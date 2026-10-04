@@ -210,6 +210,9 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			case TrackerPatternLoopPatternEffect loop:
 				return new ApplyTrackerPatternLoopCommand(loop.RepeatCount);
 
+			case TrackerPastNoteActionPatternEffect pastNote:
+				return new ApplyTrackerPastNoteActionCommand(pastNote.Action);
+
 			default:
 				throw new NotSupportedException($"Unsupported pattern effect type: {effect.GetType().FullName}");
 		}

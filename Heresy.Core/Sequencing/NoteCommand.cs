@@ -235,3 +235,16 @@ public sealed record ApplyTrackerFinePatternDelayCommand(
 /// </summary>
 public sealed record ApplyTrackerGlissandoControlCommand(
 	byte Value) : NoteCommand;
+
+/// <summary>
+/// Raw tracker S70/S71/S72 past-note action.
+/// </summary>
+public sealed record ApplyTrackerPastNoteActionCommand(
+	TrackerPastNoteAction Action) : NoteCommand;
+
+/// <summary>
+/// Resolved operation over past/NNA voices belonging to the target physical
+/// tracker channel. The current physical voice is intentionally excluded.
+/// </summary>
+public sealed record ApplyPastNoteActionCommand(
+	TrackerPastNoteAction Action) : NoteCommand;

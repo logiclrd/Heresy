@@ -329,3 +329,21 @@ public sealed record TrackerGlissandoControlPatternEffect : PatternEffect
 
 	public byte Value { get; }
 }
+
+/// <summary>
+/// Tracker S70/S71/S72 past-note action. Applies cut, note-off, or note-fade
+/// to all past/NNA voices originating from this tracker channel.
+/// </summary>
+public sealed record TrackerPastNoteActionPatternEffect : PatternEffect
+{
+	public TrackerPastNoteActionPatternEffect(
+		TrackerPastNoteAction action)
+	{
+		if (!Enum.IsDefined(action))
+			throw new ArgumentOutOfRangeException(nameof(action));
+
+		Action = action;
+	}
+
+	public TrackerPastNoteAction Action { get; }
+}

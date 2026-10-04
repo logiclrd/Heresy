@@ -46,6 +46,7 @@ public sealed class PlaybackVoice
 	private long? _fadeStartFrame;
 	private long? _fadeEndFrameExclusive;
 	private TimeSpan? _fadeDuration;
+	private bool _noteFadeRequested;
 
 	private readonly ulong _modulationSeed;
 
@@ -83,7 +84,8 @@ public sealed class PlaybackVoice
 		ResonantFilterParameters filterParameters,
 		double noteVolume,
 		double overallVolume,
-		ulong modulationSeed)
+		ulong modulationSeed,
+		int originPhysicalChannel)
 	{
 		Sound = sound ?? throw new ArgumentNullException(nameof(sound));
 		SoundState = soundState ?? throw new ArgumentNullException(nameof(soundState));
@@ -93,8 +95,11 @@ public sealed class PlaybackVoice
 			throw new ArgumentOutOfRangeException(nameof(startFrame));
 		if (outputChannelCount <= 0)
 			throw new ArgumentOutOfRangeException(nameof(outputChannelCount));
+		if (originPhysicalChannel < 0)
+			throw new ArgumentOutOfRangeException(nameof(originPhysicalChannel));
 
 		StartFrame = startFrame;
+		OriginPhysicalChannel = originPhysicalChannel;
 		NoteVolume = noteVolume;
 		OverallVolume = overallVolume;
 		_modulationSeed = modulationSeed;
@@ -117,11 +122,19 @@ public sealed class PlaybackVoice
 
 	public long StartFrame { get; }
 
+	/// <summary>
+	/// Physical tracker channel on which this voice was originally started.
+	/// This identity remains stable after NNA migration to a virtual voice.
+	/// </summary>
+	public int OriginPhysicalChannel { get; }
+
 	public double NoteVolume { get; internal set; }
 
 	public double OverallVolume { get; internal set; }
 
 	public bool IsFading => _fadeStartFrame.HasValue;
+
+	public bool IsNoteFadeRequested => _noteFadeRequested;
 
 	public long? FadeStartFrame => _fadeStartFrame;
 
@@ -173,6 +186,26 @@ public sealed class PlaybackVoice
 		_fadeDuration = duration;
 		_fadeEndFrameExclusive = checked(
 			absoluteFrame + FrameTime.Ceiling(duration, sampleRate));
+	}
+
+	internal void RequestNoteFade(
+		long absoluteFrame,
+		int sampleRate)
+	{
+		if (absoluteFrame < StartFrame)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		if (sampleRate <= 0)
+			throw new ArgumentOutOfRangeException(nameof(sampleRate));
+
+		_noteFadeRequested = true;
+
+		if (Configuration.NoteFadeDuration.HasValue)
+		{
+			BeginFade(
+				absoluteFrame,
+				Configuration.NoteFadeDuration.Value,
+				sampleRate);
+		}
 	}
 
 	internal double GetFadeGain(long absoluteFrame, int sampleRate)

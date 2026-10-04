@@ -970,6 +970,17 @@ public static class PatternNoteProcessor
 					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
 					break;
 
+				case ApplyTrackerPastNoteActionCommand pastNote:
+					GetTrackerChannelState(
+						noteEvent,
+						context,
+						"Tracker past-note action");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+					transformed.Add(
+						new ApplyPastNoteActionCommand(
+							pastNote.Action));
+					break;
+
 				default:
 					command =
 						ApplyRowTickOverride(

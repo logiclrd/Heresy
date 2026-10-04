@@ -166,13 +166,22 @@ public sealed class PlaybackSession
 				$"Playback target {noteEvent.Target.Kind} is not implemented yet.");
 		}
 
-		PlaybackChannelState channel = GetChannelState(noteEvent.Target.PhysicalChannel);
+		int physicalChannel = noteEvent.Target.PhysicalChannel;
+		PlaybackChannelState channel = GetChannelState(physicalChannel);
 
 		foreach (NoteCommand command in noteEvent.Commands)
-			ApplyCommand(channel, command, eventFrame, noteEvent.Offset.TimeOffset);
+		{
+			ApplyCommand(
+				physicalChannel,
+				channel,
+				command,
+				eventFrame,
+				noteEvent.Offset.TimeOffset);
+		}
 	}
 
 	private void ApplyCommand(
+		int physicalChannel,
 		PlaybackChannelState channel,
 		NoteCommand command,
 		long eventFrame,
@@ -181,7 +190,11 @@ public sealed class PlaybackSession
 		switch (command)
 		{
 			case StartNoteCommand start:
-				StartNote(channel, start, eventFrame);
+				StartNote(
+					physicalChannel,
+					channel,
+					start,
+					eventFrame);
 				break;
 
 			case NoteCutCommand:
@@ -256,6 +269,7 @@ public sealed class PlaybackSession
 					&& tonePortamento.TargetNote is not null)
 				{
 					StartNote(
+						physicalChannel,
 						channel,
 						tonePortamento.TargetNote,
 						eventFrame);
@@ -368,6 +382,14 @@ public sealed class PlaybackSession
 					eventTime);
 				break;
 
+			case ApplyPastNoteActionCommand pastNote:
+				ApplyPastNoteAction(
+					physicalChannel,
+					channel,
+					pastNote.Action,
+					eventFrame);
+				break;
+
 			case SetSpeedCommand:
 				// PatternNoteProcessor has already baked speed into event timing.
 				break;
@@ -392,6 +414,7 @@ public sealed class PlaybackSession
 	}
 
 	private void StartNote(
+		int physicalChannel,
 		PlaybackChannelState channel,
 		StartNoteCommand start,
 		long eventFrame)
@@ -429,9 +452,48 @@ public sealed class PlaybackSession
 			channel.FilterParameters,
 			channel.NoteVolume,
 			channel.OverallVolume,
-			_nextVoiceModulationSeed++);
+			_nextVoiceModulationSeed++,
+			physicalChannel);
 
 		channel.AttachVoice(voice);
+	}
+
+	private void ApplyPastNoteAction(
+		int physicalChannel,
+		PlaybackChannelState channel,
+		TrackerPastNoteAction action,
+		long eventFrame)
+	{
+		for (int index = _virtualVoices.Count - 1; index >= 0; index--)
+		{
+			PlaybackVoice voice = _virtualVoices[index];
+			if (voice.OriginPhysicalChannel != physicalChannel)
+				continue;
+
+			switch (action)
+			{
+				case TrackerPastNoteAction.Cut:
+					voice.AddCutTo(channel.AntiClickTail);
+					_virtualVoices.RemoveAt(index);
+					break;
+
+				case TrackerPastNoteAction.Off:
+					voice.ApplyNoteOff(
+						eventFrame,
+						_context.Configuration.SampleRate);
+					break;
+
+				case TrackerPastNoteAction.Fade:
+					voice.RequestNoteFade(
+						eventFrame,
+						_context.Configuration.SampleRate);
+					break;
+
+				default:
+					throw new InvalidOperationException(
+						$"Unsupported past-note action {action}.");
+			}
+		}
 	}
 
 	private void DisplaceCurrentVoice(
