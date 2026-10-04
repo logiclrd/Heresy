@@ -11,6 +11,7 @@ using Heresy.Render.Configuration;
 using Heresy.Render.Playback;
 using Heresy.Render.Samples;
 using Heresy.Render.Sounds;
+using Heresy.Render.Timing;
 
 using NUnit.Framework;
 
@@ -75,7 +76,7 @@ public sealed class PlaybackSessionTests
 	}
 
 	[Test]
-	public void ReplacementNoteMixesOldTailUnderNewSource()
+	public void ReplacementNoteWithDefaultCutMixesOldTailUnderNewSource()
 	{
 		ObjectId firstId = (ObjectId)10U;
 		ObjectId secondId = (ObjectId)11U;
@@ -96,6 +97,170 @@ public sealed class PlaybackSessionTests
 		Assert.That(output[0], Is.EqualTo(0.0f));
 		Assert.That(output[1], Is.EqualTo(1.0f));
 		Assert.That(output[2], Is.EqualTo(12.0f).Within(1e-6f));
+		Assert.That(session.VirtualVoices.Count, Is.EqualTo(0));
+	}
+
+	[Test]
+	public void ContinueMigratesOldVoiceAndLeavesItPlaying()
+	{
+		ObjectId firstId = (ObjectId)10U;
+		ObjectId secondId = (ObjectId)11U;
+		SampleSound first = Sample(
+			new float[] { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f },
+			4,
+			NewNotePolicy.Continue);
+		SampleSound second = Sample(
+			new float[] { 10.0f, 10.0f, 10.0f },
+			4);
+		PlaybackSession session = Session(
+			4,
+			Schedule(
+				Event(Frame(0, 4), 0, new StartNoteCommand(firstId)),
+				Event(Frame(2, 4), 0, new StartNoteCommand(secondId))),
+			new TestResolver(
+				(firstId, false, first),
+				(secondId, false, second)));
+		float[] output = new float[3];
+
+		session.Render(0, 3, output);
+
+		Assert.That(output, Is.EqualTo(new float[] { 1.0f, 1.0f, 11.0f }));
+		Assert.That(session.VirtualVoices.Count, Is.EqualTo(1));
+		Assert.That(session.VirtualVoices[0].Configuration.NewNotePolicy.Action, Is.EqualTo(NewNoteAction.Continue));
+	}
+
+	[Test]
+	public void OffMigratesOldVoiceAndSetsItsNoteOffTime()
+	{
+		ObjectId firstId = (ObjectId)10U;
+		ObjectId secondId = (ObjectId)11U;
+		ReleasingTestSound first = new(
+			NewNotePolicy.Off,
+			releaseFrames: 2);
+		SampleSound second = Sample(
+			new float[] { 10.0f, 10.0f, 10.0f, 10.0f },
+			4);
+		PlaybackSession session = Session(
+			4,
+			Schedule(
+				Event(Frame(0, 4), 0, new StartNoteCommand(firstId)),
+				Event(Frame(2, 4), 0, new StartNoteCommand(secondId))),
+			new TestResolver(
+				(firstId, false, first),
+				(secondId, false, second)));
+		float[] output = new float[5];
+
+		session.Render(0, 5, output);
+
+		Assert.That(
+			output,
+			Is.EqualTo(new float[] { 1.0f, 1.0f, 11.0f, 11.0f, 10.0f }));
+		Assert.That(session.VirtualVoices.Count, Is.EqualTo(0));
+	}
+
+	[Test]
+	public void FadeMigratesOldVoiceAndRampsToZeroOverConfiguredDuration()
+	{
+		ObjectId firstId = (ObjectId)10U;
+		ObjectId secondId = (ObjectId)11U;
+		SampleSound first = Sample(
+			new float[]
+			{
+				1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+				1.0f, 1.0f, 1.0f, 1.0f, 1.0f,
+			},
+			10,
+			NewNotePolicy.Fade(TimeSpan.FromMilliseconds(200)));
+		SampleSound second = Sample(
+			new float[] { 10.0f, 10.0f, 10.0f, 10.0f },
+			10);
+		PlaybackSession session = Session(
+			10,
+			Schedule(
+				Event(Frame(0, 10), 0, new StartNoteCommand(firstId)),
+				Event(Frame(2, 10), 0, new StartNoteCommand(secondId))),
+			new TestResolver(
+				(firstId, false, first),
+				(secondId, false, second)));
+		float[] output = new float[5];
+
+		session.Render(0, 5, output);
+
+		Assert.That(output[0], Is.EqualTo(1.0f).Within(1e-6f));
+		Assert.That(output[1], Is.EqualTo(1.0f).Within(1e-6f));
+		Assert.That(output[2], Is.EqualTo(11.0f).Within(1e-6f));
+		Assert.That(output[3], Is.EqualTo(10.5f).Within(1e-6f));
+		Assert.That(output[4], Is.EqualTo(10.0f).Within(1e-6f));
+		Assert.That(session.VirtualVoices.Count, Is.EqualTo(0));
+	}
+
+	[Test]
+	public void NewNotePolicyIsSnapshottedWhenVoiceStarts()
+	{
+		ObjectId firstId = (ObjectId)10U;
+		ObjectId secondId = (ObjectId)11U;
+		SampleSound first = Sample(
+			new float[] { 1.0f, 1.0f, 1.0f, 1.0f },
+			4,
+			NewNotePolicy.Continue);
+		SampleSound second = Sample(
+			new float[] { 10.0f, 10.0f },
+			4);
+		PlaybackSession session = Session(
+			4,
+			Schedule(
+				Event(Frame(0, 4), 0, new StartNoteCommand(firstId)),
+				Event(Frame(2, 4), 0, new StartNoteCommand(secondId))),
+			new TestResolver(
+				(firstId, false, first),
+				(secondId, false, second)));
+
+		float[] firstBlock = new float[2];
+		session.Render(0, 2, firstBlock);
+
+		first.NewNotePolicy = NewNotePolicy.Cut;
+
+		float[] secondBlock = new float[1];
+		session.Render(2, 1, secondBlock);
+
+		Assert.That(session.VirtualVoices.Count, Is.EqualTo(1));
+		Assert.That(
+			session.VirtualVoices[0].Configuration.NewNotePolicy.Action,
+			Is.EqualTo(NewNoteAction.Continue));
+	}
+
+	[Test]
+	public void MigratedVoiceKeepsVolumesCapturedFromPhysicalChannel()
+	{
+		ObjectId firstId = (ObjectId)10U;
+		ObjectId secondId = (ObjectId)11U;
+		SampleSound first = Sample(
+			new float[] { 2.0f, 2.0f, 2.0f },
+			4,
+			NewNotePolicy.Continue);
+		SampleSound second = Sample(
+			new float[] { 0.0f },
+			4);
+		PlaybackSession session = Session(
+			4,
+			Schedule(
+				Event(
+					Frame(0, 4),
+					0,
+					new SetOverallChannelVolumeCommand(0.5),
+					new SetNoteVolumeCommand(0.25),
+					new StartNoteCommand(firstId)),
+				Event(Frame(1, 4), 0, new StartNoteCommand(secondId)),
+				Event(Frame(1, 4), 0, new SetOverallChannelVolumeCommand(1.0))),
+			new TestResolver(
+				(firstId, false, first),
+				(secondId, false, second)));
+		float[] output = new float[2];
+
+		session.Render(0, 2, output);
+
+		Assert.That(output[0], Is.EqualTo(0.25f).Within(1e-6f));
+		Assert.That(output[1], Is.EqualTo(0.25f).Within(1e-6f));
 	}
 
 	[Test]
@@ -161,8 +326,13 @@ public sealed class PlaybackSessionTests
 	{
 		ObjectId firstId = (ObjectId)10U;
 		ObjectId secondId = (ObjectId)11U;
-		SampleSound first = Sample(new float[] { 0.0f, 1.0f, 2.0f, 3.0f }, 44100);
-		SampleSound second = Sample(new float[] { 10.0f, 9.0f, 8.0f }, 44100);
+		SampleSound first = Sample(
+			new float[] { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f },
+			44100,
+			NewNotePolicy.Fade(TimeSpan.FromMilliseconds(1)));
+		SampleSound second = Sample(
+			new float[] { 10.0f, 9.0f, 8.0f, 7.0f },
+			44100);
 		NoteSchedule schedule = Schedule(
 			Event(Frame(0, 44100), 0, new StartNoteCommand(firstId)),
 			Event(Frame(2, 44100), 0, new StartNoteCommand(secondId)),
@@ -219,12 +389,16 @@ public sealed class PlaybackSessionTests
 			commands);
 
 	private static TimeSpan Frame(long frame, int sampleRate)
-		=> Heresy.Render.Timing.FrameTime.FrameStartTime(frame, sampleRate);
+		=> FrameTime.FrameStartTime(frame, sampleRate);
 
-	private static SampleSound Sample(float[] values, int sampleRate)
+	private static SampleSound Sample(
+		float[] values,
+		int sampleRate,
+		NewNotePolicy? newNotePolicy = null)
 		=> new(
 			Definition(),
-			new MemorySampleData(sampleRate, 1, values));
+			new MemorySampleData(sampleRate, 1, values),
+			newNotePolicy);
 
 	private static SampleDefinition Definition()
 		=> new(
@@ -244,5 +418,64 @@ public sealed class PlaybackSessionTests
 
 		public bool TryResolve(ObjectId sourceId, bool mixdown, out ISound? sound)
 			=> _sounds.TryGetValue((sourceId, mixdown), out sound);
+	}
+
+	private sealed class ReleasingTestSound : ISound
+	{
+		private readonly int _releaseFrames;
+
+		public ReleasingTestSound(
+			NewNotePolicy newNotePolicy,
+			int releaseFrames)
+		{
+			NewNotePolicy = newNotePolicy;
+			_releaseFrames = releaseFrames;
+		}
+
+		public NewNotePolicy NewNotePolicy { get; set; }
+
+		public NoteConfigurationSnapshot SnapshotNoteConfiguration()
+			=> new(NewNotePolicy);
+
+		public SoundState CreateState()
+			=> new TestSoundState();
+
+		public long? GetEndFrameExclusive(
+			RenderContext context,
+			SoundState state)
+		{
+			if (!state.NoteOffTime.HasValue)
+				return null;
+
+			long offFrame = FrameTime.Ceiling(
+				state.NoteOffTime.Value,
+				context.Configuration.SampleRate);
+			return checked(offFrame + _releaseFrames);
+		}
+
+		public void Render(
+			RenderContext context,
+			SoundState state,
+			long startFrame,
+			int frameCount,
+			Span<float> destination)
+		{
+			long? end = GetEndFrameExclusive(context, state);
+			int outputChannels = context.Configuration.OutputChannelCount;
+
+			for (int frame = 0; frame < frameCount; frame++)
+			{
+				long current = startFrame + frame;
+				if (end.HasValue && current >= end.Value)
+					break;
+
+				for (int channel = 0; channel < outputChannels; channel++)
+					destination[frame * outputChannels + channel] += 1.0f;
+			}
+		}
+	}
+
+	private sealed class TestSoundState : SoundState
+	{
 	}
 }

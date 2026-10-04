@@ -9,7 +9,8 @@ using Heresy.Render.Timing;
 namespace Heresy.Render.Playback;
 
 /// <summary>
-/// Sequential schedule-to-PCM renderer for physical playback channels.
+/// Sequential schedule-to-PCM renderer. Physical channels own one current
+/// voice each; displaced Continue/Off/Fade voices migrate into VirtualVoices.
 /// </summary>
 public sealed class PlaybackSession
 {
@@ -17,6 +18,7 @@ public sealed class PlaybackSession
 	private readonly NoteSchedule _schedule;
 	private readonly ISoundResolver _soundResolver;
 	private readonly SortedDictionary<int, PlaybackChannelState> _channels = [];
+	private readonly List<PlaybackVoice> _virtualVoices = [];
 
 	private int _nextEventIndex;
 	private long _nextFrame;
@@ -32,6 +34,8 @@ public sealed class PlaybackSession
 	}
 
 	public long NextFrame => _nextFrame;
+
+	public IReadOnlyList<PlaybackVoice> VirtualVoices => _virtualVoices;
 
 	public bool TryGetChannelState(int channel, out PlaybackChannelState? state)
 	{
@@ -171,24 +175,27 @@ public sealed class PlaybackSession
 				break;
 
 			case NoteCutCommand:
-				channel.CutCurrentSound();
+				channel.CutCurrentVoice();
 				break;
 
 			case NoteOffCommand:
-				ApplyNoteOff(channel, eventFrame);
+				channel.CurrentVoice?.ApplyNoteOff(
+					eventFrame,
+					_context.Configuration.SampleRate);
+				CullFinishedCurrentVoice(channel, eventFrame);
 				break;
 
 			case SetNoteVolumeCommand volume:
-				channel.NoteVolume = volume.Volume;
+				channel.SetNoteVolume(volume.Volume);
 				break;
 
 			case SetOverallChannelVolumeCommand volume:
-				channel.OverallVolume = volume.Volume;
+				channel.SetOverallVolume(volume.Volume);
 				break;
 
 			case SetPlaybackOffsetCommand playbackOffset:
-				if (channel.CurrentSoundState is not null)
-					channel.CurrentSoundState.PlaybackOffset = playbackOffset.Offset;
+				if (channel.CurrentVoice is not null)
+					channel.CurrentVoice.SoundState.PlaybackOffset = playbackOffset.Offset;
 				break;
 
 			case SetTempoCommand:
@@ -207,7 +214,7 @@ public sealed class PlaybackSession
 		StartNoteCommand start,
 		long eventFrame)
 	{
-		channel.CutCurrentSound();
+		DisplaceCurrentVoice(channel, eventFrame);
 
 		if (!_soundResolver.TryResolve(start.SourceId, start.Mixdown, out ISound? sound)
 			|| sound is null)
@@ -215,26 +222,66 @@ public sealed class PlaybackSession
 			return;
 		}
 
+		NoteConfigurationSnapshot configuration =
+			sound.SnapshotNoteConfiguration()
+			?? throw new InvalidOperationException(
+				$"{sound.GetType().Name}.{nameof(ISound.SnapshotNoteConfiguration)} returned null.");
+
 		SoundState state = sound.CreateState();
 		state.PitchMultiplier = start.PitchMultiplier;
 		state.PlaybackSpeedMultiplier = start.PlaybackSpeedMultiplier;
 
-		channel.CurrentSound = sound;
-		channel.CurrentSoundState = state;
-		channel.NoteStartFrame = eventFrame;
+		PlaybackVoice voice = new(
+			sound,
+			state,
+			configuration,
+			eventFrame,
+			_context.Configuration.OutputChannelCount,
+			channel.NoteVolume,
+			channel.OverallVolume);
+
+		channel.AttachVoice(voice);
 	}
 
-	private void ApplyNoteOff(PlaybackChannelState channel, long eventFrame)
+	private void DisplaceCurrentVoice(
+		PlaybackChannelState channel,
+		long eventFrame)
 	{
-		if (!channel.HasCurrentSound || channel.CurrentSoundState is null)
+		PlaybackVoice? oldVoice = channel.DetachCurrentVoice();
+		if (oldVoice is null)
 			return;
 
-		long relativeFrame = Math.Max(0, eventFrame - channel.NoteStartFrame);
-		channel.CurrentSoundState.NoteOffTime = FrameTime.FrameStartTime(
-			relativeFrame,
-			_context.Configuration.SampleRate);
+		NewNotePolicy policy = oldVoice.Configuration.NewNotePolicy;
 
-		CullFinishedSound(channel, eventFrame);
+		switch (policy.Action)
+		{
+			case NewNoteAction.Cut:
+				oldVoice.AddCutTo(channel.AntiClickTail);
+				break;
+
+			case NewNoteAction.Continue:
+				_virtualVoices.Add(oldVoice);
+				break;
+
+			case NewNoteAction.Off:
+				oldVoice.ApplyNoteOff(
+					eventFrame,
+					_context.Configuration.SampleRate);
+				_virtualVoices.Add(oldVoice);
+				break;
+
+			case NewNoteAction.Fade:
+				oldVoice.BeginFade(
+					eventFrame,
+					policy.FadeDuration,
+					_context.Configuration.SampleRate);
+				_virtualVoices.Add(oldVoice);
+				break;
+
+			default:
+				throw new InvalidOperationException(
+					$"Unsupported new-note action {policy.Action}.");
+		}
 	}
 
 	private void RenderSegment(
@@ -254,11 +301,17 @@ public sealed class PlaybackSession
 				Span<float> channelBuffer = rented.AsSpan(0, sampleCount);
 				channelBuffer.Clear();
 
-				RenderCurrentSound(
-					channel,
-					absoluteStartFrame,
-					frameCount,
-					channelBuffer);
+				if (channel.CurrentVoice is not null)
+				{
+					bool finished = RenderVoice(
+						channel.CurrentVoice,
+						absoluteStartFrame,
+						frameCount,
+						channelBuffer);
+
+					if (finished)
+						channel.DetachCurrentVoice();
+				}
 
 				for (int frame = 0; frame < frameCount; frame++)
 				{
@@ -268,8 +321,27 @@ public sealed class PlaybackSession
 					channel.AntiClickTail.RenderFrame(outputFrame);
 				}
 
-				for (int sample = 0; sample < sampleCount; sample++)
-					destination[sample] += channelBuffer[sample];
+				AddBuffer(destination, channelBuffer);
+			}
+
+			for (int index = 0; index < _virtualVoices.Count;)
+			{
+				PlaybackVoice voice = _virtualVoices[index];
+				Span<float> voiceBuffer = rented.AsSpan(0, sampleCount);
+				voiceBuffer.Clear();
+
+				bool finished = RenderVoice(
+					voice,
+					absoluteStartFrame,
+					frameCount,
+					voiceBuffer);
+
+				AddBuffer(destination, voiceBuffer);
+
+				if (finished)
+					_virtualVoices.RemoveAt(index);
+				else
+					index++;
 			}
 		}
 		finally
@@ -278,37 +350,41 @@ public sealed class PlaybackSession
 		}
 	}
 
-	private void RenderCurrentSound(
-		PlaybackChannelState channel,
+	private bool RenderVoice(
+		PlaybackVoice voice,
 		long absoluteStartFrame,
 		int frameCount,
 		Span<float> destination)
 	{
-		if (!channel.HasCurrentSound
-			|| channel.CurrentSound is null
-			|| channel.CurrentSoundState is null)
+		long invocationStartFrame = absoluteStartFrame - voice.StartFrame;
+		if (invocationStartFrame < 0)
+			throw new InvalidOperationException("A playback voice began after the segment being rendered.");
+
+		long? soundEndRelative = voice.Sound.GetEndFrameExclusive(
+			_context,
+			voice.SoundState);
+
+		long? effectiveEndAbsolute = soundEndRelative.HasValue
+			? AddSaturating(voice.StartFrame, soundEndRelative.Value)
+			: null;
+
+		if (voice.FadeEndFrameExclusive.HasValue)
 		{
-			return;
+			effectiveEndAbsolute = effectiveEndAbsolute.HasValue
+				? Math.Min(effectiveEndAbsolute.Value, voice.FadeEndFrameExclusive.Value)
+				: voice.FadeEndFrameExclusive.Value;
 		}
 
-		long invocationStartFrame = absoluteStartFrame - channel.NoteStartFrame;
-		if (invocationStartFrame < 0)
-			throw new InvalidOperationException("A playback channel began after the segment being rendered.");
-
-		long? soundEndFrame = channel.CurrentSound.GetEndFrameExclusive(
-			_context,
-			channel.CurrentSoundState);
+		if (effectiveEndAbsolute.HasValue
+			&& absoluteStartFrame >= effectiveEndAbsolute.Value)
+		{
+			return true;
+		}
 
 		int activeFrames = frameCount;
-		if (soundEndFrame.HasValue)
+		if (effectiveEndAbsolute.HasValue)
 		{
-			long remaining = soundEndFrame.Value - invocationStartFrame;
-			if (remaining <= 0)
-			{
-				channel.DetachCurrentSound();
-				return;
-			}
-
+			long remaining = effectiveEndAbsolute.Value - absoluteStartFrame;
 			activeFrames = (int)Math.Min(activeFrames, remaining);
 		}
 
@@ -317,48 +393,66 @@ public sealed class PlaybackSession
 			0,
 			checked(activeFrames * outputChannelCount));
 
-		channel.CurrentSound.Render(
+		voice.Sound.Render(
 			_context,
-			channel.CurrentSoundState,
+			voice.SoundState,
 			invocationStartFrame,
 			activeFrames,
 			activeDestination);
 
-		double volume = channel.NoteVolume * channel.OverallVolume;
+		double baseVolume = voice.NoteVolume * voice.OverallVolume;
 		for (int frame = 0; frame < activeFrames; frame++)
 		{
-			Span<float> sourceFrame = activeDestination.Slice(
+			long absoluteFrame = absoluteStartFrame + frame;
+			double volume =
+				baseVolume
+				* voice.GetFadeGain(
+					absoluteFrame,
+					_context.Configuration.SampleRate);
+
+			Span<float> outputFrame = activeDestination.Slice(
 				frame * outputChannelCount,
 				outputChannelCount);
 
 			for (int outputChannel = 0; outputChannel < outputChannelCount; outputChannel++)
-				sourceFrame[outputChannel] = (float)(sourceFrame[outputChannel] * volume);
+				outputFrame[outputChannel] = (float)(outputFrame[outputChannel] * volume);
 
-			channel.ObserveSourceFrame(sourceFrame);
+			voice.ObserveOutputFrame(outputFrame);
 		}
 
-		if (soundEndFrame.HasValue
-			&& invocationStartFrame + activeFrames >= soundEndFrame.Value)
-		{
-			channel.DetachCurrentSound();
-		}
+		return effectiveEndAbsolute.HasValue
+			&& absoluteStartFrame + activeFrames >= effectiveEndAbsolute.Value;
 	}
 
-	private void CullFinishedSound(PlaybackChannelState channel, long absoluteFrame)
+	private void CullFinishedCurrentVoice(
+		PlaybackChannelState channel,
+		long absoluteFrame)
 	{
-		if (!channel.HasCurrentSound
-			|| channel.CurrentSound is null
-			|| channel.CurrentSoundState is null)
-		{
+		PlaybackVoice? voice = channel.CurrentVoice;
+		if (voice is null)
 			return;
-		}
 
-		long relativeFrame = Math.Max(0, absoluteFrame - channel.NoteStartFrame);
-		long? endFrame = channel.CurrentSound.GetEndFrameExclusive(
+		long relativeFrame = Math.Max(0, absoluteFrame - voice.StartFrame);
+		long? endFrame = voice.Sound.GetEndFrameExclusive(
 			_context,
-			channel.CurrentSoundState);
+			voice.SoundState);
 
 		if (endFrame.HasValue && relativeFrame >= endFrame.Value)
-			channel.DetachCurrentSound();
+			channel.DetachCurrentVoice();
+	}
+
+	private static void AddBuffer(Span<float> destination, ReadOnlySpan<float> source)
+	{
+		for (int sample = 0; sample < destination.Length; sample++)
+			destination[sample] += source[sample];
+	}
+
+	private static long AddSaturating(long left, long right)
+	{
+		if (right > 0 && left > long.MaxValue - right)
+			return long.MaxValue;
+		if (right < 0 && left < long.MinValue - right)
+			return long.MinValue;
+		return left + right;
 	}
 }

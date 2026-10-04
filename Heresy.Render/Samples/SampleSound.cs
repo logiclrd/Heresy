@@ -10,7 +10,7 @@ using Heresy.Render.Timing;
 namespace Heresy.Render.Samples;
 
 /// <summary>
-/// Stateless renderer for a SampleDefinition and its decoded PCM.
+/// Executable renderer for a SampleDefinition and its decoded PCM.
 /// </summary>
 public sealed class SampleSound : ISound
 {
@@ -18,7 +18,10 @@ public sealed class SampleSound : ISound
 	private readonly ISampleData _data;
 	private readonly Vector3[] _sourceChannelPositions;
 
-	public SampleSound(SampleDefinition definition, ISampleData data)
+	public SampleSound(
+		SampleDefinition definition,
+		ISampleData data,
+		NewNotePolicy? newNotePolicy = null)
 	{
 		_definition = definition ?? throw new ArgumentNullException(nameof(definition));
 		_data = data ?? throw new ArgumentNullException(nameof(data));
@@ -34,7 +37,18 @@ public sealed class SampleSound : ISound
 		_sourceChannelPositions = ResolveSourceChannelPositions(
 			_definition,
 			_data.ChannelCount);
+
+		NewNotePolicy = newNotePolicy ?? Heresy.Render.Sounds.NewNotePolicy.Cut;
 	}
+
+	/// <summary>
+	/// Current configuration used for notes started after this value changes.
+	/// Already-playing voices retain the value captured at note start.
+	/// </summary>
+	public NewNotePolicy NewNotePolicy { get; set; }
+
+	public NoteConfigurationSnapshot SnapshotNoteConfiguration()
+		=> new(NewNotePolicy);
 
 	public SoundState CreateState()
 		=> new SampleSoundState();

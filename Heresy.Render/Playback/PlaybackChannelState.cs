@@ -1,68 +1,69 @@
-using System;
-
 using Heresy.Render.Sounds;
 
 namespace Heresy.Render.Playback;
 
 /// <summary>
-/// Runtime state for one physical playback/tracker channel.
+/// Runtime state for one physical playback/tracker channel. Voice-specific
+/// state lives in CurrentVoice so it can migrate intact to a virtual voice.
 /// </summary>
 public sealed class PlaybackChannelState
 {
-	private readonly float[] _previousSourceFrame;
-	private readonly float[] _lastSourceFrame;
-	private int _sourceHistoryFrames;
-
 	internal PlaybackChannelState(int outputChannelCount, int sampleRate)
 	{
-		_previousSourceFrame = new float[outputChannelCount];
-		_lastSourceFrame = new float[outputChannelCount];
 		AntiClickTail = new AntiClickTail(outputChannelCount, sampleRate);
 	}
 
-	public ISound? CurrentSound { get; internal set; }
-	public SoundState? CurrentSoundState { get; internal set; }
-	public long NoteStartFrame { get; internal set; }
+	public PlaybackVoice? CurrentVoice { get; internal set; }
 
-	public double NoteVolume { get; internal set; } = 1.0;
-	public double OverallVolume { get; internal set; } = 1.0;
+	/// <summary>
+	/// Persistent per-note volume used to initialize a newly attached voice and
+	/// kept synchronized with the current physical voice.
+	/// </summary>
+	public double NoteVolume { get; private set; } = 1.0;
+
+	/// <summary>
+	/// Persistent overall playback-channel volume.
+	/// </summary>
+	public double OverallVolume { get; private set; } = 1.0;
 
 	public AntiClickTail AntiClickTail { get; }
 
-	internal bool HasCurrentSound => CurrentSound is not null && CurrentSoundState is not null;
+	// Convenience accessors retained while callers migrate to CurrentVoice.
+	public ISound? CurrentSound => CurrentVoice?.Sound;
+	public SoundState? CurrentSoundState => CurrentVoice?.SoundState;
+	public long? NoteStartFrame => CurrentVoice?.StartFrame;
 
-	internal void ObserveSourceFrame(ReadOnlySpan<float> sourceFrame)
+	internal void SetNoteVolume(double volume)
 	{
-		if (sourceFrame.Length != _lastSourceFrame.Length)
-			throw new ArgumentException("Source frame width does not match output channel count.", nameof(sourceFrame));
-
-		if (_sourceHistoryFrames != 0)
-			_lastSourceFrame.CopyTo(_previousSourceFrame);
-
-		sourceFrame.CopyTo(_lastSourceFrame);
-		if (_sourceHistoryFrames < 2)
-			_sourceHistoryFrames++;
+		NoteVolume = volume;
+		if (CurrentVoice is not null)
+			CurrentVoice.NoteVolume = volume;
 	}
 
-	internal void CutCurrentSound()
+	internal void SetOverallVolume(double volume)
 	{
-		if (HasCurrentSound && _sourceHistoryFrames != 0)
-		{
-			AntiClickTail.AddCut(
-				_previousSourceFrame,
-				_lastSourceFrame,
-				havePrevious: _sourceHistoryFrames >= 2);
-		}
-
-		DetachCurrentSound();
+		OverallVolume = volume;
+		if (CurrentVoice is not null)
+			CurrentVoice.OverallVolume = volume;
 	}
 
-	internal void DetachCurrentSound()
+	internal PlaybackVoice? DetachCurrentVoice()
 	{
-		CurrentSound = null;
-		CurrentSoundState = null;
-		_sourceHistoryFrames = 0;
-		Array.Clear(_previousSourceFrame);
-		Array.Clear(_lastSourceFrame);
+		PlaybackVoice? voice = CurrentVoice;
+		CurrentVoice = null;
+		return voice;
+	}
+
+	internal void AttachVoice(PlaybackVoice voice)
+	{
+		CurrentVoice = voice;
+		voice.NoteVolume = NoteVolume;
+		voice.OverallVolume = OverallVolume;
+	}
+
+	internal void CutCurrentVoice()
+	{
+		PlaybackVoice? voice = DetachCurrentVoice();
+		voice?.AddCutTo(AntiClickTail);
 	}
 }

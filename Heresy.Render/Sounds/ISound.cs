@@ -3,11 +3,14 @@ using System;
 namespace Heresy.Render.Sounds;
 
 /// <summary>
-/// Stateless executable sound definition. All mutable invocation state lives in
-/// a SoundState supplied by the caller.
+/// Executable sound definition. Mutable invocation state lives in SoundState;
+/// configuration which must remain fixed for an already-started note is
+/// captured by SnapshotNoteConfiguration.
 /// </summary>
 public interface ISound
 {
+	NoteConfigurationSnapshot SnapshotNoteConfiguration();
+
 	SoundState CreateState();
 
 	/// <summary>
