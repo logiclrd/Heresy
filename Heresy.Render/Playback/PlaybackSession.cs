@@ -214,6 +214,16 @@ public sealed class PlaybackSession
 					channel.CurrentVoice.SoundState.PlaybackOffset = playbackOffset.Offset;
 				break;
 
+			case SetSourceFrameOffsetCommand sourceFrameOffset:
+				if (channel.CurrentVoice is not null
+					&& channel.CurrentVoice.Sound is ISourceFrameSeekableSound seekable)
+				{
+					seekable.SetSourceFrameOffset(
+						channel.CurrentVoice.SoundState,
+						sourceFrameOffset.SourceFrameOffset);
+				}
+				break;
+
 			case AdjustPitchLinearUnitsCommand adjust:
 				channel.CurrentVoice?.AdjustPitchLinearUnits(
 					eventFrame,

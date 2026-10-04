@@ -171,3 +171,9 @@ public sealed record TremoloPatternEffect(byte Parameter) : PatternEffect;
 /// nibble transforms note volume on each retrigger.
 /// </summary>
 public sealed record RetriggerPatternEffect(byte Parameter) : PatternEffect;
+
+/// <summary>
+/// Tracker Oxx sample offset. The remembered low byte addresses source frames
+/// in units of 256.
+/// </summary>
+public sealed record SampleOffsetPatternEffect(byte Parameter) : PatternEffect;

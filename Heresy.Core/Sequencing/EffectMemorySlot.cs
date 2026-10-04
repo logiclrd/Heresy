@@ -14,4 +14,5 @@ public enum EffectMemorySlot
 	Arpeggio,
 	Tremolo,
 	Retrigger,
+	SampleOffset,
 }

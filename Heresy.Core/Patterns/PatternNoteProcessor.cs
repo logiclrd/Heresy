@@ -411,15 +411,7 @@ public static class PatternNoteProcessor
 						EffectMemorySlot.Retrigger,
 						rawRetrigger.Parameter);
 
-					bool hasNewNote = false;
-					foreach (NoteCommand eventCommand in noteEvent.Commands)
-					{
-						if (eventCommand is StartNoteCommand)
-						{
-							hasNewNote = true;
-							break;
-						}
-					}
+					bool hasNewNote = HasStartNote(noteEvent.Commands);
 
 					retrigger = new RetriggerRequest
 					{
@@ -427,6 +419,24 @@ public static class PatternNoteProcessor
 						Parameter = parameter,
 						HasNewNote = hasNewNote,
 					};
+					break;
+				}
+
+				case ApplySampleOffsetCommand rawOffset:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(noteEvent, context, "Tracker sample offset");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+
+					byte parameter = channelState.ResolveEffectParameter(
+						EffectMemorySlot.SampleOffset,
+						rawOffset.Parameter);
+
+					if (HasStartNote(noteEvent.Commands))
+					{
+						transformed.Add(new SetSourceFrameOffsetCommand(
+							(long)parameter << 8));
+					}
 					break;
 				}
 
@@ -496,6 +506,17 @@ public static class PatternNoteProcessor
 
 		request.ChannelState.RetriggerCountdown =
 			Math.Clamp(countdown, 0, 15);
+	}
+
+	private static bool HasStartNote(IReadOnlyList<NoteCommand> commands)
+	{
+		foreach (NoteCommand command in commands)
+		{
+			if (command is StartNoteCommand)
+				return true;
+		}
+
+		return false;
 	}
 
 	private static SequencingChannelState GetTrackerChannelState(

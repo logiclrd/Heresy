@@ -180,6 +180,9 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			case RetriggerPatternEffect retrigger:
 				return new ApplyRetriggerCommand(retrigger.Parameter);
 
+			case SampleOffsetPatternEffect offset:
+				return new ApplySampleOffsetCommand(offset.Parameter);
+
 			default:
 				throw new NotSupportedException($"Unsupported pattern effect type: {effect.GetType().FullName}");
 		}

@@ -123,6 +123,15 @@ public sealed class PlaybackVoice
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
 
 		long relativeFrame = absoluteFrame - StartFrame;
+
+		SoundState.PlaybackOffset = TimeSpan.Zero;
+		if (Sound is ISourceFrameSeekableSound sourceFrameSeekable)
+		{
+			sourceFrameSeekable.SetSourceFrameOffset(
+				SoundState,
+				0);
+		}
+
 		SoundState.RestartPlaybackAt(relativeFrame);
 
 		Array.Clear(_previousOutputFrame);

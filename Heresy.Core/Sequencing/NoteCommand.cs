@@ -155,3 +155,12 @@ public sealed record ApplyRetriggerCommand(byte Parameter) : NoteCommand;
 /// </summary>
 public sealed record RetriggerCurrentVoiceCommand(
 	byte VolumeTransform) : NoteCommand;
+
+/// <summary>Raw tracker Oxx sample-offset operation with whole-byte memory.</summary>
+public sealed record ApplySampleOffsetCommand(byte Parameter) : NoteCommand;
+
+/// <summary>
+/// Sets the current source's native playback offset in source frames.
+/// </summary>
+public sealed record SetSourceFrameOffsetCommand(
+	long SourceFrameOffset) : NoteCommand;

@@ -12,7 +12,7 @@ namespace Heresy.Render.Samples;
 /// <summary>
 /// Executable renderer for a SampleDefinition and its decoded PCM.
 /// </summary>
-public sealed class SampleSound : ISound
+public sealed class SampleSound : ISound, ISourceFrameSeekableSound
 {
 	private readonly SampleDefinition _definition;
 	private readonly ISampleData _data;
@@ -53,6 +53,21 @@ public sealed class SampleSound : ISound
 	public SoundState CreateState()
 		=> new SampleSoundState();
 
+	public void SetSourceFrameOffset(
+		SoundState state,
+		long sourceFrameOffset)
+	{
+		ArgumentNullException.ThrowIfNull(state);
+		if (state is not SampleSoundState sampleState)
+		{
+			throw new ArgumentException(
+				$"State must be {nameof(SampleSoundState)}.",
+				nameof(state));
+		}
+
+		sampleState.SourceFrameOffset = sourceFrameOffset;
+	}
+
 	public long? GetEndFrameExclusive(RenderContext context, SoundState state)
 	{
 		SampleSoundState sampleState = ValidateState(context, state);
@@ -67,7 +82,8 @@ public sealed class SampleSound : ISound
 			return noteOffEnd;
 
 		double sourceOffsetFrames =
-			sampleState.PlaybackOffset.TotalSeconds * _data.SampleRate;
+			sampleState.SourceFrameOffset
+			+ sampleState.PlaybackOffset.TotalSeconds * _data.SampleRate;
 		double remainingSourceFrames = _data.FrameCount - sourceOffsetFrames;
 
 		if (!(remainingSourceFrames > 0.0))
@@ -130,7 +146,8 @@ public sealed class SampleSound : ISound
 
 		double step = GetSourceFramesPerOutputFrame(context, sampleState);
 		double sourceOffsetFrames =
-			sampleState.PlaybackOffset.TotalSeconds * _data.SampleRate;
+			sampleState.SourceFrameOffset
+			+ sampleState.PlaybackOffset.TotalSeconds * _data.SampleRate;
 
 		int gainCount = checked(_data.ChannelCount * outputChannelCount);
 		Span<float> gains = gainCount <= 128
