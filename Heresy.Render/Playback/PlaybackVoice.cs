@@ -15,9 +15,8 @@ public sealed class PlaybackVoice
 	private sealed class ActiveVibrato
 	{
 		public required byte Speed { get; init; }
-		public required byte Depth { get; init; }
 		public required TimeSpan TickDuration { get; init; }
-		public required TimeSpan NextTickTime { get; set; }
+		public required TimeSpan NextLegacyTickTime { get; set; }
 	}
 
 	private readonly float[] _previousOutputFrame;
@@ -123,6 +122,7 @@ public sealed class PlaybackVoice
 		long absoluteFrame,
 		TimeSpan eventTime,
 		double tempo,
+		int sampleRate,
 		byte speed,
 		byte depth)
 	{
@@ -130,70 +130,66 @@ public sealed class PlaybackVoice
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
 		if (!(tempo > 0.0) || double.IsNaN(tempo) || double.IsInfinity(tempo))
 			throw new ArgumentOutOfRangeException(nameof(tempo));
+		if (sampleRate <= 0)
+			throw new ArgumentOutOfRangeException(nameof(sampleRate));
+
+		CommitVibratoPhaseThrough(eventTime);
 
 		TimeSpan tickDuration = TimeSpan.FromSeconds(
 			SequencingConstants.Diachron.TotalSeconds / tempo);
 		if (tickDuration <= TimeSpan.Zero)
 			throw new InvalidOperationException("Tempo produces a zero-length tracker tick.");
 
+		_vibratoPhase = TrackerVibrato.AdvancePhase(
+			_vibratoPhase,
+			speed);
+
 		_activeVibrato = new ActiveVibrato
 		{
 			Speed = speed,
-			Depth = depth,
 			TickDuration = tickDuration,
-			NextTickTime = eventTime,
+			NextLegacyTickTime = eventTime + tickDuration,
 		};
+
+		SoundState.PitchTrajectory.SetCurve(
+			absoluteFrame - StartFrame,
+			new TrackerVibratoPitchCurve(
+				_vibratoPhase,
+				speed,
+				depth,
+				tickDuration,
+				sampleRate));
 	}
 
-	internal void ClearPitchModulation(long absoluteFrame)
+	internal void ClearPitchModulation(
+		long absoluteFrame,
+		TimeSpan eventTime)
 	{
 		if (absoluteFrame < StartFrame)
 			return;
 
+		CommitVibratoPhaseThrough(eventTime);
 		_activeVibrato = null;
+
 		SoundState.PitchTrajectory.SetMultiplier(
 			absoluteFrame - StartFrame,
 			1.0);
 	}
 
-	internal void EnsurePitchTrajectoryThrough(
-		long absoluteEndFrame,
-		int sampleRate)
+	private void CommitVibratoPhaseThrough(TimeSpan eventTime)
 	{
-		if (sampleRate <= 0)
-			throw new ArgumentOutOfRangeException(nameof(sampleRate));
-		if (absoluteEndFrame <= StartFrame)
-			return;
-
 		ActiveVibrato? vibrato = _activeVibrato;
 		if (vibrato is null)
 			return;
 
-		while (true)
+		// A tracker tick exactly coincident with the command replacing/clearing
+		// this effect belongs to the new command, not the old one.
+		while (vibrato.NextLegacyTickTime < eventTime)
 		{
-			long tickFrame = FrameTime.Ceiling(
-				vibrato.NextTickTime,
-				sampleRate);
-
-			if (tickFrame >= absoluteEndFrame)
-				break;
-
 			_vibratoPhase = TrackerVibrato.AdvancePhase(
 				_vibratoPhase,
 				vibrato.Speed);
-
-			if (tickFrame >= StartFrame)
-			{
-				double multiplier = TrackerVibrato.GetPitchMultiplier(
-					_vibratoPhase,
-					vibrato.Depth);
-
-				SoundState.PitchTrajectory.SetMultiplier(
-					tickFrame - StartFrame,
-					multiplier);
-			}
-
-			vibrato.NextTickTime += vibrato.TickDuration;
+			vibrato.NextLegacyTickTime += vibrato.TickDuration;
 		}
 	}
 

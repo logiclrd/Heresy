@@ -30,6 +30,26 @@ public sealed class TrackerVibratoTests
 	}
 
 	[Test]
+	public void ContinuousPhaseInterpolatesBetweenTrackerCompatibleValues()
+	{
+		Assert.That(
+			TrackerVibrato.GetContinuousLinearSlideUnits(0.0, 15),
+			Is.EqualTo(TrackerVibrato.GetLinearSlideUnits(0, 15)));
+		Assert.That(
+			TrackerVibrato.GetContinuousLinearSlideUnits(1.0, 15),
+			Is.EqualTo(TrackerVibrato.GetLinearSlideUnits(1, 15)));
+
+		double midpoint =
+			TrackerVibrato.GetContinuousLinearSlideUnits(0.5, 15);
+		double expected =
+			(TrackerVibrato.GetLinearSlideUnits(0, 15)
+				+ TrackerVibrato.GetLinearSlideUnits(1, 15))
+			/ 2.0;
+
+		Assert.That(midpoint, Is.EqualTo(expected).Within(1e-14));
+	}
+
+	[Test]
 	public void LinearSlideUnitsMapTo768UnitsPerOctave()
 	{
 		double multiplier = TrackerVibrato.GetPitchMultiplier(64, 15);

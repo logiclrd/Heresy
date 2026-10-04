@@ -5,14 +5,12 @@ object can be used as a note source, including patterns and sequences.
 
 ## Solution layout
 
-The repository is intentionally split by concern. Only `Heresy.Core` exists in
-this first scaffold.
+The repository is intentionally split by concern.
 
 - `Heresy.Core` — persistent song model, IDs, timing primitives, sequencing
   contracts, patterns, sequences, samples, instruments and script source.
-- `Heresy.Render` *(planned)* — abstract PCM generation, channel/runtime state,
-  spatialization, filtering, effects, recursive flatten/mixdown and the common
-  renderer.
+- `Heresy.Render` — abstract PCM generation, playback voices/channels,
+  spatialization, sample rendering, effect processing and the common renderer.
 - `Heresy.Render.SDL` *(planned)* — SDL3-CS real-time sink and buffering.
 - `Heresy.Render.File` *(planned)* — FLAC, WAV and MP3 sinks.
 - `Heresy.UserInterface` *(planned)* — Avalonia single-document tracker UI.
@@ -40,10 +38,13 @@ this first scaffold.
 - Sequences are finite and entries can specify a `StartRow`.
 - Script object references are persisted in restricted-C# source as `_O(id)` and
   can later be projected by the editor as atomic named tokens.
+- Continuous effects are evaluated at output-sample resolution. Traditional
+  tracker ticks are compatibility anchors for timing/amplitude semantics, not
+  processing steps: an effect must agree with its tracker counterpart at the
+  corresponding tick states while using an appropriate continuous curve between
+  them. Discrete operations such as note delay/retrigger remain discrete.
 
 ## Toolchain note
 
-This scaffold targets **.NET 10.0**. The environment used to generate it did not
-have a .NET SDK installed, so a `dotnet build` could not be performed here. The
-project files are standard SDK-style files, but build validation should be the
-first step on a machine with the .NET 10 SDK.
+Heresy targets **.NET 10.0**. GitHub Actions builds the solution and runs the
+full test suite on pushes to `main`.

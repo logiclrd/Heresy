@@ -210,12 +210,15 @@ public sealed class PlaybackSession
 					eventFrame,
 					eventTime,
 					_tempo,
+					_context.Configuration.SampleRate,
 					vibrato.Speed,
 					vibrato.Depth);
 				break;
 
 			case ClearPitchModulationCommand:
-				channel.CurrentVoice?.ClearPitchModulation(eventFrame);
+				channel.CurrentVoice?.ClearPitchModulation(
+					eventFrame,
+					eventTime);
 				break;
 
 			case SetSpeedCommand:
@@ -390,12 +393,7 @@ public sealed class PlaybackSession
 		long invocationStartFrame = absoluteStartFrame - voice.StartFrame;
 		if (invocationStartFrame < 0)
 			throw new InvalidOperationException("A playback voice began after the segment being rendered.");
-
-		voice.EnsurePitchTrajectoryThrough(
-			checked(absoluteStartFrame + frameCount),
-			_context.Configuration.SampleRate);
-
-		long? soundEndRelative = voice.Sound.GetEndFrameExclusive(
+long? soundEndRelative = voice.Sound.GetEndFrameExclusive(
 			_context,
 			voice.SoundState);
 
@@ -454,6 +452,9 @@ public sealed class PlaybackSession
 
 			voice.ObserveOutputFrame(outputFrame);
 		}
+
+		if (voice.SoundState.NaturalEndReached)
+			return true;
 
 		return effectiveEndAbsolute.HasValue
 			&& absoluteStartFrame + activeFrames >= effectiveEndAbsolute.Value;

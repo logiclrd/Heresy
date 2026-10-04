@@ -70,18 +70,16 @@ public sealed class SampleSound : ISound
 			sampleState.PlaybackOffset.TotalSeconds * _data.SampleRate;
 		double remainingSourceFrames = _data.FrameCount - sourceOffsetFrames;
 
-		long naturalEnd;
 		if (!(remainingSourceFrames > 0.0))
-		{
-			naturalEnd = 0;
-		}
-		else
-		{
-			double baseStep = GetSourceFramesPerOutputFrame(context, sampleState);
-			double requiredPitchPosition = remainingSourceFrames / baseStep;
-			naturalEnd = sampleState.PitchTrajectory.FindFrameAtOrAfterPosition(
-				requiredPitchPosition);
-		}
+			return 0;
+
+		if (!sampleState.PitchTrajectory.CanProjectEndEfficiently)
+			return noteOffEnd;
+
+		double baseStep = GetSourceFramesPerOutputFrame(context, sampleState);
+		double requiredPitchPosition = remainingSourceFrames / baseStep;
+		long naturalEnd = sampleState.PitchTrajectory.FindFrameAtOrAfterPosition(
+			requiredPitchPosition);
 
 		return noteOffEnd.HasValue
 			? Math.Min(naturalEnd, noteOffEnd.Value)
@@ -111,8 +109,15 @@ public sealed class SampleSound : ISound
 				nameof(destination));
 		}
 
-		if (frameCount == 0 || _data.FrameCount == 0)
+		if (frameCount == 0)
 			return;
+
+		if (_data.FrameCount == 0)
+		{
+			if (_definition.Loop.Mode == SampleLoopMode.None)
+				sampleState.MarkNaturalEndReached();
+			return;
+		}
 
 		long? endFrame = GetEndFrameExclusive(context, sampleState);
 		if (endFrame.HasValue && startFrame >= endFrame.Value)
@@ -132,16 +137,28 @@ public sealed class SampleSound : ISound
 			: new float[gainCount];
 		BuildSpatialGains(context.Configuration, sampleState.Position, gains);
 
+		double pitchPosition =
+			sampleState.PitchTrajectory.GetPosition(startFrame);
+
 		for (int outputFrame = 0; outputFrame < activeFrames; outputFrame++)
 		{
 			long invocationFrame = startFrame + outputFrame;
-			double pitchPosition =
-				sampleState.PitchTrajectory.GetPosition(invocationFrame);
 			double sourcePosition =
 				sourceOffsetFrames + pitchPosition * step;
 
 			if (!IsSourcePositionActive(sourcePosition))
+			{
+				if (_definition.Loop.Mode == SampleLoopMode.None
+					&& sourcePosition >= _data.FrameCount)
+				{
+					sampleState.MarkNaturalEndReached();
+					break;
+				}
+
+				pitchPosition +=
+					sampleState.PitchTrajectory.GetMultiplier(invocationFrame);
 				continue;
+			}
 
 			int destinationBase = outputFrame * outputChannelCount;
 
@@ -156,8 +173,12 @@ public sealed class SampleSound : ISound
 						sourceValue * gains[gainBase + outputChannel];
 				}
 			}
+
+			pitchPosition +=
+				sampleState.PitchTrajectory.GetMultiplier(invocationFrame);
 		}
 	}
+
 
 	private SampleSoundState ValidateState(RenderContext context, SoundState state)
 	{

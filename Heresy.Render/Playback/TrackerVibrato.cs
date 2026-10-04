@@ -43,8 +43,32 @@ public static class TrackerVibrato
 		return (int)Math.Floor((sine * depth + 8.0) / 16.0);
 	}
 
+	public static double GetContinuousLinearSlideUnits(double phase, byte depth)
+	{
+		if (double.IsNaN(phase) || double.IsInfinity(phase))
+			throw new ArgumentOutOfRangeException(nameof(phase));
+
+		double wrapped = phase % 256.0;
+		if (wrapped < 0.0)
+			wrapped += 256.0;
+
+		int index0 = (int)Math.Floor(wrapped);
+		int index1 = (index0 + 1) & 0xFF;
+		double fraction = wrapped - index0;
+
+		double units0 = GetLinearSlideUnits((byte)index0, depth);
+		double units1 = GetLinearSlideUnits((byte)index1, depth);
+
+		return units0 + (units1 - units0) * fraction;
+	}
+
 	public static double GetPitchMultiplier(byte phase, byte depth)
 		=> Math.Pow(
 			2.0,
 			GetLinearSlideUnits(phase, depth) / LinearSlideUnitsPerOctave);
+
+	public static double GetContinuousPitchMultiplier(double phase, byte depth)
+		=> Math.Pow(
+			2.0,
+			GetContinuousLinearSlideUnits(phase, depth) / LinearSlideUnitsPerOctave);
 }

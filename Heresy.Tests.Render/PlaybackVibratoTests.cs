@@ -20,7 +20,7 @@ namespace Heresy.Tests.Render;
 public sealed class PlaybackVibratoTests
 {
 	[Test]
-	public void VibratoAdvancesOnTrackerTicksAndClearReturnsToUnity()
+	public void VibratoIsSmoothBetweenTrackerCompatibleTickAnchors()
 	{
 		ObjectId sourceId = (ObjectId)10U;
 		SampleSound sound = LongRampSample(sampleRate: 1000);
@@ -38,26 +38,34 @@ public sealed class PlaybackVibratoTests
 			1000,
 			schedule,
 			new TestResolver((sourceId, false, sound)));
-		float[] output = new float[60];
 
-		session.Render(0, 60, output);
+		session.Render(0, 60, new float[60]);
 
-		PlaybackVoice voice = session.GetChannelState(0).CurrentVoice!;
-		PitchTrajectory trajectory = voice.SoundState.PitchTrajectory;
+		PitchTrajectory trajectory =
+			session.GetChannelState(0).CurrentVoice!.SoundState.PitchTrajectory;
 
-		double firstTickMultiplier = Math.Pow(2.0, 6.0 / 768.0);
+		double tick0 = TrackerVibrato.GetPitchMultiplier(20, 3);
+		double tick1 = TrackerVibrato.GetPitchMultiplier(40, 3);
+
 		Assert.That(
-			trajectory.GetPosition(20),
-			Is.EqualTo(20.0 * firstTickMultiplier).Within(1e-10));
+			trajectory.GetMultiplier(0),
+			Is.EqualTo(tick0).Within(1e-14));
+		Assert.That(
+			trajectory.GetMultiplier(20),
+			Is.EqualTo(tick1).Within(1e-14));
 
-		Assert.That(trajectory.GetPosition(40), Is.GreaterThan(40.0));
+		double between = trajectory.GetMultiplier(10);
+		Assert.That(between, Is.Not.EqualTo(tick0).Within(1e-14));
+		Assert.That(between, Is.Not.EqualTo(tick1).Within(1e-14));
+
+		Assert.That(trajectory.GetMultiplier(40), Is.EqualTo(1.0));
 		Assert.That(
 			trajectory.GetPosition(50) - trajectory.GetPosition(40),
 			Is.EqualTo(10.0).Within(1e-10));
 	}
 
 	[Test]
-	public void TempoCommandControlsVibratoTickSpacing()
+	public void TempoCommandControlsContinuousVibratoPhaseRate()
 	{
 		ObjectId sourceId = (ObjectId)10U;
 		SampleSound sound = LongRampSample(sampleRate: 1000);
@@ -85,14 +93,13 @@ public sealed class PlaybackVibratoTests
 		PitchTrajectory trajectory =
 			session.GetChannelState(0).CurrentVoice!.SoundState.PitchTrajectory;
 
-		double first = Math.Pow(2.0, 6.0 / 768.0);
-		double second = Math.Pow(
-			2.0,
-			TrackerVibrato.GetLinearSlideUnits(40, 3) / 768.0);
-
 		Assert.That(
-			trajectory.GetPosition(20),
-			Is.EqualTo(10.0 * first + 10.0 * second).Within(1e-10));
+			trajectory.GetMultiplier(0),
+			Is.EqualTo(TrackerVibrato.GetPitchMultiplier(20, 3)).Within(1e-14));
+		Assert.That(
+			trajectory.GetMultiplier(10),
+			Is.EqualTo(TrackerVibrato.GetPitchMultiplier(40, 3)).Within(1e-14));
+		Assert.That(trajectory.GetMultiplier(20), Is.EqualTo(1.0));
 	}
 
 	[Test]
@@ -125,10 +132,10 @@ public sealed class PlaybackVibratoTests
 		PitchTrajectory trajectory =
 			session.GetChannelState(0).CurrentVoice!.SoundState.PitchTrajectory;
 
-		double resumedMultiplier = Math.Pow(2.0, 12.0 / 768.0);
 		Assert.That(
-			trajectory.GetPosition(60) - trajectory.GetPosition(40),
-			Is.EqualTo(20.0 * resumedMultiplier).Within(1e-10));
+			trajectory.GetMultiplier(40),
+			Is.EqualTo(TrackerVibrato.GetPitchMultiplier(60, 3)).Within(1e-14));
+		Assert.That(trajectory.GetMultiplier(60), Is.EqualTo(1.0));
 	}
 
 	[Test]

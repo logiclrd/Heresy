@@ -4,93 +4,126 @@ using System.Collections.Generic;
 namespace Heresy.Render.Sounds;
 
 /// <summary>
-/// Piecewise-constant relative pitch multiplier as a function of invocation
-/// output frame. The integrated position is measured in unmodulated output
-/// frames and can therefore be multiplied by a sound's ordinary base step.
+/// Piecewise pitch curves in invocation-frame coordinates. Position is the
+/// accumulated per-output-sample relative playback distance.
 /// </summary>
 public sealed class PitchTrajectory
 {
-	private sealed class ControlPoint
+	private sealed class Segment
 	{
-		public required long Frame { get; init; }
-		public required double Position { get; init; }
-		public required double Multiplier { get; set; }
+		public required long StartFrame { get; init; }
+		public required double StartPosition { get; init; }
+		public required PitchCurve Curve { get; init; }
+
+		public long? EndFrameExclusive { get; set; }
+		public double? EndPosition { get; set; }
+
+		private long _cachedFrameCount;
+		private double _cachedPosition;
+
+		public double GetPositionDelta(long frameCount)
+		{
+			if (frameCount < 0)
+				throw new ArgumentOutOfRangeException(nameof(frameCount));
+
+			if (frameCount == _cachedFrameCount)
+				return _cachedPosition;
+
+			if (frameCount > _cachedFrameCount)
+			{
+				double position = _cachedPosition;
+				for (long frame = _cachedFrameCount; frame < frameCount; frame++)
+					position += Curve.GetMultiplier(frame);
+
+				_cachedFrameCount = frameCount;
+				_cachedPosition = position;
+				return position;
+			}
+
+			return Curve.GetIntegratedPosition(frameCount);
+		}
 	}
 
-	private readonly List<ControlPoint> _points =
+	private readonly List<Segment> _segments =
 	[
-		new ControlPoint
+		new Segment
 		{
-			Frame = 0,
-			Position = 0.0,
-			Multiplier = 1.0,
+			StartFrame = 0,
+			StartPosition = 0.0,
+			Curve = new ConstantPitchCurve(1.0),
 		},
 	];
 
-	public double CurrentMultiplier => _points[^1].Multiplier;
+	public double CurrentMultiplier => _segments[^1].Curve.GetMultiplier(0);
 
-	public bool IsUnity =>
-		_points.Count == 1
-		&& _points[0].Multiplier == 1.0;
+	public bool CanProjectEndEfficiently =>
+		_segments[^1].Curve.CanProjectEndEfficiently;
 
-	/// <summary>
-	/// Changes the relative pitch multiplier starting at invocation frame.
-	/// Control points must be added chronologically.
-	/// </summary>
 	public void SetMultiplier(long frame, double multiplier)
+		=> SetCurve(frame, new ConstantPitchCurve(multiplier));
+
+	public void SetCurve(long frame, PitchCurve curve)
 	{
 		if (frame < 0)
 			throw new ArgumentOutOfRangeException(nameof(frame));
-		if (!(multiplier > 0.0)
-			|| double.IsNaN(multiplier)
-			|| double.IsInfinity(multiplier))
-		{
-			throw new ArgumentOutOfRangeException(nameof(multiplier));
-		}
+		ArgumentNullException.ThrowIfNull(curve);
 
-		ControlPoint last = _points[^1];
-		if (frame < last.Frame)
+		Segment last = _segments[^1];
+		if (frame < last.StartFrame)
 		{
 			throw new InvalidOperationException(
-				"Pitch-trajectory control points must be added chronologically.");
+				"Pitch-trajectory segments must be added chronologically.");
 		}
 
-		if (frame == last.Frame)
+		if (frame == last.StartFrame)
 		{
-			last.Multiplier = multiplier;
+			_segments[^1] = new Segment
+			{
+				StartFrame = frame,
+				StartPosition = last.StartPosition,
+				Curve = curve,
+			};
 			return;
 		}
 
-		double position =
-			last.Position
-			+ (frame - last.Frame) * last.Multiplier;
+		long frameCount = frame - last.StartFrame;
+		double endPosition =
+			last.StartPosition + last.GetPositionDelta(frameCount);
 
-		_points.Add(new ControlPoint
+		last.EndFrameExclusive = frame;
+		last.EndPosition = endPosition;
+
+		_segments.Add(new Segment
 		{
-			Frame = frame,
-			Position = position,
-			Multiplier = multiplier,
+			StartFrame = frame,
+			StartPosition = endPosition,
+			Curve = curve,
 		});
 	}
 
-	/// <summary>
-	/// Returns integrated relative playback position at an invocation frame.
-	/// </summary>
+	public double GetMultiplier(long frame)
+	{
+		if (frame < 0)
+			throw new ArgumentOutOfRangeException(nameof(frame));
+
+		Segment segment = FindSegment(frame);
+		return segment.Curve.GetMultiplier(frame - segment.StartFrame);
+	}
+
 	public double GetPosition(long frame)
 	{
 		if (frame < 0)
 			throw new ArgumentOutOfRangeException(nameof(frame));
 
-		int index = FindPointAtOrBefore(frame);
-		ControlPoint point = _points[index];
-
-		return point.Position
-			+ (frame - point.Frame) * point.Multiplier;
+		Segment segment = FindSegment(frame);
+		return segment.StartPosition
+			+ segment.GetPositionDelta(frame - segment.StartFrame);
 	}
 
 	/// <summary>
-	/// Finds the first integer output frame whose integrated relative playback
-	/// position reaches or exceeds the requested position.
+	/// Finds the first output frame whose accumulated relative playback
+	/// position reaches or exceeds position. The current open curve must support
+	/// efficient indefinite projection.
 	/// </summary>
 	public long FindFrameAtOrAfterPosition(double position)
 	{
@@ -104,45 +137,72 @@ public sealed class PitchTrajectory
 		if (position == 0.0)
 			return 0;
 
-		for (int index = 0; index < _points.Count; index++)
+		foreach (Segment segment in _segments)
 		{
-			ControlPoint point = _points[index];
-
-			if (index + 1 < _points.Count)
+			if (segment.EndFrameExclusive.HasValue)
 			{
-				ControlPoint next = _points[index + 1];
-				if (position > next.Position)
+				double endPosition = segment.EndPosition!.Value;
+				if (position > endPosition)
 					continue;
+
+				return FindWithinClosedSegment(segment, position);
 			}
 
-			double frames = (position - point.Position) / point.Multiplier;
-			if (frames <= 0.0)
-				return point.Frame;
+			if (segment.Curve is not ConstantPitchCurve constant)
+			{
+				throw new InvalidOperationException(
+					"The current pitch curve cannot be projected efficiently to an arbitrary end frame.");
+			}
 
-			double ceiling = Math.Ceiling(frames);
-			if (ceiling >= long.MaxValue - point.Frame)
+			double remaining = position - segment.StartPosition;
+			if (remaining <= 0.0)
+				return segment.StartFrame;
+
+			double frames = Math.Ceiling(remaining / constant.Multiplier);
+			if (frames >= long.MaxValue - segment.StartFrame)
 				return long.MaxValue;
 
-			return point.Frame + (long)ceiling;
+			return segment.StartFrame + (long)frames;
 		}
 
-		throw new InvalidOperationException("Pitch trajectory contains no control points.");
+		throw new InvalidOperationException("Pitch trajectory contains no open segment.");
 	}
 
-	private int FindPointAtOrBefore(long frame)
+	private long FindWithinClosedSegment(Segment segment, double position)
+	{
+		long low = segment.StartFrame;
+		long high = segment.EndFrameExclusive!.Value;
+
+		while (low < high)
+		{
+			long middle = low + (high - low) / 2;
+			double middlePosition =
+				segment.StartPosition
+				+ segment.GetPositionDelta(middle - segment.StartFrame);
+
+			if (middlePosition >= position)
+				high = middle;
+			else
+				low = middle + 1;
+		}
+
+		return low;
+	}
+
+	private Segment FindSegment(long frame)
 	{
 		int low = 0;
-		int high = _points.Count - 1;
+		int high = _segments.Count - 1;
 
 		while (low < high)
 		{
 			int middle = low + (high - low + 1) / 2;
-			if (_points[middle].Frame <= frame)
+			if (_segments[middle].StartFrame <= frame)
 				low = middle;
 			else
 				high = middle - 1;
 		}
 
-		return low;
+		return _segments[low];
 	}
 }

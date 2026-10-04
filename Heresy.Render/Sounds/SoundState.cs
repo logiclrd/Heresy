@@ -14,6 +14,7 @@ public abstract class SoundState
 	private TimeSpan _playbackOffset;
 	private Vector3 _position;
 	private TimeSpan? _noteOffTime;
+	private bool _naturalEndReached;
 
 	public double PitchMultiplier
 	{
@@ -54,6 +55,11 @@ public abstract class SoundState
 			_position = value;
 		}
 	}
+
+	public bool NaturalEndReached => _naturalEndReached;
+
+	internal void MarkNaturalEndReached()
+		=> _naturalEndReached = true;
 
 	public TimeSpan? NoteOffTime
 	{
