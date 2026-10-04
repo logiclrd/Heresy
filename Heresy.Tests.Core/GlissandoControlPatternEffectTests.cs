@@ -107,7 +107,7 @@ public sealed class GlissandoControlPatternEffectTests
 		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
 		cell.Note = new StartPatternNote(
 			(ObjectId)10U,
-			PitchMultiplier: 2.0);
+			pitchMultiplier: 2.0);
 		cell.Effects.Add(new TrackerGlissandoControlPatternEffect(1));
 		cell.Effects.Add(new TonePortamentoPatternEffect(0x04));
 
@@ -138,7 +138,7 @@ public sealed class GlissandoControlPatternEffectTests
 		PatternCell row1 = pattern.Grid.GetOrCreateCell(1, 0);
 		row1.Note = new StartPatternNote(
 			(ObjectId)10U,
-			PitchMultiplier: 2.0);
+			pitchMultiplier: 2.0);
 		row1.Effects.Add(new TonePortamentoPatternEffect(0x04));
 
 		NoteScheduleBuilder output = new();
