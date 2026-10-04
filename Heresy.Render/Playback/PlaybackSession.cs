@@ -410,6 +410,20 @@ public sealed class PlaybackSession
 				}
 				break;
 
+			case SetTremorCommand tremor:
+				channel.SetTremor(
+					eventFrame,
+					_tempo,
+					tremor.TicksPerRow ?? _speed,
+					_context.Configuration.SampleRate,
+					tremor.OnTicks,
+					tremor.OffTicks);
+				break;
+
+			case ClearTremorCommand:
+				channel.ClearTremor();
+				break;
+
 			case RetriggerCurrentVoiceCommand retrigger:
 				if (channel.CurrentVoice is not null)
 				{
@@ -683,7 +697,8 @@ public sealed class PlaybackSession
 				Span<float> channelBuffer = rented.AsSpan(0, sampleCount);
 				channelBuffer.Clear();
 
-				if (channel.HasActiveContinuousState)
+				if (channel.HasActiveContinuousState
+					|| channel.HasActiveTremor)
 				{
 					for (int frame = 0; frame < frameCount; frame++)
 					{
@@ -693,6 +708,10 @@ public sealed class PlaybackSession
 							absoluteFrame);
 
 						PlaybackVoice? voice = channel.CurrentVoice;
+						channel.SynchronizeTremor(
+							absoluteFrame,
+							voice is not null);
+
 						if (voice is null)
 							continue;
 
@@ -706,6 +725,20 @@ public sealed class PlaybackSession
 							absoluteFrame,
 							1,
 							outputFrame);
+
+						double tremorGain = channel.TremorGain;
+						if (tremorGain != 1.0)
+						{
+							for (int outputChannel = 0;
+								outputChannel < outputChannelCount;
+								outputChannel++)
+							{
+								outputFrame[outputChannel] =
+									(float)(
+										outputFrame[outputChannel]
+										* tremorGain);
+							}
+						}
 
 						if (finished)
 							channel.DetachCurrentVoice();

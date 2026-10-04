@@ -16,6 +16,7 @@ public enum EffectMemorySlot
 	TonePortamento,
 	Arpeggio,
 	Tremolo,
+	Tremor,
 	Retrigger,
 	SampleOffset,
 }

@@ -34,8 +34,21 @@ public sealed class PlaybackChannelState
 		public required int ActiveTickTransitions { get; init; }
 	}
 
+	private sealed class ActiveTremor
+	{
+		public required byte OnTicks { get; init; }
+		public required byte OffTicks { get; init; }
+		public required double FramesPerTick { get; init; }
+		public required int RemainingRowTicks { get; set; }
+		public required double NextTickFrame { get; set; }
+	}
+
 	private ActiveSpatialXSlide? _activeSpatialXSlide;
 	private ActiveOverallVolumeSlide? _activeOverallVolumeSlide;
+	private ActiveTremor? _activeTremor;
+	private bool _tremorPhaseInitialized;
+	private bool _tremorPhaseOn;
+	private int _tremorRemainingFutureTicks;
 
 	internal PlaybackChannelState(int outputChannelCount, int sampleRate)
 	{
@@ -63,6 +76,16 @@ public sealed class PlaybackChannelState
 	internal bool HasActiveContinuousState =>
 		_activeSpatialXSlide is not null
 		|| _activeOverallVolumeSlide is not null;
+
+	internal bool HasActiveTremor =>
+		_activeTremor is not null;
+
+	internal double TremorGain =>
+		_activeTremor is not null
+			&& _tremorPhaseInitialized
+			&& !_tremorPhaseOn
+			? 0.0
+			: 1.0;
 
 	public ResonantFilterParameters FilterParameters { get; private set; } =
 		ResonantFilterParameters.Disabled;
@@ -346,6 +369,105 @@ public sealed class PlaybackChannelState
 	{
 		SynchronizePosition(absoluteFrame);
 		SynchronizeOverallVolume(absoluteFrame);
+	}
+
+	internal void SetTremor(
+		long absoluteFrame,
+		double tempo,
+		int ticksPerRow,
+		int sampleRate,
+		byte onTicks,
+		byte offTicks)
+	{
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		if (!(tempo > 0.0)
+			|| double.IsNaN(tempo)
+			|| double.IsInfinity(tempo))
+		{
+			throw new ArgumentOutOfRangeException(nameof(tempo));
+		}
+		if (ticksPerRow <= 0)
+			throw new ArgumentOutOfRangeException(nameof(ticksPerRow));
+		if (sampleRate <= 0)
+			throw new ArgumentOutOfRangeException(nameof(sampleRate));
+		if (onTicks == 0)
+			throw new ArgumentOutOfRangeException(nameof(onTicks));
+		if (offTicks == 0)
+			throw new ArgumentOutOfRangeException(nameof(offTicks));
+
+		double framesPerTick =
+			SequencingConstants.Diachron.TotalSeconds
+			/ tempo
+			* sampleRate;
+
+		if (!(framesPerTick > 0.0)
+			|| double.IsNaN(framesPerTick)
+			|| double.IsInfinity(framesPerTick))
+		{
+			throw new InvalidOperationException(
+				"Tempo produces an invalid tremor tick duration.");
+		}
+
+		_activeTremor = new ActiveTremor
+		{
+			OnTicks = onTicks,
+			OffTicks = offTicks,
+			FramesPerTick = framesPerTick,
+			RemainingRowTicks = ticksPerRow,
+			NextTickFrame = absoluteFrame,
+		};
+	}
+
+	internal void ClearTremor()
+		=> _activeTremor = null;
+
+	internal void SynchronizeTremor(
+		long absoluteFrame,
+		bool hasCurrentVoice)
+	{
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+
+		ActiveTremor? tremor = _activeTremor;
+		if (tremor is null)
+			return;
+
+		while (tremor.RemainingRowTicks > 0
+			&& tremor.NextTickFrame
+				<= absoluteFrame + 1e-9)
+		{
+			if (hasCurrentVoice)
+				AdvanceTremorTick(tremor);
+
+			tremor.RemainingRowTicks--;
+			tremor.NextTickFrame += tremor.FramesPerTick;
+		}
+	}
+
+	private void AdvanceTremorTick(ActiveTremor tremor)
+	{
+		if (!_tremorPhaseInitialized)
+		{
+			_tremorPhaseInitialized = true;
+			_tremorPhaseOn = true;
+			_tremorRemainingFutureTicks =
+				tremor.OnTicks - 1;
+			return;
+		}
+
+		if (_tremorRemainingFutureTicks > 0)
+		{
+			_tremorRemainingFutureTicks--;
+			return;
+		}
+
+		_tremorPhaseOn = !_tremorPhaseOn;
+		_tremorRemainingFutureTicks =
+			(_tremorPhaseOn
+				? tremor.OnTicks
+				: tremor.OffTicks)
+			- 1;
 	}
 
 	private static void ValidateSpatialSlide(

@@ -177,6 +177,13 @@ public sealed record ArpeggioPatternEffect(byte Parameter) : PatternEffect;
 public sealed record TremoloPatternEffect(byte Parameter) : PatternEffect;
 
 /// <summary>
+/// Tracker Ixy tremor. The high nibble is the audible phase length and the
+/// low nibble is the muted phase length; zero nibbles still last one tick
+/// in modern Impulse Tracker semantics. I00 recalls whole-byte memory.
+/// </summary>
+public sealed record TremorPatternEffect(byte Parameter) : PatternEffect;
+
+/// <summary>
 /// Tracker Qxy retrigger. The low nibble is the tick countdown and the high
 /// nibble transforms note volume on each retrigger.
 /// </summary>

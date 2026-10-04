@@ -108,9 +108,8 @@ public sealed class TremorPatternEffectTests
 			context.GetPhysicalChannelState(0)
 				.TryGetEffectParameter(
 					EffectMemorySlot.Tremor,
-					out byte remembered),
-			Is.True);
-		Assert.That(remembered, Is.EqualTo(0));
+					out _),
+			Is.False);
 	}
 
 	[Test]

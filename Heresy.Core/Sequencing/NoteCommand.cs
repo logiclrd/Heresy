@@ -180,6 +180,23 @@ public sealed record SetTremoloCommand(
 /// <summary>Stops transient tremolo modulation without resetting its phase.</summary>
 public sealed record ClearTremoloCommand : NoteCommand;
 
+/// <summary>Raw tracker Ixy tremor operation with whole-byte memory.</summary>
+public sealed record ApplyTremorCommand(byte Parameter) : NoteCommand;
+
+/// <summary>
+/// Activates a physical-channel tremor gate for one row span. Phase state
+/// persists between activations; OnTicks and OffTicks are both positive.
+/// </summary>
+public sealed record SetTremorCommand(
+	byte OnTicks,
+	byte OffTicks,
+	int? TicksPerRow = null) : NoteCommand;
+
+/// <summary>
+/// Deactivates physical-channel tremor gating while preserving its phase.
+/// </summary>
+public sealed record ClearTremorCommand : NoteCommand;
+
 /// <summary>Raw tracker Qxy retrigger operation with whole-byte memory.</summary>
 public sealed record ApplyRetriggerCommand(byte Parameter) : NoteCommand;
 

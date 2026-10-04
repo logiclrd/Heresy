@@ -212,6 +212,9 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			case TremoloPatternEffect tremolo:
 				return new ApplyTremoloCommand(tremolo.Parameter);
 
+			case TremorPatternEffect tremor:
+				return new ApplyTremorCommand(tremor.Parameter);
+
 			case TrackerTremoloWaveformPatternEffect waveform:
 				return new ApplyTrackerTremoloWaveformCommand(waveform.Value);
 

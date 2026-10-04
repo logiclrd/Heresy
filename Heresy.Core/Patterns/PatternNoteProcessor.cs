@@ -1136,6 +1136,45 @@ public static class PatternNoteProcessor
 					break;
 				}
 
+				case ApplyTremorCommand tremor:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(
+							noteEvent,
+							context,
+							"Tracker tremor");
+					transformed ??= CopyCommandsBefore(
+						noteEvent.Commands,
+						i);
+
+					byte parameter =
+						channelState.ResolveEffectParameter(
+							EffectMemorySlot.Tremor,
+							tremor.Parameter);
+
+					byte onTicks = (byte)Math.Max(
+						1,
+						parameter >> 4);
+					byte offTicks = (byte)Math.Max(
+						1,
+						parameter & 0x0F);
+
+					SetTremorCommand resolved =
+						(SetTremorCommand)ApplyRowTickOverride(
+							new SetTremorCommand(
+								onTicks,
+								offTicks),
+							rowTicksOverride)!;
+
+					transformed.Add(resolved);
+					AddRepeatCommand(
+						repeatCommands,
+						resolved);
+					rowEndCommands.Add(
+						new ClearTremorCommand());
+					break;
+				}
+
 				case ApplyRetriggerCommand rawRetrigger:
 				{
 					SequencingChannelState channelState =
@@ -1480,6 +1519,8 @@ public static class PatternNoteProcessor
 				slide with { TicksPerRow = rowTicksOverride.Value },
 			SetTonePortamentoCommand portamento =>
 				portamento with { TicksPerRow = rowTicksOverride.Value },
+			SetTremorCommand tremor =>
+				tremor with { TicksPerRow = rowTicksOverride.Value },
 			_ => command,
 		};
 	}
@@ -1500,6 +1541,7 @@ public static class PatternNoteProcessor
 			case AdjustOverallChannelVolumeCommand _:
 			case SetGlobalVolumeSlideCommand _:
 			case AdjustGlobalVolumeCommand _:
+			case SetTremorCommand _:
 				repeatCommands.Add(command);
 				break;
 
