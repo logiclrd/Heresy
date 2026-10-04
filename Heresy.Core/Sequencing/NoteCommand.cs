@@ -164,3 +164,10 @@ public sealed record ApplySampleOffsetCommand(byte Parameter) : NoteCommand;
 /// </summary>
 public sealed record SetSourceFrameOffsetCommand(
 	long SourceFrameOffset) : NoteCommand;
+
+/// <summary>
+/// Raw tracker SAx high-order sample-offset operation. The value is the
+/// persistent high nibble used by later Oxx sample-offset commands.
+/// </summary>
+public sealed record ApplySampleOffsetHighCommand(
+	byte HighOffset) : NoteCommand;

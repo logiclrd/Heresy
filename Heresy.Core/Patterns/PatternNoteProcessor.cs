@@ -434,9 +434,27 @@ public static class PatternNoteProcessor
 
 					if (HasStartNote(noteEvent.Commands))
 					{
+						long sourceFrameOffset =
+							((long)channelState.SampleOffsetHigh << 16)
+							| ((long)parameter << 8);
+
 						transformed.Add(new SetSourceFrameOffsetCommand(
-							(long)parameter << 8));
+							sourceFrameOffset));
 					}
+					break;
+				}
+
+				case ApplySampleOffsetHighCommand rawHighOffset:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(
+							noteEvent,
+							context,
+							"Tracker high sample offset");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+
+					channelState.SampleOffsetHigh =
+						rawHighOffset.HighOffset;
 					break;
 				}
 

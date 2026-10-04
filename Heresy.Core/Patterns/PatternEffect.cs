@@ -177,3 +177,20 @@ public sealed record RetriggerPatternEffect(byte Parameter) : PatternEffect;
 /// in units of 256.
 /// </summary>
 public sealed record SampleOffsetPatternEffect(byte Parameter) : PatternEffect;
+
+/// <summary>
+/// Tracker SAx high-order sample offset. This sets persistent channel state;
+/// it does not seek by itself.
+/// </summary>
+public sealed record SampleOffsetHighPatternEffect : PatternEffect
+{
+	public SampleOffsetHighPatternEffect(byte highOffset)
+	{
+		if (highOffset > 0x0F)
+			throw new ArgumentOutOfRangeException(nameof(highOffset));
+
+		HighOffset = highOffset;
+	}
+
+	public byte HighOffset { get; }
+}

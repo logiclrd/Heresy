@@ -183,6 +183,9 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			case SampleOffsetPatternEffect offset:
 				return new ApplySampleOffsetCommand(offset.Parameter);
 
+			case SampleOffsetHighPatternEffect offset:
+				return new ApplySampleOffsetHighCommand(offset.HighOffset);
+
 			default:
 				throw new NotSupportedException($"Unsupported pattern effect type: {effect.GetType().FullName}");
 		}

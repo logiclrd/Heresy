@@ -13,6 +13,7 @@ public sealed class SequencingChannelState
 {
 	private readonly Dictionary<EffectMemorySlot, byte> _effectMemory = [];
 	private int _retriggerCountdown;
+	private byte _sampleOffsetHigh;
 
 	/// <summary>
 	/// Applies conventional whole-byte tracker effect-memory semantics. A
@@ -65,6 +66,17 @@ public sealed class SequencingChannelState
 	public void ClearEffectParameter(EffectMemorySlot slot)
 		=> _effectMemory.Remove(slot);
 
+	public byte SampleOffsetHigh
+	{
+		get => _sampleOffsetHigh;
+		set
+		{
+			if (value > 0x0F)
+				throw new ArgumentOutOfRangeException(nameof(value));
+			_sampleOffsetHigh = value;
+		}
+	}
+
 	public int RetriggerCountdown
 	{
 		get => _retriggerCountdown;
@@ -80,5 +92,6 @@ public sealed class SequencingChannelState
 	{
 		_effectMemory.Clear();
 		_retriggerCountdown = 0;
+		_sampleOffsetHigh = 0;
 	}
 }
