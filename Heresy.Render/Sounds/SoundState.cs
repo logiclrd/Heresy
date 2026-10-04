@@ -14,7 +14,7 @@ public abstract class SoundState
 	private TimeSpan _playbackOffset;
 	private Vector3 _position;
 	private TimeSpan? _noteOffTime;
-	private bool _naturalEndReached;
+	private long? _naturalEndFrameExclusive;
 
 	public double PitchMultiplier
 	{
@@ -56,10 +56,19 @@ public abstract class SoundState
 		}
 	}
 
-	public bool NaturalEndReached => _naturalEndReached;
+	public long? NaturalEndFrameExclusive => _naturalEndFrameExclusive;
 
-	internal void MarkNaturalEndReached()
-		=> _naturalEndReached = true;
+	internal void MarkNaturalEndReached(long frameExclusive)
+	{
+		if (frameExclusive < 0)
+			throw new ArgumentOutOfRangeException(nameof(frameExclusive));
+
+		if (!_naturalEndFrameExclusive.HasValue
+			|| frameExclusive < _naturalEndFrameExclusive.Value)
+		{
+			_naturalEndFrameExclusive = frameExclusive;
+		}
+	}
 
 	public TimeSpan? NoteOffTime
 	{

@@ -117,6 +117,11 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			case VibratoPatternEffect vibrato:
 				return new ApplyVibratoCommand(vibrato.Parameter);
 
+			case SetResonantFilterPatternEffect filter:
+				return new SetResonantFilterCommand(
+					filter.Cutoff,
+					filter.Resonance);
+
 			default:
 				throw new NotSupportedException($"Unsupported pattern effect type: {effect.GetType().FullName}");
 		}

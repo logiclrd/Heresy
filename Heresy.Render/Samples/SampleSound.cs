@@ -115,7 +115,7 @@ public sealed class SampleSound : ISound
 		if (_data.FrameCount == 0)
 		{
 			if (_definition.Loop.Mode == SampleLoopMode.None)
-				sampleState.MarkNaturalEndReached();
+				sampleState.MarkNaturalEndReached(0);
 			return;
 		}
 
@@ -151,7 +151,7 @@ public sealed class SampleSound : ISound
 				if (_definition.Loop.Mode == SampleLoopMode.None
 					&& sourcePosition >= _data.FrameCount)
 				{
-					sampleState.MarkNaturalEndReached();
+					sampleState.MarkNaturalEndReached(invocationFrame);
 					break;
 				}
 

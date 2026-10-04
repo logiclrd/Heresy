@@ -70,3 +70,34 @@ public sealed record SetPlaybackOffsetPatternEffect : PatternEffect
 /// speed and the low nibble is depth; zero nibbles recall channel memory.
 /// </summary>
 public sealed record VibratoPatternEffect(byte Parameter) : PatternEffect;
+
+/// <summary>
+/// Sets normalized Impulse-Tracker-style resonant low-pass filter parameters.
+/// </summary>
+public sealed record SetResonantFilterPatternEffect : PatternEffect
+{
+	public SetResonantFilterPatternEffect(double cutoff, double resonance)
+	{
+		if (double.IsNaN(cutoff)
+			|| double.IsInfinity(cutoff)
+			|| cutoff < 0.0
+			|| cutoff > 1.0)
+		{
+			throw new ArgumentOutOfRangeException(nameof(cutoff));
+		}
+
+		if (double.IsNaN(resonance)
+			|| double.IsInfinity(resonance)
+			|| resonance < 0.0
+			|| resonance > 1.0)
+		{
+			throw new ArgumentOutOfRangeException(nameof(resonance));
+		}
+
+		Cutoff = cutoff;
+		Resonance = resonance;
+	}
+
+	public double Cutoff { get; }
+	public double Resonance { get; }
+}

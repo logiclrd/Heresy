@@ -56,3 +56,11 @@ public sealed record SetVibratoCommand(byte Speed, byte Depth) : NoteCommand;
 /// resets its pitch-delta contribution to zero.
 /// </summary>
 public sealed record ClearPitchModulationCommand : NoteCommand;
+
+/// <summary>
+/// Sets persistent normalized resonant low-pass filter parameters on a physical
+/// playback channel.
+/// </summary>
+public sealed record SetResonantFilterCommand(
+	double Cutoff,
+	double Resonance) : NoteCommand;

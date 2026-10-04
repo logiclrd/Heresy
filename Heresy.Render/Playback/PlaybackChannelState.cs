@@ -1,3 +1,4 @@
+using Heresy.Render.Filters;
 using Heresy.Render.Sounds;
 
 namespace Heresy.Render.Playback;
@@ -26,6 +27,9 @@ public sealed class PlaybackChannelState
 	/// </summary>
 	public double OverallVolume { get; private set; } = 1.0;
 
+	public ResonantFilterParameters FilterParameters { get; private set; } =
+		ResonantFilterParameters.Disabled;
+
 	public AntiClickTail AntiClickTail { get; }
 
 	// Convenience accessors retained while callers migrate to CurrentVoice.
@@ -45,6 +49,12 @@ public sealed class PlaybackChannelState
 		OverallVolume = volume;
 		if (CurrentVoice is not null)
 			CurrentVoice.OverallVolume = volume;
+	}
+
+	internal void SetFilterParameters(ResonantFilterParameters parameters)
+	{
+		FilterParameters = parameters;
+		CurrentVoice?.FilterState.SetParameters(parameters);
 	}
 
 	internal PlaybackVoice? DetachCurrentVoice()

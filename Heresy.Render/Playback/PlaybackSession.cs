@@ -4,6 +4,7 @@ using System.Collections.Generic;
 
 using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
+using Heresy.Render.Filters;
 using Heresy.Render.Sounds;
 using Heresy.Render.Timing;
 
@@ -200,6 +201,13 @@ public sealed class PlaybackSession
 				channel.SetOverallVolume(volume.Volume);
 				break;
 
+			case SetResonantFilterCommand filter:
+				channel.SetFilterParameters(
+					new ResonantFilterParameters(
+						filter.Cutoff,
+						filter.Resonance));
+				break;
+
 			case SetPlaybackOffsetCommand playbackOffset:
 				if (channel.CurrentVoice is not null)
 					channel.CurrentVoice.SoundState.PlaybackOffset = playbackOffset.Offset;
@@ -271,6 +279,8 @@ public sealed class PlaybackSession
 			configuration,
 			eventFrame,
 			_context.Configuration.OutputChannelCount,
+			_context.Configuration.SampleRate,
+			channel.FilterParameters,
 			channel.NoteVolume,
 			channel.OverallVolume);
 
@@ -433,6 +443,21 @@ long? soundEndRelative = voice.Sound.GetEndFrameExclusive(
 			activeFrames,
 			activeDestination);
 
+		if (voice.SoundState.NaturalEndFrameExclusive.HasValue)
+		{
+			long discoveredRemaining =
+				voice.SoundState.NaturalEndFrameExclusive.Value
+				- invocationStartFrame;
+
+			activeFrames = discoveredRemaining <= 0
+				? 0
+				: (int)Math.Min(activeFrames, discoveredRemaining);
+
+			activeDestination = destination.Slice(
+				0,
+				checked(activeFrames * outputChannelCount));
+		}
+
 		double baseVolume = voice.NoteVolume * voice.OverallVolume;
 		for (int frame = 0; frame < activeFrames; frame++)
 		{
@@ -447,14 +472,20 @@ long? soundEndRelative = voice.Sound.GetEndFrameExclusive(
 				frame * outputChannelCount,
 				outputChannelCount);
 
+			voice.FilterState.ProcessFrame(outputFrame);
+
 			for (int outputChannel = 0; outputChannel < outputChannelCount; outputChannel++)
 				outputFrame[outputChannel] = (float)(outputFrame[outputChannel] * volume);
 
 			voice.ObserveOutputFrame(outputFrame);
 		}
 
-		if (voice.SoundState.NaturalEndReached)
+		if (voice.SoundState.NaturalEndFrameExclusive.HasValue
+			&& invocationStartFrame + activeFrames
+				>= voice.SoundState.NaturalEndFrameExclusive.Value)
+		{
 			return true;
+		}
 
 		return effectiveEndAbsolute.HasValue
 			&& absoluteStartFrame + activeFrames >= effectiveEndAbsolute.Value;

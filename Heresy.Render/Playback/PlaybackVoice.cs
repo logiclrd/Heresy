@@ -1,6 +1,7 @@
 using System;
 
 using Heresy.Core.Timing;
+using Heresy.Render.Filters;
 using Heresy.Render.Sounds;
 using Heresy.Render.Timing;
 
@@ -36,6 +37,8 @@ public sealed class PlaybackVoice
 		NoteConfigurationSnapshot configuration,
 		long startFrame,
 		int outputChannelCount,
+		int sampleRate,
+		ResonantFilterParameters filterParameters,
 		double noteVolume,
 		double overallVolume)
 	{
@@ -54,6 +57,10 @@ public sealed class PlaybackVoice
 
 		_previousOutputFrame = new float[outputChannelCount];
 		_lastOutputFrame = new float[outputChannelCount];
+		FilterState = new ResonantFilterState(
+			outputChannelCount,
+			sampleRate,
+			filterParameters);
 	}
 
 	public ISound Sound { get; }
@@ -61,6 +68,8 @@ public sealed class PlaybackVoice
 	public SoundState SoundState { get; }
 
 	public NoteConfigurationSnapshot Configuration { get; }
+
+	public ResonantFilterState FilterState { get; }
 
 	public long StartFrame { get; }
 
