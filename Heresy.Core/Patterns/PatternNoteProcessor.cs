@@ -697,7 +697,7 @@ public static class PatternNoteProcessor
 		};
 
 	private static int EffectiveSCommandTick(byte tick)
-		=> Math.Max(1, tick);
+		=> Math.Max(1, (int)tick);
 
 	private static long SyntheticOrder(long emissionOrder, int phase)
 		=> checked(emissionOrder * 4 + phase);
