@@ -34,6 +34,9 @@ this first scaffold.
 - Raw pattern generation is separated from the common timing/state processor;
   data-driven and scripted patterns are two front ends to the same raw-event
   model.
+- Data-driven patterns use a mutable row/channel grid whose cells contain a
+  semantic note column (start/off/cut) and semantic effects. Tracker-specific
+  notation and effect-memory behavior will be layered on top of this grid model.
 - Sequences are finite and entries can specify a `StartRow`.
 - Script object references are persisted in restricted-C# source as `_O(id)` and
   can later be projected by the editor as atomic named tokens.

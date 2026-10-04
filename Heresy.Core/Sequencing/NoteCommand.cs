@@ -1,3 +1,5 @@
+using System;
+
 using Heresy.Core.Objects;
 
 namespace Heresy.Core.Sequencing;
@@ -22,3 +24,15 @@ public sealed record NoteCutCommand : NoteCommand;
 public sealed record SetTempoCommand(double TicksPerDiachron) : NoteCommand;
 
 public sealed record SetSpeedCommand(int TicksPerRow) : NoteCommand;
+
+/// <summary>Sets the per-note volume used by the current playback voice.</summary>
+public sealed record SetNoteVolumeCommand(double Volume) : NoteCommand;
+
+/// <summary>Sets the persistent overall volume belonging to the playback channel.</summary>
+public sealed record SetOverallChannelVolumeCommand(double Volume) : NoteCommand;
+
+/// <summary>Sets the current playback frequency in Hz.</summary>
+public sealed record SetPlaybackFrequencyCommand(double Frequency) : NoteCommand;
+
+/// <summary>Moves the current source directly to a new playback time offset.</summary>
+public sealed record SetPlaybackOffsetCommand(TimeSpan Offset) : NoteCommand;
