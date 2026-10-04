@@ -227,3 +227,20 @@ public sealed record TrackerNoteDelayPatternEffect : PatternEffect
 
 	public byte Tick { get; }
 }
+
+/// <summary>
+/// Tracker SEx pattern delay. The current row remains active for the requested
+/// number of additional row spans without retriggering its note.
+/// </summary>
+public sealed record TrackerPatternDelayPatternEffect : PatternEffect
+{
+	public TrackerPatternDelayPatternEffect(byte extraRows)
+	{
+		if (extraRows > 0x0F)
+			throw new ArgumentOutOfRangeException(nameof(extraRows));
+
+		ExtraRows = extraRows;
+	}
+
+	public byte ExtraRows { get; }
+}

@@ -183,3 +183,10 @@ public sealed record ApplyTrackerNoteCutCommand(
 /// </summary>
 public sealed record ApplyTrackerNoteDelayCommand(
 	byte Tick) : NoteCommand;
+
+/// <summary>
+/// Raw tracker SEx pattern delay. ExtraRows is the number of additional
+/// tracker-row spans for which the current row remains active.
+/// </summary>
+public sealed record ApplyTrackerPatternDelayCommand(
+	byte ExtraRows) : NoteCommand;

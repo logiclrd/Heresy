@@ -192,6 +192,9 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			case TrackerNoteDelayPatternEffect delay:
 				return new ApplyTrackerNoteDelayCommand(delay.Tick);
 
+			case TrackerPatternDelayPatternEffect delay:
+				return new ApplyTrackerPatternDelayCommand(delay.ExtraRows);
+
 			default:
 				throw new NotSupportedException($"Unsupported pattern effect type: {effect.GetType().FullName}");
 		}
