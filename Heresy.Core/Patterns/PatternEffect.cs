@@ -101,3 +101,43 @@ public sealed record SetResonantFilterPatternEffect : PatternEffect
 	public double Cutoff { get; }
 	public double Resonance { get; }
 }
+
+/// <summary>
+/// Continuous pitch slide in IT linear pitch units per tracker tick.
+/// Positive values raise pitch and negative values lower it.
+/// </summary>
+public sealed record PitchSlidePatternEffect : PatternEffect
+{
+	public PitchSlidePatternEffect(double linearUnitsPerTick)
+	{
+		if (double.IsNaN(linearUnitsPerTick)
+			|| double.IsInfinity(linearUnitsPerTick))
+		{
+			throw new ArgumentOutOfRangeException(nameof(linearUnitsPerTick));
+		}
+
+		LinearUnitsPerTick = linearUnitsPerTick;
+	}
+
+	public double LinearUnitsPerTick { get; }
+}
+
+/// <summary>
+/// Continuous note-volume slide in tracker volume units per tick. Positive
+/// values raise volume and negative values lower it.
+/// </summary>
+public sealed record NoteVolumeSlidePatternEffect : PatternEffect
+{
+	public NoteVolumeSlidePatternEffect(double trackerUnitsPerTick)
+	{
+		if (double.IsNaN(trackerUnitsPerTick)
+			|| double.IsInfinity(trackerUnitsPerTick))
+		{
+			throw new ArgumentOutOfRangeException(nameof(trackerUnitsPerTick));
+		}
+
+		TrackerUnitsPerTick = trackerUnitsPerTick;
+	}
+
+	public double TrackerUnitsPerTick { get; }
+}

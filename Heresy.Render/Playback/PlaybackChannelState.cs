@@ -40,9 +40,11 @@ public sealed class PlaybackChannelState
 	internal void SetNoteVolume(double volume)
 	{
 		NoteVolume = volume;
-		if (CurrentVoice is not null)
-			CurrentVoice.NoteVolume = volume;
+		CurrentVoice?.SetNoteVolume(volume);
 	}
+
+	internal void CaptureCurrentNoteVolume(double volume)
+		=> NoteVolume = volume;
 
 	internal void SetOverallVolume(double volume)
 	{

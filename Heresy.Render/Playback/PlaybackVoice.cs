@@ -20,6 +20,15 @@ public sealed class PlaybackVoice
 		public required TimeSpan NextLegacyTickTime { get; set; }
 	}
 
+	private sealed class ActiveNoteVolumeSlide
+	{
+		public required long StartFrame { get; init; }
+		public required double StartVolume { get; init; }
+		public required double TrackerUnitsPerTick { get; init; }
+		public required double FramesPerTick { get; init; }
+		public required int ActiveTickTransitions { get; init; }
+	}
+
 	private readonly float[] _previousOutputFrame;
 	private readonly float[] _lastOutputFrame;
 	private int _outputHistoryFrames;
@@ -30,6 +39,12 @@ public sealed class PlaybackVoice
 
 	private byte _vibratoPhase;
 	private ActiveVibrato? _activeVibrato;
+	private ActiveNoteVolumeSlide? _activeNoteVolumeSlide;
+
+	private PitchCurve _basePitchCurve = new ConstantPitchCurve(1.0);
+	private long _basePitchCurveStartFrame;
+	private PitchCurve _modulationPitchCurve = new ConstantPitchCurve(1.0);
+	private long _modulationPitchCurveStartFrame;
 
 	internal PlaybackVoice(
 		ISound sound,
@@ -144,10 +159,7 @@ public sealed class PlaybackVoice
 
 		CommitVibratoPhaseThrough(eventTime);
 
-		TimeSpan tickDuration = TimeSpan.FromSeconds(
-			SequencingConstants.Diachron.TotalSeconds / tempo);
-		if (tickDuration <= TimeSpan.Zero)
-			throw new InvalidOperationException("Tempo produces a zero-length tracker tick.");
+		TimeSpan tickDuration = GetTickDuration(tempo);
 
 		_vibratoPhase = TrackerVibrato.AdvancePhase(
 			_vibratoPhase,
@@ -160,14 +172,16 @@ public sealed class PlaybackVoice
 			NextLegacyTickTime = eventTime + tickDuration,
 		};
 
-		SoundState.PitchTrajectory.SetCurve(
-			absoluteFrame - StartFrame,
-			new TrackerVibratoPitchCurve(
-				_vibratoPhase,
-				speed,
-				depth,
-				tickDuration,
-				sampleRate));
+		long relativeFrame = absoluteFrame - StartFrame;
+		_modulationPitchCurve = new TrackerVibratoPitchCurve(
+			_vibratoPhase,
+			speed,
+			depth,
+			tickDuration,
+			sampleRate);
+		_modulationPitchCurveStartFrame = relativeFrame;
+
+		RecomposePitchTrajectory(relativeFrame);
 	}
 
 	internal void ClearPitchModulation(
@@ -180,9 +194,140 @@ public sealed class PlaybackVoice
 		CommitVibratoPhaseThrough(eventTime);
 		_activeVibrato = null;
 
-		SoundState.PitchTrajectory.SetMultiplier(
-			absoluteFrame - StartFrame,
+		long relativeFrame = absoluteFrame - StartFrame;
+		_modulationPitchCurve = new ConstantPitchCurve(1.0);
+		_modulationPitchCurveStartFrame = relativeFrame;
+
+		RecomposePitchTrajectory(relativeFrame);
+	}
+
+	internal void SetPitchSlide(
+		long absoluteFrame,
+		double tempo,
+		int ticksPerRow,
+		int sampleRate,
+		double linearUnitsPerTick)
+	{
+		if (absoluteFrame < StartFrame)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		if (ticksPerRow <= 0)
+			throw new ArgumentOutOfRangeException(nameof(ticksPerRow));
+		if (sampleRate <= 0)
+			throw new ArgumentOutOfRangeException(nameof(sampleRate));
+		if (double.IsNaN(linearUnitsPerTick)
+			|| double.IsInfinity(linearUnitsPerTick))
+		{
+			throw new ArgumentOutOfRangeException(nameof(linearUnitsPerTick));
+		}
+
+		long relativeFrame = absoluteFrame - StartFrame;
+		double currentBase = GetBasePitchMultiplier(relativeFrame);
+
+		_basePitchCurve = new TrackerPitchSlideCurve(
+			currentBase,
+			linearUnitsPerTick,
+			GetTickDuration(tempo),
+			ticksPerRow,
+			sampleRate);
+		_basePitchCurveStartFrame = relativeFrame;
+
+		RecomposePitchTrajectory(relativeFrame);
+	}
+
+	internal void ClearPitchSlide(long absoluteFrame)
+	{
+		if (absoluteFrame < StartFrame)
+			return;
+
+		long relativeFrame = absoluteFrame - StartFrame;
+		double currentBase = GetBasePitchMultiplier(relativeFrame);
+
+		_basePitchCurve = new ConstantPitchCurve(currentBase);
+		_basePitchCurveStartFrame = relativeFrame;
+
+		RecomposePitchTrajectory(relativeFrame);
+	}
+
+	internal void SetNoteVolume(double volume)
+	{
+		NoteVolume = volume;
+		_activeNoteVolumeSlide = null;
+	}
+
+	internal void SetNoteVolumeSlide(
+		long absoluteFrame,
+		double tempo,
+		int ticksPerRow,
+		int sampleRate,
+		double trackerUnitsPerTick)
+	{
+		if (absoluteFrame < StartFrame)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		if (ticksPerRow <= 0)
+			throw new ArgumentOutOfRangeException(nameof(ticksPerRow));
+		if (sampleRate <= 0)
+			throw new ArgumentOutOfRangeException(nameof(sampleRate));
+		if (double.IsNaN(trackerUnitsPerTick)
+			|| double.IsInfinity(trackerUnitsPerTick))
+		{
+			throw new ArgumentOutOfRangeException(nameof(trackerUnitsPerTick));
+		}
+
+		double current = GetNoteVolume(absoluteFrame);
+		NoteVolume = current;
+
+		_activeNoteVolumeSlide = new ActiveNoteVolumeSlide
+		{
+			StartFrame = absoluteFrame,
+			StartVolume = current,
+			TrackerUnitsPerTick = trackerUnitsPerTick,
+			FramesPerTick = GetTickDuration(tempo).TotalSeconds * sampleRate,
+			ActiveTickTransitions = Math.Max(0, ticksPerRow - 1),
+		};
+	}
+
+	internal double ClearNoteVolumeSlide(long absoluteFrame)
+	{
+		double current = GetNoteVolume(absoluteFrame);
+		NoteVolume = current;
+		_activeNoteVolumeSlide = null;
+		return current;
+	}
+
+	internal double GetNoteVolume(long absoluteFrame)
+	{
+		ActiveNoteVolumeSlide? slide = _activeNoteVolumeSlide;
+		if (slide is null)
+			return NoteVolume;
+
+		double elapsedTicks = Math.Min(
+			Math.Max(0.0, absoluteFrame - slide.StartFrame)
+				/ slide.FramesPerTick,
+			slide.ActiveTickTransitions);
+
+		return Math.Clamp(
+			slide.StartVolume
+				+ slide.TrackerUnitsPerTick * elapsedTicks / 64.0,
+			0.0,
 			1.0);
+	}
+
+	private double GetBasePitchMultiplier(long relativeFrame)
+		=> _basePitchCurve.GetMultiplier(
+			checked(relativeFrame - _basePitchCurveStartFrame));
+
+	private void RecomposePitchTrajectory(long relativeFrame)
+	{
+		PitchCurve baseCurve = new OffsetPitchCurve(
+			_basePitchCurve,
+			checked(relativeFrame - _basePitchCurveStartFrame));
+		PitchCurve modulationCurve = new OffsetPitchCurve(
+			_modulationPitchCurve,
+			checked(relativeFrame - _modulationPitchCurveStartFrame));
+
+		SoundState.PitchTrajectory.SetCurve(
+			relativeFrame,
+			new ProductPitchCurve(baseCurve, modulationCurve));
 	}
 
 	private void CommitVibratoPhaseThrough(TimeSpan eventTime)
@@ -191,8 +336,6 @@ public sealed class PlaybackVoice
 		if (vibrato is null)
 			return;
 
-		// A tracker tick exactly coincident with the command replacing/clearing
-		// this effect belongs to the new command, not the old one.
 		while (vibrato.NextLegacyTickTime < eventTime)
 		{
 			_vibratoPhase = TrackerVibrato.AdvancePhase(
@@ -200,6 +343,19 @@ public sealed class PlaybackVoice
 				vibrato.Speed);
 			vibrato.NextLegacyTickTime += vibrato.TickDuration;
 		}
+	}
+
+	private static TimeSpan GetTickDuration(double tempo)
+	{
+		if (!(tempo > 0.0) || double.IsNaN(tempo) || double.IsInfinity(tempo))
+			throw new ArgumentOutOfRangeException(nameof(tempo));
+
+		TimeSpan tickDuration = TimeSpan.FromSeconds(
+			SequencingConstants.Diachron.TotalSeconds / tempo);
+		if (tickDuration <= TimeSpan.Zero)
+			throw new InvalidOperationException("Tempo produces a zero-length tracker tick.");
+
+		return tickDuration;
 	}
 
 	internal void ObserveOutputFrame(ReadOnlySpan<float> outputFrame)

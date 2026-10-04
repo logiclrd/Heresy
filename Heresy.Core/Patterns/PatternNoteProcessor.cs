@@ -26,7 +26,7 @@ public static class PatternNoteProcessor
 	private sealed class ResolvedCommands
 	{
 		public required IReadOnlyList<NoteCommand> Commands { get; init; }
-		public bool ClearPitchModulationAtRowEnd { get; init; }
+		public required IReadOnlyList<NoteCommand> RowEndCommands { get; init; }
 	}
 
 	/// <summary>
@@ -170,13 +170,13 @@ public static class PatternNoteProcessor
 					context,
 					SyntheticOrder(workingEvent.NoteEvent.EmissionOrder, 0)));
 
-				if (commands.ClearPitchModulationAtRowEnd)
+				if (commands.RowEndCommands.Count != 0)
 				{
 					double clearTimeSeconds = Math.Max(rowEndSeconds, eventTimeSeconds);
 					resolved.Add(new NoteEvent(
 						new MusicalTime(TimeSpan.FromSeconds(clearTimeSeconds), 0.0),
 						context.MapTarget(workingEvent.NoteEvent.Target),
-						new NoteCommand[] { new ClearPitchModulationCommand() },
+						commands.RowEndCommands,
 						SyntheticOrder(workingEvent.NoteEvent.EmissionOrder, 1)));
 				}
 			}
@@ -231,39 +231,45 @@ public static class PatternNoteProcessor
 		SequencingContext context)
 	{
 		List<NoteCommand>? transformed = null;
-		bool clearPitchModulationAtRowEnd = false;
+		List<NoteCommand> rowEndCommands = [];
 
 		for (int i = 0; i < noteEvent.Commands.Count; i++)
 		{
 			NoteCommand command = noteEvent.Commands[i];
 
-			if (command is not ApplyVibratoCommand vibrato)
+			if (command is ApplyVibratoCommand vibrato)
 			{
-				transformed?.Add(command);
+				if (noteEvent.Target.Kind != ChannelTargetKind.Physical)
+					throw new InvalidOperationException("Tracker vibrato requires a physical channel target.");
+
+				transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+
+				SequencingChannelState channelState =
+					context.GetPhysicalChannelState(noteEvent.Target.PhysicalChannel);
+				byte parameter = channelState.ResolveEffectParameterNibbles(
+					EffectMemorySlot.Vibrato,
+					vibrato.Parameter);
+
+				transformed.Add(new SetVibratoCommand(
+					(byte)(parameter >> 4),
+					(byte)(parameter & 0x0F)));
+				rowEndCommands.Add(new ClearPitchModulationCommand());
 				continue;
 			}
 
-			if (noteEvent.Target.Kind != ChannelTargetKind.Physical)
-				throw new InvalidOperationException("Tracker vibrato requires a physical channel target.");
+			if (command is SetPitchSlideCommand)
+				rowEndCommands.Add(new ClearPitchSlideCommand());
 
-			transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+			if (command is SetNoteVolumeSlideCommand)
+				rowEndCommands.Add(new ClearNoteVolumeSlideCommand());
 
-			SequencingChannelState channelState =
-				context.GetPhysicalChannelState(noteEvent.Target.PhysicalChannel);
-			byte parameter = channelState.ResolveEffectParameterNibbles(
-				EffectMemorySlot.Vibrato,
-				vibrato.Parameter);
-
-			transformed.Add(new SetVibratoCommand(
-				(byte)(parameter >> 4),
-				(byte)(parameter & 0x0F)));
-			clearPitchModulationAtRowEnd = true;
+			transformed?.Add(command);
 		}
 
 		return new ResolvedCommands
 		{
 			Commands = transformed ?? noteEvent.Commands,
-			ClearPitchModulationAtRowEnd = clearPitchModulationAtRowEnd,
+			RowEndCommands = rowEndCommands,
 		};
 	}
 

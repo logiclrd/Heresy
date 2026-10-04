@@ -122,6 +122,14 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 					filter.Cutoff,
 					filter.Resonance);
 
+			case PitchSlidePatternEffect slide:
+				return new SetPitchSlideCommand(
+					slide.LinearUnitsPerTick);
+
+			case NoteVolumeSlidePatternEffect slide:
+				return new SetNoteVolumeSlideCommand(
+					slide.TrackerUnitsPerTick);
+
 			default:
 				throw new NotSupportedException($"Unsupported pattern effect type: {effect.GetType().FullName}");
 		}

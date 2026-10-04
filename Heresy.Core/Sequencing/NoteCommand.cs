@@ -64,3 +64,23 @@ public sealed record ClearPitchModulationCommand : NoteCommand;
 public sealed record SetResonantFilterCommand(
 	double Cutoff,
 	double Resonance) : NoteCommand;
+
+/// <summary>
+/// Applies a continuous pitch slide measured in IT linear pitch units per
+/// legacy tracker tick. Positive values raise pitch; negative values lower it.
+/// </summary>
+public sealed record SetPitchSlideCommand(
+	double LinearUnitsPerTick) : NoteCommand;
+
+/// <summary>Stops the active pitch slide while preserving its accumulated pitch.</summary>
+public sealed record ClearPitchSlideCommand : NoteCommand;
+
+/// <summary>
+/// Applies a continuous note-volume slide in tracker volume units per legacy
+/// tick, where 64 units span the normalized [0,1] note-volume range.
+/// </summary>
+public sealed record SetNoteVolumeSlideCommand(
+	double TrackerUnitsPerTick) : NoteCommand;
+
+/// <summary>Stops the active note-volume slide while preserving its accumulated volume.</summary>
+public sealed record ClearNoteVolumeSlideCommand : NoteCommand;

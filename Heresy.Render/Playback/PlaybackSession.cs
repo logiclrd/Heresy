@@ -25,6 +25,7 @@ public sealed class PlaybackSession
 	private int _nextEventIndex;
 	private long _nextFrame;
 	private double _tempo = SequencingConstants.DefaultTempo;
+	private int _speed = SequencingConstants.DefaultSpeed;
 
 	public PlaybackSession(
 		RenderContext context,
@@ -213,6 +214,37 @@ public sealed class PlaybackSession
 					channel.CurrentVoice.SoundState.PlaybackOffset = playbackOffset.Offset;
 				break;
 
+			case SetPitchSlideCommand slide:
+				channel.CurrentVoice?.SetPitchSlide(
+					eventFrame,
+					_tempo,
+					_speed,
+					_context.Configuration.SampleRate,
+					slide.LinearUnitsPerTick);
+				break;
+
+			case ClearPitchSlideCommand:
+				channel.CurrentVoice?.ClearPitchSlide(eventFrame);
+				break;
+
+			case SetNoteVolumeSlideCommand slide:
+				channel.CurrentVoice?.SetNoteVolumeSlide(
+					eventFrame,
+					_tempo,
+					_speed,
+					_context.Configuration.SampleRate,
+					slide.TrackerUnitsPerTick);
+				break;
+
+			case ClearNoteVolumeSlideCommand:
+				if (channel.CurrentVoice is not null)
+				{
+					double volume =
+						channel.CurrentVoice.ClearNoteVolumeSlide(eventFrame);
+					channel.SetNoteVolume(volume);
+				}
+				break;
+
 			case SetVibratoCommand vibrato:
 				channel.CurrentVoice?.SetVibrato(
 					eventFrame,
@@ -246,7 +278,8 @@ public sealed class PlaybackSession
 			case SetTempoCommand tempo:
 				_tempo = tempo.TicksPerDiachron;
 				break;
-			case SetSpeedCommand:
+			case SetSpeedCommand speed:
+				_speed = speed.TicksPerRow;
 				break;
 		}
 	}
@@ -256,6 +289,12 @@ public sealed class PlaybackSession
 		StartNoteCommand start,
 		long eventFrame)
 	{
+		if (channel.CurrentVoice is not null)
+		{
+			channel.CaptureCurrentNoteVolume(
+				channel.CurrentVoice.GetNoteVolume(eventFrame));
+		}
+
 		DisplaceCurrentVoice(channel, eventFrame);
 
 		if (!_soundResolver.TryResolve(start.SourceId, start.Mixdown, out ISound? sound)
@@ -458,12 +497,12 @@ long? soundEndRelative = voice.Sound.GetEndFrameExclusive(
 				checked(activeFrames * outputChannelCount));
 		}
 
-		double baseVolume = voice.NoteVolume * voice.OverallVolume;
 		for (int frame = 0; frame < activeFrames; frame++)
 		{
 			long absoluteFrame = absoluteStartFrame + frame;
 			double volume =
-				baseVolume
+				voice.GetNoteVolume(absoluteFrame)
+				* voice.OverallVolume
 				* voice.GetFadeGain(
 					absoluteFrame,
 					_context.Configuration.SampleRate);
