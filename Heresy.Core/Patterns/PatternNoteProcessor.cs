@@ -784,6 +784,19 @@ public static class PatternNoteProcessor
 					break;
 				}
 
+				case ApplyTrackerGlissandoControlCommand glissando:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(
+							noteEvent,
+							context,
+							"Tracker glissando control");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+					channelState.GlissandoEnabled =
+						glissando.Value != 0;
+					break;
+				}
+
 				case ApplyTonePortamentoCommand tonePortamento:
 				{
 					SequencingChannelState channelState =
@@ -800,7 +813,8 @@ public static class PatternNoteProcessor
 							(SetTonePortamentoCommand)ApplyRowTickOverride(
 								new SetTonePortamentoCommand(
 									parameter * 4.0,
-									tonePortamento.TargetNote),
+									tonePortamento.TargetNote,
+									Glissando: channelState.GlissandoEnabled),
 								rowTicksOverride)!;
 						transformed.Add(resolved);
 						repeatCommands.Add(

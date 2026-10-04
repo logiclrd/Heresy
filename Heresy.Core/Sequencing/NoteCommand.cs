@@ -123,7 +123,8 @@ public sealed record ApplyTonePortamentoCommand(
 public sealed record SetTonePortamentoCommand(
 	double LinearUnitsPerTick,
 	StartNoteCommand? TargetNote = null,
-	int? TicksPerRow = null) : NoteCommand;
+	int? TicksPerRow = null,
+	bool Glissando = false) : NoteCommand;
 
 /// <summary>
 /// Stops tone-portamento movement for the row while retaining its target.
@@ -227,3 +228,10 @@ public sealed record ApplyTrackerTremoloWaveformCommand(
 /// </summary>
 public sealed record ApplyTrackerFinePatternDelayCommand(
 	byte ExtraTicks) : NoteCommand;
+
+/// <summary>
+/// Raw tracker S1x glissando control. Zero disables semitone clamping;
+/// non-zero values enable it.
+/// </summary>
+public sealed record ApplyTrackerGlissandoControlCommand(
+	byte Value) : NoteCommand;

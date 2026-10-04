@@ -64,6 +64,9 @@ public sealed class PlaybackVoice
 	private PitchCurve _basePitchCurve = new ConstantPitchCurve(1.0);
 	private long _basePitchCurveStartFrame;
 	private double? _tonePortamentoTargetBaseMultiplier;
+	private TrackerTonePortamentoCurve? _activeTonePortamentoCurve;
+	private long _activeTonePortamentoCurveStartFrame;
+	private double? _tonePortamentoContinuationBaseMultiplier;
 
 	private PitchCurve _vibratoPitchCurve = new ConstantPitchCurve(1.0);
 	private long _vibratoPitchCurveStartFrame;
@@ -381,6 +384,9 @@ public sealed class PlaybackVoice
 				2.0,
 				linearUnits / TrackerVibrato.LinearSlideUnitsPerOctave);
 
+		_activeTonePortamentoCurve = null;
+		_tonePortamentoContinuationBaseMultiplier = null;
+
 		_basePitchCurve = new ConstantPitchCurve(adjusted);
 		_basePitchCurveStartFrame = relativeFrame;
 
@@ -408,6 +414,9 @@ public sealed class PlaybackVoice
 
 		long relativeFrame = absoluteFrame - StartFrame;
 		double currentBase = GetBasePitchMultiplier(relativeFrame);
+
+		_activeTonePortamentoCurve = null;
+		_tonePortamentoContinuationBaseMultiplier = null;
 
 		_basePitchCurve = new TrackerPitchSlideCurve(
 			currentBase,
@@ -440,7 +449,8 @@ public sealed class PlaybackVoice
 		int ticksPerRow,
 		int sampleRate,
 		double linearUnitsPerTick,
-		double? targetPitchMultiplier)
+		double? targetPitchMultiplier,
+		bool glissando)
 	{
 		if (absoluteFrame < StartFrame)
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
@@ -472,15 +482,24 @@ public sealed class PlaybackVoice
 			return;
 
 		long relativeFrame = absoluteFrame - StartFrame;
-		double currentBase = GetBasePitchMultiplier(relativeFrame);
+		double currentBase =
+			GetTonePortamentoContinuousBaseMultiplier(
+				relativeFrame);
 
-		_basePitchCurve = new TrackerTonePortamentoCurve(
+		TrackerTonePortamentoCurve curve = new(
 			currentBase,
 			_tonePortamentoTargetBaseMultiplier.Value,
 			linearUnitsPerTick,
 			GetTickDuration(tempo),
 			ticksPerRow,
-			sampleRate);
+			sampleRate,
+			glissando);
+
+		_activeTonePortamentoCurve = curve;
+		_activeTonePortamentoCurveStartFrame = relativeFrame;
+		_tonePortamentoContinuationBaseMultiplier = null;
+
+		_basePitchCurve = curve;
 		_basePitchCurveStartFrame = relativeFrame;
 
 		RecomposePitchTrajectory(relativeFrame);
@@ -493,6 +512,17 @@ public sealed class PlaybackVoice
 
 		long relativeFrame = absoluteFrame - StartFrame;
 		double currentBase = GetBasePitchMultiplier(relativeFrame);
+
+		if (_activeTonePortamentoCurve is not null)
+		{
+			_tonePortamentoContinuationBaseMultiplier =
+				_activeTonePortamentoCurve.GetContinuousMultiplier(
+					checked(
+						relativeFrame
+							- _activeTonePortamentoCurveStartFrame));
+		}
+
+		_activeTonePortamentoCurve = null;
 
 		_basePitchCurve = new ConstantPitchCurve(currentBase);
 		_basePitchCurveStartFrame = relativeFrame;
@@ -601,6 +631,25 @@ public sealed class PlaybackVoice
 			volume + offsetUnits / 64.0,
 			0.0,
 			1.0);
+	}
+
+	private double GetTonePortamentoContinuousBaseMultiplier(
+		long relativeFrame)
+	{
+		if (_activeTonePortamentoCurve is not null)
+		{
+			return _activeTonePortamentoCurve.GetContinuousMultiplier(
+				checked(
+					relativeFrame
+						- _activeTonePortamentoCurveStartFrame));
+		}
+
+		if (_tonePortamentoContinuationBaseMultiplier.HasValue)
+		{
+			return _tonePortamentoContinuationBaseMultiplier.Value;
+		}
+
+		return GetBasePitchMultiplier(relativeFrame);
 	}
 
 	private double GetBasePitchMultiplier(long relativeFrame)

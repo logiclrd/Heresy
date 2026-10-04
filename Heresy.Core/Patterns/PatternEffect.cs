@@ -312,3 +312,20 @@ public sealed record TrackerFinePatternDelayPatternEffect : PatternEffect
 
 	public byte ExtraTicks { get; }
 }
+
+/// <summary>
+/// Tracker S1x glissando control. S10 disables glissando; any non-zero low
+/// nibble enables semitone-clamped tone portamento.
+/// </summary>
+public sealed record TrackerGlissandoControlPatternEffect : PatternEffect
+{
+	public TrackerGlissandoControlPatternEffect(byte value)
+	{
+		if (value > 0x0F)
+			throw new ArgumentOutOfRangeException(nameof(value));
+
+		Value = value;
+	}
+
+	public byte Value { get; }
+}

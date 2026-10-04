@@ -16,6 +16,7 @@ public sealed class SequencingChannelState
 	private byte _sampleOffsetHigh;
 	private TrackerWaveform _vibratoWaveform;
 	private TrackerWaveform _tremoloWaveform;
+	private bool _glissandoEnabled;
 
 	/// <summary>
 	/// Applies conventional whole-byte tracker effect-memory semantics. A
@@ -101,6 +102,12 @@ public sealed class SequencingChannelState
 		}
 	}
 
+	public bool GlissandoEnabled
+	{
+		get => _glissandoEnabled;
+		set => _glissandoEnabled = value;
+	}
+
 	public int RetriggerCountdown
 	{
 		get => _retriggerCountdown;
@@ -119,5 +126,6 @@ public sealed class SequencingChannelState
 		_sampleOffsetHigh = 0;
 		_vibratoWaveform = TrackerWaveform.Sine;
 		_tremoloWaveform = TrackerWaveform.Sine;
+		_glissandoEnabled = false;
 	}
 }

@@ -183,6 +183,9 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			case TrackerTremoloWaveformPatternEffect waveform:
 				return new ApplyTrackerTremoloWaveformCommand(waveform.Value);
 
+			case TrackerGlissandoControlPatternEffect glissando:
+				return new ApplyTrackerGlissandoControlCommand(glissando.Value);
+
 			case RetriggerPatternEffect retrigger:
 				return new ApplyRetriggerCommand(retrigger.Parameter);
 

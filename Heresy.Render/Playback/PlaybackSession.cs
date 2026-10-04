@@ -267,7 +267,8 @@ public sealed class PlaybackSession
 					tonePortamento.TicksPerRow ?? _speed,
 					_context.Configuration.SampleRate,
 					tonePortamento.LinearUnitsPerTick,
-					tonePortamento.TargetNote?.PitchMultiplier);
+					tonePortamento.TargetNote?.PitchMultiplier,
+					tonePortamento.Glissando);
 				break;
 
 			case ClearTonePortamentoCommand:

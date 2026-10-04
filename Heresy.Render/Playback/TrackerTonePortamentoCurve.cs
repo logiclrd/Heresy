@@ -17,6 +17,7 @@ public sealed class TrackerTonePortamentoCurve : PitchCurve
 	private readonly double _framesPerTick;
 	private readonly int _activeTickTransitions;
 	private readonly double _direction;
+	private readonly bool _glissando;
 
 	public TrackerTonePortamentoCurve(
 		double initialMultiplier,
@@ -24,7 +25,8 @@ public sealed class TrackerTonePortamentoCurve : PitchCurve
 		double linearUnitsPerTick,
 		TimeSpan tickDuration,
 		int ticksPerRow,
-		int sampleRate)
+		int sampleRate,
+		bool glissando = false)
 	{
 		if (!(initialMultiplier > 0.0)
 			|| double.IsNaN(initialMultiplier)
@@ -57,6 +59,7 @@ public sealed class TrackerTonePortamentoCurve : PitchCurve
 		_framesPerTick = tickDuration.TotalSeconds * sampleRate;
 		_activeTickTransitions = Math.Max(0, ticksPerRow - 1);
 		_direction = Math.Sign(targetMultiplier - initialMultiplier);
+		_glissando = glissando;
 	}
 
 	public override double GetMultiplier(long frameOffset)
@@ -64,12 +67,62 @@ public sealed class TrackerTonePortamentoCurve : PitchCurve
 		if (frameOffset < 0)
 			throw new ArgumentOutOfRangeException(nameof(frameOffset));
 
+		if (!_glissando)
+			return GetContinuousMultiplier(frameOffset);
+
 		if (_direction == 0.0 || _linearUnitsPerTick == 0.0)
 			return _initialMultiplier;
 
 		double elapsedTicks = Math.Min(
 			frameOffset / _framesPerTick,
 			_activeTickTransitions);
+		int tick0 = (int)Math.Floor(elapsedTicks);
+		int tick1 = Math.Min(
+			tick0 + 1,
+			_activeTickTransitions);
+		double fraction = elapsedTicks - tick0;
+
+		int semitone0 = QuantizeToNextSemitone(
+			GetContinuousMultiplierForTicks(tick0));
+		int semitone1 = QuantizeToNextSemitone(
+			GetContinuousMultiplierForTicks(tick1));
+		int delta = semitone1 - semitone0;
+
+		int semitone = semitone0;
+		if (delta != 0)
+		{
+			int magnitude = Math.Abs(delta);
+			int completedSteps = Math.Min(
+				magnitude,
+				(int)Math.Floor(
+					fraction * magnitude + 0.5));
+			semitone += Math.Sign(delta) * completedSteps;
+		}
+
+		double result = Math.Pow(
+			2.0,
+			semitone / 12.0);
+
+		return _direction > 0.0
+			? Math.Min(result, _targetMultiplier)
+			: Math.Max(result, _targetMultiplier);
+	}
+
+	public double GetContinuousMultiplier(long frameOffset)
+	{
+		if (frameOffset < 0)
+			throw new ArgumentOutOfRangeException(nameof(frameOffset));
+
+		double elapsedTicks = Math.Min(
+			frameOffset / _framesPerTick,
+			_activeTickTransitions);
+		return GetContinuousMultiplierForTicks(elapsedTicks);
+	}
+
+	private double GetContinuousMultiplierForTicks(double elapsedTicks)
+	{
+		if (_direction == 0.0 || _linearUnitsPerTick == 0.0)
+			return _initialMultiplier;
 
 		double candidate = _initialMultiplier * Math.Pow(
 			2.0,
@@ -81,5 +134,18 @@ public sealed class TrackerTonePortamentoCurve : PitchCurve
 		return _direction > 0.0
 			? Math.Min(candidate, _targetMultiplier)
 			: Math.Max(candidate, _targetMultiplier);
+	}
+
+	private static int QuantizeToNextSemitone(
+		double multiplier)
+	{
+		double semitones =
+			12.0 * Math.Log2(multiplier);
+		double nearest = Math.Round(semitones);
+
+		if (Math.Abs(semitones - nearest) <= 1e-10)
+			semitones = nearest;
+
+		return checked((int)Math.Ceiling(semitones));
 	}
 }
