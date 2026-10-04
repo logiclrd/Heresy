@@ -190,3 +190,10 @@ public sealed record ApplyTrackerNoteDelayCommand(
 /// </summary>
 public sealed record ApplyTrackerPatternDelayCommand(
 	byte ExtraRows) : NoteCommand;
+
+/// <summary>
+/// Raw tracker SBx pattern-loop control. A zero count marks the current row as
+/// this physical channel's loop start; a non-zero count repeats from that start.
+/// </summary>
+public sealed record ApplyTrackerPatternLoopCommand(
+	byte RepeatCount) : NoteCommand;

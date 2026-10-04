@@ -244,3 +244,20 @@ public sealed record TrackerPatternDelayPatternEffect : PatternEffect
 
 	public byte ExtraRows { get; }
 }
+
+/// <summary>
+/// Tracker SBx pattern loop. SB0 marks this channel's loop start and SBx with
+/// x&gt;0 repeats from that row x additional times.
+/// </summary>
+public sealed record TrackerPatternLoopPatternEffect : PatternEffect
+{
+	public TrackerPatternLoopPatternEffect(byte repeatCount)
+	{
+		if (repeatCount > 0x0F)
+			throw new ArgumentOutOfRangeException(nameof(repeatCount));
+
+		RepeatCount = repeatCount;
+	}
+
+	public byte RepeatCount { get; }
+}

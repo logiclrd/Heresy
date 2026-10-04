@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 
+using Heresy.Core.Diagnostics;
 using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
 
@@ -21,6 +22,12 @@ public static class PatternNoteProcessor
 		public required double TimeOffsetSeconds { get; init; }
 		public required bool AffectsTiming { get; init; }
 		public double? TimingEligibilitySeconds { get; set; }
+	}
+
+	private sealed class PatternLoopState
+	{
+		public int StartRow { get; set; }
+		public byte RemainingRepeats { get; set; }
 	}
 
 	private sealed class RetriggerRequest
@@ -97,6 +104,11 @@ public static class PatternNoteProcessor
 				AffectsTiming = AffectsTiming(noteEvent),
 			});
 		}
+
+		(events, effectiveRowCount) = ExpandPatternLoops(
+			events,
+			effectiveRowCount,
+			context);
 
 		List<NoteEvent> resolved = new(events.Count);
 		List<WorkingEvent> deferredTimingEvents = [];
@@ -298,6 +310,275 @@ public static class PatternNoteProcessor
 		INoteReceiver output,
 		out TimeSpan duration)
 		=> GenerateNotes(generator, context, output, 0, out duration);
+
+	private static (List<WorkingEvent> Events, double RowCount)
+		ExpandPatternLoops(
+			List<WorkingEvent> events,
+			double rowCount,
+			SequencingContext context)
+	{
+		if (!ContainsPatternLoop(events) || rowCount <= 0.0)
+			return (events, rowCount);
+
+		int sourceWholeRowCount = (int)Math.Ceiling(rowCount);
+		Dictionary<int, PatternLoopState> loopStates = [];
+		List<WorkingEvent> expanded = [];
+		List<WorkingEvent> endpoints = [];
+
+		foreach (WorkingEvent workingEvent in events)
+		{
+			if (workingEvent.RowOffset == rowCount)
+				endpoints.Add(workingEvent);
+		}
+
+		int sourceRow = 0;
+		double expandedRow = 0.0;
+		int rowVisits = 0;
+
+		while (sourceRow < sourceWholeRowCount)
+		{
+			if (++rowVisits > NoteScheduleBuilder.MaximumGeneratedNotes)
+			{
+				throw new SequencingResourceLimitException(
+					$"Pattern-loop expansion exceeded {NoteScheduleBuilder.MaximumGeneratedNotes:N0} row visits.");
+			}
+
+			double sourceRowEnd = Math.Min(sourceRow + 1.0, rowCount);
+			double rowSpan = sourceRowEnd - sourceRow;
+			if (!(rowSpan > 0.0))
+				break;
+
+			foreach (WorkingEvent workingEvent in events)
+			{
+				if (workingEvent.RowOffset == rowCount)
+					continue;
+				if (workingEvent.RowOffset < sourceRow
+					|| workingEvent.RowOffset >= sourceRowEnd)
+				{
+					continue;
+				}
+
+				IReadOnlyList<NoteCommand> commands =
+					RemovePatternLoopCommands(
+						workingEvent.NoteEvent.Commands);
+				if (commands.Count == 0)
+					continue;
+
+				double fraction =
+					workingEvent.RowOffset - sourceRow;
+				NoteEvent expandedEvent =
+					workingEvent.NoteEvent with
+					{
+						Offset = new MusicalTime(
+							workingEvent.NoteEvent.Offset.TimeOffset,
+							expandedRow + fraction),
+						Commands = commands,
+					};
+
+				expanded.Add(new WorkingEvent
+				{
+					NoteEvent = expandedEvent,
+					RowOffset = expandedRow + fraction,
+					TimeOffsetSeconds =
+						workingEvent.TimeOffsetSeconds,
+					AffectsTiming = AffectsTiming(expandedEvent),
+				});
+			}
+
+			int nextSourceRow = sourceRow + 1;
+			List<WorkingEvent> loopEvents =
+				GetPatternLoopEventsForRow(
+					events,
+					sourceRow,
+					sourceRowEnd,
+					context);
+			foreach (WorkingEvent workingEvent in loopEvents)
+			{
+				int physicalChannel =
+					context.MapPhysicalChannel(
+						workingEvent.NoteEvent.Target.PhysicalChannel);
+
+				if (!loopStates.TryGetValue(
+					physicalChannel,
+					out PatternLoopState? state))
+				{
+					state = new PatternLoopState();
+					loopStates.Add(physicalChannel, state);
+				}
+
+				foreach (NoteCommand command
+					in workingEvent.NoteEvent.Commands)
+				{
+					if (command is not ApplyTrackerPatternLoopCommand loop)
+						continue;
+
+					if (loop.RepeatCount == 0)
+					{
+						state.StartRow = sourceRow;
+						continue;
+					}
+
+					if (state.RemainingRepeats == 0)
+					{
+						state.RemainingRepeats =
+							loop.RepeatCount;
+						nextSourceRow = state.StartRow;
+						continue;
+					}
+
+					state.RemainingRepeats--;
+					if (state.RemainingRepeats != 0)
+					{
+						nextSourceRow = state.StartRow;
+					}
+					else
+					{
+						state.StartRow = sourceRow + 1;
+					}
+				}
+			}
+
+			expandedRow += rowSpan;
+
+			if (rowSpan < 1.0
+				&& nextSourceRow != sourceRow + 1)
+			{
+				throw new InvalidOperationException(
+					"Tracker pattern loops cannot jump from a fractional final row.");
+			}
+
+			sourceRow = nextSourceRow;
+		}
+
+		foreach (WorkingEvent endpoint in endpoints)
+		{
+			IReadOnlyList<NoteCommand> commands =
+				RemovePatternLoopCommands(
+					endpoint.NoteEvent.Commands);
+			if (commands.Count == 0)
+				continue;
+
+			NoteEvent expandedEvent =
+				endpoint.NoteEvent with
+				{
+					Offset = new MusicalTime(
+						endpoint.NoteEvent.Offset.TimeOffset,
+						expandedRow),
+					Commands = commands,
+				};
+
+			expanded.Add(new WorkingEvent
+			{
+				NoteEvent = expandedEvent,
+				RowOffset = expandedRow,
+				TimeOffsetSeconds = endpoint.TimeOffsetSeconds,
+				AffectsTiming = AffectsTiming(expandedEvent),
+			});
+		}
+
+		return (expanded, expandedRow);
+	}
+
+	private static bool ContainsPatternLoop(
+		IReadOnlyList<WorkingEvent> events)
+	{
+		foreach (WorkingEvent workingEvent in events)
+		{
+			foreach (NoteCommand command
+				in workingEvent.NoteEvent.Commands)
+			{
+				if (command is ApplyTrackerPatternLoopCommand)
+					return true;
+			}
+		}
+
+		return false;
+	}
+
+	private static IReadOnlyList<NoteCommand>
+		RemovePatternLoopCommands(
+			IReadOnlyList<NoteCommand> commands)
+	{
+		List<NoteCommand>? filtered = null;
+
+		for (int i = 0; i < commands.Count; i++)
+		{
+			if (commands[i] is not ApplyTrackerPatternLoopCommand)
+			{
+				filtered?.Add(commands[i]);
+				continue;
+			}
+
+			filtered ??= CopyCommandsBefore(commands, i);
+		}
+
+		return filtered ?? commands;
+	}
+
+	private static List<WorkingEvent> GetPatternLoopEventsForRow(
+		IReadOnlyList<WorkingEvent> events,
+		int sourceRow,
+		double sourceRowEnd,
+		SequencingContext context)
+	{
+		List<WorkingEvent> result = [];
+
+		foreach (WorkingEvent workingEvent in events)
+		{
+			if (workingEvent.RowOffset == sourceRowEnd
+				&& sourceRowEnd == Math.Ceiling(sourceRowEnd))
+			{
+				continue;
+			}
+			if (workingEvent.RowOffset < sourceRow
+				|| workingEvent.RowOffset >= sourceRowEnd)
+			{
+				continue;
+			}
+
+			bool hasLoop = false;
+			foreach (NoteCommand command
+				in workingEvent.NoteEvent.Commands)
+			{
+				if (command is ApplyTrackerPatternLoopCommand)
+				{
+					hasLoop = true;
+					break;
+				}
+			}
+
+			if (!hasLoop)
+				continue;
+
+			if (workingEvent.NoteEvent.Target.Kind
+				!= ChannelTargetKind.Physical)
+			{
+				throw new InvalidOperationException(
+					"Tracker pattern loop requires a physical channel target.");
+			}
+
+			result.Add(workingEvent);
+		}
+
+		result.Sort((left, right) =>
+		{
+			int leftChannel =
+				context.MapPhysicalChannel(
+					left.NoteEvent.Target.PhysicalChannel);
+			int rightChannel =
+				context.MapPhysicalChannel(
+					right.NoteEvent.Target.PhysicalChannel);
+			int compare =
+				leftChannel.CompareTo(rightChannel);
+			if (compare != 0)
+				return compare;
+
+			return left.NoteEvent.EmissionOrder.CompareTo(
+				right.NoteEvent.EmissionOrder);
+		});
+
+		return result;
+	}
 
 	private static bool AffectsTiming(NoteEvent noteEvent)
 	{
