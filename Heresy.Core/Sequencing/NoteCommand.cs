@@ -84,3 +84,20 @@ public sealed record SetNoteVolumeSlideCommand(
 
 /// <summary>Stops the active note-volume slide while preserving its accumulated volume.</summary>
 public sealed record ClearNoteVolumeSlideCommand : NoteCommand;
+
+/// <summary>Raw tracker Dxy volume-slide operation with whole-byte effect memory.</summary>
+public sealed record ApplyVolumeSlideCommand(byte Parameter) : NoteCommand;
+
+/// <summary>Raw tracker Exx pitch-slide-down operation with shared E/F memory.</summary>
+public sealed record ApplyPitchSlideDownCommand(byte Parameter) : NoteCommand;
+
+/// <summary>Raw tracker Fxx pitch-slide-up operation with shared E/F memory.</summary>
+public sealed record ApplyPitchSlideUpCommand(byte Parameter) : NoteCommand;
+
+/// <summary>Applies one immediate persistent pitch change in IT linear units.</summary>
+public sealed record AdjustPitchLinearUnitsCommand(
+	double LinearUnits) : NoteCommand;
+
+/// <summary>Applies one immediate persistent note-volume change in tracker units.</summary>
+public sealed record AdjustNoteVolumeCommand(
+	double TrackerUnits) : NoteCommand;

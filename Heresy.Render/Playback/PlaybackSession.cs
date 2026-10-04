@@ -214,6 +214,32 @@ public sealed class PlaybackSession
 					channel.CurrentVoice.SoundState.PlaybackOffset = playbackOffset.Offset;
 				break;
 
+			case AdjustPitchLinearUnitsCommand adjust:
+				channel.CurrentVoice?.AdjustPitchLinearUnits(
+					eventFrame,
+					adjust.LinearUnits);
+				break;
+
+			case AdjustNoteVolumeCommand adjust:
+				if (channel.CurrentVoice is not null)
+				{
+					double volume =
+						channel.CurrentVoice.AdjustNoteVolume(
+							eventFrame,
+							adjust.TrackerUnits);
+					channel.CaptureCurrentNoteVolume(volume);
+				}
+				else
+				{
+					channel.SetNoteVolume(
+						Math.Clamp(
+							channel.NoteVolume
+								+ adjust.TrackerUnits / 64.0,
+							0.0,
+							1.0));
+				}
+				break;
+
 			case SetPitchSlideCommand slide:
 				channel.CurrentVoice?.SetPitchSlide(
 					eventFrame,

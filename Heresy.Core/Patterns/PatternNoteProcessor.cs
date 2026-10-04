@@ -163,12 +163,15 @@ public static class PatternNoteProcessor
 					workingEvent.NoteEvent,
 					context);
 
-				resolved.Add(ResolveAt(
-					workingEvent.NoteEvent,
-					commands.Commands,
-					eventTimeSeconds,
-					context,
-					SyntheticOrder(workingEvent.NoteEvent.EmissionOrder, 0)));
+				if (commands.Commands.Count != 0)
+				{
+					resolved.Add(ResolveAt(
+						workingEvent.NoteEvent,
+						commands.Commands,
+						eventTimeSeconds,
+						context,
+						SyntheticOrder(workingEvent.NoteEvent.EmissionOrder, 0)));
+				}
 
 				if (commands.RowEndCommands.Count != 0)
 				{
@@ -237,33 +240,99 @@ public static class PatternNoteProcessor
 		{
 			NoteCommand command = noteEvent.Commands[i];
 
-			if (command is ApplyVibratoCommand vibrato)
+			switch (command)
 			{
-				if (noteEvent.Target.Kind != ChannelTargetKind.Physical)
-					throw new InvalidOperationException("Tracker vibrato requires a physical channel target.");
+				case ApplyVibratoCommand vibrato:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(noteEvent, context, "Tracker vibrato");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
 
-				transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+					byte parameter = channelState.ResolveEffectParameterNibbles(
+						EffectMemorySlot.Vibrato,
+						vibrato.Parameter);
 
-				SequencingChannelState channelState =
-					context.GetPhysicalChannelState(noteEvent.Target.PhysicalChannel);
-				byte parameter = channelState.ResolveEffectParameterNibbles(
-					EffectMemorySlot.Vibrato,
-					vibrato.Parameter);
+					transformed.Add(new SetVibratoCommand(
+						(byte)(parameter >> 4),
+						(byte)(parameter & 0x0F)));
+					rowEndCommands.Add(new ClearPitchModulationCommand());
+					break;
+				}
 
-				transformed.Add(new SetVibratoCommand(
-					(byte)(parameter >> 4),
-					(byte)(parameter & 0x0F)));
-				rowEndCommands.Add(new ClearPitchModulationCommand());
-				continue;
+				case ApplyVolumeSlideCommand slide:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(noteEvent, context, "Tracker volume slide");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+
+					byte parameter = channelState.ResolveEffectParameter(
+						EffectMemorySlot.VolumeSlide,
+						slide.Parameter);
+
+					NoteCommand? resolved = ResolveTrackerVolumeSlide(parameter);
+					if (resolved is not null)
+					{
+						transformed.Add(resolved);
+						if (resolved is SetNoteVolumeSlideCommand)
+							rowEndCommands.Add(new ClearNoteVolumeSlideCommand());
+					}
+					break;
+				}
+
+				case ApplyPitchSlideDownCommand slide:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(noteEvent, context, "Tracker pitch slide");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+
+					byte parameter = channelState.ResolveEffectParameter(
+						EffectMemorySlot.PitchSlide,
+						slide.Parameter);
+
+					NoteCommand? resolved = ResolveTrackerPitchSlide(
+						parameter,
+						direction: -1.0);
+					if (resolved is not null)
+					{
+						transformed.Add(resolved);
+						if (resolved is SetPitchSlideCommand)
+							rowEndCommands.Add(new ClearPitchSlideCommand());
+					}
+					break;
+				}
+
+				case ApplyPitchSlideUpCommand slide:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(noteEvent, context, "Tracker pitch slide");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+
+					byte parameter = channelState.ResolveEffectParameter(
+						EffectMemorySlot.PitchSlide,
+						slide.Parameter);
+
+					NoteCommand? resolved = ResolveTrackerPitchSlide(
+						parameter,
+						direction: 1.0);
+					if (resolved is not null)
+					{
+						transformed.Add(resolved);
+						if (resolved is SetPitchSlideCommand)
+							rowEndCommands.Add(new ClearPitchSlideCommand());
+					}
+					break;
+				}
+
+				default:
+					if (command is SetPitchSlideCommand)
+						rowEndCommands.Add(new ClearPitchSlideCommand());
+
+					if (command is SetNoteVolumeSlideCommand)
+						rowEndCommands.Add(new ClearNoteVolumeSlideCommand());
+
+					transformed?.Add(command);
+					break;
 			}
-
-			if (command is SetPitchSlideCommand)
-				rowEndCommands.Add(new ClearPitchSlideCommand());
-
-			if (command is SetNoteVolumeSlideCommand)
-				rowEndCommands.Add(new ClearNoteVolumeSlideCommand());
-
-			transformed?.Add(command);
 		}
 
 		return new ResolvedCommands
@@ -271,6 +340,72 @@ public static class PatternNoteProcessor
 			Commands = transformed ?? noteEvent.Commands,
 			RowEndCommands = rowEndCommands,
 		};
+	}
+
+	private static SequencingChannelState GetTrackerChannelState(
+		NoteEvent noteEvent,
+		SequencingContext context,
+		string effectName)
+	{
+		if (noteEvent.Target.Kind != ChannelTargetKind.Physical)
+		{
+			throw new InvalidOperationException(
+				$"{effectName} requires a physical channel target.");
+		}
+
+		return context.GetPhysicalChannelState(
+			noteEvent.Target.PhysicalChannel);
+	}
+
+	private static NoteCommand? ResolveTrackerVolumeSlide(byte parameter)
+	{
+		if (parameter == 0)
+			return null;
+
+		byte high = (byte)(parameter >> 4);
+		byte low = (byte)(parameter & 0x0F);
+
+		if (low == 0)
+			return new SetNoteVolumeSlideCommand(high);
+
+		if (high == 0)
+			return new SetNoteVolumeSlideCommand(-low);
+
+		if (low == 0x0F)
+			return new AdjustNoteVolumeCommand(high);
+
+		if (high == 0x0F)
+			return new AdjustNoteVolumeCommand(-low);
+
+		return null;
+	}
+
+	private static NoteCommand? ResolveTrackerPitchSlide(
+		byte parameter,
+		double direction)
+	{
+		if (parameter == 0)
+			return null;
+
+		byte high = (byte)(parameter >> 4);
+		byte low = (byte)(parameter & 0x0F);
+
+		if (high == 0x0E)
+		{
+			return low == 0
+				? null
+				: new AdjustPitchLinearUnitsCommand(direction * low);
+		}
+
+		if (high == 0x0F)
+		{
+			return low == 0
+				? null
+				: new AdjustPitchLinearUnitsCommand(direction * low * 4.0);
+		}
+
+		return new SetPitchSlideCommand(
+			direction * parameter * 4.0);
 	}
 
 	private static List<NoteCommand> CopyCommandsBefore(

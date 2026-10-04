@@ -8,4 +8,6 @@ namespace Heresy.Core.Sequencing;
 public enum EffectMemorySlot
 {
 	Vibrato = 0,
+	VolumeSlide,
+	PitchSlide,
 }

@@ -141,3 +141,12 @@ public sealed record NoteVolumeSlidePatternEffect : PatternEffect
 
 	public double TrackerUnitsPerTick { get; }
 }
+
+/// <summary>Tracker Dxy volume slide, including D00 effect memory.</summary>
+public sealed record TrackerVolumeSlidePatternEffect(byte Parameter) : PatternEffect;
+
+/// <summary>Tracker Exx pitch slide down, including shared E/F effect memory.</summary>
+public sealed record TrackerPitchSlideDownPatternEffect(byte Parameter) : PatternEffect;
+
+/// <summary>Tracker Fxx pitch slide up, including shared E/F effect memory.</summary>
+public sealed record TrackerPitchSlideUpPatternEffect(byte Parameter) : PatternEffect;

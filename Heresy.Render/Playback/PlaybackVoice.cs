@@ -201,6 +201,32 @@ public sealed class PlaybackVoice
 		RecomposePitchTrajectory(relativeFrame);
 	}
 
+	internal void AdjustPitchLinearUnits(
+		long absoluteFrame,
+		double linearUnits)
+	{
+		if (absoluteFrame < StartFrame)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		if (double.IsNaN(linearUnits)
+			|| double.IsInfinity(linearUnits))
+		{
+			throw new ArgumentOutOfRangeException(nameof(linearUnits));
+		}
+
+		long relativeFrame = absoluteFrame - StartFrame;
+		double currentBase = GetBasePitchMultiplier(relativeFrame);
+		double adjusted =
+			currentBase
+			* Math.Pow(
+				2.0,
+				linearUnits / TrackerVibrato.LinearSlideUnitsPerOctave);
+
+		_basePitchCurve = new ConstantPitchCurve(adjusted);
+		_basePitchCurveStartFrame = relativeFrame;
+
+		RecomposePitchTrajectory(relativeFrame);
+	}
+
 	internal void SetPitchSlide(
 		long absoluteFrame,
 		double tempo,
@@ -252,6 +278,25 @@ public sealed class PlaybackVoice
 	{
 		NoteVolume = volume;
 		_activeNoteVolumeSlide = null;
+	}
+
+	internal double AdjustNoteVolume(
+		long absoluteFrame,
+		double trackerUnits)
+	{
+		if (double.IsNaN(trackerUnits)
+			|| double.IsInfinity(trackerUnits))
+		{
+			throw new ArgumentOutOfRangeException(nameof(trackerUnits));
+		}
+
+		double adjusted = Math.Clamp(
+			GetNoteVolume(absoluteFrame) + trackerUnits / 64.0,
+			0.0,
+			1.0);
+
+		SetNoteVolume(adjusted);
+		return adjusted;
 	}
 
 	internal void SetNoteVolumeSlide(

@@ -130,6 +130,15 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 				return new SetNoteVolumeSlideCommand(
 					slide.TrackerUnitsPerTick);
 
+			case TrackerVolumeSlidePatternEffect slide:
+				return new ApplyVolumeSlideCommand(slide.Parameter);
+
+			case TrackerPitchSlideDownPatternEffect slide:
+				return new ApplyPitchSlideDownCommand(slide.Parameter);
+
+			case TrackerPitchSlideUpPatternEffect slide:
+				return new ApplyPitchSlideUpCommand(slide.Parameter);
+
 			default:
 				throw new NotSupportedException($"Unsupported pattern effect type: {effect.GetType().FullName}");
 		}
