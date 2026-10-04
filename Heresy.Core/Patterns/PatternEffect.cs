@@ -432,3 +432,11 @@ public sealed record TrackerGlobalVolumeSlidePatternEffect(
 /// </summary>
 public sealed record FineVibratoPatternEffect(
 	byte Parameter) : PatternEffect;
+
+/// <summary>
+/// Tracker Kxx vibrato plus note-volume slide. The parameter belongs to the
+/// shared Dxx/Kxx/Lxx volume-slide memory; vibrato resumes the channel's
+/// current Hxx/Uxx speed, effective depth, and waveform.
+/// </summary>
+public sealed record VibratoVolumeSlidePatternEffect(
+	byte Parameter) : PatternEffect;

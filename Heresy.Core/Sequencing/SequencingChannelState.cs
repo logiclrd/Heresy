@@ -15,6 +15,7 @@ public sealed class SequencingChannelState
 	private int _retriggerCountdown;
 	private byte _sampleOffsetHigh;
 	private TrackerWaveform _vibratoWaveform;
+	private double _vibratoDepthScale = 1.0;
 	private TrackerWaveform _tremoloWaveform;
 	private bool _glissandoEnabled;
 
@@ -91,6 +92,22 @@ public sealed class SequencingChannelState
 		}
 	}
 
+	public double VibratoDepthScale
+	{
+		get => _vibratoDepthScale;
+		set
+		{
+			if (!(value >= 0.0)
+				|| double.IsNaN(value)
+				|| double.IsInfinity(value))
+			{
+				throw new ArgumentOutOfRangeException(nameof(value));
+			}
+
+			_vibratoDepthScale = value;
+		}
+	}
+
 	public TrackerWaveform TremoloWaveform
 	{
 		get => _tremoloWaveform;
@@ -125,6 +142,7 @@ public sealed class SequencingChannelState
 		_retriggerCountdown = 0;
 		_sampleOffsetHigh = 0;
 		_vibratoWaveform = TrackerWaveform.Sine;
+		_vibratoDepthScale = 1.0;
 		_tremoloWaveform = TrackerWaveform.Sine;
 		_glissandoEnabled = false;
 	}

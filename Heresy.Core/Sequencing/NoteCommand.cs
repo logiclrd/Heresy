@@ -53,6 +53,13 @@ public sealed record ApplyVibratoCommand(byte Parameter) : NoteCommand;
 public sealed record ApplyFineVibratoCommand(byte Parameter) : NoteCommand;
 
 /// <summary>
+/// Raw tracker Kxx vibrato-plus-volume-slide operation. Parameter memory is
+/// shared with Dxx/Lxx; vibrato parameters come from current Hxx/Uxx state.
+/// </summary>
+public sealed record ApplyVibratoVolumeSlideCommand(
+	byte Parameter) : NoteCommand;
+
+/// <summary>
 /// Resolved normal vibrato parameters in tracker units. The renderer will turn
 /// this into the actual pitch modulation once tick timing and waveform state
 /// are available.

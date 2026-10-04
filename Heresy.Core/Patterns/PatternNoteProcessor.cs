@@ -701,10 +701,14 @@ public static class PatternNoteProcessor
 						EffectMemorySlot.Vibrato,
 						vibrato.Parameter);
 
+					if ((vibrato.Parameter & 0x0F) != 0)
+						channelState.VibratoDepthScale = 1.0;
+
 					transformed.Add(new SetVibratoCommand(
 						(byte)(parameter >> 4),
 						(byte)(parameter & 0x0F),
-						channelState.VibratoWaveform));
+						channelState.VibratoWaveform,
+						channelState.VibratoDepthScale));
 					rowEndCommands.Add(new ClearPitchModulationCommand());
 					break;
 				}
@@ -725,12 +729,67 @@ public static class PatternNoteProcessor
 							EffectMemorySlot.Vibrato,
 							vibrato.Parameter);
 
+					if ((vibrato.Parameter & 0x0F) != 0)
+						channelState.VibratoDepthScale = 0.25;
+
 					transformed.Add(
 						new SetVibratoCommand(
 							(byte)(parameter >> 4),
 							(byte)(parameter & 0x0F),
 							channelState.VibratoWaveform,
-							DepthScale: 0.25));
+							channelState.VibratoDepthScale));
+					rowEndCommands.Add(
+						new ClearPitchModulationCommand());
+					break;
+				}
+
+				case ApplyVibratoVolumeSlideCommand combined:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(
+							noteEvent,
+							context,
+							"Tracker vibrato plus volume slide");
+					transformed ??= CopyCommandsBefore(
+						noteEvent.Commands,
+						i);
+
+					byte volumeParameter =
+						channelState.ResolveEffectParameter(
+							EffectMemorySlot.VolumeSlide,
+							combined.Parameter);
+
+					NoteCommand? volumeCommand =
+						ApplyRowTickOverride(
+							ResolveTrackerVolumeSlide(
+								volumeParameter),
+							rowTicksOverride);
+
+					if (volumeCommand is not null)
+					{
+						transformed.Add(volumeCommand);
+						AddRepeatCommand(
+							repeatCommands,
+							volumeCommand);
+
+						if (volumeCommand is SetNoteVolumeSlideCommand)
+						{
+							rowEndCommands.Add(
+								new ClearNoteVolumeSlideCommand());
+						}
+					}
+
+					byte vibratoParameter =
+						channelState.ResolveEffectParameterNibbles(
+							EffectMemorySlot.Vibrato,
+							0);
+
+					transformed.Add(
+						new SetVibratoCommand(
+							(byte)(vibratoParameter >> 4),
+							(byte)(vibratoParameter & 0x0F),
+							channelState.VibratoWaveform,
+							channelState.VibratoDepthScale));
 					rowEndCommands.Add(
 						new ClearPitchModulationCommand());
 					break;
