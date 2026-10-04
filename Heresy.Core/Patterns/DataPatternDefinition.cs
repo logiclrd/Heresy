@@ -224,6 +224,9 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 				return new ApplyTrackerPanning8BitCommand(
 					panning.Parameter);
 
+			case TrackerPanningSlidePatternEffect slide:
+				return new ApplyPanningSlideCommand(slide.Parameter);
+
 			default:
 				throw new NotSupportedException($"Unsupported pattern effect type: {effect.GetType().FullName}");
 		}

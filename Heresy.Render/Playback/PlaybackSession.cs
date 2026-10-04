@@ -217,7 +217,32 @@ public sealed class PlaybackSession
 				break;
 
 			case SetSpatialPositionCommand position:
-				channel.SetPosition(position.Position);
+				channel.SetPosition(
+					eventFrame,
+					position.Position);
+				break;
+
+			case AdjustSpatialXCommand adjust:
+				channel.AdjustSpatialX(
+					eventFrame,
+					adjust.DeltaX,
+					adjust.MinimumX,
+					adjust.MaximumX);
+				break;
+
+			case SetSpatialXSlideCommand slide:
+				channel.SetSpatialXSlide(
+					eventFrame,
+					_tempo,
+					slide.TicksPerRow ?? _speed,
+					_context.Configuration.SampleRate,
+					slide.SpatialUnitsPerTick,
+					slide.MinimumX,
+					slide.MaximumX);
+				break;
+
+			case ClearSpatialXSlideCommand:
+				channel.ClearSpatialXSlide(eventFrame);
 				break;
 
 			case SetResonantFilterCommand filter:
@@ -445,6 +470,8 @@ public sealed class PlaybackSession
 		StartNoteCommand start,
 		long eventFrame)
 	{
+		channel.SynchronizePosition(eventFrame);
+
 		if (channel.CurrentVoice is not null)
 		{
 			channel.CaptureCurrentNoteVolume(
@@ -481,7 +508,7 @@ public sealed class PlaybackSession
 			_nextVoiceModulationSeed++,
 			physicalChannel);
 
-		channel.AttachVoice(voice);
+		channel.AttachVoice(voice, eventFrame);
 	}
 
 	private void ApplyPastNoteAction(
@@ -589,14 +616,47 @@ public sealed class PlaybackSession
 
 				if (channel.CurrentVoice is not null)
 				{
-					bool finished = RenderVoice(
-						channel.CurrentVoice,
-						absoluteStartFrame,
-						frameCount,
-						channelBuffer);
+					if (channel.HasActiveSpatialXSlide)
+					{
+						for (int frame = 0; frame < frameCount; frame++)
+						{
+							PlaybackVoice? voice = channel.CurrentVoice;
+							if (voice is null)
+								break;
 
-					if (finished)
-						channel.DetachCurrentVoice();
+							long absoluteFrame =
+								absoluteStartFrame + frame;
+							channel.SynchronizePosition(absoluteFrame);
+
+							Span<float> outputFrame =
+								channelBuffer.Slice(
+									frame * outputChannelCount,
+									outputChannelCount);
+
+							bool finished = RenderVoice(
+								voice,
+								absoluteFrame,
+								1,
+								outputFrame);
+
+							if (finished)
+								channel.DetachCurrentVoice();
+						}
+					}
+					else
+					{
+						channel.SynchronizePosition(
+							absoluteStartFrame);
+
+						bool finished = RenderVoice(
+							channel.CurrentVoice,
+							absoluteStartFrame,
+							frameCount,
+							channelBuffer);
+
+						if (finished)
+							channel.DetachCurrentVoice();
+					}
 				}
 
 				for (int frame = 0; frame < frameCount; frame++)

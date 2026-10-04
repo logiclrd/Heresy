@@ -392,3 +392,9 @@ public sealed record TrackerPanningPatternEffect : PatternEffect
 /// </summary>
 public sealed record TrackerPanning8BitPatternEffect(
 	byte Parameter) : PatternEffect;
+
+/// <summary>
+/// Tracker Pxx panning slide with whole-byte effect memory.
+/// </summary>
+public sealed record TrackerPanningSlidePatternEffect(
+	byte Parameter) : PatternEffect;

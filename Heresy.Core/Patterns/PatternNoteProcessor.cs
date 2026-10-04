@@ -1027,6 +1027,43 @@ public static class PatternNoteProcessor
 								0.0f)));
 					break;
 
+				case ApplyPanningSlideCommand slide:
+					{
+						SequencingChannelState channelState =
+							GetTrackerChannelState(
+								noteEvent,
+								context,
+								"Tracker panning slide");
+						transformed ??= CopyCommandsBefore(
+							noteEvent.Commands,
+							i);
+
+						byte parameter =
+							channelState.ResolveEffectParameter(
+								EffectMemorySlot.PanningSlide,
+								slide.Parameter);
+
+						NoteCommand? resolved =
+							ApplyRowTickOverride(
+								ResolveTrackerPanningSlide(parameter),
+								rowTicksOverride);
+
+						if (resolved is not null)
+						{
+							transformed.Add(resolved);
+							AddRepeatCommand(
+								repeatCommands,
+								resolved);
+
+							if (resolved is SetSpatialXSlideCommand)
+							{
+								rowEndCommands.Add(
+									new ClearSpatialXSlideCommand());
+							}
+						}
+						break;
+					}
+
 				default:
 					command =
 						ApplyRowTickOverride(
@@ -1038,6 +1075,9 @@ public static class PatternNoteProcessor
 
 					if (command is SetNoteVolumeSlideCommand)
 						rowEndCommands.Add(new ClearNoteVolumeSlideCommand());
+
+					if (command is SetSpatialXSlideCommand)
+						rowEndCommands.Add(new ClearSpatialXSlideCommand());
 
 					AddRepeatCommand(repeatCommands, command);
 					transformed?.Add(command);
@@ -1164,6 +1204,8 @@ public static class PatternNoteProcessor
 				slide with { TicksPerRow = rowTicksOverride.Value },
 			SetNoteVolumeSlideCommand slide =>
 				slide with { TicksPerRow = rowTicksOverride.Value },
+			SetSpatialXSlideCommand slide =>
+				slide with { TicksPerRow = rowTicksOverride.Value },
 			SetTonePortamentoCommand portamento =>
 				portamento with { TicksPerRow = rowTicksOverride.Value },
 			_ => command,
@@ -1180,6 +1222,8 @@ public static class PatternNoteProcessor
 			case SetNoteVolumeSlideCommand _:
 			case AdjustPitchLinearUnitsCommand _:
 			case AdjustNoteVolumeCommand _:
+			case SetSpatialXSlideCommand _:
+			case AdjustSpatialXCommand _:
 				repeatCommands.Add(command);
 				break;
 
@@ -1285,6 +1329,55 @@ public static class PatternNoteProcessor
 		if (high == 0x0F)
 			return new AdjustNoteVolumeCommand(-low);
 
+		return null;
+	}
+
+	private static NoteCommand? ResolveTrackerPanningSlide(
+		byte parameter)
+	{
+		if (parameter == 0)
+			return null;
+
+		byte high = (byte)(parameter >> 4);
+		byte low = (byte)(parameter & 0x0F);
+
+		const double spatialUnitsPerTrackerPanStep =
+			4.0 / 128.0;
+
+		if (low == 0)
+		{
+			return new SetSpatialXSlideCommand(
+				-high * spatialUnitsPerTrackerPanStep,
+				MinimumX: -1.0,
+				MaximumX: 1.0);
+		}
+
+		if (high == 0)
+		{
+			return new SetSpatialXSlideCommand(
+				low * spatialUnitsPerTrackerPanStep,
+				MinimumX: -1.0,
+				MaximumX: 1.0);
+		}
+
+		if (low == 0x0F)
+		{
+			return new AdjustSpatialXCommand(
+				-high * spatialUnitsPerTrackerPanStep,
+				MinimumX: -1.0,
+				MaximumX: 1.0);
+		}
+
+		if (high == 0x0F)
+		{
+			return new AdjustSpatialXCommand(
+				low * spatialUnitsPerTrackerPanStep,
+				MinimumX: -1.0,
+				MaximumX: 1.0);
+		}
+
+		// Impulse Tracker ignores ordinary Pxy slides when both nibbles
+		// are non-zero.
 		return null;
 	}
 

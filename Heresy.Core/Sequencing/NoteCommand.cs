@@ -306,3 +306,31 @@ public sealed record SetSpatialPositionCommand : NoteCommand
 /// </summary>
 public sealed record ApplyTrackerPanning8BitCommand(
 	byte Parameter) : NoteCommand;
+
+/// <summary>Raw tracker Pxx panning-slide operation with whole-byte memory.</summary>
+public sealed record ApplyPanningSlideCommand(
+	byte Parameter) : NoteCommand;
+
+/// <summary>
+/// Applies an immediate bounded adjustment to the physical channel's spatial X
+/// position.
+/// </summary>
+public sealed record AdjustSpatialXCommand(
+	double DeltaX,
+	double MinimumX,
+	double MaximumX) : NoteCommand;
+
+/// <summary>
+/// Applies a continuous bounded spatial-X slide in spatial units per legacy
+/// tracker tick.
+/// </summary>
+public sealed record SetSpatialXSlideCommand(
+	double SpatialUnitsPerTick,
+	int? TicksPerRow = null,
+	double MinimumX = -1.0,
+	double MaximumX = 1.0) : NoteCommand;
+
+/// <summary>
+/// Stops the active spatial-X slide while preserving the accumulated position.
+/// </summary>
+public sealed record ClearSpatialXSlideCommand : NoteCommand;
