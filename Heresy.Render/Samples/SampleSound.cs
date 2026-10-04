@@ -47,6 +47,9 @@ public sealed class SampleSound : ISound, ISourceFrameSeekableSound
 	/// </summary>
 	public NewNotePolicy NewNotePolicy { get; set; }
 
+	public SourceFrameSeekCost SeekCost
+		=> SourceFrameSeekCost.Direct;
+
 	public NoteConfigurationSnapshot SnapshotNoteConfiguration()
 		=> new(NewNotePolicy);
 

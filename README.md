@@ -43,6 +43,14 @@ The repository is intentionally split by concern.
   processing steps: an effect must agree with its tracker counterpart at the
   corresponding tick states while using an appropriate continuous curve between
   them. Discrete operations such as note delay/retrigger remain discrete.
+- Native source-frame seeking is a semantic capability, not a performance
+  promise. A seekable sound reports either direct or replay-required cost.
+  Replay-required seeks remain fully supported and exact; a future editor may
+  optionally highlight such rows as potentially expensive for realtime playback
+  (with user-configurable suppression) rather than forbidding them. Flattened
+  Pattern/Sequence playback need not expose source-frame seeking because it has
+  no single cooked PCM timeline, while mixdown forms may expose replay-required
+  seeking.
 
 ## Toolchain note
 
