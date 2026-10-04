@@ -38,7 +38,7 @@ public sealed class TrackerArpeggioPitchCurve : PitchCurve
 
 		long tick = (long)Math.Floor(frameOffset / _framesPerTick);
 
-		return tick % 3 switch
+		return (tick % 3) switch
 		{
 			0 => 1.0,
 			1 => Math.Pow(2.0, _firstSemitones / 12.0),
