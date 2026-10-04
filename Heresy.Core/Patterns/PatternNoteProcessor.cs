@@ -35,6 +35,8 @@ public static class PatternNoteProcessor
 		public required IReadOnlyList<NoteCommand> Commands { get; init; }
 		public required IReadOnlyList<NoteCommand> RowEndCommands { get; init; }
 		public RetriggerRequest? Retrigger { get; init; }
+		public byte? NoteCutTick { get; init; }
+		public byte? NoteDelayTick { get; init; }
 	}
 
 	/// <summary>
@@ -171,36 +173,81 @@ public static class PatternNoteProcessor
 					workingEvent.NoteEvent,
 					context);
 
-				if (commands.Commands.Count != 0)
+				double tickDurationSeconds =
+					SequencingConstants.Diachron.TotalSeconds
+					/ context.State.Tempo;
+				double commandTimeSeconds = eventTimeSeconds;
+				bool executeCommands = true;
+
+				if (commands.NoteDelayTick.HasValue)
+				{
+					int delayTick = EffectiveSCommandTick(
+						commands.NoteDelayTick.Value);
+
+					commandTimeSeconds =
+						eventTimeSeconds
+						+ delayTick * tickDurationSeconds;
+
+					executeCommands =
+						delayTick < context.State.Speed
+						&& commandTimeSeconds < rowEndSeconds;
+				}
+
+				if (executeCommands && commands.Commands.Count != 0)
 				{
 					resolved.Add(ResolveAt(
 						workingEvent.NoteEvent,
 						commands.Commands,
-						eventTimeSeconds,
+						commandTimeSeconds,
 						context,
 						SyntheticOrder(workingEvent.NoteEvent.EmissionOrder, 0)));
 				}
 
-				if (commands.Retrigger is not null)
+				if (executeCommands && commands.Retrigger is not null)
 				{
 					ExpandRetrigger(
 						resolved,
 						workingEvent.NoteEvent,
 						commands.Retrigger,
-						eventTimeSeconds,
+						commandTimeSeconds,
 						rowEndSeconds,
 						context.State,
 						context);
 				}
 
-				if (commands.RowEndCommands.Count != 0)
+				if (commands.NoteCutTick.HasValue)
 				{
-					double clearTimeSeconds = Math.Max(rowEndSeconds, eventTimeSeconds);
+					int cutTick = EffectiveSCommandTick(
+						commands.NoteCutTick.Value);
+					double cutTimeSeconds =
+						eventTimeSeconds
+						+ cutTick * tickDurationSeconds;
+
+					if (cutTick < context.State.Speed
+						&& cutTimeSeconds < rowEndSeconds)
+					{
+						resolved.Add(new NoteEvent(
+							new MusicalTime(
+								TimeSpan.FromSeconds(cutTimeSeconds),
+								0.0),
+							context.MapTarget(workingEvent.NoteEvent.Target),
+							new NoteCommand[] { new NoteCutCommand() },
+							SyntheticOrder(
+								workingEvent.NoteEvent.EmissionOrder,
+								2)));
+					}
+				}
+
+				if (executeCommands && commands.RowEndCommands.Count != 0)
+				{
+					double clearTimeSeconds = Math.Max(
+						rowEndSeconds,
+						commandTimeSeconds);
 					resolved.Add(new NoteEvent(
 						new MusicalTime(TimeSpan.FromSeconds(clearTimeSeconds), 0.0),
 						context.MapTarget(workingEvent.NoteEvent.Target),
 						commands.RowEndCommands,
-						SyntheticOrder(workingEvent.NoteEvent.EmissionOrder, 1)));
+						SyntheticOrder(workingEvent.NoteEvent.EmissionOrder, 3)));
 				}
 			}
 
@@ -256,6 +303,8 @@ public static class PatternNoteProcessor
 		List<NoteCommand>? transformed = null;
 		List<NoteCommand> rowEndCommands = [];
 		RetriggerRequest? retrigger = null;
+		byte? noteCutTick = null;
+		byte? noteDelayTick = null;
 
 		for (int i = 0; i < noteEvent.Commands.Count; i++)
 		{
@@ -458,6 +507,24 @@ public static class PatternNoteProcessor
 					break;
 				}
 
+				case ApplyTrackerNoteCutCommand cut:
+					GetTrackerChannelState(
+						noteEvent,
+						context,
+						"Tracker note cut");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+					noteCutTick = cut.Tick;
+					break;
+
+				case ApplyTrackerNoteDelayCommand delay:
+					GetTrackerChannelState(
+						noteEvent,
+						context,
+						"Tracker note delay");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+					noteDelayTick = delay.Tick;
+					break;
+
 				default:
 					if (command is SetPitchSlideCommand)
 						rowEndCommands.Add(new ClearPitchSlideCommand());
@@ -475,6 +542,8 @@ public static class PatternNoteProcessor
 			Commands = transformed ?? noteEvent.Commands,
 			RowEndCommands = rowEndCommands,
 			Retrigger = retrigger,
+			NoteCutTick = noteCutTick,
+			NoteDelayTick = noteDelayTick,
 		};
 	}
 
@@ -627,8 +696,11 @@ public static class PatternNoteProcessor
 			EmissionOrder = emissionOrder,
 		};
 
+	private static int EffectiveSCommandTick(byte tick)
+		=> Math.Max(1, tick);
+
 	private static long SyntheticOrder(long emissionOrder, int phase)
-		=> checked(emissionOrder * 2 + phase);
+		=> checked(emissionOrder * 4 + phase);
 
 	private static int CompareTimingEvents(WorkingEvent left, WorkingEvent right)
 	{

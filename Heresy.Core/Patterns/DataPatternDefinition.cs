@@ -186,6 +186,12 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			case SampleOffsetHighPatternEffect offset:
 				return new ApplySampleOffsetHighCommand(offset.HighOffset);
 
+			case TrackerNoteCutPatternEffect cut:
+				return new ApplyTrackerNoteCutCommand(cut.Tick);
+
+			case TrackerNoteDelayPatternEffect delay:
+				return new ApplyTrackerNoteDelayCommand(delay.Tick);
+
 			default:
 				throw new NotSupportedException($"Unsupported pattern effect type: {effect.GetType().FullName}");
 		}

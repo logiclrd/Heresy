@@ -171,3 +171,15 @@ public sealed record SetSourceFrameOffsetCommand(
 /// </summary>
 public sealed record ApplySampleOffsetHighCommand(
 	byte HighOffset) : NoteCommand;
+
+/// <summary>
+/// Raw tracker SCx note cut. Tick is the low S-command nibble (0..15).
+/// </summary>
+public sealed record ApplyTrackerNoteCutCommand(
+	byte Tick) : NoteCommand;
+
+/// <summary>
+/// Raw tracker SDx note delay. Tick is the low S-command nibble (0..15).
+/// </summary>
+public sealed record ApplyTrackerNoteDelayCommand(
+	byte Tick) : NoteCommand;

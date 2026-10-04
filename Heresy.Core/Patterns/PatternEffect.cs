@@ -194,3 +194,36 @@ public sealed record SampleOffsetHighPatternEffect : PatternEffect
 
 	public byte HighOffset { get; }
 }
+
+/// <summary>
+/// Tracker SCx note cut. IT services x=0 and x=1 on the first post-start tick.
+/// </summary>
+public sealed record TrackerNoteCutPatternEffect : PatternEffect
+{
+	public TrackerNoteCutPatternEffect(byte tick)
+	{
+		if (tick > 0x0F)
+			throw new ArgumentOutOfRangeException(nameof(tick));
+
+		Tick = tick;
+	}
+
+	public byte Tick { get; }
+}
+
+/// <summary>
+/// Tracker SDx note delay. The delayed channel event is emitted on the
+/// requested post-start tracker tick.
+/// </summary>
+public sealed record TrackerNoteDelayPatternEffect : PatternEffect
+{
+	public TrackerNoteDelayPatternEffect(byte tick)
+	{
+		if (tick > 0x0F)
+			throw new ArgumentOutOfRangeException(nameof(tick));
+
+		Tick = tick;
+	}
+
+	public byte Tick { get; }
+}
