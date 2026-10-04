@@ -78,13 +78,15 @@ public sealed class Panning8BitPatternEffectTests
 			output,
 			out _);
 
-		Vector3 xff = output.Freeze()
+		NoteSchedule schedule = output.Freeze();
+
+		Vector3 xff = schedule
 			.Single(e => e.Target == ChannelTarget.Physical(0))
 			.Commands
 			.OfType<SetSpatialPositionCommand>()
 			.Single()
 			.Position;
-		Vector3 s8f = output.Freeze()
+		Vector3 s8f = schedule
 			.Single(e => e.Target == ChannelTarget.Physical(1))
 			.Commands
 			.OfType<SetSpatialPositionCommand>()
