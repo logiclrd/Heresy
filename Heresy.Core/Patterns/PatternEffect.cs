@@ -411,3 +411,10 @@ public sealed record TrackerChannelVolumePatternEffect(
 /// </summary>
 public sealed record TrackerChannelVolumeSlidePatternEffect(
 	byte Parameter) : PatternEffect;
+
+/// <summary>
+/// Tracker Vxx global volume. Values 0..128 are valid; larger byte values are
+/// preserved as tracker input and ignored during common pattern processing.
+/// </summary>
+public sealed record TrackerGlobalVolumePatternEffect(
+	byte Parameter) : PatternEffect;

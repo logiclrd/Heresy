@@ -27,6 +27,7 @@ public sealed class PlaybackSession
 	private ulong _nextVoiceModulationSeed = 0x4845524553590001UL;
 	private double _tempo = SequencingConstants.DefaultTempo;
 	private int _speed = SequencingConstants.DefaultSpeed;
+	private double _globalVolume = 1.0;
 
 	public PlaybackSession(
 		RenderContext context,
@@ -39,6 +40,8 @@ public sealed class PlaybackSession
 	}
 
 	public long NextFrame => _nextFrame;
+
+	public double GlobalVolume => _globalVolume;
 
 	public IReadOnlyList<PlaybackVoice> VirtualVoices => _virtualVoices;
 
@@ -482,6 +485,9 @@ public sealed class PlaybackSession
 			case SetSpeedCommand speed:
 				_speed = speed.TicksPerRow;
 				break;
+			case SetGlobalVolumeCommand volume:
+				_globalVolume = volume.Volume;
+				break;
 		}
 	}
 
@@ -707,6 +713,13 @@ public sealed class PlaybackSession
 					_virtualVoices.RemoveAt(index);
 				else
 					index++;
+			}
+
+			if (_globalVolume != 1.0)
+			{
+				for (int sample = 0; sample < destination.Length; sample++)
+					destination[sample] =
+						(float)(destination[sample] * _globalVolume);
 			}
 		}
 		finally

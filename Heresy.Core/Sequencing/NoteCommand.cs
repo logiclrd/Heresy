@@ -366,3 +366,29 @@ public sealed record SetOverallChannelVolumeSlideCommand(
 /// accumulated volume.
 /// </summary>
 public sealed record ClearOverallChannelVolumeSlideCommand : NoteCommand;
+
+/// <summary>
+/// Raw tracker Vxx global-volume operation. Values above 128 are valid pattern
+/// data but are ignored by Impulse Tracker.
+/// </summary>
+public sealed record ApplyTrackerGlobalVolumeCommand(
+	byte Parameter) : NoteCommand;
+
+/// <summary>Sets normalized session-wide output gain.</summary>
+public sealed record SetGlobalVolumeCommand : NoteCommand
+{
+	public SetGlobalVolumeCommand(double volume)
+	{
+		if (double.IsNaN(volume)
+			|| double.IsInfinity(volume)
+			|| volume < 0.0
+			|| volume > 1.0)
+		{
+			throw new ArgumentOutOfRangeException(nameof(volume));
+		}
+
+		Volume = volume;
+	}
+
+	public double Volume { get; }
+}

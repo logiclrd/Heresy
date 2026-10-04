@@ -733,6 +733,19 @@ public static class PatternNoteProcessor
 					break;
 				}
 
+				case ApplyTrackerGlobalVolumeCommand volume:
+					transformed ??= CopyCommandsBefore(
+						noteEvent.Commands,
+						i);
+
+					if (volume.Parameter <= 128)
+					{
+						transformed.Add(
+							new SetGlobalVolumeCommand(
+								volume.Parameter / 128.0));
+					}
+					break;
+
 				case ApplyTrackerChannelVolumeCommand volume:
 					GetTrackerChannelState(
 						noteEvent,
