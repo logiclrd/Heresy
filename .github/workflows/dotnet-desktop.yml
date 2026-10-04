@@ -15,7 +15,7 @@ jobs:
         configuration: [Release]
 
     runs-on: ubuntu-latest  # For a list of available runner types, refer to
-                             # https://help.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idruns-on
+                            # https://help.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idruns-on
 
     steps:
     - name: Checkout
@@ -29,4 +29,4 @@ jobs:
         dotnet-version: 10.0.x
 
     - name: Execute test suite
-      run: dotnet test -p:Configuration=Release
+      run: dotnet test -p:Configuration=Release --logger "console;verbosity=normal"
