@@ -114,6 +114,9 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			case SetPlaybackOffsetPatternEffect offset:
 				return new SetPlaybackOffsetCommand(offset.Offset);
 
+			case VibratoPatternEffect vibrato:
+				return new ApplyVibratoCommand(vibrato.Parameter);
+
 			default:
 				throw new NotSupportedException($"Unsupported pattern effect type: {effect.GetType().FullName}");
 		}

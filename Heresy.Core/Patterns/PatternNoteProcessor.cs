@@ -23,6 +23,12 @@ public static class PatternNoteProcessor
 		public double? TimingEligibilitySeconds { get; set; }
 	}
 
+	private sealed class ResolvedCommands
+	{
+		public required IReadOnlyList<NoteCommand> Commands { get; init; }
+		public bool ClearPitchModulationAtRowEnd { get; init; }
+	}
+
 	/// <summary>
 	/// Generates and resolves one complete pattern invocation. <paramref name="startRow"/>
 	/// skips rows without executing their events. Timing in the skipped region is
@@ -116,20 +122,32 @@ public static class PatternNoteProcessor
 			foreach (WorkingEvent workingEvent in dueTimingEvents)
 			{
 				ApplyTimingCommands(context.State, workingEvent.NoteEvent.Commands);
-				resolved.Add(ResolveAt(workingEvent.NoteEvent, rowStartSeconds, context));
+				resolved.Add(ResolveAt(
+					workingEvent.NoteEvent,
+					workingEvent.NoteEvent.Commands,
+					rowStartSeconds,
+					context,
+					SyntheticOrder(workingEvent.NoteEvent.EmissionOrder, 0)));
 				deferredTimingEvents.Remove(workingEvent);
 			}
 
 			double rowDurationSeconds = GetRowDurationSeconds(context.State);
 			double rowEnd = Math.Min(row + 1.0, effectiveRowCount);
 			double rowFraction = rowEnd - row;
+			double rowEndSeconds = rowStartSeconds + rowDurationSeconds * rowFraction;
 
 			foreach (WorkingEvent workingEvent in events)
 			{
 				if (workingEvent.AffectsTiming)
 					continue;
 
-				if (workingEvent.RowOffset < row || workingEvent.RowOffset >= row + 1.0)
+				bool isFinalEndpoint =
+					row == wholeRowCount - 1
+					&& workingEvent.RowOffset == effectiveRowCount;
+
+				if (workingEvent.RowOffset < row)
+					continue;
+				if (!isFinalEndpoint && workingEvent.RowOffset >= row + 1.0)
 					continue;
 
 				double fraction = workingEvent.RowOffset - row;
@@ -141,10 +159,29 @@ public static class PatternNoteProcessor
 					+ fraction * rowDurationSeconds
 					+ workingEvent.TimeOffsetSeconds;
 
-				resolved.Add(ResolveAt(workingEvent.NoteEvent, eventTimeSeconds, context));
+				ResolvedCommands commands = ResolveCommands(
+					workingEvent.NoteEvent,
+					context);
+
+				resolved.Add(ResolveAt(
+					workingEvent.NoteEvent,
+					commands.Commands,
+					eventTimeSeconds,
+					context,
+					SyntheticOrder(workingEvent.NoteEvent.EmissionOrder, 0)));
+
+				if (commands.ClearPitchModulationAtRowEnd)
+				{
+					double clearTimeSeconds = Math.Max(rowEndSeconds, eventTimeSeconds);
+					resolved.Add(new NoteEvent(
+						new MusicalTime(TimeSpan.FromSeconds(clearTimeSeconds), 0.0),
+						context.MapTarget(workingEvent.NoteEvent.Target),
+						new NoteCommand[] { new ClearPitchModulationCommand() },
+						SyntheticOrder(workingEvent.NoteEvent.EmissionOrder, 1)));
+				}
 			}
 
-			rowStartSeconds += rowDurationSeconds * rowFraction;
+			rowStartSeconds = rowEndSeconds;
 		}
 
 		duration = TimeSpan.FromSeconds(rowStartSeconds);
@@ -189,12 +226,73 @@ public static class PatternNoteProcessor
 		}
 	}
 
-	private static NoteEvent ResolveAt(NoteEvent noteEvent, double timeSeconds, SequencingContext context)
+	private static ResolvedCommands ResolveCommands(
+		NoteEvent noteEvent,
+		SequencingContext context)
+	{
+		List<NoteCommand>? transformed = null;
+		bool clearPitchModulationAtRowEnd = false;
+
+		for (int i = 0; i < noteEvent.Commands.Count; i++)
+		{
+			NoteCommand command = noteEvent.Commands[i];
+
+			if (command is not ApplyVibratoCommand vibrato)
+			{
+				transformed?.Add(command);
+				continue;
+			}
+
+			if (noteEvent.Target.Kind != ChannelTargetKind.Physical)
+				throw new InvalidOperationException("Tracker vibrato requires a physical channel target.");
+
+			transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+
+			SequencingChannelState channelState =
+				context.GetPhysicalChannelState(noteEvent.Target.PhysicalChannel);
+			byte parameter = channelState.ResolveEffectParameterNibbles(
+				EffectMemorySlot.Vibrato,
+				vibrato.Parameter);
+
+			transformed.Add(new SetVibratoCommand(
+				(byte)(parameter >> 4),
+				(byte)(parameter & 0x0F)));
+			clearPitchModulationAtRowEnd = true;
+		}
+
+		return new ResolvedCommands
+		{
+			Commands = transformed ?? noteEvent.Commands,
+			ClearPitchModulationAtRowEnd = clearPitchModulationAtRowEnd,
+		};
+	}
+
+	private static List<NoteCommand> CopyCommandsBefore(
+		IReadOnlyList<NoteCommand> commands,
+		int count)
+	{
+		List<NoteCommand> result = new(count);
+		for (int i = 0; i < count; i++)
+			result.Add(commands[i]);
+		return result;
+	}
+
+	private static NoteEvent ResolveAt(
+		NoteEvent noteEvent,
+		IReadOnlyList<NoteCommand> commands,
+		double timeSeconds,
+		SequencingContext context,
+		long emissionOrder)
 		=> noteEvent with
 		{
 			Offset = new MusicalTime(TimeSpan.FromSeconds(timeSeconds), 0.0),
 			Target = context.MapTarget(noteEvent.Target),
+			Commands = commands,
+			EmissionOrder = emissionOrder,
 		};
+
+	private static long SyntheticOrder(long emissionOrder, int phase)
+		=> checked(emissionOrder * 2 + phase);
 
 	private static int CompareTimingEvents(WorkingEvent left, WorkingEvent right)
 	{

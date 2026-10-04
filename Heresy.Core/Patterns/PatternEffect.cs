@@ -64,3 +64,9 @@ public sealed record SetPlaybackOffsetPatternEffect : PatternEffect
 
 	public TimeSpan Offset { get; }
 }
+
+/// <summary>
+/// Normal tracker-style vibrato (IT/S3M Hxy semantics). The high nibble is
+/// speed and the low nibble is depth; zero nibbles recall channel memory.
+/// </summary>
+public sealed record VibratoPatternEffect(byte Parameter) : PatternEffect;

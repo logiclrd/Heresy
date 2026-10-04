@@ -32,6 +32,25 @@ public sealed class SequencingChannelStateTests
 	}
 
 	[Test]
+	public void NibbleMemoryPreservesZeroSpeedOrDepthIndependently()
+	{
+		SequencingChannelState state = new();
+
+		Assert.That(
+			state.ResolveEffectParameterNibbles(EffectMemorySlot.Vibrato, 0x53),
+			Is.EqualTo(0x53));
+		Assert.That(
+			state.ResolveEffectParameterNibbles(EffectMemorySlot.Vibrato, 0x70),
+			Is.EqualTo(0x73));
+		Assert.That(
+			state.ResolveEffectParameterNibbles(EffectMemorySlot.Vibrato, 0x04),
+			Is.EqualTo(0x74));
+		Assert.That(
+			state.ResolveEffectParameterNibbles(EffectMemorySlot.Vibrato, 0x00),
+			Is.EqualTo(0x74));
+	}
+
+	[Test]
 	public void FlattenedChildSharesEffectMemoryOnMappedParentChannel()
 	{
 		SequencingContext parent = new(physicalChannelBase: 3);

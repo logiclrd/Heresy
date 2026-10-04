@@ -36,3 +36,23 @@ public sealed record SetPlaybackFrequencyCommand(double Frequency) : NoteCommand
 
 /// <summary>Moves the current source directly to a new playback time offset.</summary>
 public sealed record SetPlaybackOffsetCommand(TimeSpan Offset) : NoteCommand;
+
+/// <summary>
+/// Raw tracker-style vibrato operation. Parameter packs speed in the high
+/// nibble and depth in the low nibble. Zero nibbles use channel effect memory.
+/// The common pattern processor resolves this into SetVibratoCommand.
+/// </summary>
+public sealed record ApplyVibratoCommand(byte Parameter) : NoteCommand;
+
+/// <summary>
+/// Resolved normal vibrato parameters in tracker units. The renderer will turn
+/// this into the actual pitch modulation once tick timing and waveform state
+/// are available.
+/// </summary>
+public sealed record SetVibratoCommand(byte Speed, byte Depth) : NoteCommand;
+
+/// <summary>
+/// Removes the transient pitch modulation installed for the preceding row and
+/// resets its pitch-delta contribution to zero.
+/// </summary>
+public sealed record ClearPitchModulationCommand : NoteCommand;

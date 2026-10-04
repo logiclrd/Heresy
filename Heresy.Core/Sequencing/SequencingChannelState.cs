@@ -13,9 +13,10 @@ public sealed class SequencingChannelState
 	private readonly Dictionary<EffectMemorySlot, byte> _effectMemory = [];
 
 	/// <summary>
-	/// Applies conventional tracker effect-memory semantics. A non-zero
-	/// parameter replaces the remembered value and is returned. Zero recalls
-	/// the remembered value, or remains zero if the slot has never been set.
+	/// Applies conventional whole-byte tracker effect-memory semantics. A
+	/// non-zero parameter replaces the remembered value and is returned. Zero
+	/// recalls the remembered value, or remains zero if the slot has never been
+	/// set.
 	/// </summary>
 	public byte ResolveEffectParameter(EffectMemorySlot slot, byte parameter)
 	{
@@ -28,6 +29,32 @@ public sealed class SequencingChannelState
 		return _effectMemory.TryGetValue(slot, out byte remembered)
 			? remembered
 			: (byte)0;
+	}
+
+	/// <summary>
+	/// Applies tracker memory independently to the high and low nibbles. This is
+	/// used by effects such as Hxy/Uxy vibrato, where x=0 preserves the previous
+	/// speed and y=0 preserves the previous depth.
+	/// </summary>
+	public byte ResolveEffectParameterNibbles(EffectMemorySlot slot, byte parameter)
+	{
+		byte remembered = _effectMemory.TryGetValue(slot, out byte value)
+			? value
+			: (byte)0;
+
+		byte high = (parameter & 0xF0) != 0
+			? (byte)(parameter & 0xF0)
+			: (byte)(remembered & 0xF0);
+		byte low = (parameter & 0x0F) != 0
+			? (byte)(parameter & 0x0F)
+			: (byte)(remembered & 0x0F);
+
+		byte resolved = (byte)(high | low);
+
+		if (parameter != 0)
+			_effectMemory[slot] = resolved;
+
+		return resolved;
 	}
 
 	public bool TryGetEffectParameter(EffectMemorySlot slot, out byte parameter)
