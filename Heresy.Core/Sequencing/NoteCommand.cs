@@ -145,3 +145,13 @@ public sealed record SetTremoloCommand(byte Speed, byte Depth) : NoteCommand;
 
 /// <summary>Stops transient tremolo modulation without resetting its phase.</summary>
 public sealed record ClearTremoloCommand : NoteCommand;
+
+/// <summary>Raw tracker Qxy retrigger operation with whole-byte memory.</summary>
+public sealed record ApplyRetriggerCommand(byte Parameter) : NoteCommand;
+
+/// <summary>
+/// Restarts the current voice's source playback without reallocating the voice.
+/// VolumeTransform is the tracker Qxy high nibble (0..15).
+/// </summary>
+public sealed record RetriggerCurrentVoiceCommand(
+	byte VolumeTransform) : NoteCommand;

@@ -177,6 +177,9 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			case TremoloPatternEffect tremolo:
 				return new ApplyTremoloCommand(tremolo.Parameter);
 
+			case RetriggerPatternEffect retrigger:
+				return new ApplyRetriggerCommand(retrigger.Parameter);
+
 			default:
 				throw new NotSupportedException($"Unsupported pattern effect type: {effect.GetType().FullName}");
 		}

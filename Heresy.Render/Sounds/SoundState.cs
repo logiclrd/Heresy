@@ -14,6 +14,7 @@ public abstract class SoundState
 	private TimeSpan _playbackOffset;
 	private Vector3 _position;
 	private TimeSpan? _noteOffTime;
+	private long _playbackOriginFrame;
 	private long? _naturalEndFrameExclusive;
 
 	public double PitchMultiplier
@@ -56,7 +57,18 @@ public abstract class SoundState
 		}
 	}
 
+	public long PlaybackOriginFrame => _playbackOriginFrame;
+
 	public long? NaturalEndFrameExclusive => _naturalEndFrameExclusive;
+
+	internal void RestartPlaybackAt(long frame)
+	{
+		if (frame < 0)
+			throw new ArgumentOutOfRangeException(nameof(frame));
+
+		_playbackOriginFrame = frame;
+		_naturalEndFrameExclusive = null;
+	}
 
 	internal void MarkNaturalEndReached(long frameExclusive)
 	{

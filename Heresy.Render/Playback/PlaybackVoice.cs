@@ -117,6 +117,19 @@ public sealed class PlaybackVoice
 
 	public TimeSpan? FadeDuration => _fadeDuration;
 
+	internal void Retrigger(long absoluteFrame)
+	{
+		if (absoluteFrame < StartFrame)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+
+		long relativeFrame = absoluteFrame - StartFrame;
+		SoundState.RestartPlaybackAt(relativeFrame);
+
+		Array.Clear(_previousOutputFrame);
+		Array.Clear(_lastOutputFrame);
+		_outputHistoryFrames = 0;
+	}
+
 	internal void ApplyNoteOff(long absoluteFrame, int sampleRate)
 	{
 		if (absoluteFrame < StartFrame)

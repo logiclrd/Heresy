@@ -165,3 +165,9 @@ public sealed record ArpeggioPatternEffect(byte Parameter) : PatternEffect;
 /// independently recall the previous component.
 /// </summary>
 public sealed record TremoloPatternEffect(byte Parameter) : PatternEffect;
+
+/// <summary>
+/// Tracker Qxy retrigger. The low nibble is the tick countdown and the high
+/// nibble transforms note volume on each retrigger.
+/// </summary>
+public sealed record RetriggerPatternEffect(byte Parameter) : PatternEffect;

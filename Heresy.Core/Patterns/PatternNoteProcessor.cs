@@ -23,10 +23,18 @@ public static class PatternNoteProcessor
 		public double? TimingEligibilitySeconds { get; set; }
 	}
 
+	private sealed class RetriggerRequest
+	{
+		public required SequencingChannelState ChannelState { get; init; }
+		public required byte Parameter { get; init; }
+		public required bool HasNewNote { get; init; }
+	}
+
 	private sealed class ResolvedCommands
 	{
 		public required IReadOnlyList<NoteCommand> Commands { get; init; }
 		public required IReadOnlyList<NoteCommand> RowEndCommands { get; init; }
+		public RetriggerRequest? Retrigger { get; init; }
 	}
 
 	/// <summary>
@@ -173,6 +181,18 @@ public static class PatternNoteProcessor
 						SyntheticOrder(workingEvent.NoteEvent.EmissionOrder, 0)));
 				}
 
+				if (commands.Retrigger is not null)
+				{
+					ExpandRetrigger(
+						resolved,
+						workingEvent.NoteEvent,
+						commands.Retrigger,
+						eventTimeSeconds,
+						rowEndSeconds,
+						context.State,
+						context);
+				}
+
 				if (commands.RowEndCommands.Count != 0)
 				{
 					double clearTimeSeconds = Math.Max(rowEndSeconds, eventTimeSeconds);
@@ -235,6 +255,7 @@ public static class PatternNoteProcessor
 	{
 		List<NoteCommand>? transformed = null;
 		List<NoteCommand> rowEndCommands = [];
+		RetriggerRequest? retrigger = null;
 
 		for (int i = 0; i < noteEvent.Commands.Count; i++)
 		{
@@ -380,6 +401,35 @@ public static class PatternNoteProcessor
 					break;
 				}
 
+				case ApplyRetriggerCommand rawRetrigger:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(noteEvent, context, "Tracker retrigger");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+
+					byte parameter = channelState.ResolveEffectParameter(
+						EffectMemorySlot.Retrigger,
+						rawRetrigger.Parameter);
+
+					bool hasNewNote = false;
+					foreach (NoteCommand eventCommand in noteEvent.Commands)
+					{
+						if (eventCommand is StartNoteCommand)
+						{
+							hasNewNote = true;
+							break;
+						}
+					}
+
+					retrigger = new RetriggerRequest
+					{
+						ChannelState = channelState,
+						Parameter = parameter,
+						HasNewNote = hasNewNote,
+					};
+					break;
+				}
+
 				default:
 					if (command is SetPitchSlideCommand)
 						rowEndCommands.Add(new ClearPitchSlideCommand());
@@ -396,7 +446,56 @@ public static class PatternNoteProcessor
 		{
 			Commands = transformed ?? noteEvent.Commands,
 			RowEndCommands = rowEndCommands,
+			Retrigger = retrigger,
 		};
+	}
+
+	private static void ExpandRetrigger(
+		List<NoteEvent> resolved,
+		NoteEvent sourceEvent,
+		RetriggerRequest request,
+		double eventTimeSeconds,
+		double rowEndSeconds,
+		SequencingState state,
+		SequencingContext context)
+	{
+		byte volumeTransform = (byte)(request.Parameter >> 4);
+		int intervalTicks = request.Parameter & 0x0F;
+		int countdown = request.HasNewNote
+			? intervalTicks
+			: request.ChannelState.RetriggerCountdown;
+		int firstTick = request.HasNewNote ? 1 : 0;
+
+		double tickDurationSeconds =
+			SequencingConstants.Diachron.TotalSeconds / state.Tempo;
+
+		for (int tick = firstTick; tick < state.Speed; tick++)
+		{
+			double retriggerTimeSeconds =
+				eventTimeSeconds + tick * tickDurationSeconds;
+			if (retriggerTimeSeconds >= rowEndSeconds)
+				break;
+
+			countdown--;
+			if (countdown > 0)
+				continue;
+
+			resolved.Add(new NoteEvent(
+				new MusicalTime(
+					TimeSpan.FromSeconds(retriggerTimeSeconds),
+					0.0),
+				context.MapTarget(sourceEvent.Target),
+				new NoteCommand[]
+				{
+					new RetriggerCurrentVoiceCommand(volumeTransform),
+				},
+				SyntheticOrder(sourceEvent.EmissionOrder, 1)));
+
+			countdown = intervalTicks;
+		}
+
+		request.ChannelState.RetriggerCountdown =
+			Math.Clamp(countdown, 0, 15);
 	}
 
 	private static SequencingChannelState GetTrackerChannelState(

@@ -71,7 +71,7 @@ public sealed class SampleSound : ISound
 		double remainingSourceFrames = _data.FrameCount - sourceOffsetFrames;
 
 		if (!(remainingSourceFrames > 0.0))
-			return 0;
+			return sampleState.PlaybackOriginFrame;
 
 		if (!sampleState.PitchTrajectory.CanProjectEndEfficiently)
 			return noteOffEnd;
@@ -115,7 +115,8 @@ public sealed class SampleSound : ISound
 		if (_data.FrameCount == 0)
 		{
 			if (_definition.Loop.Mode == SampleLoopMode.None)
-				sampleState.MarkNaturalEndReached(0);
+				sampleState.MarkNaturalEndReached(
+					sampleState.PlaybackOriginFrame);
 			return;
 		}
 

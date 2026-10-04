@@ -11,6 +11,7 @@ namespace Heresy.Core.Sequencing;
 public sealed class SequencingChannelState
 {
 	private readonly Dictionary<EffectMemorySlot, byte> _effectMemory = [];
+	private int _retriggerCountdown;
 
 	/// <summary>
 	/// Applies conventional whole-byte tracker effect-memory semantics. A
@@ -63,6 +64,20 @@ public sealed class SequencingChannelState
 	public void ClearEffectParameter(EffectMemorySlot slot)
 		=> _effectMemory.Remove(slot);
 
+	public int RetriggerCountdown
+	{
+		get => _retriggerCountdown;
+		set
+		{
+			if (value < 0 || value > 15)
+				throw new ArgumentOutOfRangeException(nameof(value));
+			_retriggerCountdown = value;
+		}
+	}
+
 	public void ClearEffectMemory()
-		=> _effectMemory.Clear();
+	{
+		_effectMemory.Clear();
+		_retriggerCountdown = 0;
+	}
 }

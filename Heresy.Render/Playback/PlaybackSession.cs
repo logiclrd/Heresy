@@ -294,6 +294,21 @@ public sealed class PlaybackSession
 				}
 				break;
 
+			case RetriggerCurrentVoiceCommand retrigger:
+				if (channel.CurrentVoice is not null)
+				{
+					PlaybackVoice voice = channel.CurrentVoice;
+					voice.AddCutTo(channel.AntiClickTail);
+
+					double volume = TrackerRetrigger.ApplyVolumeTransform(
+						voice.GetBaseNoteVolume(eventFrame),
+						retrigger.VolumeTransform);
+					channel.SetNoteVolume(volume);
+
+					voice.Retrigger(eventFrame);
+				}
+				break;
+
 			case SetArpeggioCommand arpeggio:
 				channel.CurrentVoice?.SetArpeggio(
 					eventFrame,
