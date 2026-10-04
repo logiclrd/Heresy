@@ -424,6 +424,20 @@ public sealed class PlaybackSession
 				channel.ClearTremor();
 				break;
 
+			case SetPanbrelloCommand panbrello:
+				channel.SetPanbrello(
+					eventFrame,
+					_tempo,
+					panbrello.TicksPerRow ?? _speed,
+					_context.Configuration.SampleRate,
+					panbrello.Speed,
+					panbrello.Depth);
+				break;
+
+			case ClearPanbrelloCommand:
+				channel.ClearPanbrello(eventFrame);
+				break;
+
 			case RetriggerCurrentVoiceCommand retrigger:
 				if (channel.CurrentVoice is not null)
 				{
@@ -562,6 +576,7 @@ public sealed class PlaybackSession
 		}
 
 		DisplaceCurrentVoice(channel, eventFrame);
+		channel.ResetPanbrelloOffsetForNewNote();
 
 		if (!_soundResolver.TryResolve(start.SourceId, start.Mixdown, out ISound? sound)
 			|| sound is null)

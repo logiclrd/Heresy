@@ -1175,6 +1175,38 @@ public static class PatternNoteProcessor
 					break;
 				}
 
+				case ApplyPanbrelloCommand panbrello:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(
+							noteEvent,
+							context,
+							"Tracker panbrello");
+					transformed ??= CopyCommandsBefore(
+						noteEvent.Commands,
+						i);
+
+					byte parameter =
+						channelState.ResolveEffectParameterNibbles(
+							EffectMemorySlot.Panbrello,
+							panbrello.Parameter);
+
+					SetPanbrelloCommand resolved =
+						(SetPanbrelloCommand)ApplyRowTickOverride(
+							new SetPanbrelloCommand(
+								(byte)(parameter >> 4),
+								(byte)(parameter & 0x0F)),
+							rowTicksOverride)!;
+
+					transformed.Add(resolved);
+					AddRepeatCommand(
+						repeatCommands,
+						resolved);
+					rowEndCommands.Add(
+						new ClearPanbrelloCommand());
+					break;
+				}
+
 				case ApplyRetriggerCommand rawRetrigger:
 				{
 					SequencingChannelState channelState =
@@ -1521,6 +1553,8 @@ public static class PatternNoteProcessor
 				portamento with { TicksPerRow = rowTicksOverride.Value },
 			SetTremorCommand tremor =>
 				tremor with { TicksPerRow = rowTicksOverride.Value },
+			SetPanbrelloCommand panbrello =>
+				panbrello with { TicksPerRow = rowTicksOverride.Value },
 			_ => command,
 		};
 	}
@@ -1542,6 +1576,7 @@ public static class PatternNoteProcessor
 			case SetGlobalVolumeSlideCommand _:
 			case AdjustGlobalVolumeCommand _:
 			case SetTremorCommand _:
+			case SetPanbrelloCommand _:
 				repeatCommands.Add(command);
 				break;
 

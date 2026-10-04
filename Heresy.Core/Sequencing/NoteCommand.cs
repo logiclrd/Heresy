@@ -197,6 +197,23 @@ public sealed record SetTremorCommand(
 /// </summary>
 public sealed record ClearTremorCommand : NoteCommand;
 
+/// <summary>Raw tracker Yxy panbrello operation with nibble-wise memory.</summary>
+public sealed record ApplyPanbrelloCommand(byte Parameter) : NoteCommand;
+
+/// <summary>
+/// Activates smooth physical-channel panbrello around the persistent base
+/// position while preserving IT-compatible tick anchors.
+/// </summary>
+public sealed record SetPanbrelloCommand(
+	byte Speed,
+	byte Depth,
+	int? TicksPerRow = null) : NoteCommand;
+
+/// <summary>
+/// Stops panbrello phase advancement while retaining the last applied offset.
+/// </summary>
+public sealed record ClearPanbrelloCommand : NoteCommand;
+
 /// <summary>Raw tracker Qxy retrigger operation with whole-byte memory.</summary>
 public sealed record ApplyRetriggerCommand(byte Parameter) : NoteCommand;
 

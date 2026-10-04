@@ -17,6 +17,7 @@ public enum EffectMemorySlot
 	Arpeggio,
 	Tremolo,
 	Tremor,
+	Panbrello,
 	Retrigger,
 	SampleOffset,
 }

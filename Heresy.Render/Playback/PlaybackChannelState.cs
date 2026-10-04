@@ -43,12 +43,24 @@ public sealed class PlaybackChannelState
 		public required double NextTickFrame { get; set; }
 	}
 
+	private sealed class ActivePanbrello
+	{
+		public required long StartFrame { get; init; }
+		public required byte InitialPhase { get; init; }
+		public required byte Speed { get; init; }
+		public required int TicksPerRow { get; init; }
+		public required TrackerPanbrelloCurve Curve { get; init; }
+	}
+
 	private ActiveSpatialXSlide? _activeSpatialXSlide;
 	private ActiveOverallVolumeSlide? _activeOverallVolumeSlide;
 	private ActiveTremor? _activeTremor;
 	private bool _tremorPhaseInitialized;
 	private bool _tremorPhaseOn;
 	private int _tremorRemainingFutureTicks;
+	private ActivePanbrello? _activePanbrello;
+	private byte _panbrelloPhase;
+	private double _heldPanbrelloOffsetX;
 
 	internal PlaybackChannelState(int outputChannelCount, int sampleRate)
 	{
@@ -75,7 +87,8 @@ public sealed class PlaybackChannelState
 
 	internal bool HasActiveContinuousState =>
 		_activeSpatialXSlide is not null
-		|| _activeOverallVolumeSlide is not null;
+		|| _activeOverallVolumeSlide is not null
+		|| _activePanbrello is not null;
 
 	internal bool HasActiveTremor =>
 		_activeTremor is not null;
@@ -241,6 +254,7 @@ public sealed class PlaybackChannelState
 		if (absoluteFrame < 0)
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
 
+		CancelPanbrello(absoluteFrame);
 		_activeSpatialXSlide = null;
 		Position = position;
 		if (CurrentVoice is not null)
@@ -259,6 +273,7 @@ public sealed class PlaybackChannelState
 			minimumX,
 			maximumX);
 
+		CancelPanbrello(absoluteFrame);
 		SynchronizePosition(absoluteFrame);
 		_activeSpatialXSlide = null;
 
@@ -299,6 +314,7 @@ public sealed class PlaybackChannelState
 		if (sampleRate <= 0)
 			throw new ArgumentOutOfRangeException(nameof(sampleRate));
 
+		CancelPanbrello(absoluteFrame);
 		SynchronizePosition(absoluteFrame);
 
 		double framesPerTick =
@@ -362,13 +378,148 @@ public sealed class PlaybackChannelState
 		}
 
 		if (CurrentVoice is not null)
-			CurrentVoice.SoundState.Position = Position;
+		{
+			CurrentVoice.SoundState.Position =
+				GetEffectivePosition(absoluteFrame);
+		}
 	}
 
 	internal void SynchronizeContinuousState(long absoluteFrame)
 	{
 		SynchronizePosition(absoluteFrame);
 		SynchronizeOverallVolume(absoluteFrame);
+	}
+
+	internal void SetPanbrello(
+		long absoluteFrame,
+		double tempo,
+		int ticksPerRow,
+		int sampleRate,
+		byte speed,
+		byte depth)
+	{
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		if (!(tempo > 0.0)
+			|| double.IsNaN(tempo)
+			|| double.IsInfinity(tempo))
+		{
+			throw new ArgumentOutOfRangeException(nameof(tempo));
+		}
+		if (ticksPerRow <= 0)
+			throw new ArgumentOutOfRangeException(nameof(ticksPerRow));
+		if (sampleRate <= 0)
+			throw new ArgumentOutOfRangeException(nameof(sampleRate));
+
+		if (_activePanbrello is not null)
+			CommitPanbrelloThrough(absoluteFrame, retainOffset: true);
+
+		TimeSpan tickDuration =
+			TimeSpan.FromSeconds(
+				SequencingConstants.Diachron.TotalSeconds
+				/ tempo);
+
+		_activePanbrello = new ActivePanbrello
+		{
+			StartFrame = absoluteFrame,
+			InitialPhase = _panbrelloPhase,
+			Speed = speed,
+			TicksPerRow = ticksPerRow,
+			Curve = new TrackerPanbrelloCurve(
+				_panbrelloPhase,
+				speed,
+				depth,
+				tickDuration,
+				ticksPerRow,
+				sampleRate),
+		};
+
+		SynchronizePosition(absoluteFrame);
+	}
+
+	internal void ClearPanbrello(long absoluteFrame)
+	{
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+
+		CommitPanbrelloThrough(
+			absoluteFrame,
+			retainOffset: true);
+		SynchronizePosition(absoluteFrame);
+	}
+
+	internal void ResetPanbrelloOffsetForNewNote()
+		=> _heldPanbrelloOffsetX = 0.0;
+
+	private void CancelPanbrello(long absoluteFrame)
+	{
+		CommitPanbrelloThrough(
+			absoluteFrame,
+			retainOffset: false);
+	}
+
+	private void CommitPanbrelloThrough(
+		long absoluteFrame,
+		bool retainOffset)
+	{
+		ActivePanbrello? active = _activePanbrello;
+		if (active is null)
+		{
+			if (!retainOffset)
+				_heldPanbrelloOffsetX = 0.0;
+			return;
+		}
+
+		long frameOffset = Math.Max(
+			0,
+			absoluteFrame - active.StartFrame);
+
+		if (retainOffset)
+		{
+			_heldPanbrelloOffsetX =
+				active.Curve.GetSpatialXOffset(frameOffset);
+		}
+		else
+		{
+			_heldPanbrelloOffsetX = 0.0;
+		}
+
+		double elapsedTicks =
+			frameOffset / active.Curve.FramesPerTick;
+		int processedTicks = Math.Min(
+			active.TicksPerRow,
+			Math.Max(
+				0,
+				(int)Math.Floor(elapsedTicks + 1e-9) + 1));
+
+		_panbrelloPhase =
+			TrackerPanbrello.AdvancePhase(
+				active.InitialPhase,
+				active.Speed,
+				processedTicks);
+		_activePanbrello = null;
+	}
+
+	private Vector3 GetEffectivePosition(long absoluteFrame)
+	{
+		double offsetX = _heldPanbrelloOffsetX;
+		ActivePanbrello? active = _activePanbrello;
+		if (active is not null)
+		{
+			long frameOffset = Math.Max(
+				0,
+				absoluteFrame - active.StartFrame);
+			offsetX =
+				active.Curve.GetSpatialXOffset(frameOffset);
+		}
+
+		return new Vector3(
+			(float)Math.Clamp(
+				Position.X + offsetX,
+				-1.0,
+				1.0),
+			Position.Y,
+			Position.Z);
 	}
 
 	internal void SetTremor(
@@ -512,7 +663,8 @@ public sealed class PlaybackChannelState
 		CurrentVoice = voice;
 		voice.NoteVolume = NoteVolume;
 		voice.OverallVolume = OverallVolume;
-		voice.SoundState.Position = Position;
+		voice.SoundState.Position =
+			GetEffectivePosition(absoluteFrame);
 	}
 
 	internal void CutCurrentVoice()

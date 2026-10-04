@@ -184,6 +184,12 @@ public sealed record TremoloPatternEffect(byte Parameter) : PatternEffect;
 public sealed record TremorPatternEffect(byte Parameter) : PatternEffect;
 
 /// <summary>
+/// Tracker Yxy panbrello. Speed and depth use independent nibble memory;
+/// the modulation is applied around the channel's persistent base panning.
+/// </summary>
+public sealed record PanbrelloPatternEffect(byte Parameter) : PatternEffect;
+
+/// <summary>
 /// Tracker Qxy retrigger. The low nibble is the tick countdown and the high
 /// nibble transforms note volume on each retrigger.
 /// </summary>
