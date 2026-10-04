@@ -159,6 +159,14 @@ public sealed record TrackerPitchSlideUpPatternEffect(byte Parameter) : PatternE
 /// </summary>
 public sealed record TonePortamentoPatternEffect(byte Parameter) : PatternEffect;
 
+/// <summary>
+/// Tracker Lxx tone portamento plus note-volume slide. A same-cell note
+/// becomes the portamento target. Tone speed is recalled from Gxx memory;
+/// the visible parameter belongs to shared Dxx/Kxx/Lxx volume-slide memory.
+/// </summary>
+public sealed record TonePortamentoVolumeSlidePatternEffect(
+	byte Parameter) : PatternEffect;
+
 /// <summary>Tracker Jxy arpeggio, including J00 whole-byte memory.</summary>
 public sealed record ArpeggioPatternEffect(byte Parameter) : PatternEffect;
 

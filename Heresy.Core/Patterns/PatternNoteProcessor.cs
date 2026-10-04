@@ -1019,6 +1019,68 @@ public static class PatternNoteProcessor
 					break;
 				}
 
+				case ApplyTonePortamentoVolumeSlideCommand combined:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(
+							noteEvent,
+							context,
+							"Tracker tone portamento plus volume slide");
+					transformed ??= CopyCommandsBefore(
+						noteEvent.Commands,
+						i);
+
+					byte toneParameter =
+						channelState.ResolveEffectParameter(
+							EffectMemorySlot.TonePortamento,
+							0);
+
+					if (toneParameter != 0
+						|| combined.TargetNote is not null)
+					{
+						SetTonePortamentoCommand tone =
+							(SetTonePortamentoCommand)ApplyRowTickOverride(
+								new SetTonePortamentoCommand(
+									toneParameter * 4.0,
+									combined.TargetNote,
+									Glissando:
+										channelState.GlissandoEnabled),
+								rowTicksOverride)!;
+
+						transformed.Add(tone);
+						repeatCommands.Add(
+							tone with { TargetNote = null });
+						rowEndCommands.Add(
+							new ClearTonePortamentoCommand());
+					}
+
+					byte volumeParameter =
+						channelState.ResolveEffectParameter(
+							EffectMemorySlot.VolumeSlide,
+							combined.Parameter);
+
+					NoteCommand? volume =
+						ApplyRowTickOverride(
+							ResolveTrackerVolumeSlide(
+								volumeParameter),
+							rowTicksOverride);
+
+					if (volume is not null)
+					{
+						transformed.Add(volume);
+						AddRepeatCommand(
+							repeatCommands,
+							volume);
+
+						if (volume is SetNoteVolumeSlideCommand)
+						{
+							rowEndCommands.Add(
+								new ClearNoteVolumeSlideCommand());
+						}
+					}
+					break;
+				}
+
 				case ApplyArpeggioCommand arpeggio:
 				{
 					SequencingChannelState channelState =

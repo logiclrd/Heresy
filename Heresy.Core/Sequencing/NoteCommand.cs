@@ -133,6 +133,14 @@ public sealed record ApplyTonePortamentoCommand(
 	StartNoteCommand? TargetNote = null) : NoteCommand;
 
 /// <summary>
+/// Raw tracker Lxx tone-portamento-plus-volume-slide operation. Parameter
+/// belongs to Dxx/Kxx/Lxx volume memory; tone speed comes from Gxx memory.
+/// </summary>
+public sealed record ApplyTonePortamentoVolumeSlideCommand(
+	byte Parameter,
+	StartNoteCommand? TargetNote = null) : NoteCommand;
+
+/// <summary>
 /// Resolved tone portamento. LinearUnitsPerTick is non-negative. TargetNote is
 /// null when continuing toward the previously established target.
 /// </summary>

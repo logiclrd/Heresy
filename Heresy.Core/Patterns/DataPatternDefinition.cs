@@ -38,7 +38,8 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			bool hasTonePortamento = false;
 			foreach (PatternEffect effect in cell.Effects)
 			{
-				if (effect is TonePortamentoPatternEffect)
+				if (effect is TonePortamentoPatternEffect
+					or TonePortamentoVolumeSlidePatternEffect)
 				{
 					hasTonePortamento = true;
 					break;
@@ -63,6 +64,14 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 				{
 					command = new ApplyTonePortamentoCommand(
 						tonePortamento.Parameter,
+						tonePortamentoTarget);
+					tonePortamentoTarget = null;
+					isGlobal = false;
+				}
+				else if (effect is TonePortamentoVolumeSlidePatternEffect combined)
+				{
+					command = new ApplyTonePortamentoVolumeSlideCommand(
+						combined.Parameter,
 						tonePortamentoTarget);
 					tonePortamentoTarget = null;
 					isGlobal = false;
