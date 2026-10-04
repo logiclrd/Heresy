@@ -385,3 +385,10 @@ public sealed record TrackerPanningPatternEffect : PatternEffect
 
 	public byte Value { get; }
 }
+
+/// <summary>
+/// Tracker Xxx 8-bit panning. Unlike S8x, the byte is already in IT's
+/// internal panning units and therefore ranges from 0 through 255.
+/// </summary>
+public sealed record TrackerPanning8BitPatternEffect(
+	byte Parameter) : PatternEffect;

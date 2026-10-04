@@ -220,6 +220,10 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			case TrackerPanningPatternEffect panning:
 				return new ApplyTrackerPanningCommand(panning.Value);
 
+			case TrackerPanning8BitPatternEffect panning:
+				return new ApplyTrackerPanning8BitCommand(
+					panning.Parameter);
+
 			default:
 				throw new NotSupportedException($"Unsupported pattern effect type: {effect.GetType().FullName}");
 		}

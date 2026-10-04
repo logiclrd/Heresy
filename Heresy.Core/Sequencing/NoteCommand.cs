@@ -300,3 +300,9 @@ public sealed record SetSpatialPositionCommand : NoteCommand
 
 	public Vector3 Position { get; }
 }
+
+/// <summary>
+/// Raw tracker Xxx 8-bit panning value.
+/// </summary>
+public sealed record ApplyTrackerPanning8BitCommand(
+	byte Parameter) : NoteCommand;

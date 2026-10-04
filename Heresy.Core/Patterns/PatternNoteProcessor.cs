@@ -1002,12 +1002,29 @@ public static class PatternNoteProcessor
 
 					int trackerPan =
 						(panning.Value * 256 + 8) / 15;
-					float x =
-						(trackerPan - 128) / 128.0f;
 
 					transformed.Add(
 						new SetSpatialPositionCommand(
-							new Vector3(x, 0.0f, 0.0f)));
+							new Vector3(
+								TrackerPanToSpatialX(trackerPan),
+								0.0f,
+								0.0f)));
+					break;
+
+				case ApplyTrackerPanning8BitCommand panning:
+					GetTrackerChannelState(
+						noteEvent,
+						context,
+						"Tracker 8-bit panning");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+
+					transformed.Add(
+						new SetSpatialPositionCommand(
+							new Vector3(
+								TrackerPanToSpatialX(
+									panning.Parameter),
+								0.0f,
+								0.0f)));
 					break;
 
 				default:
@@ -1124,6 +1141,14 @@ public static class PatternNoteProcessor
 
 		return left.NoteEvent.EmissionOrder.CompareTo(
 			right.NoteEvent.EmissionOrder);
+	}
+
+	private static float TrackerPanToSpatialX(int trackerPan)
+	{
+		if (trackerPan < 0 || trackerPan > 256)
+			throw new ArgumentOutOfRangeException(nameof(trackerPan));
+
+		return (trackerPan - 128) / 128.0f;
 	}
 
 	private static NoteCommand? ApplyRowTickOverride(
