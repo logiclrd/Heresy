@@ -392,3 +392,31 @@ public sealed record SetGlobalVolumeCommand : NoteCommand
 
 	public double Volume { get; }
 }
+
+/// <summary>
+/// Raw tracker Wxx global-volume slide. It remains on its physical-channel
+/// target so W00 memory and same-timestamp channel ordering are preserved.
+/// </summary>
+public sealed record ApplyGlobalVolumeSlideCommand(
+	byte Parameter) : NoteCommand;
+
+/// <summary>
+/// Immediately adjusts session-wide gain in tracker global-volume units,
+/// where 128 units span the normalized [0,1] range.
+/// </summary>
+public sealed record AdjustGlobalVolumeCommand(
+	double TrackerUnits) : NoteCommand;
+
+/// <summary>
+/// Registers a continuous session-wide volume slide contributed by the
+/// originating physical channel.
+/// </summary>
+public sealed record SetGlobalVolumeSlideCommand(
+	double TrackerUnitsPerTick,
+	int? TicksPerRow = null) : NoteCommand;
+
+/// <summary>
+/// Stops the originating physical channel's active contribution to global
+/// volume sliding while preserving the accumulated session-wide volume.
+/// </summary>
+public sealed record ClearGlobalVolumeSlideCommand : NoteCommand;

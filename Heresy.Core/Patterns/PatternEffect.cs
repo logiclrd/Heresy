@@ -418,3 +418,10 @@ public sealed record TrackerChannelVolumeSlidePatternEffect(
 /// </summary>
 public sealed record TrackerGlobalVolumePatternEffect(
 	byte Parameter) : PatternEffect;
+
+/// <summary>
+/// Tracker Wxx global-volume slide. Effect memory belongs to the originating
+/// physical channel even though the affected value is session-global.
+/// </summary>
+public sealed record TrackerGlobalVolumeSlidePatternEffect(
+	byte Parameter) : PatternEffect;

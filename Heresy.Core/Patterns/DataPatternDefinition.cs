@@ -177,9 +177,12 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 					slide.Parameter);
 
 			case TrackerGlobalVolumePatternEffect volume:
-				isGlobal = true;
 				return new ApplyTrackerGlobalVolumeCommand(
 					volume.Parameter);
+
+			case TrackerGlobalVolumeSlidePatternEffect slide:
+				return new ApplyGlobalVolumeSlideCommand(
+					slide.Parameter);
 
 			case TrackerPitchSlideDownPatternEffect slide:
 				return new ApplyPitchSlideDownCommand(slide.Parameter);

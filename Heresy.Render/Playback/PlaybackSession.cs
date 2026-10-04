@@ -16,11 +16,20 @@ namespace Heresy.Render.Playback;
 /// </summary>
 public sealed class PlaybackSession
 {
+	private sealed class ActiveGlobalVolumeSlide
+	{
+		public required double TrackerUnitsPerTick { get; init; }
+		public required double FramesPerTick { get; init; }
+		public required int RemainingTickTransitions { get; set; }
+		public required double NextTickFrame { get; set; }
+	}
+
 	private readonly RenderContext _context;
 	private readonly NoteSchedule _schedule;
 	private readonly ISoundResolver _soundResolver;
 	private readonly SortedDictionary<int, PlaybackChannelState> _channels = [];
 	private readonly List<PlaybackVoice> _virtualVoices = [];
+	private readonly SortedDictionary<int, ActiveGlobalVolumeSlide> _globalVolumeSlides = [];
 
 	private int _nextEventIndex;
 	private long _nextFrame;
@@ -28,6 +37,10 @@ public sealed class PlaybackSession
 	private double _tempo = SequencingConstants.DefaultTempo;
 	private int _speed = SequencingConstants.DefaultSpeed;
 	private double _globalVolume = 1.0;
+	private double _globalVolumeAnchorFrame;
+	private double _globalVolumeAnchorValue = 1.0;
+	private double? _globalVolumeNextAnchorFrame;
+	private double _globalVolumeNextAnchorValue = 1.0;
 
 	public PlaybackSession(
 		RenderContext context,
@@ -159,7 +172,7 @@ public sealed class PlaybackSession
 		if (noteEvent.Target.Kind == ChannelTargetKind.Global)
 		{
 			foreach (NoteCommand command in noteEvent.Commands)
-				ApplyGlobalCommand(command);
+				ApplyGlobalCommand(command, eventFrame);
 			return;
 		}
 
@@ -209,6 +222,30 @@ public sealed class PlaybackSession
 					eventFrame,
 					_context.Configuration.SampleRate);
 				CullFinishedCurrentVoice(channel, eventFrame);
+				break;
+
+			case SetGlobalVolumeCommand volume:
+				SetGlobalVolume(eventFrame, volume.Volume);
+				break;
+
+			case AdjustGlobalVolumeCommand adjust:
+				AdjustGlobalVolume(
+					eventFrame,
+					adjust.TrackerUnits);
+				break;
+
+			case SetGlobalVolumeSlideCommand slide:
+				SetGlobalVolumeSlide(
+					physicalChannel,
+					eventFrame,
+					slide.TicksPerRow ?? _speed,
+					slide.TrackerUnitsPerTick);
+				break;
+
+			case ClearGlobalVolumeSlideCommand:
+				ClearGlobalVolumeSlide(
+					physicalChannel,
+					eventFrame);
 				break;
 
 			case SetNoteVolumeCommand volume:
@@ -475,18 +512,22 @@ public sealed class PlaybackSession
 		}
 	}
 
-	private void ApplyGlobalCommand(NoteCommand command)
+	private void ApplyGlobalCommand(
+		NoteCommand command,
+		long eventFrame)
 	{
 		switch (command)
 		{
 			case SetTempoCommand tempo:
 				_tempo = tempo.TicksPerDiachron;
 				break;
+
 			case SetSpeedCommand speed:
 				_speed = speed.TicksPerRow;
 				break;
+
 			case SetGlobalVolumeCommand volume:
-				_globalVolume = volume.Volume;
+				SetGlobalVolume(eventFrame, volume.Volume);
 				break;
 		}
 	}
@@ -715,17 +756,267 @@ public sealed class PlaybackSession
 					index++;
 			}
 
-			if (_globalVolume != 1.0)
-			{
-				for (int sample = 0; sample < destination.Length; sample++)
-					destination[sample] =
-						(float)(destination[sample] * _globalVolume);
-			}
+			ApplyGlobalVolume(
+				absoluteStartFrame,
+				frameCount,
+				outputChannelCount,
+				destination);
 		}
 		finally
 		{
 			ArrayPool<float>.Shared.Return(rented);
 		}
+	}
+
+	private void SetGlobalVolume(
+		long absoluteFrame,
+		double volume)
+	{
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		if (double.IsNaN(volume)
+			|| double.IsInfinity(volume)
+			|| volume < 0.0
+			|| volume > 1.0)
+		{
+			throw new ArgumentOutOfRangeException(nameof(volume));
+		}
+
+		SynchronizeGlobalVolume(absoluteFrame);
+		_globalVolume = volume;
+		PlanNextGlobalVolumeAnchor(absoluteFrame);
+	}
+
+	private void AdjustGlobalVolume(
+		long absoluteFrame,
+		double trackerUnits)
+	{
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		if (double.IsNaN(trackerUnits)
+			|| double.IsInfinity(trackerUnits))
+		{
+			throw new ArgumentOutOfRangeException(nameof(trackerUnits));
+		}
+
+		SynchronizeGlobalVolume(absoluteFrame);
+		_globalVolume = Math.Clamp(
+			_globalVolume + trackerUnits / 128.0,
+			0.0,
+			1.0);
+		PlanNextGlobalVolumeAnchor(absoluteFrame);
+	}
+
+	private void SetGlobalVolumeSlide(
+		int physicalChannel,
+		long absoluteFrame,
+		int ticksPerRow,
+		double trackerUnitsPerTick)
+	{
+		if (physicalChannel < 0)
+			throw new ArgumentOutOfRangeException(nameof(physicalChannel));
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		if (ticksPerRow <= 0)
+			throw new ArgumentOutOfRangeException(nameof(ticksPerRow));
+		if (double.IsNaN(trackerUnitsPerTick)
+			|| double.IsInfinity(trackerUnitsPerTick))
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(trackerUnitsPerTick));
+		}
+
+		SynchronizeGlobalVolume(absoluteFrame);
+
+		double framesPerTick =
+			SequencingConstants.Diachron.TotalSeconds
+			/ _tempo
+			* _context.Configuration.SampleRate;
+
+		if (!(framesPerTick > 0.0)
+			|| double.IsNaN(framesPerTick)
+			|| double.IsInfinity(framesPerTick))
+		{
+			throw new InvalidOperationException(
+				"Tempo produces an invalid global-volume-slide tick duration.");
+		}
+
+		int transitions = Math.Max(0, ticksPerRow - 1);
+		if (transitions == 0)
+		{
+			_globalVolumeSlides.Remove(physicalChannel);
+		}
+		else
+		{
+			_globalVolumeSlides[physicalChannel] =
+				new ActiveGlobalVolumeSlide
+				{
+					TrackerUnitsPerTick = trackerUnitsPerTick,
+					FramesPerTick = framesPerTick,
+					RemainingTickTransitions = transitions,
+					NextTickFrame =
+						absoluteFrame + framesPerTick,
+				};
+		}
+
+		PlanNextGlobalVolumeAnchor(absoluteFrame);
+	}
+
+	private void ClearGlobalVolumeSlide(
+		int physicalChannel,
+		long absoluteFrame)
+	{
+		if (physicalChannel < 0)
+			throw new ArgumentOutOfRangeException(nameof(physicalChannel));
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+
+		SynchronizeGlobalVolume(absoluteFrame);
+		_globalVolumeSlides.Remove(physicalChannel);
+		PlanNextGlobalVolumeAnchor(absoluteFrame);
+	}
+
+	private void ApplyGlobalVolume(
+		long absoluteStartFrame,
+		int frameCount,
+		int outputChannelCount,
+		Span<float> destination)
+	{
+		for (int frame = 0; frame < frameCount; frame++)
+		{
+			long absoluteFrame = absoluteStartFrame + frame;
+			SynchronizeGlobalVolume(absoluteFrame);
+
+			if (_globalVolume == 1.0)
+				continue;
+
+			Span<float> outputFrame = destination.Slice(
+				frame * outputChannelCount,
+				outputChannelCount);
+
+			for (int outputChannel = 0;
+				outputChannel < outputChannelCount;
+				outputChannel++)
+			{
+				outputFrame[outputChannel] =
+					(float)(outputFrame[outputChannel] * _globalVolume);
+			}
+		}
+	}
+
+	private void SynchronizeGlobalVolume(long absoluteFrame)
+	{
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+
+		double targetFrame = absoluteFrame;
+
+		while (_globalVolumeNextAnchorFrame.HasValue
+			&& _globalVolumeNextAnchorFrame.Value
+				<= targetFrame + 1e-9)
+		{
+			double reachedFrame =
+				_globalVolumeNextAnchorFrame.Value;
+
+			_globalVolume = _globalVolumeNextAnchorValue;
+			AdvanceGlobalVolumeSlidesAt(reachedFrame);
+			PlanNextGlobalVolumeAnchor(reachedFrame);
+		}
+
+		if (_globalVolumeNextAnchorFrame.HasValue
+			&& _globalVolumeNextAnchorFrame.Value
+				> _globalVolumeAnchorFrame)
+		{
+			double fraction = Math.Clamp(
+				(targetFrame - _globalVolumeAnchorFrame)
+				/ (_globalVolumeNextAnchorFrame.Value
+					- _globalVolumeAnchorFrame),
+				0.0,
+				1.0);
+
+			_globalVolume =
+				_globalVolumeAnchorValue
+				+ (_globalVolumeNextAnchorValue
+					- _globalVolumeAnchorValue)
+					* fraction;
+		}
+		else
+		{
+			_globalVolume = _globalVolumeAnchorValue;
+		}
+	}
+
+	private void AdvanceGlobalVolumeSlidesAt(
+		double anchorFrame)
+	{
+		foreach (KeyValuePair<int, ActiveGlobalVolumeSlide> pair
+			in _globalVolumeSlides)
+		{
+			ActiveGlobalVolumeSlide slide = pair.Value;
+			if (slide.RemainingTickTransitions <= 0
+				|| Math.Abs(
+					slide.NextTickFrame - anchorFrame) > 1e-9)
+			{
+				continue;
+			}
+
+			slide.RemainingTickTransitions--;
+			if (slide.RemainingTickTransitions > 0)
+				slide.NextTickFrame += slide.FramesPerTick;
+		}
+	}
+
+	private void PlanNextGlobalVolumeAnchor(
+		double anchorFrame)
+	{
+		_globalVolumeAnchorFrame = anchorFrame;
+		_globalVolumeAnchorValue = _globalVolume;
+
+		double? earliest = null;
+		foreach (ActiveGlobalVolumeSlide slide
+			in _globalVolumeSlides.Values)
+		{
+			if (slide.RemainingTickTransitions <= 0)
+				continue;
+
+			if (!earliest.HasValue
+				|| slide.NextTickFrame < earliest.Value)
+			{
+				earliest = slide.NextTickFrame;
+			}
+		}
+
+		if (!earliest.HasValue)
+		{
+			_globalVolumeNextAnchorFrame = null;
+			_globalVolumeNextAnchorValue = _globalVolume;
+			return;
+		}
+
+		double targetVolume = _globalVolume;
+		foreach (KeyValuePair<int, ActiveGlobalVolumeSlide> pair
+			in _globalVolumeSlides)
+		{
+			ActiveGlobalVolumeSlide slide = pair.Value;
+			if (slide.RemainingTickTransitions <= 0
+				|| Math.Abs(
+					slide.NextTickFrame
+						- earliest.Value) > 1e-9)
+			{
+				continue;
+			}
+
+			// SortedDictionary iteration preserves physical-channel order,
+			// including the observable effect of clamping between channels.
+			targetVolume = Math.Clamp(
+				targetVolume
+					+ slide.TrackerUnitsPerTick / 128.0,
+				0.0,
+				1.0);
+		}
+
+		_globalVolumeNextAnchorFrame = earliest.Value;
+		_globalVolumeNextAnchorValue = targetVolume;
 	}
 
 	private bool RenderVoice(
