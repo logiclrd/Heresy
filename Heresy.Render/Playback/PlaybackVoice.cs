@@ -20,6 +20,13 @@ public sealed class PlaybackVoice
 		public required TimeSpan NextLegacyTickTime { get; set; }
 	}
 
+	private sealed class ActiveTremolo
+	{
+		public required byte Speed { get; init; }
+		public required TimeSpan TickDuration { get; init; }
+		public required TimeSpan NextLegacyTickTime { get; set; }
+	}
+
 	private sealed class ActiveNoteVolumeSlide
 	{
 		public required long StartFrame { get; init; }
@@ -39,13 +46,22 @@ public sealed class PlaybackVoice
 
 	private byte _vibratoPhase;
 	private ActiveVibrato? _activeVibrato;
+
+	private byte _tremoloPhase;
+	private ActiveTremolo? _activeTremolo;
+	private TrackerTremoloVolumeCurve? _tremoloVolumeCurve;
+	private long _tremoloVolumeCurveStartFrame;
+
 	private ActiveNoteVolumeSlide? _activeNoteVolumeSlide;
 
 	private PitchCurve _basePitchCurve = new ConstantPitchCurve(1.0);
 	private long _basePitchCurveStartFrame;
 	private double? _tonePortamentoTargetBaseMultiplier;
-	private PitchCurve _modulationPitchCurve = new ConstantPitchCurve(1.0);
-	private long _modulationPitchCurveStartFrame;
+
+	private PitchCurve _vibratoPitchCurve = new ConstantPitchCurve(1.0);
+	private long _vibratoPitchCurveStartFrame;
+	private PitchCurve _arpeggioPitchCurve = new ConstantPitchCurve(1.0);
+	private long _arpeggioPitchCurveStartFrame;
 
 	internal PlaybackVoice(
 		ISound sound,
@@ -174,13 +190,13 @@ public sealed class PlaybackVoice
 		};
 
 		long relativeFrame = absoluteFrame - StartFrame;
-		_modulationPitchCurve = new TrackerVibratoPitchCurve(
+		_vibratoPitchCurve = new TrackerVibratoPitchCurve(
 			_vibratoPhase,
 			speed,
 			depth,
 			tickDuration,
 			sampleRate);
-		_modulationPitchCurveStartFrame = relativeFrame;
+		_vibratoPitchCurveStartFrame = relativeFrame;
 
 		RecomposePitchTrajectory(relativeFrame);
 	}
@@ -196,10 +212,94 @@ public sealed class PlaybackVoice
 		_activeVibrato = null;
 
 		long relativeFrame = absoluteFrame - StartFrame;
-		_modulationPitchCurve = new ConstantPitchCurve(1.0);
-		_modulationPitchCurveStartFrame = relativeFrame;
+		_vibratoPitchCurve = new ConstantPitchCurve(1.0);
+		_vibratoPitchCurveStartFrame = relativeFrame;
 
 		RecomposePitchTrajectory(relativeFrame);
+	}
+
+	internal void SetArpeggio(
+		long absoluteFrame,
+		double tempo,
+		int sampleRate,
+		byte firstSemitones,
+		byte secondSemitones)
+	{
+		if (absoluteFrame < StartFrame)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		if (sampleRate <= 0)
+			throw new ArgumentOutOfRangeException(nameof(sampleRate));
+
+		long relativeFrame = absoluteFrame - StartFrame;
+		_arpeggioPitchCurve = new TrackerArpeggioPitchCurve(
+			firstSemitones,
+			secondSemitones,
+			GetTickDuration(tempo),
+			sampleRate);
+		_arpeggioPitchCurveStartFrame = relativeFrame;
+
+		RecomposePitchTrajectory(relativeFrame);
+	}
+
+	internal void ClearArpeggio(long absoluteFrame)
+	{
+		if (absoluteFrame < StartFrame)
+			return;
+
+		long relativeFrame = absoluteFrame - StartFrame;
+		_arpeggioPitchCurve = new ConstantPitchCurve(1.0);
+		_arpeggioPitchCurveStartFrame = relativeFrame;
+
+		RecomposePitchTrajectory(relativeFrame);
+	}
+
+	internal void SetTremolo(
+		long absoluteFrame,
+		TimeSpan eventTime,
+		double tempo,
+		int sampleRate,
+		byte speed,
+		byte depth)
+	{
+		if (absoluteFrame < StartFrame)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		if (sampleRate <= 0)
+			throw new ArgumentOutOfRangeException(nameof(sampleRate));
+
+		CommitTremoloPhaseThrough(eventTime);
+
+		TimeSpan tickDuration = GetTickDuration(tempo);
+		_tremoloPhase = TrackerVibrato.AdvancePhase(
+			_tremoloPhase,
+			speed);
+
+		_activeTremolo = new ActiveTremolo
+		{
+			Speed = speed,
+			TickDuration = tickDuration,
+			NextLegacyTickTime = eventTime + tickDuration,
+		};
+
+		_tremoloVolumeCurve = new TrackerTremoloVolumeCurve(
+			_tremoloPhase,
+			speed,
+			depth,
+			tickDuration,
+			sampleRate);
+		_tremoloVolumeCurveStartFrame = absoluteFrame;
+	}
+
+	internal void ClearTremolo(
+		long absoluteFrame,
+		TimeSpan eventTime)
+	{
+		if (absoluteFrame < StartFrame)
+			return;
+
+		CommitTremoloPhaseThrough(eventTime);
+		_activeTremolo = null;
+		_tremoloVolumeCurve = null;
+		_tremoloVolumeCurveStartFrame = absoluteFrame;
 	}
 
 	internal void AdjustPitchLinearUnits(
@@ -358,7 +458,7 @@ public sealed class PlaybackVoice
 		}
 
 		double adjusted = Math.Clamp(
-			GetNoteVolume(absoluteFrame) + trackerUnits / 64.0,
+			GetBaseNoteVolume(absoluteFrame) + trackerUnits / 64.0,
 			0.0,
 			1.0);
 
@@ -385,7 +485,7 @@ public sealed class PlaybackVoice
 			throw new ArgumentOutOfRangeException(nameof(trackerUnitsPerTick));
 		}
 
-		double current = GetNoteVolume(absoluteFrame);
+		double current = GetBaseNoteVolume(absoluteFrame);
 		NoteVolume = current;
 
 		_activeNoteVolumeSlide = new ActiveNoteVolumeSlide
@@ -400,13 +500,13 @@ public sealed class PlaybackVoice
 
 	internal double ClearNoteVolumeSlide(long absoluteFrame)
 	{
-		double current = GetNoteVolume(absoluteFrame);
+		double current = GetBaseNoteVolume(absoluteFrame);
 		NoteVolume = current;
 		_activeNoteVolumeSlide = null;
 		return current;
 	}
 
-	internal double GetNoteVolume(long absoluteFrame)
+	internal double GetBaseNoteVolume(long absoluteFrame)
 	{
 		ActiveNoteVolumeSlide? slide = _activeNoteVolumeSlide;
 		if (slide is null)
@@ -424,6 +524,26 @@ public sealed class PlaybackVoice
 			1.0);
 	}
 
+	internal double GetNoteVolume(long absoluteFrame)
+	{
+		double volume = GetBaseNoteVolume(absoluteFrame);
+
+		if (_tremoloVolumeCurve is null
+			|| absoluteFrame < _tremoloVolumeCurveStartFrame)
+		{
+			return volume;
+		}
+
+		double offsetUnits =
+			_tremoloVolumeCurve.GetOffsetTrackerUnits(
+				absoluteFrame - _tremoloVolumeCurveStartFrame);
+
+		return Math.Clamp(
+			volume + offsetUnits / 64.0,
+			0.0,
+			1.0);
+	}
+
 	private double GetBasePitchMultiplier(long relativeFrame)
 		=> _basePitchCurve.GetMultiplier(
 			checked(relativeFrame - _basePitchCurveStartFrame));
@@ -433,13 +553,20 @@ public sealed class PlaybackVoice
 		PitchCurve baseCurve = new OffsetPitchCurve(
 			_basePitchCurve,
 			checked(relativeFrame - _basePitchCurveStartFrame));
-		PitchCurve modulationCurve = new OffsetPitchCurve(
-			_modulationPitchCurve,
-			checked(relativeFrame - _modulationPitchCurveStartFrame));
+		PitchCurve vibratoCurve = new OffsetPitchCurve(
+			_vibratoPitchCurve,
+			checked(relativeFrame - _vibratoPitchCurveStartFrame));
+		PitchCurve arpeggioCurve = new OffsetPitchCurve(
+			_arpeggioPitchCurve,
+			checked(relativeFrame - _arpeggioPitchCurveStartFrame));
 
 		SoundState.PitchTrajectory.SetCurve(
 			relativeFrame,
-			new ProductPitchCurve(baseCurve, modulationCurve));
+			new ProductPitchCurve(
+				baseCurve,
+				new ProductPitchCurve(
+					vibratoCurve,
+					arpeggioCurve)));
 	}
 
 	private void CommitVibratoPhaseThrough(TimeSpan eventTime)
@@ -454,6 +581,21 @@ public sealed class PlaybackVoice
 				_vibratoPhase,
 				vibrato.Speed);
 			vibrato.NextLegacyTickTime += vibrato.TickDuration;
+		}
+	}
+
+	private void CommitTremoloPhaseThrough(TimeSpan eventTime)
+	{
+		ActiveTremolo? tremolo = _activeTremolo;
+		if (tremolo is null)
+			return;
+
+		while (tremolo.NextLegacyTickTime < eventTime)
+		{
+			_tremoloPhase = TrackerVibrato.AdvancePhase(
+				_tremoloPhase,
+				tremolo.Speed);
+			tremolo.NextLegacyTickTime += tremolo.TickDuration;
 		}
 	}
 

@@ -31,12 +31,32 @@ public static class TrackerVibrato
 
 	public const double LinearSlideUnitsPerOctave = 768.0;
 
+	public static int GetFineSineSample(byte phase)
+		=> FineSineData[phase];
+
+	public static double GetContinuousFineSineSample(double phase)
+	{
+		if (double.IsNaN(phase) || double.IsInfinity(phase))
+			throw new ArgumentOutOfRangeException(nameof(phase));
+
+		double wrapped = phase % 256.0;
+		if (wrapped < 0.0)
+			wrapped += 256.0;
+
+		int index0 = (int)Math.Floor(wrapped);
+		int index1 = (index0 + 1) & 0xFF;
+		double fraction = wrapped - index0;
+
+		return FineSineData[index0]
+			+ (FineSineData[index1] - FineSineData[index0]) * fraction;
+	}
+
 	public static byte AdvancePhase(byte phase, byte speed)
 		=> unchecked((byte)(phase + speed * 4));
 
 	public static int GetLinearSlideUnits(byte phase, byte depth)
 	{
-		int sine = FineSineData[phase];
+		int sine = GetFineSineSample(phase);
 
 		// IT multiplies FineSineData by depth*4, shifts left twice, adds 0x80,
 		// then takes signed AH. This is equivalent to the floor below.

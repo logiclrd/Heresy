@@ -156,3 +156,12 @@ public sealed record TrackerPitchSlideUpPatternEffect(byte Parameter) : PatternE
 /// pitch rather than retriggering an already-active voice.
 /// </summary>
 public sealed record TonePortamentoPatternEffect(byte Parameter) : PatternEffect;
+
+/// <summary>Tracker Jxy arpeggio, including J00 whole-byte memory.</summary>
+public sealed record ArpeggioPatternEffect(byte Parameter) : PatternEffect;
+
+/// <summary>
+/// Tracker Rxy tremolo. High nibble is speed, low nibble depth; zero nibbles
+/// independently recall the previous component.
+/// </summary>
+public sealed record TremoloPatternEffect(byte Parameter) : PatternEffect;

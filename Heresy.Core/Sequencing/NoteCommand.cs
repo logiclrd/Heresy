@@ -123,3 +123,25 @@ public sealed record SetTonePortamentoCommand(
 /// Stops tone-portamento movement for the row while retaining its target.
 /// </summary>
 public sealed record ClearTonePortamentoCommand : NoteCommand;
+
+/// <summary>Raw tracker Jxy arpeggio operation with whole-byte memory.</summary>
+public sealed record ApplyArpeggioCommand(byte Parameter) : NoteCommand;
+
+/// <summary>Resolved tracker arpeggio semitone offsets.</summary>
+public sealed record SetArpeggioCommand(
+	byte FirstSemitones,
+	byte SecondSemitones) : NoteCommand;
+
+/// <summary>Stops the row-scoped arpeggio modulation.</summary>
+public sealed record ClearArpeggioCommand : NoteCommand;
+
+/// <summary>
+/// Raw tracker Rxy tremolo. Zero nibbles independently recall speed/depth.
+/// </summary>
+public sealed record ApplyTremoloCommand(byte Parameter) : NoteCommand;
+
+/// <summary>Resolved normal tremolo parameters in tracker units.</summary>
+public sealed record SetTremoloCommand(byte Speed, byte Depth) : NoteCommand;
+
+/// <summary>Stops transient tremolo modulation without resetting its phase.</summary>
+public sealed record ClearTremoloCommand : NoteCommand;

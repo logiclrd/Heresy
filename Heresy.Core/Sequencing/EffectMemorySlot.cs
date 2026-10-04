@@ -11,4 +11,6 @@ public enum EffectMemorySlot
 	VolumeSlide,
 	PitchSlide,
 	TonePortamento,
+	Arpeggio,
+	Tremolo,
 }

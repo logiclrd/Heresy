@@ -171,6 +171,12 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			case TrackerPitchSlideUpPatternEffect slide:
 				return new ApplyPitchSlideUpCommand(slide.Parameter);
 
+			case ArpeggioPatternEffect arpeggio:
+				return new ApplyArpeggioCommand(arpeggio.Parameter);
+
+			case TremoloPatternEffect tremolo:
+				return new ApplyTremoloCommand(tremolo.Parameter);
+
 			default:
 				throw new NotSupportedException($"Unsupported pattern effect type: {effect.GetType().FullName}");
 		}

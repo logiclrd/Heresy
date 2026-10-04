@@ -343,6 +343,43 @@ public static class PatternNoteProcessor
 					break;
 				}
 
+				case ApplyArpeggioCommand arpeggio:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(noteEvent, context, "Tracker arpeggio");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+
+					byte parameter = channelState.ResolveEffectParameter(
+						EffectMemorySlot.Arpeggio,
+						arpeggio.Parameter);
+
+					if (parameter != 0)
+					{
+						transformed.Add(new SetArpeggioCommand(
+							(byte)(parameter >> 4),
+							(byte)(parameter & 0x0F)));
+						rowEndCommands.Add(new ClearArpeggioCommand());
+					}
+					break;
+				}
+
+				case ApplyTremoloCommand tremolo:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(noteEvent, context, "Tracker tremolo");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+
+					byte parameter = channelState.ResolveEffectParameterNibbles(
+						EffectMemorySlot.Tremolo,
+						tremolo.Parameter);
+
+					transformed.Add(new SetTremoloCommand(
+						(byte)(parameter >> 4),
+						(byte)(parameter & 0x0F)));
+					rowEndCommands.Add(new ClearTremoloCommand());
+					break;
+				}
+
 				default:
 					if (command is SetPitchSlideCommand)
 						rowEndCommands.Add(new ClearPitchSlideCommand());

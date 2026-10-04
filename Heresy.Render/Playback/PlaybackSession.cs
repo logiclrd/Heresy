@@ -294,6 +294,35 @@ public sealed class PlaybackSession
 				}
 				break;
 
+			case SetArpeggioCommand arpeggio:
+				channel.CurrentVoice?.SetArpeggio(
+					eventFrame,
+					_tempo,
+					_context.Configuration.SampleRate,
+					arpeggio.FirstSemitones,
+					arpeggio.SecondSemitones);
+				break;
+
+			case ClearArpeggioCommand:
+				channel.CurrentVoice?.ClearArpeggio(eventFrame);
+				break;
+
+			case SetTremoloCommand tremolo:
+				channel.CurrentVoice?.SetTremolo(
+					eventFrame,
+					eventTime,
+					_tempo,
+					_context.Configuration.SampleRate,
+					tremolo.Speed,
+					tremolo.Depth);
+				break;
+
+			case ClearTremoloCommand:
+				channel.CurrentVoice?.ClearTremolo(
+					eventFrame,
+					eventTime);
+				break;
+
 			case SetVibratoCommand vibrato:
 				channel.CurrentVoice?.SetVibrato(
 					eventFrame,
@@ -341,7 +370,7 @@ public sealed class PlaybackSession
 		if (channel.CurrentVoice is not null)
 		{
 			channel.CaptureCurrentNoteVolume(
-				channel.CurrentVoice.GetNoteVolume(eventFrame));
+				channel.CurrentVoice.GetBaseNoteVolume(eventFrame));
 		}
 
 		DisplaceCurrentVoice(channel, eventFrame);
