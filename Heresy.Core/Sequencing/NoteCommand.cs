@@ -334,3 +334,10 @@ public sealed record SetSpatialXSlideCommand(
 /// Stops the active spatial-X slide while preserving the accumulated position.
 /// </summary>
 public sealed record ClearSpatialXSlideCommand : NoteCommand;
+
+/// <summary>
+/// Raw tracker Mxx channel-volume operation. Values above 64 are valid pattern
+/// data but are ignored by Impulse Tracker.
+/// </summary>
+public sealed record ApplyTrackerChannelVolumeCommand(
+	byte Parameter) : NoteCommand;

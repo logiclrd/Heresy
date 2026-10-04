@@ -398,3 +398,10 @@ public sealed record TrackerPanning8BitPatternEffect(
 /// </summary>
 public sealed record TrackerPanningSlidePatternEffect(
 	byte Parameter) : PatternEffect;
+
+/// <summary>
+/// Tracker Mxx channel volume. Values 0..64 are valid; larger byte values are
+/// preserved as tracker input and ignored during common pattern processing.
+/// </summary>
+public sealed record TrackerChannelVolumePatternEffect(
+	byte Parameter) : PatternEffect;

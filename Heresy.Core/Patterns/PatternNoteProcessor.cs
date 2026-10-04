@@ -733,6 +733,23 @@ public static class PatternNoteProcessor
 					break;
 				}
 
+				case ApplyTrackerChannelVolumeCommand volume:
+					GetTrackerChannelState(
+						noteEvent,
+						context,
+						"Tracker channel volume");
+					transformed ??= CopyCommandsBefore(
+						noteEvent.Commands,
+						i);
+
+					if (volume.Parameter <= 64)
+					{
+						transformed.Add(
+							new SetOverallChannelVolumeCommand(
+								volume.Parameter / 64.0));
+					}
+					break;
+
 				case ApplyPitchSlideDownCommand slide:
 				{
 					SequencingChannelState channelState =

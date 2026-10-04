@@ -168,6 +168,10 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			case TrackerVolumeSlidePatternEffect slide:
 				return new ApplyVolumeSlideCommand(slide.Parameter);
 
+			case TrackerChannelVolumePatternEffect volume:
+				return new ApplyTrackerChannelVolumeCommand(
+					volume.Parameter);
+
 			case TrackerPitchSlideDownPatternEffect slide:
 				return new ApplyPitchSlideDownCommand(slide.Parameter);
 
