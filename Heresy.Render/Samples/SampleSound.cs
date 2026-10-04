@@ -5,6 +5,7 @@ using Heresy.Core.Samples;
 using Heresy.Render.Configuration;
 using Heresy.Render.Sounds;
 using Heresy.Render.Spatial;
+using Heresy.Render.Timing;
 
 namespace Heresy.Render.Samples;
 
@@ -42,23 +43,37 @@ public sealed class SampleSound : ISound
 	{
 		SampleSoundState sampleState = ValidateState(context, state);
 
+		long? noteOffEnd = sampleState.NoteOffTime.HasValue
+			? FrameTime.Ceiling(
+				sampleState.NoteOffTime.Value,
+				context.Configuration.SampleRate)
+			: null;
+
 		if (_definition.Loop.Mode != SampleLoopMode.None)
-			return null;
+			return noteOffEnd;
 
 		double sourceOffsetFrames =
 			sampleState.PlaybackOffset.TotalSeconds * _data.SampleRate;
 		double remainingSourceFrames = _data.FrameCount - sourceOffsetFrames;
 
+		long naturalEnd;
 		if (!(remainingSourceFrames > 0.0))
-			return 0;
+		{
+			naturalEnd = 0;
+		}
+		else
+		{
+			double step = GetSourceFramesPerOutputFrame(context, sampleState);
+			double outputFrames = Math.Ceiling(remainingSourceFrames / step);
 
-		double step = GetSourceFramesPerOutputFrame(context, sampleState);
-		double outputFrames = Math.Ceiling(remainingSourceFrames / step);
+			naturalEnd = outputFrames >= long.MaxValue
+				? long.MaxValue
+				: (long)outputFrames;
+		}
 
-		if (outputFrames >= long.MaxValue)
-			return long.MaxValue;
-
-		return (long)outputFrames;
+		return noteOffEnd.HasValue
+			? Math.Min(naturalEnd, noteOffEnd.Value)
+			: naturalEnd;
 	}
 
 	public void Render(
@@ -87,13 +102,25 @@ public sealed class SampleSound : ISound
 		if (frameCount == 0 || _data.FrameCount == 0)
 			return;
 
+		long? endFrame = GetEndFrameExclusive(context, sampleState);
+		if (endFrame.HasValue && startFrame >= endFrame.Value)
+			return;
+
+		int activeFrames = endFrame.HasValue
+			? (int)Math.Min(frameCount, endFrame.Value - startFrame)
+			: frameCount;
+
 		double step = GetSourceFramesPerOutputFrame(context, sampleState);
 		double sourceOffsetFrames =
 			sampleState.PlaybackOffset.TotalSeconds * _data.SampleRate;
 
-		float[] gains = BuildSpatialGains(context.Configuration, sampleState.Position);
+		int gainCount = checked(_data.ChannelCount * outputChannelCount);
+		Span<float> gains = gainCount <= 128
+			? stackalloc float[gainCount]
+			: new float[gainCount];
+		BuildSpatialGains(context.Configuration, sampleState.Position, gains);
 
-		for (int outputFrame = 0; outputFrame < frameCount; outputFrame++)
+		for (int outputFrame = 0; outputFrame < activeFrames; outputFrame++)
 		{
 			double invocationFrame = (double)startFrame + outputFrame;
 			double sourcePosition =
@@ -141,12 +168,12 @@ public sealed class SampleSound : ISound
 			* state.PitchMultiplier
 			* state.PlaybackSpeedMultiplier;
 
-	private float[] BuildSpatialGains(
+	private void BuildSpatialGains(
 		RenderConfiguration configuration,
-		Vector3 invocationPosition)
+		Vector3 invocationPosition,
+		Span<float> gains)
 	{
 		int outputChannelCount = configuration.OutputChannelCount;
-		float[] gains = new float[checked(_data.ChannelCount * outputChannelCount)];
 
 		for (int sourceChannel = 0; sourceChannel < _data.ChannelCount; sourceChannel++)
 		{
@@ -161,8 +188,6 @@ public sealed class SampleSound : ISound
 						configuration.OutputChannels[outputChannel]);
 			}
 		}
-
-		return gains;
 	}
 
 	private bool IsSourcePositionActive(double sourcePosition)
