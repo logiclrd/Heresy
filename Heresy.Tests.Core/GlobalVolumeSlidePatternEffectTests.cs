@@ -103,31 +103,28 @@ public sealed class GlobalVolumeSlidePatternEffectTests
 			output,
 			out _);
 
-		NoteEvent[] rowOneEvents =
+		NoteEvent[] slideEvents =
 			output.Freeze()
-				.Where(e => e.Offset.RowOffset == 0.0)
 				.Where(e => e.Commands
 					.OfType<SetGlobalVolumeSlideCommand>()
 					.Any())
 				.ToArray();
 
-		Assert.That(rowOneEvents, Has.Length.EqualTo(2));
+		Assert.That(slideEvents, Has.Length.EqualTo(4));
 		Assert.That(
-			rowOneEvents.Single(
-				e => e.Target == ChannelTarget.Physical(0))
-				.Commands
+			slideEvents
+				.Where(e => e.Target == ChannelTarget.Physical(0))
+				.SelectMany(e => e.Commands)
 				.OfType<SetGlobalVolumeSlideCommand>()
-				.Single()
-				.TrackerUnitsPerTick,
-			Is.EqualTo(-4.0));
+				.Select(s => s.TrackerUnitsPerTick),
+			Is.EqualTo(new[] { -4.0, -4.0 }));
 		Assert.That(
-			rowOneEvents.Single(
-				e => e.Target == ChannelTarget.Physical(1))
-				.Commands
+			slideEvents
+				.Where(e => e.Target == ChannelTarget.Physical(1))
+				.SelectMany(e => e.Commands)
 				.OfType<SetGlobalVolumeSlideCommand>()
-				.Single()
-				.TrackerUnitsPerTick,
-			Is.EqualTo(4.0));
+				.Select(s => s.TrackerUnitsPerTick),
+			Is.EqualTo(new[] { 4.0, 4.0 }));
 	}
 
 	[Test]
