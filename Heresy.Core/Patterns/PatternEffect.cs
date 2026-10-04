@@ -349,3 +349,22 @@ public sealed record TrackerPastNoteActionPatternEffect : PatternEffect
 
 	public TrackerPastNoteAction Action { get; }
 }
+
+/// <summary>
+/// Tracker S73/S74/S75/S76 new-note-action override. The action applies to the
+/// currently playing voice and is reset when a later note starts with its own
+/// snapshotted source configuration.
+/// </summary>
+public sealed record TrackerNewNoteActionPatternEffect : PatternEffect
+{
+	public TrackerNewNoteActionPatternEffect(
+		NoteDisplacementAction action)
+	{
+		if (!Enum.IsDefined(action))
+			throw new ArgumentOutOfRangeException(nameof(action));
+
+		Action = action;
+	}
+
+	public NoteDisplacementAction Action { get; }
+}

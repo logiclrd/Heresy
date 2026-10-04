@@ -248,3 +248,17 @@ public sealed record ApplyTrackerPastNoteActionCommand(
 /// </summary>
 public sealed record ApplyPastNoteActionCommand(
 	TrackerPastNoteAction Action) : NoteCommand;
+
+/// <summary>
+/// Raw tracker S73/S74/S75/S76 new-note-action override.
+/// </summary>
+public sealed record ApplyTrackerNewNoteActionCommand(
+	NoteDisplacementAction Action) : NoteCommand;
+
+/// <summary>
+/// Generic resolved operation that changes how the current voice will be
+/// displaced by the next note. A later note starts with a fresh source
+/// snapshot rather than inheriting this override.
+/// </summary>
+public sealed record SetCurrentVoiceDisplacementActionCommand(
+	NoteDisplacementAction Action) : NoteCommand;

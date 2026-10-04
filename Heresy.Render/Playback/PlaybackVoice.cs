@@ -47,6 +47,7 @@ public sealed class PlaybackVoice
 	private long? _fadeEndFrameExclusive;
 	private TimeSpan? _fadeDuration;
 	private bool _noteFadeRequested;
+	private NewNoteAction? _newNoteActionOverride;
 
 	private readonly ulong _modulationSeed;
 
@@ -136,6 +137,9 @@ public sealed class PlaybackVoice
 
 	public bool IsNoteFadeRequested => _noteFadeRequested;
 
+	internal NewNoteAction? NewNoteActionOverride
+		=> _newNoteActionOverride;
+
 	public long? FadeStartFrame => _fadeStartFrame;
 
 	public long? FadeEndFrameExclusive => _fadeEndFrameExclusive;
@@ -188,22 +192,45 @@ public sealed class PlaybackVoice
 			absoluteFrame + FrameTime.Ceiling(duration, sampleRate));
 	}
 
+	internal void SetNewNoteActionOverride(
+		NewNoteAction action)
+	{
+		if (!Enum.IsDefined(action))
+			throw new ArgumentOutOfRangeException(nameof(action));
+
+		_newNoteActionOverride = action;
+	}
+
 	internal void RequestNoteFade(
 		long absoluteFrame,
 		int sampleRate)
+		=> RequestNoteFade(
+			absoluteFrame,
+			sampleRate,
+			Configuration.NoteFadeDuration);
+
+	internal void RequestNoteFade(
+		long absoluteFrame,
+		int sampleRate,
+		TimeSpan? fadeDuration)
 	{
 		if (absoluteFrame < StartFrame)
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
 		if (sampleRate <= 0)
 			throw new ArgumentOutOfRangeException(nameof(sampleRate));
+		if (fadeDuration.HasValue
+			&& fadeDuration.Value <= TimeSpan.Zero)
+		{
+			throw new ArgumentOutOfRangeException(nameof(fadeDuration));
+		}
 
 		_noteFadeRequested = true;
 
-		if (Configuration.NoteFadeDuration.HasValue)
+		if (fadeDuration.HasValue)
 		{
 			BeginFade(
 				absoluteFrame,
-				Configuration.NoteFadeDuration.Value,
+				fadeDuration.Value,
 				sampleRate);
 		}
 	}

@@ -213,6 +213,10 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			case TrackerPastNoteActionPatternEffect pastNote:
 				return new ApplyTrackerPastNoteActionCommand(pastNote.Action);
 
+			case TrackerNewNoteActionPatternEffect newNoteAction:
+				return new ApplyTrackerNewNoteActionCommand(
+					newNoteAction.Action);
+
 			default:
 				throw new NotSupportedException($"Unsupported pattern effect type: {effect.GetType().FullName}");
 		}

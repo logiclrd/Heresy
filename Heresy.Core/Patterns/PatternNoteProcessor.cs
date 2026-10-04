@@ -981,6 +981,17 @@ public static class PatternNoteProcessor
 							pastNote.Action));
 					break;
 
+				case ApplyTrackerNewNoteActionCommand newNoteAction:
+					GetTrackerChannelState(
+						noteEvent,
+						context,
+						"Tracker new-note action");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+					transformed.Add(
+						new SetCurrentVoiceDisplacementActionCommand(
+							newNoteAction.Action));
+					break;
+
 				default:
 					command =
 						ApplyRowTickOverride(

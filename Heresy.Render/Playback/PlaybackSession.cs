@@ -390,6 +390,28 @@ public sealed class PlaybackSession
 					eventFrame);
 				break;
 
+			case SetCurrentVoiceDisplacementActionCommand displacement:
+				if (channel.CurrentVoice is not null)
+				{
+					NewNoteAction action =
+						displacement.Action switch
+						{
+							NoteDisplacementAction.Cut =>
+								NewNoteAction.Cut,
+							NoteDisplacementAction.Continue =>
+								NewNoteAction.Continue,
+							NoteDisplacementAction.Off =>
+								NewNoteAction.Off,
+							NoteDisplacementAction.Fade =>
+								NewNoteAction.Fade,
+							_ => throw new InvalidOperationException(
+								$"Unsupported displacement action {displacement.Action}."),
+						};
+
+					channel.CurrentVoice.SetNewNoteActionOverride(action);
+				}
+				break;
+
 			case SetSpeedCommand:
 				// PatternNoteProcessor has already baked speed into event timing.
 				break;
@@ -504,9 +526,11 @@ public sealed class PlaybackSession
 		if (oldVoice is null)
 			return;
 
-		NewNotePolicy policy = oldVoice.Configuration.NewNotePolicy;
+		NewNoteAction action =
+			oldVoice.NewNoteActionOverride
+			?? oldVoice.Configuration.NewNotePolicy.Action;
 
-		switch (policy.Action)
+		switch (action)
 		{
 			case NewNoteAction.Cut:
 				oldVoice.AddCutTo(channel.AntiClickTail);
@@ -524,16 +548,21 @@ public sealed class PlaybackSession
 				break;
 
 			case NewNoteAction.Fade:
-				oldVoice.BeginFade(
+				TimeSpan? fadeDuration =
+					oldVoice.NewNoteActionOverride.HasValue
+						? oldVoice.Configuration.NewNoteFadeDuration
+						: oldVoice.Configuration.NewNotePolicy.FadeDuration;
+
+				oldVoice.RequestNoteFade(
 					eventFrame,
-					policy.FadeDuration,
-					_context.Configuration.SampleRate);
+					_context.Configuration.SampleRate,
+					fadeDuration);
 				_virtualVoices.Add(oldVoice);
 				break;
 
 			default:
 				throw new InvalidOperationException(
-					$"Unsupported new-note action {policy.Action}.");
+					$"Unsupported new-note action {action}.");
 		}
 	}
 
