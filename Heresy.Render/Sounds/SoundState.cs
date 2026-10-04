@@ -8,6 +8,7 @@ namespace Heresy.Render.Sounds;
 /// </summary>
 public abstract class SoundState
 {
+	private readonly PitchTrajectory _pitchTrajectory = new();
 	private double _pitchMultiplier = 1.0;
 	private double _playbackSpeedMultiplier = 1.0;
 	private TimeSpan _playbackOffset;
@@ -19,6 +20,8 @@ public abstract class SoundState
 		get => _pitchMultiplier;
 		set => _pitchMultiplier = ValidatePositiveFinite(value, nameof(value));
 	}
+
+	public PitchTrajectory PitchTrajectory => _pitchTrajectory;
 
 	public double PlaybackSpeedMultiplier
 	{

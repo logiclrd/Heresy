@@ -77,12 +77,10 @@ public sealed class SampleSound : ISound
 		}
 		else
 		{
-			double step = GetSourceFramesPerOutputFrame(context, sampleState);
-			double outputFrames = Math.Ceiling(remainingSourceFrames / step);
-
-			naturalEnd = outputFrames >= long.MaxValue
-				? long.MaxValue
-				: (long)outputFrames;
+			double baseStep = GetSourceFramesPerOutputFrame(context, sampleState);
+			double requiredPitchPosition = remainingSourceFrames / baseStep;
+			naturalEnd = sampleState.PitchTrajectory.FindFrameAtOrAfterPosition(
+				requiredPitchPosition);
 		}
 
 		return noteOffEnd.HasValue
@@ -136,9 +134,11 @@ public sealed class SampleSound : ISound
 
 		for (int outputFrame = 0; outputFrame < activeFrames; outputFrame++)
 		{
-			double invocationFrame = (double)startFrame + outputFrame;
+			long invocationFrame = startFrame + outputFrame;
+			double pitchPosition =
+				sampleState.PitchTrajectory.GetPosition(invocationFrame);
 			double sourcePosition =
-				sourceOffsetFrames + invocationFrame * step;
+				sourceOffsetFrames + pitchPosition * step;
 
 			if (!IsSourcePositionActive(sourcePosition))
 				continue;

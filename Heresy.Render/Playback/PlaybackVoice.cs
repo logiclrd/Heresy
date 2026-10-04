@@ -1,5 +1,6 @@
 using System;
 
+using Heresy.Core.Timing;
 using Heresy.Render.Sounds;
 using Heresy.Render.Timing;
 
@@ -11,6 +12,14 @@ namespace Heresy.Render.Playback;
 /// </summary>
 public sealed class PlaybackVoice
 {
+	private sealed class ActiveVibrato
+	{
+		public required byte Speed { get; init; }
+		public required byte Depth { get; init; }
+		public required TimeSpan TickDuration { get; init; }
+		public required TimeSpan NextTickTime { get; set; }
+	}
+
 	private readonly float[] _previousOutputFrame;
 	private readonly float[] _lastOutputFrame;
 	private int _outputHistoryFrames;
@@ -18,6 +27,9 @@ public sealed class PlaybackVoice
 	private long? _fadeStartFrame;
 	private long? _fadeEndFrameExclusive;
 	private TimeSpan? _fadeDuration;
+
+	private byte _vibratoPhase;
+	private ActiveVibrato? _activeVibrato;
 
 	internal PlaybackVoice(
 		ISound sound,
@@ -105,6 +117,84 @@ public sealed class PlaybackVoice
 			return 0.0;
 
 		return 1.0 - (double)elapsed / (double)duration;
+	}
+
+	internal void SetVibrato(
+		long absoluteFrame,
+		TimeSpan eventTime,
+		double tempo,
+		byte speed,
+		byte depth)
+	{
+		if (absoluteFrame < StartFrame)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		if (!(tempo > 0.0) || double.IsNaN(tempo) || double.IsInfinity(tempo))
+			throw new ArgumentOutOfRangeException(nameof(tempo));
+
+		TimeSpan tickDuration = TimeSpan.FromSeconds(
+			SequencingConstants.Diachron.TotalSeconds / tempo);
+		if (tickDuration <= TimeSpan.Zero)
+			throw new InvalidOperationException("Tempo produces a zero-length tracker tick.");
+
+		_activeVibrato = new ActiveVibrato
+		{
+			Speed = speed,
+			Depth = depth,
+			TickDuration = tickDuration,
+			NextTickTime = eventTime,
+		};
+	}
+
+	internal void ClearPitchModulation(long absoluteFrame)
+	{
+		if (absoluteFrame < StartFrame)
+			return;
+
+		_activeVibrato = null;
+		SoundState.PitchTrajectory.SetMultiplier(
+			absoluteFrame - StartFrame,
+			1.0);
+	}
+
+	internal void EnsurePitchTrajectoryThrough(
+		long absoluteEndFrame,
+		int sampleRate)
+	{
+		if (sampleRate <= 0)
+			throw new ArgumentOutOfRangeException(nameof(sampleRate));
+		if (absoluteEndFrame <= StartFrame)
+			return;
+
+		ActiveVibrato? vibrato = _activeVibrato;
+		if (vibrato is null)
+			return;
+
+		while (true)
+		{
+			long tickFrame = FrameTime.Ceiling(
+				vibrato.NextTickTime,
+				sampleRate);
+
+			if (tickFrame >= absoluteEndFrame)
+				break;
+
+			_vibratoPhase = TrackerVibrato.AdvancePhase(
+				_vibratoPhase,
+				vibrato.Speed);
+
+			if (tickFrame >= StartFrame)
+			{
+				double multiplier = TrackerVibrato.GetPitchMultiplier(
+					_vibratoPhase,
+					vibrato.Depth);
+
+				SoundState.PitchTrajectory.SetMultiplier(
+					tickFrame - StartFrame,
+					multiplier);
+			}
+
+			vibrato.NextTickTime += vibrato.TickDuration;
+		}
 	}
 
 	internal void ObserveOutputFrame(ReadOnlySpan<float> outputFrame)

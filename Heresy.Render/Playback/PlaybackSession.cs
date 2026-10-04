@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Collections.Generic;
 
 using Heresy.Core.Sequencing;
+using Heresy.Core.Timing;
 using Heresy.Render.Sounds;
 using Heresy.Render.Timing;
 
@@ -22,6 +23,7 @@ public sealed class PlaybackSession
 
 	private int _nextEventIndex;
 	private long _nextFrame;
+	private double _tempo = SequencingConstants.DefaultTempo;
 
 	public PlaybackSession(
 		RenderContext context,
@@ -149,7 +151,11 @@ public sealed class PlaybackSession
 	private void ApplyEvent(NoteEvent noteEvent, long eventFrame)
 	{
 		if (noteEvent.Target.Kind == ChannelTargetKind.Global)
+		{
+			foreach (NoteCommand command in noteEvent.Commands)
+				ApplyGlobalCommand(command);
 			return;
+		}
 
 		if (noteEvent.Target.Kind != ChannelTargetKind.Physical)
 		{
@@ -160,13 +166,14 @@ public sealed class PlaybackSession
 		PlaybackChannelState channel = GetChannelState(noteEvent.Target.PhysicalChannel);
 
 		foreach (NoteCommand command in noteEvent.Commands)
-			ApplyCommand(channel, command, eventFrame);
+			ApplyCommand(channel, command, eventFrame, noteEvent.Offset.TimeOffset);
 	}
 
 	private void ApplyCommand(
 		PlaybackChannelState channel,
 		NoteCommand command,
-		long eventFrame)
+		long eventFrame,
+		TimeSpan eventTime)
 	{
 		switch (command)
 		{
@@ -198,14 +205,38 @@ public sealed class PlaybackSession
 					channel.CurrentVoice.SoundState.PlaybackOffset = playbackOffset.Offset;
 				break;
 
-			case SetTempoCommand:
+			case SetVibratoCommand vibrato:
+				channel.CurrentVoice?.SetVibrato(
+					eventFrame,
+					eventTime,
+					_tempo,
+					vibrato.Speed,
+					vibrato.Depth);
+				break;
+
+			case ClearPitchModulationCommand:
+				channel.CurrentVoice?.ClearPitchModulation(eventFrame);
+				break;
+
 			case SetSpeedCommand:
-				// PatternNoteProcessor has already baked these into event timing.
+				// PatternNoteProcessor has already baked speed into event timing.
 				break;
 
 			default:
 				throw new NotSupportedException(
 					$"Render command {command.GetType().Name} is not implemented yet.");
+		}
+	}
+
+	private void ApplyGlobalCommand(NoteCommand command)
+	{
+		switch (command)
+		{
+			case SetTempoCommand tempo:
+				_tempo = tempo.TicksPerDiachron;
+				break;
+			case SetSpeedCommand:
+				break;
 		}
 	}
 
@@ -359,6 +390,10 @@ public sealed class PlaybackSession
 		long invocationStartFrame = absoluteStartFrame - voice.StartFrame;
 		if (invocationStartFrame < 0)
 			throw new InvalidOperationException("A playback voice began after the segment being rendered.");
+
+		voice.EnsurePitchTrajectoryThrough(
+			checked(absoluteStartFrame + frameCount),
+			_context.Configuration.SampleRate);
 
 		long? soundEndRelative = voice.Sound.GetEndFrameExclusive(
 			_context,
