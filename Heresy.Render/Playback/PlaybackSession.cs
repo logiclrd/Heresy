@@ -463,7 +463,8 @@ public sealed class PlaybackSession
 					_context.Configuration.SampleRate,
 					vibrato.Speed,
 					vibrato.Depth,
-					vibrato.Waveform);
+					vibrato.Waveform,
+					vibrato.DepthScale);
 				break;
 
 			case ClearPitchModulationCommand:

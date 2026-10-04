@@ -45,6 +45,13 @@ public sealed record SetPlaybackOffsetCommand(TimeSpan Offset) : NoteCommand;
 /// </summary>
 public sealed record ApplyVibratoCommand(byte Parameter) : NoteCommand;
 
+
+/// <summary>
+/// Raw tracker Uxy fine-vibrato operation. Speed/depth nibble memory is shared
+/// with Hxy vibrato.
+/// </summary>
+public sealed record ApplyFineVibratoCommand(byte Parameter) : NoteCommand;
+
 /// <summary>
 /// Resolved normal vibrato parameters in tracker units. The renderer will turn
 /// this into the actual pitch modulation once tick timing and waveform state
@@ -53,7 +60,8 @@ public sealed record ApplyVibratoCommand(byte Parameter) : NoteCommand;
 public sealed record SetVibratoCommand(
 	byte Speed,
 	byte Depth,
-	TrackerWaveform Waveform = TrackerWaveform.Sine) : NoteCommand;
+	TrackerWaveform Waveform = TrackerWaveform.Sine,
+	double DepthScale = 1.0) : NoteCommand;
 
 /// <summary>
 /// Removes the transient pitch modulation installed for the preceding row and

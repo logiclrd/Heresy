@@ -709,6 +709,33 @@ public static class PatternNoteProcessor
 					break;
 				}
 
+				case ApplyFineVibratoCommand vibrato:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(
+							noteEvent,
+							context,
+							"Tracker fine vibrato");
+					transformed ??= CopyCommandsBefore(
+						noteEvent.Commands,
+						i);
+
+					byte parameter =
+						channelState.ResolveEffectParameterNibbles(
+							EffectMemorySlot.Vibrato,
+							vibrato.Parameter);
+
+					transformed.Add(
+						new SetVibratoCommand(
+							(byte)(parameter >> 4),
+							(byte)(parameter & 0x0F),
+							channelState.VibratoWaveform,
+							DepthScale: 0.25));
+					rowEndCommands.Add(
+						new ClearPitchModulationCommand());
+					break;
+				}
+
 				case ApplyVolumeSlideCommand slide:
 				{
 					SequencingChannelState channelState =

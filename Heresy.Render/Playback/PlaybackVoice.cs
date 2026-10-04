@@ -260,7 +260,8 @@ public sealed class PlaybackVoice
 		int sampleRate,
 		byte speed,
 		byte depth,
-		TrackerWaveform waveform)
+		TrackerWaveform waveform,
+		double depthScale)
 	{
 		if (absoluteFrame < StartFrame)
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
@@ -270,6 +271,13 @@ public sealed class PlaybackVoice
 			throw new ArgumentOutOfRangeException(nameof(sampleRate));
 		if (!Enum.IsDefined(waveform))
 			throw new ArgumentOutOfRangeException(nameof(waveform));
+
+		if (!(depthScale >= 0.0)
+			|| double.IsNaN(depthScale)
+			|| double.IsInfinity(depthScale))
+		{
+			throw new ArgumentOutOfRangeException(nameof(depthScale));
+		}
 
 		CommitVibratoPhaseThrough(eventTime);
 
@@ -303,7 +311,8 @@ public sealed class PlaybackVoice
 			sampleRate,
 			waveform,
 			_modulationSeed ^ 0x5649425241544F52UL,
-			randomStartIndex);
+			randomStartIndex,
+			depthScale);
 		_vibratoPitchCurveStartFrame = relativeFrame;
 
 		RecomposePitchTrajectory(relativeFrame);

@@ -425,3 +425,10 @@ public sealed record TrackerGlobalVolumePatternEffect(
 /// </summary>
 public sealed record TrackerGlobalVolumeSlidePatternEffect(
 	byte Parameter) : PatternEffect;
+
+/// <summary>
+/// Fine tracker-style vibrato (IT Uxy semantics). Speed/depth memory is shared
+/// with normal Hxy vibrato; the pitch excursion is one quarter as deep.
+/// </summary>
+public sealed record FineVibratoPatternEffect(
+	byte Parameter) : PatternEffect;

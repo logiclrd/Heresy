@@ -149,6 +149,9 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			case VibratoPatternEffect vibrato:
 				return new ApplyVibratoCommand(vibrato.Parameter);
 
+			case FineVibratoPatternEffect vibrato:
+				return new ApplyFineVibratoCommand(vibrato.Parameter);
+
 			case TrackerVibratoWaveformPatternEffect waveform:
 				return new ApplyTrackerVibratoWaveformCommand(waveform.Value);
 

@@ -19,6 +19,7 @@ public sealed class TrackerVibratoPitchCurve : PitchCurve
 	private readonly TrackerWaveform _waveform;
 	private readonly ulong _randomSeed;
 	private readonly long _randomStartIndex;
+	private readonly double _depthScale;
 
 	public TrackerVibratoPitchCurve(
 		byte initialPhase,
@@ -28,7 +29,8 @@ public sealed class TrackerVibratoPitchCurve : PitchCurve
 		int sampleRate,
 		TrackerWaveform waveform = TrackerWaveform.Sine,
 		ulong randomSeed = 0,
-		long randomStartIndex = 0)
+		long randomStartIndex = 0,
+		double depthScale = 1.0)
 	{
 		if (tickDuration <= TimeSpan.Zero)
 			throw new ArgumentOutOfRangeException(nameof(tickDuration));
@@ -40,11 +42,19 @@ public sealed class TrackerVibratoPitchCurve : PitchCurve
 		if (randomStartIndex < 0)
 			throw new ArgumentOutOfRangeException(nameof(randomStartIndex));
 
+		if (!(depthScale >= 0.0)
+			|| double.IsNaN(depthScale)
+			|| double.IsInfinity(depthScale))
+		{
+			throw new ArgumentOutOfRangeException(nameof(depthScale));
+		}
+
 		_initialPhase = initialPhase;
 		_depth = depth;
 		_waveform = waveform;
 		_randomSeed = randomSeed;
 		_randomStartIndex = randomStartIndex;
+		_depthScale = depthScale;
 
 		double tickFrames = tickDuration.TotalSeconds * sampleRate;
 		if (!(tickFrames > 0.0)
@@ -81,7 +91,8 @@ public sealed class TrackerVibratoPitchCurve : PitchCurve
 					checked(_randomStartIndex + tick1),
 					_depth);
 			double units =
-				units0 + (units1 - units0) * fraction;
+				(units0 + (units1 - units0) * fraction)
+					* _depthScale;
 
 			return Math.Pow(
 				2.0,
@@ -90,9 +101,15 @@ public sealed class TrackerVibratoPitchCurve : PitchCurve
 
 		double phase =
 			_initialPhase + frameOffset * _phasePerOutputFrame;
-		return TrackerVibrato.GetContinuousPitchMultiplier(
-			_waveform,
-			phase,
-			_depth);
+		double units =
+			TrackerVibrato.GetContinuousLinearSlideUnits(
+				_waveform,
+				phase,
+				_depth)
+				* _depthScale;
+
+		return Math.Pow(
+			2.0,
+				units / TrackerVibrato.LinearSlideUnitsPerOctave);
 	}
 }
