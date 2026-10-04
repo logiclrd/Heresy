@@ -148,7 +148,7 @@ public sealed class PlaybackArpeggioAndTremoloTests
 			session.GetChannelState(0).NoteVolume,
 			Is.EqualTo(0.5).Within(1e-12));
 		Assert.That(
-			session.GetChannelState(0).CurrentVoice!.GetBaseNoteVolume(20),
+			session.GetChannelState(0).CurrentVoice!.NoteVolume,
 			Is.EqualTo(0.5).Within(1e-12));
 		Assert.That(session.VirtualVoices.Count, Is.EqualTo(1));
 	}
