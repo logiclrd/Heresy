@@ -9,6 +9,7 @@ public enum EffectMemorySlot
 {
 	Vibrato = 0,
 	VolumeSlide,
+	ChannelVolumeSlide,
 	PanningSlide,
 	PitchSlide,
 	TonePortamento,

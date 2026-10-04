@@ -213,7 +213,28 @@ public sealed class PlaybackSession
 				break;
 
 			case SetOverallChannelVolumeCommand volume:
-				channel.SetOverallVolume(volume.Volume);
+				channel.SetOverallVolume(
+					eventFrame,
+					volume.Volume);
+				break;
+
+			case AdjustOverallChannelVolumeCommand adjust:
+				channel.AdjustOverallVolume(
+					eventFrame,
+					adjust.TrackerUnits);
+				break;
+
+			case SetOverallChannelVolumeSlideCommand slide:
+				channel.SetOverallVolumeSlide(
+					eventFrame,
+					_tempo,
+					slide.TicksPerRow ?? _speed,
+					_context.Configuration.SampleRate,
+					slide.TrackerUnitsPerTick);
+				break;
+
+			case ClearOverallChannelVolumeSlideCommand:
+				channel.ClearOverallVolumeSlide(eventFrame);
 				break;
 
 			case SetSpatialPositionCommand position:
@@ -470,7 +491,7 @@ public sealed class PlaybackSession
 		StartNoteCommand start,
 		long eventFrame)
 	{
-		channel.SynchronizePosition(eventFrame);
+		channel.SynchronizeContinuousState(eventFrame);
 
 		if (channel.CurrentVoice is not null)
 		{
@@ -614,49 +635,47 @@ public sealed class PlaybackSession
 				Span<float> channelBuffer = rented.AsSpan(0, sampleCount);
 				channelBuffer.Clear();
 
-				if (channel.CurrentVoice is not null)
+				if (channel.HasActiveContinuousState)
 				{
-					if (channel.HasActiveSpatialXSlide)
+					for (int frame = 0; frame < frameCount; frame++)
 					{
-						for (int frame = 0; frame < frameCount; frame++)
-						{
-							PlaybackVoice? voice = channel.CurrentVoice;
-							if (voice is null)
-								break;
+						long absoluteFrame =
+							absoluteStartFrame + frame;
+						channel.SynchronizeContinuousState(
+							absoluteFrame);
 
-							long absoluteFrame =
-								absoluteStartFrame + frame;
-							channel.SynchronizePosition(absoluteFrame);
+						PlaybackVoice? voice = channel.CurrentVoice;
+						if (voice is null)
+							continue;
 
-							Span<float> outputFrame =
-								channelBuffer.Slice(
-									frame * outputChannelCount,
-									outputChannelCount);
-
-							bool finished = RenderVoice(
-								voice,
-								absoluteFrame,
-								1,
-								outputFrame);
-
-							if (finished)
-								channel.DetachCurrentVoice();
-						}
-					}
-					else
-					{
-						channel.SynchronizePosition(
-							absoluteStartFrame);
+						Span<float> outputFrame =
+							channelBuffer.Slice(
+								frame * outputChannelCount,
+								outputChannelCount);
 
 						bool finished = RenderVoice(
-							channel.CurrentVoice,
-							absoluteStartFrame,
-							frameCount,
-							channelBuffer);
+							voice,
+							absoluteFrame,
+							1,
+							outputFrame);
 
 						if (finished)
 							channel.DetachCurrentVoice();
 					}
+				}
+				else if (channel.CurrentVoice is not null)
+				{
+					channel.SynchronizeContinuousState(
+						absoluteStartFrame);
+
+					bool finished = RenderVoice(
+						channel.CurrentVoice,
+						absoluteStartFrame,
+						frameCount,
+						channelBuffer);
+
+					if (finished)
+						channel.DetachCurrentVoice();
 				}
 
 				for (int frame = 0; frame < frameCount; frame++)

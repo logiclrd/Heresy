@@ -25,7 +25,17 @@ public sealed class PlaybackChannelState
 		public required double MaximumX { get; init; }
 	}
 
+	private sealed class ActiveOverallVolumeSlide
+	{
+		public required long StartFrame { get; init; }
+		public required double StartVolume { get; init; }
+		public required double TrackerUnitsPerTick { get; init; }
+		public required double FramesPerTick { get; init; }
+		public required int ActiveTickTransitions { get; init; }
+	}
+
 	private ActiveSpatialXSlide? _activeSpatialXSlide;
+	private ActiveOverallVolumeSlide? _activeOverallVolumeSlide;
 
 	internal PlaybackChannelState(int outputChannelCount, int sampleRate)
 	{
@@ -50,6 +60,10 @@ public sealed class PlaybackChannelState
 	internal bool HasActiveSpatialXSlide =>
 		_activeSpatialXSlide is not null;
 
+	internal bool HasActiveContinuousState =>
+		_activeSpatialXSlide is not null
+		|| _activeOverallVolumeSlide is not null;
+
 	public ResonantFilterParameters FilterParameters { get; private set; } =
 		ResonantFilterParameters.Disabled;
 
@@ -71,9 +85,132 @@ public sealed class PlaybackChannelState
 
 	internal void SetOverallVolume(double volume)
 	{
+		_activeOverallVolumeSlide = null;
 		OverallVolume = volume;
 		if (CurrentVoice is not null)
 			CurrentVoice.OverallVolume = volume;
+	}
+
+	internal void SetOverallVolume(
+		long absoluteFrame,
+		double volume)
+	{
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+
+		SetOverallVolume(volume);
+	}
+
+	internal void AdjustOverallVolume(
+		long absoluteFrame,
+		double trackerUnits)
+	{
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		if (double.IsNaN(trackerUnits)
+			|| double.IsInfinity(trackerUnits))
+		{
+			throw new ArgumentOutOfRangeException(nameof(trackerUnits));
+		}
+
+		SynchronizeOverallVolume(absoluteFrame);
+		_activeOverallVolumeSlide = null;
+
+		OverallVolume = Math.Clamp(
+			OverallVolume + trackerUnits / 64.0,
+			0.0,
+			1.0);
+
+		if (CurrentVoice is not null)
+			CurrentVoice.OverallVolume = OverallVolume;
+	}
+
+	internal void SetOverallVolumeSlide(
+		long absoluteFrame,
+		double tempo,
+		int ticksPerRow,
+		int sampleRate,
+		double trackerUnitsPerTick)
+	{
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		if (!(tempo > 0.0)
+			|| double.IsNaN(tempo)
+			|| double.IsInfinity(tempo))
+		{
+			throw new ArgumentOutOfRangeException(nameof(tempo));
+		}
+		if (ticksPerRow <= 0)
+			throw new ArgumentOutOfRangeException(nameof(ticksPerRow));
+		if (sampleRate <= 0)
+			throw new ArgumentOutOfRangeException(nameof(sampleRate));
+		if (double.IsNaN(trackerUnitsPerTick)
+			|| double.IsInfinity(trackerUnitsPerTick))
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(trackerUnitsPerTick));
+		}
+
+		SynchronizeOverallVolume(absoluteFrame);
+
+		double framesPerTick =
+			SequencingConstants.Diachron.TotalSeconds
+			/ tempo
+			* sampleRate;
+
+		if (!(framesPerTick > 0.0)
+			|| double.IsNaN(framesPerTick)
+			|| double.IsInfinity(framesPerTick))
+		{
+			throw new InvalidOperationException(
+				"Tempo produces an invalid channel-volume-slide tick duration.");
+		}
+
+		_activeOverallVolumeSlide = new ActiveOverallVolumeSlide
+		{
+			StartFrame = absoluteFrame,
+			StartVolume = OverallVolume,
+			TrackerUnitsPerTick = trackerUnitsPerTick,
+			FramesPerTick = framesPerTick,
+			ActiveTickTransitions = Math.Max(0, ticksPerRow - 1),
+		};
+	}
+
+	internal void ClearOverallVolumeSlide(long absoluteFrame)
+	{
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+
+		SynchronizeOverallVolume(absoluteFrame);
+		_activeOverallVolumeSlide = null;
+	}
+
+	internal void SynchronizeOverallVolume(long absoluteFrame)
+	{
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+
+		ActiveOverallVolumeSlide? slide =
+			_activeOverallVolumeSlide;
+		if (slide is not null)
+		{
+			double elapsedTicks = Math.Min(
+				Math.Max(
+					0.0,
+					absoluteFrame - slide.StartFrame)
+					/ slide.FramesPerTick,
+				slide.ActiveTickTransitions);
+
+			OverallVolume = Math.Clamp(
+				slide.StartVolume
+					+ slide.TrackerUnitsPerTick
+						* elapsedTicks / 64.0,
+				0.0,
+				1.0);
+		}
+
+		if (CurrentVoice is not null)
+			CurrentVoice.OverallVolume = OverallVolume;
 	}
 
 	internal void SetPosition(long absoluteFrame, Vector3 position)
@@ -205,6 +342,12 @@ public sealed class PlaybackChannelState
 			CurrentVoice.SoundState.Position = Position;
 	}
 
+	internal void SynchronizeContinuousState(long absoluteFrame)
+	{
+		SynchronizePosition(absoluteFrame);
+		SynchronizeOverallVolume(absoluteFrame);
+	}
+
 	private static void ValidateSpatialSlide(
 		long absoluteFrame,
 		double value,
@@ -242,7 +385,7 @@ public sealed class PlaybackChannelState
 		PlaybackVoice voice,
 		long absoluteFrame)
 	{
-		SynchronizePosition(absoluteFrame);
+		SynchronizeContinuousState(absoluteFrame);
 
 		CurrentVoice = voice;
 		voice.NoteVolume = NoteVolume;

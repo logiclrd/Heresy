@@ -405,3 +405,9 @@ public sealed record TrackerPanningSlidePatternEffect(
 /// </summary>
 public sealed record TrackerChannelVolumePatternEffect(
 	byte Parameter) : PatternEffect;
+
+/// <summary>
+/// Tracker Nxx channel-volume slide with whole-byte effect memory.
+/// </summary>
+public sealed record TrackerChannelVolumeSlidePatternEffect(
+	byte Parameter) : PatternEffect;

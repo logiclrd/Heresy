@@ -750,6 +750,45 @@ public static class PatternNoteProcessor
 					}
 					break;
 
+				case ApplyChannelVolumeSlideCommand slide:
+					{
+						SequencingChannelState channelState =
+							GetTrackerChannelState(
+								noteEvent,
+								context,
+								"Tracker channel-volume slide");
+						transformed ??= CopyCommandsBefore(
+							noteEvent.Commands,
+							i);
+
+						byte parameter =
+							channelState.ResolveEffectParameter(
+								EffectMemorySlot.ChannelVolumeSlide,
+								slide.Parameter);
+
+						NoteCommand? resolved =
+							ApplyRowTickOverride(
+								ResolveTrackerChannelVolumeSlide(
+									parameter),
+								rowTicksOverride);
+
+						if (resolved is not null)
+						{
+							transformed.Add(resolved);
+							AddRepeatCommand(
+								repeatCommands,
+								resolved);
+
+							if (resolved
+								is SetOverallChannelVolumeSlideCommand)
+							{
+								rowEndCommands.Add(
+									new ClearOverallChannelVolumeSlideCommand());
+							}
+						}
+						break;
+					}
+
 				case ApplyPitchSlideDownCommand slide:
 				{
 					SequencingChannelState channelState =
@@ -1096,6 +1135,12 @@ public static class PatternNoteProcessor
 					if (command is SetSpatialXSlideCommand)
 						rowEndCommands.Add(new ClearSpatialXSlideCommand());
 
+					if (command is SetOverallChannelVolumeSlideCommand)
+					{
+						rowEndCommands.Add(
+							new ClearOverallChannelVolumeSlideCommand());
+					}
+
 					AddRepeatCommand(repeatCommands, command);
 					transformed?.Add(command);
 					break;
@@ -1223,6 +1268,8 @@ public static class PatternNoteProcessor
 				slide with { TicksPerRow = rowTicksOverride.Value },
 			SetSpatialXSlideCommand slide =>
 				slide with { TicksPerRow = rowTicksOverride.Value },
+			SetOverallChannelVolumeSlideCommand slide =>
+				slide with { TicksPerRow = rowTicksOverride.Value },
 			SetTonePortamentoCommand portamento =>
 				portamento with { TicksPerRow = rowTicksOverride.Value },
 			_ => command,
@@ -1241,6 +1288,8 @@ public static class PatternNoteProcessor
 			case AdjustNoteVolumeCommand _:
 			case SetSpatialXSlideCommand _:
 			case AdjustSpatialXCommand _:
+			case SetOverallChannelVolumeSlideCommand _:
+			case AdjustOverallChannelVolumeCommand _:
 				repeatCommands.Add(command);
 				break;
 
@@ -1347,6 +1396,32 @@ public static class PatternNoteProcessor
 			return new AdjustNoteVolumeCommand(-low);
 
 		return null;
+	}
+
+	private static NoteCommand? ResolveTrackerChannelVolumeSlide(
+		byte parameter)
+	{
+		if (parameter == 0)
+			return null;
+
+		byte high = (byte)(parameter >> 4);
+		byte low = (byte)(parameter & 0x0F);
+
+		// Fine slide up has priority, so NFF is +15 like Impulse Tracker.
+		if (low == 0x0F && high != 0)
+			return new AdjustOverallChannelVolumeCommand(high);
+
+		if (high == 0x0F && low != 0)
+			return new AdjustOverallChannelVolumeCommand(-low);
+
+		// For ordinary Nxy with both nibbles non-zero, IT gives the low
+		// nibble priority and slides down.
+		if (low != 0)
+			return new SetOverallChannelVolumeSlideCommand(-low);
+
+		return high == 0
+			? null
+			: new SetOverallChannelVolumeSlideCommand(high);
 	}
 
 	private static NoteCommand? ResolveTrackerPanningSlide(

@@ -341,3 +341,28 @@ public sealed record ClearSpatialXSlideCommand : NoteCommand;
 /// </summary>
 public sealed record ApplyTrackerChannelVolumeCommand(
 	byte Parameter) : NoteCommand;
+
+/// <summary>Raw tracker Nxx channel-volume slide with whole-byte memory.</summary>
+public sealed record ApplyChannelVolumeSlideCommand(
+	byte Parameter) : NoteCommand;
+
+/// <summary>
+/// Applies an immediate adjustment to persistent playback-channel volume in
+/// tracker units, where 64 units span the normalized [0,1] range.
+/// </summary>
+public sealed record AdjustOverallChannelVolumeCommand(
+	double TrackerUnits) : NoteCommand;
+
+/// <summary>
+/// Applies a continuous playback-channel volume slide in tracker units per
+/// legacy tick.
+/// </summary>
+public sealed record SetOverallChannelVolumeSlideCommand(
+	double TrackerUnitsPerTick,
+	int? TicksPerRow = null) : NoteCommand;
+
+/// <summary>
+/// Stops the active playback-channel volume slide while preserving its
+/// accumulated volume.
+/// </summary>
+public sealed record ClearOverallChannelVolumeSlideCommand : NoteCommand;
