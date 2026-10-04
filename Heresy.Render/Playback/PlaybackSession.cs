@@ -24,6 +24,7 @@ public sealed class PlaybackSession
 
 	private int _nextEventIndex;
 	private long _nextFrame;
+	private ulong _nextVoiceModulationSeed = 0x4845524553590001UL;
 	private double _tempo = SequencingConstants.DefaultTempo;
 	private int _speed = SequencingConstants.DefaultSpeed;
 
@@ -339,7 +340,8 @@ public sealed class PlaybackSession
 					_tempo,
 					_context.Configuration.SampleRate,
 					tremolo.Speed,
-					tremolo.Depth);
+					tremolo.Depth,
+					tremolo.Waveform);
 				break;
 
 			case ClearTremoloCommand:
@@ -355,7 +357,8 @@ public sealed class PlaybackSession
 					_tempo,
 					_context.Configuration.SampleRate,
 					vibrato.Speed,
-					vibrato.Depth);
+					vibrato.Depth,
+					vibrato.Waveform);
 				break;
 
 			case ClearPitchModulationCommand:
@@ -424,7 +427,8 @@ public sealed class PlaybackSession
 			_context.Configuration.SampleRate,
 			channel.FilterParameters,
 			channel.NoteVolume,
-			channel.OverallVolume);
+			channel.OverallVolume,
+			_nextVoiceModulationSeed++);
 
 		channel.AttachVoice(voice);
 	}

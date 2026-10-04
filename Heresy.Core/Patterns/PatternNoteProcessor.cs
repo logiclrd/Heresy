@@ -625,6 +625,23 @@ public static class PatternNoteProcessor
 
 			switch (command)
 			{
+				case ApplyTrackerVibratoWaveformCommand waveform:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(
+							noteEvent,
+							context,
+							"Tracker vibrato waveform");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+
+					if (waveform.Value <= 3)
+					{
+						channelState.VibratoWaveform =
+							(TrackerWaveform)waveform.Value;
+					}
+					break;
+				}
+
 				case ApplyVibratoCommand vibrato:
 				{
 					SequencingChannelState channelState =
@@ -637,7 +654,8 @@ public static class PatternNoteProcessor
 
 					transformed.Add(new SetVibratoCommand(
 						(byte)(parameter >> 4),
-						(byte)(parameter & 0x0F)));
+						(byte)(parameter & 0x0F),
+						channelState.VibratoWaveform));
 					rowEndCommands.Add(new ClearPitchModulationCommand());
 					break;
 				}
@@ -751,6 +769,23 @@ public static class PatternNoteProcessor
 					break;
 				}
 
+				case ApplyTrackerTremoloWaveformCommand waveform:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(
+							noteEvent,
+							context,
+							"Tracker tremolo waveform");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+
+					if (waveform.Value <= 3)
+					{
+						channelState.TremoloWaveform =
+							(TrackerWaveform)waveform.Value;
+					}
+					break;
+				}
+
 				case ApplyTremoloCommand tremolo:
 				{
 					SequencingChannelState channelState =
@@ -763,7 +798,8 @@ public static class PatternNoteProcessor
 
 					transformed.Add(new SetTremoloCommand(
 						(byte)(parameter >> 4),
-						(byte)(parameter & 0x0F)));
+						(byte)(parameter & 0x0F),
+						channelState.TremoloWaveform));
 					rowEndCommands.Add(new ClearTremoloCommand());
 					break;
 				}

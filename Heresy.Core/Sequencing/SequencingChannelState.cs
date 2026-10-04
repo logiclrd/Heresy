@@ -14,6 +14,8 @@ public sealed class SequencingChannelState
 	private readonly Dictionary<EffectMemorySlot, byte> _effectMemory = [];
 	private int _retriggerCountdown;
 	private byte _sampleOffsetHigh;
+	private TrackerWaveform _vibratoWaveform;
+	private TrackerWaveform _tremoloWaveform;
 
 	/// <summary>
 	/// Applies conventional whole-byte tracker effect-memory semantics. A
@@ -77,6 +79,28 @@ public sealed class SequencingChannelState
 		}
 	}
 
+	public TrackerWaveform VibratoWaveform
+	{
+		get => _vibratoWaveform;
+		set
+		{
+			if (!Enum.IsDefined(value))
+				throw new ArgumentOutOfRangeException(nameof(value));
+			_vibratoWaveform = value;
+		}
+	}
+
+	public TrackerWaveform TremoloWaveform
+	{
+		get => _tremoloWaveform;
+		set
+		{
+			if (!Enum.IsDefined(value))
+				throw new ArgumentOutOfRangeException(nameof(value));
+			_tremoloWaveform = value;
+		}
+	}
+
 	public int RetriggerCountdown
 	{
 		get => _retriggerCountdown;
@@ -93,5 +117,7 @@ public sealed class SequencingChannelState
 		_effectMemory.Clear();
 		_retriggerCountdown = 0;
 		_sampleOffsetHigh = 0;
+		_vibratoWaveform = TrackerWaveform.Sine;
+		_tremoloWaveform = TrackerWaveform.Sine;
 	}
 }

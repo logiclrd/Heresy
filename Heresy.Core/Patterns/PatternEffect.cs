@@ -261,3 +261,37 @@ public sealed record TrackerPatternLoopPatternEffect : PatternEffect
 
 	public byte RepeatCount { get; }
 }
+
+/// <summary>
+/// Tracker S3x vibrato waveform selection. Values 0..3 select sine, ramp-down,
+/// square, and random; values 4..15 are accepted but ignored like IT.
+/// </summary>
+public sealed record TrackerVibratoWaveformPatternEffect : PatternEffect
+{
+	public TrackerVibratoWaveformPatternEffect(byte value)
+	{
+		if (value > 0x0F)
+			throw new ArgumentOutOfRangeException(nameof(value));
+
+		Value = value;
+	}
+
+	public byte Value { get; }
+}
+
+/// <summary>
+/// Tracker S4x tremolo waveform selection. Values 0..3 select sine, ramp-down,
+/// square, and random; values 4..15 are accepted but ignored like IT.
+/// </summary>
+public sealed record TrackerTremoloWaveformPatternEffect : PatternEffect
+{
+	public TrackerTremoloWaveformPatternEffect(byte value)
+	{
+		if (value > 0x0F)
+			throw new ArgumentOutOfRangeException(nameof(value));
+
+		Value = value;
+	}
+
+	public byte Value { get; }
+}

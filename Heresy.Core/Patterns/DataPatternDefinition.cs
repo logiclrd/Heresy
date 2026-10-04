@@ -149,6 +149,9 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			case VibratoPatternEffect vibrato:
 				return new ApplyVibratoCommand(vibrato.Parameter);
 
+			case TrackerVibratoWaveformPatternEffect waveform:
+				return new ApplyTrackerVibratoWaveformCommand(waveform.Value);
+
 			case SetResonantFilterPatternEffect filter:
 				return new SetResonantFilterCommand(
 					filter.Cutoff,
@@ -176,6 +179,9 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 
 			case TremoloPatternEffect tremolo:
 				return new ApplyTremoloCommand(tremolo.Parameter);
+
+			case TrackerTremoloWaveformPatternEffect waveform:
+				return new ApplyTrackerTremoloWaveformCommand(waveform.Value);
 
 			case RetriggerPatternEffect retrigger:
 				return new ApplyRetriggerCommand(retrigger.Parameter);

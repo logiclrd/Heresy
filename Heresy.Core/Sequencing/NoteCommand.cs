@@ -49,7 +49,10 @@ public sealed record ApplyVibratoCommand(byte Parameter) : NoteCommand;
 /// this into the actual pitch modulation once tick timing and waveform state
 /// are available.
 /// </summary>
-public sealed record SetVibratoCommand(byte Speed, byte Depth) : NoteCommand;
+public sealed record SetVibratoCommand(
+	byte Speed,
+	byte Depth,
+	TrackerWaveform Waveform = TrackerWaveform.Sine) : NoteCommand;
 
 /// <summary>
 /// Removes the transient pitch modulation installed for the preceding row and
@@ -141,7 +144,10 @@ public sealed record ClearArpeggioCommand : NoteCommand;
 public sealed record ApplyTremoloCommand(byte Parameter) : NoteCommand;
 
 /// <summary>Resolved normal tremolo parameters in tracker units.</summary>
-public sealed record SetTremoloCommand(byte Speed, byte Depth) : NoteCommand;
+public sealed record SetTremoloCommand(
+	byte Speed,
+	byte Depth,
+	TrackerWaveform Waveform = TrackerWaveform.Sine) : NoteCommand;
 
 /// <summary>Stops transient tremolo modulation without resetting its phase.</summary>
 public sealed record ClearTremoloCommand : NoteCommand;
@@ -197,3 +203,17 @@ public sealed record ApplyTrackerPatternDelayCommand(
 /// </summary>
 public sealed record ApplyTrackerPatternLoopCommand(
 	byte RepeatCount) : NoteCommand;
+
+/// <summary>
+/// Raw tracker S3x vibrato-waveform selection. Values 0..3 select a waveform;
+/// higher nibble values are valid tracker data but ignored by Impulse Tracker.
+/// </summary>
+public sealed record ApplyTrackerVibratoWaveformCommand(
+	byte Value) : NoteCommand;
+
+/// <summary>
+/// Raw tracker S4x tremolo-waveform selection. Values 0..3 select a waveform;
+/// higher nibble values are valid tracker data but ignored by Impulse Tracker.
+/// </summary>
+public sealed record ApplyTrackerTremoloWaveformCommand(
+	byte Value) : NoteCommand;
