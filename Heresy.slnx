@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="Heresy.Core/Heresy.Core.csproj" />
+  <Project Path="Heresy.Tests.Core/Heresy.Tests.Core.csproj" />
+  <Project Path="Heresy/Heresy.csproj" />
+</Solution>
