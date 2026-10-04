@@ -249,27 +249,54 @@ public static class PatternNoteProcessor
 						context);
 				}
 
-				if (executeCommands
-					&& patternDelayRows != 0
-					&& commands.RepeatCommands.Count != 0)
+				if (executeCommands && patternDelayRows != 0)
 				{
-					for (int repeat = 1; repeat <= patternDelayRows; repeat++)
+					if (commands.NoteDelayTick.HasValue
+						&& commands.Commands.Count != 0)
 					{
-						double repeatTimeSeconds =
-							eventTimeSeconds
-							+ repeat * rowSpanDurationSeconds;
+						int delayTick = EffectiveSCommandTick(
+							commands.NoteDelayTick.Value);
 
-						if (repeatTimeSeconds >= rowEndSeconds)
-							break;
+						for (int repeat = 1; repeat <= patternDelayRows; repeat++)
+						{
+							double repeatTimeSeconds =
+								eventTimeSeconds
+								+ repeat * rowSpanDurationSeconds
+								+ delayTick * tickDurationSeconds;
 
-						resolved.Add(ResolveAt(
-							workingEvent.NoteEvent,
-							commands.RepeatCommands,
-							repeatTimeSeconds,
-							context,
-							SyntheticOrder(
-								workingEvent.NoteEvent.EmissionOrder,
-								1)));
+							if (repeatTimeSeconds >= rowEndSeconds)
+								break;
+
+							resolved.Add(ResolveAt(
+								workingEvent.NoteEvent,
+								commands.Commands,
+								repeatTimeSeconds,
+								context,
+								SyntheticOrder(
+									workingEvent.NoteEvent.EmissionOrder,
+									1)));
+						}
+					}
+					else if (commands.RepeatCommands.Count != 0)
+					{
+						for (int repeat = 1; repeat <= patternDelayRows; repeat++)
+						{
+							double repeatTimeSeconds =
+								eventTimeSeconds
+								+ repeat * rowSpanDurationSeconds;
+
+							if (repeatTimeSeconds >= rowEndSeconds)
+								break;
+
+							resolved.Add(ResolveAt(
+								workingEvent.NoteEvent,
+								commands.RepeatCommands,
+								repeatTimeSeconds,
+								context,
+								SyntheticOrder(
+									workingEvent.NoteEvent.EmissionOrder,
+									1)));
+						}
 					}
 				}
 
