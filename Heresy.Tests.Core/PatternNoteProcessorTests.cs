@@ -143,6 +143,41 @@ public sealed class PatternNoteProcessorTests
 		Assert.That(schedule[2].Target.PhysicalChannel, Is.EqualTo(7));
 	}
 
+	[Test]
+	public void PhysicalTargetsAreOffsetByContextChannelBase()
+	{
+		TestPatternGenerator generator = new(
+			1.0,
+			Event(0.0, ChannelTarget.Physical(2), new NoteCutCommand()));
+		NoteScheduleBuilder output = new();
+		SequencingContext context = new(physicalChannelBase: 5);
+
+		PatternNoteProcessor.GenerateNotes(generator, context, output, out _);
+
+		NoteSchedule schedule = output.Freeze();
+		Assert.That(schedule[0].Target, Is.EqualTo(ChannelTarget.Physical(7)));
+	}
+
+	[Test]
+	public void FlattenedChildrenAccumulateChannelBaseWhileMixdownStartsLocalChannelSpace()
+	{
+		SequencingContext root = new(physicalChannelBase: 3);
+		SequencingContext child = root.FlattenedChild(physicalChannelOffset: 4);
+		SequencingContext grandchild = child.FlattenedChild(physicalChannelOffset: 5);
+		SequencingContext mixdown = grandchild.MixdownChild();
+
+		Assert.That(child.PhysicalChannelBase, Is.EqualTo(7));
+		Assert.That(child.MapPhysicalChannel(2), Is.EqualTo(9));
+		Assert.That(grandchild.PhysicalChannelBase, Is.EqualTo(12));
+		Assert.That(grandchild.MapPhysicalChannel(1), Is.EqualTo(13));
+		Assert.That(mixdown.PhysicalChannelBase, Is.EqualTo(0));
+		Assert.That(mixdown.MapPhysicalChannel(3), Is.EqualTo(3));
+		Assert.That(child.State, Is.SameAs(root.State));
+		Assert.That(mixdown.State, Is.Not.SameAs(grandchild.State));
+		Assert.That(mixdown.State.Tempo, Is.EqualTo(grandchild.State.Tempo));
+		Assert.That(mixdown.State.Speed, Is.EqualTo(grandchild.State.Speed));
+	}
+
 	private static NoteEvent Event(double rowOffset, ChannelTarget target, params NoteCommand[] commands)
 		=> Event(rowOffset, TimeSpan.Zero, target, commands);
 

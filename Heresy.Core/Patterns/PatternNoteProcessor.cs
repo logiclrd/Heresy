@@ -116,7 +116,7 @@ public static class PatternNoteProcessor
 			foreach (WorkingEvent workingEvent in dueTimingEvents)
 			{
 				ApplyTimingCommands(context.State, workingEvent.NoteEvent.Commands);
-				resolved.Add(ResolveAt(workingEvent.NoteEvent, rowStartSeconds));
+				resolved.Add(ResolveAt(workingEvent.NoteEvent, rowStartSeconds, context));
 				deferredTimingEvents.Remove(workingEvent);
 			}
 
@@ -141,7 +141,7 @@ public static class PatternNoteProcessor
 					+ fraction * rowDurationSeconds
 					+ workingEvent.TimeOffsetSeconds;
 
-				resolved.Add(ResolveAt(workingEvent.NoteEvent, eventTimeSeconds));
+				resolved.Add(ResolveAt(workingEvent.NoteEvent, eventTimeSeconds, context));
 			}
 
 			rowStartSeconds += rowDurationSeconds * rowFraction;
@@ -189,10 +189,11 @@ public static class PatternNoteProcessor
 		}
 	}
 
-	private static NoteEvent ResolveAt(NoteEvent noteEvent, double timeSeconds)
+	private static NoteEvent ResolveAt(NoteEvent noteEvent, double timeSeconds, SequencingContext context)
 		=> noteEvent with
 		{
 			Offset = new MusicalTime(TimeSpan.FromSeconds(timeSeconds), 0.0),
+			Target = context.MapTarget(noteEvent.Target),
 		};
 
 	private static int CompareTimingEvents(WorkingEvent left, WorkingEvent right)

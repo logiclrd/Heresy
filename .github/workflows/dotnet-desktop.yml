@@ -1,6 +1,9 @@
 name: Heresy Build & Test
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -27,4 +30,3 @@ jobs:
 
     - name: Execute test suite
       run: dotnet test -p:Configuration=Release
-
