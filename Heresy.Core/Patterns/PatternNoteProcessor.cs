@@ -261,8 +261,10 @@ public static class PatternNoteProcessor
 						{
 							double repeatTimeSeconds =
 								eventTimeSeconds
-								+ repeat * rowSpanDurationSeconds
-								+ delayTick * tickDurationSeconds;
+								+ checked(
+									repeat * rowSpanTickCount
+										+ delayTick)
+									* tickDurationSeconds;
 
 							if (repeatTimeSeconds >= rowEndSeconds)
 								break;
