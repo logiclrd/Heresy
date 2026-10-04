@@ -295,3 +295,20 @@ public sealed record TrackerTremoloWaveformPatternEffect : PatternEffect
 
 	public byte Value { get; }
 }
+
+/// <summary>
+/// Tracker S6x fine-pattern delay. Extends the current row by individual
+/// tracker ticks without starting a new row span.
+/// </summary>
+public sealed record TrackerFinePatternDelayPatternEffect : PatternEffect
+{
+	public TrackerFinePatternDelayPatternEffect(byte extraTicks)
+	{
+		if (extraTicks > 0x0F)
+			throw new ArgumentOutOfRangeException(nameof(extraTicks));
+
+		ExtraTicks = extraTicks;
+	}
+
+	public byte ExtraTicks { get; }
+}

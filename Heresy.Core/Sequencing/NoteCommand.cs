@@ -73,7 +73,8 @@ public sealed record SetResonantFilterCommand(
 /// legacy tracker tick. Positive values raise pitch; negative values lower it.
 /// </summary>
 public sealed record SetPitchSlideCommand(
-	double LinearUnitsPerTick) : NoteCommand;
+	double LinearUnitsPerTick,
+	int? TicksPerRow = null) : NoteCommand;
 
 /// <summary>Stops the active pitch slide while preserving its accumulated pitch.</summary>
 public sealed record ClearPitchSlideCommand : NoteCommand;
@@ -83,7 +84,8 @@ public sealed record ClearPitchSlideCommand : NoteCommand;
 /// tick, where 64 units span the normalized [0,1] note-volume range.
 /// </summary>
 public sealed record SetNoteVolumeSlideCommand(
-	double TrackerUnitsPerTick) : NoteCommand;
+	double TrackerUnitsPerTick,
+	int? TicksPerRow = null) : NoteCommand;
 
 /// <summary>Stops the active note-volume slide while preserving its accumulated volume.</summary>
 public sealed record ClearNoteVolumeSlideCommand : NoteCommand;
@@ -120,7 +122,8 @@ public sealed record ApplyTonePortamentoCommand(
 /// </summary>
 public sealed record SetTonePortamentoCommand(
 	double LinearUnitsPerTick,
-	StartNoteCommand? TargetNote = null) : NoteCommand;
+	StartNoteCommand? TargetNote = null,
+	int? TicksPerRow = null) : NoteCommand;
 
 /// <summary>
 /// Stops tone-portamento movement for the row while retaining its target.
@@ -217,3 +220,10 @@ public sealed record ApplyTrackerVibratoWaveformCommand(
 /// </summary>
 public sealed record ApplyTrackerTremoloWaveformCommand(
 	byte Value) : NoteCommand;
+
+/// <summary>
+/// Raw tracker S6x fine-pattern delay. ExtraTicks extends the current row by
+/// that many tracker ticks; multiple S6x values on one row are cumulative.
+/// </summary>
+public sealed record ApplyTrackerFinePatternDelayCommand(
+	byte ExtraTicks) : NoteCommand;

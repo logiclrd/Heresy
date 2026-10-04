@@ -201,6 +201,9 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			case TrackerPatternDelayPatternEffect delay:
 				return new ApplyTrackerPatternDelayCommand(delay.ExtraRows);
 
+			case TrackerFinePatternDelayPatternEffect delay:
+				return new ApplyTrackerFinePatternDelayCommand(delay.ExtraTicks);
+
 			case TrackerPatternLoopPatternEffect loop:
 				return new ApplyTrackerPatternLoopCommand(loop.RepeatCount);
 

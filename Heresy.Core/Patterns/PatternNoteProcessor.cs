@@ -154,15 +154,32 @@ public static class PatternNoteProcessor
 				deferredTimingEvents.Remove(workingEvent);
 			}
 
-			double rowDurationSeconds = GetRowDurationSeconds(context.State);
+			double tickDurationSeconds =
+				SequencingConstants.Diachron.TotalSeconds
+				/ context.State.Tempo;
+			double rowDurationSeconds =
+				tickDurationSeconds * context.State.Speed;
+			int fineDelayTicks =
+				GetFinePatternDelayTicksForRow(events, row);
+			int rowSpanTickCount =
+				checked(context.State.Speed + fineDelayTicks);
+			double rowSpanDurationSeconds =
+				tickDurationSeconds * rowSpanTickCount;
 			byte patternDelayRows = GetPatternDelayRowsForRow(events, row);
 			double rowEnd = Math.Min(row + 1.0, effectiveRowCount);
 			double rowFraction = rowEnd - row;
 			double rowEndSeconds =
 				rowStartSeconds
-				+ rowDurationSeconds * (rowFraction + patternDelayRows);
+				+ tickDurationSeconds
+					* (context.State.Speed * rowFraction
+						+ fineDelayTicks
+						+ patternDelayRows * rowSpanTickCount);
 			int rowTickSpan = checked(
-				context.State.Speed * (patternDelayRows + 1));
+				rowSpanTickCount * (patternDelayRows + 1));
+			int? rowTicksOverride =
+				fineDelayTicks == 0
+					? null
+					: rowSpanTickCount;
 
 			foreach (WorkingEvent workingEvent in events)
 			{
@@ -189,11 +206,9 @@ public static class PatternNoteProcessor
 
 				ResolvedCommands commands = ResolveCommands(
 					workingEvent.NoteEvent,
-					context);
+					context,
+					rowTicksOverride);
 
-				double tickDurationSeconds =
-					SequencingConstants.Diachron.TotalSeconds
-					/ context.State.Tempo;
 				double commandTimeSeconds = eventTimeSeconds;
 				bool executeCommands = true;
 
@@ -207,7 +222,7 @@ public static class PatternNoteProcessor
 						+ delayTick * tickDurationSeconds;
 
 					executeCommands =
-						delayTick < context.State.Speed
+						delayTick < rowSpanTickCount
 						&& commandTimeSeconds < rowEndSeconds;
 				}
 
@@ -242,7 +257,7 @@ public static class PatternNoteProcessor
 					{
 						double repeatTimeSeconds =
 							eventTimeSeconds
-							+ repeat * rowDurationSeconds;
+							+ repeat * rowSpanDurationSeconds;
 
 						if (repeatTimeSeconds >= rowEndSeconds)
 							break;
@@ -266,7 +281,7 @@ public static class PatternNoteProcessor
 						eventTimeSeconds
 						+ cutTick * tickDurationSeconds;
 
-					if (cutTick < context.State.Speed
+					if (cutTick < rowSpanTickCount
 						&& cutTimeSeconds < rowEndSeconds)
 					{
 						resolved.Add(new NoteEvent(
@@ -610,9 +625,13 @@ public static class PatternNoteProcessor
 
 	private static ResolvedCommands ResolveCommands(
 		NoteEvent noteEvent,
-		SequencingContext context)
+		SequencingContext context,
+		int? rowTicksOverride)
 	{
-		List<NoteCommand>? transformed = null;
+		List<NoteCommand>? transformed =
+			rowTicksOverride.HasValue
+				? new List<NoteCommand>(noteEvent.Commands.Count)
+				: null;
 		List<NoteCommand> rowEndCommands = [];
 		List<NoteCommand> repeatCommands = [];
 		RetriggerRequest? retrigger = null;
@@ -670,7 +689,10 @@ public static class PatternNoteProcessor
 						EffectMemorySlot.VolumeSlide,
 						slide.Parameter);
 
-					NoteCommand? resolved = ResolveTrackerVolumeSlide(parameter);
+					NoteCommand? resolved =
+						ApplyRowTickOverride(
+							ResolveTrackerVolumeSlide(parameter),
+							rowTicksOverride);
 					if (resolved is not null)
 					{
 						transformed.Add(resolved);
@@ -691,9 +713,12 @@ public static class PatternNoteProcessor
 						EffectMemorySlot.PitchSlide,
 						slide.Parameter);
 
-					NoteCommand? resolved = ResolveTrackerPitchSlide(
-						parameter,
-						direction: -1.0);
+					NoteCommand? resolved =
+						ApplyRowTickOverride(
+							ResolveTrackerPitchSlide(
+								parameter,
+								direction: -1.0),
+							rowTicksOverride);
 					if (resolved is not null)
 					{
 						transformed.Add(resolved);
@@ -714,9 +739,12 @@ public static class PatternNoteProcessor
 						EffectMemorySlot.PitchSlide,
 						slide.Parameter);
 
-					NoteCommand? resolved = ResolveTrackerPitchSlide(
-						parameter,
-						direction: 1.0);
+					NoteCommand? resolved =
+						ApplyRowTickOverride(
+							ResolveTrackerPitchSlide(
+								parameter,
+								direction: 1.0),
+							rowTicksOverride);
 					if (resolved is not null)
 					{
 						transformed.Add(resolved);
@@ -739,11 +767,15 @@ public static class PatternNoteProcessor
 
 					if (parameter != 0 || tonePortamento.TargetNote is not null)
 					{
-						transformed.Add(new SetTonePortamentoCommand(
-							parameter * 4.0,
-							tonePortamento.TargetNote));
-						repeatCommands.Add(new SetTonePortamentoCommand(
-							parameter * 4.0));
+						SetTonePortamentoCommand resolved =
+							(SetTonePortamentoCommand)ApplyRowTickOverride(
+								new SetTonePortamentoCommand(
+									parameter * 4.0,
+									tonePortamento.TargetNote),
+								rowTicksOverride)!;
+						transformed.Add(resolved);
+						repeatCommands.Add(
+							resolved with { TargetNote = null });
 						rowEndCommands.Add(new ClearTonePortamentoCommand());
 					}
 					break;
@@ -887,7 +919,20 @@ public static class PatternNoteProcessor
 					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
 					break;
 
+				case ApplyTrackerFinePatternDelayCommand:
+					GetTrackerChannelState(
+						noteEvent,
+						context,
+						"Tracker fine pattern delay");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+					break;
+
 				default:
+					command =
+						ApplyRowTickOverride(
+							command,
+							rowTicksOverride)
+						?? command;
 					if (command is SetPitchSlideCommand)
 						rowEndCommands.Add(new ClearPitchSlideCommand());
 
@@ -909,6 +954,37 @@ public static class PatternNoteProcessor
 			NoteCutTick = noteCutTick,
 			NoteDelayTick = noteDelayTick,
 		};
+	}
+
+	private static int GetFinePatternDelayTicksForRow(
+		IReadOnlyList<WorkingEvent> events,
+		int row)
+	{
+		int total = 0;
+
+		foreach (WorkingEvent workingEvent in events)
+		{
+			if (FloorRow(workingEvent.RowOffset) != row)
+				continue;
+
+			foreach (NoteCommand command
+				in workingEvent.NoteEvent.Commands)
+			{
+				if (command is not ApplyTrackerFinePatternDelayCommand delay)
+					continue;
+
+				if (workingEvent.NoteEvent.Target.Kind
+					!= ChannelTargetKind.Physical)
+				{
+					throw new InvalidOperationException(
+						"Tracker fine pattern delay requires a physical channel target.");
+				}
+
+				total = checked(total + delay.ExtraTicks);
+			}
+		}
+
+		return total;
 	}
 
 	private static byte GetPatternDelayRowsForRow(
@@ -965,6 +1041,25 @@ public static class PatternNoteProcessor
 
 		return left.NoteEvent.EmissionOrder.CompareTo(
 			right.NoteEvent.EmissionOrder);
+	}
+
+	private static NoteCommand? ApplyRowTickOverride(
+		NoteCommand? command,
+		int? rowTicksOverride)
+	{
+		if (command is null || !rowTicksOverride.HasValue)
+			return command;
+
+		return command switch
+		{
+			SetPitchSlideCommand slide =>
+				slide with { TicksPerRow = rowTicksOverride.Value },
+			SetNoteVolumeSlideCommand slide =>
+				slide with { TicksPerRow = rowTicksOverride.Value },
+			SetTonePortamentoCommand portamento =>
+				portamento with { TicksPerRow = rowTicksOverride.Value },
+			_ => command,
+		};
 	}
 
 	private static void AddRepeatCommand(

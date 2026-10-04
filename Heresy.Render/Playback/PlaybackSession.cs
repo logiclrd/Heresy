@@ -264,7 +264,7 @@ public sealed class PlaybackSession
 				channel.CurrentVoice?.SetTonePortamento(
 					eventFrame,
 					_tempo,
-					_speed,
+					tonePortamento.TicksPerRow ?? _speed,
 					_context.Configuration.SampleRate,
 					tonePortamento.LinearUnitsPerTick,
 					tonePortamento.TargetNote?.PitchMultiplier);
@@ -278,7 +278,7 @@ public sealed class PlaybackSession
 				channel.CurrentVoice?.SetPitchSlide(
 					eventFrame,
 					_tempo,
-					_speed,
+					slide.TicksPerRow ?? _speed,
 					_context.Configuration.SampleRate,
 					slide.LinearUnitsPerTick);
 				break;
@@ -291,7 +291,7 @@ public sealed class PlaybackSession
 				channel.CurrentVoice?.SetNoteVolumeSlide(
 					eventFrame,
 					_tempo,
-					_speed,
+					slide.TicksPerRow ?? _speed,
 					_context.Configuration.SampleRate,
 					slide.TrackerUnitsPerTick);
 				break;
