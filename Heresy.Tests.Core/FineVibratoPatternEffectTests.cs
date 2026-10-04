@@ -49,7 +49,7 @@ public sealed class FineVibratoPatternEffectTests
 	}
 
 	[Test]
-	public void HxxAndUxxShareNibbleMemory()
+	public void ZeroDepthNibblePreservesEffectiveDepthAcrossHxxAndUxx()
 	{
 		SequencingContext context = new();
 
@@ -66,17 +66,12 @@ public sealed class FineVibratoPatternEffectTests
 			fineOutput,
 			out _);
 
-		SetVibratoCommand fine =
+		SetVibratoCommand afterNormal =
 			(SetVibratoCommand)fineOutput.Freeze()[0].Commands[0];
 
 		Assert.That(
-			fine,
-			Is.EqualTo(
-				new SetVibratoCommand(
-					7,
-					3,
-					TrackerWaveform.Sine,
-					DepthScale: 0.25)));
+			afterNormal,
+			Is.EqualTo(new SetVibratoCommand(7, 3)));
 
 		PatternNoteProcessor.GenerateNotes(
 			PatternWithFineVibrato(1, 0, 0x24),
@@ -91,12 +86,17 @@ public sealed class FineVibratoPatternEffectTests
 			normalOutput,
 			out _);
 
-		SetVibratoCommand normal =
+		SetVibratoCommand afterFine =
 			(SetVibratoCommand)normalOutput.Freeze()[0].Commands[0];
 
 		Assert.That(
-			normal,
-			Is.EqualTo(new SetVibratoCommand(6, 4)));
+			afterFine,
+			Is.EqualTo(
+				new SetVibratoCommand(
+					6,
+					4,
+					TrackerWaveform.Sine,
+					DepthScale: 0.25)));
 	}
 
 	[Test]
