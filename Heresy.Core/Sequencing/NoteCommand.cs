@@ -1,4 +1,5 @@
 using System;
+using System.Numerics;
 
 using Heresy.Core.Objects;
 
@@ -262,3 +263,40 @@ public sealed record ApplyTrackerNewNoteActionCommand(
 /// </summary>
 public sealed record SetCurrentVoiceDisplacementActionCommand(
 	NoteDisplacementAction Action) : NoteCommand;
+
+/// <summary>
+/// Raw tracker S8x 4-bit panning value.
+/// </summary>
+public sealed record ApplyTrackerPanningCommand : NoteCommand
+{
+	public ApplyTrackerPanningCommand(byte value)
+	{
+		if (value > 0x0F)
+			throw new ArgumentOutOfRangeException(nameof(value));
+
+		Value = value;
+	}
+
+	public byte Value { get; }
+}
+
+/// <summary>
+/// Sets the persistent spatial position of a physical playback channel and
+/// its currently attached voice.
+/// </summary>
+public sealed record SetSpatialPositionCommand : NoteCommand
+{
+	public SetSpatialPositionCommand(Vector3 position)
+	{
+		if (!float.IsFinite(position.X)
+			|| !float.IsFinite(position.Y)
+			|| !float.IsFinite(position.Z))
+		{
+			throw new ArgumentOutOfRangeException(nameof(position));
+		}
+
+		Position = position;
+	}
+
+	public Vector3 Position { get; }
+}

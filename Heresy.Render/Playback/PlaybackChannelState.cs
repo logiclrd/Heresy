@@ -1,3 +1,5 @@
+using System.Numerics;
+
 using Heresy.Render.Filters;
 using Heresy.Render.Sounds;
 
@@ -27,6 +29,8 @@ public sealed class PlaybackChannelState
 	/// </summary>
 	public double OverallVolume { get; private set; } = 1.0;
 
+	public Vector3 Position { get; private set; } = Vector3.Zero;
+
 	public ResonantFilterParameters FilterParameters { get; private set; } =
 		ResonantFilterParameters.Disabled;
 
@@ -53,6 +57,13 @@ public sealed class PlaybackChannelState
 			CurrentVoice.OverallVolume = volume;
 	}
 
+	internal void SetPosition(Vector3 position)
+	{
+		Position = position;
+		if (CurrentVoice is not null)
+			CurrentVoice.SoundState.Position = position;
+	}
+
 	internal void SetFilterParameters(ResonantFilterParameters parameters)
 	{
 		FilterParameters = parameters;
@@ -71,6 +82,7 @@ public sealed class PlaybackChannelState
 		CurrentVoice = voice;
 		voice.NoteVolume = NoteVolume;
 		voice.OverallVolume = OverallVolume;
+		voice.SoundState.Position = Position;
 	}
 
 	internal void CutCurrentVoice()

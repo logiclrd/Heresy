@@ -368,3 +368,20 @@ public sealed record TrackerNewNoteActionPatternEffect : PatternEffect
 
 	public NoteDisplacementAction Action { get; }
 }
+
+/// <summary>
+/// Tracker S8x 4-bit panning. The low nibble maps through IT's 0..256
+/// panning scale before being projected onto Heresy's X spatial axis.
+/// </summary>
+public sealed record TrackerPanningPatternEffect : PatternEffect
+{
+	public TrackerPanningPatternEffect(byte value)
+	{
+		if (value > 0x0F)
+			throw new ArgumentOutOfRangeException(nameof(value));
+
+		Value = value;
+	}
+
+	public byte Value { get; }
+}

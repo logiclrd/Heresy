@@ -216,6 +216,10 @@ public sealed class PlaybackSession
 				channel.SetOverallVolume(volume.Volume);
 				break;
 
+			case SetSpatialPositionCommand position:
+				channel.SetPosition(position.Position);
+				break;
+
 			case SetResonantFilterCommand filter:
 				channel.SetFilterParameters(
 					new ResonantFilterParameters(

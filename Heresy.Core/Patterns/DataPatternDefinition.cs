@@ -217,6 +217,9 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 				return new ApplyTrackerNewNoteActionCommand(
 					newNoteAction.Action);
 
+			case TrackerPanningPatternEffect panning:
+				return new ApplyTrackerPanningCommand(panning.Value);
+
 			default:
 				throw new NotSupportedException($"Unsupported pattern effect type: {effect.GetType().FullName}");
 		}

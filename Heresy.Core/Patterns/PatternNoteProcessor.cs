@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Numerics;
 
 using Heresy.Core.Diagnostics;
 using Heresy.Core.Sequencing;
@@ -990,6 +991,23 @@ public static class PatternNoteProcessor
 					transformed.Add(
 						new SetCurrentVoiceDisplacementActionCommand(
 							newNoteAction.Action));
+					break;
+
+				case ApplyTrackerPanningCommand panning:
+					GetTrackerChannelState(
+						noteEvent,
+						context,
+						"Tracker panning");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+
+					int trackerPan =
+						(panning.Value * 256 + 8) / 15;
+					float x =
+						(trackerPan - 128) / 128.0f;
+
+					transformed.Add(
+						new SetSpatialPositionCommand(
+							new Vector3(x, 0.0f, 0.0f)));
 					break;
 
 				default:
