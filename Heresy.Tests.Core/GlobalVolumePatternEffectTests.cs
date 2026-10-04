@@ -16,7 +16,7 @@ public sealed class GlobalVolumePatternEffectTests
 	[TestCase((byte)128)]
 	[TestCase((byte)129)]
 	[TestCase(byte.MaxValue)]
-	public void DataGridTranslatesVxxToRawGlobalCommand(byte parameter)
+	public void DataGridKeepsVxxOnOriginatingPhysicalChannel(byte parameter)
 	{
 		DataPatternDefinition pattern = Pattern(1);
 		pattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
@@ -29,7 +29,7 @@ public sealed class GlobalVolumePatternEffectTests
 			out _);
 
 		NoteEvent noteEvent = output.Freeze().Single();
-		Assert.That(noteEvent.Target, Is.EqualTo(ChannelTarget.Global));
+		Assert.That(noteEvent.Target, Is.EqualTo(ChannelTarget.Physical(0)));
 		Assert.That(
 			noteEvent.Commands[0],
 			Is.EqualTo(new ApplyTrackerGlobalVolumeCommand(parameter)));
@@ -54,7 +54,7 @@ public sealed class GlobalVolumePatternEffectTests
 		Assert.That(command.Volume, Is.EqualTo(expectedVolume));
 		Assert.That(
 			schedule.Single().Target,
-			Is.EqualTo(ChannelTarget.Global));
+			Is.EqualTo(ChannelTarget.Physical(0)));
 	}
 
 	[TestCase((byte)129)]

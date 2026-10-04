@@ -166,6 +166,31 @@ public sealed class PlaybackGlobalVolumeSlideTests
 	}
 
 	[Test]
+	public void VxxAndFineWxxRespectPhysicalChannelOrder()
+	{
+		PlaybackSession session = Session(
+			Schedule(
+				Global(
+					Frame(0),
+					new SetGlobalVolumeCommand(0.5)),
+				Event(
+					Frame(1),
+					0,
+					new AdjustGlobalVolumeCommand(16.0)),
+				Event(
+					Frame(1),
+					1,
+					new SetGlobalVolumeCommand(0.25))),
+			new TestResolver());
+
+		session.Render(0, 2, new float[2]);
+
+		// Channel 0 raises the global volume first; channel 1's Vxx-style set
+		// then wins because tracker channels execute in physical-channel order.
+		Assert.That(session.GlobalVolume, Is.EqualTo(0.25));
+	}
+
+	[Test]
 	public void SplitCallsProduceSamePcmAsSingleCall()
 	{
 		ObjectId sourceId = (ObjectId)10U;
