@@ -90,18 +90,18 @@ public sealed class TrackerVibratoPitchCurve : PitchCurve
 					_randomSeed,
 					checked(_randomStartIndex + tick1),
 					_depth);
-			double units =
+			double randomUnits =
 				(units0 + (units1 - units0) * fraction)
 					* _depthScale;
 
 			return Math.Pow(
 				2.0,
-				units / TrackerVibrato.LinearSlideUnitsPerOctave);
+				randomUnits / TrackerVibrato.LinearSlideUnitsPerOctave);
 		}
 
 		double phase =
 			_initialPhase + frameOffset * _phasePerOutputFrame;
-		double units =
+		double continuousUnits =
 			TrackerVibrato.GetContinuousLinearSlideUnits(
 				_waveform,
 				phase,
@@ -110,6 +110,6 @@ public sealed class TrackerVibratoPitchCurve : PitchCurve
 
 		return Math.Pow(
 			2.0,
-				units / TrackerVibrato.LinearSlideUnitsPerOctave);
+				continuousUnits / TrackerVibrato.LinearSlideUnitsPerOctave);
 	}
 }
