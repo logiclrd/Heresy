@@ -5,10 +5,11 @@ using Heresy.Core.Timing;
 namespace Heresy.Core.Sequencing;
 
 /// <summary>
-/// Per-invocation sequencing context. Flattened child sequencers share State
-/// and physical-channel identity with their parent, offset by the channel on
-/// which they are flattened. Mixdown children begin a new local channel space
-/// while inheriting the parent's current timing state.
+/// Per-invocation sequencing context. Flattened child sequencers share State,
+/// mapped physical-channel state and physical-channel identity with their
+/// parent, offset by the channel on which they are flattened. Mixdown children
+/// begin a new local channel space with independent channel memory while
+/// inheriting the parent's current timing state.
 /// </summary>
 public sealed class SequencingContext
 {
@@ -19,7 +20,8 @@ public sealed class SequencingContext
 		DeterministicRandom? random = null,
 		double pitchMultiplier = 1.0,
 		double playbackSpeedMultiplier = 1.0,
-		int physicalChannelBase = 0)
+		int physicalChannelBase = 0,
+		SequencingChannelStateMap? channelStates = null)
 	{
 		if (physicalChannelBase < 0)
 			throw new ArgumentOutOfRangeException(nameof(physicalChannelBase));
@@ -29,10 +31,12 @@ public sealed class SequencingContext
 		PitchMultiplier = ValidateMultiplier(pitchMultiplier, nameof(pitchMultiplier));
 		PlaybackSpeedMultiplier = ValidateMultiplier(playbackSpeedMultiplier, nameof(playbackSpeedMultiplier));
 		PhysicalChannelBase = physicalChannelBase;
+		ChannelStates = channelStates ?? new SequencingChannelStateMap();
 	}
 
 	public SequencingState State { get; }
 	public DeterministicRandom Random { get; }
+	public SequencingChannelStateMap ChannelStates { get; }
 
 	public double PitchMultiplier { get; }
 	public double PlaybackSpeedMultiplier { get; }
@@ -55,6 +59,9 @@ public sealed class SequencingContext
 			? ChannelTarget.Physical(MapPhysicalChannel(target.PhysicalChannel))
 			: target;
 
+	public SequencingChannelState GetPhysicalChannelState(int localChannel)
+		=> ChannelStates.GetPhysical(MapPhysicalChannel(localChannel));
+
 	public SequencingContext FlattenedChild(
 		double pitchMultiplier = 1.0,
 		double playbackSpeedMultiplier = 1.0,
@@ -68,7 +75,8 @@ public sealed class SequencingContext
 			Random.CreateChild(),
 			PitchMultiplier * ValidateMultiplier(pitchMultiplier, nameof(pitchMultiplier)),
 			PlaybackSpeedMultiplier * ValidateMultiplier(playbackSpeedMultiplier, nameof(playbackSpeedMultiplier)),
-			checked(PhysicalChannelBase + physicalChannelOffset));
+			checked(PhysicalChannelBase + physicalChannelOffset),
+			ChannelStates);
 	}
 
 	public SequencingContext MixdownChild(double pitchMultiplier = 1.0, double playbackSpeedMultiplier = 1.0)
@@ -77,7 +85,8 @@ public sealed class SequencingContext
 			Random.CreateChild(),
 			PitchMultiplier * ValidateMultiplier(pitchMultiplier, nameof(pitchMultiplier)),
 			PlaybackSpeedMultiplier * ValidateMultiplier(playbackSpeedMultiplier, nameof(playbackSpeedMultiplier)),
-			physicalChannelBase: 0);
+			physicalChannelBase: 0,
+			channelStates: new SequencingChannelStateMap());
 
 	private static double ValidateMultiplier(double value, string paramName)
 	{
