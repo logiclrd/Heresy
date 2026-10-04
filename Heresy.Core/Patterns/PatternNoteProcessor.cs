@@ -323,6 +323,26 @@ public static class PatternNoteProcessor
 					break;
 				}
 
+				case ApplyTonePortamentoCommand tonePortamento:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(noteEvent, context, "Tracker tone portamento");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+
+					byte parameter = channelState.ResolveEffectParameter(
+						EffectMemorySlot.TonePortamento,
+						tonePortamento.Parameter);
+
+					if (parameter != 0 || tonePortamento.TargetNote is not null)
+					{
+						transformed.Add(new SetTonePortamentoCommand(
+							parameter * 4.0,
+							tonePortamento.TargetNote));
+						rowEndCommands.Add(new ClearTonePortamentoCommand());
+					}
+					break;
+				}
+
 				default:
 					if (command is SetPitchSlideCommand)
 						rowEndCommands.Add(new ClearPitchSlideCommand());

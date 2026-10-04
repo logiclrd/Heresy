@@ -43,6 +43,7 @@ public sealed class PlaybackVoice
 
 	private PitchCurve _basePitchCurve = new ConstantPitchCurve(1.0);
 	private long _basePitchCurveStartFrame;
+	private double? _tonePortamentoTargetBaseMultiplier;
 	private PitchCurve _modulationPitchCurve = new ConstantPitchCurve(1.0);
 	private long _modulationPitchCurveStartFrame;
 
@@ -261,6 +262,72 @@ public sealed class PlaybackVoice
 	}
 
 	internal void ClearPitchSlide(long absoluteFrame)
+	{
+		if (absoluteFrame < StartFrame)
+			return;
+
+		long relativeFrame = absoluteFrame - StartFrame;
+		double currentBase = GetBasePitchMultiplier(relativeFrame);
+
+		_basePitchCurve = new ConstantPitchCurve(currentBase);
+		_basePitchCurveStartFrame = relativeFrame;
+
+		RecomposePitchTrajectory(relativeFrame);
+	}
+
+	internal void SetTonePortamento(
+		long absoluteFrame,
+		double tempo,
+		int ticksPerRow,
+		int sampleRate,
+		double linearUnitsPerTick,
+		double? targetPitchMultiplier)
+	{
+		if (absoluteFrame < StartFrame)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		if (ticksPerRow <= 0)
+			throw new ArgumentOutOfRangeException(nameof(ticksPerRow));
+		if (sampleRate <= 0)
+			throw new ArgumentOutOfRangeException(nameof(sampleRate));
+		if (double.IsNaN(linearUnitsPerTick)
+			|| double.IsInfinity(linearUnitsPerTick)
+			|| linearUnitsPerTick < 0.0)
+		{
+			throw new ArgumentOutOfRangeException(nameof(linearUnitsPerTick));
+		}
+
+		if (targetPitchMultiplier.HasValue)
+		{
+			if (!(targetPitchMultiplier.Value > 0.0)
+				|| double.IsNaN(targetPitchMultiplier.Value)
+				|| double.IsInfinity(targetPitchMultiplier.Value))
+			{
+				throw new ArgumentOutOfRangeException(nameof(targetPitchMultiplier));
+			}
+
+			_tonePortamentoTargetBaseMultiplier =
+				targetPitchMultiplier.Value / SoundState.PitchMultiplier;
+		}
+
+		if (!_tonePortamentoTargetBaseMultiplier.HasValue)
+			return;
+
+		long relativeFrame = absoluteFrame - StartFrame;
+		double currentBase = GetBasePitchMultiplier(relativeFrame);
+
+		_basePitchCurve = new TrackerTonePortamentoCurve(
+			currentBase,
+			_tonePortamentoTargetBaseMultiplier.Value,
+			linearUnitsPerTick,
+			GetTickDuration(tempo),
+			ticksPerRow,
+			sampleRate);
+		_basePitchCurveStartFrame = relativeFrame;
+
+		RecomposePitchTrajectory(relativeFrame);
+	}
+
+	internal void ClearTonePortamento(long absoluteFrame)
 	{
 		if (absoluteFrame < StartFrame)
 			return;

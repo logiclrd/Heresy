@@ -34,12 +34,44 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			List<NoteCommand> channelCommands = [];
 			List<NoteCommand> globalCommands = [];
 
-			if (cell.Note is not null)
+			StartNoteCommand? tonePortamentoTarget = null;
+			bool hasTonePortamento = false;
+			foreach (PatternEffect effect in cell.Effects)
+			{
+				if (effect is TonePortamentoPatternEffect)
+				{
+					hasTonePortamento = true;
+					break;
+				}
+			}
+
+			if (cell.Note is StartPatternNote start && hasTonePortamento)
+			{
+				tonePortamentoTarget = (StartNoteCommand)TranslateNote(start);
+			}
+			else if (cell.Note is not null)
+			{
 				channelCommands.Add(TranslateNote(cell.Note));
+			}
 
 			foreach (PatternEffect effect in cell.Effects)
 			{
-				NoteCommand command = TranslateEffect(effect, out bool isGlobal);
+				NoteCommand command;
+				bool isGlobal;
+
+				if (effect is TonePortamentoPatternEffect tonePortamento)
+				{
+					command = new ApplyTonePortamentoCommand(
+						tonePortamento.Parameter,
+						tonePortamentoTarget);
+					tonePortamentoTarget = null;
+					isGlobal = false;
+				}
+				else
+				{
+					command = TranslateEffect(effect, out isGlobal);
+				}
+
 				if (isGlobal)
 					globalCommands.Add(command);
 				else

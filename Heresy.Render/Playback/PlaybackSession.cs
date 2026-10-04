@@ -240,6 +240,29 @@ public sealed class PlaybackSession
 				}
 				break;
 
+			case SetTonePortamentoCommand tonePortamento:
+				if (channel.CurrentVoice is null
+					&& tonePortamento.TargetNote is not null)
+				{
+					StartNote(
+						channel,
+						tonePortamento.TargetNote,
+						eventFrame);
+				}
+
+				channel.CurrentVoice?.SetTonePortamento(
+					eventFrame,
+					_tempo,
+					_speed,
+					_context.Configuration.SampleRate,
+					tonePortamento.LinearUnitsPerTick,
+					tonePortamento.TargetNote?.PitchMultiplier);
+				break;
+
+			case ClearTonePortamentoCommand:
+				channel.CurrentVoice?.ClearTonePortamento(eventFrame);
+				break;
+
 			case SetPitchSlideCommand slide:
 				channel.CurrentVoice?.SetPitchSlide(
 					eventFrame,

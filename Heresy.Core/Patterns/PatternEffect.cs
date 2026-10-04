@@ -150,3 +150,9 @@ public sealed record TrackerPitchSlideDownPatternEffect(byte Parameter) : Patter
 
 /// <summary>Tracker Fxx pitch slide up, including shared E/F effect memory.</summary>
 public sealed record TrackerPitchSlideUpPatternEffect(byte Parameter) : PatternEffect;
+
+/// <summary>
+/// Tracker Gxx tone portamento. A note in the same cell becomes the target
+/// pitch rather than retriggering an already-active voice.
+/// </summary>
+public sealed record TonePortamentoPatternEffect(byte Parameter) : PatternEffect;

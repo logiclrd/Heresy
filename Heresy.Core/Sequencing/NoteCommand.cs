@@ -101,3 +101,25 @@ public sealed record AdjustPitchLinearUnitsCommand(
 /// <summary>Applies one immediate persistent note-volume change in tracker units.</summary>
 public sealed record AdjustNoteVolumeCommand(
 	double TrackerUnits) : NoteCommand;
+
+/// <summary>
+/// Raw tracker Gxx tone-portamento operation. TargetNote is present when the
+/// same tracker cell also contains a note; an active voice uses only its target
+/// pitch, while an empty channel may use the full note as a fallback start.
+/// </summary>
+public sealed record ApplyTonePortamentoCommand(
+	byte Parameter,
+	StartNoteCommand? TargetNote = null) : NoteCommand;
+
+/// <summary>
+/// Resolved tone portamento. LinearUnitsPerTick is non-negative. TargetNote is
+/// null when continuing toward the previously established target.
+/// </summary>
+public sealed record SetTonePortamentoCommand(
+	double LinearUnitsPerTick,
+	StartNoteCommand? TargetNote = null) : NoteCommand;
+
+/// <summary>
+/// Stops tone-portamento movement for the row while retaining its target.
+/// </summary>
+public sealed record ClearTonePortamentoCommand : NoteCommand;
