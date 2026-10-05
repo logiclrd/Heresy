@@ -54,6 +54,31 @@ other intrinsically discrete operations may still use thresholded/discrete
 operator outputs; the architecture does not require every operator to be
 continuous.
 
+## Runtime ownership
+
+The same operator model is used at the three additive playback scopes:
+
+- a **voice** owns its pitch and note-volume baseline plus voice operators;
+- a **physical channel** owns channel volume and spatial-position baseline plus
+  channel operators;
+- the **playback session** owns global volume and tempo baseline plus global
+  operators.
+
+An operator never replaces another operator's current value. Each one updates
+only its own contribution, and effective state is composed from the baseline
+and all currently active contributions.
+
+Pitch uses linear/log-frequency units while operators are active, then converts
+the sum to a multiplier for rendering. Tone portamento therefore commits its
+audible pitch delta at row end while retaining its hidden continuous glissando
+position separately as tracker-compatibility state.
+
+Intrinsically discrete operations do not have to invent an additive numeric
+coordinate merely to fit the vector. Tremor, note cut/delay and retrigger may
+use row-scoped discrete operator state or threshold crossings. The requirement
+is lifecycle/compositional isolation: they must not mutate unrelated baseline
+parameters incrementally per output frame.
+
 ## Tracker row time
 
 A tracker compatibility operator receives both wall time and a continuous
@@ -145,3 +170,9 @@ a ramp operator.
 
 This row-time mapping is tracker compatibility infrastructure only. It is not a
 replacement clock for native effects.
+
+In Render, `TrackerTickClock` is the analytic integration/inversion of that
+tracker timing trajectory. It maps wall time to `row_t` for compatibility
+operators; it does **not** own effect state and it does not redefine native
+wall-time functors. The live global tempo operator and the analytic timing map
+must describe the same trajectory.
