@@ -11,6 +11,17 @@ namespace Heresy.Core.Patterns;
 /// </summary>
 public abstract record PatternEffect;
 
+/// <summary>
+/// Tracker Bxx order jump. The byte addresses a sequence order directly.
+/// </summary>
+public sealed record TrackerOrderJumpPatternEffect(byte Order) : PatternEffect;
+
+/// <summary>
+/// Tracker Cxx pattern break. The byte is the row at which the destination
+/// sequence entry begins.
+/// </summary>
+public sealed record TrackerPatternBreakPatternEffect(byte Row) : PatternEffect;
+
 public sealed record SetTempoPatternEffect : PatternEffect
 {
 	public SetTempoPatternEffect(double ticksPerDiachron)

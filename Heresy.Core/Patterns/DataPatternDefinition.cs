@@ -135,6 +135,14 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 
 		switch (effect)
 		{
+			case TrackerOrderJumpPatternEffect jump:
+				isGlobal = true;
+				return new ApplyTrackerOrderJumpCommand(jump.Order);
+
+			case TrackerPatternBreakPatternEffect patternBreak:
+				isGlobal = true;
+				return new ApplyTrackerPatternBreakCommand(patternBreak.Row);
+
 			case SetTempoPatternEffect tempo:
 				isGlobal = true;
 				return new SetTempoCommand(tempo.TicksPerDiachron);

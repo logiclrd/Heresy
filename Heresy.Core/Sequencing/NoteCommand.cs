@@ -22,6 +22,18 @@ public sealed record NoteOffCommand : NoteCommand;
 
 public sealed record NoteCutCommand : NoteCommand;
 
+/// <summary>
+/// Raw tracker Bxx order jump. PatternNoteProcessor consumes this as
+/// sequencing control; it is never emitted to playback.
+/// </summary>
+public sealed record ApplyTrackerOrderJumpCommand(byte Order) : NoteCommand;
+
+/// <summary>
+/// Raw tracker Cxx pattern break. PatternNoteProcessor consumes this as
+/// sequencing control; it is never emitted to playback.
+/// </summary>
+public sealed record ApplyTrackerPatternBreakCommand(byte Row) : NoteCommand;
+
 public sealed record SetTempoCommand(double TicksPerDiachron) : NoteCommand;
 
 /// <summary>

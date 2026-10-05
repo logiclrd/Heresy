@@ -100,6 +100,25 @@ public static class PatternNoteProcessor
 		INoteReceiver output,
 		int startRow,
 		out TimeSpan duration)
+		=> GenerateNotes(
+			generator,
+			context,
+			output,
+			startRow,
+			out duration,
+			out _);
+
+	/// <summary>
+	/// Generates one pattern invocation and reports any tracker sequence-control
+	/// request which takes effect at the end of the final generated row.
+	/// </summary>
+	public static void GenerateNotes(
+		IRawPatternNoteGenerator generator,
+		SequencingContext context,
+		INoteReceiver output,
+		int startRow,
+		out TimeSpan duration,
+		out PatternFlowControl flowControl)
 	{
 		ArgumentNullException.ThrowIfNull(generator);
 		ArgumentNullException.ThrowIfNull(context);
@@ -151,6 +170,11 @@ public static class PatternNoteProcessor
 			events,
 			effectiveRowCount,
 			context);
+
+		(events, effectiveRowCount, flowControl) =
+			ExtractPatternFlowControl(
+				events,
+				effectiveRowCount);
 
 		List<NoteEvent> resolved = new(events.Count);
 		List<WorkingEvent> deferredTimingEvents = [];
@@ -517,6 +541,127 @@ public static class PatternNoteProcessor
 		INoteReceiver output,
 		out TimeSpan duration)
 		=> GenerateNotes(generator, context, output, 0, out duration);
+
+	private static (
+		List<WorkingEvent> Events,
+		double RowCount,
+		PatternFlowControl FlowControl)
+		ExtractPatternFlowControl(
+			List<WorkingEvent> events,
+			double rowCount)
+	{
+		int? controlRow = null;
+
+		foreach (WorkingEvent workingEvent in events)
+		{
+			if (workingEvent.RowOffset < 0.0
+				|| workingEvent.RowOffset >= rowCount)
+			{
+				continue;
+			}
+
+			foreach (NoteCommand command in workingEvent.NoteEvent.Commands)
+			{
+				if (command is not ApplyTrackerOrderJumpCommand
+					&& command is not ApplyTrackerPatternBreakCommand)
+				{
+					continue;
+				}
+
+				int row = FloorRow(workingEvent.RowOffset);
+				if (!controlRow.HasValue || row < controlRow.Value)
+					controlRow = row;
+			}
+		}
+
+		if (!controlRow.HasValue)
+		{
+			return (
+				events,
+				rowCount,
+				PatternFlowControl.None);
+		}
+
+		byte? orderJump = null;
+		byte? breakRow = null;
+		int finalRow = controlRow.Value;
+
+		foreach (WorkingEvent workingEvent in events)
+		{
+			if (FloorRow(workingEvent.RowOffset) != finalRow)
+				continue;
+
+			foreach (NoteCommand command in workingEvent.NoteEvent.Commands)
+			{
+				switch (command)
+				{
+					case ApplyTrackerOrderJumpCommand jump:
+						orderJump = jump.Order;
+						break;
+
+					case ApplyTrackerPatternBreakCommand patternBreak:
+						breakRow = patternBreak.Row;
+						break;
+				}
+			}
+		}
+
+		double truncatedRowCount = Math.Min(
+			rowCount,
+			finalRow + 1.0);
+		List<WorkingEvent> filtered = [];
+
+		foreach (WorkingEvent workingEvent in events)
+		{
+			if (workingEvent.RowOffset > truncatedRowCount)
+				continue;
+
+			IReadOnlyList<NoteCommand> commands =
+				RemoveSequenceControlCommands(
+					workingEvent.NoteEvent.Commands);
+			if (commands.Count == 0)
+				continue;
+
+			NoteEvent noteEvent = workingEvent.NoteEvent with
+			{
+				Commands = commands,
+			};
+
+			filtered.Add(new WorkingEvent
+			{
+				NoteEvent = noteEvent,
+				RowOffset = workingEvent.RowOffset,
+				TimeOffsetSeconds = workingEvent.TimeOffsetSeconds,
+				AffectsTiming = AffectsTiming(noteEvent),
+			});
+		}
+
+		return (
+			filtered,
+			truncatedRowCount,
+			new PatternFlowControl(orderJump, breakRow));
+	}
+
+	private static IReadOnlyList<NoteCommand>
+		RemoveSequenceControlCommands(
+			IReadOnlyList<NoteCommand> commands)
+	{
+		List<NoteCommand>? filtered = null;
+
+		for (int i = 0; i < commands.Count; i++)
+		{
+			if (commands[i] is not ApplyTrackerOrderJumpCommand
+				&& commands[i] is not ApplyTrackerPatternBreakCommand)
+			{
+				filtered?.Add(commands[i]);
+				continue;
+			}
+
+			filtered ??= CopyCommandsBefore(commands, i);
+		}
+
+		return filtered ?? commands;
+	}
 
 	private static (List<WorkingEvent> Events, double RowCount)
 		ExpandPatternLoops(
