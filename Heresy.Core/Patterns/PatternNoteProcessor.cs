@@ -700,6 +700,8 @@ public static class PatternNoteProcessor
 			if (!(rowSpan > 0.0))
 				break;
 
+			int expandedVisitStart = expanded.Count;
+
 			foreach (WorkingEvent workingEvent in events)
 			{
 				if (workingEvent.RowOffset == rowCount)
@@ -738,6 +740,7 @@ public static class PatternNoteProcessor
 			}
 
 			int nextSourceRow = sourceRow + 1;
+			int? firstActiveLoopChannel = null;
 			List<WorkingEvent> loopEvents =
 				GetPatternLoopEventsForRow(
 					events,
@@ -775,6 +778,8 @@ public static class PatternNoteProcessor
 						state.RemainingRepeats =
 							loop.RepeatCount;
 						nextSourceRow = state.StartRow;
+						firstActiveLoopChannel ??=
+							physicalChannel;
 						continue;
 					}
 
@@ -782,6 +787,8 @@ public static class PatternNoteProcessor
 					if (state.RemainingRepeats != 0)
 					{
 						nextSourceRow = state.StartRow;
+						firstActiveLoopChannel ??=
+							physicalChannel;
 					}
 					else
 					{
@@ -789,6 +796,12 @@ public static class PatternNoteProcessor
 					}
 				}
 			}
+
+			SuppressPatternBreakCommandsAfterActiveLoop(
+				expanded,
+				expandedVisitStart,
+				firstActiveLoopChannel,
+				context);
 
 			expandedRow += rowSpan;
 
@@ -845,6 +858,66 @@ public static class PatternNoteProcessor
 		}
 
 		return false;
+	}
+
+	private static void SuppressPatternBreakCommandsAfterActiveLoop(
+		List<WorkingEvent> expanded,
+		int startIndex,
+		int? firstActiveLoopChannel,
+		SequencingContext context)
+	{
+		if (!firstActiveLoopChannel.HasValue)
+			return;
+
+		for (int i = startIndex; i < expanded.Count; i++)
+		{
+			WorkingEvent workingEvent = expanded[i];
+			ChannelTarget target = workingEvent.NoteEvent.Target;
+			if (target.Kind != ChannelTargetKind.Physical
+				|| context.MapPhysicalChannel(target.PhysicalChannel)
+					< firstActiveLoopChannel.Value)
+			{
+				continue;
+			}
+
+			IReadOnlyList<NoteCommand> commands =
+				RemovePatternBreakCommands(
+					workingEvent.NoteEvent.Commands);
+			if (commands.Count == workingEvent.NoteEvent.Commands.Count)
+				continue;
+
+			NoteEvent noteEvent = workingEvent.NoteEvent with
+			{
+				Commands = commands,
+			};
+			expanded[i] = new WorkingEvent
+			{
+				NoteEvent = noteEvent,
+				RowOffset = workingEvent.RowOffset,
+				TimeOffsetSeconds = workingEvent.TimeOffsetSeconds,
+				AffectsTiming = AffectsTiming(noteEvent),
+			};
+		}
+	}
+
+	private static IReadOnlyList<NoteCommand>
+		RemovePatternBreakCommands(
+			IReadOnlyList<NoteCommand> commands)
+	{
+		List<NoteCommand>? filtered = null;
+
+		for (int i = 0; i < commands.Count; i++)
+		{
+			if (commands[i] is not ApplyTrackerPatternBreakCommand)
+			{
+				filtered?.Add(commands[i]);
+				continue;
+			}
+
+			filtered ??= CopyCommandsBefore(commands, i);
+		}
+
+		return filtered ?? commands;
 	}
 
 	private static IReadOnlyList<NoteCommand>
