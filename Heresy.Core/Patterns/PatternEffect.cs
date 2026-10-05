@@ -326,8 +326,8 @@ public sealed record TrackerTremoloWaveformPatternEffect : PatternEffect
 
 /// <summary>
 /// Tracker S5x panbrello waveform selection. Values 0..3 select sine,
-/// ramp-down, square, and random; values 4..15 force sine like IT.
-/// Selection also resets panbrello phase to zero.
+/// ramp-down, square, and random and reset panbrello phase to zero.
+/// Values 4..15 are accepted but ignored like IT.
 /// </summary>
 public sealed record TrackerPanbrelloWaveformPatternEffect : PatternEffect
 {

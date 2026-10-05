@@ -320,7 +320,8 @@ public sealed record ApplyTrackerTremoloWaveformCommand(
 	byte Value) : NoteCommand;
 
 /// <summary>
-/// Raw tracker S5x panbrello-waveform selection. Values 4..15 force sine.
+/// Raw tracker S5x panbrello-waveform selection. Values 4..15 are valid
+/// tracker data but ignored by Impulse Tracker.
 /// </summary>
 public sealed record ApplyTrackerPanbrelloWaveformCommand(
 	byte Value) : NoteCommand;

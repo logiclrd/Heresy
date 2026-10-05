@@ -1545,10 +1545,11 @@ public static class PatternNoteProcessor
 						noteEvent.Commands,
 						i);
 
+					if (waveform.Value > 3)
+						break;
+
 					TrackerWaveform selected =
-						waveform.Value <= 3
-							? (TrackerWaveform)waveform.Value
-							: TrackerWaveform.Sine;
+						(TrackerWaveform)waveform.Value;
 
 					channelState.PanbrelloWaveform = selected;
 					transformed.Add(
