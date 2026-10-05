@@ -406,6 +406,93 @@ public sealed class PlaybackOperatorIntegrationTests
 				.Within(1e-12));
 	}
 
+	[Test]
+	public void TempoRampIsPersistentGlobalOperatorAndCommitsAtRowEnd()
+	{
+		TrackerRowTiming timing = new(
+			speed: 6.0,
+			startingTempo: 125.0,
+			endingTempo: 135.0);
+		long endFrame =
+			FrameTime.Ceiling(
+				TimeSpan.FromSeconds(
+					timing.RowDurationSeconds),
+				100);
+		NoteSchedule schedule = Schedule(
+			GlobalEvent(
+				Frame(0),
+				new SetTempoRampCommand(
+					135.0,
+					trackerTicks: 6.0)));
+		PlaybackSession session = Session(
+			schedule,
+			new TestResolver());
+
+		long probeFrame = Math.Max(1, endFrame / 2);
+		session.Render(
+			0,
+			checked((int)probeFrame + 1),
+			new float[checked((int)probeFrame + 1)]);
+
+		Assert.That(
+			session.ActiveGlobalOperatorCount,
+			Is.EqualTo(1));
+		Assert.That(
+			session.BaselineTempo,
+			Is.EqualTo(125.0).Within(1e-12));
+
+		TrackerTickClock clock =
+			new(schedule, sampleRate: 100);
+		double rowTime =
+			clock.GetElapsedTicks(0, probeFrame);
+		double expected =
+			125.0 + 10.0 * rowTime / 6.0;
+		Assert.That(
+			session.GetEffectiveTempo(probeFrame),
+			Is.EqualTo(expected).Within(1e-10));
+
+		int remaining =
+			checked(
+				(int)(endFrame + 1 - (probeFrame + 1)));
+		session.Render(
+			probeFrame + 1,
+			remaining,
+			new float[remaining]);
+
+		Assert.That(
+			session.ActiveGlobalOperatorCount,
+			Is.Zero);
+		Assert.That(
+			session.BaselineTempo,
+			Is.EqualTo(135.0).Within(1e-10));
+		Assert.That(
+			session.GetEffectiveTempo(endFrame),
+			Is.EqualTo(135.0).Within(1e-10));
+	}
+
+	[Test]
+	public void InstantaneousTempoSetChangesBaselineWithoutOperator()
+	{
+		PlaybackSession session = Session(
+			Schedule(
+				GlobalEvent(
+					Frame(0),
+					new SetTempoCommand(250.0))),
+			new TestResolver());
+
+		session.Render(0, 1, new float[1]);
+
+		Assert.That(
+			session.ActiveGlobalOperatorCount,
+			Is.Zero);
+		Assert.That(
+			session.BaselineTempo,
+			Is.EqualTo(250.0).Within(1e-12));
+		Assert.That(
+			session.GetEffectiveTempo(0),
+			Is.EqualTo(250.0).Within(1e-12));
+	}
+
 	private static PlaybackSession Session(
 		NoteSchedule schedule,
 		ISoundResolver resolver)
@@ -436,6 +523,14 @@ public sealed class PlaybackOperatorIntegrationTests
 		=> new(
 			new MusicalTime(time, 0.0),
 			ChannelTarget.Physical(0),
+			commands);
+
+	private static NoteEvent GlobalEvent(
+		TimeSpan time,
+		params NoteCommand[] commands)
+		=> new(
+			new MusicalTime(time, 0.0),
+			ChannelTarget.Global,
 			commands);
 
 	private static NoteEvent ChannelEvent(
