@@ -34,9 +34,12 @@ public sealed class Panning8BitPatternEffectTests
 	}
 
 	[TestCase((byte)0, -1.0f)]
+	[TestCase((byte)1, -1.0f)]
+	[TestCase((byte)2, -0.96875f)]
 	[TestCase((byte)64, -0.5f)]
 	[TestCase((byte)128, 0.0f)]
-	[TestCase((byte)255, 0.9921875f)]
+	[TestCase((byte)254, 1.0f)]
+	[TestCase((byte)255, 1.0f)]
 	public void ProcessorMapsXxxThroughITPanScale(
 		byte parameter,
 		float expectedX)
@@ -63,7 +66,7 @@ public sealed class Panning8BitPatternEffectTests
 	}
 
 	[Test]
-	public void XFFRemainsOneTrackerPanUnitShortOfS8FFullRight()
+	public void XFFAndS8FBothReachFullRight()
 	{
 		DataPatternDefinition pattern = Pattern(1, 2);
 		pattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
@@ -93,7 +96,7 @@ public sealed class Panning8BitPatternEffectTests
 			.Single()
 			.Position;
 
-		Assert.That(xff.X, Is.EqualTo(127.0f / 128.0f));
+		Assert.That(xff.X, Is.EqualTo(1.0f));
 		Assert.That(s8f.X, Is.EqualTo(1.0f));
 	}
 
