@@ -27,6 +27,7 @@ public sealed class PlaybackSession
 	private readonly RenderContext _context;
 	private readonly NoteSchedule _schedule;
 	private readonly ISoundResolver _soundResolver;
+	private readonly TrackerTickClock _tickClock;
 	private readonly SortedDictionary<int, PlaybackChannelState> _channels = [];
 	private readonly List<PlaybackVoice> _virtualVoices = [];
 	private readonly SortedDictionary<int, ActiveGlobalVolumeSlide> _globalVolumeSlides = [];
@@ -50,6 +51,9 @@ public sealed class PlaybackSession
 		_context = context ?? throw new ArgumentNullException(nameof(context));
 		_schedule = schedule ?? throw new ArgumentNullException(nameof(schedule));
 		_soundResolver = soundResolver ?? throw new ArgumentNullException(nameof(soundResolver));
+		_tickClock = new TrackerTickClock(
+			_schedule,
+			_context.Configuration.SampleRate);
 	}
 
 	public long NextFrame => _nextFrame;
@@ -616,6 +620,7 @@ public sealed class PlaybackSession
 			channel.FilterParameters,
 			channel.NoteVolume,
 			channel.OverallVolume,
+			_tickClock,
 			_nextVoiceModulationSeed++,
 			physicalChannel);
 

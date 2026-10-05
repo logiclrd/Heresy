@@ -14,6 +14,8 @@ public sealed class TrackerPitchSlideCurve : PitchCurve
 	private readonly double _initialMultiplier;
 	private readonly double _linearUnitsPerTick;
 	private readonly double _framesPerTick;
+	private readonly TrackerTickClock? _tickClock;
+	private readonly long _startFrame;
 	private readonly int _activeTickTransitions;
 
 	public TrackerPitchSlideCurve(
@@ -47,13 +49,50 @@ public sealed class TrackerPitchSlideCurve : PitchCurve
 		_activeTickTransitions = Math.Max(0, ticksPerRow - 1);
 	}
 
+	public TrackerPitchSlideCurve(
+		double initialMultiplier,
+		double linearUnitsPerTick,
+		TrackerTickClock tickClock,
+		long startFrame,
+		int ticksPerRow)
+	{
+		if (!(initialMultiplier > 0.0)
+			|| double.IsNaN(initialMultiplier)
+			|| double.IsInfinity(initialMultiplier))
+		{
+			throw new ArgumentOutOfRangeException(nameof(initialMultiplier));
+		}
+		if (double.IsNaN(linearUnitsPerTick)
+			|| double.IsInfinity(linearUnitsPerTick))
+		{
+			throw new ArgumentOutOfRangeException(nameof(linearUnitsPerTick));
+		}
+		ArgumentNullException.ThrowIfNull(tickClock);
+		if (startFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(startFrame));
+		if (ticksPerRow <= 0)
+			throw new ArgumentOutOfRangeException(nameof(ticksPerRow));
+
+		_initialMultiplier = initialMultiplier;
+		_linearUnitsPerTick = linearUnitsPerTick;
+		_tickClock = tickClock;
+		_startFrame = startFrame;
+		_activeTickTransitions = Math.Max(0, ticksPerRow - 1);
+	}
+
 	public override double GetMultiplier(long frameOffset)
 	{
 		if (frameOffset < 0)
 			throw new ArgumentOutOfRangeException(nameof(frameOffset));
 
+		double rawElapsedTicks = _tickClock is null
+			? frameOffset / _framesPerTick
+			: _tickClock.GetElapsedTicks(
+				_startFrame,
+				checked(_startFrame + frameOffset));
+
 		double elapsedTicks = Math.Min(
-			frameOffset / _framesPerTick,
+			rawElapsedTicks,
 			_activeTickTransitions);
 
 		return _initialMultiplier * Math.Pow(

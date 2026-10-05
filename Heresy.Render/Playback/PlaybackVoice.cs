@@ -50,6 +50,7 @@ public sealed class PlaybackVoice
 	private NewNoteAction? _newNoteActionOverride;
 
 	private readonly ulong _modulationSeed;
+	private readonly TrackerTickClock _tickClock;
 
 	private byte _vibratoPhase;
 	private long _vibratoRandomAnchorIndex = -1;
@@ -85,6 +86,7 @@ public sealed class PlaybackVoice
 		ResonantFilterParameters filterParameters,
 		double noteVolume,
 		double overallVolume,
+		TrackerTickClock tickClock,
 		ulong modulationSeed,
 		int originPhysicalChannel)
 	{
@@ -103,6 +105,8 @@ public sealed class PlaybackVoice
 		OriginPhysicalChannel = originPhysicalChannel;
 		NoteVolume = noteVolume;
 		OverallVolume = overallVolume;
+		_tickClock = tickClock
+			?? throw new ArgumentNullException(nameof(tickClock));
 		_modulationSeed = modulationSeed;
 
 		_previousOutputFrame = new float[outputChannelCount];
@@ -351,8 +355,8 @@ public sealed class PlaybackVoice
 		_arpeggioPitchCurve = new TrackerArpeggioPitchCurve(
 			firstSemitones,
 			secondSemitones,
-			GetTickDuration(tempo),
-			sampleRate);
+			_tickClock,
+			absoluteFrame);
 		_arpeggioPitchCurveStartFrame = relativeFrame;
 
 		RecomposePitchTrajectory(relativeFrame);
@@ -490,9 +494,9 @@ public sealed class PlaybackVoice
 		_basePitchCurve = new TrackerPitchSlideCurve(
 			currentBase,
 			linearUnitsPerTick,
-			GetTickDuration(tempo),
-			ticksPerRow,
-			sampleRate);
+			_tickClock,
+			absoluteFrame,
+			ticksPerRow);
 		_basePitchCurveStartFrame = relativeFrame;
 
 		RecomposePitchTrajectory(relativeFrame);
