@@ -350,6 +350,62 @@ public sealed class PlaybackOperatorIntegrationTests
 			Is.EqualTo(0.5).Within(1e-12));
 	}
 
+	[Test]
+	public void TonePortamentoCommitsAudiblePitchWhileKeepingHiddenGlissandoProgress()
+	{
+		ObjectId sourceId = (ObjectId)10U;
+		PlaybackSession session = Session(
+			Schedule(
+				Event(
+					Frame(0),
+					new StartNoteCommand(sourceId),
+					new SetTonePortamentoCommand(
+						16.0,
+						new StartNoteCommand(
+							sourceId,
+							PitchMultiplier: 2.0),
+						TicksPerRow: 6,
+						Glissando: true)),
+				Event(
+					Frame(12),
+					new ClearTonePortamentoCommand(),
+					new SetTonePortamentoCommand(
+						16.0,
+						TicksPerRow: 6,
+						Glissando: true)),
+				Event(
+					Frame(24),
+					new ClearTonePortamentoCommand())),
+			new TestResolver((sourceId, new ConstantSound())));
+
+		session.Render(0, 13, new float[13]);
+
+		PlaybackVoice voice =
+			session.GetChannelState(0).CurrentVoice!;
+		double oneSemitone =
+			Math.Pow(2.0, 1.0 / 12.0);
+
+		Assert.That(voice.ActiveOperatorCount, Is.EqualTo(1));
+		Assert.That(
+			voice.BaselinePitchMultiplier,
+			Is.EqualTo(oneSemitone).Within(1e-12));
+
+		session.Render(13, 8, new float[8]);
+
+		Assert.That(
+			voice.SoundState.PitchTrajectory.GetMultiplier(20),
+			Is.EqualTo(Math.Pow(2.0, 2.0 / 12.0))
+				.Within(1e-12));
+
+		session.Render(21, 4, new float[4]);
+
+		Assert.That(voice.ActiveOperatorCount, Is.Zero);
+		Assert.That(
+			voice.BaselinePitchMultiplier,
+			Is.EqualTo(Math.Pow(2.0, 2.0 / 12.0))
+				.Within(1e-12));
+	}
+
 	private static PlaybackSession Session(
 		NoteSchedule schedule,
 		ISoundResolver resolver)
