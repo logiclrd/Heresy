@@ -662,19 +662,16 @@ public sealed class PlaybackSession
 			return;
 		}
 
-		NoteConfigurationSnapshot configuration =
-			sound.SnapshotNoteConfiguration()
-			?? throw new InvalidOperationException(
-				$"{sound.GetType().Name}.{nameof(ISound.SnapshotNoteConfiguration)} returned null.");
-
-		SoundState state = sound.CreateState();
-		state.PitchMultiplier = start.PitchMultiplier;
-		state.PlaybackSpeedMultiplier = start.PlaybackSpeedMultiplier;
+		SoundInvocation? invocation = sound.CreateInvocation(
+			start.PitchMultiplier,
+			start.PlaybackSpeedMultiplier);
+		if (invocation is null)
+			return;
 
 		PlaybackVoice voice = new(
-			sound,
-			state,
-			configuration,
+			invocation.Sound,
+			invocation.State,
+			invocation.Configuration,
 			eventFrame,
 			_context.Configuration.OutputChannelCount,
 			_context.Configuration.SampleRate,

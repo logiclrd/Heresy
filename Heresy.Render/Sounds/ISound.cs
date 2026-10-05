@@ -14,6 +14,28 @@ public interface ISound
 	SoundState CreateState();
 
 	/// <summary>
+	/// Binds one requested note to an executable sound/state/configuration.
+	/// Ordinary sounds use the default implementation. Recursive sounds such as
+	/// instruments may override this to select and bind a child sound before the
+	/// PlaybackVoice is created. Returning null represents a silent note.
+	/// </summary>
+	SoundInvocation? CreateInvocation(
+		double pitchMultiplier,
+		double playbackSpeedMultiplier)
+	{
+		SoundState state = CreateState();
+		state.PitchMultiplier = pitchMultiplier;
+		state.PlaybackSpeedMultiplier = playbackSpeedMultiplier;
+
+		NoteConfigurationSnapshot configuration =
+			SnapshotNoteConfiguration()
+			?? throw new InvalidOperationException(
+				$"{GetType().Name}.{nameof(SnapshotNoteConfiguration)} returned null.");
+
+		return new SoundInvocation(this, state, configuration);
+	}
+
+	/// <summary>
 	/// Returns the first output frame which is outside the sound, relative to
 	/// invocation frame zero. Null means the sound has no deterministic finite
 	/// end under the supplied state.
