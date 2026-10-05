@@ -167,7 +167,7 @@ public sealed class VariableTempoContinuousEffectTests
 	public void VibratoAndTremoloMatchReferenceAtSameTickPosition()
 	{
 		ObjectId sourceId = (ObjectId)10U;
-		SampleSound sample = LongRampSample();
+		ConstantSound sound = new();
 
 		PlaybackSession changed = Session(
 			Schedule(
@@ -178,7 +178,7 @@ public sealed class VariableTempoContinuousEffectTests
 					new SetVibratoCommand(5, 8),
 					new SetTremoloCommand(5, 8)),
 				Global(2, new SetTempoCommand(250))),
-			new TestResolver((sourceId, sample)));
+			new TestResolver((sourceId, sound)));
 		float[] changedOutput = new float[4];
 		changed.Render(0, 4, changedOutput);
 
@@ -190,7 +190,7 @@ public sealed class VariableTempoContinuousEffectTests
 					new StartNoteCommand(sourceId),
 					new SetVibratoCommand(5, 8),
 					new SetTremoloCommand(5, 8))),
-			new TestResolver((sourceId, sample)));
+			new TestResolver((sourceId, sound)));
 		float[] referenceOutput = new float[5];
 		reference.Render(0, 5, referenceOutput);
 
