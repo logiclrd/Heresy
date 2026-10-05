@@ -256,6 +256,13 @@ public sealed class PlaybackSession
 				CullFinishedCurrentVoice(channel, eventFrame);
 				break;
 
+			case SetEnvelopeEnabledCommand envelope:
+				channel.CurrentVoice?.SetEnvelopeEnabled(
+					envelope.Target,
+					eventFrame,
+					envelope.Enabled);
+				break;
+
 			case SetGlobalVolumeCommand volume:
 				SetGlobalVolume(eventFrame, volume.Volume);
 				break;
@@ -1261,6 +1268,7 @@ long? soundEndRelative = voice.Sound.GetEndFrameExclusive(
 			long absoluteFrame = absoluteStartFrame + frame;
 			double volume =
 				voice.GetNoteVolume(absoluteFrame)
+				* voice.GetVolumeEnvelopeValue(absoluteFrame)
 				* voice.OverallVolume
 				* voice.GetFadeGain(
 					absoluteFrame,

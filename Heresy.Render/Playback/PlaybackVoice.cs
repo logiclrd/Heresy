@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 
+using Heresy.Core.Envelopes;
 using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
+using Heresy.Render.Envelopes;
 using Heresy.Render.Filters;
 using Heresy.Render.Sounds;
 using Heresy.Render.Timing;
@@ -137,6 +139,10 @@ public sealed class PlaybackVoice
 
 	private readonly float[] _previousOutputFrame;
 	private readonly float[] _lastOutputFrame;
+	private readonly EnvelopePlaybackState? _volumeEnvelope;
+	private readonly EnvelopePlaybackState? _pitchEnvelope;
+	private readonly EnvelopePlaybackState? _panningEnvelope;
+	private readonly EnvelopePlaybackState? _filterEnvelope;
 	private int _outputHistoryFrames;
 
 	private long? _fadeStartFrame;
@@ -214,6 +220,13 @@ public sealed class PlaybackVoice
 
 		_previousOutputFrame = new float[outputChannelCount];
 		_lastOutputFrame = new float[outputChannelCount];
+
+		EnvelopeConfigurationSnapshot envelopes = configuration.Envelopes;
+		_volumeEnvelope = CreateEnvelopeState(envelopes.Volume, startFrame, sampleRate);
+		_pitchEnvelope = CreateEnvelopeState(envelopes.Pitch, startFrame, sampleRate);
+		_panningEnvelope = CreateEnvelopeState(envelopes.Panning, startFrame, sampleRate);
+		_filterEnvelope = CreateEnvelopeState(envelopes.Filter, startFrame, sampleRate);
+
 		FilterState = new ResonantFilterState(
 			outputChannelCount,
 			sampleRate,
@@ -297,7 +310,32 @@ public sealed class PlaybackVoice
 		SoundState.NoteOffTime = FrameTime.FrameStartTime(
 			relativeFrame,
 			sampleRate);
+
+		_volumeEnvelope?.NoteOff(absoluteFrame);
+		_pitchEnvelope?.NoteOff(absoluteFrame);
+		_panningEnvelope?.NoteOff(absoluteFrame);
+		_filterEnvelope?.NoteOff(absoluteFrame);
 	}
+
+	internal void SetEnvelopeEnabled(
+		EnvelopeTarget target,
+		long absoluteFrame,
+		bool enabled)
+	{
+		EnvelopePlaybackState? envelope = target switch
+		{
+			EnvelopeTarget.Volume => _volumeEnvelope,
+			EnvelopeTarget.Pitch => _pitchEnvelope,
+			EnvelopeTarget.Panning => _panningEnvelope,
+			EnvelopeTarget.Filter => _filterEnvelope,
+			_ => throw new ArgumentOutOfRangeException(nameof(target)),
+		};
+
+		envelope?.SetEnabled(absoluteFrame, enabled);
+	}
+
+	internal double GetVolumeEnvelopeValue(long absoluteFrame)
+		=> _volumeEnvelope?.GetValue(absoluteFrame) ?? 1.0;
 
 	internal void BeginFade(long absoluteFrame, TimeSpan duration, int sampleRate)
 	{
@@ -1019,6 +1057,17 @@ public sealed class PlaybackVoice
 			0.0,
 			1.0);
 	}
+
+	private static EnvelopePlaybackState? CreateEnvelopeState(
+		IEnvelopeCurve? curve,
+		long startFrame,
+		int sampleRate)
+		=> curve is null
+			? null
+			: new EnvelopePlaybackState(
+				curve,
+				startFrame,
+				sampleRate);
 
 	private void AddPitchOperator(
 		IRowPlaybackOperator playbackOperator,
