@@ -464,7 +464,7 @@ public static class PatternNoteProcessor
 							resolved.Add(
 								new NoteEvent(
 									new MusicalTime(
-										TimeSpan.FromSeconds(
+										TimeSpanFromSeconds(
 											cutTimeSeconds),
 										0.0),
 									context.MapTarget(
@@ -489,7 +489,7 @@ public static class PatternNoteProcessor
 					resolved.Add(
 						new NoteEvent(
 							new MusicalTime(
-								TimeSpan.FromSeconds(
+								TimeSpanFromSeconds(
 									clearTimeSeconds),
 								0.0),
 							context.MapTarget(
@@ -504,7 +504,7 @@ public static class PatternNoteProcessor
 			rowStartSeconds = rowEndSeconds;
 		}
 
-		duration = TimeSpan.FromSeconds(rowStartSeconds);
+		duration = TimeSpanFromSeconds(rowStartSeconds);
 
 		resolved.Sort(CompareResolvedEvents);
 		foreach (NoteEvent noteEvent in resolved)
@@ -979,7 +979,7 @@ public static class PatternNoteProcessor
 				resolved.Add(
 					new NoteEvent(
 						new MusicalTime(
-							TimeSpan.FromSeconds(
+							TimeSpanFromSeconds(
 								rowStartSeconds
 									+ timeline.EndSeconds),
 							0.0),
@@ -2076,7 +2076,7 @@ public static class PatternNoteProcessor
 			resolved.Add(
 				new NoteEvent(
 					new MusicalTime(
-						TimeSpan.FromSeconds(
+						TimeSpanFromSeconds(
 							retriggerTimeSeconds),
 						0.0),
 					context.MapTarget(sourceEvent.Target),
@@ -2283,6 +2283,24 @@ public static class PatternNoteProcessor
 		return result;
 	}
 
+	private static TimeSpan TimeSpanFromSeconds(double seconds)
+	{
+		if (double.IsNaN(seconds)
+			|| double.IsInfinity(seconds))
+		{
+			throw new ArgumentOutOfRangeException(nameof(seconds));
+		}
+
+		double ticks = seconds * TimeSpan.TicksPerSecond;
+		if (ticks < long.MinValue || ticks > long.MaxValue)
+			throw new OverflowException("Time value is outside the TimeSpan range.");
+
+		return TimeSpan.FromTicks(
+			checked((long)Math.Round(
+				ticks,
+				MidpointRounding.AwayFromZero)));
+	}
+
 	private static NoteEvent ResolveAt(
 		NoteEvent noteEvent,
 		IReadOnlyList<NoteCommand> commands,
@@ -2291,7 +2309,7 @@ public static class PatternNoteProcessor
 		long emissionOrder)
 		=> noteEvent with
 		{
-			Offset = new MusicalTime(TimeSpan.FromSeconds(timeSeconds), 0.0),
+			Offset = new MusicalTime(TimeSpanFromSeconds(timeSeconds), 0.0),
 			Target = context.MapTarget(noteEvent.Target),
 			Commands = commands,
 			EmissionOrder = emissionOrder,

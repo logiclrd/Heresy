@@ -117,7 +117,9 @@ public sealed class TrackerTonePortamentoCurve : PitchCurve
 		}
 
 		int semitone =
-			QuantizeToNextSemitone(continuous);
+			QuantizeToCrossedSemitone(
+				continuous,
+				_direction);
 		double quantized = Math.Pow(
 			2.0,
 			semitone / 12.0);
