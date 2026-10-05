@@ -81,7 +81,7 @@ public sealed class SongDocumentJsonTests
 			SongDocumentJson.Save(path, document);
 			string text = File.ReadAllText(path);
 			Assert.That(text, Does.StartWith("{"));
-			Assert.That(text, Does.Contain(""format": "Heresy""));
+			Assert.That(text, Does.Contain("\"format\": \"Heresy\""));
 
 			SongDocument restored =
 				SongDocumentJson.Load(path);
