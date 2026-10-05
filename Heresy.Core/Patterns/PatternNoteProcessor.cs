@@ -613,7 +613,7 @@ public static class PatternNoteProcessor
 
 		foreach (WorkingEvent workingEvent in events)
 		{
-			if (workingEvent.RowOffset > truncatedRowCount)
+			if (workingEvent.RowOffset >= truncatedRowCount)
 				continue;
 
 			IReadOnlyList<NoteCommand> commands =
