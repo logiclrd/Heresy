@@ -21,6 +21,80 @@ namespace Heresy.Tests.Render;
 public sealed class VariableTempoContinuousEffectTests
 {
 	[Test]
+	public void PitchSlideDomainCompressesSmoothlyDuringTempoRamp()
+	{
+		ObjectId sourceId = (ObjectId)10U;
+		SampleSound sound = LongRampSample();
+		PlaybackSession session = Session(
+			Schedule(
+				Event(
+					0,
+					0,
+					new StartNoteCommand(sourceId),
+					new SetPitchSlideCommand(
+						TrackerVibrato.LinearSlideUnitsPerOctave / 4.0,
+						TicksPerRow: 6)),
+				Global(
+					0,
+					new SetTempoRampCommand(
+						250.0,
+						TrackerTicks: 1.0))),
+			new TestResolver((sourceId, sound)));
+
+		session.Render(0, 2, new float[2]);
+
+		double trackerTicksAtFrameOne =
+			Math.Exp(0.5) - 1.0;
+		double expected =
+			Math.Pow(
+				2.0,
+				trackerTicksAtFrameOne / 4.0);
+
+		double actual =
+			session.GetChannelState(0).CurrentVoice!
+				.SoundState.PitchTrajectory
+				.GetMultiplier(1);
+
+		Assert.That(
+			actual,
+			Is.EqualTo(expected).Within(1e-12));
+	}
+
+	[Test]
+	public void EffectStartedAfterTempoRampRenormalizesToUnitWallTimeRate()
+	{
+		ObjectId sourceId = (ObjectId)10U;
+		SampleSound sound = LongRampSample();
+		PlaybackSession session = Session(
+			Schedule(
+				Global(
+					0,
+					new SetTempoRampCommand(
+						250.0,
+						TrackerTicks: 1.0)),
+				Event(
+					2,
+					0,
+					new StartNoteCommand(sourceId),
+					new SetPitchSlideCommand(
+						TrackerVibrato.LinearSlideUnitsPerOctave / 4.0,
+						TicksPerRow: 6))),
+			new TestResolver((sourceId, sound)));
+
+		session.Render(0, 4, new float[4]);
+
+		double actual =
+			session.GetChannelState(0).CurrentVoice!
+				.SoundState.PitchTrajectory
+				.GetMultiplier(1);
+
+		Assert.That(
+			actual,
+			Is.EqualTo(Math.Pow(2.0, 0.25))
+				.Within(1e-12));
+	}
+
+	[Test]
 	public void TonePortamentoUsesSharedTickClock()
 	{
 		ObjectId sourceId = (ObjectId)10U;
