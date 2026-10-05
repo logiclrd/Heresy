@@ -95,6 +95,125 @@ public sealed class PlaybackOperatorIntegrationTests
 			Is.EqualTo(Vector3.Zero));
 	}
 
+	[Test]
+	public void PersistentSpatialOperatorCommitsOnlyAtExpiry()
+	{
+		ObjectId sourceId = (ObjectId)10U;
+		PlaybackSession session = Session(
+			Schedule(
+				Event(
+					Frame(0),
+					new StartNoteCommand(sourceId),
+					new SetSpatialXSlideCommand(
+						0.1,
+						TicksPerRow: 6)),
+				Event(
+					Frame(12),
+					new ClearSpatialXSlideCommand())),
+			new TestResolver((sourceId, new ConstantSound())));
+
+		session.Render(0, 7, new float[7]);
+
+		PlaybackChannelState channel =
+			session.GetChannelState(0);
+		Assert.That(channel.ActiveOperatorCount, Is.EqualTo(1));
+		Assert.That(channel.Position.X, Is.EqualTo(0.0f).Within(1e-6f));
+		Assert.That(
+			channel.CurrentVoice!.SoundState.Position.X,
+			Is.EqualTo(0.25f).Within(1e-6f));
+
+		session.Render(7, 6, new float[6]);
+
+		Assert.That(channel.ActiveOperatorCount, Is.Zero);
+		Assert.That(channel.Position.X, Is.EqualTo(0.5f).Within(1e-6f));
+		Assert.That(
+			channel.CurrentVoice!.SoundState.Position.X,
+			Is.EqualTo(0.5f).Within(1e-6f));
+	}
+
+	[Test]
+	public void PersistentVoiceOperatorCommitsNoteVolumeOnlyAtExpiry()
+	{
+		ObjectId sourceId = (ObjectId)10U;
+		PlaybackSession session = Session(
+			Schedule(
+				Event(
+					Frame(0),
+					new SetNoteVolumeCommand(0.5),
+					new StartNoteCommand(sourceId),
+					new SetNoteVolumeSlideCommand(
+						4.0,
+						TicksPerRow: 6)),
+				Event(
+					Frame(12),
+					new ClearNoteVolumeSlideCommand())),
+			new TestResolver((sourceId, new ConstantSound())));
+
+		session.Render(0, 7, new float[7]);
+
+		PlaybackVoice voice =
+			session.GetChannelState(0).CurrentVoice!;
+		Assert.That(voice.ActiveOperatorCount, Is.EqualTo(1));
+		Assert.That(voice.NoteVolume, Is.EqualTo(0.5).Within(1e-12));
+		Assert.That(
+			voice.GetNoteVolume(6),
+			Is.EqualTo(0.65625).Within(1e-12));
+
+		session.Render(7, 6, new float[6]);
+
+		Assert.That(voice.ActiveOperatorCount, Is.Zero);
+		Assert.That(voice.NoteVolume, Is.EqualTo(0.8125).Within(1e-12));
+		Assert.That(
+			voice.GetNoteVolume(12),
+			Is.EqualTo(0.8125).Within(1e-12));
+	}
+
+	[Test]
+	public void PersistentGlobalOperatorsSumDeltasAndCommitPerOriginChannel()
+	{
+		ObjectId sourceId = (ObjectId)10U;
+		PlaybackSession session = Session(
+			Schedule(
+				Event(
+					Frame(0),
+					new StartNoteCommand(sourceId)),
+				ChannelEvent(
+					Frame(0),
+					0,
+					new SetGlobalVolumeCommand(0.5),
+					new SetGlobalVolumeSlideCommand(
+						8.0,
+						TicksPerRow: 6)),
+				ChannelEvent(
+					Frame(0),
+					1,
+					new SetGlobalVolumeSlideCommand(
+						-4.0,
+						TicksPerRow: 6)),
+				ChannelEvent(
+					Frame(12),
+					0,
+					new ClearGlobalVolumeSlideCommand()),
+				ChannelEvent(
+					Frame(12),
+					1,
+					new ClearGlobalVolumeSlideCommand())),
+			new TestResolver((sourceId, new ConstantSound())));
+
+		float[] first = new float[7];
+		session.Render(0, 7, first);
+
+		Assert.That(session.ActiveGlobalOperatorCount, Is.EqualTo(2));
+		Assert.That(session.GlobalVolume, Is.EqualTo(0.5).Within(1e-12));
+		Assert.That(first[6], Is.EqualTo(0.578125f).Within(1e-6f));
+
+		session.Render(7, 6, new float[6]);
+
+		Assert.That(session.ActiveGlobalOperatorCount, Is.Zero);
+		Assert.That(session.GlobalVolume, Is.EqualTo(0.65625).Within(1e-12));
+	}
+
+
 	private static PlaybackSession Session(
 		NoteSchedule schedule,
 		ISoundResolver resolver)
@@ -125,6 +244,15 @@ public sealed class PlaybackOperatorIntegrationTests
 		=> new(
 			new MusicalTime(time, 0.0),
 			ChannelTarget.Physical(0),
+			commands);
+
+	private static NoteEvent ChannelEvent(
+		TimeSpan time,
+		int channel,
+		params NoteCommand[] commands)
+		=> new(
+			new MusicalTime(time, 0.0),
+			ChannelTarget.Physical(channel),
 			commands);
 
 	private static TimeSpan Frame(long frame)
