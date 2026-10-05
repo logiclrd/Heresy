@@ -48,6 +48,7 @@ public static class PatternNoteProcessor
 	private sealed class RowTickTimeline
 	{
 		private readonly List<double> _boundaries = [0.0];
+		private double _summationCompensation;
 
 		public double EndTickPosition => _boundaries.Count - 1;
 
@@ -62,10 +63,16 @@ public static class PatternNoteProcessor
 				throw new ArgumentOutOfRangeException(nameof(tempo));
 			}
 
-			_boundaries.Add(
-				_boundaries[^1]
-					+ SequencingConstants.Diachron.TotalSeconds
-						/ tempo);
+			double duration =
+				SequencingConstants.Diachron.TotalSeconds
+					/ tempo;
+			double adjusted =
+				duration - _summationCompensation;
+			double next =
+				_boundaries[^1] + adjusted;
+			_summationCompensation =
+				(next - _boundaries[^1]) - adjusted;
+			_boundaries.Add(next);
 		}
 
 		public double GetSecondsAtTickPosition(

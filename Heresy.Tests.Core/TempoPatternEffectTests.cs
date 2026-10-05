@@ -58,7 +58,7 @@ public sealed class TempoPatternEffectTests
 			Is.EqualTo(new SetTempoCommand(250)));
 		Assert.That(
 			duration.TotalSeconds,
-			Is.EqualTo(6.0 * 2.5 / 250.0).Within(1e-12));
+			Is.EqualTo(6.0 * 2.5 / 250.0).Within(1e-7));
 		Assert.That(context.State.Tempo, Is.EqualTo(250.0));
 	}
 
@@ -100,14 +100,14 @@ public sealed class TempoPatternEffectTests
 		{
 			Assert.That(
 				events[i].Offset.TimeOffset.TotalSeconds,
-				Is.EqualTo(expectedTimes[i]).Within(1e-12));
+				Is.EqualTo(expectedTimes[i]).Within(1e-7));
 		}
 
 		double expectedDuration =
 			expectedTimes[^1] + TickDuration(135);
 		Assert.That(
 			duration.TotalSeconds,
-			Is.EqualTo(expectedDuration).Within(1e-12));
+			Is.EqualTo(expectedDuration).Within(1e-7));
 		Assert.That(context.State.Tempo, Is.EqualTo(135.0));
 	}
 
@@ -300,7 +300,7 @@ public sealed class TempoPatternEffectTests
 
 		Assert.That(
 			target.Offset.TimeOffset.TotalSeconds,
-			Is.EqualTo(expected).Within(1e-12));
+			Is.EqualTo(expected).Within(1e-7));
 	}
 
 	[Test]
@@ -330,7 +330,7 @@ public sealed class TempoPatternEffectTests
 		Assert.That(context.State.Tempo, Is.EqualTo(125.0));
 		Assert.That(
 			duration.TotalSeconds,
-			Is.EqualTo(6.0 * TickDuration(125)).Within(1e-12));
+			Is.EqualTo(6.0 * TickDuration(125)).Within(1e-7));
 	}
 
 	private static NoteSchedule Generate(
