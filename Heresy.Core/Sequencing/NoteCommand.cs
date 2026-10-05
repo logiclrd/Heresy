@@ -126,12 +126,26 @@ public sealed record SetVibratoCommand(
 /// </summary>
 public sealed record ClearPitchModulationCommand : NoteCommand;
 
+/// <summary>Raw tracker SFx per-channel MIDI-macro selection.</summary>
+public sealed record ApplyTrackerMidiMacroSelectCommand(byte Macro) : NoteCommand;
+
+/// <summary>Raw tracker Zxx MIDI-macro invocation.</summary>
+public sealed record ApplyTrackerMidiMacroCommand(byte Parameter) : NoteCommand;
+
 /// <summary>
 /// Sets persistent normalized resonant low-pass filter parameters on a physical
 /// playback channel.
 /// </summary>
 public sealed record SetResonantFilterCommand(
 	double Cutoff,
+	double Resonance) : NoteCommand;
+
+/// <summary>Sets only the persistent resonant-filter cutoff.</summary>
+public sealed record SetResonantFilterCutoffCommand(
+	double Cutoff) : NoteCommand;
+
+/// <summary>Sets only the persistent resonant-filter resonance.</summary>
+public sealed record SetResonantFilterResonanceCommand(
 	double Resonance) : NoteCommand;
 
 /// <summary>

@@ -18,6 +18,7 @@ public sealed class SequencingChannelState
 	private double _vibratoDepthScale = 1.0;
 	private TrackerWaveform _tremoloWaveform;
 	private TrackerWaveform _panbrelloWaveform;
+	private byte _midiMacroIndex;
 	private bool _glissandoEnabled;
 
 	/// <summary>
@@ -130,6 +131,17 @@ public sealed class SequencingChannelState
 			_panbrelloWaveform = value;
 		}
 	}
+	public byte MidiMacroIndex
+	{
+		get => _midiMacroIndex;
+		set
+		{
+			if (value > 0x0F)
+				throw new ArgumentOutOfRangeException(nameof(value));
+			_midiMacroIndex = value;
+		}
+	}
+
 	public bool GlissandoEnabled
 	{
 		get => _glissandoEnabled;
@@ -156,6 +168,7 @@ public sealed class SequencingChannelState
 		_vibratoDepthScale = 1.0;
 		_tremoloWaveform = TrackerWaveform.Sine;
 		_panbrelloWaveform = TrackerWaveform.Sine;
+		_midiMacroIndex = 0;
 		_glissandoEnabled = false;
 	}
 }

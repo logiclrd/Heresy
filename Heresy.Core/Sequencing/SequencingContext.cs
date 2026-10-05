@@ -21,7 +21,8 @@ public sealed class SequencingContext
 		double pitchMultiplier = 1.0,
 		double playbackSpeedMultiplier = 1.0,
 		int physicalChannelBase = 0,
-		SequencingChannelStateMap? channelStates = null)
+		SequencingChannelStateMap? channelStates = null,
+		TrackerMidiMacroConfiguration? trackerMidiMacros = null)
 	{
 		if (physicalChannelBase < 0)
 			throw new ArgumentOutOfRangeException(nameof(physicalChannelBase));
@@ -32,11 +33,14 @@ public sealed class SequencingContext
 		PlaybackSpeedMultiplier = ValidateMultiplier(playbackSpeedMultiplier, nameof(playbackSpeedMultiplier));
 		PhysicalChannelBase = physicalChannelBase;
 		ChannelStates = channelStates ?? new SequencingChannelStateMap();
+		TrackerMidiMacros = trackerMidiMacros
+			?? TrackerMidiMacroConfiguration.CreateImpulseTrackerDefault();
 	}
 
 	public SequencingState State { get; }
 	public DeterministicRandom Random { get; }
 	public SequencingChannelStateMap ChannelStates { get; }
+	public TrackerMidiMacroConfiguration TrackerMidiMacros { get; }
 
 	public double PitchMultiplier { get; }
 	public double PlaybackSpeedMultiplier { get; }
@@ -76,7 +80,8 @@ public sealed class SequencingContext
 			PitchMultiplier * ValidateMultiplier(pitchMultiplier, nameof(pitchMultiplier)),
 			PlaybackSpeedMultiplier * ValidateMultiplier(playbackSpeedMultiplier, nameof(playbackSpeedMultiplier)),
 			checked(PhysicalChannelBase + physicalChannelOffset),
-			ChannelStates);
+			ChannelStates,
+			TrackerMidiMacros);
 	}
 
 	public SequencingContext MixdownChild(double pitchMultiplier = 1.0, double playbackSpeedMultiplier = 1.0)
@@ -86,7 +91,8 @@ public sealed class SequencingContext
 			PitchMultiplier * ValidateMultiplier(pitchMultiplier, nameof(pitchMultiplier)),
 			PlaybackSpeedMultiplier * ValidateMultiplier(playbackSpeedMultiplier, nameof(playbackSpeedMultiplier)),
 			physicalChannelBase: 0,
-			channelStates: new SequencingChannelStateMap());
+			channelStates: new SequencingChannelStateMap(),
+			trackerMidiMacros: TrackerMidiMacros);
 
 	private static double ValidateMultiplier(double value, string paramName)
 	{

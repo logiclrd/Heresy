@@ -90,6 +90,28 @@ public sealed record SetPlaybackOffsetPatternEffect : PatternEffect
 public sealed record VibratoPatternEffect(byte Parameter) : PatternEffect;
 
 /// <summary>
+/// Tracker SFx MIDI-macro selection. The low nibble selects one of the 16
+/// parameterized macros subsequently invoked by Z00..Z7F on this channel.
+/// </summary>
+public sealed record TrackerMidiMacroSelectPatternEffect : PatternEffect
+{
+	public TrackerMidiMacroSelectPatternEffect(byte macro)
+	{
+		if (macro > 0x0F)
+			throw new ArgumentOutOfRangeException(nameof(macro));
+		Macro = macro;
+	}
+
+	public byte Macro { get; }
+}
+
+/// <summary>
+/// Tracker Zxx MIDI-macro invocation. Z00..Z7F invoke the selected SFx macro
+/// with xx as macro data; Z80..ZFF invoke one of 128 fixed macros directly.
+/// </summary>
+public sealed record TrackerMidiMacroPatternEffect(byte Parameter) : PatternEffect;
+
+/// <summary>
 /// Sets normalized Impulse-Tracker-style resonant low-pass filter parameters.
 /// </summary>
 public sealed record SetResonantFilterPatternEffect : PatternEffect
