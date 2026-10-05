@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
@@ -14,6 +15,82 @@ namespace Heresy.Render.Playback;
 /// </summary>
 public sealed class PlaybackVoice
 {
+	private sealed class PitchOperatorBinding
+	{
+		public required IRowPlaybackOperator Operator { get; init; }
+		public required long StartFrame { get; init; }
+	}
+
+	private sealed class OperatorPitchCurve : PitchCurve
+	{
+		private readonly PitchCurve _baseCurve;
+		private readonly PitchOperatorBinding[] _operators;
+		private readonly TrackerTickClock _tickClock;
+		private readonly long _segmentAbsoluteStartFrame;
+		private readonly int _sampleRate;
+
+		public OperatorPitchCurve(
+			PitchCurve baseCurve,
+			IReadOnlyList<PitchOperatorBinding> operators,
+			TrackerTickClock tickClock,
+			long segmentAbsoluteStartFrame,
+			int sampleRate)
+		{
+			_baseCurve = baseCurve
+				?? throw new ArgumentNullException(nameof(baseCurve));
+			ArgumentNullException.ThrowIfNull(operators);
+			_tickClock = tickClock
+				?? throw new ArgumentNullException(nameof(tickClock));
+			if (segmentAbsoluteStartFrame < 0)
+				throw new ArgumentOutOfRangeException(nameof(segmentAbsoluteStartFrame));
+			if (sampleRate <= 0)
+				throw new ArgumentOutOfRangeException(nameof(sampleRate));
+
+			_operators = new PitchOperatorBinding[operators.Count];
+			for (int i = 0; i < operators.Count; i++)
+				_operators[i] = operators[i];
+
+			_segmentAbsoluteStartFrame = segmentAbsoluteStartFrame;
+			_sampleRate = sampleRate;
+		}
+
+		public override double GetMultiplier(long frameOffset)
+		{
+			if (frameOffset < 0)
+				throw new ArgumentOutOfRangeException(nameof(frameOffset));
+
+			long absoluteFrame = checked(
+				_segmentAbsoluteStartFrame + frameOffset);
+			double wallTime =
+				absoluteFrame / (double)_sampleRate;
+			double linearUnits = 0.0;
+
+			foreach (PitchOperatorBinding binding in _operators)
+			{
+				double rowTime = Math.Max(
+					0.0,
+					_tickClock.GetElapsedTicks(
+						binding.StartFrame,
+						Math.Max(
+							binding.StartFrame,
+							absoluteFrame)));
+
+				binding.Operator.Update(
+					wallTime,
+					rowTime);
+				linearUnits +=
+					binding.Operator.Deltas[
+						PlaybackParameter.PitchLinearUnits];
+			}
+
+			return _baseCurve.GetMultiplier(frameOffset)
+				* Math.Pow(
+					2.0,
+					linearUnits
+						/ TrackerVibrato.LinearSlideUnitsPerOctave);
+		}
+	}
+
 	private sealed class ActiveVibrato
 	{
 		public required byte Speed { get; init; }
@@ -64,6 +141,7 @@ public sealed class PlaybackVoice
 	private readonly TrackerTickClock _tickClock;
 	private readonly int _sampleRate;
 	private readonly PlaybackOperatorCollection _operators = new();
+	private readonly List<PitchOperatorBinding> _pitchOperators = [];
 
 	private byte _vibratoPhase;
 	private long _vibratoRandomAnchorIndex = -1;
@@ -307,7 +385,7 @@ public sealed class PlaybackVoice
 
 		CommitVibratoPhaseThrough(absoluteFrame);
 		if (_activeVibrato is not null)
-			_operators.Remove(_activeVibrato.Operator);
+			RemovePitchOperator(_activeVibrato.Operator);
 
 		long randomStartIndex = 0;
 		if (waveform == TrackerWaveform.Random)
@@ -335,7 +413,7 @@ public sealed class PlaybackVoice
 					* Math.Log2(multiplier);
 			},
 			commitOnExpire: false);
-		_operators.Add(vibratoOperator);
+		AddPitchOperator(vibratoOperator, absoluteFrame);
 
 		_activeVibrato = new ActiveVibrato
 		{
@@ -362,7 +440,7 @@ public sealed class PlaybackVoice
 
 		CommitVibratoPhaseThrough(absoluteFrame);
 		if (_activeVibrato is not null)
-			_operators.Remove(_activeVibrato.Operator);
+			RemovePitchOperator(_activeVibrato.Operator);
 		_activeVibrato = null;
 
 		long relativeFrame = absoluteFrame - StartFrame;
@@ -384,7 +462,7 @@ public sealed class PlaybackVoice
 			throw new ArgumentOutOfRangeException(nameof(sampleRate));
 
 		if (_activeArpeggioOperator is not null)
-			_operators.Remove(_activeArpeggioOperator);
+			RemovePitchOperator(_activeArpeggioOperator);
 
 		long relativeFrame = absoluteFrame - StartFrame;
 		TrackerArpeggioPitchCurve arpeggioCurve = new(
@@ -406,7 +484,7 @@ public sealed class PlaybackVoice
 					* Math.Log2(multiplier);
 			},
 			commitOnExpire: false);
-		_operators.Add(_activeArpeggioOperator);
+		AddPitchOperator(_activeArpeggioOperator, absoluteFrame);
 		RecomposePitchTrajectory(relativeFrame);
 	}
 
@@ -417,7 +495,7 @@ public sealed class PlaybackVoice
 
 		if (_activeArpeggioOperator is not null)
 		{
-			_operators.Remove(_activeArpeggioOperator);
+			RemovePitchOperator(_activeArpeggioOperator);
 			_activeArpeggioOperator = null;
 		}
 
@@ -554,19 +632,14 @@ public sealed class PlaybackVoice
 
 		if (_activePitchSlide is not null)
 		{
-			_operators.Remove(_activePitchSlide.Operator);
+			RemovePitchOperator(_activePitchSlide.Operator);
 			_activePitchSlide = null;
 		}
 
 		_activeTonePortamentoCurve = null;
 		_tonePortamentoContinuationBaseMultiplier = null;
 
-		_basePitchCurve = new TrackerPitchSlideCurve(
-			currentBase,
-			linearUnitsPerTick,
-			_tickClock,
-			absoluteFrame,
-			ticksPerRow);
+		_basePitchCurve = new ConstantPitchCurve(currentBase);
 		_basePitchCurveStartFrame = relativeFrame;
 
 		LinearRowPlaybackOperator pitchOperator = new(
@@ -576,7 +649,9 @@ public sealed class PlaybackVoice
 					* Math.Max(0, ticksPerRow - 1),
 			rowSpan: ticksPerRow,
 			commitOnExpire: true);
-		_operators.Add(pitchOperator);
+		AddPitchOperator(
+			pitchOperator,
+			absoluteFrame);
 		_activePitchSlide = new ActivePitchSlide
 		{
 			StartFrame = absoluteFrame,
@@ -604,6 +679,10 @@ public sealed class PlaybackVoice
 					_activePitchSlide.StartFrame,
 					_activePitchSlide.TicksPerRow,
 					absoluteFrame));
+			_pitchOperators.RemoveAll(
+				binding => ReferenceEquals(
+					binding.Operator,
+					_activePitchSlide.Operator));
 			_activePitchSlide = null;
 		}
 
@@ -859,6 +938,29 @@ public sealed class PlaybackVoice
 			1.0);
 	}
 
+	private void AddPitchOperator(
+		IRowPlaybackOperator playbackOperator,
+		long startFrame)
+	{
+		_operators.Add(playbackOperator);
+		_pitchOperators.Add(
+			new PitchOperatorBinding
+			{
+				Operator = playbackOperator,
+				StartFrame = startFrame,
+			});
+	}
+
+	private void RemovePitchOperator(
+		IRowPlaybackOperator playbackOperator)
+	{
+		_operators.Remove(playbackOperator);
+		_pitchOperators.RemoveAll(
+			binding => ReferenceEquals(
+				binding.Operator,
+				playbackOperator));
+	}
+
 	private double GetOperatorRowTime(
 		long startFrame,
 		int ticksPerRow,
@@ -898,28 +1000,54 @@ public sealed class PlaybackVoice
 	}
 
 	private double GetBasePitchMultiplier(long relativeFrame)
-		=> _basePitchCurve.GetMultiplier(
-			checked(relativeFrame - _basePitchCurveStartFrame));
+	{
+		long absoluteFrame = checked(StartFrame + relativeFrame);
+		double wallTime = GetWallTimeSeconds(absoluteFrame);
+
+		foreach (PitchOperatorBinding binding in _pitchOperators)
+		{
+			if (!binding.Operator.CommitOnExpire)
+				continue;
+
+			binding.Operator.Update(
+				wallTime,
+				Math.Max(
+					0.0,
+					_tickClock.GetElapsedTicks(
+						binding.StartFrame,
+						Math.Max(
+							binding.StartFrame,
+							absoluteFrame))));
+		}
+
+		double linearUnits =
+			_operators.GetPersistentTotalDelta(
+				PlaybackParameter.PitchLinearUnits);
+
+		return _basePitchCurve.GetMultiplier(
+				checked(
+					relativeFrame
+						- _basePitchCurveStartFrame))
+			* Math.Pow(
+				2.0,
+				linearUnits
+					/ TrackerVibrato.LinearSlideUnitsPerOctave);
+	}
 
 	private void RecomposePitchTrajectory(long relativeFrame)
 	{
 		PitchCurve baseCurve = new OffsetPitchCurve(
 			_basePitchCurve,
 			checked(relativeFrame - _basePitchCurveStartFrame));
-		PitchCurve vibratoCurve = new OffsetPitchCurve(
-			_vibratoPitchCurve,
-			checked(relativeFrame - _vibratoPitchCurveStartFrame));
-		PitchCurve arpeggioCurve = new OffsetPitchCurve(
-			_arpeggioPitchCurve,
-			checked(relativeFrame - _arpeggioPitchCurveStartFrame));
 
 		SoundState.PitchTrajectory.SetCurve(
 			relativeFrame,
-			new ProductPitchCurve(
+			new OperatorPitchCurve(
 				baseCurve,
-				new ProductPitchCurve(
-					vibratoCurve,
-					arpeggioCurve)));
+				_pitchOperators,
+				_tickClock,
+				checked(StartFrame + relativeFrame),
+				_sampleRate));
 	}
 
 	private void CommitVibratoPhaseThrough(long absoluteFrame)
