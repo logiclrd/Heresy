@@ -26,6 +26,8 @@ public sealed class SongDocument
 	public uint DocumentRevision { get; private set; }
 	public uint AudioRevision { get; private set; }
 
+	internal uint NextObjectIdForPersistence => _nextObjectId;
+
 	public ObjectId AllocateObjectId()
 	{
 		if (_nextObjectId == 0)
@@ -78,6 +80,46 @@ public sealed class SongDocument
 		ObjectId[] remove = _tombstones.Keys.Where(id => !referencedIds.Contains(id)).ToArray();
 		foreach (ObjectId id in remove)
 			_tombstones.Remove(id);
+	}
+
+	internal void RestoreObject(SongObject songObject)
+	{
+		ArgumentNullException.ThrowIfNull(songObject);
+		if (!_objects.TryAdd(songObject.Id, songObject))
+			throw new InvalidOperationException($"Object ID {songObject.Id} is already in use.");
+		if (_tombstones.ContainsKey(songObject.Id))
+			throw new InvalidOperationException($"Object ID {songObject.Id} also exists as a tombstone.");
+		EnsureNextIdPast(songObject.Id);
+	}
+
+	internal void RestoreTombstone(ObjectTombstone tombstone)
+	{
+		if (tombstone.Id.IsNone)
+			throw new ArgumentException("Tombstones may not use ObjectId.None.", nameof(tombstone));
+		if (_objects.ContainsKey(tombstone.Id))
+			throw new InvalidOperationException($"Object ID {tombstone.Id} already exists as an object.");
+		if (!_tombstones.TryAdd(tombstone.Id, tombstone))
+			throw new InvalidOperationException($"Object ID {tombstone.Id} is already tombstoned.");
+		EnsureNextIdPast(tombstone.Id);
+	}
+
+	internal void RestoreNextObjectId(uint nextObjectId)
+	{
+		if (nextObjectId != 0)
+		{
+			foreach (ObjectId id in _objects.Keys)
+			{
+				if (id.Value >= nextObjectId)
+					throw new ArgumentOutOfRangeException(nameof(nextObjectId));
+			}
+			foreach (ObjectId id in _tombstones.Keys)
+			{
+				if (id.Value >= nextObjectId)
+					throw new ArgumentOutOfRangeException(nameof(nextObjectId));
+			}
+		}
+
+		_nextObjectId = nextObjectId;
 	}
 
 	private void EnsureNextIdPast(ObjectId id)
