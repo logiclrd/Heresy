@@ -21,7 +21,7 @@ namespace Heresy.Tests.Render;
 public sealed class TrackerGlissandoTests
 {
 	[Test]
-	public void LegacyTickAnchorsClampToNextSemitone()
+	public void ContinuousHiddenPathQuantizesToNextSemitone()
 	{
 		TrackerTonePortamentoCurve curve = new(
 			initialMultiplier: 1.0,
@@ -48,7 +48,7 @@ public sealed class TrackerGlissandoTests
 	}
 
 	[Test]
-	public void GlissandoDistributesSemitoneStepWithinTickInterval()
+	public void GlissandoStepOccursWhenContinuousPathCrossesSemitoneBoundary()
 	{
 		TrackerTonePortamentoCurve curve = new(
 			1.0,
@@ -87,7 +87,7 @@ public sealed class TrackerGlissandoTests
 		Assert.That(
 			curve.GetContinuousMultiplier(100),
 			Is.EqualTo(
-				Math.Pow(2.0, 80.0 / 768.0))
+				Math.Pow(2.0, (80.0 * 5.0 / 6.0) / 768.0))
 				.Within(1e-14));
 
 		Assert.That(

@@ -44,7 +44,7 @@ public sealed class PlaybackFineSlideTests
 
 		double expected =
 			Math.Pow(2.0, 12.0 / 768.0)
-			* TrackerVibrato.GetPitchMultiplier(40, 3);
+			* TrackerVibrato.GetPitchMultiplier(20, 3);
 
 		Assert.That(
 			trajectory.GetMultiplier(20),

@@ -44,8 +44,8 @@ public sealed class PlaybackVibratoTests
 		PitchTrajectory trajectory =
 			session.GetChannelState(0).CurrentVoice!.SoundState.PitchTrajectory;
 
-		double tick0 = TrackerVibrato.GetPitchMultiplier(20, 3);
-		double tick1 = TrackerVibrato.GetPitchMultiplier(40, 3);
+		double tick0 = TrackerVibrato.GetPitchMultiplier(0, 3);
+		double tick1 = TrackerVibrato.GetPitchMultiplier(20, 3);
 
 		Assert.That(
 			trajectory.GetMultiplier(0),

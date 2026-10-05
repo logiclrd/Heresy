@@ -74,7 +74,7 @@ public sealed class PlaybackArpeggioAndTremoloTests
 
 		double expected =
 			Math.Pow(2.0, 4.0 / 12.0)
-			* TrackerVibrato.GetPitchMultiplier(40, 3);
+			* TrackerVibrato.GetPitchMultiplier(20, 3);
 
 		Assert.That(
 			trajectory.GetMultiplier(20),
@@ -103,9 +103,9 @@ public sealed class PlaybackArpeggioAndTremoloTests
 		session.Render(0, output.Length, output);
 
 		double tick0 =
-			0.5 + TrackerTremolo.GetVolumeOffsetUnits(20, 3) / 64.0;
+			0.5 + TrackerTremolo.GetVolumeOffsetUnits(0, 3) / 64.0;
 		double tick1 =
-			0.5 + TrackerTremolo.GetVolumeOffsetUnits(40, 3) / 64.0;
+			0.5 + TrackerTremolo.GetVolumeOffsetUnits(20, 3) / 64.0;
 
 		Assert.That(output[0], Is.EqualTo((float)tick0).Within(1e-6f));
 		Assert.That(output[20], Is.EqualTo((float)tick1).Within(1e-6f));
