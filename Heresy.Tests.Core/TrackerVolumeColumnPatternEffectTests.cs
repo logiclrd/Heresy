@@ -227,7 +227,7 @@ public sealed class TrackerVolumeColumnPatternEffectTests
 		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
 		cell.Note = new StartPatternNote(
 			sourceId,
-			PitchMultiplier: 2.0);
+			pitchMultiplier: 2.0);
 
 		NoteScheduleBuilder raw = new();
 		pattern.GenerateRawNotes(
