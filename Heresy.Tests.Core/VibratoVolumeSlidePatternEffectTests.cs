@@ -173,7 +173,7 @@ public sealed class VibratoVolumeSlidePatternEffectTests
 			Is.EqualTo(
 				new NoteCommand[]
 				{
-					new AdjustNoteVolumeCommand(2.0),
+					new AdjustCurrentNoteVolumeCommand(2.0),
 					new SetVibratoCommand(5, 3),
 				}));
 		Assert.That(
@@ -243,7 +243,7 @@ public sealed class VibratoVolumeSlidePatternEffectTests
 			output.Freeze()
 				.SelectMany(e => e.Commands)
 				.Any(c => c is SetNoteVolumeSlideCommand
-					or AdjustNoteVolumeCommand),
+					or AdjustCurrentNoteVolumeCommand),
 			Is.False);
 	}
 

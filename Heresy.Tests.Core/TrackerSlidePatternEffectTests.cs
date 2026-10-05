@@ -129,7 +129,7 @@ public sealed class TrackerSlidePatternEffectTests
 
 		Assert.That(
 			output.Freeze()[0].Commands[0],
-			Is.EqualTo(new AdjustNoteVolumeCommand(4.0)));
+			Is.EqualTo(new AdjustCurrentNoteVolumeCommand(4.0)));
 	}
 
 	[Test]

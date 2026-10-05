@@ -200,7 +200,7 @@ public sealed class TonePortamentoVolumeSlidePatternEffectTests
 						new StartNoteCommand(
 							(ObjectId)10U,
 							4.0)),
-					new AdjustNoteVolumeCommand(2.0),
+					new AdjustCurrentNoteVolumeCommand(2.0),
 				}));
 		Assert.That(
 			schedule.SelectMany(e => e.Commands)
@@ -300,7 +300,7 @@ public sealed class TonePortamentoVolumeSlidePatternEffectTests
 			output.Freeze()
 				.SelectMany(e => e.Commands)
 				.Any(c => c is SetNoteVolumeSlideCommand
-					or AdjustNoteVolumeCommand),
+					or AdjustCurrentNoteVolumeCommand),
 			Is.False);
 	}
 
