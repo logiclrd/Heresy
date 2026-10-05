@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Numerics;
 
 using Heresy.Core.Diagnostics;
+using Heresy.Core.Envelopes;
 using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
 
