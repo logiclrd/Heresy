@@ -20,7 +20,6 @@ public sealed class PlaybackChannelState
 		public required long StartFrame { get; init; }
 		public required Vector3 StartPosition { get; init; }
 		public required double SpatialUnitsPerTick { get; init; }
-		public required double FramesPerTick { get; init; }
 		public required int ActiveTickTransitions { get; init; }
 		public required double MinimumX { get; init; }
 		public required double MaximumX { get; init; }
@@ -31,7 +30,6 @@ public sealed class PlaybackChannelState
 		public required long StartFrame { get; init; }
 		public required double StartVolume { get; init; }
 		public required double TrackerUnitsPerTick { get; init; }
-		public required double FramesPerTick { get; init; }
 		public required int ActiveTickTransitions { get; init; }
 	}
 
@@ -39,9 +37,8 @@ public sealed class PlaybackChannelState
 	{
 		public required byte OnTicks { get; init; }
 		public required byte OffTicks { get; init; }
-		public required double FramesPerTick { get; init; }
 		public required int RemainingRowTicks { get; set; }
-		public required double NextTickFrame { get; set; }
+		public required double NextTickPosition { get; set; }
 	}
 
 	private sealed class ActivePanbrello
@@ -53,6 +50,7 @@ public sealed class PlaybackChannelState
 		public required TrackerPanbrelloCurve Curve { get; init; }
 	}
 
+	private readonly TrackerTickClock _tickClock;
 	private ActiveSpatialXSlide? _activeSpatialXSlide;
 	private ActiveOverallVolumeSlide? _activeOverallVolumeSlide;
 	private ActiveTremor? _activeTremor;
@@ -70,9 +68,12 @@ public sealed class PlaybackChannelState
 	internal PlaybackChannelState(
 		int outputChannelCount,
 		int sampleRate,
+		TrackerTickClock tickClock,
 		ulong panbrelloRandomSeed = 0x50414E4252454C4CUL)
 	{
 		AntiClickTail = new AntiClickTail(outputChannelCount, sampleRate);
+		_tickClock = tickClock
+			?? throw new ArgumentNullException(nameof(tickClock));
 		_panbrelloRandomSeed = panbrelloRandomSeed;
 	}
 
@@ -198,25 +199,11 @@ public sealed class PlaybackChannelState
 
 		SynchronizeOverallVolume(absoluteFrame);
 
-		double framesPerTick =
-			SequencingConstants.Diachron.TotalSeconds
-			/ tempo
-			* sampleRate;
-
-		if (!(framesPerTick > 0.0)
-			|| double.IsNaN(framesPerTick)
-			|| double.IsInfinity(framesPerTick))
-		{
-			throw new InvalidOperationException(
-				"Tempo produces an invalid channel-volume-slide tick duration.");
-		}
-
 		_activeOverallVolumeSlide = new ActiveOverallVolumeSlide
 		{
 			StartFrame = absoluteFrame,
 			StartVolume = OverallVolume,
 			TrackerUnitsPerTick = trackerUnitsPerTick,
-			FramesPerTick = framesPerTick,
 			ActiveTickTransitions = Math.Max(0, ticksPerRow - 1),
 		};
 	}
@@ -240,10 +227,9 @@ public sealed class PlaybackChannelState
 		if (slide is not null)
 		{
 			double elapsedTicks = Math.Min(
-				Math.Max(
-					0.0,
-					absoluteFrame - slide.StartFrame)
-					/ slide.FramesPerTick,
+				_tickClock.GetElapsedTicks(
+					slide.StartFrame,
+					Math.Max(slide.StartFrame, absoluteFrame)),
 				slide.ActiveTickTransitions);
 
 			OverallVolume = Math.Clamp(
@@ -326,25 +312,11 @@ public sealed class PlaybackChannelState
 		CancelPanbrello(absoluteFrame);
 		SynchronizePosition(absoluteFrame);
 
-		double framesPerTick =
-			SequencingConstants.Diachron.TotalSeconds
-			/ tempo
-			* sampleRate;
-
-		if (!(framesPerTick > 0.0)
-			|| double.IsNaN(framesPerTick)
-			|| double.IsInfinity(framesPerTick))
-		{
-			throw new InvalidOperationException(
-				"Tempo produces an invalid spatial-slide tick duration.");
-		}
-
 		_activeSpatialXSlide = new ActiveSpatialXSlide
 		{
 			StartFrame = absoluteFrame,
 			StartPosition = Position,
 			SpatialUnitsPerTick = spatialUnitsPerTick,
-			FramesPerTick = framesPerTick,
 			ActiveTickTransitions = Math.Max(0, ticksPerRow - 1),
 			MinimumX = minimumX,
 			MaximumX = maximumX,
@@ -369,10 +341,9 @@ public sealed class PlaybackChannelState
 		if (slide is not null)
 		{
 			double elapsedTicks = Math.Min(
-				Math.Max(
-					0.0,
-					absoluteFrame - slide.StartFrame)
-					/ slide.FramesPerTick,
+				_tickClock.GetElapsedTicks(
+					slide.StartFrame,
+					Math.Max(slide.StartFrame, absoluteFrame)),
 				slide.ActiveTickTransitions);
 
 			Position = new Vector3(
@@ -446,11 +417,6 @@ public sealed class PlaybackChannelState
 		if (_activePanbrello is not null)
 			CommitPanbrelloThrough(absoluteFrame, retainOffset: true);
 
-		TimeSpan tickDuration =
-			TimeSpan.FromSeconds(
-				SequencingConstants.Diachron.TotalSeconds
-				/ tempo);
-
 		_activePanbrello = new ActivePanbrello
 		{
 			StartFrame = absoluteFrame,
@@ -461,9 +427,9 @@ public sealed class PlaybackChannelState
 				_panbrelloPhase,
 				speed,
 				depth,
-				tickDuration,
+				_tickClock,
+				absoluteFrame,
 				ticksPerRow,
-				sampleRate,
 				waveform,
 				_panbrelloRandomSeed,
 				new PanbrelloRandomState(
@@ -524,7 +490,9 @@ public sealed class PlaybackChannelState
 		}
 
 		double elapsedTicks =
-			frameOffset / active.Curve.FramesPerTick;
+			_tickClock.GetElapsedTicks(
+				active.StartFrame,
+				absoluteFrame);
 		int processedTicks = Math.Min(
 			active.TicksPerRow,
 			Math.Max(
@@ -604,26 +572,13 @@ public sealed class PlaybackChannelState
 		if (offTicks == 0)
 			throw new ArgumentOutOfRangeException(nameof(offTicks));
 
-		double framesPerTick =
-			SequencingConstants.Diachron.TotalSeconds
-			/ tempo
-			* sampleRate;
-
-		if (!(framesPerTick > 0.0)
-			|| double.IsNaN(framesPerTick)
-			|| double.IsInfinity(framesPerTick))
-		{
-			throw new InvalidOperationException(
-				"Tempo produces an invalid tremor tick duration.");
-		}
-
 		_activeTremor = new ActiveTremor
 		{
 			OnTicks = onTicks,
 			OffTicks = offTicks,
-			FramesPerTick = framesPerTick,
 			RemainingRowTicks = ticksPerRow,
-			NextTickFrame = absoluteFrame,
+			NextTickPosition =
+				_tickClock.GetTickPosition(absoluteFrame),
 		};
 	}
 
@@ -641,15 +596,18 @@ public sealed class PlaybackChannelState
 		if (tremor is null)
 			return;
 
+		double tickPosition =
+			_tickClock.GetTickPosition(absoluteFrame);
+
 		while (tremor.RemainingRowTicks > 0
-			&& tremor.NextTickFrame
-				<= absoluteFrame + 1e-9)
+			&& tremor.NextTickPosition
+				<= tickPosition + 1e-9)
 		{
 			if (hasCurrentVoice)
 				AdvanceTremorTick(tremor);
 
 			tremor.RemainingRowTicks--;
-			tremor.NextTickFrame += tremor.FramesPerTick;
+			tremor.NextTickPosition += 1.0;
 		}
 	}
 

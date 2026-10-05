@@ -13,6 +13,9 @@ public sealed class TrackerTremoloVolumeCurve
 	private readonly double _initialPhase;
 	private readonly double _phasePerOutputFrame;
 	private readonly double _framesPerTick;
+	private readonly byte _speed;
+	private readonly TrackerTickClock? _tickClock;
+	private readonly long _startFrame;
 	private readonly byte _depth;
 	private readonly TrackerWaveform _waveform;
 	private readonly ulong _randomSeed;
@@ -39,6 +42,7 @@ public sealed class TrackerTremoloVolumeCurve
 			throw new ArgumentOutOfRangeException(nameof(randomStartIndex));
 
 		_initialPhase = initialPhase;
+		_speed = speed;
 		_depth = depth;
 		_waveform = waveform;
 		_randomSeed = randomSeed;
@@ -56,6 +60,34 @@ public sealed class TrackerTremoloVolumeCurve
 		_phasePerOutputFrame = speed * 4.0 / tickFrames;
 	}
 
+	public TrackerTremoloVolumeCurve(
+		byte initialPhase,
+		byte speed,
+		byte depth,
+		TrackerTickClock tickClock,
+		long startFrame,
+		TrackerWaveform waveform = TrackerWaveform.Sine,
+		ulong randomSeed = 0,
+		long randomStartIndex = 0)
+	{
+		ArgumentNullException.ThrowIfNull(tickClock);
+		if (startFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(startFrame));
+		if (!Enum.IsDefined(waveform))
+			throw new ArgumentOutOfRangeException(nameof(waveform));
+		if (randomStartIndex < 0)
+			throw new ArgumentOutOfRangeException(nameof(randomStartIndex));
+
+		_initialPhase = initialPhase;
+		_speed = speed;
+		_depth = depth;
+		_waveform = waveform;
+		_randomSeed = randomSeed;
+		_randomStartIndex = randomStartIndex;
+		_tickClock = tickClock;
+		_startFrame = startFrame;
+	}
+
 	public double GetOffsetTrackerUnits(long frameOffset)
 	{
 		if (frameOffset < 0)
@@ -63,7 +95,11 @@ public sealed class TrackerTremoloVolumeCurve
 
 		if (_waveform == TrackerWaveform.Random)
 		{
-			double tickPosition = frameOffset / _framesPerTick;
+			double tickPosition = _tickClock is null
+				? frameOffset / _framesPerTick
+				: _tickClock.GetElapsedTicks(
+					_startFrame,
+					checked(_startFrame + frameOffset));
 			long tick0 = (long)Math.Floor(tickPosition);
 			long tick1 = checked(tick0 + 1);
 			double fraction = tickPosition - tick0;
@@ -82,8 +118,14 @@ public sealed class TrackerTremoloVolumeCurve
 			return units0 + (units1 - units0) * fraction;
 		}
 
+		double elapsedTicks = _tickClock is null
+			? frameOffset / _framesPerTick
+			: _tickClock.GetElapsedTicks(
+				_startFrame,
+				checked(_startFrame + frameOffset));
+
 		double phase =
-			_initialPhase + frameOffset * _phasePerOutputFrame;
+			_initialPhase + elapsedTicks * _speed * 4.0;
 
 		return TrackerTremolo.GetContinuousVolumeOffsetUnits(
 			_waveform,

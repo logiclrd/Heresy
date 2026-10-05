@@ -15,6 +15,8 @@ public sealed class TrackerTonePortamentoCurve : PitchCurve
 	private readonly double _targetMultiplier;
 	private readonly double _linearUnitsPerTick;
 	private readonly double _framesPerTick;
+	private readonly TrackerTickClock? _tickClock;
+	private readonly long _startFrame;
 	private readonly int _activeTickTransitions;
 	private readonly double _direction;
 	private readonly bool _glissando;
@@ -62,6 +64,43 @@ public sealed class TrackerTonePortamentoCurve : PitchCurve
 		_glissando = glissando;
 	}
 
+	public TrackerTonePortamentoCurve(
+		double initialMultiplier,
+		double targetMultiplier,
+		double linearUnitsPerTick,
+		TrackerTickClock tickClock,
+		long startFrame,
+		int ticksPerRow,
+		bool glissando = false)
+	{
+		if (!(initialMultiplier > 0.0)
+			|| double.IsNaN(initialMultiplier)
+			|| double.IsInfinity(initialMultiplier))
+			throw new ArgumentOutOfRangeException(nameof(initialMultiplier));
+		if (!(targetMultiplier > 0.0)
+			|| double.IsNaN(targetMultiplier)
+			|| double.IsInfinity(targetMultiplier))
+			throw new ArgumentOutOfRangeException(nameof(targetMultiplier));
+		if (double.IsNaN(linearUnitsPerTick)
+			|| double.IsInfinity(linearUnitsPerTick)
+			|| linearUnitsPerTick < 0.0)
+			throw new ArgumentOutOfRangeException(nameof(linearUnitsPerTick));
+		ArgumentNullException.ThrowIfNull(tickClock);
+		if (startFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(startFrame));
+		if (ticksPerRow <= 0)
+			throw new ArgumentOutOfRangeException(nameof(ticksPerRow));
+
+		_initialMultiplier = initialMultiplier;
+		_targetMultiplier = targetMultiplier;
+		_linearUnitsPerTick = linearUnitsPerTick;
+		_tickClock = tickClock;
+		_startFrame = startFrame;
+		_activeTickTransitions = Math.Max(0, ticksPerRow - 1);
+		_direction = Math.Sign(targetMultiplier - initialMultiplier);
+		_glissando = glissando;
+	}
+
 	public override double GetMultiplier(long frameOffset)
 	{
 		if (frameOffset < 0)
@@ -73,8 +112,13 @@ public sealed class TrackerTonePortamentoCurve : PitchCurve
 		if (_direction == 0.0 || _linearUnitsPerTick == 0.0)
 			return _initialMultiplier;
 
+		double rawElapsedTicks = _tickClock is null
+			? frameOffset / _framesPerTick
+			: _tickClock.GetElapsedTicks(
+				_startFrame,
+				checked(_startFrame + frameOffset));
 		double elapsedTicks = Math.Min(
-			frameOffset / _framesPerTick,
+			rawElapsedTicks,
 			_activeTickTransitions);
 		int tick0 = (int)Math.Floor(elapsedTicks);
 		int tick1 = Math.Min(
@@ -113,8 +157,13 @@ public sealed class TrackerTonePortamentoCurve : PitchCurve
 		if (frameOffset < 0)
 			throw new ArgumentOutOfRangeException(nameof(frameOffset));
 
+		double rawElapsedTicks = _tickClock is null
+			? frameOffset / _framesPerTick
+			: _tickClock.GetElapsedTicks(
+				_startFrame,
+				checked(_startFrame + frameOffset));
 		double elapsedTicks = Math.Min(
-			frameOffset / _framesPerTick,
+			rawElapsedTicks,
 			_activeTickTransitions);
 		return GetContinuousMultiplierForTicks(elapsedTicks);
 	}

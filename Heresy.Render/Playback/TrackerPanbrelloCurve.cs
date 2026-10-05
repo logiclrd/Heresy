@@ -21,6 +21,8 @@ public sealed class TrackerPanbrelloCurve
 	private readonly byte _speed;
 	private readonly byte _depth;
 	private readonly double _framesPerTick;
+	private readonly TrackerTickClock? _tickClock;
+	private readonly long _startFrame;
 	private readonly int _ticksPerRow;
 	private readonly TrackerWaveform _waveform;
 	private readonly ulong _randomSeed;
@@ -70,6 +72,38 @@ public sealed class TrackerPanbrelloCurve
 		_initialRandomState = initialRandomState;
 	}
 
+	public TrackerPanbrelloCurve(
+		byte initialPhase,
+		byte speed,
+		byte depth,
+		TrackerTickClock tickClock,
+		long startFrame,
+		int ticksPerRow,
+		TrackerWaveform waveform = TrackerWaveform.Sine,
+		ulong randomSeed = 0,
+		PanbrelloRandomState initialRandomState = default)
+	{
+		ArgumentNullException.ThrowIfNull(tickClock);
+		if (startFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(startFrame));
+		if (ticksPerRow <= 0)
+			throw new ArgumentOutOfRangeException(nameof(ticksPerRow));
+		if (!Enum.IsDefined(waveform))
+			throw new ArgumentOutOfRangeException(nameof(waveform));
+		if (initialRandomState.NextAnchorIndex < 0)
+			throw new ArgumentOutOfRangeException(nameof(initialRandomState));
+
+		_initialPhase = initialPhase;
+		_speed = speed;
+		_depth = depth;
+		_ticksPerRow = ticksPerRow;
+		_waveform = waveform;
+		_randomSeed = randomSeed;
+		_initialRandomState = initialRandomState;
+		_tickClock = tickClock;
+		_startFrame = startFrame;
+	}
+
 	public double FramesPerTick => _framesPerTick;
 
 	public TrackerWaveform Waveform => _waveform;
@@ -79,8 +113,14 @@ public sealed class TrackerPanbrelloCurve
 		if (frameOffset < 0)
 			throw new ArgumentOutOfRangeException(nameof(frameOffset));
 
+		double rawTickPosition = _tickClock is null
+			? frameOffset / _framesPerTick
+			: _tickClock.GetElapsedTicks(
+				_startFrame,
+				checked(_startFrame + frameOffset));
+
 		double tickPosition = Math.Min(
-			frameOffset / _framesPerTick,
+			rawTickPosition,
 			_ticksPerRow - 1.0);
 
 		int tick0 = (int)Math.Floor(tickPosition);

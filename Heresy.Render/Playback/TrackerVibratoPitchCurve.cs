@@ -15,6 +15,9 @@ public sealed class TrackerVibratoPitchCurve : PitchCurve
 	private readonly double _initialPhase;
 	private readonly double _phasePerOutputFrame;
 	private readonly double _framesPerTick;
+	private readonly byte _speed;
+	private readonly TrackerTickClock? _tickClock;
+	private readonly long _startFrame;
 	private readonly byte _depth;
 	private readonly TrackerWaveform _waveform;
 	private readonly ulong _randomSeed;
@@ -50,6 +53,7 @@ public sealed class TrackerVibratoPitchCurve : PitchCurve
 		}
 
 		_initialPhase = initialPhase;
+		_speed = speed;
 		_depth = depth;
 		_waveform = waveform;
 		_randomSeed = randomSeed;
@@ -68,6 +72,40 @@ public sealed class TrackerVibratoPitchCurve : PitchCurve
 		_phasePerOutputFrame = speed * 4.0 / tickFrames;
 	}
 
+	public TrackerVibratoPitchCurve(
+		byte initialPhase,
+		byte speed,
+		byte depth,
+		TrackerTickClock tickClock,
+		long startFrame,
+		TrackerWaveform waveform = TrackerWaveform.Sine,
+		ulong randomSeed = 0,
+		long randomStartIndex = 0,
+		double depthScale = 1.0)
+	{
+		ArgumentNullException.ThrowIfNull(tickClock);
+		if (startFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(startFrame));
+		if (!Enum.IsDefined(waveform))
+			throw new ArgumentOutOfRangeException(nameof(waveform));
+		if (randomStartIndex < 0)
+			throw new ArgumentOutOfRangeException(nameof(randomStartIndex));
+		if (!(depthScale >= 0.0)
+			|| double.IsNaN(depthScale)
+			|| double.IsInfinity(depthScale))
+			throw new ArgumentOutOfRangeException(nameof(depthScale));
+
+		_initialPhase = initialPhase;
+		_speed = speed;
+		_depth = depth;
+		_waveform = waveform;
+		_randomSeed = randomSeed;
+		_randomStartIndex = randomStartIndex;
+		_depthScale = depthScale;
+		_tickClock = tickClock;
+		_startFrame = startFrame;
+	}
+
 	public override double GetMultiplier(long frameOffset)
 	{
 		if (frameOffset < 0)
@@ -75,7 +113,11 @@ public sealed class TrackerVibratoPitchCurve : PitchCurve
 
 		if (_waveform == TrackerWaveform.Random)
 		{
-			double tickPosition = frameOffset / _framesPerTick;
+			double tickPosition = _tickClock is null
+				? frameOffset / _framesPerTick
+				: _tickClock.GetElapsedTicks(
+					_startFrame,
+					checked(_startFrame + frameOffset));
 			long tick0 = (long)Math.Floor(tickPosition);
 			long tick1 = checked(tick0 + 1);
 			double fraction = tickPosition - tick0;
@@ -99,8 +141,14 @@ public sealed class TrackerVibratoPitchCurve : PitchCurve
 				randomUnits / TrackerVibrato.LinearSlideUnitsPerOctave);
 		}
 
+		double elapsedTicks = _tickClock is null
+			? frameOffset / _framesPerTick
+			: _tickClock.GetElapsedTicks(
+				_startFrame,
+				checked(_startFrame + frameOffset));
+
 		double phase =
-			_initialPhase + frameOffset * _phasePerOutputFrame;
+			_initialPhase + elapsedTicks * _speed * 4.0;
 		double continuousUnits =
 			TrackerVibrato.GetContinuousLinearSlideUnits(
 				_waveform,
