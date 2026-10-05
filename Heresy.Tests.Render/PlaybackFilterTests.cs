@@ -49,6 +49,37 @@ public sealed class PlaybackFilterTests
 	}
 
 	[Test]
+	public void PartialFilterCommandsPreserveTheOtherParameter()
+	{
+		ObjectId sourceId = (ObjectId)10U;
+		SampleSound sound = ConstantSample(1.0f, 16, 48000);
+		PlaybackSession session = Session(
+			48000,
+			Schedule(
+				Event(
+					Frame(0, 48000),
+					new StartNoteCommand(sourceId),
+					new SetResonantFilterCommand(0.25, 0.5)),
+				Event(
+					Frame(1, 48000),
+					new SetResonantFilterCutoffCommand(0.75)),
+				Event(
+					Frame(2, 48000),
+					new SetResonantFilterResonanceCommand(0.125))),
+			new TestResolver((sourceId, false, sound)));
+
+		session.Render(0, 3, new float[3]);
+
+		PlaybackChannelState channel = session.GetChannelState(0);
+		Assert.That(
+			channel.FilterParameters,
+			Is.EqualTo(new ResonantFilterParameters(0.75, 0.125)));
+		Assert.That(
+			channel.CurrentVoice!.FilterState.Parameters,
+			Is.EqualTo(channel.FilterParameters));
+	}
+
+	[Test]
 	public void ReplacementVoiceGetsSameParametersButFreshFilterHistory()
 	{
 		ObjectId firstId = (ObjectId)10U;
