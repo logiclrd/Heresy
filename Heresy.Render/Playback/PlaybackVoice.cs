@@ -21,6 +21,8 @@ public sealed class PlaybackVoice
 		public required double StartTickPosition { get; init; }
 		public required byte StartPhase { get; init; }
 		public required long RandomStartIndex { get; init; }
+	
+		public required FunctionalRowPlaybackOperator Operator { get; init; }
 	}
 
 	private sealed class ActiveTremolo
@@ -30,6 +32,15 @@ public sealed class PlaybackVoice
 		public required double StartTickPosition { get; init; }
 		public required byte StartPhase { get; init; }
 		public required long RandomStartIndex { get; init; }
+	
+		public required FunctionalRowPlaybackOperator Operator { get; init; }
+	}
+
+	private sealed class ActivePitchSlide
+	{
+		public required long StartFrame { get; init; }
+		public required int TicksPerRow { get; init; }
+		public required LinearRowPlaybackOperator Operator { get; init; }
 	}
 
 	private sealed class ActiveNoteVolumeSlide
@@ -64,6 +75,8 @@ public sealed class PlaybackVoice
 	private TrackerTremoloVolumeCurve? _tremoloVolumeCurve;
 	private long _tremoloVolumeCurveStartFrame;
 
+	private ActivePitchSlide? _activePitchSlide;
+	private IRowPlaybackOperator? _activeArpeggioOperator;
 	private ActiveNoteVolumeSlide? _activeNoteVolumeSlide;
 
 	private PitchCurve _basePitchCurve = new ConstantPitchCurve(1.0);
@@ -285,7 +298,6 @@ public sealed class PlaybackVoice
 			throw new ArgumentOutOfRangeException(nameof(sampleRate));
 		if (!Enum.IsDefined(waveform))
 			throw new ArgumentOutOfRangeException(nameof(waveform));
-
 		if (!(depthScale >= 0.0)
 			|| double.IsNaN(depthScale)
 			|| double.IsInfinity(depthScale))
@@ -294,26 +306,14 @@ public sealed class PlaybackVoice
 		}
 
 		CommitVibratoPhaseThrough(absoluteFrame);
+		if (_activeVibrato is not null)
+			_operators.Remove(_activeVibrato.Operator);
 
 		long randomStartIndex = 0;
 		if (waveform == TrackerWaveform.Random)
-		{
-			randomStartIndex =
-				checked(++_vibratoRandomAnchorIndex);
-		}
+			randomStartIndex = checked(++_vibratoRandomAnchorIndex);
 
-		_activeVibrato = new ActiveVibrato
-		{
-			Speed = speed,
-			Waveform = waveform,
-			StartTickPosition =
-				_tickClock.GetTickPosition(absoluteFrame),
-			StartPhase = _vibratoPhase,
-			RandomStartIndex = randomStartIndex,
-		};
-
-		long relativeFrame = absoluteFrame - StartFrame;
-		_vibratoPitchCurve = new TrackerVibratoPitchCurve(
+		TrackerVibratoPitchCurve vibratoCurve = new(
 			_vibratoPhase,
 			speed,
 			depth,
@@ -323,8 +323,33 @@ public sealed class PlaybackVoice
 			_modulationSeed ^ 0x5649425241544F52UL,
 			randomStartIndex,
 			depthScale);
-		_vibratoPitchCurveStartFrame = relativeFrame;
 
+		FunctionalRowPlaybackOperator vibratoOperator = new(
+			PlaybackParameter.PitchLinearUnits,
+			(wallTimeSeconds, _) =>
+			{
+				long frame = WallTimeToFrame(wallTimeSeconds);
+				double multiplier = vibratoCurve.GetMultiplier(
+					Math.Max(0, frame - absoluteFrame));
+				return TrackerVibrato.LinearSlideUnitsPerOctave
+					* Math.Log2(multiplier);
+			},
+			commitOnExpire: false);
+		_operators.Add(vibratoOperator);
+
+		_activeVibrato = new ActiveVibrato
+		{
+			Speed = speed,
+			Waveform = waveform,
+			StartTickPosition = _tickClock.GetTickPosition(absoluteFrame),
+			StartPhase = _vibratoPhase,
+			RandomStartIndex = randomStartIndex,
+			Operator = vibratoOperator,
+		};
+
+		long relativeFrame = absoluteFrame - StartFrame;
+		_vibratoPitchCurve = vibratoCurve;
+		_vibratoPitchCurveStartFrame = relativeFrame;
 		RecomposePitchTrajectory(relativeFrame);
 	}
 
@@ -336,12 +361,13 @@ public sealed class PlaybackVoice
 			return;
 
 		CommitVibratoPhaseThrough(absoluteFrame);
+		if (_activeVibrato is not null)
+			_operators.Remove(_activeVibrato.Operator);
 		_activeVibrato = null;
 
 		long relativeFrame = absoluteFrame - StartFrame;
 		_vibratoPitchCurve = new ConstantPitchCurve(1.0);
 		_vibratoPitchCurveStartFrame = relativeFrame;
-
 		RecomposePitchTrajectory(relativeFrame);
 	}
 
@@ -357,14 +383,30 @@ public sealed class PlaybackVoice
 		if (sampleRate <= 0)
 			throw new ArgumentOutOfRangeException(nameof(sampleRate));
 
+		if (_activeArpeggioOperator is not null)
+			_operators.Remove(_activeArpeggioOperator);
+
 		long relativeFrame = absoluteFrame - StartFrame;
-		_arpeggioPitchCurve = new TrackerArpeggioPitchCurve(
+		TrackerArpeggioPitchCurve arpeggioCurve = new(
 			firstSemitones,
 			secondSemitones,
 			_tickClock,
 			absoluteFrame);
+		_arpeggioPitchCurve = arpeggioCurve;
 		_arpeggioPitchCurveStartFrame = relativeFrame;
 
+		_activeArpeggioOperator = new FunctionalRowPlaybackOperator(
+			PlaybackParameter.PitchLinearUnits,
+			(wallTimeSeconds, _) =>
+			{
+				long frame = WallTimeToFrame(wallTimeSeconds);
+				double multiplier = arpeggioCurve.GetMultiplier(
+					Math.Max(0, frame - absoluteFrame));
+				return TrackerVibrato.LinearSlideUnitsPerOctave
+					* Math.Log2(multiplier);
+			},
+			commitOnExpire: false);
+		_operators.Add(_activeArpeggioOperator);
 		RecomposePitchTrajectory(relativeFrame);
 	}
 
@@ -373,10 +415,15 @@ public sealed class PlaybackVoice
 		if (absoluteFrame < StartFrame)
 			return;
 
+		if (_activeArpeggioOperator is not null)
+		{
+			_operators.Remove(_activeArpeggioOperator);
+			_activeArpeggioOperator = null;
+		}
+
 		long relativeFrame = absoluteFrame - StartFrame;
 		_arpeggioPitchCurve = new ConstantPitchCurve(1.0);
 		_arpeggioPitchCurveStartFrame = relativeFrame;
-
 		RecomposePitchTrajectory(relativeFrame);
 	}
 
@@ -397,25 +444,14 @@ public sealed class PlaybackVoice
 			throw new ArgumentOutOfRangeException(nameof(waveform));
 
 		CommitTremoloPhaseThrough(absoluteFrame);
+		if (_activeTremolo is not null)
+			_operators.Remove(_activeTremolo.Operator);
 
 		long randomStartIndex = 0;
 		if (waveform == TrackerWaveform.Random)
-		{
-			randomStartIndex =
-				checked(++_tremoloRandomAnchorIndex);
-		}
+			randomStartIndex = checked(++_tremoloRandomAnchorIndex);
 
-		_activeTremolo = new ActiveTremolo
-		{
-			Speed = speed,
-			Waveform = waveform,
-			StartTickPosition =
-				_tickClock.GetTickPosition(absoluteFrame),
-			StartPhase = _tremoloPhase,
-			RandomStartIndex = randomStartIndex,
-		};
-
-		_tremoloVolumeCurve = new TrackerTremoloVolumeCurve(
+		TrackerTremoloVolumeCurve tremoloCurve = new(
 			_tremoloPhase,
 			speed,
 			depth,
@@ -424,6 +460,29 @@ public sealed class PlaybackVoice
 			waveform,
 			_modulationSeed ^ 0x5452454D4F4C4F00UL,
 			randomStartIndex);
+
+		FunctionalRowPlaybackOperator tremoloOperator = new(
+			PlaybackParameter.NoteVolume,
+			(wallTimeSeconds, _) =>
+			{
+				long frame = WallTimeToFrame(wallTimeSeconds);
+				return tremoloCurve.GetOffsetTrackerUnits(
+					Math.Max(0, frame - absoluteFrame)) / 64.0;
+			},
+			commitOnExpire: false);
+		_operators.Add(tremoloOperator);
+
+		_activeTremolo = new ActiveTremolo
+		{
+			Speed = speed,
+			Waveform = waveform,
+			StartTickPosition = _tickClock.GetTickPosition(absoluteFrame),
+			StartPhase = _tremoloPhase,
+			RandomStartIndex = randomStartIndex,
+			Operator = tremoloOperator,
+		};
+
+		_tremoloVolumeCurve = tremoloCurve;
 		_tremoloVolumeCurveStartFrame = absoluteFrame;
 	}
 
@@ -435,6 +494,8 @@ public sealed class PlaybackVoice
 			return;
 
 		CommitTremoloPhaseThrough(absoluteFrame);
+		if (_activeTremolo is not null)
+			_operators.Remove(_activeTremolo.Operator);
 		_activeTremolo = null;
 		_tremoloVolumeCurve = null;
 		_tremoloVolumeCurveStartFrame = absoluteFrame;
@@ -491,6 +552,12 @@ public sealed class PlaybackVoice
 		long relativeFrame = absoluteFrame - StartFrame;
 		double currentBase = GetBasePitchMultiplier(relativeFrame);
 
+		if (_activePitchSlide is not null)
+		{
+			_operators.Remove(_activePitchSlide.Operator);
+			_activePitchSlide = null;
+		}
+
 		_activeTonePortamentoCurve = null;
 		_tonePortamentoContinuationBaseMultiplier = null;
 
@@ -501,6 +568,21 @@ public sealed class PlaybackVoice
 			absoluteFrame,
 			ticksPerRow);
 		_basePitchCurveStartFrame = relativeFrame;
+
+		LinearRowPlaybackOperator pitchOperator = new(
+			PlaybackParameter.PitchLinearUnits,
+			totalDelta:
+				linearUnitsPerTick
+					* Math.Max(0, ticksPerRow - 1),
+			rowSpan: ticksPerRow,
+			commitOnExpire: true);
+		_operators.Add(pitchOperator);
+		_activePitchSlide = new ActivePitchSlide
+		{
+			StartFrame = absoluteFrame,
+			TicksPerRow = ticksPerRow,
+			Operator = pitchOperator,
+		};
 
 		RecomposePitchTrajectory(relativeFrame);
 	}
@@ -513,9 +595,20 @@ public sealed class PlaybackVoice
 		long relativeFrame = absoluteFrame - StartFrame;
 		double currentBase = GetBasePitchMultiplier(relativeFrame);
 
+		if (_activePitchSlide is not null)
+		{
+			_operators.Expire(
+				_activePitchSlide.Operator,
+				GetWallTimeSeconds(absoluteFrame),
+				GetOperatorRowTime(
+					_activePitchSlide.StartFrame,
+					_activePitchSlide.TicksPerRow,
+					absoluteFrame));
+			_activePitchSlide = null;
+		}
+
 		_basePitchCurve = new ConstantPitchCurve(currentBase);
 		_basePitchCurveStartFrame = relativeFrame;
-
 		RecomposePitchTrajectory(relativeFrame);
 	}
 
@@ -736,22 +829,17 @@ public sealed class PlaybackVoice
 
 	public double GetNoteVolume(long absoluteFrame)
 	{
-		double volume = GetBaseNoteVolume(absoluteFrame);
-
-		if (_tremoloVolumeCurve is null
-			|| absoluteFrame < _tremoloVolumeCurveStartFrame)
+		if (_activeTremolo is not null)
 		{
-			return volume;
+			_activeTremolo.Operator.Update(
+				GetWallTimeSeconds(absoluteFrame),
+				Math.Max(
+					0.0,
+					_tickClock.GetTickPosition(absoluteFrame)
+						- _activeTremolo.StartTickPosition));
 		}
 
-		double offsetUnits =
-			_tremoloVolumeCurve.GetOffsetTrackerUnits(
-				absoluteFrame - _tremoloVolumeCurveStartFrame);
-
-		return Math.Clamp(
-			volume + offsetUnits / 64.0,
-			0.0,
-			1.0);
+		return GetBaseNoteVolume(absoluteFrame);
 	}
 
 	private double GetOperatorRowTime(
@@ -767,6 +855,11 @@ public sealed class PlaybackVoice
 
 	private double GetWallTimeSeconds(long absoluteFrame)
 		=> absoluteFrame / (double)_sampleRate;
+
+	private long WallTimeToFrame(double wallTimeSeconds)
+		=> checked((long)Math.Round(
+			wallTimeSeconds * _sampleRate,
+			MidpointRounding.AwayFromZero));
 
 	private double GetTonePortamentoContinuousBaseMultiplier(
 		long relativeFrame)
