@@ -1220,13 +1220,13 @@ public sealed class PlaybackSession
 	{
 		if (frameCount > 1 && voice.HasPanningEnvelope)
 		{
-			int outputChannelCount =
+			int panningOutputChannelCount =
 				_context.Configuration.OutputChannelCount;
 			for (int frame = 0; frame < frameCount; frame++)
 			{
 				Span<float> outputFrame = destination.Slice(
-					frame * outputChannelCount,
-					outputChannelCount);
+					frame * panningOutputChannelCount,
+					panningOutputChannelCount);
 				if (RenderVoice(
 					voice,
 					absoluteStartFrame + frame,
