@@ -55,10 +55,10 @@ public sealed class TrackerSlidePatternEffectTests
 			Is.EqualTo(new SetNoteVolumeSlideCommand(-3.0)));
 		Assert.That(
 			FirstResolved(new TrackerVolumeSlidePatternEffect(0x3F)),
-			Is.EqualTo(new AdjustNoteVolumeCommand(3.0)));
+			Is.EqualTo(new AdjustCurrentNoteVolumeCommand(3.0)));
 		Assert.That(
 			FirstResolved(new TrackerVolumeSlidePatternEffect(0xF3)),
-			Is.EqualTo(new AdjustNoteVolumeCommand(-3.0)));
+			Is.EqualTo(new AdjustCurrentNoteVolumeCommand(-3.0)));
 	}
 
 	[Test]
