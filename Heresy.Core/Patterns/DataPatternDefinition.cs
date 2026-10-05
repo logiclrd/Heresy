@@ -263,6 +263,9 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 				return new ApplyTrackerNewNoteActionCommand(
 					newNoteAction.Action);
 
+			case TrackerSurroundPatternEffect:
+				return new SetSurroundCommand(true);
+
 			case TrackerPanningPatternEffect panning:
 				return new ApplyTrackerPanningCommand(panning.Value);
 

@@ -411,6 +411,12 @@ public sealed record SetSpatialPositionCommand : NoteCommand
 }
 
 /// <summary>
+/// Enables or disables persistent surround routing on a physical playback
+/// channel. Tracker S91 enables it; ordinary absolute panning disables it.
+/// </summary>
+public sealed record SetSurroundCommand(bool Enabled) : NoteCommand;
+
+/// <summary>
 /// Raw tracker Xxx 8-bit panning value.
 /// </summary>
 public sealed record ApplyTrackerPanning8BitCommand(

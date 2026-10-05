@@ -93,6 +93,12 @@ public sealed class PlaybackChannelState
 
 	public Vector3 Position { get; private set; } = Vector3.Zero;
 
+	/// <summary>
+	/// Persistent IT-compatible surround routing. This is discrete channel
+	/// state rather than an additive playback operator.
+	/// </summary>
+	public bool Surround { get; private set; }
+
 	public int ActiveOperatorCount => _operators.Count;
 
 	internal bool HasActiveSpatialXSlide =>
@@ -303,10 +309,35 @@ public sealed class PlaybackChannelState
 			1.0);
 	}
 
+	internal void SetSurround(long absoluteFrame, bool enabled)
+	{
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+
+		if (enabled)
+		{
+			CancelPanbrello(absoluteFrame);
+			CancelSpatialXSlide();
+			Position = Vector3.Zero;
+		}
+
+		Surround = enabled;
+		if (CurrentVoice is not null)
+		{
+			CurrentVoice.Surround = enabled;
+			if (enabled)
+				CurrentVoice.SoundState.Position = Position;
+		}
+	}
+
 	internal void SetPosition(long absoluteFrame, Vector3 position)
 	{
 		if (absoluteFrame < 0)
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+
+		Surround = false;
+		if (CurrentVoice is not null)
+			CurrentVoice.Surround = false;
 
 		CancelPanbrello(absoluteFrame);
 		CancelSpatialXSlide();
@@ -326,6 +357,9 @@ public sealed class PlaybackChannelState
 			deltaX,
 			minimumX,
 			maximumX);
+
+		if (Surround)
+			return;
 
 		CancelPanbrello(absoluteFrame);
 		SynchronizePosition(absoluteFrame);
@@ -367,6 +401,9 @@ public sealed class PlaybackChannelState
 			throw new ArgumentOutOfRangeException(nameof(ticksPerRow));
 		if (sampleRate <= 0)
 			throw new ArgumentOutOfRangeException(nameof(sampleRate));
+
+		if (Surround)
+			return;
 
 		CancelPanbrello(absoluteFrame);
 		CommitSpatialXSlide(absoluteFrame);
@@ -603,6 +640,9 @@ public sealed class PlaybackChannelState
 
 	private Vector3 GetEffectivePosition(long absoluteFrame)
 	{
+		if (Surround)
+			return Vector3.Zero;
+
 		ActiveSpatialXSlide? slide =
 			_activeSpatialXSlide;
 		if (slide is not null)
@@ -787,6 +827,7 @@ public sealed class PlaybackChannelState
 		CurrentVoice = voice;
 		voice.NoteVolume = NoteVolume;
 		voice.OverallVolume = OverallVolume;
+		voice.Surround = Surround;
 		voice.SoundState.Position =
 			GetEffectivePosition(absoluteFrame);
 	}

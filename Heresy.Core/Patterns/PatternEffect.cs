@@ -430,6 +430,12 @@ public sealed record TrackerPanningPatternEffect : PatternEffect
 }
 
 /// <summary>
+/// Tracker S91 surround. Impulse Tracker represents surround as a special
+/// persistent panning state rather than an ordinary numeric pan position.
+/// </summary>
+public sealed record TrackerSurroundPatternEffect : PatternEffect;
+
+/// <summary>
 /// Tracker Xxx 8-bit panning. Unlike S8x, the byte is already in IT's
 /// internal panning units and therefore ranges from 0 through 255.
 /// </summary>

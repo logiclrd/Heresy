@@ -309,6 +309,10 @@ public sealed class PlaybackSession
 				channel.ClearOverallVolumeSlide(eventFrame);
 				break;
 
+			case SetSurroundCommand surround:
+				channel.SetSurround(eventFrame, surround.Enabled);
+				break;
+
 			case SetSpatialPositionCommand position:
 				channel.SetPosition(
 					eventFrame,
@@ -1262,6 +1266,10 @@ long? soundEndRelative = voice.Sound.GetEndFrameExclusive(
 
 			for (int outputChannel = 0; outputChannel < outputChannelCount; outputChannel++)
 				outputFrame[outputChannel] = (float)(outputFrame[outputChannel] * volume);
+
+			// Native IT surround is stereo phase encoding.
+			if (voice.Surround && outputChannelCount == 2)
+				outputFrame[1] = -outputFrame[1];
 
 			voice.ObserveOutputFrame(outputFrame);
 		}

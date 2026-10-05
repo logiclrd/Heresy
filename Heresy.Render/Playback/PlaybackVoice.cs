@@ -240,6 +240,12 @@ public sealed class PlaybackVoice
 
 	public double OverallVolume { get; internal set; }
 
+	/// <summary>
+	/// Persistent discrete surround routing captured from the physical channel.
+	/// A displaced NNA voice retains this value after migration.
+	/// </summary>
+	public bool Surround { get; internal set; }
+
 	public int ActiveOperatorCount => _operators.Count;
 
 	public double BaselinePitchMultiplier
