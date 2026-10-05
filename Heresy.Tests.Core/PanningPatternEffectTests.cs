@@ -36,7 +36,7 @@ public sealed class PanningPatternEffectTests
 
 	[TestCase((byte)0, -1.0f)]
 	[TestCase((byte)7, -0.0625f)]
-	[TestCase((byte)8, 0.0703125f)]
+	[TestCase((byte)8, 0.0625f)]
 	[TestCase((byte)15, 1.0f)]
 	public void ProcessorResolvesS8xToSpatialX(
 		byte value,

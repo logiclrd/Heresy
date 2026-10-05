@@ -300,6 +300,10 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			case TrackerPanningPatternEffect panning:
 				return new ApplyTrackerPanningCommand(panning.Value);
 
+			case TrackerVolumeColumnPanningPatternEffect panning:
+				return new ApplyTrackerVolumeColumnPanningCommand(
+					panning.Value);
+
 			case TrackerPanning8BitPatternEffect panning:
 				return new ApplyTrackerPanning8BitCommand(
 					panning.Parameter);

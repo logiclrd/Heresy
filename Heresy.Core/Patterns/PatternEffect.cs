@@ -516,8 +516,25 @@ public sealed record TrackerPanningPatternEffect : PatternEffect
 public sealed record TrackerSurroundPatternEffect : PatternEffect;
 
 /// <summary>
-/// Tracker Xxx 8-bit panning. Unlike S8x, the byte is already in IT's
-/// internal panning units and therefore ranges from 0 through 255.
+/// IT volume-column absolute panning. The decimal value spans the player's
+/// native 0..64 pan coordinate: 0 is full left, 32 center, 64 full right.
+/// </summary>
+public sealed record TrackerVolumeColumnPanningPatternEffect : PatternEffect
+{
+	public TrackerVolumeColumnPanningPatternEffect(byte value)
+	{
+		if (value > 64)
+			throw new ArgumentOutOfRangeException(nameof(value));
+
+		Value = value;
+	}
+
+	public byte Value { get; }
+}
+
+/// <summary>
+/// Tracker Xxx 8-bit panning. IT quantizes the byte onto its internal 0..64
+/// pan coordinate using (xx + 2) >> 2 before applying it.
 /// </summary>
 public sealed record TrackerPanning8BitPatternEffect(
 	byte Parameter) : PatternEffect;

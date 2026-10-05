@@ -478,6 +478,20 @@ public sealed record SetSpatialPositionCommand : NoteCommand
 /// </summary>
 public sealed record SetSurroundCommand(bool Enabled) : NoteCommand;
 
+/// <summary>Raw IT volume-column 0..64 absolute panning value.</summary>
+public sealed record ApplyTrackerVolumeColumnPanningCommand : NoteCommand
+{
+	public ApplyTrackerVolumeColumnPanningCommand(byte value)
+	{
+		if (value > 64)
+			throw new ArgumentOutOfRangeException(nameof(value));
+
+		Value = value;
+	}
+
+	public byte Value { get; }
+}
+
 /// <summary>
 /// Raw tracker Xxx 8-bit panning value.
 /// </summary>

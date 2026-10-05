@@ -2188,6 +2188,25 @@ public static class PatternNoteProcessor
 					}
 					break;
 
+				case ApplyTrackerVolumeColumnPanningCommand panning:
+					GetTrackerChannelState(
+						noteEvent,
+						context,
+						"Tracker volume-column panning");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+
+					if (!HasEffectColumnAbsolutePanning(noteEvent.Commands))
+					{
+						transformed.Add(
+							new SetSpatialPositionCommand(
+								new Vector3(
+									TrackerPan64ToSpatialX(
+										panning.Value),
+									0.0f,
+									0.0f)));
+					}
+					break;
+
 				case ApplyTrackerPanningCommand panning:
 					GetTrackerChannelState(
 						noteEvent,
@@ -2195,13 +2214,14 @@ public static class PatternNoteProcessor
 						"Tracker panning");
 					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
 
-					int trackerPan =
-						(panning.Value * 256 + 8) / 15;
+					int repeatedByte =
+						panning.Value | (panning.Value << 4);
+					int trackerPan64 = (repeatedByte + 2) >> 2;
 
 					transformed.Add(
 						new SetSpatialPositionCommand(
 							new Vector3(
-								TrackerPanToSpatialX(trackerPan),
+								TrackerPan64ToSpatialX(trackerPan64),
 								0.0f,
 								0.0f)));
 					break;
@@ -2213,11 +2233,11 @@ public static class PatternNoteProcessor
 						"Tracker 8-bit panning");
 					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
 
+					int trackerPan64 = (panning.Parameter + 2) >> 2;
 					transformed.Add(
 						new SetSpatialPositionCommand(
 							new Vector3(
-								TrackerPanToSpatialX(
-									panning.Parameter),
+								TrackerPan64ToSpatialX(trackerPan64),
 								0.0f,
 								0.0f)));
 					break;
@@ -2390,12 +2410,28 @@ public static class PatternNoteProcessor
 			right.NoteEvent.EmissionOrder);
 	}
 
-	private static float TrackerPanToSpatialX(int trackerPan)
+	private static bool HasEffectColumnAbsolutePanning(
+		IReadOnlyList<NoteCommand> commands)
 	{
-		if (trackerPan < 0 || trackerPan > 256)
+		foreach (NoteCommand command in commands)
+		{
+			if (command is ApplyTrackerPanningCommand
+				or ApplyTrackerPanning8BitCommand
+				or SetSurroundCommand { Enabled: true })
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private static float TrackerPan64ToSpatialX(int trackerPan)
+	{
+		if (trackerPan < 0 || trackerPan > 64)
 			throw new ArgumentOutOfRangeException(nameof(trackerPan));
 
-		return (trackerPan - 128) / 128.0f;
+		return (trackerPan - 32) / 32.0f;
 	}
 
 	private static NoteCommand? ApplyRowTickOverride(
