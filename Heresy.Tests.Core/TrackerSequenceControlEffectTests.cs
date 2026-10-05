@@ -94,6 +94,42 @@ public sealed class TrackerSequenceControlEffectTests
 	}
 
 	[Test]
+	public void CxxIsIgnoredWhileEarlierChannelSBxIsActivelyLooping()
+	{
+		ObjectId afterLoopSource = (ObjectId)20U;
+		DataPatternDefinition pattern = Pattern((ObjectId)1U, 3, 2);
+
+		pattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new TrackerPatternLoopPatternEffect(0));
+		pattern.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new TrackerPatternLoopPatternEffect(1));
+		pattern.Grid.GetOrCreateCell(1, 1).Effects.Add(
+			new TrackerPatternBreakPatternEffect(2));
+		pattern.Grid.GetOrCreateCell(2, 0).Note =
+			new StartPatternNote(afterLoopSource);
+
+		NoteScheduleBuilder output = new();
+		PatternNoteProcessor.GenerateNotes(
+			pattern,
+			new SequencingContext(),
+			output,
+			startRow: 0,
+			out TimeSpan duration,
+			out PatternFlowControl flowControl);
+
+		Assert.That(flowControl.OrderJump, Is.Null);
+		Assert.That(flowControl.BreakRow, Is.EqualTo(2));
+		Assert.That(
+			duration,
+			Is.EqualTo(TimeSpan.FromMilliseconds(480)));
+		Assert.That(
+			output.Freeze()
+				.SelectMany(noteEvent => noteEvent.Commands)
+				.OfType<StartNoteCommand>(),
+			Is.Empty);
+	}
+
+	[Test]
 	public void StartRowDoesNotExecuteSkippedSequenceControl()
 	{
 		DataPatternDefinition pattern = Pattern((ObjectId)1U, 2, 1);
