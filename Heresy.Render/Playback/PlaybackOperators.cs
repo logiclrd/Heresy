@@ -218,6 +218,21 @@ public sealed class PlaybackOperatorCollection
 		return total;
 	}
 
+	public double GetPersistentTotalDelta(
+		PlaybackParameter parameter)
+	{
+		double total = 0.0;
+		foreach (IRowPlaybackOperator playbackOperator
+			in _operators)
+		{
+			if (!playbackOperator.CommitOnExpire)
+				continue;
+
+			total += playbackOperator.Deltas[parameter];
+		}
+		return total;
+	}
+
 	public PlaybackParameterDeltas Expire(
 		IRowPlaybackOperator playbackOperator,
 		double wallTimeSeconds,

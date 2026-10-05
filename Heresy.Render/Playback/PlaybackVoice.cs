@@ -821,7 +821,7 @@ public sealed class PlaybackVoice
 
 		return Math.Clamp(
 			NoteVolume
-				+ _operators.GetTotalDelta(
+				+ _operators.GetPersistentTotalDelta(
 					PlaybackParameter.NoteVolume),
 			0.0,
 			1.0);
@@ -829,6 +829,18 @@ public sealed class PlaybackVoice
 
 	public double GetNoteVolume(long absoluteFrame)
 	{
+		ActiveNoteVolumeSlide? slide =
+			_activeNoteVolumeSlide;
+		if (slide is not null)
+		{
+			slide.Operator.Update(
+				GetWallTimeSeconds(absoluteFrame),
+				GetOperatorRowTime(
+					slide.StartFrame,
+					slide.TicksPerRow,
+					absoluteFrame));
+		}
+
 		if (_activeTremolo is not null)
 		{
 			_activeTremolo.Operator.Update(
@@ -839,7 +851,12 @@ public sealed class PlaybackVoice
 						- _activeTremolo.StartTickPosition));
 		}
 
-		return GetBaseNoteVolume(absoluteFrame);
+		return Math.Clamp(
+			NoteVolume
+				+ _operators.GetTotalDelta(
+					PlaybackParameter.NoteVolume),
+			0.0,
+			1.0);
 	}
 
 	private double GetOperatorRowTime(
