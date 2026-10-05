@@ -5,9 +5,9 @@ using Heresy.Render.Sounds;
 namespace Heresy.Render.Playback;
 
 /// <summary>
-/// Continuous tone-portamento curve calibrated to legacy tracker tick anchors.
-/// It moves at a constant rate in IT linear-pitch space, clamps exactly at the
-/// target, and holds there for the remainder of the row.
+/// Continuous tone-portamento row operator. It preserves the legacy row-end
+/// movement while spreading it over the whole row-time domain, clamps exactly
+/// at the target, and optionally quantizes the continuous path for glissando.
 /// </summary>
 public sealed class TrackerTonePortamentoCurve : PitchCurve
 {
@@ -17,7 +17,7 @@ public sealed class TrackerTonePortamentoCurve : PitchCurve
 	private readonly double _framesPerTick;
 	private readonly TrackerTickClock? _tickClock;
 	private readonly long _startFrame;
-	private readonly int _activeTickTransitions;
+	private readonly int _ticksPerRow;
 	private readonly double _direction;
 	private readonly bool _glissando;
 
@@ -59,7 +59,7 @@ public sealed class TrackerTonePortamentoCurve : PitchCurve
 		_targetMultiplier = targetMultiplier;
 		_linearUnitsPerTick = linearUnitsPerTick;
 		_framesPerTick = tickDuration.TotalSeconds * sampleRate;
-		_activeTickTransitions = Math.Max(0, ticksPerRow - 1);
+		_ticksPerRow = ticksPerRow;
 		_direction = Math.Sign(targetMultiplier - initialMultiplier);
 		_glissando = glissando;
 	}
@@ -96,7 +96,7 @@ public sealed class TrackerTonePortamentoCurve : PitchCurve
 		_linearUnitsPerTick = linearUnitsPerTick;
 		_tickClock = tickClock;
 		_startFrame = startFrame;
-		_activeTickTransitions = Math.Max(0, ticksPerRow - 1);
+		_ticksPerRow = ticksPerRow;
 		_direction = Math.Sign(targetMultiplier - initialMultiplier);
 		_glissando = glissando;
 	}
@@ -117,13 +117,20 @@ public sealed class TrackerTonePortamentoCurve : PitchCurve
 			: _tickClock.GetElapsedTicks(
 				_startFrame,
 				checked(_startFrame + frameOffset));
-		double elapsedTicks = Math.Min(
+		double rowTime = Math.Clamp(
 			rawElapsedTicks,
-			_activeTickTransitions);
+			0.0,
+			_ticksPerRow);
+		double elapsedTicks =
+			rowTime
+				* Math.Max(0, _ticksPerRow - 1)
+				/ _ticksPerRow;
+		int activeTransitions =
+			Math.Max(0, _ticksPerRow - 1);
 		int tick0 = (int)Math.Floor(elapsedTicks);
 		int tick1 = Math.Min(
 			tick0 + 1,
-			_activeTickTransitions);
+			activeTransitions);
 		double fraction = elapsedTicks - tick0;
 
 		int semitone0 = QuantizeToNextSemitone(
@@ -162,9 +169,14 @@ public sealed class TrackerTonePortamentoCurve : PitchCurve
 			: _tickClock.GetElapsedTicks(
 				_startFrame,
 				checked(_startFrame + frameOffset));
-		double elapsedTicks = Math.Min(
+		double rowTime = Math.Clamp(
 			rawElapsedTicks,
-			_activeTickTransitions);
+			0.0,
+			_ticksPerRow);
+		double elapsedTicks =
+			rowTime
+				* Math.Max(0, _ticksPerRow - 1)
+				/ _ticksPerRow;
 		return GetContinuousMultiplierForTicks(elapsedTicks);
 	}
 

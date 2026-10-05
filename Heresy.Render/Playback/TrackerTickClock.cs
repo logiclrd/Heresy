@@ -7,8 +7,8 @@ namespace Heresy.Render.Playback;
 
 /// <summary>
 /// Playback-facing adapter over the shared continuous tracker-time map. It
-/// converts output-frame coordinates to wall seconds and creates normalized
-/// per-effect time transforms.
+/// exposes tracker row/tick coordinates to the IT compatibility layer; native
+/// effects continue to use wall-clock time directly.
 /// </summary>
 public sealed class TrackerTickClock
 {
@@ -84,16 +84,8 @@ public sealed class TrackerTickClock
 		if (endFrame < startFrame)
 			throw new ArgumentOutOfRangeException(nameof(endFrame));
 
-		EffectTimeTransform effect =
-			CreateEffectTimeTransform(startFrame);
-
-		double effectSeconds =
-			GetEffectTimeSeconds(
-				effect,
-				endFrame);
-
-		return effectSeconds
-			/ effect.ReferenceTickDurationSeconds;
+		return GetTickPosition(endFrame)
+			- GetTickPosition(startFrame);
 	}
 
 	public double GetTickPosition(long absoluteFrame)
@@ -114,26 +106,4 @@ public sealed class TrackerTickClock
 			absoluteFrame / (double)_sampleRate);
 	}
 
-	public EffectTimeTransform CreateEffectTimeTransform(
-		long startFrame)
-	{
-		if (startFrame < 0)
-			throw new ArgumentOutOfRangeException(nameof(startFrame));
-
-		return new EffectTimeTransform(
-			_timeMap,
-			startFrame / (double)_sampleRate);
-	}
-
-	public double GetEffectTimeSeconds(
-		EffectTimeTransform effectTime,
-		long absoluteFrame)
-	{
-		ArgumentNullException.ThrowIfNull(effectTime);
-		if (absoluteFrame < 0)
-			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
-
-		return effectTime.GetTimeSeconds(
-			absoluteFrame / (double)_sampleRate);
-	}
 }

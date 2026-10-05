@@ -18,22 +18,25 @@ public sealed class PlaybackVoice
 	{
 		public required byte Speed { get; init; }
 		public required TrackerWaveform Waveform { get; init; }
-		public required double NextLegacyTickPosition { get; set; }
+		public required double StartTickPosition { get; init; }
+		public required byte StartPhase { get; init; }
+		public required long RandomStartIndex { get; init; }
 	}
 
 	private sealed class ActiveTremolo
 	{
 		public required byte Speed { get; init; }
 		public required TrackerWaveform Waveform { get; init; }
-		public required double NextLegacyTickPosition { get; set; }
+		public required double StartTickPosition { get; init; }
+		public required byte StartPhase { get; init; }
+		public required long RandomStartIndex { get; init; }
 	}
 
 	private sealed class ActiveNoteVolumeSlide
 	{
 		public required long StartFrame { get; init; }
-		public required double StartVolume { get; init; }
 		public required double TrackerUnitsPerTick { get; init; }
-		public required int ActiveTickTransitions { get; init; }
+		public required int TicksPerRow { get; init; }
 	}
 
 	private readonly float[] _previousOutputFrame;
@@ -282,12 +285,6 @@ public sealed class PlaybackVoice
 
 		CommitVibratoPhaseThrough(absoluteFrame);
 
-		TimeSpan tickDuration = GetTickDuration(tempo);
-
-		_vibratoPhase = TrackerVibrato.AdvancePhase(
-			_vibratoPhase,
-			speed);
-
 		long randomStartIndex = 0;
 		if (waveform == TrackerWaveform.Random)
 		{
@@ -299,8 +296,10 @@ public sealed class PlaybackVoice
 		{
 			Speed = speed,
 			Waveform = waveform,
-			NextLegacyTickPosition =
-				_tickClock.GetTickPosition(absoluteFrame) + 1.0,
+			StartTickPosition =
+				_tickClock.GetTickPosition(absoluteFrame),
+			StartPhase = _vibratoPhase,
+			RandomStartIndex = randomStartIndex,
 		};
 
 		long relativeFrame = absoluteFrame - StartFrame;
@@ -389,11 +388,6 @@ public sealed class PlaybackVoice
 
 		CommitTremoloPhaseThrough(absoluteFrame);
 
-		TimeSpan tickDuration = GetTickDuration(tempo);
-		_tremoloPhase = TrackerVibrato.AdvancePhase(
-			_tremoloPhase,
-			speed);
-
 		long randomStartIndex = 0;
 		if (waveform == TrackerWaveform.Random)
 		{
@@ -405,8 +399,10 @@ public sealed class PlaybackVoice
 		{
 			Speed = speed,
 			Waveform = waveform,
-			NextLegacyTickPosition =
-				_tickClock.GetTickPosition(absoluteFrame) + 1.0,
+			StartTickPosition =
+				_tickClock.GetTickPosition(absoluteFrame),
+			StartPhase = _tremoloPhase,
+			RandomStartIndex = randomStartIndex,
 		};
 
 		_tremoloVolumeCurve = new TrackerTremoloVolumeCurve(
@@ -650,9 +646,8 @@ public sealed class PlaybackVoice
 		_activeNoteVolumeSlide = new ActiveNoteVolumeSlide
 		{
 			StartFrame = absoluteFrame,
-			StartVolume = current,
 			TrackerUnitsPerTick = trackerUnitsPerTick,
-			ActiveTickTransitions = Math.Max(0, ticksPerRow - 1),
+			TicksPerRow = ticksPerRow,
 		};
 	}
 
@@ -670,15 +665,21 @@ public sealed class PlaybackVoice
 		if (slide is null)
 			return NoteVolume;
 
-		double elapsedTicks = Math.Min(
+		double rowTime = Math.Clamp(
 			_tickClock.GetElapsedTicks(
 				slide.StartFrame,
 				Math.Max(slide.StartFrame, absoluteFrame)),
-			slide.ActiveTickTransitions);
+			0.0,
+			slide.TicksPerRow);
+		double legacyEquivalentTicks =
+			rowTime
+				* Math.Max(0, slide.TicksPerRow - 1)
+				/ slide.TicksPerRow;
 
 		return Math.Clamp(
-			slide.StartVolume
-				+ slide.TrackerUnitsPerTick * elapsedTicks / 64.0,
+			NoteVolume
+				+ slide.TrackerUnitsPerTick
+					* legacyEquivalentTicks / 64.0,
 			0.0,
 			1.0);
 	}
@@ -753,18 +754,25 @@ public sealed class PlaybackVoice
 		if (vibrato is null)
 			return;
 
-		double tickPosition =
-			_tickClock.GetTickPosition(absoluteFrame);
+		double elapsedTicks = Math.Max(
+			0.0,
+			_tickClock.GetTickPosition(absoluteFrame)
+				- vibrato.StartTickPosition);
+		int phaseAdvance = checked(
+			(int)Math.Round(
+				elapsedTicks * vibrato.Speed * 4.0));
 
-		while (vibrato.NextLegacyTickPosition
-			< tickPosition - 1e-9)
+		_vibratoPhase = unchecked(
+			(byte)(vibrato.StartPhase + phaseAdvance));
+
+		if (vibrato.Waveform == TrackerWaveform.Random)
 		{
-			_vibratoPhase = TrackerVibrato.AdvancePhase(
-				_vibratoPhase,
-				vibrato.Speed);
-			if (vibrato.Waveform == TrackerWaveform.Random)
-				checked { _vibratoRandomAnchorIndex++; }
-			vibrato.NextLegacyTickPosition += 1.0;
+			long completedAnchors =
+				(long)Math.Floor(elapsedTicks + 1e-9);
+			_vibratoRandomAnchorIndex =
+				checked(
+					vibrato.RandomStartIndex
+						+ completedAnchors);
 		}
 	}
 
@@ -774,18 +782,25 @@ public sealed class PlaybackVoice
 		if (tremolo is null)
 			return;
 
-		double tickPosition =
-			_tickClock.GetTickPosition(absoluteFrame);
+		double elapsedTicks = Math.Max(
+			0.0,
+			_tickClock.GetTickPosition(absoluteFrame)
+				- tremolo.StartTickPosition);
+		int phaseAdvance = checked(
+			(int)Math.Round(
+				elapsedTicks * tremolo.Speed * 4.0));
 
-		while (tremolo.NextLegacyTickPosition
-			< tickPosition - 1e-9)
+		_tremoloPhase = unchecked(
+			(byte)(tremolo.StartPhase + phaseAdvance));
+
+		if (tremolo.Waveform == TrackerWaveform.Random)
 		{
-			_tremoloPhase = TrackerVibrato.AdvancePhase(
-				_tremoloPhase,
-				tremolo.Speed);
-			if (tremolo.Waveform == TrackerWaveform.Random)
-				checked { _tremoloRandomAnchorIndex++; }
-			tremolo.NextLegacyTickPosition += 1.0;
+			long completedAnchors =
+				(long)Math.Floor(elapsedTicks + 1e-9);
+			_tremoloRandomAnchorIndex =
+				checked(
+					tremolo.RandomStartIndex
+						+ completedAnchors);
 		}
 	}
 

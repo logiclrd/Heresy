@@ -5,9 +5,9 @@ namespace Heresy.Render.Playback;
 using Heresy.Render.Sounds;
 
 /// <summary>
-/// Continuous linear-pitch slide calibrated to tracker tick anchors. The slide
-/// advances for Speed-1 tick intervals, then holds its final value through the
-/// final tick interval of the row.
+/// Continuous linear-pitch row operator. It preserves the total IT row change
+/// of (Speed-1) legacy slide steps but distributes that change over the whole
+/// row-time domain.
 /// </summary>
 public sealed class TrackerPitchSlideCurve : PitchCurve
 {
@@ -16,7 +16,7 @@ public sealed class TrackerPitchSlideCurve : PitchCurve
 	private readonly double _framesPerTick;
 	private readonly TrackerTickClock? _tickClock;
 	private readonly long _startFrame;
-	private readonly int _activeTickTransitions;
+	private readonly int _ticksPerRow;
 
 	public TrackerPitchSlideCurve(
 		double initialMultiplier,
@@ -46,7 +46,7 @@ public sealed class TrackerPitchSlideCurve : PitchCurve
 		_initialMultiplier = initialMultiplier;
 		_linearUnitsPerTick = linearUnitsPerTick;
 		_framesPerTick = tickDuration.TotalSeconds * sampleRate;
-		_activeTickTransitions = Math.Max(0, ticksPerRow - 1);
+		_ticksPerRow = ticksPerRow;
 	}
 
 	public TrackerPitchSlideCurve(
@@ -77,7 +77,7 @@ public sealed class TrackerPitchSlideCurve : PitchCurve
 		_linearUnitsPerTick = linearUnitsPerTick;
 		_tickClock = tickClock;
 		_startFrame = startFrame;
-		_activeTickTransitions = Math.Max(0, ticksPerRow - 1);
+		_ticksPerRow = ticksPerRow;
 	}
 
 	public override double GetMultiplier(long frameOffset)
@@ -91,14 +91,19 @@ public sealed class TrackerPitchSlideCurve : PitchCurve
 				_startFrame,
 				checked(_startFrame + frameOffset));
 
-		double elapsedTicks = Math.Min(
+		double rowTime = Math.Clamp(
 			rawElapsedTicks,
-			_activeTickTransitions);
+			0.0,
+			_ticksPerRow);
+		double legacyEquivalentTicks =
+			rowTime
+				* Math.Max(0, _ticksPerRow - 1)
+				/ _ticksPerRow;
 
 		return _initialMultiplier * Math.Pow(
 			2.0,
 			_linearUnitsPerTick
-				* elapsedTicks
+				* legacyEquivalentTicks
 				/ TrackerVibrato.LinearSlideUnitsPerOctave);
 	}
 }

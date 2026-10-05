@@ -11,9 +11,9 @@ public readonly record struct PanbrelloRandomState(
 	long NextAnchorIndex);
 
 /// <summary>
-/// Smooth panbrello curve which exactly matches IT at tracker tick anchors.
-/// Sine, ramp-down and square interpolate between anchors; random panbrello
-/// retains IT's sample-and-hold behavior.
+/// Row-scoped panbrello modulation. Sine, ramp-down and square advance
+/// continuously through row time; random panbrello retains its intentionally
+/// discrete sample-and-hold behavior.
 /// </summary>
 public sealed class TrackerPanbrelloCurve
 {
@@ -119,16 +119,20 @@ public sealed class TrackerPanbrelloCurve
 				_startFrame,
 				checked(_startFrame + frameOffset));
 
-		double tickPosition = Math.Min(
+		double tickPosition = Math.Clamp(
 			rawTickPosition,
-			_ticksPerRow - 1.0);
+			0.0,
+			_ticksPerRow);
 
 		int tick0 = (int)Math.Floor(tickPosition);
 
 		if (_waveform == TrackerWaveform.Random)
 		{
 			PanbrelloRandomState state =
-				GetRandomStateAfterTicks(tick0 + 1);
+				GetRandomStateAfterTicks(
+					Math.Min(
+						tick0 + 1,
+						_ticksPerRow));
 
 			if (!state.HasHeldSample)
 				return 0.0;
@@ -138,7 +142,7 @@ public sealed class TrackerPanbrelloCurve
 
 		int tick1 = Math.Min(
 			tick0 + 1,
-			_ticksPerRow - 1);
+			_ticksPerRow);
 		double fraction = tickPosition - tick0;
 
 		byte phase0 =

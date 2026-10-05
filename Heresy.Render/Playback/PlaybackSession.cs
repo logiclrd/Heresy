@@ -18,9 +18,9 @@ public sealed class PlaybackSession
 {
 	private sealed class ActiveGlobalVolumeSlide
 	{
+		public required long StartFrame { get; init; }
 		public required double TrackerUnitsPerTick { get; init; }
-		public required int RemainingTickTransitions { get; set; }
-		public required double NextTickPosition { get; set; }
+		public required int TicksPerRow { get; init; }
 	}
 
 	private readonly RenderContext _context;
@@ -37,10 +37,6 @@ public sealed class PlaybackSession
 	private double _tempo = SequencingConstants.DefaultTempo;
 	private int _speed = SequencingConstants.DefaultSpeed;
 	private double _globalVolume = 1.0;
-	private double _globalVolumeAnchorTickPosition;
-	private double _globalVolumeAnchorValue = 1.0;
-	private double? _globalVolumeNextAnchorTickPosition;
-	private double _globalVolumeNextAnchorValue = 1.0;
 
 	public PlaybackSession(
 		RenderContext context,
@@ -866,10 +862,7 @@ public sealed class PlaybackSession
 			throw new ArgumentOutOfRangeException(nameof(volume));
 		}
 
-		SynchronizeGlobalVolume(absoluteFrame);
 		_globalVolume = volume;
-		PlanNextGlobalVolumeAnchor(
-			_tickClock.GetTickPosition(absoluteFrame));
 	}
 
 	private void AdjustGlobalVolume(
@@ -884,13 +877,10 @@ public sealed class PlaybackSession
 			throw new ArgumentOutOfRangeException(nameof(trackerUnits));
 		}
 
-		SynchronizeGlobalVolume(absoluteFrame);
 		_globalVolume = Math.Clamp(
 			_globalVolume + trackerUnits / 128.0,
 			0.0,
 			1.0);
-		PlanNextGlobalVolumeAnchor(
-			_tickClock.GetTickPosition(absoluteFrame));
 	}
 
 	private void SetGlobalVolumeSlide(
@@ -912,28 +902,23 @@ public sealed class PlaybackSession
 				nameof(trackerUnitsPerTick));
 		}
 
-		SynchronizeGlobalVolume(absoluteFrame);
-
-		double startTickPosition =
-			_tickClock.GetTickPosition(absoluteFrame);
-		int transitions = Math.Max(0, ticksPerRow - 1);
-
-		if (transitions == 0)
+		if (_globalVolumeSlides.TryGetValue(
+			physicalChannel,
+			out ActiveGlobalVolumeSlide? existing))
 		{
-			_globalVolumeSlides.Remove(physicalChannel);
-		}
-		else
-		{
-			_globalVolumeSlides[physicalChannel] =
-				new ActiveGlobalVolumeSlide
-				{
-					TrackerUnitsPerTick = trackerUnitsPerTick,
-					RemainingTickTransitions = transitions,
-					NextTickPosition = startTickPosition + 1.0,
-				};
+			_globalVolume +=
+				GetGlobalVolumeSlideDelta(
+					existing,
+					absoluteFrame);
 		}
 
-		PlanNextGlobalVolumeAnchor(startTickPosition);
+		_globalVolumeSlides[physicalChannel] =
+			new ActiveGlobalVolumeSlide
+			{
+				StartFrame = absoluteFrame,
+				TrackerUnitsPerTick = trackerUnitsPerTick,
+				TicksPerRow = ticksPerRow,
+			};
 	}
 
 	private void ClearGlobalVolumeSlide(
@@ -945,10 +930,63 @@ public sealed class PlaybackSession
 		if (absoluteFrame < 0)
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
 
-		SynchronizeGlobalVolume(absoluteFrame);
-		_globalVolumeSlides.Remove(physicalChannel);
-		PlanNextGlobalVolumeAnchor(
-			_tickClock.GetTickPosition(absoluteFrame));
+		if (!_globalVolumeSlides.Remove(
+			physicalChannel,
+			out ActiveGlobalVolumeSlide? slide))
+		{
+			return;
+		}
+
+		_globalVolume +=
+			GetGlobalVolumeSlideDelta(
+				slide,
+				absoluteFrame);
+
+		if (_globalVolumeSlides.Count == 0)
+		{
+			_globalVolume = Math.Clamp(
+				_globalVolume,
+				0.0,
+				1.0);
+		}
+	}
+
+	private double GetGlobalVolumeSlideDelta(
+		ActiveGlobalVolumeSlide slide,
+		long absoluteFrame)
+	{
+		double rowTime = Math.Clamp(
+			_tickClock.GetElapsedTicks(
+				slide.StartFrame,
+				Math.Max(slide.StartFrame, absoluteFrame)),
+			0.0,
+			slide.TicksPerRow);
+		double legacyEquivalentTicks =
+			rowTime
+				* Math.Max(0, slide.TicksPerRow - 1)
+				/ slide.TicksPerRow;
+
+		return slide.TrackerUnitsPerTick
+			* legacyEquivalentTicks / 128.0;
+	}
+
+	private double GetEffectiveGlobalVolume(long absoluteFrame)
+	{
+		double effective = _globalVolume;
+
+		foreach (ActiveGlobalVolumeSlide slide
+			in _globalVolumeSlides.Values)
+		{
+			effective +=
+				GetGlobalVolumeSlideDelta(
+					slide,
+					absoluteFrame);
+		}
+
+		return Math.Clamp(
+			effective,
+			0.0,
+			1.0);
 	}
 
 	private void ApplyGlobalVolume(
@@ -960,9 +998,10 @@ public sealed class PlaybackSession
 		for (int frame = 0; frame < frameCount; frame++)
 		{
 			long absoluteFrame = absoluteStartFrame + frame;
-			SynchronizeGlobalVolume(absoluteFrame);
+			double effectiveVolume =
+				GetEffectiveGlobalVolume(absoluteFrame);
 
-			if (_globalVolume == 1.0)
+			if (effectiveVolume == 1.0)
 				continue;
 
 			Span<float> outputFrame = destination.Slice(
@@ -974,125 +1013,11 @@ public sealed class PlaybackSession
 				outputChannel++)
 			{
 				outputFrame[outputChannel] =
-					(float)(outputFrame[outputChannel] * _globalVolume);
+					(float)(
+						outputFrame[outputChannel]
+						* effectiveVolume);
 			}
 		}
-	}
-
-	private void SynchronizeGlobalVolume(long absoluteFrame)
-	{
-		if (absoluteFrame < 0)
-			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
-
-		double targetTickPosition =
-			_tickClock.GetTickPosition(absoluteFrame);
-
-		while (_globalVolumeNextAnchorTickPosition.HasValue
-			&& _globalVolumeNextAnchorTickPosition.Value
-				<= targetTickPosition + 1e-9)
-		{
-			double reachedTickPosition =
-				_globalVolumeNextAnchorTickPosition.Value;
-
-			_globalVolume = _globalVolumeNextAnchorValue;
-			AdvanceGlobalVolumeSlidesAt(reachedTickPosition);
-			PlanNextGlobalVolumeAnchor(reachedTickPosition);
-		}
-
-		if (_globalVolumeNextAnchorTickPosition.HasValue
-			&& _globalVolumeNextAnchorTickPosition.Value
-				> _globalVolumeAnchorTickPosition)
-		{
-			double fraction = Math.Clamp(
-				(targetTickPosition
-					- _globalVolumeAnchorTickPosition)
-				/ (_globalVolumeNextAnchorTickPosition.Value
-					- _globalVolumeAnchorTickPosition),
-				0.0,
-				1.0);
-
-			_globalVolume =
-				_globalVolumeAnchorValue
-				+ (_globalVolumeNextAnchorValue
-					- _globalVolumeAnchorValue)
-					* fraction;
-		}
-		else
-		{
-			_globalVolume = _globalVolumeAnchorValue;
-		}
-	}
-
-	private void AdvanceGlobalVolumeSlidesAt(
-		double anchorTickPosition)
-	{
-		foreach (KeyValuePair<int, ActiveGlobalVolumeSlide> pair
-			in _globalVolumeSlides)
-		{
-			ActiveGlobalVolumeSlide slide = pair.Value;
-			if (slide.RemainingTickTransitions <= 0
-				|| Math.Abs(
-					slide.NextTickPosition
-						- anchorTickPosition) > 1e-9)
-			{
-				continue;
-			}
-
-			slide.RemainingTickTransitions--;
-			if (slide.RemainingTickTransitions > 0)
-				slide.NextTickPosition += 1.0;
-		}
-	}
-
-	private void PlanNextGlobalVolumeAnchor(
-		double anchorTickPosition)
-	{
-		_globalVolumeAnchorTickPosition = anchorTickPosition;
-		_globalVolumeAnchorValue = _globalVolume;
-
-		double? earliest = null;
-		foreach (ActiveGlobalVolumeSlide slide
-			in _globalVolumeSlides.Values)
-		{
-			if (slide.RemainingTickTransitions <= 0)
-				continue;
-
-			if (!earliest.HasValue
-				|| slide.NextTickPosition < earliest.Value)
-			{
-				earliest = slide.NextTickPosition;
-			}
-		}
-
-		if (!earliest.HasValue)
-		{
-			_globalVolumeNextAnchorTickPosition = null;
-			_globalVolumeNextAnchorValue = _globalVolume;
-			return;
-		}
-
-		double targetVolume = _globalVolume;
-		foreach (KeyValuePair<int, ActiveGlobalVolumeSlide> pair
-			in _globalVolumeSlides)
-		{
-			ActiveGlobalVolumeSlide slide = pair.Value;
-			if (slide.RemainingTickTransitions <= 0
-				|| Math.Abs(
-					slide.NextTickPosition
-						- earliest.Value) > 1e-9)
-			{
-				continue;
-			}
-
-			targetVolume = Math.Clamp(
-				targetVolume
-					+ slide.TrackerUnitsPerTick / 128.0,
-				0.0,
-				1.0);
-		}
-
-		_globalVolumeNextAnchorTickPosition = earliest.Value;
-		_globalVolumeNextAnchorValue = targetVolume;
 	}
 
 	private bool RenderVoice(

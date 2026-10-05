@@ -18,9 +18,8 @@ public sealed class PlaybackChannelState
 	private sealed class ActiveSpatialXSlide
 	{
 		public required long StartFrame { get; init; }
-		public required Vector3 StartPosition { get; init; }
 		public required double SpatialUnitsPerTick { get; init; }
-		public required int ActiveTickTransitions { get; init; }
+		public required int TicksPerRow { get; init; }
 		public required double MinimumX { get; init; }
 		public required double MaximumX { get; init; }
 	}
@@ -28,9 +27,8 @@ public sealed class PlaybackChannelState
 	private sealed class ActiveOverallVolumeSlide
 	{
 		public required long StartFrame { get; init; }
-		public required double StartVolume { get; init; }
 		public required double TrackerUnitsPerTick { get; init; }
-		public required int ActiveTickTransitions { get; init; }
+		public required int TicksPerRow { get; init; }
 	}
 
 	private sealed class ActiveTremor
@@ -159,7 +157,6 @@ public sealed class PlaybackChannelState
 			throw new ArgumentOutOfRangeException(nameof(trackerUnits));
 		}
 
-		SynchronizeOverallVolume(absoluteFrame);
 		_activeOverallVolumeSlide = null;
 
 		OverallVolume = Math.Clamp(
@@ -197,14 +194,17 @@ public sealed class PlaybackChannelState
 				nameof(trackerUnitsPerTick));
 		}
 
-		SynchronizeOverallVolume(absoluteFrame);
+		if (_activeOverallVolumeSlide is not null)
+		{
+			OverallVolume =
+				GetEffectiveOverallVolume(absoluteFrame);
+		}
 
 		_activeOverallVolumeSlide = new ActiveOverallVolumeSlide
 		{
 			StartFrame = absoluteFrame,
-			StartVolume = OverallVolume,
 			TrackerUnitsPerTick = trackerUnitsPerTick,
-			ActiveTickTransitions = Math.Max(0, ticksPerRow - 1),
+			TicksPerRow = ticksPerRow,
 		};
 	}
 
@@ -213,8 +213,15 @@ public sealed class PlaybackChannelState
 		if (absoluteFrame < 0)
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
 
-		SynchronizeOverallVolume(absoluteFrame);
+		if (_activeOverallVolumeSlide is not null)
+		{
+			OverallVolume =
+				GetEffectiveOverallVolume(absoluteFrame);
+		}
 		_activeOverallVolumeSlide = null;
+
+		if (CurrentVoice is not null)
+			CurrentVoice.OverallVolume = OverallVolume;
 	}
 
 	internal void SynchronizeOverallVolume(long absoluteFrame)
@@ -222,26 +229,37 @@ public sealed class PlaybackChannelState
 		if (absoluteFrame < 0)
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
 
+		if (CurrentVoice is not null)
+		{
+			CurrentVoice.OverallVolume =
+				GetEffectiveOverallVolume(absoluteFrame);
+		}
+	}
+
+	private double GetEffectiveOverallVolume(long absoluteFrame)
+	{
 		ActiveOverallVolumeSlide? slide =
 			_activeOverallVolumeSlide;
-		if (slide is not null)
-		{
-			double elapsedTicks = Math.Min(
-				_tickClock.GetElapsedTicks(
-					slide.StartFrame,
-					Math.Max(slide.StartFrame, absoluteFrame)),
-				slide.ActiveTickTransitions);
+		if (slide is null)
+			return OverallVolume;
 
-			OverallVolume = Math.Clamp(
-				slide.StartVolume
-					+ slide.TrackerUnitsPerTick
-						* elapsedTicks / 64.0,
-				0.0,
-				1.0);
-		}
+		double rowTime = Math.Clamp(
+			_tickClock.GetElapsedTicks(
+				slide.StartFrame,
+				Math.Max(slide.StartFrame, absoluteFrame)),
+			0.0,
+			slide.TicksPerRow);
+		double legacyEquivalentTicks =
+			rowTime
+				* Math.Max(0, slide.TicksPerRow - 1)
+				/ slide.TicksPerRow;
 
-		if (CurrentVoice is not null)
-			CurrentVoice.OverallVolume = OverallVolume;
+		return Math.Clamp(
+			OverallVolume
+				+ slide.TrackerUnitsPerTick
+					* legacyEquivalentTicks / 64.0,
+			0.0,
+			1.0);
 	}
 
 	internal void SetPosition(long absoluteFrame, Vector3 position)
@@ -310,14 +328,15 @@ public sealed class PlaybackChannelState
 			throw new ArgumentOutOfRangeException(nameof(sampleRate));
 
 		CancelPanbrello(absoluteFrame);
-		SynchronizePosition(absoluteFrame);
+
+		if (_activeSpatialXSlide is not null)
+			CommitSpatialXSlide(absoluteFrame);
 
 		_activeSpatialXSlide = new ActiveSpatialXSlide
 		{
 			StartFrame = absoluteFrame,
-			StartPosition = Position,
 			SpatialUnitsPerTick = spatialUnitsPerTick,
-			ActiveTickTransitions = Math.Max(0, ticksPerRow - 1),
+			TicksPerRow = ticksPerRow,
 			MinimumX = minimumX,
 			MaximumX = maximumX,
 		};
@@ -328,34 +347,52 @@ public sealed class PlaybackChannelState
 		if (absoluteFrame < 0)
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
 
-		SynchronizePosition(absoluteFrame);
+		CommitSpatialXSlide(absoluteFrame);
 		_activeSpatialXSlide = null;
+		SynchronizePosition(absoluteFrame);
+	}
+
+	private void CommitSpatialXSlide(long absoluteFrame)
+	{
+		ActiveSpatialXSlide? slide = _activeSpatialXSlide;
+		if (slide is null)
+			return;
+
+		double deltaX =
+			GetSpatialXSlideDelta(absoluteFrame, slide);
+
+		Position = new Vector3(
+			(float)Math.Clamp(
+				Position.X + deltaX,
+				slide.MinimumX,
+				slide.MaximumX),
+			Position.Y,
+			Position.Z);
+	}
+
+	private double GetSpatialXSlideDelta(
+		long absoluteFrame,
+		ActiveSpatialXSlide slide)
+	{
+		double rowTime = Math.Clamp(
+			_tickClock.GetElapsedTicks(
+				slide.StartFrame,
+				Math.Max(slide.StartFrame, absoluteFrame)),
+			0.0,
+			slide.TicksPerRow);
+		double legacyEquivalentTicks =
+			rowTime
+				* Math.Max(0, slide.TicksPerRow - 1)
+				/ slide.TicksPerRow;
+
+		return slide.SpatialUnitsPerTick
+			* legacyEquivalentTicks;
 	}
 
 	internal void SynchronizePosition(long absoluteFrame)
 	{
 		if (absoluteFrame < 0)
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
-
-		ActiveSpatialXSlide? slide = _activeSpatialXSlide;
-		if (slide is not null)
-		{
-			double elapsedTicks = Math.Min(
-				_tickClock.GetElapsedTicks(
-					slide.StartFrame,
-					Math.Max(slide.StartFrame, absoluteFrame)),
-				slide.ActiveTickTransitions);
-
-			Position = new Vector3(
-				(float)Math.Clamp(
-					slide.StartPosition.X
-						+ slide.SpatialUnitsPerTick
-							* elapsedTicks,
-					slide.MinimumX,
-					slide.MaximumX),
-				slide.StartPosition.Y,
-				slide.StartPosition.Z);
-		}
 
 		if (CurrentVoice is not null)
 		{
@@ -449,7 +486,7 @@ public sealed class PlaybackChannelState
 
 		CommitPanbrelloThrough(
 			absoluteFrame,
-			retainOffset: true);
+			retainOffset: false);
 		SynchronizePosition(absoluteFrame);
 	}
 
@@ -497,7 +534,7 @@ public sealed class PlaybackChannelState
 			active.TicksPerRow,
 			Math.Max(
 				0,
-				(int)Math.Floor(elapsedTicks + 1e-9) + 1));
+				(int)Math.Floor(elapsedTicks + 1e-9)));
 
 		if (active.Curve.Waveform == TrackerWaveform.Random)
 		{
@@ -528,21 +565,31 @@ public sealed class PlaybackChannelState
 	private Vector3 GetEffectivePosition(long absoluteFrame)
 	{
 		double offsetX = _heldPanbrelloOffsetX;
-		ActivePanbrello? active = _activePanbrello;
-		if (active is not null)
+		ActivePanbrello? panbrello = _activePanbrello;
+		if (panbrello is not null)
 		{
 			long frameOffset = Math.Max(
 				0,
-				absoluteFrame - active.StartFrame);
+				absoluteFrame - panbrello.StartFrame);
 			offsetX =
-				active.Curve.GetSpatialXOffset(frameOffset);
+				panbrello.Curve.GetSpatialXOffset(frameOffset);
 		}
+
+		ActiveSpatialXSlide? slide = _activeSpatialXSlide;
+		double slideX = slide is null
+			? 0.0
+			: GetSpatialXSlideDelta(
+				absoluteFrame,
+				slide);
+
+		double minimumX = slide?.MinimumX ?? -1.0;
+		double maximumX = slide?.MaximumX ?? 1.0;
 
 		return new Vector3(
 			(float)Math.Clamp(
-				Position.X + offsetX,
-				-1.0,
-				1.0),
+				Position.X + slideX + offsetX,
+				minimumX,
+				maximumX),
 			Position.Y,
 			Position.Z);
 	}
