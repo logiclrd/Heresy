@@ -106,6 +106,23 @@ public sealed class EnvelopePlaybackTests
 	}
 
 	[Test]
+	public void HistoricalEnvelopeQueriesRemainStableAfterPauseResume()
+	{
+		EnvelopePlaybackState state = new(
+			new ActiveFrameEnvelopeCurve(),
+			startFrame: 0,
+			sampleRate: 100);
+
+		Assert.That(state.GetValue(10), Is.EqualTo(10.0));
+		state.SetEnabled(10, false);
+		state.SetEnabled(20, true);
+		Assert.That(state.GetValue(30), Is.EqualTo(20.0));
+
+		Assert.That(state.GetValue(5), Is.EqualTo(5.0));
+		Assert.That(state.ActiveFrame, Is.EqualTo(20));
+	}
+
+	[Test]
 	public void VolumeEnvelopeMultipliesVoiceOutput()
 	{
 		ObjectId sourceId = (ObjectId)10U;
