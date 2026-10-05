@@ -57,7 +57,7 @@ public sealed class PlaybackPanbrelloWaveformTests
 	}
 
 	[Test]
-	public void S5xAloneResetsPhaseButLeavesHeldOffsetAudible()
+	public void S5xAloneResetsPhaseAfterTransientPanbrelloHasExpired()
 	{
 		ObjectId sourceId = (ObjectId)10U;
 		PositionObservingSound sound = new();
@@ -87,8 +87,7 @@ public sealed class PlaybackPanbrelloWaveformTests
 
 		Assert.That(
 			sound.ObservedPositions[5].X,
-			Is.EqualTo(sound.ObservedPositions[4].X)
-				.Within(1e-6f));
+			Is.EqualTo(0.0f).Within(1e-6f));
 	}
 
 	[Test]
