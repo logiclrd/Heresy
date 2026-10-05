@@ -186,6 +186,30 @@ public sealed record NoteVolumeSlidePatternEffect : PatternEffect
 /// <summary>Tracker Dxy volume slide, including D00 effect memory.</summary>
 public sealed record TrackerVolumeSlidePatternEffect(byte Parameter) : PatternEffect;
 
+/// <summary>
+/// One IT volume-column A-H compatibility operation. The parameter is the
+/// displayed decimal digit 0..9; memory/scaling is resolved by the common
+/// pattern processor because it differs from same-letter effect-column commands.
+/// </summary>
+public sealed record TrackerVolumeColumnPatternEffect : PatternEffect
+{
+	public TrackerVolumeColumnPatternEffect(
+		TrackerVolumeColumnEffectKind kind,
+		byte parameter)
+	{
+		if (!Enum.IsDefined(kind))
+			throw new ArgumentOutOfRangeException(nameof(kind));
+		if (parameter > 9)
+			throw new ArgumentOutOfRangeException(nameof(parameter));
+
+		Kind = kind;
+		Parameter = parameter;
+	}
+
+	public TrackerVolumeColumnEffectKind Kind { get; }
+	public byte Parameter { get; }
+}
+
 /// <summary>Tracker Exx pitch slide down, including shared E/F effect memory.</summary>
 public sealed record TrackerPitchSlideDownPatternEffect(byte Parameter) : PatternEffect;
 

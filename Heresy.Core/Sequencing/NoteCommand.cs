@@ -191,6 +191,15 @@ public sealed record ClearNoteVolumeSlideCommand : NoteCommand;
 /// <summary>Raw tracker Dxy volume-slide operation with whole-byte effect memory.</summary>
 public sealed record ApplyVolumeSlideCommand(byte Parameter) : NoteCommand;
 
+/// <summary>
+/// Raw IT volume-column A-H operation. TargetNote is used only by the Gx
+/// tone-portamento form when the same cell also contains a note.
+/// </summary>
+public sealed record ApplyTrackerVolumeColumnCommand(
+	TrackerVolumeColumnEffectKind Kind,
+	byte Parameter,
+	StartNoteCommand? TargetNote = null) : NoteCommand;
+
 /// <summary>Raw tracker Exx pitch-slide-down operation with shared E/F memory.</summary>
 public sealed record ApplyPitchSlideDownCommand(byte Parameter) : NoteCommand;
 
@@ -203,6 +212,14 @@ public sealed record AdjustPitchLinearUnitsCommand(
 
 /// <summary>Applies one immediate persistent note-volume change in tracker units.</summary>
 public sealed record AdjustNoteVolumeCommand(
+	double TrackerUnits) : NoteCommand;
+
+/// <summary>
+/// Applies an immediate note-volume change only when a voice is currently
+/// active. Tracker fine volume slides use this so an idle row cannot seed the
+/// volume of a later note.
+/// </summary>
+public sealed record AdjustCurrentNoteVolumeCommand(
 	double TrackerUnits) : NoteCommand;
 
 /// <summary>

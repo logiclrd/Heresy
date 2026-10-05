@@ -1430,6 +1430,140 @@ public static class PatternNoteProcessor
 					break;
 				}
 
+				case ApplyTrackerVolumeColumnCommand volumeColumn:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(
+							noteEvent,
+							context,
+							"Tracker volume-column effect");
+					transformed ??= CopyCommandsBefore(
+						noteEvent.Commands,
+						i);
+
+					switch (volumeColumn.Kind)
+					{
+						case TrackerVolumeColumnEffectKind.FineVolumeUp:
+						case TrackerVolumeColumnEffectKind.FineVolumeDown:
+						case TrackerVolumeColumnEffectKind.VolumeSlideUp:
+						case TrackerVolumeColumnEffectKind.VolumeSlideDown:
+						{
+							byte parameter =
+								channelState.ResolveEffectParameter(
+									EffectMemorySlot.VolumeColumnSlide,
+									volumeColumn.Parameter);
+							if (parameter == 0)
+								break;
+
+							double direction =
+								volumeColumn.Kind is TrackerVolumeColumnEffectKind.FineVolumeUp
+									or TrackerVolumeColumnEffectKind.VolumeSlideUp
+									? 1.0
+									: -1.0;
+							bool fine =
+								volumeColumn.Kind is TrackerVolumeColumnEffectKind.FineVolumeUp
+									or TrackerVolumeColumnEffectKind.FineVolumeDown;
+
+							NoteCommand resolved = fine
+								? new AdjustCurrentNoteVolumeCommand(
+									direction * parameter)
+								: ApplyRowTickOverride(
+									new SetNoteVolumeSlideCommand(
+										direction * parameter),
+									rowTicksOverride)!;
+
+							transformed.Add(resolved);
+							AddRepeatCommand(repeatCommands, resolved);
+							if (!fine)
+							{
+								rowEndCommands.Add(
+									new ClearNoteVolumeSlideCommand());
+							}
+							break;
+						}
+
+						case TrackerVolumeColumnEffectKind.PitchSlideDown:
+						case TrackerVolumeColumnEffectKind.PitchSlideUp:
+						{
+							byte supplied = volumeColumn.Parameter == 0
+								? (byte)0
+								: checked((byte)(volumeColumn.Parameter * 4));
+							byte parameter =
+								channelState.ResolveEffectParameter(
+									EffectMemorySlot.PitchSlide,
+									supplied);
+							if (parameter == 0)
+								break;
+
+							double direction =
+								volumeColumn.Kind == TrackerVolumeColumnEffectKind.PitchSlideUp
+									? 1.0
+									: -1.0;
+							SetPitchSlideCommand resolved =
+								(SetPitchSlideCommand)ApplyRowTickOverride(
+									new SetPitchSlideCommand(
+										direction * parameter * 4.0),
+									rowTicksOverride)!;
+							transformed.Add(resolved);
+							AddRepeatCommand(repeatCommands, resolved);
+							rowEndCommands.Add(new ClearPitchSlideCommand());
+							break;
+						}
+
+						case TrackerVolumeColumnEffectKind.TonePortamento:
+						{
+							byte supplied = ResolveVolumeColumnTonePortamentoSpeed(
+								volumeColumn.Parameter);
+							byte parameter =
+								channelState.ResolveEffectParameter(
+									EffectMemorySlot.TonePortamento,
+									supplied);
+
+							if (parameter != 0 || volumeColumn.TargetNote is not null)
+							{
+								SetTonePortamentoCommand resolved =
+									(SetTonePortamentoCommand)ApplyRowTickOverride(
+										new SetTonePortamentoCommand(
+											parameter * 4.0,
+											volumeColumn.TargetNote,
+											Glissando: channelState.GlissandoEnabled),
+										rowTicksOverride)!;
+								transformed.Add(resolved);
+								repeatCommands.Add(
+									resolved with { TargetNote = null });
+								rowEndCommands.Add(
+									new ClearTonePortamentoCommand());
+							}
+							break;
+						}
+
+						case TrackerVolumeColumnEffectKind.Vibrato:
+						{
+							byte parameter =
+								channelState.ResolveEffectParameterNibbles(
+									EffectMemorySlot.Vibrato,
+									volumeColumn.Parameter);
+							if (volumeColumn.Parameter != 0)
+								channelState.VibratoDepthScale = 1.0;
+
+							transformed.Add(
+								new SetVibratoCommand(
+									(byte)(parameter >> 4),
+									(byte)(parameter & 0x0F),
+									channelState.VibratoWaveform,
+									channelState.VibratoDepthScale));
+							rowEndCommands.Add(
+								new ClearPitchModulationCommand());
+							break;
+						}
+
+						default:
+							throw new InvalidOperationException(
+								$"Unsupported volume-column effect {volumeColumn.Kind}.");
+					}
+					break;
+				}
+
 				case ApplyVolumeSlideCommand slide:
 				{
 					SequencingChannelState channelState =
@@ -2416,6 +2550,22 @@ public static class PatternNoteProcessor
 			noteEvent.Target.PhysicalChannel);
 	}
 
+	private static byte ResolveVolumeColumnTonePortamentoSpeed(byte parameter)
+		=> parameter switch
+		{
+			0 => 0,
+			1 => 1,
+			2 => 4,
+			3 => 8,
+			4 => 16,
+			5 => 32,
+			6 => 64,
+			7 => 96,
+			8 => 128,
+			9 => 255,
+			_ => throw new ArgumentOutOfRangeException(nameof(parameter)),
+		};
+
 	private static NoteCommand? ResolveTrackerVolumeSlide(byte parameter)
 	{
 		if (parameter == 0)
@@ -2431,10 +2581,10 @@ public static class PatternNoteProcessor
 			return new SetNoteVolumeSlideCommand(-low);
 
 		if (low == 0x0F)
-			return new AdjustNoteVolumeCommand(high);
+			return new AdjustCurrentNoteVolumeCommand(high);
 
 		if (high == 0x0F)
-			return new AdjustNoteVolumeCommand(-low);
+			return new AdjustCurrentNoteVolumeCommand(-low);
 
 		return null;
 	}

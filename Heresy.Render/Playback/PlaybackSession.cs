@@ -390,6 +390,17 @@ public sealed class PlaybackSession
 					adjust.LinearUnits);
 				break;
 
+			case AdjustCurrentNoteVolumeCommand adjust:
+				if (channel.CurrentVoice is not null)
+				{
+					double volume =
+						channel.CurrentVoice.AdjustNoteVolume(
+							eventFrame,
+							adjust.TrackerUnits);
+					channel.CaptureCurrentNoteVolume(volume);
+				}
+				break;
+
 			case AdjustNoteVolumeCommand adjust:
 				if (channel.CurrentVoice is not null)
 				{

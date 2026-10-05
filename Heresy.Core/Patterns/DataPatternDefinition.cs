@@ -39,7 +39,9 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			foreach (PatternEffect effect in cell.Effects)
 			{
 				if (effect is TonePortamentoPatternEffect
-					or TonePortamentoVolumeSlidePatternEffect)
+					or TonePortamentoVolumeSlidePatternEffect
+					or TrackerVolumeColumnPatternEffect
+						{ Kind: TrackerVolumeColumnEffectKind.TonePortamento })
 				{
 					hasTonePortamento = true;
 					break;
@@ -74,6 +76,18 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 						combined.Parameter,
 						tonePortamentoTarget);
 					tonePortamentoTarget = null;
+					isGlobal = false;
+				}
+				else if (effect is TrackerVolumeColumnPatternEffect volumeColumn)
+				{
+					command = new ApplyTrackerVolumeColumnCommand(
+						volumeColumn.Kind,
+						volumeColumn.Parameter,
+						volumeColumn.Kind == TrackerVolumeColumnEffectKind.TonePortamento
+							? tonePortamentoTarget
+							: null);
+					if (volumeColumn.Kind == TrackerVolumeColumnEffectKind.TonePortamento)
+						tonePortamentoTarget = null;
 					isGlobal = false;
 				}
 				else
