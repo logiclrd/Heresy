@@ -19,8 +19,8 @@ public sealed class PlaybackSession
 	private sealed class ActiveGlobalVolumeSlide
 	{
 		public required long StartFrame { get; init; }
-		public required double TrackerUnitsPerTick { get; init; }
 		public required int TicksPerRow { get; init; }
+		public required LinearRowPlaybackOperator Operator { get; init; }
 	}
 
 	private readonly RenderContext _context;
@@ -30,6 +30,7 @@ public sealed class PlaybackSession
 	private readonly SortedDictionary<int, PlaybackChannelState> _channels = [];
 	private readonly List<PlaybackVoice> _virtualVoices = [];
 	private readonly SortedDictionary<int, ActiveGlobalVolumeSlide> _globalVolumeSlides = [];
+	private readonly PlaybackOperatorCollection _globalOperators = new();
 
 	private int _nextEventIndex;
 	private long _nextFrame;
@@ -54,6 +55,8 @@ public sealed class PlaybackSession
 	public long NextFrame => _nextFrame;
 
 	public double GlobalVolume => _globalVolume;
+
+	public int ActiveGlobalOperatorCount => _globalOperators.Count;
 
 	public IReadOnlyList<PlaybackVoice> VirtualVoices => _virtualVoices;
 
@@ -902,22 +905,29 @@ public sealed class PlaybackSession
 				nameof(trackerUnitsPerTick));
 		}
 
-		if (_globalVolumeSlides.TryGetValue(
-			physicalChannel,
-			out ActiveGlobalVolumeSlide? existing))
+		if (_globalVolumeSlides.ContainsKey(physicalChannel))
 		{
-			_globalVolume +=
-				GetGlobalVolumeSlideDelta(
-					existing,
-					absoluteFrame);
+			CommitGlobalVolumeSlide(
+				physicalChannel,
+				absoluteFrame);
 		}
+
+		LinearRowPlaybackOperator playbackOperator = new(
+			PlaybackParameter.GlobalVolume,
+			totalDelta:
+				trackerUnitsPerTick
+					* Math.Max(0, ticksPerRow - 1)
+					/ 128.0,
+			rowSpan: ticksPerRow,
+			commitOnExpire: true);
+		_globalOperators.Add(playbackOperator);
 
 		_globalVolumeSlides[physicalChannel] =
 			new ActiveGlobalVolumeSlide
 			{
 				StartFrame = absoluteFrame,
-				TrackerUnitsPerTick = trackerUnitsPerTick,
 				TicksPerRow = ticksPerRow,
+				Operator = playbackOperator,
 			};
 	}
 
@@ -930,6 +940,15 @@ public sealed class PlaybackSession
 		if (absoluteFrame < 0)
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
 
+		CommitGlobalVolumeSlide(
+			physicalChannel,
+			absoluteFrame);
+	}
+
+	private void CommitGlobalVolumeSlide(
+		int physicalChannel,
+		long absoluteFrame)
+	{
 		if (!_globalVolumeSlides.Remove(
 			physicalChannel,
 			out ActiveGlobalVolumeSlide? slide))
@@ -937,57 +956,56 @@ public sealed class PlaybackSession
 			return;
 		}
 
-		_globalVolume +=
-			GetGlobalVolumeSlideDelta(
-				slide,
-				absoluteFrame);
-
-		if (_globalVolumeSlides.Count == 0)
-		{
-			_globalVolume = Math.Clamp(
-				_globalVolume,
-				0.0,
-				1.0);
-		}
-	}
-
-	private double GetGlobalVolumeSlideDelta(
-		ActiveGlobalVolumeSlide slide,
-		long absoluteFrame)
-	{
 		double rowTime = Math.Clamp(
 			_tickClock.GetElapsedTicks(
 				slide.StartFrame,
 				Math.Max(slide.StartFrame, absoluteFrame)),
 			0.0,
 			slide.TicksPerRow);
-		double legacyEquivalentTicks =
-			rowTime
-				* Math.Max(0, slide.TicksPerRow - 1)
-				/ slide.TicksPerRow;
 
-		return slide.TrackerUnitsPerTick
-			* legacyEquivalentTicks / 128.0;
+		PlaybackParameterDeltas committed =
+			_globalOperators.Expire(
+				slide.Operator,
+				absoluteFrame
+					/ (double)_context.Configuration.SampleRate,
+				rowTime);
+
+		_globalVolume = Math.Clamp(
+			_globalVolume
+				+ committed[PlaybackParameter.GlobalVolume],
+			0.0,
+			1.0);
 	}
 
 	private double GetEffectiveGlobalVolume(long absoluteFrame)
 	{
-		double effective = _globalVolume;
-
-		foreach (ActiveGlobalVolumeSlide slide
-			in _globalVolumeSlides.Values)
+		foreach (
+			ActiveGlobalVolumeSlide slide
+				in _globalVolumeSlides.Values)
 		{
-			effective +=
-				GetGlobalVolumeSlideDelta(
-					slide,
-					absoluteFrame);
+			double rowTime = Math.Clamp(
+				_tickClock.GetElapsedTicks(
+					slide.StartFrame,
+					Math.Max(
+						slide.StartFrame,
+						absoluteFrame)),
+				0.0,
+				slide.TicksPerRow);
+
+			slide.Operator.Update(
+				absoluteFrame
+					/ (double)_context.Configuration.SampleRate,
+				rowTime);
 		}
 
 		return Math.Clamp(
-			effective,
+			_globalVolume
+				+ _globalOperators.GetTotalDelta(
+					PlaybackParameter.GlobalVolume),
 			0.0,
 			1.0);
 	}
+
 
 	private void ApplyGlobalVolume(
 		long absoluteStartFrame,

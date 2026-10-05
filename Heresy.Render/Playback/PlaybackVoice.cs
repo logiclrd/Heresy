@@ -35,8 +35,8 @@ public sealed class PlaybackVoice
 	private sealed class ActiveNoteVolumeSlide
 	{
 		public required long StartFrame { get; init; }
-		public required double TrackerUnitsPerTick { get; init; }
 		public required int TicksPerRow { get; init; }
+		public required LinearRowPlaybackOperator Operator { get; init; }
 	}
 
 	private readonly float[] _previousOutputFrame;
@@ -51,6 +51,8 @@ public sealed class PlaybackVoice
 
 	private readonly ulong _modulationSeed;
 	private readonly TrackerTickClock _tickClock;
+	private readonly int _sampleRate;
+	private readonly PlaybackOperatorCollection _operators = new();
 
 	private byte _vibratoPhase;
 	private long _vibratoRandomAnchorIndex = -1;
@@ -107,6 +109,7 @@ public sealed class PlaybackVoice
 		OverallVolume = overallVolume;
 		_tickClock = tickClock
 			?? throw new ArgumentNullException(nameof(tickClock));
+		_sampleRate = sampleRate;
 		_modulationSeed = modulationSeed;
 
 		_previousOutputFrame = new float[outputChannelCount];
@@ -136,6 +139,8 @@ public sealed class PlaybackVoice
 	public double NoteVolume { get; internal set; }
 
 	public double OverallVolume { get; internal set; }
+
+	public int ActiveOperatorCount => _operators.Count;
 
 	public bool IsFading => _fadeStartFrame.HasValue;
 
@@ -598,8 +603,8 @@ public sealed class PlaybackVoice
 
 	internal void SetNoteVolume(double volume)
 	{
+		CancelNoteVolumeSlide();
 		NoteVolume = volume;
-		_activeNoteVolumeSlide = null;
 	}
 
 	internal double AdjustNoteVolume(
@@ -613,7 +618,8 @@ public sealed class PlaybackVoice
 		}
 
 		double adjusted = Math.Clamp(
-			GetBaseNoteVolume(absoluteFrame) + trackerUnits / 64.0,
+			GetBaseNoteVolume(absoluteFrame)
+				+ trackerUnits / 64.0,
 			0.0,
 			1.0);
 
@@ -640,51 +646,90 @@ public sealed class PlaybackVoice
 			throw new ArgumentOutOfRangeException(nameof(trackerUnitsPerTick));
 		}
 
-		double current = GetBaseNoteVolume(absoluteFrame);
-		NoteVolume = current;
+		CommitNoteVolumeSlide(absoluteFrame);
 
-		_activeNoteVolumeSlide = new ActiveNoteVolumeSlide
-		{
-			StartFrame = absoluteFrame,
-			TrackerUnitsPerTick = trackerUnitsPerTick,
-			TicksPerRow = ticksPerRow,
-		};
+		LinearRowPlaybackOperator playbackOperator = new(
+			PlaybackParameter.NoteVolume,
+			totalDelta:
+				trackerUnitsPerTick
+					* Math.Max(0, ticksPerRow - 1)
+					/ 64.0,
+			rowSpan: ticksPerRow,
+			commitOnExpire: true);
+		_operators.Add(playbackOperator);
+
+		_activeNoteVolumeSlide =
+			new ActiveNoteVolumeSlide
+			{
+				StartFrame = absoluteFrame,
+				TicksPerRow = ticksPerRow,
+				Operator = playbackOperator,
+			};
 	}
 
 	internal double ClearNoteVolumeSlide(long absoluteFrame)
 	{
-		double current = GetBaseNoteVolume(absoluteFrame);
-		NoteVolume = current;
+		CommitNoteVolumeSlide(absoluteFrame);
+		return NoteVolume;
+	}
+
+	private void CommitNoteVolumeSlide(long absoluteFrame)
+	{
+		ActiveNoteVolumeSlide? slide =
+			_activeNoteVolumeSlide;
+		if (slide is null)
+			return;
+
+		PlaybackParameterDeltas committed =
+			_operators.Expire(
+				slide.Operator,
+				GetWallTimeSeconds(absoluteFrame),
+				GetOperatorRowTime(
+					slide.StartFrame,
+					slide.TicksPerRow,
+					absoluteFrame));
+
+		NoteVolume = Math.Clamp(
+			NoteVolume
+				+ committed[PlaybackParameter.NoteVolume],
+			0.0,
+			1.0);
 		_activeNoteVolumeSlide = null;
-		return current;
+	}
+
+	private void CancelNoteVolumeSlide()
+	{
+		if (_activeNoteVolumeSlide is null)
+			return;
+
+		_operators.Remove(
+			_activeNoteVolumeSlide.Operator);
+		_activeNoteVolumeSlide = null;
 	}
 
 	internal double GetBaseNoteVolume(long absoluteFrame)
 	{
-		ActiveNoteVolumeSlide? slide = _activeNoteVolumeSlide;
-		if (slide is null)
-			return NoteVolume;
-
-		double rowTime = Math.Clamp(
-			_tickClock.GetElapsedTicks(
-				slide.StartFrame,
-				Math.Max(slide.StartFrame, absoluteFrame)),
-			0.0,
-			slide.TicksPerRow);
-		double legacyEquivalentTicks =
-			rowTime
-				* Math.Max(0, slide.TicksPerRow - 1)
-				/ slide.TicksPerRow;
+		ActiveNoteVolumeSlide? slide =
+			_activeNoteVolumeSlide;
+		if (slide is not null)
+		{
+			slide.Operator.Update(
+				GetWallTimeSeconds(absoluteFrame),
+				GetOperatorRowTime(
+					slide.StartFrame,
+					slide.TicksPerRow,
+					absoluteFrame));
+		}
 
 		return Math.Clamp(
 			NoteVolume
-				+ slide.TrackerUnitsPerTick
-					* legacyEquivalentTicks / 64.0,
+				+ _operators.GetTotalDelta(
+					PlaybackParameter.NoteVolume),
 			0.0,
 			1.0);
 	}
 
-	internal double GetNoteVolume(long absoluteFrame)
+	public double GetNoteVolume(long absoluteFrame)
 	{
 		double volume = GetBaseNoteVolume(absoluteFrame);
 
@@ -703,6 +748,20 @@ public sealed class PlaybackVoice
 			0.0,
 			1.0);
 	}
+
+	private double GetOperatorRowTime(
+		long startFrame,
+		int ticksPerRow,
+		long absoluteFrame)
+		=> Math.Clamp(
+			_tickClock.GetElapsedTicks(
+				startFrame,
+				Math.Max(startFrame, absoluteFrame)),
+			0.0,
+			ticksPerRow);
+
+	private double GetWallTimeSeconds(long absoluteFrame)
+		=> absoluteFrame / (double)_sampleRate;
 
 	private double GetTonePortamentoContinuousBaseMultiplier(
 		long relativeFrame)

@@ -18,10 +18,10 @@ public sealed class PlaybackChannelState
 	private sealed class ActiveSpatialXSlide
 	{
 		public required long StartFrame { get; init; }
-		public required double SpatialUnitsPerTick { get; init; }
 		public required int TicksPerRow { get; init; }
 		public required double MinimumX { get; init; }
 		public required double MaximumX { get; init; }
+		public required LinearRowPlaybackOperator Operator { get; init; }
 	}
 
 	private sealed class ActiveOverallVolumeSlide
@@ -309,7 +309,7 @@ public sealed class PlaybackChannelState
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
 
 		CancelPanbrello(absoluteFrame);
-		_activeSpatialXSlide = null;
+		CancelSpatialXSlide();
 		Position = position;
 		if (CurrentVoice is not null)
 			CurrentVoice.SoundState.Position = position;
@@ -329,7 +329,7 @@ public sealed class PlaybackChannelState
 
 		CancelPanbrello(absoluteFrame);
 		SynchronizePosition(absoluteFrame);
-		_activeSpatialXSlide = null;
+		CancelSpatialXSlide();
 
 		Position = new Vector3(
 			(float)Math.Clamp(
@@ -369,18 +369,26 @@ public sealed class PlaybackChannelState
 			throw new ArgumentOutOfRangeException(nameof(sampleRate));
 
 		CancelPanbrello(absoluteFrame);
+		CommitSpatialXSlide(absoluteFrame);
 
-		if (_activeSpatialXSlide is not null)
-			CommitSpatialXSlide(absoluteFrame);
+		LinearRowPlaybackOperator playbackOperator = new(
+			PlaybackParameter.SpatialX,
+			totalDelta:
+				spatialUnitsPerTick
+					* Math.Max(0, ticksPerRow - 1),
+			rowSpan: ticksPerRow,
+			commitOnExpire: true);
+		_operators.Add(playbackOperator);
 
-		_activeSpatialXSlide = new ActiveSpatialXSlide
-		{
-			StartFrame = absoluteFrame,
-			SpatialUnitsPerTick = spatialUnitsPerTick,
-			TicksPerRow = ticksPerRow,
-			MinimumX = minimumX,
-			MaximumX = maximumX,
-		};
+		_activeSpatialXSlide =
+			new ActiveSpatialXSlide
+			{
+				StartFrame = absoluteFrame,
+				TicksPerRow = ticksPerRow,
+				MinimumX = minimumX,
+				MaximumX = maximumX,
+				Operator = playbackOperator,
+			};
 	}
 
 	internal void ClearSpatialXSlide(long absoluteFrame)
@@ -389,45 +397,45 @@ public sealed class PlaybackChannelState
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
 
 		CommitSpatialXSlide(absoluteFrame);
-		_activeSpatialXSlide = null;
 		SynchronizePosition(absoluteFrame);
 	}
 
 	private void CommitSpatialXSlide(long absoluteFrame)
 	{
-		ActiveSpatialXSlide? slide = _activeSpatialXSlide;
+		ActiveSpatialXSlide? slide =
+			_activeSpatialXSlide;
 		if (slide is null)
 			return;
 
-		double deltaX =
-			GetSpatialXSlideDelta(absoluteFrame, slide);
+		PlaybackParameterDeltas committed =
+			_operators.Expire(
+				slide.Operator,
+				GetWallTimeSeconds(absoluteFrame),
+				GetOperatorRowTime(
+					slide.StartFrame,
+					slide.TicksPerRow,
+					absoluteFrame));
 
 		Position = new Vector3(
 			(float)Math.Clamp(
-				Position.X + deltaX,
+				Position.X
+					+ committed[PlaybackParameter.SpatialX],
 				slide.MinimumX,
 				slide.MaximumX),
 			Position.Y,
 			Position.Z);
+		_activeSpatialXSlide = null;
 	}
 
-	private double GetSpatialXSlideDelta(
-		long absoluteFrame,
-		ActiveSpatialXSlide slide)
-	{
-		double rowTime = Math.Clamp(
-			_tickClock.GetElapsedTicks(
-				slide.StartFrame,
-				Math.Max(slide.StartFrame, absoluteFrame)),
-			0.0,
-			slide.TicksPerRow);
-		double legacyEquivalentTicks =
-			rowTime
-				* Math.Max(0, slide.TicksPerRow - 1)
-				/ slide.TicksPerRow;
 
-		return slide.SpatialUnitsPerTick
-			* legacyEquivalentTicks;
+	private void CancelSpatialXSlide()
+	{
+		if (_activeSpatialXSlide is null)
+			return;
+
+		_operators.Remove(
+			_activeSpatialXSlide.Operator);
+		_activeSpatialXSlide = null;
 	}
 
 	internal void SynchronizePosition(long absoluteFrame)
@@ -595,6 +603,18 @@ public sealed class PlaybackChannelState
 
 	private Vector3 GetEffectivePosition(long absoluteFrame)
 	{
+		ActiveSpatialXSlide? slide =
+			_activeSpatialXSlide;
+		if (slide is not null)
+		{
+			slide.Operator.Update(
+				GetWallTimeSeconds(absoluteFrame),
+				GetOperatorRowTime(
+					slide.StartFrame,
+					slide.TicksPerRow,
+					absoluteFrame));
+		}
+
 		ActivePanbrello? panbrello =
 			_activePanbrello;
 		if (panbrello is not null)
@@ -607,13 +627,6 @@ public sealed class PlaybackChannelState
 					absoluteFrame));
 		}
 
-		ActiveSpatialXSlide? slide = _activeSpatialXSlide;
-		double slideX = slide is null
-			? 0.0
-			: GetSpatialXSlideDelta(
-				absoluteFrame,
-				slide);
-
 		double minimumX = slide?.MinimumX ?? -1.0;
 		double maximumX = slide?.MaximumX ?? 1.0;
 		double operatorX =
@@ -622,7 +635,7 @@ public sealed class PlaybackChannelState
 
 		return new Vector3(
 			(float)Math.Clamp(
-				Position.X + slideX + operatorX,
+				Position.X + operatorX,
 				minimumX,
 				maximumX),
 			Position.Y,
