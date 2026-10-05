@@ -1,5 +1,7 @@
 using System;
 
+using Heresy.Core.Sequencing;
+
 namespace Heresy.Render.Playback;
 
 /// <summary>
@@ -11,19 +13,56 @@ public static class TrackerPanbrello
 	public static int GetPanOffsetUnits(
 		byte phase,
 		byte depth)
-	{
-		int sample =
-			TrackerVibrato.GetFineSineSample(phase);
+		=> GetPanOffsetUnits(
+			TrackerWaveform.Sine,
+			phase,
+			depth);
 
-		// IT adds 2 before signed integer division by 8. C# integer division,
-		// like modern IT-compatible players, truncates toward zero.
-		return (sample * depth + 2) / 8;
+	public static int GetPanOffsetUnits(
+		TrackerWaveform waveform,
+		byte phase,
+		byte depth)
+	{
+		if (waveform == TrackerWaveform.Random)
+		{
+			throw new ArgumentException(
+				"Random panbrello requires a deterministic random anchor.",
+				nameof(waveform));
+		}
+
+		int sample =
+			TrackerVibrato.GetWaveformSample(
+				waveform,
+				phase);
+
+		return ScaleSampleToPanUnits(
+			sample,
+			depth);
 	}
+
+	public static int GetRandomPanOffsetUnits(
+		ulong seed,
+		long anchorIndex,
+		byte depth)
+		=> ScaleSampleToPanUnits(
+			TrackerVibrato.GetRandomWaveformSample(
+				seed,
+				anchorIndex),
+			depth);
 
 	public static double GetSpatialXOffset(
 		byte phase,
 		byte depth)
 		=> GetPanOffsetUnits(phase, depth) / 128.0;
+
+	public static double GetSpatialXOffset(
+		TrackerWaveform waveform,
+		byte phase,
+		byte depth)
+		=> GetPanOffsetUnits(
+			waveform,
+			phase,
+			depth) / 128.0;
 
 	public static byte AdvancePhase(
 		byte phase,
@@ -35,5 +74,14 @@ public static class TrackerPanbrello
 
 		return unchecked(
 			(byte)(phase + speed * ticks));
+	}
+
+	private static int ScaleSampleToPanUnits(
+		int sample,
+		byte depth)
+	{
+		// IT adds 2 before signed integer division by 8. C# integer division
+		// truncates toward zero, matching the observable tracker behavior.
+		return (sample * depth + 2) / 8;
 	}
 }

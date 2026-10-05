@@ -1118,6 +1118,29 @@ public static class PatternNoteProcessor
 					break;
 				}
 
+				case ApplyTrackerPanbrelloWaveformCommand waveform:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(
+							noteEvent,
+							context,
+							"Tracker panbrello waveform");
+					transformed ??= CopyCommandsBefore(
+						noteEvent.Commands,
+						i);
+
+					TrackerWaveform selected =
+						waveform.Value <= 3
+							? (TrackerWaveform)waveform.Value
+							: TrackerWaveform.Sine;
+
+					channelState.PanbrelloWaveform = selected;
+					transformed.Add(
+						new SetPanbrelloWaveformCommand(
+							selected));
+					break;
+				}
+
 				case ApplyTremoloCommand tremolo:
 				{
 					SequencingChannelState channelState =
@@ -1195,7 +1218,8 @@ public static class PatternNoteProcessor
 						(SetPanbrelloCommand)ApplyRowTickOverride(
 							new SetPanbrelloCommand(
 								(byte)(parameter >> 4),
-								(byte)(parameter & 0x0F)),
+								(byte)(parameter & 0x0F),
+								channelState.PanbrelloWaveform),
 							rowTicksOverride)!;
 
 					transformed.Add(resolved);

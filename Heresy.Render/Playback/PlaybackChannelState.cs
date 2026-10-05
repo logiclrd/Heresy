@@ -1,6 +1,7 @@
 using System;
 using System.Numerics;
 
+using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
 
 using Heresy.Render.Filters;
@@ -61,10 +62,18 @@ public sealed class PlaybackChannelState
 	private ActivePanbrello? _activePanbrello;
 	private byte _panbrelloPhase;
 	private double _heldPanbrelloOffsetX;
+	private readonly ulong _panbrelloRandomSeed;
+	private int _panbrelloRandomHeldSample;
+	private bool _panbrelloRandomHasHeldSample;
+	private long _panbrelloRandomNextAnchorIndex;
 
-	internal PlaybackChannelState(int outputChannelCount, int sampleRate)
+	internal PlaybackChannelState(
+		int outputChannelCount,
+		int sampleRate,
+		ulong panbrelloRandomSeed = 0x50414E4252454C4CUL)
 	{
 		AntiClickTail = new AntiClickTail(outputChannelCount, sampleRate);
+		_panbrelloRandomSeed = panbrelloRandomSeed;
 	}
 
 	public PlaybackVoice? CurrentVoice { get; internal set; }
@@ -390,13 +399,34 @@ public sealed class PlaybackChannelState
 		SynchronizeOverallVolume(absoluteFrame);
 	}
 
+	internal void SetPanbrelloWaveform(
+		long absoluteFrame,
+		TrackerWaveform waveform)
+	{
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		if (!Enum.IsDefined(waveform))
+			throw new ArgumentOutOfRangeException(nameof(waveform));
+
+		if (_activePanbrello is not null)
+		{
+			CommitPanbrelloThrough(
+				absoluteFrame,
+				retainOffset: true);
+		}
+
+		_panbrelloPhase = 0;
+		SynchronizePosition(absoluteFrame);
+	}
+
 	internal void SetPanbrello(
 		long absoluteFrame,
 		double tempo,
 		int ticksPerRow,
 		int sampleRate,
 		byte speed,
-		byte depth)
+		byte depth,
+		TrackerWaveform waveform)
 	{
 		if (absoluteFrame < 0)
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
@@ -410,6 +440,8 @@ public sealed class PlaybackChannelState
 			throw new ArgumentOutOfRangeException(nameof(ticksPerRow));
 		if (sampleRate <= 0)
 			throw new ArgumentOutOfRangeException(nameof(sampleRate));
+		if (!Enum.IsDefined(waveform))
+			throw new ArgumentOutOfRangeException(nameof(waveform));
 
 		if (_activePanbrello is not null)
 			CommitPanbrelloThrough(absoluteFrame, retainOffset: true);
@@ -431,7 +463,14 @@ public sealed class PlaybackChannelState
 				depth,
 				tickDuration,
 				ticksPerRow,
-				sampleRate),
+				sampleRate,
+				waveform,
+				_panbrelloRandomSeed,
+				new PanbrelloRandomState(
+					_panbrelloPhase,
+					_panbrelloRandomHeldSample,
+					_panbrelloRandomHasHeldSample,
+					_panbrelloRandomNextAnchorIndex)),
 		};
 
 		SynchronizePosition(absoluteFrame);
@@ -492,11 +531,29 @@ public sealed class PlaybackChannelState
 				0,
 				(int)Math.Floor(elapsedTicks + 1e-9) + 1));
 
-		_panbrelloPhase =
-			TrackerPanbrello.AdvancePhase(
-				active.InitialPhase,
-				active.Speed,
-				processedTicks);
+		if (active.Curve.Waveform == TrackerWaveform.Random)
+		{
+			PanbrelloRandomState randomState =
+				active.Curve.GetRandomStateAfterTicks(
+					processedTicks);
+
+			_panbrelloPhase = randomState.Position;
+			_panbrelloRandomHeldSample =
+				randomState.HeldSample;
+			_panbrelloRandomHasHeldSample =
+				randomState.HasHeldSample;
+			_panbrelloRandomNextAnchorIndex =
+				randomState.NextAnchorIndex;
+		}
+		else
+		{
+			_panbrelloPhase =
+				TrackerPanbrello.AdvancePhase(
+					active.InitialPhase,
+					active.Speed,
+					processedTicks);
+		}
+
 		_activePanbrello = null;
 	}
 

@@ -222,6 +222,10 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			case TrackerTremoloWaveformPatternEffect waveform:
 				return new ApplyTrackerTremoloWaveformCommand(waveform.Value);
 
+			case TrackerPanbrelloWaveformPatternEffect waveform:
+				return new ApplyTrackerPanbrelloWaveformCommand(
+					waveform.Value);
+
 			case TrackerGlissandoControlPatternEffect glissando:
 				return new ApplyTrackerGlissandoControlCommand(glissando.Value);
 

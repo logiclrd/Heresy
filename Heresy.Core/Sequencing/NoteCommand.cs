@@ -207,6 +207,7 @@ public sealed record ApplyPanbrelloCommand(byte Parameter) : NoteCommand;
 public sealed record SetPanbrelloCommand(
 	byte Speed,
 	byte Depth,
+	TrackerWaveform Waveform = TrackerWaveform.Sine,
 	int? TicksPerRow = null) : NoteCommand;
 
 /// <summary>
@@ -279,6 +280,19 @@ public sealed record ApplyTrackerVibratoWaveformCommand(
 /// </summary>
 public sealed record ApplyTrackerTremoloWaveformCommand(
 	byte Value) : NoteCommand;
+
+/// <summary>
+/// Raw tracker S5x panbrello-waveform selection. Values 4..15 force sine.
+/// </summary>
+public sealed record ApplyTrackerPanbrelloWaveformCommand(
+	byte Value) : NoteCommand;
+
+/// <summary>
+/// Selects the panbrello waveform and resets its runtime phase to zero while
+/// preserving any currently held panbrello offset.
+/// </summary>
+public sealed record SetPanbrelloWaveformCommand(
+	TrackerWaveform Waveform) : NoteCommand;
 
 /// <summary>
 /// Raw tracker S6x fine-pattern delay. ExtraTicks extends the current row by

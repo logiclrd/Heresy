@@ -320,6 +320,23 @@ public sealed record TrackerTremoloWaveformPatternEffect : PatternEffect
 }
 
 /// <summary>
+/// Tracker S5x panbrello waveform selection. Values 0..3 select sine,
+/// ramp-down, square, and random; values 4..15 force sine like IT.
+/// Selection also resets panbrello phase to zero.
+/// </summary>
+public sealed record TrackerPanbrelloWaveformPatternEffect : PatternEffect
+{
+	public TrackerPanbrelloWaveformPatternEffect(byte value)
+	{
+		if (value > 0x0F)
+			throw new ArgumentOutOfRangeException(nameof(value));
+
+		Value = value;
+	}
+
+	public byte Value { get; }
+}
+/// <summary>
 /// Tracker S6x fine-pattern delay. Extends the current row by individual
 /// tracker ticks without starting a new row span.
 /// </summary>

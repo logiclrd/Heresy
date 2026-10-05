@@ -17,6 +17,7 @@ public sealed class SequencingChannelState
 	private TrackerWaveform _vibratoWaveform;
 	private double _vibratoDepthScale = 1.0;
 	private TrackerWaveform _tremoloWaveform;
+	private TrackerWaveform _panbrelloWaveform;
 	private bool _glissandoEnabled;
 
 	/// <summary>
@@ -119,6 +120,16 @@ public sealed class SequencingChannelState
 		}
 	}
 
+	public TrackerWaveform PanbrelloWaveform
+	{
+		get => _panbrelloWaveform;
+		set
+		{
+			if (!Enum.IsDefined(value))
+				throw new ArgumentOutOfRangeException(nameof(value));
+			_panbrelloWaveform = value;
+		}
+	}
 	public bool GlissandoEnabled
 	{
 		get => _glissandoEnabled;
@@ -144,6 +155,7 @@ public sealed class SequencingChannelState
 		_vibratoWaveform = TrackerWaveform.Sine;
 		_vibratoDepthScale = 1.0;
 		_tremoloWaveform = TrackerWaveform.Sine;
+		_panbrelloWaveform = TrackerWaveform.Sine;
 		_glissandoEnabled = false;
 	}
 }

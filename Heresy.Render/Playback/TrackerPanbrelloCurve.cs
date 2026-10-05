@@ -1,10 +1,19 @@
 using System;
 
+using Heresy.Core.Sequencing;
+
 namespace Heresy.Render.Playback;
 
+public readonly record struct PanbrelloRandomState(
+	byte Position,
+	int HeldSample,
+	bool HasHeldSample,
+	long NextAnchorIndex);
+
 /// <summary>
-/// Smooth panbrello curve which exactly matches IT at tracker tick anchors and
-/// linearly interpolates the spatial offset between them.
+/// Smooth panbrello curve which exactly matches IT at tracker tick anchors.
+/// Sine, ramp-down and square interpolate between anchors; random panbrello
+/// retains IT's sample-and-hold behavior.
 /// </summary>
 public sealed class TrackerPanbrelloCurve
 {
@@ -13,6 +22,9 @@ public sealed class TrackerPanbrelloCurve
 	private readonly byte _depth;
 	private readonly double _framesPerTick;
 	private readonly int _ticksPerRow;
+	private readonly TrackerWaveform _waveform;
+	private readonly ulong _randomSeed;
+	private readonly PanbrelloRandomState _initialRandomState;
 
 	public TrackerPanbrelloCurve(
 		byte initialPhase,
@@ -20,7 +32,10 @@ public sealed class TrackerPanbrelloCurve
 		byte depth,
 		TimeSpan tickDuration,
 		int ticksPerRow,
-		int sampleRate)
+		int sampleRate,
+		TrackerWaveform waveform = TrackerWaveform.Sine,
+		ulong randomSeed = 0,
+		PanbrelloRandomState initialRandomState = default)
 	{
 		if (tickDuration <= TimeSpan.Zero)
 			throw new ArgumentOutOfRangeException(nameof(tickDuration));
@@ -28,6 +43,13 @@ public sealed class TrackerPanbrelloCurve
 			throw new ArgumentOutOfRangeException(nameof(ticksPerRow));
 		if (sampleRate <= 0)
 			throw new ArgumentOutOfRangeException(nameof(sampleRate));
+		if (!Enum.IsDefined(waveform))
+			throw new ArgumentOutOfRangeException(nameof(waveform));
+		if (initialRandomState.NextAnchorIndex < 0)
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(initialRandomState));
+		}
 
 		double framesPerTick =
 			tickDuration.TotalSeconds * sampleRate;
@@ -43,9 +65,14 @@ public sealed class TrackerPanbrelloCurve
 		_depth = depth;
 		_framesPerTick = framesPerTick;
 		_ticksPerRow = ticksPerRow;
+		_waveform = waveform;
+		_randomSeed = randomSeed;
+		_initialRandomState = initialRandomState;
 	}
 
 	public double FramesPerTick => _framesPerTick;
+
+	public TrackerWaveform Waveform => _waveform;
 
 	public double GetSpatialXOffset(long frameOffset)
 	{
@@ -57,6 +84,18 @@ public sealed class TrackerPanbrelloCurve
 			_ticksPerRow - 1.0);
 
 		int tick0 = (int)Math.Floor(tickPosition);
+
+		if (_waveform == TrackerWaveform.Random)
+		{
+			PanbrelloRandomState state =
+				GetRandomStateAfterTicks(tick0 + 1);
+
+			if (!state.HasHeldSample)
+				return 0.0;
+
+			return ScaleRandomSample(state.HeldSample);
+		}
+
 		int tick1 = Math.Min(
 			tick0 + 1,
 			_ticksPerRow - 1);
@@ -75,14 +114,69 @@ public sealed class TrackerPanbrelloCurve
 
 		double offset0 =
 			TrackerPanbrello.GetSpatialXOffset(
+				_waveform,
 				phase0,
 				_depth);
 		double offset1 =
 			TrackerPanbrello.GetSpatialXOffset(
+				_waveform,
 				phase1,
 				_depth);
 
 		return offset0
 			+ (offset1 - offset0) * fraction;
+	}
+
+	public PanbrelloRandomState GetRandomStateAfterTicks(
+		int processedTicks)
+	{
+		if (processedTicks < 0
+			|| processedTicks > _ticksPerRow)
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(processedTicks));
+		}
+
+		PanbrelloRandomState state =
+			_initialRandomState;
+
+		for (int tick = 0; tick < processedTicks; tick++)
+		{
+			bool chooseNew =
+				state.Position == 0
+				|| state.Position >= _speed;
+
+			if (chooseNew)
+			{
+				int sample =
+					TrackerVibrato.GetRandomWaveformSample(
+						_randomSeed,
+						state.NextAnchorIndex);
+
+				state = state with
+				{
+					Position = 0,
+					HeldSample = sample,
+					HasHeldSample = true,
+					NextAnchorIndex =
+						checked(state.NextAnchorIndex + 1),
+				};
+			}
+
+			state = state with
+			{
+				Position = unchecked(
+					(byte)(state.Position + 1)),
+			};
+		}
+
+		return state;
+	}
+
+	private double ScaleRandomSample(int sample)
+	{
+		int panUnits =
+			(sample * _depth + 2) / 8;
+		return panUnits / 128.0;
 	}
 }

@@ -73,9 +73,15 @@ public sealed class PlaybackSession
 
 		if (!_channels.TryGetValue(channel, out PlaybackChannelState? state))
 		{
+			ulong panbrelloSeed = unchecked(
+				0x50414E4252454C4CUL
+				+ 0x9E3779B97F4A7C15UL
+					* ((ulong)(uint)channel + 1UL));
+
 			state = new PlaybackChannelState(
 				_context.Configuration.OutputChannelCount,
-				_context.Configuration.SampleRate);
+				_context.Configuration.SampleRate,
+				panbrelloSeed);
 			_channels.Add(channel, state);
 		}
 
@@ -424,6 +430,12 @@ public sealed class PlaybackSession
 				channel.ClearTremor();
 				break;
 
+			case SetPanbrelloWaveformCommand waveform:
+				channel.SetPanbrelloWaveform(
+					eventFrame,
+					waveform.Waveform);
+				break;
+
 			case SetPanbrelloCommand panbrello:
 				channel.SetPanbrello(
 					eventFrame,
@@ -431,7 +443,8 @@ public sealed class PlaybackSession
 					panbrello.TicksPerRow ?? _speed,
 					_context.Configuration.SampleRate,
 					panbrello.Speed,
-					panbrello.Depth);
+					panbrello.Depth,
+					panbrello.Waveform);
 				break;
 
 			case ClearPanbrelloCommand:
