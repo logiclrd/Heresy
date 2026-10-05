@@ -38,7 +38,7 @@ public sealed class VariableTempoContinuousEffectTests
 					0,
 					new SetTempoRampCommand(
 						250.0,
-						TrackerTicks: 1.0))),
+						trackerTicks: 1.0))),
 			new TestResolver((sourceId, sound)));
 
 		session.Render(0, 2, new float[2]);
@@ -71,7 +71,7 @@ public sealed class VariableTempoContinuousEffectTests
 					0,
 					new SetTempoRampCommand(
 						250.0,
-						TrackerTicks: 1.0)),
+						trackerTicks: 1.0)),
 				Event(
 					2,
 					0,
