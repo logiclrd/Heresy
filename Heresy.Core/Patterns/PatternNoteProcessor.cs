@@ -2216,12 +2216,12 @@ public static class PatternNoteProcessor
 
 					int repeatedByte =
 						panning.Value | (panning.Value << 4);
-					int trackerPan64 = (repeatedByte + 2) >> 2;
+					int s8Pan64 = (repeatedByte + 2) >> 2;
 
 					transformed.Add(
 						new SetSpatialPositionCommand(
 							new Vector3(
-								TrackerPan64ToSpatialX(trackerPan64),
+								TrackerPan64ToSpatialX(s8Pan64),
 								0.0f,
 								0.0f)));
 					break;
@@ -2233,11 +2233,11 @@ public static class PatternNoteProcessor
 						"Tracker 8-bit panning");
 					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
 
-					int trackerPan64 = (panning.Parameter + 2) >> 2;
+					int xPan64 = (panning.Parameter + 2) >> 2;
 					transformed.Add(
 						new SetSpatialPositionCommand(
 							new Vector3(
-								TrackerPan64ToSpatialX(trackerPan64),
+								TrackerPan64ToSpatialX(xPan64),
 								0.0f,
 								0.0f)));
 					break;
