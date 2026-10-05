@@ -135,7 +135,7 @@ public sealed class PlaybackTonePortamentoTests
 			session.GetChannelState(0).CurrentVoice!.SoundState.PitchTrajectory;
 
 		double rowOneEnd = Math.Pow(2.0, 240.0 / 768.0);
-		double rowTwoTickOne = Math.Pow(2.0, 288.0 / 768.0);
+		double rowTwoTickOne = Math.Pow(2.0, 280.0 / 768.0);
 
 		Assert.That(
 			trajectory.GetMultiplier(120),
@@ -170,8 +170,8 @@ public sealed class PlaybackTonePortamentoTests
 		PitchTrajectory trajectory =
 			session.GetChannelState(0).CurrentVoice!.SoundState.PitchTrajectory;
 
-		double porta = Math.Pow(2.0, 48.0 / 768.0);
-		double vibrato = TrackerVibrato.GetPitchMultiplier(40, 3);
+		double porta = Math.Pow(2.0, 40.0 / 768.0);
+		double vibrato = TrackerVibrato.GetPitchMultiplier(20, 3);
 
 		Assert.That(
 			trajectory.GetMultiplier(20),

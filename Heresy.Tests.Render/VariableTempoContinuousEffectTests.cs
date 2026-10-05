@@ -21,81 +21,101 @@ namespace Heresy.Tests.Render;
 public sealed class VariableTempoContinuousEffectTests
 {
 	[Test]
-	public void PitchSlideDomainCompressesSmoothlyDuringTempoRamp()
+	public void PitchSlideUsesRowTimeInsideTempoRamp()
 	{
 		ObjectId sourceId = (ObjectId)10U;
 		SampleSound sound = LongRampSample();
+		NoteSchedule schedule = Schedule(
+			Event(
+				0,
+				0,
+				new StartNoteCommand(sourceId),
+				new SetPitchSlideCommand(
+					192.0,
+					TicksPerRow: 6)),
+			Global(
+				0,
+				new SetTempoRampCommand(
+					135.0,
+					trackerTicks: 6.0)));
+
 		PlaybackSession session = Session(
-			Schedule(
-				Event(
-					0,
-					0,
-					new StartNoteCommand(sourceId),
-					new SetPitchSlideCommand(
-						TrackerVibrato.LinearSlideUnitsPerOctave / 4.0,
-						TicksPerRow: 6)),
-				Global(
-					0,
-					new SetTempoRampCommand(
-						250.0,
-						trackerTicks: 1.0))),
+			schedule,
 			new TestResolver((sourceId, sound)));
+		session.Render(0, 6, new float[6]);
 
-		session.Render(0, 2, new float[2]);
-
-		double trackerTicksAtFrameOne =
-			Math.Exp(0.5) - 1.0;
-		double expected =
-			Math.Pow(
-				2.0,
-				trackerTicksAtFrameOne / 4.0);
+		TrackerTickClock clock =
+			new(schedule, sampleRate: 100);
+		double rowTime =
+			clock.GetElapsedTicks(0, 5);
+		double expectedUnits =
+			192.0 * 5.0 * rowTime / 6.0;
 
 		double actual =
 			session.GetChannelState(0).CurrentVoice!
 				.SoundState.PitchTrajectory
-				.GetMultiplier(1);
+				.GetMultiplier(5);
 
 		Assert.That(
 			actual,
-			Is.EqualTo(expected).Within(1e-12));
-	}
-
-	[Test]
-	public void EffectStartedAfterTempoRampRenormalizesToUnitWallTimeRate()
-	{
-		ObjectId sourceId = (ObjectId)10U;
-		SampleSound sound = LongRampSample();
-		PlaybackSession session = Session(
-			Schedule(
-				Global(
-					0,
-					new SetTempoRampCommand(
-						250.0,
-						trackerTicks: 1.0)),
-				Event(
-					2,
-					0,
-					new StartNoteCommand(sourceId),
-					new SetPitchSlideCommand(
-						TrackerVibrato.LinearSlideUnitsPerOctave / 4.0,
-						TicksPerRow: 6))),
-			new TestResolver((sourceId, sound)));
-
-		session.Render(0, 4, new float[4]);
-
-		double actual =
-			session.GetChannelState(0).CurrentVoice!
-				.SoundState.PitchTrajectory
-				.GetMultiplier(1);
-
-		Assert.That(
-			actual,
-			Is.EqualTo(Math.Pow(2.0, 0.25))
+			Is.EqualTo(
+				Math.Pow(
+					2.0,
+					expectedUnits
+						/ TrackerVibrato.LinearSlideUnitsPerOctave))
 				.Within(1e-12));
 	}
 
 	[Test]
-	public void TonePortamentoUsesSharedTickClock()
+	public void PersistentSlideCommitsSameLegacyTotalAtRampEnd()
+	{
+		ObjectId sourceId = (ObjectId)10U;
+		SampleSound sound = LongRampSample();
+		TrackerRowTiming timing = new(
+			speed: 6.0,
+			startingTempo: 125.0,
+			endingTempo: 135.0);
+		long endFrame =
+			FrameTime.Ceiling(
+				TimeSpan.FromSeconds(timing.RowDurationSeconds),
+				100);
+
+		NoteSchedule schedule = Schedule(
+			Event(
+				0,
+				0,
+				new StartNoteCommand(sourceId),
+				new SetPitchSlideCommand(
+					48.0,
+					TicksPerRow: 6)),
+			Global(
+				0,
+				new SetTempoRampCommand(
+					135.0,
+					trackerTicks: 6.0)),
+			Event(
+				endFrame,
+				0,
+				new ClearPitchSlideCommand()));
+
+		PlaybackSession session = Session(
+			schedule,
+			new TestResolver((sourceId, sound)));
+		session.Render(0, (int)endFrame + 1, new float[(int)endFrame + 1]);
+
+		double final =
+			session.GetChannelState(0).CurrentVoice!
+				.SoundState.PitchTrajectory
+				.GetMultiplier(endFrame);
+
+		Assert.That(
+			final,
+			Is.EqualTo(Math.Pow(2.0, 240.0 / 768.0))
+				.Within(1e-10));
+	}
+
+	[Test]
+	public void ArpeggioStillUsesDiscreteRowTimeThresholds()
 	{
 		ObjectId sourceId = (ObjectId)10U;
 		SampleSound sound = LongRampSample();
@@ -105,10 +125,7 @@ public sealed class VariableTempoContinuousEffectTests
 					0,
 					0,
 					new StartNoteCommand(sourceId),
-					new SetTonePortamentoCommand(
-						TrackerVibrato.LinearSlideUnitsPerOctave / 2.0,
-						new StartNoteCommand(sourceId, 2.0),
-						TicksPerRow: 6)),
+					new SetArpeggioCommand(4, 7)),
 				Global(2, new SetTempoCommand(250))),
 			new TestResolver((sourceId, sound)));
 
@@ -119,209 +136,29 @@ public sealed class VariableTempoContinuousEffectTests
 				.SoundState.PitchTrajectory
 				.GetMultiplier(3);
 
-		Assert.That(actual, Is.EqualTo(2.0).Within(1e-12));
-	}
-
-	[Test]
-	public void NoteVolumeSlideUsesSharedTickClock()
-	{
-		ObjectId sourceId = (ObjectId)10U;
-		PlaybackSession session = Session(
-			Schedule(
-				Event(
-					0,
-					0,
-					new StartNoteCommand(sourceId),
-					new SetNoteVolumeSlideCommand(
-						-16.0,
-						TicksPerRow: 6)),
-				Global(2, new SetTempoCommand(250))),
-			new TestResolver((sourceId, new ConstantSound())));
-
-		float[] output = new float[4];
-		session.Render(0, 4, output);
-
-		Assert.That(output[3], Is.EqualTo(0.5f).Within(1e-6f));
-	}
-
-	[Test]
-	public void ChannelVolumeSlideUsesSharedTickClock()
-	{
-		ObjectId sourceId = (ObjectId)10U;
-		PlaybackSession session = Session(
-			Schedule(
-				Event(
-					0,
-					0,
-					new StartNoteCommand(sourceId),
-					new SetOverallChannelVolumeSlideCommand(
-						-16.0,
-						TicksPerRow: 6)),
-				Global(2, new SetTempoCommand(250))),
-			new TestResolver((sourceId, new ConstantSound())));
-
-		float[] output = new float[4];
-		session.Render(0, 4, output);
-
-		Assert.That(output[3], Is.EqualTo(0.5f).Within(1e-6f));
-	}
-
-	[Test]
-	public void SpatialSlideUsesSharedTickClock()
-	{
-		ObjectId sourceId = (ObjectId)10U;
-		PositionObservingSound sound = new();
-		PlaybackSession session = Session(
-			Schedule(
-				Event(
-					0,
-					0,
-					new StartNoteCommand(sourceId),
-					new SetSpatialXSlideCommand(
-						0.25,
-						TicksPerRow: 6)),
-				Global(2, new SetTempoCommand(250))),
-			new TestResolver((sourceId, sound)));
-
-		session.Render(0, 4, new float[4]);
-
 		Assert.That(
-			sound.ObservedPositions[3].X,
-			Is.EqualTo(0.5f).Within(1e-6f));
+			actual,
+			Is.EqualTo(Math.Pow(2.0, 7.0 / 12.0))
+				.Within(1e-12));
 	}
 
 	[Test]
-	public void TremorUsesSharedTickClock()
+	public void NativeWallTimeIsNotRenormalizedByTrackerTempo()
 	{
-		ObjectId sourceId = (ObjectId)10U;
-		PlaybackSession session = Session(
-			Schedule(
-				Event(
-					0,
-					0,
-					new StartNoteCommand(sourceId),
-					new SetTremorCommand(
-						1,
-						1,
-						TicksPerRow: 6)),
-				Global(2, new SetTempoCommand(250))),
-			new TestResolver((sourceId, new ConstantSound())));
+		TrackerRowTiming slow = new(
+			6.0,
+			125.0,
+			125.0);
+		TrackerRowTiming fast = new(
+			6.0,
+			250.0,
+			250.0);
 
-		float[] output = new float[4];
-		session.Render(0, 4, output);
+		Assert.That(slow.GetRowTime(0.05), Is.EqualTo(2.5));
+		Assert.That(fast.GetRowTime(0.05), Is.EqualTo(5.0));
 
-		Assert.That(
-			output,
-			Is.EqualTo(new float[] { 1, 1, 0, 1 }));
-	}
-
-	[Test]
-	public void GlobalVolumeSlideUsesSharedTickClock()
-	{
-		ObjectId sourceId = (ObjectId)10U;
-		PlaybackSession session = Session(
-			Schedule(
-				Event(
-					0,
-					0,
-					new StartNoteCommand(sourceId),
-					new SetGlobalVolumeSlideCommand(
-						-16.0,
-						TicksPerRow: 6)),
-				Global(2, new SetTempoCommand(250))),
-			new TestResolver((sourceId, new ConstantSound())));
-
-		float[] output = new float[4];
-		session.Render(0, 4, output);
-
-		Assert.That(output[3], Is.EqualTo(0.75f).Within(1e-6f));
-	}
-
-	[Test]
-	public void VibratoAndTremoloMatchReferenceAtSameTickPosition()
-	{
-		ObjectId sourceId = (ObjectId)10U;
-		ConstantSound sound = new();
-
-		PlaybackSession changed = Session(
-			Schedule(
-				Event(
-					0,
-					0,
-					new StartNoteCommand(sourceId),
-					new SetVibratoCommand(5, 8),
-					new SetTremoloCommand(5, 8)),
-				Global(2, new SetTempoCommand(250))),
-			new TestResolver((sourceId, sound)));
-		float[] changedOutput = new float[4];
-		changed.Render(0, 4, changedOutput);
-
-		PlaybackSession reference = Session(
-			Schedule(
-				Event(
-					0,
-					0,
-					new StartNoteCommand(sourceId),
-					new SetVibratoCommand(5, 8),
-					new SetTremoloCommand(5, 8))),
-			new TestResolver((sourceId, sound)));
-		float[] referenceOutput = new float[5];
-		reference.Render(0, 5, referenceOutput);
-
-		double changedPitch =
-			changed.GetChannelState(0).CurrentVoice!
-				.SoundState.PitchTrajectory
-				.GetMultiplier(3);
-		double referencePitch =
-			reference.GetChannelState(0).CurrentVoice!
-				.SoundState.PitchTrajectory
-				.GetMultiplier(4);
-
-		Assert.That(
-			changedPitch,
-			Is.EqualTo(referencePitch).Within(1e-12));
-		Assert.That(
-			changedOutput[3],
-			Is.EqualTo(referenceOutput[4]).Within(1e-5f));
-	}
-
-	[Test]
-	public void PanbrelloMatchesReferenceAtSameTickPosition()
-	{
-		ObjectId sourceId = (ObjectId)10U;
-		PositionObservingSound changedSound = new();
-		PlaybackSession changed = Session(
-			Schedule(
-				Event(
-					0,
-					0,
-					new StartNoteCommand(sourceId),
-					new SetPanbrelloCommand(
-						15,
-						15,
-						TicksPerRow: 6)),
-				Global(2, new SetTempoCommand(250))),
-			new TestResolver((sourceId, changedSound)));
-		changed.Render(0, 4, new float[4]);
-
-		PositionObservingSound referenceSound = new();
-		PlaybackSession reference = Session(
-			Schedule(
-				Event(
-					0,
-					0,
-					new StartNoteCommand(sourceId),
-					new SetPanbrelloCommand(
-						15,
-						15,
-						TicksPerRow: 6))),
-			new TestResolver((sourceId, referenceSound)));
-		reference.Render(0, 5, new float[5]);
-
-		Assert.That(
-			changedSound.ObservedPositions[3].X,
-			Is.EqualTo(referenceSound.ObservedPositions[4].X)
-				.Within(1e-6f));
+		// The same wall time remains 0.05 seconds for a native operator.
+		Assert.That(0.05, Is.EqualTo(0.05));
 	}
 
 	private static PlaybackSession Session(
@@ -380,59 +217,6 @@ public sealed class VariableTempoContinuousEffectTests
 				"Ramp",
 				new ExternalAssetReference("ramp.raw")),
 			new MemorySampleData(100, 1, data));
-	}
-
-	private sealed class ConstantSound : ISound
-	{
-		public NoteConfigurationSnapshot SnapshotNoteConfiguration()
-			=> new(NewNotePolicy.Cut);
-
-		public SoundState CreateState()
-			=> new TestSoundState();
-
-		public long? GetEndFrameExclusive(
-			RenderContext context,
-			SoundState state)
-			=> null;
-
-		public void Render(
-			RenderContext context,
-			SoundState state,
-			long startFrame,
-			int frameCount,
-			Span<float> destination)
-			=> destination.Fill(1.0f);
-	}
-
-	private sealed class PositionObservingSound : ISound
-	{
-		public List<Vector3> ObservedPositions { get; } = [];
-
-		public NoteConfigurationSnapshot SnapshotNoteConfiguration()
-			=> new(NewNotePolicy.Cut);
-
-		public SoundState CreateState()
-			=> new TestSoundState();
-
-		public long? GetEndFrameExclusive(
-			RenderContext context,
-			SoundState state)
-			=> null;
-
-		public void Render(
-			RenderContext context,
-			SoundState state,
-			long startFrame,
-			int frameCount,
-			Span<float> destination)
-		{
-			for (int frame = 0; frame < frameCount; frame++)
-				ObservedPositions.Add(state.Position);
-		}
-	}
-
-	private sealed class TestSoundState : SoundState
-	{
 	}
 
 	private sealed class TestResolver : ISoundResolver

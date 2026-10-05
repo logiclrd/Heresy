@@ -48,17 +48,17 @@ public sealed class PlaybackFineVibratoTests
 						DepthScale: 0.25))),
 			new TestResolver((fineId, sound)));
 
-		normal.Render(0, 1, new float[1]);
-		fine.Render(0, 1, new float[1]);
+		normal.Render(0, 11, new float[11]);
+		fine.Render(0, 11, new float[11]);
 
 		double normalMultiplier =
 			normal.GetChannelState(0).CurrentVoice!
 				.SoundState.PitchTrajectory
-				.GetMultiplier(0);
+				.GetMultiplier(10);
 		double fineMultiplier =
 			fine.GetChannelState(0).CurrentVoice!
 				.SoundState.PitchTrajectory
-				.GetMultiplier(0);
+				.GetMultiplier(10);
 
 		double normalUnits =
 			Math.Log2(normalMultiplier)
@@ -105,7 +105,7 @@ public sealed class PlaybackFineVibratoTests
 		double expectedUnits =
 			TrackerVibrato.GetLinearSlideUnits(
 				TrackerWaveform.Sine,
-				phase: 40,
+				phase: 20,
 				depth: 4)
 				* 0.25;
 		double expected =

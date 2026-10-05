@@ -21,7 +21,7 @@ namespace Heresy.Tests.Render;
 public sealed class PlaybackSlideTests
 {
 	[Test]
-	public void NoteVolumeSlideUsesContinuousTickEquivalentEnvelope()
+	public void NoteVolumeSlideSpreadsLegacyRowDeltaAcrossWholeRow()
 	{
 		ObjectId sourceId = (ObjectId)10U;
 		SampleSound sound = ConstantSample(1.0f, 200, 1000);
@@ -42,10 +42,10 @@ public sealed class PlaybackSlideTests
 		session.Render(0, output.Length, output);
 
 		Assert.That(output[0], Is.EqualTo(0.5f).Within(1e-6f));
-		Assert.That(output[10], Is.EqualTo(0.53125f).Within(1e-6f));
-		Assert.That(output[20], Is.EqualTo(0.5625f).Within(1e-6f));
-		Assert.That(output[100], Is.EqualTo(0.8125f).Within(1e-6f));
-		Assert.That(output[119], Is.EqualTo(0.8125f).Within(1e-6f));
+		Assert.That(output[10], Is.EqualTo(0.5260417f).Within(1e-6f));
+		Assert.That(output[20], Is.EqualTo(0.5520833f).Within(1e-6f));
+		Assert.That(output[100], Is.EqualTo(0.7604167f).Within(1e-6f));
+		Assert.That(output[119], Is.EqualTo(0.8098958f).Within(1e-6f));
 		Assert.That(output[120], Is.EqualTo(0.8125f).Within(1e-6f));
 		Assert.That(
 			session.GetChannelState(0).NoteVolume,
@@ -53,7 +53,7 @@ public sealed class PlaybackSlideTests
 	}
 
 	[Test]
-	public void PitchSlideAccumulatesAndClearPreservesResult()
+	public void PitchSlideSpreadsLegacyRowDeltaAndClearCommitsResult()
 	{
 		ObjectId sourceId = (ObjectId)10U;
 		SampleSound sound = RampSample(400, 1000);
@@ -78,7 +78,7 @@ public sealed class PlaybackSlideTests
 
 		Assert.That(
 			trajectory.GetMultiplier(20),
-			Is.EqualTo(Math.Pow(2.0, 48.0 / 768.0)).Within(1e-14));
+			Is.EqualTo(Math.Pow(2.0, 40.0 / 768.0)).Within(1e-14));
 		Assert.That(
 			trajectory.GetMultiplier(100),
 			Is.EqualTo(finalMultiplier).Within(1e-14));
@@ -114,8 +114,8 @@ public sealed class PlaybackSlideTests
 		PitchTrajectory trajectory =
 			session.GetChannelState(0).CurrentVoice!.SoundState.PitchTrajectory;
 
-		double slideAtTick1 = Math.Pow(2.0, 48.0 / 768.0);
-		double vibratoAtTick1 = TrackerVibrato.GetPitchMultiplier(40, 3);
+		double slideAtTick1 = Math.Pow(2.0, 40.0 / 768.0);
+		double vibratoAtTick1 = TrackerVibrato.GetPitchMultiplier(20, 3);
 
 		Assert.That(
 			trajectory.GetMultiplier(20),

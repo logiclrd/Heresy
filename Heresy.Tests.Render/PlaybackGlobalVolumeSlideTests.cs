@@ -18,7 +18,7 @@ namespace Heresy.Tests.Render;
 public sealed class PlaybackGlobalVolumeSlideTests
 {
 	[Test]
-	public void GlobalVolumeSlideInterpolatesAtOutputFrameResolution()
+	public void GlobalVolumeSlideUsesWholeRowOperatorDelta()
 	{
 		ObjectId sourceId = (ObjectId)10U;
 		ConstantSound sound = new();
@@ -49,13 +49,13 @@ public sealed class PlaybackGlobalVolumeSlideTests
 				new float[]
 				{
 					0.5f,
-					0.5625f,
-					0.625f,
+					0.546875f,
+					0.59375f,
+					0.640625f,
 					0.6875f,
-					0.75f,
-					0.8125f,
-					0.875f,
-					0.875f,
+					0.734375f,
+					0.78125f,
+					0.828125f,
 				}).Within(1e-6f));
 	}
 
@@ -113,15 +113,15 @@ public sealed class PlaybackGlobalVolumeSlideTests
 				new float[]
 				{
 					0.5f,
-					0.5625f,
-					0.25f,
-					0.3125f,
-					0.375f,
+					0.546875f,
+					0.34375f,
+					0.390625f,
+					0.4375f,
 				}).Within(1e-6f));
 	}
 
 	[Test]
-	public void SimultaneousSlidesPreservePhysicalChannelOrderAtClamp()
+	public void SimultaneousSlideDeltasComposeBeforeEffectiveClamp()
 	{
 		ObjectId sourceId = (ObjectId)10U;
 		ConstantSound sound = new();
@@ -157,12 +157,8 @@ public sealed class PlaybackGlobalVolumeSlideTests
 		session.Render(0, 3, output);
 
 		Assert.That(output[0], Is.EqualTo(0.0f).Within(1e-6f));
-		Assert.That(
-			output[1],
-			Is.EqualTo((float)(0.5 / 128.0)).Within(1e-6f));
-		Assert.That(
-			output[2],
-			Is.EqualTo((float)(1.0 / 128.0)).Within(1e-6f));
+		Assert.That(output[1], Is.EqualTo(0.0f).Within(1e-6f));
+		Assert.That(output[2], Is.EqualTo(0.0f).Within(1e-6f));
 	}
 
 	[Test]

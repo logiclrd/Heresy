@@ -20,7 +20,7 @@ namespace Heresy.Tests.Render;
 public sealed class PlaybackVibratoTests
 {
 	[Test]
-	public void VibratoIsSmoothBetweenTrackerCompatibleTickAnchors()
+	public void VibratoStartsAtCurrentPhaseAndAdvancesContinuouslyAcrossRow()
 	{
 		ObjectId sourceId = (ObjectId)10U;
 		SampleSound sound = LongRampSample(sampleRate: 1000);
@@ -95,10 +95,10 @@ public sealed class PlaybackVibratoTests
 
 		Assert.That(
 			trajectory.GetMultiplier(0),
-			Is.EqualTo(TrackerVibrato.GetPitchMultiplier(20, 3)).Within(1e-14));
+			Is.EqualTo(TrackerVibrato.GetPitchMultiplier(0, 3)).Within(1e-14));
 		Assert.That(
 			trajectory.GetMultiplier(10),
-			Is.EqualTo(TrackerVibrato.GetPitchMultiplier(40, 3)).Within(1e-14));
+			Is.EqualTo(TrackerVibrato.GetPitchMultiplier(20, 3)).Within(1e-14));
 		Assert.That(trajectory.GetMultiplier(20), Is.EqualTo(1.0));
 	}
 
@@ -134,7 +134,7 @@ public sealed class PlaybackVibratoTests
 
 		Assert.That(
 			trajectory.GetMultiplier(40),
-			Is.EqualTo(TrackerVibrato.GetPitchMultiplier(60, 3)).Within(1e-14));
+			Is.EqualTo(TrackerVibrato.GetPitchMultiplier(40, 3)).Within(1e-14));
 		Assert.That(trajectory.GetMultiplier(60), Is.EqualTo(1.0));
 	}
 

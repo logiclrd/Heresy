@@ -57,7 +57,7 @@ public sealed class PlaybackPanbrelloTests
 	}
 
 	[Test]
-	public void RowEndFreezesLastPanbrelloOffsetInsteadOfReturningToBase()
+	public void RowEndDropsTransientPanbrelloDeltaAndReturnsToBase()
 	{
 		ObjectId sourceId = (ObjectId)10U;
 		PositionObservingSound sound = new(NewNotePolicy.Cut);
@@ -87,9 +87,9 @@ public sealed class PlaybackPanbrelloTests
 					0.0f,
 					Tick1Offset / 2.0f,
 					Tick1Offset,
-					Tick1Offset,
-					Tick1Offset,
-					Tick1Offset,
+					(Tick1Offset + Tick2Offset) / 2.0f,
+					0.0f,
+					0.0f,
 				}).Within(1e-6f));
 	}
 
@@ -126,14 +126,14 @@ public sealed class PlaybackPanbrelloTests
 
 		Assert.That(
 			sound.ObservedPositions[4].X,
-			Is.EqualTo(Tick1Offset).Within(1e-6f));
+			Is.EqualTo(0.0f).Within(1e-6f));
 		Assert.That(
 			sound.ObservedPositions[5].X,
 			Is.EqualTo(0.5f).Within(1e-6f));
 	}
 
 	[Test]
-	public void NewNoteClearsHeldOffsetButNnaVoiceKeepsItsInstantaneousPosition()
+	public void NewNoteDuringRowKeepsChannelOperatorWhileNnaFreezesInstantaneousPosition()
 	{
 		ObjectId firstId = (ObjectId)10U;
 		ObjectId secondId = (ObjectId)11U;
@@ -152,30 +152,30 @@ public sealed class PlaybackPanbrelloTests
 						15,
 						TicksPerRow: 2)),
 				Event(
+					Frame(3),
+					0,
+					new StartNoteCommand(secondId)),
+				Event(
 					Frame(4),
 					0,
-					new ClearPanbrelloCommand()),
-				Event(
-					Frame(5),
-					0,
-					new StartNoteCommand(secondId))),
+					new ClearPanbrelloCommand())),
 			new TestResolver(
 				(firstId, first),
 				(secondId, second)));
 
-		session.Render(0, 6, new float[6]);
+		session.Render(0, 5, new float[5]);
 
 		Assert.That(session.VirtualVoices.Count, Is.EqualTo(1));
 		Assert.That(
 			session.VirtualVoices[0].SoundState.Position.X,
-			Is.EqualTo(Tick1Offset).Within(1e-6f));
+			Is.EqualTo((Tick1Offset + Tick2Offset) / 2.0f).Within(1e-6f));
 		Assert.That(
 			session.GetChannelState(0).CurrentVoice!
 				.SoundState.Position.X,
 			Is.EqualTo(0.0f).Within(1e-6f));
 		Assert.That(
 			second.ObservedPositions[0].X,
-			Is.EqualTo(0.0f).Within(1e-6f));
+			Is.EqualTo((Tick1Offset + Tick2Offset) / 2.0f).Within(1e-6f));
 	}
 
 	[Test]

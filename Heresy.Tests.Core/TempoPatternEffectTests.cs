@@ -63,7 +63,7 @@ public sealed class TempoPatternEffectTests
 	}
 
 	[Test]
-	public void T12SlidesUpOnEveryPostFirstTick()
+	public void T12PreservesLegacyRowEndpointButEmitsOneContinuousRowRamp()
 	{
 		SequencingContext context = new();
 		NoteSchedule schedule = Generate(
@@ -71,45 +71,25 @@ public sealed class TempoPatternEffectTests
 			context,
 			out TimeSpan duration);
 
-		SetTempoRampCommand[] commands =
+		SetTempoRampCommand command =
 			schedule.SelectMany(e => e.Commands)
 				.OfType<SetTempoRampCommand>()
-				.ToArray();
+				.Single();
 
+		Assert.That(command.EndingTempo, Is.EqualTo(135.0));
+		Assert.That(command.TrackerTicks, Is.EqualTo(6.0));
+
+		NoteEvent tempoEvent = schedule.Single(
+			e => e.Commands.OfType<SetTempoRampCommand>().Any());
 		Assert.That(
-			commands.Select(c => c.EndingTempo),
-			Is.EqualTo(new double[] { 127, 129, 131, 133, 135 }));
-		Assert.That(
-			commands.Select(c => c.TrackerTicks),
-			Is.EqualTo(new double[] { 1, 1, 1, 1, 1 }));
-
-		double[] expectedTimes =
-		{
-			0.0,
-			RampDuration(125, 127),
-			RampDuration(125, 127) + RampDuration(127, 129),
-			RampDuration(125, 127) + RampDuration(127, 129)
-				+ RampDuration(129, 131),
-			RampDuration(125, 127) + RampDuration(127, 129)
-				+ RampDuration(129, 131) + RampDuration(131, 133),
-		};
-
-		NoteEvent[] events = schedule
-			.Where(e => e.Commands.OfType<SetTempoRampCommand>().Any())
-			.ToArray();
-
-		Assert.That(events, Has.Length.EqualTo(5));
-		for (int i = 0; i < events.Length; i++)
-		{
-			Assert.That(
-				events[i].Offset.TimeOffset.TotalSeconds,
-				Is.EqualTo(expectedTimes[i]).Within(1e-7));
-		}
+			tempoEvent.Offset.TimeOffset,
+			Is.EqualTo(TimeSpan.Zero));
 
 		double expectedDuration =
-			expectedTimes[^1]
-				+ RampDuration(133, 135)
-				+ TickDuration(135);
+			RowRampDuration(
+				startingTempo: 125.0,
+				endingTempo: 135.0,
+				rowTicks: 6.0);
 		Assert.That(
 			duration.TotalSeconds,
 			Is.EqualTo(expectedDuration).Within(1e-7));
@@ -288,9 +268,11 @@ public sealed class TempoPatternEffectTests
 			out _);
 
 		double expected =
-			RampDuration(125, 127)
-			+ RampDuration(127, 129)
-			+ RampDuration(129, 131);
+			RowTimeAt(
+				startingTempo: 125.0,
+				endingTempo: 135.0,
+				rowTicks: 6.0,
+				rowTime: 3.0);
 
 		NoteEvent target = kind switch
 		{
@@ -354,13 +336,34 @@ public sealed class TempoPatternEffectTests
 		return output.Freeze();
 	}
 
-	private static double RampDuration(
+	private static double RowRampDuration(
 		double startingTempo,
-		double endingTempo)
+		double endingTempo,
+		double rowTicks)
 		=> Math.Abs(endingTempo - startingTempo) <= 1e-12
-			? TickDuration(startingTempo)
-			: 2.5 / (endingTempo - startingTempo)
+			? rowTicks * TickDuration(startingTempo)
+			: 2.5 * rowTicks
+				/ (endingTempo - startingTempo)
 				* Math.Log(endingTempo / startingTempo);
+
+	private static double RowTimeAt(
+		double startingTempo,
+		double endingTempo,
+		double rowTicks,
+		double rowTime)
+	{
+		if (Math.Abs(endingTempo - startingTempo) <= 1e-12)
+			return rowTime * TickDuration(startingTempo);
+
+		double tempo =
+			startingTempo
+				+ (endingTempo - startingTempo)
+					* rowTime / rowTicks;
+
+		return 2.5 * rowTicks
+			/ (endingTempo - startingTempo)
+			* Math.Log(tempo / startingTempo);
+	}
 
 	private static double TickDuration(double tempo)
 		=> SequencingConstants.Diachron.TotalSeconds / tempo;

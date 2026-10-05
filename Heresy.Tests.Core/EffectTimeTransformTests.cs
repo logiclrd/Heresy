@@ -7,137 +7,89 @@ using NUnit.Framework;
 namespace Heresy.Tests.Core;
 
 [TestFixture]
-public sealed class EffectTimeTransformTests
+public sealed class TrackerRowTimingTests
 {
-	[TestCase(125.0)]
-	[TestCase(250.0)]
-	public void ConstantTempoMakesEffectTimeEqualWallTime(
-		double tempo)
+	[Test]
+	public void ConstantTempoMapsWholeWallDurationOntoCapturedSpeedDomain()
 	{
-		TrackerTimeMap map = new(tempo);
-		EffectTimeTransform effect =
-			new(map, startTimeSeconds: 0.0);
+		TrackerRowTiming row = new(
+			speed: 6.0,
+			startingTempo: 125.0,
+			endingTempo: 125.0);
 
 		Assert.That(
-			effect.GetTimeSeconds(0.5),
-			Is.EqualTo(0.5).Within(1e-12));
+			row.RowDurationSeconds,
+			Is.EqualTo(6.0 * 2.5 / 125.0).Within(1e-12));
 		Assert.That(
-			effect.GetRate(0.5),
-			Is.EqualTo(1.0).Within(1e-12));
+			row.GetRowTime(0.06),
+			Is.EqualTo(3.0).Within(1e-12));
+		Assert.That(
+			row.GetWallTimeSeconds(3.0),
+			Is.EqualTo(0.06).Within(1e-12));
 	}
 
 	[Test]
-	public void SuddenTempoChangeKeepsValueContinuousButChangesDerivative()
+	public void TempoRampKeepsSameRowDomainButAdvancesThroughItNonlinearly()
 	{
-		TrackerTimeMap map = new(125.0);
-		map.AppendConstantTime(0.25);
-		map.SetTempo(250.0);
+		TrackerRowTiming row = new(
+			speed: 6.0,
+			startingTempo: 125.0,
+			endingTempo: 135.0);
 
-		EffectTimeTransform effect =
-			new(map, startTimeSeconds: 0.0);
+		double halfwayWall =
+			row.GetWallTimeSeconds(3.0);
 
 		Assert.That(
-			effect.GetTimeSeconds(0.25),
-			Is.EqualTo(0.25).Within(1e-12));
+			halfwayWall,
+			Is.EqualTo(
+				1.5 * Math.Log(130.0 / 125.0))
+				.Within(1e-12));
 		Assert.That(
-			effect.GetRate(0.25),
-			Is.EqualTo(2.0).Within(1e-12));
+			row.GetRowTime(halfwayWall),
+			Is.EqualTo(3.0).Within(1e-12));
 		Assert.That(
-			effect.GetTimeSeconds(0.375),
-			Is.EqualTo(0.5).Within(1e-12));
+			row.GetTempo(0.0),
+			Is.EqualTo(125.0));
+		Assert.That(
+			row.GetTempo(3.0),
+			Is.EqualTo(130.0));
+		Assert.That(
+			row.GetTempo(6.0),
+			Is.EqualTo(135.0));
 	}
 
 	[Test]
-	public void TempoRampChangesEffectTimeRateSmoothly()
+	public void TempoRampDerivativeStartsAndEndsAtBoundaryTempos()
 	{
-		TrackerTimeMap map = new(125.0);
-		map.AppendTempoRamp(
-			endingTempo: 250.0,
-			trackerTicks: 1.0);
-
-		EffectTimeTransform effect =
-			new(map, startTimeSeconds: 0.0);
-
-		double halfwayTime =
-			map.GetTimeAtTick(0.5);
+		TrackerRowTiming row = new(
+			speed: 6.0,
+			startingTempo: 125.0,
+			endingTempo: 135.0);
 
 		Assert.That(
-			effect.GetRate(0.0),
-			Is.EqualTo(1.0).Within(1e-12));
+			row.GetRowTimeRate(0.0),
+			Is.EqualTo(125.0 / 2.5).Within(1e-12));
 		Assert.That(
-			effect.GetRate(halfwayTime),
-			Is.EqualTo(1.5).Within(1e-12));
-		Assert.That(
-			effect.GetRate(map.CurrentTimeSeconds),
-			Is.EqualTo(2.0).Within(1e-12));
-
-		Assert.That(
-			effect.GetTimeSeconds(map.CurrentTimeSeconds),
-			Is.EqualTo(2.5 / 125.0).Within(1e-12));
+			row.GetRowTimeRate(row.RowDurationSeconds),
+			Is.EqualTo(135.0 / 2.5).Within(1e-12));
 	}
 
 	[Test]
-	public void FreshEffectAfterRampStartsAtUnitRateAgain()
+	public void NewRowStartsFreshAtCommittedTempo()
 	{
-		TrackerTimeMap map = new(125.0);
-		map.AppendTempoRamp(
-			endingTempo: 250.0,
-			trackerTicks: 1.0);
+		TrackerRowTiming first = new(
+			speed: 6.0,
+			startingTempo: 125.0,
+			endingTempo: 135.0);
+		TrackerRowTiming second = new(
+			speed: 6.0,
+			startingTempo: 135.0,
+			endingTempo: 135.0);
 
-		double start = map.CurrentTimeSeconds;
-		EffectTimeTransform effect =
-			new(map, start);
-
+		Assert.That(first.GetTempo(6.0), Is.EqualTo(135.0));
+		Assert.That(second.GetTempo(0.0), Is.EqualTo(135.0));
 		Assert.That(
-			effect.ReferenceTempo,
-			Is.EqualTo(250.0).Within(1e-12));
-		Assert.That(
-			effect.GetRate(start),
-			Is.EqualTo(1.0).Within(1e-12));
-		Assert.That(
-			effect.GetTimeSeconds(start + 0.5),
-			Is.EqualTo(0.5).Within(1e-12));
-	}
-
-	[Test]
-	public void LinearTrackerTempoRampHasLogarithmicWallDuration()
-	{
-		TrackerTimeMap map = new(125.0);
-		map.AppendTempoRamp(
-			endingTempo: 250.0,
-			trackerTicks: 1.0);
-
-		double expected =
-			2.5 / (250.0 - 125.0)
-				* Math.Log(250.0 / 125.0);
-
-		Assert.That(
-			map.CurrentTimeSeconds,
-			Is.EqualTo(expected).Within(1e-12));
-		Assert.That(
-			map.GetTickAtTime(expected),
-			Is.EqualTo(1.0).Within(1e-12));
-	}
-
-	[Test]
-	public void TempoAndTrackerPositionRemainContinuousAcrossRampAndSet()
-	{
-		TrackerTimeMap map = new(125.0);
-		map.AppendTempoRamp(150.0, trackerTicks: 1.0);
-
-		double boundaryTime = map.CurrentTimeSeconds;
-		double boundaryTick = map.CurrentTick;
-
-		map.SetTempo(200.0);
-
-		Assert.That(
-			map.GetTickAtTime(boundaryTime),
-			Is.EqualTo(boundaryTick).Within(1e-12));
-		Assert.That(
-			map.GetTimeAtTick(boundaryTick),
-			Is.EqualTo(boundaryTime).Within(1e-12));
-		Assert.That(
-			map.GetTempoAtTime(boundaryTime),
-			Is.EqualTo(200.0).Within(1e-12));
+			second.GetRowTimeRate(0.0),
+			Is.EqualTo(135.0 / 2.5).Within(1e-12));
 	}
 }

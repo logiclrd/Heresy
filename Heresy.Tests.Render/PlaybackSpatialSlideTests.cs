@@ -18,7 +18,7 @@ namespace Heresy.Tests.Render;
 public sealed class PlaybackSpatialSlideTests
 {
 	[Test]
-	public void SpatialSlideInterpolatesAtOutputFrameResolution()
+	public void SpatialSlideUsesWholeRowOperatorDelta()
 	{
 		ObjectId sourceId = (ObjectId)10U;
 		PositionObservingSound sound = new(NewNotePolicy.Cut);
@@ -47,13 +47,13 @@ public sealed class PlaybackSpatialSlideTests
 				new float[]
 				{
 					0.0f,
-					0.125f,
-					0.25f,
+					0.09375f,
+					0.1875f,
+					0.28125f,
 					0.375f,
-					0.5f,
-					0.625f,
-					0.75f,
-					0.75f,
+					0.46875f,
+					0.5625f,
+					0.65625f,
 				}));
 	}
 
@@ -153,16 +153,16 @@ public sealed class PlaybackSpatialSlideTests
 		Assert.That(session.VirtualVoices.Count, Is.EqualTo(1));
 		Assert.That(
 			session.VirtualVoices[0].SoundState.Position.X,
-			Is.EqualTo(0.5f));
+			Is.EqualTo(0.375f));
 		Assert.That(
 			second.ObservedPositions.ConvertAll(p => p.X),
 			Is.EqualTo(
 				new float[]
 				{
-					0.5f,
-					0.625f,
-					0.75f,
-					0.75f,
+					0.375f,
+					0.46875f,
+					0.5625f,
+					0.65625f,
 					0.75f,
 				}));
 	}

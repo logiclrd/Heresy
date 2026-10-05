@@ -18,7 +18,7 @@ namespace Heresy.Tests.Render;
 public sealed class PlaybackChannelVolumeSlideTests
 {
 	[Test]
-	public void ChannelVolumeSlideInterpolatesAtOutputFrameResolution()
+	public void ChannelVolumeSlideUsesWholeRowOperatorDelta()
 	{
 		ObjectId sourceId = (ObjectId)10U;
 		ConstantSound sound = new(NewNotePolicy.Cut);
@@ -47,13 +47,13 @@ public sealed class PlaybackChannelVolumeSlideTests
 				new float[]
 				{
 					0.5f,
-					0.5625f,
-					0.625f,
+					0.546875f,
+					0.59375f,
+					0.640625f,
 					0.6875f,
-					0.75f,
-					0.8125f,
-					0.875f,
-					0.875f,
+					0.734375f,
+					0.78125f,
+					0.828125f,
 				}).Within(1e-6f));
 	}
 
@@ -142,9 +142,9 @@ public sealed class PlaybackChannelVolumeSlideTests
 				new float[]
 				{
 					0.5f,
-					0.5625f,
-					0.625f,
-					0.6875f,
+					0.546875f,
+					0.59375f,
+					0.640625f,
 					0.25f,
 					0.25f,
 					0.25f,
@@ -186,7 +186,7 @@ public sealed class PlaybackChannelVolumeSlideTests
 		Assert.That(session.VirtualVoices.Count, Is.EqualTo(1));
 		Assert.That(
 			session.VirtualVoices[0].OverallVolume,
-			Is.EqualTo(0.75).Within(1e-12));
+			Is.EqualTo(0.6875).Within(1e-12));
 		Assert.That(
 			session.GetChannelState(0).CurrentVoice!.OverallVolume,
 			Is.EqualTo(0.875).Within(1e-12));

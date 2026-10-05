@@ -82,7 +82,7 @@ public sealed class PlaybackArpeggioAndTremoloTests
 	}
 
 	[Test]
-	public void TremoloIsContinuousBetweenTrackerCompatibleAnchors()
+	public void TremoloStartsAtCurrentPhaseAndRemainsTransient()
 	{
 		ObjectId sourceId = (ObjectId)10U;
 		SampleSound sound = ConstantSample(1.0f, 200, 1000);

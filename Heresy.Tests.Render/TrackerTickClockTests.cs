@@ -90,7 +90,12 @@ public sealed class TrackerTickClockTests
 
 		Assert.That(
 			actual,
-			Is.EqualTo(Math.Pow(2.0, 0.5)).Within(1e-12));
+			Is.EqualTo(
+				Math.Pow(
+					2.0,
+					320.0
+						/ TrackerVibrato.LinearSlideUnitsPerOctave))
+				.Within(1e-12));
 	}
 
 	[Test]

@@ -38,11 +38,14 @@ The repository is intentionally split by concern.
 - Sequences are finite and entries can specify a `StartRow`.
 - Script object references are persisted in restricted-C# source as `_O(id)` and
   can later be projected by the editor as atomic named tokens.
-- Continuous effects are evaluated at output-sample resolution. Traditional
-  tracker ticks are compatibility anchors for timing/amplitude semantics, not
-  processing steps: an effect must agree with its tracker counterpart at the
-  corresponding tick states while using an appropriate continuous curve between
-  them. Discrete operations such as note delay/retrigger remain discrete.
+- Native effects use wall-clock time. Tracker compatibility effects are
+  row-scoped operators whose independent parameter deltas are composed with
+  persistent baseline state on every output frame. Persistent operators commit
+  their final delta at row end; transient modulators disappear without changing
+  the baseline. Legacy tick-processing artifacts are not preserved when the
+  musical operation is naturally continuous; instead the row's total legacy
+  change is spread across continuous row time. See
+  [Effect operators and tracker compatibility](docs/effect-operators.md).
 - Native source-frame seeking is a semantic capability, not a performance
   promise. A seekable sound reports either direct or replay-required cost.
   Replay-required seeks remain fully supported and exact; a future editor may
