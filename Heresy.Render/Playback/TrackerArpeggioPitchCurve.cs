@@ -60,7 +60,7 @@ public sealed class TrackerArpeggioPitchCurve : PitchCurve
 				_startFrame,
 				checked(_startFrame + frameOffset));
 
-		long tick = (long)Math.Floor(elapsedTicks);
+		long tick = (long)Math.Floor(elapsedTicks + 1e-9);
 
 		return (tick % 3) switch
 		{

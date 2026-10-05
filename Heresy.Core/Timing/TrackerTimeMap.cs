@@ -24,6 +24,7 @@ public sealed class TrackerTimeMap
 	}
 
 	private readonly List<Segment> _segments = [];
+	private double _timeSummationCompensation;
 	private double _currentTimeSeconds;
 	private double _currentTick;
 	private double _currentTempo;
@@ -279,8 +280,14 @@ public sealed class TrackerTimeMap
 		double trackerTicks,
 		double seconds)
 	{
+		double adjustedSeconds =
+			seconds - _timeSummationCompensation;
 		double endTime =
-			_currentTimeSeconds + seconds;
+			_currentTimeSeconds + adjustedSeconds;
+		_timeSummationCompensation =
+			(endTime - _currentTimeSeconds)
+				- adjustedSeconds;
+
 		double endTick =
 			_currentTick + trackerTicks;
 
