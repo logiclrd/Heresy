@@ -81,7 +81,7 @@ public sealed class PlaybackSlideTests
 			Is.EqualTo(Math.Pow(2.0, 40.0 / 768.0)).Within(1e-14));
 		Assert.That(
 			trajectory.GetMultiplier(100),
-			Is.EqualTo(finalMultiplier).Within(1e-14));
+			Is.EqualTo(Math.Pow(2.0, 200.0 / 768.0)).Within(1e-14));
 		Assert.That(
 			trajectory.GetMultiplier(120),
 			Is.EqualTo(finalMultiplier).Within(1e-14));

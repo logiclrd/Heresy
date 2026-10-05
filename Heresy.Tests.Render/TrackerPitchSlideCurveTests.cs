@@ -28,7 +28,7 @@ public sealed class TrackerPitchSlideCurveTests
 			Is.EqualTo(Math.Pow(2.0, 200.0 / 768.0)).Within(1e-14));
 		Assert.That(
 			curve.GetMultiplier(120),
-			Is.EqualTo(curve.GetMultiplier(100)).Within(1e-14));
+			Is.EqualTo(Math.Pow(2.0, 240.0 / 768.0)).Within(1e-14));
 	}
 
 	[Test]

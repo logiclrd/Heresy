@@ -33,18 +33,17 @@ public sealed class TrackerGlissandoTests
 			glissando: true);
 
 		double oneSemitone = Math.Pow(2.0, 1.0 / 12.0);
-		double twoSemitones = Math.Pow(2.0, 2.0 / 12.0);
 
 		Assert.That(curve.GetMultiplier(0), Is.EqualTo(1.0).Within(1e-14));
 		Assert.That(
 			curve.GetMultiplier(20),
-			Is.EqualTo(oneSemitone).Within(1e-14));
+			Is.EqualTo(1.0).Within(1e-14));
 		Assert.That(
 			curve.GetMultiplier(80),
-			Is.EqualTo(oneSemitone).Within(1e-14));
+			Is.EqualTo(1.0).Within(1e-14));
 		Assert.That(
 			curve.GetMultiplier(100),
-			Is.EqualTo(twoSemitones).Within(1e-14));
+			Is.EqualTo(oneSemitone).Within(1e-14));
 	}
 
 	[Test]
@@ -62,13 +61,13 @@ public sealed class TrackerGlissandoTests
 		double oneSemitone = Math.Pow(2.0, 1.0 / 12.0);
 
 		Assert.That(
-			curve.GetMultiplier(9),
+			curve.GetMultiplier(95),
 			Is.EqualTo(1.0).Within(1e-14));
 		Assert.That(
-			curve.GetMultiplier(10),
+			curve.GetMultiplier(96),
 			Is.EqualTo(oneSemitone).Within(1e-14));
 		Assert.That(
-			curve.GetMultiplier(19),
+			curve.GetMultiplier(119),
 			Is.EqualTo(oneSemitone).Within(1e-14));
 	}
 
@@ -93,7 +92,7 @@ public sealed class TrackerGlissandoTests
 		Assert.That(
 			curve.GetMultiplier(100),
 			Is.EqualTo(
-				Math.Pow(2.0, 2.0 / 12.0))
+				Math.Pow(2.0, 1.0 / 12.0))
 				.Within(1e-14));
 	}
 
@@ -114,6 +113,9 @@ public sealed class TrackerGlissandoTests
 			Is.EqualTo(2.0).Within(1e-14));
 		Assert.That(
 			curve.GetMultiplier(80),
+			Is.EqualTo(2.0).Within(1e-14));
+		Assert.That(
+			curve.GetMultiplier(100),
 			Is.EqualTo(Math.Pow(2.0, 11.0 / 12.0))
 				.Within(1e-14));
 	}
@@ -155,14 +157,14 @@ public sealed class TrackerGlissandoTests
 			session.GetChannelState(0).CurrentVoice!
 				.SoundState.PitchTrajectory;
 
-		double twoSemitones = Math.Pow(2.0, 2.0 / 12.0);
+		double oneSemitone = Math.Pow(2.0, 1.0 / 12.0);
 
 		Assert.That(
 			trajectory.GetMultiplier(100),
-			Is.EqualTo(twoSemitones).Within(1e-12));
+			Is.EqualTo(oneSemitone).Within(1e-12));
 		Assert.That(
 			trajectory.GetMultiplier(140),
-			Is.EqualTo(twoSemitones).Within(1e-12));
+			Is.EqualTo(oneSemitone).Within(1e-12));
 	}
 
 	[Test]
