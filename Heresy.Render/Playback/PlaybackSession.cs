@@ -179,6 +179,11 @@ public sealed class PlaybackSession
 
 	private void ApplyEvent(NoteEvent noteEvent, long eventFrame)
 	{
+		// The schedule's time map is the authority for instantaneous tempo.
+		// In particular, this captures a fresh reference tempo for effects
+		// started during or after a smooth tempo ramp.
+		_tempo = _tickClock.GetTempoAtFrame(eventFrame);
+
 		if (noteEvent.Target.Kind == ChannelTargetKind.Global)
 		{
 			foreach (NoteCommand command in noteEvent.Commands)
@@ -552,6 +557,11 @@ public sealed class PlaybackSession
 				_tempo = tempo.TicksPerDiachron;
 				break;
 
+			case SetTempoRampCommand:
+				// The continuous trajectory is already represented by
+				// TrackerTickClock's shared TrackerTimeMap.
+				break;
+
 			case SetSpeedCommand:
 				// PatternNoteProcessor has already baked speed into event timing.
 				break;
@@ -570,6 +580,9 @@ public sealed class PlaybackSession
 		{
 			case SetTempoCommand tempo:
 				_tempo = tempo.TicksPerDiachron;
+				break;
+
+			case SetTempoRampCommand:
 				break;
 
 			case SetSpeedCommand speed:

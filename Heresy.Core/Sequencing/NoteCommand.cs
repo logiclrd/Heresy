@@ -25,6 +25,38 @@ public sealed record NoteCutCommand : NoteCommand;
 public sealed record SetTempoCommand(double TicksPerDiachron) : NoteCommand;
 
 /// <summary>
+/// Smooth tempo transition whose tempo is linear in continuous tracker-tick
+/// position. The command begins at its event time and reaches EndingTempo
+/// after TrackerTicks tracker ticks.
+/// </summary>
+public sealed record SetTempoRampCommand : NoteCommand
+{
+	public SetTempoRampCommand(
+		double endingTempo,
+		double trackerTicks = 1.0)
+	{
+		if (!(endingTempo > 0.0)
+			|| double.IsNaN(endingTempo)
+			|| double.IsInfinity(endingTempo))
+		{
+			throw new ArgumentOutOfRangeException(nameof(endingTempo));
+		}
+		if (!(trackerTicks > 0.0)
+			|| double.IsNaN(trackerTicks)
+			|| double.IsInfinity(trackerTicks))
+		{
+			throw new ArgumentOutOfRangeException(nameof(trackerTicks));
+		}
+
+		EndingTempo = endingTempo;
+		TrackerTicks = trackerTicks;
+	}
+
+	public double EndingTempo { get; }
+	public double TrackerTicks { get; }
+}
+
+/// <summary>
 /// Raw tracker Txx tempo operation. Memory and slide/set interpretation are
 /// resolved by the common pattern processor because Txx changes tick timing.
 /// </summary>

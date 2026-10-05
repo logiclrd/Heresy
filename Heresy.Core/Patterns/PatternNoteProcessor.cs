@@ -47,60 +47,36 @@ public static class PatternNoteProcessor
 
 	private sealed class RowTickTimeline
 	{
-		private readonly List<double> _boundaries = [0.0];
-		private double _summationCompensation;
+		private readonly TrackerTimeMap _timeMap;
 
-		public double EndTickPosition => _boundaries.Count - 1;
+		public RowTickTimeline(double initialTempo)
+			=> _timeMap = new TrackerTimeMap(initialTempo);
 
-		public double EndSeconds => _boundaries[^1];
+		public double EndTickPosition =>
+			_timeMap.CurrentTick;
 
-		public void AppendTick(double tempo)
-		{
-			if (!(tempo > 0.0)
-				|| double.IsNaN(tempo)
-				|| double.IsInfinity(tempo))
-			{
-				throw new ArgumentOutOfRangeException(nameof(tempo));
-			}
+		public double EndSeconds =>
+			_timeMap.CurrentTimeSeconds;
 
-			double duration =
-				SequencingConstants.Diachron.TotalSeconds
-					/ tempo;
-			double adjusted =
-				duration - _summationCompensation;
-			double next =
-				_boundaries[^1] + adjusted;
-			_summationCompensation =
-				(next - _boundaries[^1]) - adjusted;
-			_boundaries.Add(next);
-		}
+		public double CurrentTempo =>
+			_timeMap.CurrentTempo;
+
+		public void AppendConstantTicks(double trackerTicks)
+			=> _timeMap.AppendConstantTicks(trackerTicks);
+
+		public void AppendTempoRamp(
+			double endingTempo,
+			double trackerTicks)
+			=> _timeMap.AppendTempoRamp(
+				endingTempo,
+				trackerTicks);
+
+		public void SetTempo(double tempo)
+			=> _timeMap.SetTempo(tempo);
 
 		public double GetSecondsAtTickPosition(
 			double tickPosition)
-		{
-			if (double.IsNaN(tickPosition)
-				|| double.IsInfinity(tickPosition)
-				|| tickPosition < 0.0
-				|| tickPosition > EndTickPosition + 1e-9)
-			{
-				throw new ArgumentOutOfRangeException(
-					nameof(tickPosition));
-			}
-
-			if (tickPosition <= 0.0)
-				return 0.0;
-
-			if (tickPosition >= EndTickPosition)
-				return EndSeconds;
-
-			int tick = (int)Math.Floor(tickPosition);
-			double fraction = tickPosition - tick;
-
-			return _boundaries[tick]
-				+ (_boundaries[tick + 1]
-					- _boundaries[tick])
-					* fraction;
-		}
+			=> _timeMap.GetTimeAtTick(tickPosition);
 	}
 
 	private sealed class ResolvedCommands
@@ -921,64 +897,183 @@ public static class PatternNoteProcessor
 					right.SourceEvent.EmissionOrder);
 			});
 
-		RowTickTimeline timeline = new();
-		int tickIntervals =
-			checked((int)Math.Ceiling(
-				rowEndTickPosition - 1e-12));
+		RowTickTimeline timeline =
+			new(context.State.Tempo);
 
-		for (int tick = 0;
-			tick < tickIntervals;
-			tick++)
+		int fullIntervals =
+			(int)Math.Floor(
+				rowEndTickPosition + 1e-12);
+		double partialInterval =
+			rowEndTickPosition - fullIntervals;
+
+		for (int interval = 0;
+			interval < fullIntervals;
+			interval++)
 		{
-			int tickWithinSpan =
-				tick % rowSpanTickCount;
+			AppendTempoInterval(
+				rowStartSeconds,
+				interval,
+				1.0,
+				rowEndTickPosition,
+				rowSpanTickCount,
+				tempoRequests,
+				timeline,
+				context,
+				resolved);
+		}
 
-			if (tick > 0)
-			{
-				bool firstTickOfRepeatedSpan =
-					tickWithinSpan == 0;
-
-				foreach (TrackerTempoRequest request
-					in tempoRequests)
-				{
-					double oldTempo = context.State.Tempo;
-					double newTempo =
-						ResolveTrackerTempoAtTick(
-							oldTempo,
-							request.Parameter,
-							firstTickOfRepeatedSpan);
-
-					if (newTempo == oldTempo
-						&& !(firstTickOfRepeatedSpan
-							&& request.Parameter >= 0x20))
-					{
-						continue;
-					}
-
-					context.State.Tempo = newTempo;
-					resolved.Add(
-						ResolveAt(
-							request.SourceEvent,
-							new NoteCommand[]
-								{
-									new SetTempoCommand(
-										newTempo),
-								},
-							rowStartSeconds
-								+ timeline.EndSeconds,
-							context,
-							SyntheticOrder(
-								request.SourceEvent
-									.EmissionOrder,
-								0)));
-				}
-			}
-
-			timeline.AppendTick(
-				context.State.Tempo);
+		if (partialInterval > 1e-12)
+		{
+			AppendTempoInterval(
+				rowStartSeconds,
+				fullIntervals,
+				partialInterval,
+				rowEndTickPosition,
+				rowSpanTickCount,
+				tempoRequests,
+				timeline,
+				context,
+				resolved);
 		}
 
 		return timeline;
+	}
+
+	private static void AppendTempoInterval(
+		double rowStartSeconds,
+		int intervalIndex,
+		double intervalTicks,
+		double rowEndTickPosition,
+		int rowSpanTickCount,
+		List<TrackerTempoRequest> tempoRequests,
+		RowTickTimeline timeline,
+		SequencingContext context,
+		List<NoteEvent> resolved)
+	{
+		double startingTempo = timeline.CurrentTempo;
+		double nextBoundary =
+			intervalIndex + 1.0;
+
+		bool reachesBoundary =
+			intervalTicks >= 1.0 - 1e-12;
+		bool effectActiveAtNextBoundary =
+			reachesBoundary
+			&& nextBoundary
+				< rowEndTickPosition - 1e-12;
+
+		if (!effectActiveAtNextBoundary
+			|| tempoRequests.Count == 0)
+		{
+			timeline.AppendConstantTicks(intervalTicks);
+			context.State.Tempo = timeline.CurrentTempo;
+			return;
+		}
+
+		int nextTickWithinSpan =
+			((intervalIndex + 1)
+				% rowSpanTickCount);
+		bool firstTickOfRepeatedSpan =
+			nextTickWithinSpan == 0;
+
+		double targetTempo = startingTempo;
+		bool hasSlide = false;
+		bool hasImmediateSet = false;
+
+		foreach (TrackerTempoRequest request
+			in tempoRequests)
+		{
+			double nextTempo =
+				ResolveTrackerTempoAtTick(
+					targetTempo,
+					request.Parameter,
+					firstTickOfRepeatedSpan);
+
+			if (nextTempo == targetTempo)
+				continue;
+
+			if (firstTickOfRepeatedSpan
+				&& request.Parameter >= 0x20)
+			{
+				hasImmediateSet = true;
+			}
+			else if (!firstTickOfRepeatedSpan
+				&& request.Parameter < 0x20)
+			{
+				hasSlide = true;
+			}
+
+			targetTempo = nextTempo;
+		}
+
+		if (hasSlide)
+		{
+			resolved.Add(
+				new NoteEvent(
+					new MusicalTime(
+						TimeSpan.FromSeconds(
+							rowStartSeconds
+								+ timeline.EndSeconds),
+						0.0),
+					ChannelTarget.Global,
+					new NoteCommand[]
+						{
+							new SetTempoRampCommand(
+								targetTempo,
+								intervalTicks),
+						},
+					SyntheticOrder(
+						tempoRequests[0]
+							.SourceEvent.EmissionOrder,
+						0)));
+
+			timeline.AppendTempoRamp(
+				targetTempo,
+				intervalTicks);
+		}
+		else
+		{
+			timeline.AppendConstantTicks(intervalTicks);
+		}
+
+		if (hasImmediateSet)
+		{
+			foreach (TrackerTempoRequest request
+				in tempoRequests)
+			{
+				if (request.Parameter < 0x20)
+					continue;
+
+				double oldTempo = timeline.CurrentTempo;
+				double newTempo =
+					ResolveTrackerTempoAtTick(
+						oldTempo,
+						request.Parameter,
+						firstTick: true);
+
+				if (newTempo == oldTempo)
+					continue;
+
+				timeline.SetTempo(newTempo);
+				resolved.Add(
+					ResolveAt(
+						request.SourceEvent,
+						new NoteCommand[]
+							{
+								new SetTempoCommand(
+									newTempo),
+							},
+						rowStartSeconds
+							+ timeline.EndSeconds,
+						context,
+						SyntheticOrder(
+							request.SourceEvent
+								.EmissionOrder,
+							0)));
+			}
+		}
+
+		context.State.Tempo =
+			timeline.CurrentTempo;
 	}
 
 	private static double ResolveTrackerTempoAtTick(

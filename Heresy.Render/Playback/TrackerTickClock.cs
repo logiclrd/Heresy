@@ -1,24 +1,18 @@
 using System;
-using System.Collections.Generic;
 
 using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
-using Heresy.Render.Timing;
 
 namespace Heresy.Render.Playback;
 
 /// <summary>
-/// Piecewise tracker tick clock derived from tempo commands in a resolved
-/// schedule. Tick position is continuous across tempo changes.
+/// Playback-facing adapter over the shared continuous tracker-time map. It
+/// converts output-frame coordinates to wall seconds and creates normalized
+/// per-effect time transforms.
 /// </summary>
 public sealed class TrackerTickClock
 {
-	private readonly record struct Anchor(
-		long Frame,
-		double TickPosition,
-		double Tempo);
-
-	private readonly List<Anchor> _anchors = [];
+	private readonly TrackerTimeMap _timeMap;
 	private readonly int _sampleRate;
 
 	public TrackerTickClock(
@@ -29,74 +23,57 @@ public sealed class TrackerTickClock
 		ArgumentNullException.ThrowIfNull(schedule);
 		if (sampleRate <= 0)
 			throw new ArgumentOutOfRangeException(nameof(sampleRate));
-		if (!(initialTempo > 0.0)
-			|| double.IsNaN(initialTempo)
-			|| double.IsInfinity(initialTempo))
-		{
-			throw new ArgumentOutOfRangeException(nameof(initialTempo));
-		}
 
 		_sampleRate = sampleRate;
-
-		long currentFrame = 0;
-		double currentTicks = 0.0;
-		double currentTempo = initialTempo;
-		_anchors.Add(new Anchor(
-			currentFrame,
-			currentTicks,
-			currentTempo));
+		_timeMap = new TrackerTimeMap(initialTempo);
 
 		foreach (NoteEvent noteEvent in schedule)
 		{
-			long eventFrame = Math.Max(
-				0,
-				FrameTime.Ceiling(
-					noteEvent.Offset.TimeOffset,
-					sampleRate));
+			double eventTimeSeconds =
+				noteEvent.Offset.TimeOffset.TotalSeconds;
 
-			foreach (NoteCommand command in noteEvent.Commands)
+			foreach (NoteCommand command
+				in noteEvent.Commands)
 			{
-				if (command is not SetTempoCommand tempo)
+				if (command is not SetTempoCommand
+					&& command is not SetTempoRampCommand)
+				{
 					continue;
-
-				if (!(tempo.TicksPerDiachron > 0.0)
-					|| double.IsNaN(tempo.TicksPerDiachron)
-					|| double.IsInfinity(tempo.TicksPerDiachron))
-				{
-					throw new ArgumentOutOfRangeException(
-						nameof(schedule),
-						"Schedule contains an invalid tempo.");
 				}
 
-				if (eventFrame < currentFrame)
-				throw new ArgumentException(
-					"Schedule events must be ordered by time.",
-					nameof(schedule));
+				double delta =
+					eventTimeSeconds
+						- _timeMap.CurrentTimeSeconds;
 
-				if (eventFrame > currentFrame)
+				if (delta > 1e-7)
 				{
-					currentTicks +=
-						(eventFrame - currentFrame)
-						/ (double)_sampleRate
-						* currentTempo
-						/ SequencingConstants.Diachron.TotalSeconds;
-					currentFrame = eventFrame;
+					_timeMap.AppendConstantTime(delta);
+				}
+				else if (delta < -1e-7)
+				{
+					throw new ArgumentException(
+						"Tempo commands overlap or are not ordered in time.",
+						nameof(schedule));
 				}
 
-				currentTempo = tempo.TicksPerDiachron;
+				switch (command)
+				{
+					case SetTempoCommand tempo:
+						_timeMap.SetTempo(
+							tempo.TicksPerDiachron);
+						break;
 
-				Anchor anchor = new(
-					currentFrame,
-					currentTicks,
-					currentTempo);
-
-				if (_anchors[^1].Frame == currentFrame)
-					_anchors[^1] = anchor;
-				else
-					_anchors.Add(anchor);
+					case SetTempoRampCommand ramp:
+						_timeMap.AppendTempoRamp(
+							ramp.EndingTempo,
+							ramp.TrackerTicks);
+						break;
+				}
 			}
 		}
 	}
+
+	public TrackerTimeMap TimeMap => _timeMap;
 
 	public double GetElapsedTicks(
 		long startFrame,
@@ -107,8 +84,16 @@ public sealed class TrackerTickClock
 		if (endFrame < startFrame)
 			throw new ArgumentOutOfRangeException(nameof(endFrame));
 
-		return GetTickPosition(endFrame)
-			- GetTickPosition(startFrame);
+		EffectTimeTransform effect =
+			CreateEffectTimeTransform(startFrame);
+
+		double effectSeconds =
+			GetEffectTimeSeconds(
+				effect,
+				endFrame);
+
+		return effectSeconds
+			/ effect.ReferenceTickDurationSeconds;
 	}
 
 	public double GetTickPosition(long absoluteFrame)
@@ -116,23 +101,39 @@ public sealed class TrackerTickClock
 		if (absoluteFrame < 0)
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
 
-		int low = 0;
-		int high = _anchors.Count - 1;
+		return _timeMap.GetTickAtTime(
+			absoluteFrame / (double)_sampleRate);
+	}
 
-		while (low < high)
-		{
-			int mid = low + (high - low + 1) / 2;
-			if (_anchors[mid].Frame <= absoluteFrame)
-				low = mid;
-			else
-				high = mid - 1;
-		}
+	public double GetTempoAtFrame(long absoluteFrame)
+	{
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
 
-		Anchor anchor = _anchors[low];
-		return anchor.TickPosition
-			+ (absoluteFrame - anchor.Frame)
-				/ (double)_sampleRate
-				* anchor.Tempo
-				/ SequencingConstants.Diachron.TotalSeconds;
+		return _timeMap.GetTempoAtTime(
+			absoluteFrame / (double)_sampleRate);
+	}
+
+	public EffectTimeTransform CreateEffectTimeTransform(
+		long startFrame)
+	{
+		if (startFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(startFrame));
+
+		return new EffectTimeTransform(
+			_timeMap,
+			startFrame / (double)_sampleRate);
+	}
+
+	public double GetEffectTimeSeconds(
+		EffectTimeTransform effectTime,
+		long absoluteFrame)
+	{
+		ArgumentNullException.ThrowIfNull(effectTime);
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+
+		return effectTime.GetTimeSeconds(
+			absoluteFrame / (double)_sampleRate);
 	}
 }
