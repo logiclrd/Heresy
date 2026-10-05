@@ -57,7 +57,7 @@ public sealed class PanbrelloWaveformPatternEffectTests
 	}
 
 	[Test]
-	public void S54ThroughS5FForceSineRatherThanBeingIgnored()
+	public void S54ThroughS5FAreIgnoredLikeImpulseTracker()
 	{
 		SequencingContext context = new();
 
@@ -71,15 +71,11 @@ public sealed class PanbrelloWaveformPatternEffectTests
 
 		Assert.That(
 			context.GetPhysicalChannelState(0).PanbrelloWaveform,
-			Is.EqualTo(TrackerWaveform.Sine));
+			Is.EqualTo(TrackerWaveform.Square));
 		Assert.That(
-			schedule[0].Commands,
-			Is.EqualTo(
-				new NoteCommand[]
-				{
-					new SetPanbrelloWaveformCommand(
-						TrackerWaveform.Sine),
-				}));
+			schedule.SelectMany(e => e.Commands)
+				.OfType<SetPanbrelloWaveformCommand>(),
+			Is.Empty);
 	}
 
 	[Test]
