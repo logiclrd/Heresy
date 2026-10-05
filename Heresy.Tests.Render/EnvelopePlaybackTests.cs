@@ -347,7 +347,9 @@ public sealed class EnvelopePlaybackTests
 		}
 	}
 
-	private sealed class ConstantSoundState : SoundState;
+	private sealed class ConstantSoundState : SoundState
+	{
+	}
 
 	private sealed class TestResolver : ISoundResolver
 	{
