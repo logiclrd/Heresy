@@ -214,6 +214,142 @@ public sealed class PlaybackOperatorIntegrationTests
 	}
 
 
+	[Test]
+	public void PersistentPitchSlideIsAPlaybackOperatorAndCommitsBaselineAtExpiry()
+	{
+		ObjectId sourceId = (ObjectId)10U;
+		PlaybackSession session = Session(
+			Schedule(
+				Event(
+					Frame(0),
+					new StartNoteCommand(sourceId),
+					new SetPitchSlideCommand(
+						48.0,
+						TicksPerRow: 6)),
+				Event(
+					Frame(12),
+					new ClearPitchSlideCommand())),
+			new TestResolver((sourceId, new ConstantSound())));
+
+		session.Render(0, 7, new float[7]);
+
+		PlaybackVoice voice =
+			session.GetChannelState(0).CurrentVoice!;
+
+		Assert.That(voice.ActiveOperatorCount, Is.EqualTo(1));
+		Assert.That(
+			voice.BaselinePitchMultiplier,
+			Is.EqualTo(1.0).Within(1e-14));
+		Assert.That(
+			voice.SoundState.PitchTrajectory.GetMultiplier(6),
+			Is.EqualTo(
+				Math.Pow(
+					2.0,
+					120.0
+						/ TrackerVibrato.LinearSlideUnitsPerOctave))
+				.Within(1e-14));
+
+		session.Render(7, 6, new float[6]);
+
+		double committed =
+			Math.Pow(
+				2.0,
+				240.0
+					/ TrackerVibrato.LinearSlideUnitsPerOctave);
+
+		Assert.That(voice.ActiveOperatorCount, Is.Zero);
+		Assert.That(
+			voice.BaselinePitchMultiplier,
+			Is.EqualTo(committed).Within(1e-14));
+		Assert.That(
+			voice.SoundState.PitchTrajectory.GetMultiplier(12),
+			Is.EqualTo(committed).Within(1e-14));
+	}
+
+	[Test]
+	public void VibratoAndArpeggioAreIndependentTransientPitchOperators()
+	{
+		ObjectId sourceId = (ObjectId)10U;
+		PlaybackSession session = Session(
+			Schedule(
+				Event(
+					Frame(0),
+					new StartNoteCommand(sourceId),
+					new SetVibratoCommand(5, 3),
+					new SetArpeggioCommand(4, 7)),
+				Event(
+					Frame(8),
+					new ClearPitchModulationCommand(),
+					new ClearArpeggioCommand())),
+			new TestResolver((sourceId, new ConstantSound())));
+
+		session.Render(0, 5, new float[5]);
+
+		PlaybackVoice voice =
+			session.GetChannelState(0).CurrentVoice!;
+
+		Assert.That(voice.ActiveOperatorCount, Is.EqualTo(2));
+		Assert.That(
+			voice.BaselinePitchMultiplier,
+			Is.EqualTo(1.0).Within(1e-14));
+
+		double expected =
+			TrackerVibrato.GetPitchMultiplier(20, 3)
+			* Math.Pow(2.0, 4.0 / 12.0);
+		Assert.That(
+			voice.SoundState.PitchTrajectory.GetMultiplier(2),
+			Is.EqualTo(expected).Within(1e-12));
+
+		session.Render(5, 4, new float[4]);
+
+		Assert.That(voice.ActiveOperatorCount, Is.Zero);
+		Assert.That(
+			voice.BaselinePitchMultiplier,
+			Is.EqualTo(1.0).Within(1e-14));
+		Assert.That(
+			voice.SoundState.PitchTrajectory.GetMultiplier(8),
+			Is.EqualTo(1.0).Within(1e-14));
+	}
+
+	[Test]
+	public void TremoloIsTransientNoteVolumeOperatorAndDoesNotCommit()
+	{
+		ObjectId sourceId = (ObjectId)10U;
+		PlaybackSession session = Session(
+			Schedule(
+				Event(
+					Frame(0),
+					new SetNoteVolumeCommand(0.5),
+					new StartNoteCommand(sourceId),
+					new SetTremoloCommand(
+						5,
+						4,
+						TrackerWaveform.Sine)),
+				Event(
+					Frame(8),
+					new ClearTremoloCommand())),
+			new TestResolver((sourceId, new ConstantSound())));
+
+		session.Render(0, 5, new float[5]);
+
+		PlaybackVoice voice =
+			session.GetChannelState(0).CurrentVoice!;
+
+		Assert.That(voice.ActiveOperatorCount, Is.EqualTo(1));
+		Assert.That(voice.NoteVolume, Is.EqualTo(0.5).Within(1e-12));
+		Assert.That(
+			voice.GetNoteVolume(2),
+			Is.Not.EqualTo(0.5).Within(1e-12));
+
+		session.Render(5, 4, new float[4]);
+
+		Assert.That(voice.ActiveOperatorCount, Is.Zero);
+		Assert.That(voice.NoteVolume, Is.EqualTo(0.5).Within(1e-12));
+		Assert.That(
+			voice.GetNoteVolume(8),
+			Is.EqualTo(0.5).Within(1e-12));
+	}
+
 	private static PlaybackSession Session(
 		NoteSchedule schedule,
 		ISoundResolver resolver)
