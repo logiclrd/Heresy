@@ -142,6 +142,11 @@ public sealed class PlaybackVoice
 
 	public int ActiveOperatorCount => _operators.Count;
 
+	public double BaselinePitchMultiplier
+		=> _basePitchCurve is ConstantPitchCurve constant
+			? constant.Multiplier
+			: 1.0;
+
 	public bool IsFading => _fadeStartFrame.HasValue;
 
 	public bool IsNoteFadeRequested => _noteFadeRequested;
