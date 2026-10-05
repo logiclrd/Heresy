@@ -119,6 +119,60 @@ public sealed class LinearRowPlaybackOperator : IRowPlaybackOperator
 }
 
 /// <summary>
+/// Row operator backed by an absolute delta function. The function receives
+/// wall time and row time and returns this operator's current contribution.
+/// </summary>
+public sealed class FunctionalRowPlaybackOperator : IRowPlaybackOperator
+{
+	private readonly PlaybackParameter _parameter;
+	private readonly Func<double, double, double> _evaluate;
+
+	public FunctionalRowPlaybackOperator(
+		PlaybackParameter parameter,
+		Func<double, double, double> evaluate,
+		bool commitOnExpire)
+	{
+		_parameter = parameter;
+		_evaluate = evaluate
+			?? throw new ArgumentNullException(nameof(evaluate));
+		CommitOnExpire = commitOnExpire;
+	}
+
+	public PlaybackParameterDeltas Deltas { get; } = new();
+	public bool CommitOnExpire { get; }
+
+	public void Update(
+		double wallTimeSeconds,
+		double rowTime)
+	{
+		if (double.IsNaN(wallTimeSeconds)
+			|| double.IsInfinity(wallTimeSeconds)
+			|| wallTimeSeconds < 0.0)
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(wallTimeSeconds));
+		}
+		if (double.IsNaN(rowTime)
+			|| double.IsInfinity(rowTime))
+		{
+			throw new ArgumentOutOfRangeException(nameof(rowTime));
+		}
+
+		double value = _evaluate(
+			wallTimeSeconds,
+			rowTime);
+		if (double.IsNaN(value)
+			|| double.IsInfinity(value))
+		{
+			throw new InvalidOperationException(
+				"Operator produced a non-finite parameter delta.");
+		}
+
+		Deltas[_parameter] = value;
+	}
+}
+
+/// <summary>
 /// Owns simultaneously active operators. Operators retain independent delta
 /// vectors; composition sums those vectors only when effective state is read.
 /// </summary>

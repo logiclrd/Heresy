@@ -119,8 +119,21 @@ public sealed class TrackerPanbrelloCurve
 				_startFrame,
 				checked(_startFrame + frameOffset));
 
+		return GetSpatialXOffsetForRowTime(
+			rawTickPosition);
+	}
+
+	public double GetSpatialXOffsetForRowTime(
+		double rowTime)
+	{
+		if (double.IsNaN(rowTime)
+			|| double.IsInfinity(rowTime))
+		{
+			throw new ArgumentOutOfRangeException(nameof(rowTime));
+		}
+
 		double tickPosition = Math.Clamp(
-			rawTickPosition,
+			rowTime,
 			0.0,
 			_ticksPerRow);
 
