@@ -1303,7 +1303,8 @@ long? soundEndRelative = voice.Sound.GetEndFrameExclusive(
 				frame * outputChannelCount,
 				outputChannelCount);
 
-			voice.SynchronizeFilterEnvelope(absoluteFrame);
+			if (voice.HasFilterEnvelope)
+				voice.SynchronizeFilterEnvelope(absoluteFrame);
 			voice.FilterState.ProcessFrame(outputFrame);
 
 			for (int outputChannel = 0; outputChannel < outputChannelCount; outputChannel++)

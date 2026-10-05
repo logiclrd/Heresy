@@ -282,6 +282,7 @@ public sealed class PlaybackVoice
 	public bool Surround { get; internal set; }
 
 	internal bool HasPanningEnvelope => _panningEnvelope is not null;
+	internal bool HasFilterEnvelope => _filterEnvelope is not null;
 
 	public int ActiveOperatorCount => _operators.Count;
 
@@ -357,10 +358,19 @@ public sealed class PlaybackVoice
 
 		envelope?.SetEnabled(absoluteFrame, enabled);
 
-		if (target == EnvelopeTarget.Panning)
+		if (target == EnvelopeTarget.Pitch && _pitchEnvelope is not null)
+		{
+			RecomposePitchTrajectory(
+				absoluteFrame - StartFrame);
+		}
+		else if (target == EnvelopeTarget.Panning)
+		{
 			SynchronizePanningEnvelope(absoluteFrame);
+		}
 		else if (target == EnvelopeTarget.Filter)
+		{
 			SynchronizeFilterEnvelope(absoluteFrame);
+		}
 	}
 
 	internal double GetVolumeEnvelopeValue(long absoluteFrame)
