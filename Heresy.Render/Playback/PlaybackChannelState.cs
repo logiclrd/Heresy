@@ -326,7 +326,7 @@ public sealed class PlaybackChannelState
 		{
 			CurrentVoice.Surround = enabled;
 			if (enabled)
-				CurrentVoice.SoundState.Position = Position;
+				CurrentVoice.SetBasePosition(absoluteFrame, Position);
 		}
 	}
 
@@ -342,8 +342,7 @@ public sealed class PlaybackChannelState
 		CancelPanbrello(absoluteFrame);
 		CancelSpatialXSlide();
 		Position = position;
-		if (CurrentVoice is not null)
-			CurrentVoice.SoundState.Position = position;
+		CurrentVoice?.SetBasePosition(absoluteFrame, position);
 	}
 
 	internal void AdjustSpatialX(
@@ -373,8 +372,7 @@ public sealed class PlaybackChannelState
 			Position.Y,
 			Position.Z);
 
-		if (CurrentVoice is not null)
-			CurrentVoice.SoundState.Position = Position;
+		CurrentVoice?.SetBasePosition(absoluteFrame, Position);
 	}
 
 	internal void SetSpatialXSlide(
@@ -480,11 +478,9 @@ public sealed class PlaybackChannelState
 		if (absoluteFrame < 0)
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
 
-		if (CurrentVoice is not null)
-		{
-			CurrentVoice.SoundState.Position =
-				GetEffectivePosition(absoluteFrame);
-		}
+		CurrentVoice?.SetBasePosition(
+			absoluteFrame,
+			GetEffectivePosition(absoluteFrame));
 	}
 
 	internal void SynchronizeContinuousState(long absoluteFrame)
@@ -805,20 +801,32 @@ public sealed class PlaybackChannelState
 		}
 	}
 
-	internal void SetFilterParameters(ResonantFilterParameters parameters)
+	internal void SetFilterParameters(
+		long absoluteFrame,
+		ResonantFilterParameters parameters)
 	{
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
 		FilterParameters = parameters;
-		CurrentVoice?.FilterState.SetParameters(parameters);
+		CurrentVoice?.SetBaseFilterParameters(
+			absoluteFrame,
+			parameters);
 	}
 
-	internal void SetFilterCutoff(double cutoff)
+	internal void SetFilterCutoff(
+		long absoluteFrame,
+		double cutoff)
 		=> SetFilterParameters(
+			absoluteFrame,
 			new ResonantFilterParameters(
 				cutoff,
 				FilterParameters.Resonance));
 
-	internal void SetFilterResonance(double resonance)
+	internal void SetFilterResonance(
+		long absoluteFrame,
+		double resonance)
 		=> SetFilterParameters(
+			absoluteFrame,
 			new ResonantFilterParameters(
 				FilterParameters.Cutoff,
 				resonance));
@@ -840,8 +848,9 @@ public sealed class PlaybackChannelState
 		voice.NoteVolume = NoteVolume;
 		voice.OverallVolume = OverallVolume;
 		voice.Surround = Surround;
-		voice.SoundState.Position =
-			GetEffectivePosition(absoluteFrame);
+		voice.SetBasePosition(
+			absoluteFrame,
+			GetEffectivePosition(absoluteFrame));
 	}
 
 	internal void CutCurrentVoice()

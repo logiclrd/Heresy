@@ -351,17 +351,22 @@ public sealed class PlaybackSession
 
 			case SetResonantFilterCommand filter:
 				channel.SetFilterParameters(
+					eventFrame,
 					new ResonantFilterParameters(
 						filter.Cutoff,
 						filter.Resonance));
 				break;
 
 			case SetResonantFilterCutoffCommand filter:
-				channel.SetFilterCutoff(filter.Cutoff);
+				channel.SetFilterCutoff(
+					eventFrame,
+					filter.Cutoff);
 				break;
 
 			case SetResonantFilterResonanceCommand filter:
-				channel.SetFilterResonance(filter.Resonance);
+				channel.SetFilterResonance(
+					eventFrame,
+					filter.Resonance);
 				break;
 
 			case SetPlaybackOffsetCommand playbackOffset:
@@ -1202,6 +1207,29 @@ public sealed class PlaybackSession
 		int frameCount,
 		Span<float> destination)
 	{
+		if (frameCount > 1 && voice.HasPanningEnvelope)
+		{
+			int outputChannelCount =
+				_context.Configuration.OutputChannelCount;
+			for (int frame = 0; frame < frameCount; frame++)
+			{
+				Span<float> outputFrame = destination.Slice(
+					frame * outputChannelCount,
+					outputChannelCount);
+				if (RenderVoice(
+					voice,
+					absoluteStartFrame + frame,
+					1,
+					outputFrame))
+				{
+					return true;
+				}
+			}
+			return false;
+		}
+
+		voice.SynchronizePanningEnvelope(absoluteStartFrame);
+
 		long invocationStartFrame = absoluteStartFrame - voice.StartFrame;
 		if (invocationStartFrame < 0)
 			throw new InvalidOperationException("A playback voice began after the segment being rendered.");
@@ -1275,6 +1303,7 @@ long? soundEndRelative = voice.Sound.GetEndFrameExclusive(
 				frame * outputChannelCount,
 				outputChannelCount);
 
+			voice.SynchronizeFilterEnvelope(absoluteFrame);
 			voice.FilterState.ProcessFrame(outputFrame);
 
 			for (int outputChannel = 0; outputChannel < outputChannelCount; outputChannel++)

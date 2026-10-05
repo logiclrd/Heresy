@@ -28,6 +28,7 @@ public sealed class PlaybackVoice
 		private readonly PitchCurve _baseCurve;
 		private readonly PitchOperatorBinding[] _operators;
 		private readonly TrackerTickClock _tickClock;
+		private readonly EnvelopePlaybackState? _pitchEnvelope;
 		private readonly long _segmentAbsoluteStartFrame;
 		private readonly int _sampleRate;
 
@@ -35,6 +36,7 @@ public sealed class PlaybackVoice
 			PitchCurve baseCurve,
 			IReadOnlyList<PitchOperatorBinding> operators,
 			TrackerTickClock tickClock,
+			EnvelopePlaybackState? pitchEnvelope,
 			long segmentAbsoluteStartFrame,
 			int sampleRate)
 		{
@@ -43,6 +45,7 @@ public sealed class PlaybackVoice
 			ArgumentNullException.ThrowIfNull(operators);
 			_tickClock = tickClock
 				?? throw new ArgumentNullException(nameof(tickClock));
+			_pitchEnvelope = pitchEnvelope;
 			if (segmentAbsoluteStartFrame < 0)
 				throw new ArgumentOutOfRangeException(nameof(segmentAbsoluteStartFrame));
 			if (sampleRate <= 0)
@@ -85,11 +88,23 @@ public sealed class PlaybackVoice
 						PlaybackParameter.PitchLinearUnits];
 			}
 
-			return _baseCurve.GetMultiplier(frameOffset)
+			double envelopeOctaves =
+				_pitchEnvelope?.GetValue(absoluteFrame) ?? 0.0;
+			double multiplier =
+				_baseCurve.GetMultiplier(frameOffset)
 				* Math.Pow(
 					2.0,
 					linearUnits
-						/ TrackerVibrato.LinearSlideUnitsPerOctave);
+						/ TrackerVibrato.LinearSlideUnitsPerOctave
+						+ envelopeOctaves);
+			if (!(multiplier > 0.0)
+				|| double.IsNaN(multiplier)
+				|| double.IsInfinity(multiplier))
+			{
+				throw new InvalidOperationException(
+					"Pitch envelope produced a non-finite pitch multiplier.");
+			}
+			return multiplier;
 		}
 	}
 
@@ -143,6 +158,8 @@ public sealed class PlaybackVoice
 	private readonly EnvelopePlaybackState? _pitchEnvelope;
 	private readonly EnvelopePlaybackState? _panningEnvelope;
 	private readonly EnvelopePlaybackState? _filterEnvelope;
+	private Vector3 _basePosition;
+	private ResonantFilterParameters _baseFilterParameters;
 	private int _outputHistoryFrames;
 
 	private long? _fadeStartFrame;
@@ -226,11 +243,16 @@ public sealed class PlaybackVoice
 		_pitchEnvelope = CreateEnvelopeState(envelopes.Pitch, startFrame, sampleRate);
 		_panningEnvelope = CreateEnvelopeState(envelopes.Panning, startFrame, sampleRate);
 		_filterEnvelope = CreateEnvelopeState(envelopes.Filter, startFrame, sampleRate);
+		_basePosition = soundState.Position;
+		_baseFilterParameters = filterParameters;
 
 		FilterState = new ResonantFilterState(
 			outputChannelCount,
 			sampleRate,
 			filterParameters);
+
+		if (_pitchEnvelope is not null)
+			RecomposePitchTrajectory(0);
 	}
 
 	public ISound Sound { get; }
@@ -258,6 +280,8 @@ public sealed class PlaybackVoice
 	/// A displaced NNA voice retains this value after migration.
 	/// </summary>
 	public bool Surround { get; internal set; }
+
+	internal bool HasPanningEnvelope => _panningEnvelope is not null;
 
 	public int ActiveOperatorCount => _operators.Count;
 
@@ -332,10 +356,88 @@ public sealed class PlaybackVoice
 		};
 
 		envelope?.SetEnabled(absoluteFrame, enabled);
+
+		if (target == EnvelopeTarget.Panning)
+			SynchronizePanningEnvelope(absoluteFrame);
+		else if (target == EnvelopeTarget.Filter)
+			SynchronizeFilterEnvelope(absoluteFrame);
 	}
 
 	internal double GetVolumeEnvelopeValue(long absoluteFrame)
 		=> _volumeEnvelope?.GetValue(absoluteFrame) ?? 1.0;
+
+	internal void SetBasePosition(
+		long absoluteFrame,
+		Vector3 position)
+	{
+		if (absoluteFrame < StartFrame)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		_basePosition = position;
+		SynchronizePanningEnvelope(absoluteFrame);
+	}
+
+	internal void SynchronizePanningEnvelope(long absoluteFrame)
+	{
+		if (absoluteFrame < StartFrame)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+
+		if (_panningEnvelope is null || Surround)
+		{
+			SoundState.Position = _basePosition;
+			return;
+		}
+
+		double baseX = _basePosition.X;
+		if (baseX < -1.0 || baseX > 1.0)
+		{
+			SoundState.Position = _basePosition;
+			return;
+		}
+
+		double envelope = Math.Clamp(
+			_panningEnvelope.GetValue(absoluteFrame),
+			-1.0,
+			1.0);
+		double excursion = 1.0 - Math.Abs(baseX);
+		SoundState.Position = new Vector3(
+			(float)Math.Clamp(
+				baseX + envelope * excursion,
+				-1.0,
+				1.0),
+			_basePosition.Y,
+			_basePosition.Z);
+	}
+
+	internal void SetBaseFilterParameters(
+		long absoluteFrame,
+		ResonantFilterParameters parameters)
+	{
+		if (absoluteFrame < StartFrame)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		_baseFilterParameters = parameters;
+		SynchronizeFilterEnvelope(absoluteFrame);
+	}
+
+	internal void SynchronizeFilterEnvelope(long absoluteFrame)
+	{
+		if (absoluteFrame < StartFrame)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+
+		if (_filterEnvelope is null)
+		{
+			FilterState.SetParameters(_baseFilterParameters);
+			return;
+		}
+
+		double cutoff = Math.Clamp(
+			_filterEnvelope.GetValue(absoluteFrame),
+			0.0,
+			1.0);
+		FilterState.SetParameters(
+			new ResonantFilterParameters(
+				cutoff,
+				_baseFilterParameters.Resonance));
+	}
 
 	internal void BeginFade(long absoluteFrame, TimeSpan duration, int sampleRate)
 	{
@@ -1179,6 +1281,7 @@ public sealed class PlaybackVoice
 				baseCurve,
 				_pitchOperators,
 				_tickClock,
+				_pitchEnvelope,
 				checked(StartFrame + relativeFrame),
 				_sampleRate));
 	}
