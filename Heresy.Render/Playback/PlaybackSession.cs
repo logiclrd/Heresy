@@ -16,6 +16,12 @@ namespace Heresy.Render.Playback;
 /// </summary>
 public sealed class PlaybackSession
 {
+	private sealed class ActiveTempoRamp
+	{
+		public required long StartFrame { get; init; }
+		public required double TrackerTicks { get; init; }
+		public required LinearRowPlaybackOperator Operator { get; init; }
+	}
 	private sealed class ActiveGlobalVolumeSlide
 	{
 		public required long StartFrame { get; init; }
@@ -32,6 +38,7 @@ public sealed class PlaybackSession
 	private readonly SortedDictionary<int, ActiveGlobalVolumeSlide> _globalVolumeSlides = [];
 	private readonly PlaybackOperatorCollection _globalOperators = new();
 
+	private ActiveTempoRamp? _activeTempoRamp;
 	private int _nextEventIndex;
 	private long _nextFrame;
 	private ulong _nextVoiceModulationSeed = 0x4845524553590001UL;
@@ -58,6 +65,19 @@ public sealed class PlaybackSession
 
 	public int ActiveGlobalOperatorCount => _globalOperators.Count;
 
+
+	public double BaselineTempo => _tempo;
+
+	public double GetEffectiveTempo(long absoluteFrame)
+	{
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+
+		UpdateTempoRamp(absoluteFrame);
+		return _tempo
+			+ _globalOperators.GetTotalDelta(
+				PlaybackParameter.Tempo);
+	}
 	public IReadOnlyList<PlaybackVoice> VirtualVoices => _virtualVoices;
 
 	public bool TryGetChannelState(int channel, out PlaybackChannelState? state)
@@ -146,6 +166,7 @@ public sealed class PlaybackSession
 
 		// Events exactly at the end boundary affect the next frame and therefore
 		// are intentionally left for the next Render call.
+		SynchronizeTempoRamp(blockEnd);
 		_nextFrame = blockEnd;
 	}
 
@@ -178,10 +199,7 @@ public sealed class PlaybackSession
 
 	private void ApplyEvent(NoteEvent noteEvent, long eventFrame)
 	{
-		// The schedule's time map is the authority for instantaneous tempo.
-		// In particular, this captures a fresh reference tempo for effects
-		// started during or after a smooth tempo ramp.
-		_tempo = _tickClock.GetTempoAtFrame(eventFrame);
+		SynchronizeTempoRamp(eventFrame);
 
 		if (noteEvent.Target.Kind == ChannelTargetKind.Global)
 		{
@@ -553,14 +571,17 @@ public sealed class PlaybackSession
 				break;
 
 			case SetTempoCommand tempo:
-				_tempo = tempo.TicksPerDiachron;
+				SetBaselineTempo(
+					eventFrame,
+					tempo.TicksPerDiachron);
 				break;
 
-			case SetTempoRampCommand:
-				// The continuous trajectory is already represented by
-				// TrackerTickClock's shared TrackerTimeMap.
+			case SetTempoRampCommand ramp:
+				SetTempoRamp(
+					eventFrame,
+					ramp.EndingTempo,
+					ramp.TrackerTicks);
 				break;
-
 			case SetSpeedCommand:
 				// PatternNoteProcessor has already baked speed into event timing.
 				break;
@@ -578,12 +599,17 @@ public sealed class PlaybackSession
 		switch (command)
 		{
 			case SetTempoCommand tempo:
-				_tempo = tempo.TicksPerDiachron;
+				SetBaselineTempo(
+					eventFrame,
+					tempo.TicksPerDiachron);
 				break;
 
-			case SetTempoRampCommand:
+			case SetTempoRampCommand ramp:
+				SetTempoRamp(
+					eventFrame,
+					ramp.EndingTempo,
+					ramp.TrackerTicks);
 				break;
-
 			case SetSpeedCommand speed:
 				_speed = speed.TicksPerRow;
 				break;
@@ -851,6 +877,121 @@ public sealed class PlaybackSession
 		}
 	}
 
+	private void SetBaselineTempo(
+		long absoluteFrame,
+		double tempo)
+	{
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		if (!(tempo > 0.0)
+			|| double.IsNaN(tempo)
+			|| double.IsInfinity(tempo))
+		{
+			throw new ArgumentOutOfRangeException(nameof(tempo));
+		}
+
+		CommitTempoRamp(absoluteFrame);
+		_tempo = tempo;
+	}
+
+	private void SetTempoRamp(
+		long absoluteFrame,
+		double endingTempo,
+		double trackerTicks)
+	{
+		if (absoluteFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		if (!(endingTempo > 0.0)
+			|| double.IsNaN(endingTempo)
+			|| double.IsInfinity(endingTempo))
+		{
+			throw new ArgumentOutOfRangeException(nameof(endingTempo));
+		}
+		if (!(trackerTicks > 0.0)
+			|| double.IsNaN(trackerTicks)
+			|| double.IsInfinity(trackerTicks))
+		{
+			throw new ArgumentOutOfRangeException(nameof(trackerTicks));
+		}
+
+		CommitTempoRamp(absoluteFrame);
+
+		LinearRowPlaybackOperator playbackOperator = new(
+			PlaybackParameter.Tempo,
+			totalDelta: endingTempo - _tempo,
+			rowSpan: trackerTicks,
+			commitOnExpire: true);
+		_globalOperators.Add(playbackOperator);
+		_activeTempoRamp = new ActiveTempoRamp
+		{
+			StartFrame = absoluteFrame,
+			TrackerTicks = trackerTicks,
+			Operator = playbackOperator,
+		};
+	}
+
+	private void UpdateTempoRamp(long absoluteFrame)
+	{
+		ActiveTempoRamp? ramp = _activeTempoRamp;
+		if (ramp is null)
+			return;
+
+		double rowTime = Math.Clamp(
+			_tickClock.GetElapsedTicks(
+				ramp.StartFrame,
+				Math.Max(ramp.StartFrame, absoluteFrame)),
+			0.0,
+			ramp.TrackerTicks);
+
+		ramp.Operator.Update(
+			absoluteFrame
+				/ (double)_context.Configuration.SampleRate,
+			rowTime);
+	}
+
+	private void SynchronizeTempoRamp(long absoluteFrame)
+	{
+		ActiveTempoRamp? ramp = _activeTempoRamp;
+		if (ramp is null)
+			return;
+
+		UpdateTempoRamp(absoluteFrame);
+		double rowTime = Math.Clamp(
+			_tickClock.GetElapsedTicks(
+				ramp.StartFrame,
+				Math.Max(ramp.StartFrame, absoluteFrame)),
+			0.0,
+			ramp.TrackerTicks);
+
+		if (rowTime < ramp.TrackerTicks - 1e-9)
+			return;
+
+		CommitTempoRamp(absoluteFrame);
+	}
+
+	private void CommitTempoRamp(long absoluteFrame)
+	{
+		ActiveTempoRamp? ramp = _activeTempoRamp;
+		if (ramp is null)
+			return;
+
+		double rowTime = Math.Clamp(
+			_tickClock.GetElapsedTicks(
+				ramp.StartFrame,
+				Math.Max(ramp.StartFrame, absoluteFrame)),
+			0.0,
+			ramp.TrackerTicks);
+
+		PlaybackParameterDeltas committed =
+			_globalOperators.Expire(
+				ramp.Operator,
+				absoluteFrame
+					/ (double)_context.Configuration.SampleRate,
+				rowTime);
+
+		_tempo += committed[PlaybackParameter.Tempo];
+		_activeTempoRamp = null;
+	}
 	private void SetGlobalVolume(
 		long absoluteFrame,
 		double volume)
@@ -1016,6 +1157,7 @@ public sealed class PlaybackSession
 		for (int frame = 0; frame < frameCount; frame++)
 		{
 			long absoluteFrame = absoluteStartFrame + frame;
+			UpdateTempoRamp(absoluteFrame);
 			double effectiveVolume =
 				GetEffectiveGlobalVolume(absoluteFrame);
 
