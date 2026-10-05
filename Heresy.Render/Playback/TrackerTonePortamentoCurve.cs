@@ -167,8 +167,9 @@ public sealed class TrackerTonePortamentoCurve : PitchCurve
 			: Math.Max(candidate, _targetMultiplier);
 	}
 
-	private static int QuantizeToNextSemitone(
-		double multiplier)
+	private static int QuantizeToCrossedSemitone(
+		double multiplier,
+		double direction)
 	{
 		double semitones =
 			12.0 * Math.Log2(multiplier);
@@ -177,6 +178,8 @@ public sealed class TrackerTonePortamentoCurve : PitchCurve
 		if (Math.Abs(semitones - nearest) <= 1e-10)
 			semitones = nearest;
 
-		return checked((int)Math.Ceiling(semitones));
+		return direction >= 0.0
+			? checked((int)Math.Floor(semitones))
+			: checked((int)Math.Ceiling(semitones));
 	}
 }
