@@ -102,7 +102,7 @@ public sealed class EnvelopePlaybackTests
 		Assert.That(state.GetValue(80), Is.EqualTo(20_020.0));
 
 		state.SetEnabled(80, true);
-		Assert.That(state.GetValue(85), Is.EqualTo(25_020.0));
+		Assert.That(state.GetValue(85), Is.EqualTo(20_025.0));
 	}
 
 	[Test]
