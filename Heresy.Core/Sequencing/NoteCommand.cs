@@ -1,6 +1,7 @@
 using System;
 using System.Numerics;
 
+using Heresy.Core.Envelopes;
 using Heresy.Core.Objects;
 
 namespace Heresy.Core.Sequencing;
@@ -19,6 +20,15 @@ public sealed record StartNoteCommand(
 	bool Mixdown = false) : NoteCommand;
 
 public sealed record NoteOffCommand : NoteCommand;
+
+/// <summary>
+/// Enables or disables one voice envelope without resetting its playback
+/// position. Disabled envelopes hold their current value and resume from the
+/// held position when re-enabled.
+/// </summary>
+public sealed record SetEnvelopeEnabledCommand(
+	EnvelopeTarget Target,
+	bool Enabled) : NoteCommand;
 
 public sealed record NoteCutCommand : NoteCommand;
 

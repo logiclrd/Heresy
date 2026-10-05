@@ -1,5 +1,7 @@
 using System;
 
+using Heresy.Render.Envelopes;
+
 namespace Heresy.Render.Sounds;
 
 /// <summary>
@@ -11,7 +13,8 @@ public sealed record NoteConfigurationSnapshot
 	public NoteConfigurationSnapshot(
 		NewNotePolicy newNotePolicy,
 		TimeSpan? noteFadeDuration = null,
-		TimeSpan? newNoteFadeDuration = null)
+		TimeSpan? newNoteFadeDuration = null,
+		EnvelopeConfigurationSnapshot? envelopes = null)
 	{
 		ValidateOptionalDuration(
 			noteFadeDuration,
@@ -27,9 +30,16 @@ public sealed record NoteConfigurationSnapshot
 			?? (newNotePolicy.Action == NewNoteAction.Fade
 				? newNotePolicy.FadeDuration
 				: null);
+		Envelopes = envelopes ?? EnvelopeConfigurationSnapshot.Empty;
 	}
 
 	public NewNotePolicy NewNotePolicy { get; }
+
+	/// <summary>
+	/// Immutable envelope curves captured for this note. Mutable enable/disable
+	/// position belongs to PlaybackVoice, not to this configuration snapshot.
+	/// </summary>
+	public EnvelopeConfigurationSnapshot Envelopes { get; }
 
 	/// <summary>
 	/// Optional duration used when an explicit tracker past-note fade is
