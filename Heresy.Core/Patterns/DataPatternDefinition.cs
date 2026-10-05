@@ -177,6 +177,12 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			case TrackerVibratoWaveformPatternEffect waveform:
 				return new ApplyTrackerVibratoWaveformCommand(waveform.Value);
 
+			case TrackerMidiMacroSelectPatternEffect macro:
+				return new ApplyTrackerMidiMacroSelectCommand(macro.Macro);
+
+			case TrackerMidiMacroPatternEffect macro:
+				return new ApplyTrackerMidiMacroCommand(macro.Parameter);
+
 			case SetResonantFilterPatternEffect filter:
 				return new SetResonantFilterCommand(
 					filter.Cutoff,

@@ -1752,6 +1752,40 @@ public static class PatternNoteProcessor
 					break;
 				}
 
+				case ApplyTrackerMidiMacroSelectCommand macro:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(
+							noteEvent,
+							context,
+							"Tracker MIDI macro select");
+					transformed ??= CopyCommandsBefore(
+						noteEvent.Commands,
+						i);
+					channelState.MidiMacroIndex = macro.Macro;
+					break;
+				}
+
+				case ApplyTrackerMidiMacroCommand macro:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(
+							noteEvent,
+							context,
+							"Tracker MIDI macro");
+					transformed ??= CopyCommandsBefore(
+						noteEvent.Commands,
+						i);
+
+					NoteCommand? resolvedMacro =
+						context.TrackerMidiMacros.ResolvePcmCommand(
+							channelState.MidiMacroIndex,
+							macro.Parameter);
+					if (resolvedMacro is not null)
+						transformed.Add(resolvedMacro);
+					break;
+				}
+
 				case ApplyTrackerPanbrelloWaveformCommand waveform:
 				{
 					SequencingChannelState channelState =
