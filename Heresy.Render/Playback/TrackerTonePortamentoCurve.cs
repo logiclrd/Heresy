@@ -106,8 +106,20 @@ public sealed class TrackerTonePortamentoCurve : PitchCurve
 		if (frameOffset < 0)
 			throw new ArgumentOutOfRangeException(nameof(frameOffset));
 
+		return GetMultiplierForRowTime(
+			GetRowTime(frameOffset));
+	}
+
+	public double GetMultiplierForRowTime(double rowTime)
+	{
+		if (double.IsNaN(rowTime)
+			|| double.IsInfinity(rowTime))
+		{
+			throw new ArgumentOutOfRangeException(nameof(rowTime));
+		}
+
 		double continuous =
-			GetContinuousMultiplier(frameOffset);
+			GetContinuousMultiplierForRowTime(rowTime);
 
 		if (!_glissando
 			|| _direction == 0.0
@@ -134,20 +146,41 @@ public sealed class TrackerTonePortamentoCurve : PitchCurve
 		if (frameOffset < 0)
 			throw new ArgumentOutOfRangeException(nameof(frameOffset));
 
+		return GetContinuousMultiplierForRowTime(
+			GetRowTime(frameOffset));
+	}
+
+	public double GetContinuousMultiplierForRowTime(double rowTime)
+	{
+		if (double.IsNaN(rowTime)
+			|| double.IsInfinity(rowTime))
+		{
+			throw new ArgumentOutOfRangeException(nameof(rowTime));
+		}
+
+		double clampedRowTime = Math.Clamp(
+			rowTime,
+			0.0,
+			_ticksPerRow);
+		double elapsedTicks =
+			clampedRowTime
+				* Math.Max(0, _ticksPerRow - 1)
+				/ _ticksPerRow;
+		return GetContinuousMultiplierForTicks(elapsedTicks);
+	}
+
+	private double GetRowTime(long frameOffset)
+	{
 		double rawElapsedTicks = _tickClock is null
 			? frameOffset / _framesPerTick
 			: _tickClock.GetElapsedTicks(
 				_startFrame,
 				checked(_startFrame + frameOffset));
-		double rowTime = Math.Clamp(
+
+		return Math.Clamp(
 			rawElapsedTicks,
 			0.0,
 			_ticksPerRow);
-		double elapsedTicks =
-			rowTime
-				* Math.Max(0, _ticksPerRow - 1)
-				/ _ticksPerRow;
-		return GetContinuousMultiplierForTicks(elapsedTicks);
 	}
 
 	private double GetContinuousMultiplierForTicks(double elapsedTicks)

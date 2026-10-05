@@ -120,6 +120,14 @@ public sealed class PlaybackVoice
 		public required LinearRowPlaybackOperator Operator { get; init; }
 	}
 
+	private sealed class ActiveTonePortamento
+	{
+		public required long StartFrame { get; init; }
+		public required int TicksPerRow { get; init; }
+		public required TrackerTonePortamentoCurve Curve { get; init; }
+		public required FunctionalRowPlaybackOperator Operator { get; init; }
+	}
+
 	private sealed class ActiveNoteVolumeSlide
 	{
 		public required long StartFrame { get; init; }
@@ -154,6 +162,7 @@ public sealed class PlaybackVoice
 	private long _tremoloVolumeCurveStartFrame;
 
 	private ActivePitchSlide? _activePitchSlide;
+	private ActiveTonePortamento? _activeTonePortamento;
 	private IRowPlaybackOperator? _activeArpeggioOperator;
 	private ActiveNoteVolumeSlide? _activeNoteVolumeSlide;
 
@@ -729,13 +738,18 @@ public sealed class PlaybackVoice
 		if (!_tonePortamentoTargetBaseMultiplier.HasValue)
 			return;
 
+		CommitTonePortamento(
+			absoluteFrame,
+			preserveContinuousContinuation: true);
+
 		long relativeFrame = absoluteFrame - StartFrame;
-		double currentBase =
-			GetTonePortamentoContinuousBaseMultiplier(
-				relativeFrame);
+		double audibleBase = GetBasePitchMultiplier(relativeFrame);
+		double continuousBase =
+			_tonePortamentoContinuationBaseMultiplier
+				?? audibleBase;
 
 		TrackerTonePortamentoCurve curve = new(
-			currentBase,
+			continuousBase,
 			_tonePortamentoTargetBaseMultiplier.Value,
 			linearUnitsPerTick,
 			_tickClock,
@@ -743,13 +757,34 @@ public sealed class PlaybackVoice
 			ticksPerRow,
 			glissando);
 
+		FunctionalRowPlaybackOperator playbackOperator = new(
+			PlaybackParameter.PitchLinearUnits,
+			(_, rowTime) =>
+			{
+				double audible =
+					curve.GetMultiplierForRowTime(rowTime);
+				return TrackerVibrato.LinearSlideUnitsPerOctave
+					* Math.Log2(audible / audibleBase);
+			},
+			commitOnExpire: true);
+		AddPitchOperator(
+			playbackOperator,
+			absoluteFrame);
+
+		_activeTonePortamento = new ActiveTonePortamento
+		{
+			StartFrame = absoluteFrame,
+			TicksPerRow = ticksPerRow,
+			Curve = curve,
+			Operator = playbackOperator,
+		};
+
 		_activeTonePortamentoCurve = curve;
 		_activeTonePortamentoCurveStartFrame = relativeFrame;
 		_tonePortamentoContinuationBaseMultiplier = null;
 
-		_basePitchCurve = curve;
+		_basePitchCurve = new ConstantPitchCurve(audibleBase);
 		_basePitchCurveStartFrame = relativeFrame;
-
 		RecomposePitchTrajectory(relativeFrame);
 	}
 
@@ -758,24 +793,65 @@ public sealed class PlaybackVoice
 		if (absoluteFrame < StartFrame)
 			return;
 
-		long relativeFrame = absoluteFrame - StartFrame;
-		double currentBase = GetBasePitchMultiplier(relativeFrame);
+		CommitTonePortamento(
+			absoluteFrame,
+			preserveContinuousContinuation: true);
+		RecomposePitchTrajectory(
+			absoluteFrame - StartFrame);
+	}
 
-		if (_activeTonePortamentoCurve is not null)
-		{
-			_tonePortamentoContinuationBaseMultiplier =
-				_activeTonePortamentoCurve.GetContinuousMultiplier(
-					checked(
-						relativeFrame
-							- _activeTonePortamentoCurveStartFrame));
-		}
+	private void CommitTonePortamento(
+		long absoluteFrame,
+		bool preserveContinuousContinuation)
+	{
+		ActiveTonePortamento? active =
+			_activeTonePortamento;
+		if (active is null)
+			return;
 
-		_activeTonePortamentoCurve = null;
+		long relativeFrame =
+			absoluteFrame - StartFrame;
+		double rowTime =
+			GetOperatorRowTime(
+				active.StartFrame,
+				active.TicksPerRow,
+				absoluteFrame);
 
-		_basePitchCurve = new ConstantPitchCurve(currentBase);
+		PlaybackParameterDeltas committed =
+			_operators.Expire(
+				active.Operator,
+				GetWallTimeSeconds(absoluteFrame),
+				rowTime);
+		_pitchOperators.RemoveAll(
+			binding => ReferenceEquals(
+				binding.Operator,
+				active.Operator));
+
+		double baseMultiplier =
+			_basePitchCurve.GetMultiplier(
+				checked(
+					relativeFrame
+						- _basePitchCurveStartFrame));
+		double committedMultiplier =
+			baseMultiplier
+			* Math.Pow(
+				2.0,
+				committed[
+					PlaybackParameter.PitchLinearUnits]
+					/ TrackerVibrato.LinearSlideUnitsPerOctave);
+
+		_tonePortamentoContinuationBaseMultiplier =
+			preserveContinuousContinuation
+				? active.Curve.GetContinuousMultiplierForRowTime(
+					rowTime)
+				: null;
+
+		_basePitchCurve =
+			new ConstantPitchCurve(committedMultiplier);
 		_basePitchCurveStartFrame = relativeFrame;
-
-		RecomposePitchTrajectory(relativeFrame);
+		_activeTonePortamento = null;
+		_activeTonePortamentoCurve = null;
+		_activeTonePortamentoCurveStartFrame = relativeFrame;
 	}
 
 	internal void SetNoteVolume(double volume)
@@ -983,18 +1059,20 @@ public sealed class PlaybackVoice
 	private double GetTonePortamentoContinuousBaseMultiplier(
 		long relativeFrame)
 	{
-		if (_activeTonePortamentoCurve is not null)
+		if (_activeTonePortamento is not null)
 		{
-			return _activeTonePortamentoCurve.GetContinuousMultiplier(
-				checked(
-					relativeFrame
-						- _activeTonePortamentoCurveStartFrame));
+			long absoluteFrame =
+				checked(StartFrame + relativeFrame);
+			return _activeTonePortamento.Curve
+				.GetContinuousMultiplierForRowTime(
+					GetOperatorRowTime(
+						_activeTonePortamento.StartFrame,
+						_activeTonePortamento.TicksPerRow,
+						absoluteFrame));
 		}
 
 		if (_tonePortamentoContinuationBaseMultiplier.HasValue)
-		{
 			return _tonePortamentoContinuationBaseMultiplier.Value;
-		}
 
 		return GetBasePitchMultiplier(relativeFrame);
 	}
