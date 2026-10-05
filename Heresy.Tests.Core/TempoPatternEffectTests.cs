@@ -211,7 +211,7 @@ public sealed class TempoPatternEffectTests
 			new NoteScheduleBuilder(),
 			out _);
 
-		Assert.That(first.State.Tempo, Is.EqualTo(37.0));
+		Assert.That(first.State.Tempo, Is.EqualTo(33.0));
 
 		DataPatternDefinition upThenDown = Pattern(1, 2);
 		upThenDown.Grid.GetOrCreateCell(0, 0).Effects.Add(

@@ -24,6 +24,11 @@ public sealed record SetTempoPatternEffect : PatternEffect
 	public double TicksPerDiachron { get; }
 }
 
+/// <summary>
+/// Tracker Txx tempo command. T20..TFF set tempo on tick zero; T0x/T1x
+/// slide tempo on subsequent ticks. T00 recalls whole-byte channel memory.
+/// </summary>
+public sealed record TrackerTempoPatternEffect(byte Parameter) : PatternEffect;
 public sealed record SetSpeedPatternEffect : PatternEffect
 {
 	public SetSpeedPatternEffect(int ticksPerRow)

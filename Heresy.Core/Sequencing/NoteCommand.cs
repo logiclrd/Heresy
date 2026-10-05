@@ -24,6 +24,12 @@ public sealed record NoteCutCommand : NoteCommand;
 
 public sealed record SetTempoCommand(double TicksPerDiachron) : NoteCommand;
 
+/// <summary>
+/// Raw tracker Txx tempo operation. Memory and slide/set interpretation are
+/// resolved by the common pattern processor because Txx changes tick timing.
+/// </summary>
+public sealed record ApplyTrackerTempoCommand(byte Parameter) : NoteCommand;
+
 public sealed record SetSpeedCommand(int TicksPerRow) : NoteCommand;
 
 /// <summary>Sets the per-note volume used by the current playback voice.</summary>

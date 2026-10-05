@@ -18,6 +18,7 @@ public enum EffectMemorySlot
 	Tremolo,
 	Tremor,
 	Panbrello,
+	Tempo,
 	Retrigger,
 	SampleOffset,
 }

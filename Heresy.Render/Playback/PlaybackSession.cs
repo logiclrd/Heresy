@@ -548,6 +548,10 @@ public sealed class PlaybackSession
 				}
 				break;
 
+			case SetTempoCommand tempo:
+				_tempo = tempo.TicksPerDiachron;
+				break;
+
 			case SetSpeedCommand:
 				// PatternNoteProcessor has already baked speed into event timing.
 				break;

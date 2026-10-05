@@ -143,6 +143,9 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 				isGlobal = true;
 				return new SetSpeedCommand(speed.TicksPerRow);
 
+			case TrackerTempoPatternEffect tempo:
+				return new ApplyTrackerTempoCommand(tempo.Parameter);
+
 			case SetNoteVolumePatternEffect volume:
 				return new SetNoteVolumeCommand(volume.Volume);
 

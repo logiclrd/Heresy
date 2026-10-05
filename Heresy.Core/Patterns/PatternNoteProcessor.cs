@@ -38,6 +38,64 @@ public static class PatternNoteProcessor
 		public required bool HasNewNote { get; init; }
 	}
 
+	private sealed class TrackerTempoRequest
+	{
+		public required NoteEvent SourceEvent { get; init; }
+		public required byte Parameter { get; init; }
+		public required int PhysicalChannel { get; init; }
+	}
+
+	private sealed class RowTickTimeline
+	{
+		private readonly List<double> _boundaries = [0.0];
+
+		public double EndTickPosition => _boundaries.Count - 1;
+
+		public double EndSeconds => _boundaries[^1];
+
+		public void AppendTick(double tempo)
+		{
+			if (!(tempo > 0.0)
+				|| double.IsNaN(tempo)
+				|| double.IsInfinity(tempo))
+			{
+				throw new ArgumentOutOfRangeException(nameof(tempo));
+			}
+
+			_boundaries.Add(
+				_boundaries[^1]
+					+ SequencingConstants.Diachron.TotalSeconds
+						/ tempo);
+		}
+
+		public double GetSecondsAtTickPosition(
+			double tickPosition)
+		{
+			if (double.IsNaN(tickPosition)
+				|| double.IsInfinity(tickPosition)
+				|| tickPosition < 0.0
+				|| tickPosition > EndTickPosition + 1e-9)
+			{
+				throw new ArgumentOutOfRangeException(
+					nameof(tickPosition));
+			}
+
+			if (tickPosition <= 0.0)
+				return 0.0;
+
+			if (tickPosition >= EndTickPosition)
+				return EndSeconds;
+
+			int tick = (int)Math.Floor(tickPosition);
+			double fraction = tickPosition - tick;
+
+			return _boundaries[tick]
+				+ (_boundaries[tick + 1]
+					- _boundaries[tick])
+					* fraction;
+		}
+	}
+
 	private sealed class ResolvedCommands
 	{
 		public required IReadOnlyList<NoteCommand> Commands { get; init; }
@@ -143,40 +201,63 @@ public static class PatternNoteProcessor
 			}
 
 			dueTimingEvents.Sort(CompareTimingEvents);
+			List<TrackerTempoRequest> tempoRequests = [];
+
 			foreach (WorkingEvent workingEvent in dueTimingEvents)
 			{
-				ApplyTimingCommands(context.State, workingEvent.NoteEvent.Commands);
-				resolved.Add(ResolveAt(
-					workingEvent.NoteEvent,
-					workingEvent.NoteEvent.Commands,
-					rowStartSeconds,
-					context,
-					SyntheticOrder(workingEvent.NoteEvent.EmissionOrder, 0)));
+				IReadOnlyList<NoteCommand> timingCommands =
+					ResolveTimingCommands(
+						workingEvent.NoteEvent,
+						context,
+						tempoRequests);
+
+				if (timingCommands.Count != 0)
+				{
+					resolved.Add(
+						ResolveAt(
+							workingEvent.NoteEvent,
+							timingCommands,
+							rowStartSeconds,
+							context,
+							SyntheticOrder(
+								workingEvent.NoteEvent.EmissionOrder,
+								0)));
+				}
+
 				deferredTimingEvents.Remove(workingEvent);
 			}
 
-			double tickDurationSeconds =
-				SequencingConstants.Diachron.TotalSeconds
-				/ context.State.Tempo;
-			double rowDurationSeconds =
-				tickDurationSeconds * context.State.Speed;
 			int fineDelayTicks =
 				GetFinePatternDelayTicksForRow(events, row);
 			int rowSpanTickCount =
 				checked(context.State.Speed + fineDelayTicks);
-			double rowSpanDurationSeconds =
-				tickDurationSeconds * rowSpanTickCount;
-			byte patternDelayRows = GetPatternDelayRowsForRow(events, row);
-			double rowEnd = Math.Min(row + 1.0, effectiveRowCount);
+			byte patternDelayRows =
+				GetPatternDelayRowsForRow(events, row);
+			double rowEnd = Math.Min(
+				row + 1.0,
+				effectiveRowCount);
 			double rowFraction = rowEnd - row;
+			double rowEndTickPosition =
+				context.State.Speed * rowFraction
+					+ fineDelayTicks
+					+ patternDelayRows * rowSpanTickCount;
+
+			RowTickTimeline tickTimeline =
+				BuildRowTickTimeline(
+					rowStartSeconds,
+					rowEndTickPosition,
+					rowSpanTickCount,
+					tempoRequests,
+					context,
+					resolved);
+
 			double rowEndSeconds =
 				rowStartSeconds
-				+ tickDurationSeconds
-					* (context.State.Speed * rowFraction
-						+ fineDelayTicks
-						+ patternDelayRows * rowSpanTickCount);
+					+ tickTimeline.GetSecondsAtTickPosition(
+						rowEndTickPosition);
 			int rowTickSpan = checked(
-				rowSpanTickCount * (patternDelayRows + 1));
+				rowSpanTickCount
+					* (patternDelayRows + 1));
 			int? rowTicksOverride =
 				fineDelayTicks == 0
 					? null
@@ -184,8 +265,17 @@ public static class PatternNoteProcessor
 
 			foreach (WorkingEvent workingEvent in events)
 			{
-				if (workingEvent.AffectsTiming)
+				IReadOnlyList<NoteCommand> ordinaryCommands =
+					RemoveTimingCommands(
+						workingEvent.NoteEvent.Commands);
+				if (ordinaryCommands.Count == 0)
 					continue;
+
+				NoteEvent ordinaryEvent =
+					workingEvent.NoteEvent with
+					{
+						Commands = ordinaryCommands,
+					};
 
 				bool isFinalEndpoint =
 					row == wholeRowCount - 1
@@ -193,24 +283,32 @@ public static class PatternNoteProcessor
 
 				if (workingEvent.RowOffset < row)
 					continue;
-				if (!isFinalEndpoint && workingEvent.RowOffset >= row + 1.0)
+				if (!isFinalEndpoint
+					&& workingEvent.RowOffset >= row + 1.0)
 					continue;
 
-				double fraction = workingEvent.RowOffset - row;
+				double fraction =
+					workingEvent.RowOffset - row;
 				if (fraction > rowFraction)
 					continue;
 
+				double eventTickPosition =
+					fraction * context.State.Speed;
 				double eventTimeSeconds =
 					rowStartSeconds
-					+ fraction * rowDurationSeconds
+					+ tickTimeline.GetSecondsAtTickPosition(
+						eventTickPosition)
 					+ workingEvent.TimeOffsetSeconds;
 
 				ResolvedCommands commands = ResolveCommands(
-					workingEvent.NoteEvent,
+					ordinaryEvent,
 					context,
 					rowTicksOverride);
 
-				double commandTimeSeconds = eventTimeSeconds;
+				double commandTickPosition =
+					eventTickPosition;
+				double commandTimeSeconds =
+					eventTimeSeconds;
 				bool executeCommands = true;
 
 				if (commands.NoteDelayTick.HasValue)
@@ -218,39 +316,60 @@ public static class PatternNoteProcessor
 					int delayTick = EffectiveSCommandTick(
 						commands.NoteDelayTick.Value);
 
-					commandTimeSeconds =
-						eventTimeSeconds
-						+ delayTick * tickDurationSeconds;
+					commandTickPosition =
+						eventTickPosition + delayTick;
 
 					executeCommands =
 						delayTick < rowSpanTickCount
-						&& commandTimeSeconds < rowEndSeconds;
+						&& commandTickPosition
+							< tickTimeline.EndTickPosition + 1e-9;
+
+					if (executeCommands)
+					{
+						commandTimeSeconds =
+							rowStartSeconds
+								+ tickTimeline
+									.GetSecondsAtTickPosition(
+										commandTickPosition)
+								+ workingEvent.TimeOffsetSeconds;
+
+						executeCommands =
+							commandTimeSeconds < rowEndSeconds;
+					}
 				}
 
-				if (executeCommands && commands.Commands.Count != 0)
+				if (executeCommands
+					&& commands.Commands.Count != 0)
 				{
-					resolved.Add(ResolveAt(
-						workingEvent.NoteEvent,
-						commands.Commands,
-						commandTimeSeconds,
-						context,
-						SyntheticOrder(workingEvent.NoteEvent.EmissionOrder, 0)));
+					resolved.Add(
+						ResolveAt(
+							ordinaryEvent,
+							commands.Commands,
+							commandTimeSeconds,
+							context,
+							SyntheticOrder(
+								ordinaryEvent.EmissionOrder,
+								1)));
 				}
 
-				if (executeCommands && commands.Retrigger is not null)
+				if (executeCommands
+					&& commands.Retrigger is not null)
 				{
 					ExpandRetrigger(
 						resolved,
-						workingEvent.NoteEvent,
+						ordinaryEvent,
 						commands.Retrigger,
-						commandTimeSeconds,
+						commandTickPosition,
+						workingEvent.TimeOffsetSeconds,
+						rowStartSeconds,
 						rowEndSeconds,
 						rowTickSpan,
-						context.State,
+						tickTimeline,
 						context);
 				}
 
-				if (executeCommands && patternDelayRows != 0)
+				if (executeCommands
+					&& patternDelayRows != 0)
 				{
 					if (commands.NoteDelayTick.HasValue
 						&& commands.Commands.Count != 0)
@@ -258,47 +377,83 @@ public static class PatternNoteProcessor
 						int delayTick = EffectiveSCommandTick(
 							commands.NoteDelayTick.Value);
 
-						for (int repeat = 1; repeat <= patternDelayRows; repeat++)
+						for (int repeat = 1;
+							repeat <= patternDelayRows;
+							repeat++)
 						{
-							double repeatTimeSeconds =
-								eventTimeSeconds
-								+ checked(
-									repeat * rowSpanTickCount
-										+ delayTick)
-									* tickDurationSeconds;
-
-							if (repeatTimeSeconds >= rowEndSeconds)
+							double repeatTickPosition =
+								repeat * rowSpanTickCount
+									+ eventTickPosition
+									+ delayTick;
+							if (repeatTickPosition
+								>= tickTimeline.EndTickPosition
+									+ 1e-9)
+							{
 								break;
+							}
 
-							resolved.Add(ResolveAt(
-								workingEvent.NoteEvent,
-								commands.Commands,
-								repeatTimeSeconds,
-								context,
-								SyntheticOrder(
-									workingEvent.NoteEvent.EmissionOrder,
-									1)));
+							double repeatTimeSeconds =
+								rowStartSeconds
+									+ tickTimeline
+										.GetSecondsAtTickPosition(
+											repeatTickPosition)
+									+ workingEvent.TimeOffsetSeconds;
+
+							if (repeatTimeSeconds
+								>= rowEndSeconds)
+							{
+								break;
+							}
+
+							resolved.Add(
+								ResolveAt(
+									ordinaryEvent,
+									commands.Commands,
+									repeatTimeSeconds,
+									context,
+									SyntheticOrder(
+										ordinaryEvent.EmissionOrder,
+										2)));
 						}
 					}
 					else if (commands.RepeatCommands.Count != 0)
 					{
-						for (int repeat = 1; repeat <= patternDelayRows; repeat++)
+						for (int repeat = 1;
+							repeat <= patternDelayRows;
+							repeat++)
 						{
-							double repeatTimeSeconds =
-								eventTimeSeconds
-								+ repeat * rowSpanDurationSeconds;
-
-							if (repeatTimeSeconds >= rowEndSeconds)
+							double repeatTickPosition =
+								repeat * rowSpanTickCount
+									+ eventTickPosition;
+							if (repeatTickPosition
+								>= tickTimeline.EndTickPosition
+									+ 1e-9)
+							{
 								break;
+							}
 
-							resolved.Add(ResolveAt(
-								workingEvent.NoteEvent,
-								commands.RepeatCommands,
-								repeatTimeSeconds,
-								context,
-								SyntheticOrder(
-									workingEvent.NoteEvent.EmissionOrder,
-									1)));
+							double repeatTimeSeconds =
+								rowStartSeconds
+									+ tickTimeline
+										.GetSecondsAtTickPosition(
+											repeatTickPosition)
+									+ workingEvent.TimeOffsetSeconds;
+
+							if (repeatTimeSeconds
+								>= rowEndSeconds)
+							{
+								break;
+							}
+
+							resolved.Add(
+								ResolveAt(
+									ordinaryEvent,
+									commands.RepeatCommands,
+									repeatTimeSeconds,
+									context,
+									SyntheticOrder(
+										ordinaryEvent.EmissionOrder,
+										2)));
 						}
 					}
 				}
@@ -307,35 +462,59 @@ public static class PatternNoteProcessor
 				{
 					int cutTick = EffectiveSCommandTick(
 						commands.NoteCutTick.Value);
-					double cutTimeSeconds =
-						eventTimeSeconds
-						+ cutTick * tickDurationSeconds;
+					double cutTickPosition =
+						eventTickPosition + cutTick;
 
 					if (cutTick < rowSpanTickCount
-						&& cutTimeSeconds < rowEndSeconds)
+						&& cutTickPosition
+							< tickTimeline.EndTickPosition + 1e-9)
 					{
-						resolved.Add(new NoteEvent(
-							new MusicalTime(
-								TimeSpan.FromSeconds(cutTimeSeconds),
-								0.0),
-							context.MapTarget(workingEvent.NoteEvent.Target),
-							new NoteCommand[] { new NoteCutCommand() },
-							SyntheticOrder(
-								workingEvent.NoteEvent.EmissionOrder,
-								3)));
+						double cutTimeSeconds =
+							rowStartSeconds
+								+ tickTimeline
+									.GetSecondsAtTickPosition(
+										cutTickPosition)
+								+ workingEvent.TimeOffsetSeconds;
+
+						if (cutTimeSeconds < rowEndSeconds)
+						{
+							resolved.Add(
+								new NoteEvent(
+									new MusicalTime(
+										TimeSpan.FromSeconds(
+											cutTimeSeconds),
+										0.0),
+									context.MapTarget(
+										ordinaryEvent.Target),
+									new NoteCommand[]
+										{
+											new NoteCutCommand(),
+										},
+									SyntheticOrder(
+										ordinaryEvent.EmissionOrder,
+										4)));
+						}
 					}
 				}
 
-				if (executeCommands && commands.RowEndCommands.Count != 0)
+				if (executeCommands
+					&& commands.RowEndCommands.Count != 0)
 				{
 					double clearTimeSeconds = Math.Max(
 						rowEndSeconds,
 						commandTimeSeconds);
-					resolved.Add(new NoteEvent(
-						new MusicalTime(TimeSpan.FromSeconds(clearTimeSeconds), 0.0),
-						context.MapTarget(workingEvent.NoteEvent.Target),
-						commands.RowEndCommands,
-						SyntheticOrder(workingEvent.NoteEvent.EmissionOrder, 4)));
+					resolved.Add(
+						new NoteEvent(
+							new MusicalTime(
+								TimeSpan.FromSeconds(
+									clearTimeSeconds),
+								0.0),
+							context.MapTarget(
+								ordinaryEvent.Target),
+							commands.RowEndCommands,
+							SyntheticOrder(
+								ordinaryEvent.EmissionOrder,
+								5)));
 				}
 			}
 
@@ -629,29 +808,223 @@ public static class PatternNoteProcessor
 	{
 		foreach (NoteCommand command in noteEvent.Commands)
 		{
-			if (command is SetTempoCommand or SetSpeedCommand)
+			if (command is SetTempoCommand
+				or SetSpeedCommand
+				or ApplyTrackerTempoCommand)
 				return true;
 		}
 
 		return false;
 	}
 
-	private static void ApplyTimingCommands(SequencingState state, IReadOnlyList<NoteCommand> commands)
+	private static IReadOnlyList<NoteCommand>
+		ResolveTimingCommands(
+			NoteEvent noteEvent,
+			SequencingContext context,
+			List<TrackerTempoRequest> tempoRequests)
 	{
-		foreach (NoteCommand command in commands)
+		List<NoteCommand> resolved = [];
+
+		foreach (NoteCommand command in noteEvent.Commands)
 		{
 			switch (command)
 			{
 				case SetTempoCommand tempo:
-					state.Tempo = tempo.TicksPerDiachron;
+					context.State.Tempo =
+						tempo.TicksPerDiachron;
+					resolved.Add(command);
 					break;
 
 				case SetSpeedCommand speed:
-					state.Speed = speed.TicksPerRow;
+					context.State.Speed =
+						speed.TicksPerRow;
+					resolved.Add(command);
 					break;
+
+				case ApplyTrackerTempoCommand tempo:
+				{
+					SequencingChannelState channelState =
+						GetTrackerChannelState(
+							noteEvent,
+							context,
+							"Tracker tempo");
+
+					byte parameter =
+						channelState.ResolveEffectParameter(
+							EffectMemorySlot.Tempo,
+							tempo.Parameter);
+
+					if (parameter == 0)
+						break;
+
+					tempoRequests.Add(
+						new TrackerTempoRequest
+						{
+							SourceEvent = noteEvent,
+							Parameter = parameter,
+							PhysicalChannel =
+								context.MapPhysicalChannel(
+									noteEvent.Target
+										.PhysicalChannel),
+						});
+
+					if (parameter >= 0x20)
+					{
+						context.State.Tempo = parameter;
+						resolved.Add(
+							new SetTempoCommand(parameter));
+					}
+					break;
+				}
 			}
 		}
+
+		return resolved;
 	}
+
+	private static RowTickTimeline BuildRowTickTimeline(
+		double rowStartSeconds,
+		double rowEndTickPosition,
+		int rowSpanTickCount,
+		List<TrackerTempoRequest> tempoRequests,
+		SequencingContext context,
+		List<NoteEvent> resolved)
+	{
+		if (rowEndTickPosition < 0.0)
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(rowEndTickPosition));
+		}
+		if (rowSpanTickCount <= 0)
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(rowSpanTickCount));
+		}
+
+		tempoRequests.Sort(
+			(left, right) =>
+			{
+				int compare =
+					left.PhysicalChannel.CompareTo(
+						right.PhysicalChannel);
+				if (compare != 0)
+					return compare;
+
+				return left.SourceEvent.EmissionOrder.CompareTo(
+					right.SourceEvent.EmissionOrder);
+			});
+
+		RowTickTimeline timeline = new();
+		int tickIntervals =
+			checked((int)Math.Ceiling(
+				rowEndTickPosition - 1e-12));
+
+		for (int tick = 0;
+			tick < tickIntervals;
+			tick++)
+		{
+			int tickWithinSpan =
+				tick % rowSpanTickCount;
+
+			if (tick > 0)
+			{
+				bool firstTickOfRepeatedSpan =
+					tickWithinSpan == 0;
+
+				foreach (TrackerTempoRequest request
+					in tempoRequests)
+				{
+					double oldTempo = context.State.Tempo;
+					double newTempo =
+						ResolveTrackerTempoAtTick(
+							oldTempo,
+							request.Parameter,
+							firstTickOfRepeatedSpan);
+
+					if (newTempo == oldTempo
+						&& !(firstTickOfRepeatedSpan
+							&& request.Parameter >= 0x20))
+					{
+						continue;
+					}
+
+					context.State.Tempo = newTempo;
+					resolved.Add(
+						ResolveAt(
+							request.SourceEvent,
+							new NoteCommand[]
+								{
+									new SetTempoCommand(
+										newTempo),
+								},
+							rowStartSeconds
+								+ timeline.EndSeconds,
+							context,
+							SyntheticOrder(
+								request.SourceEvent
+									.EmissionOrder,
+								0)));
+				}
+			}
+
+			timeline.AppendTick(
+				context.State.Tempo);
+		}
+
+		return timeline;
+	}
+
+	private static double ResolveTrackerTempoAtTick(
+		double currentTempo,
+		byte parameter,
+		bool firstTick)
+	{
+		if (firstTick)
+		{
+			return parameter >= 0x20
+				? parameter
+				: currentTempo;
+		}
+
+		byte high = (byte)(parameter >> 4);
+		byte low = (byte)(parameter & 0x0F);
+
+		return high switch
+		{
+			0 => Math.Max(32.0, currentTempo - low),
+			1 => Math.Min(255.0, currentTempo + low),
+			_ => currentTempo,
+		};
+	}
+
+	private static IReadOnlyList<NoteCommand>
+		RemoveTimingCommands(
+			IReadOnlyList<NoteCommand> commands)
+	{
+		List<NoteCommand>? filtered = null;
+
+		for (int i = 0; i < commands.Count; i++)
+		{
+			if (!IsTimingCommand(commands[i]))
+			{
+				filtered?.Add(commands[i]);
+				continue;
+			}
+
+			filtered ??= CopyCommandsBefore(
+				commands,
+				i);
+		}
+
+		return filtered ?? commands;
+	}
+
+	private static bool IsTimingCommand(
+		NoteCommand command)
+		=> command is SetTempoCommand
+			or SetSpeedCommand
+			or ApplyTrackerTempoCommand;
+
 
 	private static ResolvedCommands ResolveCommands(
 		NoteEvent noteEvent,
@@ -1615,26 +1988,41 @@ public static class PatternNoteProcessor
 		List<NoteEvent> resolved,
 		NoteEvent sourceEvent,
 		RetriggerRequest request,
-		double eventTimeSeconds,
+		double eventTickPosition,
+		double fixedTimeOffsetSeconds,
+		double rowStartSeconds,
 		double rowEndSeconds,
 		int tickSpan,
-		SequencingState state,
+		RowTickTimeline tickTimeline,
 		SequencingContext context)
 	{
-		byte volumeTransform = (byte)(request.Parameter >> 4);
-		int intervalTicks = request.Parameter & 0x0F;
+		byte volumeTransform =
+			(byte)(request.Parameter >> 4);
+		int intervalTicks =
+			request.Parameter & 0x0F;
 		int countdown = request.HasNewNote
 			? intervalTicks
 			: request.ChannelState.RetriggerCountdown;
-		int firstTick = request.HasNewNote ? 1 : 0;
+		int firstTick =
+			request.HasNewNote ? 1 : 0;
 
-		double tickDurationSeconds =
-			SequencingConstants.Diachron.TotalSeconds / state.Tempo;
-
-		for (int tick = firstTick; tick < tickSpan; tick++)
+		for (int tick = firstTick;
+			tick < tickSpan;
+			tick++)
 		{
+			double retriggerTickPosition =
+				eventTickPosition + tick;
+			if (retriggerTickPosition
+				>= tickTimeline.EndTickPosition + 1e-9)
+			{
+				break;
+			}
+
 			double retriggerTimeSeconds =
-				eventTimeSeconds + tick * tickDurationSeconds;
+				rowStartSeconds
+					+ tickTimeline.GetSecondsAtTickPosition(
+						retriggerTickPosition)
+					+ fixedTimeOffsetSeconds;
 			if (retriggerTimeSeconds >= rowEndSeconds)
 				break;
 
@@ -1642,16 +2030,21 @@ public static class PatternNoteProcessor
 			if (countdown > 0)
 				continue;
 
-			resolved.Add(new NoteEvent(
-				new MusicalTime(
-					TimeSpan.FromSeconds(retriggerTimeSeconds),
-					0.0),
-				context.MapTarget(sourceEvent.Target),
-				new NoteCommand[]
-				{
-					new RetriggerCurrentVoiceCommand(volumeTransform),
-				},
-				SyntheticOrder(sourceEvent.EmissionOrder, 2)));
+			resolved.Add(
+				new NoteEvent(
+					new MusicalTime(
+						TimeSpan.FromSeconds(
+							retriggerTimeSeconds),
+						0.0),
+					context.MapTarget(sourceEvent.Target),
+					new NoteCommand[]
+						{
+							new RetriggerCurrentVoiceCommand(
+								volumeTransform),
+						},
+					SyntheticOrder(
+						sourceEvent.EmissionOrder,
+						3)));
 
 			countdown = intervalTicks;
 		}
@@ -1865,15 +2258,26 @@ public static class PatternNoteProcessor
 		=> Math.Max(1, (int)tick);
 
 	private static long SyntheticOrder(long emissionOrder, int phase)
-		=> checked(emissionOrder * 5 + phase);
+		=> checked(emissionOrder * 8 + phase);
 
 	private static int CompareTimingEvents(WorkingEvent left, WorkingEvent right)
 	{
-		int compare = left.TimingEligibilitySeconds!.Value.CompareTo(right.TimingEligibilitySeconds!.Value);
+		int compare = left.TimingEligibilitySeconds!.Value.CompareTo(
+			right.TimingEligibilitySeconds!.Value);
 		if (compare != 0)
 			return compare;
 
-		return left.NoteEvent.EmissionOrder.CompareTo(right.NoteEvent.EmissionOrder);
+		if (left.NoteEvent.Target.Kind == ChannelTargetKind.Physical
+			&& right.NoteEvent.Target.Kind == ChannelTargetKind.Physical)
+		{
+			compare = left.NoteEvent.Target.PhysicalChannel.CompareTo(
+				right.NoteEvent.Target.PhysicalChannel);
+			if (compare != 0)
+				return compare;
+		}
+
+		return left.NoteEvent.EmissionOrder.CompareTo(
+			right.NoteEvent.EmissionOrder);
 	}
 
 	private static int CompareResolvedEvents(NoteEvent left, NoteEvent right)
