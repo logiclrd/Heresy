@@ -30,6 +30,14 @@ public sealed record SetEnvelopeEnabledCommand(
 	EnvelopeTarget Target,
 	bool Enabled) : NoteCommand;
 
+/// <summary>
+/// Raw tracker S77-S7C envelope control. PatternNoteProcessor translates the
+/// shared IT pitch/filter slot into Heresy's independent semantic targets.
+/// </summary>
+public sealed record ApplyTrackerEnvelopeControlCommand(
+	TrackerEnvelopeControlTarget Target,
+	bool Enabled) : NoteCommand;
+
 public sealed record NoteCutCommand : NoteCommand;
 
 /// <summary>

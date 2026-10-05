@@ -1,5 +1,6 @@
 using System;
 
+using Heresy.Core.Envelopes;
 using Heresy.Core.Sequencing;
 
 namespace Heresy.Core.Patterns;
@@ -443,6 +444,28 @@ public sealed record TrackerNewNoteActionPatternEffect : PatternEffect
 	}
 
 	public NoteDisplacementAction Action { get; }
+}
+
+/// <summary>
+/// Tracker S77-S7C envelope enable/disable. IT has three envelope enable bits:
+/// volume, panning, and a shared pitch/filter slot. Heresy keeps pitch and
+/// filter as separate native slots, so PitchOrFilter resolves to both.
+/// </summary>
+public sealed record TrackerEnvelopeControlPatternEffect : PatternEffect
+{
+	public TrackerEnvelopeControlPatternEffect(
+		TrackerEnvelopeControlTarget target,
+		bool enabled)
+	{
+		if (!Enum.IsDefined(target))
+			throw new ArgumentOutOfRangeException(nameof(target));
+
+		Target = target;
+		Enabled = enabled;
+	}
+
+	public TrackerEnvelopeControlTarget Target { get; }
+	public bool Enabled { get; }
 }
 
 /// <summary>

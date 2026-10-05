@@ -2013,6 +2013,46 @@ public static class PatternNoteProcessor
 							newNoteAction.Action));
 					break;
 
+				case ApplyTrackerEnvelopeControlCommand envelope:
+					GetTrackerChannelState(
+						noteEvent,
+						context,
+						"Tracker envelope control");
+					transformed ??= CopyCommandsBefore(noteEvent.Commands, i);
+
+					switch (envelope.Target)
+					{
+						case TrackerEnvelopeControlTarget.Volume:
+							transformed.Add(
+								new SetEnvelopeEnabledCommand(
+									EnvelopeTarget.Volume,
+									envelope.Enabled));
+							break;
+
+						case TrackerEnvelopeControlTarget.Panning:
+							transformed.Add(
+								new SetEnvelopeEnabledCommand(
+									EnvelopeTarget.Panning,
+									envelope.Enabled));
+							break;
+
+						case TrackerEnvelopeControlTarget.PitchOrFilter:
+							transformed.Add(
+								new SetEnvelopeEnabledCommand(
+									EnvelopeTarget.Pitch,
+									envelope.Enabled));
+							transformed.Add(
+								new SetEnvelopeEnabledCommand(
+									EnvelopeTarget.Filter,
+									envelope.Enabled));
+							break;
+
+						default:
+							throw new InvalidOperationException(
+								$"Unsupported tracker envelope target {envelope.Target}.");
+					}
+					break;
+
 				case ApplyTrackerPanningCommand panning:
 					GetTrackerChannelState(
 						noteEvent,

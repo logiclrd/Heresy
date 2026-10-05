@@ -275,6 +275,11 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 				return new ApplyTrackerNewNoteActionCommand(
 					newNoteAction.Action);
 
+			case TrackerEnvelopeControlPatternEffect envelope:
+				return new ApplyTrackerEnvelopeControlCommand(
+					envelope.Target,
+					envelope.Enabled);
+
 			case TrackerSurroundPatternEffect:
 				return new SetSurroundCommand(true);
 
