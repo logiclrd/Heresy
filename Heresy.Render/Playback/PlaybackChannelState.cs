@@ -811,6 +811,18 @@ public sealed class PlaybackChannelState
 		CurrentVoice?.FilterState.SetParameters(parameters);
 	}
 
+	internal void SetFilterCutoff(double cutoff)
+		=> SetFilterParameters(
+			new ResonantFilterParameters(
+				cutoff,
+				FilterParameters.Resonance));
+
+	internal void SetFilterResonance(double resonance)
+		=> SetFilterParameters(
+			new ResonantFilterParameters(
+				FilterParameters.Cutoff,
+				resonance));
+
 	internal PlaybackVoice? DetachCurrentVoice()
 	{
 		PlaybackVoice? voice = CurrentVoice;

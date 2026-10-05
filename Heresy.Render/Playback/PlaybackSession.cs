@@ -349,6 +349,14 @@ public sealed class PlaybackSession
 						filter.Resonance));
 				break;
 
+			case SetResonantFilterCutoffCommand filter:
+				channel.SetFilterCutoff(filter.Cutoff);
+				break;
+
+			case SetResonantFilterResonanceCommand filter:
+				channel.SetFilterResonance(filter.Resonance);
+				break;
+
 			case SetPlaybackOffsetCommand playbackOffset:
 				if (channel.CurrentVoice is not null)
 					channel.CurrentVoice.SoundState.PlaybackOffset = playbackOffset.Offset;
