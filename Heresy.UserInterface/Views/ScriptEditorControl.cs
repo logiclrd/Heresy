@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Layout;
 using Avalonia.Media;
 
@@ -58,7 +59,6 @@ public sealed class ScriptEditorControl : UserControl
 
 	private ScriptSourceProjection _projection;
 	private bool _updatingProjectedText;
-	private bool _normalizingSelection;
 	private EditorSnapshot? _pendingTextEditSnapshot;
 
 	public ScriptEditorControl(
@@ -143,7 +143,6 @@ public sealed class ScriptEditorControl : UserControl
 				_pendingTextEditSnapshot = CaptureSnapshot();
 		};
 		_source.TextChanged += (_, _) => OnProjectedTextChanged();
-		_source.SelectionChanged += (_, _) => NormalizeProjectedSelection();
 		_source.KeyDown += async (_, e) =>
 			await OnSourceKeyDownAsync(e);
 		_source.ContextMenu = BuildSourceContextMenu();
@@ -555,77 +554,31 @@ public sealed class ScriptEditorControl : UserControl
 					direction);
 		}
 
-		_normalizingSelection = true;
-		try
+		if (!extendSelection)
 		{
-			if (!extendSelection)
-			{
-				_source.SelectionStart = target;
-				_source.SelectionEnd = target;
-				_source.CaretIndex = target;
-				return;
-			}
-
-			int anchor =
-				_source.SelectionStart
-					== _source.SelectionEnd
-					? _source.CaretIndex
-					: _source.CaretIndex
-						== _source.SelectionStart
-						? _source.SelectionEnd
-						: _source.SelectionStart;
-			_source.SelectionStart =
-				Math.Min(
-					anchor,
-					target);
-			_source.SelectionEnd =
-				Math.Max(
-					anchor,
-					target);
+			_source.SelectionStart = target;
+			_source.SelectionEnd = target;
 			_source.CaretIndex = target;
-		}
-		finally
-		{
-			_normalizingSelection = false;
-		}
-	}
-
-	private void NormalizeProjectedSelection()
-	{
-		if (_updatingProjectedText
-			|| _normalizingSelection)
-		{
 			return;
 		}
 
-		ScriptProjectionSelection normalized =
-			_projection.NormalizeSelection(
-				_source.SelectionStart,
-				_source.SelectionEnd);
-		if (normalized.Start == _source.SelectionStart
-			&& normalized.End == _source.SelectionEnd)
-		{
-			return;
-		}
-
-		int caret =
-			_source.CaretIndex;
-		int targetCaret =
-			caret <= _source.SelectionStart
-				? normalized.Start
-				: normalized.End;
-
-		_normalizingSelection = true;
-		try
-		{
-			_source.SelectionStart = normalized.Start;
-			_source.SelectionEnd = normalized.End;
-			_source.CaretIndex = targetCaret;
-		}
-		finally
-		{
-			_normalizingSelection = false;
-		}
+		int anchor =
+			_source.SelectionStart
+				== _source.SelectionEnd
+				? _source.CaretIndex
+				: _source.CaretIndex
+					== _source.SelectionStart
+					? _source.SelectionEnd
+					: _source.SelectionStart;
+		_source.SelectionStart =
+			Math.Min(
+				anchor,
+				target);
+		_source.SelectionEnd =
+			Math.Max(
+				anchor,
+				target);
+		_source.CaretIndex = target;
 	}
 
 	private void OnProjectedTextChanged()
@@ -791,7 +744,6 @@ public sealed class ScriptEditorControl : UserControl
 				_projection.DisplayPositionFromSource(
 					sourceCaret);
 			_updatingProjectedText = true;
-			_normalizingSelection = true;
 			try
 			{
 				_source.Text = _projection.Text;
@@ -801,7 +753,6 @@ public sealed class ScriptEditorControl : UserControl
 			}
 			finally
 			{
-				_normalizingSelection = false;
 				_updatingProjectedText = false;
 				_pendingTextEditSnapshot = null;
 			}
