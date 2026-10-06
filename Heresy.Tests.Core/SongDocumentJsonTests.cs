@@ -15,6 +15,7 @@ using Heresy.Core.Patterns;
 using Heresy.Core.Persistence;
 using Heresy.Core.Samples;
 using Heresy.Core.Sequences;
+using Heresy.Core.Scripting;
 
 using NUnit.Framework;
 
@@ -325,6 +326,48 @@ public sealed class SongDocumentJsonTests
 	}
 
 	[Test]
+	public void SuppliedScriptAnalyzerEnablesExactTombstonePruning()
+	{
+		SongDocument document = new();
+
+		ObjectId referencedId = document.AllocateObjectId();
+		document.Add(new DataPatternDefinition(referencedId, "Referenced"));
+		document.Remove(referencedId);
+
+		ObjectId unreferencedId = document.AllocateObjectId();
+		document.Add(new DataPatternDefinition(unreferencedId, "Unreferenced"));
+		document.Remove(unreferencedId);
+
+		ObjectId scriptId = document.AllocateObjectId();
+		document.Add(
+			new ScriptPatternDefinition(scriptId, "Script")
+			{
+				Source = "script source",
+			});
+
+		string json =
+			SongDocumentJson.Serialize(
+				document,
+				JsonContextPath,
+				JsonAssetPathMode.Relative,
+				new FixedScriptReferenceAnalyzer(referencedId));
+
+		JsonObject tombstones =
+			JsonNode.Parse(json)!["tombstones"]!.AsObject();
+
+		Assert.That(
+			tombstones.ContainsKey(
+				referencedId.Value.ToString(
+					System.Globalization.CultureInfo.InvariantCulture)),
+			Is.True);
+		Assert.That(
+			tombstones.ContainsKey(
+				unreferencedId.Value.ToString(
+					System.Globalization.CultureInfo.InvariantCulture)),
+			Is.False);
+	}
+
+	[Test]
 	public void UnknownFormatVersionIsRejected()
 	{
 		const string json =
@@ -588,6 +631,17 @@ public sealed class SongDocumentJsonTests
 				.Cast<SongTreeObject>()
 				.Select(node => node.ObjectId),
 			Is.EqualTo(new[] { (ObjectId)2U, (ObjectId)4U }));
+	}
+
+	private sealed class FixedScriptReferenceAnalyzer(
+		ObjectId referencedId)
+		: IScriptObjectReferenceAnalyzer
+	{
+		public ScriptObjectReferenceSet AnalyzeObjectReferences(
+			string source)
+			=> new(
+				new[] { referencedId },
+				IsReliable: true);
 	}
 
 	private static PatternEffect CreatePatternEffect(Type type)
