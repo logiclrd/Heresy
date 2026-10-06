@@ -1,8 +1,18 @@
+using System;
+
+using Avalonia;
+
 namespace Heresy.UserInterface;
 
 internal static class Program
 {
-	public static void Main(string[] args)
-	{
-	}
+	[STAThread]
+	public static int Main(string[] args)
+		=> BuildAvaloniaApp()
+			.StartWithClassicDesktopLifetime(args);
+
+	public static AppBuilder BuildAvaloniaApp()
+		=> AppBuilder
+			.Configure<App>()
+			.UsePlatformDetect();
 }

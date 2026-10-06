@@ -13,7 +13,9 @@ The repository is intentionally split by concern.
   spatialization, sample rendering, effect processing and the common renderer.
 - `Heresy.Render.SDL` *(planned)* — SDL3-CS real-time sink and buffering.
 - `Heresy.Render.File` *(planned)* — FLAC, WAV and MP3 sinks.
-- `Heresy.UserInterface` *(planned)* — Avalonia single-document tracker UI.
+- `Heresy.UserInterface` — Avalonia single-document tracker UI. The current shell
+  provides one active document, New/Open/Save/Save As, an ID-resolving song tree and
+  a selected-object editor host; realtime transport remains separate.
 - A Roslyn-backed restricted-C# compiler assembly will also be added separately
   once the Core/Render contracts have been exercised.
 
@@ -59,3 +61,12 @@ The repository is intentionally split by concern.
 
 Heresy targets **.NET 10.0**. GitHub Actions builds the solution and runs the
 full test suite on pushes to `main`.
+
+## User-interface boundary
+
+The UI is a projection/editor of the semantic Core model rather than a second
+song model. `DocumentWorkspace` owns the one active `SongDocument` plus its
+save baseline, while `SongTreeItemViewModel` resolves tree object IDs to live
+names and falls back through tombstones to raw IDs for broken references.
+Tree-only reorganization uses `SongTreeEditor` and advances `DocumentRevision`
+without advancing `AudioRevision`; moving a node never changes its ObjectId.
