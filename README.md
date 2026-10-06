@@ -181,14 +181,20 @@ order from a data-sequence arrangement opens that script source editor with
 **← Sequence** navigation rather than creating a second tracker representation.
 
 Persisted script source remains ordinary restricted-C# text. The editor offers
-a catalog containing every live song object and can insert the selected object
-using the canonical `_O(id)` spelling, replacing the current text selection and
-leaving the caret immediately after the inserted reference. The shared script
-editor validates source live with the same restricted-C# compiler rules used for
-execution, but stops before assembly emission/loading. It displays ordinary C#
-binding diagnostics, Heresy restricted-language diagnostics and semantic object
-references resolved to current live names/kinds, tombstone names/kinds, or
-canonical raw-ID fallback, without rewriting the persisted source.
+a catalog containing every live song object and inserts the selected object as
+the canonical `_O(id)` expression in the raw source. Semantic object references
+are projected in the editable view as atomic `⟦name⟧` tokens: current live names
+are shown without rewriting the source, tombstones retain their last-known names,
+and unresolved references display their canonical raw ID. Renaming an object
+therefore changes only the projection. Backspace/Delete, typing over any part of
+a token, selection replacement, copy/cut/paste and horizontal caret movement all
+operate on the complete underlying reference; clipboard text remains valid raw
+restricted C#. The projection reconciles ordinary TextBox edits back to source
+coordinates and keeps its own source-level undo/redo history rather than storing
+transient projected strings. The shared script editor validates raw source live
+with the same restricted-C# compiler rules used for execution, but stops before
+assembly emission/loading. It displays ordinary C# binding diagnostics and
+Heresy restricted-language diagnostics alongside the projected references.
 
 Core remains Roslyn-free through `IScriptObjectReferenceAnalyzer`. With no
 analyzer, `SongReferenceAnalyzer` retains the conservative opaque-script
@@ -223,8 +229,8 @@ the result into an immutable `NoteSchedule` suitable for rendering. Script
 patterns are compiled lazily only when the executing sequence actually reaches
 them, so an unused broken script does not block playback; a referenced script
 with compilation errors makes the complete schedule compilation fail with those
-diagnostics instead of silently disappearing. Atomic named-token editing remains
-future work. Script source/layout edits are audio-affecting authoring changes.
+diagnostics instead of silently disappearing. Script source/layout edits are
+audio-affecting authoring changes.
 
 The Instruments pane can create an `InstrumentDefinition` and open it in a
 main-workspace tone-table editor. Divisions and offset remain the pitch-to-index
