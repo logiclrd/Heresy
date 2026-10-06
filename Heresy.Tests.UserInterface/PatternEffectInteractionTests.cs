@@ -660,4 +660,32 @@ public sealed class PatternEffectInteractionTests
 		cursor.ExpandedField.Should().Be(ExpandedEffectField.Parameter);
 	}
 
+	[Test]
+	public void EmptyInsertedTrackerSlotCanReceiveParameterBeforeCommand()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
+		PatternEffectCursor cursor =
+			new(row: 0, channel: 0, PatternCellField.EffectCommand);
+		PatternEffectStackEditor.InsertBefore(
+			workspace,
+			pattern,
+			cursor);
+		cursor.MoveRight(pattern);
+
+		PatternEffectKeyboardEditor.Type(workspace, pattern, cursor, '1');
+		PatternEffectKeyboardEditor.Type(workspace, pattern, cursor, '5');
+
+		pattern.Grid[0, 0]!.Effects[0]
+			.Should().Be(new EmptyTrackerPatternEffect(0x15));
+		cursor.Row.Should().Be(1);
+
+		cursor.SetPosition(0, 0, PatternCellField.EffectCommand);
+		PatternEffectKeyboardEditor.Type(workspace, pattern, cursor, 'G');
+
+		pattern.Grid[0, 0]!.Effects[0]
+			.Should().Be(new TonePortamentoPatternEffect(0x15));
+	}
+
 }
