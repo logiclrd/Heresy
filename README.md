@@ -150,11 +150,24 @@ start row, reorder/remove entries, and explicitly mark the sequence as the
 song's `RootSequenceId`. Creating a sequence does not implicitly make it root.
 Broken pattern references are preserved and projected through tombstones; their
 start row remains editable and they can be repaired by selecting a live pattern.
-Opening a live data-pattern entry drills directly into the pattern editor, whose
-Back control becomes **← Sequence** and returns to the arrangement instead of
-the document browser. Script-sequence and script-pattern source editing remain
-future UI work. Existing Bxx/Cxx sequence-control semantics continue to be
-handled by the Core sequence processor.
+
+There is only one tracker-pattern editor implementation. When opened for a
+single `DataPatternDefinition`, its display-row context maps directly to that
+pattern. When opened from a data-sequence order, the same `PatternEditorControl`
+is instead given a sequence context plus the order that should receive initial
+focus. That context flattens the sequence's declared data-pattern entries into
+adjacent display rows, respecting each entry's `StartRow`, while every display
+row resolves back to the original live `(DataPatternDefinition, local row)`.
+Scrolling or cursor paint-down can therefore cross a pattern boundary directly;
+editing never creates sequence-local copies. Repeated references to the same
+pattern are multiple projections of the same object, so an edit is refreshed in
+every visible occurrence. Script-pattern and missing-pattern orders remain
+visible as non-editable segment separators rather than being silently hidden.
+The sequence projection follows declared arrangement order; it does not attempt
+to predict runtime Bxx/Cxx jumps or pattern-break control flow, which remains a
+Core sequencing concern. The Back control becomes **← Sequence** and returns to
+the arrangement list. Script-sequence and script-pattern source editing remain
+future UI work.
 
 The Instruments pane can create an `InstrumentDefinition` and open it in a
 main-workspace tone-table editor. Divisions and offset remain the pitch-to-index
