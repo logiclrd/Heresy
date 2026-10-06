@@ -6,6 +6,7 @@ using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequences;
+using Heresy.Core.Scripting;
 
 using NUnit.Framework;
 
@@ -94,5 +95,81 @@ public sealed class SongReferenceAnalyzerTests
 		SongReferenceAnalysis analysis = SongReferenceAnalyzer.Analyze(document);
 
 		analysis.HasOpaqueScriptReferences.Should().BeTrue();
+	}
+
+	[Test]
+	public void AnalyzeUsesProvidedScriptAnalyzerForExactScriptEdges()
+	{
+		SongDocument document = new();
+		ObjectId patternId = document.AllocateObjectId();
+		document.Add(
+			new ScriptPatternDefinition(patternId, "Script Pattern")
+			{
+				Source = "pattern",
+			});
+		ObjectId sequenceId = document.AllocateObjectId();
+		document.Add(
+			new ScriptSequenceDefinition(sequenceId, "Script Sequence")
+			{
+				Source = "sequence",
+			});
+
+		SongReferenceAnalysis analysis =
+			SongReferenceAnalyzer.Analyze(
+				document,
+				new TestScriptReferenceAnalyzer());
+
+		analysis.HasOpaqueScriptReferences.Should().BeFalse();
+		analysis.References.Should().Contain(
+			new SongReference(
+				(ObjectId)137U,
+				patternId,
+				SongReferenceKind.ScriptObject));
+		analysis.References.Should().Contain(
+			new SongReference(
+				(ObjectId)42U,
+				sequenceId,
+				SongReferenceKind.ScriptObject));
+	}
+
+	[Test]
+	public void UnreliableProvidedScriptAnalysisStillMarksScriptsOpaque()
+	{
+		SongDocument document = new();
+		ObjectId scriptId = document.AllocateObjectId();
+		document.Add(
+			new ScriptPatternDefinition(scriptId, "Script")
+			{
+				Source = "pattern",
+			});
+
+		SongReferenceAnalysis analysis =
+			SongReferenceAnalyzer.Analyze(
+				document,
+				new TestScriptReferenceAnalyzer
+				{
+					IsReliable = false,
+				});
+
+		analysis.HasOpaqueScriptReferences.Should().BeTrue();
+		analysis.References.Should().Contain(
+			new SongReference(
+				(ObjectId)137U,
+				scriptId,
+				SongReferenceKind.ScriptObject));
+	}
+
+	private sealed class TestScriptReferenceAnalyzer
+		: IScriptObjectReferenceAnalyzer
+	{
+		public bool IsReliable { get; init; } = true;
+
+		public ScriptObjectReferenceSet AnalyzeObjectReferences(
+			string source)
+			=> new(
+				source == "pattern"
+					? new[] { (ObjectId)137U }
+					: new[] { (ObjectId)42U },
+				IsReliable);
 	}
 }
