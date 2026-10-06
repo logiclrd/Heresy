@@ -142,7 +142,7 @@ public sealed class ScriptSourceProjectionTests
 	{
 		DocumentWorkspace workspace = WorkspaceWithPiano();
 		ScriptSourceProjection projection =
-			Create(workspace, "x_O(1)y");
+			Create(workspace, "var p = _O(1);");
 		ScriptProjectedReferenceToken token =
 			projection.Tokens.Single();
 
@@ -161,7 +161,7 @@ public sealed class ScriptSourceProjectionTests
 	{
 		DocumentWorkspace workspace = WorkspaceWithPiano();
 		ScriptSourceProjection projection =
-			Create(workspace, "a _O(1) b");
+			Create(workspace, "var p = _O(1);");
 		ScriptProjectedReferenceToken token =
 			projection.Tokens.Single();
 
