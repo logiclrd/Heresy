@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 
 using Avalonia;
@@ -9,6 +10,7 @@ using Avalonia.Media;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequences;
+using Heresy.Scripting.Analysis;
 using Heresy.UserInterface.Documents;
 
 namespace Heresy.UserInterface.Views;
@@ -16,8 +18,8 @@ namespace Heresy.UserInterface.Views;
 /// <summary>
 /// Shared source editor for scripted patterns and scripted sequences.
 /// Persisted source remains ordinary restricted-C# text; object-reference
-/// insertion writes the canonical _O(id) syntax without attempting semantic
-/// Roslyn analysis in the UI layer.
+/// insertion writes the canonical _O(id) syntax while Roslyn analysis is
+/// projected through a framework-independent authoring model.
 /// </summary>
 public sealed class ScriptEditorControl : UserControl
 {
@@ -31,6 +33,11 @@ public sealed class ScriptEditorControl : UserControl
 	private readonly TextBox _source;
 	private readonly ComboBox _reference;
 	private readonly TextBlock _message = new()
+	{
+		TextWrapping = TextWrapping.Wrap,
+	};
+
+	private readonly TextBlock _analysis = new()
 	{
 		TextWrapping = TextWrapping.Wrap,
 	};
@@ -110,6 +117,7 @@ public sealed class ScriptEditorControl : UserControl
 				MinHeight = 360,
 				MinWidth = 520,
 			};
+		_source.TextChanged += (_, _) => RefreshAnalysis();
 
 		_reference =
 			new ComboBox
@@ -129,6 +137,7 @@ public sealed class ScriptEditorControl : UserControl
 		}
 
 		Content = BuildContent();
+		RefreshAnalysis();
 	}
 
 	private SongObject ScriptObject =>
@@ -188,11 +197,19 @@ public sealed class ScriptEditorControl : UserControl
 			});
 		body.Children.Add(_source);
 
+		Border analysisBorder =
+			new()
+			{
+				Padding = new Thickness(10, 8),
+				Child = _analysis,
+			};
+		body.Children.Add(analysisBorder);
+
 		TextBlock note =
 			new()
 			{
 				Text =
-					"Object references are persisted as _O(id). This editor inserts canonical references but deliberately does not interpret arbitrary source text as semantic references yet; exact token projection will belong to the scripting/compiler layer.",
+					"Object references are persisted as _O(id). Roslyn analysis identifies semantic references and projects their current names below without rewriting the source. Atomic named-token editing and executable script compilation remain future work.",
 				TextWrapping = TextWrapping.Wrap,
 				MaxWidth = 900,
 			};
@@ -349,6 +366,61 @@ public sealed class ScriptEditorControl : UserControl
 		_source.Focus();
 		_message.Text =
 			$"Inserted {option.DisplayName} as {option.ReferenceText}.";
+	}
+
+	private void RefreshAnalysis()
+	{
+		try
+		{
+			ScriptSourceDocumentAnalysis analysis =
+				ScriptSourceDocumentAnalyzer.Analyze(
+					_workspace,
+					_source.Text ?? string.Empty);
+
+			List<string> lines = [];
+			if (analysis.Syntax.Diagnostics.Count == 0)
+			{
+				lines.Add("Analysis: no reference diagnostics.");
+			}
+			else
+			{
+				lines.Add("Diagnostics:");
+				foreach (ScriptAnalysisDiagnostic diagnostic
+					in analysis.Syntax.Diagnostics)
+				{
+					lines.Add(
+						$"{diagnostic.Severity} {diagnostic.Code} "
+						+ $"at {diagnostic.Span.Start}: "
+						+ diagnostic.Message);
+				}
+			}
+
+			if (analysis.References.Count == 0)
+			{
+				lines.Add("Object references: none.");
+			}
+			else
+			{
+				lines.Add("Object references:");
+				foreach (ProjectedScriptObjectReference reference
+					in analysis.References)
+				{
+					lines.Add(
+						$"{reference.DisplayName} — {reference.Kind} "
+						+ $"<{reference.Id.Value}> "
+						+ $"[{reference.Resolution}]");
+				}
+			}
+
+			_analysis.Text = string.Join(
+				Environment.NewLine,
+				lines);
+		}
+		catch (Exception ex)
+		{
+			_analysis.Text =
+				$"Script analysis failed: {ex.Message}";
+		}
 	}
 
 	private void ApplySource()
