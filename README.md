@@ -132,6 +132,20 @@ speed multipliers, and mixdown), exposes row/channel dimensions plus minor/major
 row-highlight intervals, and warns before shrinking dimensions when populated
 cells would be discarded.
 
+The note field supports direct tracker-keyboard entry. A current sound source
+(sample, instrument, pattern or sequence) and base octave are selected in the
+pattern header. The physical-layout convention is the familiar chromatic
+tracker piano: `Z S X D C V G B H N J M` spans the lower octave and
+`Q 2 W 3 E R 5 T 6 Y 7 U` the next, continuing through `I 9 O 0 P`.
+Entered pitches are stored as semantic pitch multipliers relative to Heresy's
+existing C4 reference convention, so multiplier 1.0 is displayed as `C-4`;
+exact equal-tempered semitone multipliers are projected as tracker note names,
+while arbitrary multipliers remain visible numerically. `1` enters note cut
+and backtick enters note off. Every recognized note/cut/off entry advances one
+row, enabling paint-down entry. Replacing an existing start note changes its
+source/pitch but preserves its playback-speed multiplier and mixdown flag;
+Enter remains available for the detailed semantic note dialog.
+
 Effects are projected as coloured tabs attached to the right edge of each cell.
 Multiple effects remain in semantic application order and collapse into an
 overlapping stack with a constant five-pixel reveal between tabs; the cell clips
