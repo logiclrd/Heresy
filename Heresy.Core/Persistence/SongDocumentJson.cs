@@ -627,7 +627,7 @@ public static class SongDocumentJson
 	{
 		if (string.IsNullOrWhiteSpace(storedPath))
 			throw new InvalidDataException("External asset paths must be non-empty.");
-		if (storedPath.StartsWith('/', StringComparison.Ordinal)
+		if (storedPath.StartsWith("/", StringComparison.Ordinal)
 			|| storedPath.StartsWith('\\')
 			|| (storedPath.Length >= 3
 				&& char.IsLetter(storedPath[0])
