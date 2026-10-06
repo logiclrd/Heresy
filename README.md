@@ -70,3 +70,12 @@ save baseline, while `SongTreeItemViewModel` resolves tree object IDs to live
 names and falls back through tombstones to raw IDs for broken references.
 Tree-only reorganization uses `SongTreeEditor` and advances `DocumentRevision`
 without advancing `AudioRevision`; moving a node never changes its ObjectId.
+
+The document tree has four fixed top-level sections, persisted in version 2 in
+clockwise document-view order: Sequences, Patterns, Instruments and Samples.
+The Avalonia document mode projects those section subtrees as four panes:
+Sequences top-left, Patterns top-right, Samples bottom-left and Instruments
+bottom-right. The fixed section nodes themselves are not shown because each
+pane is the visual root of its subtree. New objects receive one canonical tree
+placement from `SongDocument.Add`; envelopes are grouped with Instruments.
+Nodes may be reorganized within a section but not moved between sections.
