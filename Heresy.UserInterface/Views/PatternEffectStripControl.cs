@@ -46,6 +46,8 @@ public sealed class PatternEffectStripControl : UserControl
 	private readonly Action<int> _requestEditNative;
 	private readonly Action<int, bool> _requestInsertNative;
 	private readonly Action _requestInsertNativeEmpty;
+	private readonly Action _requestCopyStack;
+	private readonly Action _requestPasteStack;
 	private readonly Action<int> _requestDelete;
 	private readonly Action<int, bool> _requestInsert;
 	private readonly Action<int, int> _requestReorder;
@@ -71,6 +73,8 @@ public sealed class PatternEffectStripControl : UserControl
 		Action<int> requestEditNative,
 		Action<int, bool> requestInsertNative,
 		Action requestInsertNativeEmpty,
+		Action requestCopyStack,
+		Action requestPasteStack,
 		Action<int> requestDelete,
 		Action<int, bool> requestInsert,
 		Action<int, int> requestReorder)
@@ -95,6 +99,10 @@ public sealed class PatternEffectStripControl : UserControl
 			requestInsertNative ?? throw new ArgumentNullException(nameof(requestInsertNative));
 		_requestInsertNativeEmpty =
 			requestInsertNativeEmpty ?? throw new ArgumentNullException(nameof(requestInsertNativeEmpty));
+		_requestCopyStack =
+			requestCopyStack ?? throw new ArgumentNullException(nameof(requestCopyStack));
+		_requestPasteStack =
+			requestPasteStack ?? throw new ArgumentNullException(nameof(requestPasteStack));
 		_requestDelete =
 			requestDelete ?? throw new ArgumentNullException(nameof(requestDelete));
 		_requestInsert =
@@ -356,6 +364,12 @@ public sealed class PatternEffectStripControl : UserControl
 		insertNativeAfter.Click += (_, _) =>
 			_requestInsertNative(index, true);
 
+		MenuItem copyStack = new() { Header = "Copy Effect Stack" };
+		copyStack.Click += (_, _) => _requestCopyStack();
+
+		MenuItem pasteStack = new() { Header = "Paste Effect Stack" };
+		pasteStack.Click += (_, _) => _requestPasteStack();
+
 		MenuItem delete = new() { Header = "Delete" };
 		delete.Click += (_, _) => _requestDelete(index);
 
@@ -375,6 +389,9 @@ public sealed class PatternEffectStripControl : UserControl
 			items.Add(edit);
 			items.Add(new Separator());
 		}
+		items.Add(copyStack);
+		items.Add(pasteStack);
+		items.Add(new Separator());
 		items.Add(insertTrackerBefore);
 		items.Add(insertTrackerAfter);
 		items.Add(insertNativeBefore);
@@ -390,6 +407,14 @@ public sealed class PatternEffectStripControl : UserControl
 
 	private ContextMenu BuildEmptyContextMenu()
 	{
+		MenuItem pasteStack =
+			new()
+			{
+				Header = "Paste Effect Stack",
+			};
+		pasteStack.Click += (_, _) =>
+			_requestPasteStack();
+
 		MenuItem insertNative =
 			new()
 			{
@@ -400,7 +425,12 @@ public sealed class PatternEffectStripControl : UserControl
 
 		return new ContextMenu
 		{
-			ItemsSource = new object[] { insertNative },
+			ItemsSource = new object[]
+			{
+				pasteStack,
+				new Separator(),
+				insertNative,
+			},
 		};
 	}
 
