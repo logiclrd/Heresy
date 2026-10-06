@@ -474,4 +474,69 @@ public sealed class PatternNoteKeyboardTests
 		pattern.Grid[1, 0]!.Note.Should().Be(new PatternNoteOff());
 	}
 
+	[Test]
+	public void NoteTypingNeedsNoEditorSourceSelection()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
+		PatternEffectCursor cursor =
+			new(row: 0, channel: 0, PatternCellField.Note);
+		PatternNoteInputState state =
+			new(ObjectId.None, baseOctave: 4);
+
+		PatternNoteInputResult result =
+			PatternNoteKeyboardEditor.TypePhysical(
+				workspace,
+				pattern,
+				cursor,
+				state,
+				PhysicalKey.Z);
+
+		result.Changed.Should().BeTrue();
+		result.Rejected.Should().BeFalse();
+		pattern.Grid[0, 0]!.Note.Should().Be(
+			new StartPatternNote());
+		cursor.Row.Should().Be(1);
+	}
+
+	[Test]
+	public void SourceIsProjectedInItsOwnField()
+	{
+		DocumentWorkspace workspace = new();
+		SampleDefinition sample = AddSample(workspace, "Very Long Piano Name");
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+		cell.SourceId = sample.Id;
+		cell.Note = new StartPatternNote();
+
+		PatternCellViewModel view =
+			PatternCellViewModel.Create(
+				workspace.Document,
+				pattern,
+				0,
+				0);
+
+		view.NoteText.Should().Be("C-4");
+		view.SourceText.Should().Contain("Very Long Piano Name");
+		view.SourceText.Should().Contain($"<{sample.Id.Value}>");
+	}
+
+	[Test]
+	public void CursorTraversesNoteSourceVolumeThenEffect()
+	{
+		DataPatternDefinition pattern =
+			new((ObjectId)1U, "Pattern");
+		PatternEffectCursor cursor =
+			new(0, 0, PatternCellField.Note);
+
+		cursor.MoveRight(pattern);
+		cursor.Field.Should().Be(PatternCellField.Source);
+		cursor.MoveRight(pattern);
+		cursor.Field.Should().Be(PatternCellField.Volume);
+		cursor.MoveRight(pattern);
+		cursor.Field.Should().Be(PatternCellField.EffectCommand);
+	}
+
 }

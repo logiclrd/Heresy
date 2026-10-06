@@ -320,4 +320,139 @@ public sealed class DataPatternDefinitionTests
 				}));
 	}
 
+	[Test]
+	public void PatternSourceMakesOtherwiseEmptyCellNonEmpty()
+	{
+		PatternCell cell = new()
+		{
+			SourceId = (ObjectId)17U,
+		};
+
+		Assert.That(cell.IsEmpty, Is.False);
+	}
+
+	[Test]
+	public void SourceOnlyRowRemembersSourceWithoutEmittingEvent()
+	{
+		DataPatternDefinition pattern = new((ObjectId)1U, "Pattern");
+		pattern.Grid.GetOrCreateCell(0, 2).SourceId = (ObjectId)17U;
+		SequencingContext context = new();
+		NoteScheduleBuilder output = new();
+
+		pattern.GenerateRawNotes(context, output, out _);
+
+		Assert.That(output.Freeze().Count, Is.EqualTo(0));
+		Assert.That(
+			context.GetPhysicalChannelState(2).CurrentSourceId,
+			Is.EqualTo((ObjectId)17U));
+	}
+
+	[Test]
+	public void NoteUsesSourceStoredOnSameRowAndRemembersIt()
+	{
+		DataPatternDefinition pattern = new((ObjectId)1U, "Pattern");
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 1);
+		cell.SourceId = (ObjectId)17U;
+		cell.Note = new StartPatternNote(1.5);
+		SequencingContext context = new();
+		NoteScheduleBuilder output = new();
+
+		pattern.GenerateRawNotes(context, output, out _);
+
+		StartNoteCommand command =
+			(StartNoteCommand)output.Freeze()[0].Commands[0];
+		Assert.That(command.SourceId, Is.EqualTo((ObjectId)17U));
+		Assert.That(command.PitchMultiplier, Is.EqualTo(1.5));
+		Assert.That(
+			context.GetPhysicalChannelState(1).CurrentSourceId,
+			Is.EqualTo((ObjectId)17U));
+	}
+
+	[Test]
+	public void NoteWithoutSourceUsesRememberedSourceOnItsChannel()
+	{
+		DataPatternDefinition pattern = new((ObjectId)1U, "Pattern");
+		PatternCell first = pattern.Grid.GetOrCreateCell(0, 0);
+		first.SourceId = (ObjectId)17U;
+		first.Note = new StartPatternNote();
+		pattern.Grid.GetOrCreateCell(1, 0).Note =
+			new StartPatternNote(2.0);
+		NoteScheduleBuilder output = new();
+
+		pattern.GenerateRawNotes(new SequencingContext(), output, out _);
+
+		NoteSchedule schedule = output.Freeze();
+		Assert.That(
+			((StartNoteCommand)schedule[0].Commands[0]).SourceId,
+			Is.EqualTo((ObjectId)17U));
+		Assert.That(
+			((StartNoteCommand)schedule[1].Commands[0]).SourceId,
+			Is.EqualTo((ObjectId)17U));
+		Assert.That(
+			((StartNoteCommand)schedule[1].Commands[0]).PitchMultiplier,
+			Is.EqualTo(2.0));
+	}
+
+	[Test]
+	public void NoteWithoutAnyRememberedSourceIsPlaybackNoOp()
+	{
+		DataPatternDefinition pattern = new((ObjectId)1U, "Pattern");
+		pattern.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote();
+		NoteScheduleBuilder output = new();
+
+		pattern.GenerateRawNotes(new SequencingContext(), output, out _);
+
+		Assert.That(output.Freeze().Count, Is.EqualTo(0));
+		Assert.That(pattern.Grid[0, 0]!.Note, Is.Not.Null);
+	}
+
+	[Test]
+	public void RememberedSourceIsIndependentPerPhysicalChannel()
+	{
+		DataPatternDefinition pattern = new((ObjectId)1U, "Pattern");
+		PatternCell a = pattern.Grid.GetOrCreateCell(0, 0);
+		a.SourceId = (ObjectId)17U;
+		a.Note = new StartPatternNote();
+		PatternCell b = pattern.Grid.GetOrCreateCell(0, 1);
+		b.SourceId = (ObjectId)23U;
+		b.Note = new StartPatternNote();
+		pattern.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote();
+		pattern.Grid.GetOrCreateCell(1, 1).Note = new StartPatternNote();
+		NoteScheduleBuilder output = new();
+
+		pattern.GenerateRawNotes(new SequencingContext(), output, out _);
+
+		NoteSchedule schedule = output.Freeze();
+		Assert.That(
+			((StartNoteCommand)schedule[2].Commands[0]).SourceId,
+			Is.EqualTo((ObjectId)17U));
+		Assert.That(
+			((StartNoteCommand)schedule[3].Commands[0]).SourceId,
+			Is.EqualTo((ObjectId)23U));
+	}
+
+	[Test]
+	public void RememberedSourceSurvivesLaterPatternInvocation()
+	{
+		SequencingContext context = new();
+
+		DataPatternDefinition first = new((ObjectId)1U, "First");
+		first.Grid.GetOrCreateCell(0, 0).SourceId = (ObjectId)17U;
+		first.GenerateRawNotes(
+			context,
+			new NoteScheduleBuilder(),
+			out _);
+
+		DataPatternDefinition second = new((ObjectId)2U, "Second");
+		second.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote();
+		NoteScheduleBuilder output = new();
+
+		second.GenerateRawNotes(context, output, out _);
+
+		StartNoteCommand command =
+			(StartNoteCommand)output.Freeze()[0].Commands[0];
+		Assert.That(command.SourceId, Is.EqualTo((ObjectId)17U));
+	}
+
 }
