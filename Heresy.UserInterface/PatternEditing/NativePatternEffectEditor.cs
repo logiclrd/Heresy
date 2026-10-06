@@ -17,6 +17,28 @@ public sealed record NativePatternEffectEditModel(
 	string Title,
 	IReadOnlyList<NativePatternEffectField> Fields);
 
+public enum NativePatternEffectKind
+{
+	Tempo,
+	Speed,
+	NoteVolume,
+	OverallChannelVolume,
+	PlaybackFrequency,
+	PlaybackOffset,
+	ResonantFilter,
+	PitchSlide,
+	NoteVolumeSlide,
+	VolumeColumnCompatibility,
+	VolumeColumnPanning,
+}
+
+public sealed record NativePatternEffectChoice(
+	NativePatternEffectKind Kind,
+	string DisplayName)
+{
+	public override string ToString() => DisplayName;
+}
+
 /// <summary>
 /// Framework-independent projection and reconstruction of native (non tracker
 /// notation) pattern effects. The Avalonia dialog only renders these fields;
@@ -24,6 +46,55 @@ public sealed record NativePatternEffectEditModel(
 /// </summary>
 public static class NativePatternEffectEditor
 {
+	private static readonly NativePatternEffectChoice[] CreationChoices =
+	[
+		new(NativePatternEffectKind.Tempo, "Tempo"),
+		new(NativePatternEffectKind.Speed, "Speed"),
+		new(NativePatternEffectKind.NoteVolume, "Note volume"),
+		new(NativePatternEffectKind.OverallChannelVolume, "Overall channel volume"),
+		new(NativePatternEffectKind.PlaybackFrequency, "Playback frequency"),
+		new(NativePatternEffectKind.PlaybackOffset, "Playback offset"),
+		new(NativePatternEffectKind.ResonantFilter, "Resonant filter"),
+		new(NativePatternEffectKind.PitchSlide, "Pitch slide"),
+		new(NativePatternEffectKind.NoteVolumeSlide, "Note-volume slide"),
+		new(NativePatternEffectKind.VolumeColumnCompatibility, "Volume-column compatibility"),
+		new(NativePatternEffectKind.VolumeColumnPanning, "Volume-column panning"),
+	];
+
+	public static NativePatternEffectChoice[] GetCreationChoices()
+		=> [.. CreationChoices];
+
+	public static PatternEffect CreateDefault(
+		NativePatternEffectKind kind)
+		=> kind switch
+		{
+			NativePatternEffectKind.Tempo =>
+				new SetTempoPatternEffect(24.0),
+			NativePatternEffectKind.Speed =>
+				new SetSpeedPatternEffect(6),
+			NativePatternEffectKind.NoteVolume =>
+				new SetNoteVolumePatternEffect(1.0),
+			NativePatternEffectKind.OverallChannelVolume =>
+				new SetOverallChannelVolumePatternEffect(1.0),
+			NativePatternEffectKind.PlaybackFrequency =>
+				new SetPlaybackFrequencyPatternEffect(440.0),
+			NativePatternEffectKind.PlaybackOffset =>
+				new SetPlaybackOffsetPatternEffect(TimeSpan.Zero),
+			NativePatternEffectKind.ResonantFilter =>
+				new SetResonantFilterPatternEffect(1.0, 0.0),
+			NativePatternEffectKind.PitchSlide =>
+				new PitchSlidePatternEffect(0.0),
+			NativePatternEffectKind.NoteVolumeSlide =>
+				new NoteVolumeSlidePatternEffect(0.0),
+			NativePatternEffectKind.VolumeColumnCompatibility =>
+				new TrackerVolumeColumnPatternEffect(
+					TrackerVolumeColumnEffectKind.FineVolumeUp,
+					0),
+			NativePatternEffectKind.VolumeColumnPanning =>
+				new TrackerVolumeColumnPanningPatternEffect(32),
+			_ => throw new ArgumentOutOfRangeException(nameof(kind)),
+		};
+
 	public static bool CanEdit(PatternEffect effect)
 	{
 		ArgumentNullException.ThrowIfNull(effect);
