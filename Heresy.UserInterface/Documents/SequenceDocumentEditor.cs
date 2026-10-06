@@ -64,12 +64,15 @@ public static class SequenceDocumentEditor
 		int startRow)
 	{
 		ValidateSequence(workspace, sequence);
-		ValidatePattern(workspace.Document, patternId);
 		ValidateEntryIndex(sequence, index);
+
+		SequenceEntry current = sequence.Entries[index];
+		if (patternId != current.PatternId)
+			ValidatePattern(workspace.Document, patternId);
 
 		SequenceEntry replacement =
 			new(patternId, startRow);
-		if (sequence.Entries[index] == replacement)
+		if (current == replacement)
 			return;
 
 		sequence.Entries[index] = replacement;

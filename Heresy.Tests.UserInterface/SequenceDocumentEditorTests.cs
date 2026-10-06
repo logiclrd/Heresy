@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 
 using AwesomeAssertions;
@@ -302,4 +303,26 @@ public sealed class SequenceDocumentEditorTests
 		options.Select(option => option.Id)
 			.Should().Equal(dataId, scriptId);
 	}
+	[Test]
+	public void StartRowCanBeEditedWhileExistingPatternReferenceIsMissing()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(workspace, "Verse");
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(workspace, "Sequence");
+		sequence.Entries.Add(new SequenceEntry(pattern.Id, 2));
+		workspace.Document.Remove(pattern.Id);
+
+		SequenceDocumentEditor.UpdateEntry(
+			workspace,
+			sequence,
+			index: 0,
+			pattern.Id,
+			startRow: 9);
+
+		sequence.Entries[0].Should().Be(
+			new SequenceEntry(pattern.Id, 9));
+	}
+
 }

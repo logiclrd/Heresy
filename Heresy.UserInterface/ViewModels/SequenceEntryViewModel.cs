@@ -64,12 +64,12 @@ public sealed class SequenceEntryViewModel
 
 		if (document.Tombstones.TryGetValue(
 			entry.PatternId,
-			out ObjectTombstone tombstone))
+			out ObjectTombstone? tombstone))
 		{
 			return new SequenceEntryViewModel(
 				index,
 				entry.PatternId,
-				$"⚠ {tombstone.LastKnownName} <{entry.PatternId.Value}>",
+				$"⚠ {tombstone!.LastKnownName} <{entry.PatternId.Value}>",
 				entry.StartRow,
 				true);
 		}
