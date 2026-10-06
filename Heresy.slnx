@@ -3,5 +3,7 @@
   <Project Path="Heresy.Render/Heresy.Render.csproj" />
   <Project Path="Heresy.Tests.Core/Heresy.Tests.Core.csproj" />
   <Project Path="Heresy.Tests.Render/Heresy.Tests.Render.csproj" />
+  <Project Path="Heresy.UserInterface/Heresy.UserInterface.csproj" />
+  <Project Path="Heresy.Tests.UserInterface/Heresy.Tests.UserInterface.csproj" />
   <Project Path="Heresy/Heresy.csproj" />
 </Solution>
