@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 using Heresy.Core.Diagnostics;
 using Heresy.Core.Patterns;
@@ -8,7 +9,7 @@ using Heresy.Core.Timing;
 namespace Heresy.Core.Sequences;
 
 /// <summary>
-/// Executes a data-driven sequence by invoking referenced patterns in order.
+/// Executes sequence entries by invoking referenced patterns in order.
 /// Tracker Bxx/Cxx control is consumed here rather than reaching playback.
 /// </summary>
 public static class SequenceNoteProcessor
@@ -21,6 +22,23 @@ public static class SequenceNoteProcessor
 		out TimeSpan duration)
 	{
 		ArgumentNullException.ThrowIfNull(sequence);
+
+		GenerateNotes(
+			sequence.Entries,
+			resolver,
+			context,
+			output,
+			out duration);
+	}
+
+	public static void GenerateNotes(
+		IReadOnlyList<SequenceEntry> entries,
+		ISequencePatternResolver resolver,
+		SequencingContext context,
+		INoteReceiver output,
+		out TimeSpan duration)
+	{
+		ArgumentNullException.ThrowIfNull(entries);
 		ArgumentNullException.ThrowIfNull(resolver);
 		ArgumentNullException.ThrowIfNull(context);
 		ArgumentNullException.ThrowIfNull(output);
@@ -30,7 +48,7 @@ public static class SequenceNoteProcessor
 		int? startRowOverride = null;
 		int visits = 0;
 
-		while ((uint)order < (uint)sequence.Entries.Count)
+		while ((uint)order < (uint)entries.Count)
 		{
 			if (++visits > NoteScheduleBuilder.MaximumGeneratedNotes)
 			{
@@ -38,7 +56,7 @@ public static class SequenceNoteProcessor
 					$"Sequence control exceeded {NoteScheduleBuilder.MaximumGeneratedNotes:N0} pattern visits.");
 			}
 
-			SequenceEntry entry = sequence.Entries[order];
+			SequenceEntry entry = entries[order];
 			int startRow = startRowOverride ?? entry.StartRow;
 			startRowOverride = null;
 
