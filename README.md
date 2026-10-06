@@ -100,7 +100,7 @@ relative to its current filename:
   on the current host. A future UI resolution workflow will let the user locate
   replacement files or directories instead.
 
-The current persisted schema is format version **3**.
+The current persisted schema is format version **4**. Version 4 adds the persisted, musically inert `EmptyTrackerPatternEffect` used by the pattern editor while a newly inserted IT-style effect slot has not yet been assigned a command.
 
 ## Toolchain note
 
@@ -116,7 +116,7 @@ names and falls back through tombstones to raw IDs for broken references.
 Tree-only reorganization uses `SongTreeEditor` and advances `DocumentRevision`
 without advancing `AudioRevision`; moving a node never changes its ObjectId.
 
-The document tree has four fixed top-level sections, persisted in version 3 in
+The document tree has four fixed top-level sections, persisted in version 4 in
 clockwise document-view order: Sequences, Patterns, Instruments and Samples.
 The Avalonia document mode projects those section subtrees as four panes:
 Sequences top-left, Patterns top-right, Samples bottom-left and Instruments
@@ -153,6 +153,19 @@ individual fields but clamp at the ends; up/down collapse and move vertically,
 and Enter collapses in place. Native effects occupy one whole-tab keyboard stop,
 ignore direct typing, and are reserved for a future Enter/double-click parameter
 dialog. Native and IT-style tabs use the same visual footprint and may coexist
-in one stack. The semantic model already supports arbitrary effect stacks; a
-dedicated UI command for adding/removing/reordering additional stack members is
-still to be added.
+in one stack.
+
+Effect stacks can be edited without leaving the tracker keyboard flow. `Alt+Insert`
+inserts a new IT-style slot before the selected effect; `Alt+Shift+Insert` inserts
+after it and selects the new slot. A new slot is persisted as a musically inert
+`...` placeholder rather than as a real `xx=00` command, because many tracker
+commands use zero as effect memory and therefore are not no-ops. Parameter entry
+may precede the command (for example, an empty slot can hold `.15`, then become
+`G15` when `G` is entered). `Alt+Delete` removes the selected effect; when only
+one effect remains, the expanded stack collapses back to the ordinary single-
+effect view. `Alt+Left`/`Alt+Right` reorder the selected effect while expanded,
+and `Alt+Home`/`Alt+End` select the first/last stack member. Expanded tabs may
+also be dragged to reorder them. Right-clicking a tab first makes it the logical
+target, then offers **Insert Before**, **Insert After**, and **Delete**, all routed
+through the same stack-editing commands as the keyboard shortcuts. Copy/paste is
+intentionally deferred.
