@@ -214,9 +214,22 @@ AvaloniaEdit has run the object-reference element generator. Consequently a
 generated one-column object-name element is styled through the exact Roslyn
 source span that produced it, while ordinary source remains normal
 `VisualLineText`. Multi-line comments/raw strings are naturally colored a line
-at a time. The shared script editor continues to run the full restricted-C#
-compiler validation without assembly emission/loading and displays ordinary C#
-binding diagnostics plus Heresy restricted-language diagnostics.
+at a time.
+
+Compiler diagnostics now use the same raw-coordinate model for in-editor
+adornments. Diagnostic spans are normalized to the current document before
+rendering; non-empty spans retain their source range, while zero-length Roslyn
+diagnostics (such as an expected token at end-of-file) expand to a visible
+one-character anchor when the document is non-empty. An AvaloniaEdit
+`IBackgroundRenderer` asks `BackgroundGeometryBuilder` for the visual rectangles
+corresponding to each raw span and draws severity-colored wavy underlines on the
+text layer. Because the geometry builder resolves through the completed visual
+line, a diagnostic covering a raw `_O(id)` span automatically underlines the
+single generated object-name element rather than assuming one visual column per
+source character. Error, warning and informational diagnostics use distinct
+marker colors. The textual diagnostics list remains below the editor as the
+detailed message surface. The shared script editor continues to run the full
+restricted-C# compiler validation without assembly emission/loading.
 
 Core remains Roslyn-free through `IScriptObjectReferenceAnalyzer`. With no
 analyzer, `SongReferenceAnalyzer` retains the conservative opaque-script
