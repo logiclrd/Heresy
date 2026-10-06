@@ -198,16 +198,25 @@ ID.
 Live authoring analysis also retains an incremental Roslyn syntax snapshot.
 Each text change uses `SyntaxTree.WithChangedText`, allowing Roslyn to reuse
 unchanged syntax while still returning an error-tolerant tree and diagnostics
-for incomplete code. Valid semantic references elsewhere in the document remain
-available while another expression is being typed. The snapshot is retained in
-the authoring analysis object for the future syntax-highlighting layer: a
-`DocumentColorizingTransformer` can consume Roslyn token/trivia spans after
-visual element generation, while generated object-reference elements expose
-their semantic token metadata and original source spans for matching back to
-the corresponding syntax subtree. The shared script editor continues to run
-the full restricted-C# compiler validation without assembly emission/loading
-and displays ordinary C# binding diagnostics plus Heresy restricted-language
-diagnostics.
+for incomplete code. Valid semantic references and highlighting elsewhere in
+the document remain available while another expression is being typed.
+
+The script editor now builds syntax-highlighting spans directly from that same
+Roslyn tree. Keywords (including contextual keyword spellings), string/character
+and raw-string literals, interpolated string text, numeric literals, comments,
+disabled/preprocessor text, and semantic object references receive distinct
+highlight kinds. Comment/directive and object-reference spans take precedence
+over nested lexical spans. In particular, the complete raw `_O(id)` source span
+is emitted as one `ObjectReference` highlight rather than separate identifier,
+punctuation and number spans. A `DocumentColorizingTransformer` clips those raw
+spans to each `DocumentLine` and applies them with `ChangeLinePart` after
+AvaloniaEdit has run the object-reference element generator. Consequently a
+generated one-column object-name element is styled through the exact Roslyn
+source span that produced it, while ordinary source remains normal
+`VisualLineText`. Multi-line comments/raw strings are naturally colored a line
+at a time. The shared script editor continues to run the full restricted-C#
+compiler validation without assembly emission/loading and displays ordinary C#
+binding diagnostics plus Heresy restricted-language diagnostics.
 
 Core remains Roslyn-free through `IScriptObjectReferenceAnalyzer`. With no
 analyzer, `SongReferenceAnalyzer` retains the conservative opaque-script
