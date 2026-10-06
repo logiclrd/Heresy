@@ -36,9 +36,11 @@ The repository is intentionally split by concern.
 - Raw pattern generation is separated from the common timing/state processor;
   data-driven and scripted patterns are two front ends to the same raw-event
   model.
-- Data-driven patterns use a mutable row/channel grid whose cells contain a
-  semantic note column (start/off/cut) and semantic effects. Tracker-specific
-  notation and effect-memory behavior will be layered on top of this grid model.
+- Data-driven patterns use a mutable row/channel grid whose cells contain
+  first-class note (start/off/cut), source, volume and semantic-effect data.
+  Source is optional per row and participates in per-physical-channel tracker
+  memory; tracker-specific notation and effect-memory behavior are layered on
+  top of this semantic grid model.
 - Sequences are finite and entries can specify a `StartRow`.
 - Script object references are persisted in restricted-C# source as `_O(id)` and
   can later be projected by the editor as atomic named tokens.
@@ -126,11 +128,18 @@ placement from `SongDocument.Add`; envelopes are grouped with Instruments.
 Nodes may be reorganized within a section but not moved between sections.
 
 Opening or creating a data pattern switches the main workspace into pattern
-mode rather than opening a modal editor. The pattern grid edits the semantic
-note column directly (empty/start/off/cut, source ObjectId, pitch and playback-
-speed multipliers, and mixdown), exposes row/channel dimensions plus minor/major
-row-highlight intervals, and warns before shrinking dimensions when populated
-cells would be discarded.
+mode rather than opening a modal editor. The pattern grid edits semantic note
+(empty/start/off/cut), Source, Volume and effect columns directly; Start notes
+carry pitch/playback-speed/mixdown while Source is independent pattern-cell data.
+The editor exposes row/channel dimensions plus minor/major row-highlight
+intervals and warns before shrinking dimensions when populated cells would be
+discarded.
+
+Pattern row divisions are presentation rather than typography: major/minor
+rows use translucent background bands instead of bold text. The shared
+`UserInterfaceConfiguration` currently defaults major rows to ARGB
+`80808080` and minor rows to `40808080`, allowing the neutral grey to blend
+lighter in dark themes and darker in light themes.
 
 Opening or creating a data sequence likewise switches the main workspace into
 an arrangement-list editor. Sequence entries remain ordered `(PatternId,
@@ -146,28 +155,42 @@ the document browser. Script-sequence and script-pattern source editing remain
 future UI work. Existing Bxx/Cxx sequence-control semantics continue to be
 handled by the Core sequence processor.
 
-The note field supports direct tracker-keyboard entry. A current sound source
-(sample, instrument, pattern or sequence) and base octave are selected in the
-pattern header. The physical-layout convention is the familiar chromatic
-tracker piano: `Z S X D C V G B H N J M` spans the lower octave and
+The note field supports direct tracker-keyboard entry. A current toolbar Source
+(sample, instrument, pattern or sequence) and base octave are editor state; the
+toolbar Source is not implicitly written when a note is entered. The physical-
+layout convention is the familiar chromatic tracker piano:
+`Z S X D C V G B H N J M` spans the lower octave and
 `Q 2 W 3 E R 5 T 6 Y 7 U` the next, continuing through `I 9 O 0 P`.
 Tracker piano entry is driven from Avalonia's layout-independent physical-key
 codes rather than produced text, so changing the operating-system keyboard
 layout does not move the musical keys: the physical QWERTY `Z` position still
 enters C even if that key currently produces some other character. Entered
 pitches are stored as semantic pitch multipliers relative to Heresy's existing
-C4 reference convention, so multiplier 1.0 is displayed as `C-4`;
-exact equal-tempered semitone multipliers are projected as tracker note names,
-while arbitrary multipliers remain visible numerically. `1` enters note cut
-and backtick enters note off. Every recognized note/cut/off entry advances one
-row, enabling paint-down entry. Replacing an existing start note changes its
-source/pitch but preserves its playback-speed multiplier and mixdown flag;
-Enter remains available for the detailed semantic note dialog.
+C4 reference convention, so multiplier 1.0 is displayed as `C-4`; exact
+equal-tempered semitone multipliers are projected as tracker note names, while
+arbitrary multipliers remain visible numerically. `1` enters note cut and
+backtick enters note off. Every recognized note/cut/off entry advances one row,
+enabling paint-down entry. Replacing an existing start note changes its pitch
+but preserves its playback-speed multiplier and mixdown flag; Enter remains
+available for the detailed semantic note dialog.
+
+Source is a separate tracker column and may be omitted. An explicit Source value
+updates the remembered source for that mapped physical channel even on a row
+without a note. A Start note whose Source field is empty uses that remembered
+source; if the channel has never had a source, the note remains valid pattern
+data but generates no playback start. Sequencing source memory survives later
+pattern invocations in the same sequencing context, while mixdown children
+naturally receive independent memory with their independent channel-state map.
+The cursor order is **Note → Source → Volume → Effect Command → Effect
+Parameter**. Clicking any field moves the cursor there, including blank space.
+When Source is already focused, clicking it again opens a field-anchored picker
+wide enough to show full source names; `Alt+Down` opens the same picker.
+Space copies the Source selected in the pattern toolbar into the field, `.`
+clears it, and the Source field's right-click menu also provides **Clear**.
 
 Volume is first-class pattern-cell data, independent of the effect stack. It is
 stored as an optional normalized value and presented in the tracker grid as a
-decimal `00..64` column (`..` means absent). The cursor order is **Note → Volume
-→ Effect Command → Effect Parameter**. Two decimal digits set the volume and
+decimal `00..64` column (`..` means absent). Two decimal digits set the volume and
 advance one row; `.` clears it and advances, so volume values can be painted
 down rows even when those rows contain no new notes.
 
