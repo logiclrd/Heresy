@@ -232,19 +232,28 @@ single generated object-name element rather than assuming one visual column per
 source character. Error, warning and informational diagnostics use distinct
 marker colors.
 
-Diagnostic markers also drive hover help without invoking Roslyn again. Pointer
-movement is converted by AvaloniaEdit from the rendered editor position back to
-a raw `TextLocation`/document offset, then the current marker catalog is queried
-for diagnostics covering that offset. The lookup is tolerant of the end boundary
-of a diagnostic span so both halves of a generated one-column object-reference
-element map back to the same hover. Overlapping diagnostics are aggregated in
-severity order and shown in a pointer-positioned tooltip containing severity,
-diagnostic code and message. The tooltip is cached while the same diagnostic set
-remains under the pointer and is cleared immediately when analysis refreshes or
-the pointer leaves the editor. The textual diagnostics list remains below the
-editor as the persistent detailed-message surface. The shared script editor
-continues to run the full restricted-C# compiler validation without assembly
-emission/loading.
+Diagnostic markers also drive hover help and navigation without invoking Roslyn
+again. Pointer movement is converted by AvaloniaEdit from the rendered editor
+position back to a raw `TextLocation`/document offset, then the current marker
+catalog is queried for diagnostics covering that offset. The lookup is tolerant
+of the end boundary of a diagnostic span so both halves of a generated
+one-column object-reference element map back to the same hover. Overlapping
+diagnostics are aggregated in severity order and shown in a pointer-positioned
+tooltip containing severity, diagnostic code and message. The tooltip is cached
+while the same diagnostic set remains under the pointer and is cleared
+immediately when analysis refreshes or the pointer leaves the editor.
+
+The persistent diagnostics list below the editor renders each diagnostic as a
+clickable row. Activating one maps its *original* Roslyn span back into the
+current AvaloniaEdit document, selects that range, moves the caret to its start,
+scrolls the source location into view and focuses the editor. Navigation
+deliberately uses the original span rather than the normalized visual-marker
+span: a zero-width diagnostic at end-of-file therefore navigates to EOF even
+though its squiggle is anchored to the preceding character for visibility.
+Out-of-range stale spans are clamped to the current document. Object-reference
+summaries remain non-interactive informational rows beneath the diagnostics.
+The shared script editor continues to run the full restricted-C# compiler
+validation without assembly emission/loading.
 
 Core remains Roslyn-free through `IScriptObjectReferenceAnalyzer`. With no
 analyzer, `SongReferenceAnalyzer` retains the conservative opaque-script
