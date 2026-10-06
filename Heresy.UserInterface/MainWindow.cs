@@ -13,11 +13,13 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 
 using Heresy.Core.Objects;
+using Heresy.Core.Patterns;
 using Heresy.Core.Persistence;
 using Heresy.Core.Samples;
 using Heresy.UserInterface.Dialogs;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.ViewModels;
+using Heresy.UserInterface.Views;
 
 namespace Heresy.UserInterface;
 
@@ -67,6 +69,8 @@ public sealed class MainWindow : Window
 	private readonly DocumentWorkspace _workspace;
 	private readonly Dictionary<SongTreeSection, TreeView> _trees = [];
 	private readonly TextBlock _status;
+	private readonly ContentControl _mainContent = new();
+	private Control? _documentView;
 
 	private SongTreeItemViewModel? _selectedItem;
 	private TreeView? _selectedTree;
@@ -119,6 +123,14 @@ public sealed class MainWindow : Window
 		DockPanel.SetDock(statusBar, Dock.Bottom);
 		root.Children.Add(statusBar);
 
+		_documentView = BuildDocumentView();
+		_mainContent.Content = _documentView;
+		root.Children.Add(_mainContent);
+		return root;
+	}
+
+	private Control BuildDocumentView()
+	{
 		Grid body = new();
 		body.ColumnDefinitions.Add(
 			new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
@@ -133,9 +145,7 @@ public sealed class MainWindow : Window
 		AddSectionPane(body, SongTreeSection.Patterns, row: 0, column: 1);
 		AddSectionPane(body, SongTreeSection.Samples, row: 1, column: 0);
 		AddSectionPane(body, SongTreeSection.Instruments, row: 1, column: 1);
-
-		root.Children.Add(body);
-		return root;
+		return body;
 	}
 
 	private void AddSectionPane(
@@ -173,6 +183,12 @@ public sealed class MainWindow : Window
 				Orientation = Orientation.Horizontal,
 				Spacing = 6,
 			};
+		if (section == SongTreeSection.Patterns)
+		{
+			Button newPattern = new() { Content = "+ Pattern" };
+			newPattern.Click += async (_, _) => await CreatePatternAsync();
+			actions.Children.Add(newPattern);
+		}
 		if (section == SongTreeSection.Samples)
 		{
 			Button import = new() { Content = "+ Import" };
@@ -309,7 +325,7 @@ public sealed class MainWindow : Window
 		try
 		{
 			_workspace.Save();
-			RefreshDocumentView($"Saved {_workspace.DisplayName}", _selectedItem?.Node);
+			RefreshAfterPersistence($"Saved {_workspace.DisplayName}", _selectedItem?.Node);
 		}
 		catch (Exception ex)
 		{
@@ -366,7 +382,7 @@ public sealed class MainWindow : Window
 					: JsonAssetPathMode.Relative;
 
 			_workspace.SaveAs(path, jsonPathMode);
-			RefreshDocumentView($"Saved {_workspace.DisplayName}", _selectedItem?.Node);
+			RefreshAfterPersistence($"Saved {_workspace.DisplayName}", _selectedItem?.Node);
 		}
 		catch (Exception ex)
 		{
@@ -384,6 +400,33 @@ public sealed class MainWindow : Window
 		SetStatus(
 			"The song has unsaved changes. Save it before replacing the active document.");
 		return false;
+	}
+
+	private async Task CreatePatternAsync()
+	{
+		TextPromptDialog dialog =
+			new("New pattern", "Pattern name:", "New Pattern");
+		string? name = await dialog.ShowDialog<string?>(this);
+		if (name is null)
+			return;
+
+		try
+		{
+			DataPatternDefinition pattern =
+				PatternDocumentEditor.CreateDataPattern(
+					_workspace,
+					name);
+			SongTreeObject? node =
+				FindTreeObject(
+					_workspace.Document.GetSectionRoot(SongTreeSection.Patterns),
+					pattern.Id);
+			RefreshDocumentView($"Created pattern {pattern.Name}", node);
+			ShowPatternEditor(pattern, node);
+		}
+		catch (Exception ex)
+		{
+			SetStatus($"Could not create pattern: {ex.Message}");
+		}
 	}
 
 	private async Task ImportSamplesAsync()
@@ -642,10 +685,9 @@ public sealed class MainWindow : Window
 		string status,
 		SongTreeNode? selectNode = null)
 	{
-		Title =
-			_workspace.IsModified
-				? $"{_workspace.DisplayName} * — Heresy"
-				: $"{_workspace.DisplayName} — Heresy";
+		if (_documentView is not null)
+			_mainContent.Content = _documentView;
+		UpdateWindowTitle();
 
 		_selectedItem = null;
 		_selectedTree = null;
@@ -802,6 +844,20 @@ public sealed class MainWindow : Window
 		};
 
 		List<object> items = [];
+		if (section == SongTreeSection.Patterns
+			&& !item.IsMissingReference
+			&& item.Kind == SongObjectKind.Pattern)
+		{
+			MenuItem editPattern = new() { Header = "Edit Pattern..." };
+			editPattern.Click += (_, _) =>
+			{
+				tree.SelectedItem = control;
+				SelectTreeItem(item, tree);
+				ShowPatternEditor(item);
+			};
+			items.Add(editPattern);
+			items.Add(new Separator());
+		}
 		if (section == SongTreeSection.Samples
 			&& !item.IsMissingReference
 			&& item.Kind == SongObjectKind.Sample)
@@ -825,6 +881,44 @@ public sealed class MainWindow : Window
 		{
 			ItemsSource = items,
 		};
+	}
+
+	private void ShowPatternEditor(SongTreeItemViewModel item)
+	{
+		if (item.ObjectId is not ObjectId id
+			|| !_workspace.Document.TryGet(id, out SongObject? songObject))
+		{
+			SetStatus("The selected pattern is not available.");
+			return;
+		}
+
+		if (songObject is not DataPatternDefinition pattern)
+		{
+			SetStatus("Script-pattern editing is not implemented yet.");
+			return;
+		}
+
+		ShowPatternEditor(pattern, item.Node);
+	}
+
+	private void ShowPatternEditor(
+		DataPatternDefinition pattern,
+		SongTreeNode? selectNode)
+	{
+		PatternEditorControl editor =
+			new(
+				this,
+				_workspace,
+				pattern,
+				() => RefreshDocumentView($"Edited pattern {pattern.Name}", selectNode),
+				message =>
+				{
+					UpdateWindowTitle();
+					SetStatus(message);
+				});
+		_mainContent.Content = editor;
+		UpdateWindowTitle();
+		SetStatus($"Editing pattern {pattern.Name}");
 	}
 
 	private async Task ShowSampleEditorAsync(SongTreeItemViewModel item)
@@ -1021,6 +1115,30 @@ public sealed class MainWindow : Window
 		return item.IsMissingReference
 			? $"{item.DisplayName} — missing {item.Kind} reference, Object ID {id}"
 			: $"{item.DisplayName} — {item.Kind}, Object ID {id}";
+	}
+
+	private void RefreshAfterPersistence(
+		string status,
+		SongTreeNode? selectNode)
+	{
+		UpdateWindowTitle();
+		if (_documentView is not null
+			&& ReferenceEquals(_mainContent.Content, _documentView))
+		{
+			RefreshDocumentView(status, selectNode);
+		}
+		else
+		{
+			SetStatus(status);
+		}
+	}
+
+	private void UpdateWindowTitle()
+	{
+		Title =
+			_workspace.IsModified
+				? $"{_workspace.DisplayName} * — Heresy"
+				: $"{_workspace.DisplayName} — Heresy";
 	}
 
 	private void SetStatus(string text)
