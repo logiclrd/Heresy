@@ -14,6 +14,7 @@ namespace Heresy.UserInterface.Documents;
 /// for presentation.
 /// </summary>
 public sealed record ScriptSourceDocumentAnalysis(
+	ScriptReferenceAnalysisSnapshot SyntaxSnapshot,
 	ScriptReferenceAnalysis Syntax,
 	IReadOnlyList<ProjectedScriptObjectReference> References,
 	IReadOnlyList<ScriptAnalysisDiagnostic> Diagnostics)
@@ -37,53 +38,62 @@ public static class ScriptSourceDocumentAnalyzer
 {
 	public static ScriptSourceDocumentAnalysis Analyze(
 		DocumentWorkspace workspace,
-		string source)
-		=> AnalyzeReferences(workspace, source);
+		string source,
+		ScriptReferenceAnalysisSnapshot? previousSnapshot = null)
+		=> AnalyzeReferences(
+			workspace,
+			source,
+			ScriptReferenceAnalyzer.CreateSnapshot(
+				source,
+				previousSnapshot).Analysis.Diagnostics,
+			previousSnapshot);
 
 	public static ScriptSourceDocumentAnalysis Analyze(
 		DocumentWorkspace workspace,
 		ScriptPatternDefinition pattern,
-		string source)
+		string source,
+		ScriptReferenceAnalysisSnapshot? previousSnapshot = null)
 	{
 		ArgumentNullException.ThrowIfNull(pattern);
 		return AnalyzeReferences(
 			workspace,
 			source,
-			ScriptCompiler.AnalyzePatternSource(source));
+			ScriptCompiler.AnalyzePatternSource(source),
+			previousSnapshot);
 	}
 
 	public static ScriptSourceDocumentAnalysis Analyze(
 		DocumentWorkspace workspace,
 		ScriptSequenceDefinition sequence,
-		string source)
+		string source,
+		ScriptReferenceAnalysisSnapshot? previousSnapshot = null)
 	{
 		ArgumentNullException.ThrowIfNull(sequence);
 		return AnalyzeReferences(
 			workspace,
 			source,
-			ScriptCompiler.AnalyzeSequenceSource(source));
+			ScriptCompiler.AnalyzeSequenceSource(source),
+			previousSnapshot);
 	}
 
 	private static ScriptSourceDocumentAnalysis AnalyzeReferences(
 		DocumentWorkspace workspace,
-		string source)
-		=> AnalyzeReferences(
-			workspace,
-			source,
-			ScriptReferenceAnalyzer.Analyze(source).Diagnostics);
-
-	private static ScriptSourceDocumentAnalysis AnalyzeReferences(
-		DocumentWorkspace workspace,
 		string source,
-		IReadOnlyList<ScriptAnalysisDiagnostic> diagnostics)
+		IReadOnlyList<ScriptAnalysisDiagnostic> diagnostics,
+		ScriptReferenceAnalysisSnapshot? previousSnapshot)
 	{
 		ArgumentNullException.ThrowIfNull(workspace);
 		ArgumentNullException.ThrowIfNull(source);
 
+		ScriptReferenceAnalysisSnapshot snapshot =
+			ScriptReferenceAnalyzer.CreateSnapshot(
+				source,
+				previousSnapshot);
 		ScriptReferenceAnalysis syntax =
-			ScriptReferenceAnalyzer.Analyze(source);
+			snapshot.Analysis;
 
 		return new ScriptSourceDocumentAnalysis(
+			snapshot,
 			syntax,
 			ScriptObjectReferenceProjector.Project(
 				workspace.Document,
