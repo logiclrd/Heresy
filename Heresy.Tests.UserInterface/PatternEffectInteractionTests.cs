@@ -54,7 +54,7 @@ public sealed class PatternEffectInteractionTests
 		items[0].X.Should().Be(54);
 		items[1].X.Should().Be(59);
 		items[2].X.Should().Be(64);
-		items[2].X + items[2].Width.Should().Be(100);
+		(items[2].X + items[2].Width).Should().Be(100);
 		items.Should().OnlyContain(item =>
 			item.X >= 0 && item.X + item.Width <= 100);
 	}
