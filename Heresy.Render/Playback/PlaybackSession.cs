@@ -684,6 +684,11 @@ public sealed class PlaybackSession
 		if (invocation is null)
 			return;
 
+		// Direct volume is part of this note start. A source which cannot
+		// actually start must not seed the channel volume for a later note.
+		if (start.Volume.HasValue)
+			channel.SetNoteVolume(start.Volume.Value);
+
 		PlaybackVoice voice = new(
 			invocation.Sound,
 			invocation.State,

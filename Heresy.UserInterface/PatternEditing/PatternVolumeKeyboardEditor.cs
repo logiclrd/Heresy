@@ -40,7 +40,7 @@ public static class PatternVolumeKeyboardEditor
 
 		if (value == '.')
 		{
-			bool changed =
+			bool cleared =
 				pattern.Grid[cursor.Row, cursor.Channel]?.Volume is not null;
 			PatternDocumentEditor.SetVolume(
 				workspace,
@@ -50,7 +50,7 @@ public static class PatternVolumeKeyboardEditor
 				null);
 			state.Reset();
 			cursor.AdvanceAfterCollapsedEntry(pattern.RowCount);
-			return new PatternVolumeInputResult(true, changed, false);
+			return new PatternVolumeInputResult(true, cleared, false);
 		}
 
 		if (value is < '0' or > '9')

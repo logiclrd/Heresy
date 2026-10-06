@@ -17,7 +17,8 @@ public sealed record StartNoteCommand(
 	ObjectId SourceId,
 	double PitchMultiplier = 1.0,
 	double PlaybackSpeedMultiplier = 1.0,
-	bool Mixdown = false) : NoteCommand;
+	bool Mixdown = false,
+	double? Volume = null) : NoteCommand;
 
 public sealed record NoteOffCommand : NoteCommand;
 

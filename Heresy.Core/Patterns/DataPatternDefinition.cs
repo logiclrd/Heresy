@@ -48,13 +48,30 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 				}
 			}
 
+			bool startsNewNote =
+				cell.Note is StartPatternNote
+					&& !hasTonePortamento;
+
 			if (cell.Note is StartPatternNote start && hasTonePortamento)
 			{
-				tonePortamentoTarget = (StartNoteCommand)TranslateNote(start);
+				// Tone portamento uses the note as a pitch target rather than
+				// starting it immediately. Volume therefore follows the
+				// current-note command path below.
+				tonePortamentoTarget =
+					(StartNoteCommand)TranslateNote(start);
 			}
 			else if (cell.Note is not null)
 			{
-				channelCommands.Add(TranslateNote(cell.Note));
+				channelCommands.Add(
+					TranslateNote(
+						cell.Note,
+						startsNewNote ? cell.Volume : null));
+			}
+
+			if (cell.Volume.HasValue && !startsNewNote)
+			{
+				channelCommands.Add(
+					new SetNoteVolumeCommand(cell.Volume.Value));
 			}
 
 			foreach (PatternEffect effect in cell.Effects)
@@ -131,14 +148,17 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 		Grid.Resize(RowCount, ChannelCount);
 	}
 
-	private static NoteCommand TranslateNote(PatternNoteEntry note)
+	private static NoteCommand TranslateNote(
+		PatternNoteEntry note,
+		double? volume = null)
 		=> note switch
 		{
 			StartPatternNote start => new StartNoteCommand(
 				start.SourceId,
 				start.PitchMultiplier,
 				start.PlaybackSpeedMultiplier,
-				start.Mixdown),
+				start.Mixdown,
+				volume),
 			PatternNoteOff => new NoteOffCommand(),
 			PatternNoteCut => new NoteCutCommand(),
 			_ => throw new NotSupportedException($"Unsupported pattern note type: {note.GetType().FullName}"),
