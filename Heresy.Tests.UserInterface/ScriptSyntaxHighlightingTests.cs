@@ -22,13 +22,13 @@ public sealed class ScriptSyntaxHighlightingTests
 			new ScriptPatternDefinition(id, "Piano"));
 
 		const string source = """
-			#if DEBUG
+			#region Example
 			var number = 42;
 			var text = "hello";
 			// comment
 			if (true)
 				Note(0, 0, _O(1));
-			#endif
+			#endregion
 			""";
 
 		ScriptSourceDocumentAnalysis analysis =
