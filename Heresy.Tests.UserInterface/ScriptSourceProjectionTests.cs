@@ -191,6 +191,41 @@ public sealed class ScriptSourceProjectionTests
 		normalized.End.Should().Be(token.DisplaySpan.End);
 	}
 
+	[Test]
+	public void ReconcileOrdinaryTextBoxEditUpdatesRawSource()
+	{
+		DocumentWorkspace workspace = WorkspaceWithPiano();
+		ScriptSourceProjection projection =
+			Create(workspace, "var p = _O(1);");
+
+		ScriptProjectionEdit edit =
+			projection.ReconcileTextChange(
+				"X" + projection.Text);
+
+		edit.Source.Should().Be("Xvar p = _O(1);");
+		edit.SourceCaret.Should().Be(1);
+	}
+
+	[Test]
+	public void ReconcilePartialVisualTokenDeletionDeletesWholeRawReference()
+	{
+		DocumentWorkspace workspace = WorkspaceWithPiano();
+		ScriptSourceProjection projection =
+			Create(workspace, "var p = _O(1);");
+		ScriptProjectedReferenceToken token =
+			projection.Tokens.Single();
+		string changed =
+			projection.Text.Remove(
+				token.DisplaySpan.End - 1,
+				1);
+
+		ScriptProjectionEdit edit =
+			projection.ReconcileTextChange(changed);
+
+		edit.Source.Should().Be("var p = ;");
+	}
+
+
 	private static DocumentWorkspace WorkspaceWithPiano()
 	{
 		DocumentWorkspace workspace = new();
