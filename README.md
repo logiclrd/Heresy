@@ -184,8 +184,9 @@ Persisted script source remains ordinary restricted-C# text. The editor offers
 a catalog containing every live song object and can insert the selected object
 using the canonical `_O(id)` spelling, replacing the current text selection and
 leaving the caret immediately after the inserted reference. The shared script
-editor now analyzes its source with the separate `Heresy.Scripting` Roslyn layer
-as text changes. It displays reference diagnostics plus semantic object
+editor validates source live with the same restricted-C# compiler rules used for
+execution, but stops before assembly emission/loading. It displays ordinary C#
+binding diagnostics, Heresy restricted-language diagnostics and semantic object
 references resolved to current live names/kinds, tombstone names/kinds, or
 canonical raw-ID fallback, without rewriting the persisted source.
 
@@ -213,8 +214,17 @@ after 1,000,000 expansion units or a runaway-time budget. Every sequencing
 invocation constructs a fresh generated script-program instance, while
 randomness comes from the supplied `SequencingContext`, preserving
 deterministic replay and preventing mutable script state from leaking between
-invocations. Atomic named-token editing remains future work. Script
-source/layout edits are audio-affecting authoring changes.
+invocations.
+
+`SongScheduleCompiler` is the current song-level execution bridge. It resolves
+the document's root sequence, compiles script definitions on demand, executes
+data and script sequences through the same resolver/processor path, and freezes
+the result into an immutable `NoteSchedule` suitable for rendering. Script
+patterns are compiled lazily only when the executing sequence actually reaches
+them, so an unused broken script does not block playback; a referenced script
+with compilation errors makes the complete schedule compilation fail with those
+diagnostics instead of silently disappearing. Atomic named-token editing remains
+future work. Script source/layout edits are audio-affecting authoring changes.
 
 The Instruments pane can create an `InstrumentDefinition` and open it in a
 main-workspace tone-table editor. Divisions and offset remain the pitch-to-index
