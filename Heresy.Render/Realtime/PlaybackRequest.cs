@@ -5,9 +5,24 @@ using Heresy.Core.Sequencing;
 
 namespace Heresy.Render.Realtime;
 
-public readonly record struct SequencePlaybackPosition(
-	int Order,
-	int Row);
+public readonly record struct SequencePlaybackPosition
+{
+	public SequencePlaybackPosition(
+		int order,
+		int row)
+	{
+		if (order < 0)
+			throw new ArgumentOutOfRangeException(nameof(order));
+		if (row < 0)
+			throw new ArgumentOutOfRangeException(nameof(row));
+
+		Order = order;
+		Row = row;
+	}
+
+	public int Order { get; }
+	public int Row { get; }
+}
 
 public abstract record PlaybackRequest(
 	SongDocumentSnapshot Snapshot);
@@ -22,7 +37,18 @@ public sealed record SequencePlaybackRequest(
 		SongDocument document,
 		ObjectId sequenceId,
 		SequencePlaybackPosition? startPosition = null)
-		=> throw new NotImplementedException();
+	{
+		ArgumentNullException.ThrowIfNull(document);
+		if (sequenceId.IsNone)
+			throw new ArgumentException(
+				"A playback sequence ID may not be zero.",
+				nameof(sequenceId));
+
+		return new SequencePlaybackRequest(
+			SongDocumentSnapshot.Create(document),
+			sequenceId,
+			startPosition);
+	}
 }
 
 public sealed record PatternPlaybackRequest(
@@ -37,7 +63,21 @@ public sealed record PatternPlaybackRequest(
 		ObjectId patternId,
 		int startRow = 0,
 		bool repeat = false)
-		=> throw new NotImplementedException();
+	{
+		ArgumentNullException.ThrowIfNull(document);
+		if (patternId.IsNone)
+			throw new ArgumentException(
+				"A playback pattern ID may not be zero.",
+				nameof(patternId));
+		if (startRow < 0)
+			throw new ArgumentOutOfRangeException(nameof(startRow));
+
+		return new PatternPlaybackRequest(
+			SongDocumentSnapshot.Create(document),
+			patternId,
+			startRow,
+			repeat);
+	}
 }
 
 public sealed record AdHocPlaybackRequest(
@@ -48,7 +88,14 @@ public sealed record AdHocPlaybackRequest(
 	public static AdHocPlaybackRequest Create(
 		SongDocument document,
 		NoteSchedule schedule)
-		=> throw new NotImplementedException();
+	{
+		ArgumentNullException.ThrowIfNull(document);
+		ArgumentNullException.ThrowIfNull(schedule);
+
+		return new AdHocPlaybackRequest(
+			SongDocumentSnapshot.Create(document),
+			schedule);
+	}
 }
 
 public interface IBackgroundPlaybackSourceFactory
