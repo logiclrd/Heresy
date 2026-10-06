@@ -25,7 +25,9 @@ public sealed class SongReferenceAnalyzerTests
 
 		ObjectId patternId = document.AllocateObjectId();
 		DataPatternDefinition pattern = new(patternId, "Pattern");
-		pattern.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(targetId);
+		PatternCell referenceCell = pattern.Grid.GetOrCreateCell(0, 0);
+		referenceCell.SourceId = targetId;
+		referenceCell.Note = new StartPatternNote();
 		document.Add(pattern);
 
 		ObjectId sequenceId = document.AllocateObjectId();

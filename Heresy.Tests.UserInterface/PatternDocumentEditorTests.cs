@@ -201,4 +201,63 @@ public sealed class PatternDocumentEditorTests
 	}
 
 	private sealed record PatternNoteDelayPatternEffectForTest : PatternEffect;
+	[Test]
+	public void SetSourceCreatesSparseCellAndClearingLastValueRemovesIt()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
+		ObjectId sourceId = workspace.Document.AllocateObjectId();
+		workspace.Document.Add(
+			new SampleDefinition(
+				sourceId,
+				"Kick",
+				new Heresy.Core.Assets.ExternalAssetReference(
+					System.IO.Path.GetFullPath("kick.wav"))));
+		uint audioRevision = workspace.Document.AudioRevision;
+
+		PatternDocumentEditor.SetSource(
+			workspace,
+			pattern,
+			3,
+			1,
+			sourceId);
+
+		pattern.Grid[3, 1]!.SourceId.Should().Be(sourceId);
+		workspace.Document.AudioRevision.Should().Be(audioRevision + 1);
+
+		PatternDocumentEditor.SetSource(
+			workspace,
+			pattern,
+			3,
+			1,
+			ObjectId.None);
+
+		pattern.Grid[3, 1].Should().BeNull();
+	}
+
+	[Test]
+	public void SetSourceRejectsNonSoundObject()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
+		ObjectId envelopeId = workspace.Document.AllocateObjectId();
+		workspace.Document.Add(
+			new Heresy.Core.Envelopes.AdsrEnvelopeDefinition(
+				envelopeId,
+				"Envelope"));
+
+		var action = () =>
+			PatternDocumentEditor.SetSource(
+				workspace,
+				pattern,
+				0,
+				0,
+				envelopeId);
+
+		action.Should().Throw<InvalidOperationException>();
+		pattern.Grid[0, 0].Should().BeNull();
+	}
+
 }

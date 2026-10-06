@@ -68,6 +68,7 @@ public sealed class MainWindow : Window
 		DataFormat.CreateInProcessFormat<SongTreeNode>("Heresy.SongTreeNode");
 
 	private readonly DocumentWorkspace _workspace;
+	private readonly UserInterfaceConfiguration _uiConfiguration = new();
 	private readonly Dictionary<SongTreeSection, TreeView> _trees = [];
 	private readonly TextBlock _status;
 	private readonly ContentControl _mainContent = new();
@@ -1048,7 +1049,8 @@ public sealed class MainWindow : Window
 					UpdateWindowTitle();
 					SetStatus(message);
 				},
-				backLabel);
+				backLabel,
+				_uiConfiguration);
 		_mainContent.Content = editor;
 		UpdateWindowTitle();
 		SetStatus($"Editing pattern {pattern.Name}");
