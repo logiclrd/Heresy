@@ -2,6 +2,8 @@ using System;
 
 using AwesomeAssertions;
 
+using Avalonia.Input;
+
 using Heresy.Core.Assets;
 using Heresy.Core.Envelopes;
 using Heresy.Core.Instruments;
@@ -379,4 +381,97 @@ public sealed class PatternNoteKeyboardTests
 		workspace.Document.Add(sample);
 		return sample;
 	}
+	[TestCase(PhysicalKey.Z, 0)]
+	[TestCase(PhysicalKey.S, 1)]
+	[TestCase(PhysicalKey.X, 2)]
+	[TestCase(PhysicalKey.D, 3)]
+	[TestCase(PhysicalKey.C, 4)]
+	[TestCase(PhysicalKey.V, 5)]
+	[TestCase(PhysicalKey.G, 6)]
+	[TestCase(PhysicalKey.B, 7)]
+	[TestCase(PhysicalKey.H, 8)]
+	[TestCase(PhysicalKey.N, 9)]
+	[TestCase(PhysicalKey.J, 10)]
+	[TestCase(PhysicalKey.M, 11)]
+	[TestCase(PhysicalKey.Q, 12)]
+	[TestCase(PhysicalKey.Digit2, 13)]
+	[TestCase(PhysicalKey.W, 14)]
+	[TestCase(PhysicalKey.Digit3, 15)]
+	[TestCase(PhysicalKey.E, 16)]
+	[TestCase(PhysicalKey.R, 17)]
+	[TestCase(PhysicalKey.Digit5, 18)]
+	[TestCase(PhysicalKey.T, 19)]
+	[TestCase(PhysicalKey.Digit6, 20)]
+	[TestCase(PhysicalKey.Y, 21)]
+	[TestCase(PhysicalKey.Digit7, 22)]
+	[TestCase(PhysicalKey.U, 23)]
+	[TestCase(PhysicalKey.I, 24)]
+	[TestCase(PhysicalKey.Digit9, 25)]
+	[TestCase(PhysicalKey.O, 26)]
+	[TestCase(PhysicalKey.Digit0, 27)]
+	[TestCase(PhysicalKey.P, 28)]
+	public void PhysicalTrackerKeyboardMapIsLayoutIndependent(
+		PhysicalKey key,
+		int expectedSemitone)
+	{
+		PatternNoteKeyboard.TryGetSemitoneOffset(
+			key,
+			out int actual).Should().BeTrue();
+		actual.Should().Be(expectedSemitone);
+	}
+
+	[Test]
+	public void PhysicalZEntersCWithoutDependingOnProducedText()
+	{
+		DocumentWorkspace workspace = new();
+		SampleDefinition sample = AddSample(workspace, "Piano");
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
+		PatternEffectCursor cursor =
+			new(row: 0, channel: 0, PatternCellField.Note);
+		PatternNoteInputState state =
+			new(sample.Id, baseOctave: 4);
+
+		PatternNoteInputResult result =
+			PatternNoteKeyboardEditor.TypePhysical(
+				workspace,
+				pattern,
+				cursor,
+				state,
+				PhysicalKey.Z);
+
+		result.Changed.Should().BeTrue();
+		pattern.Grid[0, 0]!.Note.Should().Be(
+			new StartPatternNote(sample.Id, 1.0));
+		cursor.Row.Should().Be(1);
+	}
+
+	[Test]
+	public void PhysicalCutAndOffKeysUseQwertyPositions()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
+		PatternEffectCursor cursor =
+			new(row: 0, channel: 0, PatternCellField.Note);
+		PatternNoteInputState state =
+			new(ObjectId.None, baseOctave: 4);
+
+		PatternNoteKeyboardEditor.TypePhysical(
+			workspace,
+			pattern,
+			cursor,
+			state,
+			PhysicalKey.Digit1);
+		PatternNoteKeyboardEditor.TypePhysical(
+			workspace,
+			pattern,
+			cursor,
+			state,
+			PhysicalKey.Backquote);
+
+		pattern.Grid[0, 0]!.Note.Should().Be(new PatternNoteCut());
+		pattern.Grid[1, 0]!.Note.Should().Be(new PatternNoteOff());
+	}
+
 }
