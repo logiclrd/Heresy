@@ -337,33 +337,18 @@ public sealed class ScriptEditorControl : UserControl
 			return;
 		}
 
-		string text = _source.Text ?? string.Empty;
-		int first =
-			Math.Clamp(
-				Math.Min(
-					_source.SelectionStart,
-					_source.SelectionEnd),
-				0,
-				text.Length);
-		int last =
-			Math.Clamp(
-				Math.Max(
-					_source.SelectionStart,
-					_source.SelectionEnd),
-				first,
-				text.Length);
-
-		string insertion = option.ReferenceText;
-		_source.Text =
-			text[..first]
-				+ insertion
-				+ text[last..];
-		int caret = first + insertion.Length;
-		_source.SelectionStart = caret;
-		_source.SelectionEnd = caret;
+		ScriptReferenceInsertion insertion =
+			ScriptDocumentEditor.InsertObjectReference(
+				_source.Text ?? string.Empty,
+				_source.SelectionStart,
+				_source.SelectionEnd,
+				option.Id);
+		_source.Text = insertion.Text;
+		_source.SelectionStart = insertion.Caret;
+		_source.SelectionEnd = insertion.Caret;
 		_source.Focus();
 		_message.Text =
-			$"Inserted {option.DisplayName} as {insertion}.";
+			$"Inserted {option.DisplayName} as {option.ReferenceText}.";
 	}
 
 	private void ApplySource()
