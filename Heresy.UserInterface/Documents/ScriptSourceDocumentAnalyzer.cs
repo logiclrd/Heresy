@@ -40,47 +40,6 @@ public static class ScriptSourceDocumentAnalyzer
 		DocumentWorkspace workspace,
 		string source,
 		ScriptReferenceAnalysisSnapshot? previousSnapshot = null)
-		=> AnalyzeReferences(
-			workspace,
-			source,
-			ScriptReferenceAnalyzer.CreateSnapshot(
-				source,
-				previousSnapshot).Analysis.Diagnostics,
-			previousSnapshot);
-
-	public static ScriptSourceDocumentAnalysis Analyze(
-		DocumentWorkspace workspace,
-		ScriptPatternDefinition pattern,
-		string source,
-		ScriptReferenceAnalysisSnapshot? previousSnapshot = null)
-	{
-		ArgumentNullException.ThrowIfNull(pattern);
-		return AnalyzeReferences(
-			workspace,
-			source,
-			ScriptCompiler.AnalyzePatternSource(source),
-			previousSnapshot);
-	}
-
-	public static ScriptSourceDocumentAnalysis Analyze(
-		DocumentWorkspace workspace,
-		ScriptSequenceDefinition sequence,
-		string source,
-		ScriptReferenceAnalysisSnapshot? previousSnapshot = null)
-	{
-		ArgumentNullException.ThrowIfNull(sequence);
-		return AnalyzeReferences(
-			workspace,
-			source,
-			ScriptCompiler.AnalyzeSequenceSource(source),
-			previousSnapshot);
-	}
-
-	private static ScriptSourceDocumentAnalysis AnalyzeReferences(
-		DocumentWorkspace workspace,
-		string source,
-		IReadOnlyList<ScriptAnalysisDiagnostic> diagnostics,
-		ScriptReferenceAnalysisSnapshot? previousSnapshot)
 	{
 		ArgumentNullException.ThrowIfNull(workspace);
 		ArgumentNullException.ThrowIfNull(source);
@@ -89,6 +48,57 @@ public static class ScriptSourceDocumentAnalyzer
 			ScriptReferenceAnalyzer.CreateSnapshot(
 				source,
 				previousSnapshot);
+		return Project(
+			workspace,
+			snapshot,
+			snapshot.Analysis.Diagnostics);
+	}
+
+	public static ScriptSourceDocumentAnalysis Analyze(
+		DocumentWorkspace workspace,
+		ScriptPatternDefinition pattern,
+		string source,
+		ScriptReferenceAnalysisSnapshot? previousSnapshot = null)
+	{
+		ArgumentNullException.ThrowIfNull(workspace);
+		ArgumentNullException.ThrowIfNull(pattern);
+		ArgumentNullException.ThrowIfNull(source);
+
+		ScriptReferenceAnalysisSnapshot snapshot =
+			ScriptReferenceAnalyzer.CreateSnapshot(
+				source,
+				previousSnapshot);
+		return Project(
+			workspace,
+			snapshot,
+			ScriptCompiler.AnalyzePatternSource(source));
+	}
+
+	public static ScriptSourceDocumentAnalysis Analyze(
+		DocumentWorkspace workspace,
+		ScriptSequenceDefinition sequence,
+		string source,
+		ScriptReferenceAnalysisSnapshot? previousSnapshot = null)
+	{
+		ArgumentNullException.ThrowIfNull(workspace);
+		ArgumentNullException.ThrowIfNull(sequence);
+		ArgumentNullException.ThrowIfNull(source);
+
+		ScriptReferenceAnalysisSnapshot snapshot =
+			ScriptReferenceAnalyzer.CreateSnapshot(
+				source,
+				previousSnapshot);
+		return Project(
+			workspace,
+			snapshot,
+			ScriptCompiler.AnalyzeSequenceSource(source));
+	}
+
+	private static ScriptSourceDocumentAnalysis Project(
+		DocumentWorkspace workspace,
+		ScriptReferenceAnalysisSnapshot snapshot,
+		IReadOnlyList<ScriptAnalysisDiagnostic> diagnostics)
+	{
 		ScriptReferenceAnalysis syntax =
 			snapshot.Analysis;
 
