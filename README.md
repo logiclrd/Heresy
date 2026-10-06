@@ -11,7 +11,7 @@ The repository is intentionally split by concern.
   contracts, patterns, sequences, samples, instruments and script source.
 - `Heresy.Render` — abstract PCM generation, playback voices/channels,
   spatialization, sample rendering, effect processing and the common renderer.
-- `Heresy.Render.SDL` *(planned)* — SDL3-CS real-time sink and buffering.
+- `Heresy.Render.SDL` — SDL3-CS realtime audio-output backend implementing the common float-PCM sink contract.
 - `Heresy.Render.File` *(planned)* — FLAC, WAV and MP3 sinks.
 - `Heresy.UserInterface` — Avalonia single-document tracker UI. The current
   document view projects the four fixed song-tree sections into Sequences,
@@ -111,6 +111,27 @@ relative to its current filename:
   replacement files or directories instead.
 
 The current persisted schema is format version **1**. During initial pre-release buildout, breaking schema changes intentionally remain version 1 because there are no real-world Heresy documents to migrate yet. Format-version bumps and migrations will begin once the format is in actual use.
+
+## Realtime audio boundary
+
+`Heresy.Render.Realtime` defines the backend-neutral realtime PCM contracts.
+`IAudioOutputSource` produces exact blocks of interleaved 32-bit float PCM;
+`IAudioOutputBackend` opens an `IAudioOutputSession` for a fixed sample-rate
+and channel-count format. The existing sequential `PlaybackSession` is adapted
+through `PlaybackSessionAudioSource`, preserving the same frame ordering used
+by offline rendering.
+
+`Heresy.Render.SDL` provides the first concrete backend. It opens SDL's default
+playback device as a native-endian F32 stream and feeds it on demand through an
+SDL audio-stream callback. SDL callback failures never escape the unmanaged
+boundary: the first exception is latched in `IAudioOutputSession.Fault` and
+subsequent callback output is silence. Start/stop are explicit and idempotent,
+and disposing the backend disposes its open sessions before releasing SDL audio.
+The assembly references the managed SDL3-CS bindings; the eventual desktop host
+will supply the matching platform-native SDL runtime when transport wiring is
+added. The backend deliberately knows nothing about songs, patterns or authoring
+state, leaving the planned playback worker free to provide buffered/snapshotted
+PCM through the common source interface.
 
 ## Toolchain note
 
