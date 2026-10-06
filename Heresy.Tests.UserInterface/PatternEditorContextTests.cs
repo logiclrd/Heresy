@@ -96,6 +96,44 @@ public sealed class PatternEditorContextTests
 	}
 
 	[Test]
+	public void PlaybackCursorPreservesLocalRowAndSequenceOccurrence()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition first =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"First",
+				rowCount: 3,
+				channelCount: 1);
+		DataPatternDefinition second =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Second",
+				rowCount: 5,
+				channelCount: 1);
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(
+				workspace,
+				"Arrangement");
+		sequence.Entries.Add(new SequenceEntry(first.Id));
+		sequence.Entries.Add(new SequenceEntry(second.Id, startRow: 2));
+
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(
+				workspace.Document,
+				sequence,
+				initialEntryIndex: 1);
+
+		context.GetPlaybackCursor(4)
+			.Should().Be(
+				new PatternEditorPlaybackCursor(
+					second.Id,
+					3,
+					sequence.Id,
+					1));
+	}
+
+	[Test]
 	public void RepeatedPatternOccurrencesResolveToSameSharedPatternObject()
 	{
 		DocumentWorkspace workspace = new();
