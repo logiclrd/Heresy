@@ -107,7 +107,7 @@ public sealed class PatternGridInteractionTests
 			singleEffectIsTrackerStyle: true)
 			.Should().Be(PatternCellField.EffectCommand);
 		PatternCellFieldGeometry.HitTest(
-			x: 180,
+			x: 270,
 			cellWidth: 280,
 			sourceWidth: 96,
 			volumeWidth: 34,

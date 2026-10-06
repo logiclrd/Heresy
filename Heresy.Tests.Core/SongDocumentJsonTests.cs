@@ -176,9 +176,9 @@ public sealed class SongDocumentJsonTests
 				ChannelCount = 1,
 			};
 		PatternCell startCell = pattern.Grid.GetOrCreateCell(0, 0);
+		startCell.SourceId = sourceId;
 		startCell.Note =
 			new StartPatternNote(
-				sourceId,
 				pitchMultiplier: 2.0,
 				playbackSpeedMultiplier: 0.5,
 				mixdown: true);
@@ -197,11 +197,11 @@ public sealed class SongDocumentJsonTests
 		DataPatternDefinition copy =
 			(DataPatternDefinition)restored.Objects[patternId];
 
+		Assert.That(copy.Grid[0, 0]!.SourceId, Is.EqualTo(sourceId));
 		Assert.That(
 			copy.Grid[0, 0]!.Note,
 			Is.EqualTo(
 				new StartPatternNote(
-					sourceId,
 					2.0,
 					0.5,
 					true)));

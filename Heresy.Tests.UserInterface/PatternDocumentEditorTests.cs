@@ -185,15 +185,17 @@ public sealed class PatternDocumentEditorTests
 		DataPatternDefinition pattern =
 			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
 		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
-		cell.Note = new StartPatternNote(sourceId);
+		cell.SourceId = sourceId;
+		cell.Note = new StartPatternNote();
 		cell.Effects.Add(new SetNoteVolumePatternEffect(0.5));
 		cell.Effects.Add(new PatternNoteDelayPatternEffectForTest());
 
 		PatternCellViewModel view =
 			PatternCellViewModel.Create(workspace.Document, pattern, 0, 0);
 
-		view.NoteText.Should().Contain("Snare");
-		view.NoteText.Should().Contain($"<{sourceId.Value}>");
+		view.NoteText.Should().Be("C-4");
+		view.SourceText.Should().Contain("Snare");
+		view.SourceText.Should().Contain($"<{sourceId.Value}>");
 		view.EffectCount.Should().Be(2);
 		view.DisplayText.Should().Contain("+2 fx");
 	}

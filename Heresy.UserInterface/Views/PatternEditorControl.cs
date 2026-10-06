@@ -1234,6 +1234,15 @@ public sealed class PatternEditorControl : UserControl
 		int channel,
 		Heresy.Core.Objects.ObjectId sourceId)
 	{
+		Heresy.Core.Objects.ObjectId previous =
+			_pattern.Grid[row, channel]?.SourceId
+				?? Heresy.Core.Objects.ObjectId.None;
+		if (previous == sourceId)
+		{
+			FocusCursorCell();
+			return;
+		}
+
 		PatternDocumentEditor.SetSource(
 			_workspace,
 			_pattern,
@@ -1291,7 +1300,6 @@ public sealed class PatternEditorControl : UserControl
 				Child = new Border
 				{
 					Padding = new Thickness(4),
-					Background = Brushes.Black,
 					Child = list,
 				},
 			};

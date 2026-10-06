@@ -320,7 +320,7 @@ public sealed class PatternNoteKeyboardTests
 				0,
 				0);
 
-		view.NoteText.Should().StartWith("C-4 ");
+		view.NoteText.Should().Be("C-4");
 	}
 
 	[Test]
