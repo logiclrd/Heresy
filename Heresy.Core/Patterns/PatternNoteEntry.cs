@@ -14,6 +14,18 @@ public abstract record PatternNoteEntry;
 public sealed record StartPatternNote : PatternNoteEntry
 {
 	public StartPatternNote(
+		double pitchMultiplier = 1.0,
+		double playbackSpeedMultiplier = 1.0,
+		bool mixdown = false)
+		: this(
+			ObjectId.None,
+			pitchMultiplier,
+			playbackSpeedMultiplier,
+			mixdown)
+	{
+	}
+
+	public StartPatternNote(
 		ObjectId sourceId,
 		double pitchMultiplier = 1.0,
 		double playbackSpeedMultiplier = 1.0,

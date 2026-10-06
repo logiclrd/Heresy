@@ -1,13 +1,10 @@
 using System;
-using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
 
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 
-using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 
 namespace Heresy.UserInterface.Dialogs;
@@ -24,13 +21,8 @@ public sealed class PatternNoteEditorDialog : Window
 		Cut,
 	}
 
-	private sealed record SourceOption(ObjectId Id, string DisplayName)
-	{
-		public override string ToString() => DisplayName;
-	}
 
 	private readonly ComboBox _kind;
-	private readonly ComboBox _source;
 	private readonly TextBox _pitch;
 	private readonly TextBox _speed;
 	private readonly CheckBox _mixdown;
@@ -57,37 +49,6 @@ public sealed class PatternNoteEditorDialog : Window
 				SelectedItem = GetKind(note),
 			};
 
-		List<SourceOption> sources =
-			document.Objects.Values
-				.Where(IsSoundSource)
-				.OrderBy(songObject => songObject.Name, StringComparer.OrdinalIgnoreCase)
-				.ThenBy(songObject => songObject.Id.Value)
-				.Select(songObject =>
-					new SourceOption(
-						songObject.Id,
-						$"{songObject.Name} <{songObject.Id.Value}>"))
-				.ToList();
-
-		if (note is StartPatternNote start
-			&& sources.All(option => option.Id != start.SourceId))
-		{
-			string fallback =
-				document.Tombstones.TryGetValue(
-					start.SourceId,
-					out ObjectTombstone? tombstone)
-					? $"⚠ {tombstone.LastKnownName} <{start.SourceId.Value}>"
-					: $"⚠ <{start.SourceId.Value}>";
-			sources.Add(new SourceOption(start.SourceId, fallback));
-		}
-
-		_source =
-			new ComboBox
-			{
-				ItemsSource = sources,
-				SelectedItem = note is StartPatternNote selectedStart
-					? sources.FirstOrDefault(option => option.Id == selectedStart.SourceId)
-					: sources.FirstOrDefault(),
-			};
 		_pitch =
 			new TextBox
 			{
@@ -127,7 +88,6 @@ public sealed class PatternNoteEditorDialog : Window
 
 		int row = 0;
 		AddField(form, ref row, "Note", _kind);
-		AddField(form, ref row, "Source", _source);
 		AddField(form, ref row, "Pitch multiplier", _pitch);
 		AddField(form, ref row, "Playback-speed multiplier", _speed);
 		AddField(form, ref row, string.Empty, _mixdown);
@@ -188,9 +148,6 @@ public sealed class PatternNoteEditorDialog : Window
 
 	private StartPatternNote BuildStartNote()
 	{
-		if (_source.SelectedItem is not SourceOption source)
-			throw new InvalidOperationException("Choose a source object.");
-
 		if (!double.TryParse(
 			_pitch.Text,
 			NumberStyles.Float,
@@ -211,7 +168,6 @@ public sealed class PatternNoteEditorDialog : Window
 		}
 
 		return new StartPatternNote(
-			source.Id,
 			pitch,
 			speed,
 			_mixdown.IsChecked == true);
@@ -222,7 +178,6 @@ public sealed class PatternNoteEditorDialog : Window
 		bool enabled =
 			_kind.SelectedItem is NoteKind kind
 				&& kind == NoteKind.Start;
-		_source.IsEnabled = enabled;
 		_pitch.IsEnabled = enabled;
 		_speed.IsEnabled = enabled;
 		_mixdown.IsEnabled = enabled;
@@ -236,13 +191,6 @@ public sealed class PatternNoteEditorDialog : Window
 			PatternNoteCut => NoteKind.Cut,
 			_ => NoteKind.Empty,
 		};
-
-	private static bool IsSoundSource(SongObject songObject)
-		=> songObject.Kind is
-			SongObjectKind.Sample
-			or SongObjectKind.Instrument
-			or SongObjectKind.Pattern
-			or SongObjectKind.Sequence;
 
 	private static void AddField(
 		Grid grid,
