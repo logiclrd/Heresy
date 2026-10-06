@@ -30,7 +30,7 @@ public sealed class PatternEditorControl : UserControl
 
 	private readonly Window _owner;
 	private readonly DocumentWorkspace _workspace;
-	private readonly DataPatternDefinition _pattern;
+	private readonly PatternEditorContext _context;
 	private readonly Action _close;
 	private readonly Action<string> _changed;
 	private readonly string _backLabel;
@@ -44,6 +44,13 @@ public sealed class PatternEditorControl : UserControl
 	private readonly PatternNoteInputState _noteInputState;
 	private readonly ScrollViewer _scroll;
 	private readonly TextBlock _message;
+	private readonly TextBlock _title =
+		new()
+		{
+			FontSize = 20,
+			FontWeight = FontWeight.SemiBold,
+			VerticalAlignment = VerticalAlignment.Center,
+		};
 	private readonly Dictionary<(int Row, int Channel), Border> _cellBorders = [];
 	private readonly Dictionary<(int Row, int Channel), Border> _noteFields = [];
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _noteTexts = [];
@@ -67,14 +74,39 @@ public sealed class PatternEditorControl : UserControl
 		Action<string> changed,
 		string backLabel = "← Document",
 		UserInterfaceConfiguration? configuration = null)
+		: this(
+			owner,
+			workspace,
+			PatternEditorContext.ForPattern(workspace.Document, pattern),
+			close,
+			changed,
+			backLabel,
+			configuration)
+	{
+	}
+
+	public PatternEditorControl(
+		Window owner,
+		DocumentWorkspace workspace,
+		PatternEditorContext context,
+		Action close,
+		Action<string> changed,
+		string backLabel = "← Document",
+		UserInterfaceConfiguration? configuration = null)
 	{
 		_owner = owner ?? throw new ArgumentNullException(nameof(owner));
 		_workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
-		_pattern = pattern ?? throw new ArgumentNullException(nameof(pattern));
+		_context = context ?? throw new ArgumentNullException(nameof(context));
 		_close = close ?? throw new ArgumentNullException(nameof(close));
 		_changed = changed ?? throw new ArgumentNullException(nameof(changed));
 		_backLabel = backLabel ?? throw new ArgumentNullException(nameof(backLabel));
 		_configuration = configuration ?? new UserInterfaceConfiguration();
+
+		DataPatternDefinition pattern = GetInitialPattern(context);
+		_cursor.SetPosition(
+			context.Rows.Count == 0 ? 0 : context.InitialDisplayRow,
+			0,
+			PatternCellField.Note);
 
 		_rowCount = NumberBox(pattern.RowCount);
 		_channelCount = NumberBox(pattern.ChannelCount);
@@ -150,14 +182,7 @@ public sealed class PatternEditorControl : UserControl
 		Button back = new() { Content = _backLabel, MinWidth = 100 };
 		back.Click += (_, _) => _close();
 
-		TextBlock title =
-			new()
-			{
-				Text = _pattern.Name,
-				FontSize = 20,
-				FontWeight = FontWeight.SemiBold,
-				VerticalAlignment = VerticalAlignment.Center,
-			};
+		UpdateCurrentPatternControls();
 
 		Button applyLayout = new() { Content = "Apply layout" };
 		applyLayout.Click += async (_, _) => await ApplyLayoutAsync();
@@ -216,7 +241,7 @@ public sealed class PatternEditorControl : UserControl
 		DockPanel.SetDock(layout, Dock.Right);
 		header.Children.Add(back);
 		header.Children.Add(layout);
-		header.Children.Add(title);
+		header.Children.Add(_title);
 
 		DockPanel root = new();
 		DockPanel.SetDock(header, Dock.Top);
