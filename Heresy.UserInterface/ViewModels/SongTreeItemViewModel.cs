@@ -80,7 +80,8 @@ public sealed class SongTreeItemViewModel
 
 		if (document.Tombstones.TryGetValue(
 			id,
-			out ObjectTombstone tombstone))
+			out ObjectTombstone? tombstone)
+			&& tombstone is not null)
 		{
 			return new SongTreeItemViewModel(
 				node,
