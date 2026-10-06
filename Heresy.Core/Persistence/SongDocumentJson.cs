@@ -32,6 +32,53 @@ public static class SongDocumentJson
 	private static readonly JsonSerializerOptions JsonOptions =
 		CreateJsonOptions();
 
+	public static string SerializePatternEffects(
+		IEnumerable<PatternEffect> effects)
+	{
+		ArgumentNullException.ThrowIfNull(effects);
+
+		JsonArray array = [];
+		foreach (PatternEffect effect in effects)
+		{
+			ArgumentNullException.ThrowIfNull(effect);
+			array.Add(
+				JsonSerializer.SerializeToNode(
+					effect,
+					typeof(PatternEffect),
+					JsonOptions));
+		}
+
+		return array.ToJsonString(JsonOptions);
+	}
+
+	public static PatternEffect[] DeserializePatternEffects(
+		string json)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(json);
+
+		JsonNode? node = JsonNode.Parse(json);
+		if (node is not JsonArray array)
+		{
+			throw new InvalidDataException(
+				"Pattern-effect JSON must contain an array.");
+		}
+
+		List<PatternEffect> effects = [];
+		foreach (JsonNode? item in array)
+		{
+			if (item is null)
+				throw new InvalidDataException("Pattern effects may not be null.");
+
+			PatternEffect? effect =
+				item.Deserialize<PatternEffect>(JsonOptions);
+			if (effect is null)
+				throw new InvalidDataException("Pattern effects may not be null.");
+			effects.Add(effect);
+		}
+
+		return [.. effects];
+	}
+
 	public static string Serialize(
 		SongDocument document,
 		string jsonPath,
