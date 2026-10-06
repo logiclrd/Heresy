@@ -513,6 +513,11 @@ public sealed class PatternEditorControl : UserControl
 						effectIndex,
 						field),
 				effectIndex =>
+					_ = EditNativeEffectAtAsync(
+						displayRow,
+						channel,
+						effectIndex),
+				effectIndex =>
 					DeleteEffectAt(
 						displayRow,
 						channel,
@@ -769,6 +774,17 @@ public sealed class PatternEditorControl : UserControl
 					return;
 				}
 
+				if (_cursor.IsExpanded
+					&& _cursor.ExpandedField == ExpandedEffectField.Native)
+				{
+					await EditNativeEffectAtAsync(
+						row,
+						channel,
+						_cursor.ExpandedEffectIndex);
+					e.Handled = true;
+					return;
+				}
+
 				if (_cursor.IsExpanded)
 				{
 					_cursor.HandleEnter(cell);
@@ -784,10 +800,12 @@ public sealed class PatternEditorControl : UserControl
 					&& !PatternEffectCodec.IsTrackerStyle(
 						cell.Effects[0]))
 				{
-					// TODO: Enter and double-click should invoke the same
-					// native-effect parameter editor command.
-					_message.Text =
-						"Native effect parameters are not directly editable here yet.";
+					await EditNativeEffectAtAsync(
+						row,
+						channel,
+						0);
+					e.Handled = true;
+					return;
 				}
 				e.Handled = true;
 				break;
@@ -1035,6 +1053,70 @@ public sealed class PatternEditorControl : UserControl
 			default:
 				return false;
 		}
+	}
+
+	private async Task EditNativeEffectAtAsync(
+		int row,
+		int channel,
+		int effectIndex)
+	{
+		PatternEditorRow editorRow = _context.GetRow(row);
+		PatternCell? cell =
+			editorRow.Pattern.Grid[editorRow.PatternRow, channel];
+		if (cell is null
+			|| (uint)effectIndex >= (uint)cell.Effects.Count)
+		{
+			return;
+		}
+
+		PatternEffect effect = cell.Effects[effectIndex];
+		if (!NativePatternEffectEditor.CanEdit(effect))
+			return;
+
+		_cursor.SetPosition(
+			row,
+			channel,
+			PatternCellField.EffectCommand);
+		_cursor.SetExpandedSelection(
+			cell,
+			effectIndex,
+			ExpandedEffectField.Native);
+		ExpandVisualEffects(row, channel);
+		RefreshCursorVisuals();
+
+		NativePatternEffectEditorDialog dialog =
+			new(effect);
+		NativePatternEffectEditResult? result =
+			await dialog.ShowDialog<NativePatternEffectEditResult?>(
+				_owner);
+		if (result is null)
+		{
+			FocusCursorCell();
+			return;
+		}
+
+		bool changed =
+			PatternEditorContextCursor.EditCurrent(
+				_context,
+				_cursor,
+				mapped =>
+					PatternEffectStackEditor.ReplaceSelected(
+						_workspace,
+						mapped.Pattern,
+						_cursor,
+						result.Effect));
+		if (changed)
+		{
+			RefreshUnderlyingCell(
+				editorRow.Pattern,
+				editorRow.PatternRow,
+				channel);
+			_changed(
+				$"Edited native effect in {editorRow.Pattern.Name} row {editorRow.PatternRow}, channel {channel + 1}");
+		}
+
+		RefreshCursorVisuals();
+		FocusCursorCell();
 	}
 
 	private void DeleteEffectAt(
