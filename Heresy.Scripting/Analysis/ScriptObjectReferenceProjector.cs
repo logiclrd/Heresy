@@ -36,12 +36,45 @@ public static class ScriptObjectReferenceProjector
 
 		return analysis.References
 			.Select(reference =>
-				new ProjectedScriptObjectReference(
-					reference.Id,
-					reference.Span,
-					Name: null,
-					SongObjectKind.Unknown,
-					ScriptObjectReferenceResolution.Missing))
+				ProjectReference(
+					document,
+					reference))
 			.ToArray();
+	}
+
+	private static ProjectedScriptObjectReference ProjectReference(
+		SongDocument document,
+		ScriptObjectReference reference)
+	{
+		if (document.TryGet(
+			reference.Id,
+			out SongObject? songObject))
+		{
+			return new ProjectedScriptObjectReference(
+				reference.Id,
+				reference.Span,
+				songObject.Name,
+				songObject.Kind,
+				ScriptObjectReferenceResolution.Live);
+		}
+
+		if (document.Tombstones.TryGetValue(
+			reference.Id,
+			out ObjectTombstone? tombstone))
+		{
+			return new ProjectedScriptObjectReference(
+				reference.Id,
+				reference.Span,
+				tombstone.LastKnownName,
+				tombstone.Kind,
+				ScriptObjectReferenceResolution.Tombstone);
+		}
+
+		return new ProjectedScriptObjectReference(
+			reference.Id,
+			reference.Span,
+			Name: null,
+			SongObjectKind.Unknown,
+			ScriptObjectReferenceResolution.Missing);
 	}
 }
