@@ -33,7 +33,7 @@ public sealed class SampleDocumentEditorTests
 		using TempProject project = new();
 		string songPath = project.Path("songs", "track.json");
 		string assetPath = project.Path("assets", "Kick.wav");
-		Directory.CreateDirectory(Path.GetDirectoryName(assetPath)!);
+		Directory.CreateDirectory(System.IO.Path.GetDirectoryName(assetPath)!);
 		File.WriteAllBytes(assetPath, Encoding.UTF8.GetBytes("hello"));
 
 		DocumentWorkspace workspace = new();
@@ -70,7 +70,7 @@ public sealed class SampleDocumentEditorTests
 			SampleDocumentEditor.CheckAsset(workspace, sample);
 
 		check.Status.Should().Be(ExternalAssetStatus.Match);
-		check.ResolvedPath.Should().Be(Path.GetFullPath(assetPath));
+		check.ResolvedPath.Should().Be(System.IO.Path.GetFullPath(assetPath));
 	}
 
 	[Test]
@@ -131,7 +131,7 @@ public sealed class SampleDocumentEditorTests
 		string songPath = project.Path("songs", "track.json");
 		string firstPath = project.Path("assets", "first.wav");
 		string secondPath = project.Path("assets", "second.wav");
-		Directory.CreateDirectory(Path.GetDirectoryName(firstPath)!);
+		Directory.CreateDirectory(System.IO.Path.GetDirectoryName(firstPath)!);
 		File.WriteAllText(firstPath, "first");
 		File.WriteAllText(secondPath, "second");
 
@@ -152,8 +152,8 @@ public sealed class SampleDocumentEditorTests
 	private sealed class TempProject : IDisposable
 	{
 		private readonly string _root =
-			Path.Combine(
-				Path.GetTempPath(),
+			System.IO.Path.Combine(
+				System.IO.Path.GetTempPath(),
 				$"heresy-sample-ui-{Guid.NewGuid():N}");
 
 		public TempProject()
@@ -163,7 +163,7 @@ public sealed class SampleDocumentEditorTests
 		{
 			string result = _root;
 			foreach (string part in parts)
-				result = System.IO.Path.Combine(result, part);
+				result = System.IO.System.IO.Path.Combine(result, part);
 			return result;
 		}
 
