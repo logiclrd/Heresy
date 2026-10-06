@@ -14,8 +14,11 @@ preserved during implementation.
 
 ## Realtime audio and playback architecture
 
-- [ ] Introduce an abstraction for the realtime audio back-end and provide an
-  SDL implementation.
+- [x] Introduce an abstraction for the realtime audio back-end and provide an
+  SDL implementation. `Heresy.Render.Realtime` now owns the backend-neutral
+  interleaved-float PCM contracts and `Heresy.Render.SDL` provides the SDL3-CS
+  default-playback implementation. Desktop transport wiring/native runtime
+  selection remains part of the background-playback work below.
 - [ ] Add a background playback thread with tracker transport controls:
   - `F5`: play the song.
   - `F6`: play the current pattern repeatedly. In this mode, `Bxx` jumps back
