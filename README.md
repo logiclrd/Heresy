@@ -269,10 +269,17 @@ such as repeated `G` commands or repeated `15` parameters across rows whose
 effect types differ. A collapsed cell containing multiple effects rejects direct
 typing until Enter expands it. In the expanded strip, left/right traverse the
 individual fields but clamp at the ends; up/down collapse and move vertically,
-and Enter collapses in place. Native effects occupy one whole-tab keyboard stop,
-ignore direct typing, and are reserved for a future Enter/double-click parameter
-dialog. Native and IT-style tabs use the same visual footprint and may coexist
-in one stack.
+and Enter collapses in place. Native effects occupy one whole-tab keyboard stop and ignore direct tracker
+typing. Enter on a selected native effect, double-clicking its tab, or choosing
+**Edit Parameters...** from that tab's context menu all open the same generic
+native-effect parameter dialog. The dialog is driven by a framework-independent
+semantic edit model rather than effect-specific Avalonia code: all current
+native effect shapes project named fields, reconstruct the same concrete Core
+effect type, and rely on the Core constructors for value validation. Applying
+a change replaces the selected stack member through the same stack-editing
+command path used by the tracker UI. Native and IT-style tabs use the same
+visual footprint and may coexist in one stack. Creating a new native effect from
+the UI still needs a separate insertion/type-selection surface.
 
 Effect stacks can be edited without leaving the tracker keyboard flow. `Alt+Insert`
 inserts a new IT-style slot before the selected effect; `Alt+Shift+Insert` inserts
