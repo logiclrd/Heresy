@@ -21,9 +21,10 @@ namespace Heresy.UserInterface.Views;
 
 public sealed class PatternEditorControl : UserControl
 {
-	private const double CellWidth = 190;
+	private const double CellWidth = 280;
 	private const double RowHeaderWidth = 54;
 	private const double RowHeight = 28;
+	private const double SourceWidth = 96;
 	private const double VolumeWidth = 34;
 	private const double EffectWidth = 54;
 
@@ -33,6 +34,7 @@ public sealed class PatternEditorControl : UserControl
 	private readonly Action _close;
 	private readonly Action<string> _changed;
 	private readonly string _backLabel;
+	private readonly UserInterfaceConfiguration _configuration;
 	private readonly TextBox _rowCount;
 	private readonly TextBox _channelCount;
 	private readonly TextBox _minorHighlight;
@@ -45,6 +47,8 @@ public sealed class PatternEditorControl : UserControl
 	private readonly Dictionary<(int Row, int Channel), Border> _cellBorders = [];
 	private readonly Dictionary<(int Row, int Channel), Border> _noteFields = [];
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _noteTexts = [];
+	private readonly Dictionary<(int Row, int Channel), Border> _sourceFields = [];
+	private readonly Dictionary<(int Row, int Channel), TextBlock> _sourceTexts = [];
 	private readonly Dictionary<(int Row, int Channel), Border> _volumeFields = [];
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _volumeTexts = [];
 	private readonly Dictionary<(int Row, int Channel), PatternEffectStripControl> _effectStrips = [];
@@ -61,7 +65,8 @@ public sealed class PatternEditorControl : UserControl
 		DataPatternDefinition pattern,
 		Action close,
 		Action<string> changed,
-		string backLabel = "← Document")
+		string backLabel = "← Document",
+		UserInterfaceConfiguration? configuration = null)
 	{
 		_owner = owner ?? throw new ArgumentNullException(nameof(owner));
 		_workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
@@ -69,6 +74,7 @@ public sealed class PatternEditorControl : UserControl
 		_close = close ?? throw new ArgumentNullException(nameof(close));
 		_changed = changed ?? throw new ArgumentNullException(nameof(changed));
 		_backLabel = backLabel ?? throw new ArgumentNullException(nameof(backLabel));
+		_configuration = configuration ?? new UserInterfaceConfiguration();
 
 		_rowCount = NumberBox(pattern.RowCount);
 		_channelCount = NumberBox(pattern.ChannelCount);
@@ -281,6 +287,8 @@ public sealed class PatternEditorControl : UserControl
 		_cellBorders.Clear();
 		_noteFields.Clear();
 		_noteTexts.Clear();
+		_sourceFields.Clear();
+		_sourceTexts.Clear();
 		_volumeFields.Clear();
 		_volumeTexts.Clear();
 		_effectStrips.Clear();
@@ -310,13 +318,14 @@ public sealed class PatternEditorControl : UserControl
 			grid.RowDefinitions.Add(
 				new RowDefinition(new GridLength(RowHeight)));
 
-			FontWeight rowWeight = GetRowWeight(row);
+			IBrush? rowBackground = GetRowBackground(row);
 			AddText(
 				grid,
 				row.ToString("X2", CultureInfo.InvariantCulture),
 				gridRow,
 				0,
-				rowWeight);
+				FontWeight.Normal,
+				rowBackground);
 
 			for (int channel = 0; channel < _pattern.ChannelCount; channel++)
 			{
@@ -324,7 +333,7 @@ public sealed class PatternEditorControl : UserControl
 					BuildCell(
 						row,
 						channel,
-						rowWeight);
+						rowBackground);
 				Grid.SetRow(cell, gridRow);
 				Grid.SetColumn(cell, channel + 1);
 				grid.Children.Add(cell);
@@ -339,7 +348,7 @@ public sealed class PatternEditorControl : UserControl
 	private Border BuildCell(
 		int row,
 		int channel,
-		FontWeight rowWeight)
+		IBrush? rowBackground)
 	{
 		PatternCellViewModel view =
 			PatternCellViewModel.Create(
@@ -352,7 +361,7 @@ public sealed class PatternEditorControl : UserControl
 			new()
 			{
 				Text = view.NoteText,
-				FontWeight = rowWeight,
+				FontWeight = FontWeight.Normal,
 				VerticalAlignment = VerticalAlignment.Center,
 				Margin = new Thickness(5, 0),
 				TextTrimming = TextTrimming.CharacterEllipsis,
@@ -365,14 +374,46 @@ public sealed class PatternEditorControl : UserControl
 				VerticalAlignment = VerticalAlignment.Center,
 				BorderBrush = Brushes.Transparent,
 				BorderThickness = new Thickness(1),
+				Background = Brushes.Transparent,
 				Child = note,
+			};
+
+		TextBlock sourceText =
+			new()
+			{
+				Text = view.SourceText,
+				FontWeight = FontWeight.Normal,
+				VerticalAlignment = VerticalAlignment.Center,
+				TextTrimming = TextTrimming.CharacterEllipsis,
+				Margin = new Thickness(4, 0),
+			};
+		Border sourceField =
+			new()
+			{
+				Width = SourceWidth,
+				Height = RowHeight - 4,
+				HorizontalAlignment = HorizontalAlignment.Stretch,
+				VerticalAlignment = VerticalAlignment.Center,
+				BorderBrush = Brushes.Transparent,
+				BorderThickness = new Thickness(1),
+				Background = Brushes.Transparent,
+				Child = sourceText,
+			};
+		ToolTip.SetTip(sourceField, view.SourceText);
+		MenuItem clearSource = new() { Header = "Clear" };
+		clearSource.Click += (_, _) =>
+			ClearSource(row, channel);
+		sourceField.ContextMenu =
+			new ContextMenu
+			{
+				ItemsSource = new object[] { clearSource },
 			};
 
 		TextBlock volumeText =
 			new()
 			{
 				Text = view.VolumeText,
-				FontWeight = rowWeight,
+				FontWeight = FontWeight.Normal,
 				VerticalAlignment = VerticalAlignment.Center,
 				HorizontalAlignment = HorizontalAlignment.Center,
 			};
@@ -385,6 +426,7 @@ public sealed class PatternEditorControl : UserControl
 				VerticalAlignment = VerticalAlignment.Center,
 				BorderBrush = Brushes.Transparent,
 				BorderThickness = new Thickness(1),
+				Background = Brushes.Transparent,
 				Child = volumeText,
 			};
 
@@ -423,14 +465,18 @@ public sealed class PatternEditorControl : UserControl
 		content.ColumnDefinitions.Add(
 			new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
 		content.ColumnDefinitions.Add(
+			new ColumnDefinition(new GridLength(SourceWidth)));
+		content.ColumnDefinitions.Add(
 			new ColumnDefinition(new GridLength(VolumeWidth)));
 		content.ColumnDefinitions.Add(
 			new ColumnDefinition(new GridLength(EffectWidth)));
 		Grid.SetColumn(noteField, 0);
-		Grid.SetColumn(volumeField, 1);
+		Grid.SetColumn(sourceField, 1);
+		Grid.SetColumn(volumeField, 2);
 		Grid.SetColumn(effects, 0);
-		Grid.SetColumnSpan(effects, 3);
+		Grid.SetColumnSpan(effects, 4);
 		content.Children.Add(noteField);
+		content.Children.Add(sourceField);
 		content.Children.Add(volumeField);
 		content.Children.Add(effects);
 
@@ -441,6 +487,7 @@ public sealed class PatternEditorControl : UserControl
 				Height = RowHeight,
 				BorderBrush = Brushes.Gray,
 				BorderThickness = new Thickness(1),
+				Background = rowBackground ?? Brushes.Transparent,
 				ClipToBounds = true,
 				Focusable = true,
 				Child = content,
@@ -456,6 +503,8 @@ public sealed class PatternEditorControl : UserControl
 		_cellBorders[(row, channel)] = cell;
 		_noteFields[(row, channel)] = noteField;
 		_noteTexts[(row, channel)] = note;
+		_sourceFields[(row, channel)] = sourceField;
+		_sourceTexts[(row, channel)] = sourceText;
 		_volumeFields[(row, channel)] = volumeField;
 		_volumeTexts[(row, channel)] = volumeText;
 		_effectStrips[(row, channel)] = effects;
@@ -473,6 +522,10 @@ public sealed class PatternEditorControl : UserControl
 
 		Point point = e.GetPosition(cell);
 		PatternCell? patternCell = _pattern.Grid[row, channel];
+		bool sourceWasActive =
+			_cursor.Row == row
+				&& _cursor.Channel == channel
+				&& _cursor.Field == PatternCellField.Source;
 		int effectCount = patternCell?.Effects.Count ?? 0;
 		bool singleTrackerStyle =
 			effectCount != 1
@@ -482,6 +535,7 @@ public sealed class PatternEditorControl : UserControl
 			PatternCellFieldGeometry.HitTest(
 				point.X,
 				CellWidth,
+				SourceWidth,
 				VolumeWidth,
 				EffectWidth,
 				effectCount,
@@ -494,6 +548,13 @@ public sealed class PatternEditorControl : UserControl
 		_cursor.SetPosition(row, channel, field);
 		cell.Focus();
 		RefreshCursorVisuals();
+		if (field == PatternCellField.Source
+			&& sourceWasActive
+			&& e.GetCurrentPoint(cell).Properties.IsLeftButtonPressed
+			&& _sourceFields.TryGetValue((row, channel), out Border? sourceField))
+		{
+			OpenSourcePopup(row, channel, sourceField);
+		}
 		e.Handled = true;
 	}
 
@@ -515,6 +576,37 @@ public sealed class PatternEditorControl : UserControl
 			RefreshCursorVisuals();
 			FocusCursorCell();
 			return;
+		}
+
+		if (_cursor.Field == PatternCellField.Source)
+		{
+			if ((e.KeyModifiers & KeyModifiers.Alt) != 0
+				&& e.Key == Key.Down
+				&& _sourceFields.TryGetValue(
+					(row, channel),
+					out Border? sourceField))
+			{
+				OpenSourcePopup(row, channel, sourceField);
+				e.Handled = true;
+				return;
+			}
+
+			if (e.Key == Key.Space)
+			{
+				if (_noteSource.SelectedItem is PatternSourceOption option)
+				{
+					SetSource(row, channel, option.Id);
+					_message.Text =
+						$"Source set to {option.DisplayName}.";
+				}
+				else
+				{
+					_message.Text =
+						"Choose a Source in the pattern toolbar before using Space.";
+				}
+				e.Handled = true;
+				return;
+			}
 		}
 
 		KeyModifiers noteBlockingModifiers =
@@ -646,6 +738,16 @@ public sealed class PatternEditorControl : UserControl
 			// TextInput here also prevents a handled physical key from entering
 			// the same note a second time through its produced text symbol.
 			e.Handled = true;
+			return;
+		}
+
+		if (_cursor.Field == PatternCellField.Source)
+		{
+			if (value == '.')
+			{
+				ClearSource(row, channel);
+				e.Handled = true;
+			}
 			return;
 		}
 
@@ -1127,11 +1229,93 @@ public sealed class PatternEditorControl : UserControl
 		_changed($"Edited row {row}, channel {channel + 1}");
 	}
 
+	private void SetSource(
+		int row,
+		int channel,
+		Heresy.Core.Objects.ObjectId sourceId)
+	{
+		PatternDocumentEditor.SetSource(
+			_workspace,
+			_pattern,
+			row,
+			channel,
+			sourceId);
+		RefreshCell(row, channel);
+		RefreshCursorVisuals();
+		_changed(
+			$"Edited source at row {row}, channel {channel + 1}");
+		FocusCursorCell();
+	}
+
+	private void ClearSource(int row, int channel)
+	{
+		SetSource(
+			row,
+			channel,
+			Heresy.Core.Objects.ObjectId.None);
+	}
+
+	private void OpenSourcePopup(
+		int row,
+		int channel,
+		Border placementTarget)
+	{
+		PatternSourceOption[] options =
+			PatternSourceCatalog.GetSources(_workspace.Document);
+		ListBox list =
+			new()
+			{
+				ItemsSource = options,
+				Width = 300,
+				MaxHeight = 320,
+			};
+
+		Heresy.Core.Objects.ObjectId current =
+			_pattern.Grid[row, channel]?.SourceId
+				?? Heresy.Core.Objects.ObjectId.None;
+		foreach (PatternSourceOption option in options)
+		{
+			if (option.Id == current)
+			{
+				list.SelectedItem = option;
+				break;
+			}
+		}
+
+		Popup popup =
+			new()
+			{
+				PlacementTarget = placementTarget,
+				Placement = PlacementMode.Bottom,
+				IsLightDismissEnabled = true,
+				Child = new Border
+				{
+					Padding = new Thickness(4),
+					Background = Brushes.Black,
+					Child = list,
+				},
+			};
+		list.SelectionChanged += (_, _) =>
+		{
+			if (list.SelectedItem is not PatternSourceOption selected)
+				return;
+
+			SetSource(row, channel, selected.Id);
+			popup.IsOpen = false;
+		};
+		popup.Closed += (_, _) => FocusCursorCell();
+		popup.IsOpen = true;
+		list.Focus();
+	}
+
 	private void RefreshCell(int row, int channel)
 	{
 		if (!_noteTexts.TryGetValue(
 			(row, channel),
 			out TextBlock? note)
+			|| !_sourceTexts.TryGetValue(
+				(row, channel),
+				out TextBlock? source)
 			|| !_volumeTexts.TryGetValue(
 				(row, channel),
 				out TextBlock? volume)
@@ -1149,6 +1333,9 @@ public sealed class PatternEditorControl : UserControl
 				row,
 				channel);
 		note.Text = view.NoteText;
+		source.Text = view.SourceText;
+		if (_sourceFields.TryGetValue((row, channel), out Border? sourceField))
+			ToolTip.SetTip(sourceField, view.SourceText);
 		volume.Text = view.VolumeText;
 		effects.SetEffects(view.Effects);
 		RefreshCellEffectState(row, channel);
@@ -1176,6 +1363,17 @@ public sealed class PatternEditorControl : UserControl
 					noteActive ? Brushes.DeepSkyBlue : Brushes.Transparent;
 				noteField.BorderThickness =
 					noteActive ? new Thickness(2) : new Thickness(1);
+			}
+			if (_sourceFields.TryGetValue(
+				(row, channel),
+				out Border? sourceField))
+			{
+				bool sourceActive =
+					active && _cursor.Field == PatternCellField.Source;
+				sourceField.BorderBrush =
+					sourceActive ? Brushes.DeepSkyBlue : Brushes.Transparent;
+				sourceField.BorderThickness =
+					sourceActive ? new Thickness(2) : new Thickness(1);
 			}
 			if (_volumeFields.TryGetValue(
 				(row, channel),
@@ -1236,14 +1434,24 @@ public sealed class PatternEditorControl : UserControl
 		}
 	}
 
-	private FontWeight GetRowWeight(int row)
-		=> _pattern.MajorHighlightRows > 0
-			&& row % _pattern.MajorHighlightRows == 0
-				? FontWeight.Bold
-				: _pattern.MinorHighlightRows > 0
-					&& row % _pattern.MinorHighlightRows == 0
-					? FontWeight.SemiBold
-					: FontWeight.Normal;
+	private IBrush? GetRowBackground(int row)
+	{
+		if (_pattern.MajorHighlightRows > 0
+			&& row % _pattern.MajorHighlightRows == 0)
+		{
+			return new SolidColorBrush(
+				_configuration.MajorPatternRowHighlight);
+		}
+
+		if (_pattern.MinorHighlightRows > 0
+			&& row % _pattern.MinorHighlightRows == 0)
+		{
+			return new SolidColorBrush(
+				_configuration.MinorPatternRowHighlight);
+		}
+
+		return null;
+	}
 
 	private static TextBox NumberBox(int value)
 		=> new()
@@ -1271,7 +1479,8 @@ public sealed class PatternEditorControl : UserControl
 		string text,
 		int row,
 		int column,
-		FontWeight weight)
+		FontWeight weight,
+		IBrush? background = null)
 	{
 		TextBlock block =
 			new()
@@ -1281,8 +1490,16 @@ public sealed class PatternEditorControl : UserControl
 				Margin = new Thickness(5, 4),
 				VerticalAlignment = VerticalAlignment.Center,
 			};
-		Grid.SetRow(block, row);
-		Grid.SetColumn(block, column);
-		grid.Children.Add(block);
+		Control visual =
+			background is null
+				? block
+				: new Border
+				{
+					Background = background,
+					Child = block,
+				};
+		Grid.SetRow(visual, row);
+		Grid.SetColumn(visual, column);
+		grid.Children.Add(visual);
 	}
 }

@@ -42,20 +42,23 @@ public sealed class PatternGridInteractionTests
 
 	[TestCase(0, PatternCellField.Note)]
 	[TestCase(50, PatternCellField.Note)]
-	[TestCase(101, PatternCellField.Note)]
-	[TestCase(102, PatternCellField.Volume)]
-	[TestCase(135, PatternCellField.Volume)]
-	[TestCase(136, PatternCellField.EffectCommand)]
-	[TestCase(157, PatternCellField.EffectCommand)]
-	[TestCase(158, PatternCellField.EffectParameter)]
-	[TestCase(189, PatternCellField.EffectParameter)]
+	[TestCase(95, PatternCellField.Note)]
+	[TestCase(96, PatternCellField.Source)]
+	[TestCase(191, PatternCellField.Source)]
+	[TestCase(192, PatternCellField.Volume)]
+	[TestCase(225, PatternCellField.Volume)]
+	[TestCase(226, PatternCellField.EffectCommand)]
+	[TestCase(247, PatternCellField.EffectCommand)]
+	[TestCase(248, PatternCellField.EffectParameter)]
+	[TestCase(279, PatternCellField.EffectParameter)]
 	public void ClickGeometrySelectsCollapsedTrackerFields(
 		double x,
 		PatternCellField expected)
 	{
 		PatternCellFieldGeometry.HitTest(
 			x,
-			cellWidth: 190,
+			cellWidth: 280,
+			sourceWidth: 96,
 			volumeWidth: 34,
 			effectWidth: 54,
 			effectCount: 1,
@@ -67,8 +70,9 @@ public sealed class PatternGridInteractionTests
 	public void MultipleEffectsExposeOneCollapsedEffectKeyboardStop()
 	{
 		PatternCellFieldGeometry.HitTest(
-			x: 180,
-			cellWidth: 190,
+			x: 270,
+			cellWidth: 280,
+			sourceWidth: 96,
 			volumeWidth: 34,
 			effectWidth: 54,
 			effectCount: 2,
@@ -80,8 +84,9 @@ public sealed class PatternGridInteractionTests
 	public void NativeEffectExposesOneCollapsedEffectKeyboardStop()
 	{
 		PatternCellFieldGeometry.HitTest(
-			x: 180,
-			cellWidth: 190,
+			x: 270,
+			cellWidth: 280,
+			sourceWidth: 96,
 			volumeWidth: 34,
 			effectWidth: 54,
 			effectCount: 1,
@@ -93,8 +98,9 @@ public sealed class PatternGridInteractionTests
 	public void EmptyEffectAreaStillHasCommandAndParameterClickTargets()
 	{
 		PatternCellFieldGeometry.HitTest(
-			x: 145,
-			cellWidth: 190,
+			x: 235,
+			cellWidth: 280,
+			sourceWidth: 96,
 			volumeWidth: 34,
 			effectWidth: 54,
 			effectCount: 0,
@@ -102,7 +108,8 @@ public sealed class PatternGridInteractionTests
 			.Should().Be(PatternCellField.EffectCommand);
 		PatternCellFieldGeometry.HitTest(
 			x: 180,
-			cellWidth: 190,
+			cellWidth: 280,
+			sourceWidth: 96,
 			volumeWidth: 34,
 			effectWidth: 54,
 			effectCount: 0,
