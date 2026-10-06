@@ -33,14 +33,12 @@ public sealed record SongScheduleCompilationResult(
 }
 
 /// <summary>
-/// Executes the current root sequence into an immutable note schedule. Script
-/// objects are compiled on demand through the same sequencing interfaces used
-/// by data-driven definitions, so the resulting schedule is a stable playback
-/// boundary rather than a parallel script-only runtime.
+/// Executes data-driven and scripted song structures into immutable note
+/// schedules through the same Core sequencing processors.
 /// </summary>
 public static class SongScheduleCompiler
 {
-	private const string InvalidRootCode = "HRS3001";
+	private const string InvalidTargetCode = "HRS3001";
 
 	public static SongScheduleCompilationResult CompileRoot(
 		SongDocument document,
@@ -48,43 +46,141 @@ public static class SongScheduleCompiler
 	{
 		ArgumentNullException.ThrowIfNull(document);
 
-		if (document.RootSequenceId.IsNone
-			|| !document.TryGet(
-				document.RootSequenceId,
-				out SongObject? rootObject)
-			|| rootObject is not SequenceDefinition rootSequence)
+		if (document.RootSequenceId.IsNone)
 		{
 			return Failure(
-				$"Root sequence {document.RootSequenceId.Value} is missing or is not a sequence.");
+				"Root sequence 0 is missing or is not a sequence.");
+		}
+
+		return CompileSequence(
+			document,
+			document.RootSequenceId,
+			startOrder: 0,
+			startRow: null,
+			context);
+	}
+
+	public static SongScheduleCompilationResult CompileSequence(
+		SongDocument document,
+		ObjectId sequenceId,
+		int startOrder = 0,
+		int? startRow = null,
+		SequencingContext? context = null)
+	{
+		ArgumentNullException.ThrowIfNull(document);
+		if (sequenceId.IsNone)
+			return Failure("Sequence 0 is missing or is not a sequence.");
+		if (startOrder < 0)
+			throw new ArgumentOutOfRangeException(nameof(startOrder));
+		if (startRow.HasValue && startRow.Value < 0)
+			throw new ArgumentOutOfRangeException(nameof(startRow));
+
+		if (!document.TryGet(
+				sequenceId,
+				out SongObject? songObject)
+			|| songObject is not SequenceDefinition sequence)
+		{
+			return Failure(
+				$"Sequence {sequenceId.Value} is missing or is not a sequence.");
 		}
 
 		DocumentPatternResolver resolver =
 			new(document);
 		List<ScriptAnalysisDiagnostic> diagnostics = [];
-
 		INoteSequencer? sequencer;
-		if (rootSequence is DataSequenceDefinition dataSequence)
+
+		if (sequence is DataSequenceDefinition dataSequence)
 		{
 			sequencer =
 				new DataSequenceSequencer(
 					dataSequence,
-					resolver);
+					resolver,
+					startOrder,
+					startRow);
 		}
-		else if (rootSequence is ScriptSequenceDefinition scriptSequence)
+		else if (sequence is ScriptSequenceDefinition scriptSequence)
 		{
 			ScriptCompilationResult<INoteSequencer> compilation =
 				ScriptCompiler.CompileSequence(
 					scriptSequence,
-					resolver);
+					resolver,
+					startOrder,
+					startRow);
 			diagnostics.AddRange(compilation.Diagnostics);
 			sequencer = compilation.Program;
 		}
 		else
 		{
 			return Failure(
-				$"Root sequence {rootSequence.Id.Value} has an unsupported definition type.");
+				$"Sequence {sequence.Id.Value} has an unsupported definition type.");
 		}
 
+		return Generate(
+			sequencer,
+			resolver,
+			diagnostics,
+			context);
+	}
+
+	public static SongScheduleCompilationResult CompilePattern(
+		SongDocument document,
+		ObjectId patternId,
+		int startRow = 0,
+		SequencingContext? context = null)
+	{
+		ArgumentNullException.ThrowIfNull(document);
+		if (patternId.IsNone)
+			return Failure("Pattern 0 is missing or is not a pattern.");
+		if (startRow < 0)
+			throw new ArgumentOutOfRangeException(nameof(startRow));
+
+		DocumentPatternResolver resolver =
+			new(document);
+		if (!resolver.TryResolve(
+				patternId,
+				out IRawPatternNoteGenerator? pattern)
+			|| pattern is null)
+		{
+			if (resolver.Diagnostics.Count != 0)
+			{
+				return new(
+					null,
+					TimeSpan.Zero,
+					resolver.Diagnostics);
+			}
+
+			return Failure(
+				$"Pattern {patternId.Value} is missing or is not a pattern.");
+		}
+
+		NoteScheduleBuilder output = new();
+		PatternNoteProcessor.GenerateNotes(
+			pattern,
+			context ?? new SequencingContext(),
+			output,
+			startRow,
+			out TimeSpan duration);
+
+		if (HasErrors(resolver.Diagnostics))
+		{
+			return new(
+				null,
+				TimeSpan.Zero,
+				resolver.Diagnostics);
+		}
+
+		return new(
+			output.Freeze(),
+			duration,
+			resolver.Diagnostics);
+	}
+
+	private static SongScheduleCompilationResult Generate(
+		INoteSequencer? sequencer,
+		DocumentPatternResolver resolver,
+		List<ScriptAnalysisDiagnostic> diagnostics,
+		SequencingContext? context)
+	{
 		if (sequencer is null || HasErrors(diagnostics))
 		{
 			return new(
@@ -121,7 +217,7 @@ public static class SongScheduleCompiler
 			TimeSpan.Zero,
 			[
 				new ScriptAnalysisDiagnostic(
-					InvalidRootCode,
+					InvalidTargetCode,
 					ScriptDiagnosticSeverity.Error,
 					message,
 					new ScriptSourceSpan(0, 0)),
@@ -212,13 +308,19 @@ public static class SongScheduleCompiler
 	{
 		private readonly DataSequenceDefinition _sequence;
 		private readonly ISequencePatternResolver _resolver;
+		private readonly int _startOrder;
+		private readonly int? _startRow;
 
 		public DataSequenceSequencer(
 			DataSequenceDefinition sequence,
-			ISequencePatternResolver resolver)
+			ISequencePatternResolver resolver,
+			int startOrder,
+			int? startRow)
 		{
 			_sequence = sequence;
 			_resolver = resolver;
+			_startOrder = startOrder;
+			_startRow = startRow;
 		}
 
 		public void GenerateNotes(
@@ -227,10 +329,12 @@ public static class SongScheduleCompiler
 			out TimeSpan duration)
 		{
 			SequenceNoteProcessor.GenerateNotes(
-				_sequence,
+				_sequence.Entries,
 				_resolver,
 				context,
 				output,
+				_startOrder,
+				_startRow,
 				out duration);
 		}
 	}
