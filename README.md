@@ -166,8 +166,27 @@ visible as non-editable segment separators rather than being silently hidden.
 The sequence projection follows declared arrangement order; it does not attempt
 to predict runtime Bxx/Cxx jumps or pattern-break control flow, which remains a
 Core sequencing concern. The Back control becomes **← Sequence** and returns to
-the arrangement list. Script-sequence and script-pattern source editing remain
-future UI work.
+the arrangement list.
+
+Script patterns and script sequences can also be created directly from their
+respective document panes and are edited by one shared main-workspace script
+source editor. Script-pattern authoring exposes the same row/channel and
+minor/major-highlight layout values as other pattern definitions; script
+sequences can be explicitly selected as the song root. Opening a script-pattern
+order from a data-sequence arrangement opens that script source editor with
+**← Sequence** navigation rather than creating a second tracker representation.
+
+Persisted script source remains ordinary restricted-C# text. The editor offers
+a catalog containing every live song object and can insert the selected object
+using the canonical `_O(id)` spelling, replacing the current text selection and
+leaving the caret immediately after the inserted reference. It deliberately does
+not lexically reinterpret arbitrary `_O(...)` text as semantic references or
+replace it with named atomic tokens yet: strings, comments and actual C# syntax
+must ultimately be understood by the planned Roslyn-backed restricted-C#
+compiler/projection layer. Accordingly `SongReferenceAnalyzer` still treats any
+script source as opaque and persistence conservatively retains tombstones while
+scripts exist. Script source/layout edits are audio-affecting authoring changes
+even though executable script compilation remains future work.
 
 The Instruments pane can create an `InstrumentDefinition` and open it in a
 main-workspace tone-table editor. Divisions and offset remain the pitch-to-index
