@@ -43,6 +43,7 @@ public sealed class PatternEffectStripControl : UserControl
 	private readonly double _rowHeight;
 	private readonly Action _requestExpansion;
 	private readonly Action<int, ExpandedEffectField> _requestSelection;
+	private readonly Action<int> _requestEditNative;
 	private readonly Action<int> _requestDelete;
 	private readonly Action<int, bool> _requestInsert;
 	private readonly Action<int, int> _requestReorder;
@@ -65,6 +66,7 @@ public sealed class PatternEffectStripControl : UserControl
 		double rowHeight,
 		Action requestExpansion,
 		Action<int, ExpandedEffectField> requestSelection,
+		Action<int> requestEditNative,
 		Action<int> requestDelete,
 		Action<int, bool> requestInsert,
 		Action<int, int> requestReorder)
@@ -83,6 +85,8 @@ public sealed class PatternEffectStripControl : UserControl
 			requestExpansion ?? throw new ArgumentNullException(nameof(requestExpansion));
 		_requestSelection =
 			requestSelection ?? throw new ArgumentNullException(nameof(requestSelection));
+		_requestEditNative =
+			requestEditNative ?? throw new ArgumentNullException(nameof(requestEditNative));
 		_requestDelete =
 			requestDelete ?? throw new ArgumentNullException(nameof(requestDelete));
 		_requestInsert =
@@ -232,7 +236,7 @@ public sealed class PatternEffectStripControl : UserControl
 			effect.IsTrackerStyle
 				? BuildTrackerContent(index, effect, width)
 				: BuildNativeContent(effect);
-		outer.ContextMenu = BuildContextMenu(index);
+		outer.ContextMenu = BuildContextMenu(index, effect);
 
 		outer.PointerEntered += (_, _) => _requestExpansion();
 		outer.PointerPressed += (_, e) =>
@@ -241,6 +245,16 @@ public sealed class PatternEffectStripControl : UserControl
 				e.GetCurrentPoint(outer).Properties;
 			if (properties.IsRightButtonPressed)
 				return;
+
+			if (!effect.IsTrackerStyle
+				&& properties.IsLeftButtonPressed
+				&& e.ClickCount >= 2)
+			{
+				_requestSelection(index, ExpandedEffectField.Native);
+				_requestEditNative(index);
+				e.Handled = true;
+				return;
+			}
 
 			if (!_expanded)
 			{
@@ -306,7 +320,9 @@ public sealed class PatternEffectStripControl : UserControl
 		return outer;
 	}
 
-	private ContextMenu BuildContextMenu(int index)
+	private ContextMenu BuildContextMenu(
+		int index,
+		PatternEffectViewModel effect)
 	{
 		MenuItem insertBefore = new() { Header = "Insert Before" };
 		insertBefore.Click += (_, _) => _requestInsert(index, false);
@@ -317,15 +333,30 @@ public sealed class PatternEffectStripControl : UserControl
 		MenuItem delete = new() { Header = "Delete" };
 		delete.Click += (_, _) => _requestDelete(index);
 
+		List<object> items = [];
+		if (!effect.IsTrackerStyle)
+		{
+			MenuItem edit =
+				new()
+				{
+					Header = "Edit Parameters...",
+				};
+			edit.Click += (_, _) =>
+			{
+				_requestSelection(index, ExpandedEffectField.Native);
+				_requestEditNative(index);
+			};
+			items.Add(edit);
+			items.Add(new Separator());
+		}
+		items.Add(insertBefore);
+		items.Add(insertAfter);
+		items.Add(new Separator());
+		items.Add(delete);
+
 		return new ContextMenu
 		{
-			ItemsSource = new object[]
-			{
-				insertBefore,
-				insertAfter,
-				new Separator(),
-				delete,
-			},
+			ItemsSource = items,
 		};
 	}
 
