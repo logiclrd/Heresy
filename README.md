@@ -304,4 +304,21 @@ and `Alt+Home`/`Alt+End` select the first/last stack member. Expanded tabs may
 also be dragged to reorder them. A tab's context menu labels tracker insertion
 explicitly as **Insert Tracker Slot Before/After**, alongside native insertion
 and **Delete**; all operations route through the same framework-independent
-stack-editing commands. Copy/paste is intentionally deferred.
+stack-editing commands.
+
+Effect copy/paste treats the complete ordered effect list of one pattern cell as
+the clipboard unit; note, Source and Volume data are never included or replaced.
+`Ctrl+C` (or the platform Meta modifier) while the tracker cursor is in either
+effect field copies the stack, and `Ctrl+V` replaces only the destination
+cell's effects. The same commands are available as **Copy Effect Stack** and
+**Paste Effect Stack** in effect-strip context menus; an empty strip still
+offers paste so a copied stack can be placed into a blank cell. The clipboard
+payload is plain text with a Heresy pattern-effects/version header followed by
+the canonical polymorphic `PatternEffect` JSON representation used by document
+persistence. Mixed native/tracker stacks, ordering and inert `...` parameters
+therefore round-trip without a parallel clipboard schema. Copying an empty stack
+and pasting it clears destination effects while preserving any note, Source or
+Volume in that cell. A stack replacement is a no-op when values are identical;
+changes involving only inert tracker placeholders advance document revision but
+not audio revision. In sequence context, paste resolves through the same mapped
+cursor and modifies the underlying shared pattern object.
