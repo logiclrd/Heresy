@@ -249,9 +249,9 @@ public sealed class SongDocumentJsonTests
 				id,
 				"Tree Sample",
 				new ExternalAssetReference("tree.wav")));
-		document.Root.Children.Add(
-			new SongTreeObject("Tree Sample", id));
 		document.Remove(id);
+		document.GetSectionRoot(SongTreeSection.Samples).Children.Add(
+			new SongTreeObject("Tree Sample", id));
 
 		SongDocument restored =
 			SongDocumentJson.Deserialize(
@@ -259,7 +259,9 @@ public sealed class SongDocumentJsonTests
 
 		Assert.That(restored.Tombstones.ContainsKey(id), Is.True);
 		Assert.That(
-			((SongTreeObject)restored.Root.Children.Single()).ObjectId,
+			((SongTreeObject)restored
+				.GetSectionRoot(SongTreeSection.Samples)
+				.Children.Single()).ObjectId,
 			Is.EqualTo(id));
 	}
 
@@ -411,20 +413,15 @@ public sealed class SongDocumentJsonTests
 
 		document.RootSequenceId = sequenceId;
 		document.Root.Name = "Arrangement";
-		SongTreeFolder sounds = new("Sounds");
-		sounds.Children.Add(
-			new SongTreeObject("Piano", sampleId));
-		sounds.Children.Add(
-			new SongTreeObject(
-				"Recursive Instrument",
-				instrumentId));
-		document.Root.Children.Add(sounds);
-		document.Root.Children.Add(
-			new SongTreeObject("Pattern", patternId));
-		document.Root.Children.Add(
-			new SongTreeObject("Envelope", envelopeId));
-		document.Root.Children.Add(
-			new SongTreeObject("Sequence", sequenceId));
+
+		SongTreeFolder samples =
+			document.GetSectionRoot(SongTreeSection.Samples);
+		SongTreeObject sampleNode =
+			(SongTreeObject)samples.Children.Single();
+		samples.Children.Clear();
+		SongTreeFolder keys = new("Keys");
+		keys.Children.Add(sampleNode);
+		samples.Children.Add(keys);
 
 		return document;
 	}
@@ -529,13 +526,25 @@ public sealed class SongDocumentJsonTests
 			Is.EqualTo("yield return pattern;"));
 
 		Assert.That(document.Root.Children, Has.Count.EqualTo(4));
-		SongTreeFolder folder =
-			(SongTreeFolder)document.Root.Children[0];
-		Assert.That(folder.Name, Is.EqualTo("Sounds"));
-		Assert.That(folder.Children, Has.Count.EqualTo(2));
 		Assert.That(
-			((SongTreeObject)folder.Children[1]).ObjectId,
-			Is.EqualTo((ObjectId)2U));
+			document.Root.Children.Select(node => node.Name),
+			Is.EqualTo(new[] { "Sequences", "Patterns", "Instruments", "Samples" }));
+
+		SongTreeFolder samples =
+			document.GetSectionRoot(SongTreeSection.Samples);
+		SongTreeFolder keys =
+			(SongTreeFolder)samples.Children.Single();
+		Assert.That(keys.Name, Is.EqualTo("Keys"));
+		Assert.That(
+			((SongTreeObject)keys.Children.Single()).ObjectId,
+			Is.EqualTo((ObjectId)1U));
+
+		Assert.That(
+			document.GetSectionRoot(SongTreeSection.Instruments)
+				.Children
+				.Cast<SongTreeObject>()
+				.Select(node => node.ObjectId),
+			Is.EqualTo(new[] { (ObjectId)2U, (ObjectId)4U }));
 	}
 
 	private static PatternEffect CreatePatternEffect(Type type)

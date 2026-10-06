@@ -161,9 +161,16 @@ public static class SongDocumentJson
 		if (rootNode is not SongTreeFolder rootFolder)
 			throw new InvalidDataException("The document tree root must be a folder.");
 
-		document.Root.Name = rootFolder.Name;
-		document.Root.Children.Clear();
-		document.Root.Children.AddRange(rootFolder.Children);
+		try
+		{
+			document.RestoreTree(rootFolder);
+		}
+		catch (InvalidOperationException ex)
+		{
+			throw new InvalidDataException(
+				"The persisted song tree does not match the version 2 four-section structure.",
+				ex);
+		}
 
 		return document;
 	}

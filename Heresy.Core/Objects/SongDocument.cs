@@ -12,14 +12,27 @@ public sealed class SongDocument
 {
 	private readonly Dictionary<ObjectId, SongObject> _objects = [];
 	private readonly Dictionary<ObjectId, ObjectTombstone> _tombstones = [];
+	private readonly Dictionary<SongTreeSection, SongTreeFolder> _sectionRoots = [];
 	private uint _nextObjectId = 1;
 
-	public const int FormatVersion = 1;
+	public const int FormatVersion = 2;
+
+	public SongDocument()
+	{
+		Root = new SongTreeFolder("Song");
+		foreach (SongTreeSection section in SongTreeSections.DocumentOrder)
+		{
+			SongTreeFolder sectionRoot =
+				new(SongTreeSections.GetName(section));
+			_sectionRoots.Add(section, sectionRoot);
+			Root.Children.Add(sectionRoot);
+		}
+	}
 
 	public IReadOnlyDictionary<ObjectId, SongObject> Objects => _objects;
 	public IReadOnlyDictionary<ObjectId, ObjectTombstone> Tombstones => _tombstones;
 
-	public SongTreeFolder Root { get; } = new("Song");
+	public SongTreeFolder Root { get; }
 
 	public ObjectId RootSequenceId { get; set; }
 
@@ -27,6 +40,11 @@ public sealed class SongDocument
 	public uint AudioRevision { get; private set; }
 
 	internal uint NextObjectIdForPersistence => _nextObjectId;
+
+	public SongTreeFolder GetSectionRoot(SongTreeSection section)
+		=> _sectionRoots.TryGetValue(section, out SongTreeFolder? root)
+			? root
+			: throw new ArgumentOutOfRangeException(nameof(section));
 
 	public ObjectId AllocateObjectId()
 	{
@@ -40,11 +58,16 @@ public sealed class SongDocument
 	{
 		ArgumentNullException.ThrowIfNull(songObject);
 
+		SongTreeFolder sectionRoot =
+			GetSectionRoot(SongTreeSections.ForKind(songObject.Kind));
+
 		if (!_objects.TryAdd(songObject.Id, songObject))
 			throw new InvalidOperationException($"Object ID {songObject.Id} is already in use.");
 
 		_tombstones.Remove(songObject.Id);
 		EnsureNextIdPast(songObject.Id);
+		sectionRoot.Children.Add(
+			new SongTreeObject(songObject.Name, songObject.Id));
 		MarkChanged(affectsAudio);
 	}
 
@@ -56,6 +79,7 @@ public sealed class SongDocument
 		if (!_objects.Remove(id, out SongObject? removed))
 			return false;
 
+		RemoveTreePlacements(Root, id);
 		_tombstones[id] = new ObjectTombstone(id, removed.Name, removed.Kind);
 		MarkChanged(affectsAudio);
 		return true;
@@ -89,6 +113,7 @@ public sealed class SongDocument
 			throw new InvalidOperationException($"Object ID {songObject.Id} is already in use.");
 		if (_tombstones.ContainsKey(songObject.Id))
 			throw new InvalidOperationException($"Object ID {songObject.Id} also exists as a tombstone.");
+		SongTreeSections.ForKind(songObject.Kind);
 		EnsureNextIdPast(songObject.Id);
 	}
 
@@ -101,6 +126,37 @@ public sealed class SongDocument
 		if (!_tombstones.TryAdd(tombstone.Id, tombstone))
 			throw new InvalidOperationException($"Object ID {tombstone.Id} is already tombstoned.");
 		EnsureNextIdPast(tombstone.Id);
+	}
+
+	internal void RestoreTree(SongTreeFolder restoredRoot)
+	{
+		ArgumentNullException.ThrowIfNull(restoredRoot);
+
+		if (restoredRoot.Children.Count != SongTreeSections.DocumentOrder.Length)
+		{
+			throw new InvalidOperationException(
+				"A version 2 song tree must contain exactly the four fixed document sections.");
+		}
+
+		for (int index = 0; index < SongTreeSections.DocumentOrder.Length; index++)
+		{
+			SongTreeSection section = SongTreeSections.DocumentOrder[index];
+			if (restoredRoot.Children[index] is not SongTreeFolder restoredSection
+				|| !string.Equals(
+					restoredSection.Name,
+					SongTreeSections.GetName(section),
+					StringComparison.Ordinal))
+			{
+				throw new InvalidOperationException(
+					$"Song-tree section {index} must be '{SongTreeSections.GetName(section)}'.");
+			}
+
+			SongTreeFolder target = GetSectionRoot(section);
+			target.Children.Clear();
+			target.Children.AddRange(restoredSection.Children);
+		}
+
+		Root.Name = restoredRoot.Name;
 	}
 
 	internal void RestoreNextObjectId(uint nextObjectId)
@@ -120,6 +176,25 @@ public sealed class SongDocument
 		}
 
 		_nextObjectId = nextObjectId;
+	}
+
+	private static void RemoveTreePlacements(
+		SongTreeFolder folder,
+		ObjectId objectId)
+	{
+		for (int index = folder.Children.Count - 1; index >= 0; index--)
+		{
+			SongTreeNode child = folder.Children[index];
+			if (child is SongTreeObject songObject
+				&& songObject.ObjectId == objectId)
+			{
+				folder.Children.RemoveAt(index);
+			}
+			else if (child is SongTreeFolder childFolder)
+			{
+				RemoveTreePlacements(childFolder, objectId);
+			}
+		}
 	}
 
 	private void EnsureNextIdPast(ObjectId id)

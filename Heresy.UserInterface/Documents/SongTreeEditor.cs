@@ -20,6 +20,12 @@ public static class SongTreeEditor
 		ValidateName(name);
 		EnsureFolderAttached(document, parent);
 
+		if (ReferenceEquals(parent, document.Root))
+		{
+			throw new InvalidOperationException(
+				"The document root may contain only the four fixed section roots.");
+		}
+
 		SongTreeFolder folder = new(name.Trim());
 		parent.Children.Add(folder);
 		document.MarkChanged(affectsAudio: false);
@@ -35,6 +41,9 @@ public static class SongTreeEditor
 		ArgumentNullException.ThrowIfNull(folder);
 		ValidateName(name);
 		EnsureFolderAttached(document, folder);
+
+		if (IsFixedRoot(document, folder))
+			throw new InvalidOperationException("Fixed song-tree roots cannot be renamed.");
 
 		string normalizedName = name.Trim();
 		if (string.Equals(folder.Name, normalizedName, StringComparison.Ordinal))
@@ -91,8 +100,8 @@ public static class SongTreeEditor
 		ArgumentNullException.ThrowIfNull(document);
 		ArgumentNullException.ThrowIfNull(node);
 
-		if (ReferenceEquals(node, document.Root))
-			throw new InvalidOperationException("The song-tree root cannot be removed.");
+		if (node is SongTreeFolder folder && IsFixedRoot(document, folder))
+			throw new InvalidOperationException("Fixed song-tree roots cannot be removed.");
 
 		SongTreeFolder? parent = FindParent(document.Root, node);
 		if (parent is null)
@@ -112,6 +121,23 @@ public static class SongTreeEditor
 		return ReferenceEquals(node, document.Root)
 			? null
 			: FindParent(document.Root, node);
+	}
+
+	public static SongTreeSection? GetSection(
+		SongDocument document,
+		SongTreeNode node)
+	{
+		ArgumentNullException.ThrowIfNull(document);
+		ArgumentNullException.ThrowIfNull(node);
+
+		foreach (SongTreeSection section in SongTreeSections.DocumentOrder)
+		{
+			SongTreeFolder root = document.GetSectionRoot(section);
+			if (ReferenceEquals(root, node) || ContainsNode(root, node))
+				return section;
+		}
+
+		return null;
 	}
 
 	public static bool CanMoveInto(
@@ -224,20 +250,48 @@ public static class SongTreeEditor
 		SongTreeNode node,
 		SongTreeFolder destination)
 	{
-		if (ReferenceEquals(node, document.Root))
-			throw new InvalidOperationException("The song-tree root cannot be moved.");
+		if (node is SongTreeFolder folder && IsFixedRoot(document, folder))
+			throw new InvalidOperationException("Fixed song-tree roots cannot be moved.");
 
 		if (FindParent(document.Root, node) is null)
 			throw new InvalidOperationException("The node is not attached to this song tree.");
 
 		EnsureFolderAttached(document, destination);
+		if (ReferenceEquals(destination, document.Root))
+		{
+			throw new InvalidOperationException(
+				"The document root may contain only the four fixed section roots.");
+		}
 
-		if (node is SongTreeFolder folder
-			&& Contains(folder, destination))
+		if (node is SongTreeFolder movingFolder
+			&& Contains(movingFolder, destination))
 		{
 			throw new InvalidOperationException(
 				"A folder cannot be moved into itself or one of its descendants.");
 		}
+
+		SongTreeSection? sourceSection = GetSection(document, node);
+		SongTreeSection? destinationSection = GetSection(document, destination);
+		if (sourceSection is null || destinationSection is null)
+			throw new InvalidOperationException("Tree nodes must belong to one of the four document sections.");
+		if (sourceSection != destinationSection)
+			throw new InvalidOperationException("Tree nodes cannot be moved between document sections.");
+	}
+
+	private static bool IsFixedRoot(
+		SongDocument document,
+		SongTreeFolder folder)
+	{
+		if (ReferenceEquals(folder, document.Root))
+			return true;
+
+		foreach (SongTreeSection section in SongTreeSections.DocumentOrder)
+		{
+			if (ReferenceEquals(folder, document.GetSectionRoot(section)))
+				return true;
+		}
+
+		return false;
 	}
 
 	private static void EnsureFolderAttached(
@@ -330,6 +384,21 @@ public static class SongTreeEditor
 			{
 				return true;
 			}
+		}
+
+		return false;
+	}
+
+	private static bool ContainsNode(
+		SongTreeFolder root,
+		SongTreeNode candidate)
+	{
+		foreach (SongTreeNode child in root.Children)
+		{
+			if (ReferenceEquals(child, candidate))
+				return true;
+			if (child is SongTreeFolder folder && ContainsNode(folder, candidate))
+				return true;
 		}
 
 		return false;
