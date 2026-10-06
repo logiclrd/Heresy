@@ -17,7 +17,8 @@ public abstract record NoteCommand;
 /// Starts one playback note. Volume is an optional initial note-volume value
 /// carried atomically with the start; it has no effect when the source cannot
 /// actually start. Data-pattern rows which specify volume without starting a
-/// new note are translated to SetNoteVolumeCommand instead.
+/// new note are normally translated to SetNoteVolumeCommand instead. A note-cut
+/// row is the exception: its pattern-column volume is deliberately ignored.
 /// </summary>
 public sealed record StartNoteCommand(
 	ObjectId SourceId,

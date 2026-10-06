@@ -154,14 +154,19 @@ advance one row; `.` clears it and advances, so volume values can be painted
 down rows even when those rows contain no new notes.
 
 Pattern translation treats that single volume column differently according to
-whether the row actually starts a note. For an ordinary `StartPatternNote`, the
-value is folded directly into `StartNoteCommand.Volume`, keeping the common
-note+volume case atomic and compact. If the row does not start a new note —
-including a volume-only row, note-off/cut row, or a note used only as a tone-
-portamento target — the direct start-volume path is ignored and the processor
-emits `SetNoteVolumeCommand` for the current note instead. A direct start volume
-is applied by playback only after the source successfully resolves and starts,
-so a broken source cannot seed the volume of a later note.
+what the row does. For an ordinary `StartPatternNote`, the value is folded
+directly into `StartNoteCommand.Volume`, keeping the common note+volume case
+atomic and compact. A volume-only row, a note-off row, or a note used only as a
+tone-portamento target instead emits `SetNoteVolumeCommand` for the current
+note. Note off deliberately keeps the releasing voice attached to its physical
+channel, so same-row and subsequent volume-column changes continue to affect
+that voice throughout its release phase; more such changes may follow until the
+voice ends naturally or is explicitly cut. A note-cut row is different: CUT
+ends the current note immediately, so any volume value stored on that same row
+is retained as pattern data but ignored during translation and does not alter
+the channel's remembered note volume. A direct start volume is applied by
+playback only after the source successfully resolves and starts, so a broken
+source cannot seed the volume of a later note.
 
 Effects are projected as coloured tabs attached to the right edge of each cell.
 Multiple effects remain in semantic application order and collapse into an
