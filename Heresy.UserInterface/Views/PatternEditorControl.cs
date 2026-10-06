@@ -7,6 +7,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -529,6 +530,14 @@ public sealed class PatternEditorControl : UserControl
 						channel,
 						effectIndex: null,
 						after: false),
+				() =>
+					_ = CopyEffectStackAsync(
+						displayRow,
+						channel),
+				() =>
+					_ = PasteEffectStackAsync(
+						displayRow,
+						channel),
 				effectIndex =>
 					DeleteEffectAt(
 						displayRow,
@@ -660,6 +669,26 @@ public sealed class PatternEditorControl : UserControl
 		PatternCell? cell =
 			editorRow.Pattern.Grid[editorRow.PatternRow, channel];
 		(int Row, int Channel)? previouslyExpanded = _expandedCell;
+
+		bool clipboardModifier =
+			(e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) != 0
+				&& (e.KeyModifiers & KeyModifiers.Alt) == 0;
+		bool effectField =
+			_cursor.Field is
+				PatternCellField.EffectCommand
+				or PatternCellField.EffectParameter;
+		if (clipboardModifier && effectField && e.Key == Key.C)
+		{
+			await CopyEffectStackAsync(row, channel);
+			e.Handled = true;
+			return;
+		}
+		if (clipboardModifier && effectField && e.Key == Key.V)
+		{
+			await PasteEffectStackAsync(row, channel);
+			e.Handled = true;
+			return;
+		}
 
 		if ((e.KeyModifiers & KeyModifiers.Alt) != 0
 			&& e.Key == Key.N
@@ -1089,6 +1118,100 @@ public sealed class PatternEditorControl : UserControl
 
 			default:
 				return false;
+		}
+	}
+
+	private async Task CopyEffectStackAsync(
+		int row,
+		int channel)
+	{
+		try
+		{
+			PatternEditorRow editorRow = _context.GetRow(row);
+			PatternCell? cell =
+				editorRow.Pattern.Grid[editorRow.PatternRow, channel];
+			string text =
+				PatternEffectClipboardCodec.Serialize(
+					cell?.Effects
+						?? Array.Empty<PatternEffect>());
+
+			await _owner.Clipboard.SetTextAsync(text);
+			_message.Text =
+				$"Copied {cell?.Effects.Count ?? 0} effect(s) from {editorRow.Pattern.Name} row {editorRow.PatternRow}, channel {channel + 1}.";
+		}
+		catch (Exception ex)
+		{
+			_message.Text =
+				$"Could not copy effect stack: {ex.Message}";
+		}
+		finally
+		{
+			FocusCursorCell();
+		}
+	}
+
+	private async Task PasteEffectStackAsync(
+		int row,
+		int channel)
+	{
+		try
+		{
+			string? text =
+				await _owner.Clipboard.TryGetTextAsync();
+			if (text is null)
+			{
+				_message.Text =
+					"The clipboard does not contain text.";
+				return;
+			}
+
+			PatternEffect[] effects =
+				PatternEffectClipboardCodec.Deserialize(text);
+			_cursor.SetPosition(
+				row,
+				channel,
+				PatternCellField.EffectCommand);
+			PatternEditorRow editorRow = _context.GetRow(row);
+			bool changed =
+				PatternEditorContextCursor.EditCurrent(
+					_context,
+					_cursor,
+					mapped =>
+						PatternEffectStackEditor.ReplaceAll(
+							_workspace,
+							mapped.Pattern,
+							_cursor,
+							effects));
+
+			_expandedCell =
+				_cursor.IsExpanded
+					? (row, channel)
+					: null;
+
+			if (changed)
+			{
+				RefreshUnderlyingCell(
+					editorRow.Pattern,
+					editorRow.PatternRow,
+					channel);
+				_changed(
+					$"Pasted effect stack into {editorRow.Pattern.Name} row {editorRow.PatternRow}, channel {channel + 1}");
+			}
+
+			_message.Text =
+				changed
+					? $"Pasted {effects.Length} effect(s)."
+					: "The destination already has that effect stack.";
+			RefreshCursorVisuals();
+		}
+		catch (Exception ex)
+		{
+			_message.Text =
+				$"Could not paste effect stack: {ex.Message}";
+		}
+		finally
+		{
+			FocusCursorCell();
 		}
 	}
 
