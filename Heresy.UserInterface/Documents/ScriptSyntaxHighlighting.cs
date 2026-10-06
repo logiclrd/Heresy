@@ -146,11 +146,14 @@ public static class ScriptSyntaxHighlightCatalog
 		SyntaxToken token)
 	{
 		SyntaxKind kind = token.Kind();
-		SyntaxKind contextualKind = token.ContextualKind();
+		SyntaxKind contextualKind =
+			kind == SyntaxKind.IdentifierToken
+				? SyntaxFacts.GetContextualKeywordKind(
+					token.ValueText)
+				: SyntaxKind.None;
 
 		if (SyntaxFacts.IsKeywordKind(kind)
-			|| (contextualKind != SyntaxKind.IdentifierToken
-				&& SyntaxFacts.IsKeywordKind(contextualKind)))
+			|| contextualKind != SyntaxKind.None)
 		{
 			return ScriptSyntaxHighlightKind.Keyword;
 		}
