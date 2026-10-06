@@ -17,6 +17,26 @@ public static class ScriptDiagnosticNavigation
 			throw new ArgumentOutOfRangeException(nameof(sourceLength));
 		ArgumentNullException.ThrowIfNull(marker);
 
-		return new(0, 0, 0);
+		int start =
+			Math.Clamp(
+				marker.OriginalSpan.Start,
+				0,
+				sourceLength);
+
+		long requestedEnd =
+			(long)marker.OriginalSpan.Start
+				+ Math.Max(
+					0,
+					marker.OriginalSpan.Length);
+		int end =
+			(int)Math.Clamp(
+				requestedEnd,
+				start,
+				sourceLength);
+
+		return new ScriptDiagnosticNavigationTarget(
+			start,
+			end - start,
+			start);
 	}
 }
