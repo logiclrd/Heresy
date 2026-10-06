@@ -263,7 +263,8 @@ public sealed class SongDocumentJsonTests
 
 		SongDocument restored =
 			SongDocumentJson.Deserialize(
-				SongDocumentJson.Serialize(document, JsonContextPath));
+				SongDocumentJson.Serialize(document, JsonContextPath),
+				JsonContextPath);
 
 		Assert.That(restored.Tombstones.ContainsKey(id), Is.True);
 		Assert.That(
@@ -294,7 +295,8 @@ public sealed class SongDocumentJsonTests
 
 		SongDocument restored =
 			SongDocumentJson.Deserialize(
-				SongDocumentJson.Serialize(document, JsonContextPath));
+				SongDocumentJson.Serialize(document, JsonContextPath),
+				JsonContextPath);
 
 		Assert.That(restored.Tombstones.ContainsKey(deleted), Is.True);
 	}
