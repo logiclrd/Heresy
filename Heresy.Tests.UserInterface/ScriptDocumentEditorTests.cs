@@ -283,4 +283,27 @@ public sealed class ScriptDocumentEditorTests
 		analysis.References[2].Resolution.Should().Be(
 			ScriptObjectReferenceResolution.Missing);
 	}
+	[Test]
+	public void SourceAnalysisIncludesExecutableCompilerDiagnostics()
+	{
+		DocumentWorkspace workspace = new();
+		ScriptPatternDefinition pattern =
+			ScriptDocumentEditor.CreateScriptPattern(
+				workspace,
+				"Script");
+
+		ScriptSourceDocumentAnalysis analysis =
+			ScriptSourceDocumentAnalyzer.Analyze(
+				workspace,
+				pattern,
+				"System.IO.File.ReadAllText(\"not-allowed\");");
+
+		analysis.IsReliable.Should().BeFalse();
+		analysis.Diagnostics.Should().Contain(diagnostic =>
+			diagnostic.Code == "HRS2001"
+				&& diagnostic.Severity
+					== ScriptDiagnosticSeverity.Error);
+	}
+
+
 }

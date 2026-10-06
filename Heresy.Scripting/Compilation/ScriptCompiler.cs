@@ -62,6 +62,20 @@ public static class ScriptCompiler
 	private static readonly MetadataReference[] MetadataReferences =
 		CreateMetadataReferences();
 
+	public static IReadOnlyList<ScriptAnalysisDiagnostic> AnalyzePatternSource(
+		string source)
+	{
+		ArgumentNullException.ThrowIfNull(source);
+		return [];
+	}
+
+	public static IReadOnlyList<ScriptAnalysisDiagnostic> AnalyzeSequenceSource(
+		string source)
+	{
+		ArgumentNullException.ThrowIfNull(source);
+		return [];
+	}
+
 	public static ScriptCompilationResult<IRawPatternNoteGenerator> CompilePattern(
 		ScriptPatternDefinition definition)
 	{

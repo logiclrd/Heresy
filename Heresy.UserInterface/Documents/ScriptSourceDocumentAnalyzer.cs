@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 
+using Heresy.Core.Patterns;
+using Heresy.Core.Sequences;
 using Heresy.Scripting.Analysis;
 
 namespace Heresy.UserInterface.Documents;
@@ -12,14 +14,50 @@ namespace Heresy.UserInterface.Documents;
 /// </summary>
 public sealed record ScriptSourceDocumentAnalysis(
 	ScriptReferenceAnalysis Syntax,
-	IReadOnlyList<ProjectedScriptObjectReference> References)
+	IReadOnlyList<ProjectedScriptObjectReference> References,
+	IReadOnlyList<ScriptAnalysisDiagnostic> Diagnostics)
 {
-	public bool IsReliable => Syntax.IsReliable;
+	public bool IsReliable
+	{
+		get
+		{
+			foreach (ScriptAnalysisDiagnostic diagnostic in Diagnostics)
+			{
+				if (diagnostic.Severity == ScriptDiagnosticSeverity.Error)
+					return false;
+			}
+
+			return true;
+		}
+	}
 }
 
 public static class ScriptSourceDocumentAnalyzer
 {
 	public static ScriptSourceDocumentAnalysis Analyze(
+		DocumentWorkspace workspace,
+		string source)
+		=> AnalyzeReferences(workspace, source);
+
+	public static ScriptSourceDocumentAnalysis Analyze(
+		DocumentWorkspace workspace,
+		ScriptPatternDefinition pattern,
+		string source)
+	{
+		ArgumentNullException.ThrowIfNull(pattern);
+		return AnalyzeReferences(workspace, source);
+	}
+
+	public static ScriptSourceDocumentAnalysis Analyze(
+		DocumentWorkspace workspace,
+		ScriptSequenceDefinition sequence,
+		string source)
+	{
+		ArgumentNullException.ThrowIfNull(sequence);
+		return AnalyzeReferences(workspace, source);
+	}
+
+	private static ScriptSourceDocumentAnalysis AnalyzeReferences(
 		DocumentWorkspace workspace,
 		string source)
 	{
@@ -33,6 +71,7 @@ public static class ScriptSourceDocumentAnalyzer
 			syntax,
 			ScriptObjectReferenceProjector.Project(
 				workspace.Document,
-				syntax));
+				syntax),
+			syntax.Diagnostics);
 	}
 }

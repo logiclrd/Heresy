@@ -192,6 +192,42 @@ public sealed class ScriptCompilerTests
 		execute.Should().Throw<SequencingResourceLimitException>();
 	}
 
+	[Test]
+	public void PatternAnalysisReportsRestrictedLanguageDiagnosticsWithoutEmitting()
+	{
+		IReadOnlyList<ScriptAnalysisDiagnostic> diagnostics =
+			ScriptCompiler.AnalyzePatternSource(
+				"System.IO.File.ReadAllText(\"not-allowed\");");
+
+		diagnostics.Should().Contain(diagnostic =>
+			diagnostic.Code == "HRS2001"
+				&& diagnostic.Severity == ScriptDiagnosticSeverity.Error);
+	}
+
+	[Test]
+	public void PatternAnalysisReportsOrdinaryCSharpBindingDiagnostics()
+	{
+		IReadOnlyList<ScriptAnalysisDiagnostic> diagnostics =
+			ScriptCompiler.AnalyzePatternSource(
+				"MissingHelper();");
+
+		diagnostics.Should().Contain(diagnostic =>
+			diagnostic.Code == "CS0103"
+				&& diagnostic.Severity == ScriptDiagnosticSeverity.Error);
+	}
+
+	[Test]
+	public void SequenceAnalysisUsesSequenceHelperSurface()
+	{
+		IReadOnlyList<ScriptAnalysisDiagnostic> diagnostics =
+			ScriptCompiler.AnalyzeSequenceSource(
+				"Note(0, 0, _O(1));");
+
+		diagnostics.Should().Contain(diagnostic =>
+			diagnostic.Code == "CS0103"
+				&& diagnostic.Severity == ScriptDiagnosticSeverity.Error);
+	}
+
 	private static ObjectId GenerateStartedSource(
 		IRawPatternNoteGenerator program,
 		ulong seed)
