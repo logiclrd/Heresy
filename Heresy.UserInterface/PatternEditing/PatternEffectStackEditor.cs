@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -138,6 +140,73 @@ public static class PatternEffectStackEditor
 				cursor.Row,
 				cursor.Channel,
 				PatternCellField.EffectCommand);
+		}
+
+		return true;
+	}
+
+	public static bool ReplaceAll(
+		DocumentWorkspace workspace,
+		DataPatternDefinition pattern,
+		PatternEffectCursor cursor,
+		IEnumerable<PatternEffect> effects)
+	{
+		Validate(workspace, pattern, cursor);
+		ArgumentNullException.ThrowIfNull(effects);
+
+		PatternEffect[] replacement = [.. effects];
+		if (replacement.Any(effect => effect is null))
+			throw new ArgumentException("Effect stacks may not contain null entries.", nameof(effects));
+
+		PatternCell? existingCell =
+			pattern.Grid[cursor.Row, cursor.Channel];
+		IReadOnlyList<PatternEffect> existing =
+			existingCell?.Effects
+				?? Array.Empty<PatternEffect>();
+
+		if (existing.SequenceEqual(replacement))
+			return false;
+
+		bool affectsAudio =
+			existing.Any(effect => effect is not EmptyTrackerPatternEffect)
+				|| replacement.Any(effect => effect is not EmptyTrackerPatternEffect);
+
+		PatternCell? target = existingCell;
+		if (replacement.Length == 0)
+		{
+			if (target is not null)
+			{
+				target.Effects.Clear();
+				if (target.IsEmpty)
+					pattern.Grid.ClearCell(cursor.Row, cursor.Channel);
+			}
+		}
+		else
+		{
+			target ??=
+				pattern.Grid.GetOrCreateCell(
+					cursor.Row,
+					cursor.Channel);
+			target.Effects.Clear();
+			foreach (PatternEffect effect in replacement)
+				target.Effects.Add(effect);
+		}
+
+		workspace.Document.MarkChanged(affectsAudio);
+
+		if (replacement.Length <= 1)
+		{
+			cursor.SetPosition(
+				cursor.Row,
+				cursor.Channel,
+				PatternCellField.EffectCommand);
+		}
+		else
+		{
+			cursor.SetExpandedSelection(
+				target!,
+				0,
+				FirstField(replacement[0]));
 		}
 
 		return true;
