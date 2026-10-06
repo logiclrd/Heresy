@@ -6,6 +6,7 @@ using AwesomeAssertions;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Persistence;
+using Heresy.Core.Sequences;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.PatternEditing;
 
@@ -175,4 +176,64 @@ public sealed class PatternEffectClipboardTests
 
 		workspace.Document.AudioRevision.Should().Be(audioRevision);
 	}
+	[Test]
+	public void SequenceMappedPasteReplacesUnderlyingSharedPatternStack()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition first =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"First",
+				rowCount: 1,
+				channelCount: 1);
+		DataPatternDefinition second =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Second",
+				rowCount: 1,
+				channelCount: 1);
+		first.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new VibratoPatternEffect(0x11));
+		second.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new VibratoPatternEffect(0x22));
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(
+				workspace,
+				"Arrangement");
+		sequence.Entries.Add(new SequenceEntry(first.Id));
+		sequence.Entries.Add(new SequenceEntry(second.Id));
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(
+				workspace.Document,
+				sequence,
+				initialEntryIndex: 1);
+		PatternEffectCursor cursor =
+			new(
+				context.InitialDisplayRow,
+				0,
+				PatternCellField.EffectCommand);
+
+		PatternEditorContextCursor.EditCurrent(
+			context,
+			cursor,
+			row =>
+				PatternEffectStackEditor.ReplaceAll(
+					workspace,
+					row.Pattern,
+					cursor,
+					new PatternEffect[]
+					{
+						new SetSpeedPatternEffect(6),
+						new SetPlaybackFrequencyPatternEffect(440.0),
+					}));
+
+		first.Grid[0, 0]!.Effects.Should().ContainSingle()
+			.Which.Should().Be(new VibratoPatternEffect(0x11));
+		second.Grid[0, 0]!.Effects.Should().Equal(
+			new SetSpeedPatternEffect(6),
+			new SetPlaybackFrequencyPatternEffect(440.0));
+		cursor.Row.Should().Be(context.InitialDisplayRow);
+		cursor.IsExpanded.Should().BeTrue();
+	}
+
 }
