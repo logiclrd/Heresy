@@ -45,9 +45,9 @@ public sealed class ScriptEditorControl : UserControl
 		TextWrapping = TextWrapping.Wrap,
 	};
 
-	private readonly TextBlock _analysis = new()
+	private readonly StackPanel _analysis = new()
 	{
-		TextWrapping = TextWrapping.Wrap,
+		Spacing = 4,
 	};
 
 	private IReadOnlyList<ScriptDiagnosticVisualMarker> _diagnosticMarkers = [];
@@ -423,8 +423,14 @@ public sealed class ScriptEditorControl : UserControl
 		}
 		catch (Exception ex)
 		{
-			_analysis.Text =
-				$"Script analysis failed: {ex.Message}";
+			_analysis.Children.Clear();
+			_analysis.Children.Add(
+				new TextBlock
+				{
+					Text =
+						$"Script analysis failed: {ex.Message}",
+					TextWrapping = TextWrapping.Wrap,
+				});
 		}
 	}
 
@@ -510,45 +516,93 @@ public sealed class ScriptEditorControl : UserControl
 	private void RenderAnalysis(
 		ScriptSourceDocumentAnalysis analysis)
 	{
-		List<string> lines = [];
-		if (analysis.Diagnostics.Count == 0)
+		_analysis.Children.Clear();
+
+		if (_diagnosticMarkers.Count == 0)
 		{
-			lines.Add("Analysis: no compiler diagnostics.");
+			_analysis.Children.Add(
+				new TextBlock
+				{
+					Text = "Analysis: no compiler diagnostics.",
+				});
 		}
 		else
 		{
-			lines.Add("Diagnostics:");
-			foreach (ScriptAnalysisDiagnostic diagnostic
-				in analysis.Diagnostics)
+			_analysis.Children.Add(
+				new TextBlock
+				{
+					Text = "Diagnostics:",
+					FontWeight = FontWeight.SemiBold,
+				});
+
+			foreach (ScriptDiagnosticVisualMarker marker
+				in _diagnosticMarkers)
 			{
-				lines.Add(
-					$"{diagnostic.Severity} {diagnostic.Code} "
-						+ $"at {diagnostic.Span.Start}: "
-						+ diagnostic.Message);
+				Button diagnostic =
+					new()
+					{
+						Content =
+							$"{marker.Severity} {marker.Code} "
+								+ $"at {marker.OriginalSpan.Start}: "
+								+ marker.Message,
+						HorizontalAlignment = HorizontalAlignment.Stretch,
+						HorizontalContentAlignment = HorizontalAlignment.Left,
+					};
+				diagnostic.Click += (_, _) =>
+					NavigateToDiagnostic(marker);
+				_analysis.Children.Add(diagnostic);
 			}
 		}
 
-		if (analysis.References.Count == 0)
-		{
-			lines.Add("Object references: none.");
-		}
-		else
-		{
-			lines.Add("Object references:");
-			foreach (ProjectedScriptObjectReference reference
-				in analysis.References)
+		_analysis.Children.Add(
+			new TextBlock
 			{
-				lines.Add(
-					$"{reference.DisplayName} — {reference.Kind} "
-						+ $"<{reference.Id.Value}> "
-						+ $"[{reference.Resolution}]");
-			}
-		}
+				Text =
+					analysis.References.Count == 0
+						? "Object references: none."
+						: "Object references:",
+				FontWeight =
+					analysis.References.Count == 0
+						? FontWeight.Normal
+						: FontWeight.SemiBold,
+			});
 
-		_analysis.Text =
-			string.Join(
-				Environment.NewLine,
-				lines);
+		foreach (ProjectedScriptObjectReference reference
+			in analysis.References)
+		{
+			_analysis.Children.Add(
+				new TextBlock
+				{
+					Text =
+						$"{reference.DisplayName} — {reference.Kind} "
+							+ $"<{reference.Id.Value}> "
+							+ $"[{reference.Resolution}]",
+					TextWrapping = TextWrapping.Wrap,
+				});
+		}
+	}
+
+	private void NavigateToDiagnostic(
+		ScriptDiagnosticVisualMarker marker)
+	{
+		ScriptDiagnosticNavigationTarget target =
+			ScriptDiagnosticNavigation.GetTarget(
+				_source.Document.TextLength,
+				marker);
+
+		_source.Select(
+			target.SelectionStart,
+			target.SelectionLength);
+		_source.CaretOffset =
+			target.CaretOffset;
+
+		var location =
+			_source.Document.GetLocation(
+				target.CaretOffset);
+		_source.ScrollTo(
+			location.Line,
+			location.Column);
+		_source.Focus();
 	}
 
 	private void ApplySource()
