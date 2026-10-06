@@ -24,6 +24,7 @@ public enum ExpandedEffectField
 public sealed class PatternEffectCursor
 {
 	private int? _pendingHighNibble;
+	private int _verticalAdvanceGeneration;
 
 	public PatternEffectCursor(
 		int row,
@@ -47,6 +48,7 @@ public sealed class PatternEffectCursor
 	public int ExpandedEffectIndex { get; private set; } = -1;
 	public ExpandedEffectField ExpandedField { get; private set; }
 	internal bool HasPendingHighNibble => _pendingHighNibble.HasValue;
+	internal int VerticalAdvanceGeneration => _verticalAdvanceGeneration;
 
 	public void SetPosition(
 		int row,
@@ -279,6 +281,7 @@ public sealed class PatternEffectCursor
 		if (IsExpanded)
 			Collapse();
 		ResetPendingNibble();
+		_verticalAdvanceGeneration++;
 		Row = Math.Min(rowCount - 1, Row + 1);
 	}
 
@@ -396,7 +399,22 @@ public sealed class PatternEffectCursor
 	internal void AdvanceAfterCollapsedEntry(int rowCount)
 	{
 		ResetPendingNibble();
+		_verticalAdvanceGeneration++;
 		Row = Math.Min(rowCount - 1, Row + 1);
+	}
+
+	internal void RemapRow(int row)
+	{
+		if (row < 0)
+			throw new ArgumentOutOfRangeException(nameof(row));
+		Row = row;
+	}
+
+	internal void ClampChannelPreservingField(int channelCount)
+	{
+		if (channelCount <= 0)
+			throw new ArgumentOutOfRangeException(nameof(channelCount));
+		Channel = Math.Min(Channel, channelCount - 1);
 	}
 
 	private void MoveExpanded(PatternCell? cell, int direction)
