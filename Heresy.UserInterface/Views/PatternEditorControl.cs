@@ -926,14 +926,20 @@ public sealed class PatternEditorControl : UserControl
 			case Key.Left:
 				if (_cursor.IsExpanded)
 				{
+					bool changed =
+						PatternEditorContextCursor.EditCurrent(
+							_context,
+							_cursor,
+							mapped =>
+								PatternEffectStackEditor.MoveSelected(
+									_workspace,
+									mapped.Pattern,
+									_cursor,
+									delta: -1));
 					FinishStackMutation(
 						row,
 						channel,
-						PatternEffectStackEditor.MoveSelected(
-							_workspace,
-							_pattern,
-							_cursor,
-							delta: -1),
+						changed,
 						"Moved effect left");
 				}
 				return true;
@@ -941,14 +947,20 @@ public sealed class PatternEditorControl : UserControl
 			case Key.Right:
 				if (_cursor.IsExpanded)
 				{
+					bool changed =
+						PatternEditorContextCursor.EditCurrent(
+							_context,
+							_cursor,
+							mapped =>
+								PatternEffectStackEditor.MoveSelected(
+									_workspace,
+									mapped.Pattern,
+									_cursor,
+									delta: 1));
 					FinishStackMutation(
 						row,
 						channel,
-						PatternEffectStackEditor.MoveSelected(
-							_workspace,
-							_pattern,
-							_cursor,
-							delta: 1),
+						changed,
 						"Moved effect right");
 				}
 				return true;
@@ -958,13 +970,19 @@ public sealed class PatternEditorControl : UserControl
 					PatternCellField.EffectCommand
 					or PatternCellField.EffectParameter)
 				{
+					bool changed =
+						PatternEditorContextCursor.EditCurrent(
+							_context,
+							_cursor,
+							mapped =>
+								PatternEffectStackEditor.Delete(
+									_workspace,
+									mapped.Pattern,
+									_cursor));
 					FinishStackMutation(
 						row,
 						channel,
-						PatternEffectStackEditor.Delete(
-							_workspace,
-							_pattern,
-							_cursor),
+						changed,
 						"Deleted effect");
 				}
 				return true;
@@ -975,15 +993,19 @@ public sealed class PatternEditorControl : UserControl
 					or PatternCellField.EffectParameter)
 				{
 					bool changed =
-						shift
-							? PatternEffectStackEditor.InsertAfter(
-								_workspace,
-								_pattern,
-								_cursor)
-							: PatternEffectStackEditor.InsertBefore(
-								_workspace,
-								_pattern,
-								_cursor);
+						PatternEditorContextCursor.EditCurrent(
+							_context,
+							_cursor,
+							mapped =>
+								shift
+									? PatternEffectStackEditor.InsertAfter(
+										_workspace,
+										mapped.Pattern,
+										_cursor)
+									: PatternEffectStackEditor.InsertBefore(
+										_workspace,
+										mapped.Pattern,
+										_cursor));
 					FinishStackMutation(
 						row,
 						channel,
@@ -1028,13 +1050,19 @@ public sealed class PatternEditorControl : UserControl
 			return;
 		}
 
+		bool changed =
+			PatternEditorContextCursor.EditCurrent(
+				_context,
+				_cursor,
+				mapped =>
+					PatternEffectStackEditor.Delete(
+						_workspace,
+						mapped.Pattern,
+						_cursor));
 		FinishStackMutation(
 			row,
 			channel,
-			PatternEffectStackEditor.Delete(
-				_workspace,
-				_pattern,
-				_cursor),
+			changed,
 			"Deleted effect");
 	}
 
@@ -1053,15 +1081,19 @@ public sealed class PatternEditorControl : UserControl
 		}
 
 		bool changed =
-			after
-				? PatternEffectStackEditor.InsertAfter(
-					_workspace,
-					_pattern,
-					_cursor)
-				: PatternEffectStackEditor.InsertBefore(
-					_workspace,
-					_pattern,
-					_cursor);
+			PatternEditorContextCursor.EditCurrent(
+				_context,
+				_cursor,
+				mapped =>
+					after
+						? PatternEffectStackEditor.InsertAfter(
+							_workspace,
+							mapped.Pattern,
+							_cursor)
+						: PatternEffectStackEditor.InsertBefore(
+							_workspace,
+							mapped.Pattern,
+							_cursor));
 		FinishStackMutation(
 			row,
 			channel,
@@ -1085,14 +1117,20 @@ public sealed class PatternEditorControl : UserControl
 			return;
 		}
 
+		bool changed =
+			PatternEditorContextCursor.EditCurrent(
+				_context,
+				_cursor,
+				mapped =>
+					PatternEffectStackEditor.MoveSelectedTo(
+						_workspace,
+						mapped.Pattern,
+						_cursor,
+						targetIndex));
 		FinishStackMutation(
 			row,
 			channel,
-			PatternEffectStackEditor.MoveSelectedTo(
-				_workspace,
-				_pattern,
-				_cursor,
-				targetIndex),
+			changed,
 			"Reordered effect");
 	}
 
@@ -1101,8 +1139,9 @@ public sealed class PatternEditorControl : UserControl
 		int channel,
 		int effectIndex)
 	{
+		PatternEditorRow editorRow = _context.GetRow(row);
 		PatternCell? cell =
-			_pattern.Grid[row, channel];
+			editorRow.Pattern.Grid[editorRow.PatternRow, channel];
 		if (cell is null
 			|| (uint)effectIndex >= (uint)cell.Effects.Count)
 		{
@@ -1137,15 +1176,20 @@ public sealed class PatternEditorControl : UserControl
 		if (!changed)
 			return;
 
+		PatternEditorRow editorRow = _context.GetRow(row);
 		if (_cursor.IsExpanded)
 			_expandedCell = (row, channel);
 		else if (_expandedCell == (row, channel))
 			CollapseVisualEffects(collapseCursor: false);
 
-		RefreshCell(row, channel);
+		RefreshUnderlyingCell(
+			editorRow.Pattern,
+			editorRow.PatternRow,
+			channel);
 		RefreshCursorVisuals();
 		FocusCursorCell();
-		_changed($"{message} at row {row}, channel {channel + 1}");
+		_changed(
+			$"{message} in {editorRow.Pattern.Name} row {editorRow.PatternRow}, channel {channel + 1}");
 	}
 
 	private void SelectExpandedEffect(
@@ -1154,7 +1198,9 @@ public sealed class PatternEditorControl : UserControl
 		int effectIndex,
 		ExpandedEffectField field)
 	{
-		PatternCell? cell = _pattern.Grid[row, channel];
+		PatternEditorRow editorRow = _context.GetRow(row);
+		PatternCell? cell =
+			editorRow.Pattern.Grid[editorRow.PatternRow, channel];
 		if (cell is null)
 			return;
 
@@ -1175,7 +1221,9 @@ public sealed class PatternEditorControl : UserControl
 
 	private void ExpandVisualEffects(int row, int channel)
 	{
-		PatternCell? cell = _pattern.Grid[row, channel];
+		PatternEditorRow editorRow = _context.GetRow(row);
+		PatternCell? cell =
+			editorRow.Pattern.Grid[editorRow.PatternRow, channel];
 		if (cell is null || cell.Effects.Count == 0)
 			return;
 
