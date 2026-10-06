@@ -82,6 +82,88 @@ public sealed class PatternEffectCursor
 		Collapse();
 	}
 
+	public void MoveLeft(DataPatternDefinition pattern)
+	{
+		ArgumentNullException.ThrowIfNull(pattern);
+		if (pattern.RowCount <= 0)
+			return;
+
+		ResetPendingNibble();
+		PatternCell? current = pattern.Grid[Row, Channel];
+		if (IsExpanded)
+		{
+			MoveExpanded(current, -1);
+			return;
+		}
+
+		switch (Field)
+		{
+			case PatternCellField.Note:
+				if (Channel > 0)
+				{
+					Channel--;
+					PatternCell? previous = pattern.Grid[Row, Channel];
+					Field = IsSingleNative(previous)
+						? PatternCellField.EffectCommand
+						: PatternCellField.EffectParameter;
+				}
+				break;
+
+			case PatternCellField.EffectCommand:
+				Field = PatternCellField.Note;
+				break;
+
+			case PatternCellField.EffectParameter:
+				Field = PatternCellField.EffectCommand;
+				break;
+		}
+	}
+
+	public void MoveRight(DataPatternDefinition pattern)
+	{
+		ArgumentNullException.ThrowIfNull(pattern);
+		if (pattern.RowCount <= 0)
+			return;
+
+		ResetPendingNibble();
+		PatternCell? current = pattern.Grid[Row, Channel];
+		if (IsExpanded)
+		{
+			MoveExpanded(current, 1);
+			return;
+		}
+
+		switch (Field)
+		{
+			case PatternCellField.Note:
+				Field = PatternCellField.EffectCommand;
+				break;
+
+			case PatternCellField.EffectCommand:
+				if (IsSingleNative(current))
+				{
+					if (Channel + 1 < pattern.ChannelCount)
+					{
+						Channel++;
+						Field = PatternCellField.Note;
+					}
+				}
+				else
+				{
+					Field = PatternCellField.EffectParameter;
+				}
+				break;
+
+			case PatternCellField.EffectParameter:
+				if (Channel + 1 < pattern.ChannelCount)
+				{
+					Channel++;
+					Field = PatternCellField.Note;
+				}
+				break;
+		}
+	}
+
 	public void MoveLeft(
 		int rowCount,
 		int channelCount,
@@ -266,6 +348,14 @@ public sealed class PatternEffectCursor
 		ExpandedEffectIndex = stops[next].Index;
 		ExpandedField = stops[next].Field;
 	}
+
+	private static bool IsSingleNative(PatternCell? cell)
+		=> cell is not null
+			&& cell.Effects.Count == 1
+			&& !PatternEffectCodec.TryDecodeTracker(
+				cell.Effects[0],
+				out _,
+				out _);
 
 	private static List<(int Index, ExpandedEffectField Field)> BuildStops(
 		PatternCell cell)

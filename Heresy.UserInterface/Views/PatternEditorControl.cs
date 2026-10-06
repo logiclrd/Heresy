@@ -382,18 +382,12 @@ public sealed class PatternEditorControl : UserControl
 		switch (e.Key)
 		{
 			case Key.Left:
-				_cursor.MoveLeft(
-					Math.Max(1, _pattern.RowCount),
-					_pattern.ChannelCount,
-					cell);
+				_cursor.MoveLeft(_pattern);
 				e.Handled = true;
 				break;
 
 			case Key.Right:
-				_cursor.MoveRight(
-					Math.Max(1, _pattern.RowCount),
-					_pattern.ChannelCount,
-					cell);
+				_cursor.MoveRight(_pattern);
 				e.Handled = true;
 				break;
 

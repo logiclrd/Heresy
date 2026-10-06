@@ -258,6 +258,77 @@ public sealed class PatternEffectInteractionTests
 	}
 
 	[Test]
+	public void RepeatedCommandTypingPaintsDownRowsAndPreservesEachParameter()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
+		pattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new VibratoPatternEffect(0x11));
+		pattern.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new ArpeggioPatternEffect(0x22));
+		PatternEffectCursor cursor =
+			new(row: 0, channel: 0, PatternCellField.EffectCommand);
+
+		PatternEffectKeyboardEditor.Type(workspace, pattern, cursor, 'G');
+		PatternEffectKeyboardEditor.Type(workspace, pattern, cursor, 'G');
+		PatternEffectKeyboardEditor.Type(workspace, pattern, cursor, 'G');
+
+		pattern.Grid[0, 0]!.Effects[0]
+			.Should().Be(new TonePortamentoPatternEffect(0x11));
+		pattern.Grid[1, 0]!.Effects[0]
+			.Should().Be(new TonePortamentoPatternEffect(0x22));
+		pattern.Grid[2, 0]!.Effects[0]
+			.Should().Be(new TonePortamentoPatternEffect(0x00));
+		cursor.Row.Should().Be(3);
+	}
+
+	[Test]
+	public void RepeatedHexByteEntryPaintsParametersAcrossDifferentEffectTypes()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
+		pattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new TonePortamentoPatternEffect(0xAA));
+		pattern.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new VibratoPatternEffect(0xBB));
+		PatternEffectCursor cursor =
+			new(row: 0, channel: 0, PatternCellField.EffectParameter);
+
+		foreach (char value in "1515")
+			PatternEffectKeyboardEditor.Type(workspace, pattern, cursor, value);
+
+		pattern.Grid[0, 0]!.Effects[0]
+			.Should().Be(new TonePortamentoPatternEffect(0x15));
+		pattern.Grid[1, 0]!.Effects[0]
+			.Should().Be(new VibratoPatternEffect(0x15));
+		cursor.Row.Should().Be(2);
+	}
+
+	[Test]
+	public void CollapsedNativeEffectOccupiesOneKeyboardStop()
+	{
+		DataPatternDefinition pattern = new((Heresy.Core.Objects.ObjectId)1U, "Pattern");
+		pattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new SetPlaybackFrequencyPatternEffect(440));
+		PatternEffectCursor cursor =
+			new(row: 0, channel: 0, PatternCellField.Note);
+
+		cursor.MoveRight(pattern);
+		cursor.Channel.Should().Be(0);
+		cursor.Field.Should().Be(PatternCellField.EffectCommand);
+
+		cursor.MoveRight(pattern);
+		cursor.Channel.Should().Be(1);
+		cursor.Field.Should().Be(PatternCellField.Note);
+
+		cursor.MoveLeft(pattern);
+		cursor.Channel.Should().Be(0);
+		cursor.Field.Should().Be(PatternCellField.EffectCommand);
+	}
+
+	[Test]
 	public void ExpandedMixedStackHasTwoStopsForTrackerAndOneForNative()
 	{
 		PatternCell cell = new();
