@@ -30,6 +30,7 @@ public sealed class PatternEditorControl : UserControl
 	private readonly DataPatternDefinition _pattern;
 	private readonly Action _close;
 	private readonly Action<string> _changed;
+	private readonly string _backLabel;
 	private readonly TextBox _rowCount;
 	private readonly TextBox _channelCount;
 	private readonly TextBox _minorHighlight;
@@ -64,6 +65,7 @@ public sealed class PatternEditorControl : UserControl
 		_pattern = pattern ?? throw new ArgumentNullException(nameof(pattern));
 		_close = close ?? throw new ArgumentNullException(nameof(close));
 		_changed = changed ?? throw new ArgumentNullException(nameof(changed));
+		_backLabel = backLabel ?? throw new ArgumentNullException(nameof(backLabel));
 
 		_rowCount = NumberBox(pattern.RowCount);
 		_channelCount = NumberBox(pattern.ChannelCount);
@@ -136,7 +138,7 @@ public sealed class PatternEditorControl : UserControl
 
 	private Control BuildContent()
 	{
-		Button back = new() { Content = backLabel, MinWidth = 100 };
+		Button back = new() { Content = _backLabel, MinWidth = 100 };
 		back.Click += (_, _) => _close();
 
 		TextBlock title =
