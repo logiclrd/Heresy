@@ -26,10 +26,13 @@ public static class ScriptSourceDocumentAnalyzer
 		ArgumentNullException.ThrowIfNull(workspace);
 		ArgumentNullException.ThrowIfNull(source);
 
+		ScriptReferenceAnalysis syntax =
+			ScriptReferenceAnalyzer.Analyze(source);
+
 		return new ScriptSourceDocumentAnalysis(
-			new ScriptReferenceAnalysis(
-				Array.Empty<ScriptObjectReference>(),
-				Array.Empty<ScriptAnalysisDiagnostic>()),
-			Array.Empty<ProjectedScriptObjectReference>());
+			syntax,
+			ScriptObjectReferenceProjector.Project(
+				workspace.Document,
+				syntax));
 	}
 }
