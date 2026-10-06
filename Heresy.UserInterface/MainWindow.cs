@@ -292,6 +292,8 @@ public sealed class MainWindow : Window
 		}
 		catch (Exception ex)
 		{
+			// TODO: when a .hm.json asset cannot be resolved, offer a workflow
+			// for locating replacement files/directories and retry the load.
 			SetStatus($"Open failed: {ex.Message}");
 		}
 	}

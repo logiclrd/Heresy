@@ -70,10 +70,13 @@ can open and hash either form transparently.
 Persistence translates those paths rather than making the editable document
 relative to its current filename:
 
-- `.hm.json` is the transparent JSON representation. Asset paths written to
-  JSON are relative to the JSON file's containing directory; loading resolves
-  them back to absolute in-memory paths. Saving the JSON somewhere else therefore
-  does not reinterpret the document's existing asset locations.
+- `.hm.json` is the transparent JSON representation. Its default mode writes
+  portable `/`-separated relative paths only for assets inside the JSON file's
+  directory subtree. It never emits `..` to walk upward; a relative-mode save
+  fails with an informative error if an external asset is outside that subtree.
+  Save As also offers **Heresy JSON (absolute paths)**, which writes every asset
+  location as an OS-conventional fully qualified path instead. The chosen JSON
+  mode is retained by the workspace for subsequent ordinary Save operations.
 - `.hm` is a ZIP-based consolidated representation. It contains one root-level
   `.hm.json` manifest and every asset referenced by that manifest. Paths inside
   the archive always use `/`, may not contain `\\`, and may not escape the
@@ -89,6 +92,12 @@ relative to its current filename:
 - Saving an archive-backed document as bare `.hm.json` extracts its bundled
   assets beside the JSON using the same hierarchy they occupied in the archive,
   and retargets the in-memory references to those extracted files.
+- When loading bare JSON, a path beginning with `/` or containing `:` in its
+  first component is treated as absolute. Absolute paths must match the host OS
+  convention; relative paths may not escape the JSON directory. For now, loading
+  fails if an asset is missing or its absolute-path convention cannot be resolved
+  on the current host. A future UI resolution workflow will let the user locate
+  replacement files or directories instead.
 
 The current persisted schema is format version **3**.
 

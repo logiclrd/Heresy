@@ -637,8 +637,7 @@ public static class SongDocumentJson
 				throw new InvalidOperationException(
 					$"Sample '{sample.Name}' ({sample.Id}) uses asset '{sample.Asset.FullPath}', " +
 					"which is outside the .hm.json directory subtree. " +
-					"Choose the '.hm.json (absolute paths)' save type or move the asset beneath the JSON file's directory. " +
-					"TODO: navigate the editor directly to the offending sample.");
+					"Choose the '.hm.json (absolute paths)' save type or move the asset beneath the JSON file's directory.");
 			}
 		}
 	}
