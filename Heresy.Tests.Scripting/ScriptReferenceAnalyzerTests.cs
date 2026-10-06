@@ -5,6 +5,7 @@ using AwesomeAssertions;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequences;
+using Heresy.Core.Scripting;
 using Heresy.Scripting.Analysis;
 
 using NUnit.Framework;
@@ -185,5 +186,28 @@ public sealed class ScriptReferenceAnalyzerTests
 		projected.Resolution.Should().Be(
 			ScriptObjectReferenceResolution.Missing);
 		projected.DisplayName.Should().Be("_O(999)");
+	}
+
+	[Test]
+	public void CoreAdapterReturnsRoslynObjectIdsAndReliability()
+	{
+		ScriptObjectReferenceSet result =
+			RoslynScriptObjectReferenceAnalyzer.Instance
+				.AnalyzeObjectReferences(
+					"_O(137); // _O(42)");
+
+		result.IsReliable.Should().BeTrue();
+		result.ObjectIds.Should().Equal((ObjectId)137U);
+	}
+
+	[Test]
+	public void CoreAdapterPreservesUnreliableAnalysisState()
+	{
+		ScriptObjectReferenceSet result =
+			RoslynScriptObjectReferenceAnalyzer.Instance
+				.AnalyzeObjectReferences("_O()");
+
+		result.IsReliable.Should().BeFalse();
+		result.ObjectIds.Should().BeEmpty();
 	}
 }
