@@ -20,9 +20,9 @@ The repository is intentionally split by concern.
   recursive instrument/tone-table editing and ADSR envelope authoring; realtime
   transport remains separate.
 - `Heresy.Scripting` — Roslyn-backed restricted-C# analysis/compiler boundary.
-  Semantic object-reference analysis and projection are implemented while
-  Roslyn remains entirely outside `Heresy.Core`; executable script compilation
-  remains future work.
+  Semantic object-reference analysis/projection and the first executable
+  pattern/sequence compiler are implemented while Roslyn remains entirely
+  outside `Heresy.Core`.
 
 ## Current architectural rules captured in Core
 
@@ -195,8 +195,25 @@ fallback. The authoring workspace supplies the Roslyn adapter for Save/Save As,
 so persistence can retain tombstones referenced by real `_O(id)` expressions
 while pruning tombstones mentioned only in comments or strings. If analysis is
 unreliable because of syntax/reference diagnostics, the opaque safety fallback
-remains active and tombstones are conservatively retained. Atomic named-token
-editing and executable restricted-C# compilation remain future work. Script
+remains active and tombstones are conservatively retained.
+
+The first executable scripting slice compiles each `ScriptPatternDefinition`
+to the existing `IRawPatternNoteGenerator` contract, so generated raw events
+still pass through the common `PatternNoteProcessor`. Script sequences emit
+ordinary `SequenceEntry` values and then delegate to the common
+`SequenceNoteProcessor` through `ISequencePatternResolver`; there is no
+parallel script-only sequencing engine. The initial pattern helper surface is
+`_O(id)`, `Note`, `Off`, `Cut`, `Tempo`, `Speed` and deterministic
+`Random`; sequence scripts expose `_O(id)`, `Play` and `Random`.
+`System.Math` is allowed, while framework/object member access, allocation,
+lambdas/local functions, async/exception control and other unapproved language
+features are rejected with scripting diagnostics. `for`, `while` and `do`
+loops are instrumented with execution checkpoints: an invocation is stopped
+after 1,000,000 expansion units or a runaway-time budget. Every sequencing
+invocation constructs a fresh generated script-program instance, while
+randomness comes from the supplied `SequencingContext`, preserving
+deterministic replay and preventing mutable script state from leaking between
+invocations. Atomic named-token editing remains future work. Script
 source/layout edits are audio-affecting authoring changes.
 
 The Instruments pane can create an `InstrumentDefinition` and open it in a
