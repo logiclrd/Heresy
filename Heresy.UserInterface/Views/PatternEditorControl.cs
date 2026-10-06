@@ -517,6 +517,18 @@ public sealed class PatternEditorControl : UserControl
 						displayRow,
 						channel,
 						effectIndex),
+				(effectIndex, after) =>
+					_ = InsertNativeEffectAtAsync(
+						displayRow,
+						channel,
+						effectIndex,
+						after),
+				() =>
+					_ = InsertNativeEffectAtAsync(
+						displayRow,
+						channel,
+						effectIndex: null,
+						after: false),
 				effectIndex =>
 					DeleteEffectAt(
 						displayRow,
@@ -648,6 +660,31 @@ public sealed class PatternEditorControl : UserControl
 		PatternCell? cell =
 			editorRow.Pattern.Grid[editorRow.PatternRow, channel];
 		(int Row, int Channel)? previouslyExpanded = _expandedCell;
+
+		if ((e.KeyModifiers & KeyModifiers.Alt) != 0
+			&& e.Key == Key.N
+			&& _cursor.Field is
+				PatternCellField.EffectCommand
+				or PatternCellField.EffectParameter)
+		{
+			int? effectIndex =
+				cell is null || cell.Effects.Count == 0
+					? null
+					: _cursor.IsExpanded
+						? _cursor.ExpandedEffectIndex
+						: 0;
+			bool after =
+				(e.KeyModifiers & KeyModifiers.Shift) != 0;
+			await InsertNativeEffectAtAsync(
+				row,
+				channel,
+				effectIndex,
+				after);
+			e.Handled = true;
+			RefreshCursorVisuals();
+			FocusCursorCell();
+			return;
+		}
 
 		if ((e.KeyModifiers & KeyModifiers.Alt) != 0
 			&& HandleAltEffectKey(row, channel, cell, e))
@@ -1053,6 +1090,72 @@ public sealed class PatternEditorControl : UserControl
 			default:
 				return false;
 		}
+	}
+
+	private async Task InsertNativeEffectAtAsync(
+		int row,
+		int channel,
+		int? effectIndex,
+		bool after)
+	{
+		if (effectIndex.HasValue)
+		{
+			if (!SelectEffectForStackCommand(
+				row,
+				channel,
+				effectIndex.Value))
+			{
+				return;
+			}
+		}
+		else
+		{
+			_cursor.SetPosition(
+				row,
+				channel,
+				PatternCellField.EffectCommand);
+		}
+
+		NativePatternEffectEditorDialog dialog = new();
+		NativePatternEffectEditResult? result =
+			await dialog.ShowDialog<NativePatternEffectEditResult?>(
+				_owner);
+		if (result is null)
+		{
+			FocusCursorCell();
+			return;
+		}
+
+		PatternEditorRow editorRow = _context.GetRow(row);
+		bool changed =
+			PatternEditorContextCursor.EditCurrent(
+				_context,
+				_cursor,
+				mapped =>
+					after && effectIndex.HasValue
+						? PatternEffectStackEditor.InsertAfter(
+							_workspace,
+							mapped.Pattern,
+							_cursor,
+							result.Effect)
+						: PatternEffectStackEditor.InsertBefore(
+							_workspace,
+							mapped.Pattern,
+							_cursor,
+							result.Effect));
+
+		if (changed)
+		{
+			RefreshUnderlyingCell(
+				editorRow.Pattern,
+				editorRow.PatternRow,
+				channel);
+			_changed(
+				$"Inserted native effect in {editorRow.Pattern.Name} row {editorRow.PatternRow}, channel {channel + 1}");
+		}
+
+		RefreshCursorVisuals();
+		FocusCursorCell();
 	}
 
 	private async Task EditNativeEffectAtAsync(
