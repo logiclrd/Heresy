@@ -25,7 +25,19 @@ public sealed class MainWindow : Window
 	private static readonly FilePickerFileType SongFileType =
 		new("Heresy song")
 		{
-			Patterns = new[] { "*.json" },
+			Patterns = new[] { "*.hm", "*.hm.json" },
+		};
+
+	private static readonly FilePickerFileType PackageFileType =
+		new("Heresy module")
+		{
+			Patterns = new[] { "*.hm" },
+		};
+
+	private static readonly FilePickerFileType JsonFileType =
+		new("Heresy JSON")
+		{
+			Patterns = new[] { "*.hm.json" },
 		};
 
 	private static readonly FilePickerFileType SampleFileType =
@@ -311,10 +323,10 @@ public sealed class MainWindow : Window
 					Title = "Save Heresy song",
 					SuggestedFileName =
 						_workspace.FilePath is null
-							? "song.json"
+							? "song.hm"
 							: Path.GetFileName(_workspace.FilePath),
-					DefaultExtension = "json",
-					FileTypeChoices = new[] { SongFileType },
+					DefaultExtension = "hm",
+					FileTypeChoices = new[] { PackageFileType, JsonFileType },
 				});
 
 		if (file is null)
@@ -350,16 +362,6 @@ public sealed class MainWindow : Window
 
 	private async Task ImportSamplesAsync()
 	{
-		if (_workspace.FilePath is null)
-		{
-			await SaveDocumentAsAsync();
-			if (_workspace.FilePath is null)
-			{
-				SetStatus("Save the song before importing external sample files.");
-				return;
-			}
-		}
-
 		if (!StorageProvider.CanOpen)
 		{
 			SetStatus("This platform does not provide an open-file picker.");

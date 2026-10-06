@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Linq;
-using System.Text;
 
 using Heresy.Core.Assets;
 using Heresy.Core.Objects;
@@ -15,45 +14,15 @@ namespace Heresy.Tests.Core;
 public sealed class ExternalAssetIntegrityTests
 {
 	[Test]
-	public void ResolvePathUsesSongDirectory()
+	public void CreateReferenceStoresAbsolutePathAndLowercaseSha256()
 	{
 		using TempProject project = new();
-		string songPath = project.Path("songs", "track.heresy");
-		ExternalAssetReference reference =
-			new("../assets/kick.wav");
-
-		string resolved =
-			ExternalAssetIntegrity.ResolvePath(
-				songPath,
-				reference);
-
-		Assert.That(
-			resolved,
-			Is.EqualTo(
-				System.IO.Path.GetFullPath(
-					project.Path("assets", "kick.wav"))));
-	}
-
-	[Test]
-	public void CreateReferenceStoresPortableRelativePathAndLowercaseSha256()
-	{
-		using TempProject project = new();
-		string songPath = project.Path("songs", "track.heresy");
-		string assetPath = project.Path("assets", "tone.bin");
-		Directory.CreateDirectory(
-			System.IO.Path.GetDirectoryName(assetPath)!);
-		File.WriteAllBytes(
-			assetPath,
-			Encoding.UTF8.GetBytes("hello"));
+		string assetPath = project.Write("tone.bin", "hello");
 
 		ExternalAssetReference reference =
-			ExternalAssetIntegrity.CreateReference(
-				songPath,
-				assetPath);
+			ExternalAssetIntegrity.CreateReference(assetPath);
 
-		Assert.That(
-			reference.RelativePath,
-			Is.EqualTo("../assets/tone.bin"));
+		Assert.That(reference.FullPath, Is.EqualTo(Path.GetFullPath(assetPath)));
 		Assert.That(
 			reference.Sha256,
 			Is.EqualTo(
@@ -64,23 +33,16 @@ public sealed class ExternalAssetIntegrityTests
 	public void MatchingHashReportsMatch()
 	{
 		using TempProject project = new();
-		string songPath = project.Path("track.heresy");
-		string assetPath = project.Path("tone.bin");
-		File.WriteAllText(assetPath, "hello");
-
+		string assetPath = project.Write("tone.bin", "hello");
 		ExternalAssetReference reference =
 			new(
-				"tone.bin",
+				assetPath,
 				"2CF24DBA5FB0A30E26E83B2AC5B9E29E1B161E5C1FA7425E73043362938B9824");
 
-		ExternalAssetCheck check =
-			ExternalAssetIntegrity.Check(
-				songPath,
-				reference);
+		ExternalAssetCheck check = ExternalAssetIntegrity.Check(reference);
 
-		Assert.That(
-			check.Status,
-			Is.EqualTo(ExternalAssetStatus.Match));
+		Assert.That(check.Status, Is.EqualTo(ExternalAssetStatus.Match));
+		Assert.That(check.FullPath, Is.EqualTo(Path.GetFullPath(assetPath)));
 		Assert.That(
 			check.ActualSha256,
 			Is.EqualTo(
@@ -91,46 +53,29 @@ public sealed class ExternalAssetIntegrityTests
 	public void ChangedFileReportsExpectedAndActualHashes()
 	{
 		using TempProject project = new();
-		string songPath = project.Path("track.heresy");
-		string assetPath = project.Path("tone.bin");
-		File.WriteAllText(assetPath, "changed");
-
+		string assetPath = project.Write("tone.bin", "changed");
 		ExternalAssetReference reference =
 			new(
-				"tone.bin",
+				assetPath,
 				"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
 
-		ExternalAssetCheck check =
-			ExternalAssetIntegrity.Check(
-				songPath,
-				reference);
+		ExternalAssetCheck check = ExternalAssetIntegrity.Check(reference);
 
-		Assert.That(
-			check.Status,
-			Is.EqualTo(ExternalAssetStatus.HashMismatch));
-		Assert.That(
-			check.ExpectedSha256,
-			Is.EqualTo(reference.Sha256));
-		Assert.That(
-			check.ActualSha256,
-			Is.Not.EqualTo(reference.Sha256));
+		Assert.That(check.Status, Is.EqualTo(ExternalAssetStatus.HashMismatch));
+		Assert.That(check.ExpectedSha256, Is.EqualTo(reference.Sha256));
+		Assert.That(check.ActualSha256, Is.Not.EqualTo(reference.Sha256));
 	}
 
 	[Test]
 	public void ExistingAssetWithoutHashReportsUnhashedAndComputesHash()
 	{
 		using TempProject project = new();
-		string songPath = project.Path("track.heresy");
-		File.WriteAllText(project.Path("tone.bin"), "hello");
+		string assetPath = project.Write("tone.bin", "hello");
 
 		ExternalAssetCheck check =
-			ExternalAssetIntegrity.Check(
-				songPath,
-				new ExternalAssetReference("tone.bin"));
+			ExternalAssetIntegrity.Check(new ExternalAssetReference(assetPath));
 
-		Assert.That(
-			check.Status,
-			Is.EqualTo(ExternalAssetStatus.Unhashed));
+		Assert.That(check.Status, Is.EqualTo(ExternalAssetStatus.Unhashed));
 		Assert.That(
 			check.ActualSha256,
 			Is.EqualTo(
@@ -141,113 +86,65 @@ public sealed class ExternalAssetIntegrityTests
 	public void MissingAssetReportsMissingWithoutThrowing()
 	{
 		using TempProject project = new();
-		string songPath = project.Path("track.heresy");
+		string missing = project.Path("missing.wav");
 
 		ExternalAssetCheck check =
 			ExternalAssetIntegrity.Check(
-				songPath,
-				new ExternalAssetReference(
-					"missing.wav",
-					new string('0', 64)));
+				new ExternalAssetReference(missing, new string('0', 64)));
 
-		Assert.That(
-			check.Status,
-			Is.EqualTo(ExternalAssetStatus.Missing));
+		Assert.That(check.Status, Is.EqualTo(ExternalAssetStatus.Missing));
 		Assert.That(check.ActualSha256, Is.Null);
-		Assert.That(
-			check.ResolvedPath,
-			Is.EqualTo(
-				System.IO.Path.GetFullPath(
-					project.Path("missing.wav"))));
+		Assert.That(check.FullPath, Is.EqualTo(Path.GetFullPath(missing)));
 	}
 
 	[Test]
 	public void ScanReportsEverySampleWithObjectIdentity()
 	{
 		using TempProject project = new();
-		string songPath = project.Path("track.heresy");
-		File.WriteAllText(project.Path("present.wav"), "hello");
-
+		string present = project.Write("present.wav", "hello");
+		string missing = project.Path("missing.wav");
 		SongDocument document = new();
 		ObjectId presentId = document.AllocateObjectId();
 		document.Add(
 			new SampleDefinition(
 				presentId,
 				"Present",
-				new ExternalAssetReference("present.wav")));
+				new ExternalAssetReference(present)));
 		ObjectId missingId = document.AllocateObjectId();
 		document.Add(
 			new SampleDefinition(
 				missingId,
 				"Missing",
-				new ExternalAssetReference("missing.wav")));
+				new ExternalAssetReference(missing)));
 
 		ExternalAssetDiagnostic[] diagnostics =
-			ExternalAssetIntegrity.Scan(
-				songPath,
-				document)
-			.ToArray();
+			ExternalAssetIntegrity.Scan(document).ToArray();
 
 		Assert.That(diagnostics, Has.Length.EqualTo(2));
-		Assert.That(
-			diagnostics[0],
-			Is.EqualTo(
-				new ExternalAssetDiagnostic(
-					presentId,
-					"Present",
-					ExternalAssetStatus.Unhashed,
-					"present.wav",
-					System.IO.Path.GetFullPath(
-						project.Path("present.wav")),
-					null,
-					"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")));
+		Assert.That(diagnostics[0].ObjectId, Is.EqualTo(presentId));
+		Assert.That(diagnostics[0].Status, Is.EqualTo(ExternalAssetStatus.Unhashed));
+		Assert.That(diagnostics[0].FullPath, Is.EqualTo(Path.GetFullPath(present)));
 		Assert.That(diagnostics[1].ObjectId, Is.EqualTo(missingId));
-		Assert.That(diagnostics[1].ObjectName, Is.EqualTo("Missing"));
-		Assert.That(
-			diagnostics[1].Status,
-			Is.EqualTo(ExternalAssetStatus.Missing));
+		Assert.That(diagnostics[1].Status, Is.EqualTo(ExternalAssetStatus.Missing));
 	}
 
 	[Test]
-	public void RefreshHashReturnsNewReferenceWithoutMutatingDefinition()
+	public void RefreshHashReturnsNewReferenceWithoutMutatingOriginal()
 	{
 		using TempProject project = new();
-		string songPath = project.Path("track.heresy");
-		File.WriteAllText(project.Path("tone.wav"), "hello");
-
+		string assetPath = project.Write("tone.wav", "hello");
 		ExternalAssetReference original =
-			new("tone.wav", new string('0', 64));
+			new(assetPath, new string('0', 64));
 
 		ExternalAssetReference refreshed =
-			ExternalAssetIntegrity.RefreshHash(
-				songPath,
-				original);
+			ExternalAssetIntegrity.RefreshHash(original);
 
-		Assert.That(
-			refreshed.RelativePath,
-			Is.EqualTo(original.RelativePath));
+		Assert.That(refreshed.FullPath, Is.EqualTo(original.FullPath));
 		Assert.That(
 			refreshed.Sha256,
 			Is.EqualTo(
 				"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"));
-		Assert.That(
-			original.Sha256,
-			Is.EqualTo(new string('0', 64)));
-	}
-
-	[TestCase("")]
-	[TestCase("/absolute/file.wav")]
-	public void ReferencePathMustBeRelativeAndNonEmpty(
-		string relativePath)
-	{
-		using TempProject project = new();
-		string songPath = project.Path("track.heresy");
-
-		Assert.That(
-			() => ExternalAssetIntegrity.ResolvePath(
-				songPath,
-				new ExternalAssetReference(relativePath)),
-			Throws.TypeOf<ArgumentException>());
+		Assert.That(original.Sha256, Is.EqualTo(new string('0', 64)));
 	}
 
 	private sealed class TempProject : IDisposable
@@ -257,8 +154,7 @@ public sealed class ExternalAssetIntegrityTests
 				System.IO.Path.GetTempPath(),
 				$"heresy-assets-{Guid.NewGuid():N}");
 
-		public TempProject()
-			=> Directory.CreateDirectory(_root);
+		public TempProject() => Directory.CreateDirectory(_root);
 
 		public string Path(params string[] parts)
 		{
@@ -266,6 +162,15 @@ public sealed class ExternalAssetIntegrityTests
 			foreach (string part in parts)
 				result = System.IO.Path.Combine(result, part);
 			return result;
+		}
+
+		public string Write(params string[] partsAndContent)
+		{
+			string content = partsAndContent[^1];
+			string path = Path(partsAndContent[..^1]);
+			Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
+			File.WriteAllText(path, content);
+			return path;
 		}
 
 		public void Dispose()

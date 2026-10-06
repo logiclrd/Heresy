@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Security.Cryptography;
 
@@ -19,8 +20,7 @@ public enum ExternalAssetStatus
 
 public sealed record ExternalAssetCheck(
 	ExternalAssetStatus Status,
-	string RelativePath,
-	string ResolvedPath,
+	string FullPath,
 	string? ExpectedSha256,
 	string? ActualSha256);
 
@@ -28,128 +28,51 @@ public sealed record ExternalAssetDiagnostic(
 	ObjectId ObjectId,
 	string ObjectName,
 	ExternalAssetStatus Status,
-	string RelativePath,
-	string ResolvedPath,
+	string FullPath,
 	string? ExpectedSha256,
 	string? ActualSha256);
 
 /// <summary>
-/// Resolves and verifies external binary assets referenced by a song document.
-/// This layer is deliberately separate from JSON persistence: a song file can
-/// always be deserialized even when one or more external assets are missing or
-/// have changed.
+/// Verifies external assets using their in-memory absolute locations. Synthetic
+/// .hm paths are opened from the corresponding ZIP entry transparently.
 /// </summary>
 public static class ExternalAssetIntegrity
 {
-	public static string ResolvePath(
-		string songPath,
-		ExternalAssetReference reference)
+	public static ExternalAssetReference CreateReference(string assetPath)
 	{
-		ArgumentException.ThrowIfNullOrWhiteSpace(songPath);
-		ArgumentNullException.ThrowIfNull(reference);
-
-		string relativePath = reference.RelativePath;
-		if (string.IsNullOrWhiteSpace(relativePath))
-			throw new ArgumentException(
-				"External asset paths must be non-empty.",
-				nameof(reference));
-
-		string portablePath =
-			relativePath
-				.Replace('\\', Path.DirectorySeparatorChar)
-				.Replace('/', Path.DirectorySeparatorChar);
-		if (Path.IsPathRooted(portablePath))
-			throw new ArgumentException(
-				"External asset paths must be relative to the song file.",
-				nameof(reference));
-
-		string fullSongPath = Path.GetFullPath(songPath);
-		string songDirectory =
-			Path.GetDirectoryName(fullSongPath)
-			?? throw new ArgumentException(
-				"The song path must identify a file.",
-				nameof(songPath));
-
-		return Path.GetFullPath(
-			Path.Combine(songDirectory, portablePath));
-	}
-
-	public static ExternalAssetReference CreateReference(
-		string songPath,
-		string assetPath)
-	{
-		ArgumentException.ThrowIfNullOrWhiteSpace(songPath);
 		ArgumentException.ThrowIfNullOrWhiteSpace(assetPath);
-
-		string fullSongPath = Path.GetFullPath(songPath);
-		string songDirectory =
-			Path.GetDirectoryName(fullSongPath)
-			?? throw new ArgumentException(
-				"The song path must identify a file.",
-				nameof(songPath));
-		string fullAssetPath = Path.GetFullPath(assetPath);
-
-		string relativePath =
-			Path.GetRelativePath(
-					songDirectory,
-					fullAssetPath)
-				.Replace(
-					Path.DirectorySeparatorChar,
-					'/');
-		if (Path.AltDirectorySeparatorChar != Path.DirectorySeparatorChar)
-		{
-			relativePath = relativePath.Replace(
-				Path.AltDirectorySeparatorChar,
-				'/');
-		}
-
-		return new ExternalAssetReference(
-			relativePath,
-			ComputeSha256(fullAssetPath));
+		string fullPath = Path.GetFullPath(assetPath);
+		return new ExternalAssetReference(fullPath, ComputeSha256(fullPath));
 	}
 
-	public static ExternalAssetReference RefreshHash(
-		string songPath,
-		ExternalAssetReference reference)
+	public static ExternalAssetReference RefreshHash(ExternalAssetReference reference)
 	{
 		ArgumentNullException.ThrowIfNull(reference);
-
-		string resolvedPath =
-			ResolvePath(songPath, reference);
 		return reference with
 		{
-			Sha256 = ComputeSha256(resolvedPath),
+			Sha256 = ComputeSha256(reference.FullPath),
 		};
 	}
 
-	public static ExternalAssetCheck Check(
-		string songPath,
-		ExternalAssetReference reference)
+	public static ExternalAssetCheck Check(ExternalAssetReference reference)
 	{
 		ArgumentNullException.ThrowIfNull(reference);
 
-		string resolvedPath =
-			ResolvePath(songPath, reference);
-
-		if (!File.Exists(resolvedPath))
+		if (!Exists(reference.FullPath))
 		{
 			return new ExternalAssetCheck(
 				ExternalAssetStatus.Missing,
-				reference.RelativePath,
-				resolvedPath,
+				reference.FullPath,
 				reference.Sha256,
 				null);
 		}
 
-		string actualHash =
-			ComputeSha256(resolvedPath);
-
+		string actualHash = ComputeSha256(reference.FullPath);
 		if (string.IsNullOrWhiteSpace(reference.Sha256))
 		{
 			return new ExternalAssetCheck(
 				ExternalAssetStatus.Unhashed,
-				reference.RelativePath,
-				resolvedPath,
+				reference.FullPath,
 				reference.Sha256,
 				actualHash);
 		}
@@ -164,19 +87,14 @@ public static class ExternalAssetIntegrity
 
 		return new ExternalAssetCheck(
 			status,
-			reference.RelativePath,
-			resolvedPath,
+			reference.FullPath,
 			reference.Sha256,
 			actualHash);
 	}
 
-	public static IReadOnlyList<ExternalAssetDiagnostic> Scan(
-		string songPath,
-		SongDocument document)
+	public static IReadOnlyList<ExternalAssetDiagnostic> Scan(SongDocument document)
 	{
-		ArgumentException.ThrowIfNullOrWhiteSpace(songPath);
 		ArgumentNullException.ThrowIfNull(document);
-
 		List<ExternalAssetDiagnostic> diagnostics = [];
 
 		foreach ((ObjectId id, SongObject songObject) in
@@ -185,15 +103,13 @@ public static class ExternalAssetIntegrity
 			if (songObject is not SampleDefinition sample)
 				continue;
 
-			ExternalAssetCheck check =
-				Check(songPath, sample.Asset);
+			ExternalAssetCheck check = Check(sample.Asset);
 			diagnostics.Add(
 				new ExternalAssetDiagnostic(
 					id,
 					sample.Name,
 					check.Status,
-					check.RelativePath,
-					check.ResolvedPath,
+					check.FullPath,
 					check.ExpectedSha256,
 					check.ActualSha256));
 		}
@@ -201,13 +117,93 @@ public static class ExternalAssetIntegrity
 		return diagnostics;
 	}
 
-	public static string ComputeSha256(string path)
+	public static bool Exists(string fullPath)
 	{
-		ArgumentException.ThrowIfNullOrWhiteSpace(path);
+		ArgumentException.ThrowIfNullOrWhiteSpace(fullPath);
+		if (File.Exists(fullPath))
+			return true;
 
-		using FileStream stream =
-			File.OpenRead(path);
+		if (!HeresyModulePath.TrySplit(fullPath, out string archivePath, out string entryPath)
+			|| !File.Exists(archivePath))
+		{
+			return false;
+		}
+
+		try
+		{
+			using ZipArchive archive = ZipFile.OpenRead(archivePath);
+			return archive.GetEntry(entryPath) is not null;
+		}
+		catch (InvalidDataException)
+		{
+			return false;
+		}
+	}
+
+	public static Stream OpenRead(string fullPath)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(fullPath);
+		if (File.Exists(fullPath))
+			return File.OpenRead(fullPath);
+
+		if (!HeresyModulePath.TrySplit(fullPath, out string archivePath, out string entryPath)
+			|| !File.Exists(archivePath))
+		{
+			throw new FileNotFoundException("The external asset could not be found.", fullPath);
+		}
+
+		FileStream file = File.OpenRead(archivePath);
+		ZipArchive archive = new(file, ZipArchiveMode.Read, leaveOpen: false);
+		ZipArchiveEntry? entry = archive.GetEntry(entryPath);
+		if (entry is null)
+		{
+			archive.Dispose();
+			throw new FileNotFoundException(
+				$"The .hm archive does not contain '{entryPath}'.",
+				fullPath);
+		}
+
+		return new OwnedArchiveEntryStream(archive, entry.Open());
+	}
+
+	public static string ComputeSha256(string fullPath)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(fullPath);
+		using Stream stream = OpenRead(fullPath);
 		byte[] hash = SHA256.HashData(stream);
 		return Convert.ToHexString(hash).ToLowerInvariant();
+	}
+
+	private sealed class OwnedArchiveEntryStream : Stream
+	{
+		private readonly ZipArchive _archive;
+		private readonly Stream _inner;
+
+		public OwnedArchiveEntryStream(ZipArchive archive, Stream inner)
+		{
+			_archive = archive;
+			_inner = inner;
+		}
+
+		public override bool CanRead => _inner.CanRead;
+		public override bool CanSeek => _inner.CanSeek;
+		public override bool CanWrite => false;
+		public override long Length => _inner.Length;
+		public override long Position { get => _inner.Position; set => _inner.Position = value; }
+		public override void Flush() => _inner.Flush();
+		public override int Read(byte[] buffer, int offset, int count) => _inner.Read(buffer, offset, count);
+		public override long Seek(long offset, SeekOrigin origin) => _inner.Seek(offset, origin);
+		public override void SetLength(long value) => throw new NotSupportedException();
+		public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+		protected override void Dispose(bool disposing)
+		{
+			if (disposing)
+			{
+				_inner.Dispose();
+				_archive.Dispose();
+			}
+			base.Dispose(disposing);
+		}
 	}
 }

@@ -32,9 +32,26 @@ public static class SongDocumentJson
 	private static readonly JsonSerializerOptions JsonOptions =
 		CreateJsonOptions();
 
-	public static string Serialize(SongDocument document)
+	public static string Serialize(
+		SongDocument document,
+		string jsonPath)
 	{
 		ArgumentNullException.ThrowIfNull(document);
+		ArgumentException.ThrowIfNullOrWhiteSpace(jsonPath);
+		string fullPath = Path.GetFullPath(jsonPath);
+		string directory = Path.GetDirectoryName(fullPath)
+			?? throw new ArgumentException("The JSON path must identify a file.", nameof(jsonPath));
+		return Serialize(
+			document,
+			sample => ToStoredPath(directory, sample.Asset.FullPath));
+	}
+
+	internal static string Serialize(
+		SongDocument document,
+		Func<SampleDefinition, string> assetPathSelector)
+	{
+		ArgumentNullException.ThrowIfNull(document);
+		ArgumentNullException.ThrowIfNull(assetPathSelector);
 
 		SongReferenceAnalysis referenceAnalysis =
 			SongReferenceAnalyzer.Analyze(document);
@@ -65,7 +82,7 @@ public static class SongDocumentJson
 			document.Objects.OrderBy(pair => pair.Key.Value))
 		{
 			objects[id.Value.ToString(CultureInfo.InvariantCulture)] =
-				WriteSongObject(songObject);
+				WriteSongObject(songObject, assetPathSelector);
 		}
 		root["objects"] = objects;
 
@@ -86,9 +103,26 @@ public static class SongDocumentJson
 		return root.ToJsonString(JsonOptions);
 	}
 
-	public static SongDocument Deserialize(string json)
+	public static SongDocument Deserialize(
+		string json,
+		string jsonPath)
 	{
 		ArgumentNullException.ThrowIfNull(json);
+		ArgumentException.ThrowIfNullOrWhiteSpace(jsonPath);
+		string fullPath = Path.GetFullPath(jsonPath);
+		string directory = Path.GetDirectoryName(fullPath)
+			?? throw new ArgumentException("The JSON path must identify a file.", nameof(jsonPath));
+		return Deserialize(
+			json,
+			storedPath => ResolveStoredPath(directory, storedPath));
+	}
+
+	internal static SongDocument Deserialize(
+		string json,
+		Func<string, string> assetPathResolver)
+	{
+		ArgumentNullException.ThrowIfNull(json);
+		ArgumentNullException.ThrowIfNull(assetPathResolver);
 
 		JsonNode? parsed = JsonNode.Parse(json);
 		if (parsed is not JsonObject root)
@@ -124,7 +158,7 @@ public static class SongDocumentJson
 				throw new InvalidDataException($"Object {key} must be a JSON object.");
 
 			document.RestoreObject(
-				ReadSongObject(id, objectNode));
+				ReadSongObject(id, objectNode, assetPathResolver));
 		}
 
 		foreach ((string key, JsonNode? value) in tombstones)
@@ -168,7 +202,7 @@ public static class SongDocumentJson
 		catch (InvalidOperationException ex)
 		{
 			throw new InvalidDataException(
-				"The persisted song tree does not match the version 2 four-section structure.",
+				"The persisted song tree does not match the version 3 four-section structure.",
 				ex);
 		}
 
@@ -180,19 +214,36 @@ public static class SongDocumentJson
 		ArgumentException.ThrowIfNullOrWhiteSpace(path);
 		ArgumentNullException.ThrowIfNull(document);
 
+		string fullPath = Path.GetFullPath(path);
+		string directory = Path.GetDirectoryName(fullPath)
+			?? throw new ArgumentException("The JSON path must identify a file.", nameof(path));
+		Directory.CreateDirectory(directory);
+
+		MaterializeArchiveAssets(directory, document);
+
 		File.WriteAllText(
-			path,
-			Serialize(document),
+			fullPath,
+			Serialize(
+				document,
+				sample => ToStoredPath(directory, sample.Asset.FullPath)),
 			new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 	}
 
 	public static SongDocument Load(string path)
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(path);
-		return Deserialize(File.ReadAllText(path, Encoding.UTF8));
+		string fullPath = Path.GetFullPath(path);
+		string directory = Path.GetDirectoryName(fullPath)
+			?? throw new ArgumentException("The JSON path must identify a file.", nameof(path));
+
+		return Deserialize(
+			File.ReadAllText(fullPath, Encoding.UTF8),
+			storedPath => ResolveStoredPath(directory, storedPath));
 	}
 
-	private static JsonObject WriteSongObject(SongObject songObject)
+	private static JsonObject WriteSongObject(
+		SongObject songObject,
+		Func<SampleDefinition, string> assetPathSelector)
 	{
 		JsonObject result =
 			new()
@@ -205,7 +256,11 @@ public static class SongDocumentJson
 			case SampleDefinition sample:
 				result["type"] = "sample";
 				result["asset"] =
-					JsonSerializer.SerializeToNode(sample.Asset, JsonOptions);
+					new JsonObject
+					{
+						["path"] = assetPathSelector(sample),
+						["sha256"] = sample.Asset.Sha256,
+					};
 				result["referenceFrequencyHz"] = sample.ReferenceFrequencyHz;
 				result["loop"] =
 					JsonSerializer.SerializeToNode(sample.Loop, JsonOptions);
@@ -324,7 +379,8 @@ public static class SongDocumentJson
 
 	private static SongObject ReadSongObject(
 		ObjectId id,
-		JsonObject node)
+		JsonObject node,
+		Func<string, string> assetPathResolver)
 	{
 		string type = RequiredString(node, "type");
 		string name = RequiredString(node, "name");
@@ -333,10 +389,16 @@ public static class SongDocumentJson
 		{
 			case "sample":
 				{
+					JsonObject assetNode = RequiredObject(node, "asset");
+					string storedPath = RequiredString(assetNode, "path");
+					string? sha256 =
+						assetNode["sha256"] is JsonNode shaNode
+							? shaNode.GetValue<string>()
+							: null;
 					ExternalAssetReference asset =
-						DeserializeRequired<ExternalAssetReference>(
-							node,
-							"asset");
+						new(
+							assetPathResolver(storedPath),
+							sha256);
 					SampleDefinition sample =
 						new(id, name, asset)
 						{
@@ -494,6 +556,92 @@ public static class SongDocumentJson
 				throw new NotSupportedException(
 					$"Persisted song object type '{type}' is not supported.");
 		}
+	}
+
+	private static void MaterializeArchiveAssets(
+		string jsonDirectory,
+		SongDocument document)
+	{
+		foreach (SampleDefinition sample in
+			document.Objects.Values.OfType<SampleDefinition>())
+		{
+			if (!HeresyModulePath.TrySplit(
+				sample.Asset.FullPath,
+				out string archivePath,
+				out string entryPath)
+				|| !File.Exists(archivePath))
+			{
+				continue;
+			}
+
+			HeresyModulePath.ValidateEntryPath(entryPath);
+			string nativeEntry =
+				entryPath.Replace('/', Path.DirectorySeparatorChar);
+			string destination =
+				Path.GetFullPath(Path.Combine(jsonDirectory, nativeEntry));
+			string rootWithSeparator =
+				Path.GetFullPath(jsonDirectory)
+				.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+				+ Path.DirectorySeparatorChar;
+			if (!destination.StartsWith(
+				rootWithSeparator,
+				OperatingSystem.IsWindows()
+					? StringComparison.OrdinalIgnoreCase
+					: StringComparison.Ordinal))
+			{
+				throw new InvalidDataException(
+					$"Archive asset path '{entryPath}' escapes the JSON directory.");
+			}
+
+			Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+			using (Stream source =
+				ExternalAssetIntegrity.OpenRead(sample.Asset.FullPath))
+			using (FileStream target = File.Create(destination))
+				source.CopyTo(target);
+
+			sample.Asset = sample.Asset with
+			{
+				FullPath = destination,
+			};
+		}
+	}
+
+	private static string ToStoredPath(
+		string jsonDirectory,
+		string fullAssetPath)
+	{
+		string relative =
+			Path.GetRelativePath(
+				jsonDirectory,
+				Path.GetFullPath(fullAssetPath));
+
+		if (OperatingSystem.IsWindows())
+			relative = relative.Replace('\\', '/');
+
+		return relative;
+	}
+
+	private static string ResolveStoredPath(
+		string jsonDirectory,
+		string storedPath)
+	{
+		if (string.IsNullOrWhiteSpace(storedPath))
+			throw new InvalidDataException("External asset paths must be non-empty.");
+		if (storedPath.StartsWith('/', StringComparison.Ordinal)
+			|| storedPath.StartsWith('\\')
+			|| (storedPath.Length >= 3
+				&& char.IsLetter(storedPath[0])
+				&& storedPath[1] == ':'
+				&& (storedPath[2] == '/' || storedPath[2] == '\\')))
+		{
+			throw new InvalidDataException(
+				"Persisted external asset paths must be relative.");
+		}
+
+		string nativePath = OperatingSystem.IsWindows()
+			? storedPath.Replace('/', '\\')
+			: storedPath;
+		return Path.GetFullPath(Path.Combine(jsonDirectory, nativePath));
 	}
 
 	private static void WritePatternCommon(

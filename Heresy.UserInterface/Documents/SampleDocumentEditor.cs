@@ -21,7 +21,6 @@ public static class SampleDocumentEditor
 		ArgumentNullException.ThrowIfNull(workspace);
 		ArgumentException.ThrowIfNullOrWhiteSpace(assetPath);
 
-		string songPath = RequireSongPath(workspace);
 		string fullAssetPath = Path.GetFullPath(assetPath);
 		if (!File.Exists(fullAssetPath))
 			throw new FileNotFoundException("The sample asset does not exist.", fullAssetPath);
@@ -33,7 +32,7 @@ public static class SampleDocumentEditor
 			sampleName = Path.GetFileName(fullAssetPath);
 
 		ExternalAssetReference reference =
-			ExternalAssetIntegrity.CreateReference(songPath, fullAssetPath);
+			ExternalAssetIntegrity.CreateReference(fullAssetPath);
 		ObjectId id = workspace.Document.AllocateObjectId();
 		SampleDefinition sample = new(id, sampleName, reference);
 		workspace.Document.Add(sample, affectsAudio: true);
@@ -45,9 +44,7 @@ public static class SampleDocumentEditor
 		SampleDefinition sample)
 	{
 		ValidateSample(workspace, sample);
-		return ExternalAssetIntegrity.Check(
-			RequireSongPath(workspace),
-			sample.Asset);
+		return ExternalAssetIntegrity.Check(sample.Asset);
 	}
 
 	public static void UpdateMetadata(
@@ -82,9 +79,7 @@ public static class SampleDocumentEditor
 	{
 		ValidateSample(workspace, sample);
 		ExternalAssetReference refreshed =
-			ExternalAssetIntegrity.RefreshHash(
-				RequireSongPath(workspace),
-				sample.Asset);
+			ExternalAssetIntegrity.RefreshHash(sample.Asset);
 		if (sample.Asset == refreshed)
 			return;
 
@@ -105,20 +100,13 @@ public static class SampleDocumentEditor
 			throw new FileNotFoundException("The sample asset does not exist.", fullAssetPath);
 
 		ExternalAssetReference replacement =
-			ExternalAssetIntegrity.CreateReference(
-				RequireSongPath(workspace),
-				fullAssetPath);
+			ExternalAssetIntegrity.CreateReference(fullAssetPath);
 		if (sample.Asset == replacement)
 			return;
 
 		sample.Asset = replacement;
 		workspace.Document.MarkChanged(affectsAudio: true);
 	}
-
-	private static string RequireSongPath(DocumentWorkspace workspace)
-		=> workspace.FilePath
-			?? throw new InvalidOperationException(
-				"Save the song before importing or resolving external sample assets.");
 
 	private static void ValidateSample(
 		DocumentWorkspace workspace,

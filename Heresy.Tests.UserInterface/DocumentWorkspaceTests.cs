@@ -37,7 +37,7 @@ public sealed class DocumentWorkspaceTests
 
 		string path = Path.Combine(
 			Path.GetTempPath(),
-			$"heresy-ui-{Guid.NewGuid():N}.json");
+			$"heresy-ui-{Guid.NewGuid():N}.hm.json");
 		try
 		{
 			workspace.SaveAs(path);
@@ -57,7 +57,7 @@ public sealed class DocumentWorkspaceTests
 	{
 		string path = Path.Combine(
 			Path.GetTempPath(),
-			$"heresy-ui-{Guid.NewGuid():N}.json");
+			$"heresy-ui-{Guid.NewGuid():N}.hm.json");
 		try
 		{
 			SongDocument source = new();

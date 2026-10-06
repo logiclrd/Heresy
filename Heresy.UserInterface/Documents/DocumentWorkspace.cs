@@ -44,7 +44,7 @@ public sealed class DocumentWorkspace
 		ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
 		string fullPath = Path.GetFullPath(path);
-		SongDocument document = SongDocumentJson.Load(fullPath);
+		SongDocument document = SongDocumentStorage.Load(fullPath);
 
 		Document = document;
 		FilePath = fullPath;
@@ -57,7 +57,7 @@ public sealed class DocumentWorkspace
 			throw new InvalidOperationException(
 				"The document does not yet have a file path. Use SaveAs first.");
 
-		SongDocumentJson.Save(FilePath, Document);
+		SongDocumentStorage.Save(FilePath, Document);
 		_savedDocumentRevision = Document.DocumentRevision;
 	}
 
@@ -66,7 +66,7 @@ public sealed class DocumentWorkspace
 		ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
 		string fullPath = Path.GetFullPath(path);
-		SongDocumentJson.Save(fullPath, Document);
+		SongDocumentStorage.Save(fullPath, Document);
 
 		FilePath = fullPath;
 		_savedDocumentRevision = Document.DocumentRevision;

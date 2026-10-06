@@ -23,18 +23,24 @@ namespace Heresy.Tests.Core;
 [TestFixture]
 public sealed class SongDocumentJsonTests
 {
+	private static readonly string JsonContextPath =
+		Path.Combine(
+			Path.GetTempPath(),
+			"heresy-json-tests",
+			"track.hm.json");
+
 	[Test]
 	public void MixedDocumentRoundTripsAsFlatVersionedJson()
 	{
 		SongDocument document = BuildMixedDocument();
 
-		string json = SongDocumentJson.Serialize(document);
+		string json = SongDocumentJson.Serialize(document, JsonContextPath);
 
 		JsonObject root =
 			JsonNode.Parse(json)!.AsObject();
 
 		Assert.That(root["format"]!.GetValue<string>(), Is.EqualTo("Heresy"));
-		Assert.That(root["version"]!.GetValue<int>(), Is.EqualTo(2));
+		Assert.That(root["version"]!.GetValue<int>(), Is.EqualTo(3));
 		Assert.That(root["nextObjectId"]!.GetValue<uint>(), Is.EqualTo(8U));
 		Assert.That(root["rootSequenceId"]!.GetValue<uint>(), Is.EqualTo(6U));
 
@@ -58,7 +64,7 @@ public sealed class SongDocumentJsonTests
 			Is.False);
 
 		SongDocument restored =
-			SongDocumentJson.Deserialize(json);
+			SongDocumentJson.Deserialize(json, JsonContextPath);
 
 		AssertMixedDocument(restored);
 		Assert.That(restored.DocumentRevision, Is.EqualTo(0));
@@ -74,7 +80,7 @@ public sealed class SongDocumentJsonTests
 		SongDocument document = BuildMixedDocument();
 		string path = Path.Combine(
 			Path.GetTempPath(),
-			$"heresy-{Guid.NewGuid():N}.json");
+			$"heresy-{Guid.NewGuid():N}.hm.json");
 
 		try
 		{
@@ -123,7 +129,8 @@ public sealed class SongDocumentJsonTests
 
 		SongDocument restored =
 			SongDocumentJson.Deserialize(
-				SongDocumentJson.Serialize(document));
+				SongDocumentJson.Serialize(document, JsonContextPath),
+				JsonContextPath);
 
 		DataPatternDefinition restoredPattern =
 			(DataPatternDefinition)restored.Objects[id];
@@ -162,7 +169,8 @@ public sealed class SongDocumentJsonTests
 
 		SongDocument restored =
 			SongDocumentJson.Deserialize(
-				SongDocumentJson.Serialize(document));
+				SongDocumentJson.Serialize(document, JsonContextPath),
+				JsonContextPath);
 
 		DataPatternDefinition copy =
 			(DataPatternDefinition)restored.Objects[patternId];
@@ -216,7 +224,7 @@ public sealed class SongDocumentJsonTests
 		ObjectId historicalId = document.AllocateObjectId();
 		Assert.That(historicalId, Is.EqualTo((ObjectId)4U));
 
-		string json = SongDocumentJson.Serialize(document);
+		string json = SongDocumentJson.Serialize(document, JsonContextPath);
 		JsonObject tombstones =
 			JsonNode.Parse(json)!["tombstones"]!.AsObject();
 
@@ -230,7 +238,7 @@ public sealed class SongDocumentJsonTests
 			Is.EqualTo("sample"));
 
 		SongDocument restored =
-			SongDocumentJson.Deserialize(json);
+			SongDocumentJson.Deserialize(json, JsonContextPath);
 
 		Assert.That(restored.Tombstones.ContainsKey(referencedId), Is.True);
 		Assert.That(restored.Tombstones.ContainsKey(unreferencedId), Is.False);
@@ -255,7 +263,7 @@ public sealed class SongDocumentJsonTests
 
 		SongDocument restored =
 			SongDocumentJson.Deserialize(
-				SongDocumentJson.Serialize(document));
+				SongDocumentJson.Serialize(document, JsonContextPath));
 
 		Assert.That(restored.Tombstones.ContainsKey(id), Is.True);
 		Assert.That(
@@ -286,7 +294,7 @@ public sealed class SongDocumentJsonTests
 
 		SongDocument restored =
 			SongDocumentJson.Deserialize(
-				SongDocumentJson.Serialize(document));
+				SongDocumentJson.Serialize(document, JsonContextPath));
 
 		Assert.That(restored.Tombstones.ContainsKey(deleted), Is.True);
 	}
@@ -308,7 +316,7 @@ public sealed class SongDocumentJsonTests
 			""";
 
 		Assert.That(
-			() => SongDocumentJson.Deserialize(json),
+			() => SongDocumentJson.Deserialize(json, JsonContextPath),
 			Throws.TypeOf<NotSupportedException>());
 	}
 
@@ -322,7 +330,10 @@ public sealed class SongDocumentJsonTests
 				sampleId,
 				"Piano",
 				new ExternalAssetReference(
-					"assets/piano-c4.wav",
+					Path.Combine(
+						Path.GetDirectoryName(JsonContextPath)!,
+						"assets",
+						"piano-c4.wav"),
 					"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"))
 			{
 				ReferenceFrequencyHz = 440.0,
@@ -436,7 +447,14 @@ public sealed class SongDocumentJsonTests
 		SampleDefinition sample =
 			(SampleDefinition)document.Objects[(ObjectId)1U];
 		Assert.That(sample.Name, Is.EqualTo("Piano"));
-		Assert.That(sample.Asset.RelativePath, Is.EqualTo("assets/piano-c4.wav"));
+		Assert.That(
+			sample.Asset.FullPath,
+			Is.EqualTo(
+				Path.GetFullPath(
+					Path.Combine(
+						Path.GetDirectoryName(JsonContextPath)!,
+						"assets",
+						"piano-c4.wav"))));
 		Assert.That(
 			sample.Asset.Sha256,
 			Is.EqualTo(

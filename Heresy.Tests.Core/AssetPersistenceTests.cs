@@ -327,8 +327,8 @@ public sealed class AssetPersistenceTests
 	private sealed class TempProject : IDisposable
 	{
 		private readonly string _root =
-			Path.Combine(
-				Path.GetTempPath(),
+			System.IO.Path.Combine(
+				System.IO.Path.GetTempPath(),
 				$"heresy-storage-{Guid.NewGuid():N}");
 
 		public TempProject() => Directory.CreateDirectory(_root);

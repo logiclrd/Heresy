@@ -130,8 +130,8 @@ public sealed class SampleEditorDialog : Window
 				Margin = new Thickness(0, 14, 0, 2),
 			};
 		AddFullWidth(form, ref row, assetHeading);
-		AddField(form, ref row, "Relative path", _relativePath);
-		AddField(form, ref row, "Resolved path", _resolvedPath);
+		AddField(form, ref row, "Full path", _relativePath);
+		AddField(form, ref row, "Storage", _resolvedPath);
 		AddField(form, ref row, "Integrity", _integrityStatus);
 		AddField(form, ref row, "Expected SHA-256", _expectedHash);
 		AddField(form, ref row, "Actual SHA-256", _actualHash);
@@ -285,14 +285,24 @@ public sealed class SampleEditorDialog : Window
 
 	private void RefreshDiagnostics()
 	{
-		_relativePath.Text = _sample.Asset.RelativePath;
+		_relativePath.Text = _sample.Asset.FullPath;
 		_expectedHash.Text = _sample.Asset.Sha256 ?? "(not recorded)";
 
 		try
 		{
 			ExternalAssetCheck check =
 				SampleDocumentEditor.CheckAsset(_workspace, _sample);
-			_resolvedPath.Text = check.ResolvedPath;
+			if (HeresyModulePath.TrySplit(
+				_sample.Asset.FullPath,
+				out string archivePath,
+				out string entryPath))
+			{
+				_resolvedPath.Text = $"{archivePath} → {entryPath}";
+			}
+			else
+			{
+				_resolvedPath.Text = "Filesystem";
+			}
 			_actualHash.Text = check.ActualSha256 ?? "(unavailable)";
 			_integrityStatus.Text = check.Status switch
 			{
