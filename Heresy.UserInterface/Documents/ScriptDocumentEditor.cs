@@ -8,6 +8,10 @@ using Heresy.Core.Sequences;
 
 namespace Heresy.UserInterface.Documents;
 
+public sealed record ScriptReferenceInsertion(
+	string Text,
+	int Caret);
+
 public sealed record ScriptObjectReferenceOption(
 	ObjectId Id,
 	string DisplayName,
@@ -130,6 +134,34 @@ public static class ScriptDocumentEditor
 		=> SequenceDocumentEditor.SetRootSequence(
 			workspace,
 			sequence);
+
+	public static ScriptReferenceInsertion InsertObjectReference(
+		string source,
+		int selectionStart,
+		int selectionEnd,
+		ObjectId id)
+	{
+		ArgumentNullException.ThrowIfNull(source);
+
+		int first =
+			Math.Clamp(
+				Math.Min(selectionStart, selectionEnd),
+				0,
+				source.Length);
+		int last =
+			Math.Clamp(
+				Math.Max(selectionStart, selectionEnd),
+				first,
+				source.Length);
+		string insertion =
+			ScriptObjectReferenceSyntax.Format(id);
+
+		return new ScriptReferenceInsertion(
+			source[..first]
+				+ insertion
+				+ source[last..],
+			first + insertion.Length);
+	}
 
 	public static ScriptObjectReferenceOption[] GetObjectReferences(
 		SongDocument document)
