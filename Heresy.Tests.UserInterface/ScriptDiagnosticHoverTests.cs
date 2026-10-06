@@ -28,13 +28,13 @@ public sealed class ScriptDiagnosticHoverTests
 				"ERR",
 				"Error message.");
 
-		ScriptDiagnosticHoverInfo hover =
+		ScriptDiagnosticHoverInfo? hover =
 			ScriptDiagnosticHoverCatalog.FindAtOffset(
-					[warning, error],
-					3)
-				.Should().NotBeNull().Subject;
+				[warning, error],
+				3);
 
-		hover.Diagnostics.Should().Equal(error, warning);
+		hover.Should().NotBeNull();
+		hover!.Diagnostics.Should().Equal(error, warning);
 		hover.Text.Should().Be(
 			"Error ERR: Error message.\n"
 				+ "Warning WARN: Warning message.");
