@@ -76,16 +76,61 @@ public sealed class PatternCellViewModel
 		StartPatternNote start)
 	{
 		string source = ResolveSource(document, start.SourceId);
-		string pitch =
-			start.PitchMultiplier == 1.0
-				? string.Empty
-				: $" p×{start.PitchMultiplier.ToString("G4", CultureInfo.InvariantCulture)}";
 		string speed =
 			start.PlaybackSpeedMultiplier == 1.0
 				? string.Empty
 				: $" s×{start.PlaybackSpeedMultiplier.ToString("G4", CultureInfo.InvariantCulture)}";
 		string mixdown = start.Mixdown ? " [mix]" : string.Empty;
+
+		if (TryFormatTrackerPitch(
+			start.PitchMultiplier,
+			out string? trackerPitch))
+		{
+			return $"{trackerPitch} {source}{speed}{mixdown}";
+		}
+
+		string pitch =
+			$" p×{start.PitchMultiplier.ToString("G4", CultureInfo.InvariantCulture)}";
 		return $"{source}{pitch}{speed}{mixdown}";
+	}
+
+	private static bool TryFormatTrackerPitch(
+		double multiplier,
+		out string? text)
+	{
+		double semitones = 12.0 * Math.Log2(multiplier);
+		double rounded = Math.Round(semitones);
+		if (Math.Abs(semitones - rounded) > 1e-8
+			|| rounded < int.MinValue + 48.0
+			|| rounded > int.MaxValue - 48.0)
+		{
+			text = null;
+			return false;
+		}
+
+		int absoluteSemitone =
+			checked(48 + (int)rounded);
+		int pitchClass =
+			((absoluteSemitone % 12) + 12) % 12;
+		int octave =
+			(int)Math.Floor(absoluteSemitone / 12.0);
+		string[] names =
+		[
+			"C-",
+			"C#",
+			"D-",
+			"D#",
+			"E-",
+			"F-",
+			"F#",
+			"G-",
+			"G#",
+			"A-",
+			"A#",
+			"B-",
+		];
+		text = $"{names[pitchClass]}{octave}";
+		return true;
 	}
 
 	private static string ResolveSource(
