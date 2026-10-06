@@ -129,6 +129,58 @@ public sealed class DocumentWorkspaceTests
 		item.Kind.Should().Be(SongObjectKind.Unknown);
 	}
 	[Test]
+	public void SaveUsesSemanticScriptReferencesForTombstonePruning()
+	{
+		string path = Path.Combine(
+			Path.GetTempPath(),
+			$"heresy-ui-script-refs-{Guid.NewGuid():N}.hm.json");
+
+		try
+		{
+			DocumentWorkspace workspace = new();
+
+			ObjectId commentOnlyId =
+				workspace.Document.AllocateObjectId();
+			workspace.Document.Add(
+				new DataPatternDefinition(
+					commentOnlyId,
+					"Comment Only"));
+			workspace.Document.Remove(commentOnlyId);
+
+			ObjectId referencedId =
+				workspace.Document.AllocateObjectId();
+			workspace.Document.Add(
+				new DataPatternDefinition(
+					referencedId,
+					"Referenced"));
+			workspace.Document.Remove(referencedId);
+
+			ObjectId scriptId =
+				workspace.Document.AllocateObjectId();
+			workspace.Document.Add(
+				new ScriptPatternDefinition(
+					scriptId,
+					"Script")
+				{
+					Source =
+						$"// _O({commentOnlyId.Value})\n"
+						+ $"_O({referencedId.Value});",
+				});
+
+			workspace.SaveAs(path);
+
+			workspace.Document.Tombstones
+				.Should().ContainKey(referencedId);
+			workspace.Document.Tombstones
+				.Should().NotContainKey(commentOnlyId);
+		}
+		finally
+		{
+			if (File.Exists(path))
+				File.Delete(path);
+		}
+	}
+	[Test]
 	public void AbsoluteJsonSaveModeIsRememberedForSubsequentSave()
 	{
 		string root = Path.Combine(
