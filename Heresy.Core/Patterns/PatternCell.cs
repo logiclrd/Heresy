@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 
+using Heresy.Core.Objects;
+
 namespace Heresy.Core.Patterns;
 
 /// <summary>
@@ -11,6 +13,12 @@ public sealed class PatternCell
 	private double? _volume;
 
 	public PatternNoteEntry? Note { get; set; }
+
+	/// <summary>
+	/// Optional explicit sound source in the tracker Source column. ObjectId.None
+	/// means omitted; note starts then use the channel's remembered source.
+	/// </summary>
+	public ObjectId SourceId { get; set; } = ObjectId.None;
 
 	/// <summary>
 	/// Optional normalized note volume stored directly in the tracker volume
@@ -42,6 +50,7 @@ public sealed class PatternCell
 
 	public bool IsEmpty =>
 		Note is null
+		&& SourceId.IsNone
 		&& Volume is null
 		&& Effects.Count == 0;
 }

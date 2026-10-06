@@ -88,7 +88,14 @@ public static class SongReferenceAnalyzer
 				case DataPatternDefinition pattern:
 					foreach ((_, _, PatternCell cell) in pattern.Grid.EnumerateNonEmptyCells())
 					{
-						if (cell.Note is StartPatternNote start)
+						AddReference(
+							references,
+							cell.SourceId,
+							pattern.Id,
+							SongReferenceKind.PatternNoteSource);
+
+						if (cell.Note is StartPatternNote start
+							&& cell.SourceId.IsNone)
 						{
 							AddReference(
 								references,

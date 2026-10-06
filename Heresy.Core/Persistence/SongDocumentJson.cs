@@ -315,6 +315,9 @@ public static class SongDocumentJson
 							["channel"] = channel,
 						};
 
+					if (!cell.SourceId.IsNone)
+						cellNode["sourceId"] = cell.SourceId.Value;
+
 					if (cell.Note is not null)
 					{
 						cellNode["note"] =
@@ -486,6 +489,9 @@ public static class SongDocumentJson
 							pattern.Grid.GetOrCreateCell(
 								row,
 								channel);
+
+						if (cell["sourceId"] is JsonNode sourceNode)
+							target.SourceId = new ObjectId(sourceNode.GetValue<uint>());
 
 						if (cell["note"] is JsonNode noteNode)
 						{

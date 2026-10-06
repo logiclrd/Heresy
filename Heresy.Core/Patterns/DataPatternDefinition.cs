@@ -34,6 +34,23 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			List<NoteCommand> channelCommands = [];
 			List<NoteCommand> globalCommands = [];
 
+			SequencingChannelState channelState =
+				context.GetPhysicalChannelState(channel);
+			if (!cell.SourceId.IsNone)
+				channelState.CurrentSourceId = cell.SourceId;
+
+			// StartPatternNote historically carried a source directly. The
+			// tracker UI now stores it in PatternCell.SourceId, but retaining
+			// this fallback keeps the semantic API useful for programmatic
+			// producers while omitted source IDs use per-channel memory.
+			if (cell.Note is StartPatternNote inlineSource
+				&& cell.SourceId.IsNone
+				&& !inlineSource.SourceId.IsNone)
+			{
+				channelState.CurrentSourceId = inlineSource.SourceId;
+			}
+			ObjectId resolvedSourceId = channelState.CurrentSourceId;
+
 			StartNoteCommand? tonePortamentoTarget = null;
 			bool hasTonePortamento = false;
 			foreach (PatternEffect effect in cell.Effects)
@@ -50,7 +67,8 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 
 			bool startsNewNote =
 				cell.Note is StartPatternNote
-					&& !hasTonePortamento;
+					&& !hasTonePortamento
+					&& !resolvedSourceId.IsNone;
 
 			if (cell.Note is StartPatternNote start && hasTonePortamento)
 			{
@@ -58,14 +76,26 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 				// starting it immediately. Volume therefore follows the
 				// current-note command path below.
 				tonePortamentoTarget =
-					(StartNoteCommand)TranslateNote(start);
+					resolvedSourceId.IsNone
+						? null
+						: TranslateStartNote(
+							start,
+							resolvedSourceId);
+			}
+			else if (cell.Note is StartPatternNote startNote)
+			{
+				if (startsNewNote)
+				{
+					channelCommands.Add(
+						TranslateStartNote(
+							startNote,
+							resolvedSourceId,
+							cell.Volume));
+				}
 			}
 			else if (cell.Note is not null)
 			{
-				channelCommands.Add(
-					TranslateNote(
-						cell.Note,
-						startsNewNote ? cell.Volume : null));
+				channelCommands.Add(TranslateNote(cell.Note));
 			}
 
 			if (cell.Volume.HasValue
@@ -154,17 +184,20 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 		Grid.Resize(RowCount, ChannelCount);
 	}
 
-	private static NoteCommand TranslateNote(
-		PatternNoteEntry note,
+	private static StartNoteCommand TranslateStartNote(
+		StartPatternNote start,
+		ObjectId sourceId,
 		double? volume = null)
+		=> new(
+			sourceId,
+			start.PitchMultiplier,
+			start.PlaybackSpeedMultiplier,
+			start.Mixdown,
+			volume);
+
+	private static NoteCommand TranslateNote(PatternNoteEntry note)
 		=> note switch
 		{
-			StartPatternNote start => new StartNoteCommand(
-				start.SourceId,
-				start.PitchMultiplier,
-				start.PlaybackSpeedMultiplier,
-				start.Mixdown,
-				volume),
 			PatternNoteOff => new NoteOffCommand(),
 			PatternNoteCut => new NoteCutCommand(),
 			_ => throw new NotSupportedException($"Unsupported pattern note type: {note.GetType().FullName}"),

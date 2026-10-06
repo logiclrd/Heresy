@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 
+using Heresy.Core.Objects;
+
 namespace Heresy.Core.Sequencing;
 
 /// <summary>
@@ -20,6 +22,12 @@ public sealed class SequencingChannelState
 	private TrackerWaveform _panbrelloWaveform;
 	private byte _midiMacroIndex;
 	private bool _glissandoEnabled;
+
+	/// <summary>
+	/// Last explicit sound source selected on this mapped physical tracker
+	/// channel. It is sequencing memory, not render-time voice state.
+	/// </summary>
+	public ObjectId CurrentSourceId { get; set; } = ObjectId.None;
 
 	/// <summary>
 	/// Applies conventional whole-byte tracker effect-memory semantics. A
