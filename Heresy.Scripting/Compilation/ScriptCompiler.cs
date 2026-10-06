@@ -123,10 +123,16 @@ public static class ScriptCompiler
 
 	public static ScriptCompilationResult<INoteSequencer> CompileSequence(
 		ScriptSequenceDefinition definition,
-		ISequencePatternResolver resolver)
+		ISequencePatternResolver resolver,
+		int startOrder = 0,
+		int? startRow = null)
 	{
 		ArgumentNullException.ThrowIfNull(definition);
 		ArgumentNullException.ThrowIfNull(resolver);
+		if (startOrder < 0)
+			throw new ArgumentOutOfRangeException(nameof(startOrder));
+		if (startRow.HasValue && startRow.Value < 0)
+			throw new ArgumentOutOfRangeException(nameof(startRow));
 
 		string className =
 			"__HeresySequence_" + Guid.NewGuid().ToString("N");
@@ -149,7 +155,9 @@ public static class ScriptCompiler
 		return new(
 			new CompiledSequenceSequencer(
 				compiled.Program,
-				resolver),
+				resolver,
+				startOrder,
+				startRow),
 			compiled.Diagnostics);
 	}
 
@@ -787,13 +795,19 @@ public static class ScriptCompiler
 	{
 		private readonly Type _programType;
 		private readonly ISequencePatternResolver _resolver;
+		private readonly int _startOrder;
+		private readonly int? _startRow;
 
 		public CompiledSequenceSequencer(
 			Type programType,
-			ISequencePatternResolver resolver)
+			ISequencePatternResolver resolver,
+			int startOrder,
+			int? startRow)
 		{
 			_programType = programType;
 			_resolver = resolver;
+			_startOrder = startOrder;
+			_startRow = startRow;
 		}
 
 		public void GenerateNotes(
@@ -819,6 +833,8 @@ public static class ScriptCompiler
 				_resolver,
 				context,
 				output,
+				_startOrder,
+				_startRow,
 				out duration);
 		}
 	}
