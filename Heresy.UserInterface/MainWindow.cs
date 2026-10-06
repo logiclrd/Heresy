@@ -13,6 +13,7 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 
 using Heresy.Core.Objects;
+using Heresy.Core.Persistence;
 using Heresy.Core.Samples;
 using Heresy.UserInterface.Dialogs;
 using Heresy.UserInterface.Documents;
@@ -36,6 +37,12 @@ public sealed class MainWindow : Window
 
 	private static readonly FilePickerFileType JsonFileType =
 		new("Heresy JSON")
+		{
+			Patterns = new[] { "*.hm.json" },
+		};
+
+	private static readonly FilePickerFileType AbsoluteJsonFileType =
+		new("Heresy JSON (absolute paths)")
 		{
 			Patterns = new[] { "*.hm.json" },
 		};
@@ -316,8 +323,8 @@ public sealed class MainWindow : Window
 			return;
 		}
 
-		IStorageFile? file =
-			await StorageProvider.SaveFilePickerAsync(
+		SaveFilePickerResult result =
+			await StorageProvider.SaveFilePickerWithResultAsync(
 				new FilePickerSaveOptions
 				{
 					Title = "Save Heresy song",
@@ -326,9 +333,16 @@ public sealed class MainWindow : Window
 							? "song.hm"
 							: Path.GetFileName(_workspace.FilePath),
 					DefaultExtension = "hm",
-					FileTypeChoices = new[] { PackageFileType, JsonFileType },
+					FileTypeChoices =
+						new[]
+						{
+							PackageFileType,
+							JsonFileType,
+							AbsoluteJsonFileType,
+						},
 				});
 
+		IStorageFile? file = result.File;
 		if (file is null)
 			return;
 
@@ -341,11 +355,21 @@ public sealed class MainWindow : Window
 
 		try
 		{
-			_workspace.SaveAs(path);
+			JsonAssetPathMode jsonPathMode =
+				string.Equals(
+					result.SelectedFileType?.Name,
+					AbsoluteJsonFileType.Name,
+					StringComparison.Ordinal)
+					? JsonAssetPathMode.Absolute
+					: JsonAssetPathMode.Relative;
+
+			_workspace.SaveAs(path, jsonPathMode);
 			RefreshDocumentView($"Saved {_workspace.DisplayName}", _selectedItem?.Node);
 		}
 		catch (Exception ex)
 		{
+			// TODO: when a relative JSON save identifies an offending asset,
+			// navigate directly to that sample before presenting the error.
 			SetStatus($"Save failed: {ex.Message}");
 		}
 	}

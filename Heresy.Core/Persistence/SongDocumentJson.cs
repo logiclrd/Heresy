@@ -34,7 +34,8 @@ public static class SongDocumentJson
 
 	public static string Serialize(
 		SongDocument document,
-		string jsonPath)
+		string jsonPath,
+		JsonAssetPathMode pathMode = JsonAssetPathMode.Relative)
 	{
 		ArgumentNullException.ThrowIfNull(document);
 		ArgumentException.ThrowIfNullOrWhiteSpace(jsonPath);
@@ -43,7 +44,7 @@ public static class SongDocumentJson
 			?? throw new ArgumentException("The JSON path must identify a file.", nameof(jsonPath));
 		return Serialize(
 			document,
-			sample => ToStoredPath(directory, sample.Asset.FullPath));
+			sample => ToStoredPath(directory, sample, pathMode));
 	}
 
 	internal static string Serialize(
@@ -209,7 +210,10 @@ public static class SongDocumentJson
 		return document;
 	}
 
-	public static void Save(string path, SongDocument document)
+	public static void Save(
+		string path,
+		SongDocument document,
+		JsonAssetPathMode pathMode = JsonAssetPathMode.Relative)
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(path);
 		ArgumentNullException.ThrowIfNull(document);
@@ -219,13 +223,16 @@ public static class SongDocumentJson
 			?? throw new ArgumentException("The JSON path must identify a file.", nameof(path));
 		Directory.CreateDirectory(directory);
 
+		if (pathMode == JsonAssetPathMode.Relative)
+			ValidateRelativeAssetLocations(directory, document);
+
 		MaterializeArchiveAssets(directory, document);
 
 		File.WriteAllText(
 			fullPath,
 			Serialize(
 				document,
-				sample => ToStoredPath(directory, sample.Asset.FullPath)),
+				sample => ToStoredPath(directory, sample, pathMode)),
 			new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 	}
 
@@ -606,19 +613,108 @@ public static class SongDocumentJson
 		}
 	}
 
+	private static void ValidateRelativeAssetLocations(
+		string jsonDirectory,
+		SongDocument document)
+	{
+		foreach (SampleDefinition sample in
+			document.Objects.Values.OfType<SampleDefinition>())
+		{
+			if (HeresyModulePath.TrySplit(
+				sample.Asset.FullPath,
+				out string archivePath,
+				out _)
+				&& File.Exists(archivePath))
+			{
+				continue;
+			}
+
+			if (!TryGetPortableRelativePath(
+				jsonDirectory,
+				sample.Asset.FullPath,
+				out _))
+			{
+				throw new InvalidOperationException(
+					$"Sample '{sample.Name}' ({sample.Id}) uses asset '{sample.Asset.FullPath}', " +
+					"which is outside the .hm.json directory subtree. " +
+					"Choose the '.hm.json (absolute paths)' save type or move the asset beneath the JSON file's directory. " +
+					"TODO: navigate the editor directly to the offending sample.");
+			}
+		}
+	}
+
 	private static string ToStoredPath(
 		string jsonDirectory,
-		string fullAssetPath)
+		SampleDefinition sample,
+		JsonAssetPathMode pathMode)
 	{
-		string relative =
-			Path.GetRelativePath(
-				jsonDirectory,
-				Path.GetFullPath(fullAssetPath));
+		if (pathMode == JsonAssetPathMode.Absolute)
+		{
+			string fullPath = Path.GetFullPath(sample.Asset.FullPath);
+			if (!LooksAbsoluteStoredPath(fullPath))
+			{
+				throw new InvalidOperationException(
+					$"Asset path '{fullPath}' cannot be represented as a supported absolute .hm.json path.");
+			}
+			return fullPath;
+		}
 
-		if (OperatingSystem.IsWindows())
-			relative = relative.Replace('\\', '/');
+		if (TryGetPortableRelativePath(
+			jsonDirectory,
+			sample.Asset.FullPath,
+			out string? relative))
+		{
+			return relative;
+		}
 
-		return relative;
+		throw new InvalidOperationException(
+			$"Sample '{sample.Name}' ({sample.Id}) uses asset '{sample.Asset.FullPath}', " +
+			"which is outside the .hm.json directory subtree. " +
+			"Choose the '.hm.json (absolute paths)' save type or move the asset beneath the JSON file's directory. " +
+			"TODO: navigate the editor directly to the offending sample.");
+	}
+
+	private static bool TryGetPortableRelativePath(
+		string jsonDirectory,
+		string fullAssetPath,
+		out string relativePath)
+	{
+		string root = Path.GetFullPath(jsonDirectory);
+		string asset = Path.GetFullPath(fullAssetPath);
+		string relative = Path.GetRelativePath(root, asset);
+
+		if (Path.IsPathRooted(relative)
+			|| relative == ".."
+			|| relative.StartsWith(
+				".." + Path.DirectorySeparatorChar,
+				StringComparison.Ordinal)
+			|| (Path.AltDirectorySeparatorChar != Path.DirectorySeparatorChar
+				&& relative.StartsWith(
+					".." + Path.AltDirectorySeparatorChar,
+					StringComparison.Ordinal)))
+		{
+			relativePath = string.Empty;
+			return false;
+		}
+
+		if (Path.DirectorySeparatorChar != '/')
+			relative = relative.Replace(Path.DirectorySeparatorChar, '/');
+		if (Path.AltDirectorySeparatorChar != Path.DirectorySeparatorChar
+			&& Path.AltDirectorySeparatorChar != '/')
+		{
+			relative = relative.Replace(Path.AltDirectorySeparatorChar, '/');
+		}
+
+		// A literal backslash is a valid Unix filename character, but it would
+		// make a portable relative path ambiguous. Such assets require absolute mode.
+		if (relative.Contains('\\'))
+		{
+			relativePath = string.Empty;
+			return false;
+		}
+
+		relativePath = relative;
+		return true;
 	}
 
 	private static string ResolveStoredPath(
@@ -627,21 +723,104 @@ public static class SongDocumentJson
 	{
 		if (string.IsNullOrWhiteSpace(storedPath))
 			throw new InvalidDataException("External asset paths must be non-empty.");
-		if (storedPath.StartsWith("/", StringComparison.Ordinal)
-			|| storedPath.StartsWith('\\')
-			|| (storedPath.Length >= 3
-				&& char.IsLetter(storedPath[0])
-				&& storedPath[1] == ':'
-				&& (storedPath[2] == '/' || storedPath[2] == '\\')))
+
+		string resolved;
+		if (LooksAbsoluteStoredPath(storedPath))
 		{
-			throw new InvalidDataException(
-				"Persisted external asset paths must be relative.");
+			bool unixStyle = storedPath.StartsWith("/", StringComparison.Ordinal);
+			if (unixStyle == OperatingSystem.IsWindows())
+			{
+				throw new InvalidDataException(
+					$"Absolute asset path '{storedPath}' does not match this host's path convention.");
+			}
+
+			try
+			{
+				if (!Path.IsPathFullyQualified(storedPath))
+				throw new InvalidDataException(
+					$"Absolute asset path '{storedPath}' is not fully qualified on this host.");
+				resolved = Path.GetFullPath(storedPath);
+			}
+			catch (Exception ex) when (
+				ex is ArgumentException
+				or NotSupportedException
+				or PathTooLongException)
+			{
+				throw new InvalidDataException(
+					$"Absolute asset path '{storedPath}' cannot be interpreted on this host.",
+					ex);
+			}
+		}
+		else
+		{
+			if (storedPath.Contains('\\'))
+			{
+				throw new InvalidDataException(
+					"Relative .hm.json asset paths must use '/' separators.");
+			}
+
+			string[] components = storedPath.Split('/');
+			if (components.Any(component =>
+				component.Length == 0
+					|| component == "."
+					|| component == ".."))
+			{
+				throw new InvalidDataException(
+					"Relative .hm.json asset paths may not escape the JSON directory or contain empty path components.");
+			}
+
+			string nativePath =
+				storedPath.Replace('/', Path.DirectorySeparatorChar);
+			resolved = Path.GetFullPath(Path.Combine(jsonDirectory, nativePath));
 		}
 
-		string nativePath = OperatingSystem.IsWindows()
-			? storedPath.Replace('/', '\\')
-			: storedPath;
-		return Path.GetFullPath(Path.Combine(jsonDirectory, nativePath));
+		if (!File.Exists(resolved))
+		{
+			// TODO: expose a UI resolution workflow that lets the user locate
+			// missing/foreign assets and then navigate directly to the offending item.
+			throw new FileNotFoundException(
+				$"External asset '{storedPath}' could not be resolved while loading the .hm.json document.",
+				resolved);
+		}
+
+		return resolved;
+	}
+
+	internal static bool LooksAbsoluteStoredPath(string path)
+	{
+		if (path.StartsWith("/", StringComparison.Ordinal))
+			return true;
+
+		int slash = path.IndexOfAny('/', '\\');
+		int colon = path.IndexOf(':');
+		return colon >= 0 && (slash < 0 || colon < slash);
+	}
+
+	public static JsonAssetPathMode DetectPathMode(string path)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(path);
+		JsonNode? parsed = JsonNode.Parse(File.ReadAllText(path, Encoding.UTF8));
+		if (parsed is not JsonObject root)
+			throw new InvalidDataException("The Heresy document root must be a JSON object.");
+
+		JsonObject objects = RequiredObject(root, "objects");
+		foreach ((_, JsonNode? node) in objects)
+		{
+			if (node is not JsonObject songObject
+				|| !string.Equals(
+					RequiredString(songObject, "type"),
+					"sample",
+					StringComparison.Ordinal))
+			{
+				continue;
+			}
+
+			JsonObject asset = RequiredObject(songObject, "asset");
+			if (LooksAbsoluteStoredPath(RequiredString(asset, "path")))
+				return JsonAssetPathMode.Absolute;
+		}
+
+		return JsonAssetPathMode.Relative;
 	}
 
 	private static void WritePatternCommon(

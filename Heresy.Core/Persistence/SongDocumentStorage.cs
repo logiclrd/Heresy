@@ -9,7 +9,10 @@ namespace Heresy.Core.Persistence;
 /// </summary>
 public static class SongDocumentStorage
 {
-	public static void Save(string path, SongDocument document)
+	public static void Save(
+		string path,
+		SongDocument document,
+		JsonAssetPathMode jsonPathMode = JsonAssetPathMode.Relative)
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(path);
 		ArgumentNullException.ThrowIfNull(document);
@@ -21,7 +24,7 @@ public static class SongDocumentStorage
 		}
 		if (IsJsonPath(path))
 		{
-			SongDocumentJson.Save(path, document);
+			SongDocumentJson.Save(path, document, jsonPathMode);
 			return;
 		}
 
@@ -39,6 +42,14 @@ public static class SongDocumentStorage
 
 		throw new NotSupportedException(
 			"Heresy songs must use the .hm or .hm.json extension.");
+	}
+
+	public static JsonAssetPathMode DetectJsonPathMode(string path)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(path);
+		if (!IsJsonPath(path))
+			throw new ArgumentException("The path must identify a .hm.json file.", nameof(path));
+		return SongDocumentJson.DetectPathMode(path);
 	}
 
 	public static bool IsPackagePath(string path)

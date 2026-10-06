@@ -24,6 +24,8 @@ public sealed class DocumentWorkspace
 
 	public string? FilePath { get; private set; }
 
+	public JsonAssetPathMode? JsonPathMode { get; private set; }
+
 	public string DisplayName
 		=> FilePath is null
 			? "Untitled"
@@ -36,6 +38,7 @@ public sealed class DocumentWorkspace
 	{
 		Document = new SongDocument();
 		FilePath = null;
+		JsonPathMode = null;
 		_savedDocumentRevision = Document.DocumentRevision;
 	}
 
@@ -48,6 +51,9 @@ public sealed class DocumentWorkspace
 
 		Document = document;
 		FilePath = fullPath;
+		JsonPathMode = SongDocumentStorage.IsJsonPath(fullPath)
+			? SongDocumentStorage.DetectJsonPathMode(fullPath)
+			: null;
 		_savedDocumentRevision = document.DocumentRevision;
 	}
 
@@ -57,18 +63,26 @@ public sealed class DocumentWorkspace
 			throw new InvalidOperationException(
 				"The document does not yet have a file path. Use SaveAs first.");
 
-		SongDocumentStorage.Save(FilePath, Document);
+		SongDocumentStorage.Save(
+			FilePath,
+			Document,
+			JsonPathMode ?? JsonAssetPathMode.Relative);
 		_savedDocumentRevision = Document.DocumentRevision;
 	}
 
-	public void SaveAs(string path)
+	public void SaveAs(
+		string path,
+		JsonAssetPathMode jsonPathMode = JsonAssetPathMode.Relative)
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
 		string fullPath = Path.GetFullPath(path);
-		SongDocumentStorage.Save(fullPath, Document);
+		SongDocumentStorage.Save(fullPath, Document, jsonPathMode);
 
 		FilePath = fullPath;
+		JsonPathMode = SongDocumentStorage.IsJsonPath(fullPath)
+			? jsonPathMode
+			: null;
 		_savedDocumentRevision = Document.DocumentRevision;
 	}
 }
