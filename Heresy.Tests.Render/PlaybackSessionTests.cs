@@ -478,4 +478,54 @@ public sealed class PlaybackSessionTests
 	private sealed class TestSoundState : SoundState
 	{
 	}
+	[Test]
+	public void StartNoteVolumeIsAppliedAtomicallyToNewVoice()
+	{
+		ObjectId sourceId = (ObjectId)10U;
+		SampleSound sound = Sample(new float[] { 2.0f }, 1);
+		PlaybackSession session = Session(
+			1,
+			Schedule(
+				Event(
+					TimeSpan.Zero,
+					0,
+					new StartNoteCommand(
+						sourceId,
+						Volume: 0.25))),
+			new TestResolver((sourceId, false, sound)));
+		float[] output = new float[1];
+
+		session.Render(0, 1, output);
+
+		Assert.That(output[0], Is.EqualTo(0.5f).Within(1e-6f));
+	}
+
+	[Test]
+	public void UnresolvedStartNoteDoesNotApplyItsDirectVolume()
+	{
+		ObjectId missingId = (ObjectId)10U;
+		ObjectId sourceId = (ObjectId)11U;
+		SampleSound sound = Sample(new float[] { 1.0f }, 1);
+		PlaybackSession session = Session(
+			1,
+			Schedule(
+				Event(
+					Frame(0, 1),
+					0,
+					new StartNoteCommand(
+						missingId,
+						Volume: 0.25)),
+				Event(
+					Frame(1, 1),
+					0,
+					new StartNoteCommand(sourceId))),
+			new TestResolver((sourceId, false, sound)));
+		float[] output = new float[2];
+
+		session.Render(0, 2, output);
+
+		Assert.That(output[0], Is.EqualTo(0.0f));
+		Assert.That(output[1], Is.EqualTo(1.0f).Within(1e-6f));
+	}
+
 }

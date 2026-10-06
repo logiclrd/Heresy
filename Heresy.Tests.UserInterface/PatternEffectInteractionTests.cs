@@ -124,6 +124,9 @@ public sealed class PatternEffectInteractionTests
 			new(row: 3, channel: 2, PatternCellField.Note);
 
 		cursor.MoveRight(rowCount: 64, channelCount: 8);
+		cursor.Field.Should().Be(PatternCellField.Volume);
+
+		cursor.MoveRight(rowCount: 64, channelCount: 8);
 		cursor.Field.Should().Be(PatternCellField.EffectCommand);
 
 		cursor.MoveRight(rowCount: 64, channelCount: 8);

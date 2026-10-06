@@ -183,4 +183,95 @@ public sealed class DataPatternDefinitionTests
 			Is.EqualTo(new SetNoteVolumeCommand(0.5)));
 	}
 
+	[Test]
+	public void PatternVolumeMakesOtherwiseEmptyCellNonEmpty()
+	{
+		PatternCell cell = new()
+		{
+			Volume = 0.5,
+		};
+
+		Assert.That(cell.IsEmpty, Is.False);
+	}
+
+	[TestCase(-0.01)]
+	[TestCase(1.01)]
+	[TestCase(double.NaN)]
+	[TestCase(double.PositiveInfinity)]
+	public void PatternVolumeRejectsValuesOutsideNormalizedRange(double volume)
+	{
+		PatternCell cell = new();
+
+		Assert.Throws<ArgumentOutOfRangeException>(
+			() => cell.Volume = volume);
+	}
+
+	[Test]
+	public void StartNoteFoldsPatternVolumeIntoStartCommand()
+	{
+		DataPatternDefinition pattern = new((ObjectId)1U, "Pattern");
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+		cell.Note = new StartPatternNote((ObjectId)17U);
+		cell.Volume = 0.75;
+		NoteScheduleBuilder output = new();
+
+		pattern.GenerateRawNotes(new SequencingContext(), output, out _);
+
+		NoteSchedule schedule = output.Freeze();
+		Assert.That(schedule.Count, Is.EqualTo(1));
+		Assert.That(schedule[0].Commands, Has.Count.EqualTo(1));
+		Assert.That(
+			schedule[0].Commands[0],
+			Is.EqualTo(
+				new StartNoteCommand(
+					(ObjectId)17U,
+					Volume: 0.75)));
+	}
+
+	[Test]
+	public void VolumeOnlyRowBecomesSetNoteVolumeCommand()
+	{
+		DataPatternDefinition pattern = new((ObjectId)1U, "Pattern");
+		pattern.Grid.GetOrCreateCell(3, 2).Volume = 0.5;
+		NoteScheduleBuilder output = new();
+
+		pattern.GenerateRawNotes(new SequencingContext(), output, out _);
+
+		NoteSchedule schedule = output.Freeze();
+		Assert.That(schedule.Count, Is.EqualTo(1));
+		Assert.That(schedule[0].Offset.RowOffset, Is.EqualTo(3.0));
+		Assert.That(schedule[0].Target, Is.EqualTo(ChannelTarget.Physical(2)));
+		Assert.That(
+			schedule[0].Commands,
+			Is.EqualTo(
+				new NoteCommand[]
+				{
+					new SetNoteVolumeCommand(0.5),
+				}));
+	}
+
+	[Test]
+	public void TonePortamentoTargetUsesVolumeAsCurrentNoteCommand()
+	{
+		DataPatternDefinition pattern = new((ObjectId)1U, "Pattern");
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+		cell.Note = new StartPatternNote((ObjectId)17U, 2.0);
+		cell.Volume = 0.25;
+		cell.Effects.Add(new TonePortamentoPatternEffect(0x10));
+		NoteScheduleBuilder output = new();
+
+		pattern.GenerateRawNotes(new SequencingContext(), output, out _);
+
+		NoteSchedule schedule = output.Freeze();
+		Assert.That(schedule.Count, Is.EqualTo(1));
+		Assert.That(schedule[0].Commands, Has.Count.EqualTo(2));
+		Assert.That(
+			schedule[0].Commands[0],
+			Is.EqualTo(new SetNoteVolumeCommand(0.25)));
+		ApplyTonePortamentoCommand portamento =
+			(ApplyTonePortamentoCommand)schedule[0].Commands[1];
+		Assert.That(portamento.TargetNote, Is.Not.Null);
+		Assert.That(portamento.TargetNote!.Volume, Is.Null);
+	}
+
 }
