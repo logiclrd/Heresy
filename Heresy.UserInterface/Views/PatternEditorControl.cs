@@ -270,13 +270,21 @@ public sealed class PatternEditorControl : UserControl
 	{
 		try
 		{
+			DataPatternDefinition pattern = GetCurrentPattern();
+			PatternEditorRow? preferred =
+				_context.Rows.Count == 0
+					? null
+					: _context.GetRow(_cursor.Row);
+			PatternCellField field = _cursor.Field;
+			int channel = _cursor.Channel;
+
 			int rows = ParseInt(_rowCount, "Rows");
 			int channels = ParseInt(_channelCount, "Channels");
 			int minor = ParseInt(_minorHighlight, "Minor highlight");
 			int major = ParseInt(_majorHighlight, "Major highlight");
 
 			if (PatternDocumentEditor.WouldDiscardCells(
-				_pattern,
+				pattern,
 				rows,
 				channels))
 			{
@@ -291,14 +299,27 @@ public sealed class PatternEditorControl : UserControl
 
 			PatternDocumentEditor.UpdateLayout(
 				_workspace,
-				_pattern,
+				pattern,
 				rows,
 				channels,
 				minor,
 				major);
-			_cursor.Clamp(rows, channels);
+
+			int displayRow = _context.Refresh(preferred);
+			if (_context.Rows.Count != 0)
+			{
+				DataPatternDefinition focusedPattern =
+					_context.GetRow(displayRow).Pattern;
+				channel =
+					Math.Min(channel, focusedPattern.ChannelCount - 1);
+			}
+			else
+			{
+				channel = 0;
+			}
+			_cursor.SetPosition(displayRow, channel, field);
 			RefreshGrid();
-			_changed("Pattern layout updated");
+			_changed($"Pattern layout updated: {pattern.Name}");
 		}
 		catch (Exception ex)
 		{
@@ -320,14 +341,15 @@ public sealed class PatternEditorControl : UserControl
 
 		Grid grid = new();
 		_patternGrid = grid;
+		int channelCount = _context.MaxChannelCount;
 		grid.ColumnDefinitions.Add(
 			new ColumnDefinition(new GridLength(RowHeaderWidth)));
-		for (int channel = 0; channel < _pattern.ChannelCount; channel++)
+		for (int channel = 0; channel < channelCount; channel++)
 			grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(CellWidth)));
 
 		grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
 		AddText(grid, "Row", 0, 0, FontWeight.SemiBold);
-		for (int channel = 0; channel < _pattern.ChannelCount; channel++)
+		for (int channel = 0; channel < channelCount; channel++)
 		{
 			AddText(
 				grid,
@@ -337,49 +359,72 @@ public sealed class PatternEditorControl : UserControl
 				FontWeight.SemiBold);
 		}
 
-		for (int row = 0; row < _pattern.RowCount; row++)
+		int gridRow = 1;
+		foreach (PatternEditorSegment segment in _context.Segments)
 		{
-			int gridRow = row + 1;
-			grid.RowDefinitions.Add(
-				new RowDefinition(new GridLength(RowHeight)));
-
-			IBrush? rowBackground = GetRowBackground(row);
-			AddText(
-				grid,
-				row.ToString("X2", CultureInfo.InvariantCulture),
-				gridRow,
-				0,
-				FontWeight.Normal,
-				rowBackground);
-
-			for (int channel = 0; channel < _pattern.ChannelCount; channel++)
+			if (_context.IsSequence)
 			{
-				Border cell =
-					BuildCell(
-						row,
-						channel,
-						rowBackground);
-				Grid.SetRow(cell, gridRow);
-				Grid.SetColumn(cell, channel + 1);
-				grid.Children.Add(cell);
+				grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+				AddSegmentHeader(
+					grid,
+					segment,
+					gridRow,
+					channelCount + 1);
+				gridRow++;
+			}
+
+			for (int offset = 0; offset < segment.DisplayRowCount; offset++)
+			{
+				int displayRow = segment.FirstDisplayRow + offset;
+				PatternEditorRow row = _context.GetRow(displayRow);
+				grid.RowDefinitions.Add(
+					new RowDefinition(new GridLength(RowHeight)));
+
+				IBrush? rowBackground =
+					GetRowBackground(row.Pattern, row.PatternRow);
+				AddText(
+					grid,
+					row.PatternRow.ToString("X2", CultureInfo.InvariantCulture),
+					gridRow,
+					0,
+					FontWeight.Normal,
+					rowBackground);
+
+				for (int channel = 0; channel < channelCount; channel++)
+				{
+					Border cell =
+						channel < row.Pattern.ChannelCount
+							? BuildCell(
+								displayRow,
+								row,
+								channel,
+								rowBackground)
+							: BuildUnavailableCell(rowBackground);
+					Grid.SetRow(cell, gridRow);
+					Grid.SetColumn(cell, channel + 1);
+					grid.Children.Add(cell);
+				}
+				gridRow++;
 			}
 		}
 
 		_scroll.Content = grid;
+		UpdateCurrentPatternControls();
 		RefreshCursorVisuals();
 		FocusCursorCell();
 	}
 
 	private Border BuildCell(
-		int row,
+		int displayRow,
+		PatternEditorRow row,
 		int channel,
 		IBrush? rowBackground)
 	{
 		PatternCellViewModel view =
 			PatternCellViewModel.Create(
 				_workspace.Document,
-				_pattern,
-				row,
+				row.Pattern,
+				row.PatternRow,
 				channel);
 
 		TextBlock note =
@@ -427,7 +472,7 @@ public sealed class PatternEditorControl : UserControl
 		ToolTip.SetTip(sourceField, view.SourceText);
 		MenuItem clearSource = new() { Header = "Clear" };
 		clearSource.Click += (_, _) =>
-			ClearSource(row, channel);
+			ClearSource(displayRow, channel);
 		sourceField.ContextMenu =
 			new ContextMenu
 			{
@@ -460,27 +505,27 @@ public sealed class PatternEditorControl : UserControl
 				CellWidth - 2,
 				EffectWidth,
 				RowHeight - 2,
-				() => ExpandVisualEffects(row, channel),
+				() => ExpandVisualEffects(displayRow, channel),
 				(effectIndex, field) =>
 					SelectExpandedEffect(
-						row,
+						displayRow,
 						channel,
 						effectIndex,
 						field),
 				effectIndex =>
 					DeleteEffectAt(
-						row,
+						displayRow,
 						channel,
 						effectIndex),
 				(effectIndex, after) =>
 					InsertEffectAt(
-						row,
+						displayRow,
 						channel,
 						effectIndex,
 						after),
 				(sourceIndex, targetIndex) =>
 					ReorderEffectByDrag(
-						row,
+						displayRow,
 						channel,
 						sourceIndex,
 						targetIndex));
@@ -519,20 +564,20 @@ public sealed class PatternEditorControl : UserControl
 			};
 
 		cell.PointerPressed += (_, e) =>
-			OnCellPointerPressed(row, channel, cell, e);
+			OnCellPointerPressed(displayRow, channel, cell, e);
 		cell.KeyDown += async (_, e) =>
-			await OnCellKeyDownAsync(row, channel, e);
+			await OnCellKeyDownAsync(displayRow, channel, e);
 		cell.TextInput += (_, e) =>
-			OnCellTextInput(row, channel, e);
+			OnCellTextInput(displayRow, channel, e);
 
-		_cellBorders[(row, channel)] = cell;
-		_noteFields[(row, channel)] = noteField;
-		_noteTexts[(row, channel)] = note;
-		_sourceFields[(row, channel)] = sourceField;
-		_sourceTexts[(row, channel)] = sourceText;
-		_volumeFields[(row, channel)] = volumeField;
-		_volumeTexts[(row, channel)] = volumeText;
-		_effectStrips[(row, channel)] = effects;
+		_cellBorders[(displayRow, channel)] = cell;
+		_noteFields[(displayRow, channel)] = noteField;
+		_noteTexts[(displayRow, channel)] = note;
+		_sourceFields[(displayRow, channel)] = sourceField;
+		_sourceTexts[(displayRow, channel)] = sourceText;
+		_volumeFields[(displayRow, channel)] = volumeField;
+		_volumeTexts[(displayRow, channel)] = volumeText;
+		_effectStrips[(displayRow, channel)] = effects;
 		return cell;
 	}
 
