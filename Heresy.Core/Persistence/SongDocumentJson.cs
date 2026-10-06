@@ -17,6 +17,7 @@ using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Samples;
 using Heresy.Core.Sequences;
+using Heresy.Core.Scripting;
 
 namespace Heresy.Core.Persistence;
 
@@ -82,7 +83,8 @@ public static class SongDocumentJson
 	public static string Serialize(
 		SongDocument document,
 		string jsonPath,
-		JsonAssetPathMode pathMode = JsonAssetPathMode.Relative)
+		JsonAssetPathMode pathMode = JsonAssetPathMode.Relative,
+		IScriptObjectReferenceAnalyzer? scriptReferenceAnalyzer = null)
 	{
 		ArgumentNullException.ThrowIfNull(document);
 		ArgumentException.ThrowIfNullOrWhiteSpace(jsonPath);
@@ -91,12 +93,14 @@ public static class SongDocumentJson
 			?? throw new ArgumentException("The JSON path must identify a file.", nameof(jsonPath));
 		return Serialize(
 			document,
-			sample => ToStoredPath(directory, sample, pathMode));
+			sample => ToStoredPath(directory, sample, pathMode),
+			scriptReferenceAnalyzer);
 	}
 
 	internal static string Serialize(
 		SongDocument document,
-		Func<SampleDefinition, string> assetPathSelector)
+		Func<SampleDefinition, string> assetPathSelector,
+		IScriptObjectReferenceAnalyzer? scriptReferenceAnalyzer = null)
 	{
 		ArgumentNullException.ThrowIfNull(document);
 		ArgumentNullException.ThrowIfNull(assetPathSelector);
@@ -260,7 +264,8 @@ public static class SongDocumentJson
 	public static void Save(
 		string path,
 		SongDocument document,
-		JsonAssetPathMode pathMode = JsonAssetPathMode.Relative)
+		JsonAssetPathMode pathMode = JsonAssetPathMode.Relative,
+		IScriptObjectReferenceAnalyzer? scriptReferenceAnalyzer = null)
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(path);
 		ArgumentNullException.ThrowIfNull(document);
@@ -279,7 +284,8 @@ public static class SongDocumentJson
 			fullPath,
 			Serialize(
 				document,
-				sample => ToStoredPath(directory, sample, pathMode)),
+				sample => ToStoredPath(directory, sample, pathMode),
+				scriptReferenceAnalyzer),
 			new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 	}
 
