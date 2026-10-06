@@ -269,17 +269,27 @@ such as repeated `G` commands or repeated `15` parameters across rows whose
 effect types differ. A collapsed cell containing multiple effects rejects direct
 typing until Enter expands it. In the expanded strip, left/right traverse the
 individual fields but clamp at the ends; up/down collapse and move vertically,
-and Enter collapses in place. Native effects occupy one whole-tab keyboard stop and ignore direct tracker
-typing. Enter on a selected native effect, double-clicking its tab, or choosing
-**Edit Parameters...** from that tab's context menu all open the same generic
-native-effect parameter dialog. The dialog is driven by a framework-independent
-semantic edit model rather than effect-specific Avalonia code: all current
-native effect shapes project named fields, reconstruct the same concrete Core
-effect type, and rely on the Core constructors for value validation. Applying
-a change replaces the selected stack member through the same stack-editing
-command path used by the tracker UI. Native and IT-style tabs use the same
-visual footprint and may coexist in one stack. Creating a new native effect from
-the UI still needs a separate insertion/type-selection surface.
+and Enter collapses in place. Native effects occupy one whole-tab keyboard stop
+and ignore direct tracker typing. Enter on a selected native effect, double-
+clicking its tab, or choosing **Edit Parameters...** from that tab's context menu
+all open the same generic native-effect parameter dialog. The dialog is driven
+by a framework-independent semantic edit model rather than effect-specific
+Avalonia code: all current native effect shapes project named fields, reconstruct
+the same concrete Core effect type, and rely on the Core constructors for value
+validation. Applying a change replaces the selected stack member through the
+same stack-editing command path used by the tracker UI.
+
+The same dialog also creates native effects. Creation adds a type selector backed
+by the native-effect catalog, seeds a valid default instance for the selected
+type, then renders exactly the same semantic parameter fields used for editing.
+All eleven current native effect shapes are available. `Alt+N` inserts a native
+effect before the selected stack member (or into an empty effect column), while
+`Alt+Shift+N` inserts after it. A tab's context menu exposes **Insert Native
+Effect Before...** and **Insert Native Effect After...**; an empty effect strip
+offers **Insert Native Effect...**. Native insertion is audio-affecting and
+selects the inserted native tab immediately, including when it is the only effect
+in the cell. The sequence-integrated tracker uses the same mapped cursor path,
+so insertion edits the underlying shared pattern rather than sequence-local data.
 
 Effect stacks can be edited without leaving the tracker keyboard flow. `Alt+Insert`
 inserts a new IT-style slot before the selected effect; `Alt+Shift+Insert` inserts
@@ -291,7 +301,7 @@ may precede the command (for example, an empty slot can hold `.15`, then become
 one effect remains, the expanded stack collapses back to the ordinary single-
 effect view. `Alt+Left`/`Alt+Right` reorder the selected effect while expanded,
 and `Alt+Home`/`Alt+End` select the first/last stack member. Expanded tabs may
-also be dragged to reorder them. Right-clicking a tab first makes it the logical
-target, then offers **Insert Before**, **Insert After**, and **Delete**, all routed
-through the same stack-editing commands as the keyboard shortcuts. Copy/paste is
-intentionally deferred.
+also be dragged to reorder them. A tab's context menu labels tracker insertion
+explicitly as **Insert Tracker Slot Before/After**, alongside native insertion
+and **Delete**; all operations route through the same framework-independent
+stack-editing commands. Copy/paste is intentionally deferred.
