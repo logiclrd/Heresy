@@ -306,44 +306,80 @@ public sealed class AssetPersistenceTests
 
 	private static string MinimalManifest(string assetPath)
 	{
-		string escapedPath = assetPath
-			.Replace("\\\\", "\\\\\\\\")
-			.Replace("\\\"", "\\\\\\\"");
-		return $"""
-		{
-		  "format": "Heresy",
-		  "version": 3,
-		  "nextObjectId": 2,
-		  "rootSequenceId": 0,
-		  "objects": {
-		    "1": {
-		      "name": "Sample",
-		      "type": "sample",
-		      "asset": { "path": "{{escapedPath}}", "sha256": null },
-		      "referenceFrequencyHz": 261.6255653005986,
-		      "loop": { "mode": "none", "startFrame": 0, "endFrameExclusive": 0 },
-		      "sourceChannelPositions": []
-		    }
-		  },
-		  "tombstones": {},
-		  "tree": {
-		    "type": "folder",
-		    "name": "Song",
-		    "children": [
-		      { "type": "folder", "name": "Sequences", "children": [] },
-		      { "type": "folder", "name": "Patterns", "children": [] },
-		      { "type": "folder", "name": "Instruments", "children": [] },
-		      {
-		        "type": "folder",
-		        "name": "Samples",
-		        "children": [
-		          { "type": "object", "name": "Sample", "objectId": 1 }
-		        ]
-		      }
-		    ]
-		  }
-		}
-		""";
+		JsonArray sections =
+		[
+			new JsonObject
+			{
+				["type"] = "folder",
+				["name"] = "Sequences",
+				["children"] = new JsonArray(),
+			},
+			new JsonObject
+			{
+				["type"] = "folder",
+				["name"] = "Patterns",
+				["children"] = new JsonArray(),
+			},
+			new JsonObject
+			{
+				["type"] = "folder",
+				["name"] = "Instruments",
+				["children"] = new JsonArray(),
+			},
+			new JsonObject
+			{
+				["type"] = "folder",
+				["name"] = "Samples",
+				["children"] = new JsonArray
+				{
+					new JsonObject
+					{
+						["type"] = "object",
+						["name"] = "Sample",
+						["objectId"] = 1,
+					},
+				},
+			},
+		];
+
+		JsonObject root =
+			new()
+			{
+				["format"] = "Heresy",
+				["version"] = 3,
+				["nextObjectId"] = 2,
+				["rootSequenceId"] = 0,
+				["objects"] = new JsonObject
+				{
+					["1"] = new JsonObject
+					{
+						["name"] = "Sample",
+						["type"] = "sample",
+						["asset"] = new JsonObject
+						{
+							["path"] = assetPath,
+							["sha256"] = null,
+						},
+						["referenceFrequencyHz"] = 261.6255653005986,
+						["loop"] = new JsonObject
+						{
+							["mode"] = "none",
+							["startFrame"] = 0,
+							["endFrameExclusive"] = 0,
+						},
+						["sourceChannelPositions"] = new JsonArray(),
+					},
+				},
+				["tombstones"] = new JsonObject(),
+				["tree"] = new JsonObject
+				{
+					["type"] = "folder",
+					["name"] = "Song",
+					["children"] = sections,
+				},
+			};
+
+		return root.ToJsonString();
 	}
 
 	private static void WriteEntry(ZipArchive zip, string name, string content)
