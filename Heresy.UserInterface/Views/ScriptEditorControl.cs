@@ -209,7 +209,7 @@ public sealed class ScriptEditorControl : UserControl
 			new()
 			{
 				Text =
-					"Object references are persisted as _O(id). Roslyn analysis identifies semantic references and projects their current names below without rewriting the source. Atomic named-token editing and executable script compilation remain future work.",
+					"Object references are persisted as _O(id). Roslyn validation below uses the same restricted-language rules as executable compilation, while semantic references are projected to current names without rewriting source. Atomic named-token editing remains future work.",
 				TextWrapping = TextWrapping.Wrap,
 				MaxWidth = 900,
 			};
@@ -372,21 +372,28 @@ public sealed class ScriptEditorControl : UserControl
 	{
 		try
 		{
+			string source = _source.Text ?? string.Empty;
 			ScriptSourceDocumentAnalysis analysis =
-				ScriptSourceDocumentAnalyzer.Analyze(
-					_workspace,
-					_source.Text ?? string.Empty);
+				_pattern is not null
+					? ScriptSourceDocumentAnalyzer.Analyze(
+						_workspace,
+						_pattern,
+						source)
+					: ScriptSourceDocumentAnalyzer.Analyze(
+						_workspace,
+						_sequence!,
+						source);
 
 			List<string> lines = [];
-			if (analysis.Syntax.Diagnostics.Count == 0)
+			if (analysis.Diagnostics.Count == 0)
 			{
-				lines.Add("Analysis: no reference diagnostics.");
+				lines.Add("Analysis: no compiler diagnostics.");
 			}
 			else
 			{
 				lines.Add("Diagnostics:");
 				foreach (ScriptAnalysisDiagnostic diagnostic
-					in analysis.Syntax.Diagnostics)
+					in analysis.Diagnostics)
 				{
 					lines.Add(
 						$"{diagnostic.Severity} {diagnostic.Code} "
