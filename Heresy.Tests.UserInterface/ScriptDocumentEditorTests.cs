@@ -200,4 +200,32 @@ public sealed class ScriptDocumentEditorTests
 
 		action.Should().Throw<InvalidOperationException>();
 	}
+	[Test]
+	public void InsertReferenceReplacesSelectionAndReturnsCaretAfterAtomicSyntax()
+	{
+		ScriptReferenceInsertion result =
+			ScriptDocumentEditor.InsertObjectReference(
+				"before SELECTED after",
+				selectionStart: 7,
+				selectionEnd: 15,
+				(ObjectId)42U);
+
+		result.Text.Should().Be("before _O(42) after");
+		result.Caret.Should().Be(13);
+	}
+
+	[Test]
+	public void InsertReferenceNormalizesReverseSelection()
+	{
+		ScriptReferenceInsertion result =
+			ScriptDocumentEditor.InsertObjectReference(
+				"abcdef",
+				selectionStart: 5,
+				selectionEnd: 2,
+				(ObjectId)7U);
+
+		result.Text.Should().Be("ab_O(7)f");
+		result.Caret.Should().Be(7);
+	}
+
 }
