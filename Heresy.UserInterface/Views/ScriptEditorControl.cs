@@ -36,6 +36,8 @@ public sealed class ScriptEditorControl : UserControl
 		new();
 	private readonly ScriptSyntaxColorizer _syntaxColorizer =
 		new();
+	private readonly ScriptDiagnosticRenderer _diagnosticRenderer =
+		new();
 	private readonly ComboBox _reference;
 	private readonly TextBlock _message = new()
 	{
@@ -128,6 +130,8 @@ public sealed class ScriptEditorControl : UserControl
 			_referenceGenerator);
 		_source.TextArea.TextView.LineTransformers.Add(
 			_syntaxColorizer);
+		_source.TextArea.TextView.BackgroundRenderers.Add(
+			_diagnosticRenderer);
 		_source.TextChanged += (_, _) =>
 			RefreshAnalysis();
 
@@ -221,7 +225,7 @@ public sealed class ScriptEditorControl : UserControl
 			new()
 			{
 				Text =
-					"Object references remain canonical _O(id) expressions in the AvaloniaEdit document. Roslyn-recognized references are rendered as single visual object-name tokens without changing raw source offsets, while the same incremental Roslyn syntax tree drives live C# syntax highlighting after element generation.",
+					"Object references remain canonical _O(id) expressions in the AvaloniaEdit document. Roslyn-recognized references are rendered as single visual object-name tokens without changing raw source offsets; the same incremental Roslyn analysis drives live syntax colors and severity-colored diagnostic squiggles directly in the editor.",
 				TextWrapping = TextWrapping.Wrap,
 				MaxWidth = 900,
 			};
@@ -397,6 +401,10 @@ public sealed class ScriptEditorControl : UserControl
 				ScriptSyntaxHighlightCatalog.Create(
 					analysis.SyntaxSnapshot,
 					referenceTokens));
+			_diagnosticRenderer.SetMarkers(
+				ScriptDiagnosticVisualMarkerCatalog.Create(
+					_source.Document.TextLength,
+					analysis.Diagnostics));
 			_source.TextArea.TextView.Redraw();
 			RenderAnalysis(analysis);
 		}
