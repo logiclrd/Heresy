@@ -34,6 +34,8 @@ public sealed class ScriptEditorControl : UserControl
 	private readonly TextEditor _source;
 	private readonly ScriptObjectReferenceElementGenerator _referenceGenerator =
 		new();
+	private readonly ScriptSyntaxColorizer _syntaxColorizer =
+		new();
 	private readonly ComboBox _reference;
 	private readonly TextBlock _message = new()
 	{
@@ -124,6 +126,8 @@ public sealed class ScriptEditorControl : UserControl
 			};
 		_source.TextArea.TextView.ElementGenerators.Add(
 			_referenceGenerator);
+		_source.TextArea.TextView.LineTransformers.Add(
+			_syntaxColorizer);
 		_source.TextChanged += (_, _) =>
 			RefreshAnalysis();
 
@@ -217,7 +221,7 @@ public sealed class ScriptEditorControl : UserControl
 			new()
 			{
 				Text =
-					"Object references remain canonical _O(id) expressions in the AvaloniaEdit document. Roslyn-recognized references are rendered as single visual object-name tokens without changing raw source offsets, so AvaloniaEdit's native selection, clipboard and undo behavior continues to operate on valid restricted C#.",
+					"Object references remain canonical _O(id) expressions in the AvaloniaEdit document. Roslyn-recognized references are rendered as single visual object-name tokens without changing raw source offsets, while the same incremental Roslyn syntax tree drives live C# syntax highlighting after element generation.",
 				TextWrapping = TextWrapping.Wrap,
 				MaxWidth = 900,
 			};
@@ -384,9 +388,15 @@ public sealed class ScriptEditorControl : UserControl
 				AnalyzeSource(
 					_source.Text
 						?? string.Empty);
-			_referenceGenerator.SetTokens(
+			IReadOnlyList<ScriptReferenceVisualToken> referenceTokens =
 				ScriptReferenceVisualTokenCatalog.Create(
-					analysis.References));
+					analysis.References);
+			_referenceGenerator.SetTokens(
+				referenceTokens);
+			_syntaxColorizer.SetSpans(
+				ScriptSyntaxHighlightCatalog.Create(
+					analysis.SyntaxSnapshot,
+					referenceTokens));
 			_source.TextArea.TextView.Redraw();
 			RenderAnalysis(analysis);
 		}
