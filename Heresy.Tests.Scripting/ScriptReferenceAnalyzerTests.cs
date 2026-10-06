@@ -109,6 +109,29 @@ public sealed class ScriptReferenceAnalyzerTests
 				diagnostic.Severity == ScriptDiagnosticSeverity.Error);
 	}
 
+
+	[Test]
+	public void IncrementalSnapshotKeepsValidReferenceWhileLaterCodeIsIncomplete()
+	{
+		ScriptReferenceAnalysisSnapshot initial =
+			ScriptReferenceAnalyzer.CreateSnapshot(
+				"var source = _O(17);");
+
+		ScriptReferenceAnalysisSnapshot edited =
+			ScriptReferenceAnalyzer.CreateSnapshot(
+				"var source = _O(17);\nif (",
+				initial);
+
+		edited.Text.ToString().Should().EndWith("if (");
+		edited.Analysis.References.Should().ContainSingle(
+			reference => reference.Id == (ObjectId)17U);
+		edited.Analysis.Diagnostics.Should().Contain(
+			diagnostic =>
+				diagnostic.Severity
+					== ScriptDiagnosticSeverity.Error);
+	}
+
+
 	[Test]
 	public void ProjectionUsesCurrentLiveNameWithoutChangingPersistedId()
 	{
