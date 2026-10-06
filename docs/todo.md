@@ -74,7 +74,9 @@ preserved during implementation.
   - `N`: half-diminished seventh
   - `M`: diminished seventh
 - [ ] Show the notes making up the current chord in a status bar above the
-  pattern editor.
+  pattern editor. When the user plays or inputs a chord by pressing a note to
+  act as the root key, the notes shown in the status bar update to the specific
+  notes for the specified chord root.
 - [ ] Once a chord is active, pressing a tracker note key transposes the chord
   to that root and inserts its enabled notes into successive pattern channels,
   starting with the current channel. Notes that would extend past the right edge
@@ -82,10 +84,13 @@ preserved during implementation.
 - [ ] `Ctrl+Alt+-` / `Ctrl+Alt++`: rotate the chord tones, moving the first tone
   to the end or the last tone to the beginning respectively.
 - [ ] `Ctrl+Alt+Numpad *`: add chord tones by repeating the chord/scale through
-  higher octaves. `Ctrl+Alt+Numpad /`: remove chord tones.
+  higher octaves, add one additional note per press. `Ctrl+Alt+Numpad /`: remove
+  chord tones, one per press.
 - [ ] `Ctrl+Alt+1`, `Ctrl+Alt+2`, `Ctrl+Alt+3`, ... toggle the corresponding
   chord tones enabled/disabled. Disabled tones remain in the status bar but are
   grayed out. Only enabled tones consume destination channels during insertion.
+  Enabled/disabled state by index is remembered through chord changes.
+  `Ctrl-Alt-=` sets all current notes enabled.
 
 ## Pattern row insertion and deletion
 
