@@ -24,6 +24,8 @@ public sealed class PatternEditorControl : UserControl
 	private const double CellWidth = 190;
 	private const double RowHeaderWidth = 54;
 	private const double RowHeight = 28;
+	private const double VolumeWidth = 34;
+	private const double EffectWidth = 54;
 
 	private readonly Window _owner;
 	private readonly DocumentWorkspace _workspace;
@@ -41,6 +43,7 @@ public sealed class PatternEditorControl : UserControl
 	private readonly ScrollViewer _scroll;
 	private readonly TextBlock _message;
 	private readonly Dictionary<(int Row, int Channel), Border> _cellBorders = [];
+	private readonly Dictionary<(int Row, int Channel), Border> _noteFields = [];
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _noteTexts = [];
 	private readonly Dictionary<(int Row, int Channel), Border> _volumeFields = [];
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _volumeTexts = [];
@@ -276,6 +279,7 @@ public sealed class PatternEditorControl : UserControl
 	{
 		CollapseVisualEffects(collapseCursor: true);
 		_cellBorders.Clear();
+		_noteFields.Clear();
 		_noteTexts.Clear();
 		_volumeFields.Clear();
 		_volumeTexts.Clear();
@@ -353,6 +357,16 @@ public sealed class PatternEditorControl : UserControl
 				Margin = new Thickness(5, 0),
 				TextTrimming = TextTrimming.CharacterEllipsis,
 			};
+		Border noteField =
+			new()
+			{
+				Height = RowHeight - 4,
+				HorizontalAlignment = HorizontalAlignment.Stretch,
+				VerticalAlignment = VerticalAlignment.Center,
+				BorderBrush = Brushes.Transparent,
+				BorderThickness = new Thickness(1),
+				Child = note,
+			};
 
 		TextBlock volumeText =
 			new()
@@ -365,7 +379,7 @@ public sealed class PatternEditorControl : UserControl
 		Border volumeField =
 			new()
 			{
-				Width = 34,
+				Width = VolumeWidth,
 				Height = RowHeight - 4,
 				HorizontalAlignment = HorizontalAlignment.Stretch,
 				VerticalAlignment = VerticalAlignment.Center,
@@ -377,6 +391,7 @@ public sealed class PatternEditorControl : UserControl
 		PatternEffectStripControl effects =
 			new(
 				CellWidth - 2,
+				EffectWidth,
 				RowHeight - 2,
 				() => ExpandVisualEffects(row, channel),
 				(effectIndex, field) =>
@@ -408,14 +423,14 @@ public sealed class PatternEditorControl : UserControl
 		content.ColumnDefinitions.Add(
 			new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
 		content.ColumnDefinitions.Add(
-			new ColumnDefinition(new GridLength(34)));
+			new ColumnDefinition(new GridLength(VolumeWidth)));
 		content.ColumnDefinitions.Add(
-			new ColumnDefinition(new GridLength(54)));
-		Grid.SetColumn(note, 0);
+			new ColumnDefinition(new GridLength(EffectWidth)));
+		Grid.SetColumn(noteField, 0);
 		Grid.SetColumn(volumeField, 1);
 		Grid.SetColumn(effects, 0);
 		Grid.SetColumnSpan(effects, 3);
-		content.Children.Add(note);
+		content.Children.Add(noteField);
 		content.Children.Add(volumeField);
 		content.Children.Add(effects);
 
@@ -439,6 +454,7 @@ public sealed class PatternEditorControl : UserControl
 			OnCellTextInput(row, channel, e);
 
 		_cellBorders[(row, channel)] = cell;
+		_noteFields[(row, channel)] = noteField;
 		_noteTexts[(row, channel)] = note;
 		_volumeFields[(row, channel)] = volumeField;
 		_volumeTexts[(row, channel)] = volumeText;
@@ -457,33 +473,22 @@ public sealed class PatternEditorControl : UserControl
 
 		Point point = e.GetPosition(cell);
 		PatternCell? patternCell = _pattern.Grid[row, channel];
-		PatternCellField field = PatternCellField.Note;
+		int effectCount = patternCell?.Effects.Count ?? 0;
+		bool singleTrackerStyle =
+			effectCount != 1
+				|| PatternEffectCodec.IsTrackerStyle(
+					patternCell!.Effects[0]);
+		PatternCellField field =
+			PatternCellFieldGeometry.HitTest(
+				point.X,
+				CellWidth,
+				VolumeWidth,
+				EffectWidth,
+				effectCount,
+				singleTrackerStyle);
 
-		double effectLeft = CellWidth - 54;
-		double volumeLeft = effectLeft - 34;
-		if (point.X >= effectLeft)
-		{
-			if ((patternCell?.Effects.Count ?? 0) > 1)
-			{
-				field = PatternCellField.EffectCommand;
-			}
-			else if (patternCell?.Effects.Count == 1
-				&& !PatternEffectCodec.IsTrackerStyle(
-					patternCell.Effects[0]))
-			{
-				field = PatternCellField.EffectCommand;
-			}
-			else
-			{
-				field = point.X < CellWidth - 32
-					? PatternCellField.EffectCommand
-					: PatternCellField.EffectParameter;
-			}
-		}
-		else if (point.X >= volumeLeft)
-		{
-			field = PatternCellField.Volume;
-		}
+		if (_expandedCell == (row, channel))
+			CollapseVisualEffects(collapseCursor: true);
 
 		_volumeInput.Reset();
 		_cursor.SetPosition(row, channel, field);
@@ -510,6 +515,44 @@ public sealed class PatternEditorControl : UserControl
 			RefreshCursorVisuals();
 			FocusCursorCell();
 			return;
+		}
+
+		KeyModifiers noteBlockingModifiers =
+			KeyModifiers.Control
+				| KeyModifiers.Alt
+				| KeyModifiers.Meta;
+		if (_cursor.Field == PatternCellField.Note
+			&& (e.KeyModifiers & noteBlockingModifiers) == 0)
+		{
+			int editedRow = _cursor.Row;
+			int editedChannel = _cursor.Channel;
+			PatternNoteInputResult noteResult =
+				PatternNoteKeyboardEditor.TypePhysical(
+					_workspace,
+					_pattern,
+					_cursor,
+					_noteInputState,
+					e.PhysicalKey);
+
+			if (noteResult.Handled)
+			{
+				if (noteResult.Rejected)
+				{
+					_message.Text =
+						"Choose a current sound source before entering pitched notes.";
+				}
+				else if (noteResult.Changed)
+				{
+					RefreshCell(editedRow, editedChannel);
+					_changed(
+						$"Edited note at row {editedRow}, channel {editedChannel + 1}");
+				}
+
+				e.Handled = true;
+				RefreshCursorVisuals();
+				FocusCursorCell();
+				return;
+			}
 		}
 
 		switch (e.Key)
@@ -598,31 +641,10 @@ public sealed class PatternEditorControl : UserControl
 
 		if (_cursor.Field == PatternCellField.Note)
 		{
-			PatternNoteInputResult noteResult =
-				PatternNoteKeyboardEditor.Type(
-					_workspace,
-					_pattern,
-					_cursor,
-					_noteInputState,
-					value);
-
-			if (!noteResult.Handled)
-				return;
-
-			if (noteResult.Rejected)
-			{
-				_message.Text =
-					"Choose a current sound source before entering pitched notes.";
-			}
-			else if (noteResult.Changed)
-			{
-				RefreshCell(editedRow, editedChannel);
-				_changed(
-					$"Edited note at row {editedRow}, channel {editedChannel + 1}");
-			}
-
-			RefreshCursorVisuals();
-			FocusCursorCell();
+			// Tracker notes are driven by KeyDown/PhysicalKey so their piano
+			// geometry is independent of the active keyboard layout. Consuming
+			// TextInput here also prevents a handled physical key from entering
+			// the same note a second time through its produced text symbol.
 			e.Handled = true;
 			return;
 		}
@@ -1144,6 +1166,17 @@ public sealed class PatternEditorControl : UserControl
 				active ? Brushes.DeepSkyBlue : Brushes.Gray;
 			border.BorderThickness =
 				active ? new Thickness(2) : new Thickness(1);
+			if (_noteFields.TryGetValue(
+				(row, channel),
+				out Border? noteField))
+			{
+				bool noteActive =
+					active && _cursor.Field == PatternCellField.Note;
+				noteField.BorderBrush =
+					noteActive ? Brushes.DeepSkyBlue : Brushes.Transparent;
+				noteField.BorderThickness =
+					noteActive ? new Thickness(2) : new Thickness(1);
+			}
 			if (_volumeFields.TryGetValue(
 				(row, channel),
 				out Border? volumeField))

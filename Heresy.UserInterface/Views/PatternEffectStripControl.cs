@@ -39,6 +39,7 @@ public sealed class PatternEffectStripControl : UserControl
 
 	private readonly Canvas _canvas = new();
 	private readonly double _viewportWidth;
+	private readonly double _collapsedWidth;
 	private readonly double _rowHeight;
 	private readonly Action _requestExpansion;
 	private readonly Action<int, ExpandedEffectField> _requestSelection;
@@ -60,6 +61,7 @@ public sealed class PatternEffectStripControl : UserControl
 
 	public PatternEffectStripControl(
 		double viewportWidth,
+		double collapsedWidth,
 		double rowHeight,
 		Action requestExpansion,
 		Action<int, ExpandedEffectField> requestSelection,
@@ -69,10 +71,13 @@ public sealed class PatternEffectStripControl : UserControl
 	{
 		if (!(viewportWidth > 0))
 			throw new ArgumentOutOfRangeException(nameof(viewportWidth));
+		if (!(collapsedWidth > 0) || collapsedWidth > viewportWidth)
+			throw new ArgumentOutOfRangeException(nameof(collapsedWidth));
 		if (!(rowHeight > 0))
 			throw new ArgumentOutOfRangeException(nameof(rowHeight));
 
 		_viewportWidth = viewportWidth;
+		_collapsedWidth = collapsedWidth;
 		_rowHeight = rowHeight;
 		_requestExpansion =
 			requestExpansion ?? throw new ArgumentNullException(nameof(requestExpansion));
@@ -85,9 +90,10 @@ public sealed class PatternEffectStripControl : UserControl
 		_requestReorder =
 			requestReorder ?? throw new ArgumentNullException(nameof(requestReorder));
 
-		Width = viewportWidth;
+		Width = collapsedWidth;
 		Height = rowHeight;
 		HorizontalAlignment = HorizontalAlignment.Right;
+		Background = Brushes.Transparent;
 		VerticalAlignment = VerticalAlignment.Center;
 		ClipToBounds = true;
 		Content = _canvas;
@@ -129,6 +135,7 @@ public sealed class PatternEffectStripControl : UserControl
 		}
 
 		_expanded = expanded;
+		Width = _expanded ? _viewportWidth : _collapsedWidth;
 		_keyboardActive = keyboardActive;
 		_collapsedField = collapsedField;
 		_selectedEffectIndex = selectedEffectIndex;
@@ -166,17 +173,19 @@ public sealed class PatternEffectStripControl : UserControl
 			return;
 		}
 
+		double layoutWidth =
+			_expanded ? _viewportWidth : _collapsedWidth;
 		EffectStripLayoutItem[] layout =
 			_expanded
 				? EffectStripLayout.Expanded(
 					_effects.Count,
-					_viewportWidth,
+					layoutWidth,
 					TabWidth,
 					EdgeWidth,
 					_scrollOffset)
 				: EffectStripLayout.Compact(
 					_effects.Count,
-					_viewportWidth,
+					layoutWidth,
 					TabWidth,
 					RevealWidth);
 
@@ -235,7 +244,21 @@ public sealed class PatternEffectStripControl : UserControl
 
 			if (!_expanded)
 			{
-				_requestExpansion();
+				ExpandedEffectField collapsedField;
+				if (!effect.IsTrackerStyle)
+				{
+					collapsedField = ExpandedEffectField.Native;
+				}
+				else
+				{
+					Point point = e.GetPosition(outer);
+					collapsedField =
+						point.X < Math.Min(20, width * 0.4)
+							? ExpandedEffectField.Command
+							: ExpandedEffectField.Parameter;
+				}
+
+				_requestSelection(index, collapsedField);
 				e.Handled = true;
 				return;
 			}
@@ -320,8 +343,12 @@ public sealed class PatternEffectStripControl : UserControl
 		double edge = maxScroll > 0
 			? Math.Min(EdgeWidth, _viewportWidth / 2)
 			: 0;
+		double contentWidth = _effects.Count * TabWidth;
+		double firstX = maxScroll > 0
+			? edge
+			: Math.Max(0, _viewportWidth - contentWidth);
 		double contentX =
-			canvasX + _scrollOffset - edge;
+			canvasX + _scrollOffset - firstX;
 		int index =
 			(int)Math.Floor(
 				(contentX + (TabWidth / 2))
@@ -392,11 +419,12 @@ public sealed class PatternEffectStripControl : UserControl
 
 	private void AddEmptyCursorPlaceholder()
 	{
-		double x = Math.Max(0, _viewportWidth - TabWidth);
+		double width = _expanded ? _viewportWidth : _collapsedWidth;
+		double x = Math.Max(0, width - TabWidth);
 		Border placeholder =
 			new()
 			{
-				Width = Math.Min(TabWidth, _viewportWidth),
+				Width = Math.Min(TabWidth, width),
 				Height = Math.Max(1, _rowHeight - 2),
 				BorderBrush = Brushes.White,
 				BorderThickness = new Thickness(1),
