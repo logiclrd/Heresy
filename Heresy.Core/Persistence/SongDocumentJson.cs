@@ -100,27 +100,31 @@ public static class SongDocumentJson
 	internal static string Serialize(
 		SongDocument document,
 		Func<SampleDefinition, string> assetPathSelector,
-		IScriptObjectReferenceAnalyzer? scriptReferenceAnalyzer = null)
+		IScriptObjectReferenceAnalyzer? scriptReferenceAnalyzer = null,
+		bool pruneUnreferencedTombstones = true)
 	{
 		ArgumentNullException.ThrowIfNull(document);
 		ArgumentNullException.ThrowIfNull(assetPathSelector);
 
-		SongReferenceAnalysis referenceAnalysis =
-			SongReferenceAnalyzer.Analyze(
-				document,
-				scriptReferenceAnalyzer);
-		HashSet<ObjectId> referencedIds =
-			referenceAnalysis.References
-				.Select(reference => reference.TargetId)
-				.ToHashSet();
-
-		if (referenceAnalysis.HasOpaqueScriptReferences)
+		if (pruneUnreferencedTombstones)
 		{
-			foreach (ObjectId id in document.Tombstones.Keys)
-				referencedIds.Add(id);
-		}
+			SongReferenceAnalysis referenceAnalysis =
+				SongReferenceAnalyzer.Analyze(
+					document,
+					scriptReferenceAnalyzer);
+			HashSet<ObjectId> referencedIds =
+				referenceAnalysis.References
+					.Select(reference => reference.TargetId)
+					.ToHashSet();
 
-		document.PruneTombstones(referencedIds);
+			if (referenceAnalysis.HasOpaqueScriptReferences)
+			{
+				foreach (ObjectId id in document.Tombstones.Keys)
+					referencedIds.Add(id);
+			}
+
+			document.PruneTombstones(referencedIds);
+		}
 
 		JsonObject root =
 			new()
