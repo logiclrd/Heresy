@@ -44,6 +44,8 @@ public sealed class PatternEffectStripControl : UserControl
 	private readonly Action _requestExpansion;
 	private readonly Action<int, ExpandedEffectField> _requestSelection;
 	private readonly Action<int> _requestEditNative;
+	private readonly Action<int, bool> _requestInsertNative;
+	private readonly Action _requestInsertNativeEmpty;
 	private readonly Action<int> _requestDelete;
 	private readonly Action<int, bool> _requestInsert;
 	private readonly Action<int, int> _requestReorder;
@@ -67,6 +69,8 @@ public sealed class PatternEffectStripControl : UserControl
 		Action requestExpansion,
 		Action<int, ExpandedEffectField> requestSelection,
 		Action<int> requestEditNative,
+		Action<int, bool> requestInsertNative,
+		Action requestInsertNativeEmpty,
 		Action<int> requestDelete,
 		Action<int, bool> requestInsert,
 		Action<int, int> requestReorder)
@@ -87,6 +91,10 @@ public sealed class PatternEffectStripControl : UserControl
 			requestSelection ?? throw new ArgumentNullException(nameof(requestSelection));
 		_requestEditNative =
 			requestEditNative ?? throw new ArgumentNullException(nameof(requestEditNative));
+		_requestInsertNative =
+			requestInsertNative ?? throw new ArgumentNullException(nameof(requestInsertNative));
+		_requestInsertNativeEmpty =
+			requestInsertNativeEmpty ?? throw new ArgumentNullException(nameof(requestInsertNativeEmpty));
 		_requestDelete =
 			requestDelete ?? throw new ArgumentNullException(nameof(requestDelete));
 		_requestInsert =
@@ -101,6 +109,7 @@ public sealed class PatternEffectStripControl : UserControl
 		VerticalAlignment = VerticalAlignment.Center;
 		ClipToBounds = true;
 		Content = _canvas;
+		ContextMenu = BuildEmptyContextMenu();
 
 		_scrollTimer =
 			new DispatcherTimer
@@ -324,11 +333,25 @@ public sealed class PatternEffectStripControl : UserControl
 		int index,
 		PatternEffectViewModel effect)
 	{
-		MenuItem insertBefore = new() { Header = "Insert Before" };
-		insertBefore.Click += (_, _) => _requestInsert(index, false);
+		MenuItem insertTrackerBefore =
+			new() { Header = "Insert Tracker Slot Before" };
+		insertTrackerBefore.Click += (_, _) =>
+			_requestInsert(index, false);
 
-		MenuItem insertAfter = new() { Header = "Insert After" };
-		insertAfter.Click += (_, _) => _requestInsert(index, true);
+		MenuItem insertTrackerAfter =
+			new() { Header = "Insert Tracker Slot After" };
+		insertTrackerAfter.Click += (_, _) =>
+			_requestInsert(index, true);
+
+		MenuItem insertNativeBefore =
+			new() { Header = "Insert Native Effect Before..." };
+		insertNativeBefore.Click += (_, _) =>
+			_requestInsertNative(index, false);
+
+		MenuItem insertNativeAfter =
+			new() { Header = "Insert Native Effect After..." };
+		insertNativeAfter.Click += (_, _) =>
+			_requestInsertNative(index, true);
 
 		MenuItem delete = new() { Header = "Delete" };
 		delete.Click += (_, _) => _requestDelete(index);
@@ -349,14 +372,32 @@ public sealed class PatternEffectStripControl : UserControl
 			items.Add(edit);
 			items.Add(new Separator());
 		}
-		items.Add(insertBefore);
-		items.Add(insertAfter);
+		items.Add(insertTrackerBefore);
+		items.Add(insertTrackerAfter);
+		items.Add(insertNativeBefore);
+		items.Add(insertNativeAfter);
 		items.Add(new Separator());
 		items.Add(delete);
 
 		return new ContextMenu
 		{
 			ItemsSource = items,
+		};
+	}
+
+	private ContextMenu BuildEmptyContextMenu()
+	{
+		MenuItem insertNative =
+			new()
+			{
+				Header = "Insert Native Effect...",
+			};
+		insertNative.Click += (_, _) =>
+			_requestInsertNativeEmpty();
+
+		return new ContextMenu
+		{
+			ItemsSource = new object[] { insertNative },
 		};
 	}
 
