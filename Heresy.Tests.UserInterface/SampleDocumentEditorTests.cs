@@ -33,6 +33,7 @@ public sealed class SampleDocumentEditorTests
 		using TempProject project = new();
 		string songPath = project.Path("songs", "track.json");
 		string assetPath = project.Path("assets", "Kick.wav");
+		Directory.CreateDirectory(System.IO.Path.GetDirectoryName(songPath)!);
 		Directory.CreateDirectory(System.IO.Path.GetDirectoryName(assetPath)!);
 		File.WriteAllBytes(assetPath, Encoding.UTF8.GetBytes("hello"));
 
@@ -131,6 +132,7 @@ public sealed class SampleDocumentEditorTests
 		string songPath = project.Path("songs", "track.json");
 		string firstPath = project.Path("assets", "first.wav");
 		string secondPath = project.Path("assets", "second.wav");
+		Directory.CreateDirectory(System.IO.Path.GetDirectoryName(songPath)!);
 		Directory.CreateDirectory(System.IO.Path.GetDirectoryName(firstPath)!);
 		File.WriteAllText(firstPath, "first");
 		File.WriteAllText(secondPath, "second");
