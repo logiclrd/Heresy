@@ -12,6 +12,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 
+using Heresy.Core.Envelopes;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -203,6 +204,10 @@ public sealed class MainWindow : Window
 			Button newInstrument = new() { Content = "+ Instrument" };
 			newInstrument.Click += async (_, _) => await CreateInstrumentAsync();
 			actions.Children.Add(newInstrument);
+
+			Button newEnvelope = new() { Content = "+ Envelope" };
+			newEnvelope.Click += async (_, _) => await CreateEnvelopeAsync();
+			actions.Children.Add(newEnvelope);
 		}
 		if (section == SongTreeSection.Samples)
 		{
@@ -495,6 +500,33 @@ public sealed class MainWindow : Window
 		catch (Exception ex)
 		{
 			SetStatus($"Could not create instrument: {ex.Message}");
+		}
+	}
+
+	private async Task CreateEnvelopeAsync()
+	{
+		TextPromptDialog dialog =
+			new("New envelope", "Envelope name:", "New Envelope");
+		string? name = await dialog.ShowDialog<string?>(this);
+		if (name is null)
+			return;
+
+		try
+		{
+			AdsrEnvelopeDefinition envelope =
+				EnvelopeDocumentEditor.CreateAdsrEnvelope(
+					_workspace,
+					name);
+			SongTreeObject? node =
+				FindTreeObject(
+					_workspace.Document.GetSectionRoot(SongTreeSection.Instruments),
+					envelope.Id);
+			RefreshDocumentView($"Created envelope {envelope.Name}", node);
+			ShowEnvelopeEditor(envelope, node);
+		}
+		catch (Exception ex)
+		{
+			SetStatus($"Could not create envelope: {ex.Message}");
 		}
 	}
 
@@ -955,6 +987,20 @@ public sealed class MainWindow : Window
 			items.Add(editInstrument);
 			items.Add(new Separator());
 		}
+		if (section == SongTreeSection.Instruments
+			&& !item.IsMissingReference
+			&& item.Kind == SongObjectKind.Envelope)
+		{
+			MenuItem editEnvelope = new() { Header = "Edit Envelope..." };
+			editEnvelope.Click += (_, _) =>
+			{
+				tree.SelectedItem = control;
+				SelectTreeItem(item, tree);
+				ShowEnvelopeEditor(item);
+			};
+			items.Add(editEnvelope);
+			items.Add(new Separator());
+		}
 		if (section == SongTreeSection.Samples
 			&& !item.IsMissingReference
 			&& item.Kind == SongObjectKind.Sample)
@@ -1136,6 +1182,40 @@ public sealed class MainWindow : Window
 		_mainContent.Content = editor;
 		UpdateWindowTitle();
 		SetStatus($"Editing instrument {instrument.Name}");
+	}
+
+	private void ShowEnvelopeEditor(SongTreeItemViewModel item)
+	{
+		if (item.ObjectId is not ObjectId id
+			|| !_workspace.Document.TryGet(id, out SongObject? songObject)
+			|| songObject is not AdsrEnvelopeDefinition envelope)
+		{
+			SetStatus("The selected envelope is not available.");
+			return;
+		}
+
+		ShowEnvelopeEditor(envelope, item.Node);
+	}
+
+	private void ShowEnvelopeEditor(
+		AdsrEnvelopeDefinition envelope,
+		SongTreeNode? selectNode)
+	{
+		EnvelopeEditorControl editor =
+			new(
+				_workspace,
+				envelope,
+				() => RefreshDocumentView(
+					$"Edited envelope {envelope.Name}",
+					selectNode),
+				message =>
+				{
+					UpdateWindowTitle();
+					SetStatus(message);
+				});
+		_mainContent.Content = editor;
+		UpdateWindowTitle();
+		SetStatus($"Editing envelope {envelope.Name}");
 	}
 
 	private async Task ShowSampleEditorAsync(SongTreeItemViewModel item)
