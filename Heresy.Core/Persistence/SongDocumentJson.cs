@@ -106,7 +106,9 @@ public static class SongDocumentJson
 		ArgumentNullException.ThrowIfNull(assetPathSelector);
 
 		SongReferenceAnalysis referenceAnalysis =
-			SongReferenceAnalyzer.Analyze(document);
+			SongReferenceAnalyzer.Analyze(
+				document,
+				scriptReferenceAnalyzer);
 		HashSet<ObjectId> referencedIds =
 			referenceAnalysis.References
 				.Select(reference => reference.TargetId)
