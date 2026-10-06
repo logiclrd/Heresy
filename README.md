@@ -15,8 +15,9 @@ The repository is intentionally split by concern.
 - `Heresy.Render.File` *(planned)* — FLAC, WAV and MP3 sinks.
 - `Heresy.UserInterface` — Avalonia single-document tracker UI. The current
   document view projects the four fixed song-tree sections into Sequences,
-  Patterns, Samples and Instruments panes, with sample import/editing and
-  external-asset diagnostics; realtime transport remains separate.
+  Patterns, Samples and Instruments panes, with sample import/editing, external-
+  asset diagnostics and a first data-pattern editing mode; realtime transport
+  remains separate.
 - A Roslyn-backed restricted-C# compiler assembly will also be added separately
   once the Core/Render contracts have been exercised.
 
@@ -123,3 +124,12 @@ bottom-right. The fixed section nodes themselves are not shown because each
 pane is the visual root of its subtree. New objects receive one canonical tree
 placement from `SongDocument.Add`; envelopes are grouped with Instruments.
 Nodes may be reorganized within a section but not moved between sections.
+
+Opening or creating a data pattern switches the main workspace into pattern
+mode rather than opening a modal editor. The initial pattern grid edits the
+semantic note column directly (empty/start/off/cut, source ObjectId, pitch and
+playback-speed multipliers, and mixdown), exposes row/channel dimensions plus
+minor/major row-highlight intervals, and warns before shrinking dimensions when
+populated cells would be discarded. Existing semantic effects are shown as an
+effect count and are preserved by note edits; effect-column editing and compact
+tracker notation are intentionally deferred to subsequent UI slices.
