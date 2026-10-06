@@ -13,6 +13,7 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 
 using Heresy.Core.Objects;
+using Heresy.Core.Samples;
 using Heresy.UserInterface.Dialogs;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.ViewModels;
@@ -25,6 +26,20 @@ public sealed class MainWindow : Window
 		new("Heresy song")
 		{
 			Patterns = new[] { "*.json" },
+		};
+
+	private static readonly FilePickerFileType SampleFileType =
+		new("Audio sample")
+		{
+			Patterns = new[]
+			{
+				"*.wav",
+				"*.flac",
+				"*.mp3",
+				"*.ogg",
+				"*.aif",
+				"*.aiff",
+			},
 		};
 
 	private static readonly DataFormat<SongTreeNode> TreeNodeFormat =
@@ -133,13 +148,27 @@ public sealed class MainWindow : Window
 		Button newFolder = new() { Content = "+ Folder" };
 		newFolder.Click += async (_, _) => await CreateFolderAsync(section);
 
+		StackPanel actions =
+			new()
+			{
+				Orientation = Orientation.Horizontal,
+				Spacing = 6,
+			};
+		if (section == SongTreeSection.Samples)
+		{
+			Button import = new() { Content = "+ Import" };
+			import.Click += async (_, _) => await ImportSamplesAsync();
+			actions.Children.Add(import);
+		}
+		actions.Children.Add(newFolder);
+
 		DockPanel header =
 			new()
 			{
 				Margin = new Thickness(8, 6),
 			};
-		DockPanel.SetDock(newFolder, Dock.Right);
-		header.Children.Add(newFolder);
+		DockPanel.SetDock(actions, Dock.Right);
+		header.Children.Add(actions);
 		header.Children.Add(title);
 
 		Grid pane = new();
@@ -317,6 +346,74 @@ public sealed class MainWindow : Window
 		SetStatus(
 			"The song has unsaved changes. Save it before replacing the active document.");
 		return false;
+	}
+
+	private async Task ImportSamplesAsync()
+	{
+		if (_workspace.FilePath is null)
+		{
+			await SaveDocumentAsAsync();
+			if (_workspace.FilePath is null)
+			{
+				SetStatus("Save the song before importing external sample files.");
+				return;
+			}
+		}
+
+		if (!StorageProvider.CanOpen)
+		{
+			SetStatus("This platform does not provide an open-file picker.");
+			return;
+		}
+
+		IReadOnlyList<IStorageFile> files =
+			await StorageProvider.OpenFilePickerAsync(
+				new FilePickerOpenOptions
+				{
+					Title = "Import sample assets",
+					AllowMultiple = true,
+					FileTypeFilter = new[] { SampleFileType, FilePickerFileTypes.All },
+				});
+		if (files.Count == 0)
+			return;
+
+		int imported = 0;
+		SongTreeNode? selectNode = null;
+		SampleDefinition? firstSample = null;
+		foreach (IStorageFile file in files)
+		{
+			string? path = file.TryGetLocalPath();
+			if (path is null)
+				continue;
+
+			try
+			{
+				SampleDefinition sample =
+					SampleDocumentEditor.Import(_workspace, path);
+				firstSample ??= sample;
+				selectNode ??= FindTreeObject(
+					_workspace.Document.GetSectionRoot(SongTreeSection.Samples),
+					sample.Id);
+				imported++;
+			}
+			catch (Exception ex)
+			{
+				SetStatus($"Import failed for {file.Name}: {ex.Message}");
+			}
+		}
+
+		if (imported == 0)
+		{
+			SetStatus("No sample files were imported.");
+			return;
+		}
+
+		RefreshDocumentView(
+			imported == 1 ? "Imported 1 sample" : $"Imported {imported} samples",
+			selectNode);
+
+		if (imported == 1 && firstSample is not null)
+			await ShowSampleEditorAsync(firstSample, selectNode);
 	}
 
 	private async Task CreateFolderAsync(SongTreeSection section)
@@ -676,16 +773,71 @@ public sealed class MainWindow : Window
 			await DeleteSelectedAsync();
 		};
 
+		List<object> items = [];
+		if (section == SongTreeSection.Samples
+			&& !item.IsMissingReference
+			&& item.Kind == SongObjectKind.Sample)
+		{
+			MenuItem editSample = new() { Header = "Edit Sample..." };
+			editSample.Click += async (_, _) =>
+			{
+				tree.SelectedItem = control;
+				SelectTreeItem(item, tree);
+				await ShowSampleEditorAsync(item);
+			};
+			items.Add(editSample);
+			items.Add(new Separator());
+		}
+		items.Add(newFolder);
+		items.Add(rename);
+		items.Add(new Separator());
+		items.Add(delete);
+
 		return new ContextMenu
 		{
-			ItemsSource = new object[]
-			{
-				newFolder,
-				rename,
-				new Separator(),
-				delete,
-			},
+			ItemsSource = items,
 		};
+	}
+
+	private async Task ShowSampleEditorAsync(SongTreeItemViewModel item)
+	{
+		if (item.ObjectId is not ObjectId id
+			|| !_workspace.Document.TryGet(id, out SongObject? songObject)
+			|| songObject is not SampleDefinition sample)
+		{
+			SetStatus("The selected sample is not available.");
+			return;
+		}
+
+		await ShowSampleEditorAsync(sample, item.Node);
+	}
+
+	private async Task ShowSampleEditorAsync(
+		SampleDefinition sample,
+		SongTreeNode? selectNode)
+	{
+		SampleEditorDialog dialog = new(_workspace, sample);
+		await dialog.ShowDialog(this);
+		RefreshDocumentView($"Updated sample {sample.Name}", selectNode);
+	}
+
+	private static SongTreeObject? FindTreeObject(
+		SongTreeFolder folder,
+		ObjectId id)
+	{
+		foreach (SongTreeNode child in folder.Children)
+		{
+			if (child is SongTreeObject songObject && songObject.ObjectId == id)
+				return songObject;
+			if (child is SongTreeFolder childFolder)
+			{
+				SongTreeObject? nested = FindTreeObject(childFolder, id);
+				if (nested is not null)
+					return nested;
+			}
+		}
+
+		return null;
 	}
 
 	private void OnTreePointerPressed(
