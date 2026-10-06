@@ -1,6 +1,6 @@
 using System;
+using System.Linq;
 
-using Heresy.Core.Objects;
 using Heresy.Core.Scripting;
 
 namespace Heresy.Scripting.Analysis;
@@ -21,8 +21,13 @@ public sealed class RoslynScriptObjectReferenceAnalyzer
 	{
 		ArgumentNullException.ThrowIfNull(source);
 
+		ScriptReferenceAnalysis analysis =
+			ScriptReferenceAnalyzer.Analyze(source);
+
 		return new ScriptObjectReferenceSet(
-			Array.Empty<ObjectId>(),
-			IsReliable: true);
+			analysis.References
+				.Select(reference => reference.Id)
+				.ToArray(),
+			analysis.IsReliable);
 	}
 }
