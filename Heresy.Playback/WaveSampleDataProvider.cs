@@ -64,8 +64,9 @@ public sealed class WaveSampleDataProvider
 		using Stream stream =
 			ExternalAssetIntegrity.OpenRead(fullPath);
 
-		byte[] header = ReadExactly(stream, 12);
-		if (!header.AsSpan(0, 4)
+		byte[] header = ReadUpTo(stream, 12);
+		if (header.Length < 12
+			|| !header.AsSpan(0, 4)
 				.SequenceEqual(
 					"RIFF"u8)
 			|| !header.AsSpan(8, 4)
