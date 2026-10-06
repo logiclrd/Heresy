@@ -29,6 +29,26 @@ public sealed class SongDocumentJsonTests
 			"heresy-json-tests",
 			"track.hm.json");
 
+	[SetUp]
+	public void CreateReferencedSampleAsset()
+	{
+		string assetPath =
+			Path.Combine(
+				Path.GetDirectoryName(JsonContextPath)!,
+				"assets",
+				"piano-c4.wav");
+		Directory.CreateDirectory(Path.GetDirectoryName(assetPath)!);
+		File.WriteAllText(assetPath, "fixture");
+	}
+
+	[OneTimeTearDown]
+	public void RemoveReferencedSampleAsset()
+	{
+		string directory = Path.GetDirectoryName(JsonContextPath)!;
+		if (Directory.Exists(directory))
+			Directory.Delete(directory, recursive: true);
+	}
+
 	[Test]
 	public void MixedDocumentRoundTripsAsFlatVersionedJson()
 	{
