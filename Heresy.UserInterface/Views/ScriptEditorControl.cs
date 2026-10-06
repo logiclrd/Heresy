@@ -3,7 +3,6 @@ using System.Globalization;
 
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
 
@@ -108,8 +107,6 @@ public sealed class ScriptEditorControl : UserControl
 				AcceptsReturn = true,
 				AcceptsTab = true,
 				TextWrapping = TextWrapping.NoWrap,
-				HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-				VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
 				MinHeight = 360,
 				MinWidth = 520,
 			};
