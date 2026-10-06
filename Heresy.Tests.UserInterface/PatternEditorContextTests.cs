@@ -241,4 +241,110 @@ public sealed class PatternEditorContextTests
 		context.InitialDisplayRow.Should().Be(0);
 		context.Rows[0].SequenceEntryIndex.Should().Be(1);
 	}
+	[Test]
+	public void MappedNoteEntryAdvancesAcrossPatternBoundaryAndEditsRealObjects()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition first =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"First",
+				rowCount: 1,
+				channelCount: 1);
+		DataPatternDefinition second =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Second",
+				rowCount: 1,
+				channelCount: 1);
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(
+				workspace,
+				"Arrangement");
+		sequence.Entries.Add(new SequenceEntry(first.Id));
+		sequence.Entries.Add(new SequenceEntry(second.Id));
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(
+				workspace.Document,
+				sequence,
+				initialEntryIndex: 0);
+		PatternEffectCursor cursor =
+			new(0, 0, PatternCellField.Note);
+		PatternNoteInputState noteState =
+			new(ObjectId.None, baseOctave: 4);
+
+		PatternEditorContextCursor.EditCurrent(
+			context,
+			cursor,
+			row => PatternNoteKeyboardEditor.Type(
+				workspace,
+				row.Pattern,
+				cursor,
+				noteState,
+				'Z'));
+
+		cursor.Row.Should().Be(1);
+		first.Grid[0, 0]!.Note.Should().Be(new StartPatternNote());
+
+		PatternEditorContextCursor.EditCurrent(
+			context,
+			cursor,
+			row => PatternNoteKeyboardEditor.Type(
+				workspace,
+				row.Pattern,
+				cursor,
+				noteState,
+				'X'));
+
+		((StartPatternNote)second.Grid[0, 0]!.Note!)
+			.PitchMultiplier.Should().BeApproximately(
+				System.Math.Pow(2.0, 2.0 / 12.0),
+				1e-12);
+		cursor.Row.Should().Be(1);
+	}
+
+	[Test]
+	public void MappedEffectStackMutationTargetsUnderlyingPatternRow()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition first =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"First",
+				rowCount: 2,
+				channelCount: 1);
+		DataPatternDefinition second =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Second",
+				rowCount: 2,
+				channelCount: 1);
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(
+				workspace,
+				"Arrangement");
+		sequence.Entries.Add(new SequenceEntry(first.Id, startRow: 1));
+		sequence.Entries.Add(new SequenceEntry(second.Id, startRow: 1));
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(
+				workspace.Document,
+				sequence,
+				initialEntryIndex: 1);
+		PatternEffectCursor cursor =
+			new(1, 0, PatternCellField.EffectCommand);
+
+		PatternEditorContextCursor.EditCurrent(
+			context,
+			cursor,
+			row => PatternEffectStackEditor.InsertBefore(
+				workspace,
+				row.Pattern,
+				cursor));
+
+		first.Grid[1, 0].Should().BeNull();
+		second.Grid[1, 0]!.Effects.Should().ContainSingle()
+			.Which.Should().Be(new EmptyTrackerPatternEffect());
+		cursor.Row.Should().Be(1);
+	}
+
 }
