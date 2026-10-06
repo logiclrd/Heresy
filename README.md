@@ -16,8 +16,9 @@ The repository is intentionally split by concern.
 - `Heresy.UserInterface` — Avalonia single-document tracker UI. The current
   document view projects the four fixed song-tree sections into Sequences,
   Patterns, Samples and Instruments panes, with sample import/editing, external-
-  asset diagnostics, data-pattern editing, data-sequence arrangement editing and
-  recursive instrument/tone-table editing; realtime transport remains separate.
+  asset diagnostics, data-pattern editing, data-sequence arrangement editing,
+  recursive instrument/tone-table editing and ADSR envelope authoring; realtime
+  transport remains separate.
 - A Roslyn-backed restricted-C# compiler assembly will also be added separately
   once the Core/Render contracts have been exercised.
 
@@ -166,8 +167,16 @@ specification or to `-1` for silence. Removing a specification deliberately
 silences entries that referenced it and decrements later specification indices
 so remaining mappings continue to identify the same definitions. The editor
 projects existing envelope objects, including unresolved references via
-tombstone/raw-ID fallback; a dedicated envelope-authoring surface remains future
-work.
+tombstone/raw-ID fallback.
+
+ADSR envelopes are created and edited from the same Instruments pane. Attack,
+decay and release are non-negative physical-time durations stored as `TimeSpan`
+values; the UI presents them in seconds. Sustain is deliberately an unrestricted
+finite scalar rather than a normalized percentage: negative and above-unity
+values remain valid because envelope consumers interpret the scalar in their own
+domain (for example, a negative volume envelope can invert phase). Editing an
+envelope is an audio-affecting document operation and uses the same referenced-
+object/tombstone behavior as the rest of the flat song graph.
 
 The note field supports direct tracker-keyboard entry. A current toolbar Source
 (sample, instrument, pattern or sequence) and base octave are editor state; the
