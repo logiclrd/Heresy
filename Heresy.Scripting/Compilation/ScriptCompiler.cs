@@ -66,14 +66,28 @@ public static class ScriptCompiler
 		string source)
 	{
 		ArgumentNullException.ThrowIfNull(source);
-		return [];
+
+		const string className = "__HeresyPattern_Analysis";
+		return PrepareCompilation(
+			source,
+			BuildPatternWrapper(
+				className,
+				InstrumentLoops(source)))
+			.Diagnostics;
 	}
 
 	public static IReadOnlyList<ScriptAnalysisDiagnostic> AnalyzeSequenceSource(
 		string source)
 	{
 		ArgumentNullException.ThrowIfNull(source);
-		return [];
+
+		const string className = "__HeresySequence_Analysis";
+		return PrepareCompilation(
+			source,
+			BuildSequenceWrapper(
+				className,
+				InstrumentLoops(source)))
+			.Diagnostics;
 	}
 
 	public static ScriptCompilationResult<IRawPatternNoteGenerator> CompilePattern(
@@ -145,6 +159,66 @@ public static class ScriptCompiler
 		string wrapperSource,
 		Type requiredBaseType)
 	{
+		PreparedScriptCompilation prepared =
+			PrepareCompilation(
+				source,
+				wrapperSource);
+		List<ScriptAnalysisDiagnostic> diagnostics =
+			[.. prepared.Diagnostics];
+
+		if (prepared.Compilation is null)
+			return new(null, diagnostics);
+
+		CSharpCompilation compilation =
+			prepared.Compilation;
+
+		using MemoryStream image = new();
+		var emitResult = compilation.Emit(image);
+		foreach (Diagnostic diagnostic in emitResult.Diagnostics)
+		{
+			if (diagnostic.Severity
+				is DiagnosticSeverity.Warning
+					or DiagnosticSeverity.Error)
+			{
+				ScriptAnalysisDiagnostic projected =
+					ProjectDiagnostic(
+						diagnostic,
+						source);
+				if (!diagnostics.Contains(projected))
+					diagnostics.Add(projected);
+			}
+		}
+
+		if (!emitResult.Success || HasErrors(diagnostics))
+			return new(null, diagnostics);
+
+		Assembly assembly =
+			Assembly.Load(image.ToArray());
+		Type? generatedType =
+			assembly.GetType(
+				className,
+				throwOnError: false,
+				ignoreCase: false);
+
+		if (generatedType is null
+			|| !requiredBaseType.IsAssignableFrom(generatedType))
+		{
+			diagnostics.Add(
+				new ScriptAnalysisDiagnostic(
+					RestrictedFeatureCode,
+					ScriptDiagnosticSeverity.Error,
+					"The generated script type did not satisfy the expected runtime contract.",
+					new ScriptSourceSpan(0, 0)));
+			return new(null, diagnostics);
+		}
+
+		return new(generatedType, diagnostics);
+	}
+
+	private static PreparedScriptCompilation PrepareCompilation(
+		string source,
+		string wrapperSource)
+	{
 		ScriptReferenceAnalysis referenceAnalysis =
 			ScriptReferenceAnalyzer.Analyze(source);
 		List<ScriptAnalysisDiagnostic> diagnostics =
@@ -198,48 +272,9 @@ public static class ScriptCompiler
 		if (HasErrors(diagnostics))
 			return new(null, diagnostics);
 
-		using MemoryStream image = new();
-		var emitResult = compilation.Emit(image);
-		foreach (Diagnostic diagnostic in emitResult.Diagnostics)
-		{
-			if (diagnostic.Severity
-				is DiagnosticSeverity.Warning
-					or DiagnosticSeverity.Error)
-			{
-				ScriptAnalysisDiagnostic projected =
-					ProjectDiagnostic(
-						diagnostic,
-						source);
-				if (!diagnostics.Contains(projected))
-					diagnostics.Add(projected);
-			}
-		}
-
-		if (!emitResult.Success || HasErrors(diagnostics))
-			return new(null, diagnostics);
-
-		Assembly assembly =
-			Assembly.Load(image.ToArray());
-		Type? generatedType =
-			assembly.GetType(
-				className,
-				throwOnError: false,
-				ignoreCase: false);
-
-		if (generatedType is null
-			|| !requiredBaseType.IsAssignableFrom(generatedType))
-		{
-			diagnostics.Add(
-				new ScriptAnalysisDiagnostic(
-					RestrictedFeatureCode,
-					ScriptDiagnosticSeverity.Error,
-					"The generated script type did not satisfy the expected runtime contract.",
-					new ScriptSourceSpan(0, 0)));
-			return new(null, diagnostics);
-		}
-
-		return new(generatedType, diagnostics);
+		return new(compilation, diagnostics);
 	}
+
 
 	private static IReadOnlyList<ScriptAnalysisDiagnostic>
 		ValidateRestrictedSyntax(string source)
@@ -642,6 +677,10 @@ public static class ScriptCompiler
 				ScriptDiagnosticSeverity.Error,
 				message,
 				span));
+
+	private sealed record PreparedScriptCompilation(
+		CSharpCompilation? Compilation,
+		IReadOnlyList<ScriptAnalysisDiagnostic> Diagnostics);
 
 	private sealed class LoopCheckpointRewriter : CSharpSyntaxRewriter
 	{
