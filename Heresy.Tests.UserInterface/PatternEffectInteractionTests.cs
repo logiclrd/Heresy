@@ -589,7 +589,6 @@ public sealed class PatternEffectInteractionTests
 		cursor.Expand(cell);
 		cursor.MoveRight(64, 8, cell);
 		cursor.MoveRight(64, 8, cell);
-		cursor.MoveRight(64, 8, cell);
 		cursor.ExpandedEffectIndex.Should().Be(1);
 		cursor.ExpandedField.Should().Be(ExpandedEffectField.Parameter);
 
