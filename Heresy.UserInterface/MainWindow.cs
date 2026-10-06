@@ -193,12 +193,22 @@ public sealed class MainWindow : Window
 			Button newSequence = new() { Content = "+ Sequence" };
 			newSequence.Click += async (_, _) => await CreateSequenceAsync();
 			actions.Children.Add(newSequence);
+
+			Button newScriptSequence = new() { Content = "+ Script" };
+			newScriptSequence.Click += async (_, _) =>
+				await CreateScriptSequenceAsync();
+			actions.Children.Add(newScriptSequence);
 		}
 		if (section == SongTreeSection.Patterns)
 		{
 			Button newPattern = new() { Content = "+ Pattern" };
 			newPattern.Click += async (_, _) => await CreatePatternAsync();
 			actions.Children.Add(newPattern);
+
+			Button newScriptPattern = new() { Content = "+ Script" };
+			newScriptPattern.Click += async (_, _) =>
+				await CreateScriptPatternAsync();
+			actions.Children.Add(newScriptPattern);
 		}
 		if (section == SongTreeSection.Instruments)
 		{
@@ -450,6 +460,40 @@ public sealed class MainWindow : Window
 		}
 	}
 
+	private async Task CreateScriptSequenceAsync()
+	{
+		TextPromptDialog dialog =
+			new(
+				"New script sequence",
+				"Sequence name:",
+				"New Script Sequence");
+		string? name = await dialog.ShowDialog<string?>(this);
+		if (name is null)
+			return;
+
+		try
+		{
+			ScriptSequenceDefinition sequence =
+				ScriptDocumentEditor.CreateScriptSequence(
+					_workspace,
+					name);
+			SongTreeObject? node =
+				FindTreeObject(
+					_workspace.Document.GetSectionRoot(
+						SongTreeSection.Sequences),
+					sequence.Id);
+			RefreshDocumentView(
+				$"Created script sequence {sequence.Name}",
+				node);
+			ShowScriptEditor(sequence, node);
+		}
+		catch (Exception ex)
+		{
+			SetStatus(
+				$"Could not create script sequence: {ex.Message}");
+		}
+	}
+
 	private async Task CreatePatternAsync()
 	{
 		TextPromptDialog dialog =
@@ -474,6 +518,40 @@ public sealed class MainWindow : Window
 		catch (Exception ex)
 		{
 			SetStatus($"Could not create pattern: {ex.Message}");
+		}
+	}
+
+	private async Task CreateScriptPatternAsync()
+	{
+		TextPromptDialog dialog =
+			new(
+				"New script pattern",
+				"Pattern name:",
+				"New Script Pattern");
+		string? name = await dialog.ShowDialog<string?>(this);
+		if (name is null)
+			return;
+
+		try
+		{
+			ScriptPatternDefinition pattern =
+				ScriptDocumentEditor.CreateScriptPattern(
+					_workspace,
+					name);
+			SongTreeObject? node =
+				FindTreeObject(
+					_workspace.Document.GetSectionRoot(
+						SongTreeSection.Patterns),
+					pattern.Id);
+			RefreshDocumentView(
+				$"Created script pattern {pattern.Name}",
+				node);
+			ShowScriptEditor(pattern, node);
+		}
+		catch (Exception ex)
+		{
+			SetStatus(
+				$"Could not create script pattern: {ex.Message}");
 		}
 	}
 
@@ -1036,13 +1114,19 @@ public sealed class MainWindow : Window
 			return;
 		}
 
-		if (songObject is not DataSequenceDefinition sequence)
+		if (songObject is DataSequenceDefinition sequence)
 		{
-			SetStatus("Script-sequence editing is not implemented yet.");
+			ShowSequenceEditor(sequence, item.Node);
 			return;
 		}
 
-		ShowSequenceEditor(sequence, item.Node);
+		if (songObject is ScriptSequenceDefinition scriptSequence)
+		{
+			ShowScriptEditor(scriptSequence, item.Node);
+			return;
+		}
+
+		SetStatus("The selected sequence type is not editable.");
 	}
 
 	private void ShowSequenceEditor(
@@ -1088,9 +1172,19 @@ public sealed class MainWindow : Window
 			return;
 		}
 
+		if (songObject is ScriptPatternDefinition scriptPattern)
+		{
+			ShowScriptEditor(
+				scriptPattern,
+				sequenceNode,
+				() => ShowSequenceEditor(sequence, sequenceNode),
+				"← Sequence");
+			return;
+		}
+
 		if (songObject is not DataPatternDefinition pattern)
 		{
-			SetStatus("Script-pattern editing is not implemented yet.");
+			SetStatus("The referenced pattern type is not editable.");
 			return;
 		}
 
@@ -1115,13 +1209,19 @@ public sealed class MainWindow : Window
 			return;
 		}
 
-		if (songObject is not DataPatternDefinition pattern)
+		if (songObject is DataPatternDefinition pattern)
 		{
-			SetStatus("Script-pattern editing is not implemented yet.");
+			ShowPatternEditor(pattern, item.Node);
 			return;
 		}
 
-		ShowPatternEditor(pattern, item.Node);
+		if (songObject is ScriptPatternDefinition scriptPattern)
+		{
+			ShowScriptEditor(scriptPattern, item.Node);
+			return;
+		}
+
+		SetStatus("The selected pattern type is not editable.");
 	}
 
 	private void ShowPatternEditor(
@@ -1166,6 +1266,56 @@ public sealed class MainWindow : Window
 		_mainContent.Content = editor;
 		UpdateWindowTitle();
 		SetStatus(status);
+	}
+
+	private void ShowScriptEditor(
+		ScriptPatternDefinition pattern,
+		SongTreeNode? selectNode,
+		Action? closeOverride = null,
+		string backLabel = "← Document")
+	{
+		ScriptEditorControl editor =
+			new(
+				_workspace,
+				pattern,
+				closeOverride
+					?? (() => RefreshDocumentView(
+						$"Edited script pattern {pattern.Name}",
+						selectNode)),
+				message =>
+				{
+					UpdateWindowTitle();
+					SetStatus(message);
+				},
+				backLabel);
+		_mainContent.Content = editor;
+		UpdateWindowTitle();
+		SetStatus($"Editing script pattern {pattern.Name}");
+	}
+
+	private void ShowScriptEditor(
+		ScriptSequenceDefinition sequence,
+		SongTreeNode? selectNode,
+		Action? closeOverride = null,
+		string backLabel = "← Document")
+	{
+		ScriptEditorControl editor =
+			new(
+				_workspace,
+				sequence,
+				closeOverride
+					?? (() => RefreshDocumentView(
+						$"Edited script sequence {sequence.Name}",
+						selectNode)),
+				message =>
+				{
+					UpdateWindowTitle();
+					SetStatus(message);
+				},
+				backLabel);
+		_mainContent.Content = editor;
+		UpdateWindowTitle();
+		SetStatus($"Editing script sequence {sequence.Name}");
 	}
 
 	private void ShowInstrumentEditor(SongTreeItemViewModel item)
