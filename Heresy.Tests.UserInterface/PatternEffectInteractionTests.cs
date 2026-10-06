@@ -441,4 +441,222 @@ public sealed class PatternEffectInteractionTests
 		cursor.Row.Should().Be(0);
 		cursor.IsExpanded.Should().BeTrue();
 	}
+	[Test]
+	public void InsertBeforeAddsEmptyTrackerSlotAtCursorAndSelectsIt()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+		cell.Effects.Add(new TonePortamentoPatternEffect(0x11));
+		cell.Effects.Add(new VibratoPatternEffect(0x22));
+		PatternEffectCursor cursor =
+			new(row: 0, channel: 0, PatternCellField.EffectCommand);
+		cursor.Expand(cell);
+		cursor.MoveRight(64, 8, cell);
+		cursor.MoveRight(64, 8, cell);
+		uint audioRevision = workspace.Document.AudioRevision;
+
+		PatternEffectStackEditor.InsertBefore(
+			workspace,
+			pattern,
+			cursor);
+
+		cell.Effects.Should().Equal(
+			new TonePortamentoPatternEffect(0x11),
+			new EmptyTrackerPatternEffect(),
+			new VibratoPatternEffect(0x22));
+		cursor.IsExpanded.Should().BeTrue();
+		cursor.ExpandedEffectIndex.Should().Be(1);
+		cursor.ExpandedField.Should().Be(ExpandedEffectField.Command);
+		workspace.Document.AudioRevision.Should().Be(audioRevision + 1);
+	}
+
+	[Test]
+	public void InsertAfterAddsEmptyTrackerSlotAfterCursorAndMovesCursorToIt()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+		cell.Effects.Add(new TonePortamentoPatternEffect(0x11));
+		cell.Effects.Add(new VibratoPatternEffect(0x22));
+		PatternEffectCursor cursor =
+			new(row: 0, channel: 0, PatternCellField.EffectParameter);
+		cursor.Expand(cell);
+
+		PatternEffectStackEditor.InsertAfter(
+			workspace,
+			pattern,
+			cursor);
+
+		cell.Effects.Should().Equal(
+			new TonePortamentoPatternEffect(0x11),
+			new EmptyTrackerPatternEffect(),
+			new VibratoPatternEffect(0x22));
+		cursor.ExpandedEffectIndex.Should().Be(1);
+		cursor.ExpandedField.Should().Be(ExpandedEffectField.Command);
+	}
+
+	[Test]
+	public void InsertIntoEmptyEffectColumnCreatesSingleCollapsedSlot()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
+		PatternEffectCursor cursor =
+			new(row: 0, channel: 0, PatternCellField.EffectCommand);
+
+		PatternEffectStackEditor.InsertBefore(
+			workspace,
+			pattern,
+			cursor);
+
+		pattern.Grid[0, 0]!.Effects.Should().ContainSingle()
+			.Which.Should().Be(new EmptyTrackerPatternEffect());
+		cursor.IsExpanded.Should().BeFalse();
+		cursor.Field.Should().Be(PatternCellField.EffectCommand);
+	}
+
+	[Test]
+	public void DeleteFromTwoEffectStackDropsToSingleCollapsedView()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+		cell.Effects.Add(new TonePortamentoPatternEffect(0x11));
+		cell.Effects.Add(new VibratoPatternEffect(0x22));
+		PatternEffectCursor cursor =
+			new(row: 0, channel: 0, PatternCellField.EffectCommand);
+		cursor.Expand(cell);
+
+		PatternEffectStackEditor.Delete(
+			workspace,
+			pattern,
+			cursor);
+
+		cell.Effects.Should().ContainSingle()
+			.Which.Should().Be(new VibratoPatternEffect(0x22));
+		cursor.IsExpanded.Should().BeFalse();
+		cursor.Field.Should().Be(PatternCellField.EffectCommand);
+	}
+
+	[Test]
+	public void DeleteFromLargerStackKeepsExpandedAndSelectsSuccessor()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+		cell.Effects.Add(new TonePortamentoPatternEffect(0x11));
+		cell.Effects.Add(new VibratoPatternEffect(0x22));
+		cell.Effects.Add(new ArpeggioPatternEffect(0x33));
+		PatternEffectCursor cursor =
+			new(row: 0, channel: 0, PatternCellField.EffectCommand);
+		cursor.Expand(cell);
+		cursor.MoveRight(64, 8, cell);
+		cursor.MoveRight(64, 8, cell);
+
+		PatternEffectStackEditor.Delete(
+			workspace,
+			pattern,
+			cursor);
+
+		cell.Effects.Should().Equal(
+			new TonePortamentoPatternEffect(0x11),
+			new ArpeggioPatternEffect(0x33));
+		cursor.IsExpanded.Should().BeTrue();
+		cursor.ExpandedEffectIndex.Should().Be(1);
+		cursor.ExpandedField.Should().Be(ExpandedEffectField.Command);
+	}
+
+	[Test]
+	public void MoveSelectedLeftAndRightReordersEffectAndCursorFollowsIt()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+		PatternEffect first = new TonePortamentoPatternEffect(0x11);
+		PatternEffect selected = new VibratoPatternEffect(0x22);
+		PatternEffect last = new ArpeggioPatternEffect(0x33);
+		cell.Effects.AddRange([first, selected, last]);
+		PatternEffectCursor cursor =
+			new(row: 0, channel: 0, PatternCellField.EffectParameter);
+		cursor.Expand(cell);
+		cursor.MoveRight(64, 8, cell);
+		cursor.MoveRight(64, 8, cell);
+		cursor.MoveRight(64, 8, cell);
+		cursor.ExpandedEffectIndex.Should().Be(1);
+		cursor.ExpandedField.Should().Be(ExpandedEffectField.Parameter);
+
+		PatternEffectStackEditor.MoveSelected(
+			workspace,
+			pattern,
+			cursor,
+			delta: -1);
+		cell.Effects.Should().Equal(selected, first, last);
+		cursor.ExpandedEffectIndex.Should().Be(0);
+		cursor.ExpandedField.Should().Be(ExpandedEffectField.Parameter);
+
+		PatternEffectStackEditor.MoveSelected(
+			workspace,
+			pattern,
+			cursor,
+			delta: 1);
+		cell.Effects.Should().Equal(first, selected, last);
+		cursor.ExpandedEffectIndex.Should().Be(1);
+		cursor.ExpandedField.Should().Be(ExpandedEffectField.Parameter);
+	}
+
+	[Test]
+	public void MoveSelectedToIndexSupportsExpandedDragReorder()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+		PatternEffect first = new TonePortamentoPatternEffect(0x11);
+		PatternEffect selected = new SetPlaybackFrequencyPatternEffect(440);
+		PatternEffect last = new VibratoPatternEffect(0x22);
+		cell.Effects.AddRange([first, selected, last]);
+		PatternEffectCursor cursor =
+			new(row: 0, channel: 0, PatternCellField.EffectCommand);
+		cursor.Expand(cell);
+		cursor.MoveRight(64, 8, cell);
+		cursor.MoveRight(64, 8, cell);
+
+		PatternEffectStackEditor.MoveSelectedTo(
+			workspace,
+			pattern,
+			cursor,
+			2);
+
+		cell.Effects.Should().Equal(first, last, selected);
+		cursor.ExpandedEffectIndex.Should().Be(2);
+		cursor.ExpandedField.Should().Be(ExpandedEffectField.Native);
+	}
+
+	[Test]
+	public void HomeAndEndSelectFirstAndLastEffectsWithoutLeavingExpandedView()
+	{
+		PatternCell cell = new();
+		cell.Effects.Add(new TonePortamentoPatternEffect(0x11));
+		cell.Effects.Add(new SetPlaybackFrequencyPatternEffect(440));
+		cell.Effects.Add(new VibratoPatternEffect(0x22));
+		PatternEffectCursor cursor =
+			new(row: 0, channel: 0, PatternCellField.EffectParameter);
+		cursor.Expand(cell);
+
+		cursor.MoveToLastEffect(cell);
+		cursor.IsExpanded.Should().BeTrue();
+		cursor.ExpandedEffectIndex.Should().Be(2);
+		cursor.ExpandedField.Should().Be(ExpandedEffectField.Parameter);
+
+		cursor.MoveToFirstEffect(cell);
+		cursor.ExpandedEffectIndex.Should().Be(0);
+		cursor.ExpandedField.Should().Be(ExpandedEffectField.Parameter);
+	}
+
 }

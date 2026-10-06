@@ -164,4 +164,23 @@ public sealed class DataPatternDefinitionTests
 		Assert.Throws<ArgumentOutOfRangeException>(() => _ = pattern.Grid[20, 1]);
 		Assert.Throws<ArgumentOutOfRangeException>(() => _ = pattern.Grid[2, 6]);
 	}
+	[Test]
+	public void EmptyTrackerEffectIsPersistableEditorSlotAndGeneratesNoCommand()
+	{
+		DataPatternDefinition pattern = new((ObjectId)1U, "Pattern");
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+		cell.Effects.Add(new EmptyTrackerPatternEffect());
+		cell.Effects.Add(new SetNoteVolumePatternEffect(0.5));
+		NoteScheduleBuilder output = new();
+
+		pattern.GenerateRawNotes(new SequencingContext(), output, out _);
+
+		NoteSchedule schedule = output.Freeze();
+		Assert.That(schedule.Count, Is.EqualTo(1));
+		Assert.That(schedule[0].Commands, Has.Count.EqualTo(1));
+		Assert.That(
+			schedule[0].Commands[0],
+			Is.EqualTo(new SetNoteVolumeCommand(0.5)));
+	}
+
 }

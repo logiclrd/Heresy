@@ -60,7 +60,7 @@ public sealed class SongDocumentJsonTests
 			JsonNode.Parse(json)!.AsObject();
 
 		Assert.That(root["format"]!.GetValue<string>(), Is.EqualTo("Heresy"));
-		Assert.That(root["version"]!.GetValue<int>(), Is.EqualTo(3));
+		Assert.That(root["version"]!.GetValue<int>(), Is.EqualTo(4));
 		Assert.That(root["nextObjectId"]!.GetValue<uint>(), Is.EqualTo(8U));
 		Assert.That(root["rootSequenceId"]!.GetValue<uint>(), Is.EqualTo(6U));
 
