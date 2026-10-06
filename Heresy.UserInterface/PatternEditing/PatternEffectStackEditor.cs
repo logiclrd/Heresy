@@ -17,13 +17,47 @@ public static class PatternEffectStackEditor
 		DocumentWorkspace workspace,
 		DataPatternDefinition pattern,
 		PatternEffectCursor cursor)
-		=> Insert(workspace, pattern, cursor, after: false);
+		=> Insert(
+			workspace,
+			pattern,
+			cursor,
+			new EmptyTrackerPatternEffect(),
+			after: false);
 
 	public static bool InsertAfter(
 		DocumentWorkspace workspace,
 		DataPatternDefinition pattern,
 		PatternEffectCursor cursor)
-		=> Insert(workspace, pattern, cursor, after: true);
+		=> Insert(
+			workspace,
+			pattern,
+			cursor,
+			new EmptyTrackerPatternEffect(),
+			after: true);
+
+	public static bool InsertBefore(
+		DocumentWorkspace workspace,
+		DataPatternDefinition pattern,
+		PatternEffectCursor cursor,
+		PatternEffect effect)
+		=> Insert(
+			workspace,
+			pattern,
+			cursor,
+			effect,
+			after: false);
+
+	public static bool InsertAfter(
+		DocumentWorkspace workspace,
+		DataPatternDefinition pattern,
+		PatternEffectCursor cursor,
+		PatternEffect effect)
+		=> Insert(
+			workspace,
+			pattern,
+			cursor,
+			effect,
+			after: true);
 
 	public static bool Delete(
 		DocumentWorkspace workspace,
@@ -182,9 +216,11 @@ public static class PatternEffectStackEditor
 		DocumentWorkspace workspace,
 		DataPatternDefinition pattern,
 		PatternEffectCursor cursor,
+		PatternEffect effect,
 		bool after)
 	{
 		Validate(workspace, pattern, cursor);
+		ArgumentNullException.ThrowIfNull(effect);
 		if (cursor.Field is not (
 			PatternCellField.EffectCommand
 			or PatternCellField.EffectParameter))
@@ -209,15 +245,13 @@ public static class PatternEffectStackEditor
 				index++;
 		}
 
-		cell.Effects.Insert(
-			index,
-			new EmptyTrackerPatternEffect());
+		cell.Effects.Insert(index, effect);
 
-		// The inserted slot is deliberately musically inert.
 		workspace.Document.MarkChanged(
-			affectsAudio: false);
+			affectsAudio: effect is not EmptyTrackerPatternEffect);
 
-		if (cell.Effects.Count == 1)
+		if (effect is EmptyTrackerPatternEffect
+			&& cell.Effects.Count == 1)
 		{
 			cursor.SetPosition(
 				cursor.Row,
@@ -229,7 +263,7 @@ public static class PatternEffectStackEditor
 			cursor.SetExpandedSelection(
 				cell,
 				index,
-				ExpandedEffectField.Command);
+				FirstField(effect));
 		}
 
 		return true;
