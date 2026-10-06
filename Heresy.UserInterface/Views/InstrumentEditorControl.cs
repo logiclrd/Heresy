@@ -56,6 +56,7 @@ public sealed class InstrumentEditorControl : UserControl
 		_offset = NumberBox(instrument.Offset);
 		_toneTableLength = NumberBox(instrument.ToneTable.Count);
 
+		RefreshCatalogs();
 		Content = BuildContent();
 		Refresh();
 	}
@@ -450,25 +451,7 @@ public sealed class InstrumentEditorControl : UserControl
 
 	private void Refresh()
 	{
-		_sources =
-			PatternSourceCatalog.GetSources(_workspace.Document);
-		_envelopes =
-			new[]
-			{
-				new EnvelopeOption(null, "— inherit / unspecified"),
-			}
-			.Concat(
-				_workspace.Document.Objects.Values
-					.OfType<EnvelopeDefinition>()
-					.OrderBy(
-						envelope => envelope.Name,
-						StringComparer.OrdinalIgnoreCase)
-					.ThenBy(envelope => envelope.Id.Value)
-					.Select(envelope =>
-						new EnvelopeOption(
-							envelope.Id,
-							$"{envelope.Name} <{envelope.Id.Value}>")))
-			.ToArray();
+		RefreshCatalogs();
 
 		_divisions.Text =
 			_instrument.Divisions.ToString(CultureInfo.CurrentCulture);
@@ -509,6 +492,29 @@ public sealed class InstrumentEditorControl : UserControl
 		}
 	}
 
+	private void RefreshCatalogs()
+	{
+		_sources =
+			PatternSourceCatalog.GetSources(_workspace.Document);
+		_envelopes =
+			new[]
+			{
+				new EnvelopeOption(null, "— inherit / unspecified"),
+			}
+			.Concat(
+				_workspace.Document.Objects.Values
+					.OfType<EnvelopeDefinition>()
+					.OrderBy(
+						envelope => envelope.Name,
+						StringComparer.OrdinalIgnoreCase)
+					.ThenBy(envelope => envelope.Id.Value)
+					.Select(envelope =>
+						new EnvelopeOption(
+							envelope.Id,
+							$"{envelope.Name} <{envelope.Id.Value}>")))
+			.ToArray();
+	}
+
 	private ComboBox SourceBox(ObjectId selectedId)
 	{
 		PatternSourceOption[] choices = _sources;
@@ -536,8 +542,7 @@ public sealed class InstrumentEditorControl : UserControl
 			{
 				ItemsSource = choices,
 				Width = 210,
-				SelectedItem =
-					selected ?? choices.FirstOrDefault(),
+				SelectedItem = selected,
 			};
 		return box;
 	}
