@@ -274,4 +274,50 @@ public sealed class DataPatternDefinitionTests
 		Assert.That(portamento.TargetNote!.Volume, Is.Null);
 	}
 
+	[Test]
+	public void NoteCutIgnoresPatternVolumeDuringTranslation()
+	{
+		DataPatternDefinition pattern = new((ObjectId)1U, "Pattern");
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+		cell.Note = new PatternNoteCut();
+		cell.Volume = 0.25;
+		NoteScheduleBuilder output = new();
+
+		pattern.GenerateRawNotes(new SequencingContext(), output, out _);
+
+		NoteSchedule schedule = output.Freeze();
+		Assert.That(schedule.Count, Is.EqualTo(1));
+		Assert.That(
+			schedule[0].Commands,
+			Is.EqualTo(
+				new NoteCommand[]
+				{
+					new NoteCutCommand(),
+				}));
+		Assert.That(cell.Volume, Is.EqualTo(0.25));
+	}
+
+	[Test]
+	public void NoteOffKeepsPatternVolumeAsCurrentNoteVolumeCommand()
+	{
+		DataPatternDefinition pattern = new((ObjectId)1U, "Pattern");
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+		cell.Note = new PatternNoteOff();
+		cell.Volume = 0.5;
+		NoteScheduleBuilder output = new();
+
+		pattern.GenerateRawNotes(new SequencingContext(), output, out _);
+
+		NoteSchedule schedule = output.Freeze();
+		Assert.That(schedule.Count, Is.EqualTo(1));
+		Assert.That(
+			schedule[0].Commands,
+			Is.EqualTo(
+				new NoteCommand[]
+				{
+					new NoteOffCommand(),
+					new SetNoteVolumeCommand(0.5),
+				}));
+	}
+
 }

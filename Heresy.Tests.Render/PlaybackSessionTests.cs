@@ -528,4 +528,51 @@ public sealed class PlaybackSessionTests
 		Assert.That(output[1], Is.EqualTo(1.0f).Within(1e-6f));
 	}
 
+	[Test]
+	public void NoteOffReleaseRemainsVolumeControllableUntilLaterCut()
+	{
+		ObjectId sourceId = (ObjectId)10U;
+		ReleasingTestSound sound = new(
+			NewNotePolicy.Cut,
+			releaseFrames: 10);
+		PlaybackSession session = Session(
+			1,
+			Schedule(
+				Event(
+					Frame(0, 1),
+					0,
+					new StartNoteCommand(sourceId)),
+				Event(
+					Frame(1, 1),
+					0,
+					new NoteOffCommand(),
+					new SetNoteVolumeCommand(0.5)),
+				Event(
+					Frame(2, 1),
+					0,
+					new SetNoteVolumeCommand(0.25)),
+				Event(
+					Frame(3, 1),
+					0,
+					new NoteCutCommand())),
+			new TestResolver((sourceId, false, sound)));
+		float[] output = new float[5];
+
+		session.Render(0, 5, output);
+
+		Assert.That(
+			output,
+			Is.EqualTo(
+				new float[]
+				{
+					1.0f,
+					0.5f,
+					0.25f,
+					0.0f,
+					0.0f,
+				})
+				.Within(1e-6f));
+		Assert.That(session.GetChannelState(0).CurrentVoice, Is.Null);
+	}
+
 }
