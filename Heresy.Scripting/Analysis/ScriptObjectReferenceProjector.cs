@@ -48,7 +48,8 @@ public static class ScriptObjectReferenceProjector
 	{
 		if (document.TryGet(
 			reference.Id,
-			out SongObject? songObject))
+			out SongObject? songObject)
+			&& songObject is not null)
 		{
 			return new ProjectedScriptObjectReference(
 				reference.Id,
@@ -60,7 +61,8 @@ public static class ScriptObjectReferenceProjector
 
 		if (document.Tombstones.TryGetValue(
 			reference.Id,
-			out ObjectTombstone tombstone))
+			out ObjectTombstone? tombstone)
+			&& tombstone is not null)
 		{
 			return new ProjectedScriptObjectReference(
 				reference.Id,
