@@ -1,14 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Threading.Tasks;
 
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Input;
-using Avalonia.Input.Platform;
 using Avalonia.Layout;
 using Avalonia.Media;
+
+using AvaloniaEdit;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -19,17 +18,12 @@ using Heresy.UserInterface.Documents;
 namespace Heresy.UserInterface.Views;
 
 /// <summary>
-/// Shared source editor for scripted patterns and scripted sequences.
-/// Persisted source remains ordinary restricted-C# text; semantic object
-/// references are presented as atomic named tokens without rewriting the
-/// underlying _O(id) expressions.
+/// Shared AvaloniaEdit source editor for scripted patterns and sequences.
+/// The TextDocument always contains canonical restricted-C# source; semantic
+/// object references are replaced only in the visual-line layer.
 /// </summary>
 public sealed class ScriptEditorControl : UserControl
 {
-	private readonly record struct EditorSnapshot(
-		string Source,
-		int SourceCaret);
-
 	private readonly DocumentWorkspace _workspace;
 	private readonly ScriptPatternDefinition? _pattern;
 	private readonly ScriptSequenceDefinition? _sequence;
@@ -37,7 +31,9 @@ public sealed class ScriptEditorControl : UserControl
 	private readonly Action<string> _changed;
 	private readonly string _backLabel;
 
-	private readonly TextBox _source;
+	private readonly TextEditor _source;
+	private readonly ScriptObjectReferenceElementGenerator _referenceGenerator =
+		new();
 	private readonly ComboBox _reference;
 	private readonly TextBlock _message = new()
 	{
@@ -53,13 +49,6 @@ public sealed class ScriptEditorControl : UserControl
 	private readonly TextBox? _channelCount;
 	private readonly TextBox? _minorHighlight;
 	private readonly TextBox? _majorHighlight;
-
-	private readonly Stack<EditorSnapshot> _undo = [];
-	private readonly Stack<EditorSnapshot> _redo = [];
-
-	private ScriptSourceProjection _projection;
-	private bool _updatingProjectedText;
-	private EditorSnapshot? _pendingTextEditSnapshot;
 
 	public ScriptEditorControl(
 		DocumentWorkspace workspace,
@@ -121,31 +110,20 @@ public sealed class ScriptEditorControl : UserControl
 		string source =
 			pattern?.Source
 				?? sequence!.Source;
-		_projection =
-			ScriptSourceProjection.Create(
-				source,
-				[]);
+
 		_source =
-			new TextBox
+			new TextEditor
 			{
 				Text = source,
-				AcceptsReturn = true,
-				AcceptsTab = true,
-				TextWrapping = TextWrapping.NoWrap,
-				MinHeight = 360,
+				WordWrap = false,
+				ShowLineNumbers = true,
+				Height = 420,
 				MinWidth = 520,
-				UndoLimit = 0,
 			};
-
-		_source.TextChanging += (_, _) =>
-		{
-			if (!_updatingProjectedText)
-				_pendingTextEditSnapshot = CaptureSnapshot();
-		};
-		_source.TextChanged += (_, _) => OnProjectedTextChanged();
-		_source.KeyDown += async (_, e) =>
-			await OnSourceKeyDownAsync(e);
-		_source.ContextMenu = BuildSourceContextMenu();
+		_source.TextArea.TextView.ElementGenerators.Add(
+			_referenceGenerator);
+		_source.TextChanged += (_, _) =>
+			RefreshAnalysis();
 
 		_reference =
 			new ComboBox
@@ -165,9 +143,7 @@ public sealed class ScriptEditorControl : UserControl
 		}
 
 		Content = BuildContent();
-		RebuildProjection(
-			source,
-			sourceCaret: 0);
+		RefreshAnalysis();
 	}
 
 	private SongObject ScriptObject =>
@@ -239,7 +215,7 @@ public sealed class ScriptEditorControl : UserControl
 			new()
 			{
 				Text =
-					"Object references are persisted as _O(id) but displayed as atomic ⟦name⟧ tokens. Renames update the projection rather than the stored source; deleting, replacing, copying or cutting any part of a token operates on the complete canonical reference.",
+					"Object references remain canonical _O(id) expressions in the AvaloniaEdit document. Roslyn-recognized references are rendered as single visual object-name tokens without changing raw source offsets, so AvaloniaEdit's native selection, clipboard and undo behavior continues to operate on valid restricted C#.",
 				TextWrapping = TextWrapping.Wrap,
 				MaxWidth = 900,
 			};
@@ -374,233 +350,6 @@ public sealed class ScriptEditorControl : UserControl
 		return panel;
 	}
 
-	private ContextMenu BuildSourceContextMenu()
-	{
-		MenuItem undo =
-			new()
-			{
-				Header = "Undo",
-			};
-		undo.Click += (_, _) => UndoSource();
-
-		MenuItem redo =
-			new()
-			{
-				Header = "Redo",
-			};
-		redo.Click += (_, _) => RedoSource();
-
-		MenuItem cut =
-			new()
-			{
-				Header = "Cut",
-			};
-		cut.Click += async (_, _) =>
-			await CutSelectionAsync();
-
-		MenuItem copy =
-			new()
-			{
-				Header = "Copy",
-			};
-		copy.Click += async (_, _) =>
-			await CopySelectionAsync();
-
-		MenuItem paste =
-			new()
-			{
-				Header = "Paste",
-			};
-		paste.Click += async (_, _) =>
-			await PasteAsync();
-
-		MenuItem selectAll =
-			new()
-			{
-				Header = "Select All",
-			};
-		selectAll.Click += (_, _) =>
-		{
-			_source.SelectionStart = 0;
-			_source.SelectionEnd = _projection.Text.Length;
-			_source.CaretIndex = _projection.Text.Length;
-		};
-
-		return new ContextMenu
-		{
-			ItemsSource =
-				new object[]
-				{
-					undo,
-					redo,
-					new Separator(),
-					cut,
-					copy,
-					paste,
-					new Separator(),
-					selectAll,
-				},
-		};
-	}
-
-	private async Task OnSourceKeyDownAsync(
-		KeyEventArgs e)
-	{
-		bool clipboardModifier =
-			(e.KeyModifiers
-				& (KeyModifiers.Control | KeyModifiers.Meta))
-				!= 0
-			&& (e.KeyModifiers & KeyModifiers.Alt) == 0;
-
-		if (clipboardModifier && e.Key == Key.Z)
-		{
-			if ((e.KeyModifiers & KeyModifiers.Shift) != 0)
-				RedoSource();
-			else
-				UndoSource();
-			e.Handled = true;
-			return;
-		}
-
-		if (clipboardModifier && e.Key == Key.Y)
-		{
-			RedoSource();
-			e.Handled = true;
-			return;
-		}
-
-		if (clipboardModifier && e.Key == Key.C)
-		{
-			await CopySelectionAsync();
-			e.Handled = true;
-			return;
-		}
-
-		if (clipboardModifier && e.Key == Key.X)
-		{
-			await CutSelectionAsync();
-			e.Handled = true;
-			return;
-		}
-
-		if (clipboardModifier && e.Key == Key.V)
-		{
-			await PasteAsync();
-			e.Handled = true;
-			return;
-		}
-
-		if (e.Key == Key.Back)
-		{
-			ApplyProjectionEdit(
-				_projection.DeleteBackward(
-					_source.SelectionStart,
-					_source.SelectionEnd),
-				CaptureSnapshot());
-			e.Handled = true;
-			return;
-		}
-
-		if (e.Key == Key.Delete)
-		{
-			ApplyProjectionEdit(
-				_projection.DeleteForward(
-					_source.SelectionStart,
-					_source.SelectionEnd),
-				CaptureSnapshot());
-			e.Handled = true;
-			return;
-		}
-
-		bool ordinaryHorizontalMove =
-			(e.KeyModifiers
-				& (KeyModifiers.Control
-					| KeyModifiers.Meta
-					| KeyModifiers.Alt))
-				== 0
-			&& e.Key is Key.Left or Key.Right;
-		if (ordinaryHorizontalMove)
-		{
-			MoveProjectedCaret(
-				e.Key == Key.Left ? -1 : 1,
-				(e.KeyModifiers & KeyModifiers.Shift) != 0);
-			e.Handled = true;
-		}
-	}
-
-	private void MoveProjectedCaret(
-		int direction,
-		bool extendSelection)
-	{
-		int target;
-		if (!extendSelection
-			&& _source.SelectionStart
-				!= _source.SelectionEnd)
-		{
-			target =
-				direction < 0
-					? Math.Min(
-						_source.SelectionStart,
-						_source.SelectionEnd)
-					: Math.Max(
-						_source.SelectionStart,
-						_source.SelectionEnd);
-		}
-		else
-		{
-			target =
-				_projection.MoveCaret(
-					_source.CaretIndex,
-					direction);
-		}
-
-		if (!extendSelection)
-		{
-			_source.SelectionStart = target;
-			_source.SelectionEnd = target;
-			_source.CaretIndex = target;
-			return;
-		}
-
-		int anchor =
-			_source.SelectionStart
-				== _source.SelectionEnd
-				? _source.CaretIndex
-				: _source.CaretIndex
-					== _source.SelectionStart
-					? _source.SelectionEnd
-					: _source.SelectionStart;
-		_source.SelectionStart =
-			Math.Min(
-				anchor,
-				target);
-		_source.SelectionEnd =
-			Math.Max(
-				anchor,
-				target);
-		_source.CaretIndex = target;
-	}
-
-	private void OnProjectedTextChanged()
-	{
-		if (_updatingProjectedText)
-			return;
-
-		string changedText =
-			_source.Text
-				?? string.Empty;
-		ScriptProjectionEdit edit =
-			_projection.ReconcileTextChange(
-				changedText);
-		EditorSnapshot before =
-			_pendingTextEditSnapshot
-				?? CaptureSnapshot();
-		_pendingTextEditSnapshot = null;
-		ApplyProjectionEdit(
-			edit,
-			before);
-	}
-
 	private void InsertReference()
 	{
 		if (_reference.SelectedItem
@@ -611,152 +360,32 @@ public sealed class ScriptEditorControl : UserControl
 			return;
 		}
 
-		ScriptProjectionEdit edit =
-			_projection.Replace(
-				_source.SelectionStart,
-				_source.SelectionEnd,
-				option.ReferenceText);
-		ApplyProjectionEdit(
-			edit,
-			CaptureSnapshot());
+		int start = _source.SelectionStart;
+		int length = _source.SelectionLength;
+		_source.Document.Replace(
+			start,
+			length,
+			option.ReferenceText);
+		int caret =
+			start + option.ReferenceText.Length;
+		_source.Select(caret, 0);
 		_source.Focus();
 		_message.Text =
 			$"Inserted {option.DisplayName} as {option.ReferenceText}.";
 	}
 
-	private async Task CopySelectionAsync()
-	{
-		string text =
-			_projection.GetSourceText(
-				_source.SelectionStart,
-				_source.SelectionEnd);
-		if (text.Length == 0)
-			return;
-
-		var clipboard =
-			TopLevel.GetTopLevel(this)?.Clipboard;
-		if (clipboard is not null)
-			await clipboard.SetTextAsync(text);
-	}
-
-	private async Task CutSelectionAsync()
-	{
-		if (_source.SelectionStart
-			== _source.SelectionEnd)
-		{
-			return;
-		}
-
-		await CopySelectionAsync();
-		ApplyProjectionEdit(
-			_projection.Replace(
-				_source.SelectionStart,
-				_source.SelectionEnd,
-				string.Empty),
-			CaptureSnapshot());
-	}
-
-	private async Task PasteAsync()
-	{
-		var clipboard =
-			TopLevel.GetTopLevel(this)?.Clipboard;
-		if (clipboard is null)
-			return;
-
-		string? text =
-			await clipboard.TryGetTextAsync();
-		if (text is null)
-			return;
-
-		ApplyProjectionEdit(
-			_projection.Replace(
-				_source.SelectionStart,
-				_source.SelectionEnd,
-				text),
-			CaptureSnapshot());
-	}
-
-	private EditorSnapshot CaptureSnapshot()
-		=> new(
-			_projection.Source,
-			_projection.SourcePositionFromDisplay(
-				_source.CaretIndex));
-
-	private void ApplyProjectionEdit(
-		ScriptProjectionEdit edit,
-		EditorSnapshot before)
-	{
-		if (edit.Source != _projection.Source)
-		{
-			_undo.Push(before);
-			_redo.Clear();
-		}
-
-		RebuildProjection(
-			edit.Source,
-			edit.SourceCaret);
-	}
-
-	private void UndoSource()
-	{
-		if (_undo.Count == 0)
-			return;
-
-		EditorSnapshot current =
-			CaptureSnapshot();
-		EditorSnapshot previous =
-			_undo.Pop();
-		_redo.Push(current);
-		RebuildProjection(
-			previous.Source,
-			previous.SourceCaret);
-	}
-
-	private void RedoSource()
-	{
-		if (_redo.Count == 0)
-			return;
-
-		EditorSnapshot current =
-			CaptureSnapshot();
-		EditorSnapshot next =
-			_redo.Pop();
-		_undo.Push(current);
-		RebuildProjection(
-			next.Source,
-			next.SourceCaret);
-	}
-
-	private void RebuildProjection(
-		string source,
-		int sourceCaret)
+	private void RefreshAnalysis()
 	{
 		try
 		{
 			ScriptSourceDocumentAnalysis analysis =
-				AnalyzeSource(source);
-			_projection =
-				ScriptSourceProjection.Create(
-					source,
-					analysis.References);
-
-			int displayCaret =
-				_projection.DisplayPositionFromSource(
-					sourceCaret);
-			_updatingProjectedText = true;
-			try
-			{
-				_source.Text = _projection.Text;
-				_source.SelectionStart = displayCaret;
-				_source.SelectionEnd = displayCaret;
-				_source.CaretIndex = displayCaret;
-			}
-			finally
-			{
-				_updatingProjectedText = false;
-				_pendingTextEditSnapshot = null;
-			}
-
+				AnalyzeSource(
+					_source.Text
+						?? string.Empty);
+			_referenceGenerator.SetTokens(
+				ScriptReferenceVisualTokenCatalog.Create(
+					analysis.References));
+			_source.TextArea.TextView.Redraw();
 			RenderAnalysis(analysis);
 		}
 		catch (Exception ex)
@@ -792,12 +421,9 @@ public sealed class ScriptEditorControl : UserControl
 			foreach (ScriptAnalysisDiagnostic diagnostic
 				in analysis.Diagnostics)
 			{
-				int displayStart =
-					_projection.DisplayPositionFromSource(
-						diagnostic.Span.Start);
 				lines.Add(
 					$"{diagnostic.Severity} {diagnostic.Code} "
-						+ $"at {displayStart}: "
+						+ $"at {diagnostic.Span.Start}: "
 						+ diagnostic.Message);
 			}
 		}
@@ -829,7 +455,9 @@ public sealed class ScriptEditorControl : UserControl
 	{
 		try
 		{
-			string source = _projection.Source;
+			string source =
+				_source.Text
+					?? string.Empty;
 			if (_pattern is not null)
 			{
 				ScriptDocumentEditor.UpdateSource(
