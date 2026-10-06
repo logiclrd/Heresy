@@ -12,6 +12,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 
+using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Persistence;
@@ -196,6 +197,12 @@ public sealed class MainWindow : Window
 			Button newPattern = new() { Content = "+ Pattern" };
 			newPattern.Click += async (_, _) => await CreatePatternAsync();
 			actions.Children.Add(newPattern);
+		}
+		if (section == SongTreeSection.Instruments)
+		{
+			Button newInstrument = new() { Content = "+ Instrument" };
+			newInstrument.Click += async (_, _) => await CreateInstrumentAsync();
+			actions.Children.Add(newInstrument);
 		}
 		if (section == SongTreeSection.Samples)
 		{
@@ -461,6 +468,33 @@ public sealed class MainWindow : Window
 		catch (Exception ex)
 		{
 			SetStatus($"Could not create pattern: {ex.Message}");
+		}
+	}
+
+	private async Task CreateInstrumentAsync()
+	{
+		TextPromptDialog dialog =
+			new("New instrument", "Instrument name:", "New Instrument");
+		string? name = await dialog.ShowDialog<string?>(this);
+		if (name is null)
+			return;
+
+		try
+		{
+			InstrumentDefinition instrument =
+				InstrumentDocumentEditor.CreateInstrument(
+					_workspace,
+					name);
+			SongTreeObject? node =
+				FindTreeObject(
+					_workspace.Document.GetSectionRoot(SongTreeSection.Instruments),
+					instrument.Id);
+			RefreshDocumentView($"Created instrument {instrument.Name}", node);
+			ShowInstrumentEditor(instrument, node);
+		}
+		catch (Exception ex)
+		{
+			SetStatus($"Could not create instrument: {ex.Message}");
 		}
 	}
 
@@ -907,6 +941,20 @@ public sealed class MainWindow : Window
 			items.Add(editPattern);
 			items.Add(new Separator());
 		}
+		if (section == SongTreeSection.Instruments
+			&& !item.IsMissingReference
+			&& item.Kind == SongObjectKind.Instrument)
+		{
+			MenuItem editInstrument = new() { Header = "Edit Instrument..." };
+			editInstrument.Click += (_, _) =>
+			{
+				tree.SelectedItem = control;
+				SelectTreeItem(item, tree);
+				ShowInstrumentEditor(item);
+			};
+			items.Add(editInstrument);
+			items.Add(new Separator());
+		}
 		if (section == SongTreeSection.Samples
 			&& !item.IsMissingReference
 			&& item.Kind == SongObjectKind.Sample)
@@ -1054,6 +1102,40 @@ public sealed class MainWindow : Window
 		_mainContent.Content = editor;
 		UpdateWindowTitle();
 		SetStatus($"Editing pattern {pattern.Name}");
+	}
+
+	private void ShowInstrumentEditor(SongTreeItemViewModel item)
+	{
+		if (item.ObjectId is not ObjectId id
+			|| !_workspace.Document.TryGet(id, out SongObject? songObject)
+			|| songObject is not InstrumentDefinition instrument)
+		{
+			SetStatus("The selected instrument is not available.");
+			return;
+		}
+
+		ShowInstrumentEditor(instrument, item.Node);
+	}
+
+	private void ShowInstrumentEditor(
+		InstrumentDefinition instrument,
+		SongTreeNode? selectNode)
+	{
+		InstrumentEditorControl editor =
+			new(
+				_workspace,
+				instrument,
+				() => RefreshDocumentView(
+					$"Edited instrument {instrument.Name}",
+					selectNode),
+				message =>
+				{
+					UpdateWindowTitle();
+					SetStatus(message);
+				});
+		_mainContent.Content = editor;
+		UpdateWindowTitle();
+		SetStatus($"Editing instrument {instrument.Name}");
 	}
 
 	private async Task ShowSampleEditorAsync(SongTreeItemViewModel item)
