@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Heresy.Core.Instruments;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequences;
+using Heresy.Core.Scripting;
 
 namespace Heresy.Core.Objects;
 
@@ -18,6 +19,7 @@ public enum SongReferenceKind
 	InstrumentPitchEnvelope,
 	InstrumentPanningEnvelope,
 	InstrumentFilterEnvelope,
+	ScriptObject,
 }
 
 public sealed record SongReference(
@@ -36,7 +38,9 @@ public sealed record SongReferenceAnalysis(
 /// </summary>
 public static class SongReferenceAnalyzer
 {
-	public static SongReferenceAnalysis Analyze(SongDocument document)
+	public static SongReferenceAnalysis Analyze(
+		SongDocument document,
+		IScriptObjectReferenceAnalyzer? scriptReferenceAnalyzer = null)
 	{
 		ArgumentNullException.ThrowIfNull(document);
 
