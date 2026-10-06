@@ -16,6 +16,7 @@ using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Persistence;
 using Heresy.Core.Samples;
+using Heresy.Core.Sequences;
 using Heresy.UserInterface.Dialogs;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.ViewModels;
@@ -183,6 +184,12 @@ public sealed class MainWindow : Window
 				Orientation = Orientation.Horizontal,
 				Spacing = 6,
 			};
+		if (section == SongTreeSection.Sequences)
+		{
+			Button newSequence = new() { Content = "+ Sequence" };
+			newSequence.Click += async (_, _) => await CreateSequenceAsync();
+			actions.Children.Add(newSequence);
+		}
 		if (section == SongTreeSection.Patterns)
 		{
 			Button newPattern = new() { Content = "+ Pattern" };
@@ -400,6 +407,33 @@ public sealed class MainWindow : Window
 		SetStatus(
 			"The song has unsaved changes. Save it before replacing the active document.");
 		return false;
+	}
+
+	private async Task CreateSequenceAsync()
+	{
+		TextPromptDialog dialog =
+			new("New sequence", "Sequence name:", "New Sequence");
+		string? name = await dialog.ShowDialog<string?>(this);
+		if (name is null)
+			return;
+
+		try
+		{
+			DataSequenceDefinition sequence =
+				SequenceDocumentEditor.CreateDataSequence(
+					_workspace,
+					name);
+			SongTreeObject? node =
+				FindTreeObject(
+					_workspace.Document.GetSectionRoot(SongTreeSection.Sequences),
+					sequence.Id);
+			RefreshDocumentView($"Created sequence {sequence.Name}", node);
+			ShowSequenceEditor(sequence, node);
+		}
+		catch (Exception ex)
+		{
+			SetStatus($"Could not create sequence: {ex.Message}");
+		}
 	}
 
 	private async Task CreatePatternAsync()
@@ -844,6 +878,20 @@ public sealed class MainWindow : Window
 		};
 
 		List<object> items = [];
+		if (section == SongTreeSection.Sequences
+			&& !item.IsMissingReference
+			&& item.Kind == SongObjectKind.Sequence)
+		{
+			MenuItem editSequence = new() { Header = "Edit Sequence..." };
+			editSequence.Click += (_, _) =>
+			{
+				tree.SelectedItem = control;
+				SelectTreeItem(item, tree);
+				ShowSequenceEditor(item);
+			};
+			items.Add(editSequence);
+			items.Add(new Separator());
+		}
 		if (section == SongTreeSection.Patterns
 			&& !item.IsMissingReference
 			&& item.Kind == SongObjectKind.Pattern)
@@ -883,6 +931,85 @@ public sealed class MainWindow : Window
 		};
 	}
 
+	private void ShowSequenceEditor(SongTreeItemViewModel item)
+	{
+		if (item.ObjectId is not ObjectId id
+			|| !_workspace.Document.TryGet(id, out SongObject? songObject))
+		{
+			SetStatus("The selected sequence is not available.");
+			return;
+		}
+
+		if (songObject is not DataSequenceDefinition sequence)
+		{
+			SetStatus("Script-sequence editing is not implemented yet.");
+			return;
+		}
+
+		ShowSequenceEditor(sequence, item.Node);
+	}
+
+	private void ShowSequenceEditor(
+		DataSequenceDefinition sequence,
+		SongTreeNode? selectNode)
+	{
+		SequenceEditorControl editor =
+			new(
+				_workspace,
+				sequence,
+				() => RefreshDocumentView(
+					$"Edited sequence {sequence.Name}",
+					selectNode),
+				message =>
+				{
+					UpdateWindowTitle();
+					SetStatus(message);
+				},
+				(entryIndex, patternId) =>
+					ShowSequencePattern(
+						sequence,
+						selectNode,
+						entryIndex,
+						patternId));
+		_mainContent.Content = editor;
+		UpdateWindowTitle();
+		SetStatus($"Editing sequence {sequence.Name}");
+	}
+
+	private void ShowSequencePattern(
+		DataSequenceDefinition sequence,
+		SongTreeNode? sequenceNode,
+		int entryIndex,
+		ObjectId patternId)
+	{
+		if (!_workspace.Document.TryGet(
+			patternId,
+			out SongObject? songObject)
+			|| songObject is not PatternDefinition)
+		{
+			SetStatus(
+				$"Sequence order {entryIndex} references a missing pattern.");
+			return;
+		}
+
+		if (songObject is not DataPatternDefinition pattern)
+		{
+			SetStatus("Script-pattern editing is not implemented yet.");
+			return;
+		}
+
+		SongTreeObject? patternNode =
+			FindTreeObject(
+				_workspace.Document.GetSectionRoot(SongTreeSection.Patterns),
+				pattern.Id);
+		ShowPatternEditor(
+			pattern,
+			patternNode,
+			closeOverride: () =>
+				ShowSequenceEditor(sequence, sequenceNode),
+			backLabel: "← Sequence");
+	}
+
 	private void ShowPatternEditor(SongTreeItemViewModel item)
 	{
 		if (item.ObjectId is not ObjectId id
@@ -903,19 +1030,25 @@ public sealed class MainWindow : Window
 
 	private void ShowPatternEditor(
 		DataPatternDefinition pattern,
-		SongTreeNode? selectNode)
+		SongTreeNode? selectNode,
+		Action? closeOverride = null,
+		string backLabel = "← Document")
 	{
 		PatternEditorControl editor =
 			new(
 				this,
 				_workspace,
 				pattern,
-				() => RefreshDocumentView($"Edited pattern {pattern.Name}", selectNode),
+				closeOverride
+					?? (() => RefreshDocumentView(
+						$"Edited pattern {pattern.Name}",
+						selectNode)),
 				message =>
 				{
 					UpdateWindowTitle();
 					SetStatus(message);
-				});
+				},
+				backLabel);
 		_mainContent.Content = editor;
 		UpdateWindowTitle();
 		SetStatus($"Editing pattern {pattern.Name}");
