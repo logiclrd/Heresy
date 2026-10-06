@@ -324,6 +324,9 @@ public static class SongDocumentJson
 								JsonOptions);
 					}
 
+					if (cell.Volume.HasValue)
+						cellNode["volume"] = cell.Volume.Value;
+
 					JsonArray effects = [];
 					foreach (PatternEffect effect in cell.Effects)
 					{
@@ -492,6 +495,9 @@ public static class SongDocumentJson
 								?? throw new InvalidDataException(
 									"Pattern note could not be deserialized.");
 						}
+
+						if (cell["volume"] is JsonNode volumeNode)
+							target.Volume = volumeNode.GetValue<double>();
 
 						foreach (JsonNode? effectNode in
 							RequiredArray(cell, "effects"))

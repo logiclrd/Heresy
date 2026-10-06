@@ -175,12 +175,14 @@ public sealed class SongDocumentJsonTests
 				RowCount = 3,
 				ChannelCount = 1,
 			};
-		pattern.Grid.GetOrCreateCell(0, 0).Note =
+		PatternCell startCell = pattern.Grid.GetOrCreateCell(0, 0);
+		startCell.Note =
 			new StartPatternNote(
 				sourceId,
 				pitchMultiplier: 2.0,
 				playbackSpeedMultiplier: 0.5,
 				mixdown: true);
+		startCell.Volume = 0.75;
 		pattern.Grid.GetOrCreateCell(1, 0).Note =
 			new PatternNoteOff();
 		pattern.Grid.GetOrCreateCell(2, 0).Note =
@@ -203,6 +205,7 @@ public sealed class SongDocumentJsonTests
 					2.0,
 					0.5,
 					true)));
+		Assert.That(copy.Grid[0, 0]!.Volume, Is.EqualTo(0.75));
 		Assert.That(copy.Grid[1, 0]!.Note, Is.TypeOf<PatternNoteOff>());
 		Assert.That(copy.Grid[2, 0]!.Note, Is.TypeOf<PatternNoteCut>());
 	}
