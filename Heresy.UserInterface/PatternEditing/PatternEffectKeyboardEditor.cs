@@ -59,17 +59,16 @@ public static class PatternEffectKeyboardEditor
 				? cell.Effects[effectIndex]
 				: null;
 
+		char command = default;
+		byte parameter = 0;
 		if (existing is not null
 			&& !PatternEffectCodec.TryDecodeTracker(
 				existing,
-				out char existingCommand,
-				out byte existingParameter))
+				out command,
+				out parameter))
 		{
 			return new PatternEffectInputResult(false, true);
 		}
-
-		char command = existing is null ? default : existingCommand;
-		byte parameter = existing is null ? (byte)0 : existingParameter;
 
 		PatternCellField field =
 			cursor.IsExpanded
