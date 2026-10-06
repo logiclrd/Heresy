@@ -294,7 +294,24 @@ public sealed class PatternEditorControl : UserControl
 						row,
 						channel,
 						effectIndex,
-						field));
+						field),
+				effectIndex =>
+					DeleteEffectAt(
+						row,
+						channel,
+						effectIndex),
+				(effectIndex, after) =>
+					InsertEffectAt(
+						row,
+						channel,
+						effectIndex,
+						after),
+				(sourceIndex, targetIndex) =>
+					ReorderEffectByDrag(
+						row,
+						channel,
+						sourceIndex,
+						targetIndex));
 		effects.SetEffects(view.Effects);
 
 		Grid content = new();
@@ -347,10 +364,8 @@ public sealed class PatternEditorControl : UserControl
 				field = PatternCellField.EffectCommand;
 			}
 			else if (patternCell?.Effects.Count == 1
-				&& !PatternEffectCodec.TryDecodeTracker(
-					patternCell.Effects[0],
-					out _,
-					out _))
+				&& !PatternEffectCodec.IsTrackerStyle(
+					patternCell.Effects[0]))
 			{
 				field = PatternCellField.EffectCommand;
 			}
@@ -378,6 +393,15 @@ public sealed class PatternEditorControl : UserControl
 
 		PatternCell? cell = _pattern.Grid[row, channel];
 		(int Row, int Channel)? previouslyExpanded = _expandedCell;
+
+		if ((e.KeyModifiers & KeyModifiers.Alt) != 0
+			&& HandleAltEffectKey(row, channel, cell, e))
+		{
+			e.Handled = true;
+			RefreshCursorVisuals();
+			FocusCursorCell();
+			return;
+		}
 
 		switch (e.Key)
 		{
@@ -425,10 +449,8 @@ public sealed class PatternEditorControl : UserControl
 				}
 				else if (cell is not null
 					&& cell.Effects.Count == 1
-					&& !PatternEffectCodec.TryDecodeTracker(
-						cell.Effects[0],
-						out _,
-						out _))
+					&& !PatternEffectCodec.IsTrackerStyle(
+						cell.Effects[0]))
 				{
 					// TODO: Enter and double-click should invoke the same
 					// native-effect parameter editor command.
@@ -487,6 +509,242 @@ public sealed class PatternEditorControl : UserControl
 		RefreshCursorVisuals();
 		FocusCursorCell();
 		e.Handled = true;
+	}
+
+	private bool HandleAltEffectKey(
+		int row,
+		int channel,
+		PatternCell? cell,
+		KeyEventArgs e)
+	{
+		bool shift =
+			(e.KeyModifiers & KeyModifiers.Shift) != 0;
+
+		switch (e.Key)
+		{
+			case Key.Left:
+				if (_cursor.IsExpanded)
+				{
+					FinishStackMutation(
+						row,
+						channel,
+						PatternEffectStackEditor.MoveSelected(
+							_workspace,
+							_pattern,
+							_cursor,
+							delta: -1),
+						"Moved effect left");
+				}
+				return true;
+
+			case Key.Right:
+				if (_cursor.IsExpanded)
+				{
+					FinishStackMutation(
+						row,
+						channel,
+						PatternEffectStackEditor.MoveSelected(
+							_workspace,
+							_pattern,
+							_cursor,
+							delta: 1),
+						"Moved effect right");
+				}
+				return true;
+
+			case Key.Delete:
+				if (_cursor.Field is
+					PatternCellField.EffectCommand
+					or PatternCellField.EffectParameter)
+				{
+					FinishStackMutation(
+						row,
+						channel,
+						PatternEffectStackEditor.Delete(
+							_workspace,
+							_pattern,
+							_cursor),
+						"Deleted effect");
+				}
+				return true;
+
+			case Key.Insert:
+				if (_cursor.Field is
+					PatternCellField.EffectCommand
+					or PatternCellField.EffectParameter)
+				{
+					bool changed =
+						shift
+							? PatternEffectStackEditor.InsertAfter(
+								_workspace,
+								_pattern,
+								_cursor)
+							: PatternEffectStackEditor.InsertBefore(
+								_workspace,
+								_pattern,
+								_cursor);
+					FinishStackMutation(
+						row,
+						channel,
+						changed,
+						shift
+							? "Inserted effect after"
+							: "Inserted effect before");
+				}
+				return true;
+
+			case Key.Home:
+				if (_cursor.IsExpanded && cell is not null)
+				{
+					_cursor.MoveToFirstEffect(cell);
+					_expandedCell = (row, channel);
+				}
+				return true;
+
+			case Key.End:
+				if (_cursor.IsExpanded && cell is not null)
+				{
+					_cursor.MoveToLastEffect(cell);
+					_expandedCell = (row, channel);
+				}
+				return true;
+
+			default:
+				return false;
+		}
+	}
+
+	private void DeleteEffectAt(
+		int row,
+		int channel,
+		int effectIndex)
+	{
+		if (!SelectEffectForStackCommand(
+			row,
+			channel,
+			effectIndex))
+		{
+			return;
+		}
+
+		FinishStackMutation(
+			row,
+			channel,
+			PatternEffectStackEditor.Delete(
+				_workspace,
+				_pattern,
+				_cursor),
+			"Deleted effect");
+	}
+
+	private void InsertEffectAt(
+		int row,
+		int channel,
+		int effectIndex,
+		bool after)
+	{
+		if (!SelectEffectForStackCommand(
+			row,
+			channel,
+			effectIndex))
+		{
+			return;
+		}
+
+		bool changed =
+			after
+				? PatternEffectStackEditor.InsertAfter(
+					_workspace,
+					_pattern,
+					_cursor)
+				: PatternEffectStackEditor.InsertBefore(
+					_workspace,
+					_pattern,
+					_cursor);
+		FinishStackMutation(
+			row,
+			channel,
+			changed,
+			after
+				? "Inserted effect after"
+				: "Inserted effect before");
+	}
+
+	private void ReorderEffectByDrag(
+		int row,
+		int channel,
+		int sourceIndex,
+		int targetIndex)
+	{
+		if (!SelectEffectForStackCommand(
+			row,
+			channel,
+			sourceIndex))
+		{
+			return;
+		}
+
+		FinishStackMutation(
+			row,
+			channel,
+			PatternEffectStackEditor.MoveSelectedTo(
+				_workspace,
+				_pattern,
+				_cursor,
+				targetIndex),
+			"Reordered effect");
+	}
+
+	private bool SelectEffectForStackCommand(
+		int row,
+		int channel,
+		int effectIndex)
+	{
+		PatternCell? cell =
+			_pattern.Grid[row, channel];
+		if (cell is null
+			|| (uint)effectIndex >= (uint)cell.Effects.Count)
+		{
+			return false;
+		}
+
+		PatternEffect effect = cell.Effects[effectIndex];
+		ExpandedEffectField field =
+			PatternEffectCodec.IsTrackerStyle(effect)
+				? ExpandedEffectField.Command
+				: ExpandedEffectField.Native;
+		_cursor.SetPosition(
+			row,
+			channel,
+			PatternCellField.EffectCommand);
+		_cursor.SetExpandedSelection(
+			cell,
+			effectIndex,
+			field);
+		ExpandVisualEffects(row, channel);
+		FocusCursorCell();
+		RefreshCursorVisuals();
+		return true;
+	}
+
+	private void FinishStackMutation(
+		int row,
+		int channel,
+		bool changed,
+		string message)
+	{
+		if (!changed)
+			return;
+
+		if (_cursor.IsExpanded)
+			_expandedCell = (row, channel);
+		else if (_expandedCell == (row, channel))
+			CollapseVisualEffects(collapseCursor: false);
+
+		RefreshCell(row, channel);
+		RefreshCursorVisuals();
+		FocusCursorCell();
+		_changed($"{message} at row {row}, channel {channel + 1}");
 	}
 
 	private void SelectExpandedEffect(

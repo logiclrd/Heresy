@@ -42,6 +42,9 @@ public sealed class PatternEffectStripControl : UserControl
 	private readonly double _rowHeight;
 	private readonly Action _requestExpansion;
 	private readonly Action<int, ExpandedEffectField> _requestSelection;
+	private readonly Action<int> _requestDelete;
+	private readonly Action<int, bool> _requestInsert;
+	private readonly Action<int, int> _requestReorder;
 	private readonly DispatcherTimer _scrollTimer;
 
 	private IReadOnlyList<PatternEffectViewModel> _effects =
@@ -53,12 +56,16 @@ public sealed class PatternEffectStripControl : UserControl
 	private ExpandedEffectField _selectedExpandedField;
 	private double _scrollOffset;
 	private int _scrollDirection;
+	private int _dragSourceIndex = -1;
 
 	public PatternEffectStripControl(
 		double viewportWidth,
 		double rowHeight,
 		Action requestExpansion,
-		Action<int, ExpandedEffectField> requestSelection)
+		Action<int, ExpandedEffectField> requestSelection,
+		Action<int> requestDelete,
+		Action<int, bool> requestInsert,
+		Action<int, int> requestReorder)
 	{
 		if (!(viewportWidth > 0))
 			throw new ArgumentOutOfRangeException(nameof(viewportWidth));
@@ -71,6 +78,12 @@ public sealed class PatternEffectStripControl : UserControl
 			requestExpansion ?? throw new ArgumentNullException(nameof(requestExpansion));
 		_requestSelection =
 			requestSelection ?? throw new ArgumentNullException(nameof(requestSelection));
+		_requestDelete =
+			requestDelete ?? throw new ArgumentNullException(nameof(requestDelete));
+		_requestInsert =
+			requestInsert ?? throw new ArgumentNullException(nameof(requestInsert));
+		_requestReorder =
+			requestReorder ?? throw new ArgumentNullException(nameof(requestReorder));
 
 		Width = viewportWidth;
 		Height = rowHeight;
@@ -112,6 +125,7 @@ public sealed class PatternEffectStripControl : UserControl
 		{
 			_scrollOffset = 0;
 			StopScrolling();
+			_dragSourceIndex = -1;
 		}
 
 		_expanded = expanded;
@@ -209,10 +223,16 @@ public sealed class PatternEffectStripControl : UserControl
 			effect.IsTrackerStyle
 				? BuildTrackerContent(index, effect, width)
 				: BuildNativeContent(effect);
+		outer.ContextMenu = BuildContextMenu(index);
 
 		outer.PointerEntered += (_, _) => _requestExpansion();
 		outer.PointerPressed += (_, e) =>
 		{
+			PointerPointProperties properties =
+				e.GetCurrentPoint(outer).Properties;
+			if (properties.IsRightButtonPressed)
+				return;
+
 			if (!_expanded)
 			{
 				_requestExpansion();
@@ -234,11 +254,79 @@ public sealed class PatternEffectStripControl : UserControl
 			}
 
 			_requestSelection(index, field);
+
+			if (properties.IsLeftButtonPressed)
+			{
+				_dragSourceIndex = index;
+				e.Pointer.Capture(outer);
+			}
+			e.Handled = true;
+		};
+
+		outer.PointerReleased += (_, e) =>
+		{
+			if (!_expanded || _dragSourceIndex < 0)
+				return;
+
+			int source = _dragSourceIndex;
+			_dragSourceIndex = -1;
+			Point point = e.GetPosition(_canvas);
+			int target = GetDragTargetIndex(point.X);
+			e.Pointer.Capture(null);
+
+			if (target != source)
+				_requestReorder(source, target);
 			e.Handled = true;
 		};
 
 		ToolTip.SetTip(outer, effect.CompactText);
 		return outer;
+	}
+
+	private ContextMenu BuildContextMenu(int index)
+	{
+		MenuItem insertBefore = new() { Header = "Insert Before" };
+		insertBefore.Click += (_, _) => _requestInsert(index, false);
+
+		MenuItem insertAfter = new() { Header = "Insert After" };
+		insertAfter.Click += (_, _) => _requestInsert(index, true);
+
+		MenuItem delete = new() { Header = "Delete" };
+		delete.Click += (_, _) => _requestDelete(index);
+
+		return new ContextMenu
+		{
+			ItemsSource = new object[]
+			{
+				insertBefore,
+				insertAfter,
+				new Separator(),
+				delete,
+			},
+		};
+	}
+
+	private int GetDragTargetIndex(double canvasX)
+	{
+		if (_effects.Count == 0)
+			return 0;
+
+		double maxScroll =
+			EffectStripLayout.GetMaximumExpandedScroll(
+				_effects.Count,
+				_viewportWidth,
+				TabWidth,
+				EdgeWidth);
+		double edge = maxScroll > 0
+			? Math.Min(EdgeWidth, _viewportWidth / 2)
+			: 0;
+		double contentX =
+			canvasX + _scrollOffset - edge;
+		int index =
+			(int)Math.Floor(
+				(contentX + (TabWidth / 2))
+					/ TabWidth);
+		return Math.Clamp(index, 0, _effects.Count - 1);
 	}
 
 	private Control BuildTrackerContent(
