@@ -109,7 +109,6 @@ public sealed class PatternEffectStripControl : UserControl
 		VerticalAlignment = VerticalAlignment.Center;
 		ClipToBounds = true;
 		Content = _canvas;
-		ContextMenu = BuildEmptyContextMenu();
 
 		_scrollTimer =
 			new DispatcherTimer
@@ -129,6 +128,10 @@ public sealed class PatternEffectStripControl : UserControl
 	{
 		_effects =
 			effects ?? throw new ArgumentNullException(nameof(effects));
+		ContextMenu =
+			_effects.Count == 0
+				? BuildEmptyContextMenu()
+				: null;
 		_scrollOffset = ClampScroll(_scrollOffset);
 		Rebuild();
 	}
