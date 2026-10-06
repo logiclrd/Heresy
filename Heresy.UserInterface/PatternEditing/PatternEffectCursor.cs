@@ -46,6 +46,42 @@ public sealed class PatternEffectCursor
 	public ExpandedEffectField ExpandedField { get; private set; }
 	internal bool HasPendingHighNibble => _pendingHighNibble.HasValue;
 
+	public void SetPosition(
+		int row,
+		int channel,
+		PatternCellField field)
+	{
+		if (row < 0)
+			throw new ArgumentOutOfRangeException(nameof(row));
+		if (channel < 0)
+			throw new ArgumentOutOfRangeException(nameof(channel));
+
+		Row = row;
+		Channel = channel;
+		Field = field;
+		Collapse();
+	}
+
+	public void Clamp(int rowCount, int channelCount)
+	{
+		if (rowCount < 0)
+			throw new ArgumentOutOfRangeException(nameof(rowCount));
+		if (channelCount <= 0)
+			throw new ArgumentOutOfRangeException(nameof(channelCount));
+
+		if (rowCount == 0)
+		{
+			Row = 0;
+			Channel = Math.Min(Channel, channelCount - 1);
+			Collapse();
+			return;
+		}
+
+		Row = Math.Min(Row, rowCount - 1);
+		Channel = Math.Min(Channel, channelCount - 1);
+		Collapse();
+	}
+
 	public void MoveLeft(
 		int rowCount,
 		int channelCount,

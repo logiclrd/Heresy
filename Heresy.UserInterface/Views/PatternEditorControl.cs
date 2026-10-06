@@ -1,22 +1,30 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Threading.Tasks;
 
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 
 using Heresy.Core.Patterns;
 using Heresy.UserInterface.Dialogs;
 using Heresy.UserInterface.Documents;
+using Heresy.UserInterface.PatternEditing;
 using Heresy.UserInterface.ViewModels;
 
 namespace Heresy.UserInterface.Views;
 
 public sealed class PatternEditorControl : UserControl
 {
+	private const double CellWidth = 190;
+	private const double RowHeaderWidth = 54;
+	private const double RowHeight = 28;
+
 	private readonly Window _owner;
 	private readonly DocumentWorkspace _workspace;
 	private readonly DataPatternDefinition _pattern;
@@ -28,6 +36,14 @@ public sealed class PatternEditorControl : UserControl
 	private readonly TextBox _majorHighlight;
 	private readonly ScrollViewer _scroll;
 	private readonly TextBlock _message;
+	private readonly Dictionary<(int Row, int Channel), Border> _cellBorders = [];
+	private readonly Dictionary<(int Row, int Channel), TextBlock> _noteTexts = [];
+	private readonly Dictionary<(int Row, int Channel), PatternEffectStripControl> _effectStrips = [];
+
+	private PatternEffectCursor _cursor =
+		new(0, 0, PatternCellField.Note);
+	private Grid? _patternGrid;
+	private (int Row, int Channel)? _expandedCell;
 
 	public PatternEditorControl(
 		Window owner,
@@ -55,6 +71,8 @@ public sealed class PatternEditorControl : UserControl
 		_message =
 			new TextBlock
 			{
+				Text =
+					"Arrow keys move the tracker cursor. Enter edits a note or expands a stacked effect strip.",
 				TextWrapping = TextWrapping.Wrap,
 			};
 
@@ -136,6 +154,13 @@ public sealed class PatternEditorControl : UserControl
 		DockPanel.SetDock(messageBorder, Dock.Bottom);
 		root.Children.Add(messageBorder);
 		root.Children.Add(_scroll);
+
+		root.PointerMoved += OnRootPointerMoved;
+		root.AddHandler(
+			InputElement.PointerPressedEvent,
+			OnRootPointerPressed,
+			RoutingStrategies.Tunnel,
+			handledEventsToo: true);
 		return root;
 	}
 
@@ -169,6 +194,7 @@ public sealed class PatternEditorControl : UserControl
 				channels,
 				minor,
 				major);
+			_cursor.Clamp(rows, channels);
 			RefreshGrid();
 			_changed("Pattern layout updated");
 		}
@@ -180,10 +206,17 @@ public sealed class PatternEditorControl : UserControl
 
 	private void RefreshGrid()
 	{
+		CollapseVisualEffects(collapseCursor: true);
+		_cellBorders.Clear();
+		_noteTexts.Clear();
+		_effectStrips.Clear();
+
 		Grid grid = new();
-		grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(54)));
+		_patternGrid = grid;
+		grid.ColumnDefinitions.Add(
+			new ColumnDefinition(new GridLength(RowHeaderWidth)));
 		for (int channel = 0; channel < _pattern.ChannelCount; channel++)
-			grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(190)));
+			grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(CellWidth)));
 
 		grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
 		AddText(grid, "Row", 0, 0, FontWeight.SemiBold);
@@ -200,16 +233,10 @@ public sealed class PatternEditorControl : UserControl
 		for (int row = 0; row < _pattern.RowCount; row++)
 		{
 			int gridRow = row + 1;
-			grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+			grid.RowDefinitions.Add(
+				new RowDefinition(new GridLength(RowHeight)));
 
-			FontWeight rowWeight =
-				_pattern.MajorHighlightRows > 0
-					&& row % _pattern.MajorHighlightRows == 0
-					? FontWeight.Bold
-					: _pattern.MinorHighlightRows > 0
-						&& row % _pattern.MinorHighlightRows == 0
-						? FontWeight.SemiBold
-						: FontWeight.Normal;
+			FontWeight rowWeight = GetRowWeight(row);
 			AddText(
 				grid,
 				row.ToString("X2", CultureInfo.InvariantCulture),
@@ -219,33 +246,401 @@ public sealed class PatternEditorControl : UserControl
 
 			for (int channel = 0; channel < _pattern.ChannelCount; channel++)
 			{
-				int cellRow = row;
-				int cellChannel = channel;
-				PatternCellViewModel cell =
-					PatternCellViewModel.Create(
-						_workspace.Document,
-						_pattern,
+				Border cell =
+					BuildCell(
 						row,
-						channel);
-
-				Button button =
-					new()
-					{
-						Content = cell.DisplayText,
-						HorizontalContentAlignment = HorizontalAlignment.Left,
-						MinHeight = 28,
-						Margin = new Thickness(1),
-						FontWeight = rowWeight,
-					};
-				button.Click += async (_, _) =>
-					await EditCellAsync(cellRow, cellChannel);
-				Grid.SetRow(button, gridRow);
-				Grid.SetColumn(button, channel + 1);
-				grid.Children.Add(button);
+						channel,
+						rowWeight);
+				Grid.SetRow(cell, gridRow);
+				Grid.SetColumn(cell, channel + 1);
+				grid.Children.Add(cell);
 			}
 		}
 
 		_scroll.Content = grid;
+		RefreshCursorVisuals();
+		FocusCursorCell();
+	}
+
+	private Border BuildCell(
+		int row,
+		int channel,
+		FontWeight rowWeight)
+	{
+		PatternCellViewModel view =
+			PatternCellViewModel.Create(
+				_workspace.Document,
+				_pattern,
+				row,
+				channel);
+
+		TextBlock note =
+			new()
+			{
+				Text = view.NoteText,
+				FontWeight = rowWeight,
+				VerticalAlignment = VerticalAlignment.Center,
+				Margin = new Thickness(5, 0, 58, 0),
+				TextTrimming = TextTrimming.CharacterEllipsis,
+			};
+
+		PatternEffectStripControl effects =
+			new(
+				CellWidth - 2,
+				RowHeight - 2,
+				() => ExpandVisualEffects(row, channel),
+				(effectIndex, field) =>
+					SelectExpandedEffect(
+						row,
+						channel,
+						effectIndex,
+						field));
+		effects.SetEffects(view.Effects);
+
+		Grid content = new();
+		content.Children.Add(note);
+		content.Children.Add(effects);
+
+		Border cell =
+			new()
+			{
+				Width = CellWidth,
+				Height = RowHeight,
+				BorderBrush = Brushes.Gray,
+				BorderThickness = new Thickness(1),
+				ClipToBounds = true,
+				Focusable = true,
+				Child = content,
+			};
+
+		cell.PointerPressed += (_, e) =>
+			OnCellPointerPressed(row, channel, cell, e);
+		cell.KeyDown += async (_, e) =>
+			await OnCellKeyDownAsync(row, channel, e);
+		cell.TextInput += (_, e) =>
+			OnCellTextInput(row, channel, e);
+
+		_cellBorders[(row, channel)] = cell;
+		_noteTexts[(row, channel)] = note;
+		_effectStrips[(row, channel)] = effects;
+		return cell;
+	}
+
+	private void OnCellPointerPressed(
+		int row,
+		int channel,
+		Border cell,
+		PointerPressedEventArgs e)
+	{
+		if (e.Handled)
+			return;
+
+		Point point = e.GetPosition(cell);
+		PatternCell? patternCell = _pattern.Grid[row, channel];
+		PatternCellField field = PatternCellField.Note;
+
+		double effectLeft = CellWidth - 54;
+		if (point.X >= effectLeft)
+		{
+			if ((patternCell?.Effects.Count ?? 0) > 1)
+			{
+				field = PatternCellField.EffectCommand;
+			}
+			else if (patternCell?.Effects.Count == 1
+				&& !PatternEffectCodec.TryDecodeTracker(
+					patternCell.Effects[0],
+					out _,
+					out _))
+			{
+				field = PatternCellField.EffectCommand;
+			}
+			else
+			{
+				field = point.X < CellWidth - 32
+					? PatternCellField.EffectCommand
+					: PatternCellField.EffectParameter;
+			}
+		}
+
+		_cursor.SetPosition(row, channel, field);
+		cell.Focus();
+		RefreshCursorVisuals();
+		e.Handled = true;
+	}
+
+	private async Task OnCellKeyDownAsync(
+		int row,
+		int channel,
+		KeyEventArgs e)
+	{
+		if (_cursor.Row != row || _cursor.Channel != channel)
+			_cursor.SetPosition(row, channel, PatternCellField.Note);
+
+		PatternCell? cell = _pattern.Grid[row, channel];
+		(int Row, int Channel)? previouslyExpanded = _expandedCell;
+
+		switch (e.Key)
+		{
+			case Key.Left:
+				_cursor.MoveLeft(
+					Math.Max(1, _pattern.RowCount),
+					_pattern.ChannelCount,
+					cell);
+				e.Handled = true;
+				break;
+
+			case Key.Right:
+				_cursor.MoveRight(
+					Math.Max(1, _pattern.RowCount),
+					_pattern.ChannelCount,
+					cell);
+				e.Handled = true;
+				break;
+
+			case Key.Up:
+				_cursor.MoveUp(Math.Max(1, _pattern.RowCount));
+				if (previouslyExpanded is not null)
+					CollapseVisualEffects(collapseCursor: false);
+				e.Handled = true;
+				break;
+
+			case Key.Down:
+				_cursor.MoveDown(Math.Max(1, _pattern.RowCount));
+				if (previouslyExpanded is not null)
+					CollapseVisualEffects(collapseCursor: false);
+				e.Handled = true;
+				break;
+
+			case Key.Enter:
+				if (_cursor.Field == PatternCellField.Note)
+				{
+					await EditCellAsync(row, channel);
+					e.Handled = true;
+					return;
+				}
+
+				if (_cursor.IsExpanded)
+				{
+					_cursor.HandleEnter(cell);
+					CollapseVisualEffects(collapseCursor: false);
+				}
+				else if (cell is not null && cell.Effects.Count > 1)
+				{
+					_cursor.HandleEnter(cell);
+					ExpandVisualEffects(row, channel);
+				}
+				else if (cell is not null
+					&& cell.Effects.Count == 1
+					&& !PatternEffectCodec.TryDecodeTracker(
+						cell.Effects[0],
+						out _,
+						out _))
+				{
+					_message.Text =
+						"Native effect parameters are read-only here for now. "
+						+ "TODO: Enter/double-click will open the native-effect parameter dialog.";
+				}
+				e.Handled = true;
+				break;
+
+			default:
+				return;
+		}
+
+		RefreshCursorVisuals();
+		FocusCursorCell();
+	}
+
+	private void OnCellTextInput(
+		int row,
+		int channel,
+		TextInputEventArgs e)
+	{
+		if (string.IsNullOrEmpty(e.Text))
+			return;
+
+		if (_cursor.Row != row || _cursor.Channel != channel)
+			_cursor.SetPosition(row, channel, PatternCellField.Note);
+
+		char value = e.Text[0];
+		int editedRow = _cursor.Row;
+		int editedChannel = _cursor.Channel;
+
+		PatternEffectInputResult result =
+			PatternEffectKeyboardEditor.Type(
+				_workspace,
+				_pattern,
+				_cursor,
+				value);
+
+		if (result.Rejected)
+		{
+			_message.Text =
+				"That effect field is not directly editable in its current state. "
+				+ "Expand stacked effects with Enter; native effects use a future parameter dialog.";
+			e.Handled = true;
+			return;
+		}
+
+		if (result.Changed)
+		{
+			RefreshCell(editedRow, editedChannel);
+			_changed(
+				$"Edited effect at row {editedRow}, channel {editedChannel + 1}");
+		}
+
+		RefreshCursorVisuals();
+		FocusCursorCell();
+		e.Handled = true;
+	}
+
+	private void SelectExpandedEffect(
+		int row,
+		int channel,
+		int effectIndex,
+		ExpandedEffectField field)
+	{
+		PatternCell? cell = _pattern.Grid[row, channel];
+		if (cell is null)
+			return;
+
+		_cursor.SetPosition(
+			row,
+			channel,
+			field == ExpandedEffectField.Parameter
+				? PatternCellField.EffectParameter
+				: PatternCellField.EffectCommand);
+		_cursor.SetExpandedSelection(
+			cell,
+			effectIndex,
+			field);
+		ExpandVisualEffects(row, channel);
+		FocusCursorCell();
+		RefreshCursorVisuals();
+	}
+
+	private void ExpandVisualEffects(int row, int channel)
+	{
+		PatternCell? cell = _pattern.Grid[row, channel];
+		if (cell is null || cell.Effects.Count == 0)
+			return;
+
+		if (_expandedCell is (int oldRow, int oldChannel)
+			&& (oldRow != row || oldChannel != channel)
+			&& _effectStrips.TryGetValue(
+				(oldRow, oldChannel),
+				out PatternEffectStripControl? oldStrip))
+		{
+			oldStrip.SetVisualState(
+				expanded: false,
+				keyboardActive: false,
+				PatternCellField.Note,
+				-1,
+				default);
+		}
+
+		_expandedCell = (row, channel);
+		RefreshCellEffectState(row, channel);
+	}
+
+	private void CollapseVisualEffects(bool collapseCursor)
+	{
+		if (_expandedCell is not (int row, int channel))
+			return;
+
+		_expandedCell = null;
+		if (collapseCursor
+			&& _cursor.IsExpanded
+			&& _cursor.Row == row
+			&& _cursor.Channel == channel)
+		{
+			_cursor.Collapse();
+		}
+
+		if (_effectStrips.TryGetValue(
+			(row, channel),
+			out PatternEffectStripControl? strip))
+		{
+			strip.SetVisualState(
+				expanded: false,
+				keyboardActive:
+					_cursor.Row == row
+						&& _cursor.Channel == channel
+						&& _cursor.Field != PatternCellField.Note,
+				_cursor.Field,
+				-1,
+				default);
+		}
+	}
+
+	private void OnRootPointerPressed(
+		object? sender,
+		PointerPressedEventArgs e)
+	{
+		if (_expandedCell is not (int row, int channel)
+			|| !_effectStrips.TryGetValue(
+				(row, channel),
+				out PatternEffectStripControl? strip))
+		{
+			return;
+		}
+
+		Point? origin =
+			strip.TranslatePoint(
+				new Point(0, 0),
+				this);
+		if (origin is null)
+			return;
+
+		Point point = e.GetPosition(this);
+		Rect bounds =
+			new(
+				origin.Value,
+				strip.Bounds.Size);
+		if (!bounds.Contains(point))
+			CollapseVisualEffects(collapseCursor: true);
+	}
+
+	private void OnRootPointerMoved(
+		object? sender,
+		PointerEventArgs e)
+	{
+		if (_expandedCell is not (int row, int channel)
+			|| _patternGrid is null
+			|| !_cellBorders.TryGetValue(
+				(row, channel),
+				out Border? cell))
+		{
+			return;
+		}
+
+		Point? cellOrigin =
+			cell.TranslatePoint(
+				new Point(0, 0),
+				this);
+		Point? gridOrigin =
+			_patternGrid.TranslatePoint(
+				new Point(0, 0),
+				this);
+		if (cellOrigin is null || gridOrigin is null)
+			return;
+
+		Point pointer = e.GetPosition(this);
+		EffectStripRect rowBounds =
+			new(
+				gridOrigin.Value.X,
+				cellOrigin.Value.Y,
+				_patternGrid.Bounds.Width,
+				RowHeight);
+		if (EffectStripLayout.ShouldCollapseForPointer(
+			rowBounds,
+			new EffectStripPoint(pointer.X, pointer.Y),
+			RowHeight,
+			distanceInRowHeights: 5))
+		{
+			CollapseVisualEffects(collapseCursor: true);
+			RefreshCursorVisuals();
+		}
 	}
 
 	private async Task EditCellAsync(int row, int channel)
@@ -268,9 +663,100 @@ public sealed class PatternEditorControl : UserControl
 			row,
 			channel,
 			result.Note);
-		RefreshGrid();
+		RefreshCell(row, channel);
+		RefreshCursorVisuals();
 		_changed($"Edited row {row}, channel {channel + 1}");
 	}
+
+	private void RefreshCell(int row, int channel)
+	{
+		if (!_noteTexts.TryGetValue(
+			(row, channel),
+			out TextBlock? note)
+			|| !_effectStrips.TryGetValue(
+				(row, channel),
+				out PatternEffectStripControl? effects))
+		{
+			return;
+		}
+
+		PatternCellViewModel view =
+			PatternCellViewModel.Create(
+				_workspace.Document,
+				_pattern,
+				row,
+				channel);
+		note.Text = view.NoteText;
+		effects.SetEffects(view.Effects);
+		RefreshCellEffectState(row, channel);
+	}
+
+	private void RefreshCursorVisuals()
+	{
+		foreach (((int row, int channel), Border border) in _cellBorders)
+		{
+			bool active =
+				_pattern.RowCount > 0
+					&& row == _cursor.Row
+					&& channel == _cursor.Channel;
+			border.BorderBrush =
+				active ? Brushes.DeepSkyBlue : Brushes.Gray;
+			border.BorderThickness =
+				active ? new Thickness(2) : new Thickness(1);
+			RefreshCellEffectState(row, channel);
+		}
+	}
+
+	private void RefreshCellEffectState(int row, int channel)
+	{
+		if (!_effectStrips.TryGetValue(
+			(row, channel),
+			out PatternEffectStripControl? strip))
+		{
+			return;
+		}
+
+		bool keyboardActive =
+			_pattern.RowCount > 0
+				&& _cursor.Row == row
+				&& _cursor.Channel == channel
+				&& _cursor.Field != PatternCellField.Note;
+		bool expanded =
+			_expandedCell == (row, channel);
+
+		strip.SetVisualState(
+			expanded,
+			keyboardActive,
+			_cursor.Field,
+			keyboardActive && _cursor.IsExpanded
+				? _cursor.ExpandedEffectIndex
+				: -1,
+			keyboardActive && _cursor.IsExpanded
+				? _cursor.ExpandedField
+				: default);
+	}
+
+	private void FocusCursorCell()
+	{
+		if (_pattern.RowCount == 0)
+			return;
+
+		if (_cellBorders.TryGetValue(
+			(_cursor.Row, _cursor.Channel),
+			out Border? border))
+		{
+			border.Focus();
+		}
+	}
+
+	private FontWeight GetRowWeight(int row)
+		=> _pattern.MajorHighlightRows > 0
+			&& row % _pattern.MajorHighlightRows == 0
+				? FontWeight.Bold
+				: _pattern.MinorHighlightRows > 0
+					&& row % _pattern.MinorHighlightRows == 0
+					? FontWeight.SemiBold
+					: FontWeight.Normal;
 
 	private static TextBox NumberBox(int value)
 		=> new()

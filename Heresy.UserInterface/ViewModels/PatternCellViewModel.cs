@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -12,20 +14,21 @@ public sealed class PatternCellViewModel
 		int row,
 		int channel,
 		string noteText,
-		int effectCount,
+		IReadOnlyList<PatternEffectViewModel> effects,
 		string displayText)
 	{
 		Row = row;
 		Channel = channel;
 		NoteText = noteText;
-		EffectCount = effectCount;
+		Effects = effects;
 		DisplayText = displayText;
 	}
 
 	public int Row { get; }
 	public int Channel { get; }
 	public string NoteText { get; }
-	public int EffectCount { get; }
+	public IReadOnlyList<PatternEffectViewModel> Effects { get; }
+	public int EffectCount => Effects.Count;
 	public string DisplayText { get; }
 
 	public static PatternCellViewModel Create(
@@ -39,16 +42,20 @@ public sealed class PatternCellViewModel
 
 		PatternCell? cell = pattern.Grid[row, channel];
 		string noteText = FormatNote(document, cell?.Note);
-		int effectCount = cell?.Effects.Count ?? 0;
-		string display = effectCount == 0
+		IReadOnlyList<PatternEffectViewModel> effects =
+			cell?.Effects
+				.Select(PatternEffectViewModel.Create)
+				.ToArray()
+			?? Array.Empty<PatternEffectViewModel>();
+		string display = effects.Count == 0
 			? noteText
-			: $"{noteText}  +{effectCount} fx";
+			: $"{noteText}  +{effects.Count} fx";
 
 		return new PatternCellViewModel(
 			row,
 			channel,
 			noteText,
-			effectCount,
+			effects,
 			display);
 	}
 
