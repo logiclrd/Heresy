@@ -59,6 +59,9 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 
 			foreach (PatternEffect effect in cell.Effects)
 			{
+				if (effect is EmptyTrackerPatternEffect)
+					continue;
+
 				NoteCommand command;
 				bool isGlobal;
 

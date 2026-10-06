@@ -13,6 +13,15 @@ namespace Heresy.Core.Patterns;
 public abstract record PatternEffect;
 
 /// <summary>
+/// Persisted editor slot for a newly inserted IT-style effect whose command
+/// has not been chosen yet. It is musically inert until replaced by a concrete
+/// tracker effect; the byte is retained so parameter-first editing can still
+/// be represented without inventing playback semantics.
+/// </summary>
+public sealed record EmptyTrackerPatternEffect(
+	byte Parameter = 0) : PatternEffect;
+
+/// <summary>
 /// Tracker Bxx order jump. The byte addresses a sequence order directly.
 /// </summary>
 public sealed record TrackerOrderJumpPatternEffect(byte Order) : PatternEffect;

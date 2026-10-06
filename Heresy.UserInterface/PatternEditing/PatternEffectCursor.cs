@@ -286,6 +286,42 @@ public sealed class PatternEffectCursor
 		ResetPendingNibble();
 	}
 
+	public void MoveToFirstEffect(PatternCell cell)
+	{
+		MoveToEffect(cell, 0);
+	}
+
+	public void MoveToLastEffect(PatternCell cell)
+	{
+		ArgumentNullException.ThrowIfNull(cell);
+		if (cell.Effects.Count == 0)
+			return;
+		MoveToEffect(cell, cell.Effects.Count - 1);
+	}
+
+	private void MoveToEffect(PatternCell cell, int index)
+	{
+		ArgumentNullException.ThrowIfNull(cell);
+		if (!IsExpanded || cell.Effects.Count == 0)
+			return;
+
+		PatternEffect effect = cell.Effects[index];
+		if (!PatternEffectCodec.IsTrackerStyle(effect))
+		{
+			SetExpandedSelection(
+				cell,
+				index,
+				ExpandedEffectField.Native);
+			return;
+		}
+
+		ExpandedEffectField preferred =
+			ExpandedField == ExpandedEffectField.Parameter
+				? ExpandedEffectField.Parameter
+				: ExpandedEffectField.Command;
+		SetExpandedSelection(cell, index, preferred);
+	}
+
 	public void Collapse()
 	{
 		IsExpanded = false;
@@ -304,10 +340,8 @@ public sealed class PatternEffectCursor
 			throw new ArgumentOutOfRangeException(nameof(effectIndex));
 
 		bool tracker =
-			PatternEffectCodec.TryDecodeTracker(
-				cell.Effects[effectIndex],
-				out _,
-				out _);
+			PatternEffectCodec.IsTrackerStyle(
+				cell.Effects[effectIndex]);
 		if (tracker && field == ExpandedEffectField.Native)
 			throw new ArgumentException("Tracker effects use command/parameter fields.", nameof(field));
 		if (!tracker && field != ExpandedEffectField.Native)
@@ -352,10 +386,8 @@ public sealed class PatternEffectCursor
 	private static bool IsSingleNative(PatternCell? cell)
 		=> cell is not null
 			&& cell.Effects.Count == 1
-			&& !PatternEffectCodec.TryDecodeTracker(
-				cell.Effects[0],
-				out _,
-				out _);
+			&& !PatternEffectCodec.IsTrackerStyle(
+				cell.Effects[0]);
 
 	private static List<(int Index, ExpandedEffectField Field)> BuildStops(
 		PatternCell cell)
@@ -363,10 +395,8 @@ public sealed class PatternEffectCursor
 		List<(int, ExpandedEffectField)> result = [];
 		for (int index = 0; index < cell.Effects.Count; index++)
 		{
-			if (PatternEffectCodec.TryDecodeTracker(
-				cell.Effects[index],
-				out _,
-				out _))
+			if (PatternEffectCodec.IsTrackerStyle(
+				cell.Effects[index]))
 			{
 				result.Add((index, ExpandedEffectField.Command));
 				result.Add((index, ExpandedEffectField.Parameter));

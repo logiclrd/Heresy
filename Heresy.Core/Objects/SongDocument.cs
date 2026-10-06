@@ -15,7 +15,7 @@ public sealed class SongDocument
 	private readonly Dictionary<SongTreeSection, SongTreeFolder> _sectionRoots = [];
 	private uint _nextObjectId = 1;
 
-	public const int FormatVersion = 3;
+	public const int FormatVersion = 4;
 
 	public SongDocument()
 	{
@@ -135,7 +135,7 @@ public sealed class SongDocument
 		if (restoredRoot.Children.Count != SongTreeSections.DocumentOrder.Length)
 		{
 			throw new InvalidOperationException(
-				"A version 3 song tree must contain exactly the four fixed document sections.");
+				"A version 4 song tree must contain exactly the four fixed document sections.");
 		}
 
 		for (int index = 0; index < SongTreeSections.DocumentOrder.Length; index++)

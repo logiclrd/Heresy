@@ -455,6 +455,7 @@ public sealed class PatternEffectInteractionTests
 		cursor.Expand(cell);
 		cursor.MoveRight(64, 8, cell);
 		cursor.MoveRight(64, 8, cell);
+		uint documentRevision = workspace.Document.DocumentRevision;
 		uint audioRevision = workspace.Document.AudioRevision;
 
 		PatternEffectStackEditor.InsertBefore(
@@ -469,7 +470,8 @@ public sealed class PatternEffectInteractionTests
 		cursor.IsExpanded.Should().BeTrue();
 		cursor.ExpandedEffectIndex.Should().Be(1);
 		cursor.ExpandedField.Should().Be(ExpandedEffectField.Command);
-		workspace.Document.AudioRevision.Should().Be(audioRevision + 1);
+		workspace.Document.DocumentRevision.Should().Be(documentRevision + 1);
+		workspace.Document.AudioRevision.Should().Be(audioRevision);
 	}
 
 	[Test]

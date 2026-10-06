@@ -35,18 +35,28 @@ public sealed class PatternEffectViewModel
 	{
 		ArgumentNullException.ThrowIfNull(effect);
 
-		if (PatternEffectCodec.TryDecodeTracker(
+		if (PatternEffectCodec.TryDecodeTrackerSlot(
 			effect,
-			out char command,
+			out char? command,
 			out byte parameter))
 		{
+			string text =
+				command.HasValue
+					? $"{command.Value}{parameter:X2}"
+					: parameter == 0
+						? "..."
+						: $".{parameter:X2}";
+			int colorKey =
+				command.HasValue
+					? command.Value - 'A'
+					: 26;
 			return new PatternEffectViewModel(
 				effect,
 				true,
 				command,
 				parameter,
-				$"{command}{parameter:X2}",
-				command - 'A');
+				text,
+				colorKey);
 		}
 
 		string label = GetNativeLabel(effect);

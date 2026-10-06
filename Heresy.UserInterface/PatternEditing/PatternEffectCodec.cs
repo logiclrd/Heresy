@@ -8,6 +8,41 @@ namespace Heresy.UserInterface.PatternEditing;
 
 public static class PatternEffectCodec
 {
+	public static bool IsTrackerStyle(PatternEffect effect)
+	{
+		ArgumentNullException.ThrowIfNull(effect);
+		return effect is EmptyTrackerPatternEffect
+			|| TryDecodeTracker(effect, out _, out _);
+	}
+
+	public static bool TryDecodeTrackerSlot(
+		PatternEffect effect,
+		out char? command,
+		out byte parameter)
+	{
+		ArgumentNullException.ThrowIfNull(effect);
+
+		if (effect is EmptyTrackerPatternEffect empty)
+		{
+			command = null;
+			parameter = empty.Parameter;
+			return true;
+		}
+
+		if (TryDecodeTracker(
+			effect,
+			out char concreteCommand,
+			out parameter))
+		{
+			command = concreteCommand;
+			return true;
+		}
+
+		command = null;
+		parameter = default;
+		return false;
+	}
+
 	public static bool TryDecodeTracker(
 		PatternEffect effect,
 		out char command,

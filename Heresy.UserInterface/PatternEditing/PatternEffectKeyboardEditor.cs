@@ -59,10 +59,10 @@ public static class PatternEffectKeyboardEditor
 				? cell.Effects[effectIndex]
 				: null;
 
-		char command = default;
+		char? command = null;
 		byte parameter = 0;
 		if (existing is not null
-			&& !PatternEffectCodec.TryDecodeTracker(
+			&& !PatternEffectCodec.TryDecodeTrackerSlot(
 				existing,
 				out command,
 				out parameter))
@@ -110,7 +110,7 @@ public static class PatternEffectKeyboardEditor
 
 		if (value == '.')
 		{
-			if (!PatternEffectCodec.TryCreateTracker(
+			if (!TryCreateTrackerSlot(
 				command,
 				0,
 				out PatternEffect? replacement)
@@ -154,7 +154,7 @@ public static class PatternEffectKeyboardEditor
 			complete = true;
 		}
 
-		if (!PatternEffectCodec.TryCreateTracker(
+		if (!TryCreateTrackerSlot(
 			command,
 			nextParameter,
 			out PatternEffect? next)
@@ -205,6 +205,23 @@ public static class PatternEffectKeyboardEditor
 		cell.Effects[effectIndex] = effect;
 		workspace.Document.MarkChanged(affectsAudio: true);
 		return true;
+	}
+
+	private static bool TryCreateTrackerSlot(
+		char? command,
+		byte parameter,
+		out PatternEffect? effect)
+	{
+		if (!command.HasValue)
+		{
+			effect = new EmptyTrackerPatternEffect(parameter);
+			return true;
+		}
+
+		return PatternEffectCodec.TryCreateTracker(
+			command.Value,
+			parameter,
+			out effect);
 	}
 
 	private static int HexNibble(char value)
