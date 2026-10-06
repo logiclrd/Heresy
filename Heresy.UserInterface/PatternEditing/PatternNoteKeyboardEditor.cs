@@ -1,5 +1,7 @@
 using System;
 
+using Avalonia.Input;
+
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.UserInterface.Documents;
@@ -43,6 +45,31 @@ public readonly record struct PatternNoteInputResult(
 
 public static class PatternNoteKeyboardEditor
 {
+	public static PatternNoteInputResult TypePhysical(
+		DocumentWorkspace workspace,
+		DataPatternDefinition pattern,
+		PatternEffectCursor cursor,
+		PatternNoteInputState state,
+		PhysicalKey key)
+	{
+		if (!PatternNoteKeyboard.TryGetTrackerCharacter(
+			key,
+			out char trackerKey))
+		{
+			return new PatternNoteInputResult(
+				false,
+				false,
+				false);
+		}
+
+		return Type(
+			workspace,
+			pattern,
+			cursor,
+			state,
+			trackerKey);
+	}
+
 	public static PatternNoteInputResult Type(
 		DocumentWorkspace workspace,
 		DataPatternDefinition pattern,

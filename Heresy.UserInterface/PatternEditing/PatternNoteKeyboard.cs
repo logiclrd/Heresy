@@ -1,5 +1,7 @@
 using System;
 
+using Avalonia.Input;
+
 namespace Heresy.UserInterface.PatternEditing;
 
 /// <summary>
@@ -50,4 +52,65 @@ public static class PatternNoteKeyboard
 		};
 		return semitoneOffset >= 0;
 	}
+
+	public static bool TryGetSemitoneOffset(
+		PhysicalKey key,
+		out int semitoneOffset)
+	{
+		if (!TryGetTrackerCharacter(key, out char trackerKey))
+		{
+			semitoneOffset = -1;
+			return false;
+		}
+
+		return TryGetSemitoneOffset(trackerKey, out semitoneOffset);
+	}
+
+	/// <summary>
+	/// Maps a layout-independent physical key to the US-QWERTY character used
+	/// by the tracker piano. This deliberately ignores the active OS keyboard
+	/// layout and the text symbol produced by the key press.
+	/// </summary>
+	public static bool TryGetTrackerCharacter(
+		PhysicalKey key,
+		out char trackerKey)
+	{
+		trackerKey = key switch
+		{
+			PhysicalKey.Z => 'Z',
+			PhysicalKey.S => 'S',
+			PhysicalKey.X => 'X',
+			PhysicalKey.D => 'D',
+			PhysicalKey.C => 'C',
+			PhysicalKey.V => 'V',
+			PhysicalKey.G => 'G',
+			PhysicalKey.B => 'B',
+			PhysicalKey.H => 'H',
+			PhysicalKey.N => 'N',
+			PhysicalKey.J => 'J',
+			PhysicalKey.M => 'M',
+			PhysicalKey.Q => 'Q',
+			PhysicalKey.Digit2 => '2',
+			PhysicalKey.W => 'W',
+			PhysicalKey.Digit3 => '3',
+			PhysicalKey.E => 'E',
+			PhysicalKey.R => 'R',
+			PhysicalKey.Digit5 => '5',
+			PhysicalKey.T => 'T',
+			PhysicalKey.Digit6 => '6',
+			PhysicalKey.Y => 'Y',
+			PhysicalKey.Digit7 => '7',
+			PhysicalKey.U => 'U',
+			PhysicalKey.I => 'I',
+			PhysicalKey.Digit9 => '9',
+			PhysicalKey.O => 'O',
+			PhysicalKey.Digit0 => '0',
+			PhysicalKey.P => 'P',
+			PhysicalKey.Digit1 => '1',
+			PhysicalKey.Backquote => '`',
+			_ => '\0',
+		};
+		return trackerKey != '\0';
+	}
+
 }

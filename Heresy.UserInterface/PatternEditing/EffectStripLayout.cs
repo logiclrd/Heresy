@@ -71,6 +71,10 @@ public static class EffectStripLayout
 		double edge = overflows
 			? Math.Min(edgeControlWidth, viewportWidth / 2)
 			: 0;
+		double contentWidth = effectCount * tabWidth;
+		double firstX = overflows
+			? edge
+			: Math.Max(0, viewportWidth - contentWidth);
 
 		EffectStripLayoutItem[] result =
 			new EffectStripLayoutItem[effectCount];
@@ -79,7 +83,7 @@ public static class EffectStripLayout
 			result[index] =
 				new EffectStripLayoutItem(
 					index,
-					edge + (index * tabWidth) - clampedScroll,
+					firstX + (index * tabWidth) - clampedScroll,
 					tabWidth);
 		}
 		return result;
