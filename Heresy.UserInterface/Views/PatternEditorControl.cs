@@ -34,6 +34,9 @@ public sealed class PatternEditorControl : UserControl
 	private readonly TextBox _channelCount;
 	private readonly TextBox _minorHighlight;
 	private readonly TextBox _majorHighlight;
+	private readonly ComboBox _noteSource;
+	private readonly ComboBox _noteOctave;
+	private readonly PatternNoteInputState _noteInputState;
 	private readonly ScrollViewer _scroll;
 	private readonly TextBlock _message;
 	private readonly Dictionary<(int Row, int Channel), Border> _cellBorders = [];
@@ -62,6 +65,53 @@ public sealed class PatternEditorControl : UserControl
 		_channelCount = NumberBox(pattern.ChannelCount);
 		_minorHighlight = NumberBox(pattern.MinorHighlightRows);
 		_majorHighlight = NumberBox(pattern.MajorHighlightRows);
+
+		PatternSourceOption[] noteSources =
+			PatternSourceCatalog.GetSources(workspace.Document);
+		PatternSourceOption? defaultSource = null;
+		foreach (PatternSourceOption source in noteSources)
+		{
+			if (source.Id != pattern.Id)
+			{
+				defaultSource = source;
+				break;
+			}
+		}
+
+		_noteInputState =
+			new(
+				defaultSource?.Id ?? Heresy.Core.Objects.ObjectId.None,
+				baseOctave: 4);
+		_noteSource =
+			new ComboBox
+			{
+				ItemsSource = noteSources,
+				SelectedItem = defaultSource,
+				Width = 180,
+			};
+		_noteSource.SelectionChanged += (_, _) =>
+		{
+			_noteInputState.SourceId =
+				_noteSource.SelectedItem is PatternSourceOption option
+					? option.Id
+					: Heresy.Core.Objects.ObjectId.None;
+			FocusCursorCell();
+		};
+
+		_noteOctave =
+			new ComboBox
+			{
+				ItemsSource = new[] { 0, 1, 2, 3, 4, 5, 6, 7, 8 },
+				SelectedItem = 4,
+				Width = 58,
+			};
+		_noteOctave.SelectionChanged += (_, _) =>
+		{
+			if (_noteOctave.SelectedItem is int octave)
+				_noteInputState.BaseOctave = octave;
+			FocusCursorCell();
+		};
+
 		_scroll =
 			new ScrollViewer
 			{
@@ -72,7 +122,7 @@ public sealed class PatternEditorControl : UserControl
 			new TextBlock
 			{
 				Text =
-					"Arrow keys move the tracker cursor. Enter edits a note or expands a stacked effect strip.",
+					"Arrow keys move the tracker cursor. Type notes directly in the note field; Enter opens detailed note editing or expands a stacked effect strip.",
 				TextWrapping = TextWrapping.Wrap,
 			};
 
@@ -104,6 +154,18 @@ public sealed class PatternEditorControl : UserControl
 				Spacing = 6,
 				VerticalAlignment = VerticalAlignment.Center,
 			};
+		layout.Children.Add(new TextBlock
+		{
+			Text = "Source",
+			VerticalAlignment = VerticalAlignment.Center,
+		});
+		layout.Children.Add(_noteSource);
+		layout.Children.Add(new TextBlock
+		{
+			Text = "Octave",
+			VerticalAlignment = VerticalAlignment.Center,
+		});
+		layout.Children.Add(_noteOctave);
 		layout.Children.Add(new TextBlock
 		{
 			Text = "Rows",
@@ -482,6 +544,37 @@ public sealed class PatternEditorControl : UserControl
 		char value = e.Text[0];
 		int editedRow = _cursor.Row;
 		int editedChannel = _cursor.Channel;
+
+		if (_cursor.Field == PatternCellField.Note)
+		{
+			PatternNoteInputResult noteResult =
+				PatternNoteKeyboardEditor.Type(
+					_workspace,
+					_pattern,
+					_cursor,
+					_noteInputState,
+					value);
+
+			if (!noteResult.Handled)
+				return;
+
+			if (noteResult.Rejected)
+			{
+				_message.Text =
+					"Choose a current sound source before entering pitched notes.";
+			}
+			else if (noteResult.Changed)
+			{
+				RefreshCell(editedRow, editedChannel);
+				_changed(
+					$"Edited note at row {editedRow}, channel {editedChannel + 1}");
+			}
+
+			RefreshCursorVisuals();
+			FocusCursorCell();
+			e.Handled = true;
+			return;
+		}
 
 		PatternEffectInputResult result =
 			PatternEffectKeyboardEditor.Type(
