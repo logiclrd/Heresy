@@ -17,24 +17,40 @@ public sealed class SongTreeEditorTests
 	public void CreateFolderAddsOrganizationalNodeWithoutChangingAudioRevision()
 	{
 		SongDocument document = new();
+		SongTreeFolder patterns =
+			document.GetSectionRoot(SongTreeSection.Patterns);
 		uint documentRevision = document.DocumentRevision;
 		uint audioRevision = document.AudioRevision;
 
 		SongTreeFolder folder =
-			SongTreeEditor.CreateFolder(document, document.Root, "Drums");
+			SongTreeEditor.CreateFolder(document, patterns, "Drums");
 
-		document.Root.Children.Should().ContainSingle().Which.Should().BeSameAs(folder);
+		patterns.Children.Should().ContainSingle().Which.Should().BeSameAs(folder);
 		folder.Name.Should().Be("Drums");
 		document.DocumentRevision.Should().Be(documentRevision + 1);
 		document.AudioRevision.Should().Be(audioRevision);
 	}
 
 	[Test]
+	public void CreateFolderRejectsDocumentRootBecauseOnlySectionRootsMayOwnTopLevelContent()
+	{
+		SongDocument document = new();
+
+		Action create = () =>
+			SongTreeEditor.CreateFolder(document, document.Root, "Loose");
+
+		create.Should().Throw<InvalidOperationException>();
+	}
+
+	[Test]
 	public void RenameFolderIsOrganizationalOnly()
 	{
 		SongDocument document = new();
-		SongTreeFolder folder = new("Old");
-		document.Root.Children.Add(folder);
+		SongTreeFolder folder =
+			SongTreeEditor.CreateFolder(
+				document,
+				document.GetSectionRoot(SongTreeSection.Patterns),
+				"Old");
 		uint documentRevision = document.DocumentRevision;
 		uint audioRevision = document.AudioRevision;
 
@@ -46,17 +62,31 @@ public sealed class SongTreeEditorTests
 	}
 
 	[Test]
+	public void RenameRejectsFixedSectionRoot()
+	{
+		SongDocument document = new();
+		SongTreeFolder patterns =
+			document.GetSectionRoot(SongTreeSection.Patterns);
+
+		Action rename = () =>
+			SongTreeEditor.RenameFolder(document, patterns, "Bananas");
+
+		rename.Should().Throw<InvalidOperationException>();
+	}
+
+	[Test]
 	public void RenameObjectUpdatesEveryTreePlacementWithoutChangingIdentityOrAudioRevision()
 	{
 		SongDocument document = new();
 		ObjectId id = document.AllocateObjectId();
 		DataPatternDefinition pattern = new(id, "Old Name");
 		document.Add(pattern);
-		SongTreeObject first = new("Old Name", id);
+		SongTreeFolder patterns =
+			document.GetSectionRoot(SongTreeSection.Patterns);
+		SongTreeObject first = (SongTreeObject)patterns.Children.Single();
 		SongTreeFolder folder = new("Folder");
 		SongTreeObject second = new("Stale Label", id);
-		document.Root.Children.Add(first);
-		document.Root.Children.Add(folder);
+		patterns.Children.Add(folder);
 		folder.Children.Add(second);
 		uint documentRevision = document.DocumentRevision;
 		uint audioRevision = document.AudioRevision;
@@ -77,11 +107,12 @@ public sealed class SongTreeEditorTests
 		SongDocument document = new();
 		ObjectId sourceId = document.AllocateObjectId();
 		document.Add(new DataPatternDefinition(sourceId, "Source"));
-		SongTreeObject first = new("Source", sourceId);
+		SongTreeFolder patterns =
+			document.GetSectionRoot(SongTreeSection.Patterns);
+		SongTreeObject first = (SongTreeObject)patterns.Children.Single();
 		SongTreeFolder folder = new("Elsewhere");
 		SongTreeObject second = new("Source", sourceId);
-		document.Root.Children.Add(first);
-		document.Root.Children.Add(folder);
+		patterns.Children.Add(folder);
 		folder.Children.Add(second);
 
 		ObjectId referrerId = document.AllocateObjectId();
@@ -94,30 +125,30 @@ public sealed class SongTreeEditorTests
 
 		document.Objects.Should().NotContainKey(sourceId);
 		document.Tombstones[sourceId].LastKnownName.Should().Be("Source");
-		document.Root.Children.Should().NotContain(first);
+		patterns.Children.Should().NotContain(first);
 		folder.Children.Should().NotContain(second);
 		((StartPatternNote)referrer.Grid[0, 0]!.Note!).SourceId.Should().Be(sourceId);
 		document.AudioRevision.Should().Be(audioRevision + 1);
 	}
 
 	[Test]
-	public void MoveReorganizesTreeWithoutChangingObjectIdentityOrAudioRevision()
+	public void MoveReorganizesWithinSectionWithoutChangingObjectIdentityOrAudioRevision()
 	{
 		SongDocument document = new();
 		ObjectId id = document.AllocateObjectId();
 		document.Add(new DataPatternDefinition(id, "Pattern"));
-
-		SongTreeFolder destination = new("Patterns");
-		SongTreeObject node = new("Pattern", id);
-		document.Root.Children.Add(destination);
-		document.Root.Children.Add(node);
+		SongTreeFolder patterns =
+			document.GetSectionRoot(SongTreeSection.Patterns);
+		SongTreeObject node = (SongTreeObject)patterns.Children.Single();
+		SongTreeFolder destination =
+			SongTreeEditor.CreateFolder(document, patterns, "Drums");
 
 		uint documentRevision = document.DocumentRevision;
 		uint audioRevision = document.AudioRevision;
 
 		SongTreeEditor.Move(document, node, destination, 0);
 
-		document.Root.Children.Should().NotContain(node);
+		patterns.Children.Should().NotContain(node);
 		destination.Children.Should().ContainSingle().Which.Should().BeSameAs(node);
 		node.ObjectId.Should().Be(id);
 		document.DocumentRevision.Should().Be(documentRevision + 1);
@@ -125,29 +156,51 @@ public sealed class SongTreeEditorTests
 	}
 
 	[Test]
+	public void MoveRejectsCrossingSectionBoundary()
+	{
+		SongDocument document = new();
+		ObjectId id = document.AllocateObjectId();
+		document.Add(new DataPatternDefinition(id, "Pattern"));
+		SongTreeObject node =
+			(SongTreeObject)document.GetSectionRoot(SongTreeSection.Patterns).Children.Single();
+
+		Action move = () =>
+			SongTreeEditor.MoveInto(
+				document,
+				node,
+				document.GetSectionRoot(SongTreeSection.Samples));
+
+		move.Should().Throw<InvalidOperationException>();
+	}
+
+	[Test]
 	public void MoveBeforeReordersSiblings()
 	{
 		SongDocument document = new();
+		SongTreeFolder patterns =
+			document.GetSectionRoot(SongTreeSection.Patterns);
 		SongTreeFolder first = new("First");
 		SongTreeFolder second = new("Second");
 		SongTreeFolder third = new("Third");
-		document.Root.Children.Add(first);
-		document.Root.Children.Add(second);
-		document.Root.Children.Add(third);
+		patterns.Children.Add(first);
+		patterns.Children.Add(second);
+		patterns.Children.Add(third);
 
 		SongTreeEditor.MoveBefore(document, third, first);
 
-		document.Root.Children.Should().ContainInOrder(third, first, second);
+		patterns.Children.Should().ContainInOrder(third, first, second);
 	}
 
 	[Test]
 	public void MoveRejectsMovingFolderIntoItsOwnDescendant()
 	{
 		SongDocument document = new();
+		SongTreeFolder patterns =
+			document.GetSectionRoot(SongTreeSection.Patterns);
 		SongTreeFolder parent = new("Parent");
 		SongTreeFolder child = new("Child");
 		parent.Children.Add(child);
-		document.Root.Children.Add(parent);
+		patterns.Children.Add(parent);
 
 		Action move = () =>
 			SongTreeEditor.Move(document, parent, child, 0);
