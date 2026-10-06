@@ -450,7 +450,7 @@ public sealed class AssetPersistenceTests
 			new()
 			{
 				["format"] = "Heresy",
-				["version"] = 4,
+				["version"] = 1,
 				["nextObjectId"] = 2,
 				["rootSequenceId"] = 0,
 				["objects"] = new JsonObject
