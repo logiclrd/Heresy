@@ -19,11 +19,9 @@ preserved during implementation.
   interleaved-float PCM contracts and `Heresy.Render.SDL` provides the SDL3-CS
   default-playback implementation. Desktop transport wiring/native runtime
   selection remains part of the background-playback work below.
-- [ ] Add a background playback thread with tracker transport controls:
+- [ ] Add tracker transport controls on top of the implemented background playback thread and concrete snapshot-to-PCM source factory:
   - `F5`: play the song.
-  - `F6`: play the current pattern repeatedly. In this mode, `Bxx` jumps back
-    to the beginning of the current pattern instead of performing its ordinary
-    sequence-order jump.
+  - `F6`: play the current pattern repeatedly. The repeating source is now implemented; in this mode, standalone pattern compilation consumes `Bxx`, so the completed cycle restarts at the beginning of the pattern rather than performing a sequence-order jump. The remaining work is the editor key binding/request creation.
   - `F7`: enter full-song playback mode starting on the current row. Technically,
     start playback in the deepest ancestor sequence that can be found for the
     current view. If that sequence/pattern is not actually anchored to the song
@@ -46,7 +44,7 @@ preserved during implementation.
 - [ ] In the pattern editor, while the cursor is in the Note column:
   - `4` plays the current note, then advances the cursor one row.
   - `8` plays the current row, then advances the cursor one row.
-  Both are ad hoc playback instructions delivered to the background thread.
+  Both are ad hoc playback instructions delivered to the background thread; the request/source path for these frozen schedules is now implemented, while the pattern-editor bindings remain to be added.
 - [ ] While the cursor is in the Note column, holding Caps Lock while pressing a
   tracker piano key (`Z S X D C ...`) previews the note without assigning it.
   The note keeps playing until that physical key is released, which sends Note
