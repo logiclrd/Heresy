@@ -161,8 +161,9 @@ public static class PatternEffectStackEditor
 		PatternCell? existingCell =
 			pattern.Grid[cursor.Row, cursor.Channel];
 		IReadOnlyList<PatternEffect> existing =
-			existingCell?.Effects
-				?? Array.Empty<PatternEffect>();
+			existingCell is null
+				? Array.Empty<PatternEffect>()
+				: existingCell.Effects;
 
 		if (existing.SequenceEqual(replacement))
 			return false;
