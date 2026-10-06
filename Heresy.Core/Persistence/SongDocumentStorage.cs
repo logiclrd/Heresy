@@ -1,6 +1,7 @@
 using System;
 
 using Heresy.Core.Objects;
+using Heresy.Core.Scripting;
 
 namespace Heresy.Core.Persistence;
 
@@ -12,7 +13,8 @@ public static class SongDocumentStorage
 	public static void Save(
 		string path,
 		SongDocument document,
-		JsonAssetPathMode jsonPathMode = JsonAssetPathMode.Relative)
+		JsonAssetPathMode jsonPathMode = JsonAssetPathMode.Relative,
+		IScriptObjectReferenceAnalyzer? scriptReferenceAnalyzer = null)
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(path);
 		ArgumentNullException.ThrowIfNull(document);
