@@ -163,7 +163,7 @@ public sealed class SampleDocumentEditorTests
 		{
 			string result = _root;
 			foreach (string part in parts)
-				result = System.IO.System.IO.Path.Combine(result, part);
+				result = System.IO.Path.Combine(result, part);
 			return result;
 		}
 
