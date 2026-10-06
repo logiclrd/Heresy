@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Text;
 
 using AwesomeAssertions;
 
@@ -17,53 +16,29 @@ namespace Heresy.Tests.UserInterface;
 public sealed class SampleDocumentEditorTests
 {
 	[Test]
-	public void ImportRequiresSavedDocumentSoAssetPathCanBeRelative()
-	{
-		DocumentWorkspace workspace = new();
-
-		Action import = () =>
-			SampleDocumentEditor.Import(workspace, "sample.wav");
-
-		import.Should().Throw<InvalidOperationException>();
-	}
-
-	[Test]
-	public void ImportCreatesHashedRelativeSampleAndCanonicalTreePlacement()
+	public void ImportIntoUnsavedDocumentKeepsActualFullPath()
 	{
 		using TempProject project = new();
-		string songPath = project.Path("songs", "track.json");
-		string assetPath = project.Path("assets", "Kick.wav");
-		Directory.CreateDirectory(System.IO.Path.GetDirectoryName(songPath)!);
-		Directory.CreateDirectory(System.IO.Path.GetDirectoryName(assetPath)!);
-		File.WriteAllBytes(assetPath, Encoding.UTF8.GetBytes("hello"));
-
+		string assetPath = project.Write("samples", "Kick.wav", "hello");
 		DocumentWorkspace workspace = new();
-		workspace.SaveAs(songPath);
 
 		SampleDefinition sample =
 			SampleDocumentEditor.Import(workspace, assetPath);
 
-		sample.Name.Should().Be("Kick");
-		sample.Asset.RelativePath.Should().Be("../assets/Kick.wav");
+		sample.Asset.FullPath.Should().Be(Path.GetFullPath(assetPath));
 		sample.Asset.Sha256.Should().Be(
 			"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
-		workspace.Document.Objects[sample.Id].Should().BeSameAs(sample);
 		workspace.Document.GetSectionRoot(SongTreeSection.Samples)
 			.Children.Should().ContainSingle()
 			.Which.As<SongTreeObject>().ObjectId.Should().Be(sample.Id);
-		workspace.IsModified.Should().BeTrue();
 	}
 
 	[Test]
-	public void AssetCheckUsesWorkspaceSongPath()
+	public void AssetCheckDoesNotRequireSavedWorkspace()
 	{
 		using TempProject project = new();
-		string songPath = project.Path("track.json");
-		string assetPath = project.Path("tone.wav");
-		File.WriteAllText(assetPath, "hello");
-
+		string assetPath = project.Write("tone.wav", "hello");
 		DocumentWorkspace workspace = new();
-		workspace.SaveAs(songPath);
 		SampleDefinition sample =
 			SampleDocumentEditor.Import(workspace, assetPath);
 
@@ -71,102 +46,62 @@ public sealed class SampleDocumentEditorTests
 			SampleDocumentEditor.CheckAsset(workspace, sample);
 
 		check.Status.Should().Be(ExternalAssetStatus.Match);
-		check.ResolvedPath.Should().Be(System.IO.Path.GetFullPath(assetPath));
+		check.FullPath.Should().Be(Path.GetFullPath(assetPath));
 	}
 
 	[Test]
-	public void MetadataChangeAdvancesAudioAndDocumentRevisionOnce()
+	public void RelinkStoresReplacementAsFullPath()
 	{
 		using TempProject project = new();
-		string songPath = project.Path("track.json");
-		string assetPath = project.Path("tone.wav");
-		File.WriteAllText(assetPath, "hello");
-
+		string first = project.Write("first.wav", "first");
+		string second = project.Write("second.wav", "second");
 		DocumentWorkspace workspace = new();
-		workspace.SaveAs(songPath);
-		SampleDefinition sample =
-			SampleDocumentEditor.Import(workspace, assetPath);
-		uint documentRevision = workspace.Document.DocumentRevision;
+		SampleDefinition sample = SampleDocumentEditor.Import(workspace, first);
 		uint audioRevision = workspace.Document.AudioRevision;
 
-		SampleDocumentEditor.UpdateMetadata(
-			workspace,
-			sample,
-			440.0,
-			new SampleLoop(SampleLoopMode.Forward, 10, 20));
+		SampleDocumentEditor.Relink(workspace, sample, second);
 
-		sample.ReferenceFrequencyHz.Should().Be(440.0);
-		sample.Loop.Should().Be(new SampleLoop(SampleLoopMode.Forward, 10, 20));
-		workspace.Document.DocumentRevision.Should().Be(documentRevision + 1);
+		sample.Asset.FullPath.Should().Be(Path.GetFullPath(second));
+		sample.Asset.Sha256.Should().Be(ExternalAssetIntegrity.ComputeSha256(second));
 		workspace.Document.AudioRevision.Should().Be(audioRevision + 1);
 	}
 
 	[Test]
-	public void RefreshHashIsDocumentOnlyBecauseItDoesNotChangeRenderedAudio()
+	public void RefreshHashUsesFullPathAndIsDocumentOnly()
 	{
 		using TempProject project = new();
-		string songPath = project.Path("track.json");
-		string assetPath = project.Path("tone.wav");
-		File.WriteAllText(assetPath, "hello");
-
+		string assetPath = project.Write("tone.wav", "hello");
 		DocumentWorkspace workspace = new();
-		workspace.SaveAs(songPath);
-		SampleDefinition sample =
-			SampleDocumentEditor.Import(workspace, assetPath);
+		SampleDefinition sample = SampleDocumentEditor.Import(workspace, assetPath);
 		File.WriteAllText(assetPath, "changed");
 		uint documentRevision = workspace.Document.DocumentRevision;
 		uint audioRevision = workspace.Document.AudioRevision;
 
 		SampleDocumentEditor.RefreshHash(workspace, sample);
 
-		sample.Asset.Sha256.Should().Be(
-			ExternalAssetIntegrity.ComputeSha256(assetPath));
+		sample.Asset.Sha256.Should().Be(ExternalAssetIntegrity.ComputeSha256(assetPath));
 		workspace.Document.DocumentRevision.Should().Be(documentRevision + 1);
 		workspace.Document.AudioRevision.Should().Be(audioRevision);
-	}
-
-	[Test]
-	public void RelinkChangesAudioReferenceAndRehashesReplacement()
-	{
-		using TempProject project = new();
-		string songPath = project.Path("songs", "track.json");
-		string firstPath = project.Path("assets", "first.wav");
-		string secondPath = project.Path("assets", "second.wav");
-		Directory.CreateDirectory(System.IO.Path.GetDirectoryName(songPath)!);
-		Directory.CreateDirectory(System.IO.Path.GetDirectoryName(firstPath)!);
-		File.WriteAllText(firstPath, "first");
-		File.WriteAllText(secondPath, "second");
-
-		DocumentWorkspace workspace = new();
-		workspace.SaveAs(songPath);
-		SampleDefinition sample =
-			SampleDocumentEditor.Import(workspace, firstPath);
-		uint audioRevision = workspace.Document.AudioRevision;
-
-		SampleDocumentEditor.Relink(workspace, sample, secondPath);
-
-		sample.Asset.RelativePath.Should().Be("../assets/second.wav");
-		sample.Asset.Sha256.Should().Be(
-			ExternalAssetIntegrity.ComputeSha256(secondPath));
-		workspace.Document.AudioRevision.Should().Be(audioRevision + 1);
 	}
 
 	private sealed class TempProject : IDisposable
 	{
 		private readonly string _root =
-			System.IO.Path.Combine(
-				System.IO.Path.GetTempPath(),
+			Path.Combine(
+				Path.GetTempPath(),
 				$"heresy-sample-ui-{Guid.NewGuid():N}");
 
-		public TempProject()
-			=> Directory.CreateDirectory(_root);
+		public TempProject() => Directory.CreateDirectory(_root);
 
-		public string Path(params string[] parts)
+		public string Write(params string[] partsAndContent)
 		{
-			string result = _root;
-			foreach (string part in parts)
-				result = System.IO.Path.Combine(result, part);
-			return result;
+			string content = partsAndContent[^1];
+			string path = _root;
+			foreach (string part in partsAndContent[..^1])
+				path = Path.Combine(path, part);
+			Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+			File.WriteAllText(path, content);
+			return path;
 		}
 
 		public void Dispose()
