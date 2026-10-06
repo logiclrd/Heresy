@@ -13,6 +13,12 @@ namespace Heresy.Core.Sequencing;
 /// </summary>
 public abstract record NoteCommand;
 
+/// <summary>
+/// Starts one playback note. Volume is an optional initial note-volume value
+/// carried atomically with the start; it has no effect when the source cannot
+/// actually start. Data-pattern rows which specify volume without starting a
+/// new note are translated to SetNoteVolumeCommand instead.
+/// </summary>
 public sealed record StartNoteCommand(
 	ObjectId SourceId,
 	double PitchMultiplier = 1.0,

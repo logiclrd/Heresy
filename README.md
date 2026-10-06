@@ -146,6 +146,23 @@ row, enabling paint-down entry. Replacing an existing start note changes its
 source/pitch but preserves its playback-speed multiplier and mixdown flag;
 Enter remains available for the detailed semantic note dialog.
 
+Volume is first-class pattern-cell data, independent of the effect stack. It is
+stored as an optional normalized value and presented in the tracker grid as a
+decimal `00..64` column (`..` means absent). The cursor order is **Note → Volume
+→ Effect Command → Effect Parameter**. Two decimal digits set the volume and
+advance one row; `.` clears it and advances, so volume values can be painted
+down rows even when those rows contain no new notes.
+
+Pattern translation treats that single volume column differently according to
+whether the row actually starts a note. For an ordinary `StartPatternNote`, the
+value is folded directly into `StartNoteCommand.Volume`, keeping the common
+note+volume case atomic and compact. If the row does not start a new note —
+including a volume-only row, note-off/cut row, or a note used only as a tone-
+portamento target — the direct start-volume path is ignored and the processor
+emits `SetNoteVolumeCommand` for the current note instead. A direct start volume
+is applied by playback only after the source successfully resolves and starts,
+so a broken source cannot seed the volume of a later note.
+
 Effects are projected as coloured tabs attached to the right edge of each cell.
 Multiple effects remain in semantic application order and collapse into an
 overlapping stack with a constant five-pixel reveal between tabs; the cell clips
