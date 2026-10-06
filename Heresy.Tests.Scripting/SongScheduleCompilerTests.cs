@@ -149,6 +149,130 @@ public sealed class SongScheduleCompilerTests
 		result.Schedule.Should().NotBeNull();
 	}
 
+
+	[Test]
+	public void ArbitraryDataSequenceCanStartAtOrderAndRow()
+	{
+		SongDocument document = new();
+
+		ObjectId firstPatternId = document.AllocateObjectId();
+		DataPatternDefinition first =
+			new(firstPatternId, "First")
+			{
+				RowCount = 4,
+			};
+		first.Grid.GetOrCreateCell(0, 0).Note =
+			new PatternNoteCut();
+		document.Add(first);
+
+		ObjectId secondPatternId = document.AllocateObjectId();
+		DataPatternDefinition second =
+			new(secondPatternId, "Second")
+			{
+				RowCount = 4,
+			};
+		second.Grid.GetOrCreateCell(2, 0).Note =
+			new PatternNoteCut();
+		document.Add(second);
+
+		ObjectId sequenceId = document.AllocateObjectId();
+		DataSequenceDefinition sequence =
+			new(sequenceId, "Sequence");
+		sequence.Entries.Add(new SequenceEntry(firstPatternId));
+		sequence.Entries.Add(new SequenceEntry(secondPatternId));
+		document.Add(sequence);
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompileSequence(
+				document,
+				sequenceId,
+				startOrder: 1,
+				startRow: 2);
+
+		result.Success.Should().BeTrue();
+		result.Schedule.Should().NotBeNull();
+		result.Schedule!.Should().ContainSingle();
+		result.Schedule[0].Offset.TimeOffset.Should().Be(System.TimeSpan.Zero);
+		result.Schedule[0].Commands.Single()
+			.Should().BeOfType<NoteCutCommand>();
+	}
+
+	[Test]
+	public void ArbitraryScriptSequenceCanStartAtOrder()
+	{
+		SongDocument document = new();
+
+		ObjectId firstPatternId = document.AllocateObjectId();
+		DataPatternDefinition first =
+			new(firstPatternId, "First")
+			{
+				RowCount = 1,
+			};
+		first.Grid.GetOrCreateCell(0, 0).Note =
+			new PatternNoteCut();
+		document.Add(first);
+
+		ObjectId secondPatternId = document.AllocateObjectId();
+		DataPatternDefinition second =
+			new(secondPatternId, "Second")
+			{
+				RowCount = 1,
+			};
+		second.Grid.GetOrCreateCell(0, 1).Note =
+			new PatternNoteCut();
+		document.Add(second);
+
+		ObjectId sequenceId = document.AllocateObjectId();
+		document.Add(
+			new ScriptSequenceDefinition(sequenceId, "Script")
+			{
+				Source =
+					$"Play(_O({firstPatternId.Value})); "
+						+ $"Play(_O({secondPatternId.Value}));",
+			});
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompileSequence(
+				document,
+				sequenceId,
+				startOrder: 1);
+
+		result.Success.Should().BeTrue();
+		result.Schedule.Should().NotBeNull();
+		result.Schedule!.Should().ContainSingle();
+		result.Schedule[0].Target.PhysicalChannel.Should().Be(1);
+	}
+
+	[Test]
+	public void StandalonePatternCanStartAtRequestedRow()
+	{
+		SongDocument document = new();
+
+		ObjectId patternId = document.AllocateObjectId();
+		DataPatternDefinition pattern =
+			new(patternId, "Pattern")
+			{
+				RowCount = 4,
+			};
+		pattern.Grid.GetOrCreateCell(0, 0).Note =
+			new PatternNoteCut();
+		pattern.Grid.GetOrCreateCell(2, 0).Note =
+			new PatternNoteCut();
+		document.Add(pattern);
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompilePattern(
+				document,
+				patternId,
+				startRow: 2);
+
+		result.Success.Should().BeTrue();
+		result.Schedule.Should().NotBeNull();
+		result.Schedule!.Should().ContainSingle();
+		result.Schedule[0].Offset.TimeOffset.Should().Be(System.TimeSpan.Zero);
+	}
+
+
 	[Test]
 	public void MissingRootSequenceProducesDiagnostic()
 	{
