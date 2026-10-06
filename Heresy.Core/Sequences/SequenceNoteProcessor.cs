@@ -78,7 +78,8 @@ public static class SequenceNoteProcessor
 			}
 
 			SequenceEntry entry = entries[order];
-			int startRow = startRowOverride ?? entry.StartRow;
+			int effectiveStartRow =
+				startRowOverride ?? entry.StartRow;
 			startRowOverride = null;
 
 			if (!resolver.TryResolve(entry.PatternId, out IRawPatternNoteGenerator? pattern)
@@ -93,7 +94,7 @@ public static class SequenceNoteProcessor
 				pattern,
 				context,
 				patternOutput,
-				startRow,
+				effectiveStartRow,
 				out TimeSpan patternDuration,
 				out PatternFlowControl flowControl);
 
