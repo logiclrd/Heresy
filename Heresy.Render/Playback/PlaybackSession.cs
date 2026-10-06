@@ -61,6 +61,10 @@ public sealed class PlaybackSession
 
 	public long NextFrame => _nextFrame;
 
+	public int SampleRate => _context.Configuration.SampleRate;
+
+	public int OutputChannelCount => _context.Configuration.OutputChannelCount;
+
 	public double GlobalVolume => _globalVolume;
 
 	public int ActiveGlobalOperatorCount => _globalOperators.Count;
