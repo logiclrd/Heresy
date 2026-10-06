@@ -37,15 +37,36 @@ public static class SequenceNoteProcessor
 		SequencingContext context,
 		INoteReceiver output,
 		out TimeSpan duration)
+		=> GenerateNotes(
+			entries,
+			resolver,
+			context,
+			output,
+			startOrder: 0,
+			startRow: null,
+			out duration);
+
+	public static void GenerateNotes(
+		IReadOnlyList<SequenceEntry> entries,
+		ISequencePatternResolver resolver,
+		SequencingContext context,
+		INoteReceiver output,
+		int startOrder,
+		int? startRow,
+		out TimeSpan duration)
 	{
 		ArgumentNullException.ThrowIfNull(entries);
 		ArgumentNullException.ThrowIfNull(resolver);
 		ArgumentNullException.ThrowIfNull(context);
 		ArgumentNullException.ThrowIfNull(output);
+		if (startOrder < 0)
+			throw new ArgumentOutOfRangeException(nameof(startOrder));
+		if (startRow.HasValue && startRow.Value < 0)
+			throw new ArgumentOutOfRangeException(nameof(startRow));
 
 		TimeSpan elapsed = TimeSpan.Zero;
-		int order = 0;
-		int? startRowOverride = null;
+		int order = startOrder;
+		int? startRowOverride = startRow;
 		int visits = 0;
 
 		while ((uint)order < (uint)entries.Count)
