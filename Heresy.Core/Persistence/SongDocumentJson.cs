@@ -36,10 +36,14 @@ public static class SongDocumentJson
 	{
 		ArgumentNullException.ThrowIfNull(document);
 
+		SongReferenceAnalysis referenceAnalysis =
+			SongReferenceAnalyzer.Analyze(document);
 		HashSet<ObjectId> referencedIds =
-			CollectReferencedIds(document, out bool hasOpaqueScript);
+			referenceAnalysis.References
+				.Select(reference => reference.TargetId)
+				.ToHashSet();
 
-		if (hasOpaqueScript)
+		if (referenceAnalysis.HasOpaqueScriptReferences)
 		{
 			foreach (ObjectId id in document.Tombstones.Keys)
 				referencedIds.Add(id);
@@ -575,92 +579,6 @@ public static class SongDocumentJson
 				throw new NotSupportedException(
 					$"Persisted tree-node type '{type}' is not supported.");
 		}
-	}
-
-	private static HashSet<ObjectId> CollectReferencedIds(
-		SongDocument document,
-		out bool hasOpaqueScript)
-	{
-		HashSet<ObjectId> result = [];
-		hasOpaqueScript = false;
-
-		AddReference(result, document.RootSequenceId);
-		CollectTreeReferences(document.Root, result);
-
-		foreach (SongObject songObject in document.Objects.Values)
-		{
-			switch (songObject)
-			{
-				case InstrumentDefinition instrument:
-					foreach (ToneSpecification tone in
-						instrument.ToneSpecifications)
-					{
-						AddReference(result, tone.SourceId);
-						AddReference(result, tone.VolumeEnvelopeId);
-						AddReference(result, tone.PitchEnvelopeId);
-						AddReference(result, tone.PanningEnvelopeId);
-						AddReference(result, tone.FilterEnvelopeId);
-					}
-					break;
-
-				case DataPatternDefinition pattern:
-					foreach ((_, _, PatternCell cell) in
-						pattern.Grid.EnumerateNonEmptyCells())
-					{
-						if (cell.Note is StartPatternNote start)
-							AddReference(result, start.SourceId);
-					}
-					break;
-
-				case DataSequenceDefinition sequence:
-					foreach (SequenceEntry entry in sequence.Entries)
-						AddReference(result, entry.PatternId);
-					break;
-
-				case ScriptPatternDefinition:
-				case ScriptSequenceDefinition:
-					// Until the script compiler can report ObjectId references,
-					// pruning must be conservative so a script's dead reference
-					// cannot lose its tombstone metadata.
-					hasOpaqueScript = true;
-					break;
-			}
-		}
-
-		return result;
-	}
-
-	private static void CollectTreeReferences(
-		SongTreeNode node,
-		HashSet<ObjectId> result)
-	{
-		switch (node)
-		{
-			case SongTreeObject songObject:
-				AddReference(result, songObject.ObjectId);
-				break;
-
-			case SongTreeFolder folder:
-				foreach (SongTreeNode child in folder.Children)
-					CollectTreeReferences(child, result);
-				break;
-		}
-	}
-
-	private static void AddReference(
-		HashSet<ObjectId> result,
-		ObjectId id)
-	{
-		if (!id.IsNone)
-			result.Add(id);
-	}
-
-	private static void AddReference(
-		HashSet<ObjectId> result,
-		ObjectId? id)
-	{
-		if (id.HasValue)
-			AddReference(result, id.Value);
 	}
 
 	private static JsonSerializerOptions CreateJsonOptions()

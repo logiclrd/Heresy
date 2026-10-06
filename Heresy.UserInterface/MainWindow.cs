@@ -1,15 +1,19 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 
 using Heresy.Core.Objects;
+using Heresy.UserInterface.Dialogs;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.ViewModels;
 
@@ -23,12 +27,23 @@ public sealed class MainWindow : Window
 			Patterns = new[] { "*.json" },
 		};
 
+	private static readonly DataFormat<SongTreeNode> TreeNodeFormat =
+		DataFormat.CreateInProcessFormat<SongTreeNode>("Heresy.SongTreeNode");
+
 	private readonly DocumentWorkspace _workspace;
 	private readonly TreeView _tree;
 	private readonly TextBlock _editorTitle;
 	private readonly TextBlock _editorDetails;
 	private readonly TextBlock _editorHint;
 	private readonly TextBlock _status;
+	private readonly Button _renameButton;
+	private readonly Button _deleteButton;
+
+	private SongTreeItemViewModel? _selectedItem;
+	private SongTreeItemViewModel? _dragCandidate;
+	private PointerPressedEventArgs? _dragTrigger;
+	private Point _dragStart;
+	private bool _dragInProgress;
 
 	public MainWindow()
 		: this(new DocumentWorkspace())
@@ -46,6 +61,20 @@ public sealed class MainWindow : Window
 		MinHeight = 480;
 
 		_tree = new TreeView();
+		_tree.SelectionChanged += (_, _) =>
+		{
+			if (_tree.SelectedItem is TreeViewItem treeItem
+				&& treeItem.Tag is SongTreeItemViewModel item)
+			{
+				SelectTreeItem(item);
+			}
+		};
+
+		_renameButton = new Button { Content = "Rename" };
+		_renameButton.Click += async (_, _) => await RenameSelectedAsync();
+
+		_deleteButton = new Button { Content = "Delete" };
+		_deleteButton.Click += async (_, _) => await DeleteSelectedAsync();
 
 		_editorTitle =
 			new TextBlock
@@ -96,7 +125,7 @@ public sealed class MainWindow : Window
 
 		Grid body = new();
 		body.ColumnDefinitions.Add(
-			new ColumnDefinition(new GridLength(280)));
+			new ColumnDefinition(new GridLength(300)));
 		body.ColumnDefinitions.Add(
 			new ColumnDefinition(GridLength.Auto));
 		body.ColumnDefinitions.Add(
@@ -114,6 +143,20 @@ public sealed class MainWindow : Window
 				Text = "Song objects",
 				FontWeight = FontWeight.SemiBold,
 			});
+
+		Button newFolderButton = new() { Content = "+ Folder" };
+		newFolderButton.Click += async (_, _) => await CreateFolderAsync();
+
+		StackPanel treeButtons =
+			new()
+			{
+				Orientation = Orientation.Horizontal,
+				Spacing = 6,
+			};
+		treeButtons.Children.Add(newFolderButton);
+		treeButtons.Children.Add(_renameButton);
+		treeButtons.Children.Add(_deleteButton);
+		treePane.Children.Add(treeButtons);
 		treePane.Children.Add(_tree);
 
 		Border treeBorder =
@@ -251,7 +294,7 @@ public sealed class MainWindow : Window
 		try
 		{
 			_workspace.Save();
-			RefreshDocumentView($"Saved {_workspace.DisplayName}");
+			RefreshDocumentView($"Saved {_workspace.DisplayName}", _selectedItem?.Node);
 		}
 		catch (Exception ex)
 		{
@@ -293,7 +336,7 @@ public sealed class MainWindow : Window
 		try
 		{
 			_workspace.SaveAs(path);
-			RefreshDocumentView($"Saved {_workspace.DisplayName}");
+			RefreshDocumentView($"Saved {_workspace.DisplayName}", _selectedItem?.Node);
 		}
 		catch (Exception ex)
 		{
@@ -311,7 +354,200 @@ public sealed class MainWindow : Window
 		return false;
 	}
 
-	private void RefreshDocumentView(string status)
+	private async Task CreateFolderAsync()
+	{
+		SongTreeFolder parent = GetFolderForNewChild();
+		TextPromptDialog dialog =
+			new("New folder", "Folder name:", "New Folder");
+		string? name = await dialog.ShowDialog<string?>(this);
+		if (name is null)
+			return;
+
+		SongTreeFolder folder =
+			SongTreeEditor.CreateFolder(_workspace.Document, parent, name);
+		RefreshDocumentView($"Created folder {folder.Name}", folder);
+	}
+
+	private async Task RenameSelectedAsync()
+	{
+		SongTreeItemViewModel? selected = _selectedItem;
+		if (selected is null)
+			return;
+
+		if (selected.Node is SongTreeFolder folder)
+		{
+			TextPromptDialog dialog =
+				new("Rename folder", "Folder name:", folder.Name);
+			string? name = await dialog.ShowDialog<string?>(this);
+			if (name is null)
+				return;
+
+			SongTreeEditor.RenameFolder(_workspace.Document, folder, name);
+			RefreshDocumentView($"Renamed folder to {folder.Name}", folder);
+			return;
+		}
+
+		if (selected.ObjectId is not ObjectId objectId
+			|| selected.IsMissingReference)
+		{
+			SetStatus("Missing object references cannot be renamed.");
+			return;
+		}
+
+		TextPromptDialog objectDialog =
+			new("Rename object", "Object name:", selected.DisplayName);
+		string? objectName = await objectDialog.ShowDialog<string?>(this);
+		if (objectName is null)
+			return;
+
+		SongTreeEditor.RenameObject(_workspace.Document, objectId, objectName);
+		RefreshDocumentView($"Renamed object to {objectName.Trim()}", selected.Node);
+	}
+
+	private async Task DeleteSelectedAsync()
+	{
+		SongTreeItemViewModel? selected = _selectedItem;
+		if (selected?.Node is not SongTreeObject objectNode)
+			return;
+
+		SongTreeFolder parent =
+			SongTreeEditor.GetParent(_workspace.Document, objectNode)
+			?? _workspace.Document.Root;
+
+		if (selected.IsMissingReference)
+		{
+			ConfirmDialog missingDialog =
+				new(
+					"Remove missing tree entry",
+					$"Remove the missing reference '{selected.DisplayName}' from this folder? "
+					+ "Other unresolved references to the same object ID are not changed.",
+					"Remove");
+			if (!await missingDialog.ShowDialog<bool>(this))
+				return;
+
+			SongTreeEditor.RemoveNode(_workspace.Document, objectNode);
+			RefreshDocumentView("Removed missing tree entry", parent);
+			return;
+		}
+
+		ObjectId objectId = objectNode.ObjectId;
+		SongReferenceAnalysis analysis =
+			SongReferenceAnalyzer.Analyze(_workspace.Document);
+		SongReference[] meaningfulReferences =
+			analysis.References
+				.Where(reference =>
+					reference.TargetId == objectId
+					&& reference.Kind != SongReferenceKind.Tree)
+				.ToArray();
+
+		string message = BuildDeleteMessage(
+			selected.DisplayName,
+			meaningfulReferences,
+			analysis.HasOpaqueScriptReferences);
+		ConfirmDialog deleteDialog =
+			new("Delete object", message, "Delete");
+		if (!await deleteDialog.ShowDialog<bool>(this))
+			return;
+
+		SongTreeEditor.DeleteObject(_workspace.Document, objectId);
+		RefreshDocumentView($"Deleted {selected.DisplayName}", parent);
+	}
+
+	private SongTreeFolder GetFolderForNewChild()
+	{
+		if (_selectedItem?.Node is SongTreeFolder selectedFolder)
+			return selectedFolder;
+
+		if (_selectedItem?.Node is SongTreeNode selectedNode)
+		{
+			return SongTreeEditor.GetParent(_workspace.Document, selectedNode)
+				?? _workspace.Document.Root;
+		}
+
+		return _workspace.Document.Root;
+	}
+
+	private string BuildDeleteMessage(
+		string displayName,
+		IReadOnlyList<SongReference> references,
+		bool hasOpaqueScriptReferences)
+	{
+		StringBuilder message = new();
+		message.Append("Delete '");
+		message.Append(displayName);
+		message.Append("' from the song?");
+
+		if (references.Count != 0)
+		{
+			message.Append("\n\nThis object is still referenced by:\n");
+			int shown = Math.Min(references.Count, 8);
+			for (int index = 0; index < shown; index++)
+			{
+				message.Append(" • ");
+				message.Append(DescribeReference(references[index]));
+				message.Append('\n');
+			}
+			if (shown < references.Count)
+			{
+				message.Append(" • ");
+				message.Append(references.Count - shown);
+				message.Append(" more reference(s)\n");
+			}
+		}
+
+		if (hasOpaqueScriptReferences)
+		{
+			message.Append(
+				"\nOne or more script objects exist. Script references cannot yet be analyzed exactly, so they may also refer to this ID.\n");
+		}
+
+		if (references.Count != 0 || hasOpaqueScriptReferences)
+		{
+			message.Append(
+				"\nDeletion will not rewrite those references. They will remain as unresolved object IDs until the object is restored or the references are edited.");
+		}
+		else
+		{
+			message.Append("\n\nNo musical references to this object were found.");
+		}
+
+		return message.ToString();
+	}
+
+	private string DescribeReference(SongReference reference)
+	{
+		string sourceName = "Song";
+		if (reference.SourceObjectId is ObjectId sourceId)
+		{
+			if (_workspace.Document.TryGet(sourceId, out SongObject? source)
+				&& source is not null)
+			{
+				sourceName = source.Name;
+			}
+			else
+			{
+				sourceName = $"Object <{sourceId.Value}>";
+			}
+		}
+
+		return reference.Kind switch
+		{
+			SongReferenceKind.RootSequence => "the song root sequence",
+			SongReferenceKind.PatternNoteSource => $"{sourceName}: pattern note source",
+			SongReferenceKind.SequencePattern => $"{sourceName}: sequence pattern entry",
+			SongReferenceKind.InstrumentSource => $"{sourceName}: instrument tone source",
+			SongReferenceKind.InstrumentVolumeEnvelope => $"{sourceName}: volume envelope",
+			SongReferenceKind.InstrumentPitchEnvelope => $"{sourceName}: pitch envelope",
+			SongReferenceKind.InstrumentPanningEnvelope => $"{sourceName}: panning envelope",
+			SongReferenceKind.InstrumentFilterEnvelope => $"{sourceName}: filter envelope",
+			SongReferenceKind.Tree => $"{sourceName}: tree placement",
+			_ => sourceName,
+		};
+	}
+
+	private void RefreshDocumentView(
+		string status,
+		SongTreeNode? selectNode = null)
 	{
 		Title =
 			_workspace.IsModified
@@ -323,13 +559,28 @@ public sealed class MainWindow : Window
 				_workspace.Document,
 				_workspace.Document.Root);
 
-		TreeViewItem rootItem = BuildTreeItem(root);
+		TreeViewItem? selectedControl = null;
+		SongTreeItemViewModel? selectedItem = null;
+		TreeViewItem rootItem =
+			BuildTreeItem(
+				root,
+				selectNode ?? _workspace.Document.Root,
+				ref selectedControl,
+				ref selectedItem);
 		_tree.ItemsSource = new object[] { rootItem };
-		ShowTreeItem(root);
+
+		selectedControl ??= rootItem;
+		selectedItem ??= root;
+		_tree.SelectedItem = selectedControl;
+		SelectTreeItem(selectedItem);
 		SetStatus(status);
 	}
 
-	private TreeViewItem BuildTreeItem(SongTreeItemViewModel item)
+	private TreeViewItem BuildTreeItem(
+		SongTreeItemViewModel item,
+		SongTreeNode selectNode,
+		ref TreeViewItem? selectedControl,
+		ref SongTreeItemViewModel? selectedItem)
 	{
 		TextBlock header =
 			new()
@@ -347,20 +598,229 @@ public sealed class MainWindow : Window
 			{
 				Header = header,
 				IsExpanded = item.IsFolder,
+				Tag = item,
 			};
 
-		result.ItemsSource = BuildChildItems(item.Children);
-		result.PointerPressed += (_, _) => ShowTreeItem(item);
+		if (ReferenceEquals(item.Node, selectNode))
+		{
+			selectedControl = result;
+			selectedItem = item;
+		}
+
+		object[] children = new object[item.Children.Count];
+		for (int index = 0; index < item.Children.Count; index++)
+		{
+			children[index] = BuildTreeItem(
+				item.Children[index],
+				selectNode,
+				ref selectedControl,
+				ref selectedItem);
+		}
+		result.ItemsSource = children;
+
+		result.PointerPressed += (_, e) => OnTreePointerPressed(result, item, e);
+		result.PointerMoved += async (_, e) => await OnTreePointerMovedAsync(item, e);
+		result.PointerReleased += (_, _) => ClearDragCandidate(item);
+
+		DragDrop.SetAllowDrop(result, true);
+		DragDrop.AddDragOverHandler(
+			result,
+			(_, e) => OnTreeDragOver(item, e));
+		DragDrop.AddDropHandler(
+			result,
+			(_, e) => OnTreeDrop(item, e));
+
+		result.ContextMenu = BuildTreeContextMenu(item, result);
 		return result;
 	}
 
-	private object[] BuildChildItems(
-		IReadOnlyList<SongTreeItemViewModel> children)
+	private ContextMenu BuildTreeContextMenu(
+		SongTreeItemViewModel item,
+		TreeViewItem control)
 	{
-		object[] result = new object[children.Count];
-		for (int index = 0; index < children.Count; index++)
-			result[index] = BuildTreeItem(children[index]);
-		return result;
+		MenuItem newFolder = new() { Header = "New Folder..." };
+		newFolder.Click += async (_, _) =>
+		{
+			_tree.SelectedItem = control;
+			SelectTreeItem(item);
+			await CreateFolderAsync();
+		};
+
+		MenuItem rename =
+			new()
+			{
+				Header = "Rename...",
+				IsEnabled = item.IsFolder || !item.IsMissingReference,
+			};
+		rename.Click += async (_, _) =>
+		{
+			_tree.SelectedItem = control;
+			SelectTreeItem(item);
+			await RenameSelectedAsync();
+		};
+
+		MenuItem delete =
+			new()
+			{
+				Header = item.IsMissingReference ? "Remove from Tree..." : "Delete Object...",
+				IsEnabled = item.Node is SongTreeObject,
+			};
+		delete.Click += async (_, _) =>
+		{
+			_tree.SelectedItem = control;
+			SelectTreeItem(item);
+			await DeleteSelectedAsync();
+		};
+
+		return new ContextMenu
+		{
+			ItemsSource = new object[]
+			{
+				newFolder,
+				rename,
+				new Separator(),
+				delete,
+			},
+		};
+	}
+
+	private void OnTreePointerPressed(
+		TreeViewItem control,
+		SongTreeItemViewModel item,
+		PointerPressedEventArgs e)
+	{
+		_tree.SelectedItem = control;
+		SelectTreeItem(item);
+
+		if (ReferenceEquals(item.Node, _workspace.Document.Root)
+			|| !e.GetCurrentPoint(_tree).Properties.IsLeftButtonPressed)
+		{
+			ClearDragCandidate(item);
+			return;
+		}
+
+		_dragCandidate = item;
+		_dragTrigger = e;
+		_dragStart = e.GetPosition(_tree);
+	}
+
+	private async Task OnTreePointerMovedAsync(
+		SongTreeItemViewModel item,
+		PointerEventArgs e)
+	{
+		if (_dragInProgress
+			|| !ReferenceEquals(_dragCandidate, item)
+			|| _dragTrigger is null)
+		{
+			return;
+		}
+
+		if (!e.GetCurrentPoint(_tree).Properties.IsLeftButtonPressed)
+		{
+			ClearDragCandidate(item);
+			return;
+		}
+
+		Point current = e.GetPosition(_tree);
+		double dx = current.X - _dragStart.X;
+		double dy = current.Y - _dragStart.Y;
+		if ((dx * dx) + (dy * dy) < 36.0)
+			return;
+
+		PointerPressedEventArgs trigger = _dragTrigger;
+		_dragCandidate = null;
+		_dragTrigger = null;
+		_dragInProgress = true;
+
+		DataTransfer data = new();
+		data.Add(DataTransferItem.Create(TreeNodeFormat, item.Node));
+		try
+		{
+			await DragDrop.DoDragDropAsync(
+				trigger,
+				data,
+				DragDropEffects.Move);
+		}
+		finally
+		{
+			_dragInProgress = false;
+		}
+	}
+
+	private void ClearDragCandidate(SongTreeItemViewModel item)
+	{
+		if (ReferenceEquals(_dragCandidate, item))
+		{
+			_dragCandidate = null;
+			_dragTrigger = null;
+		}
+	}
+
+	private void OnTreeDragOver(
+		SongTreeItemViewModel target,
+		DragEventArgs e)
+	{
+		SongTreeNode? node = e.DataTransfer.TryGetValue(TreeNodeFormat);
+		if (node is null)
+		{
+			e.DragEffects = DragDropEffects.None;
+			return;
+		}
+
+		bool canMove = target.Node switch
+		{
+			SongTreeFolder folder =>
+				SongTreeEditor.CanMoveInto(_workspace.Document, node, folder),
+			_ =>
+				SongTreeEditor.CanMoveBefore(_workspace.Document, node, target.Node),
+		};
+		e.DragEffects = canMove
+			? DragDropEffects.Move
+			: DragDropEffects.None;
+	}
+
+	private void OnTreeDrop(
+		SongTreeItemViewModel target,
+		DragEventArgs e)
+	{
+		SongTreeNode? node = e.DataTransfer.TryGetValue(TreeNodeFormat);
+		if (node is null)
+		{
+			e.DragEffects = DragDropEffects.None;
+			return;
+		}
+
+		try
+		{
+			if (target.Node is SongTreeFolder folder)
+				SongTreeEditor.MoveInto(_workspace.Document, node, folder);
+			else
+				SongTreeEditor.MoveBefore(_workspace.Document, node, target.Node);
+
+			e.DragEffects = DragDropEffects.Move;
+			RefreshDocumentView("Reorganized song tree", node);
+		}
+		catch (InvalidOperationException ex)
+		{
+			e.DragEffects = DragDropEffects.None;
+			SetStatus(ex.Message);
+		}
+	}
+
+	private void SelectTreeItem(SongTreeItemViewModel item)
+	{
+		_selectedItem = item;
+		ShowTreeItem(item);
+		UpdateTreeCommandState();
+	}
+
+	private void UpdateTreeCommandState()
+	{
+		_renameButton.IsEnabled =
+			_selectedItem is not null
+			&& (_selectedItem.IsFolder || !_selectedItem.IsMissingReference);
+		_deleteButton.IsEnabled =
+			_selectedItem?.Node is SongTreeObject;
 	}
 
 	private void ShowTreeItem(SongTreeItemViewModel item)
@@ -372,7 +832,7 @@ public sealed class MainWindow : Window
 			_editorDetails.Text =
 				$"Folder • {item.Children.Count} item{(item.Children.Count == 1 ? string.Empty : "s")}";
 			_editorHint.Text =
-				"Folders organize the song tree only. Moving an object here never changes its identity or musical references.";
+				"Folders organize the song tree only. Drag objects or folders to reorganize them; moving an object never changes its identity or musical references.";
 			return;
 		}
 
