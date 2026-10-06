@@ -314,6 +314,55 @@ public sealed class ScriptSourceProjection
 		return Source[sourceStart..sourceEnd];
 	}
 
+	public ScriptProjectionEdit ReconcileTextChange(
+		string changedText)
+	{
+		ArgumentNullException.ThrowIfNull(changedText);
+
+		if (changedText == Text)
+		{
+			return new(
+				Source,
+				SourcePositionFromDisplay(Text.Length));
+		}
+
+		int prefix = 0;
+		int commonLength =
+			Math.Min(
+				Text.Length,
+				changedText.Length);
+		while (prefix < commonLength
+			&& Text[prefix] == changedText[prefix])
+		{
+			prefix++;
+		}
+
+		int oldEnd = Text.Length;
+		int newEnd = changedText.Length;
+		while (oldEnd > prefix
+			&& newEnd > prefix
+			&& Text[oldEnd - 1] == changedText[newEnd - 1])
+		{
+			oldEnd--;
+			newEnd--;
+		}
+
+		return Replace(
+			prefix,
+			oldEnd,
+			changedText[prefix..newEnd]);
+	}
+
+	public int SourcePositionFromDisplay(int displayPosition)
+	{
+		ScriptProjectionSelection normalized =
+			NormalizeSelection(
+				displayPosition,
+				displayPosition);
+		return SourcePositionFromDisplayBoundary(
+			normalized.Start);
+	}
+
 	public int DisplayPositionFromSource(int sourcePosition)
 	{
 		int position =
