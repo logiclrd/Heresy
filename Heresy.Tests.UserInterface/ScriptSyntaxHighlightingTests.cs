@@ -60,7 +60,7 @@ public sealed class ScriptSyntaxHighlightingTests
 						span.Span.Start,
 						span.Span.Length)
 					.StartsWith(
-						"#if",
+						"#region",
 						System.StringComparison.Ordinal));
 	}
 
