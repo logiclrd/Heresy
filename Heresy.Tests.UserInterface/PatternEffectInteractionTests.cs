@@ -60,7 +60,7 @@ public sealed class PatternEffectInteractionTests
 	}
 
 	[Test]
-	public void CompactTabsNeverBleedPastCellWhenNarrow()
+	public void DeepCompactStackKeepsFivePixelOffsetAndRightEdgeAnchor()
 	{
 		EffectStripLayoutItem[] items =
 			EffectStripLayout.Compact(
@@ -69,8 +69,9 @@ public sealed class PatternEffectInteractionTests
 				tabWidth: 36,
 				revealWidth: 5);
 
-		items.Should().OnlyContain(item =>
-			item.X >= 0 && item.X + item.Width <= 40);
+		(items[1].X - items[0].X).Should().Be(5);
+		(items[^1].X + items[^1].Width).Should().Be(40);
+		items[0].X.Should().BeLessThan(0);
 	}
 
 	[Test]

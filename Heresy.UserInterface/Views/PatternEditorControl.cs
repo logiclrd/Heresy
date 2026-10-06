@@ -540,6 +540,13 @@ public sealed class PatternEditorControl : UserControl
 		}
 
 		_expandedCell = (row, channel);
+		if (_cursor.Row == row
+			&& _cursor.Channel == channel
+			&& _cursor.Field != PatternCellField.Note
+			&& !_cursor.IsExpanded)
+		{
+			_cursor.Expand(cell);
+		}
 		RefreshCellEffectState(row, channel);
 	}
 

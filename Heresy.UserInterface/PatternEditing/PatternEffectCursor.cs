@@ -187,13 +187,20 @@ public sealed class PatternEffectCursor
 
 		IsExpanded = true;
 		ExpandedEffectIndex = 0;
-		ExpandedField =
-			PatternEffectCodec.TryDecodeTracker(
-				cell.Effects[0],
-				out _,
-				out _)
-				? ExpandedEffectField.Command
-				: ExpandedEffectField.Native;
+		if (PatternEffectCodec.TryDecodeTracker(
+			cell.Effects[0],
+			out _,
+			out _))
+		{
+			ExpandedField =
+				Field == PatternCellField.EffectParameter
+					? ExpandedEffectField.Parameter
+					: ExpandedEffectField.Command;
+		}
+		else
+		{
+			ExpandedField = ExpandedEffectField.Native;
+		}
 		ResetPendingNibble();
 	}
 

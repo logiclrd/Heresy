@@ -31,10 +31,7 @@ public static class EffectStripLayout
 			return [];
 
 		double width = Math.Min(tabWidth, viewportWidth);
-		double availableForSteps = Math.Max(0, viewportWidth - width);
-		double step = effectCount <= 1
-			? 0
-			: Math.Min(revealWidth, availableForSteps / (effectCount - 1));
+		double step = effectCount <= 1 ? 0 : revealWidth;
 		double firstX = viewportWidth - width - (step * (effectCount - 1));
 
 		EffectStripLayoutItem[] result =
