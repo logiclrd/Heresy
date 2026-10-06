@@ -29,13 +29,17 @@ preserved during implementation.
     current view. If that sequence/pattern is not actually anchored to the song
     root, play from the deepest enclosing sequence that can be found.
   - `F8`: stop playback.
-- [ ] Let the background playback thread accept both ordinary sequence playback
-  requests (with an optional starting offset) and ad hoc note/row audition
-  requests.
-- [ ] Deliver a clone/snapshot of the song to the background playback thread
+- [x] Let the background playback thread accept ordinary sequence playback
+  requests (with an optional order/row starting position), repeating/current
+  pattern requests, and ad hoc note/row audition requests. The generic worker
+  receives immutable request objects and delegates concrete source construction
+  through `IBackgroundPlaybackSourceFactory`.
+- [x] Deliver a clone/snapshot of the song to the background playback thread
   rather than allowing playback to observe the mutable authoring document.
-  This formalizes the previously planned separation between authoring state and
-  the object graph currently being played.
+  `SongDocumentSnapshot` now deep-clones the document before submission,
+  preserving stable IDs/assets/tombstones while recording the source revisions.
+  This formalizes the separation between authoring state and the object graph
+  currently being played.
 
 ## Pattern audition
 
