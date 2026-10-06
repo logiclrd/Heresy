@@ -3,6 +3,7 @@ using System.IO;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Persistence;
+using Heresy.Scripting.Analysis;
 
 namespace Heresy.UserInterface.Documents;
 
@@ -66,7 +67,8 @@ public sealed class DocumentWorkspace
 		SongDocumentStorage.Save(
 			FilePath,
 			Document,
-			JsonPathMode ?? JsonAssetPathMode.Relative);
+			JsonPathMode ?? JsonAssetPathMode.Relative,
+			RoslynScriptObjectReferenceAnalyzer.Instance);
 		_savedDocumentRevision = Document.DocumentRevision;
 	}
 
@@ -77,7 +79,11 @@ public sealed class DocumentWorkspace
 		ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
 		string fullPath = Path.GetFullPath(path);
-		SongDocumentStorage.Save(fullPath, Document, jsonPathMode);
+		SongDocumentStorage.Save(
+			fullPath,
+			Document,
+			jsonPathMode,
+			RoslynScriptObjectReferenceAnalyzer.Instance);
 
 		FilePath = fullPath;
 		JsonPathMode = SongDocumentStorage.IsJsonPath(fullPath)
