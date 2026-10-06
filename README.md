@@ -16,8 +16,8 @@ The repository is intentionally split by concern.
 - `Heresy.UserInterface` — Avalonia single-document tracker UI. The current
   document view projects the four fixed song-tree sections into Sequences,
   Patterns, Samples and Instruments panes, with sample import/editing, external-
-  asset diagnostics, data-pattern editing and data-sequence arrangement editing;
-  realtime transport remains separate.
+  asset diagnostics, data-pattern editing, data-sequence arrangement editing and
+  recursive instrument/tone-table editing; realtime transport remains separate.
 - A Roslyn-backed restricted-C# compiler assembly will also be added separately
   once the Core/Render contracts have been exercised.
 
@@ -154,6 +154,20 @@ Back control becomes **← Sequence** and returns to the arrangement instead of
 the document browser. Script-sequence and script-pattern source editing remain
 future UI work. Existing Bxx/Cxx sequence-control semantics continue to be
 handled by the Core sequence processor.
+
+The Instruments pane can create an `InstrumentDefinition` and open it in a
+main-workspace tone-table editor. Divisions and offset remain the pitch-to-index
+lookup parameters from Core. Tone specifications are edited independently from
+the tone table: each reusable specification selects any live sound-producing
+song object (sample, instrument, pattern or sequence), composes a positive pitch
+multiplier, and can independently override volume, pitch, panning and filter
+envelope references. The tone table then maps each integer tone index to a
+specification or to `-1` for silence. Removing a specification deliberately
+silences entries that referenced it and decrements later specification indices
+so remaining mappings continue to identify the same definitions. The editor
+projects existing envelope objects, including unresolved references via
+tombstone/raw-ID fallback; a dedicated envelope-authoring surface remains future
+work.
 
 The note field supports direct tracker-keyboard entry. A current toolbar Source
 (sample, instrument, pattern or sequence) and base octave are editor state; the
