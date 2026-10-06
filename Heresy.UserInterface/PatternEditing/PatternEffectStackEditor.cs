@@ -64,6 +64,51 @@ public static class PatternEffectStackEditor
 		return true;
 	}
 
+	public static bool ReplaceSelected(
+		DocumentWorkspace workspace,
+		DataPatternDefinition pattern,
+		PatternEffectCursor cursor,
+		PatternEffect replacement)
+	{
+		Validate(workspace, pattern, cursor);
+		ArgumentNullException.ThrowIfNull(replacement);
+
+		PatternCell? cell =
+			pattern.Grid[cursor.Row, cursor.Channel];
+		if (cell is null || cell.Effects.Count == 0)
+			return false;
+
+		int index = GetSelectedIndex(cursor, cell);
+		PatternEffect existing = cell.Effects[index];
+		if (existing == replacement)
+			return false;
+
+		ExpandedEffectField preferred =
+			cursor.IsExpanded
+				? cursor.ExpandedField
+				: FirstField(replacement);
+
+		cell.Effects[index] = replacement;
+		workspace.Document.MarkChanged(affectsAudio: true);
+
+		if (cursor.IsExpanded)
+		{
+			cursor.SetExpandedSelection(
+				cell,
+				index,
+				CompatibleField(replacement, preferred));
+		}
+		else
+		{
+			cursor.SetPosition(
+				cursor.Row,
+				cursor.Channel,
+				PatternCellField.EffectCommand);
+		}
+
+		return true;
+	}
+
 	public static bool MoveSelected(
 		DocumentWorkspace workspace,
 		DataPatternDefinition pattern,
