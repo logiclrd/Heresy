@@ -16,6 +16,7 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\Heresy.Core\Heresy.Core.csproj" />
+		<ProjectReference Include="..\Heresy.Scripting\Heresy.Scripting.csproj" />
 	</ItemGroup>
 
 </Project>
