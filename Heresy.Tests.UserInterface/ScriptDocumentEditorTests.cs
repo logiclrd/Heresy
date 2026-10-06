@@ -6,6 +6,7 @@ using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Scripting;
 using Heresy.Core.Sequences;
+using Heresy.Scripting.Analysis;
 using Heresy.UserInterface.Documents;
 
 using NUnit.Framework;
@@ -228,4 +229,58 @@ public sealed class ScriptDocumentEditorTests
 		result.Caret.Should().Be(7);
 	}
 
+
+	[Test]
+	public void SourceAnalysisProjectsSemanticReferencesAndDiagnostics()
+	{
+		DocumentWorkspace workspace = new();
+
+		ObjectId liveId = workspace.Document.AllocateObjectId();
+		workspace.Document.Add(
+			new ScriptPatternDefinition(
+				liveId,
+				"Live Pattern"));
+
+		ObjectId deletedId = workspace.Document.AllocateObjectId();
+		workspace.Document.Add(
+			new ScriptSequenceDefinition(
+				deletedId,
+				"Deleted Sequence"));
+		workspace.Document.Remove(deletedId);
+
+		const string source =
+			"// _O(999)\n"
+			+ "_O(1);\n"
+			+ "_O(2);\n"
+			+ "_O(77);\n"
+			+ "_O();";
+
+		ScriptSourceDocumentAnalysis analysis =
+			ScriptSourceDocumentAnalyzer.Analyze(
+				workspace,
+				source);
+
+		analysis.IsReliable.Should().BeFalse();
+		analysis.Syntax.Diagnostics.Should().ContainSingle(
+			diagnostic =>
+				diagnostic.Code == "HRS1001"
+				&& diagnostic.Severity
+					== ScriptDiagnosticSeverity.Error);
+
+		analysis.References.Should().HaveCount(3);
+		analysis.References[0].Id.Should().Be(liveId);
+		analysis.References[0].DisplayName.Should().Be("Live Pattern");
+		analysis.References[0].Resolution.Should().Be(
+			ScriptObjectReferenceResolution.Live);
+
+		analysis.References[1].Id.Should().Be(deletedId);
+		analysis.References[1].DisplayName.Should().Be("Deleted Sequence");
+		analysis.References[1].Resolution.Should().Be(
+			ScriptObjectReferenceResolution.Tombstone);
+
+		analysis.References[2].Id.Should().Be((ObjectId)77U);
+		analysis.References[2].DisplayName.Should().Be("_O(77)");
+		analysis.References[2].Resolution.Should().Be(
+			ScriptObjectReferenceResolution.Missing);
+	}
 }
