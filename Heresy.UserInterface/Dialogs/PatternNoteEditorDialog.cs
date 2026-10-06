@@ -5,6 +5,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 
+using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 
 namespace Heresy.UserInterface.Dialogs;

@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json.Serialization;
 
 using Heresy.Core.Objects;
 
@@ -25,6 +26,7 @@ public sealed record StartPatternNote : PatternNoteEntry
 	{
 	}
 
+	[JsonConstructor]
 	public StartPatternNote(
 		ObjectId sourceId,
 		double pitchMultiplier = 1.0,

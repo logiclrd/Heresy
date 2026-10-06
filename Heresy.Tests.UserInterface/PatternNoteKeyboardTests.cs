@@ -62,7 +62,7 @@ public sealed class PatternNoteKeyboardTests
 	}
 
 	[Test]
-	public void TypingNoteUsesSelectedSourceAndAdvancesOneRow()
+	public void TypingNoteDoesNotImplicitlyCopyToolbarSourceAndAdvancesOneRow()
 	{
 		DocumentWorkspace workspace = new();
 		SampleDefinition sample = AddSample(workspace, "Piano");
@@ -85,7 +85,8 @@ public sealed class PatternNoteKeyboardTests
 		result.Changed.Should().BeTrue();
 		result.Rejected.Should().BeFalse();
 		pattern.Grid[0, 0]!.Note.Should().Be(
-			new StartPatternNote(sample.Id, 1.0));
+			new StartPatternNote());
+		pattern.Grid[0, 0]!.SourceId.Should().Be(ObjectId.None);
 		cursor.Row.Should().Be(1);
 		cursor.Field.Should().Be(PatternCellField.Note);
 		workspace.Document.AudioRevision.Should().Be(audioRevision + 1);
@@ -125,11 +126,11 @@ public sealed class PatternNoteKeyboardTests
 	}
 
 	[Test]
-	public void ReplacingStartNotePreservesSpeedAndMixdownButUsesCurrentSource()
+	public void ReplacingStartNotePreservesSpeedMixdownAndInlineSource()
 	{
 		DocumentWorkspace workspace = new();
 		SampleDefinition oldSource = AddSample(workspace, "Old");
-		SampleDefinition newSource = AddSample(workspace, "New");
+		SampleDefinition newToolbarSource = AddSample(workspace, "New");
 		DataPatternDefinition pattern =
 			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
 		pattern.Grid.GetOrCreateCell(0, 0).Note =
@@ -141,7 +142,7 @@ public sealed class PatternNoteKeyboardTests
 		PatternEffectCursor cursor =
 			new(row: 0, channel: 0, PatternCellField.Note);
 		PatternNoteInputState state =
-			new(newSource.Id, baseOctave: 4);
+			new(newToolbarSource.Id, baseOctave: 4);
 
 		PatternNoteKeyboardEditor.Type(
 			workspace,
@@ -152,7 +153,7 @@ public sealed class PatternNoteKeyboardTests
 
 		StartPatternNote note =
 			(StartPatternNote)pattern.Grid[0, 0]!.Note!;
-		note.SourceId.Should().Be(newSource.Id);
+		note.SourceId.Should().Be(oldSource.Id);
 		note.PitchMultiplier.Should().BeApproximately(
 			Math.Pow(2.0, 2.0 / 12.0),
 			1e-12);
@@ -190,7 +191,7 @@ public sealed class PatternNoteKeyboardTests
 	}
 
 	[Test]
-	public void NoteTypingWithoutSelectedSourceIsRejectedWithoutAdvancing()
+	public void NoteTypingWithoutSelectedSourceCreatesSourceLessNoteAndAdvances()
 	{
 		DocumentWorkspace workspace = new();
 		DataPatternDefinition pattern =
@@ -208,14 +209,14 @@ public sealed class PatternNoteKeyboardTests
 				state,
 				'Z');
 
-		result.Changed.Should().BeFalse();
-		result.Rejected.Should().BeTrue();
-		pattern.Grid[0, 0].Should().BeNull();
-		cursor.Row.Should().Be(0);
+		result.Changed.Should().BeTrue();
+		result.Rejected.Should().BeFalse();
+		pattern.Grid[0, 0]!.Note.Should().Be(new StartPatternNote());
+		cursor.Row.Should().Be(1);
 	}
 
 	[Test]
-	public void DeletedSelectedSourceIsRejected()
+	public void DeletedToolbarSourceDoesNotBlockNoteEntry()
 	{
 		DocumentWorkspace workspace = new();
 		SampleDefinition sample = AddSample(workspace, "Piano");
@@ -235,8 +236,8 @@ public sealed class PatternNoteKeyboardTests
 				state,
 				'Z');
 
-		result.Rejected.Should().BeTrue();
-		pattern.Grid[0, 0].Should().BeNull();
+		result.Rejected.Should().BeFalse();
+		pattern.Grid[0, 0]!.Note.Should().Be(new StartPatternNote());
 	}
 
 	[Test]
@@ -283,9 +284,10 @@ public sealed class PatternNoteKeyboardTests
 		SampleDefinition sample = AddSample(workspace, "Snare");
 		DataPatternDefinition pattern =
 			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
-		pattern.Grid.GetOrCreateCell(0, 0).Note =
+		PatternCell sharpCell = pattern.Grid.GetOrCreateCell(0, 0);
+		sharpCell.SourceId = sample.Id;
+		sharpCell.Note =
 			new StartPatternNote(
-				sample.Id,
 				Math.Pow(2.0, 1.0 / 12.0));
 
 		PatternCellViewModel view =
@@ -295,9 +297,9 @@ public sealed class PatternNoteKeyboardTests
 				0,
 				0);
 
-		view.NoteText.Should().StartWith("C#4 ");
-		view.NoteText.Should().Contain("Snare");
-		view.NoteText.Should().Contain($"<{sample.Id.Value}>");
+		view.NoteText.Should().Be("C#4");
+		view.SourceText.Should().Contain("Snare");
+		view.SourceText.Should().Contain($"<{sample.Id.Value}>");
 	}
 
 	[Test]
@@ -307,8 +309,9 @@ public sealed class PatternNoteKeyboardTests
 		SampleDefinition sample = AddSample(workspace, "Piano");
 		DataPatternDefinition pattern =
 			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
-		pattern.Grid.GetOrCreateCell(0, 0).Note =
-			new StartPatternNote(sample.Id);
+		PatternCell naturalCell = pattern.Grid.GetOrCreateCell(0, 0);
+		naturalCell.SourceId = sample.Id;
+		naturalCell.Note = new StartPatternNote();
 
 		PatternCellViewModel view =
 			PatternCellViewModel.Create(
@@ -327,8 +330,9 @@ public sealed class PatternNoteKeyboardTests
 		SampleDefinition sample = AddSample(workspace, "Piano");
 		DataPatternDefinition pattern =
 			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
-		pattern.Grid.GetOrCreateCell(0, 0).Note =
-			new StartPatternNote(sample.Id, 1.001);
+		PatternCell arbitraryCell = pattern.Grid.GetOrCreateCell(0, 0);
+		arbitraryCell.SourceId = sample.Id;
+		arbitraryCell.Note = new StartPatternNote(1.001);
 
 		PatternCellViewModel view =
 			PatternCellViewModel.Create(
@@ -442,7 +446,7 @@ public sealed class PatternNoteKeyboardTests
 
 		result.Changed.Should().BeTrue();
 		pattern.Grid[0, 0]!.Note.Should().Be(
-			new StartPatternNote(sample.Id, 1.0));
+			new StartPatternNote());
 		cursor.Row.Should().Be(1);
 	}
 
