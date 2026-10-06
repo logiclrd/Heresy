@@ -21,6 +21,7 @@ using Heresy.Core.Samples;
 using Heresy.Core.Sequences;
 using Heresy.UserInterface.Dialogs;
 using Heresy.UserInterface.Documents;
+using Heresy.UserInterface.PatternEditing;
 using Heresy.UserInterface.ViewModels;
 using Heresy.UserInterface.Views;
 
@@ -1093,16 +1094,16 @@ public sealed class MainWindow : Window
 			return;
 		}
 
-		SongTreeObject? patternNode =
-			FindTreeObject(
-				_workspace.Document.GetSectionRoot(SongTreeSection.Patterns),
-				pattern.Id);
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(
+				_workspace.Document,
+				sequence,
+				entryIndex);
 		ShowPatternEditor(
-			pattern,
-			patternNode,
-			closeOverride: () =>
-				ShowSequenceEditor(sequence, sequenceNode),
-			backLabel: "← Sequence");
+			context,
+			() => ShowSequenceEditor(sequence, sequenceNode),
+			"← Sequence",
+			$"Editing sequence {sequence.Name} from order {entryIndex}");
 	}
 
 	private void ShowPatternEditor(SongTreeItemViewModel item)
@@ -1129,15 +1130,32 @@ public sealed class MainWindow : Window
 		Action? closeOverride = null,
 		string backLabel = "← Document")
 	{
+		PatternEditorContext context =
+			PatternEditorContext.ForPattern(
+				_workspace.Document,
+				pattern);
+		ShowPatternEditor(
+			context,
+			closeOverride
+				?? (() => RefreshDocumentView(
+					$"Edited pattern {pattern.Name}",
+					selectNode)),
+			backLabel,
+			$"Editing pattern {pattern.Name}");
+	}
+
+	private void ShowPatternEditor(
+		PatternEditorContext context,
+		Action close,
+		string backLabel,
+		string status)
+	{
 		PatternEditorControl editor =
 			new(
 				this,
 				_workspace,
-				pattern,
-				closeOverride
-					?? (() => RefreshDocumentView(
-						$"Edited pattern {pattern.Name}",
-						selectNode)),
+				context,
+				close,
 				message =>
 				{
 					UpdateWindowTitle();
@@ -1147,7 +1165,7 @@ public sealed class MainWindow : Window
 				_uiConfiguration);
 		_mainContent.Content = editor;
 		UpdateWindowTitle();
-		SetStatus($"Editing pattern {pattern.Name}");
+		SetStatus(status);
 	}
 
 	private void ShowInstrumentEditor(SongTreeItemViewModel item)
