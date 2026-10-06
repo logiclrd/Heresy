@@ -33,8 +33,9 @@ public sealed record SongReferenceAnalysis(
 
 /// <summary>
 /// Discovers explicit ObjectId edges in the persistent song graph. Script
-/// sources remain opaque until the restricted-C# compiler can report their
-/// semantic object-reference tokens.
+/// sources remain opaque unless a parser-independent script analyzer is supplied;
+/// compiler assemblies can provide exact semantic object-reference tokens without
+/// introducing a Roslyn dependency into Core.
 /// </summary>
 public static class SongReferenceAnalyzer
 {
@@ -121,9 +122,22 @@ public static class SongReferenceAnalyzer
 					}
 					break;
 
-				case ScriptPatternDefinition:
-				case ScriptSequenceDefinition:
-					hasOpaqueScriptReferences = true;
+				case ScriptPatternDefinition scriptPattern:
+					CollectScriptReferences(
+						scriptPattern.Source,
+						scriptPattern.Id,
+						scriptReferenceAnalyzer,
+						references,
+						ref hasOpaqueScriptReferences);
+					break;
+
+				case ScriptSequenceDefinition scriptSequence:
+					CollectScriptReferences(
+						scriptSequence.Source,
+						scriptSequence.Id,
+						scriptReferenceAnalyzer,
+						references,
+						ref hasOpaqueScriptReferences);
 					break;
 			}
 		}
@@ -131,6 +145,34 @@ public static class SongReferenceAnalyzer
 		return new SongReferenceAnalysis(
 			references,
 			hasOpaqueScriptReferences);
+	}
+
+	private static void CollectScriptReferences(
+		string source,
+		ObjectId sourceObjectId,
+		IScriptObjectReferenceAnalyzer? scriptReferenceAnalyzer,
+		List<SongReference> references,
+		ref bool hasOpaqueScriptReferences)
+	{
+		if (scriptReferenceAnalyzer is null)
+		{
+			hasOpaqueScriptReferences = true;
+			return;
+		}
+
+		ScriptObjectReferenceSet analysis =
+			scriptReferenceAnalyzer.AnalyzeObjectReferences(source);
+		foreach (ObjectId targetId in analysis.ObjectIds)
+		{
+			AddReference(
+				references,
+				targetId,
+				sourceObjectId,
+				SongReferenceKind.ScriptObject);
+		}
+
+		if (!analysis.IsReliable)
+			hasOpaqueScriptReferences = true;
 	}
 
 	private static void CollectTreeReferences(
