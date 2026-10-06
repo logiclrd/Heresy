@@ -152,8 +152,28 @@ audition. Source construction is delegated to
 transport layer independent of scripting, sample decoding and UI context.
 Starting a new request stops and disposes the previous output session first;
 Stop is safe when idle, and controller disposal tears down the active session
-and backend on the worker before joining it. Concrete request-to-render-source
-composition and the F5/F6/F7/F8 UI bindings remain the next transport layer.
+and backend on the worker before joining it.
+
+`Heresy.Playback.PlaybackRequestAudioSourceFactory` is the concrete
+request-to-render-source composition layer. Sequence requests compile the
+requested data/script sequence (including optional order/row start position);
+pattern requests compile the requested data/script pattern and may expose it as
+a repeating source; ad-hoc requests use their already-frozen `NoteSchedule`
+directly. Each resulting schedule receives a snapshot-scoped sound resolver:
+`SampleDefinition` becomes `SampleSound` through an injected
+`ISampleDataProvider`, `InstrumentDefinition` becomes recursive
+`InstrumentSound`, and ADSR envelope references become immutable
+`AdsrEnvelopeCurve` instances. The factory then constructs the ordinary
+`PlaybackSession` / `PlaybackSessionAudioSource` used by the realtime backend.
+
+Repeating pattern playback restarts at the pattern's compiled duration. Since
+standalone pattern compilation already consumes tracker sequence-flow commands,
+a `Bxx` encountered during F6-style pattern playback truncates that cycle and
+the repeating source begins again at row zero on the next cycle. Sample decoding
+remains outside this integration layer through `ISampleDataProvider`; the
+desktop host will choose the concrete decoder/cache alongside the SDL backend.
+The remaining transport work is UI binding plus F7 ancestor-sequence discovery,
+not schedule/audio-source construction.
 
 ## Toolchain note
 
@@ -325,9 +345,12 @@ deterministic replay and preventing mutable script state from leaking between
 invocations.
 
 `SongScheduleCompiler` is the current song-level execution bridge. It resolves
-the document's root sequence, compiles script definitions on demand, executes
-data and script sequences through the same resolver/processor path, and freezes
-the result into an immutable `NoteSchedule` suitable for rendering. Script
+the document's root sequence or an explicitly requested sequence/pattern,
+compiles script definitions on demand, executes data and script structures
+through the same resolver/processor path, and freezes the result into an
+immutable `NoteSchedule` suitable for rendering. Arbitrary sequence compilation
+can begin at an order with an optional row override; standalone pattern
+compilation can likewise begin at a requested row. Script
 patterns are compiled lazily only when the executing sequence actually reaches
 them, so an unused broken script does not block playback; a referenced script
 with compilation errors makes the complete schedule compilation fail with those
