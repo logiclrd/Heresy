@@ -19,12 +19,12 @@ public static class SongDocumentStorage
 
 		if (IsPackagePath(path))
 		{
-			SongDocumentPackage.Save(path, document);
+			SongDocumentPackage.Save(path, document, scriptReferenceAnalyzer);
 			return;
 		}
 		if (IsJsonPath(path))
 		{
-			SongDocumentJson.Save(path, document, jsonPathMode);
+			SongDocumentJson.Save(path, document, jsonPathMode, scriptReferenceAnalyzer);
 			return;
 		}
 
