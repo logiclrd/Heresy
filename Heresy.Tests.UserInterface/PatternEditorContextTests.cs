@@ -347,4 +347,40 @@ public sealed class PatternEditorContextTests
 		cursor.Row.Should().Be(1);
 	}
 
+	[Test]
+	public void VerticalNavigationAcrossBoundaryClampsToDestinationChannelCount()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition wide =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Wide",
+				rowCount: 1,
+				channelCount: 4);
+		DataPatternDefinition narrow =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Narrow",
+				rowCount: 1,
+				channelCount: 1);
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(
+				workspace,
+				"Arrangement");
+		sequence.Entries.Add(new SequenceEntry(wide.Id));
+		sequence.Entries.Add(new SequenceEntry(narrow.Id));
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(
+				workspace.Document,
+				sequence,
+				initialEntryIndex: 0);
+		PatternEffectCursor cursor =
+			new(0, 3, PatternCellField.Note);
+
+		PatternEditorContextCursor.MoveDown(context, cursor);
+
+		cursor.Row.Should().Be(1);
+		cursor.Channel.Should().Be(0);
+	}
+
 }
