@@ -67,7 +67,7 @@ public static class HeresyModulePath
 		if (entryPath.Contains('\\'))
 			throw new ArgumentException("Paths within .hm files may not contain backslashes.", nameof(entryPath));
 		if (entryPath.StartsWith("/", StringComparison.Ordinal)
-			|| entryPath.EndsWith('/', StringComparison.Ordinal))
+			|| entryPath.EndsWith("/", StringComparison.Ordinal))
 		{
 			throw new ArgumentException("Paths within .hm files must be relative entry paths.", nameof(entryPath));
 		}
