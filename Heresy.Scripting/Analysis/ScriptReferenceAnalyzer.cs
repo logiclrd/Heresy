@@ -9,6 +9,7 @@ using Heresy.Core.Scripting;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
 
 namespace Heresy.Scripting.Analysis;
 
@@ -33,6 +34,11 @@ public sealed record ScriptAnalysisDiagnostic(
 	ScriptDiagnosticSeverity Severity,
 	string Message,
 	ScriptSourceSpan Span);
+
+public sealed record ScriptReferenceAnalysisSnapshot(
+	SourceText Text,
+	SyntaxTree SyntaxTree,
+	ScriptReferenceAnalysis Analysis);
 
 public sealed record ScriptReferenceAnalysis(
 	IReadOnlyList<ScriptObjectReference> References,
@@ -88,13 +94,23 @@ public static class ScriptReferenceAnalyzer
 	];
 
 	public static ScriptReferenceAnalysis Analyze(string source)
+		=> CreateSnapshot(source).Analysis;
+
+	public static ScriptReferenceAnalysisSnapshot CreateSnapshot(
+		string source,
+		ScriptReferenceAnalysisSnapshot? previous = null)
 	{
 		ArgumentNullException.ThrowIfNull(source);
 
+		SourceText sourceText =
+			SourceText.From(source);
 		SyntaxTree syntaxTree =
-			CSharpSyntaxTree.ParseText(
-				source,
-				ParseOptions);
+			previous is null
+				? CSharpSyntaxTree.ParseText(
+					sourceText,
+					ParseOptions)
+				: previous.SyntaxTree.WithChangedText(
+					sourceText);
 
 		List<ScriptAnalysisDiagnostic> diagnostics = [];
 		foreach (Diagnostic diagnostic in syntaxTree.GetDiagnostics())
@@ -168,9 +184,12 @@ public static class ScriptReferenceAnalyzer
 						invocation.Span.Length)));
 		}
 
-		return new ScriptReferenceAnalysis(
-			references,
-			diagnostics);
+		return new ScriptReferenceAnalysisSnapshot(
+			sourceText,
+			syntaxTree,
+			new ScriptReferenceAnalysis(
+				references,
+				diagnostics));
 	}
 
 	private static bool IsIntrinsicLookup(
