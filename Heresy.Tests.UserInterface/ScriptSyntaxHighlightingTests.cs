@@ -50,7 +50,7 @@ public sealed class ScriptSyntaxHighlightingTests
 		Texts(source, spans, ScriptSyntaxHighlightKind.Number)
 			.Should().Contain("42");
 		Texts(source, spans, ScriptSyntaxHighlightKind.String)
-			.Should().Contain(""hello"");
+			.Should().Contain("\"hello\"");
 		Texts(source, spans, ScriptSyntaxHighlightKind.Comment)
 			.Should().Contain("// comment");
 		spans.Should().Contain(
