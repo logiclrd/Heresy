@@ -16,8 +16,8 @@ The repository is intentionally split by concern.
 - `Heresy.UserInterface` — Avalonia single-document tracker UI. The current
   document view projects the four fixed song-tree sections into Sequences,
   Patterns, Samples and Instruments panes, with sample import/editing, external-
-  asset diagnostics and a first data-pattern editing mode; realtime transport
-  remains separate.
+  asset diagnostics, data-pattern editing and data-sequence arrangement editing;
+  realtime transport remains separate.
 - A Roslyn-backed restricted-C# compiler assembly will also be added separately
   once the Core/Render contracts have been exercised.
 
@@ -131,6 +131,20 @@ note column directly (empty/start/off/cut, source ObjectId, pitch and playback-
 speed multipliers, and mixdown), exposes row/channel dimensions plus minor/major
 row-highlight intervals, and warns before shrinking dimensions when populated
 cells would be discarded.
+
+Opening or creating a data sequence likewise switches the main workspace into
+an arrangement-list editor. Sequence entries remain ordered `(PatternId,
+StartRow)` references rather than duplicating pattern data. The editor can add
+live data or script patterns, replace an entry's pattern, edit its non-negative
+start row, reorder/remove entries, and explicitly mark the sequence as the
+song's `RootSequenceId`. Creating a sequence does not implicitly make it root.
+Broken pattern references are preserved and projected through tombstones; their
+start row remains editable and they can be repaired by selecting a live pattern.
+Opening a live data-pattern entry drills directly into the pattern editor, whose
+Back control becomes **← Sequence** and returns to the arrangement instead of
+the document browser. Script-sequence and script-pattern source editing remain
+future UI work. Existing Bxx/Cxx sequence-control semantics continue to be
+handled by the Core sequence processor.
 
 The note field supports direct tracker-keyboard entry. A current sound source
 (sample, instrument, pattern or sequence) and base octave are selected in the
