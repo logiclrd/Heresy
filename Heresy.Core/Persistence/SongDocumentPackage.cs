@@ -8,12 +8,16 @@ using System.Text;
 using Heresy.Core.Assets;
 using Heresy.Core.Objects;
 using Heresy.Core.Samples;
+using Heresy.Core.Scripting;
 
 namespace Heresy.Core.Persistence;
 
 public static class SongDocumentPackage
 {
-	public static void Save(string path, SongDocument document)
+	public static void Save(
+		string path,
+		SongDocument document,
+		IScriptObjectReferenceAnalyzer? scriptReferenceAnalyzer = null)
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(path);
 		ArgumentNullException.ThrowIfNull(document);
@@ -44,7 +48,8 @@ public static class SongDocumentPackage
 					writer.Write(
 						SongDocumentJson.Serialize(
 							document,
-							sample => entries[sample.Id]));
+							sample => entries[sample.Id],
+							scriptReferenceAnalyzer));
 				}
 
 				Dictionary<string, string> writtenSources =
