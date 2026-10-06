@@ -14,6 +14,7 @@ public sealed class PatternCellViewModel
 		int row,
 		int channel,
 		string noteText,
+		string sourceText,
 		string volumeText,
 		IReadOnlyList<PatternEffectViewModel> effects,
 		string displayText)
@@ -21,6 +22,7 @@ public sealed class PatternCellViewModel
 		Row = row;
 		Channel = channel;
 		NoteText = noteText;
+		SourceText = sourceText;
 		VolumeText = volumeText;
 		Effects = effects;
 		DisplayText = displayText;
@@ -29,6 +31,7 @@ public sealed class PatternCellViewModel
 	public int Row { get; }
 	public int Channel { get; }
 	public string NoteText { get; }
+	public string SourceText { get; }
 	public string VolumeText { get; }
 	public IReadOnlyList<PatternEffectViewModel> Effects { get; }
 	public int EffectCount => Effects.Count;
@@ -44,7 +47,8 @@ public sealed class PatternCellViewModel
 		ArgumentNullException.ThrowIfNull(pattern);
 
 		PatternCell? cell = pattern.Grid[row, channel];
-		string noteText = FormatNote(document, cell?.Note);
+		string noteText = FormatNote(cell?.Note);
+		string sourceText = FormatSource(document, cell?.SourceId ?? ObjectId.None);
 		string volumeText = FormatVolume(cell?.Volume);
 		IReadOnlyList<PatternEffectViewModel> effects =
 			cell?.Effects
@@ -59,6 +63,7 @@ public sealed class PatternCellViewModel
 			row,
 			channel,
 			noteText,
+			sourceText,
 			volumeText,
 			effects,
 			display);
@@ -77,23 +82,18 @@ public sealed class PatternCellViewModel
 		return volume.Value.ToString("0.###", CultureInfo.InvariantCulture);
 	}
 
-	private static string FormatNote(
-		SongDocument document,
-		PatternNoteEntry? note)
+	private static string FormatNote(PatternNoteEntry? note)
 		=> note switch
 		{
 			null => "—",
 			PatternNoteOff => "OFF",
 			PatternNoteCut => "CUT",
-			StartPatternNote start => FormatStart(document, start),
+			StartPatternNote start => FormatStart(start),
 			_ => note.GetType().Name,
 		};
 
-	private static string FormatStart(
-		SongDocument document,
-		StartPatternNote start)
+	private static string FormatStart(StartPatternNote start)
 	{
-		string source = ResolveSource(document, start.SourceId);
 		string speed =
 			start.PlaybackSpeedMultiplier == 1.0
 				? string.Empty
@@ -104,12 +104,12 @@ public sealed class PatternCellViewModel
 			start.PitchMultiplier,
 			out string? trackerPitch))
 		{
-			return $"{trackerPitch} {source}{speed}{mixdown}";
+			return $"{trackerPitch}{speed}{mixdown}";
 		}
 
 		string pitch =
 			$" p×{start.PitchMultiplier.ToString("G4", CultureInfo.InvariantCulture)}";
-		return $"{source}{pitch}{speed}{mixdown}";
+		return $"{pitch.TrimStart()}{speed}{mixdown}";
 	}
 
 	private static bool TryFormatTrackerPitch(
@@ -151,10 +151,13 @@ public sealed class PatternCellViewModel
 		return true;
 	}
 
-	private static string ResolveSource(
+	private static string FormatSource(
 		SongDocument document,
 		ObjectId id)
 	{
+		if (id.IsNone)
+			return "—";
+
 		if (document.TryGet(id, out SongObject? songObject)
 			&& songObject is not null)
 		{

@@ -11,6 +11,7 @@ public static class PatternCellFieldGeometry
 	public static PatternCellField HitTest(
 		double x,
 		double cellWidth,
+		double sourceWidth,
 		double volumeWidth,
 		double effectWidth,
 		int effectCount,
@@ -18,8 +19,8 @@ public static class PatternCellFieldGeometry
 	{
 		if (!(cellWidth > 0))
 			throw new ArgumentOutOfRangeException(nameof(cellWidth));
-		if (volumeWidth < 0 || effectWidth < 0
-			|| volumeWidth + effectWidth > cellWidth)
+		if (sourceWidth < 0 || volumeWidth < 0 || effectWidth < 0
+			|| sourceWidth + volumeWidth + effectWidth > cellWidth)
 		{
 			throw new ArgumentOutOfRangeException(
 				nameof(volumeWidth));
@@ -30,9 +31,12 @@ public static class PatternCellFieldGeometry
 		double clampedX = Math.Clamp(x, 0, cellWidth);
 		double effectLeft = cellWidth - effectWidth;
 		double volumeLeft = effectLeft - volumeWidth;
+		double sourceLeft = volumeLeft - sourceWidth;
 
-		if (clampedX < volumeLeft)
+		if (clampedX < sourceLeft)
 			return PatternCellField.Note;
+		if (clampedX < volumeLeft)
+			return PatternCellField.Source;
 		if (clampedX < effectLeft)
 			return PatternCellField.Volume;
 

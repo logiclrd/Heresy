@@ -3,6 +3,7 @@ using System.Linq;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
+using Heresy.UserInterface.PatternEditing;
 
 namespace Heresy.UserInterface.Documents;
 
@@ -57,6 +58,44 @@ public static class PatternDocumentEditor
 		else
 		{
 			pattern.Grid.GetOrCreateCell(row, channel).Note = note;
+		}
+
+		workspace.Document.MarkChanged(affectsAudio: true);
+	}
+
+	public static void SetSource(
+		DocumentWorkspace workspace,
+		DataPatternDefinition pattern,
+		int row,
+		int channel,
+		ObjectId sourceId)
+	{
+		ValidatePattern(workspace, pattern);
+
+		if (!sourceId.IsNone
+			&& (!workspace.Document.TryGet(sourceId, out SongObject? source)
+				|| source is null
+				|| !PatternSourceCatalog.IsSoundSource(source.Kind)))
+		{
+			throw new InvalidOperationException(
+				$"Object {sourceId.Value} is not a live sound source in the active song.");
+		}
+
+		PatternCell? cell = pattern.Grid[row, channel];
+		if ((cell?.SourceId ?? ObjectId.None) == sourceId)
+			return;
+
+		if (sourceId.IsNone)
+		{
+			if (cell is null)
+				return;
+			cell.SourceId = ObjectId.None;
+			if (cell.IsEmpty)
+				pattern.Grid.ClearCell(row, channel);
+		}
+		else
+		{
+			pattern.Grid.GetOrCreateCell(row, channel).SourceId = sourceId;
 		}
 
 		workspace.Document.MarkChanged(affectsAudio: true);

@@ -95,17 +95,6 @@ public static class PatternNoteKeyboardEditor
 			value,
 			out int semitoneOffset))
 		{
-			if (!TryGetSelectedSource(
-				workspace.Document,
-				state.SourceId,
-				out _))
-			{
-				return new PatternNoteInputResult(
-					true,
-					false,
-					true);
-			}
-
 			PatternCell? existingCell =
 				pattern.Grid[cursor.Row, cursor.Channel];
 			StartPatternNote? existing =
@@ -121,7 +110,7 @@ public static class PatternNoteKeyboardEditor
 
 			note =
 				new StartPatternNote(
-					state.SourceId,
+					existing?.SourceId ?? ObjectId.None,
 					pitchMultiplier,
 					existing?.PlaybackSpeedMultiplier ?? 1.0,
 					existing?.Mixdown ?? false);
@@ -152,23 +141,6 @@ public static class PatternNoteKeyboardEditor
 			true,
 			changed,
 			false);
-	}
-
-	private static bool TryGetSelectedSource(
-		SongDocument document,
-		ObjectId id,
-		out SongObject? source)
-	{
-		if (id.IsNone
-			|| !document.TryGet(id, out source)
-			|| source is null
-			|| !PatternSourceCatalog.IsSoundSource(source.Kind))
-		{
-			source = null;
-			return false;
-		}
-
-		return true;
 	}
 
 	private static void Validate(
