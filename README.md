@@ -19,8 +19,10 @@ The repository is intentionally split by concern.
   asset diagnostics, data-pattern editing, data-sequence arrangement editing,
   recursive instrument/tone-table editing and ADSR envelope authoring; realtime
   transport remains separate.
-- A Roslyn-backed restricted-C# compiler assembly will also be added separately
-  once the Core/Render contracts have been exercised.
+- `Heresy.Scripting` — Roslyn-backed restricted-C# analysis/compiler boundary.
+  Semantic object-reference analysis and projection are implemented while
+  Roslyn remains entirely outside `Heresy.Core`; executable script compilation
+  remains future work.
 
 ## Current architectural rules captured in Core
 
@@ -43,8 +45,10 @@ The repository is intentionally split by concern.
   memory; tracker-specific notation and effect-memory behavior are layered on
   top of this semantic grid model.
 - Sequences are finite and entries can specify a `StartRow`.
-- Script object references are persisted in restricted-C# source as `_O(id)` and
-  can later be projected by the editor as atomic named tokens.
+- Script object references are persisted in restricted-C# source as `_O(id)`.
+  Roslyn semantic analysis ignores comment/string lookalikes and shadowing user
+  declarations, reports malformed intrinsic calls, and projects real references
+  through live objects, tombstones or raw-ID fallback.
 - Native effects use wall-clock time. Tracker compatibility effects are
   row-scoped operators whose independent parameter deltas are composed with
   persistent baseline state on every output frame. Persistent operators commit
@@ -179,14 +183,21 @@ order from a data-sequence arrangement opens that script source editor with
 Persisted script source remains ordinary restricted-C# text. The editor offers
 a catalog containing every live song object and can insert the selected object
 using the canonical `_O(id)` spelling, replacing the current text selection and
-leaving the caret immediately after the inserted reference. It deliberately does
-not lexically reinterpret arbitrary `_O(...)` text as semantic references or
-replace it with named atomic tokens yet: strings, comments and actual C# syntax
-must ultimately be understood by the planned Roslyn-backed restricted-C#
-compiler/projection layer. Accordingly `SongReferenceAnalyzer` still treats any
-script source as opaque and persistence conservatively retains tombstones while
-scripts exist. Script source/layout edits are audio-affecting authoring changes
-even though executable script compilation remains future work.
+leaving the caret immediately after the inserted reference. The shared script
+editor now analyzes its source with the separate `Heresy.Scripting` Roslyn layer
+as text changes. It displays reference diagnostics plus semantic object
+references resolved to current live names/kinds, tombstone names/kinds, or
+canonical raw-ID fallback, without rewriting the persisted source.
+
+Core remains Roslyn-free through `IScriptObjectReferenceAnalyzer`. With no
+analyzer, `SongReferenceAnalyzer` retains the conservative opaque-script
+fallback. The authoring workspace supplies the Roslyn adapter for Save/Save As,
+so persistence can retain tombstones referenced by real `_O(id)` expressions
+while pruning tombstones mentioned only in comments or strings. If analysis is
+unreliable because of syntax/reference diagnostics, the opaque safety fallback
+remains active and tombstones are conservatively retained. Atomic named-token
+editing and executable restricted-C# compilation remain future work. Script
+source/layout edits are audio-affecting authoring changes.
 
 The Instruments pane can create an `InstrumentDefinition` and open it in a
 main-workspace tone-table editor. Divisions and offset remain the pitch-to-index
