@@ -24,6 +24,9 @@ The repository is intentionally split by concern.
   pattern/sequence compiler are implemented while Roslyn remains entirely
   outside `Heresy.Core`.
 
+Detailed planned authoring, playback and tracker-workflow items are tracked in
+[docs/todo.md](docs/todo.md).
+
 ## Current architectural rules captured in Core
 
 - Song objects use monotonically allocated 32-bit IDs and are referenced by ID,
