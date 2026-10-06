@@ -180,21 +180,34 @@ sequences can be explicitly selected as the song root. Opening a script-pattern
 order from a data-sequence arrangement opens that script source editor with
 **← Sequence** navigation rather than creating a second tracker representation.
 
-Persisted script source remains ordinary restricted-C# text. The editor offers
-a catalog containing every live song object and inserts the selected object as
-the canonical `_O(id)` expression in the raw source. Semantic object references
-are projected in the editable view as atomic `⟦name⟧` tokens: current live names
-are shown without rewriting the source, tombstones retain their last-known names,
-and unresolved references display their canonical raw ID. Renaming an object
-therefore changes only the projection. Backspace/Delete, typing over any part of
-a token, selection replacement, copy/cut/paste and horizontal caret movement all
-operate on the complete underlying reference; clipboard text remains valid raw
-restricted C#. The projection reconciles ordinary TextBox edits back to source
-coordinates and keeps its own source-level undo/redo history rather than storing
-transient projected strings. The shared script editor validates raw source live
-with the same restricted-C# compiler rules used for execution, but stops before
-assembly emission/loading. It displays ordinary C# binding diagnostics and
-Heresy restricted-language diagnostics alongside the projected references.
+Persisted script source remains ordinary restricted-C# text. Script editing now
+uses AvaloniaEdit, and its `TextDocument` always contains the canonical source
+including literal `_O(id)` expressions. Roslyn semantic analysis supplies the
+raw source spans for actual Heresy object lookups; comments, string lookalikes
+and shadowed helper calls do not become references. A custom
+`VisualLineElementGenerator` replaces each semantic lookup only in the visual
+line with one named `FormattedTextElement`. That visual element has visual
+length 1 while consuming the complete raw `_O(id)` document span, so the object
+name behaves as one editor token without introducing a second editable string
+or a second coordinate system. AvaloniaEdit therefore keeps native caret,
+selection, clipboard and undo behavior against valid raw restricted C#.
+Current live names are projected without rewriting source, tombstones retain
+their last-known names, and unresolved references display their canonical raw
+ID.
+
+Live authoring analysis also retains an incremental Roslyn syntax snapshot.
+Each text change uses `SyntaxTree.WithChangedText`, allowing Roslyn to reuse
+unchanged syntax while still returning an error-tolerant tree and diagnostics
+for incomplete code. Valid semantic references elsewhere in the document remain
+available while another expression is being typed. The snapshot is retained in
+the authoring analysis object for the future syntax-highlighting layer: a
+`DocumentColorizingTransformer` can consume Roslyn token/trivia spans after
+visual element generation, while generated object-reference elements expose
+their semantic token metadata and original source spans for matching back to
+the corresponding syntax subtree. The shared script editor continues to run
+the full restricted-C# compiler validation without assembly emission/loading
+and displays ordinary C# binding diagnostics plus Heresy restricted-language
+diagnostics.
 
 Core remains Roslyn-free through `IScriptObjectReferenceAnalyzer`. With no
 analyzer, `SongReferenceAnalyzer` retains the conservative opaque-script
