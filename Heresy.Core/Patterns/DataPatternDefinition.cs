@@ -68,8 +68,14 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 						startsNewNote ? cell.Volume : null));
 			}
 
-			if (cell.Volume.HasValue && !startsNewNote)
+			if (cell.Volume.HasValue
+				&& !startsNewNote
+				&& cell.Note is not PatternNoteCut)
 			{
+				// A cut ends the current note immediately, so a same-row
+				// pattern volume has no current voice to affect and is ignored.
+				// Note-off is deliberately different: its releasing voice stays
+				// attached to the channel and remains volume-controllable.
 				channelCommands.Add(
 					new SetNoteVolumeCommand(cell.Volume.Value));
 			}
