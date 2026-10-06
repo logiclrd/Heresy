@@ -126,10 +126,33 @@ placement from `SongDocument.Add`; envelopes are grouped with Instruments.
 Nodes may be reorganized within a section but not moved between sections.
 
 Opening or creating a data pattern switches the main workspace into pattern
-mode rather than opening a modal editor. The initial pattern grid edits the
-semantic note column directly (empty/start/off/cut, source ObjectId, pitch and
-playback-speed multipliers, and mixdown), exposes row/channel dimensions plus
-minor/major row-highlight intervals, and warns before shrinking dimensions when
-populated cells would be discarded. Existing semantic effects are shown as an
-effect count and are preserved by note edits; effect-column editing and compact
-tracker notation are intentionally deferred to subsequent UI slices.
+mode rather than opening a modal editor. The pattern grid edits the semantic
+note column directly (empty/start/off/cut, source ObjectId, pitch and playback-
+speed multipliers, and mixdown), exposes row/channel dimensions plus minor/major
+row-highlight intervals, and warns before shrinking dimensions when populated
+cells would be discarded.
+
+Effects are projected as coloured tabs attached to the right edge of each cell.
+Multiple effects remain in semantic application order and collapse into an
+overlapping stack with a constant five-pixel reveal between tabs; the cell clips
+the stack so it can never bleed into a neighbouring channel. Hovering or tapping
+a stack expands it into equal-width tabs side by side. If those tabs exceed the
+cell width, left/right edge controls scroll the expanded strip on hover or tap.
+The expanded strip collapses on a click outside it, or once the pointer moves
+more than five row heights beyond that pattern row.
+
+The tracker cursor treats an IT-style effect as two keyboard fields: command and
+parameter byte. Typing a command letter replaces/creates a lone tracker effect
+while preserving its existing parameter and advances one row; typing two hex
+digits replaces the parameter byte and then advances, while `.` writes `00`
+and advances immediately. This deliberately supports tracker paint-down entry
+such as repeated `G` commands or repeated `15` parameters across rows whose
+effect types differ. A collapsed cell containing multiple effects rejects direct
+typing until Enter expands it. In the expanded strip, left/right traverse the
+individual fields but clamp at the ends; up/down collapse and move vertically,
+and Enter collapses in place. Native effects occupy one whole-tab keyboard stop,
+ignore direct typing, and are reserved for a future Enter/double-click parameter
+dialog. Native and IT-style tabs use the same visual footprint and may coexist
+in one stack. The semantic model already supports arbitrary effect stacks; a
+dedicated UI command for adding/removing/reordering additional stack members is
+still to be added.

@@ -430,9 +430,10 @@ public sealed class PatternEditorControl : UserControl
 						out _,
 						out _))
 				{
+					// TODO: Enter and double-click should invoke the same
+					// native-effect parameter editor command.
 					_message.Text =
-						"Native effect parameters are read-only here for now. "
-						+ "TODO: Enter/double-click will open the native-effect parameter dialog.";
+						"Native effect parameters are not directly editable here yet.";
 				}
 				e.Handled = true;
 				break;
