@@ -186,9 +186,11 @@ public sealed class WaveSampleDataProviderTests
 
 		writer.Write(
 			System.Text.Encoding.ASCII.GetBytes("RIFF"));
+		int padding =
+			data.Length & 1;
 		writer.Write(
 			checked(
-				36 + data.Length));
+				36 + data.Length + padding));
 		writer.Write(
 			System.Text.Encoding.ASCII.GetBytes("WAVE"));
 		writer.Write(
@@ -204,6 +206,8 @@ public sealed class WaveSampleDataProviderTests
 			System.Text.Encoding.ASCII.GetBytes("data"));
 		writer.Write(data.Length);
 		writer.Write(data);
+		if (padding != 0)
+			writer.Write((byte)0);
 
 		return path;
 	}
