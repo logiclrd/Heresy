@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 using Heresy.Core.Objects;
 using Heresy.Scripting.Analysis;
@@ -19,6 +20,22 @@ public static class ScriptReferenceVisualTokenCatalog
 		IReadOnlyList<ProjectedScriptObjectReference> references)
 	{
 		ArgumentNullException.ThrowIfNull(references);
-		return [];
+
+		return references
+			.OrderBy(reference => reference.Span.Start)
+			.Select(reference =>
+				new ScriptReferenceVisualToken(
+					reference.Id,
+					reference.Span,
+					Sanitize(reference.DisplayName),
+					reference.Kind,
+					reference.Resolution))
+			.ToArray();
 	}
+
+	private static string Sanitize(string text)
+		=> text
+			.Replace('\r', ' ')
+			.Replace('\n', ' ')
+			.Replace('\t', ' ');
 }
