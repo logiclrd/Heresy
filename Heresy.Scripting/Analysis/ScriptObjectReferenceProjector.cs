@@ -60,7 +60,7 @@ public static class ScriptObjectReferenceProjector
 
 		if (document.Tombstones.TryGetValue(
 			reference.Id,
-			out ObjectTombstone? tombstone))
+			out ObjectTombstone tombstone))
 		{
 			return new ProjectedScriptObjectReference(
 				reference.Id,
