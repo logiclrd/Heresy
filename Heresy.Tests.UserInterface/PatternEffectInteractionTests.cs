@@ -320,6 +320,10 @@ public sealed class PatternEffectInteractionTests
 
 		cursor.MoveRight(pattern);
 		cursor.Channel.Should().Be(0);
+		cursor.Field.Should().Be(PatternCellField.Volume);
+
+		cursor.MoveRight(pattern);
+		cursor.Channel.Should().Be(0);
 		cursor.Field.Should().Be(PatternCellField.EffectCommand);
 
 		cursor.MoveRight(pattern);
