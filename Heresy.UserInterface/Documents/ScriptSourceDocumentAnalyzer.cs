@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequences;
 using Heresy.Scripting.Analysis;
+using Heresy.Scripting.Compilation;
 
 namespace Heresy.UserInterface.Documents;
 
@@ -45,7 +46,10 @@ public static class ScriptSourceDocumentAnalyzer
 		string source)
 	{
 		ArgumentNullException.ThrowIfNull(pattern);
-		return AnalyzeReferences(workspace, source);
+		return AnalyzeReferences(
+			workspace,
+			source,
+			ScriptCompiler.AnalyzePatternSource(source));
 	}
 
 	public static ScriptSourceDocumentAnalysis Analyze(
@@ -54,12 +58,24 @@ public static class ScriptSourceDocumentAnalyzer
 		string source)
 	{
 		ArgumentNullException.ThrowIfNull(sequence);
-		return AnalyzeReferences(workspace, source);
+		return AnalyzeReferences(
+			workspace,
+			source,
+			ScriptCompiler.AnalyzeSequenceSource(source));
 	}
 
 	private static ScriptSourceDocumentAnalysis AnalyzeReferences(
 		DocumentWorkspace workspace,
 		string source)
+		=> AnalyzeReferences(
+			workspace,
+			source,
+			ScriptReferenceAnalyzer.Analyze(source).Diagnostics);
+
+	private static ScriptSourceDocumentAnalysis AnalyzeReferences(
+		DocumentWorkspace workspace,
+		string source,
+		IReadOnlyList<ScriptAnalysisDiagnostic> diagnostics)
 	{
 		ArgumentNullException.ThrowIfNull(workspace);
 		ArgumentNullException.ThrowIfNull(source);
@@ -72,6 +88,6 @@ public static class ScriptSourceDocumentAnalyzer
 			ScriptObjectReferenceProjector.Project(
 				workspace.Document,
 				syntax),
-			syntax.Diagnostics);
+			diagnostics);
 	}
 }
