@@ -133,6 +133,28 @@ added. The backend deliberately knows nothing about songs, patterns or authoring
 state, leaving the planned playback worker free to provide buffered/snapshotted
 PCM through the common source interface.
 
+
+Realtime transport requests now cross an explicit snapshot boundary before they
+reach the worker. `SongDocumentSnapshot.Create` deep-clones the mutable
+`SongDocument`, preserving object IDs, tree organization, script source, asset
+paths and tombstones while recording the source document/audio revision numbers.
+Snapshot creation uses the Core persistence representation without pruning
+unreferenced tombstones and does not mutate the authoring document.
+
+`BackgroundPlaybackController` owns a dedicated command thread and serializes
+play/replace/stop operations there. Requests are immutable descriptions backed
+by their already-captured song snapshot: `SequencePlaybackRequest` carries a
+sequence ID plus an optional order/row starting position,
+`PatternPlaybackRequest` carries a pattern ID/start row/repeat flag, and
+`AdHocPlaybackRequest` carries an immutable `NoteSchedule` for note/row
+audition. Source construction is delegated to
+`IBackgroundPlaybackSourceFactory` on the worker thread, keeping the generic
+transport layer independent of scripting, sample decoding and UI context.
+Starting a new request stops and disposes the previous output session first;
+Stop is safe when idle, and controller disposal tears down the active session
+and backend on the worker before joining it. Concrete request-to-render-source
+composition and the F5/F6/F7/F8 UI bindings remain the next transport layer.
+
 ## Toolchain note
 
 Heresy targets **.NET 10.0**. GitHub Actions builds the solution and runs the
