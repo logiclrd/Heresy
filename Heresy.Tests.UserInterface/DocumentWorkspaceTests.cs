@@ -3,7 +3,9 @@ using System.IO;
 
 using AwesomeAssertions;
 
+using Heresy.Core.Assets;
 using Heresy.Core.Objects;
+using Heresy.Core.Samples;
 using Heresy.Core.Patterns;
 using Heresy.Core.Persistence;
 using Heresy.UserInterface.Documents;
@@ -126,4 +128,75 @@ public sealed class DocumentWorkspaceTests
 		item.IsMissingReference.Should().BeTrue();
 		item.Kind.Should().Be(SongObjectKind.Unknown);
 	}
+	[Test]
+	public void AbsoluteJsonSaveModeIsRememberedForSubsequentSave()
+	{
+		string root = Path.Combine(
+			Path.GetTempPath(),
+			$"heresy-ui-mode-{Guid.NewGuid():N}");
+		string assetPath = Path.Combine(root, "outside", "tone.wav");
+		string jsonPath = Path.Combine(root, "song", "track.hm.json");
+		try
+		{
+			Directory.CreateDirectory(Path.GetDirectoryName(assetPath)!);
+			Directory.CreateDirectory(Path.GetDirectoryName(jsonPath)!);
+			File.WriteAllText(assetPath, "tone");
+
+			DocumentWorkspace workspace = new();
+			ObjectId id = workspace.Document.AllocateObjectId();
+			workspace.Document.Add(
+				new SampleDefinition(
+					id,
+					"Tone",
+					ExternalAssetIntegrity.CreateReference(assetPath)));
+
+			workspace.SaveAs(jsonPath, JsonAssetPathMode.Absolute);
+			workspace.JsonPathMode.Should().Be(JsonAssetPathMode.Absolute);
+			workspace.Document.MarkChanged(affectsAudio: false);
+			workspace.Save();
+
+			string json = File.ReadAllText(jsonPath);
+			json.Should().Contain(Path.GetFullPath(assetPath).Replace("\\", "\\\\"));
+		}
+		finally
+		{
+			if (Directory.Exists(root))
+				Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Test]
+	public void OpenInfersAbsoluteJsonSaveMode()
+	{
+		string root = Path.Combine(
+			Path.GetTempPath(),
+			$"heresy-ui-open-mode-{Guid.NewGuid():N}");
+		string assetPath = Path.Combine(root, "outside", "tone.wav");
+		string jsonPath = Path.Combine(root, "song", "track.hm.json");
+		try
+		{
+			Directory.CreateDirectory(Path.GetDirectoryName(assetPath)!);
+			Directory.CreateDirectory(Path.GetDirectoryName(jsonPath)!);
+			File.WriteAllText(assetPath, "tone");
+			SongDocument source = new();
+			ObjectId id = source.AllocateObjectId();
+			source.Add(
+				new SampleDefinition(
+					id,
+					"Tone",
+					ExternalAssetIntegrity.CreateReference(assetPath)));
+			SongDocumentStorage.Save(jsonPath, source, JsonAssetPathMode.Absolute);
+
+			DocumentWorkspace workspace = new();
+			workspace.Open(jsonPath);
+
+			workspace.JsonPathMode.Should().Be(JsonAssetPathMode.Absolute);
+		}
+		finally
+		{
+			if (Directory.Exists(root))
+				Directory.Delete(root, recursive: true);
+		}
+	}
+
 }

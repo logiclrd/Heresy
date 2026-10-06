@@ -20,7 +20,7 @@ public sealed class AssetPersistenceTests
 	public void BareJsonSaveStoresRelativePathWhileDocumentKeepsFullPath()
 	{
 		using TempProject project = new();
-		string assetPath = project.Write("assets", "kick.wav", "kick");
+		string assetPath = project.Write("songs", "assets", "kick.wav", "kick");
 		string jsonPath = project.Path("songs", "track.hm.json");
 		Directory.CreateDirectory(Path.GetDirectoryName(jsonPath)!);
 
@@ -34,14 +34,14 @@ public sealed class AssetPersistenceTests
 		JsonObject json = JsonNode.Parse(File.ReadAllText(jsonPath))!.AsObject();
 		Assert.That(
 			json["objects"]![sampleId.Value.ToString()]!["asset"]!["path"]!.GetValue<string>(),
-			Is.EqualTo("../assets/kick.wav"));
+			Is.EqualTo("assets/kick.wav"));
 	}
 
 	[Test]
 	public void BareJsonLoadResolvesAssetToAbsolutePath()
 	{
 		using TempProject project = new();
-		string assetPath = project.Write("assets", "kick.wav", "kick");
+		string assetPath = project.Write("songs", "assets", "kick.wav", "kick");
 		string jsonPath = project.Path("songs", "track.hm.json");
 		Directory.CreateDirectory(Path.GetDirectoryName(jsonPath)!);
 
@@ -55,7 +55,48 @@ public sealed class AssetPersistenceTests
 	}
 
 	[Test]
-	public void SavingBareJsonAtDifferentLocationDoesNotRetargetOrdinaryExternalAsset()
+	public void BareJsonRelativeSaveRejectsAssetOutsideJsonSubtree()
+	{
+		using TempProject project = new();
+		string assetPath = project.Write("library", "snare.wav", "snare");
+		string jsonPath = project.Path("songs", "track.hm.json");
+		Directory.CreateDirectory(Path.GetDirectoryName(jsonPath)!);
+		SongDocument document = DocumentWithSample(assetPath, out _);
+
+		TestDelegate save = () =>
+			SongDocumentStorage.Save(
+				jsonPath,
+				document,
+				JsonAssetPathMode.Relative);
+
+		Assert.That(save, Throws.TypeOf<InvalidOperationException>()
+			.With.Message.Contains("Sample")
+			.And.Message.Contains(Path.GetFullPath(assetPath))
+			.And.Message.Contains("absolute"));
+		Assert.That(File.Exists(jsonPath), Is.False);
+	}
+
+	[Test]
+	public void BareJsonAbsoluteSaveAlwaysStoresOsConventionalFullPath()
+	{
+		using TempProject project = new();
+		string assetPath = project.Write("songs", "assets", "kick.wav", "kick");
+		string jsonPath = project.Path("songs", "track.hm.json");
+		SongDocument document = DocumentWithSample(assetPath, out ObjectId sampleId);
+
+		SongDocumentStorage.Save(
+			jsonPath,
+			document,
+			JsonAssetPathMode.Absolute);
+
+		JsonObject json = JsonNode.Parse(File.ReadAllText(jsonPath))!.AsObject();
+		Assert.That(
+			json["objects"]![sampleId.Value.ToString()]!["asset"]!["path"]!.GetValue<string>(),
+			Is.EqualTo(Path.GetFullPath(assetPath)));
+	}
+
+	[Test]
+	public void AbsoluteBareJsonSaveAtDifferentLocationDoesNotRetargetExternalAsset()
 	{
 		using TempProject project = new();
 		string assetPath = project.Write("library", "snare.wav", "snare");
@@ -65,15 +106,78 @@ public sealed class AssetPersistenceTests
 		Directory.CreateDirectory(Path.GetDirectoryName(second)!);
 		SongDocument document = DocumentWithSample(assetPath, out ObjectId sampleId);
 
-		SongDocumentStorage.Save(first, document);
-		SongDocumentStorage.Save(second, document);
+		SongDocumentStorage.Save(first, document, JsonAssetPathMode.Absolute);
+		SongDocumentStorage.Save(second, document, JsonAssetPathMode.Absolute);
 
 		SampleDefinition sample = (SampleDefinition)document.Objects[sampleId];
 		Assert.That(sample.Asset.FullPath, Is.EqualTo(Path.GetFullPath(assetPath)));
 		JsonObject json = JsonNode.Parse(File.ReadAllText(second))!.AsObject();
 		Assert.That(
 			json["objects"]![sampleId.Value.ToString()]!["asset"]!["path"]!.GetValue<string>(),
-			Is.EqualTo("../library/snare.wav"));
+			Is.EqualTo(Path.GetFullPath(assetPath)));
+	}
+
+	[Test]
+	public void BareJsonLoadResolvesAbsoluteAssetPath()
+	{
+		using TempProject project = new();
+		string assetPath = project.Write("library", "snare.wav", "snare");
+		string jsonPath = project.Path("songs", "track.hm.json");
+		Directory.CreateDirectory(Path.GetDirectoryName(jsonPath)!);
+		SongDocument source = DocumentWithSample(assetPath, out ObjectId sampleId);
+		SongDocumentStorage.Save(jsonPath, source, JsonAssetPathMode.Absolute);
+
+		SongDocument loaded = SongDocumentStorage.Load(jsonPath);
+
+		Assert.That(
+			((SampleDefinition)loaded.Objects[sampleId]).Asset.FullPath,
+			Is.EqualTo(Path.GetFullPath(assetPath)));
+	}
+
+	[Test]
+	public void BareJsonLoadFailsWhenAssetCannotBeResolved()
+	{
+		using TempProject project = new();
+		string assetPath = project.Write("songs", "assets", "kick.wav", "kick");
+		string jsonPath = project.Path("songs", "track.hm.json");
+		SongDocument source = DocumentWithSample(assetPath, out _);
+		SongDocumentStorage.Save(jsonPath, source);
+		File.Delete(assetPath);
+
+		Assert.That(
+			() => SongDocumentStorage.Load(jsonPath),
+			Throws.TypeOf<FileNotFoundException>()
+				.With.Message.Contains("kick.wav"));
+	}
+
+	[Test]
+	public void BareJsonLoadRejectsForeignAbsolutePathConvention()
+	{
+		using TempProject project = new();
+		string jsonPath = project.Path("track.hm.json");
+		string foreignPath = OperatingSystem.IsWindows()
+			? "/home/bob/samples/hihat.wav"
+			: @"C:\samples\hihat.wav";
+		File.WriteAllText(jsonPath, MinimalManifest(foreignPath));
+
+		Assert.That(
+			() => SongDocumentStorage.Load(jsonPath),
+			Throws.TypeOf<InvalidDataException>()
+				.With.Message.Contains("host"));
+	}
+
+	[Test]
+	public void BareJsonLoadRejectsRelativePathThatEscapesContainer()
+	{
+		using TempProject project = new();
+		string outside = project.Write("outside.wav", "outside");
+		string jsonPath = project.Path("songs", "track.hm.json");
+		Directory.CreateDirectory(Path.GetDirectoryName(jsonPath)!);
+		File.WriteAllText(jsonPath, MinimalManifest("../outside.wav"));
+
+		Assert.That(
+			() => SongDocumentStorage.Load(jsonPath),
+			Throws.TypeOf<InvalidDataException>());
 	}
 
 	[Test]
