@@ -21,7 +21,7 @@ using Heresy.Core.Sequences;
 namespace Heresy.Core.Persistence;
 
 /// <summary>
-/// Versioned JSON persistence for a Heresy song document. Binary assets remain
+/// JSON persistence for a Heresy song document. Binary assets remain
 /// external and are represented by <see cref="ExternalAssetReference"/> values.
 /// The persisted object graph is flat: cross-object relationships are ObjectIds.
 /// </summary>
@@ -203,7 +203,7 @@ public static class SongDocumentJson
 		catch (InvalidOperationException ex)
 		{
 			throw new InvalidDataException(
-				"The persisted song tree does not match the version 3 four-section structure.",
+				"The persisted song tree does not match the required four-section structure.",
 				ex);
 		}
 

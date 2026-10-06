@@ -100,7 +100,7 @@ relative to its current filename:
   on the current host. A future UI resolution workflow will let the user locate
   replacement files or directories instead.
 
-The current persisted schema is format version **4**. Version 4 adds the persisted, musically inert `EmptyTrackerPatternEffect` used by the pattern editor while a newly inserted IT-style effect slot has not yet been assigned a command.
+The current persisted schema is format version **1**. During initial pre-release buildout, breaking schema changes intentionally remain version 1 because there are no real-world Heresy documents to migrate yet. Format-version bumps and migrations will begin once the format is in actual use.
 
 ## Toolchain note
 
@@ -116,7 +116,7 @@ names and falls back through tombstones to raw IDs for broken references.
 Tree-only reorganization uses `SongTreeEditor` and advances `DocumentRevision`
 without advancing `AudioRevision`; moving a node never changes its ObjectId.
 
-The document tree has four fixed top-level sections, persisted in version 4 in
+The document tree has four fixed top-level sections, persisted in
 clockwise document-view order: Sequences, Patterns, Instruments and Samples.
 The Avalonia document mode projects those section subtrees as four panes:
 Sequences top-left, Patterns top-right, Samples bottom-left and Instruments

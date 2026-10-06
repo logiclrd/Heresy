@@ -15,7 +15,8 @@ public sealed class SongDocument
 	private readonly Dictionary<SongTreeSection, SongTreeFolder> _sectionRoots = [];
 	private uint _nextObjectId = 1;
 
-	public const int FormatVersion = 4;
+	// Pre-release schema changes intentionally remain version 1 until the format is stabilized.
+	public const int FormatVersion = 1;
 
 	public SongDocument()
 	{
@@ -135,7 +136,7 @@ public sealed class SongDocument
 		if (restoredRoot.Children.Count != SongTreeSections.DocumentOrder.Length)
 		{
 			throw new InvalidOperationException(
-				"A version 4 song tree must contain exactly the four fixed document sections.");
+				"A song tree must contain exactly the four fixed document sections.");
 		}
 
 		for (int index = 0; index < SongTreeSections.DocumentOrder.Length; index++)
