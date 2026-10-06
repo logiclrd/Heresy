@@ -165,6 +165,36 @@ public sealed class AssetPersistenceTests
 	}
 
 	[Test]
+	public void LoadedPackageCanBundleNewExternalSampleWhenSavedAgain()
+	{
+		using TempProject project = new();
+		string originalAsset = project.Write("source", "original.wav", "original");
+		string packagePath = project.Path("song", "test.hm");
+		Directory.CreateDirectory(Path.GetDirectoryName(packagePath)!);
+		SongDocument original = DocumentWithSample(originalAsset, out _);
+		SongDocumentStorage.Save(packagePath, original);
+
+		SongDocument loaded = SongDocumentStorage.Load(packagePath);
+		string newAsset = project.Write("imports", "clap.wav", "clap");
+		ObjectId newId = loaded.AllocateObjectId();
+		loaded.Add(
+			new SampleDefinition(
+				newId,
+				"Clap",
+				ExternalAssetIntegrity.CreateReference(newAsset)));
+
+		SongDocumentStorage.Save(packagePath, loaded);
+
+		using ZipArchive zip = ZipFile.OpenRead(packagePath);
+		Assert.That(zip.GetEntry("pcm/original.wav"), Is.Not.Null);
+		Assert.That(zip.GetEntry("pcm/clap.wav"), Is.Not.Null);
+		SampleDefinition added = (SampleDefinition)loaded.Objects[newId];
+		Assert.That(
+			added.Asset.FullPath,
+			Is.EqualTo(HeresyModulePath.MakeSyntheticPath(packagePath, "pcm/clap.wav")));
+	}
+
+	[Test]
 	public void PackageJsonMayNotEscapeArchiveOrUseBackslashes()
 	{
 		using TempProject project = new();
@@ -275,7 +305,11 @@ public sealed class AssetPersistenceTests
 	}
 
 	private static string MinimalManifest(string assetPath)
-		=> $$"""
+	{
+		string escapedPath = assetPath
+			.Replace("\\\\", "\\\\\\\\")
+			.Replace("\\\"", "\\\\\\\"");
+		return $"""
 		{
 		  "format": "Heresy",
 		  "version": 3,
@@ -285,7 +319,7 @@ public sealed class AssetPersistenceTests
 		    "1": {
 		      "name": "Sample",
 		      "type": "sample",
-		      "asset": { "path": "{{assetPath}}", "sha256": null },
+		      "asset": { "path": "{{escapedPath}}", "sha256": null },
 		      "referenceFrequencyHz": 261.6255653005986,
 		      "loop": { "mode": "none", "startFrame": 0, "endFrameExclusive": 0 },
 		      "sourceChannelPositions": []
@@ -310,6 +344,7 @@ public sealed class AssetPersistenceTests
 		  }
 		}
 		""";
+	}
 
 	private static void WriteEntry(ZipArchive zip, string name, string content)
 	{
