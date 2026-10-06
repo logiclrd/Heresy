@@ -2,6 +2,7 @@
   <Project Path="Heresy.Core/Heresy.Core.csproj" />
   <Project Path="Heresy.Scripting/Heresy.Scripting.csproj" />
   <Project Path="Heresy.Render/Heresy.Render.csproj" />
+  <Project Path="Heresy.Render.SDL/Heresy.Render.SDL.csproj" />
   <Project Path="Heresy.Tests.Core/Heresy.Tests.Core.csproj" />
   <Project Path="Heresy.Tests.Scripting/Heresy.Tests.Scripting.csproj" />
   <Project Path="Heresy.Tests.Render/Heresy.Tests.Render.csproj" />
