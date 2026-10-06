@@ -50,6 +50,8 @@ public sealed class ScriptEditorControl : UserControl
 	private readonly TextBox? _minorHighlight;
 	private readonly TextBox? _majorHighlight;
 
+	private ScriptReferenceAnalysisSnapshot? _syntaxSnapshot;
+
 	public ScriptEditorControl(
 		DocumentWorkspace workspace,
 		ScriptPatternDefinition pattern,
@@ -397,15 +399,23 @@ public sealed class ScriptEditorControl : UserControl
 
 	private ScriptSourceDocumentAnalysis AnalyzeSource(
 		string source)
-		=> _pattern is not null
-			? ScriptSourceDocumentAnalyzer.Analyze(
-				_workspace,
-				_pattern,
-				source)
-			: ScriptSourceDocumentAnalyzer.Analyze(
-				_workspace,
-				_sequence!,
-				source);
+	{
+		ScriptSourceDocumentAnalysis analysis =
+			_pattern is not null
+				? ScriptSourceDocumentAnalyzer.Analyze(
+					_workspace,
+					_pattern,
+					source,
+					_syntaxSnapshot)
+				: ScriptSourceDocumentAnalyzer.Analyze(
+					_workspace,
+					_sequence!,
+					source,
+					_syntaxSnapshot);
+		_syntaxSnapshot =
+			analysis.SyntaxSnapshot;
+		return analysis;
+	}
 
 	private void RenderAnalysis(
 		ScriptSourceDocumentAnalysis analysis)
