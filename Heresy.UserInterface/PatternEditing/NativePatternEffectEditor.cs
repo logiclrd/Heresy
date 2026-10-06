@@ -50,7 +50,7 @@ public static class NativePatternEffectEditor
 
 		string Format(double value) =>
 			value.ToString("G17", culture);
-		string Format(int value) =>
+		string FormatInt(int value) =>
 			value.ToString(culture);
 
 		return effect switch
@@ -69,7 +69,7 @@ public static class NativePatternEffectEditor
 					Field(
 						"ticksPerRow",
 						"Ticks per row",
-						Format(value.TicksPerRow))),
+						FormatInt(value.TicksPerRow))),
 
 			SetNoteVolumePatternEffect value =>
 				Model(
@@ -142,7 +142,7 @@ public static class NativePatternEffectEditor
 					Field(
 						"parameter",
 						"Parameter (0..9)",
-						Format(value.Parameter))),
+						FormatInt(value.Parameter))),
 
 			TrackerVolumeColumnPanningPatternEffect value =>
 				Model(
@@ -150,7 +150,7 @@ public static class NativePatternEffectEditor
 					Field(
 						"value",
 						"Panning (0..64)",
-						Format(value.Value))),
+						FormatInt(value.Value))),
 
 			_ => throw new NotSupportedException(
 				$"Pattern effect {effect.GetType().Name} is not a native effect supported by the parameter editor."),
