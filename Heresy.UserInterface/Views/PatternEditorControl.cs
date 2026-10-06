@@ -1356,11 +1356,13 @@ public sealed class PatternEditorControl : UserControl
 
 	private async Task EditCellAsync(int row, int channel)
 	{
-		PatternCell? cell = _pattern.Grid[row, channel];
+		PatternEditorRow editorRow = _context.GetRow(row);
+		PatternCell? cell =
+			editorRow.Pattern.Grid[editorRow.PatternRow, channel];
 		PatternNoteEditorDialog dialog =
 			new(
 				_workspace.Document,
-				row,
+				editorRow.PatternRow,
 				channel,
 				cell?.Note);
 		PatternNoteEditResult? result =
@@ -1370,13 +1372,17 @@ public sealed class PatternEditorControl : UserControl
 
 		PatternDocumentEditor.SetNote(
 			_workspace,
-			_pattern,
-			row,
+			editorRow.Pattern,
+			editorRow.PatternRow,
 			channel,
 			result.Note);
-		RefreshCell(row, channel);
+		RefreshUnderlyingCell(
+			editorRow.Pattern,
+			editorRow.PatternRow,
+			channel);
 		RefreshCursorVisuals();
-		_changed($"Edited row {row}, channel {channel + 1}");
+		_changed(
+			$"Edited {editorRow.Pattern.Name} row {editorRow.PatternRow}, channel {channel + 1}");
 	}
 
 	private void SetSource(
@@ -1384,8 +1390,9 @@ public sealed class PatternEditorControl : UserControl
 		int channel,
 		Heresy.Core.Objects.ObjectId sourceId)
 	{
+		PatternEditorRow editorRow = _context.GetRow(row);
 		Heresy.Core.Objects.ObjectId previous =
-			_pattern.Grid[row, channel]?.SourceId
+			editorRow.Pattern.Grid[editorRow.PatternRow, channel]?.SourceId
 				?? Heresy.Core.Objects.ObjectId.None;
 		if (previous == sourceId)
 		{
@@ -1395,14 +1402,17 @@ public sealed class PatternEditorControl : UserControl
 
 		PatternDocumentEditor.SetSource(
 			_workspace,
-			_pattern,
-			row,
+			editorRow.Pattern,
+			editorRow.PatternRow,
 			channel,
 			sourceId);
-		RefreshCell(row, channel);
+		RefreshUnderlyingCell(
+			editorRow.Pattern,
+			editorRow.PatternRow,
+			channel);
 		RefreshCursorVisuals();
 		_changed(
-			$"Edited source at row {row}, channel {channel + 1}");
+			$"Edited source in {editorRow.Pattern.Name} row {editorRow.PatternRow}, channel {channel + 1}");
 		FocusCursorCell();
 	}
 
@@ -1419,6 +1429,7 @@ public sealed class PatternEditorControl : UserControl
 		int channel,
 		Border placementTarget)
 	{
+		PatternEditorRow editorRow = _context.GetRow(row);
 		PatternSourceOption[] options =
 			PatternSourceCatalog.GetSources(_workspace.Document);
 		ListBox list =
@@ -1430,7 +1441,7 @@ public sealed class PatternEditorControl : UserControl
 			};
 
 		Heresy.Core.Objects.ObjectId current =
-			_pattern.Grid[row, channel]?.SourceId
+			editorRow.Pattern.Grid[editorRow.PatternRow, channel]?.SourceId
 				?? Heresy.Core.Objects.ObjectId.None;
 		foreach (PatternSourceOption option in options)
 		{
@@ -1484,11 +1495,12 @@ public sealed class PatternEditorControl : UserControl
 			return;
 		}
 
+		PatternEditorRow editorRow = _context.GetRow(row);
 		PatternCellViewModel view =
 			PatternCellViewModel.Create(
 				_workspace.Document,
-				_pattern,
-				row,
+				editorRow.Pattern,
+				editorRow.PatternRow,
 				channel);
 		note.Text = view.NoteText;
 		source.Text = view.SourceText;
@@ -1499,12 +1511,24 @@ public sealed class PatternEditorControl : UserControl
 		RefreshCellEffectState(row, channel);
 	}
 
+	private void RefreshUnderlyingCell(
+		DataPatternDefinition pattern,
+		int patternRow,
+		int channel)
+	{
+		foreach (int displayRow in
+			_context.FindDisplayRows(pattern, patternRow))
+		{
+			RefreshCell(displayRow, channel);
+		}
+	}
+
 	private void RefreshCursorVisuals()
 	{
 		foreach (((int row, int channel), Border border) in _cellBorders)
 		{
 			bool active =
-				_pattern.RowCount > 0
+				_context.Rows.Count > 0
 					&& row == _cursor.Row
 					&& channel == _cursor.Channel;
 			border.BorderBrush =
@@ -1558,7 +1582,7 @@ public sealed class PatternEditorControl : UserControl
 		}
 
 		bool keyboardActive =
-			_pattern.RowCount > 0
+			_context.Rows.Count > 0
 				&& _cursor.Row == row
 				&& _cursor.Channel == channel
 				&& _cursor.Field is
@@ -1581,7 +1605,7 @@ public sealed class PatternEditorControl : UserControl
 
 	private void FocusCursorCell()
 	{
-		if (_pattern.RowCount == 0)
+		if (_context.Rows.Count == 0)
 			return;
 
 		if (_cellBorders.TryGetValue(
@@ -1592,23 +1616,123 @@ public sealed class PatternEditorControl : UserControl
 		}
 	}
 
-	private IBrush? GetRowBackground(int row)
+	private DataPatternDefinition GetCurrentPattern()
 	{
-		if (_pattern.MajorHighlightRows > 0
-			&& row % _pattern.MajorHighlightRows == 0)
+		if (_context.Rows.Count != 0
+			&& (uint)_cursor.Row < (uint)_context.Rows.Count)
+		{
+			return _context.GetRow(_cursor.Row).Pattern;
+		}
+
+		return GetInitialPattern(_context);
+	}
+
+	private static DataPatternDefinition GetInitialPattern(
+		PatternEditorContext context)
+	{
+		if (context.Rows.Count != 0)
+			return context.GetRow(context.InitialDisplayRow).Pattern;
+
+		foreach (PatternEditorSegment segment in context.Segments)
+		{
+			if (segment.Pattern is not null)
+				return segment.Pattern;
+		}
+
+		throw new InvalidOperationException(
+			"The pattern editor context contains no data pattern to edit.");
+	}
+
+	private void UpdateCurrentPatternControls()
+	{
+		DataPatternDefinition pattern = GetCurrentPattern();
+		if (_context.IsSequence
+			&& _context.Rows.Count != 0
+			&& _context.GetRow(_cursor.Row).SequenceEntryIndex is int order)
+		{
+			_title.Text =
+				$"{_context.DisplayName} — {pattern.Name} (order {order:D2})";
+		}
+		else
+		{
+			_title.Text = pattern.Name;
+		}
+
+		_rowCount.Text =
+			pattern.RowCount.ToString(CultureInfo.CurrentCulture);
+		_channelCount.Text =
+			pattern.ChannelCount.ToString(CultureInfo.CurrentCulture);
+		_minorHighlight.Text =
+			pattern.MinorHighlightRows.ToString(CultureInfo.CurrentCulture);
+		_majorHighlight.Text =
+			pattern.MajorHighlightRows.ToString(CultureInfo.CurrentCulture);
+	}
+
+	private IBrush? GetRowBackground(
+		DataPatternDefinition pattern,
+		int row)
+	{
+		if (pattern.MajorHighlightRows > 0
+			&& row % pattern.MajorHighlightRows == 0)
 		{
 			return new SolidColorBrush(
 				_configuration.MajorPatternRowHighlight);
 		}
 
-		if (_pattern.MinorHighlightRows > 0
-			&& row % _pattern.MinorHighlightRows == 0)
+		if (pattern.MinorHighlightRows > 0
+			&& row % pattern.MinorHighlightRows == 0)
 		{
 			return new SolidColorBrush(
 				_configuration.MinorPatternRowHighlight);
 		}
 
 		return null;
+	}
+
+	private static Border BuildUnavailableCell(
+		IBrush? rowBackground)
+		=> new()
+		{
+			Width = CellWidth,
+			Height = RowHeight,
+			BorderBrush = Brushes.Gray,
+			BorderThickness = new Thickness(1),
+			Background = rowBackground ?? Brushes.Transparent,
+			Opacity = 0.25,
+		};
+
+	private static void AddSegmentHeader(
+		Grid grid,
+		PatternEditorSegment segment,
+		int row,
+		int columnSpan)
+	{
+		string order =
+			segment.SequenceEntryIndex.HasValue
+				? segment.SequenceEntryIndex.Value.ToString("D2", CultureInfo.InvariantCulture)
+				: "--";
+		string text =
+			$"Order {order} — {segment.DisplayName} <{segment.PatternId.Value}> — start row {segment.StartRow}";
+		if (!string.IsNullOrWhiteSpace(segment.Status))
+			text += $" — {segment.Status}";
+
+		Border border =
+			new()
+			{
+				BorderBrush = Brushes.Gray,
+				BorderThickness = new Thickness(0, 1, 0, 1),
+				Padding = new Thickness(6, 4),
+				Child = new TextBlock
+				{
+					Text = text,
+					FontWeight = FontWeight.SemiBold,
+					TextWrapping = TextWrapping.Wrap,
+				},
+			};
+		Grid.SetRow(border, row);
+		Grid.SetColumn(border, 0);
+		Grid.SetColumnSpan(border, columnSpan);
+		grid.Children.Add(border);
 	}
 
 	private static TextBox NumberBox(int value)
