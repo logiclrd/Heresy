@@ -4,6 +4,7 @@ using System.Globalization;
 
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 
@@ -48,6 +49,9 @@ public sealed class ScriptEditorControl : UserControl
 	{
 		TextWrapping = TextWrapping.Wrap,
 	};
+
+	private IReadOnlyList<ScriptDiagnosticVisualMarker> _diagnosticMarkers = [];
+	private string? _diagnosticHoverText;
 
 	private readonly TextBox? _rowCount;
 	private readonly TextBox? _channelCount;
@@ -134,6 +138,12 @@ public sealed class ScriptEditorControl : UserControl
 			_diagnosticRenderer);
 		_source.TextChanged += (_, _) =>
 			RefreshAnalysis();
+		_source.PointerMoved += OnSourcePointerMoved;
+		_source.PointerExited += (_, _) =>
+			ClearDiagnosticHover();
+		ToolTip.SetPlacement(
+			_source,
+			PlacementMode.Pointer);
 
 		_reference =
 			new ComboBox
@@ -401,10 +411,13 @@ public sealed class ScriptEditorControl : UserControl
 				ScriptSyntaxHighlightCatalog.Create(
 					analysis.SyntaxSnapshot,
 					referenceTokens));
-			_diagnosticRenderer.SetMarkers(
+			_diagnosticMarkers =
 				ScriptDiagnosticVisualMarkerCatalog.Create(
 					_source.Document.TextLength,
-					analysis.Diagnostics));
+					analysis.Diagnostics);
+			_diagnosticRenderer.SetMarkers(
+				_diagnosticMarkers);
+			ClearDiagnosticHover();
 			_source.TextArea.TextView.Redraw();
 			RenderAnalysis(analysis);
 		}
@@ -414,6 +427,65 @@ public sealed class ScriptEditorControl : UserControl
 				$"Script analysis failed: {ex.Message}";
 		}
 	}
+
+	private void OnSourcePointerMoved(
+		object? sender,
+		PointerEventArgs e)
+	{
+		Point point =
+			e.GetPosition(_source);
+		TextViewPosition? position =
+			_source.GetPositionFromPoint(point);
+		if (position is null)
+		{
+			ClearDiagnosticHover();
+			return;
+		}
+
+		int offset =
+			_source.Document.GetOffset(
+				position.Value.Location);
+		ScriptDiagnosticHoverInfo? hover =
+			ScriptDiagnosticHoverCatalog.FindAtOffset(
+				_diagnosticMarkers,
+				offset);
+		ShowDiagnosticHover(hover);
+	}
+
+	private void ShowDiagnosticHover(
+		ScriptDiagnosticHoverInfo? hover)
+	{
+		string? text = hover?.Text;
+		if (string.Equals(
+				text,
+				_diagnosticHoverText,
+				StringComparison.Ordinal))
+		{
+			return;
+		}
+
+		ToolTip.SetIsOpen(_source, false);
+		_diagnosticHoverText = text;
+
+		if (text is null)
+		{
+			ToolTip.SetTip(_source, null);
+			return;
+		}
+
+		ToolTip.SetTip(
+			_source,
+			new TextBlock
+			{
+				Text = text,
+				TextWrapping = TextWrapping.Wrap,
+				MaxWidth = 560,
+			});
+		ToolTip.SetIsOpen(_source, true);
+	}
+
+	private void ClearDiagnosticHover()
+		=> ShowDiagnosticHover(null);
 
 	private ScriptSourceDocumentAnalysis AnalyzeSource(
 		string source)
