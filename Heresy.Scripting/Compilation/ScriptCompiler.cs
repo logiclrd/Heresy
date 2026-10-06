@@ -531,7 +531,7 @@ public static class ScriptCompiler
 
 		return paths
 			.Where(path => !string.IsNullOrWhiteSpace(path))
-			.Select(MetadataReference.CreateFromFile)
+			.Select(path => MetadataReference.CreateFromFile(path))
 			.ToArray();
 	}
 
