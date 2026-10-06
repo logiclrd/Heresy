@@ -1137,7 +1137,7 @@ public sealed class PatternEditorControl : UserControl
 			string text =
 				PatternEffectClipboardCodec.Serialize(effects);
 
-			await _owner.Clipboard.SetTextAsync(text);
+			await _owner.Clipboard?.SetTextAsync(text);
 			_message.Text =
 				$"Copied {cell?.Effects.Count ?? 0} effect(s) from {editorRow.Pattern.Name} row {editorRow.PatternRow}, channel {channel + 1}.";
 		}
@@ -1159,7 +1159,7 @@ public sealed class PatternEditorControl : UserControl
 		try
 		{
 			string? text =
-				await _owner.Clipboard.TryGetTextAsync();
+				await _owner.Clipboard?.TryGetTextAsync();
 			if (text is null)
 			{
 				_message.Text =

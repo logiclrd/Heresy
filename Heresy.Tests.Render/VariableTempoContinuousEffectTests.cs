@@ -158,7 +158,7 @@ public sealed class VariableTempoContinuousEffectTests
 		Assert.That(fast.GetRowTime(0.05), Is.EqualTo(5.0));
 
 		// The same wall time remains 0.05 seconds for a native operator.
-		Assert.That(0.05, Is.EqualTo(0.05));
+		//Assert.That(0.05, Is.EqualTo(0.05));
 	}
 
 	private static PlaybackSession Session(
