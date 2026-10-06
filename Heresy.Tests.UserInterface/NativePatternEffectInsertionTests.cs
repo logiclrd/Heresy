@@ -6,6 +6,7 @@ using System.Linq;
 using AwesomeAssertions;
 
 using Heresy.Core.Patterns;
+using Heresy.Core.Sequences;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.PatternEditing;
 
@@ -165,4 +166,57 @@ public sealed class NativePatternEffectInsertionTests
 			.Which.Should().Be(new EmptyTrackerPatternEffect());
 		workspace.Document.AudioRevision.Should().Be(audioRevision);
 	}
+	[Test]
+	public void SequenceMappedNativeInsertionEditsUnderlyingSharedPattern()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition first =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"First",
+				rowCount: 1,
+				channelCount: 1);
+		DataPatternDefinition second =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Second",
+				rowCount: 1,
+				channelCount: 1);
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(
+				workspace,
+				"Arrangement");
+		sequence.Entries.Add(new SequenceEntry(first.Id));
+		sequence.Entries.Add(new SequenceEntry(second.Id));
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(
+				workspace.Document,
+				sequence,
+				initialEntryIndex: 1);
+		PatternEffectCursor cursor =
+			new(
+				context.InitialDisplayRow,
+				0,
+				PatternCellField.EffectCommand);
+
+		bool changed =
+			PatternEditorContextCursor.EditCurrent(
+				context,
+				cursor,
+				row =>
+					PatternEffectStackEditor.InsertBefore(
+						workspace,
+						row.Pattern,
+						cursor,
+						new SetSpeedPatternEffect(6)));
+
+		changed.Should().BeTrue();
+		first.Grid[0, 0].Should().BeNull();
+		second.Grid[0, 0]!.Effects.Should().ContainSingle()
+			.Which.Should().Be(new SetSpeedPatternEffect(6));
+		cursor.Row.Should().Be(context.InitialDisplayRow);
+		cursor.IsExpanded.Should().BeTrue();
+		cursor.ExpandedField.Should().Be(ExpandedEffectField.Native);
+	}
+
 }
