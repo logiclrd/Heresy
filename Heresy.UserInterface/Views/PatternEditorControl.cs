@@ -1130,10 +1130,12 @@ public sealed class PatternEditorControl : UserControl
 			PatternEditorRow editorRow = _context.GetRow(row);
 			PatternCell? cell =
 				editorRow.Pattern.Grid[editorRow.PatternRow, channel];
+			IEnumerable<PatternEffect> effects =
+				cell is null
+					? Array.Empty<PatternEffect>()
+					: cell.Effects;
 			string text =
-				PatternEffectClipboardCodec.Serialize(
-					cell?.Effects
-						?? Array.Empty<PatternEffect>());
+				PatternEffectClipboardCodec.Serialize(effects);
 
 			await _owner.Clipboard.SetTextAsync(text);
 			_message.Text =
