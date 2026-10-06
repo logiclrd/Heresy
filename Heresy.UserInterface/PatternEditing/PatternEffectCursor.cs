@@ -8,6 +8,7 @@ namespace Heresy.UserInterface.PatternEditing;
 public enum PatternCellField
 {
 	Note,
+	Volume,
 	EffectCommand,
 	EffectParameter,
 }
@@ -109,8 +110,12 @@ public sealed class PatternEffectCursor
 				}
 				break;
 
-			case PatternCellField.EffectCommand:
+			case PatternCellField.Volume:
 				Field = PatternCellField.Note;
+				break;
+
+			case PatternCellField.EffectCommand:
+				Field = PatternCellField.Volume;
 				break;
 
 			case PatternCellField.EffectParameter:
@@ -136,6 +141,10 @@ public sealed class PatternEffectCursor
 		switch (Field)
 		{
 			case PatternCellField.Note:
+				Field = PatternCellField.Volume;
+				break;
+
+			case PatternCellField.Volume:
 				Field = PatternCellField.EffectCommand;
 				break;
 
@@ -187,8 +196,12 @@ public sealed class PatternEffectCursor
 					Field = PatternCellField.EffectParameter;
 				}
 				break;
-			case PatternCellField.EffectCommand:
+			case PatternCellField.Volume:
 				Field = PatternCellField.Note;
+				break;
+
+			case PatternCellField.EffectCommand:
+				Field = PatternCellField.Volume;
 				break;
 			case PatternCellField.EffectParameter:
 				Field = PatternCellField.EffectCommand;
@@ -213,6 +226,10 @@ public sealed class PatternEffectCursor
 		switch (Field)
 		{
 			case PatternCellField.Note:
+				Field = PatternCellField.Volume;
+				break;
+
+			case PatternCellField.Volume:
 				Field = PatternCellField.EffectCommand;
 				break;
 			case PatternCellField.EffectCommand:

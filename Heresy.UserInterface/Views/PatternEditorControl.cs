@@ -41,7 +41,10 @@ public sealed class PatternEditorControl : UserControl
 	private readonly TextBlock _message;
 	private readonly Dictionary<(int Row, int Channel), Border> _cellBorders = [];
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _noteTexts = [];
+	private readonly Dictionary<(int Row, int Channel), Border> _volumeFields = [];
+	private readonly Dictionary<(int Row, int Channel), TextBlock> _volumeTexts = [];
 	private readonly Dictionary<(int Row, int Channel), PatternEffectStripControl> _effectStrips = [];
+	private readonly PatternVolumeInputState _volumeInput = new();
 
 	private PatternEffectCursor _cursor =
 		new(0, 0, PatternCellField.Note);
@@ -271,6 +274,8 @@ public sealed class PatternEditorControl : UserControl
 		CollapseVisualEffects(collapseCursor: true);
 		_cellBorders.Clear();
 		_noteTexts.Clear();
+		_volumeFields.Clear();
+		_volumeTexts.Clear();
 		_effectStrips.Clear();
 
 		Grid grid = new();
@@ -342,8 +347,28 @@ public sealed class PatternEditorControl : UserControl
 				Text = view.NoteText,
 				FontWeight = rowWeight,
 				VerticalAlignment = VerticalAlignment.Center,
-				Margin = new Thickness(5, 0, 58, 0),
+				Margin = new Thickness(5, 0),
 				TextTrimming = TextTrimming.CharacterEllipsis,
+			};
+
+		TextBlock volumeText =
+			new()
+			{
+				Text = view.VolumeText,
+				FontWeight = rowWeight,
+				VerticalAlignment = VerticalAlignment.Center,
+				HorizontalAlignment = HorizontalAlignment.Center,
+			};
+		Border volumeField =
+			new()
+			{
+				Width = 34,
+				Height = RowHeight - 4,
+				HorizontalAlignment = HorizontalAlignment.Stretch,
+				VerticalAlignment = VerticalAlignment.Center,
+				BorderBrush = Brushes.Transparent,
+				BorderThickness = new Thickness(1),
+				Child = volumeText,
 			};
 
 		PatternEffectStripControl effects =
@@ -377,7 +402,18 @@ public sealed class PatternEditorControl : UserControl
 		effects.SetEffects(view.Effects);
 
 		Grid content = new();
+		content.ColumnDefinitions.Add(
+			new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+		content.ColumnDefinitions.Add(
+			new ColumnDefinition(new GridLength(34)));
+		content.ColumnDefinitions.Add(
+			new ColumnDefinition(new GridLength(54)));
+		Grid.SetColumn(note, 0);
+		Grid.SetColumn(volumeField, 1);
+		Grid.SetColumn(effects, 0);
+		Grid.SetColumnSpan(effects, 3);
 		content.Children.Add(note);
+		content.Children.Add(volumeField);
 		content.Children.Add(effects);
 
 		Border cell =
@@ -401,6 +437,8 @@ public sealed class PatternEditorControl : UserControl
 
 		_cellBorders[(row, channel)] = cell;
 		_noteTexts[(row, channel)] = note;
+		_volumeFields[(row, channel)] = volumeField;
+		_volumeTexts[(row, channel)] = volumeText;
 		_effectStrips[(row, channel)] = effects;
 		return cell;
 	}
@@ -419,6 +457,7 @@ public sealed class PatternEditorControl : UserControl
 		PatternCellField field = PatternCellField.Note;
 
 		double effectLeft = CellWidth - 54;
+		double volumeLeft = effectLeft - 34;
 		if (point.X >= effectLeft)
 		{
 			if ((patternCell?.Effects.Count ?? 0) > 1)
@@ -438,7 +477,12 @@ public sealed class PatternEditorControl : UserControl
 					: PatternCellField.EffectParameter;
 			}
 		}
+		else if (point.X >= volumeLeft)
+		{
+			field = PatternCellField.Volume;
+		}
 
+		_volumeInput.Reset();
 		_cursor.SetPosition(row, channel, field);
 		cell.Focus();
 		RefreshCursorVisuals();
@@ -468,16 +512,19 @@ public sealed class PatternEditorControl : UserControl
 		switch (e.Key)
 		{
 			case Key.Left:
+				_volumeInput.Reset();
 				_cursor.MoveLeft(_pattern);
 				e.Handled = true;
 				break;
 
 			case Key.Right:
+				_volumeInput.Reset();
 				_cursor.MoveRight(_pattern);
 				e.Handled = true;
 				break;
 
 			case Key.Up:
+				_volumeInput.Reset();
 				_cursor.MoveUp(Math.Max(1, _pattern.RowCount));
 				if (previouslyExpanded is not null)
 					CollapseVisualEffects(collapseCursor: false);
@@ -485,6 +532,7 @@ public sealed class PatternEditorControl : UserControl
 				break;
 
 			case Key.Down:
+				_volumeInput.Reset();
 				_cursor.MoveDown(Math.Max(1, _pattern.RowCount));
 				if (previouslyExpanded is not null)
 					CollapseVisualEffects(collapseCursor: false);
@@ -568,6 +616,37 @@ public sealed class PatternEditorControl : UserControl
 				RefreshCell(editedRow, editedChannel);
 				_changed(
 					$"Edited note at row {editedRow}, channel {editedChannel + 1}");
+			}
+
+			RefreshCursorVisuals();
+			FocusCursorCell();
+			e.Handled = true;
+			return;
+		}
+
+		if (_cursor.Field == PatternCellField.Volume)
+		{
+			PatternVolumeInputResult volumeResult =
+				PatternVolumeKeyboardEditor.Type(
+					_workspace,
+					_pattern,
+					_cursor,
+					_volumeInput,
+					value);
+
+			if (!volumeResult.Handled)
+				return;
+
+			if (volumeResult.Rejected)
+			{
+				_message.Text =
+					"Volume must be entered as a decimal tracker value from 00 through 64.";
+			}
+			else if (volumeResult.Changed)
+			{
+				RefreshCell(editedRow, editedChannel);
+				_changed(
+					$"Edited volume at row {editedRow}, channel {editedChannel + 1}");
 			}
 
 			RefreshCursorVisuals();
@@ -888,7 +967,9 @@ public sealed class PatternEditorControl : UserControl
 		_expandedCell = (row, channel);
 		if (_cursor.Row == row
 			&& _cursor.Channel == channel
-			&& _cursor.Field != PatternCellField.Note
+			&& _cursor.Field is
+				PatternCellField.EffectCommand
+				or PatternCellField.EffectParameter
 			&& !_cursor.IsExpanded)
 		{
 			_cursor.Expand(cell);
@@ -1026,6 +1107,9 @@ public sealed class PatternEditorControl : UserControl
 		if (!_noteTexts.TryGetValue(
 			(row, channel),
 			out TextBlock? note)
+			|| !_volumeTexts.TryGetValue(
+				(row, channel),
+				out TextBlock? volume)
 			|| !_effectStrips.TryGetValue(
 				(row, channel),
 				out PatternEffectStripControl? effects))
@@ -1040,6 +1124,7 @@ public sealed class PatternEditorControl : UserControl
 				row,
 				channel);
 		note.Text = view.NoteText;
+		volume.Text = view.VolumeText;
 		effects.SetEffects(view.Effects);
 		RefreshCellEffectState(row, channel);
 	}
@@ -1056,6 +1141,17 @@ public sealed class PatternEditorControl : UserControl
 				active ? Brushes.DeepSkyBlue : Brushes.Gray;
 			border.BorderThickness =
 				active ? new Thickness(2) : new Thickness(1);
+			if (_volumeFields.TryGetValue(
+				(row, channel),
+				out Border? volumeField))
+			{
+				bool volumeActive =
+					active && _cursor.Field == PatternCellField.Volume;
+				volumeField.BorderBrush =
+					volumeActive ? Brushes.DeepSkyBlue : Brushes.Transparent;
+				volumeField.BorderThickness =
+					volumeActive ? new Thickness(2) : new Thickness(1);
+			}
 			RefreshCellEffectState(row, channel);
 		}
 	}
@@ -1073,7 +1169,9 @@ public sealed class PatternEditorControl : UserControl
 			_pattern.RowCount > 0
 				&& _cursor.Row == row
 				&& _cursor.Channel == channel
-				&& _cursor.Field != PatternCellField.Note;
+				&& _cursor.Field is
+					PatternCellField.EffectCommand
+					or PatternCellField.EffectParameter;
 		bool expanded =
 			_expandedCell == (row, channel);
 

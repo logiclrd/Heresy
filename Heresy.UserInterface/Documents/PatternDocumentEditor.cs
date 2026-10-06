@@ -62,6 +62,36 @@ public static class PatternDocumentEditor
 		workspace.Document.MarkChanged(affectsAudio: true);
 	}
 
+	public static void SetVolume(
+		DocumentWorkspace workspace,
+		DataPatternDefinition pattern,
+		int row,
+		int channel,
+		double? volume)
+	{
+		ValidatePattern(workspace, pattern);
+
+		PatternCell? cell = pattern.Grid[row, channel];
+		if (cell?.Volume == volume
+			|| (cell is null && volume is null))
+		{
+			return;
+		}
+
+		if (volume is null)
+		{
+			cell!.Volume = null;
+			if (cell.IsEmpty)
+				pattern.Grid.ClearCell(row, channel);
+		}
+		else
+		{
+			pattern.Grid.GetOrCreateCell(row, channel).Volume = volume;
+		}
+
+		workspace.Document.MarkChanged(affectsAudio: true);
+	}
+
 	public static void UpdateLayout(
 		DocumentWorkspace workspace,
 		DataPatternDefinition pattern,

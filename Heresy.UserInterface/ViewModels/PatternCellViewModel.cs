@@ -14,12 +14,14 @@ public sealed class PatternCellViewModel
 		int row,
 		int channel,
 		string noteText,
+		string volumeText,
 		IReadOnlyList<PatternEffectViewModel> effects,
 		string displayText)
 	{
 		Row = row;
 		Channel = channel;
 		NoteText = noteText;
+		VolumeText = volumeText;
 		Effects = effects;
 		DisplayText = displayText;
 	}
@@ -27,6 +29,7 @@ public sealed class PatternCellViewModel
 	public int Row { get; }
 	public int Channel { get; }
 	public string NoteText { get; }
+	public string VolumeText { get; }
 	public IReadOnlyList<PatternEffectViewModel> Effects { get; }
 	public int EffectCount => Effects.Count;
 	public string DisplayText { get; }
@@ -42,6 +45,7 @@ public sealed class PatternCellViewModel
 
 		PatternCell? cell = pattern.Grid[row, channel];
 		string noteText = FormatNote(document, cell?.Note);
+		string volumeText = FormatVolume(cell?.Volume);
 		IReadOnlyList<PatternEffectViewModel> effects =
 			cell?.Effects
 				.Select(PatternEffectViewModel.Create)
@@ -55,8 +59,22 @@ public sealed class PatternCellViewModel
 			row,
 			channel,
 			noteText,
+			volumeText,
 			effects,
 			display);
+	}
+
+	private static string FormatVolume(double? volume)
+	{
+		if (!volume.HasValue)
+			return "..";
+
+		double trackerUnits = volume.Value * 64.0;
+		double rounded = Math.Round(trackerUnits);
+		if (Math.Abs(trackerUnits - rounded) < 1e-8)
+			return ((int)rounded).ToString("D2", CultureInfo.InvariantCulture);
+
+		return volume.Value.ToString("0.###", CultureInfo.InvariantCulture);
 	}
 
 	private static string FormatNote(
