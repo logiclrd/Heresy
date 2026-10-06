@@ -56,7 +56,8 @@ public sealed class PatternEditorControl : UserControl
 		DocumentWorkspace workspace,
 		DataPatternDefinition pattern,
 		Action close,
-		Action<string> changed)
+		Action<string> changed,
+		string backLabel = "← Document")
 	{
 		_owner = owner ?? throw new ArgumentNullException(nameof(owner));
 		_workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
@@ -135,7 +136,7 @@ public sealed class PatternEditorControl : UserControl
 
 	private Control BuildContent()
 	{
-		Button back = new() { Content = "← Document", MinWidth = 100 };
+		Button back = new() { Content = backLabel, MinWidth = 100 };
 		back.Click += (_, _) => _close();
 
 		TextBlock title =
