@@ -8,6 +8,11 @@ public readonly record struct AudioOutputFormat
 		int sampleRate,
 		int channelCount)
 	{
+		if (sampleRate <= 0)
+			throw new ArgumentOutOfRangeException(nameof(sampleRate));
+		if (channelCount <= 0)
+			throw new ArgumentOutOfRangeException(nameof(channelCount));
+
 		SampleRate = sampleRate;
 		ChannelCount = channelCount;
 	}
