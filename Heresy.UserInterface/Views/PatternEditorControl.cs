@@ -590,8 +590,10 @@ public sealed class PatternEditorControl : UserControl
 		if (e.Handled)
 			return;
 
+		PatternEditorRow editorRow = _context.GetRow(row);
 		Point point = e.GetPosition(cell);
-		PatternCell? patternCell = _pattern.Grid[row, channel];
+		PatternCell? patternCell =
+			editorRow.Pattern.Grid[editorRow.PatternRow, channel];
 		bool sourceWasActive =
 			_cursor.Row == row
 				&& _cursor.Channel == channel
@@ -616,6 +618,7 @@ public sealed class PatternEditorControl : UserControl
 
 		_volumeInput.Reset();
 		_cursor.SetPosition(row, channel, field);
+		UpdateCurrentPatternControls();
 		cell.Focus();
 		RefreshCursorVisuals();
 		if (field == PatternCellField.Source
@@ -636,7 +639,9 @@ public sealed class PatternEditorControl : UserControl
 		if (_cursor.Row != row || _cursor.Channel != channel)
 			_cursor.SetPosition(row, channel, PatternCellField.Note);
 
-		PatternCell? cell = _pattern.Grid[row, channel];
+		PatternEditorRow editorRow = _context.GetRow(row);
+		PatternCell? cell =
+			editorRow.Pattern.Grid[editorRow.PatternRow, channel];
 		(int Row, int Channel)? previouslyExpanded = _expandedCell;
 
 		if ((e.KeyModifiers & KeyModifiers.Alt) != 0
@@ -688,13 +693,18 @@ public sealed class PatternEditorControl : UserControl
 		{
 			int editedRow = _cursor.Row;
 			int editedChannel = _cursor.Channel;
+			PatternEditorRow edited = _context.GetRow(editedRow);
 			PatternNoteInputResult noteResult =
-				PatternNoteKeyboardEditor.TypePhysical(
-					_workspace,
-					_pattern,
+				PatternEditorContextCursor.EditCurrent(
+					_context,
 					_cursor,
-					_noteInputState,
-					e.PhysicalKey);
+					mapped =>
+						PatternNoteKeyboardEditor.TypePhysical(
+							_workspace,
+							mapped.Pattern,
+							_cursor,
+							_noteInputState,
+							e.PhysicalKey));
 
 			if (noteResult.Handled)
 			{
@@ -705,12 +715,16 @@ public sealed class PatternEditorControl : UserControl
 				}
 				else if (noteResult.Changed)
 				{
-					RefreshCell(editedRow, editedChannel);
+					RefreshUnderlyingCell(
+						edited.Pattern,
+						edited.PatternRow,
+						editedChannel);
 					_changed(
-						$"Edited note at row {editedRow}, channel {editedChannel + 1}");
+						$"Edited note in {edited.Pattern.Name} row {edited.PatternRow}, channel {editedChannel + 1}");
 				}
 
 				e.Handled = true;
+				UpdateCurrentPatternControls();
 				RefreshCursorVisuals();
 				FocusCursorCell();
 				return;
@@ -721,19 +735,19 @@ public sealed class PatternEditorControl : UserControl
 		{
 			case Key.Left:
 				_volumeInput.Reset();
-				_cursor.MoveLeft(_pattern);
+				PatternEditorContextCursor.MoveLeft(_context, _cursor);
 				e.Handled = true;
 				break;
 
 			case Key.Right:
 				_volumeInput.Reset();
-				_cursor.MoveRight(_pattern);
+				PatternEditorContextCursor.MoveRight(_context, _cursor);
 				e.Handled = true;
 				break;
 
 			case Key.Up:
 				_volumeInput.Reset();
-				_cursor.MoveUp(Math.Max(1, _pattern.RowCount));
+				PatternEditorContextCursor.MoveUp(_context, _cursor);
 				if (previouslyExpanded is not null)
 					CollapseVisualEffects(collapseCursor: false);
 				e.Handled = true;
@@ -741,7 +755,7 @@ public sealed class PatternEditorControl : UserControl
 
 			case Key.Down:
 				_volumeInput.Reset();
-				_cursor.MoveDown(Math.Max(1, _pattern.RowCount));
+				PatternEditorContextCursor.MoveDown(_context, _cursor);
 				if (previouslyExpanded is not null)
 					CollapseVisualEffects(collapseCursor: false);
 				e.Handled = true;
@@ -782,6 +796,7 @@ public sealed class PatternEditorControl : UserControl
 				return;
 		}
 
+		UpdateCurrentPatternControls();
 		RefreshCursorVisuals();
 		FocusCursorCell();
 	}
@@ -800,6 +815,7 @@ public sealed class PatternEditorControl : UserControl
 		char value = e.Text[0];
 		int editedRow = _cursor.Row;
 		int editedChannel = _cursor.Channel;
+		PatternEditorRow edited = _context.GetRow(editedRow);
 
 		if (_cursor.Field == PatternCellField.Note)
 		{
@@ -824,12 +840,16 @@ public sealed class PatternEditorControl : UserControl
 		if (_cursor.Field == PatternCellField.Volume)
 		{
 			PatternVolumeInputResult volumeResult =
-				PatternVolumeKeyboardEditor.Type(
-					_workspace,
-					_pattern,
+				PatternEditorContextCursor.EditCurrent(
+					_context,
 					_cursor,
-					_volumeInput,
-					value);
+					mapped =>
+						PatternVolumeKeyboardEditor.Type(
+							_workspace,
+							mapped.Pattern,
+							_cursor,
+							_volumeInput,
+							value));
 
 			if (!volumeResult.Handled)
 				return;
@@ -841,11 +861,15 @@ public sealed class PatternEditorControl : UserControl
 			}
 			else if (volumeResult.Changed)
 			{
-				RefreshCell(editedRow, editedChannel);
+				RefreshUnderlyingCell(
+					edited.Pattern,
+					edited.PatternRow,
+					editedChannel);
 				_changed(
-					$"Edited volume at row {editedRow}, channel {editedChannel + 1}");
+					$"Edited volume in {edited.Pattern.Name} row {edited.PatternRow}, channel {editedChannel + 1}");
 			}
 
+			UpdateCurrentPatternControls();
 			RefreshCursorVisuals();
 			FocusCursorCell();
 			e.Handled = true;
@@ -853,11 +877,15 @@ public sealed class PatternEditorControl : UserControl
 		}
 
 		PatternEffectInputResult result =
-			PatternEffectKeyboardEditor.Type(
-				_workspace,
-				_pattern,
+			PatternEditorContextCursor.EditCurrent(
+				_context,
 				_cursor,
-				value);
+				mapped =>
+					PatternEffectKeyboardEditor.Type(
+						_workspace,
+						mapped.Pattern,
+						_cursor,
+						value));
 
 		if (result.Rejected)
 		{
@@ -870,11 +898,15 @@ public sealed class PatternEditorControl : UserControl
 
 		if (result.Changed)
 		{
-			RefreshCell(editedRow, editedChannel);
+			RefreshUnderlyingCell(
+				edited.Pattern,
+				edited.PatternRow,
+				editedChannel);
 			_changed(
-				$"Edited effect at row {editedRow}, channel {editedChannel + 1}");
+				$"Edited effect in {edited.Pattern.Name} row {edited.PatternRow}, channel {editedChannel + 1}");
 		}
 
+		UpdateCurrentPatternControls();
 		RefreshCursorVisuals();
 		FocusCursorCell();
 		e.Handled = true;
