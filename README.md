@@ -227,9 +227,21 @@ text layer. Because the geometry builder resolves through the completed visual
 line, a diagnostic covering a raw `_O(id)` span automatically underlines the
 single generated object-name element rather than assuming one visual column per
 source character. Error, warning and informational diagnostics use distinct
-marker colors. The textual diagnostics list remains below the editor as the
-detailed message surface. The shared script editor continues to run the full
-restricted-C# compiler validation without assembly emission/loading.
+marker colors.
+
+Diagnostic markers also drive hover help without invoking Roslyn again. Pointer
+movement is converted by AvaloniaEdit from the rendered editor position back to
+a raw `TextLocation`/document offset, then the current marker catalog is queried
+for diagnostics covering that offset. The lookup is tolerant of the end boundary
+of a diagnostic span so both halves of a generated one-column object-reference
+element map back to the same hover. Overlapping diagnostics are aggregated in
+severity order and shown in a pointer-positioned tooltip containing severity,
+diagnostic code and message. The tooltip is cached while the same diagnostic set
+remains under the pointer and is cleared immediately when analysis refreshes or
+the pointer leaves the editor. The textual diagnostics list remains below the
+editor as the persistent detailed-message surface. The shared script editor
+continues to run the full restricted-C# compiler validation without assembly
+emission/loading.
 
 Core remains Roslyn-free through `IScriptObjectReferenceAnalyzer`. With no
 analyzer, `SongReferenceAnalyzer` retains the conservative opaque-script
