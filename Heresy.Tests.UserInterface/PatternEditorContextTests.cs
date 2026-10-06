@@ -39,7 +39,7 @@ public sealed class PatternEditorContextTests
 			.Should().OnlyContain(item => ReferenceEquals(item, pattern));
 		context.Rows.Select(row => row.PatternRow)
 			.Should().Equal(0, 1, 2, 3);
-		context.Rows.Should().OnlyContain(row => row.SequenceEntryIndex is null);
+		context.Rows.Should().OnlyContain(row => row.SequenceEntryIndex == null);
 	}
 
 	[Test]
