@@ -151,8 +151,12 @@ The note field supports direct tracker-keyboard entry. A current sound source
 pattern header. The physical-layout convention is the familiar chromatic
 tracker piano: `Z S X D C V G B H N J M` spans the lower octave and
 `Q 2 W 3 E R 5 T 6 Y 7 U` the next, continuing through `I 9 O 0 P`.
-Entered pitches are stored as semantic pitch multipliers relative to Heresy's
-existing C4 reference convention, so multiplier 1.0 is displayed as `C-4`;
+Tracker piano entry is driven from Avalonia's layout-independent physical-key
+codes rather than produced text, so changing the operating-system keyboard
+layout does not move the musical keys: the physical QWERTY `Z` position still
+enters C even if that key currently produces some other character. Entered
+pitches are stored as semantic pitch multipliers relative to Heresy's existing
+C4 reference convention, so multiplier 1.0 is displayed as `C-4`;
 exact equal-tempered semitone multipliers are projected as tracker note names,
 while arbitrary multipliers remain visible numerically. `1` enters note cut
 and backtick enters note off. Every recognized note/cut/off entry advances one
@@ -184,12 +188,18 @@ source cannot seed the volume of a later note.
 
 Effects are projected as coloured tabs attached to the right edge of each cell.
 Multiple effects remain in semantic application order and collapse into an
-overlapping stack with a constant five-pixel reveal between tabs; the cell clips
-the stack so it can never bleed into a neighbouring channel. Hovering or tapping
-a stack expands it into equal-width tabs side by side. If those tabs exceed the
-cell width, left/right edge controls scroll the expanded strip on hover or tap.
-The expanded strip collapses on a click outside it, or once the pointer moves
-more than five row heights beyond that pattern row.
+overlapping stack with a constant five-pixel reveal between tabs; the compact
+effect control occupies only the effect column, so it cannot intercept clicks
+intended for the note or volume fields and the cell clips the stack so it can
+never bleed into a neighbouring channel. Hovering or tapping a stack expands it
+over the cell into equal-width tabs side by side. Expanded tabs are right-aligned
+when their combined width is smaller than the cell; when they need the full cell
+or overflow it, they use the available width and left/right edge controls scroll
+the strip on hover or tap. The expanded strip collapses on a click outside it,
+or once the pointer moves more than five row heights beyond that pattern row.
+Clicking the note, volume, effect-command or effect-parameter region places the
+tracker cursor in that field; clicking a visible effect tab selects its logical
+field while expanding the stack.
 
 The tracker cursor treats an IT-style effect as two keyboard fields: command and
 parameter byte. Typing a command letter replaces/creates a lone tracker effect
