@@ -34,6 +34,12 @@ public sealed record PatternEditorSegment(
 	int DisplayRowCount,
 	string? Status);
 
+public sealed record PatternEditorPlaybackCursor(
+	ObjectId PatternId,
+	int PatternRow,
+	ObjectId? SequenceId,
+	int? SequenceEntryIndex);
+
 /// <summary>
 /// Framework-independent projection used by PatternEditorControl for both a
 /// single pattern and a sequence of patterns. The projection never owns pattern
@@ -127,6 +133,17 @@ public sealed class PatternEditorContext
 		if ((uint)displayRow >= (uint)_rows.Count)
 			throw new ArgumentOutOfRangeException(nameof(displayRow));
 		return _rows[displayRow];
+	}
+
+	public PatternEditorPlaybackCursor GetPlaybackCursor(
+		int displayRow)
+	{
+		PatternEditorRow row = GetRow(displayRow);
+		return new PatternEditorPlaybackCursor(
+			row.Pattern.Id,
+			row.PatternRow,
+			_sequence?.Id,
+			row.SequenceEntryIndex);
 	}
 
 	public IEnumerable<int> FindDisplayRows(
