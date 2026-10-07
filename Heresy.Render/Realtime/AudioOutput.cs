@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+
+using Heresy.Core.Sequencing;
 
 namespace Heresy.Render.Realtime;
 
@@ -29,6 +32,17 @@ public interface IAudioOutputSource
 	void Render(
 		int frameCount,
 		Span<float> destination);
+}
+
+public sealed record LivePlaybackEvent(
+	ChannelTarget Target,
+	IReadOnlyList<NoteCommand> Commands);
+
+public interface ILiveAudioOutputSource : IAudioOutputSource
+{
+	void EnqueueLiveEvent(
+		ChannelTarget target,
+		IReadOnlyList<NoteCommand> commands);
 }
 
 public interface IAudioOutputSession : IDisposable
