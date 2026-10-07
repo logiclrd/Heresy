@@ -134,6 +134,18 @@ public sealed class PatternSourceNavigationTests
 	}
 
 	[Test]
+	public void ControlShiftArrowIsReservedForSelectionCommands()
+	{
+		PatternSourceNavigationKeyboard.TryGetDelta(
+				Key.Down,
+				KeyModifiers.Control | KeyModifiers.Shift,
+				out int delta)
+			.Should().BeFalse();
+
+		delta.Should().Be(0);
+	}
+
+	[Test]
 	public void ControlAltArrowIsReservedForOtherCommands()
 	{
 		PatternSourceNavigationKeyboard.TryGetDelta(
