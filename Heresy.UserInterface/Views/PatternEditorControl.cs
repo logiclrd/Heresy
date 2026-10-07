@@ -835,14 +835,21 @@ public sealed class PatternEditorControl : UserControl
 					_message.Text =
 						"Choose a current sound source before entering pitched notes.";
 				}
-				else if (noteResult.Changed)
+				else
 				{
-					RefreshUnderlyingCell(
-						edited.Pattern,
-						edited.PatternRow,
+					if (noteResult.Changed)
+					{
+						RefreshUnderlyingCell(
+							edited.Pattern,
+							edited.PatternRow,
+							editedChannel);
+						_changed(
+							$"Edited note in {edited.Pattern.Name} row {edited.PatternRow}, channel {editedChannel + 1}");
+					}
+
+					await PlayEnteredNoteAsync(
+						edited,
 						editedChannel);
-					_changed(
-						$"Edited note in {edited.Pattern.Name} row {edited.PatternRow}, channel {editedChannel + 1}");
 				}
 
 				e.Handled = true;
@@ -936,6 +943,30 @@ public sealed class PatternEditorControl : UserControl
 		FocusCursorCell();
 	}
 
+	private async Task PlayEnteredNoteAsync(
+		PatternEditorRow editorRow,
+		int channel)
+	{
+		if (_liveAudition is null)
+			return;
+
+		try
+		{
+			var liveEvent =
+				PatternLiveEventCompiler.CompileEnteredNote(
+					editorRow.Pattern,
+					editorRow.PatternRow,
+					channel);
+			if (liveEvent is not null)
+				await _liveAudition.SendEventAsync(liveEvent);
+		}
+		catch (Exception ex)
+		{
+			_message.Text =
+				$"Entered-note playback failed: {ex.Message}";
+		}
+	}
+
 	private async Task AuditionCurrentAsync(
 		PatternAuditionKind kind,
 		PatternEditorRow editorRow,
@@ -1019,8 +1050,9 @@ public sealed class PatternEditorControl : UserControl
 		{
 			try
 			{
-				await _liveAudition.ReleaseNoteAsync(
-					release.VoiceId);
+				await _liveAudition.SendEventAsync(
+					PatternLiveEventCompiler.CompileHeldPreviewRelease(
+						(uint)release.VoiceId));
 			}
 			catch (Exception ex)
 			{
@@ -1045,8 +1077,9 @@ public sealed class PatternEditorControl : UserControl
 
 		try
 		{
-			await _liveAudition.ReleaseNoteAsync(
-				release.VoiceId);
+			await _liveAudition.SendEventAsync(
+				PatternLiveEventCompiler.CompileHeldPreviewRelease(
+					(uint)release.VoiceId));
 			_message.Text =
 				"Released preview note.";
 		}
@@ -1067,26 +1100,22 @@ public sealed class PatternEditorControl : UserControl
 
 		try
 		{
-			if (preview.StartsSession)
-				await _liveAudition.BeginSessionAsync();
-
-			StartNoteCommand? command =
-				PatternAuditionCompiler.CompileHeldNoteStart(
+			var liveEvent =
+				PatternLiveEventCompiler.CompileHeldPreviewStart(
 					editorRow.Pattern,
 					editorRow.PatternRow,
 					channel,
+					(uint)preview.VoiceId,
 					preview.PitchMultiplier);
 
-			if (command is null)
+			if (liveEvent is null)
 			{
 				_message.Text =
 					"Preview note has no resolved Source.";
 				return;
 			}
 
-			await _liveAudition.StartNoteAsync(
-				preview.VoiceId,
-				command);
+			await _liveAudition.SendEventAsync(liveEvent);
 			_message.Text =
 				"Previewing tracker note; release the key for Note Off.";
 		}
