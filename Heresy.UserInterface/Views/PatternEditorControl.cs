@@ -827,6 +827,26 @@ public sealed class PatternEditorControl : UserControl
 			return;
 		}
 
+		KeyModifiers channelNavigationBlockers =
+			KeyModifiers.Control
+				| KeyModifiers.Meta
+				| KeyModifiers.Shift;
+		if (!_cursor.IsExpanded
+			&& (e.KeyModifiers & KeyModifiers.Alt) != 0
+			&& (e.KeyModifiers & channelNavigationBlockers) == 0
+			&& e.Key is Key.Left or Key.Right)
+		{
+			_volumeInput.Reset();
+			PatternEditorContextCursor.MoveChannel(
+				_context,
+				_cursor,
+				e.Key == Key.Left ? -1 : 1);
+			e.Handled = true;
+			RefreshCursorVisuals();
+			FocusCursorCell();
+			return;
+		}
+
 		if ((e.KeyModifiers & KeyModifiers.Alt) != 0
 			&& HandleAltEffectKey(row, channel, cell, e))
 		{
