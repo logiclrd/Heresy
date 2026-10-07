@@ -115,6 +115,26 @@ public sealed class PlaybackSession
 		return state;
 	}
 
+	public void ApplyLiveEvent(
+		ChannelTarget target,
+		IReadOnlyList<NoteCommand> commands)
+	{
+		ArgumentNullException.ThrowIfNull(commands);
+
+		TimeSpan eventTime =
+			FrameTime.FrameStartTime(
+				_nextFrame,
+				_context.Configuration.SampleRate);
+		ApplyEvent(
+			new NoteEvent(
+				new MusicalTime(
+					eventTime,
+					0.0),
+				target,
+				commands),
+			_nextFrame);
+	}
+
 	/// <summary>
 	/// Fills destination with the next sequential block of interleaved float PCM.
 	/// The start frame must equal NextFrame; seeking will be layered separately.
