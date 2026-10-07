@@ -78,6 +78,23 @@ public static class PatternEditorContextCursor
 				return true;
 			});
 
+	public static void MoveChannel(
+		PatternEditorContext context,
+		PatternEffectCursor cursor,
+		int delta)
+	{
+		ArgumentNullException.ThrowIfNull(context);
+		ArgumentNullException.ThrowIfNull(cursor);
+		if (context.Rows.Count == 0)
+			return;
+
+		PatternEditorRow row =
+			context.GetRow(cursor.Row);
+		cursor.MoveChannel(
+			row.Pattern.ChannelCount,
+			delta);
+	}
+
 	public static void MoveUp(
 		PatternEditorContext context,
 		PatternEffectCursor cursor)
