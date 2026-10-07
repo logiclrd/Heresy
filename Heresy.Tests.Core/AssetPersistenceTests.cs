@@ -33,6 +33,7 @@ public sealed class AssetPersistenceTests
 
 		SongDocument loaded = SongDocumentStorage.Load(packagePath);
 		SampleDefinition sample = (SampleDefinition)loaded.Objects[sampleId];
+		File.Delete(packagePath);
 
 		Assert.That(sample.PcmData, Is.Not.Null);
 		Assert.That(sample.PcmData!.SampleRate, Is.EqualTo(8000));
