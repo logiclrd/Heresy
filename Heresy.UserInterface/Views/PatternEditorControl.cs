@@ -1930,6 +1930,17 @@ public sealed class PatternEditorControl : UserControl
 		}
 	}
 
+	internal PatternEditorPlaybackCursor GetPlaybackCursor()
+	{
+		if (_context.Rows.Count == 0)
+		{
+			throw new InvalidOperationException(
+				"The current pattern view has no playable row.");
+		}
+
+		return _context.GetPlaybackCursor(_cursor.Row);
+	}
+
 	private DataPatternDefinition GetCurrentPattern()
 	{
 		if (_context.Rows.Count != 0
