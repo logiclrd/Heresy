@@ -135,6 +135,36 @@ public sealed class PatternEditorContext
 		return _rows[displayRow];
 	}
 
+	public int? FindAdjacentPatternDisplayRow(
+		int currentDisplayRow,
+		int delta)
+	{
+		if (delta is not -1 and not 1)
+			throw new ArgumentOutOfRangeException(nameof(delta));
+
+		PatternEditorRow current = GetRow(currentDisplayRow);
+		if (current.SequenceEntryIndex is not int entryIndex)
+			return null;
+
+		int segmentIndex =
+			_segments.FindIndex(
+				segment => segment.SequenceEntryIndex == entryIndex);
+		if (segmentIndex < 0)
+			return null;
+
+		for (
+			int index = segmentIndex + delta;
+			index >= 0 && index < _segments.Count;
+			index += delta)
+		{
+			PatternEditorSegment segment = _segments[index];
+			if (segment.DisplayRowCount > 0)
+				return segment.FirstDisplayRow;
+		}
+
+		return null;
+	}
+
 	public PatternEditorPlaybackCursor GetPlaybackCursor(
 		int displayRow)
 	{
