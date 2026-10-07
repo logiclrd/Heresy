@@ -55,10 +55,14 @@ preserved during implementation.
   resolve at the current location. Note audition deliberately uses only the
   current cell's note/source/volume and ignores that cell's effect stack; row
   audition executes the full row including effects.
-- [ ] While the cursor is in the Note column, holding Caps Lock while pressing a
-  tracker piano key (`Z S X D C ...`) previews the note without assigning it.
-  The note keeps playing until that physical key is released, which sends Note
-  Off.
+- [x] While the cursor is in the Note column, physically holding Caps Lock while
+  pressing a tracker piano key (`Z S X D C ...`) previews the corresponding
+  note without assigning it. Caps Lock acts as a momentary preview modifier; its
+  toggled/locking state is irrelevant. Each held tracker key owns an independent
+  live preview voice, repeated key-down events do not retrigger it, and releasing
+  that same physical tracker key sends Note Off even if Caps Lock was released
+  first. Preview pitch follows the current tracker octave and source resolution
+  is primed from earlier pattern rows just like ordinary note sequencing.
 
 ## Pattern/object switching and editor state
 
