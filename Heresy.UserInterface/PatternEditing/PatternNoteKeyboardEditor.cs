@@ -20,6 +20,26 @@ public sealed class PatternNoteInputState
 
 	public ObjectId SourceId { get; set; }
 
+	public PatternEditMask EditMask { get; set; } =
+		PatternEditMask.Default;
+
+	public double? CurrentVolume
+	{
+		get => _currentVolume;
+		set
+		{
+			if (value.HasValue
+				&& (double.IsNaN(value.Value)
+					|| double.IsInfinity(value.Value)
+					|| value.Value < 0.0
+					|| value.Value > 1.0))
+			{
+				throw new ArgumentOutOfRangeException(nameof(value));
+			}
+			_currentVolume = value;
+		}
+	}
+
 	public int BaseOctave
 	{
 		get => _baseOctave;
@@ -27,6 +47,7 @@ public sealed class PatternNoteInputState
 	}
 
 	private int _baseOctave;
+	private double? _currentVolume;
 
 	private static int ValidateOctave(int value)
 	{
@@ -41,7 +62,10 @@ public sealed class PatternNoteInputState
 public readonly record struct PatternNoteInputResult(
 	bool Handled,
 	bool Changed,
-	bool Rejected);
+	bool Rejected)
+{
+	public bool NoteApplied { get; init; }
+}
 
 public static class PatternNoteKeyboardEditor
 {
@@ -123,16 +147,18 @@ public static class PatternNoteKeyboardEditor
 				false);
 		}
 
-		PatternNoteEntry? previous =
-			pattern.Grid[cursor.Row, cursor.Channel]?.Note;
-		bool changed = !Equals(previous, note);
-
-		PatternDocumentEditor.SetNote(
-			workspace,
-			pattern,
-			cursor.Row,
-			cursor.Channel,
-			note);
+		bool noteApplied =
+			(state.EditMask & PatternEditMask.Note) != 0;
+		bool changed =
+			PatternDocumentEditor.SetMaskedEntry(
+				workspace,
+				pattern,
+				cursor.Row,
+				cursor.Channel,
+				state.EditMask,
+				note,
+				state.SourceId,
+				state.CurrentVolume);
 
 		if (pattern.RowCount > 0)
 			cursor.MoveDown(pattern.RowCount);
@@ -140,7 +166,10 @@ public static class PatternNoteKeyboardEditor
 		return new PatternNoteInputResult(
 			true,
 			changed,
-			false);
+			false)
+			{
+				NoteApplied = noteApplied,
+			};
 	}
 
 	private static void Validate(
