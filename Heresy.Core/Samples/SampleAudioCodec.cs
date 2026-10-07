@@ -1,13 +1,14 @@
 using System;
+using System.Buffers;
 using System.Buffers.Binary;
 using System.IO;
 using System.Text;
 
 using Codec.Flac;
 using Codec.Mp3;
-using Codec.Vorbis;
-
 using FileFormat.Aiff;
+
+using NVorbis;
 
 namespace Heresy.Core.Samples;
 
@@ -98,21 +99,36 @@ public static class SampleAudioCodec
 	private static SamplePcmData DecodeVorbis(
 		ReadOnlySpan<byte> encoded)
 	{
-		byte[] bytes = encoded.ToArray();
 		using MemoryStream input =
-			new(bytes, writable: false);
-		VorbisStreamInfo info =
-			VorbisCodec.ReadStreamInfo(input);
-		input.Position = 0;
-		using MemoryStream output = new();
-		VorbisCodec.Decompress(input, output);
-		return DecodeIntegerPcm(
-			output.ToArray(),
-			info.SampleRate,
-			info.Channels,
-			bitsPerSample: 16,
-			littleEndian: true,
-			eightBitUnsigned: false);
+			new(
+				encoded.ToArray(),
+				writable: false);
+		using VorbisReader reader =
+			new(
+				input,
+				closeStreamOnDispose: false);
+
+		float[] buffer = new float[8192];
+		ArrayBufferWriter<float> samples = new();
+		while (true)
+		{
+			int read =
+				reader.ReadSamples(
+					buffer,
+					0,
+					buffer.Length);
+			if (read <= 0)
+				break;
+
+			buffer.AsSpan(0, read)
+				.CopyTo(samples.GetSpan(read));
+			samples.Advance(read);
+		}
+
+		return new SamplePcmData(
+			reader.SampleRate,
+			reader.Channels,
+			samples.WrittenSpan);
 	}
 
 	private static SamplePcmData DecodeAiff(
