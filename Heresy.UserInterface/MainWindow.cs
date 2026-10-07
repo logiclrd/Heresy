@@ -647,9 +647,15 @@ public sealed class MainWindow : Window
 			await StorageProvider.OpenFilePickerAsync(
 				new FilePickerOpenOptions
 				{
-					Title = "Import sample assets",
+					Title = "Import samples",
 					AllowMultiple = true,
-					FileTypeFilter = new[] { SampleFileType, FilePickerFileTypes.All },
+					FileTypeFilter =
+						new[]
+						{
+							SampleFileType,
+							SongFileType,
+							FilePickerFileTypes.All,
+						},
 				});
 		if (files.Count == 0)
 			return;
@@ -665,6 +671,42 @@ public sealed class MainWindow : Window
 
 			try
 			{
+				if (SongDocumentStorage.IsPackagePath(path)
+					|| SongDocumentStorage.IsJsonPath(path))
+				{
+					SongSampleImportSource source =
+						SampleDocumentEditor.LoadImportSource(path);
+					if (source.Samples.Count == 0)
+					{
+						SetStatus(
+							$"{file.Name} contains no samples to import.");
+						continue;
+					}
+
+					SampleImportSelectionDialog dialog =
+						new(source);
+					ObjectId[]? selected =
+						await dialog.ShowDialog<ObjectId[]?>(this);
+					if (selected is null || selected.Length == 0)
+						continue;
+
+					IReadOnlyList<SampleDefinition> songSamples =
+						SampleDocumentEditor.ImportFromSong(
+							_workspace,
+							source,
+							selected);
+					foreach (SampleDefinition sample in songSamples)
+					{
+						firstSample ??= sample;
+						selectNode ??= FindTreeObject(
+							_workspace.Document.GetSectionRoot(
+								SongTreeSection.Samples),
+							sample.Id);
+						imported++;
+					}
+					continue;
+				}
+
 				SampleDefinition sample =
 					SampleDocumentEditor.Import(_workspace, path);
 				firstSample ??= sample;
