@@ -14,7 +14,8 @@ public sealed record PatternEditorOpenState(
 	int Channel,
 	PatternCellField Field,
 	PatternEditMask EditMask = PatternEditMask.Default,
-	double? CurrentVolume = null);
+	double? CurrentVolume = null,
+	PatternChordInputSnapshot? Chord = null);
 
 public sealed record PatternEditorSwitchRequest(
 	int Delta,
