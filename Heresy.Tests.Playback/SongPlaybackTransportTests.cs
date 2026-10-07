@@ -79,12 +79,14 @@ public sealed class SongPlaybackTransportTests
 		using SongPlaybackTransport transport =
 			new(backend, factory);
 
-		await transport.BeginLiveAuditionAsync(document);
-		await transport.StartLiveNoteAsync(
-			voiceId: 3,
-			new StartNoteCommand((ObjectId)17U));
-		await transport.ReleaseLiveNoteAsync(
-			voiceId: 3);
+		await transport.SendLiveEventAsync(
+			document,
+			ChannelTarget.Physical(3),
+			[new StartNoteCommand((ObjectId)17U)]);
+		await transport.SendLiveEventAsync(
+			document,
+			ChannelTarget.Physical(3),
+			[new NoteOffCommand()]);
 
 		factory.Source.Events.Should().HaveCount(2);
 		factory.Source.Events[0].Target.Should().Be(
