@@ -113,50 +113,58 @@ public sealed class FmSynthGraphTests
 	[Test]
 	public void OscillatorParametersMustBeFiniteAndFrequencyPositive()
 	{
-		(() => new FmOscillatorNode(
+		Action zeroFrequency =
+			() => new FmOscillatorNode(
 				1,
 				FmOscillatorWaveform.Sine,
-				frequencyHz: 0.0))
-			.Should()
+				frequencyHz: 0.0);
+		zeroFrequency.Should()
 			.Throw<ArgumentOutOfRangeException>();
 
-		(() => new FmOscillatorNode(
+		Action nonFiniteMinimum =
+			() => new FmOscillatorNode(
 				1,
 				FmOscillatorWaveform.Sine,
 				frequencyHz: 440.0,
-				minimum: double.NaN))
-			.Should()
+				minimum: double.NaN);
+		nonFiniteMinimum.Should()
 			.Throw<ArgumentOutOfRangeException>();
 	}
 
 	[Test]
 	public void ConstantMustBeFinite()
 	{
-		(() => new FmConstantNode(
+		Action action =
+			() => new FmConstantNode(
 				1,
-				double.PositiveInfinity))
-			.Should()
+				double.PositiveInfinity);
+
+		action.Should()
 			.Throw<ArgumentOutOfRangeException>();
 	}
 
 	[Test]
 	public void EnvelopeRequiresConcreteObjectId()
 	{
-		(() => new FmEnvelopeNode(
+		Action action =
+			() => new FmEnvelopeNode(
 				1,
-				ObjectId.None))
-			.Should()
+				ObjectId.None);
+
+		action.Should()
 			.Throw<ArgumentException>();
 	}
 
 	[Test]
 	public void OperatorRequiresAtLeastOneInput()
 	{
-		(() => new FmOperatorNode(
+		Action action =
+			() => new FmOperatorNode(
 				1,
 				FmOperatorKind.Add,
-				[]))
-			.Should()
+				[]);
+
+		action.Should()
 			.Throw<ArgumentException>();
 	}
 }
