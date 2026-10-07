@@ -12,6 +12,7 @@ namespace Heresy.Core.Assets;
 
 public enum ExternalAssetStatus
 {
+	Pending,
 	Missing,
 	Unhashed,
 	Match,
@@ -103,7 +104,14 @@ public static class ExternalAssetIntegrity
 			if (songObject is not SampleDefinition sample)
 				continue;
 
-			ExternalAssetCheck check = Check(sample.Asset);
+			ExternalAssetCheck check =
+				sample.Asset is ExternalAssetReference asset
+					? Check(asset)
+					: new ExternalAssetCheck(
+						ExternalAssetStatus.Pending,
+						"(pending song asset)",
+						sample.PendingAsset?.Sha256,
+						sample.PendingAsset?.Sha256);
 			diagnostics.Add(
 				new ExternalAssetDiagnostic(
 					id,
