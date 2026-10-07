@@ -80,10 +80,18 @@ preserved during implementation.
 
 ## Pattern/object switching and editor state
 
-- [ ] Switch between patterns with `+` / `-`.
-  - If a sequence is the parent of the current view, follow that sequence's
-    pattern order.
-  - Otherwise follow the same ordering as the tree used to open the editor.
+- [x] Switch between tracker-editable patterns with `+` / `-`.
+  - In a sequence-backed tracker view, jump to the first visible row of the
+    next/previous editable pattern occurrence in sequence order. Repeated
+    occurrences remain distinct; script, missing and zero-row segments are
+    skipped. The channel and field are preserved where possible.
+  - In a standalone tracker view, follow the rendered depth-first order of
+    data-pattern placements in the Patterns tree. Tree placement identity is
+    preserved, so duplicate placements remain distinct. Script/missing entries
+    are skipped.
+  - Navigation stops at either end rather than wrapping. Standalone switches
+    preserve the current pattern row, channel, field, Source selection and
+    octave, clamping row/channel only when the destination pattern is smaller.
 - [x] Switch between Sources (the generalized instrument selection) with `<` /
   `>` and `Ctrl+Up` / `Ctrl+Down`, following the exact order presented by
   the Source drop-down. Navigation clamps at the first/last item rather than
