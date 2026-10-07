@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+
+using Heresy.Core.Sequencing;
 
 namespace Heresy.Render.Realtime;
 
@@ -21,6 +24,12 @@ public sealed class BackgroundPlaybackController
 		TaskCompletionSource Completion)
 		: Command(Completion);
 
+	private sealed record LiveEventCommand(
+		ChannelTarget Target,
+		IReadOnlyList<NoteCommand> Commands,
+		TaskCompletionSource Completion)
+		: Command(Completion);
+
 	private sealed record StopCommand(
 		TaskCompletionSource Completion)
 		: Command(Completion);
@@ -36,6 +45,7 @@ public sealed class BackgroundPlaybackController
 	private readonly Thread _worker;
 
 	private IAudioOutputSession? _session;
+	private IAudioOutputSource? _source;
 	private bool _disposed;
 
 	public BackgroundPlaybackController(
@@ -67,6 +77,22 @@ public sealed class BackgroundPlaybackController
 		Enqueue(
 			new PlayCommand(
 				request,
+				completion));
+		return completion.Task;
+	}
+
+	public Task SendLiveEventAsync(
+		ChannelTarget target,
+		IReadOnlyList<NoteCommand> commands)
+	{
+		ArgumentNullException.ThrowIfNull(commands);
+
+		TaskCompletionSource completion =
+			NewCompletion();
+		Enqueue(
+			new LiveEventCommand(
+				target,
+				commands,
 				completion));
 		return completion.Task;
 	}
@@ -125,6 +151,13 @@ public sealed class BackgroundPlaybackController
 						command.Completion.SetResult();
 						break;
 
+					case LiveEventCommand live:
+						SendLiveEvent(
+							live.Target,
+							live.Commands);
+						command.Completion.SetResult();
+						break;
+
 					case StopCommand:
 						StopCurrent();
 						command.Completion.SetResult();
@@ -165,6 +198,7 @@ public sealed class BackgroundPlaybackController
 		try
 		{
 			session.Start();
+			_source = source;
 			_session = session;
 		}
 		catch
@@ -174,10 +208,26 @@ public sealed class BackgroundPlaybackController
 		}
 	}
 
+	private void SendLiveEvent(
+		ChannelTarget target,
+		IReadOnlyList<NoteCommand> commands)
+	{
+		if (_source is not ILiveAudioOutputSource liveSource)
+		{
+			throw new InvalidOperationException(
+				"The active playback source does not accept live events.");
+		}
+
+		liveSource.EnqueueLiveEvent(
+			target,
+			commands);
+	}
+
 	private void StopCurrent()
 	{
 		IAudioOutputSession? session = _session;
 		_session = null;
+		_source = null;
 		if (session is null)
 			return;
 
