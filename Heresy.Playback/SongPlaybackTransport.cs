@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 
 using Heresy.Core.Objects;
@@ -31,6 +33,11 @@ public interface ISongPlaybackTransport
 	Task BeginLiveAuditionAsync(
 		SongDocument document);
 
+	Task SendLiveEventAsync(
+		SongDocument document,
+		ChannelTarget target,
+		IReadOnlyList<NoteCommand> commands);
+
 	Task StartLiveNoteAsync(
 		int voiceId,
 		StartNoteCommand command);
@@ -45,6 +52,8 @@ public sealed class SongPlaybackTransport
 	: ISongPlaybackTransport
 {
 	private readonly BackgroundPlaybackController _controller;
+	private readonly SemaphoreSlim _commandGate = new(1, 1);
+	private bool _liveAuditionActive;
 
 	public SongPlaybackTransport(
 		IAudioOutputBackend backend,
@@ -77,7 +86,7 @@ public sealed class SongPlaybackTransport
 		SongDocument document,
 		ObjectId sequenceId,
 		SequencePlaybackPosition? startPosition = null)
-		=> _controller.PlayAsync(
+		=> PlayRequestAsync(
 			SequencePlaybackRequest.Create(
 				document,
 				sequenceId,
@@ -88,7 +97,7 @@ public sealed class SongPlaybackTransport
 		ObjectId patternId,
 		int startRow = 0,
 		bool repeat = false)
-		=> _controller.PlayAsync(
+		=> PlayRequestAsync(
 			PatternPlaybackRequest.Create(
 				document,
 				patternId,
@@ -98,20 +107,55 @@ public sealed class SongPlaybackTransport
 	public Task PlayAdHocAsync(
 		SongDocument document,
 		NoteSchedule schedule)
-		=> _controller.PlayAsync(
+		=> PlayRequestAsync(
 			AdHocPlaybackRequest.Create(
 				document,
 				schedule));
 
-	public Task BeginLiveAuditionAsync(
+	public async Task BeginLiveAuditionAsync(
 		SongDocument document)
 	{
 		ArgumentNullException.ThrowIfNull(document);
 
-		return _controller.PlayAsync(
-			AdHocPlaybackRequest.Create(
-				document,
-				new NoteScheduleBuilder().Freeze()));
+		await _commandGate.WaitAsync().ConfigureAwait(false);
+		try
+		{
+			await EnsureLiveAuditionCoreAsync(document)
+				.ConfigureAwait(false);
+		}
+		finally
+		{
+			_commandGate.Release();
+		}
+	}
+
+	public async Task SendLiveEventAsync(
+		SongDocument document,
+		ChannelTarget target,
+		IReadOnlyList<NoteCommand> commands)
+	{
+		ArgumentNullException.ThrowIfNull(document);
+		ArgumentNullException.ThrowIfNull(commands);
+
+		await _commandGate.WaitAsync().ConfigureAwait(false);
+		try
+		{
+			await EnsureLiveAuditionCoreAsync(document)
+				.ConfigureAwait(false);
+			await _controller.SendLiveEventAsync(
+					target,
+					commands)
+				.ConfigureAwait(false);
+		}
+		catch
+		{
+			_liveAuditionActive = false;
+			throw;
+		}
+		finally
+		{
+			_commandGate.Release();
+		}
 	}
 
 	public Task StartLiveNoteAsync(
@@ -138,9 +182,62 @@ public sealed class SongPlaybackTransport
 			[new NoteOffCommand()]);
 	}
 
-	public Task StopAsync()
-		=> _controller.StopAsync();
+	public async Task StopAsync()
+	{
+		await _commandGate.WaitAsync().ConfigureAwait(false);
+		try
+		{
+			_liveAuditionActive = false;
+			await _controller.StopAsync().ConfigureAwait(false);
+		}
+		finally
+		{
+			_commandGate.Release();
+		}
+	}
+
+	private async Task PlayRequestAsync(
+		PlaybackRequest request)
+	{
+		ArgumentNullException.ThrowIfNull(request);
+
+		await _commandGate.WaitAsync().ConfigureAwait(false);
+		try
+		{
+			_liveAuditionActive = false;
+			await _controller.PlayAsync(request).ConfigureAwait(false);
+		}
+		finally
+		{
+			_commandGate.Release();
+		}
+	}
+
+	private async Task EnsureLiveAuditionCoreAsync(
+		SongDocument document)
+	{
+		if (_liveAuditionActive)
+			return;
+
+		try
+		{
+			await _controller.PlayAsync(
+					AdHocPlaybackRequest.Create(
+						document,
+						new NoteScheduleBuilder().Freeze()))
+				.ConfigureAwait(false);
+			_liveAuditionActive = true;
+		}
+		catch
+		{
+			_liveAuditionActive = false;
+			throw;
+		}
+	}
 
 	public void Dispose()
-		=> _controller.Dispose();
+	{
+		_controller.Dispose();
+		_commandGate.Dispose();
+	}
 }
