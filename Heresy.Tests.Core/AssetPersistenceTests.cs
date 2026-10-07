@@ -116,7 +116,11 @@ public sealed class AssetPersistenceTests
 	public void BareJsonSaveStoresRelativePathWhileDocumentKeepsFullPath()
 	{
 		using TempProject project = new();
-		string assetPath = project.Write("songs", "assets", "kick.wav", "kick");
+		string assetPath =
+			WritePcm16MonoWave(
+				project.Path("songs", "assets", "kick.wav"),
+				sampleRate: 8000,
+				samples: [0]);
 		string jsonPath = project.Path("songs", "track.hm.json");
 		Directory.CreateDirectory(Path.GetDirectoryName(jsonPath)!);
 
@@ -137,7 +141,11 @@ public sealed class AssetPersistenceTests
 	public void BareJsonLoadResolvesAssetToAbsolutePath()
 	{
 		using TempProject project = new();
-		string assetPath = project.Write("songs", "assets", "kick.wav", "kick");
+		string assetPath =
+			WritePcm16MonoWave(
+				project.Path("songs", "assets", "kick.wav"),
+				sampleRate: 8000,
+				samples: [0]);
 		string jsonPath = project.Path("songs", "track.hm.json");
 		Directory.CreateDirectory(Path.GetDirectoryName(jsonPath)!);
 
@@ -154,7 +162,11 @@ public sealed class AssetPersistenceTests
 	public void BareJsonRelativeSaveRejectsAssetOutsideJsonSubtree()
 	{
 		using TempProject project = new();
-		string assetPath = project.Write("library", "snare.wav", "snare");
+		string assetPath =
+			WritePcm16MonoWave(
+				project.Path("library", "snare.wav"),
+				sampleRate: 8000,
+				samples: [4096]);
 		string jsonPath = project.Path("songs", "track.hm.json");
 		Directory.CreateDirectory(Path.GetDirectoryName(jsonPath)!);
 		SongDocument document = DocumentWithSample(assetPath, out _);
@@ -176,7 +188,11 @@ public sealed class AssetPersistenceTests
 	public void BareJsonAbsoluteSaveAlwaysStoresOsConventionalFullPath()
 	{
 		using TempProject project = new();
-		string assetPath = project.Write("songs", "assets", "kick.wav", "kick");
+		string assetPath =
+			WritePcm16MonoWave(
+				project.Path("songs", "assets", "kick.wav"),
+				sampleRate: 8000,
+				samples: [0]);
 		string jsonPath = project.Path("songs", "track.hm.json");
 		SongDocument document = DocumentWithSample(assetPath, out ObjectId sampleId);
 
@@ -195,7 +211,11 @@ public sealed class AssetPersistenceTests
 	public void AbsoluteBareJsonSaveAtDifferentLocationDoesNotRetargetExternalAsset()
 	{
 		using TempProject project = new();
-		string assetPath = project.Write("library", "snare.wav", "snare");
+		string assetPath =
+			WritePcm16MonoWave(
+				project.Path("library", "snare.wav"),
+				sampleRate: 8000,
+				samples: [4096]);
 		string first = project.Path("one", "track.hm.json");
 		string second = project.Path("two", "track.hm.json");
 		Directory.CreateDirectory(Path.GetDirectoryName(first)!);
@@ -217,7 +237,11 @@ public sealed class AssetPersistenceTests
 	public void BareJsonLoadResolvesAbsoluteAssetPath()
 	{
 		using TempProject project = new();
-		string assetPath = project.Write("library", "snare.wav", "snare");
+		string assetPath =
+			WritePcm16MonoWave(
+				project.Path("library", "snare.wav"),
+				sampleRate: 8000,
+				samples: [4096]);
 		string jsonPath = project.Path("songs", "track.hm.json");
 		Directory.CreateDirectory(Path.GetDirectoryName(jsonPath)!);
 		SongDocument source = DocumentWithSample(assetPath, out ObjectId sampleId);
@@ -234,7 +258,11 @@ public sealed class AssetPersistenceTests
 	public void BareJsonLoadFailsWhenAssetCannotBeResolved()
 	{
 		using TempProject project = new();
-		string assetPath = project.Write("songs", "assets", "kick.wav", "kick");
+		string assetPath =
+			WritePcm16MonoWave(
+				project.Path("songs", "assets", "kick.wav"),
+				sampleRate: 8000,
+				samples: [0]);
 		string jsonPath = project.Path("songs", "track.hm.json");
 		SongDocument source = DocumentWithSample(assetPath, out _);
 		SongDocumentStorage.Save(jsonPath, source);
@@ -280,7 +308,11 @@ public sealed class AssetPersistenceTests
 	public void PackageSaveBundlesExternalAssetAndRetargetsDocumentToSyntheticPath()
 	{
 		using TempProject project = new();
-		string assetPath = project.Write("elsewhere", "hihat.wav", "hat");
+		string assetPath =
+			WritePcm16MonoWave(
+				project.Path("elsewhere", "hihat.wav"),
+				sampleRate: 8000,
+				samples: [8192]);
 		string packagePath = project.Path("songs", "test.hm");
 		Directory.CreateDirectory(Path.GetDirectoryName(packagePath)!);
 		SongDocument document = DocumentWithSample(assetPath, out ObjectId sampleId);
@@ -307,7 +339,11 @@ public sealed class AssetPersistenceTests
 	public void PackageSavePreservesFilesystemSubdirectoryBelowPackageContainer()
 	{
 		using TempProject project = new();
-		string assetPath = project.Write("song", "samples", "drums", "hihat.wav", "hat");
+		string assetPath =
+			WritePcm16MonoWave(
+				project.Path("song", "samples", "drums", "hihat.wav"),
+				sampleRate: 8000,
+				samples: [8192]);
 		string packagePath = project.Path("song", "test.hm");
 		SongDocument document = DocumentWithSample(assetPath, out _);
 
@@ -321,7 +357,11 @@ public sealed class AssetPersistenceTests
 	public void PackageLoadUsesSyntheticAbsoluteAssetPathAndIntegrityCanReadIt()
 	{
 		using TempProject project = new();
-		string assetPath = project.Write("source", "tone.wav", "hello");
+		string assetPath =
+			WritePcm16MonoWave(
+				project.Path("source", "tone.wav"),
+				sampleRate: 8000,
+				samples: [16384]);
 		string packagePath = project.Path("song", "test.hm");
 		Directory.CreateDirectory(Path.GetDirectoryName(packagePath)!);
 		SongDocument document = DocumentWithSample(assetPath, out ObjectId sampleId);
@@ -341,12 +381,17 @@ public sealed class AssetPersistenceTests
 	public void SavingPackageBackedDocumentAsBareJsonExtractsAssetHierarchy()
 	{
 		using TempProject project = new();
-		string assetPath = project.Write("source", "tone.wav", "hello");
+		string assetPath =
+			WritePcm16MonoWave(
+				project.Path("source", "tone.wav"),
+				sampleRate: 8000,
+				samples: [16384]);
 		string packagePath = project.Path("package", "test.hm");
 		Directory.CreateDirectory(Path.GetDirectoryName(packagePath)!);
 		SongDocument original = DocumentWithSample(assetPath, out ObjectId sampleId);
 		SongDocumentStorage.Save(packagePath, original);
 
+		byte[] originalEncoded = File.ReadAllBytes(assetPath);
 		SongDocument loaded = SongDocumentStorage.Load(packagePath);
 		string jsonPath = project.Path("export", "copy.hm.json");
 		Directory.CreateDirectory(Path.GetDirectoryName(jsonPath)!);
@@ -354,7 +399,7 @@ public sealed class AssetPersistenceTests
 		SongDocumentStorage.Save(jsonPath, loaded);
 
 		string extracted = project.Path("export", "pcm", "tone.wav");
-		Assert.That(File.ReadAllText(extracted), Is.EqualTo("hello"));
+		Assert.That(File.ReadAllBytes(extracted), Is.EqualTo(originalEncoded));
 		SampleDefinition sample = (SampleDefinition)loaded.Objects[sampleId];
 		Assert.That(sample.Asset!.FullPath, Is.EqualTo(Path.GetFullPath(extracted)));
 
@@ -368,20 +413,29 @@ public sealed class AssetPersistenceTests
 	public void LoadedPackageCanBundleNewExternalSampleWhenSavedAgain()
 	{
 		using TempProject project = new();
-		string originalAsset = project.Write("source", "original.wav", "original");
+		string originalAsset =
+			WritePcm16MonoWave(
+				project.Path("source", "original.wav"),
+				sampleRate: 8000,
+				samples: [0]);
 		string packagePath = project.Path("song", "test.hm");
 		Directory.CreateDirectory(Path.GetDirectoryName(packagePath)!);
 		SongDocument original = DocumentWithSample(originalAsset, out _);
 		SongDocumentStorage.Save(packagePath, original);
 
 		SongDocument loaded = SongDocumentStorage.Load(packagePath);
-		string newAsset = project.Write("imports", "clap.wav", "clap");
+		string newAsset =
+			WritePcm16MonoWave(
+				project.Path("imports", "clap.wav"),
+				sampleRate: 8000,
+				samples: [24576]);
 		ObjectId newId = loaded.AllocateObjectId();
 		loaded.Add(
-			new SampleDefinition(
+			SampleDefinition.CreateImported(
 				newId,
 				"Clap",
-				ExternalAssetIntegrity.CreateReference(newAsset)));
+				Path.GetFileName(newAsset),
+				File.ReadAllBytes(newAsset)));
 
 		SongDocumentStorage.Save(packagePath, loaded);
 
@@ -477,7 +531,11 @@ public sealed class AssetPersistenceTests
 			Assert.Ignore("Windows does not permit backslashes inside a filename.");
 
 		using TempProject project = new();
-		string assetPath = project.Write("song", "samples", @"odd\name.wav", "odd");
+		string assetPath =
+			WritePcm16MonoWave(
+				project.Path("song", "samples", @"odd\name.wav"),
+				sampleRate: 8000,
+				samples: [0]);
 		string packagePath = project.Path("song", "test.hm");
 		SongDocument document = DocumentWithSample(assetPath, out _);
 
