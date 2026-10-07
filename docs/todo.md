@@ -89,8 +89,11 @@ preserved during implementation.
 - [x] Change the current octave with physical numpad `*` / `/`. The value is clamped to the tracker octave range `0..8` and the toolbar selector stays synchronized. Ctrl/Alt/Meta-modified keypad operators are deliberately left available to higher-level commands such as chord editing.
 - [ ] Add edit masks. The default mask is Note + Instrument + Volume; `,` cycles
   through the available mask choices.
-- [ ] When focus is on the Instrument field for a note, Enter selects that
-  instrument in the surrounding UI.
+- [x] When focus is on the tracker Source field (the generalized Instrument
+  field), Enter selects that explicitly stored source in the surrounding toolbar.
+  Omitted Source cells deliberately do not resolve channel source memory for this
+  UI command, and missing/deleted source IDs leave the current toolbar selection
+  unchanged.
 
 ## Chord input
 
