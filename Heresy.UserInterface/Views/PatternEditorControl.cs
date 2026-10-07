@@ -37,6 +37,8 @@ public sealed class PatternEditorControl : UserControl
 	private readonly Action _close;
 	private readonly Action<string> _changed;
 	private readonly Func<NoteSchedule, Task>? _audition;
+	private readonly PatternLiveAuditionActions? _liveAudition;
+	private readonly HeldNotePreviewKeyState _heldPreviewKeys = new();
 	private readonly string _backLabel;
 	private readonly UserInterfaceConfiguration _configuration;
 	private readonly TextBox _rowCount;
@@ -78,7 +80,8 @@ public sealed class PatternEditorControl : UserControl
 		Action<string> changed,
 		string backLabel = "← Document",
 		UserInterfaceConfiguration? configuration = null,
-		Func<NoteSchedule, Task>? audition = null)
+		Func<NoteSchedule, Task>? audition = null,
+		PatternLiveAuditionActions? liveAudition = null)
 		: this(
 			owner,
 			workspace,
@@ -87,7 +90,8 @@ public sealed class PatternEditorControl : UserControl
 			changed,
 			backLabel,
 			configuration,
-			audition)
+			audition,
+			liveAudition)
 	{
 	}
 
@@ -99,7 +103,8 @@ public sealed class PatternEditorControl : UserControl
 		Action<string> changed,
 		string backLabel = "← Document",
 		UserInterfaceConfiguration? configuration = null,
-		Func<NoteSchedule, Task>? audition = null)
+		Func<NoteSchedule, Task>? audition = null,
+		PatternLiveAuditionActions? liveAudition = null)
 	{
 		_owner = owner ?? throw new ArgumentNullException(nameof(owner));
 		_workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
@@ -107,6 +112,7 @@ public sealed class PatternEditorControl : UserControl
 		_close = close ?? throw new ArgumentNullException(nameof(close));
 		_changed = changed ?? throw new ArgumentNullException(nameof(changed));
 		_audition = audition;
+		_liveAudition = liveAudition;
 		_backLabel = backLabel ?? throw new ArgumentNullException(nameof(backLabel));
 		_configuration = configuration ?? new UserInterfaceConfiguration();
 
@@ -177,7 +183,7 @@ public sealed class PatternEditorControl : UserControl
 			new TextBlock
 			{
 				Text =
-					"Arrow keys move the tracker cursor. Type notes directly in the note field; top-row 4 auditions the current note and 8 auditions the current row, advancing one row. Enter opens detailed note editing or expands a stacked effect strip.",
+					"Arrow keys move the tracker cursor. Type notes directly in the note field; hold Caps Lock while pressing tracker piano keys to preview without editing, releasing the key sends Note Off. Top-row 4 auditions the current note and 8 auditions the current row, advancing one row. Enter opens detailed note editing or expands a stacked effect strip.",
 				TextWrapping = TextWrapping.Wrap,
 			};
 
@@ -600,6 +606,8 @@ public sealed class PatternEditorControl : UserControl
 			OnCellPointerPressed(displayRow, channel, cell, e);
 		cell.KeyDown += async (_, e) =>
 			await OnCellKeyDownAsync(displayRow, channel, e);
+		cell.KeyUp += async (_, e) =>
+			await OnCellKeyUpAsync(e);
 		cell.TextInput += (_, e) =>
 			OnCellTextInput(displayRow, channel, e);
 
@@ -673,6 +681,28 @@ public sealed class PatternEditorControl : UserControl
 			_cursor.SetPosition(row, channel, PatternCellField.Note);
 
 		PatternEditorRow editorRow = _context.GetRow(row);
+
+		if (_cursor.Field == PatternCellField.Note
+			&& e.PhysicalKey == PhysicalKey.CapsLock)
+		{
+			_heldPreviewKeys.KeyDown(
+				e.PhysicalKey,
+				_noteInputState.BaseOctave);
+		}
+		else if (_cursor.Field == PatternCellField.Note
+			&& _liveAudition is not null
+			&& _heldPreviewKeys.KeyDown(
+				e.PhysicalKey,
+				_noteInputState.BaseOctave)
+				is StartHeldNotePreviewAction preview)
+		{
+			await StartHeldPreviewAsync(
+				editorRow,
+				channel,
+				preview);
+			e.Handled = true;
+			return;
+		}
 		PatternCell? cell =
 			editorRow.Pattern.Grid[editorRow.PatternRow, channel];
 		(int Row, int Channel)? previouslyExpanded = _expandedCell;
@@ -956,6 +986,73 @@ public sealed class PatternEditorControl : UserControl
 			UpdateCurrentPatternControls();
 			RefreshCursorVisuals();
 			FocusCursorCell();
+		}
+	}
+
+	private async Task OnCellKeyUpAsync(
+		KeyEventArgs e)
+	{
+		HeldNotePreviewAction? action =
+			_heldPreviewKeys.KeyUp(
+				e.PhysicalKey);
+		if (action is not ReleaseHeldNotePreviewAction release)
+			return;
+
+		e.Handled = true;
+		if (_liveAudition is null)
+			return;
+
+		try
+		{
+			await _liveAudition.ReleaseNoteAsync(
+				release.VoiceId);
+			_message.Text =
+				"Released preview note.";
+		}
+		catch (Exception ex)
+		{
+			_message.Text =
+				$"Preview release failed: {ex.Message}";
+		}
+	}
+
+	private async Task StartHeldPreviewAsync(
+		PatternEditorRow editorRow,
+		int channel,
+		StartHeldNotePreviewAction preview)
+	{
+		if (_liveAudition is null)
+			return;
+
+		try
+		{
+			if (preview.StartsSession)
+				await _liveAudition.BeginSessionAsync();
+
+			StartNoteCommand? command =
+				PatternAuditionCompiler.CompileHeldNoteStart(
+					editorRow.Pattern,
+					editorRow.PatternRow,
+					channel,
+					preview.PitchMultiplier);
+
+			if (command is null)
+			{
+				_message.Text =
+					"Preview note has no resolved Source.";
+				return;
+			}
+
+			await _liveAudition.StartNoteAsync(
+				preview.VoiceId,
+				command);
+			_message.Text =
+				"Previewing tracker note; release the key for Note Off.";
+		}
+		catch (Exception ex)
+		{
+			_message.Text =
+				$"Preview failed: {ex.Message}";
 		}
 	}
 
