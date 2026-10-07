@@ -979,6 +979,26 @@ public sealed class PatternEditorControl : UserControl
 			}
 		}
 
+		if (PatternNoteColumnNavigationKeyboard.TryGetDelta(
+			e.Key,
+			e.KeyModifiers,
+			out int noteColumnDelta))
+		{
+			_volumeInput.Reset();
+			bool moved =
+				PatternEditorContextCursor.MoveToAdjacentNote(
+					_context,
+					_cursor,
+					noteColumnDelta);
+			if (moved && _expandedCell is not null)
+				CollapseVisualEffects(collapseCursor: false);
+
+			e.Handled = true;
+			RefreshCursorVisuals();
+			FocusCursorCell();
+			return;
+		}
+
 		if (PatternRowBoundaryNavigationKeyboard.TryGetFirst(
 			e.Key,
 			e.KeyModifiers,
