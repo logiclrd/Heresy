@@ -65,7 +65,7 @@ public static class FmSynthConnectionRouter
 			foreach (FmSynthRoutePoint hint in routingHints)
 				AppendOrthogonal(hinted, hint);
 			AppendOrthogonal(hinted, end);
-			return Simplify(hinted);
+			return RemoveAdjacentDuplicates(hinted);
 		}
 
 		FmSynthLayoutRect[] blocked =
@@ -292,6 +292,21 @@ public static class FmSynthConnectionRouter
 						- route[index - 1].Y);
 		}
 		return result;
+	}
+
+	private static FmSynthRoutePoint[] RemoveAdjacentDuplicates(
+		IReadOnlyList<FmSynthRoutePoint> route)
+	{
+		List<FmSynthRoutePoint> result = [];
+		foreach (FmSynthRoutePoint point in route)
+		{
+			if (result.Count == 0
+				|| result[^1] != point)
+			{
+				result.Add(point);
+			}
+		}
+		return [.. result];
 	}
 
 	private static FmSynthRoutePoint[] Simplify(
