@@ -38,6 +38,32 @@ public sealed class SampleDefinition : SongObject
 		};
 	}
 
+	public static SampleDefinition CreateImportedCopy(
+		ObjectId id,
+		SampleDefinition source,
+		string encodedFileName,
+		ReadOnlySpan<byte> encodedBytes)
+	{
+		ArgumentNullException.ThrowIfNull(source);
+		SamplePcmData pcm =
+			source.PcmData
+				?? throw new InvalidOperationException(
+					$"Sample '{source.Name}' ({source.Id}) has no decoded PCM to copy.");
+
+		PendingSampleAsset pending =
+			new(encodedFileName, encodedBytes);
+		SampleDefinition copy =
+			new(id, source.Name)
+			{
+				PcmData = pcm,
+				PendingAsset = pending,
+				ReferenceFrequencyHz = source.ReferenceFrequencyHz,
+				Loop = source.Loop,
+			};
+		copy.SourceChannelPositions.AddRange(source.SourceChannelPositions);
+		return copy;
+	}
+
 	public override SongObjectKind Kind => SongObjectKind.Sample;
 
 	/// <summary>
