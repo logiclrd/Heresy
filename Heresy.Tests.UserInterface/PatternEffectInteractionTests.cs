@@ -212,6 +212,106 @@ public sealed class PatternEffectInteractionTests
 	}
 
 	[Test]
+	public void HomeMovesToNoteThenFirstChannel()
+	{
+		DataPatternDefinition pattern =
+			new((Heresy.Core.Objects.ObjectId)1U, "Pattern")
+			{
+				ChannelCount = 4,
+			};
+		PatternEffectCursor cursor =
+			new(row: 3, channel: 2, PatternCellField.Volume);
+
+		cursor.MoveHome(pattern);
+
+		cursor.Row.Should().Be(3);
+		cursor.Channel.Should().Be(2);
+		cursor.Field.Should().Be(PatternCellField.Note);
+
+		cursor.MoveHome(pattern);
+
+		cursor.Row.Should().Be(3);
+		cursor.Channel.Should().Be(0);
+		cursor.Field.Should().Be(PatternCellField.Note);
+	}
+
+	[Test]
+	public void EndMovesToParameterThenLastChannel()
+	{
+		DataPatternDefinition pattern =
+			new((Heresy.Core.Objects.ObjectId)1U, "Pattern")
+			{
+				ChannelCount = 4,
+			};
+		PatternEffectCursor cursor =
+			new(row: 3, channel: 1, PatternCellField.Source);
+
+		cursor.MoveEnd(pattern);
+
+		cursor.Row.Should().Be(3);
+		cursor.Channel.Should().Be(1);
+		cursor.Field.Should().Be(PatternCellField.EffectParameter);
+
+		cursor.MoveEnd(pattern);
+
+		cursor.Row.Should().Be(3);
+		cursor.Channel.Should().Be(3);
+		cursor.Field.Should().Be(PatternCellField.EffectParameter);
+	}
+
+	[Test]
+	public void EndUsesSingleNativeEffectAsOneWholeFinalField()
+	{
+		DataPatternDefinition pattern =
+			new((Heresy.Core.Objects.ObjectId)1U, "Pattern")
+			{
+				ChannelCount = 3,
+			};
+		pattern.Grid.GetOrCreateCell(3, 1).Effects.Add(
+			new SetPlaybackFrequencyPatternEffect(440));
+		PatternEffectCursor cursor =
+			new(row: 3, channel: 1, PatternCellField.Volume);
+
+		cursor.MoveEnd(pattern);
+
+		cursor.Channel.Should().Be(1);
+		cursor.Field.Should().Be(PatternCellField.EffectCommand);
+
+		cursor.MoveEnd(pattern);
+
+		cursor.Channel.Should().Be(2);
+		cursor.Field.Should().Be(PatternCellField.EffectCommand);
+	}
+
+	[Test]
+	public void HomeAndEndCollapseExpandedEffectSelection()
+	{
+		DataPatternDefinition pattern =
+			new((Heresy.Core.Objects.ObjectId)1U, "Pattern")
+			{
+				ChannelCount = 2,
+			};
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+		cell.Effects.Add(new TonePortamentoPatternEffect(0x11));
+		cell.Effects.Add(new VibratoPatternEffect(0x22));
+		PatternEffectCursor cursor =
+			new(0, 0, PatternCellField.EffectCommand);
+		cursor.Expand(cell);
+
+		cursor.MoveHome(pattern);
+
+		cursor.IsExpanded.Should().BeFalse();
+		cursor.Field.Should().Be(PatternCellField.Note);
+
+		cursor.SetPosition(0, 0, PatternCellField.EffectCommand);
+		cursor.Expand(cell);
+		cursor.MoveEnd(pattern);
+
+		cursor.IsExpanded.Should().BeFalse();
+		cursor.Field.Should().Be(PatternCellField.EffectParameter);
+	}
+
+	[Test]
 	public void CommandTypingOnEmptyCellCreatesG00AndAdvancesDown()
 	{
 		DocumentWorkspace workspace = new();
