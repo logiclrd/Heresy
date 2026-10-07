@@ -2,12 +2,14 @@ using System;
 using System.Collections.Generic;
 
 using Heresy.Core.Envelopes;
+using Heresy.Core.FmSynthesis;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Samples;
 using Heresy.Core.Sequencing;
 using Heresy.Render.Configuration;
 using Heresy.Render.Envelopes;
+using Heresy.Render.FmSynthesis;
 using Heresy.Render.Instruments;
 using Heresy.Render.Playback;
 using Heresy.Render.Realtime;
@@ -230,6 +232,13 @@ public sealed class PlaybackRequestAudioSourceFactory
 						new InstrumentSound(
 							instrument,
 							this,
+							this);
+					break;
+
+				case FmSynthDefinition fmSynth:
+					sound =
+						new FmSynthSound(
+							fmSynth.Graph,
 							this);
 					break;
 

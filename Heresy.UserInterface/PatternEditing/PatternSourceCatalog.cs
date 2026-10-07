@@ -39,6 +39,7 @@ public static class PatternSourceCatalog
 	public static bool IsSoundSource(SongObjectKind kind)
 		=> kind is
 			SongObjectKind.Sample
+			or SongObjectKind.FmSynth
 			or SongObjectKind.Instrument
 			or SongObjectKind.Pattern
 			or SongObjectKind.Sequence;
@@ -47,9 +48,10 @@ public static class PatternSourceCatalog
 		=> kind switch
 		{
 			SongObjectKind.Sample => 0,
-			SongObjectKind.Instrument => 1,
-			SongObjectKind.Pattern => 2,
-			SongObjectKind.Sequence => 3,
+			SongObjectKind.FmSynth => 1,
+			SongObjectKind.Instrument => 2,
+			SongObjectKind.Pattern => 3,
+			SongObjectKind.Sequence => 4,
 			_ => int.MaxValue,
 		};
 }
