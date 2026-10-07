@@ -6,34 +6,44 @@ using Heresy.Render.Realtime;
 
 namespace Heresy.Playback;
 
-public sealed record PlaybackPatternPosition(
-	ObjectId PatternId,
-	int PatternRow,
-	ObjectId? SequenceId,
-	int? SequenceEntryIndex)
+public sealed record PlaybackPatternPosition
 {
-	public PlaybackPatternPosition
+	public PlaybackPatternPosition(
+		ObjectId patternId,
+		int patternRow,
+		ObjectId? sequenceId,
+		int? sequenceEntryIndex)
 	{
-		if (PatternId.IsNone)
+		if (patternId.IsNone)
 			throw new ArgumentException(
 				"A playback pattern position requires a concrete pattern ID.",
-				nameof(PatternId));
-		if (PatternRow < 0)
-			throw new ArgumentOutOfRangeException(nameof(PatternRow));
-		if (SequenceId.HasValue
-			&& SequenceId.Value.IsNone)
+				nameof(patternId));
+		if (patternRow < 0)
+			throw new ArgumentOutOfRangeException(nameof(patternRow));
+		if (sequenceId.HasValue
+			&& sequenceId.Value.IsNone)
 		{
 			throw new ArgumentException(
 				"A sequence context ID may not be ObjectId.None.",
-				nameof(SequenceId));
+				nameof(sequenceId));
 		}
-		if (SequenceEntryIndex.HasValue
-			&& SequenceEntryIndex.Value < 0)
+		if (sequenceEntryIndex.HasValue
+			&& sequenceEntryIndex.Value < 0)
 		{
 			throw new ArgumentOutOfRangeException(
-				nameof(SequenceEntryIndex));
+				nameof(sequenceEntryIndex));
 		}
+
+		PatternId = patternId;
+		PatternRow = patternRow;
+		SequenceId = sequenceId;
+		SequenceEntryIndex = sequenceEntryIndex;
 	}
+
+	public ObjectId PatternId { get; }
+	public int PatternRow { get; }
+	public ObjectId? SequenceId { get; }
+	public int? SequenceEntryIndex { get; }
 }
 
 public sealed record PlaybackPositionTimelineEntry(
