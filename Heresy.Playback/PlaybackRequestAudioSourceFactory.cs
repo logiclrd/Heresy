@@ -47,6 +47,14 @@ public sealed class PlaybackRequestAudioSourceFactory
 	private readonly ISampleDataProvider _sampleDataProvider;
 
 	public PlaybackRequestAudioSourceFactory(
+		RenderConfiguration configuration)
+		: this(
+			configuration,
+			new InMemorySampleDataProvider())
+	{
+	}
+
+	public PlaybackRequestAudioSourceFactory(
 		RenderConfiguration configuration,
 		ISampleDataProvider sampleDataProvider)
 	{
