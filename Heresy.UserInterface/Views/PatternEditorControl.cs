@@ -856,6 +856,41 @@ public sealed class PatternEditorControl : UserControl
 			return;
 		}
 
+		if (PatternRowMutationKeyboard.TryGet(
+			e.Key,
+			e.KeyModifiers,
+			effectField,
+			out PatternRowMutationKind rowMutation,
+			out bool allChannels))
+		{
+			bool changed =
+				PatternEditorRowMutation.Apply(
+					_workspace,
+					_context,
+					_cursor,
+					rowMutation,
+					allChannels);
+			_volumeInput.Reset();
+			if (changed)
+			{
+				PatternEditorRow current =
+					_context.GetRow(_cursor.Row);
+				_changed(
+					$"{(rowMutation == PatternRowMutationKind.Insert ? "Inserted" : "Deleted")} row data in {current.Pattern.Name} row {current.PatternRow}"
+						+ (allChannels ? " across all channels" : $", channel {_cursor.Channel + 1}"));
+				RefreshGrid();
+			}
+			else
+			{
+				_message.Text =
+					"No populated row data was shifted.";
+				RefreshCursorVisuals();
+				FocusCursorCell();
+			}
+			e.Handled = true;
+			return;
+		}
+
 		if (_cursor.Field == PatternCellField.Source)
 		{
 			if (e.Key == Key.Enter)
@@ -1631,54 +1666,56 @@ public sealed class PatternEditorControl : UserControl
 				return true;
 
 			case Key.Delete:
-				if (_cursor.Field is
+				if (_cursor.Field is not (
 					PatternCellField.EffectCommand
-					or PatternCellField.EffectParameter)
+						or PatternCellField.EffectParameter))
 				{
-					bool changed =
-						PatternEditorContextCursor.EditCurrent(
-							_context,
-							_cursor,
-							mapped =>
-								PatternEffectStackEditor.Delete(
-									_workspace,
-									mapped.Pattern,
-									_cursor));
-					FinishStackMutation(
-						row,
-						channel,
-						changed,
-						"Deleted effect");
+					return false;
 				}
+				bool deleted =
+					PatternEditorContextCursor.EditCurrent(
+						_context,
+						_cursor,
+						mapped =>
+							PatternEffectStackEditor.Delete(
+								_workspace,
+								mapped.Pattern,
+								_cursor));
+				FinishStackMutation(
+					row,
+					channel,
+					deleted,
+					"Deleted effect");
 				return true;
 
 			case Key.Insert:
-				if (_cursor.Field is
+				if (_cursor.Field is not (
 					PatternCellField.EffectCommand
-					or PatternCellField.EffectParameter)
+						or PatternCellField.EffectParameter))
 				{
-					bool changed =
-						PatternEditorContextCursor.EditCurrent(
-							_context,
-							_cursor,
-							mapped =>
-								shift
-									? PatternEffectStackEditor.InsertAfter(
-										_workspace,
-										mapped.Pattern,
-										_cursor)
-									: PatternEffectStackEditor.InsertBefore(
-										_workspace,
-										mapped.Pattern,
-										_cursor));
-					FinishStackMutation(
-						row,
-						channel,
-						changed,
-						shift
-							? "Inserted effect after"
-							: "Inserted effect before");
+					return false;
 				}
+				bool inserted =
+					PatternEditorContextCursor.EditCurrent(
+						_context,
+						_cursor,
+						mapped =>
+							shift
+								? PatternEffectStackEditor.InsertAfter(
+									_workspace,
+									mapped.Pattern,
+									_cursor)
+								: PatternEffectStackEditor.InsertBefore(
+									_workspace,
+									mapped.Pattern,
+									_cursor));
+				FinishStackMutation(
+					row,
+					channel,
+					inserted,
+					shift
+						? "Inserted effect after"
+						: "Inserted effect before");
 				return true;
 
 			case Key.Home:
