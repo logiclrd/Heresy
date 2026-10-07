@@ -63,15 +63,15 @@ public sealed class SampleImportSelectionDialog : Window
 		Button selectAll = new() { Content = "Select all" };
 		selectAll.Click += (_, _) =>
 		{
-			foreach ((_, CheckBox checkBox) in _choices)
-				checkBox.IsChecked = true;
+			foreach (var choice in _choices)
+				choice.CheckBox.IsChecked = true;
 		};
 
 		Button selectNone = new() { Content = "Select none" };
 		selectNone.Click += (_, _) =>
 		{
-			foreach ((_, CheckBox checkBox) in _choices)
-				checkBox.IsChecked = false;
+			foreach (var choice in _choices)
+				choice.CheckBox.IsChecked = false;
 		};
 
 		Button cancel = new() { Content = "Cancel", MinWidth = 84 };
