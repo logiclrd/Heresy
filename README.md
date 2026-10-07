@@ -204,7 +204,9 @@ that same physical key queues `NoteOffCommand` into the same running
 `PlaybackSession`. The operating-system Caps Lock toggle state is deliberately
 ignored. Auto-repeat does not restart a held preview, and concurrently held
 tracker keys are assigned independent preview channels so one key's release
-cannot turn off another key's note.
+cannot turn off another key's note. If the window deactivates or the pattern
+editor leaves the visual tree while notes are held, all preview voices are
+released proactively so a lost physical key-up cannot strand a sounding voice.
 
 `PlaybackSessionAudioSource` implements `ILiveAudioOutputSource`: UI/worker
 commands enter a thread-safe queue and are applied at the next audio render
