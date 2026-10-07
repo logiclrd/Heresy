@@ -791,12 +791,17 @@ public static class ScriptCompiler
 	}
 
 	private sealed class CompiledSequenceSequencer
-		: INoteSequencer
+		: IPlaybackPositionSequencer
 	{
 		private readonly Type _programType;
 		private readonly ISequencePatternResolver _resolver;
 		private readonly int _startOrder;
 		private readonly int? _startRow;
+		private readonly List<CompiledPatternPlaybackPosition>
+			_playbackPositions = [];
+
+		public IReadOnlyList<CompiledPatternPlaybackPosition>
+			PlaybackPositions => _playbackPositions;
 
 		public CompiledSequenceSequencer(
 			Type programType,
@@ -828,6 +833,7 @@ public static class ScriptCompiler
 
 			IReadOnlyList<SequenceEntry> entries =
 				program.Execute();
+			_playbackPositions.Clear();
 			SequenceNoteProcessor.GenerateNotes(
 				entries,
 				_resolver,
@@ -835,7 +841,14 @@ public static class ScriptCompiler
 				output,
 				_startOrder,
 				_startRow,
-				out duration);
+				out duration,
+				(order, patternId, patternRow, offset) =>
+					_playbackPositions.Add(
+						new CompiledPatternPlaybackPosition(
+							offset,
+							patternId,
+							patternRow,
+							order)));
 		}
 	}
 }

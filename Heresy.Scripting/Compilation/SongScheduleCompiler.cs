@@ -15,6 +15,13 @@ public sealed record CompiledPatternPlaybackPosition(
 	int PatternRow,
 	int? SequenceEntryIndex);
 
+internal interface IPlaybackPositionSequencer
+	: INoteSequencer
+{
+	IReadOnlyList<CompiledPatternPlaybackPosition>
+		PlaybackPositions { get; }
+}
+
 public sealed record SongScheduleCompilationResult(
 	NoteSchedule? Schedule,
 	TimeSpan Duration,
@@ -232,8 +239,8 @@ public static class SongScheduleCompiler
 			diagnostics)
 		{
 			PlaybackPositions =
-				sequencer is DataSequenceSequencer dataSequence
-					? dataSequence.PlaybackPositions
+				sequencer is IPlaybackPositionSequencer positioned
+					? positioned.PlaybackPositions
 					: Array.Empty<CompiledPatternPlaybackPosition>(),
 		};
 	}
@@ -332,7 +339,7 @@ public static class SongScheduleCompiler
 	}
 
 	private sealed class DataSequenceSequencer
-		: INoteSequencer
+		: IPlaybackPositionSequencer
 	{
 		private readonly DataSequenceDefinition _sequence;
 		private readonly ISequencePatternResolver _resolver;
