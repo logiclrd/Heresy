@@ -1288,7 +1288,13 @@ public sealed class MainWindow : Window
 					SetStatus(message);
 				},
 				backLabel,
-				_uiConfiguration);
+				_uiConfiguration,
+				_playbackTransport is null
+					? null
+					: schedule =>
+						_playbackTransport.PlayAdHocAsync(
+							_workspace.Document,
+							schedule));
 		_mainContent.Content = editor;
 		UpdateWindowTitle();
 		SetStatus(status);
