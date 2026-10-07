@@ -58,6 +58,21 @@ public sealed class LazySongPlaybackTransport
 			document,
 			schedule);
 
+	public Task BeginLiveAuditionAsync(
+		SongDocument document)
+		=> GetInner().BeginLiveAuditionAsync(document);
+
+	public Task StartLiveNoteAsync(
+		int voiceId,
+		StartNoteCommand command)
+		=> GetInner().StartLiveNoteAsync(
+			voiceId,
+			command);
+
+	public Task ReleaseLiveNoteAsync(
+		int voiceId)
+		=> GetInner().ReleaseLiveNoteAsync(voiceId);
+
 	public Task StopAsync()
 	{
 		lock (_gate)
