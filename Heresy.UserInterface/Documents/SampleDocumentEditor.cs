@@ -97,23 +97,25 @@ public static class SampleDocumentEditor
 		if (sample.Asset is not ExternalAssetReference asset)
 			return;
 
-		byte[] encoded =
-			Heresy.Core.Persistence.SampleAssetPersistence.ReadAllBytes(
-				asset.FullPath);
+		byte[] encoded;
+		using (Stream source =
+			ExternalAssetIntegrity.OpenRead(asset.FullPath))
+		using (MemoryStream destination = new())
+		{
+			source.CopyTo(destination);
+			encoded = destination.ToArray();
+		}
 		ExternalAssetReference refreshed =
 			asset with
 			{
 				Sha256 =
-					Heresy.Core.Persistence.SampleAssetPersistence.Hash(
-						encoded),
+					Convert.ToHexString(
+						System.Security.Cryptography.SHA256.HashData(encoded))
+						.ToLowerInvariant(),
 			};
-		SamplePcmData pcm =
-			SampleAudioCodec.Decode(
-				encoded,
-				asset.FullPath);
-		sample.SetLoadedPcm(
-			pcm,
-			refreshed);
+		sample.ReloadPersistedEncoding(
+			refreshed,
+			encoded);
 		workspace.Document.MarkChanged(affectsAudio: true);
 	}
 
