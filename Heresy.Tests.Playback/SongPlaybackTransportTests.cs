@@ -99,6 +99,56 @@ public sealed class SongPlaybackTransportTests
 		backend.OpenCount.Should().Be(1);
 	}
 
+
+	[Test]
+	public async Task LiveEventsEnsureOneSessionAndPreserveRequestedTargets()
+	{
+		SongDocument document = new();
+		LiveFactory factory = new();
+		TestBackend backend = new();
+		using SongPlaybackTransport transport =
+			new(backend, factory);
+
+		await transport.SendLiveEventAsync(
+			document,
+			ChannelTarget.Physical(3),
+			[new StartNoteCommand((ObjectId)17U)]);
+		await transport.SendLiveEventAsync(
+			document,
+			ChannelTarget.Virtual(42),
+			[new StartNoteCommand((ObjectId)18U)]);
+
+		backend.OpenCount.Should().Be(1);
+		factory.Source.Events.Should().HaveCount(2);
+		factory.Source.Events[0].Target.Should().Be(
+			ChannelTarget.Physical(3));
+		factory.Source.Events[1].Target.Should().Be(
+			ChannelTarget.Virtual(42));
+	}
+
+	[Test]
+	public async Task LiveEventAfterStopStartsFreshSession()
+	{
+		SongDocument document = new();
+		LiveFactory factory = new();
+		TestBackend backend = new();
+		using SongPlaybackTransport transport =
+			new(backend, factory);
+
+		await transport.SendLiveEventAsync(
+			document,
+			ChannelTarget.Physical(0),
+			[new StartNoteCommand((ObjectId)17U)]);
+		await transport.StopAsync();
+		await transport.SendLiveEventAsync(
+			document,
+			ChannelTarget.Physical(0),
+			[new StartNoteCommand((ObjectId)17U)]);
+
+		backend.OpenCount.Should().Be(2);
+	}
+
+
 	private sealed class LiveFactory
 		: IBackgroundPlaybackSourceFactory
 	{
