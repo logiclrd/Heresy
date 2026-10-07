@@ -708,6 +708,20 @@ public sealed class PatternEditorControl : UserControl
 			editorRow.Pattern.Grid[editorRow.PatternRow, channel];
 		(int Row, int Channel)? previouslyExpanded = _expandedCell;
 
+		if (PatternOctaveKeyboard.TryAdjust(
+			e.PhysicalKey,
+			e.KeyModifiers,
+			_noteInputState.BaseOctave,
+			out int octave))
+		{
+			_noteInputState.BaseOctave = octave;
+			_noteOctave.SelectedItem = octave;
+			_message.Text = $"Tracker octave set to {octave}.";
+			e.Handled = true;
+			FocusCursorCell();
+			return;
+		}
+
 		bool clipboardModifier =
 			(e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) != 0
 				&& (e.KeyModifiers & KeyModifiers.Alt) == 0;
