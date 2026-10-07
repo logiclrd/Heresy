@@ -139,9 +139,19 @@ preserved during implementation.
 
 ## Pattern row insertion and deletion
 
-- [ ] `Insert` / `Delete`: insert/delete rows in the current channel only.
-- [ ] `Alt+Insert` / `Alt+Delete`: insert/delete rows across the full pattern
-  width, affecting all channels.
+- [x] `Insert` / `Delete`: insert/delete row data in the current
+  channel only. Pattern length remains fixed: Insert clears the current row
+  position and shifts that channel downward, dropping data shifted past the last
+  row; Delete shifts later data upward and clears the final row position. The
+  cursor remains on the same row/field/channel. In a sequence-backed tracker the
+  displayed row maps to the underlying pattern row before the shift is applied.
+- [x] `Alt+Insert` / `Alt+Delete`: perform the same fixed-length row shift
+  across the full width of the underlying pattern. The existing effect-stack
+  shortcuts retain priority while the cursor is in an effect field:
+  Alt+Insert inserts an effect before the selected effect, Alt+Shift+Insert
+  inserts after it, and Alt+Delete removes the selected effect. Outside effect
+  fields, Alt+Insert/Delete are the full-width row operations. Shift/Ctrl/Meta
+  variants not otherwise assigned remain reserved.
 
 ## Pattern navigation
 
