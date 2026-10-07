@@ -41,7 +41,7 @@ public sealed class HeldNotePreviewKeyStateTests
 		action.Should().Be(
 			new StartHeldNotePreviewAction(
 				PhysicalKey.Z,
-				voiceId: 0,
+				VoiceId: 0,
 				PitchMultiplier: 1.0,
 				StartsSession: true));
 		state.ActiveNoteCount.Should().Be(1);
@@ -73,7 +73,7 @@ public sealed class HeldNotePreviewKeyStateTests
 			.Should().Be(
 				new ReleaseHeldNotePreviewAction(
 					PhysicalKey.S,
-					voiceId: 1));
+					VoiceId: 1));
 		state.ActiveNoteCount.Should().Be(0);
 	}
 
