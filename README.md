@@ -123,7 +123,10 @@ by offline rendering.
 
 `Heresy.Render.SDL` provides the first concrete backend. It opens SDL's default
 playback device as a native-endian F32 stream and feeds it on demand through an
-SDL audio-stream callback. SDL callback failures never escape the unmanaged
+SDL audio-stream callback. The desktop Avalonia app references this backend
+through a lazy transport wrapper, so SDL is not initialized merely by launching
+or editing in Heresy; the native audio stack is created on the first playback
+command. SDL callback failures never escape the unmanaged
 boundary: the first exception is latched in `IAudioOutputSession.Fault` and
 subsequent callback output is silence. Start/stop are explicit and idempotent,
 and disposing the backend disposes its open sessions before releasing SDL audio.
@@ -172,8 +175,24 @@ a `Bxx` encountered during F6-style pattern playback truncates that cycle and
 the repeating source begins again at row zero on the next cycle. Sample decoding
 remains outside this integration layer through `ISampleDataProvider`; the
 desktop host will choose the concrete decoder/cache alongside the SDL backend.
-The remaining transport work is UI binding plus F7 ancestor-sequence discovery,
-not schedule/audio-source construction.
+The desktop UI now binds the tracker transport keys globally:
+`F5` snapshots and plays the root sequence; `F6` plays the pattern under the
+tracker cursor repeatedly from row zero; `F7` starts at the current local
+pattern row using the closest known data-sequence context (the sequence from
+which the editor was opened wins, then the root sequence if it contains the
+pattern, then another containing data sequence, with standalone pattern playback
+as the fallback); and `F8` stops playback. The pattern editor exposes only its
+logical pattern/local-row/sequence-order cursor, leaving ancestry resolution and
+request creation outside Avalonia.
+
+Realtime sample decoding currently uses `WaveSampleDataProvider`. It reads
+RIFF/WAVE assets through `ExternalAssetIntegrity.OpenRead`, so ordinary files
+and samples stored inside consolidated `.hm` archives use the same path. PCM
+8/16/24/32-bit, IEEE float 32/64-bit, and the corresponding extensible WAVE
+subformats are converted to immutable interleaved float PCM and cached by asset
+path plus recorded hash. Authoring may already reference FLAC, MP3, OGG and AIFF
+assets, but realtime decoding for those formats is not implemented yet and
+reports a clear unsupported-WAVE error rather than silently producing audio.
 
 ## Toolchain note
 
