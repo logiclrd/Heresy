@@ -35,17 +35,17 @@ public sealed class PatternTreeNavigationTests
 				document,
 				firstNode,
 				delta: 1)
-			.Should().BeSameAs(secondNode);
-		PatternTreeNavigation.FindAdjacent(
-				document,
-				secondNode,
-				delta: 1)
 			.Should().BeSameAs(thirdNode);
 		PatternTreeNavigation.FindAdjacent(
 				document,
 				thirdNode,
-				delta: -1)
+				delta: 1)
 			.Should().BeSameAs(secondNode);
+		PatternTreeNavigation.FindAdjacent(
+				document,
+				secondNode,
+				delta: -1)
+			.Should().BeSameAs(thirdNode);
 
 		first.Id.Should().NotBe(ObjectId.None);
 		second.Id.Should().NotBe(ObjectId.None);
