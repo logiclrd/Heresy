@@ -17,6 +17,101 @@ namespace Heresy.Tests.Core;
 public sealed class AssetPersistenceTests
 {
 	[Test]
+	public void PackageLoadHydratesDecodedPcmAndDropsEncodedBytes()
+	{
+		using TempProject project = new();
+		string assetPath =
+			WritePcm16MonoWave(
+				project.Path("source", "tone.wav"),
+				sampleRate: 8000,
+				samples: [-32768, 16384]);
+		string packagePath = project.Path("song", "test.hm");
+		Directory.CreateDirectory(Path.GetDirectoryName(packagePath)!);
+		SongDocument document = DocumentWithSample(assetPath, out ObjectId sampleId);
+		SongDocumentStorage.Save(packagePath, document);
+
+		SongDocument loaded = SongDocumentStorage.Load(packagePath);
+		SampleDefinition sample = (SampleDefinition)loaded.Objects[sampleId];
+
+		Assert.That(sample.PcmData, Is.Not.Null);
+		Assert.That(sample.PcmData!.SampleRate, Is.EqualTo(8000));
+		Assert.That(sample.PcmData.ChannelCount, Is.EqualTo(1));
+		Assert.That(sample.PcmData.FrameCount, Is.EqualTo(2));
+		Assert.That(sample.PcmData.GetSample(0, 0), Is.EqualTo(-1.0f).Within(1e-6));
+		Assert.That(sample.PcmData.GetSample(1, 0), Is.EqualTo(0.5f).Within(1e-6));
+		Assert.That(sample.PendingAsset, Is.Null);
+		Assert.That(sample.Asset, Is.Not.Null);
+	}
+
+	[Test]
+	public void ImportedEncodedPayloadSurvivesSourceDeletionUntilPackageSave()
+	{
+		using TempProject project = new();
+		string sourcePath =
+			WritePcm16MonoWave(
+				project.Path("imports", "tone.wav"),
+				sampleRate: 8000,
+				samples: [8192]);
+		byte[] originalBytes = File.ReadAllBytes(sourcePath);
+		SongDocument document = new();
+		ObjectId id = document.AllocateObjectId();
+		SampleDefinition sample =
+			SampleDefinition.CreateImported(
+				id,
+				"Tone",
+				Path.GetFileName(sourcePath),
+				originalBytes);
+		document.Add(sample);
+		File.Delete(sourcePath);
+		string packagePath = project.Path("song", "test.hm");
+		Directory.CreateDirectory(Path.GetDirectoryName(packagePath)!);
+
+		SongDocumentStorage.Save(packagePath, document);
+
+		Assert.That(sample.PendingAsset, Is.Null);
+		Assert.That(sample.Asset, Is.Not.Null);
+		Assert.That(
+			sample.Asset!.FullPath,
+			Is.EqualTo(
+				HeresyModulePath.MakeSyntheticPath(
+					packagePath,
+					"pcm/tone.wav")));
+		using ZipArchive zip = ZipFile.OpenRead(packagePath);
+		using Stream stream = zip.GetEntry("pcm/tone.wav")!.Open();
+		using MemoryStream copy = new();
+		stream.CopyTo(copy);
+		Assert.That(copy.ToArray(), Is.EqualTo(originalBytes));
+	}
+
+	[Test]
+	public void SaveRejectsChangedPersistedEncodingRatherThanSilentlyUsingIt()
+	{
+		using TempProject project = new();
+		string assetPath =
+			WritePcm16MonoWave(
+				project.Path("assets", "tone.wav"),
+				sampleRate: 8000,
+				samples: [0]);
+		string jsonPath = project.Path("song", "test.hm.json");
+		Directory.CreateDirectory(Path.GetDirectoryName(jsonPath)!);
+		SongDocument document = DocumentWithSample(assetPath, out _);
+		SongDocumentStorage.Save(
+			jsonPath,
+			document,
+			JsonAssetPathMode.Absolute);
+		SongDocument loaded = SongDocumentStorage.Load(jsonPath);
+		File.WriteAllBytes(assetPath, [1, 2, 3, 4]);
+
+		Assert.That(
+			() => SongDocumentStorage.Save(
+				jsonPath,
+				loaded,
+				JsonAssetPathMode.Absolute),
+			Throws.TypeOf<InvalidOperationException>()
+				.With.Message.Contains("changed"));
+	}
+
+	[Test]
 	public void BareJsonSaveStoresRelativePathWhileDocumentKeepsFullPath()
 	{
 		using TempProject project = new();
@@ -390,6 +485,33 @@ public sealed class AssetPersistenceTests
 		using ZipArchive zip = ZipFile.OpenRead(packagePath);
 		Assert.That(zip.GetEntry("samples/odd_name.wav"), Is.Not.Null);
 		Assert.That(zip.Entries.Any(entry => entry.FullName.Contains('\\')), Is.False);
+	}
+
+	private static string WritePcm16MonoWave(
+		string path,
+		int sampleRate,
+		short[] samples)
+	{
+		Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+		using FileStream file = File.Create(path);
+		using BinaryWriter writer = new(file);
+		int dataBytes = checked(samples.Length * 2);
+		writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+		writer.Write(36 + dataBytes);
+		writer.Write(Encoding.ASCII.GetBytes("WAVE"));
+		writer.Write(Encoding.ASCII.GetBytes("fmt "));
+		writer.Write(16);
+		writer.Write((ushort)1);
+		writer.Write((ushort)1);
+		writer.Write(sampleRate);
+		writer.Write(sampleRate * 2);
+		writer.Write((ushort)2);
+		writer.Write((ushort)16);
+		writer.Write(Encoding.ASCII.GetBytes("data"));
+		writer.Write(dataBytes);
+		foreach (short sample in samples)
+			writer.Write(sample);
+		return path;
 	}
 
 	private static SongDocument DocumentWithSample(
