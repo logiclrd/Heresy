@@ -125,8 +125,16 @@ preserved during implementation.
   backward chooses the last. Ctrl+Shift and Ctrl+Alt arrow combinations remain
   available to higher-level editor commands.
 - [x] Change the current octave with physical numpad `*` / `/`. The value is clamped to the tracker octave range `0..8` and the toolbar selector stays synchronized. Ctrl/Alt/Meta-modified keypad operators are deliberately left available to higher-level commands such as chord editing.
-- [ ] Add edit masks. The default mask is Note + Instrument + Volume; `,` cycles
-  through the available mask choices.
+- [x] Add traditional tracker edit masks for Note + Source + Volume. All
+  three fields are enabled by default. `,` toggles the mask bit for the field
+  under the cursor, so every combination is possible. Entering a tracker note
+  applies only the enabled fields: Note writes the typed note, Source stamps the
+  current toolbar Source, and Volume stamps the current edit-volume value;
+  disabled fields preserve the row's existing data. The edit-volume value is
+  remembered from completed direct Volume-column entry, with `.` making that
+  value empty. Mask/edit-volume state survives standalone pattern switching.
+  Effects are not yet part of the edit mask because Heresy has no current
+  effect-value entry state to stamp.
 - [x] When focus is on the tracker Source field (the generalized Instrument
   field), Enter selects that explicitly stored source in the surrounding toolbar.
   Omitted Source cells deliberately do not resolve channel source memory for this
