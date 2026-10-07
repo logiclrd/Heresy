@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 
 using Heresy.Core.Objects;
@@ -61,6 +62,15 @@ public sealed class LazySongPlaybackTransport
 	public Task BeginLiveAuditionAsync(
 		SongDocument document)
 		=> GetInner().BeginLiveAuditionAsync(document);
+
+	public Task SendLiveEventAsync(
+		SongDocument document,
+		ChannelTarget target,
+		IReadOnlyList<NoteCommand> commands)
+		=> GetInner().SendLiveEventAsync(
+			document,
+			target,
+			commands);
 
 	public Task StartLiveNoteAsync(
 		int voiceId,
