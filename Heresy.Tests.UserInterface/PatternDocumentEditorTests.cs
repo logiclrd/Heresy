@@ -125,6 +125,130 @@ public sealed class PatternDocumentEditorTests
 	}
 
 	[Test]
+	public void InsertRowInOneChannelShiftsDownAndDropsBottomCell()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Pattern",
+				rowCount: 4,
+				channelCount: 2);
+		PatternCell moved = pattern.Grid.GetOrCreateCell(1, 0);
+		moved.Note = new PatternNoteOff();
+		PatternCell dropped = pattern.Grid.GetOrCreateCell(3, 0);
+		dropped.Note = new PatternNoteCut();
+		PatternCell untouched = pattern.Grid.GetOrCreateCell(1, 1);
+		untouched.Note = new PatternNoteCut();
+		uint audioRevision = workspace.Document.AudioRevision;
+
+		PatternDocumentEditor.InsertRow(
+			workspace,
+			pattern,
+			row: 1,
+			channel: 0);
+
+		pattern.Grid[1, 0].Should().BeNull();
+		pattern.Grid[2, 0].Should().BeSameAs(moved);
+		pattern.Grid[3, 0].Should().BeNull();
+		pattern.Grid[1, 1].Should().BeSameAs(untouched);
+		workspace.Document.AudioRevision.Should().Be(audioRevision + 1);
+	}
+
+	[Test]
+	public void DeleteRowInOneChannelShiftsUpAndClearsBottomCell()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Pattern",
+				rowCount: 4,
+				channelCount: 2);
+		PatternCell deleted = pattern.Grid.GetOrCreateCell(1, 0);
+		deleted.Note = new PatternNoteOff();
+		PatternCell moved = pattern.Grid.GetOrCreateCell(2, 0);
+		moved.Note = new PatternNoteCut();
+		PatternCell untouched = pattern.Grid.GetOrCreateCell(2, 1);
+		untouched.Note = new PatternNoteOff();
+
+		PatternDocumentEditor.DeleteRow(
+			workspace,
+			pattern,
+			row: 1,
+			channel: 0);
+
+		pattern.Grid[1, 0].Should().BeSameAs(moved);
+		pattern.Grid[2, 0].Should().BeNull();
+		pattern.Grid[3, 0].Should().BeNull();
+		pattern.Grid[2, 1].Should().BeSameAs(untouched);
+	}
+
+	[Test]
+	public void FullWidthInsertAndDeleteShiftEveryChannelTogether()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Pattern",
+				rowCount: 4,
+				channelCount: 3);
+		PatternCell[] row =
+		[
+			pattern.Grid.GetOrCreateCell(1, 0),
+			pattern.Grid.GetOrCreateCell(1, 1),
+			pattern.Grid.GetOrCreateCell(1, 2),
+		];
+		for (int channel = 0; channel < row.Length; channel++)
+			row[channel].Note = new PatternNoteOff();
+
+		PatternDocumentEditor.InsertRow(
+			workspace,
+			pattern,
+			row: 1,
+			channel: null);
+
+		for (int channel = 0; channel < row.Length; channel++)
+		{
+			pattern.Grid[1, channel].Should().BeNull();
+			pattern.Grid[2, channel].Should().BeSameAs(row[channel]);
+		}
+
+		PatternDocumentEditor.DeleteRow(
+			workspace,
+			pattern,
+			row: 1,
+			channel: null);
+
+		for (int channel = 0; channel < row.Length; channel++)
+			pattern.Grid[1, channel].Should().BeSameAs(row[channel]);
+	}
+
+	[Test]
+	public void RowShiftWithNoPopulatedCellsIsNoOp()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Pattern",
+				rowCount: 4,
+				channelCount: 2);
+		uint documentRevision = workspace.Document.DocumentRevision;
+		uint audioRevision = workspace.Document.AudioRevision;
+
+		PatternDocumentEditor.InsertRow(
+			workspace,
+			pattern,
+			row: 2,
+			channel: 1);
+
+		workspace.Document.DocumentRevision.Should().Be(documentRevision);
+		workspace.Document.AudioRevision.Should().Be(audioRevision);
+	}
+
+	[Test]
 	public void LayoutChangeMarksOneAudioRevision()
 	{
 		DocumentWorkspace workspace = new();
