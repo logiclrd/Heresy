@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 using Heresy.Render.Realtime;
 
-using SDL3;
+using SdlApi = SDL3.SDL;
 
 namespace Heresy.Render.SDL;
 
@@ -16,10 +16,10 @@ public sealed class SdlAudioOutputBackend
 
 	public SdlAudioOutputBackend()
 	{
-		if (!SDL.InitSubSystem(SDL.InitFlags.Audio))
+		if (!SdlApi.InitSubSystem(SdlApi.InitFlags.Audio))
 		{
 			throw new InvalidOperationException(
-				$"SDL audio initialization failed: {SDL.GetError()}");
+				$"SDL audio initialization failed: {SdlApi.GetError()}");
 		}
 	}
 
@@ -66,7 +66,7 @@ public sealed class SdlAudioOutputBackend
 		foreach (SdlAudioOutputSession session in sessions)
 			session.Dispose();
 
-		SDL.QuitSubSystem(SDL.InitFlags.Audio);
+		SdlApi.QuitSubSystem(SdlApi.InitFlags.Audio);
 		GC.SuppressFinalize(this);
 	}
 
