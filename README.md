@@ -12,7 +12,7 @@ The repository is intentionally split by concern.
 - `Heresy.Render` — abstract PCM generation, playback voices/channels,
   spatialization, sample rendering, effect processing and the common renderer.
 - `Heresy.Render.SDL` — SDL3-CS realtime audio-output backend implementing the common float-PCM sink contract.
-- `Heresy.Render.File` *(planned)* — FLAC, WAV and MP3 sinks.
+- `Heresy.Render.File` — deterministic offline rendering plus encoded file sinks. The first concrete sink writes streaming 16-bit PCM RIFF/WAVE; FLAC and MP3 remain planned.
 - `Heresy.UserInterface` — Avalonia single-document tracker UI. The current
   document view projects the four fixed song-tree sections into Sequences,
   Patterns, Samples and Instruments panes, with sample import/editing, external-
@@ -111,6 +111,27 @@ relative to its current filename:
   replacement files or directories instead.
 
 The current persisted schema is format version **1**. During initial pre-release buildout, breaking schema changes intentionally remain version 1 because there are no real-world Heresy documents to migrate yet. Format-version bumps and migrations will begin once the format is in actual use.
+
+## Offline file rendering boundary
+
+`Heresy.Render.File` is the file-output sibling of the SDL realtime backend.
+`OfflinePlaybackRenderer` consumes the same sequential `PlaybackSession` used
+for realtime rendering and writes it through `IAudioFileSink`. The logical song
+duration is always rendered in full, including silence. At that boundary the
+session receives an explicit end-of-input transition: every still-active voice
+receives Note Off, deterministic sound/envelope/fade releases are allowed to
+finish, and anti-click residue is drained. A post-Note-Off voice with no
+deterministic finite end is rejected with `IndefiniteOfflineRenderException`
+rather than being silently truncated after an arbitrary timeout.
+
+`WaveFileSink` is the first encoded sink. It writes canonical little-endian
+16-bit integer PCM RIFF/WAVE incrementally, clamps finite float PCM into the
+signed 16-bit range, rejects non-finite samples, and patches RIFF/data sizes on
+completion. It deliberately targets classic RIFF (not RF64), so data beyond the
+4-GiB RIFF limit is rejected explicitly. FLAC/MP3 sinks remain separate follow-on
+work; the current managed codec package exposes whole-buffer encode facades, and
+the file-render boundary will not conceal whole-song RAM buffering behind its
+streaming sink contract.
 
 ## Realtime audio boundary
 
