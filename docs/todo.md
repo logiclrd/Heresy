@@ -37,13 +37,15 @@ preserved during implementation.
   representations remain encoded on disk/pending-save as appropriate, but every
   loaded playable sample is immutable float PCM in memory before realtime
   playback can begin. No decoder is invoked by `Heresy.Playback`.
-- [ ] Let the Samples pane import samples from another `.hm` or
-  `.hm.json` song. Enumerate the source song's sample objects and let the user
-  choose one or more. Import creates new sample objects in the current song,
-  copying the sample metadata and decoded PCM and retaining the selected
-  sample's encoded representation as a pending payload until the current song
-  is saved. It must not retain an Asset/path dependency on the source song or
-  module.
+- [x] Let the Samples pane import samples from another `.hm` or
+  `.hm.json` song. The ordinary Samples import picker accepts Heresy songs,
+  loads/hydrates the source document through the normal persistence layer, and
+  presents its sample objects in a multi-selection dialog. Each selected sample
+  becomes a new object in the current song with copied metadata, shared
+  immutable decoded PCM, and an owned pending copy of the exact encoded
+  representation. No Asset/path dependency on the source song or module is
+  retained, so the source can disappear immediately after import; the pending
+  encoding is released normally after the current song saves its own copy.
 - [x] Add tracker transport controls on top of the background playback thread and concrete snapshot-to-PCM source factory:
   - `F5`: play the song root from the beginning.
   - `F6`: play the current tracker pattern repeatedly from row zero. Standalone
