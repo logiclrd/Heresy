@@ -19,7 +19,10 @@ public sealed class PatternVolumeInputState
 public readonly record struct PatternVolumeInputResult(
 	bool Handled,
 	bool Changed,
-	bool Rejected);
+	bool Rejected)
+{
+	public bool Completed { get; init; }
+}
 
 public static class PatternVolumeKeyboardEditor
 {
@@ -50,7 +53,10 @@ public static class PatternVolumeKeyboardEditor
 				null);
 			state.Reset();
 			cursor.AdvanceAfterCollapsedEntry(pattern.RowCount);
-			return new PatternVolumeInputResult(true, cleared, false);
+			return new PatternVolumeInputResult(true, cleared, false)
+			{
+				Completed = true,
+			};
 		}
 
 		if (value is < '0' or > '9')
@@ -86,6 +92,9 @@ public static class PatternVolumeKeyboardEditor
 			cursor.Channel,
 			volume);
 		cursor.AdvanceAfterCollapsedEntry(pattern.RowCount);
-		return new PatternVolumeInputResult(true, changed, false);
+		return new PatternVolumeInputResult(true, changed, false)
+		{
+			Completed = true,
+		};
 	}
 }
