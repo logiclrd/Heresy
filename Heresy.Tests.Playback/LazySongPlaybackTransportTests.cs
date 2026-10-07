@@ -90,6 +90,19 @@ public sealed class LazySongPlaybackTransportTests
 			NoteSchedule schedule)
 			=> Task.CompletedTask;
 
+		public Task BeginLiveAuditionAsync(
+			SongDocument document)
+			=> Task.CompletedTask;
+
+		public Task StartLiveNoteAsync(
+			int voiceId,
+			StartNoteCommand command)
+			=> Task.CompletedTask;
+
+		public Task ReleaseLiveNoteAsync(
+			int voiceId)
+			=> Task.CompletedTask;
+
 		public Task StopAsync()
 		{
 			StopCalls++;
