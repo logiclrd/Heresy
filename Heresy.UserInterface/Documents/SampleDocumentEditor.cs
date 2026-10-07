@@ -163,6 +163,19 @@ public static class SampleDocumentEditor
 			throw new ArgumentOutOfRangeException(nameof(referenceFrequencyHz));
 		}
 
+		if (loop.Mode != SampleLoopMode.None
+			&& sample.PcmData is SamplePcmData pcm)
+		{
+			if (pcm.FrameCount == 0
+				|| loop.StartFrame >= pcm.FrameCount
+				|| loop.EndFrameExclusive > pcm.FrameCount)
+			{
+				throw new ArgumentException(
+					"An active sample loop must lie entirely within the decoded sample PCM.",
+					nameof(loop));
+			}
+		}
+
 		if (sample.ReferenceFrequencyHz == referenceFrequencyHz
 			&& sample.Loop == loop)
 		{
