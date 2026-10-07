@@ -131,6 +131,38 @@ public static class PatternDocumentEditor
 		workspace.Document.MarkChanged(affectsAudio: true);
 	}
 
+	public static bool InsertRow(
+		DocumentWorkspace workspace,
+		DataPatternDefinition pattern,
+		int row,
+		int? channel)
+	{
+		ValidatePattern(workspace, pattern);
+		bool changed =
+			pattern.Grid.InsertRow(
+				row,
+				channel);
+		if (changed)
+			workspace.Document.MarkChanged(affectsAudio: true);
+		return changed;
+	}
+
+	public static bool DeleteRow(
+		DocumentWorkspace workspace,
+		DataPatternDefinition pattern,
+		int row,
+		int? channel)
+	{
+		ValidatePattern(workspace, pattern);
+		bool changed =
+			pattern.Grid.DeleteRow(
+				row,
+				channel);
+		if (changed)
+			workspace.Document.MarkChanged(affectsAudio: true);
+		return changed;
+	}
+
 	public static void UpdateLayout(
 		DocumentWorkspace workspace,
 		DataPatternDefinition pattern,
