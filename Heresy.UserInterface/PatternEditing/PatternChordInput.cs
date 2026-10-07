@@ -108,9 +108,15 @@ public sealed class PatternChordInputState
 		else
 		{
 			nextPitchClass =
-				baseIntervals.First(
-					value => value > pitchClass,
-					baseIntervals[0]);
+				baseIntervals[0];
+			foreach (int interval in baseIntervals)
+			{
+				if (interval > pitchClass)
+				{
+					nextPitchClass = interval;
+					break;
+				}
+			}
 		}
 
 		int candidate =
