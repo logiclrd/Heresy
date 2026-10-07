@@ -343,6 +343,11 @@ public sealed class PlaybackVoice
 		_filterEnvelope?.NoteOff(absoluteFrame);
 	}
 
+	internal long? GetVolumeEnvelopeEndFrameExclusiveAfterNoteOff(
+		long absoluteFrame)
+		=> _volumeEnvelope?.GetEndFrameExclusiveAfterNoteOff(
+			absoluteFrame);
+
 	internal void SetEnvelopeEnabled(
 		EnvelopeTarget target,
 		long absoluteFrame,

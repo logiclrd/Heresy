@@ -65,6 +65,39 @@ public sealed class EnvelopePlaybackState
 		return value;
 	}
 
+	public long? GetEndFrameExclusiveAfterNoteOff(
+		long absoluteFrame)
+	{
+		if (absoluteFrame < _startFrame)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		if (!_noteOffActiveFrame.HasValue)
+			return null;
+
+		long activeFrame =
+			GetActiveFrame(absoluteFrame);
+		Observe(
+			absoluteFrame,
+			activeFrame);
+
+		if (!Enabled)
+			return null;
+
+		long? activeEnd =
+			_curve.GetEndActiveFrameExclusiveAfterNoteOff(
+				_noteOffActiveFrame.Value,
+				_sampleRate);
+		if (!activeEnd.HasValue)
+			return null;
+
+		long remaining =
+			Math.Max(
+				0,
+				activeEnd.Value - activeFrame);
+		return checked(
+			absoluteFrame
+				+ remaining);
+	}
+
 	public void SetEnabled(long absoluteFrame, bool enabled)
 	{
 		EnsureChronologicalMutation(absoluteFrame);

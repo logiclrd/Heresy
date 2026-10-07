@@ -37,6 +37,24 @@ public sealed class AdsrEnvelopeCurve : IEnvelopeCurve
 		_release = definition.Release;
 	}
 
+	public long? GetEndActiveFrameExclusiveAfterNoteOff(
+		long noteOffActiveFrame,
+		int sampleRate)
+	{
+		if (noteOffActiveFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(noteOffActiveFrame));
+		if (sampleRate <= 0)
+			throw new ArgumentOutOfRangeException(nameof(sampleRate));
+
+		long releaseFrames =
+			Heresy.Render.Timing.FrameTime.Ceiling(
+				_release,
+				sampleRate);
+		return checked(
+			noteOffActiveFrame
+				+ releaseFrames);
+	}
+
 	public double GetValue(
 		long activeFrame,
 		int sampleRate,

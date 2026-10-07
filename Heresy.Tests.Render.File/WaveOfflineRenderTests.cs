@@ -13,6 +13,7 @@ using Heresy.Render.Configuration;
 using Heresy.Render.Envelopes;
 using Heresy.Render.File;
 using Heresy.Render.Playback;
+using Heresy.Render.Realtime;
 using Heresy.Render.Sounds;
 
 using NUnit.Framework;
@@ -100,7 +101,8 @@ public sealed class WaveOfflineRenderTests
 		InfiniteSound sound =
 			new(
 				new NoteConfigurationSnapshot(
-					Envelopes:
+					NewNotePolicy.Cut,
+					envelopes:
 						new EnvelopeConfigurationSnapshot(
 							Volume:
 								new AdsrEnvelopeCurve(

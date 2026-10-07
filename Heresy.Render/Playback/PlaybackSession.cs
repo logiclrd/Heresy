@@ -46,6 +46,7 @@ public sealed class PlaybackSession
 	private double _tempo = SequencingConstants.DefaultTempo;
 	private int _speed = SequencingConstants.DefaultSpeed;
 	private double _globalVolume = 1.0;
+	private bool _inputEnded;
 
 	public PlaybackSession(
 		RenderContext context,
@@ -69,6 +70,85 @@ public sealed class PlaybackSession
 	public double GlobalVolume => _globalVolume;
 
 	public int ActiveGlobalOperatorCount => _globalOperators.Count;
+
+
+	public bool InputEnded => _inputEnded;
+
+	public bool IsQuiescent
+	{
+		get
+		{
+			if (!_inputEnded
+				|| _nextEventIndex < _schedule.Count
+				|| _virtualVoices.Count != 0)
+			{
+				return false;
+			}
+
+			foreach (PlaybackChannelState channel in _channels.Values)
+			{
+				if (channel.CurrentVoice is not null
+					|| channel.AntiClickTail.IsActive)
+				{
+					return false;
+				}
+			}
+
+			foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+			{
+				if (channel.CurrentVoice is not null
+					|| channel.AntiClickTail.IsActive)
+				{
+					return false;
+				}
+			}
+
+			return true;
+		}
+	}
+
+	public bool HasIndefiniteActiveVoices
+	{
+		get
+		{
+			if (!_inputEnded)
+				return false;
+
+			foreach (PlaybackChannelState channel in _channels.Values)
+			{
+				if (channel.CurrentVoice is PlaybackVoice voice
+					&& !GetEffectiveVoiceEndFrameExclusive(
+						voice,
+						_nextFrame).HasValue)
+				{
+					return true;
+				}
+			}
+
+			foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+			{
+				if (channel.CurrentVoice is PlaybackVoice voice
+					&& !GetEffectiveVoiceEndFrameExclusive(
+						voice,
+						_nextFrame).HasValue)
+				{
+					return true;
+				}
+			}
+
+			foreach (PlaybackVoice voice in _virtualVoices)
+			{
+				if (!GetEffectiveVoiceEndFrameExclusive(
+					voice,
+					_nextFrame).HasValue)
+				{
+					return true;
+				}
+			}
+
+			return false;
+		}
+	}
 
 
 	public double BaselineTempo => _tempo;
@@ -138,6 +218,48 @@ public sealed class PlaybackSession
 		}
 
 		return state;
+	}
+
+	public void EndInput()
+	{
+		if (_inputEnded)
+			return;
+
+		ProcessEventsThrough(_nextFrame);
+		if (_nextEventIndex < _schedule.Count)
+		{
+			throw new InvalidOperationException(
+				"Playback input cannot end before every scheduled event has been reached.");
+		}
+
+		foreach (PlaybackChannelState channel in _channels.Values)
+		{
+			channel.CurrentVoice?.ApplyNoteOff(
+				_nextFrame,
+				_context.Configuration.SampleRate);
+			CullFinishedCurrentVoice(
+				channel,
+				_nextFrame);
+		}
+
+		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+		{
+			channel.CurrentVoice?.ApplyNoteOff(
+				_nextFrame,
+				_context.Configuration.SampleRate);
+			CullFinishedCurrentVoice(
+				channel,
+				_nextFrame);
+		}
+
+		foreach (PlaybackVoice voice in _virtualVoices)
+		{
+			voice.ApplyNoteOff(
+				_nextFrame,
+				_context.Configuration.SampleRate);
+		}
+
+		_inputEnded = true;
 	}
 
 	public void ApplyLiveEvent(
@@ -1438,20 +1560,10 @@ public sealed class PlaybackSession
 		long invocationStartFrame = absoluteStartFrame - voice.StartFrame;
 		if (invocationStartFrame < 0)
 			throw new InvalidOperationException("A playback voice began after the segment being rendered.");
-long? soundEndRelative = voice.Sound.GetEndFrameExclusive(
-			_context,
-			voice.SoundState);
-
-		long? effectiveEndAbsolute = soundEndRelative.HasValue
-			? AddSaturating(voice.StartFrame, soundEndRelative.Value)
-			: null;
-
-		if (voice.FadeEndFrameExclusive.HasValue)
-		{
-			effectiveEndAbsolute = effectiveEndAbsolute.HasValue
-				? Math.Min(effectiveEndAbsolute.Value, voice.FadeEndFrameExclusive.Value)
-				: voice.FadeEndFrameExclusive.Value;
-		}
+		long? effectiveEndAbsolute =
+			GetEffectiveVoiceEndFrameExclusive(
+				voice,
+				absoluteStartFrame);
 
 		if (effectiveEndAbsolute.HasValue
 			&& absoluteStartFrame >= effectiveEndAbsolute.Value)
@@ -1531,6 +1643,47 @@ long? soundEndRelative = voice.Sound.GetEndFrameExclusive(
 
 		return effectiveEndAbsolute.HasValue
 			&& absoluteStartFrame + activeFrames >= effectiveEndAbsolute.Value;
+	}
+
+	private long? GetEffectiveVoiceEndFrameExclusive(
+		PlaybackVoice voice,
+		long absoluteFrame)
+	{
+		long? soundEndRelative =
+			voice.Sound.GetEndFrameExclusive(
+				_context,
+				voice.SoundState);
+		long? effectiveEndAbsolute =
+			soundEndRelative.HasValue
+				? AddSaturating(
+					voice.StartFrame,
+					soundEndRelative.Value)
+				: null;
+
+		if (voice.FadeEndFrameExclusive.HasValue)
+		{
+			effectiveEndAbsolute =
+				effectiveEndAbsolute.HasValue
+					? Math.Min(
+						effectiveEndAbsolute.Value,
+						voice.FadeEndFrameExclusive.Value)
+					: voice.FadeEndFrameExclusive.Value;
+		}
+
+		long? envelopeEnd =
+			voice.GetVolumeEnvelopeEndFrameExclusiveAfterNoteOff(
+				absoluteFrame);
+		if (envelopeEnd.HasValue)
+		{
+			effectiveEndAbsolute =
+				effectiveEndAbsolute.HasValue
+					? Math.Min(
+						effectiveEndAbsolute.Value,
+						envelopeEnd.Value)
+					: envelopeEnd.Value;
+		}
+
+		return effectiveEndAbsolute;
 	}
 
 	private void CullFinishedCurrentVoice(
