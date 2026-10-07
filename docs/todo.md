@@ -145,8 +145,11 @@ preserved during implementation.
 
 ## Pattern navigation
 
-- [ ] `Alt+Left` / `Alt+Right`: move to the same field in the adjacent channel
-  in one step.
+- [x] `Alt+Left` / `Alt+Right`: move to the same field in the adjacent channel
+  in one step, clamping at the first/last channel. In sequence-backed views the
+  current pattern occurrence's channel count is used. Expanded effect strips keep
+  their existing Alt+Left/Right effect-reordering behavior; whole-channel movement
+  applies when the tracker field is collapsed.
 - [ ] `Home` / `End`:
   - normally move to the first/last field of the current cell;
   - if already at that edge field, move to the first/last channel while staying
