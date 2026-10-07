@@ -345,7 +345,9 @@ public static class SongDocumentJson
 					new JsonObject
 					{
 						["path"] = assetPathSelector(sample),
-						["sha256"] = sample.Asset?.Sha256,
+						["sha256"] =
+							sample.Asset?.Sha256
+								?? sample.PendingAsset?.Sha256,
 					};
 				result["referenceFrequencyHz"] = sample.ReferenceFrequencyHz;
 				result["loop"] =
