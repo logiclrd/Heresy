@@ -7,6 +7,7 @@ using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequencing;
 using Heresy.Playback;
+using Heresy.Render.Realtime;
 
 using NUnit.Framework;
 
@@ -151,6 +152,90 @@ public sealed class PatternAuditionCompilerTests
 		vibrato.Speed.Should().Be(3);
 		vibrato.Depth.Should().Be(4);
 	}
+
+
+	[Test]
+	public void EnteredStartNoteTargetsPhysicalChannelAndReleasesPriorEditVoice()
+	{
+		ObjectId sourceId = (ObjectId)17U;
+		DataPatternDefinition pattern =
+			new((ObjectId)1U, "Pattern")
+			{
+				RowCount = 1,
+				ChannelCount = 3,
+			};
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 2);
+		cell.SourceId = sourceId;
+		cell.Note = new StartPatternNote();
+
+		LivePlaybackEvent? liveEvent =
+			PatternLiveEventCompiler.CompileEnteredNote(
+				pattern,
+				row: 0,
+				channel: 2);
+
+		liveEvent.Should().NotBeNull();
+		liveEvent!.Target.Should().Be(
+			ChannelTarget.Physical(2));
+		liveEvent.Commands.Should().Equal(
+			new NoteOffCommand(),
+			new StartNoteCommand(sourceId));
+	}
+
+	[Test]
+	public void EnteredNoteOffDoesNotAddASecondRelease()
+	{
+		DataPatternDefinition pattern =
+			new((ObjectId)1U, "Pattern")
+			{
+				RowCount = 1,
+				ChannelCount = 1,
+			};
+		pattern.Grid.GetOrCreateCell(0, 0).Note =
+			new PatternNoteOff();
+
+		LivePlaybackEvent? liveEvent =
+			PatternLiveEventCompiler.CompileEnteredNote(
+				pattern,
+				row: 0,
+				channel: 0);
+
+		liveEvent.Should().NotBeNull();
+		liveEvent!.Commands.Should().ContainSingle()
+			.Which.Should().BeOfType<NoteOffCommand>();
+	}
+
+	[Test]
+	public void HeldPreviewTargetsRequestedVirtualChannel()
+	{
+		ObjectId sourceId = (ObjectId)17U;
+		DataPatternDefinition pattern =
+			new((ObjectId)1U, "Pattern")
+			{
+				RowCount = 1,
+				ChannelCount = 1,
+			};
+		pattern.Grid.GetOrCreateCell(0, 0).SourceId =
+			sourceId;
+
+		LivePlaybackEvent? liveEvent =
+			PatternLiveEventCompiler.CompileHeldPreviewStart(
+				pattern,
+				row: 0,
+				channel: 0,
+				virtualChannelId: 42,
+				pitchMultiplier: 2.0);
+
+		liveEvent.Should().NotBeNull();
+		liveEvent!.Target.Should().Be(
+			ChannelTarget.Virtual(42));
+		liveEvent.Commands.Should().ContainSingle()
+			.Which.Should().Be(
+				new StartNoteCommand(
+					sourceId,
+					PitchMultiplier: 2.0));
+	}
+
 
 	[Test]
 	public void AuditionRejectsCoordinatesOutsidePattern()
