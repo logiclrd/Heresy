@@ -371,6 +371,11 @@ preserved during implementation.
   separately, `SongDocumentSnapshot` deep-clones both through persistence, FM
   envelope-node ObjectIds participate in reference/tombstone analysis, and FM
   tombstones round-trip with their own kind.
+- [x] Treat persistent FM synths as ordinary tracker sound Sources. They are
+  included in the Source catalog alongside sample-like objects, and
+  `PlaybackRequestAudioSourceFactory` resolves an FM object from the immutable
+  playback snapshot to `FmSynthSound`, reusing the same snapshot envelope
+  resolver as instrument playback for FM envelope nodes.
 - [ ] Editor for FM-synthesized instrument specifications that allows the graph to
   be edited and configured using the mouse to drag nodes around. The connections
   between nodes automatically form from orthogonal segments that make a best effort
