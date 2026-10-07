@@ -133,7 +133,7 @@ public sealed class FmEnvelopeNode : FmSynthNode
 
 public sealed class FmOperatorNode : FmSynthNode
 {
-	private readonly int[] _inputs;
+	private readonly IReadOnlyList<int> _inputs;
 
 	public FmOperatorNode(
 		int id,
