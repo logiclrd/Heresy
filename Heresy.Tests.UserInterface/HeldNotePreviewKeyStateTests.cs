@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 
 using AwesomeAssertions;
 
@@ -76,6 +77,33 @@ public sealed class HeldNotePreviewKeyStateTests
 					VoiceId: 1));
 		state.ActiveNoteCount.Should().Be(0);
 	}
+
+
+	[Test]
+	public void ReleaseAllStopsEveryHeldVoiceAndClearsModifierState()
+	{
+		HeldNotePreviewKeyState state = new();
+		state.KeyDown(PhysicalKey.CapsLock, 4);
+		state.KeyDown(PhysicalKey.Z, 4);
+		state.KeyDown(PhysicalKey.X, 4);
+
+		ReleaseHeldNotePreviewAction[] releases =
+			state.ReleaseAll()
+				.OrderBy(action => action.VoiceId)
+				.ToArray();
+
+		releases.Should().Equal(
+			new ReleaseHeldNotePreviewAction(
+				PhysicalKey.Z,
+				VoiceId: 0),
+			new ReleaseHeldNotePreviewAction(
+				PhysicalKey.X,
+				VoiceId: 2));
+		state.ActiveNoteCount.Should().Be(0);
+		state.CapsLockHeld.Should().BeFalse();
+		state.KeyUp(PhysicalKey.Z).Should().BeNull();
+	}
+
 
 	[Test]
 	public void AdditionalHeldKeyUsesSameLiveSessionAndIndependentVoice()
