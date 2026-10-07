@@ -23,9 +23,9 @@ public sealed class PatternRegionClipboardTests
 	{
 		PatternRegionClipboardData data =
 			new(
-				RowCount: 2,
-				ChannelCount: 2,
-				Cells:
+				rowCount: 2,
+				channelCount: 2,
+				cells:
 				[
 					new PatternRegionClipboardCell(
 						0,
