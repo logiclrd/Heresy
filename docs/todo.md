@@ -25,8 +25,21 @@ preserved during implementation.
   the other direction. Active loop metadata is now rejected at authoring time
   if it lies outside the decoded PCM, matching the renderer's existing
   invariant.
-- [ ] Add a loop assistant that searches for a natural loop boundary that avoids
-  audible clicking.
+- [x] Add a loop assistant that searches near the current handles for natural
+  boundaries that reduce audible loop discontinuities. Forward loops score the
+  actual wrap seam across every source channel using both sample-value jump and
+  slope mismatch; ping-pong loops instead seek locally flat turning points
+  because playback reverses direction at each endpoint rather than wrapping
+  end-to-start. The search uses bounded coordinate descent in both start/end
+  orders, so its work grows linearly with the chosen search radius instead of
+  trying every start/end pair. The Sample editor exposes an adjustable
+  millisecond radius (20 ms by default) and **Find natural loop** updates only
+  the waveform and numeric fields as a suggestion, reporting the estimated
+  discontinuity improvement. The document remains unchanged until **Apply** is
+  pressed. Search windows clamp to decoded PCM, all source channels participate,
+  non-finite candidate samples are rejected, equal-quality candidates prefer the
+  smallest movement from the user's existing loop, and existing out-of-range
+  handles are normalized before searching.
 
 ## Realtime audio and playback architecture
 
