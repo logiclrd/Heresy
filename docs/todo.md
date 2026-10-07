@@ -59,12 +59,24 @@ preserved during implementation.
   pressing a tracker piano key (`Z S X D C ...`) previews the corresponding
   note without assigning it. Caps Lock acts as a momentary preview modifier; its
   toggled/locking state is irrelevant. Each held tracker key owns an independent
-  live preview voice, repeated key-down events do not retrigger it, and releasing
-  that same physical tracker key sends Note Off even if Caps Lock was released
-  first. Window deactivation/editor detachment releases every still-held preview
-  voice as a safety net for lost key-up events. Preview pitch follows the current
-  tracker octave and source resolution is primed from earlier pattern rows just
-  like ordinary note sequencing.
+  explicitly targeted virtual channel, repeated key-down events do not retrigger
+  it, and releasing that same physical tracker key sends Note Off to that virtual
+  channel even if Caps Lock was released first. Window deactivation/editor
+  detachment releases every still-held preview voice as a safety net for lost
+  key-up events. Preview pitch follows the current tracker octave and source
+  resolution is primed from earlier pattern rows just like ordinary note
+  sequencing.
+- [x] Tracker note entry also feeds the live editing session. Entered notes use
+  their real physical tracker channel and are not tied to key-up: they remain
+  active until another entered note on that channel displaces the old voice with
+  Note Off semantics, an explicit tracker Note Off/Cut is entered, or F8 stops
+  the session. Separate tracker channels therefore remain independently
+  polyphonic while composing. Held Caps-Lock previews share the same live
+  PlaybackSession but use virtual-channel targets, so previews never steal the
+  persistent edit voice on a physical tracker channel. The transport lazily
+  creates this live session from a fresh immutable document snapshot and reuses
+  it for subsequent edit/preview events until another transport request or F8
+  replaces/stops it.
 
 ## Pattern/object switching and editor state
 
