@@ -233,6 +233,30 @@ public sealed class PatternChordInputTests
 	}
 
 	[Test]
+	public void ChordStateSnapshotPreservesVoicingRootAndEnableMask()
+	{
+		PatternChordInputState original = new();
+		original.Select(PatternChordType.Major);
+		original.AddTone();
+		original.RotateFirstToEnd();
+		original.ToggleTone(1);
+		original.SetRoot(2);
+
+		PatternChordInputSnapshot snapshot =
+			original.CreateSnapshot();
+		PatternChordInputState restored = new();
+		restored.Restore(snapshot);
+
+		restored.Type.Should().Be(PatternChordType.Major);
+		restored.ToneOffsets.Should().Equal(4, 7, 12, 16);
+		restored.EnabledTones.Should().Equal(true, false, true, true);
+		restored.RootRelativeSemitone.Should().Be(2);
+		restored.GetStatusTones()
+			.Select(tone => tone.NoteText)
+			.Should().Equal("F#4", "A-4", "D-5", "F#5");
+	}
+
+	[Test]
 	public void EnterChordWritesEnabledTonesAcrossSuccessiveChannelsAndAdvancesOneRow()
 	{
 		DocumentWorkspace workspace = new();
