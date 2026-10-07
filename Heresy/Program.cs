@@ -1,9 +1,18 @@
-﻿using System;
+using System;
 
-class Program
+using Avalonia;
+
+namespace Heresy;
+
+internal static class Program
 {
-	static void Main()
-	{
-		Console.WriteLine("Hello, World!");
-	}
+	[STAThread]
+	public static int Main(string[] args)
+		=> BuildAvaloniaApp()
+			.StartWithClassicDesktopLifetime(args);
+
+	public static AppBuilder BuildAvaloniaApp()
+		=> AppBuilder
+			.Configure<App>()
+			.UsePlatformDetect();
 }
