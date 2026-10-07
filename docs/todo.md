@@ -86,7 +86,7 @@ preserved during implementation.
   - Otherwise follow the same ordering as the tree used to open the editor.
 - [ ] Switch between instruments with `<` / `>` and `Ctrl+Up` / `Ctrl+Down`,
   following the order in which instruments are presented in the drop-down.
-- [ ] Change the current octave with numpad `*` / `/`.
+- [x] Change the current octave with physical numpad `*` / `/`. The value is clamped to the tracker octave range `0..8` and the toolbar selector stays synchronized. Ctrl/Alt/Meta-modified keypad operators are deliberately left available to higher-level commands such as chord editing.
 - [ ] Add edit masks. The default mask is Note + Instrument + Volume; `,` cycles
   through the available mask choices.
 - [ ] When focus is on the Instrument field for a note, Enter selects that
