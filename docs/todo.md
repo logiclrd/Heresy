@@ -19,7 +19,19 @@ preserved during implementation.
   interleaved-float PCM contracts and `Heresy.Render.SDL` provides the SDL3-CS
   default-playback implementation. Desktop transport wiring is now in place and
   SDL initialization is deferred until first playback.
-- [ ] Add realtime decoders for the other sample formats accepted by the authoring UI (FLAC, MP3, OGG and AIFF). Current realtime playback decodes RIFF/WAVE PCM and IEEE-float assets, including synthetic `.hm` archive paths.
+- [ ] Rework sample storage around the load/import-time PCM model in
+  `docs/sample-storage.md`. The live song and playback snapshots must own
+  decoded PCM; realtime rendering must never open files/ZIP entries or run an
+  audio decoder. Loading a song decodes its persisted sample assets up front.
+  Importing an external file or a sample from another Heresy module copies and
+  decodes it immediately, retaining encoded bytes only until the current song
+  successfully saves its own copy. Persisted encoded copies are subsequently
+  referenced only as save-time provenance and are verified by signature before
+  reuse.
+- [ ] Add load/import-time codecs for FLAC, MP3, OGG and AIFF alongside WAVE.
+  Compressed representations may remain compressed on disk, but every loaded
+  playable sample is plain decoded PCM in memory before realtime playback can
+  begin.
 - [x] Add tracker transport controls on top of the background playback thread and concrete snapshot-to-PCM source factory:
   - `F5`: play the song root from the beginning.
   - `F6`: play the current tracker pattern repeatedly from row zero. Standalone
