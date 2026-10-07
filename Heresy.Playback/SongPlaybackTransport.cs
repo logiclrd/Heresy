@@ -28,6 +28,16 @@ public interface ISongPlaybackTransport
 		SongDocument document,
 		NoteSchedule schedule);
 
+	Task BeginLiveAuditionAsync(
+		SongDocument document);
+
+	Task StartLiveNoteAsync(
+		int voiceId,
+		StartNoteCommand command);
+
+	Task ReleaseLiveNoteAsync(
+		int voiceId);
+
 	Task StopAsync();
 }
 
@@ -92,6 +102,41 @@ public sealed class SongPlaybackTransport
 			AdHocPlaybackRequest.Create(
 				document,
 				schedule));
+
+	public Task BeginLiveAuditionAsync(
+		SongDocument document)
+	{
+		ArgumentNullException.ThrowIfNull(document);
+
+		return _controller.PlayAsync(
+			AdHocPlaybackRequest.Create(
+				document,
+				new NoteScheduleBuilder().Freeze()));
+	}
+
+	public Task StartLiveNoteAsync(
+		int voiceId,
+		StartNoteCommand command)
+	{
+		if (voiceId < 0)
+			throw new ArgumentOutOfRangeException(nameof(voiceId));
+		ArgumentNullException.ThrowIfNull(command);
+
+		return _controller.SendLiveEventAsync(
+			ChannelTarget.Physical(voiceId),
+			[command]);
+	}
+
+	public Task ReleaseLiveNoteAsync(
+		int voiceId)
+	{
+		if (voiceId < 0)
+			throw new ArgumentOutOfRangeException(nameof(voiceId));
+
+		return _controller.SendLiveEventAsync(
+			ChannelTarget.Physical(voiceId),
+			[new NoteOffCommand()]);
+	}
 
 	public Task StopAsync()
 		=> _controller.StopAsync();
