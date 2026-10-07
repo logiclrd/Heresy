@@ -992,10 +992,15 @@ public sealed class PatternEditorControl : UserControl
 				firstRow
 					? PatternEditorContextCursor.MoveToFirstRow(_context, _cursor)
 					: PatternEditorContextCursor.MoveToLastRow(_context, _cursor);
-			if (!moved && !_context.IsSequence)
-				SwitchStandalonePatternBoundary(firstRow);
+			bool switched =
+				!moved
+					&& !_context.IsSequence
+					&& SwitchStandalonePatternBoundary(firstRow);
 
 			e.Handled = true;
+			if (switched)
+				return;
+
 			UpdateCurrentPatternControls();
 			RefreshCursorVisuals();
 			FocusCursorCell();
@@ -1443,17 +1448,15 @@ public sealed class PatternEditorControl : UserControl
 		e.Handled = true;
 	}
 
-	private void SwitchStandalonePatternBoundary(
+	private bool SwitchStandalonePatternBoundary(
 		bool firstRow)
 	{
 		if (_switchPattern is null
 			|| _context.Rows.Count == 0)
 		{
-			return;
+			return false;
 		}
 
-		PatternEditorRow currentRow =
-			_context.GetRow(_cursor.Row);
 		_switchPattern(
 			new PatternEditorSwitchRequest(
 				firstRow ? -1 : 1,
@@ -1463,6 +1466,7 @@ public sealed class PatternEditorControl : UserControl
 					firstRow ? 0 : int.MaxValue,
 					_cursor.Channel,
 					_cursor.Field)));
+		return true;
 	}
 
 	private void SwitchPattern(
