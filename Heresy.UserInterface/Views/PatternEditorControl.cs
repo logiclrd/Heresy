@@ -78,6 +78,7 @@ public sealed class PatternEditorControl : UserControl
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _volumeTexts = [];
 	private readonly Dictionary<(int Row, int Channel), PatternEffectStripControl> _effectStrips = [];
 	private readonly PatternVolumeInputState _volumeInput = new();
+	private readonly PatternSelectionState _selection = new();
 
 	private PatternEffectCursor _cursor =
 		new(0, 0, PatternCellField.Note);
@@ -250,7 +251,7 @@ public sealed class PatternEditorControl : UserControl
 			new TextBlock
 			{
 				Text =
-					"Arrow keys move the tracker cursor. Type notes directly in the note field; the edit mask controls which Note/Source/Volume fields are stamped, and comma toggles the mask bit for the current field. Hold Caps Lock while pressing tracker piano keys to preview without editing, releasing the key sends Note Off. Top-row 4 auditions the current note and 8 auditions the current row, advancing one row. Enter opens detailed note editing or expands a stacked effect strip.",
+					"Arrow keys move the tracker cursor. Shift+Arrow extends the marked block; Alt+B/Alt+E set its corners, Alt+D marks/expands by the major highlight, Alt+L marks the channel then pattern, and Alt+U unmarks. Type notes directly in the note field; the edit mask controls which Note/Source/Volume fields are stamped, and comma toggles the mask bit for the current field. Hold Caps Lock while pressing tracker piano keys to preview without editing, releasing the key sends Note Off. Top-row 4 auditions the current note and 8 auditions the current row, advancing one row. Enter opens detailed note editing or expands a stacked effect strip.",
 				TextWrapping = TextWrapping.Wrap,
 			};
 
@@ -412,6 +413,7 @@ public sealed class PatternEditorControl : UserControl
 				channel = 0;
 			}
 			_cursor.SetPosition(displayRow, channel, field);
+			_selection.Clear();
 			RefreshGrid();
 			_changed($"Pattern layout updated: {pattern.Name}");
 		}
@@ -808,6 +810,103 @@ public sealed class PatternEditorControl : UserControl
 		{
 			MoveCurrentSource(sourceDelta);
 			e.Handled = true;
+			FocusCursorCell();
+			return;
+		}
+
+		if (PatternSelectionKeyboard.TryGetCommand(
+			e.Key,
+			e.KeyModifiers,
+			out PatternSelectionCommand selectionCommand))
+		{
+			int originalRow = _cursor.Row;
+			int originalChannel = _cursor.Channel;
+
+			switch (selectionCommand)
+			{
+				case PatternSelectionCommand.SetStart:
+					_selection.SetStart(
+						_cursor.Row,
+						_cursor.Channel);
+					break;
+
+				case PatternSelectionCommand.SetEnd:
+					_selection.SetEnd(
+						_cursor.Row,
+						_cursor.Channel);
+					break;
+
+				case PatternSelectionCommand.SelectMajorBlock:
+					PatternSelectionEditor.SelectMajorBlock(
+						_context,
+						_cursor,
+						_selection);
+					break;
+
+				case PatternSelectionCommand.SelectColumnOrPattern:
+					PatternSelectionEditor.SelectColumnOrPattern(
+						_context,
+						_cursor,
+						_selection);
+					break;
+
+				case PatternSelectionCommand.Clear:
+					_selection.Clear();
+					break;
+
+				case PatternSelectionCommand.ExtendLeft:
+					PatternEditorContextCursor.MoveLeft(
+						_context,
+						_cursor);
+					_selection.Extend(
+						originalRow,
+						originalChannel,
+						_cursor.Row,
+						_cursor.Channel);
+					break;
+
+				case PatternSelectionCommand.ExtendRight:
+					PatternEditorContextCursor.MoveRight(
+						_context,
+						_cursor);
+					_selection.Extend(
+						originalRow,
+						originalChannel,
+						_cursor.Row,
+						_cursor.Channel);
+					break;
+
+				case PatternSelectionCommand.ExtendUp:
+					PatternEditorContextCursor.MoveUp(
+						_context,
+						_cursor);
+					_selection.Extend(
+						originalRow,
+						originalChannel,
+						_cursor.Row,
+						_cursor.Channel);
+					break;
+
+				case PatternSelectionCommand.ExtendDown:
+					PatternEditorContextCursor.MoveDown(
+						_context,
+						_cursor);
+					_selection.Extend(
+						originalRow,
+						originalChannel,
+						_cursor.Row,
+						_cursor.Channel);
+					break;
+
+				default:
+					throw new ArgumentOutOfRangeException(
+						nameof(selectionCommand));
+			}
+
+			_volumeInput.Reset();
+			e.Handled = true;
+			UpdateCurrentPatternControls();
+			RefreshCursorVisuals();
 			FocusCursorCell();
 			return;
 		}
@@ -2540,6 +2639,22 @@ public sealed class PatternEditorControl : UserControl
 				_context.Rows.Count > 0
 					&& row == _cursor.Row
 					&& channel == _cursor.Channel;
+			bool selected =
+				_selection.Region is PatternSelectionRegion selection
+					&& selection.Contains(row, channel);
+			if (_context.Rows.Count > 0)
+			{
+				PatternEditorRow editorRow =
+					_context.GetRow(row);
+				border.Background =
+					selected
+						? new SolidColorBrush(
+							_configuration.PatternSelectionHighlight)
+						: GetRowBackground(
+							editorRow.Pattern,
+							editorRow.PatternRow)
+							?? Brushes.Transparent;
+			}
 			border.BorderBrush =
 				active ? Brushes.DeepSkyBlue : Brushes.Gray;
 			border.BorderThickness =
