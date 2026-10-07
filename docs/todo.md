@@ -376,12 +376,19 @@ preserved during implementation.
   `PlaybackRequestAudioSourceFactory` resolves an FM object from the immutable
   playback snapshot to `FmSynthSound`, reusing the same snapshot envelope
   resolver as instrument playback for FM envelope nodes.
-- [ ] Editor for FM-synthesized instrument specifications that allows the graph to
-  be edited and configured using the mouse to drag nodes around. The connections
-  between nodes automatically form from orthogonal segments that make a best effort
-  to route around nodes but which can be edited by the user. This means that nodes
-  need to remember their physical position and connections need to remember hints
-  for their routing (which do not functionally affect the behaviour of the graph).
+- [x] Editor for FM-synthesized instrument specifications. The Samples pane can
+  create FM synth objects directly and opens them in a main-workspace graph editor.
+  Constant, oscillator, envelope and operator nodes can be added, selected,
+  parameterized, connected, made the output and removed subject to graph validity.
+  Nodes are dragged with the mouse; the drag is preview-only until release, then
+  the persisted node position advances DocumentRevision without touching
+  AudioRevision. Semantic graph edits replace the immutable graph and advance
+  AudioRevision. Connections render as orthogonal segments using deterministic
+  dogleg routing first and above/below obstacle lanes when necessary. Per-connection
+  persisted routing hints are editable as explicit waypoint lists in the inspector;
+  hinted routes remain orthogonal and preserve the user's waypoints even when a
+  waypoint is geometrically redundant. Routing hints and node positions remain
+  editor-only metadata and never participate in synthesis.
 - [x] Saving and loading of FM-synthesized instrument specifications in `.hm.json`
   documents. Consolidated `.hm` packages inherit the same representation through
   their JSON manifest.
