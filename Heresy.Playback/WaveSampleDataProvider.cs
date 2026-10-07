@@ -26,10 +26,14 @@ public sealed class WaveSampleDataProvider
 	{
 		ArgumentNullException.ThrowIfNull(sample);
 
+		ExternalAssetReference asset =
+			sample.Asset
+				?? throw new InvalidOperationException(
+					"WaveSampleDataProvider requires a persisted asset reference.");
 		AssetKey key =
 			new(
-				sample.Asset.FullPath,
-				sample.Asset.Sha256);
+				asset.FullPath,
+				asset.Sha256);
 
 		lock (_gate)
 		{
@@ -42,7 +46,7 @@ public sealed class WaveSampleDataProvider
 		}
 
 		ISampleData decoded =
-			Decode(sample.Asset.FullPath);
+			Decode(asset.FullPath);
 
 		lock (_gate)
 		{
