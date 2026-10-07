@@ -40,7 +40,11 @@ public sealed class SongDocumentSnapshot
 		string json =
 			SongDocumentJson.Serialize(
 				document,
-				sample => sample.Asset.FullPath,
+				sample =>
+					sample.Asset?.FullPath
+						?? System.IO.Path.Combine(
+							System.IO.Path.GetTempPath(),
+							$"heresy-pending-{sample.Id.Value}.sample"),
 				scriptReferenceAnalyzer: null,
 				pruneUnreferencedTombstones: false);
 
@@ -48,6 +52,20 @@ public sealed class SongDocumentSnapshot
 			SongDocumentJson.Deserialize(
 				json,
 				storedPath => storedPath);
+
+		foreach ((ObjectId id, SongObject sourceObject) in document.Objects)
+		{
+			if (sourceObject is not Heresy.Core.Samples.SampleDefinition sourceSample
+				|| !clone.TryGet(id, out SongObject? clonedObject)
+				|| clonedObject is not Heresy.Core.Samples.SampleDefinition clonedSample)
+			{
+				continue;
+			}
+
+			clonedSample.Asset = sourceSample.Asset;
+			clonedSample.PcmData = sourceSample.PcmData;
+			clonedSample.PendingAsset = sourceSample.PendingAsset;
+		}
 
 		return new SongDocumentSnapshot(
 			clone,
