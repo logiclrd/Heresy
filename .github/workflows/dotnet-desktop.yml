@@ -31,8 +31,9 @@ jobs:
     - name: Execute test suite
       run: dotnet test -p:Configuration=Release --logger "console;verbosity=normal"
 
-    - name: Verify desktop host and SDL native runtime
+    - name: Verify desktop host and SDL native runtimes
       run: |
         dotnet build Heresy/Heresy.csproj -p:Configuration=Release --no-restore
-        find Heresy/bin/Release/net10.0 -type f -iname '*SDL*' -print
-        test -f Heresy/bin/Release/net10.0/libSDL3.so
+        test -f Heresy/bin/Release/net10.0/runtimes/linux-x64/native/libSDL3.so
+        test -f Heresy/bin/Release/net10.0/runtimes/win-x64/native/SDL3.dll
+        test -f Heresy/bin/Release/net10.0/runtimes/osx-x64/native/libSDL3.dylib
