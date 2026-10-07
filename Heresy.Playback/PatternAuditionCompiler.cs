@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -42,6 +43,71 @@ public static class PatternAuditionCompiler
 		return CompileSlice(
 			slice,
 			context);
+	}
+
+	public static StartNoteCommand? CompileHeldNoteStart(
+		DataPatternDefinition pattern,
+		int row,
+		int channel,
+		double pitchMultiplier)
+	{
+		Validate(
+			pattern,
+			row,
+			channel);
+		if (!(pitchMultiplier > 0.0)
+			|| double.IsNaN(pitchMultiplier)
+			|| double.IsInfinity(pitchMultiplier))
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(pitchMultiplier));
+		}
+
+		SequencingContext context =
+			CreatePrimedContext(
+				pattern,
+				row);
+
+		PatternCell? source =
+			pattern.Grid[row, channel];
+		StartPatternNote? existing =
+			source?.Note as StartPatternNote;
+
+		DataPatternDefinition slice =
+			new(
+				pattern.Id,
+				$"{pattern.Name} held preview")
+			{
+				RowCount = 1,
+				ChannelCount = pattern.ChannelCount,
+			};
+		PatternCell target =
+			slice.Grid.GetOrCreateCell(
+				0,
+				channel);
+		target.SourceId =
+			source?.SourceId
+				?? ObjectId.None;
+		target.Volume = source?.Volume;
+		target.Note =
+			new StartPatternNote(
+				existing?.SourceId
+					?? ObjectId.None,
+				pitchMultiplier,
+				existing?.PlaybackSpeedMultiplier
+					?? 1.0,
+				existing?.Mixdown
+					?? false);
+
+		NoteSchedule schedule =
+			CompileSlice(
+				slice,
+				context);
+
+		return schedule
+			.SelectMany(note => note.Commands)
+			.OfType<StartNoteCommand>()
+			.SingleOrDefault();
 	}
 
 	public static NoteSchedule CompileRow(
