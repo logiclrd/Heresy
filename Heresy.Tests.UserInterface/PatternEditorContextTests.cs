@@ -422,6 +422,99 @@ public sealed class PatternEditorContextTests
 	}
 
 	[Test]
+	public void RowMutationMapsSequenceDisplayRowToUnderlyingPatternRow()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition first =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"First",
+				rowCount: 4,
+				channelCount: 2);
+		DataPatternDefinition second =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Second",
+				rowCount: 4,
+				channelCount: 2);
+		PatternCell moved =
+			second.Grid.GetOrCreateCell(2, 1);
+		moved.Note = new PatternNoteOff();
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(
+				workspace,
+				"Arrangement");
+		sequence.Entries.Add(new SequenceEntry(first.Id, startRow: 2));
+		sequence.Entries.Add(new SequenceEntry(second.Id, startRow: 1));
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(
+				workspace.Document,
+				sequence,
+				initialEntryIndex: 1);
+		PatternEffectCursor cursor =
+			new(3, 1, PatternCellField.Volume);
+
+		PatternEditorRowMutation.Apply(
+			workspace,
+			context,
+			cursor,
+			PatternRowMutationKind.Insert,
+			allChannels: false)
+			.Should().BeTrue();
+
+		second.Grid[1, 1].Should().BeNull();
+		second.Grid[2, 1].Should().BeNull();
+		second.Grid[3, 1].Should().BeSameAs(moved);
+		first.Grid.EnumerateNonEmptyCells().Should().BeEmpty();
+		cursor.Row.Should().Be(3);
+		cursor.Channel.Should().Be(1);
+		cursor.Field.Should().Be(PatternCellField.Volume);
+	}
+
+	[Test]
+	public void FullWidthRowMutationMapsSequenceDisplayRowAndEveryChannel()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Pattern",
+				rowCount: 4,
+				channelCount: 3);
+		PatternCell[] moved =
+		[
+			pattern.Grid.GetOrCreateCell(2, 0),
+			pattern.Grid.GetOrCreateCell(2, 1),
+			pattern.Grid.GetOrCreateCell(2, 2),
+		];
+		foreach (PatternCell cell in moved)
+			cell.Note = new PatternNoteOff();
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(
+				workspace,
+				"Arrangement");
+		sequence.Entries.Add(new SequenceEntry(pattern.Id, startRow: 1));
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(
+				workspace.Document,
+				sequence,
+				initialEntryIndex: 0);
+		PatternEffectCursor cursor =
+			new(1, 1, PatternCellField.Note);
+
+		PatternEditorRowMutation.Apply(
+			workspace,
+			context,
+			cursor,
+			PatternRowMutationKind.Delete,
+			allChannels: true)
+			.Should().BeTrue();
+
+		for (int channel = 0; channel < moved.Length; channel++)
+			pattern.Grid[1, channel].Should().BeSameAs(moved[channel]);
+	}
+
+	[Test]
 	public void TabNavigationFindsNextAndPreviousNoteStops()
 	{
 		DocumentWorkspace workspace = new();
