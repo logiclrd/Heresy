@@ -237,8 +237,8 @@ public sealed class PatternChordInputTests
 	{
 		PatternChordInputState original = new();
 		original.Select(PatternChordType.Major);
-		original.AddTone();
 		original.RotateFirstToEnd();
+		original.AddTone();
 		original.ToggleTone(1);
 		original.SetRoot(2);
 
