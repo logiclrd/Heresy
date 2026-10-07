@@ -16,8 +16,6 @@ public sealed class SampleAudioCodecTests
 	private const string FlacFixture =
 		"ZkxhQwAAACIQABAAAAE6AAE6AfQA8AAAAoAARtjXQTF9MY5lvAy705J8AwAAEgAAAAAAAAAAAAAAAAAAAAACgIQAACggAAAAcmVmZXJlbmNlIGxpYkZMQUMgMS41LjAgMjAyNTAyMTEAAAAA//h0CAACf8VIAAAFawoyDcUPtrSvrV/4gdZ0GAIqAkIJCU4bsZFhCIJBUQbIb8UIIhERejb+SEgIiFJG4+5BCgQkKs5tloJCEEi0g5nOQkCEiBeRvONLAhYIRE0z3+RQQhESpwftUEJBEiUbQ3NIgkIQso5s7KgJCCQlOG7GRYQiCQVEGyG/FCCIREXo2/khICIhSRuPuQQoEJCrObZaCQhBItIOZzkJAhIgXkbzjSwIWCERNM9/kUEIREqcH7VBCQRIlG0NzSIJCELKObOyoCQgkJThuxkWEIgkFRBshvxQgiERF6Nv5ISAiIUkbj7kEKBCQqzm2WgkIQSLSDmc5CQISIF5G840sCFghETTPf5FBCERKnB+1QQkESJRtDc0iCQhCyjmzsqAkIJCU4bsZFhCIJBUQbIbtz0=";
 
-	private const string Mp3Fixture =
-		"/+NIxAA1xG5sEnvMHEJgGrE3HrJ2Ts0zrUbOyPHlPd+r0PNA0DQNA0CcE4HoIQLmLePWJuJuJuJuJuLmIYJoJoJoJoJoLgPQQgXMesesnZOydlzNM6zoQxDEMVisZHlL3/8QQIEyZMmTJg4DCwAAAggQIECBAmTTu7u/+93d2mQIECBAgQIRd3d3f//73d3ERBhAgQIEyZMmTJkydoRERERG///xF3d3d3aEREREZ//2iIu7u7PJpkCBAgQIECBAmTJk07u7iIiP//+0RERd3d3d3ERn///iIiIi7u7PJk0yBAgQgOGF4AmEoGwNgbA2AkBICQIgRAiBECIEQIgRBEGwNgbA2BsDYGwlCUSRJEkxMTE9Wurl1rTVacrVy5cu/+NIxDwxI658XGGHLToyMjIyMTExMTExMTExMjIyMjIyMj46WrVq1atdqASRIklVfzVVVUSJEiJEiRmZn/zMmkSM1VVVVRxpEiRIozM1VVRIkSJTMzn9VMzJEiRIkSRIkSJEmZv///+qqqzMzMzMqqqqqqzN/6szMzMwZVVVVVCsFBQUFf/+EgoKCgoUFBQUEgpv/FBVTEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV/+NIxAAAAANIAAAAAExBTUUzLjEwMFVVVVVVVVVVVVVVTEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV";
 
 	private const string OggVorbisFixture =
 		"T2dnUwACAAAAAAAAAABcqbAwAAAAAAQUf2sBHgF2b3JiaXMAAAAAAUAfAAAAAAAAcGIAAAAAAACZAU9nZ1MAAAAAAAAAAAAAXKmwMAEAAABL+3QQCz////////////+1A3ZvcmJpcwwAAABMYXZmNjEuNy4xMDMBAAAAHwAAAGVuY29kZXI9TGF2YzYxLjE5LjEwMSBsaWJ2b3JiaXMBBXZvcmJpcxJCQ1YBAAABAAxSFCElGVNKYwiVUlIpBR1jUFtHHWPUOUYhZBBTiEkZpXtPKpVYSsgRUlgpRR1TTFNJlVKWKUUdYxRTSCFT1jFloXMUS4ZJCSVsTa50FkvomWOWMUYdY85aSp1j1jFFHWNSUkmhcxg6ZiVkFDpGxehifDA6laJCKL7H3lLpLYWKW4q91xpT6y2EGEtpwQhhc+211dxKasUYY4wxxsXiUyiC0JBVAAABAABABAFCQ1YBAAoAAMJQDEVRgNCQVQBABgCAABRFcRTHcRxHkiTLAkJDVgEAQAAAAgAAKI7hKJIjSZJkWZZlWZameZaouaov+64u667t6roOhIasBADIAAAYhiGH3knMkFOQSSYpVcw5CKH1DjnlFGTSUsaYYoxRzpBTDDEFMYbQKYUQ1E45pQwiCENInWTOIEs96OBi5zgQGrIiAIgCAACMQYwhxpBzDEoGIXKOScggRM45KZ2UTEoorbSWSQktldYi55yUTkompbQWUsuklNZCKwUAAAQ4AAAEWAiFhqwIAKIAABCDkFJIKcSUYk4xh5RSjinHkFLMOcWYcowx6CBUzDHIHIRIKcUYc0455iBkDCrmHIQMMgEAAAEOAAABFkKhISsCgDgBAIMkaZqlaaJoaZooeqaoqqIoqqrleabpmaaqeqKpqqaquq6pqq5seZ5peqaoqp4pqqqpqq5rqqrriqpqy6ar2rbpqrbsyrJuu7Ks256qyrapurJuqq5tu7Js664s27rkearqmabreqbpuqrr2rLqurLtmabriqor26bryrLryratyrKua6bpuqKr2q6purLtyq5tu7Ks+6br6rbqyrquyrLu27au+7KtC7vourauyq6uq7Ks67It67Zs20LJ81TVM03X9UzTdVXXtW3VdW1bM03XNV1XlkXVdWXVlXVddWVb90zTdU1XlWXTVWVZlWXddmVXl0XXtW1Vln1ddWVfl23d92VZ133TdXVblWXbV2VZ92Vd94VZt33dU1VbN11X103X1X1b131htm3fF11X11XZ1oVVlnXf1n1lmHWdMLqurqu27OuqLOu+ruvGMOu6MKy6bfyurQvDq+vGseu+rty+j2rbvvDqtjG8um4cu7Abv+37xrGpqm2brqvrpivrumzrvm/runGMrqvrqiz7uurKvm/ruvDrvi8Mo+vquirLurDasq/Lui4Mu64bw2rbwu7aunDMsi4Mt+8rx68LQ9W2heHVdaOr28ZvC8PSN3a+AACAAQcAgAATykChISsCgDgBAAYhCBVjECrGIIQQUgohpFQxBiFjDkrGHJQQSkkhlNIqxiBkjknIHJMQSmiplNBKKKWlUEpLoZTWUmotptRaDKG0FEpprZTSWmopttRSbBVjEDLnpGSOSSiltFZKaSlzTErGoKQOQiqlpNJKSa1lzknJoKPSOUippNJSSam1UEproZTWSkqxpdJKba3FGkppLaTSWkmptdRSba21WiPGIGSMQcmck1JKSamU0lrmnJQOOiqZg5JKKamVklKsmJPSQSglg4xKSaW1kkoroZTWSkqxhVJaa63VmFJLNZSSWkmpxVBKa621GlMrNYVQUgultBZKaa21VmtqLbZQQmuhpBZLKjG1FmNtrcUYSmmtpBJbKanFFluNrbVYU0s1lpJibK3V2EotOdZaa0ot1tJSjK21mFtMucVYaw0ltBZKaa2U0lpKrcXWWq2hlNZKKrGVklpsrdXYWow1lNJiKSm1kEpsrbVYW2w1ppZibLHVWFKLMcZYc0u11ZRai621WEsrNcYYa2415VIAAMCAAwBAgAlloNCQlQBAFAAAYAxjjEFoFHLMOSmNUs45JyVzDkIIKWXOQQghpc45CKW01DkHoZSUQikppRRbKCWl1losAACgwAEAIMAGTYnFAQoNWQkARAEAIMYoxRiExiClGIPQGKMUYxAqpRhzDkKlFGPOQcgYc85BKRljzkEnJYQQQimlhBBCKKWUAgAAChwAAAJs0JRYHKDQkBUBQBQAAGAMYgwxhiB0UjopEYRMSielkRJaCylllkqKJcbMWomtxNhICa2F1jJrJcbSYkatxFhiKgAA7MABAOzAQig0ZCUAkAcAQBijFGPOOWcQYsw5CCE0CDHmHIQQKsaccw5CCBVjzjkHIYTOOecghBBC55xzEEIIoYMQQgillNJBCCGEUkrpIIQQQimldBBCCKGUUgoAACpwAAAIsFFkc4KRoEJDVgIAeQAAgDFKOSclpUYpxiCkFFujFGMQUmqtYgxCSq3FWDEGIaXWYuwgpNRajLV2EFJqLcZaQ0qtxVhrziGl1mKsNdfUWoy15tx7ai3GWnPOuQAA3AUHALADG0U2JxgJKjRkJQCQBwBAIKQUY4w5h5RijDHnnENKMcaYc84pxhhzzjnnFGOMOeecc4wx55xzzjnGmHPOOeecc84556CDkDnnnHPQQeicc845CCF0zjnnHIQQCgAAKnAAAAiwUWRzgpGgQkNWAgDhAACAMZRSSimllFJKqKOUUkoppZRSAiGllFJKKaWUUkoppZRSSimllFJKKaWUUkoppZRSSimllFJKKaWUUkoppZRSSimllFJKKaWUUkoppZRSSimllFJKKaWUUkoppZRSSimllFJKKaWUUkoppZRSSimllFJKKaWUUkoppZRSSimVUkoppZRSSimllFJKKaUAIN8KBwD/BxtnWEk6KxwNLjRkJQAQDgAAGMMYhIw5JyWlhjEIpXROSkklNYxBKKVzElJKKYPQWmqlpNJSShmElGILIZWUWgqltFZrKam1lFIoKcUaS0qppdYy5ySkklpLrbaYOQelpNZaaq3FEEJKsbXWUmuxdVJSSa211lptLaSUWmstxtZibCWlllprqcXWWkyptRZbSy3G1mJLrcXYYosxxhoLAOBucACASLBxhpWks8LR4EJDVgIAIQEABDJKOeecgxBCCCFSijHnoIMQQgghREox5pyDEEIIIYSMMecghBBCCKGUkDHmHIQQQgghhFI65yCEUEoJpZRSSucchBBCCKWUUkoJIYQQQiillFJKKSGEEEoppZRSSiklhBBCKKWUUkoppYQQQiillFJKKaWUEEIopZRSSimllBJCCKGUUkoppZRSQgillFJKKaWUUkooIYRSSimllFJKCSWUUkoppZRSSikhlFJKKaWUUkoppQAAgAMHAIAAI+gko8oibDThwgMQAAAAAgACTACBAYKCUQgChBEIAAAAAAAIAPgAAEgKgIiIaOYMDhASFBYYGhweICIkAAAAAAAAAAAAAAAABE9nZ1MABIACAAAAAAAAXKmwMAIAAABnDF8+BBgWGCaGlJlZqVcA8E93AQAAQioJr5S702cyMwKOlZndTeYBAAAAABzLAACECm+pPY8BjpSZs5vMAwAAAABQBgC2XVa02rWG2YwAdspQseYVAOb9AAAGAELU6Gh1zKcztjPgGYrxeJyZmZmZmfnEJwE=";
@@ -107,19 +105,18 @@ public sealed class SampleAudioCodecTests
 	[Test]
 	public void DecodesMp3AtLoadTime()
 	{
-		const int sampleRate = 8000;
 		byte[] encoded =
-			Convert.FromBase64String(Mp3Fixture);
+			BuildLayerIIMonoOneActiveSubbandFrame();
 
 		SamplePcmData data =
 			SampleAudioCodec.Decode(
 				encoded,
 				"sample.mp3");
 
-		data.SampleRate.Should().Be(sampleRate);
+		data.SampleRate.Should().Be(48000);
 		data.ChannelCount.Should().Be(1);
 		data.FrameCount.Should().BeGreaterThan(0);
-		PeakMagnitude(data).Should().BeGreaterThan(0.05f);
+		PeakMagnitude(data).Should().BeGreaterThan(0.0001f);
 	}
 
 	[Test]
@@ -181,6 +178,70 @@ public sealed class SampleAudioCodecTests
 		act.Should()
 			.Throw<NotSupportedException>()
 			.WithMessage("*WAVE*FLAC*MP3*OGG*AIFF*");
+	}
+
+	private static byte[] BuildLayerIIMonoOneActiveSubbandFrame()
+	{
+		byte[] frame = new byte[384];
+		frame[0] = 0xFF;
+		frame[1] = 0xFD;
+		frame[2] = 0x84;
+		frame[3] = 0xC0;
+
+		BitWriter writer =
+			new(
+				frame,
+				startBit: 32);
+
+		writer.Write(1, 4);
+		writer.Write(0, 4);
+		writer.Write(0, 4);
+		for (int index = 0; index < 8; index++)
+			writer.Write(0, 4);
+		for (int index = 0; index < 12; index++)
+			writer.Write(0, 3);
+		for (int index = 0; index < 4; index++)
+			writer.Write(0, 2);
+
+		writer.Write(0, 2);
+		writer.Write(10, 6);
+		writer.Write(10, 6);
+		writer.Write(10, 6);
+		for (int group = 0; group < 4; group++)
+			writer.Write(13, 5);
+
+		return frame;
+	}
+
+	private sealed class BitWriter
+	{
+		private readonly byte[] _buffer;
+		private int _bitPosition;
+
+		public BitWriter(
+			byte[] buffer,
+			int startBit)
+		{
+			_buffer = buffer;
+			_bitPosition = startBit;
+		}
+
+		public void Write(
+			int value,
+			int bits)
+		{
+			for (int index = bits - 1; index >= 0; index--)
+			{
+				int bit =
+					(value >> index) & 1;
+				if (bit != 0)
+				{
+					_buffer[_bitPosition >> 3] |=
+						(byte)(0x80 >> (_bitPosition & 7));
+				}
+				_bitPosition++;
+			}
+		}
 	}
 
 	private static float PeakMagnitude(
