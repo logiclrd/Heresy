@@ -500,7 +500,7 @@ public sealed class PatternEditorContextTests
 				sequence,
 				initialEntryIndex: 0);
 		PatternEffectCursor cursor =
-			new(1, 1, PatternCellField.Note);
+			new(0, 1, PatternCellField.Note);
 
 		PatternEditorRowMutation.Apply(
 			workspace,
