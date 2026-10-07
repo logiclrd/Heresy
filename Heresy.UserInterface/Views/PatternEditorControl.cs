@@ -177,7 +177,7 @@ public sealed class PatternEditorControl : UserControl
 			new TextBlock
 			{
 				Text =
-					"Arrow keys move the tracker cursor. Type notes directly in the note field; Enter opens detailed note editing or expands a stacked effect strip.",
+					"Arrow keys move the tracker cursor. Type notes directly in the note field; top-row 4 auditions the current note and 8 auditions the current row, advancing one row. Enter opens detailed note editing or expands a stacked effect strip.",
 				TextWrapping = TextWrapping.Wrap,
 			};
 
