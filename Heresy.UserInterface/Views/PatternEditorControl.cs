@@ -219,6 +219,8 @@ public sealed class PatternEditorControl : UserControl
 				CurrentVolume =
 					initialState?.CurrentVolume,
 			};
+		if (initialState?.Chord is PatternChordInputSnapshot chord)
+			_chordInputState.Restore(chord);
 		UpdateEditStateDisplay();
 		_noteSource =
 			new ComboBox
@@ -1757,7 +1759,10 @@ public sealed class PatternEditorControl : UserControl
 					_cursor.Channel,
 					_cursor.Field,
 					_noteInputState.EditMask,
-					_noteInputState.CurrentVolume)));
+					_noteInputState.CurrentVolume,
+					_chordInputState.IsActive
+						? _chordInputState.CreateSnapshot()
+						: null)));
 		return true;
 	}
 
@@ -1825,7 +1830,10 @@ public sealed class PatternEditorControl : UserControl
 					_cursor.Channel,
 					_cursor.Field,
 					_noteInputState.EditMask,
-					_noteInputState.CurrentVolume)));
+					_noteInputState.CurrentVolume,
+					_chordInputState.IsActive
+						? _chordInputState.CreateSnapshot()
+						: null)));
 	}
 
 	private void HandleChordCommand(
