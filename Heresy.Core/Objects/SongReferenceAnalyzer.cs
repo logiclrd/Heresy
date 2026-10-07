@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
+using Heresy.Core.FmSynthesis;
 using Heresy.Core.Instruments;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequences;
@@ -19,6 +21,7 @@ public enum SongReferenceKind
 	InstrumentPitchEnvelope,
 	InstrumentPanningEnvelope,
 	InstrumentFilterEnvelope,
+	FmSynthEnvelope,
 	ScriptObject,
 }
 
@@ -87,6 +90,18 @@ public static class SongReferenceAnalyzer
 							tone.FilterEnvelopeId,
 							instrument.Id,
 							SongReferenceKind.InstrumentFilterEnvelope);
+					}
+					break;
+
+				case FmSynthDefinition fmSynth:
+					foreach (FmEnvelopeNode envelopeNode in
+						fmSynth.Graph.Nodes.OfType<FmEnvelopeNode>())
+					{
+						AddReference(
+							references,
+							envelopeNode.EnvelopeId,
+							fmSynth.Id,
+							SongReferenceKind.FmSynthEnvelope);
 					}
 					break;
 

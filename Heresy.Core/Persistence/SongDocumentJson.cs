@@ -12,6 +12,7 @@ using System.Text.Json.Serialization.Metadata;
 
 using Heresy.Core.Assets;
 using Heresy.Core.Envelopes;
+using Heresy.Core.FmSynthesis;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -392,6 +393,14 @@ public static class SongDocumentJson
 				result["sourceChannelPositions"] = positions;
 				break;
 
+			case FmSynthDefinition fmSynth:
+				result["type"] = "fmSynth";
+				result["graph"] =
+					WriteFmSynthGraph(fmSynth.Graph);
+				result["editorLayout"] =
+					WriteFmSynthEditorLayout(fmSynth);
+				break;
+
 			case InstrumentDefinition instrument:
 				result["type"] = "instrument";
 				result["divisions"] = instrument.Divisions;
@@ -553,6 +562,13 @@ public static class SongDocumentJson
 					return sample;
 				}
 
+			case "fmSynth":
+				return ReadFmSynthDefinition(
+					id,
+					name,
+					RequiredObject(node, "graph"),
+					RequiredObject(node, "editorLayout"));
+
 			case "instrument":
 				{
 					InstrumentDefinition instrument =
@@ -681,6 +697,224 @@ public static class SongDocumentJson
 				throw new NotSupportedException(
 					$"Persisted song object type '{type}' is not supported.");
 		}
+	}
+
+
+	private static JsonObject WriteFmSynthGraph(
+		FmSynthGraph graph)
+	{
+		JsonArray nodes = [];
+		foreach (FmSynthNode node in graph.Nodes)
+		{
+			JsonObject nodeJson =
+				new()
+				{
+					["id"] = node.Id,
+				};
+
+			switch (node)
+			{
+				case FmConstantNode constant:
+					nodeJson["type"] = "constant";
+					nodeJson["value"] = constant.Value;
+					break;
+
+				case FmOscillatorNode oscillator:
+					nodeJson["type"] = "oscillator";
+					nodeJson["waveform"] =
+						JsonSerializer.SerializeToNode(
+							oscillator.Waveform,
+							JsonOptions);
+					nodeJson["frequencyHz"] = oscillator.FrequencyHz;
+					nodeJson["minimum"] = oscillator.Minimum;
+					nodeJson["maximum"] = oscillator.Maximum;
+					if (oscillator.MultiplierNodeId.HasValue)
+						nodeJson["multiplierNodeId"] = oscillator.MultiplierNodeId.Value;
+					nodeJson["exponentialMultiplier"] = oscillator.ExponentialMultiplier;
+					break;
+
+				case FmEnvelopeNode envelope:
+					nodeJson["type"] = "envelope";
+					nodeJson["envelopeId"] = envelope.EnvelopeId.Value;
+					break;
+
+				case FmOperatorNode op:
+					nodeJson["type"] = "operator";
+					nodeJson["operation"] =
+						JsonSerializer.SerializeToNode(
+							op.Operation,
+							JsonOptions);
+					nodeJson["inputNodeIds"] =
+						JsonSerializer.SerializeToNode(
+							op.InputNodeIds,
+							JsonOptions);
+					break;
+
+				default:
+					throw new NotSupportedException(
+						$"FM graph node type {node.GetType().FullName} is not supported by JSON persistence.");
+			}
+
+			nodes.Add(nodeJson);
+		}
+
+		return new JsonObject
+		{
+			["outputNodeId"] = graph.OutputNodeId,
+			["nodes"] = nodes,
+		};
+	}
+
+	private static JsonObject WriteFmSynthEditorLayout(
+		FmSynthDefinition fmSynth)
+	{
+		JsonArray nodePositions = [];
+		foreach (FmSynthNodePosition position in fmSynth.NodePositions)
+		{
+			nodePositions.Add(
+				new JsonObject
+				{
+					["nodeId"] = position.NodeId,
+					["x"] = position.X,
+					["y"] = position.Y,
+				});
+		}
+
+		JsonArray routingHints = [];
+		foreach (FmSynthConnectionRoutingHint hint in fmSynth.ConnectionRoutingHints)
+		{
+			JsonArray routePoints = [];
+			foreach (FmSynthRoutePoint point in hint.RoutePoints)
+			{
+				routePoints.Add(
+					new JsonObject
+					{
+						["x"] = point.X,
+						["y"] = point.Y,
+					});
+			}
+
+			routingHints.Add(
+				new JsonObject
+				{
+					["sourceNodeId"] = hint.SourceNodeId,
+					["targetNodeId"] = hint.TargetNodeId,
+					["targetInputIndex"] = hint.TargetInputIndex,
+					["routePoints"] = routePoints,
+				});
+		}
+
+		return new JsonObject
+		{
+			["nodePositions"] = nodePositions,
+			["connectionRoutingHints"] = routingHints,
+		};
+	}
+
+	private static FmSynthDefinition ReadFmSynthDefinition(
+		ObjectId id,
+		string name,
+		JsonObject graphNode,
+		JsonObject editorLayout)
+	{
+		List<FmSynthNode> nodes = [];
+		foreach (JsonNode? rawNode in RequiredArray(graphNode, "nodes"))
+		{
+			if (rawNode is not JsonObject node)
+				throw new InvalidDataException("FM graph nodes must be JSON objects.");
+
+			int nodeId = RequiredInt32(node, "id");
+			string type = RequiredString(node, "type");
+			nodes.Add(
+				type switch
+				{
+					"constant" =>
+						new FmConstantNode(
+							nodeId,
+							RequiredDouble(node, "value")),
+					"oscillator" =>
+						new FmOscillatorNode(
+							nodeId,
+							DeserializeRequired<FmOscillatorWaveform>(
+								node,
+								"waveform"),
+							RequiredDouble(node, "frequencyHz"),
+							RequiredDouble(node, "minimum"),
+							RequiredDouble(node, "maximum"),
+							node["multiplierNodeId"] is JsonNode multiplier
+								? multiplier.GetValue<int>()
+								: null,
+							RequiredBoolean(node, "exponentialMultiplier")),
+					"envelope" =>
+						new FmEnvelopeNode(
+							nodeId,
+							new ObjectId(
+								RequiredUInt32(
+									node,
+									"envelopeId"))),
+					"operator" =>
+						new FmOperatorNode(
+							nodeId,
+							DeserializeRequired<FmOperatorKind>(
+								node,
+								"operation"),
+							DeserializeRequired<List<int>>(
+								node,
+								"inputNodeIds")),
+					_ => throw new InvalidDataException(
+						$"Unknown FM graph node type '{type}'."),
+				});
+		}
+
+		FmSynthDefinition result =
+			new(
+				id,
+				name,
+				new FmSynthGraph(
+					nodes,
+					RequiredInt32(
+						graphNode,
+						"outputNodeId")));
+
+		foreach (JsonNode? rawPosition in
+			RequiredArray(editorLayout, "nodePositions"))
+		{
+			if (rawPosition is not JsonObject position)
+				throw new InvalidDataException("FM node positions must be JSON objects.");
+
+			result.NodePositions.Add(
+				new FmSynthNodePosition(
+					RequiredInt32(position, "nodeId"),
+					RequiredDouble(position, "x"),
+					RequiredDouble(position, "y")));
+		}
+
+		foreach (JsonNode? rawHint in
+			RequiredArray(editorLayout, "connectionRoutingHints"))
+		{
+			if (rawHint is not JsonObject hint)
+				throw new InvalidDataException("FM connection routing hints must be JSON objects.");
+
+			List<FmSynthRoutePoint> routePoints = [];
+			foreach (JsonNode? rawPoint in RequiredArray(hint, "routePoints"))
+			{
+				if (rawPoint is not JsonObject point)
+					throw new InvalidDataException("FM routing points must be JSON objects.");
+				routePoints.Add(
+					new FmSynthRoutePoint(
+						RequiredDouble(point, "x"),
+						RequiredDouble(point, "y")));
+			}
+
+			result.ConnectionRoutingHints.Add(
+				new FmSynthConnectionRoutingHint(
+					RequiredInt32(hint, "sourceNodeId"),
+					RequiredInt32(hint, "targetNodeId"),
+					RequiredInt32(hint, "targetInputIndex"),
+					routePoints));
+		}
+
+		return result;
 	}
 
 	private static List<PendingAssetTransition> MaterializePendingAssets(
@@ -1254,6 +1488,7 @@ public static class SongDocumentJson
 			SongObjectKind.Pattern => "pattern",
 			SongObjectKind.Sequence => "sequence",
 			SongObjectKind.Envelope => "envelope",
+			SongObjectKind.FmSynth => "fmSynth",
 			SongObjectKind.Unknown => "unknown",
 			_ => throw new NotSupportedException(
 				$"Unsupported song-object kind {kind}."),
@@ -1268,6 +1503,7 @@ public static class SongDocumentJson
 			"pattern" => SongObjectKind.Pattern,
 			"sequence" => SongObjectKind.Sequence,
 			"envelope" => SongObjectKind.Envelope,
+			"fmSynth" => SongObjectKind.FmSynth,
 			"unknown" => SongObjectKind.Unknown,
 			_ => throw new InvalidDataException(
 				$"Unknown tombstone object kind '{value}'."),
@@ -1314,6 +1550,13 @@ public static class SongDocumentJson
 		=> node[name]?.GetValue<double>()
 			?? throw new InvalidDataException(
 				$"Required number '{name}' is missing.");
+
+	private static bool RequiredBoolean(
+		JsonObject node,
+		string name)
+		=> node[name]?.GetValue<bool>()
+			?? throw new InvalidDataException(
+				$"Required boolean '{name}' is missing.");
 
 	private static float RequiredSingle(
 		JsonObject node,

@@ -42,6 +42,7 @@ public static class SongTreeSections
 			SongObjectKind.Instrument => SongTreeSection.Instruments,
 			SongObjectKind.Envelope => SongTreeSection.Instruments,
 			SongObjectKind.Sample => SongTreeSection.Samples,
+			SongObjectKind.FmSynth => SongTreeSection.Samples,
 			_ => throw new NotSupportedException(
 				$"Song-object kind {kind} does not have a document-tree section."),
 		};

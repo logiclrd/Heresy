@@ -8,4 +8,5 @@ public enum SongObjectKind
 	Pattern,
 	Sequence,
 	Envelope,
+	FmSynth,
 }
