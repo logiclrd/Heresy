@@ -23,6 +23,7 @@ public static class SongDocumentPackage
 		ArgumentNullException.ThrowIfNull(document);
 
 		string packagePath = Path.GetFullPath(path);
+		SampleAssetPersistence.VerifyPersistedAssetsForSave(document);
 		string packageDirectory = Path.GetDirectoryName(packagePath)
 			?? throw new ArgumentException("The package path must identify a file.", nameof(path));
 		Directory.CreateDirectory(packageDirectory);
@@ -57,7 +58,22 @@ public static class SongDocumentPackage
 				foreach (SampleDefinition sample in Samples(document))
 				{
 					string entryName = entries[sample.Id];
-					if (writtenSources.TryGetValue(sample.Asset.FullPath, out string? existingEntry)
+
+					if (sample.PendingAsset is PendingSampleAsset pending)
+					{
+						ZipArchiveEntry pendingEntry = archive.CreateEntry(
+							entryName,
+							CompressionLevel.Optimal);
+						using Stream destination = pendingEntry.Open();
+						destination.Write(pending.Bytes.Span);
+						continue;
+					}
+
+					ExternalAssetReference asset =
+						sample.Asset
+							?? throw new InvalidOperationException(
+								$"Sample '{sample.Name}' ({sample.Id}) has no encoded data to save.");
+					if (writtenSources.TryGetValue(asset.FullPath, out string? existingEntry)
 						&& string.Equals(existingEntry, entryName, StringComparison.Ordinal))
 					{
 						continue;
@@ -66,10 +82,10 @@ public static class SongDocumentPackage
 					ZipArchiveEntry entry = archive.CreateEntry(
 						entryName,
 						CompressionLevel.Optimal);
-					using Stream source = ExternalAssetIntegrity.OpenRead(sample.Asset.FullPath);
+					using Stream source = ExternalAssetIntegrity.OpenRead(asset.FullPath);
 					using Stream destination = entry.Open();
 					source.CopyTo(destination);
-					writtenSources[sample.Asset.FullPath] = entryName;
+					writtenSources[asset.FullPath] = entryName;
 				}
 			}
 
@@ -83,12 +99,17 @@ public static class SongDocumentPackage
 
 		foreach (SampleDefinition sample in Samples(document))
 		{
-			sample.Asset = sample.Asset with
-			{
-				FullPath = HeresyModulePath.MakeSyntheticPath(
-					packagePath,
-					entries[sample.Id]),
-			};
+			string hash =
+				sample.PendingAsset?.Sha256
+					?? sample.Asset?.Sha256
+					?? throw new InvalidOperationException(
+						$"Sample '{sample.Name}' ({sample.Id}) has no encoded-data signature.");
+			sample.MarkAssetPersisted(
+				new ExternalAssetReference(
+					HeresyModulePath.MakeSyntheticPath(
+						packagePath,
+						entries[sample.Id]),
+					hash));
 		}
 	}
 
@@ -113,29 +134,32 @@ public static class SongDocumentPackage
 		using (StreamReader reader = new(manifests[0].Open(), Encoding.UTF8))
 			json = reader.ReadToEnd();
 
-		return SongDocumentJson.Deserialize(
-			json,
-			storedPath =>
-			{
-				try
+		SongDocument document =
+			SongDocumentJson.Deserialize(
+				json,
+				storedPath =>
 				{
-					HeresyModulePath.ValidateEntryPath(storedPath);
-				}
-				catch (ArgumentException ex)
-				{
-					throw new InvalidDataException(
-						$"Invalid asset path '{storedPath}' in .hm manifest.",
-						ex);
-				}
+					try
+					{
+						HeresyModulePath.ValidateEntryPath(storedPath);
+					}
+					catch (ArgumentException ex)
+					{
+						throw new InvalidDataException(
+							$"Invalid asset path '{storedPath}' in .hm manifest.",
+							ex);
+					}
 
-				if (archive.GetEntry(storedPath) is null)
-				{
-					throw new InvalidDataException(
-						$"The .hm manifest references missing archive entry '{storedPath}'.");
-				}
+					if (archive.GetEntry(storedPath) is null)
+					{
+						throw new InvalidDataException(
+							$"The .hm manifest references missing archive entry '{storedPath}'.");
+					}
 
-				return HeresyModulePath.MakeSyntheticPath(packagePath, storedPath);
-			});
+					return HeresyModulePath.MakeSyntheticPath(packagePath, storedPath);
+				});
+		SampleAssetPersistence.HydratePersistedSamples(document);
+		return document;
 	}
 
 	private static Dictionary<ObjectId, string> AssignEntries(
@@ -149,16 +173,30 @@ public static class SongDocumentPackage
 
 		foreach (SampleDefinition sample in Samples(document))
 		{
-			if (bySource.TryGetValue(sample.Asset.FullPath, out string? shared))
+			if (sample.PendingAsset is PendingSampleAsset pending)
+			{
+				string preferred =
+					"pcm/" + pending.FileName.Replace('\\', '_');
+				string entry = MakeUnique(preferred, used);
+				used.Add(entry);
+				result.Add(sample.Id, entry);
+				continue;
+			}
+
+			ExternalAssetReference asset =
+				sample.Asset
+					?? throw new InvalidOperationException(
+						$"Sample '{sample.Name}' ({sample.Id}) has no encoded data to save.");
+			if (bySource.TryGetValue(asset.FullPath, out string? shared))
 			{
 				result[sample.Id] = shared;
 				continue;
 			}
 
-			string preferred = PreferredEntryPath(packagePath, sample.Asset.FullPath);
+			string preferred = PreferredEntryPath(packagePath, asset.FullPath);
 			string entry = MakeUnique(preferred, used);
 			used.Add(entry);
-			bySource.Add(sample.Asset.FullPath, entry);
+			bySource.Add(asset.FullPath, entry);
 			result.Add(sample.Id, entry);
 		}
 
