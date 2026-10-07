@@ -264,12 +264,30 @@ preserved during implementation.
 
 ## Pattern clipboard
 
-- [ ] `Ctrl+C` (`^C`): copy the marked region.
-- [ ] `Ctrl+V` (`^V`): paste the copied region starting at the cell under the
-  cursor, merging copied data into existing destination data.
-- [ ] `Shift+Ctrl+V`: paste with overwrite semantics instead of merge.
-- [ ] `Ctrl+X` (`^X`): copy the marked region and then clear it.
-- [ ] `Ctrl+Delete`: clear the selected region without copying it.
+- [x] `Ctrl+C` copies the marked rectangular region as a versioned Heresy
+  pattern-region text payload. Available source cells are represented even when
+  empty so overwrite paste can reproduce emptiness exactly; cells that do not
+  exist because a sequence row's pattern is narrower are omitted rather than
+  treated as empty. Pattern notes and effects reuse the same polymorphic JSON
+  representation as song persistence/effect-stack clipboard data.
+- [x] `Ctrl+V` pastes the copied region starting at the cell under the cursor
+  with merge semantics. Empty copied fields are transparent; populated Note,
+  Source and Volume fields replace their destination counterparts, and a
+  non-empty copied effect stack replaces the destination effect stack as one
+  field. Empty copied cells therefore do nothing in merge mode.
+- [x] `Shift+Ctrl+V` pastes with overwrite semantics. Every available copied
+  cell is reproduced exactly, so empty copied fields clear destination data.
+  Both paste modes clip at the bottom of the editor context and independently at
+  each destination row's channel width, and may flow across editable pattern
+  occurrences in a sequence-backed tracker.
+- [x] `Ctrl+X` copies the marked region and clears it only after the system
+  clipboard write succeeds. `Ctrl+Delete` clears the marked region without
+  copying. Multi-cell clear/paste commands produce one document revision and
+  only advance the audio revision when the changed data can affect playback.
+- [x] Existing effect-stack `Ctrl+C` / `Ctrl+V` remains available in an
+  effect field when no region is marked/copying and the clipboard does not
+  contain a pattern-region payload. Region copy takes priority whenever a block
+  is marked.
 
 ## FM Synthesis
 
