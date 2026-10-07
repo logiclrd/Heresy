@@ -12,7 +12,9 @@ public sealed record PatternEditorOpenState(
 	int BaseOctave,
 	int PatternRow,
 	int Channel,
-	PatternCellField Field);
+	PatternCellField Field,
+	PatternEditMask EditMask = PatternEditMask.Default,
+	double? CurrentVolume = null);
 
 public sealed record PatternEditorSwitchRequest(
 	int Delta,
