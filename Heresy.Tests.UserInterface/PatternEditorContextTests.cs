@@ -421,4 +421,130 @@ public sealed class PatternEditorContextTests
 		cursor.Channel.Should().Be(0);
 	}
 
+	[Test]
+	public void SequencePatternNavigationMovesBetweenEditableOccurrences()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition first =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"First",
+				rowCount: 2,
+				channelCount: 1);
+		DataPatternDefinition second =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Second",
+				rowCount: 3,
+				channelCount: 1);
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(
+				workspace,
+				"Arrangement");
+		sequence.Entries.Add(new SequenceEntry(first.Id));
+		sequence.Entries.Add(new SequenceEntry(second.Id));
+		sequence.Entries.Add(new SequenceEntry(first.Id, startRow: 1));
+
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(
+				workspace.Document,
+				sequence,
+				initialEntryIndex: 0);
+
+		context.FindAdjacentPatternDisplayRow(
+				currentDisplayRow: 1,
+				delta: 1)
+			.Should().Be(2);
+		context.FindAdjacentPatternDisplayRow(
+				currentDisplayRow: 3,
+				delta: -1)
+			.Should().Be(0);
+		context.FindAdjacentPatternDisplayRow(
+				currentDisplayRow: 3,
+				delta: 1)
+			.Should().Be(5);
+	}
+
+	[Test]
+	public void SequencePatternNavigationSkipsNonEditableSegments()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition first =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"First",
+				rowCount: 1,
+				channelCount: 1);
+		ObjectId scriptId = workspace.Document.AllocateObjectId();
+		workspace.Document.Add(
+			new ScriptPatternDefinition(scriptId, "Script"));
+		DataPatternDefinition second =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Second",
+				rowCount: 1,
+				channelCount: 1);
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(
+				workspace,
+				"Arrangement");
+		sequence.Entries.Add(new SequenceEntry(first.Id));
+		sequence.Entries.Add(new SequenceEntry(scriptId));
+		sequence.Entries.Add(new SequenceEntry(second.Id));
+
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(
+				workspace.Document,
+				sequence,
+				initialEntryIndex: 0);
+
+		context.FindAdjacentPatternDisplayRow(
+				currentDisplayRow: 0,
+				delta: 1)
+			.Should().Be(1);
+		context.FindAdjacentPatternDisplayRow(
+				currentDisplayRow: 1,
+				delta: -1)
+			.Should().Be(0);
+	}
+
+	[Test]
+	public void SequencePatternNavigationStopsAtSequenceEdges()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition first =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"First",
+				rowCount: 1,
+				channelCount: 1);
+		DataPatternDefinition second =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Second",
+				rowCount: 1,
+				channelCount: 1);
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(
+				workspace,
+				"Arrangement");
+		sequence.Entries.Add(new SequenceEntry(first.Id));
+		sequence.Entries.Add(new SequenceEntry(second.Id));
+
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(
+				workspace.Document,
+				sequence,
+				initialEntryIndex: 0);
+
+		context.FindAdjacentPatternDisplayRow(
+				currentDisplayRow: 0,
+				delta: -1)
+			.Should().BeNull();
+		context.FindAdjacentPatternDisplayRow(
+				currentDisplayRow: 1,
+				delta: 1)
+			.Should().BeNull();
+	}
+
 }
