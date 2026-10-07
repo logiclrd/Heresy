@@ -130,9 +130,12 @@ command. SDL callback failures never escape the unmanaged
 boundary: the first exception is latched in `IAudioOutputSession.Fault` and
 subsequent callback output is silence. Start/stop are explicit and idempotent,
 and disposing the backend disposes its open sessions before releasing SDL audio.
-The assembly references the managed SDL3-CS bindings; the desktop host supplies
-the matching platform-native SDL runtime when playback is first requested. The
-backend deliberately knows nothing about songs, patterns or authoring state;
+The assembly references the managed SDL3-CS bindings and the Windows, Linux and
+macOS native runtime packages at the same SDL version. Those native assets flow
+through the project-reference graph into the desktop host's standard
+`runtimes/<rid>/native/` output tree, where .NET can resolve the matching
+platform library when playback is first requested. The backend deliberately
+knows nothing about songs, patterns or authoring state;
 the background playback worker provides snapshot-backed PCM through the common
 source interface.
 
