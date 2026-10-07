@@ -264,6 +264,26 @@ public sealed class PatternEffectCursor
 		}
 	}
 
+	public void MoveChannel(
+		int channelCount,
+		int delta)
+	{
+		if (channelCount <= 0)
+			throw new ArgumentOutOfRangeException(nameof(channelCount));
+		if (delta is not -1 and not 1)
+			throw new ArgumentOutOfRangeException(nameof(delta));
+
+		ResetPendingNibble();
+		if (IsExpanded)
+			Collapse();
+
+		Channel =
+			Math.Clamp(
+				Channel + delta,
+				0,
+				channelCount - 1);
+	}
+
 	public void MoveUp(int rowCount)
 	{
 		if (rowCount <= 0)
