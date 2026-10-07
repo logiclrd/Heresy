@@ -333,18 +333,31 @@ preserved during implementation.
 
 ## FM Synthesis
 
-- [ ] `ISound` implementation in the same category as samples that generates sound
-  using a generic multi-operator FM scheme built on a configurable graph combining
-  nodes of type:
-    * Constant: Emits a specific (configurable) value constantly.
-    * Oscillator: Emits a waveform at a frequency and amplitude. Has an optional
-      input for a multiplier and parameters for frequency, Vmin, Vmax and exp, the
-      latter of which treats the multiplier as a tone shift and computes the
-      actual multiplier as `2 ^ (e / 12)`.
-    * Envelope: Emits a value based on the same envelope configuration as is used
-      for instrument definitions.
-    * Operator: Combines inputs using a simple math operation, such as addition,
-      multiplication, min, max.
+- [x] Implement the executable FM graph substrate as a validated immutable DAG in
+  Core plus `FmSynthSound` in Render. The graph has stable integer node IDs and
+  one designated output node; missing inputs, duplicate IDs, missing output nodes
+  and cycles are rejected before rendering. Current semantic nodes are:
+    * Constant: emits one finite configurable scalar.
+    * Oscillator: sine, triangle, sawtooth or square output mapped through
+      configurable `Vmin`/`Vmax`, with positive base frequency and an optional
+      multiplier input. Linear mode multiplies frequency directly; exponential
+      mode interprets the input as semitones and applies `2 ^ (e / 12)`.
+      Oscillator frequency also composes the note pitch, playback-speed multiplier
+      and current pitch trajectory.
+    * Envelope: references the same persistent envelope IDs used by instruments
+      and evaluates them through `IEnvelopeCurveResolver`; unresolved references
+      produce zero so broken graph references remain deterministic.
+    * Operator: combines one or more inputs using addition, multiplication,
+      minimum or maximum.
+  `FmSynthSound` renders the scalar graph as an ordinary mono positional Heresy
+  source, using the common spatializer for the configured output layout. Mutable
+  oscillator phase lives only in per-note state. Sequential/split renders are
+  identical, and non-contiguous rendering deterministically replays phase from
+  frame zero rather than depending on prior chunking. Graph collection surfaces
+  are frozen snapshots so a future editor cannot mutate an already-bound graph
+  accidentally. The persistent Samples-pane FM object is deliberately deferred
+  to the editor/persistence work below so Save and `SongDocumentSnapshot` remain
+  coherent until FM serialization exists.
 - [ ] Editor for FM-synthesized instrument specifications that allows the graph to
   be edited and configured using the mouse to drag nodes around. The connections
   between nodes automatically form from orthogonal segments that make a best effort
