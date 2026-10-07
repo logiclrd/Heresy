@@ -106,7 +106,7 @@ public static class SampleAudioCodec
 		using VorbisReader reader =
 			new(
 				input,
-				closeStreamOnDispose: false);
+				false);
 
 		float[] buffer = new float[8192];
 		ArrayBufferWriter<float> samples = new();
