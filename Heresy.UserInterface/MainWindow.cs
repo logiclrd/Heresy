@@ -1260,21 +1260,34 @@ public sealed class MainWindow : Window
 			PatternEditorContext.ForPattern(
 				_workspace.Document,
 				pattern);
-		ShowPatternEditor(
-			context,
+		Action close =
 			closeOverride
 				?? (() => RefreshDocumentView(
 					$"Edited pattern {pattern.Name}",
-					selectNode)),
+					selectNode));
+		Action<int>? switchPattern =
+			selectNode is SongTreeObject currentNode
+				? delta =>
+					SwitchTreePattern(
+						currentNode,
+						delta,
+						closeOverride,
+						backLabel)
+				: null;
+		ShowPatternEditor(
+			context,
+			close,
 			backLabel,
-			$"Editing pattern {pattern.Name}");
+			$"Editing pattern {pattern.Name}",
+			switchPattern);
 	}
 
 	private void ShowPatternEditor(
 		PatternEditorContext context,
 		Action close,
 		string backLabel,
-		string status)
+		string status,
+		Action<int>? switchPattern = null)
 	{
 		PatternEditorControl editor =
 			new(
@@ -1302,10 +1315,48 @@ public sealed class MainWindow : Window
 							_playbackTransport.SendLiveEventAsync(
 								_workspace.Document,
 								liveEvent.Target,
-								liveEvent.Commands)));
+								liveEvent.Commands)),
+				switchPattern);
 		_mainContent.Content = editor;
 		UpdateWindowTitle();
 		SetStatus(status);
+	}
+
+	private void SwitchTreePattern(
+		SongTreeObject currentNode,
+		int delta,
+		Action? closeOverride,
+		string backLabel)
+	{
+		SongTreeObject? targetNode =
+			PatternTreeNavigation.FindAdjacent(
+				_workspace.Document,
+				currentNode,
+				delta);
+		if (targetNode is null)
+		{
+			SetStatus(
+				delta > 0
+					? "There is no next tracker-editable pattern in the Patterns tree."
+					: "There is no previous tracker-editable pattern in the Patterns tree.");
+			return;
+		}
+
+		if (!_workspace.Document.TryGet(
+				targetNode.ObjectId,
+				out SongObject? songObject)
+			|| songObject is not DataPatternDefinition pattern)
+		{
+			SetStatus(
+				"The adjacent pattern is no longer available.");
+			return;
+		}
+
+		ShowPatternEditor(
+			pattern,
+			targetNode,
+			closeOverride,
+			backLabel);
 	}
 
 	private void ShowScriptEditor(
