@@ -1298,16 +1298,11 @@ public sealed class MainWindow : Window
 				_playbackTransport is null
 					? null
 					: new PatternLiveAuditionActions(
-						() =>
-							_playbackTransport.BeginLiveAuditionAsync(
-								_workspace.Document),
-						(voiceId, command) =>
-							_playbackTransport.StartLiveNoteAsync(
-								voiceId,
-								command),
-						voiceId =>
-							_playbackTransport.ReleaseLiveNoteAsync(
-								voiceId)));
+						liveEvent =>
+							_playbackTransport.SendLiveEventAsync(
+								_workspace.Document,
+								liveEvent.Target,
+								liveEvent.Commands)));
 		_mainContent.Content = editor;
 		UpdateWindowTitle();
 		SetStatus(status);
