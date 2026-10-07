@@ -422,6 +422,115 @@ public sealed class PatternEditorContextTests
 	}
 
 	[Test]
+	public void GlobalNavigationMovesToStandalonePatternCorners()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Pattern",
+				rowCount: 5,
+				channelCount: 4);
+		PatternEditorContext context =
+			PatternEditorContext.ForPattern(
+				workspace.Document,
+				pattern);
+		PatternEffectCursor cursor =
+			new(2, 2, PatternCellField.Volume);
+
+		PatternEditorContextCursor.MoveToTopLeft(
+			context,
+			cursor);
+
+		cursor.Row.Should().Be(0);
+		cursor.Channel.Should().Be(0);
+		cursor.Field.Should().Be(PatternCellField.Note);
+
+		PatternEditorContextCursor.MoveToBottomRight(
+			context,
+			cursor);
+
+		cursor.Row.Should().Be(4);
+		cursor.Channel.Should().Be(3);
+		cursor.Field.Should().Be(PatternCellField.EffectParameter);
+	}
+
+	[Test]
+	public void GlobalNavigationSpansEntireSequenceEditorContext()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition first =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"First",
+				rowCount: 2,
+				channelCount: 4);
+		DataPatternDefinition last =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Last",
+				rowCount: 3,
+				channelCount: 2);
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(
+				workspace,
+				"Arrangement");
+		sequence.Entries.Add(new SequenceEntry(first.Id, startRow: 1));
+		sequence.Entries.Add(new SequenceEntry(last.Id, startRow: 1));
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(
+				workspace.Document,
+				sequence,
+				initialEntryIndex: 1);
+		PatternEffectCursor cursor =
+			new(1, 1, PatternCellField.Source);
+
+		PatternEditorContextCursor.MoveToTopLeft(
+			context,
+			cursor);
+
+		cursor.Row.Should().Be(0);
+		cursor.Channel.Should().Be(0);
+		cursor.Field.Should().Be(PatternCellField.Note);
+
+		PatternEditorContextCursor.MoveToBottomRight(
+			context,
+			cursor);
+
+		cursor.Row.Should().Be(2);
+		cursor.Channel.Should().Be(1);
+		cursor.Field.Should().Be(PatternCellField.EffectParameter);
+	}
+
+	[Test]
+	public void GlobalBottomRightUsesNativeEffectAsOneWholeFinalField()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Pattern",
+				rowCount: 2,
+				channelCount: 2);
+		pattern.Grid.GetOrCreateCell(1, 1).Effects.Add(
+			new SetPlaybackFrequencyPatternEffect(440));
+		PatternEditorContext context =
+			PatternEditorContext.ForPattern(
+				workspace.Document,
+				pattern);
+		PatternEffectCursor cursor =
+			new(0, 0, PatternCellField.Note);
+
+		PatternEditorContextCursor.MoveToBottomRight(
+			context,
+			cursor);
+
+		cursor.Row.Should().Be(1);
+		cursor.Channel.Should().Be(1);
+		cursor.Field.Should().Be(PatternCellField.EffectCommand);
+	}
+
+	[Test]
 	public void HomeEndNavigationUsesCurrentSequencePatternCellAndWidth()
 	{
 		DocumentWorkspace workspace = new();
