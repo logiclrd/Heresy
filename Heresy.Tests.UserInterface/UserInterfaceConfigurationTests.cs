@@ -20,5 +20,7 @@ public sealed class UserInterfaceConfigurationTests
 			.Should().Be(Color.FromArgb(0x80, 0x80, 0x80, 0x80));
 		configuration.MinorPatternRowHighlight
 			.Should().Be(Color.FromArgb(0x40, 0x80, 0x80, 0x80));
+		configuration.PatternSelectionHighlight
+			.Should().Be(Color.FromArgb(0x60, 0x40, 0x80, 0xFF));
 	}
 }
