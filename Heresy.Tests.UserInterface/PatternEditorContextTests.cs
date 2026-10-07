@@ -422,6 +422,118 @@ public sealed class PatternEditorContextTests
 	}
 
 	[Test]
+	public void FirstLastRowNavigationPreservesStandaloneChannelAndField()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Pattern",
+				rowCount: 6,
+				channelCount: 4);
+		PatternEditorContext context =
+			PatternEditorContext.ForPattern(
+				workspace.Document,
+				pattern);
+		PatternEffectCursor cursor =
+			new(3, 2, PatternCellField.Volume);
+
+		PatternEditorContextCursor.MoveToFirstRow(
+			context,
+			cursor);
+
+		cursor.Row.Should().Be(0);
+		cursor.Channel.Should().Be(2);
+		cursor.Field.Should().Be(PatternCellField.Volume);
+
+		PatternEditorContextCursor.MoveToLastRow(
+			context,
+			cursor);
+
+		cursor.Row.Should().Be(5);
+		cursor.Channel.Should().Be(2);
+		cursor.Field.Should().Be(PatternCellField.Volume);
+	}
+
+	[Test]
+	public void FirstLastRowNavigationSpansSequenceAndClampsDestinationChannel()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition narrow =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Narrow",
+				rowCount: 2,
+				channelCount: 2);
+		DataPatternDefinition wide =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Wide",
+				rowCount: 2,
+				channelCount: 4);
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(
+				workspace,
+				"Arrangement");
+		sequence.Entries.Add(new SequenceEntry(narrow.Id));
+		sequence.Entries.Add(new SequenceEntry(wide.Id));
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(
+				workspace.Document,
+				sequence,
+				initialEntryIndex: 1);
+		PatternEffectCursor cursor =
+			new(3, 3, PatternCellField.EffectParameter);
+
+		PatternEditorContextCursor.MoveToFirstRow(
+			context,
+			cursor);
+
+		cursor.Row.Should().Be(0);
+		cursor.Channel.Should().Be(1);
+		cursor.Field.Should().Be(PatternCellField.EffectParameter);
+
+		PatternEditorContextCursor.MoveToLastRow(
+			context,
+			cursor);
+
+		cursor.Row.Should().Be(3);
+		cursor.Channel.Should().Be(1);
+		cursor.Field.Should().Be(PatternCellField.EffectParameter);
+	}
+
+	[Test]
+	public void FirstLastRowNavigationCollapsesExpandedEffectSelection()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Pattern",
+				rowCount: 3,
+				channelCount: 2);
+		PatternCell cell =
+			pattern.Grid.GetOrCreateCell(1, 0);
+		cell.Effects.Add(new TonePortamentoPatternEffect(0x11));
+		cell.Effects.Add(new VibratoPatternEffect(0x22));
+		PatternEditorContext context =
+			PatternEditorContext.ForPattern(
+				workspace.Document,
+				pattern);
+		PatternEffectCursor cursor =
+			new(1, 0, PatternCellField.EffectCommand);
+		cursor.Expand(cell);
+
+		PatternEditorContextCursor.MoveToFirstRow(
+			context,
+			cursor);
+
+		cursor.Row.Should().Be(0);
+		cursor.IsExpanded.Should().BeFalse();
+		cursor.Field.Should().Be(PatternCellField.EffectCommand);
+	}
+
+	[Test]
 	public void GlobalNavigationMovesToStandalonePatternCorners()
 	{
 		DocumentWorkspace workspace = new();
