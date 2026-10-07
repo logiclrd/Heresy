@@ -229,7 +229,7 @@ public sealed class DocumentWorkspaceTests
 		{
 			Directory.CreateDirectory(Path.GetDirectoryName(assetPath)!);
 			Directory.CreateDirectory(Path.GetDirectoryName(jsonPath)!);
-			File.WriteAllText(assetPath, "tone");
+			WritePcm16MonoWave(assetPath);
 			SongDocument source = new();
 			ObjectId id = source.AllocateObjectId();
 			source.Add(
@@ -249,6 +249,27 @@ public sealed class DocumentWorkspaceTests
 			if (Directory.Exists(root))
 				Directory.Delete(root, recursive: true);
 		}
+	}
+
+	private static void WritePcm16MonoWave(string path)
+	{
+		Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+		using FileStream file = File.Create(path);
+		using BinaryWriter writer = new(file);
+		writer.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
+		writer.Write(38);
+		writer.Write(System.Text.Encoding.ASCII.GetBytes("WAVE"));
+		writer.Write(System.Text.Encoding.ASCII.GetBytes("fmt "));
+		writer.Write(16);
+		writer.Write((ushort)1);
+		writer.Write((ushort)1);
+		writer.Write(8000);
+		writer.Write(16000);
+		writer.Write((ushort)2);
+		writer.Write((ushort)16);
+		writer.Write(System.Text.Encoding.ASCII.GetBytes("data"));
+		writer.Write(2);
+		writer.Write((short)0);
 	}
 
 }
