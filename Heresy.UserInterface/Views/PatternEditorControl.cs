@@ -188,6 +188,7 @@ public sealed class PatternEditorControl : UserControl
 			};
 
 		Content = BuildContent();
+		_owner.Deactivated += OnOwnerDeactivated;
 		RefreshGrid();
 	}
 
@@ -986,6 +987,46 @@ public sealed class PatternEditorControl : UserControl
 			UpdateCurrentPatternControls();
 			RefreshCursorVisuals();
 			FocusCursorCell();
+		}
+	}
+
+	private async void OnOwnerDeactivated(
+		object? sender,
+		EventArgs e)
+	{
+		_ = sender;
+		_ = e;
+		await ReleaseAllHeldPreviewsAsync();
+	}
+
+	protected override void OnDetachedFromVisualTree(
+		Avalonia.VisualTreeAttachmentEventArgs e)
+	{
+		_owner.Deactivated -= OnOwnerDeactivated;
+		_ = ReleaseAllHeldPreviewsAsync();
+		base.OnDetachedFromVisualTree(e);
+	}
+
+	private async Task ReleaseAllHeldPreviewsAsync()
+	{
+		IReadOnlyList<ReleaseHeldNotePreviewAction> releases =
+			_heldPreviewKeys.ReleaseAll();
+
+		if (_liveAudition is null)
+			return;
+
+		foreach (ReleaseHeldNotePreviewAction release in releases)
+		{
+			try
+			{
+				await _liveAudition.ReleaseNoteAsync(
+					release.VoiceId);
+			}
+			catch (Exception ex)
+			{
+				_message.Text =
+					$"Preview release failed: {ex.Message}";
+			}
 		}
 	}
 
