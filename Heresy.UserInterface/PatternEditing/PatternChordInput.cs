@@ -111,6 +111,13 @@ public sealed class PatternChordInputState
 		EnsureEnabledCapacity(_toneOffsets.Count);
 	}
 
+	public void Exit()
+	{
+		_type = null;
+		_rootRelativeSemitone = null;
+		_toneOffsets.Clear();
+	}
+
 	public void SetRoot(
 		int relativeSemitoneFromC4)
 	{
@@ -322,6 +329,7 @@ public sealed class PatternChordInputState
 public enum PatternChordCommandKind
 {
 	Select,
+	Exit,
 	RotateFirstToEnd,
 	RotateLastToBeginning,
 	AddTone,
@@ -348,6 +356,14 @@ public static class PatternChordKeyboard
 
 		if (modifiers == chordModifiers)
 		{
+			if (key == PhysicalKey.Escape)
+			{
+				command =
+					new PatternChordCommand(
+						PatternChordCommandKind.Exit);
+				return true;
+			}
+
 			if (TryGetChordType(
 				key,
 				out PatternChordType type))

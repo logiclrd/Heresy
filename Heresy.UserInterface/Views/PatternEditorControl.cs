@@ -1861,6 +1861,12 @@ public sealed class PatternEditorControl : UserControl
 	{
 		switch (command.Kind)
 		{
+			case PatternChordCommandKind.Exit:
+				_chordInputState.Exit();
+				_message.Text =
+					"Exited chord mode; single-note entry is active.";
+				break;
+
 			case PatternChordCommandKind.Select:
 				_chordInputState.Select(
 					command.ChordType
@@ -1994,10 +2000,9 @@ public sealed class PatternEditorControl : UserControl
 				new TextBlock
 				{
 					Text = tone.NoteText,
-					Foreground =
-						tone.Enabled
-							? null
-							: Brushes.Gray,
+					// Do not set Foreground locally: the TextBlock must inherit
+					// the current theme/dialog foreground in both light and dark
+					// modes. Disabled tones are distinguished by opacity only.
 					Opacity =
 						tone.Enabled
 							? 1.0
