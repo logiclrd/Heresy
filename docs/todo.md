@@ -102,8 +102,8 @@ preserved during implementation.
   being played in realtime in the visible pattern editor. Playback compilation
   now emits an exact pattern-row timeline from the same resolved tracker timing
   used to build the note schedule, so tempo/speed changes, pattern delays,
-  pattern loops, start rows and data-sequence order/break flow all move the
-  highlight at their actual wall-time boundaries. Sequence playback carries the
+  pattern loops, start rows and data- or scripted-sequence traversal all move
+  the highlight at their actual wall-time boundaries. Sequence playback carries the
   sequence ObjectId and entry index so repeated occurrences of the same pattern
   highlight only the occurrence being played; standalone pattern playback
   highlights every visible occurrence of that underlying pattern row. The
