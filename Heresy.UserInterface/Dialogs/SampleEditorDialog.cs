@@ -14,6 +14,7 @@ using Avalonia.Platform.Storage;
 using Heresy.Core.Assets;
 using Heresy.Core.Samples;
 using Heresy.UserInterface.Documents;
+using Heresy.UserInterface.SampleEditing;
 using Heresy.UserInterface.Views;
 
 namespace Heresy.UserInterface.Dialogs;
