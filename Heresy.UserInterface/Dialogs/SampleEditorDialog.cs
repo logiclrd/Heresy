@@ -14,6 +14,7 @@ using Avalonia.Platform.Storage;
 using Heresy.Core.Assets;
 using Heresy.Core.Samples;
 using Heresy.UserInterface.Documents;
+using Heresy.UserInterface.Views;
 
 namespace Heresy.UserInterface.Dialogs;
 
@@ -45,6 +46,8 @@ public sealed class SampleEditorDialog : Window
 	private readonly TextBlock _integrityStatus;
 	private readonly TextBox _expectedHash;
 	private readonly TextBox _actualHash;
+	private readonly SampleWaveformControl _waveform;
+	private readonly TextBlock _waveformSummary;
 	private readonly TextBlock _message;
 
 	public SampleEditorDialog(
@@ -97,6 +100,17 @@ public sealed class SampleEditorDialog : Window
 			};
 		_expectedHash = ReadOnlyTextBox();
 		_actualHash = ReadOnlyTextBox();
+		_waveform =
+			new SampleWaveformControl
+			{
+				Height = 180,
+				HorizontalAlignment = HorizontalAlignment.Stretch,
+			};
+		_waveformSummary =
+			new TextBlock
+			{
+				TextWrapping = TextWrapping.Wrap,
+			};
 		_message =
 			new TextBlock
 			{
@@ -104,6 +118,7 @@ public sealed class SampleEditorDialog : Window
 			};
 
 		Content = BuildContent();
+		RefreshWaveform();
 		RefreshDiagnostics();
 	}
 
@@ -115,6 +130,27 @@ public sealed class SampleEditorDialog : Window
 			new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
 
 		int row = 0;
+
+		TextBlock waveformHeading =
+			new()
+			{
+				Text = "Decoded waveform",
+				FontSize = 18,
+				FontWeight = FontWeight.SemiBold,
+				Margin = new Thickness(0, 0, 0, 4),
+			};
+		AddFullWidth(form, ref row, waveformHeading);
+		AddFullWidth(
+			form,
+			ref row,
+			new Border
+			{
+				BorderBrush = Brushes.Gray,
+				BorderThickness = new Thickness(1),
+				Child = _waveform,
+			});
+		AddFullWidth(form, ref row, _waveformSummary);
+
 		AddField(form, ref row, "Name", _name);
 		AddField(form, ref row, "Reference frequency (Hz)", _referenceFrequency);
 		AddField(form, ref row, "Loop mode", _loopMode);
@@ -260,6 +296,7 @@ public sealed class SampleEditorDialog : Window
 		try
 		{
 			SampleDocumentEditor.Relink(_workspace, _sample, path);
+			RefreshWaveform();
 			RefreshDiagnostics();
 			_message.Text = "Replacement sample imported into the song and decoded.";
 		}
@@ -274,6 +311,7 @@ public sealed class SampleEditorDialog : Window
 		try
 		{
 			SampleDocumentEditor.RefreshHash(_workspace, _sample);
+			RefreshWaveform();
 			RefreshDiagnostics();
 			_message.Text = "The persisted encoding was reloaded into memory and accepted.";
 		}
@@ -281,6 +319,33 @@ public sealed class SampleEditorDialog : Window
 		{
 			_message.Text = ex.Message;
 		}
+	}
+
+	private void RefreshWaveform()
+	{
+		_waveform.SetPcmData(_sample.PcmData);
+
+		if (_sample.PcmData is not SamplePcmData pcm)
+		{
+			_waveform.Height = 120;
+			_waveformSummary.Text =
+				"No decoded PCM is available for this sample.";
+			return;
+		}
+
+		_waveform.Height =
+			Math.Clamp(
+				pcm.ChannelCount * 72.0,
+				140.0,
+				360.0);
+
+		double durationSeconds =
+			pcm.FrameCount / (double)pcm.SampleRate;
+		_waveformSummary.Text =
+			$"{pcm.ChannelCount} channel{(pcm.ChannelCount == 1 ? string.Empty : "s")} · "
+			+ $"{pcm.SampleRate} Hz · "
+			+ $"{pcm.FrameCount} frame{(pcm.FrameCount == 1 ? string.Empty : "s")} · "
+			+ $"{durationSeconds:0.###} s";
 	}
 
 	private void RefreshDiagnostics()
