@@ -60,6 +60,15 @@ public sealed class PatternEditorControl : UserControl
 			VerticalAlignment = VerticalAlignment.Center,
 		};
 	private readonly PatternNoteInputState _noteInputState;
+	private readonly PatternChordInputState _chordInputState = new();
+	private readonly StackPanel _chordStatus =
+		new()
+		{
+			Orientation = Orientation.Horizontal,
+			Spacing = 8,
+			Margin = new Thickness(10, 2),
+			VerticalAlignment = VerticalAlignment.Center,
+		};
 	private readonly ScrollViewer _scroll;
 	private readonly TextBlock _message;
 	private readonly TextBlock _title =
@@ -251,11 +260,12 @@ public sealed class PatternEditorControl : UserControl
 			new TextBlock
 			{
 				Text =
-					"Arrow keys move the tracker cursor. Shift+Arrow extends the marked block; Alt+B/Alt+E set its corners, Alt+D marks/expands by the major highlight, Alt+L marks the channel then pattern, and Alt+U unmarks. Ctrl+C/Ctrl+X copy or cut the marked block, Ctrl+V merge-pastes it, Shift+Ctrl+V overwrite-pastes it, and Ctrl+Delete clears it. Type notes directly in the note field; the edit mask controls which Note/Source/Volume fields are stamped, and comma toggles the mask bit for the current field. Hold Caps Lock while pressing tracker piano keys to preview without editing, releasing the key sends Note Off. Top-row 4 auditions the current note and 8 auditions the current row, advancing one row. Enter opens detailed note editing or expands a stacked effect strip.",
+					"Arrow keys move the tracker cursor. Shift+Arrow extends the marked block; Alt+B/Alt+E set its corners, Alt+D marks/expands by the major highlight, Alt+L marks the channel then pattern, and Alt+U unmarks. Ctrl+C/Ctrl+X copy or cut the marked block, Ctrl+V merge-pastes it, Shift+Ctrl+V overwrite-pastes it, and Ctrl+Delete clears it. Ctrl+Alt+Z/X/C/V/B/N/M chooses a chord; Ctrl+Alt+-/+ rotates it, Ctrl+Alt+Numpad */ changes its tone count, Ctrl+Alt+1..9 toggles tones and Ctrl+Alt+= enables all. Type notes directly in the note field; the edit mask controls which Note/Source/Volume fields are stamped, and comma toggles the mask bit for the current field. Hold Caps Lock while pressing tracker piano keys to preview without editing, releasing the key sends Note Off. Top-row 4 auditions the current note and 8 auditions the current row, advancing one row. Enter opens detailed note editing or expands a stacked effect strip.",
 				TextWrapping = TextWrapping.Wrap,
 			};
 
 		Content = BuildContent();
+		UpdateChordStatus();
 		_owner.Deactivated += OnOwnerDeactivated;
 		RefreshGrid();
 	}
@@ -341,6 +351,15 @@ public sealed class PatternEditorControl : UserControl
 		DockPanel root = new();
 		DockPanel.SetDock(header, Dock.Top);
 		root.Children.Add(header);
+
+		Border chordBorder =
+			new()
+			{
+				Padding = new Thickness(0, 2),
+				Child = _chordStatus,
+			};
+		DockPanel.SetDock(chordBorder, Dock.Top);
+		root.Children.Add(chordBorder);
 
 		Border messageBorder =
 			new()
@@ -789,6 +808,18 @@ public sealed class PatternEditorControl : UserControl
 			editorRow.Pattern.Grid[editorRow.PatternRow, channel];
 		(int Row, int Channel)? previouslyExpanded = _expandedCell;
 
+		if (PatternChordKeyboard.TryGetCommand(
+			e.PhysicalKey,
+			e.KeyModifiers,
+			out PatternChordCommand chordCommand))
+		{
+			HandleChordCommand(chordCommand);
+			UpdateChordStatus();
+			e.Handled = true;
+			FocusCursorCell();
+			return;
+		}
+
 		if (PatternOctaveKeyboard.TryAdjust(
 			e.PhysicalKey,
 			e.KeyModifiers,
@@ -1097,6 +1128,56 @@ public sealed class PatternEditorControl : UserControl
 			int editedRow = _cursor.Row;
 			int editedChannel = _cursor.Channel;
 			PatternEditorRow edited = _context.GetRow(editedRow);
+
+			if (_chordInputState.IsActive)
+			{
+				PatternChordInputResult chordResult =
+					PatternEditorContextCursor.EditCurrent(
+						_context,
+						_cursor,
+						mapped =>
+							PatternChordEditor.TypeRootPhysical(
+								_workspace,
+								mapped.Pattern,
+								_cursor,
+								_noteInputState,
+								_chordInputState,
+								e.PhysicalKey));
+
+				if (chordResult.Handled)
+				{
+					if (chordResult.Changed)
+					{
+						foreach (int chordChannel in chordResult.Channels)
+						{
+							RefreshUnderlyingCell(
+								edited.Pattern,
+								edited.PatternRow,
+								chordChannel);
+						}
+						_changed(
+							$"Entered chord in {edited.Pattern.Name} row {edited.PatternRow}, starting at channel {editedChannel + 1}");
+					}
+
+					if (chordResult.NoteApplied)
+					{
+						foreach (int chordChannel in chordResult.Channels)
+						{
+							await PlayEnteredNoteAsync(
+								edited,
+								chordChannel);
+						}
+					}
+
+					UpdateChordStatus();
+					e.Handled = true;
+					UpdateCurrentPatternControls();
+					RefreshCursorVisuals();
+					FocusCursorCell();
+					return;
+				}
+			}
+
 			PatternNoteInputResult noteResult =
 				PatternEditorContextCursor.EditCurrent(
 					_context,
@@ -1746,6 +1827,180 @@ public sealed class PatternEditorControl : UserControl
 					_noteInputState.EditMask,
 					_noteInputState.CurrentVolume)));
 	}
+
+	private void HandleChordCommand(
+		PatternChordCommand command)
+	{
+		switch (command.Kind)
+		{
+			case PatternChordCommandKind.Select:
+				_chordInputState.Select(
+					command.ChordType
+						?? throw new InvalidOperationException(
+							"Chord-selection command has no chord type."));
+				_message.Text =
+					$"Chord set to {FormatChordType(_chordInputState.Type!.Value)}.";
+				break;
+
+			case PatternChordCommandKind.RotateFirstToEnd:
+				if (!RequireActiveChord())
+					return;
+				_chordInputState.RotateFirstToEnd();
+				_message.Text =
+					"Rotated first chord tone to the end.";
+				break;
+
+			case PatternChordCommandKind.RotateLastToBeginning:
+				if (!RequireActiveChord())
+					return;
+				_chordInputState.RotateLastToBeginning();
+				_message.Text =
+					"Rotated last chord tone to the beginning.";
+				break;
+
+			case PatternChordCommandKind.AddTone:
+				if (!RequireActiveChord())
+					return;
+				_chordInputState.AddTone();
+				_message.Text =
+					"Added one repeated chord tone.";
+				break;
+
+			case PatternChordCommandKind.RemoveTone:
+				if (!RequireActiveChord())
+					return;
+				_chordInputState.RemoveTone();
+				_message.Text =
+					"Removed one chord tone.";
+				break;
+
+			case PatternChordCommandKind.ToggleTone:
+				if (!RequireActiveChord())
+					return;
+				if (!_chordInputState.ToggleTone(
+					command.ToneIndex))
+				{
+					_message.Text =
+						$"Chord tone {command.ToneIndex + 1} does not currently exist.";
+				}
+				else
+				{
+					_message.Text =
+						$"Toggled chord tone {command.ToneIndex + 1}.";
+				}
+				break;
+
+			case PatternChordCommandKind.EnableAll:
+				if (!RequireActiveChord())
+					return;
+				_chordInputState.EnableAll();
+				_message.Text =
+					"Enabled all current chord tones.";
+				break;
+
+			default:
+				throw new ArgumentOutOfRangeException(
+					nameof(command));
+		}
+	}
+
+	private bool RequireActiveChord()
+	{
+		if (_chordInputState.IsActive)
+			return true;
+
+		_message.Text =
+			"Choose a chord type first with Ctrl+Alt+Z/X/C/V/B/N/M.";
+		return false;
+	}
+
+	private void UpdateChordStatus()
+	{
+		_chordStatus.Children.Clear();
+		_chordStatus.Children.Add(
+			new TextBlock
+			{
+				Text = "Chord:",
+				FontWeight = FontWeight.SemiBold,
+				VerticalAlignment = VerticalAlignment.Center,
+			});
+
+		if (!_chordInputState.IsActive)
+		{
+			_chordStatus.Children.Add(
+				new TextBlock
+				{
+					Text = "—",
+					VerticalAlignment = VerticalAlignment.Center,
+				});
+			return;
+		}
+
+		_chordStatus.Children.Add(
+			new TextBlock
+			{
+				Text =
+					FormatChordType(
+						_chordInputState.Type!.Value),
+				FontWeight = FontWeight.SemiBold,
+				VerticalAlignment = VerticalAlignment.Center,
+			});
+
+		IReadOnlyList<PatternChordStatusTone> tones =
+			_chordInputState.GetStatusTones();
+		if (tones.Count == 0)
+		{
+			_chordStatus.Children.Add(
+				new TextBlock
+				{
+					Text = "— press a tracker note for root —",
+					Opacity = 0.65,
+					VerticalAlignment = VerticalAlignment.Center,
+				});
+			return;
+		}
+
+		foreach (PatternChordStatusTone tone in tones)
+		{
+			_chordStatus.Children.Add(
+				new TextBlock
+				{
+					Text = tone.NoteText,
+					Foreground =
+						tone.Enabled
+							? null
+							: Brushes.Gray,
+					Opacity =
+						tone.Enabled
+							? 1.0
+							: 0.55,
+					VerticalAlignment = VerticalAlignment.Center,
+				});
+		}
+	}
+
+	private static string FormatChordType(
+		PatternChordType type)
+		=> type switch
+		{
+			PatternChordType.Major =>
+				"Major",
+			PatternChordType.Minor =>
+				"Minor",
+			PatternChordType.DominantSeventh =>
+				"Dominant 7",
+			PatternChordType.MajorSeventh =>
+				"Major 7",
+			PatternChordType.MinorSeventh =>
+				"Minor 7",
+			PatternChordType.HalfDiminishedSeventh =>
+				"Half-diminished 7",
+			PatternChordType.DiminishedSeventh =>
+				"Diminished 7",
+			_ =>
+				throw new ArgumentOutOfRangeException(
+					nameof(type)),
+		};
 
 	private void UpdateEditStateDisplay()
 	{
