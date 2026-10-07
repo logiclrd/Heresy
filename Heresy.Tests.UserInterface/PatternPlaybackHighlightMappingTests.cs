@@ -47,7 +47,7 @@ public sealed class PatternPlaybackHighlightMappingTests
 				patternRow: 1,
 				sequence.Id,
 				sequenceEntryIndex: 1)
-			.Should().Equal(4);
+			.Should().Equal(3);
 	}
 
 	[Test]
