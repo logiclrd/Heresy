@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 
 using AwesomeAssertions;
@@ -92,6 +93,12 @@ public sealed class LazySongPlaybackTransportTests
 
 		public Task BeginLiveAuditionAsync(
 			SongDocument document)
+			=> Task.CompletedTask;
+
+		public Task SendLiveEventAsync(
+			SongDocument document,
+			ChannelTarget target,
+			IReadOnlyList<NoteCommand> commands)
 			=> Task.CompletedTask;
 
 		public Task StartLiveNoteAsync(
