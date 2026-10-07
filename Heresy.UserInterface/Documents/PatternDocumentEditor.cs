@@ -131,6 +131,57 @@ public static class PatternDocumentEditor
 		workspace.Document.MarkChanged(affectsAudio: true);
 	}
 
+	public static bool SetMaskedEntry(
+		DocumentWorkspace workspace,
+		DataPatternDefinition pattern,
+		int row,
+		int channel,
+		PatternEditMask mask,
+		PatternNoteEntry? note,
+		ObjectId sourceId,
+		double? volume)
+	{
+		ValidatePattern(workspace, pattern);
+
+		if ((mask & PatternEditMask.Source) != 0
+			&& !sourceId.IsNone
+			&& (!workspace.Document.TryGet(sourceId, out SongObject? source)
+				|| source is null
+				|| !PatternSourceCatalog.IsSoundSource(source.Kind)))
+		{
+			sourceId = ObjectId.None;
+		}
+
+		PatternCell? cell = pattern.Grid[row, channel];
+		bool noteChanged =
+			(mask & PatternEditMask.Note) != 0
+				&& !Equals(cell?.Note, note);
+		bool sourceChanged =
+			(mask & PatternEditMask.Source) != 0
+				&& (cell?.SourceId ?? ObjectId.None) != sourceId;
+		bool volumeChanged =
+			(mask & PatternEditMask.Volume) != 0
+				&& cell?.Volume != volume
+				&& !(cell is null && volume is null);
+
+		if (!noteChanged && !sourceChanged && !volumeChanged)
+			return false;
+
+		cell ??= pattern.Grid.GetOrCreateCell(row, channel);
+		if ((mask & PatternEditMask.Note) != 0)
+			cell.Note = note;
+		if ((mask & PatternEditMask.Source) != 0)
+			cell.SourceId = sourceId;
+		if ((mask & PatternEditMask.Volume) != 0)
+			cell.Volume = volume;
+
+		if (cell.IsEmpty)
+			pattern.Grid.ClearCell(row, channel);
+
+		workspace.Document.MarkChanged(affectsAudio: true);
+		return true;
+	}
+
 	public static bool InsertRow(
 		DocumentWorkspace workspace,
 		DataPatternDefinition pattern,
