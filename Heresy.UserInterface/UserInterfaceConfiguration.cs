@@ -14,4 +14,7 @@ public sealed class UserInterfaceConfiguration
 
 	public Color MinorPatternRowHighlight { get; init; } =
 		Color.FromArgb(0x40, 0x80, 0x80, 0x80);
+
+	public Color PatternSelectionHighlight { get; init; } =
+		Color.FromArgb(0x60, 0x40, 0x80, 0xFF);
 }
