@@ -164,3 +164,30 @@ preserved during implementation.
 - [ ] `Shift+Ctrl+V`: paste with overwrite semantics instead of merge.
 - [ ] `Ctrl+X` (`^X`): copy the marked region and then clear it.
 - [ ] `Ctrl+Delete`: clear the selected region without copying it.
+
+## FM Synthesis
+
+- [ ] `ISound` implementation in the same category as samples that generates sound
+  using a generic multi-operator FM scheme built on a configurable graph combining
+  nodes of type:
+    * Constant: Emits a specific (configurable) value constantly.
+    * Oscillator: Emits a waveform at a frequency and amplitude. Has an optional
+      input for a multiplier and parameters for frequency, Vmin, Vmax and exp, the
+      latter of which treats the multiplier as a tone shift and computes the
+      actual multiplier as `2 ^ (e / 12)`.
+    * Envelope: Emits a value based on the same envelope configuration as is used
+      for instrument definitions.
+    * Operator: Combines inputs using a simple math operation, such as addition,
+      multiplication, min, max.
+- [ ] Editor for FM-synthesized instrument specifications that allows the graph to
+  be edited and configured using the mouse to drag nodes around. The connections
+  between nodes automatically form from orthogonal segments that make a best effort
+  to route around nodes but which can be edited by the user. This means that nodes
+  need to remember their physical position and connections need to remember hints
+  for their routing (which do not functionally affect the behaviour of the graph).
+- [ ] Saving and loading of FM-synthesized instrument specifications in `.hm.json`
+  documents.
+- [ ] Loader that allows an FM-synthesized instrument to be loaded into the Samples
+  pane by selecting an existing `.hm` or `.hm.json` file, upon which the
+  FM-synthesized instruments in that file are enumerated and the user can select
+  one or more to be imported into the current song.
