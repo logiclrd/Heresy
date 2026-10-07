@@ -196,6 +196,24 @@ recalls are primed without playing those earlier events. The resulting frozen
 `NoteSchedule` is submitted as an ordinary `AdHocPlaybackRequest` through
 the same snapshot/background/SDL path as other realtime playback.
 
+Held-note preview uses the same sequencing state but a live-event extension of
+that playback path. While the Note column has focus, the physical Caps Lock key
+acts as a momentary preview modifier: pressing a mapped tracker piano key starts
+the note at the current tracker octave without editing the pattern, and releasing
+that same physical key queues `NoteOffCommand` into the same running
+`PlaybackSession`. The operating-system Caps Lock toggle state is deliberately
+ignored. Auto-repeat does not restart a held preview, and concurrently held
+tracker keys are assigned independent preview channels so one key's release
+cannot turn off another key's note.
+
+`PlaybackSessionAudioSource` implements `ILiveAudioOutputSource`: UI/worker
+commands enter a thread-safe queue and are applied at the next audio render
+boundary using the session's current frame. This preserves one voice lifecycle
+across key-down/key-up while keeping all renderer mutation on the audio callback
+side. A fresh song snapshot is captured when the first held preview note starts;
+additional simultaneously held notes share that live snapshot, and the next new
+preview group replaces it with a fresh snapshot.
+
 Realtime sample decoding currently uses `WaveSampleDataProvider`. It reads
 RIFF/WAVE assets through `ExternalAssetIntegrity.OpenRead`, so ordinary files
 and samples stored inside consolidated `.hm` archives use the same path. PCM
