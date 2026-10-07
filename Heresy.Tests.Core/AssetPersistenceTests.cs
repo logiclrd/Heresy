@@ -78,6 +78,14 @@ public sealed class AssetPersistenceTests
 					packagePath,
 					"pcm/tone.wav")));
 		using ZipArchive zip = ZipFile.OpenRead(packagePath);
+		JsonObject manifest =
+			JsonNode.Parse(
+				ReadEntry(zip, "test.hm.json"))!
+				.AsObject();
+		Assert.That(
+			manifest["objects"]![id.Value.ToString()]!["asset"]!["sha256"]!
+				.GetValue<string>(),
+			Is.EqualTo(sample.Asset.Sha256));
 		using Stream stream = zip.GetEntry("pcm/tone.wav")!.Open();
 		using MemoryStream copy = new();
 		stream.CopyTo(copy);
