@@ -124,7 +124,7 @@ public sealed class SampleEditorDialog : Window
 		TextBlock assetHeading =
 			new()
 			{
-				Text = "External asset",
+				Text = "Encoded storage",
 				FontSize = 18,
 				FontWeight = FontWeight.SemiBold,
 				Margin = new Thickness(0, 14, 0, 2),
@@ -261,7 +261,7 @@ public sealed class SampleEditorDialog : Window
 		{
 			SampleDocumentEditor.Relink(_workspace, _sample, path);
 			RefreshDiagnostics();
-			_message.Text = "Sample asset relinked and hashed.";
+			_message.Text = "Replacement sample imported into the song and decoded.";
 		}
 		catch (Exception ex)
 		{
@@ -275,7 +275,7 @@ public sealed class SampleEditorDialog : Window
 		{
 			SampleDocumentEditor.RefreshHash(_workspace, _sample);
 			RefreshDiagnostics();
-			_message.Text = "The current asset content is now the accepted version.";
+			_message.Text = "The persisted encoding was reloaded into memory and accepted.";
 		}
 		catch (Exception ex)
 		{
@@ -285,17 +285,23 @@ public sealed class SampleEditorDialog : Window
 
 	private void RefreshDiagnostics()
 	{
-		_relativePath.Text = _sample.Asset.FullPath;
-		_expectedHash.Text = _sample.Asset.Sha256 ?? "(not recorded)";
+		_relativePath.Text =
+			_sample.Asset?.FullPath
+				?? "(pending save into current song)";
+		_expectedHash.Text =
+			_sample.Asset?.Sha256
+				?? _sample.PendingAsset?.Sha256
+				?? "(not recorded)";
 
 		try
 		{
 			ExternalAssetCheck check =
 				SampleDocumentEditor.CheckAsset(_workspace, _sample);
-			if (HeresyModulePath.TrySplit(
-				_sample.Asset.FullPath,
-				out string archivePath,
-				out string entryPath))
+			if (_sample.Asset is ExternalAssetReference asset
+				&& HeresyModulePath.TrySplit(
+					asset.FullPath,
+					out string archivePath,
+					out string entryPath))
 			{
 				_resolvedPath.Text = $"{archivePath} → {entryPath}";
 			}
@@ -306,7 +312,8 @@ public sealed class SampleEditorDialog : Window
 			_actualHash.Text = check.ActualSha256 ?? "(unavailable)";
 			_integrityStatus.Text = check.Status switch
 			{
-				ExternalAssetStatus.Match => "OK — file matches recorded SHA-256",
+				ExternalAssetStatus.Pending => "Pending — encoded bytes are owned in memory until the song is saved",
+				ExternalAssetStatus.Match => "OK — persisted encoding matches recorded SHA-256",
 				ExternalAssetStatus.Missing => "Missing — referenced file was not found",
 				ExternalAssetStatus.Unhashed => "Unhashed — file exists but no SHA-256 is recorded",
 				ExternalAssetStatus.HashMismatch => "Changed — file content differs from recorded SHA-256",
