@@ -13,11 +13,13 @@ namespace Heresy.Playback;
 /// which actually requires audio. Stop remains a no-op before initialization.
 /// </summary>
 public sealed class LazySongPlaybackTransport
-	: ISongPlaybackTransport
+	: ISongPlaybackTransport,
+		IPlaybackPositionTransport
 {
 	private readonly object _gate = new();
 	private readonly Func<ISongPlaybackTransport> _factory;
 	private ISongPlaybackTransport? _inner;
+	private EventHandler<PlaybackPositionChangedEventArgs>? _positionChanged;
 	private bool _disposed;
 
 	public LazySongPlaybackTransport(
@@ -26,6 +28,46 @@ public sealed class LazySongPlaybackTransport
 		_factory =
 			factory
 				?? throw new ArgumentNullException(nameof(factory));
+	}
+
+	public event EventHandler<PlaybackPositionChangedEventArgs>?
+		PlaybackPositionChanged
+	{
+		add
+		{
+			lock (_gate)
+			{
+				ThrowIfDisposed();
+				_positionChanged += value;
+				if (_inner is IPlaybackPositionTransport positions)
+					positions.PlaybackPositionChanged += value;
+			}
+		}
+		remove
+		{
+			lock (_gate)
+			{
+				if (_disposed)
+					return;
+
+				_positionChanged -= value;
+				if (_inner is IPlaybackPositionTransport positions)
+					positions.PlaybackPositionChanged -= value;
+			}
+		}
+	}
+
+	public PlaybackPatternPosition? CurrentPlaybackPosition
+	{
+		get
+		{
+			lock (_gate)
+			{
+				ThrowIfDisposed();
+				return (_inner as IPlaybackPositionTransport)
+					?.CurrentPlaybackPosition;
+			}
+		}
 	}
 
 	public Task PlaySongAsync(
@@ -100,10 +142,19 @@ public sealed class LazySongPlaybackTransport
 		lock (_gate)
 		{
 			ThrowIfDisposed();
-			_inner ??=
-				_factory()
-					?? throw new InvalidOperationException(
-						"The playback transport factory returned null.");
+			if (_inner is null)
+			{
+				_inner =
+					_factory()
+						?? throw new InvalidOperationException(
+							"The playback transport factory returned null.");
+				if (_inner is IPlaybackPositionTransport positions
+					&& _positionChanged is not null)
+				{
+					positions.PlaybackPositionChanged +=
+						_positionChanged;
+				}
+			}
 			return _inner;
 		}
 	}

@@ -11,6 +11,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 
 using Heresy.Core.Envelopes;
 using Heresy.Core.FmSynthesis;
@@ -75,6 +76,7 @@ public sealed class MainWindow : Window
 
 	private readonly DocumentWorkspace _workspace;
 	private readonly ISongPlaybackTransport? _playbackTransport;
+	private readonly IPlaybackPositionTransport? _playbackPositionTransport;
 	private readonly UserInterfaceConfiguration _uiConfiguration = new();
 	private readonly Dictionary<SongTreeSection, TreeView> _trees = [];
 	private readonly TextBlock _status;
@@ -118,6 +120,13 @@ public sealed class MainWindow : Window
 		_workspace = workspace
 			?? throw new ArgumentNullException(nameof(workspace));
 		_playbackTransport = playbackTransport;
+		_playbackPositionTransport =
+			playbackTransport as IPlaybackPositionTransport;
+		if (_playbackPositionTransport is not null)
+		{
+			_playbackPositionTransport.PlaybackPositionChanged +=
+				OnPlaybackPositionChanged;
+		}
 
 		Width = 1200;
 		Height = 760;
@@ -132,7 +141,14 @@ public sealed class MainWindow : Window
 
 		Content = BuildShell();
 		Closed += (_, _) =>
+		{
+			if (_playbackPositionTransport is not null)
+			{
+				_playbackPositionTransport.PlaybackPositionChanged -=
+					OnPlaybackPositionChanged;
+			}
 			_playbackTransport?.Dispose();
+		};
 		RefreshDocumentView("New song");
 	}
 
@@ -1521,6 +1537,9 @@ public sealed class MainWindow : Window
 				switchPattern,
 				initialState);
 		_mainContent.Content = editor;
+		editor.SetPlaybackPosition(
+			_playbackPositionTransport
+				?.CurrentPlaybackPosition);
 		UpdateWindowTitle();
 		SetStatus(status);
 	}
@@ -2082,6 +2101,25 @@ public sealed class MainWindow : Window
 				throw new InvalidOperationException(
 					$"Unsupported playback start location {start.GetType().Name}.");
 		}
+	}
+
+	private void OnPlaybackPositionChanged(
+		object? sender,
+		PlaybackPositionChangedEventArgs e)
+	{
+		_ = sender;
+		PlaybackPatternPosition? position =
+			e.Position;
+		Dispatcher.UIThread.Post(
+			() =>
+			{
+				if (_mainContent.Content
+					is PatternEditorControl editor)
+				{
+					editor.SetPlaybackPosition(
+						position);
+				}
+			});
 	}
 
 	private void SetStatus(string text)

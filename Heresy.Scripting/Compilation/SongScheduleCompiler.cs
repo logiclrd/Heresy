@@ -9,11 +9,21 @@ using Heresy.Scripting.Analysis;
 
 namespace Heresy.Scripting.Compilation;
 
+public sealed record CompiledPatternPlaybackPosition(
+	TimeSpan Offset,
+	ObjectId PatternId,
+	int PatternRow,
+	int? SequenceEntryIndex);
+
 public sealed record SongScheduleCompilationResult(
 	NoteSchedule? Schedule,
 	TimeSpan Duration,
 	IReadOnlyList<ScriptAnalysisDiagnostic> Diagnostics)
 {
+	public IReadOnlyList<CompiledPatternPlaybackPosition> PlaybackPositions
+		{ get; init; } =
+			Array.Empty<CompiledPatternPlaybackPosition>();
+
 	public bool Success
 	{
 		get
@@ -154,12 +164,21 @@ public static class SongScheduleCompiler
 		}
 
 		NoteScheduleBuilder output = new();
+		List<CompiledPatternPlaybackPosition> playbackPositions = [];
 		PatternNoteProcessor.GenerateNotes(
 			pattern,
 			context ?? new SequencingContext(),
 			output,
 			startRow,
-			out TimeSpan duration);
+			out TimeSpan duration,
+			out _,
+			(patternRow, offset) =>
+				playbackPositions.Add(
+					new CompiledPatternPlaybackPosition(
+						offset,
+						patternId,
+						patternRow,
+						null)));
 
 		if (HasErrors(resolver.Diagnostics))
 		{
@@ -172,7 +191,10 @@ public static class SongScheduleCompiler
 		return new(
 			output.Freeze(),
 			duration,
-			resolver.Diagnostics);
+			resolver.Diagnostics)
+		{
+			PlaybackPositions = playbackPositions,
+		};
 	}
 
 	private static SongScheduleCompilationResult Generate(
@@ -207,7 +229,13 @@ public static class SongScheduleCompiler
 		return new(
 			output.Freeze(),
 			duration,
-			diagnostics);
+			diagnostics)
+		{
+			PlaybackPositions =
+				sequencer is DataSequenceSequencer dataSequence
+					? dataSequence.PlaybackPositions
+					: Array.Empty<CompiledPatternPlaybackPosition>(),
+		};
 	}
 
 	private static SongScheduleCompilationResult Failure(
@@ -310,6 +338,11 @@ public static class SongScheduleCompiler
 		private readonly ISequencePatternResolver _resolver;
 		private readonly int _startOrder;
 		private readonly int? _startRow;
+		private readonly List<CompiledPatternPlaybackPosition>
+			_playbackPositions = [];
+
+		public IReadOnlyList<CompiledPatternPlaybackPosition>
+			PlaybackPositions => _playbackPositions;
 
 		public DataSequenceSequencer(
 			DataSequenceDefinition sequence,
@@ -328,6 +361,7 @@ public static class SongScheduleCompiler
 			INoteReceiver output,
 			out TimeSpan duration)
 		{
+			_playbackPositions.Clear();
 			SequenceNoteProcessor.GenerateNotes(
 				_sequence.Entries,
 				_resolver,
@@ -335,7 +369,14 @@ public static class SongScheduleCompiler
 				output,
 				_startOrder,
 				_startRow,
-				out duration);
+				out duration,
+				(order, patternId, patternRow, offset) =>
+					_playbackPositions.Add(
+						new CompiledPatternPlaybackPosition(
+							offset,
+							patternId,
+							patternRow,
+							order)));
 		}
 	}
 }

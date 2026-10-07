@@ -79,6 +79,8 @@ public sealed class PatternEditorControl : UserControl
 			VerticalAlignment = VerticalAlignment.Center,
 		};
 	private readonly Dictionary<(int Row, int Channel), Border> _cellBorders = [];
+	private readonly Dictionary<int, Border> _rowHeaders = [];
+	private readonly HashSet<int> _playbackDisplayRows = [];
 	private readonly Dictionary<(int Row, int Channel), Border> _noteFields = [];
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _noteTexts = [];
 	private readonly Dictionary<(int Row, int Channel), Border> _sourceFields = [];
@@ -93,6 +95,7 @@ public sealed class PatternEditorControl : UserControl
 		new(0, 0, PatternCellField.Note);
 	private Grid? _patternGrid;
 	private (int Row, int Channel)? _expandedCell;
+	private PlaybackPatternPosition? _playbackPosition;
 
 	public PatternEditorControl(
 		Window owner,
@@ -272,6 +275,18 @@ public sealed class PatternEditorControl : UserControl
 		RefreshGrid();
 	}
 
+	public void SetPlaybackPosition(
+		PlaybackPatternPosition? position)
+	{
+		if (_playbackPosition == position)
+			return;
+
+		_playbackPosition = position;
+		RemapPlaybackDisplayRows();
+		RefreshCursorVisuals();
+		RefreshPlaybackRowHeaders();
+	}
+
 	private Control BuildContent()
 	{
 		Button back = new() { Content = _backLabel, MinWidth = 100 };
@@ -448,6 +463,7 @@ public sealed class PatternEditorControl : UserControl
 	{
 		CollapseVisualEffects(collapseCursor: true);
 		_cellBorders.Clear();
+		_rowHeaders.Clear();
 		_noteFields.Clear();
 		_noteTexts.Clear();
 		_sourceFields.Clear();
@@ -455,6 +471,8 @@ public sealed class PatternEditorControl : UserControl
 		_volumeFields.Clear();
 		_volumeTexts.Clear();
 		_effectStrips.Clear();
+
+		RemapPlaybackDisplayRows();
 
 		Grid grid = new();
 		_patternGrid = grid;
@@ -498,13 +516,15 @@ public sealed class PatternEditorControl : UserControl
 					new RowDefinition(new GridLength(RowHeight)));
 
 				IBrush? rowBackground =
-					GetRowBackground(row.Pattern, row.PatternRow);
-				AddText(
+					GetDisplayRowBackground(
+						displayRow,
+						row.Pattern,
+						row.PatternRow);
+				AddPlaybackRowHeader(
 					grid,
-					row.PatternRow.ToString("X2", CultureInfo.InvariantCulture),
+					displayRow,
+					row.PatternRow,
 					gridRow,
-					0,
-					FontWeight.Normal,
 					rowBackground);
 
 				for (int channel = 0; channel < channelCount; channel++)
@@ -3148,13 +3168,16 @@ public sealed class PatternEditorControl : UserControl
 				PatternEditorRow editorRow =
 					_context.GetRow(row);
 				border.Background =
-					selected
+					_playbackDisplayRows.Contains(row)
 						? new SolidColorBrush(
-							_configuration.PatternSelectionHighlight)
-						: GetRowBackground(
-							editorRow.Pattern,
-							editorRow.PatternRow)
-							?? Brushes.Transparent;
+							_configuration.PatternPlaybackRowHighlight)
+						: selected
+							? new SolidColorBrush(
+								_configuration.PatternSelectionHighlight)
+							: GetRowBackground(
+								editorRow.Pattern,
+								editorRow.PatternRow)
+								?? Brushes.Transparent;
 			}
 			border.BorderBrush =
 				active ? Brushes.DeepSkyBlue : Brushes.Gray;
@@ -3304,6 +3327,57 @@ public sealed class PatternEditorControl : UserControl
 			pattern.MajorHighlightRows.ToString(CultureInfo.CurrentCulture);
 	}
 
+	private void RemapPlaybackDisplayRows()
+	{
+		_playbackDisplayRows.Clear();
+		if (_playbackPosition is not PlaybackPatternPosition position)
+			return;
+
+		foreach (int displayRow in
+			_context.FindPlaybackDisplayRows(
+				position.PatternId,
+				position.PatternRow,
+				position.SequenceId,
+				position.SequenceEntryIndex))
+		{
+			_playbackDisplayRows.Add(displayRow);
+		}
+	}
+
+	private void RefreshPlaybackRowHeaders()
+	{
+		foreach ((int displayRow, Border header) in _rowHeaders)
+		{
+			if ((uint)displayRow >= (uint)_context.Rows.Count)
+				continue;
+
+			PatternEditorRow row =
+				_context.GetRow(displayRow);
+			header.Background =
+				GetDisplayRowBackground(
+					displayRow,
+					row.Pattern,
+					row.PatternRow)
+					?? Brushes.Transparent;
+		}
+	}
+
+	private IBrush? GetDisplayRowBackground(
+		int displayRow,
+		DataPatternDefinition pattern,
+		int row)
+	{
+		if (_playbackDisplayRows.Contains(displayRow))
+		{
+			return new SolidColorBrush(
+				_configuration.PatternPlaybackRowHighlight);
+		}
+
+		return GetRowBackground(
+			pattern,
+			row);
+	}
+
 	private IBrush? GetRowBackground(
 		DataPatternDefinition pattern,
 		int row)
@@ -3323,6 +3397,42 @@ public sealed class PatternEditorControl : UserControl
 		}
 
 		return null;
+	}
+
+	private void AddPlaybackRowHeader(
+		Grid grid,
+		int displayRow,
+		int patternRow,
+		int gridRow,
+		IBrush? background)
+	{
+		Border header =
+			new()
+			{
+				Background =
+					background
+						?? Brushes.Transparent,
+				Child =
+					new TextBlock
+					{
+						Text =
+							patternRow.ToString(
+								"X2",
+								CultureInfo.InvariantCulture),
+						FontWeight = FontWeight.Normal,
+						Margin = new Thickness(5, 4),
+						VerticalAlignment =
+							VerticalAlignment.Center,
+					},
+			};
+		Grid.SetRow(
+			header,
+			gridRow);
+		Grid.SetColumn(
+			header,
+			0);
+		grid.Children.Add(header);
+		_rowHeaders[displayRow] = header;
 	}
 
 	private static Border BuildUnavailableCell(

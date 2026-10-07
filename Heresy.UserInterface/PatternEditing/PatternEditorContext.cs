@@ -225,6 +225,55 @@ public sealed class PatternEditorContext
 			row.SequenceEntryIndex);
 	}
 
+	public IEnumerable<int> FindPlaybackDisplayRows(
+		ObjectId patternId,
+		int patternRow,
+		ObjectId? sequenceId,
+		int? sequenceEntryIndex)
+	{
+		if (patternId.IsNone)
+			throw new ArgumentException(
+				"A playback pattern ID may not be zero.",
+				nameof(patternId));
+		if (patternRow < 0)
+			throw new ArgumentOutOfRangeException(nameof(patternRow));
+		if (sequenceEntryIndex.HasValue
+			&& sequenceEntryIndex.Value < 0)
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(sequenceEntryIndex));
+		}
+
+		if (_sequence is not null
+			&& sequenceId.HasValue
+			&& sequenceId.Value != _sequence.Id)
+		{
+			yield break;
+		}
+
+		for (int displayRow = 0; displayRow < _rows.Count; displayRow++)
+		{
+			PatternEditorRow row =
+				_rows[displayRow];
+			if (row.Pattern.Id != patternId
+				|| row.PatternRow != patternRow)
+			{
+				continue;
+			}
+
+			if (_sequence is not null
+				&& sequenceId.HasValue
+				&& sequenceEntryIndex.HasValue
+				&& row.SequenceEntryIndex
+					!= sequenceEntryIndex)
+			{
+				continue;
+			}
+
+			yield return displayRow;
+		}
+	}
+
 	public IEnumerable<int> FindDisplayRows(
 		DataPatternDefinition pattern,
 		int patternRow)

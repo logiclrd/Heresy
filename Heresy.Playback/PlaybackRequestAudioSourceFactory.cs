@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 using Heresy.Core.Envelopes;
 using Heresy.Core.FmSynthesis;
@@ -43,10 +44,15 @@ public sealed class PlaybackSourceCompilationException
 /// ignorant of song structure and the audio backend remains a pure PCM sink.
 /// </summary>
 public sealed class PlaybackRequestAudioSourceFactory
-	: IBackgroundPlaybackSourceFactory
+	: IBackgroundPlaybackSourceFactory,
+		IPlaybackPositionTimelineProvider
 {
 	private readonly RenderConfiguration _configuration;
 	private readonly ISampleDataProvider _sampleDataProvider;
+	private readonly object _timelineGate = new();
+	private readonly Dictionary<PlaybackRequest, PlaybackPositionTimeline>
+		_positionTimelines =
+			new(ReferenceEqualityComparer.Instance);
 
 	public PlaybackRequestAudioSourceFactory(
 		RenderConfiguration configuration)
@@ -93,10 +99,17 @@ public sealed class PlaybackRequestAudioSourceFactory
 							start?.Order ?? 0,
 							start?.Row);
 
-					return CreateFiniteSource(
+					IAudioOutputSource source =
+						CreateFiniteSource(
+							compilation,
+							resolver,
+							$"Could not compile sequence {sequence.SequenceId.Value} for playback.");
+					return AttachTimeline(
+						sequence,
+						source,
 						compilation,
-						resolver,
-						$"Could not compile sequence {sequence.SequenceId.Value} for playback.");
+						sequence.SequenceId,
+						repeat: false);
 				}
 
 			case PatternPlaybackRequest pattern:
@@ -111,18 +124,34 @@ public sealed class PlaybackRequestAudioSourceFactory
 						compilation,
 						$"Could not compile pattern {pattern.PatternId.Value} for playback.");
 
+					IAudioOutputSource source;
 					if (!pattern.Repeat)
-					return CreateSource(compilation.Schedule!, resolver);
+					{
+						source =
+							CreateSource(
+								compilation.Schedule!,
+								resolver);
+					}
+					else
+					{
+						long cycleFrames =
+							FrameTime.Ceiling(
+								compilation.Duration,
+								_configuration.SampleRate);
+						source =
+							new RepeatingPlaybackSource(
+								_configuration,
+								compilation.Schedule!,
+								resolver,
+								cycleFrames);
+					}
 
-					long cycleFrames =
-						FrameTime.Ceiling(
-							compilation.Duration,
-							_configuration.SampleRate);
-					return new RepeatingPlaybackSource(
-						_configuration,
-						compilation.Schedule!,
-						resolver,
-						cycleFrames);
+					return AttachTimeline(
+						pattern,
+						source,
+						compilation,
+						sequenceId: null,
+						pattern.Repeat);
 				}
 
 			case AdHocPlaybackRequest adHoc:
@@ -134,6 +163,61 @@ public sealed class PlaybackRequestAudioSourceFactory
 				throw new NotSupportedException(
 					$"Playback request type {request.GetType().FullName} is not supported.");
 		}
+	}
+
+	public bool TryTakePlaybackPositionTimeline(
+		PlaybackRequest request,
+		out PlaybackPositionTimeline? timeline)
+	{
+		ArgumentNullException.ThrowIfNull(request);
+
+		lock (_timelineGate)
+		{
+			if (_positionTimelines.Remove(
+				request,
+				out PlaybackPositionTimeline? found))
+			{
+				timeline = found;
+				return true;
+			}
+		}
+
+		timeline = null;
+		return false;
+	}
+
+	private IAudioOutputSource AttachTimeline(
+		PlaybackRequest request,
+		IAudioOutputSource source,
+		SongScheduleCompilationResult compilation,
+		ObjectId? sequenceId,
+		bool repeat)
+	{
+		PlaybackPositionTimelineEntry[] entries =
+			compilation.PlaybackPositions
+				.Select(position =>
+					new PlaybackPositionTimelineEntry(
+						position.Offset,
+						new PlaybackPatternPosition(
+							position.PatternId,
+							position.PatternRow,
+							sequenceId,
+							position.SequenceEntryIndex)))
+				.ToArray();
+
+		if (entries.Length != 0
+			&& compilation.Duration > TimeSpan.Zero)
+		{
+			PlaybackPositionTimeline timeline =
+				new(
+					entries,
+					compilation.Duration,
+					repeat);
+			lock (_timelineGate)
+				_positionTimelines[request] = timeline;
+		}
+
+		return source;
 	}
 
 	private IAudioOutputSource CreateFiniteSource(

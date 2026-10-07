@@ -120,6 +120,23 @@ public static class PatternNoteProcessor
 		int startRow,
 		out TimeSpan duration,
 		out PatternFlowControl flowControl)
+		=> GenerateNotes(
+			generator,
+			context,
+			output,
+			startRow,
+			out duration,
+			out flowControl,
+			rowStarted: null);
+
+	public static void GenerateNotes(
+		IRawPatternNoteGenerator generator,
+		SequencingContext context,
+		INoteReceiver output,
+		int startRow,
+		out TimeSpan duration,
+		out PatternFlowControl flowControl,
+		Action<int, TimeSpan>? rowStarted)
 	{
 		ArgumentNullException.ThrowIfNull(generator);
 		ArgumentNullException.ThrowIfNull(context);
@@ -167,15 +184,26 @@ public static class PatternNoteProcessor
 			});
 		}
 
-		(events, effectiveRowCount) = ExpandPatternLoops(
-			events,
-			effectiveRowCount,
-			context);
+		(events, effectiveRowCount, List<int> sourceRows) =
+			ExpandPatternLoops(
+				events,
+				effectiveRowCount,
+				context,
+				startRow);
 
 		(events, effectiveRowCount, flowControl) =
 			ExtractPatternFlowControl(
 				events,
 				effectiveRowCount);
+
+		int generatedRowCount =
+			(int)Math.Ceiling(effectiveRowCount);
+		if (sourceRows.Count > generatedRowCount)
+		{
+			sourceRows.RemoveRange(
+				generatedRowCount,
+				sourceRows.Count - generatedRowCount);
+		}
 
 		List<NoteEvent> resolved = new(events.Count);
 		List<WorkingEvent> deferredTimingEvents = [];
@@ -185,6 +213,14 @@ public static class PatternNoteProcessor
 
 		for (int row = 0; row < wholeRowCount; row++)
 		{
+			if (rowStarted is not null)
+			{
+				rowStarted(
+					sourceRows[row],
+					TimeSpanFromSeconds(
+						rowStartSeconds));
+			}
+
 			// Timing events may only take effect at row boundaries. The fractional
 			// portion of their RowOffset is ignored. A non-zero fixed time offset
 			// can defer them to a later boundary.
@@ -664,19 +700,39 @@ public static class PatternNoteProcessor
 		return filtered ?? commands;
 	}
 
-	private static (List<WorkingEvent> Events, double RowCount)
+	private static (
+		List<WorkingEvent> Events,
+		double RowCount,
+		List<int> SourceRows)
 		ExpandPatternLoops(
 			List<WorkingEvent> events,
 			double rowCount,
-			SequencingContext context)
+			SequencingContext context,
+			int sourceRowOffset)
 	{
-		if (!ContainsPatternLoop(events) || rowCount <= 0.0)
-			return (events, rowCount);
+		if (!ContainsPatternLoop(events)
+			|| rowCount <= 0.0)
+		{
+			List<int> linearRows = [];
+			int wholeRows =
+				(int)Math.Ceiling(rowCount);
+			for (int row = 0; row < wholeRows; row++)
+			{
+				linearRows.Add(
+					checked(
+						sourceRowOffset + row));
+			}
+			return (
+				events,
+				rowCount,
+				linearRows);
+		}
 
 		int sourceWholeRowCount = (int)Math.Ceiling(rowCount);
 		Dictionary<int, PatternLoopState> loopStates = [];
 		List<WorkingEvent> expanded = [];
 		List<WorkingEvent> endpoints = [];
+		List<int> sourceRows = [];
 
 		foreach (WorkingEvent workingEvent in events)
 		{
@@ -700,6 +756,10 @@ public static class PatternNoteProcessor
 			double rowSpan = sourceRowEnd - sourceRow;
 			if (!(rowSpan > 0.0))
 				break;
+
+			sourceRows.Add(
+				checked(
+					sourceRowOffset + sourceRow));
 
 			int expandedVisitStart = expanded.Count;
 
@@ -842,7 +902,10 @@ public static class PatternNoteProcessor
 			});
 		}
 
-		return (expanded, expandedRow);
+		return (
+			expanded,
+			expandedRow,
+			sourceRows);
 	}
 
 	private static bool ContainsPatternLoop(

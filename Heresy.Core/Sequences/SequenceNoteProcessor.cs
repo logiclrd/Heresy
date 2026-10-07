@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 
 using Heresy.Core.Diagnostics;
+using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
@@ -54,6 +55,25 @@ public static class SequenceNoteProcessor
 		int startOrder,
 		int? startRow,
 		out TimeSpan duration)
+		=> GenerateNotes(
+			entries,
+			resolver,
+			context,
+			output,
+			startOrder,
+			startRow,
+			out duration,
+			rowStarted: null);
+
+	public static void GenerateNotes(
+		IReadOnlyList<SequenceEntry> entries,
+		ISequencePatternResolver resolver,
+		SequencingContext context,
+		INoteReceiver output,
+		int startOrder,
+		int? startRow,
+		out TimeSpan duration,
+		Action<int, ObjectId, int, TimeSpan>? rowStarted)
 	{
 		ArgumentNullException.ThrowIfNull(entries);
 		ArgumentNullException.ThrowIfNull(resolver);
@@ -96,7 +116,15 @@ public static class SequenceNoteProcessor
 				patternOutput,
 				effectiveStartRow,
 				out TimeSpan patternDuration,
-				out PatternFlowControl flowControl);
+				out PatternFlowControl flowControl,
+				rowStarted is null
+					? null
+					: (patternRow, patternOffset) =>
+						rowStarted(
+							order,
+							entry.PatternId,
+							patternRow,
+							elapsed + patternOffset));
 
 			foreach (NoteEvent noteEvent in patternOutput.Freeze())
 			{

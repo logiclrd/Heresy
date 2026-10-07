@@ -17,4 +17,7 @@ public sealed class UserInterfaceConfiguration
 
 	public Color PatternSelectionHighlight { get; init; } =
 		Color.FromArgb(0x60, 0x40, 0x80, 0xFF);
+
+	public Color PatternPlaybackRowHighlight { get; init; } =
+		Color.FromArgb(0x80, 0x00, 0x80, 0x00);
 }
