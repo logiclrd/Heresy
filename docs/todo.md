@@ -46,10 +46,15 @@ preserved during implementation.
 
 ## Pattern audition
 
-- [ ] In the pattern editor, while the cursor is in the Note column:
-  - `4` plays the current note, then advances the cursor one row.
-  - `8` plays the current row, then advances the cursor one row.
-  Both are ad hoc playback instructions delivered to the background thread; the request/source path for these frozen schedules is now implemented, while the pattern-editor bindings remain to be added.
+- [x] In the pattern editor, while the cursor is in the Note column:
+  - top-row `4` auditions the current note, then advances the cursor one row;
+  - top-row `8` auditions the complete current row, then advances one row.
+  Both compile immutable ad hoc schedules and deliver them through the existing
+  background playback transport. Audition compilation primes sequencing memory
+  from earlier rows so omitted Source values and tracker effect-memory recalls
+  resolve at the current location. Note audition deliberately uses only the
+  current cell's note/source/volume and ignores that cell's effect stack; row
+  audition executes the full row including effects.
 - [ ] While the cursor is in the Note column, holding Caps Lock while pressing a
   tracker piano key (`Z S X D C ...`) previews the note without assigning it.
   The note keeps playing until that physical key is released, which sends Note
