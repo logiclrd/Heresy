@@ -78,6 +78,22 @@ public static class PatternEditorContextCursor
 				return true;
 			});
 
+	public static void MoveToFirstRow(
+		PatternEditorContext context,
+		PatternEffectCursor cursor)
+		=> MoveToBoundaryRow(
+			context,
+			cursor,
+			first: true);
+
+	public static void MoveToLastRow(
+		PatternEditorContext context,
+		PatternEffectCursor cursor)
+		=> MoveToBoundaryRow(
+			context,
+			cursor,
+			first: false);
+
 	public static void MoveToTopLeft(
 		PatternEditorContext context,
 		PatternEffectCursor cursor)
@@ -157,6 +173,32 @@ public static class PatternEditorContextCursor
 		PatternEditorContext context,
 		PatternEffectCursor cursor)
 		=> MoveVertical(context, cursor, delta: 1);
+
+	private static void MoveToBoundaryRow(
+		PatternEditorContext context,
+		PatternEffectCursor cursor,
+		bool first)
+	{
+		ArgumentNullException.ThrowIfNull(context);
+		ArgumentNullException.ThrowIfNull(cursor);
+		if (context.Rows.Count == 0)
+			return;
+
+		int displayRow =
+			first
+				? 0
+				: context.Rows.Count - 1;
+		PatternEditorRow row =
+			context.GetRow(displayRow);
+		int channel =
+			Math.Min(
+				cursor.Channel,
+				row.Pattern.ChannelCount - 1);
+		cursor.SetPosition(
+			displayRow,
+			channel,
+			cursor.Field);
+	}
 
 	private static void MoveVertical(
 		PatternEditorContext context,
