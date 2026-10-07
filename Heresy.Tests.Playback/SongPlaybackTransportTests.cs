@@ -70,6 +70,68 @@ public sealed class SongPlaybackTransportTests
 		request.Repeat.Should().BeTrue();
 	}
 
+	[Test]
+	public async Task LiveAuditionStartsOneSessionAndQueuesStartThenNoteOff()
+	{
+		SongDocument document = new();
+		LiveFactory factory = new();
+		TestBackend backend = new();
+		using SongPlaybackTransport transport =
+			new(backend, factory);
+
+		await transport.BeginLiveAuditionAsync(document);
+		await transport.StartLiveNoteAsync(
+			voiceId: 3,
+			new StartNoteCommand((ObjectId)17U));
+		await transport.ReleaseLiveNoteAsync(
+			voiceId: 3);
+
+		factory.Source.Events.Should().HaveCount(2);
+		factory.Source.Events[0].Target.Should().Be(
+			ChannelTarget.Physical(3));
+		factory.Source.Events[0].Commands.Should().ContainSingle()
+			.Which.Should().Be(
+				new StartNoteCommand((ObjectId)17U));
+		factory.Source.Events[1].Target.Should().Be(
+			ChannelTarget.Physical(3));
+		factory.Source.Events[1].Commands.Should().ContainSingle()
+			.Which.Should().BeOfType<NoteOffCommand>();
+		backend.OpenCount.Should().Be(1);
+	}
+
+	private sealed class LiveFactory
+		: IBackgroundPlaybackSourceFactory
+	{
+		public LiveSource Source { get; } = new();
+
+		public IAudioOutputSource Create(
+			PlaybackRequest request)
+		{
+			request.Should().BeOfType<AdHocPlaybackRequest>();
+			return Source;
+		}
+	}
+
+	private sealed class LiveSource : ILiveAudioOutputSource
+	{
+		public List<LivePlaybackEvent> Events { get; } = [];
+
+		public AudioOutputFormat Format => new(48000, 2);
+
+		public void EnqueueLiveEvent(
+			ChannelTarget target,
+			IReadOnlyList<NoteCommand> commands)
+			=> Events.Add(
+				new LivePlaybackEvent(
+					target,
+					commands));
+
+		public void Render(
+			int frameCount,
+			Span<float> destination)
+			=> destination.Clear();
+	}
+
 	private sealed class RecordingFactory
 		: IBackgroundPlaybackSourceFactory
 	{
@@ -95,10 +157,15 @@ public sealed class SongPlaybackTransportTests
 
 	private sealed class TestBackend : IAudioOutputBackend
 	{
+		public int OpenCount { get; private set; }
+
 		public IAudioOutputSession Open(
 			AudioOutputFormat format,
 			IAudioOutputSource source)
-			=> new TestSession(format);
+		{
+			OpenCount++;
+			return new TestSession(format);
+		}
 
 		public void Dispose()
 		{
