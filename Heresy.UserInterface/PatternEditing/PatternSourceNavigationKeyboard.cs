@@ -31,7 +31,8 @@ public static class PatternSourceNavigationKeyboard
 		KeyModifiers required = KeyModifiers.Control;
 		KeyModifiers blocked =
 			KeyModifiers.Alt
-				| KeyModifiers.Meta;
+				| KeyModifiers.Meta
+				| KeyModifiers.Shift;
 		if ((modifiers & required) == 0
 			|| (modifiers & blocked) != 0)
 		{
