@@ -166,8 +166,13 @@ preserved during implementation.
   the final editable row, that row's actual pattern channel count, and the same
   last-keyboard-stop rule as plain End (Effect Parameter normally, Effect Command
   for a single native effect). Shift/Alt/Meta-modified forms remain reserved.
-- [ ] `Ctrl+PageUp` / `Ctrl+PageDown`: move to the first / last row while
-  staying in the current channel.
+- [x] `Ctrl+PageUp` / `Ctrl+PageDown`: move to the first / last
+  editable row of the active tracker context while preserving the current field
+  and channel. In a sequence-backed tracker this spans the full flattened
+  editable sequence view; if the destination row belongs to a narrower pattern,
+  the channel is clamped to that pattern's last channel. Expanded effect
+  selection collapses as part of the move. Shift/Alt/Meta-modified forms remain
+  reserved for other commands.
 - [ ] `Tab` / `Shift+Tab`: jump to the next / previous Note column, crossing to
   the adjacent channel as needed.
 
