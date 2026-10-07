@@ -62,7 +62,15 @@ public sealed class PatternRegionClipboardData
 
 		RowCount = rowCount;
 		ChannelCount = channelCount;
-		Cells = [.. cells];
+		Cells =
+			[
+				.. cells.Select(
+					cell =>
+						cell with
+						{
+							Effects = [.. cell.Effects],
+						}),
+			];
 	}
 
 	public int RowCount { get; }
