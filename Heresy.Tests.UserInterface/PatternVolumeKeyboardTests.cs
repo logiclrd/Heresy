@@ -23,12 +23,14 @@ public sealed class PatternVolumeKeyboardTests
 			new(0, 0, PatternCellField.Volume);
 		PatternVolumeInputState input = new();
 
-		PatternVolumeKeyboardEditor.Type(
-			workspace,
-			pattern,
-			cursor,
-			input,
-			'4');
+		PatternVolumeInputResult first =
+			PatternVolumeKeyboardEditor.Type(
+				workspace,
+				pattern,
+				cursor,
+				input,
+				'4');
+		first.Completed.Should().BeFalse();
 		cursor.Row.Should().Be(0);
 
 		PatternVolumeInputResult result =
@@ -41,6 +43,7 @@ public sealed class PatternVolumeKeyboardTests
 
 		result.Changed.Should().BeTrue();
 		result.Rejected.Should().BeFalse();
+		result.Completed.Should().BeTrue();
 		pattern.Grid[0, 0]!.Volume.Should().Be(48.0 / 64.0);
 		cursor.Row.Should().Be(1);
 		cursor.Field.Should().Be(PatternCellField.Volume);
@@ -57,13 +60,15 @@ public sealed class PatternVolumeKeyboardTests
 			new(0, 0, PatternCellField.Volume);
 		PatternVolumeInputState input = new();
 
-		PatternVolumeKeyboardEditor.Type(
-			workspace,
-			pattern,
-			cursor,
-			input,
-			'.');
+		PatternVolumeInputResult result =
+			PatternVolumeKeyboardEditor.Type(
+				workspace,
+				pattern,
+				cursor,
+				input,
+				'.');
 
+		result.Completed.Should().BeTrue();
 		pattern.Grid[0, 0].Should().BeNull();
 		cursor.Row.Should().Be(1);
 	}
