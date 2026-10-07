@@ -516,7 +516,7 @@ public sealed class SongDocumentJsonTests
 			(SampleDefinition)document.Objects[(ObjectId)1U];
 		Assert.That(sample.Name, Is.EqualTo("Piano"));
 		Assert.That(
-			sample.Asset.FullPath,
+			sample.Asset!.FullPath,
 			Is.EqualTo(
 				Path.GetFullPath(
 					Path.Combine(
@@ -524,7 +524,7 @@ public sealed class SongDocumentJsonTests
 						"assets",
 						"piano-c4.wav"))));
 		Assert.That(
-			sample.Asset.Sha256,
+			sample.Asset!.Sha256,
 			Is.EqualTo(
 				"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"));
 		Assert.That(sample.ReferenceFrequencyHz, Is.EqualTo(440.0));
