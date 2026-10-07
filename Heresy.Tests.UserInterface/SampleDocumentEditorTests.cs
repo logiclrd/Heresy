@@ -63,8 +63,8 @@ public sealed class SampleDocumentEditorTests
 			.Should().Equal(first.Id, second.Id);
 		source.Samples.Select(sample => sample.Name)
 			.Should().Equal("First", "Second");
-		source.Samples.Should().OnlyContain(sample => sample.PcmData is not null);
-		source.Samples.Should().OnlyContain(sample => sample.PendingAsset is null);
+		source.Samples.Should().OnlyContain(sample => sample.PcmData != null);
+		source.Samples.Should().OnlyContain(sample => sample.PendingAsset == null);
 	}
 
 	[Test]
