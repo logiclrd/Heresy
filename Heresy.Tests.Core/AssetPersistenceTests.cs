@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Text;
 using System.Text.Json.Nodes;
 
 using Heresy.Core.Assets;
@@ -124,7 +125,7 @@ public sealed class AssetPersistenceTests
 		SongDocumentStorage.Save(jsonPath, document);
 
 		SampleDefinition sample = (SampleDefinition)document.Objects[sampleId];
-		Assert.That(sample.Asset.FullPath, Is.EqualTo(Path.GetFullPath(assetPath)));
+		Assert.That(sample.Asset!.FullPath, Is.EqualTo(Path.GetFullPath(assetPath)));
 
 		JsonObject json = JsonNode.Parse(File.ReadAllText(jsonPath))!.AsObject();
 		Assert.That(
@@ -146,7 +147,7 @@ public sealed class AssetPersistenceTests
 		SongDocument loaded = SongDocumentStorage.Load(jsonPath);
 
 		SampleDefinition sample = (SampleDefinition)loaded.Objects[sampleId];
-		Assert.That(sample.Asset.FullPath, Is.EqualTo(Path.GetFullPath(assetPath)));
+		Assert.That(sample.Asset!.FullPath, Is.EqualTo(Path.GetFullPath(assetPath)));
 	}
 
 	[Test]
@@ -205,7 +206,7 @@ public sealed class AssetPersistenceTests
 		SongDocumentStorage.Save(second, document, JsonAssetPathMode.Absolute);
 
 		SampleDefinition sample = (SampleDefinition)document.Objects[sampleId];
-		Assert.That(sample.Asset.FullPath, Is.EqualTo(Path.GetFullPath(assetPath)));
+		Assert.That(sample.Asset!.FullPath, Is.EqualTo(Path.GetFullPath(assetPath)));
 		JsonObject json = JsonNode.Parse(File.ReadAllText(second))!.AsObject();
 		Assert.That(
 			json["objects"]![sampleId.Value.ToString()]!["asset"]!["path"]!.GetValue<string>(),
@@ -225,7 +226,7 @@ public sealed class AssetPersistenceTests
 		SongDocument loaded = SongDocumentStorage.Load(jsonPath);
 
 		Assert.That(
-			((SampleDefinition)loaded.Objects[sampleId]).Asset.FullPath,
+			((SampleDefinition)loaded.Objects[sampleId]).Asset!.FullPath,
 			Is.EqualTo(Path.GetFullPath(assetPath)));
 	}
 
@@ -298,7 +299,7 @@ public sealed class AssetPersistenceTests
 
 		SampleDefinition sample = (SampleDefinition)document.Objects[sampleId];
 		Assert.That(
-			sample.Asset.FullPath,
+			sample.Asset!.FullPath,
 			Is.EqualTo(HeresyModulePath.MakeSyntheticPath(packagePath, "pcm/hihat.wav")));
 	}
 
@@ -330,7 +331,7 @@ public sealed class AssetPersistenceTests
 		SampleDefinition sample = (SampleDefinition)loaded.Objects[sampleId];
 
 		Assert.That(
-			sample.Asset.FullPath,
+			sample.Asset!.FullPath,
 			Is.EqualTo(HeresyModulePath.MakeSyntheticPath(packagePath, "pcm/tone.wav")));
 		ExternalAssetCheck check = ExternalAssetIntegrity.Check(sample.Asset);
 		Assert.That(check.Status, Is.EqualTo(ExternalAssetStatus.Match));
@@ -355,7 +356,7 @@ public sealed class AssetPersistenceTests
 		string extracted = project.Path("export", "pcm", "tone.wav");
 		Assert.That(File.ReadAllText(extracted), Is.EqualTo("hello"));
 		SampleDefinition sample = (SampleDefinition)loaded.Objects[sampleId];
-		Assert.That(sample.Asset.FullPath, Is.EqualTo(Path.GetFullPath(extracted)));
+		Assert.That(sample.Asset!.FullPath, Is.EqualTo(Path.GetFullPath(extracted)));
 
 		JsonObject json = JsonNode.Parse(File.ReadAllText(jsonPath))!.AsObject();
 		Assert.That(
@@ -389,7 +390,7 @@ public sealed class AssetPersistenceTests
 		Assert.That(zip.GetEntry("pcm/clap.wav"), Is.Not.Null);
 		SampleDefinition added = (SampleDefinition)loaded.Objects[newId];
 		Assert.That(
-			added.Asset.FullPath,
+			added.Asset!.FullPath,
 			Is.EqualTo(HeresyModulePath.MakeSyntheticPath(packagePath, "pcm/clap.wav")));
 	}
 
