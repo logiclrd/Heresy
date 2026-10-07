@@ -82,7 +82,7 @@ public sealed class SampleDocumentEditorTests
 	{
 		using TempProject project = new();
 		string imported = project.WriteWave("imports", "tone.wav", sample: 0);
-		string jsonPath = project.Path("song", "track.hm.json");
+		string jsonPath = project.GetPath("song", "track.hm.json");
 		DocumentWorkspace workspace = new();
 		SampleDefinition sample = SampleDocumentEditor.Import(workspace, imported);
 		workspace.SaveAs(jsonPath);
@@ -101,13 +101,13 @@ public sealed class SampleDocumentEditorTests
 	private sealed class TempProject : IDisposable
 	{
 		private readonly string _root =
-			Path.Combine(
-				Path.GetTempPath(),
+			System.IO.Path.Combine(
+				System.IO.Path.GetTempPath(),
 				$"heresy-sample-ui-{Guid.NewGuid():N}");
 
 		public TempProject() => Directory.CreateDirectory(_root);
 
-		public string Path(params string[] parts)
+		public string GetPath(params string[] parts)
 		{
 			string path = _root;
 			foreach (string part in parts)
@@ -119,7 +119,7 @@ public sealed class SampleDocumentEditorTests
 			string fileName,
 			short sample)
 		{
-			string path = Path(fileName);
+			string path = GetPath(fileName);
 			WriteWaveAt(path, sample);
 			return path;
 		}
@@ -129,7 +129,7 @@ public sealed class SampleDocumentEditorTests
 			string fileName,
 			short sample)
 		{
-			string path = Path(directory, fileName);
+			string path = GetPath(directory, fileName);
 			WriteWaveAt(path, sample);
 			return path;
 		}
