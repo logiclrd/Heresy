@@ -695,13 +695,13 @@ public sealed class MainWindow : Window
 							_workspace,
 							source,
 							selected);
-					foreach (SampleDefinition sample in songSamples)
+					foreach (SampleDefinition songSample in songSamples)
 					{
-						firstSample ??= sample;
+						firstSample ??= songSample;
 						selectNode ??= FindTreeObject(
 							_workspace.Document.GetSectionRoot(
 								SongTreeSection.Samples),
-							sample.Id);
+							songSample.Id);
 						imported++;
 					}
 					continue;
