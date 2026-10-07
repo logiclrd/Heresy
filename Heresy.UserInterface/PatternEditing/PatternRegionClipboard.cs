@@ -358,7 +358,7 @@ public static class PatternRegionClipboardEditor
 							nameof(mode)),
 				};
 
-			if (before.Equals(after))
+			if (SnapshotsEqual(before, after))
 				continue;
 
 			ApplySnapshot(
@@ -451,6 +451,14 @@ public static class PatternRegionClipboardEditor
 		cell.Effects.Clear();
 		cell.Effects.AddRange(snapshot.Effects);
 	}
+
+	private static bool SnapshotsEqual(
+		PatternCellSnapshot left,
+		PatternCellSnapshot right)
+		=> Equals(left.Note, right.Note)
+			&& left.SourceId == right.SourceId
+			&& left.Volume == right.Volume
+			&& left.Effects.SequenceEqual(right.Effects);
 
 	private static bool AffectsAudio(
 		PatternCellSnapshot before,
