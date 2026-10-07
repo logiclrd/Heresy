@@ -28,10 +28,15 @@ preserved during implementation.
   copy. Persisted encoded copies are then save-time provenance only and are
   verified by signature before reuse. The old playback-layer WAVE decoder has
   been removed.
-- [ ] Add load/import-time codecs for FLAC, MP3, OGG and AIFF alongside WAVE.
-  Compressed representations may remain compressed on disk, but every loaded
-  playable sample is plain decoded PCM in memory before realtime playback can
-  begin.
+- [x] Add load/import-time codecs for FLAC, MP3, OGG Vorbis and AIFF
+  alongside WAVE. FLAC and MPEG audio use the managed
+  `Hawkynt.FileFormats.Audio` codecs; Ogg Vorbis uses the managed `NVorbis`
+  decoder; ordinary AIFF PCM is converted from its big-endian representation by
+  the Core load/import codec layer. AIFC `NONE`/`twos`, `sowt`,
+  `fl32`/`FL32` and `fl64`/`FL64` are also accepted. Compressed
+  representations remain encoded on disk/pending-save as appropriate, but every
+  loaded playable sample is immutable float PCM in memory before realtime
+  playback can begin. No decoder is invoked by `Heresy.Playback`.
 - [ ] Let the Samples pane import samples from another `.hm` or
   `.hm.json` song. Enumerate the source song's sample objects and let the user
   choose one or more. Import creates new sample objects in the current song,
