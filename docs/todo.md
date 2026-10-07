@@ -98,6 +98,14 @@ preserved during implementation.
   preserving stable IDs/assets/tombstones while recording the source revisions.
   This formalizes the separation between authoring state and the object graph
   currently being played.
+- [ ] While playback is traversing a pattern, highlight the row currently
+  being played in realtime in every pattern-editor view where that same pattern
+  occurrence is visible, following playback as it advances. When playback
+  terminates or is stopped (including immediately on `F8`), remove the playback
+  highlight immediately. The highlight colour is a presentation setting captured
+  by `UserInterfaceConfiguration`, with default value
+  `Color.FromArgb(0x80, 0x00, 0x80, 0x00)` (50% opacity medium green).
+
 
 ## Pattern audition
 
