@@ -38,6 +38,7 @@ public sealed class PatternEditorControl : UserControl
 	private readonly Action<string> _changed;
 	private readonly Func<NoteSchedule, Task>? _audition;
 	private readonly PatternLiveAuditionActions? _liveAudition;
+	private readonly Action<int>? _switchPattern;
 	private readonly HeldNotePreviewKeyState _heldPreviewKeys = new();
 	private readonly string _backLabel;
 	private readonly UserInterfaceConfiguration _configuration;
@@ -82,7 +83,8 @@ public sealed class PatternEditorControl : UserControl
 		string backLabel = "← Document",
 		UserInterfaceConfiguration? configuration = null,
 		Func<NoteSchedule, Task>? audition = null,
-		PatternLiveAuditionActions? liveAudition = null)
+		PatternLiveAuditionActions? liveAudition = null,
+		Action<int>? switchPattern = null)
 		: this(
 			owner,
 			workspace,
@@ -92,7 +94,8 @@ public sealed class PatternEditorControl : UserControl
 			backLabel,
 			configuration,
 			audition,
-			liveAudition)
+			liveAudition,
+			switchPattern)
 	{
 	}
 
@@ -105,7 +108,8 @@ public sealed class PatternEditorControl : UserControl
 		string backLabel = "← Document",
 		UserInterfaceConfiguration? configuration = null,
 		Func<NoteSchedule, Task>? audition = null,
-		PatternLiveAuditionActions? liveAudition = null)
+		PatternLiveAuditionActions? liveAudition = null,
+		Action<int>? switchPattern = null)
 	{
 		_owner = owner ?? throw new ArgumentNullException(nameof(owner));
 		_workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
@@ -114,6 +118,7 @@ public sealed class PatternEditorControl : UserControl
 		_changed = changed ?? throw new ArgumentNullException(nameof(changed));
 		_audition = audition;
 		_liveAudition = liveAudition;
+		_switchPattern = switchPattern;
 		_backLabel = backLabel ?? throw new ArgumentNullException(nameof(backLabel));
 		_configuration = configuration ?? new UserInterfaceConfiguration();
 
@@ -1189,6 +1194,15 @@ public sealed class PatternEditorControl : UserControl
 			_cursor.SetPosition(row, channel, PatternCellField.Note);
 
 		char value = e.Text[0];
+		if (PatternPatternNavigationKeyboard.TryGetDelta(
+			value,
+			out int patternDelta))
+		{
+			SwitchPattern(patternDelta);
+			e.Handled = true;
+			return;
+		}
+
 		if (PatternSourceNavigationKeyboard.TryGetDelta(
 			value,
 			out int sourceDelta))
@@ -1296,6 +1310,61 @@ public sealed class PatternEditorControl : UserControl
 		RefreshCursorVisuals();
 		FocusCursorCell();
 		e.Handled = true;
+	}
+
+	private void SwitchPattern(
+		int delta)
+	{
+		if (_context.IsSequence)
+		{
+			if (_context.Rows.Count == 0)
+			{
+				_message.Text =
+					"This sequence view has no editable pattern rows.";
+				return;
+			}
+
+			int? targetDisplayRow =
+				_context.FindAdjacentPatternDisplayRow(
+					_cursor.Row,
+					delta);
+			if (targetDisplayRow is not int target)
+			{
+				_message.Text =
+					delta > 0
+						? "There is no next editable pattern in this sequence."
+						: "There is no previous editable pattern in this sequence.";
+				return;
+			}
+
+			PatternCellField field = _cursor.Field;
+			CollapseVisualEffects(collapseCursor: true);
+			PatternEditorRow targetRow = _context.GetRow(target);
+			int channel =
+				Math.Min(
+					_cursor.Channel,
+					targetRow.Pattern.ChannelCount - 1);
+			_cursor.SetPosition(
+				target,
+				channel,
+				field);
+			_volumeInput.Reset();
+			UpdateCurrentPatternControls();
+			RefreshCursorVisuals();
+			FocusCursorCell();
+			_message.Text =
+				$"Switched to {targetRow.Pattern.Name}.";
+			return;
+		}
+
+		if (_switchPattern is null)
+		{
+			_message.Text =
+				"Pattern switching is not available in this editor context.";
+			return;
+		}
+
+		_switchPattern(delta);
 	}
 
 	private void MoveCurrentSource(
