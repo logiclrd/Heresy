@@ -68,6 +68,45 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
+	public void DefaultFactoryRendersPredecodedPcmWithoutReadingAssetPath()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		ExternalAssetReference missingAsset =
+			new(
+				Path.Combine(
+					Path.GetTempPath(),
+					$"missing-{Guid.NewGuid():N}.wav"),
+				new string('0', 64));
+		SampleDefinition sample =
+			new(sampleId, "Memory", missingAsset);
+		sample.ReloadPersistedEncoding(
+			missingAsset,
+			CreateWave(sample: 16384));
+		document.Add(sample);
+		ObjectId patternId =
+			AddPatternWithNote(
+				document,
+				sampleId);
+		ObjectId sequenceId =
+			AddSequence(
+				document,
+				patternId);
+		PlaybackRequestAudioSourceFactory factory =
+			new(MonoConfiguration(8000));
+
+		IAudioOutputSource source =
+			factory.Create(
+				SequencePlaybackRequest.Create(
+					document,
+					sequenceId));
+		float[] output = new float[1];
+		source.Render(1, output);
+
+		output[0].Should().BeApproximately(0.5f, 1e-6f);
+	}
+
+	[Test]
 	public void InstrumentAndAdsrEnvelopeResolveFromSnapshot()
 	{
 		SongDocument document = new();
@@ -334,4 +373,27 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			return _data;
 		}
 	}
+	private static byte[] CreateWave(short sample)
+	{
+		using MemoryStream stream = new();
+		using (BinaryWriter writer = new(stream, System.Text.Encoding.ASCII, leaveOpen: true))
+		{
+			writer.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
+			writer.Write(38);
+			writer.Write(System.Text.Encoding.ASCII.GetBytes("WAVE"));
+			writer.Write(System.Text.Encoding.ASCII.GetBytes("fmt "));
+			writer.Write(16);
+			writer.Write((ushort)1);
+			writer.Write((ushort)1);
+			writer.Write(8000);
+			writer.Write(16000);
+			writer.Write((ushort)2);
+			writer.Write((ushort)16);
+			writer.Write(System.Text.Encoding.ASCII.GetBytes("data"));
+			writer.Write(2);
+			writer.Write(sample);
+		}
+		return stream.ToArray();
+	}
+
 }
