@@ -1,5 +1,7 @@
 using AwesomeAssertions;
 
+using Avalonia.Input;
+
 using Heresy.Core.Objects;
 using Heresy.UserInterface.PatternEditing;
 
@@ -88,6 +90,70 @@ public sealed class PatternSourceNavigationTests
 				equivalent,
 				delta: 1)
 			.Should().BeSameAs(Sources[2]);
+	}
+
+	[TestCase('<', -1)]
+	[TestCase('>', 1)]
+	public void AngleBracketTextSelectsAdjacentSource(
+		char value,
+		int expectedDelta)
+	{
+		PatternSourceNavigationKeyboard.TryGetDelta(
+				value,
+				out int delta)
+			.Should().BeTrue();
+
+		delta.Should().Be(expectedDelta);
+	}
+
+	[TestCase(Key.Up, -1)]
+	[TestCase(Key.Down, 1)]
+	public void ControlArrowSelectsAdjacentSource(
+		Key key,
+		int expectedDelta)
+	{
+		PatternSourceNavigationKeyboard.TryGetDelta(
+				key,
+				KeyModifiers.Control,
+				out int delta)
+			.Should().BeTrue();
+
+		delta.Should().Be(expectedDelta);
+	}
+
+	[Test]
+	public void UnmodifiedArrowIsNotSourceNavigation()
+	{
+		PatternSourceNavigationKeyboard.TryGetDelta(
+				Key.Down,
+				KeyModifiers.None,
+				out int delta)
+			.Should().BeFalse();
+
+		delta.Should().Be(0);
+	}
+
+	[Test]
+	public void ControlAltArrowIsReservedForOtherCommands()
+	{
+		PatternSourceNavigationKeyboard.TryGetDelta(
+				Key.Down,
+				KeyModifiers.Control | KeyModifiers.Alt,
+				out int delta)
+			.Should().BeFalse();
+
+		delta.Should().Be(0);
+	}
+
+	[Test]
+	public void OtherTextIsNotSourceNavigation()
+	{
+		PatternSourceNavigationKeyboard.TryGetDelta(
+				'.',
+				out int delta)
+			.Should().BeFalse();
+
+		delta.Should().Be(0);
 	}
 
 	[Test]
