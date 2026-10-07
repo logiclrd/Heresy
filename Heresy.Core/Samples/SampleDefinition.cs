@@ -58,6 +58,18 @@ public sealed class SampleDefinition : SongObject
 	/// </summary>
 	public PendingSampleAsset? PendingAsset { get; internal set; }
 
+	public void ReloadPersistedEncoding(
+		ExternalAssetReference asset,
+		ReadOnlySpan<byte> encodedBytes)
+	{
+		ArgumentNullException.ThrowIfNull(asset);
+		SetLoadedPcm(
+			SampleAudioCodec.Decode(
+				encodedBytes,
+				asset.FullPath),
+			asset);
+	}
+
 	public void ReplaceImportedEncoding(
 		string encodedFileName,
 		ReadOnlySpan<byte> encodedBytes)
