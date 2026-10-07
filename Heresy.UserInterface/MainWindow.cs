@@ -19,6 +19,8 @@ using Heresy.Core.Patterns;
 using Heresy.Core.Persistence;
 using Heresy.Core.Samples;
 using Heresy.Core.Sequences;
+using Heresy.Playback;
+using Heresy.Render.Realtime;
 using Heresy.UserInterface.Dialogs;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.PatternEditing;
@@ -71,6 +73,7 @@ public sealed class MainWindow : Window
 		DataFormat.CreateInProcessFormat<SongTreeNode>("Heresy.SongTreeNode");
 
 	private readonly DocumentWorkspace _workspace;
+	private readonly ISongPlaybackTransport? _playbackTransport;
 	private readonly UserInterfaceConfiguration _uiConfiguration = new();
 	private readonly Dictionary<SongTreeSection, TreeView> _trees = [];
 	private readonly TextBlock _status;
@@ -85,14 +88,35 @@ public sealed class MainWindow : Window
 	private bool _dragInProgress;
 
 	public MainWindow()
-		: this(new DocumentWorkspace())
+		: this(
+			new DocumentWorkspace(),
+			playbackTransport: null)
 	{
 	}
 
-	internal MainWindow(DocumentWorkspace workspace)
+	internal MainWindow(
+		ISongPlaybackTransport playbackTransport)
+		: this(
+			new DocumentWorkspace(),
+			playbackTransport)
+	{
+	}
+
+	internal MainWindow(
+		DocumentWorkspace workspace)
+		: this(
+			workspace,
+			playbackTransport: null)
+	{
+	}
+
+	internal MainWindow(
+		DocumentWorkspace workspace,
+		ISongPlaybackTransport? playbackTransport)
 	{
 		_workspace = workspace
 			?? throw new ArgumentNullException(nameof(workspace));
+		_playbackTransport = playbackTransport;
 
 		Width = 1200;
 		Height = 760;
@@ -106,6 +130,8 @@ public sealed class MainWindow : Window
 			};
 
 		Content = BuildShell();
+		Closed += (_, _) =>
+			_playbackTransport?.Dispose();
 		RefreshDocumentView("New song");
 	}
 
@@ -1604,6 +1630,152 @@ public sealed class MainWindow : Window
 			_workspace.IsModified
 				? $"{_workspace.DisplayName} * — Heresy"
 				: $"{_workspace.DisplayName} — Heresy";
+	}
+
+	protected override void OnKeyDown(
+		KeyEventArgs e)
+	{
+		if (e.KeyModifiers == KeyModifiers.None
+			&& e.Key is
+				Key.F5
+				or Key.F6
+				or Key.F7
+				or Key.F8)
+		{
+			e.Handled = true;
+			_ = HandlePlaybackKeyAsync(e.Key);
+			return;
+		}
+
+		base.OnKeyDown(e);
+	}
+
+	private async Task HandlePlaybackKeyAsync(
+		Key key)
+	{
+		if (_playbackTransport is null)
+		{
+			SetStatus(
+				"Realtime playback is not configured in this host.");
+			return;
+		}
+
+		try
+		{
+			switch (key)
+			{
+				case Key.F5:
+					await _playbackTransport.PlaySongAsync(
+						_workspace.Document);
+					SetStatus("Playing song from the root sequence.");
+					break;
+
+				case Key.F6:
+					await PlayCurrentPatternAsync();
+					break;
+
+				case Key.F7:
+					await PlayFromCurrentRowAsync();
+					break;
+
+				case Key.F8:
+					await _playbackTransport.StopAsync();
+					SetStatus("Playback stopped.");
+					break;
+			}
+		}
+		catch (Exception ex)
+		{
+			SetStatus(
+				$"Playback failed: {ex.Message}");
+		}
+	}
+
+	private async Task PlayCurrentPatternAsync()
+	{
+		if (_playbackTransport is null)
+			return;
+
+		if (_mainContent.Content
+			is not PatternEditorControl editor)
+		{
+			SetStatus(
+				"F6 requires an open tracker pattern view.");
+			return;
+		}
+
+		PatternEditorPlaybackCursor cursor =
+			editor.GetPlaybackCursor();
+
+		await _playbackTransport.PlayPatternAsync(
+			_workspace.Document,
+			cursor.PatternId,
+			startRow: 0,
+			repeat: true);
+
+		string name =
+			_workspace.Document.TryGet(
+				cursor.PatternId,
+				out SongObject? songObject)
+				&& songObject is not null
+					? songObject.Name
+					: $"Pattern <{cursor.PatternId.Value}>";
+		SetStatus(
+			$"Playing {name} repeatedly.");
+	}
+
+	private async Task PlayFromCurrentRowAsync()
+	{
+		if (_playbackTransport is null)
+			return;
+
+		if (_mainContent.Content
+			is not PatternEditorControl editor)
+		{
+			SetStatus(
+				"F7 requires an open tracker pattern view.");
+			return;
+		}
+
+		PatternEditorPlaybackCursor cursor =
+			editor.GetPlaybackCursor();
+		PlaybackStartLocation start =
+			PlaybackStartResolver.ResolveFromPattern(
+				_workspace.Document,
+				cursor.PatternId,
+				cursor.PatternRow,
+				cursor.SequenceId,
+				cursor.SequenceEntryIndex);
+
+		switch (start)
+		{
+			case SequencePlaybackStartLocation sequence:
+				await _playbackTransport.PlaySequenceAsync(
+					_workspace.Document,
+					sequence.SequenceId,
+					new SequencePlaybackPosition(
+						sequence.Order,
+						sequence.Row));
+				SetStatus(
+					$"Playing from sequence <{sequence.SequenceId.Value}> "
+						+ $"order {sequence.Order}, row {sequence.Row}.");
+				break;
+
+			case PatternPlaybackStartLocation pattern:
+				await _playbackTransport.PlayPatternAsync(
+					_workspace.Document,
+					pattern.PatternId,
+					pattern.Row,
+					repeat: false);
+				SetStatus(
+					$"Playing pattern <{pattern.PatternId.Value}> "
+						+ $"from row {pattern.Row}.");
+				break;
+
+			default:
+				throw new InvalidOperationException(
+					$"Unsupported playback start location {start.GetType().Name}.");
+		}
 	}
 
 	private void SetStatus(string text)
