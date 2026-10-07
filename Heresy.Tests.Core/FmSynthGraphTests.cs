@@ -39,6 +39,32 @@ public sealed class FmSynthGraphTests
 	}
 
 	[Test]
+	public void GraphAndConnectionCollectionsAreReadOnlySnapshots()
+	{
+		int[] sourceInputs = [1];
+		FmOperatorNode operation =
+			new(
+				2,
+				FmOperatorKind.Add,
+				sourceInputs);
+		FmSynthGraph graph =
+			new(
+				[
+					new FmConstantNode(1, 1.0),
+					operation,
+				],
+				outputNodeId: 2);
+
+		sourceInputs[0] = 99;
+
+		operation.InputNodeIds.Should().Equal(1);
+		((System.Collections.IList)operation.InputNodeIds)
+			.IsReadOnly.Should().BeTrue();
+		((System.Collections.IList)graph.Nodes)
+			.IsReadOnly.Should().BeTrue();
+	}
+
+	[Test]
 	public void DuplicateNodeIdsAreRejected()
 	{
 		Action action =
