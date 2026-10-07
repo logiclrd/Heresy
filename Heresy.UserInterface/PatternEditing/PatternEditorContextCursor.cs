@@ -78,6 +78,30 @@ public static class PatternEditorContextCursor
 				return true;
 			});
 
+	public static void MoveHome(
+		PatternEditorContext context,
+		PatternEffectCursor cursor)
+		=> EditCurrent(
+			context,
+			cursor,
+			row =>
+			{
+				cursor.MoveHome(row.Pattern);
+				return true;
+			});
+
+	public static void MoveEnd(
+		PatternEditorContext context,
+		PatternEffectCursor cursor)
+		=> EditCurrent(
+			context,
+			cursor,
+			row =>
+			{
+				cursor.MoveEnd(row.Pattern);
+				return true;
+			});
+
 	public static void MoveChannel(
 		PatternEditorContext context,
 		PatternEffectCursor cursor,
