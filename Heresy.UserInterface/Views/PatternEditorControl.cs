@@ -250,7 +250,7 @@ public sealed class PatternEditorControl : UserControl
 			new TextBlock
 			{
 				Text =
-					"Arrow keys move the tracker cursor. Type notes directly in the note field; hold Caps Lock while pressing tracker piano keys to preview without editing, releasing the key sends Note Off. Top-row 4 auditions the current note and 8 auditions the current row, advancing one row. Enter opens detailed note editing or expands a stacked effect strip.",
+					"Arrow keys move the tracker cursor. Type notes directly in the note field; the edit mask controls which Note/Source/Volume fields are stamped, and comma toggles the mask bit for the current field. Hold Caps Lock while pressing tracker piano keys to preview without editing, releasing the key sends Note Off. Top-row 4 auditions the current note and 8 auditions the current row, advancing one row. Enter opens detailed note editing or expands a stacked effect strip.",
 				TextWrapping = TextWrapping.Wrap,
 			};
 
