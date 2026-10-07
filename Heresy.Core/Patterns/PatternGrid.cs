@@ -55,6 +55,71 @@ public sealed class PatternGrid
 	}
 
 	/// <summary>
+	/// Inserts an empty row position at <paramref name="row"/> by shifting cells
+	/// downward within one channel, or every channel when <paramref name="channel"/>
+	/// is null. The grid dimensions do not change; cells shifted past the bottom
+	/// edge are discarded.
+	/// </summary>
+	public bool InsertRow(int row, int? channel)
+	{
+		ValidateRow(row);
+		ValidateOptionalChannel(channel);
+
+		bool changed = false;
+		int firstChannel = channel ?? 0;
+		int lastChannel = channel ?? (ChannelCount - 1);
+		for (int currentChannel = firstChannel; currentChannel <= lastChannel; currentChannel++)
+		{
+			for (int currentRow = row; currentRow < RowCount; currentRow++)
+			{
+				if (_cells[currentRow, currentChannel] is not null)
+				{
+					changed = true;
+					break;
+				}
+			}
+
+			for (int currentRow = RowCount - 1; currentRow > row; currentRow--)
+				_cells[currentRow, currentChannel] = _cells[currentRow - 1, currentChannel];
+			_cells[row, currentChannel] = null;
+		}
+
+		return changed;
+	}
+
+	/// <summary>
+	/// Deletes the row position at <paramref name="row"/> by shifting cells upward
+	/// within one channel, or every channel when <paramref name="channel"/> is
+	/// null. The grid dimensions do not change; the bottom position is cleared.
+	/// </summary>
+	public bool DeleteRow(int row, int? channel)
+	{
+		ValidateRow(row);
+		ValidateOptionalChannel(channel);
+
+		bool changed = false;
+		int firstChannel = channel ?? 0;
+		int lastChannel = channel ?? (ChannelCount - 1);
+		for (int currentChannel = firstChannel; currentChannel <= lastChannel; currentChannel++)
+		{
+			for (int currentRow = row; currentRow < RowCount; currentRow++)
+			{
+				if (_cells[currentRow, currentChannel] is not null)
+				{
+					changed = true;
+					break;
+				}
+			}
+
+			for (int currentRow = row; currentRow < RowCount - 1; currentRow++)
+				_cells[currentRow, currentChannel] = _cells[currentRow + 1, currentChannel];
+			_cells[RowCount - 1, currentChannel] = null;
+		}
+
+		return changed;
+	}
+
+	/// <summary>
 	/// Resizes the grid, preserving cells in the overlapping region and dropping
 	/// cells which fall outside the new dimensions.
 	/// </summary>
@@ -92,6 +157,21 @@ public sealed class PatternGrid
 				if (cell is not null && !cell.IsEmpty)
 					yield return (row, channel, cell);
 			}
+		}
+	}
+
+	private void ValidateRow(int row)
+	{
+		if ((uint)row >= (uint)RowCount)
+			throw new ArgumentOutOfRangeException(nameof(row));
+	}
+
+	private void ValidateOptionalChannel(int? channel)
+	{
+		if (channel.HasValue
+			&& (uint)channel.Value >= (uint)ChannelCount)
+		{
+			throw new ArgumentOutOfRangeException(nameof(channel));
 		}
 	}
 
