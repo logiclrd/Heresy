@@ -80,6 +80,46 @@ public static class PatternEditorContextCursor
 				return true;
 			});
 
+	public static bool MoveToAdjacentNote(
+		PatternEditorContext context,
+		PatternEffectCursor cursor,
+		int delta)
+	{
+		ArgumentNullException.ThrowIfNull(context);
+		ArgumentNullException.ThrowIfNull(cursor);
+		if (delta is not -1 and not 1)
+			throw new ArgumentOutOfRangeException(nameof(delta));
+		if (context.Rows.Count == 0)
+			return false;
+
+		PatternEditorRow row =
+			context.GetRow(cursor.Row);
+
+		int targetChannel;
+		if (delta > 0)
+		{
+			targetChannel = cursor.Channel + 1;
+			if (targetChannel >= row.Pattern.ChannelCount)
+				return false;
+		}
+		else if (cursor.Field != PatternCellField.Note)
+		{
+			targetChannel = cursor.Channel;
+		}
+		else
+		{
+			targetChannel = cursor.Channel - 1;
+			if (targetChannel < 0)
+				return false;
+		}
+
+		cursor.SetPosition(
+			cursor.Row,
+			targetChannel,
+			PatternCellField.Note);
+		return true;
+	}
+
 	public static bool MoveToFirstRow(
 		PatternEditorContext context,
 		PatternEffectCursor cursor)
