@@ -128,6 +128,73 @@ public sealed class LivePlaybackEventTests
 		output[0].Should().Be(0.0f);
 	}
 
+
+	[Test]
+	public void VirtualLiveVoicesOverlapAndReleaseIndependently()
+	{
+		ObjectId sourceId = (ObjectId)7U;
+		SampleDefinition definition =
+			new(
+				sourceId,
+				"Loop",
+				new ExternalAssetReference("loop.wav"))
+			{
+				Loop =
+					new SampleLoop(
+						SampleLoopMode.Forward,
+						0,
+						1),
+			};
+		SampleSound sound =
+			new(
+				definition,
+				new MemorySampleData(
+					4,
+					1,
+					new float[] { 1.0f }));
+		PlaybackSession session =
+			new(
+				new RenderContext(
+					new RenderConfiguration(
+						4,
+						new[]
+							{
+								new OutputChannelConfiguration(
+									Vector3.Zero,
+									positionalImportance: 0.0),
+							})),
+				new NoteScheduleBuilder().Freeze(),
+				new Resolver(sourceId, sound));
+		PlaybackSessionAudioSource source =
+			new(session);
+
+		source.EnqueueLiveEvent(
+			ChannelTarget.Virtual(100),
+			[new StartNoteCommand(sourceId)]);
+		source.EnqueueLiveEvent(
+			ChannelTarget.Virtual(101),
+			[new StartNoteCommand(sourceId)]);
+		float[] both = new float[1];
+		source.Render(1, both);
+
+		source.EnqueueLiveEvent(
+			ChannelTarget.Virtual(100),
+			[new NoteOffCommand()]);
+		float[] secondOnly = new float[1];
+		source.Render(1, secondOnly);
+
+		source.EnqueueLiveEvent(
+			ChannelTarget.Virtual(101),
+			[new NoteOffCommand()]);
+		float[] released = new float[1];
+		source.Render(1, released);
+
+		both[0].Should().Be(2.0f);
+		secondOnly[0].Should().Be(1.0f);
+		released[0].Should().Be(0.0f);
+	}
+
+
 	private sealed class Resolver : ISoundResolver
 	{
 		private readonly ObjectId _id;
