@@ -13,6 +13,7 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 
 using Heresy.Core.Envelopes;
+using Heresy.Core.FmSynthesis;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -248,6 +249,10 @@ public sealed class MainWindow : Window
 		}
 		if (section == SongTreeSection.Samples)
 		{
+			Button newFmSynth = new() { Content = "+ FM Synth" };
+			newFmSynth.Click += async (_, _) => await CreateFmSynthAsync();
+			actions.Children.Add(newFmSynth);
+
 			Button import = new() { Content = "+ Import" };
 			import.Click += async (_, _) => await ImportSamplesAsync();
 			actions.Children.Add(import);
@@ -632,6 +637,39 @@ public sealed class MainWindow : Window
 		catch (Exception ex)
 		{
 			SetStatus($"Could not create envelope: {ex.Message}");
+		}
+	}
+
+	private async Task CreateFmSynthAsync()
+	{
+		TextPromptDialog dialog =
+			new("New FM synth", "FM synth name:", "New FM Synth");
+		string? name = await dialog.ShowDialog<string?>(this);
+		if (name is null)
+			return;
+
+		try
+		{
+			FmSynthDefinition synth =
+				FmSynthDocumentEditor.CreateFmSynth(
+					_workspace,
+					name);
+			SongTreeObject? node =
+				FindTreeObject(
+					_workspace.Document.GetSectionRoot(
+						SongTreeSection.Samples),
+					synth.Id);
+			RefreshDocumentView(
+				$"Created FM synth {synth.Name}",
+				node);
+			ShowFmSynthEditor(
+				synth,
+				node);
+		}
+		catch (Exception ex)
+		{
+			SetStatus(
+				$"Could not create FM synth: {ex.Message}");
 		}
 	}
 
@@ -1162,6 +1200,20 @@ public sealed class MainWindow : Window
 			items.Add(editSample);
 			items.Add(new Separator());
 		}
+		if (section == SongTreeSection.Samples
+			&& !item.IsMissingReference
+			&& item.Kind == SongObjectKind.FmSynth)
+		{
+			MenuItem editFmSynth = new() { Header = "Edit FM Synth..." };
+			editFmSynth.Click += (_, _) =>
+			{
+				tree.SelectedItem = control;
+				SelectTreeItem(item, tree);
+				ShowFmSynthEditor(item);
+			};
+			items.Add(editFmSynth);
+			items.Add(new Separator());
+		}
 		items.Add(newFolder);
 		items.Add(rename);
 		items.Add(new Separator());
@@ -1523,6 +1575,42 @@ public sealed class MainWindow : Window
 		_mainContent.Content = editor;
 		UpdateWindowTitle();
 		SetStatus($"Editing envelope {envelope.Name}");
+	}
+
+	private void ShowFmSynthEditor(SongTreeItemViewModel item)
+	{
+		if (item.ObjectId is not ObjectId id
+			|| !_workspace.Document.TryGet(id, out SongObject? songObject)
+			|| songObject is not FmSynthDefinition synth)
+		{
+			SetStatus("The selected FM synth is not available.");
+			return;
+		}
+
+		ShowFmSynthEditor(
+			synth,
+			item.Node);
+	}
+
+	private void ShowFmSynthEditor(
+		FmSynthDefinition synth,
+		SongTreeNode? selectNode)
+	{
+		FmSynthEditorControl editor =
+			new(
+				_workspace,
+				synth,
+				() => RefreshDocumentView(
+					$"Edited FM synth {synth.Name}",
+					selectNode),
+				message =>
+				{
+					UpdateWindowTitle();
+					SetStatus(message);
+				});
+		_mainContent.Content = editor;
+		UpdateWindowTitle();
+		SetStatus($"Editing FM synth {synth.Name}");
 	}
 
 	private async Task ShowSampleEditorAsync(SongTreeItemViewModel item)
