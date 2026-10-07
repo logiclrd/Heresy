@@ -49,6 +49,16 @@ public sealed class PatternEditorControl : UserControl
 	private readonly PatternSourceOption[] _noteSources;
 	private readonly ComboBox _noteSource;
 	private readonly ComboBox _noteOctave;
+	private readonly TextBlock _editMaskDisplay =
+		new()
+		{
+			VerticalAlignment = VerticalAlignment.Center,
+		};
+	private readonly TextBlock _editVolumeDisplay =
+		new()
+		{
+			VerticalAlignment = VerticalAlignment.Center,
+		};
 	private readonly PatternNoteInputState _noteInputState;
 	private readonly ScrollViewer _scroll;
 	private readonly TextBlock _message;
@@ -191,7 +201,15 @@ public sealed class PatternEditorControl : UserControl
 		_noteInputState =
 			new(
 				defaultSource?.Id ?? Heresy.Core.Objects.ObjectId.None,
-				baseOctave);
+				baseOctave)
+			{
+				EditMask =
+					initialState?.EditMask
+						?? PatternEditMask.Default,
+				CurrentVolume =
+					initialState?.CurrentVolume,
+			};
+		UpdateEditStateDisplay();
 		_noteSource =
 			new ComboBox
 			{
@@ -270,6 +288,18 @@ public sealed class PatternEditorControl : UserControl
 			VerticalAlignment = VerticalAlignment.Center,
 		});
 		layout.Children.Add(_noteOctave);
+		layout.Children.Add(new TextBlock
+		{
+			Text = "Mask",
+			VerticalAlignment = VerticalAlignment.Center,
+		});
+		layout.Children.Add(_editMaskDisplay);
+		layout.Children.Add(new TextBlock
+		{
+			Text = "Edit Vol",
+			VerticalAlignment = VerticalAlignment.Center,
+		});
+		layout.Children.Add(_editVolumeDisplay);
 		layout.Children.Add(new TextBlock
 		{
 			Text = "Rows",
@@ -998,12 +1028,15 @@ public sealed class PatternEditorControl : UserControl
 							edited.PatternRow,
 							editedChannel);
 						_changed(
-							$"Edited note in {edited.Pattern.Name} row {edited.PatternRow}, channel {editedChannel + 1}");
+							$"Edited tracker entry in {edited.Pattern.Name} row {edited.PatternRow}, channel {editedChannel + 1}");
 					}
 
-					await PlayEnteredNoteAsync(
-						edited,
-						editedChannel);
+					if (noteResult.NoteApplied)
+					{
+						await PlayEnteredNoteAsync(
+							edited,
+							editedChannel);
+					}
 				}
 
 				e.Handled = true;
@@ -1385,6 +1418,21 @@ public sealed class PatternEditorControl : UserControl
 			_cursor.SetPosition(row, channel, PatternCellField.Note);
 
 		char value = e.Text[0];
+		if (value == ','
+			&& PatternEditMaskEditor.TryToggle(
+				_noteInputState.EditMask,
+				_cursor.Field,
+				out PatternEditMask editMask))
+		{
+			_noteInputState.EditMask = editMask;
+			UpdateEditStateDisplay();
+			_message.Text =
+				$"Edit mask: {PatternEditMaskEditor.Describe(editMask)}.";
+			e.Handled = true;
+			FocusCursorCell();
+			return;
+		}
+
 		if (PatternPatternNavigationKeyboard.TryGetDelta(
 			value,
 			out int patternDelta))
@@ -1450,7 +1498,16 @@ public sealed class PatternEditorControl : UserControl
 				_message.Text =
 					"Volume must be entered as a decimal tracker value from 00 through 64.";
 			}
-			else if (volumeResult.Changed)
+			else if (volumeResult.Completed)
+			{
+				_noteInputState.CurrentVolume =
+					edited.Pattern.Grid[
+						edited.PatternRow,
+						editedChannel]?.Volume;
+				UpdateEditStateDisplay();
+			}
+
+			if (!volumeResult.Rejected && volumeResult.Changed)
 			{
 				RefreshUnderlyingCell(
 					edited.Pattern,
@@ -1520,7 +1577,9 @@ public sealed class PatternEditorControl : UserControl
 					_noteInputState.BaseOctave,
 					firstRow ? 0 : int.MaxValue,
 					_cursor.Channel,
-					_cursor.Field)));
+					_cursor.Field,
+					_noteInputState.EditMask,
+					_noteInputState.CurrentVolume)));
 		return true;
 	}
 
@@ -1586,7 +1645,25 @@ public sealed class PatternEditorControl : UserControl
 					_noteInputState.BaseOctave,
 					currentRow.PatternRow,
 					_cursor.Channel,
-					_cursor.Field)));
+					_cursor.Field,
+					_noteInputState.EditMask,
+					_noteInputState.CurrentVolume)));
+	}
+
+	private void UpdateEditStateDisplay()
+	{
+		_editMaskDisplay.Text =
+			PatternEditMaskEditor.Describe(
+				_noteInputState.EditMask);
+		_editVolumeDisplay.Text =
+			_noteInputState.CurrentVolume is double volume
+				? Math.Round(
+					volume * 64.0,
+					MidpointRounding.AwayFromZero)
+					.ToString(
+						"00",
+						CultureInfo.InvariantCulture)
+				: "..";
 	}
 
 	private void MoveCurrentSource(
