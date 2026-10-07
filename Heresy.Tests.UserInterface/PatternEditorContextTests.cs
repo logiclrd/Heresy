@@ -422,6 +422,151 @@ public sealed class PatternEditorContextTests
 	}
 
 	[Test]
+	public void TabNavigationFindsNextAndPreviousNoteStops()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Pattern",
+				rowCount: 3,
+				channelCount: 4);
+		PatternEditorContext context =
+			PatternEditorContext.ForPattern(
+				workspace.Document,
+				pattern);
+		PatternEffectCursor cursor =
+			new(1, 1, PatternCellField.Note);
+
+		PatternEditorContextCursor.MoveToAdjacentNote(
+			context,
+			cursor,
+			delta: 1)
+			.Should().BeTrue();
+
+		cursor.Row.Should().Be(1);
+		cursor.Channel.Should().Be(2);
+		cursor.Field.Should().Be(PatternCellField.Note);
+
+		cursor.SetPosition(
+			row: 1,
+			channel: 2,
+			PatternCellField.Volume);
+		PatternEditorContextCursor.MoveToAdjacentNote(
+			context,
+			cursor,
+			delta: -1)
+			.Should().BeTrue();
+
+		cursor.Row.Should().Be(1);
+		cursor.Channel.Should().Be(2);
+		cursor.Field.Should().Be(PatternCellField.Note);
+
+		cursor.SetPosition(
+			row: 1,
+			channel: 2,
+			PatternCellField.EffectParameter);
+		PatternEditorContextCursor.MoveToAdjacentNote(
+			context,
+			cursor,
+			delta: 1)
+			.Should().BeTrue();
+
+		cursor.Channel.Should().Be(3);
+		cursor.Field.Should().Be(PatternCellField.Note);
+	}
+
+	[Test]
+	public void TabNavigationStopsAtOuterNoteColumns()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Pattern",
+				rowCount: 2,
+				channelCount: 2);
+		PatternEditorContext context =
+			PatternEditorContext.ForPattern(
+				workspace.Document,
+				pattern);
+		PatternEffectCursor cursor =
+			new(1, 1, PatternCellField.Note);
+
+		PatternEditorContextCursor.MoveToAdjacentNote(
+			context,
+			cursor,
+			delta: 1)
+			.Should().BeFalse();
+
+		cursor.Row.Should().Be(1);
+		cursor.Channel.Should().Be(1);
+		cursor.Field.Should().Be(PatternCellField.Note);
+
+		cursor.SetPosition(
+			row: 1,
+			channel: 0,
+			PatternCellField.Note);
+		PatternEditorContextCursor.MoveToAdjacentNote(
+			context,
+			cursor,
+			delta: -1)
+			.Should().BeFalse();
+
+		cursor.Channel.Should().Be(0);
+		cursor.Field.Should().Be(PatternCellField.Note);
+	}
+
+	[Test]
+	public void TabNavigationUsesCurrentSequencePatternWidth()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition wide =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Wide",
+				rowCount: 1,
+				channelCount: 4);
+		DataPatternDefinition narrow =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Narrow",
+				rowCount: 1,
+				channelCount: 2);
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(
+				workspace,
+				"Arrangement");
+		sequence.Entries.Add(new SequenceEntry(wide.Id));
+		sequence.Entries.Add(new SequenceEntry(narrow.Id));
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(
+				workspace.Document,
+				sequence,
+				initialEntryIndex: 1);
+		PatternEffectCursor cursor =
+			new(1, 1, PatternCellField.Volume);
+
+		PatternEditorContextCursor.MoveToAdjacentNote(
+			context,
+			cursor,
+			delta: 1)
+			.Should().BeFalse();
+
+		cursor.Channel.Should().Be(1);
+		cursor.Field.Should().Be(PatternCellField.Volume);
+
+		PatternEditorContextCursor.MoveToAdjacentNote(
+			context,
+			cursor,
+			delta: -1)
+			.Should().BeTrue();
+
+		cursor.Channel.Should().Be(1);
+		cursor.Field.Should().Be(PatternCellField.Note);
+	}
+
+	[Test]
 	public void FirstLastRowNavigationPreservesStandaloneChannelAndField()
 	{
 		DocumentWorkspace workspace = new();
