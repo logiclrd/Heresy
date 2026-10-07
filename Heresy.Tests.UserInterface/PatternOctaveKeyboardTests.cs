@@ -16,6 +16,7 @@ public sealed class PatternOctaveKeyboardTests
 	{
 		PatternOctaveKeyboard.TryAdjust(
 				PhysicalKey.NumPadMultiply,
+				KeyModifiers.None,
 				currentOctave: 4,
 				out int octave)
 			.Should().BeTrue();
@@ -28,6 +29,7 @@ public sealed class PatternOctaveKeyboardTests
 	{
 		PatternOctaveKeyboard.TryAdjust(
 				PhysicalKey.NumPadDivide,
+				KeyModifiers.None,
 				currentOctave: 4,
 				out int octave)
 			.Should().BeTrue();
@@ -43,12 +45,30 @@ public sealed class PatternOctaveKeyboardTests
 	{
 		PatternOctaveKeyboard.TryAdjust(
 				key,
+				KeyModifiers.None,
 				currentOctave,
 				out int octave)
 			.Should().BeTrue();
 
 		octave.Should().Be(currentOctave);
 	}
+
+
+	[TestCase(PhysicalKey.NumPadMultiply)]
+	[TestCase(PhysicalKey.NumPadDivide)]
+	public void ModifiedNumpadOperatorsAreReservedForOtherCommands(
+		PhysicalKey key)
+	{
+		PatternOctaveKeyboard.TryAdjust(
+				key,
+				KeyModifiers.Control | KeyModifiers.Alt,
+				currentOctave: 4,
+				out int octave)
+			.Should().BeFalse();
+
+		octave.Should().Be(4);
+	}
+
 
 	[TestCase(PhysicalKey.Slash)]
 	[TestCase(PhysicalKey.Digit8)]
@@ -58,6 +78,7 @@ public sealed class PatternOctaveKeyboardTests
 	{
 		PatternOctaveKeyboard.TryAdjust(
 				key,
+				KeyModifiers.None,
 				currentOctave: 4,
 				out int octave)
 			.Should().BeFalse();
