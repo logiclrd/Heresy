@@ -285,9 +285,7 @@ public sealed class PatternEffectCursor
 		SetPosition(
 			row,
 			channel,
-			IsSingleNative(cell)
-				? PatternCellField.EffectCommand
-				: PatternCellField.EffectParameter);
+			GetLastKeyboardField(cell));
 	}
 
 	public void MoveHome(
@@ -321,9 +319,7 @@ public sealed class PatternEffectCursor
 		PatternCell? current =
 			pattern.Grid[Row, Channel];
 		PatternCellField lastField =
-			IsSingleNative(current)
-				? PatternCellField.EffectCommand
-				: PatternCellField.EffectParameter;
+			GetLastKeyboardField(current);
 
 		if (Field == lastField)
 			Channel = pattern.ChannelCount - 1;
@@ -521,6 +517,12 @@ public sealed class PatternEffectCursor
 		ExpandedEffectIndex = stops[next].Index;
 		ExpandedField = stops[next].Field;
 	}
+
+	internal static PatternCellField GetLastKeyboardField(
+		PatternCell? cell)
+		=> IsSingleNative(cell)
+			? PatternCellField.EffectCommand
+			: PatternCellField.EffectParameter;
 
 	private static bool IsSingleNative(PatternCell? cell)
 		=> cell is not null
