@@ -1,10 +1,13 @@
 using System;
 using System.IO;
+using System.Linq;
+using System.Numerics;
 
 using AwesomeAssertions;
 
 using Heresy.Core.Assets;
 using Heresy.Core.Objects;
+using Heresy.Core.Persistence;
 using Heresy.Core.Samples;
 using Heresy.UserInterface.Documents;
 
@@ -37,6 +40,115 @@ public sealed class SampleDocumentEditorTests
 			.Children.Should().ContainSingle()
 			.Which.As<SongTreeObject>().ObjectId.Should().Be(sample.Id);
 	}
+
+
+	[Test]
+	public void LoadSongSamplesEnumeratesHydratedSamplesInObjectIdOrder()
+	{
+		using TempProject project = new();
+		string firstPath = project.WriteWave("first.wav", sample: 4096);
+		string secondPath = project.WriteWave("second.wav", sample: 8192);
+		string sourcePath = project.GetPath("source.hm");
+		DocumentWorkspace sourceWorkspace = new();
+		SampleDefinition first =
+			SampleDocumentEditor.Import(sourceWorkspace, firstPath, "First");
+		SampleDefinition second =
+			SampleDocumentEditor.Import(sourceWorkspace, secondPath, "Second");
+		sourceWorkspace.SaveAs(sourcePath);
+
+		SongSampleImportSource source =
+			SampleDocumentEditor.LoadImportSource(sourcePath);
+
+		source.Samples.Select(sample => sample.Id)
+			.Should().Equal(first.Id, second.Id);
+		source.Samples.Select(sample => sample.Name)
+			.Should().Equal("First", "Second");
+		source.Samples.Should().OnlyContain(sample => sample.PcmData is not null);
+		source.Samples.Should().OnlyContain(sample => sample.PendingAsset is null);
+	}
+
+	[Test]
+	public void ImportFromSongCopiesMetadataPcmAndEncodedPayloadWithoutSourceDependency()
+	{
+		using TempProject project = new();
+		string wavePath = project.WriteWave("source", "tone.wav", sample: 8192);
+		string sourcePath = project.GetPath("source.hm");
+		DocumentWorkspace sourceWorkspace = new();
+		SampleDefinition original =
+			SampleDocumentEditor.Import(sourceWorkspace, wavePath, "Imported Tone");
+		original.ReferenceFrequencyHz = 440.0;
+		original.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 1);
+		original.SourceChannelPositions.Add(new Vector3(0.25f, -0.5f, 0.75f));
+		sourceWorkspace.SaveAs(sourcePath);
+
+		SongSampleImportSource source =
+			SampleDocumentEditor.LoadImportSource(sourcePath);
+		DocumentWorkspace targetWorkspace = new();
+
+		SampleDefinition imported =
+			SampleDocumentEditor.ImportFromSong(
+				targetWorkspace,
+				source,
+				new[] { original.Id })
+				.Should().ContainSingle().Which;
+
+		imported.Should().NotBeSameAs(source.Samples.Single());
+		imported.Name.Should().Be("Imported Tone");
+		imported.ReferenceFrequencyHz.Should().Be(440.0);
+		imported.Loop.Should().Be(new SampleLoop(SampleLoopMode.Forward, 0, 1));
+		imported.SourceChannelPositions.Should()
+			.Equal(new Vector3(0.25f, -0.5f, 0.75f));
+		imported.PcmData.Should().BeSameAs(source.Samples.Single().PcmData);
+		imported.PendingAsset.Should().NotBeNull();
+		imported.Asset.Should().BeNull();
+		imported.PendingAsset!.FileName.Should().Be("tone.wav");
+
+		File.Delete(sourcePath);
+		imported.PcmData!.GetSample(0, 0)
+			.Should().BeApproximately(0.25f, 1e-6f);
+
+		string targetPath = project.GetPath("target.hm");
+		targetWorkspace.SaveAs(targetPath);
+		SongDocument reloaded = SongDocumentStorage.Load(targetPath);
+		SampleDefinition persisted =
+			reloaded.Objects.Values.OfType<SampleDefinition>().Single();
+		persisted.PcmData!.GetSample(0, 0)
+			.Should().BeApproximately(0.25f, 1e-6f);
+	}
+
+	[Test]
+	public void ImportFromSongImportsOnlySelectedSamples()
+	{
+		using TempProject project = new();
+		string firstPath = project.WriteWave("first.wav", sample: 4096);
+		string secondPath = project.WriteWave("second.wav", sample: 8192);
+		string sourcePath = project.GetPath("source.hm.json");
+		DocumentWorkspace sourceWorkspace = new();
+		SampleDefinition first =
+			SampleDocumentEditor.Import(sourceWorkspace, firstPath, "First");
+		SampleDefinition second =
+			SampleDocumentEditor.Import(sourceWorkspace, secondPath, "Second");
+		sourceWorkspace.SaveAs(sourcePath);
+
+		SongSampleImportSource source =
+			SampleDocumentEditor.LoadImportSource(sourcePath);
+		DocumentWorkspace targetWorkspace = new();
+
+		var imported =
+			SampleDocumentEditor.ImportFromSong(
+				targetWorkspace,
+				source,
+				new[] { second.Id });
+
+		imported.Should().ContainSingle();
+		imported[0].Name.Should().Be("Second");
+		targetWorkspace.Document.Objects.Values
+			.OfType<SampleDefinition>()
+			.Should().ContainSingle()
+			.Which.Name.Should().Be("Second");
+		first.Name.Should().Be("First");
+	}
+
 
 	[Test]
 	public void AssetCheckReportsPendingUntilSongOwnsPersistedCopy()
