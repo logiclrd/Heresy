@@ -979,6 +979,27 @@ public sealed class PatternEditorControl : UserControl
 			}
 		}
 
+		if (PatternCornerNavigationKeyboard.TryGetTopLeft(
+			e.Key,
+			e.KeyModifiers,
+			out bool topLeft))
+		{
+			_volumeInput.Reset();
+			if (_expandedCell is not null)
+				CollapseVisualEffects(collapseCursor: true);
+
+			if (topLeft)
+				PatternEditorContextCursor.MoveToTopLeft(_context, _cursor);
+			else
+				PatternEditorContextCursor.MoveToBottomRight(_context, _cursor);
+
+			e.Handled = true;
+			UpdateCurrentPatternControls();
+			RefreshCursorVisuals();
+			FocusCursorCell();
+			return;
+		}
+
 		KeyModifiers homeEndBlockers =
 			KeyModifiers.Control
 				| KeyModifiers.Alt
