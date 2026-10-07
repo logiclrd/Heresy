@@ -645,6 +645,54 @@ public sealed class PatternEditorContextTests
 		cursor.Field.Should().Be(PatternCellField.EffectParameter);
 	}
 	[Test]
+	public void CornerNavigationEscalatesOnlyFromExactLocalCornerCell()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition first =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"First",
+				rowCount: 1,
+				channelCount: 3);
+		DataPatternDefinition second =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Second",
+				rowCount: 2,
+				channelCount: 2);
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(
+				workspace,
+				"Arrangement");
+		sequence.Entries.Add(new SequenceEntry(first.Id));
+		sequence.Entries.Add(new SequenceEntry(second.Id));
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(
+				workspace.Document,
+				sequence,
+				initialEntryIndex: 1);
+		PatternEffectCursor cursor =
+			new(1, 1, PatternCellField.Source);
+
+		PatternEditorContextCursor.MoveToTopLeft(
+			context,
+			cursor);
+
+		cursor.Row.Should().Be(1);
+		cursor.Channel.Should().Be(0);
+		cursor.Field.Should().Be(PatternCellField.Note);
+
+		cursor.SetPosition(2, 0, PatternCellField.Volume);
+		PatternEditorContextCursor.MoveToBottomRight(
+			context,
+			cursor);
+
+		cursor.Row.Should().Be(2);
+		cursor.Channel.Should().Be(1);
+		cursor.Field.Should().Be(PatternCellField.EffectParameter);
+	}
+
+	[Test]
 	public void GlobalBottomRightUsesNativeEffectAsOneWholeFinalField()
 	{
 		DocumentWorkspace workspace = new();
