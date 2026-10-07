@@ -58,7 +58,7 @@ public sealed class FmConstantNode : FmSynthNode
 
 public sealed class FmOscillatorNode : FmSynthNode
 {
-	private readonly int[] _inputs;
+	private readonly IReadOnlyList<int> _inputs;
 
 	public FmOscillatorNode(
 		int id,
@@ -94,9 +94,10 @@ public sealed class FmOscillatorNode : FmSynthNode
 		MultiplierNodeId = multiplierNodeId;
 		ExponentialMultiplier = exponentialMultiplier;
 		_inputs =
-			multiplierNodeId.HasValue
-				? [multiplierNodeId.Value]
-				: [];
+			Array.AsReadOnly(
+				multiplierNodeId.HasValue
+					? [multiplierNodeId.Value]
+					: Array.Empty<int>());
 	}
 
 	public FmOscillatorWaveform Waveform { get; }
@@ -144,19 +145,20 @@ public sealed class FmOperatorNode : FmSynthNode
 			throw new ArgumentOutOfRangeException(nameof(operation));
 		ArgumentNullException.ThrowIfNull(inputNodeIds);
 
-		_inputs = inputNodeIds.ToArray();
-		if (_inputs.Length == 0)
+		int[] inputs = inputNodeIds.ToArray();
+		if (inputs.Length == 0)
 		{
 			throw new ArgumentException(
 				"FM operator nodes require at least one input.",
 				nameof(inputNodeIds));
 		}
-		if (_inputs.Any(input => input < 0))
+		if (inputs.Any(input => input < 0))
 		{
 			throw new ArgumentOutOfRangeException(
 				nameof(inputNodeIds));
 		}
 
+		_inputs = Array.AsReadOnly(inputs);
 		Operation = operation;
 	}
 
@@ -167,7 +169,7 @@ public sealed class FmOperatorNode : FmSynthNode
 
 public sealed class FmSynthGraph
 {
-	private readonly FmSynthNode[] _nodes;
+	private readonly IReadOnlyList<FmSynthNode> _nodes;
 
 	public FmSynthGraph(
 		IEnumerable<FmSynthNode> nodes,
@@ -175,13 +177,15 @@ public sealed class FmSynthGraph
 	{
 		ArgumentNullException.ThrowIfNull(nodes);
 
-		_nodes = nodes.ToArray();
-		if (_nodes.Any(node => node is null))
+		FmSynthNode[] nodeArray = nodes.ToArray();
+		if (nodeArray.Any(node => node is null))
 		{
 			throw new ArgumentException(
 				"FM graph nodes may not contain null.",
 				nameof(nodes));
 		}
+
+		_nodes = Array.AsReadOnly(nodeArray);
 
 		Dictionary<int, FmSynthNode> byId = [];
 		foreach (FmSynthNode node in _nodes)
