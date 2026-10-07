@@ -142,6 +142,76 @@ public sealed class PatternEffectInteractionTests
 	}
 
 	[Test]
+	public void AdjacentChannelNavigationPreservesCollapsedField()
+	{
+		PatternEffectCursor cursor =
+			new(row: 3, channel: 2, PatternCellField.Volume);
+
+		cursor.MoveChannel(
+			channelCount: 5,
+			delta: 1);
+
+		cursor.Row.Should().Be(3);
+		cursor.Channel.Should().Be(3);
+		cursor.Field.Should().Be(PatternCellField.Volume);
+
+		cursor.MoveChannel(
+			channelCount: 5,
+			delta: -1);
+
+		cursor.Channel.Should().Be(2);
+		cursor.Field.Should().Be(PatternCellField.Volume);
+	}
+
+	[Test]
+	public void AdjacentChannelNavigationClampsAtEdges()
+	{
+		PatternEffectCursor cursor =
+			new(row: 3, channel: 0, PatternCellField.Source);
+
+		cursor.MoveChannel(
+			channelCount: 2,
+			delta: -1);
+
+		cursor.Channel.Should().Be(0);
+		cursor.Field.Should().Be(PatternCellField.Source);
+
+		cursor.SetPosition(
+			row: 3,
+			channel: 1,
+			PatternCellField.EffectParameter);
+		cursor.MoveChannel(
+			channelCount: 2,
+			delta: 1);
+
+		cursor.Channel.Should().Be(1);
+		cursor.Field.Should().Be(PatternCellField.EffectParameter);
+	}
+
+	[Test]
+	public void AdjacentChannelNavigationCollapsesExpandedEffect()
+	{
+		DataPatternDefinition pattern =
+			new((Heresy.Core.Objects.ObjectId)1U, "Pattern");
+		PatternCell cell =
+			pattern.Grid.GetOrCreateCell(0, 0);
+		cell.Effects.Add(new TonePortamentoPatternEffect(0x11));
+		cell.Effects.Add(new VibratoPatternEffect(0x22));
+		PatternEffectCursor cursor =
+			new(0, 0, PatternCellField.EffectCommand);
+		cursor.Expand(cell);
+		cursor.IsExpanded.Should().BeTrue();
+
+		cursor.MoveChannel(
+			channelCount: 2,
+			delta: 1);
+
+		cursor.Channel.Should().Be(1);
+		cursor.Field.Should().Be(PatternCellField.EffectCommand);
+		cursor.IsExpanded.Should().BeFalse();
+	}
+
+	[Test]
 	public void CommandTypingOnEmptyCellCreatesG00AndAdvancesDown()
 	{
 		DocumentWorkspace workspace = new();
