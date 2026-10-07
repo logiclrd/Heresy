@@ -13,6 +13,8 @@ using Avalonia.Layout;
 using Avalonia.Media;
 
 using Heresy.Core.Patterns;
+using Heresy.Core.Sequencing;
+using Heresy.Playback;
 using Heresy.UserInterface.Dialogs;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.PatternEditing;
@@ -34,6 +36,7 @@ public sealed class PatternEditorControl : UserControl
 	private readonly PatternEditorContext _context;
 	private readonly Action _close;
 	private readonly Action<string> _changed;
+	private readonly Func<NoteSchedule, Task>? _audition;
 	private readonly string _backLabel;
 	private readonly UserInterfaceConfiguration _configuration;
 	private readonly TextBox _rowCount;
@@ -74,7 +77,8 @@ public sealed class PatternEditorControl : UserControl
 		Action close,
 		Action<string> changed,
 		string backLabel = "← Document",
-		UserInterfaceConfiguration? configuration = null)
+		UserInterfaceConfiguration? configuration = null,
+		Func<NoteSchedule, Task>? audition = null)
 		: this(
 			owner,
 			workspace,
@@ -82,7 +86,8 @@ public sealed class PatternEditorControl : UserControl
 			close,
 			changed,
 			backLabel,
-			configuration)
+			configuration,
+			audition)
 	{
 	}
 
@@ -93,13 +98,15 @@ public sealed class PatternEditorControl : UserControl
 		Action close,
 		Action<string> changed,
 		string backLabel = "← Document",
-		UserInterfaceConfiguration? configuration = null)
+		UserInterfaceConfiguration? configuration = null,
+		Func<NoteSchedule, Task>? audition = null)
 	{
 		_owner = owner ?? throw new ArgumentNullException(nameof(owner));
 		_workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
 		_context = context ?? throw new ArgumentNullException(nameof(context));
 		_close = close ?? throw new ArgumentNullException(nameof(close));
 		_changed = changed ?? throw new ArgumentNullException(nameof(changed));
+		_audition = audition;
 		_backLabel = backLabel ?? throw new ArgumentNullException(nameof(backLabel));
 		_configuration = configuration ?? new UserInterfaceConfiguration();
 
@@ -760,6 +767,19 @@ public sealed class PatternEditorControl : UserControl
 				| KeyModifiers.Alt
 				| KeyModifiers.Meta;
 		if (_cursor.Field == PatternCellField.Note
+			&& (e.KeyModifiers & noteBlockingModifiers) == 0
+			&& PatternAuditionKeyboard.TryGetKind(
+				e.PhysicalKey,
+				out PatternAuditionKind auditionKind))
+		{
+			await AuditionCurrentAsync(
+				auditionKind,
+				editorRow,
+				channel);
+			e.Handled = true;
+			return;
+		}
+		if (_cursor.Field == PatternCellField.Note
 			&& (e.KeyModifiers & noteBlockingModifiers) == 0)
 		{
 			int editedRow = _cursor.Row;
@@ -883,6 +903,60 @@ public sealed class PatternEditorControl : UserControl
 		UpdateCurrentPatternControls();
 		RefreshCursorVisuals();
 		FocusCursorCell();
+	}
+
+	private async Task AuditionCurrentAsync(
+		PatternAuditionKind kind,
+		PatternEditorRow editorRow,
+		int channel)
+	{
+		NoteSchedule schedule =
+			kind switch
+			{
+				PatternAuditionKind.Note =>
+					PatternAuditionCompiler.CompileNote(
+						editorRow.Pattern,
+						editorRow.PatternRow,
+						channel),
+				PatternAuditionKind.Row =>
+					PatternAuditionCompiler.CompileRow(
+						editorRow.Pattern,
+						editorRow.PatternRow),
+				_ =>
+					throw new ArgumentOutOfRangeException(
+						nameof(kind)),
+			};
+
+		try
+		{
+			if (_audition is null)
+			{
+				_message.Text =
+					"Realtime audition is not configured in this host.";
+			}
+			else
+			{
+				await _audition(schedule);
+				_message.Text =
+					kind == PatternAuditionKind.Note
+						? "Auditioned current note."
+						: "Auditioned current row.";
+			}
+		}
+		catch (Exception ex)
+		{
+			_message.Text =
+				$"Audition failed: {ex.Message}";
+		}
+		finally
+		{
+			PatternEditorContextCursor.MoveDown(
+				_context,
+				_cursor);
+			UpdateCurrentPatternControls();
+			RefreshCursorVisuals();
+			FocusCursorCell();
+		}
 	}
 
 	private void OnCellTextInput(
