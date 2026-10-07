@@ -160,17 +160,27 @@ preserved during implementation.
   - expanded effect selection collapses before plain Home/End navigation.
     Modified Home/End combinations remain available to their own commands.
 - [x] `Ctrl+Home` / `Ctrl+End`: move to the top-left / bottom-right
-  of the active tracker editor context. In a standalone pattern that is the
-  pattern itself; in a sequence-backed tracker it spans the full flattened
-  editable sequence view. Top-left is row 0, channel 1, Note. Bottom-right uses
-  the final editable row, that row's actual pattern channel count, and the same
-  last-keyboard-stop rule as plain End (Effect Parameter normally, Effect Command
-  for a single native effect). Shift/Alt/Meta-modified forms remain reserved.
+  of the current tracker-editable pattern occurrence first. In a sequence-backed
+  tracker, an occurrence's first visible row respects its sequence `StartRow`;
+  repeated occurrences are distinct. Top-left is that occurrence's first visible
+  row, channel 1, Note. Bottom-right is its last visible row, last channel, and
+  the same last-keyboard-stop rule as plain End (Effect Parameter normally,
+  Effect Command for a single native effect). Only when the cursor is already on
+  that exact local corner cell does another Ctrl+Home / Ctrl+End escalate to the
+  absolute first / last editable cell of the whole editor context. In a
+  standalone pattern the local and absolute corners are therefore the same.
+  Shift/Alt/Meta-modified forms remain reserved.
 - [x] `Ctrl+PageUp` / `Ctrl+PageDown`: move to the first / last
-  editable row of the active tracker context while preserving the current field
-  and channel. In a sequence-backed tracker this spans the full flattened
-  editable sequence view; if the destination row belongs to a narrower pattern,
-  the channel is clamped to that pattern's last channel. Expanded effect
+  visible row of the current tracker-editable pattern occurrence while preserving
+  the current field and channel. If already on that boundary row, Ctrl+PageUp
+  moves to the first visible row of the preceding editable pattern occurrence and
+  Ctrl+PageDown moves to the last visible row of the next editable occurrence.
+  Sequence navigation skips script, missing and zero-row entries; repeated
+  occurrences remain distinct and `StartRow` is respected. If the destination
+  pattern is narrower, the channel clamps to its last channel. For standalone
+  patterns opened from the tree, the same boundary press switches through the
+  same tree order used by `-` / `+`, landing on the first row of the previous
+  or last row of the next pattern. Navigation does not wrap. Expanded effect
   selection collapses as part of the move. Shift/Alt/Meta-modified forms remain
   reserved for other commands.
 - [ ] `Tab` / `Shift+Tab`: jump to the next / previous Note column, crossing to
