@@ -1,5 +1,7 @@
 using System;
 
+using Heresy.Core.Patterns;
+
 namespace Heresy.UserInterface.PatternEditing;
 
 /// <summary>
