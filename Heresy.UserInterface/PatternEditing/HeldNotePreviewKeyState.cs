@@ -11,8 +11,7 @@ public abstract record HeldNotePreviewAction;
 public sealed record StartHeldNotePreviewAction(
 	PhysicalKey Key,
 	int VoiceId,
-	double PitchMultiplier,
-	bool StartsSession)
+	double PitchMultiplier)
 	: HeldNotePreviewAction;
 
 public sealed record ReleaseHeldNotePreviewAction(
@@ -67,9 +66,7 @@ public sealed class HeldNotePreviewKeyState
 		return new StartHeldNotePreviewAction(
 			key,
 			semitoneOffset,
-			pitchMultiplier,
-			StartsSession:
-				_activeNotes.Count == 1);
+			pitchMultiplier);
 	}
 
 	public IReadOnlyList<ReleaseHeldNotePreviewAction> ReleaseAll()
