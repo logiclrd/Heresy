@@ -28,9 +28,8 @@ public sealed class PatternAuditionKeyboardTests
 		actual.Should().Be(expected);
 	}
 
-	[TestCase(PhysicalKey.Numpad4)]
-	[TestCase(PhysicalKey.Numpad8)]
 	[TestCase(PhysicalKey.Digit5)]
+	[TestCase(PhysicalKey.Z)]
 	public void OtherPhysicalKeysAreNotAuditionCommands(
 		PhysicalKey key)
 	{
