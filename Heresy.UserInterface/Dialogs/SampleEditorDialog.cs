@@ -106,6 +106,10 @@ public sealed class SampleEditorDialog : Window
 				Height = 180,
 				HorizontalAlignment = HorizontalAlignment.Stretch,
 			};
+		_waveform.LoopPreviewChanged +=
+			(_, e) => PreviewWaveformLoop(e.Loop);
+		_waveform.LoopCommitted +=
+			(_, e) => CommitWaveformLoop(e.Loop);
 		_waveformSummary =
 			new TextBlock
 			{
@@ -257,6 +261,8 @@ public sealed class SampleEditorDialog : Window
 				_sample,
 				referenceFrequency,
 				loop);
+			_waveform.SetLoop(loop);
+			PreviewWaveformLoop(loop);
 
 			Title = $"Sample — {_sample.Name}";
 			_message.Text = "Sample metadata updated.";
@@ -324,6 +330,8 @@ public sealed class SampleEditorDialog : Window
 	private void RefreshWaveform()
 	{
 		_waveform.SetPcmData(_sample.PcmData);
+		_waveform.SetLoop(_sample.Loop);
+		PreviewWaveformLoop(_sample.Loop);
 
 		if (_sample.PcmData is not SamplePcmData pcm)
 		{
@@ -346,6 +354,40 @@ public sealed class SampleEditorDialog : Window
 			+ $"{pcm.SampleRate} Hz · "
 			+ $"{pcm.FrameCount} frame{(pcm.FrameCount == 1 ? string.Empty : "s")} · "
 			+ $"{durationSeconds:0.###} s";
+	}
+
+	private void PreviewWaveformLoop(
+		SampleLoop loop)
+	{
+		_loopStart.Text =
+			loop.StartFrame.ToString(
+				CultureInfo.CurrentCulture);
+		_loopEnd.Text =
+			loop.EndFrameExclusive.ToString(
+				CultureInfo.CurrentCulture);
+	}
+
+	private void CommitWaveformLoop(
+		SampleLoop loop)
+	{
+		try
+		{
+			SampleDocumentEditor.UpdateMetadata(
+				_workspace,
+				_sample,
+				_sample.ReferenceFrequencyHz,
+				loop);
+			_loopMode.SelectedItem = loop.Mode;
+			PreviewWaveformLoop(loop);
+			_message.Text =
+				$"Loop range updated to frames {loop.StartFrame}..{loop.EndFrameExclusive}.";
+		}
+		catch (Exception ex)
+		{
+			_waveform.SetLoop(_sample.Loop);
+			PreviewWaveformLoop(_sample.Loop);
+			_message.Text = ex.Message;
+		}
 	}
 
 	private void RefreshDiagnostics()
