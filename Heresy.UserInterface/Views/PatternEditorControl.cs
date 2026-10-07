@@ -979,6 +979,30 @@ public sealed class PatternEditorControl : UserControl
 			}
 		}
 
+		KeyModifiers homeEndBlockers =
+			KeyModifiers.Control
+				| KeyModifiers.Alt
+				| KeyModifiers.Meta
+				| KeyModifiers.Shift;
+		if ((e.KeyModifiers & homeEndBlockers) == 0
+			&& e.Key is Key.Home or Key.End)
+		{
+			_volumeInput.Reset();
+			if (_expandedCell is not null)
+				CollapseVisualEffects(collapseCursor: true);
+
+			if (e.Key == Key.Home)
+				PatternEditorContextCursor.MoveHome(_context, _cursor);
+			else
+				PatternEditorContextCursor.MoveEnd(_context, _cursor);
+
+			e.Handled = true;
+			UpdateCurrentPatternControls();
+			RefreshCursorVisuals();
+			FocusCursorCell();
+			return;
+		}
+
 		switch (e.Key)
 		{
 			case Key.Left:
