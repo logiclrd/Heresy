@@ -33,6 +33,31 @@ public static class SongDocumentJson
 	private static readonly JsonSerializerOptions JsonOptions =
 		CreateJsonOptions();
 
+	public static string SerializePatternNote(
+		PatternNoteEntry note)
+	{
+		ArgumentNullException.ThrowIfNull(note);
+		JsonNode? node =
+			JsonSerializer.SerializeToNode(
+				note,
+				typeof(PatternNoteEntry),
+				JsonOptions);
+		return (node
+			?? throw new InvalidOperationException(
+				"Pattern note could not be serialized."))
+			.ToJsonString(JsonOptions);
+	}
+
+	public static PatternNoteEntry DeserializePatternNote(
+		string json)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(json);
+		JsonNode? node = JsonNode.Parse(json);
+		return node?.Deserialize<PatternNoteEntry>(JsonOptions)
+			?? throw new InvalidDataException(
+				"Pattern note could not be deserialized.");
+	}
+
 	public static string SerializePatternEffects(
 		IEnumerable<PatternEffect> effects)
 	{
