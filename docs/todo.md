@@ -143,7 +143,7 @@ preserved during implementation.
 
 ## Chord input
 
-- [ ] Add chord-entry state to the pattern editor. `Ctrl+Alt` plus the physical
+- [x] Add chord-entry state to the pattern editor. `Ctrl+Alt` plus the physical
   bottom-row tracker keys chooses a chord type:
   - `Z`: major
   - `X`: minor
@@ -152,24 +152,37 @@ preserved during implementation.
   - `B`: minor seventh
   - `N`: half-diminished seventh
   - `M`: diminished seventh
-- [ ] Show the notes making up the current chord in a status bar above the
-  pattern editor. When the user plays or inputs a chord by pressing a note to
-  act as the root key, the notes shown in the status bar update to the specific
-  notes for the specified chord root.
-- [ ] Once a chord is active, pressing a tracker note key transposes the chord
-  to that root and inserts its enabled notes into successive pattern channels,
-  starting with the current channel. Notes that would extend past the right edge
-  are simply dropped.
-- [ ] `Ctrl+Alt+-` / `Ctrl+Alt++`: rotate the chord tones, moving the first tone
-  to the end or the last tone to the beginning respectively.
-- [ ] `Ctrl+Alt+Numpad *`: add chord tones by repeating the chord/scale through
-  higher octaves, add one additional note per press. `Ctrl+Alt+Numpad /`: remove
-  chord tones, one per press.
-- [ ] `Ctrl+Alt+1`, `Ctrl+Alt+2`, `Ctrl+Alt+3`, ... toggle the corresponding
-  chord tones enabled/disabled. Disabled tones remain in the status bar but are
-  grayed out. Only enabled tones consume destination channels during insertion.
-  Enabled/disabled state by index is remembered through chord changes.
-  `Ctrl-Alt-=` sets all current notes enabled.
+  The state is layout-independent, lives with the pattern editor, and is
+  snapshotted/restored when a standalone editor switches patterns.
+- [x] Show the current chord immediately above the tracker grid. Before a root
+  has been played the bar shows the selected chord type; pressing a physical
+  tracker piano key establishes the concrete root and updates the bar to the
+  resulting tracker note names. Disabled tones remain visible but are grayed
+  out.
+- [x] Once a chord is active, pressing a pitched tracker key in the Note field
+  transposes the voicing to that root and inserts enabled tones into successive
+  pattern channels starting at the current channel. Disabled tones consume no
+  channel. Tones extending past the right edge are dropped. The current
+  Note/Source/Volume edit mask is applied independently to every enabled
+  destination, preserving disabled destination fields, and the whole chord
+  edit advances the document/audio revision only once. The cursor advances one
+  row after the chord while staying on its original channel.
+- [x] Chord entry feeds the existing live editing session once per enabled
+  destination channel when the Note edit-mask bit is active, so entered chords
+  sound immediately with the same persistent per-channel semantics as ordinary
+  note entry.
+- [x] `Ctrl+Alt+-` / `Ctrl+Alt++` rotate the voicing by moving the first tone
+  to the end or the last tone to the beginning respectively. The moved tone
+  crosses an octave as needed so the stored voicing remains strictly ascending;
+  for example C-E-G rotates forward to E-G-C5.
+- [x] `Ctrl+Alt+Numpad *` adds one tone per press by continuing the chord's
+  pitch-class cycle into higher octaves from the current voicing.
+  `Ctrl+Alt+Numpad /` removes one tone per press, retaining at least one tone.
+- [x] `Ctrl+Alt+1` through `Ctrl+Alt+9` toggle the corresponding current chord
+  tones enabled/disabled. Only enabled tones are inserted and consume
+  destination channels. Enabled state is remembered by tone index through chord
+  changes and through remove/re-add operations. `Ctrl+Alt+=` re-enables every
+  current tone.
 
 ## Pattern row insertion and deletion
 
