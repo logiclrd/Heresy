@@ -34,6 +34,7 @@ public sealed class PlaybackSession
 	private readonly ISoundResolver _soundResolver;
 	private readonly TrackerTickClock _tickClock;
 	private readonly SortedDictionary<int, PlaybackChannelState> _channels = [];
+	private readonly SortedDictionary<uint, PlaybackChannelState> _targetedVirtualChannels = [];
 	private readonly List<PlaybackVoice> _virtualVoices = [];
 	private readonly SortedDictionary<int, ActiveGlobalVolumeSlide> _globalVolumeSlides = [];
 	private readonly PlaybackOperatorCollection _globalOperators = new();
@@ -110,6 +111,30 @@ public sealed class PlaybackSession
 				_tickClock,
 				panbrelloSeed);
 			_channels.Add(channel, state);
+		}
+
+		return state;
+	}
+
+	private PlaybackChannelState GetVirtualChannelState(uint channelId)
+	{
+		if (!_targetedVirtualChannels.TryGetValue(
+			channelId,
+			out PlaybackChannelState? state))
+		{
+			ulong panbrelloSeed = unchecked(
+				0x5649525455414C00UL
+					+ 0x9E3779B97F4A7C15UL
+						* ((ulong)channelId + 1UL));
+
+			state = new PlaybackChannelState(
+				_context.Configuration.OutputChannelCount,
+				_context.Configuration.SampleRate,
+				_tickClock,
+				panbrelloSeed);
+			_targetedVirtualChannels.Add(
+				channelId,
+				state);
 		}
 
 		return state;
@@ -232,6 +257,15 @@ public sealed class PlaybackSession
 			return;
 		}
 
+		if (noteEvent.Target.Kind == ChannelTargetKind.Virtual)
+		{
+			ApplyVirtualEvent(
+				noteEvent.Target.VirtualChannelId,
+				noteEvent.Commands,
+				eventFrame);
+			return;
+		}
+
 		if (noteEvent.Target.Kind != ChannelTargetKind.Physical)
 		{
 			throw new NotSupportedException(
@@ -250,6 +284,90 @@ public sealed class PlaybackSession
 				eventFrame,
 				noteEvent.Offset.TimeOffset);
 		}
+	}
+
+	private void ApplyVirtualEvent(
+		uint channelId,
+		IReadOnlyList<NoteCommand> commands,
+		long eventFrame)
+	{
+		PlaybackChannelState channel =
+			GetVirtualChannelState(channelId);
+
+		foreach (NoteCommand command in commands)
+		{
+			switch (command)
+			{
+				case StartNoteCommand start:
+					StartVirtualNote(
+						channel,
+						start,
+						eventFrame);
+					break;
+
+				case NoteOffCommand:
+					channel.CurrentVoice?.ApplyNoteOff(
+						eventFrame,
+						_context.Configuration.SampleRate);
+					CullFinishedCurrentVoice(
+						channel,
+						eventFrame);
+					break;
+
+				case NoteCutCommand:
+					channel.CutCurrentVoice();
+					break;
+
+				default:
+					throw new NotSupportedException(
+						$"Render command {command.GetType().Name} is not supported on an explicitly targeted virtual channel.");
+			}
+		}
+	}
+
+	private void StartVirtualNote(
+		PlaybackChannelState channel,
+		StartNoteCommand start,
+		long eventFrame)
+	{
+		channel.CutCurrentVoice();
+
+		if (!_soundResolver.TryResolve(
+			start.SourceId,
+			start.Mixdown,
+			out ISound? sound)
+			|| sound is null)
+		{
+			return;
+		}
+
+		SoundInvocation? invocation =
+			sound.CreateInvocation(
+				start.PitchMultiplier,
+				start.PlaybackSpeedMultiplier);
+		if (invocation is null)
+			return;
+
+		if (start.Volume.HasValue)
+			channel.SetNoteVolume(start.Volume.Value);
+
+		PlaybackVoice voice = new(
+			invocation.Sound,
+			invocation.State,
+			invocation.Configuration,
+			eventFrame,
+			_context.Configuration.OutputChannelCount,
+			_context.Configuration.SampleRate,
+			channel.FilterParameters,
+			channel.NoteVolume,
+			channel.OverallVolume,
+			_tickClock,
+			_nextVoiceModulationSeed++,
+			originPhysicalChannel: 0);
+
+		channel.AttachVoice(
+			voice,
+			eventFrame);
 	}
 
 	private void ApplyCommand(
@@ -904,6 +1022,53 @@ public sealed class PlaybackSession
 				}
 
 				AddBuffer(destination, channelBuffer);
+			}
+
+			List<uint>? emptyVirtualChannels = null;
+			foreach (KeyValuePair<uint, PlaybackChannelState> pair
+				in _targetedVirtualChannels)
+			{
+				PlaybackChannelState channel = pair.Value;
+				Span<float> channelBuffer =
+					rented.AsSpan(0, sampleCount);
+				channelBuffer.Clear();
+
+				if (channel.CurrentVoice is not null)
+				{
+					bool finished = RenderVoice(
+						channel.CurrentVoice,
+						absoluteStartFrame,
+						frameCount,
+						channelBuffer);
+					if (finished)
+						channel.DetachCurrentVoice();
+				}
+
+				for (int frame = 0; frame < frameCount; frame++)
+				{
+					Span<float> outputFrame =
+						channelBuffer.Slice(
+							frame * outputChannelCount,
+							outputChannelCount);
+					channel.AntiClickTail.RenderFrame(outputFrame);
+				}
+
+				AddBuffer(
+					destination,
+					channelBuffer);
+
+				if (channel.CurrentVoice is null
+					&& !channel.AntiClickTail.IsActive)
+				{
+					emptyVirtualChannels ??= [];
+					emptyVirtualChannels.Add(pair.Key);
+				}
+			}
+
+			if (emptyVirtualChannels is not null)
+			{
+				foreach (uint channelId in emptyVirtualChannels)
+					_targetedVirtualChannels.Remove(channelId);
 			}
 
 			for (int index = 0; index < _virtualVoices.Count;)
