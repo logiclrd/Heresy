@@ -6,7 +6,14 @@ preserved during implementation.
 
 ## Instrument and waveform editing
 
-- [ ] When editing an instrument, display its waveform graphically.
+- [x] Display decoded sample PCM graphically in the Sample editor. The original
+  wording called this an instrument waveform, but Heresy's recursive
+  `InstrumentDefinition` has no single PCM waveform: its tone specifications
+  may resolve to samples, instruments, patterns or sequences. The waveform
+  therefore lives with `SampleDefinition`, which owns both the immutable PCM
+  and the loop metadata. A framework-independent peak-envelope reducer produces
+  per-pixel min/max values without copying PCM, and the Avalonia view draws one
+  stacked lane per source channel. Relink/reload refreshes the graph immediately.
 - [ ] Add a graphical depiction of the loop range and allow the loop boundaries
   to be edited directly in that view.
 - [ ] Add a loop assistant that searches for a natural loop boundary that avoids
