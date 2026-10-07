@@ -240,16 +240,27 @@ preserved during implementation.
 
 ## Pattern selection
 
-- [ ] `Alt+B`: set the start of the marked region.
-- [ ] `Alt+E`: set the end of the marked region.
-- [ ] `Alt+D`: select the major-highlight number of rows starting at the current
-  cursor position. If the cursor is already inside a selected block, expand the
-  block to the next power-of-two multiple of the major-highlight row count.
-- [ ] `Alt+L`: mark the entire current column. If that column is already fully
-  marked, mark the entire pattern.
-- [ ] `Shift+Arrow`: move the cursor normally while setting/extending the marked
-  region end to the new cursor position.
-- [ ] `Alt+U`: cancel the selection/unmark the current region.
+- [x] Mark rectangular tracker-cell regions by display row and channel; subfields
+  inside a cell are not separate selection units. `Alt+B` sets one corner and
+  `Alt+E` sets the other, with the visible block normalized regardless of which
+  physical corner was set first.
+- [x] `Alt+D` marks the current channel for the current pattern's
+  major-highlight row count starting at the cursor. Repeating it while the
+  cursor remains inside that block expands its height to the next power-of-two
+  multiple of the major-highlight size. The block is clamped to the current
+  pattern occurrence in a sequence-backed editor.
+- [x] `Alt+L` marks the entire current channel across the current pattern
+  occurrence. If that channel is already fully covered by the marked region,
+  another `Alt+L` marks the whole pattern occurrence across all of its
+  channels.
+- [x] `Shift+Arrow` uses the ordinary tracker cursor movement rules while
+  setting/extending the marked-region end to the new cell. If no region exists,
+  the cell where the Shift movement began becomes the first corner.
+- [x] `Alt+U` clears the marked region.
+- [x] Marked cells use a configurable translucent selection highlight while the
+  active cursor and field keep their independent focus borders. Pattern layout
+  mutation clears the selection because its row/channel geometry may no longer
+  be valid.
 
 ## Pattern clipboard
 
