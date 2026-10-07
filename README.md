@@ -130,11 +130,11 @@ command. SDL callback failures never escape the unmanaged
 boundary: the first exception is latched in `IAudioOutputSession.Fault` and
 subsequent callback output is silence. Start/stop are explicit and idempotent,
 and disposing the backend disposes its open sessions before releasing SDL audio.
-The assembly references the managed SDL3-CS bindings; the eventual desktop host
-will supply the matching platform-native SDL runtime when transport wiring is
-added. The backend deliberately knows nothing about songs, patterns or authoring
-state, leaving the planned playback worker free to provide buffered/snapshotted
-PCM through the common source interface.
+The assembly references the managed SDL3-CS bindings; the desktop host supplies
+the matching platform-native SDL runtime when playback is first requested. The
+backend deliberately knows nothing about songs, patterns or authoring state;
+the background playback worker provides snapshot-backed PCM through the common
+source interface.
 
 
 Realtime transport requests now cross an explicit snapshot boundary before they
@@ -184,6 +184,17 @@ pattern, then another containing data sequence, with standalone pattern playback
 as the fallback); and `F8` stops playback. The pattern editor exposes only its
 logical pattern/local-row/sequence-order cursor, leaving ancestry resolution and
 request creation outside Avalonia.
+
+The pattern editor also supports ad-hoc tracker audition while the Note column
+has focus. Top-row `4` compiles and plays only the current cell's
+note/source/volume; top-row `8` compiles and plays the entire current row,
+including its effects. Both commands advance the tracker cursor by one logical
+row, including across flattened sequence-pattern boundaries. Before compiling
+the auditioned location, `PatternAuditionCompiler` sequences earlier rows into
+a discard sink so source selection, timing state and tracker effect-memory
+recalls are primed without playing those earlier events. The resulting frozen
+`NoteSchedule` is submitted as an ordinary `AdHocPlaybackRequest` through
+the same snapshot/background/SDL path as other realtime playback.
 
 Realtime sample decoding currently uses `WaveSampleDataProvider`. It reads
 RIFF/WAVE assets through `ExternalAssetIntegrity.OpenRead`, so ordinary files
