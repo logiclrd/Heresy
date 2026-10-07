@@ -61,8 +61,10 @@ preserved during implementation.
   toggled/locking state is irrelevant. Each held tracker key owns an independent
   live preview voice, repeated key-down events do not retrigger it, and releasing
   that same physical tracker key sends Note Off even if Caps Lock was released
-  first. Preview pitch follows the current tracker octave and source resolution
-  is primed from earlier pattern rows just like ordinary note sequencing.
+  first. Window deactivation/editor detachment releases every still-held preview
+  voice as a safety net for lost key-up events. Preview pitch follows the current
+  tracker octave and source resolution is primed from earlier pattern rows just
+  like ordinary note sequencing.
 
 ## Pattern/object switching and editor state
 
