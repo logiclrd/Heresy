@@ -58,15 +58,15 @@ public sealed class SampleLoopAssistantTests
 				channelCount: 2,
 				interleavedSamples:
 				[
-					0.0f, 0.0f,
-					0.5f, 0.9f,
-					1.0f, 0.0f,
-					0.5f, -0.9f,
-					0.0f, 0.0f,
-					0.5f, 0.9f,
-					1.0f, 0.0f,
-					0.5f, -0.9f,
-					0.0f, 0.0f,
+					-0.5f, 0.5f,
+					0.5f, 0.5f,
+					0.0f, -0.5f,
+					-1.5f, 0.5f,
+					-0.5f, 0.5f,
+					-0.5f, 0.0f,
+					0.0f, 0.5f,
+					0.5f, -0.5f,
+					1.0f, 0.5f,
 				]);
 		SampleLoop loop =
 			new(
