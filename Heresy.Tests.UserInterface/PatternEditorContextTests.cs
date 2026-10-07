@@ -422,6 +422,54 @@ public sealed class PatternEditorContextTests
 	}
 
 	[Test]
+	public void AdjacentChannelNavigationUsesCurrentSequencePatternWidth()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition wide =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Wide",
+				rowCount: 1,
+				channelCount: 4);
+		DataPatternDefinition narrow =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Narrow",
+				rowCount: 1,
+				channelCount: 2);
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(
+				workspace,
+				"Arrangement");
+		sequence.Entries.Add(new SequenceEntry(wide.Id));
+		sequence.Entries.Add(new SequenceEntry(narrow.Id));
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(
+				workspace.Document,
+				sequence,
+				initialEntryIndex: 0);
+		PatternEffectCursor cursor =
+			new(1, 1, PatternCellField.Source);
+
+		PatternEditorContextCursor.MoveChannel(
+			context,
+			cursor,
+			delta: 1);
+
+		cursor.Row.Should().Be(1);
+		cursor.Channel.Should().Be(1);
+		cursor.Field.Should().Be(PatternCellField.Source);
+
+		PatternEditorContextCursor.MoveChannel(
+			context,
+			cursor,
+			delta: -1);
+
+		cursor.Channel.Should().Be(0);
+		cursor.Field.Should().Be(PatternCellField.Source);
+	}
+
+	[Test]
 	public void SequencePatternNavigationMovesBetweenEditableOccurrences()
 	{
 		DocumentWorkspace workspace = new();
