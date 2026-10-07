@@ -38,7 +38,7 @@ public sealed class PatternEditorControl : UserControl
 	private readonly Action<string> _changed;
 	private readonly Func<NoteSchedule, Task>? _audition;
 	private readonly PatternLiveAuditionActions? _liveAudition;
-	private readonly Action<int>? _switchPattern;
+	private readonly Action<PatternEditorSwitchRequest>? _switchPattern;
 	private readonly HeldNotePreviewKeyState _heldPreviewKeys = new();
 	private readonly string _backLabel;
 	private readonly UserInterfaceConfiguration _configuration;
@@ -84,7 +84,8 @@ public sealed class PatternEditorControl : UserControl
 		UserInterfaceConfiguration? configuration = null,
 		Func<NoteSchedule, Task>? audition = null,
 		PatternLiveAuditionActions? liveAudition = null,
-		Action<int>? switchPattern = null)
+		Action<PatternEditorSwitchRequest>? switchPattern = null,
+		PatternEditorOpenState? initialState = null)
 		: this(
 			owner,
 			workspace,
@@ -95,7 +96,8 @@ public sealed class PatternEditorControl : UserControl
 			configuration,
 			audition,
 			liveAudition,
-			switchPattern)
+			switchPattern,
+			initialState)
 	{
 	}
 
@@ -109,7 +111,8 @@ public sealed class PatternEditorControl : UserControl
 		UserInterfaceConfiguration? configuration = null,
 		Func<NoteSchedule, Task>? audition = null,
 		PatternLiveAuditionActions? liveAudition = null,
-		Action<int>? switchPattern = null)
+		Action<PatternEditorSwitchRequest>? switchPattern = null,
+		PatternEditorOpenState? initialState = null)
 	{
 		_owner = owner ?? throw new ArgumentNullException(nameof(owner));
 		_workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
@@ -123,10 +126,34 @@ public sealed class PatternEditorControl : UserControl
 		_configuration = configuration ?? new UserInterfaceConfiguration();
 
 		DataPatternDefinition pattern = GetInitialPattern(context);
+		int initialDisplayRow =
+			context.Rows.Count == 0
+				? 0
+				: context.InitialDisplayRow;
+		int initialChannel = 0;
+		PatternCellField initialField = PatternCellField.Note;
+		if (initialState is not null
+			&& !context.IsSequence
+			&& context.Rows.Count != 0)
+		{
+			initialDisplayRow =
+				Math.Clamp(
+					initialState.PatternRow,
+					0,
+					context.Rows.Count - 1);
+			DataPatternDefinition initialPattern =
+				context.GetRow(initialDisplayRow).Pattern;
+			initialChannel =
+				Math.Clamp(
+					initialState.Channel,
+					0,
+					initialPattern.ChannelCount - 1);
+			initialField = initialState.Field;
+		}
 		_cursor.SetPosition(
-			context.Rows.Count == 0 ? 0 : context.InitialDisplayRow,
-			0,
-			PatternCellField.Note);
+			initialDisplayRow,
+			initialChannel,
+			initialField);
 
 		_rowCount = NumberBox(pattern.RowCount);
 		_channelCount = NumberBox(pattern.ChannelCount);
@@ -136,19 +163,35 @@ public sealed class PatternEditorControl : UserControl
 		_noteSources =
 			PatternSourceCatalog.GetSources(workspace.Document);
 		PatternSourceOption? defaultSource = null;
-		foreach (PatternSourceOption source in _noteSources)
+		if (initialState is not null)
 		{
-			if (source.Id != pattern.Id)
+			foreach (PatternSourceOption source in _noteSources)
 			{
-				defaultSource = source;
-				break;
+				if (source.Id == initialState.SourceId)
+				{
+					defaultSource = source;
+					break;
+				}
+			}
+		}
+		else
+		{
+			foreach (PatternSourceOption source in _noteSources)
+			{
+				if (source.Id != pattern.Id)
+				{
+					defaultSource = source;
+					break;
+				}
 			}
 		}
 
+		int baseOctave =
+			initialState?.BaseOctave ?? 4;
 		_noteInputState =
 			new(
 				defaultSource?.Id ?? Heresy.Core.Objects.ObjectId.None,
-				baseOctave: 4);
+				baseOctave);
 		_noteSource =
 			new ComboBox
 			{
@@ -169,7 +212,7 @@ public sealed class PatternEditorControl : UserControl
 			new ComboBox
 			{
 				ItemsSource = new[] { 0, 1, 2, 3, 4, 5, 6, 7, 8 },
-				SelectedItem = 4,
+				SelectedItem = baseOctave,
 				Width = 58,
 			};
 		_noteOctave.SelectionChanged += (_, _) =>
@@ -1364,7 +1407,17 @@ public sealed class PatternEditorControl : UserControl
 			return;
 		}
 
-		_switchPattern(delta);
+		PatternEditorRow currentRow =
+			_context.GetRow(_cursor.Row);
+		_switchPattern(
+			new PatternEditorSwitchRequest(
+				delta,
+				new PatternEditorOpenState(
+					_noteInputState.SourceId,
+					_noteInputState.BaseOctave,
+					currentRow.PatternRow,
+					_cursor.Channel,
+					_cursor.Field)));
 	}
 
 	private void MoveCurrentSource(
