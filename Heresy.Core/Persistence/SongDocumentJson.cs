@@ -797,11 +797,11 @@ public static class SongDocumentJson
 
 			Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
 			using (Stream source =
-				ExternalAssetIntegrity.OpenRead(sample.Asset.FullPath))
+				ExternalAssetIntegrity.OpenRead(RequireAsset(sample).FullPath))
 			using (FileStream target = File.Create(destination))
 				source.CopyTo(target);
 
-			sample.Asset = sample.Asset with
+			sample.Asset = RequireAsset(sample) with
 			{
 				FullPath = destination,
 			};
@@ -826,7 +826,7 @@ public static class SongDocumentJson
 
 			if (!TryGetPortableRelativePath(
 				jsonDirectory,
-				sample.Asset.FullPath,
+				RequireAsset(sample).FullPath,
 				out _))
 			{
 				throw new InvalidOperationException(
@@ -855,14 +855,14 @@ public static class SongDocumentJson
 
 		if (TryGetPortableRelativePath(
 			jsonDirectory,
-			sample.Asset.FullPath,
+			RequireAsset(sample).FullPath,
 			out string? relative))
 		{
 			return relative;
 		}
 
 		throw new InvalidOperationException(
-			$"Sample '{sample.Name}' ({sample.Id}) uses asset '{sample.Asset.FullPath}', " +
+			$"Sample '{sample.Name}' ({sample.Id}) uses asset '{RequireAsset(sample).FullPath}', " +
 			"which is outside the .hm.json directory subtree. " +
 			"Choose the '.hm.json (absolute paths)' save type or move the asset beneath the JSON file's directory. " +
 			"TODO: navigate the editor directly to the offending sample.");
