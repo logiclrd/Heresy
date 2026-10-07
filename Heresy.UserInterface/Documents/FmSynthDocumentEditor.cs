@@ -1,12 +1,19 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 
 using Heresy.Core.Envelopes;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
+using Heresy.Core.Persistence;
 
 namespace Heresy.UserInterface.Documents;
+
+public sealed record SongFmSynthImportSource(
+	string Path,
+	SongDocument Document,
+	IReadOnlyList<FmSynthDefinition> Synths);
 
 /// <summary>
 /// Framework-independent mutation surface for persistent FM synth objects.
@@ -41,6 +48,152 @@ public static class FmSynthDocumentEditor
 			synth,
 			affectsAudio: true);
 		return synth;
+	}
+
+	public static SongFmSynthImportSource LoadImportSource(
+		string songPath)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(songPath);
+		string fullPath =
+			Path.GetFullPath(songPath);
+		SongDocument document =
+			SongDocumentStorage.Load(fullPath);
+		FmSynthDefinition[] synths =
+			document.Objects
+				.OrderBy(pair => pair.Key.Value)
+				.Select(pair => pair.Value)
+				.OfType<FmSynthDefinition>()
+				.ToArray();
+		return new SongFmSynthImportSource(
+			fullPath,
+			document,
+			synths);
+	}
+
+	public static IReadOnlyList<FmSynthDefinition> ImportFromSong(
+		DocumentWorkspace workspace,
+		SongFmSynthImportSource source,
+		IEnumerable<ObjectId> synthIds)
+	{
+		ArgumentNullException.ThrowIfNull(workspace);
+		ArgumentNullException.ThrowIfNull(source);
+		ArgumentNullException.ThrowIfNull(synthIds);
+
+		HashSet<ObjectId> selectedIds =
+			new(synthIds);
+		FmSynthDefinition[] selected =
+			source.Synths
+				.Where(synth =>
+					selectedIds.Contains(synth.Id))
+				.ToArray();
+		if (selected.Length == 0)
+			return Array.Empty<FmSynthDefinition>();
+
+		ObjectId[] envelopeIds =
+			selected
+				.SelectMany(synth =>
+					synth.Graph.Nodes
+						.OfType<FmEnvelopeNode>())
+				.Select(node => node.EnvelopeId)
+				.Distinct()
+				.OrderBy(id => id.Value)
+				.ToArray();
+
+		Dictionary<ObjectId, AdsrEnvelopeDefinition> sourceEnvelopes = [];
+		foreach (ObjectId envelopeId in envelopeIds)
+		{
+			if (!source.Document.TryGet(
+				envelopeId,
+				out SongObject? songObject)
+				|| songObject is not EnvelopeDefinition envelope)
+			{
+				throw new InvalidOperationException(
+					$"FM synth import requires envelope object {envelopeId.Value}, but that envelope is missing from the source song.");
+			}
+
+			if (envelope is not AdsrEnvelopeDefinition adsr)
+			{
+				throw new NotSupportedException(
+					$"FM synth import does not support source envelope type {envelope.GetType().Name} for object {envelopeId.Value}.");
+			}
+
+			sourceEnvelopes.Add(
+				envelopeId,
+				adsr);
+		}
+
+		foreach (FmSynthDefinition synth in selected)
+		{
+			if (!source.Document.TryGet(
+				synth.Id,
+				out SongObject? stored)
+				|| !ReferenceEquals(
+					stored,
+					synth))
+			{
+				throw new InvalidOperationException(
+					$"FM synth object {synth.Id.Value} is not part of the selected source song.");
+			}
+
+			foreach (FmSynthNode node in synth.Graph.Nodes)
+			{
+				if (node is not FmConstantNode
+					&& node is not FmOscillatorNode
+					&& node is not FmEnvelopeNode
+					&& node is not FmOperatorNode)
+				{
+					throw new NotSupportedException(
+						$"FM synth import does not support node type {node.GetType().Name}.");
+				}
+			}
+		}
+
+		Dictionary<ObjectId, ObjectId> envelopeIdMap = [];
+		foreach (ObjectId sourceId in envelopeIds)
+		{
+			envelopeIdMap.Add(
+				sourceId,
+				workspace.Document.AllocateObjectId());
+		}
+
+		Dictionary<ObjectId, ObjectId> synthIdMap = [];
+		foreach (FmSynthDefinition synth in selected)
+		{
+			synthIdMap.Add(
+				synth.Id,
+				workspace.Document.AllocateObjectId());
+		}
+
+		AdsrEnvelopeDefinition[] importedEnvelopes =
+			envelopeIds
+				.Select(sourceId =>
+					CloneEnvelope(
+						sourceEnvelopes[sourceId],
+						envelopeIdMap[sourceId]))
+				.ToArray();
+		FmSynthDefinition[] importedSynths =
+			selected
+				.Select(synth =>
+					CloneSynth(
+						synth,
+						synthIdMap[synth.Id],
+						envelopeIdMap))
+				.ToArray();
+
+		foreach (AdsrEnvelopeDefinition envelope in importedEnvelopes)
+		{
+			workspace.Document.Add(
+				envelope,
+				affectsAudio: true);
+		}
+		foreach (FmSynthDefinition synth in importedSynths)
+		{
+			workspace.Document.Add(
+				synth,
+				affectsAudio: true);
+		}
+
+		return importedSynths;
 	}
 
 	public static int AddConstantNode(
@@ -365,6 +518,85 @@ public static class FmSynthDocumentEditor
 				affectsAudio: false);
 		}
 	}
+
+	private static AdsrEnvelopeDefinition CloneEnvelope(
+		AdsrEnvelopeDefinition source,
+		ObjectId targetId)
+		=> new(
+			targetId,
+			source.Name)
+		{
+			Attack = source.Attack,
+			Decay = source.Decay,
+			SustainLevel = source.SustainLevel,
+			Release = source.Release,
+		};
+
+	private static FmSynthDefinition CloneSynth(
+		FmSynthDefinition source,
+		ObjectId targetId,
+		IReadOnlyDictionary<ObjectId, ObjectId> envelopeIdMap)
+	{
+		FmSynthNode[] nodes =
+			source.Graph.Nodes
+				.Select(node =>
+					CloneNode(
+						node,
+						envelopeIdMap))
+				.ToArray();
+		FmSynthDefinition result =
+			new(
+				targetId,
+				source.Name,
+				new FmSynthGraph(
+					nodes,
+					source.Graph.OutputNodeId));
+
+		result.NodePositions.AddRange(
+			source.NodePositions);
+		foreach (FmSynthConnectionRoutingHint hint in
+			source.ConnectionRoutingHints)
+		{
+			result.ConnectionRoutingHints.Add(
+				new FmSynthConnectionRoutingHint(
+					hint.SourceNodeId,
+					hint.TargetNodeId,
+					hint.TargetInputIndex,
+					hint.RoutePoints));
+		}
+		return result;
+	}
+
+	private static FmSynthNode CloneNode(
+		FmSynthNode node,
+		IReadOnlyDictionary<ObjectId, ObjectId> envelopeIdMap)
+		=> node switch
+		{
+			FmConstantNode constant =>
+				new FmConstantNode(
+					constant.Id,
+					constant.Value),
+			FmOscillatorNode oscillator =>
+				new FmOscillatorNode(
+					oscillator.Id,
+					oscillator.Waveform,
+					oscillator.FrequencyHz,
+					oscillator.Minimum,
+					oscillator.Maximum,
+					oscillator.MultiplierNodeId,
+					oscillator.ExponentialMultiplier),
+			FmEnvelopeNode envelope =>
+				new FmEnvelopeNode(
+					envelope.Id,
+					envelopeIdMap[envelope.EnvelopeId]),
+			FmOperatorNode operation =>
+				new FmOperatorNode(
+					operation.Id,
+					operation.Operation,
+					operation.InputNodeIds),
+			_ => throw new NotSupportedException(
+				$"FM synth import does not support node type {node.GetType().Name}."),
+		};
 
 	private static void AddNode(
 		DocumentWorkspace workspace,

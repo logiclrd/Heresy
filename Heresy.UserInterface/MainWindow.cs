@@ -253,6 +253,10 @@ public sealed class MainWindow : Window
 			newFmSynth.Click += async (_, _) => await CreateFmSynthAsync();
 			actions.Children.Add(newFmSynth);
 
+			Button importFmSynth = new() { Content = "+ Import FM" };
+			importFmSynth.Click += async (_, _) => await ImportFmSynthsAsync();
+			actions.Children.Add(importFmSynth);
+
 			Button import = new() { Content = "+ Import" };
 			import.Click += async (_, _) => await ImportSamplesAsync();
 			actions.Children.Add(import);
@@ -670,6 +674,107 @@ public sealed class MainWindow : Window
 		{
 			SetStatus(
 				$"Could not create FM synth: {ex.Message}");
+		}
+	}
+
+	private async Task ImportFmSynthsAsync()
+	{
+		if (!StorageProvider.CanOpen)
+		{
+			SetStatus("This platform does not provide an open-file picker.");
+			return;
+		}
+
+		IReadOnlyList<IStorageFile> files =
+			await StorageProvider.OpenFilePickerAsync(
+				new FilePickerOpenOptions
+				{
+					Title = "Import FM synths",
+					AllowMultiple = true,
+					FileTypeFilter =
+						new[]
+						{
+							SongFileType,
+							FilePickerFileTypes.All,
+						},
+				});
+		if (files.Count == 0)
+			return;
+
+		int imported = 0;
+		SongTreeNode? selectNode = null;
+		FmSynthDefinition? firstSynth = null;
+		foreach (IStorageFile file in files)
+		{
+			string? path =
+				file.TryGetLocalPath();
+			if (path is null)
+				continue;
+
+			try
+			{
+				SongFmSynthImportSource source =
+					FmSynthDocumentEditor.LoadImportSource(
+						path);
+				if (source.Synths.Count == 0)
+				{
+					SetStatus(
+						$"{file.Name} contains no FM synths to import.");
+					continue;
+				}
+
+				FmSynthImportSelectionDialog dialog =
+					new(source);
+				ObjectId[]? selected =
+					await dialog.ShowDialog<ObjectId[]?>(
+						this);
+				if (selected is null
+					|| selected.Length == 0)
+				{
+					continue;
+				}
+
+				IReadOnlyList<FmSynthDefinition> synths =
+					FmSynthDocumentEditor.ImportFromSong(
+						_workspace,
+						source,
+						selected);
+				foreach (FmSynthDefinition synth in synths)
+				{
+					firstSynth ??= synth;
+					selectNode ??=
+						FindTreeObject(
+							_workspace.Document.GetSectionRoot(
+								SongTreeSection.Samples),
+							synth.Id);
+					imported++;
+				}
+			}
+			catch (Exception ex)
+			{
+				SetStatus(
+					$"FM synth import failed for {file.Name}: {ex.Message}");
+			}
+		}
+
+		if (imported == 0)
+		{
+			SetStatus("No FM synths were imported.");
+			return;
+		}
+
+		RefreshDocumentView(
+			imported == 1
+				? "Imported 1 FM synth"
+				: $"Imported {imported} FM synths",
+			selectNode);
+
+		if (imported == 1
+			&& firstSynth is not null)
+		{
+			ShowFmSynthEditor(
+				firstSynth,
+				selectNode);
 		}
 	}
 
