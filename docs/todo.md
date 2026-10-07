@@ -183,8 +183,16 @@ preserved during implementation.
   or last row of the next pattern. Navigation does not wrap. Expanded effect
   selection collapses as part of the move. Shift/Alt/Meta-modified forms remain
   reserved for other commands.
-- [ ] `Tab` / `Shift+Tab`: jump to the next / previous Note column, crossing to
-  the adjacent channel as needed.
+- [x] `Tab` / `Shift+Tab`: jump between Note-column keyboard stops
+  on the current row. Tab always seeks the next Note stop to the right, so from
+  any field in a channel it moves to the next channel's Note field. Shift+Tab
+  seeks the previous Note stop to the left: from Source/Volume/effect fields it
+  returns to the current channel's Note field, while from a Note field it moves
+  to the preceding channel's Note field. Navigation uses the current underlying
+  pattern occurrence's channel count, stops at the outer channel edges rather
+  than wrapping rows or patterns, and consumes the key at those edges so focus
+  remains in the tracker. Ctrl/Alt/Meta-modified Tab combinations remain
+  reserved.
 
 ## Pattern selection
 
