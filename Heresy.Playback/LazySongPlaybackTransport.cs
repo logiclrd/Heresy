@@ -59,10 +59,6 @@ public sealed class LazySongPlaybackTransport
 			document,
 			schedule);
 
-	public Task BeginLiveAuditionAsync(
-		SongDocument document)
-		=> GetInner().BeginLiveAuditionAsync(document);
-
 	public Task SendLiveEventAsync(
 		SongDocument document,
 		ChannelTarget target,
@@ -71,17 +67,6 @@ public sealed class LazySongPlaybackTransport
 			document,
 			target,
 			commands);
-
-	public Task StartLiveNoteAsync(
-		int voiceId,
-		StartNoteCommand command)
-		=> GetInner().StartLiveNoteAsync(
-			voiceId,
-			command);
-
-	public Task ReleaseLiveNoteAsync(
-		int voiceId)
-		=> GetInner().ReleaseLiveNoteAsync(voiceId);
 
 	public Task StopAsync()
 	{
