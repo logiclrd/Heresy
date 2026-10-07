@@ -264,6 +264,47 @@ public sealed class PatternEffectCursor
 		}
 	}
 
+	public void MoveHome(
+		DataPatternDefinition pattern)
+	{
+		ArgumentNullException.ThrowIfNull(pattern);
+		if (pattern.RowCount <= 0)
+			return;
+
+		ResetPendingNibble();
+		if (IsExpanded)
+			Collapse();
+
+		if (Field == PatternCellField.Note)
+			Channel = 0;
+		else
+			Field = PatternCellField.Note;
+	}
+
+	public void MoveEnd(
+		DataPatternDefinition pattern)
+	{
+		ArgumentNullException.ThrowIfNull(pattern);
+		if (pattern.RowCount <= 0)
+			return;
+
+		ResetPendingNibble();
+		if (IsExpanded)
+			Collapse();
+
+		PatternCell? current =
+			pattern.Grid[Row, Channel];
+		PatternCellField lastField =
+			IsSingleNative(current)
+				? PatternCellField.EffectCommand
+				: PatternCellField.EffectParameter;
+
+		if (Field == lastField)
+			Channel = pattern.ChannelCount - 1;
+		else
+			Field = lastField;
+	}
+
 	public void MoveChannel(
 		int channelCount,
 		int delta)
