@@ -38,8 +38,10 @@ public sealed class SongDocumentJsonTests
 				Path.GetDirectoryName(JsonContextPath)!,
 				"assets",
 				"piano-c4.wav");
-		Directory.CreateDirectory(Path.GetDirectoryName(assetPath)!);
-		File.WriteAllText(assetPath, "fixture");
+		WritePcm16MonoWave(
+			assetPath,
+			sampleRate: 8000,
+			samples: [8192]);
 	}
 
 	[OneTimeTearDown]
@@ -397,12 +399,11 @@ public sealed class SongDocumentJsonTests
 			new(
 				sampleId,
 				"Piano",
-				new ExternalAssetReference(
+				ExternalAssetIntegrity.CreateReference(
 					Path.Combine(
 						Path.GetDirectoryName(JsonContextPath)!,
 						"assets",
-						"piano-c4.wav"),
-					"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"))
+						"piano-c4.wav")))
 			{
 				ReferenceFrequencyHz = 440.0,
 				Loop = new SampleLoop(
@@ -526,7 +527,15 @@ public sealed class SongDocumentJsonTests
 		Assert.That(
 			sample.Asset!.Sha256,
 			Is.EqualTo(
-				"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"));
+				ExternalAssetIntegrity.ComputeSha256(
+					Path.Combine(
+						Path.GetDirectoryName(JsonContextPath)!,
+						"assets",
+						"piano-c4.wav"))));
+		Assert.That(sample.PcmData, Is.Not.Null);
+		Assert.That(
+			sample.PcmData!.GetSample(0, 0),
+			Is.EqualTo(0.25f).Within(1e-6));
 		Assert.That(sample.ReferenceFrequencyHz, Is.EqualTo(440.0));
 		Assert.That(
 			sample.Loop,
@@ -679,4 +688,30 @@ public sealed class SongDocumentJsonTests
 		throw new InvalidOperationException(
 			$"No generated test argument for {type.FullName}.");
 	}
+	private static void WritePcm16MonoWave(
+		string path,
+		int sampleRate,
+		short[] samples)
+	{
+		Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+		using FileStream file = File.Create(path);
+		using BinaryWriter writer = new(file);
+		int dataBytes = checked(samples.Length * 2);
+		writer.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
+		writer.Write(36 + dataBytes);
+		writer.Write(System.Text.Encoding.ASCII.GetBytes("WAVE"));
+		writer.Write(System.Text.Encoding.ASCII.GetBytes("fmt "));
+		writer.Write(16);
+		writer.Write((ushort)1);
+		writer.Write((ushort)1);
+		writer.Write(sampleRate);
+		writer.Write(sampleRate * 2);
+		writer.Write((ushort)2);
+		writer.Write((ushort)16);
+		writer.Write(System.Text.Encoding.ASCII.GetBytes("data"));
+		writer.Write(dataBytes);
+		foreach (short sample in samples)
+			writer.Write(sample);
+	}
+
 }
