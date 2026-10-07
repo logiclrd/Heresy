@@ -33,11 +33,8 @@ public sealed class App : Application
 		RenderConfiguration configuration =
 			RenderConfiguration.Stereo(
 				sampleRate: 48000);
-		WaveSampleDataProvider samples = new();
 		PlaybackRequestAudioSourceFactory sourceFactory =
-			new(
-				configuration,
-				samples);
+			new(configuration);
 		SdlAudioOutputBackend backend = new();
 
 		return new SongPlaybackTransport(
