@@ -25,6 +25,12 @@ public readonly record struct PatternChordStatusTone(
 	string NoteText,
 	bool Enabled);
 
+public sealed record PatternChordInputSnapshot(
+	PatternChordType Type,
+	int[] ToneOffsets,
+	bool[] EnabledTones,
+	int? RootRelativeSemitone);
+
 public sealed class PatternChordInputState
 {
 	private readonly List<int> _toneOffsets = [];
@@ -42,6 +48,58 @@ public sealed class PatternChordInputState
 		_enabledByIndex.Take(_toneOffsets.Count).ToArray();
 
 	public int? RootRelativeSemitone => _rootRelativeSemitone;
+
+	public PatternChordInputSnapshot CreateSnapshot()
+	{
+		PatternChordType type =
+			RequireActive();
+		return new PatternChordInputSnapshot(
+			type,
+			[.. _toneOffsets],
+			[.. EnabledTones],
+			_rootRelativeSemitone);
+	}
+
+	public void Restore(
+		PatternChordInputSnapshot snapshot)
+	{
+		ArgumentNullException.ThrowIfNull(snapshot);
+		if (!Enum.IsDefined(snapshot.Type))
+			throw new ArgumentOutOfRangeException(nameof(snapshot));
+		if (snapshot.ToneOffsets is null
+			|| snapshot.EnabledTones is null
+			|| snapshot.ToneOffsets.Length == 0
+			|| snapshot.EnabledTones.Length
+				!= snapshot.ToneOffsets.Length)
+		{
+			throw new ArgumentException(
+				"Chord snapshot tone and enable arrays must be non-empty and have the same length.",
+				nameof(snapshot));
+		}
+
+		for (int index = 1;
+			index < snapshot.ToneOffsets.Length;
+			index++)
+		{
+			if (snapshot.ToneOffsets[index]
+				<= snapshot.ToneOffsets[index - 1])
+			{
+				throw new ArgumentException(
+					"Chord snapshot tones must be strictly ascending.",
+					nameof(snapshot));
+			}
+		}
+
+		_type = snapshot.Type;
+		_rootRelativeSemitone =
+			snapshot.RootRelativeSemitone;
+		_toneOffsets.Clear();
+		_toneOffsets.AddRange(
+			snapshot.ToneOffsets);
+		_enabledByIndex.Clear();
+		_enabledByIndex.AddRange(
+			snapshot.EnabledTones);
+	}
 
 	public void Select(
 		PatternChordType type)
