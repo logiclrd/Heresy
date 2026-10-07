@@ -43,8 +43,7 @@ public sealed class HeldNotePreviewKeyStateTests
 			new StartHeldNotePreviewAction(
 				PhysicalKey.Z,
 				VoiceId: 0,
-				PitchMultiplier: 1.0,
-				StartsSession: true));
+				PitchMultiplier: 1.0));
 		state.ActiveNoteCount.Should().Be(1);
 	}
 
@@ -106,7 +105,7 @@ public sealed class HeldNotePreviewKeyStateTests
 
 
 	[Test]
-	public void AdditionalHeldKeyUsesSameLiveSessionAndIndependentVoice()
+	public void AdditionalHeldKeyUsesIndependentVirtualVoice()
 	{
 		HeldNotePreviewKeyState state = new();
 		state.KeyDown(PhysicalKey.CapsLock, 4);
@@ -122,7 +121,6 @@ public sealed class HeldNotePreviewKeyStateTests
 				.BeOfType<StartHeldNotePreviewAction>()
 				.Subject;
 		start.VoiceId.Should().Be(2);
-		start.StartsSession.Should().BeFalse();
 		start.PitchMultiplier.Should().BeApproximately(
 			Math.Pow(2.0, 2.0 / 12.0),
 			1e-12);
