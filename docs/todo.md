@@ -14,8 +14,17 @@ preserved during implementation.
   and the loop metadata. A framework-independent peak-envelope reducer produces
   per-pixel min/max values without copying PCM, and the Avalonia view draws one
   stacked lane per source channel. Relink/reload refreshes the graph immediately.
-- [ ] Add a graphical depiction of the loop range and allow the loop boundaries
-  to be edited directly in that view.
+- [x] Depict the active sample loop directly on the waveform as a translucent
+  range with start/end handles. Handles are interactive only when looping is
+  enabled. Dragging previews the candidate boundary in both the waveform and the
+  numeric frame fields without mutating the document; releasing the pointer
+  commits once through the ordinary sample-metadata editor. Start/end are
+  clamped to decoded PCM, cannot cross, and an active loop always retains at
+  least one frame. Losing pointer capture cancels the drag and restores the
+  original range. Manual numeric edits followed by Apply update the waveform in
+  the other direction. Active loop metadata is now rejected at authoring time
+  if it lies outside the decoded PCM, matching the renderer's existing
+  invariant.
 - [ ] Add a loop assistant that searches for a natural loop boundary that avoids
   audible clicking.
 
