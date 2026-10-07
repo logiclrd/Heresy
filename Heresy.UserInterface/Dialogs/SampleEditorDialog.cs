@@ -41,6 +41,7 @@ public sealed class SampleEditorDialog : Window
 	private readonly ComboBox _loopMode;
 	private readonly TextBox _loopStart;
 	private readonly TextBox _loopEnd;
+	private readonly TextBox _loopAssistantRadiusMs;
 	private readonly TextBox _relativePath;
 	private readonly TextBox _resolvedPath;
 	private readonly TextBlock _integrityStatus;
@@ -89,6 +90,12 @@ public sealed class SampleEditorDialog : Window
 			new TextBox
 			{
 				Text = sample.Loop.EndFrameExclusive.ToString(CultureInfo.CurrentCulture),
+			};
+		_loopAssistantRadiusMs =
+			new TextBox
+			{
+				Text = "20",
+				Width = 70,
 			};
 
 		_relativePath = ReadOnlyTextBox();
@@ -160,6 +167,37 @@ public sealed class SampleEditorDialog : Window
 		AddField(form, ref row, "Loop mode", _loopMode);
 		AddField(form, ref row, "Loop start frame", _loopStart);
 		AddField(form, ref row, "Loop end frame (exclusive)", _loopEnd);
+
+		Button findNaturalLoop =
+			new()
+			{
+				Content = "Find natural loop",
+			};
+		findNaturalLoop.Click +=
+			(_, _) => FindNaturalLoop();
+
+		StackPanel loopAssistant =
+			new()
+			{
+				Orientation = Orientation.Horizontal,
+				Spacing = 6,
+				VerticalAlignment = VerticalAlignment.Center,
+			};
+		loopAssistant.Children.Add(
+			new TextBlock
+			{
+				Text = "Search ±",
+				VerticalAlignment = VerticalAlignment.Center,
+			});
+		loopAssistant.Children.Add(_loopAssistantRadiusMs);
+		loopAssistant.Children.Add(
+			new TextBlock
+			{
+				Text = "ms",
+				VerticalAlignment = VerticalAlignment.Center,
+			});
+		loopAssistant.Children.Add(findNaturalLoop);
+		AddField(form, ref row, "Loop assistant", loopAssistant);
 
 		TextBlock assetHeading =
 			new()
@@ -234,25 +272,8 @@ public sealed class SampleEditorDialog : Window
 				throw new ArgumentException("Reference frequency is not a valid number.");
 			}
 
-			if (!long.TryParse(
-				_loopStart.Text,
-				NumberStyles.Integer,
-				CultureInfo.CurrentCulture,
-				out long loopStart)
-				|| !long.TryParse(
-					_loopEnd.Text,
-					NumberStyles.Integer,
-					CultureInfo.CurrentCulture,
-					out long loopEnd))
-			{
-				throw new ArgumentException("Loop frame positions must be integers.");
-			}
-
-			SampleLoopMode loopMode =
-				_loopMode.SelectedItem is SampleLoopMode selectedMode
-					? selectedMode
-					: SampleLoopMode.None;
-			SampleLoop loop = new(loopMode, loopStart, loopEnd);
+			SampleLoop loop =
+				ReadLoopFromFields();
 
 			if (!string.Equals(name, _sample.Name, StringComparison.Ordinal))
 				SongTreeEditor.RenameObject(_workspace.Document, _sample.Id, name);
@@ -320,6 +341,131 @@ public sealed class SampleEditorDialog : Window
 			RefreshWaveform();
 			RefreshDiagnostics();
 			_message.Text = "The persisted encoding was reloaded into memory and accepted.";
+		}
+		catch (Exception ex)
+		{
+			_message.Text = ex.Message;
+		}
+	}
+
+	private SampleLoop ReadLoopFromFields()
+	{
+		if (!long.TryParse(
+			_loopStart.Text,
+			NumberStyles.Integer,
+			CultureInfo.CurrentCulture,
+			out long loopStart)
+			|| !long.TryParse(
+				_loopEnd.Text,
+				NumberStyles.Integer,
+				CultureInfo.CurrentCulture,
+				out long loopEnd))
+		{
+			throw new ArgumentException(
+				"Loop frame positions must be integers.");
+		}
+
+		SampleLoopMode loopMode =
+			_loopMode.SelectedItem is SampleLoopMode selectedMode
+				? selectedMode
+				: SampleLoopMode.None;
+		return new SampleLoop(
+			loopMode,
+			loopStart,
+			loopEnd);
+	}
+
+	private void FindNaturalLoop()
+	{
+		try
+		{
+			SamplePcmData pcm =
+				_sample.PcmData
+					?? throw new InvalidOperationException(
+						"The sample has no decoded PCM to analyze.");
+			SampleLoop loop =
+				ReadLoopFromFields();
+
+			if (!double.TryParse(
+				_loopAssistantRadiusMs.Text,
+				NumberStyles.Float,
+				CultureInfo.CurrentCulture,
+				out double radiusMs)
+				|| !(radiusMs > 0.0)
+				|| !double.IsFinite(radiusMs))
+			{
+				throw new ArgumentException(
+					"Loop assistant search radius must be a finite number greater than zero.");
+			}
+
+			double radiusFramesExact =
+				radiusMs
+					* pcm.SampleRate
+					/ 1000.0;
+			if (radiusFramesExact > long.MaxValue)
+			{
+				throw new ArgumentOutOfRangeException(
+					nameof(radiusMs),
+					"Loop assistant search radius is too large.");
+			}
+
+			long radiusFrames =
+				Math.Max(
+					1,
+					(long)Math.Round(
+						radiusFramesExact,
+						MidpointRounding.AwayFromZero));
+			SampleLoopAssistantResult result =
+				SampleLoopAssistant.Find(
+					pcm,
+					loop,
+					radiusFrames);
+
+			_waveform.SetLoop(
+				result.SuggestedLoop);
+			_loopMode.SelectedItem =
+				result.SuggestedLoop.Mode;
+			PreviewWaveformLoop(
+				result.SuggestedLoop);
+
+			string radiusDescription =
+				$"±{radiusMs:0.###} ms ({radiusFrames} frames)";
+			if (!result.Changed)
+			{
+				_message.Text =
+					$"The current loop is already the best candidate within {radiusDescription}.";
+				return;
+			}
+
+			string improvement;
+			if (double.IsFinite(result.OriginalScore)
+				&& result.OriginalScore > 0.0
+				&& double.IsFinite(result.SuggestedScore))
+			{
+				double percent =
+					Math.Clamp(
+						(1.0
+							- (result.SuggestedScore
+								/ result.OriginalScore))
+							* 100.0,
+						0.0,
+						100.0);
+				improvement =
+					$" Estimated discontinuity reduced by {percent:0.#}%.";
+			}
+			else if (!double.IsFinite(result.OriginalScore)
+				&& double.IsFinite(result.SuggestedScore))
+			{
+				improvement =
+					" Found a finite seam where the original candidate contained non-finite PCM.";
+			}
+			else
+			{
+				improvement = string.Empty;
+			}
+
+			_message.Text =
+				$"Suggested loop: frames {result.SuggestedLoop.StartFrame}..{result.SuggestedLoop.EndFrameExclusive} within {radiusDescription}.{improvement} Click Apply to commit.";
 		}
 		catch (Exception ex)
 		{
