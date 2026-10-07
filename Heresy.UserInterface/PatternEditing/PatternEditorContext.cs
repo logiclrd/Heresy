@@ -135,6 +135,55 @@ public sealed class PatternEditorContext
 		return _rows[displayRow];
 	}
 
+	public (int FirstDisplayRow, int LastDisplayRow) GetPatternDisplayBounds(
+		int displayRow)
+	{
+		PatternEditorRow row = GetRow(displayRow);
+		PatternEditorSegment segment =
+			GetSegmentForRow(row);
+		if (segment.DisplayRowCount <= 0)
+		{
+			throw new InvalidOperationException(
+				"The current editor row does not belong to an editable pattern segment.");
+		}
+
+		return (
+			segment.FirstDisplayRow,
+			segment.FirstDisplayRow + segment.DisplayRowCount - 1);
+	}
+
+	public int? FindAdjacentPatternBoundaryDisplayRow(
+		int currentDisplayRow,
+		int delta,
+		bool firstRow)
+	{
+		if (delta is not -1 and not 1)
+			throw new ArgumentOutOfRangeException(nameof(delta));
+
+		PatternEditorRow current = GetRow(currentDisplayRow);
+		PatternEditorSegment currentSegment =
+			GetSegmentForRow(current);
+		int segmentIndex = _segments.IndexOf(currentSegment);
+		if (segmentIndex < 0)
+			return null;
+
+		for (
+			int index = segmentIndex + delta;
+			index >= 0 && index < _segments.Count;
+			index += delta)
+		{
+			PatternEditorSegment segment = _segments[index];
+			if (segment.DisplayRowCount <= 0)
+				continue;
+
+			return firstRow
+				? segment.FirstDisplayRow
+				: segment.FirstDisplayRow + segment.DisplayRowCount - 1;
+		}
+
+		return null;
+	}
+
 	public int? FindAdjacentPatternDisplayRow(
 		int currentDisplayRow,
 		int delta)
@@ -246,6 +295,19 @@ public sealed class PatternEditorContext
 		}
 
 		return InitialDisplayRow;
+	}
+
+	private PatternEditorSegment GetSegmentForRow(
+		PatternEditorRow row)
+	{
+		PatternEditorSegment? segment =
+			_segments.FirstOrDefault(item =>
+				item.SequenceEntryIndex == row.SequenceEntryIndex
+					&& ReferenceEquals(item.Pattern, row.Pattern)
+					&& item.DisplayRowCount > 0);
+		return segment
+			?? throw new InvalidOperationException(
+				"The editor row is not represented by an editable pattern segment.");
 	}
 
 	private void Build()
