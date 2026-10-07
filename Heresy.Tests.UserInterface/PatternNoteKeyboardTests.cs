@@ -194,6 +194,102 @@ public sealed class PatternNoteKeyboardTests
 	}
 
 	[Test]
+	public void DisabledSourceMaskPreservesExistingSource()
+	{
+		DocumentWorkspace workspace = new();
+		SampleDefinition existingSource = AddSample(workspace, "Existing");
+		SampleDefinition toolbarSource = AddSample(workspace, "Toolbar");
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+		cell.SourceId = existingSource.Id;
+		cell.Volume = 0.25;
+		PatternEffectCursor cursor =
+			new(0, 0, PatternCellField.Note);
+		PatternNoteInputState state =
+			new(toolbarSource.Id, 4)
+			{
+				CurrentVolume = 0.75,
+				EditMask = PatternEditMask.Note | PatternEditMask.Volume,
+			};
+
+		PatternNoteKeyboardEditor.Type(
+			workspace,
+			pattern,
+			cursor,
+			state,
+			'Z');
+
+		pattern.Grid[0, 0]!.SourceId.Should().Be(existingSource.Id);
+		pattern.Grid[0, 0]!.Volume.Should().Be(0.75);
+	}
+
+	[Test]
+	public void DisabledNoteMaskStampsSourceAndVolumeWithoutReplacingNote()
+	{
+		DocumentWorkspace workspace = new();
+		SampleDefinition toolbarSource = AddSample(workspace, "Toolbar");
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
+		StartPatternNote existingNote =
+			new(
+				pitchMultiplier: 1.5,
+				playbackSpeedMultiplier: 0.75,
+				mixdown: true);
+		pattern.Grid.GetOrCreateCell(0, 0).Note = existingNote;
+		PatternEffectCursor cursor =
+			new(0, 0, PatternCellField.Note);
+		PatternNoteInputState state =
+			new(toolbarSource.Id, 4)
+			{
+				CurrentVolume = 0.5,
+				EditMask = PatternEditMask.Source | PatternEditMask.Volume,
+			};
+
+		PatternNoteInputResult result =
+			PatternNoteKeyboardEditor.Type(
+				workspace,
+				pattern,
+				cursor,
+				state,
+				'X');
+
+		pattern.Grid[0, 0]!.Note.Should().Be(existingNote);
+		pattern.Grid[0, 0]!.SourceId.Should().Be(toolbarSource.Id);
+		pattern.Grid[0, 0]!.Volume.Should().Be(0.5);
+		result.NoteApplied.Should().BeFalse();
+		result.Changed.Should().BeTrue();
+		cursor.Row.Should().Be(1);
+	}
+
+	[Test]
+	public void DisabledVolumeMaskPreservesExistingVolume()
+	{
+		DocumentWorkspace workspace = new();
+		SampleDefinition sample = AddSample(workspace, "Piano");
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
+		pattern.Grid.GetOrCreateCell(0, 0).Volume = 0.25;
+		PatternEffectCursor cursor =
+			new(0, 0, PatternCellField.Note);
+		PatternNoteInputState state =
+			new(sample.Id, 4)
+			{
+				CurrentVolume = 0.75,
+				EditMask = PatternEditMask.Note | PatternEditMask.Source,
+			};
+
+		PatternNoteKeyboardEditor.Type(
+			workspace,
+			pattern,
+			cursor,
+			state,
+			'Z');
+
+		pattern.Grid[0, 0]!.Volume.Should().Be(0.25);
+	}
+
+	[Test]
 	public void UpperRowsUseSelectedBaseOctave()
 	{
 		DocumentWorkspace workspace = new();
