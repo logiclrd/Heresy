@@ -723,6 +723,17 @@ public sealed class PatternEditorControl : UserControl
 			return;
 		}
 
+		if (PatternSourceNavigationKeyboard.TryGetDelta(
+			e.Key,
+			e.KeyModifiers,
+			out int sourceDelta))
+		{
+			MoveCurrentSource(sourceDelta);
+			e.Handled = true;
+			FocusCursorCell();
+			return;
+		}
+
 		bool clipboardModifier =
 			(e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) != 0
 				&& (e.KeyModifiers & KeyModifiers.Alt) == 0;
@@ -1178,6 +1189,16 @@ public sealed class PatternEditorControl : UserControl
 			_cursor.SetPosition(row, channel, PatternCellField.Note);
 
 		char value = e.Text[0];
+		if (PatternSourceNavigationKeyboard.TryGetDelta(
+			value,
+			out int sourceDelta))
+		{
+			MoveCurrentSource(sourceDelta);
+			e.Handled = true;
+			FocusCursorCell();
+			return;
+		}
+
 		int editedRow = _cursor.Row;
 		int editedChannel = _cursor.Channel;
 		PatternEditorRow edited = _context.GetRow(editedRow);
@@ -1275,6 +1296,29 @@ public sealed class PatternEditorControl : UserControl
 		RefreshCursorVisuals();
 		FocusCursorCell();
 		e.Handled = true;
+	}
+
+	private void MoveCurrentSource(
+		int delta)
+	{
+		PatternSourceOption? current =
+			_noteSource.SelectedItem as PatternSourceOption;
+		PatternSourceOption? selected =
+			PatternSourceNavigation.Move(
+				_noteSources,
+				current,
+				delta);
+
+		if (selected is null)
+		{
+			_message.Text =
+				"No sound sources are available.";
+			return;
+		}
+
+		_noteSource.SelectedItem = selected;
+		_message.Text =
+			$"Current Source set to {selected.DisplayName}.";
 	}
 
 	private bool HandleAltEffectKey(
