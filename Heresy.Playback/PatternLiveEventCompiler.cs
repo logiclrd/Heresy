@@ -35,11 +35,16 @@ public static class PatternLiveEventCompiler
 		if (commands.Count == 0)
 			return null;
 
-		// Tracker editing is monophonic per physical channel. Explicitly send
-		// Note Off before a new start so the edit-audition lifetime is not
-		// governed by the source's normal new-note displacement policy.
+		// Tracker editing is monophonic per physical channel. Override the
+		// current voice's displacement to Off before starting the replacement
+		// so its release is preserved independently of the source's normal NNA.
 		if (commands.Any(command => command is StartNoteCommand))
-			commands.Insert(0, new NoteOffCommand());
+		{
+			commands.Insert(
+				0,
+				new SetCurrentVoiceDisplacementActionCommand(
+					NoteDisplacementAction.Off));
+		}
 
 		return new LivePlaybackEvent(
 			ChannelTarget.Physical(channel),
