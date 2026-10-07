@@ -210,6 +210,36 @@ public sealed class SampleDocumentEditorTests
 	}
 
 
+	[Test]
+	public void MetadataRejectsActiveLoopOutsideDecodedPcm()
+	{
+		using TempProject project = new();
+		string path =
+			project.WriteWave(
+				"tone.wav",
+				sample: 0);
+		DocumentWorkspace workspace = new();
+		SampleDefinition sample =
+			SampleDocumentEditor.Import(
+				workspace,
+				path);
+
+		Action action =
+			() => SampleDocumentEditor.UpdateMetadata(
+				workspace,
+				sample,
+				sample.ReferenceFrequencyHz,
+				new SampleLoop(
+					SampleLoopMode.Forward,
+					0,
+					2));
+
+		action.Should().Throw<ArgumentException>()
+			.WithMessage("*decoded sample*");
+	}
+
+
+
 	private sealed class TempProject : IDisposable
 	{
 		private readonly string _root =
