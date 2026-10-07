@@ -45,6 +45,7 @@ public sealed class PatternEditorControl : UserControl
 	private readonly TextBox _channelCount;
 	private readonly TextBox _minorHighlight;
 	private readonly TextBox _majorHighlight;
+	private readonly PatternSourceOption[] _noteSources;
 	private readonly ComboBox _noteSource;
 	private readonly ComboBox _noteOctave;
 	private readonly PatternNoteInputState _noteInputState;
@@ -127,10 +128,10 @@ public sealed class PatternEditorControl : UserControl
 		_minorHighlight = NumberBox(pattern.MinorHighlightRows);
 		_majorHighlight = NumberBox(pattern.MajorHighlightRows);
 
-		PatternSourceOption[] noteSources =
+		_noteSources =
 			PatternSourceCatalog.GetSources(workspace.Document);
 		PatternSourceOption? defaultSource = null;
-		foreach (PatternSourceOption source in noteSources)
+		foreach (PatternSourceOption source in _noteSources)
 		{
 			if (source.Id != pattern.Id)
 			{
@@ -146,7 +147,7 @@ public sealed class PatternEditorControl : UserControl
 		_noteSource =
 			new ComboBox
 			{
-				ItemsSource = noteSources,
+				ItemsSource = _noteSources,
 				SelectedItem = defaultSource,
 				Width = 180,
 			};
@@ -778,6 +779,31 @@ public sealed class PatternEditorControl : UserControl
 
 		if (_cursor.Field == PatternCellField.Source)
 		{
+			if (e.Key == Key.Enter)
+			{
+				PatternSourceOption? selected =
+					PatternSourceSelection.FindExplicitSource(
+						cell,
+						_noteSources);
+				if (selected is null)
+				{
+					_message.Text =
+						cell is null || cell.SourceId.IsNone
+							? "This Source field is empty."
+							: "This Source is no longer available.";
+				}
+				else
+				{
+					_noteSource.SelectedItem = selected;
+					_message.Text =
+						$"Current Source set to {selected.DisplayName}.";
+				}
+
+				e.Handled = true;
+				FocusCursorCell();
+				return;
+			}
+
 			if ((e.KeyModifiers & KeyModifiers.Alt) != 0
 				&& e.Key == Key.Down
 				&& _sourceFields.TryGetValue(
