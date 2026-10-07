@@ -94,7 +94,7 @@ public sealed class MainWindow : Window
 	{
 	}
 
-	internal MainWindow(
+	public MainWindow(
 		ISongPlaybackTransport playbackTransport)
 		: this(
 			new DocumentWorkspace(),
