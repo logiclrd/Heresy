@@ -4,7 +4,7 @@ using System.Threading;
 
 using Heresy.Render.Realtime;
 
-using SDL3;
+using SdlApi = SDL3.SDL;
 
 namespace Heresy.Render.SDL;
 
@@ -14,7 +14,7 @@ internal sealed class SdlAudioOutputSession
 	private readonly object _gate = new();
 	private readonly IAudioOutputSource _source;
 	private readonly Action<SdlAudioOutputSession> _onDisposed;
-	private readonly SDL.AudioStreamCallback _callback;
+	private readonly SdlApi.AudioStreamCallback _callback;
 
 	private IntPtr _stream;
 	private Exception? _fault;
@@ -33,27 +33,27 @@ internal sealed class SdlAudioOutputSession
 				?? throw new ArgumentNullException(nameof(onDisposed));
 		_callback = FeedAudio;
 
-		SDL.AudioSpec spec =
+		SdlApi.AudioSpec spec =
 			new()
 			{
 				Channels = format.ChannelCount,
 				Format =
 					BitConverter.IsLittleEndian
-						? SDL.AudioFormat.AudioF32LE
-						: SDL.AudioFormat.AudioF32BE,
+						? SdlApi.AudioFormat.AudioF32LE
+						: SdlApi.AudioFormat.AudioF32BE,
 				Freq = format.SampleRate,
 			};
 
 		_stream =
-			SDL.OpenAudioDeviceStream(
-				SDL.AudioDeviceDefaultPlayback,
+			SdlApi.OpenAudioDeviceStream(
+				SdlApi.AudioDeviceDefaultPlayback,
 				in spec,
 				_callback,
 				IntPtr.Zero);
 		if (_stream == IntPtr.Zero)
 		{
 			throw new InvalidOperationException(
-				$"SDL could not open the default playback device: {SDL.GetError()}");
+				$"SDL could not open the default playback device: {SdlApi.GetError()}");
 		}
 	}
 
@@ -79,10 +79,10 @@ internal sealed class SdlAudioOutputSession
 			if (_isRunning)
 				return;
 
-			if (!SDL.ResumeAudioStreamDevice(_stream))
+			if (!SdlApi.ResumeAudioStreamDevice(_stream))
 			{
 				throw new InvalidOperationException(
-					$"SDL could not resume audio playback: {SDL.GetError()}");
+					$"SDL could not resume audio playback: {SdlApi.GetError()}");
 			}
 
 			_isRunning = true;
@@ -97,10 +97,10 @@ internal sealed class SdlAudioOutputSession
 			if (!_isRunning)
 				return;
 
-			if (!SDL.PauseAudioStreamDevice(_stream))
+			if (!SdlApi.PauseAudioStreamDevice(_stream))
 			{
 				throw new InvalidOperationException(
-					$"SDL could not pause audio playback: {SDL.GetError()}");
+					$"SDL could not pause audio playback: {SdlApi.GetError()}");
 			}
 
 			_isRunning = false;
@@ -122,7 +122,7 @@ internal sealed class SdlAudioOutputSession
 		}
 
 		if (stream != IntPtr.Zero)
-			SDL.DestroyAudioStream(stream);
+			SdlApi.DestroyAudioStream(stream);
 
 		_onDisposed(this);
 		GC.SuppressFinalize(this);
@@ -184,14 +184,14 @@ internal sealed class SdlAudioOutputSession
 					0,
 					byteCount);
 
-				if (!SDL.PutAudioStreamData(
+				if (!SdlApi.PutAudioStreamData(
 						audioStream,
 						bytes,
 						byteCount))
 				{
 					SetFault(
 						new InvalidOperationException(
-							$"SDL could not queue audio data: {SDL.GetError()}"));
+							$"SDL could not queue audio data: {SdlApi.GetError()}"));
 				}
 			}
 			finally
