@@ -78,18 +78,18 @@ public static class PatternEditorContextCursor
 				return true;
 			});
 
-	public static void MoveToFirstRow(
+	public static bool MoveToFirstRow(
 		PatternEditorContext context,
 		PatternEffectCursor cursor)
-		=> MoveToBoundaryRow(
+		=> MoveToPatternBoundaryRow(
 			context,
 			cursor,
 			first: true);
 
-	public static void MoveToLastRow(
+	public static bool MoveToLastRow(
 		PatternEditorContext context,
 		PatternEffectCursor cursor)
-		=> MoveToBoundaryRow(
+		=> MoveToPatternBoundaryRow(
 			context,
 			cursor,
 			first: false);
@@ -103,7 +103,17 @@ public static class PatternEditorContextCursor
 		if (context.Rows.Count == 0)
 			return;
 
-		cursor.MoveToTopLeft();
+		(int firstDisplayRow, _) =
+			context.GetPatternDisplayBounds(cursor.Row);
+		bool alreadyLocalTarget =
+			cursor.Row == firstDisplayRow
+				&& cursor.Channel == 0
+				&& cursor.Field == PatternCellField.Note;
+
+		cursor.SetPosition(
+			alreadyLocalTarget ? 0 : firstDisplayRow,
+			0,
+			PatternCellField.Note);
 	}
 
 	public static void MoveToBottomRight(
@@ -115,12 +125,38 @@ public static class PatternEditorContextCursor
 		if (context.Rows.Count == 0)
 			return;
 
-		int displayRow = context.Rows.Count - 1;
-		PatternEditorRow row =
-			context.GetRow(displayRow);
-		cursor.RemapRow(row.PatternRow);
-		cursor.MoveToBottomRight(row.Pattern);
-		cursor.RemapRow(displayRow);
+		(_, int lastDisplayRow) =
+			context.GetPatternDisplayBounds(cursor.Row);
+		PatternEditorRow localRow =
+			context.GetRow(lastDisplayRow);
+		int localChannel = localRow.Pattern.ChannelCount - 1;
+		PatternCell? localCell =
+			localRow.Pattern.Grid[
+				localRow.PatternRow,
+				localChannel];
+		PatternCellField localField =
+			PatternEffectCursor.GetLastKeyboardField(localCell);
+		bool alreadyLocalTarget =
+			cursor.Row == lastDisplayRow
+				&& cursor.Channel == localChannel
+				&& cursor.Field == localField;
+
+		int targetDisplayRow =
+			alreadyLocalTarget
+				? context.Rows.Count - 1
+				: lastDisplayRow;
+		PatternEditorRow targetRow =
+			context.GetRow(targetDisplayRow);
+		int targetChannel =
+			targetRow.Pattern.ChannelCount - 1;
+		PatternCell? targetCell =
+			targetRow.Pattern.Grid[
+				targetRow.PatternRow,
+				targetChannel];
+		cursor.SetPosition(
+			targetDisplayRow,
+			targetChannel,
+			PatternEffectCursor.GetLastKeyboardField(targetCell));
 	}
 
 	public static void MoveHome(
@@ -174,7 +210,7 @@ public static class PatternEditorContextCursor
 		PatternEffectCursor cursor)
 		=> MoveVertical(context, cursor, delta: 1);
 
-	private static void MoveToBoundaryRow(
+	private static bool MoveToPatternBoundaryRow(
 		PatternEditorContext context,
 		PatternEffectCursor cursor,
 		bool first)
@@ -182,22 +218,40 @@ public static class PatternEditorContextCursor
 		ArgumentNullException.ThrowIfNull(context);
 		ArgumentNullException.ThrowIfNull(cursor);
 		if (context.Rows.Count == 0)
-			return;
+			return false;
 
-		int displayRow =
+		(int firstDisplayRow, int lastDisplayRow) =
+			context.GetPatternDisplayBounds(cursor.Row);
+		int localTarget =
 			first
-				? 0
-				: context.Rows.Count - 1;
+				? firstDisplayRow
+				: lastDisplayRow;
+		int target = localTarget;
+
+		if (cursor.Row == localTarget)
+		{
+			int delta = first ? -1 : 1;
+			int? adjacent =
+				context.FindAdjacentPatternBoundaryDisplayRow(
+					cursor.Row,
+					delta,
+					firstRow: first);
+			if (adjacent is null)
+				return false;
+			target = adjacent.Value;
+		}
+
 		PatternEditorRow row =
-			context.GetRow(displayRow);
+			context.GetRow(target);
 		int channel =
 			Math.Min(
 				cursor.Channel,
 				row.Pattern.ChannelCount - 1);
 		cursor.SetPosition(
-			displayRow,
+			target,
 			channel,
 			cursor.Field);
+		return true;
 	}
 
 	private static void MoveVertical(
