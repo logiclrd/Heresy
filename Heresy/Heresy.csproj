@@ -9,7 +9,16 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<ProjectReference Include="../Heresy.Core/Heresy.Core.csproj" />
+		<PackageReference Include="Avalonia" Version="12.1.3" />
+		<PackageReference Include="Avalonia.Desktop" Version="12.1.3" />
+		<PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.3" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="../Heresy.UserInterface/Heresy.UserInterface.csproj" />
+		<ProjectReference Include="../Heresy.Playback/Heresy.Playback.csproj" />
+		<ProjectReference Include="../Heresy.Render/Heresy.Render.csproj" />
+		<ProjectReference Include="../Heresy.Render.SDL/Heresy.Render.SDL.csproj" />
 	</ItemGroup>
 
 </Project>
