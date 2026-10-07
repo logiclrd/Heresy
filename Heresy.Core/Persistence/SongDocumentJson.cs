@@ -170,9 +170,12 @@ public static class SongDocumentJson
 		string fullPath = Path.GetFullPath(jsonPath);
 		string directory = Path.GetDirectoryName(fullPath)
 			?? throw new ArgumentException("The JSON path must identify a file.", nameof(jsonPath));
-		return Deserialize(
-			json,
-			storedPath => ResolveStoredPath(directory, storedPath));
+		SongDocument document =
+			Deserialize(
+				json,
+				storedPath => ResolveStoredPath(directory, storedPath));
+		SampleAssetPersistence.HydratePersistedSamples(document);
+		return document;
 	}
 
 	internal static SongDocument Deserialize(
@@ -281,18 +284,32 @@ public static class SongDocumentJson
 			?? throw new ArgumentException("The JSON path must identify a file.", nameof(path));
 		Directory.CreateDirectory(directory);
 
-		if (pathMode == JsonAssetPathMode.Relative)
-			ValidateRelativeAssetLocations(directory, document);
+		List<PendingAssetTransition> pending =
+			MaterializePendingAssets(
+				directory,
+				document);
+		try
+		{
+			SampleAssetPersistence.VerifyPersistedAssetsForSave(document);
 
-		MaterializeArchiveAssets(directory, document);
+			if (pathMode == JsonAssetPathMode.Relative)
+				ValidateRelativeAssetLocations(directory, document);
 
-		File.WriteAllText(
-			fullPath,
-			Serialize(
-				document,
-				sample => ToStoredPath(directory, sample, pathMode),
-				scriptReferenceAnalyzer),
-			new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+			MaterializeArchiveAssets(directory, document);
+
+			File.WriteAllText(
+				fullPath,
+				Serialize(
+					document,
+					sample => ToStoredPath(directory, sample, pathMode),
+					scriptReferenceAnalyzer),
+				new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+		}
+		catch
+		{
+			RestorePendingAssets(pending);
+			throw;
+		}
 	}
 
 	public static SongDocument Load(string path)
@@ -302,9 +319,12 @@ public static class SongDocumentJson
 		string directory = Path.GetDirectoryName(fullPath)
 			?? throw new ArgumentException("The JSON path must identify a file.", nameof(path));
 
-		return Deserialize(
-			File.ReadAllText(fullPath, Encoding.UTF8),
-			storedPath => ResolveStoredPath(directory, storedPath));
+		SongDocument document =
+			Deserialize(
+				File.ReadAllText(fullPath, Encoding.UTF8),
+				storedPath => ResolveStoredPath(directory, storedPath));
+		SampleAssetPersistence.HydratePersistedSamples(document);
+		return document;
 	}
 
 	private static JsonObject WriteSongObject(
@@ -325,7 +345,7 @@ public static class SongDocumentJson
 					new JsonObject
 					{
 						["path"] = assetPathSelector(sample),
-						["sha256"] = sample.Asset.Sha256,
+						["sha256"] = sample.Asset?.Sha256,
 					};
 				result["referenceFrequencyHz"] = sample.ReferenceFrequencyHz;
 				result["loop"] =
@@ -636,6 +656,110 @@ public static class SongDocumentJson
 		}
 	}
 
+	private static List<PendingAssetTransition> MaterializePendingAssets(
+		string jsonDirectory,
+		SongDocument document)
+	{
+		List<PendingAssetTransition> transitions = [];
+		HashSet<string> reserved =
+			new(
+				OperatingSystem.IsWindows()
+					? StringComparer.OrdinalIgnoreCase
+					: StringComparer.Ordinal);
+
+		foreach (SampleDefinition sample in
+			document.Objects.Values.OfType<SampleDefinition>())
+		{
+			if (sample.PendingAsset is not PendingSampleAsset pending)
+				continue;
+
+			string directory =
+				Path.Combine(
+					jsonDirectory,
+					"pcm");
+			Directory.CreateDirectory(directory);
+			string destination =
+				MakeUniquePendingDestination(
+					directory,
+					pending.FileName,
+					reserved);
+			File.WriteAllBytes(
+				destination,
+				pending.Bytes.ToArray());
+
+			ExternalAssetReference? previousAsset = sample.Asset;
+			transitions.Add(
+				new PendingAssetTransition(
+					sample,
+					previousAsset,
+					pending));
+			sample.MarkAssetPersisted(
+				new ExternalAssetReference(
+					destination,
+					pending.Sha256));
+		}
+
+		return transitions;
+	}
+
+	private static string MakeUniquePendingDestination(
+		string directory,
+		string fileName,
+		HashSet<string> reserved)
+	{
+		string safeName =
+			Path.GetFileName(fileName);
+		if (string.IsNullOrWhiteSpace(safeName))
+			safeName = "sample.wav";
+
+		string candidate =
+			Path.Combine(
+				directory,
+				safeName);
+		if (!File.Exists(candidate)
+			&& reserved.Add(candidate))
+		{
+			return candidate;
+		}
+
+		string extension = Path.GetExtension(safeName);
+		string stem =
+			safeName[..^extension.Length];
+		for (int suffix = 2; ; suffix++)
+		{
+			candidate =
+				Path.Combine(
+					directory,
+					$"{stem}-{suffix}{extension}");
+			if (!File.Exists(candidate)
+				&& reserved.Add(candidate))
+			{
+				return candidate;
+			}
+		}
+	}
+
+	private static void RestorePendingAssets(
+		IEnumerable<PendingAssetTransition> transitions)
+	{
+		foreach (PendingAssetTransition transition in transitions)
+		{
+			transition.Sample.Asset = transition.PreviousAsset;
+			transition.Sample.PendingAsset = transition.PendingAsset;
+		}
+	}
+
+	private static ExternalAssetReference RequireAsset(
+		SampleDefinition sample)
+		=> sample.Asset
+			?? throw new InvalidOperationException(
+				$"Sample '{sample.Name}' ({sample.Id}) has not yet persisted its encoded data.");
+
+	private sealed record PendingAssetTransition(
+		SampleDefinition Sample,
+		ExternalAssetReference? PreviousAsset,
+		PendingSampleAsset PendingAsset);
+
 	private static void MaterializeArchiveAssets(
 		string jsonDirectory,
 		SongDocument document)
@@ -644,7 +768,7 @@ public static class SongDocumentJson
 			document.Objects.Values.OfType<SampleDefinition>())
 		{
 			if (!HeresyModulePath.TrySplit(
-				sample.Asset.FullPath,
+				RequireAsset(sample).FullPath,
 				out string archivePath,
 				out string entryPath)
 				|| !File.Exists(archivePath))
@@ -692,7 +816,7 @@ public static class SongDocumentJson
 			document.Objects.Values.OfType<SampleDefinition>())
 		{
 			if (HeresyModulePath.TrySplit(
-				sample.Asset.FullPath,
+				RequireAsset(sample).FullPath,
 				out string archivePath,
 				out _)
 				&& File.Exists(archivePath))
@@ -706,7 +830,7 @@ public static class SongDocumentJson
 				out _))
 			{
 				throw new InvalidOperationException(
-					$"Sample '{sample.Name}' ({sample.Id}) uses asset '{sample.Asset.FullPath}', " +
+					$"Sample '{sample.Name}' ({sample.Id}) uses asset '{RequireAsset(sample).FullPath}', " +
 					"which is outside the .hm.json directory subtree. " +
 					"Choose the '.hm.json (absolute paths)' save type or move the asset beneath the JSON file's directory.");
 			}
@@ -720,7 +844,7 @@ public static class SongDocumentJson
 	{
 		if (pathMode == JsonAssetPathMode.Absolute)
 		{
-			string fullPath = Path.GetFullPath(sample.Asset.FullPath);
+			string fullPath = Path.GetFullPath(RequireAsset(sample).FullPath);
 			if (!LooksAbsoluteStoredPath(fullPath))
 			{
 				throw new InvalidOperationException(
