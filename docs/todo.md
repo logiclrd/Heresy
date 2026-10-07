@@ -392,7 +392,13 @@ preserved during implementation.
 - [x] Saving and loading of FM-synthesized instrument specifications in `.hm.json`
   documents. Consolidated `.hm` packages inherit the same representation through
   their JSON manifest.
-- [ ] Loader that allows an FM-synthesized instrument to be loaded into the Samples
-  pane by selecting an existing `.hm` or `.hm.json` file, upon which the
-  FM-synthesized instruments in that file are enumerated and the user can select
-  one or more to be imported into the current song.
+- [x] Import FM-synthesized instruments into the Samples pane from an existing
+  `.hm` or `.hm.json` song. The source song's FM synth objects are enumerated
+  in object-ID order and presented in a multi-selection dialog. Each selected
+  synth receives a fresh object ID while retaining its immutable graph topology,
+  stable graph-node IDs, output selection, node positions and routing hints.
+  Envelope nodes never retain source-song ObjectIds: every referenced source
+  envelope is imported automatically with a fresh ID and the graph reference is
+  remapped. Envelopes shared by multiple selected synths are imported only once
+  and remain shared; unrelated envelopes are not copied. A missing or unsupported
+  referenced envelope rejects the batch before the target document is modified.
