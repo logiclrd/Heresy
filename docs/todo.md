@@ -159,8 +159,13 @@ preserved during implementation.
     Command;
   - expanded effect selection collapses before plain Home/End navigation.
     Modified Home/End combinations remain available to their own commands.
-- [ ] `Ctrl+Home` / `Ctrl+End`: move to the top-left / bottom-right of the
-  pattern.
+- [x] `Ctrl+Home` / `Ctrl+End`: move to the top-left / bottom-right
+  of the active tracker editor context. In a standalone pattern that is the
+  pattern itself; in a sequence-backed tracker it spans the full flattened
+  editable sequence view. Top-left is row 0, channel 1, Note. Bottom-right uses
+  the final editable row, that row's actual pattern channel count, and the same
+  last-keyboard-stop rule as plain End (Effect Parameter normally, Effect Command
+  for a single native effect). Shift/Alt/Meta-modified forms remain reserved.
 - [ ] `Ctrl+PageUp` / `Ctrl+PageDown`: move to the first / last row while
   staying in the current channel.
 - [ ] `Tab` / `Shift+Tab`: jump to the next / previous Note column, crossing to
