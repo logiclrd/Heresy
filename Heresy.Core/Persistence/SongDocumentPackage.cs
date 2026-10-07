@@ -64,8 +64,8 @@ public static class SongDocumentPackage
 						ZipArchiveEntry pendingEntry = archive.CreateEntry(
 							entryName,
 							CompressionLevel.Optimal);
-						using Stream destination = pendingEntry.Open();
-						destination.Write(pending.Bytes.Span);
+						using Stream pendingDestination = pendingEntry.Open();
+						pendingDestination.Write(pending.Bytes.Span);
 						continue;
 					}
 
@@ -175,11 +175,11 @@ public static class SongDocumentPackage
 		{
 			if (sample.PendingAsset is PendingSampleAsset pending)
 			{
-				string preferred =
+				string pendingPreferred =
 					"pcm/" + pending.FileName.Replace('\\', '_');
-				string entry = MakeUnique(preferred, used);
-				used.Add(entry);
-				result.Add(sample.Id, entry);
+				string pendingEntryName = MakeUnique(pendingPreferred, used);
+				used.Add(pendingEntryName);
+				result.Add(sample.Id, pendingEntryName);
 				continue;
 			}
 
