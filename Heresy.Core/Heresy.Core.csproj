@@ -10,6 +10,7 @@
 
 	<ItemGroup>
 		<PackageReference Include="Hawkynt.FileFormats.Audio" Version="1.0.0.776" />
+		<PackageReference Include="NVorbis" Version="0.10.5" />
 	</ItemGroup>
 
 </Project>
