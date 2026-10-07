@@ -988,10 +988,12 @@ public sealed class PatternEditorControl : UserControl
 			if (_expandedCell is not null)
 				CollapseVisualEffects(collapseCursor: true);
 
-			if (firstRow)
-				PatternEditorContextCursor.MoveToFirstRow(_context, _cursor);
-			else
-				PatternEditorContextCursor.MoveToLastRow(_context, _cursor);
+			bool moved =
+				firstRow
+					? PatternEditorContextCursor.MoveToFirstRow(_context, _cursor)
+					: PatternEditorContextCursor.MoveToLastRow(_context, _cursor);
+			if (!moved && !_context.IsSequence)
+				SwitchStandalonePatternBoundary(firstRow);
 
 			e.Handled = true;
 			UpdateCurrentPatternControls();
@@ -1439,6 +1441,28 @@ public sealed class PatternEditorControl : UserControl
 		RefreshCursorVisuals();
 		FocusCursorCell();
 		e.Handled = true;
+	}
+
+	private void SwitchStandalonePatternBoundary(
+		bool firstRow)
+	{
+		if (_switchPattern is null
+			|| _context.Rows.Count == 0)
+		{
+			return;
+		}
+
+		PatternEditorRow currentRow =
+			_context.GetRow(_cursor.Row);
+		_switchPattern(
+			new PatternEditorSwitchRequest(
+				firstRow ? -1 : 1,
+				new PatternEditorOpenState(
+					_noteInputState.SourceId,
+					_noteInputState.BaseOctave,
+					firstRow ? 0 : int.MaxValue,
+					_cursor.Channel,
+					_cursor.Field)));
 	}
 
 	private void SwitchPattern(
