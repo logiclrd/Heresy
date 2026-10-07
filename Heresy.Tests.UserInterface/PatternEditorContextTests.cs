@@ -422,6 +422,68 @@ public sealed class PatternEditorContextTests
 	}
 
 	[Test]
+	public void HomeEndNavigationUsesCurrentSequencePatternCellAndWidth()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition first =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"First",
+				rowCount: 1,
+				channelCount: 4);
+		DataPatternDefinition second =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Second",
+				rowCount: 1,
+				channelCount: 2);
+		second.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new SetPlaybackFrequencyPatternEffect(440));
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(
+				workspace,
+				"Arrangement");
+		sequence.Entries.Add(new SequenceEntry(first.Id));
+		sequence.Entries.Add(new SequenceEntry(second.Id));
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(
+				workspace.Document,
+				sequence,
+				initialEntryIndex: 1);
+		PatternEffectCursor cursor =
+			new(1, 0, PatternCellField.Volume);
+
+		PatternEditorContextCursor.MoveEnd(
+			context,
+			cursor);
+
+		cursor.Row.Should().Be(1);
+		cursor.Channel.Should().Be(0);
+		cursor.Field.Should().Be(PatternCellField.EffectCommand);
+
+		PatternEditorContextCursor.MoveEnd(
+			context,
+			cursor);
+
+		cursor.Channel.Should().Be(1);
+		cursor.Field.Should().Be(PatternCellField.EffectCommand);
+
+		PatternEditorContextCursor.MoveHome(
+			context,
+			cursor);
+
+		cursor.Channel.Should().Be(1);
+		cursor.Field.Should().Be(PatternCellField.Note);
+
+		PatternEditorContextCursor.MoveHome(
+			context,
+			cursor);
+
+		cursor.Channel.Should().Be(0);
+		cursor.Field.Should().Be(PatternCellField.Note);
+	}
+
+	[Test]
 	public void AdjacentChannelNavigationUsesCurrentSequencePatternWidth()
 	{
 		DocumentWorkspace workspace = new();
