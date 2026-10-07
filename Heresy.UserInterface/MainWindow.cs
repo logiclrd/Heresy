@@ -1294,7 +1294,20 @@ public sealed class MainWindow : Window
 					: schedule =>
 						_playbackTransport.PlayAdHocAsync(
 							_workspace.Document,
-							schedule));
+							schedule),
+				_playbackTransport is null
+					? null
+					: new PatternLiveAuditionActions(
+						() =>
+							_playbackTransport.BeginLiveAuditionAsync(
+								_workspace.Document),
+						(voiceId, command) =>
+							_playbackTransport.StartLiveNoteAsync(
+								voiceId,
+								command),
+						voiceId =>
+							_playbackTransport.ReleaseLiveNoteAsync(
+								voiceId)));
 		_mainContent.Content = editor;
 		UpdateWindowTitle();
 		SetStatus(status);
