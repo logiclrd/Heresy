@@ -30,20 +30,10 @@ public interface ISongPlaybackTransport
 		SongDocument document,
 		NoteSchedule schedule);
 
-	Task BeginLiveAuditionAsync(
-		SongDocument document);
-
 	Task SendLiveEventAsync(
 		SongDocument document,
 		ChannelTarget target,
 		IReadOnlyList<NoteCommand> commands);
-
-	Task StartLiveNoteAsync(
-		int voiceId,
-		StartNoteCommand command);
-
-	Task ReleaseLiveNoteAsync(
-		int voiceId);
 
 	Task StopAsync();
 }
@@ -112,23 +102,6 @@ public sealed class SongPlaybackTransport
 				document,
 				schedule));
 
-	public async Task BeginLiveAuditionAsync(
-		SongDocument document)
-	{
-		ArgumentNullException.ThrowIfNull(document);
-
-		await _commandGate.WaitAsync().ConfigureAwait(false);
-		try
-		{
-			await EnsureLiveAuditionCoreAsync(document)
-				.ConfigureAwait(false);
-		}
-		finally
-		{
-			_commandGate.Release();
-		}
-	}
-
 	public async Task SendLiveEventAsync(
 		SongDocument document,
 		ChannelTarget target,
@@ -156,30 +129,6 @@ public sealed class SongPlaybackTransport
 		{
 			_commandGate.Release();
 		}
-	}
-
-	public Task StartLiveNoteAsync(
-		int voiceId,
-		StartNoteCommand command)
-	{
-		if (voiceId < 0)
-			throw new ArgumentOutOfRangeException(nameof(voiceId));
-		ArgumentNullException.ThrowIfNull(command);
-
-		return _controller.SendLiveEventAsync(
-			ChannelTarget.Physical(voiceId),
-			[command]);
-	}
-
-	public Task ReleaseLiveNoteAsync(
-		int voiceId)
-	{
-		if (voiceId < 0)
-			throw new ArgumentOutOfRangeException(nameof(voiceId));
-
-		return _controller.SendLiveEventAsync(
-			ChannelTarget.Physical(voiceId),
-			[new NoteOffCommand()]);
 	}
 
 	public async Task StopAsync()
