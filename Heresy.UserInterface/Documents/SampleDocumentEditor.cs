@@ -9,7 +9,8 @@ namespace Heresy.UserInterface.Documents;
 
 /// <summary>
 /// Framework-independent sample authoring operations used by the Avalonia UI.
-/// External assets remain referenced in place rather than copied into the song.
+/// Imported encoded assets are copied into memory immediately and decoded to
+/// PCM. The original source path is not retained as a live song dependency.
 /// </summary>
 public static class SampleDocumentEditor
 {
@@ -31,10 +32,14 @@ public static class SampleDocumentEditor
 		if (string.IsNullOrWhiteSpace(sampleName))
 			sampleName = Path.GetFileName(fullAssetPath);
 
-		ExternalAssetReference reference =
-			ExternalAssetIntegrity.CreateReference(fullAssetPath);
+		byte[] encoded = File.ReadAllBytes(fullAssetPath);
 		ObjectId id = workspace.Document.AllocateObjectId();
-		SampleDefinition sample = new(id, sampleName, reference);
+		SampleDefinition sample =
+			SampleDefinition.CreateImported(
+				id,
+				sampleName,
+				Path.GetFileName(fullAssetPath),
+				encoded);
 		workspace.Document.Add(sample, affectsAudio: true);
 		return sample;
 	}
@@ -44,7 +49,18 @@ public static class SampleDocumentEditor
 		SampleDefinition sample)
 	{
 		ValidateSample(workspace, sample);
-		return ExternalAssetIntegrity.Check(sample.Asset);
+		if (sample.Asset is ExternalAssetReference asset)
+			return ExternalAssetIntegrity.Check(asset);
+
+		PendingSampleAsset pending =
+			sample.PendingAsset
+				?? throw new InvalidOperationException(
+					"The sample has no persisted or pending encoded representation.");
+		return new ExternalAssetCheck(
+			ExternalAssetStatus.Pending,
+			"(pending song asset)",
+			pending.Sha256,
+			pending.Sha256);
 	}
 
 	public static void UpdateMetadata(
@@ -78,13 +94,27 @@ public static class SampleDocumentEditor
 		SampleDefinition sample)
 	{
 		ValidateSample(workspace, sample);
-		ExternalAssetReference refreshed =
-			ExternalAssetIntegrity.RefreshHash(sample.Asset);
-		if (sample.Asset == refreshed)
+		if (sample.Asset is not ExternalAssetReference asset)
 			return;
 
-		sample.Asset = refreshed;
-		workspace.Document.MarkChanged(affectsAudio: false);
+		byte[] encoded =
+			Heresy.Core.Persistence.SampleAssetPersistence.ReadAllBytes(
+				asset.FullPath);
+		ExternalAssetReference refreshed =
+			asset with
+			{
+				Sha256 =
+					Heresy.Core.Persistence.SampleAssetPersistence.Hash(
+						encoded),
+			};
+		SamplePcmData pcm =
+			SampleAudioCodec.Decode(
+				encoded,
+				asset.FullPath);
+		sample.SetLoadedPcm(
+			pcm,
+			refreshed);
+		workspace.Document.MarkChanged(affectsAudio: true);
 	}
 
 	public static void Relink(
@@ -99,12 +129,10 @@ public static class SampleDocumentEditor
 		if (!File.Exists(fullAssetPath))
 			throw new FileNotFoundException("The sample asset does not exist.", fullAssetPath);
 
-		ExternalAssetReference replacement =
-			ExternalAssetIntegrity.CreateReference(fullAssetPath);
-		if (sample.Asset == replacement)
-			return;
-
-		sample.Asset = replacement;
+		byte[] encoded = File.ReadAllBytes(fullAssetPath);
+		sample.ReplaceImportedEncoding(
+			Path.GetFileName(fullAssetPath),
+			encoded);
 		workspace.Document.MarkChanged(affectsAudio: true);
 	}
 
