@@ -34,4 +34,5 @@ jobs:
     - name: Verify desktop host and SDL native runtime
       run: |
         dotnet build Heresy/Heresy.csproj -p:Configuration=Release --no-restore
+        find Heresy/bin/Release/net10.0 -type f -iname '*SDL*' -print
         test -f Heresy/bin/Release/net10.0/libSDL3.so
