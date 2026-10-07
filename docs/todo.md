@@ -355,17 +355,23 @@ preserved during implementation.
   identical, and non-contiguous rendering deterministically replays phase from
   frame zero rather than depending on prior chunking. Graph collection surfaces
   are frozen snapshots so a future editor cannot mutate an already-bound graph
-  accidentally. The persistent Samples-pane FM object is deliberately deferred
-  to the editor/persistence work below so Save and `SongDocumentSnapshot` remain
-  coherent until FM serialization exists.
+  accidentally.
+- [x] Make FM synthesis a persistent Samples-pane song object. `FmSynthDefinition`
+  owns the immutable semantic graph plus separate editor-only node-position and
+  orthogonal-routing-hint metadata. `SongObjectKind.FmSynth` belongs to the
+  Samples tree section. JSON persistence stores the graph and editor layout
+  separately, `SongDocumentSnapshot` deep-clones both through persistence, FM
+  envelope-node ObjectIds participate in reference/tombstone analysis, and FM
+  tombstones round-trip with their own kind.
 - [ ] Editor for FM-synthesized instrument specifications that allows the graph to
   be edited and configured using the mouse to drag nodes around. The connections
   between nodes automatically form from orthogonal segments that make a best effort
   to route around nodes but which can be edited by the user. This means that nodes
   need to remember their physical position and connections need to remember hints
   for their routing (which do not functionally affect the behaviour of the graph).
-- [ ] Saving and loading of FM-synthesized instrument specifications in `.hm.json`
-  documents.
+- [x] Saving and loading of FM-synthesized instrument specifications in `.hm.json`
+  documents. Consolidated `.hm` packages inherit the same representation through
+  their JSON manifest.
 - [ ] Loader that allows an FM-synthesized instrument to be loaded into the Samples
   pane by selecting an existing `.hm` or `.hm.json` file, upon which the
   FM-synthesized instruments in that file are enumerated and the user can select
