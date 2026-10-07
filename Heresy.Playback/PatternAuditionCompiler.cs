@@ -117,7 +117,7 @@ public static class PatternAuditionCompiler
 	{
 		DataPatternDefinition slice =
 			new(
-				ObjectId.None,
+				pattern.Id,
 				$"{pattern.Name} audition")
 			{
 				RowCount = 1,
