@@ -324,6 +324,106 @@ public sealed class PatternRegionClipboardTests
 	}
 
 	[Test]
+	public void PasteCanFlowAcrossSequencePatternOccurrences()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition first =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"First",
+				rowCount: 1,
+				channelCount: 1);
+		DataPatternDefinition second =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Second",
+				rowCount: 1,
+				channelCount: 1);
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(
+				workspace,
+				"Sequence");
+		sequence.Entries.Add(new SequenceEntry(first.Id));
+		sequence.Entries.Add(new SequenceEntry(second.Id));
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(
+				workspace.Document,
+				sequence,
+				initialEntryIndex: 0);
+		PatternEffectCursor cursor =
+			new(0, 0, PatternCellField.Note);
+		PatternRegionClipboardData data =
+			new(
+				2,
+				1,
+				[
+					Cell(0, 0, new PatternNoteCut()),
+					Cell(1, 0, new PatternNoteOff()),
+				]);
+
+		PatternRegionClipboardEditor.Paste(
+				workspace,
+				context,
+				cursor,
+				data,
+				PatternRegionPasteMode.Overwrite)
+			.Should().BeTrue();
+
+		first.Grid[0, 0]!.Note.Should().Be(new PatternNoteCut());
+		second.Grid[0, 0]!.Note.Should().Be(new PatternNoteOff());
+	}
+
+	[Test]
+	public void IdenticalOverwritePasteIsNoOp()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Pattern",
+				rowCount: 1,
+				channelCount: 1);
+		PatternCell cell =
+			pattern.Grid.GetOrCreateCell(0, 0);
+		cell.Note = new StartPatternNote(1.5);
+		cell.SourceId = (ObjectId)7U;
+		cell.Volume = 0.5;
+		cell.Effects.Add(new VibratoPatternEffect(0x22));
+		PatternEditorContext context =
+			PatternEditorContext.ForPattern(
+				workspace.Document,
+				pattern);
+		PatternEffectCursor cursor =
+			new(0, 0, PatternCellField.Note);
+		PatternRegionClipboardData data =
+			new(
+				1,
+				1,
+				[
+					new PatternRegionClipboardCell(
+						0,
+						0,
+						new StartPatternNote(1.5),
+						(ObjectId)7U,
+						0.5,
+						[new VibratoPatternEffect(0x22)]),
+				]);
+		uint documentRevision =
+			workspace.Document.DocumentRevision;
+
+		PatternRegionClipboardEditor.Paste(
+				workspace,
+				context,
+				cursor,
+				data,
+				PatternRegionPasteMode.Overwrite)
+			.Should().BeFalse();
+
+		workspace.Document.DocumentRevision.Should()
+			.Be(documentRevision);
+	}
+
+	[Test]
 	public void ClearRegionRemovesEveryAvailableCellAndMarksOneDocumentChange()
 	{
 		DocumentWorkspace workspace = new();
