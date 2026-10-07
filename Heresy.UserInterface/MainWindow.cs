@@ -1254,7 +1254,8 @@ public sealed class MainWindow : Window
 		DataPatternDefinition pattern,
 		SongTreeNode? selectNode,
 		Action? closeOverride = null,
-		string backLabel = "← Document")
+		string backLabel = "← Document",
+		PatternEditorOpenState? initialState = null)
 	{
 		PatternEditorContext context =
 			PatternEditorContext.ForPattern(
@@ -1265,12 +1266,12 @@ public sealed class MainWindow : Window
 				?? (() => RefreshDocumentView(
 					$"Edited pattern {pattern.Name}",
 					selectNode));
-		Action<int>? switchPattern =
+		Action<PatternEditorSwitchRequest>? switchPattern =
 			selectNode is SongTreeObject currentNode
-				? delta =>
+				? request =>
 					SwitchTreePattern(
 						currentNode,
-						delta,
+						request,
 						closeOverride,
 						backLabel)
 				: null;
@@ -1279,7 +1280,8 @@ public sealed class MainWindow : Window
 			close,
 			backLabel,
 			$"Editing pattern {pattern.Name}",
-			switchPattern);
+			switchPattern,
+			initialState);
 	}
 
 	private void ShowPatternEditor(
@@ -1287,7 +1289,8 @@ public sealed class MainWindow : Window
 		Action close,
 		string backLabel,
 		string status,
-		Action<int>? switchPattern = null)
+		Action<PatternEditorSwitchRequest>? switchPattern = null,
+		PatternEditorOpenState? initialState = null)
 	{
 		PatternEditorControl editor =
 			new(
@@ -1316,7 +1319,8 @@ public sealed class MainWindow : Window
 								_workspace.Document,
 								liveEvent.Target,
 								liveEvent.Commands)),
-				switchPattern);
+				switchPattern,
+				initialState);
 		_mainContent.Content = editor;
 		UpdateWindowTitle();
 		SetStatus(status);
@@ -1324,10 +1328,11 @@ public sealed class MainWindow : Window
 
 	private void SwitchTreePattern(
 		SongTreeObject currentNode,
-		int delta,
+		PatternEditorSwitchRequest request,
 		Action? closeOverride,
 		string backLabel)
 	{
+		int delta = request.Delta;
 		SongTreeObject? targetNode =
 			PatternTreeNavigation.FindAdjacent(
 				_workspace.Document,
@@ -1356,7 +1361,8 @@ public sealed class MainWindow : Window
 			pattern,
 			targetNode,
 			closeOverride,
-			backLabel);
+			backLabel,
+			request.State);
 	}
 
 	private void ShowScriptEditor(
