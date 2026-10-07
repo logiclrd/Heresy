@@ -78,6 +78,35 @@ public static class PatternEditorContextCursor
 				return true;
 			});
 
+	public static void MoveToTopLeft(
+		PatternEditorContext context,
+		PatternEffectCursor cursor)
+	{
+		ArgumentNullException.ThrowIfNull(context);
+		ArgumentNullException.ThrowIfNull(cursor);
+		if (context.Rows.Count == 0)
+			return;
+
+		cursor.MoveToTopLeft();
+	}
+
+	public static void MoveToBottomRight(
+		PatternEditorContext context,
+		PatternEffectCursor cursor)
+	{
+		ArgumentNullException.ThrowIfNull(context);
+		ArgumentNullException.ThrowIfNull(cursor);
+		if (context.Rows.Count == 0)
+			return;
+
+		int displayRow = context.Rows.Count - 1;
+		PatternEditorRow row =
+			context.GetRow(displayRow);
+		cursor.RemapRow(row.PatternRow);
+		cursor.MoveToBottomRight(row.Pattern);
+		cursor.RemapRow(displayRow);
+	}
+
 	public static void MoveHome(
 		PatternEditorContext context,
 		PatternEffectCursor cursor)
