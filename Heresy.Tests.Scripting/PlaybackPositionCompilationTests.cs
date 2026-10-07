@@ -100,6 +100,44 @@ public sealed class PlaybackPositionCompilationTests
 	}
 
 	[Test]
+	public void ScriptSequenceTimelineTracksGeneratedPatternEntries()
+	{
+		SongDocument document = new();
+		ObjectId patternId = document.AllocateObjectId();
+		DataPatternDefinition pattern =
+			new(patternId, "Pattern")
+			{
+				RowCount = 3,
+				ChannelCount = 1,
+			};
+		document.Add(pattern);
+
+		ObjectId sequenceId = document.AllocateObjectId();
+		document.Add(
+			new ScriptSequenceDefinition(
+				sequenceId,
+				"Script")
+			{
+				Source =
+					$"Play(_O({patternId.Value}), 1); "
+						+ $"Play(_O({patternId.Value}), 2);",
+			});
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompileSequence(
+				document,
+				sequenceId);
+
+		result.Success.Should().BeTrue();
+		result.PlaybackPositions.Select(position =>
+				(position.Offset, position.PatternId, position.PatternRow, position.SequenceEntryIndex))
+			.Should().Equal(
+				(TimeSpan.Zero, patternId, 1, (int?)0),
+				(TimeSpan.FromMilliseconds(120), patternId, 2, (int?)0),
+				(TimeSpan.FromMilliseconds(240), patternId, 2, (int?)1));
+	}
+
+	[Test]
 	public void PatternLoopTimelineRevisitsTheActualSourceRows()
 	{
 		SongDocument document = new();
