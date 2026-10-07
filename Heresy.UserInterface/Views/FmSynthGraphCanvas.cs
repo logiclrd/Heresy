@@ -14,7 +14,7 @@ using Heresy.UserInterface.FmEditing;
 
 namespace Heresy.UserInterface.Views;
 
-public sealed class FmSynthGraphCanvas : Canvas
+public sealed class FmSynthGraphCanvas : UserControl
 {
 	public const double NodeWidth = 170.0;
 	public const double NodeHeight = 72.0;
@@ -22,6 +22,8 @@ public sealed class FmSynthGraphCanvas : Canvas
 	private readonly FmSynthDefinition _synth;
 	private readonly Action<int> _selected;
 	private readonly Action<int, double, double> _moved;
+	private readonly Canvas _canvas = new();
+	private readonly ConnectionLayer _connectionLayer;
 	private readonly Dictionary<int, Border> _nodeControls = [];
 	private readonly Dictionary<int, FmSynthNodePosition> _positions = [];
 
@@ -47,19 +49,35 @@ public sealed class FmSynthGraphCanvas : Canvas
 
 		MinWidth = 1200;
 		MinHeight = 720;
-		Background =
-			new SolidColorBrush(
-				Color.FromRgb(
-					24,
-					24,
-					28));
 		ClipToBounds = false;
+
+		_connectionLayer =
+			new ConnectionLayer(
+				DrawConnections)
+			{
+				IsHitTestVisible = false,
+			};
+		Grid root =
+			new()
+			{
+				Background =
+					new SolidColorBrush(
+						Color.FromRgb(
+							24,
+							24,
+							28)),
+			};
+		root.Children.Add(
+			_connectionLayer);
+		root.Children.Add(
+			_canvas);
+		Content = root;
 		Refresh();
 	}
 
 	public void Refresh()
 	{
-		Children.Clear();
+		_canvas.Children.Clear();
 		_nodeControls.Clear();
 		_positions.Clear();
 
@@ -83,7 +101,7 @@ public sealed class FmSynthGraphCanvas : Canvas
 			Canvas.SetTop(
 				control,
 				position.Y);
-			Children.Add(control);
+			_canvas.Children.Add(control);
 			_nodeControls.Add(
 				node.Id,
 				control);
@@ -91,7 +109,7 @@ public sealed class FmSynthGraphCanvas : Canvas
 		}
 
 		ApplySelectionVisuals();
-		InvalidateVisual();
+		_connectionLayer.InvalidateVisual();
 	}
 
 	public void SetSelectedNode(
@@ -104,11 +122,9 @@ public sealed class FmSynthGraphCanvas : Canvas
 		ApplySelectionVisuals();
 	}
 
-	public override void Render(
+	private void DrawConnections(
 		DrawingContext context)
 	{
-		base.Render(context);
-
 		Pen connectionPen =
 			new(
 				new SolidColorBrush(
@@ -280,7 +296,7 @@ public sealed class FmSynthGraphCanvas : Canvas
 
 		_dragNodeId = nodeId;
 		_dragPointerStart =
-			e.GetPosition(this);
+			e.GetPosition(_canvas);
 		_dragOriginal = position;
 		e.Pointer.Capture(border);
 		e.Handled = true;
@@ -295,7 +311,7 @@ public sealed class FmSynthGraphCanvas : Canvas
 			return;
 
 		Point current =
-			e.GetPosition(this);
+			e.GetPosition(_canvas);
 		double x =
 			Math.Max(
 				0.0,
@@ -320,7 +336,7 @@ public sealed class FmSynthGraphCanvas : Canvas
 		Canvas.SetTop(
 			border,
 			y);
-		InvalidateVisual();
+		_connectionLayer.InvalidateVisual();
 		e.Handled = true;
 	}
 
@@ -364,7 +380,7 @@ public sealed class FmSynthGraphCanvas : Canvas
 		Canvas.SetTop(
 			border,
 			_dragOriginal.Y);
-		InvalidateVisual();
+		_connectionLayer.InvalidateVisual();
 	}
 
 	private void ApplySelectionVisuals()
@@ -448,4 +464,24 @@ public sealed class FmSynthGraphCanvas : Canvas
 						id => $"#{id}")),
 			_ => string.Empty,
 		};
+
+	private sealed class ConnectionLayer : Control
+	{
+		private readonly Action<DrawingContext> _render;
+
+		public ConnectionLayer(
+			Action<DrawingContext> render)
+		{
+			_render =
+				render
+					?? throw new ArgumentNullException(nameof(render));
+		}
+
+		public override void Render(
+			DrawingContext context)
+		{
+			base.Render(context);
+			_render(context);
+		}
+	}
 }
