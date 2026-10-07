@@ -8,4 +8,8 @@
 		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 	</PropertyGroup>
 
+	<ItemGroup>
+		<PackageReference Include="Hawkynt.FileFormats.Audio" Version="1.0.0.776" />
+	</ItemGroup>
+
 </Project>
