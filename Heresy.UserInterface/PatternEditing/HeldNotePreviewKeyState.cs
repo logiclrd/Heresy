@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 using Avalonia.Input;
 
@@ -69,6 +70,27 @@ public sealed class HeldNotePreviewKeyState
 			pitchMultiplier,
 			StartsSession:
 				_activeNotes.Count == 1);
+	}
+
+	public IReadOnlyList<ReleaseHeldNotePreviewAction> ReleaseAll()
+	{
+		ReleaseHeldNotePreviewAction[] releases =
+			_activeNotes
+				.Select(
+					key =>
+					{
+						PatternNoteKeyboard.TryGetSemitoneOffset(
+							key,
+							out int semitoneOffset);
+						return new ReleaseHeldNotePreviewAction(
+							key,
+							semitoneOffset);
+					})
+				.ToArray();
+
+		_activeNotes.Clear();
+		_capsLockHeld = false;
+		return releases;
 	}
 
 	public HeldNotePreviewAction? KeyUp(
