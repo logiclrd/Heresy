@@ -15,18 +15,23 @@ preserved during implementation.
 ## Realtime audio and playback architecture
 
 - [x] Introduce an abstraction for the realtime audio back-end and provide an
-  SDL implementation. `Heresy.Render.Realtime` now owns the backend-neutral
+  SDL implementation. `Heresy.Render.Realtime` owns the backend-neutral
   interleaved-float PCM contracts and `Heresy.Render.SDL` provides the SDL3-CS
-  default-playback implementation. Desktop transport wiring/native runtime
-  selection remains part of the background-playback work below.
-- [ ] Add tracker transport controls on top of the implemented background playback thread and concrete snapshot-to-PCM source factory:
-  - `F5`: play the song.
-  - `F6`: play the current pattern repeatedly. The repeating source is now implemented; in this mode, standalone pattern compilation consumes `Bxx`, so the completed cycle restarts at the beginning of the pattern rather than performing a sequence-order jump. The remaining work is the editor key binding/request creation.
-  - `F7`: enter full-song playback mode starting on the current row. Technically,
-    start playback in the deepest ancestor sequence that can be found for the
-    current view. If that sequence/pattern is not actually anchored to the song
-    root, play from the deepest enclosing sequence that can be found.
+  default-playback implementation. Desktop transport wiring is now in place and
+  SDL initialization is deferred until first playback.
+- [ ] Add realtime decoders for the other sample formats accepted by the authoring UI (FLAC, MP3, OGG and AIFF). Current realtime playback decodes RIFF/WAVE PCM and IEEE-float assets, including synthetic `.hm` archive paths.
+- [x] Add tracker transport controls on top of the background playback thread and concrete snapshot-to-PCM source factory:
+  - `F5`: play the song root from the beginning.
+  - `F6`: play the current tracker pattern repeatedly from row zero. Standalone
+    pattern compilation consumes `Bxx`, so a jump ends the current cycle and
+    repetition resumes at the pattern start rather than jumping sequence order.
+  - `F7`: start on the current row in the closest sequence context that can be
+    established. The sequence from which the tracker view was opened takes
+    priority even when it is not the song root; otherwise a containing root/data
+    sequence is found, with standalone pattern playback as the fallback.
   - `F8`: stop playback.
+  The Avalonia app constructs the SDL transport lazily on first playback so
+  editing does not require SDL initialization.
 - [x] Let the background playback thread accept ordinary sequence playback
   requests (with an optional order/row starting position), repeating/current
   pattern requests, and ad hoc note/row audition requests. The generic worker
