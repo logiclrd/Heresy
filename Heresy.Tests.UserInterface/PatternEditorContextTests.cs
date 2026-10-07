@@ -456,7 +456,7 @@ public sealed class PatternEditorContextTests
 	}
 
 	[Test]
-	public void FirstLastRowNavigationSpansSequenceAndClampsDestinationChannel()
+	public void FirstLastRowNavigationStaysWithinOccurrenceThenCrossesAtBoundary()
 	{
 		DocumentWorkspace workspace = new();
 		DataPatternDefinition narrow =
@@ -489,7 +489,23 @@ public sealed class PatternEditorContextTests
 			context,
 			cursor);
 
+		cursor.Row.Should().Be(2);
+		cursor.Channel.Should().Be(3);
+		cursor.Field.Should().Be(PatternCellField.EffectParameter);
+
+		PatternEditorContextCursor.MoveToFirstRow(
+			context,
+			cursor);
+
 		cursor.Row.Should().Be(0);
+		cursor.Channel.Should().Be(1);
+		cursor.Field.Should().Be(PatternCellField.EffectParameter);
+
+		PatternEditorContextCursor.MoveToLastRow(
+			context,
+			cursor);
+
+		cursor.Row.Should().Be(1);
 		cursor.Channel.Should().Be(1);
 		cursor.Field.Should().Be(PatternCellField.EffectParameter);
 
@@ -501,7 +517,6 @@ public sealed class PatternEditorContextTests
 		cursor.Channel.Should().Be(1);
 		cursor.Field.Should().Be(PatternCellField.EffectParameter);
 	}
-
 	[Test]
 	public void FirstLastRowNavigationCollapsesExpandedEffectSelection()
 	{
@@ -568,7 +583,7 @@ public sealed class PatternEditorContextTests
 	}
 
 	[Test]
-	public void GlobalNavigationSpansEntireSequenceEditorContext()
+	public void CornerNavigationStaysWithinOccurrenceThenEscalatesToContextEdge()
 	{
 		DocumentWorkspace workspace = new();
 		DataPatternDefinition first =
@@ -595,7 +610,15 @@ public sealed class PatternEditorContextTests
 				sequence,
 				initialEntryIndex: 1);
 		PatternEffectCursor cursor =
-			new(1, 1, PatternCellField.Source);
+			new(2, 1, PatternCellField.Source);
+
+		PatternEditorContextCursor.MoveToTopLeft(
+			context,
+			cursor);
+
+		cursor.Row.Should().Be(1);
+		cursor.Channel.Should().Be(0);
+		cursor.Field.Should().Be(PatternCellField.Note);
 
 		PatternEditorContextCursor.MoveToTopLeft(
 			context,
@@ -609,11 +632,18 @@ public sealed class PatternEditorContextTests
 			context,
 			cursor);
 
+		cursor.Row.Should().Be(0);
+		cursor.Channel.Should().Be(3);
+		cursor.Field.Should().Be(PatternCellField.EffectParameter);
+
+		PatternEditorContextCursor.MoveToBottomRight(
+			context,
+			cursor);
+
 		cursor.Row.Should().Be(2);
 		cursor.Channel.Should().Be(1);
 		cursor.Field.Should().Be(PatternCellField.EffectParameter);
 	}
-
 	[Test]
 	public void GlobalBottomRightUsesNativeEffectAsOneWholeFinalField()
 	{
@@ -750,6 +780,59 @@ public sealed class PatternEditorContextTests
 
 		cursor.Channel.Should().Be(0);
 		cursor.Field.Should().Be(PatternCellField.Source);
+	}
+
+	[Test]
+	public void PatternBoundaryNavigationSkipsNonEditableOccurrencesAndHonorsStartRows()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition shared =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Shared",
+				rowCount: 4,
+				channelCount: 2);
+		ObjectId scriptId = workspace.Document.AllocateObjectId();
+		workspace.Document.Add(
+			new ScriptPatternDefinition(scriptId, "Script"));
+		DataPatternDefinition last =
+			PatternDocumentEditor.CreateDataPattern(
+				workspace,
+				"Last",
+				rowCount: 3,
+				channelCount: 3);
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(
+				workspace,
+				"Arrangement");
+		sequence.Entries.Add(new SequenceEntry(shared.Id, startRow: 1));
+		sequence.Entries.Add(new SequenceEntry(scriptId));
+		sequence.Entries.Add(new SequenceEntry(shared.Id, startRow: 3));
+		sequence.Entries.Add(new SequenceEntry(last.Id, startRow: 1));
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(
+				workspace.Document,
+				sequence,
+				initialEntryIndex: 2);
+		PatternEffectCursor cursor =
+			new(3, 1, PatternCellField.Source);
+
+		PatternEditorContextCursor.MoveToFirstRow(
+			context,
+			cursor);
+
+		cursor.Row.Should().Be(0);
+		context.GetRow(cursor.Row).SequenceEntryIndex.Should().Be(0);
+		context.GetRow(cursor.Row).PatternRow.Should().Be(1);
+
+		cursor.SetPosition(3, 1, PatternCellField.Source);
+		PatternEditorContextCursor.MoveToLastRow(
+			context,
+			cursor);
+
+		cursor.Row.Should().Be(5);
+		context.GetRow(cursor.Row).SequenceEntryIndex.Should().Be(3);
+		context.GetRow(cursor.Row).PatternRow.Should().Be(2);
 	}
 
 	[Test]
