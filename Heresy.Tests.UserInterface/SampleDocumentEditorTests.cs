@@ -116,12 +116,20 @@ public sealed class SampleDocumentEditorTests
 		}
 
 		public string WriteWave(
-			params object[] partsAndSample)
+			string fileName,
+			short sample)
 		{
-			short sample = (short)partsAndSample[^1];
-			string path = _root;
-			for (int index = 0; index < partsAndSample.Length - 1; index++)
-				path = System.IO.Path.Combine(path, (string)partsAndSample[index]);
+			string path = Path(fileName);
+			WriteWaveAt(path, sample);
+			return path;
+		}
+
+		public string WriteWave(
+			string directory,
+			string fileName,
+			short sample)
+		{
+			string path = Path(directory, fileName);
 			WriteWaveAt(path, sample);
 			return path;
 		}
