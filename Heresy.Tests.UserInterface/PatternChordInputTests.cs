@@ -233,6 +233,27 @@ public sealed class PatternChordInputTests
 	}
 
 	[Test]
+	public void CtrlAltEscapeExitsChordMode()
+	{
+		PatternChordKeyboard.TryGetCommand(
+			PhysicalKey.Escape,
+			KeyModifiers.Control | KeyModifiers.Alt,
+			out PatternChordCommand command).Should().BeTrue();
+		command.Kind.Should().Be(PatternChordCommandKind.Exit);
+
+		PatternChordInputState state = new();
+		state.Select(PatternChordType.Major);
+		state.SetRoot(2);
+
+		state.Exit();
+
+		state.IsActive.Should().BeFalse();
+		state.Type.Should().BeNull();
+		state.RootRelativeSemitone.Should().BeNull();
+		state.ToneOffsets.Should().BeEmpty();
+	}
+
+	[Test]
 	public void ChordStateSnapshotPreservesVoicingRootAndEnableMask()
 	{
 		PatternChordInputState original = new();
