@@ -911,22 +911,20 @@ public sealed class PatternEditorControl : UserControl
 			return;
 		}
 
-		bool clipboardModifier =
-			(e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) != 0
-				&& (e.KeyModifiers & KeyModifiers.Alt) == 0;
 		bool effectField =
 			_cursor.Field is
 				PatternCellField.EffectCommand
 				or PatternCellField.EffectParameter;
-		if (clipboardModifier && effectField && e.Key == Key.C)
+		if (PatternRegionClipboardKeyboard.TryGetCommand(
+			e.Key,
+			e.KeyModifiers,
+			out PatternRegionClipboardCommand clipboardCommand))
 		{
-			await CopyEffectStackAsync(row, channel);
-			e.Handled = true;
-			return;
-		}
-		if (clipboardModifier && effectField && e.Key == Key.V)
-		{
-			await PasteEffectStackAsync(row, channel);
+			await HandlePatternRegionClipboardAsync(
+				row,
+				channel,
+				effectField,
+				clipboardCommand);
 			e.Handled = true;
 			return;
 		}
@@ -1912,6 +1910,246 @@ public sealed class PatternEditorControl : UserControl
 
 			default:
 				return false;
+		}
+	}
+
+	private async Task HandlePatternRegionClipboardAsync(
+		int row,
+		int channel,
+		bool effectField,
+		PatternRegionClipboardCommand command)
+	{
+		switch (command)
+		{
+			case PatternRegionClipboardCommand.Copy:
+				if (_selection.Region is PatternSelectionRegion copyRegion)
+				{
+					await CopyPatternRegionAsync(
+						copyRegion,
+						cut: false);
+				}
+				else if (effectField)
+				{
+					await CopyEffectStackAsync(
+						row,
+						channel);
+				}
+				else
+				{
+					_message.Text =
+						"No pattern region is marked.";
+					FocusCursorCell();
+				}
+				break;
+
+			case PatternRegionClipboardCommand.Cut:
+				if (_selection.Region is PatternSelectionRegion cutRegion)
+				{
+					await CopyPatternRegionAsync(
+						cutRegion,
+						cut: true);
+				}
+				else
+				{
+					_message.Text =
+						"No pattern region is marked.";
+					FocusCursorCell();
+				}
+				break;
+
+			case PatternRegionClipboardCommand.PasteMerge:
+				await PastePatternRegionAsync(
+					row,
+					channel,
+					PatternRegionPasteMode.Merge,
+					fallbackToEffectStack: effectField);
+				break;
+
+			case PatternRegionClipboardCommand.PasteOverwrite:
+				await PastePatternRegionAsync(
+					row,
+					channel,
+					PatternRegionPasteMode.Overwrite,
+					fallbackToEffectStack: false);
+				break;
+
+			case PatternRegionClipboardCommand.Clear:
+				ClearPatternRegion();
+				break;
+
+			default:
+				throw new ArgumentOutOfRangeException(
+					nameof(command));
+		}
+	}
+
+	private async Task CopyPatternRegionAsync(
+		PatternSelectionRegion region,
+		bool cut)
+	{
+		try
+		{
+			if (_owner.Clipboard is null)
+			{
+				_message.Text =
+					"The system clipboard is not available.";
+				return;
+			}
+
+			PatternRegionClipboardData data =
+				PatternRegionClipboardEditor.Capture(
+					_context,
+					region);
+			string text =
+				PatternRegionClipboardCodec.Serialize(data);
+			await _owner.Clipboard.SetTextAsync(text);
+
+			bool changed = false;
+			if (cut)
+			{
+				changed =
+					PatternRegionClipboardEditor.Clear(
+						_workspace,
+						_context,
+						region);
+				if (changed)
+				{
+					_changed(
+						"Cut marked pattern region");
+					RefreshGrid();
+				}
+			}
+
+			_message.Text =
+				cut
+					? changed
+						? $"Cut {data.RowCount}×{data.ChannelCount} pattern region."
+						: $"Copied {data.RowCount}×{data.ChannelCount} empty pattern region; nothing needed clearing."
+					: $"Copied {data.RowCount}×{data.ChannelCount} pattern region.";
+		}
+		catch (Exception ex)
+		{
+			_message.Text =
+				$"Could not {(cut ? "cut" : "copy")} pattern region: {ex.Message}";
+		}
+		finally
+		{
+			FocusCursorCell();
+		}
+	}
+
+	private async Task PastePatternRegionAsync(
+		int row,
+		int channel,
+		PatternRegionPasteMode mode,
+		bool fallbackToEffectStack)
+	{
+		try
+		{
+			string? text =
+				_owner.Clipboard is null
+					? null
+					: await _owner.Clipboard.TryGetTextAsync();
+			if (text is null)
+			{
+				_message.Text =
+					"The clipboard does not contain text.";
+				return;
+			}
+
+			if (!PatternRegionClipboardCodec.TryDeserialize(
+				text,
+				out PatternRegionClipboardData? data))
+			{
+				if (fallbackToEffectStack)
+				{
+					await PasteEffectStackAsync(
+						row,
+						channel);
+					return;
+				}
+
+				_message.Text =
+					"The clipboard does not contain a Heresy pattern region.";
+				return;
+			}
+
+			bool changed =
+				PatternRegionClipboardEditor.Paste(
+					_workspace,
+					_context,
+					_cursor,
+					data!,
+					mode);
+			if (changed)
+			{
+				_changed(
+					mode == PatternRegionPasteMode.Merge
+						? "Merged pattern region"
+						: "Overwrote pattern region");
+				RefreshGrid();
+			}
+			else
+			{
+				RefreshCursorVisuals();
+			}
+
+			_message.Text =
+				changed
+					? mode == PatternRegionPasteMode.Merge
+						? "Merged clipboard region at the tracker cursor."
+						: "Overwrote from clipboard region at the tracker cursor."
+					: "Clipboard region produced no changes at this position.";
+		}
+		catch (Exception ex)
+		{
+			_message.Text =
+				$"Could not paste pattern region: {ex.Message}";
+		}
+		finally
+		{
+			FocusCursorCell();
+		}
+	}
+
+	private void ClearPatternRegion()
+	{
+		if (_selection.Region is not PatternSelectionRegion region)
+		{
+			_message.Text =
+				"No pattern region is marked.";
+			FocusCursorCell();
+			return;
+		}
+
+		try
+		{
+			bool changed =
+				PatternRegionClipboardEditor.Clear(
+					_workspace,
+					_context,
+					region);
+			if (changed)
+			{
+				_changed(
+					"Cleared marked pattern region");
+				RefreshGrid();
+				_message.Text =
+					"Cleared marked pattern region.";
+			}
+			else
+			{
+				_message.Text =
+					"The marked pattern region is already empty.";
+				RefreshCursorVisuals();
+				FocusCursorCell();
+			}
+		}
+		catch (Exception ex)
+		{
+			_message.Text =
+				$"Could not clear pattern region: {ex.Message}";
+			FocusCursorCell();
 		}
 	}
 
