@@ -16,28 +16,33 @@ namespace Heresy.Tests.UserInterface;
 public sealed class SampleDocumentEditorTests
 {
 	[Test]
-	public void ImportIntoUnsavedDocumentKeepsActualFullPath()
+	public void ImportIntoUnsavedDocumentOwnsPendingEncodingAndDecodedPcm()
 	{
 		using TempProject project = new();
-		string assetPath = project.Write("samples", "Kick.wav", "hello");
+		string assetPath = project.WriteWave("samples", "Kick.wav", sample: 8192);
 		DocumentWorkspace workspace = new();
 
 		SampleDefinition sample =
 			SampleDocumentEditor.Import(workspace, assetPath);
 
-		sample.Asset.FullPath.Should().Be(Path.GetFullPath(assetPath));
-		sample.Asset.Sha256.Should().Be(
-			"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+		sample.Asset.Should().BeNull();
+		sample.PendingAsset.Should().NotBeNull();
+		sample.PendingAsset!.FileName.Should().Be("Kick.wav");
+		sample.PcmData.Should().NotBeNull();
+		sample.PcmData!.SampleRate.Should().Be(8000);
+		sample.PcmData.GetSample(0, 0).Should().BeApproximately(0.25f, 1e-6f);
+		File.Delete(assetPath);
+		sample.PcmData.GetSample(0, 0).Should().BeApproximately(0.25f, 1e-6f);
 		workspace.Document.GetSectionRoot(SongTreeSection.Samples)
 			.Children.Should().ContainSingle()
 			.Which.As<SongTreeObject>().ObjectId.Should().Be(sample.Id);
 	}
 
 	[Test]
-	public void AssetCheckDoesNotRequireSavedWorkspace()
+	public void AssetCheckReportsPendingUntilSongOwnsPersistedCopy()
 	{
 		using TempProject project = new();
-		string assetPath = project.Write("tone.wav", "hello");
+		string assetPath = project.WriteWave("tone.wav", sample: 0);
 		DocumentWorkspace workspace = new();
 		SampleDefinition sample =
 			SampleDocumentEditor.Import(workspace, assetPath);
@@ -45,44 +50,53 @@ public sealed class SampleDocumentEditorTests
 		ExternalAssetCheck check =
 			SampleDocumentEditor.CheckAsset(workspace, sample);
 
-		check.Status.Should().Be(ExternalAssetStatus.Match);
-		check.FullPath.Should().Be(Path.GetFullPath(assetPath));
+		check.Status.Should().Be(ExternalAssetStatus.Pending);
+		check.FullPath.Should().Be("(pending song asset)");
+		check.ExpectedSha256.Should().Be(sample.PendingAsset!.Sha256);
+		check.ActualSha256.Should().Be(sample.PendingAsset.Sha256);
 	}
 
 	[Test]
-	public void RelinkStoresReplacementAsFullPath()
+	public void RelinkImportsReplacementWithoutKeepingSourceDependency()
 	{
 		using TempProject project = new();
-		string first = project.Write("first.wav", "first");
-		string second = project.Write("second.wav", "second");
+		string first = project.WriteWave("first.wav", sample: 0);
+		string second = project.WriteWave("second.wav", sample: 16384);
 		DocumentWorkspace workspace = new();
 		SampleDefinition sample = SampleDocumentEditor.Import(workspace, first);
 		uint audioRevision = workspace.Document.AudioRevision;
 
 		SampleDocumentEditor.Relink(workspace, sample, second);
 
-		sample.Asset.FullPath.Should().Be(Path.GetFullPath(second));
-		sample.Asset.Sha256.Should().Be(ExternalAssetIntegrity.ComputeSha256(second));
+		sample.Asset.Should().BeNull();
+		sample.PendingAsset.Should().NotBeNull();
+		sample.PendingAsset!.FileName.Should().Be("second.wav");
+		sample.PcmData!.GetSample(0, 0).Should().BeApproximately(0.5f, 1e-6f);
+		File.Delete(second);
+		sample.PcmData.GetSample(0, 0).Should().BeApproximately(0.5f, 1e-6f);
 		workspace.Document.AudioRevision.Should().Be(audioRevision + 1);
 	}
 
 	[Test]
-	public void RefreshHashUsesFullPathAndIsDocumentOnly()
+	public void AcceptCurrentPersistedFileReloadsPcmAndHash()
 	{
 		using TempProject project = new();
-		string assetPath = project.Write("tone.wav", "hello");
+		string imported = project.WriteWave("imports", "tone.wav", sample: 0);
+		string jsonPath = project.Path("song", "track.hm.json");
 		DocumentWorkspace workspace = new();
-		SampleDefinition sample = SampleDocumentEditor.Import(workspace, assetPath);
-		File.WriteAllText(assetPath, "changed");
-		uint documentRevision = workspace.Document.DocumentRevision;
+		SampleDefinition sample = SampleDocumentEditor.Import(workspace, imported);
+		workspace.SaveAs(jsonPath);
+		string persisted = sample.Asset!.FullPath;
+		project.WriteWaveAt(persisted, sample: -16384);
 		uint audioRevision = workspace.Document.AudioRevision;
 
 		SampleDocumentEditor.RefreshHash(workspace, sample);
 
-		sample.Asset.Sha256.Should().Be(ExternalAssetIntegrity.ComputeSha256(assetPath));
-		workspace.Document.DocumentRevision.Should().Be(documentRevision + 1);
-		workspace.Document.AudioRevision.Should().Be(audioRevision);
+		sample.PcmData!.GetSample(0, 0).Should().BeApproximately(-0.5f, 1e-6f);
+		sample.Asset!.Sha256.Should().Be(ExternalAssetIntegrity.ComputeSha256(persisted));
+		workspace.Document.AudioRevision.Should().Be(audioRevision + 1);
 	}
+
 
 	private sealed class TempProject : IDisposable
 	{
@@ -93,15 +107,46 @@ public sealed class SampleDocumentEditorTests
 
 		public TempProject() => Directory.CreateDirectory(_root);
 
-		public string Write(params string[] partsAndContent)
+		public string Path(params string[] parts)
 		{
-			string content = partsAndContent[^1];
 			string path = _root;
-			foreach (string part in partsAndContent[..^1])
-				path = Path.Combine(path, part);
-			Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-			File.WriteAllText(path, content);
+			foreach (string part in parts)
+				path = System.IO.Path.Combine(path, part);
 			return path;
+		}
+
+		public string WriteWave(
+			params object[] partsAndSample)
+		{
+			short sample = (short)partsAndSample[^1];
+			string path = _root;
+			for (int index = 0; index < partsAndSample.Length - 1; index++)
+				path = System.IO.Path.Combine(path, (string)partsAndSample[index]);
+			WriteWaveAt(path, sample);
+			return path;
+		}
+
+		public void WriteWaveAt(
+			string path,
+			short sample)
+		{
+			Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path)!);
+			using FileStream file = File.Create(path);
+			using BinaryWriter writer = new(file);
+			writer.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
+			writer.Write(38);
+			writer.Write(System.Text.Encoding.ASCII.GetBytes("WAVE"));
+			writer.Write(System.Text.Encoding.ASCII.GetBytes("fmt "));
+			writer.Write(16);
+			writer.Write((ushort)1);
+			writer.Write((ushort)1);
+			writer.Write(8000);
+			writer.Write(16000);
+			writer.Write((ushort)2);
+			writer.Write((ushort)16);
+			writer.Write(System.Text.Encoding.ASCII.GetBytes("data"));
+			writer.Write(2);
+			writer.Write(sample);
 		}
 
 		public void Dispose()
