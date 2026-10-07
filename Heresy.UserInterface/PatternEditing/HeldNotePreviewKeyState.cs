@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+
 using Avalonia.Input;
 
 namespace Heresy.UserInterface.PatternEditing;
@@ -16,17 +19,77 @@ public sealed record ReleaseHeldNotePreviewAction(
 	int VoiceId)
 	: HeldNotePreviewAction;
 
+/// <summary>
+/// Treats the physical Caps Lock key as a momentary tracker-preview modifier.
+/// The locking/toggled state is deliberately irrelevant: preview mode exists
+/// only while the key is physically held.
+/// </summary>
 public sealed class HeldNotePreviewKeyState
 {
-	public bool CapsLockHeld => false;
-	public int ActiveNoteCount => 0;
+	private readonly HashSet<PhysicalKey> _activeNotes = [];
+	private bool _capsLockHeld;
+
+	public bool CapsLockHeld => _capsLockHeld;
+
+	public int ActiveNoteCount => _activeNotes.Count;
 
 	public HeldNotePreviewAction? KeyDown(
 		PhysicalKey key,
 		int baseOctave)
-		=> null;
+	{
+		if (baseOctave is < 0 or > 8)
+			throw new ArgumentOutOfRangeException(nameof(baseOctave));
+
+		if (key == PhysicalKey.CapsLock)
+		{
+			_capsLockHeld = true;
+			return null;
+		}
+
+		if (!_capsLockHeld
+			|| !PatternNoteKeyboard.TryGetSemitoneOffset(
+				key,
+				out int semitoneOffset)
+			|| !_activeNotes.Add(key))
+		{
+			return null;
+		}
+
+		int relativeSemitone =
+			((baseOctave - 4) * 12)
+				+ semitoneOffset;
+		double pitchMultiplier =
+			Math.Pow(
+				2.0,
+				relativeSemitone / 12.0);
+
+		return new StartHeldNotePreviewAction(
+			key,
+			semitoneOffset,
+			pitchMultiplier,
+			StartsSession:
+				_activeNotes.Count == 1);
+	}
 
 	public HeldNotePreviewAction? KeyUp(
 		PhysicalKey key)
-		=> null;
+	{
+		if (key == PhysicalKey.CapsLock)
+		{
+			_capsLockHeld = false;
+			return null;
+		}
+
+		if (!_activeNotes.Remove(key)
+			|| !PatternNoteKeyboard.TryGetSemitoneOffset(
+				key,
+				out int semitoneOffset))
+		{
+			return null;
+		}
+
+		return new ReleaseHeldNotePreviewAction(
+			key,
+			semitoneOffset);
+	}
 }
