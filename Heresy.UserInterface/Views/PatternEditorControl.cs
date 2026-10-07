@@ -979,6 +979,27 @@ public sealed class PatternEditorControl : UserControl
 			}
 		}
 
+		if (PatternRowBoundaryNavigationKeyboard.TryGetFirst(
+			e.Key,
+			e.KeyModifiers,
+			out bool firstRow))
+		{
+			_volumeInput.Reset();
+			if (_expandedCell is not null)
+				CollapseVisualEffects(collapseCursor: true);
+
+			if (firstRow)
+				PatternEditorContextCursor.MoveToFirstRow(_context, _cursor);
+			else
+				PatternEditorContextCursor.MoveToLastRow(_context, _cursor);
+
+			e.Handled = true;
+			UpdateCurrentPatternControls();
+			RefreshCursorVisuals();
+			FocusCursorCell();
+			return;
+		}
+
 		if (PatternCornerNavigationKeyboard.TryGetTopLeft(
 			e.Key,
 			e.KeyModifiers,
