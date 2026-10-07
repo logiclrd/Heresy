@@ -150,10 +150,15 @@ preserved during implementation.
   current pattern occurrence's channel count is used. Expanded effect strips keep
   their existing Alt+Left/Right effect-reordering behavior; whole-channel movement
   applies when the tracker field is collapsed.
-- [ ] `Home` / `End`:
-  - normally move to the first/last field of the current cell;
+- [x] `Home` / `End`:
+  - normally move to the first/last keyboard field of the current cell;
   - if already at that edge field, move to the first/last channel while staying
-    on the current row.
+    on the current row;
+  - the first field is Note. The last field is Effect Parameter, except a single
+    native effect occupies one whole effect stop so its last field is Effect
+    Command;
+  - expanded effect selection collapses before plain Home/End navigation.
+    Modified Home/End combinations remain available to their own commands.
 - [ ] `Ctrl+Home` / `Ctrl+End`: move to the top-left / bottom-right of the
   pattern.
 - [ ] `Ctrl+PageUp` / `Ctrl+PageDown`: move to the first / last row while
