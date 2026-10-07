@@ -1,11 +1,19 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
 using Heresy.Core.Assets;
 using Heresy.Core.Objects;
+using Heresy.Core.Persistence;
 using Heresy.Core.Samples;
 
 namespace Heresy.UserInterface.Documents;
+
+public sealed record SongSampleImportSource(
+	string Path,
+	SongDocument Document,
+	IReadOnlyList<SampleDefinition> Samples);
 
 /// <summary>
 /// Framework-independent sample authoring operations used by the Avalonia UI.
@@ -42,6 +50,83 @@ public static class SampleDocumentEditor
 				encoded);
 		workspace.Document.Add(sample, affectsAudio: true);
 		return sample;
+	}
+
+	public static SongSampleImportSource LoadImportSource(
+		string songPath)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(songPath);
+		string fullPath = Path.GetFullPath(songPath);
+		SongDocument document =
+			SongDocumentStorage.Load(fullPath);
+		SampleDefinition[] samples =
+			document.Objects
+				.OrderBy(pair => pair.Key.Value)
+				.Select(pair => pair.Value)
+				.OfType<SampleDefinition>()
+				.ToArray();
+		return new SongSampleImportSource(
+			fullPath,
+			document,
+			samples);
+	}
+
+	public static IReadOnlyList<SampleDefinition> ImportFromSong(
+		DocumentWorkspace workspace,
+		SongSampleImportSource source,
+		IEnumerable<ObjectId> sampleIds)
+	{
+		ArgumentNullException.ThrowIfNull(workspace);
+		ArgumentNullException.ThrowIfNull(source);
+		ArgumentNullException.ThrowIfNull(sampleIds);
+
+		HashSet<ObjectId> selected = new(sampleIds);
+		List<SampleDefinition> imported = [];
+		foreach (SampleDefinition sample in source.Samples)
+		{
+			if (!selected.Contains(sample.Id))
+				continue;
+
+			(byte[] Encoded, string FileName) encoding =
+				ReadEncodedRepresentation(sample);
+			ObjectId id = workspace.Document.AllocateObjectId();
+			SampleDefinition copy =
+				SampleDefinition.CreateImportedCopy(
+					id,
+					sample,
+					encoding.FileName,
+					encoding.Encoded);
+			workspace.Document.Add(copy, affectsAudio: true);
+			imported.Add(copy);
+		}
+
+		return imported;
+	}
+
+	private static (byte[] Encoded, string FileName) ReadEncodedRepresentation(
+		SampleDefinition sample)
+	{
+		if (sample.PendingAsset is PendingSampleAsset pending)
+		{
+			return (
+				pending.Bytes.ToArray(),
+				pending.FileName);
+		}
+
+		ExternalAssetReference asset =
+			sample.Asset
+				?? throw new InvalidOperationException(
+					$"Sample '{sample.Name}' ({sample.Id}) has no encoded representation to import.");
+		using Stream source =
+			ExternalAssetIntegrity.OpenRead(asset.FullPath);
+		using MemoryStream destination = new();
+		source.CopyTo(destination);
+		string fileName = Path.GetFileName(asset.FullPath);
+		if (string.IsNullOrWhiteSpace(fileName))
+			fileName = $"sample-{sample.Id.Value}.bin";
+		return (
+			destination.ToArray(),
+			fileName);
 	}
 
 	public static ExternalAssetCheck CheckAsset(
