@@ -1484,7 +1484,7 @@ public sealed class SongScheduleCompilerTests
 		ObjectId sequenceId = document.AllocateObjectId();
 		document.Add(new ScriptSequenceDefinition(sequenceId, "Generated")
 		{
-			Source = $"Play(_O({firstId.Value})); Play(_O({secondId.Value}), 2);",
+			Source = $"if (sequenceIndex == 0) return Play(_O({firstId.Value})); if (sequenceIndex == 1) return Play(_O({secondId.Value}), 2); return null;",
 		});
 
 		SongScheduleCompilationResult result =
@@ -1580,7 +1580,7 @@ public sealed class SongScheduleCompilerTests
 		ObjectId sequenceId = document.AllocateObjectId();
 		document.Add(new ScriptSequenceDefinition(sequenceId, "Offset beyond entry")
 		{
-			Source = $"Play(_O({firstId.Value})); Play(_O({secondId.Value}), 1);",
+			Source = $"if (sequenceIndex == 0) return Play(_O({firstId.Value})); if (sequenceIndex == 1) return Play(_O({secondId.Value}), 1); return null;",
 		});
 
 		SongScheduleCompilationResult result =
@@ -1662,7 +1662,7 @@ public sealed class SongScheduleCompilerTests
 		ObjectId sequenceId = document.AllocateObjectId();
 		document.Add(new ScriptSequenceDefinition(sequenceId, "Script arrangement")
 		{
-			Source = $"Play(_O({firstId.Value})); Play(_O({secondId.Value}));",
+			Source = $"if (sequenceIndex == 0) return Play(_O({firstId.Value})); if (sequenceIndex == 1) return Play(_O({secondId.Value})); return null;",
 		});
 
 		SongScheduleCompilationResult result =
@@ -1711,7 +1711,7 @@ public sealed class SongScheduleCompilerTests
 		ObjectId seqId = document.AllocateObjectId();
 		document.Add(new ScriptSequenceDefinition(seqId, "Late invocation")
 		{
-			Source = $"Play(_O({firstId.Value})); Play(_O({secondId.Value}));",
+			Source = $"if (sequenceIndex == 0) return Play(_O({firstId.Value})); if (sequenceIndex == 1) return Play(_O({secondId.Value})); return null;",
 		});
 
 		SongScheduleCompilationResult result =
@@ -1745,7 +1745,7 @@ public sealed class SongScheduleCompilerTests
 		ObjectId seqId = document.AllocateObjectId();
 		document.Add(new ScriptSequenceDefinition(seqId, "Repeated patterns")
 		{
-			Source = $"Play(_O({patternId.Value})); Play(_O({patternId.Value}));",
+			Source = $"if (sequenceIndex == 0) return Play(_O({patternId.Value})); if (sequenceIndex == 1) return Play(_O({patternId.Value})); return null;",
 		});
 
 		SongScheduleCompilationResult result =
@@ -1785,8 +1785,8 @@ public sealed class SongScheduleCompilerTests
 		ObjectId sequenceId = document.AllocateObjectId();
 		document.Add(new ScriptSequenceDefinition(sequenceId, "Fallback")
 		{
-			Source = $"if (Random() < 0.5) Play(_O({leftId.Value})); "
-				+ $"else Play(_O({rightId.Value}));",
+			Source = $"if (sequenceIndex != 0) return null; if (Random() < 0.5) return Play(_O({leftId.Value})); "
+				+ $"return Play(_O({rightId.Value}));",
 		});
 		SequencingContext context = new();
 		SequencingContext expected = new();
@@ -1818,7 +1818,7 @@ public sealed class SongScheduleCompilerTests
 		document.Add(
 			new ScriptSequenceDefinition(sequenceId, "Arrangement")
 			{
-				Source = $"Play(_O({patternId.Value}));",
+				Source = $"return sequenceIndex == 0 ? Play(_O({patternId.Value})) : null;",
 			});
 		document.RootSequenceId = sequenceId;
 
@@ -2012,8 +2012,8 @@ public sealed class SongScheduleCompilerTests
 			new ScriptSequenceDefinition(sequenceId, "Script")
 			{
 				Source =
-					$"Play(_O({firstPatternId.Value})); "
-						+ $"Play(_O({secondPatternId.Value}));",
+					$"if (sequenceIndex == 0) return Play(_O({firstPatternId.Value})); "
+						+ $"if (sequenceIndex == 1) return Play(_O({secondPatternId.Value})); return null;",
 			});
 
 		SongScheduleCompilationResult result =
