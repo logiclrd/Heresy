@@ -16,13 +16,15 @@ Items that were already completed remain in Git history, not in this checklist.
   and **mixdown** (private child sequencing state and a cooked multichannel
   signal exposed as one parent playback voice). A playback-channel mixdown must
   not collapse physical speaker feeds to mono.
-- [ ] Complete **within-row flattened timing and event ordering**.
-  Source-only rows and source-omitted notes now resolve from shared mapped
-  channel memory as their row executes (including flattened child changes).
-  Child tempo/effects at fractional offsets, simultaneous parent/child rows,
-  and delayed child invocations must still obey the exact parent timeline
-  rather than only affecting subsequent parent rows. Add overlapping-event
-  and within-row timing regressions.
+- [ ] Complete **concurrent flattened child/parent timing**.
+  Child tempo changes at their invocation instant now splice correctly into
+  the current parent row, including fractional invocation positions and
+  deterministic same-time ordering. Build a unified event-driven scheduler
+  for delayed tempo changes from later child rows, nested tempo ramps,
+  overlapping parent tempo slides and pattern delays, and other simultaneous
+  parent/child state changes. These unsupported combinations currently fail
+  explicitly rather than render an incorrect shared timeline. Expand
+  overlapping-effect, source-memory and within-row timing regressions.
 - [ ] Propagate pitch, playback-speed multiplier, origin timing, Note Off/Cut,
   envelope/release behavior and new-note actions through nested sources.
   Preserve snapshot isolation, deterministic random/effect memory, script
