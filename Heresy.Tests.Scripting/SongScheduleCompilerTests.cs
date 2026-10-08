@@ -135,7 +135,7 @@ public sealed class SongScheduleCompilerTests
 			.Should().Equal(200.0, 250.0);
 		tempoChanges.Select(e => e.Offset.TimeOffset)
 			.Should().OnlyContain(t => t == TimeSpan.FromMilliseconds(60));
-		result.Schedule.Single(e => e.Commands.Any(c => c is NoteCutCommand))
+		result.Schedule!.Single(e => e.Commands.Any(c => c is NoteCutCommand))
 			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(90));
 	}
 
