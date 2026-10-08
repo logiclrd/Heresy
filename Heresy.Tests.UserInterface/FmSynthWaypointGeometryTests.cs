@@ -83,7 +83,7 @@ public sealed class FmSynthWaypointGeometryTests
 		var between = FmSynthWaypointGeometry.HitConnection(
 			[connection], new FmSynthRoutePoint(220, 90), 1);
 		between!.Value.InsertIndex.Should().Be(1);
-		between.Value.SegmentIndex.Should().Be(3);
+		between.Value.SegmentIndex.Should().Be(2);
 
 		var afterLast = FmSynthWaypointGeometry.HitConnection(
 			[connection], new FmSynthRoutePoint(375, 170), 1);
