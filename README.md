@@ -330,6 +330,18 @@ are retained and the route finishes with a short horizontal approach to the
 consumer. Editor-only node positions and routing hints never alter the
 semantic audio graph.
 
+Connection waypoints are edited directly on the canvas. Pointer hit-testing
+uses a three-physical-pixel tolerance on either side of the rendered wire,
+with the display scaling accounted for. Dragging a wire creates a waypoint at
+the clicked segment's position, inserted before or after existing waypoints
+according to the location along the actual orthogonal route. A small gold
+handle marks every waypoint; drag it to move it, or double-click it to delete
+it. The path is previewed live during drag and persisted only on release,
+and a simple click without moving does not add a waypoint. Deleting the final
+waypoint clears the routing hint, restoring automatic routing. The old raw
+text waypoint editor and its buttons have been removed; these layout-only
+edits never advance the audio revision.
+
 The FM editor has a focusable `Test` audition area. With keyboard focus there,
 the same layout-independent tracker piano keys as the pattern editor
 (`Z S X D C` and higher rows) start notes on independent live virtual voices
@@ -353,9 +365,7 @@ report a validation error without changing the graph; invalid drafts are
 reverted on focus loss. Parameter edits use the current immutable node value
 when constructing the replacement, so editing another parameter does not
 overwrite unrelated committed settings. Ordinary commits refresh the graph
-without rebuilding the inspector or disrupting focus. The separate raw
-connection-routing waypoint controls remain until graphical waypoint editing
-replaces them.
+without rebuilding the inspector or disrupting focus.
 
 
 The desktop File menu offers New (`Ctrl+N`), Open (`Ctrl+O`), Save
