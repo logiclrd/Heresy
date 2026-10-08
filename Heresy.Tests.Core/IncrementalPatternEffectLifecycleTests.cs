@@ -207,14 +207,22 @@ public sealed class IncrementalPatternEffectLifecycleTests
 	}
 
 	[Test]
-	public void UnsupportedDeferredGlobalTempoChangesRemainExplicit()
+	public void DeferredGlobalTempoChangesExecuteAtNextEligibleRowBoundary()
 	{
 		SequencingContext root = new();
 		using IncrementalPatternTimeline timeline = new(root);
 		timeline.Add(new RawStream(
 			At(0, TimeSpan.FromMilliseconds(20),
-				ChannelTarget.Global, new SetTempoCommand(250))), 1, root);
-		Assert.Throws<NotSupportedException>(() => timeline.TryStep(out _));
+				ChannelTarget.Global, new SetTempoCommand(250))), 2, root);
+		NoteEvent[] events = Drain(timeline);
+		Assert.That(events, Has.Length.EqualTo(1));
+		Assert.That(events[0].Commands.Single(),
+			Is.EqualTo(new SetTempoCommand(250)));
+		Assert.That(events[0].Offset.TimeOffset,
+			Is.EqualTo(TimeSpan.FromMilliseconds(120)));
+		Assert.That(root.State.Tempo, Is.EqualTo(250));
+		Assert.That(timeline.Elapsed,
+			Is.EqualTo(TimeSpan.FromMilliseconds(180)));
 	}
 
 	private static NoteEvent At(double row, int channel, NoteCommand command)
