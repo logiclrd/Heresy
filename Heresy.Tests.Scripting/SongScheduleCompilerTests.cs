@@ -54,6 +54,38 @@ public sealed class SongScheduleCompilerTests
 	}
 
 	[Test]
+	public void ParentTempoMovesScriptedChildFractionalNoteInSharedTickDomain()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Fractional child")
+		{
+			RowCount = 3,
+			Source = $"Note(1.5, 0, _O({sampleId.Value}));",
+		});
+
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Tempo before child note")
+		{
+			RowCount = 3,
+			ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sourceId: childId);
+		parent.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new SetTempoPatternEffect(250));
+		document.Add(parent);
+
+		SongScheduleCompilationResult compilation =
+			SongScheduleCompiler.CompilePattern(document, parentId);
+		compilation.Success.Should().BeTrue();
+		NoteEvent note = compilation.Schedule!.Single(e =>
+			e.Commands.Any(c => c is StartNoteCommand));
+		note.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(150));
+	}
+
+	[Test]
 	public void ScriptedChildFractionalNoteDoesNotExecuteBeforeParentRow()
 	{
 		SongDocument document = new();
