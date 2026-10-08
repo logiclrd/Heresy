@@ -1127,7 +1127,14 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			current.ConsumeScheduled();
 			NoteEvent? output = null;
 			if (scheduled.Kind == TickOperationKind.Retrigger)
-				output = current.ExecuteRetriggerTick(scheduled);
+			{
+				NoteEvent? retrigger = current.ExecuteRetriggerTick(scheduled);
+				if (retrigger is not null)
+					output = retrigger with
+					{
+						Target = current.Context.MapTarget(retrigger.Target),
+					};
+			}
 			else if (scheduled.Kind == TickOperationKind.Cut)
 				output = scheduled.Note with
 				{
