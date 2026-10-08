@@ -205,6 +205,54 @@ public sealed class TrackerSequenceControlEffectTests
 	}
 
 	[Test]
+	public void OrderJumpObserverCanTerminateThirdEncounterWithSameBxx()
+	{
+		ObjectId patternId = (ObjectId)1U;
+		DataPatternDefinition pattern =
+			Pattern(
+				patternId,
+				rows: 1,
+				channels: 1);
+		pattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new TrackerOrderJumpPatternEffect(0));
+
+		DataSequenceDefinition sequence =
+			new((ObjectId)100U, "Loop");
+		sequence.Entries.Add(
+			new SequenceEntry(patternId));
+
+		List<SequenceOrderJumpEncounter> encounters = [];
+		NoteScheduleBuilder output = new();
+		SequenceNoteProcessor.GenerateNotes(
+			sequence.Entries,
+			new TestPatternResolver(pattern),
+			new SequencingContext(),
+			output,
+			startOrder: 0,
+			startRow: null,
+			out TimeSpan duration,
+			rowStarted: null,
+			shouldFollowOrderJump: encounter =>
+			{
+				encounters.Add(encounter);
+				return encounters.Count < 3;
+			});
+
+		Assert.That(encounters, Has.Count.EqualTo(3));
+		Assert.That(
+			encounters,
+			Has.All.EqualTo(
+				new SequenceOrderJumpEncounter(
+					patternId,
+					PatternRow: 0,
+					TargetOrder: 0)));
+		Assert.That(
+			duration,
+			Is.EqualTo(
+				TimeSpan.FromMilliseconds(360)));
+	}
+
+	[Test]
 	public void CxxStartsNextSequenceEntryAtRequestedRowWithoutExecutingSkippedRows()
 	{
 		ObjectId firstPattern = (ObjectId)1U;
