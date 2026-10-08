@@ -68,6 +68,16 @@ public sealed class SequencingContext
 	/// </summary>
 	public TimeSpan TimelineOrigin { get; set; }
 
+	/// <summary>Shared mailbox for future nested timing changes.</summary>
+	public DeferredTempoEventQueue DeferredTempoEvents { get; private set; } = new();
+
+	/// <summary>
+	/// Nested compilers produce the child schedule but must not consume
+	/// parent-time events while compiling their own future rows.
+	/// </summary>
+	public bool IsPreparingFlattenedChild { get; set; }
+
+
 	public int MapPhysicalChannel(int localChannel)
 	{
 		if (localChannel < 0)
@@ -104,6 +114,8 @@ public sealed class SequencingContext
 			FlattenedSourceExpander = FlattenedSourceExpander,
 			ResolvePatternSourcesAtRowTime = ResolvePatternSourcesAtRowTime,
 			TimelineOrigin = TimelineOrigin,
+			DeferredTempoEvents = DeferredTempoEvents,
+			IsPreparingFlattenedChild = true,
 		};
 	}
 
