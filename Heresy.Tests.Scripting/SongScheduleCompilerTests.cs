@@ -18,6 +18,77 @@ namespace Heresy.Tests.Scripting;
 public sealed class SongScheduleCompilerTests
 {
 	[Test]
+	public void ChildTempoAtFractionalParentPositionChangesRemainingRowLength()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Immediate tempo")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		child.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new SetTempoPatternEffect(250));
+		document.Add(child);
+
+		ObjectId parentId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(parentId, "Mid-row child")
+		{
+			RowCount = 2,
+			Source = $"Note(0.5, 0, _O({childId.Value})); Cut(1.0, 1);",
+		});
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompilePattern(document, parentId);
+		result.Success.Should().BeTrue();
+		result.Diagnostics.Should().BeEmpty();
+		NoteEvent cut = result.Schedule!.Single(e =>
+			e.Commands.Any(command => command is NoteCutCommand));
+		// 3 ticks at tempo 125 (60 ms), then 3 at tempo 250 (30 ms).
+		cut.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(90));
+		result.Duration.Should().Be(TimeSpan.FromMilliseconds(150));
+		NoteEvent tempo = result.Schedule.Single(e =>
+			e.Commands.Any(command => command is SetTempoCommand));
+		tempo.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(60));
+	}
+
+	[Test]
+	public void SimultaneousParentEventAndChildTempoShareTimestamp()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Child tempo")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		child.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new SetTempoPatternEffect(250));
+		document.Add(child);
+
+		ObjectId parentId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(parentId, "Same time")
+		{
+			RowCount = 2,
+			// Deliberately emit the other-channel event before the child.
+			Source = $"Cut(0.5, 1); Note(0.5, 0, _O({childId.Value})); Cut(1, 1);",
+		});
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompilePattern(document, parentId);
+
+		result.Success.Should().BeTrue();
+		NoteEvent[] cuts = result.Schedule!
+			.Where(e => e.Commands.Any(c => c is NoteCutCommand))
+			.OrderBy(e => e.Offset.TimeOffset).ToArray();
+		cuts.Should().HaveCount(2);
+		cuts[0].Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(60));
+		cuts[1].Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(90));
+		result.Schedule.Single(e =>
+			e.Commands.Any(c => c is SetTempoCommand))
+			.Offset.TimeOffset.Should().Be(cuts[0].Offset.TimeOffset);
+	}
+
+	[Test]
 	public void NestedFlattenedEventsAreGeneratedInParentsActiveChannelState()
 	{
 		SongDocument document = new();
