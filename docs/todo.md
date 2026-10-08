@@ -21,8 +21,8 @@ Items that were already completed remain in Git history, not in this checklist.
   Patterns and scripted note/cut/off events with fractional row positions,
   including mixed data/script hierarchies and data-sequence arrangements.
   Extend to scripted Sequences, nonzero StartRow, pattern control jumps,
-  non-unit pitch/speed transforms, fixed wall-time event offsets, terminal
-  script endpoint events, tracker tempo ramps, scripted/global effects,
+  non-unit pitch/speed transforms, fixed wall-time event offsets,
+  tracker tempo ramps, scripted/global effects,
   overlapping tempo slides and pattern/fine delays. Preserve the existing
   processor's semantic rules and fail explicitly for unsupported
   combinations rather than render an invalid shared timeline.
