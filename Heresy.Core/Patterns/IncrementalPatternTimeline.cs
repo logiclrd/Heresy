@@ -583,20 +583,59 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		}
 		if (current.DueTiming is { } timing)
 		{
-			// Evaluate eligible timing only at this invocation's new row
-			// boundary. Resolve against the common processor's command
-			// semantics; no timing state changed while this was pending.
+			// Eligible timing executes only at the invocation's row boundary.
+			// The common PatternNoteProcessor owns Txx memory, clamping, and
+			// its conversion to a continuous SetTempoRampCommand.
+			bool trackerTempo = timing.Commands.Count == 1
+				&& timing.Commands[0] is ApplyTrackerTempoCommand;
+			if (_tempoRamp is not null)
+				throw new NotSupportedException(
+					"Timing changes during an active tracker tempo ramp require cross-cursor arbitration.");
+
 			NoteScheduleBuilder resolvedTiming = new();
-			PatternNoteProcessor.GenerateNotes(
-				new SingleEventSlice(timing with
+			if (trackerTempo)
+			{
+				// The eager processor resolves a *whole* row and thus leaves
+				// SequencingState at the ramp's endpoint. Restore it: this
+				// shared clock must evolve only as actual time advances.
+				double initialTempo = current.Context.State.Tempo;
+				int initialSpeed = current.Context.State.Speed;
+				try
 				{
-					Offset = MusicalTime.Zero,
-				}), current.Context, resolvedTiming, out _);
+					current.Context.State.Speed = checked((int)current.RowSpeed);
+					PatternNoteProcessor.GenerateNotes(
+						new SingleEventSlice(timing with { Offset = MusicalTime.Zero }),
+						current.Context, resolvedTiming, out _);
+				}
+				finally
+				{
+					current.Context.State.Tempo = initialTempo;
+					current.Context.State.Speed = initialSpeed;
+				}
+			}
+			else
+			{
+				PatternNoteProcessor.GenerateNotes(
+					new SingleEventSlice(timing with { Offset = MusicalTime.Zero }),
+					current.Context, resolvedTiming, out _);
+			}
 			current.ConsumeTiming();
 			NoteEvent[] due = resolvedTiming.Freeze().ToArray();
-			if (due.Length != 1 || due[0].Offset.TimeOffset != TimeSpan.Zero)
+			if (due.Length > 1
+				|| due.Any(e => e.Offset.TimeOffset != TimeSpan.Zero))
 				throw new NotSupportedException(
-					"Deferred timing did not resolve to one immediate boundary command.");
+					"Incremental tracker timing produced unsupported extra operations.");
+			if (due.Length == 0)
+				return false;
+
+			if (due[0].Commands.Count == 1
+				&& due[0].Commands[0] is SetTempoRampCommand ramp)
+				StartTempoRamp(ramp);
+			else if (trackerTempo
+				&& due[0].Commands.Count == 1
+				&& due[0].Commands[0] is SetTempoCommand set)
+				_root.State.Tempo = set.TicksPerDiachron;
+
 			NoteEvent emittedTiming = due[0] with
 			{
 				Offset = new MusicalTime(Elapsed, 0),
