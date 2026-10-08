@@ -219,10 +219,13 @@ public sealed class SongScheduleCompilerTests
 		ObjectId childId = document.AllocateObjectId();
 		DataPatternDefinition child = new(childId, "Later child tempo")
 		{
-			RowCount = 2,
+			RowCount = 3,
 			ChannelCount = 1,
 		};
-		child.Grid.GetOrCreateCell(1, 0).Effects.Add(
+		// Parent changes tempo at row 1, strictly before this child
+		// reaches its row-2 tempo change. Child timings would need
+		// interleaving to know the new wall-clock location.
+		child.Grid.GetOrCreateCell(2, 0).Effects.Add(
 			new SetTempoPatternEffect(250));
 		document.Add(child);
 		ObjectId parentId = document.AllocateObjectId();
