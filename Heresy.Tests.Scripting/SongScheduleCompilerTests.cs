@@ -334,7 +334,7 @@ public sealed class SongScheduleCompilerTests
 	}
 
 	[Test]
-	public void DeferredChildTempoCannotPreemptInterveningParentTempo()
+	public void ParentTempoMovesLaterChildRowBoundaryInTickDomain()
 	{
 		SongDocument document = new();
 		ObjectId childId = document.AllocateObjectId();
@@ -361,10 +361,15 @@ public sealed class SongScheduleCompilerTests
 			new SetTempoPatternEffect(200));
 		document.Add(parent);
 
-		Action compile = () => SongScheduleCompiler.CompilePattern(
-			document, parentId);
-		compile.Should().Throw<NotSupportedException>()
-			.WithMessage("*concurrent*");
+		SongScheduleCompilationResult compiled =
+			SongScheduleCompiler.CompilePattern(document, parentId);
+		compiled.Success.Should().BeTrue();
+		compiled.Schedule!.Where(e => e.Commands.Any(c =>
+			c is SetTempoCommand))
+			.Select(e => e.Offset.TimeOffset).Should().Equal(
+				TimeSpan.FromMilliseconds(120),
+				TimeSpan.FromMilliseconds(195));
+		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(255));
 	}
 
 	[Test]
