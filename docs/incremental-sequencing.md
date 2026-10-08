@@ -670,6 +670,40 @@ model to scripted Sequence `Play` and ordering, define replay/seek
 semantics, and only then admit scripts in the recursive resolver.
 No production scheduler was switched by this proof.
 
+## Fourteenth executable step: CPU-only cooperation in the shared timeline
+
+`IncrementalPatternTimeline.TryStep` now returns
+`IncrementalPatternTimelineStep.Cooperate(InvocationId, Tick, Time)`
+when a raw producer yields `RawPatternStep.Cooperate`. This returns CPU
+control at **unchanged musical and wall time**; it emits no sound and
+does not commit Tempo, Speed, Source memory or other tracker commands.
+
+A Cursor now retains a partially prepared row across cooperation
+checkpoints. Collected raw events, ordering, row timing requests and
+delay-effect candidates remain buffered. The source enumerator resumes
+from the same position on the next call. Only when the row has been
+completely collected can its commands enter shared-clock arbitration.
+The row's starting tick, wall time and captured speed stay fixed while
+preparation is suspended. A raw CPU checkpoint's Row is informational,
+not a musical progress marker: only `Advance` denotes progress.
+
+Both the same-tick scheduler budget and per-row raw-step limit remain
+effective. Infinite silent loops return checkpoints and can be cancelled
+without moving the clock; an unbounded number of such returns at one
+tick eventually hits the existing same-tick cooperation budget.
+Tests cover a paused row with a buffered Tempo command, a fractional
+checkpoint with unchanged time, cancellation/disposal of a never-ending
+CPU-only producer, and an actual resumable Roslyn loop feeding the
+shared timeline.
+
+This **does not switch production playback/export** or add scripted
+Pattern/Sequence sources to `IncrementalRecursiveTimeline`.
+The experimental timeline still buffers a full musical row for stable
+command ordering. The next step is a resumable scripted Sequence
+`Play` producer and then safe recursive script admission, with
+deterministic Random and legacy out-of-order script semantics resolved
+before production migration.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
