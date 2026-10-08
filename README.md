@@ -308,6 +308,13 @@ the normal window-close path: when the document is dirty, the existing
 save/discard/cancel confirmation can prevent closing, just as it does for New
 and Open.
 
+Dialog action rows are anchored at the lower-right of their windows using a
+flexible content area and a bottom button row, including in resizable import
+and sample dialogs. Standard accept/confirm buttons are the Enter defaults,
+while Cancel (or the Sample editor's Close button) responds to Escape. In the
+unsaved-changes confirmation, Yes is the default, Cancel responds to Escape,
+and No remains an explicit discard choice.
+
 Opening or creating a data pattern switches the main workspace into pattern
 mode rather than opening a modal editor. The pattern grid edits semantic note
 (empty/start/off/cut), Source, Volume and effect columns directly; Start notes

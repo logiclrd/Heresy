@@ -2,19 +2,6 @@
 
 This file contains only explicitly specified work that remains open.
 
-## Dialog behavior and layout
-
-- [ ] In every dialog under `Heresy.UserInterface/Dialogs`, mark the dialog's
-  accept/confirm button as `IsDefault` and its cancel button as `IsCancel`
-  so Enter and Escape perform the expected standard dialog actions.
-- [ ] In dialogs that end with a row/array of action buttons, anchor that action
-  row to the lower-right of the dialog rather than allowing it to float with the
-  preceding content. Audit at least `ConfirmDialog`,
-  `FmSynthImportSelectionDialog`, `NativePatternEffectEditorDialog`,
-  `SampleImportSelectionDialog`, `TextPromptDialog`, and
-  `UnsavedChangesDialog`; preserve the lower-right placement even for
-  resizable dialogs.
-
 ## FM synth graph editor
 
 - [ ] Draw a small arrowhead at the sink end of every graph connection, pointing
