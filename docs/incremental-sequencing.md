@@ -770,6 +770,63 @@ snapshot-safe ownership, general script ordering, voice lifecycles and
 full timing parity remain future work. No realtime/offline production
 scheduler was changed.
 
+## Sixteenth executable step: opt-in recursive Roslyn admission
+
+`IncrementalRecursiveTimeline` now admits resumable
+`ScriptPatternDefinition` and `ScriptSequenceDefinition` sources alongside
+data Patterns and data Sequences. Core remains Roslyn-independent: an
+**optional** `IIncrementalScriptSourceCompiler` supplied to the
+coordinator compiles scripted definitions to
+`IIncrementalRawPatternNoteGenerator` or
+`IIncrementalRawSequenceEntryGenerator`. The Scripting assembly provides
+`RoslynIncrementalScriptSourceCompiler` as the explicit opt-in bridge;
+the previous two-argument constructor continues to run data sources
+without compiling scripts. An unsupported or unconfigured scripted
+source fails explicitly rather than invoking an eager fallback.
+
+Scripted Pattern invocations use exactly the same
+`IncrementalPatternTimeline.Add`, physical-channel mapping, Tempo/Speed
+state, delayed-note ownership and recursive ancestry/cycle checks as
+data children. Scripted Sequence invocations retain their own suspended
+`RawSequenceStep` enumerator and generate `Play` entries only when their
+next order is needed. Previously generated entries remain cached for Bxx
+revisits, preserving script locals, `Random` consumption and ordering
+without executing future script statements. Cxx start-row overrides are
+still one-use, and the shared Pattern timeline remains the only musical
+clock. A recursive Sequence `Cooperate` step is explicitly CPU-only
+and keeps Tick and Elapsed unchanged, with a per-invocation, same-tick
+8192-checkpoint guard.
+
+Every active Sequence order now records **the specific newly created
+Pattern frame ID**, not the latest historical child. This matters when
+a streaming Sequence finishes, skips a missing order or jumps to a
+not-yet-generated order: a completed older frame must not be reselected,
+preventing final pruning. Cancelling a subtree or disposing the
+coordinator releases suspended Sequence and Pattern enumerators while
+retaining unrelated sibling invocations.
+
+Regression coverage includes a scripted child changing Tempo before
+a parent's next row, CPU cooperation before a scripted Sequence's first
+Play, cancellation/disposal, recursive Bxx replay without triggering
+later scripted Play instructions, a genuine nested Roslyn Sequence
+launching a Roslyn Pattern with mapped channels, and explicit rejection
+of out-of-order scripted Pattern notes. The red commit demonstrated
+missing script contracts, and the first implementation run exposed the
+order-frame lifecycle bug fixed test-first before documenting.
+
+**Not a production migration.** The generic resolver still must return
+stable immutable song snapshots; this experimental bridge does not
+snapshot mutable document objects itself. Compiling scripts upon
+invocation may be expensive, so offline/realtime source preparation and
+compiled-program caching need an explicit policy. Distinct future
+scripted Play entries are still cached without a bounded-history scheme;
+a long-running script that keeps generating new orders can grow memory.
+The streaming Pattern API still rejects out-of-order note positions
+rather than preserving eager ordering. Mixdown's independent clock,
+full virtual-channel/effect parity and export bounds remain outstanding.
+Production playback/export, their eager compatibility fallback and
+`SongScheduleCompiler` are unchanged.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
