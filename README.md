@@ -254,9 +254,12 @@ acts as a momentary preview modifier: pressing a mapped tracker piano key starts
 the note at the current tracker octave without editing the pattern, and releasing
 that same physical key queues `NoteOffCommand` into the same running
 `PlaybackSession`. The operating-system Caps Lock toggle state is deliberately
-ignored. Auto-repeat does not restart a held preview, and concurrently held
-tracker keys are assigned independent preview channels so one key's release
-cannot turn off another key's note. If the window deactivates or the pattern
+ignored. Auto-repeat is consumed entirely by held preview and never falls
+through to ordinary note entry. This remains true even if Caps Lock is released
+before a still-held piano key; repeats become ordinary input only after that
+physical piano key has been released and pressed anew without Caps Lock.
+Concurrently held tracker keys are assigned independent preview channels,
+so one key's release cannot turn off another key's note. If the window deactivates or the pattern
 editor leaves the visual tree while notes are held, all preview voices are
 released proactively so a lost physical key-up cannot strand a sounding voice.
 
@@ -578,8 +581,16 @@ pitches are stored as semantic pitch multipliers relative to Heresy's existing
 C4 reference convention, so multiplier 1.0 is displayed as `C-4`; exact
 equal-tempered semitone multipliers are projected as tracker note names, while
 arbitrary multipliers remain visible numerically. `1` enters note cut and
-backtick enters note off. Every recognized note/cut/off entry advances one row,
-enabling paint-down entry. Replacing an existing start note changes its pitch
+backtick enters note off. The tracker note-entry **skip value** starts at 1.
+Press Alt+0 through Alt+9 (the physical top-row digits) to choose 0–9 rows
+to advance after every recognized note/cut/off entry. Skip 0 leaves the
+cursor on the same row; other values move it just as pressing Down that many
+times would, clamping at the final row and crossing projected sequence-pattern
+boundaries. Chord entry uses the same skip value, and the chosen value is
+shown in the pattern toolbar and retained when switching standalone patterns.
+With Caps Lock *not* pressed, physical key auto-repeat continues inserting
+notes in successive rows using this skip; with Caps Lock pressed, repeats
+remain preview-only. Replacing an existing start note changes its pitch
 but preserves its playback-speed multiplier and mixdown flag; Enter remains
 available for the detailed semantic note dialog.
 
