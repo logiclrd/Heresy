@@ -140,7 +140,7 @@ public sealed class SongScheduleCompilerTests
 	}
 
 	[Test]
-	public void DelayedFlattenedTempoChangeIsRejectedUntilChildRowsCanBeInterleaved()
+	public void DelayedFlattenedTempoChangesParentRemainderWithoutBackdating()
 	{
 		SongDocument document = new();
 		ObjectId childId = document.AllocateObjectId();
@@ -158,10 +158,16 @@ public sealed class SongScheduleCompilerTests
 			RowCount = 2,
 			Source = $"Note(0.5, 0, _O({childId.Value})); Cut(1, 1);",
 		});
-		Action compile = () => SongScheduleCompiler.CompilePattern(
-			document, parentId);
-		compile.Should().Throw<NotSupportedException>()
-			.WithMessage("*concurrent row scheduling*");
+		SongScheduleCompilationResult compiled =
+			SongScheduleCompiler.CompilePattern(document, parentId);
+		compiled.Success.Should().BeTrue();
+		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(210));
+		compiled.Schedule!.Single(e =>
+			e.Commands.Any(c => c is NoteCutCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(120));
+		compiled.Schedule!.Single(e =>
+			e.Commands.Any(c => c is SetTempoCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(180));
 	}
 
 	[Test]
