@@ -64,24 +64,56 @@ nested source can still output stereo, 5.1 or another speaker configuration.
   rejection. Unsupported parent pitch/speed/initial-volume transformations
   fail **explicitly** rather than rendering incorrect notes.
 
-**This is a limited preparation-stage integration, not yet full flattening.**
-The parent root schedule has already been compiled when child expansion
-occurs, so parent and child tracker effect memory, tempo changes and
-sequencing state are **not yet merged at the original generation point**.
-The original design requires generation inside the parent's active
-sequencing context (as events occur), which will need a deeper integration
-than a post-compilation expansion. Parent Note Off/Cut, NNA, complex effects,
-virtual channel scopes and transform semantics across the expanded child
-channel set also remain open. These constraints are tracked in the TODO.
+**This was a limited preparation-stage integration.** The newer
+in-context generation stage described below supersedes post-compilation
+expansion for ordinary song and pattern playback. The remaining source-memory,
+within-row timing, parent Note Off/Cut, NNA, virtual-channel and transform
+contracts are still tracked in the TODO.
+
+## Flattened child generation in active parent context (October 8, 2026)
+
+The compiler now installs a Core-facing
+`IFlattenedNoteSourceExpander` on its `SequencingContext` and invokes it when
+`PatternNoteProcessor` resolves a parent note start **inside the row
+processing loop**, rather than after freezing the entire parent schedule.
+The expander compiles child Patterns/Sequences on
+`SequencingContext.FlattenedChild` instances, which share both parent
+`SequencingState` and mapped `SequencingChannelStateMap`. The script and data
+compilers use the same pathway.
+
+- Child tracker effects are resolved while parent state is active, and can
+  update effect memory before subsequent parent rows. Regression tests cover
+  a child tracker volume slide remembered by a later parent `D00`.
+- Child tempo changes affect subsequent parent sequence-pattern timing.
+  `SequenceNoteProcessor` tracks the absolute origin of each sequence entry
+  without changing the local offsets emitted by `PatternNoteProcessor`.
+- Flattened note events are inserted directly into the parent's schedule
+  with their proper relative offsets and mapped physical channels. The
+  outer compiler's returned logical duration includes nested child tails,
+  without making later sequence orders wait for those tails.
+- Cyclic flattened references are rejected as they are encountered during
+  recursive compilation, and both realtime song playback and offline export
+  consume the already-expanded compiler schedule. A separate legacy expander
+  remains for arbitrary ad-hoc raw schedules that bypass normal compilation.
+
+**Remaining correctness work:** Data Pattern raw-note generation currently
+reads/resolves remembered source IDs for the entire grid before the row loop
+starts. That means a child changing `CurrentSourceId` cannot yet influence a
+later source-omitted parent note within the same parent pattern. Moreover,
+child tempo events that start partway through a parent row do not yet reshape
+that already-computed parent row's timeline; virtual channel scopes and
+parent-to-child effects, release and pitch/speed propagation remain open.
+These cases require moving more of data-note resolution into the live
+row-processing timeline and adding tests for simultaneous operations.
 
 ## Boundaries deliberately NOT complete
 
-- Ordinary `Mixdown: false` nested Pattern/Sequence notes now have a
-  basic event-expansion route, but full flattening still requires integrating
-  child generation at the parent's active sequence step to share tracker
-  memory/timing, correctly scope virtual channels, and propagate parent
-  effects and note actions. The separate child-session approach used for
-  mixdown is deliberately **not** used for flattened notes.
+- Ordinary `Mixdown: false` nested Pattern/Sequence notes are now
+  compiled at their parent's active sequencing row, sharing tracker effect
+  memory and later-row timing changes. Full flattening still requires
+  source-selection memory at row-generation time, exact within-row tempo
+  interplay, virtual-channel scoping, and parent-to-child effects/note
+  actions. No separate child session is used for flattened notes.
 - The first mixdown implementation supports unit initial pitch/speed only. It
   **rejects** other initial pitch/playback-speed multipliers rather than playing
   incorrect audio. Child pitch trajectory/time-warp and parent row-time
