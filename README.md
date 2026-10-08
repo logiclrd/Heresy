@@ -12,7 +12,7 @@ The repository is intentionally split by concern.
 - `Heresy.Render` — abstract PCM generation, playback voices/channels,
   spatialization, sample rendering, effect processing and the common renderer.
 - `Heresy.Render.SDL` — SDL3-CS realtime audio-output backend implementing the common float-PCM sink contract.
-- `Heresy.Render.File` — deterministic offline rendering plus encoded file sinks. The first concrete sink writes streaming 16-bit PCM RIFF/WAVE; FLAC and MP3 remain planned.
+- `Heresy.Render.File` — deterministic offline rendering plus streaming FLAC and 16-bit PCM RIFF/WAVE sinks. FLAC is the default lossless file format; MP3 remains planned.
 - `Heresy.UserInterface` — Avalonia single-document tracker UI. The current
   document view projects the four fixed song-tree sections into Sequences,
   Patterns, Samples and Instruments panes, with sample import/editing, external-
@@ -124,14 +124,22 @@ finish, and anti-click residue is drained. A post-Note-Off voice with no
 deterministic finite end is rejected with `IndefiniteOfflineRenderException`
 rather than being silently truncated after an arbitrary timeout.
 
-`WaveFileSink` is the first encoded sink. It writes canonical little-endian
-16-bit integer PCM RIFF/WAVE incrementally, clamps finite float PCM into the
-signed 16-bit range, rejects non-finite samples, and patches RIFF/data sizes on
-completion. It deliberately targets classic RIFF (not RF64), so data beyond the
-4-GiB RIFF limit is rejected explicitly. FLAC/MP3 sinks remain separate follow-on
-work; the current managed codec package exposes whole-buffer encode facades, and
-the file-render boundary will not conceal whole-song RAM buffering behind its
-streaming sink contract.
+`WaveFileSink` writes canonical little-endian 16-bit integer PCM RIFF/WAVE
+incrementally, clamps finite float PCM into the signed 16-bit range, rejects
+non-finite samples, and patches RIFF/data sizes on completion. It deliberately
+targets classic RIFF (not RF64), so data beyond the 4-GiB RIFF limit is rejected
+explicitly.
+
+`FlacFileSink` is the default lossless sink. It is a managed incremental FLAC
+encoder that keeps at most one 4096-frame PCM block plus bounded per-frame
+scratch storage in memory. Completed blocks are emitted immediately; arbitrary
+caller write sizes are accepted. The encoder uses constant, verbatim, or
+first-order fixed-predictor/Rice subframes per channel, emits frame/header CRCs,
+supports the FLAC 1-8 channel range, and quantizes the same 16-bit PCM domain as
+WAVE. Seekable destinations get their total-sample count patched into STREAMINFO
+on completion; non-seekable destinations remain valid with an unknown total as
+allowed by FLAC. MP3 remains follow-on work, and the file-render boundary still
+does not permit whole-song buffering merely to reach a codec facade.
 
 ## Realtime audio boundary
 
