@@ -99,7 +99,8 @@ public abstract class PatternScriptProgram
 		double pitchMultiplier = 1.0,
 		double playbackSpeedMultiplier = 1.0,
 		bool mixdown = false,
-		double? volume = null)
+		double? volume = null,
+		double timeOffsetSeconds = 0.0)
 	{
 		ValidateRow(row);
 		ValidateChannel(channel);
@@ -128,27 +129,28 @@ public abstract class PatternScriptProgram
 				pitchMultiplier,
 				playbackSpeedMultiplier,
 				mixdown,
-				volume));
+				volume),
+			timeOffsetSeconds);
 	}
 
-	protected void Off(double row, int channel)
+	protected void Off(double row, int channel, double timeOffsetSeconds = 0.0)
 	{
 		ValidateRow(row);
 		ValidateChannel(channel);
 		Append(
 			row,
 			ChannelTarget.Physical(channel),
-			new NoteOffCommand());
+			new NoteOffCommand(), timeOffsetSeconds);
 	}
 
-	protected void Cut(double row, int channel)
+	protected void Cut(double row, int channel, double timeOffsetSeconds = 0.0)
 	{
 		ValidateRow(row);
 		ValidateChannel(channel);
 		Append(
 			row,
 			ChannelTarget.Physical(channel),
-			new NoteCutCommand());
+			new NoteCutCommand(), timeOffsetSeconds);
 	}
 
 	protected void Tempo(double row, double ticksPerDiachron)
@@ -178,12 +180,16 @@ public abstract class PatternScriptProgram
 	private void Append(
 		double row,
 		ChannelTarget target,
-		NoteCommand command)
+		NoteCommand command,
+		double timeOffsetSeconds = 0.0)
 	{
+		if (!double.IsFinite(timeOffsetSeconds)
+			|| Math.Abs(timeOffsetSeconds) > TimeSpan.MaxValue.TotalSeconds)
+			throw new ArgumentOutOfRangeException(nameof(timeOffsetSeconds));
 		Checkpoint();
 		_output.Append(
 			new NoteEvent(
-				new MusicalTime(TimeSpan.Zero, row),
+				new MusicalTime(TimeSpan.FromSeconds(timeOffsetSeconds), row),
 				target,
 				[command]));
 	}
