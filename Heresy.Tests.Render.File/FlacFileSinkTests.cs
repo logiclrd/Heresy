@@ -25,7 +25,7 @@ public sealed class FlacFileSinkTests
 	}
 
 	[Test]
-	public void WritesCompletedBlocksBeforeCompleteAndRoundTripsPcm()
+	public void StreamsBeforeCompleteAndRoundTripsPcm()
 	{
 		const int frames = 5000;
 		AudioOutputFormat format =
@@ -52,11 +52,11 @@ public sealed class FlacFileSinkTests
 
 		sink.Write(pcm);
 
-		// 42 bytes is the fLaC marker plus the mandatory STREAMINFO block.
-		// A full 4096-frame block must already have been encoded rather than
-		// keeping the whole song in memory until Complete().
+		// Encoded output must already be reaching the destination before
+		// Complete(), while FramesWritten consistently reports every frame the
+		// sink has accepted rather than an internal codec block boundary.
 		stream.Length.Should().BeGreaterThan(42);
-		sink.FramesWritten.Should().Be(4096);
+		sink.FramesWritten.Should().Be(frames);
 
 		sink.Complete();
 		sink.FramesWritten.Should().Be(frames);
