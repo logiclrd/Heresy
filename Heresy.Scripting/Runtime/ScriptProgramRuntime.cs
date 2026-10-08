@@ -4,6 +4,7 @@ using System.Diagnostics;
 
 using Heresy.Core.Diagnostics;
 using Heresy.Core.Objects;
+using Heresy.Core.Sequencing;
 using Heresy.Core.Sequences;
 using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
@@ -38,6 +39,33 @@ internal sealed class ScriptExecutionBudget
 }
 
 /// <summary>
+/// Single pending raw event for a resumable script. The generated iterator
+/// suspends immediately after each helper call instead of constructing an
+/// eager note schedule.
+/// </summary>
+internal sealed class IncrementalPatternEventReceiver : INoteReceiver
+{
+	private NoteEvent? _pending;
+
+	public void Append(NoteEvent noteEvent)
+	{
+		ArgumentNullException.ThrowIfNull(noteEvent);
+		if (_pending is not null)
+			throw new InvalidOperationException(
+				"An incremental script must yield after every note helper.");
+		_pending = noteEvent;
+	}
+
+	public NoteEvent Take()
+	{
+		NoteEvent eventToYield = _pending
+			?? throw new InvalidOperationException("No raw script event is pending.");
+		_pending = null;
+		return eventToYield;
+	}
+}
+
+/// <summary>
 /// Per-invocation runtime surface inherited by compiled pattern scripts.
 /// Instances are never reused between sequencing invocations.
 /// </summary>
@@ -48,6 +76,8 @@ public abstract class PatternScriptProgram
 	private readonly double _rowCount;
 	private readonly int _channelCount;
 	private readonly ScriptExecutionBudget _budget = new();
+	private int _cooperationIterations;
+	private double _lastRawRow;
 
 	protected PatternScriptProgram(
 		SequencingContext context,
@@ -74,7 +104,32 @@ public abstract class PatternScriptProgram
 
 	internal void Execute() => ExecuteScript();
 
+	// The eager and resumable wrappers are deliberately separate. Eager
+	// callers cannot accidentally enumerate a streaming program, or vice versa.
+	internal IEnumerable<RawPatternStep> Enumerate() => EnumerateScript();
+
 	protected abstract void ExecuteScript();
+
+	protected virtual IEnumerable<RawPatternStep> EnumerateScript()
+		=> throw new NotSupportedException(
+			"This compiled script does not support resumable execution.");
+
+	protected RawPatternStep EmitPendingStep()
+		=> _output is IncrementalPatternEventReceiver receiver
+			? new RawPatternStep.Emit(receiver.Take())
+			: throw new InvalidOperationException(
+				"Resumable scripts need an invocation-local event receiver.");
+
+	protected bool ShouldCooperate()
+	{
+		// Periodic CPU cooperation is not musical progress and has no
+		// lifetime iteration ceiling for a valid infinitely looping script.
+		_cooperationIterations = (_cooperationIterations + 1) & 127;
+		return _cooperationIterations == 0;
+	}
+
+	protected RawPatternStep CpuCheckpoint()
+		=> new RawPatternStep.Cooperate(_lastRawRow);
 
 	protected ObjectId _O(uint id)
 	{
@@ -192,6 +247,7 @@ public abstract class PatternScriptProgram
 				new MusicalTime(TimeSpan.FromSeconds(timeOffsetSeconds), row),
 				target,
 				[command]));
+		_lastRawRow = row;
 	}
 
 	private void ValidateRow(double row)

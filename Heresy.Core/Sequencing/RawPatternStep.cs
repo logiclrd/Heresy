@@ -17,4 +17,11 @@ public abstract record RawPatternStep(double Row)
 	/// Row is the boundary reached, not a calculated wall-time timestamp.
 	/// </summary>
 	public sealed record Advance(double Row) : RawPatternStep(Row);
+
+	/// <summary>
+	/// Yield CPU execution without advancing musical time or resolving a
+	/// tracker command. Row is only the last raw script position observed;
+	/// consumers must not treat it as a musical progress boundary.
+	/// </summary>
+	public sealed record Cooperate(double Row) : RawPatternStep(Row);
 }

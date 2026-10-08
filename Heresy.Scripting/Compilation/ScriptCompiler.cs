@@ -121,6 +121,43 @@ public static class ScriptCompiler
 			compiled.Diagnostics);
 	}
 
+	/// <summary>
+	/// Compile a separate, invocation-local streaming Roslyn Pattern program.
+	/// The source must emit notes in nondecreasing row order. This initial
+	/// API is not used by production song compilation or the recursive
+	/// timeline until CPU checkpoint scheduling and full parity are ready.
+	/// </summary>
+	public static ScriptCompilationResult<IIncrementalRawPatternNoteGenerator>
+		CompileIncrementalPattern(ScriptPatternDefinition definition)
+	{
+		ArgumentNullException.ThrowIfNull(definition);
+
+		IReadOnlyList<ScriptAnalysisDiagnostic> restrictions =
+			ValidateIncrementalPatternStatements(definition.Source);
+		if (restrictions.Count != 0)
+			return new(null, restrictions);
+
+		string className =
+			"__HeresyIncrementalPattern_" + Guid.NewGuid().ToString("N");
+		ScriptCompilationResult<Type> compiled = CompileType(
+			definition.Source,
+			className,
+			BuildIncrementalPatternWrapper(
+				className,
+				InstrumentIncrementalPattern(definition.Source)),
+			typeof(PatternScriptProgram));
+
+		if (!compiled.Success || compiled.Program is null)
+			return new(null, compiled.Diagnostics);
+
+		return new(
+			new CompiledIncrementalPatternGenerator(
+				compiled.Program,
+				definition.RowCount,
+				definition.ChannelCount),
+			compiled.Diagnostics);
+	}
+
 	public static ScriptCompilationResult<INoteSequencer> CompileSequence(
 		ScriptSequenceDefinition definition,
 		ISequencePatternResolver resolver,
@@ -515,6 +552,73 @@ public static class ScriptCompiler
 			?? source;
 	}
 
+	private static IReadOnlyList<ScriptAnalysisDiagnostic>
+		ValidateIncrementalPatternStatements(string source)
+	{
+		SyntaxNode root = CSharpSyntaxTree.ParseText(
+			source, ScriptParseOptions).GetRoot();
+		List<ScriptAnalysisDiagnostic> diagnostics = [];
+		foreach (InvocationExpressionSyntax invocation
+			in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
+		{
+			if (invocation.Expression is not IdentifierNameSyntax name
+				|| name.Identifier.ValueText is not
+					("Note" or "Off" or "Cut" or "Tempo" or "Speed"))
+				continue;
+			if (invocation.Parent is ExpressionStatementSyntax statement
+				&& ReferenceEquals(statement.Expression, invocation))
+				continue;
+			diagnostics.Add(new ScriptAnalysisDiagnostic(
+				RestrictedFeatureCode, ScriptDiagnosticSeverity.Error,
+				"Streaming note helpers must be direct statements.",
+				new ScriptSourceSpan(invocation.Span.Start, invocation.Span.Length)));
+		}
+		return diagnostics;
+	}
+
+	private static string InstrumentIncrementalPattern(string source)
+	{
+		SyntaxNode root = CSharpSyntaxTree.ParseText(
+			source, ScriptParseOptions).GetRoot();
+		root = new LoopCheckpointRewriter(cooperative: true).Visit(root)
+			?? root;
+		return new IncrementalPatternYieldRewriter().Visit(root)
+			?.ToFullString() ?? source;
+	}
+
+	private static string BuildIncrementalPatternWrapper(
+		string className, string source)
+		=> $"""
+			using System;
+			using System.Collections.Generic;
+			using Heresy.Core.Sequencing;
+			using Heresy.Scripting.Runtime;
+
+			public sealed class {{className}} : PatternScriptProgram
+			{
+				public {{className}}(
+					SequencingContext context,
+					INoteReceiver output,
+					double rowCount,
+					int channelCount)
+					: base(context, output, rowCount, channelCount)
+				{
+				}
+
+				protected override void ExecuteScript()
+					=> throw new NotSupportedException(
+						"Use the incremental script enumerator.");
+
+				protected override IEnumerable<RawPatternStep> EnumerateScript()
+				{
+			#line 1 "heresy-script"
+			{{source}}
+			#line default
+					yield break;
+				}
+			}
+			""";
+
 	private static string BuildPatternWrapper(
 		string className,
 		string source)
@@ -692,7 +796,8 @@ public static class ScriptCompiler
 		CSharpCompilation? Compilation,
 		IReadOnlyList<ScriptAnalysisDiagnostic> Diagnostics);
 
-	private sealed class LoopCheckpointRewriter : CSharpSyntaxRewriter
+	private sealed class LoopCheckpointRewriter(bool cooperative = false)
+		: CSharpSyntaxRewriter
 	{
 		public override SyntaxNode? VisitForStatement(
 			ForStatementSyntax node)
@@ -727,14 +832,13 @@ public static class ScriptCompiler
 				Guard(visited.Statement));
 		}
 
-		private static StatementSyntax Guard(
+		private StatementSyntax Guard(
 			StatementSyntax body)
 		{
-			ExpressionStatementSyntax checkpoint =
-				SyntaxFactory.ExpressionStatement(
-					SyntaxFactory.InvocationExpression(
-						SyntaxFactory.IdentifierName(
-							"Checkpoint")));
+			StatementSyntax checkpoint = SyntaxFactory.ParseStatement(
+				cooperative
+					? "if (ShouldCooperate()) yield return CpuCheckpoint();"
+					: "Checkpoint();");
 
 			if (body is BlockSyntax block)
 			{
@@ -748,6 +852,81 @@ public static class ScriptCompiler
 					checkpoint,
 					body.WithoutLeadingTrivia())
 				.WithTriviaFrom(body);
+		}
+	}
+
+	private sealed class IncrementalPatternYieldRewriter : CSharpSyntaxRewriter
+	{
+		public override SyntaxNode? VisitExpressionStatement(
+			ExpressionStatementSyntax node)
+		{
+			ExpressionStatementSyntax visited =
+				(ExpressionStatementSyntax)(base.VisitExpressionStatement(node) ?? node);
+			if (node.Expression is not InvocationExpressionSyntax invocation
+				|| invocation.Expression is not IdentifierNameSyntax name
+				|| name.Identifier.ValueText is not
+					("Note" or "Off" or "Cut" or "Tempo" or "Speed"))
+				return visited;
+
+			// Execute the original helper (and its validation) exactly once.
+			// The next source statement cannot run before MoveNext resumes.
+			return SyntaxFactory.Block(
+				visited.WithoutLeadingTrivia(),
+				SyntaxFactory.ParseStatement("yield return EmitPendingStep();"))
+				.WithTriviaFrom(node);
+		}
+	}
+
+	private sealed class CompiledIncrementalPatternGenerator
+		: IIncrementalRawPatternNoteGenerator
+	{
+		private readonly Type _programType;
+		private readonly int _rowCount;
+		private readonly int _channelCount;
+
+		public CompiledIncrementalPatternGenerator(
+			Type programType, int rowCount, int channelCount)
+		{
+			_programType = programType;
+			_rowCount = rowCount;
+			_channelCount = channelCount;
+		}
+
+		public IEnumerable<RawPatternStep> EnumerateRawSteps(
+			SequencingContext context)
+		{
+			ArgumentNullException.ThrowIfNull(context);
+			return Enumerate(context);
+		}
+
+		private IEnumerable<RawPatternStep> Enumerate(
+			SequencingContext context)
+		{
+			IncrementalPatternEventReceiver receiver = new();
+			PatternScriptProgram program =
+				Activator.CreateInstance(
+					_programType,
+					context,
+					receiver,
+					(double)_rowCount,
+					_channelCount)
+					as PatternScriptProgram
+				?? throw new InvalidOperationException(
+					"Could not construct the incremental pattern script.");
+
+			double lastRow = 0;
+			foreach (RawPatternStep step in program.Enumerate())
+			{
+				if (step is RawPatternStep.Emit emission)
+				{
+					if (emission.Row < lastRow)
+						throw new NotSupportedException(
+							"Streaming script notes require nondecreasing row order.");
+					lastRow = emission.Row;
+				}
+				yield return step;
+			}
+			yield return new RawPatternStep.Advance(_rowCount);
 		}
 	}
 
