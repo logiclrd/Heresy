@@ -914,8 +914,19 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				out TimeSpan nominalDuration);
 			current.ConsumeEvent();
 			List<NoteEvent> immediate = [];
-			foreach (NoteEvent note in resolved.Freeze())
+			foreach (NoteEvent generated in resolved.Freeze())
 			{
+				// S6x changes the renderer's continuous-effect tick span.
+				// Use the very same override table as the eager processor,
+				// without processing future rows or replaying commands.
+				NoteEvent note = current.FineDelayTicks == 0 ? generated
+					: generated with
+					{
+						Commands = generated.Commands.Select(c =>
+							PatternNoteProcessor.ApplyRowTickOverride(
+								c, checked((int)current.EffectiveSpanTicks))!)
+							.ToArray(),
+					};
 				// The common PatternNoteProcessor is authoritative for slide
 				// transformations and tracker-effect memory. Its generated
 				// row-end freezes are deferred until this cursor's own row end.
