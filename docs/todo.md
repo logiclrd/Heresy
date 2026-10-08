@@ -127,12 +127,21 @@ Items that were already completed remain in Git history, not in this checklist.
   Random persist through iterator suspension. The consumer limits endless
   same-tick CPU cooperation to 8192 checkpoints, while advancing musical
   loops have no lifetime ceiling. The existing eager and production paths
-  remain unchanged. Next: bounded history for unbounded distinct `Play`
-  entries, snapshot-safe script ownership and recursive source admission,
-  legacy out-of-order Pattern emission parity, and deterministic effect
-  integration. Continue incompatible Tempo spans, SEy repeated Tempo,
-  SDx/Qxy, virtual/mixdown channels and advanced effects before migrating
-  production scheduling.
+  remain unchanged. `IncrementalRecursiveTimeline` now accepts scripted
+  Patterns and Sequences through an optional Core
+  `IIncrementalScriptSourceCompiler` and the explicit
+  `RoslynIncrementalScriptSourceCompiler` adapter in Scripting. All
+  flattened sources share the existing clock and nested lifetime/cycle
+  rules; scripted Sequence Play is requested lazily and Bxx revisits
+  use cached generated entries. CPU-only checkpoints do not advance time,
+  cancelled subtrees dispose script iterators, and Sequence frames use
+  the exact newly created order child rather than a finished historical
+  frame. **Production playback/export remain unchanged.**
+  Next: bounded history for unbounded distinct `Play` entries, immutable
+  snapshot and prepared/cached script ownership, eager out-of-order
+  Pattern emission parity, and deterministic effect integration.
+  Continue incompatible Tempo spans, SEy repeated Tempo, SDx/Qxy,
+  virtual/mixdown channels and advanced effects before production migration.
   Preserve out-of-order scripted-event semantics or explicitly resolve
   their ordering policy before migrating playback. Replace the existing
   restricted chronological scheduler rather than adding more special
