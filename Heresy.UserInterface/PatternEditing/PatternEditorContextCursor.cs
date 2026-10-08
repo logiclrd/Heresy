@@ -43,12 +43,12 @@ public static class PatternEditorContextCursor
 		}
 		finally
 		{
-			bool advanced =
-				cursor.VerticalAdvanceGeneration != advanceGeneration;
-			int restoredDisplayRow =
-				advanced
-					? Math.Min(context.Rows.Count - 1, displayRow + 1)
-					: displayRow;
+			// A note entry advances by the chosen tracker skip (0–9).
+			// Mapping it as a boolean used to discard all but the first
+			// step when the editor presents a flattened sequence.
+			int steps = cursor.VerticalAdvanceGeneration - advanceGeneration;
+			int restoredDisplayRow = Math.Min(
+				context.Rows.Count - 1, displayRow + steps);
 			cursor.RemapRow(restoredDisplayRow);
 			PatternEditorRow restored = context.GetRow(restoredDisplayRow);
 			cursor.ClampChannelPreservingField(
