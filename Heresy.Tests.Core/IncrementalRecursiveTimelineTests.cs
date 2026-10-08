@@ -38,8 +38,8 @@ public sealed class IncrementalRecursiveTimelineTests
 			Is.EqualTo(new NoteCommand[] {
 				new SetTempoCommand(250), new NoteOffCommand(),
 				new NoteCutCommand() }));
-		Assert.That(events[1].Target, Is.EqualTo(ChannelTarget.Physical(0)));
-		Assert.That(events[2].Target, Is.EqualTo(ChannelTarget.Physical(1)));
+		Assert.That(events[1].Target, Is.EqualTo(ChannelTarget.Physical(1)));
+		Assert.That(events[2].Target, Is.EqualTo(ChannelTarget.Physical(0)));
 		Assert.That(context.State.Tempo, Is.EqualTo(250));
 		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(90)));
 		Assert.That(timeline.IsComplete, Is.True);
