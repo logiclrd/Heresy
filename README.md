@@ -12,7 +12,7 @@ The repository is intentionally split by concern.
 - `Heresy.Render` — abstract PCM generation, playback voices/channels,
   spatialization, sample rendering, effect processing and the common renderer.
 - `Heresy.Render.SDL` — SDL3-CS realtime audio-output backend implementing the common float-PCM sink contract.
-- `Heresy.Render.File` — deterministic offline rendering plus streaming FLAC and 16-bit PCM RIFF/WAVE sinks. FLAC is the default lossless file format; MP3 remains planned.
+- `Heresy.Render.File` — deterministic offline rendering plus streaming FLAC, MP3 and 16-bit PCM RIFF/WAVE sinks. FLAC is the default lossless file format.
 - `Heresy.UserInterface` — Avalonia single-document tracker UI. The current
   document view projects the four fixed song-tree sections into Sequences,
   Patterns, Samples and Instruments panes, with sample import/editing, external-
@@ -138,9 +138,22 @@ accounting, stream lifetime and the `IAudioFileSink` contract; FLAC framing,
 prediction, Rice coding and compression decisions remain outside the project.
 The native codec runtime is bundled for the supported desktop RIDs, including
 the ELF SONAME aliases required by the Linux packages, so export does not depend
-on a system-installed codec. Arbitrary caller write sizes and non-seekable
-streams remain supported without whole-song buffering. MP3 remains follow-on
-work on the same codec boundary.
+on a system-installed codec. Arbitrary caller write sizes and non-seekable FLAC
+streams remain supported without whole-song buffering.
+
+`Mp3FileSink` uses the same `NAudio.SoundFile`/libsndfile boundary, leaving
+MPEG framing, psychoacoustics and bit allocation to the native codec stack.
+MP3 export is incremental and bounded-memory, but this libsndfile MPEG writer
+requires a seekable destination; normal file export satisfies that requirement
+and the sink rejects forward-only streams explicitly.
+
+The desktop File -> Render Audio command captures an immutable song snapshot,
+compiles the root sequence through the playback composition layer, then performs
+PCM rendering and encoding on a worker task. FLAC, MP3 and WAV are selectable,
+with FLAC suggested by default. Output is written to a temporary sibling file
+and atomically replaces the selected destination only after a successful render.
+Compilation failures and voices with no deterministic post-song end are reported
+as render failures rather than producing a silently truncated file.
 
 ## Realtime audio boundary
 
