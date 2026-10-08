@@ -271,6 +271,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 
 		private static void Validate(NoteEvent note)
 		{
+			if (note.Commands.Any(c => c is ApplyTrackerTempoCommand)
+				&& !IsTiming(note))
+				throw new NotSupportedException(
+					"Tracker Txx in a mixed-command raw note requires resumable row resolution.");
 			if (note.Offset.TimeOffset < TimeSpan.Zero)
 				throw new NotSupportedException(
 					"The incremental tick merger does not support negative wall-time offsets.");
