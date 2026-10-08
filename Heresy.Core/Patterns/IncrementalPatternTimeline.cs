@@ -50,9 +50,15 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		}
 	}
 
+	private sealed record DeferredTiming(
+		NoteEvent Raw, TimeSpan EligibleAt, long Order);
+
 	private sealed class Cursor : IDisposable
 	{
 		private readonly IEnumerator<RawPatternStep> _source;
+		private readonly List<DeferredTiming> _pendingTiming = [];
+		private readonly List<DeferredTiming> _readyTiming = [];
+		private long _nextTimingOrder;
 		private RawPatternStep? _lookahead;
 		private bool _ended;
 		private double _lastRow;
@@ -89,6 +95,9 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		public NoteEvent? DueEvent =>
 			_inRow && _eventIndex < _rowEvents.Count
 				? _rowEvents[_eventIndex] : null;
+		public NoteEvent? DueTiming =>
+			_inRow && _readyTiming.Count > 0
+				? _readyTiming[0].Raw : null;
 		public NoteEvent? DueCleanup =>
 			_inRow && DueEvent is null && _rowEndCommands.Count > 0
 				? _rowEndCommands[0] : null;
@@ -107,7 +116,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			_rowEndCommands.RemoveAt(0);
 		}
 
-		public void BeginRow(double tick)
+		public void BeginRow(double tick, TimeSpan now)
 		{
 			if (_inRow || Complete)
 				throw new InvalidOperationException("Cursor row is not available.");
@@ -131,7 +140,19 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				if (step is RawPatternStep.Emit emit && emit.Row >= Row)
 				{
 					Validate(emit.Note);
-					events.Add(emit.Note);
+					if (IsTiming(emit.Note))
+					{
+						// Fractional timing positions apply at the start of
+						// their nominal row. A positive fixed offset is an
+						// eligibility deadline, never an execution timestamp.
+						_pendingTiming.Add(new DeferredTiming(
+							emit.Note, now + emit.Note.Offset.TimeOffset,
+							_nextTimingOrder++));
+					}
+					else
+					{
+						events.Add(emit.Note);
+					}
 				}
 			}
 
@@ -146,6 +167,12 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				.Select(x => x.note)
 				.ToArray();
 			_eventIndex = 0;
+			_readyTiming.AddRange(_pendingTiming
+				.Where(t => t.EligibleAt <= now)
+				.OrderBy(t => t.EligibleAt)
+				.ThenBy(t => t.Order));
+			foreach (DeferredTiming timing in _readyTiming)
+				_pendingTiming.Remove(timing);
 			_inRow = true;
 			RefreshDue();
 		}
@@ -174,16 +201,24 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			return result is not null;
 		}
 
+
 		public void ConsumeEvent()
 		{
 			if (DueEvent is null)
 				throw new InvalidOperationException("Cursor has no due event.");
-			NoteEvent consumed = _rowEvents[_eventIndex++];
-			// Speed changes at this cursor's row boundary resize only its
-			// *own* captured row; existing rows of other cursors stay intact.
-			if (IsTiming(consumed)
-				&& DuePosition(consumed, Row, RowCount) == Row
-				&& consumed.Commands.Any(c => c is SetSpeedCommand))
+			_eventIndex++;
+			RefreshDue();
+		}
+
+		public void ConsumeTiming()
+		{
+			if (DueTiming is null)
+				throw new InvalidOperationException("Cursor has no due timing command.");
+			NoteEvent executed = _readyTiming[0].Raw;
+			_readyTiming.RemoveAt(0);
+			// A boundary Speed change resizes this cursor's own newly
+			// started row, but not any other cursor's active row.
+			if (executed.Commands.Any(c => c is SetSpeedCommand))
 				_rowSpeed = Context.State.Speed;
 			RefreshDue();
 		}
@@ -195,6 +230,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			_inRow = false;
 			_rowEvents = [];
 			_rowEndCommands.Clear();
+			_readyTiming.Clear();
 			Row++;
 			// The next row is eligible at exactly this tick. The caller
 			// decides when it executes relative to other due cursors.
@@ -202,6 +238,11 @@ public sealed class IncrementalPatternTimeline : IDisposable
 
 		private void RefreshDue()
 		{
+			if (DueTiming is not null)
+			{
+				DueTick = _rowStartTick;
+				return;
+			}
 			double position = DueEvent is { } due
 				? DuePosition(due, Row, RowCount) : Row + 1.0;
 			DueTick = _rowStartTick + (position - Row) * _rowSpeed;
@@ -225,11 +266,12 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				throw new NotSupportedException(
 					"The incremental tick merger does not support negative wall-time offsets.");
 			if (note.Offset.TimeOffset > TimeSpan.Zero
+				&& !IsTiming(note)
 				&& (note.Target.Kind != ChannelTargetKind.Physical
 					|| note.Commands.Any(c => c is not (StartNoteCommand
 						or NoteOffCommand or NoteCutCommand))))
 				throw new NotSupportedException(
-					"Positive fixed wall-time offsets are supported only on ordinary physical Note/Off/Cut.");
+					"Positive fixed wall-time offsets require standalone global Tempo/Speed or ordinary physical Note/Off/Cut.");
 			if (note.Target.Kind is not (ChannelTargetKind.Physical
 				or ChannelTargetKind.Global))
 				throw new NotSupportedException(
@@ -437,8 +479,33 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		result = null;
 		if (!current.InRow)
 		{
-			current.BeginRow(_tick);
+			current.BeginRow(_tick, Elapsed);
 			return false;
+		}
+		if (current.DueTiming is { } timing)
+		{
+			// Evaluate eligible timing only at this invocation's new row
+			// boundary. Resolve against the common processor's command
+			// semantics; no timing state changed while this was pending.
+			NoteScheduleBuilder resolvedTiming = new();
+			PatternNoteProcessor.GenerateNotes(
+				new SingleEventSlice(timing with
+				{
+					Offset = MusicalTime.Zero,
+				}), current.Context, resolvedTiming, out _);
+			current.ConsumeTiming();
+			NoteEvent[] due = resolvedTiming.Freeze().ToArray();
+			if (due.Length != 1 || due[0].Offset.TimeOffset != TimeSpan.Zero)
+				throw new NotSupportedException(
+					"Deferred timing did not resolve to one immediate boundary command.");
+			NoteEvent emittedTiming = due[0] with
+			{
+				Offset = new MusicalTime(Elapsed, 0),
+				EmissionOrder = _emissionOrder++,
+			};
+			result = new IncrementalPatternTimelineStep.Emit(
+				emittedTiming, _tick, Elapsed);
+			return true;
 		}
 		if (current.DueEvent is { } raw)
 		{
