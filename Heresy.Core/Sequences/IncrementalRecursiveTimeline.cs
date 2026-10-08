@@ -192,14 +192,14 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 		=> _scripts ?? throw new NotSupportedException(
 			"Roslyn scripted sources require an explicitly configured incremental script compiler.");
 
-	private void EnterNextOrder(Invocation sequence)
+	private long? EnterNextOrder(Invocation sequence)
 	{
 		if (sequence.Entries is null || sequence.OrdersEnded)
-			return;
+			return null;
 		if (sequence.Order >= sequence.Entries.Count)
 		{
 			sequence.OrdersEnded = sequence.ScriptEnded;
-			return;
+			return null;
 		}
 
 		SequenceEntry entry = sequence.Entries[sequence.Order];
@@ -211,12 +211,12 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 			sequence.Order++;
 			sequence.OrdersEnded = sequence.ScriptEnded
 				&& sequence.Order >= sequence.Entries.Count;
-			return;
+			return null;
 		}
 		if (source is not PatternDefinition)
 			throw new NotSupportedException(
 				$"Sequence order {sequence.Order} requires an incremental Pattern.");
-		AddInvocation(source, sequence.Context, sequence.Id,
+		return AddInvocation(source, sequence.Context, sequence.Id,
 			startRow: startRow);
 	}
 
@@ -305,14 +305,11 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 						}
 					}
 				}
-				EnterNextOrder(sequence);
-				// Mark only the Pattern representing the current order;
-				// late wall events and grandchildren of old orders
-				// remain owned but do not delay the next order.
-				sequence.OrderFrameId = sequence.Children
-					.Select(id => _frames[id])
-					.Where(f => f.PatternId.HasValue)
-					.OrderByDescending(f => f.Id).FirstOrDefault()?.Id;
+				// Only the freshly created Pattern represents this order.
+				// Never revive a finished historical frame when the script
+				// exhausts, skips an unresolved entry, or requests a
+				// not-yet-generated future order.
+				sequence.OrderFrameId = EnterNextOrder(sequence);
 			}
 		}
 		return null;
