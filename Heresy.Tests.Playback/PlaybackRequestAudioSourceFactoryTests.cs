@@ -266,6 +266,116 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
+	public void FlattenedPatternRendersThroughMappedParentChannel()
+	{
+		SongDocument document = new();
+		ObjectId sample = AddSample(document, "Sample");
+		ObjectId childPattern = AddPatternWithNote(document, sample);
+		ObjectId parentPattern = AddPatternWithNote(document, childPattern);
+		ObjectId root = AddSequence(document, parentPattern);
+
+		PlaybackRequestAudioSourceFactory factory = new(
+			MonoConfiguration(100),
+			new RecordingSampleProvider(
+				new MemorySampleData(100, 1, new float[] { 0.5f })));
+
+		IAudioOutputSource source = factory.Create(
+			SequencePlaybackRequest.Create(document, root));
+		float[] buffer = new float[1];
+		source.Render(1, buffer);
+		buffer[0].Should().BeApproximately(0.5f, 1e-6f);
+	}
+
+	[Test]
+	public void FlattenedSequenceRendersThroughMappedParentChannel()
+	{
+		SongDocument document = new();
+		ObjectId sample = AddSample(document, "Sample");
+		ObjectId childPattern = AddPatternWithNote(document, sample);
+		ObjectId childSequence = AddSequence(document, childPattern);
+		ObjectId parent = AddPatternWithNote(document, childSequence);
+		ObjectId root = AddSequence(document, parent);
+
+		PlaybackRequestAudioSourceFactory factory = new(
+			MonoConfiguration(100),
+			new RecordingSampleProvider(
+				new MemorySampleData(100, 1, new float[] { 0.375f })));
+
+		IAudioOutputSource source = factory.Create(
+			SequencePlaybackRequest.Create(document, root));
+		float[] buffer = new float[1];
+		source.Render(1, buffer);
+		buffer[0].Should().BeApproximately(0.375f, 1e-6f);
+	}
+
+	[Test]
+	public void FlattenedPatternMapsChildChannelsIntoParentPhysicalChannels()
+	{
+		SongDocument document = new();
+		ObjectId sample = AddSample(document, "Sample");
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Child")
+		{
+			RowCount = 1,
+			ChannelCount = 2,
+		};
+		for (int channel = 0; channel < 2; channel++)
+		{
+			PatternCell cell = child.Grid.GetOrCreateCell(0, channel);
+			cell.SourceId = sample;
+			cell.Note = new StartPatternNote();
+		}
+		document.Add(child);
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Parent")
+		{
+			RowCount = 1,
+			ChannelCount = 3,
+		};
+		PatternCell start = parent.Grid.GetOrCreateCell(0, 1);
+		start.SourceId = childId;
+		start.Note = new StartPatternNote();
+		document.Add(parent);
+		ObjectId root = AddSequence(document, parentId);
+		PlaybackRequestAudioSourceFactory factory = new(
+			MonoConfiguration(100),
+			new RecordingSampleProvider(
+				new MemorySampleData(100, 1, new float[] { 0.25f })));
+
+		IAudioOutputSource source = factory.Create(
+			SequencePlaybackRequest.Create(document, root));
+		float[] buffer = new float[1];
+		source.Render(1, buffer);
+		buffer[0].Should().BeApproximately(0.5f, 1e-6f);
+	}
+
+	[Test]
+	public void FlattenedRecursivePatternCycleFailsBeforeRendering()
+	{
+		SongDocument document = new();
+		ObjectId id = document.AllocateObjectId();
+		DataPatternDefinition self = new(id, "Recursive")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		PatternCell cell = self.Grid.GetOrCreateCell(0, 0);
+		cell.SourceId = id;
+		cell.Note = new StartPatternNote();
+		document.Add(self);
+		ObjectId root = AddSequence(document, id);
+		PlaybackRequestAudioSourceFactory factory = new(
+			MonoConfiguration(100),
+			new RecordingSampleProvider(
+				new MemorySampleData(100, 1, new float[] { 1.0f })));
+
+		Action create = () =>
+			factory.Create(SequencePlaybackRequest.Create(document, root));
+		create.Should().Throw<InvalidOperationException>()
+			.WithMessage("*cycle*");
+	}
+
+	[Test]
 	public void NestedPatternMixdownRendersThroughPlaybackSnapshotResolver()
 	{
 		SongDocument document = new();
