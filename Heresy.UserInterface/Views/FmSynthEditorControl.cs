@@ -110,7 +110,8 @@ public sealed class FmSynthEditorControl : UserControl
 				synth,
 				SelectNode,
 				MoveNode,
-				ConnectNodes);
+				ConnectNodes,
+				EditConnectionWaypoints);
 		_selectedNodeId =
 			synth.Graph.OutputNodeId;
 		_canvas.SetSelectedNode(
@@ -577,6 +578,38 @@ public sealed class FmSynthEditorControl : UserControl
 		}
 	}
 
+	private void EditConnectionWaypoints(
+		int sourceNodeId,
+		int targetNodeId,
+		int targetInputIndex,
+		IReadOnlyList<FmSynthRoutePoint> waypoints)
+	{
+		try
+		{
+			if (waypoints.Count == 0)
+			{
+				FmSynthDocumentEditor.ClearRoutingHint(
+					_workspace, _synth, targetNodeId, targetInputIndex);
+			}
+			else
+			{
+				FmSynthDocumentEditor.SetRoutingHint(
+					_workspace, _synth, sourceNodeId,
+					targetNodeId, targetInputIndex, waypoints);
+			}
+
+			_canvas.Refresh();
+			_canvas.SetSelectedNode(_selectedNodeId);
+			_changed($"Updated waypoints into FM node #{targetNodeId}");
+		}
+		catch (Exception ex)
+		{
+			_message.Text = $"Could not edit FM connection: {ex.Message}";
+			_canvas.Refresh();
+			_canvas.SetSelectedNode(_selectedNodeId);
+		}
+	}
+
 	private void RebuildInspector()
 	{
 		_inspector.Children.Clear();
@@ -662,8 +695,6 @@ public sealed class FmSynthEditorControl : UserControl
 					op);
 				break;
 		}
-
-		AddRoutingInspector(node);
 
 		Button remove =
 			Button(
@@ -886,124 +917,6 @@ public sealed class FmSynthEditorControl : UserControl
 								live.Id, live.Operation, parsed);
 					});
 			});
-	}
-
-	private void AddRoutingInspector(
-		FmSynthNode node)
-	{
-		if (node.InputNodeIds.Count == 0)
-			return;
-
-		_inspector.Children.Add(
-			new Separator());
-		_inspector.Children.Add(
-			new TextBlock
-			{
-				Text = "Connection routing",
-				FontWeight = FontWeight.SemiBold,
-			});
-		_inspector.Children.Add(
-			new TextBlock
-			{
-				Text =
-					"Optional waypoints use invariant x,y pairs separated by semicolons. Empty means automatic routing.",
-				TextWrapping = TextWrapping.Wrap,
-				FontSize = 11,
-			});
-
-		for (int inputIndex = 0;
-			inputIndex < node.InputNodeIds.Count;
-			inputIndex++)
-		{
-			int capturedIndex = inputIndex;
-			int sourceId =
-				node.InputNodeIds[inputIndex];
-			FmSynthConnectionRoutingHint? hint =
-				_synth.ConnectionRoutingHints
-					.FirstOrDefault(candidate =>
-						candidate.SourceNodeId
-							== sourceId
-						&& candidate.TargetNodeId
-							== node.Id
-						&& candidate.TargetInputIndex
-							== inputIndex);
-			TextBox route =
-				new()
-				{
-					Text =
-						hint is null
-							? string.Empty
-							: FormatRoutePoints(
-								hint.RoutePoints),
-				};
-			AddField(
-				$"Input {inputIndex} from #{sourceId}",
-				route);
-
-			StackPanel actions =
-				new()
-				{
-					Orientation = Orientation.Horizontal,
-					Spacing = 6,
-				};
-			actions.Children.Add(
-				Button(
-					"Apply waypoints",
-					() =>
-					{
-						try
-						{
-							FmSynthRoutePoint[] points =
-								ParseRoutePoints(
-									route.Text);
-							if (points.Length == 0)
-							{
-								FmSynthDocumentEditor.ClearRoutingHint(
-									_workspace,
-									_synth,
-									node.Id,
-									capturedIndex);
-							}
-							else
-							{
-								FmSynthDocumentEditor.SetRoutingHint(
-									_workspace,
-									_synth,
-									sourceId,
-									node.Id,
-									capturedIndex,
-									points);
-							}
-							_canvas.Refresh();
-							_canvas.SetSelectedNode(
-								_selectedNodeId);
-							_changed(
-								$"Updated route into FM node #{node.Id}");
-						}
-						catch (Exception ex)
-						{
-							_message.Text = ex.Message;
-						}
-					}));
-			actions.Children.Add(
-				Button(
-					"Auto",
-					() =>
-					{
-						FmSynthDocumentEditor.ClearRoutingHint(
-							_workspace,
-							_synth,
-							node.Id,
-							capturedIndex);
-						route.Text = string.Empty;
-						_canvas.Refresh();
-						_canvas.SetSelectedNode(
-							_selectedNodeId);
-						_changed(
-							$"Reset route into FM node #{node.Id}");
-					}));
-			_inspector.Children.Add(actions);
-		}
 	}
 
 	/// <summary>
@@ -1297,60 +1210,6 @@ public sealed class FmSynthEditorControl : UserControl
 			}
 		}
 		return result;
-	}
-
-	private static string FormatRoutePoints(
-		IReadOnlyList<FmSynthRoutePoint> points)
-		=> string.Join(
-			"; ",
-			points.Select(point =>
-				$"{point.X.ToString("R", CultureInfo.InvariantCulture)},"
-				+ point.Y.ToString(
-					"R",
-					CultureInfo.InvariantCulture)));
-
-	private static FmSynthRoutePoint[] ParseRoutePoints(
-		string? text)
-	{
-		if (string.IsNullOrWhiteSpace(text))
-			return [];
-
-		string[] waypoints =
-			text.Split(
-				';',
-				StringSplitOptions.RemoveEmptyEntries
-					| StringSplitOptions.TrimEntries);
-		List<FmSynthRoutePoint> result = [];
-		foreach (string waypoint in waypoints)
-		{
-			string[] components =
-				waypoint.Split(
-					',',
-					StringSplitOptions.TrimEntries);
-			if (components.Length != 2
-				|| !double.TryParse(
-					components[0],
-					NumberStyles.Float,
-					CultureInfo.InvariantCulture,
-					out double x)
-				|| !double.TryParse(
-					components[1],
-					NumberStyles.Float,
-					CultureInfo.InvariantCulture,
-					out double y)
-				|| !double.IsFinite(x)
-				|| !double.IsFinite(y))
-			{
-				throw new ArgumentException(
-					$"Routing waypoint '{waypoint}' must be written as finite invariant x,y.");
-			}
-
-			result.Add(
-				new FmSynthRoutePoint(
-					x,
-					y));
-		}
-		return [.. result];
 	}
 
 	private static string NodeName(
