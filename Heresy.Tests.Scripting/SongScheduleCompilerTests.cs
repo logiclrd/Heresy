@@ -19,6 +19,47 @@ public sealed class SongScheduleCompilerTests
 {
 
 	[Test]
+	public void ScriptedTerminalSpeedChangesNextOrderButNotCompletedFinalRow()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new DataPatternDefinition(childId, "Simple child")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		});
+		ObjectId firstId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(firstId, "Terminal Speed")
+		{
+			RowCount = 1,
+			Source = $"Note(0, 0, _O({childId.Value})); Speed(1, 3);",
+		});
+		ObjectId secondId = document.AllocateObjectId();
+		DataPatternDefinition second = new(secondId, "Next order")
+		{
+			RowCount = 1,
+			ChannelCount = 2,
+		};
+		second.Grid.GetOrCreateCell(0, 1).Note = new PatternNoteCut();
+		document.Add(second);
+		ObjectId songId = document.AllocateObjectId();
+		DataSequenceDefinition sequence = new(songId, "Song");
+		sequence.Entries.Add(new SequenceEntry(firstId));
+		sequence.Entries.Add(new SequenceEntry(secondId));
+		document.Add(sequence);
+
+		SongScheduleCompilationResult compiled =
+			SongScheduleCompiler.CompileSequence(document, songId);
+
+		compiled.Success.Should().BeTrue();
+		compiled.Schedule!.Single(e => e.Commands.Any(c => c is SetSpeedCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(120));
+		compiled.Schedule!.Single(e => e.Commands.Any(c => c is NoteCutCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(120));
+		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(180));
+	}
+
+	[Test]
 	public void ScriptedSpeedChangesItsOwnCurrentRowBeforeFractionalEvents()
 	{
 		SongDocument document = new();
@@ -173,7 +214,7 @@ public sealed class SongScheduleCompilerTests
 				&& e.Commands.Any(c => c is NoteCutCommand))
 			.Select(e => e.Offset.TimeOffset).Should().Equal(
 				TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(180));
-		compiled.PlaybackPositions.Single(p => p.PatternId == secondId)
+		compiled.PlaybackPositions.First(p => p.PatternId == secondId)
 			.Offset.Should().Be(TimeSpan.FromMilliseconds(120));
 		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(240));
 	}
