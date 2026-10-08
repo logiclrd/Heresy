@@ -15,7 +15,8 @@ public sealed record PatternEditorOpenState(
 	PatternCellField Field,
 	PatternEditMask EditMask = PatternEditMask.Default,
 	double? CurrentVolume = null,
-	PatternChordInputSnapshot? Chord = null);
+	PatternChordInputSnapshot? Chord = null,
+	int SkipRows = 1);
 
 public sealed record PatternEditorSwitchRequest(
 	int Delta,
