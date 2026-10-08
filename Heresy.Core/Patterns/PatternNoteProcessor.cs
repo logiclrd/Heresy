@@ -145,6 +145,12 @@ public static class PatternNoteProcessor
 		if (startRow < 0)
 			throw new ArgumentOutOfRangeException(nameof(startRow));
 
+		// The deferred Source-column vocabulary is emitted only by data
+		// patterns. Script patterns keep their independent explicit note
+		// semantics, including source ID 0.
+		bool deferredDataSources = context.ResolvePatternSourcesAtRowTime
+			&& generator is DataPatternDefinition;
+
 		NoteScheduleBuilder rawBuilder = new();
 		generator.GenerateRawNotes(context, rawBuilder, out double rowCount);
 		NoteSchedule rawSchedule = rawBuilder.Freeze();
@@ -348,7 +354,8 @@ public static class PatternNoteProcessor
 				ResolvedCommands commands = ResolveCommands(
 					ordinaryEvent,
 					context,
-					rowTicksOverride);
+					rowTicksOverride,
+					deferredDataSources);
 
 				double commandTickPosition =
 					eventTickPosition;
@@ -1450,12 +1457,14 @@ public static class PatternNoteProcessor
 	private static ResolvedCommands ResolveCommands(
 		NoteEvent noteEvent,
 		SequencingContext context,
-		int? rowTicksOverride)
+		int? rowTicksOverride,
+		bool deferredDataSources)
 	{
 		// Source selection is a row-level sequencer operation, not a raw
 		// grid preprocessing side effect. In particular, a flattened child
 		// may have replaced this physical channel's remembered source.
-		noteEvent = ResolveRowSourceCommands(noteEvent, context);
+		if (deferredDataSources)
+			noteEvent = ResolveRowSourceCommands(noteEvent, context);
 		List<NoteCommand>? transformed =
 			rowTicksOverride.HasValue
 				? new List<NoteCommand>(noteEvent.Commands.Count)
