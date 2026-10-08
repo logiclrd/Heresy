@@ -195,6 +195,80 @@ public sealed class LivePlaybackEventTests
 	}
 
 
+	[Test]
+	public void LiveVirtualNoteOffCutsPreviewVoiceWhenSourceCannotTailOff()
+	{
+		ObjectId sourceId = (ObjectId)7U;
+		PlaybackSession session =
+			new(
+				new RenderContext(
+					new RenderConfiguration(
+						4,
+						new[]
+						{
+							new OutputChannelConfiguration(
+								Vector3.Zero,
+								positionalImportance: 0.0),
+						})),
+				new NoteScheduleBuilder().Freeze(),
+				new Resolver(
+					sourceId,
+					new InfiniteSound()));
+		PlaybackSessionAudioSource source =
+			new(session);
+
+		source.EnqueueLiveEvent(
+			ChannelTarget.Virtual(42),
+			[new StartNoteCommand(sourceId)]);
+		float[] sounding = new float[1];
+		source.Render(1, sounding);
+
+		source.EnqueueLiveEvent(
+			ChannelTarget.Virtual(42),
+			[new NoteOffCommand()]);
+		float[] released = new float[1];
+		source.Render(1, released);
+
+		sounding[0].Should().Be(1.0f);
+		released[0].Should().Be(0.0f);
+	}
+
+	private sealed class InfiniteSound : ISound
+	{
+		public NoteConfigurationSnapshot SnapshotNoteConfiguration()
+			=> NoteConfigurationSnapshot.Default;
+
+		public SoundState CreateState()
+			=> new InfiniteSoundState();
+
+		public long? GetEndFrameExclusive(
+			RenderContext context,
+			SoundState state)
+		{
+			_ = context;
+			_ = state;
+			return null;
+		}
+
+		public void Render(
+			RenderContext context,
+			SoundState state,
+			long startFrame,
+			int frameCount,
+			Span<float> destination)
+		{
+			_ = context;
+			_ = state;
+			_ = startFrame;
+			for (int frame = 0; frame < frameCount; frame++)
+				destination[frame] += 1.0f;
+		}
+	}
+
+	private sealed class InfiniteSoundState : SoundState
+	{
+	}
+
 	private sealed class Resolver : ISoundResolver
 	{
 		private readonly ObjectId _id;

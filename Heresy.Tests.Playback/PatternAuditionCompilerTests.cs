@@ -179,8 +179,7 @@ public sealed class PatternAuditionCompilerTests
 			ChannelTarget.Physical(2));
 		liveEvent.Commands.Should().Equal(
 			new NoteOffCommand(),
-			new SetCurrentVoiceDisplacementActionCommand(
-				NoteDisplacementAction.Cut),
+			new NoteCutCommand(),
 			new StartNoteCommand(sourceId));
 	}
 
