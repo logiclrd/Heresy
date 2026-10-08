@@ -18,10 +18,13 @@ namespace Heresy.Core.Sequences;
 public sealed class IncrementalSequenceCursor : IDisposable
 {
 	private const int MaximumCooperationPerStep = 8192;
+	private const double TickTolerance = 1e-9;
 
 	private readonly List<SequenceEntry> _entries;
 	private IEnumerator<RawSequenceStep>? _scriptEnumerator;
 	private bool _sourceEnded;
+	private double _lastCooperationTick = double.NegativeInfinity;
+	private int _cooperationAtTick;
 	private readonly ISequencePatternResolver _resolver;
 	private readonly SequencingContext _context;
 	private readonly IncrementalPatternTimeline _timeline;
@@ -186,6 +189,7 @@ public sealed class IncrementalSequenceCursor : IDisposable
 						_entries.Add(play.Entry);
 						break;
 					case RawSequenceStep.Cooperate:
+						CheckScriptCooperationBudget();
 						checkpoint = new IncrementalPatternTimelineStep.Cooperate(
 							-1, Tick, Elapsed);
 						return false;
@@ -239,6 +243,21 @@ public sealed class IncrementalSequenceCursor : IDisposable
 		_currentInvocation = _timeline.Add(
 			generator, definition.RowCount, _context, startRow);
 		return true;
+	}
+
+	private void CheckScriptCooperationBudget()
+	{
+		// This persists across TryStep calls. Returning control without
+		// musical progress is useful, but an infinite CPU-only loop must
+		// not permanently starve playback at one tracker instant.
+		if (Math.Abs(Tick - _lastCooperationTick) > TickTolerance)
+		{
+			_lastCooperationTick = Tick;
+			_cooperationAtTick = 0;
+		}
+		if (++_cooperationAtTick > MaximumCooperationPerStep)
+			throw new InvalidOperationException(
+				"Incremental Sequence exceeded its same-tick CPU cooperation budget.");
 	}
 
 	private void FinishCurrentOrder()
