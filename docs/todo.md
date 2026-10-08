@@ -39,15 +39,6 @@ This file contains only explicitly specified work that remains open.
   of the rendered line. Double-clicking an existing waypoint should delete it.
   Once this interaction exists, remove the raw waypoint-data editing UI.
 
-## Pattern note preview
-
-- [ ] Fix Note Off on release of a previewed tracker-key note. Releasing the key
-  must stop the same preview voice rather than leaving notes accumulated on
-  virtual channels.
-- [ ] Fix replacement of an existing preview voice when a new note is entered in
-  the same tracker channel. The previous voice must receive Note Off before the
-  new note starts and must not be left accumulating on a virtual channel.
-
 ## Offline rendering and export
 
 - [ ] Export must not fail merely because a voice has no deterministic natural
