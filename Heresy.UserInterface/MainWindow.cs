@@ -22,9 +22,12 @@ using Heresy.Core.Persistence;
 using Heresy.Core.Samples;
 using Heresy.Core.Sequences;
 using Heresy.Playback;
+using Heresy.Render.Configuration;
+using Heresy.Render.File;
 using Heresy.Render.Realtime;
 using Heresy.UserInterface.Dialogs;
 using Heresy.UserInterface.Documents;
+using Heresy.UserInterface.Exporting;
 using Heresy.UserInterface.PatternEditing;
 using Heresy.UserInterface.ViewModels;
 using Heresy.UserInterface.Views;
@@ -71,11 +74,30 @@ public sealed class MainWindow : Window
 			},
 		};
 
+	private static readonly FilePickerFileType FlacRenderFileType =
+		new("FLAC audio")
+		{
+			Patterns = new[] { "*.flac" },
+		};
+
+	private static readonly FilePickerFileType Mp3RenderFileType =
+		new("MP3 audio")
+		{
+			Patterns = new[] { "*.mp3" },
+		};
+
+	private static readonly FilePickerFileType WaveRenderFileType =
+		new("WAV audio")
+		{
+			Patterns = new[] { "*.wav" },
+		};
+
 	private static readonly DataFormat<SongTreeNode> TreeNodeFormat =
 		DataFormat.CreateInProcessFormat<SongTreeNode>("Heresy.SongTreeNode");
 
 	private readonly DocumentWorkspace _workspace;
 	private readonly ISongPlaybackTransport? _playbackTransport;
+	private readonly SongExportService _exportService;
 	private readonly IPlaybackPositionTransport? _playbackPositionTransport;
 	private readonly UserInterfaceConfiguration _uiConfiguration = new();
 	private readonly Dictionary<SongTreeSection, TreeView> _trees = [];
@@ -95,7 +117,8 @@ public sealed class MainWindow : Window
 	public MainWindow()
 		: this(
 			new DocumentWorkspace(),
-			playbackTransport: null)
+			playbackTransport: null,
+			CreateDefaultExportService())
 	{
 	}
 
@@ -103,7 +126,18 @@ public sealed class MainWindow : Window
 		ISongPlaybackTransport playbackTransport)
 		: this(
 			new DocumentWorkspace(),
-			playbackTransport)
+			playbackTransport,
+			CreateDefaultExportService())
+	{
+	}
+
+	public MainWindow(
+		ISongPlaybackTransport playbackTransport,
+		SongExportService exportService)
+		: this(
+			new DocumentWorkspace(),
+			playbackTransport,
+			exportService)
 	{
 	}
 
@@ -111,17 +145,32 @@ public sealed class MainWindow : Window
 		DocumentWorkspace workspace)
 		: this(
 			workspace,
-			playbackTransport: null)
+			playbackTransport: null,
+			CreateDefaultExportService())
 	{
 	}
 
 	internal MainWindow(
 		DocumentWorkspace workspace,
 		ISongPlaybackTransport? playbackTransport)
+		: this(
+			workspace,
+			playbackTransport,
+			CreateDefaultExportService())
+	{
+	}
+
+	internal MainWindow(
+		DocumentWorkspace workspace,
+		ISongPlaybackTransport? playbackTransport,
+		SongExportService exportService)
 	{
 		_workspace = workspace
 			?? throw new ArgumentNullException(nameof(workspace));
 		_playbackTransport = playbackTransport;
+		_exportService =
+			exportService
+				?? throw new ArgumentNullException(nameof(exportService));
 		_playbackPositionTransport =
 			playbackTransport as IPlaybackPositionTransport;
 		if (_playbackPositionTransport is not null)
@@ -327,6 +376,9 @@ public sealed class MainWindow : Window
 		MenuItem saveAsItem = new() { Header = "Save _As..." };
 		saveAsItem.Click += async (_, _) => await SaveDocumentAsAsync();
 
+		MenuItem renderItem = new() { Header = "_Render Audio..." };
+		renderItem.Click += async (_, _) => await RenderAudioAsync();
+
 		MenuItem file =
 			new()
 			{
@@ -338,6 +390,8 @@ public sealed class MainWindow : Window
 					new Separator(),
 					saveItem,
 					saveAsItem,
+					new Separator(),
+					renderItem,
 				},
 			};
 
@@ -477,6 +531,137 @@ public sealed class MainWindow : Window
 			return false;
 		}
 	}
+
+	private async Task RenderAudioAsync()
+	{
+		if (!StorageProvider.CanSave)
+		{
+			SetStatus("This platform does not provide a save-file picker.");
+			return;
+		}
+
+		if (_workspace.Document.RootSequenceId.IsNone)
+		{
+			SetStatus("Render failed: the song does not have a root sequence.");
+			return;
+		}
+
+		SaveFilePickerResult result =
+			await StorageProvider.SaveFilePickerWithResultAsync(
+				new FilePickerSaveOptions
+				{
+					Title = "Render Heresy song",
+					SuggestedFileName =
+						GetSuggestedRenderFileName(),
+					DefaultExtension = "flac",
+					FileTypeChoices =
+						new[]
+						{
+							FlacRenderFileType,
+							Mp3RenderFileType,
+							WaveRenderFileType,
+						},
+				});
+
+		IStorageFile? file = result.File;
+		if (file is null)
+			return;
+
+		string? path = file.TryGetLocalPath();
+		if (path is null)
+		{
+			SetStatus("The selected render destination does not expose a local filesystem path.");
+			return;
+		}
+
+		OfflineAudioFileFormat format =
+			ResolveRenderFormat(
+				result.SelectedFileType?.Name,
+				path);
+
+		SetStatus($"Rendering {Path.GetFileName(path)}...");
+		try
+		{
+			OfflineRenderResult render =
+				await _exportService.ExportAsync(
+					_workspace.Document,
+					path,
+					format);
+			SetStatus(
+				$"Rendered {Path.GetFileName(path)} ({render.TotalFrameCount:N0} frames).");
+		}
+		catch (IndefiniteOfflineRenderException ex)
+		{
+			SetStatus(
+				$"Render failed: {ex.Message} Add a finite release or otherwise terminate the source before the song ends.");
+		}
+		catch (PlaybackSourceCompilationException ex)
+		{
+			SetStatus(
+				$"Render failed while compiling the song: {ex.Message}");
+		}
+		catch (Exception ex)
+		{
+			SetStatus($"Render failed: {ex.Message}");
+		}
+	}
+
+	private string GetSuggestedRenderFileName()
+	{
+		string sourceName =
+			_workspace.FilePath is null
+				? "song"
+				: Path.GetFileName(_workspace.FilePath);
+		string baseName =
+			sourceName.EndsWith(
+					".hm.json",
+					StringComparison.OrdinalIgnoreCase)
+				? sourceName[..^8]
+				: Path.GetFileNameWithoutExtension(sourceName);
+		if (string.IsNullOrWhiteSpace(baseName))
+			baseName = "song";
+		return baseName + ".flac";
+	}
+
+	private static OfflineAudioFileFormat ResolveRenderFormat(
+		string? selectedFileTypeName,
+		string path)
+	{
+		if (string.Equals(
+			selectedFileTypeName,
+			Mp3RenderFileType.Name,
+			StringComparison.Ordinal))
+		{
+			return OfflineAudioFileFormat.Mp3;
+		}
+		if (string.Equals(
+			selectedFileTypeName,
+			WaveRenderFileType.Name,
+			StringComparison.Ordinal))
+		{
+			return OfflineAudioFileFormat.Wave;
+		}
+		if (string.Equals(
+			selectedFileTypeName,
+			FlacRenderFileType.Name,
+			StringComparison.Ordinal))
+		{
+			return OfflineAudioFileFormat.Flac;
+		}
+
+		return Path.GetExtension(path).ToLowerInvariant() switch
+		{
+			".mp3" => OfflineAudioFileFormat.Mp3,
+			".wav" => OfflineAudioFileFormat.Wave,
+			_ => OfflineAudioFileFormat.Flac,
+		};
+	}
+
+	private static SongExportService CreateDefaultExportService()
+		=> new(
+			new OfflineSongRenderPlanFactory(
+				RenderConfiguration.Stereo(
+					sampleRate: 48000)));
 
 	private async Task<bool> ConfirmCanReplaceDocumentAsync()
 		=> await UnsavedChangesGuard.CanProceedAsync(

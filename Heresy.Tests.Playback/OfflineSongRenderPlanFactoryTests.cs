@@ -95,16 +95,8 @@ public sealed class OfflineSongRenderPlanFactoryTests
 	public void CompilationFailureUsesPlaybackCompilationException()
 	{
 		SongDocument document = new();
-		ObjectId sequenceId = document.AllocateObjectId();
-		DataSequenceDefinition sequence =
-			new(
-				sequenceId,
-				"Broken");
-		sequence.Entries.Add(
-			new SequenceEntry(
-				(ObjectId)999U));
-		document.Add(sequence);
-		document.RootSequenceId = sequenceId;
+		document.RootSequenceId =
+			(ObjectId)999U;
 		document.MarkChanged(
 			affectsAudio: true);
 
