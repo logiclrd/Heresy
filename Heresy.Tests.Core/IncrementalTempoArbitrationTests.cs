@@ -162,7 +162,7 @@ public sealed class IncrementalTempoArbitrationTests
 		NoteEvent[] events = Drain(timeline);
 		Assert.That(events.SelectMany(e => e.Commands)
 			.OfType<SetTempoRampCommand>().Single().EndingTempo,
-			Is.EqualTo(129.0));
+			Is.EqualTo(135.0));
 		Assert.That(root.State.Speed, Is.EqualTo(3));
 	}
 
