@@ -22,8 +22,10 @@ public sealed class FmSynthGraphCanvas : UserControl
 	private readonly FmSynthDefinition _synth;
 	private readonly Action<int> _selected;
 	private readonly Action<int, double, double> _moved;
+	private readonly Action<int, int, int> _connected;
 	private readonly Canvas _canvas = new();
 	private readonly ConnectionLayer _connectionLayer;
+	private readonly ConnectionLayer _portLayer;
 	private readonly Dictionary<int, Border> _nodeControls = [];
 	private readonly Dictionary<int, FmSynthNodePosition> _positions = [];
 
@@ -31,11 +33,15 @@ public sealed class FmSynthGraphCanvas : UserControl
 	private int? _dragNodeId;
 	private Point _dragPointerStart;
 	private FmSynthNodePosition _dragOriginal;
+	private int? _hoverNodeId;
+	private FmSynthConnectionPort? _dragPort;
+	private Point _dragPortPointer;
 
 	public FmSynthGraphCanvas(
 		FmSynthDefinition synth,
 		Action<int> selected,
-		Action<int, double, double> moved)
+		Action<int, double, double> moved,
+		Action<int, int, int> connected)
 	{
 		_synth =
 			synth
@@ -46,6 +52,9 @@ public sealed class FmSynthGraphCanvas : UserControl
 		_moved =
 			moved
 				?? throw new ArgumentNullException(nameof(moved));
+		_connected =
+			connected
+				?? throw new ArgumentNullException(nameof(connected));
 
 		MinWidth = 1200;
 		MinHeight = 720;
@@ -54,6 +63,12 @@ public sealed class FmSynthGraphCanvas : UserControl
 		_connectionLayer =
 			new ConnectionLayer(
 				DrawConnections)
+			{
+				IsHitTestVisible = false,
+			};
+		_portLayer =
+			new ConnectionLayer(
+				DrawConnectionPorts)
 			{
 				IsHitTestVisible = false,
 			};
@@ -71,12 +86,18 @@ public sealed class FmSynthGraphCanvas : UserControl
 			_connectionLayer);
 		root.Children.Add(
 			_canvas);
+		// Handles and the in-progress drag must remain visible above nodes;
+		// this overlay never intercepts pointer events from the canvas.
+		root.Children.Add(
+			_portLayer);
 		Content = root;
 		Refresh();
 	}
 
 	public void Refresh()
 	{
+		_hoverNodeId = null;
+		_dragPort = null;
 		_canvas.Children.Clear();
 		_nodeControls.Clear();
 		_positions.Clear();
@@ -110,6 +131,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 
 		ApplySelectionVisuals();
 		_connectionLayer.InvalidateVisual();
+		_portLayer.InvalidateVisual();
 	}
 
 	public void SetSelectedNode(
@@ -206,6 +228,116 @@ public sealed class FmSynthGraphCanvas : UserControl
 		}
 	}
 
+	private void DrawConnectionPorts(
+		DrawingContext context)
+	{
+		if (_dragPort is FmSynthConnectionPort start)
+		{
+			context.DrawLine(
+				new Pen(Brushes.LightSkyBlue, 2.0),
+				new Point(start.Center.X, start.Center.Y),
+				_dragPortPointer);
+		}
+
+		foreach (FmSynthNode node in _synth.Graph.Nodes)
+		{
+			if (node.Id != _hoverNodeId
+				&& node.Id != _dragPort?.NodeId)
+			{
+				continue;
+			}
+			if (!_positions.TryGetValue(
+				node.Id,
+				out FmSynthNodePosition position))
+			{
+				continue;
+			}
+
+			foreach (FmSynthConnectionPort port in
+				FmSynthConnectionPorts.GetPorts(node, ToRect(position)))
+			{
+				bool compatible =
+					_dragPort is not FmSynthConnectionPort dragging
+						|| FmSynthConnectionPorts.TryResolve(
+							dragging, port, out _);
+				IBrush fill =
+					!compatible
+						? Brushes.Gray
+						: port.Kind == FmSynthConnectionPortKind.Output
+							? Brushes.LightGreen
+							: node is FmOperatorNode operation
+								&& port.InputIndex == operation.InputNodeIds.Count
+								? Brushes.Gold
+								: Brushes.LightSkyBlue;
+				context.DrawEllipse(
+					fill,
+					new Pen(Brushes.Black, 1.5),
+					new Point(port.Center.X, port.Center.Y),
+					5.5,
+					5.5);
+			}
+		}
+	}
+
+	private FmSynthConnectionPort? FindPortAt(
+		Point pointer)
+	{
+		foreach (FmSynthNode node in _synth.Graph.Nodes)
+		{
+			if (_positions.TryGetValue(
+				node.Id,
+				out FmSynthNodePosition position)
+				&& FmSynthConnectionPorts.HitTest(
+					FmSynthConnectionPorts.GetPorts(
+						node,
+						ToRect(position)),
+					new FmSynthRoutePoint(pointer.X, pointer.Y))
+				is FmSynthConnectionPort port)
+			{
+				return port;
+			}
+		}
+		return null;
+	}
+
+	private int? FindNodeBorderAt(
+		Point pointer)
+	{
+		const double borderHoverWidth = 12.0;
+		foreach ((int nodeId, FmSynthNodePosition position) in _positions)
+		{
+			FmSynthLayoutRect rect = ToRect(position);
+			if (pointer.X < rect.Left - borderHoverWidth
+				|| pointer.X > rect.Right + borderHoverWidth
+				|| pointer.Y < rect.Top - borderHoverWidth
+				|| pointer.Y > rect.Bottom + borderHoverWidth)
+			{
+				continue;
+			}
+			double edgeDistance =
+				Math.Min(
+					Math.Min(
+						Math.Abs(pointer.X - rect.Left),
+						Math.Abs(pointer.X - rect.Right)),
+					Math.Min(
+						Math.Abs(pointer.Y - rect.Top),
+						Math.Abs(pointer.Y - rect.Bottom)));
+			if (edgeDistance <= borderHoverWidth)
+				return nodeId;
+		}
+		return null;
+	}
+
+	private void UpdateHover(
+		Point pointer)
+	{
+		int? hovered = FindNodeBorderAt(pointer);
+		if (_hoverNodeId == hovered)
+			return;
+		_hoverNodeId = hovered;
+		_portLayer.InvalidateVisual();
+	}
+
 	private static void DrawArrowhead(
 		DrawingContext context,
 		Pen pen,
@@ -285,6 +417,15 @@ public sealed class FmSynthGraphCanvas : UserControl
 				Child = content,
 			};
 
+		border.PointerExited += (_, e) =>
+		{
+			_ = e;
+			if (_dragPort is null && _dragNodeId is null)
+			{
+				_hoverNodeId = null;
+				_portLayer.InvalidateVisual();
+			}
+		};
 		border.PointerPressed += (_, e) =>
 			OnNodePointerPressed(
 				border,
@@ -325,6 +466,20 @@ public sealed class FmSynthGraphCanvas : UserControl
 		ApplySelectionVisuals();
 		_selected(nodeId);
 
+		Point pointer = e.GetPosition(_canvas);
+		if (FindPortAt(pointer)
+			is FmSynthConnectionPort port
+			&& port.NodeId == nodeId)
+		{
+			_dragPort = port;
+			_dragPortPointer = pointer;
+			_hoverNodeId = nodeId;
+			_portLayer.InvalidateVisual();
+			e.Pointer.Capture(border);
+			e.Handled = true;
+			return;
+		}
+
 		_dragNodeId = nodeId;
 		_dragPointerStart =
 			e.GetPosition(_canvas);
@@ -338,11 +493,21 @@ public sealed class FmSynthGraphCanvas : UserControl
 		int nodeId,
 		PointerEventArgs e)
 	{
-		if (_dragNodeId != nodeId)
-			return;
-
 		Point current =
 			e.GetPosition(_canvas);
+		if (_dragPort is not null)
+		{
+			_dragPortPointer = current;
+			UpdateHover(current);
+			_portLayer.InvalidateVisual();
+			e.Handled = true;
+			return;
+		}
+		if (_dragNodeId != nodeId)
+		{
+			UpdateHover(current);
+			return;
+		}
 		double x =
 			Math.Max(
 				0.0,
@@ -368,6 +533,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 			border,
 			y);
 		_connectionLayer.InvalidateVisual();
+		_portLayer.InvalidateVisual();
 		e.Handled = true;
 	}
 
@@ -376,6 +542,26 @@ public sealed class FmSynthGraphCanvas : UserControl
 		int nodeId,
 		PointerReleasedEventArgs e)
 	{
+		if (_dragPort is FmSynthConnectionPort start
+			&& start.NodeId == nodeId)
+		{
+			FmSynthConnectionPort? end = FindPortAt(e.GetPosition(_canvas));
+			_dragPort = null;
+			_hoverNodeId = null;
+			e.Pointer.Capture(null);
+			_portLayer.InvalidateVisual();
+			if (end is FmSynthConnectionPort target
+				&& FmSynthConnectionPorts.TryResolve(
+					start, target, out FmSynthConnectionCandidate connection))
+			{
+				_connected(
+					connection.SourceNodeId,
+					connection.TargetNodeId,
+					connection.TargetInputIndex);
+			}
+			e.Handled = true;
+			return;
+		}
 		if (_dragNodeId != nodeId)
 			return;
 
@@ -400,6 +586,14 @@ public sealed class FmSynthGraphCanvas : UserControl
 		PointerCaptureLostEventArgs e)
 	{
 		_ = e;
+		if (_dragPort is FmSynthConnectionPort start
+			&& start.NodeId == nodeId)
+		{
+			_dragPort = null;
+			_hoverNodeId = null;
+			_portLayer.InvalidateVisual();
+			return;
+		}
 		if (_dragNodeId != nodeId)
 			return;
 
@@ -412,6 +606,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 			border,
 			_dragOriginal.Y);
 		_connectionLayer.InvalidateVisual();
+		_portLayer.InvalidateVisual();
 	}
 
 	private void ApplySelectionVisuals()
