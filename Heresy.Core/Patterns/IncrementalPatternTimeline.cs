@@ -99,6 +99,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		public NoteEvent? DueTiming =>
 			_inRow && _readyTiming.Count > 0
 				? _readyTiming[0].Raw : null;
+		public IReadOnlyList<DeferredTiming> ReadyTimings => _readyTiming;
 		public NoteEvent? DueCleanup =>
 			_inRow && DueEvent is null && _rowEndCommands.Count > 0
 				? _rowEndCommands[0] : null;
@@ -527,10 +528,119 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			current = _active.OrderBy(c => c.DueTick)
 				.ThenBy(c => c.Context.PhysicalChannelBase)
 				.ThenBy(c => c.Sequence).First();
+			if (current.DueTick > _tick + TickTolerance)
+				continue;
 			if (TryOperate(current, out result))
 				return true;
 		}
 		return false;
+	}
+
+	/// <summary>
+	/// Compose simultaneous Txx requests at one row boundary. Their
+	/// remembered bytes are resolved in mapped channel order, and on every
+	/// subsequent legacy tick the clamps are applied sequentially in that
+	/// same order. This matches the common eager processor's Txx arithmetic.
+	/// One shared ramp replaces the previous ramp from its *current*
+	/// instantaneous Tempo; no event can pre-apply the endpoint.
+	/// </summary>
+	private bool ArbitrateTrackerTempoAtCurrentTick()
+	{
+		var pending = _active
+			.Where(c => c.InRow && Math.Abs(c.DueTick - _tick) <= TickTolerance)
+			.SelectMany(c => c.ReadyTimings
+				.Where(t => t.Raw.Commands.Count == 1
+					&& t.Raw.Commands[0] is ApplyTrackerTempoCommand)
+				.Select(t => (Cursor: c, Timing: t,
+					Channel: c.Context.MapPhysicalChannel(t.Raw.Target.PhysicalChannel))))
+			.OrderBy(x => x.Timing.EligibleAt)
+			.ThenBy(x => x.Channel)
+			.ThenBy(x => x.Cursor.Sequence)
+			.ThenBy(x => x.Timing.Order)
+			.ToArray();
+		if (pending.Length == 0)
+			return false;
+
+		// A ramp from several sources has one duration only when they
+		// agree on the tick span. Defer mixed-speed arbitration rather
+		// than quietly using whichever invocation happened to run first.
+		int[] slideSpans = pending
+			.Where(x =>
+			{
+				byte memory = x.Cursor.Context
+					.GetPhysicalChannelState(x.Timing.Raw.Target.PhysicalChannel)
+					.PeekEffectParameter(EffectMemorySlot.Tempo,
+						((ApplyTrackerTempoCommand)x.Timing.Raw.Commands[0]).Parameter);
+				return memory > 0 && memory < 0x20;
+			})
+			.Select(x => checked((int)x.Cursor.RowSpeed))
+			.Distinct().ToArray();
+		if (slideSpans.Length > 1)
+			throw new NotSupportedException(
+				"Simultaneous Txx slides with different captured row speeds require separate arbitration.");
+
+		List<byte> slides = [];
+		foreach (var request in pending)
+		{
+			NoteEvent raw = request.Timing.Raw;
+			byte input = ((ApplyTrackerTempoCommand)raw.Commands[0]).Parameter;
+			byte parameter = request.Cursor.Context
+				.GetPhysicalChannelState(raw.Target.PhysicalChannel)
+				.ResolveEffectParameter(EffectMemorySlot.Tempo, input);
+			if (parameter >= 0x20)
+			{
+				// A new Tempo set cuts off any previous ramp at the
+				// current shared tick, never at its future endpoint.
+				_tempoRamp = null;
+				_root.State.Tempo = parameter;
+				QueueTimingEvent(raw with
+				{
+					Target = request.Cursor.Context.MapTarget(raw.Target),
+					Commands = [new SetTempoCommand(parameter)],
+				});
+			}
+			else if (parameter > 0)
+			{
+				slides.Add(parameter);
+			}
+			request.Cursor.ConsumeTiming();
+		}
+
+		if (slides.Count > 0)
+		{
+			int span = slideSpans[0];
+			double initial = _root.State.Tempo;
+			double ending = initial;
+			for (int transition = 1; transition < span; transition++)
+			{
+				foreach (byte parameter in slides)
+				{
+					ending = PatternNoteProcessor.ResolveTrackerTempoAtTick(
+						ending, parameter, firstTick: false);
+				}
+			}
+			_tempoRamp = null;
+			if (Math.Abs(ending - initial) > 1e-12)
+			{
+				SetTempoRampCommand ramp = new(ending, span);
+				StartTempoRamp(ramp);
+				QueueTimingEvent(new NoteEvent(
+					new MusicalTime(Elapsed, 0), ChannelTarget.Global,
+					[ramp]));
+			}
+		}
+		return true;
+	}
+
+	private void QueueTimingEvent(NoteEvent note)
+	{
+		NoteEvent resolved = note with
+		{
+			Offset = new MusicalTime(Elapsed, 0),
+			EmissionOrder = _emissionOrder++,
+		};
+		_queuedTempoEvents.Enqueue(
+			new IncrementalPatternTimelineStep.Emit(resolved, _tick, Elapsed));
 	}
 
 	// All cursor deadlines remain in musical ticks. The shared ramp is
