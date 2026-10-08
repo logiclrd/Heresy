@@ -34,22 +34,32 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			List<NoteCommand> channelCommands = [];
 			List<NoteCommand> globalCommands = [];
 
+			// Raw-note callers retain the historical immediate resolution
+			// contract. Song compilation instead records Source-column changes
+			// and defers omitted-source lookup until this row executes, after
+			// any flattened child has changed the mapped channel state.
+			bool deferSource = context.ResolvePatternSourcesAtRowTime;
+			ObjectId explicitSourceId = !cell.SourceId.IsNone
+				? cell.SourceId
+				: cell.Note is StartPatternNote inline
+					? inline.SourceId
+					: ObjectId.None;
+
 			SequencingChannelState channelState =
 				context.GetPhysicalChannelState(channel);
-			if (!cell.SourceId.IsNone)
-				channelState.CurrentSourceId = cell.SourceId;
-
-			// StartPatternNote historically carried a source directly. The
-			// tracker UI now stores it in PatternCell.SourceId, but retaining
-			// this fallback keeps the semantic API useful for programmatic
-			// producers while omitted source IDs use per-channel memory.
-			if (cell.Note is StartPatternNote inlineSource
-				&& cell.SourceId.IsNone
-				&& !inlineSource.SourceId.IsNone)
+			if (deferSource)
 			{
-				channelState.CurrentSourceId = inlineSource.SourceId;
+				if (!explicitSourceId.IsNone)
+					channelCommands.Add(
+						new SelectPatternSourceCommand(explicitSourceId));
 			}
-			ObjectId resolvedSourceId = channelState.CurrentSourceId;
+			else if (!explicitSourceId.IsNone)
+			{
+				channelState.CurrentSourceId = explicitSourceId;
+			}
+			ObjectId resolvedSourceId = deferSource
+				? explicitSourceId
+				: channelState.CurrentSourceId;
 
 			StartNoteCommand? tonePortamentoTarget = null;
 			bool hasTonePortamento = false;
@@ -68,7 +78,7 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 			bool startsNewNote =
 				cell.Note is StartPatternNote
 					&& !hasTonePortamento
-					&& !resolvedSourceId.IsNone;
+					&& (deferSource || !resolvedSourceId.IsNone);
 
 			if (cell.Note is StartPatternNote start && hasTonePortamento)
 			{
@@ -76,11 +86,9 @@ public sealed class DataPatternDefinition : PatternDefinition, IRawPatternNoteGe
 				// starting it immediately. Volume therefore follows the
 				// current-note command path below.
 				tonePortamentoTarget =
-					resolvedSourceId.IsNone
-						? null
-						: TranslateStartNote(
-							start,
-							resolvedSourceId);
+					deferSource || !resolvedSourceId.IsNone
+						? TranslateStartNote(start, resolvedSourceId)
+						: null;
 			}
 			else if (cell.Note is StartPatternNote startNote)
 			{
