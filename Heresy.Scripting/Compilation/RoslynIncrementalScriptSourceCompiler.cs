@@ -27,11 +27,11 @@ public sealed class RoslynIncrementalScriptSourceCompiler
 		return result.Program;
 	}
 
-	public IIncrementalRawSequenceEntryGenerator CompileSequence(
+	public ISequenceEntrySourceFactory CompileSequence(
 		ScriptSequenceDefinition source)
 	{
 		ArgumentNullException.ThrowIfNull(source);
-		ScriptCompilationResult<IIncrementalRawSequenceEntryGenerator> result =
+		ScriptCompilationResult<ISequenceEntrySourceFactory> result =
 			ScriptCompiler.CompileIncrementalSequence(source);
 		if (!result.Success || result.Program is null)
 			throw CompilationFailure("Sequence", result.Diagnostics);

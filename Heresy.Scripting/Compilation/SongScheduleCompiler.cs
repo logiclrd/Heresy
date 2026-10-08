@@ -22,16 +22,6 @@ internal interface IPlaybackPositionSequencer
 		PlaybackPositions { get; }
 }
 
-/// <summary>
-/// Lets the caller select a chronological sequence scheduler from the exact
-/// Play() entries of one executed script invocation. A later legacy fallback
-/// must consume those same entries, not execute the script a second time.
-/// </summary>
-internal interface IPreparedScriptSequenceEntries
-{
-	IReadOnlyList<SequenceEntry> PrepareEntries(SequencingContext context);
-}
-
 public sealed record SongScheduleCompilationResult(
 	NoteSchedule? Schedule,
 	TimeSpan Duration,
@@ -155,24 +145,7 @@ public static class SongScheduleCompiler
 					shouldFollowOrderJump);
 			diagnostics.AddRange(compilation.Diagnostics);
 			sequencer = compilation.Program;
-			if (startOrder == 0 && startRow is null
-				&& !HasErrors(diagnostics)
-				&& (context is null || context.FlattenedSourceExpander is null
-					&& !context.IsPreparingFlattenedChild)
-				&& sequencer is IPreparedScriptSequenceEntries prepared)
-			{
-				// Evaluate this invocation's script exactly once; if it is
-				// incompatible, the legacy sequencer consumes these entries,
-				// preserving Random() state and dynamic Play() decisions.
-				IReadOnlyList<SequenceEntry> entries =
-					prepared.PrepareEntries(activeContext);
-				if (ChronologicalDataPatternScheduler.CanHandleSequence(
-					document, entries))
-				{
-					return ChronologicalDataPatternScheduler.CompileSequence(
-						document, entries, activeContext);
-				}
-			}
+
 		}
 		else
 		{

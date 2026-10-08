@@ -284,93 +284,59 @@ public abstract class PatternScriptProgram
 /// A script builds ordinary SequenceEntry values which are then consumed by
 /// the common SequenceNoteProcessor.
 /// </summary>
-public abstract class SequenceScriptProgram
+public abstract class SequenceScriptProgram : ISequenceEntryProvider
 {
 	private readonly SequencingContext _context;
-	private readonly ScriptExecutionBudget _budget = new();
-	private readonly List<SequenceEntry> _entries = [];
-	private readonly bool _incremental;
-	private SequenceEntry? _pendingEntry;
-	private int _cooperationIterations;
+	private ScriptExecutionBudget _budget = new();
 
-	protected SequenceScriptProgram(
-		SequencingContext context, bool incremental = false)
+	protected SequenceScriptProgram(SequencingContext context)
 	{
-		ArgumentNullException.ThrowIfNull(context);
-		_context = context;
-		_incremental = incremental;
+		_context = context ?? throw new ArgumentNullException(nameof(context));
 	}
 
-	internal IReadOnlyList<SequenceEntry> Execute()
+	/// <summary>
+	/// Called exactly once per visited order; local script variables are
+	/// fresh on each call. The per-invocation RNG remains available through
+	/// Random(). The first previousSequenceIndex is -1.
+	/// </summary>
+	public SequenceEntry? GetSequenceEntry(
+		int absoluteIndex, int sequenceIndex, int previousSequenceIndex)
 	{
-		ExecuteScript();
-		return _entries.ToArray();
+		if (absoluteIndex < 0 || sequenceIndex < 0 || previousSequenceIndex < -1)
+			throw new ArgumentOutOfRangeException(nameof(sequenceIndex));
+		// The execution budget bounds a single lookup, not the duration of
+		// valid indefinitely repeating music.
+		_budget = new ScriptExecutionBudget();
+		return ExecuteEntry(absoluteIndex, sequenceIndex, previousSequenceIndex);
 	}
 
-	protected abstract void ExecuteScript();
-
-	// Eager and streaming wrappers are separate. Every streaming
-	// enumeration owns its script instance and suspended iterator.
-	internal IEnumerable<RawSequenceStep> Enumerate() => EnumerateScript();
-
-	protected virtual IEnumerable<RawSequenceStep> EnumerateScript()
-		=> throw new NotSupportedException(
-			"This compiled Sequence script is not resumable.");
-
-	protected RawSequenceStep EmitPlayStep()
-	{
-		SequenceEntry entry = _pendingEntry
-			?? throw new InvalidOperationException("No scripted Play is pending.");
-		_pendingEntry = null;
-		return new RawSequenceStep.Play(entry);
-	}
-
-	protected bool ShouldCooperate()
-	{
-		_cooperationIterations = (_cooperationIterations + 1) & 127;
-		return _cooperationIterations == 0;
-	}
-
-	protected RawSequenceStep CpuCheckpoint()
-		=> new RawSequenceStep.Cooperate();
+	protected abstract SequenceEntry? ExecuteEntry(
+		int absoluteIndex, int sequenceIndex, int previousSequenceIndex);
 
 	protected ObjectId _O(uint id)
 	{
 		if (id == 0)
 			throw new ArgumentOutOfRangeException(nameof(id));
-
 		return (ObjectId)id;
 	}
 
 	protected double Random()
 	{
-		// The eager path keeps its total execution guard. Resumable
-		// loops instead return CPU control every 128 iterations; they
-		// must not expire merely because a valid song plays for hours.
-		if (!_incremental)
-			Checkpoint();
+		Checkpoint();
 		return _context.Random.NextDouble();
 	}
 
 	protected void Checkpoint() => _budget.Checkpoint();
 
-	protected void Play(ObjectId patternId, int startRow = 0)
+	/// <summary>
+	/// Construct one order entry for return by the scripted lookup function.
+	/// Does not launch the child or change any Sequence iteration state.
+	/// </summary>
+	protected SequenceEntry Play(ObjectId patternId, int startRow = 0)
 	{
 		if (patternId.IsNone)
 			throw new ArgumentOutOfRangeException(nameof(patternId));
-
-		SequenceEntry entry = new(patternId, startRow);
-		if (_incremental)
-		{
-			if (_pendingEntry is not null)
-				throw new InvalidOperationException(
-					"Streaming Sequence scripts must yield after every Play.");
-			_pendingEntry = entry;
-		}
-		else
-		{
-			Checkpoint();
-			_entries.Add(entry);
-		}
+		Checkpoint();
+		return new SequenceEntry(patternId, startRow);
 	}
 }

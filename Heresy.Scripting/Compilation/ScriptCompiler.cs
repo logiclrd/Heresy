@@ -159,32 +159,23 @@ public static class ScriptCompiler
 	}
 
 	/// <summary>
-	/// Compile a Roslyn Sequence into an invocation-local, cooperatively
-	/// suspended Play-entry source without eagerly materializing its orders.
-	/// Production compilation remains on the existing eager path.
+	/// Compile a per-invocation, on-demand Sequence entry lookup.
+	/// Both the eager and incremental processors use the same script
+	/// function and never buffer a generated list of orders.
 	/// </summary>
-	public static ScriptCompilationResult<IIncrementalRawSequenceEntryGenerator>
+	public static ScriptCompilationResult<ISequenceEntrySourceFactory>
 		CompileIncrementalSequence(ScriptSequenceDefinition definition)
 	{
 		ArgumentNullException.ThrowIfNull(definition);
-
-		IReadOnlyList<ScriptAnalysisDiagnostic> restrictions =
-			ValidateIncrementalSequenceStatements(definition.Source);
-		if (restrictions.Count != 0)
-			return new(null, restrictions);
-
-		string className =
-			"__HeresyIncrementalSequence_" + Guid.NewGuid().ToString("N");
+		string className = "__HeresySequenceLookup_" + Guid.NewGuid().ToString("N");
 		ScriptCompilationResult<Type> compiled = CompileType(
 			definition.Source, className,
-			BuildIncrementalSequenceWrapper(
-				className, InstrumentIncrementalSequence(definition.Source)),
+			BuildSequenceWrapper(className, InstrumentLoops(definition.Source)),
 			typeof(SequenceScriptProgram));
 
 		if (!compiled.Success || compiled.Program is null)
 			return new(null, compiled.Diagnostics);
-
-		return new(new CompiledIncrementalSequenceGenerator(compiled.Program),
+		return new(new CompiledSequenceEntryFactory(compiled.Program),
 			compiled.Diagnostics);
 	}
 
@@ -649,69 +640,6 @@ public static class ScriptCompiler
 			}
 			""";
 
-	private static IReadOnlyList<ScriptAnalysisDiagnostic>
-		ValidateIncrementalSequenceStatements(string source)
-	{
-		SyntaxNode root = CSharpSyntaxTree.ParseText(
-			source, ScriptParseOptions).GetRoot();
-		List<ScriptAnalysisDiagnostic> diagnostics = [];
-		foreach (InvocationExpressionSyntax invocation
-			in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
-		{
-			if (invocation.Expression is not IdentifierNameSyntax name
-				|| name.Identifier.ValueText != "Play")
-				continue;
-			if (invocation.Parent is ExpressionStatementSyntax statement
-				&& ReferenceEquals(statement.Expression, invocation))
-				continue;
-			diagnostics.Add(new ScriptAnalysisDiagnostic(
-				RestrictedFeatureCode, ScriptDiagnosticSeverity.Error,
-				"Streaming Play helpers must be direct statements.",
-				new ScriptSourceSpan(invocation.Span.Start, invocation.Span.Length)));
-		}
-		return diagnostics;
-	}
-
-	private static string InstrumentIncrementalSequence(string source)
-	{
-		SyntaxNode root = CSharpSyntaxTree.ParseText(
-			source, ScriptParseOptions).GetRoot();
-		root = new LoopCheckpointRewriter(cooperative: true).Visit(root)
-			?? root;
-		return new IncrementalSequenceYieldRewriter().Visit(root)
-			?.ToFullString() ?? source;
-	}
-
-	private static string BuildIncrementalSequenceWrapper(
-		string className, string source)
-		=> $$"""
-			using System;
-			using System.Collections.Generic;
-			using Heresy.Core.Sequences;
-			using Heresy.Core.Sequencing;
-			using Heresy.Scripting.Runtime;
-
-			public sealed class {{className}} : SequenceScriptProgram
-			{
-				public {{className}}(SequencingContext context)
-					: base(context, incremental: true)
-				{
-				}
-
-				protected override void ExecuteScript()
-					=> throw new NotSupportedException(
-						"Use the resumable Sequence iterator.");
-
-				protected override IEnumerable<RawSequenceStep> EnumerateScript()
-				{
-			#line 1 "heresy-script"
-			{{source}}
-			#line default
-					yield break;
-				}
-			}
-			""";
-
 	private static string BuildPatternWrapper(
 		string className,
 		string source)
@@ -740,11 +668,10 @@ public static class ScriptCompiler
 			}
 			""";
 
-	private static string BuildSequenceWrapper(
-		string className,
-		string source)
+	private static string BuildSequenceWrapper(string className, string source)
 		=> $$"""
 			using System;
+			using Heresy.Core.Sequences;
 			using Heresy.Core.Sequencing;
 			using Heresy.Scripting.Runtime;
 
@@ -755,7 +682,8 @@ public static class ScriptCompiler
 				{
 				}
 
-				protected override void ExecuteScript()
+				protected override SequenceEntry? ExecuteEntry(
+					int absoluteIndex, int sequenceIndex, int previousSequenceIndex)
 				{
 			#line 1 "heresy-script"
 			{{source}}
@@ -970,51 +898,22 @@ public static class ScriptCompiler
 		}
 	}
 
-	private sealed class IncrementalSequenceYieldRewriter : CSharpSyntaxRewriter
-	{
-		public override SyntaxNode? VisitExpressionStatement(
-			ExpressionStatementSyntax node)
-		{
-			ExpressionStatementSyntax visited =
-				(ExpressionStatementSyntax)(base.VisitExpressionStatement(node) ?? node);
-			if (node.Expression is not InvocationExpressionSyntax invocation
-				|| invocation.Expression is not IdentifierNameSyntax name
-				|| name.Identifier.ValueText != "Play")
-				return visited;
-
-			return SyntaxFactory.Block(
-				visited.WithoutLeadingTrivia(),
-				SyntaxFactory.ParseStatement("yield return EmitPlayStep();"))
-				.WithTriviaFrom(node);
-		}
-	}
-
-	private sealed class CompiledIncrementalSequenceGenerator
-		: IIncrementalRawSequenceEntryGenerator
+	private sealed class CompiledSequenceEntryFactory : ISequenceEntrySourceFactory
 	{
 		private readonly Type _programType;
 
-		public CompiledIncrementalSequenceGenerator(Type programType)
+		public CompiledSequenceEntryFactory(Type programType)
 		{
 			_programType = programType;
 		}
 
-		public IEnumerable<RawSequenceStep> EnumerateRawSteps(
-			SequencingContext context)
+		public ISequenceEntryProvider Create(SequencingContext context)
 		{
 			ArgumentNullException.ThrowIfNull(context);
-			return Enumerate(context);
-		}
-
-		private IEnumerable<RawSequenceStep> Enumerate(SequencingContext context)
-		{
-			SequenceScriptProgram program =
-				Activator.CreateInstance(_programType, context)
-					as SequenceScriptProgram
+			return Activator.CreateInstance(_programType, context)
+				as SequenceScriptProgram
 				?? throw new InvalidOperationException(
-					"Could not construct the incremental Sequence script.");
-			foreach (RawSequenceStep step in program.Enumerate())
-				yield return step;
+					"Could not construct the Sequence lookup script.");
 		}
 	}
 
@@ -1112,10 +1011,9 @@ public static class ScriptCompiler
 		}
 	}
 
-	private sealed class CompiledSequenceSequencer
-		: IPlaybackPositionSequencer, IPreparedScriptSequenceEntries
+	private sealed class CompiledSequenceSequencer : IPlaybackPositionSequencer
 	{
-		private readonly Type _programType;
+		private readonly ISequenceEntrySourceFactory _factory;
 		private readonly ISequencePatternResolver _resolver;
 		private readonly int _startOrder;
 		private readonly int? _startRow;
@@ -1123,8 +1021,6 @@ public static class ScriptCompiler
 			_shouldFollowOrderJump;
 		private readonly List<CompiledPatternPlaybackPosition>
 			_playbackPositions = [];
-		private SequencingContext? _preparedContext;
-		private IReadOnlyList<SequenceEntry>? _preparedEntries;
 
 		public IReadOnlyList<CompiledPatternPlaybackPosition>
 			PlaybackPositions => _playbackPositions;
@@ -1136,28 +1032,11 @@ public static class ScriptCompiler
 			int? startRow,
 			Func<SequenceOrderJumpEncounter, bool>? shouldFollowOrderJump)
 		{
-			_programType = programType;
+			_factory = new CompiledSequenceEntryFactory(programType);
 			_resolver = resolver;
 			_startOrder = startOrder;
 			_startRow = startRow;
 			_shouldFollowOrderJump = shouldFollowOrderJump;
-		}
-
-		public IReadOnlyList<SequenceEntry> PrepareEntries(
-			SequencingContext context)
-		{
-			ArgumentNullException.ThrowIfNull(context);
-			SequenceScriptProgram program =
-				Activator.CreateInstance(
-					_programType,
-					context)
-					as SequenceScriptProgram
-				?? throw new InvalidOperationException(
-					"Could not construct the compiled sequence script.");
-			IReadOnlyList<SequenceEntry> entries = program.Execute();
-			_preparedContext = context;
-			_preparedEntries = entries;
-			return entries;
 		}
 
 		public void GenerateNotes(
@@ -1167,32 +1046,15 @@ public static class ScriptCompiler
 		{
 			ArgumentNullException.ThrowIfNull(context);
 			ArgumentNullException.ThrowIfNull(output);
-
-			// Compatibility probing must not execute a dynamic sequence
-			// script twice, consume Random() twice, or change its Play list.
-			IReadOnlyList<SequenceEntry> entries =
-				ReferenceEquals(_preparedContext, context)
-					&& _preparedEntries is not null
-						? _preparedEntries
-						: PrepareEntries(context);
-			_preparedContext = null;
-			_preparedEntries = null;
 			_playbackPositions.Clear();
 			SequenceNoteProcessor.GenerateNotes(
-				entries,
-				_resolver,
-				context,
-				output,
-				_startOrder,
-				_startRow,
+				_factory.Create(context),
+				_resolver, context, output, _startOrder, _startRow,
 				out duration,
 				(order, patternId, patternRow, offset) =>
 					_playbackPositions.Add(
 						new CompiledPatternPlaybackPosition(
-							offset,
-							patternId,
-							patternRow,
-							order)),
+							offset, patternId, patternRow, order)),
 				_shouldFollowOrderJump);
 		}
 	}
