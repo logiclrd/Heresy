@@ -15,108 +15,67 @@ namespace Heresy.Tests.Core;
 public sealed class IncrementalScriptSequenceCursorTests
 {
 	[Test]
-	public void EntriesAreRequestedOnlyWhenTheirPredecessorCompletes()
+	public void LookupIsDeferredUntilItsPatternCompletes()
 	{
 		DataPatternDefinition first = Pattern(11, 2);
 		first.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
 		DataPatternDefinition second = Pattern(12, 1);
 		second.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteOff();
-		TrackingGenerator source = new(
-			new RawSequenceStep.Play(new SequenceEntry(first.Id)),
-			new RawSequenceStep.Play(new SequenceEntry(second.Id)));
+		RecordingLookup source = new((absolute, order, previous) =>
+			order switch
+			{
+				0 => new SequenceEntry(first.Id),
+				1 => new SequenceEntry(second.Id),
+				_ => null,
+			});
 		using IncrementalSequenceCursor cursor = new(
 			source, new Resolver(first, second), new SequencingContext());
 
 		Assert.That(cursor.TryStep(out IncrementalPatternTimelineStep? step), Is.True);
 		Assert.That(step, Is.TypeOf<IncrementalPatternTimelineStep.Emit>());
-		Assert.That(source.Yields, Is.EqualTo(1),
-			"The next Play must not execute while the current Pattern is active.");
-		List<NoteEvent> remaining = Drain(cursor);
-		Assert.That(remaining, Has.Count.EqualTo(1));
-		Assert.That(remaining[0].Offset.TimeOffset,
-			Is.EqualTo(TimeSpan.FromMilliseconds(240)));
-		Assert.That(source.Yields, Is.EqualTo(2));
+		Assert.That(source.Calls, Has.Count.EqualTo(1));
+		Assert.That(Drain(cursor), Has.Count.EqualTo(1));
+		Assert.That(source.Calls,
+			Is.EqualTo(new[] { (0, 0, -1), (1, 1, 0), (2, 2, 1) }));
 		Assert.That(cursor.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(360)));
 	}
 
 	[Test]
-	public void CpuCooperationDoesNotChangeMusicalTimeOrStartNextOrder()
+	public void BxxCanChooseDifferentPatternForSameIndexOnEachVisit()
 	{
-		DataPatternDefinition pattern = Pattern(21, 1);
-		pattern.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
-		TrackingGenerator source = new(
-			new RawSequenceStep.Cooperate(),
-			new RawSequenceStep.Cooperate(),
-			new RawSequenceStep.Play(new SequenceEntry(pattern.Id)));
-		using IncrementalSequenceCursor cursor = new(
-			source, new Resolver(pattern), new SequencingContext());
-
-		for (int i = 0; i < 2; i++)
-		{
-			Assert.That(cursor.TryStep(out IncrementalPatternTimelineStep? step), Is.True);
-			Assert.That(step, Is.TypeOf<IncrementalPatternTimelineStep.Cooperate>());
-			Assert.That(cursor.Tick, Is.Zero);
-			Assert.That(cursor.Elapsed, Is.EqualTo(TimeSpan.Zero));
-		}
-		Assert.That(Drain(cursor).Single().Offset.TimeOffset, Is.EqualTo(TimeSpan.Zero));
-		Assert.That(cursor.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(120)));
-	}
-
-	[Test]
-	public void BxxReusesGeneratedOrderWithoutExecutingScriptTail()
-	{
-		DataPatternDefinition loop = Pattern(31, 1);
-		loop.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
-		loop.Grid.GetOrCreateCell(0, 0).Effects.Add(new TrackerOrderJumpPatternEffect(0));
-		TrackingGenerator source = new(
-			new RawSequenceStep.Play(new SequenceEntry(loop.Id)),
-			new RawSequenceStep.Play(new SequenceEntry((ObjectId)999U)));
+		DataPatternDefinition first = Pattern(31, 1);
+		first.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
+		first.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new TrackerOrderJumpPatternEffect(0));
+		DataPatternDefinition second = Pattern(32, 1);
+		second.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteOff();
+		second.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new TrackerOrderJumpPatternEffect(0));
+		RecordingLookup source = new((absolute, order, previous) =>
+			new SequenceEntry(absolute % 2 == 0 ? first.Id : second.Id));
 		int jumps = 0;
 		using IncrementalSequenceCursor cursor = new(
-			source, new Resolver(loop), new SequencingContext(),
-			shouldFollowOrderJump: _ => ++jumps < 3);
+			source, new Resolver(first, second), new SequencingContext(),
+			shouldFollowOrderJump: _ => ++jumps < 4);
 
-		Assert.That(Drain(cursor), Has.Count.EqualTo(3));
-		Assert.That(source.Yields, Is.EqualTo(1),
-			"B00 revisits the cached Play without advancing the script.");
-		Assert.That(cursor.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(360)));
+		List<NoteEvent> notes = Drain(cursor);
+		Assert.That(notes.Select(x => x.Commands.Single().GetType()), Is.EqualTo(
+			new[] { typeof(NoteCutCommand), typeof(NoteOffCommand),
+				typeof(NoteCutCommand), typeof(NoteOffCommand) }));
+		Assert.That(source.Calls, Is.EqualTo(
+			new[] { (0, 0, -1), (1, 0, 0), (2, 0, 0), (3, 0, 0) }));
+		Assert.That(cursor.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(480)));
 	}
 
 	[Test]
-	public void EndlessCpuCheckpointsAtOneTickHitAnExplicitBudget()
+	public void NullEntryEndsSequenceWithoutAnotherOrder()
 	{
+		RecordingLookup source = new((absolute, order, previous) => null);
 		using IncrementalSequenceCursor cursor = new(
-			new EndlessCooperationSource(), new Resolver(), new SequencingContext());
-		for (int i = 0; i < 8192; i++)
-		{
-			Assert.That(cursor.TryStep(out IncrementalPatternTimelineStep? step),
-				Is.True);
-			Assert.That(step, Is.TypeOf<IncrementalPatternTimelineStep.Cooperate>());
-			Assert.That(cursor.Tick, Is.Zero);
-		}
-		Assert.Throws<InvalidOperationException>(() => cursor.TryStep(out _));
-	}
-
-	private sealed class EndlessCooperationSource
-		: IIncrementalRawSequenceEntryGenerator
-	{
-		public IEnumerable<RawSequenceStep> EnumerateRawSteps(SequencingContext context)
-		{
-			while (true)
-				yield return new RawSequenceStep.Cooperate();
-		}
-	}
-
-	[Test]
-	public void CancellingSequenceDisposesItsSuspendedSource()
-	{
-		TrackingGenerator source = new(
-			new RawSequenceStep.Cooperate(), new RawSequenceStep.Cooperate());
-		IncrementalSequenceCursor cursor = new(
-			source, new Resolver(), new SequencingContext());
-		Assert.That(cursor.TryStep(out _), Is.True);
-		cursor.Dispose();
-		Assert.That(source.Disposed, Is.True);
+			source, new Resolver(), new SequencingContext(), startOrder: 7);
+		Assert.That(cursor.TryStep(out _), Is.False);
+		Assert.That(cursor.IsComplete, Is.True);
+		Assert.That(source.Calls, Is.EqualTo(new[] { (0, 7, -1) }));
 	}
 
 	private static DataPatternDefinition Pattern(uint id, int rows)
@@ -140,25 +99,15 @@ public sealed class IncrementalScriptSequenceCursorTests
 			=> _patterns.TryGetValue(id, out pattern);
 	}
 
-	private sealed class TrackingGenerator(params RawSequenceStep[] steps)
-		: IIncrementalRawSequenceEntryGenerator
+	private sealed class RecordingLookup(
+		Func<int, int, int, SequenceEntry?> resolve) : ISequenceEntryProvider
 	{
-		public int Yields { get; private set; }
-		public bool Disposed { get; private set; }
-		public IEnumerable<RawSequenceStep> EnumerateRawSteps(SequencingContext context)
+		public List<(int, int, int)> Calls { get; } = [];
+		public SequenceEntry? GetSequenceEntry(
+			int absoluteIndex, int sequenceIndex, int previousSequenceIndex)
 		{
-			try
-			{
-				foreach (RawSequenceStep step in steps)
-				{
-					Yields++;
-					yield return step;
-				}
-			}
-			finally
-			{
-				Disposed = true;
-			}
+			Calls.Add((absoluteIndex, sequenceIndex, previousSequenceIndex));
+			return resolve(absoluteIndex, sequenceIndex, previousSequenceIndex);
 		}
 	}
 }
