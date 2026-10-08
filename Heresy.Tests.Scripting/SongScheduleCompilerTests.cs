@@ -47,7 +47,7 @@ public sealed class SongScheduleCompilerTests
 		// 3 ticks at tempo 125 (60 ms), then 3 at tempo 250 (30 ms).
 		cut.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(90));
 		result.Duration.Should().Be(TimeSpan.FromMilliseconds(150));
-		NoteEvent tempo = result.Schedule.Single(e =>
+		NoteEvent tempo = result.Schedule!.Single(e =>
 			e.Commands.Any(command => command is SetTempoCommand));
 		tempo.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(60));
 	}
@@ -83,7 +83,7 @@ public sealed class SongScheduleCompilerTests
 		cuts.Should().HaveCount(2);
 		cuts[0].Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(60));
 		cuts[1].Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(90));
-		result.Schedule.Single(e =>
+		result.Schedule!.Single(e =>
 			e.Commands.Any(c => c is SetTempoCommand))
 			.Offset.TimeOffset.Should().Be(cuts[0].Offset.TimeOffset);
 	}
