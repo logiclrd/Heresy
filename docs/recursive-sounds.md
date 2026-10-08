@@ -357,7 +357,39 @@ cursor path. They retain the general compilation behavior, including
 its explicit unsupported-combination checks where applicable. The
 scripting API itself validates finite, representable numeric offsets.
 
-**Not yet universal:** Scripted sequences, negative wall-time script
+### Scripted Sequence Play() entries on the shared clock
+
+Eligible **scripted Sequences** now use the same chronological cursor
+scheduler as eligible data Sequences. A sequence script runs its restricted
+`Play(patternId)` instructions once to produce an ordered collection of
+`SequenceEntry` values. When every entry references a compatible data or
+scripted Pattern with `StartRow = 0`, at least one nested flattened
+Pattern is present, and the compiler starts at order zero with no row
+override, the scheduler starts each root Pattern at the previous root's
+own endpoint. Nested child cursors and pending wall-time commands can
+continue independently across later generated Play entries.
+
+Global Tempo/Speed, fractional events, deferred Source memory and
+wall-time deadlines remain shared across the complete arrangement.
+`CompiledPatternPlaybackPosition.SequenceEntryIndex` identifies the
+original zero-based Play entry, including repeated references to the
+same Pattern. Separate invocations retain separate raw script-event
+schedules and cursor state.
+
+The supported dispatch reuses the **actual script-generated entries**.
+If any entry is ineligible, the existing `SequenceNoteProcessor`
+continues to execute those entries with its established semantics;
+the script is **not run a second time** merely because chronological
+eligibility failed. That matters for scripts using `Random()` and
+conditional Play decisions.
+
+Deliberately excluded from this path: `Play(..., startRow: nonzero)`,
+nonzero compile start order/row, missing or unsupported Pattern sources,
+pattern jumps/breaks, and otherwise incompatible nested source graphs.
+They use the general compiler until corresponding scheduler tests and
+logic exist.
+
+**Not yet universal:** Negative wall-time script
 offsets, fixed offsets on global/advanced effect commands, tracker
 tempo ramps, other scripted global/effect commands, complex virtual-channel events,
 pattern control and delayed note commands still need distinct red tests and
