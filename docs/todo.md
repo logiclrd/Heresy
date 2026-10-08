@@ -53,11 +53,19 @@ Items that were already completed remain in Git history, not in this checklist.
   the current ramp running. Txx byte memory still resolves when due.
   Mixed-command Txx cells and simultaneous Txx on different captured
   row-speed spans remain explicitly unsupported.
-  Next, move **remaining tracker row/effect semantics** into incremental
-  resolution, including incompatible-span tempo arbitration, fine and
-  whole-row delays, virtual targets, and user script coroutine
-  instrumentation with distinct CPU-only checkpoints. Wire generic
-  invocation-lifetime management for data and scripted Sequences.
+  The incremental timeline now recognizes **S6x and SEy variable-length
+  row spans**: physical-channel S6x ticks accumulate, lowest mapped
+  channel SEy wins, ordinary notes execute only once, and admitted
+  continuous/fine effects repeat at the correct ticks (including
+  fractional offsets), clearing at the final delayed row end.
+  S6x reuses the common processor's TicksPerRow override and extends
+  isolated tracker Txx ramps. SEy combined with tracker Txx and other
+  unported tick/repeat effects remains unsupported explicitly.
+  Next, complete incompatible-span tempo arbitration, repeated Tempo
+  and other advanced tracker effects (SCx/SDx, retrigger, flow control),
+  virtual targets, and user script coroutine instrumentation with
+  distinct CPU-only checkpoints. Wire generic invocation-lifetime
+  management for data and scripted Sequences.
   Preserve out-of-order scripted-event semantics or explicitly resolve
   their ordering policy before migrating playback. Replace the existing
   restricted chronological scheduler rather than adding more special
