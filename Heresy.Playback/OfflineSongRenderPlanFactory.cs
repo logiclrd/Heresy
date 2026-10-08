@@ -119,15 +119,21 @@ public sealed class OfflineSongRenderPlanFactory
 			new(
 				snapshotDocument,
 				_sampleDataProvider);
+		FlattenedNestedScheduleExpander.Result expanded =
+			FlattenedNestedScheduleExpander.Expand(
+				snapshotDocument,
+				compilation.Schedule,
+				compilation.Duration,
+				snapshotDocument.RootSequenceId);
 		PlaybackSession session =
 			new(
 				new RenderContext(_configuration),
-				compilation.Schedule,
+				expanded.Schedule,
 				resolver);
 
 		return new OfflineSongRenderPlan(
 			snapshot,
 			session,
-			compilation.Duration);
+			expanded.Duration);
 	}
 }
