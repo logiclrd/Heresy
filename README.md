@@ -300,6 +300,14 @@ pane is the visual root of its subtree. New objects receive one canonical tree
 placement from `SongDocument.Add`; envelopes are grouped with Instruments.
 Nodes may be reorganized within a section but not moved between sections.
 
+The desktop File menu offers New (`Ctrl+N`), Open (`Ctrl+O`), Save
+(`Ctrl+S`) and Exit (`Ctrl+Q`). These shortcuts are handled by the window
+only after the focused control has had an opportunity to handle its key event,
+so pattern-editor key bindings take precedence on conflicts. File -> Exit uses
+the normal window-close path: when the document is dirty, the existing
+save/discard/cancel confirmation can prevent closing, just as it does for New
+and Open.
+
 Opening or creating a data pattern switches the main workspace into pattern
 mode rather than opening a modal editor. The pattern grid edits semantic note
 (empty/start/off/cut), Source, Volume and effect columns directly; Start notes
