@@ -89,19 +89,25 @@ public sealed class IncrementalTempoArbitrationTests
 			At(0, 0, new ApplyTrackerTempoCommand(0x12)),
 			At(1, 0, new NoteCutCommand())), 2, root);
 		List<NoteEvent> events = [];
+		bool spawnedMidpoint = false;
+		bool spawnedReplacement = false;
 		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
 		{
 			if (step is not IncrementalPatternTimelineStep.Emit emit)
 				continue;
 			events.Add(emit.Note);
-			if (emit.Note.Commands.Any(c => c is SetTempoRampCommand))
+			if (!spawnedMidpoint
+				&& emit.Note.Commands.Any(c => c is SetTempoRampCommand))
 			{
+				spawnedMidpoint = true;
 				timeline.Add(new RawSource(
 					At(0.5, 0, new NoteOffCommand())), 1,
 					root.FlattenedChild(physicalChannelOffset: 2));
 			}
-			else if (emit.Note.Commands.Any(c => c is NoteOffCommand))
+			else if (!spawnedReplacement
+				&& emit.Note.Commands.Any(c => c is NoteOffCommand))
 			{
+				spawnedReplacement = true;
 				// The child starts at tick 3; a new T11 now begins from
 				// the instantaneous 130 rather than the previous end 135.
 				timeline.Add(new RawSource(
