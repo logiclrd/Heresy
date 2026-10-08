@@ -692,57 +692,44 @@ public sealed class FmSynthEditorControl : UserControl
 		_inspector.Children.Add(remove);
 	}
 
-	private void AddConstantInspector(
-		FmConstantNode node)
+	private void AddConstantInspector(FmConstantNode node)
 	{
-		TextBox value =
-			NumberBox(
-				node.Value);
-		AddField(
-			"Value",
-			value);
-		_inspector.Children.Add(
-			Button(
-				"Apply",
-				() =>
-					ApplyNode(
-						new FmConstantNode(
-							node.Id,
-							ParseDouble(
-								value,
-								"Value")))));
+		TextBox value = NumberBox(node.Value);
+		AddField("Value", value);
+		BindParameterText(
+			value,
+			text =>
+			{
+				double parsed = ParseDouble(text, "Value");
+				UpdateParameter(
+					node.Id,
+					current =>
+					{
+						FmConstantNode constant = (FmConstantNode)current;
+						return constant.Value == parsed
+							? null
+							: new FmConstantNode(node.Id, parsed);
+					});
+			});
 	}
 
-	private void AddOscillatorInspector(
-		FmOscillatorNode node)
+	private void AddOscillatorInspector(FmOscillatorNode node)
 	{
 		ComboBox waveform =
 			new()
 			{
-				ItemsSource =
-					Enum.GetValues<FmOscillatorWaveform>(),
+				ItemsSource = Enum.GetValues<FmOscillatorWaveform>(),
 				SelectedItem = node.Waveform,
 			};
-		TextBox frequency =
-			NumberBox(
-				node.FrequencyHz);
-		TextBox minimum =
-			NumberBox(
-				node.Minimum);
-		TextBox maximum =
-			NumberBox(
-				node.Maximum);
+		TextBox frequency = NumberBox(node.FrequencyHz);
+		TextBox minimum = NumberBox(node.Minimum);
+		TextBox maximum = NumberBox(node.Maximum);
+
 		NodeChoice[] multiplierChoices =
-			new[]
-			{
-				new NodeChoice(
-					null,
-					"— none"),
-			}
+			new[] { new NodeChoice(null, "— none") }
 			.Concat(
 				_synth.Graph.Nodes
-					.Where(candidate =>
-						candidate.Id != node.Id)
+					.Where(candidate => candidate.Id != node.Id)
 					.Select(candidate =>
 						new NodeChoice(
 							candidate.Id,
@@ -753,80 +740,71 @@ public sealed class FmSynthEditorControl : UserControl
 			{
 				ItemsSource = multiplierChoices,
 				SelectedItem =
-					multiplierChoices.FirstOrDefault(
-						choice =>
-							choice.NodeId
-								== node.MultiplierNodeId)
+					multiplierChoices.FirstOrDefault(choice =>
+						choice.NodeId == node.MultiplierNodeId)
 					?? multiplierChoices[0],
 			};
 		CheckBox exponential =
 			new()
 			{
 				Content = "Exponential multiplier (semitones)",
-				IsChecked =
-					node.ExponentialMultiplier,
+				IsChecked = node.ExponentialMultiplier,
 			};
 
-		AddField(
-			"Waveform",
-			waveform);
-		AddField(
-			"Frequency Hz",
-			frequency);
-		AddField(
-			"Vmin",
-			minimum);
-		AddField(
-			"Vmax",
-			maximum);
-		AddField(
-			"Multiplier input",
-			multiplier);
+		AddField("Waveform", waveform);
+		AddField("Frequency Hz", frequency);
+		AddField("Vmin", minimum);
+		AddField("Vmax", maximum);
+		AddField("Multiplier input", multiplier);
 		_inspector.Children.Add(exponential);
-		_inspector.Children.Add(
-			Button(
-				"Apply",
-				() =>
-				{
-					if (waveform.SelectedItem
-						is not FmOscillatorWaveform selectedWaveform)
-					{
-						return;
-					}
 
-					int? multiplierId =
-						(multiplier.SelectedItem as NodeChoice)
-							?.NodeId;
-					ApplyNode(
-						new FmOscillatorNode(
-							node.Id,
-							selectedWaveform,
-							ParsePositiveDouble(
-								frequency,
-								"Frequency"),
-							ParseDouble(
-								minimum,
-								"Vmin"),
-							ParseDouble(
-								maximum,
-								"Vmax"),
-							multiplierId,
-							exponential.IsChecked
-								== true));
-				}));
+		BindParameterSelection(
+			waveform,
+			() => ((FmOscillatorNode)CurrentNode(node.Id)).Waveform,
+			item => UpdateOscillator(node.Id, waveform: (FmOscillatorWaveform)item));
+
+		BindParameterText(
+			frequency,
+			text => UpdateOscillator(
+				node.Id,
+				frequency: ParsePositiveDouble(text, "Frequency")));
+		BindParameterText(
+			minimum,
+			text => UpdateOscillator(
+				node.Id,
+				minimum: ParseDouble(text, "Vmin")));
+		BindParameterText(
+			maximum,
+			text => UpdateOscillator(
+				node.Id,
+				maximum: ParseDouble(text, "Vmax")));
+
+		BindParameterSelection(
+			multiplier,
+			() =>
+			{
+				int? id = ((FmOscillatorNode)CurrentNode(node.Id))
+					.MultiplierNodeId;
+				return multiplierChoices.First(choice => choice.NodeId == id);
+			},
+			item => UpdateOscillator(
+				node.Id,
+				multiplierId: ((NodeChoice)item).NodeId,
+				replaceMultiplier: true));
+
+		BindParameterToggle(
+			exponential,
+			() => ((FmOscillatorNode)CurrentNode(node.Id)).ExponentialMultiplier,
+			value => UpdateOscillator(node.Id, exponential: value));
 	}
 
-	private void AddEnvelopeInspector(
-		FmEnvelopeNode node)
+	private void AddEnvelopeInspector(FmEnvelopeNode node)
 	{
 		EnvelopeChoice[] envelopes =
 			_workspace.Document.Objects.Values
 				.OfType<EnvelopeDefinition>()
-				.OrderBy(
-					envelope => envelope.Name,
-					StringComparer.OrdinalIgnoreCase)
-				.ThenBy(
-					envelope => envelope.Id.Value)
+				.OrderBy(envelope => envelope.Name, StringComparer.OrdinalIgnoreCase)
+				.ThenBy(envelope => envelope.Id.Value)
 				.Select(envelope =>
 					new EnvelopeChoice(
 						envelope.Id,
@@ -836,77 +814,78 @@ public sealed class FmSynthEditorControl : UserControl
 			new()
 			{
 				ItemsSource = envelopes,
-				SelectedItem =
-					envelopes.FirstOrDefault(
-						choice =>
-							choice.Id
-								== node.EnvelopeId),
+				SelectedItem = envelopes.FirstOrDefault(choice =>
+					choice.Id == node.EnvelopeId),
 			};
-		AddField(
-			"Envelope",
-			envelopeBox);
-		_inspector.Children.Add(
-			Button(
-				"Apply",
-				() =>
-				{
-					if (envelopeBox.SelectedItem
-						is not EnvelopeChoice selected)
+		AddField("Envelope", envelopeBox);
+		BindParameterSelection(
+			envelopeBox,
+			() =>
+			{
+				ObjectId id = ((FmEnvelopeNode)CurrentNode(node.Id)).EnvelopeId;
+				return envelopes.FirstOrDefault(choice => choice.Id == id);
+			},
+			item =>
+				UpdateParameter(
+					node.Id,
+					current =>
 					{
-						_message.Text =
-							"Select a live envelope.";
-						return;
-					}
-
-					ApplyNode(
-						new FmEnvelopeNode(
-							node.Id,
-							selected.Id));
-				}));
+						FmEnvelopeNode live = (FmEnvelopeNode)current;
+						ObjectId selectedId = ((EnvelopeChoice)item).Id;
+						return live.EnvelopeId == selectedId
+							? null
+							: new FmEnvelopeNode(node.Id, selectedId);
+					}));
 	}
 
-	private void AddOperatorInspector(
-		FmOperatorNode node)
+	private void AddOperatorInspector(FmOperatorNode node)
 	{
 		ComboBox operation =
 			new()
 			{
-				ItemsSource =
-					Enum.GetValues<FmOperatorKind>(),
+				ItemsSource = Enum.GetValues<FmOperatorKind>(),
 				SelectedItem = node.Operation,
 			};
 		TextBox inputs =
 			new()
 			{
-				Text =
-					string.Join(
-						", ",
-						node.InputNodeIds),
+				Text = string.Join(", ", node.InputNodeIds),
 			};
-		AddField(
-			"Operation",
-			operation);
-		AddField(
-			"Input node IDs",
-			inputs);
-		_inspector.Children.Add(
-			Button(
-				"Apply",
-				() =>
-				{
-					if (operation.SelectedItem
-						is not FmOperatorKind selectedOperation)
-					{
-						return;
-					}
+		AddField("Operation", operation);
+		AddField("Input node IDs", inputs);
 
-					ApplyNode(
-						new FmOperatorNode(
-							node.Id,
-							selectedOperation,
-							ParseNodeIds(
-								inputs.Text)));
-				}));
+		BindParameterSelection(
+			operation,
+			() => ((FmOperatorNode)CurrentNode(node.Id)).Operation,
+			item =>
+				UpdateParameter(
+					node.Id,
+					current =>
+					{
+						FmOperatorNode live = (FmOperatorNode)current;
+						FmOperatorKind selected = (FmOperatorKind)item;
+						return live.Operation == selected
+							? null
+							: new FmOperatorNode(
+								live.Id, selected, live.InputNodeIds);
+					}));
+
+		BindParameterText(
+			inputs,
+			text =>
+			{
+				int[] parsed = ParseNodeIds(text);
+				UpdateParameter(
+					node.Id,
+					current =>
+					{
+						FmOperatorNode live = (FmOperatorNode)current;
+						return live.InputNodeIds.SequenceEqual(parsed)
+							? null
+							: new FmOperatorNode(
+								live.Id, live.Operation, parsed);
+					});
+			});
 	}
 
 	private void AddRoutingInspector(
@@ -1027,23 +1006,168 @@ public sealed class FmSynthEditorControl : UserControl
 		}
 	}
 
-	private void ApplyNode(
-		FmSynthNode replacement)
+	/// <summary>
+	/// Enter/focus loss commit just this field. Escape resets the current
+	/// draft to the last successful commit. Rebuilding the inspector while
+	/// another field gains focus would steal that focus, so model commits only
+	/// refresh the graph canvas; the existing controls remain mounted.
+	/// </summary>
+	private void BindParameterText(TextBox box, Action<string> apply)
 	{
-		try
+		FmSynthParameterTextField field = new(box.Text ?? string.Empty);
+
+		void Commit(bool focusLost)
 		{
-			FmSynthDocumentEditor.UpdateNode(
-				_workspace,
-				_synth,
-				replacement);
-			AfterGraphChange(
-				replacement.Id,
-				$"Updated FM node #{replacement.Id}");
+			try
+			{
+				field.Commit(box.Text, apply);
+			}
+			catch (Exception ex)
+			{
+				_message.Text = ex.Message;
+				if (focusLost)
+					box.Text = field.Revert();
+			}
 		}
-		catch (Exception ex)
+
+		box.KeyDown += (_, e) =>
 		{
-			_message.Text = ex.Message;
+			if (e.Key == Key.Escape)
+			{
+				box.Text = field.Revert();
+				e.Handled = true;
+			}
+			else if (e.Key == Key.Enter)
+			{
+				Commit(focusLost: false);
+				e.Handled = true;
+			}
+		};
+		box.LostFocus += (_, _) => Commit(focusLost: true);
+	}
+
+	private void BindParameterSelection(
+		ComboBox box,
+		Func<object?> committedSelection,
+		Action<object> apply)
+	{
+		bool reverting = false;
+		box.SelectionChanged += (_, _) =>
+		{
+			if (reverting || box.SelectedItem is not object item)
+				return;
+
+			try
+			{
+				apply(item);
+			}
+			catch (Exception ex)
+			{
+				_message.Text = ex.Message;
+				reverting = true;
+				try
+				{
+					box.SelectedItem = committedSelection();
+				}
+				finally
+				{
+					reverting = false;
+				}
+			}
+		};
+	}
+
+	private void BindParameterToggle(
+		CheckBox box,
+		Func<bool> committedValue,
+		Action<bool> apply)
+	{
+		bool reverting = false;
+		void Changed()
+		{
+			if (reverting)
+				return;
+			try
+			{
+				apply(box.IsChecked == true);
+			}
+			catch (Exception ex)
+			{
+				_message.Text = ex.Message;
+				reverting = true;
+				try
+				{
+					box.IsChecked = committedValue();
+				}
+				finally
+				{
+					reverting = false;
+				}
+			}
 		}
+
+		box.Checked += (_, _) => Changed();
+		box.Unchecked += (_, _) => Changed();
+	}
+
+	private FmSynthNode CurrentNode(int nodeId)
+		=> _synth.Graph.Nodes.FirstOrDefault(node => node.Id == nodeId)
+			?? throw new InvalidOperationException(
+					$"FM node #{nodeId} no longer exists.");
+
+	private void UpdateOscillator(
+		int nodeId,
+		FmOscillatorWaveform? waveform = null,
+		double? frequency = null,
+		double? minimum = null,
+		double? maximum = null,
+		int? multiplierId = null,
+		bool replaceMultiplier = false,
+		bool? exponential = null)
+	{
+		UpdateParameter(
+			nodeId,
+			current =>
+			{
+				FmOscillatorNode live = (FmOscillatorNode)current;
+				FmOscillatorWaveform wave = waveform ?? live.Waveform;
+				double freq = frequency ?? live.FrequencyHz;
+				double min = minimum ?? live.Minimum;
+				double max = maximum ?? live.Maximum;
+				int? multiplier = replaceMultiplier
+					? multiplierId : live.MultiplierNodeId;
+				bool exp = exponential ?? live.ExponentialMultiplier;
+				if (wave == live.Waveform
+					&& freq == live.FrequencyHz
+					&& min == live.Minimum
+					&& max == live.Maximum
+					&& multiplier == live.MultiplierNodeId
+					&& exp == live.ExponentialMultiplier)
+				{
+					return null;
+				}
+				return new FmOscillatorNode(
+					live.Id, wave, freq, min, max, multiplier, exp);
+			});
+	}
+
+	private void UpdateParameter(
+		int nodeId,
+		Func<FmSynthNode, FmSynthNode?> createReplacement)
+	{
+		FmSynthNode current = CurrentNode(nodeId);
+		FmSynthNode? replacement = createReplacement(current);
+		if (replacement is null)
+			return;
+
+		FmSynthDocumentEditor.UpdateNode(
+			_workspace,
+			_synth,
+			replacement);
+		_canvas.Refresh();
+		_canvas.SetSelectedNode(_selectedNodeId);
+		_message.Text = string.Empty;
+		_changed($"Updated FM node #{nodeId}");
 	}
 
 	private void AfterGraphChange(
@@ -1105,11 +1229,11 @@ public sealed class FmSynthEditorControl : UserControl
 		};
 
 	private static double ParseDouble(
-		TextBox box,
+		string? text,
 		string label)
 	{
 		if (!double.TryParse(
-			box.Text,
+			text,
 			NumberStyles.Float,
 			CultureInfo.InvariantCulture,
 			out double value)
@@ -1122,12 +1246,12 @@ public sealed class FmSynthEditorControl : UserControl
 	}
 
 	private static double ParsePositiveDouble(
-		TextBox box,
+		string? text,
 		string label)
 	{
 		double value =
 			ParseDouble(
-				box,
+				text,
 				label);
 		if (!(value > 0.0))
 		{
