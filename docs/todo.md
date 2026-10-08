@@ -4,10 +4,6 @@ This file contains only explicitly specified work that remains open.
 
 ## FM synth graph editor
 
-- [ ] Add an FM-synth audition area containing the text `Test`. While keyboard
-  focus is in that area, tracker piano keys (`Z S X D C ...`) should audition
-  the corresponding notes, and `*` / `/` should change the audition octave
-  exactly as they do in the pattern editor.
 - [ ] Make node-parameter editing commit immediately when an input loses focus or
   when Enter is pressed. Escape in an input should restore its last committed
   value. Remove the Apply button; there should be no separate apply step.

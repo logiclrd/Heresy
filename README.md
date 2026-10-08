@@ -330,6 +330,19 @@ are retained and the route finishes with a short horizontal approach to the
 consumer. Editor-only node positions and routing hints never alter the
 semantic audio graph.
 
+The FM editor has a focusable `Test` audition area. With keyboard focus there,
+the same layout-independent tracker piano keys as the pattern editor
+(`Z S X D C` and higher rows) start notes on independent live virtual voices
+without requiring Caps Lock. Repeated physical key-downs do not retrigger;
+releasing each key sends Note Off to its own voice. The physical keypad
+`*` and `/` keys adjust audition octave (initially 4, clamped to 0–8),
+reusing the pattern editor's octave-shortcut rules. Moving focus away,
+deactivating the window or leaving the editor releases all held notes.
+The live audition uses the FM synth as its sound source and never changes
+the song merely by previewing a note. New note starts after semantic audio
+edits refresh the live playback snapshot; note releases and layout-only
+changes do not restart an existing playback session.
+
 The desktop File menu offers New (`Ctrl+N`), Open (`Ctrl+O`), Save
 (`Ctrl+S`) and Exit (`Ctrl+Q`). These shortcuts are handled by the window
 only after the focused control has had an opportunity to handle its key event,
