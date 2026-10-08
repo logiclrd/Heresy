@@ -173,35 +173,115 @@ public sealed class IncrementalTempoArbitrationTests
 	}
 
 	[Test]
-	public void DifferentCapturedRowSpeedsRejectSimultaneousTxxBeforeUpdatingEffectMemory()
+	public void DifferentCapturedRowSpeedsComposePiecewiseWithoutLosingEffectMemory()
 	{
 		SequencingContext root = new();
 		using IncrementalPatternTimeline timeline = new(root);
-		timeline.Add(new RawSource(At(0, 0,
-			new ApplyTrackerTempoCommand(0x12))), 1, root);
+		timeline.Add(new RawSource(
+			At(0, 0, new ApplyTrackerTempoCommand(0x12)),
+			At(1, 0, new NoteCutCommand())), 2, root);
 		timeline.Add(new RawSource(At(0, ChannelTarget.Global,
 			new SetSpeedCommand(3))), 1,
 			root.FlattenedChild(physicalChannelOffset: 2));
 
-		// Both existing invocations captured Speed 6 at tick zero;
-		// their global Speed command executes before physical Txx.
-		Assert.That(timeline.TryStep(out IncrementalPatternTimelineStep? first),
-			Is.True);
-		Assert.That(((IncrementalPatternTimelineStep.Emit)first!).Note
-			.Commands.Single(), Is.EqualTo(new SetSpeedCommand(3)));
+		Assert.That(timeline.TryStep(out IncrementalPatternTimelineStep? first), Is.True);
+		Assert.That(((IncrementalPatternTimelineStep.Emit)first!).Note.Commands.Single(),
+			Is.EqualTo(new SetSpeedCommand(3)));
 
-		// A newly started invocation at the *same* tick captures Speed 3.
-		// The two Txx spans differ, so no combined ramp is well-defined.
 		timeline.Add(new RawSource(At(0, 0,
 			new ApplyTrackerTempoCommand(0x11))), 1,
 			root.FlattenedChild(physicalChannelOffset: 3));
-		Assert.Throws<NotSupportedException>(() => timeline.TryStep(out _));
-		Assert.That(root.State.Tempo, Is.EqualTo(125));
+		NoteEvent[] events = Drain(timeline);
+		SetTempoRampCommand[] ramps = events.SelectMany(e => e.Commands)
+			.OfType<SetTempoRampCommand>().ToArray();
+		Assert.That(ramps.Select(r => r.EndingTempo),
+			Is.EqualTo(new[] { 132.0, 137.0 }).Within(1e-8));
+		Assert.That(ramps.Select(r => r.TrackerTicks),
+			Is.EqualTo(new[] { 3.0, 3.0 }));
+		double breakpoint = RampSeconds(125, 132, 3, 3);
+		Assert.That(events.First(e => e.Commands.Any(c =>
+			c is SetTempoRampCommand ramp && ramp.EndingTempo == 137))
+			.Offset.TimeOffset.TotalSeconds,
+			Is.EqualTo(breakpoint).Within(1e-6));
+		Assert.That(events.Single(e => e.Commands.Any(c => c is NoteCutCommand))
+			.Offset.TimeOffset.TotalSeconds,
+			Is.EqualTo(breakpoint + RampSeconds(132, 137, 3, 3)).Within(1e-6));
+		Assert.That(root.State.Tempo, Is.EqualTo(137).Within(1e-8));
 		Assert.That(root.GetPhysicalChannelState(0)
-			.TryGetEffectParameter(EffectMemorySlot.Tempo, out _), Is.False);
+			.TryGetEffectParameter(EffectMemorySlot.Tempo, out byte a), Is.True);
 		Assert.That(root.GetPhysicalChannelState(3)
-			.TryGetEffectParameter(EffectMemorySlot.Tempo, out _), Is.False);
+			.TryGetEffectParameter(EffectMemorySlot.Tempo, out byte b), Is.True);
+		Assert.That(a, Is.EqualTo(0x12));
+		Assert.That(b, Is.EqualTo(0x11));
 	}
+
+	[Test]
+	public void FixedWallDeadlineInsideSecondTempoSegmentUsesAnalyticInverse()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(new RawSource(At(0, 0, new ApplyTrackerTempoCommand(0x12))),
+			1, root);
+		timeline.Add(new RawSource(At(0, ChannelTarget.Global,
+			new SetSpeedCommand(3))), 1, root.FlattenedChild(physicalChannelOffset: 2));
+		Assert.That(timeline.TryStep(out _), Is.True);
+		timeline.Add(new RawSource(At(0, 0, new ApplyTrackerTempoCommand(0x11))),
+			1, root.FlattenedChild(physicalChannelOffset: 3));
+		double boundary = RampSeconds(125, 132, 3, 3);
+		TimeSpan deadline = TimeSpan.FromSeconds(boundary + 0.012);
+		timeline.Add(new RawSource(new NoteEvent(
+			new MusicalTime(deadline, 0), ChannelTarget.Physical(0),
+			[new NoteOffCommand()])), 1,
+			root.FlattenedChild(physicalChannelOffset: 5));
+		double? dueTick = null;
+		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+			if (step is IncrementalPatternTimelineStep.Emit e
+				&& e.Note.Commands.Any(c => c is NoteOffCommand))
+			{
+				Assert.That(e.Note.Offset.TimeOffset, Is.EqualTo(deadline));
+				dueTick = e.Tick;
+			}
+		double slope = 5.0 / 3;
+		double expectedTick = 3 + 132 / slope
+			* (Math.Exp(slope * 0.012 / 2.5) - 1);
+		Assert.That(dueTick, Is.EqualTo(expectedTick).Within(1e-6));
+	}
+
+	[Test]
+	public void LaterGlobalTempoSetCancelsRemainingSegmentOfUnequalSpans()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(new RawSource(
+			At(0, 0, new ApplyTrackerTempoCommand(0x12)),
+			At(1, 0, new NoteCutCommand())), 2, root);
+		timeline.Add(new RawSource(At(0, ChannelTarget.Global,
+			new SetSpeedCommand(3))), 1, root.FlattenedChild(physicalChannelOffset: 2));
+		Assert.That(timeline.TryStep(out _), Is.True);
+		timeline.Add(new RawSource(At(0, 0, new ApplyTrackerTempoCommand(0x11))),
+			1, root.FlattenedChild(physicalChannelOffset: 3));
+		// Advance into the first ramp, then inject a row-boundary Tempo set.
+		bool inserted = false;
+		List<NoteEvent> events = [];
+		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+		{
+			if (step is not IncrementalPatternTimelineStep.Emit e)
+				continue;
+			events.Add(e.Note);
+			if (!inserted && e.Note.Commands.Any(c =>
+				c is SetTempoRampCommand))
+			{
+				inserted = true;
+				timeline.Add(new RawSource(At(0, ChannelTarget.Global,
+					new SetTempoCommand(250))), 1,
+					root.FlattenedChild(physicalChannelOffset: 6));
+			}
+		}
+		Assert.That(events.SelectMany(e => e.Commands)
+			.OfType<SetTempoRampCommand>().Count(), Is.EqualTo(1));
+		Assert.That(root.State.Tempo, Is.EqualTo(250));
+	}
+
 
 	private static double RampSeconds(
 		double start, double end, double ticks, double into)
