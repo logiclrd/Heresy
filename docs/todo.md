@@ -55,7 +55,14 @@ Items that were already completed remain in Git history, not in this checklist.
   commands from the shared-boundary Txx request. Same-row compatible
   Txx requests still compose one ramp, preserve T00 effect memory,
   and leave positive wall-time note deadlines independent. Simultaneous
-  Txx on different captured row-speed spans remain explicitly unsupported.
+  Txx on different captured row-speed spans now compose **piecewise
+  shared-clock Tempo ramps**. Each T0x/T1x uses its own captured
+  tick span and legacy per-tick delta; the combined Tempo trajectory
+  changes slope when a shorter slide finishes. The scheduler emits
+  the next Tempo ramp at that tick (not early), preserves fixed wall
+  deadlines across the transition, and cancels all pending segments
+  on an interrupting Tempo command. Simultaneous SEy repeated Txx
+  and more involved effects still require separate arbitration.
   The incremental timeline now recognizes **S6x and SEy variable-length
   row spans**: physical-channel S6x ticks accumulate, lowest mapped
   channel SEy wins, ordinary notes execute only once, and admitted
