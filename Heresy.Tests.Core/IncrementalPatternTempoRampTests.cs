@@ -178,7 +178,7 @@ public sealed class IncrementalPatternTempoRampTests
 	}
 
 	[Test]
-	public void ConflictingTempoRampWhilePreviousIsActiveFailsExplicitly()
+	public void SimultaneousTempoSlidesComposeIntoOneGlobalRamp()
 	{
 		SequencingContext root = new();
 		using IncrementalPatternTimeline timeline = new(root);
@@ -189,7 +189,12 @@ public sealed class IncrementalPatternTempoRampTests
 			Event(0, ChannelTarget.Physical(0),
 				new ApplyTrackerTempoCommand(0x11))), 1,
 			root.FlattenedChild(physicalChannelOffset: 1));
-		Assert.Throws<NotSupportedException>(() => Drain(timeline));
+		NoteEvent[] events = Drain(timeline);
+		Assert.That(events, Has.Length.EqualTo(1));
+		Assert.That(events[0].Target, Is.EqualTo(ChannelTarget.Global));
+		Assert.That(events[0].Commands.Single(),
+			Is.EqualTo(new SetTempoRampCommand(140, 6)));
+		Assert.That(root.State.Tempo, Is.EqualTo(140));
 	}
 
 	[Test]
@@ -208,7 +213,7 @@ public sealed class IncrementalPatternTempoRampTests
 	}
 
 	[Test]
-	public void CompetingGlobalTempoDuringActiveRampFailsWithoutClobberingRamp()
+	public void GlobalTempoAtSameBoundaryPrecedesPhysicalTxxRamp()
 	{
 		SequencingContext root = new();
 		using IncrementalPatternTimeline timeline = new(root);
@@ -218,12 +223,14 @@ public sealed class IncrementalPatternTempoRampTests
 		timeline.Add(new RawSource(
 			Event(0, ChannelTarget.Global, new SetTempoCommand(250))),
 			1, root.FlattenedChild(physicalChannelOffset: 3));
-		// The parent cursor starts its ramp; the second cursor attempts
-		// a competing boundary operation at the same tracker tick.
-		Assert.That(timeline.TryStep(out IncrementalPatternTimelineStep? first), Is.True);
-		Assert.That(first, Is.TypeOf<IncrementalPatternTimelineStep.Emit>());
-		Assert.Throws<NotSupportedException>(() => timeline.TryStep(out _));
-		Assert.That(root.State.Tempo, Is.EqualTo(125));
+		NoteEvent[] events = Drain(timeline);
+		Assert.That(events.SelectMany(e => e.Commands)
+			.OfType<SetTempoCommand>().Single().TicksPerDiachron,
+			Is.EqualTo(250));
+		Assert.That(events.SelectMany(e => e.Commands)
+			.OfType<SetTempoRampCommand>().Single().EndingTempo,
+			Is.EqualTo(255));
+		Assert.That(root.State.Tempo, Is.EqualTo(255));
 	}
 
 	private static double RampSeconds(double start, double end, double ticks, double elapsedTicks)
