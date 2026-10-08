@@ -258,7 +258,7 @@ public sealed class IncrementalPatternTimelineTests
 		SequencingContext root = new();
 		using IncrementalPatternTimeline timeline = new(root);
 		timeline.Add(new RawSource(
-			At(0, 0, new SetNoteVolumeCommand(0.75))), 1, root);
+			At(0, 0, new ApplyArpeggioCommand(0x12))), 1, root);
 		Assert.Throws<NotSupportedException>(
 			() => timeline.TryStep(out _));
 	}
