@@ -6,7 +6,6 @@ using Heresy.Core.Diagnostics;
 using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
 using Heresy.Core.Sequences;
-using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
 
 namespace Heresy.Scripting.Runtime;
