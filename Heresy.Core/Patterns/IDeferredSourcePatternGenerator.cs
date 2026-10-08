@@ -1,3 +1,5 @@
+using Heresy.Core.Sequencing;
+
 namespace Heresy.Core.Patterns;
 
 /// <summary>
