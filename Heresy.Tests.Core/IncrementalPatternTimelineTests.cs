@@ -120,7 +120,10 @@ public sealed class IncrementalPatternTimelineTests
 			Is.EqualTo(ObjectId.None));
 		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
 		{
-			if (step is IncrementalPatternTimelineStep.Emit)
+			// The global Tempo event precedes the physical-channel event
+			// on the same row. Source selection executes with the latter.
+			if (step is IncrementalPatternTimelineStep.Emit emit
+				&& emit.Note.Commands.Any(c => c is StartNoteCommand))
 				break;
 		}
 		Assert.That(root.State.Tempo, Is.EqualTo(250));
