@@ -164,6 +164,132 @@ public sealed class IncrementalRecursiveTimelineTests
 		Assert.That(timeline.IsComplete, Is.True);
 	}
 
+	[Test]
+	public void TwoFlattenedSiblingsKeepDistinctMappedChannelTargets()
+	{
+		DataPatternDefinition parent = Pattern(1, 1);
+		parent.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote((ObjectId)2U);
+		parent.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote((ObjectId)2U);
+		DataPatternDefinition child = Pattern(2, 1);
+		child.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
+
+		using IncrementalRecursiveTimeline timeline = new(
+			new SequencingContext(), new Resolver(parent, child));
+		timeline.AddRoot(parent.Id);
+		NoteEvent[] actual = Drain(timeline);
+		Assert.That(actual.Select(e => e.Target),
+			Is.EqualTo(new[] { ChannelTarget.Physical(0),
+				ChannelTarget.Physical(1) }));
+		Assert.That(actual.Select(e => e.Offset.TimeOffset),
+			Is.All.EqualTo(TimeSpan.Zero));
+	}
+
+	[Test]
+	public void GrandchildPatternBeginsInsideSequenceWithAdditiveChannelMapping()
+	{
+		DataPatternDefinition root = Pattern(1, 1);
+		root.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote((ObjectId)10U);
+		DataSequenceDefinition sequence = new((ObjectId)10U, "Nested");
+		sequence.Entries.Add(new SequenceEntry((ObjectId)2U));
+		DataPatternDefinition intermediate = Pattern(2, 1);
+		intermediate.Grid.GetOrCreateCell(0, 1).Note =
+			new StartPatternNote((ObjectId)3U);
+		DataPatternDefinition grandchild = Pattern(3, 1);
+		grandchild.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
+
+		using IncrementalRecursiveTimeline timeline = new(
+			new SequencingContext(), new Resolver(
+				root, sequence, intermediate, grandchild));
+		timeline.AddRoot(root.Id);
+		NoteEvent[] events = Drain(timeline);
+		Assert.That(events.Single().Target,
+			Is.EqualTo(ChannelTarget.Physical(2)));
+		Assert.That(events.Single().Offset.TimeOffset, Is.EqualTo(TimeSpan.Zero));
+	}
+
+	[Test]
+	public void MixedParentCommandPreservesNonFlattenedActions()
+	{
+		StreamingPattern parent = new((ObjectId)1U, 1,
+			new NoteEvent(MusicalTime.Zero, ChannelTarget.Physical(0),
+				[new SetNoteVolumeCommand(0.5),
+					new StartNoteCommand((ObjectId)2U)]));
+		DataPatternDefinition child = Pattern(2, 1);
+		child.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
+
+		using IncrementalRecursiveTimeline timeline = new(
+			new SequencingContext(), new Resolver(parent, child));
+		timeline.AddRoot(parent.Id);
+		NoteEvent[] events = Drain(timeline);
+		Assert.That(events, Has.Length.EqualTo(2));
+		Assert.That(events[0].Commands.Single(),
+			Is.EqualTo(new SetNoteVolumeCommand(0.5)));
+		Assert.That(events[1].Commands.Single(), Is.TypeOf<NoteCutCommand>());
+	}
+
+	[Test]
+	public void MixdownChildStartPassesThroughWithoutFlattening()
+	{
+		StreamingPattern parent = new((ObjectId)1U, 1,
+			new NoteEvent(MusicalTime.Zero, ChannelTarget.Physical(0),
+				[new StartNoteCommand((ObjectId)2U, Mixdown: true)]));
+		DataPatternDefinition child = Pattern(2, 1);
+		child.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
+
+		using IncrementalRecursiveTimeline timeline = new(
+			new SequencingContext(), new Resolver(parent, child));
+		timeline.AddRoot(parent.Id);
+		NoteEvent[] emitted = Drain(timeline);
+		Assert.That(emitted, Has.Length.EqualTo(1));
+		Assert.That(emitted[0].Commands.OfType<StartNoteCommand>().Single().Mixdown,
+			Is.True);
+	}
+
+	[Test]
+	public void TransformedFlattenedChildIsRejectedBeforeRunningItsSource()
+	{
+		StreamingPattern parent = new((ObjectId)1U, 1,
+			new NoteEvent(MusicalTime.Zero, ChannelTarget.Physical(0),
+				[new StartNoteCommand((ObjectId)2U,
+					PitchMultiplier: 2.0)]));
+		DataPatternDefinition child = Pattern(2, 1);
+		child.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new SetTempoPatternEffect(250));
+		SequencingContext root = new();
+		using IncrementalRecursiveTimeline timeline = new(
+			root, new Resolver(parent, child));
+		timeline.AddRoot(parent.Id);
+		Assert.Throws<NotSupportedException>(() => Drain(timeline));
+		Assert.That(root.State.Tempo, Is.EqualTo(125));
+	}
+
+	[Test]
+	public void AdvancingSequenceLoopCanRepeatedlyLaunchFlattenedChildren()
+	{
+		DataSequenceDefinition sequence = new((ObjectId)10U, "Repeat");
+		sequence.Entries.Add(new SequenceEntry((ObjectId)1U));
+		DataPatternDefinition parent = Pattern(1, 1);
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote((ObjectId)2U);
+		parent.Grid.GetOrCreateCell(0, 1).Effects.Add(
+			new TrackerOrderJumpPatternEffect(0));
+		DataPatternDefinition child = Pattern(2, 1);
+		child.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
+		int encountered = 0;
+
+		using IncrementalRecursiveTimeline timeline = new(
+			new SequencingContext(), new Resolver(sequence, parent, child));
+		timeline.AddRoot(sequence.Id, shouldFollowOrderJump: _ => ++encountered < 3);
+		NoteEvent[] notes = Drain(timeline);
+		Assert.That(notes.Select(e => e.Offset.TimeOffset),
+			Is.EqualTo(new[] { TimeSpan.Zero,
+				TimeSpan.FromMilliseconds(120),
+				TimeSpan.FromMilliseconds(240) }));
+		Assert.That(encountered, Is.EqualTo(3));
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(360)));
+		Assert.That(timeline.IsComplete, Is.True);
+	}
+
 	private static DataPatternDefinition Pattern(uint id, int rows)
 		=> new((ObjectId)id, "Pattern")
 		{
@@ -177,6 +303,25 @@ public sealed class IncrementalRecursiveTimelineTests
 			if (step is IncrementalPatternTimelineStep.Emit emit)
 				events.Add(emit.Note);
 		return events.ToArray();
+	}
+
+	private sealed class StreamingPattern : PatternDefinition,
+		IIncrementalRawPatternNoteGenerator
+	{
+		private readonly NoteEvent[] _events;
+
+		public StreamingPattern(ObjectId id, int rowCount,
+			params NoteEvent[] events) : base(id, "Streaming")
+		{
+			RowCount = rowCount;
+			_events = events;
+		}
+
+		public IEnumerable<RawPatternStep> EnumerateRawSteps(SequencingContext context)
+		{
+			foreach (NoteEvent entry in _events)
+				yield return new RawPatternStep.Emit(entry);
+		}
 	}
 
 	private sealed class Resolver(params SongObject[] objects)
