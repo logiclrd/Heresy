@@ -1,9 +1,85 @@
 # Heresy TODO
 
-This file contains only explicitly specified work that remains open.
+This file tracks the remaining requirements recovered from the original design
+and the current repository audit (2026-10-08). Work should be implemented
+test-first with a red checkpoint, green GitHub Actions, and focused documentation.
+Items that were already completed remain in Git history, not in this checklist.
 
-There are currently no open TODO items.
+## Recursive sound sources — architecture priority
 
-Completed implementation history is preserved in Git, while stable architectural
-and behavioral rules belong in the focused documentation and README rather than
-remaining as checked-off TODO entries.
+- [ ] Resolve data/script **Patterns and Sequences as playable note sources**
+  through the concrete playback sound resolver, including from instruments and
+  other nested source graphs. They must render in realtime and offline rather
+  than resolve silently.
+- [ ] Preserve the original distinction between **flattened** nested invocation
+  (mapped child channels, shared parent sequencing state where appropriate)
+  and **mixdown** (private child sequencing state and a cooked multichannel
+  signal exposed as one parent playback voice). A playback-channel mixdown must
+  not collapse physical speaker feeds to mono.
+- [ ] Propagate pitch, playback-speed multiplier, origin timing, Note Off/Cut,
+  envelope/release behavior and new-note actions through nested sources.
+  Preserve snapshot isolation, deterministic random/effect memory, script
+  compilation safety, event caps, and finite/infinite lifetime semantics.
+- [ ] Implement mixdown **native source-frame seeking**, including accurate
+  ReplayRequired seeking and Oxx/retrigger behavior without silently dropping
+  expensive but legal offsets. Add tests for nested patterns, sequences,
+  instruments, repeated invocation, notes/releases, seek, and offline parity.
+- [ ] Detect or safely bound recursive object-reference cycles and
+  unbounded event expansion without hanging playback or export.
+
+## Output audio configuration and physical speaker processing
+
+- [ ] Apply configured per-output-channel filtering to the **final speaker
+  feeds**, independently of the existing per-voice tracker resonant filter;
+  cover None, LowPass and HighPass and continuity across render blocks.
+- [ ] Expose configuration of output channel count/layout (including 5.1 and
+  7.1), speaker positions, positional importance, optional speaker filters
+  and cutoff frequencies, and sample rate. Wire the chosen configuration to
+  realtime and offline paths, preserving the same PCM engine and proper
+  distinctions between playback channels and speaker outputs.
+- [ ] Test spatial and filtered output routing, including arbitrary output
+  layouts, stable multi-block rendering, and configured channel ordering.
+
+## Export workflow
+
+- [ ] Show offline rendering progress in **rendered musical time** against
+  the logical length (not guessed wall-clock ETA).
+- [ ] Add cooperative cancellation at safe render blocks, preserving the
+  atomic temporary-output-file behavior and leaving existing exports intact.
+- [ ] Support user-selectable output configuration for export and additional
+  WAV depths beyond default 16-bit PCM. Retain FLAC as default and MP3/WAV.
+- [ ] Ensure export and realtime render identically for equal snapshots and
+  render configurations, aside from intentionally different end-of-song
+  handling and output encoding.
+
+## Asset portability
+
+- [ ] Add an interactive recovery flow for missing/unreadable sample assets
+  when opening an existing project: select substitute files or search folders,
+  validate loaded encoded data, and retry without mutating the current
+  document on failure. Preserve in-memory decoded PCM and archive semantics.
+
+## Playback state and authoring feedback
+
+- [ ] Measure/report actual realtime audio underruns. Late audio produces a
+  temporary dropout without skipping the musical timeline or stopping playback.
+  The UI underrun indicator must be **hidden until the first underrun**.
+- [ ] Show playback-affecting changes since the most recent playback snapshot,
+  separately from unsaved-file status, using document/audio revision tracking.
+- [ ] Highlight Oxx/offset operations on ReplayRequired mixdown sources when
+  the runtime capability indicates expensive realtime seeking. Explain in a
+  tooltip that export remains correct; provide an option to suppress warnings.
+  Do not prohibit these operations.
+
+## Documentation and later maintenance
+
+- [ ] Reconcile stale README descriptions of WAVE-only realtime sample
+  decoding with the implemented **load/import-time** WAVE/FLAC/MP3/OGG/AIFF
+  decoding and immutable, shared in-memory PCM playback architecture. Treat
+  docs/sample-storage.md and current code as authoritative.
+- [ ] Add format-version migration tooling **only when** actual documents
+  require schema evolution; intentionally retain format version 1 during
+  pre-release development.
+
+Completed implementation history is preserved in Git, while stable architecture
+belongs in the README and focused documentation.
