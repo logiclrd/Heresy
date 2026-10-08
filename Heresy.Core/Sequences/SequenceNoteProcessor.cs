@@ -63,7 +63,8 @@ public static class SequenceNoteProcessor
 			startOrder,
 			startRow,
 			out duration,
-			rowStarted: null);
+			rowStarted: null,
+			shouldFollowOrderJump: null);
 
 	public static void GenerateNotes(
 		IReadOnlyList<SequenceEntry> entries,
@@ -73,7 +74,8 @@ public static class SequenceNoteProcessor
 		int startOrder,
 		int? startRow,
 		out TimeSpan duration,
-		Action<int, ObjectId, int, TimeSpan>? rowStarted)
+		Action<int, ObjectId, int, TimeSpan>? rowStarted,
+		Func<SequenceOrderJumpEncounter, bool>? shouldFollowOrderJump = null)
 	{
 		ArgumentNullException.ThrowIfNull(entries);
 		ArgumentNullException.ThrowIfNull(resolver);
@@ -142,6 +144,19 @@ public static class SequenceNoteProcessor
 			{
 				order++;
 				continue;
+			}
+
+			if (flowControl.OrderJump.HasValue
+				&& flowControl.SourceRow.HasValue
+				&& shouldFollowOrderJump is not null)
+			{
+				SequenceOrderJumpEncounter encounter =
+					new(
+						entry.PatternId,
+						flowControl.SourceRow.Value,
+						flowControl.OrderJump.Value);
+				if (!shouldFollowOrderJump(encounter))
+					break;
 			}
 
 			order = flowControl.OrderJump ?? checked(order + 1);

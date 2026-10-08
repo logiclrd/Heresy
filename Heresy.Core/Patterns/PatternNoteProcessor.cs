@@ -194,7 +194,8 @@ public static class PatternNoteProcessor
 		(events, effectiveRowCount, flowControl) =
 			ExtractPatternFlowControl(
 				events,
-				effectiveRowCount);
+				effectiveRowCount,
+				sourceRows);
 
 		int generatedRowCount =
 			(int)Math.Ceiling(effectiveRowCount);
@@ -585,7 +586,8 @@ public static class PatternNoteProcessor
 		PatternFlowControl FlowControl)
 		ExtractPatternFlowControl(
 			List<WorkingEvent> events,
-			double rowCount)
+			double rowCount,
+			IReadOnlyList<int> sourceRows)
 	{
 		int? controlRow = null;
 
@@ -676,7 +678,15 @@ public static class PatternNoteProcessor
 		return (
 			filtered,
 			truncatedRowCount,
-			new PatternFlowControl(orderJump, breakRow));
+			new PatternFlowControl(
+				orderJump,
+				breakRow)
+			{
+				SourceRow =
+					finalRow < sourceRows.Count
+						? sourceRows[finalRow]
+						: null,
+			});
 	}
 
 	private static IReadOnlyList<NoteCommand>

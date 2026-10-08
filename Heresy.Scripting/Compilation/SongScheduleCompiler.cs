@@ -59,7 +59,8 @@ public static class SongScheduleCompiler
 
 	public static SongScheduleCompilationResult CompileRoot(
 		SongDocument document,
-		SequencingContext? context = null)
+		SequencingContext? context = null,
+		Func<SequenceOrderJumpEncounter, bool>? shouldFollowOrderJump = null)
 	{
 		ArgumentNullException.ThrowIfNull(document);
 
@@ -74,7 +75,8 @@ public static class SongScheduleCompiler
 			document.RootSequenceId,
 			startOrder: 0,
 			startRow: null,
-			context);
+			context,
+			shouldFollowOrderJump);
 	}
 
 	public static SongScheduleCompilationResult CompileSequence(
@@ -82,7 +84,8 @@ public static class SongScheduleCompiler
 		ObjectId sequenceId,
 		int startOrder = 0,
 		int? startRow = null,
-		SequencingContext? context = null)
+		SequencingContext? context = null,
+		Func<SequenceOrderJumpEncounter, bool>? shouldFollowOrderJump = null)
 	{
 		ArgumentNullException.ThrowIfNull(document);
 		if (sequenceId.IsNone)
@@ -113,7 +116,8 @@ public static class SongScheduleCompiler
 					dataSequence,
 					resolver,
 					startOrder,
-					startRow);
+					startRow,
+					shouldFollowOrderJump);
 		}
 		else if (sequence is ScriptSequenceDefinition scriptSequence)
 		{
@@ -122,7 +126,8 @@ public static class SongScheduleCompiler
 					scriptSequence,
 					resolver,
 					startOrder,
-					startRow);
+					startRow,
+					shouldFollowOrderJump);
 			diagnostics.AddRange(compilation.Diagnostics);
 			sequencer = compilation.Program;
 		}
@@ -345,6 +350,8 @@ public static class SongScheduleCompiler
 		private readonly ISequencePatternResolver _resolver;
 		private readonly int _startOrder;
 		private readonly int? _startRow;
+		private readonly Func<SequenceOrderJumpEncounter, bool>?
+			_shouldFollowOrderJump;
 		private readonly List<CompiledPatternPlaybackPosition>
 			_playbackPositions = [];
 
@@ -355,12 +362,14 @@ public static class SongScheduleCompiler
 			DataSequenceDefinition sequence,
 			ISequencePatternResolver resolver,
 			int startOrder,
-			int? startRow)
+			int? startRow,
+			Func<SequenceOrderJumpEncounter, bool>? shouldFollowOrderJump)
 		{
 			_sequence = sequence;
 			_resolver = resolver;
 			_startOrder = startOrder;
 			_startRow = startRow;
+			_shouldFollowOrderJump = shouldFollowOrderJump;
 		}
 
 		public void GenerateNotes(
@@ -383,7 +392,8 @@ public static class SongScheduleCompiler
 							offset,
 							patternId,
 							patternRow,
-							order)));
+							order)),
+				_shouldFollowOrderJump);
 		}
 	}
 }

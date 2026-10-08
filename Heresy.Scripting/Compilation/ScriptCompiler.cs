@@ -125,7 +125,8 @@ public static class ScriptCompiler
 		ScriptSequenceDefinition definition,
 		ISequencePatternResolver resolver,
 		int startOrder = 0,
-		int? startRow = null)
+		int? startRow = null,
+		Func<SequenceOrderJumpEncounter, bool>? shouldFollowOrderJump = null)
 	{
 		ArgumentNullException.ThrowIfNull(definition);
 		ArgumentNullException.ThrowIfNull(resolver);
@@ -157,7 +158,8 @@ public static class ScriptCompiler
 				compiled.Program,
 				resolver,
 				startOrder,
-				startRow),
+				startRow,
+				shouldFollowOrderJump),
 			compiled.Diagnostics);
 	}
 
@@ -797,6 +799,8 @@ public static class ScriptCompiler
 		private readonly ISequencePatternResolver _resolver;
 		private readonly int _startOrder;
 		private readonly int? _startRow;
+		private readonly Func<SequenceOrderJumpEncounter, bool>?
+			_shouldFollowOrderJump;
 		private readonly List<CompiledPatternPlaybackPosition>
 			_playbackPositions = [];
 
@@ -807,12 +811,14 @@ public static class ScriptCompiler
 			Type programType,
 			ISequencePatternResolver resolver,
 			int startOrder,
-			int? startRow)
+			int? startRow,
+			Func<SequenceOrderJumpEncounter, bool>? shouldFollowOrderJump)
 		{
 			_programType = programType;
 			_resolver = resolver;
 			_startOrder = startOrder;
 			_startRow = startRow;
+			_shouldFollowOrderJump = shouldFollowOrderJump;
 		}
 
 		public void GenerateNotes(
@@ -848,7 +854,8 @@ public static class ScriptCompiler
 							offset,
 							patternId,
 							patternRow,
-							order)));
+							order)),
+				_shouldFollowOrderJump);
 		}
 	}
 }

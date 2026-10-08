@@ -92,6 +92,50 @@ public sealed class OfflineSongRenderPlanFactoryTests
 	}
 
 	[Test]
+	public void ThirdEncounterWithSameBxxEndsOfflineArrangement()
+	{
+		SongDocument document = new();
+
+		ObjectId patternId =
+			document.AllocateObjectId();
+		DataPatternDefinition pattern =
+			new(
+				patternId,
+				"Loop")
+			{
+				RowCount = 1,
+				ChannelCount = 1,
+			};
+		pattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new TrackerOrderJumpPatternEffect(0));
+		document.Add(pattern);
+
+		ObjectId sequenceId =
+			document.AllocateObjectId();
+		DataSequenceDefinition sequence =
+			new(
+				sequenceId,
+				"Song");
+		sequence.Entries.Add(
+			new SequenceEntry(patternId));
+		document.Add(sequence);
+		document.RootSequenceId = sequenceId;
+		document.MarkChanged(
+			affectsAudio: true);
+
+		OfflineSongRenderPlanFactory factory =
+			new(
+				RenderConfiguration.Stereo(
+					sampleRate: 48000));
+
+		OfflineSongRenderPlan plan =
+			factory.Create(document);
+
+		plan.LogicalDuration.Should()
+			.Be(TimeSpan.FromMilliseconds(360));
+	}
+
+	[Test]
 	public void CompilationFailureUsesPlaybackCompilationException()
 	{
 		SongDocument document = new();

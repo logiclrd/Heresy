@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Samples;
+using Heresy.Core.Sequences;
 using Heresy.Render.Configuration;
 using Heresy.Render.Playback;
 using Heresy.Render.Samples;
@@ -80,10 +82,30 @@ public sealed class OfflineSongRenderPlanFactory
 			SongDocumentSnapshot.Create(document);
 		SongDocument snapshotDocument =
 			snapshot.Document;
+		Dictionary<SequenceOrderJumpEncounter, int>
+			orderJumpEncounters = [];
+		bool ShouldFollowOrderJump(
+			SequenceOrderJumpEncounter encounter)
+		{
+			orderJumpEncounters.TryGetValue(
+				encounter,
+				out int previousCount);
+			int count =
+				checked(previousCount + 1);
+			orderJumpEncounters[encounter] = count;
+
+			// Offline rendering treats the third encounter with the same Bxx
+			// instruction as the logical end of the arrangement. The row
+			// containing that third Bxx is still rendered; only its jump is
+			// suppressed.
+			return count < 3;
+		}
+
 		SongScheduleCompilationResult compilation =
 			SongScheduleCompiler.CompileSequence(
 				snapshotDocument,
-				snapshotDocument.RootSequenceId);
+				snapshotDocument.RootSequenceId,
+				shouldFollowOrderJump: ShouldFollowOrderJump);
 
 		if (!compilation.Success
 			|| compilation.Schedule is null)
