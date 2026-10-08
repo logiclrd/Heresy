@@ -511,14 +511,24 @@ public sealed class PlaybackSessionTests
 			new float[1]);
 		session.EndInput();
 
-		session.HasIndefiniteActiveVoices.Should().BeTrue();
+		Assert.That(
+			session.HasIndefiniteActiveVoices,
+			Is.True);
 
 		session.CutIndefiniteActiveVoicesAfterEndInput();
 
-		session.HasIndefiniteActiveVoices.Should().BeFalse();
-		session.GetChannelState(0).CurrentVoice.Should().NotBeNull();
-		session.GetChannelState(1).CurrentVoice.Should().BeNull();
-		session.GetChannelState(1).AntiClickTail.IsActive.Should().BeTrue();
+		Assert.That(
+			session.HasIndefiniteActiveVoices,
+			Is.False);
+		Assert.That(
+			session.GetChannelState(0).CurrentVoice,
+			Is.Not.Null);
+		Assert.That(
+			session.GetChannelState(1).CurrentVoice,
+			Is.Null);
+		Assert.That(
+			session.GetChannelState(1).AntiClickTail.IsActive,
+			Is.True);
 	}
 
 	private sealed class InfiniteTestSound : ISound
