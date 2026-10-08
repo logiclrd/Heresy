@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
+using Heresy.Core.Diagnostics;
 using Heresy.Core.Envelopes;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Instruments;
@@ -45,13 +46,17 @@ public sealed class PlaybackSourceCompilationException
 /// </summary>
 public sealed class PlaybackRequestAudioSourceFactory
 	: IBackgroundPlaybackSourceFactory,
-		IPlaybackPositionTimelineProvider
+		IPlaybackPositionTimelineProvider,
+		IPlaybackRuntimeDiagnosticReportProvider
 {
 	private readonly RenderConfiguration _configuration;
 	private readonly ISampleDataProvider _sampleDataProvider;
 	private readonly object _timelineGate = new();
 	private readonly Dictionary<PlaybackRequest, PlaybackPositionTimeline>
 		_positionTimelines =
+			new(ReferenceEqualityComparer.Instance);
+	private readonly Dictionary<PlaybackRequest, SequencingDiagnostic[]>
+		_diagnosticReports =
 			new(ReferenceEqualityComparer.Instance);
 
 	public PlaybackRequestAudioSourceFactory(
@@ -85,6 +90,7 @@ public sealed class PlaybackRequestAudioSourceFactory
 			new(
 				document,
 				_sampleDataProvider);
+		SequencingContext sequencingContext = new();
 
 		switch (request)
 		{
@@ -97,7 +103,8 @@ public sealed class PlaybackRequestAudioSourceFactory
 							document,
 							sequence.SequenceId,
 							start?.Order ?? 0,
-							start?.Row);
+							start?.Row,
+							sequencingContext);
 
 					ThrowIfFailed(
 						compilation,
@@ -112,7 +119,8 @@ public sealed class PlaybackRequestAudioSourceFactory
 						source,
 						compilation,
 						sequence.SequenceId,
-						repeat: false);
+						repeat: false,
+						sequencingContext);
 				}
 
 			case PatternPlaybackRequest pattern:
@@ -121,7 +129,8 @@ public sealed class PlaybackRequestAudioSourceFactory
 						SongScheduleCompiler.CompilePattern(
 							document,
 							pattern.PatternId,
-							pattern.StartRow);
+							pattern.StartRow,
+							sequencingContext);
 
 					ThrowIfFailed(
 						compilation,
@@ -154,7 +163,8 @@ public sealed class PlaybackRequestAudioSourceFactory
 						source,
 						compilation,
 						sequenceId: null,
-						pattern.Repeat);
+						pattern.Repeat,
+						sequencingContext);
 				}
 
 			case AdHocPlaybackRequest adHoc:
@@ -192,13 +202,40 @@ public sealed class PlaybackRequestAudioSourceFactory
 		return false;
 	}
 
+	public bool TryTakeRuntimeDiagnostics(
+		PlaybackRequest request,
+		out SequencingDiagnostic[] diagnostics)
+	{
+		ArgumentNullException.ThrowIfNull(request);
+		lock (_timelineGate)
+		{
+			if (_diagnosticReports.Remove(
+				request, out SequencingDiagnostic[]? found))
+			{
+				diagnostics = found;
+				return true;
+			}
+		}
+
+		diagnostics = [];
+		return false;
+	}
+
 	private IAudioOutputSource AttachTimeline(
 		PlaybackRequest request,
 		IAudioOutputSource source,
 		SongScheduleCompilationResult compilation,
 		ObjectId? sequenceId,
-		bool repeat)
+		bool repeat,
+		SequencingContext context)
 	{
+		SequencingDiagnostic[] warnings = context.Diagnostics.Drain();
+		if (warnings.Length != 0)
+		{
+			lock (_timelineGate)
+				_diagnosticReports[request] = warnings;
+		}
+
 		PlaybackPositionTimelineEntry[] entries =
 			compilation.PlaybackPositions
 				.Select(position =>
