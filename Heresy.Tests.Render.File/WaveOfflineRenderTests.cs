@@ -144,7 +144,7 @@ public sealed class WaveOfflineRenderTests
 	}
 
 	[Test]
-	public void OfflineRendererRejectsVoiceThatStillHasNoDeterministicEndAfterSongEnd()
+	public void OfflineRendererCutsVoiceThatStillHasNoDeterministicEndAfterSongEnd()
 	{
 		ObjectId sourceId = (ObjectId)1U;
 		PlaybackSession session =
@@ -165,13 +165,20 @@ public sealed class WaveOfflineRenderTests
 				new AudioOutputFormat(10, 1),
 				leaveOpen: true);
 
-		Action action = () =>
+		OfflineRenderResult result =
 			OfflinePlaybackRenderer.Render(
 				session,
 				TimeSpan.FromMilliseconds(200),
-				sink);
+				sink,
+				blockFrameCount: 4);
+		sink.Complete();
 
-		action.Should().Throw<IndefiniteOfflineRenderException>();
+		result.LogicalFrameCount.Should().Be(2);
+		result.TailFrameCount.Should().Be(1);
+		result.TotalFrameCount.Should().Be(3);
+		BinaryPrimitives.ReadUInt32LittleEndian(
+				stream.ToArray().AsSpan(40, 4))
+			.Should().Be(6);
 	}
 
 	[Test]

@@ -479,6 +479,80 @@ public sealed class PlaybackSessionTests
 	{
 	}
 	[Test]
+	public void EndInputCutRemovesOnlyVoicesThatRemainIndefinite()
+	{
+		ObjectId finiteId = (ObjectId)20U;
+		ObjectId infiniteId = (ObjectId)21U;
+		ReleasingTestSound finite =
+			new(
+				NewNotePolicy.Cut,
+				releaseFrames: 2);
+		InfiniteTestSound infinite = new();
+
+		PlaybackSession session =
+			Session(
+				10,
+				Schedule(
+					Event(
+						TimeSpan.Zero,
+						0,
+						new StartNoteCommand(finiteId)),
+					Event(
+						TimeSpan.Zero,
+						1,
+						new StartNoteCommand(infiniteId))),
+				new TestResolver(
+					(finiteId, false, finite),
+					(infiniteId, false, infinite)));
+
+		session.Render(
+			0,
+			1,
+			new float[1]);
+		session.EndInput();
+
+		session.HasIndefiniteActiveVoices.Should().BeTrue();
+
+		session.CutIndefiniteActiveVoicesAfterEndInput();
+
+		session.HasIndefiniteActiveVoices.Should().BeFalse();
+		session.GetChannelState(0).CurrentVoice.Should().NotBeNull();
+		session.GetChannelState(1).CurrentVoice.Should().BeNull();
+		session.GetChannelState(1).AntiClickTail.IsActive.Should().BeTrue();
+	}
+
+	private sealed class InfiniteTestSound : ISound
+	{
+		public NoteConfigurationSnapshot SnapshotNoteConfiguration()
+			=> NoteConfigurationSnapshot.Default;
+
+		public SoundState CreateState()
+			=> new TestSoundState();
+
+		public long? GetEndFrameExclusive(
+			RenderContext context,
+			SoundState state)
+		{
+			_ = context;
+			_ = state;
+			return null;
+		}
+
+		public void Render(
+			RenderContext context,
+			SoundState state,
+			long startFrame,
+			int frameCount,
+			Span<float> destination)
+		{
+			_ = context;
+			_ = state;
+			_ = startFrame;
+			destination.Fill(1.0f);
+		}
+	}
+
+	[Test]
 	public void StartNoteVolumeIsAppliedAtomicallyToNewVoice()
 	{
 		ObjectId sourceId = (ObjectId)10U;
