@@ -254,18 +254,23 @@ introduce another scripting language.
   script ID within one schedule; its generated raw events are not
   shared between invocations.
 - The selector conservatively admits script patterns whose raw events use
-  physical channels, zero fixed wall-time offsets, row offsets within the
-  pattern, and the currently supported Start/NoteOff/Cut commands. End-of-
-  pattern endpoint events and more complex script commands retain the
-  legacy compiler. Data-pattern support continues alongside scripts with
-  shared row-time Source and effect memory.
+  physical channels, zero fixed wall-time offsets, nonnegative row offsets
+  **up to and including** the final pattern boundary, and the currently
+  supported Start/NoteOff/Cut commands. The final row owns events exactly
+  at RowCount and runs them at its RowEndTick before cursor retirement;
+  these events can launch additional flattened child cursors. More complex
+  script commands retain the legacy compiler. Data-pattern support
+  continues alongside scripts with shared row-time Source and effect memory.
 - Regressions check fractional scripted parents, fractional scripted child
   notes, tempo changes between child creation and a future script event,
-  and script invocations extending across data-sequence order boundaries.
+  script invocations extending across data-sequence order boundaries,
+  and endpoint notes/flattened invocations whose exact final tick follows
+  intervening parent tempo changes. An endpoint child can outlive its
+  initiating parent; the compiled logical duration includes its tail.
 
 **Not yet universal:** Scripted sequences, arbitrary wall-time script
-offsets, scripted tracker effects and global tempo commands, terminal
-endpoint events, fractional tempo ramps, complex virtual-channel events,
+offsets, scripted tracker effects and global tempo commands,
+fractional tempo ramps, complex virtual-channel events,
 pattern control and delayed note commands still need distinct red tests and
 scheduler integration. The older compiler remains for those cases.
 
