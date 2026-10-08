@@ -991,6 +991,45 @@ stable equal-position ordering, shared-clock timestamps, and a late
 global Tempo request that **must not** retime later notes.
 **No production scheduler migration** is implied by this policy.
 
+## Twentieth executable step: rate-capped diagnostics for late raw notes
+
+The chronological-emission contract retains **silent musical discard**:
+a raw `Emit` at a row earlier than the last accepted raw musical row
+makes no sound, cannot change Tempo/Speed/Source/effect state, never
+rewinds the musical clock and does not interrupt sequencing. The term
+"silent" does **not** mean the violation is hidden from diagnostics.
+
+Each sequencing context now owns a `SequencingDiagnosticLog`, available
+as `SequencingContext.Diagnostics`. Eager raw receivers, incremental
+Roslyn Pattern generators, and both incremental Pattern processors
+report every dropped out-of-order note at the point of rejection, with
+the rejected and previously accepted row positions. The warning code
+is `HRSEQ001` and the information is represented as a structured
+`SequencingDiagnostic`, independent of compile-time Roslyn diagnostics.
+
+Reports are **bounded per root sequencing context**, including its
+flattened and mixdown children: the first **32** violations generate
+individual warning messages, the 33rd generates one `HRSEQ002`
+suppression notice, and later occurrences only increment counters
+(`DroppedOutOfOrderNotes` and `SuppressedWarnings`). This hard cap
+prevents malformed potentially infinite Pattern streams from consuming
+unbounded memory or spamming a host logger. It does not restart after
+draining the queue.
+
+Diagnostics are **queued, not synchronously dispatched to application
+callbacks**, so a logging or UI subscriber cannot throw or perform
+expensive I/O on the realtime sequencing path. The host can poll and
+consume reports using `context.Diagnostics.Drain()` outside that path.
+The playback UI has not yet been connected to this queue; it should
+surface warnings through its normal diagnostics/logging view later.
+
+Equal-position notes are still valid. Fixed wall-time offsets do not
+participate in the raw musical-row ordering comparison. Non-note
+backward progress markers and infinite no-progress workloads retain
+their separate resource/correctness safeguards; those are not ordinary
+dropped-note warnings. Existing production scheduler selection is
+unchanged.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
