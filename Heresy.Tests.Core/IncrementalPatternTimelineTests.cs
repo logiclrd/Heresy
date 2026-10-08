@@ -157,8 +157,9 @@ public sealed class IncrementalPatternTimelineTests
 			RowCount = 10000,
 			ChannelCount = 1,
 		};
-		using IncrementalPatternTimeline timeline = new(new SequencingContext());
-		timeline.Add(silent, silent.RowCount, new SequencingContext());
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		timeline.Add(silent, silent.RowCount, context);
 
 		Assert.That(timeline.TryStep(out IncrementalPatternTimelineStep? step), Is.True);
 		Assert.That(step, Is.TypeOf<IncrementalPatternTimelineStep.Advance>());
