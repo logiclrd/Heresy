@@ -335,6 +335,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	private readonly List<DeferredNote> _delayed = [];
 	private long _nextDeferredOrder;
 	private ActiveTempoRamp? _tempoRamp;
+	private readonly Queue<IncrementalPatternTimelineStep.Emit> _queuedTempoEvents = new();
 	private long _nextSequence;
 	private long _emissionOrder;
 	private double _tick;
@@ -350,7 +351,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 
 	public double Tick => _tick;
 	public TimeSpan Elapsed { get; private set; }
-	public bool IsComplete => _active.Count == 0 && _delayed.Count == 0;
+	public bool IsComplete => _active.Count == 0
+		&& _delayed.Count == 0 && _queuedTempoEvents.Count == 0;
 
 	/// <summary>
 	/// Starts an independent invocation at the current musical instant.
@@ -413,8 +415,14 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		result = null;
-		while (_active.Count != 0 || _delayed.Count != 0)
+		while (_active.Count != 0 || _delayed.Count != 0 || _queuedTempoEvents.Count != 0)
 		{
+			if (_queuedTempoEvents.TryDequeue(out IncrementalPatternTimelineStep.Emit? queued))
+			{
+				CheckCooperationBudget();
+				result = queued;
+				return true;
+			}
 			Cursor? current = _active
 				.OrderBy(c => c.DueTick)
 				.ThenBy(c => c.Context.PhysicalChannelBase)
@@ -481,6 +489,44 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				current.Dispose();
 				continue;
 			}
+			// All invocations whose row begins at this tick must expose
+			// their due timing before any one of them is resolved. Otherwise
+			// creation order would arbitrarily change simultaneous Txx.
+			foreach (Cursor ready in _active
+				.Where(c => !c.Complete && !c.InRow
+					&& Math.Abs(c.DueTick - _tick) <= TickTolerance)
+				.OrderBy(c => c.Context.PhysicalChannelBase)
+				.ThenBy(c => c.Sequence).ToArray())
+			{
+				CheckCooperationBudget();
+				ready.BeginRow(_tick, Elapsed);
+			}
+			// Standalone global Tempo/Speed takes priority over tracker
+			// physical-channel Txx effects at a shared row boundary.
+			Cursor? globalTiming = _active
+				.Where(c => Math.Abs(c.DueTick - _tick) <= TickTolerance
+					&& c.DueTiming?.Target.Kind == ChannelTargetKind.Global)
+				.OrderBy(c => c.Sequence).FirstOrDefault();
+			if (globalTiming is not null)
+			{
+				if (TryOperate(globalTiming, out result))
+					return true;
+				continue;
+			}
+			if (ArbitrateTrackerTempoAtCurrentTick())
+			{
+				if (_queuedTempoEvents.TryDequeue(
+					out IncrementalPatternTimelineStep.Emit? tempo))
+				{
+					result = tempo;
+					return true;
+				}
+				continue;
+			}
+			// Row preparation can change this cursor's next deadline.
+			current = _active.OrderBy(c => c.DueTick)
+				.ThenBy(c => c.Context.PhysicalChannelBase)
+				.ThenBy(c => c.Sequence).First();
 			if (TryOperate(current, out result))
 				return true;
 		}
@@ -726,5 +772,6 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			cursor.Dispose();
 		_active.Clear();
 		_delayed.Clear();
+		_queuedTempoEvents.Clear();
 	}
 }
