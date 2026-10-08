@@ -112,6 +112,54 @@ public sealed class IncrementalRecursiveTimelineTests
 	}
 
 	[Test]
+	public void ChildFixedWallDeadlineOutlivesFinishedParentAndChildRows()
+	{
+		DataPatternDefinition parent = Pattern(1, 1);
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote((ObjectId)2U);
+		StreamingPattern child = new((ObjectId)2U, 1,
+			new NoteEvent(
+				new MusicalTime(TimeSpan.FromMilliseconds(170), 0),
+				ChannelTarget.Physical(0), [new NoteOffCommand()]));
+
+		using IncrementalRecursiveTimeline timeline = new(
+			new SequencingContext(), new Resolver(parent, child));
+		long id = timeline.AddRoot(parent.Id);
+		NoteEvent[] notes = Drain(timeline);
+		Assert.That(notes, Has.Length.EqualTo(1));
+		Assert.That(notes[0].Offset.TimeOffset,
+			Is.EqualTo(TimeSpan.FromMilliseconds(170)));
+		Assert.That(timeline.Elapsed,
+			Is.EqualTo(TimeSpan.FromMilliseconds(170)));
+		Assert.That(timeline.IsInvocationActive(id), Is.False);
+		Assert.That(timeline.IsComplete, Is.True);
+	}
+
+	[Test]
+	public void CancelledSubtreeDiscardsItsDelayedChildWithoutAffectingSibling()
+	{
+		DataPatternDefinition first = Pattern(1, 1);
+		first.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote((ObjectId)3U);
+		DataPatternDefinition sibling = Pattern(2, 1);
+		sibling.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
+		StreamingPattern child = new((ObjectId)3U, 2,
+			new NoteEvent(
+				new MusicalTime(TimeSpan.FromMilliseconds(170), 0),
+				ChannelTarget.Physical(0), [new NoteOffCommand()]));
+
+		using IncrementalRecursiveTimeline timeline = new(
+			new SequencingContext(), new Resolver(first, sibling, child));
+		long cancelled = timeline.AddRoot(first.Id);
+		timeline.AddRoot(sibling.Id);
+		Assert.That(timeline.Cancel(cancelled), Is.True);
+		NoteEvent[] notes = Drain(timeline);
+		Assert.That(notes, Has.Length.EqualTo(1));
+		Assert.That(notes[0].Commands.Single(), Is.TypeOf<NoteCutCommand>());
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(120)));
+	}
+
+	[Test]
 	public void CyclicFlattenedSourcesFailBeforeCreatingTheRecursiveChild()
 	{
 		DataPatternDefinition first = Pattern(1, 1);
