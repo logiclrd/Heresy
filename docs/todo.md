@@ -51,8 +51,11 @@ Items that were already completed remain in Git history, not in this checklist.
   and later Txx commands interrupt an active ramp at the instantaneous
   shared-clock Tempo, not its future endpoint; Speed-only changes leave
   the current ramp running. Txx byte memory still resolves when due.
-  Mixed-command Txx cells and simultaneous Txx on different captured
-  row-speed spans remain explicitly unsupported.
+  Mixed-command Txx cells now separate their ordinary physical note
+  commands from the shared-boundary Txx request. Same-row compatible
+  Txx requests still compose one ramp, preserve T00 effect memory,
+  and leave positive wall-time note deadlines independent. Simultaneous
+  Txx on different captured row-speed spans remain explicitly unsupported.
   The incremental timeline now recognizes **S6x and SEy variable-length
   row spans**: physical-channel S6x ticks accumulate, lowest mapped
   channel SEy wins, ordinary notes execute only once, and admitted
