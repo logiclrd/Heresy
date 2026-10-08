@@ -467,16 +467,76 @@ cross-invocation note migration, virtual channels, advanced tracker
 commands and script coroutine generation are still separate tasks.
 The production scheduler has not been replaced.
 
+## Eleventh executable step: lazy data-Sequence order cursor
+
+`IncrementalSequenceCursor` now owns an **experimental,
+single-Sequence order cursor** over the same long-lived
+`IncrementalPatternTimeline`. It accepts a
+`DataSequenceDefinition` or an `IReadOnlyList<SequenceEntry>`,
+the existing `ISequencePatternResolver`, a shared
+`SequencingContext`, and optional initial order and row.
+The entries are snapshotted on construction, while Pattern generators
+are resolved **only when their order is first visited**.
+
+- When a Pattern's **source rows finish**, the cursor advances to the
+  next order. It does **not** wait for delayed physical Note/Off/Cut
+  deadlines from that invocation: those remain on the *same shared
+  timeline* and can interleave chronologically with the next Pattern's
+  notes. Tempo, Speed, mapped channel state, Txx/Qxx memory and timing
+  effects are retained across orders.
+- `IncrementalPatternTimelineStep.Flow` is returned to the caller
+  at the completed Bxx/Cxx row boundary, before the next order begins.
+  On the following step, `OrderJump` selects the new order, or
+  sequential progression is used; `BreakRow` overrides the next
+  entry's `StartRow` for **one invocation only**. A Bxx jump to
+  an earlier order constructs a new incremental Pattern invocation.
+  No future loop iterations are generated speculatively.
+- The optional `shouldFollowOrderJump` callback receives the same
+  `SequenceOrderJumpEncounter(PatternId, SourceRow, Order)` as the
+  eager `SequenceNoteProcessor`, and may stop on a particular
+  encounter (useful for bounded offline exports). A caller can also
+  advance an indefinitely repeating Bxx Sequence cooperatively
+  by calling `TryStep` one step at a time.
+- Unresolved Pattern references and zero-row Patterns are skipped
+  without advancing musical time. A resolved reference **must**
+  be an `IIncrementalRawPatternNoteGenerator` with a
+  `PatternDefinition.RowCount`; eager-only/script Patterns are
+  rejected, not silently expanded. A maximum of 8192 internal
+  operations per `TryStep` prevents a long run of missing or empty
+  entries from starving the caller, and the existing one-million
+  Pattern-visit resource limit remains as a second safety bound.
+  Both limits are independent of legitimate advancing Bxx loops.
+- The invocation's `TimelineOrigin` is supplied during its raw
+  iteration and temporarily restored afterward. `Dispose()` owns
+  and releases the shared timeline and outstanding raw enumerators.
+  This is a **sequential data-Sequence cursor**, not yet a common
+  scheduler for recursively flattened or scripted Sequences.
+
+Parity tests cover ordinary order progression, Bxx skips, combined
+Bxx/Cxx jumps with row overrides, one-invocation Cxx overrides,
+initial `startOrder`/`startRow`, missing and zero-row Patterns,
+Tempo and effect memory across orders, B00 observation and
+termination, reporting Flow before entering the next order,
+delayed notes crossing an order boundary, truly lazy Pattern
+enumeration, and explicit rejection of eager-only generators.
+
+**Production playback and offline export are unchanged.**
+This milestone adds an executable order-level primitive for
+future composition with recursive Pattern/Sequence cursors. We still
+need genuine Roslyn iterator compilation (with CPU-only checkpoints),
+shared invocation-lifetime management, flattening/mixdown, and
+the remaining complex tracker-effect parity before replacing the
+existing chronological data-Pattern scheduler.
+
 ## Proposed next interfaces and migration
 
-1. Expand the now-implemented **within-row shared-tick merger**
-   beyond supported S6x/SEy row extensions, SCx/SDx/Qxy tick deadlines,
-   lazy SBx source-row loops, Bxx/Cxx flow steps, repeatable slides
-   and concurrent Txx ramps. Finish SEy repeated Tempo, SDx/Qxy
-   interactions, complex commands, virtual channels and incompatible
-   spans before production adoption. Add a lazy Sequence cursor that
-   consumes `Flow` instead of eagerly resolving Bxx/Cxx order jumps,
-   with zero-time and loop-growth guards.
+1. Extend the implemented **within-row shared-tick merger
+   and sequential data-Sequence cursor** with common invocation
+   lifetimes, nested and flattened Sequences, and eventually script
+   iterators. Bxx/Cxx now move between orders lazily and SBx
+   revisits replay-safe Pattern rows. Finish SEy repeated Tempo,
+   SDx/Qxy interactions, advanced effect combinations, virtual
+   channels and incompatible Tempo spans before production adoption.
 2. Add **script invocation-local iterators** through Roslyn syntax
    rewriting. The existing loop `Checkpoint()` instrumentation for
    `for`/`while`/`do` is the starting point, but the generated
@@ -485,9 +545,9 @@ The production scheduler has not been replaced.
    and resume without sacrificing diagnostics or deterministic Random().
    A computational cooperation step is distinct from musical `Advance`:
    it yields CPU control but does **not** advance musical time.
-3. Introduce **Sequence cursors** that begin Pattern invocations lazily and
-   retain their progress. A common clock orders all active cursors by
-   musical deadline, with stable same-time tie breaking, and handles
+3. Generalize the existing **sequential data-Sequence cursor**
+   into composable recursive Pattern/Sequence invocations. A common
+   clock orders all active cursors by musical deadline, with stable same-time tie breaking, and handles
    cancellation and migrated/releasing note lifetimes.
 4. Move realtime and offline compilation consumers across behind tests,
    then remove duplicate eager/chronological engines once semantics match.
