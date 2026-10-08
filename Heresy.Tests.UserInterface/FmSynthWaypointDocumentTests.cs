@@ -4,6 +4,7 @@ using AwesomeAssertions;
 
 using Heresy.Core.FmSynthesis;
 using Heresy.UserInterface.Documents;
+using Heresy.UserInterface.FmEditing;
 
 using NUnit.Framework;
 
