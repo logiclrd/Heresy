@@ -14,7 +14,12 @@ namespace Heresy.Core.Patterns;
 public abstract record IncrementalPatternTimelineStep(double Tick, TimeSpan Time)
 {
 	public sealed record Emit(NoteEvent Note, double Tick, TimeSpan Time)
-		: IncrementalPatternTimelineStep(Tick, Time);
+		: IncrementalPatternTimelineStep(Tick, Time)
+	{
+		/// <summary>Producer invocation of this event. The recursive
+		/// coordinator uses it for per-invocation child ownership.</summary>
+		public long InvocationId { get; init; } = -1;
+	}
 
 	public sealed record Advance(double Tick, TimeSpan Time)
 		: IncrementalPatternTimelineStep(Tick, Time);
@@ -877,7 +882,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					Offset = new MusicalTime(Elapsed, 0),
 					EmissionOrder = _emissionOrder++,
 				};
-				result = new IncrementalPatternTimelineStep.Emit(note, _tick, Elapsed);
+				result = new IncrementalPatternTimelineStep.Emit(note, _tick, Elapsed)
+				{
+					InvocationId = nextWall.Owner.Sequence,
+				};
 				return true;
 			}
 
@@ -994,7 +1002,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				{
 					Target = request.Cursor.Context.MapTarget(raw.Target),
 					Commands = [new SetTempoCommand(parameter)],
-				});
+				}, request.Cursor.Sequence);
 			}
 			else if (parameter > 0)
 			{
@@ -1023,13 +1031,13 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				StartTempoRamp(ramp);
 				QueueTimingEvent(new NoteEvent(
 					new MusicalTime(Elapsed, 0), ChannelTarget.Global,
-					[ramp]));
+					[ramp]), pending[0].Cursor.Sequence);
 			}
 		}
 		return true;
 	}
 
-	private void QueueTimingEvent(NoteEvent note)
+	private void QueueTimingEvent(NoteEvent note, long invocationId)
 	{
 		NoteEvent resolved = note with
 		{
@@ -1037,7 +1045,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			EmissionOrder = _emissionOrder++,
 		};
 		_queuedTempoEvents.Enqueue(
-			new IncrementalPatternTimelineStep.Emit(resolved, _tick, Elapsed));
+			new IncrementalPatternTimelineStep.Emit(resolved, _tick, Elapsed)
+			{
+				InvocationId = invocationId,
+			});
 	}
 
 	// All cursor deadlines remain in musical ticks. The shared ramp is
@@ -1203,7 +1214,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				EmissionOrder = _emissionOrder++,
 			};
 			result = new IncrementalPatternTimelineStep.Emit(
-				emittedTiming, _tick, Elapsed);
+				emittedTiming, _tick, Elapsed)
+			{
+				InvocationId = current.Sequence,
+			};
 			return true;
 		}
 		if (current.DueEvent is { } raw)
@@ -1316,7 +1330,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				Offset = new MusicalTime(Elapsed, 0),
 				EmissionOrder = _emissionOrder++,
 			};
-			result = new IncrementalPatternTimelineStep.Emit(emitted, _tick, Elapsed);
+			result = new IncrementalPatternTimelineStep.Emit(emitted, _tick, Elapsed)
+			{
+				InvocationId = current.Sequence,
+			};
 			return true;
 		}
 		if (current.DueScheduled is { } scheduled)
@@ -1383,7 +1400,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				Offset = new MusicalTime(Elapsed, 0),
 				EmissionOrder = _emissionOrder++,
 			};
-			result = new IncrementalPatternTimelineStep.Emit(emitted, _tick, Elapsed);
+			result = new IncrementalPatternTimelineStep.Emit(emitted, _tick, Elapsed)
+			{
+				InvocationId = current.Sequence,
+			};
 			return true;
 		}
 		if (current.DueRepeated is { } repeating)
@@ -1394,7 +1414,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				Offset = new MusicalTime(Elapsed, 0),
 				EmissionOrder = _emissionOrder++,
 			};
-			result = new IncrementalPatternTimelineStep.Emit(emitted, _tick, Elapsed);
+			result = new IncrementalPatternTimelineStep.Emit(emitted, _tick, Elapsed)
+			{
+				InvocationId = current.Sequence,
+			};
 			return true;
 		}
 		// An SBx backward visit reorders a tick-zero start from an
@@ -1408,7 +1431,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				Offset = new MusicalTime(Elapsed, 0),
 				EmissionOrder = _emissionOrder++,
 			};
-			result = new IncrementalPatternTimelineStep.Emit(emitted, _tick, Elapsed);
+			result = new IncrementalPatternTimelineStep.Emit(emitted, _tick, Elapsed)
+			{
+				InvocationId = current.Sequence,
+			};
 			return true;
 		}
 		if (current.DueCleanup is { } cleanup)
@@ -1419,7 +1445,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				Offset = new MusicalTime(Elapsed, 0),
 				EmissionOrder = _emissionOrder++,
 			};
-			result = new IncrementalPatternTimelineStep.Emit(emitted, _tick, Elapsed);
+			result = new IncrementalPatternTimelineStep.Emit(emitted, _tick, Elapsed)
+			{
+				InvocationId = current.Sequence,
+			};
 			return true;
 		}
 		PatternFlowControl completed = current.FinishRow();
