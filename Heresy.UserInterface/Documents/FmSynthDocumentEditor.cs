@@ -447,34 +447,107 @@ public static class FmSynthDocumentEditor
 				"The FM graph output node cannot be removed. Select another output first.");
 		}
 
-		if (synth.Graph.Nodes.Any(
-			node =>
-				node.Id != nodeId
-				&& node.InputNodeIds.Contains(nodeId)))
-		{
-			throw new InvalidOperationException(
-				$"FM node {nodeId} is still used as an input by another node.");
-		}
-
+		// Construct and validate the entire graph before mutating the
+		// document. Detaching a source clears oscillator modulation and
+		// removes ALL matching operator operands, including duplicates.
+		// Operators cannot have zero inputs: preserve their node identity
+		// and downstream edges as a silent constant when emptied.
+		FmSynthGraph original = synth.Graph;
 		FmSynthNode[] nodes =
-			synth.Graph.Nodes
+			original.Nodes
 				.Where(node => node.Id != nodeId)
+				.Select(node => DisconnectInput(node, nodeId))
 				.ToArray();
 		FmSynthGraph replacement =
-			new(
-				nodes,
-				synth.Graph.OutputNodeId);
+			new(nodes, original.OutputNodeId);
+
+		// Surviving operator inputs shift left when earlier operands are
+		// removed. Re-index their waypoint hints to follow the original
+		// connection, not whichever connection now occupies its old slot.
+		List<FmSynthConnectionRoutingHint> hints = [];
+		foreach (FmSynthConnectionRoutingHint hint in synth.ConnectionRoutingHints)
+		{
+			if (hint.SourceNodeId == nodeId
+				|| hint.TargetNodeId == nodeId)
+			{
+				continue;
+			}
+
+			FmSynthNode oldTarget =
+				original.Nodes.First(node => node.Id == hint.TargetNodeId);
+			int newIndex = hint.TargetInputIndex;
+			if (oldTarget is FmOperatorNode operation)
+			{
+				newIndex -= operation.InputNodeIds
+					.Take(hint.TargetInputIndex)
+					.Count(input => input == nodeId);
+			}
+			if (!ConnectionExists(
+				replacement,
+				hint.SourceNodeId,
+				hint.TargetNodeId,
+				newIndex))
+			{
+				continue;
+			}
+			hints.Add(
+				new FmSynthConnectionRoutingHint(
+					hint.SourceNodeId,
+					hint.TargetNodeId,
+					newIndex,
+					hint.RoutePoints));
+		}
 
 		synth.Graph = replacement;
 		synth.NodePositions.RemoveAll(
 			position => position.NodeId == nodeId);
-		synth.ConnectionRoutingHints.RemoveAll(
-			hint =>
-				hint.SourceNodeId == nodeId
-					|| hint.TargetNodeId == nodeId);
-		PruneRoutingHints(synth);
+		synth.ConnectionRoutingHints.Clear();
+		synth.ConnectionRoutingHints.AddRange(hints);
 		workspace.Document.MarkChanged(
 			affectsAudio: true);
+	}
+
+	private static FmSynthNode DisconnectInput(
+		FmSynthNode node,
+		int removedNodeId)
+	{
+		if (!node.InputNodeIds.Contains(removedNodeId))
+			return node;
+
+		return node switch
+		{
+			FmOscillatorNode oscillator =>
+				new FmOscillatorNode(
+					oscillator.Id,
+					oscillator.Waveform,
+					oscillator.FrequencyHz,
+					oscillator.Minimum,
+					oscillator.Maximum,
+					multiplierNodeId: null,
+					exponentialMultiplier: oscillator.ExponentialMultiplier),
+
+			FmOperatorNode operation =>
+				RemoveOperatorInputs(operation, removedNodeId),
+
+			_ => throw new NotSupportedException(
+				$"Cannot disconnect a source from FM node type {node.GetType().Name}."),
+		};
+	}
+
+	private static FmSynthNode RemoveOperatorInputs(
+		FmOperatorNode operation,
+		int removedNodeId)
+	{
+		int[] remaining = operation.InputNodeIds
+			.Where(id => id != removedNodeId)
+			.ToArray();
+
+		return remaining.Length == 0
+			? new FmConstantNode(operation.Id, 0.0)
+			: new FmOperatorNode(
+				operation.Id,
+				operation.Operation,
+				remaining);
 	}
 
 	public static void MoveNode(
