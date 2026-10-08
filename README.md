@@ -601,6 +601,12 @@ source; if the channel has never had a source, the note remains valid pattern
 data but generates no playback start. Sequencing source memory survives later
 pattern invocations in the same sequencing context, while mixdown children
 naturally receive independent memory with their independent channel-state map.
+During song compilation, Source selections are resolved as each row executes,
+not precomputed for the entire pattern. A flattened Pattern or Sequence may
+therefore change the mapped channel's remembered source before a later parent
+row, even when the child merely selects a source without starting a note.
+Source changes in skipped rows do not execute; standalone raw-note generator
+callers retain their previous eager resolution behavior.
 The cursor order is **Note → Source → Volume → Effect Command → Effect
 Parameter**. Clicking any field moves the cursor there, including blank space.
 When Source is already focused, clicking it again opens a field-anchored picker
