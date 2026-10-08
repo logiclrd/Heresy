@@ -87,8 +87,9 @@ Items that were already completed remain in Git history, not in this checklist.
   Shared Tempo/Speed and channel effect memory survive order visits,
   and a prior Pattern's delayed physical notes can overlap the
   next order. Missing/zero-row entries skip without changing musical
-  time, while cooperative per-step and visit-count budgets prevent
-  indefinite zero-time traversal. The existing order-jump observer
+  time; per-step and same-tick cooperation budgets prevent non-progressing
+  traversal without imposing a lifetime limit on legitimately advancing
+  Bxx playback. The existing order-jump observer
   can terminate Bxx loops without preexpanding them. Resolved
   Patterns must support the incremental interface; scripted/eager-only
   sources explicitly fail.
