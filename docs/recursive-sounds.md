@@ -357,30 +357,54 @@ cursor path. They retain the general compilation behavior, including
 its explicit unsupported-combination checks where applicable. The
 scripting API itself validates finite, representable numeric offsets.
 
-### Scripted Sequence Play() entries on the shared clock
+### Scripted Sequence lookup on the shared clock
 
-Eligible **scripted Sequences** now use the same chronological cursor
-scheduler as eligible data Sequences. A sequence script runs its restricted
-`Play(patternId)` instructions once to produce an ordered collection of
-`SequenceEntry` values. When every entry references a compatible data or
-scripted Pattern, at least one nested flattened Pattern is present,
-and the compiler starts at order zero with no row override, the scheduler starts each root Pattern at the previous root's
-own endpoint. Nested child cursors and pending wall-time commands can
-continue independently across later generated Play entries.
+Both data and scripted Sequences expose a logical
+`GetSequenceEntry(int absoluteIndex, int sequenceIndex,
+int previousSequenceIndex)` returning a nullable `SequenceEntry`.
+`absoluteIndex` begins at zero and increments on **every entry lookup**,
+even when Bxx revisits the same order; `sequenceIndex` is the requested
+order, and `previousSequenceIndex` is the previous requested order (or
+-1 on the first visit). Returning `null` ends the Sequence naturally.
 
-Global Tempo/Speed, fractional events, deferred Source memory and
-wall-time deadlines remain shared across the complete arrangement.
+A data Sequence ignores the visit history and returns its indexed entry,
+or `null` out of range. A restricted-C# scripted Sequence implements the
+*body* of the lookup function; for example:
+
+```csharp
+switch (sequenceIndex)
+{
+    case 0: return Play(_O(17));
+    case 1: return Play(_O(18), 2);
+    default: return null;
+}
+```
+
+`Play(id, startRow)` now **constructs and returns** a `SequenceEntry`;
+it does not enqueue one. Scripts may instead inspect `absoluteIndex`,
+`previousSequenceIndex`, and invocation-local `Random()` to choose
+different Patterns for the same order on successive visits. Ordinary
+local variables are fresh on each call; the RNG is shared by calls in
+one Sequence invocation. Bxx changes the next requested index, and
+Cxx supplies a one-invocation start row. No list of generated scripted
+entries is cached and no iterator is rewound.
+
+For eligible scripted root Sequences, the chronological shared-row
+scheduler consults the function **only when the preceding root Pattern
+finishes**. Static object-reference analysis decides whether that
+scheduler supports all potential Pattern targets without executing the
+script or consuming its RNG. Unqualified source graphs use the general
+`SequenceNoteProcessor`, which also calls the same lookup function per
+visit; it does not pre-expand the script. Both processors therefore
+preserve Bxx/Cxx ordering and deterministic invocation-local Random.
+
+On the supported chronological subset, nested child cursors and pending
+wall-time commands can outlive the root Pattern that started them.
+Global Tempo/Speed, fractional events, Source memory and wall-time
+deadlines remain shared across the arrangement.
 `CompiledPatternPlaybackPosition.SequenceEntryIndex` identifies the
-original zero-based Play entry, including repeated references to the
-same Pattern. Separate invocations retain separate raw script-event
-schedules and cursor state.
-
-The supported dispatch reuses the **actual script-generated entries**.
-If any entry is ineligible, the existing `SequenceNoteProcessor`
-continues to execute those entries with its established semantics;
-the script is **not run a second time** merely because chronological
-eligibility failed. That matters for scripts using `Random()` and
-conditional Play decisions.
+requested order index; repeated visits can now select different Patterns
+while retaining the same order index.
 
 ### Chronological Sequence entry StartRow
 
