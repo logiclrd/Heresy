@@ -107,15 +107,15 @@ public static class SongScheduleCompiler
 		// Eligible data-only arrangements use independently advancing
 		// parent/child row cursors, rather than eagerly compiling every
 		// future nested row. Complex patterns retain the general compiler.
-		if (sequence is DataSequenceDefinition dataSequence
+		if (sequence is DataSequenceDefinition chronologicalSequence
 			&& (context is null || context.FlattenedSourceExpander is null
 				&& !context.IsPreparingFlattenedChild)
 			&& startOrder == 0 && startRow is null
 			&& ChronologicalDataPatternScheduler.CanHandleSequence(
-				document, dataSequence))
+				document, chronologicalSequence))
 		{
 			return ChronologicalDataPatternScheduler.CompileSequence(
-				document, dataSequence, context);
+				document, chronologicalSequence, context);
 		}
 
 		DocumentPatternResolver resolver =
