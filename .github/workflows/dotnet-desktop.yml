@@ -28,6 +28,11 @@ jobs:
       with:
         dotnet-version: 10.0.x
 
+    - name: Inspect libsndfile runtime package
+      run: |
+        dotnet restore Heresy.Tests.Render.File/Heresy.Tests.Render.File.csproj
+        find ~/.nuget/packages/org.sndfile.runtime.linux-x64/1.2.2.1 -maxdepth 6 -type f -print
+
     - name: Execute test suite
       run: dotnet test -p:Configuration=Release --logger "console;verbosity=normal"
 
