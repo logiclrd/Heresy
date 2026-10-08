@@ -158,6 +158,36 @@ public static class ScriptCompiler
 			compiled.Diagnostics);
 	}
 
+	/// <summary>
+	/// Compile a Roslyn Sequence into an invocation-local, cooperatively
+	/// suspended Play-entry source without eagerly materializing its orders.
+	/// Production compilation remains on the existing eager path.
+	/// </summary>
+	public static ScriptCompilationResult<IIncrementalRawSequenceEntryGenerator>
+		CompileIncrementalSequence(ScriptSequenceDefinition definition)
+	{
+		ArgumentNullException.ThrowIfNull(definition);
+
+		IReadOnlyList<ScriptAnalysisDiagnostic> restrictions =
+			ValidateIncrementalSequenceStatements(definition.Source);
+		if (restrictions.Count != 0)
+			return new(null, restrictions);
+
+		string className =
+			"__HeresyIncrementalSequence_" + Guid.NewGuid().ToString("N");
+		ScriptCompilationResult<Type> compiled = CompileType(
+			definition.Source, className,
+			BuildIncrementalSequenceWrapper(
+				className, InstrumentIncrementalSequence(definition.Source)),
+			typeof(SequenceScriptProgram));
+
+		if (!compiled.Success || compiled.Program is null)
+			return new(null, compiled.Diagnostics);
+
+		return new(new CompiledIncrementalSequenceGenerator(compiled.Program),
+			compiled.Diagnostics);
+	}
+
 	public static ScriptCompilationResult<INoteSequencer> CompileSequence(
 		ScriptSequenceDefinition definition,
 		ISequencePatternResolver resolver,
@@ -619,6 +649,69 @@ public static class ScriptCompiler
 			}
 			""";
 
+	private static IReadOnlyList<ScriptAnalysisDiagnostic>
+		ValidateIncrementalSequenceStatements(string source)
+	{
+		SyntaxNode root = CSharpSyntaxTree.ParseText(
+			source, ScriptParseOptions).GetRoot();
+		List<ScriptAnalysisDiagnostic> diagnostics = [];
+		foreach (InvocationExpressionSyntax invocation
+			in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
+		{
+			if (invocation.Expression is not IdentifierNameSyntax name
+				|| name.Identifier.ValueText != "Play")
+				continue;
+			if (invocation.Parent is ExpressionStatementSyntax statement
+				&& ReferenceEquals(statement.Expression, invocation))
+				continue;
+			diagnostics.Add(new ScriptAnalysisDiagnostic(
+				RestrictedFeatureCode, ScriptDiagnosticSeverity.Error,
+				"Streaming Play helpers must be direct statements.",
+				new ScriptSourceSpan(invocation.Span.Start, invocation.Span.Length)));
+		}
+		return diagnostics;
+	}
+
+	private static string InstrumentIncrementalSequence(string source)
+	{
+		SyntaxNode root = CSharpSyntaxTree.ParseText(
+			source, ScriptParseOptions).GetRoot();
+		root = new LoopCheckpointRewriter(cooperative: true).Visit(root)
+			?? root;
+		return new IncrementalSequenceYieldRewriter().Visit(root)
+			?.ToFullString() ?? source;
+	}
+
+	private static string BuildIncrementalSequenceWrapper(
+		string className, string source)
+		=> $"""
+			using System;
+			using System.Collections.Generic;
+			using Heresy.Core.Sequences;
+			using Heresy.Core.Sequencing;
+			using Heresy.Scripting.Runtime;
+
+			public sealed class {{className}} : SequenceScriptProgram
+			{
+				public {{className}}(SequencingContext context)
+					: base(context, incremental: true)
+				{
+				}
+
+				protected override void ExecuteScript()
+					=> throw new NotSupportedException(
+						"Use the resumable Sequence iterator.");
+
+				protected override IEnumerable<RawSequenceStep> EnumerateScript()
+				{
+			#line 1 "heresy-script"
+			{{source}}
+			#line default
+					yield break;
+				}
+			}
+			""";
+
 	private static string BuildPatternWrapper(
 		string className,
 		string source)
@@ -874,6 +967,54 @@ public static class ScriptCompiler
 				visited.WithoutLeadingTrivia(),
 				SyntaxFactory.ParseStatement("yield return EmitPendingStep();"))
 				.WithTriviaFrom(node);
+		}
+	}
+
+	private sealed class IncrementalSequenceYieldRewriter : CSharpSyntaxRewriter
+	{
+		public override SyntaxNode? VisitExpressionStatement(
+			ExpressionStatementSyntax node)
+		{
+			ExpressionStatementSyntax visited =
+				(ExpressionStatementSyntax)(base.VisitExpressionStatement(node) ?? node);
+			if (node.Expression is not InvocationExpressionSyntax invocation
+				|| invocation.Expression is not IdentifierNameSyntax name
+				|| name.Identifier.ValueText != "Play")
+				return visited;
+
+			return SyntaxFactory.Block(
+				visited.WithoutLeadingTrivia(),
+				SyntaxFactory.ParseStatement("yield return EmitPlayStep();"))
+				.WithTriviaFrom(node);
+		}
+	}
+
+	private sealed class CompiledIncrementalSequenceGenerator
+		: IIncrementalRawSequenceEntryGenerator
+	{
+		private readonly Type _programType;
+
+		public CompiledIncrementalSequenceGenerator(Type programType)
+		{
+			_programType = programType;
+		}
+
+		public IEnumerable<RawSequenceStep> EnumerateRawSteps(
+			SequencingContext context)
+		{
+			ArgumentNullException.ThrowIfNull(context);
+			return Enumerate(context);
+		}
+
+		private IEnumerable<RawSequenceStep> Enumerate(SequencingContext context)
+		{
+			SequenceScriptProgram program =
+				Activator.CreateInstance(_programType, context)
+					as SequenceScriptProgram
+				?? throw new InvalidOperationException(
+					"Could not construct the incremental Sequence script.");
+			foreach (RawSequenceStep step in program.Enumerate())
+				yield return step;
 		}
 	}
 

@@ -289,11 +289,16 @@ public abstract class SequenceScriptProgram
 	private readonly SequencingContext _context;
 	private readonly ScriptExecutionBudget _budget = new();
 	private readonly List<SequenceEntry> _entries = [];
+	private readonly bool _incremental;
+	private SequenceEntry? _pendingEntry;
+	private int _cooperationIterations;
 
-	protected SequenceScriptProgram(SequencingContext context)
+	protected SequenceScriptProgram(
+		SequencingContext context, bool incremental = false)
 	{
 		ArgumentNullException.ThrowIfNull(context);
 		_context = context;
+		_incremental = incremental;
 	}
 
 	internal IReadOnlyList<SequenceEntry> Execute()
@@ -303,6 +308,31 @@ public abstract class SequenceScriptProgram
 	}
 
 	protected abstract void ExecuteScript();
+
+	// Eager and streaming wrappers are separate. Every streaming
+	// enumeration owns its script instance and suspended iterator.
+	internal IEnumerable<RawSequenceStep> Enumerate() => EnumerateScript();
+
+	protected virtual IEnumerable<RawSequenceStep> EnumerateScript()
+		=> throw new NotSupportedException(
+			"This compiled Sequence script is not resumable.");
+
+	protected RawSequenceStep EmitPlayStep()
+	{
+		SequenceEntry entry = _pendingEntry
+			?? throw new InvalidOperationException("No scripted Play is pending.");
+		_pendingEntry = null;
+		return new RawSequenceStep.Play(entry);
+	}
+
+	protected bool ShouldCooperate()
+	{
+		_cooperationIterations = (_cooperationIterations + 1) & 127;
+		return _cooperationIterations == 0;
+	}
+
+	protected RawSequenceStep CpuCheckpoint()
+		=> new RawSequenceStep.Cooperate();
 
 	protected ObjectId _O(uint id)
 	{
@@ -314,7 +344,11 @@ public abstract class SequenceScriptProgram
 
 	protected double Random()
 	{
-		Checkpoint();
+		// The eager path keeps its total execution guard. Resumable
+		// loops instead return CPU control every 128 iterations; they
+		// must not expire merely because a valid song plays for hours.
+		if (!_incremental)
+			Checkpoint();
 		return _context.Random.NextDouble();
 	}
 
@@ -325,7 +359,18 @@ public abstract class SequenceScriptProgram
 		if (patternId.IsNone)
 			throw new ArgumentOutOfRangeException(nameof(patternId));
 
-		Checkpoint();
-		_entries.Add(new SequenceEntry(patternId, startRow));
+		SequenceEntry entry = new(patternId, startRow);
+		if (_incremental)
+		{
+			if (_pendingEntry is not null)
+				throw new InvalidOperationException(
+					"Streaming Sequence scripts must yield after every Play.");
+			_pendingEntry = entry;
+		}
+		else
+		{
+			Checkpoint();
+			_entries.Add(entry);
+		}
 	}
 }
