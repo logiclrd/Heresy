@@ -675,6 +675,7 @@ public static class ScriptCompiler
 			using Heresy.Core.Sequencing;
 			using Heresy.Scripting.Runtime;
 
+			#nullable enable
 			public sealed class {{className}} : SequenceScriptProgram
 			{
 				public {{className}}(SequencingContext context)
