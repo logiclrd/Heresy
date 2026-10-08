@@ -133,7 +133,7 @@ public sealed class SongScheduleCompilerTests
 	}
 
 	[Test]
-	public void ScriptedSpeedCrossingSequenceOrderOnlyChangesFutureRows()
+	public void ScriptedSpeedCrossingSequenceOrderAffectsUnstartedNextOrder()
 	{
 		SongDocument document = new();
 		ObjectId childId = document.AllocateObjectId();
@@ -172,10 +172,10 @@ public sealed class SongScheduleCompilerTests
 		compiled.Schedule!.Where(e => e.Target == ChannelTarget.Physical(1)
 				&& e.Commands.Any(c => c is NoteCutCommand))
 			.Select(e => e.Offset.TimeOffset).Should().Equal(
-				TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(240));
+				TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(180));
 		compiled.PlaybackPositions.Single(p => p.PatternId == secondId)
 			.Offset.Should().Be(TimeSpan.FromMilliseconds(120));
-		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(300));
+		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(240));
 	}
 
 	[Test]
