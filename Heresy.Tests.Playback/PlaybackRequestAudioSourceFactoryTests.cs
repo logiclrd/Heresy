@@ -28,6 +28,36 @@ namespace Heresy.Tests.Playback;
 public sealed class PlaybackRequestAudioSourceFactoryTests
 {
 	[Test]
+	public void ScriptedPatternWarningsReachRequestScopedPlaybackDiagnosticReport()
+	{
+		SongDocument document = new();
+		ObjectId id = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(id, "Malformed")
+		{
+			RowCount = 5,
+			ChannelCount = 1,
+			Source = "Cut(4, 0); Off(2, 0); Cut(4, 0);",
+		});
+
+		PlaybackRequest request = PatternPlaybackRequest.Create(
+			document, id, startRow: 0, repeat: false);
+		PlaybackRequestAudioSourceFactory factory =
+			new(MonoConfiguration(100));
+		factory.Create(request);
+		IPlaybackRuntimeDiagnosticReportProvider diagnostics = factory;
+
+		diagnostics.TryTakeRuntimeDiagnostics(request, out var warnings)
+			.Should().BeTrue();
+		warnings.Should().ContainSingle();
+		warnings[0].Code.Should().Be("HRSEQ001");
+		warnings[0].Row.Should().Be(2);
+		warnings[0].LastAcceptedRow.Should().Be(4);
+		diagnostics.TryTakeRuntimeDiagnostics(request, out var again)
+			.Should().BeFalse();
+		again.Should().BeEmpty();
+	}
+
+	[Test]
 	public void SequenceRequestRendersSampleFromSnapshot()
 	{
 		SongDocument document = new();
