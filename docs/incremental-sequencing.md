@@ -47,12 +47,52 @@ snapshot whose lifetime spans the iterator. Likewise, the eagerly consuming
 legacy bridge still cannot play an infinite Pattern: nothing has claimed
 to solve that until the *consumer* changes.
 
+## Second executable step: whole-row incremental processor
+
+`Heresy.Core.Patterns.IncrementalPatternNoteProcessor` is the first
+consumer that retains a raw `IEnumerable<RawPatternStep>` iterator instead
+of exhausting it up front. Its `TryAdvance(out IncrementalPatternRow)`
+method processes **exactly one source row**. Returned events are resolved
+`NoteEvent` values with absolute offsets from the current invocation's
+origin; the result also records source row, row origin, and duration.
+`NextRow` and `Elapsed` track cursor progress. `Dispose()` releases the
+source enumerator, and the caller can stop well before the Pattern ends.
+
+Each row's raw events are resolved through the **existing**
+`PatternNoteProcessor` as a one-row
+`IDeferredSourcePatternGenerator` slice, preserving its tracker command,
+effect-memory, Source-column and Tempo/Speed behavior. The cursor enables
+`ResolvePatternSourcesAtRowTime` before reading raw steps so **lookahead
+does not execute future Source changes**; a row's state changes occur only
+when `TryAdvance` is called for that row. Other producers must obey that
+lookahead contract before they can be used with this incremental consumer.
+Changing the shared state between calls can change the subsequent row's
+timing, as opposed to an eagerly prepared Pattern whose later rows have
+already been resolved.
+
+This is deliberately **a whole-row proof of the consumer seam**, not yet
+a fully correct concurrent scheduler. A row is processed as one unit,
+including internal fractional events, tempo ramps, delayed effects,
+flattened child starts and end-of-row cleanup. The caller currently cannot
+interleave a second cursor's operations in the middle of that row. The
+prototype explicitly rejects contexts requiring eager flattened expansion,
+rather than silently pretending such combinations are correct. It also
+does not yet retain cross-row deferred timing commands. We must graduate
+from the one-row slices to resumable *within-row* processing and a single
+shared-clock merger before replacing actual playback preparation.
+
+Parity/regression coverage checks ordinary raw command ordering and
+row timing against the eager processor, external tempo changes before the
+next row, skipped Source/Tempo commands, deferred Source memory in future
+rows and disposal of a partially consumed silent Pattern.
+
 ## Proposed next interfaces and migration
 
-1. Introduce a **real incremental Pattern processor** that consumes raw
-   steps up to the current musical instant and emits resolved sequencing
-   operations without preparing future shared channel state. Keep raw
-   producer steps, scheduled actions and playback NoteEvents distinct.
+1. Extend the now-implemented **whole-row incremental processor**
+   into a resumable **within-row processor**, producing timed operations at
+   the current shared musical instant without resolving future effects,
+   delayed commands or flattened children in advance. Keep raw producer
+   steps, scheduled actions and playback NoteEvents distinct.
 2. Add **script invocation-local iterators** through Roslyn syntax
    rewriting. The existing loop `Checkpoint()` instrumentation for
    `for`/`while`/`do` is the starting point, but the generated
