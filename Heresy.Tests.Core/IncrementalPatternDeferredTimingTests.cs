@@ -181,6 +181,47 @@ public sealed class IncrementalPatternDeferredTimingTests
 	}
 
 	[Test]
+	public void EligibilityIsCheckedAtOwnersOwnRowStartAfterAnotherCursorChangesTempo()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(new RawSource(
+			Event(0, TimeSpan.FromMilliseconds(30), ChannelTarget.Global,
+				new SetTempoCommand(200)),
+			Event(1.5, ChannelTarget.Physical(0), new NoteCutCommand())),
+			2, root);
+		timeline.Add(new RawSource(
+			Event(0, ChannelTarget.Global, new SetTempoCommand(250))),
+			1, root.FlattenedChild(physicalChannelOffset: 2));
+
+		NoteEvent[] notes = Drain(timeline);
+		Assert.That(notes.Select(n => n.Offset.TimeOffset),
+			Is.EqualTo(new[]
+			{
+				TimeSpan.Zero,
+				TimeSpan.FromMilliseconds(60),
+				TimeSpan.FromMilliseconds(97.5),
+			}));
+		Assert.That(notes[0].Commands.Single(), Is.EqualTo(new SetTempoCommand(250)));
+		Assert.That(notes[1].Commands.Single(), Is.EqualTo(new SetTempoCommand(200)));
+		Assert.That(root.State.Tempo, Is.EqualTo(200));
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(135)));
+	}
+
+	[Test]
+	public void GlobalTimingAtFinalPatternEndpointDoesNotApplyToLastRow()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(new RawSource(
+			Event(2, ChannelTarget.Global, new SetSpeedCommand(3))), 2, root);
+
+		Assert.That(Drain(timeline), Is.Empty);
+		Assert.That(root.State.Speed, Is.EqualTo(6));
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(240)));
+	}
+
+	[Test]
 	public void NegativeAndMixedFixedOffsetTimingRemainExplicitlyUnsupported()
 	{
 		foreach (NoteEvent raw in new[]
