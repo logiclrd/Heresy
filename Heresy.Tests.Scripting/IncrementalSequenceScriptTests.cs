@@ -20,7 +20,7 @@ public sealed class IncrementalSequenceScriptTests
 	{
 		ScriptSequenceDefinition source = new((ObjectId)1U, "Lazy sequence")
 		{
-			Source = "Play(_O(17), 2); Play(_O(0));",
+			Source = "Play(_O(17), 2); Play(_O(18), -1);",
 		};
 		var compiled = ScriptCompiler.CompileIncrementalSequence(source);
 		compiled.Success.Should().BeTrue();
@@ -59,7 +59,12 @@ public sealed class IncrementalSequenceScriptTests
 			Source = """
 				int i = 0;
 				while (i++ < 3)
-					Play(_O(Random() < 0.5 ? 17U : 18U), i);
+				{
+					if (Random() < 0.5)
+						Play(_O(17), i);
+					else
+						Play(_O(18), i);
+				}
 				""",
 		};
 		var compiled = ScriptCompiler.CompileIncrementalSequence(source);
