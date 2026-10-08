@@ -91,6 +91,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		private double _lastRow;
 		private IReadOnlyList<NoteEvent> _rowEvents = [];
 		private readonly List<NoteEvent> _rowEndCommands = [];
+		private readonly List<NoteEvent> _deferredLoopCleanup = [];
+		private readonly List<NoteEvent> _wrapCleanup = [];
 		private readonly List<(double TickOffset, NoteEvent Note)> _repeated = [];
 		private readonly List<TickOperation> _scheduled = [];
 		private long _scheduledOrder;
@@ -136,12 +138,14 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				|| _repeated[0].TickOffset < RawEventTickOffset - TickTolerance)
 			&& (_scheduled.Count == 0
 				|| _repeated[0].TickOffset <= _scheduled[0].Offset + TickTolerance)
+			&& (_wrapCleanup.Count == 0 || _repeated[0].TickOffset <= TickTolerance)
 			? _repeated[0].Note : null;
 		public TickOperation? DueScheduled => _inRow && _scheduled.Count != 0
 			&& (_eventIndex >= _rowEvents.Count
 				|| _scheduled[0].Offset < RawEventTickOffset - TickTolerance)
 			&& (_repeated.Count == 0
 				|| _scheduled[0].Offset < _repeated[0].TickOffset - TickTolerance)
+			&& (_wrapCleanup.Count == 0 || _scheduled[0].Offset <= TickTolerance)
 			? _scheduled[0] : null;
 
 		private void Schedule(double offset, NoteEvent note,
@@ -272,6 +276,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					|| RawEventTickOffset <= _repeated[0].TickOffset + TickTolerance)
 			&& (_scheduled.Count == 0
 					|| RawEventTickOffset <= _scheduled[0].Offset + TickTolerance)
+			&& (_wrapCleanup.Count == 0 || RawEventTickOffset <= TickTolerance)
 				? _rowEvents[_eventIndex] : null;
 		public NoteEvent? DueTiming =>
 			_inRow && _readyTiming.Count > 0
@@ -279,8 +284,49 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		public IReadOnlyList<DeferredTiming> ReadyTimings => _readyTiming;
 		public NoteEvent? DueCleanup =>
 			_inRow && DueEvent is null && DueRepeated is null && DueScheduled is null
-			&& _rowEndCommands.Count > 0
+			&& _wrapCleanup.Count == 0 && _rowEndCommands.Count > 0
 				? _rowEndCommands[0] : null;
+
+		public NoteEvent? DueWrapCleanup => _inRow && _wrapCleanup.Count > 0
+			&& DueTiming is null
+			&& (_eventIndex >= _rowEvents.Count || RawEventTickOffset > TickTolerance)
+			&& (_repeated.Count == 0 || _repeated[0].TickOffset > TickTolerance)
+			&& (_scheduled.Count == 0 || _scheduled[0].Offset > TickTolerance)
+			? _wrapCleanup[0] : null;
+
+		public void ConsumeWrapCleanup()
+		{
+			if (DueWrapCleanup is null)
+				throw new InvalidOperationException("No SBx wrap cleanup is due.");
+			_wrapCleanup.RemoveAt(0);
+			RefreshDue();
+		}
+
+		/// <summary>
+		/// The eager loop expander retains the *original* row's emission
+		/// ordering. At a backwards visit, the target row's tick-zero
+		/// commands can therefore precede this row's ending cleanup.
+		/// </summary>
+		public void DeferCleanupForBackwardLoop()
+		{
+			if (_rowEndCommands.Count == 0 || _rowFlowCommands.Count != 0)
+				return;
+			bool backward = false;
+			foreach (var instruction in _rowLoopCommands
+				.OrderBy(x => x.Channel).ThenBy(x => x.Order))
+			{
+				if (instruction.Count == 0)
+					continue;
+				_loopStates.TryGetValue(instruction.Channel,
+						out PatternLoopState? state);
+				if (state is null || state.RemainingRepeats != 1)
+					backward = true;
+			}
+			if (!backward)
+				return;
+			_deferredLoopCleanup.AddRange(_rowEndCommands);
+			_rowEndCommands.Clear();
+		}
 
 		public void QueueCleanup(NoteEvent note)
 		{
@@ -550,7 +596,16 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			_rowLoopCommands.Clear();
 			_rowFlowCommands.Clear();
 			if (flow.HasControl)
+			{
 				_pendingTiming.Clear();
+				_deferredLoopCleanup.Clear();
+				_wrapCleanup.Clear();
+			}
+			else if (nextRow <= Row)
+			{
+				_wrapCleanup.AddRange(_deferredLoopCleanup);
+				_deferredLoopCleanup.Clear();
+			}
 			if (flow.HasControl)
 				Row = RowCount;
 			else if (nextRow <= Row)
@@ -581,7 +636,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				? double.PositiveInfinity : _repeated[0].TickOffset;
 			double commandTick = _scheduled.Count == 0
 				? double.PositiveInfinity : _scheduled[0].Offset;
-			DueTick = _rowStartTick + Math.Min(rawTick, Math.Min(repeatTick, commandTick));
+			double wrapTick = _wrapCleanup.Count == 0
+				? double.PositiveInfinity : 0;
+			DueTick = _rowStartTick + Math.Min(wrapTick,
+				Math.Min(rawTick, Math.Min(repeatTick, commandTick)));
 		}
 
 		public void Dispose() => _source.Dispose();
@@ -1319,6 +1377,20 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		{
 			current.ConsumeRepeated();
 			NoteEvent emitted = repeating with
+			{
+				Offset = new MusicalTime(Elapsed, 0),
+				EmissionOrder = _emissionOrder++,
+			};
+			result = new IncrementalPatternTimelineStep.Emit(emitted, _tick, Elapsed);
+			return true;
+		}
+		// An SBx backward visit reorders a tick-zero start from an
+		// earlier source row ahead of the previous row's ending clear.
+		current.DeferCleanupForBackwardLoop();
+		if (current.DueWrapCleanup is { } wrapped)
+		{
+			current.ConsumeWrapCleanup();
+			NoteEvent emitted = wrapped with
 			{
 				Offset = new MusicalTime(Elapsed, 0),
 				EmissionOrder = _emissionOrder++,
