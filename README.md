@@ -120,9 +120,10 @@ for realtime rendering and writes it through `IAudioFileSink`. The logical song
 duration is always rendered in full, including silence. At that boundary the
 session receives an explicit end-of-input transition: every still-active voice
 receives Note Off, deterministic sound/envelope/fade releases are allowed to
-finish, and anti-click residue is drained. A post-Note-Off voice with no
-deterministic finite end is rejected with `IndefiniteOfflineRenderException`
-rather than being silently truncated after an arbitrary timeout.
+finish, and anti-click residue is drained. If a voice still has no deterministic
+finite end after Note Off, offline rendering cuts only that voice at the logical
+song end and drains its ordinary anti-click residue; finite releases remain
+untouched.
 
 `WaveFileSink` writes canonical little-endian 16-bit integer PCM RIFF/WAVE
 incrementally, clamps finite float PCM into the signed 16-bit range, rejects
@@ -152,8 +153,9 @@ compiles the root sequence through the playback composition layer, then performs
 PCM rendering and encoding on a worker task. FLAC, MP3 and WAV are selectable,
 with FLAC suggested by default. Output is written to a temporary sibling file
 and atomically replaces the selected destination only after a successful render.
-Compilation failures and voices with no deterministic post-song end are reported
-as render failures rather than producing a silently truncated file.
+Compilation failures are reported as render failures. Voices with no
+deterministic post-Note-Off end are cut at the logical song boundary while
+ordinary finite release tails continue to completion.
 
 ## Realtime audio boundary
 

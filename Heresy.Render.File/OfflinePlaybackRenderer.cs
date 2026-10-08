@@ -6,16 +6,6 @@ using Heresy.Render.Timing;
 
 namespace Heresy.Render.File;
 
-public sealed class IndefiniteOfflineRenderException
-	: InvalidOperationException
-{
-	public IndefiniteOfflineRenderException()
-		: base(
-			"Offline rendering cannot finish because at least one voice has no deterministic end after end-of-input Note Off.")
-	{
-	}
-}
-
 public readonly record struct OfflineRenderResult(
 	long LogicalFrameCount,
 	long TailFrameCount)

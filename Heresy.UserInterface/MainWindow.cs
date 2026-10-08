@@ -590,11 +590,6 @@ public sealed class MainWindow : Window
 			SetStatus(
 				$"Rendered {Path.GetFileName(path)} ({render.TotalFrameCount:N0} frames).");
 		}
-		catch (IndefiniteOfflineRenderException ex)
-		{
-			SetStatus(
-				$"Render failed: {ex.Message} Add a finite release or otherwise terminate the source before the song ends.");
-		}
 		catch (PlaybackSourceCompilationException ex)
 		{
 			SetStatus(

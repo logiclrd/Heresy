@@ -39,21 +39,8 @@ This file contains only explicitly specified work that remains open.
   of the rendered line. Double-clicking an existing waypoint should delete it.
   Once this interaction exists, remove the raw waypoint-data editing UI.
 
-## Project view activation
-
-- [ ] Fix double-click activation in the main project view. Editable objects
-  already expose their natural editor as the bold default context-menu action;
-  double-clicking the same object must invoke that exact default activation.
-  Folders and missing references should retain their existing non-editor
-  behavior.
-
 ## Offline rendering and export
 
-- [ ] Export must not fail merely because a voice has no deterministic natural
-  end. At the end of the final row of the final pattern, first send Note Off and
-  allow ordinary finite release tails to complete; if a voice still cannot
-  terminate deterministically, cut that voice at the song end rather than
-  blocking export.
 - [ ] Define finite export behavior for songs whose `Bxx` effects create loops.
   During offline song rendering, the third time playback reaches the same
   `Bxx` instruction, treat that occurrence as the end of the song instead of
