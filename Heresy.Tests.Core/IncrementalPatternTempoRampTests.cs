@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
@@ -20,13 +19,7 @@ public sealed class IncrementalPatternTempoRampTests
 	public void TxxSlideAndFractionalNoteMatchEagerProcessor(
 		byte parameter, double startingTempo, double endingTempo)
 	{
-		DataPatternDefinition pattern = Pattern(1, 2);
-		pattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
-			new TrackerTempoPatternEffect(parameter));
-		// The independent note needs no instrument to emit a Cut.
-		pattern.Grid.GetOrCreateCell(0, 1).Note = new PatternNoteCut();
-		// The grid note is at row start; the additional fractional note
-		// ensures another cursor observes the tempo at half a row.
+		// The fractional note observes the evolving Tempo within the row.
 		RawSource source = new(
 			Event(0, ChannelTarget.Physical(0),
 				new ApplyTrackerTempoCommand(parameter)),
@@ -107,7 +100,6 @@ public sealed class IncrementalPatternTempoRampTests
 		// Advance steps expose the shared tracker-tick position at
 		// each cooperative observation. The delayed note must be in the
 		// interval and must not have been scheduled by constant Tempo.
-		using IncrementalPatternTimeline second = new(new SequencingContext());
 		SequencingContext context = new();
 		using IncrementalPatternTimeline measured = new(context);
 		measured.Add(new RawSource(Event(0, ChannelTarget.Physical(0),
@@ -204,11 +196,6 @@ public sealed class IncrementalPatternTempoRampTests
 		=> 2.5 * ticks / (end - start)
 			* Math.Log((start + (end - start) * elapsedTicks / ticks) / start);
 
-	private static DataPatternDefinition Pattern(int rows, int channels)
-		=> new((ObjectId)1U, "Unused", )
-		{
-			RowCount = rows, ChannelCount = channels,
-		};
 
 	private static NoteEvent Event(double row, ChannelTarget target, params NoteCommand[] commands)
 		=> new(new MusicalTime(TimeSpan.Zero, row), target, commands);
