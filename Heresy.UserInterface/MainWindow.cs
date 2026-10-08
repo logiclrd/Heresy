@@ -364,13 +364,28 @@ public sealed class MainWindow : Window
 
 	private Menu BuildMenu()
 	{
-		MenuItem newItem = new() { Header = "_New" };
+		MenuItem newItem =
+			new()
+			{
+				Header = "_New",
+				InputGesture = new KeyGesture(Key.N, KeyModifiers.Control),
+			};
 		newItem.Click += async (_, _) => await NewDocumentAsync();
 
-		MenuItem openItem = new() { Header = "_Open..." };
+		MenuItem openItem =
+			new()
+			{
+				Header = "_Open...",
+				InputGesture = new KeyGesture(Key.O, KeyModifiers.Control),
+			};
 		openItem.Click += async (_, _) => await OpenDocumentAsync();
 
-		MenuItem saveItem = new() { Header = "_Save" };
+		MenuItem saveItem =
+			new()
+			{
+				Header = "_Save",
+				InputGesture = new KeyGesture(Key.S, KeyModifiers.Control),
+			};
 		saveItem.Click += async (_, _) => await SaveDocumentAsync();
 
 		MenuItem saveAsItem = new() { Header = "Save _As..." };
@@ -378,6 +393,14 @@ public sealed class MainWindow : Window
 
 		MenuItem renderItem = new() { Header = "_Render Audio..." };
 		renderItem.Click += async (_, _) => await RenderAudioAsync();
+
+		MenuItem exitItem =
+			new()
+			{
+				Header = "E_xit",
+				InputGesture = new KeyGesture(Key.Q, KeyModifiers.Control),
+			};
+		exitItem.Click += (_, _) => Close();
 
 		MenuItem file =
 			new()
@@ -392,6 +415,8 @@ public sealed class MainWindow : Window
 					saveAsItem,
 					new Separator(),
 					renderItem,
+					new Separator(),
+					exitItem,
 				},
 			};
 
@@ -2201,7 +2226,44 @@ public sealed class MainWindow : Window
 			return;
 		}
 
+		if (FileMenuKeyboard.TryGetCommand(
+			e.Key,
+			e.KeyModifiers,
+			e.Handled,
+			out FileMenuCommand command))
+		{
+			e.Handled = true;
+			_ = HandleFileMenuCommandAsync(command);
+			return;
+		}
+
 		base.OnKeyDown(e);
+	}
+
+	private async Task HandleFileMenuCommandAsync(
+		FileMenuCommand command)
+	{
+		switch (command)
+		{
+			case FileMenuCommand.New:
+				await NewDocumentAsync();
+				break;
+
+			case FileMenuCommand.Open:
+				await OpenDocumentAsync();
+				break;
+
+			case FileMenuCommand.Save:
+				await SaveDocumentAsync();
+				break;
+
+			case FileMenuCommand.Exit:
+				Close();
+				break;
+
+			default:
+				throw new ArgumentOutOfRangeException(nameof(command));
+		}
 	}
 
 	private async Task HandlePlaybackKeyAsync(
