@@ -137,11 +137,24 @@ public static class SongScheduleCompiler
 				$"Sequence {sequence.Id.Value} has an unsupported definition type.");
 		}
 
-		return Generate(
+		SequencingContext activeContext = context ?? new SequencingContext();
+		bool rootInvocation = activeContext.FlattenedSourceExpander is null;
+		activeContext.FlattenedSourceExpander ??=
+			new DocumentFlattenedNoteSourceExpander(document);
+		SongScheduleCompilationResult result = Generate(
 			sequencer,
 			resolver,
 			diagnostics,
-			context);
+			activeContext);
+		if (rootInvocation && result.Success
+			&& activeContext.FlattenedSourceExpander.MaximumAbsoluteEnd > result.Duration)
+		{
+			return result with
+			{
+				Duration = activeContext.FlattenedSourceExpander.MaximumAbsoluteEnd,
+			};
+		}
+		return result;
 	}
 
 	public static SongScheduleCompilationResult CompilePattern(
@@ -175,11 +188,16 @@ public static class SongScheduleCompiler
 				$"Pattern {patternId.Value} is missing or is not a pattern.");
 		}
 
+		SequencingContext activeContext = context ?? new SequencingContext();
+		bool rootInvocation = activeContext.FlattenedSourceExpander is null;
+		activeContext.FlattenedSourceExpander ??=
+			new DocumentFlattenedNoteSourceExpander(document);
+
 		NoteScheduleBuilder output = new();
 		List<CompiledPatternPlaybackPosition> playbackPositions = [];
 		PatternNoteProcessor.GenerateNotes(
 			pattern,
-			context ?? new SequencingContext(),
+			activeContext,
 			output,
 			startRow,
 			out TimeSpan duration,
@@ -202,7 +220,9 @@ public static class SongScheduleCompiler
 
 		return new(
 			output.Freeze(),
-			duration,
+			rootInvocation && activeContext.FlattenedSourceExpander.MaximumAbsoluteEnd > duration
+				? activeContext.FlattenedSourceExpander.MaximumAbsoluteEnd
+				: duration,
 			resolver.Diagnostics)
 		{
 			PlaybackPositions = playbackPositions,
