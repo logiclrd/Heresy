@@ -5,6 +5,7 @@ using System.Linq;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequencing;
+using Heresy.Core.Sequences;
 using Heresy.Core.Timing;
 
 namespace Heresy.Scripting.Compilation;
@@ -28,6 +29,8 @@ internal static class ChronologicalDataPatternScheduler
 		public long DueTick { get; set; }
 		public int Row { get; set; }
 		public long Sequence { get; init; }
+		public bool IsRoot { get; init; }
+		public int RootOrder { get; init; }
 		public List<NoteEvent> EndOfRowCommands { get; } = [];
 	}
 
@@ -63,11 +66,35 @@ internal static class ChronologicalDataPatternScheduler
 	public static bool CanHandle(
 		SongDocument document,
 		DataPatternDefinition root)
+		=> IsCompatible(document, root, out bool hasNested) && hasNested;
+
+	public static bool CanHandleSequence(
+		SongDocument document,
+		DataSequenceDefinition sequence)
+	{
+		ArgumentNullException.ThrowIfNull(sequence);
+		bool hasNested = false;
+		foreach (SequenceEntry entry in sequence.Entries)
+		{
+			if (entry.StartRow != 0
+				|| !document.TryGet(entry.PatternId, out SongObject? obj)
+				|| obj is not DataPatternDefinition pattern
+				|| !IsCompatible(document, pattern, out bool nested))
+				return false;
+			hasNested |= nested;
+		}
+		return sequence.Entries.Count != 0 && hasNested;
+	}
+
+	private static bool IsCompatible(
+		SongDocument document,
+		DataPatternDefinition root,
+		out bool hasNested)
 	{
 		ArgumentNullException.ThrowIfNull(document);
 		ArgumentNullException.ThrowIfNull(root);
 		HashSet<ObjectId> visited = [];
-		bool hasNestedData = false;
+		bool foundNested = false;
 		bool Visit(DataPatternDefinition pattern)
 		{
 			if (!visited.Add(pattern.Id))
@@ -82,31 +109,56 @@ internal static class ChronologicalDataPatternScheduler
 						or EmptyTrackerPatternEffect))
 						return false;
 				}
-				if (cell.Note is not StartPatternNote start
-					|| start.Mixdown)
+				if (cell.Note is not StartPatternNote start || start.Mixdown)
 					continue;
 				ObjectId id = !cell.SourceId.IsNone
 					? cell.SourceId : start.SourceId;
 				if (id.IsNone || !document.TryGet(id, out SongObject? obj))
 					continue;
-				if (obj is PatternDefinition or Heresy.Core.Sequences.SequenceDefinition)
+				if (obj is PatternDefinition or SequenceDefinition)
 				{
 					if (obj is not DataPatternDefinition child)
 						return false;
-					hasNestedData = true;
+					foundNested = true;
 					if (!Visit(child))
 						return false;
 				}
 			}
 			return true;
 		}
-		return Visit(root) && hasNestedData;
+		bool compatible = Visit(root);
+		hasNested = foundNested;
+		return compatible;
 	}
 
 	public static SongScheduleCompilationResult Compile(
 		SongDocument document,
 		DataPatternDefinition root,
 		SequencingContext? suppliedContext)
+		=> Run(document, [root], suppliedContext, sequenceMode: false);
+
+	public static SongScheduleCompilationResult CompileSequence(
+		SongDocument document,
+		DataSequenceDefinition sequence,
+		SequencingContext? suppliedContext)
+	{
+		List<DataPatternDefinition> patterns = [];
+		foreach (SequenceEntry entry in sequence.Entries)
+		{
+			if (!document.TryGet(entry.PatternId, out SongObject? obj)
+				|| obj is not DataPatternDefinition pattern)
+				throw new InvalidOperationException(
+					"Eligible arrangement pattern disappeared while preparing its cursors.");
+			patterns.Add(pattern);
+		}
+		return Run(document, patterns, suppliedContext, sequenceMode: true);
+	}
+
+	private static SongScheduleCompilationResult Run(
+		SongDocument document,
+		IReadOnlyList<DataPatternDefinition> patterns,
+		SequencingContext? suppliedContext,
+		bool sequenceMode)
 	{
 		SequencingContext context = suppliedContext ?? new SequencingContext();
 		if (context.FlattenedSourceExpander is not null
@@ -126,7 +178,9 @@ internal static class ChronologicalDataPatternScheduler
 			ObjectId id,
 			DataPatternDefinition pattern,
 			SequencingContext mapped,
-			IReadOnlySet<ObjectId> ancestry)
+			IReadOnlySet<ObjectId> ancestry,
+			bool isRoot = false,
+			int rootOrder = 0)
 		{
 			if (ancestry.Contains(id))
 				throw new InvalidOperationException(
@@ -143,10 +197,14 @@ internal static class ChronologicalDataPatternScheduler
 				Ancestry = descendants,
 				DueTick = tick,
 				Sequence = nextCursorSequence++,
+				IsRoot = isRoot,
+				RootOrder = rootOrder,
 			};
 		}
 
-		active.Add(CreateCursor(root.Id, root, context, new HashSet<ObjectId>()));
+		DataPatternDefinition first = patterns[0];
+		active.Add(CreateCursor(first.Id, first, context,
+			new HashSet<ObjectId>(), isRoot: true));
 		double tempo = context.State.Tempo;
 		while (active.Count != 0)
 		{
@@ -188,11 +246,23 @@ internal static class ChronologicalDataPatternScheduler
 				current.EndOfRowCommands.Clear();
 
 				if (current.Row >= current.Pattern.RowCount)
+				{
+					if (current.IsRoot && current.RootOrder + 1 < patterns.Count)
+				{
+						int nextOrder = current.RootOrder + 1;
+						DataPatternDefinition nextRoot = patterns[nextOrder];
+						active.Add(CreateCursor(
+							nextRoot.Id, nextRoot, context,
+							new HashSet<ObjectId>(), isRoot: true,
+							rootOrder: nextOrder));
+					}
 					continue;
+				}
 
-				if (current.Id == root.Id && current.Sequence == 0)
+				if (current.IsRoot)
 					positions.Add(new CompiledPatternPlaybackPosition(
-						elapsed, root.Id, current.Row, null));
+						elapsed, current.Id, current.Row,
+						sequenceMode ? current.RootOrder : null));
 
 				NoteScheduleBuilder rowBuilder = new();
 				PatternNoteProcessor.GenerateNotes(
