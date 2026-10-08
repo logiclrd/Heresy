@@ -80,12 +80,24 @@ Items that were already completed remain in Git history, not in this checklist.
   `PatternFlowControl` step for the future Sequence cursor rather than
   jumping Pattern rows. Same-tick effect recall/cleanup during SBx
   wrap is kept in eager source-emission order.
-  Next, implement a **lazy Sequence/order cursor** consuming these
-  Bxx/Cxx flow results, then complete incompatible-span Tempo
-  arbitration, SEy repeated Tempo, SDx/Qxy interaction, virtual
-  channels, and user-script coroutine instrumentation with distinct
-  CPU checkpoints. Wire generic invocation-lifetime management for
-  data and scripted Sequences.
+  The experimental `IncrementalSequenceCursor` now executes
+  **data-Sequence orders lazily**, consuming Bxx/Cxx `Flow` results,
+  applying Cxx's one-invocation StartRow override, and visiting Bxx
+  targets with fresh Pattern cursors on the same shared timeline.
+  Shared Tempo/Speed and channel effect memory survive order visits,
+  and a prior Pattern's delayed physical notes can overlap the
+  next order. Missing/zero-row entries skip without changing musical
+  time, while cooperative per-step and visit-count budgets prevent
+  indefinite zero-time traversal. The existing order-jump observer
+  can terminate Bxx loops without preexpanding them. Resolved
+  Patterns must support the incremental interface; scripted/eager-only
+  sources explicitly fail.
+  Next, compose **nested and flattened Pattern/Sequence invocations**
+  with a common cursor/lifetime model, then complete incompatible-span
+  Tempo arbitration, SEy repeated Tempo, SDx/Qxy interaction, virtual
+  channels, and Roslyn coroutine instrumentation with distinct CPU-only
+  checkpoints. Wire generic invocation-lifetime management for data
+  and scripted Sequences.
   Preserve out-of-order scripted-event semantics or explicitly resolve
   their ordering policy before migrating playback. Replace the existing
   restricted chronological scheduler rather than adding more special
