@@ -199,12 +199,24 @@ public sealed class FmSynthGraphCanvas : UserControl
 							candidate.SourceNodeId == sourceId
 								&& candidate.TargetNodeId == target.Id
 								&& candidate.TargetInputIndex == inputIndex);
+				FmSynthNode sourceNode =
+					nodes.First(node => node.Id == sourceId);
+				FmSynthRoutePoint startPort =
+					FmSynthConnectionPorts.GetPorts(
+						sourceNode,
+						sourceRect)[0].Center;
+				FmSynthRoutePoint endPort =
+					FmSynthConnectionPorts.GetPorts(
+						target,
+						targetRect)[inputIndex + 1].Center;
 				FmSynthRoutePoint[] route =
 					FmSynthConnectionRouter.Route(
 						sourceRect,
 						targetRect,
 						obstacles,
-						hint?.RoutePoints);
+						hint?.RoutePoints,
+						startPort,
+						endPort);
 
 				for (int pointIndex = 1;
 					pointIndex < route.Length;
