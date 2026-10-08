@@ -1128,12 +1128,14 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			NoteEvent? output = null;
 			if (scheduled.Kind == TickOperationKind.Retrigger)
 				output = current.ExecuteRetriggerTick(scheduled);
-			else if (scheduled.Kind is TickOperationKind.Cut
-				or TickOperationKind.RepeatedDelayed)
+			else if (scheduled.Kind == TickOperationKind.Cut)
 				output = scheduled.Note with
 				{
 					Target = current.Context.MapTarget(scheduled.Note.Target),
 				};
+			else if (scheduled.Kind == TickOperationKind.RepeatedDelayed)
+				// The first SDx execution already mapped this target.
+				output = scheduled.Note;
 			else
 			{
 				// SDx resolves and commits command memory once, at its first
