@@ -105,11 +105,18 @@ Items that were already completed remain in Git history, not in this checklist.
   advancing Bxx loops have no artificial lifetime cap. Mixdown starts
   remain renderer-owned; unsupported transformed flattened and
   eager-only scripted sources fail explicitly.
-  Next, convert **Roslyn Pattern and Sequence scripts** to genuine
-  invocation-local resumable generators with distinct CPU-only
-  checkpoints, then complete incompatible Tempo spans, SEy repeated
-  Tempo, SDx/Qxy interaction, virtual/mixdown channels and remaining
-  advanced effects before switching production scheduling.
+  The first **resumable Roslyn Pattern** producer proof now exists as
+  `ScriptCompiler.CompileIncrementalPattern`: direct Note/Off/Cut/
+  Tempo/Speed statements suspend after each raw event, and loops yield
+  `RawPatternStep.Cooperate` after every 128 iterations without
+  musical progress. Out-of-order row emissions explicitly throw in
+  this experimental API; the old eager compiler remains unchanged.
+  Next, teach the shared-tick consumer to surface CPU cooperation without
+  treating it as musical Advance; extend to invocation-local scripted
+  Sequence Play, preserve legacy output ordering/deterministic Random,
+  then complete incompatible Tempo spans, SEy repeated Tempo,
+  SDx/Qxy interaction, virtual/mixdown channels and remaining advanced
+  effects before switching production scheduling.
   Preserve out-of-order scripted-event semantics or explicitly resolve
   their ordering policy before migrating playback. Replace the existing
   restricted chronological scheduler rather than adding more special

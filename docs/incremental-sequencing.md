@@ -620,6 +620,56 @@ independent timing domain are subsequent milestones. In particular,
 mixdown must not be inserted into the shared-clock merger as if it
 were a flattened child. Production playback is unchanged.
 
+## Thirteenth executable step: invocation-local Roslyn Pattern iterator proof
+
+`ScriptCompiler.CompileIncrementalPattern(ScriptPatternDefinition)` is a
+**separate, experimental** Roslyn compilation entrypoint. The old
+`CompilePattern`, eager `GenerateRawNotes`, and all production song,
+playback and export schedulers are unchanged.
+
+- It retains the restricted C# syntax/semantic checks and the existing
+  helper validation (`Note`, `Off`, `Cut`, `Tempo`, `Speed`). A new
+  syntax pass turns *direct helper statements* into a call followed by
+  `yield return EmitPendingStep()`. Each invocation gets its own script
+  instance and one-event receiver. Creating the enumerator does not run
+  the source, and resuming after a raw `Emit` executes the **next**
+  script statement only then. Helpers used outside ordinary direct
+  statements (for example, a `for` increment expression) are rejected
+  by the streaming entrypoint with HRS2001 instead of silently losing
+  their events. The eager compiler still accepts its established input.
+- Incremental `for`/`while`/`do` loops inject
+  `if (ShouldCooperate()) yield return CpuCheckpoint();` at their body
+  head, one yield per 128 iterations. A `RawPatternStep.Cooperate`
+  represents **CPU-only cooperation**, never a sound event, tracker
+  memory operation, or musical-time increment. Its Row is informational
+  (the most recently emitted script row), **not** a progress boundary.
+  The existing `RawPatternStep.Advance` continues to mean musical
+  progress. Streaming enumeration emits a terminal `Advance(RowCount)`
+  only if the script actually completes; an infinite CPU-only loop does
+  not fabricate progression. Disposal ends that invocation's iterator.
+- The producer enforces **nondecreasing note row positions** as it
+  emits them; out-of-order scripted calls throw rather than being
+  silently sorted. This is a deliberately narrower contract than the
+  legacy eager script compiler: an earlier yielded event may already
+  have reached a caller before later out-of-order output is detected.
+  It is **not safe to install this producer into active playback**
+  without deciding whether to statically validate/buffer the script
+  or otherwise preserve legacy out-of-order semantics.
+- The existing `SequencingContext.Random` and script helper budget
+  remain invocation-local in the same runtime base. The tests cover
+  lazy execution before a later invalid command, indefinite silent
+  CPU cooperation, out-of-order rejection, and sandbox diagnostics.
+
+**Explicit next prerequisites:** the current
+`IncrementalPatternTimeline` buffers one musical row and does not
+yet suspend that partial row to return `Cooperate` steps to callers.
+It must handle checkpoints on a fixed musical instant with a bounded
+per-call work budget, without confusing them with `Advance`.
+Then prove deterministic random/state parity, extend the same iterator
+model to scripted Sequence `Play` and ordering, define replay/seek
+semantics, and only then admit scripts in the recursive resolver.
+No production scheduler was switched by this proof.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
