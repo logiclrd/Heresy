@@ -350,6 +350,29 @@ public sealed class IncrementalPatternTimelineTests
 	}
 
 	[Test]
+	public void RawTimelineSilentlyDropsEarlierEventsButKeepsEqualRowOrder()
+	{
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		timeline.Add(new RawSource(
+			At(4, 0, new NoteCutCommand()),
+			At(2, 0, new NoteOffCommand()),
+			At(3, 0, new NoteOffCommand()),
+			At(4, 0, new NoteOffCommand()),
+			At(5, 0, new NoteCutCommand())), 6, context);
+
+		NoteEvent[] events = DrainNotes(timeline);
+		Assert.That(events.Select(e => e.Offset.TimeOffset), Is.EqualTo(
+			new[] { TimeSpan.FromMilliseconds(480),
+				TimeSpan.FromMilliseconds(480),
+				TimeSpan.FromMilliseconds(600) }));
+		Assert.That(events.Select(e => e.Commands.Single().GetType()), Is.EqualTo(
+			new[] { typeof(NoteCutCommand), typeof(NoteOffCommand),
+				typeof(NoteCutCommand) }));
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(720)));
+	}
+
+	[Test]
 	public void CpuCheckpointAtFractionalPositionDoesNotMoveMusicalClock()
 	{
 		SequencingContext context = new();
