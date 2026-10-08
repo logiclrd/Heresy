@@ -126,8 +126,8 @@ public sealed class SongScheduleCompilerTests
 		document.Add(new ScriptPatternDefinition(firstId, "Delayed first order")
 		{
 			RowCount = 1,
-			Source = $"Note(0.5, 0, _O({soundId.Value}), timeOffsetSeconds: 0.12); "
-				+ "Cut(0.25, 1, timeOffsetSeconds: 0.02);",
+			Source = "Cut(0.25, 1, timeOffsetSeconds: 0.02); "
+				+ $"Note(0.5, 0, _O({soundId.Value}), timeOffsetSeconds: 0.12);",
 		});
 		ObjectId secondId = document.AllocateObjectId();
 		DataPatternDefinition second = new(secondId, "Following order")

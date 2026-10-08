@@ -260,7 +260,7 @@ public sealed class IncrementalPatternTimelineTests
 	}
 
 	[Test]
-	public void DecreasingRawRowPositionsAreRejectedBeforeResolvingLaterCommand()
+	public void DecreasingRawRowPositionsAreSilentlyDroppedBeforeResolvingLaterCommand()
 	{
 		SequencingContext root = new();
 		using IncrementalPatternTimeline timeline = new(root);
@@ -268,7 +268,11 @@ public sealed class IncrementalPatternTimelineTests
 			At(1.0, 0, new NoteOffCommand()),
 			At(0.5, 0, new NoteCutCommand())), 2, root);
 
-		Assert.Throws<InvalidOperationException>(() => DrainNotes(timeline));
+		NoteEvent[] notes = DrainNotes(timeline);
+		Assert.That(notes, Has.Length.EqualTo(1));
+		Assert.That(notes[0].Commands.Single(), Is.TypeOf<NoteOffCommand>());
+		Assert.That(notes[0].Offset.TimeOffset, Is.EqualTo(TimeSpan.FromMilliseconds(120)));
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(240)));
 	}
 
 	[Test]

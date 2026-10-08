@@ -59,8 +59,8 @@ public sealed class PatternNoteProcessorTests
 	{
 		TestPatternGenerator generator = new(
 			2.0,
-			Event(1.75, ChannelTarget.Global, new SetSpeedCommand(3)),
-			Event(1.5, ChannelTarget.Physical(0), new NoteCutCommand()));
+			Event(1.5, ChannelTarget.Physical(0), new NoteCutCommand()),
+			Event(1.75, ChannelTarget.Global, new SetSpeedCommand(3)));
 		NoteScheduleBuilder output = new();
 
 		PatternNoteProcessor.GenerateNotes(generator, new SequencingContext(), output, out _);

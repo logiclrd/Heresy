@@ -51,22 +51,25 @@ public sealed class IncrementalRecursiveRoslynTests
 	}
 
 	[Test]
-	public void InvalidStreamingScriptFailsExplicitlyInsteadOfFallingBackToEager()
+	public void RecursiveScriptSilentlyDropsEarlierNoteWithoutExecutingIt()
 	{
-		ScriptPatternDefinition pattern = new((ObjectId)4U, "Invalid")
+		ScriptPatternDefinition pattern = new((ObjectId)4U, "Out of order")
 		{
+			RowCount = 4,
 			Source = "Note(3, 0, _O(2)); Note(1, 0, _O(3));",
 		};
 		using IncrementalRecursiveTimeline timeline = new(
 			new SequencingContext(), new Resolver(pattern),
 			new RoslynIncrementalScriptSourceCompiler());
 		timeline.AddRoot(pattern.Id);
-		Action drain = () =>
-		{
-			while (timeline.TryStep(out _)) { }
-		};
-		drain.Should().Throw<NotSupportedException>()
-			.WithMessage("*nondecreasing*");
+		List<NoteEvent> notes = [];
+		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+			if (step is IncrementalPatternTimelineStep.Emit emission)
+				notes.Add(emission.Note);
+		notes.Should().ContainSingle();
+		notes[0].Commands.OfType<StartNoteCommand>()
+			.Single().SourceId.Should().Be((ObjectId)2U);
+		notes[0].Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(360));
 	}
 
 	private sealed class Resolver(params SongObject[] objects)
