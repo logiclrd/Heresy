@@ -201,7 +201,7 @@ public sealed class IncrementalPatternEffectLifecycleTests
 			}
 		}
 		Assert.That(timeline.TryStep(out _), Is.False);
-		Assert.That(events, Has.Length.EqualTo(2));
+		Assert.That(events, Has.Count.EqualTo(2));
 		Assert.That(events.SelectMany(e => e.Commands).OfType<ClearPitchSlideCommand>(),
 			Is.Empty);
 	}
