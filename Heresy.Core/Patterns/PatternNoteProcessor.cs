@@ -1526,7 +1526,7 @@ public static class PatternNoteProcessor
 		return timeline;
 	}
 
-	private static double ResolveTrackerTempoAtTick(
+	internal static double ResolveTrackerTempoAtTick(
 		double currentTempo,
 		byte parameter,
 		bool firstTick)
