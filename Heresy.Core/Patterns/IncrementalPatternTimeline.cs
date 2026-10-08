@@ -84,6 +84,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		public double DueTick { get; private set; }
 		public long Sequence { get; }
 		public bool Complete => Row >= RowCount;
+		public bool InRow => _inRow;
 		public NoteEvent? DueEvent =>
 			_inRow && _eventIndex < _rowEvents.Count
 				? _rowEvents[_eventIndex] : null;
@@ -314,14 +315,6 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				_active.Remove(current);
 				current.Dispose();
 				continue;
-			}
-
-			// At a row boundary, prepare only raw notes for this row,
-			// without resolving their future effects or channel memory.
-			if (current.DueEvent is null && current.DueTick == _tick)
-			{
-				// First call and post-row boundary need separate handling:
-				// next due row begins at this tick (after Advance emission).
 			}
 
 			if (TryOperate(current, out result))
