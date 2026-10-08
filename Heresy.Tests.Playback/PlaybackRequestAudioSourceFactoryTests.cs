@@ -266,6 +266,51 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
+	public void NestedPatternMixdownRendersThroughPlaybackSnapshotResolver()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = AddSample(document, "Nested sample");
+		ObjectId childPatternId = AddPatternWithNote(document, sampleId);
+		ObjectId parentId = AddPatternWithNote(
+			document, childPatternId, mixdown: true);
+		ObjectId rootId = AddSequence(document, parentId);
+
+		PlaybackRequestAudioSourceFactory factory = new(
+			MonoConfiguration(100),
+			new RecordingSampleProvider(
+				new MemorySampleData(100, 1, new float[] { 0.625f })));
+		IAudioOutputSource source =
+			factory.Create(SequencePlaybackRequest.Create(document, rootId));
+		float[] output = new float[1];
+		source.Render(1, output);
+
+		output[0].Should().BeApproximately(0.625f, 1e-6f);
+	}
+
+	[Test]
+	public void NestedSequenceMixdownRendersThroughPlaybackSnapshotResolver()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = AddSample(document, "Nested sample");
+		ObjectId childPatternId = AddPatternWithNote(document, sampleId);
+		ObjectId childSequenceId = AddSequence(document, childPatternId);
+		ObjectId parentId = AddPatternWithNote(
+			document, childSequenceId, mixdown: true);
+		ObjectId rootId = AddSequence(document, parentId);
+
+		PlaybackRequestAudioSourceFactory factory = new(
+			MonoConfiguration(100),
+			new RecordingSampleProvider(
+				new MemorySampleData(100, 1, new float[] { 0.375f })));
+		IAudioOutputSource source =
+			factory.Create(SequencePlaybackRequest.Create(document, rootId));
+		float[] output = new float[1];
+		source.Render(1, output);
+
+		output[0].Should().BeApproximately(0.375f, 1e-6f);
+	}
+
+	[Test]
 	public void MissingSequenceProducesCompilationException()
 	{
 		PlaybackRequestAudioSourceFactory factory =
@@ -323,7 +368,8 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 
 	private static ObjectId AddPatternWithNote(
 		SongDocument document,
-		ObjectId sourceId)
+		ObjectId sourceId,
+		bool mixdown = false)
 	{
 		ObjectId id =
 			document.AllocateObjectId();
@@ -336,7 +382,7 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 		PatternCell cell =
 			pattern.Grid.GetOrCreateCell(0, 0);
 		cell.SourceId = sourceId;
-		cell.Note = new StartPatternNote();
+		cell.Note = new StartPatternNote(mixdown: mixdown);
 		document.Add(pattern);
 		return id;
 	}
