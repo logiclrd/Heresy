@@ -34,6 +34,8 @@ jobs:
         dotnet msbuild Heresy.Tests.Render.File/Heresy.Tests.Render.File.csproj -getProperty:NuGetPackageRoot -getProperty:RuntimeIdentifier -getProperty:NETCoreSdkRuntimeIdentifier -getProperty:_SndFileRuntimeRid -getProperty:_SndFileRuntimeGlob
         dotnet build Heresy.Tests.Render.File/Heresy.Tests.Render.File.csproj -p:Configuration=Release --no-restore
         find Heresy.Tests.Render.File/bin/Release -maxdepth 3 -type f -print | grep -E 'sndfile|FLAC|ogg|opus|vorbis|mpg|lame' || true
+        ldd Heresy.Tests.Render.File/bin/Release/net10.0/libsndfile.so || true
+        readelf -d Heresy.Tests.Render.File/bin/Release/net10.0/libsndfile.so | grep -E 'NEEDED|RPATH|RUNPATH' || true
 
     - name: Execute test suite
       run: dotnet test -p:Configuration=Release --logger "console;verbosity=normal"
