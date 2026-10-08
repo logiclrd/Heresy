@@ -659,8 +659,22 @@ public static class PatternNoteProcessor
 
 		duration = TimeSpanFromSeconds(rowStartSeconds);
 
-		resolved.Sort(CompareResolvedEvents);
-		foreach (NoteEvent noteEvent in resolved)
+		// Child compilers own their emission-order counters, so two
+		// flattened effects can have identical timestamps, targets and
+		// emission orders. Preserve their resolution order as the final
+		// deterministic tie-breaker (List.Sort itself is not stable).
+		(NoteEvent Event, int Index)[] indexed =
+			new (NoteEvent Event, int Index)[resolved.Count];
+		for (int i = 0; i < resolved.Count; i++)
+			indexed[i] = (resolved[i], i);
+		Array.Sort(indexed, (left, right) =>
+		{
+			int comparison = CompareResolvedEvents(left.Event, right.Event);
+			return comparison != 0
+				? comparison
+				: left.Index.CompareTo(right.Index);
+		});
+		foreach ((NoteEvent noteEvent, _) in indexed)
 			output.Append(noteEvent);
 	}
 
