@@ -160,8 +160,12 @@ public sealed class ScriptCompilerTests
 			new((ObjectId)1U, "Generated Sequence")
 			{
 				Source = """
-					Play(_O(21));
-					Play(_O(22));
+					switch (sequenceIndex)
+					{
+						case 0: return Play(_O(21));
+						case 1: return Play(_O(22));
+						default: return null;
+					}
 					""",
 			};
 		RecordingResolver resolver = new();
