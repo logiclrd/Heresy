@@ -705,9 +705,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 
 	private void StartTempoRamp(SetTempoRampCommand ramp)
 	{
-		if (_tempoRamp is not null)
-			throw new NotSupportedException(
-				"Overlapping tracker tempo ramps require cross-cursor ramp arbitration.");
+		// A later row-boundary Txx replaces the prior trajectory from the
+		// instantaneous Tempo reached at this tracker tick.
 		_tempoRamp = new ActiveTempoRamp(
 			_tick, _tick + ramp.TrackerTicks, _root.State.Tempo, ramp.EndingTempo);
 	}
@@ -740,9 +739,14 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			// its conversion to a continuous SetTempoRampCommand.
 			bool trackerTempo = timing.Commands.Count == 1
 				&& timing.Commands[0] is ApplyTrackerTempoCommand;
-			if (_tempoRamp is not null)
-				throw new NotSupportedException(
-					"Timing changes during an active tracker tempo ramp require cross-cursor arbitration.");
+			if (trackerTempo)
+				throw new InvalidOperationException(
+					"Tracker Txx must be resolved through same-boundary arbitration.");
+			if (timing.Commands.Any(c => c is SetTempoCommand))
+			{
+				// A new direct Tempo command truncates any previous ramp now.
+				_tempoRamp = null;
+			}
 
 			NoteScheduleBuilder resolvedTiming = new();
 			if (trackerTempo)
