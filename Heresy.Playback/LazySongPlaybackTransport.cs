@@ -14,12 +14,14 @@ namespace Heresy.Playback;
 /// </summary>
 public sealed class LazySongPlaybackTransport
 	: ISongPlaybackTransport,
-		IPlaybackPositionTransport
+		IPlaybackPositionTransport,
+		IPlaybackRuntimeDiagnosticsTransport
 {
 	private readonly object _gate = new();
 	private readonly Func<ISongPlaybackTransport> _factory;
 	private ISongPlaybackTransport? _inner;
 	private EventHandler<PlaybackPositionChangedEventArgs>? _positionChanged;
+	private EventHandler<PlaybackRuntimeDiagnosticsEventArgs>? _runtimeDiagnostics;
 	private bool _disposed;
 
 	public LazySongPlaybackTransport(
@@ -53,6 +55,32 @@ public sealed class LazySongPlaybackTransport
 				_positionChanged -= value;
 				if (_inner is IPlaybackPositionTransport positions)
 					positions.PlaybackPositionChanged -= value;
+			}
+		}
+	}
+
+	public event EventHandler<PlaybackRuntimeDiagnosticsEventArgs>?
+		RuntimeDiagnostics
+	{
+		add
+		{
+			lock (_gate)
+			{
+				ThrowIfDisposed();
+				_runtimeDiagnostics += value;
+				if (_inner is IPlaybackRuntimeDiagnosticsTransport diagnostics)
+					diagnostics.RuntimeDiagnostics += value;
+			}
+		}
+		remove
+		{
+			lock (_gate)
+			{
+				if (_disposed)
+					return;
+				_runtimeDiagnostics -= value;
+				if (_inner is IPlaybackRuntimeDiagnosticsTransport diagnostics)
+					diagnostics.RuntimeDiagnostics -= value;
 			}
 		}
 	}
@@ -154,6 +182,9 @@ public sealed class LazySongPlaybackTransport
 					positions.PlaybackPositionChanged +=
 						_positionChanged;
 				}
+				if (_inner is IPlaybackRuntimeDiagnosticsTransport diagnostics
+					&& _runtimeDiagnostics is not null)
+					diagnostics.RuntimeDiagnostics += _runtimeDiagnostics;
 			}
 			return _inner;
 		}
