@@ -69,7 +69,9 @@ public sealed class DataPatternDefinitionTests
 			ChannelCount = 1,
 		};
 		ObjectId laterSource = (ObjectId)42U;
-		pattern.Grid.GetOrCreateCell(175, 0).SourceId = laterSource;
+		PatternCell future = pattern.Grid.GetOrCreateCell(175, 0);
+		future.SourceId = laterSource;
+		future.Note = new StartPatternNote();
 		SequencingContext context = new();
 		using IEnumerator<RawPatternStep> cursor =
 			pattern.EnumerateRawSteps(context).GetEnumerator();
