@@ -48,7 +48,7 @@ public sealed class SongScheduleCompilerTests
 		compiled.Success.Should().BeTrue();
 		compiled.Schedule!.Single(e => e.Commands.Any(c => c is SetTempoCommand))
 			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(120));
-		compiled.Schedule.Where(e => e.Commands.Any(c => c is NoteCutCommand))
+		compiled.Schedule!.Where(e => e.Commands.Any(c => c is NoteCutCommand))
 			.Select(e => e.Offset.TimeOffset).Should().Equal(
 				TimeSpan.FromMilliseconds(120),
 				TimeSpan.FromMilliseconds(180));
