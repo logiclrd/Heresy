@@ -107,7 +107,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		private double RawEventTickOffset => _eventIndex >= _rowEvents.Count
 			? double.PositiveInfinity
 			: (_rowEvents[_eventIndex].Offset.RowOffset - Row) * _rowSpeed;
-		public void QueueRepeats(NoteEvent note)
+		public void QueueRepeats(NoteEvent note, double originalTickOffset)
 		{
 			if (_extraRowSpans == 0)
 				return;
@@ -116,13 +116,16 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			{
 				if (command is SetPitchSlideCommand or SetNoteVolumeSlideCommand
 					or SetOverallChannelVolumeSlideCommand
-					or SetGlobalVolumeSlideCommand or SetSpatialXSlideCommand)
+					or SetGlobalVolumeSlideCommand or SetSpatialXSlideCommand
+					or AdjustPitchLinearUnitsCommand or AdjustNoteVolumeCommand
+					or AdjustOverallChannelVolumeCommand
+					or AdjustGlobalVolumeCommand or AdjustSpatialXCommand)
 					repeating.Add(command);
 			}
 			if (repeating.Count == 0)
 				return;
 			for (int span = 1; span <= _extraRowSpans; span++)
-				_repeated.Add((span * EffectiveSpanTicks, note with
+				_repeated.Add((span * EffectiveSpanTicks + originalTickOffset, note with
 				{
 					Commands = repeating.ToArray(),
 				}));
@@ -950,7 +953,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			if (immediate.Count == 0)
 				return false;
 			if (current.ExtraRowSpans > 0)
-				current.QueueRepeats(immediate[0]);
+				current.QueueRepeats(immediate[0],
+					(raw.Offset.RowOffset - current.Row) * current.RowSpeed);
 			NoteEvent emitted = immediate[0] with
 			{
 				Offset = new MusicalTime(Elapsed, 0),
