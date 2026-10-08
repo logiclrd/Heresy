@@ -161,6 +161,52 @@ public sealed class IncrementalPatternEffectLifecycleTests
 	}
 
 	[Test]
+	public void DelayedStartResolvesRememberedSourceAtDeadlineNotAtOrigin()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(new RawStream(
+			At(0, 0, new SelectPatternSourceCommand((ObjectId)7U)),
+			At(0.5, TimeSpan.FromMilliseconds(100), 0,
+				new StartNoteCommand(ObjectId.None)),
+			At(1.0, 0, new SelectPatternSourceCommand((ObjectId)8U))), 2, root);
+
+		NoteEvent[] events = Drain(timeline);
+		Assert.That(events, Has.Length.EqualTo(1));
+		Assert.That(events[0].Offset.TimeOffset,
+			Is.EqualTo(TimeSpan.FromMilliseconds(160)));
+		Assert.That(events[0].Commands.OfType<StartNoteCommand>().Single().SourceId,
+			Is.EqualTo((ObjectId)8U));
+	}
+
+	[Test]
+	public void CancellingActiveSlideBeforeRowEndDoesNotEmitCleanup()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		long id = timeline.Add(new RawStream(
+			At(0, 0, new SetPitchSlideCommand(24)),
+			At(0.5, 0, new NoteCutCommand())), 1, root);
+		List<NoteEvent> events = [];
+		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+		{
+			if (step is IncrementalPatternTimelineStep.Emit emit)
+			{
+				events.Add(emit.Note);
+				if (emit.Note.Commands.Any(c => c is NoteCutCommand))
+				{
+					Assert.That(timeline.Cancel(id), Is.True);
+					break;
+				}
+			}
+		}
+		Assert.That(timeline.TryStep(out _), Is.False);
+		Assert.That(events, Has.Length.EqualTo(2));
+		Assert.That(events.SelectMany(e => e.Commands).OfType<ClearPitchSlideCommand>(),
+			Is.Empty);
+	}
+
+	[Test]
 	public void UnsupportedDeferredGlobalTempoChangesRemainExplicit()
 	{
 		SequencingContext root = new();
