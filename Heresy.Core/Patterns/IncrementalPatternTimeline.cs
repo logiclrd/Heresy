@@ -422,8 +422,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			TimeSpan nextTickTime = current is null
 				? TimeSpan.MaxValue
 				: Elapsed + TimeSpan.FromSeconds(
-					Math.Max(0, current.DueTick - _tick)
-					* SequencingConstants.Diachron.TotalSeconds / _root.State.Tempo);
+					PredictWallSeconds(current.DueTick));
 			DeferredNote? nextWall = _delayed
 				.OrderBy(n => n.Deadline)
 				.ThenBy(n => n.Owner.Context.PhysicalChannelBase)
@@ -444,8 +443,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				TimeSpan delta = nextWall!.Deadline - Elapsed;
 				if (delta < TimeSpan.Zero)
 					throw new InvalidOperationException("A delayed raw note moved backwards.");
-				_tick += delta.TotalSeconds * _root.State.Tempo
-					/ SequencingConstants.Diachron.TotalSeconds;
+				MoveByWallSeconds(delta.TotalSeconds);
 				Elapsed = nextWall.Deadline;
 				CheckCooperationBudget();
 				_delayed.Remove(nextWall);
@@ -470,8 +468,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 
 			if (current is null)
 				throw new InvalidOperationException("No advancing musical or wall event.");
+			MoveToTick(current.DueTick);
 			Elapsed = nextTickTime;
-			_tick = current.DueTick;
 			CheckCooperationBudget();
 			if (current.Complete)
 			{
@@ -483,6 +481,83 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				return true;
 		}
 		return false;
+	}
+
+	// All cursor deadlines remain in musical ticks. The shared ramp is
+	// consulted only while moving the real clock to the next due action;
+	// looking ahead must not apply its future Tempo to SequencingState.
+	private double PredictWallSeconds(double targetTick)
+	{
+		double remaining = Math.Max(0, targetTick - _tick);
+		if (_tempoRamp is null || remaining == 0)
+			return remaining * SequencingConstants.Diachron.TotalSeconds
+				/ _root.State.Tempo;
+		double rampTicks = Math.Min(remaining, _tempoRamp.EndTick - _tick);
+		if (rampTicks <= 0)
+			return remaining * SequencingConstants.Diachron.TotalSeconds
+				/ _root.State.Tempo;
+		TrackerTimeMap integral = new(_root.State.Tempo);
+		integral.AppendTempoRamp(_tempoRamp.TempoAt(_tick + rampTicks), rampTicks);
+		return integral.CurrentTimeSeconds
+			+ (remaining - rampTicks) * SequencingConstants.Diachron.TotalSeconds
+				/ _tempoRamp.EndTempo;
+	}
+
+	private void MoveToTick(double targetTick)
+	{
+		if (targetTick < _tick - TickTolerance)
+			throw new InvalidOperationException("The shared tick clock moved backwards.");
+		if (_tempoRamp is not null && targetTick >= _tempoRamp.EndTick - TickTolerance)
+		{
+			_root.State.Tempo = _tempoRamp.EndTempo;
+			_tempoRamp = null;
+		}
+		else if (_tempoRamp is not null)
+		{
+			_root.State.Tempo = _tempoRamp.TempoAt(targetTick);
+		}
+		_tick = targetTick;
+	}
+
+	// A positive fixed wall deadline can fall *inside* a ramp. Invert the
+	// same TrackerTimeMap integral used by the established eager processor.
+	private void MoveByWallSeconds(double seconds)
+	{
+		if (seconds < 0)
+			throw new InvalidOperationException("The shared wall clock moved backwards.");
+		if (seconds == 0)
+			return;
+		if (_tempoRamp is { } ramp)
+		{
+			double ticksLeft = ramp.EndTick - _tick;
+			if (ticksLeft > TickTolerance)
+			{
+				TrackerTimeMap map = new(_root.State.Tempo);
+				map.AppendTempoRamp(ramp.EndTempo, ticksLeft);
+				if (seconds < map.CurrentTimeSeconds)
+				{
+					double localTicks = map.GetTickAtTime(seconds);
+					_tick += localTicks;
+					_root.State.Tempo = map.GetTempoAtTick(localTicks);
+					return;
+				}
+				seconds -= map.CurrentTimeSeconds;
+				_tick = ramp.EndTick;
+				_root.State.Tempo = ramp.EndTempo;
+			}
+			_tempoRamp = null;
+		}
+		_tick += seconds * _root.State.Tempo
+			/ SequencingConstants.Diachron.TotalSeconds;
+	}
+
+	private void StartTempoRamp(SetTempoRampCommand ramp)
+	{
+		if (_tempoRamp is not null)
+			throw new NotSupportedException(
+				"Overlapping tracker tempo ramps require cross-cursor ramp arbitration.");
+		_tempoRamp = new ActiveTempoRamp(
+			_tick, _tick + ramp.TrackerTicks, _root.State.Tempo, ramp.EndingTempo);
 	}
 
 	private void CheckCooperationBudget()
