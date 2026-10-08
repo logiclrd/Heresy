@@ -292,7 +292,7 @@ Regressions include fractional scripted `Tempo` snapping to its row start,
 competing parent/child tempo changes at a common tick, and equal-tick
 sibling-script tempo changes ordered by mapped channels. This is **not**
 support for tempo ramps, arbitrary global commands beyond Tempo/Speed,
-fixed wall-time offsets or complex row/effect operations.
+or complex row/effect operations.
 
 ### Scripted Speed and independent row-length capture
 
@@ -321,9 +321,45 @@ at a final endpoint. This milestone is about the script **timing command**,
 not the playback-speed multiplier of nested sounds, which remains
 explicitly unsupported for flattened recursive cursors.
 
-**Not yet universal:** Scripted sequences, arbitrary wall-time script
-offsets, other scripted global/effect commands, tracker tempo ramps,
-complex virtual-channel events,
+### Fixed wall-time scripted note events
+
+The restricted script helpers `Note`, `Off` and `Cut` now have an optional
+numeric `timeOffsetSeconds` argument (zero by default). For example:
+
+```csharp
+Note(0.5, 0, _O(17), timeOffsetSeconds: 0.09);
+Off(1.0, 0, timeOffsetSeconds: 0.025);
+Cut(1.5, 0, timeOffsetSeconds: 0.05);
+```
+
+A fixed offset is added to the **actual wall time when the note's musical
+row position is reached**, after all intervening shared-tempo changes.
+For supported **nonnegative** offsets, the chronological scheduler
+records the resulting absolute deadline and interleaves pending events
+with ongoing tracker-tick cursors. Later tempo changes cannot retime an
+already-established wall deadline. Crucially, command resolution and
+nested flattened-child cursor creation happen only when the deadline
+arrives; nothing executes early during script generation or when the
+base musical position is reached.
+
+Delayed Note/Off/Cut commands may cross sequence-order boundaries or
+outlive their invoking parent. A delayed flattened child begins at the
+deadline, advances on its own tick-driven cursor and contributes its
+logical duration. At exact shared wall times, pending commands compete
+with ordinary cursor events using mapped channel base and stable cursor
+creation order. Delayed operations count against the same one-million
+sequencing work cap.
+
+This extension is deliberately narrow: negative offsets, wall offsets
+for scripted `Tempo`/`Speed`, arbitrary global/advanced effect commands
+and virtual-channel targets are *not* admitted to the chronological
+cursor path. They retain the general compilation behavior, including
+its explicit unsupported-combination checks where applicable. The
+scripting API itself validates finite, representable numeric offsets.
+
+**Not yet universal:** Scripted sequences, negative wall-time script
+offsets, fixed offsets on global/advanced effect commands, tracker
+tempo ramps, other scripted global/effect commands, complex virtual-channel events,
 pattern control and delayed note commands still need distinct red tests and
 scheduler integration. The older compiler remains for those cases.
 
