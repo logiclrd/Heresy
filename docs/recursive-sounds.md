@@ -128,15 +128,43 @@ parent-to-child effects, release and pitch/speed propagation remain open.
 Those cases need separate red-test coverage and potentially deeper
 row/event interleaving.
 
+## Within-row immediate flattened tempo updates (October 8, 2026)
+
+The parent pattern processor now sorts ordinary events by their initial
+wall-time position, then by mapped physical channel and emission order.
+When a flattened child **sets tempo at the instant its note is invoked**,
+the parent row's remaining tracker-tick timeline is reconstructed with a
+piecewise-constant tempo map. This works for invocations at row start and
+at fractional row offsets; parent notes and subsequent rows use the
+updated timing and parent row-scoped cleanup commands end at the recalculated
+boundary. Equal-time events are sorted stably: independently compiled
+children can have identical emission orders, and mapped physical-channel
+ordering determines which simultaneous tempo setting wins.
+
+A prior test expecting a child tempo set at the **same** row-start boundary
+to affect *only* the following row was corrected: under this timeline
+contract an immediate child set affects the current row too. Existing
+non-flattened tracker timing commands retain their original rule that
+timing changes occur only at row boundaries (fractional RowOffset ignored).
+
+**Remaining scope:** A flattened child whose tempo changes at some *later
+child row* currently cannot be safely interleaved with a concurrently
+advancing parent. Such delayed tempo changes and child tempo ramps now
+fail explicitly rather than silently backdating the parent's shared
+tempo state. Concurrent parent tempo ramps or pattern/fine delays together
+with an in-row child tempo set also fail explicitly. The next step requires
+a unified, event-driven parent/child timing scheduler and collision tests,
+not another eager child-schedule shortcut.
+
 ## Boundaries deliberately NOT complete
 
 - Ordinary `Mixdown: false` nested Pattern/Sequence notes are now
   compiled at their parent's active sequencing row, sharing tracker effect
-  memory and later-row timing changes. Full flattening still requires
-  exact within-row tempo interplay, virtual-channel scoping, and
-  parent-to-child effects/note actions. Source selection is now resolved
-  at row execution against shared mapped memory. No separate child session
-  is used for flattened notes.
+  and Source memory. Immediate flattened child tempo changes at invocation
+  time are incorporated into the parent's remaining row. Full concurrent
+  scheduling of delayed child tempo changes, tempo ramps, virtual-channel
+  scoping and parent-to-child effects/note actions remains open.
+  No separate child session is used for flattened notes.
 - The first mixdown implementation supports unit initial pitch/speed only. It
   **rejects** other initial pitch/playback-speed multipliers rather than playing
   incorrect audio. Child pitch trajectory/time-warp and parent row-time
