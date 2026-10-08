@@ -1463,8 +1463,9 @@ public sealed class SongScheduleCompilerTests
 		ObjectId childId = document.AllocateObjectId();
 		document.Add(new ScriptPatternDefinition(childId, "Change speed")
 		{
-			RowCount = 1,
-			Source = "Speed(0, 3);",
+			RowCount = 2,
+			// Child changes the shared speed at its later row boundary.
+			Source = "Speed(1, 3);",
 		});
 		ObjectId firstId = document.AllocateObjectId();
 		document.Add(new ScriptPatternDefinition(firstId, "Invoking")
@@ -1490,10 +1491,12 @@ public sealed class SongScheduleCompilerTests
 			SongScheduleCompiler.CompileSequence(document, sequenceId);
 
 		result.Success.Should().BeTrue();
-		result.Schedule!.Single(e => e.Commands.Any(c => c is StartNoteCommand))
-			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(90));
-		result.Schedule!.Single(e => e.Commands.Any(c => c is NoteOffCommand))
+		result.Schedule!.Single(e => e.Commands.Any(c => c is SetSpeedCommand))
 			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(120));
+		result.Schedule!.Single(e => e.Commands.Any(c => c is StartNoteCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(150));
+		result.Schedule!.Single(e => e.Commands.Any(c => c is NoteOffCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(180));
 		result.Schedule!.Should().NotContain(e => e.Commands.Any(c => c is NoteCutCommand));
 		result.Schedule!.Should().NotContain(e => e.Commands.OfType<SetTempoCommand>()
 			.Any(c => c.TicksPerDiachron == 500));
@@ -1501,7 +1504,7 @@ public sealed class SongScheduleCompilerTests
 			.Select(p => p.PatternRow).Should().Equal(2, 3);
 		result.PlaybackPositions.First(p => p.PatternId == secondId)
 			.SequenceEntryIndex.Should().Be(1);
-		result.Duration.Should().Be(TimeSpan.FromMilliseconds(180));
+		result.Duration.Should().Be(TimeSpan.FromMilliseconds(240));
 	}
 
 	[Test]
