@@ -135,11 +135,22 @@ Items that were already completed remain in Git history, not in this checklist.
   production chronological scheduler now obtains eligible scripted
   entries on demand without executing scripts for static preflight;
   ineligible arrangements retain per-visit eager note compilation.
-  Next: immutable snapshot and prepared/cached script ownership,
-  legacy out-of-order Pattern emission parity, and full deterministic
-  effect integration. Continue incompatible Tempo spans, SEy repeated
-  Tempo, SDx/Qxy, virtual/mixdown channels and advanced effects before
-  production recursive-clock migration.
+  Experimental recursive scripts now also have **snapshot-owned,
+  prepared compilation** via `PreparedRoslynIncrementalScriptSources`.
+  This object privately snapshots a supplied `SongDocumentSnapshot`,
+  compiles every scripted Pattern and Sequence once before playback,
+  caches immutable factories by object ID, and creates a fresh timeline
+  bound to the same source graph. Compilation failures are surfaced
+  during preparation; external authoring/snapshot edits cannot change
+  the prepared definitions or Pattern dimensions. Roslyn does not run
+  in the audio callback, and new invocations have independent script
+  and RNG state. This remains explicitly opt-in; production
+  playback/export use their existing scheduling paths.
+  Next: establish realtime/offline integration with preprepared
+  snapshots, legacy out-of-order Pattern emission parity, and full
+  deterministic effect integration. Continue incompatible Tempo spans,
+  SEy repeated Tempo, SDx/Qxy, virtual/mixdown channels and advanced
+  effects before production recursive-clock migration.
   Preserve out-of-order scripted-event semantics or explicitly resolve
   their ordering policy before migrating playback. Replace the existing
   restricted chronological scheduler rather than adding more special
