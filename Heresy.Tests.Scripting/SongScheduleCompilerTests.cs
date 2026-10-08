@@ -1406,6 +1406,133 @@ public sealed class SongScheduleCompilerTests
 	}
 
 	[Test]
+	public void ScriptSequenceSchedulesChildSpeedAndLaterOrderChronologically()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Continuing speed child")
+		{
+			RowCount = 3,
+			Source = "Speed(1.5, 3);",
+		});
+		ObjectId firstId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(firstId, "First order")
+		{
+			RowCount = 1,
+			Source = $"Note(0, 0, _O({childId.Value}));",
+		});
+		ObjectId secondId = document.AllocateObjectId();
+		DataPatternDefinition second = new(secondId, "Following data order")
+		{
+			RowCount = 2,
+			ChannelCount = 2,
+		};
+		second.Grid.GetOrCreateCell(0, 1).Note = new PatternNoteCut();
+		second.Grid.GetOrCreateCell(1, 1).Note = new PatternNoteCut();
+		document.Add(second);
+		ObjectId sequenceId = document.AllocateObjectId();
+		document.Add(new ScriptSequenceDefinition(sequenceId, "Script arrangement")
+		{
+			Source = $"Play(_O({firstId.Value})); Play(_O({secondId.Value}));",
+		});
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompileSequence(document, sequenceId);
+
+		result.Success.Should().BeTrue();
+		result.Schedule!.Single(e => e.Commands.Any(c => c is SetSpeedCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(120));
+		result.Schedule!.Where(e => e.Target == ChannelTarget.Physical(1)
+				&& e.Commands.Any(c => c is NoteCutCommand))
+			.Select(e => e.Offset.TimeOffset).Should().Equal(
+				TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(180));
+		result.PlaybackPositions.First(p => p.PatternId == secondId)
+			.SequenceEntryIndex.Should().Be(1);
+		result.PlaybackPositions.First(p => p.PatternId == secondId)
+			.Offset.Should().Be(TimeSpan.FromMilliseconds(120));
+		result.Duration.Should().Be(TimeSpan.FromMilliseconds(240));
+	}
+
+	[Test]
+	public void ScriptSequenceKeepsDeferredChildStartAcrossGeneratedOrders()
+	{
+		SongDocument document = new();
+		ObjectId nestedId = document.AllocateObjectId();
+		DataPatternDefinition nested = new(nestedId, "Late nested Pattern")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		nested.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteCut();
+		document.Add(nested);
+		ObjectId firstId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(firstId, "Delayed launch")
+		{
+			RowCount = 1,
+			Source = $"Note(0.5, 0, _O({nestedId.Value}), timeOffsetSeconds: 0.12);",
+		});
+		ObjectId secondId = document.AllocateObjectId();
+		DataPatternDefinition second = new(secondId, "Second order")
+		{
+			RowCount = 1,
+			ChannelCount = 2,
+		};
+		second.Grid.GetOrCreateCell(0, 1).Note = new PatternNoteCut();
+		document.Add(second);
+		ObjectId seqId = document.AllocateObjectId();
+		document.Add(new ScriptSequenceDefinition(seqId, "Late invocation")
+		{
+			Source = $"Play(_O({firstId.Value})); Play(_O({secondId.Value}));",
+		});
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompileSequence(document, seqId);
+
+		result.Success.Should().BeTrue();
+		result.Schedule!.Where(e => e.Commands.Any(c => c is NoteCutCommand))
+			.Select(e => e.Offset.TimeOffset).Should().Equal(
+				TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(300));
+		result.PlaybackPositions.First(p => p.PatternId == secondId)
+			.Offset.Should().Be(TimeSpan.FromMilliseconds(120));
+		result.Duration.Should().Be(TimeSpan.FromMilliseconds(420));
+	}
+
+	[Test]
+	public void ScriptSequenceRepeatedPlayEntriesKeepIndependentInvocations()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Speed state")
+		{
+			RowCount = 1,
+			Source = "Speed(0, 3);",
+		});
+		ObjectId patternId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(patternId, "Repeatable")
+		{
+			RowCount = 2,
+			Source = $"Note(0, 0, _O({childId.Value})); Cut(1, 1);",
+		});
+		ObjectId seqId = document.AllocateObjectId();
+		document.Add(new ScriptSequenceDefinition(seqId, "Repeated patterns")
+		{
+			Source = $"Play(_O({patternId.Value})); Play(_O({patternId.Value}));",
+		});
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompileSequence(document, seqId);
+
+		result.Success.Should().BeTrue();
+		result.Schedule!.Where(e => e.Commands.Any(c => c is NoteCutCommand))
+			.Select(e => e.Offset.TimeOffset).Should().Equal(
+				TimeSpan.FromMilliseconds(60), TimeSpan.FromMilliseconds(180));
+		result.PlaybackPositions.Where(p => p.PatternId == patternId
+				&& p.PatternRow == 0)
+			.Select(p => p.SequenceEntryIndex).Should().Equal(0, 1);
+		result.Duration.Should().Be(TimeSpan.FromMilliseconds(240));
+	}
+
+	[Test]
 	public void ScriptRootSequenceCanInvokeScriptPattern()
 	{
 		SongDocument document = new();
