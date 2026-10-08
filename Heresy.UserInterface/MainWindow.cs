@@ -1961,7 +1961,15 @@ public sealed class MainWindow : Window
 				{
 					UpdateWindowTitle();
 					SetStatus(message);
-				});
+				},
+				_playbackTransport is null
+					? null
+					: new PatternLiveAuditionActions(
+						liveEvent =>
+							_playbackTransport.SendLiveEventAsync(
+								_workspace.Document,
+								liveEvent.Target,
+								liveEvent.Commands)));
 		_mainContent.Content = editor;
 		UpdateWindowTitle();
 		SetStatus($"Editing FM synth {synth.Name}");
