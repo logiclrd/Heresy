@@ -1106,8 +1106,11 @@ public sealed class FmSynthEditorControl : UserControl
 			}
 		}
 
-		box.Checked += (_, _) => Changed();
-		box.Unchecked += (_, _) => Changed();
+		box.PropertyChanged += (_, args) =>
+		{
+			if (args.Property == ToggleButton.IsCheckedProperty)
+				Changed();
+		};
 	}
 
 	private FmSynthNode CurrentNode(int nodeId)
