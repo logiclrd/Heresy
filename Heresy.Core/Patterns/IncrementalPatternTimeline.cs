@@ -763,6 +763,20 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	}
 
 	/// <summary>
+	/// True while the invocation has source rows or delayed emissions
+	/// outstanding. A completed Pattern can retain a wall-clock note after
+	/// its parent Sequence has entered the next order.
+	/// </summary>
+	public bool HasOutstandingWork(long invocationId)
+	{
+		if (_disposed)
+			throw new ObjectDisposedException(nameof(IncrementalPatternTimeline));
+		return HasUnfinishedRows(invocationId)
+			|| _delayed.Any(n => n.Owner.Sequence == invocationId)
+			|| _queuedTempoEvents.Any(n => n.InvocationId == invocationId);
+	}
+
+	/// <summary>
 	/// Starts an independent invocation at the current musical instant.
 	/// A flattened child may pass a separately mapped SequencingContext,
 	/// provided it shares the root's actual clock and channel-state map.
@@ -805,6 +819,18 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		Cursor? cursor = _active.FirstOrDefault(c => c.Sequence == invocationId);
 		int removed = _delayed.RemoveAll(note => note.Owner.Sequence == invocationId);
+		if (_queuedTempoEvents.Count != 0)
+		{
+			int size = _queuedTempoEvents.Count;
+			for (int i = 0; i < size; i++)
+			{
+				IncrementalPatternTimelineStep.Emit queued = _queuedTempoEvents.Dequeue();
+				if (queued.InvocationId == invocationId)
+					removed++;
+				else
+					_queuedTempoEvents.Enqueue(queued);
+			}
+		}
 		if (cursor is null)
 			return removed != 0;
 		_active.Remove(cursor);
