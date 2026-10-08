@@ -303,6 +303,74 @@ public static class FmSynthDocumentEditor
 		return id;
 	}
 
+	/// <summary>
+	/// Connect an output to an oscillator multiplier or an ordered operator
+	/// input. Existing slots are replaced; the slot after an operator's
+	/// final input appends a new one. Invalid or cyclic graphs never commit.
+	/// </summary>
+	public static void ConnectNodes(
+		DocumentWorkspace workspace,
+		FmSynthDefinition synth,
+		int sourceNodeId,
+		int targetNodeId,
+		int targetInputIndex)
+	{
+		ValidateSynth(workspace, synth);
+		RequireNode(synth, sourceNodeId);
+		FmSynthNode target = RequireNode(synth, targetNodeId);
+		if (sourceNodeId == targetNodeId)
+		{
+			throw new InvalidOperationException(
+				"An FM node cannot connect to itself.");
+		}
+
+		FmSynthNode replacement;
+		switch (target)
+		{
+			case FmOscillatorNode oscillator
+				when targetInputIndex == 0:
+				if (oscillator.MultiplierNodeId == sourceNodeId)
+					return;
+				replacement =
+					new FmOscillatorNode(
+						oscillator.Id,
+						oscillator.Waveform,
+						oscillator.FrequencyHz,
+						oscillator.Minimum,
+						oscillator.Maximum,
+						sourceNodeId,
+						oscillator.ExponentialMultiplier);
+				break;
+
+			case FmOperatorNode operation
+				when targetInputIndex >= 0
+					&& targetInputIndex <= operation.InputNodeIds.Count:
+				int[] inputs = operation.InputNodeIds.ToArray();
+				if (targetInputIndex == inputs.Length)
+				{
+					inputs = [.. inputs, sourceNodeId];
+				}
+				else
+				{
+					if (inputs[targetInputIndex] == sourceNodeId)
+						return;
+					inputs[targetInputIndex] = sourceNodeId;
+				}
+				replacement =
+					new FmOperatorNode(
+						operation.Id,
+						operation.Operation,
+						inputs);
+				break;
+
+			default:
+				throw new InvalidOperationException(
+					$"FM node {targetNodeId} has no input slot {targetInputIndex}.");
+		}
+
+		UpdateNode(workspace, synth, replacement);
+	}
+
 	public static void UpdateNode(
 		DocumentWorkspace workspace,
 		FmSynthDefinition synth,
