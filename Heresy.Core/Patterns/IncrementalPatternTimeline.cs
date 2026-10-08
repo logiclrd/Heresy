@@ -251,7 +251,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	/// A flattened child may pass a separately mapped SequencingContext,
 	/// provided it shares the root's actual clock and channel-state map.
 	/// </summary>
-	public void Add(
+	public long Add(
 		IIncrementalRawPatternNoteGenerator generator,
 		int rowCount,
 		SequencingContext context,
@@ -273,8 +273,26 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				"Use explicit cursor invocation, not eager flattened expansion.");
 
 		context.ResolvePatternSourcesAtRowTime = true;
+		long id = _nextSequence++;
 		_active.Add(new Cursor(generator, context, rowCount,
-			startRow, _tick, _nextSequence++));
+			startRow, _tick, id));
+		return id;
+	}
+
+	/// <summary>
+	/// Cancels a particular invocation immediately, disposing its suspended
+	/// enumerator without affecting other active Patterns. The caller owns
+	/// the association between a playback note and its invocation ID.
+	/// </summary>
+	public bool Cancel(long invocationId)
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		Cursor? cursor = _active.FirstOrDefault(c => c.Sequence == invocationId);
+		if (cursor is null)
+			return false;
+		_active.Remove(cursor);
+		cursor.Dispose();
+		return true;
 	}
 
 	/// <summary>
