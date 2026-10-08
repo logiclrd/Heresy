@@ -114,8 +114,20 @@ internal static class ChronologicalDataPatternScheduler
 		DataSequenceDefinition sequence)
 	{
 		ArgumentNullException.ThrowIfNull(sequence);
+		return CanHandleSequence(document, sequence.Entries);
+	}
+
+	// The sequence script's Play() commands produce the same ordered entries
+	// as a data sequence. Both use the identical eligibility rules and cursor
+	// scheduler; unsupported entry start rows retain the legacy processor.
+	public static bool CanHandleSequence(
+		SongDocument document,
+		IReadOnlyList<SequenceEntry> entries)
+	{
+		ArgumentNullException.ThrowIfNull(document);
+		ArgumentNullException.ThrowIfNull(entries);
 		bool hasNested = false;
-		foreach (SequenceEntry entry in sequence.Entries)
+		foreach (SequenceEntry entry in entries)
 		{
 			if (entry.StartRow != 0
 				|| !document.TryGet(entry.PatternId, out SongObject? obj)
@@ -124,7 +136,7 @@ internal static class ChronologicalDataPatternScheduler
 				return false;
 			hasNested |= nested;
 		}
-		return sequence.Entries.Count != 0 && hasNested;
+		return entries.Count != 0 && hasNested;
 	}
 
 	private static bool IsCompatible(
@@ -243,9 +255,15 @@ internal static class ChronologicalDataPatternScheduler
 		SongDocument document,
 		DataSequenceDefinition sequence,
 		SequencingContext? suppliedContext)
+		=> CompileSequence(document, sequence.Entries, suppliedContext);
+
+	public static SongScheduleCompilationResult CompileSequence(
+		SongDocument document,
+		IReadOnlyList<SequenceEntry> entries,
+		SequencingContext? suppliedContext)
 	{
 		List<PatternDefinition> patterns = [];
-		foreach (SequenceEntry entry in sequence.Entries)
+		foreach (SequenceEntry entry in entries)
 		{
 			if (!document.TryGet(entry.PatternId, out SongObject? obj)
 				|| obj is not PatternDefinition pattern)
