@@ -1417,8 +1417,14 @@ public sealed class MainWindow : Window
 		}
 		result.ItemsSource = children;
 
-		result.PointerPressed += async (_, e) =>
-			await OnTreePointerPressedAsync(
+		result.PointerPressed += (_, e) =>
+			OnTreePointerPressed(
+				tree,
+				result,
+				item,
+				e);
+		result.DoubleTapped += async (_, e) =>
+			await OnTreeDoubleTappedAsync(
 				section,
 				tree,
 				result,
@@ -1982,8 +1988,7 @@ public sealed class MainWindow : Window
 		return null;
 	}
 
-	private async Task OnTreePointerPressedAsync(
-		SongTreeSection section,
+	private void OnTreePointerPressed(
 		TreeView tree,
 		TreeViewItem control,
 		SongTreeItemViewModel item,
@@ -1998,26 +2003,33 @@ public sealed class MainWindow : Window
 			return;
 		}
 
-		if (e.ClickCount >= 2)
-		{
-			ClearDragCandidate(item);
-			SongTreeActivationKind activation =
-				SongTreeDefaultActivation.Resolve(
-					section,
-					item);
-			if (activation != SongTreeActivationKind.None)
-			{
-				e.Handled = true;
-				await ActivateTreeItemAsync(
-					activation,
-					item);
-			}
-			return;
-		}
-
 		_dragCandidate = item;
 		_dragTrigger = e;
 		_dragStart = e.GetPosition(tree);
+	}
+
+	private async Task OnTreeDoubleTappedAsync(
+		SongTreeSection section,
+		TreeView tree,
+		TreeViewItem control,
+		SongTreeItemViewModel item,
+		TappedEventArgs e)
+	{
+		tree.SelectedItem = control;
+		SelectTreeItem(item, tree);
+		ClearDragCandidate(item);
+
+		SongTreeActivationKind activation =
+			SongTreeDefaultActivation.Resolve(
+				section,
+				item);
+		if (activation == SongTreeActivationKind.None)
+			return;
+
+		e.Handled = true;
+		await ActivateTreeItemAsync(
+			activation,
+			item);
 	}
 
 	private async Task OnTreePointerMovedAsync(
