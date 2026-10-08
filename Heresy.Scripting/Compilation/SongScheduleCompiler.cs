@@ -141,6 +141,7 @@ public static class SongScheduleCompiler
 		bool rootInvocation = activeContext.FlattenedSourceExpander is null;
 		activeContext.FlattenedSourceExpander ??=
 			new DocumentFlattenedNoteSourceExpander(document);
+		activeContext.ResolvePatternSourcesAtRowTime = true;
 		SongScheduleCompilationResult result = Generate(
 			sequencer,
 			resolver,
@@ -192,6 +193,7 @@ public static class SongScheduleCompiler
 		bool rootInvocation = activeContext.FlattenedSourceExpander is null;
 		activeContext.FlattenedSourceExpander ??=
 			new DocumentFlattenedNoteSourceExpander(document);
+		activeContext.ResolvePatternSourcesAtRowTime = true;
 
 		NoteScheduleBuilder output = new();
 		List<CompiledPatternPlaybackPosition> playbackPositions = [];
