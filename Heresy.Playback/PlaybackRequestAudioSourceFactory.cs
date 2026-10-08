@@ -99,11 +99,17 @@ public sealed class PlaybackRequestAudioSourceFactory
 							start?.Order ?? 0,
 							start?.Row);
 
+					ThrowIfFailed(
+						compilation,
+						$"Could not compile sequence {sequence.SequenceId.Value} for playback.");
+					FlattenedNestedScheduleExpander.Result expanded =
+						FlattenedNestedScheduleExpander.Expand(
+							document,
+							compilation.Schedule!,
+							compilation.Duration,
+							sequence.SequenceId);
 					IAudioOutputSource source =
-						CreateFiniteSource(
-							compilation,
-							resolver,
-							$"Could not compile sequence {sequence.SequenceId.Value} for playback.");
+						CreateSource(expanded.Schedule, resolver);
 					return AttachTimeline(
 						sequence,
 						source,
@@ -124,24 +130,31 @@ public sealed class PlaybackRequestAudioSourceFactory
 						compilation,
 						$"Could not compile pattern {pattern.PatternId.Value} for playback.");
 
+					FlattenedNestedScheduleExpander.Result expanded =
+						FlattenedNestedScheduleExpander.Expand(
+							document,
+							compilation.Schedule!,
+							compilation.Duration,
+							pattern.PatternId);
+
 					IAudioOutputSource source;
 					if (!pattern.Repeat)
 					{
 						source =
 							CreateSource(
-								compilation.Schedule!,
+								expanded.Schedule,
 								resolver);
 					}
 					else
 					{
 						long cycleFrames =
 							FrameTime.Ceiling(
-								compilation.Duration,
+								expanded.Duration,
 								_configuration.SampleRate);
 						source =
 							new RepeatingPlaybackSource(
 								_configuration,
-								compilation.Schedule!,
+								expanded.Schedule,
 								resolver,
 								cycleFrames);
 					}
@@ -156,7 +169,10 @@ public sealed class PlaybackRequestAudioSourceFactory
 
 			case AdHocPlaybackRequest adHoc:
 				return CreateSource(
-					adHoc.Schedule,
+					FlattenedNestedScheduleExpander.Expand(
+						document,
+						adHoc.Schedule,
+						TimeSpan.Zero).Schedule,
 					resolver);
 
 			default:
