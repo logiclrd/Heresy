@@ -32,11 +32,18 @@ Items that were already completed remain in Git history, not in this checklist.
   fixed wall-time Note/Off/Cut commands use absolute deadlines established
   at their musical origin, resolve Source memory only when due, and can
   be discarded with their invocation's Cancel operation.
+  Deferred standalone global Tempo/Speed events now retain an
+  eligibility wall-time established at the beginning of their nominal
+  source row and execute at the **first eligible future row boundary of
+  that invocation**. Zero-offset global timing shares the same boundary
+  handling; effect commands stay in eligibility/emission order, preserve
+  other cursors' already-started row durations and are dropped if the
+  originating Pattern ends or is cancelled before an eligible boundary.
   Next, move **remaining tracker row/effect semantics** into incremental
-  resolution, including global delayed timing at subsequent row boundaries,
-  ramps, fine and whole-row delays, virtual targets, and user script
-  coroutine instrumentation with distinct CPU-only checkpoints. Wire
-  generic invocation-lifetime management for data and scripted Sequences.
+  resolution, including tracker Txx tempo slides, ramps, fine and
+  whole-row delays, virtual targets, and user script coroutine
+  instrumentation with distinct CPU-only checkpoints. Wire generic
+  invocation-lifetime management for data and scripted Sequences.
   Preserve out-of-order scripted-event semantics or explicitly resolve
   their ordering policy before migrating playback. Replace the existing
   restricted chronological scheduler rather than adding more special
