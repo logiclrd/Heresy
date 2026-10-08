@@ -33,6 +33,9 @@ public sealed class HeldNotePreviewKeyState
 
 	public int ActiveNoteCount => _activeNotes.Count;
 
+	public bool IsPreviewKeyActive(PhysicalKey key)
+		=> _activeNotes.Contains(key);
+
 	public HeldNotePreviewAction? KeyDown(
 		PhysicalKey key,
 		int baseOctave)
