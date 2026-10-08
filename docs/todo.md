@@ -253,12 +253,18 @@ Items that were already completed remain in Git history, not in this checklist.
 
 ## Playback state and authoring feedback
 
-- [ ] Surface playback/runtime sequencing diagnostics from
-  `SequencingContext.Diagnostics.Drain()` in the UI/host logging view,
-  outside the audio callback. The engine already posts bounded
-  `HRSEQ001` warnings for discarded out-of-order notes and one
-  `HRSEQ002` suppression notice per context; do not duplicate or
-  reset the rate cap when presenting them.
+- [x] Surface bounded `HRSEQ001`/`HRSEQ002` warning reports from
+  realtime playback **source compilation** in the UI. The playback
+  factory drains the request's `SequencingContext.Diagnostics` after
+  preparation; the playback transport and lazy wrapper publish an
+  optional runtime-diagnostics event outside the audio callback.
+  MainWindow shows a status-bar warning indicator and a bounded
+  **View → Runtime Diagnostics** window, marshalled to the UI thread.
+  Clearing displayed messages does not reset Core rate limits.
+- [ ] Route offline render diagnostics and any future streaming-time
+  sequencing warnings to the same UI history without dispatching
+  callbacks from the audio thread. Maintain the existing 32-message
+  per-sequencing-context suppression limit and bounded 500-entry UI history.
 - [ ] Measure/report actual realtime audio underruns. Late audio produces a
   temporary dropout without skipping the musical timeline or stopping playback.
   The UI underrun indicator must be **hidden until the first underrun**.
