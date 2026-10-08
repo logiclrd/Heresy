@@ -244,7 +244,8 @@ public sealed class IncrementalPatternFlowTests
 		Assert.That(observed.Events.Length, Is.EqualTo(expected.Length));
 		for (int i = 0; i < expected.Length; i++)
 		{
-			Assert.That(observed.Events[i].Commands, Is.EqualTo(expected[i].Commands));
+			Assert.That(observed.Events[i].Commands, Is.EqualTo(expected[i].Commands),
+				$"Event {i} diverged. Expected: {string.Join(" | ", expected.Select((e, j) => $"{j}:{e.Offset.TimeOffset}:{string.Join(",", e.Commands)}"))}; Actual: {string.Join(" | ", observed.Events.Select((e, j) => $"{j}:{e.Offset.TimeOffset}:{string.Join(",", e.Commands)}"))}");
 			Assert.That(observed.Events[i].Target, Is.EqualTo(expected[i].Target));
 			Assert.That(observed.Events[i].Offset.TimeOffset.TotalSeconds,
 				Is.EqualTo(expected[i].Offset.TimeOffset.TotalSeconds).Within(1e-6));
