@@ -262,11 +262,12 @@ deadline inversion during the ramp, T00 memory across rows, immediate
 TFA followed by T00 recall, and a positive-offset Txx becoming
 eligible at a later row boundary.
 
-**Remaining restrictions:** Complex cells containing Txx together with
-other non-timing commands,
-SEy repeating Tempo ramps, tempo-control retriggering, script-generated
-out-of-order raw events and NNA/mixdown effects are not implemented
-here. This is **not** yet wired to the production song compiler,
+**Remaining restrictions (at this historical milestone):**
+Txx combined with other non-timing commands, SEy repeating Tempo ramps,
+tempo-control retriggering, and NNA/mixdown effects were not yet
+implemented. **Mixed Txx cells have since been admitted in the
+twenty-second milestone below.** Out-of-order raw note events are now
+silently discarded with bounded warnings instead of being rejected. This is **not** yet wired to the production song compiler,
 realtime playback, or offline export.
 
 ## Seventh executable step: concurrent Tempo arbitration
@@ -301,11 +302,12 @@ overlaps.
   order, and silent/empty Txx memory recalls do not create a ramp.
 
 **Remaining supported-subset boundary:** simultaneous Txx invocations
-whose already-captured row Speed differs are rejected explicitly
-until competing ramp-span policies are specified. Mixed-command Txx
-cells, combined SEy/Txx repeated Tempo ramps, advanced tracker controls, virtual
-channels and recursive invocation lifetimes are still outside this
-prototype. The old eager Pattern processor remains the production
+whose already-captured row Speed differs are rejected explicitly until
+competing ramp-span policies are specified. Mixed-command Txx cells
+were unsupported at this historical step, but are now handled by the
+twenty-second milestone below. Combined SEy/Txx repeated Tempo ramps,
+advanced tracker controls, virtual channels and recursive invocation
+lifetimes still require separate work. The old eager Pattern processor remains the production
 authority for full tracker-effect semantics, and song compilation,
 realtime playback and offline export have not switched to this timeline.
 
@@ -1043,6 +1045,46 @@ participate in the raw musical-row ordering comparison. Non-note
 backward progress markers and infinite no-progress workloads retain
 their separate resource/correctness safeguards; those are not ordinary
 dropped-note warnings. Existing production scheduler selection is
+unchanged.
+
+## Twenty-second executable step: tracker Txx in mixed-command cells
+
+The experimental `IncrementalPatternTimeline` now accepts a physical
+`NoteEvent` that contains **Txx together with ordinary commands**,
+rather than rejecting the entire event.
+
+During lazy row preparation, such an event is split into two views of
+the same original source event:
+
+1. The `ApplyTrackerTempoCommand` part enters the pending boundary
+   timing queue. It becomes eligible at the start of its nominal row
+   (or the first later eligible row boundary if it has a positive fixed
+   wall-time offset). All eligible Txx commands across the shared
+   timeline still arbitrate at that tick, in mapped physical-channel
+   and stable emission order. They share a single compatible ramp,
+   resolving T00 effect memory only when the command is due.
+2. Its remaining physical musical commands retain their original row
+   position and wall-time offset. A note at a fractional row remains
+   at that fractional musical position, now correctly subject to
+   Tempo changes introduced at the row's beginning. Positive fixed
+   offsets remain independent wall deadlines.
+
+The split does not pre-apply Tempo, advance the iterator, duplicate
+note commands, or bypass the existing per-row cooperation budget.
+Raw events already discarded as out of order never reach either
+branch. Existing per-command validations continue to reject
+unsupported effects and incompatible delay combinations explicitly.
+
+Core regression tests compare mixed T12 plus Note Cut and fractional
+notes **directly against the eager processor**, confirm simultaneous
+mixed/standalone Txx compose into one ramp, verify delayed wall-time
+notes are not moved by a deferred Txx request, and check immediate
+mixed TFA at fractional position followed by T00 memory recall.
+
+This expands only the **experimental shared-tick** supported subset.
+Simultaneous Txx slides with different captured row speeds and
+SEy repeated Tempo remain unsupported; production realtime playback,
+offline export, and migration to the recursive scheduler are
 unchanged.
 
 ## Proposed next interfaces and migration
