@@ -155,7 +155,11 @@ with FLAC suggested by default. Output is written to a temporary sibling file
 and atomically replaces the selected destination only after a successful render.
 Compilation failures are reported as render failures. Voices with no
 deterministic post-Note-Off end are cut at the logical song boundary while
-ordinary finite release tails continue to completion.
+ordinary finite release tails continue to completion. Offline sequence
+compilation also guards tracker `Bxx` loops: the third encounter with the same
+order-jump instruction (same pattern, source row and target order) renders that
+row normally but suppresses the jump and treats it as the logical end of the
+arrangement. Realtime playback does not install this guard.
 
 ## Realtime audio boundary
 

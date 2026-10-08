@@ -50,10 +50,6 @@ This file contains only explicitly specified work that remains open.
 
 ## Offline rendering and export
 
-- [ ] Define finite export behavior for songs whose `Bxx` effects create loops.
-  During offline song rendering, the third time playback reaches the same
-  `Bxx` instruction, treat that occurrence as the end of the song instead of
-  following the jump again indefinitely.
 
 Completed implementation history is preserved in Git, while stable architectural
 and behavioral rules belong in the focused documentation and README rather than
