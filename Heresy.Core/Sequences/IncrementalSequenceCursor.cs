@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-using Heresy.Core.Diagnostics;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequencing;
@@ -146,9 +145,12 @@ public sealed class IncrementalSequenceCursor : IDisposable
 			return;
 		}
 
-		if (++_visits > NoteScheduleBuilder.MaximumGeneratedNotes)
-			throw new SequencingResourceLimitException(
-				$"Sequence control exceeded {NoteScheduleBuilder.MaximumGeneratedNotes:N0} pattern visits.");
+		// Advancing Bxx loops are legitimate indefinite playback. A hard
+		// total-visit cap would eventually stop a song that loops for hours
+		// or days, so resource safety is handled by TryStep's bounded
+		// cooperation work and the Pattern timeline's same-tick budget.
+		if (_visits < long.MaxValue)
+			_visits++;
 
 		SequenceEntry entry = _entries[_order];
 		int startRow = _startRowOverride ?? entry.StartRow;
