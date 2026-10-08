@@ -60,6 +60,8 @@ public sealed class SongPlaybackTransport
 	private PlaybackPositionTimeline? _positionTimeline;
 	private PlaybackPatternPosition? _currentPlaybackPosition;
 	private bool _liveAuditionActive;
+	private SongDocument? _liveAuditionDocument;
+	private uint _liveAuditionAudioRevision;
 
 	public SongPlaybackTransport(
 		IAudioOutputBackend backend,
@@ -150,7 +152,7 @@ public sealed class SongPlaybackTransport
 		try
 		{
 			StopPositionTracking();
-			await EnsureLiveAuditionCoreAsync(document)
+			await EnsureLiveAuditionCoreAsync(document, commands)
 				.ConfigureAwait(false);
 			await _controller.SendLiveEventAsync(
 					target,
@@ -160,6 +162,7 @@ public sealed class SongPlaybackTransport
 		catch
 		{
 			_liveAuditionActive = false;
+			_liveAuditionDocument = null;
 			throw;
 		}
 		finally
@@ -174,6 +177,7 @@ public sealed class SongPlaybackTransport
 		try
 		{
 			_liveAuditionActive = false;
+			_liveAuditionDocument = null;
 			StopPositionTracking();
 			await _controller.StopAsync().ConfigureAwait(false);
 		}
@@ -192,6 +196,7 @@ public sealed class SongPlaybackTransport
 		try
 		{
 			_liveAuditionActive = false;
+			_liveAuditionDocument = null;
 			StopPositionTracking();
 			await _controller.PlayAsync(request).ConfigureAwait(false);
 
@@ -216,23 +221,46 @@ public sealed class SongPlaybackTransport
 	}
 
 	private async Task EnsureLiveAuditionCoreAsync(
-		SongDocument document)
+		SongDocument document,
+		IReadOnlyList<NoteCommand> commands)
 	{
-		if (_liveAuditionActive)
+		bool newNote = false;
+		foreach (NoteCommand command in commands)
+		{
+			if (command is StartNoteCommand)
+			{
+				newNote = true;
+				break;
+			}
+		}
+
+		// A held note must be released in its existing session even when
+		// an edit has changed the document meanwhile. The NEXT note start
+		// reconstructs the playback snapshot from the current audio model.
+		if (_liveAuditionActive
+			&& (!newNote
+				|| (ReferenceEquals(_liveAuditionDocument, document)
+					&& _liveAuditionAudioRevision == document.AudioRevision)))
+		{
 			return;
+		}
 
 		try
 		{
+			uint revision = document.AudioRevision;
 			await _controller.PlayAsync(
 					AdHocPlaybackRequest.Create(
 						document,
 						new NoteScheduleBuilder().Freeze()))
 				.ConfigureAwait(false);
 			_liveAuditionActive = true;
+			_liveAuditionDocument = document;
+			_liveAuditionAudioRevision = revision;
 		}
 		catch
 		{
 			_liveAuditionActive = false;
+			_liveAuditionDocument = null;
 			throw;
 		}
 	}
