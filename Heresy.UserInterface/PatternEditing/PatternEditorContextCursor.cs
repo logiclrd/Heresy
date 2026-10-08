@@ -47,12 +47,21 @@ public static class PatternEditorContextCursor
 			// Mapping it as a boolean used to discard all but the first
 			// step when the editor presents a flattened sequence.
 			int steps = cursor.VerticalAdvanceGeneration - advanceGeneration;
-			int restoredDisplayRow = Math.Min(
-				context.Rows.Count - 1, displayRow + steps);
+			int restoredDisplayRow = displayRow;
+			for (int step = 0; step < steps
+				&& restoredDisplayRow < context.Rows.Count - 1; step++)
+			{
+				restoredDisplayRow++;
+				// Repeated Down presses clamp the channel at EVERY row,
+				// not only at the destination. A narrow intermediate
+				// pattern can permanently reduce the selected channel.
+				cursor.ClampChannelPreservingField(
+					context.GetRow(restoredDisplayRow)
+						.Pattern.ChannelCount);
+			}
 			cursor.RemapRow(restoredDisplayRow);
-			PatternEditorRow restored = context.GetRow(restoredDisplayRow);
 			cursor.ClampChannelPreservingField(
-				restored.Pattern.ChannelCount);
+				context.GetRow(restoredDisplayRow).Pattern.ChannelCount);
 		}
 	}
 
