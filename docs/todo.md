@@ -30,8 +30,11 @@ Items that were already completed remain in Git history, not in this checklist.
   also dispatch their ordered Play entries through these shared cursors,
   retaining stable sequence-order positions and one script execution on
   chronological-to-legacy fallback.
-  Extend to nonzero StartRow, nonzero compile start order/row for
-  chronological sequences, pattern control jumps,
+  SequenceEntry.StartRow / scripted Play(..., startRow) now enter the
+  actual source row without executing earlier effects or Source memory;
+  sufficiently delayed skipped-row script events can survive the new
+  origin as wall deadlines. Extend to nonzero compile start order/row
+  for chronological sequences, pattern control jumps,
   non-unit pitch/speed transforms, negative fixed wall-time offsets,
   fixed offsets on global/advanced effect commands, tracker tempo ramps,
   other scripted/global effects,
