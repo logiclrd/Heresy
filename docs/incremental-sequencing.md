@@ -119,7 +119,7 @@ raw source is a data Pattern, a script, or a future Sequence iterator.
   its own cursor's captured row, not another cursor's existing row.
 - Raw steps must be in **nondecreasing row order**. This is an explicit
   causality contract, not something legacy scripts currently guarantee.
-  Negative fixed wall-time offsets, tracker-style tempo ramps,
+  Negative fixed wall-time offsets, simultaneous/interrupting Tempo ramps,
   virtual targets, advanced tracker commands beyond the supported slide
   families, out-of-order scripts and nested compiler expansion are not
   yet supported by this prototype and fail explicitly. Same-tick and
@@ -130,8 +130,8 @@ This milestone **does not replace song compilation or realtime/offline
 playback**. Whole-row `IncrementalPatternNoteProcessor` and production
 `ChronologicalDataPatternScheduler` remain unchanged. Per-event
 invocation here is valid only for the admitted simple command subset:
-the remaining row-scoped effects, tempo ramps, deferred global timing,
-sequential Bxx/Cxx flow, note-action lifetime and mixes will require an
+the remaining row-scoped effects, overlapping Tempo ramps, pattern
+delays, sequential Bxx/Cxx flow, note-action lifetime and mixes require an
 incremental version of the original common processor's richer state machine.
 
 ## Fourth executable step: row-scoped effect and wall-time lifetimes
@@ -175,8 +175,8 @@ deadline, and cancellation.
 
 **Scope remains intentional.** This is still a row/event state machine
 *prototype*, not a replacement for the entire `PatternNoteProcessor`.
-Negative global Tempo/Speed offsets, tracker tempo slides and other
-advanced tracker effects, fine/whole-row pattern delays, virtual-channel
+Negative global Tempo/Speed offsets, overlapping tracker Tempo slides
+and other advanced tracker effects, fine/whole-row pattern delays, virtual-channel
 behavior and note-action migration remain unsupported. A fixed wall-time
 offset on a *non-timing* command other than ordinary physical
 Note/Off/Cut is rejected, rather than executing early or with incorrect
