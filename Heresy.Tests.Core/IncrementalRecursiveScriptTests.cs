@@ -44,76 +44,84 @@ public sealed class IncrementalRecursiveScriptTests
 	}
 
 	[Test]
-	public void ScriptedSequenceCpuPausePrecedesItsPlayWithoutMovingTime()
+	public void RecursiveScriptedSequenceLooksUpOnlyAtOrderVisits()
 	{
-		ScriptSequenceDefinition sequence = new((ObjectId)10U, "Scripted orders");
-		DataPatternDefinition pattern = Pattern(11, 1);
-		pattern.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
+		ScriptSequenceDefinition sequence = new((ObjectId)10U, "Script");
+		DataPatternDefinition first = Pattern(11, 1);
+		first.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
+		DataPatternDefinition second = Pattern(12, 1);
+		second.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteOff();
+		Lookup provider = new((abs, index, previous) => index switch
+		{
+			0 => new SequenceEntry(first.Id),
+			1 => new SequenceEntry(second.Id),
+			_ => null,
+		});
 		TrackingCompiler compiler = new();
-		compiler.Sequences[sequence.Id] = new RawSequence(
-			new RawSequenceStep.Cooperate(),
-			new RawSequenceStep.Play(new SequenceEntry(pattern.Id)));
+		compiler.Sequences[sequence.Id] = new Factory(provider);
 		using IncrementalRecursiveTimeline timeline = new(
-			new SequencingContext(), new Resolver(sequence, pattern), compiler);
+			new SequencingContext(), new Resolver(sequence, first, second), compiler);
 		timeline.AddRoot(sequence.Id);
-		Assert.That(timeline.TryStep(out IncrementalPatternTimelineStep? first),
-			Is.True);
-		Assert.That(first, Is.TypeOf<IncrementalPatternTimelineStep.Cooperate>());
-		Assert.That(timeline.Tick, Is.Zero);
-		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.Zero));
-
-		NoteEvent[] emitted = Drain(timeline);
-		Assert.That(emitted, Has.Length.EqualTo(1));
-		Assert.That(emitted[0].Commands.Single(), Is.TypeOf<NoteCutCommand>());
-		Assert.That(emitted[0].Offset.TimeOffset, Is.EqualTo(TimeSpan.Zero));
-		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(120)));
+		NoteEvent[] actual = Drain(timeline);
+		Assert.That(actual.Select(e => e.Offset.TimeOffset), Is.EqualTo(
+			new[] { TimeSpan.Zero, TimeSpan.FromMilliseconds(120) }));
+		Assert.That(provider.Calls, Is.EqualTo(
+			new[] { (0, 0, -1), (1, 1, 0), (2, 2, 1) }));
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(240)));
 		Assert.That(compiler.SequenceCalls, Is.EqualTo(1));
 	}
 
 	[Test]
-	public void ScriptedSequenceBxxReusesEarlierPlayWithoutRunningFutureScript()
+	public void RecursiveBxxRequeriesSameOrderAndCanChangePattern()
 	{
 		ScriptSequenceDefinition sequence = new((ObjectId)20U, "Repeated");
-		DataPatternDefinition loop = Pattern(21, 1);
-		loop.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
-		loop.Grid.GetOrCreateCell(0, 0).Effects.Add(
+		DataPatternDefinition first = Pattern(21, 1);
+		first.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
+		first.Grid.GetOrCreateCell(0, 0).Effects.Add(
 			new TrackerOrderJumpPatternEffect(0));
-		RawSequence orders = new(
-			new RawSequenceStep.Play(new SequenceEntry(loop.Id)),
-			new RawSequenceStep.Play(new SequenceEntry((ObjectId)999U)));
+		DataPatternDefinition second = Pattern(22, 1);
+		second.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteOff();
+		second.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new TrackerOrderJumpPatternEffect(0));
+		Lookup provider = new((abs, index, previous) =>
+			new SequenceEntry(abs % 2 == 0 ? first.Id : second.Id));
 		TrackingCompiler compiler = new();
-		compiler.Sequences[sequence.Id] = orders;
+		compiler.Sequences[sequence.Id] = new Factory(provider);
 		int jumps = 0;
 		using IncrementalRecursiveTimeline timeline = new(
-			new SequencingContext(), new Resolver(sequence, loop), compiler);
+			new SequencingContext(), new Resolver(sequence, first, second), compiler);
 		timeline.AddRoot(sequence.Id,
-			shouldFollowOrderJump: _ => ++jumps < 3);
+			shouldFollowOrderJump: _ => ++jumps < 4);
 
 		NoteEvent[] notes = Drain(timeline);
 		Assert.That(notes.Select(n => n.Offset.TimeOffset), Is.EqualTo(
 			new[] { TimeSpan.Zero, TimeSpan.FromMilliseconds(120),
-				TimeSpan.FromMilliseconds(240) }));
-		Assert.That(jumps, Is.EqualTo(3));
-		Assert.That(orders.Yields, Is.EqualTo(1));
-		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(360)));
+				TimeSpan.FromMilliseconds(240), TimeSpan.FromMilliseconds(360) }));
+		Assert.That(notes.Select(n => n.Commands.Single().GetType()), Is.EqualTo(
+			new[] { typeof(NoteCutCommand), typeof(NoteOffCommand),
+				typeof(NoteCutCommand), typeof(NoteOffCommand) }));
+		Assert.That(provider.Calls, Is.EqualTo(
+			new[] { (0, 0, -1), (1, 0, 0), (2, 0, 0), (3, 0, 0) }));
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(480)));
 		Assert.That(timeline.IsComplete, Is.True);
 	}
 
 	[Test]
-	public void CancellingScriptedSequenceDisposesItsSuspendedEnumerator()
+	public void CancellingSequenceStopsFurtherLookups()
 	{
-		ScriptSequenceDefinition sequence = new((ObjectId)10U, "Endless");
-		RawSequence source = new(new RawSequenceStep.Cooperate(),
-			new RawSequenceStep.Cooperate());
+		ScriptSequenceDefinition sequence = new((ObjectId)10U, "Cancelled");
+		DataPatternDefinition first = Pattern(11, 2);
+		Lookup provider = new((abs, order, previous) => new SequenceEntry(first.Id));
 		TrackingCompiler compiler = new();
-		compiler.Sequences[sequence.Id] = source;
+		compiler.Sequences[sequence.Id] = new Factory(provider);
 		using IncrementalRecursiveTimeline timeline = new(
-			new SequencingContext(), new Resolver(sequence), compiler);
-		long id = timeline.AddRoot(sequence.Id);
+			new SequencingContext(), new Resolver(sequence, first), compiler);
+		long root = timeline.AddRoot(sequence.Id);
 		Assert.That(timeline.TryStep(out _), Is.True);
-		Assert.That(timeline.Cancel(id), Is.True);
-		Assert.That(source.Disposed, Is.True);
+		Assert.That(provider.Calls.Count, Is.EqualTo(1));
+		Assert.That(timeline.Cancel(root), Is.True);
 		Assert.That(timeline.IsComplete, Is.True);
+		Assert.That(provider.Calls.Count, Is.EqualTo(1));
 	}
 
 	private static DataPatternDefinition Pattern(uint id, int rows)
@@ -141,7 +149,7 @@ public sealed class IncrementalRecursiveScriptTests
 	{
 		public Dictionary<ObjectId, IIncrementalRawPatternNoteGenerator> Patterns
 			{ get; } = [];
-		public Dictionary<ObjectId, IIncrementalRawSequenceEntryGenerator> Sequences
+		public Dictionary<ObjectId, ISequenceEntrySourceFactory> Sequences
 			{ get; } = [];
 		public int PatternCalls { get; private set; }
 		public int SequenceCalls { get; private set; }
@@ -153,7 +161,7 @@ public sealed class IncrementalRecursiveScriptTests
 			return Patterns[source.Id];
 		}
 
-		public IIncrementalRawSequenceEntryGenerator CompileSequence(
+		public ISequenceEntrySourceFactory CompileSequence(
 			ScriptSequenceDefinition source)
 		{
 			SequenceCalls++;
@@ -171,25 +179,21 @@ public sealed class IncrementalRecursiveScriptTests
 		}
 	}
 
-	private sealed class RawSequence(params RawSequenceStep[] steps)
-		: IIncrementalRawSequenceEntryGenerator
+	private sealed class Factory(ISequenceEntryProvider provider)
+		: ISequenceEntrySourceFactory
 	{
-		public bool Disposed { get; private set; }
-		public int Yields { get; private set; }
-		public IEnumerable<RawSequenceStep> EnumerateRawSteps(SequencingContext context)
+		public ISequenceEntryProvider Create(SequencingContext context) => provider;
+	}
+
+	private sealed class Lookup(Func<int, int, int, SequenceEntry?> resolve)
+		: ISequenceEntryProvider
+	{
+		public List<(int, int, int)> Calls { get; } = [];
+		public SequenceEntry? GetSequenceEntry(
+			int absoluteIndex, int sequenceIndex, int previousSequenceIndex)
 		{
-			try
-			{
-				foreach (RawSequenceStep step in steps)
-				{
-					Yields++;
-					yield return step;
-				}
-			}
-			finally
-			{
-				Disposed = true;
-			}
+			Calls.Add((absoluteIndex, sequenceIndex, previousSequenceIndex));
+			return resolve(absoluteIndex, sequenceIndex, previousSequenceIndex);
 		}
 	}
 }
