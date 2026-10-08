@@ -5,6 +5,9 @@ using Heresy.Core.Envelopes;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
+using Heresy.Core.Patterns;
+using Heresy.Core.Sequences;
+using Heresy.Scripting.Compilation;
 using Heresy.Core.Samples;
 using Heresy.Render.Envelopes;
 using Heresy.Render.FmSynthesis;
@@ -21,7 +24,7 @@ internal sealed class PlaybackSnapshotSoundResolver
 {
 	private readonly SongDocument _document;
 	private readonly ISampleDataProvider _sampleDataProvider;
-	private readonly Dictionary<ObjectId, ISound?> _sounds = [];
+	private readonly Dictionary<(ObjectId, bool), ISound?> _sounds = [];
 	private readonly Dictionary<ObjectId, IEnvelopeCurve?> _envelopes = [];
 
 	public PlaybackSnapshotSoundResolver(
@@ -41,10 +44,8 @@ internal sealed class PlaybackSnapshotSoundResolver
 		bool mixdown,
 		out ISound? sound)
 	{
-		_ = mixdown;
-
 		if (_sounds.TryGetValue(
-				sourceId,
+				(sourceId, mixdown),
 				out sound))
 		{
 			return sound is not null;
@@ -55,7 +56,7 @@ internal sealed class PlaybackSnapshotSoundResolver
 				out SongObject? songObject)
 			|| songObject is null)
 		{
-			_sounds[sourceId] = null;
+			_sounds[(sourceId, mixdown)] = null;
 			sound = null;
 			return false;
 		}
@@ -84,12 +85,31 @@ internal sealed class PlaybackSnapshotSoundResolver
 						this);
 				break;
 
+			case PatternDefinition when mixdown:
+			case SequenceDefinition when mixdown:
+				SongScheduleCompilationResult compilation =
+					songObject is PatternDefinition
+						? SongScheduleCompiler.CompilePattern(_document, sourceId)
+						: SongScheduleCompiler.CompileSequence(_document, sourceId);
+				if (!compilation.Success || compilation.Schedule is null)
+				{
+					throw new PlaybackSourceCompilationException(
+						$"Could not compile nested sound source {sourceId.Value}.",
+						compilation.Diagnostics);
+				}
+				sound = new CompiledNestedMixdownSound(
+					sourceId,
+					compilation.Schedule,
+					compilation.Duration,
+					this);
+				break;
+
 			default:
 				sound = null;
 				break;
 		}
 
-		_sounds[sourceId] = sound;
+		_sounds[(sourceId, mixdown)] = sound;
 		return sound is not null;
 	}
 
