@@ -27,6 +27,12 @@ public sealed record StartNoteCommand(
 	bool Mixdown = false,
 	double? Volume = null) : NoteCommand;
 
+/// <summary>
+/// Compiler-only data-pattern Source-column update. Resolved in row order
+/// against the mapped SequencingChannelState; never reaches the renderer.
+/// </summary>
+public sealed record SelectPatternSourceCommand(ObjectId SourceId) : NoteCommand;
+
 public sealed record NoteOffCommand : NoteCommand;
 
 /// <summary>
