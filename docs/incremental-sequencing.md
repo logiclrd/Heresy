@@ -503,9 +503,10 @@ are resolved **only when their order is first visited**.
   `PatternDefinition.RowCount`; eager-only/script Patterns are
   rejected, not silently expanded. A maximum of 8192 internal
   operations per `TryStep` prevents a long run of missing or empty
-  entries from starving the caller, and the existing one-million
-  Pattern-visit resource limit remains as a second safety bound.
-  Both limits are independent of legitimate advancing Bxx loops.
+  entries from starving the caller. **There is deliberately no
+  lifetime Pattern-visit cap:** an advancing Bxx loop must be able to
+  run indefinitely. The existing within-row and same-tick operation
+  budgets still protect against non-advancing sources.
 - The invocation's `TimelineOrigin` is supplied during its raw
   iteration and temporarily restored afterward. `Dispose()` owns
   and releases the shared timeline and outstanding raw enumerators.
