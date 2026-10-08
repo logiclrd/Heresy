@@ -111,10 +111,17 @@ Items that were already completed remain in Git history, not in this checklist.
   `RawPatternStep.Cooperate` after every 128 iterations without
   musical progress. Out-of-order row emissions explicitly throw in
   this experimental API; the old eager compiler remains unchanged.
-  Next, teach the shared-tick consumer to surface CPU cooperation without
-  treating it as musical Advance; extend to invocation-local scripted
-  Sequence Play, preserve legacy output ordering/deterministic Random,
-  then complete incompatible Tempo spans, SEy repeated Tempo,
+  The shared-tick `IncrementalPatternTimeline` now exposes a distinct
+  CPU-only `IncrementalPatternTimelineStep.Cooperate` at unchanged Tick and
+  Elapsed. It suspends partial-row raw collection and retains buffered
+  commands until generation resumes, without prematurely executing Tempo,
+  Speed or Source effects. Same-instant and per-row work budgets remain
+  effective; silent loops can be cancelled and their enumerators disposed.
+  This accepts experimental Roslyn Pattern producers through explicit
+  Timeline.Add only. Production scheduling and recursive script admission
+  remain untouched. Next: invocation-local scripted Sequence Play,
+  preservation of legacy out-of-order script behavior and deterministic
+  Random, then incompatible Tempo spans, SEy repeated Tempo,
   SDx/Qxy interaction, virtual/mixdown channels and remaining advanced
   effects before switching production scheduling.
   Preserve out-of-order scripted-event semantics or explicitly resolve
