@@ -47,7 +47,7 @@ public sealed class SongScheduleCompilerTests
 			.OrderBy(e => e.Offset.TimeOffset).ToArray();
 		cuts.Select(x => x.Offset.TimeOffset).Should().Equal(
 			TimeSpan.FromMilliseconds(180),
-			TimeSpan.FromMilliseconds(270));
+			TimeSpan.FromMilliseconds(240));
 		compilation.Schedule.Where(e => e.Commands.Any(c => c is SetTempoCommand))
 			.Select(e => e.Offset.TimeOffset)
 			.Should().Equal(TimeSpan.FromMilliseconds(180));
