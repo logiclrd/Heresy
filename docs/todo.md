@@ -119,11 +119,20 @@ Items that were already completed remain in Git history, not in this checklist.
   effective; silent loops can be cancelled and their enumerators disposed.
   This accepts experimental Roslyn Pattern producers through explicit
   Timeline.Add only. Production scheduling and recursive script admission
-  remain untouched. Next: invocation-local scripted Sequence Play,
-  preservation of legacy out-of-order script behavior and deterministic
-  Random, then incompatible Tempo spans, SEy repeated Tempo,
-  SDx/Qxy interaction, virtual/mixdown channels and remaining advanced
-  effects before switching production scheduling.
+  remain untouched. The **resumable Roslyn Sequence** milestone is now implemented:
+  `CompileIncrementalSequence` yields invocation-local `Play` entries
+  and CPU-only checkpoints; `IncrementalSequenceCursor` requests entries
+  only when due, preserves Cxx row overrides, and reuses cached Bxx targets
+  without rerunning future script statements. Local variables and seeded
+  Random persist through iterator suspension. The consumer limits endless
+  same-tick CPU cooperation to 8192 checkpoints, while advancing musical
+  loops have no lifetime ceiling. The existing eager and production paths
+  remain unchanged. Next: bounded history for unbounded distinct `Play`
+  entries, snapshot-safe script ownership and recursive source admission,
+  legacy out-of-order Pattern emission parity, and deterministic effect
+  integration. Continue incompatible Tempo spans, SEy repeated Tempo,
+  SDx/Qxy, virtual/mixdown channels and advanced effects before migrating
+  production scheduling.
   Preserve out-of-order scripted-event semantics or explicitly resolve
   their ordering policy before migrating playback. Replace the existing
   restricted chronological scheduler rather than adding more special
