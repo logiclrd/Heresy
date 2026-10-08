@@ -50,6 +50,17 @@ public sealed class SequencingContext
 	/// </summary>
 	public int PhysicalChannelBase { get; }
 
+	/// <summary>
+	/// Preparation-stage expander shared by flattened child contexts, if
+	/// provided by the song compiler.
+	/// </summary>
+	public IFlattenedNoteSourceExpander? FlattenedSourceExpander { get; set; }
+
+	/// <summary>
+	/// Absolute timeline origin while sequencers generate local-time notes.
+	/// </summary>
+	public TimeSpan TimelineOrigin { get; set; }
+
 	public int MapPhysicalChannel(int localChannel)
 	{
 		if (localChannel < 0)
@@ -74,14 +85,18 @@ public sealed class SequencingContext
 		if (physicalChannelOffset < 0)
 			throw new ArgumentOutOfRangeException(nameof(physicalChannelOffset));
 
-		return new(
+		return new SequencingContext(
 			State,
 			Random.CreateChild(),
 			PitchMultiplier * ValidateMultiplier(pitchMultiplier, nameof(pitchMultiplier)),
 			PlaybackSpeedMultiplier * ValidateMultiplier(playbackSpeedMultiplier, nameof(playbackSpeedMultiplier)),
 			checked(PhysicalChannelBase + physicalChannelOffset),
 			ChannelStates,
-			TrackerMidiMacros);
+			TrackerMidiMacros)
+		{
+			FlattenedSourceExpander = FlattenedSourceExpander,
+			TimelineOrigin = TimelineOrigin,
+		};
 	}
 
 	public SequencingContext MixdownChild(double pitchMultiplier = 1.0, double playbackSpeedMultiplier = 1.0)
