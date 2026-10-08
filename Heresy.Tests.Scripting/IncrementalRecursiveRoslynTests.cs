@@ -27,7 +27,7 @@ public sealed class IncrementalRecursiveRoslynTests
 		parent.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteOff();
 
 		ScriptSequenceDefinition sequence = new((ObjectId)10U, "Sequence")
-			{ Source = "Play(_O(2));" };
+			{ Source = "return sequenceIndex == 0 ? Play(_O(2)) : null;" };
 		ScriptPatternDefinition child = new((ObjectId)2U, "Pattern")
 		{
 			RowCount = 1, ChannelCount = 2,
