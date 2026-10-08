@@ -71,6 +71,20 @@ Items that were already completed remain in Git history, not in this checklist.
   tooltip that export remains correct; provide an option to suppress warnings.
   Do not prohibit these operations.
 
+## Startup branding and application identity
+
+- [ ] Use `Heresy.UserInterface/Images/Icon.ico` as the main window icon
+  so the application has its own icon in the title bar, taskbar, Alt-Tab,
+  and other window-manager UI on supported platforms.
+- [ ] Embed `Heresy.UserInterface/Images/Icon.ico` as the Windows executable
+  icon in the Windows build, including the native apphost/stub `.exe` file,
+  while preserving cross-platform builds.
+- [ ] On startup show the supplied `Heresy.UserInterface/Images/Logo.axaml`
+  control in a separate chromeless splash window in front of the main window.
+  Dismiss it on any keyboard key, any pointer click, or automatically after
+  four seconds, whichever happens first. Do not delay or block main-window
+  initialization or leave the splash open when the main window closes.
+
 ## Documentation and later maintenance
 
 - [ ] Reconcile stale README descriptions of WAVE-only realtime sample
