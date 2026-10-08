@@ -25,6 +25,15 @@ public abstract record IncrementalPatternTimelineStep(double Tick, TimeSpan Time
 		: IncrementalPatternTimelineStep(Tick, Time);
 
 	/// <summary>
+	/// The raw producer voluntarily returned CPU control before completing
+	/// its current row. No musical time advances, no note is emitted, and
+	/// no command from the unfinished row has been interpreted yet.
+	/// </summary>
+	public sealed record Cooperate(
+		long InvocationId, double Tick, TimeSpan Time)
+		: IncrementalPatternTimelineStep(Tick, Time);
+
+	/// <summary>
 	/// The invocation completed its terminating Bxx/Cxx source row. The
 	/// surrounding Sequence interprets the order jump and next-pattern
 	/// start row; this timeline does not execute a Sequence order.
@@ -76,6 +85,17 @@ public sealed class IncrementalPatternTimeline : IDisposable
 
 	private sealed class Cursor : IDisposable
 	{
+		// Row preparation is intentionally resumable. An iterator may
+		// cooperate after emitting some raw commands, but no row-level
+		// tracker effect can run until all due raw steps are collected.
+		private sealed class RowPreparation
+		{
+			public List<NoteEvent> Events { get; } = [];
+			public List<(int Channel, int Order, byte ExtraRows)> RowDelays { get; } = [];
+			public int SourceOrder { get; set; }
+			public int Inspected { get; set; }
+		}
+
 		private sealed class PatternLoopState(int startRow)
 		{
 			public int StartRow { get; set; } = startRow;
@@ -105,6 +125,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		private int _extraRowSpans;
 		private int _eventIndex;
 		private bool _inRow;
+		private RowPreparation? _preparation;
+		private TimeSpan _rowStartTime;
 		private double _rowStartTick;
 		private double _rowSpeed;
 
@@ -347,26 +369,42 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			_rowEndCommands.RemoveAt(0);
 		}
 
-		public void BeginRow(double tick, TimeSpan now)
+		public bool BeginRow(double tick, TimeSpan now)
 		{
 			if (_inRow || Complete)
 				throw new InvalidOperationException("Cursor row is not available.");
 
-			_rowStartTick = tick;
-			_rowSpeed = Context.State.Speed;
-			_fineDelayTicks = 0;
-			_extraRowSpans = 0;
-			_repeated.Clear();
-			_scheduled.Clear();
-			_rowLoopCommands.Clear();
-			_rowFlowCommands.Clear();
-			List<NoteEvent> events = [];
-			List<(int Channel, int Order, byte ExtraRows)> rowDelays = [];
-			int sourceOrder = 0;
-			int inspected = 0;
+			if (_preparation is null)
+			{
+				_rowStartTick = tick;
+				_rowStartTime = now;
+				_rowSpeed = Context.State.Speed;
+				_fineDelayTicks = 0;
+				_extraRowSpans = 0;
+				_repeated.Clear();
+				_scheduled.Clear();
+				_rowLoopCommands.Clear();
+				_rowFlowCommands.Clear();
+				_preparation = new RowPreparation();
+			}
+			else if (Math.Abs(tick - _rowStartTick) > TickTolerance
+				|| now != _rowStartTime)
+			{
+				throw new InvalidOperationException(
+					"A partially prepared Pattern row cannot move musical time.");
+			}
+
+			RowPreparation preparation = _preparation;
 			while (TryPeek(out RawPatternStep? step))
 			{
-				if (++inspected > MaximumRawStepsPerRow)
+				if (step is RawPatternStep.Cooperate)
+				{
+					// Do not complete or commit the partial row. The
+					// next TryStep resumes this exact enumerator position.
+					_lookahead = null;
+					return false;
+				}
+				if (++preparation.Inspected > MaximumRawStepsPerRow)
 					throw new InvalidOperationException(
 						"Raw Pattern iterator exceeded the per-row cooperation budget.");
 				// The final row may also own events at exactly RowCount.
@@ -398,7 +436,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 									"SBx requires a physical target without a fixed wall offset.");
 							if (emit.Row < RowCount)
 								_rowLoopCommands.Add((Context.MapPhysicalChannel(
-									emit.Note.Target.PhysicalChannel), sourceOrder, loop.RepeatCount));
+									emit.Note.Target.PhysicalChannel), preparation.SourceOrder, loop.RepeatCount));
 						}
 						else if (command is ApplyTrackerOrderJumpCommand
 							or ApplyTrackerPatternBreakCommand)
@@ -408,7 +446,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 									"Bxx/Cxx requires a physical tracker channel.");
 							if (emit.Row < RowCount)
 								_rowFlowCommands.Add((Context.MapPhysicalChannel(
-									emit.Note.Target.PhysicalChannel), sourceOrder, command));
+									emit.Note.Target.PhysicalChannel), preparation.SourceOrder, command));
 						}
 						else if (command is ApplyTrackerPatternDelayCommand delay)
 						{
@@ -416,13 +454,13 @@ public sealed class IncrementalPatternTimeline : IDisposable
 								throw new InvalidOperationException("SEy requires a physical channel.");
 							if (emit.Note.Offset.TimeOffset != TimeSpan.Zero)
 								throw new NotSupportedException("Delayed SEy scheduling is not supported.");
-							rowDelays.Add((Context.MapPhysicalChannel(
-								emit.Note.Target.PhysicalChannel), sourceOrder, delay.ExtraRows));
+							preparation.RowDelays.Add((Context.MapPhysicalChannel(
+								emit.Note.Target.PhysicalChannel), preparation.SourceOrder, delay.ExtraRows));
 						}
 						else
 							commands.Add(command);
 					}
-					sourceOrder++;
+					preparation.SourceOrder++;
 					if (commands.Count == 0)
 						continue;
 					NoteEvent filtered = emit.Note with { Commands = commands.ToArray() };
@@ -443,13 +481,13 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					}
 					else
 					{
-						events.Add(filtered);
+						preparation.Events.Add(filtered);
 					}
 				}
 			}
 
-			if (rowDelays.Count != 0)
-				_extraRowSpans = rowDelays.OrderBy(x => x.Channel)
+			if (preparation.RowDelays.Count != 0)
+				_extraRowSpans = preparation.RowDelays.OrderBy(x => x.Channel)
 					.ThenBy(x => x.Order).First().ExtraRows;
 			if (_extraRowSpans != 0 && _pendingTiming.Any(t =>
 				t.Raw.Commands.Any(c => c is ApplyTrackerTempoCommand)))
@@ -458,7 +496,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			// Stable equal-time order: timing at the beginning of the row
 			// (including fractional Timing commands) comes before notes;
 			// then physical channels, finally the producer's emission order.
-			_rowEvents = events.Select((note, index) => (note, index))
+			_rowEvents = preparation.Events.Select((note, index) => (note, index))
 				.OrderBy(x => DuePosition(x.note, Row, RowCount))
 				.ThenBy(x => x.note.Target.Kind == ChannelTargetKind.Global
 					? -1 : x.note.Target.PhysicalChannel)
@@ -473,7 +511,9 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			foreach (DeferredTiming timing in _readyTiming)
 				_pendingTiming.Remove(timing);
 			_inRow = true;
+			_preparation = null;
 			RefreshDue();
+			return true;
 		}
 
 		private bool TryPeek(out RawPatternStep? result)
@@ -484,11 +524,15 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				{
 					RawPatternStep step = _source.Current
 						?? throw new InvalidOperationException("Raw Pattern emitted null.");
-					if (!double.IsFinite(step.Row) || step.Row < _lastRow
-						|| step.Row < 0)
+					if (!double.IsFinite(step.Row) || step.Row < 0
+						|| step is not RawPatternStep.Cooperate
+							&& step.Row < _lastRow)
 						throw new InvalidOperationException(
 							"Raw Pattern positions must be nonnegative and nondecreasing.");
-					_lastRow = step.Row;
+					// The CPU-only marker's Row is informational, never
+					// a claim of musical progress or sorted event position.
+					if (step is not RawPatternStep.Cooperate)
+						_lastRow = step.Row;
 					_lookahead = step;
 				}
 				else
@@ -866,7 +910,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 
 	/// <summary>
 	/// Advances the globally earliest due cursor operation. Emits at most
-	/// one playback event or a silent row-boundary cooperation step. Tempo
+	/// one playback event, a musical row Advance, or CPU-only cooperation.
+	/// Tempo
 	/// integrates only across already-observed tracker ticks; peeking ahead
 	/// never commits commands from future rows or fractional positions.
 	/// </summary>
@@ -962,7 +1007,12 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				.ThenBy(c => c.Sequence).ToArray())
 			{
 				CheckCooperationBudget();
-				ready.BeginRow(_tick, Elapsed);
+				if (!ready.BeginRow(_tick, Elapsed))
+				{
+					result = new IncrementalPatternTimelineStep.Cooperate(
+						ready.Sequence, _tick, Elapsed);
+					return true;
+				}
 			}
 			// Standalone global Tempo/Speed takes priority over tracker
 			// physical-channel Txx effects at a shared row boundary.
@@ -1197,7 +1247,12 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		result = null;
 		if (!current.InRow)
 		{
-			current.BeginRow(_tick, Elapsed);
+			if (!current.BeginRow(_tick, Elapsed))
+			{
+				result = new IncrementalPatternTimelineStep.Cooperate(
+					current.Sequence, _tick, Elapsed);
+				return true;
+			}
 			return false;
 		}
 		if (current.DueTiming is { } timing)
