@@ -213,6 +213,51 @@ public sealed class SongScheduleCompilerTests
 	}
 
 	[Test]
+	public void DeferredChildTempoAppliesAcrossSubsequentSequencePattern()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Late child tempo")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		child.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new SetTempoPatternEffect(250));
+		document.Add(child);
+		ObjectId firstId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(firstId, "Start child")
+		{
+			RowCount = 1,
+			Source = $"Note(0.5, 0, _O({childId.Value}));",
+		});
+		ObjectId secondId = document.AllocateObjectId();
+		DataPatternDefinition second = new(secondId, "Continue")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		second.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteCut();
+		document.Add(second);
+		ObjectId seqId = document.AllocateObjectId();
+		DataSequenceDefinition root = new(seqId, "Root");
+		root.Entries.Add(new SequenceEntry(firstId));
+		root.Entries.Add(new SequenceEntry(secondId));
+		document.Add(root);
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompileSequence(document, seqId);
+
+		result.Success.Should().BeTrue();
+		NoteEvent tempo = result.Schedule!.Single(e =>
+			e.Commands.Any(c => c is SetTempoCommand));
+		tempo.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(180));
+		NoteEvent cut = result.Schedule!.Single(e =>
+			e.Commands.Any(c => c is NoteCutCommand));
+		cut.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(210));
+	}
+
+	[Test]
 	public void DeferredChildTempoCannotPreemptInterveningParentTempo()
 	{
 		SongDocument document = new();
