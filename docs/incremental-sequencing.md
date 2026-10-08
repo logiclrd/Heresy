@@ -1020,8 +1020,23 @@ Diagnostics are **queued, not synchronously dispatched to application
 callbacks**, so a logging or UI subscriber cannot throw or perform
 expensive I/O on the realtime sequencing path. The host can poll and
 consume reports using `context.Diagnostics.Drain()` outside that path.
-The playback UI has not yet been connected to this queue; it should
-surface warnings through its normal diagnostics/logging view later.
+Realtime playback source compilation now passes an explicit
+`SequencingContext` and drains its queue when preparation completes.
+A request-scoped diagnostic-report provider hands messages to
+`SongPlaybackTransport`, which raises
+`IPlaybackRuntimeDiagnosticsTransport.RuntimeDiagnostics` **after
+source preparation**, never from the audio callback.
+`LazySongPlaybackTransport` forwards the same event without forcing
+audio-device initialization just to subscribe.
+
+The Avalonia main window dispatches received messages to its UI thread,
+shows a bounded warning count in the status bar and exposes
+**View → Runtime Diagnostics**. Messages survive ordinary status changes,
+while the visible UI history retains at most 500 entries. The dialog
+can clear displayed history without resetting the Core per-sequencing
+suppression cap. Only playback compilation is wired to this UI path at
+present; offline render reports and later runtime streaming updates
+remain separate integration work.
 
 Equal-position notes are still valid. Fixed wall-time offsets do not
 participate in the raw musical-row ordering comparison. Non-note
