@@ -367,9 +367,9 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 		document.Add(child);
 		ObjectId parent = AddPatternWithNote(document, childId);
 		ObjectId root = AddSequence(document, parent);
-		int noteFrame = FrameTime.Ceiling(
+		int noteFrame = checked((int)FrameTime.Ceiling(
 			SongScheduleCompiler.CompilePattern(document, childId)
-				.Schedule!.First().Offset.TimeOffset, 100);
+				.Schedule!.First().Offset.TimeOffset, 100));
 		noteFrame.Should().BeGreaterThan(0);
 		PlaybackRequestAudioSourceFactory factory = new(
 			MonoConfiguration(100),
