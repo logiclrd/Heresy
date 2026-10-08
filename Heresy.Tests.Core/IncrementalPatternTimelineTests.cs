@@ -234,6 +234,45 @@ public sealed class IncrementalPatternTimelineTests
 		Assert.Throws<InvalidOperationException>(() => DrainNotes(timeline));
 	}
 
+	[Test]
+	public void SkippedRowsDoNotExecuteGlobalSpeedOrChannelCommands()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(new RawSource(
+			At(0, ChannelTarget.Global, new SetSpeedCommand(3)),
+			At(1, 0, new NoteOffCommand()),
+			At(2, 0, new NoteCutCommand())), 3, root, startRow: 2);
+
+		NoteEvent[] notes = DrainNotes(timeline);
+		Assert.That(notes, Has.Length.EqualTo(1));
+		Assert.That(notes[0].Commands.Single(), Is.TypeOf<NoteCutCommand>());
+		Assert.That(notes[0].Offset.TimeOffset, Is.EqualTo(TimeSpan.Zero));
+		Assert.That(root.State.Speed, Is.EqualTo(6));
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(120)));
+	}
+
+	[Test]
+	public void UnsupportedAdvancedCommandFailsInsteadOfSilentlyChangingSemantics()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(new RawSource(
+			At(0, 0, new SetNoteVolumeCommand(0.75))), 1, root);
+		Assert.Throws<NotSupportedException>(
+			() => timeline.TryStep(out _));
+	}
+
+	[Test]
+	public void UnboundedSameRowEmissionIsStoppedByCooperationBudget()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(new RepeatingSameRowSource(), 1, root);
+		Assert.Throws<InvalidOperationException>(
+			() => timeline.TryStep(out _));
+	}
+
 	private static NoteEvent At(double row, int channel, NoteCommand command)
 		=> At(row, ChannelTarget.Physical(channel), command);
 
@@ -258,6 +297,16 @@ public sealed class IncrementalPatternTimelineTests
 		{
 			foreach (NoteEvent e in events)
 				yield return new RawPatternStep.Emit(e);
+		}
+	}
+
+	private sealed class RepeatingSameRowSource : IIncrementalRawPatternNoteGenerator
+	{
+		public IEnumerable<RawPatternStep> EnumerateRawSteps(SequencingContext context)
+		{
+			while (true)
+				yield return new RawPatternStep.Emit(
+					At(0, 0, new NoteCutCommand()));
 		}
 	}
 }
