@@ -1082,10 +1082,50 @@ notes are not moved by a deferred Txx request, and check immediate
 mixed TFA at fractional position followed by T00 memory recall.
 
 This expands only the **experimental shared-tick** supported subset.
-Simultaneous Txx slides with different captured row speeds and
-SEy repeated Tempo remain unsupported; production realtime playback,
-offline export, and migration to the recursive scheduler are
-unchanged.
+Simultaneous Txx slides with different captured row speeds were
+unsupported at this milestone; the **next milestone** implements a
+piecewise composition model. SEy repeated Tempo is still unsupported.
+Production realtime playback, offline export, and migration to the
+recursive scheduler are unchanged.
+
+## Twenty-third executable step: simultaneous Txx with unequal spans
+
+The experimental shared-tick coordinator now composes T0x/T1x
+requests from separate Pattern invocations even when they captured
+**different row tick spans**. A same-tick global Speed command can
+change the span subsequently captured by a newly inserted invocation;
+older invocations keep their original span.
+
+Each slide contributes its usual `span - 1` legacy Tempo increments,
+distributed linearly across its own captured row span. At the earliest
+span endpoint its contribution stops; the still-active slides continue
+the Tempo trajectory on a new linear segment. The combined Tempo is
+clamped to the supported range at each segment endpoint. When all
+captured spans match, existing mapped-physical-channel IT clamp
+arbitration is used unchanged.
+
+Only the **current** segment's
+`SetTempoRampCommand(endingTempo, trackerTicks)` is emitted at its
+start. Subsequent segment commands are emitted **at their actual
+shared-tick boundaries**; those boundaries participate in scheduler
+deadline selection. This prevents premature application of a later
+Tempo, incorrect integration across a kink, or incorrectly timed
+inversion of an absolute wall-time deadline. The same `TrackerTimeMap`
+analytic integral and inverse are used independently for each segment.
+
+A later direct Tempo set or Txx request cancels all unexecuted
+segments and begins from the instantaneous Tempo at its actual tick.
+Effect-memory T00 resolution still occurs once when each original
+Txx request becomes eligible. No future script entry is executed to
+prepare the segments. Tests cover two captured spans (3 and 6 ticks),
+the resulting intermediate and final Tempo, note arrival at the later
+endpoint, exact wall-time tick inversion in the second segment, and
+interruption by a standalone Tempo set.
+
+**Remaining:** simultaneous SEy-repeated Txx, complex/overlapping
+repetition policies, and additional full-effect parity tests before
+production recursive scheduling. This is still an experimental
+shared-clock extension; production playback/export are unchanged.
 
 ## Proposed next interfaces and migration
 
