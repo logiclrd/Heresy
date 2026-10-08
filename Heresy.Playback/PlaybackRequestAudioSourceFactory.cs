@@ -102,14 +102,11 @@ public sealed class PlaybackRequestAudioSourceFactory
 					ThrowIfFailed(
 						compilation,
 						$"Could not compile sequence {sequence.SequenceId.Value} for playback.");
-					FlattenedNestedScheduleExpander.Result expanded =
-						FlattenedNestedScheduleExpander.Expand(
-							document,
-							compilation.Schedule!,
-							compilation.Duration,
-							sequence.SequenceId);
+					// The compiler expands flattened sources during each active
+					// parent row; re-expanding a finished schedule would lose
+					// shared timing and tracker-channel memory.
 					IAudioOutputSource source =
-						CreateSource(expanded.Schedule, resolver);
+						CreateSource(compilation.Schedule!, resolver);
 					return AttachTimeline(
 						sequence,
 						source,
@@ -130,31 +127,24 @@ public sealed class PlaybackRequestAudioSourceFactory
 						compilation,
 						$"Could not compile pattern {pattern.PatternId.Value} for playback.");
 
-					FlattenedNestedScheduleExpander.Result expanded =
-						FlattenedNestedScheduleExpander.Expand(
-							document,
-							compilation.Schedule!,
-							compilation.Duration,
-							pattern.PatternId);
-
 					IAudioOutputSource source;
 					if (!pattern.Repeat)
 					{
 						source =
 							CreateSource(
-								expanded.Schedule,
+								compilation.Schedule!,
 								resolver);
 					}
 					else
 					{
 						long cycleFrames =
 							FrameTime.Ceiling(
-								expanded.Duration,
+								compilation.Duration,
 								_configuration.SampleRate);
 						source =
 							new RepeatingPlaybackSource(
 								_configuration,
-								expanded.Schedule,
+								compilation.Schedule!,
 								resolver,
 								cycleFrames);
 					}
