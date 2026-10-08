@@ -19,6 +19,24 @@ namespace Heresy.Tests.Playback;
 public sealed class SongPlaybackTransportTests
 {
 	[Test]
+	public async Task FaultyDiagnosticsSubscriberCannotInterruptPlaybackOrOtherSubscribers()
+	{
+		SongDocument document = new();
+		ObjectId id = document.AllocateObjectId();
+		document.Add(new DataPatternDefinition(id, "Test"));
+		using SongPlaybackTransport transport =
+			new(new TestBackend(), new DiagnosticFactory());
+		List<PlaybackRuntimeDiagnosticsEventArgs> received = [];
+		((IPlaybackRuntimeDiagnosticsTransport)transport).RuntimeDiagnostics +=
+			(_, _) => throw new InvalidOperationException("Observer failure");
+		((IPlaybackRuntimeDiagnosticsTransport)transport).RuntimeDiagnostics +=
+			(_, e) => received.Add(e);
+
+		await transport.PlayPatternAsync(document, id);
+		received.Should().ContainSingle();
+	}
+
+	[Test]
 	public async Task RuntimeDiagnosticsArePublishedFromPreparedSourceAfterPlay()
 	{
 		SongDocument document = new();
