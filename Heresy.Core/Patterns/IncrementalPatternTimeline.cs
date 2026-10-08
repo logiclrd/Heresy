@@ -146,7 +146,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				? _readyTiming[0].Raw : null;
 		public IReadOnlyList<DeferredTiming> ReadyTimings => _readyTiming;
 		public NoteEvent? DueCleanup =>
-			_inRow && DueEvent is null && _rowEndCommands.Count > 0
+			_inRow && DueEvent is null && DueRepeated is null
+			&& _rowEndCommands.Count > 0
 				? _rowEndCommands[0] : null;
 
 		public void QueueCleanup(NoteEvent note)
@@ -653,8 +654,11 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		// A ramp from several sources has one duration only when they
 		// agree on the tick span. Defer mixed-speed arbitration rather
 		// than quietly using whichever invocation happened to run first.
+		if (pending.Any(x => x.Cursor.ExtraRowSpans != 0))
+			throw new NotSupportedException(
+				"SEy repeating Txx ramps requires a resumable multi-span tempo state machine.");
 		int[] slideSpans = pending
-			.Select(x => checked((int)x.Cursor.RowSpeed))
+			.Select(x => checked((int)x.Cursor.EffectiveSpanTicks))
 			.Distinct().ToArray();
 		if (slideSpans.Length > 1)
 			throw new NotSupportedException(
@@ -934,7 +938,20 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					"One raw cursor event resolved into multiple immediate operations.");
 			if (immediate.Count == 0)
 				return false;
+			if (current.ExtraRowSpans > 0)
+				current.QueueRepeats(immediate[0]);
 			NoteEvent emitted = immediate[0] with
+			{
+				Offset = new MusicalTime(Elapsed, 0),
+				EmissionOrder = _emissionOrder++,
+			};
+			result = new IncrementalPatternTimelineStep.Emit(emitted, _tick, Elapsed);
+			return true;
+		}
+		if (current.DueRepeated is { } repeating)
+		{
+			current.ConsumeRepeated();
+			NoteEvent emitted = repeating with
 			{
 				Offset = new MusicalTime(Elapsed, 0),
 				EmissionOrder = _emissionOrder++,
