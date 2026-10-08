@@ -69,12 +69,13 @@ internal static class ChronologicalDataPatternScheduler
 	}
 
 	// Scripted timing commands retain PatternNoteProcessor's established
-	// row-boundary semantics: Tempo(1.5, ...) executes at row 1, not at 1.5.
+	// row-boundary semantics: Tempo/Speed(1.5, ...) execute at row 1.
 	// Other supported script events keep their exact fractional-row tick.
 	private static double ScriptEventDueRow(NoteEvent note)
 		=> note.Target.Kind == ChannelTargetKind.Global
 			&& note.Commands.Count > 0
-			&& note.Commands.All(command => command is SetTempoCommand)
+			&& note.Commands.All(command => command is SetTempoCommand
+				or SetSpeedCommand)
 				? Math.Floor(note.Offset.RowOffset)
 				: note.Offset.RowOffset;
 
@@ -179,14 +180,14 @@ internal static class ChronologicalDataPatternScheduler
 						// that boundary, after the final row's elapsed ticks.
 						|| note.Offset.RowOffset > rowCount)
 						return false;
-					// Only standalone global SetTempo commands are eligible.
-					// In particular, scripted Speed, ramps, and mixed-command
-					// events are not yet part of the shared-tick contract.
+					// Standalone global Tempo/Speed commands use their row's
+					// boundary. Ramps and other global/effect commands still
+					// require an expanded scheduler contract.
 					if (note.Target.Kind == ChannelTargetKind.Global)
 					{
 						if (note.Commands.Count == 0
 							|| note.Commands.Any(command =>
-								command is not SetTempoCommand))
+								command is not (SetTempoCommand or SetSpeedCommand)))
 							return false;
 						continue;
 					}
@@ -434,6 +435,16 @@ internal static class ChronologicalDataPatternScheduler
 					PatternNoteProcessor.GenerateNotes(
 						new ScriptEventSlice(scripted),
 						current.Context, rowBuilder, out nominalDuration);
+					// The existing pattern processor applies Speed at its
+					// row boundary, before taking the row's tick count.
+					// Re-capture this cursor's row length for its own Speed
+					// command, but never rewrite other cursors' already
+					// established end ticks. Endpoint Speed affects future
+					// rows/orders only, not the completed final row.
+					if (ScriptEventDueRow(scripted) == current.Row
+						&& scripted.Commands.Any(command => command is SetSpeedCommand))
+						current.RowEndTick = current.RowStartTick
+							+ context.State.Speed;
 					current.ScriptEventIndex++;
 				}
 				else
