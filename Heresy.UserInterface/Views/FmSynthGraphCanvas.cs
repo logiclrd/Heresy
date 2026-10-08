@@ -23,6 +23,8 @@ public sealed class FmSynthGraphCanvas : UserControl
 	private readonly Action<int> _selected;
 	private readonly Action<int, double, double> _moved;
 	private readonly Action<int, int, int> _connected;
+	private readonly Action<
+		int, int, int, IReadOnlyList<FmSynthRoutePoint>> _waypointsChanged;
 	private readonly Canvas _canvas = new();
 	private readonly ConnectionLayer _connectionLayer;
 	private readonly ConnectionLayer _portLayer;
@@ -36,12 +38,25 @@ public sealed class FmSynthGraphCanvas : UserControl
 	private int? _hoverNodeId;
 	private FmSynthConnectionPort? _dragPort;
 	private Point _dragPortPointer;
+	private WaypointDrag? _waypointDrag;
+
+	private sealed class WaypointDrag
+	{
+		public required FmSynthConnectionCandidate Connection { get; init; }
+		public required FmSynthRoutePoint[] Waypoints { get; init; }
+		public required int Index { get; init; }
+		public required Point PointerStart { get; init; }
+		public required FmSynthRoutePoint InitialPoint { get; init; }
+		public FmSynthRoutePoint CurrentPoint { get; set; }
+		public bool Moved { get; set; }
+	}
 
 	public FmSynthGraphCanvas(
 		FmSynthDefinition synth,
 		Action<int> selected,
 		Action<int, double, double> moved,
-		Action<int, int, int> connected)
+		Action<int, int, int> connected,
+		Action<int, int, int, IReadOnlyList<FmSynthRoutePoint>> waypointsChanged)
 	{
 		_synth =
 			synth
@@ -55,6 +70,9 @@ public sealed class FmSynthGraphCanvas : UserControl
 		_connected =
 			connected
 				?? throw new ArgumentNullException(nameof(connected));
+		_waypointsChanged =
+			waypointsChanged
+				?? throw new ArgumentNullException(nameof(waypointsChanged));
 
 		MinWidth = 1200;
 		MinHeight = 720;
@@ -90,6 +108,10 @@ public sealed class FmSynthGraphCanvas : UserControl
 		// this overlay never intercepts pointer events from the canvas.
 		root.Children.Add(
 			_portLayer);
+		root.PointerPressed += OnWirePointerPressed;
+		root.PointerMoved += OnWirePointerMoved;
+		root.PointerReleased += OnWirePointerReleased;
+		root.PointerCaptureLost += OnWirePointerCaptureLost;
 		Content = root;
 		Refresh();
 	}
@@ -98,6 +120,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 	{
 		_hoverNodeId = null;
 		_dragPort = null;
+		_waypointDrag = null;
 		_canvas.Children.Clear();
 		_nodeControls.Clear();
 		_positions.Clear();
@@ -144,20 +167,15 @@ public sealed class FmSynthGraphCanvas : UserControl
 		ApplySelectionVisuals();
 	}
 
-	private void DrawConnections(
-		DrawingContext context)
+	/// <summary>
+	/// Use the identical routed wire geometry for drawing, hit testing, and
+	/// waypoint ordering. The drag preview substitutes editor-only hints but
+	/// never mutates the document until the pointer is released.
+	/// </summary>
+	private FmSynthRenderedConnection[] GetRenderedConnections()
 	{
-		Pen connectionPen =
-			new(
-				new SolidColorBrush(
-					Color.FromRgb(
-						125,
-						175,
-						235)),
-				2.0);
-
-		FmSynthNode[] nodes =
-			_synth.Graph.Nodes.ToArray();
+		FmSynthNode[] nodes = _synth.Graph.Nodes.ToArray();
+		List<FmSynthRenderedConnection> connections = [];
 		foreach (FmSynthNode target in nodes)
 		{
 			if (!_positions.TryGetValue(
@@ -166,78 +184,230 @@ public sealed class FmSynthGraphCanvas : UserControl
 			{
 				continue;
 			}
-
-			FmSynthLayoutRect targetRect =
-				ToRect(targetPosition);
+			FmSynthLayoutRect targetRect = ToRect(targetPosition);
 			for (int inputIndex = 0;
 				inputIndex < target.InputNodeIds.Count;
 				inputIndex++)
 			{
-				int sourceId =
-					target.InputNodeIds[inputIndex];
+				int sourceId = target.InputNodeIds[inputIndex];
 				if (!_positions.TryGetValue(
 					sourceId,
 					out FmSynthNodePosition sourcePosition))
 				{
 					continue;
 				}
-
-				FmSynthLayoutRect sourceRect =
-					ToRect(sourcePosition);
-				FmSynthLayoutRect[] obstacles =
-					nodes
-						.Where(node =>
-							node.Id != sourceId
-								&& node.Id != target.Id)
-						.Select(node =>
-							ToRect(
-								_positions[node.Id]))
-						.ToArray();
+				FmSynthLayoutRect sourceRect = ToRect(sourcePosition);
+				FmSynthLayoutRect[] obstacles = nodes
+					.Where(node => node.Id != sourceId
+						&& node.Id != target.Id)
+					.Select(node => ToRect(_positions[node.Id]))
+					.ToArray();
 				FmSynthConnectionRoutingHint? hint =
-					_synth.ConnectionRoutingHints
-						.FirstOrDefault(candidate =>
-							candidate.SourceNodeId == sourceId
-								&& candidate.TargetNodeId == target.Id
-								&& candidate.TargetInputIndex == inputIndex);
+					_synth.ConnectionRoutingHints.FirstOrDefault(candidate =>
+						candidate.SourceNodeId == sourceId
+						&& candidate.TargetNodeId == target.Id
+						&& candidate.TargetInputIndex == inputIndex);
+				FmSynthConnectionCandidate connection =
+					new(sourceId, target.Id, inputIndex);
+				IReadOnlyList<FmSynthRoutePoint> waypoints =
+					hint?.RoutePoints ?? Array.Empty<FmSynthRoutePoint>();
+				if (_waypointDrag is WaypointDrag drag
+					&& drag.Connection == connection
+					&& drag.Moved)
+				{
+					waypoints = FmSynthWaypointGeometry.Replace(
+						drag.Waypoints, drag.Index, drag.CurrentPoint);
+				}
+
 				FmSynthNode sourceNode =
 					nodes.First(node => node.Id == sourceId);
 				FmSynthRoutePoint startPort =
 					FmSynthConnectionPorts.GetPorts(
-						sourceNode,
-						sourceRect)[0].Center;
+						sourceNode, sourceRect)[0].Center;
 				FmSynthRoutePoint endPort =
 					FmSynthConnectionPorts.GetPorts(
-						target,
-						targetRect)[inputIndex + 1].Center;
+						target, targetRect)[inputIndex + 1].Center;
 				FmSynthRoutePoint[] route =
 					FmSynthConnectionRouter.Route(
-						sourceRect,
-						targetRect,
-						obstacles,
-						hint?.RoutePoints,
-						startPort,
-						endPort);
-
-				for (int pointIndex = 1;
-					pointIndex < route.Length;
-					pointIndex++)
-				{
-					context.DrawLine(
-						connectionPen,
-						new Point(
-							route[pointIndex - 1].X,
-							route[pointIndex - 1].Y),
-						new Point(
-							route[pointIndex].X,
-							route[pointIndex].Y));
-				}
-
-				DrawArrowhead(
-					context,
-					connectionPen,
-					route);
+						sourceRect, targetRect, obstacles, waypoints,
+						startPort, endPort);
+				connections.Add(
+					new FmSynthRenderedConnection(
+						connection, route, waypoints));
 			}
 		}
+		return [.. connections];
+	}
+
+	private void DrawConnections(DrawingContext context)
+	{
+		Pen connectionPen =
+			new(
+				new SolidColorBrush(
+					Color.FromRgb(125, 175, 235)),
+				2.0);
+		foreach (FmSynthRenderedConnection connection in GetRenderedConnections())
+		{
+			IReadOnlyList<FmSynthRoutePoint> route = connection.Route;
+			for (int pointIndex = 1;
+				pointIndex < route.Count;
+				pointIndex++)
+			{
+				context.DrawLine(
+					connectionPen,
+					new Point(
+						route[pointIndex - 1].X,
+						route[pointIndex - 1].Y),
+					new Point(
+						route[pointIndex].X,
+						route[pointIndex].Y));
+			}
+			DrawArrowhead(context, connectionPen, route);
+
+			// Existing waypoints are always visible so that the user can
+			// move or double-click them without an inspector panel.
+			foreach (FmSynthRoutePoint waypoint in connection.Waypoints)
+			{
+				context.DrawEllipse(
+					Brushes.Gold,
+					new Pen(Brushes.Black, 1.5),
+					new Point(waypoint.X, waypoint.Y),
+					4.5,
+					4.5);
+			}
+		}
+	}
+
+	private double RenderScaling
+		=> TopLevel.GetTopLevel(this)?.RenderScaling ?? 1.0;
+
+	private void OnWirePointerPressed(
+		object? sender,
+		PointerPressedEventArgs e)
+	{
+		if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+			return;
+
+		Point pointer = e.GetPosition(_canvas);
+		FmSynthRoutePoint position = new(pointer.X, pointer.Y);
+		FmSynthRenderedConnection[] connections = GetRenderedConnections();
+		FmSynthWaypointHit? waypoint = FmSynthWaypointGeometry.HitWaypoint(
+			connections, position, RenderScaling);
+		if (e.ClickCount == 2)
+		{
+			if (waypoint is FmSynthWaypointHit hit)
+			{
+				FmSynthRenderedConnection connection =
+					connections.First(item => item.Connection == hit.Connection);
+				FmSynthRoutePoint[] remaining = FmSynthWaypointGeometry.Remove(
+					connection.Waypoints, hit.WaypointIndex);
+				_waypointDrag = null;
+				_waypointsChanged(
+					hit.Connection.SourceNodeId,
+					hit.Connection.TargetNodeId,
+					hit.Connection.TargetInputIndex,
+					remaining);
+				e.Handled = true;
+			}
+			return;
+		}
+
+		if (waypoint is FmSynthWaypointHit old)
+		{
+			FmSynthRenderedConnection wire =
+				connections.First(item => item.Connection == old.Connection);
+			_waypointDrag = new WaypointDrag
+			{
+				Connection = old.Connection,
+				Waypoints = [.. wire.Waypoints],
+				Index = old.WaypointIndex,
+				InitialPoint = wire.Waypoints[old.WaypointIndex],
+				CurrentPoint = wire.Waypoints[old.WaypointIndex],
+				PointerStart = pointer,
+			};
+		}
+		else if (FmSynthWaypointGeometry.HitConnection(
+			connections, position, RenderScaling)
+			is FmSynthConnectionLineHit line)
+		{
+			FmSynthRenderedConnection wire =
+				connections.First(item => item.Connection == line.Connection);
+			FmSynthRoutePoint[] inserted = FmSynthWaypointGeometry.Insert(
+				wire.Waypoints, line.InsertIndex, line.NearestPoint);
+			_waypointDrag = new WaypointDrag
+			{
+				Connection = line.Connection,
+				Waypoints = inserted,
+				Index = line.InsertIndex,
+				InitialPoint = line.NearestPoint,
+				CurrentPoint = line.NearestPoint,
+				PointerStart = pointer,
+			};
+		}
+		else
+		{
+			return;
+		}
+
+		e.Pointer.Capture((IInputElement)sender!);
+		e.Handled = true;
+	}
+
+	private void OnWirePointerMoved(
+		object? sender,
+		PointerEventArgs e)
+	{
+		_ = sender;
+		if (_waypointDrag is not WaypointDrag drag)
+			return;
+		Point pointer = e.GetPosition(_canvas);
+		double dx = pointer.X - drag.PointerStart.X;
+		double dy = pointer.Y - drag.PointerStart.Y;
+		if (!drag.Moved
+			&& ((dx * dx + dy * dy) * RenderScaling * RenderScaling) < 9.0)
+		{
+			return;
+		}
+
+		drag.Moved = true;
+		drag.CurrentPoint = new FmSynthRoutePoint(
+			drag.InitialPoint.X + dx,
+			drag.InitialPoint.Y + dy);
+		_connectionLayer.InvalidateVisual();
+		e.Handled = true;
+	}
+
+	private void OnWirePointerReleased(
+		object? sender,
+		PointerReleasedEventArgs e)
+	{
+		_ = sender;
+		if (_waypointDrag is not WaypointDrag drag)
+			return;
+		_waypointDrag = null;
+		e.Pointer.Capture(null);
+		if (drag.Moved && drag.CurrentPoint != drag.InitialPoint)
+		{
+			FmSynthRoutePoint[] points = FmSynthWaypointGeometry.Replace(
+				drag.Waypoints, drag.Index, drag.CurrentPoint);
+			_waypointsChanged(
+				drag.Connection.SourceNodeId,
+				drag.Connection.TargetNodeId,
+				drag.Connection.TargetInputIndex,
+				points);
+		}
+		_connectionLayer.InvalidateVisual();
+		e.Handled = true;
+	}
+
+	private void OnWirePointerCaptureLost(
+		object? sender,
+		PointerCaptureLostEventArgs e)
+	{
+		_ = sender;
+		_ = e;
+		_waypointDrag = null;
+		_connectionLayer.InvalidateVisual();
 	}
 
 	private void DrawConnectionPorts(
