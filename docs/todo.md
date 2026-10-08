@@ -72,10 +72,20 @@ Items that were already completed remain in Git history, not in this checklist.
   SDx combined with Qxy and fixed wall offsets on SCx/SDx/Qxy remain
   explicitly unsupported rather than risking incorrect memory/voice
   semantics.
-  Next, complete incompatible-span tempo arbitration, SEy repeated Tempo,
-  SDx/Qxy interaction, pattern flow controls, virtual targets, and
-  user-script coroutine instrumentation with distinct CPU checkpoints.
-  Wire generic invocation-lifetime management for data and scripted Sequences.
+  SBx now revisits raw source rows lazily with per-mapped-channel loop
+  markers and repeat counters, resolving shared tracker state anew
+  on every visit. Backward visits restart only explicitly replay-safe raw
+  sources (data Patterns; scripts must provide a separate coroutine-safe
+  model). Bxx/Cxx terminate their original source row and produce a
+  `PatternFlowControl` step for the future Sequence cursor rather than
+  jumping Pattern rows. Same-tick effect recall/cleanup during SBx
+  wrap is kept in eager source-emission order.
+  Next, implement a **lazy Sequence/order cursor** consuming these
+  Bxx/Cxx flow results, then complete incompatible-span Tempo
+  arbitration, SEy repeated Tempo, SDx/Qxy interaction, virtual
+  channels, and user-script coroutine instrumentation with distinct
+  CPU checkpoints. Wire generic invocation-lifetime management for
+  data and scripted Sequences.
   Preserve out-of-order scripted-event semantics or explicitly resolve
   their ordering policy before migrating playback. Replace the existing
   restricted chronological scheduler rather than adding more special
