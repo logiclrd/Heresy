@@ -32,7 +32,7 @@ public sealed class IncrementalSequenceCursorTests
 	[Test]
 	public void BxxSkipsIntermediateOrderAndCanRevisitPreviousOrder()
 	{
-		DataPatternDefinition first = Pattern(1, 1);
+		DataPatternDefinition first = Pattern(1, 2);
 		first.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
 		first.Grid.GetOrCreateCell(1, 0).Effects.Add(new TrackerOrderJumpPatternEffect(2));
 		DataPatternDefinition skipped = Pattern(2, 1);
@@ -52,7 +52,7 @@ public sealed class IncrementalSequenceCursorTests
 		first.Grid.GetOrCreateCell(0, 1).Effects.Add(new TrackerPatternBreakPatternEffect(1));
 		DataPatternDefinition middle = Pattern(2, 1);
 		middle.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
-		DataPatternDefinition last = Pattern(3, 1);
+		DataPatternDefinition last = Pattern(3, 3);
 		last.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
 		last.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteOff();
 		last.Grid.GetOrCreateCell(2, 0).Note = new PatternNoteCut();
@@ -66,7 +66,7 @@ public sealed class IncrementalSequenceCursorTests
 	{
 		DataPatternDefinition first = Pattern(1, 1);
 		first.Grid.GetOrCreateCell(0, 0).Effects.Add(new TrackerPatternBreakPatternEffect(2));
-		DataPatternDefinition target = Pattern(2, 1);
+		DataPatternDefinition target = Pattern(2, 3);
 		target.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
 		target.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteCut();
 		target.Grid.GetOrCreateCell(2, 0).Note = new PatternNoteOff();
@@ -80,7 +80,7 @@ public sealed class IncrementalSequenceCursorTests
 	public void StartOrderAndStartRowOverrideAgreeWithEagerSequence()
 	{
 		DataPatternDefinition first = Pattern(1, 1);
-		DataPatternDefinition second = Pattern(2, 1);
+		DataPatternDefinition second = Pattern(2, 2);
 		second.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
 		second.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteOff();
 		DataPatternDefinition third = Pattern(3, 1);
@@ -165,10 +165,10 @@ public sealed class IncrementalSequenceCursorTests
 	[Test]
 	public void TimingChangesAndQ00MemorySurviveARevisitedOrder()
 	{
-		DataPatternDefinition first = Pattern(1, 1);
+		DataPatternDefinition first = Pattern(1, 2);
 		first.Grid.GetOrCreateCell(0, 0).Effects.Add(
 			new TrackerTempoPatternEffect(0xFA));
-		first.Grid.GetOrCreateCell(0, 0).Effects.Add(
+		first.Grid.GetOrCreateCell(1, 0).Effects.Add(
 			new TrackerVolumeSlidePatternEffect(0x03));
 		DataPatternDefinition second = Pattern(2, 1);
 		second.Grid.GetOrCreateCell(0, 0).Effects.Add(
