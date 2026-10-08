@@ -20,6 +20,18 @@ public sealed class PatternNoteInputState
 
 	public ObjectId SourceId { get; set; }
 
+	public int SkipRows
+	{
+		get => _skipRows;
+		set
+		{
+			if (value is < 0 or > 9)
+				throw new ArgumentOutOfRangeException(nameof(value),
+					"Tracker note skip must be in the range 0..9.");
+			_skipRows = value;
+		}
+	}
+
 	public PatternEditMask EditMask { get; set; } =
 		PatternEditMask.Default;
 
@@ -47,6 +59,7 @@ public sealed class PatternNoteInputState
 	}
 
 	private int _baseOctave;
+	private int _skipRows = 1;
 	private double? _currentVolume;
 
 	private static int ValidateOctave(int value)
@@ -160,7 +173,7 @@ public static class PatternNoteKeyboardEditor
 				state.SourceId,
 				state.CurrentVolume);
 
-		if (pattern.RowCount > 0)
+		for (int step = 0; step < state.SkipRows; step++)
 			cursor.MoveDown(pattern.RowCount);
 
 		return new PatternNoteInputResult(
