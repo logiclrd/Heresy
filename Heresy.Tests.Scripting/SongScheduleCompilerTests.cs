@@ -173,6 +173,64 @@ public sealed class SongScheduleCompilerTests
 	}
 
 	[Test]
+	public void IndependentlyAdvancingChildCarriesSourceMemoryAcrossSequenceOrders()
+	{
+		SongDocument document = new();
+		ObjectId sourceAtStart = document.AllocateObjectId();
+		ObjectId sourceLater = document.AllocateObjectId();
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Source selector")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		PatternCell firstChild = child.Grid.GetOrCreateCell(0, 0);
+		firstChild.SourceId = sourceAtStart;
+		firstChild.Effects.Add(new SetSpeedPatternEffect(9));
+		child.Grid.GetOrCreateCell(1, 0).SourceId = sourceLater;
+		document.Add(child);
+
+		ObjectId firstId = document.AllocateObjectId();
+		DataPatternDefinition first = new(firstId, "First order")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		first.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sourceId: childId);
+		document.Add(first);
+
+		ObjectId nextId = document.AllocateObjectId();
+		DataPatternDefinition next = new(nextId, "Next order")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		next.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote();
+		next.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote();
+		document.Add(next);
+
+		ObjectId sequenceId = document.AllocateObjectId();
+		DataSequenceDefinition sequence = new(sequenceId, "Arrangement");
+		sequence.Entries.Add(new SequenceEntry(firstId));
+		sequence.Entries.Add(new SequenceEntry(nextId));
+		document.Add(sequence);
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompileSequence(document, sequenceId);
+		result.Success.Should().BeTrue();
+		StartNoteCommand[] starts = result.Schedule!
+			.SelectMany(e => e.Commands).OfType<StartNoteCommand>().ToArray();
+		starts.Select(s => s.SourceId).Should()
+			.Equal(sourceAtStart, sourceLater);
+		result.PlaybackPositions
+			.Where(p => p.PatternId == nextId)
+			.Select(p => p.Offset).Should().Equal(
+				TimeSpan.FromMilliseconds(120),
+				TimeSpan.FromMilliseconds(300));
+	}
+
+	[Test]
 	public void FutureChildSourceSelectionDoesNotLeakIntoEarlierParentRow()
 	{
 		SongDocument document = new();
