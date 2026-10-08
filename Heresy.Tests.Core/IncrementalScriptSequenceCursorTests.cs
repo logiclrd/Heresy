@@ -83,6 +83,31 @@ public sealed class IncrementalScriptSequenceCursorTests
 	}
 
 	[Test]
+	public void EndlessCpuCheckpointsAtOneTickHitAnExplicitBudget()
+	{
+		using IncrementalSequenceCursor cursor = new(
+			new EndlessCooperationSource(), new Resolver(), new SequencingContext());
+		for (int i = 0; i < 8192; i++)
+		{
+			Assert.That(cursor.TryStep(out IncrementalPatternTimelineStep? step),
+				Is.True);
+			Assert.That(step, Is.TypeOf<IncrementalPatternTimelineStep.Cooperate>());
+			Assert.That(cursor.Tick, Is.Zero);
+		}
+		Assert.Throws<InvalidOperationException>(() => cursor.TryStep(out _));
+	}
+
+	private sealed class EndlessCooperationSource
+		: IIncrementalRawSequenceEntryGenerator
+	{
+		public IEnumerable<RawSequenceStep> EnumerateRawSteps(SequencingContext context)
+		{
+			while (true)
+				yield return new RawSequenceStep.Cooperate();
+		}
+	}
+
+	[Test]
 	public void CancellingSequenceDisposesItsSuspendedSource()
 	{
 		TrackingGenerator source = new(
