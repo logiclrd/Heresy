@@ -23,10 +23,14 @@ Items that were already completed remain in Git history, not in this checklist.
   portions ignored as in PatternNoteProcessor), including mixed
   data/script hierarchies and data-sequence arrangements. Scripted Speed
   updates the issuing cursor's row length, without resizing another
-  cursor's already-started row.
+  cursor's already-started row. Nonnegative fixed wall-time offsets on
+  scripted Note/Off/Cut now generate absolute deadlines on reaching their
+  musical position, and nested sources invoked at those deadlines retain
+  independent cursors across sequence orders.
   Extend to scripted Sequences, nonzero StartRow, pattern control jumps,
-  non-unit pitch/speed transforms, fixed wall-time event offsets,
-  tracker tempo ramps, other scripted/global effects,
+  non-unit pitch/speed transforms, negative fixed wall-time offsets,
+  fixed offsets on global/advanced effect commands, tracker tempo ramps,
+  other scripted/global effects,
   overlapping tempo slides and pattern/fine delays. Preserve the existing
   processor's semantic rules and fail explicitly for unsupported
   combinations rather than render an invalid shared timeline.
@@ -35,8 +39,9 @@ Items that were already completed remain in Git history, not in this checklist.
   child-row boundaries in the data-pattern cursor path; eligible scripted
   Start/NoteOff/Cut events execute at fractional timestamps and standalone
   global Tempo/Speed commands at their row starts, without applying
-  future commands early. Other scripted/effect combinations still use
-  eager preparation and can mutate future shared channel state
+  future commands early. Supported delayed Note/Off/Cut commands likewise
+  resolve only at their actual wall deadline. Other scripted/effect
+  combinations still use eager preparation and can mutate future shared channel state
   prematurely. Add same-time and overlapping-command regressions.
 - [ ] Propagate pitch, playback-speed multiplier, origin timing, Note Off/Cut,
   envelope/release behavior and new-note actions through nested sources.
