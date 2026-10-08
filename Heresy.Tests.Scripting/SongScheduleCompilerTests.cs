@@ -19,6 +19,43 @@ public sealed class SongScheduleCompilerTests
 {
 
 
+
+	[Test]
+	public void DelayedScriptCommandAndParentRowShareTimestampInCursorOrder()
+	{
+		SongDocument document = new();
+		ObjectId sourceId = document.AllocateObjectId();
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Delayed at boundary")
+		{
+			RowCount = 2,
+			Source = $"Note(0.5, 0, _O({sourceId.Value}), timeOffsetSeconds: 0.06);",
+		});
+		ObjectId rootId = document.AllocateObjectId();
+		DataPatternDefinition root = new(rootId, "Root boundary")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		root.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(sourceId: childId);
+		root.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteCut();
+		document.Add(root);
+
+		SongScheduleCompilationResult compiled =
+			SongScheduleCompiler.CompilePattern(document, rootId);
+
+		compiled.Success.Should().BeTrue();
+		NoteEvent[] atBoundary = compiled.Schedule!
+			.Where(e => e.Offset.TimeOffset == TimeSpan.FromMilliseconds(120))
+			.ToArray();
+		atBoundary.Should().HaveCount(2);
+		atBoundary[0].Commands.Should().ContainSingle()
+			.Which.Should().BeOfType<NoteCutCommand>();
+		atBoundary[1].Commands.Should().ContainSingle()
+			.Which.Should().BeOfType<StartNoteCommand>();
+		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(240));
+	}
+
 	[Test]
 	public void ScriptedWallOffsetRunsAtAbsoluteDeadlineAfterParentTempoChange()
 	{
