@@ -704,7 +704,10 @@ command ordering. The next step is a resumable scripted Sequence
 deterministic Random and legacy out-of-order script semantics resolved
 before production migration.
 
-## Fifteenth executable step: lazy Roslyn Sequence Play invocation
+## Fifteenth executable step (historical): lazy Roslyn Sequence Play invocation
+
+**Superseded by the seventeenth step below.** The streamed Play
+iterator and generated-entry cache described here have been removed.
 
 A new Core contract, `IIncrementalRawSequenceEntryGenerator`, produces
 `IEnumerable<RawSequenceStep>` per invocation. A `RawSequenceStep.Play`
@@ -770,7 +773,10 @@ snapshot-safe ownership, general script ordering, voice lifecycles and
 full timing parity remain future work. No realtime/offline production
 scheduler was changed.
 
-## Sixteenth executable step: opt-in recursive Roslyn admission
+## Sixteenth executable step (historical): opt-in recursive Roslyn admission
+
+**The script admission remains; its Sequence iterator and entry cache were
+replaced by per-visit lookup in the seventeenth step below.**
 
 `IncrementalRecursiveTimeline` now admits resumable
 `ScriptPatternDefinition` and `ScriptSequenceDefinition` sources alongside
@@ -826,6 +832,80 @@ rather than preserving eager ordering. Mixdown's independent clock,
 full virtual-channel/effect parity and export bounds remain outstanding.
 Production playback/export, their eager compatibility fallback and
 `SongScheduleCompiler` are unchanged.
+
+## Seventeenth executable step: stateless-index, visit-sensitive Sequence lookup
+
+Scripted Sequences no longer yield a stream of `Play` entries. All
+three sequencing paths—`SequenceNoteProcessor`, the standalone
+`IncrementalSequenceCursor`, and `IncrementalRecursiveTimeline`—now
+resolve **exactly one entry per order visit** using:
+
+```csharp
+SequenceEntry? GetSequenceEntry(
+    int absoluteIndex, int sequenceIndex, int previousSequenceIndex);
+```
+
+The values are scoped to one Sequence invocation. `absoluteIndex`
+starts at zero and increments for every lookup (including repeated Bxx
+visits, missing Patterns and a final `null`). `sequenceIndex` is the
+requested order after any Bxx/Cxx flow. `previousSequenceIndex` is the
+order passed on the previous lookup, or -1 on the first. A `null`
+return ends that Sequence immediately and naturally, even if its
+`sequenceIndex` is otherwise valid.
+
+`DataSequenceDefinition` trivially implements this Core contract,
+ignoring the visit history and indexing its Entries list. Scripted
+Sequences use a generated Roslyn method body with those three arguments
+in scope. In scripts `Play(_O(patternId), startRow)` now creates a
+`SequenceEntry` **for return**, rather than appending it. The idiomatic
+restricted-C# source is:
+
+```csharp
+switch (sequenceIndex)
+{
+    case 0: return Play(_O(17));
+    case 1: return Play(_O(18), 2);
+    default: return null;
+}
+```
+
+This is only a convention, not a rule: a script may choose based on
+`absoluteIndex`, `previousSequenceIndex`, `Random()` and local
+expressions. The function can return a different child for the same
+Bxx-targeted order on its next visit. Its local variables reset on each
+call, while the `SequencingContext` RNG persists in one invocation.
+`ISequenceEntrySourceFactory.Create(context)` binds each compiled
+script to a fresh invocation-local `ISequenceEntryProvider`. Script
+loops retain a **per-lookup** runaway CPU guard; there is no longer
+a Sequence-specific CPU cooperation yield. Musical cooperation and
+suspension for **Pattern** scripts remain as before.
+
+No script-entry list or stream iterator is cached. Bxx and Cxx remain
+the responsibility of the Sequence scheduler, not the script. The new
+model avoids unlimited scripted-order history and makes backward/forward
+flow equally cheap at the Sequence-definition layer. It intentionally
+changes the restricted script language: earlier `Play(...);` statement
+scripts must return an entry or `null` on every control-flow path.
+The obsolete `RawSequenceStep` and
+`IIncrementalRawSequenceEntryGenerator` types were deleted.
+
+The production `SongScheduleCompiler` now uses the same lookup
+contract. For eligible scripted root Sequences, a chronological
+scheduler consults each new entry at the preceding root's endpoint,
+retaining concurrent nested rows, shared Tempo/Speed, delayed notes,
+and positional metadata. It qualifies potential targets by static
+script object references rather than executing the script to build
+an entry list; a non-eligible arrangement uses the established
+eager `SequenceNoteProcessor` with **per-visit lookup**. The recursive
+experimental scheduler likewise binds a script provider once per
+invocation, preserving Bxx/Cxx, root/child lifetimes, and shared clock.
+
+Tests cover in-place Bxx replacement of its own target Pattern by
+visit number, lookups starting from a nonzero requested order,
+`previousSequenceIndex` changes, `null` termination, deterministic
+invocation-local RNG, per-call runaway handling, and nested timing
+parity. Real-time/export migration of the experimental recursive
+clock and remaining unsupported advanced effects are still open.
 
 ## Proposed next interfaces and migration
 
