@@ -198,18 +198,86 @@ public sealed class IncrementalPatternTempoRampTests
 	}
 
 	[Test]
-	public void MixedTxxAndNoteCommandsFailBeforeApplyingFutureTempo()
+	public void MixedTxxAndNoteCommandsMatchEagerTempoAndEventTiming()
+	{
+		RawSource source = new(
+			Event(0, ChannelTarget.Physical(0),
+				new ApplyTrackerTempoCommand(0x12), new NoteCutCommand()),
+			Event(0.5, ChannelTarget.Physical(1), new NoteOffCommand()));
+
+		SequencingContext eagerContext = new();
+		NoteScheduleBuilder eager = new();
+		PatternNoteProcessor.GenerateNotes(
+			new EagerSource(source.Events, 1), eagerContext, eager,
+			out TimeSpan eagerDuration);
+
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(source, 1, root);
+		NoteEvent[] actual = Drain(timeline);
+		NoteEvent[] expected = eager.Freeze().ToArray();
+		Assert.That(actual.Length, Is.EqualTo(expected.Length));
+		for (int i = 0; i < expected.Length; i++)
+		{
+			Assert.That(actual[i].Target, Is.EqualTo(expected[i].Target));
+			Assert.That(actual[i].Commands, Is.EqualTo(expected[i].Commands));
+			Assert.That(actual[i].Offset.TimeOffset.TotalSeconds,
+				Is.EqualTo(expected[i].Offset.TimeOffset.TotalSeconds)
+					.Within(1e-6));
+		}
+		Assert.That(root.State.Tempo, Is.EqualTo(135));
+		Assert.That(timeline.Elapsed.TotalSeconds,
+			Is.EqualTo(eagerDuration.TotalSeconds).Within(1e-6));
+		Assert.That(root.GetPhysicalChannelState(0)
+			.TryGetEffectParameter(EffectMemorySlot.Tempo, out byte memory), Is.True);
+		Assert.That(memory, Is.EqualTo(0x12));
+	}
+
+	[Test]
+	public void MixedTxxComposesWithConcurrentStandaloneTxx()
 	{
 		SequencingContext root = new();
 		using IncrementalPatternTimeline timeline = new(root);
-		timeline.Add(new RawSource(new NoteEvent(
-			MusicalTime.Zero, ChannelTarget.Physical(0),
-			[new ApplyTrackerTempoCommand(0x12), new NoteCutCommand()])),
+		timeline.Add(new RawSource(
+			Event(0, ChannelTarget.Physical(0),
+				new ApplyTrackerTempoCommand(0x12), new NoteCutCommand())),
 			1, root);
-		Assert.Throws<NotSupportedException>(() => timeline.TryStep(out _));
-		Assert.That(root.State.Tempo, Is.EqualTo(125));
-		Assert.That(root.GetPhysicalChannelState(0)
-			.TryGetEffectParameter(EffectMemorySlot.Tempo, out _), Is.False);
+		timeline.Add(new RawSource(
+			Event(0, ChannelTarget.Physical(0),
+				new ApplyTrackerTempoCommand(0x11))), 1,
+			root.FlattenedChild(physicalChannelOffset: 1));
+		NoteEvent[] events = Drain(timeline);
+		Assert.That(events.SelectMany(e => e.Commands)
+			.OfType<SetTempoRampCommand>().Single(),
+			Is.EqualTo(new SetTempoRampCommand(140, 6)));
+		Assert.That(events.SelectMany(e => e.Commands)
+			.OfType<NoteCutCommand>().Count(), Is.EqualTo(1));
+		Assert.That(root.State.Tempo, Is.EqualTo(140));
+	}
+
+	[Test]
+	public void FixedWallNoteInMixedTxxRunsBeforeDeferredTempoBoundary()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(new RawSource(
+			new NoteEvent(
+				new MusicalTime(TimeSpan.FromMilliseconds(40), 0),
+				ChannelTarget.Physical(0),
+				[new ApplyTrackerTempoCommand(0x12), new NoteCutCommand()]),
+			Event(1.5, ChannelTarget.Physical(0), new NoteOffCommand())),
+			2, root);
+		NoteEvent[] events = Drain(timeline);
+		NoteEvent cut = events.Single(e =>
+			e.Commands.Any(c => c is NoteCutCommand));
+		NoteEvent ramp = events.Single(e =>
+			e.Commands.Any(c => c is SetTempoRampCommand));
+		Assert.That(cut.Offset.TimeOffset, Is.EqualTo(TimeSpan.FromMilliseconds(40)));
+		Assert.That(ramp.Offset.TimeOffset, Is.EqualTo(TimeSpan.FromMilliseconds(120)));
+		double half = RampSeconds(125, 135, 6, 3);
+		Assert.That(events.Single(e =>
+			e.Commands.Any(c => c is NoteOffCommand)).Offset.TimeOffset.TotalSeconds,
+			Is.EqualTo(0.120 + half).Within(1e-6));
 	}
 
 	[Test]
