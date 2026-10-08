@@ -21,6 +21,17 @@
 		<Copy SourceFiles="@(_HeresySndFileRuntime)"
 			DestinationFolder="$(TargetDir)"
 			SkipUnchangedFiles="true" />
+
+		<!--
+			The Linux NuGet contains shared libraries under unversioned file
+			names, while the binaries themselves request their ELF SONAMEs.
+			NuGet cannot preserve the original symlink farm, so reproduce those
+			names as ordinary copies beside the executable.
+		-->
+		<Copy Condition="$([System.String]::Copy('$(_SndFileRuntimeRid)').StartsWith('linux-'))"
+			SourceFiles="$(TargetDir)libsndfile.so;$(TargetDir)libvorbisenc.so;$(TargetDir)libFLAC.so;$(TargetDir)libopus.so;$(TargetDir)libmp3lame.so;$(TargetDir)libvorbis.so;$(TargetDir)libogg.so"
+			DestinationFiles="$(TargetDir)libsndfile.so.1;$(TargetDir)libvorbisenc.so.2.0.12;$(TargetDir)libFLAC.so.12;$(TargetDir)libopus.so.0;$(TargetDir)libmp3lame.so.0;$(TargetDir)libvorbis.so.0.4.9;$(TargetDir)libogg.so.0"
+			SkipUnchangedFiles="true" />
 	</Target>
 
 	<Target Name="CopyHeresySndFileRuntimeToPublish"
@@ -31,6 +42,10 @@
 		</ItemGroup>
 		<Copy SourceFiles="@(_HeresySndFileRuntimePublish)"
 			DestinationFolder="$(PublishDir)"
+			SkipUnchangedFiles="true" />
+		<Copy Condition="$([System.String]::Copy('$(_SndFileRuntimeRid)').StartsWith('linux-'))"
+			SourceFiles="$(PublishDir)libsndfile.so;$(PublishDir)libvorbisenc.so;$(PublishDir)libFLAC.so;$(PublishDir)libopus.so;$(PublishDir)libmp3lame.so;$(PublishDir)libvorbis.so;$(PublishDir)libogg.so"
+			DestinationFiles="$(PublishDir)libsndfile.so.1;$(PublishDir)libvorbisenc.so.2.0.12;$(PublishDir)libFLAC.so.12;$(PublishDir)libopus.so.0;$(PublishDir)libmp3lame.so.0;$(PublishDir)libvorbis.so.0.4.9;$(PublishDir)libogg.so.0"
 			SkipUnchangedFiles="true" />
 	</Target>
 
