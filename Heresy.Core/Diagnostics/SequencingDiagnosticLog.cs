@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
+using System.Threading;
 
 namespace Heresy.Core.Diagnostics;
 
@@ -12,7 +14,7 @@ public sealed record SequencingDiagnostic(
 	double? LastAcceptedRow = null);
 
 /// <summary>
-/// Bounded diagnostic queue for a sequencing context and its descendants.
+/// Thread-safe bounded diagnostic queue for a sequencing context and its descendants.
 /// At most 32 individual dropped-note warnings and one suppression notice
 /// are enqueued per session, regardless of how often callers drain them.
 /// After the cap is reached only counters advance; no additional messages
@@ -24,21 +26,20 @@ public sealed class SequencingDiagnosticLog
 	public const string OutOfOrderNoteCode = "HRSEQ001";
 	public const string SuppressionCode = "HRSEQ002";
 
-	private readonly Queue<SequencingDiagnostic> _pending = new();
+	private readonly ConcurrentQueue<SequencingDiagnostic> _pending = new();
 	private long _droppedOutOfOrderNotes;
 
-	public long DroppedOutOfOrderNotes => _droppedOutOfOrderNotes;
+	public long DroppedOutOfOrderNotes => Interlocked.Read(ref _droppedOutOfOrderNotes);
 
 	public long SuppressedWarnings =>
-		Math.Max(0, _droppedOutOfOrderNotes - MaximumIndividualMessages);
+		Math.Max(0, DroppedOutOfOrderNotes - MaximumIndividualMessages);
 
 	/// <summary>Record one discarded note without affecting playback.</summary>
 	public void ReportDroppedOutOfOrderNote(double row, double lastAcceptedRow)
 	{
-		if (_droppedOutOfOrderNotes < long.MaxValue)
-			_droppedOutOfOrderNotes++;
+		long count = Interlocked.Increment(ref _droppedOutOfOrderNotes);
 
-		if (_droppedOutOfOrderNotes <= MaximumIndividualMessages)
+		if (count <= MaximumIndividualMessages)
 		{
 			_pending.Enqueue(new SequencingDiagnostic(
 				OutOfOrderNoteCode,
@@ -46,7 +47,7 @@ public sealed class SequencingDiagnosticLog
 					+ $"last accepted musical row is {lastAcceptedRow}.",
 				row, lastAcceptedRow));
 		}
-		else if (_droppedOutOfOrderNotes == MaximumIndividualMessages + 1)
+		else if (count == MaximumIndividualMessages + 1)
 		{
 			_pending.Enqueue(new SequencingDiagnostic(
 				SuppressionCode,
@@ -58,8 +59,9 @@ public sealed class SequencingDiagnosticLog
 	/// <summary>Consume currently queued reports without resetting the cap.</summary>
 	public SequencingDiagnostic[] Drain()
 	{
-		SequencingDiagnostic[] messages = _pending.ToArray();
-		_pending.Clear();
-		return messages;
+		List<SequencingDiagnostic> messages = [];
+		while (_pending.TryDequeue(out SequencingDiagnostic? message))
+			messages.Add(message);
+		return messages.ToArray();
 	}
 }
