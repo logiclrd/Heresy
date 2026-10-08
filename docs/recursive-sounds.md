@@ -255,9 +255,10 @@ introduce another scripting language.
   shared between invocations.
 - The selector conservatively admits script patterns whose raw events use
   physical channels for Start/NoteOff/Cut, or the global target for standalone
-  SetTempo commands, with zero fixed wall-time offsets and nonnegative row
-  offsets **up to and including** the final pattern boundary. The final row owns events exactly
-  at RowCount and runs them at its RowEndTick before cursor retirement;
+  SetTempo/SetSpeed commands, with zero fixed wall-time offsets and
+  nonnegative row offsets **up to and including** the final pattern boundary.
+  The final row owns events exactly at RowCount and runs them at its
+  RowEndTick before cursor retirement;
   these events can launch additional flattened child cursors. More complex
   script commands retain the legacy compiler. Data-pattern support
   continues alongside scripts with shared row-time Source and effect memory.
@@ -290,12 +291,39 @@ child wall-time events.
 Regressions include fractional scripted `Tempo` snapping to its row start,
 competing parent/child tempo changes at a common tick, and equal-tick
 sibling-script tempo changes ordered by mapped channels. This is **not**
-support for scripted `Speed`, tempo ramps, arbitrary global commands,
+support for tempo ramps, arbitrary global commands beyond Tempo/Speed,
 fixed wall-time offsets or complex row/effect operations.
 
+### Scripted Speed and independent row-length capture
+
+Eligible scripted global `SetSpeedCommand` events (the
+`Speed(row, ticksPerRow)` helper) now use the same boundary rule as
+`Tempo`: the fractional portion of `row` is ignored. A scripted
+`Speed(1.5, 3)` executes at the beginning of row 1, **before** that
+cursor's row duration is captured. Its subsequent fractional note/cut/off
+events are scheduled at positions calculated from the new row speed.
+
+Each cursor's `RowEndTick` is captured independently. A Speed command
+changes its **own** current row's tick span, and sets the shared speed for
+future rows/orders and other cursors that have not started their row.
+It does **not** retroactively resize another cursor's already-started
+row, even if the other cursor's boundary is at the same tick. At an exact
+final `RowCount` endpoint, Speed affects future work without resizing
+the completed row. As with scripted Tempo, same-time operations are
+resolved by mapped physical-channel base and stable cursor creation
+sequence; within a script row, global timing commands precede ordinary
+fractional note events.
+
+Regressions cover fractional Speed taking effect at row start, an
+in-flight data parent's preserved row length, simultaneous parent/child
+Speed conflicts, carryover across data-sequence orders, and a Speed event
+at a final endpoint. This milestone is about the script **timing command**,
+not the playback-speed multiplier of nested sounds, which remains
+explicitly unsupported for flattened recursive cursors.
+
 **Not yet universal:** Scripted sequences, arbitrary wall-time script
-offsets, scripted Speed and other global/effect commands, tracker
-tempo ramps, complex virtual-channel events,
+offsets, other scripted global/effect commands, tracker tempo ramps,
+complex virtual-channel events,
 pattern control and delayed note commands still need distinct red tests and
 scheduler integration. The older compiler remains for those cases.
 
