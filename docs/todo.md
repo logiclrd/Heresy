@@ -44,13 +44,19 @@ Items that were already completed remain in Git history, not in this checklist.
   the shared tick merger integrates each ramp analytically (and inverts
   it for fixed wall deadlines), so overlapping child/parent cursors
   observe the actual evolving Tempo rather than its future endpoint.
-  Simultaneous/interrupting tempo ramps and mixed-command Txx cells
-  currently fail explicitly pending cross-cursor arbitration.
+  Concurrent Txx commands on compatible row spans now compose a single
+  ramp with each legacy tick's clamp applied in mapped physical-channel
+  order, independent of cursor creation order. New standalone global Tempo
+  and later Txx commands interrupt an active ramp at the instantaneous
+  shared-clock Tempo, not its future endpoint; Speed-only changes leave
+  the current ramp running. Txx byte memory still resolves when due.
+  Mixed-command Txx cells and simultaneous Txx on different captured
+  row-speed spans remain explicitly unsupported.
   Next, move **remaining tracker row/effect semantics** into incremental
-  resolution, including concurrent Tempo arbitration, fine and whole-row
-  delays, virtual targets, and user script coroutine instrumentation
-  with distinct CPU-only checkpoints. Wire generic invocation-lifetime
-  management for data and scripted Sequences.
+  resolution, including incompatible-span tempo arbitration, fine and
+  whole-row delays, virtual targets, and user script coroutine
+  instrumentation with distinct CPU-only checkpoints. Wire generic
+  invocation-lifetime management for data and scripted Sequences.
   Preserve out-of-order scripted-event semantics or explicitly resolve
   their ordering policy before migrating playback. Replace the existing
   restricted chronological scheduler rather than adding more special
