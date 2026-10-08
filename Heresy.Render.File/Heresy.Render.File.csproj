@@ -12,12 +12,12 @@
 
 	<ItemGroup>
 		<PackageReference Include="NAudio.SoundFile" Version="3.1.0" />
-		<PackageReference Include="org.sndfile.runtime.win-x64" Version="1.2.2" GeneratePathProperty="true" PrivateAssets="all" />
-		<PackageReference Include="org.sndfile.runtime.win-arm64" Version="1.2.2" GeneratePathProperty="true" PrivateAssets="all" />
-		<PackageReference Include="org.sndfile.runtime.linux-x64" Version="1.2.2.1" GeneratePathProperty="true" PrivateAssets="all" />
-		<PackageReference Include="org.sndfile.runtime.linux-arm64" Version="1.2.2.1" GeneratePathProperty="true" PrivateAssets="all" />
-		<PackageReference Include="org.sndfile.runtime.osx-x64" Version="1.2.2" GeneratePathProperty="true" PrivateAssets="all" />
-		<PackageReference Include="org.sndfile.runtime.osx-arm64" Version="1.2.2" GeneratePathProperty="true" PrivateAssets="all" />
+		<PackageReference Include="org.sndfile.runtime.win-x64" Version="1.2.2" PrivateAssets="all" />
+		<PackageReference Include="org.sndfile.runtime.win-arm64" Version="1.2.2" PrivateAssets="all" />
+		<PackageReference Include="org.sndfile.runtime.linux-x64" Version="1.2.2.1" PrivateAssets="all" />
+		<PackageReference Include="org.sndfile.runtime.linux-arm64" Version="1.2.2.1" PrivateAssets="all" />
+		<PackageReference Include="org.sndfile.runtime.osx-x64" Version="1.2.2" PrivateAssets="all" />
+		<PackageReference Include="org.sndfile.runtime.osx-arm64" Version="1.2.2" PrivateAssets="all" />
 	</ItemGroup>
 
 	<!--
@@ -27,37 +27,37 @@
 		the executable/test host just like other runtime content.
 	-->
 	<ItemGroup Condition="'$(_SndFileRid)' == 'linux-x64'">
-		<None Include="$(Pkgorg_sndfile_runtime_linux_x64)/runtimes/linux-x64/native/*.so"
+		<None Include="$(NuGetPackageRoot)org.sndfile.runtime.linux-x64/1.2.2.1/runtimes/linux-x64/native/*.so"
 			Link="%(Filename)%(Extension)"
 			CopyToOutputDirectory="PreserveNewest"
 			CopyToPublishDirectory="PreserveNewest" />
 	</ItemGroup>
 	<ItemGroup Condition="'$(_SndFileRid)' == 'linux-arm64'">
-		<None Include="$(Pkgorg_sndfile_runtime_linux_arm64)/runtimes/linux-arm64/native/*.so"
+		<None Include="$(NuGetPackageRoot)org.sndfile.runtime.linux-arm64/1.2.2.1/runtimes/linux-arm64/native/*.so"
 			Link="%(Filename)%(Extension)"
 			CopyToOutputDirectory="PreserveNewest"
 			CopyToPublishDirectory="PreserveNewest" />
 	</ItemGroup>
 	<ItemGroup Condition="'$(_SndFileRid)' == 'win-x64'">
-		<None Include="$(Pkgorg_sndfile_runtime_win_x64)/runtimes/win-x64/native/*.dll"
+		<None Include="$(NuGetPackageRoot)org.sndfile.runtime.win-x64/1.2.2/runtimes/win-x64/native/*.dll"
 			Link="%(Filename)%(Extension)"
 			CopyToOutputDirectory="PreserveNewest"
 			CopyToPublishDirectory="PreserveNewest" />
 	</ItemGroup>
 	<ItemGroup Condition="'$(_SndFileRid)' == 'win-arm64'">
-		<None Include="$(Pkgorg_sndfile_runtime_win_arm64)/runtimes/win-arm64/native/*.dll"
+		<None Include="$(NuGetPackageRoot)org.sndfile.runtime.win-arm64/1.2.2/runtimes/win-arm64/native/*.dll"
 			Link="%(Filename)%(Extension)"
 			CopyToOutputDirectory="PreserveNewest"
 			CopyToPublishDirectory="PreserveNewest" />
 	</ItemGroup>
 	<ItemGroup Condition="'$(_SndFileRid)' == 'osx-x64'">
-		<None Include="$(Pkgorg_sndfile_runtime_osx_x64)/runtimes/osx-x64/native/*.dylib"
+		<None Include="$(NuGetPackageRoot)org.sndfile.runtime.osx-x64/1.2.2/runtimes/osx-x64/native/*.dylib"
 			Link="%(Filename)%(Extension)"
 			CopyToOutputDirectory="PreserveNewest"
 			CopyToPublishDirectory="PreserveNewest" />
 	</ItemGroup>
 	<ItemGroup Condition="'$(_SndFileRid)' == 'osx-arm64'">
-		<None Include="$(Pkgorg_sndfile_runtime_osx_arm64)/runtimes/osx-arm64/native/*.dylib"
+		<None Include="$(NuGetPackageRoot)org.sndfile.runtime.osx-arm64/1.2.2/runtimes/osx-arm64/native/*.dylib"
 			Link="%(Filename)%(Extension)"
 			CopyToOutputDirectory="PreserveNewest"
 			CopyToPublishDirectory="PreserveNewest" />
