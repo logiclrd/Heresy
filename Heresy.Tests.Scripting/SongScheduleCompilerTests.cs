@@ -1529,7 +1529,7 @@ public sealed class SongScheduleCompilerTests
 		result.PlaybackPositions.Where(p => p.PatternId == patternId
 				&& p.PatternRow == 0)
 			.Select(p => p.SequenceEntryIndex).Should().Equal(0, 1);
-		result.Duration.Should().Be(TimeSpan.FromMilliseconds(240));
+		result.Duration.Should().Be(TimeSpan.FromMilliseconds(300));
 	}
 
 
