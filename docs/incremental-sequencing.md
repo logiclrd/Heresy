@@ -529,15 +529,86 @@ shared invocation-lifetime management, flattening/mixdown, and
 the remaining complex tracker-effect parity before replacing the
 existing chronological data-Pattern scheduler.
 
+## Twelfth executable step: recursive flattened invocation ownership
+
+The new experimental `IncrementalRecursiveTimeline` composes **nested
+data Patterns and data Sequences through one shared
+`IncrementalPatternTimeline`**. It does not instantiate one scheduler
+per child: Tempo, Speed, row ticks, deferred events and mapped
+physical-channel memory remain common to parent, child, and siblings.
+
+- Source lookup is expressed by `IIncrementalInvocationResolver`, which
+  resolves immutable snapshot `SongObject` references by stable ID.
+  `AddRoot(sourceId)` begins a Pattern or data Sequence at the
+  timeline's current position. `TryStep` returns the existing
+  `IncrementalPatternTimelineStep` types and can be advanced
+  cooperatively without eager future expansion.
+- Each note `Emit` now carries its *originating Pattern invocation
+  ID*. When an emitted physical `StartNoteCommand` refers to an
+  incremental `PatternDefinition` or `DataSequenceDefinition`
+  and `Mixdown` is false, the coordinator consumes **only that
+  nested start command**, leaving any unrelated commands in the
+  original event. It creates a child context using
+  `FlattenedChild(physicalChannelOffset: ...)` and starts the
+  child at that **exact shared tick**, including fractional parent
+  positions. An unknown or sample/instrument source, or a
+  `Mixdown=true` start, passes through to the existing renderer.
+- A data Sequence invocation snapshots its order entries, starts
+  just one referenced Pattern at a time, consumes that Pattern's
+  Bxx/Cxx `Flow`, and starts the requested next order at the
+  proper musical boundary. An optional `shouldFollowOrderJump`
+  observer retains the existing `SequenceOrderJumpEncounter`
+  contract. **B00** can therefore revisit an order forever while
+  creating new children only as time advances; no lifetime
+  visit-count ceiling is imposed.
+- Frames record parent/child relationships independently of source
+  row completion. A child may outlive its parent's final row;
+  a previous order's delayed physical Note/Off/Cut can outlive that
+  order without stopping the next. `HasOutstandingWork` on the
+  underlying timeline accounts for delayed deadlines and queued
+  synthetic timing events. `Cancel(invocationId)` recursively
+  disposes descendant enumerators, pending timing and wall events,
+  and future Sequence orders while preserving unrelated siblings.
+  Finished frames are pruned when their own work *and all descendants*
+  are complete, so repeating Bxx orders do not accumulate historical
+  invocation frames indefinitely.
+- Recursive source-ID cycles are rejected against the **active
+  ancestry path**, not across sibling invocations or separate
+  sequential Bxx visits; nesting depth is limited to 128.
+  A per-call cooperation budget also rejects non-advancing
+  chains of missing/empty Sequence orders.
+
+A flattened child currently requires a **physical parent target**
+and unit Pitch/Speed multipliers with no initial Volume override,
+matching the existing flattened-expander limitations. Mixdown
+requires an independently rendered sound and is explicitly left
+unflattened in this shared-clock prototype. Scripted, eager-only
+and other unsupported Pattern/Sequence sources are rejected instead
+of being executed speculatively.
+
+Regressions cover child Tempo changes retiming later parent notes,
+child Sequence Bxx/Cxx, grandchildren and additive channel mapping,
+simultaneous siblings, descendant lifetimes/cancellation, active
+cycle detection, B00 repeatedly launching child Patterns,
+mixed-command retention, unknown-source and mixdown pass-through,
+and unsupported transforms.
+
+**Production playback and offline export have not migrated.** The
+remaining major architecture item is generating invocation-local
+raw steps for Roslyn Pattern/Sequence scripts (distinguishing
+CPU checkpoint yields from musical time), together with stronger
+mixed effect and mixdown parity before replacing the existing
+compiler and chronological scheduler.
+
 ## Proposed next interfaces and migration
 
-1. Extend the implemented **within-row shared-tick merger
-   and sequential data-Sequence cursor** with common invocation
-   lifetimes, nested and flattened Sequences, and eventually script
-   iterators. Bxx/Cxx now move between orders lazily and SBx
-   revisits replay-safe Pattern rows. Finish SEy repeated Tempo,
-   SDx/Qxy interactions, advanced effect combinations, virtual
-   channels and incompatible Tempo spans before production adoption.
+1. Extend the implemented **shared-tick recursive Pattern/Sequence
+   invocation coordinator** to cover scripting and remaining effect
+   semantics. Flattened data children and Sequence orders now execute
+   lazily with subtree lifetimes; Bxx/Cxx move between orders and SBx
+   revisits replay-safe rows. Finish SEy repeated Tempo, SDx/Qxy
+   interactions, advanced effect combinations, virtual channels,
+   mixdown clocks, and incompatible Tempo spans before adoption.
 2. Add **script invocation-local iterators** through Roslyn syntax
    rewriting. The existing loop `Checkpoint()` instrumentation for
    `for`/`while`/`do` is the starting point, but the generated
@@ -546,9 +617,10 @@ existing chronological data-Pattern scheduler.
    and resume without sacrificing diagnostics or deterministic Random().
    A computational cooperation step is distinct from musical `Advance`:
    it yields CPU control but does **not** advance musical time.
-3. Generalize the existing **sequential data-Sequence cursor**
-   into composable recursive Pattern/Sequence invocations. A common
-   clock orders all active cursors by musical deadline, with stable same-time tie breaking, and handles
+3. Extend the new **recursive Pattern/data-Sequence coordinator**
+   to accept resumable scripted invocations and true mixdown semantics.
+   The common clock already orders flattened active cursors by musical
+   deadline, with stable same-time tie breaking, and handles
    cancellation and migrated/releasing note lifetimes.
 4. Move realtime and offline compilation consumers across behind tests,
    then remove duplicate eager/chronological engines once semantics match.
