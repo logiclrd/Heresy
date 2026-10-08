@@ -335,44 +335,97 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	/// integrates only across already-observed tracker ticks; peeking ahead
 	/// never commits commands from future rows or fractional positions.
 	/// </summary>
+
 	public bool TryStep(out IncrementalPatternTimelineStep? result)
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		result = null;
-		while (_active.Count != 0)
+		while (_active.Count != 0 || _delayed.Count != 0)
 		{
-			Cursor current = _active
+			Cursor? current = _active
 				.OrderBy(c => c.DueTick)
 				.ThenBy(c => c.Context.PhysicalChannelBase)
 				.ThenBy(c => c.Sequence)
-				.First();
-			if (current.DueTick < _tick - TickTolerance)
+				.FirstOrDefault();
+			if (current is not null && current.DueTick < _tick - TickTolerance)
 				throw new InvalidOperationException("Incremental cursor moved backwards.");
-			double next = current.DueTick;
-			Elapsed += TimeSpan.FromSeconds(
-				Math.Max(0, next - _tick)
-				* SequencingConstants.Diachron.TotalSeconds / _root.State.Tempo);
-			_tick = next;
-			if (Math.Abs(_tick - _lastStepTick) > TickTolerance)
-			{
-				_lastStepTick = _tick;
-				_operationsAtTick = 0;
-			}
-			if (++_operationsAtTick > MaximumOperationsAtOneTick)
-				throw new InvalidOperationException(
-					"Incremental scheduler exceeded its same-tick cooperation budget.");
 
+			TimeSpan nextTickTime = current is null
+				? TimeSpan.MaxValue
+				: Elapsed + TimeSpan.FromSeconds(
+					Math.Max(0, current.DueTick - _tick)
+					* SequencingConstants.Diachron.TotalSeconds / _root.State.Tempo);
+			DeferredNote? nextWall = _delayed
+				.OrderBy(n => n.Deadline)
+				.ThenBy(n => n.Owner.Context.PhysicalChannelBase)
+				.ThenBy(n => n.Owner.Sequence)
+				.ThenBy(n => n.Order)
+				.FirstOrDefault();
+
+			bool useWall = nextWall is not null
+				&& (current is null || nextWall.Deadline < nextTickTime
+					|| nextWall.Deadline == nextTickTime
+						&& (nextWall.Owner.Context.PhysicalChannelBase
+							< current.Context.PhysicalChannelBase
+							|| nextWall.Owner.Context.PhysicalChannelBase
+								== current.Context.PhysicalChannelBase
+								&& nextWall.Owner.Sequence < current.Sequence));
+			if (useWall)
+			{
+				TimeSpan delta = nextWall!.Deadline - Elapsed;
+				if (delta < TimeSpan.Zero)
+					throw new InvalidOperationException("A delayed raw note moved backwards.");
+				_tick += delta.TotalSeconds * _root.State.Tempo
+					/ SequencingConstants.Diachron.TotalSeconds;
+				Elapsed = nextWall.Deadline;
+				CheckCooperationBudget();
+				_delayed.Remove(nextWall);
+
+				NoteScheduleBuilder wall = new();
+				PatternNoteProcessor.GenerateNotes(
+					new SingleEventSlice(nextWall.Raw), nextWall.Owner.Context,
+					wall, out _);
+				NoteEvent[] resolvedWall = wall.Freeze().ToArray();
+				if (resolvedWall.Length != 1
+					|| resolvedWall[0].Offset.TimeOffset != TimeSpan.Zero)
+					throw new NotSupportedException(
+						"Deferred physical note did not resolve to one immediate event.");
+				NoteEvent note = resolvedWall[0] with
+				{
+					Offset = new MusicalTime(Elapsed, 0),
+					EmissionOrder = _emissionOrder++,
+				};
+				result = new IncrementalPatternTimelineStep.Emit(note, _tick, Elapsed);
+				return true;
+			}
+
+			if (current is null)
+				throw new InvalidOperationException("No advancing musical or wall event.");
+			Elapsed = nextTickTime;
+			_tick = current.DueTick;
+			CheckCooperationBudget();
 			if (current.Complete)
 			{
 				_active.Remove(current);
 				current.Dispose();
 				continue;
 			}
-
 			if (TryOperate(current, out result))
 				return true;
 		}
 		return false;
+	}
+
+	private void CheckCooperationBudget()
+	{
+		if (Math.Abs(_tick - _lastStepTick) > TickTolerance)
+		{
+			_lastStepTick = _tick;
+			_operationsAtTick = 0;
+		}
+		if (++_operationsAtTick > MaximumOperationsAtOneTick)
+			throw new InvalidOperationException(
+					"Incremental scheduler exceeded its same-tick cooperation budget.");
 	}
 
 	private bool TryOperate(Cursor current, out IncrementalPatternTimelineStep? result)
