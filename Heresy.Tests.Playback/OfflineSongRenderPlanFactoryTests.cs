@@ -92,6 +92,42 @@ public sealed class OfflineSongRenderPlanFactoryTests
 	}
 
 	[Test]
+	public void FlattenedChildExtendsOfflineLogicalDurationBeyondContainingPattern()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Long child")
+		{
+			RowCount = 3,
+			ChannelCount = 1,
+		};
+		document.Add(child);
+
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Short parent")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		PatternCell cell = parent.Grid.GetOrCreateCell(0, 0);
+		cell.SourceId = childId;
+		cell.Note = new StartPatternNote();
+		document.Add(parent);
+
+		ObjectId rootId = document.AllocateObjectId();
+		DataSequenceDefinition sequence = new(rootId, "Song");
+		sequence.Entries.Add(new SequenceEntry(parentId));
+		document.Add(sequence);
+		document.RootSequenceId = rootId;
+
+		OfflineSongRenderPlanFactory factory = new(
+			RenderConfiguration.Stereo(sampleRate: 48000));
+		OfflineSongRenderPlan plan = factory.Create(document);
+
+		plan.LogicalDuration.Should().Be(TimeSpan.FromMilliseconds(360));
+	}
+
+	[Test]
 	public void ThirdEncounterWithSameBxxEndsOfflineArrangement()
 	{
 		SongDocument document = new();
