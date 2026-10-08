@@ -16,22 +16,21 @@ Items that were already completed remain in Git history, not in this checklist.
   and **mixdown** (private child sequencing state and a cooked multichannel
   signal exposed as one parent playback voice). A playback-channel mixdown must
   not collapse physical speaker feeds to mono.
-- [ ] Complete **concurrent flattened child/parent timing**.
-  Immediate child tempo changes and a first chronological queue for future
-  child-row SetTempo events now reach the parent at their due wall time,
-  including within-row changes across sequence orders. Replace the queue's
-  precalculated wall-clock due times with a unified tick-domain scheduler
-  capable of interleaving parent and child row boundaries when an intervening
-  tempo change moves a later child event. Include nested tempo ramps,
-  overlapping parent tempo slides, speed changes and pattern/fine delays.
-  Detected unsupported combinations should fail explicitly, never silently
-  produce an invalid shared timeline.
-- [ ] Defer **future flattened child channel-state changes** (remembered
-  Source, tracker effect memory and related commands) until the actual
-  chronological child-row boundary. Although sources resolve correctly when
-  each row executes, eager compilation of all future child rows can still
-  mutate shared channel state too early. Add tests where a parent note falls
-  between a child invocation and a later source/effect change.
+- [ ] Generalize the **concurrent flattened row scheduler** to scripted
+  and mixed Pattern/Sequence hierarchies, nonzero StartRow, pattern control
+  jumps, non-unit pitch/speed transforms, fractional-row invocations,
+  tracker tempo ramps, overlapping tempo slides and pattern/fine delays.
+  Independently advancing shared-tick row cursors now handle a first
+  compatible subset of data-only Patterns and data-sequence arrangements;
+  their row boundaries respond to intervening parent tempo changes.
+  The legacy wall-time deferred queue remains only for unsupported paths,
+  which must fail explicitly rather than produce an invalid shared timeline.
+- [ ] Extend **chronologically deferred channel state** to every flattened
+  source kind and effect. Source and tracker-effect memory now execute at
+  actual child-row boundaries in the compatible data-pattern cursor path,
+  including across parent sequence orders. Scripted and advanced-effect
+  children still use eager preparation and may mutate future shared
+  channel state too early. Add more overlap and same-timestamp regressions.
 - [ ] Propagate pitch, playback-speed multiplier, origin timing, Note Off/Cut,
   envelope/release behavior and new-note actions through nested sources.
   Preserve snapshot isolation, deterministic random/effect memory, script
