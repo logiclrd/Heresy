@@ -268,6 +268,53 @@ public sealed class SongScheduleCompilerTests
 	}
 
 	[Test]
+	public void FutureChildEffectMemoryIsNotVisibleBeforeItsOwnRow()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Delayed effect memory")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		PatternCell first = child.Grid.GetOrCreateCell(0, 0);
+		first.Effects.Add(new SetSpeedPatternEffect(9));
+		first.Effects.Add(new TrackerVolumeSlidePatternEffect(0x20));
+		child.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new TrackerVolumeSlidePatternEffect(0x30));
+		document.Add(child);
+
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Recall around child row")
+		{
+			RowCount = 3,
+			ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sourceId: childId);
+		parent.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new TrackerVolumeSlidePatternEffect(0));
+		parent.Grid.GetOrCreateCell(2, 0).Effects.Add(
+			new TrackerVolumeSlidePatternEffect(0));
+		document.Add(parent);
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompilePattern(document, parentId);
+		result.Success.Should().BeTrue();
+		SetNoteVolumeSlideCommand early = result.Schedule!
+			.Single(e => e.Offset.TimeOffset == TimeSpan.FromMilliseconds(120)
+				&& e.Commands.Any(c => c is SetNoteVolumeSlideCommand))
+			.Commands.OfType<SetNoteVolumeSlideCommand>().Single();
+		SetNoteVolumeSlideCommand later = result.Schedule!
+			.Single(e => e.Offset.TimeOffset == TimeSpan.FromMilliseconds(300)
+				&& e.Commands.Any(c => c is SetNoteVolumeSlideCommand))
+			.Commands.OfType<SetNoteVolumeSlideCommand>().Single();
+
+		early.TrackerUnitsPerTick.Should().BeLessThan(
+			later.TrackerUnitsPerTick);
+	}
+
+	[Test]
 	public void InterveningParentTempoMovesFutureChildRowInSharedTickDomain()
 	{
 		SongDocument document = new();
