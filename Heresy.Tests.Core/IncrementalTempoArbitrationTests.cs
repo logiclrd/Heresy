@@ -172,6 +172,37 @@ public sealed class IncrementalTempoArbitrationTests
 		Assert.That(root.State.Speed, Is.EqualTo(3));
 	}
 
+	[Test]
+	public void DifferentCapturedRowSpeedsRejectSimultaneousTxxBeforeUpdatingEffectMemory()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(new RawSource(At(0, 0,
+			new ApplyTrackerTempoCommand(0x12))), 1, root);
+		timeline.Add(new RawSource(At(0, ChannelTarget.Global,
+			new SetSpeedCommand(3))), 1,
+			root.FlattenedChild(physicalChannelOffset: 2));
+
+		// Both existing invocations captured Speed 6 at tick zero;
+		// their global Speed command executes before physical Txx.
+		Assert.That(timeline.TryStep(out IncrementalPatternTimelineStep? first),
+			Is.True);
+		Assert.That(((IncrementalPatternTimelineStep.Emit)first!).Note
+			.Commands.Single(), Is.EqualTo(new SetSpeedCommand(3)));
+
+		// A newly started invocation at the *same* tick captures Speed 3.
+		// The two Txx spans differ, so no combined ramp is well-defined.
+		timeline.Add(new RawSource(At(0, 0,
+			new ApplyTrackerTempoCommand(0x11))), 1,
+			root.FlattenedChild(physicalChannelOffset: 3));
+		Assert.Throws<NotSupportedException>(() => timeline.TryStep(out _));
+		Assert.That(root.State.Tempo, Is.EqualTo(125));
+		Assert.That(root.GetPhysicalChannelState(0)
+			.TryGetEffectParameter(EffectMemorySlot.Tempo, out _), Is.False);
+		Assert.That(root.GetPhysicalChannelState(3)
+			.TryGetEffectParameter(EffectMemorySlot.Tempo, out _), Is.False);
+	}
+
 	private static double RampSeconds(
 		double start, double end, double ticks, double into)
 		=> 2.5 * ticks / (end - start)
