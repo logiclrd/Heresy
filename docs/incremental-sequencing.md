@@ -953,6 +953,44 @@ timing parity or safety of a future production migration. Out-of-order
 raw scripted Pattern events, unsupported effects, flattened voice
 lifecycles and independent mixdown clocks remain separate gates.
 
+## Nineteenth executable step: silently discard out-of-order raw Pattern events
+
+**Authoritative Pattern ordering policy:** raw note events must be
+emitted in nondecreasing **musical-row position**, and a late arrival
+whose raw row is earlier than the last accepted position is silently
+discarded. This is not a hard error and does not rewind the cursor.
+Emissions at the **same** position are valid and retain their
+original order. A rejected event cannot change shared Tempo, Speed,
+Source, or tracker-effect memory. Discarded events do not update the
+last accepted position: after rows 4, 2, 3, 4, 5 are emitted, the
+accepted events are 4, 4, 5. The rule applies to both scripted and
+data sources at Core consumer boundaries.
+
+The underlying positions are raw tracker **rows**, not final
+wall-clock deadlines. A positive fixed `TimeOffset` is resolved
+later; earlier wall deadlines on later rows do not cause otherwise
+valid raw notes to be dropped. `RawPatternStep.Cooperate` is only
+CPU cooperation, not a claim of musical progress. Backwards
+`RawPatternStep.Advance` progress remains invalid; earlier
+`RawPatternStep.Emit` notes are silently skipped. Infinite streams
+of stale notes are still subject to the existing per-row/at-one-instant
+no-progress budgets, so the silent-discard policy cannot stall the
+audio thread indefinitely.
+
+Eager scripted Patterns now filter raw results as they are appended,
+before the schedule is frozen or tracker commands are resolved.
+`PatternNoteProcessor` enforces the same contract for general eager
+raw generators. `CompiledIncrementalPatternGenerator`,
+`IncrementalPatternTimeline`, and the standalone
+`IncrementalPatternNoteProcessor` skip stale `Emit` steps instead
+of throwing, without reordering or buffering future events.
+The former streaming rejection behavior is superseded.
+
+Regression tests verify scripted eager and streaming drop semantics,
+stable equal-position ordering, shared-clock timestamps, and a late
+global Tempo request that **must not** retime later notes.
+**No production scheduler migration** is implied by this policy.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
@@ -982,10 +1020,10 @@ lifecycles and independent mixdown clocks remain separate gates.
 
 - **Causality:** looking ahead for the next step must not apply future
   Tempo/Speed, Source or tracker-effect memory to shared state.
-- **Ordering:** currently Pattern scripts can call `Note(10,...)` before
-  `Note(2,...)`. The new stream cannot automatically assume script
-  execution order equals musical order; choose a documented policy or
-  safe buffering strategy before migrating scripts.
+- **Ordering:** a Pattern source must emit chronological raw musical-row
+  positions; out-of-order notes are silently discarded rather than
+  buffered, sorted or treated as hard errors. Equal positions preserve
+  source order; fixed wall offsets remain independent deadlines.
 - **Runaway protection:** a cursor may emit indefinitely if musical time
   advances. An infinite loop yielding cooperation steps but no musical
   progress, or producing infinitely many zero-time events, still needs

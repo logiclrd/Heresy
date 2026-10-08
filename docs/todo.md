@@ -109,8 +109,10 @@ Items that were already completed remain in Git history, not in this checklist.
   `ScriptCompiler.CompileIncrementalPattern`: direct Note/Off/Cut/
   Tempo/Speed statements suspend after each raw event, and loops yield
   `RawPatternStep.Cooperate` after every 128 iterations without
-  musical progress. Out-of-order row emissions explicitly throw in
-  this experimental API; the old eager compiler remains unchanged.
+  musical progress. Raw notes emitted earlier than the last accepted
+  musical row are now **silently discarded** in both streaming and
+  eager Pattern paths, while equal positions preserve emission order.
+  Fixed wall offsets are separate deadlines, not the comparison key.
   The shared-tick `IncrementalPatternTimeline` now exposes a distinct
   CPU-only `IncrementalPatternTimelineStep.Cooperate` at unchanged Tick and
   Elapsed. It suspends partial-row raw collection and retains buffered
@@ -147,15 +149,17 @@ Items that were already completed remain in Git history, not in this checklist.
   and RNG state. This remains explicitly opt-in; production
   playback/export use their existing scheduling paths.
   Next: establish realtime/offline integration with preprepared
-  snapshots, legacy out-of-order Pattern emission parity, and full
-  deterministic effect integration. Continue incompatible Tempo spans,
+  snapshots and full deterministic effect integration. The Pattern
+  ordering contract is settled: earlier raw musical-row events are
+  silently dropped at the consumption boundary; no arbitrary sorting
+  or lookahead is required. Continue incompatible Tempo spans,
   SEy repeated Tempo, SDx/Qxy, virtual/mixdown channels and advanced
   effects before production recursive-clock migration.
-  Preserve out-of-order scripted-event semantics or explicitly resolve
-  their ordering policy before migrating playback. Replace the existing
-  restricted chronological scheduler rather than adding more special
-  cases. Require test parity and realtime/offline determinism before
-  retiring eager scheduling.
+  Require test parity, chronological raw-emission filtering, and
+  realtime/offline determinism before retiring eager scheduling.
+  Replace the restricted chronological scheduler rather than adding
+  more special cases; dropped stale note events must never mutate
+  shared timing or effect state.
 - [ ] Resolve data/script **Patterns and Sequences as playable note sources**
   through the concrete playback sound resolver, including from instruments and
   other nested source graphs. They must render in realtime and offline rather

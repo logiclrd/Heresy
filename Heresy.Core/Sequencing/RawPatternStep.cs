@@ -9,7 +9,10 @@ namespace Heresy.Core.Sequencing;
 /// </summary>
 public abstract record RawPatternStep(double Row)
 {
-	/// <summary>A raw command-bearing event in Pattern-local row coordinates.</summary>
+	/// <summary>
+/// A raw command-bearing event in Pattern-local row coordinates. Consumers
+/// silently discard emissions earlier than the last accepted musical position.
+/// </summary>
 	public sealed record Emit(NoteEvent Note) : RawPatternStep(Note.Offset.RowOffset);
 
 	/// <summary>
