@@ -113,6 +113,107 @@ public sealed class SongScheduleCompilerTests
 	}
 
 	[Test]
+	public void FlattenedChildSourceOnlyRowReplacesRememberedSourceBeforeLaterParentNote()
+	{
+		SongDocument document = new();
+		ObjectId nextSource = document.AllocateObjectId();
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Source selector")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		child.Grid.GetOrCreateCell(0, 0).SourceId = nextSource;
+		document.Add(child);
+
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Parent")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sourceId: childId);
+		parent.Grid.GetOrCreateCell(1, 0).Note =
+			new StartPatternNote();
+		document.Add(parent);
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompilePattern(document, parentId);
+
+		result.Success.Should().BeTrue();
+		StartNoteCommand[] starts = result.Schedule!
+			.SelectMany(e => e.Commands)
+			.OfType<StartNoteCommand>()
+			.ToArray();
+		starts.Should().ContainSingle()
+			.Which.SourceId.Should().Be(nextSource);
+		result.Schedule.Should().NotContain(e =>
+			e.Commands.Any(c => c is SelectPatternSourceCommand));
+	}
+
+	[Test]
+	public void SourceOnlyRowAfterSourceOmittedNoteDoesNotRetroactivelyChangeItsSource()
+	{
+		SongDocument document = new();
+		ObjectId selected = document.AllocateObjectId();
+		ObjectId patternId = document.AllocateObjectId();
+		DataPatternDefinition pattern = new(patternId, "Select later")
+		{
+			RowCount = 3,
+			ChannelCount = 1,
+		};
+		pattern.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote();
+		pattern.Grid.GetOrCreateCell(1, 0).SourceId = selected;
+		pattern.Grid.GetOrCreateCell(2, 0).Note = new StartPatternNote();
+		document.Add(pattern);
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompilePattern(document, patternId);
+		result.Success.Should().BeTrue();
+		StartNoteCommand[] starts = result.Schedule!
+			.SelectMany(e => e.Commands).OfType<StartNoteCommand>().ToArray();
+		starts.Should().ContainSingle().Which.SourceId.Should().Be(selected);
+		result.Schedule.Single(e =>
+			e.Commands.Any(c => c is StartNoteCommand))
+			.Offset.TimeOffset.Should().BeGreaterThan(TimeSpan.FromMilliseconds(120));
+	}
+
+	[Test]
+	public void SourceSelectionMemoryIsSharedAtMappedChildChannelButNotAdjacentParentChannel()
+	{
+		SongDocument document = new();
+		ObjectId src = document.AllocateObjectId();
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Child")
+		{
+			RowCount = 1,
+			ChannelCount = 2,
+		};
+		child.Grid.GetOrCreateCell(0, 1).SourceId = src;
+		document.Add(child);
+
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Parent")
+		{
+			RowCount = 2,
+			ChannelCount = 3,
+		};
+		parent.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote(sourceId: childId);
+		parent.Grid.GetOrCreateCell(1, 1).Note = new StartPatternNote();
+		parent.Grid.GetOrCreateCell(1, 2).Note = new StartPatternNote();
+		document.Add(parent);
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompilePattern(document, parentId);
+		result.Success.Should().BeTrue();
+		NoteEvent note = result.Schedule!.Single(e =>
+			e.Commands.Any(c => c is StartNoteCommand));
+		note.Target.Should().Be(ChannelTarget.Physical(2));
+		((StartNoteCommand)note.Commands.Single()).SourceId.Should().Be(src);
+	}
+
+	[Test]
 	public void ScriptRootSequenceCanInvokeScriptPattern()
 	{
 		SongDocument document = new();
