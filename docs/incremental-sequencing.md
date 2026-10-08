@@ -223,20 +223,65 @@ Mixed unsupported command combinations and negative fixed offsets
 still fail explicitly.
 
 This is an **experimental incremental timeline**, not production
-playback. Tracker Tempo slides `T0x/T1x`, timing effects embedded in
-complex commands, variable-length tracker rows, and full cross-cursor
-same-instant priority reconciliation still require additional parity
-work before general use.
+playback. Timing effects embedded in mixed-command notes, variable-length
+tracker rows, and full cross-cursor same-instant priority reconciliation
+still require additional parity work before general use.
+
+## Sixth executable step: tracker Txx continuous tempo ramps
+
+The incremental shared-clock prototype now handles an **isolated tracker
+`ApplyTrackerTempoCommand`** on a physical channel. The existing common
+`PatternNoteProcessor` remains authoritative for tracker Txx memory
+(`T00`), whole-byte recall, T20–TFF immediate sets, T0x/T1x slides,
+32/255 clamping, and the conversion of a slide into a single
+`SetTempoRampCommand`. The incremental wrapper temporarily runs the
+existing processor for that one command using the cursor's captured row
+Speed, then restores the shared timing state: the eager processor normally
+advances the shared Tempo to its *future* endpoint while preparing the
+full row, which would violate lazy causality.
+
+The shared clock installs the resulting ramp at the command's **eligible
+source-row boundary**. Tempo is linear with respect to *tracker ticks*
+throughout the ramp:
+
+`tempo(tick) = startingTempo + (endingTempo - startingTempo) * progress`
+
+The timeline integrates its wall-time duration analytically with
+`TrackerTimeMap`, and inverts that same integral if an absolute
+wall-time deadline falls *inside* the ramp. As it actually advances,
+it updates `SequencingState.Tempo` to the current instantaneous Tempo.
+An overlapping child's note, Source change, row boundary, or deferred
+physical Note/Off/Cut can therefore occur at the correct wall time even
+when another cursor is responsible for the active ramp. A later row
+starts using the tempo the shared clock has reached by that boundary.
+
+The first tests establish eager parity for T12, the downward T02
+clamp and upward T1F clamp, row-end duration and fractional note
+times, a child Txx ramp retiming parent events, exact fixed-wall
+deadline inversion during the ramp, T00 memory across rows, immediate
+TFA followed by T00 recall, and a positive-offset Txx becoming
+eligible at a later row boundary.
+
+**Restrictions remain explicit.** Concurrent or interrupting global
+timing operations while a ramp is still active currently throw
+`NotSupportedException`: physical-channel ordering of multiple
+simultaneous Txx commands and two unrelated cursors contributing
+overlapping ramps require a separate priority/arbitration design.
+Complex cells containing Txx together with other non-timing commands,
+S6x/SEy extended rows, tempo-control retriggering, script-generated
+out-of-order raw events and NNA/mixdown effects are not implemented
+here. This is **not** yet wired to the production song compiler,
+realtime playback, or offline export.
 
 ## Proposed next interfaces and migration
 
 1. Expand the now-implemented **within-row shared-tick merger** beyond
-   supported slide families, ordinary fixed wall-time notes and deferred
-   standalone global Tempo/Speed. Extract a fully resumable version of
-   the `PatternNoteProcessor`'s remaining row/event semantics, especially
-   tracker `Txx` tempo slides, fine delays, tempo ramps, pattern flow
-   control, effect families, virtual channels, same-instant arbitration
-   and the existing zero-time cooperation guards before production adoption.
+   the supported slide families, deferred timing and isolated tracker
+   Txx ramps. Extract a fully resumable common processor with complete
+   row/event semantics, including priority arbitration for concurrent
+   and interrupting Tempo ramps, fine/whole-row pattern delays, pattern
+   flow control, complex mixed-command effects, virtual channels and
+   zero-time cooperation guards before production adoption.
 2. Add **script invocation-local iterators** through Roslyn syntax
    rewriting. The existing loop `Checkpoint()` instrumentation for
    `for`/`while`/`do` is the starting point, but the generated
