@@ -311,6 +311,96 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
+	public void NestedMixdownOffsetUsesNativeSourceFrames()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = AddSample(document, "Stepped sample");
+		ObjectId patternId = AddPatternWithNote(document, sampleId);
+		NoteScheduleBuilder events = new();
+		events.Append(
+			new NoteEvent(
+				new Heresy.Core.Timing.MusicalTime(TimeSpan.Zero, 0.0),
+				ChannelTarget.Physical(0),
+				new NoteCommand[]
+				{
+					new StartNoteCommand(patternId, Mixdown: true),
+					new SetSourceFrameOffsetCommand(2),
+				}));
+		PlaybackRequestAudioSourceFactory factory = new(
+			MonoConfiguration(100),
+			new RecordingSampleProvider(
+				new MemorySampleData(
+					100, 1, [0.1f, 0.2f, 0.3f, 0.4f])));
+
+		IAudioOutputSource source =
+			factory.Create(AdHocPlaybackRequest.Create(document, events.Freeze()));
+		float[] output = new float[2];
+		source.Render(2, output);
+
+		output.Should().Equal(0.3f, 0.4f);
+	}
+
+	[Test]
+	public void RecursiveNestedMixdownCyclesAreRejectedRatherThanReentered()
+	{
+		SongDocument document = new();
+		ObjectId patternId = document.AllocateObjectId();
+		DataPatternDefinition pattern = new(patternId, "Self recursive")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+		cell.SourceId = patternId;
+		cell.Note = new StartPatternNote(mixdown: true);
+		document.Add(pattern);
+		ObjectId sequenceId = AddSequence(document, patternId);
+		PlaybackRequestAudioSourceFactory factory = new(
+			MonoConfiguration(100),
+			new RecordingSampleProvider(
+				new MemorySampleData(100, 1, new float[] { 1.0f })));
+
+		IAudioOutputSource source =
+			factory.Create(SequencePlaybackRequest.Create(document, sequenceId));
+		Action render = () => source.Render(1, new float[1]);
+
+		render.Should().Throw<InvalidOperationException>()
+			.WithMessage("*cycle*");
+	}
+
+	[Test]
+	public void ParallelNestedMixdownVoicesDoNotShareTheirPlaybackState()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = AddSample(document, "Sample");
+		ObjectId nestedId = AddPatternWithNote(document, sampleId);
+		ObjectId outerId = document.AllocateObjectId();
+		DataPatternDefinition outer = new(outerId, "Parallel")
+		{
+			RowCount = 1,
+			ChannelCount = 2,
+		};
+		for (int channel = 0; channel < 2; channel++)
+		{
+			PatternCell cell = outer.Grid.GetOrCreateCell(0, channel);
+			cell.SourceId = nestedId;
+			cell.Note = new StartPatternNote(mixdown: true);
+		}
+		document.Add(outer);
+		ObjectId rootId = AddSequence(document, outerId);
+		PlaybackRequestAudioSourceFactory factory = new(
+			MonoConfiguration(100),
+			new RecordingSampleProvider(
+				new MemorySampleData(100, 1, new float[] { 0.25f })));
+
+		IAudioOutputSource source =
+			factory.Create(SequencePlaybackRequest.Create(document, rootId));
+		float[] output = new float[1];
+		source.Render(1, output);
+		output[0].Should().BeApproximately(0.5f, 1e-6f);
+	}
+
+	[Test]
 	public void MissingSequenceProducesCompilationException()
 	{
 		PlaybackRequestAudioSourceFactory factory =
