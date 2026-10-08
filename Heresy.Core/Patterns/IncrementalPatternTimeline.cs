@@ -745,6 +745,19 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		&& _delayed.Count == 0 && _queuedTempoEvents.Count == 0;
 
 	/// <summary>
+	/// True while this invocation has unfinished source rows. Unlike
+	/// IsComplete, this does not wait for already-established wall deadlines
+	/// belonging to a finished invocation: a Sequence can start its next
+	/// order while the previous Pattern's physical note is still pending.
+	/// </summary>
+	public bool HasUnfinishedRows(long invocationId)
+	{
+		if (_disposed)
+			throw new ObjectDisposedException(nameof(IncrementalPatternTimeline));
+		return _active.Any(c => c.Sequence == invocationId && !c.Complete);
+	}
+
+	/// <summary>
 	/// Starts an independent invocation at the current musical instant.
 	/// A flattened child may pass a separately mapped SequencingContext,
 	/// provided it shares the root's actual clock and channel-state map.
