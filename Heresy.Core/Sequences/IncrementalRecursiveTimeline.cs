@@ -31,7 +31,11 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 		// Pattern frames own one timeline cursor; Sequence frames own an
 		// ordered list of child Pattern frames, created one at a time.
 		public long? PatternId { get; set; }
-		public SequenceEntry[]? Entries { get; set; }
+		public List<SequenceEntry>? Entries { get; set; }
+		public IEnumerator<RawSequenceStep>? ScriptOrders { get; set; }
+		public bool ScriptEnded { get; set; } = true;
+		public int ScriptCooperationsAtTick { get; set; }
+		public double LastCooperationTick { get; set; } = double.NegativeInfinity;
 		public int Order { get; set; }
 		public int? StartRowOverride { get; set; }
 		public PatternFlowControl PendingFlow { get; set; } = PatternFlowControl.None;
@@ -44,6 +48,7 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 
 	private readonly SequencingContext _root;
 	private readonly IIncrementalInvocationResolver _resolver;
+	private readonly IIncrementalScriptSourceCompiler? _scripts;
 	private readonly IncrementalPatternTimeline _timeline;
 	private readonly Dictionary<long, Invocation> _frames = [];
 	private readonly Dictionary<long, long> _patternOwners = [];
@@ -52,10 +57,12 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 
 	public IncrementalRecursiveTimeline(
 		SequencingContext root,
-		IIncrementalInvocationResolver resolver)
+		IIncrementalInvocationResolver resolver,
+		IIncrementalScriptSourceCompiler? scripts = null)
 	{
 		_root = root ?? throw new ArgumentNullException(nameof(root));
 		_resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
+		_scripts = scripts;
 		_timeline = new IncrementalPatternTimeline(root);
 	}
 
@@ -100,6 +107,8 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 	private void RemoveSubtree(long invocationId)
 	{
 		Invocation frame = _frames[invocationId];
+		frame.ScriptOrders?.Dispose();
+		frame.ScriptOrders = null;
 		foreach (long child in frame.Children.ToArray())
 			RemoveSubtree(child);
 		if (frame.PatternId is long pattern)
@@ -139,6 +148,13 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 		};
 		switch (source)
 		{
+			case ScriptPatternDefinition script:
+				if (startOrder != 0)
+					throw new ArgumentOutOfRangeException(nameof(startOrder));
+				frame.PatternId = _timeline.Add(
+					RequireScriptCompiler().CompilePattern(script),
+					script.RowCount, context, startRow ?? 0);
+				break;
 			case PatternDefinition pattern
 				when pattern is IIncrementalRawPatternNoteGenerator raw:
 				if (startOrder != 0)
@@ -147,14 +163,22 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 					raw, pattern.RowCount, context, startRow ?? 0);
 				break;
 			case DataSequenceDefinition sequence:
-				frame.Entries = sequence.Entries.ToArray();
+				frame.Entries = sequence.Entries.ToList();
 				frame.Order = startOrder;
 				frame.StartRowOverride = startRow;
-				frame.OrdersEnded = startOrder >= frame.Entries.Length;
+				frame.OrdersEnded = startOrder >= frame.Entries.Count;
+				break;
+			case ScriptSequenceDefinition script:
+				frame.Entries = [];
+				frame.Order = startOrder;
+				frame.StartRowOverride = startRow;
+				frame.ScriptOrders = RequireScriptCompiler()
+					.CompileSequence(script).EnumerateRawSteps(context).GetEnumerator();
+				frame.ScriptEnded = false;
 				break;
 			default:
 				throw new NotSupportedException(
-					$"Source {source.Id.Value} needs an incremental Pattern or data Sequence.");
+					$"Source {source.Id.Value} needs an incremental Pattern or Sequence.");
 		}
 		_frames.Add(frame.Id, frame);
 		if (frame.PatternId is long patternId)
@@ -164,13 +188,17 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 		return frame.Id;
 	}
 
+	private IIncrementalScriptSourceCompiler RequireScriptCompiler()
+		=> _scripts ?? throw new NotSupportedException(
+			"Roslyn scripted sources require an explicitly configured incremental script compiler.");
+
 	private void EnterNextOrder(Invocation sequence)
 	{
 		if (sequence.Entries is null || sequence.OrdersEnded)
 			return;
-		if ((uint)sequence.Order >= (uint)sequence.Entries.Length)
+		if (sequence.Order >= sequence.Entries.Count)
 		{
-			sequence.OrdersEnded = true;
+			sequence.OrdersEnded = sequence.ScriptEnded;
 			return;
 		}
 
@@ -181,7 +209,8 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 			|| source is null)
 		{
 			sequence.Order++;
-			sequence.OrdersEnded = sequence.Order >= sequence.Entries.Length;
+			sequence.OrdersEnded = sequence.ScriptEnded
+				&& sequence.Order >= sequence.Entries.Count;
 			return;
 		}
 		if (source is not PatternDefinition)
@@ -206,13 +235,12 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 		}
 		sequence.Order = flow.OrderJump ?? checked(sequence.Order + 1);
 		sequence.StartRowOverride = flow.BreakRow;
-		sequence.OrdersEnded = (uint)sequence.Order >=
-			(uint)sequence.Entries.Length;
+		sequence.OrdersEnded = sequence.ScriptEnded
+			&& sequence.Order >= sequence.Entries.Count;
 	}
 
-	private bool PrepareSequences()
+	private IncrementalPatternTimelineStep.Cooperate? PrepareSequences()
 	{
-		bool changed = false;
 		foreach (Invocation sequence in _frames.Values
 			.Where(f => f.IsSequence && !f.OrdersEnded)
 			.OrderBy(f => f.Depth).ThenBy(f => f.Id).ToArray())
@@ -235,12 +263,49 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 			{
 				CompleteOrder(sequence);
 				sequence.OrderFrameId = null;
-				changed = true;
 			}
 			if (!sequence.OrdersEnded)
 			{
+				if (sequence.Order >= sequence.Entries.Count
+					&& !sequence.ScriptEnded)
+				{
+					IEnumerator<RawSequenceStep> source = sequence.ScriptOrders
+						?? throw new InvalidOperationException(
+							"Scripted Sequence iterator is unavailable.");
+					if (!source.MoveNext())
+					{
+						source.Dispose();
+						sequence.ScriptOrders = null;
+						sequence.ScriptEnded = true;
+					}
+					else
+					{
+						switch (source.Current)
+						{
+							case RawSequenceStep.Play play when play.Entry is not null:
+								sequence.Entries.Add(play.Entry);
+								break;
+							case RawSequenceStep.Cooperate:
+								// CPU cooperation cannot advance the shared musical
+								// clock or commit future Pattern state.
+								if (Math.Abs(Tick - sequence.LastCooperationTick) > 1e-9)
+								{
+									sequence.LastCooperationTick = Tick;
+									sequence.ScriptCooperationsAtTick = 0;
+								}
+								if (++sequence.ScriptCooperationsAtTick >
+									MaximumCooperationPerStep)
+									throw new InvalidOperationException(
+										"Recursive scripted Sequence exceeded its same-tick CPU cooperation budget.");
+								return new IncrementalPatternTimelineStep.Cooperate(
+									sequence.Id, Tick, Elapsed);
+							default:
+								throw new InvalidOperationException(
+									"Scripted Sequence emitted an invalid raw step.");
+						}
+					}
+				}
 				EnterNextOrder(sequence);
-				changed = true;
 				// Mark only the Pattern representing the current order;
 				// late wall events and grandchildren of old orders
 				// remain owned but do not delay the next order.
@@ -250,7 +315,7 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 					.OrderByDescending(f => f.Id).FirstOrDefault()?.Id;
 			}
 		}
-		return changed;
+		return null;
 	}
 
 	/// <summary>
@@ -264,7 +329,11 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 		result = null;
 		for (int budget = 0; budget < MaximumCooperationPerStep; budget++)
 		{
-			PrepareSequences();
+			if (PrepareSequences() is { } checkpoint)
+			{
+				result = checkpoint;
+				return true;
+			}
 			PruneCompleted();
 			if (_timeline.TryStep(out IncrementalPatternTimelineStep? step))
 			{
@@ -324,7 +393,11 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 						return true;
 				}
 			}
-			PrepareSequences();
+			if (PrepareSequences() is { } checkpointAfter)
+			{
+				result = checkpointAfter;
+				return true;
+			}
 			PruneCompleted();
 			if (IsComplete)
 				return false;
@@ -362,6 +435,8 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 			return;
 		_disposed = true;
 		_timeline.Dispose();
+		foreach (Invocation frame in _frames.Values)
+			frame.ScriptOrders?.Dispose();
 		_frames.Clear();
 		_patternOwners.Clear();
 	}
