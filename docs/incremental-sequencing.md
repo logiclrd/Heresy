@@ -264,7 +264,7 @@ eligible at a later row boundary.
 
 **Remaining restrictions:** Complex cells containing Txx together with
 other non-timing commands,
-S6x/SEy extended rows, tempo-control retriggering, script-generated
+SEy repeating Tempo ramps, tempo-control retriggering, script-generated
 out-of-order raw events and NNA/mixdown effects are not implemented
 here. This is **not** yet wired to the production song compiler,
 realtime playback, or offline export.
@@ -303,7 +303,7 @@ overlaps.
 **Remaining supported-subset boundary:** simultaneous Txx invocations
 whose already-captured row Speed differs are rejected explicitly
 until competing ramp-span policies are specified. Mixed-command Txx
-cells, S6x/SEy extended rows, advanced tracker controls, virtual
+cells, combined SEy/Txx repeated Tempo ramps, advanced tracker controls, virtual
 channels and recursive invocation lifetimes are still outside this
 prototype. The old eager Pattern processor remains the production
 authority for full tracker-effect semantics, and song compilation,
@@ -316,15 +316,54 @@ set plus slide, a later slide interrupting from the current Tempo,
 direct Tempo interruption and global-boundary priority, and the
 non-interruption of a ramp by a Speed-only command.
 
+## Eighth executable step: variable-length S6x/SEy rows
+
+The experimental `IncrementalPatternTimeline` now recognizes a restricted
+set of row-delay effects **before** starting the current row:
+
+- `ApplyTrackerFinePatternDelayCommand` (**S6x**) contributes its
+  `ExtraTicks` cumulatively across physical channels. Raw events still
+  occur at their original fractional position in the base-Speed span;
+  additional ticks extend the row's end.
+- `ApplyTrackerPatternDelayCommand` (**SEy**) repeats the **effective
+  row tick span** `y + 1` times. The lowest mapped physical channel
+  wins (source emission order breaks ties). Ordinary notes do not
+  retrigger merely because an SEy span repeats.
+- Together the row lasts
+  `(capturedSpeed + sum(S6x)) * (1 + selectedSEy)` ticks.
+  An intervening Tempo change from another active cursor alters the
+  row's wall-clock duration, not the stored tick deadline.
+- Supported continuous pitch/note-volume/channel-volume/global-volume/
+  panning slides and persistent fine adjustments repeat at successive
+  SEy span starts, including at the originating fractional offset.
+  Existing row-end cleanup occurs at the last extended boundary.
+  `PatternNoteProcessor.ApplyRowTickOverride` is shared so S6x
+  attaches the original processor's `TicksPerRow` values to resolved
+  continuous effects.
+- Isolated Txx with S6x generates a longer **single-span** ramp and
+  retains the analytic `TrackerTimeMap` integral. SEy combined with
+  Txx remains explicitly rejected **before effect-memory changes**
+  because the eager engine repeats Tempo processing across spans.
+
+Tests compare supported cases directly with eager `PatternNoteProcessor`,
+including cumulative S6x, first-channel SEy selection, combined delays,
+Speed changes, fractional effect repetition, row-scoped cleanup and
+parent/child Tempo timing.
+
+**Still unsupported:** SEy with Txx, and other tracker effects whose
+per-tick or repeated-span semantics have not been migrated (SCx/SDx,
+retrigger, tracker control flow, compound advanced effects), plus
+virtual targets and full recursive invocation lifetime management.
+Production playback and offline export remain unchanged.
+
 ## Proposed next interfaces and migration
 
-1. Expand the now-implemented **within-row shared-tick merger** beyond
-   its supported slide families, deferred timing and compatible
-   concurrent Txx ramps. Extract a fully resumable common processor
-   with complete row/event semantics, including arbitration when
-   row spans differ, fine/whole-row pattern delays, pattern flow
-   control, complex mixed-command effects, virtual channels and
-   zero-time cooperation guards before production adoption.
+1. Expand the now-implemented **within-row shared-tick merger**
+   beyond supported S6x/SEy row extensions, repeatable slides and
+   concurrent Txx ramps. Extract a resumable processor for SEy Tempo
+   repetition, tracker note delays/cuts/retrigger, pattern flow control,
+   complex effect combinations, virtual channels, incompatible row spans
+   and zero-time cooperation guards before production adoption.
 2. Add **script invocation-local iterators** through Roslyn syntax
    rewriting. The existing loop `Checkpoint()` instrumentation for
    `for`/`while`/`do` is the starting point, but the generated
