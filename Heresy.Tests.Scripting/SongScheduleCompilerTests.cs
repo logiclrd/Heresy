@@ -173,6 +173,80 @@ public sealed class SongScheduleCompilerTests
 	}
 
 	[Test]
+	public void FutureChildSourceSelectionDoesNotLeakIntoEarlierParentRow()
+	{
+		SongDocument document = new();
+		ObjectId earlier = document.AllocateObjectId();
+		ObjectId later = document.AllocateObjectId();
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Independent child")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		child.Grid.GetOrCreateCell(0, 0).SourceId = earlier;
+		child.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new SetSpeedPatternEffect(9));
+		child.Grid.GetOrCreateCell(1, 0).SourceId = later;
+		document.Add(child);
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Parent")
+		{
+			RowCount = 3,
+			ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sourceId: childId);
+		parent.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote();
+		parent.Grid.GetOrCreateCell(2, 0).Note = new StartPatternNote();
+		document.Add(parent);
+
+		SongScheduleCompilationResult compiled =
+			SongScheduleCompiler.CompilePattern(document, parentId);
+		compiled.Success.Should().BeTrue();
+		StartNoteCommand[] notes = compiled.Schedule!
+			.SelectMany(e => e.Commands).OfType<StartNoteCommand>().ToArray();
+		notes.Select(n => n.SourceId).Should().Equal(earlier, later);
+	}
+
+	[Test]
+	public void InterveningParentTempoMovesFutureChildRowInSharedTickDomain()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Late child tempo")
+		{
+			RowCount = 3,
+			ChannelCount = 1,
+		};
+		child.Grid.GetOrCreateCell(2, 0).Effects.Add(
+			new SetTempoPatternEffect(200));
+		document.Add(child);
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Intervening tempo")
+		{
+			RowCount = 4,
+			ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(sourceId: childId);
+		parent.Grid.GetOrCreateCell(1, 0).Effects.Add(new SetTempoPatternEffect(250));
+		parent.Grid.GetOrCreateCell(3, 0).Note = new PatternNoteCut();
+		document.Add(parent);
+
+		SongScheduleCompilationResult compiled =
+			SongScheduleCompiler.CompilePattern(document, parentId);
+		compiled.Success.Should().BeTrue();
+		NoteEvent[] tempos = compiled.Schedule!
+			.Where(e => e.Commands.Any(c => c is SetTempoCommand))
+			.OrderBy(e => e.Offset.TimeOffset).ToArray();
+		tempos.Select(e => e.Offset.TimeOffset).Should().Equal(
+			TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(180));
+		NoteEvent cut = compiled.Schedule!.Single(e =>
+			e.Commands.Any(c => c is NoteCutCommand));
+		cut.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(255));
+	}
+
+	[Test]
 	public void DeferredChildTempoIsAppliedOnlyWhenParentReachesChildRow()
 	{
 		SongDocument document = new();
