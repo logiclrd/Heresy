@@ -1406,6 +1406,232 @@ public sealed class SongScheduleCompilerTests
 	}
 
 	[Test]
+	public void DataSequenceStartRowSkipsEarlierTempoAndRetainsAbsoluteSourceRows()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Set shared tempo")
+		{
+			RowCount = 1,
+			Source = "Tempo(0, 250);",
+		});
+		ObjectId firstId = document.AllocateObjectId();
+		DataPatternDefinition first = new(firstId, "First")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		first.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(sourceId: childId);
+		document.Add(first);
+		ObjectId secondId = document.AllocateObjectId();
+		DataPatternDefinition second = new(secondId, "Skip the first two rows")
+		{
+			RowCount = 4,
+			ChannelCount = 2,
+		};
+		second.Grid.GetOrCreateCell(0, 1).Effects.Add(new SetTempoPatternEffect(200));
+		second.Grid.GetOrCreateCell(1, 1).Effects.Add(new SetSpeedPatternEffect(3));
+		second.Grid.GetOrCreateCell(2, 1).Note = new PatternNoteCut();
+		second.Grid.GetOrCreateCell(3, 1).Note = new PatternNoteCut();
+		document.Add(second);
+		ObjectId sequenceId = document.AllocateObjectId();
+		DataSequenceDefinition sequence = new(sequenceId, "Jump in");
+		sequence.Entries.Add(new SequenceEntry(firstId));
+		sequence.Entries.Add(new SequenceEntry(secondId, startRow: 2));
+		document.Add(sequence);
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompileSequence(document, sequenceId);
+
+		result.Success.Should().BeTrue();
+		result.Schedule!.SelectMany(e => e.Commands).OfType<SetTempoCommand>()
+			.Select(c => c.TicksPerDiachron).Should().Equal(250);
+		result.Schedule!.Where(e => e.Commands.Any(c => c is NoteCutCommand))
+			.Select(e => e.Offset.TimeOffset).Should().Equal(
+				TimeSpan.FromMilliseconds(60), TimeSpan.FromMilliseconds(120));
+		result.PlaybackPositions.Where(p => p.PatternId == secondId)
+			.Select(p => p.PatternRow).Should().Equal(2, 3);
+		result.PlaybackPositions.First(p => p.PatternId == secondId)
+			.Offset.Should().Be(TimeSpan.FromMilliseconds(60));
+		result.Duration.Should().Be(TimeSpan.FromMilliseconds(180));
+	}
+
+	[Test]
+	public void ScriptSequencePlayStartRowRetainsFractionalEventsAndSharedSpeed()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Change speed")
+		{
+			RowCount = 1,
+			Source = "Speed(0, 3);",
+		});
+		ObjectId firstId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(firstId, "Invoking")
+		{
+			RowCount = 1,
+			Source = $"Note(0, 0, _O({childId.Value}));",
+		});
+		ObjectId soundId = document.AllocateObjectId();
+		ObjectId secondId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(secondId, "Enter at row two")
+		{
+			RowCount = 4,
+			Source = $"Tempo(0, 500); Cut(1.5, 1); "
+				+ $"Note(2.5, 1, _O({soundId.Value})); Off(3, 1);",
+		});
+		ObjectId sequenceId = document.AllocateObjectId();
+		document.Add(new ScriptSequenceDefinition(sequenceId, "Generated")
+		{
+			Source = $"Play(_O({firstId.Value})); Play(_O({secondId.Value}), 2);",
+		});
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompileSequence(document, sequenceId);
+
+		result.Success.Should().BeTrue();
+		result.Schedule!.Single(e => e.Commands.Any(c => c is StartNoteCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(90));
+		result.Schedule!.Single(e => e.Commands.Any(c => c is NoteOffCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(120));
+		result.Schedule!.Should().NotContain(e => e.Commands.Any(c => c is NoteCutCommand));
+		result.Schedule!.Should().NotContain(e => e.Commands.OfType<SetTempoCommand>()
+			.Any(c => c.TicksPerDiachron == 500));
+		result.PlaybackPositions.Where(p => p.PatternId == secondId)
+			.Select(p => p.PatternRow).Should().Equal(2, 3);
+		result.PlaybackPositions.First(p => p.PatternId == secondId)
+			.SequenceEntryIndex.Should().Be(1);
+		result.Duration.Should().Be(TimeSpan.FromMilliseconds(180));
+	}
+
+	[Test]
+	public void SkippedDataSourceSelectionDoesNotOverrideRememberedSource()
+	{
+		SongDocument document = new();
+		ObjectId remembered = document.AllocateObjectId();
+		ObjectId skipped = document.AllocateObjectId();
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Remember source")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		child.Grid.GetOrCreateCell(0, 0).SourceId = remembered;
+		document.Add(child);
+		ObjectId firstId = document.AllocateObjectId();
+		DataPatternDefinition first = new(firstId, "Invoke selector")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		first.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(sourceId: childId);
+		document.Add(first);
+		ObjectId secondId = document.AllocateObjectId();
+		DataPatternDefinition second = new(secondId, "Skipped selection")
+		{
+			RowCount = 3,
+			ChannelCount = 1,
+		};
+		second.Grid.GetOrCreateCell(0, 0).SourceId = skipped;
+		second.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote();
+		second.Grid.GetOrCreateCell(2, 0).Note = new PatternNoteCut();
+		document.Add(second);
+		ObjectId sequenceId = document.AllocateObjectId();
+		DataSequenceDefinition sequence = new(sequenceId, "Remember");
+		sequence.Entries.Add(new SequenceEntry(firstId));
+		sequence.Entries.Add(new SequenceEntry(secondId, startRow: 1));
+		document.Add(sequence);
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompileSequence(document, sequenceId);
+
+		result.Success.Should().BeTrue();
+		result.Schedule!.SelectMany(e => e.Commands).OfType<StartNoteCommand>()
+			.Should().ContainSingle().Which.SourceId.Should().Be(remembered);
+		result.Schedule!.Single(e => e.Commands.Any(c => c is StartNoteCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(120));
+		result.Duration.Should().Be(TimeSpan.FromMilliseconds(360));
+	}
+
+	[Test]
+	public void ScriptSequenceStartRowPreservesPositiveWallOffsetFromSkippedRow()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new DataPatternDefinition(childId, "Empty nested")
+		{
+			RowCount = 1,
+		});
+		ObjectId firstId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(firstId, "Invoke nested")
+		{
+			RowCount = 1,
+			Source = $"Note(0, 0, _O({childId.Value}));",
+		});
+		ObjectId secondId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(secondId, "Skipped with delayed cut")
+		{
+			RowCount = 2,
+			Source = "Cut(0.5, 0, timeOffsetSeconds: 0.09); Cut(1.5, 1);",
+		});
+		ObjectId sequenceId = document.AllocateObjectId();
+		document.Add(new ScriptSequenceDefinition(sequenceId, "Offset beyond entry")
+		{
+			Source = $"Play(_O({firstId.Value})); Play(_O({secondId.Value}), 1);",
+		});
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompileSequence(document, sequenceId);
+
+		result.Success.Should().BeTrue();
+		result.Schedule!.Where(e => e.Commands.Any(c => c is NoteCutCommand))
+			.Select(e => e.Offset.TimeOffset).Should().Equal(
+				TimeSpan.FromMilliseconds(150), TimeSpan.FromMilliseconds(180));
+		result.Duration.Should().Be(TimeSpan.FromMilliseconds(240));
+	}
+
+	[Test]
+	public void SequenceStartRowAtOrBeyondPatternEndAdvancesToNextOrderImmediately()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new DataPatternDefinition(childId, "Unused child")
+		{
+			RowCount = 1,
+		});
+		ObjectId firstId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(firstId, "Skipped entirely")
+		{
+			RowCount = 1,
+			Source = $"Note(0, 0, _O({childId.Value}));",
+		});
+		ObjectId nextId = document.AllocateObjectId();
+		DataPatternDefinition next = new(nextId, "Next")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		next.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
+		document.Add(next);
+		ObjectId sequenceId = document.AllocateObjectId();
+		DataSequenceDefinition sequence = new(sequenceId, "Skip all");
+		sequence.Entries.Add(new SequenceEntry(firstId, startRow: 5));
+		sequence.Entries.Add(new SequenceEntry(nextId));
+		document.Add(sequence);
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompileSequence(document, sequenceId);
+
+		result.Success.Should().BeTrue();
+		result.Schedule!.Should().ContainSingle()
+			.Which.Offset.TimeOffset.Should().Be(TimeSpan.Zero);
+		result.PlaybackPositions.Should().NotContain(p => p.PatternId == firstId);
+		result.PlaybackPositions.First(p => p.PatternId == nextId)
+			.SequenceEntryIndex.Should().Be(1);
+		result.Duration.Should().Be(TimeSpan.FromMilliseconds(120));
+	}
+
+	[Test]
 	public void ScriptSequenceSchedulesChildSpeedAndLaterOrderChronologically()
 	{
 		SongDocument document = new();
