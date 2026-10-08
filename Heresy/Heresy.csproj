@@ -12,6 +12,12 @@
 		<PackageReference Include="Avalonia" Version="12.1.3" />
 		<PackageReference Include="Avalonia.Desktop" Version="12.1.3" />
 		<PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.3" />
+		<PackageReference Include="org.sndfile.runtime.win-x64" Version="1.2.2" />
+		<PackageReference Include="org.sndfile.runtime.win-arm64" Version="1.2.2" />
+		<PackageReference Include="org.sndfile.runtime.linux-x64" Version="1.2.2.1" />
+		<PackageReference Include="org.sndfile.runtime.linux-arm64" Version="1.2.2.1" />
+		<PackageReference Include="org.sndfile.runtime.osx-x64" Version="1.2.2" />
+		<PackageReference Include="org.sndfile.runtime.osx-arm64" Version="1.2.2" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -19,6 +25,7 @@
 		<ProjectReference Include="../Heresy.Playback/Heresy.Playback.csproj" />
 		<ProjectReference Include="../Heresy.Render/Heresy.Render.csproj" />
 		<ProjectReference Include="../Heresy.Render.SDL/Heresy.Render.SDL.csproj" />
+		<ProjectReference Include="../Heresy.Render.File/Heresy.Render.File.csproj" />
 	</ItemGroup>
 
 </Project>
