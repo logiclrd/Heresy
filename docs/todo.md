@@ -26,8 +26,12 @@ Items that were already completed remain in Git history, not in this checklist.
   cursor's already-started row. Nonnegative fixed wall-time offsets on
   scripted Note/Off/Cut now generate absolute deadlines on reaching their
   musical position, and nested sources invoked at those deadlines retain
-  independent cursors across sequence orders.
-  Extend to scripted Sequences, nonzero StartRow, pattern control jumps,
+  independent cursors across sequence orders. Eligible scripted Sequences
+  also dispatch their ordered Play entries through these shared cursors,
+  retaining stable sequence-order positions and one script execution on
+  chronological-to-legacy fallback.
+  Extend to nonzero StartRow, nonzero compile start order/row for
+  chronological sequences, pattern control jumps,
   non-unit pitch/speed transforms, negative fixed wall-time offsets,
   fixed offsets on global/advanced effect commands, tracker tempo ramps,
   other scripted/global effects,
