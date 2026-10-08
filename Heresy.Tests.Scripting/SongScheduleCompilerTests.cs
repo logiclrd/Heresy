@@ -19,6 +19,166 @@ public sealed class SongScheduleCompilerTests
 {
 
 	[Test]
+	public void ScriptedSpeedChangesItsOwnCurrentRowBeforeFractionalEvents()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Speed-sensitive child")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		child.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteCut();
+		document.Add(child);
+
+		ObjectId rootId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(rootId, "Own row speed")
+		{
+			RowCount = 2,
+			// Speed's fractional part is ignored, even though its command
+			// appears after the nested start in the authored script.
+			Source = $"Note(0, 0, _O({childId.Value})); Speed(0.5, 3); "
+				+ "Cut(0.5, 1); Cut(1, 1);",
+		});
+
+		SongScheduleCompilationResult compiled =
+			SongScheduleCompiler.CompilePattern(document, rootId);
+
+		compiled.Success.Should().BeTrue();
+		compiled.Schedule!.Single(e => e.Commands.Any(c => c is SetSpeedCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.Zero);
+		compiled.Schedule!.Where(e => e.Target == ChannelTarget.Physical(1)
+				&& e.Commands.Any(c => c is NoteCutCommand))
+			.Select(e => e.Offset.TimeOffset).Should().Equal(
+				TimeSpan.FromMilliseconds(30), TimeSpan.FromMilliseconds(60));
+		compiled.Schedule!.Single(e => e.Target == ChannelTarget.Physical(0)
+				&& e.Commands.Any(c => c is NoteCutCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(60));
+		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(120));
+	}
+
+	[Test]
+	public void ScriptedChildSpeedDoesNotRetroactivelyResizeStartedParentRow()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Child speed")
+		{
+			RowCount = 2,
+			Source = "Speed(1.5, 3); Cut(1.5, 0);",
+		});
+		ObjectId rootId = document.AllocateObjectId();
+		DataPatternDefinition root = new(rootId, "Parent data")
+		{
+			RowCount = 3,
+			ChannelCount = 2,
+		};
+		root.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sourceId: childId);
+		root.Grid.GetOrCreateCell(1, 1).Note = new PatternNoteCut();
+		root.Grid.GetOrCreateCell(2, 1).Note = new PatternNoteCut();
+		document.Add(root);
+
+		SongScheduleCompilationResult compiled =
+			SongScheduleCompiler.CompilePattern(document, rootId);
+
+		compiled.Success.Should().BeTrue();
+		compiled.Schedule!.Single(e => e.Commands.Any(c => c is SetSpeedCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(120));
+		compiled.Schedule!.Single(e => e.Target == ChannelTarget.Physical(0)
+				&& e.Commands.Any(c => c is NoteCutCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(150));
+		compiled.Schedule!.Where(e => e.Target == ChannelTarget.Physical(1)
+				&& e.Commands.Any(c => c is NoteCutCommand))
+			.Select(e => e.Offset.TimeOffset).Should().Equal(
+				TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(240));
+		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(300));
+	}
+
+	[Test]
+	public void SimultaneousScriptedSpeedChangesPreserveEachCursorsRowCapture()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Child changes speed")
+		{
+			RowCount = 2,
+			Source = "Speed(1, 3); Cut(1.5, 0);",
+		});
+		ObjectId rootId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(rootId, "Parent changes speed")
+		{
+			RowCount = 3,
+			Source = $"Note(0, 0, _O({childId.Value})); "
+				+ "Speed(1, 4); Cut(2, 1);",
+		});
+
+		SongScheduleCompilationResult compiled =
+			SongScheduleCompiler.CompilePattern(document, rootId);
+
+		compiled.Success.Should().BeTrue();
+		NoteEvent[] speeds = compiled.Schedule!
+			.Where(e => e.Commands.Any(c => c is SetSpeedCommand)).ToArray();
+		speeds.Select(e => e.Offset.TimeOffset).Should().Equal(
+			TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(120));
+		speeds.SelectMany(e => e.Commands).OfType<SetSpeedCommand>()
+			.Select(c => c.TicksPerRow).Should().Equal(4, 3);
+		compiled.Schedule!.Single(e => e.Target == ChannelTarget.Physical(0)
+				&& e.Commands.Any(c => c is NoteCutCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(150));
+		compiled.Schedule!.Single(e => e.Target == ChannelTarget.Physical(1)
+				&& e.Commands.Any(c => c is NoteCutCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(200));
+		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(260));
+	}
+
+	[Test]
+	public void ScriptedSpeedCrossingSequenceOrderOnlyChangesFutureRows()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Continuing child")
+		{
+			RowCount = 3,
+			Source = "Speed(1.5, 3);",
+		});
+		ObjectId firstId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(firstId, "First order")
+		{
+			RowCount = 1,
+			Source = $"Note(0, 0, _O({childId.Value}));",
+		});
+		ObjectId secondId = document.AllocateObjectId();
+		DataPatternDefinition second = new(secondId, "Second order")
+		{
+			RowCount = 2,
+			ChannelCount = 2,
+		};
+		second.Grid.GetOrCreateCell(0, 1).Note = new PatternNoteCut();
+		second.Grid.GetOrCreateCell(1, 1).Note = new PatternNoteCut();
+		document.Add(second);
+		ObjectId songId = document.AllocateObjectId();
+		DataSequenceDefinition sequence = new(songId, "Two orders");
+		sequence.Entries.Add(new SequenceEntry(firstId));
+		sequence.Entries.Add(new SequenceEntry(secondId));
+		document.Add(sequence);
+
+		SongScheduleCompilationResult compiled =
+			SongScheduleCompiler.CompileSequence(document, songId);
+
+		compiled.Success.Should().BeTrue();
+		compiled.Schedule!.Single(e => e.Commands.Any(c => c is SetSpeedCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(120));
+		compiled.Schedule!.Where(e => e.Target == ChannelTarget.Physical(1)
+				&& e.Commands.Any(c => c is NoteCutCommand))
+			.Select(e => e.Offset.TimeOffset).Should().Equal(
+				TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(240));
+		compiled.PlaybackPositions.Single(p => p.PatternId == secondId)
+			.Offset.Should().Be(TimeSpan.FromMilliseconds(120));
+		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(300));
+	}
+
+	[Test]
 	public void ScriptedChildTempoUsesRowStartNotFractionalEventTime()
 	{
 		SongDocument document = new();
