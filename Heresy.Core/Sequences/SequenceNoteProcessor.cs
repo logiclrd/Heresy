@@ -112,21 +112,35 @@ public static class SequenceNoteProcessor
 			}
 
 			NoteScheduleBuilder patternOutput = new();
-			PatternNoteProcessor.GenerateNotes(
-				pattern,
-				context,
-				patternOutput,
-				effectiveStartRow,
-				out TimeSpan patternDuration,
-				out PatternFlowControl flowControl,
-				rowStarted is null
-					? null
-					: (patternRow, patternOffset) =>
-						rowStarted(
-							order,
-							entry.PatternId,
-							patternRow,
-							elapsed + patternOffset));
+			TimeSpan patternDuration;
+			PatternFlowControl flowControl;
+			TimeSpan previousOrigin = context.TimelineOrigin;
+			try
+			{
+				// Nested source generation happens inside PatternNoteProcessor
+				// and needs the absolute start of this sequence entry, while
+				// its ordinary NoteEvents still use local pattern time.
+				context.TimelineOrigin = previousOrigin + elapsed;
+				PatternNoteProcessor.GenerateNotes(
+					pattern,
+					context,
+					patternOutput,
+					effectiveStartRow,
+					out patternDuration,
+					out flowControl,
+					rowStarted is null
+						? null
+						: (patternRow, patternOffset) =>
+							rowStarted(
+								order,
+								entry.PatternId,
+								patternRow,
+								elapsed + patternOffset));
+			}
+			finally
+			{
+				context.TimelineOrigin = previousOrigin;
+			}
 
 			foreach (NoteEvent noteEvent in patternOutput.Freeze())
 			{
