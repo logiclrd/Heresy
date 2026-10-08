@@ -12,7 +12,7 @@ namespace Heresy.Core.Patterns;
 /// values and translates them into the same raw NoteEvent representation used
 /// by scripted patterns before the common PatternNoteProcessor runs.
 /// </summary>
-public sealed class DataPatternDefinition : PatternDefinition, IDeferredSourcePatternGenerator, IIncrementalRawPatternNoteGenerator
+public sealed class DataPatternDefinition : PatternDefinition, IDeferredSourcePatternGenerator, IReplayableRawPatternNoteGenerator
 {
 	public DataPatternDefinition(ObjectId id, string name) : base(id, name)
 	{
