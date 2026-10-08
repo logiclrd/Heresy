@@ -1,0 +1,272 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+using Heresy.Core.Objects;
+using Heresy.Core.Patterns;
+using Heresy.Core.Sequencing;
+using Heresy.Core.Timing;
+
+namespace Heresy.Scripting.Compilation;
+
+/// <summary>
+/// Chronological, tick-driven data-pattern flattening. Each invocation owns
+/// an independently advancing row cursor, but all mapped cursors observe one
+/// SequencingState and channel-state map. No future row is compiled early.
+/// Limited to data patterns without pattern control/delays or complex effects;
+/// other sources continue using the general pattern/sequence compiler.
+/// </summary>
+internal static class ChronologicalDataPatternScheduler
+{
+	private sealed class RowCursor
+	{
+		public required ObjectId Id { get; init; }
+		public required DataPatternDefinition Pattern { get; init; }
+		public required SequencingContext Context { get; init; }
+		public required NoteSchedule Raw { get; init; }
+		public required IReadOnlySet<ObjectId> Ancestry { get; init; }
+		public long DueTick { get; set; }
+		public int Row { get; set; }
+		public long Sequence { get; init; }
+		public List<NoteEvent> EndOfRowCommands { get; } = [];
+	}
+
+	private sealed class RowSlice : IDeferredSourcePatternGenerator
+	{
+		private readonly IReadOnlyList<NoteEvent> _events;
+		public RowSlice(NoteSchedule raw, int row)
+		{
+			List<NoteEvent> selected = [];
+			foreach (NoteEvent note in raw)
+			{
+				if (note.Offset.RowOffset != row)
+					continue;
+				selected.Add(note with
+				{
+					Offset = new MusicalTime(TimeSpan.Zero, 0),
+				});
+			}
+			_events = selected;
+		}
+
+		public void GenerateRawNotes(
+			SequencingContext context,
+			INoteReceiver output,
+			out double rowCount)
+		{
+			foreach (NoteEvent note in _events)
+				output.Append(note);
+			rowCount = 1.0;
+		}
+	}
+
+	public static bool CanHandle(
+		SongDocument document,
+		DataPatternDefinition root)
+	{
+		ArgumentNullException.ThrowIfNull(document);
+		ArgumentNullException.ThrowIfNull(root);
+		HashSet<ObjectId> visited = [];
+		bool hasNestedData = false;
+		bool Visit(DataPatternDefinition pattern)
+		{
+			if (!visited.Add(pattern.Id))
+				return true;
+			foreach ((_, _, PatternCell cell) in pattern.Grid.EnumerateNonEmptyCells())
+			{
+				foreach (PatternEffect effect in cell.Effects)
+				{
+					if (effect is not (SetTempoPatternEffect
+						or SetSpeedPatternEffect
+						or TrackerVolumeSlidePatternEffect
+						or EmptyTrackerPatternEffect))
+						return false;
+				}
+				if (cell.Note is not StartPatternNote start
+					|| start.Mixdown)
+					continue;
+				ObjectId id = !cell.SourceId.IsNone
+					? cell.SourceId : start.SourceId;
+				if (id.IsNone || !document.TryGet(id, out SongObject? obj))
+					continue;
+				if (obj is PatternDefinition or Heresy.Core.Sequences.SequenceDefinition)
+				{
+					if (obj is not DataPatternDefinition child)
+						return false;
+					hasNestedData = true;
+					if (!Visit(child))
+						return false;
+				}
+			}
+			return true;
+		}
+		return Visit(root) && hasNestedData;
+	}
+
+	public static SongScheduleCompilationResult Compile(
+		SongDocument document,
+		DataPatternDefinition root,
+		SequencingContext? suppliedContext)
+	{
+		SequencingContext context = suppliedContext ?? new SequencingContext();
+		if (context.FlattenedSourceExpander is not null
+			|| context.IsPreparingFlattenedChild)
+			throw new InvalidOperationException(
+				"Chronological data pattern cursors require a root context.");
+		context.ResolvePatternSourcesAtRowTime = true;
+		List<RowCursor> active = [];
+		NoteScheduleBuilder output = new();
+		List<CompiledPatternPlaybackPosition> positions = [];
+		long nextCursorSequence = 0;
+		long tick = 0;
+		TimeSpan elapsed = TimeSpan.Zero;
+		int workCount = 0;
+
+		RowCursor CreateCursor(
+			ObjectId id,
+			DataPatternDefinition pattern,
+			SequencingContext mapped,
+			IReadOnlySet<ObjectId> ancestry)
+		{
+			if (ancestry.Contains(id))
+				throw new InvalidOperationException(
+					$"Flattened Pattern/Sequence sound source cycle includes object {id.Value}.");
+			HashSet<ObjectId> descendants = new(ancestry) { id };
+			NoteScheduleBuilder rawBuilder = new();
+			pattern.GenerateRawNotes(mapped, rawBuilder, out _);
+			return new RowCursor
+			{
+				Id = id,
+				Pattern = pattern,
+				Context = mapped,
+				Raw = rawBuilder.Freeze(),
+				Ancestry = descendants,
+				DueTick = tick,
+				Sequence = nextCursorSequence++,
+			};
+		}
+
+		active.Add(CreateCursor(root.Id, root, context, new HashSet<ObjectId>()));
+		double tempo = context.State.Tempo;
+		while (active.Count != 0)
+		{
+			if (++workCount > NoteScheduleBuilder.MaximumGeneratedNotes)
+				throw new InvalidOperationException(
+					"Chronological flattened row expansion exceeded the sequencing resource limit.");
+
+			long next = active.Min(cursor => cursor.DueTick);
+			if (next < tick)
+				throw new InvalidOperationException("A nested row cursor moved backwards.");
+			if (next != tick)
+			{
+				elapsed += TimeSpan.FromSeconds(
+					(next - tick) * SequencingConstants.Diachron.TotalSeconds / tempo);
+				tick = next;
+			}
+
+			// A row may start another cursor at the same tick. Keep draining
+			// that tick before advancing time. Mapped channel and creation
+			// order provide deterministic simultaneous event ordering.
+			while (true)
+			{
+				RowCursor? current = active
+					.Where(cursor => cursor.DueTick == tick)
+					.OrderBy(cursor => cursor.Context.PhysicalChannelBase)
+					.ThenBy(cursor => cursor.Sequence)
+					.FirstOrDefault();
+				if (current is null)
+					break;
+
+				active.Remove(current);
+				foreach (NoteEvent endOfRow in current.EndOfRowCommands)
+				{
+					output.Append(endOfRow with
+					{
+						Offset = new MusicalTime(elapsed, 0.0),
+					});
+				}
+				current.EndOfRowCommands.Clear();
+
+				if (current.Row >= current.Pattern.RowCount)
+					continue;
+
+				if (current.Id == root.Id && current.Sequence == 0)
+					positions.Add(new CompiledPatternPlaybackPosition(
+						elapsed, root.Id, current.Row, null));
+
+				NoteScheduleBuilder rowBuilder = new();
+				PatternNoteProcessor.GenerateNotes(
+					new RowSlice(current.Raw, current.Row),
+					current.Context,
+					rowBuilder,
+					out TimeSpan nominalDuration);
+
+				foreach (NoteEvent item in rowBuilder.Freeze())
+				{
+					// On the supported subset, all source starts and tempo
+					// changes happen at the row boundary; Dxy effect cleanup
+					// is postponed until that cursor advances to its next row.
+					if (item.Offset.TimeOffset != TimeSpan.Zero)
+					{
+						if (item.Offset.TimeOffset == nominalDuration
+							&& item.Commands.All(command =>
+								command is ClearNoteVolumeSlideCommand))
+						{
+							current.EndOfRowCommands.Add(item);
+							continue;
+						}
+						throw new NotSupportedException(
+							"Chronological data row cursor does not yet support delayed row commands.");
+					}
+
+					List<NoteCommand> retained = [];
+					foreach (NoteCommand command in item.Commands)
+					{
+						if (command is not StartNoteCommand start
+							|| start.Mixdown
+							|| !document.TryGet(start.SourceId, out SongObject? childObject)
+							|| childObject is not DataPatternDefinition child)
+						{
+							retained.Add(command);
+							continue;
+						}
+						if (start.PitchMultiplier != 1.0
+							|| start.PlaybackSpeedMultiplier != 1.0
+							|| start.Volume.HasValue)
+							throw new NotSupportedException(
+								"Flattened child pitch/speed/volume transforms require the full concurrent scheduler.");
+						if (item.Target.Kind != ChannelTargetKind.Physical)
+							throw new NotSupportedException(
+								"Flattened child must start on a physical channel.");
+						int offset = item.Target.PhysicalChannel
+							- current.Context.PhysicalChannelBase;
+						active.Add(CreateCursor(
+							start.SourceId, child,
+							current.Context.FlattenedChild(
+								physicalChannelOffset: offset),
+							current.Ancestry));
+					}
+
+					if (retained.Count != 0)
+						output.Append(item with
+						{
+							Commands = retained,
+							Offset = new MusicalTime(elapsed, 0),
+						});
+				}
+
+				current.Row++;
+				// Speed is captured after the row's boundary effects. Other
+				// cursors retain their own next tick even when speed changes.
+				current.DueTick = checked(tick + context.State.Speed);
+				active.Add(current);
+			}
+			tempo = context.State.Tempo;
+		}
+		return new SongScheduleCompilationResult(
+			output.Freeze(), elapsed, [])
+		{
+			PlaybackPositions = positions,
+		};
+	}
+}
