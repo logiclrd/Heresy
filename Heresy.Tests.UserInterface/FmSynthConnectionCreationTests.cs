@@ -154,21 +154,27 @@ public sealed class FmSynthConnectionCreationTests
 			FmSynthDocumentEditor.AddOscillatorNode(
 				workspace, synth, FmOscillatorWaveform.Sine, 440.0, 300.0, 100.0,
 				multiplierNodeId: 0);
+		int upstream =
+			FmSynthDocumentEditor.AddOperatorNode(
+				workspace, synth, FmOperatorKind.Add, [0], 500.0, 100.0);
+		int downstream =
+			FmSynthDocumentEditor.AddOperatorNode(
+				workspace, synth, FmOperatorKind.Add, [upstream], 700.0, 100.0);
 		FmSynthGraph before = synth.Graph;
 		uint revision = workspace.Document.DocumentRevision;
 
 		Action self = () =>
 			FmSynthDocumentEditor.ConnectNodes(workspace, synth, oscillator, oscillator, 0);
 		Action cycle = () =>
-			FmSynthDocumentEditor.ConnectNodes(workspace, synth, oscillator, 0, 0);
+			FmSynthDocumentEditor.ConnectNodes(workspace, synth, downstream, upstream, 0);
 		Action nonConsumer = () =>
-			FmSynthDocumentEditor.ConnectNodes(workspace, synth, 0, 0, 0);
+			FmSynthDocumentEditor.ConnectNodes(workspace, synth, oscillator, 0, 0);
 		Action invalidSlot = () =>
 			FmSynthDocumentEditor.ConnectNodes(workspace, synth, 0, oscillator, 1);
-		self.Should().Throw<Exception>();
-		cycle.Should().Throw<Exception>();
-		nonConsumer.Should().Throw<Exception>();
-		invalidSlot.Should().Throw<Exception>();
+		self.Should().Throw<InvalidOperationException>();
+		cycle.Should().Throw<ArgumentException>();
+		nonConsumer.Should().Throw<InvalidOperationException>();
+		invalidSlot.Should().Throw<InvalidOperationException>();
 		synth.Graph.Should().BeSameAs(before);
 		workspace.Document.DocumentRevision.Should().Be(revision);
 	}
