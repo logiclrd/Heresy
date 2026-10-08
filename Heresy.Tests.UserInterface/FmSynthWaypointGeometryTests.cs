@@ -113,18 +113,19 @@ public sealed class FmSynthWaypointGeometryTests
 				],
 				[]);
 
-		FmSynthWaypointGeometry.HitConnection(
-				[vertical, horizontal],
-				new FmSynthRoutePoint(53, 32),
-				renderScaling: 1)
-			.Should().NotBeNull()
-			.And.Subject.Value.Connection.Should().Be(horizontal.Connection);
-		FmSynthWaypointGeometry.HitConnection(
-				[vertical],
-				new FmSynthRoutePoint(50, 0),
-				renderScaling: 1)
-			.Should().NotBeNull()
-			.And.Subject.Value.SegmentIndex.Should().Be(1);
+		FmSynthConnectionLineHit? chosen = FmSynthWaypointGeometry.HitConnection(
+			[vertical, horizontal],
+			new FmSynthRoutePoint(53, 32),
+			renderScaling: 1);
+		chosen.Should().NotBeNull();
+		chosen!.Value.Connection.Should().Be(horizontal.Connection);
+
+		FmSynthConnectionLineHit? nonzero = FmSynthWaypointGeometry.HitConnection(
+			[vertical],
+			new FmSynthRoutePoint(50, 0),
+			renderScaling: 1);
+		nonzero.Should().NotBeNull();
+		nonzero!.Value.SegmentIndex.Should().Be(1);
 	}
 
 	[Test]
