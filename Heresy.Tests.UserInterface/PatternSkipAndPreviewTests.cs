@@ -177,6 +177,39 @@ public sealed class PatternSkipAndPreviewTests
 	}
 
 	[Test]
+	public void SkipClampsChannelsAtEachIntermediateSequenceRow()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition wide = PatternDocumentEditor.CreateDataPattern(
+			workspace, "Wide", rowCount: 1, channelCount: 4);
+		DataPatternDefinition narrow = PatternDocumentEditor.CreateDataPattern(
+			workspace, "Narrow", rowCount: 1, channelCount: 1);
+		DataPatternDefinition againWide = PatternDocumentEditor.CreateDataPattern(
+			workspace, "AgainWide", rowCount: 1, channelCount: 4);
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(workspace, "Sequence");
+		sequence.Entries.Add(new SequenceEntry(wide.Id));
+		sequence.Entries.Add(new SequenceEntry(narrow.Id));
+		sequence.Entries.Add(new SequenceEntry(againWide.Id));
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(workspace.Document, sequence, 0);
+		PatternEffectCursor cursor = new(0, 3, PatternCellField.Note);
+		PatternNoteInputState input = new(ObjectId.None, 4) { SkipRows = 2 };
+
+		PatternEditorContextCursor.EditCurrent(
+			context,
+			cursor,
+			row => PatternNoteKeyboardEditor.TypePhysical(
+				workspace, row.Pattern, cursor, input, PhysicalKey.Z));
+
+		cursor.Row.Should().Be(2);
+		// A physical Down press into the intermediate narrow pattern
+		// clamps channel 3 to 0 before the second Down press.
+		cursor.Channel.Should().Be(0);
+		wide.Grid[0, 3]!.Note.Should().BeOfType<StartPatternNote>();
+	}
+
+	[Test]
 	public void ChordEntryUsesSkipValueToo()
 	{
 		DocumentWorkspace workspace = new();
