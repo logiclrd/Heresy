@@ -119,8 +119,8 @@ public sealed class PlaybackPositionCompilationTests
 				"Script")
 			{
 				Source =
-					$"Play(_O({patternId.Value}), 1); "
-						+ $"Play(_O({patternId.Value}), 2);",
+					$"if (sequenceIndex == 0) return Play(_O({patternId.Value}), 1); "
+						+ $"if (sequenceIndex == 1) return Play(_O({patternId.Value}), 2); return null;",
 			});
 
 		SongScheduleCompilationResult result =
