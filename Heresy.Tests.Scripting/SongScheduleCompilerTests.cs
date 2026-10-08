@@ -19,6 +19,116 @@ public sealed class SongScheduleCompilerTests
 {
 
 	[Test]
+	public void ScriptedChildTempoUsesRowStartNotFractionalEventTime()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Delayed scripted tempo")
+		{
+			RowCount = 2,
+			// Tracker timing ignores the fractional row offset.
+			Source = "Tempo(1.5, 250);",
+		});
+
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Parent")
+		{
+			RowCount = 3,
+			ChannelCount = 2,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sourceId: childId);
+		parent.Grid.GetOrCreateCell(1, 1).Note = new PatternNoteCut();
+		parent.Grid.GetOrCreateCell(2, 1).Note = new PatternNoteCut();
+		document.Add(parent);
+
+		SongScheduleCompilationResult compiled =
+			SongScheduleCompiler.CompilePattern(document, parentId);
+
+		compiled.Success.Should().BeTrue();
+		compiled.Schedule!.Single(e => e.Commands.Any(c => c is SetTempoCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(120));
+		compiled.Schedule.Where(e => e.Commands.Any(c => c is NoteCutCommand))
+			.Select(e => e.Offset.TimeOffset).Should().Equal(
+				TimeSpan.FromMilliseconds(120),
+				TimeSpan.FromMilliseconds(180));
+		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(240));
+	}
+
+	[Test]
+	public void SimultaneousScriptedParentAndChildTempoUseStableCursorOrder()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Script child")
+		{
+			RowCount = 2,
+			Source = "Tempo(1, 250);",
+		});
+
+		ObjectId parentId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(parentId, "Script parent")
+		{
+			RowCount = 3,
+			Source = $"Note(0, 0, _O({childId.Value})); Tempo(1, 200); Cut(2, 1);",
+		});
+
+		SongScheduleCompilationResult compiled =
+			SongScheduleCompiler.CompilePattern(document, parentId);
+
+		compiled.Success.Should().BeTrue();
+		NoteEvent[] tempoEvents = compiled.Schedule!
+			.Where(e => e.Commands.Any(c => c is SetTempoCommand)).ToArray();
+		tempoEvents.Select(e => e.Offset.TimeOffset).Should().Equal(
+			TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(120));
+		tempoEvents.SelectMany(e => e.Commands).OfType<SetTempoCommand>()
+			.Select(c => c.TicksPerDiachron).Should().Equal(200, 250);
+		compiled.Schedule!.Single(e => e.Commands.Any(c => c is NoteCutCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(180));
+		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(240));
+	}
+
+	[Test]
+	public void EqualTickScriptedChildTemposFollowMappedChannelOrder()
+	{
+		SongDocument document = new();
+		ObjectId lowerId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(lowerId, "Lower channel")
+		{
+			RowCount = 1,
+			Source = "Tempo(0.5, 250);",
+		});
+		ObjectId higherId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(higherId, "Higher channel")
+		{
+			RowCount = 1,
+			Source = "Tempo(0.5, 200);",
+		});
+		ObjectId parentId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(parentId, "Simultaneous script starts")
+		{
+			RowCount = 2,
+			// Reverse script emission order deliberately: channel base wins.
+			Source = $"Note(0, 1, _O({higherId.Value})); "
+				+ $"Note(0, 0, _O({lowerId.Value})); Cut(1, 2);",
+		});
+
+		SongScheduleCompilationResult compiled =
+			SongScheduleCompiler.CompilePattern(document, parentId);
+
+		compiled.Success.Should().BeTrue();
+		NoteEvent[] tempoEvents = compiled.Schedule!
+			.Where(e => e.Commands.Any(c => c is SetTempoCommand)).ToArray();
+		tempoEvents.Select(e => e.Offset.TimeOffset).Should().Equal(
+			TimeSpan.Zero, TimeSpan.Zero);
+		tempoEvents.SelectMany(e => e.Commands).OfType<SetTempoCommand>()
+			.Select(c => c.TicksPerDiachron).Should().Equal(250, 200);
+		compiled.Schedule!.Single(e => e.Commands.Any(c => c is NoteCutCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(75));
+		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(150));
+	}
+
+	[Test]
 	public void ScriptedTerminalChildNoteFollowsSharedTempoChange()
 	{
 		SongDocument document = new();
