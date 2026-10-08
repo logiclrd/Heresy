@@ -44,7 +44,7 @@ public sealed class IncrementalSequenceCursor : IDisposable
 		int? startRow = null,
 		Func<SequenceOrderJumpEncounter, bool>? shouldFollowOrderJump = null)
 		: this(
-			sequence ?? throw new ArgumentNullException(nameof(sequence)),
+			(ISequenceEntryProvider)(sequence ?? throw new ArgumentNullException(nameof(sequence))),
 			resolver, context, startOrder, startRow, shouldFollowOrderJump)
 	{
 	}
