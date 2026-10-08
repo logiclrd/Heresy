@@ -193,7 +193,7 @@ public abstract class PatternScriptProgram
 		if (double.IsNaN(row)
 			|| double.IsInfinity(row)
 			|| row < 0.0
-			|| row >= _rowCount)
+			|| row > _rowCount)
 		{
 			throw new ArgumentOutOfRangeException(nameof(row));
 		}
