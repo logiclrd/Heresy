@@ -119,7 +119,7 @@ raw source is a data Pattern, a script, or a future Sequence iterator.
   its own cursor's captured row, not another cursor's existing row.
 - Raw steps must be in **nondecreasing row order**. This is an explicit
   causality contract, not something legacy scripts currently guarantee.
-  Negative fixed wall-time offsets, delayed global timing effects,
+  Negative fixed wall-time offsets, tracker-style tempo ramps,
   virtual targets, advanced tracker commands beyond the supported slide
   families, out-of-order scripts and nested compiler expansion are not
   yet supported by this prototype and fail explicitly. Same-tick and
@@ -175,26 +175,68 @@ deadline, and cancellation.
 
 **Scope remains intentional.** This is still a row/event state machine
 *prototype*, not a replacement for the entire `PatternNoteProcessor`.
-Delayed or negative global Tempo/Speed, cross-row tracker-control commands,
-advanced tracker effect families, tempo ramps, fine/whole-row pattern
-delays, virtual-channel behavior and note-action migration remain
-unsupported. A timed event with commands beyond ordinary physical
+Negative global Tempo/Speed offsets, tracker tempo slides and other
+advanced tracker effects, fine/whole-row pattern delays, virtual-channel
+behavior and note-action migration remain unsupported. A fixed wall-time
+offset on a *non-timing* command other than ordinary physical
 Note/Off/Cut is rejected, rather than executing early or with incorrect
 row-boundary semantics. Other source types must also fulfill the
 nondecreasing-row contract before integration with this prototype.
 Production song compilation, existing chronological scheduling, realtime
 playback and offline export are unchanged.
 
+## Fifth executable step: deferred global Tempo/Speed eligibility
+
+A standalone global `SetTempoCommand` or `SetSpeedCommand` may now have
+a **positive** fixed `TimeOffset` in the incremental shared-clock timeline.
+It obeys the same boundary semantics as the eager
+`PatternNoteProcessor`:
+
+- At the beginning of the source row, ignore the fractional part of
+  `RowOffset` and establish an *eligibility wall-clock instant* at
+  `rowStart + TimeOffset`. **Neither the source row nor the eligibility
+  deadline immediately changes Tempo or Speed**.
+- Each cursor retains its own pending commands. At the beginning of
+  each **later row belonging to that invocation**, check which requests
+  are eligible at that row's *actual* wall time, considering any
+  intervening shared Tempo changes. Execute eligible timing operations
+  through the existing common `PatternNoteProcessor`, ordered by
+  eligibility time and their original emission order.
+- Zero-offset global timing events enter this **same row-boundary
+  mechanism**, so future offsets and ordinary immediate Tempo/Speed
+  share the ordering model. A Speed change updates the issuing cursor's
+  newly captured row duration, but not another cursor's already-started
+  row. A global Tempo change alters future wall-time integration from
+  the actual boundary.
+- Requests waiting beyond the final available source row never apply;
+  a timing event exactly at `RowCount` has no source row to execute.
+  Cancelling an invocation disposes all its pending timing commands.
+  Positive wall-time physical Note/Off/Cut remain on the separate
+  **exact wall-deadline** queue and are not delayed to row boundaries.
+
+Regression tests compare deferred timing against eager output, cover
+Speed without retroactive parent-row resizing, multiple pending Tempo
+changes ordered by their eligibility, requests skipped across several
+boundaries, fractional timing positions, changes to a cursor's row
+wall-time by another cursor, cancellation, and final-row endpoints.
+Mixed unsupported command combinations and negative fixed offsets
+still fail explicitly.
+
+This is an **experimental incremental timeline**, not production
+playback. Tracker Tempo slides `T0x/T1x`, timing effects embedded in
+complex commands, variable-length tracker rows, and full cross-cursor
+same-instant priority reconciliation still require additional parity
+work before general use.
+
 ## Proposed next interfaces and migration
 
-1. Expand the now-implemented **within-row shared-tick merger**
-   beyond its supported slide families and ordinary fixed wall-time notes
-   by extracting a fully resumable version of the
-   `PatternNoteProcessor`'s remaining row and event semantics. Preserve
-   deferred global timing at subsequent row boundaries, fine delays,
-   tempo ramps, pattern flow control, other effect families, virtual
-   channels and the existing zero-time cooperation guards before
-   production adoption.
+1. Expand the now-implemented **within-row shared-tick merger** beyond
+   supported slide families, ordinary fixed wall-time notes and deferred
+   standalone global Tempo/Speed. Extract a fully resumable version of
+   the `PatternNoteProcessor`'s remaining row/event semantics, especially
+   tracker `Txx` tempo slides, fine delays, tempo ramps, pattern flow
+   control, effect families, virtual channels, same-instant arbitration
+   and the existing zero-time cooperation guards before production adoption.
 2. Add **script invocation-local iterators** through Roslyn syntax
    rewriting. The existing loop `Checkpoint()` instrumentation for
    `for`/`while`/`do` is the starting point, but the generated
