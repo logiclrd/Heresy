@@ -262,6 +262,57 @@ public sealed class PlaybackSession
 		_inputEnded = true;
 	}
 
+	public void CutIndefiniteActiveVoicesAfterEndInput()
+	{
+		if (!_inputEnded)
+		{
+			throw new InvalidOperationException(
+				"Indefinite voices can only be cut after playback input has ended.");
+		}
+
+		foreach (PlaybackChannelState channel in _channels.Values)
+		{
+			if (channel.CurrentVoice is PlaybackVoice voice
+				&& !GetEffectiveVoiceEndFrameExclusive(
+					voice,
+					_nextFrame).HasValue)
+			{
+				channel.CutCurrentVoice();
+			}
+		}
+
+		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+		{
+			if (channel.CurrentVoice is PlaybackVoice voice
+				&& !GetEffectiveVoiceEndFrameExclusive(
+					voice,
+					_nextFrame).HasValue)
+			{
+				channel.CutCurrentVoice();
+			}
+		}
+
+		for (int index = _virtualVoices.Count - 1;
+			index >= 0;
+			index--)
+		{
+			PlaybackVoice voice = _virtualVoices[index];
+			if (GetEffectiveVoiceEndFrameExclusive(
+				voice,
+				_nextFrame).HasValue)
+			{
+				continue;
+			}
+
+			PlaybackChannelState origin =
+				GetChannelState(
+					voice.OriginPhysicalChannel);
+			voice.AddCutTo(
+				origin.AntiClickTail);
+			_virtualVoices.RemoveAt(index);
+		}
+	}
+
 	public void ApplyLiveEvent(
 		ChannelTarget target,
 		IReadOnlyList<NoteCommand> commands)

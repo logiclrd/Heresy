@@ -28,9 +28,9 @@ public readonly record struct OfflineRenderResult(
 
 /// <summary>
 /// Renders a sequential PlaybackSession through its logical arrangement end,
-/// releases every still-active voice, then drains deterministic release and
-/// anti-click tails. A genuinely unbounded post-release voice is rejected
-/// rather than being truncated at an arbitrary timeout.
+/// releases every still-active voice, preserves deterministic release tails,
+/// then cuts only voices that remain unbounded after Note Off and drains their
+/// ordinary anti-click residue.
 /// </summary>
 public static class OfflinePlaybackRenderer
 {
@@ -77,8 +77,7 @@ public static class OfflinePlaybackRenderer
 			blockFrameCount);
 
 		session.EndInput();
-		if (session.HasIndefiniteActiveVoices)
-			throw new IndefiniteOfflineRenderException();
+		session.CutIndefiniteActiveVoicesAfterEndInput();
 
 		long tailFrames =
 			RenderTail(
@@ -146,7 +145,7 @@ public static class OfflinePlaybackRenderer
 		while (!session.IsQuiescent)
 		{
 			if (session.HasIndefiniteActiveVoices)
-				throw new IndefiniteOfflineRenderException();
+				session.CutIndefiniteActiveVoicesAfterEndInput();
 
 			Span<float> block =
 				buffer.AsSpan();
