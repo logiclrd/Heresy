@@ -4,8 +4,6 @@ This file contains only explicitly specified work that remains open.
 
 ## FM synth graph editor
 
-- [ ] Draw a small arrowhead at the sink end of every graph connection, pointing
-  into the node/input consuming the value. Do not decorate the source end.
 - [ ] When the pointer hovers over a node border, show small connection handles.
   Dragging from one handle to a compatible handle on another node should create
   the corresponding graph connection directly.

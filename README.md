@@ -300,6 +300,14 @@ pane is the visual root of its subtree. New objects receive one canonical tree
 placement from `SongDocument.Add`; envelopes are grouped with Instruments.
 Nodes may be reorganized within a section but not moved between sections.
 
+FM synth graph connections are drawn as orthogonal routes from producer to
+consumer, with a small arrowhead **only at the consuming/input end**. The
+arrowhead follows the last nonzero segment of the rendered route and scales
+down for short segments. When an explicit connection waypoint is supplied,
+the route retains the waypoint and finishes with a short horizontal approach
+into the target node's input-facing border; editing the layout or routing
+hints does not alter the semantic audio graph.
+
 The desktop File menu offers New (`Ctrl+N`), Open (`Ctrl+O`), Save
 (`Ctrl+S`) and Exit (`Ctrl+Q`). These shortcuts are handled by the window
 only after the focused control has had an opportunity to handle its key event,
