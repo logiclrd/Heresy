@@ -1370,11 +1370,92 @@ public static class PatternNoteProcessor
 			or ApplyTrackerTempoCommand;
 
 
+	private static NoteEvent ResolveRowSourceCommands(
+		NoteEvent noteEvent,
+		SequencingContext context)
+	{
+		if (!context.ResolvePatternSourcesAtRowTime
+			|| noteEvent.Target.Kind != ChannelTargetKind.Physical)
+			return noteEvent;
+
+		SequencingChannelState channelState =
+			context.GetPhysicalChannelState(noteEvent.Target.PhysicalChannel);
+		List<NoteCommand> commands = [];
+		bool changed = false;
+		foreach (NoteCommand command in noteEvent.Commands)
+		{
+			switch (command)
+			{
+				case SelectPatternSourceCommand selection:
+					channelState.CurrentSourceId = selection.SourceId;
+					changed = true;
+					break;
+
+				case StartNoteCommand start when start.SourceId.IsNone:
+					changed = true;
+					if (!channelState.CurrentSourceId.IsNone)
+						commands.Add(start with
+						{
+							SourceId = channelState.CurrentSourceId,
+						});
+					else if (start.Volume.HasValue)
+						commands.Add(new SetNoteVolumeCommand(start.Volume.Value));
+					break;
+
+				case ApplyTonePortamentoCommand tone
+					when tone.TargetNote is { SourceId.IsNone: true }:
+					changed = true;
+					commands.Add(tone with
+					{
+						TargetNote = ResolvePortamentoSource(
+							tone.TargetNote, channelState),
+					});
+					break;
+
+				case ApplyTonePortamentoVolumeSlideCommand combined
+					when combined.TargetNote is { SourceId.IsNone: true }:
+					changed = true;
+					commands.Add(combined with
+					{
+						TargetNote = ResolvePortamentoSource(
+							combined.TargetNote, channelState),
+					});
+					break;
+
+				case ApplyTrackerVolumeColumnCommand volume
+					when volume.TargetNote is { SourceId.IsNone: true }:
+					changed = true;
+					commands.Add(volume with
+					{
+						TargetNote = ResolvePortamentoSource(
+							volume.TargetNote, channelState),
+					});
+					break;
+
+				default:
+					commands.Add(command);
+					break;
+			}
+		}
+		return changed ? noteEvent with { Commands = commands } : noteEvent;
+	}
+
+	private static StartNoteCommand? ResolvePortamentoSource(
+		StartNoteCommand target,
+		SequencingChannelState channelState)
+		=> channelState.CurrentSourceId.IsNone
+			? null
+			: target with { SourceId = channelState.CurrentSourceId };
+
 	private static ResolvedCommands ResolveCommands(
 		NoteEvent noteEvent,
 		SequencingContext context,
 		int? rowTicksOverride)
 	{
+		// Source selection is a row-level sequencer operation, not a raw
+		// grid preprocessing side effect. In particular, a flattened child
+		// may have replaced this physical channel's remembered source.
+		noteEvent = ResolveRowSourceCommands(noteEvent, context);
 		List<NoteCommand>? transformed =
 			rowTicksOverride.HasValue
 				? new List<NoteCommand>(noteEvent.Commands.Count)
