@@ -311,6 +311,17 @@ while operators can replace a selected input or append another ordered input.
 Cycle detection and all other graph validation occur before committing, and
 invalid drags leave the graph, revisions and routing hints unchanged.
 
+Removing a non-output FM node disconnects every consumer atomically: oscillator
+multiplier inputs become unset while retaining the oscillator settings, and
+all matching operands are removed from operators (including repeated inputs).
+An operator with no remaining inputs is converted into a zero-valued constant
+with the same node ID, preserving its location, output selection and any
+downstream dependencies without relaxing the Core requirement that operators
+have at least one input. Surviving connection waypoints are remapped to their
+new operator input indices. The deletion advances the audio/document revision
+once. The selected output node still cannot be removed until another output
+is selected.
+
 Connection routes terminate at the exact input-port positions, including the
 individual inputs of an operator; backward connections travel around an
 exterior lane to reach the fixed port sides. Arrowheads follow the last

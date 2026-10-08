@@ -4,9 +4,6 @@ This file contains only explicitly specified work that remains open.
 
 ## FM synth graph editor
 
-- [ ] Allow `Remove Node` even when the node is currently consumed by other
-  nodes. Removing the node must implicitly remove every connection that uses it
-  as an input, while preserving normal graph validity for the remaining graph.
 - [ ] Add an FM-synth audition area containing the text `Test`. While keyboard
   focus is in that area, tracker piano keys (`Z S X D C ...`) should audition
   the corresponding notes, and `*` / `/` should change the audition octave
