@@ -18,6 +18,7 @@
 		<ProjectReference Include="..\Heresy.Scripting\Heresy.Scripting.csproj" />
 		<ProjectReference Include="..\Heresy.Render\Heresy.Render.csproj" />
 		<ProjectReference Include="..\Heresy.Playback\Heresy.Playback.csproj" />
+		<ProjectReference Include="..\Heresy.Render.File\Heresy.Render.File.csproj" />
 	</ItemGroup>
 
 </Project>

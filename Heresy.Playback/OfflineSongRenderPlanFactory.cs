@@ -5,6 +5,7 @@ using Heresy.Core.Samples;
 using Heresy.Render.Configuration;
 using Heresy.Render.Playback;
 using Heresy.Render.Samples;
+using Heresy.Render.Sounds;
 using Heresy.Scripting.Compilation;
 
 namespace Heresy.Playback;
