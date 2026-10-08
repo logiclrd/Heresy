@@ -89,6 +89,82 @@ public sealed class SongScheduleCompilerTests
 	}
 
 	[Test]
+	public void SimultaneousFlattenedTempoChangesFollowMappedPhysicalChannelOrder()
+	{
+		SongDocument document = new();
+		ObjectId lowerId = document.AllocateObjectId();
+		DataPatternDefinition lower = new(lowerId, "Channel zero")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		lower.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new SetTempoPatternEffect(200));
+		document.Add(lower);
+
+		ObjectId higherId = document.AllocateObjectId();
+		DataPatternDefinition higher = new(higherId, "Channel one")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		higher.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new SetTempoPatternEffect(250));
+		document.Add(higher);
+
+		ObjectId parentId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(parentId, "Simultaneous nested tempo")
+		{
+			RowCount = 2,
+			// Reverse source emission order: mapped physical channel
+			// order determines same-time effects.
+			Source = $"Note(0.5, 1, _O({higherId.Value})); "
+				+ $"Note(0.5, 0, _O({lowerId.Value})); Cut(1, 2);",
+		});
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompilePattern(document, parentId);
+
+		result.Success.Should().BeTrue();
+		NoteEvent[] tempoChanges = result.Schedule!
+			.Where(e => e.Commands.Any(c => c is SetTempoCommand))
+			.ToArray();
+		tempoChanges.Should().HaveCount(2);
+		tempoChanges.Select(e =>
+			((SetTempoCommand)e.Commands.Single()).TicksPerDiachron)
+			.Should().Equal(200.0, 250.0);
+		tempoChanges.Select(e => e.Offset.TimeOffset)
+			.Should().OnlyContain(t => t == TimeSpan.FromMilliseconds(60));
+		result.Schedule.Single(e => e.Commands.Any(c => c is NoteCutCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(90));
+	}
+
+	[Test]
+	public void DelayedFlattenedTempoChangeIsRejectedUntilChildRowsCanBeInterleaved()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Late tempo")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		child.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new SetTempoPatternEffect(250));
+		document.Add(child);
+		ObjectId parentId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(parentId, "Parent")
+		{
+			RowCount = 2,
+			Source = $"Note(0.5, 0, _O({childId.Value})); Cut(1, 1);",
+		});
+		Action compile = () => SongScheduleCompiler.CompilePattern(
+			document, parentId);
+		compile.Should().Throw<NotSupportedException>()
+			.WithMessage("*concurrent row scheduling*");
+	}
+
+	[Test]
 	public void NestedFlattenedEventsAreGeneratedInParentsActiveChannelState()
 	{
 		SongDocument document = new();
