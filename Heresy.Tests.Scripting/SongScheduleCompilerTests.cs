@@ -113,7 +113,7 @@ public sealed class SongScheduleCompilerTests
 		NoteEvent note = compilation.Schedule!.Single(e =>
 			e.Commands.Any(c => c is StartNoteCommand));
 		note.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(180));
-		NoteEvent cut = compilation.Schedule.Single(e =>
+		NoteEvent cut = compilation.Schedule!.Single(e =>
 			e.Commands.Any(c => c is NoteCutCommand));
 		cut.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(120));
 	}
