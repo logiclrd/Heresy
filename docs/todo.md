@@ -14,10 +14,13 @@ Items that were already completed remain in Git history, not in this checklist.
   raw `NoteEvent` steps and non-executing musical progress after up to
   100 silent rows. The legacy `GenerateRawNotes` path eagerly consumes
   the stream for full compatibility.
-  Next, implement an incremental Pattern processor consuming those steps
-  without applying shared tracker state early; provide script coroutine
-  instrumentation with distinct CPU-only checkpoints, then a common
-  invocation-lifetime-aware cursor merger for data and scripted Sequences.
+  The first `IncrementalPatternNoteProcessor` now retains a raw iterator
+  and resolves just one requested row through the existing common processor,
+  preserving row-time Source memory and allowing shared Tempo/Speed changes
+  between rows. Next, support **within-row suspension and interleaving**,
+  deferred cross-row operations, then script coroutine instrumentation with
+  distinct CPU-only checkpoints and a common invocation-lifetime-aware
+  cursor merger for data and scripted Sequences.
   Preserve out-of-order scripted-event semantics or explicitly resolve
   their ordering policy before migrating playback. Replace the existing
   restricted chronological scheduler rather than adding more special
