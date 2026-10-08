@@ -11,5 +11,12 @@ public readonly record struct PatternFlowControl(
 {
 	public static PatternFlowControl None => new(null, null);
 
+	/// <summary>
+	/// Original source-pattern row containing the selected sequence-control
+	/// instruction. This remains stable when local pattern loops expand rows
+	/// before sequence control is consumed by the surrounding sequence.
+	/// </summary>
+	public int? SourceRow { get; init; }
+
 	public bool HasControl => OrderJump.HasValue || BreakRow.HasValue;
 }
