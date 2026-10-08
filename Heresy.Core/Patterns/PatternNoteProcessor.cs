@@ -152,7 +152,7 @@ public static class PatternNoteProcessor
 		// patterns. Script patterns keep their independent explicit note
 		// semantics, including source ID 0.
 		bool deferredDataSources = context.ResolvePatternSourcesAtRowTime
-			&& generator is DataPatternDefinition;
+			&& generator is IDeferredSourcePatternGenerator;
 
 		NoteScheduleBuilder rawBuilder = new();
 		generator.GenerateRawNotes(context, rawBuilder, out double rowCount);
