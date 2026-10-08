@@ -71,6 +71,32 @@ public sealed class SequencingDiagnosticsTests
 	}
 
 	[Test]
+	public void ConcurrentProducerAndConsumerPreserveBoundedDiagnostics()
+	{
+		SequencingDiagnosticLog log = new();
+		System.Collections.Generic.List<SequencingDiagnostic> received = [];
+		System.Threading.Tasks.Task producer = System.Threading.Tasks.Task.Run(() =>
+		{
+			for (int i = 0; i < 4000; i++)
+				log.ReportDroppedOutOfOrderNote(1, 4);
+		});
+
+		while (!producer.IsCompleted)
+			received.AddRange(log.Drain());
+		producer.GetAwaiter().GetResult();
+		received.AddRange(log.Drain());
+
+		Assert.That(log.DroppedOutOfOrderNotes, Is.EqualTo(4000));
+		Assert.That(received, Has.Count.EqualTo(
+			SequencingDiagnosticLog.MaximumIndividualMessages + 1));
+		Assert.That(received.Count(m => m.Code == "HRSEQ001"),
+			Is.EqualTo(SequencingDiagnosticLog.MaximumIndividualMessages));
+		Assert.That(received.Count(m => m.Code == "HRSEQ002"),
+			Is.EqualTo(1));
+		Assert.That(log.Drain(), Is.Empty);
+	}
+
+	[Test]
 	public void SharedTimelineReportsDiscardedTimingCommandWithoutExecutingIt()
 	{
 		SequencingContext context = new();
