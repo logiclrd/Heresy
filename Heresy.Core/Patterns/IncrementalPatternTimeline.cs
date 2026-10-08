@@ -464,6 +464,36 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					if (commands.Count == 0)
 						continue;
 					NoteEvent filtered = emit.Note with { Commands = commands.ToArray() };
+					// Tracker Txx changes the shared row-boundary clock even
+					// when the same cell also contains a musical command.
+					// Split it into a timing request and the original
+					// ordinary command sequence, so all simultaneous Txx
+					// instructions still enter one global arbitration.
+					// The ordinary commands retain their exact musical
+					// position and any fixed wall-time offset.
+					if (filtered.Target.Kind == ChannelTargetKind.Physical
+						&& filtered.Commands.Any(c => c is ApplyTrackerTempoCommand)
+						&& filtered.Commands.Any(c => c is not ApplyTrackerTempoCommand))
+					{
+						NoteEvent timing = filtered with
+						{
+							Commands = filtered.Commands
+								.Where(c => c is ApplyTrackerTempoCommand).ToArray(),
+						};
+						NoteEvent ordinary = filtered with
+						{
+							Commands = filtered.Commands
+								.Where(c => c is not ApplyTrackerTempoCommand).ToArray(),
+						};
+						Validate(timing);
+						Validate(ordinary);
+						if (timing.Offset.RowOffset < RowCount)
+							_pendingTiming.Add(new DeferredTiming(
+								timing, now + timing.Offset.TimeOffset,
+								_nextTimingOrder++));
+						preparation.Events.Add(ordinary);
+						continue;
+					}
 					Validate(filtered);
 					if (IsTiming(filtered))
 					{
@@ -721,10 +751,6 @@ public sealed class IncrementalPatternTimeline : IDisposable
 
 		private static void Validate(NoteEvent note)
 		{
-			if (note.Commands.Any(c => c is ApplyTrackerTempoCommand)
-				&& !IsTiming(note))
-				throw new NotSupportedException(
-					"Tracker Txx in a mixed-command raw note requires resumable row resolution.");
 			if (note.Offset.TimeOffset < TimeSpan.Zero)
 				throw new NotSupportedException(
 					"The incremental tick merger does not support negative wall-time offsets.");
