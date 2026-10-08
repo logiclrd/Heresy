@@ -78,6 +78,24 @@ public static class SequenceNoteProcessor
 		Func<SequenceOrderJumpEncounter, bool>? shouldFollowOrderJump = null)
 	{
 		ArgumentNullException.ThrowIfNull(entries);
+		GenerateNotes(
+			new IndexedSequenceEntryProvider(entries),
+			resolver, context, output, startOrder, startRow, out duration,
+			rowStarted, shouldFollowOrderJump);
+	}
+
+	public static void GenerateNotes(
+		ISequenceEntryProvider entries,
+		ISequencePatternResolver resolver,
+		SequencingContext context,
+		INoteReceiver output,
+		int startOrder,
+		int? startRow,
+		out TimeSpan duration,
+		Action<int, ObjectId, int, TimeSpan>? rowStarted = null,
+		Func<SequenceOrderJumpEncounter, bool>? shouldFollowOrderJump = null)
+	{
+		ArgumentNullException.ThrowIfNull(entries);
 		ArgumentNullException.ThrowIfNull(resolver);
 		ArgumentNullException.ThrowIfNull(context);
 		ArgumentNullException.ThrowIfNull(output);
@@ -90,16 +108,22 @@ public static class SequenceNoteProcessor
 		int order = startOrder;
 		int? startRowOverride = startRow;
 		int visits = 0;
+		int previousOrder = -1;
 
-		while ((uint)order < (uint)entries.Count)
+		while (true)
 		{
-			if (++visits > NoteScheduleBuilder.MaximumGeneratedNotes)
+			if (visits >= NoteScheduleBuilder.MaximumGeneratedNotes)
 			{
 				throw new SequencingResourceLimitException(
 					$"Sequence control exceeded {NoteScheduleBuilder.MaximumGeneratedNotes:N0} pattern visits.");
 			}
 
-			SequenceEntry entry = entries[order];
+			SequenceEntry? selected = entries.GetSequenceEntry(
+				visits++, order, previousOrder);
+			previousOrder = order;
+			if (selected is null)
+				break;
+			SequenceEntry entry = selected;
 			int effectiveStartRow =
 				startRowOverride ?? entry.StartRow;
 			startRowOverride = null;

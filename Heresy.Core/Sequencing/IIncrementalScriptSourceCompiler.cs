@@ -14,6 +14,6 @@ public interface IIncrementalScriptSourceCompiler
 	IIncrementalRawPatternNoteGenerator CompilePattern(
 		ScriptPatternDefinition source);
 
-	IIncrementalRawSequenceEntryGenerator CompileSequence(
+	ISequenceEntrySourceFactory CompileSequence(
 		ScriptSequenceDefinition source);
 }
