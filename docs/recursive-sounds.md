@@ -96,24 +96,47 @@ compilers use the same pathway.
   consume the already-expanded compiler schedule. A separate legacy expander
   remains for arbitrary ad-hoc raw schedules that bypass normal compilation.
 
-**Remaining correctness work:** Data Pattern raw-note generation currently
-reads/resolves remembered source IDs for the entire grid before the row loop
-starts. That means a child changing `CurrentSourceId` cannot yet influence a
-later source-omitted parent note within the same parent pattern. Moreover,
-child tempo events that start partway through a parent row do not yet reshape
-that already-computed parent row's timeline; virtual channel scopes and
+## Row-time data-pattern Source-column resolution (October 8, 2026)
+
+Data Pattern raw-note generation now emits compiler-only
+`SelectPatternSourceCommand` events when a Source column is explicitly set,
+and unresolved note starts/portamento targets when Source is omitted.
+`PatternNoteProcessor` resolves these against the mapped channel's
+`CurrentSourceId` **as each row executes**. A flattened child can therefore
+change the source selected by a later parent note, and that change also
+affects later pattern invocations on the same mapped channel.
+
+- Source-only rows update sequencing memory without creating playback notes.
+  Skipped rows do not execute their Source changes. Missing remembered sources
+  suppress playback starts but retain the original valid pattern data.
+- Explicit Source selections on a row take effect before that row's note.
+  Note-volume and tone-portamento semantics remain intact, including when
+  source memory is absent. Raw `GenerateRawNotes` callers retain their
+  previous eager resolution behavior for compatibility; the song compiler
+  opts into row-time semantics explicitly.
+- Deferred command interpretation applies only to data-pattern generation,
+  not arbitrary scripted `StartNoteCommand` events. Selection commands are
+  removed during Core resolution and never reach the renderer.
+- Regression tests cover flattened source-only child rows, no retroactive
+  selection, independent mapped channels, skipped source rows, and
+  source-omitted tone-portamento targets.
+
+**Remaining correctness work:** Child tempo events that start partway through
+a parent row do not yet reshape the already-computed parent row timeline.
+Simultaneous parent/child operations, virtual-channel scopes and
 parent-to-child effects, release and pitch/speed propagation remain open.
-These cases require moving more of data-note resolution into the live
-row-processing timeline and adding tests for simultaneous operations.
+Those cases need separate red-test coverage and potentially deeper
+row/event interleaving.
 
 ## Boundaries deliberately NOT complete
 
 - Ordinary `Mixdown: false` nested Pattern/Sequence notes are now
   compiled at their parent's active sequencing row, sharing tracker effect
   memory and later-row timing changes. Full flattening still requires
-  source-selection memory at row-generation time, exact within-row tempo
-  interplay, virtual-channel scoping, and parent-to-child effects/note
-  actions. No separate child session is used for flattened notes.
+  exact within-row tempo interplay, virtual-channel scoping, and
+  parent-to-child effects/note actions. Source selection is now resolved
+  at row execution against shared mapped memory. No separate child session
+  is used for flattened notes.
 - The first mixdown implementation supports unit initial pitch/speed only. It
   **rejects** other initial pitch/playback-speed multipliers rather than playing
   incorrect audio. Child pitch trajectory/time-warp and parent row-time
