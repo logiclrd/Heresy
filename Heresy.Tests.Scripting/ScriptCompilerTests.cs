@@ -19,6 +19,47 @@ namespace Heresy.Tests.Scripting;
 [TestFixture]
 public sealed class ScriptCompilerTests
 {
+
+	[Test]
+	public void PatternScriptFixedWallOffsetsAppearInRawMusicalTime()
+	{
+		ScriptPatternDefinition pattern = new((ObjectId)1U, "Wall offsets")
+		{
+			RowCount = 3,
+			Source = "Note(0.5, 0, _O(17), timeOffsetSeconds: 0.09); "
+				+ "Off(1.5, 0, timeOffsetSeconds: 0.025); "
+				+ "Cut(2, 0, timeOffsetSeconds: 0.1);",
+		};
+		ScriptCompilationResult<IRawPatternNoteGenerator> compiled =
+			ScriptCompiler.CompilePattern(pattern);
+		compiled.Success.Should().BeTrue();
+		NoteScheduleBuilder builder = new();
+		compiled.Program!.GenerateRawNotes(new SequencingContext(), builder, out _);
+		NoteEvent[] events = builder.Freeze().ToArray();
+		events.Select(e => e.Offset.RowOffset).Should().Equal(0.5, 1.5, 2);
+		events.Select(e => e.Offset.TimeOffset).Should().Equal(
+			TimeSpan.FromMilliseconds(90),
+			TimeSpan.FromMilliseconds(25),
+			TimeSpan.FromMilliseconds(100));
+	}
+
+	[Test]
+	public void PatternScriptRejectsUnrepresentableFixedWallOffset()
+	{
+		ScriptPatternDefinition pattern = new((ObjectId)1U, "Oversized wall offset")
+		{
+			RowCount = 2,
+			Source = "Cut(0, 0, timeOffsetSeconds: 1e300);",
+		};
+		ScriptCompilationResult<IRawPatternNoteGenerator> compiled =
+			ScriptCompiler.CompilePattern(pattern);
+		compiled.Success.Should().BeTrue();
+		Action generate = () =>
+			compiled.Program!.GenerateRawNotes(
+				new SequencingContext(), new NoteScheduleBuilder(), out _);
+		generate.Should().Throw<ArgumentOutOfRangeException>();
+	}
+
 	[Test]
 	public void PatternScriptEndpointCommandsAreInclusiveButLaterRowsAreRejected()
 	{
