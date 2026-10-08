@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 
 using AwesomeAssertions;
@@ -347,6 +348,70 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 		float[] buffer = new float[1];
 		source.Render(1, buffer);
 		buffer[0].Should().BeApproximately(0.5f, 1e-6f);
+	}
+
+	[Test]
+	public void FlattenedChildTimingIsRelativeToItsParentStart()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = AddSample(document, "Offset sample");
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Delayed child")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		PatternCell note = child.Grid.GetOrCreateCell(1, 0);
+		note.SourceId = sampleId;
+		note.Note = new StartPatternNote();
+		document.Add(child);
+		ObjectId parent = AddPatternWithNote(document, childId);
+		ObjectId root = AddSequence(document, parent);
+		int noteFrame = FrameTime.Ceiling(
+			SongScheduleCompiler.CompilePattern(document, childId)
+				.Schedule!.First().Offset.TimeOffset, 100);
+		noteFrame.Should().BeGreaterThan(0);
+		PlaybackRequestAudioSourceFactory factory = new(
+			MonoConfiguration(100),
+			new RecordingSampleProvider(
+				new MemorySampleData(100, 1, new float[] { 0.75f })));
+
+		IAudioOutputSource source = factory.Create(
+			SequencePlaybackRequest.Create(document, root));
+		float[] prefix = new float[noteFrame];
+		source.Render(prefix.Length, prefix);
+		prefix.Should().OnlyContain(value => value == 0.0f);
+		float[] result = new float[1];
+		source.Render(1, result);
+		result[0].Should().BeApproximately(0.75f, 1e-6f);
+	}
+
+	[Test]
+	public void FlattenedNestedSourceRejectsUnimplementedInitialPitchTransform()
+	{
+		SongDocument document = new();
+		ObjectId sample = AddSample(document, "Sample");
+		ObjectId childId = AddPatternWithNote(document, sample);
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Transposed")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		PatternCell note = parent.Grid.GetOrCreateCell(0, 0);
+		note.SourceId = childId;
+		note.Note = new StartPatternNote(pitchMultiplier: 2.0);
+		document.Add(parent);
+		ObjectId root = AddSequence(document, parentId);
+		PlaybackRequestAudioSourceFactory factory = new(
+			MonoConfiguration(100),
+			new RecordingSampleProvider(
+				new MemorySampleData(100, 1, new float[] { 1.0f })));
+
+		Action create = () =>
+			factory.Create(SequencePlaybackRequest.Create(document, root));
+		create.Should().Throw<NotSupportedException>()
+			.WithMessage("*not yet implemented*");
 	}
 
 	[Test]
