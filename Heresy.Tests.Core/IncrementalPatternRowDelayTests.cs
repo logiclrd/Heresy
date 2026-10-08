@@ -174,6 +174,72 @@ public sealed class IncrementalPatternRowDelayTests
 			.TryGetEffectParameter(EffectMemorySlot.Tempo, out _), Is.False);
 	}
 
+	[Test]
+	public void FineDelayOverridesContinuousTrackerVolumeSlideTicksPerRow()
+	{
+		DataPatternDefinition p = Pattern(1, 1);
+		var cell = p.Grid.GetOrCreateCell(0, 0);
+		cell.Effects.Add(new TrackerVolumeSlidePatternEffect(0x01));
+		cell.Effects.Add(new TrackerFinePatternDelayPatternEffect(3));
+		AssertParity(p);
+		SequencingContext state = new();
+		using IncrementalPatternTimeline timeline = new(state);
+		timeline.Add(p, 1, state);
+		NoteEvent[] notes = Drain(timeline);
+		Assert.That(notes[0].Commands,
+			Does.Contain(new SetNoteVolumeSlideCommand(-1, 9)));
+		Assert.That(notes[^1].Offset.TimeOffset,
+			Is.EqualTo(TimeSpan.FromMilliseconds(180)));
+	}
+
+	[Test]
+	public void FineVolumeAdjustmentRepeatsAtEverySEySpan()
+	{
+		DataPatternDefinition p = Pattern(1, 1);
+		var cell = p.Grid.GetOrCreateCell(0, 0);
+		cell.Effects.Add(new TrackerVolumeSlidePatternEffect(0xF2));
+		cell.Effects.Add(new TrackerPatternDelayPatternEffect(2));
+		AssertParity(p);
+	}
+
+	[Test]
+	public void S6xAndSEyRepeatContinuousEffectWithEffectiveRowTicks()
+	{
+		DataPatternDefinition p = Pattern(1, 1);
+		var cell = p.Grid.GetOrCreateCell(0, 0);
+		cell.Effects.Add(new TrackerFinePatternDelayPatternEffect(2));
+		cell.Effects.Add(new TrackerPatternDelayPatternEffect(1));
+		cell.Effects.Add(new TrackerVolumeSlidePatternEffect(0x01));
+		AssertParity(p);
+		SequencingContext state = new();
+		using IncrementalPatternTimeline timeline = new(state);
+		timeline.Add(p, 1, state);
+		NoteEvent[] events = Drain(timeline);
+		Assert.That(events.Select(x => x.Offset.TimeOffset),
+			Is.EqualTo(new[] { TimeSpan.Zero,
+				TimeSpan.FromMilliseconds(160), TimeSpan.FromMilliseconds(320) }));
+		Assert.That(events[1].Commands,
+			Does.Contain(new SetNoteVolumeSlideCommand(-1, 8)));
+	}
+
+	[Test]
+	public void FractionalContinuousEffectRepeatsAtSameFractionOfEachDelayedSpan()
+	{
+		RawSource source = new(
+			new NoteEvent(new MusicalTime(TimeSpan.Zero, 0),
+				ChannelTarget.Physical(0), [new ApplyTrackerPatternDelayCommand(2)]),
+			new NoteEvent(new MusicalTime(TimeSpan.Zero, 0.5),
+				ChannelTarget.Physical(0), [new SetPitchSlideCommand(24)]));
+		SequencingContext state = new();
+		using IncrementalPatternTimeline timeline = new(state);
+		timeline.Add(source, 1, state);
+		NoteEvent[] notes = Drain(timeline);
+		Assert.That(notes.Select(n => n.Offset.TimeOffset),
+			Is.EqualTo(new[] {
+				TimeSpan.FromMilliseconds(60), TimeSpan.FromMilliseconds(180),
+				TimeSpan.FromMilliseconds(300), TimeSpan.FromMilliseconds(360) }));
+	}
+
 	private static DataPatternDefinition Pattern(int rows, int channels)
 		=> new((ObjectId)1U, "Delay parity") { RowCount = rows, ChannelCount = channels };
 
