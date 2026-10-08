@@ -192,6 +192,40 @@ public sealed class IncrementalPatternTempoRampTests
 		Assert.Throws<NotSupportedException>(() => Drain(timeline));
 	}
 
+	[Test]
+	public void MixedTxxAndNoteCommandsFailBeforeApplyingFutureTempo()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(new RawSource(new NoteEvent(
+			MusicalTime.Zero, ChannelTarget.Physical(0),
+			[new ApplyTrackerTempoCommand(0x12), new NoteCutCommand()])),
+			1, root);
+		Assert.Throws<NotSupportedException>(() => timeline.TryStep(out _));
+		Assert.That(root.State.Tempo, Is.EqualTo(125));
+		Assert.That(root.GetPhysicalChannelState(0)
+			.TryGetEffectParameter(EffectMemorySlot.Tempo, out _), Is.False);
+	}
+
+	[Test]
+	public void CompetingGlobalTempoDuringActiveRampFailsWithoutClobberingRamp()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(new RawSource(
+			Event(0, ChannelTarget.Physical(0),
+				new ApplyTrackerTempoCommand(0x12))), 1, root);
+		timeline.Add(new RawSource(
+			Event(0, ChannelTarget.Global, new SetTempoCommand(250))),
+			1, root.FlattenedChild(physicalChannelOffset: 3));
+		// The parent cursor starts its ramp; the second cursor attempts
+		// a competing boundary operation at the same tracker tick.
+		Assert.That(timeline.TryStep(out IncrementalPatternTimelineStep? first), Is.True);
+		Assert.That(first, Is.TypeOf<IncrementalPatternTimelineStep.Emit>());
+		Assert.Throws<NotSupportedException>(() => timeline.TryStep(out _));
+		Assert.That(root.State.Tempo, Is.EqualTo(125));
+	}
+
 	private static double RampSeconds(double start, double end, double ticks, double elapsedTicks)
 		=> 2.5 * ticks / (end - start)
 			* Math.Log((start + (end - start) * elapsedTicks / ticks) / start);
