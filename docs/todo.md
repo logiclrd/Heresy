@@ -24,10 +24,19 @@ Items that were already completed remain in Git history, not in this checklist.
   changing shared tempo midway through another Pattern row. A note-less
   row boundary returns a cooperative Advance; unsupported effects and
   unbounded same-row streams fail explicitly.
-  Next, move **complete tracker row/effect semantics** into incremental
-  resolution, add deferred cross-row timing and user script coroutine
-  instrumentation with distinct CPU-only checkpoints, and wire generic
-  invocation-lifetime management for data and scripted Sequences.
+  The prototype now retains **row-scoped slide cleanup** for direct pitch/
+  volume, tracker Dxy/Exx/Fxx, Nxx/Wxx channel/global volume and Pxx
+  panning slides. Effect-memory transformations stay in the common
+  PatternNoteProcessor, but cleanup executes only at the issuing cursor's
+  real row end, even when another cursor changes Tempo. Ordinary positive
+  fixed wall-time Note/Off/Cut commands use absolute deadlines established
+  at their musical origin, resolve Source memory only when due, and can
+  be discarded with their invocation's Cancel operation.
+  Next, move **remaining tracker row/effect semantics** into incremental
+  resolution, including global delayed timing at subsequent row boundaries,
+  ramps, fine and whole-row delays, virtual targets, and user script
+  coroutine instrumentation with distinct CPU-only checkpoints. Wire
+  generic invocation-lifetime management for data and scripted Sequences.
   Preserve out-of-order scripted-event semantics or explicitly resolve
   their ordering policy before migrating playback. Replace the existing
   restricted chronological scheduler rather than adding more special
