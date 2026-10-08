@@ -33,6 +33,8 @@ internal static class ChronologicalDataPatternScheduler
 		public int ScriptEventIndex { get; set; }
 		public List<NoteEvent> ScriptRowEvents { get; } = [];
 		public int Row { get; set; }
+		public int EntryStartRow { get; init; }
+		public bool EntryOffsetPrepared { get; set; }
 		public long Sequence { get; init; }
 		public bool IsRoot { get; init; }
 		public int RootOrder { get; init; }
@@ -119,7 +121,7 @@ internal static class ChronologicalDataPatternScheduler
 
 	// The sequence script's Play() commands produce the same ordered entries
 	// as a data sequence. Both use the identical eligibility rules and cursor
-	// scheduler; unsupported entry start rows retain the legacy processor.
+	// scheduler. Entry StartRow skips earlier rows without executing effects.
 	public static bool CanHandleSequence(
 		SongDocument document,
 		IReadOnlyList<SequenceEntry> entries)
@@ -129,8 +131,7 @@ internal static class ChronologicalDataPatternScheduler
 		bool hasNested = false;
 		foreach (SequenceEntry entry in entries)
 		{
-			if (entry.StartRow != 0
-				|| !document.TryGet(entry.PatternId, out SongObject? obj)
+			if (!document.TryGet(entry.PatternId, out SongObject? obj)
 				|| obj is not PatternDefinition pattern
 				|| !IsCompatible(document, pattern, out bool nested))
 				return false;
@@ -263,6 +264,7 @@ internal static class ChronologicalDataPatternScheduler
 		SequencingContext? suppliedContext)
 	{
 		List<PatternDefinition> patterns = [];
+		List<int> entryStartRows = [];
 		foreach (SequenceEntry entry in entries)
 		{
 			if (!document.TryGet(entry.PatternId, out SongObject? obj)
@@ -270,15 +272,18 @@ internal static class ChronologicalDataPatternScheduler
 				throw new InvalidOperationException(
 					"Eligible arrangement pattern disappeared while preparing its cursors.");
 			patterns.Add(pattern);
+			entryStartRows.Add(entry.StartRow);
 		}
-		return Run(document, patterns, suppliedContext, sequenceMode: true);
+		return Run(document, patterns, suppliedContext, sequenceMode: true,
+			entryStartRows);
 	}
 
 	private static SongScheduleCompilationResult Run(
 		SongDocument document,
 		IReadOnlyList<PatternDefinition> patterns,
 		SequencingContext? suppliedContext,
-		bool sequenceMode)
+		bool sequenceMode,
+		IReadOnlyList<int>? entryStartRows = null)
 	{
 		SequencingContext context = suppliedContext ?? new SequencingContext();
 		if (context.FlattenedSourceExpander is not null
@@ -302,7 +307,8 @@ internal static class ChronologicalDataPatternScheduler
 			SequencingContext mapped,
 			IReadOnlySet<ObjectId> ancestry,
 			bool isRoot = false,
-			int rootOrder = 0)
+			int rootOrder = 0,
+			int startRow = 0)
 		{
 			if (ancestry.Contains(id))
 				throw new InvalidOperationException(
@@ -336,6 +342,8 @@ internal static class ChronologicalDataPatternScheduler
 				Raw = rawBuilder.Freeze(),
 				Ancestry = descendants,
 				DueTick = tick,
+				Row = Math.Min(startRow, pattern.RowCount),
+				EntryStartRow = Math.Min(startRow, pattern.RowCount),
 				Sequence = nextCursorSequence++,
 				IsRoot = isRoot,
 				RootOrder = rootOrder,
@@ -403,7 +411,8 @@ internal static class ChronologicalDataPatternScheduler
 
 		PatternDefinition first = patterns[0];
 		active.Add(CreateCursor(first.Id, first, context,
-			new HashSet<ObjectId>(), isRoot: true));
+			new HashSet<ObjectId>(), isRoot: true,
+			startRow: entryStartRows is null ? 0 : entryStartRows[0]));
 		double tempo = context.State.Tempo;
 		while (active.Count != 0 || delayed.Count != 0)
 		{
@@ -494,9 +503,39 @@ internal static class ChronologicalDataPatternScheduler
 						active.Add(CreateCursor(
 							nextRoot.Id, nextRoot, context,
 							new HashSet<ObjectId>(), isRoot: true,
-							rootOrder: nextOrder));
+							rootOrder: nextOrder,
+							startRow: entryStartRows is null
+								? 0 : entryStartRows[nextOrder]));
 					}
 					continue;
+				}
+
+				if (!current.EntryOffsetPrepared)
+				{
+					current.EntryOffsetPrepared = true;
+					if (current.EntryStartRow > 0
+						&& current.Pattern is ScriptPatternDefinition)
+					{
+						// The general PatternNoteProcessor collapses skipped rows
+						// using speed/tempo at entry. Commands in those rows
+						// normally disappear, but a positive fixed wall offset
+						// may extend past the new origin and must remain pending.
+						double skippedRowSeconds = context.State.Speed
+							* SequencingConstants.Diachron.TotalSeconds
+							/ context.State.Tempo;
+						foreach (NoteEvent raw in current.Raw)
+						{
+							if (raw.Offset.RowOffset >= current.EntryStartRow
+								|| raw.Offset.TimeOffset <= TimeSpan.Zero)
+								continue;
+							double remainingSeconds = raw.Offset.TimeOffset.TotalSeconds
+								+ (raw.Offset.RowOffset - current.EntryStartRow)
+									* skippedRowSeconds;
+							if (remainingSeconds >= 0.0)
+								delayed.Add(new DeferredScriptEvent(current, raw,
+									elapsed + TimeSpan.FromSeconds(remainingSeconds)));
+						}
+					}
 				}
 
 				// A scripted row may revisit its cursor for several fractional
