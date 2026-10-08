@@ -156,15 +156,48 @@ with an in-row child tempo set also fail explicitly. The next step requires
 a unified, event-driven parent/child timing scheduler and collision tests,
 not another eager child-schedule shortcut.
 
+## Deferred child-row tempo queue — initial concurrency milestone (October 8, 2026)
+
+A new `DeferredTempoEventQueue` is attached to the flattened sequencing
+context. When a flattened child has a future **SetTempo** in a later child row,
+the parent records the child's absolute wall-time instead of allowing
+eager child compilation to apply the change to the parent's present tempo.
+The parent pattern consumes queued tempo sets in chronological order while
+walking its rows; the tick map is spliced at a due change, including changes
+partway through a parent row. The queue is stable for equal timestamps and
+retains events across successive patterns within a parent sequence.
+
+A delayed child row can therefore change the duration of a *concurrent*
+parent row. The first supported integration case is a unit-speed/normal
+tracker-tempo sequence with no intervening unrelated tempo effects.
+Regression tests cover:
+- a child tempo change in its second row modifying the second half of
+  the parent's current row, without backdating earlier parent notes;
+- a child invoked in one sequence order modifying the next order's tempo;
+- strict ordering and argument validation for the shared tempo queue.
+
+**This is NOT yet a general unified concurrent row scheduler.** Future child
+notes are still compiled eagerly. The queue currently schedules delayed
+changes using the child's precalculated absolute wall time. If an
+intervening parent tempo change would move that future child's row
+boundary, a real tick-domain scheduler must recompute that boundary.
+The implementation deliberately rejects detected intervening parent tempo
+effects instead of producing silently inconsistent time. Tempo ramps,
+child speed changes, nested pattern/fine delays and arbitrary overlapping
+effects require further work. Future child effect/source-memory changes
+are also currently applied too early by eager child compilation, and need
+a comparable deferred event model. Child musical time, not wall time, must
+be the final source of truth for all of these.
+
 ## Boundaries deliberately NOT complete
 
 - Ordinary `Mixdown: false` nested Pattern/Sequence notes are now
   compiled at their parent's active sequencing row, sharing tracker effect
-  and Source memory. Immediate flattened child tempo changes at invocation
-  time are incorporated into the parent's remaining row. Full concurrent
-  scheduling of delayed child tempo changes, tempo ramps, virtual-channel
-  scoping and parent-to-child effects/note actions remains open.
-  No separate child session is used for flattened notes.
+  and Source memory. Immediate child tempo changes and the first class of
+  delayed child-row tempo sets are incorporated into the parent timeline.
+  A general tick-domain concurrent scheduler, deferred child channel state,
+  tempo ramps, virtual-channel scoping and parent-to-child effects/note
+  actions remain open. No separate child session is used for flattened notes.
 - The first mixdown implementation supports unit initial pitch/speed only. It
   **rejects** other initial pitch/playback-speed multipliers rather than playing
   incorrect audio. Child pitch trajectory/time-warp and parent row-time
