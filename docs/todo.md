@@ -16,13 +16,13 @@ Items that were already completed remain in Git history, not in this checklist.
   and **mixdown** (private child sequencing state and a cooked multichannel
   signal exposed as one parent playback voice). A playback-channel mixdown must
   not collapse physical speaker feeds to mono.
-- [ ] Complete **row-accurate flattened source-memory propagation**.
-  Data Pattern raw generation currently resolves source selection for the
-  entire pattern before row processing; move omitted-source resolution to
-  the active row timeline so flattened child changes to the mapped channel
-  influence later parent notes. Ensure child tempo/effects at fractional
-  offsets and simultaneous rows obey the original parent timeline semantics
-  rather than only affecting subsequent parent rows.
+- [ ] Complete **within-row flattened timing and event ordering**.
+  Source-only rows and source-omitted notes now resolve from shared mapped
+  channel memory as their row executes (including flattened child changes).
+  Child tempo/effects at fractional offsets, simultaneous parent/child rows,
+  and delayed child invocations must still obey the exact parent timeline
+  rather than only affecting subsequent parent rows. Add overlapping-event
+  and within-row timing regressions.
 - [ ] Propagate pitch, playback-speed multiplier, origin timing, Note Off/Cut,
   envelope/release behavior and new-note actions through nested sources.
   Preserve snapshot isolation, deterministic random/effect memory, script
