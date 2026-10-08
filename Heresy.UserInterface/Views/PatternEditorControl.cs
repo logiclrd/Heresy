@@ -49,6 +49,10 @@ public sealed class PatternEditorControl : UserControl
 	private readonly PatternSourceOption[] _noteSources;
 	private readonly ComboBox _noteSource;
 	private readonly ComboBox _noteOctave;
+	private readonly TextBlock _skipValueDisplay = new()
+	{
+		VerticalAlignment = VerticalAlignment.Center,
+	};
 	private readonly TextBlock _editMaskDisplay =
 		new()
 		{
@@ -221,7 +225,10 @@ public sealed class PatternEditorControl : UserControl
 						?? PatternEditMask.Default,
 				CurrentVolume =
 					initialState?.CurrentVolume,
+				SkipRows =
+					initialState?.SkipRows ?? 1,
 			};
+		UpdateSkipValueDisplay();
 		if (initialState?.Chord is PatternChordInputSnapshot chord)
 			_chordInputState.Restore(chord);
 		UpdateEditStateDisplay();
@@ -265,7 +272,7 @@ public sealed class PatternEditorControl : UserControl
 			new TextBlock
 			{
 				Text =
-					"Arrow keys move the tracker cursor. Shift+Arrow extends the marked block; Alt+B/Alt+E set its corners, Alt+D marks/expands by the major highlight, Alt+L marks the channel then pattern, and Alt+U unmarks. Ctrl+C/Ctrl+X copy or cut the marked block, Ctrl+V merge-pastes it, Shift+Ctrl+V overwrite-pastes it, and Ctrl+Delete clears it. Ctrl+Alt+Z/X/C/V/B/N/M chooses a chord; Ctrl+Alt+-/+ rotates it, Ctrl+Alt+Numpad */ changes its tone count, Ctrl+Alt+1..9 toggles tones and Ctrl+Alt+= enables all. Type notes directly in the note field; the edit mask controls which Note/Source/Volume fields are stamped, and comma toggles the mask bit for the current field. Hold Caps Lock while pressing tracker piano keys to preview without editing, releasing the key sends Note Off. Top-row 4 auditions the current note and 8 auditions the current row, advancing one row. Enter opens detailed note editing or expands a stacked effect strip.",
+					"Arrow keys move the tracker cursor. Shift+Arrow extends the marked block; Alt+B/Alt+E set its corners, Alt+D marks/expands by the major highlight, Alt+L marks the channel then pattern, and Alt+U unmarks. Ctrl+C/Ctrl+X copy or cut the marked block, Ctrl+V merge-pastes it, Shift+Ctrl+V overwrite-pastes it, and Ctrl+Delete clears it. Ctrl+Alt+Z/X/C/V/B/N/M chooses a chord; Ctrl+Alt+-/+ rotates it, Ctrl+Alt+Numpad */ changes its tone count, Ctrl+Alt+1..9 toggles tones and Ctrl+Alt+= enables all. Type notes directly in the note field; the edit mask controls which Note/Source/Volume fields are stamped, and comma toggles the mask bit for the current field. Hold Caps Lock while pressing tracker piano keys to preview without editing; repeats are ignored and key release sends Note Off. Alt+0–9 selects the note-entry skip (default 1; 0 stays on the row); ordinary held-key repeats enter notes at successive skipped rows. Top-row 4 auditions the current note and 8 auditions the current row, advancing one row. Enter opens detailed note editing or expands a stacked effect strip.",
 				TextWrapping = TextWrapping.Wrap,
 			};
 
@@ -286,6 +293,9 @@ public sealed class PatternEditorControl : UserControl
 		RefreshCursorVisuals();
 		RefreshPlaybackRowHeaders();
 	}
+
+	private void UpdateSkipValueDisplay()
+		=> _skipValueDisplay.Text = $"Skip {_noteInputState.SkipRows}";
 
 	private Control BuildContent()
 	{
@@ -316,6 +326,7 @@ public sealed class PatternEditorControl : UserControl
 			VerticalAlignment = VerticalAlignment.Center,
 		});
 		layout.Children.Add(_noteOctave);
+		layout.Children.Add(_skipValueDisplay);
 		layout.Children.Add(new TextBlock
 		{
 			Text = "Mask",
@@ -811,18 +822,32 @@ public sealed class PatternEditorControl : UserControl
 			_heldPreviewKeys.KeyDown(
 				e.PhysicalKey,
 				_noteInputState.BaseOctave);
+			e.Handled = true;
+			return;
 		}
-		else if (_cursor.Field == PatternCellField.Note
-			&& _liveAudition is not null
-			&& _heldPreviewKeys.KeyDown(
-				e.PhysicalKey,
-				_noteInputState.BaseOctave)
-				is StartHeldNotePreviewAction preview)
+		if (_cursor.Field == PatternCellField.Note
+			&& PatternPreviewKeyRouting.IsPreviewOnly(
+				_heldPreviewKeys, e.PhysicalKey))
 		{
-			await StartHeldPreviewAsync(
-				editorRow,
-				channel,
-				preview);
+			// Auto-repeat remains preview-only, even when Caps Lock is
+			// released before the still-held piano key.
+			HeldNotePreviewAction? action = _heldPreviewKeys.KeyDown(
+				e.PhysicalKey, _noteInputState.BaseOctave);
+			e.Handled = true;
+			if (_liveAudition is not null
+				&& action is StartHeldNotePreviewAction preview)
+			{
+				await StartHeldPreviewAsync(editorRow, channel, preview);
+			}
+			return;
+		}
+
+		if (PatternSkipKeyboard.TryGetValue(
+			e.PhysicalKey, e.KeyModifiers, out int skipRows))
+		{
+			_noteInputState.SkipRows = skipRows;
+			UpdateSkipValueDisplay();
+			_message.Text = $"Tracker note skip set to {skipRows}.";
 			e.Handled = true;
 			return;
 		}
@@ -1782,7 +1807,8 @@ public sealed class PatternEditorControl : UserControl
 					_noteInputState.CurrentVolume,
 					_chordInputState.IsActive
 						? _chordInputState.CreateSnapshot()
-						: null)));
+						: null,
+					_noteInputState.SkipRows)));
 		return true;
 	}
 
@@ -1853,7 +1879,8 @@ public sealed class PatternEditorControl : UserControl
 					_noteInputState.CurrentVolume,
 					_chordInputState.IsActive
 						? _chordInputState.CreateSnapshot()
-						: null)));
+						: null,
+					_noteInputState.SkipRows)));
 	}
 
 	private void HandleChordCommand(
