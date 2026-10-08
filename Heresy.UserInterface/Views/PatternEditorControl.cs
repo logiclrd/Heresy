@@ -816,6 +816,16 @@ public sealed class PatternEditorControl : UserControl
 
 		PatternEditorRow editorRow = _context.GetRow(row);
 
+		if (PatternSkipKeyboard.TryGetValue(
+			e.PhysicalKey, e.KeyModifiers, out int skipRows))
+		{
+			_noteInputState.SkipRows = skipRows;
+			UpdateSkipValueDisplay();
+			_message.Text = $"Tracker note skip set to {skipRows}.";
+			e.Handled = true;
+			return;
+		}
+
 		if (_cursor.Field == PatternCellField.Note
 			&& e.PhysicalKey == PhysicalKey.CapsLock)
 		{
@@ -842,15 +852,6 @@ public sealed class PatternEditorControl : UserControl
 			return;
 		}
 
-		if (PatternSkipKeyboard.TryGetValue(
-			e.PhysicalKey, e.KeyModifiers, out int skipRows))
-		{
-			_noteInputState.SkipRows = skipRows;
-			UpdateSkipValueDisplay();
-			_message.Text = $"Tracker note skip set to {skipRows}.";
-			e.Handled = true;
-			return;
-		}
 		PatternCell? cell =
 			editorRow.Pattern.Grid[editorRow.PatternRow, channel];
 		(int Row, int Channel)? previouslyExpanded = _expandedCell;
