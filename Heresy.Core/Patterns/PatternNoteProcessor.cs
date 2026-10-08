@@ -386,15 +386,24 @@ public static class PatternNoteProcessor
 				if (executeCommands
 					&& commands.Commands.Count != 0)
 				{
-					resolved.Add(
-						ResolveAt(
-							ordinaryEvent,
-							commands.Commands,
-							commandTimeSeconds,
-							context,
-							SyntheticOrder(
-								ordinaryEvent.EmissionOrder,
-								1)));
+					NoteEvent resolvedEvent = ResolveAt(
+						ordinaryEvent,
+						commands.Commands,
+						commandTimeSeconds,
+						context,
+						SyntheticOrder(
+							ordinaryEvent.EmissionOrder,
+							1));
+					// Flattened children must be generated here, while the
+					// parent still has this row's tracker state. Waiting
+					// until Freeze() loses effect memory and tempo ordering.
+					IReadOnlyList<NoteEvent>? expanded =
+						context.FlattenedSourceExpander?.Expand(
+							resolvedEvent, context);
+					if (expanded is null)
+						resolved.Add(resolvedEvent);
+					else
+						resolved.AddRange(expanded);
 				}
 
 				if (executeCommands
