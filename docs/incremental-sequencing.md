@@ -86,13 +86,62 @@ row timing against the eager processor, external tempo changes before the
 next row, skipped Source/Tempo commands, deferred Source memory in future
 rows and disposal of a partially consumed silent Pattern.
 
+## Third executable step: suspended within-row cursor merging
+
+`Heresy.Core.Patterns.IncrementalPatternTimeline` now implements a small
+generic shared-tick merger over `IIncrementalRawPatternNoteGenerator`
+invocations. It belongs to Core and does not know whether the caller's
+raw source is a data Pattern, a script, or a future Sequence iterator.
+
+- `Add(generator, rowCount, context, startRow)` registers an independent
+  invocation at the **current shared tick** and returns its invocation ID.
+  Its context must share the clock (`SequencingState`) and channel-memory
+  map of the timeline. `Cancel(id)` terminates and disposes just that
+  invocation. A caller observing a nested `StartNoteCommand` may call
+  `Add` with `context.FlattenedChild(...)` at the instant of that start.
+  Source resolution and invocation-lifetime policy remain the caller's job.
+- `TryStep(out IncrementalPatternTimelineStep)` cooperatively returns
+  either one **resolved event at its actual time** or a silent row-boundary
+  `Advance`. A progress step is not a playback note.
+- The scheduler holds each raw enumerator and buffers raw **commands only
+  for its current row**, with no future effect resolution. A cursor's
+  outstanding fractional event or row-end has an absolute tracker-tick
+  deadline. The merger visits the next due cursor in stable channel-base
+  and creation order. The one shared wall-time clock integrates tick
+  distances using the *current* tempo. A child invoked midway through
+  a parent row can change the shared Tempo before the parent's next
+  event without recalculating that event's tick.
+- Global standalone Tempo/Speed operations, ordinary Start/Off/Cut and
+  data Source selections resolve using `PatternNoteProcessor` on the
+  **single due raw event**. Script-style fractional Tempo/Speed executes
+  at the beginning of its source row, as specified by the established
+  timing semantics. A Speed change made at a row boundary can resize
+  its own cursor's captured row, not another cursor's existing row.
+- Raw steps must be in **nondecreasing row order**. This is an explicit
+  causality contract, not something legacy scripts currently guarantee.
+  Fixed wall-time offsets, virtual targets, advanced tracker commands,
+  out-of-order scripts and nested compiler expansion are not yet
+  supported by this prototype and fail explicitly. Same-tick and
+  per-row cooperation budgets prevent non-advancing raw streams
+  from starving the scheduler.
+
+This milestone **does not replace song compilation or realtime/offline
+playback**. Whole-row `IncrementalPatternNoteProcessor` and production
+`ChronologicalDataPatternScheduler` remain unchanged. Per-event
+invocation here is valid only for the admitted simple command subset:
+the complete row-scoped effects, volume-slide cleanup, tempo ramps,
+fixed wall-time deadlines, sequential Bxx/Cxx flow, note-action lifetime
+and mixes will require an incremental version of the original common
+processor's richer state machine.
+
 ## Proposed next interfaces and migration
 
-1. Extend the now-implemented **whole-row incremental processor**
-   into a resumable **within-row processor**, producing timed operations at
-   the current shared musical instant without resolving future effects,
-   delayed commands or flattened children in advance. Keep raw producer
-   steps, scheduled actions and playback NoteEvents distinct.
+1. Expand the now-implemented **within-row, shared-tick merger**
+   beyond the current simple command subset by moving the full
+   `PatternNoteProcessor`'s per-row and per-event state into a
+   resumable processor. In particular, preserve row-scoped effect cleanup,
+   deferred cross-row timing, fine delays, tempo ramps, tracker effect
+   memory, and zero-time cooperation guards before production adoption.
 2. Add **script invocation-local iterators** through Roslyn syntax
    rewriting. The existing loop `Checkpoint()` instrumentation for
    `for`/`while`/`do` is the starting point, but the generated
