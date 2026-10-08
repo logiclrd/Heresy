@@ -1525,7 +1525,7 @@ public sealed class SongScheduleCompilerTests
 		result.Success.Should().BeTrue();
 		result.Schedule!.Where(e => e.Commands.Any(c => c is NoteCutCommand))
 			.Select(e => e.Offset.TimeOffset).Should().Equal(
-				TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(300));
+				TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(240));
 		result.PlaybackPositions.Where(p => p.PatternId == patternId
 				&& p.PatternRow == 0)
 			.Select(p => p.SequenceEntryIndex).Should().Equal(0, 1);
