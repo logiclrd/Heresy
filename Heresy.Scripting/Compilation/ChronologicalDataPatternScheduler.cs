@@ -327,59 +327,59 @@ internal static class ChronologicalDataPatternScheduler
 		void EmitCommands(RowCursor current, NoteScheduleBuilder rowBuilder,
 			TimeSpan nominalDuration)
 		{
-		foreach (NoteEvent item in rowBuilder.Freeze())
-		{
-			// On the supported subset, all source starts and tempo
-			// changes happen at the row boundary; Dxy effect cleanup
-			// is postponed until that cursor advances to its next row.
-			if (item.Offset.TimeOffset != TimeSpan.Zero)
+			foreach (NoteEvent item in rowBuilder.Freeze())
 			{
-				if (item.Offset.TimeOffset == nominalDuration
-					&& item.Commands.All(command =>
-						command is ClearNoteVolumeSlideCommand))
+				// On the supported subset, all source starts and tempo
+				// changes happen at the row boundary; Dxy effect cleanup
+				// is postponed until that cursor advances to its next row.
+				if (item.Offset.TimeOffset != TimeSpan.Zero)
 				{
-					current.EndOfRowCommands.Add(item);
-					continue;
-				}
-				throw new NotSupportedException(
-					"Chronological data row cursor does not yet support delayed row commands.");
-			}
-
-			List<NoteCommand> retained = [];
-			foreach (NoteCommand command in item.Commands)
-			{
-				if (command is not StartNoteCommand start
-					|| start.Mixdown
-					|| !document.TryGet(start.SourceId, out SongObject? childObject)
-					|| childObject is not PatternDefinition child)
-				{
-					retained.Add(command);
-					continue;
-				}
-				if (start.PitchMultiplier != 1.0
-					|| start.PlaybackSpeedMultiplier != 1.0
-					|| start.Volume.HasValue)
+					if (item.Offset.TimeOffset == nominalDuration
+						&& item.Commands.All(command =>
+							command is ClearNoteVolumeSlideCommand))
+					{
+						current.EndOfRowCommands.Add(item);
+						continue;
+					}
 					throw new NotSupportedException(
-						"Flattened child pitch/speed/volume transforms are not yet implemented by the chronological row scheduler.");
-				if (item.Target.Kind != ChannelTargetKind.Physical)
-					throw new NotSupportedException(
-						"Flattened child must start on a physical channel.");
-				int offset = item.Target.PhysicalChannel
-					- current.Context.PhysicalChannelBase;
-				active.Add(CreateCursor(
-					start.SourceId, child,
-					current.Context.FlattenedChild(
-						physicalChannelOffset: offset),
-					current.Ancestry));
-			}
+						"Chronological data row cursor does not yet support delayed row commands.");
+				}
 
-			if (retained.Count != 0)
-				output.Append(item with
+				List<NoteCommand> retained = [];
+				foreach (NoteCommand command in item.Commands)
 				{
-					Commands = retained,
-					Offset = new MusicalTime(elapsed, 0),
-				});
-		}
+					if (command is not StartNoteCommand start
+						|| start.Mixdown
+						|| !document.TryGet(start.SourceId, out SongObject? childObject)
+						|| childObject is not PatternDefinition child)
+					{
+						retained.Add(command);
+						continue;
+					}
+					if (start.PitchMultiplier != 1.0
+						|| start.PlaybackSpeedMultiplier != 1.0
+						|| start.Volume.HasValue)
+						throw new NotSupportedException(
+							"Flattened child pitch/speed/volume transforms are not yet implemented by the chronological row scheduler.");
+					if (item.Target.Kind != ChannelTargetKind.Physical)
+						throw new NotSupportedException(
+							"Flattened child must start on a physical channel.");
+					int offset = item.Target.PhysicalChannel
+						- current.Context.PhysicalChannelBase;
+					active.Add(CreateCursor(
+						start.SourceId, child,
+						current.Context.FlattenedChild(
+							physicalChannelOffset: offset),
+						current.Ancestry));
+				}
+
+				if (retained.Count != 0)
+					output.Append(item with
+					{
+						Commands = retained,
+						Offset = new MusicalTime(elapsed, 0),
+					});
+			}
 
 		}
 
@@ -387,15 +387,30 @@ internal static class ChronologicalDataPatternScheduler
 		active.Add(CreateCursor(first.Id, first, context,
 			new HashSet<ObjectId>(), isRoot: true));
 		double tempo = context.State.Tempo;
-		while (active.Count != 0)
+		while (active.Count != 0 || delayed.Count != 0)
 		{
-			double next = active.Min(cursor => cursor.DueTick);
-			if (next < tick)
+			double next = active.Count == 0
+				? double.PositiveInfinity : active.Min(cursor => cursor.DueTick);
+			if (next < tick - 1e-9)
 				throw new InvalidOperationException("A nested row cursor moved backwards.");
-			if (next != tick)
+			TimeSpan nextTickTime = double.IsPositiveInfinity(next)
+				? TimeSpan.MaxValue
+				: elapsed + TimeSpan.FromSeconds(
+					Math.Max(0, next - tick) * SequencingConstants.Diachron.TotalSeconds / tempo);
+			TimeSpan? nextWallDeadline = delayed.Count == 0
+				? null : delayed.Min(note => note.Due);
+			if (nextWallDeadline.HasValue && nextWallDeadline.Value < nextTickTime)
 			{
-				elapsed += TimeSpan.FromSeconds(
-					(next - tick) * SequencingConstants.Diachron.TotalSeconds / tempo);
+				// A delayed command retains its wall deadline despite subsequent tempo changes.
+				TimeSpan delta = nextWallDeadline.Value - elapsed;
+				tick += delta.TotalSeconds * tempo / SequencingConstants.Diachron.TotalSeconds;
+				elapsed = nextWallDeadline.Value;
+			}
+			else
+			{
+				if (double.IsPositiveInfinity(next))
+					throw new InvalidOperationException("No advancing musical or wall event.");
+				elapsed = nextTickTime;
 				tick = next;
 			}
 
@@ -405,11 +420,17 @@ internal static class ChronologicalDataPatternScheduler
 			while (true)
 			{
 				RowCursor? current = active
-					.Where(cursor => cursor.DueTick == tick)
+					.Where(cursor => Math.Abs(cursor.DueTick - tick) <= 1e-9)
 					.OrderBy(cursor => cursor.Context.PhysicalChannelBase)
 					.ThenBy(cursor => cursor.Sequence)
 					.FirstOrDefault();
-				if (current is null)
+				DeferredScriptEvent? dueWall = delayed
+					.Where(note => note.Due <= elapsed)
+					.OrderBy(note => note.Owner.Context.PhysicalChannelBase)
+					.ThenBy(note => note.Owner.Sequence)
+					.ThenBy(note => note.Event.EmissionOrder)
+					.FirstOrDefault();
+				if (current is null && dueWall is null)
 					break;
 				// Every cursor operation counts, including arbitrarily many
 				// fractional events at the same tick (the outer clock need
@@ -418,6 +439,24 @@ internal static class ChronologicalDataPatternScheduler
 					throw new InvalidOperationException(
 						"Chronological flattened row expansion exceeded the sequencing resource limit.");
 
+				// A wall deadline competes with musical operations using the same
+				// channel-base and cursor-creation order as other collisions.
+				if (dueWall is not null
+					&& (current is null
+						|| dueWall.Owner.Context.PhysicalChannelBase < current.Context.PhysicalChannelBase
+						|| dueWall.Owner.Context.PhysicalChannelBase == current.Context.PhysicalChannelBase
+							&& dueWall.Owner.Sequence < current.Sequence))
+				{
+					delayed.Remove(dueWall);
+					NoteScheduleBuilder wallBuilder = new();
+					PatternNoteProcessor.GenerateNotes(
+						new ScriptEventSlice(dueWall.Event),
+						dueWall.Owner.Context, wallBuilder, out TimeSpan wallDuration);
+					EmitCommands(dueWall.Owner, wallBuilder, wallDuration);
+					continue;
+				}
+				if (current is null)
+					throw new InvalidOperationException("A delayed script event was not selected.");
 				active.Remove(current);
 				foreach (NoteEvent endOfRow in current.EndOfRowCommands)
 				{
@@ -499,9 +538,20 @@ internal static class ChronologicalDataPatternScheduler
 						active.Add(current);
 						continue;
 					}
-					PatternNoteProcessor.GenerateNotes(
-						new ScriptEventSlice(scripted),
-						current.Context, rowBuilder, out nominalDuration);
+					if (scripted.Offset.TimeOffset > TimeSpan.Zero)
+					{
+						// The deadline is established when its musical origin is reached.
+						// Commands are not resolved until the actual wall deadline.
+						delayed.Add(new DeferredScriptEvent(
+							current, scripted, elapsed + scripted.Offset.TimeOffset));
+						nominalDuration = TimeSpan.Zero;
+					}
+					else
+					{
+						PatternNoteProcessor.GenerateNotes(
+							new ScriptEventSlice(scripted),
+							current.Context, rowBuilder, out nominalDuration);
+					}
 					// The existing pattern processor applies Speed at its
 					// row boundary, before taking the row's tick count.
 					// Re-capture this cursor's row length for its own Speed
