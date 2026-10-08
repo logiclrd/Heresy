@@ -499,7 +499,10 @@ internal static class ChronologicalDataPatternScheduler
 					continue;
 				}
 
-				if (current.IsRoot)
+				// A scripted row may revisit its cursor for several fractional
+				// events. Playback position is a row-start checkpoint, not a
+				// checkpoint for each event in that one row.
+				if (current.IsRoot && !current.InScriptRow)
 					positions.Add(new CompiledPatternPlaybackPosition(
 						elapsed, current.Id, current.Row,
 						sequenceMode ? current.RootOrder : null));
