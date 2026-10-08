@@ -165,6 +165,79 @@ public sealed class SongScheduleCompilerTests
 	}
 
 	[Test]
+	public void DeferredChildTempoIsAppliedOnlyWhenParentReachesChildRow()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Tempo on next child row")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		child.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new SetTempoPatternEffect(250));
+		document.Add(child);
+
+		ObjectId parentId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(parentId, "Overlapping parent")
+		{
+			RowCount = 3,
+			Source = $"Note(0.5, 0, _O({childId.Value})); "
+				+ "Cut(1.0, 1); Cut(1.5, 1); Cut(2.0, 1);",
+		});
+
+		SongScheduleCompilationResult compiled =
+			SongScheduleCompiler.CompilePattern(document, parentId);
+
+		compiled.Success.Should().BeTrue();
+		NoteEvent[] cuts = compiled.Schedule!
+			.Where(e => e.Commands.Any(c => c is NoteCutCommand))
+			.OrderBy(e => e.Offset.TimeOffset).ToArray();
+		cuts.Should().HaveCount(3);
+		// The child's row one begins at t=60+120=180 ms.
+		// Parent row one starts at 120, and its second half runs at 250.
+		cuts.Select(e => e.Offset.TimeOffset)
+			.Should().Equal(
+				TimeSpan.FromMilliseconds(120),
+				TimeSpan.FromMilliseconds(180),
+				TimeSpan.FromMilliseconds(210));
+		compiled.Schedule!.Single(e =>
+			e.Commands.Any(c => c is SetTempoCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(180));
+	}
+
+	[Test]
+	public void DeferredChildTempoCannotPreemptInterveningParentTempo()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Later child tempo")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		child.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new SetTempoPatternEffect(250));
+		document.Add(child);
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Earlier parent tempo")
+		{
+			RowCount = 3,
+			ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sourceId: childId);
+		parent.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new SetTempoPatternEffect(200));
+		document.Add(parent);
+
+		Action compile = () => SongScheduleCompiler.CompilePattern(
+			document, parentId);
+		compile.Should().Throw<NotSupportedException>()
+			.WithMessage("*concurrent*");
+	}
+
+	[Test]
 	public void NestedFlattenedEventsAreGeneratedInParentsActiveChannelState()
 	{
 		SongDocument document = new();
