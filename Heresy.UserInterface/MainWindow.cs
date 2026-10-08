@@ -13,6 +13,7 @@ using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 
+using Heresy.Core.Diagnostics;
 using Heresy.Core.Envelopes;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Instruments;
@@ -99,6 +100,15 @@ public sealed class MainWindow : Window
 	private readonly ISongPlaybackTransport? _playbackTransport;
 	private readonly SongExportService _exportService;
 	private readonly IPlaybackPositionTransport? _playbackPositionTransport;
+	private readonly IPlaybackRuntimeDiagnosticsTransport?
+		_runtimeDiagnosticsTransport;
+	private readonly Button _diagnosticsButton =
+		new() { Content = "Warnings", IsVisible = false };
+	private readonly List<string> _runtimeDiagnosticMessages = [];
+	private Window? _runtimeDiagnosticsWindow;
+	private ListBox? _runtimeDiagnosticsList;
+	private bool _windowClosed;
+	private const int MaximumVisibleRuntimeDiagnostics = 500;
 	private readonly UserInterfaceConfiguration _uiConfiguration = new();
 	private readonly Dictionary<SongTreeSection, TreeView> _trees = [];
 	private readonly TextBlock _status;
@@ -173,6 +183,12 @@ public sealed class MainWindow : Window
 				?? throw new ArgumentNullException(nameof(exportService));
 		_playbackPositionTransport =
 			playbackTransport as IPlaybackPositionTransport;
+		_runtimeDiagnosticsTransport =
+			playbackTransport as IPlaybackRuntimeDiagnosticsTransport;
+		if (_runtimeDiagnosticsTransport is not null)
+			_runtimeDiagnosticsTransport.RuntimeDiagnostics +=
+				OnRuntimeDiagnostics;
+		_diagnosticsButton.Click += (_, _) => ShowRuntimeDiagnostics();
 		if (_playbackPositionTransport is not null)
 		{
 			_playbackPositionTransport.PlaybackPositionChanged +=
@@ -194,6 +210,11 @@ public sealed class MainWindow : Window
 		Closing += OnClosing;
 		Closed += (_, _) =>
 		{
+			_windowClosed = true;
+			if (_runtimeDiagnosticsTransport is not null)
+				_runtimeDiagnosticsTransport.RuntimeDiagnostics -=
+					OnRuntimeDiagnostics;
+			_runtimeDiagnosticsWindow?.Close();
 			if (_playbackPositionTransport is not null)
 			{
 				_playbackPositionTransport.PlaybackPositionChanged -=
@@ -218,8 +239,16 @@ public sealed class MainWindow : Window
 				BorderThickness = new Thickness(0, 1, 0, 0),
 				BorderBrush = Brushes.Gray,
 				Padding = new Thickness(10, 5),
-				Child = _status,
+				Child = new DockPanel
+				{
+					Children =
+					{
+						_diagnosticsButton,
+						_status,
+					},
+				},
 			};
+		DockPanel.SetDock(_diagnosticsButton, Dock.Right);
 		DockPanel.SetDock(statusBar, Dock.Bottom);
 		root.Children.Add(statusBar);
 
@@ -420,9 +449,17 @@ public sealed class MainWindow : Window
 				},
 			};
 
+		MenuItem diagnosticsItem =
+			new() { Header = "Runtime _Diagnostics..." };
+		diagnosticsItem.Click += (_, _) => ShowRuntimeDiagnostics();
+		MenuItem view = new()
+		{
+			Header = "_View",
+			ItemsSource = new object[] { diagnosticsItem },
+		};
 		return new Menu
 		{
-			ItemsSource = new object[] { file },
+			ItemsSource = new object[] { file, view },
 		};
 	}
 
@@ -2419,6 +2456,79 @@ public sealed class MainWindow : Window
 						position);
 				}
 			});
+	}
+
+	private void OnRuntimeDiagnostics(
+		object? sender,
+		PlaybackRuntimeDiagnosticsEventArgs e)
+	{
+		_ = sender;
+		// Source compilation and transport callbacks can complete on a
+		// worker thread. Never touch Avalonia controls until dispatched.
+		SequencingDiagnostic[] snapshot = e.Diagnostics.ToArray();
+		Dispatcher.UIThread.Post(() =>
+		{
+			if (_windowClosed)
+				return;
+			foreach (SequencingDiagnostic warning in snapshot)
+				_runtimeDiagnosticMessages.Add(
+					$"{warning.Code}: {warning.Message}");
+			if (_runtimeDiagnosticMessages.Count > MaximumVisibleRuntimeDiagnostics)
+				_runtimeDiagnosticMessages.RemoveRange(
+					0,
+					_runtimeDiagnosticMessages.Count - MaximumVisibleRuntimeDiagnostics);
+			UpdateRuntimeDiagnosticsView();
+		});
+	}
+
+	private void UpdateRuntimeDiagnosticsView()
+	{
+		int count = _runtimeDiagnosticMessages.Count;
+		_diagnosticsButton.IsVisible = count != 0;
+		_diagnosticsButton.Content = $"Warnings ({count})";
+		if (_runtimeDiagnosticsList is not null)
+			_runtimeDiagnosticsList.ItemsSource =
+				_runtimeDiagnosticMessages.ToArray();
+	}
+
+	private void ShowRuntimeDiagnostics()
+	{
+		if (_runtimeDiagnosticsWindow is not null)
+		{
+			_runtimeDiagnosticsWindow.Activate();
+			return;
+		}
+
+		_runtimeDiagnosticsList = new ListBox
+		{
+			ItemsSource = _runtimeDiagnosticMessages.ToArray(),
+		};
+		Button clear = new() { Content = "Clear" };
+		clear.Click += (_, _) =>
+		{
+			_runtimeDiagnosticMessages.Clear();
+			UpdateRuntimeDiagnosticsView();
+		};
+		DockPanel layout = new();
+		DockPanel.SetDock(clear, Dock.Bottom);
+		layout.Children.Add(clear);
+		layout.Children.Add(_runtimeDiagnosticsList);
+		Window dialog = new()
+		{
+			Title = "Heresy — Runtime Diagnostics",
+			Width = 850,
+			Height = 380,
+			MinWidth = 450,
+			MinHeight = 230,
+			Content = layout,
+		};
+		_runtimeDiagnosticsWindow = dialog;
+		dialog.Closed += (_, _) =>
+		{
+			_runtimeDiagnosticsWindow = null;
+			_runtimeDiagnosticsList = null;
+		};
+		dialog.Show(this);
 	}
 
 	private void SetStatus(string text)
