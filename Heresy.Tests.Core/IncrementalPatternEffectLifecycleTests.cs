@@ -126,18 +126,18 @@ public sealed class IncrementalPatternEffectLifecycleTests
 			At(0.5, TimeSpan.FromMilliseconds(100), 0, new NoteOffCommand()),
 			At(1.0, 0, new NoteCutCommand())), 2, root);
 		timeline.Add(new RawStream(
-			At(0.75, ChannelTarget.Global, new SetTempoCommand(250))), 1,
+			At(1.0, ChannelTarget.Global, new SetTempoCommand(250))), 2,
 			root.FlattenedChild(physicalChannelOffset: 1));
 
 		NoteEvent[] actual = Drain(timeline);
 		Assert.That(actual.Select(e => e.Offset.TimeOffset),
 			Is.EqualTo(new[]
 			{
-				TimeSpan.Zero,
-				TimeSpan.FromMilliseconds(60),
+				TimeSpan.FromMilliseconds(120),
+				TimeSpan.FromMilliseconds(120),
 				TimeSpan.FromMilliseconds(160),
 			}));
-		Assert.That(actual[1].Commands.Single(), Is.TypeOf<NoteCutCommand>());
+		Assert.That(actual[0].Commands.Single(), Is.TypeOf<NoteCutCommand>());
 		Assert.That(actual[2].Commands.Single(), Is.TypeOf<NoteOffCommand>());
 	}
 
