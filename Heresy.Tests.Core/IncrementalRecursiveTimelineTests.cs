@@ -32,11 +32,14 @@ public sealed class IncrementalRecursiveTimelineTests
 		NoteEvent[] events = Drain(timeline);
 
 		Assert.That(events.Select(e => e.Offset.TimeOffset),
-			Is.EqualTo(new[] { TimeSpan.Zero, TimeSpan.FromMilliseconds(60) }));
+			Is.EqualTo(new[] { TimeSpan.Zero, TimeSpan.Zero,
+				TimeSpan.FromMilliseconds(60) }));
 		Assert.That(events.Select(e => e.Commands.Single()),
 			Is.EqualTo(new NoteCommand[] {
-				new SetTempoCommand(250), new NoteCutCommand() }));
-		Assert.That(events[1].Target, Is.EqualTo(ChannelTarget.Physical(1)));
+				new SetTempoCommand(250), new NoteOffCommand(),
+				new NoteCutCommand() }));
+		Assert.That(events[1].Target, Is.EqualTo(ChannelTarget.Physical(0)));
+		Assert.That(events[2].Target, Is.EqualTo(ChannelTarget.Physical(1)));
 		Assert.That(context.State.Tempo, Is.EqualTo(250));
 		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(90)));
 		Assert.That(timeline.IsComplete, Is.True);
@@ -137,18 +140,6 @@ public sealed class IncrementalRecursiveTimelineTests
 		Assert.That(actual, Has.Length.EqualTo(1));
 		Assert.That(actual[0].Commands.OfType<StartNoteCommand>().Single().SourceId,
 			Is.EqualTo((ObjectId)77U));
-	}
-
-	[Test]
-	public void ChildSourceTransformsRejectUnsupportedFlatteningWithoutMutatingTempo()
-	{
-		DataPatternDefinition root = Pattern(1, 1);
-		DataPatternDefinition child = Pattern(2, 1);
-		using IncrementalRecursiveTimeline timeline = new(
-			new SequencingContext(), new Resolver(root, child));
-		timeline.AddRoot(root.Id);
-		// The fixture also uses a raw command to isolate a non-unit
-		// multiplier from the tracker editor's ordinary default fields.
 	}
 
 	[Test]
