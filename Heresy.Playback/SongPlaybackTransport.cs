@@ -48,7 +48,8 @@ public interface IPlaybackPositionTransport
 
 public sealed class SongPlaybackTransport
 	: ISongPlaybackTransport,
-		IPlaybackPositionTransport
+		IPlaybackPositionTransport,
+		IPlaybackRuntimeDiagnosticsTransport
 {
 	private readonly BackgroundPlaybackController _controller;
 	private readonly IBackgroundPlaybackSourceFactory _sourceFactory;
@@ -85,6 +86,8 @@ public sealed class SongPlaybackTransport
 
 	public event EventHandler<PlaybackPositionChangedEventArgs>?
 		PlaybackPositionChanged;
+	public event EventHandler<PlaybackRuntimeDiagnosticsEventArgs>?
+		RuntimeDiagnostics;
 
 	public PlaybackPatternPosition? CurrentPlaybackPosition
 	{
@@ -199,6 +202,17 @@ public sealed class SongPlaybackTransport
 			_liveAuditionDocument = null;
 			StopPositionTracking();
 			await _controller.PlayAsync(request).ConfigureAwait(false);
+
+			if (_sourceFactory is IPlaybackRuntimeDiagnosticReportProvider diagnostics
+				&& diagnostics.TryTakeRuntimeDiagnostics(
+					request, out var messages)
+				&& messages.Length != 0)
+			{
+				// Playback compilation is complete. No UI callback is
+				// invoked from the audio thread. Consumers marshal as needed.
+				RuntimeDiagnostics?.Invoke(
+					this, new PlaybackRuntimeDiagnosticsEventArgs(messages));
+			}
 
 			if (_sourceFactory is IPlaybackPositionTimelineProvider provider
 				&& provider.TryTakePlaybackPositionTimeline(
