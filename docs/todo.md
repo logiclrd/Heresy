@@ -18,19 +18,22 @@ Items that were already completed remain in Git history, not in this checklist.
   not collapse physical speaker feeds to mono.
 - [ ] Complete the **generalized concurrent flattened row scheduler**.
   Independently advancing shared-tick cursors now handle compatible data
-  Patterns and scripted note/cut/off events with fractional row positions,
-  including mixed data/script hierarchies and data-sequence arrangements.
+  Patterns, scripted note/cut/off at fractional positions, and standalone
+  scripted global Tempo commands at row starts (fractional timing portions
+  ignored as in PatternNoteProcessor), including mixed data/script
+  hierarchies and data-sequence arrangements.
   Extend to scripted Sequences, nonzero StartRow, pattern control jumps,
   non-unit pitch/speed transforms, fixed wall-time event offsets,
-  tracker tempo ramps, scripted/global effects,
+  tracker tempo ramps, scripted Speed/other global effects,
   overlapping tempo slides and pattern/fine delays. Preserve the existing
   processor's semantic rules and fail explicitly for unsupported
   combinations rather than render an invalid shared timeline.
 - [ ] Extend **chronologically deferred channel state** across advanced
   scripted commands and effects. Source and tracker memory execute at actual
   child-row boundaries in the data-pattern cursor path; eligible scripted
-  Start/NoteOff/Cut events now execute at their own fractional timestamps,
-  without applying future commands early. Other scripted/effect combinations
+  Start/NoteOff/Cut events execute at fractional timestamps and standalone
+  global Tempo commands at their row starts, without applying future
+  commands early. Other scripted/effect combinations
   still use eager preparation and can mutate future shared channel state
   prematurely. Add same-time and overlapping-command regressions.
 - [ ] Propagate pitch, playback-speed multiplier, origin timing, Note Off/Cut,
