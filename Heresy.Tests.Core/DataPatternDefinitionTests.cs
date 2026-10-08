@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -11,6 +13,107 @@ namespace Heresy.Tests.Core;
 [TestFixture]
 public sealed class DataPatternDefinitionTests
 {
+	[Test]
+	public void IncrementalEmptyDataPatternCooperatesAfterHundredSilentRows()
+	{
+		DataPatternDefinition pattern = new((ObjectId)1U, "Silent")
+		{
+			RowCount = 250,
+			ChannelCount = 1,
+		};
+
+		using IEnumerator<RawPatternStep> cursor =
+			pattern.EnumerateRawSteps(new SequencingContext()).GetEnumerator();
+
+		List<double> advances = [];
+		while (cursor.MoveNext())
+		{
+			Assert.That(cursor.Current, Is.TypeOf<RawPatternStep.Advance>());
+			advances.Add(cursor.Current.Row);
+		}
+
+		Assert.That(advances, Is.EqualTo(new[] { 100.0, 200.0, 250.0 }));
+	}
+
+	[Test]
+	public void IncrementalDataPatternPreservesGlobalAndChannelEventOrdering()
+	{
+		DataPatternDefinition pattern = new((ObjectId)1U, "Steps")
+		{
+			RowCount = 300,
+			ChannelCount = 2,
+		};
+		pattern.Grid.GetOrCreateCell(50, 1).Note = new PatternNoteCut();
+		PatternCell later = pattern.Grid.GetOrCreateCell(175, 0);
+		later.Note = new PatternNoteOff();
+		later.Effects.Add(new SetTempoPatternEffect(200));
+
+		RawPatternStep[] steps =
+			pattern.EnumerateRawSteps(new SequencingContext()).ToArray();
+		Assert.That(steps.Select(s => s.Row),
+			Is.EqualTo(new[] { 50.0, 150.0, 175.0, 175.0, 275.0, 300.0 }));
+		Assert.That(steps.Select(s => s is RawPatternStep.Advance),
+			Is.EqualTo(new[] { false, true, false, false, true, true }));
+		Assert.That(((RawPatternStep.Emit)steps[2]).Note.Target,
+			Is.EqualTo(ChannelTarget.Global));
+		Assert.That(((RawPatternStep.Emit)steps[3]).Note.Target,
+			Is.EqualTo(ChannelTarget.Physical(0)));
+	}
+
+	[Test]
+	public void IncrementalDataPatternDoesNotExecuteFutureSourceSelectionBeforeYield()
+	{
+		DataPatternDefinition pattern = new((ObjectId)1U, "Lazy")
+		{
+			RowCount = 210,
+			ChannelCount = 1,
+		};
+		ObjectId laterSource = (ObjectId)42U;
+		pattern.Grid.GetOrCreateCell(175, 0).SourceId = laterSource;
+		SequencingContext context = new();
+		using IEnumerator<RawPatternStep> cursor =
+			pattern.EnumerateRawSteps(context).GetEnumerator();
+
+		Assert.That(context.GetPhysicalChannelState(0).CurrentSourceId,
+			Is.EqualTo(ObjectId.None));
+		Assert.That(cursor.MoveNext(), Is.True);
+		Assert.That(cursor.Current, Is.TypeOf<RawPatternStep.Advance>());
+		Assert.That(cursor.Current.Row, Is.EqualTo(100));
+		Assert.That(context.GetPhysicalChannelState(0).CurrentSourceId,
+			Is.EqualTo(ObjectId.None));
+		Assert.That(cursor.MoveNext(), Is.True);
+		Assert.That(cursor.Current, Is.TypeOf<RawPatternStep.Emit>());
+		Assert.That(((RawPatternStep.Emit)cursor.Current).Note.Offset.RowOffset,
+			Is.EqualTo(175));
+		Assert.That(context.GetPhysicalChannelState(0).CurrentSourceId,
+			Is.EqualTo(laterSource));
+	}
+
+	[Test]
+	public void IncrementalRawEventsMatchLegacyGenerateRawNotes()
+	{
+		DataPatternDefinition pattern = new((ObjectId)1U, "Same translation")
+		{
+			RowCount = 250,
+			ChannelCount = 2,
+		};
+		pattern.Grid.GetOrCreateCell(40, 0).Note = new PatternNoteCut();
+		PatternCell cell = pattern.Grid.GetOrCreateCell(209, 1);
+		cell.Note = new PatternNoteOff();
+		cell.Effects.Add(new SetSpeedPatternEffect(3));
+
+		NoteScheduleBuilder legacy = new();
+		pattern.GenerateRawNotes(new SequencingContext(), legacy, out double rowCount);
+		NoteEvent[] emitted = pattern.EnumerateRawSteps(new SequencingContext())
+			.OfType<RawPatternStep.Emit>().Select(x => x.Note).ToArray();
+
+		Assert.That(rowCount, Is.EqualTo(250));
+		Assert.That(emitted, Is.EqualTo(legacy.Freeze().ToArray()).Using<NoteEvent>(
+			(left, right) => left.Offset == right.Offset
+				&& left.Target == right.Target
+				&& left.Commands.SequenceEqual(right.Commands)));
+	}
+
 	[Test]
 	public void EmptyPatternGeneratesNoEventsAndReportsConfiguredRowCount()
 	{
