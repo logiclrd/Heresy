@@ -20,6 +20,37 @@ namespace Heresy.Tests.Scripting;
 public sealed class ScriptCompilerTests
 {
 	[Test]
+	public void PatternScriptEndpointCommandsAreInclusiveButLaterRowsAreRejected()
+	{
+		ScriptPatternDefinition endpoint = new((ObjectId)1U, "Endpoint")
+		{
+			RowCount = 2,
+			Source = "Note(2, 0, _O(17)); Off(2, 0); Cut(2, 0);",
+		};
+		ScriptCompilationResult<IRawPatternNoteGenerator> accepted =
+			ScriptCompiler.CompilePattern(endpoint);
+		accepted.Success.Should().BeTrue();
+		NoteScheduleBuilder notes = new();
+		accepted.Program!.GenerateRawNotes(new SequencingContext(), notes, out double count);
+		count.Should().Be(2);
+		notes.Freeze().Select(e => e.Offset.RowOffset)
+			.Should().Equal(2, 2, 2);
+
+		ScriptPatternDefinition beyond = new((ObjectId)2U, "Past endpoint")
+		{
+			RowCount = 2,
+			Source = "Note(2.01, 0, _O(17));",
+		};
+		ScriptCompilationResult<IRawPatternNoteGenerator> rejected =
+			ScriptCompiler.CompilePattern(beyond);
+		rejected.Success.Should().BeTrue();
+		Action generate = () =>
+			rejected.Program!.GenerateRawNotes(
+				new SequencingContext(), new NoteScheduleBuilder(), out _);
+		generate.Should().Throw<ArgumentOutOfRangeException>();
+	}
+
+	[Test]
 	public void PatternScriptCompilesIntoRawPatternGenerator()
 	{
 		ScriptPatternDefinition definition =
