@@ -61,11 +61,21 @@ Items that were already completed remain in Git history, not in this checklist.
   S6x reuses the common processor's TicksPerRow override and extends
   isolated tracker Txx ramps. SEy combined with tracker Txx and other
   unported tick/repeat effects remains unsupported explicitly.
-  Next, complete incompatible-span tempo arbitration, repeated Tempo
-  and other advanced tracker effects (SCx/SDx, retrigger, flow control),
-  virtual targets, and user script coroutine instrumentation with
-  distinct CPU-only checkpoints. Wire generic invocation-lifetime
-  management for data and scripted Sequences.
+  The next incremental-timeline slice now uses invocation-local
+  tracker-tick deadlines for SCx note cut, SDx delayed atomic note setup,
+  and Qxy retrigger. SC0/SC1 and SD0/SD1 share first-post-start-tick
+  semantics; S6x extends the tick eligibility window; SEy repeats SDx
+  starts but not ordinary cuts and extends the Qxy countdown. Repeated
+  SDx notes preserve mapped child physical targets; Q00 retains effect
+  memory/countdown across mapped Pattern invocations. Pending tick actions
+  respond to live shared Tempo and are discarded with Cancel().
+  SDx combined with Qxy and fixed wall offsets on SCx/SDx/Qxy remain
+  explicitly unsupported rather than risking incorrect memory/voice
+  semantics.
+  Next, complete incompatible-span tempo arbitration, SEy repeated Tempo,
+  SDx/Qxy interaction, pattern flow controls, virtual targets, and
+  user-script coroutine instrumentation with distinct CPU checkpoints.
+  Wire generic invocation-lifetime management for data and scripted Sequences.
   Preserve out-of-order scripted-event semantics or explicitly resolve
   their ordering policy before migrating playback. Replace the existing
   restricted chronological scheduler rather than adding more special
