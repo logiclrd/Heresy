@@ -12,7 +12,7 @@ namespace Heresy.Core.Patterns;
 /// values and translates them into the same raw NoteEvent representation used
 /// by scripted patterns before the common PatternNoteProcessor runs.
 /// </summary>
-public sealed class DataPatternDefinition : PatternDefinition, IDeferredSourcePatternGenerator
+public sealed class DataPatternDefinition : PatternDefinition, IDeferredSourcePatternGenerator, IIncrementalRawPatternNoteGenerator
 {
 	public DataPatternDefinition(ObjectId id, string name) : base(id, name)
 	{
@@ -21,6 +21,9 @@ public sealed class DataPatternDefinition : PatternDefinition, IDeferredSourcePa
 
 	public PatternGrid Grid { get; }
 
+	// Compatibility bridge: the established processor continues to receive
+	// all raw notes at once. New sequencing cursors may instead suspend the
+	// underlying generator at any Emit or silent Advance step.
 	public void GenerateRawNotes(
 		SequencingContext context,
 		INoteReceiver output,
@@ -28,10 +31,29 @@ public sealed class DataPatternDefinition : PatternDefinition, IDeferredSourcePa
 	{
 		ArgumentNullException.ThrowIfNull(context);
 		ArgumentNullException.ThrowIfNull(output);
-
-		foreach ((int row, int channel, PatternCell cell) in Grid.EnumerateNonEmptyCells())
+		foreach (RawPatternStep step in EnumerateRawSteps(context))
 		{
-			List<NoteCommand> channelCommands = [];
+			if (step is RawPatternStep.Emit emission)
+				output.Append(emission.Note);
+		}
+		rowCount = RowCount;
+	}
+
+	public IEnumerable<RawPatternStep> EnumerateRawSteps(SequencingContext context)
+	{
+		ArgumentNullException.ThrowIfNull(context);
+
+		long nextProgressRow = 100;
+		long lastProgressRow = 0;
+		for (int row = 0; row < RowCount; row++)
+		{
+			bool emitted = false;
+			for (int channel = 0; channel < ChannelCount; channel++)
+			{
+				PatternCell? cell = Grid[row, channel];
+				if (cell is null || cell.IsEmpty)
+					continue;
+				List<NoteCommand> channelCommands = [];
 			List<NoteCommand> globalCommands = [];
 
 			// Raw-note callers retain the historical immediate resolution
@@ -169,7 +191,8 @@ public sealed class DataPatternDefinition : PatternDefinition, IDeferredSourcePa
 
 			if (globalCommands.Count != 0)
 			{
-				output.Append(new NoteEvent(
+				emitted = true;
+				yield return new RawPatternStep.Emit(new NoteEvent(
 					offset,
 					ChannelTarget.Global,
 					globalCommands));
@@ -177,14 +200,28 @@ public sealed class DataPatternDefinition : PatternDefinition, IDeferredSourcePa
 
 			if (channelCommands.Count != 0)
 			{
-				output.Append(new NoteEvent(
+				emitted = true;
+				yield return new RawPatternStep.Emit(new NoteEvent(
 					offset,
 					ChannelTarget.Physical(channel),
 					channelCommands));
 			}
+			}
+
+			// A long silent span must still cooperate. This is musical
+			// progress, not an audible or state-mutating note.
+			if (emitted)
+				nextProgressRow = (long)row + 100;
+			else if ((long)row + 1 >= nextProgressRow)
+			{
+				lastProgressRow = nextProgressRow;
+				yield return new RawPatternStep.Advance(nextProgressRow);
+				nextProgressRow += 100;
+			}
 		}
 
-		rowCount = RowCount;
+		if (lastProgressRow != RowCount)
+			yield return new RawPatternStep.Advance(RowCount);
 	}
 
 	protected override void OnDimensionsChanged(int previousRowCount, int previousChannelCount)
