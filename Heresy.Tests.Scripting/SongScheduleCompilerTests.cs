@@ -18,6 +18,75 @@ namespace Heresy.Tests.Scripting;
 public sealed class SongScheduleCompilerTests
 {
 	[Test]
+	public void ScriptedFractionalParentStartsIndependentChildAtExactTick()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Delayed child tempo")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		child.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new SetTempoPatternEffect(250));
+		document.Add(child);
+
+		ObjectId parentId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(parentId, "Fractional source")
+		{
+			RowCount = 3,
+			Source = $"Note(0.5, 0, _O({childId.Value})); "
+				+ "Cut(1.5, 1); Cut(2.5, 1);",
+		});
+
+		SongScheduleCompilationResult compilation =
+			SongScheduleCompiler.CompilePattern(document, parentId);
+		compilation.Success.Should().BeTrue();
+		NoteEvent[] cuts = compilation.Schedule!
+			.Where(e => e.Commands.Any(c => c is NoteCutCommand))
+			.OrderBy(e => e.Offset.TimeOffset).ToArray();
+		cuts.Select(x => x.Offset.TimeOffset).Should().Equal(
+			TimeSpan.FromMilliseconds(180),
+			TimeSpan.FromMilliseconds(270));
+		compilation.Schedule.Where(e => e.Commands.Any(c => c is SetTempoCommand))
+			.Select(e => e.Offset.TimeOffset)
+			.Should().Equal(TimeSpan.FromMilliseconds(180));
+	}
+
+	[Test]
+	public void ScriptedChildFractionalNoteDoesNotExecuteBeforeParentRow()
+	{
+		SongDocument document = new();
+		ObjectId soundId = document.AllocateObjectId();
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Fractional child")
+		{
+			RowCount = 2,
+			Source = $"Note(1.5, 0, _O({soundId.Value}));",
+		});
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Parent")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sourceId: childId);
+		parent.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteCut();
+		document.Add(parent);
+
+		SongScheduleCompilationResult compilation =
+			SongScheduleCompiler.CompilePattern(document, parentId);
+		compilation.Success.Should().BeTrue();
+		NoteEvent note = compilation.Schedule!.Single(e =>
+			e.Commands.Any(c => c is StartNoteCommand));
+		note.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(180));
+		NoteEvent cut = compilation.Schedule.Single(e =>
+			e.Commands.Any(c => c is NoteCutCommand));
+		cut.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(120));
+	}
+
+	[Test]
 	public void ChildTempoAtFractionalParentPositionChangesRemainingRowLength()
 	{
 		SongDocument document = new();
