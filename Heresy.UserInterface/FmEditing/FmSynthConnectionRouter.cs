@@ -42,21 +42,58 @@ public static class FmSynthConnectionRouter
 		FmSynthLayoutRect target,
 		IReadOnlyList<FmSynthLayoutRect> obstacles,
 		IReadOnlyList<FmSynthRoutePoint>? routingHints)
+		=> RouteCore(
+			source,
+			target,
+			obstacles,
+			routingHints,
+			startPort: null,
+			endPort: null);
+
+	/// <summary>
+	/// Connect exact user-visible port locations. Outputs are on the right,
+	/// inputs on the left; even reverse-positioned nodes retain those anchors.
+	/// </summary>
+	public static FmSynthRoutePoint[] Route(
+		FmSynthLayoutRect source,
+		FmSynthLayoutRect target,
+		IReadOnlyList<FmSynthLayoutRect> obstacles,
+		IReadOnlyList<FmSynthRoutePoint>? routingHints,
+		FmSynthRoutePoint startPort,
+		FmSynthRoutePoint endPort)
+		=> RouteCore(
+			source,
+			target,
+			obstacles,
+			routingHints,
+			startPort,
+			endPort);
+
+	private static FmSynthRoutePoint[] RouteCore(
+		FmSynthLayoutRect source,
+		FmSynthLayoutRect target,
+		IReadOnlyList<FmSynthLayoutRect> obstacles,
+		IReadOnlyList<FmSynthRoutePoint>? routingHints,
+		FmSynthRoutePoint? startPort,
+		FmSynthRoutePoint? endPort)
 	{
 		ArgumentNullException.ThrowIfNull(obstacles);
 
+		bool anchored = startPort.HasValue && endPort.HasValue;
 		bool forward =
-			source.CenterX <= target.CenterX;
+			anchored || source.CenterX <= target.CenterX;
 		double direction =
 			forward ? 1.0 : -1.0;
 		FmSynthRoutePoint start =
-			new(
-				forward ? source.Right : source.Left,
-				source.CenterY);
+			startPort
+				?? new FmSynthRoutePoint(
+					forward ? source.Right : source.Left,
+					source.CenterY);
 		FmSynthRoutePoint end =
-			new(
-				forward ? target.Left : target.Right,
-				target.CenterY);
+			endPort
+				?? new FmSynthRoutePoint(
+					forward ? target.Left : target.Right,
+					target.CenterY);
 
 		if (routingHints is not null
 			&& routingHints.Count != 0)
@@ -97,9 +134,10 @@ public static class FmSynthConnectionRouter
 						end.Y),
 					end,
 				]);
-		if (PathClear(
-			dogleg,
-			blocked))
+		if (!(anchored && end.X <= start.X)
+			&& PathClear(
+				dogleg,
+				blocked))
 		{
 			return dogleg;
 		}
