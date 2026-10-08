@@ -17,6 +17,83 @@ namespace Heresy.Tests.Scripting;
 [TestFixture]
 public sealed class SongScheduleCompilerTests
 {
+
+	[Test]
+	public void ScriptedTerminalChildNoteFollowsSharedTempoChange()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Terminal note")
+		{
+			RowCount = 2,
+			Source = $"Note(2, 0, _O({sampleId.Value}));",
+		});
+
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Parent tempo change")
+		{
+			RowCount = 3,
+			ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sourceId: childId);
+		parent.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new SetTempoPatternEffect(250));
+		document.Add(parent);
+
+		SongScheduleCompilationResult compiled =
+			SongScheduleCompiler.CompilePattern(document, parentId);
+
+		compiled.Success.Should().BeTrue();
+		NoteEvent terminal = compiled.Schedule!.Single(e =>
+			e.Commands.Any(c => c is StartNoteCommand));
+		terminal.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(180));
+		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(240));
+	}
+
+	[Test]
+	public void ScriptedTerminalEventStartsGrandchildBeyondParentEnd()
+	{
+		SongDocument document = new();
+		ObjectId grandchildId = document.AllocateObjectId();
+		DataPatternDefinition grandchild = new(grandchildId, "Grandchild")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		grandchild.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteCut();
+		document.Add(grandchild);
+
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Terminal invocation")
+		{
+			RowCount = 2,
+			Source = $"Note(2, 0, _O({grandchildId.Value}));",
+		});
+
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Short parent")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sourceId: childId);
+		parent.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new SetTempoPatternEffect(250));
+		document.Add(parent);
+
+		SongScheduleCompilationResult compiled =
+			SongScheduleCompiler.CompilePattern(document, parentId);
+
+		compiled.Success.Should().BeTrue();
+		NoteEvent cut = compiled.Schedule!.Single(e =>
+			e.Commands.Any(c => c is NoteCutCommand));
+		cut.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(240));
+		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(300));
+	}
+
 	[Test]
 	public void FractionalScriptedInvocationContinuesAcrossSequenceOrderBoundary()
 	{
