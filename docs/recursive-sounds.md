@@ -363,9 +363,8 @@ Eligible **scripted Sequences** now use the same chronological cursor
 scheduler as eligible data Sequences. A sequence script runs its restricted
 `Play(patternId)` instructions once to produce an ordered collection of
 `SequenceEntry` values. When every entry references a compatible data or
-scripted Pattern with `StartRow = 0`, at least one nested flattened
-Pattern is present, and the compiler starts at order zero with no row
-override, the scheduler starts each root Pattern at the previous root's
+scripted Pattern, at least one nested flattened Pattern is present,
+and the compiler starts at order zero with no row override, the scheduler starts each root Pattern at the previous root's
 own endpoint. Nested child cursors and pending wall-time commands can
 continue independently across later generated Play entries.
 
@@ -383,8 +382,37 @@ the script is **not run a second time** merely because chronological
 eligibility failed. That matters for scripts using `Random()` and
 conditional Play decisions.
 
-Deliberately excluded from this path: `Play(..., startRow: nonzero)`,
-nonzero compile start order/row, missing or unsupported Pattern sources,
+### Chronological Sequence entry StartRow
+
+An eligible data-Sequence `SequenceEntry(patternId, startRow)` and scripted
+Sequence `Play(patternId, startRow)` now enter that Pattern at the specified
+**source row** rather than running its skipped rows. The root cursor begins
+with `Row = min(startRow, RowCount)`; its first playback-position record uses
+that source row. Earlier Source-column selections, Tempo/Speed changes,
+notes, and effects do **not** execute or contribute their skipped time.
+Each remaining row still advances by the shared tracker speed, with
+subsequent nested child operations ordered by the concurrent clock.
+
+As defined by `SequenceEntry`, skipped row durations are evaluated from
+the SequencingState in effect **on entry**, without running those rows. A
+script event originating in a skipped row with a sufficiently positive fixed
+wall-time offset can nevertheless land after the new entry origin. The
+scheduler preserves such an event by converting its remaining offset
+using the entry speed/tempo and queuing an absolute wall deadline.
+Events wholly before the new origin are dropped. Entries whose StartRow
+is at or beyond RowCount finish immediately and advance to the next
+order without synthesizing skipped row positions.
+
+Regressions cover skipped Tempo/Speed, retained absolute source row and
+order indices, Source memory not mutated by skipped data rows, fractional
+script events after `Play(..., startRow)`, delayed pre-origin script events
+that survive the skipped duration, and out-of-range entries.
+Compile-level `startOrder` and `startRow` overrides remain on the
+established general compiler path; this milestone concerns the
+individual Sequence entries.
+
+Deliberately excluded from this path: nonzero compile start order/row,
+missing or unsupported Pattern sources,
 pattern jumps/breaks, and otherwise incompatible nested source graphs.
 They use the general compiler until corresponding scheduler tests and
 logic exist.
