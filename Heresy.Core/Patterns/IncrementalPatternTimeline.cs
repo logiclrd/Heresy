@@ -142,6 +142,11 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					Validate(emit.Note);
 					if (IsTiming(emit.Note))
 					{
+						// Commands exactly at the Pattern endpoint have no
+						// eligible source row. Do not apply them to the
+						// preceding final row.
+						if (emit.Note.Offset.RowOffset >= RowCount)
+							continue;
 						// Fractional timing positions apply at the start of
 						// their nominal row. A positive fixed offset is an
 						// eligibility deadline, never an execution timestamp.
