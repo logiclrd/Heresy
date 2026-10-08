@@ -17,6 +17,100 @@ namespace Heresy.Tests.Scripting;
 public sealed class SongScheduleCompilerTests
 {
 	[Test]
+	public void NestedFlattenedEventsAreGeneratedInParentsActiveChannelState()
+	{
+		SongDocument document = new();
+		ObjectId source = document.AllocateObjectId();
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Child")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		child.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new TrackerVolumeSlidePatternEffect(0x20));
+		document.Add(child);
+
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Parent")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sourceId: childId);
+		parent.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new TrackerVolumeSlidePatternEffect(0x00));
+		document.Add(parent);
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompilePattern(document, parentId);
+
+		result.Success.Should().BeTrue();
+		result.Schedule.Should().NotBeNull();
+		result.Schedule!.SelectMany(e => e.Commands)
+			.Should().NotContain(command => command is StartNoteCommand start
+				&& start.SourceId == childId);
+		// The child effect must be available to the parent's next row. The
+		// previous post-compiler expansion could not resolve this D00 recall.
+		result.Schedule.SelectMany(e => e.Commands)
+			.OfType<SetNoteVolumeSlideCommand>()
+			.Count().Should().BeGreaterThanOrEqualTo(2);
+	}
+
+	[Test]
+	public void FlattenedSequenceRootSharesTrackerTempoWithFollowingPattern()
+	{
+		SongDocument document = new();
+		ObjectId nestedId = document.AllocateObjectId();
+		DataPatternDefinition nested = new(nestedId, "Tempo child")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		nested.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new SetTempoPatternEffect(250));
+		document.Add(nested);
+
+		ObjectId invokeId = document.AllocateObjectId();
+		DataPatternDefinition invoke = new(invokeId, "Invoke")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		invoke.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sourceId: nestedId);
+		document.Add(invoke);
+
+		ObjectId followingId = document.AllocateObjectId();
+		DataPatternDefinition following = new(followingId, "Following")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		following.Grid.GetOrCreateCell(1, 0).Note =
+			new PatternNoteCut();
+		document.Add(following);
+
+		ObjectId rootId = document.AllocateObjectId();
+		DataSequenceDefinition sequence = new(rootId, "Song");
+		sequence.Entries.Add(new SequenceEntry(invokeId));
+		sequence.Entries.Add(new SequenceEntry(followingId));
+		document.Add(sequence);
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompileSequence(document, rootId);
+
+		result.Success.Should().BeTrue();
+		result.Schedule.Should().NotBeNull();
+		TimeSpan cutTime = result.Schedule!
+			.Where(e => e.Commands.Any(c => c is NoteCutCommand))
+			.Single().Offset.TimeOffset;
+		// First parent row: 120ms. Following row: 60ms at new tempo.
+		cutTime.Should().Be(TimeSpan.FromMilliseconds(180));
+	}
+
+	[Test]
 	public void ScriptRootSequenceCanInvokeScriptPattern()
 	{
 		SongDocument document = new();
