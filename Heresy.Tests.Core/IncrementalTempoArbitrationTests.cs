@@ -248,7 +248,7 @@ public sealed class IncrementalTempoArbitrationTests
 	}
 
 	[Test]
-	public void LaterGlobalTempoSetCancelsRemainingSegmentOfUnequalSpans()
+	public void MidRampGlobalTempoSetCancelsRemainingUnequalSpanSegments()
 	{
 		SequencingContext root = new();
 		using IncrementalPatternTimeline timeline = new(root);
@@ -256,11 +256,14 @@ public sealed class IncrementalTempoArbitrationTests
 			At(0, 0, new ApplyTrackerTempoCommand(0x12)),
 			At(1, 0, new NoteCutCommand())), 2, root);
 		timeline.Add(new RawSource(At(0, ChannelTarget.Global,
-			new SetSpeedCommand(3))), 1, root.FlattenedChild(physicalChannelOffset: 2));
+			new SetSpeedCommand(3))), 1,
+			root.FlattenedChild(physicalChannelOffset: 2));
 		Assert.That(timeline.TryStep(out _), Is.True);
-		timeline.Add(new RawSource(At(0, 0, new ApplyTrackerTempoCommand(0x11))),
-			1, root.FlattenedChild(physicalChannelOffset: 3));
-		// Advance into the first ramp, then inject a row-boundary Tempo set.
+		timeline.Add(new RawSource(At(0, 0,
+			new ApplyTrackerTempoCommand(0x11))), 1,
+			root.FlattenedChild(physicalChannelOffset: 3));
+		timeline.Add(new RawSource(At(0.5, 0, new NoteOffCommand())), 1,
+			root.FlattenedChild(physicalChannelOffset: 5));
 		bool inserted = false;
 		List<NoteEvent> events = [];
 		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
@@ -268,17 +271,22 @@ public sealed class IncrementalTempoArbitrationTests
 			if (step is not IncrementalPatternTimelineStep.Emit e)
 				continue;
 			events.Add(e.Note);
-			if (!inserted && e.Note.Commands.Any(c =>
-				c is SetTempoRampCommand))
+			if (!inserted && e.Note.Commands.Any(c => c is NoteOffCommand))
 			{
 				inserted = true;
+				Assert.That(e.Tick, Is.EqualTo(1.5).Within(1e-8));
+				Assert.That(root.State.Tempo, Is.EqualTo(128.5).Within(1e-8));
 				timeline.Add(new RawSource(At(0, ChannelTarget.Global,
 					new SetTempoCommand(250))), 1,
 					root.FlattenedChild(physicalChannelOffset: 6));
 			}
 		}
+		Assert.That(inserted, Is.True);
 		Assert.That(events.SelectMany(e => e.Commands)
 			.OfType<SetTempoRampCommand>().Count(), Is.EqualTo(1));
+		Assert.That(events.SelectMany(e => e.Commands)
+			.OfType<SetTempoCommand>().Single().TicksPerDiachron,
+			Is.EqualTo(250));
 		Assert.That(root.State.Tempo, Is.EqualTo(250));
 	}
 
