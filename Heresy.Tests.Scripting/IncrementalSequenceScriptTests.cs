@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 
 using AwesomeAssertions;
 
 using Heresy.Core.Objects;
+using Heresy.Core.Patterns;
 using Heresy.Core.Sequences;
 using Heresy.Core.Sequencing;
 using Heresy.Scripting.Compilation;
@@ -79,6 +81,55 @@ public sealed class IncrementalSequenceScriptTests
 		first.Should().Equal(second);
 		first.Select(e => e.StartRow).Should().Equal(1, 2, 3);
 		first.Should().HaveCount(3);
+	}
+
+	[Test]
+	public void ActualRoslynSequenceFeedsLazySharedTickCursor()
+	{
+		ScriptSequenceDefinition source = new((ObjectId)1U, "Roslyn arrangement")
+		{
+			Source = "Play(_O(17)); Play(_O(18));",
+		};
+		var compiled = ScriptCompiler.CompileIncrementalSequence(source);
+		compiled.Success.Should().BeTrue();
+		DataPatternDefinition first = new((ObjectId)17U, "First")
+		{
+			RowCount = 2, ChannelCount = 1,
+		};
+		first.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
+		DataPatternDefinition second = new((ObjectId)18U, "Second")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		second.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteOff();
+		using IncrementalSequenceCursor cursor = new(
+			compiled.Program!, new PatternResolver(first, second),
+			new SequencingContext());
+
+		cursor.TryStep(out IncrementalPatternTimelineStep? step).Should().BeTrue();
+		step.Should().BeOfType<IncrementalPatternTimelineStep.Emit>()
+			.Which.Note.Commands.Single().Should().BeOfType<NoteCutCommand>();
+		cursor.Order.Should().Be(0);
+
+		List<NoteEvent> notes = [];
+		while (cursor.TryStep(out step))
+			if (step is IncrementalPatternTimelineStep.Emit emitted)
+				notes.Add(emitted.Note);
+
+		notes.Should().ContainSingle();
+		notes[0].Commands.Single().Should().BeOfType<NoteOffCommand>();
+		notes[0].Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(240));
+		cursor.Elapsed.Should().Be(TimeSpan.FromMilliseconds(360));
+		cursor.IsComplete.Should().BeTrue();
+	}
+
+	private sealed class PatternResolver(params DataPatternDefinition[] patterns)
+		: ISequencePatternResolver
+	{
+		private readonly Dictionary<ObjectId, IRawPatternNoteGenerator> _patterns =
+			patterns.ToDictionary(p => p.Id, p => (IRawPatternNoteGenerator)p);
+		public bool TryResolve(ObjectId id, out IRawPatternNoteGenerator? pattern)
+			=> _patterns.TryGetValue(id, out pattern);
 	}
 
 	[Test]
