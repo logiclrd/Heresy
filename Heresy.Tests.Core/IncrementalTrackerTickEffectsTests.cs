@@ -194,6 +194,67 @@ public sealed class IncrementalTrackerTickEffectsTests
     }
 
     [Test]
+    public void RepeatedDelayedChildNoteUsesMappedChannelExactlyOnce()
+    {
+        DataPatternDefinition p = Pattern();
+        PatternCell c = p.Grid.GetOrCreateCell(0, 0);
+        c.Note = new StartPatternNote((ObjectId)10U);
+        c.Effects.Add(new TrackerNoteDelayPatternEffect(2));
+        c.Effects.Add(new TrackerPatternDelayPatternEffect(1));
+        SequencingContext root = new();
+        using IncrementalPatternTimeline timeline = new(root);
+        timeline.Add(p, 1, root.FlattenedChild(physicalChannelOffset: 5));
+        List<NoteEvent> actual = [];
+        while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+            if (step is IncrementalPatternTimelineStep.Emit emit)
+                actual.Add(emit.Note);
+
+        Assert.That(actual.Select(e => e.Offset.TimeOffset),
+            Is.EqualTo(new[] { TimeSpan.FromMilliseconds(40),
+                TimeSpan.FromMilliseconds(160) }));
+        Assert.That(actual.Select(e => e.Target),
+            Is.All.EqualTo(ChannelTarget.Physical(5)));
+    }
+
+    [Test]
+    public void Q00UsesExistingCountdownOnMappedChildAcrossPatternInvocations()
+    {
+        SequencingContext root = new();
+        DataPatternDefinition first = Pattern();
+        PatternCell firstCell = first.Grid.GetOrCreateCell(0, 0);
+        firstCell.Note = new StartPatternNote((ObjectId)10U);
+        firstCell.Effects.Add(new RetriggerPatternEffect(0xA3));
+        DataPatternDefinition next = Pattern();
+        next.Grid.GetOrCreateCell(0, 0).Effects.Add(new RetriggerPatternEffect(0x00));
+
+        using IncrementalPatternTimeline timeline = new(root);
+        timeline.Add(first, 1, root.FlattenedChild(physicalChannelOffset: 3));
+        List<NoteEvent> actual = [];
+        bool addedNext = false;
+        while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+        {
+            if (step is IncrementalPatternTimelineStep.Emit emit)
+                actual.Add(emit.Note);
+            if (!addedNext && timeline.Elapsed == TimeSpan.FromMilliseconds(120))
+            {
+                addedNext = true;
+                timeline.Add(next, 1, root.FlattenedChild(physicalChannelOffset: 3));
+            }
+        }
+
+        NoteEvent[] retriggers = actual.Where(e =>
+            e.Commands.Any(c => c is RetriggerCurrentVoiceCommand)).ToArray();
+        Assert.That(retriggers.Select(x => x.Offset.TimeOffset),
+            Is.EqualTo(new[] {
+                TimeSpan.FromMilliseconds(60), TimeSpan.FromMilliseconds(120),
+                TimeSpan.FromMilliseconds(180) }));
+        Assert.That(retriggers.Select(e => e.Target),
+            Is.All.EqualTo(ChannelTarget.Physical(3)));
+        Assert.That(retriggers.All(e => e.Commands.Single()
+            == new RetriggerCurrentVoiceCommand(0x0A)), Is.True);
+    }
+
+    [Test]
     public void SDxWithQxxIsExplicitlyUnsupportedWithoutMutatingRetriggerMemory()
     {
         DataPatternDefinition p = Pattern();
