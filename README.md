@@ -130,16 +130,17 @@ non-finite samples, and patches RIFF/data sizes on completion. It deliberately
 targets classic RIFF (not RF64), so data beyond the 4-GiB RIFF limit is rejected
 explicitly.
 
-`FlacFileSink` is the default lossless sink. It is a managed incremental FLAC
-encoder that keeps at most one 4096-frame PCM block plus bounded per-frame
-scratch storage in memory. Completed blocks are emitted immediately; arbitrary
-caller write sizes are accepted. The encoder uses constant, verbatim, or
-first-order fixed-predictor/Rice subframes per channel, emits frame/header CRCs,
-supports the FLAC 1-8 channel range, and quantizes the same 16-bit PCM domain as
-WAVE. Seekable destinations get their total-sample count patched into STREAMINFO
-on completion; non-seekable destinations remain valid with an unknown total as
-allowed by FLAC. MP3 remains follow-on work, and the file-render boundary still
-does not permit whole-song buffering merely to reach a codec facade.
+`FlacFileSink` is the default lossless sink. Heresy deliberately does not
+implement FLAC compression itself: the sink is a thin streaming adapter over
+`NAudio.SoundFile`, which delegates encoding to the mature native
+`libsndfile`/libFLAC stack. Heresy owns PCM validation, accepted-frame
+accounting, stream lifetime and the `IAudioFileSink` contract; FLAC framing,
+prediction, Rice coding and compression decisions remain outside the project.
+The native codec runtime is bundled for the supported desktop RIDs, including
+the ELF SONAME aliases required by the Linux packages, so export does not depend
+on a system-installed codec. Arbitrary caller write sizes and non-seekable
+streams remain supported without whole-song buffering. MP3 remains follow-on
+work on the same codec boundary.
 
 ## Realtime audio boundary
 
