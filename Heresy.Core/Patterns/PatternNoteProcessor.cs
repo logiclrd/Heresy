@@ -293,6 +293,7 @@ public static class PatternNoteProcessor
 					+ fineDelayTicks
 					+ patternDelayRows * rowSpanTickCount;
 
+			double initialRowTempo = context.State.Tempo;
 			RowTickTimeline tickTimeline =
 				BuildRowTickTimeline(
 					rowStartSeconds,
@@ -309,12 +310,38 @@ public static class PatternNoteProcessor
 			int rowTickSpan = checked(
 				rowSpanTickCount
 					* (patternDelayRows + 1));
+			int rowSpeed = context.State.Speed;
+			List<(double Tick, double Tempo)> childTempoChanges = [];
+			List<(NoteEvent Event, double CommandTime)> delayedRowClears = [];
+			// Process ordinary events by their actual position on the
+			// row's initial time map, not by source emission order.
+			// This also gives deterministic channel/emission tie-breaking
+			// for simultaneous flattened invocations.
+			List<WorkingEvent> ordinaryRowEvents = new(events);
+			ordinaryRowEvents.Sort((left, right) =>
+			{
+				double a = tickTimeline.GetSecondsAtTickPosition(
+					Math.Max(0.0, left.RowOffset - row) * rowSpeed)
+					+ left.TimeOffsetSeconds;
+				double b = tickTimeline.GetSecondsAtTickPosition(
+					Math.Max(0.0, right.RowOffset - row) * rowSpeed)
+					+ right.TimeOffsetSeconds;
+				int compare = a.CompareTo(b);
+				if (compare != 0)
+					return compare;
+				compare = CompareTargets(
+					context.MapTarget(left.NoteEvent.Target),
+					context.MapTarget(right.NoteEvent.Target));
+				return compare != 0 ? compare
+					: left.NoteEvent.EmissionOrder.CompareTo(
+						right.NoteEvent.EmissionOrder);
+			});
 			int? rowTicksOverride =
 				fineDelayTicks == 0
 					? null
 					: rowSpanTickCount;
 
-			foreach (WorkingEvent workingEvent in events)
+			foreach (WorkingEvent workingEvent in ordinaryRowEvents)
 			{
 				IReadOnlyList<NoteCommand> ordinaryCommands =
 					RemoveTimingCommands(
@@ -344,7 +371,7 @@ public static class PatternNoteProcessor
 					continue;
 
 				double eventTickPosition =
-					fraction * context.State.Speed;
+					fraction * rowSpeed;
 				double eventTimeSeconds =
 					rowStartSeconds
 					+ tickTimeline.GetSecondsAtTickPosition(
@@ -410,7 +437,50 @@ public static class PatternNoteProcessor
 					if (expanded is null)
 						resolved.Add(resolvedEvent);
 					else
+					{
 						resolved.AddRange(expanded);
+						// Flattened children are allowed to set the tempo at
+						// the instant they are invoked, including halfway
+						// through a parent row. Splice that change into the
+						// remainder of the parent's tracker-tick map.
+						// A future child tempo change needs concurrent child
+						// scheduling and is intentionally not guessed here.
+						foreach (NoteEvent nested in expanded)
+						{
+							foreach (NoteCommand command in nested.Commands)
+							{
+								if (command is SetTempoRampCommand)
+								{
+									throw new NotSupportedException(
+										"Flattened child tempo ramps need concurrent row scheduling.");
+								}
+								if (command is not SetTempoCommand setTempo)
+									continue;
+								double delta = (nested.Offset.TimeOffset
+									- resolvedEvent.Offset.TimeOffset).TotalSeconds;
+								if (Math.Abs(delta) > 1e-7)
+								{
+									throw new NotSupportedException(
+										"Delayed flattened child tempo changes need concurrent row scheduling.");
+								}
+								if (tempoRequests.Count != 0
+									|| fineDelayTicks != 0 || patternDelayRows != 0)
+								{
+									throw new NotSupportedException(
+										"Concurrent parent tempo slides or row delays and flattened child tempo changes need a unified timeline.");
+								}
+								childTempoChanges.Add((eventTickPosition,
+									setTempo.TicksPerDiachron));
+								tickTimeline = BuildTimelineWithChildTempoChanges(
+									initialRowTempo,
+									rowEndTickPosition,
+									childTempoChanges);
+								rowEndSeconds = rowStartSeconds
+									+ tickTimeline.GetSecondsAtTickPosition(
+										rowEndTickPosition);
+							}
+						}
+					}
 				}
 
 				if (executeCommands
@@ -564,21 +634,26 @@ public static class PatternNoteProcessor
 					double clearTimeSeconds = Math.Max(
 						rowEndSeconds,
 						commandTimeSeconds);
-					resolved.Add(
+					delayedRowClears.Add((
 						new NoteEvent(
-							new MusicalTime(
-								TimeSpanFromSeconds(
-									clearTimeSeconds),
-								0.0),
-							context.MapTarget(
-								ordinaryEvent.Target),
+							new MusicalTime(TimeSpan.Zero, 0.0),
+							context.MapTarget(ordinaryEvent.Target),
 							commands.RowEndCommands,
-							SyntheticOrder(
-								ordinaryEvent.EmissionOrder,
-								5)));
+							SyntheticOrder(ordinaryEvent.EmissionOrder, 5)),
+						commandTimeSeconds));
 				}
 			}
 
+			foreach ((NoteEvent clear, double commandTime) in delayedRowClears)
+			{
+				resolved.Add(clear with
+				{
+					Offset = new MusicalTime(
+						TimeSpanFromSeconds(
+								Math.Max(rowEndSeconds, commandTime)),
+						0.0),
+				});
+			}
 			rowStartSeconds = rowEndSeconds;
 		}
 
@@ -1171,6 +1246,28 @@ public static class PatternNoteProcessor
 		}
 
 		return resolved;
+	}
+
+	private static RowTickTimeline BuildTimelineWithChildTempoChanges(
+		double initialTempo,
+		double rowEndTick,
+		IReadOnlyList<(double Tick, double Tempo)> changes)
+	{
+		RowTickTimeline timeline = new(initialTempo);
+		double lastTick = 0.0;
+		foreach ((double tick, double tempo) in changes)
+		{
+			if (tick < lastTick - 1e-9 || tick > rowEndTick + 1e-9)
+				throw new InvalidOperationException(
+					"Flattened tempo changes must be processed in nondecreasing tracker time.");
+			if (tick > lastTick)
+				timeline.AppendConstantTicks(tick - lastTick);
+			timeline.SetTempo(tempo);
+			lastTick = tick;
+		}
+		if (lastTick < rowEndTick)
+			timeline.AppendConstantTicks(rowEndTick - lastTick);
+		return timeline;
 	}
 
 	private static RowTickTimeline BuildRowTickTimeline(
