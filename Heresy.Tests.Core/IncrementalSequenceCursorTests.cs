@@ -178,6 +178,53 @@ public sealed class IncrementalSequenceCursorTests
 	}
 
 	[Test]
+	public void DelayedPhysicalNoteFromPriorOrderSurvivesNextOrderStart()
+	{
+		StreamingPattern first = new((ObjectId)1U, 1,
+			new NoteEvent(
+				new MusicalTime(TimeSpan.FromMilliseconds(170), 0),
+				ChannelTarget.Physical(0), [new NoteOffCommand()]),
+			new NoteEvent(MusicalTime.Zero, ChannelTarget.Physical(0),
+				[new ApplyTrackerOrderJumpCommand(1)]));
+		DataPatternDefinition next = Pattern(2, 1);
+		next.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
+		using IncrementalSequenceCursor cursor = new(
+			[new(first.Id), new(next.Id)],
+			new StreamingResolver(first, next), new SequencingContext());
+
+		NoteEvent[] notes = Drain(cursor);
+		Assert.That(notes.Select(n => n.Offset.TimeOffset),
+			Is.EqualTo(new[]
+			{
+				TimeSpan.FromMilliseconds(120),
+				TimeSpan.FromMilliseconds(170),
+			}));
+		Assert.That(notes.Select(n => n.Commands.Single()),
+			Is.EqualTo(new NoteCommand[] { new NoteCutCommand(), new NoteOffCommand() }));
+		Assert.That(cursor.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(240)));
+		Assert.That(cursor.IsComplete, Is.True);
+	}
+
+	[Test]
+	public void B00RevisitsTheSourceLazilyRatherThanMaterializingFutureOrders()
+	{
+		StreamingPattern loop = new((ObjectId)4U, 1,
+			new NoteEvent(MusicalTime.Zero, ChannelTarget.Physical(0),
+				[new NoteCutCommand(), new ApplyTrackerOrderJumpCommand(0)]));
+		// No eager expansion is permitted, even for a large number of
+		// B00 visits: each order re-enumerates exactly once when entered.
+		int jumps = 0;
+		using IncrementalSequenceCursor cursor = new(
+			[new(loop.Id)], new StreamingResolver(loop), new SequencingContext(),
+			shouldFollowOrderJump: _ => ++jumps < 100);
+		int notes = Drain(cursor).Length;
+		Assert.That(notes, Is.EqualTo(100));
+		Assert.That(loop.RawEnumerations, Is.EqualTo(100));
+		Assert.That(loop.EagerCalls, Is.Zero);
+		Assert.That(cursor.Elapsed, Is.EqualTo(TimeSpan.FromSeconds(12)));
+	}
+
+	[Test]
 	public void UnsupportedScriptPatternFailsInsteadOfFallingBackToEagerExpansion()
 	{
 		IRawPatternNoteGenerator generator = new NonStreamingPattern();
@@ -256,6 +303,46 @@ public sealed class IncrementalSequenceCursorTests
 			output = pattern;
 			return true;
 		}
+	}
+
+	private sealed class StreamingPattern : PatternDefinition,
+		IRawPatternNoteGenerator, IIncrementalRawPatternNoteGenerator
+	{
+		private readonly NoteEvent[] _notes;
+
+		public StreamingPattern(ObjectId id, int rows, params NoteEvent[] notes)
+			: base(id, "Streaming fixture")
+		{
+			RowCount = rows;
+			_notes = notes;
+		}
+
+		public int RawEnumerations { get; private set; }
+		public int EagerCalls { get; private set; }
+
+		public IEnumerable<RawPatternStep> EnumerateRawSteps(SequencingContext context)
+		{
+			RawEnumerations++;
+			foreach (NoteEvent note in _notes)
+				yield return new RawPatternStep.Emit(note);
+		}
+
+		public void GenerateRawNotes(SequencingContext context,
+			INoteReceiver output, out double rowCount)
+		{
+			EagerCalls++;
+			throw new InvalidOperationException("Unexpected eager expansion.");
+		}
+	}
+
+	private sealed class StreamingResolver(params PatternDefinition[] patterns)
+		: ISequencePatternResolver
+	{
+		private readonly Dictionary<ObjectId, IRawPatternNoteGenerator> _patterns =
+			patterns.ToDictionary(p => p.Id, p => (IRawPatternNoteGenerator)p);
+
+		public bool TryResolve(ObjectId id, out IRawPatternNoteGenerator? pattern)
+			=> _patterns.TryGetValue(id, out pattern);
 	}
 
 	private sealed class NonStreamingPattern : IRawPatternNoteGenerator
