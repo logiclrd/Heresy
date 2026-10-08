@@ -1011,6 +1011,53 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		}
 		if (current.DueEvent is { } raw)
 		{
+			byte? cutTick = null;
+			byte? delayTick = null;
+			byte? retrigger = null;
+			List<NoteCommand> ordinary = [];
+			foreach (NoteCommand command in raw.Commands)
+			{
+				switch (command)
+				{
+					case ApplyTrackerNoteCutCommand cut:
+						cutTick = cut.Tick;
+						break;
+					case ApplyTrackerNoteDelayCommand delay:
+						delayTick = delay.Tick;
+						break;
+					case ApplyRetriggerCommand q:
+						retrigger = q.Parameter;
+						break;
+					default:
+						ordinary.Add(command);
+						break;
+				}
+			}
+			if (delayTick.HasValue && retrigger.HasValue)
+				throw new NotSupportedException(
+					"Combined SDx/Qxy needs a shared retrigger/delay state machine.");
+			if ((cutTick.HasValue || delayTick.HasValue || retrigger.HasValue)
+				&& raw.Offset.TimeOffset != TimeSpan.Zero)
+				throw new NotSupportedException(
+					"SCx/SDx/Qxy with fixed wall offsets is not yet supported.");
+			if (cutTick.HasValue || delayTick.HasValue || retrigger.HasValue)
+			{
+				// A note delayed by SDx is resolved only when its tick is
+				// reached; this preserves atomic note setup and Source memory.
+				NoteEvent note = raw with { Commands = ordinary.ToArray() };
+				if (delayTick.HasValue && ordinary.Count > 0)
+					current.QueueDelayed(note, delayTick.Value);
+				if (cutTick.HasValue)
+					current.QueueCut(raw, cutTick.Value);
+				if (retrigger.HasValue)
+					current.QueueRetrigger(raw, retrigger.Value);
+				if (delayTick.HasValue || ordinary.Count == 0)
+				{
+					current.ConsumeEvent();
+					return false;
+				}
+				raw = note;
+			}
 			// Fixed wall-time begins when this musical position is reached.
 			// Resolve commands only upon reaching the established deadline,
 			// even if another cursor changes tempo in between.
@@ -1068,6 +1115,64 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				current.QueueRepeats(immediate[0],
 					(raw.Offset.RowOffset - current.Row) * current.RowSpeed);
 			NoteEvent emitted = immediate[0] with
+			{
+				Offset = new MusicalTime(Elapsed, 0),
+				EmissionOrder = _emissionOrder++,
+			};
+			result = new IncrementalPatternTimelineStep.Emit(emitted, _tick, Elapsed);
+			return true;
+		}
+		if (current.DueScheduled is { } scheduled)
+		{
+			current.ConsumeScheduled();
+			NoteEvent? output = null;
+			if (scheduled.Kind == TickOperationKind.Retrigger)
+				output = current.ExecuteRetriggerTick(scheduled);
+			else if (scheduled.Kind is TickOperationKind.Cut
+				or TickOperationKind.RepeatedDelayed)
+				output = scheduled.Note with
+				{
+					Target = current.Context.MapTarget(scheduled.Note.Target),
+				};
+			else
+			{
+				// SDx resolves and commits command memory once, at its first
+				// actual delayed tick. Later SEy copies reuse those resolved
+				// commands, without replaying tracker command memory.
+				NoteScheduleBuilder builder = new();
+				PatternNoteProcessor.GenerateNotes(
+					new SingleEventSlice(scheduled.Note), current.Context, builder,
+					out TimeSpan nominal);
+				List<NoteEvent> resolved = [];
+				foreach (NoteEvent note in builder.Freeze())
+				{
+					if (note.Offset.TimeOffset == nominal
+						&& note.Commands.Count > 0
+						&& note.Commands.All(c => c is ClearPitchSlideCommand
+							or ClearNoteVolumeSlideCommand
+							or ClearOverallChannelVolumeSlideCommand
+							or ClearGlobalVolumeSlideCommand or ClearSpatialXSlideCommand))
+					{
+						current.QueueCleanup(note);
+						continue;
+					}
+					if (note.Offset.TimeOffset != TimeSpan.Zero)
+						throw new NotSupportedException(
+							"SDx resolved an unsupported deferred effect.");
+					resolved.Add(note);
+				}
+				if (resolved.Count > 1)
+					throw new NotSupportedException(
+						"SDx produced multiple independent note operations.");
+				if (resolved.Count == 1)
+				{
+					output = resolved[0];
+					current.QueueDelayedCopies(scheduled, output);
+				}
+			}
+			if (output is null)
+				return false;
+			NoteEvent emitted = output with
 			{
 				Offset = new MusicalTime(Elapsed, 0),
 				EmissionOrder = _emissionOrder++,
