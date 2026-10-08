@@ -216,16 +216,58 @@ child compiler corrected with deferred wall-clock effects.
   row, deferred effect memory, tempo changes of a parent moving child row
   boundaries, and source selection across data-sequence order boundaries.
 
-**Scope of this milestone:** The initial cursor path accepts data Patterns
-with row-start tempo/speed, tracker volume slides, and ordinary note/source
-events. It does *not* yet support scripted Pattern/Sequence cursor timelines,
-fractional-row scripted invocation, pattern-loop/break/jump control, fine
-and whole-row delays, nested tempo ramps, or advanced row-scoped effects.
+**Scope of the first milestone:** The initial cursor path accepted data
+Patterns with row-start tempo/speed, tracker volume slides, and ordinary
+note/source events. The scripted subset described below extends the path to
+fractional script note/cut/off events, but pattern-loop/break/jump control,
+fine and whole-row delays, nested tempo ramps, and advanced row-scoped
+effects are still outside its eligibility checks.
 These inputs retain the existing general compiler path and its explicit
 unsupported-combination checks where appropriate. The older
 `DeferredTempoEventQueue` remains for that compatibility path; this
 data-pattern cursor pathway no longer needs to precalculate a child's
 future wall-clock events.
+
+## Scripted Pattern cursors and fractional events (October 8, 2026)
+
+The first tick-driven cursor generalization now supports **eligible
+`ScriptPatternDefinition` sources** as roots, flattened children, and
+entries of ordinary `DataSequenceDefinition` arrangements. Their Roslyn
+programs still generate raw `NoteEvent` values through the existing script
+compiler; the cursor scheduler does not reinterpret user source text or
+introduce another scripting language.
+
+- Script events are divided into independently scheduled, per-event cursor
+  operations at their original (potentially fractional) row offsets. Their
+  offset within a row is converted to shared tracker ticks using that
+  cursor's speed at the beginning of the row. The scheduler advances the
+  shared clock to the next data row, script event, or pattern boundary.
+- A later parent or child tempo change adjusts **wall-clock time** along the
+  shared tick timeline without moving already-established musical positions.
+  An event at row 1.5 consequently follows the actual tempo history, even
+  when a flattened child changes it partway through the containing row.
+- Source starts from script events create independent mapped child cursors
+  at their exact event tick. A child may outlive its initiating scripted
+  pattern and continue through a later sequence order.
+- Script raw-note generation remains invocation-scoped. The compiled
+  Roslyn generator is reused across repeated invocations of the same
+  script ID within one schedule; its generated raw events are not
+  shared between invocations.
+- The selector conservatively admits script patterns whose raw events use
+  physical channels, zero fixed wall-time offsets, row offsets within the
+  pattern, and the currently supported Start/NoteOff/Cut commands. End-of-
+  pattern endpoint events and more complex script commands retain the
+  legacy compiler. Data-pattern support continues alongside scripts with
+  shared row-time Source and effect memory.
+- Regressions check fractional scripted parents, fractional scripted child
+  notes, tempo changes between child creation and a future script event,
+  and script invocations extending across data-sequence order boundaries.
+
+**Not yet universal:** Scripted sequences, arbitrary wall-time script
+offsets, scripted tracker effects and global tempo commands, terminal
+endpoint events, fractional tempo ramps, complex virtual-channel events,
+pattern control and delayed note commands still need distinct red tests and
+scheduler integration. The older compiler remains for those cases.
 
 ## Boundaries deliberately NOT complete
 
