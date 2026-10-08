@@ -197,8 +197,39 @@ public sealed class FmSynthGraphCanvas : UserControl
 							route[pointIndex].X,
 							route[pointIndex].Y));
 				}
+
+				DrawArrowhead(
+					context,
+					connectionPen,
+					route);
 			}
 		}
+	}
+
+	private static void DrawArrowhead(
+		DrawingContext context,
+		Pen pen,
+		IReadOnlyList<FmSynthRoutePoint> route)
+	{
+		if (FmSynthConnectionArrowheadGeometry.FromRoute(route)
+			is not FmSynthConnectionArrowhead arrow)
+		{
+			return;
+		}
+
+		Point tip = new(arrow.Tip.X, arrow.Tip.Y);
+		context.DrawLine(
+			pen,
+			tip,
+			new Point(
+				arrow.FirstWing.X,
+				arrow.FirstWing.Y));
+		context.DrawLine(
+			pen,
+			tip,
+			new Point(
+				arrow.SecondWing.X,
+				arrow.SecondWing.Y));
 	}
 
 	private Border BuildNodeControl(

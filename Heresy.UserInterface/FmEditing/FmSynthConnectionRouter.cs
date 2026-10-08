@@ -64,6 +64,14 @@ public static class FmSynthConnectionRouter
 			List<FmSynthRoutePoint> hinted = [start];
 			foreach (FmSynthRoutePoint hint in routingHints)
 				AppendOrthogonal(hinted, hint);
+
+			// The arrow must approach the consumer from outside its border,
+			// even when the last explicit waypoint is above or below it.
+			AppendOrthogonal(
+				hinted,
+				new FmSynthRoutePoint(
+					end.X - (direction * Lead),
+					end.Y));
 			AppendOrthogonal(hinted, end);
 			return RemoveAdjacentDuplicates(hinted);
 		}
