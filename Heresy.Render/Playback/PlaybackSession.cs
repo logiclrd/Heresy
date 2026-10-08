@@ -268,6 +268,16 @@ public sealed class PlaybackSession
 	{
 		ArgumentNullException.ThrowIfNull(commands);
 
+		if (target.Kind == ChannelTargetKind.Virtual)
+		{
+			ApplyVirtualEvent(
+				target.VirtualChannelId,
+				commands,
+				_nextFrame,
+				cutIndefiniteAfterNoteOff: true);
+			return;
+		}
+
 		TimeSpan eventTime =
 			FrameTime.FrameStartTime(
 				_nextFrame,
@@ -384,7 +394,8 @@ public sealed class PlaybackSession
 			ApplyVirtualEvent(
 				noteEvent.Target.VirtualChannelId,
 				noteEvent.Commands,
-				eventFrame);
+				eventFrame,
+				cutIndefiniteAfterNoteOff: false);
 			return;
 		}
 
@@ -411,7 +422,8 @@ public sealed class PlaybackSession
 	private void ApplyVirtualEvent(
 		uint channelId,
 		IReadOnlyList<NoteCommand> commands,
-		long eventFrame)
+		long eventFrame,
+		bool cutIndefiniteAfterNoteOff)
 	{
 		PlaybackChannelState channel =
 			GetVirtualChannelState(channelId);
@@ -428,12 +440,26 @@ public sealed class PlaybackSession
 					break;
 
 				case NoteOffCommand:
-					channel.CurrentVoice?.ApplyNoteOff(
-						eventFrame,
-						_context.Configuration.SampleRate);
-					CullFinishedCurrentVoice(
-						channel,
-						eventFrame);
+					if (channel.CurrentVoice is PlaybackVoice voice)
+					{
+						voice.ApplyNoteOff(
+							eventFrame,
+							_context.Configuration.SampleRate);
+
+						if (cutIndefiniteAfterNoteOff
+							&& !GetEffectiveVoiceEndFrameExclusive(
+								voice,
+								eventFrame).HasValue)
+						{
+							channel.CutCurrentVoice();
+						}
+						else
+						{
+							CullFinishedCurrentVoice(
+								channel,
+								eventFrame);
+						}
+					}
 					break;
 
 				case NoteCutCommand:

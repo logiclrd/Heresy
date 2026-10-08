@@ -36,17 +36,17 @@ public static class PatternLiveEventCompiler
 			return null;
 
 		// Tracker entry audition is monophonic per physical channel. Deliver
-		// Note Off to the existing edit voice first, then force the immediate
-		// replacement itself to Cut so that entering successive notes does not
-		// accumulate displaced edit voices on the virtual-voice list.
+		// Note Off first so the old voice observes the release transition, then
+		// cut that exact current voice before starting the replacement. This is
+		// deliberately stronger than an NNA override: there is no displacement
+		// step in which an edit-preview voice can migrate to the virtual pool.
 		if (commands.Any(command => command is StartNoteCommand))
 		{
 			commands.InsertRange(
 				0,
 				[
 					new NoteOffCommand(),
-					new SetCurrentVoiceDisplacementActionCommand(
-						NoteDisplacementAction.Cut),
+					new NoteCutCommand(),
 				]);
 		}
 

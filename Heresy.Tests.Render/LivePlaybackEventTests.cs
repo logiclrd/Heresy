@@ -226,11 +226,14 @@ public sealed class LivePlaybackEventTests
 		source.EnqueueLiveEvent(
 			ChannelTarget.Virtual(42),
 			[new NoteOffCommand()]);
-		float[] released = new float[1];
-		source.Render(1, released);
+		float[] released = new float[2];
+		source.Render(2, released);
 
 		sounding[0].Should().Be(1.0f);
-		released[0].Should().Be(0.0f);
+		// A cut preserves the ordinary anti-click residue for the immediately
+		// following frame, but the underlying indefinite voice is gone.
+		released[0].Should().Be(1.0f);
+		released[1].Should().Be(0.0f);
 	}
 
 	private sealed class InfiniteSound : ISound
