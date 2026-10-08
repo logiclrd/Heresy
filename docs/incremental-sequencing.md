@@ -262,25 +262,68 @@ deadline inversion during the ramp, T00 memory across rows, immediate
 TFA followed by T00 recall, and a positive-offset Txx becoming
 eligible at a later row boundary.
 
-**Restrictions remain explicit.** Concurrent or interrupting global
-timing operations while a ramp is still active currently throw
-`NotSupportedException`: physical-channel ordering of multiple
-simultaneous Txx commands and two unrelated cursors contributing
-overlapping ramps require a separate priority/arbitration design.
-Complex cells containing Txx together with other non-timing commands,
+**Remaining restrictions:** Complex cells containing Txx together with
+other non-timing commands,
 S6x/SEy extended rows, tempo-control retriggering, script-generated
 out-of-order raw events and NNA/mixdown effects are not implemented
 here. This is **not** yet wired to the production song compiler,
 realtime playback, or offline export.
 
+## Seventh executable step: concurrent Tempo arbitration
+
+The experimental shared clock now arbitrates **simultaneous Txx commands**
+and **interruptions of running Tempo ramps**, rather than rejecting all
+overlaps.
+
+- Every cursor beginning a new row at the same tracker tick prepares its
+  raw steps before any Txx is interpreted. Standalone global Tempo/Speed
+  changes at that boundary execute before the physical-channel tracker
+  effects, regardless of cursor creation order.
+- The Txx requests ready at that tick are collected together and sorted
+  by eligibility time, mapped physical-channel number, invocation order
+  and per-invocation emission order. The associated
+  `SequencingChannelState` resolves byte-memory `T00` **only when
+  the command executes**. The common `PatternNoteProcessor`'s
+  `ResolveTrackerTempoAtTick` routine is reused to apply each legacy
+  per-tick T0x/T1x adjustment and its clamp in physical-channel order.
+  Compatible slide requests combine into **one global ramp**, not
+  multiple ramps overwriting each other at the same instant.
+- A simultaneous Txx immediate set applies in physical-channel order;
+  subsequent slides start from the resulting Tempo. A standalone global
+  Tempo command at the same boundary is applied first. A **later**
+  Txx request or direct global Tempo set interrupts the old ramp at the
+  instantaneous Tempo actually reached by the shared tick clock. It
+  never uses the interrupted ramp's future endpoint. A Speed change
+  alone does not interrupt the ramp.
+- The common analytic `TrackerTimeMap` integration remains in use,
+  including inverse tick mapping for exact wall-time events that occur
+  during the ramp. Same-time output events are queued in deterministic
+  order, and silent/empty Txx memory recalls do not create a ramp.
+
+**Remaining supported-subset boundary:** simultaneous Txx invocations
+whose already-captured row Speed differs are rejected explicitly
+until competing ramp-span policies are specified. Mixed-command Txx
+cells, S6x/SEy extended rows, advanced tracker controls, virtual
+channels and recursive invocation lifetimes are still outside this
+prototype. The old eager Pattern processor remains the production
+authority for full tracker-effect semantics, and song compilation,
+realtime playback and offline export have not switched to this timeline.
+
+Tests compare same-boundary Txx channel-order clamping directly with
+the eager Pattern processor, verify reversed cursor creation order,
+multiple simultaneous slides composing into one ramp, Txx immediate
+set plus slide, a later slide interrupting from the current Tempo,
+direct Tempo interruption and global-boundary priority, and the
+non-interruption of a ramp by a Speed-only command.
+
 ## Proposed next interfaces and migration
 
 1. Expand the now-implemented **within-row shared-tick merger** beyond
-   the supported slide families, deferred timing and isolated tracker
-   Txx ramps. Extract a fully resumable common processor with complete
-   row/event semantics, including priority arbitration for concurrent
-   and interrupting Tempo ramps, fine/whole-row pattern delays, pattern
-   flow control, complex mixed-command effects, virtual channels and
+   its supported slide families, deferred timing and compatible
+   concurrent Txx ramps. Extract a fully resumable common processor
+   with complete row/event semantics, including arbitration when
+   row spans differ, fine/whole-row pattern delays, pattern flow
+   control, complex mixed-command effects, virtual channels and
    zero-time cooperation guards before production adoption.
 2. Add **script invocation-local iterators** through Roslyn syntax
    rewriting. The existing loop `Checkpoint()` instrumentation for
