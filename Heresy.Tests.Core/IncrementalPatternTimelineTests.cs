@@ -167,6 +167,59 @@ public sealed class IncrementalPatternTimelineTests
 	}
 
 	[Test]
+	public void ChildStartedAtFractionalNoteCanChangeTempoWithinParentRow()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(new RawSource(
+			At(0.5, 0, new StartNoteCommand((ObjectId)42U)),
+			At(1.0, 0, new NoteCutCommand())), 2, root);
+
+		List<NoteEvent> notes = [];
+		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+		{
+			if (step is not IncrementalPatternTimelineStep.Emit emit)
+				continue;
+			notes.Add(emit.Note);
+			if (emit.Note.Commands.Any(c => c is StartNoteCommand))
+			{
+				timeline.Add(new RawSource(
+					At(0, ChannelTarget.Global, new SetTempoCommand(250))),
+					1, root.FlattenedChild(physicalChannelOffset: 0));
+			}
+		}
+
+		Assert.That(notes.Select(e => e.Offset.TimeOffset),
+			Is.EqualTo(new[]
+			{
+				TimeSpan.FromMilliseconds(60),
+				TimeSpan.FromMilliseconds(60),
+				TimeSpan.FromMilliseconds(90),
+			}));
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(150)));
+	}
+
+	[Test]
+	public void CancelledInvocationDisposesItsCursorAndDoesNotEmitLaterNotes()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		long id = timeline.Add(new RawSource(
+			At(0.5, 0, new NoteCutCommand()),
+			At(1.5, 0, new NoteOffCommand())), 2, root);
+		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+		{
+			if (step is IncrementalPatternTimelineStep.Emit)
+				break;
+		}
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(60)));
+		Assert.That(timeline.Cancel(id), Is.True);
+		Assert.That(timeline.Cancel(id), Is.False);
+		Assert.That(timeline.IsComplete, Is.True);
+		Assert.That(timeline.TryStep(out _), Is.False);
+	}
+
+	[Test]
 	public void DecreasingRawRowPositionsAreRejectedBeforeResolvingLaterCommand()
 	{
 		SequencingContext root = new();
