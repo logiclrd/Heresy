@@ -71,6 +71,35 @@ public sealed class IncrementalRecursiveScriptTests
 	}
 
 	[Test]
+	public void ScriptedSequenceBxxReusesEarlierPlayWithoutRunningFutureScript()
+	{
+		ScriptSequenceDefinition sequence = new((ObjectId)20U, "Repeated");
+		DataPatternDefinition loop = Pattern(21, 1);
+		loop.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
+		loop.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new TrackerOrderJumpPatternEffect(0));
+		RawSequence orders = new(
+			new RawSequenceStep.Play(new SequenceEntry(loop.Id)),
+			new RawSequenceStep.Play(new SequenceEntry((ObjectId)999U)));
+		TrackingCompiler compiler = new();
+		compiler.Sequences[sequence.Id] = orders;
+		int jumps = 0;
+		using IncrementalRecursiveTimeline timeline = new(
+			new SequencingContext(), new Resolver(sequence, loop), compiler);
+		timeline.AddRoot(sequence.Id,
+			shouldFollowOrderJump: _ => ++jumps < 3);
+
+		NoteEvent[] notes = Drain(timeline);
+		Assert.That(notes.Select(n => n.Offset.TimeOffset), Is.EqualTo(
+			new[] { TimeSpan.Zero, TimeSpan.FromMilliseconds(120),
+				TimeSpan.FromMilliseconds(240) }));
+		Assert.That(jumps, Is.EqualTo(3));
+		Assert.That(orders.Yields, Is.EqualTo(1));
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(360)));
+		Assert.That(timeline.IsComplete, Is.True);
+	}
+
+	[Test]
 	public void CancellingScriptedSequenceDisposesItsSuspendedEnumerator()
 	{
 		ScriptSequenceDefinition sequence = new((ObjectId)10U, "Endless");
@@ -146,12 +175,16 @@ public sealed class IncrementalRecursiveScriptTests
 		: IIncrementalRawSequenceEntryGenerator
 	{
 		public bool Disposed { get; private set; }
+		public int Yields { get; private set; }
 		public IEnumerable<RawSequenceStep> EnumerateRawSteps(SequencingContext context)
 		{
 			try
 			{
 				foreach (RawSequenceStep step in steps)
+				{
+					Yields++;
 					yield return step;
+				}
 			}
 			finally
 			{
