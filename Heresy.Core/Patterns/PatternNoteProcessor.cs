@@ -2807,7 +2807,7 @@ public static class PatternNoteProcessor
 		return (trackerPan - 32) / 32.0f;
 	}
 
-	private static NoteCommand? ApplyRowTickOverride(
+	internal static NoteCommand? ApplyRowTickOverride(
 		NoteCommand? command,
 		int? rowTicksOverride)
 	{
