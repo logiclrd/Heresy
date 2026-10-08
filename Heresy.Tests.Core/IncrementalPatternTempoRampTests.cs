@@ -256,6 +256,44 @@ public sealed class IncrementalPatternTempoRampTests
 	}
 
 	[Test]
+	public void FractionalMixedTfaSetsTempoAtRowStartAndT00RecallsIt()
+	{
+		RawSource source = new(
+			Event(0.5, ChannelTarget.Physical(0),
+				new NoteOffCommand(), new ApplyTrackerTempoCommand(0xFA)),
+			Event(1, ChannelTarget.Physical(0),
+				new ApplyTrackerTempoCommand(0x00)),
+			Event(1.5, ChannelTarget.Physical(0),
+				new NoteCutCommand()));
+		SequencingContext eagerContext = new();
+		NoteScheduleBuilder eager = new();
+		PatternNoteProcessor.GenerateNotes(
+			new EagerSource(source.Events, 2), eagerContext, eager,
+			out TimeSpan eagerDuration);
+
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(source, 2, root);
+		NoteEvent[] actual = Drain(timeline);
+		NoteEvent[] expected = eager.Freeze().ToArray();
+		Assert.That(actual.Length, Is.EqualTo(expected.Length));
+		for (int i = 0; i < expected.Length; i++)
+		{
+			Assert.That(actual[i].Target, Is.EqualTo(expected[i].Target));
+			Assert.That(actual[i].Commands, Is.EqualTo(expected[i].Commands));
+			Assert.That(actual[i].Offset.TimeOffset.TotalSeconds,
+				Is.EqualTo(expected[i].Offset.TimeOffset.TotalSeconds)
+					.Within(1e-6));
+		}
+		Assert.That(actual.SelectMany(x => x.Commands)
+			.OfType<SetTempoCommand>().Select(x => x.TicksPerDiachron),
+			Is.EqualTo(new[] { 250.0, 250.0 }));
+		Assert.That(root.State.Tempo, Is.EqualTo(250.0));
+		Assert.That(timeline.Elapsed.TotalSeconds,
+			Is.EqualTo(eagerDuration.TotalSeconds).Within(1e-6));
+	}
+
+	[Test]
 	public void FixedWallNoteInMixedTxxRunsBeforeDeferredTempoBoundary()
 	{
 		SequencingContext root = new();
