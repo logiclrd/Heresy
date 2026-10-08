@@ -84,6 +84,40 @@ public sealed class IncrementalScriptCompilerTests
 	}
 
 	[Test]
+	public void RoslynCpuCheckpointsReachSharedTimelineWithoutRunningFutureNotes()
+	{
+		ScriptPatternDefinition definition = new((ObjectId)1U, "Streaming loop")
+		{
+			RowCount = 1,
+			Source = """
+				Note(0, 0, _O(17));
+				for (int i = 0; i < 128; i++) { }
+				Note(0.5, 0, _O(18));
+				""",
+		};
+		var result = ScriptCompiler.CompileIncrementalPattern(definition);
+		result.Success.Should().BeTrue();
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		timeline.Add(result.Program!, definition.RowCount, context);
+
+		timeline.TryStep(out IncrementalPatternTimelineStep? first).Should().BeTrue();
+		first.Should().BeOfType<IncrementalPatternTimelineStep.Cooperate>();
+		timeline.Elapsed.Should().Be(TimeSpan.Zero);
+		timeline.Tick.Should().Be(0);
+
+		List<NoteEvent> output = [];
+		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+			if (step is IncrementalPatternTimelineStep.Emit emit)
+				output.Add(emit.Note);
+
+		output.Select(e => e.Offset.TimeOffset).Should().Equal(
+			TimeSpan.Zero, TimeSpan.FromMilliseconds(60));
+		output.Select(e => e.Commands.OfType<StartNoteCommand>()
+			.Single().SourceId).Should().Equal((ObjectId)17U, (ObjectId)18U);
+	}
+
+	[Test]
 	public void StreamingPatternPreservesExistingRestrictedDiagnostics()
 	{
 		ScriptPatternDefinition definition = new((ObjectId)1U, "Unsafe")

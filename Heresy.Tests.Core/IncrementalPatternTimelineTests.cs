@@ -310,6 +310,121 @@ public sealed class IncrementalPatternTimelineTests
 			() => timeline.TryStep(out _));
 	}
 
+	[Test]
+	public void CpuCooperationSuspendsPartiallyBufferedRowBeforeCommittingTempo()
+	{
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		long id = timeline.Add(new CooperativeRawSource(
+			new RawPatternStep.Emit(At(0, ChannelTarget.Global,
+				new SetTempoCommand(250))),
+			new RawPatternStep.Cooperate(0),
+			new RawPatternStep.Emit(At(0.5, 0, new NoteCutCommand())),
+			new RawPatternStep.Advance(1)), 1, context);
+
+		Assert.That(timeline.TryStep(out IncrementalPatternTimelineStep? step),
+			Is.True);
+		Assert.That(step, Is.TypeOf<IncrementalPatternTimelineStep.Cooperate>());
+		var checkpoint = (IncrementalPatternTimelineStep.Cooperate)step!;
+		Assert.That(checkpoint.InvocationId, Is.EqualTo(id));
+		Assert.That(checkpoint.Tick, Is.Zero);
+		Assert.That(checkpoint.Time, Is.EqualTo(TimeSpan.Zero));
+		Assert.That(timeline.Tick, Is.Zero);
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.Zero));
+		Assert.That(context.State.Tempo, Is.EqualTo(125));
+
+		Assert.That(timeline.TryStep(out step), Is.True);
+		Assert.That(step, Is.TypeOf<IncrementalPatternTimelineStep.Emit>());
+		Assert.That(((IncrementalPatternTimelineStep.Emit)step!).Note
+			.Commands.Single(), Is.EqualTo(new SetTempoCommand(250)));
+		Assert.That(context.State.Tempo, Is.EqualTo(250));
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.Zero));
+
+		Assert.That(timeline.TryStep(out step), Is.True);
+		Assert.That(step, Is.TypeOf<IncrementalPatternTimelineStep.Emit>());
+		Assert.That(((IncrementalPatternTimelineStep.Emit)step!).Note
+			.Commands.Single(), Is.TypeOf<NoteCutCommand>());
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(30)));
+		DrainNotes(timeline);
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(60)));
+	}
+
+	[Test]
+	public void CpuCheckpointAtFractionalPositionDoesNotMoveMusicalClock()
+	{
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		timeline.Add(new CooperativeRawSource(
+			new RawPatternStep.Emit(At(0.75, 0, new NoteOffCommand())),
+			new RawPatternStep.Cooperate(0.75),
+			new RawPatternStep.Emit(At(0.9, 0, new NoteCutCommand()))),
+			1, context);
+
+		Assert.That(timeline.TryStep(out IncrementalPatternTimelineStep? step),
+			Is.True);
+		Assert.That(step, Is.TypeOf<IncrementalPatternTimelineStep.Cooperate>());
+		Assert.That(timeline.Tick, Is.Zero);
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.Zero));
+		NoteEvent[] events = DrainNotes(timeline);
+		Assert.That(events.Select(e => e.Offset.TimeOffset),
+			Is.EqualTo(new[]
+			{
+				TimeSpan.FromMilliseconds(90),
+				TimeSpan.FromMilliseconds(108),
+			}));
+	}
+
+	[Test]
+	public void EndlessCpuCooperationReturnsControlAndCancellationDisposesSource()
+	{
+		SequencingContext context = new();
+		InfiniteCooperationRawSource source = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		long id = timeline.Add(source, 1, context);
+
+		for (int i = 0; i < 3; i++)
+		{
+			Assert.That(timeline.TryStep(out IncrementalPatternTimelineStep? step),
+				Is.True);
+			Assert.That(step, Is.TypeOf<IncrementalPatternTimelineStep.Cooperate>());
+			Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.Zero));
+			Assert.That(timeline.HasUnfinishedRows(id), Is.True);
+		}
+
+		Assert.That(timeline.Cancel(id), Is.True);
+		Assert.That(source.Disposed, Is.True);
+		Assert.That(timeline.IsComplete, Is.True);
+	}
+
+	private sealed class CooperativeRawSource(params RawPatternStep[] steps)
+		: IIncrementalRawPatternNoteGenerator
+	{
+		public IEnumerable<RawPatternStep> EnumerateRawSteps(SequencingContext context)
+		{
+			foreach (RawPatternStep step in steps)
+				yield return step;
+		}
+	}
+
+	private sealed class InfiniteCooperationRawSource
+		: IIncrementalRawPatternNoteGenerator
+	{
+		public bool Disposed { get; private set; }
+
+		public IEnumerable<RawPatternStep> EnumerateRawSteps(SequencingContext context)
+		{
+			try
+			{
+				while (true)
+					yield return new RawPatternStep.Cooperate(0);
+			}
+			finally
+			{
+				Disposed = true;
+			}
+		}
+	}
+
 	private static NoteEvent At(double row, int channel, NoteCommand command)
 		=> At(row, ChannelTarget.Physical(channel), command);
 
