@@ -25,6 +25,7 @@ internal sealed class CompiledNestedMixdownSound
 		public RenderContext? RenderContext { get; set; }
 		public long SourceFrameOffset { get; set; }
 		public bool HasCompleted { get; set; }
+		public long? EndFrameExclusive { get; set; }
 	}
 
 	[ThreadStatic]
@@ -81,6 +82,7 @@ internal sealed class CompiledNestedMixdownSound
 		NestedState nested = ValidateState(state);
 		nested.SourceFrameOffset = sourceFrameOffset;
 		nested.HasCompleted = false;
+		nested.EndFrameExclusive = null;
 	}
 
 	public long? GetEndFrameExclusive(
@@ -89,8 +91,8 @@ internal sealed class CompiledNestedMixdownSound
 	{
 		ArgumentNullException.ThrowIfNull(context);
 		NestedState nested = ValidateState(state);
-		if (nested.NaturalEndFrameExclusive.HasValue)
-			return nested.NaturalEndFrameExclusive;
+		if (nested.EndFrameExclusive.HasValue)
+			return nested.EndFrameExclusive;
 		// Explicit Note Off should not leave a nested instrument stuck.
 		// Full relative-time child release propagation is still outstanding.
 		if (nested.NoteOffTime.HasValue)
@@ -156,12 +158,13 @@ internal sealed class CompiledNestedMixdownSound
 			// offset changes and backwards seeks correctly.
 			state.Session = child = NewSession(context);
 			state.HasCompleted = false;
+			state.EndFrameExclusive = null;
 		}
 
 		float[] rented = ArrayPool<float>.Shared.Rent(checked(256 * channels));
 		try
 		{
-			Advance(child, state, sourceStart, channels, rented, null,
+			Advance(child, state, sourceStart, channels, rented, Span<float>.Empty,
 				context.Configuration.SampleRate, sourceOffset);
 			if (state.HasCompleted)
 				return;
@@ -197,8 +200,8 @@ internal sealed class CompiledNestedMixdownSound
 			if (child.IsQuiescent)
 			{
 				state.HasCompleted = true;
-				state.MarkNaturalEndReached(
-					Math.Max(0, child.NextFrame - sourceOffset));
+				state.EndFrameExclusive =
+					Math.Max(0, child.NextFrame - sourceOffset);
 				break;
 			}
 
@@ -241,6 +244,7 @@ internal sealed class CompiledNestedMixdownSound
 			state.Session = NewSession(context);
 			state.RenderContext = context;
 			state.HasCompleted = false;
+			state.EndFrameExclusive = null;
 		}
 		return state.Session;
 	}
