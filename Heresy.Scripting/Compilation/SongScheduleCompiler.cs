@@ -189,6 +189,18 @@ public static class SongScheduleCompiler
 				$"Pattern {patternId.Value} is missing or is not a pattern.");
 		}
 
+		if (pattern is DataPatternDefinition dataPattern
+			&& (context is null
+				|| context.FlattenedSourceExpander is null
+					&& !context.IsPreparingFlattenedChild)
+			&& startRow == 0
+			&& ChronologicalDataPatternScheduler.CanHandle(
+				document, dataPattern))
+		{
+			return ChronologicalDataPatternScheduler.Compile(
+				document, dataPattern, context);
+		}
+
 		SequencingContext activeContext = context ?? new SequencingContext();
 		bool rootInvocation = activeContext.FlattenedSourceExpander is null;
 		activeContext.FlattenedSourceExpander ??=
