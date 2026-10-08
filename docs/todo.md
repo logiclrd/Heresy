@@ -39,8 +39,9 @@ Items that were already completed remain in Git history, not in this checklist.
   handling; effect commands stay in eligibility/emission order, preserve
   other cursors' already-started row durations and are dropped if the
   originating Pattern ends or is cancelled before an eligible boundary.
-  Isolated tracker Txx effects now use PatternNoteProcessor for
-  T00 memory, immediate T20-TFF Tempo sets and T0x/T1x continuous ramps;
+  Tracker Txx effects reuse SequencingChannelState for T00 memory
+  and PatternNoteProcessor's shared per-tick clamp logic for T0x/T1x
+  slides and immediate T20-TFF Tempo sets;
   the shared tick merger integrates each ramp analytically (and inverts
   it for fixed wall deadlines), so overlapping child/parent cursors
   observe the actual evolving Tempo rather than its future endpoint.
