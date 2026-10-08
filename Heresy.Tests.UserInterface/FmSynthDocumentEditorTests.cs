@@ -194,7 +194,7 @@ public sealed class FmSynthDocumentEditorTests
 	}
 
 	[Test]
-	public void RemovingReferencedOrOutputNodeIsRejectedButUnusedNodeCanBeRemoved()
+	public void RemovingReferencedNodeReplacesEmptyOutputOperatorWithZero()
 	{
 		DocumentWorkspace workspace = new();
 		FmSynthDefinition synth =
@@ -228,7 +228,12 @@ public sealed class FmSynthDocumentEditorTests
 				0);
 
 		output.Should().Throw<InvalidOperationException>();
-		referenced.Should().Throw<InvalidOperationException>();
+		referenced.Should().NotThrow();
+		synth.Graph.OutputNodeId.Should().Be(opId);
+		synth.Graph.Nodes.Should().NotContain(node => node.Id == 0);
+		synth.Graph.Nodes.Single(node => node.Id == opId)
+		.Should().BeOfType<FmConstantNode>()
+		.Which.Value.Should().Be(0.0);
 
 		FmSynthDocumentEditor.RemoveNode(
 			workspace,
@@ -237,6 +242,161 @@ public sealed class FmSynthDocumentEditorTests
 
 		synth.Graph.Nodes.Should().NotContain(node => node.Id == unused);
 		synth.NodePositions.Should().NotContain(position => position.NodeId == unused);
+	}
+
+	[Test]
+	public void RemovingConsumedNodeDisconnectsAllOccurrencesAndReindexesRoutingHints()
+	{
+		DocumentWorkspace workspace = new();
+		FmSynthDefinition synth =
+			FmSynthDocumentEditor.CreateFmSynth(workspace, "FM");
+		int removed = FmSynthDocumentEditor.AddConstantNode(
+			workspace, synth, 1.0, 100.0, 200.0);
+		int first = FmSynthDocumentEditor.AddConstantNode(
+			workspace, synth, 2.0, 200.0, 200.0);
+		int last = FmSynthDocumentEditor.AddConstantNode(
+			workspace, synth, 3.0, 300.0, 200.0);
+		int op = FmSynthDocumentEditor.AddOperatorNode(
+			workspace, synth, FmOperatorKind.Add,
+			[removed, first, removed, last], 450.0, 200.0);
+		int downstream = FmSynthDocumentEditor.AddOperatorNode(
+			workspace, synth, FmOperatorKind.Multiply,
+			[op, 0], 700.0, 200.0);
+		FmSynthDocumentEditor.SetOutputNode(workspace, synth, downstream);
+
+		FmSynthDocumentEditor.SetRoutingHint(
+			workspace, synth, removed, op, 0,
+			[new FmSynthRoutePoint(10.0, 10.0)]);
+		FmSynthDocumentEditor.SetRoutingHint(
+			workspace, synth, first, op, 1,
+			[new FmSynthRoutePoint(20.0, 20.0)]);
+		FmSynthDocumentEditor.SetRoutingHint(
+			workspace, synth, removed, op, 2,
+			[new FmSynthRoutePoint(30.0, 30.0)]);
+		FmSynthDocumentEditor.SetRoutingHint(
+			workspace, synth, last, op, 3,
+			[new FmSynthRoutePoint(40.0, 40.0)]);
+		FmSynthDocumentEditor.SetRoutingHint(
+			workspace, synth, 0, downstream, 1,
+			[new FmSynthRoutePoint(50.0, 50.0)]);
+
+		FmSynthGraph before = synth.Graph;
+		uint documentRevision = workspace.Document.DocumentRevision;
+		uint audioRevision = workspace.Document.AudioRevision;
+		FmSynthDocumentEditor.RemoveNode(workspace, synth, removed);
+
+		synth.Graph.Should().NotBeSameAs(before);
+		synth.Graph.Nodes.Should().NotContain(node => node.Id == removed);
+		synth.Graph.Nodes.Single(node => node.Id == op)
+		.Should().BeOfType<FmOperatorNode>()
+		.Which.InputNodeIds.Should().Equal(first, last);
+		synth.Graph.Nodes.Single(node => node.Id == downstream)
+		.InputNodeIds.Should().Equal(op, 0);
+		synth.NodePositions.Should().NotContain(p => p.NodeId == removed);
+		synth.ConnectionRoutingHints.Should().HaveCount(3);
+		synth.ConnectionRoutingHints.Should().ContainEquivalentOf(
+			new FmSynthConnectionRoutingHint(
+				first, op, 0, [new FmSynthRoutePoint(20.0, 20.0)]));
+		synth.ConnectionRoutingHints.Should().ContainEquivalentOf(
+			new FmSynthConnectionRoutingHint(
+				last, op, 1, [new FmSynthRoutePoint(40.0, 40.0)]));
+		synth.ConnectionRoutingHints.Should().ContainEquivalentOf(
+			new FmSynthConnectionRoutingHint(
+				0, downstream, 1, [new FmSynthRoutePoint(50.0, 50.0)]));
+		workspace.Document.DocumentRevision.Should().Be(documentRevision + 1);
+		workspace.Document.AudioRevision.Should().Be(audioRevision + 1);
+	}
+
+	[Test]
+	public void RemovingMultiplierSourcePreservesOscillatorAndUnrelatedConnections()
+	{
+		DocumentWorkspace workspace = new();
+		FmSynthDefinition synth =
+			FmSynthDocumentEditor.CreateFmSynth(workspace, "FM");
+		int removed = FmSynthDocumentEditor.AddConstantNode(
+			workspace, synth, 1.0, 100.0, 200.0);
+		int oscillator = FmSynthDocumentEditor.AddOscillatorNode(
+			workspace, synth, FmOscillatorWaveform.Square, 330.0,
+			300.0, 200.0, minimum: -0.5, maximum: 0.75,
+			multiplierNodeId: removed, exponentialMultiplier: true);
+		int op = FmSynthDocumentEditor.AddOperatorNode(
+			workspace, synth, FmOperatorKind.Add, [oscillator],
+			500.0, 200.0);
+		FmSynthDocumentEditor.SetOutputNode(workspace, synth, op);
+		FmSynthDocumentEditor.SetRoutingHint(
+			workspace, synth, removed, oscillator, 0,
+			[new FmSynthRoutePoint(10.0, 10.0)]);
+		FmSynthDocumentEditor.SetRoutingHint(
+			workspace, synth, oscillator, op, 0,
+			[new FmSynthRoutePoint(20.0, 20.0)]);
+
+		FmSynthDocumentEditor.RemoveNode(workspace, synth, removed);
+
+		FmOscillatorNode remaining = synth.Graph.Nodes
+			.OfType<FmOscillatorNode>().Single();
+		remaining.MultiplierNodeId.Should().BeNull();
+		remaining.Waveform.Should().Be(FmOscillatorWaveform.Square);
+		remaining.FrequencyHz.Should().Be(330.0);
+		remaining.Minimum.Should().Be(-0.5);
+		remaining.Maximum.Should().Be(0.75);
+		remaining.ExponentialMultiplier.Should().BeTrue();
+		synth.ConnectionRoutingHints.Should().ContainSingle()
+			.Which.Should().BeEquivalentTo(
+				new FmSynthConnectionRoutingHint(
+					oscillator, op, 0,
+					[new FmSynthRoutePoint(20.0, 20.0)]));
+	}
+
+	[Test]
+	public void EmptyOperatorIsSilencedWithoutDeletingDownstreamConsumers()
+	{
+		DocumentWorkspace workspace = new();
+		FmSynthDefinition synth =
+			FmSynthDocumentEditor.CreateFmSynth(workspace, "FM");
+		int removed = FmSynthDocumentEditor.AddConstantNode(
+			workspace, synth, 1.0, 100.0, 200.0);
+		int op = FmSynthDocumentEditor.AddOperatorNode(
+			workspace, synth, FmOperatorKind.Multiply,
+			[removed, removed], 300.0, 200.0);
+		int downstream = FmSynthDocumentEditor.AddOperatorNode(
+			workspace, synth, FmOperatorKind.Add, [op], 500.0, 200.0);
+		FmSynthDocumentEditor.SetOutputNode(workspace, synth, downstream);
+
+		FmSynthDocumentEditor.RemoveNode(workspace, synth, removed);
+
+		synth.Graph.Nodes.Single(node => node.Id == op)
+			.Should().BeOfType<FmConstantNode>()
+			.Which.Value.Should().Be(0.0);
+		synth.Graph.Nodes.Single(node => node.Id == downstream)
+			.InputNodeIds.Should().Equal(op);
+		synth.Graph.OutputNodeId.Should().Be(downstream);
+	}
+
+	[Test]
+	public void FailedRemovalDoesNotTouchRevisionsLayoutOrRouting()
+	{
+		DocumentWorkspace workspace = new();
+		FmSynthDefinition synth =
+			FmSynthDocumentEditor.CreateFmSynth(workspace, "FM");
+		int extra = FmSynthDocumentEditor.AddConstantNode(
+			workspace, synth, 1.0, 200.0, 200.0);
+		FmSynthDocumentEditor.SetOutputNode(workspace, synth, extra);
+		FmSynthGraph graph = synth.Graph;
+		uint revision = workspace.Document.DocumentRevision;
+		uint audio = workspace.Document.AudioRevision;
+		FmSynthNodePosition[] positions = [.. synth.NodePositions];
+
+		Action removeOutput = () =>
+			FmSynthDocumentEditor.RemoveNode(workspace, synth, extra);
+		Action removeMissing = () =>
+			FmSynthDocumentEditor.RemoveNode(workspace, synth, 99999);
+
+		removeOutput.Should().Throw<InvalidOperationException>();
+		removeMissing.Should().Throw<InvalidOperationException>();
+		synth.Graph.Should().BeSameAs(graph);
+		synth.NodePositions.Should().Equal(positions);
+		workspace.Document.DocumentRevision.Should().Be(revision);
+		workspace.Document.AudioRevision.Should().Be(audio);
 	}
 
 	[Test]
