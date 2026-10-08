@@ -66,22 +66,34 @@ public sealed class IncrementalScriptCompilerTests
 	}
 
 	[Test]
-	public void StreamingPatternRejectsOutOfOrderNotesInsteadOfReordering()
+	public void StreamingPatternSilentlyDropsEarlierEventsAndRetainsEqualPositionOrder()
 	{
 		ScriptPatternDefinition definition = new((ObjectId)1U, "Out of order")
 		{
 			RowCount = 8,
-			Source = "Note(4, 0, _O(17)); Note(2, 0, _O(18));",
+			Source = """
+				Note(4, 0, _O(17));
+				Note(2, 0, _O(18));
+				Off(3, 0);
+				Note(4, 0, _O(19));
+				Cut(5, 0);
+				""",
 		};
 		var result = ScriptCompiler.CompileIncrementalPattern(definition);
 		result.Success.Should().BeTrue();
 
-		using var iterator = result.Program!
-			.EnumerateRawSteps(new SequencingContext()).GetEnumerator();
-		iterator.MoveNext().Should().BeTrue();
-		Action resume = () => iterator.MoveNext();
-		resume.Should().Throw<NotSupportedException>()
-			.WithMessage("*nondecreasing*");
+		RawPatternStep[] steps = result.Program!
+			.EnumerateRawSteps(new SequencingContext()).ToArray();
+		var emissions = steps.OfType<RawPatternStep.Emit>().ToArray();
+		emissions.Select(e => e.Row).Should().Equal(4, 4, 5);
+		emissions[0].Note.Commands.Single().Should()
+			.BeOfType<StartNoteCommand>()
+			.Which.SourceId.Should().Be((ObjectId)17U);
+		emissions[1].Note.Commands.Single().Should()
+			.BeOfType<StartNoteCommand>()
+			.Which.SourceId.Should().Be((ObjectId)19U);
+		emissions[2].Note.Commands.Single().Should()
+			.BeOfType<NoteCutCommand>();
 	}
 
 	[Test]

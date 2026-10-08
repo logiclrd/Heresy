@@ -44,6 +44,35 @@ public sealed class ScriptCompilerTests
 	}
 
 	[Test]
+	public void EagerPatternSilentlyDiscardsOutOfOrderEventsWithoutSortingThem()
+	{
+		ScriptPatternDefinition pattern = new((ObjectId)1U, "Ordering")
+		{
+			RowCount = 8,
+			Source = """
+				Note(4, 0, _O(17));
+				Note(2, 0, _O(18));
+				Off(3, 0);
+				Note(4, 0, _O(19));
+				Cut(5, 0);
+				""",
+		};
+		var compiled = ScriptCompiler.CompilePattern(pattern);
+		compiled.Success.Should().BeTrue();
+		NoteScheduleBuilder output = new();
+		compiled.Program!.GenerateRawNotes(
+			new SequencingContext(), output, out _);
+		NoteEvent[] notes = output.Freeze().ToArray();
+
+		notes.Select(n => n.Offset.RowOffset).Should().Equal(4, 4, 5);
+		notes[0].Commands.Single().Should().BeOfType<StartNoteCommand>()
+			.Which.SourceId.Should().Be((ObjectId)17U);
+		notes[1].Commands.Single().Should().BeOfType<StartNoteCommand>()
+			.Which.SourceId.Should().Be((ObjectId)19U);
+		notes[2].Commands.Single().Should().BeOfType<NoteCutCommand>();
+	}
+
+	[Test]
 	public void PatternScriptRejectsUnrepresentableFixedWallOffset()
 	{
 		ScriptPatternDefinition pattern = new((ObjectId)1U, "Oversized wall offset")
