@@ -57,6 +57,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		private bool _ended;
 		private double _lastRow;
 		private IReadOnlyList<NoteEvent> _rowEvents = [];
+		private readonly List<NoteEvent> _rowEndCommands = [];
 		private int _eventIndex;
 		private bool _inRow;
 		private double _rowStartTick;
@@ -88,6 +89,23 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		public NoteEvent? DueEvent =>
 			_inRow && _eventIndex < _rowEvents.Count
 				? _rowEvents[_eventIndex] : null;
+		public NoteEvent? DueCleanup =>
+			_inRow && DueEvent is null && _rowEndCommands.Count > 0
+				? _rowEndCommands[0] : null;
+
+		public void QueueCleanup(NoteEvent note)
+		{
+			if (!_inRow)
+				throw new InvalidOperationException("No active row for cleanup.");
+			_rowEndCommands.Add(note);
+		}
+
+		public void ConsumeCleanup()
+		{
+			if (DueCleanup is null)
+				throw new InvalidOperationException("No due row cleanup.");
+			_rowEndCommands.RemoveAt(0);
+		}
 
 		public void BeginRow(double tick)
 		{
@@ -176,6 +194,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				throw new InvalidOperationException("Cursor row is not finished.");
 			_inRow = false;
 			_rowEvents = [];
+			_rowEndCommands.Clear();
 			Row++;
 			// The next row is eligible at exactly this tick. The caller
 			// decides when it executes relative to other due cursors.
@@ -202,9 +221,15 @@ public sealed class IncrementalPatternTimeline : IDisposable
 
 		private static void Validate(NoteEvent note)
 		{
-			if (note.Offset.TimeOffset != TimeSpan.Zero)
+			if (note.Offset.TimeOffset < TimeSpan.Zero)
 				throw new NotSupportedException(
-					"The incremental tick merger does not yet support fixed wall-time offsets.");
+					"The incremental tick merger does not support negative wall-time offsets.");
+			if (note.Offset.TimeOffset > TimeSpan.Zero
+				&& (note.Target.Kind != ChannelTargetKind.Physical
+					|| note.Commands.Any(c => c is not (StartNoteCommand
+						or NoteOffCommand or NoteCutCommand))))
+				throw new NotSupportedException(
+					"Positive fixed wall-time offsets are supported only on ordinary physical Note/Off/Cut.");
 			if (note.Target.Kind is not (ChannelTargetKind.Physical
 				or ChannelTargetKind.Global))
 				throw new NotSupportedException(
@@ -215,7 +240,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				bool allowed = note.Target.Kind == ChannelTargetKind.Global
 					? command is SetTempoCommand or SetSpeedCommand
 					: command is StartNoteCommand or NoteOffCommand
-						or NoteCutCommand or SelectPatternSourceCommand;
+						or NoteCutCommand or SelectPatternSourceCommand
+						or SetPitchSlideCommand or SetNoteVolumeSlideCommand
+						or ApplyVolumeSlideCommand or ApplyPitchSlideDownCommand
+						or ApplyPitchSlideUpCommand;
 				if (!allowed)
 					throw new NotSupportedException(
 						$"The incremental tick merger does not yet support {command.GetType().Name}.");
@@ -227,8 +255,13 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		}
 	}
 
+	private sealed record DeferredNote(
+		Cursor Owner, NoteEvent Raw, TimeSpan Deadline, long Order);
+
 	private readonly SequencingContext _root;
 	private readonly List<Cursor> _active = [];
+	private readonly List<DeferredNote> _delayed = [];
+	private long _nextDeferredOrder;
 	private long _nextSequence;
 	private long _emissionOrder;
 	private double _tick;
@@ -244,7 +277,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 
 	public double Tick => _tick;
 	public TimeSpan Elapsed { get; private set; }
-	public bool IsComplete => _active.Count == 0;
+	public bool IsComplete => _active.Count == 0 && _delayed.Count == 0;
 
 	/// <summary>
 	/// Starts an independent invocation at the current musical instant.
@@ -288,8 +321,9 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		Cursor? cursor = _active.FirstOrDefault(c => c.Sequence == invocationId);
+		int removed = _delayed.RemoveAll(note => note.Owner.Sequence == invocationId);
 		if (cursor is null)
-			return false;
+			return removed != 0;
 		_active.Remove(cursor);
 		cursor.Dispose();
 		return true;
@@ -384,5 +418,6 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		foreach (Cursor cursor in _active)
 			cursor.Dispose();
 		_active.Clear();
+		_delayed.Clear();
 	}
 }
