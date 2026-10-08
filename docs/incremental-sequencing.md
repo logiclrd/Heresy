@@ -907,6 +907,52 @@ invocation-local RNG, per-call runaway handling, and nested timing
 parity. Real-time/export migration of the experimental recursive
 clock and remaining unsupported advanced effects are still open.
 
+## Eighteenth executable step: snapshot-owned preparation of recursive Roslyn scripts
+
+`PreparedRoslynIncrementalScriptSources` (Scripting) is an **explicit
+opt-in** source factory for experimental `IncrementalRecursiveTimeline`.
+It implements both Core contracts,
+`IIncrementalInvocationResolver` and
+`IIncrementalScriptSourceCompiler`, so one prepared object supplies the
+same source graph and the corresponding precompiled script factories.
+It can create a new experimental coordinator with
+`prepared.CreateTimeline(context)`. This does **not** switch production
+playback or offline export to the recursive scheduler.
+
+The constructor takes a `SongDocumentSnapshot`, then captures its
+**own private document snapshot** before preparing scripts, preventing
+later edits to the authoring document *or to the caller's supplied
+snapshot* from changing the executing source text or Pattern
+RowCount/ChannelCount. The existing snapshot mechanism deep-clones
+song objects and shares immutable sample PCM, not new PCM buffers.
+
+At preparation, every scripted Pattern and Sequence in the owned
+snapshot is compiled **once** with the existing restricted Roslyn
+compiler; failures are surfaced immediately before a timeline starts,
+including scripts that are not currently reachable from the root.
+Prepared factories are cached by immutable object ID. Each Pattern
+enumeration and Sequence `GetSequenceEntry` invocation creates its
+own runtime state from a new `SequencingContext`, preserving the
+existing deterministic RNG contract and avoiding sharing mutable
+program instances. `CompilePattern` and `CompileSequence` reject
+definitions not owned by the prepared snapshot, rather than
+accepting an authoring object with a colliding ID.
+
+The preparation work, including full Roslyn compilation, **must be
+performed off the audio callback**. Only already prepared factories
+are used by the experimental timeline. Regression tests prove
+source/dimension isolation across both mutable documents, factory
+identity across visits, deterministic fresh-lookup RNG, two complete
+timeline passes, and fail-fast restricted-script diagnostics.
+
+**Still open:** production uses its existing scheduling and compiled
+source resolver; this new entrypoint is not yet wired to the live
+playback session or export snapshots. Snapshot ownership/PCM-sharing
+tests establish isolation for the opt-in experimental path, not
+timing parity or safety of a future production migration. Out-of-order
+raw scripted Pattern events, unsupported effects, flattened voice
+lifecycles and independent mixdown clocks remain separate gates.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
