@@ -783,7 +783,7 @@ public sealed class FlacFileSink : IAudioFileSink
 				_pending =
 					(byte)(
 						(_pending << 1)
-							| ((value >> bit) & 1UL));
+							| (byte)((value >> bit) & 1UL));
 				_pendingBits++;
 				if (_pendingBits == 8)
 				{
