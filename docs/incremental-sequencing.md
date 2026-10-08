@@ -119,9 +119,10 @@ raw source is a data Pattern, a script, or a future Sequence iterator.
   its own cursor's captured row, not another cursor's existing row.
 - Raw steps must be in **nondecreasing row order**. This is an explicit
   causality contract, not something legacy scripts currently guarantee.
-  Fixed wall-time offsets, virtual targets, advanced tracker commands,
-  out-of-order scripts and nested compiler expansion are not yet
-  supported by this prototype and fail explicitly. Same-tick and
+  Negative fixed wall-time offsets, delayed global timing effects,
+  virtual targets, advanced tracker commands beyond the supported slide
+  families, out-of-order scripts and nested compiler expansion are not
+  yet supported by this prototype and fail explicitly. Same-tick and
   per-row cooperation budgets prevent non-advancing raw streams
   from starving the scheduler.
 
@@ -129,19 +130,71 @@ This milestone **does not replace song compilation or realtime/offline
 playback**. Whole-row `IncrementalPatternNoteProcessor` and production
 `ChronologicalDataPatternScheduler` remain unchanged. Per-event
 invocation here is valid only for the admitted simple command subset:
-the complete row-scoped effects, volume-slide cleanup, tempo ramps,
-fixed wall-time deadlines, sequential Bxx/Cxx flow, note-action lifetime
-and mixes will require an incremental version of the original common
-processor's richer state machine.
+the remaining row-scoped effects, tempo ramps, deferred global timing,
+sequential Bxx/Cxx flow, note-action lifetime and mixes will require an
+incremental version of the original common processor's richer state machine.
+
+## Fourth executable step: row-scoped effect and wall-time lifetimes
+
+The generic tick scheduler can now retain a narrow set of effects that must
+outlive the raw note which invoked them. The **established**
+`PatternNoteProcessor` still performs the transformation of tracker
+commands and their effect-memory state; the incremental timeline holds
+only the resulting pending operations and **executes them at their due
+musical or wall time**.
+
+- Direct pitch and note-volume slides, tracker Dxy volume slides and Exx/Fxx
+  pitch slides are admitted. Continuous channel-volume (Nxx), global-volume
+  (Wxx), and panning (Pxx) slides also use the common processor and their
+  existing IT byte-memory semantics. Their matching
+  `ClearPitchSlideCommand`, `ClearNoteVolumeSlideCommand`,
+  `ClearOverallChannelVolumeSlideCommand`,
+  `ClearGlobalVolumeSlideCommand`, and
+  `ClearSpatialXSlideCommand` operations are **retained per invocation**
+  until that cursor's actual row-end tracker tick. Global Tempo changes
+  during the row correctly change the *wall time* of those cleanup actions,
+  without changing the row's already-captured musical tick deadline.
+  Fine/instant slide variants execute once and do not synthesize cleanup.
+- Ordinary physical `StartNote`, `NoteOff`, and `NoteCut` with a
+  **positive fixed wall-time offset** enter a deadline queue only when
+  their musical origin occurs. Their absolute deadline cannot be moved by
+  later Tempo changes; they resolve channel Source memory **at that
+  deadline**, not when initially queued. The scheduler integrates their
+  wall times alongside musical tick deadlines, even if their originating
+  Pattern has already completed. It retains the owning invocation identity
+  so `Cancel(id)` can discard those pending notes.
+- `Cancel(id)` also discards the cursor's pending row cleanup, without
+  altering other cursors. Stable same-time ordering and the existing
+  operation budgets remain in effect.
+
+The tests compare slide start/clear commands with the eager processor,
+check tracker D00/Nxx/Wxx memory, include parent/child channel state
+sharing, verify a child's future Tempo change moves another cursor's
+slide cleanup, and verify deadline stability, Source resolution at the
+deadline, and cancellation.
+
+**Scope remains intentional.** This is still a row/event state machine
+*prototype*, not a replacement for the entire `PatternNoteProcessor`.
+Delayed or negative global Tempo/Speed, cross-row tracker-control commands,
+advanced tracker effect families, tempo ramps, fine/whole-row pattern
+delays, virtual-channel behavior and note-action migration remain
+unsupported. A timed event with commands beyond ordinary physical
+Note/Off/Cut is rejected, rather than executing early or with incorrect
+row-boundary semantics. Other source types must also fulfill the
+nondecreasing-row contract before integration with this prototype.
+Production song compilation, existing chronological scheduling, realtime
+playback and offline export are unchanged.
 
 ## Proposed next interfaces and migration
 
-1. Expand the now-implemented **within-row, shared-tick merger**
-   beyond the current simple command subset by moving the full
-   `PatternNoteProcessor`'s per-row and per-event state into a
-   resumable processor. In particular, preserve row-scoped effect cleanup,
-   deferred cross-row timing, fine delays, tempo ramps, tracker effect
-   memory, and zero-time cooperation guards before production adoption.
+1. Expand the now-implemented **within-row shared-tick merger**
+   beyond its supported slide families and ordinary fixed wall-time notes
+   by extracting a fully resumable version of the
+   `PatternNoteProcessor`'s remaining row and event semantics. Preserve
+   deferred global timing at subsequent row boundaries, fine delays,
+   tempo ramps, pattern flow control, other effect families, virtual
+   channels and the existing zero-time cooperation guards before
+   production adoption.
 2. Add **script invocation-local iterators** through Roslyn syntax
    rewriting. The existing loop `Checkpoint()` instrumentation for
    `for`/`while`/`do` is the starting point, but the generated
