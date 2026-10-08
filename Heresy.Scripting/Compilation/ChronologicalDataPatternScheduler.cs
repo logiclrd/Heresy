@@ -304,7 +304,7 @@ internal static class ChronologicalDataPatternScheduler
 							|| start.PlaybackSpeedMultiplier != 1.0
 							|| start.Volume.HasValue)
 							throw new NotSupportedException(
-								"Flattened child pitch/speed/volume transforms require the full concurrent scheduler.");
+								"Flattened child pitch/speed/volume transforms are not yet implemented by the chronological row scheduler.");
 						if (item.Target.Kind != ChannelTargetKind.Physical)
 							throw new NotSupportedException(
 								"Flattened child must start on a physical channel.");
