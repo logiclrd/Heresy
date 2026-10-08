@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 
 using AwesomeAssertions;
@@ -49,8 +50,9 @@ public sealed class SongScheduleCompilerTests
 		result.Success.Should().BeTrue();
 		result.Schedule.Should().NotBeNull();
 		result.Schedule!.SelectMany(e => e.Commands)
-			.Should().NotContain(command => command is StartNoteCommand start
-				&& start.SourceId == childId);
+			.OfType<StartNoteCommand>()
+			.Select(command => command.SourceId)
+			.Should().NotContain(childId);
 		// The child effect must be available to the parent's next row. The
 		// previous post-compiler expansion could not resolve this D00 recall.
 		result.Schedule.SelectMany(e => e.Commands)
