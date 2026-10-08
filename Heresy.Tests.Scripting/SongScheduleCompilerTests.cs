@@ -113,6 +113,63 @@ public sealed class SongScheduleCompilerTests
 	}
 
 	[Test]
+	public void SkippedDataPatternSourceSelectionDoesNotLeakIntoCompiledNotes()
+	{
+		SongDocument document = new();
+		ObjectId source = document.AllocateObjectId();
+		ObjectId patternId = document.AllocateObjectId();
+		DataPatternDefinition pattern = new(patternId, "Start on row 1")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		pattern.Grid.GetOrCreateCell(0, 0).SourceId = source;
+		pattern.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote();
+		document.Add(pattern);
+
+		SongScheduleCompilationResult full =
+			SongScheduleCompiler.CompilePattern(document, patternId);
+		full.Success.Should().BeTrue();
+		full.Schedule!.SelectMany(e => e.Commands).OfType<StartNoteCommand>()
+			.Should().ContainSingle().Which.SourceId.Should().Be(source);
+
+		SongScheduleCompilationResult skipped =
+			SongScheduleCompiler.CompilePattern(document, patternId, startRow: 1);
+		skipped.Success.Should().BeTrue();
+		skipped.Schedule!.SelectMany(e => e.Commands).OfType<StartNoteCommand>()
+			.Should().BeEmpty();
+	}
+
+	[Test]
+	public void CompiledDataPatternTonePortamentoResolvesDeferredRememberedSource()
+	{
+		SongDocument document = new();
+		ObjectId source = document.AllocateObjectId();
+		ObjectId patternId = document.AllocateObjectId();
+		DataPatternDefinition pattern = new(patternId, "Portamento source")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		pattern.Grid.GetOrCreateCell(0, 0).SourceId = source;
+		PatternCell target = pattern.Grid.GetOrCreateCell(1, 0);
+		target.Note = new StartPatternNote(pitchMultiplier: 2.0);
+		target.Effects.Add(new TonePortamentoPatternEffect(0x10));
+		document.Add(pattern);
+
+		SongScheduleCompilationResult compiled =
+			SongScheduleCompiler.CompilePattern(document, patternId);
+
+		compiled.Success.Should().BeTrue();
+		SetTonePortamentoCommand slide = compiled.Schedule!
+			.SelectMany(e => e.Commands)
+			.OfType<SetTonePortamentoCommand>()
+			.Single(command => command.TargetNote is not null);
+		slide.TargetNote!.SourceId.Should().Be(source);
+		slide.TargetNote.PitchMultiplier.Should().Be(2.0);
+	}
+
+	[Test]
 	public void FlattenedChildSourceOnlyRowReplacesRememberedSourceBeforeLaterParentNote()
 	{
 		SongDocument document = new();
