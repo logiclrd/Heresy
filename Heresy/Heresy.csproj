@@ -22,4 +22,6 @@
 		<ProjectReference Include="../Heresy.Render.File/Heresy.Render.File.csproj" />
 	</ItemGroup>
 
+	<Import Project="..\build\SndFileNativeRuntime.targets" />
+
 </Project>

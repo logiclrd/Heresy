@@ -1,0 +1,37 @@
+<Project>
+
+	<PropertyGroup>
+		<_SndFileRuntimeRid Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</_SndFileRuntimeRid>
+		<_SndFileRuntimeRid Condition="'$(_SndFileRuntimeRid)' == ''">$(NETCoreSdkRuntimeIdentifier)</_SndFileRuntimeRid>
+
+		<_SndFileRuntimeGlob Condition="'$(_SndFileRuntimeRid)' == 'linux-x64'">$(NuGetPackageRoot)org.sndfile.runtime.linux-x64/1.2.2.1/runtimes/linux-x64/native/*.so</_SndFileRuntimeGlob>
+		<_SndFileRuntimeGlob Condition="'$(_SndFileRuntimeRid)' == 'linux-arm64'">$(NuGetPackageRoot)org.sndfile.runtime.linux-arm64/1.2.2.1/runtimes/linux-arm64/native/*.so</_SndFileRuntimeGlob>
+		<_SndFileRuntimeGlob Condition="'$(_SndFileRuntimeRid)' == 'win-x64'">$(NuGetPackageRoot)org.sndfile.runtime.win-x64/1.2.2/runtimes/win-x64/native/*.dll</_SndFileRuntimeGlob>
+		<_SndFileRuntimeGlob Condition="'$(_SndFileRuntimeRid)' == 'win-arm64'">$(NuGetPackageRoot)org.sndfile.runtime.win-arm64/1.2.2/runtimes/win-arm64/native/*.dll</_SndFileRuntimeGlob>
+		<_SndFileRuntimeGlob Condition="'$(_SndFileRuntimeRid)' == 'osx-x64'">$(NuGetPackageRoot)org.sndfile.runtime.osx-x64/1.2.2/runtimes/osx-x64/native/*.dylib</_SndFileRuntimeGlob>
+		<_SndFileRuntimeGlob Condition="'$(_SndFileRuntimeRid)' == 'osx-arm64'">$(NuGetPackageRoot)org.sndfile.runtime.osx-arm64/1.2.2/runtimes/osx-arm64/native/*.dylib</_SndFileRuntimeGlob>
+	</PropertyGroup>
+
+	<Target Name="CopyHeresySndFileRuntimeToOutput"
+		AfterTargets="Build"
+		Condition="'$(_SndFileRuntimeGlob)' != ''">
+		<ItemGroup>
+			<_HeresySndFileRuntime Include="$(_SndFileRuntimeGlob)" />
+		</ItemGroup>
+		<Copy SourceFiles="@(_HeresySndFileRuntime)"
+			DestinationFolder="$(TargetDir)"
+			SkipUnchangedFiles="true" />
+	</Target>
+
+	<Target Name="CopyHeresySndFileRuntimeToPublish"
+		AfterTargets="Publish"
+		Condition="'$(_SndFileRuntimeGlob)' != ''">
+		<ItemGroup>
+			<_HeresySndFileRuntimePublish Include="$(_SndFileRuntimeGlob)" />
+		</ItemGroup>
+		<Copy SourceFiles="@(_HeresySndFileRuntimePublish)"
+			DestinationFolder="$(PublishDir)"
+			SkipUnchangedFiles="true" />
+	</Target>
+
+</Project>
