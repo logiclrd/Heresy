@@ -117,31 +117,29 @@ Items that were already completed remain in Git history, not in this checklist.
   commands until generation resumes, without prematurely executing Tempo,
   Speed or Source effects. Same-instant and per-row work budgets remain
   effective; silent loops can be cancelled and their enumerators disposed.
-  This accepts experimental Roslyn Pattern producers through explicit
-  Timeline.Add only. Production scheduling and recursive script admission
-  remain untouched. The **resumable Roslyn Sequence** milestone is now implemented:
-  `CompileIncrementalSequence` yields invocation-local `Play` entries
-  and CPU-only checkpoints; `IncrementalSequenceCursor` requests entries
-  only when due, preserves Cxx row overrides, and reuses cached Bxx targets
-  without rerunning future script statements. Local variables and seeded
-  Random persist through iterator suspension. The consumer limits endless
-  same-tick CPU cooperation to 8192 checkpoints, while advancing musical
-  loops have no lifetime ceiling. The existing eager and production paths
-  remain unchanged. `IncrementalRecursiveTimeline` now accepts scripted
-  Patterns and Sequences through an optional Core
-  `IIncrementalScriptSourceCompiler` and the explicit
-  `RoslynIncrementalScriptSourceCompiler` adapter in Scripting. All
-  flattened sources share the existing clock and nested lifetime/cycle
-  rules; scripted Sequence Play is requested lazily and Bxx revisits
-  use cached generated entries. CPU-only checkpoints do not advance time,
-  cancelled subtrees dispose script iterators, and Sequence frames use
-  the exact newly created order child rather than a finished historical
-  frame. **Production playback/export remain unchanged.**
-  Next: bounded history for unbounded distinct `Play` entries, immutable
-  snapshot and prepared/cached script ownership, eager out-of-order
-  Pattern emission parity, and deterministic effect integration.
-  Continue incompatible Tempo spans, SEy repeated Tempo, SDx/Qxy,
-  virtual/mixdown channels and advanced effects before production migration.
+  The recursive shared-tick coordinator admits resumable scripted
+  Patterns through an optional Core script compiler bridge; production
+  recursive playback/export are not yet migrated. **Scripted Sequences
+  now use a single per-visit `GetSequenceEntry(absoluteIndex, sequenceIndex,
+  previousSequenceIndex)` contract** in production and experimental
+  processors. `absoluteIndex` increments on every lookup, Bxx revisits
+  re-evaluate the function even for the same `sequenceIndex`, and
+  `previousSequenceIndex` identifies the prior requested order (-1 on
+  first call). Returning null naturally terminates the Sequence.
+  Data Sequences implement the lookup by ordinary indexed access.
+  Roslyn Sequence script bodies return `Play(_O(id), startRow)` or null
+  instead of appending `Play` statements. Invocation-local Random persists,
+  local variables reset per call, and each lookup retains CPU runaway
+  protection. The older yield-based Sequence iterator, CPU-only
+  Sequence checkpoints and generated-entry cache were removed. The
+  production chronological scheduler now obtains eligible scripted
+  entries on demand without executing scripts for static preflight;
+  ineligible arrangements retain per-visit eager note compilation.
+  Next: immutable snapshot and prepared/cached script ownership,
+  legacy out-of-order Pattern emission parity, and full deterministic
+  effect integration. Continue incompatible Tempo spans, SEy repeated
+  Tempo, SDx/Qxy, virtual/mixdown channels and advanced effects before
+  production recursive-clock migration.
   Preserve out-of-order scripted-event semantics or explicitly resolve
   their ordering policy before migrating playback. Replace the existing
   restricted chronological scheduler rather than adding more special
