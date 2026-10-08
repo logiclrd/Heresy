@@ -18,6 +18,109 @@ namespace Heresy.Tests.Scripting;
 public sealed class SongScheduleCompilerTests
 {
 
+
+	[Test]
+	public void ScriptedWallOffsetRunsAtAbsoluteDeadlineAfterParentTempoChange()
+	{
+		SongDocument document = new();
+		ObjectId soundId = document.AllocateObjectId();
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Delayed note")
+		{
+			RowCount = 2,
+			Source = $"Note(0.5, 0, _O({soundId.Value}), timeOffsetSeconds: 0.09);",
+		});
+		ObjectId rootId = document.AllocateObjectId();
+		DataPatternDefinition root = new(rootId, "Tempo after due tick")
+		{
+			RowCount = 3,
+			ChannelCount = 2,
+		};
+		root.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(sourceId: childId);
+		root.Grid.GetOrCreateCell(1, 1).Effects.Add(new SetTempoPatternEffect(250));
+		root.Grid.GetOrCreateCell(2, 1).Note = new PatternNoteCut();
+		document.Add(root);
+
+		SongScheduleCompilationResult compiled =
+			SongScheduleCompiler.CompilePattern(document, rootId);
+
+		compiled.Success.Should().BeTrue();
+		compiled.Schedule!.Single(e => e.Commands.Any(c => c is StartNoteCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(150));
+		compiled.Schedule!.Single(e => e.Commands.Any(c => c is NoteCutCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(180));
+		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(240));
+	}
+
+	[Test]
+	public void DelayedFlattenedInvocationStartsAtWallDeadlineAndRetainsChildCursor()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Nested after delay")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		child.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteCut();
+		document.Add(child);
+		ObjectId parentId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(parentId, "Delayed child")
+		{
+			RowCount = 1,
+			Source = $"Note(0.5, 0, _O({childId.Value}), timeOffsetSeconds: 0.12);",
+		});
+
+		SongScheduleCompilationResult compiled =
+			SongScheduleCompiler.CompilePattern(document, parentId);
+
+		compiled.Success.Should().BeTrue();
+		compiled.Schedule!.Single(e => e.Commands.Any(c => c is NoteCutCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(300));
+		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(420));
+	}
+
+	[Test]
+	public void DelayedScriptedNoteCrossesSequenceOrderWithoutEarlyEmission()
+	{
+		SongDocument document = new();
+		ObjectId soundId = document.AllocateObjectId();
+		ObjectId firstId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(firstId, "Delayed first order")
+		{
+			RowCount = 1,
+			Source = $"Note(0.5, 0, _O({soundId.Value}), timeOffsetSeconds: 0.12); "
+				+ "Cut(0.25, 1, timeOffsetSeconds: 0.02);",
+		});
+		ObjectId secondId = document.AllocateObjectId();
+		DataPatternDefinition second = new(secondId, "Following order")
+		{
+			RowCount = 2,
+			ChannelCount = 2,
+		};
+		second.Grid.GetOrCreateCell(0, 1).Note = new PatternNoteCut();
+		second.Grid.GetOrCreateCell(1, 1).Note = new PatternNoteCut();
+		document.Add(second);
+		ObjectId sequenceId = document.AllocateObjectId();
+		DataSequenceDefinition sequence = new(sequenceId, "Song");
+		sequence.Entries.Add(new SequenceEntry(firstId));
+		sequence.Entries.Add(new SequenceEntry(secondId));
+		document.Add(sequence);
+
+		SongScheduleCompilationResult compiled =
+			SongScheduleCompiler.CompileSequence(document, sequenceId);
+
+		compiled.Success.Should().BeTrue();
+		compiled.Schedule!.Single(e => e.Commands.Any(c => c is StartNoteCommand))
+			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(180));
+		compiled.Schedule!.Where(e => e.Commands.Any(c => c is NoteCutCommand))
+			.Select(e => e.Offset.TimeOffset).Should().Equal(
+				TimeSpan.FromMilliseconds(50),
+				TimeSpan.FromMilliseconds(120),
+				TimeSpan.FromMilliseconds(240));
+		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(360));
+	}
+
 	[Test]
 	public void ScriptedTerminalSpeedChangesNextOrderButNotCompletedFinalRow()
 	{
