@@ -7,6 +7,7 @@ using Heresy.Core.Patterns;
 using Heresy.Core.Sequencing;
 using Heresy.Core.Sequences;
 using Heresy.Core.Timing;
+using Heresy.Scripting.Analysis;
 
 namespace Heresy.Scripting.Compilation;
 
@@ -138,6 +139,32 @@ internal static class ChronologicalDataPatternScheduler
 			hasNested |= nested;
 		}
 		return entries.Count != 0 && hasNested;
+	}
+
+	/// <summary>
+	/// Statically qualify potential scripted order targets without evaluating
+	/// the order lookup or consuming its ambient RNG. Actual entries are
+	/// requested only when the preceding root Pattern has completed.
+	/// </summary>
+	public static bool CanHandleSequence(
+		SongDocument document, ScriptSequenceDefinition sequence)
+	{
+		ArgumentNullException.ThrowIfNull(document);
+		ArgumentNullException.ThrowIfNull(sequence);
+		ScriptReferenceAnalysis analysis =
+			ScriptReferenceAnalyzer.Analyze(sequence.Source);
+		if (!analysis.IsReliable || analysis.References.Count == 0)
+			return false;
+		bool hasNested = false;
+		foreach (ScriptObjectReference reference in analysis.References)
+		{
+			if (!document.TryGet(reference.Id, out SongObject? obj)
+				|| obj is not PatternDefinition pattern
+				|| !IsCompatible(document, pattern, out bool nested))
+				return false;
+			hasNested |= nested;
+		}
+		return hasNested;
 	}
 
 	private static bool IsCompatible(
@@ -278,12 +305,23 @@ internal static class ChronologicalDataPatternScheduler
 			entryStartRows);
 	}
 
+	public static SongScheduleCompilationResult CompileSequence(
+		SongDocument document,
+		ISequenceEntryProvider provider,
+		SequencingContext? suppliedContext)
+	{
+		ArgumentNullException.ThrowIfNull(provider);
+		return Run(document, Array.Empty<PatternDefinition>(),
+			suppliedContext, sequenceMode: true, scriptedSource: provider);
+	}
+
 	private static SongScheduleCompilationResult Run(
 		SongDocument document,
 		IReadOnlyList<PatternDefinition> patterns,
 		SequencingContext? suppliedContext,
 		bool sequenceMode,
-		IReadOnlyList<int>? entryStartRows = null)
+		IReadOnlyList<int>? entryStartRows = null,
+		ISequenceEntryProvider? scriptedSource = null)
 	{
 		SequencingContext context = suppliedContext ?? new SequencingContext();
 		if (context.FlattenedSourceExpander is not null
@@ -409,10 +447,38 @@ internal static class ChronologicalDataPatternScheduler
 
 		}
 
-		PatternDefinition first = patterns[0];
-		active.Add(CreateCursor(first.Id, first, context,
-			new HashSet<ObjectId>(), isRoot: true,
-			startRow: entryStartRows is null ? 0 : entryStartRows[0]));
+		int nextScriptOrder = 0;
+		int absoluteIndex = 0;
+		int previousScriptOrder = -1;
+		RowCursor? NextScriptRoot()
+		{
+			SequenceEntry? entry = scriptedSource!.GetSequenceEntry(
+				checked(absoluteIndex++), nextScriptOrder, previousScriptOrder);
+			previousScriptOrder = nextScriptOrder;
+			int order = nextScriptOrder++;
+			if (entry is null)
+				return null;
+			if (!document.TryGet(entry.PatternId, out SongObject? resolved)
+				|| resolved is not PatternDefinition pattern)
+				throw new InvalidOperationException(
+					$"Scripted Sequence order {order} did not resolve to a Pattern.");
+			return CreateCursor(entry.PatternId, pattern, context,
+				new HashSet<ObjectId>(), isRoot: true,
+				rootOrder: order, startRow: entry.StartRow);
+		}
+		if (scriptedSource is not null)
+		{
+			RowCursor? firstScriptRoot = NextScriptRoot();
+			if (firstScriptRoot is not null)
+				active.Add(firstScriptRoot);
+		}
+		else
+		{
+			PatternDefinition first = patterns[0];
+			active.Add(CreateCursor(first.Id, first, context,
+				new HashSet<ObjectId>(), isRoot: true,
+				startRow: entryStartRows is null ? 0 : entryStartRows[0]));
+		}
 		double tempo = context.State.Tempo;
 		while (active.Count != 0 || delayed.Count != 0)
 		{
@@ -496,7 +562,13 @@ internal static class ChronologicalDataPatternScheduler
 
 				if (current.Row >= current.Pattern.RowCount)
 				{
-					if (current.IsRoot && current.RootOrder + 1 < patterns.Count)
+					if (current.IsRoot && scriptedSource is not null)
+					{
+						RowCursor? nextScriptRoot = NextScriptRoot();
+						if (nextScriptRoot is not null)
+							active.Add(nextScriptRoot);
+					}
+					else if (current.IsRoot && current.RootOrder + 1 < patterns.Count)
 				{
 						int nextOrder = current.RootOrder + 1;
 						PatternDefinition nextRoot = patterns[nextOrder];
