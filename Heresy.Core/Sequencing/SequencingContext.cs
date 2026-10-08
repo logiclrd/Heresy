@@ -57,6 +57,13 @@ public sealed class SequencingContext
 	public IFlattenedNoteSourceExpander? FlattenedSourceExpander { get; set; }
 
 	/// <summary>
+	/// Data patterns normally expose their already-resolved raw note events.
+	/// The song compiler enables deferred Source-column resolution so source
+	/// memory is read when each row executes, including nested child changes.
+	/// </summary>
+	public bool ResolvePatternSourcesAtRowTime { get; set; }
+
+	/// <summary>
 	/// Absolute timeline origin while sequencers generate local-time notes.
 	/// </summary>
 	public TimeSpan TimelineOrigin { get; set; }
@@ -95,6 +102,7 @@ public sealed class SequencingContext
 			TrackerMidiMacros)
 		{
 			FlattenedSourceExpander = FlattenedSourceExpander,
+			ResolvePatternSourcesAtRowTime = ResolvePatternSourcesAtRowTime,
 			TimelineOrigin = TimelineOrigin,
 		};
 	}
