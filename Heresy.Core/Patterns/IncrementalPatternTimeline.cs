@@ -53,6 +53,12 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	private sealed record DeferredTiming(
 		NoteEvent Raw, TimeSpan EligibleAt, long Order);
 
+	private enum TickOperationKind { DeferredRaw, Cut, Retrigger, RepeatedDelayed }
+
+	private sealed record TickOperation(
+		double Offset, NoteEvent Note, TickOperationKind Kind,
+		long Order, int Interval = 0, byte VolumeTransform = 0);
+
 	private sealed class Cursor : IDisposable
 	{
 		private readonly IEnumerator<RawPatternStep> _source;
@@ -65,6 +71,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		private IReadOnlyList<NoteEvent> _rowEvents = [];
 		private readonly List<NoteEvent> _rowEndCommands = [];
 		private readonly List<(double TickOffset, NoteEvent Note)> _repeated = [];
+		private readonly List<TickOperation> _scheduled = [];
+		private long _scheduledOrder;
 		private int _fineDelayTicks;
 		private int _extraRowSpans;
 		private int _eventIndex;
@@ -103,7 +111,103 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		public NoteEvent? DueRepeated => _inRow && _repeated.Count != 0
 			&& (_eventIndex >= _rowEvents.Count
 				|| _repeated[0].TickOffset < RawEventTickOffset - TickTolerance)
+			&& (_scheduled.Count == 0
+				|| _repeated[0].TickOffset <= _scheduled[0].Offset + TickTolerance)
 			? _repeated[0].Note : null;
+		public TickOperation? DueScheduled => _inRow && _scheduled.Count != 0
+			&& (_eventIndex >= _rowEvents.Count
+				|| _scheduled[0].Offset < RawEventTickOffset - TickTolerance)
+			&& (_repeated.Count == 0
+				|| _scheduled[0].Offset < _repeated[0].TickOffset - TickTolerance)
+			? _scheduled[0] : null;
+
+		private void Schedule(double offset, NoteEvent note,
+			TickOperationKind kind, int interval = 0, byte volumeTransform = 0)
+		{
+			_scheduled.Add(new TickOperation(offset, note, kind,
+				_scheduledOrder++, interval, volumeTransform));
+			_scheduled.Sort((a, b) =>
+			{
+				int order = a.Offset.CompareTo(b.Offset);
+				return order != 0 ? order : a.Order.CompareTo(b.Order);
+			});
+			RefreshDue();
+		}
+
+		public void QueueCut(NoteEvent note, byte cutTick)
+		{
+			int tick = Math.Max(1, (int)cutTick);
+			double original = (note.Offset.RowOffset - Row) * RowSpeed;
+			if (tick >= EffectiveSpanTicks || original + tick >= TotalRowTicks)
+				return;
+			Schedule(original + tick, note with
+			{
+				Commands = [new NoteCutCommand()],
+			}, TickOperationKind.Cut);
+		}
+
+		public void QueueDelayed(NoteEvent note, byte delayTick)
+		{
+			int tick = Math.Max(1, (int)delayTick);
+			double original = (note.Offset.RowOffset - Row) * RowSpeed;
+			if (tick >= EffectiveSpanTicks || original + tick >= TotalRowTicks)
+				return;
+			Schedule(original + tick, note, TickOperationKind.DeferredRaw);
+		}
+
+		public void QueueDelayedCopies(TickOperation original, NoteEvent resolved)
+		{
+			for (int span = 1; span <= ExtraRowSpans; span++)
+			{
+				double tick = original.Offset + span * EffectiveSpanTicks;
+				if (tick >= TotalRowTicks)
+					break;
+				Schedule(tick, resolved, TickOperationKind.RepeatedDelayed);
+			}
+		}
+
+		public void QueueRetrigger(NoteEvent note, byte input)
+		{
+			SequencingChannelState channel =
+				Context.GetPhysicalChannelState(note.Target.PhysicalChannel);
+			byte parameter = channel.ResolveEffectParameter(
+				EffectMemorySlot.Retrigger, input);
+			int interval = parameter & 0x0F;
+			byte transform = (byte)(parameter >> 4);
+			bool startsNew = note.Commands.Any(c => c is StartNoteCommand);
+			if (startsNew)
+				channel.RetriggerCountdown = interval;
+			double original = (note.Offset.RowOffset - Row) * RowSpeed;
+			for (int tick = startsNew ? 1 : 0; original + tick < TotalRowTicks; tick++)
+			{
+				Schedule(original + tick, note, TickOperationKind.Retrigger,
+					interval, transform);
+			}
+		}
+
+		public void ConsumeScheduled()
+		{
+			if (DueScheduled is null)
+				throw new InvalidOperationException("No tracker tick operation is due.");
+			_scheduled.RemoveAt(0);
+			RefreshDue();
+		}
+
+		public NoteEvent? ExecuteRetriggerTick(TickOperation operation)
+		{
+			SequencingChannelState state = Context.GetPhysicalChannelState(
+					operation.Note.Target.PhysicalChannel);
+			int countdown = state.RetriggerCountdown - 1;
+			bool trigger = countdown <= 0;
+			state.RetriggerCountdown = Math.Clamp(
+					trigger ? operation.Interval : countdown, 0, 15);
+			if (!trigger)
+				return null;
+			return operation.Note with
+			{
+				Commands = [new RetriggerCurrentVoiceCommand(operation.VolumeTransform)],
+			};
+		}
 		private double RawEventTickOffset => _eventIndex >= _rowEvents.Count
 			? double.PositiveInfinity
 			: (_rowEvents[_eventIndex].Offset.RowOffset - Row) * _rowSpeed;
@@ -143,13 +247,15 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			_inRow && _eventIndex < _rowEvents.Count
 				&& (_repeated.Count == 0
 					|| RawEventTickOffset <= _repeated[0].TickOffset + TickTolerance)
+			&& (_scheduled.Count == 0
+					|| RawEventTickOffset <= _scheduled[0].Offset + TickTolerance)
 				? _rowEvents[_eventIndex] : null;
 		public NoteEvent? DueTiming =>
 			_inRow && _readyTiming.Count > 0
 				? _readyTiming[0].Raw : null;
 		public IReadOnlyList<DeferredTiming> ReadyTimings => _readyTiming;
 		public NoteEvent? DueCleanup =>
-			_inRow && DueEvent is null && DueRepeated is null
+			_inRow && DueEvent is null && DueRepeated is null && DueScheduled is null
 			&& _rowEndCommands.Count > 0
 				? _rowEndCommands[0] : null;
 
@@ -177,6 +283,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			_fineDelayTicks = 0;
 			_extraRowSpans = 0;
 			_repeated.Clear();
+			_scheduled.Clear();
 			List<NoteEvent> events = [];
 			List<(int Channel, int Order, byte ExtraRows)> rowDelays = [];
 			int sourceOrder = 0;
@@ -327,6 +434,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			_rowEvents = [];
 			_rowEndCommands.Clear();
 			_repeated.Clear();
+			_scheduled.Clear();
 			_readyTiming.Clear();
 			Row++;
 			// The next row is eligible at exactly this tick. The caller
@@ -345,7 +453,9 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				: TotalRowTicks;
 			double repeatTick = _repeated.Count == 0
 				? double.PositiveInfinity : _repeated[0].TickOffset;
-			DueTick = _rowStartTick + Math.Min(rawTick, repeatTick);
+			double commandTick = _scheduled.Count == 0
+				? double.PositiveInfinity : _scheduled[0].Offset;
+			DueTick = _rowStartTick + Math.Min(rawTick, Math.Min(repeatTick, commandTick));
 		}
 
 		public void Dispose() => _source.Dispose();
@@ -396,7 +506,9 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						or ApplyGlobalVolumeSlideCommand or ApplyPanningSlideCommand
 						or SetOverallChannelVolumeSlideCommand
 						or SetGlobalVolumeSlideCommand or SetSpatialXSlideCommand
-						or ApplyTrackerTempoCommand;
+						or ApplyTrackerTempoCommand or ApplyTrackerNoteCutCommand
+						or ApplyTrackerNoteDelayCommand or ApplyRetriggerCommand
+						or SetNoteVolumeCommand or ApplySampleOffsetCommand;
 				if (!allowed)
 					throw new NotSupportedException(
 						$"The incremental tick merger does not yet support {command.GetType().Name}.");
