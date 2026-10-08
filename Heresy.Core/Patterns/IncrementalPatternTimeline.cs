@@ -777,6 +777,32 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	}
 
 	/// <summary>
+	/// Starts a flattened child on this timeline, preserving the shared
+	/// musical clock and physical-channel memory while applying the
+	/// parent's channel offset and playback multipliers.
+	/// </summary>
+	public long AddFlattenedChild(
+		IIncrementalRawPatternNoteGenerator generator,
+		int rowCount,
+		SequencingContext parent,
+		int physicalChannelOffset = 0,
+		int startRow = 0,
+		double pitchMultiplier = 1.0,
+		double playbackSpeedMultiplier = 1.0)
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		ArgumentNullException.ThrowIfNull(parent);
+		if (!ReferenceEquals(_root.State, parent.State)
+			|| !ReferenceEquals(_root.ChannelStates, parent.ChannelStates))
+			throw new ArgumentException(
+				"Parent must belong to the same shared timeline.", nameof(parent));
+
+		SequencingContext child = parent.FlattenedChild(
+			pitchMultiplier, playbackSpeedMultiplier, physicalChannelOffset);
+		return Add(generator, rowCount, child, startRow);
+	}
+
+	/// <summary>
 	/// Starts an independent invocation at the current musical instant.
 	/// A flattened child may pass a separately mapped SequencingContext,
 	/// provided it shares the root's actual clock and channel-state map.
