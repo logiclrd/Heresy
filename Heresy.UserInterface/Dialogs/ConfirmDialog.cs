@@ -29,6 +29,7 @@ public sealed class ConfirmDialog : Window
 
 		Button confirm = new() { Content = confirmText, MinWidth = 90 };
 		confirm.Click += (_, _) => Close(true);
+		DialogActionLayout.ConfigureButtons(confirm, cancel);
 
 		StackPanel buttons =
 			new()
@@ -40,19 +41,15 @@ public sealed class ConfirmDialog : Window
 		buttons.Children.Add(cancel);
 		buttons.Children.Add(confirm);
 
-		StackPanel content =
-			new()
-			{
-				Margin = new Thickness(18),
-				Spacing = 16,
-			};
-		content.Children.Add(
-			new TextBlock
-			{
-				Text = message,
-				TextWrapping = TextWrapping.Wrap,
-			});
-		content.Children.Add(buttons);
-		Content = content;
+		Content =
+			DialogActionLayout.Create(
+				new TextBlock
+				{
+					Text = message,
+					TextWrapping = TextWrapping.Wrap,
+				},
+				buttons,
+				new Thickness(18),
+				spacing: 16);
 	}
 }

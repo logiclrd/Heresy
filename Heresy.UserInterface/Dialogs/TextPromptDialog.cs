@@ -37,6 +37,7 @@ public sealed class TextPromptDialog : Window
 
 		Button accept = new() { Content = "OK", MinWidth = 80 };
 		accept.Click += (_, _) => Accept();
+		DialogActionLayout.ConfigureButtons(accept, cancel);
 
 		StackPanel buttons =
 			new()
@@ -51,13 +52,14 @@ public sealed class TextPromptDialog : Window
 		StackPanel content =
 			new()
 			{
-				Margin = new Thickness(16),
 				Spacing = 12,
 			};
 		content.Children.Add(new TextBlock { Text = prompt });
 		content.Children.Add(_textBox);
-		content.Children.Add(buttons);
-		Content = content;
+		Content = DialogActionLayout.Create(
+			content,
+			buttons,
+			new Thickness(16));
 
 		Opened += (_, _) =>
 		{

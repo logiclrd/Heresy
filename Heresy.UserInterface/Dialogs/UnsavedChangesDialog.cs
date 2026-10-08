@@ -49,6 +49,7 @@ public sealed class UnsavedChangesDialog : Window
 			};
 		yes.Click += (_, _) =>
 			Close(UnsavedChangesChoice.Save);
+		DialogActionLayout.ConfigureButtons(yes, cancel);
 
 		StackPanel buttons =
 			new()
@@ -63,21 +64,17 @@ public sealed class UnsavedChangesDialog : Window
 		buttons.Children.Add(no);
 		buttons.Children.Add(yes);
 
-		StackPanel content =
-			new()
-			{
-				Margin = new Thickness(18),
-				Spacing = 16,
-			};
-		content.Children.Add(
-			new TextBlock
-			{
-				Text =
-					$"Save changes to {documentName}?",
-				TextWrapping =
-					TextWrapping.Wrap,
-			});
-		content.Children.Add(buttons);
-		Content = content;
+		Content =
+			DialogActionLayout.Create(
+				new TextBlock
+				{
+					Text =
+						$"Save changes to {documentName}?",
+					TextWrapping =
+						TextWrapping.Wrap,
+				},
+				buttons,
+				new Thickness(18),
+				spacing: 16);
 	}
 }

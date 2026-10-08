@@ -140,6 +140,7 @@ public sealed class NativePatternEffectEditorDialog : Window
 				MinWidth = 90,
 			};
 		apply.Click += (_, _) => Apply();
+		DialogActionLayout.ConfigureButtons(apply, cancel);
 
 		StackPanel buttons =
 			new()
@@ -150,13 +151,11 @@ public sealed class NativePatternEffectEditorDialog : Window
 			};
 		buttons.Children.Add(cancel);
 		buttons.Children.Add(apply);
-		body.Children.Add(buttons);
 
-		return new Border
-		{
-			Padding = new Thickness(18),
-			Child = body,
-		};
+		return DialogActionLayout.Create(
+			body,
+			buttons,
+			new Thickness(18));
 	}
 
 	private void ChangeCreationType()

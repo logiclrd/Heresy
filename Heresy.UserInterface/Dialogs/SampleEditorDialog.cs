@@ -227,6 +227,7 @@ public sealed class SampleEditorDialog : Window
 
 		Button close = new() { Content = "Close" };
 		close.Click += (_, _) => Close();
+		DialogActionLayout.ConfigureButtons(apply, close);
 
 		StackPanel buttons =
 			new()
@@ -240,20 +241,14 @@ public sealed class SampleEditorDialog : Window
 		buttons.Children.Add(apply);
 		buttons.Children.Add(close);
 
-		StackPanel content =
-			new()
-			{
-				Margin = new Thickness(18),
-				Spacing = 12,
-			};
-		content.Children.Add(
+		return DialogActionLayout.Create(
 			new ScrollViewer
 			{
 				Content = form,
 				VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-			});
-		content.Children.Add(buttons);
-		return content;
+			},
+			buttons,
+			new Thickness(18));
 	}
 
 	private void ApplyMetadata()

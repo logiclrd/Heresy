@@ -89,6 +89,8 @@ public sealed class SampleImportSelectionDialog : Window
 			Close(selected);
 		};
 
+		DialogActionLayout.ConfigureButtons(import, cancel);
+
 		StackPanel selectionActions =
 			new()
 			{
@@ -107,6 +109,7 @@ public sealed class SampleImportSelectionDialog : Window
 			};
 		dialogActions.Children.Add(cancel);
 		dialogActions.Children.Add(import);
+		dialogActions.VerticalAlignment = VerticalAlignment.Bottom;
 
 		Grid root = new()
 			{

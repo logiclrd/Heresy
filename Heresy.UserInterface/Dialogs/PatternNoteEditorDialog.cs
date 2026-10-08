@@ -98,6 +98,7 @@ public sealed class PatternNoteEditorDialog : Window
 
 		Button apply = new() { Content = "Apply", MinWidth = 90 };
 		apply.Click += (_, _) => Apply();
+		DialogActionLayout.ConfigureButtons(apply, cancel);
 
 		StackPanel buttons =
 			new()
@@ -112,13 +113,14 @@ public sealed class PatternNoteEditorDialog : Window
 		StackPanel content =
 			new()
 			{
-				Margin = new Thickness(18),
 				Spacing = 12,
 			};
 		content.Children.Add(form);
 		content.Children.Add(_message);
-		content.Children.Add(buttons);
-		return content;
+		return DialogActionLayout.Create(
+			content,
+			buttons,
+			new Thickness(18));
 	}
 
 	private void Apply()
