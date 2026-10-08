@@ -64,6 +64,9 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		private double _lastRow;
 		private IReadOnlyList<NoteEvent> _rowEvents = [];
 		private readonly List<NoteEvent> _rowEndCommands = [];
+		private readonly List<(double TickOffset, NoteEvent Note)> _repeated = [];
+		private int _fineDelayTicks;
+		private int _extraRowSpans;
 		private int _eventIndex;
 		private bool _inRow;
 		private double _rowStartTick;
@@ -93,8 +96,50 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		public bool Complete => Row >= RowCount;
 		public bool InRow => _inRow;
 		public double RowSpeed => _rowSpeed;
+		public int FineDelayTicks => _fineDelayTicks;
+		public int ExtraRowSpans => _extraRowSpans;
+		public double EffectiveSpanTicks => _rowSpeed + _fineDelayTicks;
+		public double TotalRowTicks => EffectiveSpanTicks * (_extraRowSpans + 1);
+		public NoteEvent? DueRepeated => _inRow && _repeated.Count != 0
+			&& (_eventIndex >= _rowEvents.Count
+				|| _repeated[0].TickOffset < RawEventTickOffset - TickTolerance)
+			? _repeated[0].Note : null;
+		private double RawEventTickOffset => _eventIndex >= _rowEvents.Count
+			? double.PositiveInfinity
+			: (_rowEvents[_eventIndex].Offset.RowOffset - Row) * _rowSpeed;
+		public void QueueRepeats(NoteEvent note)
+		{
+			if (_extraRowSpans == 0)
+				return;
+			List<NoteCommand> repeating = [];
+			foreach (NoteCommand command in note.Commands)
+			{
+				if (command is SetPitchSlideCommand or SetNoteVolumeSlideCommand
+					or SetOverallChannelVolumeSlideCommand
+					or SetGlobalVolumeSlideCommand or SetSpatialXSlideCommand)
+					repeating.Add(command);
+			}
+			if (repeating.Count == 0)
+				return;
+			for (int span = 1; span <= _extraRowSpans; span++)
+				_repeated.Add((span * EffectiveSpanTicks, note with
+				{
+					Commands = repeating.ToArray(),
+				}));
+			_repeated.Sort((a,b) => a.TickOffset.CompareTo(b.TickOffset));
+			RefreshDue();
+		}
+		public void ConsumeRepeated()
+		{
+			if (DueRepeated is null)
+				throw new InvalidOperationException("No repeated row command is due.");
+			_repeated.RemoveAt(0);
+			RefreshDue();
+		}
 		public NoteEvent? DueEvent =>
 			_inRow && _eventIndex < _rowEvents.Count
+				&& (_repeated.Count == 0
+					|| RawEventTickOffset <= _repeated[0].TickOffset + TickTolerance)
 				? _rowEvents[_eventIndex] : null;
 		public NoteEvent? DueTiming =>
 			_inRow && _readyTiming.Count > 0
@@ -125,7 +170,12 @@ public sealed class IncrementalPatternTimeline : IDisposable
 
 			_rowStartTick = tick;
 			_rowSpeed = Context.State.Speed;
+			_fineDelayTicks = 0;
+			_extraRowSpans = 0;
+			_repeated.Clear();
 			List<NoteEvent> events = [];
+			List<(int Channel, int Order, byte ExtraRows)> rowDelays = [];
+			int sourceOrder = 0;
 			int inspected = 0;
 			while (TryPeek(out RawPatternStep? step))
 			{
@@ -141,28 +191,63 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				_lookahead = null;
 				if (step is RawPatternStep.Emit emit && emit.Row >= Row)
 				{
-					Validate(emit.Note);
-					if (IsTiming(emit.Note))
+					// Delay effects modify the current row's tick span, not
+					// its audible command stream. Strip them without calling
+					// the eager processor or changing shared tracker state.
+					List<NoteCommand> commands = [];
+					foreach (NoteCommand command in emit.Note.Commands)
+					{
+						if (command is ApplyTrackerFinePatternDelayCommand fine)
+						{
+							if (emit.Note.Target.Kind != ChannelTargetKind.Physical)
+								throw new InvalidOperationException("S6x requires a physical channel.");
+							_fineDelayTicks = checked(_fineDelayTicks + fine.ExtraTicks);
+						}
+						else if (command is ApplyTrackerPatternDelayCommand delay)
+						{
+							if (emit.Note.Target.Kind != ChannelTargetKind.Physical)
+								throw new InvalidOperationException("SEy requires a physical channel.");
+							if (emit.Note.Offset.TimeOffset != TimeSpan.Zero)
+								throw new NotSupportedException("Delayed SEy scheduling is not supported.");
+							rowDelays.Add((Context.MapPhysicalChannel(
+								emit.Note.Target.PhysicalChannel), sourceOrder, delay.ExtraRows));
+						}
+						else
+							commands.Add(command);
+					}
+					sourceOrder++;
+					if (commands.Count == 0)
+						continue;
+					NoteEvent filtered = emit.Note with { Commands = commands.ToArray() };
+					Validate(filtered);
+					if (IsTiming(filtered))
 					{
 						// Commands exactly at the Pattern endpoint have no
 						// eligible source row. Do not apply them to the
 						// preceding final row.
-						if (emit.Note.Offset.RowOffset >= RowCount)
+						if (filtered.Offset.RowOffset >= RowCount)
 							continue;
 						// Fractional timing positions apply at the start of
 						// their nominal row. A positive fixed offset is an
 						// eligibility deadline, never an execution timestamp.
 						_pendingTiming.Add(new DeferredTiming(
-							emit.Note, now + emit.Note.Offset.TimeOffset,
+							filtered, now + filtered.Offset.TimeOffset,
 							_nextTimingOrder++));
 					}
 					else
 					{
-						events.Add(emit.Note);
+						events.Add(filtered);
 					}
 				}
 			}
 
+			if (rowDelays.Count != 0)
+				_extraRowSpans = rowDelays.OrderBy(x => x.Channel)
+					.ThenBy(x => x.Order).First().ExtraRows;
+			if (_extraRowSpans != 0 && _pendingTiming.Any(t =>
+				t.Raw.Commands.Any(c => c is ApplyTrackerTempoCommand)))
+				throw new NotSupportedException(
+					"SEy with tracker Txx requires repeated-span tempo arbitration.");
 			// Stable equal-time order: timing at the beginning of the row
 			// (including fractional Timing commands) comes before notes;
 			// then physical channels, finally the producer's emission order.
@@ -237,6 +322,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			_inRow = false;
 			_rowEvents = [];
 			_rowEndCommands.Clear();
+			_repeated.Clear();
 			_readyTiming.Clear();
 			Row++;
 			// The next row is eligible at exactly this tick. The caller
@@ -250,9 +336,12 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				DueTick = _rowStartTick;
 				return;
 			}
-			double position = DueEvent is { } due
-				? DuePosition(due, Row, RowCount) : Row + 1.0;
-			DueTick = _rowStartTick + (position - Row) * _rowSpeed;
+			double rawTick = _eventIndex < _rowEvents.Count
+				? (DuePosition(_rowEvents[_eventIndex], Row, RowCount) - Row) * _rowSpeed
+				: TotalRowTicks;
+			double repeatTick = _repeated.Count == 0
+				? double.PositiveInfinity : _repeated[0].TickOffset;
+			DueTick = _rowStartTick + Math.Min(rawTick, repeatTick);
 		}
 
 		public void Dispose() => _source.Dispose();
