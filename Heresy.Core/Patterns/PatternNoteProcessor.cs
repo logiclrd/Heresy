@@ -78,6 +78,9 @@ public static class PatternNoteProcessor
 		public double GetSecondsAtTickPosition(
 			double tickPosition)
 			=> _timeMap.GetTimeAtTick(tickPosition);
+
+		public double GetTickAtSeconds(double seconds)
+			=> _timeMap.GetTickAtTime(seconds);
 	}
 
 	private sealed class ResolvedCommands
@@ -251,6 +254,13 @@ public static class PatternNoteProcessor
 					dueTimingEvents.Add(workingEvent);
 			}
 
+			if (!context.IsPreparingFlattenedChild
+				&& context.DeferredTempoEvents.HasPending
+				&& dueTimingEvents.Count > 0)
+			{
+				throw new NotSupportedException(
+					"Intervening parent tempo changes and deferred child timing require concurrent row scheduling.");
+			}
 			dueTimingEvents.Sort(CompareTimingEvents);
 			List<TrackerTempoRequest> tempoRequests = [];
 
@@ -313,6 +323,13 @@ public static class PatternNoteProcessor
 			int rowSpeed = context.State.Speed;
 			List<(double Tick, double Tempo)> childTempoChanges = [];
 			List<(NoteEvent Event, double CommandTime)> delayedRowClears = [];
+			if (!context.IsPreparingFlattenedChild)
+			{
+				ApplyDueDeferredTempoChanges(
+					context, rowStartSeconds, rowStartSeconds,
+					initialRowTempo, rowEndTickPosition,
+					childTempoChanges, ref tickTimeline, ref rowEndSeconds);
+			}
 			// Process ordinary events by their actual position on the
 			// row's initial time map, not by source emission order.
 			// This also gives deterministic channel/emission tie-breaking
@@ -377,6 +394,17 @@ public static class PatternNoteProcessor
 					+ tickTimeline.GetSecondsAtTickPosition(
 						eventTickPosition)
 					+ workingEvent.TimeOffsetSeconds;
+				if (!context.IsPreparingFlattenedChild)
+				{
+					ApplyDueDeferredTempoChanges(
+						context, rowStartSeconds, eventTimeSeconds,
+						initialRowTempo, rowEndTickPosition,
+						childTempoChanges, ref tickTimeline, ref rowEndSeconds);
+					eventTimeSeconds =
+						rowStartSeconds
+						+ tickTimeline.GetSecondsAtTickPosition(eventTickPosition)
+						+ workingEvent.TimeOffsetSeconds;
+				}
 
 				ResolvedCommands commands = ResolveCommands(
 					ordinaryEvent,
@@ -431,6 +459,8 @@ public static class PatternNoteProcessor
 					// Flattened children must be generated here, while the
 					// parent still has this row's tracker state. Waiting
 					// until Freeze() loses effect memory and tempo ordering.
+					double tempoBeforeChild = context.State.Tempo;
+					int speedBeforeChild = context.State.Speed;
 					IReadOnlyList<NoteEvent>? expanded =
 						context.FlattenedSourceExpander?.Expand(
 							resolvedEvent, context);
@@ -445,30 +475,39 @@ public static class PatternNoteProcessor
 						// remainder of the parent's tracker-tick map.
 						// A future child tempo change needs concurrent child
 						// scheduling and is intentionally not guessed here.
+						bool hasDeferredTempo = false;
 						foreach (NoteEvent nested in expanded)
 						{
 							foreach (NoteCommand command in nested.Commands)
 							{
 								if (command is SetTempoRampCommand)
-								{
 									throw new NotSupportedException(
 										"Flattened child tempo ramps need concurrent row scheduling.");
-								}
+								if (command is SetSpeedCommand speed
+									&& nested.Offset.TimeOffset
+										> resolvedEvent.Offset.TimeOffset)
+									throw new NotSupportedException(
+										"Deferred flattened child speed changes need concurrent row scheduling.");
 								if (command is not SetTempoCommand setTempo)
 									continue;
 								double delta = (nested.Offset.TimeOffset
 									- resolvedEvent.Offset.TimeOffset).TotalSeconds;
-								if (Math.Abs(delta) > 1e-7)
+								if (delta > 1e-7)
 								{
-									throw new NotSupportedException(
-										"Delayed flattened child tempo changes need concurrent row scheduling.");
+									if (tempoRequests.Count != 0
+										|| fineDelayTicks != 0 || patternDelayRows != 0)
+										throw new NotSupportedException(
+											"Concurrent parent timing effects and deferred flattened child tempo changes need concurrent row scheduling.");
+									context.DeferredTempoEvents.Schedule(
+										context.TimelineOrigin + nested.Offset.TimeOffset,
+										setTempo.TicksPerDiachron);
+									hasDeferredTempo = true;
+									continue;
 								}
 								if (tempoRequests.Count != 0
 									|| fineDelayTicks != 0 || patternDelayRows != 0)
-								{
 									throw new NotSupportedException(
 										"Concurrent parent tempo slides or row delays and flattened child tempo changes need a unified timeline.");
-								}
 								childTempoChanges.Add((eventTickPosition,
 									setTempo.TicksPerDiachron));
 								tickTimeline = BuildTimelineWithChildTempoChanges(
@@ -479,6 +518,16 @@ public static class PatternNoteProcessor
 									+ tickTimeline.GetSecondsAtTickPosition(
 										rowEndTickPosition);
 							}
+						}
+						if (hasDeferredTempo)
+						{
+							// Preparing the child ran its future rows against the
+							// shared state. Undo that premature tempo mutation.
+							// Immediate sets at the invocation still take effect.
+							context.State.Tempo = childTempoChanges.Count == 0
+								? tempoBeforeChild
+								: childTempoChanges[^1].Tempo;
+							context.State.Speed = speedBeforeChild;
 						}
 					}
 				}
@@ -644,6 +693,13 @@ public static class PatternNoteProcessor
 				}
 			}
 
+			if (!context.IsPreparingFlattenedChild)
+			{
+				ApplyDueDeferredTempoChanges(
+					context, rowStartSeconds, rowEndSeconds,
+					initialRowTempo, rowEndTickPosition,
+					childTempoChanges, ref tickTimeline, ref rowEndSeconds);
+			}
 			foreach ((NoteEvent clear, double commandTime) in delayedRowClears)
 			{
 				resolved.Add(clear with
@@ -1260,6 +1316,40 @@ public static class PatternNoteProcessor
 		}
 
 		return resolved;
+	}
+
+	private static void ApplyDueDeferredTempoChanges(
+		SequencingContext context,
+		double rowStartSeconds,
+		double throughSeconds,
+		double initialRowTempo,
+		double rowEndTickPosition,
+		List<(double Tick, double Tempo)> changes,
+		ref RowTickTimeline timeline,
+		ref double rowEndSeconds)
+	{
+		while (context.DeferredTempoEvents.Peek() is
+			DeferredTempoEventQueue.Change next)
+		{
+			double localTime = (next.At - context.TimelineOrigin).TotalSeconds;
+			if (localTime > throughSeconds + 1e-8)
+				break;
+			double tick = localTime <= rowStartSeconds
+				? 0.0
+				: timeline.GetTickAtSeconds(localTime - rowStartSeconds);
+			if (tick > rowEndTickPosition + 1e-8)
+				break;
+			context.DeferredTempoEvents.Pop();
+			if (changes.Count > 0 && tick < changes[^1].Tick - 1e-8)
+				throw new NotSupportedException(
+					"Overlapping flattened tempo schedules require concurrent row scheduling.");
+			changes.Add((Math.Clamp(tick, 0.0, rowEndTickPosition), next.Tempo));
+			timeline = BuildTimelineWithChildTempoChanges(
+				initialRowTempo, rowEndTickPosition, changes);
+			rowEndSeconds = rowStartSeconds
+				+ timeline.GetSecondsAtTickPosition(rowEndTickPosition);
+			context.State.Tempo = next.Tempo;
+		}
 	}
 
 	private static RowTickTimeline BuildTimelineWithChildTempoChanges(
