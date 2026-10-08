@@ -176,18 +176,56 @@ Regression tests cover:
 - a child invoked in one sequence order modifying the next order's tempo;
 - strict ordering and argument validation for the shared tempo queue.
 
-**This is NOT yet a general unified concurrent row scheduler.** Future child
-notes are still compiled eagerly. The queue currently schedules delayed
-changes using the child's precalculated absolute wall time. If an
-intervening parent tempo change would move that future child's row
-boundary, a real tick-domain scheduler must recompute that boundary.
-The implementation deliberately rejects detected intervening parent tempo
-effects instead of producing silently inconsistent time. Tempo ramps,
-child speed changes, nested pattern/fine delays and arbitrary overlapping
-effects require further work. Future child effect/source-memory changes
-are also currently applied too early by eager child compilation, and need
-a comparable deferred event model. Child musical time, not wall time, must
-be the final source of truth for all of these.
+**The queue is a compatibility-path milestone, not a general scheduler.**
+Its future events use precalculated wall time, so interfering parent tempo
+changes may be rejected. The newer independent data-pattern row cursors
+described below resolve the main shared-tick and state-memory limitations
+for their supported subset. Scripted, mixed and advanced tracker sources
+still require a generalized cursor scheduler.
+
+## Independent tick-driven data-pattern row cursors (October 8, 2026)
+
+A new `ChronologicalDataPatternScheduler` has been integrated into
+`SongScheduleCompiler.CompilePattern` and `CompileSequence` for eligible
+**data-only** arrangements containing flattened data-pattern sources. It is
+the first actual independently advancing row scheduler, rather than an eager
+child compiler corrected with deferred wall-clock effects.
+
+- Every root or nested data Pattern invocation has its own `RowCursor`,
+  containing its raw events, mapped `SequencingContext`, ancestry for cycle
+  protection, and its next absolute tracker-tick boundary.
+- All active cursors share `SequencingState` and the physical-channel state
+  map. The scheduler advances directly to the next cursor boundary; wall time
+  is integrated from the current shared tempo over the elapsed tracker ticks.
+  A parent tempo change therefore moves a future child boundary naturally,
+  without knowing the child's future wall-clock times ahead of execution.
+- Each cursor compiles **only its current row** through the existing
+  `PatternNoteProcessor`; a data-row marker retains live Source-column
+  lookup and existing tracker effect-memory resolution. Future child Source
+  changes and tracker memory mutations no longer execute early in this path.
+- Flattened note starts create mapped child cursors at that same tick.
+  Independent child cursors can outlive the root Pattern or cross into later
+  data-sequence orders. Row-scoped tracker volume-slide cleanup is emitted
+  at each cursor's actual row boundary; logical duration includes the
+  longest active cursor.
+- The regular data-pattern generator retains its public raw-note behavior,
+  while the compiler selects the cursor path only for compatible data
+  patterns with supported effects. Root playback positions follow the new
+  row clock. Cycle detection and the established million-event cap remain.
+- New regressions cover Future-Source selection not leaking before a child
+  row, deferred effect memory, tempo changes of a parent moving child row
+  boundaries, and source selection across data-sequence order boundaries.
+
+**Scope of this milestone:** The initial cursor path accepts data Patterns
+with row-start tempo/speed, tracker volume slides, and ordinary note/source
+events. It does *not* yet support scripted Pattern/Sequence cursor timelines,
+fractional-row scripted invocation, pattern-loop/break/jump control, fine
+and whole-row delays, nested tempo ramps, or advanced row-scoped effects.
+These inputs retain the existing general compiler path and its explicit
+unsupported-combination checks where appropriate. The older
+`DeferredTempoEventQueue` remains for that compatibility path; this
+data-pattern cursor pathway no longer needs to precalculate a child's
+future wall-clock events.
 
 ## Boundaries deliberately NOT complete
 
