@@ -183,6 +183,66 @@ public sealed class IncrementalPatternFlowTests
 	}
 
 	[Test]
+	public void OneRowSB2RevisitsTheSameSourceRowAtAdvancingMusicalTimes()
+	{
+		DataPatternDefinition pattern = Pattern(1);
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+		cell.Note = new PatternNoteCut();
+		cell.Effects.Add(new TrackerPatternLoopPatternEffect(2));
+
+		AssertEagerParity(pattern);
+		Observation result = Execute(pattern);
+		Assert.That(result.Events.Select(e => e.Offset.TimeOffset),
+			Is.EqualTo(new[]
+			{
+				TimeSpan.Zero,
+				TimeSpan.FromMilliseconds(120),
+				TimeSpan.FromMilliseconds(240),
+			}));
+		Assert.That(result.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(360)));
+		Assert.That(result.Advances, Is.EqualTo(3));
+	}
+
+	[Test]
+	public void OtherCursorTempoChangeRetimesSubsequentSBxRowVisits()
+	{
+		DataPatternDefinition pattern = Pattern(3);
+		PatternCell first = pattern.Grid.GetOrCreateCell(0, 0);
+		first.Effects.Add(new TrackerPatternLoopPatternEffect(0));
+		first.Note = new PatternNoteCut();
+		PatternCell second = pattern.Grid.GetOrCreateCell(1, 0);
+		second.Note = new PatternNoteOff();
+		second.Effects.Add(new TrackerPatternLoopPatternEffect(1));
+		pattern.Grid.GetOrCreateCell(2, 0).Note = new PatternNoteCut();
+
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		timeline.Add(pattern, pattern.RowCount, context);
+		timeline.Add(new RawSource(new NoteEvent(
+			new MusicalTime(TimeSpan.Zero, 1),
+			ChannelTarget.Global, [new SetTempoCommand(250)])),
+			2, context.FlattenedChild(physicalChannelOffset: 2));
+
+		List<NoteEvent> observed = [];
+		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+			if (step is IncrementalPatternTimelineStep.Emit emit
+					&& emit.Note.Target.Kind == ChannelTargetKind.Physical)
+				observed.Add(emit.Note);
+
+		Assert.That(observed.Select(e => e.Offset.TimeOffset),
+			Is.EqualTo(new[]
+			{
+				TimeSpan.Zero,
+				TimeSpan.FromMilliseconds(120),
+				TimeSpan.FromMilliseconds(180),
+				TimeSpan.FromMilliseconds(240),
+				TimeSpan.FromMilliseconds(300),
+			}));
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(360)));
+		Assert.That(context.State.Tempo, Is.EqualTo(250));
+	}
+
+	[Test]
 	public void NonReplayableGeneratorCannotRewindForSBx()
 	{
 		RawSource source = new(
