@@ -161,7 +161,9 @@ public sealed class SongScheduleCompilerTests
 		SongScheduleCompilationResult compiled =
 			SongScheduleCompiler.CompilePattern(document, parentId);
 		compiled.Success.Should().BeTrue();
-		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(210));
+		// Parent row one finishes at 210 ms, but the child extends
+		// to 240 ms, and export must retain that longer logical tail.
+		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(240));
 		compiled.Schedule!.Single(e =>
 			e.Commands.Any(c => c is NoteCutCommand))
 			.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(120));
