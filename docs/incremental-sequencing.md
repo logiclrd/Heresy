@@ -704,6 +704,72 @@ command ordering. The next step is a resumable scripted Sequence
 deterministic Random and legacy out-of-order script semantics resolved
 before production migration.
 
+## Fifteenth executable step: lazy Roslyn Sequence Play invocation
+
+A new Core contract, `IIncrementalRawSequenceEntryGenerator`, produces
+`IEnumerable<RawSequenceStep>` per invocation. A `RawSequenceStep.Play`
+contains one ordinary `SequenceEntry` (`PatternId`, `StartRow`);
+`RawSequenceStep.Cooperate` means **CPU-only suspension**, not a tracker
+row, elapsed duration, or audio event. The contract does not import Roslyn
+into Core.
+
+`ScriptCompiler.CompileIncrementalSequence` is an **experimental,
+separate Roslyn entrypoint**. It rewrites direct `Play(...)` statements to
+execute the original helper once, then yield exactly that entry. The
+`SequenceScriptProgram` instance and its enumerator belong to one
+invocation, preserving local variables and deterministic context `Random`
+across successive `MoveNext` calls. `for`/`while`/`do` loop heads
+cooperate every 128 iterations without advancing musical time. Streaming
+`Play` and `Random` do not consume the eager compiler's total-lifetime
+script budget, because a valid sequence can run indefinitely as musical
+time advances. Existing restricted syntax/semantic/reference validation
+and diagnostic codes remain in force. `Play` in an expression context
+rather than as a direct statement is rejected by this streaming API with
+HRS2001. The old `CompileSequence`/`ExecuteScript` eager preparation
+path, including its own resource budget, remains unchanged.
+
+`IncrementalSequenceCursor` now has an overload accepting the raw
+Sequence generator. It retains its iterator rather than expanding the
+whole Play list. The next `Play` is requested only when its order is
+needed, **after the preceding Pattern finishes its source rows**; any
+already established delayed physical notes can still overlap following
+orders on the shared Pattern timeline. Script CPU checkpoints surface
+as `IncrementalPatternTimelineStep.Cooperate(-1, Tick, Elapsed)` (the
+sentinel -1 denotes the Sequence script, not a Pattern invocation).
+Tick, wall time, and effects remain unchanged. A same-tick guard permits
+up to 8192 such returns before explicitly failing a continuously silent,
+non-advancing Sequence script. Each `TryStep` also retains its existing
+finite zero-progress traversal work budget.
+
+Previously generated entries are cached so Bxx can revisit them without
+rerunning the script, changing its `Random` history, or prematurely
+executing statements beyond the loop target. Cxx continues to supply a
+one-invocation starting row. Forward Bxx jumps can request successive
+future Play entries until the target exists or the generator completes.
+The shared Pattern cursor remains the authority for actual musical
+advancement, Tempo/Speed, timing and physical note ordering.
+
+Tests cover statement-by-statement suspension before an invalid later
+Play, infinite CPU-only loop cooperation, `Random` and local counter
+reproducibility across independent invocations, streaming-only HRS2001
+and restricted-code diagnostics, sequential Pattern timing, B00 cached
+visits, checkpoint time invariance, iterator disposal, the 8192 same-tick
+guard, and an **actual Roslyn Sequence** consuming two data Patterns on
+the shared-tick cursor.
+
+**Important boundaries:** Generated Play entries are currently cached
+for possible backward visits; a script producing an unbounded number of
+distinct orders can grow this cache indefinitely. Establish a bounded
+rollback/history policy before production admission. This cursor still
+requires resolved child Patterns implementing both `PatternDefinition`
+and `IIncrementalRawPatternNoteGenerator` (data Patterns today); it
+does **not** automatically compile scripted Pattern definitions, recurse
+flattened grandchildren, or implement independent mixdown clocks.
+Script/Sequence source admission to `IncrementalRecursiveTimeline`,
+snapshot-safe ownership, general script ordering, voice lifecycles and
+full timing parity remain future work. No realtime/offline production
+scheduler was changed.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
