@@ -146,43 +146,24 @@ public sealed class Mp3FileSinkTests
 	}
 
 	[Test]
-	public void NonSeekableDestinationProducesAValidMp3()
+	public void NonSeekableDestinationIsRejectedExplicitly()
 	{
-		const int sampleRate = 48000;
-		const int frames = 12000;
-		AudioOutputFormat format =
-			new(
-				sampleRate,
-				channelCount: 1);
-		float[] pcm = new float[frames];
-		for (int frame = 0; frame < frames; frame++)
-		{
-			pcm[frame] =
-				(float)(
-					0.5
-						* Math.Sin(
-							frame * 0.05));
-		}
-
 		using MemoryStream storage = new();
 		using NonSeekableWriteStream stream =
 			new(storage);
-		using Mp3FileSink sink =
-			new(
-				stream,
-				format,
-				leaveOpen: true);
 
-		sink.Write(pcm);
-		sink.Complete();
+		Action action = () =>
+		{
+			using Mp3FileSink _ =
+				new(
+					stream,
+					new AudioOutputFormat(48000, 1),
+					leaveOpen: true);
+		};
 
-		SamplePcmData decoded =
-			SampleAudioCodec.Decode(
-				storage.ToArray(),
-				"stream.mp3");
-		decoded.SampleRate.Should().Be(sampleRate);
-		decoded.ChannelCount.Should().Be(1);
-		decoded.FrameCount.Should().BeGreaterThan(0);
+		action.Should()
+			.Throw<ArgumentException>()
+			.WithMessage("*seekable*");
 	}
 
 	[Test]

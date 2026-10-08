@@ -37,6 +37,12 @@ public sealed class Mp3FileSink : IAudioFileSink
 				"The MP3 destination stream must be writable.",
 				nameof(stream));
 		}
+		if (!stream.CanSeek)
+		{
+			throw new ArgumentException(
+				"The libsndfile MP3 encoder requires a seekable destination stream.",
+				nameof(stream));
+		}
 		if (format.ChannelCount > 2)
 		{
 			throw new ArgumentOutOfRangeException(
