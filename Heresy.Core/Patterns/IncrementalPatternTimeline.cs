@@ -565,14 +565,6 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		// agree on the tick span. Defer mixed-speed arbitration rather
 		// than quietly using whichever invocation happened to run first.
 		int[] slideSpans = pending
-			.Where(x =>
-			{
-				byte memory = x.Cursor.Context
-					.GetPhysicalChannelState(x.Timing.Raw.Target.PhysicalChannel)
-					.PeekEffectParameter(EffectMemorySlot.Tempo,
-						((ApplyTrackerTempoCommand)x.Timing.Raw.Commands[0]).Parameter);
-				return memory > 0 && memory < 0x20;
-			})
 			.Select(x => checked((int)x.Cursor.RowSpeed))
 			.Distinct().ToArray();
 		if (slideSpans.Length > 1)
