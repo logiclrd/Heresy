@@ -4,9 +4,6 @@ This file contains only explicitly specified work that remains open.
 
 ## FM synth graph editor
 
-- [ ] When the pointer hovers over a node border, show small connection handles.
-  Dragging from one handle to a compatible handle on another node should create
-  the corresponding graph connection directly.
 - [ ] Allow `Remove Node` even when the node is currently consumed by other
   nodes. Removing the node must implicitly remove every connection that uses it
   as an input, while preserving normal graph validity for the remaining graph.

@@ -301,12 +301,23 @@ placement from `SongDocument.Add`; envelopes are grouped with Instruments.
 Nodes may be reorganized within a section but not moved between sections.
 
 FM synth graph connections are drawn as orthogonal routes from producer to
-consumer, with a small arrowhead **only at the consuming/input end**. The
-arrowhead follows the last nonzero segment of the rendered route and scales
-down for short segments. When an explicit connection waypoint is supplied,
-the route retains the waypoint and finishes with a short horizontal approach
-into the target node's input-facing border; editing the layout or routing
-hints does not alter the semantic audio graph.
+consumer, with a small arrowhead **only at the consuming/input end**. Hovering
+over a node border reveals connection ports: green output handles on the
+right, blue input handles on the left, and an additional gold input handle on
+operators for appending an input. Dragging between an output and a compatible
+input (in either direction) creates the semantic connection; dropping elsewhere
+does not change the graph. An oscillator has one replaceable multiplier input,
+while operators can replace a selected input or append another ordered input.
+Cycle detection and all other graph validation occur before committing, and
+invalid drags leave the graph, revisions and routing hints unchanged.
+
+Connection routes terminate at the exact input-port positions, including the
+individual inputs of an operator; backward connections travel around an
+exterior lane to reach the fixed port sides. Arrowheads follow the last
+nonzero segment and scale down for short segments. Explicit routing waypoints
+are retained and the route finishes with a short horizontal approach to the
+consumer. Editor-only node positions and routing hints never alter the
+semantic audio graph.
 
 The desktop File menu offers New (`Ctrl+N`), Open (`Ctrl+O`), Save
 (`Ctrl+S`) and Exit (`Ctrl+Q`). These shortcuts are handled by the window
