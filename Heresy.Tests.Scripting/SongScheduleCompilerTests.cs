@@ -1525,11 +1525,51 @@ public sealed class SongScheduleCompilerTests
 		result.Success.Should().BeTrue();
 		result.Schedule!.Where(e => e.Commands.Any(c => c is NoteCutCommand))
 			.Select(e => e.Offset.TimeOffset).Should().Equal(
-				TimeSpan.FromMilliseconds(60), TimeSpan.FromMilliseconds(180));
+				TimeSpan.FromMilliseconds(120), TimeSpan.FromMilliseconds(300));
 		result.PlaybackPositions.Where(p => p.PatternId == patternId
 				&& p.PatternRow == 0)
 			.Select(p => p.SequenceEntryIndex).Should().Equal(0, 1);
 		result.Duration.Should().Be(TimeSpan.FromMilliseconds(240));
+	}
+
+
+	[Test]
+	public void ScriptSequenceFallbackDoesNotReexecuteRandomPlayScript()
+	{
+		SongDocument document = new();
+		ObjectId leftId = document.AllocateObjectId();
+		DataPatternDefinition left = new(leftId, "Left")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		left.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
+		document.Add(left);
+		ObjectId rightId = document.AllocateObjectId();
+		DataPatternDefinition right = new(rightId, "Right")
+		{
+			RowCount = 1,
+			ChannelCount = 2,
+		};
+		right.Grid.GetOrCreateCell(0, 1).Note = new PatternNoteCut();
+		document.Add(right);
+		ObjectId sequenceId = document.AllocateObjectId();
+		document.Add(new ScriptSequenceDefinition(sequenceId, "Fallback")
+		{
+			Source = $"if (Random() < 0.5) Play(_O({leftId.Value})); "
+				+ $"else Play(_O({rightId.Value}));",
+		});
+		SequencingContext context = new();
+		SequencingContext expected = new();
+		expected.Random.NextDouble(); // One script execution, never two.
+
+		SongScheduleCompilationResult result =
+			SongScheduleCompiler.CompileSequence(
+				document, sequenceId, context: context);
+
+		result.Success.Should().BeTrue();
+		result.Schedule!.Should().ContainSingle();
+		context.Random.NextDouble().Should().Be(expected.Random.NextDouble());
 	}
 
 	[Test]
