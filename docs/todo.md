@@ -4,9 +4,6 @@ This file contains only explicitly specified work that remains open.
 
 ## FM synth graph editor
 
-- [ ] Make node-parameter editing commit immediately when an input loses focus or
-  when Enter is pressed. Escape in an input should restore its last committed
-  value. Remove the Apply button; there should be no separate apply step.
 - [ ] Make connection routing editable directly on the graph. Clicking anywhere
   along a connection and dragging should create a waypoint at that location,
   inserted into the existing waypoint sequence according to the segment that was

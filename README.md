@@ -343,6 +343,21 @@ the song merely by previewing a note. New note starts after semantic audio
 edits refresh the live playback snapshot; note releases and layout-only
 changes do not restart an existing playback session.
 
+FM node-parameter fields commit individually on Enter or loss of keyboard
+focus; dropdowns and checkboxes commit as soon as their selection changes.
+There is no node-parameter Apply button. Each text field tracks its own latest
+successfully committed value. Escape restores only the current uncommitted
+draft: editing a field, tabbing/clicking elsewhere to commit, then returning
+and pressing Escape does **not** undo that committed edit. Invalid values
+report a validation error without changing the graph; invalid drafts are
+reverted on focus loss. Parameter edits use the current immutable node value
+when constructing the replacement, so editing another parameter does not
+overwrite unrelated committed settings. Ordinary commits refresh the graph
+without rebuilding the inspector or disrupting focus. The separate raw
+connection-routing waypoint controls remain until graphical waypoint editing
+replaces them.
+
+
 The desktop File menu offers New (`Ctrl+N`), Open (`Ctrl+O`), Save
 (`Ctrl+S`) and Exit (`Ctrl+Q`). These shortcuts are handled by the window
 only after the focused control has had an opportunity to handle its key event,
