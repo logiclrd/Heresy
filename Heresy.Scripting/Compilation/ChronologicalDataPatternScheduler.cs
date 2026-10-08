@@ -165,7 +165,10 @@ internal static class ChronologicalDataPatternScheduler
 					if (note.Offset.TimeOffset != TimeSpan.Zero
 						|| !double.IsFinite(note.Offset.RowOffset)
 						|| note.Offset.RowOffset < 0
-						|| note.Offset.RowOffset > rowCount
+						// The legacy processor supports final-endpoint commands;
+						// leave that contract on its path until the new cursor
+						// models terminal endpoint operations explicitly.
+						|| note.Offset.RowOffset >= rowCount
 						|| note.Target.Kind != ChannelTargetKind.Physical)
 						return false;
 					foreach (NoteCommand command in note.Commands)
@@ -237,6 +240,7 @@ internal static class ChronologicalDataPatternScheduler
 				"Chronological data pattern cursors require a root context.");
 		context.ResolvePatternSourcesAtRowTime = true;
 		List<RowCursor> active = [];
+		Dictionary<ObjectId, IRawPatternNoteGenerator> compiledScripts = [];
 		NoteScheduleBuilder output = new();
 		List<CompiledPatternPlaybackPosition> positions = [];
 		long nextCursorSequence = 0;
@@ -261,12 +265,18 @@ internal static class ChronologicalDataPatternScheduler
 				data.GenerateRawNotes(mapped, rawBuilder, out _);
 			else if (pattern is ScriptPatternDefinition script)
 			{
-				ScriptCompilationResult<IRawPatternNoteGenerator> compilation =
-					ScriptCompiler.CompilePattern(script);
-				if (!compilation.Success || compilation.Program is null)
-					throw new InvalidOperationException(
-						$"Could not compile scripted Pattern {pattern.Id.Value}.");
-				compilation.Program.GenerateRawNotes(mapped, rawBuilder, out _);
+				if (!compiledScripts.TryGetValue(pattern.Id, out
+					IRawPatternNoteGenerator? compiled))
+				{
+					ScriptCompilationResult<IRawPatternNoteGenerator> compilation =
+						ScriptCompiler.CompilePattern(script);
+					if (!compilation.Success || compilation.Program is null)
+						throw new InvalidOperationException(
+							$"Could not compile scripted Pattern {pattern.Id.Value}.");
+					compiled = compilation.Program;
+					compiledScripts.Add(pattern.Id, compiled);
+				}
+				compiled.GenerateRawNotes(mapped, rawBuilder, out _);
 			}
 			else
 				throw new NotSupportedException("Unknown pattern cursor source.");
