@@ -229,16 +229,16 @@ still require additional parity work before general use.
 
 ## Sixth executable step: tracker Txx continuous tempo ramps
 
-The incremental shared-clock prototype now handles an **isolated tracker
-`ApplyTrackerTempoCommand`** on a physical channel. The existing common
-`PatternNoteProcessor` remains authoritative for tracker Txx memory
-(`T00`), whole-byte recall, T20–TFF immediate sets, T0x/T1x slides,
-32/255 clamping, and the conversion of a slide into a single
-`SetTempoRampCommand`. The incremental wrapper temporarily runs the
-existing processor for that one command using the cursor's captured row
-Speed, then restores the shared timing state: the eager processor normally
-advances the shared Tempo to its *future* endpoint while preparing the
-full row, which would violate lazy causality.
+The sixth step established isolated physical-channel tracker
+`ApplyTrackerTempoCommand` execution with continuous Tempo ramps, using
+the common `PatternNoteProcessor` to translate individual effects without
+applying their future endpoint prematurely. **The seventh step below has
+since replaced that isolated-event adapter with a generalized simultaneous
+Txx arbiter.** It resolves T00/whole-byte memory through the existing
+`SequencingChannelState` and shares the eager processor's
+`ResolveTrackerTempoAtTick` clamp arithmetic for T0x/T1x transitions.
+T20–TFF sets and the resulting `SetTempoRampCommand` are emitted only
+at the shared clock's actual eligible row boundary.
 
 The shared clock installs the resulting ramp at the command's **eligible
 source-row boundary**. Tempo is linear with respect to *tracker ticks*
