@@ -22,11 +22,16 @@ internal static class ChronologicalDataPatternScheduler
 	private sealed class RowCursor
 	{
 		public required ObjectId Id { get; init; }
-		public required DataPatternDefinition Pattern { get; init; }
+		public required PatternDefinition Pattern { get; init; }
 		public required SequencingContext Context { get; init; }
 		public required NoteSchedule Raw { get; init; }
 		public required IReadOnlySet<ObjectId> Ancestry { get; init; }
-		public long DueTick { get; set; }
+		public double DueTick { get; set; }
+		public double RowStartTick { get; set; }
+		public double RowEndTick { get; set; }
+		public bool InScriptRow { get; set; }
+		public int ScriptEventIndex { get; set; }
+		public List<NoteEvent> ScriptRowEvents { get; } = [];
 		public int Row { get; set; }
 		public long Sequence { get; init; }
 		public bool IsRoot { get; init; }
@@ -63,9 +68,29 @@ internal static class ChronologicalDataPatternScheduler
 		}
 	}
 
+	private sealed class ScriptEventSlice : IRawPatternNoteGenerator
+	{
+		private readonly NoteEvent _event;
+
+		public ScriptEventSlice(NoteEvent noteEvent)
+			=> _event = noteEvent with
+			{
+				Offset = new MusicalTime(TimeSpan.Zero, 0),
+			};
+
+		public void GenerateRawNotes(
+			SequencingContext context,
+			INoteReceiver output,
+			out double rowCount)
+		{
+			output.Append(_event);
+			rowCount = 1;
+		}
+	}
+
 	public static bool CanHandle(
 		SongDocument document,
-		DataPatternDefinition root)
+		PatternDefinition root)
 		=> IsCompatible(document, root, out bool hasNested) && hasNested;
 
 	public static bool CanHandleSequence(
@@ -78,7 +103,7 @@ internal static class ChronologicalDataPatternScheduler
 		{
 			if (entry.StartRow != 0
 				|| !document.TryGet(entry.PatternId, out SongObject? obj)
-				|| obj is not DataPatternDefinition pattern
+				|| obj is not PatternDefinition pattern
 				|| !IsCompatible(document, pattern, out bool nested))
 				return false;
 			hasNested |= nested;
@@ -88,44 +113,89 @@ internal static class ChronologicalDataPatternScheduler
 
 	private static bool IsCompatible(
 		SongDocument document,
-		DataPatternDefinition root,
+		PatternDefinition root,
 		out bool hasNested)
 	{
 		ArgumentNullException.ThrowIfNull(document);
 		ArgumentNullException.ThrowIfNull(root);
 		HashSet<ObjectId> visited = [];
 		bool foundNested = false;
-		bool Visit(DataPatternDefinition pattern)
+
+		bool Visit(PatternDefinition pattern)
 		{
 			if (!visited.Add(pattern.Id))
 				return true;
-			foreach ((_, _, PatternCell cell) in pattern.Grid.EnumerateNonEmptyCells())
+
+			if (pattern is DataPatternDefinition data)
 			{
-				foreach (PatternEffect effect in cell.Effects)
+				foreach ((_, _, PatternCell cell) in
+					data.Grid.EnumerateNonEmptyCells())
 				{
-					if (effect is not (SetTempoPatternEffect
-						or SetSpeedPatternEffect
-						or TrackerVolumeSlidePatternEffect
-						or EmptyTrackerPatternEffect))
+					foreach (PatternEffect effect in cell.Effects)
+					{
+						if (effect is not (SetTempoPatternEffect
+							or SetSpeedPatternEffect
+							or TrackerVolumeSlidePatternEffect
+							or EmptyTrackerPatternEffect))
+							return false;
+					}
+					if (cell.Note is not StartPatternNote start || start.Mixdown)
+						continue;
+					ObjectId id = !cell.SourceId.IsNone
+						? cell.SourceId : start.SourceId;
+					if (!VisitSource(id))
 						return false;
 				}
-				if (cell.Note is not StartPatternNote start || start.Mixdown)
-					continue;
-				ObjectId id = !cell.SourceId.IsNone
-					? cell.SourceId : start.SourceId;
-				if (id.IsNone || !document.TryGet(id, out SongObject? obj))
-					continue;
-				if (obj is PatternDefinition or SequenceDefinition)
-				{
-					if (obj is not DataPatternDefinition child)
-						return false;
-					foundNested = true;
-					if (!Visit(child))
-						return false;
-				}
+				return true;
 			}
-			return true;
+
+			if (pattern is ScriptPatternDefinition script)
+			{
+				ScriptCompilationResult<IRawPatternNoteGenerator> compilation =
+					ScriptCompiler.CompilePattern(script);
+				if (!compilation.Success || compilation.Program is null)
+					return false;
+				NoteScheduleBuilder rawBuilder = new();
+				compilation.Program.GenerateRawNotes(
+					new SequencingContext(), rawBuilder, out double rowCount);
+				if (rowCount != script.RowCount)
+					return false;
+				foreach (NoteEvent note in rawBuilder.Freeze())
+				{
+					if (note.Offset.TimeOffset != TimeSpan.Zero
+						|| !double.IsFinite(note.Offset.RowOffset)
+						|| note.Offset.RowOffset < 0
+						|| note.Offset.RowOffset > rowCount
+						|| note.Target.Kind != ChannelTargetKind.Physical)
+						return false;
+					foreach (NoteCommand command in note.Commands)
+					{
+						if (command is StartNoteCommand start)
+						{
+							if (!start.Mixdown && !VisitSource(start.SourceId))
+								return false;
+						}
+						else if (command is not (NoteCutCommand or NoteOffCommand))
+							return false;
+					}
+				}
+				return true;
+			}
+			return false;
 		}
+
+		bool VisitSource(ObjectId id)
+		{
+			if (id.IsNone || !document.TryGet(id, out SongObject? obj))
+				return true;
+			if (obj is PatternDefinition child)
+			{
+				foundNested = true;
+				return Visit(child);
+			}
+			return obj is not SequenceDefinition;
+		}
+
 		bool compatible = Visit(root);
 		hasNested = foundNested;
 		return compatible;
@@ -133,7 +203,7 @@ internal static class ChronologicalDataPatternScheduler
 
 	public static SongScheduleCompilationResult Compile(
 		SongDocument document,
-		DataPatternDefinition root,
+		PatternDefinition root,
 		SequencingContext? suppliedContext)
 		=> Run(document, [root], suppliedContext, sequenceMode: false);
 
@@ -142,11 +212,11 @@ internal static class ChronologicalDataPatternScheduler
 		DataSequenceDefinition sequence,
 		SequencingContext? suppliedContext)
 	{
-		List<DataPatternDefinition> patterns = [];
+		List<PatternDefinition> patterns = [];
 		foreach (SequenceEntry entry in sequence.Entries)
 		{
 			if (!document.TryGet(entry.PatternId, out SongObject? obj)
-				|| obj is not DataPatternDefinition pattern)
+				|| obj is not PatternDefinition pattern)
 				throw new InvalidOperationException(
 					"Eligible arrangement pattern disappeared while preparing its cursors.");
 			patterns.Add(pattern);
@@ -156,7 +226,7 @@ internal static class ChronologicalDataPatternScheduler
 
 	private static SongScheduleCompilationResult Run(
 		SongDocument document,
-		IReadOnlyList<DataPatternDefinition> patterns,
+		IReadOnlyList<PatternDefinition> patterns,
 		SequencingContext? suppliedContext,
 		bool sequenceMode)
 	{
@@ -170,13 +240,13 @@ internal static class ChronologicalDataPatternScheduler
 		NoteScheduleBuilder output = new();
 		List<CompiledPatternPlaybackPosition> positions = [];
 		long nextCursorSequence = 0;
-		long tick = 0;
+		double tick = 0;
 		TimeSpan elapsed = TimeSpan.Zero;
 		int workCount = 0;
 
 		RowCursor CreateCursor(
 			ObjectId id,
-			DataPatternDefinition pattern,
+			PatternDefinition pattern,
 			SequencingContext mapped,
 			IReadOnlySet<ObjectId> ancestry,
 			bool isRoot = false,
@@ -187,7 +257,19 @@ internal static class ChronologicalDataPatternScheduler
 					$"Flattened Pattern/Sequence sound source cycle includes object {id.Value}.");
 			HashSet<ObjectId> descendants = new(ancestry) { id };
 			NoteScheduleBuilder rawBuilder = new();
-			pattern.GenerateRawNotes(mapped, rawBuilder, out _);
+			if (pattern is DataPatternDefinition data)
+				data.GenerateRawNotes(mapped, rawBuilder, out _);
+			else if (pattern is ScriptPatternDefinition script)
+			{
+				ScriptCompilationResult<IRawPatternNoteGenerator> compilation =
+					ScriptCompiler.CompilePattern(script);
+				if (!compilation.Success || compilation.Program is null)
+					throw new InvalidOperationException(
+						$"Could not compile scripted Pattern {pattern.Id.Value}.");
+				compilation.Program.GenerateRawNotes(mapped, rawBuilder, out _);
+			}
+			else
+				throw new NotSupportedException("Unknown pattern cursor source.");
 			return new RowCursor
 			{
 				Id = id,
@@ -202,7 +284,7 @@ internal static class ChronologicalDataPatternScheduler
 			};
 		}
 
-		DataPatternDefinition first = patterns[0];
+		PatternDefinition first = patterns[0];
 		active.Add(CreateCursor(first.Id, first, context,
 			new HashSet<ObjectId>(), isRoot: true));
 		double tempo = context.State.Tempo;
@@ -212,7 +294,7 @@ internal static class ChronologicalDataPatternScheduler
 				throw new InvalidOperationException(
 					"Chronological flattened row expansion exceeded the sequencing resource limit.");
 
-			long next = active.Min(cursor => cursor.DueTick);
+			double next = active.Min(cursor => cursor.DueTick);
 			if (next < tick)
 				throw new InvalidOperationException("A nested row cursor moved backwards.");
 			if (next != tick)
@@ -250,7 +332,7 @@ internal static class ChronologicalDataPatternScheduler
 					if (current.IsRoot && current.RootOrder + 1 < patterns.Count)
 				{
 						int nextOrder = current.RootOrder + 1;
-						DataPatternDefinition nextRoot = patterns[nextOrder];
+						PatternDefinition nextRoot = patterns[nextOrder];
 						active.Add(CreateCursor(
 							nextRoot.Id, nextRoot, context,
 							new HashSet<ObjectId>(), isRoot: true,
@@ -265,11 +347,63 @@ internal static class ChronologicalDataPatternScheduler
 						sequenceMode ? current.RootOrder : null));
 
 				NoteScheduleBuilder rowBuilder = new();
-				PatternNoteProcessor.GenerateNotes(
-					new RowSlice(current.Raw, current.Row),
-					current.Context,
-					rowBuilder,
-					out TimeSpan nominalDuration);
+				TimeSpan nominalDuration;
+				if (current.Pattern is ScriptPatternDefinition)
+				{
+					if (!current.InScriptRow)
+					{
+						current.InScriptRow = true;
+						current.RowStartTick = tick;
+						current.RowEndTick = tick + context.State.Speed;
+						current.ScriptEventIndex = 0;
+						current.ScriptRowEvents.Clear();
+						foreach (NoteEvent raw in current.Raw)
+						{
+							if (Math.Floor(raw.Offset.RowOffset) == current.Row)
+								current.ScriptRowEvents.Add(raw);
+						}
+						current.ScriptRowEvents.Sort((a, b) =>
+						{
+							int compare = a.Offset.RowOffset.CompareTo(b.Offset.RowOffset);
+							if (compare != 0)
+								return compare;
+							compare = a.Target.PhysicalChannel.CompareTo(
+								b.Target.PhysicalChannel);
+							return compare != 0 ? compare
+								: a.EmissionOrder.CompareTo(b.EmissionOrder);
+						});
+					}
+
+					if (current.ScriptEventIndex >= current.ScriptRowEvents.Count)
+					{
+						current.Row++;
+						current.InScriptRow = false;
+						current.DueTick = current.RowEndTick;
+						active.Add(current);
+						continue;
+					}
+
+					NoteEvent scripted = current.ScriptRowEvents[current.ScriptEventIndex];
+					double eventTick = current.RowStartTick
+						+ (scripted.Offset.RowOffset - current.Row)
+							* (current.RowEndTick - current.RowStartTick);
+					if (eventTick > tick + 1e-9)
+					{
+						current.DueTick = eventTick;
+						active.Add(current);
+						continue;
+					}
+					PatternNoteProcessor.GenerateNotes(
+						new ScriptEventSlice(scripted),
+						current.Context, rowBuilder, out nominalDuration);
+					current.ScriptEventIndex++;
+				}
+				else
+				{
+					PatternNoteProcessor.GenerateNotes(
+						new RowSlice(current.Raw, current.Row),
+						current.Context, rowBuilder, out nominalDuration);
+				}
 
 				foreach (NoteEvent item in rowBuilder.Freeze())
 				{
@@ -295,7 +429,7 @@ internal static class ChronologicalDataPatternScheduler
 						if (command is not StartNoteCommand start
 							|| start.Mixdown
 							|| !document.TryGet(start.SourceId, out SongObject? childObject)
-							|| childObject is not DataPatternDefinition child)
+							|| childObject is not PatternDefinition child)
 						{
 							retained.Add(command);
 							continue;
@@ -325,10 +459,25 @@ internal static class ChronologicalDataPatternScheduler
 						});
 				}
 
-				current.Row++;
-				// Speed is captured after the row's boundary effects. Other
-				// cursors retain their own next tick even when speed changes.
-				current.DueTick = checked(tick + context.State.Speed);
+				if (current.Pattern is ScriptPatternDefinition)
+				{
+					if (current.ScriptEventIndex < current.ScriptRowEvents.Count)
+					{
+						NoteEvent nextEvent =
+							current.ScriptRowEvents[current.ScriptEventIndex];
+						current.DueTick = current.RowStartTick
+							+ (nextEvent.Offset.RowOffset - current.Row)
+								* (current.RowEndTick - current.RowStartTick);
+					}
+					else
+						current.DueTick = current.RowEndTick;
+				}
+				else
+				{
+					current.Row++;
+					// Speed is captured after the row's boundary effects.
+					current.DueTick = tick + context.State.Speed;
+				}
 				active.Add(current);
 			}
 			tempo = context.State.Tempo;
