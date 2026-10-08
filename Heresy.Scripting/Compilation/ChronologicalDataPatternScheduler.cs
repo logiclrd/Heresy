@@ -158,17 +158,16 @@ internal static class ChronologicalDataPatternScheduler
 				NoteScheduleBuilder rawBuilder = new();
 				compilation.Program.GenerateRawNotes(
 					new SequencingContext(), rawBuilder, out double rowCount);
-				if (rowCount != script.RowCount)
+				if (rowCount != script.RowCount || rowCount <= 0)
 					return false;
 				foreach (NoteEvent note in rawBuilder.Freeze())
 				{
 					if (note.Offset.TimeOffset != TimeSpan.Zero
 						|| !double.IsFinite(note.Offset.RowOffset)
 						|| note.Offset.RowOffset < 0
-						// The legacy processor supports final-endpoint commands;
-						// leave that contract on its path until the new cursor
-						// models terminal endpoint operations explicitly.
-						|| note.Offset.RowOffset >= rowCount
+						// A command exactly at the final boundary executes at
+						// that boundary, after the final row's elapsed ticks.
+						|| note.Offset.RowOffset > rowCount
 						|| note.Target.Kind != ChannelTargetKind.Physical)
 						return false;
 					foreach (NoteCommand command in note.Commands)
@@ -371,7 +370,12 @@ internal static class ChronologicalDataPatternScheduler
 						current.ScriptRowEvents.Clear();
 						foreach (NoteEvent raw in current.Raw)
 						{
-							if (Math.Floor(raw.Offset.RowOffset) == current.Row)
+							// The final row also owns endpoint events at exactly
+							// RowCount. They execute at RowEndTick, rather than
+							// disappearing when the cursor retires.
+							if (Math.Floor(raw.Offset.RowOffset) == current.Row
+								|| current.Row == current.Pattern.RowCount - 1
+									&& raw.Offset.RowOffset == current.Pattern.RowCount)
 								current.ScriptRowEvents.Add(raw);
 						}
 						current.ScriptRowEvents.Sort((a, b) =>
