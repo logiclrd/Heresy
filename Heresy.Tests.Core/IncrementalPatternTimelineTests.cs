@@ -48,6 +48,43 @@ public sealed class IncrementalPatternTimelineTests
 	}
 
 	[Test]
+	public void ExplicitFlattenedChildUsesMappedChannelsAndSharedClock()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(new RawSource(
+			At(0.5, 0, new NoteCutCommand())), 2, root);
+		long child = timeline.AddFlattenedChild(new RawSource(
+			At(0.25, 1, new NoteOffCommand())), 2, root,
+			physicalChannelOffset: 4);
+
+		Assert.That(timeline.HasUnfinishedRows(child), Is.True);
+		NoteEvent[] notes = DrainNotes(timeline);
+		Assert.That(notes.Select(n => n.Target),
+			Is.EqualTo(new[] {
+				ChannelTarget.Physical(5),
+				ChannelTarget.Physical(0),
+			}));
+		Assert.That(notes.Select(n => n.Offset.TimeOffset),
+			Is.EqualTo(new[] {
+				TimeSpan.FromMilliseconds(30),
+				TimeSpan.FromMilliseconds(60),
+			}));
+		Assert.That(timeline.HasOutstandingWork(child), Is.False);
+	}
+
+	[Test]
+	public void ExplicitFlattenedChildRejectsParentFromDifferentTimeline()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		Assert.Throws<ArgumentException>(() =>
+			timeline.AddFlattenedChild(
+				new RawSource(At(0, 0, new NoteCutCommand())),
+				1, new SequencingContext()));
+	}
+
+	[Test]
 	public void ChildTempoSetAtFractionalTickMovesParentAndChildLaterEvents()
 	{
 		SequencingContext root = new();
