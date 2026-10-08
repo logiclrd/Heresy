@@ -89,6 +89,8 @@ public sealed class MainWindow : Window
 	private PointerPressedEventArgs? _dragTrigger;
 	private Point _dragStart;
 	private bool _dragInProgress;
+	private bool _closeApproved;
+	private bool _closePromptInProgress;
 
 	public MainWindow()
 		: this(
@@ -140,6 +142,7 @@ public sealed class MainWindow : Window
 			};
 
 		Content = BuildShell();
+		Closing += OnClosing;
 		Closed += (_, _) =>
 		{
 			if (_playbackPositionTransport is not null)
@@ -313,7 +316,7 @@ public sealed class MainWindow : Window
 	private Menu BuildMenu()
 	{
 		MenuItem newItem = new() { Header = "_New" };
-		newItem.Click += (_, _) => NewDocument();
+		newItem.Click += async (_, _) => await NewDocumentAsync();
 
 		MenuItem openItem = new() { Header = "_Open..." };
 		openItem.Click += async (_, _) => await OpenDocumentAsync();
@@ -344,9 +347,9 @@ public sealed class MainWindow : Window
 		};
 	}
 
-	private void NewDocument()
+	private async Task NewDocumentAsync()
 	{
-		if (!CanReplaceDocument())
+		if (!await ConfirmCanReplaceDocumentAsync())
 			return;
 
 		_workspace.New();
@@ -355,7 +358,7 @@ public sealed class MainWindow : Window
 
 	private async Task OpenDocumentAsync()
 	{
-		if (!CanReplaceDocument())
+		if (!await ConfirmCanReplaceDocumentAsync())
 			return;
 
 		if (!StorageProvider.CanOpen)
@@ -396,31 +399,30 @@ public sealed class MainWindow : Window
 		}
 	}
 
-	private async Task SaveDocumentAsync()
+	private async Task<bool> SaveDocumentAsync()
 	{
 		if (_workspace.FilePath is null)
-		{
-			await SaveDocumentAsAsync();
-			return;
-		}
+			return await SaveDocumentAsAsync();
 
 		try
 		{
 			_workspace.Save();
 			RefreshAfterPersistence($"Saved {_workspace.DisplayName}", _selectedItem?.Node);
+			return true;
 		}
 		catch (Exception ex)
 		{
 			SetStatus($"Save failed: {ex.Message}");
+			return false;
 		}
 	}
 
-	private async Task SaveDocumentAsAsync()
+	private async Task<bool> SaveDocumentAsAsync()
 	{
 		if (!StorageProvider.CanSave)
 		{
 			SetStatus("This platform does not provide a save-file picker.");
-			return;
+			return false;
 		}
 
 		SaveFilePickerResult result =
@@ -444,13 +446,13 @@ public sealed class MainWindow : Window
 
 		IStorageFile? file = result.File;
 		if (file is null)
-			return;
+			return false;
 
 		string? path = file.TryGetLocalPath();
 		if (path is null)
 		{
 			SetStatus("The selected destination does not expose a local filesystem path.");
-			return;
+			return false;
 		}
 
 		try
@@ -465,23 +467,61 @@ public sealed class MainWindow : Window
 
 			_workspace.SaveAs(path, jsonPathMode);
 			RefreshAfterPersistence($"Saved {_workspace.DisplayName}", _selectedItem?.Node);
+			return true;
 		}
 		catch (Exception ex)
 		{
 			// TODO: when a relative JSON save identifies an offending asset,
 			// navigate directly to that sample before presenting the error.
 			SetStatus($"Save failed: {ex.Message}");
+			return false;
 		}
 	}
 
-	private bool CanReplaceDocument()
-	{
-		if (!_workspace.IsModified)
-			return true;
+	private async Task<bool> ConfirmCanReplaceDocumentAsync()
+		=> await UnsavedChangesGuard.CanProceedAsync(
+			_workspace,
+			async () =>
+			{
+				UnsavedChangesDialog dialog =
+					new(_workspace.DisplayName);
+				UnsavedChangesChoice? choice =
+					await dialog.ShowDialog<UnsavedChangesChoice?>(
+						this);
+				return choice
+					?? UnsavedChangesChoice.Cancel;
+			},
+			SaveDocumentAsync);
 
-		SetStatus(
-			"The song has unsaved changes. Save it before replacing the active document.");
-		return false;
+	private async void OnClosing(
+		object? sender,
+		WindowClosingEventArgs e)
+	{
+		_ = sender;
+
+		if (_closeApproved
+			|| !_workspace.IsModified)
+		{
+			return;
+		}
+
+		e.Cancel = true;
+		if (_closePromptInProgress)
+			return;
+
+		_closePromptInProgress = true;
+		try
+		{
+			if (!await ConfirmCanReplaceDocumentAsync())
+				return;
+
+			_closeApproved = true;
+			Close();
+		}
+		finally
+		{
+			_closePromptInProgress = false;
+		}
 	}
 
 	private async Task CreateSequenceAsync()
@@ -1192,8 +1232,13 @@ public sealed class MainWindow : Window
 		}
 		result.ItemsSource = children;
 
-		result.PointerPressed += (_, e) =>
-			OnTreePointerPressed(tree, result, item, e);
+		result.PointerPressed += async (_, e) =>
+			await OnTreePointerPressedAsync(
+				section,
+				tree,
+				result,
+				item,
+				e);
 		result.PointerMoved += async (_, e) =>
 			await OnTreePointerMovedAsync(tree, item, e);
 		result.PointerReleased += (_, _) => ClearDragCandidate(item);
@@ -1251,88 +1296,30 @@ public sealed class MainWindow : Window
 		};
 
 		List<object> items = [];
-		if (section == SongTreeSection.Sequences
-			&& !item.IsMissingReference
-			&& item.Kind == SongObjectKind.Sequence)
+		SongTreeActivationKind activation =
+			SongTreeDefaultActivation.Resolve(
+				section,
+				item);
+		if (activation != SongTreeActivationKind.None)
 		{
-			MenuItem editSequence = new() { Header = "Edit Sequence..." };
-			editSequence.Click += (_, _) =>
+			MenuItem edit =
+				new()
+				{
+					Header =
+						SongTreeDefaultActivation.GetMenuHeader(
+							activation),
+					FontWeight =
+						FontWeight.Bold,
+				};
+			edit.Click += async (_, _) =>
 			{
 				tree.SelectedItem = control;
 				SelectTreeItem(item, tree);
-				ShowSequenceEditor(item);
+				await ActivateTreeItemAsync(
+					activation,
+					item);
 			};
-			items.Add(editSequence);
-			items.Add(new Separator());
-		}
-		if (section == SongTreeSection.Patterns
-			&& !item.IsMissingReference
-			&& item.Kind == SongObjectKind.Pattern)
-		{
-			MenuItem editPattern = new() { Header = "Edit Pattern..." };
-			editPattern.Click += (_, _) =>
-			{
-				tree.SelectedItem = control;
-				SelectTreeItem(item, tree);
-				ShowPatternEditor(item);
-			};
-			items.Add(editPattern);
-			items.Add(new Separator());
-		}
-		if (section == SongTreeSection.Instruments
-			&& !item.IsMissingReference
-			&& item.Kind == SongObjectKind.Instrument)
-		{
-			MenuItem editInstrument = new() { Header = "Edit Instrument..." };
-			editInstrument.Click += (_, _) =>
-			{
-				tree.SelectedItem = control;
-				SelectTreeItem(item, tree);
-				ShowInstrumentEditor(item);
-			};
-			items.Add(editInstrument);
-			items.Add(new Separator());
-		}
-		if (section == SongTreeSection.Instruments
-			&& !item.IsMissingReference
-			&& item.Kind == SongObjectKind.Envelope)
-		{
-			MenuItem editEnvelope = new() { Header = "Edit Envelope..." };
-			editEnvelope.Click += (_, _) =>
-			{
-				tree.SelectedItem = control;
-				SelectTreeItem(item, tree);
-				ShowEnvelopeEditor(item);
-			};
-			items.Add(editEnvelope);
-			items.Add(new Separator());
-		}
-		if (section == SongTreeSection.Samples
-			&& !item.IsMissingReference
-			&& item.Kind == SongObjectKind.Sample)
-		{
-			MenuItem editSample = new() { Header = "Edit Sample..." };
-			editSample.Click += async (_, _) =>
-			{
-				tree.SelectedItem = control;
-				SelectTreeItem(item, tree);
-				await ShowSampleEditorAsync(item);
-			};
-			items.Add(editSample);
-			items.Add(new Separator());
-		}
-		if (section == SongTreeSection.Samples
-			&& !item.IsMissingReference
-			&& item.Kind == SongObjectKind.FmSynth)
-		{
-			MenuItem editFmSynth = new() { Header = "Edit FM Synth..." };
-			editFmSynth.Click += (_, _) =>
-			{
-				tree.SelectedItem = control;
-				SelectTreeItem(item, tree);
-				ShowFmSynthEditor(item);
-			};
-			items.Add(editFmSynth);
+			items.Add(edit);
 			items.Add(new Separator());
 		}
 		items.Add(newFolder);
@@ -1344,6 +1331,38 @@ public sealed class MainWindow : Window
 		{
 			ItemsSource = items,
 		};
+	}
+
+	private async Task ActivateTreeItemAsync(
+		SongTreeActivationKind activation,
+		SongTreeItemViewModel item)
+	{
+		switch (activation)
+		{
+			case SongTreeActivationKind.Sequence:
+				ShowSequenceEditor(item);
+				break;
+			case SongTreeActivationKind.Pattern:
+				ShowPatternEditor(item);
+				break;
+			case SongTreeActivationKind.Instrument:
+				ShowInstrumentEditor(item);
+				break;
+			case SongTreeActivationKind.Envelope:
+				ShowEnvelopeEditor(item);
+				break;
+			case SongTreeActivationKind.Sample:
+				await ShowSampleEditorAsync(item);
+				break;
+			case SongTreeActivationKind.FmSynth:
+				ShowFmSynthEditor(item);
+				break;
+			case SongTreeActivationKind.None:
+				break;
+			default:
+				throw new ArgumentOutOfRangeException(
+					nameof(activation));
+		}
 	}
 
 	private void ShowSequenceEditor(SongTreeItemViewModel item)
@@ -1778,7 +1797,8 @@ public sealed class MainWindow : Window
 		return null;
 	}
 
-	private void OnTreePointerPressed(
+	private async Task OnTreePointerPressedAsync(
+		SongTreeSection section,
 		TreeView tree,
 		TreeViewItem control,
 		SongTreeItemViewModel item,
@@ -1790,6 +1810,23 @@ public sealed class MainWindow : Window
 		if (!e.GetCurrentPoint(tree).Properties.IsLeftButtonPressed)
 		{
 			ClearDragCandidate(item);
+			return;
+		}
+
+		if (e.ClickCount >= 2)
+		{
+			ClearDragCandidate(item);
+			SongTreeActivationKind activation =
+				SongTreeDefaultActivation.Resolve(
+					section,
+					item);
+			if (activation != SongTreeActivationKind.None)
+			{
+				e.Handled = true;
+				await ActivateTreeItemAsync(
+					activation,
+					item);
+			}
 			return;
 		}
 
