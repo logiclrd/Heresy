@@ -119,21 +119,18 @@ public sealed class OfflineSongRenderPlanFactory
 			new(
 				snapshotDocument,
 				_sampleDataProvider);
-		FlattenedNestedScheduleExpander.Result expanded =
-			FlattenedNestedScheduleExpander.Expand(
-				snapshotDocument,
-				compilation.Schedule,
-				compilation.Duration,
-				snapshotDocument.RootSequenceId);
+		// Nested flattened sources were already sequenced in the parent
+		// context during compilation. That schedule and its expanded
+		// logical duration are the source of truth for offline output.
 		PlaybackSession session =
 			new(
 				new RenderContext(_configuration),
-				expanded.Schedule,
+				compilation.Schedule,
 				resolver);
 
 		return new OfflineSongRenderPlan(
 			snapshot,
 			session,
-			expanded.Duration);
+			compilation.Duration);
 	}
 }
