@@ -39,6 +39,11 @@ internal static class ChronologicalDataPatternScheduler
 		public List<NoteEvent> EndOfRowCommands { get; } = [];
 	}
 
+	// A fixed wall-time offset begins when an event reaches its musical
+	// tick. Its deadline is then independent of future tempo changes.
+	private sealed record DeferredScriptEvent(
+		RowCursor Owner, NoteEvent Event, TimeSpan Due);
+
 	private sealed class RowSlice : IDeferredSourcePatternGenerator
 	{
 		private readonly IReadOnlyList<NoteEvent> _events;
@@ -173,7 +178,7 @@ internal static class ChronologicalDataPatternScheduler
 					return false;
 				foreach (NoteEvent note in rawBuilder.Freeze())
 				{
-					if (note.Offset.TimeOffset != TimeSpan.Zero
+					if (note.Offset.TimeOffset < TimeSpan.Zero
 						|| !double.IsFinite(note.Offset.RowOffset)
 						|| note.Offset.RowOffset < 0
 						// A command exactly at the final boundary executes at
@@ -185,6 +190,8 @@ internal static class ChronologicalDataPatternScheduler
 					// require an expanded scheduler contract.
 					if (note.Target.Kind == ChannelTargetKind.Global)
 					{
+						if (note.Offset.TimeOffset != TimeSpan.Zero)
+							return false;
 						if (note.Commands.Count == 0
 							|| note.Commands.Any(command =>
 								command is not (SetTempoCommand or SetSpeedCommand)))
@@ -262,6 +269,7 @@ internal static class ChronologicalDataPatternScheduler
 				"Chronological data pattern cursors require a root context.");
 		context.ResolvePatternSourcesAtRowTime = true;
 		List<RowCursor> active = [];
+		List<DeferredScriptEvent> delayed = [];
 		Dictionary<ObjectId, IRawPatternNoteGenerator> compiledScripts = [];
 		NoteScheduleBuilder output = new();
 		List<CompiledPatternPlaybackPosition> positions = [];
@@ -314,6 +322,65 @@ internal static class ChronologicalDataPatternScheduler
 				IsRoot = isRoot,
 				RootOrder = rootOrder,
 			};
+		}
+
+		void EmitCommands(RowCursor current, NoteScheduleBuilder rowBuilder,
+			TimeSpan nominalDuration)
+		{
+		foreach (NoteEvent item in rowBuilder.Freeze())
+		{
+			// On the supported subset, all source starts and tempo
+			// changes happen at the row boundary; Dxy effect cleanup
+			// is postponed until that cursor advances to its next row.
+			if (item.Offset.TimeOffset != TimeSpan.Zero)
+			{
+				if (item.Offset.TimeOffset == nominalDuration
+					&& item.Commands.All(command =>
+						command is ClearNoteVolumeSlideCommand))
+				{
+					current.EndOfRowCommands.Add(item);
+					continue;
+				}
+				throw new NotSupportedException(
+					"Chronological data row cursor does not yet support delayed row commands.");
+			}
+
+			List<NoteCommand> retained = [];
+			foreach (NoteCommand command in item.Commands)
+			{
+				if (command is not StartNoteCommand start
+					|| start.Mixdown
+					|| !document.TryGet(start.SourceId, out SongObject? childObject)
+					|| childObject is not PatternDefinition child)
+				{
+					retained.Add(command);
+					continue;
+				}
+				if (start.PitchMultiplier != 1.0
+					|| start.PlaybackSpeedMultiplier != 1.0
+					|| start.Volume.HasValue)
+					throw new NotSupportedException(
+						"Flattened child pitch/speed/volume transforms are not yet implemented by the chronological row scheduler.");
+				if (item.Target.Kind != ChannelTargetKind.Physical)
+					throw new NotSupportedException(
+						"Flattened child must start on a physical channel.");
+				int offset = item.Target.PhysicalChannel
+					- current.Context.PhysicalChannelBase;
+				active.Add(CreateCursor(
+					start.SourceId, child,
+					current.Context.FlattenedChild(
+						physicalChannelOffset: offset),
+					current.Ancestry));
+			}
+
+			if (retained.Count != 0)
+				output.Append(item with
+				{
+					Commands = retained,
+					Offset = new MusicalTime(elapsed, 0),
+				});
+		}
+
 		}
 
 		PatternDefinition first = patterns[0];
@@ -454,59 +521,7 @@ internal static class ChronologicalDataPatternScheduler
 						current.Context, rowBuilder, out nominalDuration);
 				}
 
-				foreach (NoteEvent item in rowBuilder.Freeze())
-				{
-					// On the supported subset, all source starts and tempo
-					// changes happen at the row boundary; Dxy effect cleanup
-					// is postponed until that cursor advances to its next row.
-					if (item.Offset.TimeOffset != TimeSpan.Zero)
-					{
-						if (item.Offset.TimeOffset == nominalDuration
-							&& item.Commands.All(command =>
-								command is ClearNoteVolumeSlideCommand))
-						{
-							current.EndOfRowCommands.Add(item);
-							continue;
-						}
-						throw new NotSupportedException(
-							"Chronological data row cursor does not yet support delayed row commands.");
-					}
-
-					List<NoteCommand> retained = [];
-					foreach (NoteCommand command in item.Commands)
-					{
-						if (command is not StartNoteCommand start
-							|| start.Mixdown
-							|| !document.TryGet(start.SourceId, out SongObject? childObject)
-							|| childObject is not PatternDefinition child)
-						{
-							retained.Add(command);
-							continue;
-						}
-						if (start.PitchMultiplier != 1.0
-							|| start.PlaybackSpeedMultiplier != 1.0
-							|| start.Volume.HasValue)
-							throw new NotSupportedException(
-								"Flattened child pitch/speed/volume transforms are not yet implemented by the chronological row scheduler.");
-						if (item.Target.Kind != ChannelTargetKind.Physical)
-							throw new NotSupportedException(
-								"Flattened child must start on a physical channel.");
-						int offset = item.Target.PhysicalChannel
-							- current.Context.PhysicalChannelBase;
-						active.Add(CreateCursor(
-							start.SourceId, child,
-							current.Context.FlattenedChild(
-								physicalChannelOffset: offset),
-							current.Ancestry));
-					}
-
-					if (retained.Count != 0)
-						output.Append(item with
-						{
-							Commands = retained,
-							Offset = new MusicalTime(elapsed, 0),
-						});
-				}
+				EmitCommands(current, rowBuilder, nominalDuration);
 
 				if (current.Pattern is ScriptPatternDefinition)
 				{
