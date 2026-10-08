@@ -110,8 +110,13 @@ Items that were already completed remain in Git history, not in this checklist.
   Tempo/Speed statements suspend after each raw event, and loops yield
   `RawPatternStep.Cooperate` after every 128 iterations without
   musical progress. Raw notes emitted earlier than the last accepted
-  musical row are now **silently discarded** in both streaming and
-  eager Pattern paths, while equal positions preserve emission order.
+  musical row are now **silently discarded in playback** in both
+  streaming and eager Pattern paths, while equal positions preserve
+  emission order. A bounded per-context runtime diagnostic queue posts
+  `HRSEQ001` for each of the first 32 dropped notes, followed by one
+  `HRSEQ002` suppression notice. Subsequent violations increment
+  counters but cannot flood the log or interrupt playback; flattened
+  and mixdown children share the parent's cap.
   Fixed wall offsets are separate deadlines, not the comparison key.
   The shared-tick `IncrementalPatternTimeline` now exposes a distinct
   CPU-only `IncrementalPatternTimelineStep.Cooperate` at unchanged Tick and
@@ -248,6 +253,12 @@ Items that were already completed remain in Git history, not in this checklist.
 
 ## Playback state and authoring feedback
 
+- [ ] Surface playback/runtime sequencing diagnostics from
+  `SequencingContext.Diagnostics.Drain()` in the UI/host logging view,
+  outside the audio callback. The engine already posts bounded
+  `HRSEQ001` warnings for discarded out-of-order notes and one
+  `HRSEQ002` suppression notice per context; do not duplicate or
+  reset the rate cap when presenting them.
 - [ ] Measure/report actual realtime audio underruns. Late audio produces a
   temporary dropout without skipping the musical timeline or stopping playback.
   The UI underrun indicator must be **hidden until the first underrun**.
