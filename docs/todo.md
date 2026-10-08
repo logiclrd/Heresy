@@ -39,11 +39,18 @@ Items that were already completed remain in Git history, not in this checklist.
   handling; effect commands stay in eligibility/emission order, preserve
   other cursors' already-started row durations and are dropped if the
   originating Pattern ends or is cancelled before an eligible boundary.
+  Isolated tracker Txx effects now use PatternNoteProcessor for
+  T00 memory, immediate T20-TFF Tempo sets and T0x/T1x continuous ramps;
+  the shared tick merger integrates each ramp analytically (and inverts
+  it for fixed wall deadlines), so overlapping child/parent cursors
+  observe the actual evolving Tempo rather than its future endpoint.
+  Simultaneous/interrupting tempo ramps and mixed-command Txx cells
+  currently fail explicitly pending cross-cursor arbitration.
   Next, move **remaining tracker row/effect semantics** into incremental
-  resolution, including tracker Txx tempo slides, ramps, fine and
-  whole-row delays, virtual targets, and user script coroutine
-  instrumentation with distinct CPU-only checkpoints. Wire generic
-  invocation-lifetime management for data and scripted Sequences.
+  resolution, including concurrent Tempo arbitration, fine and whole-row
+  delays, virtual targets, and user script coroutine instrumentation
+  with distinct CPU-only checkpoints. Wire generic invocation-lifetime
+  management for data and scripted Sequences.
   Preserve out-of-order scripted-event semantics or explicitly resolve
   their ordering policy before migrating playback. Replace the existing
   restricted chronological scheduler rather than adding more special
