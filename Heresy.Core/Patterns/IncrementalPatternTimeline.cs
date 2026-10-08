@@ -534,9 +534,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						"Raw Pattern positions must be finite and nonnegative.");
 				if (step is RawPatternStep.Emit && step.Row < _lastRow)
 				{
-					// Earlier note events are too late for this musical
-					// cursor. Discard silently, retaining the last accepted
-					// position; never cause future shared-state changes.
+					// The event is silent in playback, but diagnostic
+					// messages are retained up to the context-wide cap.
+					Context.Diagnostics.ReportDroppedOutOfOrderNote(
+						step.Row, _lastRow);
 					if (++discarded > MaximumRawStepsPerRow)
 						throw new InvalidOperationException(
 							"Raw Pattern iterator exceeded its no-progress budget.");

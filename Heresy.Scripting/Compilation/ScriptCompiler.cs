@@ -965,7 +965,11 @@ public static class ScriptCompiler
 					// musical position. It is too late to schedule that
 					// event, so discard it without rewinding or reordering.
 					if (emission.Row < lastRow)
+					{
+						context.Diagnostics.ReportDroppedOutOfOrderNote(
+							emission.Row, lastRow);
 						continue;
+					}
 					lastRow = emission.Row;
 				}
 				else if (step is RawPatternStep.Advance advance
@@ -1010,7 +1014,7 @@ public static class ScriptCompiler
 				Activator.CreateInstance(
 					_programType,
 					context,
-					new ChronologicalRawPatternNoteReceiver(output),
+					new ChronologicalRawPatternNoteReceiver(output, context.Diagnostics),
 					(double)_rowCount,
 					_channelCount)
 					as PatternScriptProgram

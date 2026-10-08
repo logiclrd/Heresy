@@ -1,5 +1,7 @@
 using System;
 
+using Heresy.Core.Diagnostics;
+
 namespace Heresy.Core.Sequencing;
 
 /// <summary>
@@ -12,17 +14,25 @@ namespace Heresy.Core.Sequencing;
 public sealed class ChronologicalRawPatternNoteReceiver : INoteReceiver
 {
 	private readonly INoteReceiver _output;
+	private readonly SequencingDiagnosticLog? _diagnostics;
 	private double _lastRow;
 
-	public ChronologicalRawPatternNoteReceiver(INoteReceiver output)
-		=> _output = output ?? throw new ArgumentNullException(nameof(output));
+	public ChronologicalRawPatternNoteReceiver(
+		INoteReceiver output, SequencingDiagnosticLog? diagnostics = null)
+	{
+		_output = output ?? throw new ArgumentNullException(nameof(output));
+		_diagnostics = diagnostics;
+	}
 
 	public void Append(NoteEvent noteEvent)
 	{
 		ArgumentNullException.ThrowIfNull(noteEvent);
 		double row = noteEvent.Offset.RowOffset;
 		if (row < _lastRow)
+		{
+			_diagnostics?.ReportDroppedOutOfOrderNote(row, _lastRow);
 			return;
+		}
 		_lastRow = row;
 		_output.Append(noteEvent);
 	}

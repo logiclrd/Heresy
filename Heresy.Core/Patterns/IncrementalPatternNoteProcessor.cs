@@ -155,6 +155,8 @@ public sealed class IncrementalPatternNoteProcessor : IDisposable
 					"A raw Pattern iterator must have finite nonnegative positions.");
 			if (next is RawPatternStep.Emit && next.Row < _lastSourcePosition)
 			{
+				_context.Diagnostics.ReportDroppedOutOfOrderNote(
+					next.Row, _lastSourcePosition);
 				// No musical rewind: silently skip already-passed notes.
 				if (++discarded > 8192)
 					throw new InvalidOperationException(

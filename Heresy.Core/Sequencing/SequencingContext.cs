@@ -1,5 +1,6 @@
 using System;
 
+using Heresy.Core.Diagnostics;
 using Heresy.Core.Timing;
 
 namespace Heresy.Core.Sequencing;
@@ -22,7 +23,8 @@ public sealed class SequencingContext
 		double playbackSpeedMultiplier = 1.0,
 		int physicalChannelBase = 0,
 		SequencingChannelStateMap? channelStates = null,
-		TrackerMidiMacroConfiguration? trackerMidiMacros = null)
+		TrackerMidiMacroConfiguration? trackerMidiMacros = null,
+		SequencingDiagnosticLog? diagnostics = null)
 	{
 		if (physicalChannelBase < 0)
 			throw new ArgumentOutOfRangeException(nameof(physicalChannelBase));
@@ -35,12 +37,18 @@ public sealed class SequencingContext
 		ChannelStates = channelStates ?? new SequencingChannelStateMap();
 		TrackerMidiMacros = trackerMidiMacros
 			?? TrackerMidiMacroConfiguration.CreateImpulseTrackerDefault();
+		Diagnostics = diagnostics ?? new SequencingDiagnosticLog();
 	}
 
 	public SequencingState State { get; }
 	public DeterministicRandom Random { get; }
 	public SequencingChannelStateMap ChannelStates { get; }
 	public TrackerMidiMacroConfiguration TrackerMidiMacros { get; }
+
+	/// <summary>
+	/// Bounded recoverable sequencing warnings, shared by child contexts.
+	/// </summary>
+	public SequencingDiagnosticLog Diagnostics { get; }
 
 	public double PitchMultiplier { get; }
 	public double PlaybackSpeedMultiplier { get; }
@@ -109,7 +117,8 @@ public sealed class SequencingContext
 			PlaybackSpeedMultiplier * ValidateMultiplier(playbackSpeedMultiplier, nameof(playbackSpeedMultiplier)),
 			checked(PhysicalChannelBase + physicalChannelOffset),
 			ChannelStates,
-			TrackerMidiMacros)
+			TrackerMidiMacros,
+			Diagnostics)
 		{
 			FlattenedSourceExpander = FlattenedSourceExpander,
 			ResolvePatternSourcesAtRowTime = ResolvePatternSourcesAtRowTime,
@@ -127,7 +136,8 @@ public sealed class SequencingContext
 			PlaybackSpeedMultiplier * ValidateMultiplier(playbackSpeedMultiplier, nameof(playbackSpeedMultiplier)),
 			physicalChannelBase: 0,
 			channelStates: new SequencingChannelStateMap(),
-			trackerMidiMacros: TrackerMidiMacros);
+			trackerMidiMacros: TrackerMidiMacros,
+			diagnostics: Diagnostics);
 
 	private static double ValidateMultiplier(double value, string paramName)
 	{
