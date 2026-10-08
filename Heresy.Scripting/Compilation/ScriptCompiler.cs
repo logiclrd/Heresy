@@ -684,7 +684,7 @@ public static class ScriptCompiler
 
 	private static string BuildIncrementalSequenceWrapper(
 		string className, string source)
-		=> $"""
+		=> $$"""
 			using System;
 			using System.Collections.Generic;
 			using Heresy.Core.Sequences;
