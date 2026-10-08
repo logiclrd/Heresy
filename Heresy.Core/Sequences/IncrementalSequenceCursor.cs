@@ -19,7 +19,9 @@ public sealed class IncrementalSequenceCursor : IDisposable
 {
 	private const int MaximumCooperationPerStep = 8192;
 
-	private readonly SequenceEntry[] _entries;
+	private readonly List<SequenceEntry> _entries;
+	private IEnumerator<RawSequenceStep>? _scriptEnumerator;
+	private bool _sourceEnded;
 	private readonly ISequencePatternResolver _resolver;
 	private readonly SequencingContext _context;
 	private readonly IncrementalPatternTimeline _timeline;
@@ -64,7 +66,8 @@ public sealed class IncrementalSequenceCursor : IDisposable
 		if (startRow < 0)
 			throw new ArgumentOutOfRangeException(nameof(startRow));
 
-		_entries = entries.ToArray();
+		_entries = entries.ToList();
+		_sourceEnded = true;
 		_resolver = resolver;
 		_context = context;
 		_timeline = new IncrementalPatternTimeline(context);
@@ -72,7 +75,29 @@ public sealed class IncrementalSequenceCursor : IDisposable
 		_shouldFollowOrderJump = shouldFollowOrderJump;
 		_order = startOrder;
 		_startRowOverride = startRow;
-		_ordersEnded = startOrder >= _entries.Length;
+		_ordersEnded = startOrder >= _entries.Count;
+	}
+
+	/// <summary>
+	/// Consume scripted Play instructions only when an order is required.
+	/// The iterator's local variables and RNG remain suspended across
+	/// entire child Pattern visits, and CPU checkpoints do not move time.
+	/// Previously generated entries remain available for Bxx revisits.
+	/// </summary>
+	public IncrementalSequenceCursor(
+		IIncrementalRawSequenceEntryGenerator generator,
+		ISequencePatternResolver resolver,
+		SequencingContext context,
+		int startOrder = 0,
+		int? startRow = null,
+		Func<SequenceOrderJumpEncounter, bool>? shouldFollowOrderJump = null)
+		: this(Array.Empty<SequenceEntry>(), resolver, context,
+			startOrder, startRow, shouldFollowOrderJump)
+	{
+		ArgumentNullException.ThrowIfNull(generator);
+		_scriptEnumerator = generator.EnumerateRawSteps(context).GetEnumerator();
+		_sourceEnded = false;
+		_ordersEnded = false;
 	}
 
 	/// <summary>The order currently executing, or the next order to visit.</summary>
@@ -102,7 +127,11 @@ public sealed class IncrementalSequenceCursor : IDisposable
 
 			if (_currentInvocation is null && !_ordersEnded)
 			{
-				StartNextOrder();
+				if (!StartNextOrder(out IncrementalPatternTimelineStep? checkpoint))
+				{
+					result = checkpoint;
+					return true;
+				}
 				continue;
 			}
 
@@ -137,12 +166,46 @@ public sealed class IncrementalSequenceCursor : IDisposable
 			"Incremental Sequence exceeded its zero-progress order/cooperation budget.");
 	}
 
-	private void StartNextOrder()
+	private bool StartNextOrder(out IncrementalPatternTimelineStep? checkpoint)
 	{
-		if ((uint)_order >= (uint)_entries.Length)
+		checkpoint = null;
+
+		// Generate at most one script step per dispatch iteration. A
+		// cooperative pause must be observable without draining the
+		// script, and empty/missing orders are guarded by TryStep's
+		// finite same-instant work budget.
+		if (_order >= _entries.Count && !_sourceEnded)
 		{
-			_ordersEnded = true;
-			return;
+			if (_scriptEnumerator is null)
+				throw new InvalidOperationException("Sequence entry iterator is unavailable.");
+			if (_scriptEnumerator.MoveNext())
+			{
+				switch (_scriptEnumerator.Current)
+				{
+					case RawSequenceStep.Play play when play.Entry is not null:
+						_entries.Add(play.Entry);
+						break;
+					case RawSequenceStep.Cooperate:
+						checkpoint = new IncrementalPatternTimelineStep.Cooperate(
+							-1, Tick, Elapsed);
+						return false;
+					default:
+						throw new InvalidOperationException(
+							"Scripted Sequence emitted an invalid raw step.");
+				}
+			}
+			else
+			{
+				_sourceEnded = true;
+				_scriptEnumerator.Dispose();
+				_scriptEnumerator = null;
+			}
+		}
+
+		if (_order >= _entries.Count)
+		{
+			_ordersEnded = _sourceEnded;
+			return true;
 		}
 
 		// Advancing Bxx loops are legitimate indefinite playback. A hard
@@ -160,7 +223,7 @@ public sealed class IncrementalSequenceCursor : IDisposable
 				out IRawPatternNoteGenerator? resolved) || resolved is null)
 		{
 			_order++;
-			return;
+			return true;
 		}
 
 		// A Pattern's finite row count cannot be safely inferred by
@@ -175,6 +238,7 @@ public sealed class IncrementalSequenceCursor : IDisposable
 		_pendingFlow = PatternFlowControl.None;
 		_currentInvocation = _timeline.Add(
 			generator, definition.RowCount, _context, startRow);
+		return true;
 	}
 
 	private void FinishCurrentOrder()
@@ -199,7 +263,7 @@ public sealed class IncrementalSequenceCursor : IDisposable
 
 		_order = flow.OrderJump ?? checked(_order + 1);
 		_startRowOverride = flow.BreakRow;
-		_ordersEnded = (uint)_order >= (uint)_entries.Length;
+		_ordersEnded = _sourceEnded && _order >= _entries.Count;
 	}
 
 	public void Dispose()
@@ -207,6 +271,8 @@ public sealed class IncrementalSequenceCursor : IDisposable
 		if (_disposed)
 			return;
 		_disposed = true;
+		_scriptEnumerator?.Dispose();
+		_scriptEnumerator = null;
 		_timeline.Dispose();
 	}
 }
