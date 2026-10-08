@@ -68,6 +68,16 @@ internal static class ChronologicalDataPatternScheduler
 		}
 	}
 
+	// Scripted timing commands retain PatternNoteProcessor's established
+	// row-boundary semantics: Tempo(1.5, ...) executes at row 1, not at 1.5.
+	// Other supported script events keep their exact fractional-row tick.
+	private static double ScriptEventDueRow(NoteEvent note)
+		=> note.Target.Kind == ChannelTargetKind.Global
+			&& note.Commands.Count > 0
+			&& note.Commands.All(command => command is SetTempoCommand)
+				? Math.Floor(note.Offset.RowOffset)
+				: note.Offset.RowOffset;
+
 	private sealed class ScriptEventSlice : IRawPatternNoteGenerator
 	{
 		private readonly NoteEvent _event;
@@ -167,8 +177,20 @@ internal static class ChronologicalDataPatternScheduler
 						|| note.Offset.RowOffset < 0
 						// A command exactly at the final boundary executes at
 						// that boundary, after the final row's elapsed ticks.
-						|| note.Offset.RowOffset > rowCount
-						|| note.Target.Kind != ChannelTargetKind.Physical)
+						|| note.Offset.RowOffset > rowCount)
+						return false;
+					// Only standalone global SetTempo commands are eligible.
+					// In particular, scripted Speed, ramps, and mixed-command
+					// events are not yet part of the shared-tick contract.
+					if (note.Target.Kind == ChannelTargetKind.Global)
+					{
+						if (note.Commands.Count == 0
+							|| note.Commands.Any(command =>
+								command is not SetTempoCommand))
+							return false;
+						continue;
+					}
+					if (note.Target.Kind != ChannelTargetKind.Physical)
 						return false;
 					foreach (NoteCommand command in note.Commands)
 					{
@@ -380,7 +402,7 @@ internal static class ChronologicalDataPatternScheduler
 						}
 						current.ScriptRowEvents.Sort((a, b) =>
 						{
-							int compare = a.Offset.RowOffset.CompareTo(b.Offset.RowOffset);
+							int compare = ScriptEventDueRow(a).CompareTo(ScriptEventDueRow(b));
 							if (compare != 0)
 								return compare;
 							compare = a.Target.PhysicalChannel.CompareTo(
@@ -401,7 +423,7 @@ internal static class ChronologicalDataPatternScheduler
 
 					NoteEvent scripted = current.ScriptRowEvents[current.ScriptEventIndex];
 					double eventTick = current.RowStartTick
-						+ (scripted.Offset.RowOffset - current.Row)
+						+ (ScriptEventDueRow(scripted) - current.Row)
 							* (current.RowEndTick - current.RowStartTick);
 					if (eventTick > tick + 1e-9)
 					{
@@ -482,7 +504,7 @@ internal static class ChronologicalDataPatternScheduler
 						NoteEvent nextEvent =
 							current.ScriptRowEvents[current.ScriptEventIndex];
 						current.DueTick = current.RowStartTick
-							+ (nextEvent.Offset.RowOffset - current.Row)
+							+ (ScriptEventDueRow(nextEvent) - current.Row)
 								* (current.RowEndTick - current.RowStartTick);
 					}
 					else
