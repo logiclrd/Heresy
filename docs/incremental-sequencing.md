@@ -350,20 +350,71 @@ including cumulative S6x, first-channel SEy selection, combined delays,
 Speed changes, fractional effect repetition, row-scoped cleanup and
 parent/child Tempo timing.
 
-**Still unsupported:** SEy with Txx, and other tracker effects whose
-per-tick or repeated-span semantics have not been migrated (SCx/SDx,
-retrigger, tracker control flow, compound advanced effects), plus
-virtual targets and full recursive invocation lifetime management.
+**Still unsupported:** SEy with Txx, SDx combined with Qxy,
+fixed wall-time offsets on SCx/SDx/Qxy, tracker control flow, compound
+advanced effects beyond the admitted commands, virtual targets and
+full recursive invocation lifetime management.
 Production playback and offline export remain unchanged.
+
+## Ninth executable step: tracker SCx/SDx note timing and Qxy retrigger
+
+The incremental shared-clock prototype now also has a **per-invocation
+tracker-tick operation queue**. These operations are scheduled only when
+their source event is reached, and execute when that cursor's shared
+musical tick is due. They are neither eagerly resolved into future wall
+times nor confused with an ordinary positive fixed-wall offset.
+
+- **SCx note cut:** the effective tick is `max(1,x)`; a Cut is emitted
+  once at that tick, only if `x` fits inside the effective
+  `Speed + S6x` row span. SEy does not repeat an SCx cut. Other
+  commands in its cell may execute at the original event time.
+- **SDx note delay:** the same `max(1,x)` and within-span eligibility
+  apply. The **whole ordinary note/setup command list** remains pending
+  until its actual delayed tracker tick. Source memory, volume and
+  sample-offset transforms therefore resolve atomically at that time,
+  rather than starting a note early and applying its properties later.
+  With SEy the already-resolved command set is copied to the equivalent
+  tick in each repeated span; tracker effect-memory resolution is not
+  rerun for every copy.
+- **Qxy retrigger:** its whole-byte `Q00` memory resolves through the
+  existing mapped `SequencingChannelState` at the source event. Each
+  tracker tick decrements the live `RetriggerCountdown`, emitting
+  `RetriggerCurrentVoiceCommand` only when due and preserving the volume
+  transform nibble. A newly started note initializes the countdown and
+  begins checking on the following tick; a Qxy row without a new note
+  continues from the previous countdown, including across Pattern
+  invocations sharing the mapped physical channel. Zero interval
+  retriggers at each eligible active tick. S6x adds eligible ticks,
+  and SEy continues the countdown through repeated spans.
+- **Shared time and cancellation:** these operations retain tracker-tick
+  deadlines, so a concurrent child's instantaneous or continuous Tempo
+  changes retime their wall timestamps correctly. Cancelling a cursor
+  drops its pending cut, delayed note and retrigger tick operations.
+  For repeated SDx notes, the already mapped physical target is preserved
+  and not mapped twice.
+
+The tests compare the supported SCx/SDx/Qxy cases with the eager
+`PatternNoteProcessor`, including SC0/SC1/SD0/SD1, beyond-span
+suppression, S6x eligibility, SEy repeat rules, atomic sample offsets,
+Q00 effect memory and countdown continuity, zero-interval retrigger,
+mapped flattened-child channels, Tempo changes during pending ticks,
+and cancellation.
+
+**Scope limits:** combining SDx with Qxy is still explicitly rejected
+before effect memory is changed. Fixed wall-time offsets on SCx/SDx/Qxy,
+other advanced composite tracker effects, physical note lifetimes and
+unported row controls require further work. This is an **experimental
+engine**, not yet substituted for the production realtime or offline
+compiler.
 
 ## Proposed next interfaces and migration
 
 1. Expand the now-implemented **within-row shared-tick merger**
-   beyond supported S6x/SEy row extensions, repeatable slides and
-   concurrent Txx ramps. Extract a resumable processor for SEy Tempo
-   repetition, tracker note delays/cuts/retrigger, pattern flow control,
-   complex effect combinations, virtual channels, incompatible row spans
-   and zero-time cooperation guards before production adoption.
+   beyond supported S6x/SEy row extensions, SCx/SDx/Qxy tick deadlines,
+   repeatable slides and concurrent Txx ramps. Finish SEy repeated Tempo,
+   SDx/Qxy interactions, tracker pattern flow, complex command combinations,
+   virtual channels, incompatible row spans and zero-time cooperation
+   guards before production adoption.
 2. Add **script invocation-local iterators** through Roslyn syntax
    rewriting. The existing loop `Checkpoint()` instrumentation for
    `for`/`while`/`do` is the starting point, but the generated
