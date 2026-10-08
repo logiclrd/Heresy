@@ -151,6 +151,75 @@ public sealed class SongPlaybackTransportTests
 	}
 
 
+	[Test]
+	public async Task NewLiveNoteAfterAudioEditRefreshesPlaybackSnapshot()
+	{
+		SongDocument document = new();
+		LiveFactory factory = new();
+		TestBackend backend = new();
+		using SongPlaybackTransport transport = new(backend, factory);
+
+		await transport.SendLiveEventAsync(
+			document,
+			ChannelTarget.Virtual(42),
+			[new StartNoteCommand((ObjectId)17U)]);
+		document.MarkChanged(affectsAudio: true);
+
+		// Releasing the running note must not restart its old session.
+		await transport.SendLiveEventAsync(
+			document,
+			ChannelTarget.Virtual(42),
+			[new NoteOffCommand()]);
+		backend.OpenCount.Should().Be(1);
+
+		await transport.SendLiveEventAsync(
+			document,
+			ChannelTarget.Virtual(42),
+			[new StartNoteCommand((ObjectId)17U)]);
+		backend.OpenCount.Should().Be(2);
+	}
+
+	[Test]
+	public async Task LiveAuditionReusesSnapshotAcrossLayoutChangesOnly()
+	{
+		SongDocument document = new();
+		LiveFactory factory = new();
+		TestBackend backend = new();
+		using SongPlaybackTransport transport = new(backend, factory);
+
+		await transport.SendLiveEventAsync(
+			document,
+			ChannelTarget.Virtual(42),
+			[new StartNoteCommand((ObjectId)17U)]);
+		document.MarkChanged(affectsAudio: false);
+		await transport.SendLiveEventAsync(
+			document,
+			ChannelTarget.Virtual(43),
+			[new StartNoteCommand((ObjectId)17U)]);
+		backend.OpenCount.Should().Be(1);
+	}
+
+	[Test]
+	public async Task LiveAuditionOnDifferentDocumentUsesFreshSnapshot()
+	{
+		SongDocument first = new();
+		SongDocument second = new();
+		LiveFactory factory = new();
+		TestBackend backend = new();
+		using SongPlaybackTransport transport = new(backend, factory);
+
+		await transport.SendLiveEventAsync(
+			first,
+			ChannelTarget.Virtual(42),
+			[new StartNoteCommand((ObjectId)17U)]);
+		await transport.SendLiveEventAsync(
+			second,
+			ChannelTarget.Virtual(42),
+			[new StartNoteCommand((ObjectId)17U)]);
+		backend.OpenCount.Should().Be(2);
+	}
+
+
 	private sealed class LiveFactory
 		: IBackgroundPlaybackSourceFactory
 	{
