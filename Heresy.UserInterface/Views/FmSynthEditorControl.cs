@@ -65,7 +65,8 @@ public sealed class FmSynthEditorControl : UserControl
 			new FmSynthGraphCanvas(
 				synth,
 				SelectNode,
-				MoveNode);
+				MoveNode,
+				ConnectNodes);
 		_selectedNodeId =
 			synth.Graph.OutputNodeId;
 		_canvas.SetSelectedNode(
@@ -352,6 +353,35 @@ public sealed class FmSynthEditorControl : UserControl
 			_canvas.Refresh();
 			_canvas.SetSelectedNode(
 				_selectedNodeId);
+		}
+	}
+
+	private void ConnectNodes(
+		int sourceNodeId,
+		int targetNodeId,
+		int targetInputIndex)
+	{
+		try
+		{
+			uint previousRevision = _workspace.Document.AudioRevision;
+			FmSynthDocumentEditor.ConnectNodes(
+				_workspace,
+				_synth,
+				sourceNodeId,
+				targetNodeId,
+				targetInputIndex);
+			if (_workspace.Document.AudioRevision != previousRevision)
+			{
+				AfterGraphChange(
+					targetNodeId,
+					$"Connected FM node #{sourceNodeId} to #{targetNodeId}, input {targetInputIndex + 1}");
+			}
+		}
+		catch (Exception ex)
+		{
+			_message.Text = $"Cannot connect FM nodes: {ex.Message}";
+			_canvas.Refresh();
+			_canvas.SetSelectedNode(_selectedNodeId);
 		}
 	}
 
