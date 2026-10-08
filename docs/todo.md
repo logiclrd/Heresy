@@ -39,6 +39,15 @@ This file contains only explicitly specified work that remains open.
   of the rendered line. Double-clicking an existing waypoint should delete it.
   Once this interaction exists, remove the raw waypoint-data editing UI.
 
+## File menu and accelerators
+
+- [ ] Add an Exit command to the File menu. It must use the same normal
+  window-close path, including the existing dirty-document Yes/No/Cancel prompt.
+- [ ] Add application accelerators: `Ctrl+N` for File -> New, `Ctrl+O` for
+  File -> Open, `Ctrl+S` for File -> Save, and `Ctrl+Q` for File -> Exit.
+  If any accelerator conflicts with pattern-editor functionality, the pattern
+  editor binding takes precedence while focus is in the pattern editor.
+
 ## Offline rendering and export
 
 - [ ] Define finite export behavior for songs whose `Bxx` effects create loops.
