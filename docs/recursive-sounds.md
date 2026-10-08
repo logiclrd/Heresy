@@ -254,9 +254,9 @@ introduce another scripting language.
   script ID within one schedule; its generated raw events are not
   shared between invocations.
 - The selector conservatively admits script patterns whose raw events use
-  physical channels, zero fixed wall-time offsets, nonnegative row offsets
-  **up to and including** the final pattern boundary, and the currently
-  supported Start/NoteOff/Cut commands. The final row owns events exactly
+  physical channels for Start/NoteOff/Cut, or the global target for standalone
+  SetTempo commands, with zero fixed wall-time offsets and nonnegative row
+  offsets **up to and including** the final pattern boundary. The final row owns events exactly
   at RowCount and runs them at its RowEndTick before cursor retirement;
   these events can launch additional flattened child cursors. More complex
   script commands retain the legacy compiler. Data-pattern support
@@ -268,9 +268,34 @@ introduce another scripting language.
   intervening parent tempo changes. An endpoint child can outlive its
   initiating parent; the compiled logical duration includes its tail.
 
+### Standalone scripted Tempo events on the shared clock
+
+The restricted scheduler also supports script-generated **global
+`SetTempoCommand`** events (the script `Tempo(row, value)` helper). For
+compatibility with `PatternNoteProcessor`, **timing commands apply at their
+row boundary**: `Tempo(1.5, 250)` takes effect at the start of row 1, not
+halfway through it. Notes, Off and Cut retain their exact fractional
+positions. A tempo command at `RowCount` applies at the final endpoint.
+
+The cursor orders these effective row-start operations with ordinary events
+without preparing future child state early. The shared tempo integrates
+elapsed wall time between tick positions only after **all** simultaneous
+operations have run. Across cursors, the stable precedence is mapped
+physical-channel base followed by cursor creation order; within one script
+cursor, commands at the same due tick are ordered by target and emission
+order. This permits competing parent and child script tempo sets and
+scripted siblings on different mapped channels without precalculated
+child wall-time events.
+
+Regressions include fractional scripted `Tempo` snapping to its row start,
+competing parent/child tempo changes at a common tick, and equal-tick
+sibling-script tempo changes ordered by mapped channels. This is **not**
+support for scripted `Speed`, tempo ramps, arbitrary global commands,
+fixed wall-time offsets or complex row/effect operations.
+
 **Not yet universal:** Scripted sequences, arbitrary wall-time script
-offsets, scripted tracker effects and global tempo commands,
-fractional tempo ramps, complex virtual-channel events,
+offsets, scripted Speed and other global/effect commands, tracker
+tempo ramps, complex virtual-channel events,
 pattern control and delayed note commands still need distinct red tests and
 scheduler integration. The older compiler remains for those cases.
 
