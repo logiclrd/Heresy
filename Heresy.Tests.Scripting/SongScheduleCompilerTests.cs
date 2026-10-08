@@ -174,7 +174,7 @@ public sealed class SongScheduleCompilerTests
 		StartNoteCommand[] starts = result.Schedule!
 			.SelectMany(e => e.Commands).OfType<StartNoteCommand>().ToArray();
 		starts.Should().ContainSingle().Which.SourceId.Should().Be(selected);
-		result.Schedule.Single(e =>
+		result.Schedule!.Single(e =>
 			e.Commands.Any(c => c is StartNoteCommand))
 			.Offset.TimeOffset.Should().BeGreaterThan(TimeSpan.FromMilliseconds(120));
 	}
