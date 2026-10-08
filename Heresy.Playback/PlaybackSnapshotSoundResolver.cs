@@ -9,6 +9,7 @@ using Heresy.Core.Samples;
 using Heresy.Render.Envelopes;
 using Heresy.Render.FmSynthesis;
 using Heresy.Render.Instruments;
+using Heresy.Render.Playback;
 using Heresy.Render.Samples;
 using Heresy.Render.Sounds;
 
