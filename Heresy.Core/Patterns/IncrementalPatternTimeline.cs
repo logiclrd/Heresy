@@ -813,6 +813,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	private readonly List<DeferredNote> _delayed = [];
 	private long _nextDeferredOrder;
 	private ActiveTempoRamp? _tempoRamp;
+	private readonly Queue<ActiveTempoRamp> _futureTempoRamps = new();
+	private long _futureTempoOwner;
 	private readonly Queue<IncrementalPatternTimelineStep.Emit> _queuedTempoEvents = new();
 	private long _nextSequence;
 	private long _emissionOrder;
@@ -830,7 +832,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	public double Tick => _tick;
 	public TimeSpan Elapsed { get; private set; }
 	public bool IsComplete => _active.Count == 0
-		&& _delayed.Count == 0 && _queuedTempoEvents.Count == 0;
+		&& _delayed.Count == 0 && _queuedTempoEvents.Count == 0
+		&& _futureTempoRamps.Count == 0;
 
 	/// <summary>
 	/// True while this invocation has unfinished source rows. Unlike
@@ -959,7 +962,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		result = null;
-		while (_active.Count != 0 || _delayed.Count != 0 || _queuedTempoEvents.Count != 0)
+		while (_active.Count != 0 || _delayed.Count != 0
+			|| _queuedTempoEvents.Count != 0 || _futureTempoRamps.Count != 0)
 		{
 			if (_queuedTempoEvents.TryDequeue(out IncrementalPatternTimelineStep.Emit? queued))
 			{
@@ -985,6 +989,32 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				.ThenBy(n => n.Owner.Sequence)
 				.ThenBy(n => n.Order)
 				.FirstOrDefault();
+
+			// Piecewise Txx ramps have an observable boundary whenever one
+			// source's captured row span ends. Activate the next segment
+			// before any event/deadline after that tracker tick.
+			if (_futureTempoRamps.Count != 0 && _tempoRamp is { } segment)
+			{
+				double boundaryTick = segment.EndTick;
+				TimeSpan boundaryWall = Elapsed + TimeSpan.FromSeconds(
+					PredictWallSeconds(boundaryTick));
+				if ((current is null
+						|| current.DueTick >= boundaryTick - TickTolerance)
+					&& (nextWall is null || nextWall.Deadline >= boundaryWall))
+				{
+					MoveToTick(boundaryTick);
+					Elapsed = boundaryWall;
+					CheckCooperationBudget();
+					ActiveTempoRamp nextSegment = _futureTempoRamps.Dequeue();
+					_tempoRamp = nextSegment;
+					QueueTimingEvent(new NoteEvent(
+						new MusicalTime(Elapsed, 0), ChannelTarget.Global,
+						[new SetTempoRampCommand(nextSegment.EndTempo,
+							nextSegment.EndTick - nextSegment.StartTick)]),
+						_futureTempoOwner);
+					continue;
+				}
+			}
 
 			bool useWall = nextWall is not null
 				&& (current is null || nextWall.Deadline < nextTickTime
@@ -1118,14 +1148,9 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		if (pending.Any(x => x.Cursor.ExtraRowSpans != 0))
 			throw new NotSupportedException(
 				"SEy repeating Txx ramps requires a resumable multi-span tempo state machine.");
-		int[] slideSpans = pending
-			.Select(x => checked((int)x.Cursor.EffectiveSpanTicks))
-			.Distinct().ToArray();
-		if (slideSpans.Length > 1)
-			throw new NotSupportedException(
-				"Simultaneous Txx slides with different captured row speeds require separate arbitration.");
-
-		List<byte> slides = [];
+		// Resolve each command exactly once, in mapped physical order.
+		// Each slide retains its own previously captured row span.
+		List<(byte Parameter, int Span)> slides = [];
 		foreach (var request in pending)
 		{
 			NoteEvent raw = request.Timing.Raw;
@@ -1135,9 +1160,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				.ResolveEffectParameter(EffectMemorySlot.Tempo, input);
 			if (parameter >= 0x20)
 			{
-				// A new Tempo set cuts off any previous ramp at the
-				// current shared tick, never at its future endpoint.
 				_tempoRamp = null;
+				_futureTempoRamps.Clear();
 				_root.State.Tempo = parameter;
 				QueueTimingEvent(raw with
 				{
@@ -1147,32 +1171,72 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			}
 			else if (parameter > 0)
 			{
-				slides.Add(parameter);
+				slides.Add((parameter,
+					checked((int)request.Cursor.EffectiveSpanTicks)));
 			}
 			request.Cursor.ConsumeTiming();
 		}
 
 		if (slides.Count > 0)
 		{
-			int span = slideSpans[0];
+			int[] spans = slides.Select(x => x.Span).Distinct()
+				.OrderBy(x => x).ToArray();
 			double initial = _root.State.Tempo;
-			double ending = initial;
-			for (int transition = 1; transition < span; transition++)
+			_tempoRamp = null;
+			_futureTempoRamps.Clear();
+			if (spans.Length == 1)
 			{
-				foreach (byte parameter in slides)
+				// Preserve established same-span IT clamping and output.
+				int span = spans[0];
+				double ending = initial;
+				for (int transition = 1; transition < span; transition++)
+					foreach (var slide in slides)
+						ending = PatternNoteProcessor.ResolveTrackerTempoAtTick(
+							ending, slide.Parameter, firstTick: false);
+				if (Math.Abs(ending - initial) > 1e-12)
 				{
-					ending = PatternNoteProcessor.ResolveTrackerTempoAtTick(
-						ending, parameter, firstTick: false);
+					SetTempoRampCommand ramp = new(ending, span);
+					StartTempoRamp(ramp);
+					QueueTimingEvent(new NoteEvent(
+						new MusicalTime(Elapsed, 0), ChannelTarget.Global,
+						[ramp]), pending[0].Cursor.Sequence);
 				}
 			}
-			_tempoRamp = null;
-			if (Math.Abs(ending - initial) > 1e-12)
+			else
 			{
-				SetTempoRampCommand ramp = new(ending, span);
-				StartTempoRamp(ramp);
+				// Each slide changes Tempo by (span-1) legacy increments
+				// over its own span, exactly as a single-source Txx ramp.
+				// Compose those slopes until each source expires. Clamp
+				// at the ordered segment endpoints.
+				double previousTick = 0;
+				double previousTempo = initial;
+				List<ActiveTempoRamp> segments = [];
+				foreach (int stop in spans)
+				{
+					double requested = initial;
+					foreach (var slide in slides)
+					{
+						int magnitude = slide.Parameter & 0x0F;
+						int sign = slide.Parameter < 0x10 ? -1 : 1;
+						requested += sign * magnitude * (slide.Span - 1.0)
+							* Math.Min(stop, slide.Span) / slide.Span;
+					}
+					double ending = Math.Clamp(requested, 32, 255);
+					segments.Add(new ActiveTempoRamp(
+						_tick + previousTick, _tick + stop,
+						previousTempo, ending));
+					previousTick = stop;
+					previousTempo = ending;
+				}
+				_tempoRamp = segments[0];
+				_futureTempoOwner = pending[0].Cursor.Sequence;
+				foreach (ActiveTempoRamp future in segments.Skip(1))
+					_futureTempoRamps.Enqueue(future);
 				QueueTimingEvent(new NoteEvent(
 					new MusicalTime(Elapsed, 0), ChannelTarget.Global,
-					[ramp]), pending[0].Cursor.Sequence);
+					[new SetTempoRampCommand(segments[0].EndTempo,
+						segments[0].EndTick - segments[0].StartTick)]),
+					_futureTempoOwner);
 			}
 		}
 		return true;
@@ -1264,6 +1328,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	{
 		// A later row-boundary Txx replaces the prior trajectory from the
 		// instantaneous Tempo reached at this tracker tick.
+		_futureTempoRamps.Clear();
 		_tempoRamp = new ActiveTempoRamp(
 			_tick, _tick + ramp.TrackerTicks, _root.State.Tempo, ramp.EndingTempo);
 	}
@@ -1308,6 +1373,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			{
 				// A new direct Tempo command truncates any previous ramp now.
 				_tempoRamp = null;
+				_futureTempoRamps.Clear();
 			}
 
 			NoteScheduleBuilder resolvedTiming = new();
@@ -1615,5 +1681,6 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		_active.Clear();
 		_delayed.Clear();
 		_queuedTempoEvents.Clear();
+		_futureTempoRamps.Clear();
 	}
 }
