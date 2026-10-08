@@ -210,8 +210,25 @@ public sealed class SongPlaybackTransport
 			{
 				// Playback compilation is complete. No UI callback is
 				// invoked from the audio thread. Consumers marshal as needed.
-				RuntimeDiagnostics?.Invoke(
-					this, new PlaybackRuntimeDiagnosticsEventArgs(messages));
+				// Runtime warning observers are informational only. A faulty
+				// UI/logging subscriber must never turn successful playback
+				// into an error (or prevent other subscribers seeing warnings).
+				PlaybackRuntimeDiagnosticsEventArgs args = new(messages);
+				if (RuntimeDiagnostics is { } observers)
+				{
+					foreach (EventHandler<PlaybackRuntimeDiagnosticsEventArgs> observer
+						in observers.GetInvocationList())
+					{
+						try
+						{
+							observer(this, args);
+						}
+						catch (Exception)
+						{
+							// Never interrupt audio for a diagnostic consumer.
+						}
+					}
+				}
 			}
 
 			if (_sourceFactory is IPlaybackPositionTimelineProvider provider
