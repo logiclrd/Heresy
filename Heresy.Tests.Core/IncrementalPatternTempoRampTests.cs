@@ -70,7 +70,7 @@ public sealed class IncrementalPatternTempoRampTests
 		double ending = RampSeconds(125, 135, 6, 6);
 		Assert.That(events.Select(e => e.Offset.TimeOffset.TotalSeconds),
 			Is.EqualTo(new[] { 0.0, middle, ending }).Within(1e-6));
-		Assert.That(events[0].Target, Is.EqualTo(ChannelTarget.Physical(3)));
+		Assert.That(events[0].Target, Is.EqualTo(ChannelTarget.Global));
 		Assert.That(root.State.Tempo, Is.EqualTo(135.0));
 		Assert.That(timeline.Elapsed.TotalSeconds,
 			Is.EqualTo(ending + 2.5 * 6 / 135).Within(1e-6));
