@@ -118,6 +118,26 @@ public static class SongScheduleCompiler
 				document, chronologicalSequence, context);
 		}
 
+		// Scripted order selection is now a per-visit lookup rather than a
+		// materialized Play list. Eligible root arrangements still use
+		// chronological shared-row scheduling; its next order is requested
+		// only when the previous root's rows have completed.
+		if (sequence is ScriptSequenceDefinition chronologicalScript
+			&& startOrder == 0 && startRow is null
+			&& (context is null || context.FlattenedSourceExpander is null
+				&& !context.IsPreparingFlattenedChild)
+			&& ChronologicalDataPatternScheduler.CanHandleSequence(
+				document, chronologicalScript))
+		{
+			ScriptCompilationResult<ISequenceEntrySourceFactory> source =
+				ScriptCompiler.CompileIncrementalSequence(chronologicalScript);
+			if (!source.Success || source.Program is null)
+				return new(null, TimeSpan.Zero, source.Diagnostics);
+			SequencingContext active = context ?? new SequencingContext();
+			return ChronologicalDataPatternScheduler.CompileSequence(
+				document, source.Program.Create(active), active);
+		}
+
 		SequencingContext activeContext = context ?? new SequencingContext();
 		DocumentPatternResolver resolver =
 			new(document);
