@@ -93,12 +93,23 @@ Items that were already completed remain in Git history, not in this checklist.
   can terminate Bxx loops without preexpanding them. Resolved
   Patterns must support the incremental interface; scripted/eager-only
   sources explicitly fail.
-  Next, compose **nested and flattened Pattern/Sequence invocations**
-  with a common cursor/lifetime model, then complete incompatible-span
-  Tempo arbitration, SEy repeated Tempo, SDx/Qxy interaction, virtual
-  channels, and Roslyn coroutine instrumentation with distinct CPU-only
-  checkpoints. Wire generic invocation-lifetime management for data
-  and scripted Sequences.
+  The experimental `IncrementalRecursiveTimeline` now composes
+  **flattened nested data Patterns and data Sequences** through one
+  shared Pattern timeline. A newly due StartNote that resolves to a
+  nested data source starts a child at that tick using additive mapped
+  physical channels; unrelated commands survive the event. Bxx/Cxx
+  order flow, independent child lifetimes, child Tempo changes affecting
+  parent timing, sibling overlap, parent-subtree cancellation and
+  in-flight delayed notes all operate on the same clock. Recursive
+  active-source cycles and non-progressing chains are bounded, while
+  advancing Bxx loops have no artificial lifetime cap. Mixdown starts
+  remain renderer-owned; unsupported transformed flattened and
+  eager-only scripted sources fail explicitly.
+  Next, convert **Roslyn Pattern and Sequence scripts** to genuine
+  invocation-local resumable generators with distinct CPU-only
+  checkpoints, then complete incompatible Tempo spans, SEy repeated
+  Tempo, SDx/Qxy interaction, virtual/mixdown channels and remaining
+  advanced effects before switching production scheduling.
   Preserve out-of-order scripted-event semantics or explicitly resolve
   their ordering policy before migrating playback. Replace the existing
   restricted chronological scheduler rather than adding more special
