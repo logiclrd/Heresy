@@ -92,6 +92,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		public long Sequence { get; }
 		public bool Complete => Row >= RowCount;
 		public bool InRow => _inRow;
+		public double RowSpeed => _rowSpeed;
 		public NoteEvent? DueEvent =>
 			_inRow && _eventIndex < _rowEvents.Count
 				? _rowEvents[_eventIndex] : null;
@@ -261,9 +262,12 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				: note.Offset.RowOffset;
 
 		private static bool IsTiming(NoteEvent note)
-			=> note.Target.Kind == ChannelTargetKind.Global
-				&& note.Commands.Count != 0
-				&& note.Commands.All(c => c is SetTempoCommand or SetSpeedCommand);
+			=> note.Commands.Count != 0
+				&& (note.Target.Kind == ChannelTargetKind.Global
+					&& note.Commands.All(c => c is SetTempoCommand or SetSpeedCommand)
+					|| note.Target.Kind == ChannelTargetKind.Physical
+						&& note.Commands.Count == 1
+						&& note.Commands[0] is ApplyTrackerTempoCommand);
 
 		private static void Validate(NoteEvent note)
 		{
@@ -293,7 +297,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						or ApplyPitchSlideUpCommand or ApplyChannelVolumeSlideCommand
 						or ApplyGlobalVolumeSlideCommand or ApplyPanningSlideCommand
 						or SetOverallChannelVolumeSlideCommand
-						or SetGlobalVolumeSlideCommand or SetSpatialXSlideCommand;
+						or SetGlobalVolumeSlideCommand or SetSpatialXSlideCommand
+						or ApplyTrackerTempoCommand;
 				if (!allowed)
 					throw new NotSupportedException(
 						$"The incremental tick merger does not yet support {command.GetType().Name}.");
@@ -308,10 +313,24 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	private sealed record DeferredNote(
 		Cursor Owner, NoteEvent Raw, TimeSpan Deadline, long Order);
 
+	/// <summary>
+	/// A tracker Tempo ramp is linear in musical tick position, never wall
+	/// time. Its starting Tempo is the *actual* shared Tempo at its boundary.
+	/// </summary>
+	private sealed record ActiveTempoRamp(
+		double StartTick, double EndTick,
+		double StartTempo, double EndTempo)
+	{
+		public double TempoAt(double tick)
+			=> StartTempo + (EndTempo - StartTempo)
+				* Math.Clamp((tick - StartTick) / (EndTick - StartTick), 0, 1);
+	}
+
 	private readonly SequencingContext _root;
 	private readonly List<Cursor> _active = [];
 	private readonly List<DeferredNote> _delayed = [];
 	private long _nextDeferredOrder;
+	private ActiveTempoRamp? _tempoRamp;
 	private long _nextSequence;
 	private long _emissionOrder;
 	private double _tick;
