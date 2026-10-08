@@ -518,27 +518,39 @@ public sealed class IncrementalPatternTimeline : IDisposable
 
 		private bool TryPeek(out RawPatternStep? result)
 		{
-			if (_lookahead is null && !_ended)
+			int discarded = 0;
+			while (_lookahead is null && !_ended)
 			{
-				if (_source.MoveNext())
-				{
-					RawPatternStep step = _source.Current
-						?? throw new InvalidOperationException("Raw Pattern emitted null.");
-					if (!double.IsFinite(step.Row) || step.Row < 0
-						|| step is not RawPatternStep.Cooperate
-							&& step.Row < _lastRow)
-						throw new InvalidOperationException(
-							"Raw Pattern positions must be nonnegative and nondecreasing.");
-					// The CPU-only marker's Row is informational, never
-					// a claim of musical progress or sorted event position.
-					if (step is not RawPatternStep.Cooperate)
-						_lastRow = step.Row;
-					_lookahead = step;
-				}
-				else
+				if (!_source.MoveNext())
 				{
 					_ended = true;
+					break;
 				}
+
+				RawPatternStep step = _source.Current
+					?? throw new InvalidOperationException("Raw Pattern emitted null.");
+				if (!double.IsFinite(step.Row) || step.Row < 0)
+					throw new InvalidOperationException(
+						"Raw Pattern positions must be finite and nonnegative.");
+				if (step is RawPatternStep.Emit && step.Row < _lastRow)
+				{
+					// Earlier note events are too late for this musical
+					// cursor. Discard silently, retaining the last accepted
+					// position; never cause future shared-state changes.
+					if (++discarded > MaximumRawStepsPerRow)
+						throw new InvalidOperationException(
+							"Raw Pattern iterator exceeded its no-progress budget.");
+					continue;
+				}
+				if (step is not RawPatternStep.Cooperate
+					&& step.Row < _lastRow)
+					throw new InvalidOperationException(
+						"Raw Pattern progress markers must be nondecreasing.");
+
+				// Cooperation markers carry only an informational position.
+				if (step is not RawPatternStep.Cooperate)
+					_lastRow = step.Row;
+				_lookahead = step;
 			}
 			result = _lookahead;
 			return result is not null;

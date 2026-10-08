@@ -155,7 +155,8 @@ public static class PatternNoteProcessor
 			&& generator is IDeferredSourcePatternGenerator;
 
 		NoteScheduleBuilder rawBuilder = new();
-		generator.GenerateRawNotes(context, rawBuilder, out double rowCount);
+		generator.GenerateRawNotes(context,
+			new ChronologicalRawPatternNoteReceiver(rawBuilder), out double rowCount);
 		NoteSchedule rawSchedule = rawBuilder.Freeze();
 
 		if (double.IsNaN(rowCount) || double.IsInfinity(rowCount) || rowCount < 0.0)

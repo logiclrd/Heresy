@@ -139,26 +139,35 @@ public sealed class IncrementalPatternNoteProcessor : IDisposable
 
 	private bool TryGetPending(out RawPatternStep? step)
 	{
-		if (_pending is null && !_sourceEnded)
+		int discarded = 0;
+		while (_pending is null && !_sourceEnded)
 		{
-			if (_source.MoveNext())
-			{
-				RawPatternStep next = _source.Current
-					?? throw new InvalidOperationException(
-						"A raw Pattern iterator yielded null.");
-				if (!double.IsFinite(next.Row)
-					|| next.Row < _lastSourcePosition)
-				{
-					throw new InvalidOperationException(
-						"A raw Pattern iterator must advance in nondecreasing source-row order.");
-				}
-				_lastSourcePosition = next.Row;
-				_pending = next;
-			}
-			else
+			if (!_source.MoveNext())
 			{
 				_sourceEnded = true;
+				break;
 			}
+			RawPatternStep next = _source.Current
+				?? throw new InvalidOperationException(
+					"A raw Pattern iterator yielded null.");
+			if (!double.IsFinite(next.Row) || next.Row < 0)
+				throw new InvalidOperationException(
+					"A raw Pattern iterator must have finite nonnegative positions.");
+			if (next is RawPatternStep.Emit && next.Row < _lastSourcePosition)
+			{
+				// No musical rewind: silently skip already-passed notes.
+				if (++discarded > 8192)
+					throw new InvalidOperationException(
+						"A raw Pattern iterator exceeded its no-progress budget.");
+				continue;
+			}
+			if (next is not RawPatternStep.Cooperate
+				&& next.Row < _lastSourcePosition)
+				throw new InvalidOperationException(
+					"Raw Pattern progress markers must be nondecreasing.");
+			if (next is not RawPatternStep.Cooperate)
+				_lastSourcePosition = next.Row;
+			_pending = next;
 		}
 		step = _pending;
 		return step is not null;

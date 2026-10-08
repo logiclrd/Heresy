@@ -123,8 +123,9 @@ public static class ScriptCompiler
 
 	/// <summary>
 	/// Compile a separate, invocation-local streaming Roslyn Pattern program.
-	/// The source must emit notes in nondecreasing row order. This initial
-	/// API is not used by production song compilation or the recursive
+	/// Raw note positions are nondecreasing among accepted events. Earlier
+	/// emissions are silently discarded; equal-row emissions remain in order.
+	/// This API is not used by production song compilation or the recursive
 	/// timeline until CPU checkpoint scheduling and full parity are ready.
 	/// </summary>
 	public static ScriptCompilationResult<IIncrementalRawPatternNoteGenerator>
@@ -960,10 +961,17 @@ public static class ScriptCompiler
 			{
 				if (step is RawPatternStep.Emit emission)
 				{
+					// A script may accidentally emit an already-passed
+					// musical position. It is too late to schedule that
+					// event, so discard it without rewinding or reordering.
 					if (emission.Row < lastRow)
-						throw new NotSupportedException(
-							"Streaming script notes require nondecreasing row order.");
+						continue;
 					lastRow = emission.Row;
+				}
+				else if (step is RawPatternStep.Advance advance
+					&& advance.Row > lastRow)
+				{
+					lastRow = advance.Row;
 				}
 				yield return step;
 			}
@@ -1002,7 +1010,7 @@ public static class ScriptCompiler
 				Activator.CreateInstance(
 					_programType,
 					context,
-					output,
+					new ChronologicalRawPatternNoteReceiver(output),
 					(double)_rowCount,
 					_channelCount)
 					as PatternScriptProgram
