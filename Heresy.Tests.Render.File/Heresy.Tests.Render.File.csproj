@@ -15,12 +15,6 @@
 		<PackageReference Include="NUnit.Analyzers" Version="4.7.0" />
 		<PackageReference Include="NUnit3TestAdapter" Version="5.0.0" />
 		<PackageReference Include="AwesomeAssertions" Version="9.3.0" />
-		<PackageReference Include="org.sndfile.runtime.win-x64" Version="1.2.2" />
-		<PackageReference Include="org.sndfile.runtime.win-arm64" Version="1.2.2" />
-		<PackageReference Include="org.sndfile.runtime.linux-x64" Version="1.2.2.1" />
-		<PackageReference Include="org.sndfile.runtime.linux-arm64" Version="1.2.2.1" />
-		<PackageReference Include="org.sndfile.runtime.osx-x64" Version="1.2.2" />
-		<PackageReference Include="org.sndfile.runtime.osx-arm64" Version="1.2.2" />
 		<ProjectReference Include="..\Heresy.Core\Heresy.Core.csproj" />
 		<ProjectReference Include="..\Heresy.Render\Heresy.Render.csproj" />
 		<ProjectReference Include="..\Heresy.Render.File\Heresy.Render.File.csproj" />
