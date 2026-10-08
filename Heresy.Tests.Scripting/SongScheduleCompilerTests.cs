@@ -18,6 +18,51 @@ namespace Heresy.Tests.Scripting;
 public sealed class SongScheduleCompilerTests
 {
 	[Test]
+	public void FractionalScriptedInvocationContinuesAcrossSequenceOrderBoundary()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Long-running child")
+		{
+			RowCount = 3,
+			ChannelCount = 1,
+		};
+		child.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new SetTempoPatternEffect(250));
+		document.Add(child);
+
+		ObjectId firstId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(firstId, "Fractional order")
+		{
+			RowCount = 2,
+			Source = $"Note(0.5, 0, _O({childId.Value}));",
+		});
+		ObjectId secondId = document.AllocateObjectId();
+		DataPatternDefinition second = new(secondId, "Next order")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		second.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
+		document.Add(second);
+		ObjectId sequenceId = document.AllocateObjectId();
+		DataSequenceDefinition sequence = new(sequenceId, "Song");
+		sequence.Entries.Add(new SequenceEntry(firstId));
+		sequence.Entries.Add(new SequenceEntry(secondId));
+		document.Add(sequence);
+
+		SongScheduleCompilationResult compiled =
+			SongScheduleCompiler.CompileSequence(document, sequenceId);
+		compiled.Success.Should().BeTrue();
+		NoteEvent cut = compiled.Schedule!.Single(e =>
+			e.Commands.Any(c => c is NoteCutCommand));
+		cut.Offset.TimeOffset.Should().Be(TimeSpan.FromMilliseconds(210));
+		compiled.PlaybackPositions.Single(p => p.PatternId == secondId)
+			.Offset.Should().Be(TimeSpan.FromMilliseconds(210));
+		compiled.Duration.Should().Be(TimeSpan.FromMilliseconds(300));
+	}
+
+	[Test]
 	public void ScriptedFractionalParentStartsIndependentChildAtExactTick()
 	{
 		SongDocument document = new();
