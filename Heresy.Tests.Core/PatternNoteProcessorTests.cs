@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 using NUnit.Framework;
 
@@ -176,6 +177,60 @@ public sealed class PatternNoteProcessorTests
 		Assert.That(mixdown.State, Is.Not.SameAs(grandchild.State));
 		Assert.That(mixdown.State.Tempo, Is.EqualTo(grandchild.State.Tempo));
 		Assert.That(mixdown.State.Speed, Is.EqualTo(grandchild.State.Speed));
+	}
+
+	[Test]
+	public void NestedTempoChangeMovesParentRowScopedEffectCleanupToNewRowEnd()
+	{
+		TestPatternGenerator generator = new(
+			1.0,
+			Event(0.0, ChannelTarget.Physical(1),
+				new SetNoteVolumeSlideCommand(1.0)),
+			Event(0.5, ChannelTarget.Physical(0),
+				new StartNoteCommand((Heresy.Core.Objects.ObjectId)17U)));
+		SequencingContext context = new()
+		{
+			FlattenedSourceExpander = new ImmediateTempoExpander(),
+		};
+		NoteScheduleBuilder output = new();
+		PatternNoteProcessor.GenerateNotes(
+			generator, context, output, out TimeSpan duration);
+
+		NoteSchedule schedule = output.Freeze();
+		Assert.That(duration, Is.EqualTo(TimeSpan.FromMilliseconds(90)));
+		NoteEvent clear = schedule.Single(e =>
+			e.Commands.Count == 1
+			&& e.Commands[0] is ClearNoteVolumeSlideCommand);
+		Assert.That(clear.Offset.TimeOffset,
+			Is.EqualTo(TimeSpan.FromMilliseconds(90)));
+		NoteEvent set = schedule.Single(e =>
+			e.Commands.Count == 1
+			&& e.Commands[0] is SetTempoCommand);
+		Assert.That(set.Offset.TimeOffset,
+			Is.EqualTo(TimeSpan.FromMilliseconds(60)));
+	}
+
+	private sealed class ImmediateTempoExpander : IFlattenedNoteSourceExpander
+	{
+		public TimeSpan MaximumAbsoluteEnd => TimeSpan.Zero;
+
+		public IReadOnlyList<NoteEvent>? Expand(
+			NoteEvent noteEvent,
+			SequencingContext context)
+		{
+			if (noteEvent.Commands.Count != 1
+				|| noteEvent.Commands[0] is not StartNoteCommand)
+				return null;
+			context.State.Tempo = 250;
+			return new[]
+			{
+				noteEvent with
+				{
+					Target = ChannelTarget.Global,
+					Commands = new NoteCommand[] { new SetTempoCommand(250) },
+				},
+			};
+		}
 	}
 
 	private static NoteEvent Event(double rowOffset, ChannelTarget target, params NoteCommand[] commands)
