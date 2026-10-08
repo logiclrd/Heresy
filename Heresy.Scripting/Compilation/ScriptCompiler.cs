@@ -793,7 +793,7 @@ public static class ScriptCompiler
 	}
 
 	private sealed class CompiledSequenceSequencer
-		: IPlaybackPositionSequencer
+		: IPlaybackPositionSequencer, IPreparedScriptSequenceEntries
 	{
 		private readonly Type _programType;
 		private readonly ISequencePatternResolver _resolver;
@@ -803,6 +803,8 @@ public static class ScriptCompiler
 			_shouldFollowOrderJump;
 		private readonly List<CompiledPatternPlaybackPosition>
 			_playbackPositions = [];
+		private SequencingContext? _preparedContext;
+		private IReadOnlyList<SequenceEntry>? _preparedEntries;
 
 		public IReadOnlyList<CompiledPatternPlaybackPosition>
 			PlaybackPositions => _playbackPositions;
@@ -821,6 +823,23 @@ public static class ScriptCompiler
 			_shouldFollowOrderJump = shouldFollowOrderJump;
 		}
 
+		public IReadOnlyList<SequenceEntry> PrepareEntries(
+			SequencingContext context)
+		{
+			ArgumentNullException.ThrowIfNull(context);
+			SequenceScriptProgram program =
+				Activator.CreateInstance(
+					_programType,
+					context)
+					as SequenceScriptProgram
+				?? throw new InvalidOperationException(
+					"Could not construct the compiled sequence script.");
+			IReadOnlyList<SequenceEntry> entries = program.Execute();
+			_preparedContext = context;
+			_preparedEntries = entries;
+			return entries;
+		}
+
 		public void GenerateNotes(
 			SequencingContext context,
 			INoteReceiver output,
@@ -829,16 +848,15 @@ public static class ScriptCompiler
 			ArgumentNullException.ThrowIfNull(context);
 			ArgumentNullException.ThrowIfNull(output);
 
-			SequenceScriptProgram program =
-				Activator.CreateInstance(
-					_programType,
-					context)
-					as SequenceScriptProgram
-				?? throw new InvalidOperationException(
-					"Could not construct the compiled sequence script.");
-
+			// Compatibility probing must not execute a dynamic sequence
+			// script twice, consume Random() twice, or change its Play list.
 			IReadOnlyList<SequenceEntry> entries =
-				program.Execute();
+				ReferenceEquals(_preparedContext, context)
+					&& _preparedEntries is not null
+						? _preparedEntries
+						: PrepareEntries(context);
+			_preparedContext = null;
+			_preparedEntries = null;
 			_playbackPositions.Clear();
 			SequenceNoteProcessor.GenerateNotes(
 				entries,
