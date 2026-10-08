@@ -18,6 +18,16 @@ public abstract record IncrementalPatternTimelineStep(double Tick, TimeSpan Time
 
 	public sealed record Advance(double Tick, TimeSpan Time)
 		: IncrementalPatternTimelineStep(Tick, Time);
+
+	/// <summary>
+	/// The invocation completed its terminating Bxx/Cxx source row. The
+	/// surrounding Sequence interprets the order jump and next-pattern
+	/// start row; this timeline does not execute a Sequence order.
+	/// </summary>
+	public sealed record Flow(
+		long InvocationId, PatternFlowControl Control,
+		double Tick, TimeSpan Time)
+		: IncrementalPatternTimelineStep(Tick, Time);
 }
 
 /// <summary>
@@ -61,7 +71,18 @@ public sealed class IncrementalPatternTimeline : IDisposable
 
 	private sealed class Cursor : IDisposable
 	{
-		private readonly IEnumerator<RawPatternStep> _source;
+		private sealed class PatternLoopState(int startRow)
+		{
+			public int StartRow { get; set; } = startRow;
+			public byte RemainingRepeats { get; set; }
+		}
+
+		private readonly IIncrementalRawPatternNoteGenerator _generator;
+		private IEnumerator<RawPatternStep> _source;
+		private readonly Dictionary<int, PatternLoopState> _loopStates = [];
+		private readonly List<(int Channel, int Order, byte Count)> _rowLoopCommands = [];
+		private readonly List<(int Channel, int Order, NoteCommand Command)> _rowFlowCommands = [];
+		private readonly int _initialRow;
 		private readonly List<DeferredTiming> _pendingTiming = [];
 		private readonly List<DeferredTiming> _readyTiming = [];
 		private long _nextTimingOrder;
@@ -90,9 +111,11 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		{
 			Context = context;
 			RowCount = rowCount;
-			Row = Math.Min(rowCount, startRow);
+			_initialRow = Math.Min(rowCount, startRow);
+			Row = _initialRow;
 			DueTick = tick;
 			Sequence = sequence;
+			_generator = generator;
 			_source = generator.EnumerateRawSteps(context).GetEnumerator();
 		}
 
@@ -284,6 +307,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			_extraRowSpans = 0;
 			_repeated.Clear();
 			_scheduled.Clear();
+			_rowLoopCommands.Clear();
+			_rowFlowCommands.Clear();
 			List<NoteEvent> events = [];
 			List<(int Channel, int Order, byte ExtraRows)> rowDelays = [];
 			int sourceOrder = 0;
@@ -313,6 +338,26 @@ public sealed class IncrementalPatternTimeline : IDisposable
 							if (emit.Note.Target.Kind != ChannelTargetKind.Physical)
 								throw new InvalidOperationException("S6x requires a physical channel.");
 							_fineDelayTicks = checked(_fineDelayTicks + fine.ExtraTicks);
+						}
+						else if (command is ApplyTrackerPatternLoopCommand loop)
+						{
+							if (emit.Note.Target.Kind != ChannelTargetKind.Physical
+								|| emit.Note.Offset.TimeOffset != TimeSpan.Zero)
+								throw new NotSupportedException(
+									"SBx requires a physical target without a fixed wall offset.");
+							if (emit.Row < RowCount)
+								_rowLoopCommands.Add((Context.MapPhysicalChannel(
+									emit.Note.Target.PhysicalChannel), sourceOrder, loop.RepeatCount));
+						}
+						else if (command is ApplyTrackerOrderJumpCommand
+							or ApplyTrackerPatternBreakCommand)
+						{
+							if (emit.Note.Target.Kind != ChannelTargetKind.Physical)
+								throw new NotSupportedException(
+									"Bxx/Cxx requires a physical tracker channel.");
+							if (emit.Row < RowCount)
+								_rowFlowCommands.Add((Context.MapPhysicalChannel(
+									emit.Note.Target.PhysicalChannel), sourceOrder, command));
 						}
 						else if (command is ApplyTrackerPatternDelayCommand delay)
 						{
@@ -426,19 +471,100 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			RefreshDue();
 		}
 
-		public void FinishRow()
+		public PatternFlowControl FinishRow()
 		{
-			if (!_inRow || DueEvent is not null)
+			if (!_inRow || DueEvent is not null || DueRepeated is not null
+				|| DueScheduled is not null)
 				throw new InvalidOperationException("Cursor row is not finished.");
+
+			int nextRow = Row + 1;
+			int? firstActiveLoopChannel = null;
+			foreach (var instruction in _rowLoopCommands
+				.OrderBy(x => x.Channel).ThenBy(x => x.Order))
+			{
+				if (!_loopStates.TryGetValue(instruction.Channel,
+					out PatternLoopState? loopState))
+				{
+					loopState = new PatternLoopState(_initialRow);
+					_loopStates.Add(instruction.Channel, loopState);
+				}
+				if (instruction.Count == 0)
+				{
+					loopState.StartRow = Row;
+					continue;
+				}
+				if (loopState.RemainingRepeats == 0)
+				{
+					loopState.RemainingRepeats = instruction.Count;
+					nextRow = loopState.StartRow;
+					firstActiveLoopChannel ??= instruction.Channel;
+				}
+				else
+				{
+					loopState.RemainingRepeats--;
+					if (loopState.RemainingRepeats != 0)
+					{
+						nextRow = loopState.StartRow;
+						firstActiveLoopChannel ??= instruction.Channel;
+					}
+					else
+						loopState.StartRow = Row + 1;
+				}
+			}
+
+			byte? order = null, breakRow = null;
+			foreach (var instruction in _rowFlowCommands
+				.OrderBy(x => x.Order).ThenBy(x => x.Channel))
+			{
+				switch (instruction.Command)
+				{
+					case ApplyTrackerOrderJumpCommand jump:
+						order = jump.Order;
+						break;
+					case ApplyTrackerPatternBreakCommand patternBreak
+						when !firstActiveLoopChannel.HasValue
+							|| instruction.Channel < firstActiveLoopChannel.Value:
+						breakRow = patternBreak.Row;
+						break;
+				}
+			}
+			PatternFlowControl flow = new(order, breakRow)
+			{
+				SourceRow = order.HasValue || breakRow.HasValue ? Row : null,
+			};
+
+			// It is never legal to replay source code with invocation-local
+			// side effects. Only explicitly replay-safe generators can be
+			// restarted for backward SBx row visits.
+			if (!flow.HasControl && nextRow <= Row
+				&& _generator is not IReplayableRawPatternNoteGenerator)
+				throw new NotSupportedException(
+					"SBx backwards loops require a replay-safe raw Pattern generator.");
+
 			_inRow = false;
 			_rowEvents = [];
 			_rowEndCommands.Clear();
 			_repeated.Clear();
 			_scheduled.Clear();
 			_readyTiming.Clear();
-			Row++;
-			// The next row is eligible at exactly this tick. The caller
-			// decides when it executes relative to other due cursors.
+			_rowLoopCommands.Clear();
+			_rowFlowCommands.Clear();
+			if (flow.HasControl)
+				_pendingTiming.Clear();
+			if (flow.HasControl)
+				Row = RowCount;
+			else if (nextRow <= Row)
+			{
+				_source.Dispose();
+				_source = _generator.EnumerateRawSteps(Context).GetEnumerator();
+				_lookahead = null;
+				_ended = false;
+				_lastRow = 0;
+				Row = nextRow;
+			}
+			else
+				Row = nextRow;
+			return flow;
 		}
 
 		private void RefreshDue()
@@ -1211,8 +1337,11 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			result = new IncrementalPatternTimelineStep.Emit(emitted, _tick, Elapsed);
 			return true;
 		}
-		current.FinishRow();
-		result = new IncrementalPatternTimelineStep.Advance(_tick, Elapsed);
+		PatternFlowControl completed = current.FinishRow();
+		result = completed.HasControl
+			? new IncrementalPatternTimelineStep.Flow(
+				current.Sequence, completed, _tick, Elapsed)
+			: new IncrementalPatternTimelineStep.Advance(_tick, Elapsed);
 		return true;
 	}
 
