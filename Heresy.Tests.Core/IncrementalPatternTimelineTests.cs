@@ -373,6 +373,24 @@ public sealed class IncrementalPatternTimelineTests
 	}
 
 	[Test]
+	public void LateRawTempoCommandDoesNotMutateSharedTempoOrRetiming()
+	{
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		timeline.Add(new RawSource(
+			At(2, 0, new NoteCutCommand()),
+			At(1, ChannelTarget.Global, new SetTempoCommand(250)),
+			At(3, 0, new NoteOffCommand())), 4, context);
+
+		NoteEvent[] events = DrainNotes(timeline);
+		Assert.That(events.Select(e => e.Offset.TimeOffset), Is.EqualTo(
+			new[] { TimeSpan.FromMilliseconds(240),
+				TimeSpan.FromMilliseconds(360) }));
+		Assert.That(context.State.Tempo, Is.EqualTo(125));
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(480)));
+	}
+
+	[Test]
 	public void CpuCheckpointAtFractionalPositionDoesNotMoveMusicalClock()
 	{
 		SequencingContext context = new();
