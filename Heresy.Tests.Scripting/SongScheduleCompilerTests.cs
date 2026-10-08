@@ -179,8 +179,9 @@ public sealed class SongScheduleCompilerTests
 		TimeSpan cutTime = result.Schedule!
 			.Where(e => e.Commands.Any(c => c is NoteCutCommand))
 			.Single().Offset.TimeOffset;
-		// First parent row: 120ms. Following row: 60ms at new tempo.
-		cutTime.Should().Be(TimeSpan.FromMilliseconds(180));
+		// The child changes tempo at the shared row-start boundary:
+		// both the invoking row and following row use the new 60ms duration.
+		cutTime.Should().Be(TimeSpan.FromMilliseconds(120));
 	}
 
 	[Test]
