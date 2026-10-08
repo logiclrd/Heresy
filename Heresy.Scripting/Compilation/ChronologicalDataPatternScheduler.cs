@@ -300,10 +300,6 @@ internal static class ChronologicalDataPatternScheduler
 		double tempo = context.State.Tempo;
 		while (active.Count != 0)
 		{
-			if (++workCount > NoteScheduleBuilder.MaximumGeneratedNotes)
-				throw new InvalidOperationException(
-					"Chronological flattened row expansion exceeded the sequencing resource limit.");
-
 			double next = active.Min(cursor => cursor.DueTick);
 			if (next < tick)
 				throw new InvalidOperationException("A nested row cursor moved backwards.");
@@ -326,6 +322,12 @@ internal static class ChronologicalDataPatternScheduler
 					.FirstOrDefault();
 				if (current is null)
 					break;
+				// Every cursor operation counts, including arbitrarily many
+				// fractional events at the same tick (the outer clock need
+				// not advance between these operations).
+				if (++workCount > NoteScheduleBuilder.MaximumGeneratedNotes)
+					throw new InvalidOperationException(
+						"Chronological flattened row expansion exceeded the sequencing resource limit.");
 
 				active.Remove(current);
 				foreach (NoteEvent endOfRow in current.EndOfRowCommands)
