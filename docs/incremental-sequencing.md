@@ -407,14 +407,76 @@ unported row controls require further work. This is an **experimental
 engine**, not yet substituted for the production realtime or offline
 compiler.
 
+## Tenth executable step: lazy SBx row revisits and Bxx/Cxx flow
+
+The experimental incremental Pattern cursor now handles **SBx** by
+revisiting source rows *without expanding the Pattern into a complete
+schedule*. Each invocation maintains its own physical-channel loop
+markers, remaining repeat counts, and current source-row index. At a
+completed row boundary:
+
+- **SB0** marks the current source row as the loop beginning for that
+  channel. Without a marker, the loop begins at the invocation's
+  `startRow` (not at a skipped earlier row). A positive SBx count
+  repeats the marked range that many **additional** times. Each
+  revisit independently resolves Tempo, Speed, Source-column memory,
+  effects, variable-length rows, delayed notes, and row-end cleanup
+  against state as it stands on that visit.
+- Loop decisions are processed in ascending **mapped physical-channel**
+  order, with stable source emission order for ties. A loop end on a
+  lower channel wins the global row revisit; later channel loop
+  controls retain their own per-channel counters. During an active
+  backward loop, Cxx on that loop's channel or a higher channel is
+  suppressed on that pass, following the eager expansion's rule.
+- Backward visits restart raw enumeration at the beginning and skip
+  raw steps until the selected row. This is legal only for an
+  `IReplayableRawPatternNoteGenerator`: a generator that can replay
+  **raw notes without committing tracker state or other side effects**.
+  `DataPatternDefinition` implements that contract. Scripts do not;
+  a nonreplayable source attempting a backward SBx jump fails
+  explicitly. The source enumerator is disposed on each restart.
+  State-bearing scripts will need a genuine resumable/replay policy
+  rather than silently rerunning arbitrary script code.
+- A visit whose last row contains **Bxx/Cxx** now ends at that row
+  boundary and yields an `IncrementalPatternTimelineStep.Flow`
+  carrying its invocation ID and `PatternFlowControl` (OrderJump,
+  BreakRow, and original SourceRow). Bxx and Cxx on the same
+  terminating row compose. This is a **Sequence-level request**;
+  the Pattern timeline does not interpret Bxx as a Pattern-local jump,
+  and does not yet instantiate the next Sequence order.
+- At a backward SBx boundary, an earlier raw source row may have an
+  effect start at exactly the same tick as the previous row's
+  cleanup. Eager output sorts those commands by **original source
+  emission order**, not just by the visit order. The incremental
+  cursor retains previous-row cleanup across the wrap to preserve
+  that ordering for tick-zero effects.
+
+The regressions compare against the eager `PatternNoteProcessor`:
+SB0/SB2, SBx without a marker, retained tracker effect memory on
+revisited rows, per-channel competing loop markers, skipped start rows,
+SEy pattern delays within a loop, Bxx/Cxx composition and termination,
+earlier control rows, and the SBx/Cxx suppression rule. They also
+test replay-safe enumeration restart and rejection of non-replayable
+sources.
+
+**Limits:** SBx is still bounded by the tracker's nibble repeat
+count. An indefinitely repeating **Sequence** requires Sequence
+cursors that consume the new `Flow` steps and re-invoke Patterns
+as needed, not an infinite preexpanded Pattern buffer. Continuous
+cross-invocation note migration, virtual channels, advanced tracker
+commands and script coroutine generation are still separate tasks.
+The production scheduler has not been replaced.
+
 ## Proposed next interfaces and migration
 
 1. Expand the now-implemented **within-row shared-tick merger**
    beyond supported S6x/SEy row extensions, SCx/SDx/Qxy tick deadlines,
-   repeatable slides and concurrent Txx ramps. Finish SEy repeated Tempo,
-   SDx/Qxy interactions, tracker pattern flow, complex command combinations,
-   virtual channels, incompatible row spans and zero-time cooperation
-   guards before production adoption.
+   lazy SBx source-row loops, Bxx/Cxx flow steps, repeatable slides
+   and concurrent Txx ramps. Finish SEy repeated Tempo, SDx/Qxy
+   interactions, complex commands, virtual channels and incompatible
+   spans before production adoption. Add a lazy Sequence cursor that
+   consumes `Flow` instead of eagerly resolving Bxx/Cxx order jumps,
+   with zero-time and loop-growth guards.
 2. Add **script invocation-local iterators** through Roslyn syntax
    rewriting. The existing loop `Checkpoint()` instrumentation for
    `for`/`while`/`do` is the starting point, but the generated
