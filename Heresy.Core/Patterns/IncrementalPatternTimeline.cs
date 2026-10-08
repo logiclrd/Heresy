@@ -243,7 +243,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						or NoteCutCommand or SelectPatternSourceCommand
 						or SetPitchSlideCommand or SetNoteVolumeSlideCommand
 						or ApplyVolumeSlideCommand or ApplyPitchSlideDownCommand
-						or ApplyPitchSlideUpCommand;
+						or ApplyPitchSlideUpCommand or ApplyChannelVolumeSlideCommand
+						or ApplyGlobalVolumeSlideCommand or ApplyPanningSlideCommand
+						or SetOverallChannelVolumeSlideCommand
+						or SetGlobalVolumeSlideCommand or SetSpatialXSlideCommand;
 				if (!allowed)
 					throw new NotSupportedException(
 						$"The incremental tick merger does not yet support {command.GetType().Name}.");
@@ -465,7 +468,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				if (note.Offset.TimeOffset == nominalDuration
 					&& note.Commands.Count != 0
 					&& note.Commands.All(c => c is ClearPitchSlideCommand
-						or ClearNoteVolumeSlideCommand))
+						or ClearNoteVolumeSlideCommand or ClearOverallChannelVolumeSlideCommand
+						or ClearGlobalVolumeSlideCommand or ClearSpatialXSlideCommand))
 				{
 					current.QueueCleanup(note);
 					continue;
