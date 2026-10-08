@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 
 using AwesomeAssertions;
 
+using Heresy.Core.Diagnostics;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequencing;
@@ -17,6 +18,61 @@ namespace Heresy.Tests.Playback;
 [TestFixture]
 public sealed class SongPlaybackTransportTests
 {
+	[Test]
+	public async Task RuntimeDiagnosticsArePublishedFromPreparedSourceAfterPlay()
+	{
+		SongDocument document = new();
+		ObjectId id = document.AllocateObjectId();
+		document.Add(new DataPatternDefinition(id, "Test"));
+
+		DiagnosticFactory factory = new();
+		using SongPlaybackTransport transport = new(new TestBackend(), factory);
+		List<PlaybackRuntimeDiagnosticsEventArgs> events = [];
+		((IPlaybackRuntimeDiagnosticsTransport)transport).RuntimeDiagnostics +=
+			(_, e) => events.Add(e);
+
+		await transport.PlayPatternAsync(document, id);
+		events.Should().ContainSingle();
+		events[0].Diagnostics.Should().ContainSingle();
+		events[0].Diagnostics[0].Code.Should().Be("HRSEQ001");
+		events[0].Diagnostics[0].Row.Should().Be(2);
+
+		await transport.PlayPatternAsync(document, id);
+		events.Should().HaveCount(2);
+		events[1].Diagnostics.Should().ContainSingle();
+		events[1].Diagnostics[0].Row.Should().Be(2);
+	}
+
+	private sealed class DiagnosticFactory :
+		IBackgroundPlaybackSourceFactory,
+		IPlaybackRuntimeDiagnosticReportProvider
+	{
+		private readonly Dictionary<PlaybackRequest, SequencingDiagnostic[]>
+			_pending = new(ReferenceEqualityComparer.Instance);
+
+		public IAudioOutputSource Create(PlaybackRequest request)
+		{
+			_pending[request] = [
+				new SequencingDiagnostic("HRSEQ001",
+					"Dropped out-of-order Pattern note at row 2", 2, 4),
+			];
+			return new SilentSource();
+		}
+
+		public bool TryTakeRuntimeDiagnostics(
+			PlaybackRequest request,
+			out SequencingDiagnostic[] diagnostics)
+		{
+			if (_pending.Remove(request, out SequencingDiagnostic[]? found))
+			{
+				diagnostics = found;
+				return true;
+			}
+			diagnostics = [];
+			return false;
+		}
+	}
+
 	[Test]
 	public async Task PlaySongTargetsCurrentRootSequence()
 	{
