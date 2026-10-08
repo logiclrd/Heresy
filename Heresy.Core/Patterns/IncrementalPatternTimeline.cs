@@ -428,6 +428,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					"Incremental scheduler exceeded its same-tick cooperation budget.");
 	}
 
+
 	private bool TryOperate(Cursor current, out IncrementalPatternTimelineStep? result)
 	{
 		result = null;
@@ -438,26 +439,66 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		}
 		if (current.DueEvent is { } raw)
 		{
+			// Fixed wall-time begins when this musical position is reached.
+			// Resolve commands only upon reaching the established deadline,
+			// even if another cursor changes tempo in between.
+			if (raw.Offset.TimeOffset > TimeSpan.Zero)
+			{
+				_delayed.Add(new DeferredNote(current,
+					raw with { Offset = MusicalTime.Zero },
+					Elapsed + raw.Offset.TimeOffset, _nextDeferredOrder++));
+				current.ConsumeEvent();
+				return false;
+			}
+
 			NoteScheduleBuilder resolved = new();
 			PatternNoteProcessor.GenerateNotes(
 				new SingleEventSlice(raw), current.Context, resolved,
-				out _);
+				out TimeSpan nominalDuration);
 			current.ConsumeEvent();
-			List<NoteEvent> emitted = resolved.Freeze().ToList();
-			if (emitted.Count > 1)
+			List<NoteEvent> immediate = [];
+			foreach (NoteEvent note in resolved.Freeze())
+			{
+				// The common PatternNoteProcessor is authoritative for slide
+				// transformations and tracker-effect memory. Its generated
+				// row-end freezes are deferred until this cursor's own row end.
+				if (note.Offset.TimeOffset == nominalDuration
+					&& note.Commands.Count != 0
+					&& note.Commands.All(c => c is ClearPitchSlideCommand
+						or ClearNoteVolumeSlideCommand))
+				{
+					current.QueueCleanup(note);
+					continue;
+				}
+				if (note.Offset.TimeOffset != TimeSpan.Zero)
+					throw new NotSupportedException(
+						"Incremental raw event resolved into an unsupported delayed operation.");
+				immediate.Add(note);
+			}
+			if (immediate.Count > 1)
 				throw new NotSupportedException(
-					"One raw cursor event resolved into several playback operations.");
-			if (emitted.Count == 0)
+					"One raw cursor event resolved into multiple immediate operations.");
+			if (immediate.Count == 0)
 				return false;
-			NoteEvent note = emitted[0] with
+			NoteEvent emitted = immediate[0] with
 			{
 				Offset = new MusicalTime(Elapsed, 0),
 				EmissionOrder = _emissionOrder++,
 			};
-			result = new IncrementalPatternTimelineStep.Emit(note, _tick, Elapsed);
+			result = new IncrementalPatternTimelineStep.Emit(emitted, _tick, Elapsed);
 			return true;
 		}
-
+		if (current.DueCleanup is { } cleanup)
+		{
+			current.ConsumeCleanup();
+			NoteEvent emitted = cleanup with
+			{
+				Offset = new MusicalTime(Elapsed, 0),
+				EmissionOrder = _emissionOrder++,
+			};
+			result = new IncrementalPatternTimelineStep.Emit(emitted, _tick, Elapsed);
+			return true;
+		}
 		current.FinishRow();
 		result = new IncrementalPatternTimelineStep.Advance(_tick, Elapsed);
 		return true;
