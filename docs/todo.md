@@ -2,6 +2,15 @@
 
 This file contains only explicitly specified work that remains open.
 
+## Document lifecycle and project view
+
+- [ ] Prompt to save when closing the application while the current document is
+  dirty. Use the standard Yes/No/Cancel flow: Yes saves and then exits, No exits
+  without saving, and Cancel aborts the close.
+- [ ] Double-clicking an editable item in the main project view should open its
+  corresponding editor. The matching context-menu action should be bold to
+  communicate that it is the default activation action.
+
 ## Offline rendering and export
 
 - [ ] Add a streaming FLAC sink to `Heresy.Render.File` and make FLAC the
