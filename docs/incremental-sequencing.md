@@ -600,6 +600,26 @@ CPU checkpoint yields from musical time), together with stronger
 mixed effect and mixdown parity before replacing the existing
 compiler and chronological scheduler.
 
+## Recursive composition: initial flattened-child primitive
+
+The shared `IncrementalPatternTimeline` now exposes
+`AddFlattenedChild(generator, rowCount, parent, physicalChannelOffset,
+startRow, pitchMultiplier, playbackSpeedMultiplier)`. This creates a
+`SequencingContext.FlattenedChild` with the inherited shared tracker
+clock and channel-state map, maps its physical channels relative to the
+parent, and registers a separate resumable Pattern invocation at the
+current tick. It rejects parents belonging to a different timeline.
+The returned invocation ID can be observed using
+`HasUnfinishedRows` / `HasOutstandingWork` and cancelled separately.
+
+This is the first explicit composition primitive, **not** recursive
+source resolution yet: callers still decide when to start a child
+from an emitted note. Sequence-as-child scheduling, automatic nested
+source dispatch, invocation ancestry/cancellation, and mixdown's
+independent timing domain are subsequent milestones. In particular,
+mixdown must not be inserted into the shared-clock merger as if it
+were a flattened child. Production playback is unchanged.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
