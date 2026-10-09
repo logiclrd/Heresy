@@ -263,7 +263,7 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 
 		int writtenFrames = 0;
 		while (TryPeekEvent(out PreparedEvent? next)
-			&& next.Frame < end)
+			&& next is not null && next.Frame < end)
 		{
 			long now = _session.NextFrame;
 			if (next.Frame < now)
@@ -282,9 +282,10 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 			// Multiple emissions at one output frame keep their original
 			// streaming order. Scoped broadcast eligibility still checks
 			// StartFrame < current frame, not callback/enqueue order.
-			while (TryPeekEvent(out next) && next.Frame == _session.NextFrame)
+			while (TryPeekEvent(out next) && next is not null
+				&& next.Frame == _session.NextFrame)
 			{
-				if (!TryReadEvent(out PreparedEvent? current))
+				if (!TryReadEvent(out PreparedEvent? current) || current is null)
 					continue;
 				if (!_canceledOwners.Contains(current.InvocationId)
 					&& current.Note is { } note)
