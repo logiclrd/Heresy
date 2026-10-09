@@ -73,6 +73,25 @@ public sealed class PreparedIncrementalAudioSourceTests
 	}
 
 	[Test]
+	public void EventExactlyAtRenderBoundaryAppliesOnlyToFollowingFrame()
+	{
+		TestPattern pattern = new((ObjectId)1U,
+			At(0.5, ChannelTarget.Physical(0),
+				new StartNoteCommand(SoundId)));
+		using IncrementalRecursiveTimeline timeline = Timeline(pattern);
+		using PreparedIncrementalAudioSource source = new(timeline, Session());
+		source.PrepareThrough(TimeSpan.FromMilliseconds(100));
+
+		float[] preceding = new float[60];
+		source.Render(60, preceding);
+		Assert.That(preceding, Is.All.Zero);
+		float[] following = new float[6];
+		source.Render(6, following);
+		Assert.That(following, Is.All.EqualTo(1f));
+		Assert.That(source.NextFrame, Is.EqualTo(66));
+	}
+
+	[Test]
 	public void GlobalTempoChangeRetimesLaterNoteWithoutEagerSongSchedule()
 	{
 		TestPattern pattern = new((ObjectId)1U,
