@@ -20,6 +20,7 @@ namespace Heresy.Playback;
 public sealed class PreparedIncrementalPlaybackPlan : IDisposable
 {
 	private bool _disposed;
+	private AsyncPreparedIncrementalAudioSource? _lookahead;
 
 	internal PreparedIncrementalPlaybackPlan(
 		SongDocumentSnapshot snapshot, IncrementalRecursiveTimeline timeline,
@@ -39,11 +40,27 @@ public sealed class PreparedIncrementalPlaybackPlan : IDisposable
 	public PreparedIncrementalAudioSource Source { get; }
 	public long RootInvocationId { get; }
 
+	/// <summary>
+	/// Start the opt-in background producer. One worker per plan; its
+	/// lifetime is tied to the plan. Stop consuming audio before disposal.
+	/// </summary>
+	public AsyncPreparedIncrementalAudioSource StartLookahead(
+		int lookaheadFrames)
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		if (_lookahead is not null)
+			throw new InvalidOperationException(
+				"A prepared playback plan already has a lookahead worker.");
+		return _lookahead = new AsyncPreparedIncrementalAudioSource(
+			Source, lookaheadFrames);
+	}
+
 	public void Dispose()
 	{
 		if (_disposed)
 			return;
 		_disposed = true;
+		_lookahead?.Dispose();
 		Source.Dispose();
 		Timeline.Dispose();
 	}
