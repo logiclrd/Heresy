@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 
 using Heresy.Core.Objects;
+using Heresy.Core.Instruments;
+using Heresy.Render.Instruments;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequences;
 using Heresy.Core.Sequencing;
@@ -120,6 +122,40 @@ public sealed class PreparedIncrementalPlaybackFactory
 			}
 			return scripts.TryResolve(id, out source);
 		}
+	}
+
+	/// <summary>Bind an instrument's tone graph for one musical note.
+	/// No mutable, shared resolver state or eager audio is retained.</summary>
+	private sealed class InstrumentToneSoundResolver(
+		Func<ObjectId, ISound?> resolve) : ISoundResolver
+	{
+		public bool TryResolve(ObjectId id, bool mixdown, out ISound? sound)
+		{
+			// An Instrument selects a single terminal voice: recursive
+			// Pattern/Sequence tones are rendered as private mixdowns.
+			sound = resolve(id);
+			return sound is not null;
+		}
+	}
+
+	/// <summary>Keep the exact sound/state/envelope snapshot selected while
+	/// walking an Instrument tone graph at a particular event frame.</summary>
+	private sealed class BoundInstrumentInvocationSound(
+		SoundInvocation invocation) : ISound
+	{
+		public NoteConfigurationSnapshot SnapshotNoteConfiguration()
+			=> invocation.Configuration;
+		public SoundState CreateState() => invocation.State;
+		public SoundInvocation CreateInvocation(
+			double pitchMultiplier, double playbackSpeedMultiplier)
+			=> invocation;
+		public long? GetEndFrameExclusive(
+			RenderContext context, SoundState state)
+			=> invocation.Sound.GetEndFrameExclusive(context, state);
+		public void Render(RenderContext context, SoundState state,
+			long startFrame, int frameCount, Span<float> destination)
+			=> invocation.Sound.Render(context, state, startFrame,
+				frameCount, destination);
 	}
 
 	private sealed class TrackedMixdown(
@@ -395,6 +431,92 @@ public sealed class PreparedIncrementalPlaybackFactory
 			}
 		}
 
+		PreparedRecursiveMixdownSound CreatePrivateSound(
+			ObjectId childSource, IReadOnlyList<ObjectId> path, long parentFrame)
+		{
+			if (path.Contains(childSource))
+				throw new InvalidOperationException(
+					$"Recursive source cycle includes object {childSource.Value}.");
+			ObjectId[] childAncestry = new ObjectId[path.Count + 1];
+			for (int i = 0; i < path.Count; i++)
+				childAncestry[i] = path[i];
+			childAncestry[^1] = childSource;
+
+			PrivateRecursivePlayback CreateChildPlayback()
+			{
+				IncrementalRecursiveTimeline childTimeline =
+					scripts.CreateTimeline(new SequencingContext());
+				try
+				{
+					childTimeline.AddRoot(childSource);
+					PlaybackSession childSession = new(
+						new RenderContext(_configuration),
+						new NoteScheduleBuilder().Freeze(), sounds);
+					PreparedIncrementalAudioSource childSourceStream =
+						CreatePrivateMixdownAwareSource(
+							childTimeline, childSession, scripts, sounds,
+							childAncestry, out Action disposeDescendants,
+							isPrivateChild: true);
+					return new PrivateRecursivePlayback(childTimeline,
+						childSession, childSourceStream, disposeDescendants);
+				}
+				catch
+				{
+					childTimeline.Dispose();
+					throw;
+				}
+			}
+			PreparedRecursiveMixdownSound voice = new(
+				CreateChildPlayback(), parentFrame, CreateChildPlayback);
+			privateVoices.Add(voice);
+			return voice;
+		}
+
+		void Track(PreparedRecursiveMixdownSound sound,
+			ChannelTarget target, long owner, long frame)
+		{
+			TrackedMixdown tracked = new(sound, frame,
+				target.Kind == ChannelTargetKind.Physical
+					? target.PhysicalChannel : -1);
+			if (target.Kind == ChannelTargetKind.Physical)
+				physicalVoices[target.PhysicalChannel] = tracked;
+			else if (target.Kind == ChannelTargetKind.Virtual)
+				scopedVoices[(owner, target.VirtualChannelId)] = tracked;
+		}
+
+		// Only a selected tone is visited, so unused instrument branches
+		// cannot cause cycles or unnecessarily instantiate private timelines.
+		ISound? ResolveTone(ObjectId id, IReadOnlyList<ObjectId> path,
+			ChannelTarget target, long owner, long frame)
+		{
+			if (scripts.TryResolve(id, out SongObject? definition))
+			{
+				if (definition is PatternDefinition or SequenceDefinition)
+				{
+					PreparedRecursiveMixdownSound voice =
+						CreatePrivateSound(id, path, frame);
+					Track(voice, target, owner, frame);
+					return voice;
+				}
+				if (definition is InstrumentDefinition instrument)
+				{
+					if (path.Contains(id))
+						throw new InvalidOperationException(
+							$"Recursive instrument source cycle includes object {id.Value}.");
+					ObjectId[] nextPath = new ObjectId[path.Count + 1];
+					for (int p = 0; p < path.Count; p++)
+						nextPath[p] = path[p];
+					nextPath[^1] = id;
+					return new InstrumentSound(instrument,
+						new InstrumentToneSoundResolver(child =>
+							ResolveTone(child, nextPath, target, owner, frame)),
+						sounds);
+				}
+			}
+			return sounds.TryResolve(id, mixdown: false, out ISound? direct)
+				? direct : null;
+		}
+
 		NoteEvent Transform(NoteEvent note, long parentFrame, long owner)
 		{
 			NoteCommand[] commands = new NoteCommand[note.Commands.Count];
@@ -405,6 +527,39 @@ public sealed class PreparedIncrementalPlaybackFactory
 				{
 					ProcessControl(note.Target, owner, parentFrame, command);
 					commands[i] = command;
+					continue;
+				}
+				// An instrument's selected ToneSpecification may lead to
+				// another instrument or a private Pattern/Sequence voice.
+				// Bind the complete invocation now so its recursive leaf is
+				// tracked before subsequent same-frame lifecycle commands.
+				if (scripts.TryResolve(start.SourceId, out SongObject? selected)
+					&& selected is InstrumentDefinition)
+				{
+					if (note.Target.Kind == ChannelTargetKind.Physical)
+						ReplacePhysical(note.Target.PhysicalChannel, parentFrame);
+					else if (note.Target.Kind == ChannelTargetKind.Virtual)
+					{
+						var key = (owner, note.Target.VirtualChannelId);
+						if (scopedVoices.Remove(key, out TrackedMixdown? prior))
+							prior.Sound.ScheduleCut(parentFrame);
+					}
+					ISound instrument = ResolveTone(start.SourceId, ancestry,
+						note.Target, owner, parentFrame)!;
+					SoundInvocation? bound = instrument.CreateInvocation(
+						start.PitchMultiplier, start.PlaybackSpeedMultiplier);
+					if (bound is not null)
+					{
+						ObjectId boundId = sounds.RegisterPreparedMixdown(
+							new BoundInstrumentInvocationSound(bound));
+						commands[i] = start with
+						{
+							SourceId = boundId, Mixdown = false,
+							PitchMultiplier = 1, PlaybackSpeedMultiplier = 1,
+						};
+					}
+					else
+						commands[i] = start;
 					continue;
 				}
 				bool nested = start.Mixdown
@@ -440,51 +595,10 @@ public sealed class PreparedIncrementalPlaybackFactory
 					|| start.PlaybackSpeedMultiplier != 1.0)
 					throw new NotSupportedException(
 						"Recursive mixdown transforms require private-clock remapping.");
-				foreach (ObjectId ancestor in ancestry)
-					if (ancestor == start.SourceId)
-						throw new InvalidOperationException(
-							$"Recursive mixdown source cycle includes object {start.SourceId.Value}.");
-
-				ObjectId[] childAncestry = new ObjectId[ancestry.Count + 1];
-				for (int a = 0; a < ancestry.Count; a++)
-					childAncestry[a] = ancestry[a];
-				childAncestry[^1] = start.SourceId;
-
-				PrivateRecursivePlayback CreateChildPlayback()
-				{
-					IncrementalRecursiveTimeline childTimeline =
-						scripts.CreateTimeline(new SequencingContext());
-					try
-					{
-						childTimeline.AddRoot(start.SourceId);
-						PlaybackSession childSession = new(
-							new RenderContext(_configuration),
-							new NoteScheduleBuilder().Freeze(), sounds);
-						PreparedIncrementalAudioSource childSource =
-							CreatePrivateMixdownAwareSource(
-								childTimeline, childSession, scripts, sounds,
-								childAncestry, out Action disposeDescendants,
-								isPrivateChild: true);
-						return new PrivateRecursivePlayback(
-							childTimeline, childSession, childSource, disposeDescendants);
-					}
-					catch
-					{
-						childTimeline.Dispose();
-						throw;
-					}
-				}
-				PreparedRecursiveMixdownSound privateVoice = new(
-					CreateChildPlayback(), parentFrame, CreateChildPlayback);
+				PreparedRecursiveMixdownSound privateVoice =
+					CreatePrivateSound(start.SourceId, ancestry, parentFrame);
 				ObjectId preparedId = sounds.RegisterPreparedMixdown(privateVoice);
-				privateVoices.Add(privateVoice);
-				TrackedMixdown tracked = new(privateVoice, parentFrame,
-					note.Target.Kind == ChannelTargetKind.Physical
-						? note.Target.PhysicalChannel : -1);
-				if (note.Target.Kind == ChannelTargetKind.Physical)
-					physicalVoices[note.Target.PhysicalChannel] = tracked;
-				else if (note.Target.Kind == ChannelTargetKind.Virtual)
-					scopedVoices[(owner, note.Target.VirtualChannelId)] = tracked;
+				Track(privateVoice, note.Target, owner, parentFrame);
 				commands[i] = start with
 				{
 					SourceId = preparedId,
