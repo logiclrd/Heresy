@@ -72,9 +72,6 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		((ScriptSequenceDefinition)document.Objects[sequenceId]).Source = "return null;";
 		((ScriptSequenceDefinition)plan.Snapshot.Document.Objects[sequenceId]).Source = "return null;";
 		((ScriptPatternDefinition)plan.Snapshot.Document.Objects[scriptPatternId]).Source = "Cut(0, 0);";
-		Assert.Throws<InvalidOperationException>(() =>
-			plan.Source.Render(1, new float[1]));
-		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(160));
 		float[] output = new float[2];
 		plan.Source.Render(2, output);
 		Assert.That(output, Is.All.EqualTo(0.5f).Within(1e-6f));
@@ -101,13 +98,12 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			factory.Create(SongDocumentSnapshot.Create(document), patternId);
 		Assert.That(provider.Calls, Is.EqualTo(1),
 			"Sample-data providers must run during preparation, never Render.");
-		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(130));
 		plan.Source.Render(1, new float[1]);
 		Assert.That(provider.Calls, Is.EqualTo(1));
 	}
 
 	[Test]
-	public void NestedPatternMixdownPreparesOnProducerAndRendersSilence()
+	public void NestedPatternMixdownRendersSilenceWithoutIntermediatePcm()
 	{
 		SongDocument document = new();
 		ObjectId childId = document.AllocateObjectId();
@@ -129,8 +125,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		using PreparedIncrementalPlaybackPlan plan =
 			new PreparedIncrementalPlaybackFactory(Mono(1000))
 				.Create(document, parentId);
-		Assert.DoesNotThrow(() =>
-			plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(120)));
+		Assert.DoesNotThrow(() => plan.Source.Render(1, new float[1]));
 		float[] silence = new float[12];
 		plan.Source.Render(12, silence);
 		Assert.That(silence, Is.All.Zero);
@@ -164,7 +159,6 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		using PreparedIncrementalPlaybackPlan plan =
 			new PreparedIncrementalPlaybackFactory(Mono(1000))
 				.Create(document, parentId);
-		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(150));
 		float[] result = new float[121];
 		plan.Source.Render(result.Length, result);
 		Assert.That(result[0], Is.EqualTo(0.5f).Within(1e-5f));
@@ -202,7 +196,6 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		using PreparedIncrementalPlaybackPlan plan =
 			new PreparedIncrementalPlaybackFactory(Mono(1000))
 				.Create(document, parentId);
-		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(40));
 		float[] output = new float[2];
 		plan.Source.Render(2, output);
 		Assert.That(output, Is.All.EqualTo(0.5f).Within(1e-5f));
@@ -240,7 +233,6 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		using PreparedIncrementalPlaybackPlan plan =
 			new PreparedIncrementalPlaybackFactory(Mono(1000))
 				.Create(document, rootId);
-		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(30));
 		float[] actual = new float[4];
 		plan.Source.Render(4, actual);
 		Assert.That(actual, Is.All.EqualTo(0.5f).Within(1e-5f));
@@ -274,15 +266,11 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		using PreparedIncrementalPlaybackPlan nested =
 			factory.Create(document, parentId);
 
-		direct.Source.PrepareThrough(TimeSpan.FromMilliseconds(3));
-		nested.Source.PrepareThrough(TimeSpan.FromMilliseconds(3));
 		float[] directPcm = new float[16];
 		float[] mixedPcm = new float[16];
 		direct.Source.Render(3, directPcm.AsSpan(0, 6));
 		nested.Source.Render(3, mixedPcm.AsSpan(0, 6));
 
-		direct.Source.PrepareThrough(TimeSpan.FromMilliseconds(9));
-		nested.Source.PrepareThrough(TimeSpan.FromMilliseconds(9));
 		direct.Source.Render(5, directPcm.AsSpan(6, 10));
 		nested.Source.Render(5, mixedPcm.AsSpan(6, 10));
 		for (int i = 0; i < directPcm.Length; i++)
@@ -307,8 +295,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		using PreparedIncrementalPlaybackPlan plan =
 			new PreparedIncrementalPlaybackFactory(Mono(1000))
 				.Create(document, id);
-		Assert.That(() => plan.Source.PrepareThrough(
-			TimeSpan.FromMilliseconds(20)),
+		Assert.That(() => plan.Source.Render(20, new float[20]),
 			Throws.InvalidOperationException.With.Message.Contains("cycle"));
 	}
 
@@ -340,7 +327,6 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		using PreparedIncrementalPlaybackPlan plan =
 			new PreparedIncrementalPlaybackFactory(Mono(1000))
 				.Create(document, parentId);
-		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(200));
 		float[] prefix = new float[1];
 		plan.Source.Render(1, prefix);
 		Assert.That(prefix[0], Is.GreaterThan(0));
@@ -352,7 +338,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		Assert.That(childSession.InputEnded, Is.False,
 			"Preparation must queue Off, not apply it ahead of live PCM rendering.");
 		Assert.That(childSession.NextFrame, Is.EqualTo(1L),
-			"Preparing the entire child timeline must not pre-render its samples.");
+			"A one-frame parent render must advance its child by one frame.");
 		float[] remaining = new float[120];
 		plan.Source.Render(remaining.Length, remaining);
 		Assert.That(childSession.InputEnded, Is.True,
@@ -391,7 +377,6 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		using PreparedIncrementalPlaybackPlan plan =
 			new PreparedIncrementalPlaybackFactory(Mono(1000))
 				.Create(document, parentId);
-		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(200));
 		float[] pcm = new float[150];
 		plan.Source.Render(pcm.Length, pcm);
 		Assert.That(pcm[110], Is.EqualTo(0.5f).Within(1e-5f));
@@ -432,7 +417,6 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		using PreparedIncrementalPlaybackPlan plan =
 			new PreparedIncrementalPlaybackFactory(Mono(1000))
 				.Create(document, parentId);
-		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(310));
 		float[] pcm = new float[300];
 		plan.Source.Render(pcm.Length, pcm);
 		Assert.That(pcm[200], Is.EqualTo(1f).Within(1e-5f));
@@ -469,7 +453,6 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		using PreparedIncrementalPlaybackPlan plan =
 			new PreparedIncrementalPlaybackFactory(Mono(1000))
 				.Create(document, parentId);
-		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(200));
 		float[] output = new float[130];
 		plan.Source.Render(output.Length, output);
 		Assert.That(output[110], Is.EqualTo(0.5f).Within(1e-5f));
@@ -511,7 +494,6 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		using PreparedIncrementalPlaybackPlan plan =
 			new PreparedIncrementalPlaybackFactory(Mono(1000))
 				.Create(document, parentId);
-		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(200));
 		plan.Source.Render(121, new float[121]);
 		object privateSound = plan.Session.VirtualVoices
 			.Single(voice => voice.Sound.GetType().Name == "PreparedRecursiveMixdownSound")
@@ -552,9 +534,9 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		using PreparedIncrementalPlaybackPlan plan =
 			new PreparedIncrementalPlaybackFactory(Mono(1000))
 				.Create(document, parentId);
-		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(200));
 		plan.Source.Render(1, new float[1]);
 		var voice = plan.Session.GetChannelState(0).CurrentVoice!;
+		plan.Source.Render(120, new float[120]);
 		long? privateEnd = voice.Sound.GetEndFrameExclusive(
 			new RenderContext(Mono(1000)), voice.SoundState);
 		Assert.That(privateEnd, Is.EqualTo(120L),
@@ -562,7 +544,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 	}
 
 	[Test]
-	public void PreparingNestedMixdownEventsDoesNotRenderChildPcm()
+	public void ParentRenderAdvancesNestedChildByExactlyRequestedFrames()
 	{
 		SongDocument document = new();
 		ObjectId sampleId = document.AllocateObjectId();
@@ -585,7 +567,6 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		using PreparedIncrementalPlaybackPlan plan =
 			new PreparedIncrementalPlaybackFactory(Mono(1000))
 				.Create(document, rootId);
-		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(300));
 		float[] first = new float[1];
 		plan.Source.Render(1, first);
 		object sound = plan.Session.GetChannelState(0).CurrentSound!;
@@ -627,8 +608,6 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		PreparedIncrementalPlaybackFactory factory = new(Mono(1000));
 		using PreparedIncrementalPlaybackPlan nested = factory.Create(document, rootId);
 		using PreparedIncrementalPlaybackPlan direct = factory.Create(document, childId);
-		nested.Source.PrepareThrough(TimeSpan.FromMilliseconds(50));
-		direct.Source.PrepareThrough(TimeSpan.FromMilliseconds(50));
 
 		float[] reference = new float[12];
 		direct.Source.Render(reference.Length, reference);
@@ -681,7 +660,6 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		using PreparedIncrementalPlaybackPlan plan =
 			new PreparedIncrementalPlaybackFactory(Mono(1000))
 				.Create(document, rootId);
-		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(40));
 		float[] before = new float[3];
 		plan.Source.Render(3, before);
 		Assert.That(before[0], Is.EqualTo(0.5f).Within(1e-6f));
@@ -736,7 +714,6 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		using PreparedIncrementalPlaybackPlan plan =
 			new PreparedIncrementalPlaybackFactory(Mono(1000))
 				.Create(document, rootId);
-		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(50));
 		plan.Source.Render(1, new float[1]);
 		PlaybackVoice outer = plan.Session.GetChannelState(0).CurrentVoice!;
 		ISourceFrameSeekableSound seekable = (ISourceFrameSeekableSound)outer.Sound;
