@@ -169,10 +169,10 @@ public sealed class PreparedIncrementalPlaybackFactory
 
 	/// <summary>
 	/// Each physical mixdown start gets a new private recursive clock and
-	/// renderer. The parent receives an invocation-unique rendered sound ID
-	/// while the producer renders that child's speaker PCM before publishing
-	/// each parent horizon. Neither a child script nor child PCM session runs
-	/// on the parent's callback.
+	/// renderer. The parent receives an invocation-unique sound ID.
+	/// The producer stages only child events before publishing each parent
+	/// horizon. The audio callback renders child PlaybackSessions recursively,
+	/// with no Roslyn or timeline enumeration and no persistent cooked PCM.
 	/// </summary>
 	private PreparedIncrementalAudioSource CreatePrivateMixdownAwareSource(
 		IncrementalRecursiveTimeline timeline,
