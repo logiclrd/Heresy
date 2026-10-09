@@ -18,7 +18,6 @@ using Heresy.Render.Configuration;
 using Heresy.Render.Realtime;
 using Heresy.Render.Samples;
 using Heresy.Render.Timing;
-using Heresy.Scripting.Compilation;
 
 using NUnit.Framework;
 
@@ -43,7 +42,10 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			document, id, startRow: 0, repeat: false);
 		PlaybackRequestAudioSourceFactory factory =
 			new(MonoConfiguration(100));
-		factory.Create(request);
+		IAudioOutputSource source = factory.Create(request);
+		// Diagnostics now arise as the coroutine runs on its rendering worker,
+		// rather than from an eager Create()-time full-song compilation.
+		source.Render(512, new float[512]);
 		IPlaybackRuntimeDiagnosticReportProvider diagnostics = factory;
 
 		diagnostics.TryTakeRuntimeDiagnostics(request, out var warnings)
@@ -259,15 +261,9 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 				new TrackerOrderJumpPatternEffect(0));
 		document.Add(pattern);
 
-		SongScheduleCompilationResult compilation =
-			SongScheduleCompiler.CompilePattern(
-				document,
-				patternId);
-		compilation.Success.Should().BeTrue();
-		long cycleFrames =
-			FrameTime.Ceiling(
-				compilation.Duration,
-				100);
+		// Bxx at row 1 terminates the two 120-ms tracker rows.
+		long cycleFrames = FrameTime.Ceiling(
+			TimeSpan.FromMilliseconds(240), 100);
 		cycleFrames.Should().BeGreaterThan(1);
 
 		PlaybackRequestAudioSourceFactory factory =
@@ -398,8 +394,7 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 		ObjectId parent = AddPatternWithNote(document, childId);
 		ObjectId root = AddSequence(document, parent);
 		int noteFrame = checked((int)FrameTime.Ceiling(
-			SongScheduleCompiler.CompilePattern(document, childId)
-				.Schedule!.First().Offset.TimeOffset, 100));
+			TimeSpan.FromMilliseconds(120), 100));
 		noteFrame.Should().BeGreaterThan(0);
 		PlaybackRequestAudioSourceFactory factory = new(
 			MonoConfiguration(100),
@@ -438,10 +433,11 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			new RecordingSampleProvider(
 				new MemorySampleData(100, 1, new float[] { 1.0f })));
 
-		Action create = () =>
-			factory.Create(SequencePlaybackRequest.Create(document, root));
-		create.Should().Throw<NotSupportedException>()
-			.WithMessage("*not yet implemented*");
+		IAudioOutputSource source = factory.Create(
+			SequencePlaybackRequest.Create(document, root));
+		Action render = () => source.Render(1, new float[1]);
+		render.Should().Throw<NotSupportedException>()
+			.WithMessage("*Transformed flattened child*");
 	}
 
 	[Test]
@@ -464,9 +460,10 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			new RecordingSampleProvider(
 				new MemorySampleData(100, 1, new float[] { 1.0f })));
 
-		Action create = () =>
-			factory.Create(SequencePlaybackRequest.Create(document, root));
-		create.Should().Throw<InvalidOperationException>()
+		IAudioOutputSource source = factory.Create(
+			SequencePlaybackRequest.Create(document, root));
+		Action render = () => source.Render(1, new float[1]);
+		render.Should().Throw<InvalidOperationException>()
 			.WithMessage("*cycle*");
 	}
 
