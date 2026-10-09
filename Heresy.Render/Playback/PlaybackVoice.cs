@@ -215,7 +215,8 @@ public sealed class PlaybackVoice
 		TrackerTickClock tickClock,
 		ulong modulationSeed,
 		int originPhysicalChannel,
-		double sourceGainMultiplier = 1.0)
+		double sourceGainMultiplier = 1.0,
+		long originPhysicalPlaybackOwner = 0)
 	{
 		Sound = sound ?? throw new ArgumentNullException(nameof(sound));
 		SoundState = soundState ?? throw new ArgumentNullException(nameof(soundState));
@@ -227,12 +228,15 @@ public sealed class PlaybackVoice
 			throw new ArgumentOutOfRangeException(nameof(outputChannelCount));
 		if (originPhysicalChannel < 0)
 			throw new ArgumentOutOfRangeException(nameof(originPhysicalChannel));
+		if (originPhysicalPlaybackOwner < 0)
+			throw new ArgumentOutOfRangeException(nameof(originPhysicalPlaybackOwner));
 		if (sourceGainMultiplier < 0.0 || !double.IsFinite(sourceGainMultiplier))
 			throw new ArgumentOutOfRangeException(nameof(sourceGainMultiplier));
 
 		SourceGainMultiplier = sourceGainMultiplier;
 		StartFrame = startFrame;
 		OriginPhysicalChannel = originPhysicalChannel;
+		OriginPhysicalPlaybackOwner = originPhysicalPlaybackOwner;
 		NoteVolume = noteVolume;
 		OverallVolume = overallVolume;
 		_tickClock = tickClock
@@ -275,6 +279,8 @@ public sealed class PlaybackVoice
 	/// This identity remains stable after NNA migration to a virtual voice.
 	/// </summary>
 	public int OriginPhysicalChannel { get; }
+	/// <summary>Logical channel owning this voice, even after NNA migration.</summary>
+	public long OriginPhysicalPlaybackOwner { get; }
 
 	/// <summary>Immutable invocation-local source gain, separate from the
 	/// mutable shared channel's tracker note volume.</summary>

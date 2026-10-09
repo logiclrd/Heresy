@@ -34,7 +34,8 @@ public sealed class PlaybackSession
 	private readonly NoteSchedule _schedule;
 	private readonly ISoundResolver _soundResolver;
 	private readonly TrackerTickClock _tickClock;
-	private readonly SortedDictionary<int, PlaybackChannelState> _channels = [];
+	private readonly SortedDictionary<(long Owner, int Host), PlaybackChannelState>
+		_channels = [];
 	private readonly SortedDictionary<uint, PlaybackChannelState> _targetedVirtualChannels = [];
 	// A Pattern's virtual ID is local to its invocation, not a global
 	// playback channel. The legacy live-preview dictionary above remains
@@ -42,7 +43,8 @@ public sealed class PlaybackSession
 	private readonly SortedDictionary<(long Owner, uint Id), PlaybackChannelState>
 		_scopedVirtualChannels = [];
 	private readonly List<PlaybackVoice> _virtualVoices = [];
-	private readonly SortedDictionary<int, ActiveGlobalVolumeSlide> _globalVolumeSlides = [];
+	private readonly SortedDictionary<(long Owner, int Host), ActiveGlobalVolumeSlide>
+		_globalVolumeSlides = [];
 	private readonly PlaybackOperatorCollection _globalOperators = new();
 
 	private ActiveTempoRamp? _activeTempoRamp;
@@ -219,27 +221,35 @@ public sealed class PlaybackSession
 		if (channel < 0)
 			throw new ArgumentOutOfRangeException(nameof(channel));
 
-		return _channels.TryGetValue(channel, out state);
+		return _channels.TryGetValue((0, channel), out state);
 	}
 
 	public PlaybackChannelState GetChannelState(int channel)
+		=> GetChannelState(channel, 0);
+
+	/// <summary>Owner 0 selects the ordinary parent physical channel;
+	/// positive owners have independent logical channels at that host.</summary>
+	public PlaybackChannelState GetChannelState(int channel, long owner)
 	{
 		if (channel < 0)
 			throw new ArgumentOutOfRangeException(nameof(channel));
 
-		if (!_channels.TryGetValue(channel, out PlaybackChannelState? state))
+		if (owner < 0)
+			throw new ArgumentOutOfRangeException(nameof(owner));
+		if (!_channels.TryGetValue((owner, channel), out PlaybackChannelState? state))
 		{
 			ulong panbrelloSeed = unchecked(
 				0x50414E4252454C4CUL
 				+ 0x9E3779B97F4A7C15UL
-					* ((ulong)(uint)channel + 1UL));
+					* ((ulong)(uint)channel + 1UL)
+				+ (ulong)owner * 0xD1B54A32D192ED03UL);
 
 			state = new PlaybackChannelState(
 				_context.Configuration.OutputChannelCount,
 				_context.Configuration.SampleRate,
 				_tickClock,
 				panbrelloSeed);
-			_channels.Add(channel, state);
+			_channels.Add((owner, channel), state);
 		}
 
 		return state;
@@ -393,7 +403,8 @@ public sealed class PlaybackSession
 
 			PlaybackChannelState origin =
 				GetChannelState(
-					voice.OriginPhysicalChannel);
+					voice.OriginPhysicalChannel,
+					voice.OriginPhysicalPlaybackOwner);
 			voice.AddCutTo(
 				origin.AntiClickTail);
 			_virtualVoices.RemoveAt(index);
@@ -408,7 +419,8 @@ public sealed class PlaybackSession
 	/// </summary>
 	public void ApplyScopedEvent(
 		long invocationId, ChannelTarget target,
-		IReadOnlyList<NoteCommand> commands)
+		IReadOnlyList<NoteCommand> commands,
+		long physicalPlaybackOwner = 0)
 	{
 		if (invocationId < 0)
 			throw new ArgumentOutOfRangeException(nameof(invocationId));
@@ -425,6 +437,15 @@ public sealed class PlaybackSession
 				ApplyVirtualBroadcast(invocationId,
 					target.Kind == ChannelTargetKind.AllVirtual,
 					commands, _nextFrame);
+				return;
+			case ChannelTargetKind.Physical:
+				ApplyEvent(new NoteEvent(
+					new MusicalTime(FrameTime.FrameStartTime(
+						_nextFrame, _context.Configuration.SampleRate), 0),
+					target, commands)
+				{
+					PhysicalPlaybackOwner = physicalPlaybackOwner,
+				}, _nextFrame);
 				return;
 			default:
 				ApplyLiveEvent(target, commands);
@@ -536,7 +557,8 @@ public sealed class PlaybackSession
 			if (cut)
 			{
 				voice.AddCutTo(GetChannelState(
-					voice.OriginPhysicalChannel).AntiClickTail);
+					voice.OriginPhysicalChannel,
+					voice.OriginPhysicalPlaybackOwner).AntiClickTail);
 				_virtualVoices.RemoveAt(i);
 			}
 		}
@@ -686,7 +708,8 @@ public sealed class PlaybackSession
 		}
 
 		int physicalChannel = noteEvent.Target.PhysicalChannel;
-		PlaybackChannelState channel = GetChannelState(physicalChannel);
+		PlaybackChannelState channel = GetChannelState(
+			physicalChannel, noteEvent.PhysicalPlaybackOwner);
 
 		foreach (NoteCommand command in noteEvent.Commands)
 		{
@@ -695,7 +718,8 @@ public sealed class PlaybackSession
 				channel,
 				command,
 				eventFrame,
-				noteEvent.Offset.TimeOffset);
+				noteEvent.Offset.TimeOffset,
+				noteEvent.PhysicalPlaybackOwner);
 		}
 	}
 
@@ -812,7 +836,8 @@ public sealed class PlaybackSession
 		PlaybackChannelState channel,
 		NoteCommand command,
 		long eventFrame,
-		TimeSpan eventTime)
+		TimeSpan eventTime,
+		long physicalPlaybackOwner)
 	{
 		switch (command)
 		{
@@ -821,7 +846,8 @@ public sealed class PlaybackSession
 					physicalChannel,
 					channel,
 					start,
-					eventFrame);
+					eventFrame,
+					physicalPlaybackOwner);
 				break;
 
 			case NoteCutCommand:
@@ -857,13 +883,15 @@ public sealed class PlaybackSession
 					physicalChannel,
 					eventFrame,
 					slide.TicksPerRow ?? _speed,
-					slide.TrackerUnitsPerTick);
+					slide.TrackerUnitsPerTick,
+					physicalPlaybackOwner);
 				break;
 
 			case ClearGlobalVolumeSlideCommand:
 				ClearGlobalVolumeSlide(
 					physicalChannel,
-					eventFrame);
+					eventFrame,
+					physicalPlaybackOwner);
 				break;
 
 			case SetNoteVolumeCommand volume:
@@ -1008,7 +1036,8 @@ public sealed class PlaybackSession
 						physicalChannel,
 						channel,
 						tonePortamento.TargetNote,
-						eventFrame);
+						eventFrame,
+						physicalPlaybackOwner);
 				}
 
 				channel.CurrentVoice?.SetTonePortamento(
@@ -1238,7 +1267,8 @@ public sealed class PlaybackSession
 		int physicalChannel,
 		PlaybackChannelState channel,
 		StartNoteCommand start,
-		long eventFrame)
+		long eventFrame,
+		long physicalPlaybackOwner)
 	{
 		channel.SynchronizeContinuousState(eventFrame);
 
@@ -1281,7 +1311,8 @@ public sealed class PlaybackSession
 			_tickClock,
 			_nextVoiceModulationSeed++,
 			physicalChannel,
-			sourceGainMultiplier: start.GainMultiplier);
+			sourceGainMultiplier: start.GainMultiplier,
+			originPhysicalPlaybackOwner: physicalPlaybackOwner);
 
 		channel.AttachVoice(voice, eventFrame);
 	}
@@ -1290,12 +1321,14 @@ public sealed class PlaybackSession
 		int physicalChannel,
 		PlaybackChannelState channel,
 		TrackerPastNoteAction action,
-		long eventFrame)
+		long eventFrame,
+		long channelOwner)
 	{
 		for (int index = _virtualVoices.Count - 1; index >= 0; index--)
 		{
 			PlaybackVoice voice = _virtualVoices[index];
-			if (voice.OriginPhysicalChannel != physicalChannel)
+			if (voice.OriginPhysicalChannel != physicalChannel
+				|| voice.OriginPhysicalPlaybackOwner != channelOwner)
 				continue;
 
 			switch (action)
@@ -1383,7 +1416,7 @@ public sealed class PlaybackSession
 
 		try
 		{
-			foreach (KeyValuePair<int, PlaybackChannelState> pair in _channels)
+			foreach (KeyValuePair<(long Owner, int Host), PlaybackChannelState> pair in _channels)
 			{
 				PlaybackChannelState channel = pair.Value;
 				Span<float> channelBuffer = rented.AsSpan(0, sampleCount);
@@ -1727,7 +1760,8 @@ public sealed class PlaybackSession
 		int physicalChannel,
 		long absoluteFrame,
 		int ticksPerRow,
-		double trackerUnitsPerTick)
+		double trackerUnitsPerTick,
+		long physicalPlaybackOwner)
 	{
 		if (physicalChannel < 0)
 			throw new ArgumentOutOfRangeException(nameof(physicalChannel));
@@ -1742,11 +1776,11 @@ public sealed class PlaybackSession
 				nameof(trackerUnitsPerTick));
 		}
 
-		if (_globalVolumeSlides.ContainsKey(physicalChannel))
+		if (_globalVolumeSlides.ContainsKey((physicalPlaybackOwner, physicalChannel)))
 		{
 			CommitGlobalVolumeSlide(
 				physicalChannel,
-				absoluteFrame);
+				absoluteFrame, physicalPlaybackOwner);
 		}
 
 		LinearRowPlaybackOperator playbackOperator = new(
@@ -1759,7 +1793,7 @@ public sealed class PlaybackSession
 			commitOnExpire: true);
 		_globalOperators.Add(playbackOperator);
 
-		_globalVolumeSlides[physicalChannel] =
+		_globalVolumeSlides[(physicalPlaybackOwner, physicalChannel)] =
 			new ActiveGlobalVolumeSlide
 			{
 				StartFrame = absoluteFrame,
@@ -1770,7 +1804,8 @@ public sealed class PlaybackSession
 
 	private void ClearGlobalVolumeSlide(
 		int physicalChannel,
-		long absoluteFrame)
+		long absoluteFrame,
+		long physicalPlaybackOwner)
 	{
 		if (physicalChannel < 0)
 			throw new ArgumentOutOfRangeException(nameof(physicalChannel));
@@ -1779,15 +1814,16 @@ public sealed class PlaybackSession
 
 		CommitGlobalVolumeSlide(
 			physicalChannel,
-			absoluteFrame);
+			absoluteFrame, physicalPlaybackOwner);
 	}
 
 	private void CommitGlobalVolumeSlide(
 		int physicalChannel,
-		long absoluteFrame)
+		long absoluteFrame,
+		long physicalPlaybackOwner)
 	{
 		if (!_globalVolumeSlides.Remove(
-			physicalChannel,
+			(physicalPlaybackOwner, physicalChannel),
 			out ActiveGlobalVolumeSlide? slide))
 		{
 			return;
