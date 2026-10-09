@@ -1541,6 +1541,55 @@ asynchronous lookahead buffer. Production realtime/export is unchanged;
 physical-parent Off/Cut/Fade/Continue and private multichannel mixdown
 remain independent parity gates.
 
+## Thirty-third executable step: snapshot-backed opt-in recursive PCM factory
+
+`Heresy.Playback.PreparedIncrementalPlaybackFactory` now constructs a
+`PreparedIncrementalPlaybackPlan` from a mutable `SongDocument` or an
+existing `SongDocumentSnapshot`. The default source is the document's
+root Sequence; an explicitly supplied Pattern/Sequence ID can instead be
+played as the root. This is a **separate experimental factory**, not an
+alternate path inside the production `PlaybackRequestAudioSourceFactory`
+or `OfflineSongRenderPlanFactory`.
+
+The preparation stage captures editable definitions and revisions,
+constructs `PreparedRoslynIncrementalScriptSources` (compiling restricted
+Pattern and Sequence scripts once), creates a fresh shared-tick
+`IncrementalRecursiveTimeline`, then creates a fresh `PlaybackSession`
+with an empty compatibility schedule and a snapshot-based
+`PlaybackSnapshotSoundResolver`. The resolver eagerly preloads **direct**
+Sample, Instrument and FM synth sounds and envelopes, using the existing
+`InMemorySampleDataProvider` by default. It shares immutable decoded
+`SamplePcmData` across snapshots, without re-reading asset paths,
+ZIP entries or codecs. The renderer holds a further private metadata
+clone so that caller changes to the plan's exposed snapshot do not
+change the audio object graph. Script source compilation, timeline
+advance and sample-provider acquisition stay off the audio callback.
+
+The resulting plan exposes `Source`, `Session`, `Timeline`, the
+captured `Snapshot` and `RootInvocationId`. The caller must invoke
+`Source.PrepareThrough` on the single non-audio producer and arrange
+covered `Source.Render` calls on the consumer. Disposing the plan
+disposes its adapter and timeline but intentionally does not invent
+an end-of-input, release or tail-cut policy: callers may explicitly
+use `Session.EndInput()` according to their consumer's lifetime.
+
+The factory attaches an optional producer-side note validator to the
+prepared audio adapter. A nested Pattern/Sequence start with
+`Mixdown: true` fails explicitly **during preparation**, before the
+PCM callback could fall back to compiling that private cooked source.
+The native mixdown private clock and its preserved stereo/5.1/7.1
+speaker feeds are still separate work. Unprepared callback blocks
+remain explicit errors; bounded asynchronous lookahead, cancelation
+past a published lookahead frontier, advanced physical voice
+lifecycle and production/export parity are future integration gates.
+
+Regression tests exercise an actual decoded PCM sample through scripted
+Sequence, data Pattern and nested Roslyn Pattern, including immutable
+PCM sharing and authoring/snapshot mutation isolation. Another test
+ensures injected sample-data providers are called during factory
+preparation rather than rendering; invalid scripts and missing roots
+fail early, and a nested Pattern mixdown is rejected before playback.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
