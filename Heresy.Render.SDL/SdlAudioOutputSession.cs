@@ -12,7 +12,7 @@ internal sealed class SdlAudioOutputSession
 	: IAudioOutputSession
 {
 	private readonly object _gate = new();
-	private readonly IAudioOutputSource _source;
+	private readonly BufferedAudioOutputSource _source;
 	private readonly Action<SdlAudioOutputSession> _onDisposed;
 	private readonly SdlApi.AudioStreamCallback _callback;
 
@@ -27,7 +27,7 @@ internal sealed class SdlAudioOutputSession
 		Action<SdlAudioOutputSession> onDisposed)
 	{
 		Format = format;
-		_source = source ?? throw new ArgumentNullException(nameof(source));
+		ArgumentNullException.ThrowIfNull(source);
 		_onDisposed =
 			onDisposed
 				?? throw new ArgumentNullException(nameof(onDisposed));
@@ -55,6 +55,10 @@ internal sealed class SdlAudioOutputSession
 			throw new InvalidOperationException(
 				$"SDL could not open the default playback device: {SdlApi.GetError()}");
 		}
+
+		// The SDL callback never calls a sequencer or renderer. A dedicated
+		// worker owns the source and publishes bounded interleaved PCM.
+		_source = new BufferedAudioOutputSource(source);
 	}
 
 	public AudioOutputFormat Format { get; }
@@ -69,7 +73,7 @@ internal sealed class SdlAudioOutputSession
 	}
 
 	public Exception? Fault =>
-		Volatile.Read(ref _fault);
+		Volatile.Read(ref _fault) ?? _source.RenderingFault;
 
 	public void Start()
 	{
@@ -123,6 +127,7 @@ internal sealed class SdlAudioOutputSession
 
 		if (stream != IntPtr.Zero)
 			SdlApi.DestroyAudioStream(stream);
+		_source.Dispose();
 
 		_onDisposed(this);
 		GC.SuppressFinalize(this);
