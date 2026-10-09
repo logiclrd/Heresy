@@ -1409,6 +1409,59 @@ scheduler. Full renderer integration of virtual voice lifetimes,
 scoped broadcast semantics and isolated multichannel mixdown is
 still outstanding.
 
+## Thirtieth executable step: invocation-scoped virtual voice playback
+
+The renderer now has an **opt-in** invocation-scoped event path that
+allows virtual events emitted by experimental recursive Pattern
+invocations to create and control **real rendered audio voices**.
+`PlaybackSessionAudioSource.EnqueueScopedEvent(invocationId, target,
+commands)` queues the operation in the existing single-consumer
+realtime event queue; `PlaybackSession.ApplyScopedEvent` applies it
+at the next render block's current frame. Queued operations preserve
+submission order. The legacy `EnqueueLiveEvent` preview API is
+unchanged and does not acquire accidental Pattern scopes.
+
+A scoped virtual playback channel is keyed by **(Pattern invocation
+ID, local VirtualChannelId)**. This means two concurrent flattened
+Patterns may both start Virtual(7), render audible overlapping voices,
+and NoteOff/Cut their own voice without affecting the other.
+Those voices share the normal renderer's sample rate, speaker-channel
+spatialization, volume and anti-click processing; a virtual scope is
+an ownership key, not a mono mixdown bus.
+
+`AllVirtualInScope` reaches only **currently sounding virtual voices
+owned by the issuing Pattern invocation**. `AllVirtual` reaches the
+virtual voices from every invocation, existing unscoped preview
+virtual channels, and displaced NNA voices in the existing virtual
+pool. In both cases, a voice must have started **strictly before**
+the broadcast event's absolute playback frame; same-frame starts
+are not retrospectively controlled. Broadcasts support Note Off,
+Note Cut and direct note volume. They never create voices.
+
+`EnqueueCancelScope(invocationId)` explicitly cuts all currently
+sounding scoped virtual voices for a canceled invocation. Normal
+Pattern completion is distinct from cancellation: outstanding notes
+are allowed to release/tail out naturally. Cancellation respects the
+usual anti-click tail and neither changes sibling voices nor unscoped
+live preview. Scoped channels also participate in end-of-input,
+quiescence, indefinite-tail handling and ordinary multichannel mixing.
+
+Renderer regressions use actual sample PCM to verify overlapping
+identical virtual IDs, scoped Note Off, strict prior-start broadcast
+selection, AllVirtual global broadcast, owner-only cancellation
+with the one-frame anti-click residue, and NNA-migrated voice
+visibility to global but not scoped broadcasts.
+
+**Important integration boundary:** the opt-in event queue applies
+events at the **render block boundary**, just like existing live
+preview events. A production adapter that pulls
+`IncrementalRecursiveTimeline` steps ahead of each audio block,
+retains each step's exact event timestamp, and renders segments at
+those timestamps is still needed for sample-accurate continuous
+recursive playback. This is not an automatic replacement for the
+production playback/export scheduler. Private mixdown sequencing
+clocks and cooked multichannel nested mixdown remain future work.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
