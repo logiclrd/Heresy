@@ -70,9 +70,26 @@ preserving audible release and already-captured anti-click tails. These are
   Recalled Sources can still reclassify Gxx/Lxx at execution time.
   Retired scope controller lookups are removed, while sounding descendant
   voices retain their referenced controller objects until completion.
-  **Still outstanding:** cross-row NNA/cut/off lifecycle behavior for
-  source controllers, more cancellation/same-frame cases, and UI warnings
-  where a flattened source was started on an earlier Pattern row.
+  **Step 54: flattened-source note lifecycle implemented.** An active
+  source instigator owns a logical note even though its children are
+  hosted in independent renderer channels. Note Cut and Note Off on
+  its logical channel immediately end future child production and
+  send Cut/Off to all existing descendant voices (including nested,
+  virtual and NNA-migrated voices) without touching siblings or
+  unrelated voices sharing the physical hosts. Natural source
+  completion remains non-destructive to already sounding voices.
+  Replacing the instigator obeys S73-S76 NNA: Cut (default when no
+  single instrument supplies an NNA policy), Continue (old producer
+  keeps generating), Off or Fade (future notes stop, existing voices
+  release/fade). A later row's volume still controls a releasing
+  source until replaced or cut. Explicit subtree cancellation now
+  cuts matching physical/virtual descendant voices and clears scope
+  state; passive retirement remains separate.
+  **Still outstanding:** richer live UI indications for inherited
+  Source selection and downstream Note Off/Cut controls; more
+  rapid same-frame mixed producer/cancellation cases, and a deeper
+  look at source lifecycle when nested instruments select private
+  mixdowns or custom indefinite scripts.
   The incremental merger admits zero-offset Mxx and native channel-volume
   commands alongside flattened starts.
   The detailed target remains in step 48 below.

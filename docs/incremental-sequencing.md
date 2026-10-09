@@ -2619,3 +2619,64 @@ audible, and both Dxx and Kxx on a later row. Native per-voice pitch
 operations and lifecycle controls remain a separate semantic
 consideration: do not redirect arbitrary retrigger, glide, sample
 offset, note-cut, or NNA operations to the entire child collection.
+
+
+## Fifty-fourth step: flattened-instigator Note Off, Cut, NNA, and cancellation
+
+A non-mixdown flattened Pattern/Sequence is treated as a **single
+logical instigating note** for note termination and displacement,
+just as it is for note-volume automation (step 53). Its produced
+voices remain independent for their own envelopes, channel effect
+memory and hosts, but the enclosing source still has a lifecycle.
+A source that has simply reached its natural final row is *not*
+automatically cut: its already sounding finite or releasing notes
+remain audible, including voices migrated by the child Pattern's
+own NNA rules.
+
+**Explicit Note Off or Cut on the instigating logical channel** ends
+the active descendant producer tree and discards future Pattern/Sequence
+notes at and after that point. The processor emits a scoped
+`ControlFlattenedSourceCommand` in the same timestamped stream:
+Off sends each already-sounding descendant voice a normal note
+release, whereas Cut immediately detaches and anti-clicks it.
+This uses scope identity, not physical-host identity, and it reaches
+descendant physical, scoped virtual, targeted virtual and NNA-migrated
+voices without also affecting a sibling or unrelated parent-host
+voice. A Sample may naturally end immediately on Note Off; envelope
+instruments can instead sustain through their defined release.
+An Off source may still receive later note-volume changes while its
+released tails remain the logical channel's current note, whereas
+Cut clears that current-note association.
+
+**New-note displacement** is resolved separately from Note Off/Cut:
+a subsequent start on the instigating channel applies the old
+source's S73–S76 action before beginning the new note. Cut stops
+the producer and its voices; Off or Fade stops future production
+and releases/fades the existing descendant voices; Continue leaves
+the old producer generating its future events as well as preserving
+any already-sounding child voices. Each replacement gets a fresh
+current-note controller and NNA override. Since one flattened
+Pattern/Sequence does not itself select a single instrument voice,
+its default displacement policy is Cut; explicit S73–S76 overrides
+remain supported and are no longer classified as inapplicable
+single-voice effects. Continue does not mean keeping the old source
+as the instigating channel's *current* note: later channel-volume
+and note-volume effects act on the new current note, while the old
+children retain the old independent source-volume controller.
+
+**Cancellation** is distinct from natural completion.
+`IncrementalRecursiveTimeline.ScopeCanceled` signals an explicitly
+aborted subtree to the renderer on the same PCM thread; the renderer
+cuts descendant voices by their source-scope ancestry and then
+processes the existing `ScopeRetired` notification. Natural
+`ScopeRetired` does not request a cut and continues to preserve
+sounding voices and anti-click tails. A synthetic control event
+for explicit note termination also stops the producer but carries
+Off/Cut/Fade separately so sound endings obey musical semantics.
+
+Regression tests cover S73–S76 producer survival/termination,
+nested sibling isolation, input cancellation after PCM has started,
+cross-row Note Off/Cut, live sample rendering, and cut propagation
+through scoped virtual and NNA-displaced voices with an unrelated
+physical host left untouched. The renderer does not introduce a
+new callback thread, eager event journal or intermediate PCM buffer.
