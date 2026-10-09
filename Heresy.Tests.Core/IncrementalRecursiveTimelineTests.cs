@@ -868,6 +868,39 @@ public sealed class IncrementalRecursiveTimelineTests
 	}
 
 	[Test]
+	public void LaterRowCombinedEffectsControlActiveSourceVolumeWithoutPitchMemory()
+	{
+		DataPatternDefinition parent = Pattern(1, 3);
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote((ObjectId)2U);
+		parent.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new VibratoVolumeSlidePatternEffect(0x01));
+		parent.Grid.GetOrCreateCell(2, 0).Effects.Add(
+			new TonePortamentoVolumeSlidePatternEffect(0x01));
+		DataPatternDefinition child = Pattern(2, 3);
+		child.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote((ObjectId)90U);
+		SequencingContext root = new();
+		using IncrementalRecursiveTimeline timeline = new(
+			root, new Resolver(parent, child));
+		timeline.AddRoot(parent.Id);
+		NoteEvent[] events = Drain(timeline);
+		Assert.That(events.SelectMany(e => e.Commands)
+			.OfType<SetNoteVolumeSlideCommand>().Count(),
+			Is.EqualTo(2), "Both Kxx and Lxx preserve their source-volume slide.");
+		Assert.That(root.GetPhysicalChannelState(0)
+			.TryGetEffectParameter(EffectMemorySlot.VolumeSlide, out _),
+			Is.True);
+		Assert.That(root.GetPhysicalChannelState(0)
+			.TryGetEffectParameter(EffectMemorySlot.Vibrato, out _),
+			Is.False);
+		Assert.That(root.GetPhysicalChannelState(0)
+			.TryGetEffectParameter(EffectMemorySlot.TonePortamento, out _),
+			Is.False);
+		Assert.That(root.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(2));
+	}
+
+	[Test]
 	public void OmittedSourceStartCanFlattenDespitePortamentoAndVolumeEffects()
 	{
 		DataPatternDefinition parent = Pattern(1, 2);

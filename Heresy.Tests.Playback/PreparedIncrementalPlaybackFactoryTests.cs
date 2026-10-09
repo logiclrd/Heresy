@@ -447,8 +447,10 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			Is.EqualTo(1), "Lxx is discarded without disrupting the source.");
 	}
 
-	[Test]
-	public void LaterRowVolumeSlideModulatesAlreadySoundingFlattenedChild()
+	[TestCase(false)]
+	[TestCase(true)]
+	public void LaterRowVolumeSlideModulatesAlreadySoundingFlattenedChild(
+		bool combinedVibratoSlide)
 	{
 		SongDocument document = new();
 		ObjectId sample = document.AllocateObjectId();
@@ -466,7 +468,9 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		call.Note = new StartPatternNote(child);
 		call.Volume = 0.75;
 		parent.Grid.GetOrCreateCell(1, 0).Effects.Add(
-			new TrackerVolumeSlidePatternEffect(0x01));
+			combinedVibratoSlide
+				? new VibratoVolumeSlidePatternEffect(0x01)
+				: new TrackerVolumeSlidePatternEffect(0x01));
 		document.Add(parent);
 		using PreparedIncrementalPlaybackPlan plan =
 			new PreparedIncrementalPlaybackFactory(Mono(1000))
@@ -480,7 +484,8 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		Assert.That(pcm[240], Is.EqualTo((float)(0.5 * (0.75 - 5.0 / 64.0)))
 			.Within(1e-5f));
 		Assert.That(plan.SequencingContext.Diagnostics.IgnoredFlatteningEffects,
-			Is.Zero);
+			Is.EqualTo(combinedVibratoSlide ? 1 : 0),
+			"The source-volume component is audible while only the vibrato component is warned.");
 	}
 
 	[Test]
