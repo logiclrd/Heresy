@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Threading;
 
 using Heresy.Core.Sequences;
@@ -24,6 +25,8 @@ namespace Heresy.Playback;
 internal sealed class PreparedRecursiveMixdownSound : ISound, ISourceFrameSeekableSound, IDisposable
 {
 	private const int BlockFrames = 256;
+	private enum LifecycleKind { Release, Cut, Fade }
+	private sealed record LifecycleChange(long Frame, LifecycleKind Kind);
 	private sealed class NestedState : SoundState
 	{
 		public long SourceFrameOffset { get; set; }
@@ -40,6 +43,9 @@ internal sealed class PreparedRecursiveMixdownSound : ISound, ISourceFrameSeekab
 	private readonly int _channels;
 	private long _preparedFrames;
 	private long _endFrame = -1;
+	private readonly List<LifecycleChange> _lifecycle = [];
+	private int _nextLifecycle;
+	private bool _released;
 
 	public PreparedRecursiveMixdownSound(
 		IncrementalRecursiveTimeline timeline,
@@ -84,12 +90,67 @@ internal sealed class PreparedRecursiveMixdownSound : ISound, ISourceFrameSeekab
 	public long? GetEndFrameExclusive(RenderContext context, SoundState state)
 	{
 		NestedState nested = (NestedState)state;
-		if (nested.NoteOffTime.HasValue)
-			return FrameTime.Ceiling(nested.NoteOffTime.Value, _sampleRate);
+		// Parent Note Off is forwarded into the child's input by the
+		// preparation worker; it is not a hard stop of the entire cooked
+		// signal. Child release envelopes and displaced voices may tail.
 		long end = Volatile.Read(ref _endFrame);
 		return end >= 0
 			? Math.Max(0, end - nested.SourceFrameOffset)
 			: null;
+	}
+
+	/// <summary>
+	/// Propagate a parent-owned voice lifecycle change at an exact parent
+	/// playback frame. These requests are submitted only by the same producer
+	/// that advances the private timeline, not by the PCM callback.
+	/// </summary>
+	public void ScheduleRelease(long parentFrame)
+		=> Schedule(parentFrame, LifecycleKind.Release);
+
+	public void ScheduleCut(long parentFrame)
+		=> Schedule(parentFrame, LifecycleKind.Cut);
+
+	public void ScheduleFade(long parentFrame)
+		=> Schedule(parentFrame, LifecycleKind.Fade);
+
+	private void Schedule(long parentFrame, LifecycleKind kind)
+	{
+		if (parentFrame < ParentStartFrame)
+			throw new ArgumentOutOfRangeException(nameof(parentFrame));
+		long at = parentFrame - ParentStartFrame;
+		if (at < _preparedFrames)
+			throw new InvalidOperationException(
+				"Cannot apply private mixdown lifecycle behind the prepared PCM frontier.");
+		if (_lifecycle.Count != 0 && at < _lifecycle[^1].Frame)
+			throw new InvalidOperationException(
+				"Private mixdown lifecycle commands must arrive chronologically.");
+		_lifecycle.Add(new LifecycleChange(at, kind));
+	}
+
+	private void ApplyLifecycleAtCurrentFrame()
+	{
+		while (_nextLifecycle < _lifecycle.Count
+			&& _lifecycle[_nextLifecycle].Frame == _preparedFrames)
+		{
+			LifecycleChange action = _lifecycle[_nextLifecycle++];
+			switch (action.Kind)
+			{
+				case LifecycleKind.Cut:
+					Volatile.Write(ref _endFrame, _preparedFrames);
+					return;
+				case LifecycleKind.Release:
+					if (!_session.InputEnded)
+					{
+						_session.EndInput();
+						_session.CutIndefiniteActiveVoicesAfterEndInput();
+					}
+					_released = true;
+					break;
+				case LifecycleKind.Fade:
+					_session.RequestFadeOfActiveVoices();
+					break;
+			}
+		}
 	}
 
 	/// <summary>
@@ -102,7 +163,10 @@ internal sealed class PreparedRecursiveMixdownSound : ISound, ISourceFrameSeekab
 			throw new ArgumentOutOfRangeException(nameof(exclusiveEnd));
 		while (_preparedFrames < exclusiveEnd && Volatile.Read(ref _endFrame) < 0)
 		{
-			if (_source.IsPreparedToEnd && !_session.InputEnded
+			ApplyLifecycleAtCurrentFrame();
+			if (Volatile.Read(ref _endFrame) >= 0)
+				break;
+			if (!_released && _source.IsPreparedToEnd && !_session.InputEnded
 				&& _preparedFrames >= FrameTime.Ceiling(_timeline.Elapsed, _sampleRate))
 			{
 				_session.EndInput();
@@ -117,7 +181,9 @@ internal sealed class PreparedRecursiveMixdownSound : ISound, ISourceFrameSeekab
 			// immutable block with newly prepared frames.
 			long next = Math.Min(exclusiveEnd,
 				checked((_preparedFrames / BlockFrames + 1) * BlockFrames));
-			if (_source.IsPreparedToEnd && !_session.InputEnded)
+			if (_nextLifecycle < _lifecycle.Count)
+				next = Math.Min(next, _lifecycle[_nextLifecycle].Frame);
+			if (!_released && _source.IsPreparedToEnd && !_session.InputEnded)
 				next = Math.Min(next,
 					FrameTime.Ceiling(_timeline.Elapsed, _sampleRate));
 			if (next <= _preparedFrames)
@@ -126,9 +192,10 @@ internal sealed class PreparedRecursiveMixdownSound : ISound, ISourceFrameSeekab
 				// boundary. The next iteration releases its outstanding voices.
 				continue;
 			}
-			_source.PrepareThrough(FrameTime.FrameStartTime(next, _sampleRate));
+			if (!_released)
+				_source.PrepareThrough(FrameTime.FrameStartTime(next, _sampleRate));
 			// The first call can discover a shorter natural end.
-			if (_source.IsPreparedToEnd && !_session.InputEnded)
+			if (!_released && _source.IsPreparedToEnd && !_session.InputEnded)
 			{
 				long end = FrameTime.Ceiling(_timeline.Elapsed, _sampleRate);
 				if (end > _preparedFrames)
@@ -136,7 +203,10 @@ internal sealed class PreparedRecursiveMixdownSound : ISound, ISourceFrameSeekab
 			}
 			int count = checked((int)(next - _preparedFrames));
 			float[] output = new float[checked(count * _channels)];
-			_source.Render(count, output);
+			if (_released)
+				_session.Render(_session.NextFrame, count, output);
+			else
+				_source.Render(count, output);
 			long chunkId = _preparedFrames / BlockFrames;
 			int chunkOffset = checked((int)(_preparedFrames % BlockFrames));
 			float[] snapshot = new float[checked(BlockFrames * _channels)];
