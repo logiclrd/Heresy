@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 
 using Heresy.Core.Sequencing;
+using Heresy.Render.Playback;
 
 namespace Heresy.Render.Realtime;
 
@@ -32,6 +33,19 @@ public interface IAudioOutputSource
 	void Render(
 		int frameCount,
 		Span<float> destination);
+}
+
+/// <summary>
+/// A finite arrangement is generated incrementally rather than compiled
+/// up front. Offline renderers request the remaining logical frames, then
+/// drain the exposed session's existing release tails.
+/// </summary>
+public interface IIncrementalArrangementSource : IAudioOutputSource
+{
+	PlaybackSession Session { get; }
+	bool IsComplete { get; }
+	TimeSpan LogicalDuration { get; }
+	int RenderLogical(int frameCount, Span<float> destination);
 }
 
 public sealed record LivePlaybackEvent(
