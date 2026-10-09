@@ -36,7 +36,7 @@ public sealed class PreparedIncrementalAudioSourceTests
 		using IncrementalRecursiveTimeline timeline = Timeline(pattern);
 		using PreparedIncrementalAudioSource source =
 			new(timeline, Session());
-		source.PrepareThrough(TimeSpan.FromMilliseconds(100));
+		source.PrepareThrough(TimeSpan.FromMilliseconds(110));
 
 		float[] output = new float[105];
 		source.Render(17, output.AsSpan(0, 17));
