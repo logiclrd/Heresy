@@ -781,6 +781,128 @@ public sealed class IncrementalRecursiveTimelineTests
 	}
 
 	[Test]
+	public void FlattenedStartIgnoresCombinedAndDirectNoteVolumeSlidesButKeepsChannelVolume()
+	{
+		DataPatternDefinition parent = Pattern(1, 2);
+		PatternCell call = parent.Grid.GetOrCreateCell(0, 0);
+		call.Note = new StartPatternNote((ObjectId)2U);
+		call.Volume = 0.6;
+		call.Effects.Add(new TrackerVolumeSlidePatternEffect(0x21));
+		call.Effects.Add(new VibratoVolumeSlidePatternEffect(0x32));
+		call.Effects.Add(new TonePortamentoVolumeSlidePatternEffect(0x43));
+		call.Effects.Add(new TrackerVolumeColumnPatternEffect(
+			TrackerVolumeColumnEffectKind.VolumeSlideUp, 5));
+		call.Effects.Add(new TrackerChannelVolumePatternEffect(32));
+		DataPatternDefinition child = Pattern(2, 1);
+		child.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteOff();
+		SequencingContext context = new();
+		using IncrementalRecursiveTimeline timeline = new(
+			context, new Resolver(parent, child));
+		timeline.AddRoot(parent.Id);
+		NoteEvent[] events = Drain(timeline);
+		Assert.That(events.SelectMany(e => e.Commands).OfType<NoteOffCommand>()
+			.Count(), Is.EqualTo(1),
+			"Gxx+volume-slide must not turn the flattened start into a pitch target.");
+		Assert.That(events.SelectMany(e => e.Commands)
+			.OfType<SetNoteVolumeSlideCommand>(), Is.Empty);
+		Assert.That(events.SelectMany(e => e.Commands)
+			.OfType<AdjustCurrentNoteVolumeCommand>(), Is.Empty);
+		Assert.That(events.SelectMany(e => e.Commands)
+			.OfType<SetOverallChannelVolumeCommand>().Select(v => v.Volume),
+			Is.EqualTo(new[] { 0.5 }),
+			"Mxx is a true channel-wide control and must survive filtering.");
+		foreach (EffectMemorySlot slot in new[] {
+			EffectMemorySlot.VolumeSlide, EffectMemorySlot.TonePortamento,
+			EffectMemorySlot.Vibrato, EffectMemorySlot.VolumeColumnSlide })
+			Assert.That(context.GetPhysicalChannelState(0)
+				.TryGetEffectParameter(slot, out _), Is.False,
+				$"Ignored effect must not seed {slot} memory.");
+		Assert.That(context.GetPhysicalChannelState(0).NoteVolume,
+			Is.EqualTo(0.6), "Caller still remembers the explicit start volume.");
+		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(4));
+		Assert.That(call.Effects, Has.Count.EqualTo(5));
+	}
+
+	[Test]
+	public void OmittedSourceStartCanFlattenDespitePortamentoAndVolumeEffects()
+	{
+		DataPatternDefinition parent = Pattern(1, 2);
+		parent.Grid.GetOrCreateCell(0, 0).SourceId = (ObjectId)2U;
+		PatternCell call = parent.Grid.GetOrCreateCell(1, 0);
+		call.Note = new StartPatternNote();
+		call.Effects.Add(new TonePortamentoPatternEffect(0x05));
+		call.Effects.Add(new TonePortamentoVolumeSlidePatternEffect(0x35));
+		DataPatternDefinition child = Pattern(2, 1);
+		child.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteOff();
+		SequencingContext context = new();
+		using IncrementalRecursiveTimeline timeline = new(
+			context, new Resolver(parent, child));
+		timeline.AddRoot(parent.Id);
+		NoteEvent[] events = Drain(timeline);
+		Assert.That(events.SelectMany(e => e.Commands).OfType<NoteOffCommand>()
+			.Count(), Is.EqualTo(1));
+		Assert.That(events.Any(e => e.PhysicalPlaybackOwner > 0), Is.True);
+		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(2));
+	}
+
+	[Test]
+	public void RawScriptedFlatteningLeavesChannelWideCommandsButDropsCombinedVoiceSlide()
+	{
+		StreamingPattern parent = new((ObjectId)1U, 1,
+			new NoteEvent(MusicalTime.Zero, ChannelTarget.Physical(0),
+			[
+				new StartNoteCommand((ObjectId)2U),
+				new ApplyVibratoVolumeSlideCommand(0x32),
+				new ApplyTonePortamentoVolumeSlideCommand(0x43),
+				new ApplyTrackerChannelVolumeCommand(32),
+			]));
+		DataPatternDefinition child = Pattern(2, 1);
+		child.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteOff();
+		SequencingContext context = new();
+		using IncrementalRecursiveTimeline timeline = new(
+			context, new Resolver(parent, child));
+		timeline.AddRoot(parent.Id);
+		NoteEvent[] events = Drain(timeline);
+		Assert.That(events.SelectMany(e => e.Commands).OfType<NoteOffCommand>()
+			.Count(), Is.EqualTo(1));
+		Assert.That(events.SelectMany(e => e.Commands)
+			.OfType<SetOverallChannelVolumeCommand>().Select(v => v.Volume),
+			Is.EqualTo(new[] { 0.5 }));
+		Assert.That(context.GetPhysicalChannelState(0)
+			.TryGetEffectParameter(EffectMemorySlot.VolumeSlide, out _), Is.False);
+		Assert.That(context.GetPhysicalChannelState(0)
+			.TryGetEffectParameter(EffectMemorySlot.ChannelVolumeSlide, out _), Is.False);
+		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(2));
+	}
+
+	[Test]
+	public void RawFilteringKeepsCommandOrderingAfterConsecutiveUnsupportedEffects()
+	{
+		SequencingContext context = new()
+		{
+			IsFlattenedSource = source => source == (ObjectId)2U,
+		};
+		NoteEvent raw = new(MusicalTime.Zero, ChannelTarget.Physical(0),
+			[
+				new SetNoteVolumeCommand(0.8),
+				new ApplyVolumeSlideCommand(0x34),
+				new ApplyVibratoVolumeSlideCommand(0x12),
+				new SetOverallChannelVolumeCommand(0.5),
+				new StartNoteCommand((ObjectId)2U),
+				new ApplyTrackerChannelVolumeCommand(32),
+			]);
+		NoteEvent filtered = FlattenedSourceEffectPolicy.Filter(raw, context);
+		Assert.That(filtered.Commands, Is.EqualTo(new NoteCommand[]
+		{
+			new SetNoteVolumeCommand(0.8),
+			new SetOverallChannelVolumeCommand(0.5),
+			new StartNoteCommand((ObjectId)2U),
+			new ApplyTrackerChannelVolumeCommand(32),
+		}));
+		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(2));
+	}
+
+	[Test]
 	public void MixdownAndOrdinaryStartsDoNotTriggerFlattenedWarnings()
 	{
 		SequencingContext context = new();

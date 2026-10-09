@@ -33,6 +33,32 @@ public sealed class FlattenedSourceEffectWarningsTests
 	}
 
 	[Test]
+	public void CombinedNoteVolumeSlidesWarnButChannelVolumeRemainsPermitted()
+	{
+		SongDocument doc = new();
+		ObjectId childId = doc.AllocateObjectId();
+		doc.Add(new DataPatternDefinition(childId, "Child")
+			{ RowCount = 1, ChannelCount = 1 });
+		DataPatternDefinition parent = new((ObjectId)999U, "Parent")
+			{ RowCount = 1, ChannelCount = 1 };
+		PatternCell start = parent.Grid.GetOrCreateCell(0, 0);
+		start.Note = new StartPatternNote(childId);
+		start.Effects.Add(new TrackerChannelVolumePatternEffect(32));
+		Assert.That(FlattenedSourceEffectWarnings.Describe(
+			doc, parent, 0, 0), Is.Null);
+		start.Effects.Add(new TonePortamentoVolumeSlidePatternEffect(0x43));
+		start.Effects.Add(new VibratoVolumeSlidePatternEffect(0x32));
+		start.Effects.Add(new TrackerVolumeSlidePatternEffect(0x21));
+		string? warning = FlattenedSourceEffectWarnings.Describe(
+			doc, parent, 0, 0);
+		Assert.That(warning, Does.Contain("TonePortamentoVolumeSlide"));
+		Assert.That(warning, Does.Contain("VibratoVolumeSlide"));
+		Assert.That(warning, Does.Contain("TrackerVolumeSlide"));
+		Assert.That(warning, Does.Not.Contain("TrackerChannelVolume"));
+		Assert.That(start.Effects, Has.Count.EqualTo(4));
+	}
+
+	[Test]
 	public void MixdownOrdinaryAndSafeEffectsDoNotWarn()
 	{
 		SongDocument doc = new();
