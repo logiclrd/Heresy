@@ -887,6 +887,51 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 	}
 
 	[Test]
+	public void ParentCutPropagatesIntoInstrumentSelectedRecursiveChild()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		SampleDefinition looping = SampleDefinition.CreateImported(
+			sample, "Loop", "loop.wav", Wave(16384));
+		looping.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 4);
+		document.Add(looping);
+		ObjectId child = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(child, "Child")
+		{
+			RowCount = 8, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({sample.Value}));",
+		});
+		ObjectId instrumentId = document.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Recursive");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = child,
+		});
+		instrument.ToneTable.Add(0);
+		document.Add(instrument);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent")
+		{
+			RowCount = 3, ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(instrumentId);
+		parent.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteCut();
+		document.Add(parent);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, root);
+		plan.Source.Render(1, new float[1]);
+		PlaybackVoice voice = plan.Session.GetChannelState(0).CurrentVoice!;
+		Assert.That(voice.Sound.GetType().Name,
+			Is.EqualTo("PreparedRecursiveMixdownSound"));
+		plan.Source.Render(120, new float[120]);
+		long? exclusiveEnd = voice.Sound.GetEndFrameExclusive(
+			new RenderContext(Mono(1000)), voice.SoundState);
+		Assert.That(exclusiveEnd, Is.EqualTo(120L));
+	}
+
+	[Test]
 	public void IndirectInstrumentCyclesAreRejectedBeforeRecursiveNoteRendering()
 	{
 		SongDocument document = new();
