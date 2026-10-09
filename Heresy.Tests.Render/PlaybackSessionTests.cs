@@ -130,6 +130,31 @@ public sealed class PlaybackSessionTests
 	}
 
 	[Test]
+	public void AllVirtualBroadcastReachesDisplacedNnaVoicesButScopedDoesNot()
+	{
+		ObjectId first = (ObjectId)10U;
+		ObjectId second = (ObjectId)11U;
+		PlaybackSession session = Session(4,
+			Schedule(
+				Event(Frame(0, 4), 0, new StartNoteCommand(first)),
+				Event(Frame(2, 4), 0, new StartNoteCommand(second))),
+			new TestResolver(
+				(first, false, Sample(
+					[1f, 1f, 1f, 1f, 1f], 4, NewNotePolicy.Continue)),
+				(second, false, Sample([10f, 10f, 10f], 4))));
+		float[] buffer = new float[3];
+		session.Render(0, 3, buffer);
+		Assert.That(session.VirtualVoices.Count, Is.EqualTo(1));
+		session.ApplyScopedEvent(33, ChannelTarget.AllVirtualInScope,
+			[new NoteCutCommand()]);
+		Assert.That(session.VirtualVoices.Count, Is.EqualTo(1));
+		session.ApplyScopedEvent(33, ChannelTarget.AllVirtual,
+			[new NoteCutCommand()]);
+		Assert.That(session.VirtualVoices.Count, Is.Zero);
+		Assert.That(session.GetChannelState(0).CurrentVoice, Is.Not.Null);
+	}
+
+	[Test]
 	public void OffMigratesOldVoiceAndSetsItsNoteOffTime()
 	{
 		ObjectId firstId = (ObjectId)10U;
