@@ -214,7 +214,8 @@ public sealed class PlaybackVoice
 		double overallVolume,
 		TrackerTickClock tickClock,
 		ulong modulationSeed,
-		int originPhysicalChannel)
+		int originPhysicalChannel,
+		double sourceGainMultiplier = 1.0)
 	{
 		Sound = sound ?? throw new ArgumentNullException(nameof(sound));
 		SoundState = soundState ?? throw new ArgumentNullException(nameof(soundState));
@@ -226,7 +227,10 @@ public sealed class PlaybackVoice
 			throw new ArgumentOutOfRangeException(nameof(outputChannelCount));
 		if (originPhysicalChannel < 0)
 			throw new ArgumentOutOfRangeException(nameof(originPhysicalChannel));
+		if (sourceGainMultiplier < 0.0 || !double.IsFinite(sourceGainMultiplier))
+			throw new ArgumentOutOfRangeException(nameof(sourceGainMultiplier));
 
+		SourceGainMultiplier = sourceGainMultiplier;
 		StartFrame = startFrame;
 		OriginPhysicalChannel = originPhysicalChannel;
 		NoteVolume = noteVolume;
@@ -271,6 +275,10 @@ public sealed class PlaybackVoice
 	/// This identity remains stable after NNA migration to a virtual voice.
 	/// </summary>
 	public int OriginPhysicalChannel { get; }
+
+	/// <summary>Immutable invocation-local source gain, separate from the
+	/// mutable shared channel's tracker note volume.</summary>
+	public double SourceGainMultiplier { get; }
 
 	public double NoteVolume { get; internal set; }
 

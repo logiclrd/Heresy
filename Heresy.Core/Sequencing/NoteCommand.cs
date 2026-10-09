@@ -16,7 +16,8 @@ public abstract record NoteCommand;
 /// <summary>
 /// Starts one playback note. Volume is an optional initial note-volume value
 /// carried atomically with the start; it has no effect when the source cannot
-/// actually start. Data-pattern rows which specify volume without starting a
+/// actually start. GainMultiplier is a separate invocation-local multiplicative
+/// output gain that never overwrites a tracker's remembered note volume. Data-pattern rows which specify volume without starting a
 /// new note are normally translated to SetNoteVolumeCommand instead. A note-cut
 /// row is the exception: its pattern-column volume is deliberately ignored.
 /// </summary>
@@ -25,7 +26,8 @@ public sealed record StartNoteCommand(
 	double PitchMultiplier = 1.0,
 	double PlaybackSpeedMultiplier = 1.0,
 	bool Mixdown = false,
-	double? Volume = null) : NoteCommand;
+	double? Volume = null,
+	double GainMultiplier = 1.0) : NoteCommand;
 
 /// <summary>
 /// Compiler-only data-pattern Source-column update. Resolved in row order

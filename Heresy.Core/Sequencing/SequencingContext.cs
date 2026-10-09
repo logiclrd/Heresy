@@ -24,7 +24,8 @@ public sealed class SequencingContext
 		int physicalChannelBase = 0,
 		SequencingChannelStateMap? channelStates = null,
 		TrackerMidiMacroConfiguration? trackerMidiMacros = null,
-		SequencingDiagnosticLog? diagnostics = null)
+		SequencingDiagnosticLog? diagnostics = null,
+		double gainMultiplier = 1.0)
 	{
 		if (physicalChannelBase < 0)
 			throw new ArgumentOutOfRangeException(nameof(physicalChannelBase));
@@ -33,6 +34,7 @@ public sealed class SequencingContext
 		Random = random ?? new DeterministicRandom(DefaultRootRandomSeed);
 		PitchMultiplier = ValidateMultiplier(pitchMultiplier, nameof(pitchMultiplier));
 		PlaybackSpeedMultiplier = ValidateMultiplier(playbackSpeedMultiplier, nameof(playbackSpeedMultiplier));
+		GainMultiplier = ValidateGain(gainMultiplier, nameof(gainMultiplier));
 		PhysicalChannelBase = physicalChannelBase;
 		ChannelStates = channelStates ?? new SequencingChannelStateMap();
 		TrackerMidiMacros = trackerMidiMacros
@@ -52,6 +54,8 @@ public sealed class SequencingContext
 
 	public double PitchMultiplier { get; }
 	public double PlaybackSpeedMultiplier { get; }
+	/// <summary>Invoked source amplitude, independent of shared tracker volume memory.</summary>
+	public double GainMultiplier { get; }
 
 	/// <summary>
 	/// Parent playback channel corresponding to local physical channel zero.
@@ -105,7 +109,8 @@ public sealed class SequencingContext
 	public SequencingContext FlattenedChild(
 		double pitchMultiplier = 1.0,
 		double playbackSpeedMultiplier = 1.0,
-		int physicalChannelOffset = 0)
+		int physicalChannelOffset = 0,
+		double gainMultiplier = 1.0)
 	{
 		if (physicalChannelOffset < 0)
 			throw new ArgumentOutOfRangeException(nameof(physicalChannelOffset));
@@ -118,7 +123,9 @@ public sealed class SequencingContext
 			checked(PhysicalChannelBase + physicalChannelOffset),
 			ChannelStates,
 			TrackerMidiMacros,
-			Diagnostics)
+			Diagnostics,
+			ValidateGain(GainMultiplier * ValidateGain(gainMultiplier, nameof(gainMultiplier)),
+				nameof(gainMultiplier)))
 		{
 			FlattenedSourceExpander = FlattenedSourceExpander,
 			ResolvePatternSourcesAtRowTime = ResolvePatternSourcesAtRowTime,
@@ -137,7 +144,15 @@ public sealed class SequencingContext
 			physicalChannelBase: 0,
 			channelStates: new SequencingChannelStateMap(),
 			trackerMidiMacros: TrackerMidiMacros,
-			diagnostics: Diagnostics);
+			diagnostics: Diagnostics,
+			gainMultiplier: GainMultiplier);
+
+	private static double ValidateGain(double value, string paramName)
+	{
+		if (value < 0.0 || !double.IsFinite(value))
+			throw new ArgumentOutOfRangeException(paramName);
+		return value;
+	}
 
 	private static double ValidateMultiplier(double value, string paramName)
 	{

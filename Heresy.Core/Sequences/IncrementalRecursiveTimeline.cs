@@ -337,6 +337,11 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 									// into the new child context exactly once.
 									double composedPitch = regularStart.PitchMultiplier
 										* frame.Context.PitchMultiplier;
+									double composedGain = regularStart.GainMultiplier
+										* frame.Context.GainMultiplier;
+									if (composedGain < 0.0 || !double.IsFinite(composedGain))
+										throw new InvalidOperationException(
+											"Recursive gain multiplier is negative or non-finite.");
 									if (!(composedPitch > 0.0)
 										|| !double.IsFinite(composedPitch))
 										throw new InvalidOperationException(
@@ -344,6 +349,7 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 									retained.Add(regularStart with
 									{
 										PitchMultiplier = composedPitch,
+										GainMultiplier = composedGain,
 									});
 								}
 								else
@@ -353,9 +359,15 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 							if (emit.Note.Target.Kind != ChannelTargetKind.Physical)
 								throw new NotSupportedException(
 									"Flattened child requires a physical parent channel.");
-							if (start.Volume.HasValue)
-								throw new NotSupportedException(
-									"Flattened child initial source-volume transforms are not supported.");
+							// Source volume is a gain on descendant voices, not
+							// a SetNoteVolume command on a shared physical channel.
+							// The child's own tracker note-volume memory remains
+							// independent and can still change via slides/effects.
+							double localGain = start.GainMultiplier
+								* (start.Volume ?? 1.0);
+							if (localGain < 0.0 || !double.IsFinite(localGain))
+								throw new InvalidOperationException(
+									"Flattened source gain is negative or non-finite.");
 
 							int physicalOffset = emit.Note.Target.PhysicalChannel
 								- frame.Context.PhysicalChannelBase;
@@ -365,7 +377,8 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 							SequencingContext child = frame.Context.FlattenedChild(
 								pitchMultiplier: start.PitchMultiplier,
 								playbackSpeedMultiplier: start.PlaybackSpeedMultiplier,
-								physicalChannelOffset: physicalOffset);
+								physicalChannelOffset: physicalOffset,
+								gainMultiplier: localGain);
 							child.TimelineOrigin = emit.Time;
 							AddInvocation(source, child, frame.Id);
 						}

@@ -799,7 +799,8 @@ public sealed class PlaybackSession
 			channel.OverallVolume,
 			_tickClock,
 			_nextVoiceModulationSeed++,
-			originPhysicalChannel: 0);
+			originPhysicalChannel: 0,
+			sourceGainMultiplier: start.GainMultiplier);
 
 		channel.AttachVoice(
 			voice,
@@ -1279,7 +1280,8 @@ public sealed class PlaybackSession
 			channel.OverallVolume,
 			_tickClock,
 			_nextVoiceModulationSeed++,
-			physicalChannel);
+			physicalChannel,
+			sourceGainMultiplier: start.GainMultiplier);
 
 		channel.AttachVoice(voice, eventFrame);
 	}
@@ -1955,7 +1957,8 @@ public sealed class PlaybackSession
 		{
 			long absoluteFrame = absoluteStartFrame + frame;
 			double volume =
-				voice.GetNoteVolume(absoluteFrame)
+				voice.SourceGainMultiplier
+				* voice.GetNoteVolume(absoluteFrame)
 				* voice.GetVolumeEnvelopeValue(absoluteFrame)
 				* voice.OverallVolume
 				* voice.GetFadeGain(
