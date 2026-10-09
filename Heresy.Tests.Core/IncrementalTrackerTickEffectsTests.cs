@@ -255,19 +255,30 @@ public sealed class IncrementalTrackerTickEffectsTests
     }
 
     [Test]
-    public void SDxWithQxxIsExplicitlyUnsupportedWithoutMutatingRetriggerMemory()
+    public void SDxWithQxxExecutesAtDelayedTickAndRemembersQParameter()
     {
         DataPatternDefinition p = Pattern();
         PatternCell c = p.Grid.GetOrCreateCell(0, 0);
         c.Note = new StartPatternNote((ObjectId)10U);
         c.Effects.Add(new TrackerNoteDelayPatternEffect(2));
         c.Effects.Add(new RetriggerPatternEffect(0x03));
+        AssertParity(p);
+
         SequencingContext root = new();
         using IncrementalPatternTimeline timeline = new(root);
         timeline.Add(p, 1, root);
-        Assert.Throws<NotSupportedException>(() => timeline.TryStep(out _));
+        List<NoteEvent> events = [];
+        while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+            if (step is IncrementalPatternTimelineStep.Emit emit)
+                events.Add(emit.Note);
+        Assert.That(events.Select(e => e.Offset.TimeOffset),
+            Is.EqualTo(new[] {
+                TimeSpan.FromMilliseconds(40),
+                TimeSpan.FromMilliseconds(100),
+            }));
         Assert.That(root.GetPhysicalChannelState(0).TryGetEffectParameter(
-            EffectMemorySlot.Retrigger, out _), Is.False);
+            EffectMemorySlot.Retrigger, out byte parameter), Is.True);
+        Assert.That(parameter, Is.EqualTo(0x03));
     }
 
     private static DataPatternDefinition Pattern(int rows = 1)
