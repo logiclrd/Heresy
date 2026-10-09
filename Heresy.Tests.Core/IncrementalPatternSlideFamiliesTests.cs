@@ -82,7 +82,7 @@ public sealed class IncrementalPatternSlideFamiliesTests
 	}
 
 	[Test]
-	public void GlobalVolumeSlideMemoryIsSharedByMappedChildAndParent()
+	public void GlobalVolumeSlideMemoryIsIsolatedFromMappedChild()
 	{
 		SequencingContext root = new();
 		DataPatternDefinition parent = new((ObjectId)1U, "Wxy")
@@ -114,11 +114,11 @@ public sealed class IncrementalPatternSlideFamiliesTests
 
 		SetGlobalVolumeSlideCommand[] slides = emitted
 			.SelectMany(e => e.Commands).OfType<SetGlobalVolumeSlideCommand>().ToArray();
-		Assert.That(slides, Has.Length.EqualTo(2));
+		Assert.That(slides, Has.Length.EqualTo(1),
+			"W00 in a new flattened invocation has no local Wxy memory.");
 		Assert.That(slides[0].TrackerUnitsPerTick, Is.EqualTo(4));
-		Assert.That(slides[1].TrackerUnitsPerTick, Is.EqualTo(4));
-		Assert.That(emitted.SelectMany(e => e.Commands).OfType<ClearGlobalVolumeSlideCommand>().Count(),
-			Is.EqualTo(2));
+		Assert.That(emitted.SelectMany(e => e.Commands)
+			.OfType<ClearGlobalVolumeSlideCommand>().Count(), Is.EqualTo(1));
 	}
 
 	private static NoteEvent[] Drain(IncrementalPatternTimeline timeline)
