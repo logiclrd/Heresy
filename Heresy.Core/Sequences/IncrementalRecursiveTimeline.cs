@@ -63,6 +63,28 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 		_resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
 		_scripts = scripts;
 		_timeline = new IncrementalPatternTimeline(root);
+		_timeline.RowBegan += ReportRowBegan;
+	}
+
+	/// <summary>Realtime view follows rows as cursors enter them;
+	/// no future sequence orders are traversed to build this feed.</summary>
+	public event Action<ObjectId, int, ObjectId?, int?, TimeSpan>? RowBegan;
+
+	private void ReportRowBegan(long cursorId, int row, TimeSpan time)
+	{
+		if (!_patternOwners.TryGetValue(cursorId, out long owner)
+			|| !_frames.TryGetValue(owner, out Invocation? frame))
+			return;
+		ObjectId? sequenceId = null;
+		int? order = null;
+		if (frame.ParentId is long parent
+			&& _frames.TryGetValue(parent, out Invocation? ancestor)
+			&& ancestor.IsSequence)
+		{
+			sequenceId = ancestor.SourceId;
+			order = ancestor.Order;
+		}
+		RowBegan?.Invoke(frame.SourceId, row, sequenceId, order, time);
 	}
 
 	public TimeSpan Elapsed => _timeline.Elapsed;
