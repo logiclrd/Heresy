@@ -233,19 +233,24 @@ public sealed class IncrementalPatternRowDelayTests
 	}
 
 	[Test]
-	public void IncompatibleSEyAndTxxCombinationFailsBeforeChangingTempoMemory()
+	public void SEyAndTxxSameCellRepeatWithEagerParityAndRememberedByte()
 	{
 		DataPatternDefinition p = Pattern(1, 1);
 		var cell = p.Grid.GetOrCreateCell(0, 0);
 		cell.Effects.Add(new TrackerTempoPatternEffect(0x12));
 		cell.Effects.Add(new TrackerPatternDelayPatternEffect(1));
+		AssertParity(p);
 		SequencingContext state = new();
 		using IncrementalPatternTimeline timeline = new(state);
 		timeline.Add(p, 1, state);
-		Assert.Throws<NotSupportedException>(() => timeline.TryStep(out _));
-		Assert.That(state.State.Tempo, Is.EqualTo(125));
+		NoteEvent[] notes = Drain(timeline);
+		Assert.That(notes.SelectMany(n => n.Commands)
+			.OfType<SetTempoRampCommand>().Select(x => x.EndingTempo),
+			Is.EqualTo(new[] { 135.0, 145.0 }));
+		Assert.That(state.State.Tempo, Is.EqualTo(145));
 		Assert.That(state.GetPhysicalChannelState(0)
-			.TryGetEffectParameter(EffectMemorySlot.Tempo, out _), Is.False);
+			.TryGetEffectParameter(EffectMemorySlot.Tempo, out byte recalled), Is.True);
+		Assert.That(recalled, Is.EqualTo(0x12));
 	}
 
 	[Test]
