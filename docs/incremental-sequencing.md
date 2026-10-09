@@ -1311,10 +1311,55 @@ S6x-extended spans, invalid out-of-span note delay, Q00 row-to-row
 recall, and Q00 memory/countdown continuing across independent
 Pattern invocations with the same physical channel.
 
-**Still unsupported:** positive fixed wall-time offsets on combined
-SCx/SDx/Qxy events, and other advanced tracker-effect combinations.
+**Historical limit:** fixed wall-time offsets on SCx/SDx/Qxy
+were unsupported at this milestone; milestone 28 below introduces
+positive offsets. Other advanced combinations remain separate work.
 This remains an **experimental** shared-clock scheduler; production
 realtime and export scheduling are unchanged.
+
+## Twenty-eighth executable step: fixed-wall SCx/SDx/Qxy operations
+
+The experimental shared-tick Pattern scheduler now accepts a **positive
+fixed wall-time offset** on physical note cells containing SCx note cut,
+SDx atomic delayed-note setup, and/or Qxy retrigger. The eager processor
+remains the compatibility baseline for this restricted combination.
+
+A tracker command first becomes eligible at the **original musical
+tracker tick**, respecting the invocation's captured Speed, S6x,
+SEy repeated spans, and Qxy countdown. The resulting *audible*
+operation is then queued for delivery at that tick's **current actual
+wall time plus the fixed offset**. This is not equivalent to moving
+the tracker tick or converting the offset into a fixed number of ticks:
+a concurrent Tempo change still affects the time at which that tick
+occurs, while the wall offset remains independent of Tempo.
+
+SCx emits a delayed cut only once; SDx resolves its atomic note/setup
+commands at the first eligible delayed tick and copies the resolved
+commands for SEy repeats. Every copy retains the independent wall
+offset without resolving Source/effect memory again. Qxy resolves its
+whole-byte memory once and schedules its countdown/retrigger candidate
+ticks relative to the SDx-delayed note when combined. The queue keeps
+eager-compatible note/copy/retrigger/cut precedence at simultaneous
+ticks. Cancellation discards a Pattern's outstanding wall deadlines.
+
+Unlike an ordinary fixed-offset Note/Off/Cut, a tracker-generated
+operation cannot outlive its original SEy/S6x-extended row. Pending
+synthetic wall deadlines are dropped when that row ends, and the live
+musical clock also checks end-of-row eligibility when their deadlines
+arrive. An ineligible SDx must not initialize Qxy countdown, although
+the valid Qxy memory byte is still remembered. No audible command is
+silently carried into a subsequent row.
+
+Tests compare eager and incremental SCx, SDx, Qxy and combined SDx/Qxy
+with positive offsets, SEy/S6x repetitions, beyond-row suppression,
+a simultaneous Tempo change, and cancelation before a deferred
+operation becomes audible.
+
+**Boundary:** Negative wall-time offsets remain unsupported. More
+advanced tracker combinations and arbitrary future Tempo changes
+across yet-unreached deadlines still require explicit parity testing.
+This remains experimental; production playback and offline export
+continue using their established scheduling pipeline.
 
 ## Proposed next interfaces and migration
 
