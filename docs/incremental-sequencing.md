@@ -2463,3 +2463,44 @@ effects *before* mutating memory, provide rate-limited diagnostics and
 UI warnings, and broaden cancellation/NNA/long-tail tests. The scope
 memory lifetime is deliberately not tied to the last emitted note:
 a released source's sounding voices may outlive its producer.
+
+
+## Fifty-first step: flattened source effect applicability and warnings
+
+A non-mixdown start whose resolved direct Source is a Pattern/Sequence
+instantiates a *set of future independent notes*, not an individual
+note voice. `FlattenedSourceEffectPolicy` classifies direct-voice
+effects consistently between stored `PatternEffect` values and the
+corresponding raw `NoteCommand` vocabulary. The incremental cursor
+filters raw events at row preparation *before* retrigger tick queuing,
+source-frame offset processing, note cut scheduling and parameter-memory
+resolution. The common processor also checks after deferred Source
+resolution, covering its eager and script-facing path. The data Pattern
+generator checks this policy before interpreting Gxx/Lxx/volume-column
+portamento as a change to the note-start meaning: an inapplicable Gxx
+must not suppress the child invocation itself.
+
+Ignored single-voice effects include retrigger, portamento, glissando,
+sample offset, pitch slides, arpeggio, vibrato, tremolo, tremor,
+panbrello, selected waveform controls, per-voice envelopes and
+displacement operations. Channel-memory volume changes, global Tempo,
+and otherwise meaningful channel/global changes remain legal and are
+left in the stream. This applies **only** to a direct non-mixdown
+Pattern/Sequence Source: ordinary sound starts and private mixdowns
+still receive their normal effects. The stored cell effect objects are
+never deleted or rewritten.
+
+Each ignored effect is posted to the existing bounded, thread-safe
+diagnostic queue as `HRSEQ003`; after 32 such messages a single
+`HRSEQ004` suppression message is emitted. These counters are
+independent of out-of-order-note reports and do not invoke UI callbacks
+on the rendering worker. The Pattern editor displays a warning on
+affected cells with a tooltip identifying skipped effect families.
+It resolves explicit sources and locally recalled Source-column values
+where possible; playback is authoritative for dynamically resolved
+source identity. No effect becomes an invalid document value merely
+because it is inapplicable to the chosen source.
+
+The remaining compatibility review includes richer split semantics for
+combined volume-and-voice effects, delayed-script effects, indirect
+instrument-selected sources and unusual same-frame interactions.

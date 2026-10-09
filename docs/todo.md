@@ -46,13 +46,18 @@ preserving audible release and already-captured anti-click tails. These are
   after outstanding voices, NNA voices and anti-click tails finish.
   Repeating recursive music must retain state proportional to live
   invocations/voices, not the cumulative number of source starts.
-  **Still outstanding:** meaningful-effect classification on a flattening
-  start before per-note effects update local tracker memory; ignore
-  nonsensical single-voice controls (retrigger, glissando, portamento,
-  sample offset and similar) and post bounded playback warnings; add
-  nonblocking authoring-UI warnings while preserving valid stored data;
-  test deeper nested cancellation, virtual/NNA displacement, source-volume
-  curves and unusual same-frame starts. Raw incremental Patterns still do
+  **Instigating-note effect classification implemented:** direct
+  non-mixdown flattened starts ignore single-voice commands *before*
+  tracker effect memory and tick-operation scheduling. This includes
+  retrigger, tone portamento, glissando, sample offset, pitch/vibrato
+  and other direct-voice effects; global Tempo and channel/volume
+  controls remain meaningful. Playback emits rate-capped HRSEQ003/004
+  warnings while leaving stored Pattern effects untouched; the data
+  Pattern editor shows a nonblocking warning on qualifying effects.
+  **Still outstanding:** deepen effect-family parity and test unusual
+  indirect/omitted-source and same-frame cases; improve diagnostics
+  for ambiguous script-only effects, and test deeper nested cancellation,
+  virtual/NNA displacement and source-volume curves. Raw incremental Patterns still do
   not admit direct SetOverallChannelVolumeCommand: overall-volume ancestry
   is currently covered through supported live channel-volume controls.
   The detailed target remains in step 48 below.
