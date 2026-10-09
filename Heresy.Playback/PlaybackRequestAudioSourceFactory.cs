@@ -38,6 +38,8 @@ public sealed class PlaybackRequestAudioSourceFactory :
 	private readonly object _gate = new();
 	private readonly Dictionary<PlaybackRequest, PreparedIncrementalPlaybackPlan>
 		_active = new(ReferenceEqualityComparer.Instance);
+	private readonly Dictionary<PlaybackRequest, PlaybackPositionTimeline>
+		_positions = new(ReferenceEqualityComparer.Instance);
 
 	public PlaybackRequestAudioSourceFactory(RenderConfiguration configuration)
 		: this(configuration, new InMemorySampleDataProvider()) { }
@@ -80,19 +82,29 @@ public sealed class PlaybackRequestAudioSourceFactory :
 					"HRS3001", ScriptDiagnosticSeverity.Error,
 					error.Message, new ScriptSourceSpan(0, 0))]);
 		}
+		PlaybackPositionTimeline? positions = request is AdHocPlaybackRequest
+			? null : new PlaybackPositionTimeline();
+		if (positions is not null)
+		{
+			plan.Timeline.RowBegan += (id, row, sequence, order, at) =>
+				positions.Append(new PlaybackPositionTimelineEntry(at,
+					new PlaybackPatternPosition(id, row, sequence, order)));
+		}
 		lock (_gate)
+		{
+			_active.Clear();
 			_active[request] = plan;
-		return new LiveRecursiveSource(plan);
+			if (positions is not null)
+				_positions[request] = positions;
+		}
+		return new LiveRecursiveSource(plan, positions);
 	}
 
 	public bool TryTakePlaybackPositionTimeline(PlaybackRequest request,
 		out PlaybackPositionTimeline? timeline)
 	{
-		// The old factory's fixed playback-position timeline was built by
-		// greedy song expansion. A streamed cursor is required for the
-		// incremental transport; never compile ahead to populate this.
-		timeline = null;
-		return false;
+		lock (_gate)
+			return _positions.Remove(request, out timeline);
 	}
 
 	public bool TryTakeRuntimeDiagnostics(PlaybackRequest request,
@@ -115,7 +127,8 @@ public sealed class PlaybackRequestAudioSourceFactory :
 	}
 
 	private sealed class LiveRecursiveSource(
-		PreparedIncrementalPlaybackPlan plan) : ILiveAudioOutputSource, IDisposable
+		PreparedIncrementalPlaybackPlan plan,
+		PlaybackPositionTimeline? positions) : ILiveAudioOutputSource, IDisposable
 	{
 		private readonly ConcurrentQueue<LivePlaybackEvent> _commands = new();
 		public AudioOutputFormat Format => plan.Source.Format;
@@ -131,6 +144,8 @@ public sealed class PlaybackRequestAudioSourceFactory :
 			while (_commands.TryDequeue(out LivePlaybackEvent? command))
 				plan.Session.ApplyLiveEvent(command.Target, command.Commands);
 			plan.Source.Render(frameCount, destination);
+			if (plan.Source.IsComplete && positions is not null)
+				positions.Finish(plan.Source.LogicalDuration);
 		}
 		public void Dispose() => plan.Dispose();
 	}
