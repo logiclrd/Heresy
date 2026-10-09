@@ -794,28 +794,39 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			if (note.Offset.TimeOffset < TimeSpan.Zero)
 				throw new NotSupportedException(
 					"The incremental tick merger does not support negative wall-time offsets.");
+			bool virtualTarget = note.Target.Kind is
+				ChannelTargetKind.Virtual or ChannelTargetKind.AllVirtualInScope
+				or ChannelTargetKind.AllVirtual;
 			if (note.Offset.TimeOffset > TimeSpan.Zero
 				&& !IsTiming(note)
 				&& (note.Target.Kind != ChannelTargetKind.Physical
+					&& !virtualTarget
 					|| note.Commands.Any(c => c is not (StartNoteCommand
 						or NoteOffCommand or NoteCutCommand
-						or SelectPatternSourceCommand or SetNoteVolumeCommand
-						or ApplySampleOffsetCommand
-						or ApplyTrackerNoteCutCommand
-						or ApplyTrackerNoteDelayCommand
-						or ApplyRetriggerCommand))))
+						or SetNoteVolumeCommand)
+						&& (virtualTarget || c is not (SelectPatternSourceCommand
+							or ApplySampleOffsetCommand
+							or ApplyTrackerNoteCutCommand
+							or ApplyTrackerNoteDelayCommand
+							or ApplyRetriggerCommand)))))
 				throw new NotSupportedException(
-					"Positive fixed wall-time offsets require standalone global Tempo/Speed or supported physical Note/Off/Cut/SCx/SDx/Qxy.");
+					"Positive fixed wall-time offsets require standalone global Tempo/Speed or supported physical/virtual note commands.");
 			if (note.Target.Kind is not (ChannelTargetKind.Physical
-				or ChannelTargetKind.Global))
+				or ChannelTargetKind.Global
+				or ChannelTargetKind.Virtual
+				or ChannelTargetKind.AllVirtualInScope
+				or ChannelTargetKind.AllVirtual))
 				throw new NotSupportedException(
-					"The incremental tick merger does not yet support virtual targets.");
+					"The incremental tick merger does not support this target.");
 
 			foreach (NoteCommand command in note.Commands)
 			{
 				bool allowed = note.Target.Kind == ChannelTargetKind.Global
 					? command is SetTempoCommand or SetSpeedCommand
-					: command is StartNoteCommand or NoteOffCommand
+					: virtualTarget
+						? command is StartNoteCommand or NoteOffCommand
+							or NoteCutCommand or SetNoteVolumeCommand
+						: command is StartNoteCommand or NoteOffCommand
 						or NoteCutCommand or SelectPatternSourceCommand
 						or SetPitchSlideCommand or SetNoteVolumeSlideCommand
 						or ApplyVolumeSlideCommand or ApplyPitchSlideDownCommand
