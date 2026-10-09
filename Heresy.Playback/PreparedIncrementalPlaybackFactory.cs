@@ -46,8 +46,10 @@ public sealed class PreparedIncrementalPlaybackPlan : IDisposable
 	public long RootInvocationId { get; }
 
 	/// <summary>
-	/// Start the opt-in background producer. One worker per plan; its
-	/// lifetime is tied to the plan. Stop consuming audio before disposal.
+	/// Start the dedicated PCM rendering worker and bounded output ring.
+	/// Its single worker owns both incremental event generation and nested
+	/// PCM rendering. The audio callback only consumes completed PCM.
+	/// Stop consuming audio before disposal.
 	/// </summary>
 	public AsyncPreparedIncrementalAudioSource StartLookahead(
 		int lookaheadFrames)
