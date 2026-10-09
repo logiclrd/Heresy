@@ -171,7 +171,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 	}
 
 	[Test]
-	public void FlattenedInitialSourceVolumeScalesVoicesWithoutLeakingToParentNotes()
+	public void FlattenedInitialSourceVolumeAlsoUpdatesCallerRememberedNoteVolume()
 	{
 		SongDocument document = new();
 		ObjectId sample = document.AllocateObjectId();
@@ -202,8 +202,8 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		plan.Source.Render(120, pcm.AsSpan(2));
 		Assert.That(pcm[0], Is.EqualTo(0.125f).Within(1e-6f));
 		Assert.That(pcm[1], Is.EqualTo(0.125f).Within(1e-6f));
-		Assert.That(pcm[120], Is.EqualTo(0.5f).Within(1e-6f),
-			"An unrelated later note on the same channel must inherit its original volume.");
+		Assert.That(pcm[120], Is.EqualTo(0.125f).Within(1e-6f),
+			"The instigating note's volume must be recalled by later parent notes.");
 	}
 
 	[Test]
@@ -245,6 +245,105 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		plan.Source.Render(pcm.Length, pcm);
 		Assert.That(pcm, Is.All.EqualTo(0.0625f).Within(1e-6f),
 			"Inherited 0.5 gain * mixdown's 0.25 note volume * 0.5 PCM.");
+	}
+
+	[Test]
+	public void FlattenedSourceWithoutExplicitVolumeRecallsCallerNoteVolume()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample, "PCM",
+			"pcm.wav", Wave(16384)));
+		ObjectId child = document.AllocateObjectId();
+		DataPatternDefinition notes = new(child, "Child")
+		{
+			RowCount = 1, ChannelCount = 2,
+		};
+		notes.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote(sample);
+		document.Add(notes);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent")
+		{
+			RowCount = 3, ChannelCount = 1,
+		};
+		PatternCell first = parent.Grid.GetOrCreateCell(0, 0);
+		first.Note = new StartPatternNote(sample);
+		first.Volume = 0.4;
+		parent.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote(child);
+		document.Add(parent);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000)).Create(document, root);
+		float[] pcm = new float[122];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm[0], Is.EqualTo(0.2f).Within(1e-6f));
+		Assert.That(pcm[120], Is.EqualTo(0.2f).Within(1e-6f),
+			"Flattening without volume must recall 0.4, not use unity.");
+	}
+
+	[Test]
+	public void FlattenedGuestAndUnrelatedParentVoiceMaySharePhysicalHost()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample, "PCM",
+			"pcm.wav", Wave(16384)));
+		ObjectId child = document.AllocateObjectId();
+		DataPatternDefinition notes = new(child, "Child")
+		{
+			RowCount = 1, ChannelCount = 2,
+		};
+		notes.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote(sample);
+		document.Add(notes);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent")
+		{
+			RowCount = 1, ChannelCount = 2,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(child);
+		parent.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote(sample);
+		document.Add(parent);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000)).Create(document, root);
+		float[] pcm = new float[2];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm, Is.All.EqualTo(1.0f).Within(1e-6f),
+			"The flattened channel and the unrelated host voice must both sound.");
+	}
+
+	[Test]
+	public void FlattenedSourceUsesLiveInstigatorOverallVolumeNotHostVolume()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample, "PCM",
+			"pcm.wav", Wave(16384)));
+		ObjectId child = document.AllocateObjectId();
+		DataPatternDefinition notes = new(child, "Child")
+		{
+			RowCount = 1, ChannelCount = 2,
+		};
+		notes.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote(sample);
+		document.Add(notes);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent")
+		{
+			RowCount = 1, ChannelCount = 2,
+		};
+		PatternCell instigator = parent.Grid.GetOrCreateCell(0, 0);
+		instigator.Note = new StartPatternNote(child);
+		instigator.Volume = 0.5;
+		instigator.Effects.Add(new SetOverallChannelVolumePatternEffect(0.5));
+		parent.Grid.GetOrCreateCell(0, 1).Effects.Add(
+			new SetOverallChannelVolumePatternEffect(0.2));
+		document.Add(parent);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000)).Create(document, root);
+		float[] pcm = new float[2];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm, Is.All.EqualTo(0.125f).Within(1e-6f),
+			"0.5 PCM * 0.5 source gain * 0.5 instigator overall volume; host 0.2 is irrelevant.");
 	}
 
 	[TestCase(2.0, 60)]
