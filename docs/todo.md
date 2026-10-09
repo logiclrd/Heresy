@@ -96,9 +96,16 @@ Items that were already completed remain in Git history, not in this checklist.
   SDx notes preserve mapped child physical targets; Q00 retains effect
   memory/countdown across mapped Pattern invocations. Pending tick actions
   respond to live shared Tempo and are discarded with Cancel().
-  SDx combined with Qxy and fixed wall offsets on SCx/SDx/Qxy remain
-  explicitly unsupported rather than risking incorrect memory/voice
-  semantics.
+  SDx combined with Qxy is now supported in the incremental
+  shared-tick timeline: the delayed note executes first and Qxy
+  retrigger timing begins from that same eligible SDx tick. At a shared
+  tick, repeated delayed note setup precedes retrigger and SCx cut
+  according to eager synthetic ordering. Q00 effect memory and
+  retrigger countdown remain mapped-channel state across rows and
+  independent Pattern visits; SEy and S6x use the captured span.
+  Out-of-span SDx prevents audible note setup/retrigger while leaving
+  valid Qxx memory. Positive fixed wall offsets on SCx/SDx/Qxy remain
+  explicitly unsupported.
   SBx now revisits raw source rows lazily with per-mapped-channel loop
   markers and repeat counters, resolving shared tracker state anew
   on every visit. Backward visits restart only explicitly replay-safe raw
@@ -185,8 +192,8 @@ Items that were already completed remain in Git history, not in this checklist.
   ordering contract is settled: earlier raw musical-row events are
   silently dropped at the consumption boundary; no arbitrary sorting
   or lookahead is required. Continue incompatible Tempo spans,
-  SDx/Qxy interaction parity, virtual/mixdown channels, advanced
-  effects, and end-to-end deterministic recursive playback/export
+  fixed-wall SCx/SDx/Qxy interactions, virtual/mixdown channels,
+  advanced effects, and end-to-end deterministic recursive playback/export
   integration before production recursive-clock migration.
   Require test parity, chronological raw-emission filtering, and
   realtime/offline determinism before retiring eager scheduling.
