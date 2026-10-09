@@ -170,6 +170,12 @@ internal sealed class PreparedRecursiveMixdownSound :
 		if (frameCount == 0)
 			return;
 		NestedState nested = (NestedState)state;
+		// A tracker retrigger resets the parent voice origin, but the
+		// private event stream cannot be rewound without recreating its
+		// sequencing and PCM state. Reject rather than replay stale PCM.
+		if (nested.PlaybackOriginFrame != 0)
+			throw new NotSupportedException(
+				"Recursive mixdown retrigger requires fresh private timeline and renderer state.");
 		long offset = checked(nested.SourceFrameOffset
 			+ FrameTime.Ceiling(nested.PlaybackOffset, _sampleRate));
 		long first = checked(startFrame + offset);
