@@ -33,7 +33,16 @@ public sealed record StartNoteCommand(
 	/// <summary>Enclosing source-instigating logical channel volumes,
 	/// evaluated live in the renderer rather than captured from a host.</summary>
 	public IReadOnlyList<ParentVolumeChannel>? ParentOverallChannels { get; init; }
+	/// <summary>Nested flattened invocations whose live note volumes
+	/// multiply this voice, independently of physical playback hosts.</summary>
+	public IReadOnlyList<long>? ParentSourceScopes { get; init; }
 }
+
+/// <summary>Begin the live note-volume controller for one non-mixdown
+/// flattened invocation. The scope identity belongs to the invoked
+/// child; control effects continue to target the caller's channel.</summary>
+public sealed record BeginFlattenedSourceVolumeCommand(
+	long ChildScopeId, double InitialVolume) : NoteCommand;
 
 /// <summary>Update remembered volume on a flattening note that does not
 /// itself create a physical voice; do not change an older active voice.</summary>

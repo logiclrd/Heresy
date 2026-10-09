@@ -36,7 +36,8 @@ public sealed class SequencingContext
 		long physicalPlaybackOwner = 0,
 		IReadOnlyList<ParentVolumeChannel>? parentOverallChannels = null,
 		ScopedSequencingChannelMemory? scopedMemory = null,
-		long scopeId = 0)
+		long scopeId = 0,
+		IReadOnlyList<long>? parentSourceScopes = null)
 	{
 		if (physicalChannelBase < 0)
 			throw new ArgumentOutOfRangeException(nameof(physicalChannelBase));
@@ -57,6 +58,7 @@ public sealed class SequencingContext
 		_useLocalChannelMemory = useLocalChannelMemory || scopeId != 0;
 		PhysicalPlaybackOwner = scopeId == 0 ? physicalPlaybackOwner : scopeId;
 		ParentOverallChannels = parentOverallChannels ?? Array.Empty<ParentVolumeChannel>();
+		ParentSourceScopes = parentSourceScopes ?? Array.Empty<long>();
 		TrackerMidiMacros = trackerMidiMacros
 			?? TrackerMidiMacroConfiguration.CreateImpulseTrackerDefault();
 		Diagnostics = diagnostics ?? new SequencingDiagnosticLog();
@@ -74,6 +76,10 @@ public sealed class SequencingContext
 	/// <summary>Live overall volume of instigating channels on the path
 	/// from the root to this flattened invocation.</summary>
 	public IReadOnlyList<ParentVolumeChannel> ParentOverallChannels { get; }
+	/// <summary>Ancestor flattening instigators, whose note volume
+	/// is live for their descendants, distinct from channel overall
+	/// volume and from the physical host's own note volume.</summary>
+	public IReadOnlyList<long> ParentSourceScopes { get; }
 	public TrackerMidiMacroConfiguration TrackerMidiMacros { get; }
 
 	/// <summary>
@@ -161,6 +167,10 @@ public sealed class SequencingContext
 		parents[^1] = new ParentVolumeChannel(PhysicalPlaybackOwner,
 			MapPhysicalChannel(physicalChannelOffset));
 		long childScopeId = ScopedMemory.AllocateScope();
+		long[] parentSourceScopes = new long[ParentSourceScopes.Count + 1];
+		for (int i = 0; i < ParentSourceScopes.Count; i++)
+			parentSourceScopes[i] = ParentSourceScopes[i];
+		parentSourceScopes[^1] = childScopeId;
 		try
 		{
 			return new SequencingContext(
@@ -178,7 +188,8 @@ public sealed class SequencingContext
 			physicalPlaybackOwner: childScopeId,
 			parentOverallChannels: parents,
 			scopedMemory: ScopedMemory,
-			scopeId: childScopeId)
+			scopeId: childScopeId,
+			parentSourceScopes: parentSourceScopes)
 			{
 				FlattenedSourceExpander = FlattenedSourceExpander,
 				IsFlattenedSource = IsFlattenedSource,

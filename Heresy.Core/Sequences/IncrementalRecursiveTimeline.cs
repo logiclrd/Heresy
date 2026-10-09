@@ -381,6 +381,10 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 											frame.Context.ParentOverallChannels.Count == 0
 												? null
 												: frame.Context.ParentOverallChannels,
+										ParentSourceScopes =
+											frame.Context.ParentSourceScopes.Count == 0
+												? null
+												: frame.Context.ParentSourceScopes,
 									});
 								}
 								else
@@ -410,10 +414,12 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 							{
 								frame.Context.GetPhysicalChannelState(localChannel)
 									.NoteVolume = start.Volume.Value;
-								retained.Add(new RememberFlatteningNoteVolumeCommand(
-									start.Volume.Value));
+								// The begin command below captures this volume
+								// without changing an older physical voice.
 							}
-							double localGain = start.GainMultiplier * startingSourceVolume;
+							// A live source controller owns note volume; only
+							// the independent constant gain stays captured.
+							double localGain = start.GainMultiplier;
 							if (localGain < 0.0 || !double.IsFinite(localGain))
 								throw new InvalidOperationException(
 									"Flattened source gain is negative or non-finite.");
@@ -429,6 +435,8 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 								physicalChannelOffset: physicalOffset,
 								gainMultiplier: localGain);
 							child.TimelineOrigin = emit.Time;
+							retained.Add(new BeginFlattenedSourceVolumeCommand(
+								child.ScopeId, startingSourceVolume));
 							try
 							{
 								AddInvocation(source, child, frame.Id);
