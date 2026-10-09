@@ -160,7 +160,7 @@ public sealed class InstrumentSound : ISound
 
 		double continuousIndex =
 			Math.Log2(pitchMultiplier) * divisions
-			+ _definition.Offset;
+			+ definition.Offset;
 		if (continuousIndex < int.MinValue
 			|| continuousIndex > int.MaxValue)
 		{
@@ -170,10 +170,10 @@ public sealed class InstrumentSound : ISound
 		int toneIndex = checked((int)Math.Round(
 			continuousIndex,
 			MidpointRounding.AwayFromZero));
-		if ((uint)toneIndex >= (uint)_definition.ToneTable.Count)
+		if ((uint)toneIndex >= (uint)definition.ToneTable.Count)
 			return null;
 
-		int specificationIndex = _definition.ToneTable[toneIndex];
+		int specificationIndex = definition.ToneTable[toneIndex];
 		if (specificationIndex == -1)
 			return null;
 		if ((uint)specificationIndex
@@ -183,7 +183,7 @@ public sealed class InstrumentSound : ISound
 				$"Tone table entry {toneIndex} refers to invalid tone specification {specificationIndex}.");
 		}
 
-		return _definition.ToneSpecifications[specificationIndex];
+		return definition.ToneSpecifications[specificationIndex];
 	}
 
 	private EnvelopeConfigurationSnapshot ResolveEnvelopes(
