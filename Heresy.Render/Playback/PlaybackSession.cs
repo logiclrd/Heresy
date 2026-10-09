@@ -39,6 +39,9 @@ public sealed class PlaybackSession
 	// A completed producer's logical playback channels are reclaimed only
 	// after all its voices (including displaced NNA) and tails finish.
 	private readonly HashSet<long> _retiredPhysicalScopes = [];
+	// Scope-unique controllers outlive the instigating note's assignment
+	// to a logical channel. Descendant voices hold direct references.
+	private readonly Dictionary<long, FlattenedSourceVolume> _sourceVolumes = [];
 	private readonly SortedDictionary<uint, PlaybackChannelState> _targetedVirtualChannels = [];
 	// A Pattern's virtual ID is local to its invocation, not a global
 	// playback channel. The legacy live-preview dictionary above remains
@@ -240,6 +243,9 @@ public sealed class PlaybackSession
 		if (scopeId <= 0)
 			throw new ArgumentOutOfRangeException(nameof(scopeId));
 		_retiredPhysicalScopes.Add(scopeId);
+		// No new child voice may be created once its entire producer tree
+		// has retired; existing voices hold the controller directly.
+		_sourceVolumes.Remove(scopeId);
 		ReclaimRetiredPhysicalScopes();
 	}
 
@@ -295,7 +301,8 @@ public sealed class PlaybackSession
 	public double GetRememberedNoteVolume(int host, long owner, long frame)
 	{
 		PlaybackChannelState channel = GetChannelState(host, owner);
-		return channel.CurrentVoice?.GetBaseNoteVolume(frame)
+		return channel.CurrentFlattenedSource?.Read(frame)
+			?? channel.CurrentVoice?.GetBaseNoteVolume(frame)
 			?? channel.NoteVolume;
 	}
 
@@ -913,6 +920,10 @@ public sealed class PlaybackSession
 	{
 		switch (command)
 		{
+			case BeginFlattenedSourceVolumeCommand begin:
+				BeginFlattenedSource(channel, begin, eventFrame);
+				break;
+
 			case StartNoteCommand start:
 				StartNote(
 					physicalChannel,
@@ -967,7 +978,13 @@ public sealed class PlaybackSession
 				break;
 
 			case SetNoteVolumeCommand volume:
-				channel.SetNoteVolume(volume.Volume);
+				if (channel.CurrentFlattenedSource is { } source)
+				{
+					source.Set(eventFrame, volume.Volume);
+					channel.CaptureCurrentNoteVolume(volume.Volume);
+				}
+				else
+					channel.SetNoteVolume(volume.Volume);
 				break;
 
 			case RememberFlatteningNoteVolumeCommand remembered:
@@ -1076,7 +1093,12 @@ public sealed class PlaybackSession
 				break;
 
 			case AdjustCurrentNoteVolumeCommand adjust:
-				if (channel.CurrentVoice is not null)
+				if (channel.CurrentFlattenedSource is { } flattened)
+				{
+					channel.CaptureCurrentNoteVolume(
+						flattened.Adjust(eventFrame, adjust.TrackerUnits));
+				}
+				else if (channel.CurrentVoice is not null)
 				{
 					double volume =
 						channel.CurrentVoice.AdjustNoteVolume(
@@ -1087,7 +1109,12 @@ public sealed class PlaybackSession
 				break;
 
 			case AdjustNoteVolumeCommand adjust:
-				if (channel.CurrentVoice is not null)
+				if (channel.CurrentFlattenedSource is { } flattened)
+				{
+					channel.CaptureCurrentNoteVolume(
+						flattened.Adjust(eventFrame, adjust.TrackerUnits));
+				}
+				else if (channel.CurrentVoice is not null)
 				{
 					double volume =
 						channel.CurrentVoice.AdjustNoteVolume(
@@ -1146,16 +1173,22 @@ public sealed class PlaybackSession
 				break;
 
 			case SetNoteVolumeSlideCommand slide:
-				channel.CurrentVoice?.SetNoteVolumeSlide(
-					eventFrame,
-					_tempo,
-					slide.TicksPerRow ?? _speed,
-					_context.Configuration.SampleRate,
-					slide.TrackerUnitsPerTick);
+				if (channel.CurrentFlattenedSource is { } flattened)
+					flattened.Slide(eventFrame,
+						slide.TicksPerRow ?? _speed, slide.TrackerUnitsPerTick);
+				else
+					channel.CurrentVoice?.SetNoteVolumeSlide(
+						eventFrame,
+						_tempo,
+						slide.TicksPerRow ?? _speed,
+						_context.Configuration.SampleRate,
+						slide.TrackerUnitsPerTick);
 				break;
 
 			case ClearNoteVolumeSlideCommand:
-				if (channel.CurrentVoice is not null)
+				if (channel.CurrentFlattenedSource is { } flattened)
+					channel.CaptureCurrentNoteVolume(flattened.Clear(eventFrame));
+				else if (channel.CurrentVoice is not null)
 				{
 					double volume =
 						channel.CurrentVoice.ClearNoteVolumeSlide(eventFrame);
@@ -1342,6 +1375,28 @@ public sealed class PlaybackSession
 		}
 	}
 
+	private void BeginFlattenedSource(PlaybackChannelState channel,
+		BeginFlattenedSourceVolumeCommand begin, long frame)
+	{
+		if (_sourceVolumes.ContainsKey(begin.ChildScopeId))
+			throw new InvalidOperationException(
+				"Flattened scope already has a volume controller.");
+		channel.SynchronizeContinuousState(frame);
+		if (channel.CurrentFlattenedSource is { } previous)
+			channel.CaptureCurrentNoteVolume(previous.Read(frame));
+		else if (channel.CurrentVoice is not null)
+			channel.CaptureCurrentNoteVolume(
+				channel.CurrentVoice.GetBaseNoteVolume(frame));
+		DisplaceCurrentVoice(channel, frame);
+		channel.ResetPanbrelloOffsetForNewNote();
+		FlattenedSourceVolume source = new(begin.ChildScopeId,
+			begin.InitialVolume, _tickClock,
+			_context.Configuration.SampleRate);
+		_sourceVolumes.Add(begin.ChildScopeId, source);
+		channel.CurrentFlattenedSource = source;
+		channel.CaptureCurrentNoteVolume(begin.InitialVolume);
+	}
+
 	private void StartNote(
 		int physicalChannel,
 		PlaybackChannelState channel,
@@ -1351,11 +1406,12 @@ public sealed class PlaybackSession
 	{
 		channel.SynchronizeContinuousState(eventFrame);
 
-		if (channel.CurrentVoice is not null)
-		{
+		if (channel.CurrentFlattenedSource is { } previousSource)
+			channel.CaptureCurrentNoteVolume(previousSource.Read(eventFrame));
+		else if (channel.CurrentVoice is not null)
 			channel.CaptureCurrentNoteVolume(
 				channel.CurrentVoice.GetBaseNoteVolume(eventFrame));
-		}
+		channel.CurrentFlattenedSource = null;
 
 		DisplaceCurrentVoice(channel, eventFrame);
 		channel.ResetPanbrelloOffsetForNewNote();
@@ -1381,6 +1437,16 @@ public sealed class PlaybackSession
 		if (start.ParentOverallChannels is { } parents)
 			foreach (ParentVolumeChannel parent in parents)
 				enclosingVolumes.Add(GetChannelState(parent.Host, parent.Owner));
+		List<FlattenedSourceVolume> enclosingSources = [];
+		if (start.ParentSourceScopes is { } sourceScopes)
+			foreach (long sourceScope in sourceScopes)
+			{
+				if (!_sourceVolumes.TryGetValue(sourceScope,
+					out FlattenedSourceVolume? sourceController))
+					throw new InvalidOperationException(
+						"Flattened source controller was not activated before its child note.");
+				enclosingSources.Add(sourceController);
+			}
 		PlaybackVoice voice = new(
 			invocation.Sound,
 			invocation.State,
@@ -1396,7 +1462,8 @@ public sealed class PlaybackSession
 			physicalChannel,
 			sourceGainMultiplier: start.GainMultiplier,
 			originPhysicalPlaybackOwner: physicalPlaybackOwner,
-			enclosingVolumeChannels: enclosingVolumes);
+			enclosingVolumeChannels: enclosingVolumes,
+			enclosingSourceVolumes: enclosingSources);
 
 		channel.AttachVoice(voice, eventFrame);
 	}
@@ -2078,6 +2145,8 @@ public sealed class PlaybackSession
 		{
 			long absoluteFrame = absoluteStartFrame + frame;
 			double volume = voice.SourceGainMultiplier;
+			foreach (FlattenedSourceVolume source in voice.EnclosingSourceVolumes)
+				volume *= source.Read(absoluteFrame);
 			foreach (PlaybackChannelState enclosing in voice.EnclosingVolumeChannels)
 				volume *= enclosing.ReadEffectiveOverallVolume(absoluteFrame);
 			volume *= voice.GetNoteVolume(absoluteFrame)
