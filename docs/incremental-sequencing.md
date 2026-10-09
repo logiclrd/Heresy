@@ -1462,6 +1462,61 @@ recursive playback. This is not an automatic replacement for the
 production playback/export scheduler. Private mixdown sequencing
 clocks and cooked multichannel nested mixdown remain future work.
 
+## Thirty-first executable step: sample-accurate prepared recursive audio
+
+The **opt-in** `PreparedIncrementalAudioSource` in `Heresy.Playback`
+bridges the experimental `IncrementalRecursiveTimeline` to an ordinary
+`PlaybackSession` without eagerly compiling the entire song schedule.
+
+The caller owns both objects. On a **single producer thread outside
+the audio callback**, it calls `PrepareThrough(exclusiveEnd)`. That
+method cooperatively executes the recursive Pattern and Sequence
+cursor until the requested exclusive wall-time horizon is known. It
+stages only emitted `NoteEvent` commands, their absolute timeline
+timestamps and their original **Pattern invocation IDs** in a
+single-producer/concurrent-consumer queue. Advance, Flow and
+Cooperate checkpoints advance preparation without creating synthetic
+notes. Scripted generators, source lookups and any associated
+sequencing diagnostics happen here, not in the render callback.
+Preparation stops when a chronological step reaches the requested
+boundary, and a bounded per-call budget prevents monopolizing the
+preparation worker.
+
+`Render(frameCount, destination)` never calls `TryStep`. It requires
+the producer to have published coverage for the entire requested
+block (or to have reached the natural end of input); otherwise it
+fails explicitly **before advancing the renderer**. Each staged event
+uses `FrameTime.Ceiling(emit.Time, sampleRate)`, the same
+never-early quantization rule as the eager `NoteSchedule` renderer.
+The adapter divides a requested audio block at those exact output
+frames, renders the preceding segment, applies all events at that
+frame **in their original stream order** through
+`PlaybackSession.ApplyScopedEvent(invocationId, ...)`, and resumes
+rendering. A 30.1 ms note at 1 kHz therefore begins on frame 31 even
+if frame 31 falls in the middle of an arbitrary callback buffer.
+Scoped broadcasts still use the renderer's strict
+`voice.StartFrame < eventFrame` rule.
+
+The existing `PlaybackSession` and its precompiled
+`NoteSchedule` path are unchanged, as are live-preview block-boundary
+events. The new source does not need a mutable/eager full-song
+schedule, nor does it execute scripting on the audio thread. It
+deliberately does **not** take ownership of the supplied timeline;
+the caller handles disposal and any final explicit
+`PlaybackSession.EndInput()` tail policy.
+
+Tests render constant PCM across uneven callbacks and verify
+fractional-frame ceiling, a Tempo change retiming a later note,
+owner-isolated same-ID virtual voices, same-frame broadcasts,
+explicit preparation coverage, and no premature time advancement.
+
+**Remaining:** a production snapshot/asset/source factory for this
+experimental renderer, an asynchronous preparation/lookahead worker,
+end-of-input tails and explicit cancellation propagation to already
+started voices, stronger scheduler completeness/advanced-effect
+parity, and private multichannel mixdown clocks. Do not silently
+replace realtime or offline export with this opt-in path yet.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
