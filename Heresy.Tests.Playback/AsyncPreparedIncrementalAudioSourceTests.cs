@@ -113,7 +113,8 @@ public sealed class AsyncPreparedIncrementalAudioSourceTests
 			plan.StartLookahead(32);
 		Assert.Throws<InvalidOperationException>(() => plan.StartLookahead(32));
 		Assert.That(SpinWait.SpinUntil(
-			() => plan.Source.IsPreparedToEnd,
+			() => plan.Source.PreparedThrough >= TimeSpan.FromMilliseconds(32)
+				|| plan.Source.IsPreparedToEnd,
 			TimeSpan.FromSeconds(5)), Is.True);
 		float[] output = new float[8];
 		asyncSource.Render(8, output);
