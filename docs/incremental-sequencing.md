@@ -2276,3 +2276,79 @@ cache is introduced.
 
 **Remaining:** dynamic propagation of parent pitch trajectories and
 the advanced simultaneous cross-rate tracker-tempo interactions.
+
+
+## Forty-eighth design correction: logical vs physical channels in flattened sources
+
+**Authoritative October 9 clarification. This supersedes earlier statements
+that flattened invocations share the parent's channel state, source memory,
+effect memory or note volume. It also supersedes step 47's assertion that
+the instigating note's volume must not update the parent's remembered
+note volume. The step-47 per-voice gain mechanism remains useful as a
+building block, but the previous result is not semantically complete.**
+
+A non-mixdown `StartNote` invoking a Pattern or Sequence operates in two
+distinct domains:
+
+1. **The caller's own logical channel**, before entering the child. The
+   instigating note acts as an ordinary note where appropriate: an explicit
+   note volume updates that channel's remembered note volume. If omitted,
+   the remembered note volume is used. That value is captured as the child
+   source-invocation volume. Other meaningful channel/global effects may
+   update the caller normally.
+2. **The child's independent logical channels**, owning their own selected
+   Source memory, note volume and tracker effect parameters, active voices,
+   independent NNA/cut/off/fade, and channel-local automation. A new
+   flattened invocation has its own state map, even if another sibling
+   invocation occupies the same host. A data Sequence's successive Pattern
+   orders share the same logical context and its memory; nested invocations
+   get fresh logical maps.
+3. **The inherited physical playback hosts**, selected by the parent channel
+   offset plus the child's local channel index. They provide placement/
+   routing, *not* logical ownership or inherited local effect/note-volume
+   state. Commands from the child cannot silently overwrite, retrigger,
+   cut, stop or leave remembered state on the host's unrelated voices.
+
+For a child voice, the amplitude contribution is the product of its
+independent child logical note volume, its own logical channel overall
+volume, the captured flattening **source gain** and the live overall
+channel-volume multiplier of the **instigating channel**, not the host
+channel into which the child voice splays. Nested invocation gains and
+parent-channel overall-volume ancestry compose. An ordinary direct note
+on the caller uses the caller's remembered note volume; descendants are
+not double-scaled by a coincidentally overlapping physical host. Note
+volume at invocation start is captured, whereas relevant overall-channel
+volume automation on the instigating channel stays live.
+
+**Instigating-note effects:** Effects with meaningful global/channel/
+invocation semantics, such as Tempo and legitimate volume controls, are
+processed normally and may update the caller's memory. Effects requiring
+a single ongoing voice (including note retrigger, tone-portamento,
+glissando, sample offsets and other per-voice controls) have no unique
+meaning on a flattened multi-note source. These are **valid stored data**,
+but ignored for playback with rate-limited diagnostics; the UI should
+warn non-disruptively when the user authors them. Ignore them before
+their tracker parameter-memory side effects. These effects remain
+fully legal *inside* the child Pattern.
+
+**Implementation seams:** `SequencingContext` must distinguish shared
+global `SequencingState` from per-invocation `SequencingChannelStateMap`;
+`IncrementalPatternTimeline` must allow multiple independently mapped
+channel-memory contexts on one shared tick timeline; `NoteEvent` and
+`PlaybackSession` must distinguish logical render ownership from the
+physical host while preserving invocation-scoped virtual channels,
+NNA, tails, private recursive mixdowns, and nested recursion. Source-volume
+capture must agree with the renderer's authoritative remembered volume,
+including after live volume slides. Per-voice ancestry is required for
+live caller overall-channel volume. Validation/diagnostic logic must be
+shared with the UI. Avoid greedy pattern expansion or another rendering
+thread.
+
+Required regressions include: explicit caller volume memory; omitted
+volume recall; no host channel volume/effect leakage; child Source and
+effect memory persisting across Sequence orders but not parent/siblings;
+overlapping logical channels using one host; independent NoteOff/Cut/
+retrigger; scoped NNA and release tails; composed nested gains; live
+overall parent-channel-volume automation affecting all splayed channels;
+unsupported instigating-note effects ignored before tracker parameter
+memory changes and diagnosed; full realtime/offline PCM parity.

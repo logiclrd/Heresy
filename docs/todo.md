@@ -27,6 +27,37 @@ nested ownership graphs are reclaimed after the final active voice detaches,
 preserving audible release and already-captured anti-click tails. These are
 **implemented invariants**, not outstanding TODOs.
 
+- [ ] **Priority: correct non-mixdown flattened invocation ownership.**
+  The original shared-channel-memory design and step 47's gain treatment
+  are **superseded** by the October 9 clarification. A flattened
+  Pattern/Sequence owns independent logical channel memory (selected Source,
+  note volume, effect parameters, retrigger/portamento, channel automation
+  and current voices) that persists across its own Sequence orders but
+  never leaks into the parent or sibling invocations. It merely **uses**
+  parent physical channel indexes as playback hosts. A host must not lend
+  note volume/effect memory to its guest or be changed by that guest.
+  Only the instigating note updates its caller's remembered note volume.
+  Its **explicit or recalled** volume is captured as an initial source-gain
+  multiplier for the child's notes; its instigating channel's **overall**
+  channel volume is a live parent multiplier for all splayed child voices,
+  regardless of which physical host they use. Child logical channel note/
+  overall volumes remain independent and are multiplicative with this gain.
+  Nested flattening retains independent memories and composes gains;
+  sequences reuse their invocation-local map between order Patterns.
+  No double-application from a host's remembered note volume.
+  Implement stable logical render-channel identities through end-to-end
+  PCM, private mixdown ownership, virtual/NNA lifecycle and cancellation;
+  provide tests for physical-host collisions, parent memory persistence,
+  omitted-volume recall, nested/sibling and multichannel splaying.
+  Classify effects on the *instigating flattening note*: global Tempo and
+  meaningful channel/volume changes still apply, but individual-voice
+  operations such as retrigger, glissando, sample offset or portamento
+  are **ignored before their effect memory changes**, with rate-limited
+  runtime diagnostics and non-blocking UI warnings. Preserve all effects
+  in the stored data (do not reject/erase them). A note *inside* the child
+  can still use those effects normally on its own logical voice.
+  Important: do not consider source-volume step 47 fully correct until
+  both remembered caller volume and private child channel ownership pass.
 - [ ] Complete recursive **dynamic pitch trajectories** and advanced
   cross-rate tracker-effect parity. Initial recursive source volume is now
   inherited by flattened Pattern/Sequence descendants as a per-voice
