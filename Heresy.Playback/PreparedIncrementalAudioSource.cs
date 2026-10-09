@@ -28,6 +28,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 	private readonly bool _endInputAtNaturalCompletion;
 	private readonly Action? _repeatRoot;
 	private readonly Func<NoteEvent, long, long, NoteEvent>? _transform;
+	private readonly Action? _afterRender;
 	private readonly HashSet<long> _canceledOwners = [];
 	private IncrementalPatternTimelineStep? _deferredStep;
 	private PendingEvent? _pendingEvent;
@@ -41,7 +42,8 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		Action<NoteEvent>? validatePreparedNote = null,
 		Func<NoteEvent, long, long, NoteEvent>? prepareEvent = null,
 		bool endInputAtNaturalCompletion = false,
-		Action? repeatRoot = null)
+		Action? repeatRoot = null,
+		Action? afterRender = null)
 	{
 		_timeline = timeline ?? throw new ArgumentNullException(nameof(timeline));
 		_session = session ?? throw new ArgumentNullException(nameof(session));
@@ -49,6 +51,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		_endInputAtNaturalCompletion = endInputAtNaturalCompletion;
 		_repeatRoot = repeatRoot;
 		_transform = prepareEvent;
+		_afterRender = afterRender;
 		if (session.NextFrame != 0)
 			throw new ArgumentException(
 				"The incremental renderer requires a fresh playback session.",
@@ -229,6 +232,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 				destination.Slice(written * channels, count * channels));
 			written += count;
 		}
+		_afterRender?.Invoke();
 		return written;
 	}
 

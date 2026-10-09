@@ -48,6 +48,12 @@ internal sealed class PlaybackSnapshotSoundResolver
 			"Prepared recursive mixdown exhausted the source ID space.");
 	}
 
+
+	/// <summary>Retire an invocation-unique source identity after its
+	/// final physical, virtual or displaced voice has detached.</summary>
+	public bool UnregisterPreparedMixdown(ObjectId id)
+		=> _preparedMixdowns.TryRemove(id, out _);
+
 	public PlaybackSnapshotSoundResolver(
 		SongDocument document,
 		ISampleDataProvider sampleDataProvider)

@@ -21,7 +21,10 @@ policy and drains release tails, with explicit bounds for endless songs.
 Indirect Instrument tones can also select Pattern/Sequence sources,
 including nested Instrument chains; selected tones receive independent
 private mixdown voices, preserve tone-envelope overlays, and check cycles.
-Sample/FM-only tones still use the normal cached resolver. These are
+Sample/FM-only tones still use the normal cached resolver. Retired
+private mixdown sound registrations, Instrument-bound transient IDs and
+nested ownership graphs are reclaimed after the final active voice detaches,
+preserving audible release and already-captured anti-click tails. These are
 **implemented invariants**, not outstanding TODOs.
 
 - [ ] Implement non-unit **pitch and playback-speed transforms** on
@@ -49,10 +52,6 @@ Sample/FM-only tones still use the normal cached resolver. These are
   using deterministic bounded checkpoints **only if** realtime ring-buffer
   underruns warrant it. Do not reintroduce unbounded event journals or
   schedule/PCM pre-rendering.
-- [ ] Reclaim retired invocation-unique private mixdown sound registrations
-  and their nested ownership graphs after all live/release/anti-click voices
-  have finished. Long-running or infinite songs must not retain every past
-  recursive invocation in the resolver or disposal list.
 - [ ] Expand end-to-end tests for indefinite scripted sequences, recursive
   cancellation and instrument cycles, realtime/offline PCM parity, and finite
   export-body/tail limits. Basic cycle protection, cooperation budgets and

@@ -312,15 +312,55 @@ public sealed class PreparedIncrementalPlaybackFactory
 		ObjectId? repeatSourceId = null,
 		int? repeatStartRow = null)
 	{
+
 		List<PreparedRecursiveMixdownSound> privateVoices = [];
+		Dictionary<ObjectId, ISound> registeredVoices = [];
 		Dictionary<int, TrackedMixdown> physicalVoices = [];
 		Dictionary<(long Owner, uint Id), TrackedMixdown> scopedVoices = [];
 		List<TrackedMixdown> displacedVoices = [];
 		disposePrivateMixdowns = () =>
 		{
+			foreach (ObjectId id in registeredVoices.Keys)
+				sounds.UnregisterPreparedMixdown(id);
+			registeredVoices.Clear();
 			foreach (PreparedRecursiveMixdownSound voice in privateVoices)
 				voice.Dispose();
+			privateVoices.Clear();
+			physicalVoices.Clear();
+			scopedVoices.Clear();
+			displacedVoices.Clear();
 		};
+
+		// Run only after a PCM block has detached its finished rendered voices.
+		// Release tails and displaced NNA voices remain present in the session,
+		// while detached anti-click residue is independent of the sound.
+		void RetireFinished()
+		{
+			foreach (var pair in registeredVoices.ToArray())
+			{
+				if (session.HasActiveSound(pair.Value))
+					continue;
+				sounds.UnregisterPreparedMixdown(pair.Key);
+				registeredVoices.Remove(pair.Key);
+			}
+			for (int i = privateVoices.Count - 1; i >= 0; i--)
+			{
+				PreparedRecursiveMixdownSound voice = privateVoices[i];
+				if (session.HasActiveSound(voice))
+					continue;
+				voice.Dispose();
+				privateVoices.RemoveAt(i);
+			}
+			foreach (var pair in physicalVoices.ToArray())
+				if (!session.HasActiveSound(pair.Value.Sound))
+					physicalVoices.Remove(pair.Key);
+			foreach (var pair in scopedVoices.ToArray())
+				if (!session.HasActiveSound(pair.Value.Sound))
+					scopedVoices.Remove(pair.Key);
+			displacedVoices.RemoveAll(
+				voice => !session.HasActiveSound(voice.Sound));
+		}
+
 
 		void Schedule(TrackedMixdown voice, long frame,
 			NoteDisplacementAction action)
@@ -581,6 +621,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 					{
 						ObjectId boundId = sounds.RegisterPreparedMixdown(
 							new BoundInstrumentInvocationSound(bound));
+						registeredVoices.Add(boundId, bound.Sound);
 						commands[i] = start with
 						{
 							SourceId = boundId, Mixdown = false,
@@ -627,6 +668,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 				PreparedRecursiveMixdownSound privateVoice =
 					CreatePrivateSound(start.SourceId, ancestry, parentFrame);
 				ObjectId preparedId = sounds.RegisterPreparedMixdown(privateVoice);
+			registeredVoices.Add(preparedId, privateVoice);
 				Track(privateVoice, note.Target, owner, parentFrame);
 				commands[i] = start with
 				{
@@ -642,6 +684,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 			endInputAtNaturalCompletion: isPrivateChild,
 			repeatRoot: repeatSourceId is ObjectId repeated
 				? () => timeline.AddRoot(repeated, startRow: repeatStartRow)
-				: null);
+				: null,
+			afterRender: RetireFinished);
 	}
 }

@@ -2085,6 +2085,26 @@ private sound IDs after all sounding/anti-click tails have finished.
 Indefinite songs must not retain every retired recursive invocation.
 No greedy scheduler fallback is reintroduced.
 
+## Forty-third step: retire completed recursive private invocations
+
+The production PCM worker now retires invocation-unique resolver registrations
+and private Pattern/Sequence ownership **after render blocks**, using the
+`PlaybackSession`'s actual rendered sound identity on physical, explicit
+virtual, scoped virtual and NNA-displaced voices. Instrument-bound transient
+wrappers track their selected recursive leaf rather than the wrapper identity.
+
+A detached voice's anti-click tail contains only copied speaker PCM residue;
+its sound and nested generator may be disposed once no live voice references
+them. Continue, Off, Fade and release voices remain registered as long as the
+renderer holds them. Retiring an invocation removes its resolver ID and local
+lifecycle tracking, and disposes its private timeline/session/children. Plan
+disposal and deterministic rewind also clean up the remaining registrations.
+This neither adds caching nor a new audio worker.
+
+Repeated direct mixdown and Instrument-selected recursive-note regressions
+assert that old registrations do not grow with the number of completed
+invocations in a long-running arrangement.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence

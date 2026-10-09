@@ -185,6 +185,30 @@ public sealed class PlaybackSession
 			+ _globalOperators.GetTotalDelta(
 				PlaybackParameter.Tempo);
 	}
+
+	/// <summary>
+	/// Checks all rendered voices by their actual bound sound identity.
+	/// Detached anti-click tails retain PCM residue, not the original sound.
+	/// Used on the single rendering worker to retire transient sources.
+	/// </summary>
+	public bool HasActiveSound(ISound sound)
+	{
+		ArgumentNullException.ThrowIfNull(sound);
+		foreach (PlaybackChannelState channel in _channels.Values)
+			if (ReferenceEquals(channel.CurrentVoice?.Sound, sound))
+				return true;
+		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+			if (ReferenceEquals(channel.CurrentVoice?.Sound, sound))
+				return true;
+		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+			if (ReferenceEquals(channel.CurrentVoice?.Sound, sound))
+				return true;
+		foreach (PlaybackVoice voice in _virtualVoices)
+			if (ReferenceEquals(voice.Sound, sound))
+				return true;
+		return false;
+	}
+
 	public IReadOnlyList<PlaybackVoice> VirtualVoices => _virtualVoices;
 
 	public bool TryGetChannelState(int channel, out PlaybackChannelState? state)
