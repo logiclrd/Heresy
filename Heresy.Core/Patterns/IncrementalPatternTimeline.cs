@@ -183,10 +183,25 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			_scheduled.Sort((a, b) =>
 			{
 				int order = a.Offset.CompareTo(b.Offset);
-				return order != 0 ? order : a.Order.CompareTo(b.Order);
+				if (order != 0)
+					return order;
+				// Eager SyntheticOrder emits delayed note setup before
+				// same-tick Qxy retrigger, and SCx cut after both.
+				int priority = Priority(a.Kind).CompareTo(Priority(b.Kind));
+				return priority != 0 ? priority : a.Order.CompareTo(b.Order);
 			});
 			RefreshDue();
 		}
+
+		private static int Priority(TickOperationKind kind)
+			=> kind switch
+			{
+				TickOperationKind.DeferredRaw => 1,
+				TickOperationKind.RepeatedDelayed => 2,
+				TickOperationKind.Retrigger => 3,
+				TickOperationKind.Cut => 4,
+				_ => 5,
+			};
 
 		public void QueueCut(NoteEvent note, byte cutTick)
 		{
@@ -220,23 +235,37 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			}
 		}
 
-		public void QueueRetrigger(NoteEvent note, byte input)
+		public void QueueRetrigger(
+			NoteEvent note, byte input, byte? delayTick = null)
 		{
 			SequencingChannelState channel =
 				Context.GetPhysicalChannelState(note.Target.PhysicalChannel);
+			// Qxx memory is read when its original row event is
+			// encountered, even if SDx later suppresses execution.
 			byte parameter = channel.ResolveEffectParameter(
 				EffectMemorySlot.Retrigger, input);
 			int interval = parameter & 0x0F;
 			byte transform = (byte)(parameter >> 4);
 			bool startsNew = note.Commands.Any(c => c is StartNoteCommand);
+			double original = (note.Offset.RowOffset - Row) * RowSpeed;
+			if (delayTick.HasValue)
+			{
+				int offset = Math.Max(1, (int)delayTick.Value);
+				// SEy does not rescue SDx whose offset is outside its
+				// *original* captured row span.
+				if (offset >= EffectiveSpanTicks
+					|| original + offset >= TotalRowTicks)
+					return;
+				original += offset;
+			}
+			// Qxy's countdown starts when the delayed note executes;
+			// its first candidate retrigger is the next tracker tick.
+			// All work is still scheduled lazily against the shared clock.
 			if (startsNew)
 				channel.RetriggerCountdown = interval;
-			double original = (note.Offset.RowOffset - Row) * RowSpeed;
 			for (int tick = startsNew ? 1 : 0; original + tick < TotalRowTicks; tick++)
-			{
 				Schedule(original + tick, note, TickOperationKind.Retrigger,
 					interval, transform);
-			}
 		}
 
 		public void ConsumeScheduled()
@@ -1781,9 +1810,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						break;
 				}
 			}
-			if (delayTick.HasValue && retrigger.HasValue)
-				throw new NotSupportedException(
-					"Combined SDx/Qxy needs a shared retrigger/delay state machine.");
+			// SDx shifts the note's actual execution position; Qxy
+			// evaluates future retrigger ticks from that delayed position.
 			if ((cutTick.HasValue || delayTick.HasValue || retrigger.HasValue)
 				&& raw.Offset.TimeOffset != TimeSpan.Zero)
 				throw new NotSupportedException(
@@ -1798,7 +1826,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				if (cutTick.HasValue)
 					current.QueueCut(raw, cutTick.Value);
 				if (retrigger.HasValue)
-					current.QueueRetrigger(raw, retrigger.Value);
+					current.QueueRetrigger(raw, retrigger.Value, delayTick);
 				if (delayTick.HasValue || ordinary.Count == 0)
 				{
 					current.ConsumeEvent();
