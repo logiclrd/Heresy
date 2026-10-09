@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Threading;
 
 using Heresy.Core.Patterns;
@@ -22,7 +23,7 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 	private const int MaximumStepsPerPreparation = 1_000_000;
 
 	private sealed record PreparedEvent(
-		long Frame, long InvocationId, NoteEvent Note);
+		long Frame, long InvocationId, NoteEvent? Note);
 
 	private readonly IncrementalRecursiveTimeline _timeline;
 	private readonly PlaybackSession _session;
@@ -114,6 +115,32 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 		Volatile.Write(ref _preparedThroughTicks, exclusiveEnd.Ticks);
 	}
 
+	/// <summary>
+	/// Explicitly cancel a live invocation subtree at the current playback
+	/// frame. The producer must serialize this with Render and may only cancel
+	/// when no lookahead remains beyond the playback head. This deliberately
+	/// avoids rewriting previously published, sample-exact events.
+	/// Natural completion does not cut voices.
+	/// </summary>
+	public bool Cancel(long invocationId)
+	{
+		if (_disposed)
+			throw new ObjectDisposedException(nameof(PreparedIncrementalAudioSource));
+		long now = _session.NextFrame;
+		if (Volatile.Read(ref _preparedThroughTicks) >
+			FrameTime.FrameStartTime(now, Format.SampleRate).Ticks
+			|| _events.TryPeek(out PreparedEvent? pending) && pending.Frame >= now)
+			throw new InvalidOperationException(
+				"Cancel requires the prepared frontier to meet the playback head.");
+		List<long> removed = [];
+		if (!_timeline.Cancel(invocationId, removed))
+			return false;
+		foreach (long owner in removed)
+			_events.Enqueue(new PreparedEvent(now, owner, null));
+		_lastEventFrame = now;
+		return true;
+	}
+
 	public void Render(int frameCount, Span<float> destination)
 	{
 		if (_disposed)
@@ -162,8 +189,11 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 			{
 				if (!_events.TryDequeue(out PreparedEvent? current))
 					continue;
-				_session.ApplyScopedEvent(current.InvocationId,
-					current.Note.Target, current.Note.Commands);
+				if (current.Note is null)
+					_session.CancelScopedVoices(current.InvocationId);
+				else
+					_session.ApplyScopedEvent(current.InvocationId,
+						current.Note.Target, current.Note.Commands);
 			}
 		}
 		int remaining = frameCount - writtenFrames;
