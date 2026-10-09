@@ -17,9 +17,8 @@ using Heresy.Scripting.Compilation;
 namespace Heresy.Playback;
 
 /// <summary>
-/// Owns the experimental recursive timeline and adapter. The playback
-/// session's tail/end-of-input policy stays explicit; disposing this plan
-/// does not switch or affect production realtime/offline scheduling.
+/// Owns the snapshot-isolated recursive timeline, renderer and nested voices.
+/// The same plan now powers production realtime transport and offline export.
 /// </summary>
 public sealed class PreparedIncrementalPlaybackPlan : IDisposable
 {
@@ -78,9 +77,9 @@ public sealed class PreparedIncrementalPlaybackPlan : IDisposable
 }
 
 /// <summary>
-/// Opt-in preparation of a recursive Pattern/Sequence as a sample-accurate
-/// PCM source, using stable song definitions and already decoded sample data.
-/// This does not replace the production playback/export source factories.
+/// Production recursive Pattern/Sequence execution as sample-accurate PCM,
+/// using immutable song definitions, prepared scripts and decoded samples.
+/// The coroutine advances on the dedicated rendering worker or export thread.
 /// </summary>
 public sealed class PreparedIncrementalPlaybackFactory
 {
