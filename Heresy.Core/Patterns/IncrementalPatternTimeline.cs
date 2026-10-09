@@ -50,10 +50,13 @@ public abstract record IncrementalPatternTimelineStep(double Tick, TimeSpan Time
 /// individual row-end ticks captured independently. A cursor processes only
 /// its due operation and retains its raw enumerator between operations.
 ///
-/// This prototype admits only ordinary Note Start/Off/Cut, data Source-column
-/// selection, and standalone global Tempo/Speed. Unsupported commands and
-/// wall-time offsets fail explicitly; advanced tracker effects still use the
-/// established production PatternNoteProcessor/scheduler.
+/// The experimental supported subset includes physical-channel tracker timing,
+/// ordinary virtual and broadcast note targets, shared Tempo/Speed changes,
+/// bounded fixed-wall deadlines and selected row-scoped tracker effects.
+/// Virtual targets retain their local IDs and cursor invocation ownership;
+/// physical-only tracker effect memory still requires a physical channel.
+/// Unsupported effects and mixdown sound generation remain separate from
+/// the production PatternNoteProcessor and renderer.
 /// </summary>
 public sealed class IncrementalPatternTimeline : IDisposable
 {
