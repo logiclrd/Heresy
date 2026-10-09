@@ -237,6 +237,27 @@ public sealed class PlaybackSession
 		return state;
 	}
 
+	/// <summary>
+	/// Request normal note-fade semantics for voices presently active in
+	/// this session. A recursive private-clock owner invokes this at its
+	/// prepared frame when the parent applies an NNA/past-note Fade.
+	/// No sequencing work is performed here.
+	/// </summary>
+	public void RequestFadeOfActiveVoices()
+	{
+		foreach (PlaybackChannelState channel in _channels.Values)
+			channel.CurrentVoice?.RequestNoteFade(
+				_nextFrame, SampleRate);
+		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+			channel.CurrentVoice?.RequestNoteFade(
+				_nextFrame, SampleRate);
+		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+			channel.CurrentVoice?.RequestNoteFade(
+				_nextFrame, SampleRate);
+		foreach (PlaybackVoice voice in _virtualVoices)
+			voice.RequestNoteFade(_nextFrame, SampleRate);
+	}
+
 	public void EndInput()
 	{
 		if (_inputEnded)
