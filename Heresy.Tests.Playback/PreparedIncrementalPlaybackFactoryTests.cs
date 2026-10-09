@@ -64,6 +64,8 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		// Authoring changes must not rewrite an already prepared program.
 		scripted.Source = "Cut(0, 0);";
 		((ScriptSequenceDefinition)document.Objects[sequenceId]).Source = "return null;";
+		((ScriptSequenceDefinition)plan.Snapshot.Document.Objects[sequenceId]).Source = "return null;";
+		((ScriptPatternDefinition)plan.Snapshot.Document.Objects[scriptPatternId]).Source = "Cut(0, 0);";
 		Assert.Throws<InvalidOperationException>(() =>
 			plan.Source.Render(1, new float[1]));
 		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(160));
@@ -96,6 +98,34 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(130));
 		plan.Source.Render(1, new float[1]);
 		Assert.That(provider.Calls, Is.EqualTo(1));
+	}
+
+	[Test]
+	public void NestedPatternMixdownIsRejectedOnTheProducerBeforeRendering()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new DataPatternDefinition(childId, "Mixdown child")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		});
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Parent")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		PatternCell cell = parent.Grid.GetOrCreateCell(0, 0);
+		cell.SourceId = childId;
+		cell.Note = new StartPatternNote(mixdown: true);
+		document.Add(parent);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, parentId);
+		Assert.Throws<NotSupportedException>(() =>
+			plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(120)));
+		Assert.That(plan.Source.NextFrame, Is.Zero);
 	}
 
 	[Test]
