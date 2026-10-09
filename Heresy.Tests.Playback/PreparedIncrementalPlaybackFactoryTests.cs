@@ -782,8 +782,8 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		float[] output = new float[3];
 		plan.Source.Render(output.Length, output);
 		Assert.That(output, Is.All.EqualTo(0.125f).Within(1e-6f));
-		Assert.That(plan.Session.GetChannelState(0).CurrentVoice!.Sound,
-			Is.TypeOf<PreparedRecursiveMixdownSound>());
+		Assert.That(plan.Session.GetChannelState(0).CurrentVoice!.Sound
+			.GetType().Name, Is.EqualTo("PreparedRecursiveMixdownSound"));
 	}
 
 	[Test]
