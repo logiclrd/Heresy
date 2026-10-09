@@ -2,135 +2,82 @@ using System;
 using System.Collections.Generic;
 
 using Heresy.Core.Objects;
-using Heresy.Core.Samples;
 using Heresy.Core.Sequences;
 using Heresy.Render.Configuration;
-using Heresy.Render.Playback;
 using Heresy.Render.Samples;
-using Heresy.Render.Sounds;
-using Heresy.Scripting.Compilation;
+using Heresy.Scripting.Analysis;
 
 namespace Heresy.Playback;
 
-public sealed class OfflineSongRenderPlan
+/// <summary>
+/// Owns the same incremental source as realtime playback. Its logical
+/// duration is discovered while the file renderer enumerates the song;
+/// neither infinite scripts nor looping arrangements are expanded eagerly.
+/// </summary>
+public sealed class OfflineSongRenderPlan : IDisposable
 {
-	internal OfflineSongRenderPlan(
-		SongDocumentSnapshot snapshot,
-		PlaybackSession session,
-		TimeSpan logicalDuration)
-	{
-		Snapshot =
-			snapshot
-				?? throw new ArgumentNullException(nameof(snapshot));
-		Session =
-			session
-				?? throw new ArgumentNullException(nameof(session));
-		if (logicalDuration < TimeSpan.Zero)
-			throw new ArgumentOutOfRangeException(nameof(logicalDuration));
+	private readonly PreparedIncrementalPlaybackPlan _playback;
 
-		LogicalDuration = logicalDuration;
+	internal OfflineSongRenderPlan(PreparedIncrementalPlaybackPlan playback)
+	{
+		_playback = playback ?? throw new ArgumentNullException(nameof(playback));
 	}
 
-	public SongDocumentSnapshot Snapshot { get; }
+	public SongDocumentSnapshot Snapshot => _playback.Snapshot;
+	public Heresy.Render.Playback.PlaybackSession Session => _playback.Session;
+	public PreparedIncrementalAudioSource Source => _playback.Source;
+	public TimeSpan LogicalDuration => _playback.Source.LogicalDuration;
 
-	public PlaybackSession Session { get; }
-
-	public TimeSpan LogicalDuration { get; }
+	public void Dispose() => _playback.Dispose();
 }
 
 /// <summary>
-/// Captures an immutable authoring snapshot and compiles its root sequence into
-/// the same PlaybackSession model used by realtime playback. File encoding is
-/// deliberately outside this layer.
+/// Builds a lazy, deterministic root sequence. The Bxx export policy is
+/// applied to each actual cursor visit; no full-song compilation occurs.
 /// </summary>
 public sealed class OfflineSongRenderPlanFactory
 {
 	private readonly RenderConfiguration _configuration;
-	private readonly ISampleDataProvider _sampleDataProvider;
+	private readonly ISampleDataProvider _samples;
+
+	public OfflineSongRenderPlanFactory(RenderConfiguration configuration)
+		: this(configuration, new InMemorySampleDataProvider()) { }
 
 	public OfflineSongRenderPlanFactory(
-		RenderConfiguration configuration)
-		: this(
-			configuration,
-			new InMemorySampleDataProvider())
+		RenderConfiguration configuration, ISampleDataProvider sampleDataProvider)
 	{
+		_configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+		_samples = sampleDataProvider ?? throw new ArgumentNullException(nameof(sampleDataProvider));
 	}
 
-	public OfflineSongRenderPlanFactory(
-		RenderConfiguration configuration,
-		ISampleDataProvider sampleDataProvider)
-	{
-		_configuration =
-			configuration
-				?? throw new ArgumentNullException(nameof(configuration));
-		_sampleDataProvider =
-			sampleDataProvider
-				?? throw new ArgumentNullException(nameof(sampleDataProvider));
-	}
-
-	public OfflineSongRenderPlan Create(
-		SongDocument document)
+	public OfflineSongRenderPlan Create(SongDocument document)
 	{
 		ArgumentNullException.ThrowIfNull(document);
 		if (document.RootSequenceId.IsNone)
-		{
-			throw new InvalidOperationException(
-				"The song does not have a root sequence.");
-		}
+			throw new InvalidOperationException("The song does not have a root sequence.");
 
-		SongDocumentSnapshot snapshot =
-			SongDocumentSnapshot.Create(document);
-		SongDocument snapshotDocument =
-			snapshot.Document;
-		Dictionary<SequenceOrderJumpEncounter, int>
-			orderJumpEncounters = [];
-		bool ShouldFollowOrderJump(
-			SequenceOrderJumpEncounter encounter)
+		SongDocumentSnapshot snapshot = SongDocumentSnapshot.Create(document);
+		Dictionary<SequenceOrderJumpEncounter, int> visits = [];
+		bool FollowJump(SequenceOrderJumpEncounter encounter)
 		{
-			orderJumpEncounters.TryGetValue(
-				encounter,
-				out int previousCount);
-			int count =
-				checked(previousCount + 1);
-			orderJumpEncounters[encounter] = count;
-
-			// Offline rendering treats the third encounter with the same Bxx
-			// instruction as the logical end of the arrangement. The row
-			// containing that third Bxx is still rendered; only its jump is
-			// suppressed.
+			visits.TryGetValue(encounter, out int count);
+			visits[encounter] = ++count;
+			// Keep the row containing the third Bxx; suppress its jump.
 			return count < 3;
 		}
-
-		SongScheduleCompilationResult compilation =
-			SongScheduleCompiler.CompileSequence(
-				snapshotDocument,
-				snapshotDocument.RootSequenceId,
-				shouldFollowOrderJump: ShouldFollowOrderJump);
-
-		if (!compilation.Success
-			|| compilation.Schedule is null)
+		try
+		{
+			PreparedIncrementalPlaybackPlan playback =
+				new PreparedIncrementalPlaybackFactory(_configuration, _samples)
+					.Create(snapshot, snapshot.Document.RootSequenceId,
+						shouldFollowOrderJump: FollowJump);
+			return new OfflineSongRenderPlan(playback);
+		}
+		catch (ArgumentException error)
 		{
 			throw new PlaybackSourceCompilationException(
-				$"Could not compile root sequence {snapshotDocument.RootSequenceId.Value} for offline rendering.",
-				compilation.Diagnostics);
+				$"Could not prepare root sequence {snapshot.Document.RootSequenceId.Value} for offline rendering: {error.Message}",
+				Array.Empty<ScriptAnalysisDiagnostic>());
 		}
-
-		PlaybackSnapshotSoundResolver resolver =
-			new(
-				snapshotDocument,
-				_sampleDataProvider);
-		// Nested flattened sources were already sequenced in the parent
-		// context during compilation. That schedule and its expanded
-		// logical duration are the source of truth for offline output.
-		PlaybackSession session =
-			new(
-				new RenderContext(_configuration),
-				compilation.Schedule,
-				resolver);
-
-		return new OfflineSongRenderPlan(
-			snapshot,
-			session,
-			compilation.Duration);
 	}
 }
