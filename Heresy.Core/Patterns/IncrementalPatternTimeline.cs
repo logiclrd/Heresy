@@ -814,7 +814,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	private long _nextDeferredOrder;
 	private ActiveTempoRamp? _tempoRamp;
 	private readonly Queue<ActiveTempoRamp> _futureTempoRamps = new();
-	private long _futureTempoOwner;
+	private long _futureTempoOwner = -1;
 	private readonly Queue<IncrementalPatternTimelineStep.Emit> _queuedTempoEvents = new();
 	private long _nextSequence;
 	private long _emissionOrder;
@@ -942,6 +942,17 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				else
 					_queuedTempoEvents.Enqueue(queued);
 			}
+		}
+		if (_futureTempoOwner == invocationId
+			&& (_tempoRamp is not null || _futureTempoRamps.Count != 0))
+		{
+			// A cancelled Pattern no longer owns any future SEy Tempo
+			// repetitions. Freeze at the instantaneous shared Tempo;
+			// do not let its queued ramps retime unrelated voices.
+			_tempoRamp = null;
+			_futureTempoRamps.Clear();
+			_futureTempoOwner = -1;
+			removed++;
 		}
 		if (cursor is null)
 			return removed != 0;
@@ -1192,6 +1203,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				immediateSets.Add((parameter, request.Cursor.Context.MapTarget(raw.Target)));
 				_tempoRamp = null;
 				_futureTempoRamps.Clear();
+				_futureTempoOwner = -1;
 				_root.State.Tempo = parameter;
 				QueueTimingEvent(raw with
 				{
@@ -1253,6 +1265,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		}
 		else if (slides.Count > 0)
 		{
+			_futureTempoOwner = -1;
 			int[] spans = slides.Select(x => x.Span).Distinct()
 				.OrderBy(x => x).ToArray();
 			double initial = _root.State.Tempo;
@@ -1429,6 +1442,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		// A later row-boundary Txx replaces the prior trajectory from the
 		// instantaneous Tempo reached at this tracker tick.
 		_futureTempoRamps.Clear();
+		_futureTempoOwner = -1;
 		_tempoRamp = new ActiveTempoRamp(
 			_tick, _tick + ramp.TrackerTicks, _root.State.Tempo, ramp.EndingTempo);
 	}
@@ -1474,6 +1488,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				// A new direct Tempo command truncates any previous ramp now.
 				_tempoRamp = null;
 				_futureTempoRamps.Clear();
+				_futureTempoOwner = -1;
 			}
 
 			NoteScheduleBuilder resolvedTiming = new();
