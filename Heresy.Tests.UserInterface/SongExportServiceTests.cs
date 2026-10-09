@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using AwesomeAssertions;
 
 using Heresy.Core.Objects;
+using Heresy.Core.Instruments;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequences;
 using Heresy.Core.Samples;
@@ -146,6 +147,63 @@ public sealed class SongExportServiceTests
 			writer.Write((short)16384);
 		}
 		return stream.ToArray();
+	}
+
+	[Test]
+	public async Task ExportRendersPatternSelectedByInstrumentTone()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(
+			sampleId, "PCM", "memory.wav", OneFrameWave()));
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Inner")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		child.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sampleId);
+		document.Add(child);
+		ObjectId instrumentId = document.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Instrument");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = child,
+		});
+		instrument.ToneTable.Add(0);
+		document.Add(instrument);
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Parent")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(instrumentId);
+		document.Add(parent);
+		ObjectId rootId = document.AllocateObjectId();
+		DataSequenceDefinition root = new(rootId, "Song");
+		root.Entries.Add(new SequenceEntry(parentId));
+		document.Add(root);
+		document.RootSequenceId = rootId;
+		SongExportService service = new(new OfflineSongRenderPlanFactory(
+			RenderConfiguration.Stereo(sampleRate: 1000)));
+		string path = Path.Combine(Path.GetTempPath(),
+			$"heresy-instrument-tone-export-{Guid.NewGuid():N}.wav");
+		try
+		{
+			OfflineRenderResult result = await service.ExportAsync(
+				document, path, OfflineAudioFileFormat.Wave);
+			result.LogicalFrameCount.Should().Be(120);
+			byte[] wav = await File.ReadAllBytesAsync(path);
+			short left = BinaryPrimitives.ReadInt16LittleEndian(
+				wav.AsSpan(44, 2));
+			left.Should().NotBe(0,
+				"an Instrument-owned recursive Pattern must produce offline PCM");
+		}
+		finally
+		{
+			if (File.Exists(path)) File.Delete(path);
+		}
 	}
 
 	[Test]
