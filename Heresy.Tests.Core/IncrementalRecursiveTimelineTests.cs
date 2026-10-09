@@ -685,10 +685,12 @@ public sealed class IncrementalRecursiveTimelineTests
 			new SequencingContext(), new Resolver(sequence, parent, child));
 		timeline.AddRoot(sequence.Id, shouldFollowOrderJump: _ => ++encountered < 3);
 		NoteEvent[] notes = Drain(timeline);
-		Assert.That(notes.Select(e => e.Offset.TimeOffset),
+		Assert.That(notes.Where(e => e.Commands.Any(c => c is NoteCutCommand))
+			.Select(e => e.Offset.TimeOffset),
 			Is.EqualTo(new[] { TimeSpan.Zero,
 				TimeSpan.FromMilliseconds(120),
-				TimeSpan.FromMilliseconds(240) }));
+				TimeSpan.FromMilliseconds(240) }),
+			"Scope control and NNA override commands are not musical child notes.");
 		Assert.That(encountered, Is.EqualTo(3));
 		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(360)));
 		Assert.That(timeline.IsComplete, Is.True);

@@ -21,6 +21,46 @@ namespace Heresy.Tests.Render;
 public sealed class PlaybackSessionTests
 {
 	[Test]
+	public void FlattenedScopeCutIncludesVirtualAndDisplacedNnaVoicesButNotHostSiblings()
+	{
+		ObjectId sampleId = (ObjectId)10U;
+		float[] waveform = new float[64];
+		Array.Fill(waveform, 1f);
+		PlaybackSession session = Session(1000,
+			Schedule(), new TestResolver(
+				(sampleId, false,
+					Sample(waveform, 1000, NewNotePolicy.Continue))));
+		session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+			[new BeginFlattenedSourceVolumeCommand(1, 0.5)]);
+		StartNoteCommand nestedStart = new(sampleId)
+		{
+			ParentSourceScopes = new long[] { 1 },
+		};
+		session.ApplyScopedEvent(100, ChannelTarget.Virtual(7),
+			[nestedStart]);
+		session.ApplyScopedEvent(100, ChannelTarget.Physical(1),
+			[nestedStart], physicalPlaybackOwner: 1);
+		// The old scoped physical voice becomes a displaced NNA voice.
+		session.ApplyScopedEvent(100, ChannelTarget.Physical(1),
+			[nestedStart], physicalPlaybackOwner: 1);
+		// An unrelated root physical host must survive the scope action.
+		session.ApplyScopedEvent(200, ChannelTarget.Physical(2),
+			[new StartNoteCommand(sampleId)]);
+		float[] first = new float[1];
+		session.Render(0, 1, first);
+		Assert.That(first[0], Is.EqualTo(2.5f).Within(1e-6f));
+		Assert.That(session.VirtualVoices, Has.Count.EqualTo(1));
+
+		session.ApplyFlattenedScopeAction(1, NoteDisplacementAction.Cut);
+		Assert.That(session.VirtualVoices, Is.Empty);
+		Assert.That(session.GetChannelState(2).CurrentVoice, Is.Not.Null);
+		float[] after = new float[30];
+		session.Render(1, after.Length, after);
+		Assert.That(after[20], Is.EqualTo(1f).Within(1e-6f),
+			"Only the unrelated host remains after the cut tails decay.");
+	}
+
+	[Test]
 	public void StartNoteRendersResolvedSound()
 	{
 		ObjectId sourceId = (ObjectId)10U;
