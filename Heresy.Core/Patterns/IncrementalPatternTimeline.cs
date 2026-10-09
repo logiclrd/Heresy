@@ -799,6 +799,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				&& (note.Target.Kind != ChannelTargetKind.Physical
 					|| note.Commands.Any(c => c is not (StartNoteCommand
 						or NoteOffCommand or NoteCutCommand
+						or SelectPatternSourceCommand or SetNoteVolumeCommand
+						or ApplySampleOffsetCommand
 						or ApplyTrackerNoteCutCommand
 						or ApplyTrackerNoteDelayCommand
 						or ApplyRetriggerCommand))))
