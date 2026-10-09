@@ -936,6 +936,50 @@ public sealed class IncrementalRecursiveTimelineTests
 		Assert.That(context.Diagnostics.Drain(), Is.Empty);
 	}
 
+	[Test]
+	public void DeferredSourcePortamentoReinterpretsPatternStartAtResolutionTime()
+	{
+		SequencingContext context = new()
+		{
+			ResolvePatternSourcesAtRowTime = true,
+			IsFlattenedSource = source => source == (ObjectId)2U,
+		};
+		NoteEvent unresolved = new(
+			MusicalTime.Zero, ChannelTarget.Physical(0),
+			[new ApplyTonePortamentoCommand(5,
+				new StartNoteCommand(ObjectId.None))]);
+		NoteScheduleBuilder output = new();
+		PatternNoteProcessor.GenerateNotes(
+			new SourceChangingDeferredGenerator(unresolved, (ObjectId)2U),
+			context, output, out _);
+		NoteEvent[] resolved = output.Freeze().ToArray();
+		Assert.That(resolved.SelectMany(e => e.Commands)
+			.OfType<StartNoteCommand>().Select(e => e.SourceId),
+			Is.EqualTo(new[] { (ObjectId)2U }),
+			"An omitted Source is judged when it actually resolves, not at generator lookahead.");
+		Assert.That(resolved.SelectMany(e => e.Commands)
+			.OfType<SetTonePortamentoCommand>(), Is.Empty);
+		Assert.That(context.GetPhysicalChannelState(0)
+			.TryGetEffectParameter(EffectMemorySlot.TonePortamento, out _),
+			Is.False);
+		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(1));
+	}
+
+	private sealed class SourceChangingDeferredGenerator(
+		NoteEvent eventBeforeSourceResolution, ObjectId resolvedSource)
+		: IDeferredSourcePatternGenerator
+	{
+		public void GenerateRawNotes(SequencingContext context,
+			INoteReceiver output, out double rowCount)
+		{
+			output.Append(eventBeforeSourceResolution);
+			// Mimics source selection becoming authoritative only after
+			// a different coroutine updates the shared logical context.
+			context.GetPhysicalChannelState(0).CurrentSourceId = resolvedSource;
+			rowCount = 1;
+		}
+	}
+
 	private static DataPatternDefinition Pattern(uint id, int rows)
 		=> new((ObjectId)id, "Pattern")
 		{
