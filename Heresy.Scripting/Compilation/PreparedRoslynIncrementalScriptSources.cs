@@ -9,8 +9,8 @@ using Heresy.Core.Sequencing;
 namespace Heresy.Scripting.Compilation;
 
 /// <summary>
-/// An explicitly prepared, snapshot-owned source resolver and script compiler
-/// for experimental recursive playback. All restricted Roslyn scripts are
+/// A snapshot-owned source resolver and streaming script compiler
+/// for production recursive playback. All restricted Roslyn scripts are
 /// compiled once before creating a timeline. Compiled program factories
 /// are immutable and reused; their invocation-local script state and RNG
 /// are never shared between executions.
@@ -72,9 +72,8 @@ public sealed class PreparedRoslynIncrementalScriptSources :
 	}
 
 	/// <summary>
-	/// Create a fresh shared-clock coordinator, resolving its entire source
-	/// graph from the private preparation snapshot. Production playback is
-	/// not switched to this experimental coordinator.
+	/// Create a fresh shared-clock coordinator from this immutable song
+	/// snapshot, for realtime, offline or nested private playback.
 	/// </summary>
 	public IncrementalRecursiveTimeline CreateTimeline(SequencingContext context)
 	{
