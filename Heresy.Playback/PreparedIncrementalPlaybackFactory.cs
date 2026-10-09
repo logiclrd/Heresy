@@ -172,9 +172,9 @@ public sealed class PreparedIncrementalPlaybackFactory
 	/// <summary>
 	/// Each physical mixdown start gets a new private recursive clock and
 	/// renderer. The parent receives an invocation-unique sound ID.
-	/// The producer stages only child events before publishing each parent
-	/// horizon. The audio callback renders child PlaybackSessions recursively,
-	/// with no Roslyn or timeline enumeration and no persistent cooked PCM.
+	/// The same PCM worker advances each child generator and renderer
+	/// synchronously. Rewinds reconstruct both; no prepared event journals,
+	/// separate preparation threads or cooked PCM buffers are retained.
 	/// </summary>
 	private PreparedIncrementalAudioSource CreatePrivateMixdownAwareSource(
 		IncrementalRecursiveTimeline timeline,
@@ -182,8 +182,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 		PreparedRoslynIncrementalScriptSources scripts,
 		PlaybackSnapshotSoundResolver sounds,
 		IReadOnlyList<ObjectId> ancestry,
-		out Action disposePrivateMixdowns,
-		Func<PlaybackSession>? replaySessionFactory = null)
+		out Action disposePrivateMixdowns)
 	{
 		List<PreparedRecursiveMixdownSound> privateVoices = [];
 		Dictionary<int, TrackedMixdown> physicalVoices = [];
@@ -359,57 +358,50 @@ public sealed class PreparedIncrementalPlaybackFactory
 					childAncestry[a] = ancestry[a];
 				childAncestry[^1] = start.SourceId;
 
-				IncrementalRecursiveTimeline childTimeline =
-					scripts.CreateTimeline(new SequencingContext());
-				try
+				PrivateRecursivePlayback CreateChildPlayback()
 				{
-					childTimeline.AddRoot(start.SourceId);
-					PlaybackSession FreshChildSession() => new(
-						new RenderContext(_configuration),
-						new NoteScheduleBuilder().Freeze(), sounds);
-					PlaybackSession childSession = FreshChildSession();
-					PreparedIncrementalAudioSource childSource =
-						CreatePrivateMixdownAwareSource(childTimeline, childSession,
-							scripts, sounds, childAncestry,
-							out Action disposeDescendants, FreshChildSession);
-					PreparedRecursiveMixdownSound privateVoice = new(
-						childTimeline, childSession, childSource, parentFrame,
-						disposeDescendants);
-					ObjectId preparedId = sounds.RegisterPreparedMixdown(privateVoice);
-					privateVoices.Add(privateVoice);
-					TrackedMixdown tracked = new(privateVoice, parentFrame,
-						note.Target.Kind == ChannelTargetKind.Physical
-							? note.Target.PhysicalChannel : -1);
-					if (note.Target.Kind == ChannelTargetKind.Physical)
-						physicalVoices[note.Target.PhysicalChannel] = tracked;
-					else if (note.Target.Kind == ChannelTargetKind.Virtual)
-						scopedVoices[(owner, note.Target.VirtualChannelId)] = tracked;
-					commands[i] = start with
+					IncrementalRecursiveTimeline childTimeline =
+						scripts.CreateTimeline(new SequencingContext());
+					try
 					{
-						SourceId = preparedId,
-						Mixdown = false,
-					};
+						childTimeline.AddRoot(start.SourceId);
+						PlaybackSession childSession = new(
+							new RenderContext(_configuration),
+							new NoteScheduleBuilder().Freeze(), sounds);
+						PreparedIncrementalAudioSource childSource =
+							CreatePrivateMixdownAwareSource(
+								childTimeline, childSession, scripts, sounds,
+								childAncestry, out Action disposeDescendants);
+						return new PrivateRecursivePlayback(
+							childTimeline, childSession, childSource, disposeDescendants);
+					}
+					catch
+					{
+						childTimeline.Dispose();
+						throw;
+					}
 				}
-				catch
+				PreparedRecursiveMixdownSound privateVoice = new(
+					CreateChildPlayback(), parentFrame, CreateChildPlayback);
+				ObjectId preparedId = sounds.RegisterPreparedMixdown(privateVoice);
+				privateVoices.Add(privateVoice);
+				TrackedMixdown tracked = new(privateVoice, parentFrame,
+					note.Target.Kind == ChannelTargetKind.Physical
+						? note.Target.PhysicalChannel : -1);
+				if (note.Target.Kind == ChannelTargetKind.Physical)
+					physicalVoices[note.Target.PhysicalChannel] = tracked;
+				else if (note.Target.Kind == ChannelTargetKind.Virtual)
+					scopedVoices[(owner, note.Target.VirtualChannelId)] = tracked;
+				commands[i] = start with
 				{
-					childTimeline.Dispose();
-					throw;
-				}
+					SourceId = preparedId,
+					Mixdown = false,
+				};
 			}
 			return note with { Commands = commands };
 		}
 
-		void PrepareNested(TimeSpan exclusiveEnd)
-		{
-			long parentEnd = FrameTime.Ceiling(exclusiveEnd, _configuration.SampleRate);
-			foreach (PreparedRecursiveMixdownSound voice in privateVoices)
-				voice.PrepareThrough(Math.Max(0, parentEnd - voice.ParentStartFrame));
-		}
-
 		return new PreparedIncrementalAudioSource(
-			timeline, session,
-			prepareEvent: Transform,
-			prepareNested: PrepareNested,
-			replaySessionFactory: replaySessionFactory);
+			timeline, session, prepareEvent: Transform);
 	}
 }
