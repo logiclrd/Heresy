@@ -168,7 +168,7 @@ public sealed class RetriggerPatternEffectTests
 	}
 
 	[Test]
-	public void FlattenedChildSharesMappedRetriggerMemoryAndCountdown()
+	public void FlattenedChildDoesNotRecallParentRetriggerMemoryAndCountdown()
 	{
 		SequencingContext parent = new(physicalChannelBase: 3);
 
@@ -197,7 +197,7 @@ public sealed class RetriggerPatternEffectTests
 			Is.EqualTo(TimeSpan.Zero));
 		Assert.That(
 			schedule[0].Commands[0],
-			Is.EqualTo(new RetriggerCurrentVoiceCommand(0x0A)));
+			Is.EqualTo(new RetriggerCurrentVoiceCommand(0x00)));
 	}
 
 	private static DataPatternDefinition PatternWithRows(int rows)
