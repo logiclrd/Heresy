@@ -801,7 +801,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	private sealed record ActiveTempoRamp(
 		double StartTick, double EndTick,
 		double StartTempo, double EndTempo,
-		IReadOnlyList<double>? BoundaryTempoSets = null)
+		IReadOnlyList<(double Tempo, ChannelTarget Target)>? BoundaryTempoSets = null)
 	{
 		public double TempoAt(double tick)
 			=> StartTempo + (EndTempo - StartTempo)
@@ -965,7 +965,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		while (_active.Count != 0 || _delayed.Count != 0
 			|| _queuedTempoEvents.Count != 0 || _futureTempoRamps.Count != 0)
 		{
-			if (_queuedTempoEvents.TryDequeue(out IncrementalPatternTimelineStep.Emit? queued))
+			if (TryDequeueTempoEvent(out IncrementalPatternTimelineStep.Emit? queued))
 			{
 				CheckCooperationBudget();
 				result = queued;
@@ -1012,14 +1012,14 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					// preparation of future rows.
 					if (nextSegment.BoundaryTempoSets is { } sets)
 					{
-						foreach (double tempo in sets)
+						foreach ((double tempo, ChannelTarget target) in sets)
 						{
 							if (Math.Abs(_root.State.Tempo - tempo) < 1e-12)
 								continue;
 							_root.State.Tempo = tempo;
 							QueueTimingEvent(new NoteEvent(
 								new MusicalTime(Elapsed, 0),
-								ChannelTarget.Global, [new SetTempoCommand(tempo)]),
+								target, [new SetTempoCommand(tempo)]),
 								_futureTempoOwner);
 						}
 					}
@@ -1118,7 +1118,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			}
 			if (ArbitrateTrackerTempoAtCurrentTick())
 			{
-				if (_queuedTempoEvents.TryDequeue(
+				if (TryDequeueTempoEvent(
 					out IncrementalPatternTimelineStep.Emit? tempo))
 				{
 					result = tempo;
@@ -1178,7 +1178,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		// Resolve each original Txx once, in mapped physical order.
 		// Capture the resolved bytes; future SEy rows reuse those bytes
 		// without repeatedly committing T00 effect memory.
-		List<byte> immediateSets = [];
+		List<(byte Parameter, ChannelTarget Target)> immediateSets = [];
 		List<(byte Parameter, int Span)> slides = [];
 		foreach (var request in pending)
 		{
@@ -1189,7 +1189,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				.ResolveEffectParameter(EffectMemorySlot.Tempo, input);
 			if (parameter >= 0x20)
 			{
-				immediateSets.Add(parameter);
+				immediateSets.Add((parameter, request.Cursor.Context.MapTarget(raw.Target)));
 				_tempoRamp = null;
 				_futureTempoRamps.Clear();
 				_root.State.Tempo = parameter;
@@ -1218,11 +1218,11 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			List<ActiveTempoRamp> segments = [];
 			for (int repetition = 0; repetition <= repeats; repetition++)
 			{
-				IReadOnlyList<double>? sets = null;
+				IReadOnlyList<(double Tempo, ChannelTarget Target)>? sets = null;
 				if (repetition != 0 && immediateSets.Count != 0)
 				{
-					sets = immediateSets.Select(x => (double)x).ToArray();
-					beginning = sets[^1];
+					sets = immediateSets.Select(x => ((double)x.Parameter, x.Target)).ToArray();
+					beginning = sets[^1].Tempo;
 				}
 				double ending = beginning;
 				for (int transition = 1; transition < span; transition++)
@@ -1313,6 +1313,32 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					_futureTempoOwner);
 			}
 		}
+		return true;
+	}
+
+	// Match the eager processor's equal-wall-time note ordering:
+	// global commands precede physical channels at a common boundary,
+	// with stable order within the same target. Keep this ordering on
+	// *emission*, not on resolution of state/memory for Txx.
+	private bool TryDequeueTempoEvent(
+		out IncrementalPatternTimelineStep.Emit? result)
+	{
+		if (_queuedTempoEvents.Count == 0)
+		{
+			result = null;
+			return false;
+		}
+		IncrementalPatternTimelineStep.Emit[] ordered = _queuedTempoEvents
+			.Select((step, index) => (step, index))
+			.OrderBy(x => x.step.Note.Offset.TimeOffset)
+			.ThenBy(x => x.step.Note.Target.Kind)
+			.ThenBy(x => x.step.Note.Target.PhysicalChannel)
+			.ThenBy(x => x.index)
+			.Select(x => x.step).ToArray();
+		_queuedTempoEvents.Clear();
+		foreach (IncrementalPatternTimelineStep.Emit item in ordered.Skip(1))
+			_queuedTempoEvents.Enqueue(item);
+		result = ordered[0];
 		return true;
 	}
 
