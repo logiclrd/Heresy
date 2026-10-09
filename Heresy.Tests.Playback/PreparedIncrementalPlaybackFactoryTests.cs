@@ -26,8 +26,10 @@ namespace Heresy.Tests.Playback;
 [TestFixture]
 public sealed class PreparedIncrementalPlaybackFactoryTests
 {
-	[Test]
-	public void SameEventFlattenedStartThenCutDoesNotRetainControllerOrStartChildPcm()
+	[TestCase(false)]
+	[TestCase(true)]
+	public void SameEventFlattenedStartThenCutOrOffDoesNotRetainControllerOrStartChildPcm(
+		bool release)
 	{
 		SongDocument document = new();
 		ObjectId sampleId = document.AllocateObjectId();
@@ -51,7 +53,8 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		builder.Append(new NoteEvent(
 			Heresy.Core.Timing.MusicalTime.Zero,
 			ChannelTarget.Physical(0),
-			[new StartNoteCommand(childId), new NoteCutCommand()]));
+			[new StartNoteCommand(childId),
+				release ? new NoteOffCommand() : new NoteCutCommand()]));
 		using PreparedIncrementalPlaybackPlan plan =
 			new PreparedIncrementalPlaybackFactory(Mono(1000))
 				.CreateAdHoc(SongDocumentSnapshot.Create(document), builder.Freeze());
@@ -64,6 +67,52 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		Assert.That(plan.Session.RetainedFlattenedSourceControllerCount, Is.Zero,
 			"Scope retirement can precede playback of the enclosing event; "
 			+ "the retired controller must not be registered afterward.");
+	}
+
+	[TestCase(false, 0.5f)]
+	[TestCase(true, 1.0f)]
+	public void SameFrameNnaContinuePreservesChildStartWithoutDuplicatingHostVoice(
+		bool continueOld, float expectedAtFrameZero)
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sampleId,
+			"Sustain", "sustain.wav", LongWave(16384)));
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Child")
+		{
+			RowCount = 2, ChannelCount = 2,
+		};
+		child.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote(sampleId);
+		document.Add(child);
+
+		// A single raw event starts the source, optionally installs S74
+		// Continue, and immediately replaces it with a direct sample.
+		// Both child and replacement map to the same shared PCM frame,
+		// but only Continue permits the child producer to survive.
+		List<NoteCommand> commands = [new StartNoteCommand(childId)];
+		if (continueOld)
+			commands.Add(new SetCurrentVoiceDisplacementActionCommand(
+				NoteDisplacementAction.Continue));
+		commands.Add(new StartNoteCommand(sampleId));
+		NoteScheduleBuilder builder = new();
+		builder.Append(new NoteEvent(
+			Heresy.Core.Timing.MusicalTime.Zero,
+			ChannelTarget.Physical(0), commands));
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.CreateAdHoc(SongDocumentSnapshot.Create(document), builder.Freeze());
+
+		float[] frame0 = new float[1];
+		plan.Source.Render(1, frame0);
+		Assert.That(frame0[0], Is.EqualTo(expectedAtFrameZero).Within(1e-6f),
+			"At the same frame, Continue preserves the child's first voice "
+			+ "while Cut removes its producer before child generation.");
+		float[] next = new float[150];
+		plan.Source.Render(next.Length, next);
+		Assert.That(next[0], Is.EqualTo(expectedAtFrameZero).Within(1e-6f));
+		plan.Source.Render(400, new float[400]);
+		Assert.That(plan.Session.RetainedFlattenedSourceControllerCount, Is.Zero);
 	}
 
 	[Test]
