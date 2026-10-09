@@ -1122,10 +1122,56 @@ the resulting intermediate and final Tempo, note arrival at the later
 endpoint, exact wall-time tick inversion in the second segment, and
 interruption by a standalone Tempo set.
 
-**Remaining:** simultaneous SEy-repeated Txx, complex/overlapping
-repetition policies, and additional full-effect parity tests before
-production recursive scheduling. This is still an experimental
+**Remaining at that historical milestone:** SEy-repeated Txx,
+complex/overlapping repetition policies, and additional parity tests.
+Single-invocation SEy repeated Tempo is implemented in the
+twenty-fourth milestone below; cross-invocation repetition remains open. This is still an experimental
 shared-clock extension; production playback/export are unchanged.
+
+## Twenty-fourth executable step: SEy repeated tracker Tempo spans
+
+The experimental shared-tick `IncrementalPatternTimeline` now applies
+tracker Txx during a delayed `SEy` compatibility row **for one Pattern
+invocation**, matching the eager row processor's repeat semantics:
+
+- An SEy delayed row has `1 + y` compatibility spans, each with its
+  original, separately captured **effective tick span** (including
+  S6x fine delays). Ordinary note starts/cuts/offs still execute only
+  once at their original musical position.
+- A T0x/T1x slide resolves its effect-memory byte once at its original
+  eligible boundary. Each repeat starts from the **previous span's
+  ending shared Tempo**, then makes `span - 1` tracker-tick slide
+  transitions with the common per-tick clamp. The resulting ramp is
+  emitted only upon reaching that span's start.
+- Immediate T20–TFF tracker Tempo commands are **reapplied at each
+  repeated-span boundary** before that repetition's slides. Replayed
+  immediate sets keep their mapped physical-channel target. The
+  note-output tie ordering places global ramp events ahead of physical
+  Tempo set events at the same timestamp, as in the eager processor.
+- Future compatibility spans remain queued, not pre-applied to shared
+  `SequencingState`. Advancing across a repeat boundary uses the
+  current Tempo integral; wall-time note deadlines in each segment
+  use the existing analytic `TrackerTimeMap` inversion. Later Tempo
+  interruptions clear unexecuted scheduled segments.
+
+The eager `PatternNoteProcessor` was also corrected: selection of the
+physical-channel SEy winner must inspect **combined Txx + SEy cells**,
+even though those events are marked timing-affecting. Previously,
+the eager path could ignore SEy when both effects occurred in one
+cell; the incremental path already recognized the delay.
+
+The new parity tests cover Txx+SEy in the same cell, T0x/T1x slides
+over repeated compatibility rows, S6x-extended repeated Tempo spans,
+TFA immediate Tempo sets followed by slides on every repeat, retained
+Txx byte memory, ordinary-note timing, and stable same-time ordering.
+
+**Boundary:** Combining repeated Txx commands across multiple
+*independently advancing* Pattern invocations is still explicitly
+unsupported. Each invocation's repeat start, captured row speed,
+simultaneous channel arbitration, and competing new Tempo requests
+require a separate policy. Other unsupported effect combinations and
+production scheduler migration remain open. The normal realtime
+playback/export scheduling engine has **not** been switched over.
 
 ## Proposed next interfaces and migration
 
