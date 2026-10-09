@@ -1175,6 +1175,60 @@ require a separate policy. Other unsupported effect combinations and
 production scheduler migration remain open. The normal realtime
 playback/export scheduling engine has **not** been switched over.
 
+## Twenty-fifth executable step: independent SEy/Txx source arbitration
+
+The experimental shared-tick scheduler now accepts simultaneous
+tracker Txx effects from **multiple flattened Pattern invocations**
+when one or more of them have SEy repeated compatibility rows.
+Each accepted source retains its own mapped physical channel,
+invocation owner, remembered Txx byte, captured S6x-adjusted row
+span, and SEy repetition count.
+
+The shared Tempo trajectory is represented as an **owner-aware
+piecewise plan**. Segment boundaries are the union of each source's
+successive compatibility-row endings. Over each interval, active
+T0x/T1x slides contribute their continuous per-tick slope, using
+`(span - 1) / span` of the legacy byte's delta. A source stops
+contributing after its last repeat; other sources continue normally.
+Simultaneous mapped physical channels remain ordered consistently.
+At each applicable SEy boundary, an original T20–TFF immediate
+setting is **reapplied** in physical order before that interval's
+slide contribution. The scheduler emits a new global ramp command
+only on reaching its actual shared tick boundary, not when it
+inspects the finite repetition metadata.
+
+This is compatible with independent captured row spans, such as
+one Pattern playing with six ticks per row while another captured
+three after a shared Speed change. The pending future plan never
+pre-executes a Pattern iterator or commits future Tempo/effect memory.
+Each segment uses the existing `TrackerTimeMap` analytic integral
+and inverse to resolve intervening fixed wall-time note deadlines.
+
+**Cancellation is per source**, not per shared Tempo plan: stopping
+one Pattern removes its future slide and immediate-set repetitions.
+The remaining sources recompute their future segments from the
+instantaneous shared Tempo. New global Tempo or Txx commands still
+interrupt the previous composite trajectory. Emitted global Tempo
+events retain a live contributing invocation ID for recursive
+ownership, and outstanding-work queries account for a source's
+remaining Tempo contribution.
+
+Regression tests cover independent SEy slide contributions with
+different repetition counts, unequal captured spans (3 and 6),
+repeated TFA settings competing with another slide, exact fixed
+wall-time tick inversion across the composite segments, cancellation
+without aborting surviving contributors, and an interrupting global
+Tempo change. A former negative test is now a successful two-Pattern
+timing-and-memory check.
+
+The **experimental** timeline is still not the production realtime or
+offline scheduler. Its next priorities are wider SDx/Qxy and advanced
+tracker-effect parity, flattened/mixdown lifecycle correctness, and
+deterministic production migration. Complex cases where new
+independently authored tempo commands arrive exactly at a pending
+SEy repetition boundary remain a useful further same-tick arbitration
+stress test.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
