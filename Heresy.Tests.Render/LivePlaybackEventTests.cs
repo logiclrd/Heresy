@@ -236,6 +236,106 @@ public sealed class LivePlaybackEventTests
 		released[1].Should().Be(0.0f);
 	}
 
+	[Test]
+	public void ScopedVirtualIdsOverlapAndScopedNoteOffAffectsOnlyOwner()
+	{
+		PlaybackSession session = CreateScopedSession();
+		PlaybackSessionAudioSource source = new(session);
+		source.EnqueueScopedEvent(10, ChannelTarget.Virtual(7),
+			[new StartNoteCommand((ObjectId)7U)]);
+		source.EnqueueScopedEvent(20, ChannelTarget.Virtual(7),
+			[new StartNoteCommand((ObjectId)7U)]);
+		float[] both = new float[1];
+		source.Render(1, both);
+		source.EnqueueScopedEvent(10, ChannelTarget.Virtual(7),
+			[new NoteOffCommand()]);
+		float[] remaining = new float[1];
+		source.Render(1, remaining);
+		Assert.That(both[0], Is.EqualTo(2f));
+		Assert.That(remaining[0], Is.EqualTo(1f));
+	}
+
+	[Test]
+	public void ScopedBroadcastTargetsOnlyPreexistingVoicesOfOwner()
+	{
+		PlaybackSession session = CreateScopedSession();
+		PlaybackSessionAudioSource source = new(session);
+		source.EnqueueScopedEvent(10, ChannelTarget.Virtual(3),
+			[new StartNoteCommand((ObjectId)7U)]);
+		source.EnqueueScopedEvent(20, ChannelTarget.Virtual(3),
+			[new StartNoteCommand((ObjectId)7U)]);
+		source.EnqueueScopedEvent(10, ChannelTarget.AllVirtualInScope,
+			[new NoteOffCommand()]);
+		float[] first = new float[1];
+		source.Render(1, first);
+		// Both starts and the broadcast are frame 0. No voice starts
+		// strictly earlier than that broadcast.
+		Assert.That(first[0], Is.EqualTo(2f));
+		source.EnqueueScopedEvent(10, ChannelTarget.AllVirtualInScope,
+			[new NoteOffCommand()]);
+		float[] second = new float[1];
+		source.Render(1, second);
+		Assert.That(second[0], Is.EqualTo(1f));
+	}
+
+	[Test]
+	public void GlobalVirtualBroadcastTargetsAllOwnersButNotFutureStarts()
+	{
+		PlaybackSession session = CreateScopedSession();
+		PlaybackSessionAudioSource source = new(session);
+		source.EnqueueScopedEvent(10, ChannelTarget.Virtual(3),
+			[new StartNoteCommand((ObjectId)7U)]);
+		source.EnqueueScopedEvent(20, ChannelTarget.Virtual(3),
+			[new StartNoteCommand((ObjectId)7U)]);
+		float[] first = new float[1];
+		source.Render(1, first);
+		source.EnqueueScopedEvent(10, ChannelTarget.AllVirtual,
+			[new NoteOffCommand()]);
+		source.EnqueueScopedEvent(30, ChannelTarget.Virtual(3),
+			[new StartNoteCommand((ObjectId)7U)]);
+		float[] second = new float[1];
+		source.Render(1, second);
+		Assert.That(first[0], Is.EqualTo(2f));
+		Assert.That(second[0], Is.EqualTo(1f));
+	}
+
+	[Test]
+	public void CancellingScopedVoicesDoesNotCutUnrelatedOwnerOrPreview()
+	{
+		PlaybackSession session = CreateScopedSession();
+		PlaybackSessionAudioSource source = new(session);
+		source.EnqueueScopedEvent(10, ChannelTarget.Virtual(5),
+			[new StartNoteCommand((ObjectId)7U)]);
+		source.EnqueueScopedEvent(20, ChannelTarget.Virtual(5),
+			[new StartNoteCommand((ObjectId)7U)]);
+		source.EnqueueLiveEvent(ChannelTarget.Virtual(5),
+			[new StartNoteCommand((ObjectId)7U)]);
+		float[] first = new float[1];
+		source.Render(1, first);
+		source.EnqueueCancelScope(10);
+		float[] second = new float[1];
+		source.Render(1, second);
+		Assert.That(first[0], Is.EqualTo(3f));
+		Assert.That(second[0], Is.EqualTo(2f));
+	}
+
+	private static PlaybackSession CreateScopedSession()
+	{
+		ObjectId sourceId = (ObjectId)7U;
+		SampleDefinition definition = new(
+			sourceId, "Loop", new ExternalAssetReference("loop.wav"))
+		{
+			Loop = new SampleLoop(SampleLoopMode.Forward, 0, 1),
+		};
+		return new PlaybackSession(
+			new RenderContext(new RenderConfiguration(4,
+				[new OutputChannelConfiguration(
+					Vector3.Zero, positionalImportance: 0.0)])),
+			new NoteScheduleBuilder().Freeze(),
+			new Resolver(sourceId, new SampleSound(definition,
+				new MemorySampleData(4, 1, [1.0f]))));
+	}
+
 	private sealed class InfiniteSound : ISound
 	{
 		public NoteConfigurationSnapshot SnapshotNoteConfiguration()
