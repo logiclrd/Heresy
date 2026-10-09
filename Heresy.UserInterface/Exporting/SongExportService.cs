@@ -53,6 +53,15 @@ public sealed class SongExportService
 		string fullPath,
 		OfflineAudioFileFormat format)
 	{
+		using (plan)
+			return ExportOwnedPlan(plan, fullPath, format);
+	}
+
+	private static OfflineRenderResult ExportOwnedPlan(
+		OfflineSongRenderPlan plan,
+		string fullPath,
+		OfflineAudioFileFormat format)
+	{
 		string directory =
 			Path.GetDirectoryName(fullPath)
 				?? throw new InvalidOperationException(
@@ -83,8 +92,7 @@ public sealed class SongExportService
 						format);
 				result =
 					OfflinePlaybackRenderer.Render(
-						plan.Session,
-						plan.LogicalDuration,
+						plan.Source,
 						sink);
 				sink.Complete();
 			}
