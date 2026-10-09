@@ -1710,6 +1710,68 @@ updates, and explicit cycle rejection. The established production
 realtime and offline export schedulers remain unchanged until the
 remaining structural requirements are satisfied.
 
+## Thirty-sixth executable step: producer-forwarded private voice lifecycle
+
+Private-clock recursive mixdown sources now receive parent lifecycle
+operations at **the exact private-frame boundary**, before the parent
+publishes completed lookahead PCM. Merely setting the parent cooked
+`SoundState.NoteOffTime` is not sufficient: that previously truncated
+the entire nested signal at Note Off, even when child voices had
+release envelopes or displaced tails.
+
+`PreparedRecursiveMixdownSound` now accepts chronological
+`ScheduleRelease`, `ScheduleCut`, and `ScheduleFade` notifications
+from the parent's **single producer**. Each carries the quantized
+parent frame and is translated to an invocation-relative frame. The
+private PCM preparation loop never renders past the next scheduled
+lifecycle boundary. At a release it calls the child's
+`PlaybackSession.EndInput` at that exact frame, applies the existing
+indefinite-voice safeguard, stops evaluating future child Pattern or
+Sequence events, then renders its released child voice tails. Cut
+terminates the child cooked stream; fade forwards a normal
+`RequestNoteFade` to voices currently sounding in the child session.
+The parent callback itself still executes **no Roslyn, private timeline
+or nested PCM rendering** and performs its ordinary parent voice
+Cut, Off, NNA migration, gain and anti-click behavior.
+
+The producer tracks current private mixdown voices on mapped physical
+channels and invocation-scoped virtual targets. On a later valid
+StartNote, it applies the old voice's displacement policy in the
+original command order: Cut ends the private stream; Continue
+leaves the old stream advancing independently; Off releases its
+private input; Fade requests a child fade while the parent's existing
+voice fade is also retained. Tracker S73–S76 and S70–S72 lifecycle
+commands are now admitted by the incremental tick merger and
+translated by the established `PatternNoteProcessor` into
+`SetCurrentVoiceDisplacementActionCommand` and
+`ApplyPastNoteActionCommand`. Past-note actions apply only to
+tracked displaced voices from the matching physical channel.
+Explicit virtual Note Off/Cut and scope/global virtual broadcasts
+forward controls to previously started tracked private mixdown
+voices, preserving the renderer's strict same-frame broadcast rule.
+
+Producer lifecycle events at the same frame retain original command
+order. Scheduling an event behind already produced private PCM is
+rejected, rather than silently rewriting past audio. Private-clock
+release is separate from normal Pattern/Sequence completion, and
+child voices may tail after their parent Note Off; parent physical
+Cut and default displacement still cut immediately, with the
+parent renderer supplying its normal anti-click tail.
+
+**Remaining structural boundaries:** a producer-aware source-frame
+seek/replay strategy and bounded private PCM retention; end-to-end
+parent Fade duration parity for dynamically created future child
+voices; NNA policy inheritance from instruments and custom
+configuration (prepared recursive mixdown currently uses the
+default sound policy until an explicit tracker override); routing
+of broader custom or indirect instrument-generated recursive
+sources; fully synchronized asynchronous subtree cancellation
+while future lookahead is already published; and offline/realtime
+integration with bounded diagnostics and parity checks.
+No user-facing opt-in production mode is planned; the eventual
+cutover will replace the legacy scheduler directly once structural
+contracts are complete.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
