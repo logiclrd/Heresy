@@ -2680,3 +2680,40 @@ cross-row Note Off/Cut, live sample rendering, and cut propagation
 through scoped virtual and NNA-displaced voices with an unrelated
 physical host left untouched. The renderer does not introduce a
 new callback thread, eager event journal or intermediate PCM buffer.
+
+
+## Fifty-fifth step: inherited active flattened-source warnings in data Patterns
+
+The Pattern editor now warns on **effect-only and other later rows**
+while a non-mixdown Pattern/Sequence remains the current instigating
+logical note on that Pattern's channel. Previously, a warning required
+a `StartPatternNote` in the same cell, overlooking valid later-row
+effects which the actual coroutine renderer already classifies based on
+the active source scope.
+
+This is a **conservative, local static analysis**. The warning helper
+walks earlier cells in the same data Pattern in row order, keeping
+remembered Source selection separate from current logical-note identity.
+A Source-column edit alone changes the next start's selected Source but
+does not displace the active note. A subsequent regular or private
+mixdown start replaces the current flattened instigator; a Note Cut
+clears it, whereas Note Off retains the releasing current note for
+later note-volume automation. Different channels do not share this
+history. A start with omitted Source may resolve an earlier local
+Source-column selection. These rules deliberately do not assume that a
+source from a preceding Sequence order or a dynamic script can be
+resolved from this Pattern alone; runtime HRSEQ003/004 remain
+authoritative for those cases, and actual jump/repeat chronology may
+differ from a static row walk.
+
+Only the **incompatible voice-specific portion** is warned about.
+Dxx and note-volume-column operations remain valid on the active
+instigator, Kxx/Lxx retain their real-time volume-slide component,
+and S73–S76 new-note actions remain legal. Effects stay in document
+data and are editable; the warning is a nonblocking tooltip/marker.
+
+The two new UI regressions first failed on the old warning helper:
+one covers later effect-only rows, Note Off tails, Cut and channel
+isolation; the other covers Source selection without displacement
+followed by a mixdown replacement. The implementation changes editor
+static diagnostics only, not runtime effect filtering or PCM scheduling.

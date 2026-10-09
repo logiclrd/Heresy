@@ -85,11 +85,17 @@ preserving audible release and already-captured anti-click tails. These are
   source until replaced or cut. Explicit subtree cancellation now
   cuts matching physical/virtual descendant voices and clears scope
   state; passive retirement remains separate.
-  **Still outstanding:** richer live UI indications for inherited
-  Source selection and downstream Note Off/Cut controls; more
-  rapid same-frame mixed producer/cancellation cases, and a deeper
-  look at source lifecycle when nested instruments select private
-  mixdowns or custom indefinite scripts.
+  **Step 55: inherited data-Pattern editor warnings implemented.**
+  Voice-specific effects on later rows of a locally known active
+  flattened instigator now display the nonblocking warning; Source
+  selection without a start, Note Off tails, Cut, and mixdown/new-note
+  displacement are distinguished. Runtime diagnostics remain the
+  authority for dynamically selected/cross-Pattern Sources.
+  **Still outstanding:** UI indications for sources inherited across
+  Sequence orders or selected dynamically, and downstream Note Off/Cut
+  presentation; more rapid same-frame mixed producer/cancellation
+  cases, and deeper lifecycle coverage for nested indirect private
+  mixdowns and indefinite scripts.
   The incremental merger admits zero-offset Mxx and native channel-volume
   commands alongside flattened starts.
   The detailed target remains in step 48 below.
