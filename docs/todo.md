@@ -484,3 +484,33 @@ asynchronous cancellation through published lookahead, and realtime/
 export transport and finite-lifetime parity. Do not add an opt-in
 production scheduler: retire the legacy route when these structural
 requirements are satisfied.
+
+### Live private recursive rendering checkpoint (milestone 37)
+
+**Supersedes the cached PCM implementation in milestones 35–36.**
+`PreparedRecursiveMixdownSound` now owns its independent event timeline
+and `PlaybackSession` but no longer pre-renders or stores child PCM.
+The producer only prepares immutable note events and recursively
+publishes a safe event horizon. The audio callback asks each nested
+mixdown for the exact frames needed, and the child renders its own
+`PlaybackSession` synchronously; deeper mixdown voices recurse into
+the same native speaker feeds. Scratch buffers are bounded per render
+call (256 frames, pooled), not retained per voice lifetime.
+
+Parent lifecycle events remain timestamped and in producer order, but
+are queued for **consumer-frame application**, not applied during
+lookahead. Parent Off and natural completion stop private input at the
+matching child frame and drain its tails; Cut ends it and Fade applies
+to the child voices then. Forward native source-frame seeking renders
+and discards intervening prepared frames without storing history.
+Backward/retrigger replay rejects explicitly pending state
+reconstruction. Tests verify that preparation does not advance child
+PCM state, nested and stereo parity, lifecycle timing, and forward
+seek correctness.
+
+**Remaining before direct production cutover:** prepared event-count
+bounds, safe published-lookahead cancellation, private renderer
+reconstruction for backwards seeks, coordinated long forward seeks,
+indirect instrument-owned recursive sources and nuanced lifecycle
+policies, plus realtime/export wiring and finite-tail parity.
+No compatibility switch is planned.
