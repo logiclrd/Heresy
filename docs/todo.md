@@ -18,13 +18,12 @@ callback only consumes a bounded PCM ring; no event journal, preparation
 queue or cooked private PCM cache remains. Offline rendering discovers
 the finite arrangement end incrementally, applies the third-Bxx-encounter
 policy and drains release tails, with explicit bounds for endless songs.
-These are **implemented invariants**, not outstanding TODOs.
+Indirect Instrument tones can also select Pattern/Sequence sources,
+including nested Instrument chains; selected tones receive independent
+private mixdown voices, preserve tone-envelope overlays, and check cycles.
+Sample/FM-only tones still use the normal cached resolver. These are
+**implemented invariants**, not outstanding TODOs.
 
-- [ ] Support Pattern/Sequence sources selected *indirectly* through
-  Instrument tone specifications and other nested source graphs, in both
-  realtime and offline playback. The direct sound resolver does not yet
-  recursively instantiate those as instrument child sounds; preserve
-  correct tone-envelope and per-note policy inheritance and cycle checks.
 - [ ] Implement non-unit **pitch and playback-speed transforms** on
   flattened and mixdown Pattern/Sequence invocations, including source
   volume, private/parent clock mapping and effects. Preserve the distinction
@@ -50,10 +49,14 @@ These are **implemented invariants**, not outstanding TODOs.
   using deterministic bounded checkpoints **only if** realtime ring-buffer
   underruns warrant it. Do not reintroduce unbounded event journals or
   schedule/PCM pre-rendering.
+- [ ] Reclaim retired invocation-unique private mixdown sound registrations
+  and their nested ownership graphs after all live/release/anti-click voices
+  have finished. Long-running or infinite songs must not retain every past
+  recursive invocation in the resolver or disposal list.
 - [ ] Expand end-to-end tests for indefinite scripted sequences, recursive
-  cycles through indirect sources, cancellation, realtime/offline PCM parity
-  and finite export-body/tail limits. Basic source-cycle protection,
-  cooperation budgets and export limits are already implemented.
+  cancellation and instrument cycles, realtime/offline PCM parity, and finite
+  export-body/tail limits. Basic cycle protection, cooperation budgets and
+  export limits are already implemented.
 
 ## Output audio configuration and physical speaker processing
 
