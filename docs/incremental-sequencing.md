@@ -1775,6 +1775,74 @@ No user-facing opt-in production mode is planned; the eventual
 cutover will replace the legacy scheduler directly once structural
 contracts are complete.
 
+## Thirty-seventh executable step: live recursive mixdown PCM rendering
+
+This milestone **supersedes the private pre-rendered PCM design in milestones
+35–36**. A nested `Mixdown=true` Pattern or Sequence still owns a separate
+`IncrementalRecursiveTimeline`, `SequencingContext`, tracker/effect memory,
+`PreparedIncrementalAudioSource` and `PlaybackSession`; however, the
+producer no longer calls the private session's PCM renderer. There is **no
+persistent mixdown PCM cache** and no buffer history proportional to the
+duration of the child voice.
+
+The preparation worker enumerates only child note events and prepares
+descendant timelines to the parent's requested *exclusive* audio horizon.
+The parent publishes coverage **only after every private child has staged
+its events**. The audio consumer's `PlaybackSession` calls
+`PreparedRecursiveMixdownSound.Render`, which renders the precise number
+of requested child frames through that child's own
+`PreparedIncrementalAudioSource.Render`. Further nested mixdowns recurse
+naturally into the same speaker-channel configuration. A bounded temporary
+scratch buffer (up to 256 interleaved frames, rented from ArrayPool)
+accumulates the child's signal into the parent's output feed; no rendered
+frames are retained after this call. The PCM callback may run the normal
+sample/instrument/FM synthesis, envelope, spatialization and mixing code
+for arbitrary supported nesting levels, but **never executes Roslyn,
+source generators, or cursor advancement**.
+
+Parent lifecycle notifications (Off, Cut, Fade, past-note actions and
+new-note displacement) remain producer-ordered frame-stamped commands,
+but now enter a concurrent producer-to-audio **lifecycle queue**.
+The child renderer subdivides its block at these exact frame boundaries.
+Release calls the child `PlaybackSession.EndInput` *on the consumer at
+the correct child frame*, stops consuming future child note events and
+allows eligible release tails. Fade requests normal voice fades at the
+same point; Cut establishes a hard end and lets the parent renderer
+perform its existing anti-click handling. Ordinary natural sequence
+completion similarly publishes the child's input-end frame, at which
+the consumer ends input and drains its remaining tails. Thus preparing
+future music does **not** apply future voice operations ahead of time.
+
+Forward native source-frame seeks are supported by incrementally
+rendering/discarding the intervening prepared child frames, leaving the
+private clock and active voices at the correct live point. The sound
+reports `SourceFrameSeekCost.ReplayRequired`. **Backward seeks are
+explicitly unsupported for now**: correct rewind requires recreating the
+private event stream and renderer state, not retaining prior PCM.
+Forward seeks outside the published event horizon also fail explicitly.
+These cases remain structural follow-ups before full producer-coordinated
+Oxx/retrigger parity; no PCM cache has been retained as a workaround.
+
+Regression tests now require that preparing 300 ms of recursive music
+does not advance the child `PlaybackSession` even one frame; rendering
+one parent frame advances the child exactly one frame. Existing
+multi-level, stereo speaker-feed, parent tempo isolation, simultaneous
+invocation, cancellation-cycle and lifecycle tests continue to exercise
+the **live** child sessions. Release and Fade tests were updated to
+assert the operation happens at the requested consumer frame rather
+than during background preparation. Forward-seek PCM is compared
+against a direct reference stream, and backwards replay rejects
+explicitly.
+
+**Outstanding structural gates:** bounded queues of prepared note
+events (not rendered PCM); safe asynchronous cancellation across
+published lookahead; full dynamic parent/instrument lifecycle and
+new-note policy parity; correct private clock state reconstruction
+for backward seeks/retriggers; producer-side horizon requests for
+large forward Oxx offsets; explicit tail/end handling for offline
+export; and final production realtime/export cutover. There is no
+user-facing opt-in switch or fallback production scheduler planned.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
