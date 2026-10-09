@@ -148,7 +148,7 @@ public sealed class PlaybackPositionTimeline
 
 	public IReadOnlyList<PlaybackPositionTimelineEntry> Entries => _entries;
 
-	public TimeSpan Duration { get; }
+	public TimeSpan Duration { get; private set; }
 
 	public bool Repeat { get; }
 
