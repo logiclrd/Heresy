@@ -84,4 +84,75 @@ public sealed class FlattenedSourceEffectWarningsTests
 		Assert.That(FlattenedSourceEffectWarnings.Describe(
 			doc, outer, 2, 0), Does.Contain("SampleOffset"));
 	}
+
+	[Test]
+	public void LaterRowsWarnUntilCutIncludingAfterNoteOffRelease()
+	{
+		SongDocument doc = new();
+		ObjectId childId = doc.AllocateObjectId();
+		doc.Add(new DataPatternDefinition(childId, "Child")
+			{ RowCount = 1, ChannelCount = 1 });
+		DataPatternDefinition parent = new((ObjectId)999U, "Parent")
+			{ RowCount = 6, ChannelCount = 2 };
+		parent.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(childId);
+		PatternCell effectOnly = parent.Grid.GetOrCreateCell(1, 0);
+		effectOnly.Effects.Add(new RetriggerPatternEffect(0xA3));
+		effectOnly.Effects.Add(new TrackerVolumeSlidePatternEffect(0x21));
+		parent.Grid.GetOrCreateCell(2, 0).Note = new PatternNoteOff();
+		parent.Grid.GetOrCreateCell(3, 0).Effects.Add(
+			new SampleOffsetPatternEffect(0x17));
+		parent.Grid.GetOrCreateCell(4, 0).Note = new PatternNoteCut();
+		parent.Grid.GetOrCreateCell(5, 0).Effects.Add(
+			new RetriggerPatternEffect(0xA3));
+		parent.Grid.GetOrCreateCell(1, 1).Effects.Add(
+			new RetriggerPatternEffect(0xA3));
+
+		string? current = FlattenedSourceEffectWarnings.Describe(
+			doc, parent, 1, 0);
+		Assert.That(current, Does.Contain("Retrigger"));
+		Assert.That(current, Does.Not.Contain("TrackerVolumeSlide"));
+		Assert.That(FlattenedSourceEffectWarnings.Describe(
+			doc, parent, 3, 0), Does.Contain("SampleOffset"),
+			"Note Off retains the releasing instigator's volume association.");
+		Assert.That(FlattenedSourceEffectWarnings.Describe(
+			doc, parent, 5, 0), Is.Null,
+			"Cut clears the current logical source.");
+		Assert.That(FlattenedSourceEffectWarnings.Describe(
+			doc, parent, 1, 1), Is.Null,
+			"Unrelated logical channels cannot inherit the flattened source.");
+		Assert.That(effectOnly.Effects, Has.Count.EqualTo(2));
+	}
+
+	[Test]
+	public void SourceColumnRecallDoesNotChangeActiveSourceUntilNextStart()
+	{
+		SongDocument doc = new();
+		ObjectId firstId = doc.AllocateObjectId();
+		ObjectId secondId = doc.AllocateObjectId();
+		doc.Add(new DataPatternDefinition(firstId, "First")
+			{ RowCount = 1, ChannelCount = 1 });
+		doc.Add(new DataPatternDefinition(secondId, "Second")
+			{ RowCount = 1, ChannelCount = 1 });
+		DataPatternDefinition parent = new((ObjectId)999U, "Parent")
+			{ RowCount = 4, ChannelCount = 1 };
+		parent.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(firstId);
+		PatternCell selected = parent.Grid.GetOrCreateCell(1, 0);
+		selected.SourceId = secondId;
+		selected.Effects.Add(new ArpeggioPatternEffect(0x23));
+		PatternCell mixed = parent.Grid.GetOrCreateCell(2, 0);
+		mixed.Note = new StartPatternNote(mixdown: true);
+		mixed.Effects.Add(new RetriggerPatternEffect(0xA3));
+		parent.Grid.GetOrCreateCell(3, 0).Effects.Add(
+			new SampleOffsetPatternEffect(0x17));
+
+		Assert.That(FlattenedSourceEffectWarnings.Describe(
+			doc, parent, 1, 0), Does.Contain("Arpeggio"),
+			"Selecting a future Source must not displace the current instigator.");
+		Assert.That(FlattenedSourceEffectWarnings.Describe(
+			doc, parent, 2, 0), Is.Null,
+			"A mixdown start is an ordinary single playback voice.");
+		Assert.That(FlattenedSourceEffectWarnings.Describe(
+			doc, parent, 3, 0), Is.Null,
+			"Effects after mixdown replacement cannot target the old source.");
+	}
 }
