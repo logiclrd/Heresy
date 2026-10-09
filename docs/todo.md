@@ -61,16 +61,21 @@ Items that were already completed remain in Git history, not in this checklist.
   changes slope when a shorter slide finishes. The scheduler emits
   the next Tempo ramp at that tick (not early), preserves fixed wall
   deadlines across the transition, and cancels all pending segments
-  on an interrupting Tempo command. Simultaneous SEy repeated Txx
-  and more involved effects still require separate arbitration.
+  on an interrupting Tempo command. SEy-repeated Txx in one Pattern
+  invocation now uses successive causally activated compatibility-row
+  Tempo spans, matching eager T0x/T1x slides and repeating T20–TFF
+  immediate sets; the legacy eager processor also recognizes SEy
+  when combined with Txx in one tracker cell. Competing *independent*
+  SEy/Txx invocations still need cross-invocation replay arbitration.
   The incremental timeline now recognizes **S6x and SEy variable-length
   row spans**: physical-channel S6x ticks accumulate, lowest mapped
   channel SEy wins, ordinary notes execute only once, and admitted
   continuous/fine effects repeat at the correct ticks (including
   fractional offsets), clearing at the final delayed row end.
   S6x reuses the common processor's TicksPerRow override and extends
-  isolated tracker Txx ramps. SEy combined with tracker Txx and other
-  unported tick/repeat effects remains unsupported explicitly.
+  isolated tracker Txx ramps. SEy combined with Txx is now handled
+  for one source invocation; cross-invocation repeated Txx and other
+  unported tick/repeat effects remain explicitly unsupported.
   The next incremental-timeline slice now uses invocation-local
   tracker-tick deadlines for SCx note cut, SDx delayed atomic note setup,
   and Qxy retrigger. SC0/SC1 and SD0/SD1 share first-post-start-tick
@@ -168,8 +173,9 @@ Items that were already completed remain in Git history, not in this checklist.
   ordering contract is settled: earlier raw musical-row events are
   silently dropped at the consumption boundary; no arbitrary sorting
   or lookahead is required. Continue incompatible Tempo spans,
-  SEy repeated Tempo, SDx/Qxy, virtual/mixdown channels and advanced
-  effects before production recursive-clock migration.
+  cross-invocation SEy/Txx Tempo contention, SDx/Qxy,
+  virtual/mixdown channels and advanced effects before production
+  recursive-clock migration.
   Require test parity, chronological raw-emission filtering, and
   realtime/offline determinism before retiring eager scheduling.
   Replace the restricted chronological scheduler rather than adding
