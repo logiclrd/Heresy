@@ -188,12 +188,17 @@ public sealed class BackgroundPlaybackController
 	{
 		StopCurrent();
 
-		IAudioOutputSource source =
-			_sourceFactory.Create(request);
-		IAudioOutputSession session =
-			_backend.Open(
-				source.Format,
-				source);
+		IAudioOutputSource source = _sourceFactory.Create(request);
+		IAudioOutputSession session;
+		try
+		{
+			session = _backend.Open(source.Format, source);
+		}
+		catch
+		{
+			(source as IDisposable)?.Dispose();
+			throw;
+		}
 
 		try
 		{
@@ -204,6 +209,7 @@ public sealed class BackgroundPlaybackController
 		catch
 		{
 			session.Dispose();
+			(source as IDisposable)?.Dispose();
 			throw;
 		}
 	}
@@ -226,18 +232,20 @@ public sealed class BackgroundPlaybackController
 	private void StopCurrent()
 	{
 		IAudioOutputSession? session = _session;
+		IAudioOutputSource? source = _source;
 		_session = null;
 		_source = null;
-		if (session is null)
-			return;
-
 		try
 		{
-			session.Stop();
+			if (session is not null)
+			{
+				try { session.Stop(); }
+				finally { session.Dispose(); }
+			}
 		}
 		finally
 		{
-			session.Dispose();
+			(source as IDisposable)?.Dispose();
 		}
 	}
 
