@@ -87,7 +87,7 @@ public sealed class TrackerWaveformPatternEffectTests
 				new SetTremoloCommand(
 					5,
 					3,
-					TrackerWaveform.Sine)));
+					TrackerWaveform.Square)));
 	}
 
 	[Test]
@@ -203,7 +203,7 @@ public sealed class TrackerWaveformPatternEffectTests
 				new SetVibratoCommand(
 					5,
 					3,
-					TrackerWaveform.Square)));
+					TrackerWaveform.Sine)));
 	}
 
 	[Test]
