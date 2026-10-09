@@ -133,7 +133,12 @@ public sealed class IncrementalRecursiveScriptTests
 		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
 			if (step is IncrementalPatternTimelineStep.Emit e)
 				notes.Add(e.Note);
-		return notes.ToArray();
+		return notes.Select(note => note with
+		{
+			Commands = note.Commands
+				.Where(c => c is not BeginFlattenedSourceVolumeCommand)
+				.ToArray(),
+		}).Where(note => note.Commands.Count > 0).ToArray();
 	}
 
 	private sealed class Resolver(params SongObject[] objects)

@@ -364,8 +364,9 @@ public sealed class IncrementalRecursiveTimelineTests
 		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
 			if (step is IncrementalPatternTimelineStep.Emit e)
 				notes.Add(e.Note);
-		Assert.That(notes.Single().Offset.TimeOffset,
-			Is.EqualTo(TimeSpan.FromMilliseconds(240)));
+		Assert.That(notes.Single(n => n.Commands.Any(c =>
+			c is not BeginFlattenedSourceVolumeCommand))
+			.Offset.TimeOffset, Is.EqualTo(TimeSpan.FromMilliseconds(240)));
 		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(360)));
 		Assert.That(timeline.IsInvocationActive(id), Is.False);
 	}
@@ -490,6 +491,8 @@ public sealed class IncrementalRecursiveTimelineTests
 			if (step is IncrementalPatternTimelineStep.Emit emit)
 				actual.Add(emit);
 
+		actual = actual.Where(x => x.Note.Commands.Any(c =>
+			c is not BeginFlattenedSourceVolumeCommand)).ToList();
 		Assert.That(actual, Has.Count.EqualTo(4));
 		Assert.That(actual.Select(x => x.Note.Target),
 			Is.EqualTo(new[] {

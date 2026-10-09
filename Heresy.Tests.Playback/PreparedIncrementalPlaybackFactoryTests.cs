@@ -453,7 +453,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		SongDocument document = new();
 		ObjectId sample = document.AllocateObjectId();
 		document.Add(SampleDefinition.CreateImported(sample,
-			"Sustain", "sustain.wav", Wave(16384)));
+			"Sustain", "sustain.wav", LongWave(16384)));
 		ObjectId child = document.AllocateObjectId();
 		DataPatternDefinition nested = new(child, "Child")
 			{ RowCount = 3, ChannelCount = 2 };
@@ -489,7 +489,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		SongDocument document = new();
 		ObjectId sample = document.AllocateObjectId();
 		document.Add(SampleDefinition.CreateImported(sample,
-			"Sustain", "sustain.wav", Wave(16384)));
+			"Sustain", "sustain.wav", LongWave(16384)));
 		ObjectId leaf = document.AllocateObjectId();
 		DataPatternDefinition riff = new(leaf, "Riff")
 			{ RowCount = 3, ChannelCount = 1 };
@@ -530,7 +530,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		SongDocument document = new();
 		ObjectId sample = document.AllocateObjectId();
 		document.Add(SampleDefinition.CreateImported(sample,
-			"Sustain", "sustain.wav", Wave(16384)));
+			"Sustain", "sustain.wav", LongWave(16384)));
 		ObjectId child = document.AllocateObjectId();
 		DataPatternDefinition nested = new(child, "Child")
 			{ RowCount = 3, ChannelCount = 2 };
@@ -1830,6 +1830,32 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 				writer.Write((short)16384);
 				writer.Write((short)8192);
 			}
+		}
+		return stream.ToArray();
+	}
+
+	/// <summary>Constant PCM long enough to exercise row-spanning
+	/// live source-gain curves; Wave() intentionally has only 4 frames.</summary>
+	private static byte[] LongWave(short sample, int frames = 512)
+	{
+		using MemoryStream stream = new();
+		using (BinaryWriter writer = new(stream, Encoding.ASCII, leaveOpen: true))
+		{
+			writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+			writer.Write(36 + frames * 2);
+			writer.Write(Encoding.ASCII.GetBytes("WAVE"));
+			writer.Write(Encoding.ASCII.GetBytes("fmt "));
+			writer.Write(16);
+			writer.Write((ushort)1);
+			writer.Write((ushort)1);
+			writer.Write(1000);
+			writer.Write(2000);
+			writer.Write((ushort)2);
+			writer.Write((ushort)16);
+			writer.Write(Encoding.ASCII.GetBytes("data"));
+			writer.Write(frames * 2);
+			for (int i = 0; i < frames; i++)
+				writer.Write(sample);
 		}
 		return stream.ToArray();
 	}
