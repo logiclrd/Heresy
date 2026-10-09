@@ -806,7 +806,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					&& !virtualTarget
 					|| note.Commands.Any(c => c is not (StartNoteCommand
 						or NoteOffCommand or NoteCutCommand
-						or SetNoteVolumeCommand)
+						or SetNoteVolumeCommand or SetSourceFrameOffsetCommand)
 						&& (virtualTarget || c is not (SelectPatternSourceCommand
 							or ApplySampleOffsetCommand
 							or ApplyTrackerNoteCutCommand
@@ -829,6 +829,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					: virtualTarget
 						? command is StartNoteCommand or NoteOffCommand
 							or NoteCutCommand or SetNoteVolumeCommand
+							or SetSourceFrameOffsetCommand
 						: command is StartNoteCommand or NoteOffCommand
 						or NoteCutCommand or SelectPatternSourceCommand
 						or SetPitchSlideCommand or SetNoteVolumeSlideCommand
@@ -840,6 +841,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						or ApplyTrackerTempoCommand or ApplyTrackerNoteCutCommand
 						or ApplyTrackerNoteDelayCommand or ApplyRetriggerCommand
 						or SetNoteVolumeCommand or ApplySampleOffsetCommand
+						or SetSourceFrameOffsetCommand
 						or ApplyTrackerNewNoteActionCommand
 						or ApplyTrackerPastNoteActionCommand
 						or SetCurrentVoiceDisplacementActionCommand
