@@ -27,14 +27,18 @@ nested ownership graphs are reclaimed after the final active voice detaches,
 preserving audible release and already-captured anti-click tails. These are
 **implemented invariants**, not outstanding TODOs.
 
-- [ ] Complete **flattened** playback-speed and initial **source volume**
-  transformations, including per-cursor shared-clock remapping and advanced
-  tracker-effect parity. Non-unit playback speed now works for **private**
-  Pattern/Sequence mixdowns (including selected Instrument tones) by scaling
-  the child's independent tracker tick-to-wall-time map, not its note pitch.
-  Initial pitch transposition works on flattened and private recursive calls.
-  Dynamic pitch trajectories and complex recursive source volume remain open.
-  Preserve native multichannel speaker feeds, cancellation, and deterministic
+- [ ] Complete recursive **initial source volume**, **dynamic pitch
+  trajectories**, and advanced cross-rate tracker-effect parity. Non-unit
+  playback speed now works for private mixdowns and **flattened** nested
+  Pattern/Sequence invocations: each flattened cursor maps its local row
+  and tracker-tick deadlines to one shared musical clock without retiming
+  sibling channels. Nested playback-speed multipliers compose. Both
+  branches preserve actual sample/FM pitch. A single flattened Txx slide
+  scales its shared-clock ramp span; simultaneous cross-rate slides and
+  Txx-with-SEy repeats remain explicitly unsupported pending complete
+  multi-rate arbitration. Initial pitch transposition already works for
+  flattened and private recursive invocations. Preserve shared effect
+  memory, native multichannel speaker feeds, cancellation and deterministic
   native source-frame seeking.
 - [ ] Finish unsupported advanced tracker/script effect combinations in
   the shared-tick coordinator. In particular, verify negative fixed

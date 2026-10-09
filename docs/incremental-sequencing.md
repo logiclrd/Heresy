@@ -2207,3 +2207,40 @@ of a shared-clock arrangement still requires per-cursor row-tick mapping;
 it is rejected rather than incorrectly rescaling the common parent clock.
 Initial source volume, dynamic pitch trajectories, and full complex tracker
 effects/tempo-ramp parity remain open.
+
+## Forty-sixth step: per-invocation flattened playback-speed clocks
+
+Flattened Pattern/Sequence invocations now retain the **single shared
+tracker Tempo clock** but advance at their individual, inherited
+playback-speed multipliers. The incremental Pattern cursor keeps its
+row speed, row-delay ticks, fractional events and delayed/retrigger
+operations in local tracker ticks. It maps their due positions, row ends,
+and lifecycle deadlines into shared tracker ticks by dividing by the
+ratio of the cursor's playback-speed multiplier to the root clock's
+multiplier. This avoids modifying global Tempo and preserves sibling
+cursors' already-captured rows and channel/effect memory. Nested
+flattened calls and Sequence order cursors inherit and compose rates;
+the same mapping works for flattened children inside accelerated private
+mixdowns, whose root clock is already scaled.
+
+A flattened child `SetTempo` changes the actual shared Tempo when its
+scaled musical deadline arrives; subsequent parent and sibling events
+are retimed through that same clock. Fixed `TimeOffset` values remain
+real wall-time deadlines, not fractions of a row's speed. SDx/SCx/Qxy
+tick operations and row-end cleanup use the cursor's scaled deadlines.
+For a single source's tracker Txx slide, the original local per-tick
+change and clamping determine the ending Tempo; the resulting global
+Tempo ramp occupies the source row's **scaled shared-tick span**.
+Simultaneous cross-rate slides and scaled Txx with SEy repeats are
+explicitly rejected rather than guessing a future composite slope.
+
+The playback-side `StartNote` commands for ordinary samples and FM
+are unchanged: multiplying the *Pattern invocation's* playback speed
+does not resample its note PCM or change the source pitch. This change
+does not add queues, per-child workers, eager schedule materialization,
+or PCM history. Realtime and offline keep the same shared cursor engine.
+
+**Remaining:** full multi-rate simultaneous Tempo-slide and repeated
+SEy arbitration, other advanced tracker-effect clock interactions,
+initial recursive source-volume propagation, and dynamic pitch
+trajectory inheritance.
