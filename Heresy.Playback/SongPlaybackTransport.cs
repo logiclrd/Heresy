@@ -59,6 +59,7 @@ public sealed class SongPlaybackTransport
 	private readonly Timer _positionTimer;
 
 	private PlaybackPositionTimeline? _positionTimeline;
+	private PlaybackRequest? _diagnosticRequest;
 	private PlaybackPatternPosition? _currentPlaybackPosition;
 	private bool _liveAuditionActive;
 	private SongDocument? _liveAuditionDocument;
@@ -78,7 +79,11 @@ public sealed class SongPlaybackTransport
 				_sourceFactory);
 		_positionTimer =
 			new Timer(
-				_ => PollPlaybackPosition(),
+				_ =>
+				{
+					PollPlaybackPosition();
+					PollRuntimeDiagnostics();
+				},
 				null,
 				Timeout.Infinite,
 				Timeout.Infinite);
@@ -203,33 +208,9 @@ public sealed class SongPlaybackTransport
 			StopPositionTracking();
 			await _controller.PlayAsync(request).ConfigureAwait(false);
 
-			if (_sourceFactory is IPlaybackRuntimeDiagnosticReportProvider diagnostics
-				&& diagnostics.TryTakeRuntimeDiagnostics(
-					request, out var messages)
-				&& messages.Length != 0)
-			{
-				// Playback compilation is complete. No UI callback is
-				// invoked from the audio thread. Consumers marshal as needed.
-				// Runtime warning observers are informational only. A faulty
-				// UI/logging subscriber must never turn successful playback
-				// into an error (or prevent other subscribers seeing warnings).
-				PlaybackRuntimeDiagnosticsEventArgs args = new(messages);
-				if (RuntimeDiagnostics is { } observers)
-				{
-					foreach (EventHandler<PlaybackRuntimeDiagnosticsEventArgs> observer
-						in observers.GetInvocationList())
-					{
-						try
-						{
-							observer(this, args);
-						}
-						catch (Exception)
-						{
-							// Never interrupt audio for a diagnostic consumer.
-						}
-					}
-				}
-			}
+			lock (_positionGate)
+				_diagnosticRequest = request;
+			PollRuntimeDiagnostics();
 
 			if (_sourceFactory is IPlaybackPositionTimelineProvider provider
 				&& provider.TryTakePlaybackPositionTimeline(
@@ -239,6 +220,8 @@ public sealed class SongPlaybackTransport
 			{
 				StartPositionTracking(timeline);
 			}
+			else
+				_positionTimer.Change(dueTime: 5, period: 20);
 		}
 		catch
 		{
@@ -322,7 +305,32 @@ public sealed class SongPlaybackTransport
 				Timeout.Infinite);
 			_positionStopwatch.Reset();
 			_positionTimeline = null;
+			_diagnosticRequest = null;
 			SetCurrentPlaybackPositionLocked(null);
+		}
+	}
+
+	private void PollRuntimeDiagnostics()
+	{
+		PlaybackRequest? request;
+		lock (_positionGate)
+			request = _diagnosticRequest;
+		if (request is null
+			|| _sourceFactory is not IPlaybackRuntimeDiagnosticReportProvider provider
+			|| !provider.TryTakeRuntimeDiagnostics(request, out var messages)
+			|| messages.Length == 0)
+			return;
+		PlaybackRuntimeDiagnosticsEventArgs args = new(messages);
+		if (RuntimeDiagnostics is not { } observers)
+			return;
+		foreach (EventHandler<PlaybackRuntimeDiagnosticsEventArgs> observer
+			in observers.GetInvocationList())
+		{
+			try { observer(this, args); }
+			catch (Exception)
+			{
+				// Faulty UI/logging subscribers are never allowed to stop audio.
+			}
 		}
 	}
 
