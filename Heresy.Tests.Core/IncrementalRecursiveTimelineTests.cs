@@ -721,7 +721,7 @@ public sealed class IncrementalRecursiveTimelineTests
 				new ApplyRetriggerCommand(0xA3),
 				new ApplySampleOffsetCommand(0x17),
 				new ApplyTrackerGlissandoControlCommand(1),
-				new SetTempoCommand(200),
+				new ApplyTrackerTempoCommand(0xC8),
 			]));
 		DataPatternDefinition child = Pattern(2, 1);
 		child.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteOff();
