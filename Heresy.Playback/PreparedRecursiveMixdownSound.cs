@@ -29,10 +29,16 @@ internal sealed class PreparedRecursiveMixdownSound :
 	}
 
 	private readonly IncrementalRecursiveTimeline _timeline;
-	private readonly PlaybackSession _session;
+	private PlaybackSession _session;
 	private readonly PreparedIncrementalAudioSource _source;
 	private readonly Action _disposeChildren;
-	private readonly ConcurrentQueue<LifecycleChange> _lifecycle = new();
+	// Producer-published, immutable lifecycle history: consumer can replay
+	// precisely the same changes after reconstructing a private session.
+	private readonly ConcurrentDictionary<long, LifecycleChange> _lifecycle = new();
+	private long _lifecycleNextWrite;
+	private long _lifecyclePublished;
+	private long _lifecycleRead;
+	private long _renderOriginFrame;
 	private readonly int _sampleRate;
 	private readonly int _channels;
 
@@ -87,6 +93,9 @@ internal sealed class PreparedRecursiveMixdownSound :
 		if (sourceFrameOffset < 0)
 			throw new ArgumentOutOfRangeException(nameof(sourceFrameOffset));
 		((NestedState)state).SourceFrameOffset = sourceFrameOffset;
+		// A new offset can rewind a previously observed natural ending.
+		// Do not let the parent cull this voice before its next Render().
+		Volatile.Write(ref _observedEndFrame, -1);
 	}
 
 	public long? GetEndFrameExclusive(RenderContext context, SoundState state)
@@ -95,7 +104,16 @@ internal sealed class PreparedRecursiveMixdownSound :
 		// Off is deliberately not a hard cooked-sound end: child envelopes,
 		// releases and displaced voices may continue after its input stops.
 		long cut = Volatile.Read(ref _scheduledCutFrame);
+		long origin = nested.PlaybackOriginFrame;
+		// Lifecycle operations preceding a retrigger belong to the
+		// previous playback of this voice, not the restarted clock.
+		if (cut < origin)
+			cut = -1;
 		long observed = Volatile.Read(ref _observedEndFrame);
+		if (observed >= 0 && _renderOriginFrame == origin)
+			observed = checked(observed + origin);
+		else
+			observed = -1;
 		long end = cut < 0 ? observed
 			: observed < 0 ? cut : Math.Min(cut, observed);
 		return end < 0 ? null
@@ -132,7 +150,43 @@ internal sealed class PreparedRecursiveMixdownSound :
 			_terminalInputFrame = Math.Min(_terminalInputFrame, at);
 		if (kind == LifecycleKind.Cut)
 			Volatile.Write(ref _scheduledCutFrame, at);
-		_lifecycle.Enqueue(new LifecycleChange(at, kind));
+		long index = _lifecycleNextWrite++;
+		if (!_lifecycle.TryAdd(index, new LifecycleChange(at, kind)))
+			throw new InvalidOperationException("Duplicate private lifecycle index.");
+		Volatile.Write(ref _lifecyclePublished, index + 1);
+	}
+
+	private bool TryPeekLifecycle(out LifecycleChange? next)
+	{
+		if (_lifecycleRead >= Volatile.Read(ref _lifecyclePublished))
+		{
+			next = null;
+			return false;
+		}
+		if (!_lifecycle.TryGetValue(_lifecycleRead, out next))
+			throw new InvalidOperationException(
+				"Private lifecycle event was not published.");
+		return true;
+	}
+
+	/// <summary>
+	/// Translate producer-scheduled parent-relative frames to the *current*
+	/// restarted child's local clock. Events before the restart are omitted.
+	/// </summary>
+	private bool TryPeekRelativeLifecycle(out LifecycleChange? next)
+	{
+		while (TryPeekLifecycle(out LifecycleChange? absolute))
+		{
+			if (absolute.Frame < _renderOriginFrame)
+			{
+				_lifecycleRead++;
+				continue;
+			}
+			next = absolute with { Frame = absolute.Frame - _renderOriginFrame };
+			return true;
+		}
+		next = null;
+		return false;
 	}
 
 	/// <summary>
@@ -170,25 +224,32 @@ internal sealed class PreparedRecursiveMixdownSound :
 		if (frameCount == 0)
 			return;
 		NestedState nested = (NestedState)state;
-		// A tracker retrigger resets the parent voice origin, but the
-		// private event stream cannot be rewound without recreating its
-		// sequencing and PCM state. Reject rather than replay stale PCM.
-		if (nested.PlaybackOriginFrame != 0)
-			throw new NotSupportedException(
-				"Recursive mixdown retrigger requires fresh private timeline and renderer state.");
+		long origin = nested.PlaybackOriginFrame;
 		long offset = checked(nested.SourceFrameOffset
 			+ FrameTime.Ceiling(nested.PlaybackOffset, _sampleRate));
-		long first = checked(startFrame + offset);
+		long first = checked(startFrame - origin + offset);
+		if (first < 0)
+			throw new InvalidOperationException(
+				"Private mixdown playback cannot begin before its invocation origin.");
 		long end = checked(first + frameCount);
-		long knownCut = Volatile.Read(ref _scheduledCutFrame);
+		long cutAbsolute = Volatile.Read(ref _scheduledCutFrame);
+		long knownCut = cutAbsolute >= origin
+			? cutAbsolute - origin : -1;
 		if (knownCut >= 0 && first >= knownCut)
 			return;
 		if (Volatile.Read(ref _preparedThroughFrames) < end)
 			throw new InvalidOperationException(
 				"Private mixdown events were not prepared for the requested audio frames.");
-		if (first < _session.NextFrame)
-			throw new NotSupportedException(
-				"Backward private mixdown seeks require a fresh recursive event and renderer state.");
+		if (origin != _renderOriginFrame || first < _session.NextFrame)
+		{
+			// All source scripts and child timelines remain owned by the
+			// producer. Only the consumer's renderer/event cursor rewinds.
+			_source.RewindForReplay();
+			_session = _source.Session;
+			_renderOriginFrame = origin;
+			_lifecycleRead = 0;
+			Volatile.Write(ref _observedEndFrame, -1);
+		}
 
 		float[] scratchArray = ArrayPool<float>.Shared.Rent(
 			checked(ScratchFrames * _channels));
@@ -212,7 +273,9 @@ internal sealed class PreparedRecursiveMixdownSound :
 		{
 			long now = _session.NextFrame;
 			ApplyDueLifecycle(now);
-			long cut = Volatile.Read(ref _scheduledCutFrame);
+			long scheduledCut = Volatile.Read(ref _scheduledCutFrame);
+			long cut = scheduledCut >= _renderOriginFrame
+				? scheduledCut - _renderOriginFrame : -1;
 			if (cut >= 0 && now >= cut)
 			{
 				Volatile.Write(ref _observedEndFrame, now);
@@ -231,7 +294,7 @@ internal sealed class PreparedRecursiveMixdownSound :
 			}
 
 			long until = Math.Min(exclusiveEnd, checked(now + ScratchFrames));
-			if (_lifecycle.TryPeek(out LifecycleChange? pending))
+			if (TryPeekRelativeLifecycle(out LifecycleChange? pending))
 			{
 				if (pending.Frame < now)
 					throw new InvalidOperationException(
@@ -266,11 +329,10 @@ internal sealed class PreparedRecursiveMixdownSound :
 
 	private void ApplyDueLifecycle(long frame)
 	{
-		while (_lifecycle.TryPeek(out LifecycleChange? next)
-			&& next.Frame == frame)
+		while (TryPeekRelativeLifecycle(out LifecycleChange? change)
+			&& change.Frame == frame)
 		{
-			if (!_lifecycle.TryDequeue(out LifecycleChange? change))
-				continue;
+			_lifecycleRead++;
 			switch (change.Kind)
 			{
 				case LifecycleKind.Cut:
