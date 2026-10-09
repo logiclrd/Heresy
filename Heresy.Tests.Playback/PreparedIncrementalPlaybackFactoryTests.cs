@@ -203,6 +203,110 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 	}
 
 	[Test]
+	public void RecursiveTwoLevelMixdownUsesNestedPrivateClocks()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(
+			sampleId, "PCM", "test.wav", Wave(16384)));
+		ObjectId scriptId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(scriptId, "Script")
+		{
+			RowCount = 1, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({sampleId.Value}));",
+		});
+		ObjectId intermediateId = document.AllocateObjectId();
+		DataPatternDefinition intermediate = new(intermediateId, "Middle")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		intermediate.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(scriptId, mixdown: true);
+		document.Add(intermediate);
+		ObjectId rootId = document.AllocateObjectId();
+		DataPatternDefinition root = new(rootId, "Root")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		root.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(intermediateId, mixdown: true);
+		document.Add(root);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, rootId);
+		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(30));
+		float[] actual = new float[4];
+		plan.Source.Render(4, actual);
+		Assert.That(actual, Is.All.EqualTo(0.5f).Within(1e-5f));
+	}
+
+	[Test]
+	public void RecursiveMixdownPreservesNativeStereoSpeakerFeedsAcrossHorizons()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(
+			sampleId, "Stereo", "stereo.wav", StereoWave()));
+		ObjectId scriptId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(scriptId, "Child")
+		{
+			RowCount = 1, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({sampleId.Value}));",
+		});
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Mixdown")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(scriptId, mixdown: true);
+		document.Add(parent);
+		RenderConfiguration stereo = RenderConfiguration.Stereo(sampleRate: 1000);
+		PreparedIncrementalPlaybackFactory factory = new(stereo);
+		using PreparedIncrementalPlaybackPlan direct =
+			factory.Create(document, scriptId);
+		using PreparedIncrementalPlaybackPlan nested =
+			factory.Create(document, parentId);
+
+		direct.Source.PrepareThrough(TimeSpan.FromMilliseconds(3));
+		nested.Source.PrepareThrough(TimeSpan.FromMilliseconds(3));
+		float[] directPcm = new float[16];
+		float[] mixedPcm = new float[16];
+		direct.Source.Render(3, directPcm.AsSpan(0, 6));
+		nested.Source.Render(3, mixedPcm.AsSpan(0, 6));
+
+		direct.Source.PrepareThrough(TimeSpan.FromMilliseconds(9));
+		nested.Source.PrepareThrough(TimeSpan.FromMilliseconds(9));
+		direct.Source.Render(5, directPcm.AsSpan(6, 10));
+		nested.Source.Render(5, mixedPcm.AsSpan(6, 10));
+		for (int i = 0; i < directPcm.Length; i++)
+			Assert.That(mixedPcm[i],
+				Is.EqualTo(directPcm[i]).Within(1e-6f),
+				$"Speaker sample {i} should match native direct rendering.");
+		Assert.That(directPcm[0], Is.Not.EqualTo(directPcm[1]));
+	}
+
+	[Test]
+	public void RecursiveMixdownSourceCycleFailsBeforeAudioRendering()
+	{
+		SongDocument document = new();
+		ObjectId id = document.AllocateObjectId();
+		DataPatternDefinition root = new(id, "Cycle")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		root.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(id, mixdown: true);
+		document.Add(root);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, id);
+		Assert.That(() => plan.Source.PrepareThrough(
+			TimeSpan.FromMilliseconds(20)),
+			Throws.InvalidOperationException.With.Message.Contains("cycle"));
+	}
+
+	[Test]
 	public void RequiresRootAndRejectsInvalidRoslynDuringPreparation()
 	{
 		SongDocument document = new();
@@ -220,6 +324,33 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 	private static RenderConfiguration Mono(int rate)
 		=> new(rate, [new OutputChannelConfiguration(
 			Vector3.Zero, positionalImportance: 0.0)]);
+
+	private static byte[] StereoWave()
+	{
+		using MemoryStream stream = new();
+		using (BinaryWriter writer = new(stream, Encoding.ASCII, leaveOpen: true))
+		{
+			writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+			writer.Write(36 + 32);
+			writer.Write(Encoding.ASCII.GetBytes("WAVE"));
+			writer.Write(Encoding.ASCII.GetBytes("fmt "));
+			writer.Write(16);
+			writer.Write((ushort)1);
+			writer.Write((ushort)2);
+			writer.Write(1000);
+			writer.Write(4000);
+			writer.Write((ushort)4);
+			writer.Write((ushort)16);
+			writer.Write(Encoding.ASCII.GetBytes("data"));
+			writer.Write(32);
+			for (int frame = 0; frame < 8; frame++)
+			{
+				writer.Write((short)16384);
+				writer.Write((short)8192);
+			}
+		}
+		return stream.ToArray();
+	}
 
 	private static byte[] Wave(short sample)
 	{
