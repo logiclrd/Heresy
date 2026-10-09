@@ -387,9 +387,6 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		PatternCell instigator = parent.Grid.GetOrCreateCell(0, 0);
 		instigator.Note = new StartPatternNote(child);
 		instigator.Volume = 0.5;
-		// Overall-channel volume is currently applied through live playback
-		// controls: direct SetOverallChannelVolume is not yet admitted by
-		// the incremental raw Pattern-effect merger.
 		document.Add(parent);
 
 		using PreparedIncrementalPlaybackPlan plan =
@@ -407,6 +404,47 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		plan.Source.Render(1, pcm.AsSpan(1, 1));
 		Assert.That(pcm[1], Is.EqualTo(0.2f).Within(1e-6f),
 			"Instigator's overall-volume changes must affect the child's running voice live.");
+	}
+
+	[Test]
+	public void TrackerChannelVolumeOnFlattenedStartControlsSplayedVoiceButHostVolumeDoesNot()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample, "PCM",
+			"pcm.wav", Wave(16384)));
+		ObjectId child = document.AllocateObjectId();
+		DataPatternDefinition notes = new(child, "Child")
+		{
+			RowCount = 1, ChannelCount = 2,
+		};
+		notes.Grid.GetOrCreateCell(0, 1).Note =
+			new StartPatternNote(sample);
+		document.Add(notes);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent")
+		{
+			RowCount = 1, ChannelCount = 2,
+		};
+		PatternCell instigator = parent.Grid.GetOrCreateCell(0, 0);
+		instigator.Note = new StartPatternNote(child);
+		instigator.Volume = 0.5;
+		instigator.Effects.Add(new TrackerChannelVolumePatternEffect(32));
+		instigator.Effects.Add(new TonePortamentoVolumeSlidePatternEffect(0x34));
+		parent.Grid.GetOrCreateCell(0, 1).Effects.Add(
+			new TrackerChannelVolumePatternEffect(16));
+		document.Add(parent);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, root);
+		float[] pcm = new float[2];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm, Is.All.EqualTo(0.125f).Within(1e-6f),
+			"0.5 PCM * captured source gain 0.5 * instigator M32/64; "
+			+ "the host's M16/64 must not affect the flattened child.");
+		Assert.That(plan.SequencingContext.Diagnostics.IgnoredFlatteningEffects,
+			Is.EqualTo(1), "Lxx is discarded without disrupting the source.");
 	}
 
 	[TestCase(2.0, 60)]
