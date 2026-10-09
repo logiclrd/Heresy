@@ -514,3 +514,34 @@ reconstruction for backwards seeks, coordinated long forward seeks,
 indirect instrument-owned recursive sources and nuanced lifecycle
 policies, plus realtime/export wiring and finite-tail parity.
 No compatibility switch is planned.
+
+### Reconstructable private renderer checkpoint (milestone 38)
+
+Backward source-frame seeks and tracker retriggers of live recursive
+mixdowns now reconstruct the child `PlaybackSession` from an initial
+render state, then replay the already prepared, immutable,
+chronologically indexed note-event journal to the requested frame.
+Nested mixdown levels each reconstruct their own renderer when an
+ancestor asks them for earlier frames. The producer retains its
+running incremental timeline and script state and never executes
+Roslyn or emits new events on the callback. The parent renderer
+continues to own retrigger anti-click tails. Parent lifecycle
+records are retained and replayed at translated private frames,
+including correctly omitting pre-retrigger parent actions.
+
+Tests cover backward PCM parity following a forward offset, exact
+private voice recreation following retrigger, and two levels of
+recursive nested replay. New playback sessions are constructed on
+the consumer thread without reparsing or recompiling scripts;
+prefix samples are generated/discarded with small pooled scratch
+buffers, never cached.
+
+**Still unchecked before production cutover:** cap and reclaim
+private replay note-event journals (currently unbounded) with
+deterministic checkpoints/producer reconstruction; schedule
+potentially expensive replay ahead of realtime deadlines; handle
+replay over explicit cancellations, out-of-horizon Oxx seek
+requests, remaining indirect recursive instrument and
+lifecycle-policy parity, finite offline tails and production
+transport/export replacement. Do not restore the prior cooked
+PCM cache and do not introduce an opt-in production switch.
