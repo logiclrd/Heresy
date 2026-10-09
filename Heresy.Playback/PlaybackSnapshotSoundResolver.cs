@@ -39,6 +39,24 @@ internal sealed class PlaybackSnapshotSoundResolver
 				?? throw new ArgumentNullException(nameof(sampleDataProvider));
 	}
 
+	/// <summary>
+	/// Resolve direct PCM-producing sources and envelopes outside the audio
+	/// callback. Experimental recursive playback may dynamically address any
+	/// sound object, including sources not named in the root arrangement.
+	/// Nested cooked Pattern/Sequence mixdowns are deliberately not compiled
+	/// by this preload; the prepared adapter rejects those unsupported starts.
+	/// </summary>
+	public void PrepareDirectSources()
+	{
+		foreach (SongObject source in _document.Objects.Values)
+			if (source is SampleDefinition or InstrumentDefinition or FmSynthDefinition)
+				TryResolve(source.Id, mixdown: false, out _);
+
+		foreach (SongObject source in _document.Objects.Values)
+			if (source is EnvelopeDefinition)
+				TryResolve(source.Id, out IEnvelopeCurve? _);
+	}
+
 	public bool TryResolve(
 		ObjectId sourceId,
 		bool mixdown,
