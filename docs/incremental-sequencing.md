@@ -1816,12 +1816,12 @@ future music does **not** apply future voice operations ahead of time.
 Forward native source-frame seeks are supported by incrementally
 rendering/discarding the intervening prepared child frames, leaving the
 private clock and active voices at the correct live point. The sound
-reports `SourceFrameSeekCost.ReplayRequired`. **Backward seeks and tracker retriggers are supported by
-the replay journal added in milestone 38**: correct rewind requires recreating the
-private event stream and renderer state, not retaining prior PCM.
-Forward seeks outside the published event horizon also fail explicitly.
-These cases remain structural follow-ups before full producer-coordinated
-Oxx/retrigger parity; no PCM cache has been retained as a workaround.
+reports `SourceFrameSeekCost.ReplayRequired`. Milestone 37 initially rejected backward seeks and tracker
+retriggers. Milestone 38 supersedes that limitation: previously prepared
+note events can be replayed into a fresh private renderer without
+regenerating scripts or retaining PCM history. Forward seeks outside
+the published event horizon still fail explicitly, and scheduling
+large seeks safely ahead of realtime deadlines remains future work.
 
 Regression tests now require that preparing 300 ms of recursive music
 does not advance the child `PlaybackSession` even one frame; rendering
