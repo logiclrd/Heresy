@@ -40,13 +40,13 @@ public sealed class AsyncPreparedIncrementalAudioSourceTests
 		{
 			release.Set();
 			Assert.That(SpinWait.SpinUntil(
-				() => prepared.IsPreparedToEnd
-					|| prepared.PreparedThrough >= TimeSpan.FromMilliseconds(40),
+				() => asyncSource.BufferedFrames >= 10,
 				TimeSpan.FromSeconds(5)), Is.True);
 			float[] result = new float[10];
 			asyncSource.Render(10, result);
 			Assert.That(result, Is.All.EqualTo(1f));
-			Assert.That(prepared.NextFrame, Is.EqualTo(10));
+			Assert.That(prepared.NextFrame, Is.GreaterThanOrEqualTo(10),
+				"The PCM worker may render ahead; callbacks never drive this clock.");
 			Assert.That(asyncSource.UnderrunCount, Is.EqualTo(1));
 		}
 		finally
@@ -63,16 +63,16 @@ public sealed class AsyncPreparedIncrementalAudioSourceTests
 		using PreparedIncrementalAudioSource prepared = new(timeline, Session());
 		using AsyncPreparedIncrementalAudioSource asyncSource = new(prepared, 32);
 		Assert.That(SpinWait.SpinUntil(
-			() => prepared.PreparedThrough >= TimeSpan.FromMilliseconds(32),
+			() => asyncSource.BufferedFrames == 32,
 			TimeSpan.FromSeconds(5)), Is.True);
-		Assert.That(prepared.PreparedThrough,
-			Is.LessThanOrEqualTo(TimeSpan.FromMilliseconds(32)));
+		Assert.That(prepared.NextFrame, Is.EqualTo(32),
+			"The worker must render PCM up to the bounded ring capacity.");
 		asyncSource.Render(16, new float[16]);
 		Assert.That(SpinWait.SpinUntil(
-			() => prepared.PreparedThrough >= TimeSpan.FromMilliseconds(48),
+			() => asyncSource.BufferedFrames == 32,
 			TimeSpan.FromSeconds(5)), Is.True);
-		Assert.That(prepared.PreparedThrough,
-			Is.LessThanOrEqualTo(TimeSpan.FromMilliseconds(48)));
+		Assert.That(prepared.NextFrame, Is.EqualTo(48),
+			"The worker must refill from the current rendering position.");
 		Assert.Throws<ArgumentOutOfRangeException>(() =>
 			asyncSource.Render(33, new float[33]));
 	}
@@ -113,8 +113,7 @@ public sealed class AsyncPreparedIncrementalAudioSourceTests
 			plan.StartLookahead(32);
 		Assert.Throws<InvalidOperationException>(() => plan.StartLookahead(32));
 		Assert.That(SpinWait.SpinUntil(
-			() => plan.Source.PreparedThrough >= TimeSpan.FromMilliseconds(32)
-				|| plan.Source.IsPreparedToEnd,
+			() => asyncSource.BufferedFrames == 32,
 			TimeSpan.FromSeconds(5)), Is.True);
 		float[] output = new float[8];
 		asyncSource.Render(8, output);
