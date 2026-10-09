@@ -99,8 +99,13 @@ public sealed class PreparedIncrementalPlaybackFactory
 				"Root source must resolve to a prepared Pattern or Sequence.",
 				nameof(rootSourceId));
 
+		// Keep the renderer's object graph private too: the plan exposes its
+		// descriptive snapshot, but callers may mutate that document. The
+		// additional clone shares immutable PCM and does not decode assets.
+		SongDocumentSnapshot rendererSnapshot =
+			SongDocumentSnapshot.Create(frozen.Document);
 		PlaybackSnapshotSoundResolver sounds =
-			new(frozen.Document, _samples);
+			new(rendererSnapshot.Document, _samples);
 		// Resolve every direct sample/synth/instrument and envelope now so
 		// injected providers and codec-dependent work cannot run in Render.
 		sounds.PrepareDirectSources();
