@@ -168,7 +168,7 @@ public sealed class SongExportServiceTests
 		InstrumentDefinition instrument = new(instrumentId, "Instrument");
 		instrument.ToneSpecifications.Add(new ToneSpecification
 		{
-			SourceId = child,
+			SourceId = childId,
 		});
 		instrument.ToneTable.Add(0);
 		document.Add(instrument);
