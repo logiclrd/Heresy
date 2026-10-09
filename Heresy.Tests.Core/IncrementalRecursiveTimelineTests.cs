@@ -671,8 +671,10 @@ public sealed class IncrementalRecursiveTimelineTests
 		DataSequenceDefinition sequence = new((ObjectId)10U, "Repeat");
 		sequence.Entries.Add(new SequenceEntry((ObjectId)1U));
 		DataPatternDefinition parent = Pattern(1, 1);
-		parent.Grid.GetOrCreateCell(0, 0).Note =
-			new StartPatternNote((ObjectId)2U);
+		PatternCell instigator = parent.Grid.GetOrCreateCell(0, 0);
+		instigator.Note = new StartPatternNote((ObjectId)2U);
+		instigator.Effects.Add(new TrackerNewNoteActionPatternEffect(
+			NoteDisplacementAction.Continue));
 		parent.Grid.GetOrCreateCell(0, 1).Effects.Add(
 			new TrackerOrderJumpPatternEffect(0));
 		DataPatternDefinition child = Pattern(2, 1);
