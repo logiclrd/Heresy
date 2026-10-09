@@ -484,6 +484,33 @@ public sealed class PreparedIncrementalPlaybackFactory
 				scopedVoices[(owner, target.VirtualChannelId)] = tracked;
 		}
 
+		// Ordinary sample/FM Instruments keep the existing immutable cached
+		// resolver; only a tone chain actually selecting a Pattern/Sequence
+		// requires a unique bound invocation/private recursive clock.
+		bool SelectsRecursiveTone(ObjectId id, double pitch,
+			IReadOnlyList<ObjectId> path)
+		{
+			if (!scripts.TryResolve(id, out SongObject? definition)
+				|| definition is not InstrumentDefinition instrument)
+				return false;
+			if (path.Contains(id))
+				throw new InvalidOperationException(
+					$"Recursive instrument source cycle includes object {id.Value}.");
+			ToneSpecification? tone = InstrumentSound.SelectTone(
+				instrument, pitch);
+			if (tone is null)
+				return false;
+			if (scripts.TryResolve(tone.SourceId, out SongObject? child)
+				&& child is PatternDefinition or SequenceDefinition)
+				return true;
+			ObjectId[] nextPath = new ObjectId[path.Count + 1];
+			for (int i = 0; i < path.Count; i++)
+				nextPath[i] = path[i];
+			nextPath[^1] = id;
+		return SelectsRecursiveTone(tone.SourceId,
+			checked(pitch * tone.PitchMultiplier), nextPath);
+		}
+
 		// Only a selected tone is visited, so unused instrument branches
 		// cannot cause cycles or unnecessarily instantiate private timelines.
 		ISound? ResolveTone(ObjectId id, IReadOnlyList<ObjectId> path,
@@ -534,7 +561,9 @@ public sealed class PreparedIncrementalPlaybackFactory
 				// Bind the complete invocation now so its recursive leaf is
 				// tracked before subsequent same-frame lifecycle commands.
 				if (scripts.TryResolve(start.SourceId, out SongObject? selected)
-					&& selected is InstrumentDefinition)
+					&& selected is InstrumentDefinition
+					&& SelectsRecursiveTone(start.SourceId,
+						start.PitchMultiplier, ancestry))
 				{
 					if (note.Target.Kind == ChannelTargetKind.Physical)
 						ReplacePhysical(note.Target.PhysicalChannel, parentFrame);
