@@ -109,10 +109,12 @@ public static class FlattenedSourceEffectPolicy
 				filtered?.Add(command);
 				continue;
 			}
-			filtered ??= new List<NoteCommand>(note.Commands.Count);
-			if (filtered.Count == 0 && index != 0)
+			if (filtered is null)
+			{
+				filtered = new List<NoteCommand>(note.Commands.Count);
 				for (int j = 0; j < index; j++)
 					filtered.Add(note.Commands[j]);
+			}
 			context.Diagnostics.ReportIgnoredFlatteningEffect(
 				command.GetType().Name, note.Offset.RowOffset);
 		}
