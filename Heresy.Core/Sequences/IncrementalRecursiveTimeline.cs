@@ -52,6 +52,7 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 	private readonly Dictionary<long, Invocation> _frames = [];
 	private readonly Dictionary<long, long> _patternOwners = [];
 	private long _nextFrameId;
+	private long _nextPlaybackOwner = 1;
 	private bool _disposed;
 
 	public IncrementalRecursiveTimeline(
@@ -378,7 +379,8 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 								pitchMultiplier: start.PitchMultiplier,
 								playbackSpeedMultiplier: start.PlaybackSpeedMultiplier,
 								physicalChannelOffset: physicalOffset,
-								gainMultiplier: localGain);
+								gainMultiplier: localGain,
+								physicalPlaybackOwner: _nextPlaybackOwner++);
 							child.TimelineOrigin = emit.Time;
 							AddInvocation(source, child, frame.Id);
 						}
@@ -386,7 +388,11 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 							continue;
 						result = emit with
 						{
-							Note = emit.Note with { Commands = retained.ToArray() },
+							Note = emit.Note with
+							{
+								Commands = retained.ToArray(),
+								PhysicalPlaybackOwner = frame.Context.PhysicalPlaybackOwner,
+							},
 						};
 						return true;
 					default:

@@ -209,7 +209,8 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 					NoteEvent note = _transform?.Invoke(next.Note, now, next.Owner)
 						?? next.Note;
 					_session.ApplyScopedEvent(
-						next.Owner, note.Target, note.Commands);
+						next.Owner, note.Target, note.Commands,
+						note.PhysicalPlaybackOwner);
 				}
 				continue;
 			}

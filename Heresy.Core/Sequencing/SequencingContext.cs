@@ -27,10 +27,13 @@ public sealed class SequencingContext
 		TrackerMidiMacroConfiguration? trackerMidiMacros = null,
 		SequencingDiagnosticLog? diagnostics = null,
 		double gainMultiplier = 1.0,
-		bool useLocalChannelMemory = false)
+		bool useLocalChannelMemory = false,
+		long physicalPlaybackOwner = 0)
 	{
 		if (physicalChannelBase < 0)
 			throw new ArgumentOutOfRangeException(nameof(physicalChannelBase));
+		if (physicalPlaybackOwner < 0)
+			throw new ArgumentOutOfRangeException(nameof(physicalPlaybackOwner));
 
 		State = state ?? new SequencingState();
 		Random = random ?? new DeterministicRandom(DefaultRootRandomSeed);
@@ -40,6 +43,7 @@ public sealed class SequencingContext
 		PhysicalChannelBase = physicalChannelBase;
 		ChannelStates = channelStates ?? new SequencingChannelStateMap();
 		_useLocalChannelMemory = useLocalChannelMemory;
+		PhysicalPlaybackOwner = physicalPlaybackOwner;
 		TrackerMidiMacros = trackerMidiMacros
 			?? TrackerMidiMacroConfiguration.CreateImpulseTrackerDefault();
 		Diagnostics = diagnostics ?? new SequencingDiagnosticLog();
@@ -50,6 +54,8 @@ public sealed class SequencingContext
 	public SequencingState State { get; }
 	public DeterministicRandom Random { get; }
 	public SequencingChannelStateMap ChannelStates { get; }
+	/// <summary>Scoped renderer voice-state namespace for flattened channels.</summary>
+	public long PhysicalPlaybackOwner { get; }
 	public TrackerMidiMacroConfiguration TrackerMidiMacros { get; }
 
 	/// <summary>
@@ -123,7 +129,8 @@ public sealed class SequencingContext
 		double pitchMultiplier = 1.0,
 		double playbackSpeedMultiplier = 1.0,
 		int physicalChannelOffset = 0,
-		double gainMultiplier = 1.0)
+		double gainMultiplier = 1.0,
+		long physicalPlaybackOwner = 0)
 	{
 		if (physicalChannelOffset < 0)
 			throw new ArgumentOutOfRangeException(nameof(physicalChannelOffset));
@@ -139,7 +146,8 @@ public sealed class SequencingContext
 			Diagnostics,
 			ValidateGain(GainMultiplier * ValidateGain(gainMultiplier, nameof(gainMultiplier)),
 				nameof(gainMultiplier)),
-			useLocalChannelMemory: true)
+			useLocalChannelMemory: true,
+			physicalPlaybackOwner: physicalPlaybackOwner)
 		{
 			FlattenedSourceExpander = FlattenedSourceExpander,
 			ResolvePatternSourcesAtRowTime = ResolvePatternSourcesAtRowTime,

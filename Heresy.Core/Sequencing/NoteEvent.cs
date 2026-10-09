@@ -14,5 +14,10 @@ public sealed record NoteEvent(
 	IReadOnlyList<NoteCommand> Commands,
 	long EmissionOrder = -1)
 {
+	/// <summary>Stable logical ownership of a physical-host channel.
+	/// Zero is the normal root physical-channel namespace; flattened
+	/// sources use distinct positive IDs even when their hosts overlap.</summary>
+	public long PhysicalPlaybackOwner { get; init; }
+
 	public NoteEvent WithEmissionOrder(long order) => this with { EmissionOrder = order };
 }
