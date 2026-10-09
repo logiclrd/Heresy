@@ -37,7 +37,10 @@ public sealed class IncrementalRecursiveScriptTests
 		Assert.That(output.Select(x => x.Offset.TimeOffset),
 			Is.EqualTo(new[] { TimeSpan.Zero, TimeSpan.Zero,
 				TimeSpan.FromMilliseconds(60) }));
-		Assert.That(output.Last().Commands.Single(), Is.TypeOf<NoteOffCommand>());
+		Assert.That(output.Last().Commands.Single(),
+			Is.EqualTo(new ControlFlattenedSourceCommand(
+				1, NoteDisplacementAction.Off)),
+			"Releasing the instigator releases its flattened child, not the empty host.");
 		Assert.That(context.State.Tempo, Is.EqualTo(250));
 		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(120)));
 		Assert.That(compiler.PatternCalls, Is.EqualTo(1));

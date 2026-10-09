@@ -1815,9 +1815,10 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		plan.Source.Render(pcm.Length, pcm);
 		Assert.That(pcm[0], Is.EqualTo(0.5f).Within(1e-6f));
 		Assert.That(pcm[110], Is.EqualTo(0.5f).Within(1e-6f));
-		Assert.That(pcm[260], Is.EqualTo(release ? 0.5f : 0f).Within(1e-5f),
-			"The child may not start its second note at row 2; an Off lets the "
-			+ "first sample tail, while a Cut kills it.");
+		Assert.That(pcm[260], Is.Zero.Within(1e-5f),
+			"The second child note must not start after either Cut or Off.");
+		// Off is distinguished by its NoteOffTime, rather than necessarily
+		// remaining audible: a Sample can end immediately on Note Off.
 		if (release)
 		{
 			PlaybackVoice? voice = plan.Session.GetChannelState(1, 1)

@@ -34,8 +34,7 @@ public static class FlattenedSourceEffectPolicy
 			or TrackerPanbrelloWaveformPatternEffect
 			or TrackerGlissandoControlPatternEffect
 			or TrackerPastNoteActionPatternEffect
-			or TrackerNewNoteActionPatternEffect
-			or TrackerEnvelopeControlPatternEffect
+ 			or TrackerEnvelopeControlPatternEffect
 			or TrackerVolumeColumnPatternEffect
 				{ Kind: TrackerVolumeColumnEffectKind.PitchSlideDown
 					or TrackerVolumeColumnEffectKind.PitchSlideUp

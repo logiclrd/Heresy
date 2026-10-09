@@ -34,10 +34,11 @@ public sealed class IncrementalRecursiveTimelineTests
 		Assert.That(events.Select(e => e.Offset.TimeOffset),
 			Is.EqualTo(new[] { TimeSpan.Zero, TimeSpan.Zero,
 				TimeSpan.FromMilliseconds(60) }));
-		Assert.That(events.Select(e => e.Commands.Single()),
-			Is.EqualTo(new NoteCommand[] {
-				new SetTempoCommand(250), new NoteOffCommand(),
-				new NoteCutCommand() }));
+		Assert.That(events[0].Commands.Single(), Is.EqualTo(new SetTempoCommand(250)));
+		Assert.That(events[1].Commands.Single(), Is.TypeOf<NoteOffCommand>());
+		Assert.That(events[2].Commands.Single(),
+			Is.EqualTo(new ControlFlattenedSourceCommand(
+				1, NoteDisplacementAction.Cut)));
 		Assert.That(events[1].Target, Is.EqualTo(ChannelTarget.Physical(1)));
 		Assert.That(events[2].Target, Is.EqualTo(ChannelTarget.Physical(0)));
 		Assert.That(context.State.Tempo, Is.EqualTo(250));
@@ -54,7 +55,9 @@ public sealed class IncrementalRecursiveTimelineTests
 		parent.Grid.GetOrCreateCell(0, 0).Note =
 			new StartPatternNote((ObjectId)2U,
 				playbackSpeedMultiplier: multiplier);
-		parent.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteCut();
+		// The unrelated parent host is only a timing marker.
+		// Cutting the instigating channel would terminate the child.
+		parent.Grid.GetOrCreateCell(1, 1).Note = new PatternNoteCut();
 		DataPatternDefinition child = Pattern(2, 2);
 		child.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteOff();
 
@@ -190,6 +193,8 @@ public sealed class IncrementalRecursiveTimelineTests
 		PatternCell flattened = parent.Grid.GetOrCreateCell(0, 0);
 		flattened.Note = new StartPatternNote((ObjectId)2U);
 		flattened.Volume = 0.5;
+		flattened.Effects.Add(new TrackerNewNoteActionPatternEffect(
+			NoteDisplacementAction.Continue));
 		parent.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote((ObjectId)90U);
 		DataPatternDefinition child = Pattern(2, 2);
 		child.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote((ObjectId)91U);
