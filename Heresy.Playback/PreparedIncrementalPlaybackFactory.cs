@@ -114,7 +114,10 @@ public sealed class PreparedIncrementalPlaybackFactory
 	}
 
 	public PreparedIncrementalPlaybackPlan Create(
-		SongDocumentSnapshot snapshot, ObjectId? rootSourceId = null)
+		SongDocumentSnapshot snapshot, ObjectId? rootSourceId = null,
+		int startOrder = 0, int? startRow = null,
+		Func<SequenceOrderJumpEncounter, bool>? shouldFollowOrderJump = null,
+		bool repeatPattern = false)
 	{
 		ArgumentNullException.ThrowIfNull(snapshot);
 
@@ -150,13 +153,16 @@ public sealed class PreparedIncrementalPlaybackFactory
 			scripts.CreateTimeline(new SequencingContext());
 		try
 		{
-			long invocationId = timeline.AddRoot(root);
+			long invocationId = timeline.AddRoot(
+				root, startOrder, startRow, shouldFollowOrderJump);
 			PlaybackSession session = new(
 				new RenderContext(_configuration),
 				new NoteScheduleBuilder().Freeze(), sounds);
 			PreparedIncrementalAudioSource source = CreatePrivateMixdownAwareSource(
 				timeline, session, scripts, sounds, [root],
-				out Action disposePrivateMixdowns);
+				out Action disposePrivateMixdowns,
+				repeatSourceId: repeatPattern ? root : null,
+				repeatStartRow: startRow);
 			return new PreparedIncrementalPlaybackPlan(
 				frozen, timeline, session, source, invocationId,
 				disposePrivateMixdowns);
@@ -183,7 +189,9 @@ public sealed class PreparedIncrementalPlaybackFactory
 		PlaybackSnapshotSoundResolver sounds,
 		IReadOnlyList<ObjectId> ancestry,
 		out Action disposePrivateMixdowns,
-		bool isPrivateChild = false)
+		bool isPrivateChild = false,
+		ObjectId? repeatSourceId = null,
+		int? repeatStartRow = null)
 	{
 		List<PreparedRecursiveMixdownSound> privateVoices = [];
 		Dictionary<int, TrackedMixdown> physicalVoices = [];
@@ -405,6 +413,9 @@ public sealed class PreparedIncrementalPlaybackFactory
 
 		return new PreparedIncrementalAudioSource(
 			timeline, session, prepareEvent: Transform,
-			endInputAtNaturalCompletion: isPrivateChild);
+			endInputAtNaturalCompletion: isPrivateChild,
+			repeatRoot: repeatSourceId is ObjectId repeated
+				? () => timeline.AddRoot(repeated, startRow: repeatStartRow)
+				: null);
 	}
 }
