@@ -1981,6 +1981,66 @@ the production source factories still use the legacy eager
 `SongScheduleCompiler`; changing the callback/worker boundary is not
 the final production recursive-scheduler cutover.
 
+## Fortieth step: remove the redundant event and lifecycle transport
+
+**This step supersedes the event-preparation and replay-journal mechanisms
+described in steps 34–39.** The now-correct threading architecture has
+one PCM rendering worker which owns both incremental sequencing and all
+nested PCM rendering. Its only consumer boundary is the bounded output
+PCM ring. No note-event queue or intermediate PCM cache is necessary
+between a recursive generator and its own `PlaybackSession`.
+
+`PreparedIncrementalAudioSource` is now a **single-owner synchronous
+incremental source** (the historical type name is retained for the
+experimental factory). Each requested PCM block directly advances its
+`IncrementalRecursiveTimeline`, applies emitted `NoteEvent` commands
+to its corresponding `PlaybackSession` at sample-exact frame boundaries,
+then renders the requested audio. It holds at most **one future event or
+cooperative generator step** when a block ends before that step. It does
+not have `PrepareThrough`, published-frontier tracking, concurrent
+note/cancellation queues, or a replay-event journal. The existing
+bounded per-call generator-step budget remains in place so malformed
+scripts cannot loop indefinitely without returning control.
+
+Each `PreparedRecursiveMixdownSound` now owns a complete child
+invocation (timeline, renderer, source, descendants). The parent calls
+its child recursively on the *same PCM worker*. Parent Note Off,
+Cut, Fade, NNA displacement and past-note actions are delivered
+immediately at their musical frame; they do not cross a second thread
+and therefore require no timestamped lifecycle queue. Rewinds and
+tracker retriggers use an invocation-local **deterministic factory
+to reconstruct the child's generator and rendering state** and then
+advance the new invocation forward to the required source frame,
+discarding intermediate samples. Deeper children reconstruct in turn.
+No prepared-event history and no previous PCM frames are retained.
+Natural completion of private input releases it and allows finite
+release tails; completion of the root source does not forcibly cut
+its sounding voices.
+
+The now-redundant `AsyncPreparedIncrementalAudioSource` was deleted.
+`PreparedIncrementalPlaybackPlan.StartRendering` directly creates
+the shared `BufferedAudioOutputSource` (the dedicated PCM worker and
+bounded ring). Its source `Render` simultaneously executes sequencing
+and PCM generation on that one worker; system audio callbacks only
+copy already generated PCM. The old queue/frontier-focused test
+fixtures were removed. Directly rendered incremental timing,
+tempo, invocation-scoped virtual channels and cancellation behavior
+are covered by a concise synchronous test suite instead. Recursive
+mixdown tests still cover multi-level clocks, native speaker PCM,
+lifecycle controls, exact frame boundaries, forward/backward source
+offsets and deterministic retransformation on retrigger.
+
+**Outstanding production considerations:** Deterministic generator
+reconstruction can be expensive for long backward seeks and may cause
+an audio ring underrun. This is acceptable for correctness and device
+callback isolation; checkpoints could be a future optimization rather
+than a prerequisite or an unbounded journal. Explicit cancellation
+and cut state need additional compatibility coverage for complex
+recursive source graphs. The production playback and offline export
+factories have not yet been switched to the incremental engine; they
+still use the older eager scheduler. Do not reintroduce the removed
+queues, replay journal or PCM-cache fallback in that cutover.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
