@@ -384,3 +384,25 @@ remain isolated. Cancellation is admitted only at the prepared playback
 frontier with producer and Render serialized; future lookahead invalidation,
 asynchronous cancellation delivery, parent physical lifecycle parity, and
 production scheduler migration remain unchecked work.
+
+### Prepared snapshot-backed recursive playback checkpoint (milestone 33)
+
+The opt-in `PreparedIncrementalPlaybackFactory` now creates a usable
+`PreparedIncrementalPlaybackPlan` (captured revision/snapshot, compiled
+restricted Pattern/Sequence Roslyn factories, fresh shared-clock recursive
+timeline, empty-schedule renderer session, sample-accurate prepared adapter).
+Direct Sample/Instrument/FM synth sounds and envelope curves are resolved
+before the callback. Immutable decoded sample PCM remains shared; both
+script state and renderer metadata are insulated from caller mutations.
+Producer-side note validation explicitly rejects nested Pattern/Sequence
+`Mixdown=true` starts until private multichannel mixdown clocks exist.
+Real decoded PCM from scripted Sequence -> data Pattern -> scripted
+Pattern has an end-to-end regression, alongside sample provider, invalid
+script, root-source and mixdown guards.
+
+**Still unchecked:** streaming/background lookahead and underrun policy,
+audio-thread-safe cancellation during published lookahead, private nested
+mixdown clocks with native frame seeking and preserved speaker feeds,
+parent physical channel note lifecycle and advanced effects, full
+realtime/export PCM parity, playback transport/diagnostics integration,
+and migration of production scheduling.
