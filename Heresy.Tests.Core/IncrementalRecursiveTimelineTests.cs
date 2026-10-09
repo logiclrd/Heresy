@@ -817,7 +817,7 @@ public sealed class IncrementalRecursiveTimelineTests
 	}
 
 	[Test]
-	public void FlattenedStartIgnoresCombinedAndDirectNoteVolumeSlidesButKeepsChannelVolume()
+	public void FlattenedStartAppliesNoteVolumePortionsOfCombinedEffectsButIgnoresPitchParts()
 	{
 		DataPatternDefinition parent = Pattern(1, 2);
 		PatternCell call = parent.Grid.GetOrCreateCell(0, 0);
@@ -840,7 +840,8 @@ public sealed class IncrementalRecursiveTimelineTests
 			.Count(), Is.EqualTo(1),
 			"Gxx+volume-slide must not turn the flattened start into a pitch target.");
 		Assert.That(events.SelectMany(e => e.Commands)
-			.OfType<SetNoteVolumeSlideCommand>(), Is.Empty);
+			.OfType<SetNoteVolumeSlideCommand>(), Is.Not.Empty,
+			"Dxx, Kxx, Lxx and volume-column slides must control the instigating source.");
 		Assert.That(events.SelectMany(e => e.Commands)
 			.OfType<AdjustCurrentNoteVolumeCommand>(), Is.Empty);
 		Assert.That(events.SelectMany(e => e.Commands)
@@ -848,14 +849,18 @@ public sealed class IncrementalRecursiveTimelineTests
 			Is.EqualTo(new[] { 0.5 }),
 			"Mxx is a true channel-wide control and must survive filtering.");
 		foreach (EffectMemorySlot slot in new[] {
-			EffectMemorySlot.VolumeSlide, EffectMemorySlot.TonePortamento,
-			EffectMemorySlot.Vibrato, EffectMemorySlot.VolumeColumnSlide })
+			EffectMemorySlot.VolumeSlide, EffectMemorySlot.VolumeColumnSlide })
+			Assert.That(context.GetPhysicalChannelState(0)
+				.TryGetEffectParameter(slot, out _), Is.True,
+				$"Source-volume effect must remember its {slot} parameter.");
+		foreach (EffectMemorySlot slot in new[] {
+			EffectMemorySlot.TonePortamento, EffectMemorySlot.Vibrato })
 			Assert.That(context.GetPhysicalChannelState(0)
 				.TryGetEffectParameter(slot, out _), Is.False,
-				$"Ignored effect must not seed {slot} memory.");
+				$"Ignored pitch effect must not seed {slot} memory.");
 		Assert.That(context.GetPhysicalChannelState(0).NoteVolume,
 			Is.EqualTo(0.6), "Caller still remembers the explicit start volume.");
-		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(4));
+		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(2));
 		Assert.That(call.Effects, Has.Count.EqualTo(5));
 	}
 
@@ -882,7 +887,7 @@ public sealed class IncrementalRecursiveTimelineTests
 	}
 
 	[Test]
-	public void RawScriptedFlatteningLeavesChannelWideCommandsButDropsCombinedVoiceSlide()
+	public void RawScriptedFlatteningKeepsCombinedVolumeSlideWithoutPitchPart()
 	{
 		StreamingPattern parent = new((ObjectId)1U, 1,
 			new NoteEvent(MusicalTime.Zero, ChannelTarget.Physical(0),
@@ -905,7 +910,7 @@ public sealed class IncrementalRecursiveTimelineTests
 			.OfType<SetOverallChannelVolumeCommand>().Select(v => v.Volume),
 			Is.EqualTo(new[] { 0.5 }));
 		Assert.That(context.GetPhysicalChannelState(0)
-			.TryGetEffectParameter(EffectMemorySlot.VolumeSlide, out _), Is.False);
+			.TryGetEffectParameter(EffectMemorySlot.VolumeSlide, out _), Is.True);
 		Assert.That(context.GetPhysicalChannelState(0)
 			.TryGetEffectParameter(EffectMemorySlot.ChannelVolumeSlide, out _), Is.False);
 		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(2));
@@ -931,11 +936,13 @@ public sealed class IncrementalRecursiveTimelineTests
 		Assert.That(filtered.Commands, Is.EqualTo(new NoteCommand[]
 		{
 			new SetNoteVolumeCommand(0.8),
+			new ApplyVolumeSlideCommand(0x34),
+			new ApplyVolumeSlideCommand(0x12),
 			new SetOverallChannelVolumeCommand(0.5),
 			new StartNoteCommand((ObjectId)2U),
 			new ApplyTrackerChannelVolumeCommand(32),
 		}));
-		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(2));
+		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(1));
 	}
 
 	[Test]
