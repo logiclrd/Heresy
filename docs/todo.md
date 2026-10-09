@@ -27,19 +27,19 @@ nested ownership graphs are reclaimed after the final active voice detaches,
 preserving audible release and already-captured anti-click tails. These are
 **implemented invariants**, not outstanding TODOs.
 
-- [ ] Complete recursive **initial source volume**, **dynamic pitch
-  trajectories**, and advanced cross-rate tracker-effect parity. Non-unit
-  playback speed now works for private mixdowns and **flattened** nested
-  Pattern/Sequence invocations: each flattened cursor maps its local row
-  and tracker-tick deadlines to one shared musical clock without retiming
-  sibling channels. Nested playback-speed multipliers compose. Both
-  branches preserve actual sample/FM pitch. A single flattened Txx slide
-  scales its shared-clock ramp span; simultaneous cross-rate slides and
-  Txx-with-SEy repeats remain explicitly unsupported pending complete
-  multi-rate arbitration. Initial pitch transposition already works for
-  flattened and private recursive invocations. Preserve shared effect
-  memory, native multichannel speaker feeds, cancellation and deterministic
-  native source-frame seeking.
+- [ ] Complete recursive **dynamic pitch trajectories** and advanced
+  cross-rate tracker-effect parity. Initial recursive source volume is now
+  inherited by flattened Pattern/Sequence descendants as a per-voice
+  multiplicative gain, separate from shared tracker channel-volume memory.
+  Nested initial source volumes compose; gains survive note slides, fades
+  and virtual-voice displacement without affecting unrelated parent notes.
+  Private mixdowns retain their renderer-owned parent note-volume semantics
+  and inherit a flattened ancestor's source gain on their outer voice.
+  Initial pitch and private/flattened playback-speed multipliers are already
+  implemented. A single scaled Txx slide is supported, but simultaneous
+  cross-rate slides and scaled Txx-with-SEy remain explicitly unsupported
+  pending complete multi-rate arbitration. Preserve native multichannel
+  speaker feeds, cancellation and deterministic source-frame seeking.
 - [ ] Finish unsupported advanced tracker/script effect combinations in
   the shared-tick coordinator. In particular, verify negative fixed
   wall-time offsets, advanced/global effect deadlines, incompatible

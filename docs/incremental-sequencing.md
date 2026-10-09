@@ -2244,3 +2244,35 @@ or PCM history. Realtime and offline keep the same shared cursor engine.
 SEy arbitration, other advanced tracker-effect clock interactions,
 initial recursive source-volume propagation, and dynamic pitch
 trajectory inheritance.
+
+## Forty-seventh step: isolate inherited flattened source volume
+
+A flattened Pattern/Sequence invocation's initial `StartNoteCommand.Volume`
+now becomes an **invocation-local output gain** inherited by every
+descendant's rendered voice. The context carries the multiplicative gain;
+nested flattened invocations multiply the local source volume into that
+context. When an ordinary Sample, FM, Instrument or private-mixdown voice
+is finally started, `StartNoteCommand.GainMultiplier` captures the
+result. The `PlaybackVoice` multiplies its PCM by that immutable gain
+alongside note volume, envelope, channel volume and fade, preserving
+their independent automation and existing tracker semantics.
+
+This is deliberately **not** implemented by writing `SetNoteVolume` to
+a flattened child's physical channel: flattened children share real
+physical channels and their remembered tracker volume. Changing that
+memory would incorrectly modify sibling and later parent notes.
+Child notes with their own explicit Volume keep that Volume unchanged,
+including tracker note-volume slides and later commands. A direct
+parent note or separate sibling inherits no gain from an unrelated
+flattened invocation. Zero source volume yields a silent invocation
+without altering other channel state. A private mixdown already owns
+a parent playback voice, so its direct initial Volume continues to be
+applied there; if that mixdown is started under a flattened ancestor,
+the ancestor's gain also multiplies the outer mixdown voice.
+
+This keeps on-demand nested PCM rendering and antclick/release/NNA
+lifecycle state intact. No per-child worker, eager preparation or PCM
+cache is introduced.
+
+**Remaining:** dynamic propagation of parent pitch trajectories and
+the advanced simultaneous cross-rate tracker-tempo interactions.
