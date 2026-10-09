@@ -648,6 +648,69 @@ public sealed class IncrementalRecursiveTimelineTests
 		Assert.That(timeline.IsComplete, Is.True);
 	}
 
+	[Test]
+	public void RepeatedNestedSourcesReclaimScopeMemoryWithoutReusingIds()
+	{
+		DataSequenceDefinition sequence = new((ObjectId)10U, "Loop");
+		sequence.Entries.Add(new SequenceEntry((ObjectId)1U));
+		DataPatternDefinition outer = Pattern(1, 1);
+		outer.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote((ObjectId)2U);
+		outer.Grid.GetOrCreateCell(0, 1).Effects.Add(
+			new TrackerOrderJumpPatternEffect(0));
+		DataPatternDefinition middle = Pattern(2, 1);
+		middle.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote((ObjectId)3U);
+		DataPatternDefinition inner = Pattern(3, 1);
+		inner.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
+		SequencingContext root = new();
+		int jumps = 0;
+		using IncrementalRecursiveTimeline timeline = new(
+			root, new Resolver(sequence, outer, middle, inner));
+		timeline.AddRoot(sequence.Id,
+			shouldFollowOrderJump: _ => ++jumps < 1024);
+		HashSet<long> emittedScopes = [];
+		int peak = 0;
+		int emitted = 0;
+		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+		{
+			peak = Math.Max(peak, root.ScopedMemory.ActiveScopeCount);
+			if (step is IncrementalPatternTimelineStep.Emit e
+				&& e.Note.Commands.Any(c => c is NoteCutCommand))
+			{
+				Assert.That(e.Note.PhysicalPlaybackOwner, Is.GreaterThan(0));
+				emittedScopes.Add(e.Note.PhysicalPlaybackOwner);
+				emitted++;
+			}
+		}
+		Assert.That(jumps, Is.EqualTo(1024));
+		Assert.That(emitted, Is.EqualTo(1024));
+		Assert.That(emittedScopes.Count, Is.EqualTo(1024),
+			"Every invocation must receive a fresh, non-reused scope ID.");
+		Assert.That(peak, Is.LessThanOrEqualTo(4),
+			"Scope memory growth must track active recursion, not loop iterations.");
+		Assert.That(root.ScopedMemory.ActiveScopeCount, Is.Zero);
+		Assert.That(root.ScopedMemory.MaterializedScopeCount, Is.Zero);
+	}
+
+	[Test]
+	public void CancelNestedFlatteningReleasesOnlyThatSubtreeScopes()
+	{
+		DataPatternDefinition outer = Pattern(1, 3);
+		outer.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote((ObjectId)2U);
+		DataPatternDefinition middle = Pattern(2, 4);
+		middle.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote((ObjectId)3U);
+		DataPatternDefinition leaf = Pattern(3, 4);
+		SequencingContext root = new();
+		using IncrementalRecursiveTimeline timeline = new(
+			root, new Resolver(outer, middle, leaf));
+		timeline.AddRoot(outer.Id);
+		Assert.That(timeline.TryStep(out _), Is.True);
+		Assert.That(root.ScopedMemory.ActiveScopeCount,
+			Is.GreaterThanOrEqualTo(1));
+		timeline.Dispose();
+		Assert.That(root.ScopedMemory.ActiveScopeCount, Is.Zero);
+		Assert.That(root.ScopedMemory.MaterializedScopeCount, Is.Zero);
+	}
+
 	private static DataPatternDefinition Pattern(uint id, int rows)
 		=> new((ObjectId)id, "Pattern")
 		{
