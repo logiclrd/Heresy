@@ -36,7 +36,7 @@ public sealed class PlaybackRequestAudioSourceFactory :
 	private readonly RenderConfiguration _configuration;
 	private readonly ISampleDataProvider _samples;
 	private readonly object _gate = new();
-	private readonly Dictionary<PlaybackRequest, PreparedIncrementalPlaybackPlan>
+	private readonly Dictionary<PlaybackRequest, LiveRecursiveSource>
 		_active = new(ReferenceEqualityComparer.Instance);
 	private readonly Dictionary<PlaybackRequest, PlaybackPositionTimeline>
 		_positions = new(ReferenceEqualityComparer.Instance);
@@ -90,14 +90,16 @@ public sealed class PlaybackRequestAudioSourceFactory :
 				positions.Append(new PlaybackPositionTimelineEntry(at,
 					new PlaybackPatternPosition(id, row, sequence, order)));
 		}
+		LiveRecursiveSource live = new(plan, positions);
 		lock (_gate)
 		{
 			_active.Clear();
-			_active[request] = plan;
+			_active[request] = live;
+			_positions.Clear();
 			if (positions is not null)
 				_positions[request] = positions;
 		}
-		return new LiveRecursiveSource(plan, positions);
+		return live;
 	}
 
 	public bool TryTakePlaybackPositionTimeline(PlaybackRequest request,
@@ -110,17 +112,13 @@ public sealed class PlaybackRequestAudioSourceFactory :
 	public bool TryTakeRuntimeDiagnostics(PlaybackRequest request,
 		out SequencingDiagnostic[] diagnostics)
 	{
+		LiveRecursiveSource? live;
 		lock (_gate)
+			_active.TryGetValue(request, out live);
+		if (live is not null)
 		{
-			if (_active.TryGetValue(request, out PreparedIncrementalPlaybackPlan? plan))
-			{
-				diagnostics = plan.SequencingContext.Diagnostics.Drain();
-				if (diagnostics.Length != 0)
-				{
-					_active.Remove(request);
-					return true;
-				}
-			}
+			diagnostics = live.DrainRuntimeDiagnostics();
+			return diagnostics.Length > 0;
 		}
 		diagnostics = [];
 		return false;
@@ -131,6 +129,14 @@ public sealed class PlaybackRequestAudioSourceFactory :
 		PlaybackPositionTimeline? positions) : ILiveAudioOutputSource, IDisposable
 	{
 		private readonly ConcurrentQueue<LivePlaybackEvent> _commands = new();
+		private readonly ConcurrentQueue<SequencingDiagnostic> _warnings = new();
+		public SequencingDiagnostic[] DrainRuntimeDiagnostics()
+		{
+			List<SequencingDiagnostic> messages = [];
+			while (_warnings.TryDequeue(out SequencingDiagnostic? next))
+				messages.Add(next);
+			return [.. messages];
+		}
 		public AudioOutputFormat Format => plan.Source.Format;
 
 		public void EnqueueLiveEvent(ChannelTarget target,
@@ -144,6 +150,11 @@ public sealed class PlaybackRequestAudioSourceFactory :
 			while (_commands.TryDequeue(out LivePlaybackEvent? command))
 				plan.Source.ApplyLiveEvent(command.Target, command.Commands);
 			plan.Source.Render(frameCount, destination);
+			// Drain in the same worker that owns sequencing diagnostics.
+			// Transport/UI readers see only immutable queued records.
+			foreach (SequencingDiagnostic message
+				in plan.SequencingContext.Diagnostics.Drain())
+				_warnings.Enqueue(message);
 			if (plan.Source.IsComplete && positions is not null)
 				positions.Finish(plan.Source.LogicalDuration);
 		}
