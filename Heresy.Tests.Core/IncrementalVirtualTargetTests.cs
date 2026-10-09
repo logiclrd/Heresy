@@ -124,9 +124,10 @@ public sealed class IncrementalVirtualTargetTests
 	[Test]
 	public void TrackerMemoryEffectsStillRequirePhysicalTargets()
 	{
-		using IncrementalPatternTimeline timeline = new(new SequencingContext());
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
 		timeline.Add(new RawSource(At(0, ChannelTarget.Virtual(1),
-			new ApplyRetriggerCommand(0x03))), 1, new SequencingContext());
+			new ApplyRetriggerCommand(0x03))), 1, root);
 		Assert.Throws<NotSupportedException>(() => Drain(timeline));
 	}
 
