@@ -137,6 +137,49 @@ public sealed class PreparedIncrementalAudioSourceTests
 		Assert.That(output[70], Is.EqualTo(1f).Within(1e-5f));
 	}
 
+	[Test]
+	public void ExplicitSubtreeCancellationCutsOnlyItsOwnedAudibleVoices()
+	{
+		TestPattern first = new((ObjectId)1U,
+			At(0, ChannelTarget.Virtual(7), new StartNoteCommand(SoundId)));
+		TestPattern second = new((ObjectId)2U,
+			At(0, ChannelTarget.Virtual(7), new StartNoteCommand(SoundId)));
+		using IncrementalRecursiveTimeline timeline =
+			new(new SequencingContext(), new Resolver(first, second));
+		long canceled = timeline.AddRoot(first.Id);
+		timeline.AddRoot(second.Id);
+		using PreparedIncrementalAudioSource source = new(timeline, Session());
+		source.PrepareThrough(TimeSpan.FromMilliseconds(20));
+		float[] firstFrames = new float[20];
+		source.Render(20, firstFrames);
+		Assert.That(firstFrames, Is.All.EqualTo(2f));
+		Assert.That(source.Cancel(canceled), Is.True);
+		source.PrepareThrough(TimeSpan.FromMilliseconds(110));
+		float[] nextFrames = new float[80];
+		source.Render(80, nextFrames);
+		Assert.That(nextFrames[0], Is.EqualTo(2f));
+		Assert.That(nextFrames[1],
+			Is.EqualTo(1f + (float)AntiClickTail.CalculateDecay(1000))
+				.Within(1e-6f));
+		Assert.That(nextFrames[20], Is.EqualTo(1f).Within(1e-5f));
+		Assert.That(source.Cancel(canceled), Is.False);
+	}
+
+	[Test]
+	public void CancellationRejectsPreparedLookaheadInsteadOfReorderingAudio()
+	{
+		TestPattern pattern = new((ObjectId)1U,
+			At(0, ChannelTarget.Virtual(7), new StartNoteCommand(SoundId)));
+		using IncrementalRecursiveTimeline timeline = Timeline(pattern);
+		using PreparedIncrementalAudioSource source = new(timeline, Session());
+		source.PrepareThrough(TimeSpan.FromMilliseconds(40));
+		Assert.Throws<InvalidOperationException>(() => source.Cancel(0));
+		float[] output = new float[40];
+		source.Render(40, output);
+		Assert.That(output, Is.All.EqualTo(1f));
+		Assert.That(source.Cancel(0), Is.True);
+	}
+
 	private static NoteEvent At(double row, ChannelTarget target,
 		params NoteCommand[] commands)
 		=> new(new MusicalTime(TimeSpan.Zero, row), target, commands);
