@@ -237,7 +237,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		}
 
 		public void QueueRetrigger(
-			NoteEvent note, byte input, byte? delayTick = null)
+			NoteEvent note, byte input, byte? delayTick = null,
+			bool canExecute = true)
 		{
 			SequencingChannelState channel =
 				Context.GetPhysicalChannelState(note.Target.PhysicalChannel);
@@ -245,6 +246,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			// encountered, even if SDx later suppresses execution.
 			byte parameter = channel.ResolveEffectParameter(
 				EffectMemorySlot.Retrigger, input);
+			if (!canExecute)
+				return;
 			int interval = parameter & 0x0F;
 			byte transform = (byte)(parameter >> 4);
 			bool startsNew = note.Commands.Any(c => c is StartNoteCommand);
@@ -490,8 +493,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						{
 							if (emit.Note.Target.Kind != ChannelTargetKind.Physical)
 								throw new InvalidOperationException("SEy requires a physical channel.");
-							if (emit.Note.Offset.TimeOffset != TimeSpan.Zero)
-								throw new NotSupportedException("Delayed SEy scheduling is not supported.");
+							// SEy is a row-span control, independent of a
+							// cell's fixed wall offset on its note commands.
 							preparation.RowDelays.Add((Context.MapPhysicalChannel(
 								emit.Note.Target.PhysicalChannel), preparation.SourceOrder, delay.ExtraRows));
 						}
@@ -1841,7 +1844,25 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				if (cutTick.HasValue)
 					current.QueueCut(raw, cutTick.Value);
 				if (retrigger.HasValue)
-					current.QueueRetrigger(raw, retrigger.Value, delayTick);
+				{
+					// Eager Qxy commits its parameter byte even if SDx's
+					// note can never start before this row ends; in that
+					// case it does not initialize or advance countdown.
+					int shift = delayTick.HasValue
+						? Math.Max(1, delayTick.Value) : 0;
+					double startTick = _tick + shift;
+					bool startCanExecute =
+						!delayTick.HasValue || shift < current.EffectiveSpanTicks;
+					if (startCanExecute && raw.Offset.TimeOffset > TimeSpan.Zero)
+					{
+						double firstWall = PredictWallSeconds(startTick)
+							+ raw.Offset.TimeOffset.TotalSeconds;
+						double endWall = PredictWallSeconds(current.RowEndTick);
+						startCanExecute = firstWall < endWall - 1e-9;
+					}
+					current.QueueRetrigger(raw, retrigger.Value, delayTick,
+						startCanExecute);
+				}
 				if (delayTick.HasValue || ordinary.Count == 0)
 				{
 					current.ConsumeEvent();
