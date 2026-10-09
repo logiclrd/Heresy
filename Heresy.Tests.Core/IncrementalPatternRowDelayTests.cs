@@ -250,7 +250,7 @@ public sealed class IncrementalPatternRowDelayTests
 	}
 
 	[Test]
-	public void ConcurrentIndependentSEyAndTxxComposeInPhysicalOrder()
+	public void ConcurrentIndependentSEyAndTxxComposeInPhysicalOrderWithSeparateEffectMemory()
 	{
 		DataPatternDefinition p = Pattern(1, 1);
 		var cell = p.Grid.GetOrCreateCell(0, 0);
@@ -259,10 +259,11 @@ public sealed class IncrementalPatternRowDelayTests
 		SequencingContext state = new();
 		using IncrementalPatternTimeline timeline = new(state);
 		timeline.Add(p, 1, state);
+		SequencingContext child = state.FlattenedChild(physicalChannelOffset: 3);
 		timeline.Add(new RawSource(new NoteEvent(
 			MusicalTime.Zero, ChannelTarget.Physical(0),
 			[new ApplyTrackerTempoCommand(0x11)])),
-			1, state.FlattenedChild(physicalChannelOffset: 3));
+			1, child);
 		NoteEvent[] notes = Drain(timeline);
 		Assert.That(notes.SelectMany(x => x.Commands)
 			.OfType<SetTempoRampCommand>().Select(x => x.EndingTempo),
@@ -274,8 +275,10 @@ public sealed class IncrementalPatternRowDelayTests
 		Assert.That(state.GetPhysicalChannelState(0)
 			.TryGetEffectParameter(EffectMemorySlot.Tempo, out byte first), Is.True);
 		Assert.That(first, Is.EqualTo(0x12));
-		Assert.That(state.GetPhysicalChannelState(3)
+		Assert.That(child.GetPhysicalChannelState(0)
 			.TryGetEffectParameter(EffectMemorySlot.Tempo, out byte second), Is.True);
+		Assert.That(state.GetPhysicalChannelState(3)
+			.TryGetEffectParameter(EffectMemorySlot.Tempo, out _), Is.False);
 		Assert.That(second, Is.EqualTo(0x11));
 	}
 
