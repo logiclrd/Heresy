@@ -65,6 +65,8 @@ internal sealed class PreparedRecursiveMixdownSound :
 	}
 
 	public long ParentStartFrame { get; }
+	/// <summary>Current private renderer; replaced on deterministic rewind.</summary>
+	public PlaybackSession Session => _playback.Session;
 	public SourceFrameSeekCost SeekCost => SourceFrameSeekCost.ReplayRequired;
 	public NoteConfigurationSnapshot SnapshotNoteConfiguration()
 		=> NoteConfigurationSnapshot.Default;
