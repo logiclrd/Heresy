@@ -98,6 +98,51 @@ public sealed class IncrementalRecursiveTimelineTests
 	}
 
 	[Test]
+	public void AcceleratedFlattenedTrackerTempoSlideUsesScaledSharedTickSpan()
+	{
+		DataPatternDefinition parent = Pattern(1, 2);
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote((ObjectId)2U, playbackSpeedMultiplier: 2.0);
+		DataPatternDefinition child = Pattern(2, 1);
+		child.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new TrackerTempoPatternEffect(0x11));
+
+		SequencingContext root = new();
+		using IncrementalRecursiveTimeline timeline = new(
+			root, new Resolver(parent, child));
+		timeline.AddRoot(parent.Id);
+		NoteEvent[] notes = Drain(timeline);
+		SetTempoRampCommand ramp = notes
+			.SelectMany(e => e.Commands)
+			.OfType<SetTempoRampCommand>().Single();
+		Assert.That(ramp.TrackerTicks, Is.EqualTo(3.0),
+			"A six-tick child row at 2x occupies three shared tracker ticks.");
+		Assert.That(ramp.EndingTempo, Is.EqualTo(130.0),
+			"The slide still applies five local T11 increments.");
+		Assert.That(root.State.Tempo, Is.EqualTo(130.0));
+	}
+
+	[Test]
+	public void AcceleratedPrivateClockCanAlsoContainIndependentlyScaledFlattenedChild()
+	{
+		DataPatternDefinition parent = Pattern(1, 2);
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote((ObjectId)2U, playbackSpeedMultiplier: 1.5);
+		DataPatternDefinition child = Pattern(2, 2);
+		child.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteCut();
+
+		SequencingContext privateRoot = new(playbackSpeedMultiplier: 2.0);
+		using IncrementalRecursiveTimeline timeline = new(
+			privateRoot, new Resolver(parent, child));
+		timeline.AddRoot(parent.Id);
+		NoteEvent[] notes = Drain(timeline);
+		Assert.That(notes.Single().Offset.TimeOffset,
+			Is.EqualTo(TimeSpan.FromMilliseconds(40)),
+			"2x private clock times 1.5x flattened child gives a 3x row rate.");
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(120)));
+	}
+
+	[Test]
 	public void FlattenedNestedSequenceComposesPlaybackSpeedMultipliers()
 	{
 		DataPatternDefinition parent = Pattern(1, 2);
