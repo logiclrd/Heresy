@@ -205,11 +205,15 @@ public sealed class IncrementalRecursiveTimelineTests
 		Assert.That(starts, Has.Length.EqualTo(3));
 		StartNoteCommand inherited = starts.Single(n => n.SourceId == (ObjectId)91U);
 		Assert.That(inherited.Volume, Is.Null);
-		Assert.That(inherited.GainMultiplier, Is.EqualTo(0.5));
+		Assert.That(inherited.GainMultiplier, Is.EqualTo(1.0));
+		Assert.That(inherited.ParentSourceScopes, Has.Count.EqualTo(1),
+			"Child notes retain a live reference to their source-volume scope.");
 		StartNoteCommand explicitVolume = starts.Single(n => n.SourceId == (ObjectId)92U);
 		Assert.That(explicitVolume.Volume, Is.EqualTo(0.25),
 			"Child tracker note volume is distinct from enclosing source gain.");
-		Assert.That(explicitVolume.GainMultiplier, Is.EqualTo(0.5));
+		Assert.That(explicitVolume.GainMultiplier, Is.EqualTo(1.0));
+		Assert.That(explicitVolume.ParentSourceScopes,
+			Is.EqualTo(inherited.ParentSourceScopes));
 		StartNoteCommand parentNote = starts.Single(n => n.SourceId == (ObjectId)90U);
 		Assert.That(parentNote.GainMultiplier, Is.EqualTo(1.0),
 			"Flattened gain must never leak to an unrelated parent note.");
@@ -235,7 +239,39 @@ public sealed class IncrementalRecursiveTimelineTests
 		StartNoteCommand emitted = Drain(timeline)
 			.SelectMany(n => n.Commands).OfType<StartNoteCommand>().Single();
 		Assert.That(emitted.SourceId, Is.EqualTo((ObjectId)90U));
-		Assert.That(emitted.GainMultiplier, Is.EqualTo(0.2).Within(1e-12));
+		Assert.That(emitted.GainMultiplier, Is.EqualTo(1.0));
+		Assert.That(emitted.ParentSourceScopes, Has.Count.EqualTo(2));
+		Assert.That(emitted.ParentSourceScopes![0],
+			Is.LessThan(emitted.ParentSourceScopes[1]),
+			"Each nested instigator contributes an independent live note-volume factor.");
+	}
+
+	[Test]
+	public void FlattenedStartCommandsCarryUniqueControllerAndOriginalNoteVolume()
+	{
+		DataPatternDefinition parent = Pattern(1, 2);
+		PatternCell call = parent.Grid.GetOrCreateCell(0, 0);
+		call.Note = new StartPatternNote((ObjectId)2U);
+		call.Volume = 0.6;
+		call.Effects.Add(new TrackerVolumeSlidePatternEffect(0x01));
+		DataPatternDefinition child = Pattern(2, 1);
+		child.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote((ObjectId)90U);
+		SequencingContext context = new();
+		using IncrementalRecursiveTimeline timeline = new(
+			context, new Resolver(parent, child));
+		timeline.AddRoot(parent.Id);
+		NoteEvent[] events = Drain(timeline);
+		BeginFlattenedSourceVolumeCommand begin = events
+			.SelectMany(e => e.Commands).OfType<BeginFlattenedSourceVolumeCommand>().Single();
+		Assert.That(begin.ChildScopeId, Is.GreaterThan(0));
+		Assert.That(begin.InitialVolume, Is.EqualTo(0.6));
+		Assert.That(events.SelectMany(e => e.Commands)
+			.OfType<SetNoteVolumeSlideCommand>(), Is.Not.Empty,
+			"Dxx on an instigator must retain the source's volume slide.");
+		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.Zero);
+		Assert.That(events.SelectMany(e => e.Commands)
+			.OfType<StartNoteCommand>().Single().ParentSourceScopes,
+			Is.EqualTo(new[] { begin.ChildScopeId }));
 	}
 
 	[Test]

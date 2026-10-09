@@ -447,6 +447,113 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			Is.EqualTo(1), "Lxx is discarded without disrupting the source.");
 	}
 
+	[Test]
+	public void LaterRowVolumeSlideModulatesAlreadySoundingFlattenedChild()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample,
+			"Sustain", "sustain.wav", Wave(16384)));
+		ObjectId child = document.AllocateObjectId();
+		DataPatternDefinition nested = new(child, "Child")
+			{ RowCount = 3, ChannelCount = 2 };
+		nested.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote(sample);
+		document.Add(nested);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent")
+			{ RowCount = 3, ChannelCount = 1 };
+		PatternCell call = parent.Grid.GetOrCreateCell(0, 0);
+		call.Note = new StartPatternNote(child);
+		call.Volume = 0.75;
+		parent.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new TrackerVolumeSlidePatternEffect(0x01));
+		document.Add(parent);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, root);
+		float[] pcm = new float[244];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm[0], Is.EqualTo(0.375f).Within(1e-6f));
+		Assert.That(pcm[120], Is.EqualTo(0.375f).Within(1e-6f));
+		Assert.That(pcm[140], Is.EqualTo((float)(0.5 * (0.75 - 1.0 / 64.0)))
+			.Within(1e-5f));
+		Assert.That(pcm[240], Is.EqualTo((float)(0.5 * (0.75 - 5.0 / 64.0)))
+			.Within(1e-5f));
+		Assert.That(plan.SequencingContext.Diagnostics.IgnoredFlatteningEffects,
+			Is.Zero);
+	}
+
+	[Test]
+	public void NestedFlattenedSourcesMultiplyIndependentLiveVolumeSlides()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample,
+			"Sustain", "sustain.wav", Wave(16384)));
+		ObjectId leaf = document.AllocateObjectId();
+		DataPatternDefinition riff = new(leaf, "Riff")
+			{ RowCount = 3, ChannelCount = 1 };
+		riff.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(sample);
+		document.Add(riff);
+		ObjectId middle = document.AllocateObjectId();
+		DataPatternDefinition drums = new(middle, "Drums")
+			{ RowCount = 3, ChannelCount = 1 };
+		PatternCell drumsCall = drums.Grid.GetOrCreateCell(0, 0);
+		drumsCall.Note = new StartPatternNote(leaf);
+		drumsCall.Volume = 0.8;
+		drums.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new TrackerVolumeSlidePatternEffect(0x01));
+		document.Add(drums);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition verse = new(root, "Verse")
+			{ RowCount = 3, ChannelCount = 1 };
+		PatternCell verseCall = verse.Grid.GetOrCreateCell(0, 0);
+		verseCall.Note = new StartPatternNote(middle);
+		verseCall.Volume = 0.75;
+		verse.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new TrackerVolumeSlidePatternEffect(0x01));
+		document.Add(verse);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, root);
+		float[] pcm = new float[141];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm[0], Is.EqualTo(0.3f).Within(1e-6f));
+		Assert.That(pcm[140],
+			Is.EqualTo((float)(0.5 * (0.75 - 1.0 / 64.0)
+				* (0.8 - 1.0 / 64.0))).Within(1e-5f));
+	}
+
+	[Test]
+	public void ZeroVolumeFlattenedSourceCanBecomeAudibleFromLaterVolumeCommand()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample,
+			"Sustain", "sustain.wav", Wave(16384)));
+		ObjectId child = document.AllocateObjectId();
+		DataPatternDefinition nested = new(child, "Child")
+			{ RowCount = 3, ChannelCount = 2 };
+		nested.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote(sample);
+		document.Add(nested);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent")
+			{ RowCount = 3, ChannelCount = 1 };
+		PatternCell call = parent.Grid.GetOrCreateCell(0, 0);
+		call.Note = new StartPatternNote(child);
+		call.Volume = 0;
+		parent.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new SetNoteVolumePatternEffect(0.5));
+		document.Add(parent);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, root);
+		float[] pcm = new float[122];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm[0], Is.Zero);
+		Assert.That(pcm[120], Is.EqualTo(0.25f).Within(1e-6f));
+	}
+
 	[TestCase(2.0, 60)]
 	[TestCase(0.5, 240)]
 	public void FlattenedRecursiveSpeedChangesChildRowsButNotSiblingTiming(

@@ -53,7 +53,8 @@ public sealed class FlattenedSourceEffectWarningsTests
 			doc, parent, 0, 0);
 		Assert.That(warning, Does.Contain("TonePortamentoVolumeSlide"));
 		Assert.That(warning, Does.Contain("VibratoVolumeSlide"));
-		Assert.That(warning, Does.Contain("TrackerVolumeSlide"));
+		Assert.That(warning, Does.Not.Contain("TrackerVolumeSlide"),
+			"Dxx is a meaningful live note-volume effect on the flattened source.");
 		Assert.That(warning, Does.Not.Contain("TrackerChannelVolume"));
 		Assert.That(start.Effects, Has.Count.EqualTo(4));
 	}
