@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -279,9 +280,9 @@ public sealed class PreparedIncrementalPlaybackFactory
 				return;
 			}
 
-			if (target.Kind is ChannelTargetKind.AllVirtual
-				or ChannelTargetKind.AllVirtualInScope
-				&& command is NoteOffCommand or NoteCutCommand)
+			if ((target.Kind is ChannelTargetKind.AllVirtual
+				or ChannelTargetKind.AllVirtualInScope)
+				&& (command is NoteOffCommand or NoteCutCommand))
 			{
 				foreach (var pair in scopedVoices.ToArray())
 				{
