@@ -11,7 +11,8 @@ using Heresy.Render.Timing;
 namespace Heresy.Render.Playback;
 
 /// <summary>
-/// Sequential schedule-to-PCM renderer. Physical channels own one current
+/// Sequential event-to-PCM renderer. Immutable schedules and incremental
+/// live notes share the same voice and effect state. Physical channels own one current
 /// voice each; displaced Continue/Off/Fade voices migrate into VirtualVoices.
 /// </summary>
 public sealed class PlaybackSession
