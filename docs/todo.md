@@ -197,9 +197,20 @@ Items that were already completed remain in Git history, not in this checklist.
   silently dropped at the consumption boundary; no arbitrary sorting
   or lookahead is required. Continue incompatible Tempo spans,
   negative/future-interrupted wall-offset tracker effect corner
-  cases, virtual/mixdown channels, advanced effects, and end-to-end
-  deterministic recursive playback/export
-  integration before production recursive-clock migration.
+  cases, isolated multichannel mixdown, advanced effects, and
+  end-to-end deterministic recursive playback/export integration
+  before production recursive-clock migration.
+  Direct **virtual and broadcast note targets** now pass through the
+  experimental shared-tick and recursive coordinators: Virtual(id),
+  AllVirtualInScope and AllVirtual preserve their target identities,
+  fractional timing, positive wall deadlines and per-Pattern
+  InvocationId. Flattened siblings can reuse a virtual ID without
+  losing separate invocation ownership. Physical-only tracker memory
+  effects remain rejected on virtual targets. A known nested Mixdown=true
+  start remains renderer-owned instead of being flattened into the
+  parent's clock. Renderer scoped-broadcast eligibility, live virtual
+  voice lifecycle, private mixdown state/clock and cooked multichannel
+  mixdown audio are still separate integration work.
   Require test parity, chronological raw-emission filtering, and
   realtime/offline determinism before retiring eager scheduling.
   Replace the restricted chronological scheduler rather than adding
