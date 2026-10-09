@@ -164,7 +164,7 @@ public sealed class TrackerSlidePatternEffectTests
 	}
 
 	[Test]
-	public void FlattenedChildSharesMappedSlideMemoryWithParent()
+	public void FlattenedChildAndParentHaveIndependentVolumeSlideMemory()
 	{
 		SequencingContext parent = new(physicalChannelBase: 3);
 
@@ -186,9 +186,8 @@ public sealed class TrackerSlidePatternEffectTests
 			recalled,
 			out _);
 
-		Assert.That(
-			recalled.Freeze()[0].Commands[0],
-			Is.EqualTo(new SetNoteVolumeSlideCommand(3.0)));
+		Assert.That(recalled.Freeze(), Is.Empty,
+			"Child D00 has no local slide parameter to recall.");
 
 		PatternNoteProcessor.GenerateNotes(
 			PatternWithEffect(new TrackerVolumeSlidePatternEffect(0x04)),
@@ -207,7 +206,8 @@ public sealed class TrackerSlidePatternEffectTests
 
 		Assert.That(
 			parentRecall.Freeze()[0].Commands[0],
-			Is.EqualTo(new SetNoteVolumeSlideCommand(-4.0)));
+			Is.EqualTo(new SetNoteVolumeSlideCommand(3.0)),
+			"Child D04 must not replace the caller's remembered D30.");
 	}
 
 	private static NoteCommand FirstResolved(PatternEffect effect)
