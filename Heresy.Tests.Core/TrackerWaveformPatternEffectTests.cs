@@ -87,7 +87,7 @@ public sealed class TrackerWaveformPatternEffectTests
 				new SetTremoloCommand(
 					5,
 					3,
-					TrackerWaveform.Square)));
+					TrackerWaveform.Sine)));
 	}
 
 	[Test]
@@ -174,7 +174,7 @@ public sealed class TrackerWaveformPatternEffectTests
 	}
 
 	[Test]
-	public void FlattenedChildSharesWaveformSelection()
+	public void FlattenedChildDoesNotInheritParentVibratoWaveform()
 	{
 		SequencingContext parent =
 			new(physicalChannelBase: 3);
