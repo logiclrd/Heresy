@@ -36,6 +36,9 @@ public sealed class PlaybackSession
 	private readonly TrackerTickClock _tickClock;
 	private readonly SortedDictionary<(long Owner, int Host), PlaybackChannelState>
 		_channels = [];
+	// A completed producer's logical playback channels are reclaimed only
+	// after all its voices (including displaced NNA) and tails finish.
+	private readonly HashSet<long> _retiredPhysicalScopes = [];
 	private readonly SortedDictionary<uint, PlaybackChannelState> _targetedVirtualChannels = [];
 	// A Pattern's virtual ID is local to its invocation, not a global
 	// playback channel. The legacy live-preview dictionary above remains
@@ -215,6 +218,66 @@ public sealed class PlaybackSession
 	}
 
 	public IReadOnlyList<PlaybackVoice> VirtualVoices => _virtualVoices;
+
+	/// <summary>Diagnostic count of non-root logical channel entries,
+	/// including scopes retained for sounding voices or anti-click tails.</summary>
+	public int RetainedScopedPhysicalChannelCount
+	{
+		get
+		{
+			int count = 0;
+			foreach (var key in _channels.Keys)
+				if (key.Owner != 0)
+					count++;
+			return count;
+		}
+	}
+
+	/// <summary>The producer is gone. Its existing voices and cut tails
+	/// remain audible; its channel state may now be reclaimed once silent.</summary>
+	public void RetirePhysicalScope(long scopeId)
+	{
+		if (scopeId <= 0)
+			throw new ArgumentOutOfRangeException(nameof(scopeId));
+		_retiredPhysicalScopes.Add(scopeId);
+		ReclaimRetiredPhysicalScopes();
+	}
+
+	private void ReclaimRetiredPhysicalScopes()
+	{
+		if (_retiredPhysicalScopes.Count == 0)
+			return;
+		foreach (long scopeId in _retiredPhysicalScopes.ToArray())
+		{
+			bool retained = false;
+			foreach (PlaybackVoice voice in _virtualVoices)
+				if (voice.OriginPhysicalPlaybackOwner == scopeId)
+				{
+					retained = true;
+					break;
+				}
+			if (retained)
+				continue;
+			List<(long Owner, int Host)> candidates = [];
+			foreach (var pair in _channels)
+			{
+				if (pair.Key.Owner != scopeId)
+					continue;
+				if (pair.Value.CurrentVoice is not null
+					|| pair.Value.AntiClickTail.IsActive)
+				{
+					retained = true;
+					break;
+				}
+				candidates.Add(pair.Key);
+			}
+			if (retained)
+				continue;
+			foreach (var key in candidates)
+				_channels.Remove(key);
+			_retiredPhysicalScopes.Remove(scopeId);
+		}
+	}
 
 	public bool TryGetChannelState(int channel, out PlaybackChannelState? state)
 	{
@@ -1620,6 +1683,7 @@ public sealed class PlaybackSession
 				frameCount,
 				outputChannelCount,
 				destination);
+			ReclaimRetiredPhysicalScopes();
 		}
 		finally
 		{
