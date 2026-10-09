@@ -403,6 +403,88 @@ public sealed class IncrementalPatternRowDelayTests
 				TimeSpan.FromMilliseconds(300), TimeSpan.FromMilliseconds(360) }));
 	}
 
+	[Test]
+	public void CombinedSDxQxyDelaysNewNoteBeforeStartingRetriggerTicks()
+	{
+		DataPatternDefinition p = Pattern(1, 1);
+		PatternCell cell = p.Grid.GetOrCreateCell(0, 0);
+		cell.Note = new StartPatternNote((ObjectId)10U);
+		cell.Effects.Add(new TrackerNoteDelayPatternEffect(2));
+		cell.Effects.Add(new RetriggerPatternEffect(0x03));
+		AssertParity(p);
+	}
+
+	[Test]
+	public void CombinedSDxQxyAndSEyRepeatNoteAndRetriggerInEagerOrder()
+	{
+		DataPatternDefinition p = Pattern(1, 1);
+		PatternCell cell = p.Grid.GetOrCreateCell(0, 0);
+		cell.Note = new StartPatternNote((ObjectId)10U);
+		cell.Effects.Add(new TrackerNoteDelayPatternEffect(2));
+		cell.Effects.Add(new RetriggerPatternEffect(0x03));
+		cell.Effects.Add(new TrackerPatternDelayPatternEffect(1));
+		AssertParity(p);
+
+		SequencingContext state = new();
+		using IncrementalPatternTimeline timeline = new(state);
+		timeline.Add(p, 1, state);
+		NoteEvent[] notes = Drain(timeline);
+		Assert.That(notes.Select(n => n.Offset.TimeOffset),
+			Is.EqualTo(new[] { 40, 100, 160, 160, 220 }
+				.Select(x => TimeSpan.FromMilliseconds(x))));
+		Assert.That(notes.Select(n => n.Commands[0].GetType()),
+			Is.EqualTo(new[] {
+				typeof(StartNoteCommand), typeof(RetriggerCurrentVoiceCommand),
+				typeof(StartNoteCommand), typeof(RetriggerCurrentVoiceCommand),
+				typeof(RetriggerCurrentVoiceCommand),
+			}));
+	}
+
+	[Test]
+	public void CombinedSDxQxyAndS6xRetainOriginalSpanAndRepetitionTiming()
+	{
+		DataPatternDefinition p = Pattern(1, 1);
+		PatternCell cell = p.Grid.GetOrCreateCell(0, 0);
+		cell.Note = new StartPatternNote((ObjectId)10U);
+		cell.Effects.Add(new TrackerFinePatternDelayPatternEffect(3));
+		cell.Effects.Add(new TrackerPatternDelayPatternEffect(1));
+		cell.Effects.Add(new TrackerNoteDelayPatternEffect(8));
+		cell.Effects.Add(new RetriggerPatternEffect(0x02));
+		AssertParity(p);
+	}
+
+	[Test]
+	public void OutOfSpanCombinedSDxQxyDoesNotStartOrRetrigger()
+	{
+		DataPatternDefinition p = Pattern(2, 1);
+		PatternCell cell = p.Grid.GetOrCreateCell(0, 0);
+		cell.Note = new StartPatternNote((ObjectId)10U);
+		cell.Effects.Add(new TrackerNoteDelayPatternEffect(6));
+		cell.Effects.Add(new RetriggerPatternEffect(0x93));
+		cell.Effects.Add(new TrackerPatternDelayPatternEffect(2));
+		p.Grid.GetOrCreateCell(1, 0).Effects.Add(new RetriggerPatternEffect(0));
+		AssertParity(p);
+		SequencingContext state = new();
+		using IncrementalPatternTimeline timeline = new(state);
+		timeline.Add(p, p.RowCount, state);
+		Drain(timeline);
+		Assert.That(state.GetPhysicalChannelState(0).TryGetEffectParameter(
+			EffectMemorySlot.Retrigger, out byte parameter), Is.True);
+		Assert.That(parameter, Is.EqualTo(0x93));
+	}
+
+	[Test]
+	public void DelayedRetriggerCountdownAndQ00MemoryCarryToFollowingRow()
+	{
+		DataPatternDefinition p = Pattern(2, 1);
+		PatternCell first = p.Grid.GetOrCreateCell(0, 0);
+		first.Note = new StartPatternNote((ObjectId)10U);
+		first.Effects.Add(new TrackerNoteDelayPatternEffect(2));
+		first.Effects.Add(new RetriggerPatternEffect(0x03));
+		p.Grid.GetOrCreateCell(1, 0).Effects.Add(new RetriggerPatternEffect(0));
+		AssertParity(p);
+	}
+
 	private static DataPatternDefinition Pattern(int rows, int channels)
 		=> new((ObjectId)1U, "Delay parity") { RowCount = rows, ChannelCount = channels };
 
