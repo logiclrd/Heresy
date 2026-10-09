@@ -960,6 +960,73 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			Throws.InvalidOperationException.With.Message.Contains("cycle"));
 	}
 
+	[TestCase(false)]
+	[TestCase(true)]
+	public void RetiredRecursiveVoicesDoNotAccumulateInInfiniteStylePlayback(
+		bool instrumentSelected)
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample, "PCM",
+			"sample.wav", Wave(16384)));
+		ObjectId child = document.AllocateObjectId();
+		DataPatternDefinition childPattern = new(child, "Short child")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		childPattern.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sample);
+		document.Add(childPattern);
+
+		ObjectId selected = child;
+		if (instrumentSelected)
+		{
+			selected = document.AllocateObjectId();
+			InstrumentDefinition instrument = new(selected, "Recursive tone");
+			instrument.ToneSpecifications.Add(new ToneSpecification
+			{
+				SourceId = child,
+			});
+			instrument.ToneTable.Add(0);
+			document.Add(instrument);
+		}
+
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Repeated source")
+		{
+			RowCount = 48, ChannelCount = 1,
+		};
+		for (int row = 0; row < 48; row++)
+			parent.Grid.GetOrCreateCell(row, 0).Note =
+				new StartPatternNote(selected, mixdown: !instrumentSelected);
+		document.Add(parent);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, root);
+		for (int row = 0; row < 48; row++)
+		{
+			plan.Source.Render(120, new float[120]);
+			Assert.That(PreparedRegistrationCount(plan), Is.LessThanOrEqualTo(2),
+				$"Retired voices accumulated by row {row}.");
+		}
+		plan.Source.Render(400, new float[400]);
+		Assert.That(PreparedRegistrationCount(plan), Is.Zero,
+			"Finite recursive voices must release their transient IDs after finishing.");
+	}
+
+	private static int PreparedRegistrationCount(PreparedIncrementalPlaybackPlan plan)
+	{
+		FieldInfo resolverField = typeof(PlaybackSession).GetField(
+			"_soundResolver", BindingFlags.NonPublic | BindingFlags.Instance)!;
+		object resolver = resolverField.GetValue(plan.Session)!;
+		FieldInfo registrationsField = resolver.GetType().GetField(
+			"_preparedMixdowns", BindingFlags.NonPublic | BindingFlags.Instance)!;
+		object registrations = registrationsField.GetValue(resolver)!;
+		return (int)registrations.GetType().GetProperty("Count")!
+			.GetValue(registrations)!;
+	}
+
 	[Test]
 	public void RequiresRootAndRejectsInvalidRoslynDuringPreparation()
 	{
