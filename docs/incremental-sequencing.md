@@ -1917,6 +1917,70 @@ seeking through a previously applied action still require parity
 coverage. The factory continues as an experimental source; no
 production compatibility option or alternate scheduler is added.
 
+## Thirty-ninth step: dedicated PCM rendering worker and bounded SDL ring
+
+**Corrected threading contract (supersedes the callback ownership
+assumptions in milestones 34–38):**
+
+The SDL audio callback must never invoke musical sequencing, Roslyn,
+instruments, nested mixdown PCM synthesis, or any song renderer.
+A dedicated PCM rendering thread owns these operations and publishes
+interleaved float PCM through a bounded single-producer/single-consumer
+ring. SDL calls only the ring consumer, which copies the available
+speaker frames without blocking or invoking `IAudioOutputSource.Render`
+on the actual musical source. A short read is zero-filled and counted
+as an underrun. Missing PCM is **not** consumed from the producer,
+so a missed callback does not fast-forward musical playback.
+
+`Heresy.Render.Realtime.BufferedAudioOutputSource` implements this
+worker and ring without dependencies on SDL, and is usable with
+ordinary production sources as well as incremental recursive sources.
+It has a configurable fixed frame capacity (2048 default, 256-frame
+render blocks), preallocated interleaved PCM storage, lock-free SPSC
+read/write frontiers, one dedicated producer thread, thread-safe
+diagnostic counters and a fault report. The worker renders until
+the ring is full, wakes on consumption and shuts down with its owning
+session. Reused ring storage is cleared before handing a block to
+a potentially additive PCM renderer.
+
+`SdlAudioOutputSession` now always wraps its source in a
+`BufferedAudioOutputSource`, including the current legacy production
+playback/export transport's realtime source. Its `FeedAudio` callback
+copies ring PCM into SDL's audio stream; it cannot run song
+rendering. Source failures are published through the backend fault
+property and callbacks output silence. Lifecycle ownership remains
+source construction / transport commands on the existing controller
+thread, musical rendering on the dedicated PCM worker and SDL
+buffer draining on the device callback.
+
+`AsyncPreparedIncrementalAudioSource`, the incremental experimental
+transport adapter, no longer operates an event-only preparation thread
+with PCM rendering on its callback. It uses the same bounded ring
+and a worker-side `SynchronousRenderingSource`: each render iteration
+advances the incremental timeline to that block's exclusive horizon,
+then renders the parent and all active child mixdowns synchronously
+on **that same worker**. Both sequence generation and PCM synthesis
+can run expensive code without blocking SDL. Existing sample-accurate
+internal chronology and nested child sessions are preserved. Tests
+cover callback isolation under a deliberately blocked generator,
+short reads, uninterrupted musical position, wraparound and speaker
+interleaving, ring-size bounds, producer failure, live-event dispatch,
+and identical worker IDs for sequencing and PCM synthesis.
+
+**Important remaining simplification:** `PreparedIncrementalAudioSource`
+and `PreparedRecursiveMixdownSound` still contain the earlier
+event-preparation queues, replay journal and producer-to-consumer
+lifecycle history. Those structures are no longer *needed for
+thread isolation*, because recursive musical work now runs on one
+worker; they are retained temporarily to avoid silently breaking
+the established seeking/lifecycle tests during this threading
+correction. The next cleanup should collapse those redundant
+producer/consumer boundaries and reconstruct deterministic private
+generators instead of keeping an unbounded event journal. Also,
+the production source factories still use the legacy eager
+`SongScheduleCompiler`; changing the callback/worker boundary is not
+the final production recursive-scheduler cutover.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
