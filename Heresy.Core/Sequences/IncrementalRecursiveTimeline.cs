@@ -95,19 +95,29 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 	/// unrelated sibling invocations continue.
 	/// </summary>
 	public bool Cancel(long invocationId)
+		=> Cancel(invocationId, null);
+
+	/// <summary>
+	/// Explicitly cancel a subtree and optionally collect every invocation
+	/// removed (including descendants) for renderer-owned voice cancellation.
+	/// Natural completion never publishes these cancellation identities.
+	/// </summary>
+	public bool Cancel(long invocationId, ICollection<long>? canceledInvocations)
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		if (!_frames.ContainsKey(invocationId))
 			return false;
-		RemoveSubtree(invocationId);
+		RemoveSubtree(invocationId, canceledInvocations);
 		return true;
 	}
 
-	private void RemoveSubtree(long invocationId)
+	private void RemoveSubtree(long invocationId,
+		ICollection<long>? canceledInvocations = null)
 	{
 		Invocation frame = _frames[invocationId];
 		foreach (long child in frame.Children.ToArray())
-			RemoveSubtree(child);
+			RemoveSubtree(child, canceledInvocations);
+		canceledInvocations?.Add(invocationId);
 		if (frame.PatternId is long pattern)
 		{
 			_timeline.Cancel(pattern);
