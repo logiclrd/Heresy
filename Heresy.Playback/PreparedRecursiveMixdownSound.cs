@@ -41,7 +41,8 @@ internal sealed class PreparedRecursiveMixdownSound :
 		public long SourceFrameOffset { get; set; }
 	}
 
-	private readonly Func<PrivateRecursivePlayback> _reconstruct;
+	private readonly Func<double, PrivateRecursivePlayback> _reconstruct;
+	private double _pitchMultiplier = 1.0;
 	private PrivateRecursivePlayback _playback;
 	private readonly int _sampleRate;
 	private readonly int _channels;
@@ -53,7 +54,7 @@ internal sealed class PreparedRecursiveMixdownSound :
 	public PreparedRecursiveMixdownSound(
 		PrivateRecursivePlayback playback,
 		long parentStartFrame,
-		Func<PrivateRecursivePlayback> reconstruct)
+		Func<double, PrivateRecursivePlayback> reconstruct)
 	{
 		_playback = playback ?? throw new ArgumentNullException(nameof(playback));
 		_reconstruct = reconstruct ?? throw new ArgumentNullException(nameof(reconstruct));
@@ -75,9 +76,24 @@ internal sealed class PreparedRecursiveMixdownSound :
 	public SoundInvocation? CreateInvocation(
 		double pitchMultiplier, double playbackSpeedMultiplier)
 	{
-		if (pitchMultiplier != 1 || playbackSpeedMultiplier != 1)
+		if (!(pitchMultiplier > 0.0) || !double.IsFinite(pitchMultiplier))
+			throw new ArgumentOutOfRangeException(nameof(pitchMultiplier));
+		if (playbackSpeedMultiplier != 1.0)
 			throw new NotSupportedException(
-				"Private mixdown pitch/playback-speed transforms need private-clock remapping.");
+				"Private mixdown playback-speed transforms need private-clock remapping.");
+
+		// Initial pitch is an inherited note transposition in the child's
+		// private context. It does not change tracker Tempo, Speed, note
+		// deadlines, or parent/child sample-frame mapping. Instantiation is
+		// unique per recursive voice, so the child can be reconstructed now.
+		if (_pitchMultiplier != pitchMultiplier)
+		{
+			PrivateRecursivePlayback fresh = _reconstruct(pitchMultiplier);
+			_playback.Dispose();
+			_playback = fresh;
+			_pitchMultiplier = pitchMultiplier;
+			_observedEndFrame = -1;
+		}
 		return new SoundInvocation(this, CreateState(), SnapshotNoteConfiguration());
 	}
 
@@ -167,7 +183,7 @@ internal sealed class PreparedRecursiveMixdownSound :
 		// independent nested clocks. They execute on the PCM worker.
 		if (origin != _renderOriginFrame || first < _playback.Source.NextFrame)
 		{
-			PrivateRecursivePlayback fresh = _reconstruct();
+			PrivateRecursivePlayback fresh = _reconstruct(_pitchMultiplier);
 			_playback.Dispose();
 			_playback = fresh;
 			_renderOriginFrame = origin;

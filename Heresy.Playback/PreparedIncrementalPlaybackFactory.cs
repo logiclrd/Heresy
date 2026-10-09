@@ -482,10 +482,11 @@ public sealed class PreparedIncrementalPlaybackFactory
 				childAncestry[i] = path[i];
 			childAncestry[^1] = childSource;
 
-			PrivateRecursivePlayback CreateChildPlayback()
+			PrivateRecursivePlayback CreateChildPlayback(double pitchMultiplier)
 			{
 				IncrementalRecursiveTimeline childTimeline =
-					scripts.CreateTimeline(new SequencingContext());
+					scripts.CreateTimeline(new SequencingContext(
+						pitchMultiplier: pitchMultiplier));
 				try
 				{
 					childTimeline.AddRoot(childSource);
@@ -507,7 +508,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 				}
 			}
 			PreparedRecursiveMixdownSound voice = new(
-				CreateChildPlayback(), parentFrame, CreateChildPlayback);
+				CreateChildPlayback(1.0), parentFrame, CreateChildPlayback);
 			privateVoices.Add(voice);
 			return voice;
 		}
@@ -661,10 +662,9 @@ public sealed class PreparedIncrementalPlaybackFactory
 					if (scopedVoices.Remove(key, out TrackedMixdown? prior))
 						prior.Sound.ScheduleCut(parentFrame);
 				}
-				if (start.PitchMultiplier != 1.0
-					|| start.PlaybackSpeedMultiplier != 1.0)
+				if (start.PlaybackSpeedMultiplier != 1.0)
 					throw new NotSupportedException(
-						"Recursive mixdown transforms require private-clock remapping.");
+						"Recursive mixdown playback-speed transforms require private-clock remapping.");
 				PreparedRecursiveMixdownSound privateVoice =
 					CreatePrivateSound(start.SourceId, ancestry, parentFrame);
 				ObjectId preparedId = sounds.RegisterPreparedMixdown(privateVoice);

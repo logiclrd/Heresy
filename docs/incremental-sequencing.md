@@ -2105,7 +2105,33 @@ Repeated direct mixdown and Instrument-selected recursive-note regressions
 assert that old registrations do not grow with the number of completed
 invocations in a long-running arrangement.
 
-## Proposed next interfaces and migration
+## Forty-fourth step: initial recursive pitch transposition
+
+Initial non-unit **pitch** multipliers now propagate through flattened
+Pattern/Sequence invocations via `SequencingContext.FlattenedChild`, composing
+with the parent context and multiplying actual child `StartNoteCommand`
+pitches exactly once at emission. Neither source note row positions nor
+shared Tempo/Speed or effect deadlines are transformed by pitch.
+
+Private Pattern/Sequence mixdowns bind the selected invocation pitch to the
+child's own sequencing context; a uniquely owned private timeline/session is
+reconstructed with that pitch before its first frame renders. Nested
+Instrument tone selections compose their pitch factors before reaching that
+private recursive leaf. Deterministic seeks/retriggers reconstruct using the
+same pitch, retaining just-in-time multichannel PCM on the same rendering
+worker, without caches or journals. Pitch transposes underlying notes while
+leaving the private tracker clock and parent-to-child native frame mapping
+unchanged.
+
+**Still unsupported:** non-unit playback-speed mapping for flattened or
+private child clocks, initial source-volume propagation for flattened
+invocations, and dynamic parent pitch/envelope/slide trajectories acting
+on child note pitch. These remain explicit TODOs; they are not approximated
+using whole-mixdown PCM resampling. Playback-speed errors still fail
+explicitly. This is a deliberately scoped first slice of the recursive
+transformation milestone, not completion of its full compatibility item.
+
+
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
    invocation coordinator** to cover scripting and remaining effect

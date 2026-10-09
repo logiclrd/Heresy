@@ -329,17 +329,34 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 								|| !_resolver.TryResolve(start.SourceId, out SongObject? source)
 								|| source is not (PatternDefinition or SequenceDefinition))
 							{
-								retained.Add(command);
+								if (command is StartNoteCommand regularStart)
+								{
+									// An invocation's initial pitch transposes the
+									// actual child notes, not their musical deadlines.
+									// Flattened starts below pass the *local* factor
+									// into the new child context exactly once.
+									double composedPitch = regularStart.PitchMultiplier
+										* frame.Context.PitchMultiplier;
+									if (!(composedPitch > 0.0)
+										|| !double.IsFinite(composedPitch))
+										throw new InvalidOperationException(
+											"Recursive pitch multiplier is not positive and finite.");
+									retained.Add(regularStart with
+									{
+										PitchMultiplier = composedPitch,
+									});
+								}
+								else
+									retained.Add(command);
 								continue;
 							}
 							if (emit.Note.Target.Kind != ChannelTargetKind.Physical)
 								throw new NotSupportedException(
 									"Flattened child requires a physical parent channel.");
-							if (start.PitchMultiplier != 1.0
-								|| start.PlaybackSpeedMultiplier != 1.0
+							if (start.PlaybackSpeedMultiplier != 1.0
 								|| start.Volume.HasValue)
 								throw new NotSupportedException(
-									"Transformed flattened child notes are not supported.");
+									"Flattened child playback-speed and volume transforms require shared-clock mapping.");
 
 							int physicalOffset = emit.Note.Target.PhysicalChannel
 								- frame.Context.PhysicalChannelBase;
@@ -347,6 +364,7 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 								throw new InvalidOperationException(
 									"Child channels cannot precede parent channel space.");
 							SequencingContext child = frame.Context.FlattenedChild(
+								pitchMultiplier: start.PitchMultiplier,
 								physicalChannelOffset: physicalOffset);
 							child.TimelineOrigin = emit.Time;
 							AddInvocation(source, child, frame.Id);

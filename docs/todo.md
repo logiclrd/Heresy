@@ -27,11 +27,15 @@ nested ownership graphs are reclaimed after the final active voice detaches,
 preserving audible release and already-captured anti-click tails. These are
 **implemented invariants**, not outstanding TODOs.
 
-- [ ] Implement non-unit **pitch and playback-speed transforms** on
-  flattened and mixdown Pattern/Sequence invocations, including source
-  volume, private/parent clock mapping and effects. Preserve the distinction
-  between flattened shared-time/channel semantics and mixdown's private
-  sequencing state with native multichannel speaker feeds.
+- [ ] Complete **playback-speed** and initial **source volume** transforms
+  on flattened and mixdown Pattern/Sequence invocations, including
+  private/parent or shared-clock remapping and advanced effects. Initial
+  non-unit **pitch** transposition is implemented for flattened and private
+  Pattern/Sequence calls, including Instrument-selected recursion: pitch
+  modifies child note frequencies, not the row clock. Dynamic parent pitch
+  trajectory propagation remains to be developed. Preserve flattened
+  shared-time/channel semantics and mixdown's independent private timeline
+  with native multichannel speaker feeds.
 - [ ] Finish unsupported advanced tracker/script effect combinations in
   the shared-tick coordinator. In particular, verify negative fixed
   wall-time offsets, advanced/global effect deadlines, incompatible
