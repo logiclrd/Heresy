@@ -228,6 +228,28 @@ public sealed class IncrementalPatternRowDelayTests
 	}
 
 	[Test]
+	public void CancellingSEyPatternDiscardRemainingTempoRepetitions()
+	{
+		DataPatternDefinition p = Pattern(1, 1);
+		var cell = p.Grid.GetOrCreateCell(0, 0);
+		cell.Effects.Add(new TrackerTempoPatternEffect(0x12));
+		cell.Effects.Add(new TrackerPatternDelayPatternEffect(2));
+		SequencingContext state = new();
+		using IncrementalPatternTimeline timeline = new(state);
+		long id = timeline.Add(p, 1, state);
+		Assert.That(timeline.TryStep(out IncrementalPatternTimelineStep? first),
+			Is.True);
+		Assert.That(first, Is.TypeOf<IncrementalPatternTimelineStep.Emit>());
+		Assert.That(((IncrementalPatternTimelineStep.Emit)first!).Note.Commands
+			.Single(), Is.EqualTo(new SetTempoRampCommand(135, 6)));
+
+		Assert.That(timeline.Cancel(id), Is.True);
+		Assert.That(timeline.IsComplete, Is.True);
+		Assert.That(timeline.TryStep(out _), Is.False);
+		Assert.That(state.State.Tempo, Is.EqualTo(125.0));
+	}
+
+	[Test]
 	public void ConcurrentIndependentSEyAndTxxRejectBeforeMutatingTempoMemory()
 	{
 		DataPatternDefinition p = Pattern(1, 1);
