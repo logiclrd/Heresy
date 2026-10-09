@@ -1357,7 +1357,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 	}
 
 	[Test]
-	public void FlattenedRecursivePlaybackSpeedStillFailsExplicitlyWithoutPerCursorMapping()
+	public void FlattenedRecursivePlaybackSpeedSupportsEmptyChild()
 	{
 		SongDocument document = new();
 		ObjectId child = document.AllocateObjectId();
@@ -1376,8 +1376,8 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		using PreparedIncrementalPlaybackPlan plan =
 			new PreparedIncrementalPlaybackFactory(Mono(1000))
 				.Create(document, root);
-		Assert.That(() => plan.Source.Render(1, new float[1]),
-			Throws.TypeOf<NotSupportedException>());
+		Assert.DoesNotThrow(() => plan.Source.Render(1, new float[1]),
+			"A transformed empty child must be schedulable without special cases.");
 	}
 
 	[Test]
