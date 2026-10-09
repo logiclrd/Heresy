@@ -290,6 +290,93 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 	}
 
 	[Test]
+	public void NestedPrivateMixdownSpeedFactorsComposeWithoutResampling()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample, "Ramp",
+			"ramp.wav", RampWave()));
+		ObjectId leaf = document.AllocateObjectId();
+		DataPatternDefinition inner = new(leaf, "Leaf")
+		{
+			RowCount = 2, ChannelCount = 1,
+		};
+		inner.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote(sample);
+		document.Add(inner);
+		ObjectId middleId = document.AllocateObjectId();
+		DataPatternDefinition middle = new(middleId, "Middle")
+		{
+			RowCount = 3, ChannelCount = 1,
+		};
+		middle.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(leaf, playbackSpeedMultiplier: 1.5, mixdown: true);
+		document.Add(middle);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent")
+		{
+			RowCount = 3, ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(middleId, playbackSpeedMultiplier: 2.0, mixdown: true);
+		document.Add(parent);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000)).Create(document, root);
+		float[] pcm = new float[45];
+		plan.Source.Render(10, pcm.AsSpan(0, 10));
+		plan.Source.Render(35, pcm.AsSpan(10));
+		Assert.That(pcm[39], Is.Zero);
+		Assert.That(pcm[41], Is.EqualTo(512f / 32768f).Within(1e-6f),
+			"Outer 2x and inner 1.5x should compose to a 3x leaf clock.");
+	}
+
+	[Test]
+	public void PrivateMixdownSpeedSurvivesDeterministicNativeFrameRewind()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample, "Ramp",
+			"ramp.wav", RampWave()));
+		ObjectId child = document.AllocateObjectId();
+		DataPatternDefinition notes = new(child, "Later")
+		{
+			RowCount = 2, ChannelCount = 1,
+		};
+		notes.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote(sample);
+		document.Add(notes);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent")
+		{
+			RowCount = 3, ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(child, playbackSpeedMultiplier: 3.0, mixdown: true);
+		document.Add(parent);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000)).Create(document, root);
+		plan.Source.Render(1, new float[1]);
+		PlaybackVoice voice = plan.Session.GetChannelState(0).CurrentVoice!;
+		ISourceFrameSeekableSound seekable = (ISourceFrameSeekableSound)voice.Sound;
+		PropertyInfo sessionProperty = voice.Sound.GetType().GetProperty(
+			"Session", BindingFlags.Public | BindingFlags.Instance)!;
+		PlaybackSession firstSession =
+			(PlaybackSession)sessionProperty.GetValue(voice.Sound)!;
+		seekable.SetSourceFrameOffset(voice.SoundState, 40);
+		float[] forward = new float[1];
+		plan.Source.Render(1, forward);
+		Assert.That(forward[0], Is.EqualTo(512f / 32768f).Within(1e-6f),
+			"A native source-frame seek must advance the accelerated child timeline.");
+		seekable.SetSourceFrameOffset(voice.SoundState, 0);
+		float[] backward = new float[1];
+		plan.Source.Render(1, backward);
+		PlaybackSession rebuilt =
+			(PlaybackSession)sessionProperty.GetValue(voice.Sound)!;
+		Assert.That(backward[0], Is.Zero);
+		Assert.That(rebuilt, Is.Not.SameAs(firstSession));
+		Assert.That(rebuilt.BaselineTempo, Is.EqualTo(375.0),
+			"Reconstruction must retain the threefold tracker-clock rate.");
+	}
+
+	[Test]
 	public void RepeatedNestedMixdownStartsCreateIndependentPrivateSources()
 	{
 		SongDocument document = new();
