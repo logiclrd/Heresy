@@ -90,14 +90,17 @@ public static class OfflinePlaybackRenderer
 		IIncrementalArrangementSource arrangement,
 		IAudioFileSink sink,
 		int blockFrameCount = DefaultBlockFrameCount,
-		long maximumLogicalFrames = 48000L * 60 * 60 * 4)
+		long maximumLogicalFrames = 0)
 	{
 		ArgumentNullException.ThrowIfNull(arrangement);
 		ArgumentNullException.ThrowIfNull(sink);
 		if (blockFrameCount <= 0)
 			throw new ArgumentOutOfRangeException(nameof(blockFrameCount));
-		if (maximumLogicalFrames <= 0)
+		if (maximumLogicalFrames < 0)
 			throw new ArgumentOutOfRangeException(nameof(maximumLogicalFrames));
+		if (maximumLogicalFrames == 0)
+			maximumLogicalFrames = checked(
+				(long)arrangement.Format.SampleRate * 60 * 60 * 4);
 		if (sink.Format != arrangement.Format)
 			throw new ArgumentException(
 				"Audio file sink format must match the incremental source.", nameof(sink));
