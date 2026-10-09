@@ -17,7 +17,7 @@ namespace Heresy.Playback;
 /// step, never an event queue, a replay journal or a second producer.
 /// This source MUST NOT be called by a device audio callback.
 /// </summary>
-public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDisposable
+public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSource, IDisposable
 {
 	private const int MaximumStepsPerRender = 1_000_000;
 	private sealed record PendingEvent(long Frame, long Owner, NoteEvent Note);
