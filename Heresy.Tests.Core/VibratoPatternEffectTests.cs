@@ -99,7 +99,7 @@ public sealed class VibratoPatternEffectTests
 	}
 
 	[Test]
-	public void FlattenedChildRecallsAndUpdatesParentsMappedVibratoMemory()
+	public void FlattenedChildHasIndependentVibratoMemoryFromParent()
 	{
 		SequencingContext parent = new(physicalChannelBase: 3);
 
@@ -130,8 +130,9 @@ public sealed class VibratoPatternEffectTests
 		SetVibratoCommand recalledByParent =
 			(SetVibratoCommand)parentOutput.Freeze()[0].Commands[0];
 
-		Assert.That(recalled, Is.EqualTo(new SetVibratoCommand(5, 3)));
-		Assert.That(recalledByParent, Is.EqualTo(new SetVibratoCommand(2, 7)));
+		Assert.That(recalled, Is.EqualTo(new SetVibratoCommand(0, 0)));
+		Assert.That(recalledByParent, Is.EqualTo(new SetVibratoCommand(5, 3)),
+			"Child vibrato H27 must not overwrite the parent's H53 memory.");
 	}
 
 	[Test]
