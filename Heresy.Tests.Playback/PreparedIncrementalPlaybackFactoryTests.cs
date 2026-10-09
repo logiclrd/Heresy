@@ -170,6 +170,125 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			"Child private Tempo must not retime the parent row.");
 	}
 
+	[TestCase(2.0, 60)]
+	[TestCase(0.5, 240)]
+	public void PrivateMixdownSpeedScalesMusicalRowsWithoutResamplingNotes(
+		double rate, int nextNoteFrame)
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample, "Ramp",
+			"ramp.wav", RampWave()));
+		ObjectId child = document.AllocateObjectId();
+		DataPatternDefinition notes = new(child, "Two rows")
+		{
+			RowCount = 2, ChannelCount = 1,
+		};
+		notes.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(sample);
+		notes.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote(sample);
+		document.Add(notes);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent")
+		{
+			RowCount = 3, ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(child, playbackSpeedMultiplier: rate, mixdown: true);
+		document.Add(parent);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000)).Create(document, root);
+		float[] pcm = new float[nextNoteFrame + 3];
+		plan.Source.Render(3, pcm.AsSpan(0, 3));
+		plan.Source.Render(pcm.Length - 3, pcm.AsSpan(3));
+		Assert.That(pcm[1], Is.EqualTo(512f / 32768f).Within(1e-6f),
+			"Playback speed may not implicitly change the note's pitch.");
+		Assert.That(pcm[34], Is.Zero);
+		Assert.That(pcm[nextNoteFrame + 1],
+			Is.EqualTo(512f / 32768f).Within(1e-6f),
+			"Second child row must execute at its speed-scaled deadline.");
+	}
+
+	[Test]
+	public void PrivateMixdownSpeedRespectsChildTempoChangesButNotParentClock()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample, "PCM",
+			"tone.wav", Wave(16384)));
+		ObjectId child = document.AllocateObjectId();
+		DataPatternDefinition notes = new(child, "Private tempo")
+		{
+			RowCount = 3, ChannelCount = 1,
+		};
+		notes.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(sample);
+		notes.Grid.GetOrCreateCell(1, 0).Effects.Add(new SetTempoPatternEffect(250));
+		notes.Grid.GetOrCreateCell(2, 0).Note = new StartPatternNote(sample);
+		document.Add(notes);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent clock")
+		{
+			RowCount = 3, ChannelCount = 2,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(child, playbackSpeedMultiplier: 2.0, mixdown: true);
+		parent.Grid.GetOrCreateCell(1, 1).Note = new StartPatternNote(sample);
+		document.Add(parent);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000)).Create(document, root);
+		plan.Source.Render(1, new float[1]);
+		PlaybackVoice privateVoice = plan.Session.GetChannelState(0).CurrentVoice!;
+		PropertyInfo childSessionProperty = privateVoice.Sound.GetType().GetProperty(
+			"Session", BindingFlags.Public | BindingFlags.Instance)!;
+		PlaybackSession childSession =
+			(PlaybackSession)childSessionProperty.GetValue(privateVoice.Sound)!;
+		Assert.That(childSession.BaselineTempo, Is.EqualTo(250.0));
+		float[] pcm = new float[140];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm[89], Is.Zero);
+		Assert.That(pcm[90], Is.EqualTo(0.5f).Within(1e-5f),
+			"Child's second-row Tempo change accelerates its third row.");
+		Assert.That(pcm[119], Is.Zero);
+		Assert.That(pcm[120], Is.EqualTo(0.5f).Within(1e-5f),
+			"Private tempo must not retime the parent's next row.");
+	}
+
+	[Test]
+	public void InstrumentSelectedPrivateSpeedTransformsChildClockNotPitch()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample, "Ramp",
+			"ramp.wav", RampWave()));
+		ObjectId child = document.AllocateObjectId();
+		DataPatternDefinition notes = new(child, "Child")
+		{
+			RowCount = 2, ChannelCount = 1,
+		};
+		notes.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(sample);
+		notes.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote(sample);
+		document.Add(notes);
+		ObjectId instrumentId = document.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Selected");
+		instrument.ToneSpecifications.Add(new ToneSpecification { SourceId = child });
+		instrument.ToneTable.Add(0);
+		document.Add(instrument);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent")
+		{
+			RowCount = 2, ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(instrumentId, playbackSpeedMultiplier: 2.0);
+		document.Add(parent);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000)).Create(document, root);
+		float[] pcm = new float[65];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm[1], Is.EqualTo(512f / 32768f).Within(1e-6f));
+		Assert.That(pcm[61], Is.EqualTo(512f / 32768f).Within(1e-6f));
+	}
+
 	[Test]
 	public void RepeatedNestedMixdownStartsCreateIndependentPrivateSources()
 	{
