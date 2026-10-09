@@ -405,6 +405,78 @@ public sealed class IncrementalTempoArbitrationTests
 			.All(e => e.InvocationId == surviving), Is.True);
 	}
 
+	[Test]
+	public void WallDeadlineInSecondCrossInvocationRepeatUsesCorrectTickInverse()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(new RawSource(
+			At(0, 0, new ApplyTrackerPatternDelayCommand(1)),
+			At(0, 0, new ApplyTrackerTempoCommand(0x12))), 1, root);
+		timeline.Add(new RawSource(At(0, ChannelTarget.Global,
+			new SetSpeedCommand(3))), 1,
+			root.FlattenedChild(physicalChannelOffset: 2));
+		Assert.That(timeline.TryStep(out _), Is.True);
+		timeline.Add(new RawSource(
+			At(0, 0, new ApplyTrackerPatternDelayCommand(2)),
+			At(0, 0, new ApplyTrackerTempoCommand(0x11))), 1,
+			root.FlattenedChild(physicalChannelOffset: 3));
+		double startOfSecond = RampSeconds(125, 132, 3, 3);
+		TimeSpan deadline = TimeSpan.FromSeconds(startOfSecond + 0.012);
+		timeline.Add(new RawSource(new NoteEvent(
+			new MusicalTime(deadline, 0), ChannelTarget.Physical(0),
+			[new NoteOffCommand()])), 1,
+			root.FlattenedChild(physicalChannelOffset: 5));
+		double? due = null;
+		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+			if (step is IncrementalPatternTimelineStep.Emit e
+				&& e.Note.Commands.Any(c => c is NoteOffCommand))
+			{
+				Assert.That(e.Note.Offset.TimeOffset, Is.EqualTo(deadline));
+				due = e.Tick;
+			}
+		double slope = 7.0 / 3.0;
+		double expected = 3 + 132 / slope *
+			(Math.Exp(slope * 0.012 / 2.5) - 1);
+		Assert.That(due, Is.EqualTo(expected).Within(1e-6));
+		Assert.That(root.State.Tempo, Is.EqualTo(151));
+	}
+
+	[Test]
+	public void DirectTempoSetInterruptsAllIndependentSEySourcesWithoutResurrection()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(new RawSource(
+			At(0, 0, new ApplyTrackerPatternDelayCommand(2)),
+			At(0, 0, new ApplyTrackerTempoCommand(0x12))), 1, root);
+		timeline.Add(new RawSource(
+			At(0, 0, new ApplyTrackerPatternDelayCommand(1)),
+			At(0, 0, new ApplyTrackerTempoCommand(0x11))), 1,
+			root.FlattenedChild(physicalChannelOffset: 2));
+		timeline.Add(new RawSource(At(0.5, 0, new NoteOffCommand())), 1,
+			root.FlattenedChild(physicalChannelOffset: 4));
+		bool interrupted = false;
+		List<NoteEvent> output = [];
+		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+		{
+			if (step is not IncrementalPatternTimelineStep.Emit emit)
+				continue;
+			output.Add(emit.Note);
+			if (!interrupted && emit.Note.Commands.Any(c => c is NoteOffCommand))
+			{
+				interrupted = true;
+				timeline.Add(new RawSource(At(0, ChannelTarget.Global,
+					new SetTempoCommand(250))), 1,
+					root.FlattenedChild(physicalChannelOffset: 5));
+			}
+		}
+		Assert.That(interrupted, Is.True);
+		Assert.That(output.SelectMany(x => x.Commands)
+			.OfType<SetTempoRampCommand>().Count(), Is.EqualTo(1));
+		Assert.That(root.State.Tempo, Is.EqualTo(250));
+	}
+
 	private static double RampSeconds(
 		double start, double end, double ticks, double into)
 		=> 2.5 * ticks / (end - start)
