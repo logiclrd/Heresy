@@ -94,7 +94,7 @@ public sealed class IncrementalRecursiveTimelineTests
 			Is.EqualTo(new[] { TimeSpan.FromMilliseconds(60),
 				TimeSpan.FromMilliseconds(60), TimeSpan.FromMilliseconds(90) }));
 		Assert.That(state.State.Tempo, Is.EqualTo(250));
-		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(150)));
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(210)));
 	}
 
 	[Test]
