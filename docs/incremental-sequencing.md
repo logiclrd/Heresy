@@ -1361,6 +1361,54 @@ across yet-unreached deadlines still require explicit parity testing.
 This remains experimental; production playback and offline export
 continue using their established scheduling pipeline.
 
+## Twenty-ninth executable step: virtual targets through shared-tick recursion
+
+The experimental `IncrementalPatternTimeline` now admits ordinary
+`ChannelTarget.Virtual(id)`, `AllVirtualInScope`, and `AllVirtual`
+events, including positive fixed wall-time offsets on Note Start,
+Note Off, Note Cut and direct note-volume commands. These targets
+follow the same fractional tracker positions and live shared Tempo
+as ordinary physical notes; they never acquire an accidental
+physical-channel offset in a flattened child.
+
+Unlike physical tracker channels, virtual targets do **not** own
+per-channel Source, Qxy, Txx, or SCx/SDx tracker-effect memory.
+The incremental validator therefore permits only direct ordinary
+note commands on virtual/broadcast targets, continuing to reject
+physical-only tracker effects explicitly instead of inventing
+virtual tracker state. The common eager Pattern processor is the
+reference for timestamp, command and target parity.
+
+The `IncrementalPatternTimelineStep.Emit.InvocationId` preserves
+the **particular Pattern cursor** owning each virtual or broadcast
+operation. Two flattened siblings can emit identical
+`VirtualChannelId` values while keeping distinct invocation IDs,
+even with different mapped physical bases. A virtual note with a
+pending fixed wall deadline also retains that owner, and canceling
+the Pattern drops its pending events.
+
+The recursive coordinator forwards these events and their ownership
+rather than merging them into global physical channels. This is
+particularly important for `AllVirtualInScope`, whose broadcast
+scope and strictly-prior-start eligibility are renderer responsibilities.
+A nested Pattern or Sequence start whose parent target is virtual
+still fails explicitly: the current flattened recursive mapping
+requires a physical parent channel. Existing `Mixdown=true` nested
+starts remain **renderer-owned single starts**, rather than being
+mistakenly expanded on the shared flattened clock; a private mixdown
+sequencing clock and actual cooked audio output are separate work.
+
+Tests cover eager timing parity across all three virtual target
+forms, simultaneous sibling virtual IDs with separate owners,
+positive wall deadlines and cancelation, rejection of physical
+tracker memory commands on virtual targets, and recursive sibling
+scope identity and known nested mixdown pass-through.
+
+Production playback/export are not switched to this experimental
+scheduler. Full renderer integration of virtual voice lifetimes,
+scoped broadcast semantics and isolated multichannel mixdown is
+still outstanding.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
