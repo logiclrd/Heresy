@@ -84,6 +84,45 @@ public sealed class PreparedIncrementalPlaybackPlan : IDisposable
 /// </summary>
 public sealed class PreparedIncrementalPlaybackFactory
 {
+	/// <summary>
+	/// An ad-hoc note schedule is already an ordered set of resolved commands;
+	/// feed it into the ordinary incremental resolver as a temporary raw
+	/// Pattern, rather than expanding nested sources greedily.
+	/// </summary>
+	private sealed class AdHocPattern : PatternDefinition,
+		IIncrementalRawPatternNoteGenerator
+	{
+		private readonly NoteSchedule _schedule;
+		public AdHocPattern(ObjectId id, NoteSchedule schedule)
+			: base(id, "Live audition")
+		{
+			_schedule = schedule;
+			RowCount = Math.Max(1, schedule.Count == 0 ? 1
+				: (int)Math.Ceiling(schedule.Max(note => note.Offset.RowOffset)) + 1);
+			ChannelCount = 64;
+		}
+		public IEnumerable<RawPatternStep> EnumerateRawSteps(SequencingContext context)
+		{
+			foreach (NoteEvent note in _schedule)
+				yield return new RawPatternStep.Emit(note);
+		}
+	}
+
+	private sealed class AdHocResolver(
+		PreparedRoslynIncrementalScriptSources scripts, AdHocPattern transient)
+		: IIncrementalInvocationResolver
+	{
+		public bool TryResolve(ObjectId id, out SongObject? source)
+		{
+			if (id == transient.Id)
+			{
+				source = transient;
+				return true;
+			}
+			return scripts.TryResolve(id, out source);
+		}
+	}
+
 	private sealed class TrackedMixdown(
 		PreparedRecursiveMixdownSound sound, long startFrame,
 		int physicalChannel)
@@ -170,6 +209,47 @@ public sealed class PreparedIncrementalPlaybackFactory
 			return new PreparedIncrementalPlaybackPlan(
 				frozen, timeline, session, source, invocationId,
 				disposePrivateMixdowns, sequencingContext);
+		}
+		catch
+		{
+			timeline.Dispose();
+			throw;
+		}
+	}
+
+
+	/// <summary>
+	/// Realtime live-preview and row-audition schedules use the same coroutine
+	/// renderer; only the supplied already-resolved NoteSchedule is transient.
+	/// </summary>
+	public PreparedIncrementalPlaybackPlan CreateAdHoc(
+		SongDocumentSnapshot snapshot, NoteSchedule schedule)
+	{
+		ArgumentNullException.ThrowIfNull(snapshot);
+		ArgumentNullException.ThrowIfNull(schedule);
+		SongDocumentSnapshot frozen =
+			SongDocumentSnapshot.Create(snapshot.Document);
+		PreparedRoslynIncrementalScriptSources scripts = new(frozen);
+		PlaybackSnapshotSoundResolver sounds = new(
+			SongDocumentSnapshot.Create(frozen.Document).Document, _samples);
+		sounds.PrepareDirectSources();
+		AdHocPattern transient = new(frozen.Document.AllocateObjectId(), schedule);
+		SequencingContext context = new();
+		IncrementalRecursiveTimeline timeline =
+			new(context, new AdHocResolver(scripts, transient), scripts);
+		try
+		{
+			long invocation = timeline.AddRoot(transient.Id);
+			PlaybackSession session = new(
+				new RenderContext(_configuration),
+				new NoteScheduleBuilder().Freeze(), sounds);
+			PreparedIncrementalAudioSource source =
+				CreatePrivateMixdownAwareSource(
+					timeline, session, scripts, sounds, [transient.Id],
+					out Action disposeChildren);
+			return new PreparedIncrementalPlaybackPlan(
+				frozen, timeline, session, source,
+				invocation, disposeChildren, context);
 		}
 		catch
 		{
