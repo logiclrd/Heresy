@@ -106,11 +106,12 @@ public sealed class IncrementalVirtualTargetTests
 		Assert.That(notes[^1].InvocationId, Is.EqualTo(delayed));
 		Assert.That(notes[^1].Note.Target, Is.EqualTo(ChannelTarget.Virtual(9)));
 
-		using IncrementalPatternTimeline cancelled = new(new SequencingContext());
+		SequencingContext cancelledRoot = new();
+		using IncrementalPatternTimeline cancelled = new(cancelledRoot);
 		long owner = cancelled.Add(new RawSource(
 			new NoteEvent(new MusicalTime(TimeSpan.FromMilliseconds(160), 0),
 				ChannelTarget.AllVirtual, [new NoteCutCommand()])),
-			1, root.FlattenedChild());
+			1, cancelledRoot);
 		while (cancelled.TryStep(out IncrementalPatternTimelineStep? step))
 		{
 			if (step is IncrementalPatternTimelineStep.Advance)
