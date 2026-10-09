@@ -798,10 +798,24 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	/// A tracker Tempo ramp is linear in musical tick position, never wall
 	/// time. Its starting Tempo is the *actual* shared Tempo at its boundary.
 	/// </summary>
+	private sealed record TempoBoundarySet(
+		double Tempo, ChannelTarget Target, long InvocationId);
+
+	// Each simultaneous SEy source retains its own row speed, repetition
+	// count, mapped physical target, and cancellation ownership. The combined
+	// ramp is a projection of these sources, never a pre-executed row.
+	private sealed record RepeatedTempoSource(
+		long InvocationId, byte Parameter, int Span, int Repeats,
+		int Channel, ChannelTarget Target, long SourceOrder)
+	{
+		public double EndTick(double origin)
+			=> origin + Span * (Repeats + 1);
+	}
+
 	private sealed record ActiveTempoRamp(
 		double StartTick, double EndTick,
 		double StartTempo, double EndTempo,
-		IReadOnlyList<(double Tempo, ChannelTarget Target)>? BoundaryTempoSets = null)
+		IReadOnlyList<TempoBoundarySet>? BoundaryTempoSets = null)
 	{
 		public double TempoAt(double tick)
 			=> StartTempo + (EndTempo - StartTempo)
@@ -815,6 +829,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	private ActiveTempoRamp? _tempoRamp;
 	private readonly Queue<ActiveTempoRamp> _futureTempoRamps = new();
 	private long _futureTempoOwner = -1;
+	private readonly List<RepeatedTempoSource> _crossTempoSources = [];
+	private double _crossTempoOrigin;
 	private readonly Queue<IncrementalPatternTimelineStep.Emit> _queuedTempoEvents = new();
 	private long _nextSequence;
 	private long _emissionOrder;
@@ -859,7 +875,11 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			throw new ObjectDisposedException(nameof(IncrementalPatternTimeline));
 		return HasUnfinishedRows(invocationId)
 			|| _delayed.Any(n => n.Owner.Sequence == invocationId)
-			|| _queuedTempoEvents.Any(n => n.InvocationId == invocationId);
+			|| _queuedTempoEvents.Any(n => n.InvocationId == invocationId)
+			|| _crossTempoSources.Any(n => n.InvocationId == invocationId
+				&& _tick < n.EndTick(_crossTempoOrigin) - TickTolerance)
+			|| (_futureTempoOwner == invocationId
+				&& _futureTempoRamps.Count != 0);
 	}
 
 	/// <summary>
@@ -943,7 +963,15 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					_queuedTempoEvents.Enqueue(queued);
 			}
 		}
-		if (_futureTempoOwner == invocationId
+		if (_crossTempoSources.RemoveAll(x => x.InvocationId == invocationId) != 0)
+		{
+			// Recompose only the remaining sources from the *instantaneous*
+			// shared Tempo. No future repeat command or cancelled owner's
+			// future slide may leak into the surviving Patterns.
+			RebuildCrossTempoPlan();
+			removed++;
+		}
+		else if (_futureTempoOwner == invocationId
 			&& (_tempoRamp is not null || _futureTempoRamps.Count != 0))
 		{
 			// A cancelled Pattern no longer owns any future SEy Tempo
@@ -1023,15 +1051,17 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					// preparation of future rows.
 					if (nextSegment.BoundaryTempoSets is { } sets)
 					{
-						foreach ((double tempo, ChannelTarget target) in sets)
+						foreach (TempoBoundarySet set in sets)
 						{
+							double tempo = set.Tempo;
+							ChannelTarget target = set.Target;
 							if (Math.Abs(_root.State.Tempo - tempo) < 1e-12)
 								continue;
 							_root.State.Tempo = tempo;
 							QueueTimingEvent(new NoteEvent(
 								new MusicalTime(Elapsed, 0),
 								target, [new SetTempoCommand(tempo)]),
-								_futureTempoOwner);
+								set.InvocationId);
 						}
 					}
 					_tempoRamp = nextSegment;
@@ -1174,17 +1204,13 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		if (pending.Length == 0)
 			return false;
 
-		// An SEy repeat belongs to one Pattern invocation. Each replayed
-		// compatibility row has that invocation's original captured span.
-		// Cross-invocation repetition is not yet a single shared policy;
-		// retain explicit rejection rather than pre-applying a sibling's
-		// future Txx state.
+		// Independent SEy invocations can start a shared Tempo trajectory
+		// at this same boundary, while retaining their own captured row
+		// spans and future repetition boundaries.
 		int repeats = pending.Max(x => x.Cursor.ExtraRowSpans);
-		if (repeats != 0 && pending.Any(x =>
-			x.Cursor.Sequence != pending[0].Cursor.Sequence
-			|| x.Cursor.ExtraRowSpans != repeats))
-			throw new NotSupportedException(
-				"Simultaneous SEy-repeated Txx from independent Patterns needs cross-invocation replay arbitration.");
+		bool crossInvocationRepeat = repeats != 0
+			&& pending.Any(x => x.Cursor.Sequence != pending[0].Cursor.Sequence);
+		List<RepeatedTempoSource> crossSources = [];
 
 		// Resolve each original Txx once, in mapped physical order.
 		// Capture the resolved bytes; future SEy rows reuse those bytes
@@ -1198,12 +1224,20 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			byte parameter = request.Cursor.Context
 				.GetPhysicalChannelState(raw.Target.PhysicalChannel)
 				.ResolveEffectParameter(EffectMemorySlot.Tempo, input);
+			if (crossInvocationRepeat && parameter != 0)
+				crossSources.Add(new RepeatedTempoSource(
+					request.Cursor.Sequence, parameter,
+					checked((int)request.Cursor.EffectiveSpanTicks),
+					request.Cursor.ExtraRowSpans, request.Channel,
+					request.Cursor.Context.MapTarget(raw.Target),
+					request.Timing.Order));
 			if (parameter >= 0x20)
 			{
 				immediateSets.Add((parameter, request.Cursor.Context.MapTarget(raw.Target)));
 				_tempoRamp = null;
 				_futureTempoRamps.Clear();
 				_futureTempoOwner = -1;
+				_crossTempoSources.Clear();
 				_root.State.Tempo = parameter;
 				QueueTimingEvent(raw with
 				{
@@ -1219,7 +1253,14 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			request.Cursor.ConsumeTiming();
 		}
 
-		if (repeats > 0)
+		if (crossInvocationRepeat)
+		{
+			_crossTempoSources.Clear();
+			_crossTempoSources.AddRange(crossSources);
+			_crossTempoOrigin = _tick;
+			RebuildCrossTempoPlan();
+		}
+		else if (repeats > 0)
 		{
 			int span = checked((int)pending[0].Cursor.EffectiveSpanTicks);
 			// Every repeated compatibility row uses exactly the same
@@ -1230,10 +1271,11 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			List<ActiveTempoRamp> segments = [];
 			for (int repetition = 0; repetition <= repeats; repetition++)
 			{
-				IReadOnlyList<(double Tempo, ChannelTarget Target)>? sets = null;
+				IReadOnlyList<TempoBoundarySet>? sets = null;
 				if (repetition != 0 && immediateSets.Count != 0)
 				{
-					sets = immediateSets.Select(x => ((double)x.Parameter, x.Target)).ToArray();
+					sets = immediateSets.Select(x => new TempoBoundarySet(
+						x.Parameter, x.Target, pending[0].Cursor.Sequence)).ToArray();
 					beginning = sets[^1].Tempo;
 				}
 				double ending = beginning;
@@ -1265,6 +1307,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		}
 		else if (slides.Count > 0)
 		{
+			_crossTempoSources.Clear();
 			_futureTempoOwner = -1;
 			int[] spans = slides.Select(x => x.Span).Distinct()
 				.OrderBy(x => x).ToArray();
@@ -1327,6 +1370,98 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			}
 		}
 		return true;
+	}
+
+	private void RebuildCrossTempoPlan()
+	{
+		// Rebuilds are also used after cancelling an individual contributor.
+		// The first segment always begins at the *current* shared Tempo.
+		// Only finite, bounded SEy metadata is inspected: no Pattern
+		// enumerator or future row is consumed.
+		_tempoRamp = null;
+		_futureTempoRamps.Clear();
+		_futureTempoOwner = -1;
+		RepeatedTempoSource[] active = _crossTempoSources
+			.Where(x => _tick < x.EndTick(_crossTempoOrigin) - TickTolerance)
+			.OrderBy(x => x.Channel)
+			.ThenBy(x => x.InvocationId)
+			.ThenBy(x => x.SourceOrder)
+			.ToArray();
+		if (active.Length == 0)
+			return;
+
+		_futureTempoOwner = active[0].InvocationId;
+		double[] boundaries = active
+			.SelectMany(x => Enumerable.Range(1, x.Repeats + 1)
+				.Select(k => _crossTempoOrigin + (double)x.Span * k))
+			.Where(t => t > _tick + TickTolerance)
+			.Distinct()
+			.OrderBy(t => t)
+			.ToArray();
+		double startingTick = _tick;
+		double startingTempo = _root.State.Tempo;
+		List<ActiveTempoRamp> segments = [];
+		for (int i = 0; i < boundaries.Length; i++)
+		{
+			// A repeated T20–TFF set is re-applied at that source's own
+			// compatibility-row boundary, not when this plan is built.
+			List<TempoBoundarySet> resets = [];
+			if (i > 0)
+			{
+				foreach (RepeatedTempoSource source in active)
+				{
+					if (source.Parameter < 0x20)
+						continue;
+					double local = startingTick - _crossTempoOrigin;
+					if (local < TickTolerance
+						|| local >= (double)source.Span * (source.Repeats + 1)
+							- TickTolerance)
+						continue;
+					double repetition = local / source.Span;
+					if (Math.Abs(repetition - Math.Round(repetition)) > TickTolerance)
+						continue;
+					resets.Add(new TempoBoundarySet(
+						source.Parameter, source.Target, source.InvocationId));
+				}
+			}
+			if (resets.Count != 0)
+				startingTempo = resets[^1].Tempo;
+
+			double endTick = boundaries[i];
+			double slope = 0;
+			foreach (RepeatedTempoSource source in active)
+			{
+				if (source.Parameter == 0 || source.Parameter >= 0x20
+					|| startingTick >= source.EndTick(_crossTempoOrigin)
+						- TickTolerance)
+					continue;
+				int sign = source.Parameter < 0x10 ? -1 : 1;
+				slope += sign * (source.Parameter & 0x0F)
+					* (source.Span - 1.0) / source.Span;
+			}
+			double endingTempo = Math.Clamp(
+				startingTempo + slope * (endTick - startingTick), 32, 255);
+			segments.Add(new ActiveTempoRamp(
+				startingTick, endTick, startingTempo, endingTempo,
+				resets.Count == 0 ? null : resets));
+			startingTick = endTick;
+			startingTempo = endingTempo;
+		}
+		if (segments.Count == 0)
+			return;
+		_tempoRamp = segments[0];
+		foreach (ActiveTempoRamp following in segments.Skip(1))
+			_futureTempoRamps.Enqueue(following);
+		if (Math.Abs(segments[0].EndTempo
+			- segments[0].StartTempo) > 1e-12)
+		{
+			QueueTimingEvent(new NoteEvent(
+				new MusicalTime(Elapsed, 0), ChannelTarget.Global,
+				[new SetTempoRampCommand(
+					segments[0].EndTempo,
+					segments[0].EndTick - segments[0].StartTick)]),
+				_futureTempoOwner);
+		}
 	}
 
 	// Match the eager processor's equal-wall-time note ordering:
@@ -1443,6 +1578,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		// instantaneous Tempo reached at this tracker tick.
 		_futureTempoRamps.Clear();
 		_futureTempoOwner = -1;
+		_crossTempoSources.Clear();
 		_tempoRamp = new ActiveTempoRamp(
 			_tick, _tick + ramp.TrackerTicks, _root.State.Tempo, ramp.EndingTempo);
 	}
@@ -1489,6 +1625,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				_tempoRamp = null;
 				_futureTempoRamps.Clear();
 				_futureTempoOwner = -1;
+				_crossTempoSources.Clear();
 			}
 
 			NoteScheduleBuilder resolvedTiming = new();
@@ -1797,5 +1934,6 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		_delayed.Clear();
 		_queuedTempoEvents.Clear();
 		_futureTempoRamps.Clear();
+		_crossTempoSources.Clear();
 	}
 }
