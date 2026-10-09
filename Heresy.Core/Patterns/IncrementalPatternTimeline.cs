@@ -845,6 +845,11 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						or SetPitchSlideCommand or SetNoteVolumeSlideCommand
 						or ApplyVolumeSlideCommand or ApplyPitchSlideDownCommand
 						or ApplyPitchSlideUpCommand or ApplyChannelVolumeSlideCommand
+						or ApplyTrackerChannelVolumeCommand
+						or SetOverallChannelVolumeCommand
+						or ApplyTonePortamentoCommand
+						or ApplyTonePortamentoVolumeSlideCommand
+						or ApplyTrackerVolumeColumnCommand
 						or ApplyGlobalVolumeSlideCommand or ApplyPanningSlideCommand
 						or SetOverallChannelVolumeSlideCommand
 						or SetGlobalVolumeSlideCommand or SetSpatialXSlideCommand
