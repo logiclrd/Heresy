@@ -349,9 +349,15 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			BindingFlags.NonPublic | BindingFlags.Instance)!;
 		PlaybackSession childSession =
 			(PlaybackSession)sessionField.GetValue(mixdown)!;
+		Assert.That(childSession.InputEnded, Is.False,
+			"Preparation must queue Off, not apply it ahead of live PCM rendering.");
+		Assert.That(childSession.NextFrame, Is.EqualTo(1L),
+			"Preparing the entire child timeline must not pre-render its samples.");
+		float[] remaining = new float[120];
+		plan.Source.Render(remaining.Length, remaining);
 		Assert.That(childSession.InputEnded, Is.True,
-			"Parent Off must release the child's private input on the producer.");
-		Assert.That(childSession.NextFrame, Is.GreaterThanOrEqualTo(120));
+			"Parent Off must release private input when rendering reaches its frame.");
+		Assert.That(childSession.NextFrame, Is.EqualTo(120L));
 	}
 
 	[Test]
@@ -506,8 +512,10 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			new PreparedIncrementalPlaybackFactory(Mono(1000))
 				.Create(document, parentId);
 		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(200));
-		plan.Source.Render(1, new float[1]);
-		object privateSound = plan.Session.GetChannelState(0).CurrentSound!;
+		plan.Source.Render(121, new float[121]);
+		object privateSound = plan.Session.VirtualVoices
+			.Single(voice => voice.Sound.GetType().Name == "PreparedRecursiveMixdownSound")
+			.Sound;
 		FieldInfo privateSession = privateSound.GetType().GetField("_session",
 			BindingFlags.Instance | BindingFlags.NonPublic)!;
 		PlaybackSession childSession =
@@ -551,6 +559,48 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			new RenderContext(Mono(1000)), voice.SoundState);
 		Assert.That(privateEnd, Is.EqualTo(120L),
 			"Parent Cut must stop future child PCM generation, not only mute its parent voice.");
+	}
+
+	[Test]
+	public void PreparingNestedMixdownEventsDoesNotRenderChildPcm()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(
+			sampleId, "PCM", "memory.wav", Wave(16384)));
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Child")
+		{
+			RowCount = 8, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({sampleId.Value}));",
+		});
+		ObjectId rootId = document.AllocateObjectId();
+		DataPatternDefinition root = new(rootId, "Parent")
+		{
+			RowCount = 3, ChannelCount = 1,
+		};
+		root.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(childId, mixdown: true);
+		document.Add(root);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, rootId);
+		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(300));
+		float[] first = new float[1];
+		plan.Source.Render(1, first);
+		object sound = plan.Session.GetChannelState(0).CurrentSound!;
+		FieldInfo sessionField = sound.GetType().GetField("_session",
+			BindingFlags.NonPublic | BindingFlags.Instance)!;
+		PlaybackSession childSession = (PlaybackSession)sessionField.GetValue(sound)!;
+		Assert.That(childSession.NextFrame, Is.EqualTo(1L),
+			"Child PlaybackSession must render only the frame requested by its parent.");
+		Assert.That(sound.GetType().GetField("_blocks",
+			BindingFlags.NonPublic | BindingFlags.Instance), Is.Null,
+			"Pre-rendered PCM chunk storage must be removed.");
+		Assert.That(first[0], Is.EqualTo(0.5f).Within(1e-5f));
+		float[] next = new float[3];
+		plan.Source.Render(3, next);
+		Assert.That(childSession.NextFrame, Is.EqualTo(4L));
 	}
 
 	[Test]
