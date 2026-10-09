@@ -26,6 +26,7 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 	private readonly PlaybackSession _session;
 	private readonly Action<NoteEvent>? _validateNote;
 	private readonly bool _endInputAtNaturalCompletion;
+	private readonly Action? _repeatRoot;
 	private readonly Func<NoteEvent, long, long, NoteEvent>? _transform;
 	private readonly HashSet<long> _canceledOwners = [];
 	private IncrementalPatternTimelineStep? _deferredStep;
@@ -39,12 +40,14 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 		IncrementalRecursiveTimeline timeline, PlaybackSession session,
 		Action<NoteEvent>? validatePreparedNote = null,
 		Func<NoteEvent, long, long, NoteEvent>? prepareEvent = null,
-		bool endInputAtNaturalCompletion = false)
+		bool endInputAtNaturalCompletion = false,
+		Action? repeatRoot = null)
 	{
 		_timeline = timeline ?? throw new ArgumentNullException(nameof(timeline));
 		_session = session ?? throw new ArgumentNullException(nameof(session));
 		_validateNote = validatePreparedNote;
 		_endInputAtNaturalCompletion = endInputAtNaturalCompletion;
+		_repeatRoot = repeatRoot;
 		_transform = prepareEvent;
 		if (session.NextFrame != 0)
 			throw new ArgumentException(
@@ -58,6 +61,13 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 	public long NextFrame => _session.NextFrame;
 	public PlaybackSession Session => _session;
 	public bool IsComplete => _complete || _inputStopped;
+	public TimeSpan LogicalDuration => _timeline.Elapsed;
+
+	/// <summary>Produce at most the remaining logical arrangement frames.
+	/// On reaching the natural end, return a short frame count so the
+	/// offline renderer can transition directly to envelope tails.</summary>
+	public int RenderLogical(int frameCount, Span<float> destination)
+		=> RenderCore(frameCount, destination, stopAtLogicalEnd: true);
 
 	/// <summary>
 	/// End private child sequencing now, retaining its existing sounding
@@ -100,6 +110,11 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 			_deferredStep = null;
 			if (step is null && !_timeline.TryStep(out step))
 			{
+				if (_repeatRoot is not null)
+				{
+					_repeatRoot();
+					continue;
+				}
 				_complete = true;
 				return;
 			}
@@ -136,6 +151,10 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 	}
 
 	public void Render(int frameCount, Span<float> destination)
+		=> RenderCore(frameCount, destination, stopAtLogicalEnd: false);
+
+	private int RenderCore(int frameCount, Span<float> destination,
+		bool stopAtLogicalEnd)
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		if (frameCount < 0)
@@ -151,6 +170,14 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 		{
 			long now = _session.NextFrame;
 			FindNextEvent(end);
+			if (stopAtLogicalEnd && _complete)
+			{
+				long logicalEnd = FrameTime.Ceiling(
+					_timeline.Elapsed, Format.SampleRate);
+				if (logicalEnd <= now)
+					break;
+				end = Math.Min(end, logicalEnd);
+			}
 
 			if (_pendingEvent is { } next && next.Frame == now)
 			{
@@ -184,6 +211,7 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 				destination.Slice(written * channels, count * channels));
 			written += count;
 		}
+		return written;
 	}
 
 	/// <summary>The enclosing playback plan owns the timeline and session.</summary>
