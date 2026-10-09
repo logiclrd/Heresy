@@ -576,3 +576,34 @@ cancellation, past-note/NNA semantics, and deterministic RNG.
 Existing production eager schedule compiler still needs its
 planned direct recursive-engine cutover; do not add a compatibility
 option or reintroduce rendered mixdown PCM caching.
+
+### Single-owner incremental recursive source checkpoint (milestone 40)
+
+Removed the redundant event preparation infrastructure after correcting the
+audio threading model: no event lookahead worker, no private replay-event
+journal, no parent-to-child lifecycle queue, no prepared event frontier and
+no intermediate cooked PCM history. Removed `AsyncPreparedIncrementalAudioSource`
+and its producer/callback contract tests; replaced old queue-specific
+incremental tests with direct stream timing, tracker tempo, scoped voice
+and cancellation regressions.
+
+`PreparedIncrementalAudioSource` synchronously pulls only the
+necessary incremental timeline steps while rendering each PCM block,
+holding at most one future step/event. Recursive mixdown notes own
+live child generators and renderers that run on the **same PCM worker**.
+Past-note/NNA/Off/Fade/Cut operations apply at exact frames in that
+single-thread hierarchy. Backwards source offsets and retriggers
+recreate the private deterministic generator and renderer, rather than
+retaining past note events. The root can continue ringing after its
+sequence naturally ends; private subtrees release input at their
+own natural end and tail appropriately.
+
+`PreparedIncrementalPlaybackPlan.StartRendering` now uses
+`BufferedAudioOutputSource` directly as the sole background
+rendering/ring-buffer boundary.
+
+**Remaining:** production realtime and export scheduler replacement,
+recursive lifecycle/cancellation corner cases, and optional
+producer-side deterministic checkpoints if long private rewinds cause
+undesirable PCM ring underruns. Do not reintroduce the deleted journal
+or a parallel event producer.
