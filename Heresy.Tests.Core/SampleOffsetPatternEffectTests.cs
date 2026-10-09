@@ -153,7 +153,7 @@ public sealed class SampleOffsetPatternEffectTests
 	}
 
 	[Test]
-	public void FlattenedChildSharesMappedSampleOffsetMemory()
+	public void FlattenedChildDoesNotRecallParentSampleOffsetMemory()
 	{
 		SequencingContext parent = new(physicalChannelBase: 3);
 
@@ -180,7 +180,7 @@ public sealed class SampleOffsetPatternEffectTests
 
 		Assert.That(
 			output.Freeze()[0].Commands[1],
-			Is.EqualTo(new SetSourceFrameOffsetCommand(0x1700)));
+			Is.EqualTo(new SetSourceFrameOffsetCommand(0)));
 	}
 
 	private static DataPatternDefinition Pattern(int rows)
