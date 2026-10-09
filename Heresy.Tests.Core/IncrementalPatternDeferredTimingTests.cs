@@ -241,6 +241,81 @@ public sealed class IncrementalPatternDeferredTimingTests
 		}
 	}
 
+	[TestCase("SCx")]
+	[TestCase("SDx")]
+	[TestCase("Qxy")]
+	[TestCase("SDx+Qxy")]
+	public void TrackerTickEffectsWithPositiveFixedWallOffsetMatchEager(
+		string kind)
+	{
+		NoteCommand[] commands = kind switch
+		{
+			"SCx" => [new StartNoteCommand((Heresy.Core.Objects.ObjectId)10U),
+				new ApplyTrackerNoteCutCommand(3)],
+			"SDx" => [new StartNoteCommand((Heresy.Core.Objects.ObjectId)10U),
+				new ApplyTrackerNoteDelayCommand(2)],
+			"Qxy" => [new StartNoteCommand((Heresy.Core.Objects.ObjectId)10U),
+				new ApplyRetriggerCommand(0x03)],
+			_ => [new StartNoteCommand((Heresy.Core.Objects.ObjectId)10U),
+				new ApplyTrackerNoteDelayCommand(2),
+				new ApplyRetriggerCommand(0x03)],
+		};
+		RawSource source = new(Event(0,
+			TimeSpan.FromMilliseconds(15), ChannelTarget.Physical(0),
+			commands));
+		AssertTrackerWallParity(source, 1);
+	}
+
+	[Test]
+	public void SDxQxyWallOffsetsFollowSEyAndS6xRepeatTicks()
+	{
+		RawSource source = new(Event(0,
+			TimeSpan.FromMilliseconds(8), ChannelTarget.Physical(0),
+			new StartNoteCommand((Heresy.Core.Objects.ObjectId)10U),
+			new ApplyTrackerFinePatternDelayCommand(2),
+			new ApplyTrackerPatternDelayCommand(1),
+			new ApplyTrackerNoteDelayCommand(3),
+			new ApplyRetriggerCommand(0x03)));
+		AssertTrackerWallParity(source, 1);
+	}
+
+	[Test]
+	public void TrackerWallOffsetsBeyondOriginalRowEndDoNotEmitLateNotes()
+	{
+		RawSource source = new(Event(0,
+			TimeSpan.FromMilliseconds(110), ChannelTarget.Physical(0),
+			new StartNoteCommand((Heresy.Core.Objects.ObjectId)10U),
+			new ApplyTrackerNoteDelayCommand(2),
+			new ApplyRetriggerCommand(0x03)));
+		AssertTrackerWallParity(source, 1);
+	}
+
+	private static void AssertTrackerWallParity(RawSource source, int rowCount)
+	{
+		SequencingContext eager = new();
+		NoteScheduleBuilder expected = new();
+		PatternNoteProcessor.GenerateNotes(new EagerSource(source.Events, rowCount),
+			eager, expected, out TimeSpan duration);
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		timeline.Add(source, rowCount, context);
+		NoteEvent[] actual = Drain(timeline);
+		NoteEvent[] baseline = expected.Freeze().ToArray();
+		Assert.That(actual.Length, Is.EqualTo(baseline.Length));
+		for (int i = 0; i < baseline.Length; i++)
+		{
+			Assert.That(actual[i].Target, Is.EqualTo(baseline[i].Target));
+			Assert.That(actual[i].Commands, Is.EqualTo(baseline[i].Commands));
+			Assert.That(actual[i].Offset.TimeOffset.TotalSeconds,
+				Is.EqualTo(baseline[i].Offset.TimeOffset.TotalSeconds)
+					.Within(1e-6));
+		}
+		Assert.That(timeline.Elapsed.TotalSeconds,
+			Is.EqualTo(duration.TotalSeconds).Within(1e-6));
+		Assert.That(context.GetPhysicalChannelState(0).RetriggerCountdown,
+			Is.EqualTo(eager.GetPhysicalChannelState(0).RetriggerCountdown));
+	}
+
 	private static NoteEvent Event(
 		double row, ChannelTarget target, params NoteCommand[] commands)
 		=> new(new MusicalTime(TimeSpan.Zero, row), target, commands);
