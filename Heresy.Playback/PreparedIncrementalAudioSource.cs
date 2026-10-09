@@ -30,6 +30,11 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 	private readonly Func<NoteEvent, long, long, NoteEvent>? _transform;
 	private readonly Action? _afterRender;
 	private readonly HashSet<long> _canceledOwners = [];
+	// The timeline can retire a just-started child while it is still
+	// transforming the same NoteEvent (Start followed by Cut/Off).
+	// The renderer must apply the event's Begin command *before* retiring
+	// its controller, rather than losing retirement and leaking the lookup.
+	private readonly List<long> _pendingRetiredScopes = [];
 	private IncrementalPatternTimelineStep? _deferredStep;
 	private PendingEvent? _pendingEvent;
 	private long _lastEventFrame = -1;
@@ -52,7 +57,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		_repeatRoot = repeatRoot;
 		_transform = prepareEvent;
 		_afterRender = afterRender;
-		_timeline.ScopeRetired += _session.RetirePhysicalScope;
+		_timeline.ScopeRetired += OnScopeRetired;
 		_timeline.ScopeCanceled += OnScopeCanceled;
 		if (session.NextFrame != 0)
 			throw new ArgumentException(
@@ -110,6 +115,16 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		=> _session.ApplyFlattenedScopeAction(
 			scopeId, NoteDisplacementAction.Cut);
 
+	private void OnScopeRetired(long scopeId)
+		=> _pendingRetiredScopes.Add(scopeId);
+
+	private void FlushRetiredScopes()
+	{
+		foreach (long scopeId in _pendingRetiredScopes)
+			_session.RetirePhysicalScope(scopeId);
+		_pendingRetiredScopes.Clear();
+	}
+
 	public bool Cancel(long invocationId)
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
@@ -123,6 +138,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 			_canceledOwners.Add(owner);
 			_session.CancelScopedVoices(owner);
 		}
+		FlushRetiredScopes();
 		return true;
 	}
 
@@ -137,6 +153,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 			_deferredStep = null;
 			if (step is null && !_timeline.TryStep(out step))
 			{
+				FlushRetiredScopes();
 				if (_repeatRoot is not null)
 				{
 					_repeatRoot();
@@ -163,6 +180,11 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 					frame, emit.InvocationId, emit.Note);
 				return;
 			}
+			// An Emit can contain both Begin and Cut, and the timeline
+			// may have retired the scope during transformation. Delay
+			// retirement until that entire event has been applied. For
+			// silent/flow steps there is no event to wait for.
+			FlushRetiredScopes();
 
 			// A cooperative/no-op step in the future is one bounded cursor
 			// lookahead. Do not execute an unbounded silent script to reach
@@ -209,14 +231,21 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 			if (_pendingEvent is { } next && next.Frame == now)
 			{
 				_pendingEvent = null;
-				if (!_canceledOwners.Contains(next.Owner))
+				try
 				{
-					_validateNote?.Invoke(next.Note);
-					NoteEvent note = _transform?.Invoke(next.Note, now, next.Owner)
-						?? next.Note;
-					_session.ApplyScopedEvent(
-						next.Owner, note.Target, note.Commands,
-						note.PhysicalPlaybackOwner);
+					if (!_canceledOwners.Contains(next.Owner))
+					{
+						_validateNote?.Invoke(next.Note);
+						NoteEvent note = _transform?.Invoke(next.Note, now, next.Owner)
+							?? next.Note;
+						_session.ApplyScopedEvent(
+							next.Owner, note.Target, note.Commands,
+							note.PhysicalPlaybackOwner);
+					}
+				}
+				finally
+				{
+					FlushRetiredScopes();
 				}
 				continue;
 			}
@@ -249,7 +278,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		if (_disposed)
 			return;
 		_disposed = true;
-		_timeline.ScopeRetired -= _session.RetirePhysicalScope;
+		_timeline.ScopeRetired -= OnScopeRetired;
 		_timeline.ScopeCanceled -= OnScopeCanceled;
 	}
 }
