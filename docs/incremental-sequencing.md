@@ -1224,10 +1224,55 @@ timing-and-memory check.
 The **experimental** timeline is still not the production realtime or
 offline scheduler. Its next priorities are wider SDx/Qxy and advanced
 tracker-effect parity, flattened/mixdown lifecycle correctness, and
-deterministic production migration. Complex cases where new
-independently authored tempo commands arrive exactly at a pending
-SEy repetition boundary remain a useful further same-tick arbitration
-stress test.
+deterministic production migration. At this historical milestone, newly
+authored Txx arriving exactly at a pending SEy repeat boundary was
+still an open stress test; it is now covered by milestone twenty-six.
+
+## Twenty-sixth executable step: new Txx at the exact SEy boundary
+
+The experimental shared-tick clock now treats a **newly arriving
+Pattern's Txx** and an **existing Pattern's SEy-repeated Txx** as
+simultaneous operations when they share an exact musical tick.
+Previously the coordinator prematurely published the old source's
+precomputed repeat ramp, then allowed the new Txx to replace it.
+That produced a spurious transient ramp and lost the old source's
+legitimate contribution.
+
+The coordinator now pauses on a pending SEy boundary, advances to its
+exact musical tick and wall-time using the preceding segment, and
+lets due Pattern rows **finish and expose their next-row timing** before
+deciding which Tempo events will execute at that tick. Global Tempo
+and Speed retain their existing priority; a new global Tempo set
+cancels the pending SEy trajectory without emitting its stale ramp.
+When a new physical-channel Txx arrives at the boundary, all due
+repeated Txx commands and new Txx commands participate in one mapped
+physical-channel-order arbitration. New Txx effect memory is committed
+once, while already-remembered repeated bytes are reused without a
+second memory mutation. The combined projection emits one ramp for
+the resulting interval, never a provisional old ramp followed by a
+replacement.
+
+Each source now stores **its own absolute origin tick**, in addition
+to captured span, SEy repetition count, target, and invocation owner.
+This matters when another invocation first issues Txx on the older
+Pattern's *second* or later repeat: its own row count and repetition
+boundaries are relative to its later start, not the original source's
+origin. Both single-invocation and cross-invocation repeated Tempo
+plans use the same owner-aware projection, including the physical
+channel ordering of repeated immediate Tempo sets. Independent
+cancelation continues to reproject from instantaneous shared Tempo.
+
+Tests confirm creation-order independence, one combined ramp at the
+coincident boundary, exact physical-channel ordering of a new
+T80 setting and a repeated TFA setting, global Tempo interruption
+at that tick, preserved Txx effect memory, and a new SEy source
+continuing through its independent lifespan as the older source
+eventually finishes.
+
+The production realtime/export path remains unchanged. This closes
+the particular **same-tick Txx/SEy collision** gap; broader recursive
+effect parity, mixed timing/effect lifecycles, and production scheduler
+migration are still open.
 
 ## Proposed next interfaces and migration
 
