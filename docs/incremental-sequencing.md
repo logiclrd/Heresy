@@ -2041,6 +2041,50 @@ factories have not yet been switched to the incremental engine; they
 still use the older eager scheduler. Do not reintroduce the removed
 queues, replay journal or PCM-cache fallback in that cutover.
 
+## Forty-second step: Instrument-selected recursive Pattern and Sequence voices
+
+Production recursive sequencing and offline export now accept a Pattern or
+Sequence selected by an Instrument's `ToneSpecification.SourceId`. Such
+tones are not compiled into eager schedules or flattened into an
+ordinary sample. Each selected note binds a private
+`PreparedRecursiveMixdownSound` via the existing recursive
+`PreparedIncrementalPlaybackFactory`; its own Pattern/Sequence cursor,
+Tempo, physical-channel memory, output-channel layout and lifecycle
+run synchronously on the PCM worker. A chain of Instruments can select
+another Instrument and finally a Pattern or Sequence. Only the tone
+chosen for the incoming note's pitch is traversed.
+
+`InstrumentSound.SelectTone` supplies a pure shared selection routine
+for ordinary instrument playback and the recursive-tone preflight.
+An Instrument whose **selected** tone is a normal Sample/FM or other
+nonrecursive source keeps using the cached prepared sound resolver;
+it incurs no invocation-unique sound registration. If the chosen tone
+chain reaches a recursive source, the binding walks its instrument
+ancestors, creates a new private invocation and captures a single
+`SoundInvocation` with the original nested Instrument tone-envelope
+overlays and note configuration. The parent receives a unique
+registered sound identity for that bound invocation; lifecycle controls
+may therefore address the child at the same musical frame. Recursive
+Instrument and Pattern/Sequence object cycles are rejected by the
+ancestry path, even when an instrument reaches a Pattern which selects
+the original Instrument again. Unselected tone-table branches do not
+run or fail due to unrelated cycles.
+
+Regression coverage includes a Script Pattern selected through a
+volume-enveloped Instrument, a data Sequence reached through two
+Instrument levels, an instrument-only cycle, a selected direct sample
+coexisting with an unused recursive tone, realtime F5/F6/F7 transport
+and production offline WAV export. None of these operations runs on
+the SDL callback or caches child PCM.
+
+**Still outstanding:** non-unit pitch/playback-speed transforms for
+recursive Pattern/Sequence tones (the existing private clock explicitly
+rejects them), complete instrument-owned NNA/Off/Fade/cancellation
+corner-case parity, and lifetime reclamation for invocation-unique
+private sound IDs after all sounding/anti-click tails have finished.
+Indefinite songs must not retain every retired recursive invocation.
+No greedy scheduler fallback is reintroduced.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
