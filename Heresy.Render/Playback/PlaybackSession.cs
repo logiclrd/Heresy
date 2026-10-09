@@ -57,14 +57,17 @@ public sealed class PlaybackSession
 	public PlaybackSession(
 		RenderContext context,
 		NoteSchedule schedule,
-		ISoundResolver soundResolver)
+		ISoundResolver soundResolver,
+		double initialTempo = SequencingConstants.DefaultTempo)
 	{
 		_context = context ?? throw new ArgumentNullException(nameof(context));
 		_schedule = schedule ?? throw new ArgumentNullException(nameof(schedule));
 		_soundResolver = soundResolver ?? throw new ArgumentNullException(nameof(soundResolver));
+		if (!(initialTempo > 0.0) || !double.IsFinite(initialTempo))
+			throw new ArgumentOutOfRangeException(nameof(initialTempo));
+		_tempo = initialTempo;
 		_tickClock = new TrackerTickClock(
-			_schedule,
-			_context.Configuration.SampleRate);
+			_schedule, _context.Configuration.SampleRate, initialTempo);
 	}
 
 	public long NextFrame => _nextFrame;

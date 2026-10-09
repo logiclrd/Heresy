@@ -8,6 +8,7 @@ using Heresy.Render.Instruments;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequences;
 using Heresy.Core.Sequencing;
+using Heresy.Core.Timing;
 using Heresy.Render.Configuration;
 using Heresy.Render.Playback;
 using Heresy.Render.Samples;
@@ -309,6 +310,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 		IReadOnlyList<ObjectId> ancestry,
 		out Action disposePrivateMixdowns,
 		bool isPrivateChild = false,
+		double privateClockRate = 1.0,
 		ObjectId? repeatSourceId = null,
 		int? repeatStartRow = null)
 	{
@@ -482,22 +484,31 @@ public sealed class PreparedIncrementalPlaybackFactory
 				childAncestry[i] = path[i];
 			childAncestry[^1] = childSource;
 
-			PrivateRecursivePlayback CreateChildPlayback(double pitchMultiplier)
+			PrivateRecursivePlayback CreateChildPlayback(
+				double pitchMultiplier, double playbackSpeedMultiplier)
 			{
 				IncrementalRecursiveTimeline childTimeline =
 					scripts.CreateTimeline(new SequencingContext(
-						pitchMultiplier: pitchMultiplier));
+						pitchMultiplier: pitchMultiplier,
+						playbackSpeedMultiplier: playbackSpeedMultiplier));
 				try
 				{
 					childTimeline.AddRoot(childSource);
+					double effectiveTempo =
+						SequencingConstants.DefaultTempo * playbackSpeedMultiplier;
+					if (!double.IsFinite(effectiveTempo))
+						throw new InvalidOperationException(
+							"Private playback rate produced a non-finite Tempo.");
 					PlaybackSession childSession = new(
 						new RenderContext(_configuration),
-						new NoteScheduleBuilder().Freeze(), sounds);
+						new NoteScheduleBuilder().Freeze(), sounds,
+						initialTempo: effectiveTempo);
 					PreparedIncrementalAudioSource childSourceStream =
 						CreatePrivateMixdownAwareSource(
 							childTimeline, childSession, scripts, sounds,
 							childAncestry, out Action disposeDescendants,
-							isPrivateChild: true);
+							isPrivateChild: true,
+							privateClockRate: playbackSpeedMultiplier);
 					return new PrivateRecursivePlayback(childTimeline,
 						childSession, childSourceStream, disposeDescendants);
 				}
@@ -508,7 +519,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 				}
 			}
 			PreparedRecursiveMixdownSound voice = new(
-				CreateChildPlayback(1.0), parentFrame, CreateChildPlayback);
+				CreateChildPlayback(1.0, 1.0), parentFrame, CreateChildPlayback);
 			privateVoices.Add(voice);
 			return voice;
 		}
@@ -594,7 +605,17 @@ public sealed class PreparedIncrementalPlaybackFactory
 				if (command is not StartNoteCommand start)
 				{
 					ProcessControl(note.Target, owner, parentFrame, command);
-					commands[i] = command;
+					// Scale only renderer-facing Tempo, leaving the source
+					// shared musical state and effect memory unchanged.
+					commands[i] = command switch
+					{
+						SetTempoCommand tempo when privateClockRate != 1.0 =>
+							new SetTempoCommand(tempo.TicksPerDiachron * privateClockRate),
+						SetTempoRampCommand ramp when privateClockRate != 1.0 =>
+							new SetTempoRampCommand(ramp.EndingTempo * privateClockRate,
+								ramp.TrackerTicks),
+						_ => command,
+					};
 					continue;
 				}
 				// An instrument's selected ToneSpecification may lead to
@@ -617,7 +638,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 					ISound instrument = ResolveTone(start.SourceId, ancestry,
 						note.Target, owner, parentFrame)!;
 					SoundInvocation? bound = instrument.CreateInvocation(
-						start.PitchMultiplier, start.PlaybackSpeedMultiplier);
+						start.PitchMultiplier,
+						start.PlaybackSpeedMultiplier * privateClockRate);
 					if (bound is not null)
 					{
 						ObjectId boundId = sounds.RegisterPreparedMixdown(
@@ -662,10 +684,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 					if (scopedVoices.Remove(key, out TrackedMixdown? prior))
 						prior.Sound.ScheduleCut(parentFrame);
 				}
-				if (start.PlaybackSpeedMultiplier != 1.0)
-					throw new NotSupportedException(
-						"Recursive mixdown playback-speed transforms require private-clock remapping.");
-				PreparedRecursiveMixdownSound privateVoice =
+ 				PreparedRecursiveMixdownSound privateVoice =
 					CreatePrivateSound(start.SourceId, ancestry, parentFrame);
 				ObjectId preparedId = sounds.RegisterPreparedMixdown(privateVoice);
 			registeredVoices.Add(preparedId, privateVoice);
@@ -674,6 +693,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 				{
 					SourceId = preparedId,
 					Mixdown = false,
+					PlaybackSpeedMultiplier =
+						start.PlaybackSpeedMultiplier * privateClockRate,
 				};
 			}
 			return note with { Commands = commands };

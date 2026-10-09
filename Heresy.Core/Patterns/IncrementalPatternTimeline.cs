@@ -899,6 +899,9 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	}
 
 	private readonly SequencingContext _root;
+	// A private mixdown scales its own tracker ticks to wall time. All
+	// invocations sharing this timeline have the same effective clock.
+	private readonly double _clockRate;
 	private readonly List<Cursor> _active = [];
 	private readonly List<DeferredNote> _delayed = [];
 	private long _nextDeferredOrder;
@@ -919,6 +922,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	{
 		ArgumentNullException.ThrowIfNull(root);
 		_root = root;
+		_clockRate = root.PlaybackSpeedMultiplier;
 	}
 
 	public double Tick => _tick;
@@ -1012,6 +1016,9 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		if (context.FlattenedSourceExpander is not null)
 			throw new NotSupportedException(
 				"Use explicit cursor invocation, not eager flattened expansion.");
+		if (context.PlaybackSpeedMultiplier != _clockRate)
+			throw new NotSupportedException(
+				"Non-unit flattened playback speed needs per-cursor shared-clock remapping.");
 
 		context.ResolvePatternSourcesAtRowTime = true;
 		long id = _nextSequence++;
@@ -1660,16 +1667,16 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		double remaining = Math.Max(0, targetTick - _tick);
 		if (_tempoRamp is null || remaining == 0)
 			return remaining * SequencingConstants.Diachron.TotalSeconds
-				/ _root.State.Tempo;
+				/ _root.State.Tempo / _clockRate;
 		double rampTicks = Math.Min(remaining, _tempoRamp.EndTick - _tick);
 		if (rampTicks <= 0)
 			return remaining * SequencingConstants.Diachron.TotalSeconds
-				/ _root.State.Tempo;
+				/ _root.State.Tempo / _clockRate;
 		TrackerTimeMap integral = new(_root.State.Tempo);
 		integral.AppendTempoRamp(_tempoRamp.TempoAt(_tick + rampTicks), rampTicks);
-		return integral.CurrentTimeSeconds
+		return (integral.CurrentTimeSeconds
 			+ (remaining - rampTicks) * SequencingConstants.Diachron.TotalSeconds
-				/ _tempoRamp.EndTempo;
+				/ _tempoRamp.EndTempo) / _clockRate;
 	}
 
 	private void MoveToTick(double targetTick)
@@ -1696,6 +1703,9 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			throw new InvalidOperationException("The shared wall clock moved backwards.");
 		if (seconds == 0)
 			return;
+		// Invert in unscaled tracker time, retaining the musical Tempo
+		// and ramp profile; fixed TimeOffset deadlines remain wall time.
+		seconds *= _clockRate;
 		if (_tempoRamp is { } ramp)
 		{
 			double ticksLeft = ramp.EndTick - _tick;
