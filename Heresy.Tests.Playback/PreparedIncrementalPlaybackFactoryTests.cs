@@ -647,12 +647,15 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 
 		((ISourceFrameSeekableSound)voice.Sound).SetSourceFrameOffset(
 			voice.SoundState, 0);
-		Assert.That(() => nested.Source.Render(1, new float[1]),
-			Throws.TypeOf<NotSupportedException>().With.Message.Contains("Backward"));
+		float[] rewound = new float[1];
+		nested.Source.Render(1, rewound);
+		Assert.That(rewound[0], Is.EqualTo(reference[2]).Within(1e-6f),
+			"Backward source-frame offset must replay the child state rather than PCM history.");
+		Assert.That(child.NextFrame, Is.EqualTo(3L));
 	}
 
 	[Test]
-	public void PrivateMixdownRetriggerRejectsWithoutRecursiveReplayCheckpoint()
+	public void PrivateMixdownRetriggerReconstructsChildPlaybackState()
 	{
 		SongDocument document = new();
 		ObjectId sampleId = document.AllocateObjectId();
@@ -676,12 +679,15 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			new PreparedIncrementalPlaybackFactory(Mono(1000))
 				.Create(document, rootId);
 		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(40));
-		plan.Source.Render(1, new float[1]);
+		float[] before = new float[3];
+		plan.Source.Render(3, before);
+		Assert.That(before[0], Is.EqualTo(0.5f).Within(1e-6f));
 		plan.Session.ApplyLiveEvent(ChannelTarget.Physical(0),
 			[new RetriggerCurrentVoiceCommand(0)]);
-		Assert.That(() => plan.Source.Render(1, new float[1]),
-			Throws.TypeOf<NotSupportedException>()
-				.With.Message.Contains("retrigger"));
+		float[] after = new float[3];
+		plan.Source.Render(3, after);
+		Assert.That(after, Is.EqualTo(before).AsCollection
+			.Within(1e-6f), "Retrigger must reconstruct the original private voice state.");
 	}
 
 	[Test]
