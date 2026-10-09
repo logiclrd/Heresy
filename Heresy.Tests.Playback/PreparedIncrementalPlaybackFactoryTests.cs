@@ -9,6 +9,8 @@ using Heresy.Render.Playback;
 using System.Text;
 
 using Heresy.Core.Objects;
+using Heresy.Core.Instruments;
+using Heresy.Core.Envelopes;
 using Heresy.Core.Patterns;
 using Heresy.Core.Samples;
 using Heresy.Core.Sequences;
@@ -737,6 +739,136 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		Assert.That(newLeaf, Is.Not.SameAs(oldLeaf));
 		Assert.That(newMiddle.NextFrame, Is.EqualTo(3L));
 		Assert.That(newLeaf.NextFrame, Is.EqualTo(3L));
+	}
+
+	[Test]
+	public void InstrumentToneRunsScriptedPatternAndPreservesToneVolumeEnvelope()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample, "PCM",
+			"sample.wav", Wave(16384)));
+		ObjectId child = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(child, "Child")
+		{
+			RowCount = 3, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({sample.Value}));",
+		});
+		ObjectId envelopeId = document.AllocateObjectId();
+		document.Add(new AdsrEnvelopeDefinition(envelopeId, "Quarter")
+		{
+			SustainLevel = 0.25,
+		});
+		ObjectId instrumentId = document.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Instrument");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = child,
+			VolumeEnvelopeId = envelopeId,
+		});
+		instrument.ToneTable.Add(0);
+		document.Add(instrument);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition pattern = new(root, "Root")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		pattern.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(instrumentId);
+		document.Add(pattern);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, root);
+		float[] output = new float[3];
+		plan.Source.Render(output.Length, output);
+		Assert.That(output, Is.All.EqualTo(0.125f).Within(1e-6f));
+		Assert.That(plan.Session.GetChannelState(0).CurrentVoice!.Sound,
+			Is.TypeOf<PreparedRecursiveMixdownSound>());
+	}
+
+	[Test]
+	public void NestedInstrumentsCanSelectSequenceAndInheritEnvelopeChain()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample, "PCM",
+			"sample.wav", Wave(16384)));
+		ObjectId leaf = document.AllocateObjectId();
+		DataPatternDefinition leafPattern = new(leaf, "Leaf")
+		{
+			RowCount = 2, ChannelCount = 1,
+		};
+		leafPattern.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sample);
+		document.Add(leafPattern);
+		ObjectId child = document.AllocateObjectId();
+		DataSequenceDefinition sequence = new(child, "Child Sequence");
+		sequence.Entries.Add(new SequenceEntry(leaf));
+		document.Add(sequence);
+		ObjectId quarter = document.AllocateObjectId();
+		document.Add(new AdsrEnvelopeDefinition(quarter, "Quarter")
+		{
+			SustainLevel = 0.25,
+		});
+		ObjectId inner = document.AllocateObjectId();
+		InstrumentDefinition innerInstrument = new(inner, "Inner");
+		innerInstrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = child, VolumeEnvelopeId = quarter,
+		});
+		innerInstrument.ToneTable.Add(0);
+		document.Add(innerInstrument);
+		ObjectId outer = document.AllocateObjectId();
+		InstrumentDefinition outerInstrument = new(outer, "Outer");
+		outerInstrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = inner,
+		});
+		outerInstrument.ToneTable.Add(0);
+		document.Add(outerInstrument);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition rootPattern = new(root, "Root")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		rootPattern.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(outer);
+		document.Add(rootPattern);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, root);
+		float[] output = new float[2];
+		plan.Source.Render(output.Length, output);
+		Assert.That(output, Is.All.EqualTo(0.125f).Within(1e-6f));
+	}
+
+	[Test]
+	public void IndirectInstrumentCyclesAreRejectedBeforeRecursiveNoteRendering()
+	{
+		SongDocument document = new();
+		ObjectId first = document.AllocateObjectId();
+		ObjectId second = document.AllocateObjectId();
+		InstrumentDefinition a = new(first, "A");
+		a.ToneSpecifications.Add(new ToneSpecification { SourceId = second });
+		a.ToneTable.Add(0);
+		document.Add(a);
+		InstrumentDefinition b = new(second, "B");
+		b.ToneSpecifications.Add(new ToneSpecification { SourceId = first });
+		b.ToneTable.Add(0);
+		document.Add(b);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition pattern = new(root, "Root")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		pattern.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(first);
+		document.Add(pattern);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, root);
+		Assert.That(() => plan.Source.Render(1, new float[1]),
+			Throws.InvalidOperationException.With.Message.Contains("cycle"));
 	}
 
 	[Test]
