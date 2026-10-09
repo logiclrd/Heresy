@@ -1531,8 +1531,10 @@ unrelated sibling scopes, even with identical local virtual IDs, remain
 audible.
 
 This first opt-in seam requires a producer/render synchronization boundary.
-Cancel refuses already-published lookahead beyond the playback head, or
-pending events at or beyond that frame. The producer must serialize Cancel
+Cancel refuses a published preparation horizon beyond the playback head.
+A step may nonetheless have staged a future event at the boundary;
+canceled-owner events are skipped when subsequently consumed, without
+reordering sibling events. The producer must serialize Cancel
 against Render and resume preparation after cancellation. This deliberately
 does not purport to invalidate previously staged future work in an
 asynchronous lookahead buffer. Production realtime/export is unchanged;
