@@ -121,6 +121,28 @@ public sealed class AsyncPreparedIncrementalAudioSourceTests
 		Assert.That(asyncSource.UnderrunCount, Is.Zero);
 	}
 
+	[Test]
+	public void DedicatedPcmWorkerExecutesRecursiveSequencingAndRenderingOnSameThread()
+	{
+		BlockingPattern pattern = new((ObjectId)8U, null);
+		using IncrementalRecursiveTimeline timeline = Timeline(pattern);
+		Sounds resolver = new();
+		using PreparedIncrementalAudioSource prepared = new(timeline, Session(resolver));
+		using AsyncPreparedIncrementalAudioSource buffered = new(prepared, 32);
+		int callbackThread = Environment.CurrentManagedThreadId;
+		Assert.That(SpinWait.SpinUntil(
+			() => buffered.BufferedFrames >= 8,
+			TimeSpan.FromSeconds(5)), Is.True);
+		float[] output = new float[8];
+		buffered.Render(8, output);
+		Assert.That(output, Is.All.EqualTo(1f));
+		Assert.That(pattern.GeneratorThreadId, Is.Not.EqualTo(0));
+		Assert.That(pattern.GeneratorThreadId,
+			Is.EqualTo(resolver.Sound.RenderThreadId),
+			"The same worker must own script enumeration and recursive PCM rendering.");
+		Assert.That(pattern.GeneratorThreadId, Is.Not.EqualTo(callbackThread));
+	}
+
 	private static IncrementalRecursiveTimeline Timeline(BlockingPattern pattern)
 	{
 		IncrementalRecursiveTimeline timeline =
@@ -129,17 +151,19 @@ public sealed class AsyncPreparedIncrementalAudioSourceTests
 		return timeline;
 	}
 
-	private static PlaybackSession Session()
+	private static PlaybackSession Session(Sounds? sounds = null)
 		=> new(new RenderContext(new RenderConfiguration(1000,
 				[new OutputChannelConfiguration(
 					Vector3.Zero, positionalImportance: 0.0)])),
-			new NoteScheduleBuilder().Freeze(), new Sounds());
+			new NoteScheduleBuilder().Freeze(), sounds ?? new Sounds());
 
 	private sealed class BlockingPattern : PatternDefinition,
 		IIncrementalRawPatternNoteGenerator
 	{
 		private readonly ManualResetEventSlim? _release;
 		private readonly bool _fail;
+		private int _generatorThreadId;
+		public int GeneratorThreadId => Volatile.Read(ref _generatorThreadId);
 
 		public BlockingPattern(ObjectId id, ManualResetEventSlim? release,
 			bool fail = false) : base(id, "Controlled")
@@ -152,6 +176,7 @@ public sealed class AsyncPreparedIncrementalAudioSourceTests
 
 		public IEnumerable<RawPatternStep> EnumerateRawSteps(SequencingContext context)
 		{
+			Volatile.Write(ref _generatorThreadId, Environment.CurrentManagedThreadId);
 			_release?.Wait();
 			if (_fail)
 				throw new InvalidOperationException("Invalid producer");
@@ -174,15 +199,18 @@ public sealed class AsyncPreparedIncrementalAudioSourceTests
 
 	private sealed class Sounds : ISoundResolver
 	{
+		public ConstantSound Sound { get; } = new();
 		public bool TryResolve(ObjectId id, bool mixdown, out ISound? sound)
 		{
-			sound = id == SoundId && !mixdown ? new ConstantSound() : null;
+			sound = id == SoundId && !mixdown ? Sound : null;
 			return sound is not null;
 		}
 	}
 
 	private sealed class ConstantSound : ISound
 	{
+		private int _renderThreadId;
+		public int RenderThreadId => Volatile.Read(ref _renderThreadId);
 		public NoteConfigurationSnapshot SnapshotNoteConfiguration()
 			=> NoteConfigurationSnapshot.Default;
 		public SoundState CreateState() => new ConstantState();
@@ -191,6 +219,7 @@ public sealed class AsyncPreparedIncrementalAudioSourceTests
 		public void Render(RenderContext context, SoundState state,
 			long startFrame, int frameCount, Span<float> destination)
 		{
+			Volatile.Write(ref _renderThreadId, Environment.CurrentManagedThreadId);
 			for (int i = 0; i < frameCount; i++)
 				destination[i] += 1f;
 		}
