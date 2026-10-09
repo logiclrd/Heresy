@@ -60,6 +60,33 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
+	public void MainPlaybackPositionFollowsLivePatternRowsWithoutGreedySchedule()
+	{
+		SongDocument document = new();
+		ObjectId id = document.AllocateObjectId();
+		document.Add(new DataPatternDefinition(id, "Rows")
+		{
+			RowCount = 3, ChannelCount = 1,
+		});
+		PlaybackRequest request =
+			PatternPlaybackRequest.Create(document, id);
+		PlaybackRequestAudioSourceFactory factory = new(MonoConfiguration(100));
+		IAudioOutputSource source = factory.Create(request);
+		factory.TryTakePlaybackPositionTimeline(request,
+			out PlaybackPositionTimeline? positions).Should().BeTrue();
+		positions.Should().NotBeNull();
+		positions!.GetPositionAt(TimeSpan.Zero).Should().BeNull();
+		float[] first = new float[1];
+		source.Render(1, first);
+		positions.GetPositionAt(TimeSpan.Zero)?.PatternId.Should().Be(id);
+		positions.GetPositionAt(TimeSpan.Zero)?.PatternRow.Should().Be(0);
+		source.Render(13, new float[13]);
+		positions.GetPositionAt(TimeSpan.FromMilliseconds(120))
+			?.PatternRow.Should().Be(1);
+		positions.IsComplete(TimeSpan.FromMilliseconds(120)).Should().BeFalse();
+	}
+
+	[Test]
 	public void SequenceRequestRendersSampleFromSnapshot()
 	{
 		SongDocument document = new();
