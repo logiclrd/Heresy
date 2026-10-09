@@ -161,11 +161,12 @@ public sealed class PreparedIncrementalPlaybackFactory
 
 	private sealed class TrackedMixdown(
 		PreparedRecursiveMixdownSound sound, long startFrame,
-		int physicalChannel)
+		int physicalChannel, long physicalPlaybackOwner)
 	{
 		public PreparedRecursiveMixdownSound Sound { get; } = sound;
 		public long StartFrame { get; } = startFrame;
 		public int PhysicalChannel { get; } = physicalChannel;
+		public long PhysicalPlaybackOwner { get; } = physicalPlaybackOwner;
 		public NoteDisplacementAction Displacement { get; set; } =
 			NoteDisplacementAction.Cut;
 	}
@@ -317,7 +318,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 
 		List<PreparedRecursiveMixdownSound> privateVoices = [];
 		Dictionary<ObjectId, ISound> registeredVoices = [];
-		Dictionary<int, TrackedMixdown> physicalVoices = [];
+		Dictionary<(long Owner, int Host), TrackedMixdown> physicalVoices = [];
 		Dictionary<(long Owner, uint Id), TrackedMixdown> scopedVoices = [];
 		List<TrackedMixdown> displacedVoices = [];
 		disposePrivateMixdowns = () =>
@@ -383,9 +384,9 @@ public sealed class PreparedIncrementalPlaybackFactory
 			}
 		}
 
-		void ReplacePhysical(int channel, long frame)
+		void ReplacePhysical(int channel, long playbackOwner, long frame)
 		{
-			if (!physicalVoices.Remove(channel, out TrackedMixdown? old))
+			if (!physicalVoices.Remove((playbackOwner, channel), out TrackedMixdown? old))
 				return;
 			Schedule(old, frame, old.Displacement);
 			if (old.Displacement != NoteDisplacementAction.Cut)
@@ -393,7 +394,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 		}
 
 		void ProcessControl(ChannelTarget target, long owner,
-			long frame, NoteCommand command)
+			long playbackOwner, long frame, NoteCommand command)
 		{
 			if (target.Kind == ChannelTargetKind.Physical)
 			{
@@ -403,7 +404,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 					for (int p = displacedVoices.Count - 1; p >= 0; p--)
 					{
 						TrackedMixdown prior = displacedVoices[p];
-						if (prior.PhysicalChannel != channel)
+						if (prior.PhysicalChannel != channel
+							|| prior.PhysicalPlaybackOwner != playbackOwner)
 							continue;
 						NoteDisplacementAction action = past.Action switch
 						{
@@ -418,7 +420,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 							displacedVoices.RemoveAt(p);
 					}
 				}
-				if (!physicalVoices.TryGetValue(channel,
+				if (!physicalVoices.TryGetValue((playbackOwner, channel),
 					out TrackedMixdown? active))
 					return;
 				switch (command)
@@ -428,7 +430,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 						break;
 					case NoteCutCommand:
 						active.Sound.ScheduleCut(frame);
-						physicalVoices.Remove(channel);
+						physicalVoices.Remove((playbackOwner, channel));
 						break;
 					case SetCurrentVoiceDisplacementActionCommand nna:
 						active.Displacement = nna.Action;
@@ -525,13 +527,13 @@ public sealed class PreparedIncrementalPlaybackFactory
 		}
 
 		void Track(PreparedRecursiveMixdownSound sound,
-			ChannelTarget target, long owner, long frame)
+			ChannelTarget target, long owner, long playbackOwner, long frame)
 		{
 			TrackedMixdown tracked = new(sound, frame,
 				target.Kind == ChannelTargetKind.Physical
-					? target.PhysicalChannel : -1);
+					? target.PhysicalChannel : -1, playbackOwner);
 			if (target.Kind == ChannelTargetKind.Physical)
-				physicalVoices[target.PhysicalChannel] = tracked;
+				physicalVoices[(playbackOwner, target.PhysicalChannel)] = tracked;
 			else if (target.Kind == ChannelTargetKind.Virtual)
 				scopedVoices[(owner, target.VirtualChannelId)] = tracked;
 		}
@@ -566,7 +568,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 		// Only a selected tone is visited, so unused instrument branches
 		// cannot cause cycles or unnecessarily instantiate private timelines.
 		ISound? ResolveTone(ObjectId id, IReadOnlyList<ObjectId> path,
-			ChannelTarget target, long owner, long frame)
+			ChannelTarget target, long owner, long playbackOwner, long frame)
 		{
 			if (scripts.TryResolve(id, out SongObject? definition))
 			{
@@ -574,7 +576,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 				{
 					PreparedRecursiveMixdownSound voice =
 						CreatePrivateSound(id, path, frame);
-					Track(voice, target, owner, frame);
+					Track(voice, target, owner, playbackOwner, frame);
 					return voice;
 				}
 				if (definition is InstrumentDefinition instrument)
@@ -588,7 +590,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 					nextPath[^1] = id;
 					return new InstrumentSound(instrument,
 						new InstrumentToneSoundResolver(child =>
-							ResolveTone(child, nextPath, target, owner, frame)),
+							ResolveTone(child, nextPath, target, owner, playbackOwner, frame)),
 						sounds);
 				}
 			}
@@ -604,7 +606,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 				NoteCommand command = note.Commands[i];
 				if (command is not StartNoteCommand start)
 				{
-					ProcessControl(note.Target, owner, parentFrame, command);
+					ProcessControl(note.Target, owner,
+						note.PhysicalPlaybackOwner, parentFrame, command);
 					// Scale only renderer-facing Tempo, leaving the source
 					// shared musical state and effect memory unchanged.
 					commands[i] = command switch
@@ -628,7 +631,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 						start.PitchMultiplier, ancestry))
 				{
 					if (note.Target.Kind == ChannelTargetKind.Physical)
-						ReplacePhysical(note.Target.PhysicalChannel, parentFrame);
+						ReplacePhysical(note.Target.PhysicalChannel,
+							note.PhysicalPlaybackOwner, parentFrame);
 					else if (note.Target.Kind == ChannelTargetKind.Virtual)
 					{
 						var key = (owner, note.Target.VirtualChannelId);
@@ -636,7 +640,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 							prior.Sound.ScheduleCut(parentFrame);
 					}
 					ISound instrument = ResolveTone(start.SourceId, ancestry,
-						note.Target, owner, parentFrame)!;
+						note.Target, owner, note.PhysicalPlaybackOwner, parentFrame)!;
 					SoundInvocation? bound = instrument.CreateInvocation(
 						start.PitchMultiplier,
 						start.PlaybackSpeedMultiplier * privateClockRate);
@@ -665,7 +669,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 					if (sounds.TryResolve(start.SourceId, start.Mixdown, out _))
 					{
 						if (note.Target.Kind == ChannelTargetKind.Physical)
-							ReplacePhysical(note.Target.PhysicalChannel, parentFrame);
+							ReplacePhysical(note.Target.PhysicalChannel,
+								note.PhysicalPlaybackOwner, parentFrame);
 						else if (note.Target.Kind == ChannelTargetKind.Virtual)
 						{
 							var key = (owner, note.Target.VirtualChannelId);
@@ -677,7 +682,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 					continue;
 				}
 				if (note.Target.Kind == ChannelTargetKind.Physical)
-					ReplacePhysical(note.Target.PhysicalChannel, parentFrame);
+					ReplacePhysical(note.Target.PhysicalChannel,
+						note.PhysicalPlaybackOwner, parentFrame);
 				else if (note.Target.Kind == ChannelTargetKind.Virtual)
 				{
 					var key = (owner, note.Target.VirtualChannelId);
@@ -688,7 +694,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 					CreatePrivateSound(start.SourceId, ancestry, parentFrame);
 				ObjectId preparedId = sounds.RegisterPreparedMixdown(privateVoice);
 			registeredVoices.Add(preparedId, privateVoice);
-				Track(privateVoice, note.Target, owner, parentFrame);
+				Track(privateVoice, note.Target, owner,
+					note.PhysicalPlaybackOwner, parentFrame);
 				commands[i] = start with
 				{
 					SourceId = preparedId,

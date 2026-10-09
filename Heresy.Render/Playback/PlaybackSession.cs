@@ -1188,7 +1188,8 @@ public sealed class PlaybackSession
 					physicalChannel,
 					channel,
 					pastNote.Action,
-					eventFrame);
+					eventFrame,
+					physicalPlaybackOwner);
 				break;
 
 			case SetCurrentVoiceDisplacementActionCommand displacement:
