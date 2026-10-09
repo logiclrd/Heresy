@@ -1590,6 +1590,64 @@ ensures injected sample-data providers are called during factory
 preparation rather than rendering; invalid scripts and missing roots
 fail early, and a nested Pattern mixdown is rejected before playback.
 
+## Thirty-fourth executable step: asynchronous bounded recursive lookahead
+
+The experimental `AsyncPreparedIncrementalAudioSource` wraps an already
+prepared `PreparedIncrementalAudioSource` with exactly **one dedicated
+background producer thread**. `PreparedIncrementalPlaybackPlan.StartLookahead(
+lookaheadFrames)` starts the owned worker; only one worker is allowed for a
+plan, and plan disposal first stops/joins the worker before disposing its
+timeline and prepared adapter. Callers must stop PCM callbacks before
+disposing the wrapper or plan. The default production playback factory
+and offline export path remain unchanged.
+
+The worker reads the last successfully consumed output frame published by
+the consumer, converts `frame + lookaheadFrames` to the exact output-frame
+start time with `FrameTime.FrameStartTime`, and calls
+`PrepareThrough` only as far as that fixed horizon. After publishing
+the horizon it sleeps on a wake-up event until a consumed block advances
+the head; an indefinitely repeating Sequence is not eagerly enumerated.
+The existing prepared source retains its per-call million-step safeguard
+and may stage one speculative future event beyond the exclusive horizon.
+The bound is on **prepared musical frames**, not a general byte-count or
+absolute cap on notes emitted within that interval.
+
+The audio callback never calls scripts, `TryStep`, Roslyn or sample-data
+providers, and does not wait for the producer. It requires a requested
+block to fit within the configured lookahead frame count; invalid block
+sizes remain caller errors. If the complete requested block is **not yet
+prepared**, it writes silence to that block, increments the atomic
+`UnderrunCount`, and **does not advance `PlaybackSession.NextFrame`**.
+The next prepared callback picks up at exactly the same musical frame,
+without skipping any notes, and the worker may catch up. Thus the
+external audio clock continues while musical time briefly pauses;
+silent dropouts may repeat. This differs intentionally from the
+direct `PreparedIncrementalAudioSource.Render` contract, which throws
+on missing coverage rather than replacing a block with silence.
+
+Exceptions on the preparation thread are published through
+`PreparationError`; they stop producer progress but are never raised by
+the PCM callback. Such failures currently lead to silent, counted
+unprepared blocks until the host inspects the error outside the callback.
+The worker is not a production audio transport and does not yet publish
+underrun counters or diagnostics to the UI. The UI underrun indicator
+must remain hidden until the **actual** production path has recorded its
+first underrun.
+
+Tests deliberately block a raw producer to cause a guaranteed
+underrun, then release it and verify unskipped sample-exact PCM
+recovery. Additional tests assert frame-bounded lookahead before
+and after consumption, oversized-block validation, captured worker
+errors, single-worker ownership and cancellation/disposal order.
+
+**Still gated:** asynchronous cancellation while future work is already
+prepared; a bounded event-memory/backpressure policy in addition to the
+frame horizon and existing step budget; transport-level underrun status,
+diagnostic forwarding, playback tail/end-of-input policy, and full
+effect/mixdown/export parity. Do not use `Source.Cancel` concurrently
+with this worker, and do not promote the experimental scheduler to the
+production realtime/export default.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
