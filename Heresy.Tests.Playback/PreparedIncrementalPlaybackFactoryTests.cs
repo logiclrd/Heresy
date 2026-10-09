@@ -994,11 +994,14 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		ObjectId root = document.AllocateObjectId();
 		DataPatternDefinition parent = new(root, "Repeated source")
 		{
-			RowCount = 48, ChannelCount = 1,
+			RowCount = 49, ChannelCount = 1,
 		};
 		for (int row = 0; row < 48; row++)
 			parent.Grid.GetOrCreateCell(row, 0).Note =
 				new StartPatternNote(selected, mixdown: !instrumentSelected);
+		// Terminate the last live voice explicitly, rather than assuming an
+		// otherwise unbounded child is safe to evict after an elapsed timeout.
+		parent.Grid.GetOrCreateCell(48, 0).Note = new PatternNoteCut();
 		document.Add(parent);
 
 		using PreparedIncrementalPlaybackPlan plan =
