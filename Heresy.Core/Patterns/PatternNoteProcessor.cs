@@ -2737,8 +2737,9 @@ public static class PatternNoteProcessor
 
 		foreach (WorkingEvent workingEvent in events)
 		{
-			if (workingEvent.AffectsTiming)
-				continue;
+			// A tracker row can contain Txx and SEy in the *same* note
+			// event. The timing flag must not hide SEy while selecting
+			// the physical-channel row-delay winner.
 			if (FloorRow(workingEvent.RowOffset) != row)
 				continue;
 
