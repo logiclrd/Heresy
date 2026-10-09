@@ -475,7 +475,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		plan.Source.Render(pcm.Length, pcm);
 		Assert.That(pcm[0], Is.EqualTo(0.375f).Within(1e-6f));
 		Assert.That(pcm[120], Is.EqualTo(0.375f).Within(1e-6f));
-		Assert.That(pcm[140], Is.EqualTo((float)(0.5 * (0.75 - 1.0 / 64.0)))
+		Assert.That(pcm[140], Is.EqualTo((float)(0.5 * (0.75 - 5.0 / (6.0 * 64.0))))
 			.Within(1e-5f));
 		Assert.That(pcm[240], Is.EqualTo((float)(0.5 * (0.75 - 5.0 / 64.0)))
 			.Within(1e-5f));
@@ -520,8 +520,8 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		plan.Source.Render(pcm.Length, pcm);
 		Assert.That(pcm[0], Is.EqualTo(0.3f).Within(1e-6f));
 		Assert.That(pcm[140],
-			Is.EqualTo((float)(0.5 * (0.75 - 1.0 / 64.0)
-				* (0.8 - 1.0 / 64.0))).Within(1e-5f));
+			Is.EqualTo((float)(0.5 * (0.75 - 5.0 / (6.0 * 64.0))
+				* (0.8 - 5.0 / (6.0 * 64.0)))).Within(1e-5f));
 	}
 
 	[Test]
