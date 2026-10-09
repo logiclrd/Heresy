@@ -182,7 +182,7 @@ public sealed class SampleOffsetHighPatternEffectTests
 	}
 
 	[Test]
-	public void FlattenedChildSharesMappedHighOffsetState()
+	public void FlattenedChildDoesNotRecallParentHighOffsetState()
 	{
 		SequencingContext parent = new(physicalChannelBase: 3);
 
@@ -206,7 +206,7 @@ public sealed class SampleOffsetHighPatternEffectTests
 
 		Assert.That(
 			output.Freeze()[0].Commands[1],
-			Is.EqualTo(new SetSourceFrameOffsetCommand(0x50700)));
+			Is.EqualTo(new SetSourceFrameOffsetCommand(0x00700)));
 	}
 
 	[Test]
