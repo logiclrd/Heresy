@@ -10,9 +10,9 @@ namespace Heresy.UserInterface.PatternEditing;
 
 /// <summary>
 /// Nonblocking editor warning driven by the same effect classifier used
-/// by the coroutine renderer. An omitted source can be resolved from an
-/// earlier cell in the same Pattern; cross-Pattern inherited sources are
-/// diagnosed authoritatively during playback.
+/// by the coroutine renderer. It tracks deterministic Source selections and
+/// the current logical note across rows of one data Pattern. Cross-Pattern
+/// inheritance and dynamically selected Sources remain runtime-diagnosed.
 /// </summary>
 public static class FlattenedSourceEffectWarnings
 {
@@ -22,29 +22,43 @@ public static class FlattenedSourceEffectWarnings
 		ArgumentNullException.ThrowIfNull(document);
 		ArgumentNullException.ThrowIfNull(pattern);
 		PatternCell? cell = pattern.Grid[row, channel];
-		if (cell?.Note is not StartPatternNote { Mixdown: false } start)
+		if (cell is null || cell.Effects.Count == 0)
 			return null;
-		ObjectId source = !cell.SourceId.IsNone
-			? cell.SourceId : start.SourceId;
-		if (source.IsNone)
+
+		// A Source-column selection is remembered even without a note
+		// start, but does not replace the currently sounding source.
+		// Reconstruct only what this data Pattern establishes locally:
+		// Sequence-order inheritance and script-selected Sources may be
+		// unknowable statically and remain runtime-diagnosed.
+		ObjectId rememberedSource = ObjectId.None;
+		bool currentIsFlattened = false;
+		for (int previous = 0; previous <= row; previous++)
 		{
-			for (int previous = row - 1; previous >= 0; previous--)
+			PatternCell? earlier = pattern.Grid[previous, channel];
+			if (earlier is null)
+				continue;
+			ObjectId selection = !earlier.SourceId.IsNone
+				? earlier.SourceId
+				: earlier.Note is StartPatternNote inline
+					? inline.SourceId
+					: ObjectId.None;
+			if (!selection.IsNone)
+				rememberedSource = selection;
+
+			switch (earlier.Note)
 			{
-				PatternCell? earlier = pattern.Grid[previous, channel];
-				if (earlier is null)
-					continue;
-				if (!earlier.SourceId.IsNone)
-					source = earlier.SourceId;
-				else if (earlier.Note is StartPatternNote note
-					&& !note.SourceId.IsNone)
-					source = note.SourceId;
-				if (!source.IsNone)
+				case StartPatternNote start:
+					currentIsFlattened = !start.Mixdown
+						&& IsFlattenedSource(document, rememberedSource);
+					break;
+				case PatternNoteCut:
+					// Cut detaches the instigator. Note Off intentionally
+					// does not: release tails retain its live controller.
+					currentIsFlattened = false;
 					break;
 			}
 		}
-		if (source.IsNone
-			|| !document.TryGet(source, out SongObject? definition)
-			|| definition is not (PatternDefinition or SequenceDefinition))
+		if (!currentIsFlattened)
 			return null;
 
 		string[] ignored = cell.Effects
@@ -57,7 +71,7 @@ public static class FlattenedSourceEffectWarnings
 			e is VibratoVolumeSlidePatternEffect
 				or TonePortamentoVolumeSlidePatternEffect);
 		return "Warning: these effects contain voice-specific operations "
-			+ "which do not apply to a non-mixdown flattened source: "
+			+ "which do not apply to the current non-mixdown flattened source: "
 			+ string.Join(", ", ignored)
 			+ ". "
 			+ (hasCombinedSlide
@@ -66,4 +80,9 @@ public static class FlattenedSourceEffectWarnings
 				: "")
 			+ "The effects remain stored and editable.";
 	}
+	private static bool IsFlattenedSource(SongDocument document, ObjectId source)
+		=> !source.IsNone
+			&& document.TryGet(source, out SongObject? definition)
+			&& definition is PatternDefinition or SequenceDefinition;
+
 }
