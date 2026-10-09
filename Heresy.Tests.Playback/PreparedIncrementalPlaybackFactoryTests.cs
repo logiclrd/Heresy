@@ -4,8 +4,6 @@ using System.Linq;
 using System.Numerics;
 using System.Reflection;
 
-using Heresy.Core.Instruments;
-using Heresy.Core.Envelopes;
 using Heresy.Core.Sequencing;
 using Heresy.Render.Playback;
 using System.Text;
