@@ -475,6 +475,47 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 	}
 
 	[Test]
+	public void NnaFadeRequestsFadeOnChildPrivateVoicesAtDisplacement()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		SampleDefinition sample = SampleDefinition.CreateImported(
+			sampleId, "Loop", "memory.wav", Wave(16384));
+		sample.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 4);
+		document.Add(sample);
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Long child")
+		{
+			RowCount = 8, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({sampleId.Value}));",
+		});
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "NNA fade")
+		{
+			RowCount = 3, ChannelCount = 1,
+		};
+		PatternCell first = parent.Grid.GetOrCreateCell(0, 0);
+		first.Note = new StartPatternNote(childId, mixdown: true);
+		first.Effects.Add(new TrackerNewNoteActionPatternEffect(
+			NoteDisplacementAction.Fade));
+		parent.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote(sampleId);
+		document.Add(parent);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, parentId);
+		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(200));
+		plan.Source.Render(1, new float[1]);
+		object privateSound = plan.Session.GetChannelState(0).CurrentSound!;
+		FieldInfo privateSession = privateSound.GetType().GetField("_session",
+			BindingFlags.Instance | BindingFlags.NonPublic)!;
+		PlaybackSession childSession =
+			(PlaybackSession)privateSession.GetValue(privateSound)!;
+		Assert.That(childSession.GetChannelState(0).CurrentVoice?
+			.IsNoteFadeRequested, Is.True);
+	}
+
+	[Test]
 	public void RequiresRootAndRejectsInvalidRoslynDuringPreparation()
 	{
 		SongDocument document = new();
