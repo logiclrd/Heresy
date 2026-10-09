@@ -1030,6 +1030,112 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			.GetValue(registrations)!;
 	}
 
+	[TestCase(false)]
+	[TestCase(true)]
+	public void RecursivePatternPitchTransposesChildNotesWithoutChangingTheirTiming(bool mixdown)
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample, "Ramp",
+			"ramp.wav", RampWave()));
+		ObjectId child = document.AllocateObjectId();
+		DataPatternDefinition childPattern = new(child, "Notes")
+		{
+			RowCount = 2, ChannelCount = 1,
+		};
+		childPattern.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sample);
+		document.Add(childPattern);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent")
+		{
+			RowCount = 3, ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(child, pitchMultiplier: 2.0, mixdown: mixdown);
+		document.Add(parent);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, root);
+		float[] first = new float[3];
+		float[] remaining = new float[5];
+		plan.Source.Render(first.Length, first);
+		plan.Source.Render(remaining.Length, remaining);
+		float[] pcm = [.. first, .. remaining];
+		for (int frame = 0; frame < pcm.Length; frame++)
+			Assert.That(pcm[frame],
+				Is.EqualTo(frame * 2 * 512f / 32768f).Within(1e-6f),
+				$"Pitch transposition must sample child source at twice its normal frequency (frame {frame}).");
+		Assert.That(plan.Session.NextFrame, Is.EqualTo(8L));
+	}
+
+	[Test]
+	public void InstrumentSelectedRecursivePatternComposesTonePitchWithNotePitch()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample, "Ramp",
+			"ramp.wav", RampWave()));
+		ObjectId child = document.AllocateObjectId();
+		DataPatternDefinition childPattern = new(child, "Child")
+		{
+			RowCount = 2, ChannelCount = 1,
+		};
+		childPattern.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(sample);
+		document.Add(childPattern);
+		ObjectId instrumentId = document.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Selected");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = child,
+			PitchMultiplier = 2.0,
+		});
+		instrument.ToneTable.Add(0);
+		document.Add(instrument);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent")
+		{
+			RowCount = 2, ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(instrumentId);
+		document.Add(parent);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, root);
+		float[] pcm = new float[6];
+		plan.Source.Render(pcm.Length, pcm);
+		for (int frame = 0; frame < pcm.Length; frame++)
+			Assert.That(pcm[frame],
+				Is.EqualTo(frame * 2 * 512f / 32768f).Within(1e-6f));
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void RecursivePlaybackSpeedStillFailsExplicitlyUntilClockMappingExists(bool mixdown)
+	{
+		SongDocument document = new();
+		ObjectId child = document.AllocateObjectId();
+		document.Add(new DataPatternDefinition(child, "Child")
+		{
+			RowCount = 1, ChannelCount = 1,
+		});
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(child, playbackSpeedMultiplier: 2.0, mixdown: mixdown);
+		document.Add(parent);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, root);
+		Assert.That(() => plan.Source.Render(1, new float[1]),
+			Throws.TypeOf<NotSupportedException>());
+	}
+
 	[Test]
 	public void RequiresRootAndRejectsInvalidRoslynDuringPreparation()
 	{
