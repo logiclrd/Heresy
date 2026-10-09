@@ -387,13 +387,13 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 							// never absorbs the caller's host memory.
 							int localChannel = emit.Note.Target.PhysicalChannel -
 								frame.Context.PhysicalChannelBase;
-							double noteVolume = start.Volume
+							double startingSourceVolume = start.Volume
 								?? ReadRememberedNoteVolume?.Invoke(
 									frame.Context.PhysicalPlaybackOwner,
 									emit.Note.Target.PhysicalChannel, emit.Time)
 								?? frame.Context.GetPhysicalChannelState(
 									localChannel).NoteVolume;
-							if (noteVolume < 0 || !double.IsFinite(noteVolume))
+							if (startingSourceVolume < 0 || !double.IsFinite(startingSourceVolume))
 								throw new InvalidOperationException(
 									"Recalled flattened source volume is invalid.");
 							if (start.Volume.HasValue)
@@ -403,7 +403,7 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 								retained.Add(new RememberFlatteningNoteVolumeCommand(
 									start.Volume.Value));
 							}
-							double localGain = start.GainMultiplier * noteVolume;
+							double localGain = start.GainMultiplier * startingSourceVolume;
 							if (localGain < 0.0 || !double.IsFinite(localGain))
 								throw new InvalidOperationException(
 									"Flattened source gain is negative or non-finite.");
