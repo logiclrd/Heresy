@@ -80,6 +80,67 @@ public static class OfflinePlaybackRenderer
 			tailFrames);
 	}
 
+	/// <summary>
+	/// Stream the arrangement from a coroutine generator directly into the
+	/// file sink. No full-song schedule is constructed, and the logical end
+	/// is discovered as the root generator naturally completes. Release
+	/// tails retain the same PlaybackSession policy as the finite overload.
+	/// </summary>
+	public static OfflineRenderResult Render(
+		IIncrementalArrangementSource arrangement,
+		IAudioFileSink sink,
+		int blockFrameCount = DefaultBlockFrameCount,
+		long maximumLogicalFrames = 48000L * 60 * 60 * 4)
+	{
+		ArgumentNullException.ThrowIfNull(arrangement);
+		ArgumentNullException.ThrowIfNull(sink);
+		if (blockFrameCount <= 0)
+			throw new ArgumentOutOfRangeException(nameof(blockFrameCount));
+		if (maximumLogicalFrames <= 0)
+			throw new ArgumentOutOfRangeException(nameof(maximumLogicalFrames));
+		if (sink.Format != arrangement.Format)
+			throw new ArgumentException(
+				"Audio file sink format must match the incremental source.", nameof(sink));
+		float[] samples = new float[checked(blockFrameCount * arrangement.Format.ChannelCount)];
+		long frames = 0;
+		while (true)
+		{
+			int wanted = (int)Math.Min(blockFrameCount,
+				maximumLogicalFrames - frames);
+			if (wanted == 0)
+				throw new InvalidOperationException(
+					"Offline arrangement exceeded the finite export frame limit.");
+			Span<float> block = samples.AsSpan(0, wanted * arrangement.Format.ChannelCount);
+			block.Clear();
+			int produced = arrangement.RenderLogical(wanted, block);
+			if (produced < 0 || produced > wanted)
+				throw new InvalidOperationException(
+					"Incremental arrangement returned an invalid frame count.");
+			if (produced != 0)
+			{
+				sink.Write(block.Slice(0, produced * arrangement.Format.ChannelCount));
+				frames = checked(frames + produced);
+			}
+			if (produced < wanted)
+			{
+				if (!arrangement.IsComplete)
+					throw new InvalidOperationException(
+						"Incremental arrangement stopped before its natural end.");
+				break;
+			}
+			if (arrangement.IsComplete
+				&& frames >= FrameTime.Ceiling(arrangement.LogicalDuration,
+					arrangement.Format.SampleRate))
+				break;
+		}
+
+		PlaybackSession session = arrangement.Session;
+		session.EndInput();
+		session.CutIndefiniteActiveVoicesAfterEndInput();
+		long tails = RenderTail(session, sink, blockFrameCount);
+		return new OfflineRenderResult(frames, tails);
+	}
+
 	private static void RenderLogicalBody(
 		PlaybackSession session,
 		IAudioFileSink sink,
