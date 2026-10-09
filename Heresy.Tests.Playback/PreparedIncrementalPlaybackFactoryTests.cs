@@ -101,7 +101,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 	}
 
 	[Test]
-	public void NestedPatternMixdownIsRejectedOnTheProducerBeforeRendering()
+	public void NestedPatternMixdownPreparesOnProducerAndRendersSilence()
 	{
 		SongDocument document = new();
 		ObjectId childId = document.AllocateObjectId();
@@ -123,9 +123,83 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		using PreparedIncrementalPlaybackPlan plan =
 			new PreparedIncrementalPlaybackFactory(Mono(1000))
 				.Create(document, parentId);
-		Assert.Throws<NotSupportedException>(() =>
+		Assert.DoesNotThrow(() =>
 			plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(120)));
-		Assert.That(plan.Source.NextFrame, Is.Zero);
+		float[] silence = new float[12];
+		plan.Source.Render(12, silence);
+		Assert.That(silence, Is.All.Zero);
+	}
+
+	[Test]
+	public void NestedScriptPatternMixdownUsesPrivateClockWithoutShiftingParentTempo()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(
+			sampleId, "PCM", "sample.wav", Wave(16384)));
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Nested script")
+		{
+			RowCount = 1, ChannelCount = 1,
+			Source = $"Tempo(0, 250); Note(0, 0, _O({sampleId.Value}));",
+		});
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Parent")
+		{
+			RowCount = 2, ChannelCount = 2,
+		};
+		PatternCell nested = parent.Grid.GetOrCreateCell(0, 0);
+		nested.SourceId = childId;
+		nested.Note = new StartPatternNote(mixdown: true);
+		PatternCell direct = parent.Grid.GetOrCreateCell(1, 1);
+		direct.SourceId = sampleId;
+		direct.Note = new StartPatternNote();
+		document.Add(parent);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, parentId);
+		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(150));
+		float[] result = new float[121];
+		plan.Source.Render(result.Length, result);
+		Assert.That(result[0], Is.EqualTo(0.5f).Within(1e-5f));
+		Assert.That(result[10], Is.Zero);
+		Assert.That(result[119], Is.Zero);
+		Assert.That(result[120], Is.EqualTo(0.5f).Within(1e-5f),
+			"Child private Tempo must not retime the parent row.");
+	}
+
+	[Test]
+	public void RepeatedNestedMixdownStartsCreateIndependentPrivateSources()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(
+			sampleId, "PCM", "sample.wav", Wave(8192)));
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Child")
+		{
+			RowCount = 1, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({sampleId.Value}));",
+		});
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Parallel")
+		{
+			RowCount = 1, ChannelCount = 2,
+		};
+		for (int channel = 0; channel < 2; channel++)
+		{
+			PatternCell cell = parent.Grid.GetOrCreateCell(0, channel);
+			cell.SourceId = childId;
+			cell.Note = new StartPatternNote(mixdown: true);
+		}
+		document.Add(parent);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, parentId);
+		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(40));
+		float[] output = new float[2];
+		plan.Source.Render(2, output);
+		Assert.That(output, Is.All.EqualTo(0.5f).Within(1e-5f));
 	}
 
 	[Test]
