@@ -126,8 +126,9 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 					"Incremental preparation exceeded its bounded step budget.");
 		}
 
-		// Finish private mixdown PCM before publishing that its parent
-		// interval is ready. Nested scripts run only on this producer.
+		// Stage every private child's chronological note events before
+		// publishing parent coverage. Child PCM is rendered just-in-time
+		// by the audio consumer, never by this producer.
 		_prepareNested?.Invoke(exclusiveEnd);
 
 		// Publish the complete exclusive coverage only *after* all preceding
