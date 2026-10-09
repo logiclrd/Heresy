@@ -9,7 +9,7 @@ using Heresy.Core.Sequencing;
 namespace Heresy.Core.Sequences;
 
 /// <summary>
-/// Experimental flattened Pattern/Sequence invocation coordinator. All
+/// Streaming flattened Pattern/Sequence invocation coordinator. All
 /// invocations share exactly one incremental musical clock. A nested
 /// StartNote is consumed only if it resolves to a Pattern or Sequence;
 /// ordinary and mixdown starts stay with the renderer. No eager recursion.
