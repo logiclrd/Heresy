@@ -336,7 +336,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		PlaybackSession childSession =
 			(PlaybackSession)sessionField.GetValue(mixdown)!;
 		Assert.That(childSession.InputEnded, Is.False,
-			"Preparation must queue Off, not apply it ahead of live PCM rendering.");
+			"The live private input must not be released before the parent Off frame.");
 		Assert.That(childSession.NextFrame, Is.EqualTo(1L),
 			"A one-frame parent render must advance its child by one frame.");
 		float[] remaining = new float[120];
