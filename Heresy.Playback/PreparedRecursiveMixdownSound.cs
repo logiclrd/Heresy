@@ -176,10 +176,7 @@ internal sealed class PreparedRecursiveMixdownSound :
 		long end = checked(first + frameCount);
 		long knownCut = Volatile.Read(ref _scheduledCutFrame);
 		if (knownCut >= 0 && first >= knownCut)
-		{
-			nested.MarkNaturalEndReached(Math.Max(0, knownCut - offset));
 			return;
-		}
 		if (Volatile.Read(ref _preparedThroughFrames) < end)
 			throw new InvalidOperationException(
 				"Private mixdown events were not prepared for the requested audio frames.");
@@ -195,9 +192,6 @@ internal sealed class PreparedRecursiveMixdownSound :
 			// while discarding its output. No PCM history is retained.
 			RenderUntil(first, Span<float>.Empty, first, scratchArray);
 			RenderUntil(end, destination, first, scratchArray);
-			long observed = Volatile.Read(ref _observedEndFrame);
-			if (observed >= 0 && observed <= end)
-				nested.MarkNaturalEndReached(Math.Max(0, observed - offset));
 		}
 		finally
 		{
