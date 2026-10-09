@@ -431,3 +431,28 @@ realtime end-of-input and tail policy; lifecycle, mixdown and export
 parity; migration of the production scheduler. The existing TODO item
 for realtime underrun reporting is **not** marked complete by this
 experimental adapter.
+
+### Private-clock recursive mixdown checkpoint (milestone 35)
+
+The experimental prepared recursive factory can now start a
+`Mixdown=true` data/script Pattern or Sequence as an independent
+invocation-local **private recursive clock**. Each start owns its own
+`IncrementalRecursiveTimeline`, `SequencingContext`, prepared adapter,
+and native speaker-channel PCM session. The producer pre-renders
+private frames before publishing parent coverage; parent PCM callbacks
+only read immutable, concurrently published chunks, using a unique
+transient sound ID per invocation. Recursive mixdowns are allowed;
+source cycles fail at preparation; direct stereo speaker feeds are
+preserved without collapsing to a single mono playback channel.
+Separate starts of the same child have separate clock/voice state,
+and private Tempo changes do not retime the parent. Disposal follows
+the nested plan.
+
+**Still unchecked before cutover:** producer-aware native source-frame
+seeking (especially offsets beyond lookahead and backwards replay),
+memory-bounded private PCM buffer retention/backpressure, full parent
+Off/Cut/Fade/Continue/NNA propagation into child voices and private
+clocks, mixed instrument-owned recursive sources, transformations of
+nested pitch/playback speed, realtime/offline end handling and parity,
+and production transport/export migration. These are structural
+remaining requirements, not reasons to add an opt-in production switch.
