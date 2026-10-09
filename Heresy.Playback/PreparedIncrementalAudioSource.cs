@@ -83,6 +83,24 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		_session.CutIndefiniteActiveVoicesAfterEndInput();
 	}
 
+	/// <summary>
+	/// Live-preview commands enter on the same PCM worker and pass through the
+	/// identical recursive-source transformation as scripted note starts.
+	/// </summary>
+	public void ApplyLiveEvent(ChannelTarget target,
+		IReadOnlyList<NoteCommand> commands)
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		ArgumentNullException.ThrowIfNull(commands);
+		long frame = _session.NextFrame;
+		NoteEvent raw = new(
+			new Heresy.Core.Timing.MusicalTime(
+				FrameTime.FrameStartTime(frame, Format.SampleRate), 0),
+			target, commands);
+		NoteEvent prepared = _transform?.Invoke(raw, frame, -1) ?? raw;
+		_session.ApplyLiveEvent(prepared.Target, prepared.Commands);
+	}
+
 	public bool Cancel(long invocationId)
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
