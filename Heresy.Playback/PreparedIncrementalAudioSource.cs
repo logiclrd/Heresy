@@ -128,6 +128,8 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 	{
 		if (_disposed)
 			throw new ObjectDisposedException(nameof(PreparedIncrementalAudioSource));
+		if (!_timeline.IsInvocationActive(invocationId))
+			return false;
 		long now = _session.NextFrame;
 		if (FrameTime.Ceiling(
 			TimeSpan.FromTicks(Volatile.Read(ref _preparedThroughTicks)),
