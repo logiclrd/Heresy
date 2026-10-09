@@ -652,6 +652,39 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 	}
 
 	[Test]
+	public void PrivateMixdownRetriggerRejectsWithoutRecursiveReplayCheckpoint()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(
+			sampleId, "PCM", "memory.wav", Wave(16384)));
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Child")
+		{
+			RowCount = 4, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({sampleId.Value}));",
+		});
+		ObjectId rootId = document.AllocateObjectId();
+		DataPatternDefinition root = new(rootId, "Parent")
+		{
+			RowCount = 4, ChannelCount = 1,
+		};
+		root.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(childId, mixdown: true);
+		document.Add(root);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, rootId);
+		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(40));
+		plan.Source.Render(1, new float[1]);
+		plan.Session.ApplyLiveEvent(ChannelTarget.Physical(0),
+			[new RetriggerCurrentVoiceCommand(0)]);
+		Assert.That(() => plan.Source.Render(1, new float[1]),
+			Throws.TypeOf<NotSupportedException>()
+				.With.Message.Contains("retrigger"));
+	}
+
+	[Test]
 	public void RequiresRootAndRejectsInvalidRoslynDuringPreparation()
 	{
 		SongDocument document = new();
