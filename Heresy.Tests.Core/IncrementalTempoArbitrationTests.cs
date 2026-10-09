@@ -188,9 +188,9 @@ public sealed class IncrementalTempoArbitrationTests
 		Assert.That(((IncrementalPatternTimelineStep.Emit)first!).Note.Commands.Single(),
 			Is.EqualTo(new SetSpeedCommand(3)));
 
+		SequencingContext second = root.FlattenedChild(physicalChannelOffset: 3);
 		timeline.Add(new RawSource(At(0, 0,
-			new ApplyTrackerTempoCommand(0x11))), 1,
-			root.FlattenedChild(physicalChannelOffset: 3));
+			new ApplyTrackerTempoCommand(0x11))), 1, second);
 		NoteEvent[] events = Drain(timeline);
 		SetTempoRampCommand[] ramps = events.SelectMany(e => e.Commands)
 			.OfType<SetTempoRampCommand>().ToArray();
@@ -209,8 +209,10 @@ public sealed class IncrementalTempoArbitrationTests
 		Assert.That(root.State.Tempo, Is.EqualTo(137).Within(1e-8));
 		Assert.That(root.GetPhysicalChannelState(0)
 			.TryGetEffectParameter(EffectMemorySlot.Tempo, out byte a), Is.True);
-		Assert.That(root.GetPhysicalChannelState(3)
+		Assert.That(second.GetPhysicalChannelState(0)
 			.TryGetEffectParameter(EffectMemorySlot.Tempo, out byte b), Is.True);
+		Assert.That(root.GetPhysicalChannelState(3)
+			.TryGetEffectParameter(EffectMemorySlot.Tempo, out _), Is.False);
 		Assert.That(a, Is.EqualTo(0x12));
 		Assert.That(b, Is.EqualTo(0x11));
 	}
@@ -489,17 +491,17 @@ public sealed class IncrementalTempoArbitrationTests
 			At(0, 0, new ApplyTrackerTempoCommand(0x12)));
 		RawSource incoming = new(At(1, 0,
 			new ApplyTrackerTempoCommand(0x11)));
+		SequencingContext incomingContext =
+			root.FlattenedChild(physicalChannelOffset: 3);
 		if (reverseCreation)
 		{
-			timeline.Add(incoming, 2,
-				root.FlattenedChild(physicalChannelOffset: 3));
+			timeline.Add(incoming, 2, incomingContext);
 			timeline.Add(delayed, 1, root);
 		}
 		else
 		{
 			timeline.Add(delayed, 1, root);
-			timeline.Add(incoming, 2,
-				root.FlattenedChild(physicalChannelOffset: 3));
+			timeline.Add(incoming, 2, incomingContext);
 		}
 		NoteEvent[] events = Drain(timeline);
 		SetTempoRampCommand[] ramps = events
@@ -517,9 +519,11 @@ public sealed class IncrementalTempoArbitrationTests
 			.TryGetEffectParameter(EffectMemorySlot.Tempo, out byte first),
 			Is.True);
 		Assert.That(first, Is.EqualTo(0x12));
-		Assert.That(root.GetPhysicalChannelState(3)
+		Assert.That(incomingContext.GetPhysicalChannelState(0)
 			.TryGetEffectParameter(EffectMemorySlot.Tempo, out byte second),
 			Is.True);
+		Assert.That(root.GetPhysicalChannelState(3)
+			.TryGetEffectParameter(EffectMemorySlot.Tempo, out _), Is.False);
 		Assert.That(second, Is.EqualTo(0x11));
 	}
 
