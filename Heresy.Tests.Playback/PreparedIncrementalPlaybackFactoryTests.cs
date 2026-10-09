@@ -332,7 +332,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		Assert.That(prefix[0], Is.GreaterThan(0));
 		object mixdown = plan.Session.GetChannelState(0).CurrentSound!;
 		PropertyInfo sessionField = mixdown.GetType().GetProperty("Session",
-			BindingFlags.NonPublic | BindingFlags.Instance)!;
+			BindingFlags.Public | BindingFlags.Instance)!;
 		PlaybackSession childSession =
 			(PlaybackSession)sessionField.GetValue(mixdown)!;
 		Assert.That(childSession.InputEnded, Is.False,
@@ -499,7 +499,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			.Single(voice => voice.Sound.GetType().Name == "PreparedRecursiveMixdownSound")
 			.Sound;
 		PropertyInfo privateSession = privateSound.GetType().GetProperty("Session",
-			BindingFlags.Instance | BindingFlags.NonPublic)!;
+			BindingFlags.Public | BindingFlags.Instance)!;
 		PlaybackSession childSession =
 			(PlaybackSession)privateSession.GetValue(privateSound)!;
 		Assert.That(childSession.GetChannelState(0).CurrentVoice?
@@ -571,7 +571,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		plan.Source.Render(1, first);
 		object sound = plan.Session.GetChannelState(0).CurrentSound!;
 		PropertyInfo sessionField = sound.GetType().GetProperty("Session",
-			BindingFlags.NonPublic | BindingFlags.Instance)!;
+			BindingFlags.Public | BindingFlags.Instance)!;
 		PlaybackSession childSession = (PlaybackSession)sessionField.GetValue(sound)!;
 		Assert.That(childSession.NextFrame, Is.EqualTo(1L),
 			"Child PlaybackSession must render only the frame requested by its parent.");
@@ -619,7 +619,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		nested.Source.Render(1, sought);
 		Assert.That(sought[0], Is.EqualTo(reference[11]).Within(1e-6f));
 		PropertyInfo sessionField = voice.Sound.GetType().GetProperty("Session",
-			BindingFlags.NonPublic | BindingFlags.Instance)!;
+			BindingFlags.Public | BindingFlags.Instance)!;
 		PlaybackSession child = (PlaybackSession)sessionField.GetValue(voice.Sound)!;
 		Assert.That(child.NextFrame, Is.EqualTo(12L),
 			"Forward seek must advance the actual child renderer, discarding samples.");
@@ -665,7 +665,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		Assert.That(before[0], Is.EqualTo(0.5f).Within(1e-6f));
 		PlaybackVoice voice = plan.Session.GetChannelState(0).CurrentVoice!;
 		PropertyInfo sessionField = voice.Sound.GetType().GetProperty("Session",
-			BindingFlags.Instance | BindingFlags.NonPublic)!;
+			BindingFlags.Public | BindingFlags.Instance)!;
 		PlaybackSession original = (PlaybackSession)sessionField.GetValue(voice.Sound)!;
 		Assert.That(original.NextFrame, Is.EqualTo(3L));
 		plan.Session.ApplyLiveEvent(ChannelTarget.Physical(0),
@@ -718,7 +718,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		PlaybackVoice outer = plan.Session.GetChannelState(0).CurrentVoice!;
 		ISourceFrameSeekableSound seekable = (ISourceFrameSeekableSound)outer.Sound;
 		PropertyInfo sessionField = outer.Sound.GetType().GetProperty("Session",
-			BindingFlags.NonPublic | BindingFlags.Instance)!;
+			BindingFlags.Public | BindingFlags.Instance)!;
 		PlaybackSession oldMiddle = (PlaybackSession)sessionField.GetValue(outer.Sound)!;
 		PlaybackVoice inner = oldMiddle.GetChannelState(0).CurrentVoice!;
 		PlaybackSession oldLeaf = (PlaybackSession)sessionField.GetValue(inner.Sound)!;
