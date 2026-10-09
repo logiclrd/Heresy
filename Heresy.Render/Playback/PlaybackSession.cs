@@ -1093,10 +1093,10 @@ public sealed class PlaybackSession
 				break;
 
 			case AdjustCurrentNoteVolumeCommand adjust:
-				if (channel.CurrentFlattenedSource is { } flattened)
+				if (channel.CurrentFlattenedSource is { } currentVolumeSource)
 				{
 					channel.CaptureCurrentNoteVolume(
-						flattened.Adjust(eventFrame, adjust.TrackerUnits));
+						currentVolumeSource.Adjust(eventFrame, adjust.TrackerUnits));
 				}
 				else if (channel.CurrentVoice is not null)
 				{
@@ -1109,10 +1109,10 @@ public sealed class PlaybackSession
 				break;
 
 			case AdjustNoteVolumeCommand adjust:
-				if (channel.CurrentFlattenedSource is { } flattened)
+				if (channel.CurrentFlattenedSource is { } adjustedVolumeSource)
 				{
 					channel.CaptureCurrentNoteVolume(
-						flattened.Adjust(eventFrame, adjust.TrackerUnits));
+						adjustedVolumeSource.Adjust(eventFrame, adjust.TrackerUnits));
 				}
 				else if (channel.CurrentVoice is not null)
 				{
@@ -1173,8 +1173,8 @@ public sealed class PlaybackSession
 				break;
 
 			case SetNoteVolumeSlideCommand slide:
-				if (channel.CurrentFlattenedSource is { } flattened)
-					flattened.Slide(eventFrame,
+				if (channel.CurrentFlattenedSource is { } slidingVolumeSource)
+					slidingVolumeSource.Slide(eventFrame,
 						slide.TicksPerRow ?? _speed, slide.TrackerUnitsPerTick);
 				else
 					channel.CurrentVoice?.SetNoteVolumeSlide(
@@ -1186,8 +1186,8 @@ public sealed class PlaybackSession
 				break;
 
 			case ClearNoteVolumeSlideCommand:
-				if (channel.CurrentFlattenedSource is { } flattened)
-					channel.CaptureCurrentNoteVolume(flattened.Clear(eventFrame));
+				if (channel.CurrentFlattenedSource is { } clearedVolumeSource)
+					channel.CaptureCurrentNoteVolume(clearedVolumeSource.Clear(eventFrame));
 				else if (channel.CurrentVoice is not null)
 				{
 					double volume =
