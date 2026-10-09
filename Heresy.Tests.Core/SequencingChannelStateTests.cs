@@ -51,13 +51,13 @@ public sealed class SequencingChannelStateTests
 	}
 
 	[Test]
-	public void FlattenedChildSharesEffectMemoryOnMappedParentChannel()
+	public void FlattenedChildKeepsIndependentEffectMemoryDespiteMatchingPhysicalHost()
 	{
 		SequencingContext parent = new(physicalChannelBase: 3);
 		SequencingContext child = parent.FlattenedChild(physicalChannelOffset: 4);
 
-		// Parent local channel 4 and child local channel 0 are both mapped
-		// physical channel 7.
+		// Parent local channel 4 and child local channel 0 both host on
+		// physical channel 7, but have separate logical memory namespaces.
 		parent.GetPhysicalChannelState(4)
 			.ResolveEffectParameter(EffectMemorySlot.Vibrato, 0x53);
 
@@ -70,9 +70,9 @@ public sealed class SequencingChannelStateTests
 		byte recalledByParent = parent.GetPhysicalChannelState(4)
 			.ResolveEffectParameter(EffectMemorySlot.Vibrato, 0x00);
 
-		Assert.That(recalledByChild, Is.EqualTo(0x53));
-		Assert.That(recalledByParent, Is.EqualTo(0x27));
-		Assert.That(child.ChannelStates, Is.SameAs(parent.ChannelStates));
+		Assert.That(recalledByChild, Is.Zero);
+		Assert.That(recalledByParent, Is.EqualTo(0x53));
+		Assert.That(child.ChannelStates, Is.Not.SameAs(parent.ChannelStates));
 	}
 
 	[Test]
