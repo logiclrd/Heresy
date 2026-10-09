@@ -576,7 +576,7 @@ public sealed class IncrementalTempoArbitrationTests
 		SequencingContext root = new();
 		using IncrementalPatternTimeline timeline = new(root);
 		long first = timeline.Add(new RawSource(
-			At(0, 0, new ApplyTrackerPatternDelayCommand(2)),
+			At(0, 0, new ApplyTrackerPatternDelayCommand(3)),
 			At(0, 0, new ApplyTrackerTempoCommand(0x12))), 1, root);
 		long second = timeline.Add(new RawSource(
 			At(1, 0, new ApplyTrackerPatternDelayCommand(1)),
@@ -586,8 +586,8 @@ public sealed class IncrementalTempoArbitrationTests
 		SetTempoRampCommand[] ramps = notes.SelectMany(x => x.Commands)
 			.OfType<SetTempoRampCommand>().ToArray();
 		Assert.That(ramps.Select(x => x.EndingTempo),
-			Is.EqualTo(new[] { 135.0, 150.0, 165.0, 170.0 }));
-		Assert.That(root.State.Tempo, Is.EqualTo(170.0));
+			Is.EqualTo(new[] { 135.0, 150.0, 165.0, 175.0 }));
+		Assert.That(root.State.Tempo, Is.EqualTo(175.0));
 		Assert.That(timeline.HasOutstandingWork(first), Is.False);
 		Assert.That(timeline.HasOutstandingWork(second), Is.False);
 	}
