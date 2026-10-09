@@ -216,7 +216,8 @@ public sealed class PlaybackVoice
 		ulong modulationSeed,
 		int originPhysicalChannel,
 		double sourceGainMultiplier = 1.0,
-		long originPhysicalPlaybackOwner = 0)
+		long originPhysicalPlaybackOwner = 0,
+		IReadOnlyList<PlaybackChannelState>? enclosingVolumeChannels = null)
 	{
 		Sound = sound ?? throw new ArgumentNullException(nameof(sound));
 		SoundState = soundState ?? throw new ArgumentNullException(nameof(soundState));
@@ -234,6 +235,8 @@ public sealed class PlaybackVoice
 			throw new ArgumentOutOfRangeException(nameof(sourceGainMultiplier));
 
 		SourceGainMultiplier = sourceGainMultiplier;
+		EnclosingVolumeChannels = enclosingVolumeChannels
+			?? Array.Empty<PlaybackChannelState>();
 		StartFrame = startFrame;
 		OriginPhysicalChannel = originPhysicalChannel;
 		OriginPhysicalPlaybackOwner = originPhysicalPlaybackOwner;
@@ -285,6 +288,9 @@ public sealed class PlaybackVoice
 	/// <summary>Immutable invocation-local source gain, separate from the
 	/// mutable shared channel's tracker note volume.</summary>
 	public double SourceGainMultiplier { get; }
+	/// <summary>Caller-channel overall-volume ancestry remains live while
+	/// descendant voices use their own independent logical channel memory.</summary>
+	public IReadOnlyList<PlaybackChannelState> EnclosingVolumeChannels { get; }
 
 	public double NoteVolume { get; internal set; }
 

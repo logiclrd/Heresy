@@ -316,6 +316,10 @@ public sealed class PreparedIncrementalPlaybackFactory
 		int? repeatStartRow = null)
 	{
 
+		timeline.ReadRememberedNoteVolume = (owner, host, time) =>
+			session.GetRememberedNoteVolume(host, owner,
+				FrameTime.Ceiling(time, session.SampleRate));
+
 		List<PreparedRecursiveMixdownSound> privateVoices = [];
 		Dictionary<ObjectId, ISound> registeredVoices = [];
 		Dictionary<(long Owner, int Host), TrackedMixdown> physicalVoices = [];

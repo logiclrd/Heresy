@@ -227,6 +227,15 @@ public sealed class PlaybackSession
 	public PlaybackChannelState GetChannelState(int channel)
 		=> GetChannelState(channel, 0);
 
+	/// <summary>Recalled note volume as of the requested future musical
+	/// boundary, including the currently playing voice's volume curve.</summary>
+	public double GetRememberedNoteVolume(int host, long owner, long frame)
+	{
+		PlaybackChannelState channel = GetChannelState(host, owner);
+		return channel.CurrentVoice?.GetBaseNoteVolume(frame)
+			?? channel.NoteVolume;
+	}
+
 	/// <summary>Owner 0 selects the ordinary parent physical channel;
 	/// positive owners have independent logical channels at that host.</summary>
 	public PlaybackChannelState GetChannelState(int channel, long owner)
@@ -898,6 +907,12 @@ public sealed class PlaybackSession
 				channel.SetNoteVolume(volume.Volume);
 				break;
 
+			case RememberFlatteningNoteVolumeCommand remembered:
+				// Starting a flattened collection is a logical note start,
+				// not a modification of an older live physical voice.
+				channel.CaptureCurrentNoteVolume(remembered.Volume);
+				break;
+
 			case SetOverallChannelVolumeCommand volume:
 				channel.SetOverallVolume(
 					eventFrame,
@@ -1299,6 +1314,10 @@ public sealed class PlaybackSession
 		if (start.Volume.HasValue)
 			channel.SetNoteVolume(start.Volume.Value);
 
+		List<PlaybackChannelState> enclosingVolumes = [];
+		if (start.ParentOverallChannels is { } parents)
+			foreach (ParentVolumeChannel parent in parents)
+				enclosingVolumes.Add(GetChannelState(parent.Host, parent.Owner));
 		PlaybackVoice voice = new(
 			invocation.Sound,
 			invocation.State,
@@ -1313,7 +1332,8 @@ public sealed class PlaybackSession
 			_nextVoiceModulationSeed++,
 			physicalChannel,
 			sourceGainMultiplier: start.GainMultiplier,
-			originPhysicalPlaybackOwner: physicalPlaybackOwner);
+			originPhysicalPlaybackOwner: physicalPlaybackOwner,
+			enclosingVolumeChannels: enclosingVolumes);
 
 		channel.AttachVoice(voice, eventFrame);
 	}
@@ -1993,9 +2013,10 @@ public sealed class PlaybackSession
 		for (int frame = 0; frame < activeFrames; frame++)
 		{
 			long absoluteFrame = absoluteStartFrame + frame;
-			double volume =
-				voice.SourceGainMultiplier
-				* voice.GetNoteVolume(absoluteFrame)
+			double volume = voice.SourceGainMultiplier;
+			foreach (PlaybackChannelState enclosing in voice.EnclosingVolumeChannels)
+				volume *= enclosing.ReadEffectiveOverallVolume(absoluteFrame);
+			volume *= voice.GetNoteVolume(absoluteFrame)
 				* voice.GetVolumeEnvelopeValue(absoluteFrame)
 				* voice.OverallVolume
 				* voice.GetFadeGain(

@@ -287,6 +287,9 @@ public sealed class PlaybackChannelState
 		}
 	}
 
+	internal double ReadEffectiveOverallVolume(long absoluteFrame)
+		=> GetEffectiveOverallVolume(absoluteFrame);
+
 	private double GetEffectiveOverallVolume(long absoluteFrame)
 	{
 		ActiveOverallVolumeSlide? slide =
