@@ -218,12 +218,21 @@ Items that were already completed remain in Git history, not in this checklist.
   owner-scoped voices in multichannel rendering, normal release,
   cancellation, indefinite-tail cleanup and anti-click handling.
   Global virtual broadcasts also include unscoped preview and
-  displaced NNA virtual voices. The bridge currently dispatches at
-  render **block** boundaries, not at incremental event timestamps:
-  a preprepared sample-accurate recursive timeline consumer, complete
-  scoped voice ancestry and production migration remain open.
-  Private mixdown state/clock and cooked multichannel mixdown audio
-  are also separate integration work.
+  displaced NNA virtual voices. The first **sample-accurate**
+  prepared recursive consumer now exists as the opt-in
+  `Heresy.Playback.PreparedIncrementalAudioSource`: a non-audio
+  producer calls PrepareThrough(exclusiveEnd) to stage chronological
+  `IncrementalRecursiveTimeline` events and invocation identities.
+  Render requires prepared coverage, never executes a source script,
+  and splits audio output at `FrameTime.Ceiling` exact event frames,
+  applying each event to the existing scoped voice renderer before
+  continuing. Uneven block sizes, fractional frames, shared Tempo
+  and same-ID independent virtual voices have PCM regressions.
+  The earlier EnqueueScopedEvent live-preview interface still uses
+  block boundaries by design. A production snapshot/asset factory,
+  asynchronous lookahead worker, full cancellation/tail propagation,
+  broader effects and private multichannel mixdown clocks remain
+  separate integration work; do not switch production paths yet.
   Require test parity, chronological raw-emission filtering, and
   realtime/offline determinism before retiring eager scheduling.
   Replace the restricted chronological scheduler rather than adding
