@@ -217,7 +217,7 @@ public sealed class IncrementalTrackerTickEffectsTests
     }
 
     [Test]
-    public void Q00UsesExistingCountdownOnMappedChildAcrossPatternInvocations()
+    public void Q00UsesExistingCountdownAcrossOrdersOfOneLogicalInvocation()
     {
         SequencingContext root = new();
         DataPatternDefinition first = Pattern();
@@ -228,7 +228,8 @@ public sealed class IncrementalTrackerTickEffectsTests
         next.Grid.GetOrCreateCell(0, 0).Effects.Add(new RetriggerPatternEffect(0x00));
 
         using IncrementalPatternTimeline timeline = new(root);
-        timeline.Add(first, 1, root.FlattenedChild(physicalChannelOffset: 3));
+        SequencingContext child = root.FlattenedChild(physicalChannelOffset: 3);
+        timeline.Add(first, 1, child);
         List<NoteEvent> actual = [];
         bool addedNext = false;
         while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
@@ -238,7 +239,7 @@ public sealed class IncrementalTrackerTickEffectsTests
             if (!addedNext && timeline.Elapsed == TimeSpan.FromMilliseconds(120))
             {
                 addedNext = true;
-                timeline.Add(next, 1, root.FlattenedChild(physicalChannelOffset: 3));
+                timeline.Add(next, 1, child);
             }
         }
 
