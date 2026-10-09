@@ -186,7 +186,7 @@ public sealed class TonePortamentoPatternEffectTests
 	}
 
 	[Test]
-	public void FlattenedChildSharesMappedTonePortamentoMemory()
+	public void FlattenedChildDoesNotRecallParentTonePortamentoSpeed()
 	{
 		SequencingContext parent = new(physicalChannelBase: 3);
 
@@ -211,10 +211,8 @@ public sealed class TonePortamentoPatternEffectTests
 			output,
 			out _);
 
-		SetTonePortamentoCommand recalled =
-			(SetTonePortamentoCommand)output.Freeze()[0].Commands[0];
-
-		Assert.That(recalled.LinearUnitsPerTick, Is.EqualTo(24.0));
+		Assert.That(output.Freeze(), Is.Empty,
+			"G00 without local Gxx memory has no tone trajectory to start.");
 	}
 
 	private static DataPatternDefinition PatternWithTonePortamento(
