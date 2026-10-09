@@ -8,7 +8,6 @@ using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequences;
-using Heresy.Scripting.Compilation;
 using Heresy.Core.Samples;
 using Heresy.Render.Envelopes;
 using Heresy.Render.FmSynthesis;
@@ -67,7 +66,7 @@ internal sealed class PlaybackSnapshotSoundResolver
 	/// sound object, including sources not named in the root arrangement.
 	/// Nested Pattern/Sequence sources are not eagerly compiled by this
 	/// preload. Producer-prepared private mixdowns register their own transient
-	/// sound identities, while the legacy compiled resolver remains separate.
+	/// sound identities; no legacy greedy resolver remains.
 	/// </summary>
 	public void PrepareDirectSources()
 	{
@@ -130,22 +129,9 @@ internal sealed class PlaybackSnapshotSoundResolver
 
 			case PatternDefinition when mixdown:
 			case SequenceDefinition when mixdown:
-				SongScheduleCompilationResult compilation =
-					songObject is PatternDefinition
-						? SongScheduleCompiler.CompilePattern(_document, sourceId)
-						: SongScheduleCompiler.CompileSequence(_document, sourceId);
-				if (!compilation.Success || compilation.Schedule is null)
-				{
-					throw new PlaybackSourceCompilationException(
-						$"Could not compile nested sound source {sourceId.Value}.",
-						compilation.Diagnostics);
-				}
-				sound = new CompiledNestedMixdownSound(
-					sourceId,
-					compilation.Schedule,
-					compilation.Duration,
-					this);
-				break;
+				throw new InvalidOperationException(
+					"Recursive Pattern/Sequence mixdowns must be constructed by " +
+					"the incremental invocation owner, not a compiled sound resolver.");
 
 			default:
 				sound = null;
