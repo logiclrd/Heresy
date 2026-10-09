@@ -245,11 +245,11 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		Assert.That(childSession.BaselineTempo, Is.EqualTo(250.0));
 		float[] pcm = new float[140];
 		plan.Source.Render(pcm.Length, pcm);
-		Assert.That(pcm[89], Is.Zero);
-		Assert.That(pcm[90], Is.EqualTo(0.5f).Within(1e-5f),
+		Assert.That(pcm[88], Is.Zero);
+		Assert.That(pcm[89], Is.EqualTo(0.5f).Within(1e-5f),
 			"Child's second-row Tempo change accelerates its third row.");
-		Assert.That(pcm[119], Is.Zero);
-		Assert.That(pcm[120], Is.EqualTo(0.5f).Within(1e-5f),
+		Assert.That(pcm[118], Is.Zero);
+		Assert.That(pcm[119], Is.EqualTo(0.5f).Within(1e-5f),
 			"Private tempo must not retime the parent's next row.");
 	}
 
