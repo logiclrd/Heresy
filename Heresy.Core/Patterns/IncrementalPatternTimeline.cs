@@ -801,7 +801,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	/// </summary>
 	private sealed record ActiveTempoRamp(
 		double StartTick, double EndTick,
-		double StartTempo, double EndTempo)
+		double StartTempo, double EndTempo,
+		IReadOnlyList<double>? BoundaryTempoSets = null)
 	{
 		public double TempoAt(double tick)
 			=> StartTempo + (EndTempo - StartTempo)
@@ -1006,12 +1007,33 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					Elapsed = boundaryWall;
 					CheckCooperationBudget();
 					ActiveTempoRamp nextSegment = _futureTempoRamps.Dequeue();
+					// SEy repeats tracker immediate Txx sets at every
+					// compatibility-row boundary before applying that
+					// repetition's slide. They are *not* applied during
+					// preparation of future rows.
+					if (nextSegment.BoundaryTempoSets is { } sets)
+					{
+						foreach (double tempo in sets)
+						{
+							if (Math.Abs(_root.State.Tempo - tempo) < 1e-12)
+								continue;
+							_root.State.Tempo = tempo;
+							QueueTimingEvent(new NoteEvent(
+								new MusicalTime(Elapsed, 0),
+								ChannelTarget.Global, [new SetTempoCommand(tempo)]),
+								_futureTempoOwner);
+						}
+					}
 					_tempoRamp = nextSegment;
-					QueueTimingEvent(new NoteEvent(
-						new MusicalTime(Elapsed, 0), ChannelTarget.Global,
-						[new SetTempoRampCommand(nextSegment.EndTempo,
-							nextSegment.EndTick - nextSegment.StartTick)]),
-						_futureTempoOwner);
+					if (Math.Abs(nextSegment.StartTempo
+						- nextSegment.EndTempo) > 1e-12)
+					{
+						QueueTimingEvent(new NoteEvent(
+							new MusicalTime(Elapsed, 0), ChannelTarget.Global,
+							[new SetTempoRampCommand(nextSegment.EndTempo,
+								nextSegment.EndTick - nextSegment.StartTick)]),
+							_futureTempoOwner);
+					}
 					continue;
 				}
 			}
@@ -1142,14 +1164,22 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		if (pending.Length == 0)
 			return false;
 
-		// A ramp from several sources has one duration only when they
-		// agree on the tick span. Defer mixed-speed arbitration rather
-		// than quietly using whichever invocation happened to run first.
-		if (pending.Any(x => x.Cursor.ExtraRowSpans != 0))
+		// An SEy repeat belongs to one Pattern invocation. Each replayed
+		// compatibility row has that invocation's original captured span.
+		// Cross-invocation repetition is not yet a single shared policy;
+		// retain explicit rejection rather than pre-applying a sibling's
+		// future Txx state.
+		int repeats = pending.Max(x => x.Cursor.ExtraRowSpans);
+		if (repeats != 0 && pending.Any(x =>
+			x.Cursor.Sequence != pending[0].Cursor.Sequence
+			|| x.Cursor.ExtraRowSpans != repeats))
 			throw new NotSupportedException(
-				"SEy repeating Txx ramps requires a resumable multi-span tempo state machine.");
-		// Resolve each command exactly once, in mapped physical order.
-		// Each slide retains its own previously captured row span.
+				"Simultaneous SEy-repeated Txx from independent Patterns needs cross-invocation replay arbitration.");
+
+		// Resolve each original Txx once, in mapped physical order.
+		// Capture the resolved bytes; future SEy rows reuse those bytes
+		// without repeatedly committing T00 effect memory.
+		List<byte> immediateSets = [];
 		List<(byte Parameter, int Span)> slides = [];
 		foreach (var request in pending)
 		{
@@ -1160,6 +1190,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				.ResolveEffectParameter(EffectMemorySlot.Tempo, input);
 			if (parameter >= 0x20)
 			{
+				immediateSets.Add(parameter);
 				_tempoRamp = null;
 				_futureTempoRamps.Clear();
 				_root.State.Tempo = parameter;
@@ -1177,7 +1208,51 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			request.Cursor.ConsumeTiming();
 		}
 
-		if (slides.Count > 0)
+		if (repeats > 0)
+		{
+			int span = checked((int)pending[0].Cursor.EffectiveSpanTicks);
+			// Every repeated compatibility row uses exactly the same
+			// (S6x-adjusted) captured number of ticks. T0x/T1x slides
+			// restart from the *actual endpoint* of the preceding
+			// repetition; T20-TFF resets precede a repeat's slide.
+			double beginning = _root.State.Tempo;
+			List<ActiveTempoRamp> segments = [];
+			for (int repetition = 0; repetition <= repeats; repetition++)
+			{
+				IReadOnlyList<double>? sets = null;
+				if (repetition != 0 && immediateSets.Count != 0)
+				{
+					sets = immediateSets.Select(x => (double)x).ToArray();
+					beginning = sets[^1];
+				}
+				double ending = beginning;
+				for (int transition = 1; transition < span; transition++)
+				{
+					foreach (var slide in slides)
+						ending = PatternNoteProcessor.ResolveTrackerTempoAtTick(
+							ending, slide.Parameter, firstTick: false);
+				}
+				segments.Add(new ActiveTempoRamp(
+					_tick + repetition * span,
+					_tick + (repetition + 1) * span,
+					beginning, ending, sets));
+				beginning = ending;
+			}
+			_tempoRamp = segments[0];
+			_futureTempoRamps.Clear();
+			_futureTempoOwner = pending[0].Cursor.Sequence;
+			foreach (ActiveTempoRamp future in segments.Skip(1))
+				_futureTempoRamps.Enqueue(future);
+			if (Math.Abs(segments[0].EndTempo
+				- segments[0].StartTempo) > 1e-12)
+			{
+				QueueTimingEvent(new NoteEvent(
+					new MusicalTime(Elapsed, 0), ChannelTarget.Global,
+					[new SetTempoRampCommand(segments[0].EndTempo, span)]),
+					_futureTempoOwner);
+			}
+		}
+		else if (slides.Count > 0)
 		{
 			int[] spans = slides.Select(x => x.Span).Distinct()
 				.OrderBy(x => x).ToArray();
