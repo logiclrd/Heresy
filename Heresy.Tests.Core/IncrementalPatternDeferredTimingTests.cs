@@ -291,6 +291,19 @@ public sealed class IncrementalPatternDeferredTimingTests
 	}
 
 	[Test]
+	public void FixedWallSDxResolvesAtomicVolumeAndSampleOffsetOnce()
+	{
+		RawSource source = new(Event(0,
+			TimeSpan.FromMilliseconds(12), ChannelTarget.Physical(0),
+			new StartNoteCommand((Heresy.Core.Objects.ObjectId)10U),
+			new SetNoteVolumeCommand(0.5),
+			new ApplySampleOffsetCommand(1),
+			new ApplyTrackerNoteDelayCommand(2),
+			new ApplyRetriggerCommand(0x03)));
+		AssertTrackerWallParity(source, 1);
+	}
+
+	[Test]
 	public void ConcurrentTempoChangeRetimesTickButPreservesFixedWallOffset()
 	{
 		RawSource source = new(
