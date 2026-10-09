@@ -53,6 +53,47 @@ public sealed record PlaybackPositionTimelineEntry(
 public sealed class PlaybackPositionTimeline
 {
 	private readonly IReadOnlyList<PlaybackPositionTimelineEntry> _entries;
+	private readonly object _streamGate = new();
+	private readonly List<PlaybackPositionTimelineEntry>? _streamEntries;
+	private TimeSpan _streamEnd = TimeSpan.MaxValue;
+
+	/// <summary>A timeline populated incrementally by the real playback cursor,
+	/// rather than by eagerly traversing all future sequence orders.</summary>
+	public PlaybackPositionTimeline()
+	{
+		_streamEntries = [];
+		_entries = _streamEntries;
+		Duration = TimeSpan.MaxValue;
+		Repeat = false;
+	}
+
+	public void Append(PlaybackPositionTimelineEntry entry)
+	{
+		ArgumentNullException.ThrowIfNull(entry);
+		if (_streamEntries is null)
+			throw new InvalidOperationException("Static position timelines cannot be extended.");
+		lock (_streamGate)
+		{
+			if (_streamEnd != TimeSpan.MaxValue)
+				return;
+			if (_streamEntries.Count != 0
+				&& entry.Offset < _streamEntries[^1].Offset)
+				throw new InvalidOperationException("Streamed Pattern rows must be chronological.");
+			_streamEntries.Add(entry);
+		}
+	}
+
+	public void Finish(TimeSpan duration)
+	{
+		if (_streamEntries is null)
+			throw new InvalidOperationException("Static position timelines cannot be finished.");
+		lock (_streamGate)
+		{
+			_streamEnd = duration;
+			Duration = duration;
+		}
+	}
+
 
 	public PlaybackPositionTimeline(
 		IEnumerable<PlaybackPositionTimelineEntry> entries,
@@ -110,6 +151,12 @@ public sealed class PlaybackPositionTimeline
 	public PlaybackPatternPosition? GetPositionAt(
 		TimeSpan elapsed)
 	{
+		lock (_streamGate)
+			return GetPositionAtCore(elapsed);
+	}
+
+	private PlaybackPatternPosition? GetPositionAtCore(TimeSpan elapsed)
+	{
 		if (elapsed < TimeSpan.Zero)
 			throw new ArgumentOutOfRangeException(nameof(elapsed));
 		if (_entries.Count == 0
@@ -156,10 +203,11 @@ public sealed class PlaybackPositionTimeline
 			: null;
 	}
 
-	public bool IsComplete(
-		TimeSpan elapsed)
-		=> !Repeat
-			&& elapsed >= Duration;
+	public bool IsComplete(TimeSpan elapsed)
+	{
+		lock (_streamGate)
+			return !Repeat && elapsed >= Duration;
+	}
 }
 
 public sealed class PlaybackPositionChangedEventArgs : EventArgs
