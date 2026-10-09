@@ -117,6 +117,59 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 	}
 
 	[Test]
+	public void CancelingSequenceDoesNotSuppressOtherRootPendingCursorEvent()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sampleId,
+			"Independent", "independent.wav", LongWave(16384)));
+
+		ObjectId silentId = document.AllocateObjectId();
+		document.Add(new DataPatternDefinition(silentId, "Long silent order")
+		{
+			RowCount = 4, ChannelCount = 1,
+		});
+		ObjectId sequenceId = document.AllocateObjectId();
+		DataSequenceDefinition sequence = new(sequenceId, "Cancelled sequence");
+		sequence.Entries.Add(new SequenceEntry(silentId));
+		document.Add(sequence);
+
+		ObjectId otherId = document.AllocateObjectId();
+		DataPatternDefinition other = new(otherId, "Independent root")
+		{
+			RowCount = 3, ChannelCount = 1,
+		};
+		other.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote(sampleId);
+		document.Add(other);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, sequenceId);
+		plan.Timeline.AddRoot(otherId);
+
+		// Precisely exercise the existing one-event lookahead: the
+		// independent root's row-1 event is ready for frame 120, but
+		// the PCM render head is still on frame zero. Sequence order
+		// frames and Pattern cursors have different identity spaces.
+		MethodInfo prime = typeof(PreparedIncrementalAudioSource).GetMethod(
+			"FindNextEvent", BindingFlags.Instance | BindingFlags.NonPublic)!;
+		prime.Invoke(plan.Source, [1000L]);
+		FieldInfo pending = typeof(PreparedIncrementalAudioSource).GetField(
+			"_pendingEvent", BindingFlags.Instance | BindingFlags.NonPublic)!;
+		Assert.That(pending.GetValue(plan.Source), Is.Not.Null);
+		Assert.That(plan.Source.NextFrame, Is.Zero);
+		Assert.That(plan.Source.Cancel(plan.RootInvocationId), Is.True);
+
+		float[] pcm = new float[135];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm[119], Is.Zero.Within(1e-6f));
+		Assert.That(pcm[120], Is.EqualTo(0.5f).Within(1e-6f),
+			"Cancelling a Sequence must not cancel an independent cursor "
+			+ "whose numeric ID matches a removed recursive frame.");
+		Assert.That(pcm[134], Is.EqualTo(0.5f).Within(1e-6f));
+	}
+
+	[Test]
 	public void HundredsOfFlatInvocationsReclaimRendererMemoryAfterTheirVoicesEnd()
 	{
 		SongDocument document = new();
