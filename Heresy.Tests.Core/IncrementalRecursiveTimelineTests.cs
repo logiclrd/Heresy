@@ -1059,6 +1059,66 @@ public sealed class IncrementalRecursiveTimelineTests
 		}
 	}
 
+	[Test]
+	public void InstigatorCutCancelsOnlyItsFlattenedSubtreeNotSiblingOrHost()
+	{
+		DataPatternDefinition parent = Pattern(1, 4);
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote((ObjectId)2U);
+		parent.Grid.GetOrCreateCell(0, 1).Note =
+			new StartPatternNote((ObjectId)3U);
+		parent.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteCut();
+		DataPatternDefinition first = Pattern(2, 3);
+		first.Grid.GetOrCreateCell(2, 0).Note = new PatternNoteOff();
+		DataPatternDefinition sibling = Pattern(3, 3);
+		sibling.Grid.GetOrCreateCell(2, 0).Note = new PatternNoteOff();
+		SequencingContext context = new();
+		using IncrementalRecursiveTimeline timeline = new(
+			context, new Resolver(parent, first, sibling));
+		timeline.AddRoot(parent.Id);
+		NoteEvent[] notes = Drain(timeline);
+		ControlFlattenedSourceCommand[] controls = notes
+			.SelectMany(n => n.Commands)
+			.OfType<ControlFlattenedSourceCommand>().ToArray();
+		Assert.That(controls, Has.Length.EqualTo(1));
+		Assert.That(controls[0].Action, Is.EqualTo(NoteDisplacementAction.Cut));
+		Assert.That(notes.SelectMany(n => n.Commands).OfType<NoteOffCommand>()
+			.Count(), Is.EqualTo(1),
+			"The terminated child cannot emit its later note-off, but the sibling still does.");
+		Assert.That(notes.Single(n => n.Commands.Any(c =>
+			c is NoteOffCommand)).Offset.TimeOffset,
+			Is.EqualTo(TimeSpan.FromMilliseconds(240)));
+		Assert.That(context.ScopedMemory.ActiveScopeCount, Is.Zero);
+	}
+
+	[TestCase(NoteDisplacementAction.Cut, false)]
+	[TestCase(NoteDisplacementAction.Continue, true)]
+	[TestCase(NoteDisplacementAction.Off, false)]
+	[TestCase(NoteDisplacementAction.Fade, false)]
+	public void NewNoteActionControlsOldFlattenedProducer(
+		NoteDisplacementAction action, bool childContinues)
+	{
+		DataPatternDefinition parent = Pattern(1, 4);
+		PatternCell initial = parent.Grid.GetOrCreateCell(0, 0);
+		initial.Note = new StartPatternNote((ObjectId)2U);
+		initial.Effects.Add(new TrackerNewNoteActionPatternEffect(action));
+		parent.Grid.GetOrCreateCell(1, 0).Note =
+			new StartPatternNote((ObjectId)90U);
+		DataPatternDefinition child = Pattern(2, 3);
+		child.Grid.GetOrCreateCell(2, 1).Note = new PatternNoteCut();
+		SequencingContext context = new();
+		using IncrementalRecursiveTimeline timeline = new(
+			context, new Resolver(parent, child));
+		timeline.AddRoot(parent.Id);
+		NoteEvent[] notes = Drain(timeline);
+		Assert.That(notes.SelectMany(n => n.Commands)
+			.OfType<ControlFlattenedSourceCommand>().Single().Action,
+			Is.EqualTo(action));
+		Assert.That(notes.SelectMany(n => n.Commands)
+			.OfType<NoteCutCommand>().Any(), Is.EqualTo(childContinues));
+		Assert.That(context.ScopedMemory.ActiveScopeCount, Is.Zero);
+	}
+
 	private static DataPatternDefinition Pattern(uint id, int rows)
 		=> new((ObjectId)id, "Pattern")
 		{

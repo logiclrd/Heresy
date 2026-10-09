@@ -1786,6 +1786,117 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			SongDocumentSnapshot.Create(document), badId));
 	}
 
+	[TestCase(false)]
+	[TestCase(true)]
+	public void FlattenedInstigatorCutOrOffHaltsFutureNotesWithoutCuttingHost(
+		bool release)
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample,
+			"Sustain", "sustain.wav", LongWave(16384)));
+		ObjectId child = document.AllocateObjectId();
+		DataPatternDefinition nested = new(child, "Child")
+			{ RowCount = 3, ChannelCount = 3 };
+		nested.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote(sample);
+		nested.Grid.GetOrCreateCell(2, 2).Note = new StartPatternNote(sample);
+		document.Add(nested);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent")
+			{ RowCount = 3, ChannelCount = 2 };
+		parent.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(child);
+		parent.Grid.GetOrCreateCell(1, 0).Note =
+			release ? new PatternNoteOff() : new PatternNoteCut();
+		document.Add(parent);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, root);
+		float[] pcm = new float[300];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm[0], Is.EqualTo(0.5f).Within(1e-6f));
+		Assert.That(pcm[110], Is.EqualTo(0.5f).Within(1e-6f));
+		Assert.That(pcm[260], Is.EqualTo(release ? 0.5f : 0f).Within(1e-5f),
+			"The child may not start its second note at row 2; an Off lets the "
+			+ "first sample tail, while a Cut kills it.");
+		if (release)
+		{
+			PlaybackVoice? voice = plan.Session.GetChannelState(1, 1)
+				.CurrentVoice;
+			Assert.That(voice?.SoundState.NoteOffTime,
+				Is.EqualTo(TimeSpan.FromMilliseconds(120)),
+				"Note Off must reach the child voice through its scope ancestry.");
+		}
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void SourceNnaContinueKeepsOldProducerWhileDefaultCutStopsIt(
+		bool continueOld)
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample,
+			"Sustain", "sustain.wav", LongWave(16384)));
+		ObjectId child = document.AllocateObjectId();
+		DataPatternDefinition nested = new(child, "Child")
+			{ RowCount = 3, ChannelCount = 3 };
+		nested.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote(sample);
+		nested.Grid.GetOrCreateCell(2, 2).Note = new StartPatternNote(sample);
+		document.Add(nested);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent")
+			{ RowCount = 3, ChannelCount = 2 };
+		PatternCell start = parent.Grid.GetOrCreateCell(0, 0);
+		start.Note = new StartPatternNote(child);
+		if (continueOld)
+			start.Effects.Add(new TrackerNewNoteActionPatternEffect(
+				NoteDisplacementAction.Continue));
+		parent.Grid.GetOrCreateCell(1, 0).Note =
+			new StartPatternNote(sample);
+		document.Add(parent);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, root);
+		float[] pcm = new float[280];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm[0], Is.EqualTo(0.5f).Within(1e-6f));
+		Assert.That(pcm[260],
+			Is.EqualTo(continueOld ? 1.5f : 0.5f).Within(1e-5f),
+			"Continue must preserve the old collection's future events as "
+			+ "well as its currently playing voices.");
+	}
+
+	[Test]
+	public void ExplicitCancellationCutsNestedPhysicalVoicesAtCurrentFrame()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample,
+			"Sustain", "sustain.wav", LongWave(16384)));
+		ObjectId child = document.AllocateObjectId();
+		DataPatternDefinition nested = new(child, "Child")
+			{ RowCount = 4, ChannelCount = 2 };
+		nested.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote(sample);
+		document.Add(nested);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent")
+			{ RowCount = 4, ChannelCount = 1 };
+		parent.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(child);
+		document.Add(parent);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, root);
+		float[] intro = new float[10];
+		plan.Source.Render(10, intro);
+		Assert.That(intro[0], Is.EqualTo(0.5f).Within(1e-6f));
+		Assert.That(plan.Source.Cancel(plan.RootInvocationId), Is.True);
+		float[] after = new float[60];
+		plan.Source.Render(60, after);
+		Assert.That(after[50], Is.Zero.Within(1e-6f),
+			"Explicit subtree cancellation must not leave its physical-host voice sounding.");
+		Assert.That(plan.SequencingContext.ScopedMemory.ActiveScopeCount, Is.Zero);
+	}
+
 	private static RenderConfiguration Mono(int rate)
 		=> new(rate, [new OutputChannelConfiguration(
 			Vector3.Zero, positionalImportance: 0.0)]);
