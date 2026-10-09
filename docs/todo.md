@@ -66,7 +66,14 @@ Items that were already completed remain in Git history, not in this checklist.
   Tempo spans, matching eager T0x/T1x slides and repeating T20–TFF
   immediate sets; the legacy eager processor also recognizes SEy
   when combined with Txx in one tracker cell. Competing *independent*
-  SEy/Txx invocations still need cross-invocation replay arbitration.
+  SEy/Txx invocations now compose with independent per-invocation
+  captured row spans and repeat counts. The shared piecewise Tempo
+  plan has owner-aware contributions: canceling one Pattern removes
+  only its remaining repetitions and recalculates from the actually
+  reached shared Tempo. Simultaneous immediate Tempo sets remain
+  in mapped physical-channel order; no future Pattern iterator is
+  consumed during planning. Same-boundary collisions with newly
+  arriving Txx remain a further stress-test target.
   The incremental timeline now recognizes **S6x and SEy variable-length
   row spans**: physical-channel S6x ticks accumulate, lowest mapped
   channel SEy wins, ordinary notes execute only once, and admitted
@@ -74,7 +81,8 @@ Items that were already completed remain in Git history, not in this checklist.
   fractional offsets), clearing at the final delayed row end.
   S6x reuses the common processor's TicksPerRow override and extends
   isolated tracker Txx ramps. SEy combined with Txx is now handled
-  for one source invocation; cross-invocation repeated Txx and other
+  for independent flattened Pattern invocations as well, including
+  different captured spans and owner-aware cancellation. Other
   unported tick/repeat effects remain explicitly unsupported.
   The next incremental-timeline slice now uses invocation-local
   tracker-tick deadlines for SCx note cut, SDx delayed atomic note setup,
@@ -173,7 +181,7 @@ Items that were already completed remain in Git history, not in this checklist.
   ordering contract is settled: earlier raw musical-row events are
   silently dropped at the consumption boundary; no arbitrary sorting
   or lookahead is required. Continue incompatible Tempo spans,
-  cross-invocation SEy/Txx Tempo contention, SDx/Qxy,
+  exact-boundary Txx/SEy collision parity, SDx/Qxy,
   virtual/mixdown channels and advanced effects before production
   recursive-clock migration.
   Require test parity, chronological raw-emission filtering, and
