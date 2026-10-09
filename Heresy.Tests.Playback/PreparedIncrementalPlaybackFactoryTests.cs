@@ -395,6 +395,88 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 	}
 
 	[Test]
+	public void PastNoteCutTerminatesOnlyTheDisplacedMixdown()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		SampleDefinition sample = SampleDefinition.CreateImported(
+			sampleId, "Loop", "memory.wav", Wave(16384));
+		sample.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 4);
+		document.Add(sample);
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Long child")
+		{
+			RowCount = 8, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({sampleId.Value}));",
+		});
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "NNA and past cut")
+		{
+			RowCount = 4, ChannelCount = 1,
+		};
+		PatternCell start = parent.Grid.GetOrCreateCell(0, 0);
+		start.Note = new StartPatternNote(childId, mixdown: true);
+		start.Effects.Add(new TrackerNewNoteActionPatternEffect(
+			NoteDisplacementAction.Continue));
+		parent.Grid.GetOrCreateCell(1, 0).Note =
+			new StartPatternNote(sampleId);
+		parent.Grid.GetOrCreateCell(2, 0).Effects.Add(
+			new TrackerPastNoteActionPatternEffect(TrackerPastNoteAction.Cut));
+		document.Add(parent);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, parentId);
+		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(310));
+		float[] pcm = new float[300];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm[200], Is.EqualTo(1f).Within(1e-5f));
+		Assert.That(pcm[280], Is.EqualTo(0.5f).Within(1e-5f));
+	}
+
+	[Test]
+	public void NnaNoteOffReleasesOldPrivateInputButNotReplacement()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		SampleDefinition sample = SampleDefinition.CreateImported(
+			sampleId, "Loop", "memory.wav", Wave(16384));
+		sample.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 4);
+		document.Add(sample);
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Long child")
+		{
+			RowCount = 8, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({sampleId.Value}));",
+		});
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "NNA off")
+		{
+			RowCount = 3, ChannelCount = 1,
+		};
+		PatternCell start = parent.Grid.GetOrCreateCell(0, 0);
+		start.Note = new StartPatternNote(childId, mixdown: true);
+		start.Effects.Add(new TrackerNewNoteActionPatternEffect(
+			NoteDisplacementAction.Off));
+		parent.Grid.GetOrCreateCell(1, 0).Note =
+			new StartPatternNote(sampleId);
+		document.Add(parent);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, parentId);
+		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(200));
+		float[] output = new float[130];
+		plan.Source.Render(output.Length, output);
+		Assert.That(output[110], Is.EqualTo(0.5f).Within(1e-5f));
+		Assert.That(output[125], Is.EqualTo(0.5f).Within(1e-5f));
+		// NNA Off applies to the previous private input as well as the
+		// parent-renderer voice; only the new direct sample survives.
+		Assert.That(plan.Session.VirtualVoices,
+			Is.All.Matches<Heresy.Render.Playback.PlaybackVoice>(
+				voice => voice.Sound.GetType().Name != "PreparedRecursiveMixdownSound"
+					|| voice.SoundState.NoteOffTime.HasValue));
+	}
+
+	[Test]
 	public void RequiresRootAndRejectsInvalidRoslynDuringPreparation()
 	{
 		SongDocument document = new();
