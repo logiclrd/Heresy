@@ -170,6 +170,83 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			"Child private Tempo must not retime the parent row.");
 	}
 
+	[Test]
+	public void FlattenedInitialSourceVolumeScalesVoicesWithoutLeakingToParentNotes()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample, "PCM",
+			"pcm.wav", Wave(16384)));
+		ObjectId child = document.AllocateObjectId();
+		DataPatternDefinition inner = new(child, "Child")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		inner.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(sample);
+		document.Add(inner);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent")
+		{
+			RowCount = 3, ChannelCount = 1,
+		};
+		PatternCell nested = parent.Grid.GetOrCreateCell(0, 0);
+		nested.Note = new StartPatternNote(child);
+		nested.Volume = 0.25;
+		parent.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote(sample);
+		document.Add(parent);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000)).Create(document, root);
+		float[] pcm = new float[122];
+		plan.Source.Render(2, pcm.AsSpan(0, 2));
+		plan.Source.Render(120, pcm.AsSpan(2));
+		Assert.That(pcm[0], Is.EqualTo(0.125f).Within(1e-6f));
+		Assert.That(pcm[1], Is.EqualTo(0.125f).Within(1e-6f));
+		Assert.That(pcm[120], Is.EqualTo(0.5f).Within(1e-6f),
+			"An unrelated later note on the same channel must inherit its original volume.");
+	}
+
+	[Test]
+	public void FlattenedSourceVolumeComposesWithChildExplicitVolumeAndPrivateMixdown()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample, "PCM",
+			"pcm.wav", Wave(16384)));
+		ObjectId privateId = document.AllocateObjectId();
+		DataPatternDefinition inner = new(privateId, "Private")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		inner.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(sample);
+		document.Add(inner);
+		ObjectId flattenedId = document.AllocateObjectId();
+		DataPatternDefinition middle = new(flattenedId, "Flattened")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		PatternCell privateStart = middle.Grid.GetOrCreateCell(0, 0);
+		privateStart.Note = new StartPatternNote(privateId, mixdown: true);
+		privateStart.Volume = 0.25;
+		document.Add(middle);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent")
+		{
+			RowCount = 2, ChannelCount = 1,
+		};
+		PatternCell call = parent.Grid.GetOrCreateCell(0, 0);
+		call.Note = new StartPatternNote(flattenedId);
+		call.Volume = 0.5;
+		document.Add(parent);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000)).Create(document, root);
+		float[] pcm = new float[2];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm, Is.All.EqualTo(0.0625f).Within(1e-6f),
+			"Inherited 0.5 gain * mixdown's 0.25 note volume * 0.5 PCM.");
+	}
+
 	[TestCase(2.0, 60)]
 	[TestCase(0.5, 240)]
 	public void FlattenedRecursiveSpeedChangesChildRowsButNotSiblingTiming(
