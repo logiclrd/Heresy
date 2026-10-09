@@ -217,7 +217,8 @@ public sealed class PlaybackVoice
 		int originPhysicalChannel,
 		double sourceGainMultiplier = 1.0,
 		long originPhysicalPlaybackOwner = 0,
-		IReadOnlyList<PlaybackChannelState>? enclosingVolumeChannels = null)
+		IReadOnlyList<PlaybackChannelState>? enclosingVolumeChannels = null,
+		IReadOnlyList<FlattenedSourceVolume>? enclosingSourceVolumes = null)
 	{
 		Sound = sound ?? throw new ArgumentNullException(nameof(sound));
 		SoundState = soundState ?? throw new ArgumentNullException(nameof(soundState));
@@ -237,6 +238,8 @@ public sealed class PlaybackVoice
 		SourceGainMultiplier = sourceGainMultiplier;
 		EnclosingVolumeChannels = enclosingVolumeChannels
 			?? Array.Empty<PlaybackChannelState>();
+		EnclosingSourceVolumes = enclosingSourceVolumes
+			?? Array.Empty<FlattenedSourceVolume>();
 		StartFrame = startFrame;
 		OriginPhysicalChannel = originPhysicalChannel;
 		OriginPhysicalPlaybackOwner = originPhysicalPlaybackOwner;
@@ -291,6 +294,9 @@ public sealed class PlaybackVoice
 	/// <summary>Caller-channel overall-volume ancestry remains live while
 	/// descendant voices use their own independent logical channel memory.</summary>
 	public IReadOnlyList<PlaybackChannelState> EnclosingVolumeChannels { get; }
+	/// <summary>Each ancestor invocation contributes its own live note
+	/// volume, even when the instigating channel has been reused since.</summary>
+	internal IReadOnlyList<FlattenedSourceVolume> EnclosingSourceVolumes { get; }
 
 	public double NoteVolume { get; internal set; }
 

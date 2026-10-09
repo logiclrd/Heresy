@@ -80,6 +80,10 @@ public sealed class PlaybackChannelState
 
 	public PlaybackVoice? CurrentVoice { get; internal set; }
 
+	/// <summary>The currently instigated flattened source on this logical
+	/// channel, separate from any displaced voice on the same host.</summary>
+	internal FlattenedSourceVolume? CurrentFlattenedSource { get; set; }
+
 	/// <summary>
 	/// Persistent per-note volume used to initialize a newly attached voice and
 	/// kept synchronized with the current physical voice.
