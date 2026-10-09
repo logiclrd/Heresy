@@ -129,8 +129,9 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 		if (_disposed)
 			throw new ObjectDisposedException(nameof(PreparedIncrementalAudioSource));
 		long now = _session.NextFrame;
-		if (Volatile.Read(ref _preparedThroughTicks) >
-			FrameTime.FrameStartTime(now, Format.SampleRate).Ticks)
+		if (FrameTime.Ceiling(
+			TimeSpan.FromTicks(Volatile.Read(ref _preparedThroughTicks)),
+			Format.SampleRate) > now)
 			throw new InvalidOperationException(
 				"Cancel requires the prepared frontier to meet the playback head.");
 		List<long> removed = [];
