@@ -309,6 +309,14 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			_inRow && _readyTiming.Count > 0
 				? _readyTiming[0].Raw : null;
 		public IReadOnlyList<DeferredTiming> ReadyTimings => _readyTiming;
+
+		/// <summary>Complete a preceding row before deciding Tempo at
+		/// the next row's exact shared tick. No musical command is due.</summary>
+		public bool CanFinishRowAt(double tick)
+			=> _inRow && Math.Abs(DueTick - tick) <= TickTolerance
+				&& DueTiming is null && DueEvent is null
+				&& DueRepeated is null && DueScheduled is null
+				&& DueWrapCleanup is null && DueCleanup is null;
 		public NoteEvent? DueCleanup =>
 			_inRow && DueEvent is null && DueRepeated is null && DueScheduled is null
 			&& _wrapCleanup.Count == 0 && _rowEndCommands.Count > 0
@@ -1027,6 +1035,29 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			if (current is not null && current.DueTick < _tick - TickTolerance)
 				throw new InvalidOperationException("Incremental cursor moved backwards.");
 
+			if (_crossTempoBoundaryPending)
+			{
+				// A cursor finishing row N at this tick may immediately
+				// start row N+1 with Txx. Cross the row boundary without
+				// emitting the old SEy ramp prematurely.
+				Cursor? ending = _active
+					.Where(c => c.CanFinishRowAt(_tick))
+					.OrderBy(c => c.Context.PhysicalChannelBase)
+					.ThenBy(c => c.Sequence).FirstOrDefault();
+				if (ending is not null)
+				{
+					if (TryOperate(ending, out result))
+						return true;
+					continue;
+				}
+				if (current is null
+					|| current.DueTick > _tick + TickTolerance)
+				{
+					ArbitrateTrackerTempoAtCurrentTick();
+					continue;
+				}
+			}
+
 			TimeSpan nextTickTime = current is null
 				? TimeSpan.MaxValue
 				: Elapsed + TimeSpan.FromSeconds(
@@ -1053,6 +1084,15 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					MoveToTick(boundaryTick);
 					Elapsed = boundaryWall;
 					CheckCooperationBudget();
+					if (_crossTempoSources.Count != 0)
+					{
+						// Do not publish the already-projected next ramp.
+						// A new Pattern's row may begin at this *same* tick.
+						// Prepare that row first, then arbitrate its Txx
+						// together with the SEy boundary instructions.
+						_crossTempoBoundaryPending = true;
+						continue;
+					}
 					ActiveTempoRamp nextSegment = _futureTempoRamps.Dequeue();
 					// SEy repeats tracker immediate Txx sets at every
 					// compatibility-row boundary before applying that
@@ -1210,6 +1250,15 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			.ThenBy(x => x.Cursor.Sequence)
 			.ThenBy(x => x.Timing.Order)
 			.ToArray();
+		if (_crossTempoBoundaryPending)
+		{
+			// At an SEy repeat boundary, incoming Txx is simultaneous
+			// with the repeated effects, not an interruption occurring
+			// later in musical time.
+			ArbitrateCrossTempoBoundary(pending.Select(x => (
+				x.Cursor, x.Timing, x.Channel)).ToArray());
+			return true;
+		}
 		if (pending.Length == 0)
 			return false;
 
@@ -1334,6 +1383,70 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			}
 		}
 		return true;
+	}
+
+	/// <summary>
+	/// All Txx operations due at an existing SEy repeat boundary share
+	/// the same instant. Apply immediate sets in mapped physical order,
+	/// resolve new Txx memory once, and build one combined future slope.
+	/// This never enumerates unvisited source rows.
+	/// </summary>
+	private void ArbitrateCrossTempoBoundary(
+		IReadOnlyList<(Cursor Cursor, DeferredTiming Timing, int Channel)> incoming)
+	{
+		if (!_crossTempoBoundaryPending)
+			throw new InvalidOperationException("No pending Tempo boundary.");
+
+		var sets = new List<(
+			int Channel, long Owner, long Order, byte Parameter,
+			ChannelTarget Target, bool Incoming)>();
+		foreach (RepeatedTempoSource source in _crossTempoSources)
+		{
+			if (source.Parameter >= 0x20 && source.RepeatsAt(_tick))
+				sets.Add((source.Channel, source.InvocationId,
+					source.SourceOrder, source.Parameter, source.Target, false));
+		}
+
+		List<RepeatedTempoSource> newSources = [];
+		foreach (var request in incoming)
+		{
+			NoteEvent raw = request.Timing.Raw;
+			byte byteValue = ((ApplyTrackerTempoCommand)raw.Commands[0]).Parameter;
+			byte parameter = request.Cursor.Context
+				.GetPhysicalChannelState(raw.Target.PhysicalChannel)
+				.ResolveEffectParameter(EffectMemorySlot.Tempo, byteValue);
+			ChannelTarget mapped = request.Cursor.Context.MapTarget(raw.Target);
+			if (parameter != 0)
+			{
+				newSources.Add(new RepeatedTempoSource(
+					request.Cursor.Sequence, parameter,
+					checked((int)request.Cursor.EffectiveSpanTicks),
+					request.Cursor.ExtraRowSpans, request.Channel,
+					mapped, request.Timing.Order, _tick));
+				if (parameter >= 0x20)
+					sets.Add((request.Channel, request.Cursor.Sequence,
+						request.Timing.Order, parameter, mapped, true));
+			}
+			request.Cursor.ConsumeTiming();
+		}
+
+		foreach (var set in sets.OrderBy(x => x.Channel)
+			.ThenBy(x => x.Owner).ThenBy(x => x.Order))
+		{
+			// An original Txx emits its immediate setting even when it
+			// matches the existing Tempo; repeated settings do not.
+			if (!set.Incoming && Math.Abs(_root.State.Tempo - set.Parameter) <= 1e-12)
+				continue;
+			_root.State.Tempo = set.Parameter;
+			QueueTimingEvent(new NoteEvent(
+				new MusicalTime(Elapsed, 0), set.Target,
+				[new SetTempoCommand(set.Parameter)]), set.Owner);
+		}
+
+		_crossTempoSources.RemoveAll(x => _tick >= x.EndTick - TickTolerance);
+		_crossTempoSources.AddRange(newSources);
+		_crossTempoBoundaryPending = false;
+		RebuildCrossTempoPlan();
 	}
 
 	private void RebuildCrossTempoPlan()
