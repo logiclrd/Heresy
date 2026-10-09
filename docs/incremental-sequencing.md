@@ -2509,6 +2509,11 @@ instrument-selected sources and unusual same-frame interactions.
 
 ## Fifty-second step: combined note-volume effects and late Source resolution
 
+**Historical design note:** The suppression of all Dxx/Kxx/Lxx
+note-volume operations described below was superseded by step 53
+after clarification that a flattened source behaves as one live
+instigating note for its volume effects.
+
 Effects must be classified according to the entity they control, not
 merely because the word "volume" appears in the effect name. Dxx is
 a **current note-volume slide**; Kxx combines that same note-volume
@@ -2554,3 +2559,63 @@ unsupported timing constraints. End-to-end PCM regression coverage
 checks a child voice on a splayed host with a different parent host
 Mxx value: it follows only its *instigating* channel's Mxx, with
 captured invocation gain and no extra factor from the host.
+
+
+## Fifty-third step: live instigating-note volume across recursive scopes
+
+**Authoritative clarification, October 9, 2026.** A flattened
+non-mixdown Pattern/Sequence is a *single instigating note* with
+respect to note-volume controls, even though it emits many
+independently playing notes in different physical hosts. A volume
+effect on its logical channel must control those descendants in
+**real time**, just as it would control one ordinary playing voice.
+This updates the captured-only gain model and supersedes step 52's
+earlier whole-effect suppression of Dxx/Kxx/Lxx.
+
+Each source start creates one `FlattenedSourceVolume` for its globally
+unique child scope ID. `BeginFlattenedSourceVolumeCommand` is emitted
+at the start's timestamp, before descendant sample voices begin.
+The controller initializes from the explicitly specified or recalled
+note volume and supports `SetNoteVolume`, immediate adjustments,
+tick-domain note-volume slides, and row-end slide commits. A
+`PlaybackChannelState` remembers which controller currently belongs
+to its logical instigating channel; later-row effects use it until
+another note takes over the channel. The old controller remains
+reachable from the descendants which started while it was current.
+
+A descendant `StartNoteCommand` carries ordered
+`ParentSourceScopes` references. At playback the renderer resolves
+these to actual controller objects and multiplies their current values
+sample-by-sample, *in addition to* the child's own note volume,
+captured independent constant gains, and live overall-volume ancestry
+from the instigating channels. This works for nested invocations,
+splayed physical hosts, zero initial volume subsequently raised, and
+two ancestor sources sliding simultaneously. Crucially, an ancestor's
+new remembered note volume for a later ordinary start does not
+retroactively change a displaced source controller.
+
+Dxx and native current-note-volume operations are valid on a
+flattening note and its later logical-channel rows. Volume-column
+A-D likewise control the source. Kxx (vibrato+volume-slide) and Lxx
+(portamento+volume-slide) **retain the volume-slide portion** and
+discard only their meaningless individual-voice vibrato/portamento
+component, without contaminating those pitch-effect memory slots.
+The partial suppression is diagnosed with bounded HRSEQ003/004 messages;
+the editor warning explicitly says that the volume part remains
+active. Mxx/Nxx are still distinct overall-channel controls, with
+the parent-host-vs-instigating-channel rule already established.
+
+Scope retirement removes its controller from the session-wide lookup,
+but voices hold their controller objects directly until they finish.
+This preserves the ability to render long tails after a producer stops
+generating notes without leaking a scope lookup for every invocation.
+Stress tests for hundreds of repeated short recursive sources now
+include the retained-controller registry.
+
+The lifetime and independent source-volume behavior is verified by
+PCM tests spanning multiple tracker rows, independent simultaneous
+ancestor slides, a controller starting at zero and later becoming
+audible, and both Dxx and Kxx on a later row. Native per-voice pitch
+operations and lifecycle controls remain a separate semantic
+consideration: do not redirect arbitrary retrigger, glide, sample
+offset, note-cut, or NNA operations to the entire child collection.

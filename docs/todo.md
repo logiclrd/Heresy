@@ -54,25 +54,27 @@ preserving audible release and already-captured anti-click tails. These are
   controls remain meaningful. Playback emits rate-capped HRSEQ003/004
   warnings while leaving stored Pattern effects untouched; the data
   Pattern editor shows a nonblocking warning on qualifying effects.
-  **Combined-effect parity refined:** Dxx note-volume slide, Kxx
-  vibrato+note-volume slide and Lxx portamento+note-volume slide are
-  voice-specific in their entirety on a flattened start; neither half
-  has a well-defined target voice. Volume-column A-D sliders likewise
-  need an individual current voice. Do **not** misinterpret them as
-  channel-volume automation: Mxx/Nxx, genuine overall-channel volume,
-  and global Tempo remain applicable. Deferred recalled Sources can
-  reclassify a Gxx/Lxx portamento target into an actual flattened
-  start at command-resolution time, before modifying tracker effect
-  memory. Core, raw-script and editor tests protect this behavior.
-  **Still outstanding:** dynamic **source-level note-volume
-  trajectories** if animated invocation gain is desired (requires
-  explicit new semantics); greater script-only and same-frame
-  interaction parity; deeper nested cancellation, virtual/NNA
-  displacement, and long-tail scope cleanup coverage. The incremental
-  merger now admits zero-offset Mxx channel-volume changes and native
-  overall-channel-volume commands alongside flattened starts; both
-  live playback controls and Pattern commands can drive the instigating
-  channel's overall-volume ancestry.
+  **Step 53: live instigating-note volume semantics supersede step 52's
+  whole-effect suppression.** Every flattened invocation now has an
+  independent renderer-side source-note volume controller. At source start
+  the caller remembers the explicit/recalled volume, which initializes the
+  controller, and all descendant voices hold live references to every
+  enclosing controller. Per-sample multiplication composes arbitrarily
+  nested values; volume zero can be raised by later effects. Dxx, native
+  note-volume slide/adjustments and volume-column A-D remain active; Kxx
+  and Lxx keep their *note-volume* slide while discarding and diagnosing
+  only the vibrato/portamento component. Effects entered on later rows of
+  the still-active instigating logical channel also control the source.
+  Mxx/Nxx continue affecting the separate live overall-channel-volume
+  ancestry, not the physical hosts into which child notes splay.
+  Recalled Sources can still reclassify Gxx/Lxx at execution time.
+  Retired scope controller lookups are removed, while sounding descendant
+  voices retain their referenced controller objects until completion.
+  **Still outstanding:** cross-row NNA/cut/off lifecycle behavior for
+  source controllers, more cancellation/same-frame cases, and UI warnings
+  where a flattened source was started on an earlier Pattern row.
+  The incremental merger admits zero-offset Mxx and native channel-volume
+  commands alongside flattened starts.
   The detailed target remains in step 48 below.
 
   **Original architectural requirement (now partially implemented):** A flattened

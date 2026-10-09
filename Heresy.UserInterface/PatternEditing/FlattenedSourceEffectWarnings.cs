@@ -53,9 +53,17 @@ public static class FlattenedSourceEffectWarnings
 			.ToArray();
 		if (ignored.Length == 0)
 			return null;
-		return "Warning: these effects require a single voice and will be "
-			+ "ignored on this non-mixdown flattened source: "
+		bool hasCombinedSlide = cell.Effects.Any(e =>
+			e is VibratoVolumeSlidePatternEffect
+				or TonePortamentoVolumeSlidePatternEffect);
+		return "Warning: these effects contain voice-specific operations "
+			+ "which do not apply to a non-mixdown flattened source: "
 			+ string.Join(", ", ignored)
-			+ ". They remain stored and editable.";
+			+ ". "
+			+ (hasCombinedSlide
+				? "Kxx/Lxx retain their live source-note volume slides; "
+					+ "only vibrato/portamento is ignored. "
+				: "")
+			+ "The effects remain stored and editable.";
 	}
 }

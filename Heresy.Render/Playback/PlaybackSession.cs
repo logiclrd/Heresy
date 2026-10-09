@@ -222,6 +222,11 @@ public sealed class PlaybackSession
 
 	public IReadOnlyList<PlaybackVoice> VirtualVoices => _virtualVoices;
 
+	/// <summary>Live source-controller registrations still owned by
+	/// active producer scopes. Descendants retain their controller objects
+	/// directly after a producer is retired.</summary>
+	public int RetainedFlattenedSourceControllerCount => _sourceVolumes.Count;
+
 	/// <summary>Diagnostic count of non-root logical channel entries,
 	/// including scopes retained for sounding voices or anti-click tails.</summary>
 	public int RetainedScopedPhysicalChannelCount

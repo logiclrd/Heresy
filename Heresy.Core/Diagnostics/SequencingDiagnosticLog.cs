@@ -41,7 +41,7 @@ public sealed class SequencingDiagnosticLog
 		if (count <= MaximumIndividualMessages)
 			_pending.Enqueue(new SequencingDiagnostic(
 				IgnoredFlatteningEffectCode,
-				$"Ignored voice-specific effect {effect} on a flattened source start at row {row}.",
+				$"Ignored incompatible voice-specific operation of {effect} on the flattened source's logical channel at row {row}; applicable source-volume operations remain active.",
 				row));
 		else if (count == MaximumIndividualMessages + 1)
 			_pending.Enqueue(new SequencingDiagnostic(

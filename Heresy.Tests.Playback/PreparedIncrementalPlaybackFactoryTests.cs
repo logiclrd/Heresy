@@ -78,6 +78,8 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		Assert.That(plan.SequencingContext.ScopedMemory.MaterializedScopeCount, Is.Zero);
 		Assert.That(plan.Session.RetainedScopedPhysicalChannelCount, Is.Zero,
 			"Finished and silent playback hosts must not accumulate indefinitely.");
+		Assert.That(plan.Session.RetainedFlattenedSourceControllerCount, Is.Zero,
+			"Finished invocations must also release live volume-controller registrations.");
 	}
 
 	[Test]
