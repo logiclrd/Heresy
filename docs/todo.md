@@ -406,3 +406,28 @@ mixdown clocks with native frame seeking and preserved speaker feeds,
 parent physical channel note lifecycle and advanced effects, full
 realtime/export PCM parity, playback transport/diagnostics integration,
 and migration of production scheduling.
+
+### Bounded asynchronous preparation checkpoint (milestone 34)
+
+The **experimental** `AsyncPreparedIncrementalAudioSource` starts a
+dedicated bounded-lookahead worker via
+`PreparedIncrementalPlaybackPlan.StartLookahead(lookaheadFrames)`.
+The producer prepares only up to a moving, exact output-frame horizon,
+rather than eagerly enumerating an infinite Sequence. Only the single
+worker calls `TryStep` / Roslyn; the callback never waits on it.
+Insufficient coverage produces an entire silent callback block with an
+atomic underrun count but leaves the **musical playback head unchanged**,
+so later prepared audio resumes at the missed musical frame.
+Producer exceptions are exposed as `PreparationError` outside the callback;
+plan disposal stops and joins the worker. Deterministic tests cover
+blocked-producer underrun and recovery, maximum-ahead frame accounting,
+producer faults, and worker lifetime.
+
+**Remaining unchecked:** production transport/UI wiring of underrun
+measurement/status (indicator hidden until first real underrun); a
+separate byte/event-count buffering policy; asynchronous cancellation
+while lookahead is published; runtime error/diagnostic transport;
+realtime end-of-input and tail policy; lifecycle, mixdown and export
+parity; migration of the production scheduler. The existing TODO item
+for realtime underrun reporting is **not** marked complete by this
+experimental adapter.
