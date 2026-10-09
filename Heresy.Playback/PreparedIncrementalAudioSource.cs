@@ -28,7 +28,7 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 	private readonly IncrementalRecursiveTimeline _timeline;
 	private readonly PlaybackSession _session;
 	private readonly Action<NoteEvent>? _validatePreparedNote;
-	private readonly Func<NoteEvent, long, NoteEvent>? _prepareEvent;
+	private readonly Func<NoteEvent, long, long, NoteEvent>? _prepareEvent;
 	private readonly Action<TimeSpan>? _prepareNested;
 	private readonly ConcurrentQueue<PreparedEvent> _events = new();
 	private readonly ConcurrentQueue<long> _cancellations = new();
@@ -41,7 +41,7 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 	public PreparedIncrementalAudioSource(
 		IncrementalRecursiveTimeline timeline, PlaybackSession session,
 		Action<NoteEvent>? validatePreparedNote = null,
-		Func<NoteEvent, long, NoteEvent>? prepareEvent = null,
+		Func<NoteEvent, long, long, NoteEvent>? prepareEvent = null,
 		Action<TimeSpan>? prepareNested = null)
 	{
 		_timeline = timeline ?? throw new ArgumentNullException(nameof(timeline));
@@ -110,7 +110,7 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 						throw new InvalidOperationException(
 							"Cannot prepare an incremental event behind the playback head.");
 					_lastEventFrame = frame;
-					NoteEvent prepared = _prepareEvent?.Invoke(emit.Note, frame)
+					NoteEvent prepared = _prepareEvent?.Invoke(emit.Note, frame, emit.InvocationId)
 						?? emit.Note;
 					_events.Enqueue(new PreparedEvent(
 						frame, emit.InvocationId, prepared));
