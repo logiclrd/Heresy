@@ -477,6 +477,121 @@ public sealed class IncrementalTempoArbitrationTests
 		Assert.That(root.State.Tempo, Is.EqualTo(250));
 	}
 
+	[TestCase(false)]
+	[TestCase(true)]
+	public void IncomingTxxExactlyAtSEyRepeatBoundaryComposesOneRamp(
+		bool reverseCreation)
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		RawSource delayed = new(
+			At(0, 0, new ApplyTrackerPatternDelayCommand(1)),
+			At(0, 0, new ApplyTrackerTempoCommand(0x12)));
+		RawSource incoming = new(At(1, 0,
+			new ApplyTrackerTempoCommand(0x11)));
+		if (reverseCreation)
+		{
+			timeline.Add(incoming, 2,
+				root.FlattenedChild(physicalChannelOffset: 3));
+			timeline.Add(delayed, 1, root);
+		}
+		else
+		{
+			timeline.Add(delayed, 1, root);
+			timeline.Add(incoming, 2,
+				root.FlattenedChild(physicalChannelOffset: 3));
+		}
+		NoteEvent[] events = Drain(timeline);
+		SetTempoRampCommand[] ramps = events
+			.SelectMany(n => n.Commands).OfType<SetTempoRampCommand>()
+			.ToArray();
+		Assert.That(ramps.Select(r => r.EndingTempo),
+			Is.EqualTo(new[] { 135.0, 150.0 }));
+		Assert.That(ramps.Select(r => r.TrackerTicks),
+			Is.EqualTo(new[] { 6.0, 6.0 }));
+		Assert.That(events.Where(e => e.Commands.Any(c =>
+			c is SetTempoRampCommand)).Select(e => e.Offset.TimeOffset)
+			.Distinct().Count(), Is.EqualTo(2));
+		Assert.That(root.State.Tempo, Is.EqualTo(150.0));
+		Assert.That(root.GetPhysicalChannelState(0)
+			.TryGetEffectParameter(EffectMemorySlot.Tempo, out byte first),
+			Is.True);
+		Assert.That(first, Is.EqualTo(0x12));
+		Assert.That(root.GetPhysicalChannelState(3)
+			.TryGetEffectParameter(EffectMemorySlot.Tempo, out byte second),
+			Is.True);
+		Assert.That(second, Is.EqualTo(0x11));
+	}
+
+	[Test]
+	public void IncomingTxxSetAndSEyImmediateResetAtSameTickHonorMappedChannels()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		// The repeated TFA owns mapped channel 4; at tick 6 the
+		// newly arriving T80 on channel 0 must execute *before* its
+		// repeated reset, regardless of creation order.
+		timeline.Add(new RawSource(At(1, 0,
+			new ApplyTrackerTempoCommand(0x80))), 2, root);
+		timeline.Add(new RawSource(
+			At(0, 0, new ApplyTrackerPatternDelayCommand(1)),
+			At(0, 0, new ApplyTrackerTempoCommand(0xFA))), 1,
+			root.FlattenedChild(physicalChannelOffset: 4));
+
+		var events = Drain(timeline);
+		var sets = events.Where(e => e.Commands.Any(c =>
+			c is SetTempoCommand)).ToArray();
+		Assert.That(sets.SelectMany(e => e.Commands)
+			.OfType<SetTempoCommand>().Select(c => c.TicksPerDiachron),
+			Is.EqualTo(new[] { 250.0, 128.0, 250.0 }));
+		Assert.That(sets.Select(e => e.Target.PhysicalChannel),
+			Is.EqualTo(new[] { 4, 0, 4 }));
+		Assert.That(root.State.Tempo, Is.EqualTo(250.0));
+	}
+
+	[Test]
+	public void GlobalTempoAtSEyBoundarySuppressesOldRepeatedRamp()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(new RawSource(
+			At(0, 0, new ApplyTrackerPatternDelayCommand(1)),
+			At(0, 0, new ApplyTrackerTempoCommand(0x12))), 1, root);
+		timeline.Add(new RawSource(At(1, ChannelTarget.Global,
+			new SetTempoCommand(200))), 2,
+			root.FlattenedChild(physicalChannelOffset: 3));
+		NoteEvent[] events = Drain(timeline);
+		Assert.That(events.SelectMany(e => e.Commands)
+			.OfType<SetTempoRampCommand>().Select(x => x.EndingTempo),
+			Is.EqualTo(new[] { 135.0 }));
+		Assert.That(events.SelectMany(e => e.Commands)
+			.OfType<SetTempoCommand>().Select(x => x.TicksPerDiachron),
+			Is.EqualTo(new[] { 200.0 }));
+		Assert.That(root.State.Tempo, Is.EqualTo(200.0));
+	}
+
+	[Test]
+	public void NewRepeatingTxxAtOldRepeatBoundaryRetainsIndependentOwnership()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		long first = timeline.Add(new RawSource(
+			At(0, 0, new ApplyTrackerPatternDelayCommand(2)),
+			At(0, 0, new ApplyTrackerTempoCommand(0x12))), 1, root);
+		long second = timeline.Add(new RawSource(
+			At(1, 0, new ApplyTrackerPatternDelayCommand(1)),
+			At(1, 0, new ApplyTrackerTempoCommand(0x11))), 2,
+			root.FlattenedChild(physicalChannelOffset: 3));
+		NoteEvent[] notes = Drain(timeline);
+		SetTempoRampCommand[] ramps = notes.SelectMany(x => x.Commands)
+			.OfType<SetTempoRampCommand>().ToArray();
+		Assert.That(ramps.Select(x => x.EndingTempo),
+			Is.EqualTo(new[] { 135.0, 150.0, 165.0, 170.0 }));
+		Assert.That(root.State.Tempo, Is.EqualTo(170.0));
+		Assert.That(timeline.HasOutstandingWork(first), Is.False);
+		Assert.That(timeline.HasOutstandingWork(second), Is.False);
+	}
+
 	private static double RampSeconds(
 		double start, double end, double ticks, double into)
 		=> 2.5 * ticks / (end - start)
