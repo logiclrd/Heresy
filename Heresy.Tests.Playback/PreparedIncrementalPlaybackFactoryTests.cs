@@ -843,6 +843,50 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 	}
 
 	[Test]
+	public void DirectToneDoesNotAllocateRecursiveVoiceForUnselectedPatternTone()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample, "PCM",
+			"sample.wav", Wave(16384)));
+		ObjectId unusedPattern = document.AllocateObjectId();
+		document.Add(new DataPatternDefinition(unusedPattern, "Unused")
+		{
+			RowCount = 1, ChannelCount = 1,
+		});
+		ObjectId instrumentId = document.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Mixed tones");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = sample,
+		});
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = unusedPattern,
+		});
+		instrument.ToneTable.Add(0); // Default pitch selects ordinary sample.
+		instrument.ToneTable.Add(1);
+		document.Add(instrument);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition pattern = new(root, "Parent")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		pattern.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(instrumentId);
+		document.Add(pattern);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, root);
+		float[] output = new float[1];
+		plan.Source.Render(1, output);
+		Assert.That(output[0], Is.EqualTo(0.5f).Within(1e-6f));
+		Assert.That(plan.Session.GetChannelState(0).CurrentVoice!.Sound
+			.GetType().Name, Is.EqualTo("SampleSound"),
+			"Only selected recursive tone paths need invocation-unique sounds.");
+	}
+
+	[Test]
 	public void IndirectInstrumentCyclesAreRejectedBeforeRecursiveNoteRendering()
 	{
 		SongDocument document = new();
