@@ -545,3 +545,34 @@ requests, remaining indirect recursive instrument and
 lifecycle-policy parity, finite offline tails and production
 transport/export replacement. Do not restore the prior cooked
 PCM cache and do not introduce an opt-in production switch.
+
+### Dedicated PCM worker threading correction (milestone 39)
+
+The realtime SDL callback now **only drains a bounded interleaved PCM
+ring**, with no song rendering, scripts or recursive mixdown on the
+device audio thread. `BufferedAudioOutputSource` is an independent
+2048-frame default SPSC ring with a dedicated PCM rendering thread,
+underrun accounting, fault publication, channel-correct wraparound and
+zero-filled short reads. SDL wraps every supplied realtime source
+through this buffer, protecting both existing production sources and
+subsequent incremental sources.
+
+The experimental `AsyncPreparedIncrementalAudioSource` is now
+another consumer of this PCM ring: **one rendering worker** performs
+incremental event preparation, recursive nested PCM rendering and
+buffer publication, rather than preparing events on one worker and
+running music-renderer code on SDL callbacks. This makes expensive
+script evaluation, deterministic private rewind and recursive mixdown
+safe from blocking audio callback execution; an expensive operation
+can cause an underrun, not a blocked callback.
+
+**Next architectural cleanup:** collapse the now-redundant
+event-preparation queue/replay journal and producer-to-consumer
+lifecycle queue in the incremental recursive source, so its
+generator and renderer advance together with one musical owner.
+Recreate private generators on rewind/retrigger instead of
+retaining an unbounded journal. Preserve sample accuracy, scope
+cancellation, past-note/NNA semantics, and deterministic RNG.
+Existing production eager schedule compiler still needs its
+planned direct recursive-engine cutover; do not add a compatibility
+option or reintroduce rendered mixdown PCM caching.
