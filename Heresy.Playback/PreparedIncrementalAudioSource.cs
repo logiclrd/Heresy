@@ -25,6 +25,7 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 	private readonly IncrementalRecursiveTimeline _timeline;
 	private readonly PlaybackSession _session;
 	private readonly Action<NoteEvent>? _validateNote;
+	private readonly bool _endInputAtNaturalCompletion;
 	private readonly Func<NoteEvent, long, long, NoteEvent>? _transform;
 	private readonly HashSet<long> _canceledOwners = [];
 	private IncrementalPatternTimelineStep? _deferredStep;
@@ -37,11 +38,13 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 	public PreparedIncrementalAudioSource(
 		IncrementalRecursiveTimeline timeline, PlaybackSession session,
 		Action<NoteEvent>? validatePreparedNote = null,
-		Func<NoteEvent, long, long, NoteEvent>? prepareEvent = null)
+		Func<NoteEvent, long, long, NoteEvent>? prepareEvent = null,
+		bool endInputAtNaturalCompletion = false)
 	{
 		_timeline = timeline ?? throw new ArgumentNullException(nameof(timeline));
 		_session = session ?? throw new ArgumentNullException(nameof(session));
 		_validateNote = validatePreparedNote;
+		_endInputAtNaturalCompletion = endInputAtNaturalCompletion;
 		_transform = prepareEvent;
 		if (session.NextFrame != 0)
 			throw new ArgumentException(
@@ -163,14 +166,14 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 				continue;
 			}
 
-			if (_complete && !_inputStopped && !_session.InputEnded
+			if (_endInputAtNaturalCompletion && _complete && !_inputStopped && !_session.InputEnded
 				&& FrameTime.Ceiling(_timeline.Elapsed, Format.SampleRate) <= now)
 				EndInput();
 
 			long boundary = end;
 			if (_pendingEvent is { } future)
 				boundary = Math.Min(boundary, future.Frame);
-			if (_complete && !_session.InputEnded && !_inputStopped)
+			if (_endInputAtNaturalCompletion && _complete && !_session.InputEnded && !_inputStopped)
 				boundary = Math.Min(boundary,
 					FrameTime.Ceiling(_timeline.Elapsed, Format.SampleRate));
 			if (boundary <= now)
