@@ -122,6 +122,80 @@ public sealed class IncrementalPatternRowDelayTests
 	}
 
 	[Test]
+	public void SEyRepeatsTrackerTxxSlideFromPreviousSpanEndingTempo()
+	{
+		DataPatternDefinition p = Pattern(2, 2);
+		var cell = p.Grid.GetOrCreateCell(0, 0);
+		cell.Effects.Add(new TrackerTempoPatternEffect(0x11));
+		cell.Effects.Add(new TrackerPatternDelayPatternEffect(2));
+		p.Grid.GetOrCreateCell(0, 1).Note = new PatternNoteCut();
+		p.Grid.GetOrCreateCell(1, 1).Note = new PatternNoteOff();
+		AssertParity(p);
+
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		timeline.Add(p, 2, context);
+		NoteEvent[] notes = Drain(timeline);
+		SetTempoRampCommand[] ramps = notes.SelectMany(n => n.Commands)
+			.OfType<SetTempoRampCommand>().ToArray();
+		Assert.That(ramps.Select(r => r.EndingTempo),
+			Is.EqualTo(new[] { 130.0, 135.0, 140.0 }));
+		Assert.That(ramps.Select(r => r.TrackerTicks),
+			Is.EqualTo(new[] { 6.0, 6.0, 6.0 }));
+		Assert.That(context.State.Tempo, Is.EqualTo(140));
+	}
+
+	[Test]
+	public void S6xExtendsEachSEyTxxRampAndDelaysTheNextNote()
+	{
+		DataPatternDefinition p = Pattern(2, 2);
+		var cell = p.Grid.GetOrCreateCell(0, 0);
+		cell.Effects.Add(new TrackerFinePatternDelayPatternEffect(2));
+		cell.Effects.Add(new TrackerTempoPatternEffect(0x12));
+		cell.Effects.Add(new TrackerPatternDelayPatternEffect(1));
+		p.Grid.GetOrCreateCell(1, 1).Note = new PatternNoteCut();
+		AssertParity(p);
+
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		timeline.Add(p, 2, context);
+		NoteEvent[] notes = Drain(timeline);
+		SetTempoRampCommand[] ramps = notes.SelectMany(n => n.Commands)
+			.OfType<SetTempoRampCommand>().ToArray();
+		Assert.That(ramps.Select(r => r.EndingTempo),
+			Is.EqualTo(new[] { 139.0, 153.0 }));
+		Assert.That(ramps.Select(r => r.TrackerTicks),
+			Is.EqualTo(new[] { 8.0, 8.0 }));
+		Assert.That(context.State.Tempo, Is.EqualTo(153));
+	}
+
+	[Test]
+	public void SEyRepeatedTxxImmediateSetReplaysBeforeEachTxxSlide()
+	{
+		DataPatternDefinition p = Pattern(2, 3);
+		p.Grid.GetOrCreateCell(0, 0).Effects.Add(new TrackerTempoPatternEffect(0xFA));
+		p.Grid.GetOrCreateCell(0, 1).Effects.Add(new TrackerTempoPatternEffect(0x11));
+		p.Grid.GetOrCreateCell(0, 2).Effects.Add(new TrackerPatternDelayPatternEffect(2));
+		p.Grid.GetOrCreateCell(1, 2).Note = new PatternNoteCut();
+		AssertParity(p);
+
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		timeline.Add(p, 2, context);
+		NoteEvent[] notes = Drain(timeline);
+		SetTempoRampCommand[] ramps = notes.SelectMany(n => n.Commands)
+			.OfType<SetTempoRampCommand>().ToArray();
+		Assert.That(ramps.Select(r => r.EndingTempo),
+			Is.EqualTo(new[] { 255.0, 255.0, 255.0 }));
+		Assert.That(ramps.Select(r => r.TrackerTicks),
+			Is.EqualTo(new[] { 6.0, 6.0, 6.0 }));
+		Assert.That(notes.SelectMany(n => n.Commands)
+			.OfType<SetTempoCommand>().Select(c => c.TicksPerDiachron),
+			Is.EqualTo(new[] { 250.0, 250.0, 250.0 }));
+		Assert.That(context.State.Tempo, Is.EqualTo(255.0));
+	}
+
+	[Test]
 	public void ContinuousPitchAndVolumeSlidesRepeatAndClearAtLastSEyBoundary()
 	{
 		DataPatternDefinition p = Pattern(1, 1);
