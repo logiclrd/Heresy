@@ -72,8 +72,12 @@ Items that were already completed remain in Git history, not in this checklist.
   only its remaining repetitions and recalculates from the actually
   reached shared Tempo. Simultaneous immediate Tempo sets remain
   in mapped physical-channel order; no future Pattern iterator is
-  consumed during planning. Same-boundary collisions with newly
-  arriving Txx remain a further stress-test target.
+  consumed during planning. At exact SEy repeat boundaries, the
+  scheduler now prepares all newly due Pattern rows *before*
+  arbitrating the repeat with incoming Txx. Immediate Tempo sets
+  follow mapped physical-channel order and the combined future
+  ramp is emitted once, with no prematurely emitted stale ramp.
+  Per-source absolute origins preserve different repeat starts.
   The incremental timeline now recognizes **S6x and SEy variable-length
   row spans**: physical-channel S6x ticks accumulate, lowest mapped
   channel SEy wins, ordinary notes execute only once, and admitted
@@ -181,9 +185,9 @@ Items that were already completed remain in Git history, not in this checklist.
   ordering contract is settled: earlier raw musical-row events are
   silently dropped at the consumption boundary; no arbitrary sorting
   or lookahead is required. Continue incompatible Tempo spans,
-  exact-boundary Txx/SEy collision parity, SDx/Qxy,
-  virtual/mixdown channels and advanced effects before production
-  recursive-clock migration.
+  SDx/Qxy interaction parity, virtual/mixdown channels, advanced
+  effects, and end-to-end deterministic recursive playback/export
+  integration before production recursive-clock migration.
   Require test parity, chronological raw-emission filtering, and
   realtime/offline determinism before retiring eager scheduling.
   Replace the restricted chronological scheduler rather than adding
