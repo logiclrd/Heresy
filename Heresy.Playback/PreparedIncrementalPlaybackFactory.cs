@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -8,6 +9,7 @@ using Heresy.Render.Configuration;
 using Heresy.Render.Playback;
 using Heresy.Render.Samples;
 using Heresy.Render.Sounds;
+using Heresy.Render.Timing;
 using Heresy.Scripting.Compilation;
 
 namespace Heresy.Playback;
@@ -21,17 +23,19 @@ public sealed class PreparedIncrementalPlaybackPlan : IDisposable
 {
 	private bool _disposed;
 	private AsyncPreparedIncrementalAudioSource? _lookahead;
+	private readonly Action _disposePrivateMixdowns;
 
 	internal PreparedIncrementalPlaybackPlan(
 		SongDocumentSnapshot snapshot, IncrementalRecursiveTimeline timeline,
 		PlaybackSession session, PreparedIncrementalAudioSource source,
-		long rootInvocationId)
+		long rootInvocationId, Action disposePrivateMixdowns)
 	{
 		Snapshot = snapshot;
 		Timeline = timeline;
 		Session = session;
 		Source = source;
 		RootInvocationId = rootInvocationId;
+		_disposePrivateMixdowns = disposePrivateMixdowns;
 	}
 
 	public SongDocumentSnapshot Snapshot { get; }
@@ -63,6 +67,7 @@ public sealed class PreparedIncrementalPlaybackPlan : IDisposable
 		_lookahead?.Dispose();
 		Source.Dispose();
 		Timeline.Dispose();
+		_disposePrivateMixdowns();
 	}
 }
 
@@ -135,10 +140,12 @@ public sealed class PreparedIncrementalPlaybackFactory
 			PlaybackSession session = new(
 				new RenderContext(_configuration),
 				new NoteScheduleBuilder().Freeze(), sounds);
-			PreparedIncrementalAudioSource source = new(
-				timeline, session, note => ValidatePreparedNote(scripts, note));
+			PreparedIncrementalAudioSource source = CreatePrivateMixdownAwareSource(
+				timeline, session, scripts, sounds, [root],
+				out Action disposePrivateMixdowns);
 			return new PreparedIncrementalPlaybackPlan(
-				frozen, timeline, session, source, invocationId);
+				frozen, timeline, session, source, invocationId,
+				disposePrivateMixdowns);
 		}
 		catch
 		{
@@ -147,18 +154,98 @@ public sealed class PreparedIncrementalPlaybackFactory
 		}
 	}
 
-	private static void ValidatePreparedNote(
-		PreparedRoslynIncrementalScriptSources scripts, NoteEvent note)
+
+	/// <summary>
+	/// Each physical mixdown start gets a new private recursive clock and
+	/// renderer. The parent receives an invocation-unique rendered sound ID
+	/// while the producer renders that child's speaker PCM before publishing
+	/// each parent horizon. Neither a child script nor child PCM session runs
+	/// on the parent's callback.
+	/// </summary>
+	private PreparedIncrementalAudioSource CreatePrivateMixdownAwareSource(
+		IncrementalRecursiveTimeline timeline,
+		PlaybackSession session,
+		PreparedRoslynIncrementalScriptSources scripts,
+		PlaybackSnapshotSoundResolver sounds,
+		IReadOnlyList<ObjectId> ancestry,
+		out Action disposePrivateMixdowns)
 	{
-		foreach (NoteCommand command in note.Commands)
+		List<PreparedRecursiveMixdownSound> privateVoices = [];
+		disposePrivateMixdowns = () =>
 		{
-			if (command is StartNoteCommand { Mixdown: true } start
-				&& scripts.TryResolve(start.SourceId, out SongObject? source)
-				&& source is PatternDefinition or SequenceDefinition)
+			foreach (PreparedRecursiveMixdownSound voice in privateVoices)
+				voice.Dispose();
+		};
+
+		NoteEvent Transform(NoteEvent note, long parentFrame)
+		{
+			NoteCommand[] commands = new NoteCommand[note.Commands.Count];
+			for (int i = 0; i < commands.Length; i++)
 			{
-				throw new NotSupportedException(
-					"Prepared recursive playback does not yet support nested Pattern/Sequence mixdown clocks.");
+				NoteCommand command = note.Commands[i];
+				if (command is not StartNoteCommand { Mixdown: true } start
+					|| !scripts.TryResolve(start.SourceId, out SongObject? definition)
+					|| definition is not (PatternDefinition or SequenceDefinition))
+				{
+					commands[i] = command;
+					continue;
+				}
+				if (start.PitchMultiplier != 1.0
+					|| start.PlaybackSpeedMultiplier != 1.0)
+					throw new NotSupportedException(
+						"Recursive mixdown transforms require private-clock remapping.");
+				foreach (ObjectId ancestor in ancestry)
+					if (ancestor == start.SourceId)
+						throw new InvalidOperationException(
+							$"Recursive mixdown source cycle includes object {start.SourceId.Value}.");
+
+				ObjectId[] childAncestry = new ObjectId[ancestry.Count + 1];
+				for (int a = 0; a < ancestry.Count; a++)
+					childAncestry[a] = ancestry[a];
+				childAncestry[^1] = start.SourceId;
+
+				IncrementalRecursiveTimeline childTimeline =
+					scripts.CreateTimeline(new SequencingContext());
+				try
+				{
+					childTimeline.AddRoot(start.SourceId);
+					PlaybackSession childSession = new(
+						new RenderContext(_configuration),
+						new NoteScheduleBuilder().Freeze(), sounds);
+					PreparedIncrementalAudioSource childSource =
+						CreatePrivateMixdownAwareSource(childTimeline, childSession,
+							scripts, sounds, childAncestry,
+							out Action disposeDescendants);
+					PreparedRecursiveMixdownSound privateVoice = new(
+						childTimeline, childSession, childSource, parentFrame,
+						disposeDescendants);
+					ObjectId preparedId = sounds.RegisterPreparedMixdown(privateVoice);
+					privateVoices.Add(privateVoice);
+					commands[i] = start with
+					{
+						SourceId = preparedId,
+						Mixdown = false,
+					};
+				}
+				catch
+				{
+					childTimeline.Dispose();
+					throw;
+				}
 			}
+			return note with { Commands = commands };
 		}
+
+		void PrepareNested(TimeSpan exclusiveEnd)
+		{
+			long parentEnd = FrameTime.Ceiling(exclusiveEnd, _configuration.SampleRate);
+			foreach (PreparedRecursiveMixdownSound voice in privateVoices)
+				voice.PrepareThrough(Math.Max(0, parentEnd - voice.ParentStartFrame));
+		}
+
+		return new PreparedIncrementalAudioSource(
+			timeline, session,
+			prepareEvent: Transform,
+			prepareNested: PrepareNested);
 	}
 }
