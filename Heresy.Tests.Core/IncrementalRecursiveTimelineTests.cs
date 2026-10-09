@@ -45,6 +45,99 @@ public sealed class IncrementalRecursiveTimelineTests
 		Assert.That(timeline.IsComplete, Is.True);
 	}
 
+	[TestCase(2.0, 60)]
+	[TestCase(0.5, 240)]
+	public void FlattenedChildRowsRunAtTheirOwnSpeedWithoutRetimingParent(
+		double multiplier, int childSecondRowMilliseconds)
+	{
+		DataPatternDefinition parent = Pattern(1, 3);
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote((ObjectId)2U,
+				playbackSpeedMultiplier: multiplier);
+		parent.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteCut();
+		DataPatternDefinition child = Pattern(2, 2);
+		child.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteOff();
+
+		using IncrementalRecursiveTimeline timeline = new(
+			new SequencingContext(), new Resolver(parent, child));
+		timeline.AddRoot(parent.Id);
+		NoteEvent[] notes = Drain(timeline);
+		Assert.That(notes, Has.Length.EqualTo(2));
+		Assert.That(notes[0].Offset.TimeOffset,
+			Is.EqualTo(TimeSpan.FromMilliseconds(Math.Min(120,
+				childSecondRowMilliseconds))));
+		Assert.That(notes[1].Offset.TimeOffset,
+			Is.EqualTo(TimeSpan.FromMilliseconds(Math.Max(120,
+				childSecondRowMilliseconds))));
+		Assert.That(notes.Single(n => n.Commands.Single() is NoteCutCommand)
+			.Offset.TimeOffset, Is.EqualTo(TimeSpan.FromMilliseconds(120)),
+			"Parent's already captured row remains 120 ms.");
+	}
+
+	[Test]
+	public void AcceleratedFlattenedChildTempoChangesRetimesAllSharedCursors()
+	{
+		DataPatternDefinition parent = Pattern(1, 3);
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote((ObjectId)2U, playbackSpeedMultiplier: 2.0);
+		parent.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteCut();
+		DataPatternDefinition child = Pattern(2, 2);
+		child.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new SetTempoPatternEffect(250));
+		child.Grid.GetOrCreateCell(1, 1).Note = new PatternNoteOff();
+		SequencingContext state = new();
+		using IncrementalRecursiveTimeline timeline = new(
+			state, new Resolver(parent, child));
+		timeline.AddRoot(parent.Id);
+		NoteEvent[] notes = Drain(timeline);
+		Assert.That(notes.Select(x => x.Offset.TimeOffset),
+			Is.EqualTo(new[] { TimeSpan.FromMilliseconds(60),
+				TimeSpan.FromMilliseconds(60), TimeSpan.FromMilliseconds(90) }));
+		Assert.That(state.State.Tempo, Is.EqualTo(250));
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(150)));
+	}
+
+	[Test]
+	public void FlattenedNestedSequenceComposesPlaybackSpeedMultipliers()
+	{
+		DataPatternDefinition parent = Pattern(1, 2);
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote((ObjectId)10U, playbackSpeedMultiplier: 2.0);
+		DataSequenceDefinition sequence = new((ObjectId)10U, "Orders");
+		sequence.Entries.Add(new SequenceEntry((ObjectId)2U));
+		DataPatternDefinition order = Pattern(2, 2);
+		order.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote((ObjectId)3U, playbackSpeedMultiplier: 2.0);
+		DataPatternDefinition leaf = Pattern(3, 2);
+		leaf.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteCut();
+
+		using IncrementalRecursiveTimeline timeline = new(
+			new SequencingContext(), new Resolver(parent, sequence, order, leaf));
+		timeline.AddRoot(parent.Id);
+		NoteEvent[] notes = Drain(timeline);
+		Assert.That(notes.Single().Offset.TimeOffset,
+			Is.EqualTo(TimeSpan.FromMilliseconds(30)),
+			"2x Sequence times 2x Pattern composes to 4x leaf rows.");
+		Assert.That(timeline.Elapsed, Is.EqualTo(TimeSpan.FromMilliseconds(240)));
+	}
+
+	[Test]
+	public void DelayedChildNoteFixedWallOffsetIsNotScaledWithPlaybackSpeed()
+	{
+		DataPatternDefinition parent = Pattern(1, 1);
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote((ObjectId)2U, playbackSpeedMultiplier: 2.0);
+		StreamingPattern child = new((ObjectId)2U, 2,
+			new NoteEvent(new MusicalTime(TimeSpan.FromMilliseconds(35), 1.0),
+				ChannelTarget.Physical(0), [new NoteOffCommand()]));
+		using IncrementalRecursiveTimeline timeline = new(
+			new SequencingContext(), new Resolver(parent, child));
+		timeline.AddRoot(parent.Id);
+		NoteEvent[] notes = Drain(timeline);
+		Assert.That(notes.Single().Offset.TimeOffset,
+			Is.EqualTo(TimeSpan.FromMilliseconds(95)));
+	}
+
 	[Test]
 	public void ChildSequenceBxxRunsOnSameClockAndRetainsItsChannelMemory()
 	{
