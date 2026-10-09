@@ -1612,34 +1612,53 @@ public static class PatternNoteProcessor
 					break;
 
 				case ApplyTonePortamentoCommand tone
-					when tone.TargetNote is { SourceId.IsNone: true }:
+					when tone.TargetNote is { } target:
+				{
+					StartNoteCommand? resolved = ResolvePortamentoStart(target, channelState);
 					changed = true;
-					commands.Add(tone with
+					if (IsFlatteningPortamentoTarget(resolved, context))
 					{
-						TargetNote = ResolvePortamentoSource(
-							tone.TargetNote, channelState),
-					});
+						// The generator cannot know a recalled Source until
+						// this row executes. A Gxx targeting a Pattern must
+						// still start that Pattern, then the voice-only Gxx
+						// is discarded by the common effect policy.
+						commands.Add(resolved!);
+						commands.Add(tone with { TargetNote = null });
+					}
+					else
+						commands.Add(tone with { TargetNote = resolved });
 					break;
+				}
 
 				case ApplyTonePortamentoVolumeSlideCommand combined
-					when combined.TargetNote is { SourceId.IsNone: true }:
+					when combined.TargetNote is { } target:
+				{
+					StartNoteCommand? resolved = ResolvePortamentoStart(target, channelState);
 					changed = true;
-					commands.Add(combined with
+					if (IsFlatteningPortamentoTarget(resolved, context))
 					{
-						TargetNote = ResolvePortamentoSource(
-							combined.TargetNote, channelState),
-					});
+						commands.Add(resolved!);
+						commands.Add(combined with { TargetNote = null });
+					}
+					else
+						commands.Add(combined with { TargetNote = resolved });
 					break;
+				}
 
 				case ApplyTrackerVolumeColumnCommand volume
-					when volume.TargetNote is { SourceId.IsNone: true }:
+					when volume.TargetNote is { } target:
+				{
+					StartNoteCommand? resolved = ResolvePortamentoStart(target, channelState);
 					changed = true;
-					commands.Add(volume with
+					if (IsFlatteningPortamentoTarget(resolved, context))
 					{
-						TargetNote = ResolvePortamentoSource(
-							volume.TargetNote, channelState),
-					});
+						commands.Add(resolved!);
+						commands.Add(volume with { TargetNote = null });
+					}
+					else
+						commands.Add(volume with { TargetNote = resolved });
 					break;
+				}
 
 				default:
 					commands.Add(command);
@@ -1648,6 +1667,18 @@ public static class PatternNoteProcessor
 		}
 		return changed ? noteEvent with { Commands = commands } : noteEvent;
 	}
+
+	private static StartNoteCommand? ResolvePortamentoStart(
+		StartNoteCommand target,
+		SequencingChannelState channelState)
+		=> target.SourceId.IsNone
+			? ResolvePortamentoSource(target, channelState)
+			: target;
+
+	private static bool IsFlatteningPortamentoTarget(
+		StartNoteCommand? target, SequencingContext context)
+		=> target is { Mixdown: false }
+			&& context.IsFlattenedSource?.Invoke(target.SourceId) == true;
 
 	private static StartNoteCommand? ResolvePortamentoSource(
 		StartNoteCommand target,
