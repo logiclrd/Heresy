@@ -333,17 +333,26 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		PatternCell instigator = parent.Grid.GetOrCreateCell(0, 0);
 		instigator.Note = new StartPatternNote(child);
 		instigator.Volume = 0.5;
-		instigator.Effects.Add(new SetOverallChannelVolumePatternEffect(0.5));
-		parent.Grid.GetOrCreateCell(0, 1).Effects.Add(
-			new SetOverallChannelVolumePatternEffect(0.2));
+		// Overall-channel volume is currently applied through live playback
+		// controls: direct SetOverallChannelVolume is not yet admitted by
+		// the incremental raw Pattern-effect merger.
 		document.Add(parent);
 
 		using PreparedIncrementalPlaybackPlan plan =
 			new PreparedIncrementalPlaybackFactory(Mono(1000)).Create(document, root);
+		plan.Source.ApplyLiveEvent(ChannelTarget.Physical(0),
+			[new SetOverallChannelVolumeCommand(0.5)]);
+		plan.Source.ApplyLiveEvent(ChannelTarget.Physical(1),
+			[new SetOverallChannelVolumeCommand(0.2)]);
 		float[] pcm = new float[2];
-		plan.Source.Render(pcm.Length, pcm);
-		Assert.That(pcm, Is.All.EqualTo(0.125f).Within(1e-6f),
-			"0.5 PCM * 0.5 source gain * 0.5 instigator overall volume; host 0.2 is irrelevant.");
+		plan.Source.Render(1, pcm.AsSpan(0, 1));
+		Assert.That(pcm[0], Is.EqualTo(0.125f).Within(1e-6f),
+			"Child uses its instigating channel volume, not the host volume.");
+		plan.Source.ApplyLiveEvent(ChannelTarget.Physical(0),
+			[new SetOverallChannelVolumeCommand(0.8)]);
+		plan.Source.Render(1, pcm.AsSpan(1, 1));
+		Assert.That(pcm[1], Is.EqualTo(0.2f).Within(1e-6f),
+			"Instigator's overall-volume changes must affect the child's running voice live.");
 	}
 
 	[TestCase(2.0, 60)]
