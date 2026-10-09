@@ -71,6 +71,7 @@ public sealed class OfflineSongRenderPlanFactoryTests
 			.NotBeSameAs(document);
 		plan.Snapshot.Document.RootSequenceId
 			.Should().Be(sequenceId);
+		CompleteBody(plan);
 		plan.LogicalDuration.Should()
 			.Be(TimeSpan.FromMilliseconds(240));
 		plan.Session.SampleRate.Should().Be(48000);
@@ -124,6 +125,7 @@ public sealed class OfflineSongRenderPlanFactoryTests
 			RenderConfiguration.Stereo(sampleRate: 48000));
 		OfflineSongRenderPlan plan = factory.Create(document);
 
+		CompleteBody(plan);
 		plan.LogicalDuration.Should().Be(TimeSpan.FromMilliseconds(360));
 	}
 
@@ -167,8 +169,25 @@ public sealed class OfflineSongRenderPlanFactoryTests
 		OfflineSongRenderPlan plan =
 			factory.Create(document);
 
+		CompleteBody(plan);
 		plan.LogicalDuration.Should()
 			.Be(TimeSpan.FromMilliseconds(360));
+	}
+
+	private static void CompleteBody(OfflineSongRenderPlan plan)
+	{
+		// The root is no longer greedily sequenced in Create(). Consuming
+		// the finite arrangement discovers its exact logical duration.
+		float[] block = new float[512 * plan.Source.Format.ChannelCount];
+		for (int i = 0; i < 1000; i++)
+		{
+			int generated = plan.Source.RenderLogical(512, block);
+			if (generated < 512 || plan.Source.IsComplete
+				&& plan.Source.NextFrame >= Heresy.Render.Timing.FrameTime.Ceiling(
+					plan.Source.LogicalDuration, plan.Source.Format.SampleRate))
+				return;
+		}
+		Assert.Fail("Incremental sequence did not reach a finite logical end.");
 	}
 
 	[Test]
