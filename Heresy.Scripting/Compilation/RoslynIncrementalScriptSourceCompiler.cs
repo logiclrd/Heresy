@@ -9,9 +9,9 @@ using Heresy.Scripting.Analysis;
 namespace Heresy.Scripting.Compilation;
 
 /// <summary>
-/// Explicit opt-in bridge between the experimental shared-clock recursive
-/// coordinator and the restricted Roslyn streaming compilers. Production
-/// playback and its eager compatibility paths are not modified.
+/// Production bridge between the shared-clock recursive sequencer and
+/// restricted Roslyn streaming Pattern/Sequence compilers. No eager song
+/// compilation or playback-specific compatibility branch remains.
 /// </summary>
 public sealed class RoslynIncrementalScriptSourceCompiler
 	: IIncrementalScriptSourceCompiler
