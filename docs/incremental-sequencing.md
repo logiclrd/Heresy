@@ -1726,8 +1726,11 @@ parent frame and is translated to an invocation-relative frame. The
 private PCM preparation loop never renders past the next scheduled
 lifecycle boundary. At a release it calls the child's
 `PlaybackSession.EndInput` at that exact frame, applies the existing
-indefinite-voice safeguard, stops evaluating future child Pattern or
-Sequence events, then renders its released child voice tails. Cut
+indefinite-voice safeguard, stops consuming future child Pattern or
+Sequence events, then renders its released child voice tails.
+As in ordinary lookahead, at most one future event may already have
+been staged at the boundary; it is never applied to the released
+child session. Cut
 terminates the child cooked stream; fade forwards a normal
 `RequestNoteFade` to voices currently sounding in the child session.
 The parent callback itself still executes **no Roslyn, private timeline
