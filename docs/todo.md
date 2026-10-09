@@ -209,8 +209,21 @@ Items that were already completed remain in Git history, not in this checklist.
   effects remain rejected on virtual targets. A known nested Mixdown=true
   start remains renderer-owned instead of being flattened into the
   parent's clock. Renderer scoped-broadcast eligibility, live virtual
-  voice lifecycle, private mixdown state/clock and cooked multichannel
-  mixdown audio are still separate integration work.
+  voice lifecycle now has a first opt-in **realtime renderer bridge**:
+  PlaybackSessionAudioSource accepts EnqueueScopedEvent(owner, target,
+  commands) and EnqueueCancelScope(owner). PlaybackSession keys audible
+  virtual voices by (Pattern invocation ID, local virtual channel ID),
+  preserving sibling identity, applies scoped/global broadcasts only to
+  voices started strictly before the command frame, and includes
+  owner-scoped voices in multichannel rendering, normal release,
+  cancellation, indefinite-tail cleanup and anti-click handling.
+  Global virtual broadcasts also include unscoped preview and
+  displaced NNA virtual voices. The bridge currently dispatches at
+  render **block** boundaries, not at incremental event timestamps:
+  a preprepared sample-accurate recursive timeline consumer, complete
+  scoped voice ancestry and production migration remain open.
+  Private mixdown state/clock and cooked multichannel mixdown audio
+  are also separate integration work.
   Require test parity, chronological raw-emission filtering, and
   realtime/offline determinism before retiring eager scheduling.
   Replace the restricted chronological scheduler rather than adding
