@@ -27,6 +27,7 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 
 	private readonly IncrementalRecursiveTimeline _timeline;
 	private readonly PlaybackSession _session;
+	private readonly Action<NoteEvent>? _validatePreparedNote;
 	private readonly ConcurrentQueue<PreparedEvent> _events = new();
 	private readonly ConcurrentQueue<long> _cancellations = new();
 	private readonly HashSet<long> _canceledOwners = [];
@@ -36,10 +37,12 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 	private bool _disposed;
 
 	public PreparedIncrementalAudioSource(
-		IncrementalRecursiveTimeline timeline, PlaybackSession session)
+		IncrementalRecursiveTimeline timeline, PlaybackSession session,
+		Action<NoteEvent>? validatePreparedNote = null)
 	{
 		_timeline = timeline ?? throw new ArgumentNullException(nameof(timeline));
 		_session = session ?? throw new ArgumentNullException(nameof(session));
+		_validatePreparedNote = validatePreparedNote;
 		if (session.NextFrame != 0)
 			throw new ArgumentException(
 				"The incremental renderer requires a fresh playback session.",
@@ -89,6 +92,9 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 						"Recursive timeline returned a null step.");
 				if (step is IncrementalPatternTimelineStep.Emit emit)
 				{
+					// Factory-supplied restrictions and source checks run here,
+					// never on the PCM callback.
+					_validatePreparedNote?.Invoke(emit.Note);
 					long frame = FrameTime.Ceiling(
 						emit.Time, Format.SampleRate);
 					if (frame < _lastEventFrame)
