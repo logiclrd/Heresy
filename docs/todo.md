@@ -374,3 +374,13 @@ Items that were already completed remain in Git history, not in this checklist.
 
 Completed implementation history is preserved in Git, while stable architecture
 belongs in the README and focused documentation.
+
+### Prepared recursive cancellation checkpoint (milestone 32)
+
+The opt-in prepared adapter now supports explicit current-frame subtree
+cancellation of renderer-owned scoped virtual voices. Natural completion
+does not cut voice tails, and duplicate virtual IDs in sibling invocations
+remain isolated. Cancellation is admitted only at the prepared playback
+frontier with producer and Render serialized; future lookahead invalidation,
+asynchronous cancellation delivery, parent physical lifecycle parity, and
+production scheduler migration remain unchecked work.
