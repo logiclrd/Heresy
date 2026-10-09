@@ -456,3 +456,31 @@ clocks, mixed instrument-owned recursive sources, transformations of
 nested pitch/playback speed, realtime/offline end handling and parity,
 and production transport/export migration. These are structural
 remaining requirements, not reasons to add an opt-in production switch.
+
+### Parent-to-private voice lifecycle checkpoint (milestone 36)
+
+The experimental recursive PCM producer now forwards parent Note Off,
+Cut, Fade, ordinary replacement/NNA displacement and tracker S70–S76
+past/new-note actions to the affected private mixdown voice **at the
+quantized child-frame boundary**, before publishing its audio horizon.
+Release stops executing future child Pattern/Sequence notes and ends
+child input at that frame, allowing finite child tails to drain.
+Continue retains an independent old private source; Cut terminates
+it; Fade requests normal child-voice fade as well as retaining the
+parent's own voice fade behavior. Invocation-scoped virtual note
+controls and previously eligible scoped/global broadcasts also
+forward their lifecycle events. The shared tick merger admits
+the tracker NNA/past-note control commands and uses the common
+PatternNoteProcessor to resolve them. All child timeline and PCM
+work remains off the audio callback. Tests cover producer-side
+input release, current/continued voices, displaced past-note
+cut and NNA Off.
+
+**Still unchecked before scheduler cutover:** complete NNA policy
+inheritance for indirect instrument recursive tones and configured
+per-note fade durations, broader indirect recursive source graphs,
+byte-bounded private PCM storage and native producer-coordinated seek,
+asynchronous cancellation through published lookahead, and realtime/
+export transport and finite-lifetime parity. Do not add an opt-in
+production scheduler: retire the legacy route when these structural
+requirements are satisfied.
