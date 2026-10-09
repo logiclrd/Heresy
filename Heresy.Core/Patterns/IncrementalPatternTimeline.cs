@@ -923,6 +923,9 @@ public sealed class IncrementalPatternTimeline : IDisposable
 
 	public double Tick => _tick;
 	public TimeSpan Elapsed { get; private set; }
+	/// <summary>Emitted when a cursor finishes preparing a new row.
+	/// This is observability, not an extra note event or audible action.</summary>
+	public event Action<long, int, TimeSpan>? RowBegan;
 	public bool IsComplete => _active.Count == 0
 		&& _delayed.Count == 0 && _queuedTempoEvents.Count == 0
 		&& _futureTempoRamps.Count == 0;
@@ -1266,6 +1269,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						ready.Sequence, _tick, Elapsed);
 					return true;
 				}
+				RowBegan?.Invoke(ready.Sequence, ready.Row, Elapsed);
 			}
 			// Standalone global Tempo/Speed takes priority over tracker
 			// physical-channel Txx effects at a shared row boundary.
