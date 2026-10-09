@@ -20,7 +20,7 @@ namespace Heresy.Playback;
 /// the prepared window. A future bounded history/replay policy must replace
 /// this accumulation for indefinitely advancing voices.
 /// </remarks>
-internal sealed class PreparedRecursiveMixdownSound : ISound, ISourceFrameSeekableSound
+internal sealed class PreparedRecursiveMixdownSound : ISound, ISourceFrameSeekableSound, IDisposable
 {
 	private const int BlockFrames = 256;
 	private sealed class NestedState : SoundState
@@ -31,6 +31,7 @@ internal sealed class PreparedRecursiveMixdownSound : ISound, ISourceFrameSeekab
 	private readonly IncrementalRecursiveTimeline _timeline;
 	private readonly PlaybackSession _session;
 	private readonly PreparedIncrementalAudioSource _source;
+	private readonly Action _disposeChildren;
 	private readonly List<float[]> _blocks = [];
 	private readonly int _sampleRate;
 	private readonly int _channels;
@@ -41,11 +42,13 @@ internal sealed class PreparedRecursiveMixdownSound : ISound, ISourceFrameSeekab
 		IncrementalRecursiveTimeline timeline,
 		PlaybackSession session,
 		PreparedIncrementalAudioSource source,
-		long parentStartFrame)
+		long parentStartFrame,
+		Action disposeChildren)
 	{
 		_timeline = timeline ?? throw new ArgumentNullException(nameof(timeline));
 		_session = session ?? throw new ArgumentNullException(nameof(session));
 		_source = source ?? throw new ArgumentNullException(nameof(source));
+		_disposeChildren = disposeChildren ?? throw new ArgumentNullException(nameof(disposeChildren));
 		if (parentStartFrame < 0)
 			throw new ArgumentOutOfRangeException(nameof(parentStartFrame));
 		ParentStartFrame = parentStartFrame;
@@ -131,6 +134,13 @@ internal sealed class PreparedRecursiveMixdownSound : ISound, ISourceFrameSeekab
 			_blocks.Add(output);
 			_preparedFrames = next;
 		}
+	}
+
+	public void Dispose()
+	{
+		_source.Dispose();
+		_timeline.Dispose();
+		_disposeChildren();
 	}
 
 	public void Render(RenderContext context, SoundState state,
