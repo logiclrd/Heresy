@@ -91,10 +91,16 @@ preserving audible release and already-captured anti-click tails. These are
   selection without a start, Note Off tails, Cut, and mixdown/new-note
   displacement are distinguished. Runtime diagnostics remain the
   authority for dynamically selected/cross-Pattern Sources.
+  **Step 56: same-event source lifecycle ordering implemented.**
+  One raw event may start a flattened source then Cut/Off or displace
+  it with S74 Continue at the very same output frame. Scope retirement
+  now reaches the renderer after the complete emitted command group,
+  never before its Begin controller registration. Exact-frame PCM and
+  bounded controller lifetime are regression-tested.
   **Still outstanding:** UI indications for sources inherited across
   Sequence orders or selected dynamically, and downstream Note Off/Cut
-  presentation; more rapid same-frame mixed producer/cancellation
-  cases, and deeper lifecycle coverage for nested indirect private
+  presentation; further simultaneous producer/cancellation and delayed
+  virtual/NNA ties, plus lifecycle coverage for nested indirect private
   mixdowns and indefinite scripts.
   The incremental merger admits zero-offset Mxx and native channel-volume
   commands alongside flattened starts.

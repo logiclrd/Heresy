@@ -2717,3 +2717,49 @@ one covers later effect-only rows, Note Off tails, Cut and channel
 isolation; the other covers Source selection without displacement
 followed by a mixdown replacement. The implementation changes editor
 static diagnostics only, not runtime effect filtering or PCM scheduling.
+
+## Fifty-sixth step: same-event flattened start/termination retirement ordering
+
+A same-timestamp raw `NoteEvent` can contain **multiple ordered commands**,
+including a flattened source `StartNoteCommand` followed immediately by
+`NoteCutCommand` or `NoteOffCommand`, or a source start, S74/Continue
+override and replacement start. The Core coroutine transforms this one
+event into a `BeginFlattenedSourceVolumeCommand` plus its lifecycle
+control. Crucially, it can stop and **retire the child producer inside
+that same `TryStep`** before the PCM renderer has consumed the transformed
+event. The former direct `ScopeRetired -> PlaybackSession.RetirePhysicalScope`
+subscription ran too early: no renderer source controller existed yet
+to remove, and a later `BeginFlattenedSourceVolumeCommand` could register
+a controller that was never retired.
+
+The production `PreparedIncrementalAudioSource` now **queues scope
+retirement notifications in memory just for the in-flight coroutine
+step**. An emitted event is applied in its command order at
+`Ceiling(eventTime * sampleRate)`; only after the entire event is
+applied are its pending scope retirements delivered to
+`PlaybackSession`. A non-emitting cooperative/flow/advance step has
+no such command group, so its retirements are flushed immediately.
+External `Cancel` flushes after canceling its owned renderer voices.
+A canceled pending event still drains its retirement notifications.
+Existing live voice references and anti-click tails retain their
+normal separate lifetimes. This is **not** a note journal, PCM cache,
+new scheduler, cross-thread queue or extra rendering worker.
+
+An actual end-to-end playback regression went red on the old code:
+a single raw event started a flattened child and then Cut it in the
+same command list. PCM remained silent and the Core scope retired,
+but the renderer's source-controller lookup incorrectly retained one
+entry. With the corrected ordering it is released. Expanded
+regressions cover both same-event Cut and Off, plus same-event
+new-note displacement with S74 Continue. In the latter case the
+first child and replacement sample contribute independently to the
+*first output frame*; without Continue, default Cut stops the child
+producer before its first note, leaving only the replacement sample.
+These verify both source ownership and sample-accurate scheduling,
+including no retroactive host-voice displacement.
+
+This intentionally settles **one concrete same-frame contract**,
+not every possible simultaneous-producer tie. Remaining review areas
+include externally canceled pending future frames, NNA-migrated
+virtual voices at coincident deadlines, nested private mixdowns with
+release tails and rapid wall-time/cooperation interactions.
