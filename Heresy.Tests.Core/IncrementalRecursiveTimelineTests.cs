@@ -196,7 +196,7 @@ public sealed class IncrementalRecursiveTimelineTests
 		DataPatternDefinition parent = Pattern(1, 1);
 		parent.Grid.GetOrCreateCell(0, 0).Note =
 			new StartPatternNote((ObjectId)2U);
-		parent.Grid.GetOrCreateCell(1, 0).Note =
+		parent.Grid.GetOrCreateCell(0, 1).Note =
 			new StartPatternNote((ObjectId)2U);
 		StreamingPattern child = new((ObjectId)2U, 1,
 			new NoteEvent(new MusicalTime(TimeSpan.Zero, 0.5),
