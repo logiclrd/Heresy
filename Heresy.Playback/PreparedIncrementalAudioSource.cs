@@ -26,7 +26,12 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 		long Frame, long InvocationId, NoteEvent? Note);
 
 	private readonly IncrementalRecursiveTimeline _timeline;
-	private readonly PlaybackSession _session;
+	private PlaybackSession _session;
+	private readonly Func<PlaybackSession>? _replaySessionFactory;
+	private readonly ConcurrentDictionary<long, PreparedEvent> _replayEvents = new();
+	private long _replayPublishedCount;
+	private long _replayNextWrite;
+	private long _replayRead;
 	private readonly Action<NoteEvent>? _validatePreparedNote;
 	private readonly Func<NoteEvent, long, long, NoteEvent>? _prepareEvent;
 	private readonly Action<TimeSpan>? _prepareNested;
@@ -42,13 +47,15 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 		IncrementalRecursiveTimeline timeline, PlaybackSession session,
 		Action<NoteEvent>? validatePreparedNote = null,
 		Func<NoteEvent, long, long, NoteEvent>? prepareEvent = null,
-		Action<TimeSpan>? prepareNested = null)
+		Action<TimeSpan>? prepareNested = null,
+		Func<PlaybackSession>? replaySessionFactory = null)
 	{
 		_timeline = timeline ?? throw new ArgumentNullException(nameof(timeline));
 		_session = session ?? throw new ArgumentNullException(nameof(session));
 		_validatePreparedNote = validatePreparedNote;
 		_prepareEvent = prepareEvent;
 		_prepareNested = prepareNested;
+		_replaySessionFactory = replaySessionFactory;
 		if (session.NextFrame != 0)
 			throw new ArgumentException(
 				"The incremental renderer requires a fresh playback session.",
@@ -60,6 +67,56 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 	public AudioOutputFormat Format { get; }
 
 	public long NextFrame => _session.NextFrame;
+
+	/// <summary>Current consumer-owned playback state, replaced when rewinding a private clock.</summary>
+	public PlaybackSession Session => _session;
+
+	/// <summary>
+	/// Restore a fresh consumer session and begin replaying already prepared,
+	/// timestamped note events from frame zero. This never calls TryStep,
+	/// enumerates scripts, or runs the producer's callback.
+	/// The caller must serialize rewinds with all audio rendering.
+	/// </summary>
+	public void RewindForReplay()
+	{
+		if (_disposed)
+			throw new ObjectDisposedException(nameof(PreparedIncrementalAudioSource));
+		if (_replaySessionFactory is null)
+			throw new NotSupportedException("This source does not retain events for private replay.");
+		if (!_cancellations.IsEmpty || _canceledOwners.Count != 0)
+			throw new NotSupportedException(
+				"Private rewind with canceled invocation scopes requires reconstructing cancellation state.");
+		PlaybackSession fresh = _replaySessionFactory();
+		if (fresh.NextFrame != 0 || fresh.SampleRate != Format.SampleRate
+			|| fresh.OutputChannelCount != Format.ChannelCount)
+			throw new InvalidOperationException("Private replay session does not match the prepared source.");
+		_session = fresh;
+		_replayRead = 0;
+	}
+
+	private bool TryPeekEvent(out PreparedEvent? next)
+	{
+		if (_replaySessionFactory is null)
+			return _events.TryPeek(out next);
+		if (_replayRead >= Volatile.Read(ref _replayPublishedCount))
+		{
+			next = null;
+			return false;
+		}
+		if (!_replayEvents.TryGetValue(_replayRead, out next))
+			throw new InvalidOperationException("Prepared replay event was not published.");
+		return true;
+	}
+
+	private bool TryReadEvent(out PreparedEvent? next)
+	{
+		if (_replaySessionFactory is null)
+			return _events.TryDequeue(out next);
+		if (!TryPeekEvent(out next))
+			return false;
+		_replayRead++;
+		return true;
+	}
 
 	public bool IsPreparedToEnd => Volatile.Read(ref _finished);
 
@@ -112,8 +169,17 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 					_lastEventFrame = frame;
 					NoteEvent prepared = _prepareEvent?.Invoke(emit.Note, frame, emit.InvocationId)
 						?? emit.Note;
-					_events.Enqueue(new PreparedEvent(
-						frame, emit.InvocationId, prepared));
+					PreparedEvent staged = new(
+						frame, emit.InvocationId, prepared);
+					if (_replaySessionFactory is not null)
+					{
+						long index = _replayNextWrite++;
+						if (!_replayEvents.TryAdd(index, staged))
+							throw new InvalidOperationException("Duplicate private replay event index.");
+						Volatile.Write(ref _replayPublishedCount, index + 1);
+					}
+					else
+						_events.Enqueue(staged);
 				}
 				if (step.Time >= exclusiveEnd)
 				{
@@ -196,7 +262,7 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 		}
 
 		int writtenFrames = 0;
-		while (_events.TryPeek(out PreparedEvent? next)
+		while (TryPeekEvent(out PreparedEvent? next)
 			&& next.Frame < end)
 		{
 			long now = _session.NextFrame;
@@ -216,9 +282,9 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 			// Multiple emissions at one output frame keep their original
 			// streaming order. Scoped broadcast eligibility still checks
 			// StartFrame < current frame, not callback/enqueue order.
-			while (_events.TryPeek(out next) && next.Frame == _session.NextFrame)
+			while (TryPeekEvent(out next) && next.Frame == _session.NextFrame)
 			{
-				if (!_events.TryDequeue(out PreparedEvent? current))
+				if (!TryReadEvent(out PreparedEvent? current))
 					continue;
 				if (!_canceledOwners.Contains(current.InvocationId)
 					&& current.Note is { } note)
