@@ -711,6 +711,109 @@ public sealed class IncrementalRecursiveTimelineTests
 		Assert.That(root.ScopedMemory.MaterializedScopeCount, Is.Zero);
 	}
 
+	[Test]
+	public void RawFlatteningStartIgnoresVoiceEffectsWithoutContaminatingCallerMemory()
+	{
+		StreamingPattern root = new((ObjectId)1U, 1,
+			new NoteEvent(MusicalTime.Zero, ChannelTarget.Physical(0),
+			[
+				new StartNoteCommand((ObjectId)2U, Volume: 0.6),
+				new ApplyRetriggerCommand(0xA3),
+				new ApplySampleOffsetCommand(0x17),
+				new ApplyTrackerGlissandoControlCommand(1),
+				new SetTempoCommand(200),
+			]));
+		DataPatternDefinition child = Pattern(2, 1);
+		child.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteOff();
+		SequencingContext context = new();
+		using IncrementalRecursiveTimeline timeline = new(
+			context, new Resolver(root, child));
+		timeline.AddRoot(root.Id);
+		NoteEvent[] events = Drain(timeline);
+		Assert.That(events.SelectMany(e => e.Commands)
+			.OfType<NoteOffCommand>().Count(), Is.EqualTo(1));
+		Assert.That(events.SelectMany(e => e.Commands)
+			.OfType<RetriggerCurrentVoiceCommand>(), Is.Empty);
+		Assert.That(events.SelectMany(e => e.Commands)
+			.OfType<SetSourceFrameOffsetCommand>(), Is.Empty);
+		Assert.That(context.State.Tempo, Is.EqualTo(200));
+		Assert.That(context.GetPhysicalChannelState(0)
+			.TryGetEffectParameter(EffectMemorySlot.Retrigger, out _), Is.False);
+		Assert.That(context.GetPhysicalChannelState(0)
+			.TryGetEffectParameter(EffectMemorySlot.SampleOffset, out _), Is.False);
+		Assert.That(context.GetPhysicalChannelState(0).GlissandoEnabled, Is.False);
+		Assert.That(context.GetPhysicalChannelState(0).NoteVolume,
+			Is.EqualTo(0.6));
+		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(3));
+		Assert.That(context.Diagnostics.Drain()
+			.Count(d => d.Code == "HRSEQ003"), Is.EqualTo(3));
+	}
+
+	[Test]
+	public void DataFlatteningStartDoesNotBecomePortamentoTarget()
+	{
+		DataPatternDefinition root = Pattern(1, 1);
+		PatternCell cell = root.Grid.GetOrCreateCell(0, 0);
+		cell.Note = new StartPatternNote((ObjectId)2U);
+		cell.Effects.Add(new TonePortamentoPatternEffect(0x05));
+		cell.Effects.Add(new RetriggerPatternEffect(0xA3));
+		cell.Effects.Add(new TrackerTempoPatternEffect(0x80));
+		DataPatternDefinition child = Pattern(2, 1);
+		child.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteOff();
+		SequencingContext context = new();
+		using IncrementalRecursiveTimeline timeline = new(
+			context, new Resolver(root, child));
+		timeline.AddRoot(root.Id);
+		NoteEvent[] events = Drain(timeline);
+		Assert.That(events.SelectMany(e => e.Commands)
+			.OfType<NoteOffCommand>().Count(), Is.EqualTo(1),
+			"The Pattern still starts, even with Gxx in its stored cell.");
+		Assert.That(context.GetPhysicalChannelState(0)
+			.TryGetEffectParameter(EffectMemorySlot.TonePortamento, out _),
+			Is.False);
+		Assert.That(context.GetPhysicalChannelState(0)
+			.TryGetEffectParameter(EffectMemorySlot.Retrigger, out _),
+			Is.False);
+		Assert.That(context.State.Tempo, Is.EqualTo(128));
+		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(2));
+		Assert.That(cell.Effects, Has.Count.EqualTo(3),
+			"Playback filtering must never mutate stored Pattern effects.");
+	}
+
+	[Test]
+	public void MixdownAndOrdinaryStartsDoNotTriggerFlattenedWarnings()
+	{
+		SequencingContext context = new();
+		context.IsFlattenedSource = id => id == (ObjectId)2U;
+		NoteEvent mixdown = new(MusicalTime.Zero, ChannelTarget.Physical(0),
+			[new StartNoteCommand((ObjectId)2U, Mixdown: true),
+				new ApplyRetriggerCommand(0xA3)]);
+		NoteEvent ordinary = new(MusicalTime.Zero, ChannelTarget.Physical(0),
+			[new StartNoteCommand((ObjectId)99U),
+				new ApplySampleOffsetCommand(0x17)]);
+		Assert.That(FlattenedSourceEffectPolicy.Filter(mixdown, context),
+			Is.SameAs(mixdown));
+		Assert.That(FlattenedSourceEffectPolicy.Filter(ordinary, context),
+			Is.SameAs(ordinary));
+		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.Zero);
+	}
+
+	[Test]
+	public void IgnoredFlattenedEffectsUseIndependentBoundedDiagnosticQueue()
+	{
+		SequencingContext context = new();
+		const int excess = 1000;
+		for (int i = 0;
+			i < Heresy.Core.Diagnostics.SequencingDiagnosticLog.MaximumIndividualMessages
+				+ excess; i++)
+			context.Diagnostics.ReportIgnoredFlatteningEffect("Retrigger", 2);
+		var messages = context.Diagnostics.Drain();
+		Assert.That(messages.Count(x => x.Code == "HRSEQ003"),
+			Is.EqualTo(Heresy.Core.Diagnostics.SequencingDiagnosticLog.MaximumIndividualMessages));
+		Assert.That(messages.Count(x => x.Code == "HRSEQ004"), Is.EqualTo(1));
+		Assert.That(context.Diagnostics.Drain(), Is.Empty);
+	}
+
 	private static DataPatternDefinition Pattern(uint id, int rows)
 		=> new((ObjectId)id, "Pattern")
 		{
