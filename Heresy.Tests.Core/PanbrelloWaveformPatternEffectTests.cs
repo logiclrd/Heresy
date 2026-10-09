@@ -71,7 +71,7 @@ public sealed class PanbrelloWaveformPatternEffectTests
 
 		Assert.That(
 			context.GetPhysicalChannelState(0).PanbrelloWaveform,
-			Is.EqualTo(TrackerWaveform.Sine));
+			Is.EqualTo(TrackerWaveform.Square));
 		Assert.That(
 			schedule.SelectMany(e => e.Commands)
 				.OfType<SetPanbrelloWaveformCommand>(),
@@ -186,7 +186,7 @@ public sealed class PanbrelloWaveformPatternEffectTests
 				.OfType<SetPanbrelloCommand>()
 				.Single()
 				.Waveform,
-			Is.EqualTo(TrackerWaveform.Square));
+			Is.EqualTo(TrackerWaveform.Sine));
 	}
 
 	[Test]
