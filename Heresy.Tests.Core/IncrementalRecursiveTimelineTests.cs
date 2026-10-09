@@ -260,7 +260,7 @@ public sealed class IncrementalRecursiveTimelineTests
 		using IncrementalRecursiveTimeline timeline = new(
 			context, new Resolver(parent, child));
 		timeline.AddRoot(parent.Id);
-		NoteEvent[] events = Drain(timeline);
+		NoteEvent[] events = DrainRaw(timeline);
 		BeginFlattenedSourceVolumeCommand begin = events
 			.SelectMany(e => e.Commands).OfType<BeginFlattenedSourceVolumeCommand>().Single();
 		Assert.That(begin.ChildScopeId, Is.GreaterThan(0));
@@ -1022,7 +1022,17 @@ public sealed class IncrementalRecursiveTimelineTests
 			RowCount = rows, ChannelCount = 2,
 		};
 
+	// Musical-output assertions deliberately exclude the private control
+	// command which initializes a flattened source's live volume controller.
 	private static NoteEvent[] Drain(IncrementalRecursiveTimeline timeline)
+		=> DrainRaw(timeline)
+			.Select(e => e with {
+				Commands = e.Commands.Where(c =>
+					c is not BeginFlattenedSourceVolumeCommand).ToArray(),
+			})
+			.Where(e => e.Commands.Count != 0).ToArray();
+
+	private static NoteEvent[] DrainRaw(IncrementalRecursiveTimeline timeline)
 	{
 		List<NoteEvent> events = [];
 		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))

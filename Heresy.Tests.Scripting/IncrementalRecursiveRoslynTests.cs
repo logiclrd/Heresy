@@ -43,6 +43,12 @@ public sealed class IncrementalRecursiveRoslynTests
 		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
 			if (step is IncrementalPatternTimelineStep.Emit e)
 				emitted.Add(e.Note);
+		// Source-start controller initialization is a private render action,
+		// not an additional musical note.
+		emitted = emitted.Select(e => e with {
+			Commands = e.Commands.Where(c =>
+				c is not BeginFlattenedSourceVolumeCommand).ToArray(),
+		}).Where(e => e.Commands.Count > 0).ToList();
 		emitted.Select(e => e.Offset.TimeOffset).Should().Equal(
 			TimeSpan.Zero, TimeSpan.Zero, TimeSpan.FromMilliseconds(60));
 		emitted[1].Target.Should().Be(ChannelTarget.Physical(2));
