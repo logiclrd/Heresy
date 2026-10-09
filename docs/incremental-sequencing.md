@@ -1152,7 +1152,9 @@ invocation**, matching the eager row processor's repeat semantics:
   `SequencingState`. Advancing across a repeat boundary uses the
   current Tempo integral; wall-time note deadlines in each segment
   use the existing analytic `TrackerTimeMap` inversion. Later Tempo
-  interruptions clear unexecuted scheduled segments.
+  interruptions clear unexecuted scheduled segments. Cancelling the
+  owning Pattern also discards its pending SEy Tempo repetitions and
+  freezes the shared Tempo at its actually reached value.
 
 The eager `PatternNoteProcessor` was also corrected: selection of the
 physical-channel SEy winner must inspect **combined Txx + SEy cells**,
