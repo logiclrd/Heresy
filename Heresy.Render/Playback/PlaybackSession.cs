@@ -127,7 +127,8 @@ public sealed class PlaybackSession
 			foreach (PlaybackChannelState channel in _channels.Values)
 			{
 				if (channel.CurrentVoice is PlaybackVoice voice
-					&& !GetEffectiveVoiceEndFrameExclusive(
+				&& voice.Sound is not IStreamingFiniteSound
+				&& !GetEffectiveVoiceEndFrameExclusive(
 						voice,
 						_nextFrame).HasValue)
 				{
@@ -138,7 +139,8 @@ public sealed class PlaybackSession
 			foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
 			{
 				if (channel.CurrentVoice is PlaybackVoice voice
-					&& !GetEffectiveVoiceEndFrameExclusive(
+				&& voice.Sound is not IStreamingFiniteSound
+				&& !GetEffectiveVoiceEndFrameExclusive(
 						voice,
 						_nextFrame).HasValue)
 				{
@@ -149,13 +151,15 @@ public sealed class PlaybackSession
 			foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
 			{
 				if (channel.CurrentVoice is PlaybackVoice voice
-					&& !GetEffectiveVoiceEndFrameExclusive(
+				&& voice.Sound is not IStreamingFiniteSound
+				&& !GetEffectiveVoiceEndFrameExclusive(
 						voice, _nextFrame).HasValue)
 					return true;
 			}
 			foreach (PlaybackVoice voice in _virtualVoices)
 			{
-				if (!GetEffectiveVoiceEndFrameExclusive(
+				if (voice.Sound is not IStreamingFiniteSound
+				&& !GetEffectiveVoiceEndFrameExclusive(
 					voice,
 					_nextFrame).HasValue)
 				{
@@ -317,6 +321,7 @@ public sealed class PlaybackSession
 		foreach (PlaybackChannelState channel in _channels.Values)
 		{
 			if (channel.CurrentVoice is PlaybackVoice voice
+				&& voice.Sound is not IStreamingFiniteSound
 				&& !GetEffectiveVoiceEndFrameExclusive(
 					voice,
 					_nextFrame).HasValue)
@@ -328,6 +333,7 @@ public sealed class PlaybackSession
 		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
 		{
 			if (channel.CurrentVoice is PlaybackVoice voice
+				&& voice.Sound is not IStreamingFiniteSound
 				&& !GetEffectiveVoiceEndFrameExclusive(
 					voice,
 					_nextFrame).HasValue)
@@ -339,6 +345,7 @@ public sealed class PlaybackSession
 		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
 		{
 			if (channel.CurrentVoice is PlaybackVoice voice
+				&& voice.Sound is not IStreamingFiniteSound
 				&& !GetEffectiveVoiceEndFrameExclusive(
 					voice, _nextFrame).HasValue)
 				channel.CutCurrentVoice();
@@ -349,9 +356,9 @@ public sealed class PlaybackSession
 			index--)
 		{
 			PlaybackVoice voice = _virtualVoices[index];
-			if (GetEffectiveVoiceEndFrameExclusive(
-				voice,
-				_nextFrame).HasValue)
+			if (voice.Sound is IStreamingFiniteSound
+				|| GetEffectiveVoiceEndFrameExclusive(
+					voice, _nextFrame).HasValue)
 			{
 				continue;
 			}
