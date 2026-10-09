@@ -143,7 +143,7 @@ public sealed class ArpeggioAndTremoloPatternEffectTests
 	}
 
 	[Test]
-	public void FlattenedChildSharesMappedArpeggioMemory()
+	public void FlattenedChildDoesNotRecallParentArpeggioMemory()
 	{
 		SequencingContext parent = new(physicalChannelBase: 3);
 
@@ -165,9 +165,8 @@ public sealed class ArpeggioAndTremoloPatternEffectTests
 			output,
 			out _);
 
-		Assert.That(
-			output.Freeze()[0].Commands[0],
-			Is.EqualTo(new SetArpeggioCommand(4, 7)));
+		Assert.That(output.Freeze(), Is.Empty,
+			"A00 without local memory cannot inherit a parent arpeggio.");
 	}
 
 	private static DataPatternDefinition PatternWithEffect(
