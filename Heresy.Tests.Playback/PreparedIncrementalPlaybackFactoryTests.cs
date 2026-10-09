@@ -331,7 +331,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		plan.Source.Render(1, prefix);
 		Assert.That(prefix[0], Is.GreaterThan(0));
 		object mixdown = plan.Session.GetChannelState(0).CurrentSound!;
-		FieldInfo sessionField = mixdown.GetType().GetField("_session",
+		PropertyInfo sessionField = mixdown.GetType().GetProperty("Session",
 			BindingFlags.NonPublic | BindingFlags.Instance)!;
 		PlaybackSession childSession =
 			(PlaybackSession)sessionField.GetValue(mixdown)!;
@@ -498,7 +498,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		object privateSound = plan.Session.VirtualVoices
 			.Single(voice => voice.Sound.GetType().Name == "PreparedRecursiveMixdownSound")
 			.Sound;
-		FieldInfo privateSession = privateSound.GetType().GetField("_session",
+		PropertyInfo privateSession = privateSound.GetType().GetProperty("Session",
 			BindingFlags.Instance | BindingFlags.NonPublic)!;
 		PlaybackSession childSession =
 			(PlaybackSession)privateSession.GetValue(privateSound)!;
@@ -570,7 +570,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		float[] first = new float[1];
 		plan.Source.Render(1, first);
 		object sound = plan.Session.GetChannelState(0).CurrentSound!;
-		FieldInfo sessionField = sound.GetType().GetField("_session",
+		PropertyInfo sessionField = sound.GetType().GetProperty("Session",
 			BindingFlags.NonPublic | BindingFlags.Instance)!;
 		PlaybackSession childSession = (PlaybackSession)sessionField.GetValue(sound)!;
 		Assert.That(childSession.NextFrame, Is.EqualTo(1L),
@@ -618,7 +618,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		float[] sought = new float[1];
 		nested.Source.Render(1, sought);
 		Assert.That(sought[0], Is.EqualTo(reference[11]).Within(1e-6f));
-		FieldInfo sessionField = voice.Sound.GetType().GetField("_session",
+		PropertyInfo sessionField = voice.Sound.GetType().GetProperty("Session",
 			BindingFlags.NonPublic | BindingFlags.Instance)!;
 		PlaybackSession child = (PlaybackSession)sessionField.GetValue(voice.Sound)!;
 		Assert.That(child.NextFrame, Is.EqualTo(12L),
@@ -664,7 +664,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		plan.Source.Render(3, before);
 		Assert.That(before[0], Is.EqualTo(0.5f).Within(1e-6f));
 		PlaybackVoice voice = plan.Session.GetChannelState(0).CurrentVoice!;
-		FieldInfo sessionField = voice.Sound.GetType().GetField("_session",
+		PropertyInfo sessionField = voice.Sound.GetType().GetProperty("Session",
 			BindingFlags.Instance | BindingFlags.NonPublic)!;
 		PlaybackSession original = (PlaybackSession)sessionField.GetValue(voice.Sound)!;
 		Assert.That(original.NextFrame, Is.EqualTo(3L));
@@ -717,7 +717,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		plan.Source.Render(1, new float[1]);
 		PlaybackVoice outer = plan.Session.GetChannelState(0).CurrentVoice!;
 		ISourceFrameSeekableSound seekable = (ISourceFrameSeekableSound)outer.Sound;
-		FieldInfo sessionField = outer.Sound.GetType().GetField("_session",
+		PropertyInfo sessionField = outer.Sound.GetType().GetProperty("Session",
 			BindingFlags.NonPublic | BindingFlags.Instance)!;
 		PlaybackSession oldMiddle = (PlaybackSession)sessionField.GetValue(outer.Sound)!;
 		PlaybackVoice inner = oldMiddle.GetChannelState(0).CurrentVoice!;
