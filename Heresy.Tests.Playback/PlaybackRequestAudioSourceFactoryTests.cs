@@ -466,7 +466,7 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
-	public void FlattenedNestedSourceRejectsUnimplementedInitialPitchTransform()
+	public void FlattenedNestedSourceInitialPitchTransposesRealtimeSampleFrames()
 	{
 		SongDocument document = new();
 		ObjectId sample = AddSample(document, "Sample");
@@ -485,13 +485,16 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 		PlaybackRequestAudioSourceFactory factory = new(
 			MonoConfiguration(100),
 			new RecordingSampleProvider(
-				new MemorySampleData(100, 1, new float[] { 1.0f })));
+				new MemorySampleData(100, 1,
+					new float[] { 0.125f, 0.25f, 0.5f, 0.75f, 1.0f })));
 
 		IAudioOutputSource source = factory.Create(
 			SequencePlaybackRequest.Create(document, root));
-		Action render = () => source.Render(1, new float[1]);
-		render.Should().Throw<NotSupportedException>()
-			.WithMessage("*Transformed flattened child*");
+		float[] output = new float[2];
+		source.Render(output.Length, output);
+		output[0].Should().BeApproximately(0.125f, 1e-6f);
+		output[1].Should().BeApproximately(0.5f, 1e-6f,
+			"The flattened child must read source frame two at output frame one.");
 	}
 
 	[Test]

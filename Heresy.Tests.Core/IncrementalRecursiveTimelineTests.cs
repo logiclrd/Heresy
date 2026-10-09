@@ -354,7 +354,7 @@ public sealed class IncrementalRecursiveTimelineTests
 	}
 
 	[Test]
-	public void TransformedFlattenedChildIsRejectedBeforeRunningItsSource()
+	public void TransposedFlattenedChildEmitsInheritedPitchAndSharesParentTempo()
 	{
 		StreamingPattern parent = new((ObjectId)1U, 1,
 			new NoteEvent(MusicalTime.Zero, ChannelTarget.Physical(0),
@@ -363,12 +363,21 @@ public sealed class IncrementalRecursiveTimelineTests
 		DataPatternDefinition child = Pattern(2, 1);
 		child.Grid.GetOrCreateCell(0, 0).Effects.Add(
 			new SetTempoPatternEffect(250));
+		child.Grid.GetOrCreateCell(0, 1).Note =
+			new StartPatternNote((ObjectId)3U);
 		SequencingContext root = new();
 		using IncrementalRecursiveTimeline timeline = new(
 			root, new Resolver(parent, child));
 		timeline.AddRoot(parent.Id);
-		Assert.Throws<NotSupportedException>(() => Drain(timeline));
-		Assert.That(root.State.Tempo, Is.EqualTo(125));
+		NoteEvent[] events = Drain(timeline);
+		StartNoteCommand note = events
+			.SelectMany(e => e.Commands)
+			.OfType<StartNoteCommand>().Single();
+		Assert.That(note.SourceId, Is.EqualTo((ObjectId)3U));
+		Assert.That(note.PitchMultiplier, Is.EqualTo(2.0),
+			"Child sound pitch inherits the recursive invocation transposition.");
+		Assert.That(root.State.Tempo, Is.EqualTo(250),
+			"Initial pitch must not isolate the flattened shared Tempo clock.");
 	}
 
 	[Test]
