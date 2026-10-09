@@ -1648,6 +1648,68 @@ effect/mixdown/export parity. Do not use `Source.Cancel` concurrently
 with this worker, and do not promote the experimental scheduler to the
 production realtime/export default.
 
+## Thirty-fifth executable step: invocation-local recursive mixdown clocks
+
+The prepared recursive playback factory now admits ordinary
+`StartNoteCommand { Mixdown = true }` whose target is a data/script
+Pattern or Sequence. It is **not** handled by the flattened recursive
+timeline: each mixdown start creates an independent
+`IncrementalRecursiveTimeline` with a fresh `SequencingContext`,
+separate tracker/effect memory and private tempo clock, paired with its
+own `PlaybackSession` and `PreparedIncrementalAudioSource`.
+A producer-side event transform allocates a **new transient source ID
+per start** and substitutes that ID in the parent's emitted StartNote.
+The transient resolves to one `PreparedRecursiveMixdownSound`,
+so simultaneous starts of the same source never share voices or
+script invocation state.
+
+On each parent `PrepareThrough` call, the single producer first
+prepares all nested mixdown streams to the parent's exclusive
+frame horizon *relative to each note's quantized start frame*.
+Each child recursively prepares its own private mixdowns.
+The private renderer generates interleaved speaker-channel PCM;
+the parent receives the full native output-channel signal directly,
+not an intermediate collapsed playback-channel mono mix.
+No nested Roslyn script, recursive cursor or child
+`PlaybackSession.Render` is executed on the **parent audio callback**.
+Completed 256-frame PCM chunks are shared through an atomic
+concurrent dictionary with immutable chunk snapshots, including
+the case where a chunk is extended over several lookahead calls.
+The parent coverage frontier is published only after its children
+are ready. Natural completion releases and cuts indefinite child
+voices at the child's own logical end and its output tail is allowed
+to drain. The plan recursively disposes child timelines when it ends.
+
+Source ancestry rejects recursive mixdown cycles rather than
+allocating an infinite series of nested sound states.
+Non-unit pitch and playback-speed transforms are rejected during
+producer preparation. Direct parent Source-column and note-level
+volume semantics remain renderer-owned; parent Note Off currently
+applies the renderer's existing nested-voice cutoff, but does not
+yet propagate an independent Note Off/Cut/Fade/Continue event into
+the child's private timeline.
+
+An initial native source-frame offset can address already prepared
+speaker frames (the sound advertises `ReplayRequired`), but **offset
+changes that jump beyond a prepared lookahead horizon are not yet
+scheduled back to the private producer**. Rendering such a request
+fails explicitly. The first slice also retains completed PCM chunks
+for backwards access throughout the plan's lifetime: unlike the
+outer timeline's bounded frame lookahead, nested PCM storage is
+currently **not memory bounded**. A bounded history/replay strategy,
+source-frame seek requests routed to the producer, and full dynamic
+parent voice-lifecycle propagation are mandatory before
+production cutover. This remains the existing experimental factory;
+there is no new user-facing switch or compatibility fallback.
+
+Regression tests cover recursive scripted Pattern audio, two
+independent same-source starts, a private Tempo change that does not
+retime the parent, two nested private clock levels, stereo speaker
+parity with a direct sample, incremental lookahead across PCM chunk
+updates, and explicit cycle rejection. The established production
+realtime and offline export schedulers remain unchanged until the
+remaining structural requirements are satisfied.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
