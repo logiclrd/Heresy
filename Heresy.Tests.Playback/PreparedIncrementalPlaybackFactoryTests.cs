@@ -604,6 +604,54 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 	}
 
 	[Test]
+	public void PrivateMixdownForwardSeekAdvancesLiveRendererWithoutPcmHistory()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(
+			sampleId, "Ramp", "memory.wav", RampWave()));
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Child")
+		{
+			RowCount = 4, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({sampleId.Value}));",
+		});
+		ObjectId rootId = document.AllocateObjectId();
+		DataPatternDefinition root = new(rootId, "Parent")
+		{
+			RowCount = 4, ChannelCount = 1,
+		};
+		root.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(childId, mixdown: true);
+		document.Add(root);
+		PreparedIncrementalPlaybackFactory factory = new(Mono(1000));
+		using PreparedIncrementalPlaybackPlan nested = factory.Create(document, rootId);
+		using PreparedIncrementalPlaybackPlan direct = factory.Create(document, childId);
+		nested.Source.PrepareThrough(TimeSpan.FromMilliseconds(50));
+		direct.Source.PrepareThrough(TimeSpan.FromMilliseconds(50));
+
+		float[] reference = new float[12];
+		direct.Source.Render(reference.Length, reference);
+		nested.Source.Render(1, new float[1]);
+		PlaybackVoice voice = nested.Session.GetChannelState(0).CurrentVoice!;
+		((ISourceFrameSeekableSound)voice.Sound).SetSourceFrameOffset(
+			voice.SoundState, 10);
+		float[] sought = new float[1];
+		nested.Source.Render(1, sought);
+		Assert.That(sought[0], Is.EqualTo(reference[11]).Within(1e-6f));
+		FieldInfo sessionField = voice.Sound.GetType().GetField("_session",
+			BindingFlags.NonPublic | BindingFlags.Instance)!;
+		PlaybackSession child = (PlaybackSession)sessionField.GetValue(voice.Sound)!;
+		Assert.That(child.NextFrame, Is.EqualTo(12L),
+			"Forward seek must advance the actual child renderer, discarding samples.");
+
+		((ISourceFrameSeekableSound)voice.Sound).SetSourceFrameOffset(
+			voice.SoundState, 0);
+		Assert.That(() => nested.Source.Render(1, new float[1]),
+			Throws.TypeOf<NotSupportedException>().With.Message.Contains("Backward"));
+	}
+
+	[Test]
 	public void RequiresRootAndRejectsInvalidRoslynDuringPreparation()
 	{
 		SongDocument document = new();
@@ -621,6 +669,30 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 	private static RenderConfiguration Mono(int rate)
 		=> new(rate, [new OutputChannelConfiguration(
 			Vector3.Zero, positionalImportance: 0.0)]);
+
+	private static byte[] RampWave()
+	{
+		using MemoryStream stream = new();
+		using (BinaryWriter writer = new(stream, Encoding.ASCII, leaveOpen: true))
+		{
+			writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+			writer.Write(36 + 64);
+			writer.Write(Encoding.ASCII.GetBytes("WAVE"));
+			writer.Write(Encoding.ASCII.GetBytes("fmt "));
+			writer.Write(16);
+			writer.Write((ushort)1);
+			writer.Write((ushort)1);
+			writer.Write(1000);
+			writer.Write(2000);
+			writer.Write((ushort)2);
+			writer.Write((ushort)16);
+			writer.Write(Encoding.ASCII.GetBytes("data"));
+			writer.Write(64);
+			for (short frame = 0; frame < 32; frame++)
+				writer.Write((short)(frame * 512));
+		}
+		return stream.ToArray();
+	}
 
 	private static byte[] StereoWave()
 	{
