@@ -76,7 +76,9 @@ public sealed class PlaybackRequestAudioSourceFactory :
 		{
 			throw new PlaybackSourceCompilationException(
 				$"Could not prepare recursive playback: {error.Message}",
-				Array.Empty<ScriptAnalysisDiagnostic>());
+				[new ScriptAnalysisDiagnostic(
+					"HRS3001", ScriptDiagnosticSeverity.Error,
+					error.Message, new ScriptSourceSpan(0, 0))]);
 		}
 		lock (_gate)
 			_active[request] = plan;
