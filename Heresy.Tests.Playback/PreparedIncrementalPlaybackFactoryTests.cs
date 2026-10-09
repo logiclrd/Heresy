@@ -27,6 +27,60 @@ namespace Heresy.Tests.Playback;
 public sealed class PreparedIncrementalPlaybackFactoryTests
 {
 	[Test]
+	public void HundredsOfFlatInvocationsReclaimRendererMemoryAfterTheirVoicesEnd()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample, "Short", "short.wav",
+			Wave(16384)));
+		ObjectId leaf = document.AllocateObjectId();
+		DataPatternDefinition child = new(leaf, "Short note")
+		{
+			RowCount = 1, ChannelCount = 2,
+		};
+		child.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote(sample);
+		document.Add(child);
+		ObjectId riff = document.AllocateObjectId();
+		DataPatternDefinition parent = new(riff, "Repeat")
+		{
+			RowCount = 1, ChannelCount = 2,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(leaf);
+		parent.Grid.GetOrCreateCell(0, 1).Effects.Add(
+			new TrackerOrderJumpPatternEffect(0));
+		document.Add(parent);
+		ObjectId root = document.AllocateObjectId();
+		DataSequenceDefinition song = new(root, "Loop");
+		song.Entries.Add(new SequenceEntry(riff));
+		document.Add(song);
+		int jumps = 0;
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(SongDocumentSnapshot.Create(document), root,
+					shouldFollowOrderJump: _ => ++jumps < 256);
+		float[] block = new float[120];
+		int peakRenderingChannels = 0;
+		int peakProducerScopes = 0;
+		for (int i = 0; i < 256; i++)
+		{
+			plan.Source.Render(120, block);
+			Assert.That(block[0], Is.EqualTo(0.5f).Within(1e-6f));
+			peakRenderingChannels = Math.Max(peakRenderingChannels,
+				plan.Session.RetainedScopedPhysicalChannelCount);
+			peakProducerScopes = Math.Max(peakProducerScopes,
+				plan.SequencingContext.ScopedMemory.ActiveScopeCount);
+		}
+		plan.Source.Render(240, new float[240]);
+		Assert.That(jumps, Is.EqualTo(256));
+		Assert.That(peakProducerScopes, Is.LessThanOrEqualTo(2));
+		Assert.That(peakRenderingChannels, Is.LessThanOrEqualTo(3));
+		Assert.That(plan.SequencingContext.ScopedMemory.ActiveScopeCount, Is.Zero);
+		Assert.That(plan.SequencingContext.ScopedMemory.MaterializedScopeCount, Is.Zero);
+		Assert.That(plan.Session.RetainedScopedPhysicalChannelCount, Is.Zero,
+			"Finished and silent playback hosts must not accumulate indefinitely.");
+	}
+
+	[Test]
 	public void PreparedScriptSequenceAndNestedDataAndScriptPatternsRenderDecodedPcm()
 	{
 		SongDocument document = new();
