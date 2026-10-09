@@ -28,6 +28,8 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 	private readonly IncrementalRecursiveTimeline _timeline;
 	private readonly PlaybackSession _session;
 	private readonly ConcurrentQueue<PreparedEvent> _events = new();
+	private readonly ConcurrentQueue<long> _cancellations = new();
+	private readonly HashSet<long> _canceledOwners = [];
 	private long _preparedThroughTicks;
 	private long _lastEventFrame = -1;
 	private bool _finished;
@@ -128,16 +130,14 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 			throw new ObjectDisposedException(nameof(PreparedIncrementalAudioSource));
 		long now = _session.NextFrame;
 		if (Volatile.Read(ref _preparedThroughTicks) >
-			FrameTime.FrameStartTime(now, Format.SampleRate).Ticks
-			|| _events.TryPeek(out PreparedEvent? pending) && pending.Frame >= now)
+			FrameTime.FrameStartTime(now, Format.SampleRate).Ticks)
 			throw new InvalidOperationException(
 				"Cancel requires the prepared frontier to meet the playback head.");
 		List<long> removed = [];
 		if (!_timeline.Cancel(invocationId, removed))
 			return false;
 		foreach (long owner in removed)
-			_events.Enqueue(new PreparedEvent(now, owner, null));
-		_lastEventFrame = now;
+			_cancellations.Enqueue(owner);
 		return true;
 	}
 
@@ -164,6 +164,15 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 			throw new InvalidOperationException(
 				"Incremental audio must be prepared beyond the requested block.");
 
+		// Cancellations are published only at the serialized playback frontier.
+		// A raw step beyond that frontier may already have been staged:
+		// skip its canceled owner without moving or reordering other events.
+		while (_cancellations.TryDequeue(out long owner))
+		{
+			_canceledOwners.Add(owner);
+			_session.CancelScopedVoices(owner);
+		}
+
 		int writtenFrames = 0;
 		while (_events.TryPeek(out PreparedEvent? next)
 			&& next.Frame < end)
@@ -189,11 +198,10 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 			{
 				if (!_events.TryDequeue(out PreparedEvent? current))
 					continue;
-				if (current.Note is null)
-					_session.CancelScopedVoices(current.InvocationId);
-				else
+				if (!_canceledOwners.Contains(current.InvocationId)
+					&& current.Note is { } note)
 					_session.ApplyScopedEvent(current.InvocationId,
-						current.Note.Target, current.Note.Commands);
+						note.Target, note.Commands);
 			}
 		}
 		int remaining = frameCount - writtenFrames;
