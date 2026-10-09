@@ -2178,3 +2178,32 @@ transformation milestone, not completion of its full compatibility item.
 - **Parity:** existing compilation paths stay authoritative until a
   streaming integration passes their test suites, including mixed data
   and scripted Sequences and flattened versus mixdown sources.
+
+## Forty-fifth step: independent private-mixdown playback-speed clock
+
+A non-unit playback-speed multiplier on a private Pattern/Sequence sound now
+scales its **independent tracker clock**, never the PCM sample rate or pitch
+of its notes. The private `IncrementalPatternTimeline` integrates tracker
+Tempo and Txx ramps in the original tick domain, then divides the mapped
+wall-time interval by the invocation's rate. Its inverse wall-time mapping
+similarly multiplies an elapsed wall interval before evaluating the original
+Tempo trajectory. Fixed positive `TimeOffset` note deadlines remain actual
+wall-clock offsets rather than multiplying with musical speed.
+
+The private `PlaybackSession` initializes its effective Tempo from
+`DefaultTempo * rate` and receives correspondingly scaled Tempo / ramp
+commands; the Core shared musical Tempo and tracker memory stay unscaled.
+Nested private sources and selected recursive Instrument tones compose
+speed factors at their own private-clock boundaries; flattened children
+inside an accelerated private source automatically share that clock.
+
+The original sample-frame seek/retrigger reconstruction, nested PCM rendering
+on the single worker, lifecycle forwarding and multichannel speaker feeds
+are retained. No PCM stretching, event journals, eager expansion, or worker
+per child has been added.
+
+**Remaining:** A non-unit playback-speed multiplier on one flattened child
+of a shared-clock arrangement still requires per-cursor row-tick mapping;
+it is rejected rather than incorrectly rescaling the common parent clock.
+Initial source volume, dynamic pitch trajectories, and full complex tracker
+effects/tempo-ramp parity remain open.

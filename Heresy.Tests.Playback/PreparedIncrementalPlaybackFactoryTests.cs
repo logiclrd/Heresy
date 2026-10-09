@@ -1230,9 +1230,8 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 				Is.EqualTo(frame * 2 * 512f / 32768f).Within(1e-6f));
 	}
 
-	[TestCase(false)]
-	[TestCase(true)]
-	public void RecursivePlaybackSpeedStillFailsExplicitlyUntilClockMappingExists(bool mixdown)
+	[Test]
+	public void FlattenedRecursivePlaybackSpeedStillFailsExplicitlyWithoutPerCursorMapping()
 	{
 		SongDocument document = new();
 		ObjectId child = document.AllocateObjectId();
@@ -1246,7 +1245,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			RowCount = 1, ChannelCount = 1,
 		};
 		parent.Grid.GetOrCreateCell(0, 0).Note =
-			new StartPatternNote(child, playbackSpeedMultiplier: 2.0, mixdown: mixdown);
+			new StartPatternNote(child, playbackSpeedMultiplier: 2.0, mixdown: false);
 		document.Add(parent);
 		using PreparedIncrementalPlaybackPlan plan =
 			new PreparedIncrementalPlaybackFactory(Mono(1000))
