@@ -191,6 +191,66 @@ public sealed class IncrementalRecursiveTimelineTests
 	}
 
 	[Test]
+	public void FlattenedSiblingVirtualNotesRetainDistinctPatternInvocationScopes()
+	{
+		DataPatternDefinition parent = Pattern(1, 1);
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote((ObjectId)2U);
+		parent.Grid.GetOrCreateCell(1, 0).Note =
+			new StartPatternNote((ObjectId)2U);
+		StreamingPattern child = new((ObjectId)2U, 1,
+			new NoteEvent(new MusicalTime(TimeSpan.Zero, 0.5),
+				ChannelTarget.Virtual(7),
+				[new StartNoteCommand((ObjectId)90U)]),
+			new NoteEvent(new MusicalTime(TimeSpan.Zero, 0.75),
+				ChannelTarget.AllVirtualInScope, [new NoteOffCommand()]));
+
+		using IncrementalRecursiveTimeline timeline = new(
+			new SequencingContext(), new Resolver(parent, child));
+		timeline.AddRoot(parent.Id);
+		List<IncrementalPatternTimelineStep.Emit> actual = [];
+		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+			if (step is IncrementalPatternTimelineStep.Emit emit)
+				actual.Add(emit);
+
+		Assert.That(actual, Has.Count.EqualTo(4));
+		Assert.That(actual.Select(x => x.Note.Target),
+			Is.EqualTo(new[] {
+				ChannelTarget.Virtual(7), ChannelTarget.Virtual(7),
+				ChannelTarget.AllVirtualInScope, ChannelTarget.AllVirtualInScope,
+			}));
+		Assert.That(actual[0].InvocationId,
+			Is.Not.EqualTo(actual[1].InvocationId));
+		Assert.That(actual[0].InvocationId,
+			Is.EqualTo(actual[2].InvocationId));
+		Assert.That(actual[1].InvocationId,
+			Is.EqualTo(actual[3].InvocationId));
+		Assert.That(timeline.IsComplete, Is.True);
+	}
+
+	[Test]
+	public void KnownNestedMixdownPatternRemainsOneRendererOwnedStart()
+	{
+		StreamingPattern parent = new((ObjectId)1U, 1,
+			new NoteEvent(MusicalTime.Zero, ChannelTarget.Physical(0),
+				[new StartNoteCommand((ObjectId)2U, Mixdown: true)]));
+		StreamingPattern child = new((ObjectId)2U, 1,
+			new NoteEvent(MusicalTime.Zero, ChannelTarget.Virtual(3),
+				[new StartNoteCommand((ObjectId)90U)]));
+
+		using IncrementalRecursiveTimeline timeline = new(
+			new SequencingContext(), new Resolver(parent, child));
+		timeline.AddRoot(parent.Id);
+		NoteEvent[] notes = Drain(timeline);
+		Assert.That(notes, Has.Length.EqualTo(1));
+		StartNoteCommand start = notes[0].Commands.OfType<StartNoteCommand>()
+			.Single();
+		Assert.That(start.Mixdown, Is.True);
+		Assert.That(start.SourceId, Is.EqualTo(child.Id));
+		Assert.That(notes[0].Target, Is.EqualTo(ChannelTarget.Physical(0)));
+	}
+
+	[Test]
 	public void ADataSequenceRootUsesOneSharedTimelineAndFollowsBxx()
 	{
 		DataSequenceDefinition root = new((ObjectId)10U, "Root");
