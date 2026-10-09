@@ -182,7 +182,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 		PreparedRoslynIncrementalScriptSources scripts,
 		PlaybackSnapshotSoundResolver sounds,
 		IReadOnlyList<ObjectId> ancestry,
-		out Action disposePrivateMixdowns)
+		out Action disposePrivateMixdowns,
+		bool isPrivateChild = false)
 	{
 		List<PreparedRecursiveMixdownSound> privateVoices = [];
 		Dictionary<int, TrackedMixdown> physicalVoices = [];
@@ -371,7 +372,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 						PreparedIncrementalAudioSource childSource =
 							CreatePrivateMixdownAwareSource(
 								childTimeline, childSession, scripts, sounds,
-								childAncestry, out Action disposeDescendants);
+								childAncestry, out Action disposeDescendants,
+								isPrivateChild: true);
 						return new PrivateRecursivePlayback(
 							childTimeline, childSession, childSource, disposeDescendants);
 					}
@@ -402,6 +404,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 		}
 
 		return new PreparedIncrementalAudioSource(
-			timeline, session, prepareEvent: Transform);
+			timeline, session, prepareEvent: Transform,
+			endInputAtNaturalCompletion: isPrivateChild);
 	}
 }
