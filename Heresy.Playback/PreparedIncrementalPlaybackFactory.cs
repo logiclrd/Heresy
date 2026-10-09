@@ -78,6 +78,17 @@ public sealed class PreparedIncrementalPlaybackPlan : IDisposable
 /// </summary>
 public sealed class PreparedIncrementalPlaybackFactory
 {
+	private sealed class TrackedMixdown(
+		PreparedRecursiveMixdownSound sound, long startFrame,
+		int physicalChannel)
+	{
+		public PreparedRecursiveMixdownSound Sound { get; } = sound;
+		public long StartFrame { get; } = startFrame;
+		public int PhysicalChannel { get; } = physicalChannel;
+		public NoteDisplacementAction Displacement { get; set; } =
+			NoteDisplacementAction.Cut;
+	}
+
 	private readonly RenderConfiguration _configuration;
 	private readonly ISampleDataProvider _samples;
 
@@ -171,24 +182,164 @@ public sealed class PreparedIncrementalPlaybackFactory
 		out Action disposePrivateMixdowns)
 	{
 		List<PreparedRecursiveMixdownSound> privateVoices = [];
+		Dictionary<int, TrackedMixdown> physicalVoices = [];
+		Dictionary<(long Owner, uint Id), TrackedMixdown> scopedVoices = [];
+		List<TrackedMixdown> displacedVoices = [];
 		disposePrivateMixdowns = () =>
 		{
 			foreach (PreparedRecursiveMixdownSound voice in privateVoices)
 				voice.Dispose();
 		};
 
-		NoteEvent Transform(NoteEvent note, long parentFrame)
+		void Schedule(TrackedMixdown voice, long frame,
+			NoteDisplacementAction action)
+		{
+			switch (action)
+			{
+				case NoteDisplacementAction.Cut:
+					voice.Sound.ScheduleCut(frame);
+					break;
+				case NoteDisplacementAction.Continue:
+					break;
+				case NoteDisplacementAction.Off:
+					voice.Sound.ScheduleRelease(frame);
+					break;
+				case NoteDisplacementAction.Fade:
+					voice.Sound.ScheduleFade(frame);
+					break;
+			}
+		}
+
+		void ReplacePhysical(int channel, long frame)
+		{
+			if (!physicalVoices.Remove(channel, out TrackedMixdown? old))
+				return;
+			Schedule(old, frame, old.Displacement);
+			if (old.Displacement != NoteDisplacementAction.Cut)
+				displacedVoices.Add(old);
+		}
+
+		void ProcessControl(ChannelTarget target, long owner,
+			long frame, NoteCommand command)
+		{
+			if (target.Kind == ChannelTargetKind.Physical)
+			{
+				int channel = target.PhysicalChannel;
+				if (command is ApplyPastNoteActionCommand past)
+				{
+					for (int p = displacedVoices.Count - 1; p >= 0; p--)
+					{
+						TrackedMixdown prior = displacedVoices[p];
+						if (prior.PhysicalChannel != channel)
+							continue;
+						NoteDisplacementAction action = past.Action switch
+						{
+							TrackerPastNoteAction.Cut => NoteDisplacementAction.Cut,
+							TrackerPastNoteAction.Off => NoteDisplacementAction.Off,
+							TrackerPastNoteAction.Fade => NoteDisplacementAction.Fade,
+							_ => throw new InvalidOperationException(
+								"Unsupported past-note lifecycle operation."),
+						};
+						Schedule(prior, frame, action);
+						if (action == NoteDisplacementAction.Cut)
+							displacedVoices.RemoveAt(p);
+					}
+				}
+				if (!physicalVoices.TryGetValue(channel,
+					out TrackedMixdown? active))
+					return;
+				switch (command)
+				{
+					case NoteOffCommand:
+						active.Sound.ScheduleRelease(frame);
+						break;
+					case NoteCutCommand:
+						active.Sound.ScheduleCut(frame);
+						physicalVoices.Remove(channel);
+						break;
+					case SetCurrentVoiceDisplacementActionCommand nna:
+						active.Displacement = nna.Action;
+						break;
+				}
+				return;
+			}
+
+			if (target.Kind == ChannelTargetKind.Virtual)
+			{
+				var key = (owner, target.VirtualChannelId);
+				if (!scopedVoices.TryGetValue(key, out TrackedMixdown? active))
+					return;
+				if (command is NoteOffCommand)
+					active.Sound.ScheduleRelease(frame);
+				else if (command is NoteCutCommand)
+				{
+					active.Sound.ScheduleCut(frame);
+					scopedVoices.Remove(key);
+				}
+				return;
+			}
+
+			if (target.Kind is ChannelTargetKind.AllVirtual
+				or ChannelTargetKind.AllVirtualInScope
+				&& command is NoteOffCommand or NoteCutCommand)
+			{
+				foreach (var pair in scopedVoices.ToArray())
+				{
+					if (target.Kind == ChannelTargetKind.AllVirtualInScope
+						&& pair.Key.Owner != owner
+						|| pair.Value.StartFrame >= frame)
+						continue;
+					if (command is NoteOffCommand)
+						pair.Value.Sound.ScheduleRelease(frame);
+					else
+					{
+						pair.Value.Sound.ScheduleCut(frame);
+						scopedVoices.Remove(pair.Key);
+					}
+				}
+			}
+		}
+
+		NoteEvent Transform(NoteEvent note, long parentFrame, long owner)
 		{
 			NoteCommand[] commands = new NoteCommand[note.Commands.Count];
 			for (int i = 0; i < commands.Length; i++)
 			{
 				NoteCommand command = note.Commands[i];
-				if (command is not StartNoteCommand { Mixdown: true } start
-					|| !scripts.TryResolve(start.SourceId, out SongObject? definition)
-					|| definition is not (PatternDefinition or SequenceDefinition))
+				if (command is not StartNoteCommand start)
 				{
+					ProcessControl(note.Target, owner, parentFrame, command);
 					commands[i] = command;
 					continue;
+				}
+				bool nested = start.Mixdown
+					&& scripts.TryResolve(start.SourceId, out SongObject? definition)
+					&& definition is PatternDefinition or SequenceDefinition;
+				if (!nested)
+				{
+					// An unresolved note does not displace the existing
+					// renderer voice. Known direct sounds do.
+					if (sounds.TryResolve(start.SourceId, start.Mixdown, out _))
+					{
+						if (note.Target.Kind == ChannelTargetKind.Physical)
+							ReplacePhysical(note.Target.PhysicalChannel, parentFrame);
+						else if (note.Target.Kind == ChannelTargetKind.Virtual)
+						{
+							var key = (owner, note.Target.VirtualChannelId);
+							if (scopedVoices.Remove(key, out TrackedMixdown? prior))
+								prior.Sound.ScheduleCut(parentFrame);
+						}
+					}
+					commands[i] = command;
+					continue;
+				}
+				if (note.Target.Kind == ChannelTargetKind.Physical)
+					ReplacePhysical(note.Target.PhysicalChannel, parentFrame);
+				else if (note.Target.Kind == ChannelTargetKind.Virtual)
+				{
+					var key = (owner, note.Target.VirtualChannelId);
+					if (scopedVoices.Remove(key, out TrackedMixdown? prior))
+						prior.Sound.ScheduleCut(parentFrame);
 				}
 				if (start.PitchMultiplier != 1.0
 					|| start.PlaybackSpeedMultiplier != 1.0)
@@ -221,6 +372,13 @@ public sealed class PreparedIncrementalPlaybackFactory
 						disposeDescendants);
 					ObjectId preparedId = sounds.RegisterPreparedMixdown(privateVoice);
 					privateVoices.Add(privateVoice);
+					TrackedMixdown tracked = new(privateVoice, parentFrame,
+						note.Target.Kind == ChannelTargetKind.Physical
+							? note.Target.PhysicalChannel : -1);
+					if (note.Target.Kind == ChannelTargetKind.Physical)
+						physicalVoices[note.Target.PhysicalChannel] = tracked;
+					else if (note.Target.Kind == ChannelTargetKind.Virtual)
+						scopedVoices[(owner, note.Target.VirtualChannelId)] = tracked;
 					commands[i] = start with
 					{
 						SourceId = preparedId,
