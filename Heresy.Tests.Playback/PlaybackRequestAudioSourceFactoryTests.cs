@@ -495,6 +495,53 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
+	public void LiveAuditionMixdownUsesRecursiveGeneratorRatherThanCompiledResolver()
+	{
+		SongDocument document = new();
+		ObjectId sample = AddSample(document, "Preview");
+		ObjectId pattern = AddPatternWithNote(document, sample);
+		PlaybackRequestAudioSourceFactory factory = new(
+			MonoConfiguration(100),
+			new RecordingSampleProvider(new MemorySampleData(
+				100, 1, [0.625f])));
+		NoteSchedule schedule = new NoteScheduleBuilder().Freeze();
+		IAudioOutputSource source = factory.Create(
+			AdHocPlaybackRequest.Create(document, schedule));
+		ILiveAudioOutputSource live = (ILiveAudioOutputSource)source;
+		live.EnqueueLiveEvent(ChannelTarget.Physical(0),
+			[new StartNoteCommand(pattern, Mixdown: true)]);
+		float[] output = new float[1];
+		source.Render(1, output);
+		output[0].Should().BeApproximately(0.625f, 1e-6f);
+	}
+
+	[Test]
+	public void RealtimeSequenceCanStartAtSelectedOrderRowWithoutCompilingEarlierRows()
+	{
+		SongDocument document = new();
+		ObjectId sample = AddSample(document, "Started late");
+		ObjectId patternId = document.AllocateObjectId();
+		DataPatternDefinition pattern = new(patternId, "Rows")
+		{
+			RowCount = 4, ChannelCount = 1,
+		};
+		PatternCell cell = pattern.Grid.GetOrCreateCell(2, 0);
+		cell.SourceId = sample;
+		cell.Note = new StartPatternNote();
+		document.Add(pattern);
+		ObjectId sequence = AddSequence(document, patternId);
+		PlaybackRequestAudioSourceFactory factory = new(
+			MonoConfiguration(100),
+			new RecordingSampleProvider(new MemorySampleData(100, 1, [0.75f])));
+		IAudioOutputSource source = factory.Create(
+			SequencePlaybackRequest.Create(document, sequence,
+				new SequencePlaybackPosition(0, 2)));
+		float[] output = new float[1];
+		source.Render(1, output);
+		output[0].Should().BeApproximately(0.75f, 1e-6f);
+	}
+
+	[Test]
 	public void NestedPatternMixdownRendersThroughPlaybackSnapshotResolver()
 	{
 		SongDocument document = new();
