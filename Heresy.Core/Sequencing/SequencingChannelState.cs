@@ -39,6 +39,11 @@ public sealed class SequencingChannelState
 	/// its live source-note volume rather than an unrelated host voice.</summary>
 	public long ActiveFlattenedSourceScopeId { get; set; }
 
+	/// <summary>Per-current-instigator NNA override. Null chooses Cut,
+	/// since a flattened collection has no single instrument voice from
+	/// which to inherit an instrument-defined displacement policy.</summary>
+	public NoteDisplacementAction? FlattenedSourceDisplacementAction { get; set; }
+
 	/// <summary>
 	/// Applies conventional whole-byte tracker effect-memory semantics. A
 	/// non-zero parameter replaces the remembered value and is returned. Zero

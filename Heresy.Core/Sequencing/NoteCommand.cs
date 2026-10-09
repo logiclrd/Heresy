@@ -44,6 +44,13 @@ public sealed record StartNoteCommand(
 public sealed record BeginFlattenedSourceVolumeCommand(
 	long ChildScopeId, double InitialVolume) : NoteCommand;
 
+/// <summary>Lifecycle operation on a flattened instigating note.
+/// Matches only voices descending from the specified source scope;
+/// never broadcasts to unrelated voices on its physical hosts.
+/// Continue leaves existing voices and producer uninterrupted.</summary>
+public sealed record ControlFlattenedSourceCommand(
+	long ChildScopeId, NoteDisplacementAction Action) : NoteCommand;
+
 /// <summary>Update remembered volume on a flattening note that does not
 /// itself create a physical voice; do not change an older active voice.</summary>
 public sealed record RememberFlatteningNoteVolumeCommand(double Volume) : NoteCommand;

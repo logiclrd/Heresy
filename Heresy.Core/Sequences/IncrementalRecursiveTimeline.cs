@@ -96,6 +96,9 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 	public Func<long, int, TimeSpan, double>? ReadRememberedNoteVolume { get; set; }
 
 	public event Action<long>? ScopeRetired;
+	/// <summary>Explicit subtree cancellation (as opposed to natural
+	/// completion) cuts voices belonging to the cancelled scope.</summary>
+	public event Action<long>? ScopeCanceled;
 
 	public TimeSpan Elapsed => _timeline.Elapsed;
 	public double Tick => _timeline.Tick;
@@ -139,16 +142,18 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		if (!_frames.ContainsKey(invocationId))
 			return false;
-		RemoveSubtree(invocationId, canceledInvocations);
+		RemoveSubtree(invocationId, canceledInvocations,
+			cancelAudible: true);
 		return true;
 	}
 
 	private void RemoveSubtree(long invocationId,
-		ICollection<long>? canceledInvocations = null)
+		ICollection<long>? canceledInvocations = null,
+		bool cancelAudible = false)
 	{
 		Invocation frame = _frames[invocationId];
 		foreach (long child in frame.Children.ToArray())
-			RemoveSubtree(child, canceledInvocations);
+			RemoveSubtree(child, canceledInvocations, cancelAudible);
 		canceledInvocations?.Add(invocationId);
 		if (frame.PatternId is long pattern)
 		{
@@ -164,7 +169,11 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 			parentFrame.Children.Remove(invocationId);
 		if (frame.Context.ScopeId != 0 && !sharesParentScope
 			&& _root.ScopedMemory.ForgetScope(frame.Context.ScopeId))
+		{
+			if (cancelAudible)
+				ScopeCanceled?.Invoke(frame.Context.ScopeId);
 			ScopeRetired?.Invoke(frame.Context.ScopeId);
+		}
 	}
 
 	private long AddInvocation(SongObject source,
@@ -313,6 +322,19 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 	/// Nested flattened starts are consumed and replaced by live child
 	/// invocations; any unrelated commands in the same event are retained.
 	/// </summary>
+	private void StopSourceProducer(long scopeId)
+	{
+		// Sequence order Frames reuse the same scope. Select its owning
+		// top-level invocation rather than only cancelling the active order.
+		Invocation? owner = _frames.Values
+			.Where(f => f.Context.ScopeId == scopeId)
+			.OrderBy(f => f.Depth).FirstOrDefault();
+		if (owner is not null)
+			RemoveSubtree(owner.Id);
+	}
+
+	/// <summary>Physical note events can redirect to scope-owned
+	/// instigating-note lifecycle actions without changing host notes.</summary>
 	public bool TryStep(out IncrementalPatternTimelineStep? result)
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
@@ -341,6 +363,57 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 						List<NoteCommand> retained = [];
 						foreach (NoteCommand command in emit.Note.Commands)
 						{
+							SequencingChannelState? logical = emit.Note.Target.Kind
+								== ChannelTargetKind.Physical
+									? frame.Context.GetPhysicalChannelState(
+										emit.Note.Target.PhysicalChannel -
+										frame.Context.PhysicalChannelBase)
+									: null;
+							if (logical is not null && command is
+								SetCurrentVoiceDisplacementActionCommand overrideAction
+								&& logical.ActiveFlattenedSourceScopeId > 0)
+								logical.FlattenedSourceDisplacementAction =
+									overrideAction.Action;
+
+							// Note Off releases all voices in this logical source.
+							// Cut immediately stops them. Both end its future
+							// note production, but neither touches host siblings.
+							if (logical is not null
+								&& logical.ActiveFlattenedSourceScopeId is > 0
+								&& command is NoteOffCommand or NoteCutCommand)
+							{
+								long scopeId = logical.ActiveFlattenedSourceScopeId;
+								NoteDisplacementAction action = command is NoteCutCommand
+									? NoteDisplacementAction.Cut : NoteDisplacementAction.Off;
+								retained.Add(new ControlFlattenedSourceCommand(
+									scopeId, action));
+								StopSourceProducer(scopeId);
+								if (action == NoteDisplacementAction.Cut)
+								{
+									logical.ActiveFlattenedSourceScopeId = 0;
+									logical.FlattenedSourceDisplacementAction = null;
+								}
+								continue;
+							}
+
+							// An instigating source is one logical note for NNA
+							// displacement. Continue leaves its producer running;
+							// Cut/Off/Fade end its future note emission.
+							if (logical is not null
+								&& logical.ActiveFlattenedSourceScopeId is > 0
+								&& command is StartNoteCommand)
+							{
+								long oldScope = logical.ActiveFlattenedSourceScopeId;
+								NoteDisplacementAction action =
+									logical.FlattenedSourceDisplacementAction
+									?? NoteDisplacementAction.Cut;
+								retained.Add(new ControlFlattenedSourceCommand(
+									oldScope, action));
+								if (action != NoteDisplacementAction.Continue)
+									StopSourceProducer(oldScope);
+								logical.ActiveFlattenedSourceScopeId = 0;
+								logical.FlattenedSourceDisplacementAction = null;
+							}
 							if (command is SetNoteVolumeCommand noteVolume
 								&& emit.Note.Target.Kind == ChannelTargetKind.Physical)
 								frame.Context.GetPhysicalChannelState(
@@ -374,6 +447,7 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 												emit.Note.Target.PhysicalChannel -
 												frame.Context.PhysicalChannelBase);
 										state.ActiveFlattenedSourceScopeId = 0;
+										state.FlattenedSourceDisplacementAction = null;
 										if (regularStart.Volume.HasValue)
 											state.NoteVolume = regularStart.Volume.Value;
 									}
@@ -441,6 +515,8 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 							child.TimelineOrigin = emit.Time;
 							frame.Context.GetPhysicalChannelState(localChannel)
 								.ActiveFlattenedSourceScopeId = child.ScopeId;
+							frame.Context.GetPhysicalChannelState(localChannel)
+								.FlattenedSourceDisplacementAction = null;
 							retained.Add(new BeginFlattenedSourceVolumeCommand(
 								child.ScopeId, startingSourceVolume));
 							try

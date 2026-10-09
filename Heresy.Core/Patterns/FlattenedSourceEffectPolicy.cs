@@ -69,9 +69,7 @@ public static class FlattenedSourceEffectPolicy
 			or SetPanbrelloWaveformCommand
 			or ApplyTrackerGlissandoControlCommand
 			or ApplyTrackerPastNoteActionCommand or ApplyPastNoteActionCommand
-			or ApplyTrackerNewNoteActionCommand
-			or SetCurrentVoiceDisplacementActionCommand
-			or ApplyTrackerEnvelopeControlCommand or SetEnvelopeEnabledCommand
+ 			or ApplyTrackerEnvelopeControlCommand or SetEnvelopeEnabledCommand
 			or ApplyTrackerVolumeColumnCommand
 				{ Kind: TrackerVolumeColumnEffectKind.PitchSlideDown
 					or TrackerVolumeColumnEffectKind.PitchSlideUp
