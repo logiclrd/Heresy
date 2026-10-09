@@ -148,8 +148,17 @@ public sealed class InstrumentSound : ISound
 	}
 
 	private ToneSpecification? ResolveTone(double pitchMultiplier)
+		=> SelectTone(_definition, pitchMultiplier);
+
+	/// <summary>Pure tone-table selection shared by normal instrument
+	/// binding and recursive playback's indirect-source preflight.
+	/// Only the selected tone is examined; unselected branches are inert.</summary>
+	public static ToneSpecification? SelectTone(
+		InstrumentDefinition definition, double pitchMultiplier)
 	{
-		double divisions = _definition.Divisions;
+		ArgumentNullException.ThrowIfNull(definition);
+		ValidatePositiveFinite(pitchMultiplier, nameof(pitchMultiplier));
+		double divisions = definition.Divisions;
 		if (!(divisions > 0.0)
 			|| double.IsNaN(divisions)
 			|| double.IsInfinity(divisions))
@@ -163,26 +172,18 @@ public sealed class InstrumentSound : ISound
 			+ definition.Offset;
 		if (continuousIndex < int.MinValue
 			|| continuousIndex > int.MaxValue)
-		{
 			return null;
-		}
 
 		int toneIndex = checked((int)Math.Round(
-			continuousIndex,
-			MidpointRounding.AwayFromZero));
+			continuousIndex, MidpointRounding.AwayFromZero));
 		if ((uint)toneIndex >= (uint)definition.ToneTable.Count)
 			return null;
-
 		int specificationIndex = definition.ToneTable[toneIndex];
 		if (specificationIndex == -1)
 			return null;
-		if ((uint)specificationIndex
-			>= (uint)_definition.ToneSpecifications.Count)
-		{
+		if ((uint)specificationIndex >= (uint)definition.ToneSpecifications.Count)
 			throw new InvalidOperationException(
 				$"Tone table entry {toneIndex} refers to invalid tone specification {specificationIndex}.");
-		}
-
 		return definition.ToneSpecifications[specificationIndex];
 	}
 
