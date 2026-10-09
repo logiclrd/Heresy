@@ -27,9 +27,29 @@ nested ownership graphs are reclaimed after the final active voice detaches,
 preserving audible release and already-captured anti-click tails. These are
 **implemented invariants**, not outstanding TODOs.
 
-- [ ] **Priority: correct non-mixdown flattened invocation ownership.**
-  The original shared-channel-memory design and step 47's gain treatment
-  are **superseded** by the October 9 clarification. A flattened
+- [ ] **Complete flattened-source instigating-note effect handling and
+  ownership edge cases.** The first logical-channel isolation milestone is
+  **implemented**: the shared clock now supports independent Source/effect
+  memory per flattened invocation, stable logical render-channel ownership
+  over overlapping physical hosts, separate NNA/cut/off/retrigger voice
+  state, remembered note volume updates on an explicit flattening start,
+  omitted-volume recall from the live renderer, multiplicative child
+  source gain, and live instigating-channel overall-volume ancestry.
+  Nested sources, sibling hosts and repeated Sequence orders have regression
+  coverage. The original shared-channel-memory design and step 47's
+  no-caller-memory claim were **superseded** by the October 9 clarification.
+  **Still outstanding:** meaningful-effect classification on a flattening
+  start before per-note effects update local tracker memory; ignore
+  nonsensical single-voice controls (retrigger, glissando, portamento,
+  sample offset and similar) and post bounded playback warnings; add
+  nonblocking authoring-UI warnings while preserving valid stored data;
+  test deeper nested cancellation, virtual/NNA displacement, source-volume
+  curves and unusual same-frame starts. Raw incremental Patterns still do
+  not admit direct SetOverallChannelVolumeCommand: overall-volume ancestry
+  is currently covered through supported live channel-volume controls.
+  The detailed target remains in step 48 below.
+
+  **Original architectural requirement (now partially implemented):** A flattened
   Pattern/Sequence owns independent logical channel memory (selected Source,
   note volume, effect parameters, retrigger/portamento, channel automation
   and current voices) that persists across its own Sequence orders but

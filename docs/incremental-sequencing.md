@@ -2352,3 +2352,63 @@ retrigger; scoped NNA and release tails; composed nested gains; live
 overall parent-channel-volume automation affecting all splayed channels;
 unsupported instigating-note effects ignored before tracker parameter
 memory changes and diagnosed; full realtime/offline PCM parity.
+
+
+## Forty-ninth step: independent flattened logical channel state (implemented)
+
+The recursive scheduler now assigns each new flattened Pattern/Sequence an
+independent `SequencingChannelStateMap` for Source selection, effect
+parameters, and channel-local tracker state, while continuing to share
+the global Tempo/Speed `SequencingState`. The map is reused between
+successive orders of the *same* child Sequence. A sibling invocation
+gets a separate map, even when it is placed on the same host channel.
+The former regression tests expecting shared physical-host memory were
+revised to assert this new distinction; the shared global Tempo
+arbitration and channel ordering remain unchanged.
+
+Incremental `NoteEvent`s now carry `PhysicalPlaybackOwner`, a stable
+logical voice-state namespace assigned when a child is flattened.
+`PlaybackSession` keys physical voice state by `(owner, host)`,
+rather than by the host integer alone. Independent logical channels can
+therefore sound simultaneously through the same physical host without
+cutting each other off or changing each other's note volume, retrigger,
+past-note actions, filter state or anti-click tail. Private recursive
+mixdown lifecycle tracking keys its physical voices by the same scoped
+identity, so unrelated recursive mixdowns do not displace each other
+solely because they use the same host number.
+
+At a flattened source start, an explicit `Volume` updates the
+instigating logical channel's remembered volume without changing the
+previous actual voice on that channel. An omitted `Volume` reads the
+renderer's effective remembered volume, including any currently
+sounding note-volume curve, at the invocation's source time. That value
+becomes the **captured source gain** for the child context; note volume
+inside the child begins at its own independent baseline and is never
+multiplied a second time through a coincident host. Ordinary notes
+following the flattened source recall the updated parent memory.
+
+Each child context also captures the identities of its **instigating
+overall-volume channels**. Descendant `PlaybackVoice` instances
+reference those channels and sample their effective overall volumes
+*live* during PCM rendering, independently of the physical hosts into
+which the child's notes splay. Nested flattened invocations accumulate
+both captured source gains and live overall-volume ancestor references.
+The realtime PCM path still uses one rendering worker and lazy note
+enumeration; no eager song materialization or child workers were added.
+
+New Core and PCM regressions verify Source/effect-memory isolation,
+memory continuation between child Sequence orders, simultaneous notes
+on a shared host, explicit parent volume persistence, omitted-volume
+recall, nested source-volume products, private mixdown composition,
+and live instigator overall-volume changes that ignore the host's
+volume. The established Waveform/Tempo/tracker-effect tests were
+re-specified only where they depended on now-incorrect shared memory.
+
+**Not yet implemented:** filtering and diagnosing meaningless
+single-voice effects attached to the **instigating** non-mixdown
+flattening note, authoring UI warnings, and more extensive scoped
+lifecycle/cancellation coverage. Those cases remain explicit
+priority TODOs rather than being misreported as completed. Direct
+SetOverallChannelVolumeCommand is still unsupported by the raw
+incremental Pattern merger; the documented live-volume behavior is
+supported through playback controls.
