@@ -63,7 +63,8 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 	/// </summary>
 	public void PrepareThrough(TimeSpan exclusiveEnd)
 	{
-		ObjectDisposedException.Throw(_disposed, this);
+		if (_disposed)
+			throw new ObjectDisposedException(nameof(PreparedIncrementalAudioSource));
 		if (exclusiveEnd < TimeSpan.Zero)
 			throw new ArgumentOutOfRangeException(nameof(exclusiveEnd));
 		if (exclusiveEnd.Ticks <= Volatile.Read(ref _preparedThroughTicks))
@@ -80,6 +81,9 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 					reachedBoundary = true;
 					break;
 				}
+				if (step is null)
+					throw new InvalidOperationException(
+						"Recursive timeline returned a null step.");
 				if (step is IncrementalPatternTimelineStep.Emit emit)
 				{
 					long frame = FrameTime.Ceiling(
@@ -112,7 +116,8 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 
 	public void Render(int frameCount, Span<float> destination)
 	{
-		ObjectDisposedException.Throw(_disposed, this);
+		if (_disposed)
+			throw new ObjectDisposedException(nameof(PreparedIncrementalAudioSource));
 		if (frameCount < 0)
 			throw new ArgumentOutOfRangeException(nameof(frameCount));
 		int channelCount = Format.ChannelCount;
