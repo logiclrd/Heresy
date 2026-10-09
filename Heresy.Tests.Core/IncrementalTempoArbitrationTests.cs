@@ -291,6 +291,120 @@ public sealed class IncrementalTempoArbitrationTests
 	}
 
 
+	[Test]
+	public void IndependentSEySlidesComposeAtEachOwnersOwnRepeatBoundary()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		long first = timeline.Add(new RawSource(
+			At(0, 0, new ApplyTrackerPatternDelayCommand(2)),
+			At(0, 0, new ApplyTrackerTempoCommand(0x12)),
+			At(1, 0, new NoteCutCommand())), 2, root);
+		long second = timeline.Add(new RawSource(
+			At(0, 0, new ApplyTrackerPatternDelayCommand(1)),
+			At(0, 0, new ApplyTrackerTempoCommand(0x11)),
+			At(1, 0, new NoteOffCommand())), 2,
+			root.FlattenedChild(physicalChannelOffset: 2));
+		NoteEvent[] notes = Drain(timeline);
+		SetTempoRampCommand[] ramps = notes.SelectMany(n => n.Commands)
+			.OfType<SetTempoRampCommand>().ToArray();
+		Assert.That(ramps.Select(x => x.EndingTempo),
+			Is.EqualTo(new[] { 140.0, 155.0, 165.0 }));
+		Assert.That(ramps.Select(x => x.TrackerTicks),
+			Is.EqualTo(new[] { 6.0, 6.0, 6.0 }));
+		Assert.That(root.State.Tempo, Is.EqualTo(165.0));
+		Assert.That(timeline.HasOutstandingWork(first), Is.False);
+		Assert.That(timeline.HasOutstandingWork(second), Is.False);
+		Assert.That(notes.Single(x => x.Commands.Any(c => c is NoteOffCommand))
+			.Offset.TimeOffset, Is.LessThan(notes.Single(x =>
+				x.Commands.Any(c => c is NoteCutCommand)).Offset.TimeOffset));
+	}
+
+	[Test]
+	public void RepeatedTxxFromDifferentCapturedSpansComposesAtDistinctBoundaries()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(new RawSource(
+			At(0, 0, new ApplyTrackerPatternDelayCommand(1)),
+			At(0, 0, new ApplyTrackerTempoCommand(0x12))), 1, root);
+		timeline.Add(new RawSource(At(0, ChannelTarget.Global,
+			new SetSpeedCommand(3))), 1, root.FlattenedChild(physicalChannelOffset: 2));
+		Assert.That(timeline.TryStep(out _), Is.True);
+		timeline.Add(new RawSource(
+			At(0, 0, new ApplyTrackerPatternDelayCommand(2)),
+			At(0, 0, new ApplyTrackerTempoCommand(0x11))), 1,
+			root.FlattenedChild(physicalChannelOffset: 3));
+
+		NoteEvent[] notes = Drain(timeline);
+		SetTempoRampCommand[] ramps = notes.SelectMany(x => x.Commands)
+			.OfType<SetTempoRampCommand>().ToArray();
+		Assert.That(ramps.Select(r => r.TrackerTicks),
+			Is.EqualTo(new[] { 3.0, 3.0, 3.0, 3.0 }));
+		Assert.That(ramps.Select(r => r.EndingTempo),
+			Is.EqualTo(new[] { 132.0, 139.0, 146.0, 151.0 }));
+		Assert.That(root.State.Tempo, Is.EqualTo(151.0));
+	}
+
+	[Test]
+	public void IndependentSEySetAtRepeatedBoundaryResetsCompetingSlide()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(new RawSource(
+			At(0, 0, new ApplyTrackerPatternDelayCommand(1)),
+			At(0, 0, new ApplyTrackerTempoCommand(0xFA))), 1, root);
+		timeline.Add(new RawSource(
+			At(0, 0, new ApplyTrackerPatternDelayCommand(2)),
+			At(0, 0, new ApplyTrackerTempoCommand(0x11))), 1,
+			root.FlattenedChild(physicalChannelOffset: 2));
+		NoteEvent[] notes = Drain(timeline);
+		Assert.That(notes.SelectMany(x => x.Commands)
+			.OfType<SetTempoCommand>().Select(x => x.TicksPerDiachron),
+			Is.EqualTo(new[] { 250.0, 250.0 }));
+		Assert.That(notes.SelectMany(x => x.Commands)
+			.OfType<SetTempoRampCommand>().Select(x => x.EndingTempo),
+			Is.EqualTo(new[] { 255.0, 255.0 }));
+		Assert.That(root.State.Tempo, Is.EqualTo(255.0));
+	}
+
+	[Test]
+	public void CancellingOneSEyInvocationPreservesOthersFutureTempoSegments()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		long cancelled = timeline.Add(new RawSource(
+			At(0, 0, new ApplyTrackerPatternDelayCommand(1)),
+			At(0, 0, new ApplyTrackerTempoCommand(0x12))), 1, root);
+		long surviving = timeline.Add(new RawSource(
+			At(0, 0, new ApplyTrackerPatternDelayCommand(2)),
+			At(0, 0, new ApplyTrackerTempoCommand(0x11))), 1,
+			root.FlattenedChild(physicalChannelOffset: 2));
+		timeline.Add(new RawSource(At(0.5, 0, new NoteOffCommand())), 1,
+			root.FlattenedChild(physicalChannelOffset: 4));
+
+		bool cancelledNow = false;
+		List<IncrementalPatternTimelineStep.Emit> notes = [];
+		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+		{
+			if (step is not IncrementalPatternTimelineStep.Emit emit)
+				continue;
+			notes.Add(emit);
+			if (!cancelledNow && emit.Note.Commands.Any(c => c is NoteOffCommand))
+			{
+				Assert.That(emit.Tick, Is.EqualTo(3.0).Within(1e-8));
+				Assert.That(root.State.Tempo, Is.EqualTo(132.5).Within(1e-8));
+				Assert.That(timeline.Cancel(cancelled), Is.True);
+				cancelledNow = true;
+			}
+		}
+		Assert.That(cancelledNow, Is.True);
+		Assert.That(root.State.Tempo, Is.EqualTo(145.0).Within(1e-8));
+		Assert.That(notes.Where(e => e.Tick > 3.0 + 1e-8
+			&& e.Note.Commands.Any(c => c is SetTempoRampCommand))
+			.All(e => e.InvocationId == surviving), Is.True);
+	}
+
 	private static double RampSeconds(
 		double start, double end, double ticks, double into)
 		=> 2.5 * ticks / (end - start)
