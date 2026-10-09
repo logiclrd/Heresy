@@ -1,6 +1,12 @@
 using System;
 using System.IO;
 using System.Numerics;
+using System.Reflection;
+
+using Heresy.Core.Instruments;
+using Heresy.Core.Envelopes;
+using Heresy.Core.Sequencing;
+using Heresy.Render.Playback;
 using System.Text;
 
 using Heresy.Core.Objects;
@@ -304,6 +310,88 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		Assert.That(() => plan.Source.PrepareThrough(
 			TimeSpan.FromMilliseconds(20)),
 			Throws.InvalidOperationException.With.Message.Contains("cycle"));
+	}
+
+	[Test]
+	public void ParentNoteOffTerminatesPrivateInputAtItsOwnMusicalFrame()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		SampleDefinition sample = SampleDefinition.CreateImported(
+			sampleId, "Loop", "memory.wav", Wave(16384));
+		sample.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 4);
+		document.Add(sample);
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Long child")
+		{
+			RowCount = 8, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({sampleId.Value}));",
+		});
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Off parent")
+		{
+			RowCount = 3, ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(childId, mixdown: true);
+		parent.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteOff();
+		document.Add(parent);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, parentId);
+		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(200));
+		float[] prefix = new float[1];
+		plan.Source.Render(1, prefix);
+		Assert.That(prefix[0], Is.GreaterThan(0));
+		object mixdown = plan.Session.GetChannelState(0).CurrentSound!;
+		FieldInfo sessionField = mixdown.GetType().GetField("_session",
+			BindingFlags.NonPublic | BindingFlags.Instance)!;
+		PlaybackSession childSession =
+			(PlaybackSession)sessionField.GetValue(mixdown)!;
+		Assert.That(childSession.InputEnded, Is.True,
+			"Parent Off must release the child's private input on the producer.");
+		Assert.That(childSession.NextFrame, Is.GreaterThanOrEqualTo(120));
+	}
+
+	[Test]
+	public void ContinueNewNoteActionPreservesPrivateMixdownAfterReplacement()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		SampleDefinition sample = SampleDefinition.CreateImported(
+			sampleId, "Loop", "memory.wav", Wave(16384));
+		sample.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 4);
+		document.Add(sample);
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Continued child")
+		{
+			RowCount = 8, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({sampleId.Value}));",
+		});
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Continue parent")
+		{
+			RowCount = 3, ChannelCount = 1,
+		};
+		PatternCell first = parent.Grid.GetOrCreateCell(0, 0);
+		first.Note = new StartPatternNote(childId, mixdown: true);
+		first.Effects.Add(new TrackerNewNoteActionPatternEffect(
+			NoteDisplacementAction.Continue));
+		parent.Grid.GetOrCreateCell(1, 0).Note =
+			new StartPatternNote(sampleId);
+		document.Add(parent);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, parentId);
+		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(200));
+		float[] pcm = new float[150];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm[110], Is.EqualTo(0.5f).Within(1e-5f));
+		Assert.That(pcm[120], Is.EqualTo(1f).Within(1e-5f));
+		Assert.That(pcm[140], Is.EqualTo(0.5f).Within(1e-5f),
+			"Old private mixdown must keep playing after its replacement ends.");
 	}
 
 	[Test]
