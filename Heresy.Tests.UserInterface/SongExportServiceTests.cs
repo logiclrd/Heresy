@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Buffers.Binary;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -8,6 +9,7 @@ using AwesomeAssertions;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequences;
+using Heresy.Core.Samples;
 using Heresy.Playback;
 using Heresy.Render.Configuration;
 using Heresy.Render.File;
@@ -70,6 +72,80 @@ public sealed class SongExportServiceTests
 			if (File.Exists(path))
 				File.Delete(path);
 		}
+	}
+
+	[Test]
+	public async Task MixdownContinuesGeneratingItsOwnNotesAfterParentLogicalEnd()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(
+			sampleId, "Delayed PCM", "memory.wav", OneFrameWave()));
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Delayed child")
+		{
+			RowCount = 3, ChannelCount = 1,
+		};
+		PatternCell late = child.Grid.GetOrCreateCell(2, 0);
+		late.SourceId = sampleId;
+		late.Note = new StartPatternNote();
+		document.Add(child);
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Short parent")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(childId, mixdown: true);
+		document.Add(parent);
+		ObjectId rootId = document.AllocateObjectId();
+		DataSequenceDefinition root = new(rootId, "Root");
+		root.Entries.Add(new SequenceEntry(parentId));
+		document.Add(root);
+		document.RootSequenceId = rootId;
+		SongExportService service = new(new OfflineSongRenderPlanFactory(
+			RenderConfiguration.Stereo(sampleRate: 1000)));
+		string path = Path.Combine(Path.GetTempPath(),
+			$"heresy-export-private-tail-{Guid.NewGuid():N}.wav");
+		try
+		{
+			OfflineRenderResult result = await service.ExportAsync(
+				document, path, OfflineAudioFileFormat.Wave);
+			result.LogicalFrameCount.Should().Be(120);
+			result.TotalFrameCount.Should().BeGreaterThan(240,
+				"the child must reach its own row 2 after its parent's end");
+			byte[] wav = await File.ReadAllBytesAsync(path);
+			int offset = 44 + 240 * 2 * sizeof(short);
+			short left = BinaryPrimitives.ReadInt16LittleEndian(wav.AsSpan(offset, 2));
+			left.Should().NotBe(0, "the delayed child note must survive tail draining");
+		}
+		finally
+		{
+			if (File.Exists(path)) File.Delete(path);
+		}
+	}
+
+	private static byte[] OneFrameWave()
+	{
+		using MemoryStream stream = new();
+		using (BinaryWriter writer = new(stream, Encoding.ASCII, leaveOpen: true))
+		{
+			writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+			writer.Write(38);
+			writer.Write(Encoding.ASCII.GetBytes("WAVE"));
+			writer.Write(Encoding.ASCII.GetBytes("fmt "));
+			writer.Write(16);
+			writer.Write((ushort)1);
+			writer.Write((ushort)1);
+			writer.Write(1000);
+			writer.Write(2000);
+			writer.Write((ushort)2);
+			writer.Write((ushort)16);
+			writer.Write(Encoding.ASCII.GetBytes("data"));
+			writer.Write(2);
+			writer.Write((short)16384);
+		}
+		return stream.ToArray();
 	}
 
 	[Test]
