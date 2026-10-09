@@ -9,6 +9,7 @@ using Heresy.Core.Sequencing;
 using Heresy.Render.Configuration;
 using Heresy.Render.Playback;
 using Heresy.Render.Samples;
+using Heresy.Render.Realtime;
 using Heresy.Render.Sounds;
 using Heresy.Render.Timing;
 using Heresy.Scripting.Compilation;
@@ -23,7 +24,7 @@ namespace Heresy.Playback;
 public sealed class PreparedIncrementalPlaybackPlan : IDisposable
 {
 	private bool _disposed;
-	private AsyncPreparedIncrementalAudioSource? _lookahead;
+	private BufferedAudioOutputSource? _renderingWorker;
 	private readonly Action _disposePrivateMixdowns;
 
 	internal PreparedIncrementalPlaybackPlan(
@@ -46,20 +47,19 @@ public sealed class PreparedIncrementalPlaybackPlan : IDisposable
 	public long RootInvocationId { get; }
 
 	/// <summary>
-	/// Start the dedicated PCM rendering worker and bounded output ring.
-	/// Its single worker owns both incremental event generation and nested
-	/// PCM rendering. The audio callback only consumes completed PCM.
-	/// Stop consuming audio before disposal.
+	/// Start the dedicated worker that both generates notes and renders
+	/// recursive PCM, publishing into a bounded callback-consumed ring.
+	/// Stop audio callbacks before disposing the plan.
 	/// </summary>
-	public AsyncPreparedIncrementalAudioSource StartLookahead(
-		int lookaheadFrames)
+	public BufferedAudioOutputSource StartRendering(
+		int capacityFrames, int blockFrames = 256)
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
-		if (_lookahead is not null)
+		if (_renderingWorker is not null)
 			throw new InvalidOperationException(
-				"A prepared playback plan already has a lookahead worker.");
-		return _lookahead = new AsyncPreparedIncrementalAudioSource(
-			Source, lookaheadFrames);
+				"A recursive playback plan already has a PCM worker.");
+		return _renderingWorker = new BufferedAudioOutputSource(
+			Source, capacityFrames, Math.Min(blockFrames, capacityFrames));
 	}
 
 	public void Dispose()
@@ -67,7 +67,7 @@ public sealed class PreparedIncrementalPlaybackPlan : IDisposable
 		if (_disposed)
 			return;
 		_disposed = true;
-		_lookahead?.Dispose();
+		_renderingWorker?.Dispose();
 		Source.Dispose();
 		Timeline.Dispose();
 		_disposePrivateMixdowns();
