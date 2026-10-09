@@ -20,6 +20,12 @@ public static class FlattenedSourceEffectPolicy
 			SetPlaybackFrequencyPatternEffect or SetPlaybackOffsetPatternEffect
 			or VibratoPatternEffect or FineVibratoPatternEffect
 			or VibratoVolumeSlidePatternEffect
+			// Dxx/Kxx/Lxx and volume-column A-D change *current note*
+			// volume, not the instigating channel's overall volume.
+			// Splitting Kxx/Lxx into Dxx would incorrectly adjust an
+			// unrelated preceding voice rather than the child source.
+			or NoteVolumeSlidePatternEffect
+			or TrackerVolumeSlidePatternEffect
 			or PitchSlidePatternEffect or TrackerPitchSlideDownPatternEffect
 			or TrackerPitchSlideUpPatternEffect
 			or TonePortamentoPatternEffect or TonePortamentoVolumeSlidePatternEffect
@@ -35,7 +41,11 @@ public static class FlattenedSourceEffectPolicy
 			or TrackerNewNoteActionPatternEffect
 			or TrackerEnvelopeControlPatternEffect
 			or TrackerVolumeColumnPatternEffect
-				{ Kind: TrackerVolumeColumnEffectKind.PitchSlideDown
+				{ Kind: TrackerVolumeColumnEffectKind.FineVolumeUp
+					or TrackerVolumeColumnEffectKind.FineVolumeDown
+					or TrackerVolumeColumnEffectKind.VolumeSlideUp
+					or TrackerVolumeColumnEffectKind.VolumeSlideDown
+					or TrackerVolumeColumnEffectKind.PitchSlideDown
 					or TrackerVolumeColumnEffectKind.PitchSlideUp
 					or TrackerVolumeColumnEffectKind.TonePortamento
 					or TrackerVolumeColumnEffectKind.Vibrato };
@@ -50,6 +60,9 @@ public static class FlattenedSourceEffectPolicy
 			or ApplyVibratoVolumeSlideCommand
 			or SetVibratoCommand or ClearPitchModulationCommand
 			or SetPitchSlideCommand or ClearPitchSlideCommand
+			or SetNoteVolumeSlideCommand or ClearNoteVolumeSlideCommand
+			or ApplyVolumeSlideCommand
+			or AdjustNoteVolumeCommand or AdjustCurrentNoteVolumeCommand
 			or ApplyPitchSlideDownCommand or ApplyPitchSlideUpCommand
 			or AdjustPitchLinearUnitsCommand
 			or ApplyTonePortamentoCommand or ApplyTonePortamentoVolumeSlideCommand
@@ -71,7 +84,11 @@ public static class FlattenedSourceEffectPolicy
 			or SetCurrentVoiceDisplacementActionCommand
 			or ApplyTrackerEnvelopeControlCommand or SetEnvelopeEnabledCommand
 			or ApplyTrackerVolumeColumnCommand
-				{ Kind: TrackerVolumeColumnEffectKind.PitchSlideDown
+				{ Kind: TrackerVolumeColumnEffectKind.FineVolumeUp
+					or TrackerVolumeColumnEffectKind.FineVolumeDown
+					or TrackerVolumeColumnEffectKind.VolumeSlideUp
+					or TrackerVolumeColumnEffectKind.VolumeSlideDown
+					or TrackerVolumeColumnEffectKind.PitchSlideDown
 					or TrackerVolumeColumnEffectKind.PitchSlideUp
 					or TrackerVolumeColumnEffectKind.TonePortamento
 					or TrackerVolumeColumnEffectKind.Vibrato };
