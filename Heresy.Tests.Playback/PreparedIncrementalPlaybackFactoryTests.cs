@@ -651,7 +651,10 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		nested.Source.Render(1, rewound);
 		Assert.That(rewound[0], Is.EqualTo(reference[2]).Within(1e-6f),
 			"Backward source-frame offset must replay the child state rather than PCM history.");
-		Assert.That(child.NextFrame, Is.EqualTo(3L));
+		PlaybackSession reconstructed = (PlaybackSession)sessionField.GetValue(voice.Sound)!;
+		Assert.That(reconstructed, Is.Not.SameAs(child),
+			"A backward seek must replace the live child playback session.");
+		Assert.That(reconstructed.NextFrame, Is.EqualTo(3L));
 	}
 
 	[Test]
@@ -682,12 +685,23 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		float[] before = new float[3];
 		plan.Source.Render(3, before);
 		Assert.That(before[0], Is.EqualTo(0.5f).Within(1e-6f));
+		PlaybackVoice voice = plan.Session.GetChannelState(0).CurrentVoice!;
+		FieldInfo sessionField = voice.Sound.GetType().GetField("_session",
+			BindingFlags.Instance | BindingFlags.NonPublic)!;
+		PlaybackSession original = (PlaybackSession)sessionField.GetValue(voice.Sound)!;
+		Assert.That(original.NextFrame, Is.EqualTo(3L));
 		plan.Session.ApplyLiveEvent(ChannelTarget.Physical(0),
 			[new RetriggerCurrentVoiceCommand(0)]);
 		float[] after = new float[3];
 		plan.Source.Render(3, after);
-		Assert.That(after, Is.EqualTo(before).AsCollection
-			.Within(1e-6f), "Retrigger must reconstruct the original private voice state.");
+		PlaybackSession replayed = (PlaybackSession)sessionField.GetValue(voice.Sound)!;
+		Assert.That(replayed, Is.Not.SameAs(original));
+		Assert.That(replayed.NextFrame, Is.EqualTo(3L),
+			"Retrigger must restart the private renderer at frame zero.");
+		Assert.That(replayed.GetChannelState(0).CurrentVoice?.StartFrame,
+			Is.EqualTo(0L), "The child source's initial event must be replayed.");
+		Assert.That(after[0], Is.GreaterThan(before[0]),
+			"Normal parent retrigger anti-click PCM should overlap the restarted child.");
 	}
 
 	[Test]
