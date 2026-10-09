@@ -2412,3 +2412,54 @@ priority TODOs rather than being misreported as completed. Direct
 SetOverallChannelVolumeCommand is still unsupported by the raw
 incremental Pattern merger; the documented live-volume behavior is
 supported through playback controls.
+
+
+## Fiftieth step: monotonic scope IDs and bounded channel-state lifetime
+
+The October 9 scope-memory refinement consolidates channel-local state
+without changing the shared Tempo/Speed clock. `ScopedSequencingChannelMemory`
+is the single map owner for one recursive rendering tree: scope **0** uses
+one directly stored `SequencingChannelStateMap`; non-root scopes use an
+on-demand dictionary of independent maps. Scope IDs are positive `long`
+values allocated monotonically, never recycled. An invalid or retired
+scope ID cannot resurrect a stale map. A scope's local channel map
+contains remembered Source, explicit/recalled note volume, tracker
+effect bytes and nibble memories, high sample offset, retrigger
+countdown, waveform settings, glissando and MIDI-macro selection.
+
+A flattened Pattern/Sequence note allocates a new scope and stamps
+that identity through the child `SequencingContext`, physical-host
+`NoteEvent`s and playback voices. Nesting requires no fixed limit of
+`own/child` state slots. Children share the root global musical
+clock but not their scope's channel memory, even at the same mapped
+physical host. A Sequence's successive Pattern order frames reuse the
+enclosing Sequence context/scope. Child scopes are released only
+after their producer has no pending cursor/wall-time operations and no
+descendant; cancelling an entire subtree releases its scoped maps.
+The context manager uses separate allocated-scope and materialized-map
+counts for deterministic regression checks.
+
+Physical rendering still uses `(scopeId, physicalHost)` as a voice-state
+key. The recursive producer notifies the PCM session when a scope is
+retired; the session reclaims its per-host playback channel objects
+only when voices (including migrated NNA voices) and anti-click tails
+have drained. The parent/child *captured source-volume multiplier*
+remains 0.75 × 0.8 = 0.6 for a Verse → Drum Beat → Riff chain,
+regardless of a later remembered note-volume update. Overall
+channel-volume ancestry remains live while its descendant voice is
+sounding. References held by living voices preserve any required
+ancestor channel state even after the ancestor has finished generating
+notes and its lookup entry has been retired.
+
+Memory reclamation runs synchronously on the existing PCM worker; no
+extra thread, global note journal, eager source expansion or PCM cache
+has been introduced. Stress regressions check one thousand recursive
+nesting/repeat iterations with unique IDs and bounded active scope
+counts; PCM tests additionally monitor retained scoped renderer
+channels across hundreds of short-lived note invocations.
+
+**Remaining**: classify/ignore ambiguous single-voice instigating-note
+effects *before* mutating memory, provide rate-limited diagnostics and
+UI warnings, and broaden cancellation/NNA/long-tail tests. The scope
+memory lifetime is deliberately not tied to the last emitted note:
+a released source's sounding voices may outlive its producer.

@@ -38,6 +38,14 @@ preserving audible release and already-captured anti-click tails. These are
   Nested sources, sibling hosts and repeated Sequence orders have regression
   coverage. The original shared-channel-memory design and step 47's
   no-caller-memory claim were **superseded** by the October 9 clarification.
+  **Scoped memory lifecycle implemented:** a single shared
+  `ScopedSequencingChannelMemory` owns scope 0 directly and lazily maps all
+  nested scopes by never-reused 64-bit IDs. Producers retire their maps
+  when their entire invocation subtree/order completes or is cancelled;
+  the renderer retires the matching per-scope physical channel entries
+  after outstanding voices, NNA voices and anti-click tails finish.
+  Repeating recursive music must retain state proportional to live
+  invocations/voices, not the cumulative number of source starts.
   **Still outstanding:** meaningful-effect classification on a flattening
   start before per-note effects update local tracker memory; ignore
   nonsensical single-voice controls (retrigger, glissando, portamento,

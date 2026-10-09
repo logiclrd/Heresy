@@ -247,7 +247,7 @@ public sealed class PlaybackSession
 	{
 		if (_retiredPhysicalScopes.Count == 0)
 			return;
-		foreach (long scopeId in _retiredPhysicalScopes.ToArray())
+		foreach (long scopeId in new List<long>(_retiredPhysicalScopes))
 		{
 			bool retained = false;
 			foreach (PlaybackVoice voice in _virtualVoices)
