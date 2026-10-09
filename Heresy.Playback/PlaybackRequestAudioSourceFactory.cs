@@ -142,7 +142,7 @@ public sealed class PlaybackRequestAudioSourceFactory :
 		public void Render(int frameCount, Span<float> destination)
 		{
 			while (_commands.TryDequeue(out LivePlaybackEvent? command))
-				plan.Session.ApplyLiveEvent(command.Target, command.Commands);
+				plan.Source.ApplyLiveEvent(command.Target, command.Commands);
 			plan.Source.Render(frameCount, destination);
 			if (plan.Source.IsComplete && positions is not null)
 				positions.Finish(plan.Source.LogicalDuration);
