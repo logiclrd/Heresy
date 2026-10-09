@@ -703,6 +703,15 @@ public sealed class PatternEditorControl : UserControl
 						sourceIndex,
 						targetIndex));
 		effects.SetEffects(view.Effects);
+		string? flattenedWarning = FlattenedSourceEffectWarnings.Describe(
+			_workspace.Document, row.Pattern, row.PatternRow, channel);
+		if (flattenedWarning is not null)
+		{
+			ToolTip.SetTip(effects, flattenedWarning);
+			ToolTip.SetTip(noteField, flattenedWarning);
+			// Visible, nonblocking warning; effect data remains editable.
+			note.Text = "⚠ " + view.NoteText;
+		}
 
 		Grid content = new();
 		content.ColumnDefinitions.Add(
