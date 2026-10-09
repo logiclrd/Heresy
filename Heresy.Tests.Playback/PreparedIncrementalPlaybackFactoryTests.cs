@@ -705,6 +705,64 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 	}
 
 	[Test]
+	public void RewindingOuterMixdownRecursivelyReconstructsGrandchildPlayback()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(
+			sampleId, "PCM", "test.wav", Wave(16384)));
+		ObjectId leafId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(leafId, "Leaf")
+		{
+			RowCount = 2, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({sampleId.Value}));",
+		});
+		ObjectId middleId = document.AllocateObjectId();
+		DataPatternDefinition middle = new(middleId, "Middle")
+		{
+			RowCount = 2, ChannelCount = 1,
+		};
+		middle.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(leafId, mixdown: true);
+		document.Add(middle);
+		ObjectId rootId = document.AllocateObjectId();
+		DataPatternDefinition root = new(rootId, "Root")
+		{
+			RowCount = 2, ChannelCount = 1,
+		};
+		root.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(middleId, mixdown: true);
+		document.Add(root);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, rootId);
+		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(50));
+		plan.Source.Render(1, new float[1]);
+		PlaybackVoice outer = plan.Session.GetChannelState(0).CurrentVoice!;
+		ISourceFrameSeekableSound seekable = (ISourceFrameSeekableSound)outer.Sound;
+		FieldInfo sessionField = outer.Sound.GetType().GetField("_session",
+			BindingFlags.NonPublic | BindingFlags.Instance)!;
+		PlaybackSession oldMiddle = (PlaybackSession)sessionField.GetValue(outer.Sound)!;
+		PlaybackVoice inner = oldMiddle.GetChannelState(0).CurrentVoice!;
+		PlaybackSession oldLeaf = (PlaybackSession)sessionField.GetValue(inner.Sound)!;
+		seekable.SetSourceFrameOffset(outer.SoundState, 15);
+		plan.Source.Render(1, new float[1]);
+		Assert.That(oldMiddle.NextFrame, Is.EqualTo(17L));
+		Assert.That(oldLeaf.NextFrame, Is.EqualTo(17L));
+		seekable.SetSourceFrameOffset(outer.SoundState, 0);
+		float[] again = new float[1];
+		plan.Source.Render(1, again);
+		Assert.That(again[0], Is.EqualTo(0.5f).Within(1e-6f));
+		PlaybackSession newMiddle = (PlaybackSession)sessionField.GetValue(outer.Sound)!;
+		PlaybackVoice newInner = newMiddle.GetChannelState(0).CurrentVoice!;
+		PlaybackSession newLeaf = (PlaybackSession)sessionField.GetValue(newInner.Sound)!;
+		Assert.That(newMiddle, Is.Not.SameAs(oldMiddle));
+		Assert.That(newLeaf, Is.Not.SameAs(oldLeaf));
+		Assert.That(newMiddle.NextFrame, Is.EqualTo(3L));
+		Assert.That(newLeaf.NextFrame, Is.EqualTo(3L));
+	}
+
+	[Test]
 	public void RequiresRootAndRejectsInvalidRoslynDuringPreparation()
 	{
 		SongDocument document = new();
