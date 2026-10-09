@@ -132,6 +132,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		private TimeSpan _rowStartTime;
 		private double _rowStartTick;
 		private double _rowSpeed;
+		private readonly double _tickRate;
 
 		public Cursor(
 			IIncrementalRawPatternNoteGenerator generator,
@@ -139,9 +140,14 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			int rowCount,
 			int startRow,
 			double tick,
-			long sequence)
+			long sequence,
+			double timelineClockRate)
 		{
 			Context = context;
+			_tickRate = context.PlaybackSpeedMultiplier / timelineClockRate;
+			if (!double.IsFinite(_tickRate) || !(_tickRate > 0.0))
+				throw new NotSupportedException(
+					"Flattened playback-speed composition exceeds finite tracker time.");
 			RowCount = rowCount;
 			_initialRow = Math.Min(rowCount, startRow);
 			Row = _initialRow;
@@ -159,11 +165,12 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		public bool Complete => Row >= RowCount;
 		public bool InRow => _inRow;
 		public double RowSpeed => _rowSpeed;
+		public double TickRate => _tickRate;
 		public int FineDelayTicks => _fineDelayTicks;
 		public int ExtraRowSpans => _extraRowSpans;
 		public double EffectiveSpanTicks => _rowSpeed + _fineDelayTicks;
 		public double TotalRowTicks => EffectiveSpanTicks * (_extraRowSpans + 1);
-		public double RowEndTick => _rowStartTick + TotalRowTicks;
+		public double RowEndTick => _rowStartTick + TotalRowTicks / _tickRate;
 		public NoteEvent? DueRepeated => _inRow && _repeated.Count != 0
 			&& (_eventIndex >= _rowEvents.Count
 				|| _repeated[0].TickOffset < RawEventTickOffset - TickTolerance)
@@ -774,7 +781,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			double wrapTick = _wrapCleanup.Count == 0
 				? double.PositiveInfinity : 0;
 			DueTick = _rowStartTick + Math.Min(wrapTick,
-				Math.Min(rawTick, Math.Min(repeatTick, commandTick)));
+				Math.Min(rawTick, Math.Min(repeatTick, commandTick))) / _tickRate;
 		}
 
 		public void Dispose() => _source.Dispose();
@@ -1016,14 +1023,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		if (context.FlattenedSourceExpander is not null)
 			throw new NotSupportedException(
 				"Use explicit cursor invocation, not eager flattened expansion.");
-		if (context.PlaybackSpeedMultiplier != _clockRate)
-			throw new NotSupportedException(
-				"Non-unit flattened playback speed needs per-cursor shared-clock remapping.");
-
 		context.ResolvePatternSourcesAtRowTime = true;
 		long id = _nextSequence++;
 		_active.Add(new Cursor(generator, context, rowCount,
-			startRow, _tick, id));
+			startRow, _tick, id, _clockRate));
 		return id;
 	}
 
@@ -1357,7 +1360,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		// Capture the resolved bytes; future SEy rows reuse those bytes
 		// without repeatedly committing T00 effect memory.
 		List<(byte Parameter, ChannelTarget Target)> immediateSets = [];
-		List<(byte Parameter, int Span)> slides = [];
+		List<(byte Parameter, int Span, double Rate)> slides = [];
 		foreach (var request in pending)
 		{
 			NoteEvent raw = request.Timing.Raw;
@@ -1365,6 +1368,13 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			byte parameter = request.Cursor.Context
 				.GetPhysicalChannelState(raw.Target.PhysicalChannel)
 				.ResolveEffectParameter(EffectMemorySlot.Tempo, input);
+			// SEy repeats have a separate cross-invocation timing map.
+			// Do not schedule their future Txx operations at the wrong
+			// shared-tick boundaries when this cursor runs at a new rate.
+			if (crossInvocationRepeat && parameter != 0
+				&& request.Cursor.TickRate != 1.0)
+				throw new NotSupportedException(
+					"Scaled flattened Txx with SEy repeats requires cross-rate Tempo arbitration.");
 			if (crossInvocationRepeat && parameter != 0)
 				crossSources.Add(new RepeatedTempoSource(
 					request.Cursor.Sequence, parameter,
@@ -1390,7 +1400,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			else if (parameter > 0)
 			{
 				slides.Add((parameter,
-					checked((int)request.Cursor.EffectiveSpanTicks)));
+					checked((int)request.Cursor.EffectiveSpanTicks),
+					request.Cursor.TickRate));
 			}
 			request.Cursor.ConsumeTiming();
 		}
@@ -1406,6 +1417,34 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		{
 			_crossTempoSources.Clear();
 			_futureTempoOwner = -1;
+			if (slides.Any(x => x.Rate != 1.0))
+			{
+				// For one scaled Txx, its original per-local-tick delta
+				// spans fewer/more *shared* tracker ticks. Keep the
+				// original IT clamping while mapping the ramp deadline.
+				// Mixed-rate simultaneous slides need multi-slope
+				// arbitration and are not approximated.
+				if (slides.Count != 1)
+					throw new NotSupportedException(
+						"Simultaneous Txx slides at different flattened rates require multi-clock Tempo arbitration.");
+				var slide = slides[0];
+				double ending = _root.State.Tempo;
+				for (int transition = 1; transition < slide.Span; transition++)
+					ending = PatternNoteProcessor.ResolveTrackerTempoAtTick(
+						ending, slide.Parameter, firstTick: false);
+				_tempoRamp = null;
+				_futureTempoRamps.Clear();
+				if (Math.Abs(ending - _root.State.Tempo) > 1e-12)
+				{
+					SetTempoRampCommand ramp = new(ending,
+						slide.Span / slide.Rate);
+					StartTempoRamp(ramp);
+					QueueTimingEvent(new NoteEvent(
+						new MusicalTime(Elapsed, 0), ChannelTarget.Global,
+						[ramp]), pending[0].Cursor.Sequence);
+				}
+				return true;
+			}
 			int[] spans = slides.Select(x => x.Span).Distinct()
 				.OrderBy(x => x).ToArray();
 			double initial = _root.State.Tempo;
@@ -1886,7 +1925,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					// case it does not initialize or advance countdown.
 					int shift = delayTick.HasValue
 						? Math.Max(1, (int)delayTick.Value) : 0;
-					double startTick = _tick + shift;
+					double startTick = _tick + shift / current.TickRate;
 					bool startCanExecute =
 						!delayTick.HasValue || shift < current.EffectiveSpanTicks;
 					if (startCanExecute && raw.Offset.TimeOffset > TimeSpan.Zero)

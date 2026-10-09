@@ -353,10 +353,9 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 							if (emit.Note.Target.Kind != ChannelTargetKind.Physical)
 								throw new NotSupportedException(
 									"Flattened child requires a physical parent channel.");
-							if (start.PlaybackSpeedMultiplier != 1.0
-								|| start.Volume.HasValue)
+							if (start.Volume.HasValue)
 								throw new NotSupportedException(
-									"Flattened child playback-speed and volume transforms require shared-clock mapping.");
+									"Flattened child initial source-volume transforms are not supported.");
 
 							int physicalOffset = emit.Note.Target.PhysicalChannel
 								- frame.Context.PhysicalChannelBase;
@@ -365,6 +364,7 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 									"Child channels cannot precede parent channel space.");
 							SequencingContext child = frame.Context.FlattenedChild(
 								pitchMultiplier: start.PitchMultiplier,
+								playbackSpeedMultiplier: start.PlaybackSpeedMultiplier,
 								physicalChannelOffset: physicalOffset);
 							child.TimelineOrigin = emit.Time;
 							AddInvocation(source, child, frame.Id);
