@@ -160,6 +160,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		public int ExtraRowSpans => _extraRowSpans;
 		public double EffectiveSpanTicks => _rowSpeed + _fineDelayTicks;
 		public double TotalRowTicks => EffectiveSpanTicks * (_extraRowSpans + 1);
+		public double RowEndTick => _rowStartTick + TotalRowTicks;
 		public NoteEvent? DueRepeated => _inRow && _repeated.Count != 0
 			&& (_eventIndex >= _rowEvents.Count
 				|| _repeated[0].TickOffset < RawEventTickOffset - TickTolerance)
@@ -794,9 +795,12 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				&& !IsTiming(note)
 				&& (note.Target.Kind != ChannelTargetKind.Physical
 					|| note.Commands.Any(c => c is not (StartNoteCommand
-						or NoteOffCommand or NoteCutCommand))))
+						or NoteOffCommand or NoteCutCommand
+						or ApplyTrackerNoteCutCommand
+						or ApplyTrackerNoteDelayCommand
+						or ApplyRetriggerCommand))))
 				throw new NotSupportedException(
-					"Positive fixed wall-time offsets require standalone global Tempo/Speed or ordinary physical Note/Off/Cut.");
+					"Positive fixed wall-time offsets require standalone global Tempo/Speed or supported physical Note/Off/Cut/SCx/SDx/Qxy.");
 			if (note.Target.Kind is not (ChannelTargetKind.Physical
 				or ChannelTargetKind.Global))
 				throw new NotSupportedException(
@@ -829,7 +833,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	}
 
 	private sealed record DeferredNote(
-		Cursor Owner, NoteEvent Raw, TimeSpan Deadline, long Order);
+		Cursor Owner, NoteEvent Raw, TimeSpan Deadline, long Order,
+		bool IsResolved = false, double? RowEndTick = null);
 
 	/// <summary>
 	/// A tracker Tempo ramp is linear in musical tick position, never wall
@@ -1173,17 +1178,31 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				Elapsed = nextWall.Deadline;
 				CheckCooperationBudget();
 				_delayed.Remove(nextWall);
+				// SCx/SDx/Qxy synthetic tick results are bounded by the
+				// row's actual end, even if SEy extended that row.
+				// This check uses the live shared clock, not a wall-time
+				// duration guessed when the tracker operation was queued.
+				if (nextWall.RowEndTick is double rowEnd
+					&& _tick >= rowEnd - TickTolerance)
+					continue;
 
-				NoteScheduleBuilder wall = new();
-				PatternNoteProcessor.GenerateNotes(
-					new SingleEventSlice(nextWall.Raw), nextWall.Owner.Context,
-					wall, out _);
-				NoteEvent[] resolvedWall = wall.Freeze().ToArray();
-				if (resolvedWall.Length != 1
-					|| resolvedWall[0].Offset.TimeOffset != TimeSpan.Zero)
-					throw new NotSupportedException(
-						"Deferred physical note did not resolve to one immediate event.");
-				NoteEvent note = resolvedWall[0] with
+				NoteEvent resolved;
+				if (nextWall.IsResolved)
+					resolved = nextWall.Raw;
+				else
+				{
+					NoteScheduleBuilder wall = new();
+					PatternNoteProcessor.GenerateNotes(
+						new SingleEventSlice(nextWall.Raw),
+						nextWall.Owner.Context, wall, out _);
+					NoteEvent[] generated = wall.Freeze().ToArray();
+					if (generated.Length != 1
+						|| generated[0].Offset.TimeOffset != TimeSpan.Zero)
+						throw new NotSupportedException(
+							"Deferred physical note did not resolve to one immediate event.");
+					resolved = generated[0];
+				}
+				NoteEvent note = resolved with
 				{
 					Offset = new MusicalTime(Elapsed, 0),
 					EmissionOrder = _emissionOrder++,
@@ -1812,10 +1831,6 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			}
 			// SDx shifts the note's actual execution position; Qxy
 			// evaluates future retrigger ticks from that delayed position.
-			if ((cutTick.HasValue || delayTick.HasValue || retrigger.HasValue)
-				&& raw.Offset.TimeOffset != TimeSpan.Zero)
-				throw new NotSupportedException(
-					"SCx/SDx/Qxy with fixed wall offsets is not yet supported.");
 			if (cutTick.HasValue || delayTick.HasValue || retrigger.HasValue)
 			{
 				// A note delayed by SDx is resolved only when its tick is
@@ -1954,12 +1969,33 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						"SDx produced multiple independent note operations.");
 				if (resolved.Count == 1)
 				{
-					output = resolved[0];
+					// Preserve the cell's independent wall offset for
+					// every SEy note copy. Its Source/volume memory has
+					// already been committed exactly once here.
+					output = resolved[0] with
+					{
+						Offset = new MusicalTime(
+							scheduled.Note.Offset.TimeOffset, 0),
+					};
 					current.QueueDelayedCopies(scheduled, output);
 				}
 			}
 			if (output is null)
 				return false;
+			if (output.Offset.TimeOffset > TimeSpan.Zero)
+			{
+				// A tracker tick remains a musical deadline; the fixed
+				// TimeOffset delays only its resulting note operation.
+				// The ordinary positive-offset path stays independently
+				// unresolved until delivery (above).
+				_delayed.Add(new DeferredNote(
+					current,
+					output with { Offset = MusicalTime.Zero },
+					Elapsed + output.Offset.TimeOffset,
+					_nextDeferredOrder++, IsResolved: true,
+					RowEndTick: current.RowEndTick));
+				return false;
+			}
 			NoteEvent emitted = output with
 			{
 				Offset = new MusicalTime(Elapsed, 0),
@@ -2016,6 +2052,13 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			};
 			return true;
 		}
+		// Tracker tick effects with a fixed wall offset may remain in
+		// the wall queue after their containing row has ended. They
+		// must not emit outside that row (ordinary wall-offset notes
+		// have no such restriction).
+		_delayed.RemoveAll(n => ReferenceEquals(n.Owner, current)
+			&& n.RowEndTick is double limit
+			&& _tick >= limit - TickTolerance);
 		PatternFlowControl completed = current.FinishRow();
 		result = completed.HasControl
 			? new IncrementalPatternTimelineStep.Flow(
