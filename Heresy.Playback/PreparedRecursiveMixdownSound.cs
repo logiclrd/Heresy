@@ -33,6 +33,7 @@ internal sealed class PreparedRecursiveMixdownSound : ISound, ISourceFrameSeekab
 	private readonly PreparedIncrementalAudioSource _source;
 	private readonly Action _disposeChildren;
 	private readonly List<float[]> _blocks = [];
+	private readonly List<long> _blockStartFrames = [];
 	private readonly int _sampleRate;
 	private readonly int _channels;
 	private long _preparedFrames;
@@ -131,6 +132,7 @@ internal sealed class PreparedRecursiveMixdownSound : ISound, ISourceFrameSeekab
 			int count = checked((int)(next - _preparedFrames));
 			float[] output = new float[checked(count * _channels)];
 			_source.Render(count, output);
+			_blockStartFrames.Add(_preparedFrames);
 			_blocks.Add(output);
 			_preparedFrames = next;
 		}
@@ -162,22 +164,18 @@ internal sealed class PreparedRecursiveMixdownSound : ISound, ISourceFrameSeekab
 			if (sourceFrame >= _preparedFrames)
 				throw new InvalidOperationException(
 					"Nested mixdown PCM was not prepared before its audio callback.");
-			long remaining = sourceFrame;
-			float[]? block = null;
-			int blockFrame = 0;
-			foreach (float[] completed in _blocks)
-			{
-				int available = completed.Length / _channels;
-				if (remaining < available)
-				{
-					block = completed;
-					blockFrame = (int)remaining;
-					break;
-				}
-				remaining -= available;
-			}
-			if (block is null)
+			// Blocks may be shorter than BlockFrames at each parent
+			// horizon, so locate the absolute frame by its recorded origin.
+			// Binary search avoids quadratic readback for long mixdowns.
+			int index = _blockStartFrames.BinarySearch(sourceFrame);
+			if (index < 0)
+				index = ~index - 1;
+			if (index < 0)
 				throw new InvalidOperationException("Missing prepared mixdown block.");
+			float[] block = _blocks[index];
+			int blockFrame = checked((int)(sourceFrame - _blockStartFrames[index]));
+			if (blockFrame >= block.Length / _channels)
+				throw new InvalidOperationException("Missing prepared mixdown frame.");
 			for (int channel = 0; channel < _channels; channel++)
 				destination[frame * _channels + channel] +=
 					block[blockFrame * _channels + channel];
