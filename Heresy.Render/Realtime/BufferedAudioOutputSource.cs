@@ -133,9 +133,12 @@ public sealed class BufferedAudioOutputSource : ILiveAudioOutputSource, IDisposa
 				Math.Min(free, _capacityFrames - position));
 			try
 			{
-				_source.Render(count,
-					_samples.AsSpan(position * Format.ChannelCount,
-						count * Format.ChannelCount));
+				// The ring reuses physical storage. Every source must receive a
+				// clean destination even when it renders additively.
+				Span<float> output = _samples.AsSpan(
+					position * Format.ChannelCount, count * Format.ChannelCount);
+				output.Clear();
+				_source.Render(count, output);
 			}
 			catch (Exception error)
 			{
