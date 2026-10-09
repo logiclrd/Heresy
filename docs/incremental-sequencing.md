@@ -402,8 +402,9 @@ Q00 effect memory and countdown continuity, zero-interval retrigger,
 mapped flattened-child channels, Tempo changes during pending ticks,
 and cancellation.
 
-**Scope limits:** combining SDx with Qxy is still explicitly rejected
-before effect memory is changed. Fixed wall-time offsets on SCx/SDx/Qxy,
+**Historical scope limits:** SDx combined with Qxy was explicitly
+rejected at this milestone, but is implemented in milestone 27 below.
+Fixed wall-time offsets on SCx/SDx/Qxy,
 other advanced composite tracker effects, physical note lifetimes and
 unported row controls require further work. This is an **experimental
 engine**, not yet substituted for the production realtime or offline
@@ -1273,6 +1274,47 @@ The production realtime/export path remains unchanged. This closes
 the particular **same-tick Txx/SEy collision** gap; broader recursive
 effect parity, mixed timing/effect lifecycles, and production scheduler
 migration are still open.
+
+## Twenty-seventh executable step: combined SDx/Qxy tick interactions
+
+The experimental shared-tick `IncrementalPatternTimeline` now accepts
+`ApplyTrackerNoteDelayCommand` (SDx) together with
+`ApplyRetriggerCommand` (Qxy) in a single physical-channel Pattern cell.
+The eager `PatternNoteProcessor` is the compatibility baseline.
+
+When both effects are present, the source cell commits Qxy whole-byte
+effect memory at its original musical row event, but its **entire
+ordinary note/setup command list** remains pending until the eligible
+SDx tick. A newly started note initializes the Qxy countdown, and
+retrigger candidate ticks begin on the **tick after the delayed note**,
+not at the original row position. A Qxy without a new Start continues
+the mapped physical channel's remembered countdown.
+
+If SDx cannot execute within its *original* captured
+`Speed + S6x` row span, neither its note setup nor its Qxy retriggers
+execute. SEy cannot make an out-of-span SDx eligible. With SEy, SDx
+copies the already-resolved note setup to equivalent ticks of the
+compatibility-row repeats. Qxy retrigger countdown continues across
+the whole repeated-row tick span without resetting at every copied
+note. When one of those copies and a Qxy tick coincide, the note copy
+precedes the retrigger, consistent with eager synthetic note ordering.
+
+The per-invocation tick-operation queue orders equal-tick operations
+as delayed note setup, repeated SDx copy, Qxy retrigger, and SCx note
+cut; stable source insertion order breaks remaining ties. No scheduled
+Qxy work is resolved into fixed future wall time, so Tempo changes
+can retime an outstanding tick, and cancellation drops scheduled work.
+
+Parity regressions compare actual emitted commands and timestamps to
+the eager processor for SDx/Qxy Start, overlapping SEy repetitions,
+S6x-extended spans, invalid out-of-span note delay, Q00 row-to-row
+recall, and Q00 memory/countdown continuing across independent
+Pattern invocations with the same physical channel.
+
+**Still unsupported:** positive fixed wall-time offsets on combined
+SCx/SDx/Qxy events, and other advanced tracker-effect combinations.
+This remains an **experimental** shared-clock scheduler; production
+realtime and export scheduling are unchanged.
 
 ## Proposed next interfaces and migration
 
