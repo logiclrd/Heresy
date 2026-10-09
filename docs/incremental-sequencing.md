@@ -1816,8 +1816,8 @@ future music does **not** apply future voice operations ahead of time.
 Forward native source-frame seeks are supported by incrementally
 rendering/discarding the intervening prepared child frames, leaving the
 private clock and active voices at the correct live point. The sound
-reports `SourceFrameSeekCost.ReplayRequired`. **Backward seeks and tracker retriggers are
-explicitly unsupported for now**: correct rewind requires recreating the
+reports `SourceFrameSeekCost.ReplayRequired`. **Backward seeks and tracker retriggers are supported by
+the replay journal added in milestone 38**: correct rewind requires recreating the
 private event stream and renderer state, not retaining prior PCM.
 Forward seeks outside the published event horizon also fail explicitly.
 These cases remain structural follow-ups before full producer-coordinated
@@ -1842,6 +1842,80 @@ for backward seeks/retriggers; producer-side horizon requests for
 large forward Oxx offsets; explicit tail/end handling for offline
 export; and final production realtime/export cutover. There is no
 user-facing opt-in switch or fallback production scheduler planned.
+
+## Thirty-eighth executable step: replayable private renderer state
+
+This milestone extends the live, just-in-time recursive mixdown architecture
+from milestone 37. **Seeking backwards or retriggering does not use a
+PCM cache**. Instead the private preparation worker publishes an ordered
+journal of immutable `PreparedEvent` records (sample-exact frame,
+invocation owner, resolved `NoteEvent`) while it continues its
+incremental Pattern/Sequence execution. The producer publishes each
+event's index only after writing the record. The realtime consumer
+uses a separate cursor, so re-reading past events does not modify
+the producer's pending enumeration or rerun Roslyn. This journal
+exists **only for nested replayable sources**: the top-level prepared
+source retains its existing destructive concurrent queue.
+
+`PreparedIncrementalAudioSource.RewindForReplay()` now constructs a fresh
+consumer `PlaybackSession` with the same frozen sound resolver and
+render configuration, resets its journal cursor to zero, and replays
+the prepared event stream as the private session renders forwards.
+All sample/instrument voices, channel state, tracker effect memory,
+virtual voices and their envelopes start from their initial condition
+and are naturally rebuilt in chronological order as events are
+consumed. Scripts and pattern cursors continue to run **only on the
+preparation worker**. No child PCM is retained. Replaying an already
+prepared prefix only renders and discards its intermediate output,
+in bounded scratch blocks.
+
+A private `PreparedRecursiveMixdownSound` detects a requested
+source-frame offset that precedes the live child render head, or
+a tracker retrigger that changes the voice's playback origin. It
+rewinds the private consumer session and renders the requested
+prefix again. In the retrigger case it subtracts the original
+voice's new playback-origin frame before addressing the child.
+The parent's preexisting anti-click cut tail remains intact: the
+retrigger therefore deliberately crossfades its original frame
+with the restarted sound. Descendant mixdown sounds are each
+replayable themselves; on receiving earlier frames from a
+reconstructed ancestor, they reset their own renderer and event
+cursor. This supports arbitrarily many supported recursive levels
+without pre-rendered sound assets.
+
+Parent lifecycle actions also need replayable history. Their
+producer-ordered `Release/Cut/Fade` records are now published in
+their own indexed, immutable queue instead of being destroyed as
+the consumer visits them. On reconstruction the consumer resets
+this cursor; for retriggered voices it ignores lifecycle records
+from before the new parent playback origin and translates future
+records to the restarted private clock. The producer still owns
+all future timeline and lifecycle generation; the callback
+only replays already resolved commands.
+
+Regressions verify forward source-frame offset and subsequent
+**backwards return to earlier PCM**, a tracker retrigger rebuilding
+a new child session and replaying its initial voice, and a two-level
+mixdown rebuilding both intermediate and leaf sessions. Existing
+lifecycle, stereo, clock-isolation and simultaneous-voice tests
+remain in place. A rebuild uses the original resolved note events
+so deterministic script output does not need reevaluation.
+
+**Scope and remaining work:** The replay journal is currently
+retained unbounded for each private invocation; no pre-rendered
+PCM is retained, but the note-event memory budget and
+replay-checkpoint/eviction policy remain unfinished. Creating a
+fresh renderer and rendering a large prefix on the callback is
+semantically correct but may cause a realtime deadline miss:
+`SeekCost=ReplayRequired` must be surfaced and expensive seeks
+eventually moved/prepared ahead of playback. Seeking beyond the
+prepared producer horizon remains explicitly rejected. Replaying
+past explicit subtree cancellation remains unsupported until
+cancellation state can be checkpointed. Advanced parent lifecycle
+cases such as independent child release/fade inheritance when
+seeking through a previously applied action still require parity
+coverage. The factory continues as an experimental source; no
+production compatibility option or alternate scheduler is added.
 
 ## Proposed next interfaces and migration
 
