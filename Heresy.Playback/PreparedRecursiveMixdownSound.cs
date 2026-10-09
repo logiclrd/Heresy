@@ -175,7 +175,8 @@ internal sealed class PreparedRecursiveMixdownSound :
 	/// </summary>
 	private bool TryPeekRelativeLifecycle(out LifecycleChange? next)
 	{
-		while (TryPeekLifecycle(out LifecycleChange? absolute))
+		while (TryPeekLifecycle(out LifecycleChange? absolute)
+			&& absolute is not null)
 		{
 			if (absolute.Frame < _renderOriginFrame)
 			{
@@ -294,7 +295,8 @@ internal sealed class PreparedRecursiveMixdownSound :
 			}
 
 			long until = Math.Min(exclusiveEnd, checked(now + ScratchFrames));
-			if (TryPeekRelativeLifecycle(out LifecycleChange? pending))
+			if (TryPeekRelativeLifecycle(out LifecycleChange? pending)
+				&& pending is not null)
 			{
 				if (pending.Frame < now)
 					throw new InvalidOperationException(
@@ -330,7 +332,7 @@ internal sealed class PreparedRecursiveMixdownSound :
 	private void ApplyDueLifecycle(long frame)
 	{
 		while (TryPeekRelativeLifecycle(out LifecycleChange? change)
-			&& change.Frame == frame)
+			&& change is not null && change.Frame == frame)
 		{
 			_lifecycleRead++;
 			switch (change.Kind)
