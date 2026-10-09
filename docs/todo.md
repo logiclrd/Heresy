@@ -68,9 +68,11 @@ preserving audible release and already-captured anti-click tails. These are
   trajectories** if animated invocation gain is desired (requires
   explicit new semantics); greater script-only and same-frame
   interaction parity; deeper nested cancellation, virtual/NNA
-  displacement, and long-tail scope cleanup coverage. Raw incremental Patterns still do
-  not admit direct SetOverallChannelVolumeCommand: overall-volume ancestry
-  is currently covered through supported live channel-volume controls.
+  displacement, and long-tail scope cleanup coverage. The incremental
+  merger now admits zero-offset Mxx channel-volume changes and native
+  overall-channel-volume commands alongside flattened starts; both
+  live playback controls and Pattern commands can drive the instigating
+  channel's overall-volume ancestry.
   The detailed target remains in step 48 below.
 
   **Original architectural requirement (now partially implemented):** A flattened

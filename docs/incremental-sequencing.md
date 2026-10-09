@@ -2409,9 +2409,10 @@ single-voice effects attached to the **instigating** non-mixdown
 flattening note, authoring UI warnings, and more extensive scoped
 lifecycle/cancellation coverage. Those cases remain explicit
 priority TODOs rather than being misreported as completed. Direct
-SetOverallChannelVolumeCommand is still unsupported by the raw
-incremental Pattern merger; the documented live-volume behavior is
-supported through playback controls.
+At this historical milestone the raw Pattern merger did not yet
+admit SetOverallChannelVolumeCommand; the step-52 compatibility
+update adds zero-offset direct overall-channel volume and Mxx
+support in the incremental event merger.
 
 
 ## Fiftieth step: monotonic scope IDs and bounded channel-state lifetime
@@ -2540,3 +2541,16 @@ commands and the author's warning tooltip. More sophisticated
 **live invocation-source gain slides** would require a distinct
 source-level automation model and are deliberately not implemented
 by disguising note-volume slides as channel-volume slides.
+
+
+**Step-52 follow-up: incremental volume command admission (verified in
+Core tests).** The row merger must admit relevant zero-wall-offset
+Mxx channel-volume and native overall-channel-volume commands and
+deferred Gxx/Lxx/volume-column portamento commands, so the shared
+PatternNoteProcessor can determine the final Source identity and
+effect applicability. Such zero-offset commands are now accepted
+without loosening unrelated positive-wall-time, global target or
+unsupported timing constraints. End-to-end PCM regression coverage
+checks a child voice on a splayed host with a different parent host
+Mxx value: it follows only its *instigating* channel's Mxx, with
+captured invocation gain and no extra factor from the host.
