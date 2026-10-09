@@ -33,7 +33,7 @@ internal sealed record PrivateRecursivePlayback(
 /// lifecycle queues, replay journals or cooked PCM buffers are retained.
 /// </summary>
 internal sealed class PreparedRecursiveMixdownSound :
-	ISound, ISourceFrameSeekableSound, IDisposable
+	IStreamingFiniteSound, ISourceFrameSeekableSound, IDisposable
 {
 	private const int ScratchFrames = 256;
 	private sealed class NestedState : SoundState
