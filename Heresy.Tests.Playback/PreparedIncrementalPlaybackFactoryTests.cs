@@ -27,6 +27,46 @@ namespace Heresy.Tests.Playback;
 public sealed class PreparedIncrementalPlaybackFactoryTests
 {
 	[Test]
+	public void SameEventFlattenedStartThenCutDoesNotRetainControllerOrStartChildPcm()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(
+			sampleId, "Sustain", "sustain.wav", LongWave(16384)));
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Deferred child")
+		{
+			RowCount = 3, ChannelCount = 2,
+		};
+		child.Grid.GetOrCreateCell(0, 1).Note =
+			new StartPatternNote(sampleId);
+		child.Grid.GetOrCreateCell(1, 1).Note =
+			new StartPatternNote(sampleId);
+		document.Add(child);
+
+		// An incremental raw event may carry multiple ordered commands
+		// at one timestamp. The same-frame Cut stops generation before
+		// the child gets an opportunity to emit its first note.
+		NoteScheduleBuilder builder = new();
+		builder.Append(new NoteEvent(
+			Heresy.Core.Timing.MusicalTime.Zero,
+			ChannelTarget.Physical(0),
+			[new StartNoteCommand(childId), new NoteCutCommand()]));
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.CreateAdHoc(SongDocumentSnapshot.Create(document), builder.Freeze());
+
+		float[] pcm = new float[250];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm, Is.All.Zero.Within(1e-6f),
+			"Cut in the start's own event must cancel the producer before child PCM begins.");
+		Assert.That(plan.SequencingContext.ScopedMemory.ActiveScopeCount, Is.Zero);
+		Assert.That(plan.Session.RetainedFlattenedSourceControllerCount, Is.Zero,
+			"Scope retirement can precede playback of the enclosing event; "
+			+ "the retired controller must not be registered afterward.");
+	}
+
+	[Test]
 	public void HundredsOfFlatInvocationsReclaimRendererMemoryAfterTheirVoicesEnd()
 	{
 		SongDocument document = new();
