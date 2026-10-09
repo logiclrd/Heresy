@@ -247,6 +247,39 @@ public sealed class WaveOfflineRenderTests
 			ChannelTarget.Physical(0),
 			commands);
 
+	[Test]
+	public void InfiniteIncrementalArrangementFailsAtExplicitExportFrameCap()
+	{
+		using MemoryStream stream = new();
+		using WaveFileSink sink = new(
+			stream, new AudioOutputFormat(10, 1), leaveOpen: true);
+		NeverEndingArrangement source = new(
+			Session(10, Schedule(), new Resolver(
+				(ObjectId)99U,
+				new InfiniteSound(NoteConfigurationSnapshot.Default))));
+		Action render = () => OfflinePlaybackRenderer.Render(
+			source, sink, blockFrameCount: 4, maximumLogicalFrames: 9);
+		render.Should().Throw<InvalidOperationException>()
+			.WithMessage("*finite export frame limit*");
+	}
+
+	private sealed class NeverEndingArrangement(PlaybackSession session)
+		: IIncrementalArrangementSource
+	{
+		public PlaybackSession Session => session;
+		public AudioOutputFormat Format => new(
+			session.SampleRate, session.OutputChannelCount);
+		public bool IsComplete => false;
+		public TimeSpan LogicalDuration => TimeSpan.Zero;
+		public int RenderLogical(int frameCount, Span<float> destination)
+		{
+			destination.Clear();
+			return frameCount;
+		}
+		public void Render(int frameCount, Span<float> destination)
+			=> RenderLogical(frameCount, destination);
+	}
+
 	private sealed class Resolver : ISoundResolver
 	{
 		private readonly ObjectId _id;
