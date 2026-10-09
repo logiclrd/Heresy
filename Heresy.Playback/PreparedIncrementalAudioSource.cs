@@ -52,6 +52,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		_repeatRoot = repeatRoot;
 		_transform = prepareEvent;
 		_afterRender = afterRender;
+		_timeline.ScopeRetired += _session.RetirePhysicalScope;
 		if (session.NextFrame != 0)
 			throw new ArgumentException(
 				"The incremental renderer requires a fresh playback session.",
@@ -238,5 +239,11 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 	}
 
 	/// <summary>The enclosing playback plan owns the timeline and session.</summary>
-	public void Dispose() => _disposed = true;
+	public void Dispose()
+	{
+		if (_disposed)
+			return;
+		_disposed = true;
+		_timeline.ScopeRetired -= _session.RetirePhysicalScope;
+	}
 }

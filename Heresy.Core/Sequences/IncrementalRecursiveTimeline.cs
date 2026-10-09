@@ -52,7 +52,6 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 	private readonly Dictionary<long, Invocation> _frames = [];
 	private readonly Dictionary<long, long> _patternOwners = [];
 	private long _nextFrameId;
-	private long _nextPlaybackOwner = 1;
 	private bool _disposed;
 
 	public IncrementalRecursiveTimeline(
@@ -92,6 +91,8 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 	/// The renderer includes note-volume slides and NNA, which cannot be
 	/// inferred from raw sequencing effect memory alone.</summary>
 	public Func<long, int, TimeSpan, double>? ReadRememberedNoteVolume { get; set; }
+
+	public event Action<long>? ScopeRetired;
 
 	public TimeSpan Elapsed => _timeline.Elapsed;
 	public double Tick => _timeline.Tick;
@@ -152,9 +153,15 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 			_patternOwners.Remove(pattern);
 		}
 		_frames.Remove(invocationId);
-		if (frame.ParentId is long parentId && _frames.TryGetValue(
-			parentId, out Invocation? parent))
-			parent.Children.Remove(invocationId);
+		bool sharesParentScope = frame.ParentId is long parentId
+			&& _frames.TryGetValue(parentId, out Invocation? parent)
+			&& ReferenceEquals(parent.Context, frame.Context);
+		if (frame.ParentId is long actualParent && _frames.TryGetValue(
+			actualParent, out Invocation? parentFrame))
+			parentFrame.Children.Remove(invocationId);
+		if (frame.Context.ScopeId != 0 && !sharesParentScope
+			&& _root.ScopedMemory.ForgetScope(frame.Context.ScopeId))
+			ScopeRetired?.Invoke(frame.Context.ScopeId);
 	}
 
 	private long AddInvocation(SongObject source,
@@ -417,10 +424,17 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 								pitchMultiplier: start.PitchMultiplier,
 								playbackSpeedMultiplier: start.PlaybackSpeedMultiplier,
 								physicalChannelOffset: physicalOffset,
-								gainMultiplier: localGain,
-								physicalPlaybackOwner: _nextPlaybackOwner++);
+								gainMultiplier: localGain);
 							child.TimelineOrigin = emit.Time;
-							AddInvocation(source, child, frame.Id);
+							try
+							{
+								AddInvocation(source, child, frame.Id);
+							}
+							catch
+							{
+								_root.ScopedMemory.ForgetScope(child.ScopeId);
+								throw;
+							}
 						}
 						if (retained.Count == 0)
 							continue;
@@ -476,6 +490,10 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 			return;
 		_disposed = true;
 		_timeline.Dispose();
+		foreach (long scope in _frames.Values.Select(f => f.Context.ScopeId)
+			.Where(id => id != 0).Distinct().ToArray())
+			if (_root.ScopedMemory.ForgetScope(scope))
+				ScopeRetired?.Invoke(scope);
 		_frames.Clear();
 		_patternOwners.Clear();
 	}

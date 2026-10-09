@@ -34,12 +34,16 @@ public sealed class SequencingContext
 		double gainMultiplier = 1.0,
 		bool useLocalChannelMemory = false,
 		long physicalPlaybackOwner = 0,
-		IReadOnlyList<ParentVolumeChannel>? parentOverallChannels = null)
+		IReadOnlyList<ParentVolumeChannel>? parentOverallChannels = null,
+		ScopedSequencingChannelMemory? scopedMemory = null,
+		long scopeId = 0)
 	{
 		if (physicalChannelBase < 0)
 			throw new ArgumentOutOfRangeException(nameof(physicalChannelBase));
 		if (physicalPlaybackOwner < 0)
 			throw new ArgumentOutOfRangeException(nameof(physicalPlaybackOwner));
+		if (scopeId < 0)
+			throw new ArgumentOutOfRangeException(nameof(scopeId));
 
 		State = state ?? new SequencingState();
 		Random = random ?? new DeterministicRandom(DefaultRootRandomSeed);
@@ -47,9 +51,11 @@ public sealed class SequencingContext
 		PlaybackSpeedMultiplier = ValidateMultiplier(playbackSpeedMultiplier, nameof(playbackSpeedMultiplier));
 		GainMultiplier = ValidateGain(gainMultiplier, nameof(gainMultiplier));
 		PhysicalChannelBase = physicalChannelBase;
-		ChannelStates = channelStates ?? new SequencingChannelStateMap();
-		_useLocalChannelMemory = useLocalChannelMemory;
-		PhysicalPlaybackOwner = physicalPlaybackOwner;
+		ScopedMemory = scopedMemory ?? new ScopedSequencingChannelMemory(channelStates);
+		ScopeId = scopeId;
+		ChannelStates = ScopedMemory[scopeId];
+		_useLocalChannelMemory = useLocalChannelMemory || scopeId != 0;
+		PhysicalPlaybackOwner = scopeId == 0 ? physicalPlaybackOwner : scopeId;
 		ParentOverallChannels = parentOverallChannels ?? Array.Empty<ParentVolumeChannel>();
 		TrackerMidiMacros = trackerMidiMacros
 			?? TrackerMidiMacroConfiguration.CreateImpulseTrackerDefault();
@@ -61,6 +67,8 @@ public sealed class SequencingContext
 	public SequencingState State { get; }
 	public DeterministicRandom Random { get; }
 	public SequencingChannelStateMap ChannelStates { get; }
+	public ScopedSequencingChannelMemory ScopedMemory { get; }
+	public long ScopeId { get; }
 	/// <summary>Scoped renderer voice-state namespace for flattened channels.</summary>
 	public long PhysicalPlaybackOwner { get; }
 	/// <summary>Live overall volume of instigating channels on the path
@@ -139,8 +147,7 @@ public sealed class SequencingContext
 		double pitchMultiplier = 1.0,
 		double playbackSpeedMultiplier = 1.0,
 		int physicalChannelOffset = 0,
-		double gainMultiplier = 1.0,
-		long physicalPlaybackOwner = 0)
+		double gainMultiplier = 1.0)
 	{
 		if (physicalChannelOffset < 0)
 			throw new ArgumentOutOfRangeException(nameof(physicalChannelOffset));
@@ -151,27 +158,38 @@ public sealed class SequencingContext
 			parents[i] = ParentOverallChannels[i];
 		parents[^1] = new ParentVolumeChannel(PhysicalPlaybackOwner,
 			MapPhysicalChannel(physicalChannelOffset));
-		return new SequencingContext(
+		long childScopeId = ScopedMemory.AllocateScope();
+		try
+		{
+			return new SequencingContext(
 			State,
 			Random.CreateChild(),
 			PitchMultiplier * ValidateMultiplier(pitchMultiplier, nameof(pitchMultiplier)),
 			PlaybackSpeedMultiplier * ValidateMultiplier(playbackSpeedMultiplier, nameof(playbackSpeedMultiplier)),
 			checked(PhysicalChannelBase + physicalChannelOffset),
-			new SequencingChannelStateMap(),
+			null,
 			TrackerMidiMacros,
 			Diagnostics,
 			ValidateGain(GainMultiplier * ValidateGain(gainMultiplier, nameof(gainMultiplier)),
 				nameof(gainMultiplier)),
 			useLocalChannelMemory: true,
-			physicalPlaybackOwner: physicalPlaybackOwner,
-			parentOverallChannels: parents)
+			physicalPlaybackOwner: childScopeId,
+			parentOverallChannels: parents,
+			scopedMemory: ScopedMemory,
+			scopeId: childScopeId)
+			{
+				FlattenedSourceExpander = FlattenedSourceExpander,
+				ResolvePatternSourcesAtRowTime = ResolvePatternSourcesAtRowTime,
+				TimelineOrigin = TimelineOrigin,
+				DeferredTempoEvents = DeferredTempoEvents,
+				IsPreparingFlattenedChild = true,
+			};
+		}
+		catch
 		{
-			FlattenedSourceExpander = FlattenedSourceExpander,
-			ResolvePatternSourcesAtRowTime = ResolvePatternSourcesAtRowTime,
-			TimelineOrigin = TimelineOrigin,
-			DeferredTempoEvents = DeferredTempoEvents,
-			IsPreparingFlattenedChild = true,
-		};
+			ScopedMemory.ForgetScope(childScopeId);
+			throw;
+		}
 	}
 
 	public SequencingContext MixdownChild(double pitchMultiplier = 1.0, double playbackSpeedMultiplier = 1.0)
