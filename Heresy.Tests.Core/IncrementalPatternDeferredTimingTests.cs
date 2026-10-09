@@ -290,6 +290,52 @@ public sealed class IncrementalPatternDeferredTimingTests
 		AssertTrackerWallParity(source, 1);
 	}
 
+	[Test]
+	public void ConcurrentTempoChangeRetimesTickButPreservesFixedWallOffset()
+	{
+		RawSource source = new(
+			Event(0, TimeSpan.Zero, ChannelTarget.Global,
+				new SetTempoCommand(250)),
+			Event(0, TimeSpan.FromMilliseconds(15), ChannelTarget.Physical(0),
+				new StartNoteCommand((Heresy.Core.Objects.ObjectId)10U),
+				new ApplyTrackerNoteDelayCommand(2),
+				new ApplyRetriggerCommand(0x03),
+				new ApplyTrackerNoteCutCommand(4)));
+		AssertTrackerWallParity(source, 1);
+	}
+
+	[Test]
+	public void CancelDropsSyntheticTrackerWallDeadline()
+	{
+		RawSource delayed = new(Event(0,
+			TimeSpan.FromMilliseconds(30), ChannelTarget.Physical(0),
+			new StartNoteCommand((Heresy.Core.Objects.ObjectId)10U),
+			new ApplyTrackerNoteDelayCommand(2)));
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		long owner = timeline.Add(delayed, 1, root);
+		timeline.Add(new RawSource(Event(0.5, TimeSpan.Zero,
+			ChannelTarget.Physical(0), new NoteOffCommand())), 1,
+			root.FlattenedChild(physicalChannelOffset: 2));
+		bool canceled = false;
+		List<NoteEvent> events = [];
+		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+		{
+			if (step is not IncrementalPatternTimelineStep.Emit emit)
+				continue;
+			events.Add(emit.Note);
+			if (emit.Note.Commands.Any(c => c is NoteOffCommand))
+			{
+				canceled = timeline.Cancel(owner);
+				break;
+			}
+		}
+		Assert.That(canceled, Is.True);
+		events.AddRange(Drain(timeline));
+		Assert.That(events.SelectMany(e => e.Commands)
+			.OfType<StartNoteCommand>(), Is.Empty);
+	}
+
 	private static void AssertTrackerWallParity(RawSource source, int rowCount)
 	{
 		SequencingContext eager = new();
