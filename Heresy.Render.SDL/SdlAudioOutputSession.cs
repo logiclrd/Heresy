@@ -58,7 +58,8 @@ internal sealed class SdlAudioOutputSession
 
 		// The SDL callback never calls a sequencer or renderer. A dedicated
 		// worker owns the source and publishes bounded interleaved PCM.
-		_source = new BufferedAudioOutputSource(source);
+		_source = source as BufferedAudioOutputSource
+			?? new BufferedAudioOutputSource(source);
 	}
 
 	public AudioOutputFormat Format { get; }
