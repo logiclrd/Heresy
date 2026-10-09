@@ -30,7 +30,8 @@ public sealed class PreparedIncrementalPlaybackPlan : IDisposable
 	internal PreparedIncrementalPlaybackPlan(
 		SongDocumentSnapshot snapshot, IncrementalRecursiveTimeline timeline,
 		PlaybackSession session, PreparedIncrementalAudioSource source,
-		long rootInvocationId, Action disposePrivateMixdowns)
+		long rootInvocationId, Action disposePrivateMixdowns,
+		SequencingContext sequencingContext)
 	{
 		Snapshot = snapshot;
 		Timeline = timeline;
@@ -38,6 +39,7 @@ public sealed class PreparedIncrementalPlaybackPlan : IDisposable
 		Source = source;
 		RootInvocationId = rootInvocationId;
 		_disposePrivateMixdowns = disposePrivateMixdowns;
+		SequencingContext = sequencingContext;
 	}
 
 	public SongDocumentSnapshot Snapshot { get; }
@@ -45,6 +47,7 @@ public sealed class PreparedIncrementalPlaybackPlan : IDisposable
 	public PlaybackSession Session { get; }
 	public PreparedIncrementalAudioSource Source { get; }
 	public long RootInvocationId { get; }
+	public SequencingContext SequencingContext { get; }
 
 	/// <summary>
 	/// Start the dedicated worker that both generates notes and renders
@@ -149,8 +152,9 @@ public sealed class PreparedIncrementalPlaybackFactory
 		// injected providers and codec-dependent work cannot run in Render.
 		sounds.PrepareDirectSources();
 
+		SequencingContext sequencingContext = new();
 		IncrementalRecursiveTimeline timeline =
-			scripts.CreateTimeline(new SequencingContext());
+			scripts.CreateTimeline(sequencingContext);
 		try
 		{
 			long invocationId = timeline.AddRoot(
@@ -165,7 +169,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 				repeatStartRow: startRow);
 			return new PreparedIncrementalPlaybackPlan(
 				frozen, timeline, session, source, invocationId,
-				disposePrivateMixdowns);
+				disposePrivateMixdowns, sequencingContext);
 		}
 		catch
 		{
