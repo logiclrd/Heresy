@@ -839,7 +839,11 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						or SetGlobalVolumeSlideCommand or SetSpatialXSlideCommand
 						or ApplyTrackerTempoCommand or ApplyTrackerNoteCutCommand
 						or ApplyTrackerNoteDelayCommand or ApplyRetriggerCommand
-						or SetNoteVolumeCommand or ApplySampleOffsetCommand;
+						or SetNoteVolumeCommand or ApplySampleOffsetCommand
+						or ApplyTrackerNewNoteActionCommand
+						or ApplyTrackerPastNoteActionCommand
+						or SetCurrentVoiceDisplacementActionCommand
+						or ApplyPastNoteActionCommand;
 				if (!allowed)
 					throw new NotSupportedException(
 						$"The incremental tick merger does not yet support {command.GetType().Name}.");
