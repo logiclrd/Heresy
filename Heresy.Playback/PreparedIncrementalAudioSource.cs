@@ -53,6 +53,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		_transform = prepareEvent;
 		_afterRender = afterRender;
 		_timeline.ScopeRetired += _session.RetirePhysicalScope;
+		_timeline.ScopeCanceled += OnScopeCanceled;
 		if (session.NextFrame != 0)
 			throw new ArgumentException(
 				"The incremental renderer requires a fresh playback session.",
@@ -104,6 +105,10 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		NoteEvent prepared = _transform?.Invoke(raw, frame, -1) ?? raw;
 		_session.ApplyLiveEvent(prepared.Target, prepared.Commands);
 	}
+
+	private void OnScopeCanceled(long scopeId)
+		=> _session.ApplyFlattenedScopeAction(
+			scopeId, NoteDisplacementAction.Cut);
 
 	public bool Cancel(long invocationId)
 	{
@@ -245,5 +250,6 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 			return;
 		_disposed = true;
 		_timeline.ScopeRetired -= _session.RetirePhysicalScope;
+		_timeline.ScopeCanceled -= OnScopeCanceled;
 	}
 }

@@ -227,6 +227,76 @@ public sealed class PlaybackSession
 	/// directly after a producer is retired.</summary>
 	public int RetainedFlattenedSourceControllerCount => _sourceVolumes.Count;
 
+	/// <summary>Controls only voices started by the indicated flattened
+	/// source (including its descendants and displaced NNA voices).
+	/// Natural producer completion deliberately does not call this.</summary>
+	public void ApplyFlattenedScopeAction(
+		long scopeId, NoteDisplacementAction action)
+	{
+		if (scopeId <= 0)
+			throw new ArgumentOutOfRangeException(nameof(scopeId));
+		if (action == NoteDisplacementAction.Continue)
+			return;
+		long frame = _nextFrame;
+		foreach (PlaybackChannelState channel in _channels.Values)
+			ApplySourceActionToChannel(channel, scopeId, action, frame);
+		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+			ApplySourceActionToChannel(channel, scopeId, action, frame);
+		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+			ApplySourceActionToChannel(channel, scopeId, action, frame);
+		for (int i = _virtualVoices.Count - 1; i >= 0; i--)
+		{
+			PlaybackVoice voice = _virtualVoices[i];
+			if (!VoiceBelongsToFlattenedSource(voice, scopeId))
+				continue;
+			if (action == NoteDisplacementAction.Cut)
+			{
+				voice.AddCutTo(GetChannelState(
+					voice.OriginPhysicalChannel,
+					voice.OriginPhysicalPlaybackOwner).AntiClickTail);
+				_virtualVoices.RemoveAt(i);
+			}
+			else if (action == NoteDisplacementAction.Off)
+				voice.ApplyNoteOff(frame, SampleRate);
+			else if (action == NoteDisplacementAction.Fade)
+				voice.RequestNoteFade(frame, SampleRate);
+		}
+	}
+
+	private static bool VoiceBelongsToFlattenedSource(
+		PlaybackVoice voice, long scopeId)
+	{
+		foreach (FlattenedSourceVolume source in voice.EnclosingSourceVolumes)
+			if (source.ScopeId == scopeId)
+				return true;
+		return false;
+	}
+
+	private void ApplySourceActionToChannel(
+		PlaybackChannelState channel, long scopeId,
+		NoteDisplacementAction action, long frame)
+	{
+		if (channel.CurrentFlattenedSource?.ScopeId == scopeId
+			&& action == NoteDisplacementAction.Cut)
+			channel.CurrentFlattenedSource = null;
+		PlaybackVoice? voice = channel.CurrentVoice;
+		if (voice is null || !VoiceBelongsToFlattenedSource(voice, scopeId))
+			return;
+		switch (action)
+		{
+			case NoteDisplacementAction.Cut:
+				channel.CutCurrentVoice();
+				break;
+			case NoteDisplacementAction.Off:
+				voice.ApplyNoteOff(frame, SampleRate);
+				CullFinishedCurrentVoice(channel, frame);
+				break;
+			case NoteDisplacementAction.Fade:
+				voice.RequestNoteFade(frame, SampleRate);
+				break;
+		}
+	}
+
 	/// <summary>Diagnostic count of non-root logical channel entries,
 	/// including scopes retained for sounding voices or anti-click tails.</summary>
 	public int RetainedScopedPhysicalChannelCount
@@ -895,6 +965,18 @@ public sealed class PlaybackSession
 		if (start.Volume.HasValue)
 			channel.SetNoteVolume(start.Volume.Value);
 
+		// Virtual voices inside a flattened Pattern have the same
+		// enclosing logical source-note gain ancestry as physical voices.
+		List<FlattenedSourceVolume> ancestors = [];
+		if (start.ParentSourceScopes is { } scopes)
+			foreach (long scope in scopes)
+				if (_sourceVolumes.TryGetValue(scope,
+					out FlattenedSourceVolume? controller))
+					ancestors.Add(controller);
+		List<PlaybackChannelState> enclosingVolumes = [];
+		if (start.ParentOverallChannels is { } parents)
+			foreach (ParentVolumeChannel parent in parents)
+				enclosingVolumes.Add(GetChannelState(parent.Host, parent.Owner));
 		PlaybackVoice voice = new(
 			invocation.Sound,
 			invocation.State,
@@ -908,7 +990,9 @@ public sealed class PlaybackSession
 			_tickClock,
 			_nextVoiceModulationSeed++,
 			originPhysicalChannel: 0,
-			sourceGainMultiplier: start.GainMultiplier);
+			sourceGainMultiplier: start.GainMultiplier,
+			enclosingVolumeChannels: enclosingVolumes,
+			enclosingSourceVolumes: ancestors);
 
 		channel.AttachVoice(
 			voice,
@@ -927,6 +1011,11 @@ public sealed class PlaybackSession
 		{
 			case BeginFlattenedSourceVolumeCommand begin:
 				BeginFlattenedSource(channel, begin, eventFrame);
+				break;
+
+			case ControlFlattenedSourceCommand control:
+				ApplyFlattenedScopeAction(
+					control.ChildScopeId, control.Action);
 				break;
 
 			case StartNoteCommand start:
