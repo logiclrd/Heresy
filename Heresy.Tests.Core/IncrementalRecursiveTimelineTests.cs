@@ -242,9 +242,9 @@ public sealed class IncrementalRecursiveTimelineTests
 	public void FlattenedChildGetsIndependentSourceAndEffectMemoryAtOverlappingHost()
 	{
 		DataPatternDefinition parent = Pattern(1, 3);
-		parent.Grid.GetOrCreateCell(0, 0).SourceId = (ObjectId)92U;
 		parent.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote((ObjectId)2U);
-		parent.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote();
+		parent.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote((ObjectId)92U);
+		parent.Grid.GetOrCreateCell(2, 0).Note = new StartPatternNote();
 		DataPatternDefinition child = Pattern(2, 1);
 		child.Grid.GetOrCreateCell(0, 0).SourceId = (ObjectId)93U;
 		child.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote();
@@ -258,7 +258,7 @@ public sealed class IncrementalRecursiveTimelineTests
 		StartNoteCommand[] starts = Drain(timeline)
 			.SelectMany(e => e.Commands).OfType<StartNoteCommand>().ToArray();
 		Assert.That(starts.Select(n => n.SourceId),
-			Is.EqualTo(new[] { (ObjectId)93U, (ObjectId)92U }),
+			Is.EqualTo(new[] { (ObjectId)93U, (ObjectId)92U, (ObjectId)92U }),
 			"Child Source choice must not change the parent's remembered Source.");
 		Assert.That(context.GetPhysicalChannelState(0).CurrentSourceId,
 			Is.EqualTo((ObjectId)92U));
