@@ -90,7 +90,8 @@ public static class OfflinePlaybackRenderer
 		IIncrementalArrangementSource arrangement,
 		IAudioFileSink sink,
 		int blockFrameCount = DefaultBlockFrameCount,
-		long maximumLogicalFrames = 0)
+		long maximumLogicalFrames = 0,
+		long maximumTailFrames = 0)
 	{
 		ArgumentNullException.ThrowIfNull(arrangement);
 		ArgumentNullException.ThrowIfNull(sink);
@@ -101,6 +102,11 @@ public static class OfflinePlaybackRenderer
 		if (maximumLogicalFrames == 0)
 			maximumLogicalFrames = checked(
 				(long)arrangement.Format.SampleRate * 60 * 60 * 4);
+		if (maximumTailFrames < 0)
+			throw new ArgumentOutOfRangeException(nameof(maximumTailFrames));
+		if (maximumTailFrames == 0)
+			maximumTailFrames = checked(
+				(long)arrangement.Format.SampleRate * 60 * 5);
 		if (sink.Format != arrangement.Format)
 			throw new ArgumentException(
 				"Audio file sink format must match the incremental source.", nameof(sink));
@@ -140,7 +146,8 @@ public static class OfflinePlaybackRenderer
 		PlaybackSession session = arrangement.Session;
 		session.EndInput();
 		session.CutIndefiniteActiveVoicesAfterEndInput();
-		long tails = RenderTail(session, sink, blockFrameCount);
+		long tails = RenderTail(session, sink, blockFrameCount,
+			maximumTailFrames);
 		return new OfflineRenderResult(frames, tails);
 	}
 
@@ -182,7 +189,8 @@ public static class OfflinePlaybackRenderer
 	private static long RenderTail(
 		PlaybackSession session,
 		IAudioFileSink sink,
-		int blockFrameCount)
+		int blockFrameCount,
+		long maximumTailFrames = long.MaxValue)
 	{
 		if (session.IsQuiescent)
 			return 0;
@@ -201,19 +209,17 @@ public static class OfflinePlaybackRenderer
 			if (session.HasIndefiniteActiveVoices)
 				session.CutIndefiniteActiveVoicesAfterEndInput();
 
-			Span<float> block =
-				buffer.AsSpan();
-			session.Render(
-				session.NextFrame,
-				blockFrameCount,
-				block);
+			long budget = maximumTailFrames - writtenFrames;
+			if (budget <= 0)
+				throw new InvalidOperationException(
+					"Offline arrangement's recursive release tail exceeded the export frame limit.");
+			int frames = (int)Math.Min(blockFrameCount, budget);
+			Span<float> block = buffer.AsSpan(0, frames * channels);
+			session.Render(session.NextFrame, frames, block);
 
-			int framesToWrite =
-				session.IsQuiescent
-					? FindLastNonZeroFrameExclusive(
-						block,
-						channels)
-					: blockFrameCount;
+			int framesToWrite = session.IsQuiescent
+				? FindLastNonZeroFrameExclusive(block, channels)
+				: frames;
 			if (framesToWrite != 0)
 			{
 				sink.Write(
