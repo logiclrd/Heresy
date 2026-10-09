@@ -485,6 +485,60 @@ public sealed class IncrementalPatternRowDelayTests
 		AssertParity(p);
 	}
 
+	[Test]
+	public void SDxQxySharedMemoryAndCountdownContinueAcrossPatternInvocations()
+	{
+		DataPatternDefinition first = Pattern(1, 1);
+		PatternCell start = first.Grid.GetOrCreateCell(0, 0);
+		start.Note = new StartPatternNote((ObjectId)10U);
+		start.Effects.Add(new TrackerNoteDelayPatternEffect(2));
+		start.Effects.Add(new RetriggerPatternEffect(0x03));
+		DataPatternDefinition second = Pattern(1, 1);
+		second.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new RetriggerPatternEffect(0));
+
+		SequencingContext eagerContext = new();
+		NoteScheduleBuilder eagerA = new();
+		PatternNoteProcessor.GenerateNotes(first, eagerContext, eagerA,
+			out TimeSpan firstDuration);
+		NoteScheduleBuilder eagerB = new();
+		PatternNoteProcessor.GenerateNotes(second, eagerContext, eagerB,
+			out _);
+		NoteEvent[] expected = eagerA.Freeze().ToArray().Concat(
+			eagerB.Freeze().Select(e => e with
+			{
+				Offset = new MusicalTime(
+					e.Offset.TimeOffset + firstDuration, 0),
+			})).ToArray();
+
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(first, 1, root);
+		List<NoteEvent> actual = [];
+		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+			if (step is IncrementalPatternTimelineStep.Emit emit)
+				actual.Add(emit.Note);
+		Assert.That(timeline.Elapsed, Is.EqualTo(firstDuration));
+		timeline.Add(second, 1, root);
+		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+			if (step is IncrementalPatternTimelineStep.Emit emit)
+				actual.Add(emit.Note);
+
+		Assert.That(actual.Count, Is.EqualTo(expected.Length));
+		for (int i = 0; i < expected.Length; i++)
+		{
+			Assert.That(actual[i].Commands, Is.EqualTo(expected[i].Commands));
+			Assert.That(actual[i].Offset.TimeOffset.TotalSeconds,
+				Is.EqualTo(expected[i].Offset.TimeOffset.TotalSeconds)
+					.Within(1e-6));
+		}
+		Assert.That(root.GetPhysicalChannelState(0).TryGetEffectParameter(
+			EffectMemorySlot.Retrigger, out byte memory), Is.True);
+		Assert.That(memory, Is.EqualTo(0x03));
+		Assert.That(root.GetPhysicalChannelState(0).RetriggerCountdown,
+			Is.EqualTo(eagerContext.GetPhysicalChannelState(0).RetriggerCountdown));
+	}
+
 	private static DataPatternDefinition Pattern(int rows, int channels)
 		=> new((ObjectId)1U, "Delay parity") { RowCount = rows, ChannelCount = channels };
 
