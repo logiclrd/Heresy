@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 
 using Heresy.Core.Envelopes;
@@ -26,6 +27,27 @@ internal sealed class PlaybackSnapshotSoundResolver
 	private readonly ISampleDataProvider _sampleDataProvider;
 	private readonly Dictionary<(ObjectId, bool), ISound?> _sounds = [];
 	private readonly Dictionary<ObjectId, IEnvelopeCurve?> _envelopes = [];
+	private readonly ConcurrentDictionary<ObjectId, ISound> _preparedMixdowns = new();
+	private uint _nextPreparedId = uint.MaxValue;
+
+	/// <summary>
+	/// Reserve an invocation-unique source identity before publishing its
+	/// StartNote. This lookup is concurrency-safe on the audio consumer;
+	/// prepared IDs never alias persisted document object identities.
+	/// </summary>
+	public ObjectId RegisterPreparedMixdown(ISound sound)
+	{
+		ArgumentNullException.ThrowIfNull(sound);
+		while (_nextPreparedId != 0)
+		{
+			ObjectId id = new(_nextPreparedId--);
+			if (!_document.Objects.ContainsKey(id)
+				&& _preparedMixdowns.TryAdd(id, sound))
+				return id;
+		}
+		throw new InvalidOperationException(
+			"Prepared recursive mixdown exhausted the source ID space.");
+	}
 
 	public PlaybackSnapshotSoundResolver(
 		SongDocument document,
@@ -62,6 +84,8 @@ internal sealed class PlaybackSnapshotSoundResolver
 		bool mixdown,
 		out ISound? sound)
 	{
+		if (_preparedMixdowns.TryGetValue(sourceId, out sound))
+			return true;
 		if (_sounds.TryGetValue(
 				(sourceId, mixdown),
 				out sound))
