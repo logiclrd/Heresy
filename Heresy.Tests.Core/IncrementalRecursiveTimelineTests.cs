@@ -184,6 +184,61 @@ public sealed class IncrementalRecursiveTimelineTests
 	}
 
 	[Test]
+	public void FlattenedInitialVolumeBecomesPerVoiceGainWithoutRewritingChildVolume()
+	{
+		DataPatternDefinition parent = Pattern(1, 3);
+		PatternCell flattened = parent.Grid.GetOrCreateCell(0, 0);
+		flattened.Note = new StartPatternNote((ObjectId)2U);
+		flattened.Volume = 0.5;
+		parent.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote((ObjectId)90U);
+		DataPatternDefinition child = Pattern(2, 2);
+		child.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote((ObjectId)91U);
+		PatternCell explicitChild = child.Grid.GetOrCreateCell(1, 0);
+		explicitChild.Note = new StartPatternNote((ObjectId)92U);
+		explicitChild.Volume = 0.25;
+
+		using IncrementalRecursiveTimeline timeline = new(
+			new SequencingContext(), new Resolver(parent, child));
+		timeline.AddRoot(parent.Id);
+		StartNoteCommand[] starts = Drain(timeline)
+			.SelectMany(n => n.Commands).OfType<StartNoteCommand>().ToArray();
+		Assert.That(starts, Has.Length.EqualTo(3));
+		StartNoteCommand inherited = starts.Single(n => n.SourceId == (ObjectId)91U);
+		Assert.That(inherited.Volume, Is.Null);
+		Assert.That(inherited.GainMultiplier, Is.EqualTo(0.5));
+		StartNoteCommand explicitVolume = starts.Single(n => n.SourceId == (ObjectId)92U);
+		Assert.That(explicitVolume.Volume, Is.EqualTo(0.25),
+			"Child tracker note volume is distinct from enclosing source gain.");
+		Assert.That(explicitVolume.GainMultiplier, Is.EqualTo(0.5));
+		StartNoteCommand parentNote = starts.Single(n => n.SourceId == (ObjectId)90U);
+		Assert.That(parentNote.GainMultiplier, Is.EqualTo(1.0),
+			"Flattened gain must never leak to an unrelated parent note.");
+	}
+
+	[Test]
+	public void NestedFlattenedInitialSourceVolumesMultiplyAcrossInvocations()
+	{
+		DataPatternDefinition parent = Pattern(1, 2);
+		PatternCell parentCall = parent.Grid.GetOrCreateCell(0, 0);
+		parentCall.Note = new StartPatternNote((ObjectId)2U);
+		parentCall.Volume = 0.5;
+		DataPatternDefinition middle = Pattern(2, 1);
+		PatternCell middleCall = middle.Grid.GetOrCreateCell(0, 0);
+		middleCall.Note = new StartPatternNote((ObjectId)3U);
+		middleCall.Volume = 0.4;
+		DataPatternDefinition leaf = Pattern(3, 1);
+		leaf.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote((ObjectId)90U);
+
+		using IncrementalRecursiveTimeline timeline = new(
+			new SequencingContext(), new Resolver(parent, middle, leaf));
+		timeline.AddRoot(parent.Id);
+		StartNoteCommand emitted = Drain(timeline)
+			.SelectMany(n => n.Commands).OfType<StartNoteCommand>().Single();
+		Assert.That(emitted.SourceId, Is.EqualTo((ObjectId)90U));
+		Assert.That(emitted.GainMultiplier, Is.EqualTo(0.2).Within(1e-12));
+	}
+
+	[Test]
 	public void ChildSequenceBxxRunsOnSameClockAndRetainsItsChannelMemory()
 	{
 		DataPatternDefinition parent = Pattern(1, 1);
