@@ -29,7 +29,7 @@ public sealed class BufferedAudioOutputSource : ILiveAudioOutputSource, IDisposa
 
 	public BufferedAudioOutputSource(
 		IAudioOutputSource source,
-		int capacityFrames = 8192,
+		int capacityFrames = 2048,
 		int blockFrames = 256)
 	{
 		_source = source ?? throw new ArgumentNullException(nameof(source));
@@ -123,7 +123,7 @@ public sealed class BufferedAudioOutputSource : ILiveAudioOutputSource, IDisposa
 			long read = Volatile.Read(ref _readFrames);
 			long written = Volatile.Read(ref _writtenFrames);
 			long free = _capacityFrames - (written - read);
-			if (free < _blockFrames)
+			if (free == 0)
 			{
 				_wake.WaitOne();
 				continue;
