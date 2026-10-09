@@ -1,5 +1,6 @@
 using System;
-using System.Collections.Generic;
+using System.Collections.Concurrent;
+using System.Threading;
 
 using Heresy.Core.Sequences;
 using Heresy.Render.Playback;
@@ -32,12 +33,13 @@ internal sealed class PreparedRecursiveMixdownSound : ISound, ISourceFrameSeekab
 	private readonly PlaybackSession _session;
 	private readonly PreparedIncrementalAudioSource _source;
 	private readonly Action _disposeChildren;
-	private readonly List<float[]> _blocks = [];
-	private readonly List<long> _blockStartFrames = [];
+	// Publish immutable arrays by atomic replacement. A consumer reading an
+	// earlier version of the current chunk still sees its covered frames.
+	private readonly ConcurrentDictionary<long, float[]> _blocks = new();
 	private readonly int _sampleRate;
 	private readonly int _channels;
 	private long _preparedFrames;
-	private long? _endFrame;
+	private long _endFrame = -1;
 
 	public PreparedRecursiveMixdownSound(
 		IncrementalRecursiveTimeline timeline,
@@ -84,8 +86,9 @@ internal sealed class PreparedRecursiveMixdownSound : ISound, ISourceFrameSeekab
 		NestedState nested = (NestedState)state;
 		if (nested.NoteOffTime.HasValue)
 			return FrameTime.Ceiling(nested.NoteOffTime.Value, _sampleRate);
-		return _endFrame.HasValue
-			? Math.Max(0, _endFrame.Value - nested.SourceFrameOffset)
+		long end = Volatile.Read(ref _endFrame);
+		return end >= 0
+			? Math.Max(0, end - nested.SourceFrameOffset)
 			: null;
 	}
 
@@ -97,7 +100,7 @@ internal sealed class PreparedRecursiveMixdownSound : ISound, ISourceFrameSeekab
 	{
 		if (exclusiveEnd < 0)
 			throw new ArgumentOutOfRangeException(nameof(exclusiveEnd));
-		while (_preparedFrames < exclusiveEnd && !_endFrame.HasValue)
+		while (_preparedFrames < exclusiveEnd && Volatile.Read(ref _endFrame) < 0)
 		{
 			if (_source.IsPreparedToEnd && !_session.InputEnded
 				&& _preparedFrames >= FrameTime.Ceiling(_timeline.Elapsed, _sampleRate))
@@ -107,11 +110,13 @@ internal sealed class PreparedRecursiveMixdownSound : ISound, ISourceFrameSeekab
 			}
 			if (_session.IsQuiescent)
 			{
-				_endFrame = _preparedFrames;
+				Volatile.Write(ref _endFrame, _preparedFrames);
 				break;
 			}
+			// Never straddle chunk boundaries when extending a published
+			// immutable block with newly prepared frames.
 			long next = Math.Min(exclusiveEnd,
-				checked(_preparedFrames + BlockFrames));
+				checked((_preparedFrames / BlockFrames + 1) * BlockFrames));
 			if (_source.IsPreparedToEnd && !_session.InputEnded)
 				next = Math.Min(next,
 					FrameTime.Ceiling(_timeline.Elapsed, _sampleRate));
@@ -132,9 +137,14 @@ internal sealed class PreparedRecursiveMixdownSound : ISound, ISourceFrameSeekab
 			int count = checked((int)(next - _preparedFrames));
 			float[] output = new float[checked(count * _channels)];
 			_source.Render(count, output);
-			_blockStartFrames.Add(_preparedFrames);
-			_blocks.Add(output);
-			_preparedFrames = next;
+			long chunkId = _preparedFrames / BlockFrames;
+			int chunkOffset = checked((int)(_preparedFrames % BlockFrames));
+			float[] snapshot = new float[checked(BlockFrames * _channels)];
+			if (_blocks.TryGetValue(chunkId, out float[]? earlier))
+				Array.Copy(earlier, snapshot, earlier.Length);
+			output.CopyTo(snapshot, chunkOffset * _channels);
+			_blocks[chunkId] = snapshot;
+			Volatile.Write(ref _preparedFrames, next);
 		}
 	}
 
@@ -159,26 +169,18 @@ internal sealed class PreparedRecursiveMixdownSound : ISound, ISourceFrameSeekab
 		for (int frame = 0; frame < frameCount; frame++)
 		{
 			long sourceFrame = checked(from + frame);
-			if (_endFrame.HasValue && sourceFrame >= _endFrame.Value)
+			long end = Volatile.Read(ref _endFrame);
+			if (end >= 0 && sourceFrame >= end)
 				break;
-			if (sourceFrame >= _preparedFrames)
+			if (sourceFrame >= Volatile.Read(ref _preparedFrames))
 				throw new InvalidOperationException(
 					"Nested mixdown PCM was not prepared before its audio callback.");
-			// Blocks may be shorter than BlockFrames at each parent
-			// horizon, so locate the absolute frame by its recorded origin.
-			// Binary search avoids quadratic readback for long mixdowns.
-			int index = _blockStartFrames.BinarySearch(sourceFrame);
-			if (index < 0)
-				index = ~index - 1;
-			if (index < 0)
+			if (!_blocks.TryGetValue(sourceFrame / BlockFrames, out float[]? block))
 				throw new InvalidOperationException("Missing prepared mixdown block.");
-			float[] block = _blocks[index];
-			int blockFrame = checked((int)(sourceFrame - _blockStartFrames[index]));
-			if (blockFrame >= block.Length / _channels)
-				throw new InvalidOperationException("Missing prepared mixdown frame.");
+			int sourceIndex = checked((int)(sourceFrame % BlockFrames) * _channels);
 			for (int channel = 0; channel < _channels; channel++)
 				destination[frame * _channels + channel] +=
-					block[blockFrame * _channels + channel];
+					block[sourceIndex + channel];
 		}
 	}
 }
