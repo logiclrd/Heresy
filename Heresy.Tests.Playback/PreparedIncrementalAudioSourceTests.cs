@@ -112,7 +112,10 @@ public sealed class PreparedIncrementalAudioSourceTests
 		Assert.That(output[59], Is.EqualTo(2f));
 		// A scoped NoteCut preserves one anti-click sample at frame 60.
 		Assert.That(output[60], Is.EqualTo(2f));
-		Assert.That(output[61], Is.EqualTo(1f));
+		Assert.That(output[61],
+			Is.EqualTo(1f + (float)AntiClickTail.CalculateDecay(1000))
+				.Within(1e-6f));
+		Assert.That(output[70], Is.EqualTo(1f).Within(1e-5f));
 	}
 
 	private static NoteEvent At(double row, ChannelTarget target,
