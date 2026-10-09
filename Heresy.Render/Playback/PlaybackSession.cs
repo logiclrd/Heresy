@@ -35,6 +35,11 @@ public sealed class PlaybackSession
 	private readonly TrackerTickClock _tickClock;
 	private readonly SortedDictionary<int, PlaybackChannelState> _channels = [];
 	private readonly SortedDictionary<uint, PlaybackChannelState> _targetedVirtualChannels = [];
+	// A Pattern's virtual ID is local to its invocation, not a global
+	// playback channel. The legacy live-preview dictionary above remains
+	// unchanged for tracker-key audition.
+	private readonly SortedDictionary<(long Owner, uint Id), PlaybackChannelState>
+		_scopedVirtualChannels = [];
 	private readonly List<PlaybackVoice> _virtualVoices = [];
 	private readonly SortedDictionary<int, ActiveGlobalVolumeSlide> _globalVolumeSlides = [];
 	private readonly PlaybackOperatorCollection _globalOperators = new();
@@ -102,7 +107,12 @@ public sealed class PlaybackSession
 					return false;
 				}
 			}
-
+			foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+			{
+				if (channel.CurrentVoice is not null
+					|| channel.AntiClickTail.IsActive)
+					return false;
+			}
 			return true;
 		}
 	}
@@ -136,6 +146,13 @@ public sealed class PlaybackSession
 				}
 			}
 
+			foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+			{
+				if (channel.CurrentVoice is PlaybackVoice voice
+					&& !GetEffectiveVoiceEndFrameExclusive(
+						voice, _nextFrame).HasValue)
+					return true;
+			}
 			foreach (PlaybackVoice voice in _virtualVoices)
 			{
 				if (!GetEffectiveVoiceEndFrameExclusive(
@@ -313,6 +330,110 @@ public sealed class PlaybackSession
 		}
 	}
 
+	/// <summary>
+	/// Apply an incremental Pattern event at the current output frame.
+	/// Virtual(id) is local to invocationId, and broadcasts affect only
+	/// voices started at strictly earlier frames. Ordinary previews keep
+	/// their independent legacy virtual-channel namespace.
+	/// </summary>
+	public void ApplyScopedEvent(
+		long invocationId, ChannelTarget target,
+		IReadOnlyList<NoteCommand> commands)
+	{
+		if (invocationId < 0)
+			throw new ArgumentOutOfRangeException(nameof(invocationId));
+		ArgumentNullException.ThrowIfNull(commands);
+		switch (target.Kind)
+		{
+			case ChannelTargetKind.Virtual:
+				ApplyVirtualCommands(GetScopedChannel(
+					invocationId, target.VirtualChannelId),
+					commands, _nextFrame, cutIndefiniteAfterNoteOff: false);
+				return;
+			case ChannelTargetKind.AllVirtualInScope:
+			case ChannelTargetKind.AllVirtual:
+				ApplyVirtualBroadcast(invocationId,
+					target.Kind == ChannelTargetKind.AllVirtual,
+					commands, _nextFrame);
+				return;
+			default:
+				ApplyLiveEvent(target, commands);
+				return;
+		}
+	}
+
+	/// <summary>
+	/// Cancel the audible virtual voices owned by an invocation without
+	/// disturbing identically numbered IDs from sibling invocations.
+	/// Normal Pattern completion does not call this: notes may tail out.
+	/// </summary>
+	public void CancelScopedVoices(long invocationId)
+	{
+		if (invocationId < 0)
+			throw new ArgumentOutOfRangeException(nameof(invocationId));
+		foreach (var pair in _scopedVirtualChannels)
+			if (pair.Key.Owner == invocationId)
+				pair.Value.CutCurrentVoice();
+	}
+
+	private PlaybackChannelState GetScopedChannel(long owner, uint id)
+	{
+		if (_scopedVirtualChannels.TryGetValue(
+			(owner, id), out PlaybackChannelState? channel))
+			return channel;
+		channel = new PlaybackChannelState(
+			_context.Configuration.OutputChannelCount,
+			_context.Configuration.SampleRate, _tickClock,
+			unchecked(0x5649525455414C00UL
+				+ (ulong)id * 0x9E3779B97F4A7C15UL
+				+ (ulong)owner));
+		_scopedVirtualChannels.Add((owner, id), channel);
+		return channel;
+	}
+
+	private void ApplyVirtualBroadcast(
+		long owner, bool allOwners,
+		IReadOnlyList<NoteCommand> commands, long frame)
+	{
+		// Snapshot the eligible channels before applying commands.
+		// Same-frame starts are not pre-existing voices, even if their
+		// start event was dequeued earlier in this callback.
+		List<PlaybackChannelState> eligible = [];
+		foreach (var pair in _scopedVirtualChannels)
+			if ((allOwners || pair.Key.Owner == owner)
+				&& pair.Value.CurrentVoice is PlaybackVoice voice
+				&& voice.StartFrame < frame)
+				eligible.Add(pair.Value);
+		if (allOwners)
+			foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+				if (channel.CurrentVoice is PlaybackVoice voice
+					&& voice.StartFrame < frame)
+					eligible.Add(channel);
+		foreach (PlaybackChannelState channel in eligible)
+			foreach (NoteCommand command in commands)
+			{
+				// Broadcasts control existing voices, not the creation
+				// of new ones or independent target memory.
+				switch (command)
+				{
+					case NoteOffCommand:
+						channel.CurrentVoice?.ApplyNoteOff(
+							frame, _context.Configuration.SampleRate);
+						CullFinishedCurrentVoice(channel, frame);
+						break;
+					case NoteCutCommand:
+						channel.CutCurrentVoice();
+						break;
+					case SetNoteVolumeCommand volume:
+						channel.SetNoteVolume(volume.Volume);
+						break;
+					default:
+						throw new NotSupportedException(
+							$"Broadcast command {command.GetType().Name} is not supported.");
+				}
+			}
+	}
+
 	public void ApplyLiveEvent(
 		ChannelTarget target,
 		IReadOnlyList<NoteCommand> commands)
@@ -475,10 +596,15 @@ public sealed class PlaybackSession
 		IReadOnlyList<NoteCommand> commands,
 		long eventFrame,
 		bool cutIndefiniteAfterNoteOff)
-	{
-		PlaybackChannelState channel =
-			GetVirtualChannelState(channelId);
+		=> ApplyVirtualCommands(GetVirtualChannelState(channelId),
+			commands, eventFrame, cutIndefiniteAfterNoteOff);
 
+	private void ApplyVirtualCommands(
+		PlaybackChannelState channel,
+		IReadOnlyList<NoteCommand> commands,
+		long eventFrame,
+		bool cutIndefiniteAfterNoteOff)
+	{
 		foreach (NoteCommand command in commands)
 		{
 			switch (command)
@@ -515,6 +641,9 @@ public sealed class PlaybackSession
 
 				case NoteCutCommand:
 					channel.CutCurrentVoice();
+					break;
+				case SetNoteVolumeCommand volume:
+					channel.SetNoteVolume(volume.Volume);
 					break;
 
 				default:
