@@ -80,6 +80,10 @@ public sealed class PlaybackPositionTimeline
 				&& entry.Offset < _streamEntries[^1].Offset)
 				throw new InvalidOperationException("Streamed Pattern rows must be chronological.");
 			_streamEntries.Add(entry);
+			// Only the recent playback cursor history is useful to the UI.
+			// Infinite scripted songs must not accumulate position records.
+			if (_streamEntries.Count > 1024)
+				_streamEntries.RemoveRange(0, 512);
 		}
 	}
 
