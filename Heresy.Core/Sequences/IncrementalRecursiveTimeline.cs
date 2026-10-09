@@ -367,12 +367,16 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 										|| !double.IsFinite(composedPitch))
 										throw new InvalidOperationException(
 											"Recursive pitch multiplier is not positive and finite.");
-									if (regularStart.Volume.HasValue
-										&& emit.Note.Target.Kind == ChannelTargetKind.Physical)
-										frame.Context.GetPhysicalChannelState(
-											emit.Note.Target.PhysicalChannel -
-											frame.Context.PhysicalChannelBase).NoteVolume =
-												regularStart.Volume.Value;
+									if (emit.Note.Target.Kind == ChannelTargetKind.Physical)
+									{
+										SequencingChannelState state =
+											frame.Context.GetPhysicalChannelState(
+												emit.Note.Target.PhysicalChannel -
+												frame.Context.PhysicalChannelBase);
+										state.ActiveFlattenedSourceScopeId = 0;
+										if (regularStart.Volume.HasValue)
+											state.NoteVolume = regularStart.Volume.Value;
+									}
 									retained.Add(regularStart with
 									{
 										PitchMultiplier = composedPitch,
@@ -435,6 +439,8 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 								physicalChannelOffset: physicalOffset,
 								gainMultiplier: localGain);
 							child.TimelineOrigin = emit.Time;
+							frame.Context.GetPhysicalChannelState(localChannel)
+								.ActiveFlattenedSourceScopeId = child.ScopeId;
 							retained.Add(new BeginFlattenedSourceVolumeCommand(
 								child.ScopeId, startingSourceVolume));
 							try

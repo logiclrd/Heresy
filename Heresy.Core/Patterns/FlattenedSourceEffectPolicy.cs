@@ -85,21 +85,29 @@ public static class FlattenedSourceEffectPolicy
 			|| note.Target.Kind != ChannelTargetKind.Physical)
 			return note;
 
-		ObjectId source = context.GetPhysicalChannelState(
-			note.Target.PhysicalChannel).CurrentSourceId;
+		SequencingChannelState channel = context.GetPhysicalChannelState(
+			note.Target.PhysicalChannel);
+		ObjectId source = channel.CurrentSourceId;
 		StartNoteCommand? start = null;
+		bool hasNewStart = false;
 		foreach (NoteCommand command in note.Commands)
 		{
 			if (command is SelectPatternSourceCommand selected)
 				source = selected.SourceId;
-			if (command is StartNoteCommand candidate && !candidate.Mixdown)
-				start = candidate;
+			if (command is StartNoteCommand candidate)
+			{
+				hasNewStart = true;
+				if (!candidate.Mixdown)
+					start = candidate;
+			}
 		}
-		if (start is null)
-			return note;
-		if (!start.SourceId.IsNone)
+		if (start is not null && !start.SourceId.IsNone)
 			source = start.SourceId;
-		if (source.IsNone || !context.IsFlattenedSource(source))
+		bool controlsFlattenedSource = hasNewStart
+			? start is not null && !source.IsNone
+				&& context.IsFlattenedSource(source)
+			: channel.ActiveFlattenedSourceScopeId > 0;
+		if (!controlsFlattenedSource)
 			return note;
 
 		List<NoteCommand>? filtered = null;

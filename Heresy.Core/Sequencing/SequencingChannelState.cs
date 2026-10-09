@@ -33,6 +33,12 @@ public sealed class SequencingChannelState
 	/// The live renderer is authoritative when a voice has a volume slide.</summary>
 	public double NoteVolume { get; set; } = 1.0;
 
+	/// <summary>The scope of the most recently started flattened
+	/// collection on this *logical* channel, until replaced by another
+	/// note. Later-row effects on that channel must continue targeting
+	/// its live source-note volume rather than an unrelated host voice.</summary>
+	public long ActiveFlattenedSourceScopeId { get; set; }
+
 	/// <summary>
 	/// Applies conventional whole-byte tracker effect-memory semantics. A
 	/// non-zero parameter replaces the remembered value and is returned. Zero
