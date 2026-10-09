@@ -368,7 +368,9 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 										PitchMultiplier = composedPitch,
 										GainMultiplier = composedGain,
 										ParentOverallChannels =
-											frame.Context.ParentOverallChannels,
+											frame.Context.ParentOverallChannels.Count == 0
+												? null
+												: frame.Context.ParentOverallChannels,
 									});
 								}
 								else
