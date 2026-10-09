@@ -65,8 +65,9 @@ internal sealed class PlaybackSnapshotSoundResolver
 	/// Resolve direct PCM-producing sources and envelopes outside the audio
 	/// callback. Experimental recursive playback may dynamically address any
 	/// sound object, including sources not named in the root arrangement.
-	/// Nested cooked Pattern/Sequence mixdowns are deliberately not compiled
-	/// by this preload; the prepared adapter rejects those unsupported starts.
+	/// Nested Pattern/Sequence sources are not eagerly compiled by this
+	/// preload. Producer-prepared private mixdowns register their own transient
+	/// sound identities, while the legacy compiled resolver remains separate.
 	/// </summary>
 	public void PrepareDirectSources()
 	{
