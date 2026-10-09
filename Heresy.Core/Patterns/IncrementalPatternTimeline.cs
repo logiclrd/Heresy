@@ -519,10 +519,9 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			if (preparation.RowDelays.Count != 0)
 				_extraRowSpans = preparation.RowDelays.OrderBy(x => x.Channel)
 					.ThenBy(x => x.Order).First().ExtraRows;
-			if (_extraRowSpans != 0 && _pendingTiming.Any(t =>
-				t.Raw.Commands.Any(c => c is ApplyTrackerTempoCommand)))
-				throw new NotSupportedException(
-					"SEy with tracker Txx requires repeated-span tempo arbitration.");
+			// Txx requests remain pending for shared-clock arbitration.
+			// An SEy row's captured span and repeat count are retained
+			// on this cursor for scheduled compatibility-row repeats.
 			// Stable equal-time order: timing at the beginning of the row
 			// (including fractional Timing commands) comes before notes;
 			// then physical channels, finally the producer's emission order.
