@@ -269,6 +269,12 @@ public sealed class PlaybackSession
 				_nextFrame);
 		}
 
+		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+		{
+			channel.CurrentVoice?.ApplyNoteOff(
+				_nextFrame, _context.Configuration.SampleRate);
+			CullFinishedCurrentVoice(channel, _nextFrame);
+		}
 		foreach (PlaybackVoice voice in _virtualVoices)
 		{
 			voice.ApplyNoteOff(
@@ -307,6 +313,14 @@ public sealed class PlaybackSession
 			{
 				channel.CutCurrentVoice();
 			}
+		}
+
+		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+		{
+			if (channel.CurrentVoice is PlaybackVoice voice
+				&& !GetEffectiveVoiceEndFrameExclusive(
+					voice, _nextFrame).HasValue)
+				channel.CutCurrentVoice();
 		}
 
 		for (int index = _virtualVoices.Count - 1;
@@ -1398,6 +1412,38 @@ public sealed class PlaybackSession
 				foreach (uint channelId in emptyVirtualChannels)
 					_targetedVirtualChannels.Remove(channelId);
 			}
+
+			// Invocation-scoped virtual channels are mixed exactly as
+			// ordinary targeted virtual voices, preserving every output
+			// speaker feed. Scope is an identity key, not an audio bus.
+			List<(long Owner, uint Id)>? emptyScoped = null;
+			foreach (var pair in _scopedVirtualChannels)
+			{
+				PlaybackChannelState channel = pair.Value;
+				Span<float> channelBuffer = rented.AsSpan(0, sampleCount);
+				channelBuffer.Clear();
+				if (channel.CurrentVoice is not null)
+				{
+					bool finished = RenderVoice(
+						channel.CurrentVoice, absoluteStartFrame,
+						frameCount, channelBuffer);
+					if (finished)
+						channel.DetachCurrentVoice();
+				}
+				for (int frame = 0; frame < frameCount; frame++)
+					channel.AntiClickTail.RenderFrame(channelBuffer.Slice(
+						frame * outputChannelCount, outputChannelCount));
+				AddBuffer(destination, channelBuffer);
+				if (channel.CurrentVoice is null
+					&& !channel.AntiClickTail.IsActive)
+				{
+					emptyScoped ??= [];
+					emptyScoped.Add(pair.Key);
+				}
+			}
+			if (emptyScoped is not null)
+				foreach (var key in emptyScoped)
+					_scopedVirtualChannels.Remove(key);
 
 			for (int index = 0; index < _virtualVoices.Count;)
 			{
