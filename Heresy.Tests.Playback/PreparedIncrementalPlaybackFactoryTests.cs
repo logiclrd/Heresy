@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 using System.Reflection;
 
@@ -390,8 +391,8 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		plan.Source.Render(pcm.Length, pcm);
 		Assert.That(pcm[110], Is.EqualTo(0.5f).Within(1e-5f));
 		Assert.That(pcm[120], Is.EqualTo(1f).Within(1e-5f));
-		Assert.That(pcm[140], Is.EqualTo(0.5f).Within(1e-5f),
-			"Old private mixdown must keep playing after its replacement ends.");
+		Assert.That(pcm[140], Is.EqualTo(1f).Within(1e-5f),
+			"Continued private mixdown and replacement sample must both stay audible.");
 	}
 
 	[Test]
@@ -470,10 +471,9 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		Assert.That(output[125], Is.EqualTo(0.5f).Within(1e-5f));
 		// NNA Off applies to the previous private input as well as the
 		// parent-renderer voice; only the new direct sample survives.
-		Assert.That(plan.Session.VirtualVoices,
-			Is.All.Matches<Heresy.Render.Playback.PlaybackVoice>(
-				voice => voice.Sound.GetType().Name != "PreparedRecursiveMixdownSound"
-					|| voice.SoundState.NoteOffTime.HasValue));
+		Assert.That(plan.Session.VirtualVoices
+			.Where(voice => voice.Sound.GetType().Name == "PreparedRecursiveMixdownSound")
+			.All(voice => voice.SoundState.NoteOffTime.HasValue), Is.True);
 	}
 
 	[Test]
