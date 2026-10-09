@@ -196,6 +196,61 @@ public sealed class IncrementalPatternRowDelayTests
 	}
 
 	[Test]
+	public void WallDeadlineInsideSecondSEyTempoRampKeepsExactTickAndTime()
+	{
+		DataPatternDefinition p = Pattern(1, 1);
+		var cell = p.Grid.GetOrCreateCell(0, 0);
+		cell.Effects.Add(new TrackerTempoPatternEffect(0x12));
+		cell.Effects.Add(new TrackerPatternDelayPatternEffect(1));
+		SequencingContext state = new();
+		using IncrementalPatternTimeline timeline = new(state);
+		timeline.Add(p, 1, state);
+		double firstSpanSeconds = 2.5 * 6 / 10.0 * Math.Log(135.0 / 125.0);
+		TimeSpan deadline = TimeSpan.FromSeconds(firstSpanSeconds + 0.020);
+		timeline.Add(new RawSource(new NoteEvent(
+			new MusicalTime(deadline, 0.0),
+			ChannelTarget.Physical(0), [new NoteOffCommand()])),
+			1, state.FlattenedChild(physicalChannelOffset: 4));
+
+		IncrementalPatternTimelineStep.Emit? due = null;
+		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+			if (step is IncrementalPatternTimelineStep.Emit e
+				&& e.Note.Commands.Any(c => c is NoteOffCommand))
+				due = e;
+
+		Assert.That(due, Is.Not.Null);
+		Assert.That(due!.Note.Offset.TimeOffset, Is.EqualTo(deadline));
+		double slope = 10.0 / 6.0;
+		double expectedTick = 6.0 + 135.0 / slope *
+			(Math.Exp(slope * 0.020 / 2.5) - 1);
+		Assert.That(due.Tick, Is.EqualTo(expectedTick).Within(1e-6));
+		Assert.That(state.State.Tempo, Is.EqualTo(145.0));
+	}
+
+	[Test]
+	public void ConcurrentIndependentSEyAndTxxRejectBeforeMutatingTempoMemory()
+	{
+		DataPatternDefinition p = Pattern(1, 1);
+		var cell = p.Grid.GetOrCreateCell(0, 0);
+		cell.Effects.Add(new TrackerTempoPatternEffect(0x12));
+		cell.Effects.Add(new TrackerPatternDelayPatternEffect(1));
+		SequencingContext state = new();
+		using IncrementalPatternTimeline timeline = new(state);
+		timeline.Add(p, 1, state);
+		timeline.Add(new RawSource(new NoteEvent(
+			MusicalTime.Zero, ChannelTarget.Physical(0),
+			[new ApplyTrackerTempoCommand(0x11)])),
+			1, state.FlattenedChild(physicalChannelOffset: 3));
+
+		Assert.Throws<NotSupportedException>(() => timeline.TryStep(out _));
+		Assert.That(state.State.Tempo, Is.EqualTo(125.0));
+		Assert.That(state.GetPhysicalChannelState(0)
+			.TryGetEffectParameter(EffectMemorySlot.Tempo, out _), Is.False);
+		Assert.That(state.GetPhysicalChannelState(3)
+			.TryGetEffectParameter(EffectMemorySlot.Tempo, out _), Is.False);
+	}
+
+	[Test]
 	public void ContinuousPitchAndVolumeSlidesRepeatAndClearAtLastSEyBoundary()
 	{
 		DataPatternDefinition p = Pattern(1, 1);
