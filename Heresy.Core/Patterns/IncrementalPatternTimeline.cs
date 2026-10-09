@@ -1849,7 +1849,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					// note can never start before this row ends; in that
 					// case it does not initialize or advance countdown.
 					int shift = delayTick.HasValue
-						? Math.Max(1, delayTick.Value) : 0;
+						? Math.Max(1, (int)delayTick.Value) : 0;
 					double startTick = _tick + shift;
 					bool startCanExecute =
 						!delayTick.HasValue || shift < current.EffectiveSpanTicks;
