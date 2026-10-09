@@ -71,7 +71,7 @@ public sealed class PanbrelloWaveformPatternEffectTests
 
 		Assert.That(
 			context.GetPhysicalChannelState(0).PanbrelloWaveform,
-			Is.EqualTo(TrackerWaveform.Square));
+			Is.EqualTo(TrackerWaveform.Sine));
 		Assert.That(
 			schedule.SelectMany(e => e.Commands)
 				.OfType<SetPanbrelloWaveformCommand>(),
@@ -164,7 +164,7 @@ public sealed class PanbrelloWaveformPatternEffectTests
 	}
 
 	[Test]
-	public void FlattenedChildSharesPanbrelloWaveformSelection()
+	public void FlattenedChildDoesNotInheritParentPanbrelloWaveform()
 	{
 		SequencingContext parent =
 			new(physicalChannelBase: 3);
