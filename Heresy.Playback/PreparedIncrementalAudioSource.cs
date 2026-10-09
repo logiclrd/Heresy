@@ -28,6 +28,8 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 	private readonly IncrementalRecursiveTimeline _timeline;
 	private readonly PlaybackSession _session;
 	private readonly Action<NoteEvent>? _validatePreparedNote;
+	private readonly Func<NoteEvent, long, NoteEvent>? _prepareEvent;
+	private readonly Action<TimeSpan>? _prepareNested;
 	private readonly ConcurrentQueue<PreparedEvent> _events = new();
 	private readonly ConcurrentQueue<long> _cancellations = new();
 	private readonly HashSet<long> _canceledOwners = [];
@@ -38,11 +40,15 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 
 	public PreparedIncrementalAudioSource(
 		IncrementalRecursiveTimeline timeline, PlaybackSession session,
-		Action<NoteEvent>? validatePreparedNote = null)
+		Action<NoteEvent>? validatePreparedNote = null,
+		Func<NoteEvent, long, NoteEvent>? prepareEvent = null,
+		Action<TimeSpan>? prepareNested = null)
 	{
 		_timeline = timeline ?? throw new ArgumentNullException(nameof(timeline));
 		_session = session ?? throw new ArgumentNullException(nameof(session));
 		_validatePreparedNote = validatePreparedNote;
+		_prepareEvent = prepareEvent;
+		_prepareNested = prepareNested;
 		if (session.NextFrame != 0)
 			throw new ArgumentException(
 				"The incremental renderer requires a fresh playback session.",
@@ -104,8 +110,10 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 						throw new InvalidOperationException(
 							"Cannot prepare an incremental event behind the playback head.");
 					_lastEventFrame = frame;
+					NoteEvent prepared = _prepareEvent?.Invoke(emit.Note, frame)
+						?? emit.Note;
 					_events.Enqueue(new PreparedEvent(
-						frame, emit.InvocationId, emit.Note));
+						frame, emit.InvocationId, prepared));
 				}
 				if (step.Time >= exclusiveEnd)
 				{
@@ -117,6 +125,10 @@ public sealed class PreparedIncrementalAudioSource : IAudioOutputSource, IDispos
 				throw new InvalidOperationException(
 					"Incremental preparation exceeded its bounded step budget.");
 		}
+
+		// Finish private mixdown PCM before publishing that its parent
+		// interval is ready. Nested scripts run only on this producer.
+		_prepareNested?.Invoke(exclusiveEnd);
 
 		// Publish the complete exclusive coverage only *after* all preceding
 		// emissions have been queued. The callback never invokes TryStep.
