@@ -226,6 +226,33 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
+	public void RealtimeInstrumentToneCanStartRecursivePatternThroughProductionFactory()
+	{
+		SongDocument document = new();
+		ObjectId sample = AddSample(document, "Sample");
+		ObjectId nested = AddPatternWithNote(document, sample);
+		ObjectId instrumentId = document.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Recursive tone");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = nested,
+		});
+		instrument.ToneTable.Add(0);
+		document.Add(instrument);
+		ObjectId parent = AddPatternWithNote(document, instrumentId);
+		ObjectId sequence = AddSequence(document, parent);
+		PlaybackRequestAudioSourceFactory factory = new(
+			MonoConfiguration(100),
+			new RecordingSampleProvider(
+				new MemorySampleData(100, 1, [0.625f])));
+		IAudioOutputSource source = factory.Create(
+			SequencePlaybackRequest.Create(document, sequence));
+		float[] block = new float[1];
+		source.Render(1, block);
+		block[0].Should().BeApproximately(0.625f, 1e-6f);
+	}
+
+	[Test]
 	public void AdHocScheduleUsesSnapshotSoundResolver()
 	{
 		SongDocument document = new();
