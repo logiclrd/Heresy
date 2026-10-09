@@ -1943,6 +1943,16 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			NoteEvent? output = null;
 			if (scheduled.Kind == TickOperationKind.Retrigger)
 			{
+				// Qxy's candidate must be *audible within the row* to
+				// decrement its remembered countdown. The eager
+				// processor skips a candidate once its tracker tick
+				// plus fixed wall offset reaches the row's end.
+				// Compare against the live Tempo-integrated remaining
+				// row duration, not the Tempo at the raw event.
+				if (scheduled.Note.Offset.TimeOffset > TimeSpan.Zero
+					&& scheduled.Note.Offset.TimeOffset.TotalSeconds
+						>= PredictWallSeconds(current.RowEndTick) - 1e-9)
+					return false;
 				NoteEvent? retrigger = current.ExecuteRetriggerTick(scheduled);
 				if (retrigger is not null)
 					output = retrigger with
