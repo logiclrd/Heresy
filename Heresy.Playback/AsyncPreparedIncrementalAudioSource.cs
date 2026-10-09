@@ -1,5 +1,4 @@
 using System;
-using System.Threading;
 
 using Heresy.Render.Realtime;
 using Heresy.Render.Timing;
@@ -7,136 +6,80 @@ using Heresy.Render.Timing;
 namespace Heresy.Playback;
 
 /// <summary>
-/// Experimental bounded, asynchronous preparation in front of a
-/// sample-accurate incremental renderer. Only the worker executes
-/// source generation; the audio consumer never waits for it.
+/// Dedicated single-threaded sequencing + PCM rendering of a recursive
+/// incremental source into a bounded SPSC ring. The system audio callback
+/// never executes a Pattern, a script, a child session or a PCM renderer.
 /// </summary>
 /// <remarks>
-/// A missing whole-block preparation horizon produces a silent output block,
-/// leaves the musical playback frame unchanged and increments UnderrunCount.
-/// This is a deliberate, opt-in dropout policy, not production transport
-/// integration. The caller must stop its audio callbacks before Dispose.
-/// Explicit invocation cancellation during lookahead is not yet supported.
+/// This adapter uses the existing incremental event processor on the *same*
+/// worker that renders its PCM; the staged event queue is no longer a
+/// producer/consumer boundary. The SDL backend also buffers other sources.
+/// The caller must stop its output callbacks before disposing the worker.
 /// </remarks>
 public sealed class AsyncPreparedIncrementalAudioSource : IAudioOutputSource, IDisposable
 {
-	private readonly PreparedIncrementalAudioSource _source;
+	private sealed class SynchronousRenderingSource : IAudioOutputSource
+	{
+		private readonly PreparedIncrementalAudioSource _source;
+		public SynchronousRenderingSource(PreparedIncrementalAudioSource source)
+		{
+			_source = source;
+			Format = source.Format;
+		}
+		public AudioOutputFormat Format { get; }
+		public void Render(int frameCount, Span<float> destination)
+		{
+			// Both operations occur on the same dedicated PCM rendering thread.
+			// Scripts and nested mixdown generators are never invoked by SDL.
+			long end = checked(_source.NextFrame + frameCount);
+			_source.PrepareThrough(
+				FrameTime.FrameStartTime(end, Format.SampleRate));
+			_source.Render(frameCount, destination);
+		}
+	}
+
+	private readonly BufferedAudioOutputSource _ring;
 	private readonly int _lookaheadFrames;
-	private readonly AutoResetEvent _wake = new(false);
-	private readonly Thread _producer;
-	private Exception? _preparationError;
-	private long _playbackHead;
-	private long _underrunCount;
-	private int _disposed;
+	private bool _disposed;
 
 	public AsyncPreparedIncrementalAudioSource(
 		PreparedIncrementalAudioSource source, int lookaheadFrames)
 	{
-		_source = source ?? throw new ArgumentNullException(nameof(source));
+		ArgumentNullException.ThrowIfNull(source);
 		if (lookaheadFrames <= 0)
 			throw new ArgumentOutOfRangeException(nameof(lookaheadFrames));
 		_lookaheadFrames = lookaheadFrames;
-		_playbackHead = source.NextFrame;
 		Format = source.Format;
-		_producer = new Thread(PrepareLoop)
-		{
-			IsBackground = true,
-			Name = "Heresy incremental lookahead",
-		};
-		_producer.Start();
+		_ring = new BufferedAudioOutputSource(
+			new SynchronousRenderingSource(source),
+			capacityFrames: lookaheadFrames,
+			blockFrames: Math.Min(256, lookaheadFrames));
 	}
 
 	public AudioOutputFormat Format { get; }
-
 	public int LookaheadFrames => _lookaheadFrames;
+	public long UnderrunCount => _ring.UnderrunCount;
+	public Exception? PreparationError => _ring.RenderingFault;
+	public long BufferedFrames => _ring.BufferedFrames;
 
 	/// <summary>
-	/// Number of whole callback blocks replaced with silence because
-	/// they were not prepared. The first nonzero value is the first
-	/// observed dropout. The timeline does not skip any musical frames.
+	/// Callback path: consume prepared PCM, substituting silence on underrun
+	/// without advancing the source. No sequencing or rendering here.
 	/// </summary>
-	public long UnderrunCount => Interlocked.Read(ref _underrunCount);
-
-	/// <summary>
-	/// Producer exception, published for handling outside the audio callback.
-	/// A failed producer stops preparing; missing blocks remain silent.
-	/// </summary>
-	public Exception? PreparationError => Volatile.Read(ref _preparationError);
-
 	public void Render(int frameCount, Span<float> destination)
 	{
-		ObjectDisposedException.ThrowIf(
-			Volatile.Read(ref _disposed) != 0, this);
+		ObjectDisposedException.ThrowIf(_disposed, this);
 		if (frameCount < 0 || frameCount > _lookaheadFrames)
 			throw new ArgumentOutOfRangeException(nameof(frameCount),
-				"A render block must fit within the bounded lookahead horizon.");
-		int samples = checked(frameCount * Format.ChannelCount);
-		if (destination.Length != samples)
-			throw new ArgumentException(
-				"Destination length must match the requested output frames.",
-				nameof(destination));
-		if (frameCount == 0)
-			return;
-
-		long head = Volatile.Read(ref _playbackHead);
-		long end = checked(head + frameCount);
-		long neededTicks = FrameTime.FrameStartTime(
-			end, Format.SampleRate).Ticks;
-		if (_source.IsPreparedToEnd
-			|| _source.PreparedThrough.Ticks >= neededTicks)
-		{
-			_source.Render(frameCount, destination);
-			Volatile.Write(ref _playbackHead, _source.NextFrame);
-		}
-		else
-		{
-			destination.Clear();
-			Interlocked.Increment(ref _underrunCount);
-		}
-		// AutoResetEvent.Set is a non-waiting wake-up; no producer-side
-		// locking, script evaluation, or backpressure on the PCM callback.
-		_wake.Set();
-	}
-
-	private void PrepareLoop()
-	{
-		while (Volatile.Read(ref _disposed) == 0)
-		{
-			try
-			{
-				if (!_source.IsPreparedToEnd)
-				{
-					long head = Volatile.Read(ref _playbackHead);
-					long end = checked(head + _lookaheadFrames);
-					TimeSpan target = FrameTime.FrameStartTime(
-						end, Format.SampleRate);
-					if (_source.PreparedThrough < target)
-					{
-						_source.PrepareThrough(target);
-						// The consumer may have advanced while preparing.
-						// Re-evaluate its published head before sleeping.
-						continue;
-					}
-				}
-			}
-			catch (Exception error)
-			{
-				Volatile.Write(ref _preparationError, error);
-				return;
-			}
-			_wake.WaitOne();
-		}
+				"A callback request must fit within the PCM ring capacity.");
+		_ring.Render(frameCount, destination);
 	}
 
 	public void Dispose()
 	{
-		if (Interlocked.Exchange(ref _disposed, 1) != 0)
+		if (_disposed)
 			return;
-		_wake.Set();
-		if (Thread.CurrentThread == _producer)
-			throw new InvalidOperationException(
-				"The preparation worker cannot dispose itself.");
-		_producer.Join();
-		_wake.Dispose();
+		_disposed = true;
+		_ring.Dispose();
 	}
 }
