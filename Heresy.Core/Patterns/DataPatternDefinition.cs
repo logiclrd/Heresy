@@ -153,6 +153,21 @@ public sealed class DataPatternDefinition : PatternDefinition, IDeferredSourcePa
 				if (effect is EmptyTrackerPatternEffect)
 					continue;
 				if (flatteningStart
+					&& effect is (VibratoVolumeSlidePatternEffect
+						or TonePortamentoVolumeSlidePatternEffect))
+				{
+					byte parameter = effect switch
+					{
+						VibratoVolumeSlidePatternEffect k => k.Parameter,
+						TonePortamentoVolumeSlidePatternEffect l => l.Parameter,
+						_ => throw new InvalidOperationException(),
+					};
+					channelCommands.Add(new ApplyVolumeSlideCommand(parameter));
+					context.Diagnostics.ReportIgnoredFlatteningEffect(
+						effect.GetType().Name, row);
+					continue;
+				}
+				if (flatteningStart
 					&& FlattenedSourceEffectPolicy.IsVoiceSpecific(effect))
 				{
 					context.Diagnostics.ReportIgnoredFlatteningEffect(
