@@ -172,6 +172,45 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 
 	[TestCase(2.0, 60)]
 	[TestCase(0.5, 240)]
+	public void FlattenedRecursiveSpeedChangesChildRowsButNotSiblingTiming(
+		double rate, int childNoteFrame)
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(sample, "Pulse",
+			"pulse.wav", Wave(16384)));
+		ObjectId child = document.AllocateObjectId();
+		DataPatternDefinition childPattern = new(child, "Child")
+		{
+			RowCount = 2, ChannelCount = 2,
+		};
+		childPattern.Grid.GetOrCreateCell(1, 1).Note = new StartPatternNote(sample);
+		document.Add(childPattern);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent")
+		{
+			RowCount = 3, ChannelCount = 2,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(child, playbackSpeedMultiplier: rate);
+		parent.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote(sample);
+		document.Add(parent);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000)).Create(document, root);
+		float[] pcm = new float[Math.Max(childNoteFrame, 120) + 6];
+		plan.Source.Render(5, pcm.AsSpan(0, 5));
+		plan.Source.Render(pcm.Length - 5, pcm.AsSpan(5));
+		Assert.That(pcm[119], Is.Zero);
+		Assert.That(pcm[120], Is.EqualTo(0.5f).Within(1e-6f),
+			"Parent source row remains at its original 120 ms.");
+		Assert.That(pcm[childNoteFrame], Is.EqualTo(0.5f).Within(1e-6f),
+			"The flattened child source row must follow its own speed.");
+		Assert.That(pcm[childNoteFrame + 1], Is.EqualTo(0.5f).Within(1e-6f),
+			"Playback speed changes scheduling, not source PCM frequency.");
+	}
+
+	[TestCase(2.0, 60)]
+	[TestCase(0.5, 240)]
 	public void PrivateMixdownSpeedScalesMusicalRowsWithoutResamplingNotes(
 		double rate, int nextNoteFrame)
 	{
