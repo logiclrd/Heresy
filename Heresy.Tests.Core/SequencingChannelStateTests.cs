@@ -1,3 +1,4 @@
+using System;
 using Heresy.Core.Sequencing;
 
 using NUnit.Framework;
@@ -7,6 +8,61 @@ namespace Heresy.Tests.Core;
 [TestFixture]
 public sealed class SequencingChannelStateTests
 {
+	[Test]
+	public void ScopeManagerAllocatesMonotonicallyAndNeverResurrectsRetiredMemory()
+	{
+		ScopedSequencingChannelMemory manager = new();
+		SequencingChannelStateMap root = manager[0];
+		Assert.That(manager[0], Is.SameAs(root));
+		Assert.That(manager.ActiveScopeCount, Is.Zero);
+
+		long first = manager.AllocateScope();
+		long second = manager.AllocateScope();
+		Assert.That(first, Is.GreaterThan(0));
+		Assert.That(second, Is.GreaterThan(first));
+		Assert.That(manager.ActiveScopeCount, Is.EqualTo(2));
+		Assert.That(manager.MaterializedScopeCount, Is.Zero,
+			"Allocating an invocation without accessing its channels is free of channel maps.");
+
+		manager[first].GetPhysical(0).CurrentSourceId = (Heresy.Core.Objects.ObjectId)42U;
+		Assert.That(manager.MaterializedScopeCount, Is.EqualTo(1));
+		Assert.That(manager[second].GetPhysical(0).CurrentSourceId,
+			Is.EqualTo(Heresy.Core.Objects.ObjectId.None));
+		Assert.That(manager[0], Is.SameAs(root));
+
+		Assert.That(manager.ForgetScope(first), Is.True);
+		Assert.That(manager.ForgetScope(first), Is.False);
+		Assert.That(manager.MaterializedScopeCount, Is.EqualTo(1));
+		Assert.Throws<InvalidOperationException>(() => _ = manager[first],
+			"Retired scope IDs must never silently recreate a channel map.");
+		long third = manager.AllocateScope();
+		Assert.That(third, Is.GreaterThan(second));
+		Assert.That(manager[0], Is.SameAs(root));
+	}
+
+	[Test]
+	public void NestedFlattenedContextsShareManagerButNotLocalMemory()
+	{
+		SequencingContext root = new();
+		SequencingContext child = root.FlattenedChild(physicalChannelOffset: 2);
+		SequencingContext grandchild = child.FlattenedChild(physicalChannelOffset: 3);
+		Assert.That(grandchild.ScopedMemory, Is.SameAs(root.ScopedMemory));
+		Assert.That(child.ScopedMemory, Is.SameAs(root.ScopedMemory));
+		Assert.That(child.ScopeId, Is.GreaterThan(0));
+		Assert.That(grandchild.ScopeId, Is.GreaterThan(child.ScopeId));
+		Assert.That(root.ScopeId, Is.Zero);
+		Assert.That(child.PhysicalPlaybackOwner, Is.EqualTo(child.ScopeId));
+		Assert.That(grandchild.PhysicalPlaybackOwner, Is.EqualTo(grandchild.ScopeId));
+		Assert.That(grandchild.MapPhysicalChannel(0), Is.EqualTo(5));
+		child.GetPhysicalChannelState(0).ResolveEffectParameter(
+			EffectMemorySlot.Retrigger, 0x56);
+		Assert.That(grandchild.GetPhysicalChannelState(0)
+			.ResolveEffectParameter(EffectMemorySlot.Retrigger, 0), Is.Zero);
+		Assert.That(root.GetPhysicalChannelState(2)
+			.ResolveEffectParameter(EffectMemorySlot.Retrigger, 0), Is.Zero);
+		Assert.That(root.ScopedMemory.ActiveScopeCount, Is.EqualTo(2));
+	}
+
 	[Test]
 	public void ZeroParameterWithoutMemoryResolvesToZero()
 	{
