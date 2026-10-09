@@ -446,6 +446,44 @@ public sealed class PlaybackSession
 							$"Broadcast command {command.GetType().Name} is not supported.");
 				}
 			}
+
+		// AllVirtual also includes displaced NNA voices, which already
+		// live in the session-wide virtual pool. They have no invocation
+		// scope: AllVirtualInScope must not control them.
+		if (!allOwners)
+			return;
+		for (int i = _virtualVoices.Count - 1; i >= 0; i--)
+		{
+			PlaybackVoice voice = _virtualVoices[i];
+			if (voice.StartFrame >= frame)
+				continue;
+			bool cut = false;
+			foreach (NoteCommand command in commands)
+			{
+				switch (command)
+				{
+					case NoteOffCommand:
+						voice.ApplyNoteOff(frame,
+							_context.Configuration.SampleRate);
+						break;
+					case NoteCutCommand:
+						cut = true;
+						break;
+					case SetNoteVolumeCommand volume:
+						voice.SetNoteVolume(volume.Volume);
+						break;
+					default:
+						throw new NotSupportedException(
+							$"Broadcast command {command.GetType().Name} is not supported.");
+				}
+			}
+			if (cut)
+			{
+				voice.AddCutTo(GetChannelState(
+					voice.OriginPhysicalChannel).AntiClickTail);
+				_virtualVoices.RemoveAt(i);
+			}
+		}
 	}
 
 	public void ApplyLiveEvent(
