@@ -54,10 +54,21 @@ preserving audible release and already-captured anti-click tails. These are
   controls remain meaningful. Playback emits rate-capped HRSEQ003/004
   warnings while leaving stored Pattern effects untouched; the data
   Pattern editor shows a nonblocking warning on qualifying effects.
-  **Still outstanding:** deepen effect-family parity and test unusual
-  indirect/omitted-source and same-frame cases; improve diagnostics
-  for ambiguous script-only effects, and test deeper nested cancellation,
-  virtual/NNA displacement and source-volume curves. Raw incremental Patterns still do
+  **Combined-effect parity refined:** Dxx note-volume slide, Kxx
+  vibrato+note-volume slide and Lxx portamento+note-volume slide are
+  voice-specific in their entirety on a flattened start; neither half
+  has a well-defined target voice. Volume-column A-D sliders likewise
+  need an individual current voice. Do **not** misinterpret them as
+  channel-volume automation: Mxx/Nxx, genuine overall-channel volume,
+  and global Tempo remain applicable. Deferred recalled Sources can
+  reclassify a Gxx/Lxx portamento target into an actual flattened
+  start at command-resolution time, before modifying tracker effect
+  memory. Core, raw-script and editor tests protect this behavior.
+  **Still outstanding:** dynamic **source-level note-volume
+  trajectories** if animated invocation gain is desired (requires
+  explicit new semantics); greater script-only and same-frame
+  interaction parity; deeper nested cancellation, virtual/NNA
+  displacement, and long-tail scope cleanup coverage. Raw incremental Patterns still do
   not admit direct SetOverallChannelVolumeCommand: overall-volume ancestry
   is currently covered through supported live channel-volume controls.
   The detailed target remains in step 48 below.

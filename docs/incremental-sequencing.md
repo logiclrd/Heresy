@@ -2504,3 +2504,39 @@ because it is inapplicable to the chosen source.
 The remaining compatibility review includes richer split semantics for
 combined volume-and-voice effects, delayed-script effects, indirect
 instrument-selected sources and unusual same-frame interactions.
+
+
+## Fifty-second step: combined note-volume effects and late Source resolution
+
+Effects must be classified according to the entity they control, not
+merely because the word "volume" appears in the effect name. Dxx is
+a **current note-volume slide**; Kxx combines that same note-volume
+slide with vibrato, while Lxx combines it with tone portamento.
+The note-volume portion is still not an overall-channel-volume
+operator: applying it when a non-mixdown Pattern or Sequence is
+started would incorrectly modulate an older individual voice on the
+instigating channel. Therefore Dxx, Kxx and Lxx are all ignored,
+including their parameter-memory updates, on that specific start.
+The volume-column A-D fine/current-note volume operations are likewise
+ignored. Mxx channel volume, Nxx channel-volume slide, and global
+volume/Tempo changes remain separate, meaningful controls and are
+not filtered. An explicit start's note-volume field still updates
+the caller's remembered volume and captures the child's source gain.
+
+The common deferred Source resolver now handles another important
+ambiguity: a Gxx, Lxx or volume-column Gx originally translated as a
+portamento target may discover *at note execution time* that the
+recalled Source denotes a flattened Pattern/Sequence. In that case,
+the target is restored as a `StartNoteCommand` before the
+voice-specific portamento instruction is ignored; the child
+invocation must not disappear because the generator used an older
+Source memory value during raw lookahead. Sample/ordinary and
+private mixdown sources preserve portamento behavior.
+
+Regression tests cover source starts with combined Kxx/Lxx and Dxx,
+no pollution of volume/pitch/retrigger memory, surviving Mxx,
+omitted/recalled Sources, late source resolution, raw script-like
+commands and the author's warning tooltip. More sophisticated
+**live invocation-source gain slides** would require a distinct
+source-level automation model and are deliberately not implemented
+by disguising note-volume slides as channel-volume slides.
