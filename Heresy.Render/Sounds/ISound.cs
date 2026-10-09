@@ -54,3 +54,10 @@ public interface ISound
 		int frameCount,
 		Span<float> destination);
 }
+
+/// <summary>
+/// A recursively generated sound whose finite end is discovered only as
+/// its private timeline renders. Parent end-of-input must not forcibly cut
+/// it merely because its end frame is not known yet.
+/// </summary>
+public interface IStreamingFiniteSound : ISound { }
