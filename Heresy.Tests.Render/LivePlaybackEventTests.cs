@@ -313,10 +313,14 @@ public sealed class LivePlaybackEventTests
 		float[] first = new float[1];
 		source.Render(1, first);
 		source.EnqueueCancelScope(10);
-		float[] second = new float[1];
-		source.Render(1, second);
+		float[] second = new float[3];
+		source.Render(3, second);
 		Assert.That(first[0], Is.EqualTo(3f));
-		Assert.That(second[0], Is.EqualTo(2f));
+		// Cutting the owner retains a one-frame anti-click tail;
+		// afterward, only the unrelated owner and legacy preview remain.
+		Assert.That(second[0], Is.EqualTo(3f));
+		Assert.That(second[1], Is.EqualTo(2f));
+		Assert.That(second[2], Is.EqualTo(2f));
 	}
 
 	private static PlaybackSession CreateScopedSession()
