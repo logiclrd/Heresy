@@ -1816,7 +1816,7 @@ future music does **not** apply future voice operations ahead of time.
 Forward native source-frame seeks are supported by incrementally
 rendering/discarding the intervening prepared child frames, leaving the
 private clock and active voices at the correct live point. The sound
-reports `SourceFrameSeekCost.ReplayRequired`. **Backward seeks are
+reports `SourceFrameSeekCost.ReplayRequired`. **Backward seeks and tracker retriggers are
 explicitly unsupported for now**: correct rewind requires recreating the
 private event stream and renderer state, not retaining prior PCM.
 Forward seeks outside the published event horizon also fail explicitly.
