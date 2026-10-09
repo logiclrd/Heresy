@@ -15,6 +15,7 @@ using Heresy.Core.Sequences;
 using Heresy.Playback;
 using Heresy.Render.Configuration;
 using Heresy.Render.Samples;
+using Heresy.Render.Sounds;
 
 using NUnit.Framework;
 
@@ -513,6 +514,43 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			(PlaybackSession)privateSession.GetValue(privateSound)!;
 		Assert.That(childSession.GetChannelState(0).CurrentVoice?
 			.IsNoteFadeRequested, Is.True);
+	}
+
+	[Test]
+	public void ParentNoteCutEndsPrivateMixdownAtExactOutputFrame()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		SampleDefinition sample = SampleDefinition.CreateImported(
+			sampleId, "Loop", "memory.wav", Wave(16384));
+		sample.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 4);
+		document.Add(sample);
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Long child")
+		{
+			RowCount = 8, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({sampleId.Value}));",
+		});
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Cut parent")
+		{
+			RowCount = 3, ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(childId, mixdown: true);
+		parent.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteCut();
+		document.Add(parent);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, parentId);
+		plan.Source.PrepareThrough(TimeSpan.FromMilliseconds(200));
+		plan.Source.Render(1, new float[1]);
+		var voice = plan.Session.GetChannelState(0).CurrentVoice!;
+		long? privateEnd = voice.Sound.GetEndFrameExclusive(
+			new RenderContext(Mono(1000)), voice.SoundState);
+		Assert.That(privateEnd, Is.EqualTo(120L),
+			"Parent Cut must stop future child PCM generation, not only mute its parent voice.");
 	}
 
 	[Test]
