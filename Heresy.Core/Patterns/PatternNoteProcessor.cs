@@ -1667,6 +1667,7 @@ public static class PatternNoteProcessor
 		// may have replaced this physical channel's remembered source.
 		if (deferredDataSources)
 			noteEvent = ResolveRowSourceCommands(noteEvent, context);
+		noteEvent = FlattenedSourceEffectPolicy.Filter(noteEvent, context);
 		List<NoteCommand>? transformed =
 			rowTicksOverride.HasValue
 				? new List<NoteCommand>(noteEvent.Commands.Count)

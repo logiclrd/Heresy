@@ -62,6 +62,9 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 		_root = root ?? throw new ArgumentNullException(nameof(root));
 		_resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
 		_scripts = scripts;
+		_root.IsFlattenedSource = sourceId =>
+			_resolver.TryResolve(sourceId, out SongObject? definition)
+			&& definition is PatternDefinition or SequenceDefinition;
 		_timeline = new IncrementalPatternTimeline(root);
 		_timeline.RowBegan += ReportRowBegan;
 	}

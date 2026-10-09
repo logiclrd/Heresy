@@ -25,9 +25,29 @@ public sealed class SequencingDiagnosticLog
 	public const int MaximumIndividualMessages = 32;
 	public const string OutOfOrderNoteCode = "HRSEQ001";
 	public const string SuppressionCode = "HRSEQ002";
+	public const string IgnoredFlatteningEffectCode = "HRSEQ003";
+	public const string IgnoredFlatteningSuppressionCode = "HRSEQ004";
 
 	private readonly ConcurrentQueue<SequencingDiagnostic> _pending = new();
 	private long _droppedOutOfOrderNotes;
+	private long _ignoredFlatteningEffects;
+
+	public long IgnoredFlatteningEffects =>
+		Interlocked.Read(ref _ignoredFlatteningEffects);
+
+	public void ReportIgnoredFlatteningEffect(string effect, double row)
+	{
+		long count = Interlocked.Increment(ref _ignoredFlatteningEffects);
+		if (count <= MaximumIndividualMessages)
+			_pending.Enqueue(new SequencingDiagnostic(
+				IgnoredFlatteningEffectCode,
+				$"Ignored voice-specific effect {effect} on a flattened source start at row {row}.",
+				row));
+		else if (count == MaximumIndividualMessages + 1)
+			_pending.Enqueue(new SequencingDiagnostic(
+				IgnoredFlatteningSuppressionCode,
+				"Further flattened-source effect warnings are suppressed."));
+	}
 
 	public long DroppedOutOfOrderNotes => Interlocked.Read(ref _droppedOutOfOrderNotes);
 

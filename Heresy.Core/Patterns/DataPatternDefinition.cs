@@ -83,10 +83,18 @@ public sealed class DataPatternDefinition : PatternDefinition, IDeferredSourcePa
 				? explicitSourceId
 				: channelState.CurrentSourceId;
 
+			bool flatteningStart = cell.Note is StartPatternNote { Mixdown: false }
+				&& context.IsFlattenedSource?.Invoke(
+					!resolvedSourceId.IsNone
+						? resolvedSourceId
+						: channelState.CurrentSourceId) == true;
 			StartNoteCommand? tonePortamentoTarget = null;
 			bool hasTonePortamento = false;
 			foreach (PatternEffect effect in cell.Effects)
 			{
+				if (flatteningStart &&
+					FlattenedSourceEffectPolicy.IsVoiceSpecific(effect))
+					continue;
 				if (effect is TonePortamentoPatternEffect
 					or TonePortamentoVolumeSlidePatternEffect
 					or TrackerVolumeColumnPatternEffect
@@ -144,6 +152,13 @@ public sealed class DataPatternDefinition : PatternDefinition, IDeferredSourcePa
 			{
 				if (effect is EmptyTrackerPatternEffect)
 					continue;
+				if (flatteningStart
+					&& FlattenedSourceEffectPolicy.IsVoiceSpecific(effect))
+				{
+					context.Diagnostics.ReportIgnoredFlatteningEffect(
+						effect.GetType().Name, row);
+					continue;
+				}
 
 				NoteCommand command;
 				bool isGlobal;

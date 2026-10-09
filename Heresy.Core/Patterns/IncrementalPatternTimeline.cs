@@ -514,7 +514,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					preparation.SourceOrder++;
 					if (commands.Count == 0)
 						continue;
-					NoteEvent filtered = emit.Note with { Commands = commands.ToArray() };
+					NoteEvent filtered = FlattenedSourceEffectPolicy.Filter(
+						emit.Note with { Commands = commands.ToArray() }, Context);
+					if (filtered.Commands.Count == 0)
+						continue;
 					// Tracker Txx changes the shared row-boundary clock even
 					// when the same cell also contains a musical command.
 					// Split it into a timing request and the original

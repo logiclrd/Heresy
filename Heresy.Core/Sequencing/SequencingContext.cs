@@ -97,6 +97,8 @@ public sealed class SequencingContext
 	/// </summary>
 	public IFlattenedNoteSourceExpander? FlattenedSourceExpander { get; set; }
 
+	public Func<Heresy.Core.Objects.ObjectId, bool>? IsFlattenedSource { get; set; }
+
 	/// <summary>
 	/// Data patterns normally expose their already-resolved raw note events.
 	/// The song compiler enables deferred Source-column resolution so source
@@ -179,6 +181,7 @@ public sealed class SequencingContext
 			scopeId: childScopeId)
 			{
 				FlattenedSourceExpander = FlattenedSourceExpander,
+				IsFlattenedSource = IsFlattenedSource,
 				ResolvePatternSourcesAtRowTime = ResolvePatternSourcesAtRowTime,
 				TimelineOrigin = TimelineOrigin,
 				DeferredTempoEvents = DeferredTempoEvents,
