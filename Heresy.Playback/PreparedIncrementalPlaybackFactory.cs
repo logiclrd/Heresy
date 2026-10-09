@@ -180,7 +180,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 		PreparedRoslynIncrementalScriptSources scripts,
 		PlaybackSnapshotSoundResolver sounds,
 		IReadOnlyList<ObjectId> ancestry,
-		out Action disposePrivateMixdowns)
+		out Action disposePrivateMixdowns,
+		Func<PlaybackSession>? replaySessionFactory = null)
 	{
 		List<PreparedRecursiveMixdownSound> privateVoices = [];
 		Dictionary<int, TrackedMixdown> physicalVoices = [];
@@ -361,13 +362,14 @@ public sealed class PreparedIncrementalPlaybackFactory
 				try
 				{
 					childTimeline.AddRoot(start.SourceId);
-					PlaybackSession childSession = new(
+					PlaybackSession FreshChildSession() => new(
 						new RenderContext(_configuration),
 						new NoteScheduleBuilder().Freeze(), sounds);
+					PlaybackSession childSession = FreshChildSession();
 					PreparedIncrementalAudioSource childSource =
 						CreatePrivateMixdownAwareSource(childTimeline, childSession,
 							scripts, sounds, childAncestry,
-							out Action disposeDescendants);
+							out Action disposeDescendants, FreshChildSession);
 					PreparedRecursiveMixdownSound privateVoice = new(
 						childTimeline, childSession, childSource, parentFrame,
 						disposeDescendants);
@@ -405,6 +407,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 		return new PreparedIncrementalAudioSource(
 			timeline, session,
 			prepareEvent: Transform,
-			prepareNested: PrepareNested);
+			prepareNested: PrepareNested,
+			replaySessionFactory: replaySessionFactory);
 	}
 }
