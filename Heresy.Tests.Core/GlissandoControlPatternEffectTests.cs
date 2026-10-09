@@ -156,7 +156,7 @@ public sealed class GlissandoControlPatternEffectTests
 	}
 
 	[Test]
-	public void FlattenedChildSharesMappedGlissandoState()
+	public void FlattenedChildDoesNotInheritParentGlissandoState()
 	{
 		SequencingContext parent =
 			new(physicalChannelBase: 3);
@@ -184,7 +184,7 @@ public sealed class GlissandoControlPatternEffectTests
 		Assert.That(
 			((SetTonePortamentoCommand)output.Freeze()[0].Commands[0])
 				.Glissando,
-			Is.True);
+			Is.False);
 	}
 
 	[Test]
