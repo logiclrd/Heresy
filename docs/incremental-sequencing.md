@@ -1517,6 +1517,28 @@ started voices, stronger scheduler completeness/advanced-effect
 parity, and private multichannel mixdown clocks. Do not silently
 replace realtime or offline export with this opt-in path yet.
 
+
+## Thirty-second executable step: explicit prepared-frontier subtree cancellation
+
+The experimental `PreparedIncrementalAudioSource.Cancel(invocationId)` connects
+explicit recursive subtree cancellation to already-audible invocation-scoped
+virtual voices. Core collects all removed descendant invocation IDs; natural
+completion does not produce these cancellation notices. The adapter stages
+a cancellation marker at the playback head for each removed scope, and
+Render applies each marker at that exact frame using
+`PlaybackSession.CancelScopedVoices`. Existing anti-click decay applies;
+unrelated sibling scopes, even with identical local virtual IDs, remain
+audible.
+
+This first opt-in seam requires a producer/render synchronization boundary.
+Cancel refuses already-published lookahead beyond the playback head, or
+pending events at or beyond that frame. The producer must serialize Cancel
+against Render and resume preparation after cancellation. This deliberately
+does not purport to invalidate previously staged future work in an
+asynchronous lookahead buffer. Production realtime/export is unchanged;
+physical-parent Off/Cut/Fade/Continue and private multichannel mixdown
+remain independent parity gates.
+
 ## Proposed next interfaces and migration
 
 1. Extend the implemented **shared-tick recursive Pattern/Sequence
