@@ -6,11 +6,12 @@ using Heresy.Core.Timing;
 namespace Heresy.Core.Sequencing;
 
 /// <summary>
-/// Per-invocation sequencing context. Flattened child sequencers share State,
-/// mapped physical-channel state and physical-channel identity with their
-/// parent, offset by the channel on which they are flattened. Mixdown children
-/// begin a new local channel space with independent channel memory while
-/// inheriting the parent's current timing state.
+/// Per-invocation sequencing context. Flattened children share only the
+/// global tempo/speed clock with their parent: their logical Source and
+/// tracker-effect channel memory belongs to the child invocation, even
+/// though its note events are mapped onto physical playback host channels.
+/// Sequence order Patterns reuse this context and therefore retain memory.
+/// Private mixdown children also have independent channel memory and state.
 /// </summary>
 public sealed class SequencingContext
 {
@@ -25,7 +26,8 @@ public sealed class SequencingContext
 		SequencingChannelStateMap? channelStates = null,
 		TrackerMidiMacroConfiguration? trackerMidiMacros = null,
 		SequencingDiagnosticLog? diagnostics = null,
-		double gainMultiplier = 1.0)
+		double gainMultiplier = 1.0,
+		bool useLocalChannelMemory = false)
 	{
 		if (physicalChannelBase < 0)
 			throw new ArgumentOutOfRangeException(nameof(physicalChannelBase));
@@ -37,10 +39,13 @@ public sealed class SequencingContext
 		GainMultiplier = ValidateGain(gainMultiplier, nameof(gainMultiplier));
 		PhysicalChannelBase = physicalChannelBase;
 		ChannelStates = channelStates ?? new SequencingChannelStateMap();
+		_useLocalChannelMemory = useLocalChannelMemory;
 		TrackerMidiMacros = trackerMidiMacros
 			?? TrackerMidiMacroConfiguration.CreateImpulseTrackerDefault();
 		Diagnostics = diagnostics ?? new SequencingDiagnosticLog();
 	}
+
+	private readonly bool _useLocalChannelMemory;
 
 	public SequencingState State { get; }
 	public DeterministicRandom Random { get; }
@@ -103,8 +108,16 @@ public sealed class SequencingContext
 			? ChannelTarget.Physical(MapPhysicalChannel(target.PhysicalChannel))
 			: target;
 
+	/// <summary>The local index selects independent logical state for
+	/// flattened children, not a state indexed by its playback host.</summary>
 	public SequencingChannelState GetPhysicalChannelState(int localChannel)
-		=> ChannelStates.GetPhysical(MapPhysicalChannel(localChannel));
+		=> ChannelStates.GetPhysical(_useLocalChannelMemory
+			? CheckedLocalChannel(localChannel)
+			: MapPhysicalChannel(localChannel));
+
+	private static int CheckedLocalChannel(int channel)
+		=> channel >= 0 ? channel
+			: throw new ArgumentOutOfRangeException(nameof(channel));
 
 	public SequencingContext FlattenedChild(
 		double pitchMultiplier = 1.0,
@@ -121,11 +134,12 @@ public sealed class SequencingContext
 			PitchMultiplier * ValidateMultiplier(pitchMultiplier, nameof(pitchMultiplier)),
 			PlaybackSpeedMultiplier * ValidateMultiplier(playbackSpeedMultiplier, nameof(playbackSpeedMultiplier)),
 			checked(PhysicalChannelBase + physicalChannelOffset),
-			ChannelStates,
+			new SequencingChannelStateMap(),
 			TrackerMidiMacros,
 			Diagnostics,
 			ValidateGain(GainMultiplier * ValidateGain(gainMultiplier, nameof(gainMultiplier)),
-				nameof(gainMultiplier)))
+				nameof(gainMultiplier)),
+			useLocalChannelMemory: true)
 		{
 			FlattenedSourceExpander = FlattenedSourceExpander,
 			ResolvePatternSourcesAtRowTime = ResolvePatternSourcesAtRowTime,

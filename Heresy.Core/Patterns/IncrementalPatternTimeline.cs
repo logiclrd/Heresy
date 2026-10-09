@@ -974,8 +974,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 
 	/// <summary>
 	/// Starts a flattened child on this timeline, preserving the shared
-	/// musical clock and physical-channel memory while applying the
-	/// parent's channel offset and playback multipliers.
+	/// musical clock and host-channel mapping while isolating the child's
+	/// source/effect memory from parent and sibling invocations.
 	/// </summary>
 	public long AddFlattenedChild(
 		IIncrementalRawPatternNoteGenerator generator,
@@ -988,10 +988,9 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		ArgumentNullException.ThrowIfNull(parent);
-		if (!ReferenceEquals(_root.State, parent.State)
-			|| !ReferenceEquals(_root.ChannelStates, parent.ChannelStates))
+		if (!ReferenceEquals(_root.State, parent.State))
 			throw new ArgumentException(
-				"Parent must belong to the same shared timeline.", nameof(parent));
+				"Parent must belong to the same shared timeline clock.", nameof(parent));
 
 		SequencingContext child = parent.FlattenedChild(
 			pitchMultiplier, playbackSpeedMultiplier, physicalChannelOffset);
@@ -1001,7 +1000,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	/// <summary>
 	/// Starts an independent invocation at the current musical instant.
 	/// A flattened child may pass a separately mapped SequencingContext,
-	/// provided it shares the root's actual clock and channel-state map.
+	/// provided it shares the root's actual clock. Its logical channel
+	/// memory can be independently owned even when host channels overlap.
 	/// </summary>
 	public long Add(
 		IIncrementalRawPatternNoteGenerator generator,
@@ -1015,10 +1015,9 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		if (rowCount < 0 || startRow < 0)
 			throw new ArgumentOutOfRangeException(
 				rowCount < 0 ? nameof(rowCount) : nameof(startRow));
-		if (!ReferenceEquals(_root.State, context.State)
-			|| !ReferenceEquals(_root.ChannelStates, context.ChannelStates))
+		if (!ReferenceEquals(_root.State, context.State))
 			throw new ArgumentException(
-				"All merged cursors must share the same sequencing clock and channel memory.",
+				"All merged cursors must share the same sequencing clock.",
 				nameof(context));
 		if (context.FlattenedSourceExpander is not null)
 			throw new NotSupportedException(

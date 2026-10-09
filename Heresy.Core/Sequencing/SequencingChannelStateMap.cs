@@ -4,9 +4,10 @@ using System.Collections.Generic;
 namespace Heresy.Core.Sequencing;
 
 /// <summary>
-/// Sparse state table keyed by fully mapped physical channel number.
-/// Flattened sequencing contexts share this table. Mixdown contexts receive a
-/// new table because their local playback channels are independent.
+/// Sparse per-context tracker Source and effect memory.
+/// Root contexts may address it by physical channel number; flattened
+/// invocations address it by local logical-channel number and never share
+/// the map with parent or sibling invocations.
 /// </summary>
 public sealed class SequencingChannelStateMap
 {
