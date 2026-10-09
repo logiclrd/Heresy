@@ -29,6 +29,10 @@ public sealed class SequencingChannelState
 	/// </summary>
 	public ObjectId CurrentSourceId { get; set; } = ObjectId.None;
 
+	/// <summary>Logical channel's recalled note volume for source starts.
+	/// The live renderer is authoritative when a voice has a volume slide.</summary>
+	public double NoteVolume { get; set; } = 1.0;
+
 	/// <summary>
 	/// Applies conventional whole-byte tracker effect-memory semantics. A
 	/// non-zero parameter replaces the remembered value and is returned. Zero

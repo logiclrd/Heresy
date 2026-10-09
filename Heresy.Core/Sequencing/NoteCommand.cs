@@ -27,7 +27,16 @@ public sealed record StartNoteCommand(
 	double PlaybackSpeedMultiplier = 1.0,
 	bool Mixdown = false,
 	double? Volume = null,
-	double GainMultiplier = 1.0) : NoteCommand;
+	double GainMultiplier = 1.0) : NoteCommand
+{
+	/// <summary>Enclosing source-instigating logical channel volumes,
+	/// evaluated live in the renderer rather than captured from a host.</summary>
+	public IReadOnlyList<ParentVolumeChannel>? ParentOverallChannels { get; init; }
+}
+
+/// <summary>Update remembered volume on a flattening note that does not
+/// itself create a physical voice; do not change an older active voice.</summary>
+public sealed record RememberFlatteningNoteVolumeCommand(double Volume) : NoteCommand;
 
 /// <summary>
 /// Compiler-only data-pattern Source-column update. Resolved in row order

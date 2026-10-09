@@ -88,6 +88,11 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 		RowBegan?.Invoke(frame.SourceId, row, sequenceId, order, time);
 	}
 
+	/// <summary>Optional live playback source of remembered note volume.
+	/// The renderer includes note-volume slides and NNA, which cannot be
+	/// inferred from raw sequencing effect memory alone.</summary>
+	public Func<long, int, TimeSpan, double>? ReadRememberedNoteVolume { get; set; }
+
 	public TimeSpan Elapsed => _timeline.Elapsed;
 	public double Tick => _timeline.Tick;
 	public bool IsComplete => _frames.Count == 0 && _timeline.IsComplete;
@@ -326,6 +331,11 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 						List<NoteCommand> retained = [];
 						foreach (NoteCommand command in emit.Note.Commands)
 						{
+							if (command is SetNoteVolumeCommand noteVolume
+								&& emit.Note.Target.Kind == ChannelTargetKind.Physical)
+								frame.Context.GetPhysicalChannelState(
+									emit.Note.Target.PhysicalChannel -
+									frame.Context.PhysicalChannelBase).NoteVolume = noteVolume.Volume;
 							if (command is not StartNoteCommand start || start.Mixdown
 								|| !_resolver.TryResolve(start.SourceId, out SongObject? source)
 								|| source is not (PatternDefinition or SequenceDefinition))
@@ -347,10 +357,18 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 										|| !double.IsFinite(composedPitch))
 										throw new InvalidOperationException(
 											"Recursive pitch multiplier is not positive and finite.");
+									if (regularStart.Volume.HasValue
+										&& emit.Note.Target.Kind == ChannelTargetKind.Physical)
+										frame.Context.GetPhysicalChannelState(
+											emit.Note.Target.PhysicalChannel -
+											frame.Context.PhysicalChannelBase).NoteVolume =
+												regularStart.Volume.Value;
 									retained.Add(regularStart with
 									{
 										PitchMultiplier = composedPitch,
 										GainMultiplier = composedGain,
+										ParentOverallChannels =
+											frame.Context.ParentOverallChannels,
 									});
 								}
 								else
@@ -360,12 +378,30 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 							if (emit.Note.Target.Kind != ChannelTargetKind.Physical)
 								throw new NotSupportedException(
 									"Flattened child requires a physical parent channel.");
-							// Source volume is a gain on descendant voices, not
-							// a SetNoteVolume command on a shared physical channel.
-							// The child's own tracker note-volume memory remains
-							// independent and can still change via slides/effects.
-							double localGain = start.GainMultiplier
-								* (start.Volume ?? 1.0);
+							// Starting a flattened source is a *real start*
+							// for the caller's remembered volume, but does not
+							// create or control one individual playback voice.
+							// The child's logical channel memory is fresh and
+							// never absorbs the caller's host memory.
+							int localChannel = emit.Note.Target.PhysicalChannel -
+								frame.Context.PhysicalChannelBase;
+							double noteVolume = start.Volume
+								?? ReadRememberedNoteVolume?.Invoke(
+									frame.Context.PhysicalPlaybackOwner,
+									emit.Note.Target.PhysicalChannel, emit.Time)
+								?? frame.Context.GetPhysicalChannelState(
+									localChannel).NoteVolume;
+							if (noteVolume < 0 || !double.IsFinite(noteVolume))
+								throw new InvalidOperationException(
+									"Recalled flattened source volume is invalid.");
+							if (start.Volume.HasValue)
+							{
+								frame.Context.GetPhysicalChannelState(localChannel)
+									.NoteVolume = start.Volume.Value;
+								retained.Add(new RememberFlatteningNoteVolumeCommand(
+									start.Volume.Value));
+							}
+							double localGain = start.GainMultiplier * noteVolume;
 							if (localGain < 0.0 || !double.IsFinite(localGain))
 								throw new InvalidOperationException(
 									"Flattened source gain is negative or non-finite.");

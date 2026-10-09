@@ -1,9 +1,14 @@
 using System;
+using System.Collections.Generic;
 
 using Heresy.Core.Diagnostics;
 using Heresy.Core.Timing;
 
 namespace Heresy.Core.Sequencing;
+
+/// <summary>One logical channel whose live overall-volume automation
+/// contributes to a flattened descendant's amplitude.</summary>
+public readonly record struct ParentVolumeChannel(long Owner, int Host);
 
 /// <summary>
 /// Per-invocation sequencing context. Flattened children share only the
@@ -28,7 +33,8 @@ public sealed class SequencingContext
 		SequencingDiagnosticLog? diagnostics = null,
 		double gainMultiplier = 1.0,
 		bool useLocalChannelMemory = false,
-		long physicalPlaybackOwner = 0)
+		long physicalPlaybackOwner = 0,
+		IReadOnlyList<ParentVolumeChannel>? parentOverallChannels = null)
 	{
 		if (physicalChannelBase < 0)
 			throw new ArgumentOutOfRangeException(nameof(physicalChannelBase));
@@ -44,6 +50,7 @@ public sealed class SequencingContext
 		ChannelStates = channelStates ?? new SequencingChannelStateMap();
 		_useLocalChannelMemory = useLocalChannelMemory;
 		PhysicalPlaybackOwner = physicalPlaybackOwner;
+		ParentOverallChannels = parentOverallChannels ?? Array.Empty<ParentVolumeChannel>();
 		TrackerMidiMacros = trackerMidiMacros
 			?? TrackerMidiMacroConfiguration.CreateImpulseTrackerDefault();
 		Diagnostics = diagnostics ?? new SequencingDiagnosticLog();
@@ -56,6 +63,9 @@ public sealed class SequencingContext
 	public SequencingChannelStateMap ChannelStates { get; }
 	/// <summary>Scoped renderer voice-state namespace for flattened channels.</summary>
 	public long PhysicalPlaybackOwner { get; }
+	/// <summary>Live overall volume of instigating channels on the path
+	/// from the root to this flattened invocation.</summary>
+	public IReadOnlyList<ParentVolumeChannel> ParentOverallChannels { get; }
 	public TrackerMidiMacroConfiguration TrackerMidiMacros { get; }
 
 	/// <summary>
@@ -135,6 +145,12 @@ public sealed class SequencingContext
 		if (physicalChannelOffset < 0)
 			throw new ArgumentOutOfRangeException(nameof(physicalChannelOffset));
 
+		ParentVolumeChannel[] parents = new ParentVolumeChannel[
+			ParentOverallChannels.Count + 1];
+		for (int i = 0; i < ParentOverallChannels.Count; i++)
+			parents[i] = ParentOverallChannels[i];
+		parents[^1] = new ParentVolumeChannel(PhysicalPlaybackOwner,
+			MapPhysicalChannel(physicalChannelOffset));
 		return new SequencingContext(
 			State,
 			Random.CreateChild(),
@@ -147,7 +163,8 @@ public sealed class SequencingContext
 			ValidateGain(GainMultiplier * ValidateGain(gainMultiplier, nameof(gainMultiplier)),
 				nameof(gainMultiplier)),
 			useLocalChannelMemory: true,
-			physicalPlaybackOwner: physicalPlaybackOwner)
+			physicalPlaybackOwner: physicalPlaybackOwner,
+			parentOverallChannels: parents)
 		{
 			FlattenedSourceExpander = FlattenedSourceExpander,
 			ResolvePatternSourcesAtRowTime = ResolvePatternSourcesAtRowTime,
