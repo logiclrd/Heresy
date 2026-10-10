@@ -42,6 +42,31 @@
   hints for costly ReplayRequired Oxx/Qxy seeks remain advisory.
   See [source-seek hints](source-seek-hints.md).
 
+- **Independently modulated child notes are now compatible with private
+  Oxx/Qxy seeking.** The shared-tick merger accepts Hxx normal vibrato,
+  Uxx fine vibrato, Kxx vibrato+volume slide and S3x waveform changes,
+  forwarding them to the established `PatternNoteProcessor` memory and
+  row-end cleanup logic. `RecursiveNativeSeekBoundaryTests` compare
+  a vibrato-modulated child Sequence at source frame 256 against a
+  full direct render through private and Instrument-selected sounds,
+  then verify Q03 rebuilds the child's modulation phase after O01.
+  Incremental/eager command-stream parity covers those four families.
+
+- **Remaining confirmed limitation:** A pitch slide or pitch envelope
+  attached to a *private recursive parent's own note* changes that
+  parent voice's `SoundState.PitchTrajectory`, but the private mixdown
+  currently plays its child PCM at the initial pitch without applying
+  later trajectory changes to the underlying child voices. Running
+  `RecursiveNativeSeekBoundaryTests.PrivateNotePitchSlideShouldModulateActiveChildVoicesWithoutChangingClock`
+  without NUnit's `Explicit` marker produces a reproducible red test
+  for both a private Pattern note and an Instrument-selected private
+  Pattern note (CI run 38038804155). The two cases are retained as
+  explicit expectations until pitch modulation can be propagated into
+  individual child voices without re-timing their tracker notes or
+  naively resampling the polyphonic mixdown. Do not conflate this
+  private-voice limitation with the intentionally suppressed
+  voice-specific effects of a **flattened** instigating note.
+
 ---
 
 **The sections below are preserved only as the chronological account
