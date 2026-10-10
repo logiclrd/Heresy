@@ -320,6 +320,57 @@ public sealed class RecursiveNativeSeekBoundaryTests
 		Assert.That(offsetPcm.Any(v => v != 0f), Is.True);
 	}
 
+	[TestCase(false)]
+	[TestCase(true)]
+	public void QxyAfterOxxReconstructsChildPitchModulationWithoutRememberingOffset(
+		bool viaInstrument)
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId child = AddPattern(document, sample, rows: 5);
+		((DataPatternDefinition)document.Objects[child])
+			.Grid.GetOrCreateCell(0, 0).Effects.Add(
+				new VibratoPatternEffect(0x48));
+		ObjectId sequence = AddSequence(document, child);
+		ObjectId source = viaInstrument
+			? AddInstrument(document, sequence) : sequence;
+		ObjectId parent = AddPattern(document, source, rows: 5,
+			mixdown: !viaInstrument);
+		DataPatternDefinition root = (DataPatternDefinition)document.Objects[parent];
+		root.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new SampleOffsetPatternEffect(1));
+		root.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new RetriggerPatternEffect(0x01));
+		PreparedIncrementalPlaybackFactory factory = new(Mono());
+		using PreparedIncrementalPlaybackPlan withOffset =
+			factory.Create(document, parent);
+		using PreparedIncrementalPlaybackPlan direct =
+			factory.Create(document, sequence);
+		float[] earlier = new float[120];
+		withOffset.Source.Render(earlier.Length, earlier);
+		PlaybackVoice outer = withOffset.Session.GetChannelState(0).CurrentVoice!;
+		PlaybackSession old = ChildSession(outer);
+		float[] afterRetrigger = new float[31];
+		withOffset.Source.Render(afterRetrigger.Length, afterRetrigger);
+		PlaybackSession fresh = ChildSession(outer);
+		direct.Source.Render(31, new float[31]);
+		PlaybackVoice replayedSample = fresh.GetChannelState(0).CurrentVoice!;
+		PlaybackVoice referenceSample = direct.Session.GetChannelState(0).CurrentVoice!;
+		Assert.Multiple(() =>
+		{
+			Assert.That(fresh, Is.Not.SameAs(old));
+			Assert.That(fresh.NextFrame, Is.EqualTo(31L));
+			Assert.That(outer.SoundState.PlaybackOriginFrame, Is.EqualTo(120L));
+			Assert.That(outer.SoundState.GetType().GetProperty(
+				"SourceFrameOffset")!.GetValue(outer.SoundState), Is.EqualTo(0L));
+			Assert.That(replayedSample.SoundState.PitchTrajectory.GetPosition(30),
+				Is.EqualTo(referenceSample.SoundState.PitchTrajectory.GetPosition(30))
+					.Within(1e-8),
+				"Qxy must reconstruct child vibrato's integrated phase after Oxx.");
+			Assert.That(fresh.GetChannelState(0).CurrentVoice?.StartFrame,
+					Is.EqualTo(0L));
+		});
+	}
+
 	private static PlaybackSession ChildSession(PlaybackVoice parent)
 		=> (PlaybackSession)parent.Sound.GetType()
 			.GetProperty("Session", BindingFlags.Instance | BindingFlags.Public)!
