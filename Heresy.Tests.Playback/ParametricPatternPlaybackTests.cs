@@ -95,6 +95,73 @@ public sealed class ParametricPatternPlaybackTests
         });
     }
 
+    [TestCase(false, 0.5)]
+    [TestCase(true, 0.375)]
+    public void CurrentVoiceNoteVolumeModulationEndsOrCommits(bool commit, double after)
+    {
+        SongDocument song = SongWithTone(out ObjectId root);
+        DataPatternDefinition pattern = (DataPatternDefinition)song.Objects[root];
+        pattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
+            new ParametricPatternEffect(ParametricEffectParameter.NoteVolume,
+                TimeSpan.FromMilliseconds(100), "-0.25", commit));
+        PreparedIncrementalPlaybackFactory factory = new(Mono());
+        using PreparedIncrementalPlaybackPlan one = factory.Create(song, root);
+        using PreparedIncrementalPlaybackPlan many = factory.Create(song, root);
+        float[] reference = new float[145], split = new float[145];
+        one.Source.Render(reference.Length, reference);
+        for (int i = 0; i < split.Length;)
+        {
+            int n = Math.Min(3, split.Length - i);
+            many.Source.Render(n, split.AsSpan(i, n));
+            i += n;
+        }
+        Assert.Multiple(() =>
+        {
+            Assert.That(split, Is.EqualTo(reference).Within(1e-6f));
+            Assert.That(reference[40], Is.EqualTo(0.375f).Within(1e-4f));
+            Assert.That(reference[100], Is.EqualTo((float)after).Within(1e-4f));
+        });
+    }
+
+    [Test]
+    public void NativePitchExpressionChangesSamplerPitchAndExpiresAtWallDeadline()
+    {
+        const double oneOctaveLinearUnits =
+            Heresy.Render.Playback.TrackerVibrato.LinearSlideUnitsPerOctave;
+        SongDocument song = new();
+        ObjectId sampleId = song.AllocateObjectId();
+        song.Add(SampleDefinition.CreateImported(
+            sampleId, "Ramp", "ramp.wav", RampWave()));
+        ObjectId firstId = song.AllocateObjectId();
+        DataPatternDefinition first = new(firstId, "Pitch")
+            { RowCount = 10, ChannelCount = 1 };
+        first.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(sampleId);
+        first.Grid[0, 0]!.Effects.Add(new ParametricPatternEffect(
+            ParametricEffectParameter.PitchLinearUnits,
+            TimeSpan.FromMilliseconds(100),
+            oneOctaveLinearUnits.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            commitOnExpire: false));
+        song.Add(first);
+        ObjectId secondId = song.AllocateObjectId();
+        DataPatternDefinition baseline = new(secondId, "No pitch")
+            { RowCount = 10, ChannelCount = 1 };
+        baseline.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(sampleId);
+        song.Add(baseline);
+        PreparedIncrementalPlaybackFactory factory = new(Mono());
+        using PreparedIncrementalPlaybackPlan changed = factory.Create(song, firstId);
+        using PreparedIncrementalPlaybackPlan plain = factory.Create(song, secondId);
+        float[] actual = new float[130], expected = new float[130];
+        changed.Source.Render(actual.Length, actual);
+        plain.Source.Render(expected.Length, expected);
+        Assert.Multiple(() =>
+        {
+            Assert.That(actual[15], Is.EqualTo(expected[30]).Within(1e-4f));
+            Assert.That(actual[80], Is.GreaterThan(expected[80]));
+            Assert.That(actual[120], Is.EqualTo(expected[120]).Within(1e-4f),
+                "Transient pitch modification must not commit on expiry.");
+        });
+    }
+
     [Test]
     public void ExpressionsAndPolicySurviveJsonAndSnapshotAndDoNotAffectLiveSong()
     {
@@ -161,6 +228,24 @@ public sealed class ParametricPatternPlaybackTests
         song.Add(pattern);
         return song;
     }
+    private static byte[] RampWave()
+    {
+        const int frames = 400;
+        using MemoryStream stream = new();
+        using BinaryWriter writer = new(stream, Encoding.ASCII, leaveOpen: true);
+        writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+        writer.Write(36 + frames * 2);
+        writer.Write(Encoding.ASCII.GetBytes("WAVEfmt "));
+        writer.Write(16); writer.Write((ushort)1); writer.Write((ushort)1);
+        writer.Write(1000); writer.Write(2000);
+        writer.Write((ushort)2); writer.Write((ushort)16);
+        writer.Write(Encoding.ASCII.GetBytes("data"));
+        writer.Write(frames * 2);
+        for (int i = 0; i < frames; i++) writer.Write((short)(i * 70));
+        writer.Flush();
+        return stream.ToArray();
+    }
+
     private static byte[] Wave()
     {
         const int frames = 3000;
