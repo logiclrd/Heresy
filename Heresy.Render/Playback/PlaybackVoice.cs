@@ -32,6 +32,8 @@ public sealed class PlaybackVoice
 		private readonly EnvelopePlaybackState? _pitchEnvelope;
 		private readonly long _segmentAbsoluteStartFrame;
 		private readonly int _sampleRate;
+		private readonly Func<long, double>? _inheritedPitch;
+		private readonly double _inheritedPitchAtStart;
 
 		public OperatorPitchCurve(
 			PitchCurve baseCurve,
@@ -39,7 +41,9 @@ public sealed class PlaybackVoice
 			TrackerTickClock tickClock,
 			EnvelopePlaybackState? pitchEnvelope,
 			long segmentAbsoluteStartFrame,
-			int sampleRate)
+			int sampleRate,
+			Func<long, double>? inheritedPitch,
+			double inheritedPitchAtStart)
 		{
 			_baseCurve = baseCurve
 				?? throw new ArgumentNullException(nameof(baseCurve));
@@ -58,6 +62,8 @@ public sealed class PlaybackVoice
 
 			_segmentAbsoluteStartFrame = segmentAbsoluteStartFrame;
 			_sampleRate = sampleRate;
+			_inheritedPitch = inheritedPitch;
+			_inheritedPitchAtStart = inheritedPitchAtStart;
 		}
 
 		public override double GetMultiplier(long frameOffset)
@@ -98,6 +104,9 @@ public sealed class PlaybackVoice
 					linearUnits
 						/ TrackerVibrato.LinearSlideUnitsPerOctave
 						+ envelopeOctaves);
+			if (_inheritedPitch is not null)
+				multiplier *= _inheritedPitch(absoluteFrame)
+					/ _inheritedPitchAtStart;
 			if (!(multiplier > 0.0)
 				|| double.IsNaN(multiplier)
 				|| double.IsInfinity(multiplier))
@@ -174,6 +183,8 @@ public sealed class PlaybackVoice
 	private readonly int _sampleRate;
 	private readonly PlaybackOperatorCollection _operators = new();
 	private readonly List<PitchOperatorBinding> _pitchOperators = [];
+	private readonly Func<long, double>? _inheritedPitch;
+	private readonly double _inheritedPitchAtStart;
 
 	private byte _vibratoPhase;
 	private long _vibratoRandomAnchorIndex = -1;
@@ -218,7 +229,9 @@ public sealed class PlaybackVoice
 		double sourceGainMultiplier = 1.0,
 		long originPhysicalPlaybackOwner = 0,
 		IReadOnlyList<PlaybackChannelState>? enclosingVolumeChannels = null,
-		IReadOnlyList<FlattenedSourceVolume>? enclosingSourceVolumes = null)
+		IReadOnlyList<FlattenedSourceVolume>? enclosingSourceVolumes = null,
+		Func<long, double>? inheritedPitch = null,
+		double inheritedPitchAtStart = 1.0)
 	{
 		Sound = sound ?? throw new ArgumentNullException(nameof(sound));
 		SoundState = soundState ?? throw new ArgumentNullException(nameof(soundState));
@@ -235,6 +248,11 @@ public sealed class PlaybackVoice
 		if (sourceGainMultiplier < 0.0 || !double.IsFinite(sourceGainMultiplier))
 			throw new ArgumentOutOfRangeException(nameof(sourceGainMultiplier));
 
+		if (!(inheritedPitchAtStart > 0.0)
+			|| !double.IsFinite(inheritedPitchAtStart))
+			throw new ArgumentOutOfRangeException(nameof(inheritedPitchAtStart));
+		_inheritedPitch = inheritedPitch;
+		_inheritedPitchAtStart = inheritedPitchAtStart;
 		SourceGainMultiplier = sourceGainMultiplier;
 		EnclosingVolumeChannels = enclosingVolumeChannels
 			?? Array.Empty<PlaybackChannelState>();
@@ -266,7 +284,7 @@ public sealed class PlaybackVoice
 			sampleRate,
 			filterParameters);
 
-		if (_pitchEnvelope is not null)
+		if (_pitchEnvelope is not null || _inheritedPitch is not null)
 			RecomposePitchTrajectory(0);
 	}
 
@@ -1333,7 +1351,9 @@ public sealed class PlaybackVoice
 				_tickClock,
 				_pitchEnvelope,
 				checked(StartFrame + relativeFrame),
-				_sampleRate));
+				_sampleRate,
+				_inheritedPitch,
+				_inheritedPitchAtStart));
 	}
 
 	private void CommitVibratoPhaseThrough(long absoluteFrame)
