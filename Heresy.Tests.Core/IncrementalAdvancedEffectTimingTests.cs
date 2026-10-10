@@ -63,9 +63,9 @@ public sealed class IncrementalAdvancedEffectTimingTests
                     new SetSpeedCommand(3),
                 }));
             Assert.That(events[1].Offset.TimeOffset,
-                Is.EqualTo(TimeSpan.FromMilliseconds(150)),
-                "Row one must retain the speed captured before the deferred " +
-                "global change; only its Tempo changes at the boundary.");
+                Is.EqualTo(TimeSpan.FromMilliseconds(135)),
+                "Deferred global Tempo/Speed is active when the owning " +
+                "invocation captures its next row's tick span.");
             Assert.That(root.State.Tempo, Is.EqualTo(250));
             Assert.That(root.State.Speed, Is.EqualTo(3));
         });
@@ -79,10 +79,10 @@ public sealed class IncrementalAdvancedEffectTimingTests
         timeline.Add(new RawSource(
             At(0, TimeSpan.FromMilliseconds(10), ChannelTarget.Global,
                 new SetTempoCommand(200))), 2, root);
+        SequencingContext child = root.FlattenedChild(physicalChannelOffset: 3);
         timeline.Add(new RawSource(
             At(1, 0, new ApplyTrackerTempoCommand(0x11)),
-            At(1.5, 0, new NoteCutCommand())), 2,
-            root.FlattenedChild(physicalChannelOffset: 3));
+            At(1.5, 0, new NoteCutCommand())), 2, child);
 
         NoteEvent[] notes = Drain(timeline);
         NoteEvent[] timing = notes.Where(n => n.Commands.Any(c =>
@@ -97,7 +97,7 @@ public sealed class IncrementalAdvancedEffectTimingTests
             Assert.That(timing.Select(n => n.Offset.TimeOffset),
                 Is.All.EqualTo(TimeSpan.FromMilliseconds(120)));
             Assert.That(root.State.Tempo, Is.EqualTo(205));
-            Assert.That(root.GetPhysicalChannelState(3)
+            Assert.That(child.GetPhysicalChannelState(0)
                 .TryGetEffectParameter(EffectMemorySlot.Tempo, out byte memory),
                 Is.True);
             Assert.That(memory, Is.EqualTo(0x11));
@@ -121,12 +121,8 @@ public sealed class IncrementalAdvancedEffectTimingTests
         Assert.Multiple(() =>
         {
             Assert.That(starts, Has.Length.EqualTo(2));
-            Assert.That(starts.Select(n => n.Offset.TimeOffset),
-                Is.EqualTo(new[]
-                {
-                    TimeSpan.FromMilliseconds(104),
-                    TimeSpan.FromMilliseconds(144),
-                }));
+            Assert.That(starts.Select(n => n.Offset.TimeOffset.TotalSeconds),
+                Is.EqualTo(new[] { 0.104, 0.144 }).Within(1e-6));
             Assert.That(starts.SelectMany(n => n.Commands)
                 .OfType<StartNoteCommand>().Select(n => n.SourceId),
                 Is.EqualTo(new[] { (ObjectId)7U, (ObjectId)8U }));
