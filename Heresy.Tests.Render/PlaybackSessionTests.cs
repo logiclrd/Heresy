@@ -239,6 +239,109 @@ public sealed class PlaybackSessionTests
 	}
 
 	[Test]
+	public void FlattenedS76UsesNewNoteFadeDurationForEveryDescendantVoice()
+	{
+		ObjectId id = (ObjectId)50U;
+		PlaybackSession session = Session(1000, Schedule(),
+			new TestResolver((id, false, new ConfiguredSustainSound(
+				noteFadeDuration: TimeSpan.FromMilliseconds(200),
+				newNoteFadeDuration: TimeSpan.FromMilliseconds(40)))));
+		session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+			[new BeginFlattenedSourceVolumeCommand(1, 0.5)]);
+		StartNoteCommand child = new(id)
+		{
+			ParentSourceScopes = new long[] { 1 },
+		};
+		session.ApplyScopedEvent(10, ChannelTarget.Physical(1),
+			[child], physicalPlaybackOwner: 1);
+		session.ApplyScopedEvent(10, ChannelTarget.Physical(2),
+			[child, new SetCurrentVoiceDisplacementActionCommand(
+				NoteDisplacementAction.Continue)], physicalPlaybackOwner: 1);
+		session.ApplyScopedEvent(10, ChannelTarget.Physical(2),
+			[child], physicalPlaybackOwner: 1);
+		session.ApplyScopedEvent(10, ChannelTarget.Virtual(7), [child]);
+		session.Render(0, 1, new float[1]);
+		Assert.That(session.VirtualVoices, Has.Count.EqualTo(1));
+
+		session.ApplyFlattenedScopeAction(1, NoteDisplacementAction.Fade);
+		Assert.That(session.GetChannelState(1, 1).CurrentVoice!
+			.FadeEndFrameExclusive, Is.EqualTo(41L));
+		Assert.That(session.GetChannelState(2, 1).CurrentVoice!
+			.FadeEndFrameExclusive, Is.EqualTo(41L));
+		Assert.That(session.VirtualVoices[0].FadeEndFrameExclusive,
+			Is.EqualTo(41L));
+		float[] after = new float[65];
+		session.Render(1, after.Length, after);
+		Assert.That(after[0], Is.EqualTo(2f).Within(1e-6f));
+		Assert.That(after[20], Is.EqualTo(1f).Within(1e-5f));
+		Assert.That(after[40], Is.Zero.Within(1e-6f));
+		Assert.That(after[64], Is.Zero.Within(1e-6f));
+	}
+
+	[Test]
+	public void ReleasedFlattenedDescendantRetainsLiveAncestryAfterProducerRetirement()
+	{
+		ObjectId id = (ObjectId)51U;
+		PlaybackSession session = Session(1000, Schedule(),
+			new TestResolver((id, false,
+				new ReleasingTestSound(NewNotePolicy.Cut, releaseFrames: 80))));
+		session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+			[new BeginFlattenedSourceVolumeCommand(1, 0.5)]);
+		session.ApplyScopedEvent(10, ChannelTarget.Physical(1),
+			[new StartNoteCommand(id)
+			{
+				ParentSourceScopes = new long[] { 1 },
+				ParentOverallChannels = new[]
+				{
+					new ParentVolumeChannel(0, 0),
+				},
+			}], physicalPlaybackOwner: 1);
+		session.ApplyScopedEvent(0, ChannelTarget.Physical(2),
+			[new StartNoteCommand(id)]);
+		float[] first = new float[1];
+		session.Render(0, 1, first);
+		Assert.That(first[0], Is.EqualTo(1.5f).Within(1e-6f));
+
+		session.ApplyFlattenedScopeAction(1, NoteDisplacementAction.Off);
+		session.RetirePhysicalScope(1);
+		Assert.That(session.RetainedFlattenedSourceControllerCount, Is.Zero);
+		session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+			[new SetNoteVolumeCommand(0.4),
+				new SetOverallChannelVolumeCommand(0.5)]);
+		float[] released = new float[1];
+		session.Render(1, 1, released);
+		Assert.That(released[0], Is.EqualTo(1.2f).Within(1e-6f),
+			"Releasing child 1 * source 0.4 * overall 0.5 plus sibling 1.");
+
+		// A new note takes over the instigating channel. Its edits must
+		// not retroactively change the released descendant's controller.
+		session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+			[new StartNoteCommand(id, Volume: 0.75)]);
+		float[] replaced = new float[1];
+		session.Render(2, 1, replaced);
+		Assert.That(replaced[0], Is.EqualTo(2.2f).Within(1e-6f),
+			"Only the new note inherits the new 0.75 volume.");
+	}
+
+	private sealed class ConfiguredSustainSound(
+		TimeSpan noteFadeDuration, TimeSpan newNoteFadeDuration) : ISound
+	{
+		public NoteConfigurationSnapshot SnapshotNoteConfiguration()
+			=> new(NewNotePolicy.Cut,
+				noteFadeDuration: noteFadeDuration,
+				newNoteFadeDuration: newNoteFadeDuration);
+
+		public SoundState CreateState() => new TestSoundState();
+
+		public long? GetEndFrameExclusive(RenderContext context,
+			SoundState state) => null;
+
+		public void Render(RenderContext context, SoundState state,
+			long startFrame, int frameCount, Span<float> destination)
+			=> destination.Fill(1f);
+	}
+
+	[Test]
 	public void StartNoteRendersResolvedSound()
 	{
 		ObjectId sourceId = (ObjectId)10U;
