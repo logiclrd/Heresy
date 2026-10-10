@@ -72,6 +72,63 @@ separately in [todo.md](todo.md). Historical milestone sections below
 may still describe this cross-rate behavior as unsupported; those
 statements no longer characterize the current production code.
 
+## Direct scripted physical playback controls (October 10, 2026)
+
+Streaming and eager Pattern scripts now share the following **physical
+channel** helpers, in addition to existing `Note`, `Off`, `Cut`,
+`Tempo` and `Speed`:
+
+| Helper | Resolved command | Value domain |
+| --- | --- | --- |
+| `Seek(row, channel, playbackSeconds, timeOffsetSeconds = 0)` | `SetPlaybackOffsetCommand` | nonnegative source playback **seconds**, not Oxx native source frames |
+| `Pan(row, channel, x, y = 0, z = 0, timeOffsetSeconds = 0)` | `SetSpatialPositionCommand` | finite 3D scene position |
+| `Surround(row, channel, enabled, timeOffsetSeconds = 0)` | `SetSurroundCommand` | true/false |
+| `Filter(row, channel, cutoff, resonance, timeOffsetSeconds = 0)` | `SetResonantFilterCommand` | normalized 0–1 parameters |
+| `FilterCutoff(row, channel, cutoff, timeOffsetSeconds = 0)` | `SetResonantFilterCutoffCommand` | normalized 0–1 cutoff |
+| `FilterResonance(row, channel, resonance, timeOffsetSeconds = 0)` | `SetResonantFilterResonanceCommand` | normalized 0–1 resonance |
+
+These helpers invoke existing renderer controls; none synthesizes a
+new source type, changes Tempo, or reinterprets native Oxx offsets.
+The script runtime validates the channel, numerical domains, row
+and optional fixed wall-time offset **before appending** a command.
+`ScriptCompiler` includes all six helpers in both the restricted
+direct-statement validation and the streaming yield rewriter:
+each call appends one event, suspends the coroutine and never runs
+the following user statement until the consumer resumes it. Direct
+physical controls, including positive fixed-wall delays, pass through
+the shared-tick merger only at their actual execution deadlines.
+Negative wall-time offsets remain unsupported.
+
+Example:
+
+```csharp
+Note(0, 0, _O(17));
+Pan(0.5, 0, -0.5);
+Filter(1, 0, 0.25, 0.4);
+FilterCutoff(1.5, 0, 0.6);
+Seek(2, 0, 0.05);
+Surround(2.5, 0, true);
+```
+
+The channel's filter parameters and spatial/surround state persist
+according to the normal renderer rules. In particular, enabling
+surround recenters its channel, and later absolute panning disables
+surround. A direct `Seek` adjusts the current voice's playback-time
+offset, whereas tracker Oxx uses native source-frame seeking with
+the established replay/reconstruction policy.
+
+`SetPlaybackFrequencyCommand` remains intentionally rejected:
+the production `PlaybackSession` has **no handler** for an absolute
+frequency assignment. In particular, it cannot safely be treated
+as an arbitrary relative pitch multiplier without defining which
+source's fundamental frequency it is measured against. A script
+`Frequency` helper has therefore *not* been introduced. The
+`IncrementalDirectControlScriptTests` and
+`DirectScriptPlaybackControlTests` verify generated commands,
+lazy validation, Tempo-retimed fixed-wall deadlines, negative
+and unsupported command guards, production PCM and block-size
+invariance.
+
 ## S1x, SAx and absolute-panning shared-tick parity (October 10, 2026)
 
 The lazy incremental cursor now accepts the last eager-supported
