@@ -3,6 +3,8 @@ using System.IO;
 using System.Buffers.Binary;
 using System.Text;
 using System.Threading.Tasks;
+using System.Threading;
+using System.Collections.Generic;
 
 using AwesomeAssertions;
 
@@ -23,6 +25,75 @@ namespace Heresy.Tests.UserInterface;
 [TestFixture]
 public sealed class SongExportServiceTests
 {
+	[Test]
+	public async Task CancellationAfterFirstPcmBlockPreservesDestinationAndDeletesTemporaryFile()
+	{
+		SongDocument document = CreateSong();
+		SongExportService service = new(new OfflineSongRenderPlanFactory(
+			RenderConfiguration.Stereo(1000)));
+		string path = Path.Combine(Path.GetTempPath(),
+			$"heresy-cancel-atomic-{Guid.NewGuid():N}.wav");
+		await File.WriteAllTextAsync(path, "preexisting audio");
+		using CancellationTokenSource canceled = new();
+		List<OfflineRenderProgress> observed = [];
+		CallbackProgress progress = new(update =>
+		{
+			observed.Add(update);
+			if (update.Phase == OfflineRenderPhase.LogicalBody)
+				canceled.Cancel();
+		});
+		try
+		{
+			Assert.ThrowsAsync<OperationCanceledException>(async () =>
+				await service.ExportAsync(document, path,
+					OfflineAudioFileFormat.Wave, progress, canceled.Token));
+			Assert.That(observed, Is.Not.Empty);
+			Assert.That(observed[0].LogicalFramesRendered,
+				Is.GreaterThan(0));
+			Assert.That(await File.ReadAllTextAsync(path),
+				Is.EqualTo("preexisting audio"));
+			Assert.That(Directory.GetFiles(Path.GetTempPath(),
+				$".{Path.GetFileName(path)}.*.heresy-render.tmp"),
+				Is.Empty, "Cancellation must leave no partial output files.");
+		}
+		finally
+		{
+			if (File.Exists(path))
+				File.Delete(path);
+		}
+	}
+
+	[Test]
+	public async Task CancellationBeforeExportBeginsNeverReplacesDestination()
+	{
+		SongExportService service = new(new OfflineSongRenderPlanFactory(
+			RenderConfiguration.Stereo(1000)));
+		string path = Path.Combine(Path.GetTempPath(),
+			$"heresy-precancel-{Guid.NewGuid():N}.wav");
+		await File.WriteAllTextAsync(path, "original");
+		using CancellationTokenSource canceled = new();
+		canceled.Cancel();
+		try
+		{
+			Assert.ThrowsAsync<OperationCanceledException>(async () =>
+				await service.ExportAsync(CreateSong(), path,
+					OfflineAudioFileFormat.Wave,
+					cancellationToken: canceled.Token));
+			Assert.That(await File.ReadAllTextAsync(path),
+				Is.EqualTo("original"));
+		}
+		finally
+		{
+			File.Delete(path);
+		}
+	}
+
+	private sealed class CallbackProgress(Action<OfflineRenderProgress> callback)
+		: IProgress<OfflineRenderProgress>
+	{
+		public void Report(OfflineRenderProgress progress) => callback(progress);
+	}
+
 	[Test]
 	public async Task ExportConfigurationChangesApplyOnlyToNewFilesAndPreserveWavHeaders()
 	{
