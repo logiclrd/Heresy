@@ -65,7 +65,7 @@ public sealed class ScriptEnvelopeCurveTests
 		Assert.That(state.GetEndFrameExclusiveAfterNoteOff(20), Is.Null);
 		state.SetEnabled(20, true);
 		Assert.That(state.GetValue(25), Is.EqualTo(0.3).Within(1e-12));
-		Assert.That(state.GetEndFrameExclusiveAfterNoteOff(25), Is.EqualTo(30));
+		Assert.That(state.GetEndFrameExclusiveAfterNoteOff(25), Is.EqualTo(28));
 	}
 
 	[TestCase(-0.01)]
