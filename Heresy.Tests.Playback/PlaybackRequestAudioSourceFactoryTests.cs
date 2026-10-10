@@ -27,6 +27,33 @@ namespace Heresy.Tests.Playback;
 public sealed class PlaybackRequestAudioSourceFactoryTests
 {
 	[Test]
+	public void RealtimeFactoryCapturesFreshOutputConfigurationForEachNewRequest()
+	{
+		SongDocument document = new();
+		ObjectId id = document.AllocateObjectId();
+		document.Add(new DataPatternDefinition(id, "Empty")
+		{
+			RowCount = 1, ChannelCount = 1,
+		});
+		RenderConfiguration selection = MonoConfiguration(1000);
+		PlaybackRequestAudioSourceFactory factory = new(() => selection);
+		IAudioOutputSource first =
+			factory.Create(PatternPlaybackRequest.Create(document, id));
+		Assert.That(first.Format.SampleRate, Is.EqualTo(1000));
+		Assert.That(first.Format.ChannelCount, Is.EqualTo(1));
+
+		selection = RenderConfiguration.Stereo(48000);
+		IAudioOutputSource second =
+			factory.Create(PatternPlaybackRequest.Create(document, id));
+		Assert.That(second.Format.SampleRate, Is.EqualTo(48000));
+		Assert.That(second.Format.ChannelCount, Is.EqualTo(2));
+		Assert.That(first.Format.SampleRate, Is.EqualTo(1000),
+			"The factory cannot mutate already-prepared PCM source formats.");
+		(first as IDisposable)?.Dispose();
+		(second as IDisposable)?.Dispose();
+	}
+
+	[Test]
 	public void ScriptedPatternWarningsReachRequestScopedPlaybackDiagnosticReport()
 	{
 		SongDocument document = new();
