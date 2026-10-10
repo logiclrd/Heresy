@@ -21,6 +21,90 @@ namespace Heresy.Tests.Render;
 public sealed class PlaybackSessionTests
 {
 	[Test]
+	public void FinalOutputFiltersUseIndependentSpeakerStatesAndPersistAcrossBlocks()
+	{
+		ObjectId source = (ObjectId)10U;
+		double cutoffHz = 1000.0 * Math.Log(2.0) / (2.0 * Math.PI);
+		RenderConfiguration config = new(1000,
+		[
+			new OutputChannelConfiguration(new Vector3(-1, 0, 0),
+				positionalImportance: 0, filterType: OutputFilterType.LowPass,
+				cutoffHz: cutoffHz),
+			new OutputChannelConfiguration(new Vector3(1, 0, 0),
+				positionalImportance: 0, filterType: OutputFilterType.HighPass,
+				cutoffHz: cutoffHz),
+		]);
+
+		PlaybackSession Create() => new(new RenderContext(config),
+			Schedule(Event(TimeSpan.Zero, 0, new StartNoteCommand(source))),
+			new TestResolver((source, false, new SpeakerImpulseSound())));
+
+		float[] whole = new float[12];
+		Create().Render(0, 6, whole);
+		for (int frame = 0; frame < 6; frame++)
+		{
+			double low = Math.Pow(0.5, frame + 1);
+			double high = frame == 0 ? 0.5 : -low;
+			Assert.That(whole[frame * 2],
+				Is.EqualTo(low).Within(1e-6f), $"left frame {frame}");
+			Assert.That(whole[frame * 2 + 1],
+				Is.EqualTo(high).Within(1e-6f), $"right frame {frame}");
+		}
+
+		PlaybackSession chunked = Create();
+		float[] pieces = new float[12];
+		chunked.Render(0, 1, pieces.AsSpan(0, 2));
+		chunked.Render(1, 2, pieces.AsSpan(2, 4));
+		chunked.Render(3, 3, pieces.AsSpan(6, 6));
+		Assert.That(pieces, Is.EqualTo(whole),
+			"Per-speaker filter history must not reset at PCM block boundaries.");
+	}
+
+	[Test]
+	public void UnfilteredOutputAndGlobalMixPreserveOriginalSpeakerFeed()
+	{
+		ObjectId source = (ObjectId)10U;
+		RenderConfiguration config = new(1000,
+		[
+			new OutputChannelConfiguration(new Vector3(-1, 0, 0),
+				positionalImportance: 0),
+			new OutputChannelConfiguration(new Vector3(1, 0, 0),
+				positionalImportance: 0),
+		]);
+		PlaybackSession session = new(new RenderContext(config),
+			Schedule(
+				Event(TimeSpan.Zero, 0, new StartNoteCommand(source)),
+				Event(TimeSpan.Zero, 1, new StartNoteCommand(source))),
+			new TestResolver((source, false, new SpeakerImpulseSound())));
+		float[] data = new float[8];
+		session.Render(0, 4, data);
+		Assert.That(data, Is.EqualTo(new float[]
+			{ 2f, 2f, 0f, 0f, 0f, 0f, 0f, 0f }),
+			"The filter-disabled render path must remain bit-exact.");
+	}
+
+	private sealed class SpeakerImpulseSound : ISound
+	{
+		public NoteConfigurationSnapshot SnapshotNoteConfiguration()
+			=> NoteConfigurationSnapshot.Default;
+
+		public SoundState CreateState() => new TestSoundState();
+
+		public long? GetEndFrameExclusive(RenderContext context,
+			SoundState state) => 8;
+
+		public void Render(RenderContext context, SoundState state,
+			long startFrame, int frameCount, Span<float> destination)
+		{
+			int channels = context.Configuration.OutputChannelCount;
+			for (int frame = 0; frame < frameCount; frame++)
+				if (startFrame + frame == 0)
+					for (int output = 0; output < channels; output++)
+						destination[frame * channels + output] += 1f;
+		}
+	}
+
+	[Test]
 	public void FlattenedScopeCutIncludesVirtualAndDisplacedNnaVoicesButNotHostSiblings()
 	{
 		ObjectId sampleId = (ObjectId)10U;
