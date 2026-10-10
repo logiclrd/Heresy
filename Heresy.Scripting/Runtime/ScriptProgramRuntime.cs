@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Numerics;
 
 using Heresy.Core.Diagnostics;
 using Heresy.Core.Objects;
@@ -229,6 +230,98 @@ public abstract class PatternScriptProgram
 			row,
 			ChannelTarget.Global,
 			new SetSpeedCommand(ticksPerRow));
+	}
+
+	/// <summary>Move the existing physical-channel voice to an explicit
+	/// source playback-time offset. Unlike tracker Oxx, this is a wall-time
+	/// offset and follows the renderer's established seek semantics.</summary>
+	protected void Seek(
+		double row, int channel, double playbackSeconds,
+		double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		ValidateChannel(channel);
+		if (!double.IsFinite(playbackSeconds)
+			|| playbackSeconds < 0
+			|| playbackSeconds > TimeSpan.MaxValue.TotalSeconds)
+			throw new ArgumentOutOfRangeException(nameof(playbackSeconds));
+		Append(row, ChannelTarget.Physical(channel),
+			new SetPlaybackOffsetCommand(TimeSpan.FromSeconds(playbackSeconds)),
+			timeOffsetSeconds);
+	}
+
+	/// <summary>Set physical-channel spatial position. These are absolute
+	/// normalized scene coordinates, not IT's 0..64 panning column.</summary>
+	protected void Pan(
+		double row, int channel, double x, double y = 0, double z = 0,
+		double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		ValidateChannel(channel);
+		if (!double.IsFinite(x) || !double.IsFinite(y)
+			|| !double.IsFinite(z)
+			|| Math.Abs(x) > float.MaxValue
+			|| Math.Abs(y) > float.MaxValue
+			|| Math.Abs(z) > float.MaxValue)
+			throw new ArgumentOutOfRangeException(nameof(x));
+		Append(row, ChannelTarget.Physical(channel),
+			new SetSpatialPositionCommand(
+				new Vector3((float)x, (float)y, (float)z)),
+			timeOffsetSeconds);
+	}
+
+	protected void Surround(
+		double row, int channel, bool enabled,
+		double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		ValidateChannel(channel);
+		Append(row, ChannelTarget.Physical(channel),
+			new SetSurroundCommand(enabled), timeOffsetSeconds);
+	}
+
+	/// <summary>IT-style filter values normalized to the interval [0,1].
+	/// The physical channel retains these values for subsequent voices.</summary>
+	protected void Filter(
+		double row, int channel, double cutoff, double resonance,
+		double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		ValidateChannel(channel);
+		ValidateUnitInterval(cutoff, nameof(cutoff));
+		ValidateUnitInterval(resonance, nameof(resonance));
+		Append(row, ChannelTarget.Physical(channel),
+			new SetResonantFilterCommand(cutoff, resonance),
+			timeOffsetSeconds);
+	}
+
+	protected void FilterCutoff(
+		double row, int channel, double cutoff,
+		double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		ValidateChannel(channel);
+		ValidateUnitInterval(cutoff, nameof(cutoff));
+		Append(row, ChannelTarget.Physical(channel),
+			new SetResonantFilterCutoffCommand(cutoff), timeOffsetSeconds);
+	}
+
+	protected void FilterResonance(
+		double row, int channel, double resonance,
+		double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		ValidateChannel(channel);
+		ValidateUnitInterval(resonance, nameof(resonance));
+		Append(row, ChannelTarget.Physical(channel),
+			new SetResonantFilterResonanceCommand(resonance),
+			timeOffsetSeconds);
+	}
+
+	private static void ValidateUnitInterval(double value, string name)
+	{
+		if (!double.IsFinite(value) || value < 0 || value > 1)
+			throw new ArgumentOutOfRangeException(name);
 	}
 
 	private void Append(
