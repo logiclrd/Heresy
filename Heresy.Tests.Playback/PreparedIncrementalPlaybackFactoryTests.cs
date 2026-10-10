@@ -28,6 +28,74 @@ namespace Heresy.Tests.Playback;
 public sealed class PreparedIncrementalPlaybackFactoryTests
 {
 	[Test]
+	public void RecursiveOxxReportsActualReplayRequiredCapabilityThroughPlanDiagnostics()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(
+			sample, "Sample", "sample.wav", Wave(8192)));
+		ObjectId privateId = document.AllocateObjectId();
+		DataPatternDefinition child = new(privateId, "Private")
+			{ RowCount = 1, ChannelCount = 1 };
+		child.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sample);
+		document.Add(child);
+		ObjectId rootId = document.AllocateObjectId();
+		DataPatternDefinition root = new(rootId, "Root")
+			{ RowCount = 1, ChannelCount = 1 };
+		PatternCell start = root.Grid.GetOrCreateCell(0, 0);
+		start.Note = new StartPatternNote(privateId, mixdown: true);
+		start.Effects.Add(new SampleOffsetPatternEffect(1));
+		document.Add(root);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, rootId);
+		plan.Source.Render(1, new float[1]);
+		var warnings = plan.SequencingContext.Diagnostics.Drain();
+		Assert.That(warnings, Has.Length.EqualTo(1));
+		Assert.That(warnings[0].Code,
+			Is.EqualTo(Heresy.Core.Diagnostics.SequencingDiagnosticLog.ExpensiveSourceSeekCode));
+		Assert.That(warnings[0].Message, Does.Contain("Oxx"));
+		Assert.That(warnings[0].Message, Does.Contain("256"));
+	}
+
+	[Test]
+	public void NestedPrivateMixdownOxxUsesSharedRootDiagnosticLog()
+	{
+		SongDocument doc = new();
+		ObjectId sampleId = doc.AllocateObjectId();
+		doc.Add(SampleDefinition.CreateImported(
+			sampleId, "Sample", "sample.wav", Wave(8192)));
+		ObjectId leafId = doc.AllocateObjectId();
+		DataPatternDefinition leaf = new(leafId, "Leaf")
+			{ RowCount = 1, ChannelCount = 1 };
+		leaf.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(sampleId);
+		doc.Add(leaf);
+		ObjectId middleId = doc.AllocateObjectId();
+		DataPatternDefinition middle = new(middleId, "Middle")
+			{ RowCount = 1, ChannelCount = 1 };
+		PatternCell middleNote = middle.Grid.GetOrCreateCell(0, 0);
+		middleNote.Note = new StartPatternNote(leafId, mixdown: true);
+		middleNote.Effects.Add(new SampleOffsetPatternEffect(1));
+		doc.Add(middle);
+		ObjectId rootId = doc.AllocateObjectId();
+		DataPatternDefinition root = new(rootId, "Root")
+			{ RowCount = 1, ChannelCount = 1 };
+		root.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(middleId, mixdown: true);
+		doc.Add(root);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000)).Create(doc, rootId);
+		plan.Source.Render(1, new float[1]);
+		Assert.That(plan.SequencingContext.Diagnostics.Drain()
+			.Any(d => d.Code ==
+				Heresy.Core.Diagnostics.SequencingDiagnosticLog.ExpensiveSourceSeekCode),
+			Is.True, "Nested private contexts must share their root reporting sink.");
+	}
+
+	[Test]
 	public void PrivateRecursiveMixdownIsFilteredOnlyOnceAtFinalSpeakerOutput()
 	{
 		SongDocument document = new();

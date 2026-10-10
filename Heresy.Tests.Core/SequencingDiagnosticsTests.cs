@@ -71,6 +71,31 @@ public sealed class SequencingDiagnosticsTests
 	}
 
 	[Test]
+	public void ReplayRequiredSeekHintsAreCappedAcrossDrainsWithoutChangingOtherCategories()
+	{
+		SequencingDiagnosticLog log = new();
+		for (int n = 0; n < 16; n++)
+			log.ReportExpensiveSourceSeek("Oxx native offset", 256);
+		Assert.That(log.Drain(), Has.Length.EqualTo(16));
+
+		for (int n = 0; n < 100; n++)
+			log.ReportExpensiveSourceSeek("Qxy retrigger", 0);
+		var remainder = log.Drain();
+		Assert.That(remainder.Count(x => x.Code
+			== SequencingDiagnosticLog.ExpensiveSourceSeekCode),
+			Is.EqualTo(16));
+		Assert.That(remainder.Count(x => x.Code
+			== SequencingDiagnosticLog.ExpensiveSourceSeekSuppressionCode),
+			Is.EqualTo(1));
+		Assert.That(log.ExpensiveSourceSeeks, Is.EqualTo(116));
+		log.ReportExpensiveSourceSeek("Oxx native offset", 512);
+		Assert.That(log.Drain(), Is.Empty);
+		log.ReportIgnoredFlatteningEffect("Arpeggio", 1);
+		Assert.That(log.Drain().Single().Code,
+			Is.EqualTo(SequencingDiagnosticLog.IgnoredFlatteningEffectCode));
+	}
+
+	[Test]
 	public void ConcurrentProducerAndConsumerPreserveBoundedDiagnostics()
 	{
 		SequencingDiagnosticLog log = new();
