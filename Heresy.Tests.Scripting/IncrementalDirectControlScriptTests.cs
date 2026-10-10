@@ -139,7 +139,7 @@ public sealed class IncrementalDirectControlScriptTests
     }
 
     [Test]
-    public void DirectFrequencyIsStillRejectedUntilRendererSemanticsExist()
+    public void DirectFrequencyIsAcceptedByIncrementalPhysicalControlScheduler()
     {
         SequencingContext context = new();
         using IncrementalPatternTimeline timeline = new(context);
@@ -147,7 +147,10 @@ public sealed class IncrementalDirectControlScriptTests
             new Heresy.Core.Timing.MusicalTime(TimeSpan.Zero, 0),
             ChannelTarget.Physical(0),
             [new SetPlaybackFrequencyCommand(440)])), 1, context);
-        Assert.Throws<NotSupportedException>(() => Drain(timeline));
+        NoteEvent[] emitted = Drain(timeline);
+        Assert.That(emitted, Has.Length.EqualTo(1));
+        Assert.That(emitted[0].Commands.Single(),
+            Is.EqualTo(new SetPlaybackFrequencyCommand(440)));
     }
 
     private static NoteEvent[] Drain(IncrementalPatternTimeline timeline)
