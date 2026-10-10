@@ -373,10 +373,6 @@ public sealed class RecursiveNativeSeekBoundaryTests
 
 	[TestCase(false)]
 	[TestCase(true)]
-	[Explicit("Known gap: a private recursive note captures its initial pitch, " +
-		"but its later parent PitchTrajectory modulation is not propagated to " +
-		"child voice frequencies. Enable this counterexample after defining " +
-		"the dynamic per-child pitch propagation contract.")]
 	public void PrivateNotePitchSlideShouldModulateActiveChildVoicesWithoutChangingClock(
 		bool viaInstrument)
 	{
