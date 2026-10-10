@@ -58,6 +58,44 @@ body and tail caps remain in force for looping/infinite scripts. The FLAC/MP3 si
 sink now supports selectable integer precision and explicit surround
 speaker-channel metadata. The buffered realtime architecture is unchanged.
 
+## Realtime/offline PCM parity regression (implemented)
+
+`PlaybackExportPcmParityTests` exercise the **production** realtime
+`PlaybackRequestAudioSourceFactory` and offline
+`OfflineSongRenderPlanFactory` + `OfflinePlaybackRenderer`, with the
+same song objects, sample-data provider, and immutable
+`RenderConfiguration`. The test copies float PCM at the
+`IAudioFileSink` boundary **before WAV/FLAC/MP3 quantization**, and
+compares it sample-for-sample against realtime's worker-source
+`IAudioOutputSource.Render` output. Realtime and offline render in
+different PCM block sizes (including single-frame blocks), checking
+chunk invariance as well as parity. The test mutates the original
+document after constructing both sources; neither already-frozen
+source may follow those edits.
+
+The eight cases cover mono, stereo, 5.1 and 7.1 layouts with
+independent per-speaker LowPass / HighPass filters, direct sample
+notes, flattened nested Patterns, simultaneous private mixdowns,
+instrument-selected recursive sounds, and scripted child notes with
+a Tempo change. Every output channel is compared for the entire
+naturally completed logical arrangement, and a non-silent assertion
+prevents empty tests from falsely proving parity. Both paths
+continue to rely on the same recursive coroutine and deterministic
+sample-frame mapping: no eager schedule/journal or new audio path
+was introduced.
+
+The comparison deliberately stops at the **logical-body end**:
+offline export invokes `EndInput`, cuts indefinite voices as
+specified, and renders envelope/filter tails into the file, whereas
+realtime playback does not use that export-only termination policy.
+Encoding quantization and physical SDL callback/ring-buffer timing
+are separately tested contracts, and the latter is not compared
+with an actual audio device by this headless suite.
+
+Advanced compatibility testing of unbounded **scripted Patterns**,
+mixed tracker flow/time changes and export body/tail caps remains
+tracked separately in [todo.md](todo.md).
+
 ## Export encoding and format-specific constraints
 
 The **File → Render Audio** save picker offers FLAC (default), MP3,
