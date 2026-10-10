@@ -174,7 +174,7 @@ public sealed class InstrumentEditorControl : UserControl
 			entryIndex = new TextBox
 			{
 				Text = _model.EntryIndex?.ToString(CultureInfo.CurrentCulture) ?? "",
-				Watermark = "Index",
+				PlaceholderText = "Index",
 				Width = 60,
 			};
 			At(grid, entryIndex, 0);
