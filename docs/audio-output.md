@@ -77,29 +77,51 @@ export captures the format synchronously before starting the
 background file render, so changing UI preferences does not change
 the format of an already running file.
 
-Default output is 48 kHz stereo. Settings apply to the **application
-session**, not to the song document; persistence between launches
-is a separate potential enhancement. The user-configurable sample
-rate is limited to 8–384 kHz and active LowPass/HighPass cutoffs must
-lie strictly below Nyquist. Filter fields with type None are ignored.
+Default output is 48 kHz stereo on first launch or if local settings
+cannot be loaded. Settings apply to the **application**, not to the
+song document. `AudioOutputPreference` now stores a version-1 JSON
+snapshot under `LocalApplicationData/Heresy/audio-output.v1.json`.
+At desktop startup `App` injects that preference into
+`AudioOutputSettings` **before** realtime transport or offline export
+factories are constructed. A subsequent successful dialog Apply
+first stops the old SDL session, publishes the new immutable
+configuration, then attempts to save it. Dialog Cancel, aborted
+stop, and startup loading do not rewrite the preference.
+
+The format preserves the sample rate and ordered 1/2/6/8 speaker
+feeds, with each speaker's X/Y/Z position, positional importance,
+filter type and active cutoff. Unknown versions, missing fields,
+invalid layouts, nonfinite/out-of-range parameters and malformed
+JSON are rejected as a **whole snapshot** (never partly restored).
+The user-configurable sample rate is limited to 8–384 kHz and
+active LowPass/HighPass cutoffs must lie strictly below Nyquist.
+Filter fields with type None are ignored. Writes use a unique
+temporary sibling and atomic replacement; missing/unreadable/
+unwritable settings are nonfatal. A failed disk write leaves the
+new in-memory selection available for the next render and does
+not change previously captured playback/export configurations.
 
 Tests cover mono/stereo/5.1/7.1 preset ordering, speaker positions
 and filter selections, configuration snapshots across consecutive
 realtime and offline requests, 5.1/7.1 renderer speaker isolation
 with per-output filtering, and actual WAV header sample rate/channel
 counts from two concurrent background exports using successive
-configurations.
+configurations. `AudioOutputPreferenceTests` additionally exercise
+persistence of every speaker field and ordering, first-run defaults,
+invalid versions/layouts/rates/filters/cutoffs/nonfinite coordinates,
+atomic temporary cleanup, unavailable storage, and immutable snapshot
+isolation across preference changes.
 
 ## Still open
 
-The engine can now render the selected layout through both realtime
-and export and the UI exposes the full setting surface, but actual
-hardware-speaker mapping on a range of SDL output devices and
-encoder-specific 5.1/7.1 support still need device/integration
-coverage. The UI does not yet persist its per-session output settings,
-and no automatic LFE bass management is implemented. Those concerns,
-along with selectable WAV bit depths, remain separate from the
-completed renderer and user-configuration path in [todo.md](todo.md).
+The engine renders the selected layout through realtime and export,
+and the UI now persists the selected output across desktop launches.
+Actual hardware-speaker mapping on different SDL devices and
+encoder-specific 5.1/7.1 support still require device/integration
+coverage. No automatic LFE bass management is implemented.
+Those concerns, along with selectable WAV bit depths, remain separate
+from the completed renderer, configuration and preference path in
+[todo.md](todo.md).
 
 ## Realtime playback health
 
