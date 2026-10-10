@@ -8,6 +8,7 @@ using System.Collections.Generic;
 
 using AwesomeAssertions;
 
+using Heresy.Core.Diagnostics;
 using Heresy.Core.Objects;
 using Heresy.Core.Instruments;
 using Heresy.Core.Patterns;
@@ -25,6 +26,124 @@ namespace Heresy.Tests.UserInterface;
 [TestFixture]
 public sealed class SongExportServiceTests
 {
+	[Test]
+	public async Task OfflineExportStreamsBoundedFlattenedWarningsIncludingSuppressionNotice()
+	{
+		SongDocument document = CreateFlatteningWarningSong(48);
+		SongExportService service = new(new OfflineSongRenderPlanFactory(
+			RenderConfiguration.Stereo(1000)));
+		string path = Path.Combine(Path.GetTempPath(),
+			$"heresy-export-warning-cap-{Guid.NewGuid():N}.wav");
+		List<SequencingDiagnostic> diagnostics = [];
+		List<OfflineRenderProgress> progress = [];
+		try
+		{
+			await service.ExportAsync(document, path,
+				OfflineAudioFileFormat.Wave,
+				new CallbackProgress(progress.Add),
+				diagnostics: new DiagnosticProgress(batch =>
+					diagnostics.AddRange(batch)));
+			Assert.That(File.Exists(path), Is.True);
+			Assert.That(progress.Count, Is.GreaterThan(1));
+			Assert.That(diagnostics.Count(w =>
+				w.Code == SequencingDiagnosticLog.IgnoredFlatteningEffectCode),
+				Is.EqualTo(SequencingDiagnosticLog.MaximumIndividualMessages));
+			Assert.That(diagnostics.Count(w =>
+				w.Code == SequencingDiagnosticLog.IgnoredFlatteningSuppressionCode),
+				Is.EqualTo(1));
+			Assert.That(diagnostics, Has.Count.EqualTo(
+				SequencingDiagnosticLog.MaximumIndividualMessages + 1),
+				"Offline export must share the nested-context warning cap and "
+				+ "never repeat messages between block drains and final cleanup.");
+		}
+		finally
+		{
+			if (File.Exists(path)) File.Delete(path);
+		}
+	}
+
+	[Test]
+	public async Task CanceledExportForwardsPreviouslyGeneratedWarningsAndKeepsDestination()
+	{
+		SongDocument document = CreateFlatteningWarningSong(48);
+		SongExportService service = new(new OfflineSongRenderPlanFactory(
+			RenderConfiguration.Stereo(1000)));
+		string path = Path.Combine(Path.GetTempPath(),
+			$"heresy-export-warning-cancel-{Guid.NewGuid():N}.wav");
+		await File.WriteAllTextAsync(path, "keep original");
+		using CancellationTokenSource canceled = new();
+		List<SequencingDiagnostic> warnings = [];
+		List<OfflineRenderProgress> blocks = [];
+		try
+		{
+			Assert.ThrowsAsync<OperationCanceledException>(async () =>
+				await service.ExportAsync(document, path,
+					OfflineAudioFileFormat.Wave,
+					new CallbackProgress(update =>
+					{
+						blocks.Add(update);
+						canceled.Cancel();
+					}),
+					canceled.Token,
+					new DiagnosticProgress(batch => warnings.AddRange(batch))));
+			Assert.That(blocks, Has.Count.EqualTo(1));
+			Assert.That(warnings, Is.Not.Empty,
+				"An interrupted export must not discard warnings "
+				+ "generated while rendering the last completed block.");
+			Assert.That(warnings[0].Code,
+				Is.EqualTo(SequencingDiagnosticLog.IgnoredFlatteningEffectCode));
+			Assert.That(await File.ReadAllTextAsync(path),
+				Is.EqualTo("keep original"));
+			Assert.That(Directory.GetFiles(Path.GetTempPath(),
+				$".{Path.GetFileName(path)}.*.heresy-render.tmp"),
+				Is.Empty);
+		}
+		finally
+		{
+			if (File.Exists(path)) File.Delete(path);
+		}
+	}
+
+	private static SongDocument CreateFlatteningWarningSong(int rows)
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(
+			sampleId, "PCM", "memory.wav", OneFrameWave()));
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Nested")
+		{
+			RowCount = 3, ChannelCount = 2,
+		};
+		child.Grid.GetOrCreateCell(0, 1).Note =
+			new StartPatternNote(sampleId);
+		document.Add(child);
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Ignored voice effect")
+		{
+			RowCount = rows, ChannelCount = 1,
+		};
+		for (int row = 0; row < rows; row++)
+		{
+			PatternCell call = parent.Grid.GetOrCreateCell(row, 0);
+			call.Note = new StartPatternNote(childId);
+			call.Effects.Add(new TonePortamentoVolumeSlidePatternEffect(0x34));
+		}
+		document.Add(parent);
+		ObjectId rootId = document.AllocateObjectId();
+		DataSequenceDefinition root = new(rootId, "Song");
+		root.Entries.Add(new SequenceEntry(parentId));
+		document.Add(root);
+		document.RootSequenceId = rootId;
+		return document;
+	}
+
+	private sealed class DiagnosticProgress(Action<SequencingDiagnostic[]> callback)
+		: IProgress<SequencingDiagnostic[]>
+	{
+		public void Report(SequencingDiagnostic[] batch) => callback(batch);
+	}
+
 	[Test]
 	public async Task CancellationAfterFirstPcmBlockPreservesDestinationAndDeletesTemporaryFile()
 	{
