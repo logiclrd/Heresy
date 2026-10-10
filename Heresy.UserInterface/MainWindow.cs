@@ -585,19 +585,110 @@ public sealed class MainWindow : Window
 			// Picker-first: canceling the picker never prompts the user to
 			// save. Once a usable path exists, the same guard as New/Exit
 			// protects the current document before the load begins.
-			await DocumentOpenWorkflow.TryOpenAsync(
+			List<string> recoveryFolders = [];
+			HashSet<string> attemptedPaths = new(
+				OperatingSystem.IsWindows()
+					? StringComparer.OrdinalIgnoreCase
+					: StringComparer.Ordinal);
+			await DocumentOpenWorkflow.TryOpenWithRecoveryAsync(
 				SelectDocumentPathAsync,
 				ConfirmCanReplaceDocumentAsync,
-				path =>
+				async path =>
 				{
-					_workspace.Open(path);
-					RefreshDocumentView($"Opened {_workspace.DisplayName}");
+					await _workspace.OpenWithRecoveryAsync(
+						path,
+						request => LocateRecoveredSampleAsync(
+							request, recoveryFolders, attemptedPaths));
+					RefreshDocumentView(
+						$"Opened {_workspace.DisplayName}"
+						+ (_workspace.IsModified
+							? " (recovered samples; save to preserve them)"
+							: ""));
 				});
+		}
+		catch (OperationCanceledException)
+		{
+			SetStatus("Open canceled; the current document was preserved.");
 		}
 		catch (Exception ex)
 		{
-			// TODO: offer an asset-recovery flow for missing .hm.json files.
 			SetStatus($"Open failed: {ex.Message}");
+		}
+	}
+
+	private async Task<string?> LocateRecoveredSampleAsync(
+		SampleAssetRecoveryRequest request,
+		List<string> searchFolders,
+		HashSet<string> attemptedPaths)
+	{
+		foreach (string folder in searchFolders)
+		{
+			string? match = await Task.Run(
+				() => SampleAssetRecoveryFolderSearch.FindMatch(request, folder));
+			if (match is not null && attemptedPaths.Add(match))
+				return match;
+		}
+
+		while (true)
+		{
+			SampleAssetRecoveryChoice choice =
+				await new SampleAssetRecoveryDialog(request)
+					.ShowDialog<SampleAssetRecoveryChoice>(this);
+			if (choice == SampleAssetRecoveryChoice.Cancel)
+				return null;
+
+			if (choice == SampleAssetRecoveryChoice.ChooseFile)
+			{
+				IReadOnlyList<IStorageFile> choices =
+					await StorageProvider.OpenFilePickerAsync(
+						new FilePickerOpenOptions
+						{
+							Title = $"Locate sample: {request.SampleName}",
+							AllowMultiple = false,
+							FileTypeFilter = new[] { SampleFileType, FilePickerFileTypes.All },
+						});
+				if (choices.Count == 0)
+					continue;
+				string? filePath = choices[0].TryGetLocalPath();
+				if (filePath is null)
+				{
+					SetStatus("The chosen sample has no local filesystem path.");
+					continue;
+				}
+				attemptedPaths.Add(filePath);
+				return filePath;
+			}
+
+			if (!StorageProvider.CanPickFolder)
+			{
+				SetStatus("This platform does not provide a folder picker.");
+				continue;
+			}
+
+			IReadOnlyList<IStorageFolder> folders =
+				await StorageProvider.OpenFolderPickerAsync(
+					new FolderPickerOpenOptions
+					{
+						Title = "Search for missing Heresy samples",
+						AllowMultiple = false,
+					});
+			if (folders.Count == 0)
+				continue;
+			string? folderPath = folders[0].TryGetLocalPath();
+			if (folderPath is null)
+			{
+				SetStatus("The selected folder has no local filesystem path.");
+				continue;
+			}
+			if (!searchFolders.Contains(folderPath))
+				searchFolders.Add(folderPath);
+			string? recovered = await Task.Run(
+				() => SampleAssetRecoveryFolderSearch.FindMatch(request, folderPath));
+			if (recovered is not null && attemptedPaths.Add(recovered))
+				return recovered;
+			SetStatus(
+				"No SHA-256-verified matching sample was found in that folder. "
+				+ "Choose the file directly if it was renamed or has no stored hash.");
 		}
 	}
 

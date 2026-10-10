@@ -30,4 +30,29 @@ public static class DocumentOpenWorkflow
 		openDocument(path);
 		return true;
 	}
+	/// <summary>
+	/// Async load variant for recoverable multi-step document opens.
+	/// The picker and unsaved guard precede the staged asynchronous load.
+	/// Exceptions (including recovery cancellation) propagate to the caller.
+	/// </summary>
+	public static async Task<bool> TryOpenWithRecoveryAsync(
+		Func<Task<string?>> chooseFileAsync,
+		Func<Task<bool>> confirmCanReplaceAsync,
+		Func<string, Task> openDocumentAsync)
+	{
+		ArgumentNullException.ThrowIfNull(chooseFileAsync);
+		ArgumentNullException.ThrowIfNull(confirmCanReplaceAsync);
+		ArgumentNullException.ThrowIfNull(openDocumentAsync);
+
+		string? path = await chooseFileAsync();
+		if (string.IsNullOrWhiteSpace(path))
+			return false;
+
+		if (!await confirmCanReplaceAsync())
+			return false;
+
+		await openDocumentAsync(path);
+		return true;
+	}
+
 }

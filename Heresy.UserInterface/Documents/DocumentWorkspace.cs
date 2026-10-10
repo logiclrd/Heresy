@@ -1,5 +1,9 @@
 using System;
 using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+
+using Heresy.Core.Samples;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Persistence;
@@ -60,6 +64,37 @@ public sealed class DocumentWorkspace
 		FilePath = fullPath;
 		JsonPathMode = mode;
 		_savedDocumentRevision = document.DocumentRevision;
+	}
+
+
+	/// <summary>
+	/// Stages all sample decoding/recovery before publishing the new document.
+	/// Recovered encoded bytes are pending song-owned assets; mark the open
+	/// document dirty because the original manifest still names missing files.
+	/// </summary>
+	public async Task OpenWithRecoveryAsync(
+		string path,
+		Func<SampleAssetRecoveryRequest, Task<string?>> locateAsync)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(path);
+		ArgumentNullException.ThrowIfNull(locateAsync);
+
+		string fullPath = Path.GetFullPath(path);
+		SongDocument document =
+			await SongDocumentStorage.LoadWithRecoveryAsync(fullPath, locateAsync);
+		JsonAssetPathMode? mode = SongDocumentStorage.IsJsonPath(fullPath)
+			? SongDocumentStorage.DetectJsonPathMode(fullPath)
+			: null;
+
+		bool recovered = document.Objects.Values
+			.OfType<SampleDefinition>()
+			.Any(sample => sample.PendingAsset is not null);
+		Document = document;
+		FilePath = fullPath;
+		JsonPathMode = mode;
+		_savedDocumentRevision = document.DocumentRevision;
+		if (recovered)
+			document.MarkChanged(affectsAudio: false);
 	}
 
 	public void Save()
