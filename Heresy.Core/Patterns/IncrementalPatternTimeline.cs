@@ -840,6 +840,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						? command is StartNoteCommand or NoteOffCommand
 							or NoteCutCommand or SetNoteVolumeCommand
 							or SetSourceFrameOffsetCommand
+							or SetCurrentVoiceDisplacementActionCommand
+							or ApplyPastNoteActionCommand
 						: command is StartNoteCommand or NoteOffCommand
 						or NoteCutCommand or SelectPatternSourceCommand
 						or SetPitchSlideCommand or SetNoteVolumeSlideCommand
