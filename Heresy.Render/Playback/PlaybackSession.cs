@@ -766,6 +766,10 @@ public sealed class PlaybackSession
 			channel.CancelNativeParametric(invocationId);
 			channel.CurrentVoice?.CancelNativeParametric(
 				invocationId, _nextFrame);
+			// A different invocation may still own the current physical voice.
+			// Remove canceled operator contributions from its live channel state
+			// immediately, even when no further continuous operator remains.
+			channel.SynchronizeContinuousState(_nextFrame);
 		}
 		foreach (PlaybackChannelState channel in _channels.Values)
 			if (channel.CurrentVoice?.OriginPatternCursorId == invocationId)
