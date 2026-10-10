@@ -122,6 +122,16 @@ public sealed class IncrementalAdvancedTrackerEffectsTests
         Compare(pattern);
     }
 
+    [Test]
+    public void SEyRepeatsTonePortamentoWithoutReinstatingTargetNote()
+    {
+        DataPatternDefinition pattern = Pattern(1, 1);
+        PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+        cell.Effects.Add(new TonePortamentoPatternEffect(4));
+        cell.Effects.Add(new TrackerPatternDelayPatternEffect(2));
+        Compare(pattern);
+    }
+
     [TestCase((byte)0)]
     [TestCase((byte)1)]
     public void S1xGlissandoAffectsLaterTonePortamentoAtItsOwnRow(byte enabled)
