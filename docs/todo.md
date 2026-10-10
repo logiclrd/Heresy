@@ -150,11 +150,17 @@ See [export-workflow.md](export-workflow.md).
 - [ ] Optionally add a **determinate** export progress percentage only when
   a separately proven finite total is available without unrolling an
   unbounded script; the default coroutine path must stay indeterminate.
-- [ ] Support **additional WAV bit depths** beyond default 16-bit PCM,
-  and check encoder-specific validity for user-selected output rates and
-  channel layouts. Realtime and export already share the chosen sample
-  rate, speaker count, positions and filter configuration; retain FLAC
-  as the default format with MP3/WAV available.
+**WAV precision and codec-format validation implemented.** File →
+Render Audio retains FLAC as the default and offers WAV 8/16/24/32-bit
+integer PCM (16-bit default), alongside MP3. The canonical mono/stereo
+WAV writer now supports four precisions, correct saturation and RIFF
+word alignment; surround WAV uses WAVEFORMATEXTENSIBLE masks matching
+the standard 5.1/7.1 output order. MP3 validates mono/stereo and MPEG
+sample rates, FLAC limits channel count/sample rate, and WAV validates
+layout/precision before temporary file creation. Unsupported exports
+preserve any existing destination without creating incomplete files.
+PCM snapshotting, coroutine execution and output speaker processing
+are unchanged. See [export-workflow.md](export-workflow.md).
 - [ ] Ensure export and realtime render identically for equal snapshots and
   render configurations, aside from intentionally different end-of-song
   handling and output encoding.
