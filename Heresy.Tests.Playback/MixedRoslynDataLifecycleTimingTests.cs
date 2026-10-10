@@ -52,8 +52,11 @@ public sealed class MixedRoslynDataLifecycleTimingTests
         double end = speedInsteadOfTempo ? 240 : 180;
         double firstStart = 160;
 
+        // PCM is rendered at 1 kHz. Fractional tracker positions may be
+        // represented by a TimeSpan a single tick (100 ns) below an
+        // integer millisecond; the renderer executes on the ceiling frame.
         static double Milliseconds(NoteEvent note)
-            => note.Offset.TimeOffset.TotalMilliseconds;
+            => Math.Ceiling(note.Offset.TimeOffset.TotalMilliseconds);
         Assert.Multiple(() =>
         {
             Assert.That(emitted.Where(e => e.Commands
