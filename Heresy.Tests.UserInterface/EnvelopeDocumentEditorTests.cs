@@ -15,7 +15,7 @@ namespace Heresy.Tests.UserInterface;
 public sealed class EnvelopeDocumentEditorTests
 {
 	[Test]
-	public void CreateAdsrEnvelopeAddsCanonicalInstrumentPlacementAndMarksAudio()
+	public void CreateAdsrEnvelopeAddsCanonicalEnvelopePlacementAndMarksAudio()
 	{
 		DocumentWorkspace workspace = new();
 		uint documentRevision = workspace.Document.DocumentRevision;
@@ -39,7 +39,7 @@ public sealed class EnvelopeDocumentEditorTests
 		workspace.Document.AudioRevision.Should().Be(audioRevision + 1);
 
 		SongTreeObject node =
-			workspace.Document.GetSectionRoot(SongTreeSection.Instruments)
+			workspace.Document.GetSectionRoot(SongTreeSection.Envelopes)
 				.Children.Cast<SongTreeObject>()
 				.Single();
 		node.ObjectId.Should().Be(envelope.Id);
