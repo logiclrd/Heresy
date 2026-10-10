@@ -495,6 +495,73 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 	}
 
 	[Test]
+	public void NnaContinuedIndirectPrivateTailsHaveBoundedRegistrationsAndFullyReclaim()
+	{
+		SongDocument doc = new();
+		ObjectId sampleId = doc.AllocateObjectId();
+		doc.Add(SampleDefinition.CreateImported(sampleId,
+			"Four hundred frames", "medium.wav", LongWave(16384, frames: 400)));
+		ObjectId privateId = doc.AllocateObjectId();
+		DataPatternDefinition privatePattern = new(privateId, "Private note")
+		{
+			RowCount = 5, ChannelCount = 1,
+		};
+		privatePattern.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sampleId);
+		doc.Add(privatePattern);
+		ObjectId instrumentId = doc.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Indirect source");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = privateId,
+		});
+		instrument.ToneTable.Add(0);
+		doc.Add(instrument);
+		ObjectId parentId = doc.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Many NNA tails")
+		{
+			RowCount = 25, ChannelCount = 1,
+		};
+		for (int row = 0; row < 24; row++)
+		{
+			PatternCell start = parent.Grid.GetOrCreateCell(row, 0);
+			start.Note = new StartPatternNote(instrumentId);
+			start.Effects.Add(new TrackerNewNoteActionPatternEffect(
+				NoteDisplacementAction.Continue));
+		}
+		parent.Grid.GetOrCreateCell(24, 0).Note = new PatternNoteCut();
+		doc.Add(parent);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(doc, parentId);
+		int peakRegistered = 0;
+		int peakNnaVoices = 0;
+		for (int row = 0; row < 24; row++)
+		{
+			float[] block = new float[120];
+			plan.Source.Render(120, block);
+			Assert.That(block[0], Is.GreaterThan(0));
+			int registered = PreparedRegistrationCount(plan);
+			peakRegistered = Math.Max(peakRegistered, registered);
+			peakNnaVoices = Math.Max(peakNnaVoices,
+				plan.Session.VirtualVoices.Count);
+			Assert.That(registered, Is.LessThanOrEqualTo(6),
+				$"Private registrations accumulated after row {row} "
+				+ "instead of tracking only live NNA tail voices.");
+		}
+		Assert.That(peakNnaVoices, Is.GreaterThan(1),
+			"NNA Continue must actually overlap more than one private voice.");
+		Assert.That(peakRegistered, Is.GreaterThan(1));
+		plan.Source.Render(1200, new float[1200]);
+		Assert.That(PreparedRegistrationCount(plan), Is.Zero);
+		Assert.That(plan.Session.VirtualVoices, Is.Empty);
+		Assert.That(plan.Session.RetainedFlattenedSourceControllerCount, Is.Zero);
+		Assert.That(plan.Session.RetainedScopedPhysicalChannelCount, Is.Zero);
+		Assert.That(plan.SequencingContext.ScopedMemory.ActiveScopeCount, Is.Zero);
+	}
+
+	[Test]
 	public void HundredsOfFlatInvocationsReclaimRendererMemoryAfterTheirVoicesEnd()
 	{
 		SongDocument document = new();
