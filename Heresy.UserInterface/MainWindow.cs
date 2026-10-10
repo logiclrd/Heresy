@@ -625,7 +625,7 @@ public sealed class MainWindow : Window
 		{
 			string? match = await Task.Run(
 				() => SampleAssetRecoveryFolderSearch.FindMatch(request, folder));
-			if (match is not null && attemptedPaths.Add(match))
+			if (match is not null && attemptedPaths.Add($"{request.SampleId.Value}:{match}"))
 				return match;
 		}
 
@@ -655,7 +655,7 @@ public sealed class MainWindow : Window
 					SetStatus("The chosen sample has no local filesystem path.");
 					continue;
 				}
-				attemptedPaths.Add(filePath);
+				attemptedPaths.Add($"{request.SampleId.Value}:{filePath}");
 				return filePath;
 			}
 
@@ -684,7 +684,7 @@ public sealed class MainWindow : Window
 				searchFolders.Add(folderPath);
 			string? recovered = await Task.Run(
 				() => SampleAssetRecoveryFolderSearch.FindMatch(request, folderPath));
-			if (recovered is not null && attemptedPaths.Add(recovered))
+			if (recovered is not null && attemptedPaths.Add($"{request.SampleId.Value}:{recovered}"))
 				return recovered;
 			SetStatus(
 				"No SHA-256-verified matching sample was found in that folder. "
