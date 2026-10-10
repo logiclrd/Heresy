@@ -59,6 +59,22 @@ public interface ILiveAudioOutputSource : IAudioOutputSource
 		IReadOnlyList<NoteCommand> commands);
 }
 
+/// <summary>Optional lock-free counter exposed by a realtime output session.</summary>
+public interface IAudioOutputUnderrunCounter
+{
+	long UnderrunCount { get; }
+}
+
+/// <summary>
+/// Stable snapshot from an active or stopped output session. SessionId advances
+/// on every replacement/stop, so stale callback reports cannot revive old UI.
+/// </summary>
+public readonly record struct PlaybackAudioHealthSnapshot(
+	long SessionId,
+	bool IsActive,
+	long UnderrunCount,
+	Exception? Fault);
+
 public interface IAudioOutputSession : IDisposable
 {
 	AudioOutputFormat Format { get; }

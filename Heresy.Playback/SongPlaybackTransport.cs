@@ -49,13 +49,17 @@ public interface IPlaybackPositionTransport
 public sealed class SongPlaybackTransport
 	: ISongPlaybackTransport,
 		IPlaybackPositionTransport,
-		IPlaybackRuntimeDiagnosticsTransport
+		IPlaybackRuntimeDiagnosticsTransport,
+		IPlaybackAudioHealthTransport
 {
 	private readonly BackgroundPlaybackController _controller;
 	private readonly IBackgroundPlaybackSourceFactory _sourceFactory;
 	private readonly SemaphoreSlim _commandGate = new(1, 1);
 	private readonly object _positionGate = new();
 	private readonly Stopwatch _positionStopwatch = new();
+	private long _lastAudioSessionId = -1;
+	private long _lastAudioUnderruns;
+	private bool _lastAudioFaultReported;
 	private readonly Timer _positionTimer;
 
 	private PlaybackPositionTimeline? _positionTimeline;
@@ -83,6 +87,7 @@ public sealed class SongPlaybackTransport
 				{
 					PollPlaybackPosition();
 					PollRuntimeDiagnostics();
+					PollAudioHealth();
 				},
 				null,
 				Timeout.Infinite,
@@ -93,6 +98,9 @@ public sealed class SongPlaybackTransport
 		PlaybackPositionChanged;
 	public event EventHandler<PlaybackRuntimeDiagnosticsEventArgs>?
 		RuntimeDiagnostics;
+
+	public event EventHandler<PlaybackAudioHealthChangedEventArgs>?
+		AudioHealthChanged;
 
 	public PlaybackPatternPosition? CurrentPlaybackPosition
 	{
@@ -159,7 +167,7 @@ public sealed class SongPlaybackTransport
 		await _commandGate.WaitAsync().ConfigureAwait(false);
 		try
 		{
-			StopPositionTracking();
+			StopPositionTracking(keepAudioMonitoring: true);
 			await EnsureLiveAuditionCoreAsync(document, commands)
 				.ConfigureAwait(false);
 			await _controller.SendLiveEventAsync(
@@ -188,6 +196,7 @@ public sealed class SongPlaybackTransport
 			_liveAuditionDocument = null;
 			StopPositionTracking();
 			await _controller.StopAsync().ConfigureAwait(false);
+			PollAudioHealth();
 		}
 		finally
 		{
@@ -207,6 +216,7 @@ public sealed class SongPlaybackTransport
 			_liveAuditionDocument = null;
 			StopPositionTracking();
 			await _controller.PlayAsync(request).ConfigureAwait(false);
+			PollAudioHealth();
 
 			lock (_positionGate)
 				_diagnosticRequest = request;
@@ -262,11 +272,13 @@ public sealed class SongPlaybackTransport
 		try
 		{
 			uint revision = document.AudioRevision;
-			await _controller.PlayAsync(
-					AdHocPlaybackRequest.Create(
-						document,
-						new NoteScheduleBuilder().Freeze()))
-				.ConfigureAwait(false);
+			PlaybackRequest request = AdHocPlaybackRequest.Create(
+				document, new NoteScheduleBuilder().Freeze());
+			await _controller.PlayAsync(request).ConfigureAwait(false);
+			lock (_positionGate)
+				_diagnosticRequest = request;
+			_positionTimer.Change(dueTime: 5, period: 50);
+			PollAudioHealth();
 			_liveAuditionActive = true;
 			_liveAuditionDocument = document;
 			_liveAuditionAudioRevision = revision;
@@ -296,16 +308,16 @@ public sealed class SongPlaybackTransport
 		}
 	}
 
-	private void StopPositionTracking()
+	private void StopPositionTracking(bool keepAudioMonitoring = false)
 	{
 		lock (_positionGate)
 		{
-			_positionTimer.Change(
-				Timeout.Infinite,
-				Timeout.Infinite);
+			if (!keepAudioMonitoring)
+				_positionTimer.Change(Timeout.Infinite, Timeout.Infinite);
 			_positionStopwatch.Reset();
 			_positionTimeline = null;
-			_diagnosticRequest = null;
+			if (!keepAudioMonitoring)
+				_diagnosticRequest = null;
 			SetCurrentPlaybackPositionLocked(null);
 		}
 	}
@@ -334,6 +346,44 @@ public sealed class SongPlaybackTransport
 		}
 	}
 
+	/// <summary>Sample session health without executing code in SDL's callback.</summary>
+	private void PollAudioHealth()
+	{
+		PlaybackAudioHealthSnapshot health = _controller.GetAudioHealth();
+		PlaybackAudioHealthChangedEventArgs? args;
+		lock (_positionGate)
+		{
+			if (health.SessionId < _lastAudioSessionId)
+				return;
+			bool changed = health.SessionId != _lastAudioSessionId;
+			if (changed)
+			{
+				_lastAudioSessionId = health.SessionId;
+				_lastAudioUnderruns = 0;
+				_lastAudioFaultReported = false;
+			}
+			bool newFault = health.Fault is not null && !_lastAudioFaultReported;
+			if (!changed && !newFault
+				&& health.UnderrunCount == _lastAudioUnderruns)
+				return;
+			_lastAudioUnderruns = health.UnderrunCount;
+			if (newFault)
+				_lastAudioFaultReported = true;
+			args = new PlaybackAudioHealthChangedEventArgs(health, newFault);
+		}
+		if (AudioHealthChanged is not { } observers)
+			return;
+		foreach (EventHandler<PlaybackAudioHealthChangedEventArgs> observer
+			in observers.GetInvocationList())
+		{
+			try { observer(this, args); }
+			catch (Exception)
+			{
+				// UI/logging subscribers must never interrupt transport polling.
+			}
+		}
+	}
+
 	private void PollPlaybackPosition()
 	{
 		lock (_positionGate)
@@ -352,9 +402,9 @@ public sealed class SongPlaybackTransport
 			{
 				_positionTimeline = null;
 				_positionStopwatch.Stop();
-				_positionTimer.Change(
-					Timeout.Infinite,
-					Timeout.Infinite);
+				// Musical position is finished, but an output worker may
+				// still render tails, fault or underrun before Stop.
+				_positionTimer.Change(dueTime: 100, period: 100);
 			}
 		}
 	}

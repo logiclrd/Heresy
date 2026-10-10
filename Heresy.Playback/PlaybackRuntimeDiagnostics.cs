@@ -37,3 +37,33 @@ public sealed class PlaybackRuntimeDiagnosticsEventArgs : EventArgs
 
 	public IReadOnlyList<SequencingDiagnostic> Diagnostics { get; }
 }
+
+	
+/// <summary>
+/// Session-scoped underrun/fault updates. The transport publishes outside
+/// the SDL callback; subscribers should dispatch to their own UI context.
+/// </summary>
+public interface IPlaybackAudioHealthTransport
+{
+	event EventHandler<PlaybackAudioHealthChangedEventArgs>? AudioHealthChanged;
+}
+
+public sealed class PlaybackAudioHealthChangedEventArgs : EventArgs
+{
+	public PlaybackAudioHealthChangedEventArgs(
+		PlaybackAudioHealthSnapshot health,
+		bool isNewFault)
+	{
+		SessionId = health.SessionId;
+		IsActive = health.IsActive;
+		UnderrunCount = health.UnderrunCount;
+		Fault = health.Fault;
+		IsNewFault = isNewFault;
+	}
+
+	public long SessionId { get; }
+	public bool IsActive { get; }
+	public long UnderrunCount { get; }
+	public Exception? Fault { get; }
+	public bool IsNewFault { get; }
+}

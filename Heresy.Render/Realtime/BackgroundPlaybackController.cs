@@ -38,6 +38,8 @@ public sealed class BackgroundPlaybackController
 		TaskCompletionSource Completion)
 		: Command(Completion);
 
+	private sealed record AudioSession(long Id, IAudioOutputSession? Session);
+
 	private readonly object _gate = new();
 	private readonly IAudioOutputBackend _backend;
 	private readonly IBackgroundPlaybackSourceFactory _sourceFactory;
@@ -45,6 +47,8 @@ public sealed class BackgroundPlaybackController
 	private readonly Thread _worker;
 
 	private IAudioOutputSession? _session;
+	private AudioSession _audioSession = new(0, null);
+	private long _nextAudioSessionId;
 	private IAudioOutputSource? _source;
 	private bool _disposed;
 
@@ -66,6 +70,22 @@ public sealed class BackgroundPlaybackController
 				Name = "Heresy Playback",
 			};
 		_worker.Start();
+	}
+
+	/// <summary>
+	/// Readable on a transport timer thread. The SDL callback only updates
+	/// atomic counters/faults; subscribers and UI are never invoked there.
+	/// </summary>
+	public PlaybackAudioHealthSnapshot GetAudioHealth()
+	{
+		AudioSession state = Volatile.Read(ref _audioSession);
+		IAudioOutputSession? session = state.Session;
+		return new PlaybackAudioHealthSnapshot(
+			state.Id,
+			session is not null,
+			session is IAudioOutputUnderrunCounter counter
+				? counter.UnderrunCount : 0,
+			session?.Fault);
 	}
 
 	public Task PlayAsync(PlaybackRequest request)
@@ -205,6 +225,8 @@ public sealed class BackgroundPlaybackController
 			session.Start();
 			_source = source;
 			_session = session;
+			Volatile.Write(ref _audioSession, new AudioSession(
+				Interlocked.Increment(ref _nextAudioSessionId), session));
 		}
 		catch
 		{
@@ -231,6 +253,10 @@ public sealed class BackgroundPlaybackController
 
 	private void StopCurrent()
 	{
+		// Withdraw the session before disposal so transport observers cannot
+		// confuse a stopped/replaced session with the next one.
+		Volatile.Write(ref _audioSession, new AudioSession(
+			Interlocked.Increment(ref _nextAudioSessionId), null));
 		IAudioOutputSession? session = _session;
 		IAudioOutputSource? source = _source;
 		_session = null;

@@ -9,7 +9,7 @@ using SdlApi = SDL3.SDL;
 namespace Heresy.Render.SDL;
 
 internal sealed class SdlAudioOutputSession
-	: IAudioOutputSession
+	: IAudioOutputSession, IAudioOutputUnderrunCounter
 {
 	private readonly object _gate = new();
 	private readonly BufferedAudioOutputSource _source;
@@ -72,6 +72,8 @@ internal sealed class SdlAudioOutputSession
 				return _isRunning;
 		}
 	}
+
+	public long UnderrunCount => _source.UnderrunCount;
 
 	public Exception? Fault =>
 		Volatile.Read(ref _fault) ?? _source.RenderingFault;
