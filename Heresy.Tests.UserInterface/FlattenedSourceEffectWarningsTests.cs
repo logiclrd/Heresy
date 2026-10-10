@@ -243,6 +243,48 @@ public sealed class FlattenedSourceEffectWarningsTests
 	}
 
 	[Test]
+	public void RememberedSourceSelectionFromEarlierOrderIsRecognizedAtLaterNoteStart()
+	{
+		SongDocument doc = new();
+		ObjectId innerId = doc.AllocateObjectId();
+		doc.Add(new DataPatternDefinition(innerId, "Flat")
+			{ RowCount = 1, ChannelCount = 1 });
+		ObjectId firstId = doc.AllocateObjectId();
+		DataPatternDefinition first = new(firstId, "Select only")
+			{ RowCount = 1, ChannelCount = 1 };
+		first.Grid.GetOrCreateCell(0, 0).SourceId = innerId;
+		doc.Add(first);
+		ObjectId secondId = doc.AllocateObjectId();
+		DataPatternDefinition second = new(secondId, "Start recalled")
+			{ RowCount = 2, ChannelCount = 1 };
+		PatternCell recalledStart = second.Grid.GetOrCreateCell(0, 0);
+		recalledStart.Note = new StartPatternNote();
+		recalledStart.Effects.Add(new RetriggerPatternEffect(0xA3));
+		second.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new TrackerVolumeSlidePatternEffect(0x12));
+		doc.Add(second);
+		ObjectId seqId = doc.AllocateObjectId();
+		DataSequenceDefinition seq = new(seqId, "Song");
+		seq.Entries.Add(new SequenceEntry(firstId));
+		seq.Entries.Add(new SequenceEntry(secondId));
+		doc.Add(seq);
+		var context = PatternEditorContext.ForSequence(doc, seq, 1);
+
+		var warnings = FlattenedSourceEffectWarnings.Analyze(doc, context);
+		Assert.That(warnings[(1, 0)].IsConditional, Is.False);
+		Assert.That(warnings[(1, 0)].Message,
+			Does.Contain("Source selection was inherited from sequence order 0"));
+		Assert.That(warnings.ContainsKey((2, 0)), Is.False,
+			"Native note-volume slides remain valid on flattened sources.");
+
+		// A single cell edit changes later warnings without mutating audio
+		// state or requiring static runtime-script execution.
+		first.Grid.GetOrCreateCell(0, 0).SourceId = ObjectId.None;
+		var updated = FlattenedSourceEffectWarnings.Analyze(doc, context);
+		Assert.That(updated[(1, 0)].IsConditional, Is.True);
+	}
+
+	[Test]
 	public void SkippedStartRowsAndFlowEffectsPreventFalseDefiniteWarnings()
 	{
 		SongDocument doc = new();
