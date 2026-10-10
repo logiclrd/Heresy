@@ -1827,6 +1827,73 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 	}
 
 	[Test]
+	public void IndirectPrivateVirtualNnaContinueAndPastNoteOffReleaseOnlyOldInput()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		SampleDefinition looping = SampleDefinition.CreateImported(
+			sample, "Loop", "loop.wav", Wave(16384));
+		looping.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 4);
+		document.Add(looping);
+		ObjectId child = document.AllocateObjectId();
+		DataPatternDefinition privatePattern = new(child, "Private")
+		{
+			RowCount = 5, ChannelCount = 1,
+		};
+		privatePattern.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sample);
+		document.Add(privatePattern);
+		ObjectId instrumentId = document.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Indirect");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = child,
+		});
+		instrument.ToneTable.Add(0);
+		document.Add(instrument);
+		NoteScheduleBuilder schedule = new();
+		schedule.Append(new NoteEvent(
+			Heresy.Core.Timing.MusicalTime.Zero,
+			ChannelTarget.Virtual(7),
+			[new StartNoteCommand(instrumentId),
+				new SetCurrentVoiceDisplacementActionCommand(
+					NoteDisplacementAction.Continue)]));
+		schedule.Append(new NoteEvent(
+			new Heresy.Core.Timing.MusicalTime(TimeSpan.FromMilliseconds(120), 0),
+			ChannelTarget.Virtual(7),
+			[new StartNoteCommand(sample)]));
+		schedule.Append(new NoteEvent(
+			new Heresy.Core.Timing.MusicalTime(TimeSpan.FromMilliseconds(240), 0),
+			ChannelTarget.Virtual(7),
+			[new ApplyPastNoteActionCommand(TrackerPastNoteAction.Off)]));
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.CreateAdHoc(SongDocumentSnapshot.Create(document),
+					schedule.Freeze());
+		float[] intro = new float[121];
+		plan.Source.Render(intro.Length, intro);
+		Assert.That(intro[110], Is.EqualTo(0.5f).Within(1e-5f));
+		Assert.That(intro[120], Is.EqualTo(1f).Within(1e-5f));
+		PlaybackVoice previous = plan.Session.VirtualVoices.Single();
+		Assert.That(previous.Sound.GetType().Name,
+			Is.EqualTo("PreparedRecursiveMixdownSound"));
+		PropertyInfo sessionProperty = previous.Sound.GetType()
+			.GetProperty("Session", BindingFlags.Instance | BindingFlags.Public)!;
+		PlaybackSession privateSession =
+			(PlaybackSession)sessionProperty.GetValue(previous.Sound)!;
+		Assert.That(privateSession.InputEnded, Is.False);
+
+		float[] after = new float[140];
+		plan.Source.Render(after.Length, after);
+		Assert.That(privateSession.InputEnded, Is.True,
+			"Virtual S71 on the displaced recursive voice must release its "
+			+ "private input, not only its parent renderer voice.");
+		Assert.That(after[130], Is.EqualTo(0.5f).Within(1e-5f),
+			"The newer virtual note must remain audible after old input releases.");
+	}
+
+	[Test]
 	public void ParentCutPropagatesIntoInstrumentSelectedRecursiveChild()
 	{
 		SongDocument document = new();
