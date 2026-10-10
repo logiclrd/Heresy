@@ -142,7 +142,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 
 	/// <summary>Keep the exact sound/state/envelope snapshot selected while
 	/// walking an Instrument tone graph at a particular event frame.</summary>
-	private class BoundInstrumentInvocationSound(
+	private sealed class BoundInstrumentInvocationSound(
 		SoundInvocation invocation) : ISound
 	{
 		public NoteConfigurationSnapshot SnapshotNoteConfiguration()
@@ -158,18 +158,6 @@ public sealed class PreparedIncrementalPlaybackFactory
 			long startFrame, int frameCount, Span<float> destination)
 			=> invocation.Sound.Render(context, state, startFrame,
 				frameCount, destination);
-	}
-
-	/// <summary>Instrument note binding must retain native-frame seeking
-	/// for a selected recursive tone (or direct seekable sample) without
-	/// misrepresenting non-seekable sounds as supporting Oxx/Qxy.</summary>
-	private sealed class SeekableBoundInstrumentInvocationSound(
-		SoundInvocation invocation, ISourceFrameSeekableSound seekable)
-		: BoundInstrumentInvocationSound(invocation), ISourceFrameSeekableSound
-	{
-		public SourceFrameSeekCost SeekCost => seekable.SeekCost;
-		public void SetSourceFrameOffset(SoundState state, long sourceFrameOffset)
-			=> seekable.SetSourceFrameOffset(state, sourceFrameOffset);
 	}
 
 	private sealed class TrackedMixdown(
@@ -788,10 +776,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 						start.PlaybackSpeedMultiplier * privateClockRate);
 					if (bound is not null)
 					{
-						ISound boundSound = bound.Sound is ISourceFrameSeekableSound seekable
-							? new SeekableBoundInstrumentInvocationSound(bound, seekable)
-							: new BoundInstrumentInvocationSound(bound);
-						ObjectId boundId = sounds.RegisterPreparedMixdown(boundSound);
+						ObjectId boundId = sounds.RegisterPreparedMixdown(
+							new BoundInstrumentInvocationSound(bound));
 						registeredVoices.Add(boundId, bound.Sound);
 						commands[i] = start with
 						{
