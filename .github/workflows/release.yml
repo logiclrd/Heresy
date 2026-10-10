@@ -1,0 +1,128 @@
+name: Heresy release
+
+# GitHub tag filters are globs, not regular expressions. The first job
+# enforces exactly release-A.B.C (three nonnegative decimal components).
+on:
+  push:
+    tags:
+      - 'release-*'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Require a strict release-A.B.C tag
+        id: version
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^release-(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Release tags must be release-A.B.C with three nonnegative integer components (no leading zeroes)."
+            exit 1
+          fi
+          printf 'version=%s.%s.%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" >> "$GITHUB_OUTPUT"
+
+  package:
+    needs: validate-tag
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [win-x64, win-arm64, linux-x64, linux-arm64, osx-x64, osx-arm64]
+    env:
+      RID: ${{ matrix.rid }}
+      VERSION: ${{ needs.validate-tag.outputs.version }}
+    steps:
+      - name: Check out exact tagged source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install .NET 10
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Publish self-contained desktop application
+        shell: bash
+        run: |
+          dotnet publish Heresy/Heresy.csproj \
+            --configuration Release \
+            --runtime "$RID" \
+            --self-contained true \
+            --output "$RUNNER_TEMP/heresy-publish/$RID" \
+            -p:UseAppHost=true \
+            -p:ContinuousIntegrationBuild=true \
+            -p:Version="$VERSION" \
+            -p:AssemblyVersion="$VERSION.0" \
+            -p:FileVersion="$VERSION.0" \
+            -p:InformationalVersion="$VERSION" \
+            -p:IncludeSourceRevisionInInformationalVersion=false
+
+      - name: Verify every Heresy assembly's embedded release version
+        shell: bash
+        run: |
+          dotnet run --project build/ReleaseVersionCheck/ReleaseVersionCheck.csproj \
+            --configuration Release -- \
+            "$RUNNER_TEMP/heresy-publish/$RID" "$VERSION"
+
+      - name: Package README and exact source commit
+        shell: bash
+        run: |
+          commit="$(git rev-parse HEAD)"
+          bash build/package-release.sh \
+            "$RUNNER_TEMP/heresy-publish/$RID" \
+            "$VERSION" "$RID" "$commit" \
+            "$RUNNER_TEMP/heresy-archives"
+
+      - name: Upload packaged build
+        uses: actions/upload-artifact@v4
+        with:
+          name: heresy-release-${{ matrix.rid }}
+          path: ${{ runner.temp }}/heresy-archives/Heresy-${{ needs.validate-tag.outputs.version }}-${{ matrix.rid }}.*
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+  github-release:
+    name: Attach all packages to GitHub Release
+    needs: [validate-tag, package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.validate-tag.outputs.version }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Collect all six platform archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: heresy-release-*
+          path: archives
+          merge-multiple: true
+
+      - name: Publish release assets
+        shell: bash
+        run: |
+          shopt -s nullglob
+          packages=(archives/*.zip archives/*.tar.bz2)
+          if (( ${#packages[@]} != 6 )); then
+            echo "::error::Expected all six OS/architecture packages."
+            exit 1
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${packages[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" "${packages[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "Heresy $VERSION" \
+              --generate-notes
+          fi

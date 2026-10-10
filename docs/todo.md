@@ -1,79 +1,50 @@
-# Heresy — open work
+# Heresy — outstanding work
 
-**Only genuinely unfinished work belongs here.** Completed work and
-red-to-green regressions live in focused [reference docs](README.md)
-or the [chronological engineering log](incremental-sequencing.md).
-Reconciled October 10, 2026. The original-design programmability features are now implemented;
-the hardware/optimization/schema tasks below remain conditional. This is not a list of completed milestones.
-
-## Original design — remaining programmability
-
-The [programmability architecture](script-programmability.md) separates
-persisted authoring objects from compiled, snapshot-owned runtime behavior.
-The existing restricted-C# Pattern/Sequence scripts, sound/envelope resolver
-interfaces, and compositional effect operators are starting points, **not**
-proof that the following authorable features are complete.
-
-### Pattern-script virtual channels
-
-Both Pattern-script virtual-channel slices are complete: lifecycle and
-broadcast helpers, and the scoped voice-local volume, native frame seek,
-displacement and past-note actions. Their validation and renderer
-semantics are documented in
-[script programmability](script-programmability.md).
-Further work requires a new concrete regression or feature request.
-
-### Programmable object types
-
-Script-defined Envelopes and Instruments, plus compiled native parametric
-effects, are implemented. Deterministic bounded expressions, release
-and tone-selection contracts, recursive sound binding, reference retention,
-persistence, snapshotting and authoring are covered.
-See [script programmability](script-programmability.md).
+Only unfinished, independently actionable work belongs here. Completed
+architecture and regression history are documented in the
+[documentation index](README.md). The original-design programmability
+features, including scripted Patterns, Sequences, Envelopes, Instruments,
+virtual-voice controls, and compiled parametric effects, are implemented.
 
 ## Physical validation
 
-- [ ] **Verify real 5.1/7.1 output mapping and encoder-specific multichannel
-  FLAC/MP3 export** on supported physical devices/codecs. Check SDL
-  speaker order, per-device behavior and playable encoded layouts.
-  Software PCM parity, speaker routing/filtering and WAV channel masks
-  are already tested. **Requires real hardware/integration evidence**;
-  synthetic tests alone cannot close it.
-  See [audio output](audio-output.md) and [export workflow](export-workflow.md).
+- [ ] **Validate surround playback and encoded multichannel output on real
+  hardware.** Verify SDL speaker routing on actual 5.1/7.1 devices and
+  FLAC/MP3 encoder-specific supported layouts with playable outputs.
+  Automated PCM, WAV speaker-mask and software routing tests are already
+  in place. Completion requires physical-device/codec evidence, not only
+  synthetic tests. See [audio output](audio-output.md) and
+  [export workflow](export-workflow.md).
 
-## Evidence-dependent improvements
+## Conditional improvements
 
-- [ ] **Optionally add bounded deterministic reconstruction checkpoints**
-  for expensive long-distance native Oxx/Qxy seeks in private recursive
-  sources, **only after measurements show replay-required seeking causes
-  real-time PCM-ring underruns**. Preserve native-frame accuracy,
-  deterministic replay and the one-coroutine architecture. Do not
-  reintroduce unbounded journals, future schedules or cached PCM.
-  See [seek hints](source-seek-hints.md) and
-  [recursive sounds](recursive-sounds.md).
+- [ ] **Consider bounded seek-reconstruction checkpoints only if measured
+  underruns justify them.** Profile long-distance Oxx/Qxy private-source
+  seeking with the existing underrun instrumentation. Introduce
+  deterministic, memory-bounded checkpoints only when measurements
+  demonstrate real-time PCM-ring underruns. Preserve native-frame
+  accuracy and the coroutine renderer; do not restore eager event
+  journals or PCM caching. See [source-seek hints](source-seek-hints.md).
 
-- [ ] **Optionally display determinate export progress** only when an
-  independently proven finite logical total can be obtained without
-  expanding future script output. Arbitrarily scripted/indefinite
-  sequences must continue to show rendered musical time with
-  indeterminate progress. No fabricated percentages or ETAs.
+- [ ] **Consider determinate export progress only with a proven finite
+  duration.** A percentage must be based on a logically established
+  total without pre-expanding arbitrary scripted sequences. Continue
+  reporting rendered musical time and indeterminate progress otherwise.
   See [export workflow](export-workflow.md).
 
-## Deferred until schema evolution
+## Deferred compatibility work
 
-- [ ] **Introduce format-version migration tooling only when a genuine
-  persisted format change requires it.** The pre-release schema
-  deliberately remains **version 1**; legacy four-pane tree migration,
-  stable IDs and old sample-metadata tolerance are already implemented.
-  Do not create a speculative v2 or migration framework.
-  See [document panes](document-panes.md) and
+- [ ] **Add persisted-format migrations when a genuine schema change
+  requires them.** The current `.hm.json` / `.hm` format remains at
+  version 1. Do not preemptively invent version 2. Existing five-pane
+  migration, sample metadata tolerance and stable-ID behavior remain
+  supported. See [document panes](document-panes.md) and
   [sample storage](sample-storage.md).
 
-## Adding new tasks
+## Maintenance policy
 
-Add a narrowly scoped checkbox with a reproducible bug or independently
-actionable feature and an acceptance criterion. When closing it,
-update the relevant topical contract and tests, and verify GitHub
-Actions green at the final commit. **Do not reopen the completed
-advanced lifecycle, flattened ownership, source-frequency, seeking,
-or missing-asset recovery series** without a concrete failing example.
+New tasks need a reproducible defect or concrete feature, testable
+acceptance criteria, and a link to the relevant design contract.
+When completing a task, update its documentation, add regression
+coverage where appropriate, and verify CI on the final commit.
+Do not re-add historical completed milestones as open work.
