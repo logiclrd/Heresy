@@ -275,6 +275,28 @@ public sealed class FmSynthSoundTests
 	}
 
 	[Test]
+	public void UnassignedEnvelopeInputRendersZeroWithoutResolverDependency()
+	{
+		FmSynthSound sound =
+			Sound(
+				new FmSynthGraph(
+					[
+						new FmEnvelopeNode(
+							1,
+							ObjectId.None),
+					],
+					outputNodeId: 1));
+		float[] output = [1, 1, 1, 1];
+		sound.Render(
+			MonoContext(4),
+			sound.CreateState(),
+			0,
+			4,
+			output);
+		output.Should().OnlyContain(value => value == 0.0f);
+	}
+
+	[Test]
 	public void SplitRenderingMatchesSinglePass()
 	{
 		FmSynthGraph graph =
