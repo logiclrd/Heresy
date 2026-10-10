@@ -81,6 +81,35 @@ public sealed class InstrumentSampleReleaseTests
     }
 
     [Test]
+    public void DirectAndInstrumentInvocationsOfSameSampleHaveIndependentNoteOffPolicies()
+    {
+        TestSoundResolver sounds = new();
+        SampleSound commonSample = LoopingSample();
+        sounds.Add(SampleId, commonSample);
+        sounds.Add(OuterId, Instrument(OuterId, SampleId,
+            TimeSpan.FromMilliseconds(4), sounds));
+
+        PlaybackSession session = Session(
+            Schedule(
+                Event(0, 0, new StartNoteCommand(SampleId)),
+                Event(0, 1, new StartNoteCommand(OuterId)),
+                Event(2, 0, new NoteOffCommand()),
+                Event(2, 1, new NoteOffCommand())),
+            sounds);
+        float[] pcm = new float[8];
+
+        session.Render(0, pcm.Length, pcm);
+
+        Assert.That(pcm,
+            Is.EqualTo(new float[] { 2f, 2f, 1f, 0.75f,
+                0.5f, 0.25f, 0f, 0f }).Within(1e-6f),
+            "The direct sample must cut on Note Off while the same " +
+            "SampleSound object's Instrument invocation still releases.");
+        Assert.That(session.GetChannelState(0).CurrentVoice, Is.Null);
+        Assert.That(session.GetChannelState(1).CurrentVoice, Is.Null);
+    }
+
+    [Test]
     public void NnaOffMigratedInstrumentSampleFinishesVolumeReleaseAlongsideReplacement()
     {
         TestSoundResolver sounds = new();
