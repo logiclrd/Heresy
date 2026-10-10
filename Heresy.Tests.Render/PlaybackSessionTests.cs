@@ -96,6 +96,41 @@ public sealed class PlaybackSessionTests
 			=> destination.Fill(1f);
 	}
 
+	[TestCase(6)]
+	[TestCase(8)]
+	public void MultichannelSpeakerFiltersPreserveOrderedFeedsAndIndependentHistories(
+		int channelCount)
+	{
+		ObjectId source = (ObjectId)10U;
+		double cutoffHz = 1000.0 * Math.Log(2) / (2 * Math.PI);
+		OutputChannelConfiguration[] channels =
+			new OutputChannelConfiguration[channelCount];
+		for (int i = 0; i < channelCount; i++)
+			channels[i] = new OutputChannelConfiguration(
+				new Vector3(i, 0, 0), positionalImportance: 0,
+				filterType: i == 0 ? OutputFilterType.LowPass
+					: i == channelCount - 1 ? OutputFilterType.HighPass
+						: OutputFilterType.None,
+				cutoffHz: i == 0 || i == channelCount - 1
+					? cutoffHz : null);
+		RenderConfiguration configuration = new(1000, channels);
+		PlaybackSession session = new(new RenderContext(configuration),
+			Schedule(Event(TimeSpan.Zero, 0, new StartNoteCommand(source))),
+			new TestResolver((source, false, new SpeakerImpulseSound())));
+		float[] output = new float[3 * channelCount];
+		session.Render(0, 3, output);
+		for (int channel = 0; channel < channelCount; channel++)
+		{
+			Assert.That(output[channel], Is.EqualTo(
+				channel == 0 || channel == channelCount - 1
+					? 0.5f : 1.0f).Within(1e-6f));
+			Assert.That(output[channelCount + channel], Is.EqualTo(
+				channel == 0 ? 0.25f
+					: channel == channelCount - 1 ? -0.25f : 0f)
+				.Within(1e-6f));
+		}
+	}
+
 	[Test]
 	public void FinalSpeakerFilterTailDelaysQuiescenceButEndsAtDigitalSilence()
 	{
