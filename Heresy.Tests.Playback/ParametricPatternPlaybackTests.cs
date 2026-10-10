@@ -157,8 +157,10 @@ public sealed class ParametricPatternPlaybackTests
         {
             Assert.That(actual[15], Is.EqualTo(expected[30]).Within(1e-4f));
             Assert.That(actual[80], Is.GreaterThan(expected[80]));
-            Assert.That(actual[120], Is.EqualTo(expected[120]).Within(1e-4f),
-                "Transient pitch modification must not commit on expiry.");
+            Assert.That(actual[120] - actual[110],
+                Is.EqualTo(expected[120] - expected[110]).Within(1e-4f),
+                "Transient pitch modulation must return to normal playback speed, " +
+                "without rewinding source frames already consumed.");
         });
     }
 
