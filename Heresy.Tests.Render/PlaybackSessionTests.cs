@@ -319,8 +319,9 @@ public sealed class PlaybackSessionTests
 			[new StartNoteCommand(id, Volume: 0.75)]);
 		float[] replaced = new float[1];
 		session.Render(2, 1, replaced);
-		Assert.That(replaced[0], Is.EqualTo(2.2f).Within(1e-6f),
-			"Only the new note inherits the new 0.75 volume.");
+		Assert.That(replaced[0], Is.EqualTo(1.575f).Within(1e-6f),
+			"New note 0.75 * channel overall 0.5, released child still "
+			+ "0.4 * 0.5, and unrelated sibling 1.");
 	}
 
 	private sealed class ConfiguredSustainSound(
