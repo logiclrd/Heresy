@@ -85,11 +85,27 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 	/// voices and their normal end-input release/tail behavior. Called by
 	/// the parent on this same PCM worker, at the exact musical boundary.
 	/// </summary>
-	public void EndInput()
+	/// <summary>Stop the private note producer without releasing or cutting
+	/// voices that already exist. Used for source-level Fade: the parent
+	/// controls the audible fade, while existing private voices keep their
+	/// fade envelopes and future source notes never begin.</summary>
+	public void StopProducing()
 	{
 		if (_inputStopped)
 			return;
 		_inputStopped = true;
+		_pendingEvent = null;
+		_deferredStep = null;
+		// One prefetched event may already have retired a source scope.
+		// Discarding that event must still complete its retirement.
+		FlushRetiredScopes();
+	}
+
+	public void EndInput()
+	{
+		if (_session.InputEnded)
+			return;
+		StopProducing();
 		_session.EndInput();
 		_session.CutIndefiniteActiveVoicesAfterEndInput();
 	}
