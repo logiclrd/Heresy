@@ -404,6 +404,10 @@ public sealed class MainWindow : Window
 			Button newInstrument = new() { Content = "+ Instrument" };
 			newInstrument.Click += async (_, _) => await CreateInstrumentAsync();
 			actions.Children.Add(newInstrument);
+			Button newScriptInstrument = new() { Content = "+ Script" };
+			newScriptInstrument.Click += async (_, _) =>
+				await CreateScriptInstrumentAsync();
+			actions.Children.Add(newScriptInstrument);
 		}
 		if (section == SongTreeSection.Envelopes)
 		{
@@ -1220,6 +1224,32 @@ public sealed class MainWindow : Window
 		catch (Exception ex)
 		{
 			SetStatus($"Could not create instrument: {ex.Message}");
+		}
+	}
+
+	private async Task CreateScriptInstrumentAsync()
+	{
+		TextPromptDialog dialog = new(
+			"New script Instrument", "Instrument name:", "Script Instrument");
+		string? name = await dialog.ShowDialog<string?>(this);
+		if (name is null)
+			return;
+
+		try
+		{
+			ScriptInstrumentDefinition instrument =
+				ScriptInstrumentDocumentEditor.Create(_workspace, name);
+			SongTreeObject? node =
+				FindTreeObject(
+					_workspace.Document.GetSectionRoot(SongTreeSection.Instruments),
+					instrument.Id);
+			RefreshDocumentView(
+				$"Created script Instrument {instrument.Name}", node);
+			ShowInstrumentEditor(instrument, node);
+		}
+		catch (Exception ex)
+		{
+			SetStatus($"Could not create script Instrument: {ex.Message}");
 		}
 	}
 
@@ -2238,14 +2268,24 @@ public sealed class MainWindow : Window
 	private void ShowInstrumentEditor(SongTreeItemViewModel item)
 	{
 		if (item.ObjectId is not ObjectId id
-			|| !_workspace.Document.TryGet(id, out SongObject? songObject)
-			|| songObject is not InstrumentDefinition instrument)
+			|| !_workspace.Document.TryGet(id, out SongObject? songObject))
 		{
 			SetStatus("The selected instrument is not available.");
 			return;
 		}
 
-		ShowInstrumentEditor(instrument, item.Node);
+		switch (songObject)
+		{
+			case InstrumentDefinition table:
+				ShowInstrumentEditor(table, item.Node);
+				break;
+			case ScriptInstrumentDefinition scripted:
+				ShowInstrumentEditor(scripted, item.Node);
+				break;
+			default:
+				SetStatus("The selected Instrument type is not editable.");
+				break;
+		}
 	}
 
 	private void ShowInstrumentEditor(
@@ -2267,6 +2307,24 @@ public sealed class MainWindow : Window
 		_mainContent.Content = editor;
 		UpdateWindowTitle();
 		SetStatus($"Editing instrument {instrument.Name}");
+	}
+
+	private void ShowInstrumentEditor(
+		ScriptInstrumentDefinition definition,
+		SongTreeNode? selectNode)
+	{
+		ScriptInstrumentEditorControl editor = new(
+			_workspace, definition,
+			() => RefreshDocumentView(
+				$"Edited Instrument {definition.Name}", selectNode),
+			message =>
+			{
+				UpdateWindowTitle();
+				SetStatus(message);
+			});
+		_mainContent.Content = editor;
+		UpdateWindowTitle();
+		SetStatus($"Editing script Instrument {definition.Name}");
 	}
 
 	private void ShowEnvelopeEditor(SongTreeItemViewModel item)
