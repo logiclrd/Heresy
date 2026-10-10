@@ -36,6 +36,7 @@ public sealed class ScriptInstrumentEditorControl : UserControl
     private readonly Action _close;
     private readonly Action<string> _changed;
     private readonly TextBox _expression;
+    private readonly TextBox _pitchExpression;
     private readonly TextBox _ratio;
     private readonly ComboBox _sound;
     private readonly ComboBox[] _envelopes;
@@ -54,6 +55,11 @@ public sealed class ScriptInstrumentEditorControl : UserControl
         {
             Text = definition.Source, MinWidth = 420, MinHeight = 75,
             AcceptsReturn = true, TextWrapping = TextWrapping.Wrap,
+        };
+        _pitchExpression = new TextBox
+        {
+            Text = definition.PitchExpression,
+            MinWidth = 420,
         };
         _ratio = new TextBox { Text = "1", MinWidth = 115 };
         _sound = new ComboBox { MinWidth = 260 };
@@ -91,10 +97,18 @@ public sealed class ScriptInstrumentEditorControl : UserControl
             TextWrapping = TextWrapping.Wrap,
         });
         panel.Children.Add(_expression);
-        Button apply = new() { Content = "Apply selector" };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Optional pitch scaling expression of pitchMultiplier; " +
+                "multiplied by the selected tone's fixed ratio.",
+            TextWrapping = TextWrapping.Wrap,
+        });
+        panel.Children.Add(_pitchExpression);
+        Button apply = new() { Content = "Apply expressions" };
         apply.Click += (_, _) => Execute(() =>
-            ScriptInstrumentDocumentEditor.SetSource(
-                _workspace, _definition, _expression.Text ?? string.Empty));
+            ScriptInstrumentDocumentEditor.SetExpressions(
+                _workspace, _definition, _expression.Text ?? string.Empty,
+                _pitchExpression.Text ?? string.Empty));
         panel.Children.Add(apply);
         panel.Children.Add(new TextBlock
         {

@@ -22,6 +22,7 @@ public static class ScriptInstrumentDocumentEditor
         ArgumentNullException.ThrowIfNull(workspace);
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ValidateSource(source);
+        ValidatePitchExpression("1.0");
         ScriptInstrumentDefinition definition =
             new(workspace.Document.AllocateObjectId(), name.Trim())
             { Source = source };
@@ -32,12 +33,21 @@ public static class ScriptInstrumentDocumentEditor
     public static void SetSource(
         DocumentWorkspace workspace, ScriptInstrumentDefinition definition,
         string source)
+        => SetExpressions(workspace, definition, source,
+            definition.PitchExpression);
+
+    public static void SetExpressions(
+        DocumentWorkspace workspace, ScriptInstrumentDefinition definition,
+        string source, string pitchExpression)
     {
         ValidateOwner(workspace, definition);
         ValidateSource(source);
-        if (definition.Source == source)
+        ValidatePitchExpression(pitchExpression);
+        if (definition.Source == source
+            && definition.PitchExpression == pitchExpression)
             return;
         definition.Source = source;
+        definition.PitchExpression = pitchExpression;
         workspace.Document.MarkChanged(affectsAudio: true);
     }
 
@@ -109,6 +119,17 @@ public static class ScriptInstrumentDocumentEditor
     {
         if ((uint)index >= (uint)definition.ToneSpecifications.Count)
             throw new ArgumentOutOfRangeException(nameof(index));
+    }
+
+    private static void ValidatePitchExpression(string source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        IReadOnlyList<ScriptAnalysisDiagnostic> diagnostics =
+            ScriptCompiler.AnalyzeInstrumentPitchSource(source);
+        if (diagnostics.Any(d => d.Severity == ScriptDiagnosticSeverity.Error))
+            throw new ArgumentException(
+                string.Join("; ", diagnostics.Select(d => d.Message)),
+                nameof(source));
     }
 
     private static void ValidateSource(string source)
