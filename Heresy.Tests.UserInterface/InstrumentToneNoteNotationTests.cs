@@ -41,9 +41,13 @@ public sealed class InstrumentToneNoteNotationTests
 			"A#-1", "A#-1+", "A#-1++", "B-1-",
 			"B-1", "B-1+", "B-1++",
 		];
-		Enumerable.Range(0, 48).Select(i =>
+		// The historical example stops at B++; the last (48th)
+		// division is closer to the next octave's C, and is C-2-.
+		Enumerable.Range(0, expected.Length).Select(i =>
 			InstrumentToneNoteNotation.Format(i, 48, 144))
 			.Should().Equal(expected);
+		InstrumentToneNoteNotation.Format(47, 48, 144)
+			.Should().Be("C-2-");
 	}
 
 	[Test]
@@ -51,7 +55,7 @@ public sealed class InstrumentToneNoteNotationTests
 	{
 		InstrumentToneNoteNotation.Format(10, 12, 10)
 			.Should().Be("C-4");
-		InstrumentToneNoteNotation.Format(12, 24, 10)
+		InstrumentToneNoteNotation.Format(11, 24, 10)
 			.Should().Be("C-4+");
 		InstrumentToneNoteNotation.Format(10, 19, 10)
 			.Should().Be("C-4");
