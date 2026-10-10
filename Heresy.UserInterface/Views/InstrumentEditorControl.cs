@@ -61,8 +61,10 @@ public sealed class InstrumentEditorControl : UserControl
 		_rows = new ListBox
 		{
 			MinWidth = ColumnWidths.Sum(),
+			// Avalonia may invoke the template with null while clearing or
+			// recycling a virtualized ListBox item container.
 			ItemTemplate = new FuncDataTemplate<InstrumentToneGridRow>(
-				(row, _) => BuildRow(row)),
+				(row, _) => row is null ? null : BuildRow(row)),
 		};
 		_rows.KeyDown += OnGridKeyDown;
 		Content = BuildContent();

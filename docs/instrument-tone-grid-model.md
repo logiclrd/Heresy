@@ -149,8 +149,13 @@ copy-on-write, revisions and playback snapshot isolation remain
 covered by `InstrumentToneGridModelTests`.
 
 The grid is implemented and covered by automated regressions.
-An optional desktop smoke test can examine focus routing, row
-overflow and keyboard navigation. Log any *observed* defect
+Avalonia's virtualized `ListBox` can temporarily invoke its row template
+with a null item while recycling a container during scrolling. The
+`InstrumentEditorControl` template returns no control for that null case,
+without calling `BuildRow`. A regression invokes the actual data template
+with a null item, then with the entry and normal tone rows. A desktop
+smoke test is still useful for focus routing, row overflow, scrolling
+and keyboard navigation. Log any *observed* defect
 as a new scoped item in [todo.md](todo.md).
 
 
