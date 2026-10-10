@@ -4,6 +4,7 @@ using System.Threading;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
+using Avalonia.Threading;
 
 using Heresy.Render.File;
 
@@ -65,6 +66,46 @@ public sealed class ExportProgressDialog : Window
 			},
 			actions,
 			new Thickness(18));
+	}
+
+	/// <summary>Bound UI work to one outstanding dispatcher post, even
+	/// when the offline PCM worker emits thousands of fast render blocks.
+	/// The most recent musical-time position wins; no per-block UI queue
+	/// can grow with the length or playback rate of a song.</summary>
+	public IProgress<OfflineRenderProgress> CreateProgressReporter()
+		=> new CoalescingProgress(this);
+
+	private sealed class CoalescingProgress(ExportProgressDialog window)
+		: IProgress<OfflineRenderProgress>
+	{
+		private readonly object _gate = new();
+		private OfflineRenderProgress _latest;
+		private bool _scheduled;
+
+		public void Report(OfflineRenderProgress update)
+		{
+			bool post;
+			lock (_gate)
+			{
+				_latest = update;
+				post = !_scheduled;
+				_scheduled = true;
+			}
+			if (post)
+				Dispatcher.UIThread.Post(Publish);
+		}
+
+		private void Publish()
+		{
+			OfflineRenderProgress update;
+			lock (_gate)
+			{
+				update = _latest;
+				_scheduled = false;
+			}
+			if (window.IsVisible)
+				window.Update(update);
+		}
 	}
 
 	public void Update(OfflineRenderProgress update)
