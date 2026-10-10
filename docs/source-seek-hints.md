@@ -75,3 +75,16 @@ behavior, exact source-frame offsets, Qxy callbacks, bounded diagnostic
 delivery even after drains, private-child reporting, remembered Oxx
 memory, ordinary/dynamic/Instrument editor classifications, and the
 session preference.
+
+The production `RecursiveNativeSeekBoundaryTests` additionally validate
+actual tracker O01 against independently rendered frames **256–319** of
+a private child Sequence (direct or Instrument-selected), native
+O01/Q01 retrieval and replay across tick and row boundaries, O00 memory
+through a new Sequence order invocation, seeking past a finite child's
+logical end without contaminating a subsequent invocation, a private
+mixdown nested within another private mixdown, and stereo PCM parity
+of realtime and offline sources with deliberately different block
+sizes. The `PlaybackVoice` uses the selected `SoundInvocation.Sound`,
+so Instrument binding already preserves `ISourceFrameSeekableSound`
+without special adapter forwarding. Rewinds keep replaying deterministic
+child generators rather than retaining previously generated data.
