@@ -83,6 +83,38 @@ PCM chunk invariance. Playback remains an incremental coroutine with
 bounded rendering; this feature does not create an event journal or a
 separate eager render path.
 
+## Fixed-wall note-lifecycle controls across mixed patterns (October 10, 2026)
+
+The incremental Pattern scheduler now permits **positive fixed wall-time
+offsets** for physical S70/S71/S72 past-note and S73/S74/S75/S76
+new-note-action tracker commands, and for the already-resolved
+`SetCurrentVoiceDisplacementActionCommand` and
+`ApplyPastNoteActionCommand` on physical and explicitly targeted
+virtual channels. Previously, ordinary immediate commands were
+recognized and rendered but their otherwise-equivalent wall-delayed
+forms were rejected during raw validation.
+
+These commands use the existing bounded deferred wall queue. Their
+deadline is established relative to their musical position and does
+not move if another cursor later changes the shared Tempo. Raw tracker
+S7x commands pass through the common `PatternNoteProcessor` *at the
+deadline*, just as other deferred tracker note operations do. An
+override changes the currently playing note's next displacement,
+and a past-note action affects eligible already-displaced notes at
+that moment. Virtual commands preserve their target identity and
+existing invocation/voice ownership rules; virtual raw tracker-memory
+operations remain unsupported. Negative wall offsets are not enabled.
+
+`IncrementalAdvancedEffectTimingTests` exercises separate physical
+and virtual fixed-wall overrides at 35/45 ms, subsequent starts at
+60 ms and past-note cuts at 80/90 ms. `PlaybackDelayedLifecycleTests`
+confirms in rendered PCM that both old notes continue through the
+replacements before their independent cuts and current notes remain
+audible. An actual Roslyn script `Off` with positive wall offset is
+also tested alongside a data Pattern's SD3 delayed start and a
+concurrent shared Tempo change. No eager note-event schedule or
+alternate rendering path was introduced.
+
 ## Current shared-clock cross-rate Tempo arbitration (October 10, 2026)
 
 The production `IncrementalPatternTimeline` now supports **simultaneous

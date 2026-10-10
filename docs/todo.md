@@ -224,6 +224,25 @@ and native resampling versus pitch compensation. See
   PCM and terminal sound state agree on the original release time.
   The broader delayed-effect/script routing and envelope interaction
   compatibility item remains open for further demonstrated cases.
+
+  **Fixed-wall S7x and virtual note-lifecycle controls supported (October 10).**
+  The incremental Pattern merger previously rejected positive
+  `TimeOffset` on physical raw S73–S76 new-note actions/S70–S72
+  past-note actions and on already-resolved physical/virtual
+  `SetCurrentVoiceDisplacementActionCommand` and
+  `ApplyPastNoteActionCommand`, even though the normal renderer
+  already handles those commands. They now stay in the bounded wall
+  queue and resolve at the actual deadline: tracker commands transform
+  only then, and their effects act on whichever voice exists at
+  delivery, not at raw-script emission. Red-then-green scheduler and
+  PCM regressions cover physical/virtual displacement overrides,
+  subsequent independently timed past-note cuts, and preservation of
+  currently sounding replacement notes. A Roslyn/data regression also
+  combines a scripted positive-wall Off, data-Pattern SD3, and an
+  immediate shared Tempo change. This does **not** add a restricted
+  script S7x helper or alter unsupported virtual tracker-memory commands.
+  Broader multichannel, recursive lifecycle and script-effect
+  combinations remain under this TODO.
 **Recursive native Oxx/Qxy source-frame seeking verified across
 invocation boundaries.** `RecursiveNativeSeekBoundaryTests` now cover
 O01 as exactly 256 private source frames across multi-order child
