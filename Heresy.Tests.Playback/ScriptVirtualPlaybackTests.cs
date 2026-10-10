@@ -96,6 +96,48 @@ public sealed class ScriptVirtualPlaybackTests
         });
     }
 
+    [Test]
+    public void CancelingOneScriptCursorDropsItsVirtualVoiceAndDeferredEventsOnly()
+    {
+        SongDocument song = new();
+        ObjectId sampleId = AddSample(song);
+        ObjectId firstId = song.AllocateObjectId();
+        ObjectId secondId = song.AllocateObjectId();
+        song.Add(new ScriptPatternDefinition(firstId, "Canceled")
+        {
+            RowCount = 3, ChannelCount = 1,
+            Source = $"""
+                NoteVirtual(0, 7U, _O({sampleId.Value}));
+                CutVirtual(1, 7U);
+                """,
+        });
+        song.Add(new ScriptPatternDefinition(secondId, "Survivor")
+        {
+            RowCount = 3, ChannelCount = 1,
+            Source = $"NoteVirtual(0, 7U, _O({sampleId.Value}));",
+        });
+        using PreparedIncrementalPlaybackPlan plan =
+            new PreparedIncrementalPlaybackFactory(Mono()).Create(song, firstId);
+        long sibling = plan.Timeline.AddRoot(secondId);
+        float[] before = new float[20];
+        plan.Source.Render(before.Length, before);
+        Assert.That(before[10], Is.GreaterThan(0.65f));
+
+        Assert.That(plan.Source.Cancel(plan.RootInvocationId), Is.True);
+        Assert.That(plan.Timeline.IsInvocationActive(sibling), Is.True);
+        float[] after = new float[160];
+        plan.Source.Render(after.Length, after);
+        Assert.Multiple(() =>
+        {
+            Assert.That(after[25], Is.GreaterThan(0.2f),
+                "The independently owned sibling keeps its virtual voice.");
+            Assert.That(after[25], Is.LessThan(before[10] * 0.7f),
+                "The canceled scope's virtual voice was cut.");
+            Assert.That(after[140], Is.GreaterThan(0.2f),
+                "Canceled producer's deferred Cut must not affect the sibling.");
+        });
+    }
+
     private static RenderConfiguration Mono()
         => new(1000, [new OutputChannelConfiguration(
             Vector3.Zero, positionalImportance: 0)]);
