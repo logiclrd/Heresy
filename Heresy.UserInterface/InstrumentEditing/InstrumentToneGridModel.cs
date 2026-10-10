@@ -125,10 +125,10 @@ public sealed class InstrumentToneGridModel
 			throw new ArgumentOutOfRangeException(nameof(index));
 
 		Dictionary<int, InstrumentToneGridCells> mapped = ReadMappings();
+		if (mapped.Remove(index))
+			PublishMappedCells(mapped);
+		// Discard the draft only after a successful Core transaction.
 		_drafts.Remove(index);
-		if (!mapped.Remove(index))
-			return;
-		PublishMappedCells(mapped);
 	}
 
 	private Dictionary<int, InstrumentToneGridCells> ReadMappings()
