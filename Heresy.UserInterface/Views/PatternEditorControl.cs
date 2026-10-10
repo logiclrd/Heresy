@@ -85,6 +85,9 @@ public sealed class PatternEditorControl : UserControl
 	private readonly Dictionary<(int Row, int Channel), Border> _cellBorders = [];
 	private readonly Dictionary<int, Border> _rowHeaders = [];
 	private readonly HashSet<int> _playbackDisplayRows = [];
+	private IReadOnlyDictionary<(int Row, int Channel),
+		FlattenedSourceEditorIndication> _flattenedIndications =
+			new Dictionary<(int Row, int Channel), FlattenedSourceEditorIndication>();
 	private readonly Dictionary<(int Row, int Channel), Border> _noteFields = [];
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _noteTexts = [];
 	private readonly Dictionary<(int Row, int Channel), Border> _sourceFields = [];
@@ -483,6 +486,10 @@ public sealed class PatternEditorControl : UserControl
 		_volumeTexts.Clear();
 		_effectStrips.Clear();
 
+		// Analyze displayed Sequence occurrences once per grid rebuild.
+		// Repeated Patterns can carry different inherited Sources.
+		_flattenedIndications = FlattenedSourceEffectWarnings.Analyze(
+			_workspace.Document, _context);
 		RemapPlaybackDisplayRows();
 
 		Grid grid = new();
@@ -703,14 +710,20 @@ public sealed class PatternEditorControl : UserControl
 						sourceIndex,
 						targetIndex));
 		effects.SetEffects(view.Effects);
-		string? flattenedWarning = FlattenedSourceEffectWarnings.Describe(
-			_workspace.Document, row.Pattern, row.PatternRow, channel);
-		if (flattenedWarning is not null)
+		if (_flattenedIndications.TryGetValue(
+			(displayRow, channel), out FlattenedSourceEditorIndication? indication))
 		{
-			ToolTip.SetTip(effects, flattenedWarning);
-			ToolTip.SetTip(noteField, flattenedWarning);
-			// Visible, nonblocking warning; effect data remains editable.
-			note.Text = "⚠ " + view.NoteText;
+			ToolTip.SetTip(effects, indication.Message);
+			ToolTip.SetTip(noteField, indication.Message);
+			ToolTip.SetTip(volumeField, indication.Message);
+			// Conditional warnings are not claims of runtime certainty.
+			// Lifecycle notices annotate OFF/CUT without marking them invalid.
+			string prefix = indication.IsConditional
+				? "? "
+				: indication.HasVoiceSpecificEffects
+					? "⚠ "
+					: "↳ ";
+			note.Text = prefix + view.NoteText;
 		}
 
 		Grid content = new();
