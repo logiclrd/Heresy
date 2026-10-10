@@ -1,6 +1,9 @@
+using System;
+
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Markup.Xaml.Styling;
 using Avalonia.Themes.Fluent;
 using Avalonia.Threading;
 
@@ -17,6 +20,16 @@ public sealed class App : Application
 	public override void Initialize()
 	{
 		Styles.Add(new FluentTheme());
+
+		// AvaloniaEdit requires its own Fluent control templates. Without
+		// these styles the scripted Pattern/Sequence editor takes up layout
+		// space but its text surface is not rendered.
+		Uri editorStyles = new(
+			"avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml");
+		Styles.Add(new StyleInclude(editorStyles)
+		{
+			Source = editorStyles,
+		});
 	}
 
 	public override void OnFrameworkInitializationCompleted()

@@ -19,6 +19,8 @@
 	<ItemGroup>
 		<ProjectReference Include="..\Heresy.Core\Heresy.Core.csproj" />
 		<ProjectReference Include="..\Heresy.UserInterface\Heresy.UserInterface.csproj" />
+		<!-- Verify the real desktop App style registration, not a parallel test-only setup. -->
+		<ProjectReference Include="..\Heresy\Heresy.csproj" />
 	</ItemGroup>
 
 </Project>

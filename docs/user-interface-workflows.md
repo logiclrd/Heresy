@@ -189,7 +189,14 @@ order from a data-sequence arrangement opens that script source editor with
 ## Script editor and diagnostics
 
 Persisted script source remains ordinary restricted-C# text. Script editing now
-uses AvaloniaEdit, and its `TextDocument` always contains the canonical source
+uses AvaloniaEdit. The desktop `App.Initialize()` must register the
+AvaloniaEdit Fluent style resource
+(`avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml`) after the
+application's Fluent theme; the general Avalonia theme does not supply
+AvaloniaEdit's text-control template. Omitting this style produces a blank
+reserved editor area despite the source control being present. A desktop
+initialization regression checks that the actual App registers the theme.
+Its `TextDocument` always contains the canonical source
 including literal `_O(id)` expressions. Roslyn semantic analysis supplies the
 raw source spans for actual Heresy object lookups; comments, string lookalikes
 and shadowed helper calls do not become references. A custom
