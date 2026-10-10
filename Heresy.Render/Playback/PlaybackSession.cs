@@ -2315,6 +2315,30 @@ public sealed class PlaybackSession
 			activeFrames,
 			activeDestination);
 
+		// A streaming sound (notably a coroutine-backed private
+		// Pattern/Sequence mixdown) can discover its exact end *during*
+		// this Render call. Re-evaluate before deciding which voices to
+		// detach: otherwise a single long tail block leaves completed
+		// NNA voices and transient private sound registrations live until
+		// an unrelated future Render call, even after their PCM ends.
+		if (voice.Sound is IStreamingFiniteSound)
+		{
+			long? observedEnd = GetEffectiveVoiceEndFrameExclusive(
+				voice, absoluteStartFrame + activeFrames);
+			if (observedEnd.HasValue)
+			{
+				effectiveEndAbsolute = effectiveEndAbsolute.HasValue
+					? Math.Min(effectiveEndAbsolute.Value, observedEnd.Value)
+					: observedEnd.Value;
+				long remaining = effectiveEndAbsolute.Value - absoluteStartFrame;
+				activeFrames = remaining <= 0
+					? 0
+					: (int)Math.Min(activeFrames, remaining);
+				activeDestination = destination.Slice(0,
+					checked(activeFrames * outputChannelCount));
+			}
+		}
+
 		if (voice.SoundState.NaturalEndFrameExclusive.HasValue)
 		{
 			long discoveredRemaining =
