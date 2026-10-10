@@ -13,8 +13,16 @@ namespace Heresy.UserInterface;
 /// </summary>
 public sealed class AudioOutputSettings
 {
+	private readonly AudioOutputPreference? _preference;
 	private RenderConfiguration _current =
 		RenderConfiguration.Stereo(sampleRate: 48000);
+
+	public AudioOutputSettings(AudioOutputPreference? preference = null)
+	{
+		_preference = preference;
+		if (_preference?.Read() is RenderConfiguration restored)
+			_current = restored;
+	}
 
 	public RenderConfiguration Current => Volatile.Read(ref _current);
 
@@ -22,6 +30,10 @@ public sealed class AudioOutputSettings
 	{
 		ArgumentNullException.ThrowIfNull(configuration);
 		Volatile.Write(ref _current, configuration);
+		// The selected output changes only after a successful Apply/Stop,
+		// never on dialog cancellation or while constructing a render.
+		// Persistence failures do not change the user's active selection.
+		_preference?.TrySave(configuration);
 	}
 
 	/// <summary>Preset output ordering: mono; FL/FR; or FL,FR,C,LFE,
