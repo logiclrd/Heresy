@@ -1893,6 +1893,88 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			"The newer virtual note must remain audible after old input releases.");
 	}
 
+	[TestCase(false)]
+	[TestCase(true)]
+	public void FlattenedInstigatorCutOrFadeControlsNestedInstrumentMixdownAtBoundary(
+		bool fade)
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		SampleDefinition looping = SampleDefinition.CreateImported(sample,
+			"Loop", "loop.wav", Wave(16384));
+		looping.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 4);
+		document.Add(looping);
+		ObjectId privateId = document.AllocateObjectId();
+		DataPatternDefinition privatePattern = new(privateId, "Nested notes")
+		{
+			RowCount = 4, ChannelCount = 1,
+		};
+		privatePattern.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sample);
+		privatePattern.Grid.GetOrCreateCell(2, 0).Note =
+			new StartPatternNote(sample);
+		document.Add(privatePattern);
+		ObjectId instrumentId = document.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Recursive tone");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = privateId,
+		});
+		instrument.ToneTable.Add(0);
+		document.Add(instrument);
+		ObjectId flattenedId = document.AllocateObjectId();
+		DataPatternDefinition flattened = new(flattenedId, "Flattened")
+		{
+			RowCount = 4, ChannelCount = 2,
+		};
+		flattened.Grid.GetOrCreateCell(0, 1).Note =
+			new StartPatternNote(instrumentId);
+		document.Add(flattened);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Parent")
+		{
+			RowCount = 4, ChannelCount = 1,
+		};
+		PatternCell instigator = parent.Grid.GetOrCreateCell(0, 0);
+		instigator.Note = new StartPatternNote(flattenedId);
+		if (fade)
+		{
+			instigator.Effects.Add(new TrackerNewNoteActionPatternEffect(
+				NoteDisplacementAction.Fade));
+			parent.Grid.GetOrCreateCell(1, 0).Note =
+				new StartPatternNote(sample);
+		}
+		else
+			parent.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteCut();
+		document.Add(parent);
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, root);
+		plan.Source.Render(1, new float[1]);
+		PlaybackVoice privateVoice =
+			plan.Session.GetChannelState(1, 1).CurrentVoice!;
+		PropertyInfo sessionProperty = privateVoice.Sound.GetType()
+			.GetProperty("Session", BindingFlags.Instance | BindingFlags.Public)!;
+		PlaybackSession childSession =
+			(PlaybackSession)sessionProperty.GetValue(privateVoice.Sound)!;
+		plan.Source.Render(120, new float[120]);
+		if (fade)
+			Assert.That(childSession.GetChannelState(0).CurrentVoice?
+				.IsNoteFadeRequested, Is.True,
+				"S76 on the flattened instigator must reach the private "
+				+ "Instrument-selected renderer, not only the outer voice.");
+		else
+		{
+			long? end = privateVoice.Sound.GetEndFrameExclusive(
+				new RenderContext(Mono(1000)), privateVoice.SoundState);
+			Assert.That(end, Is.EqualTo(120L),
+				"The nested private sound must end at the exact source Cut frame.");
+			float[] tail = new float[65];
+			plan.Source.Render(tail.Length, tail);
+			Assert.That(tail[64], Is.Zero.Within(1e-5f));
+		}
+	}
+
 	[Test]
 	public void ParentCutPropagatesIntoInstrumentSelectedRecursiveChild()
 	{
