@@ -2816,3 +2816,60 @@ or source-lifecycle interaction. Next: scoped virtual/NNA
 displacement and broadcast semantics at coincident deadlines;
 then deeper indirect Instrument/private-mixdown source graphs,
 release/fade automation, and inherited-source UI indications.
+
+## Fifty-eighth step: virtual-channel NNA and past-note ownership parity
+
+An explicit scoped Virtual(id) note is a logical voice, not a disposable
+single-slot sound. Prior to this milestone, `PlaybackSession.StartVirtualNote`
+unconditionally called `CutCurrentVoice` when another note was started
+at the same virtual ID, even if the existing voice had declared
+NNA Continue, Off, or Fade. The sound was neither migrated to the
+session-wide displaced-voice pool nor available to the normal S7x
+past-note and source-scope lifecycle operations.
+
+Virtual replacement now uses the renderer's shared
+`DisplaceCurrentVoice` machinery, honoring each old voice's captured
+NNA configuration/override. The displaced voice carries explicit
+`OriginVirtualChannelId` and nullable `OriginScopedVirtualOwner`.
+The latter is the **Pattern cursor ID** supplied by the streaming
+coordinator, not the recursive frame ID or mapped physical host.
+A null owner represents a directly targeted/legacy virtual channel.
+This virtual identity survives migration into `_virtualVoices`,
+alongside existing flattened-source ancestry and live volume
+references.
+
+`CancelScopedVoices(cursorId)` now cuts both the cursor's current
+scoped virtual notes and its migrated NNA voices. It uses the original
+virtual channel's anti-click tail, and never cuts another cursor's
+voice with the same numeric virtual ID. `ApplyFlattenedScopeAction`
+continues to use enclosing source-volume ancestry to reach both
+physical and virtual descendant voices, including displaced ones.
+Conversely physical-channel S70-S72 no longer matches NNA-migrated
+virtual voices merely because virtual voices formerly had an
+unspecified physical origin of channel 0/owner 0.
+
+The virtual-channel command path now implements
+`SetCurrentVoiceDisplacementActionCommand` (S73-S76) and
+`ApplyPastNoteActionCommand` (S70-S72), resolving past voices by
+original virtual ID **and** scoped cursor owner. The new/current
+virtual note is excluded from its own past-note action. A scoped
+`AllVirtualInScope` broadcast continues to act only on currently
+hosted scoped virtual voices from earlier PCM frames, not the global
+NNA-migrated pool. `AllVirtual` explicitly includes that pool.
+A broadcast at frame N cannot retroactively cut a note that also
+started at frame N, regardless of event dequeue order.
+
+End-to-end renderer regressions were red on the old virtual replacement:
+same-frame same-ID starts with Continue rendered only two voices
+instead of three, and neither cursor cancellation nor a flattened
+Cut could find the expected migrated virtual voice. The implementation
+restores those voices, preserving unrelated invocations and physical
+hosts. Further tests cover S74 followed by S70 targeting only an
+original virtual channel, isolation from physical S70, and explicit
+S75 Off/S76 Fade at the precise displacement frame. No new coroutine,
+event journal, PCM cache, or second rendering worker was introduced.
+
+This milestone establishes **renderer-side virtual/NNA lifecycle
+parity** and explicit command semantics. Integration with more
+complex indirect Instrument-selected private mixdowns and deep
+release-envelope graphs is the next separate ownership pass.

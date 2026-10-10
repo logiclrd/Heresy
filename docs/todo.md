@@ -104,11 +104,25 @@ preserving audible release and already-captured anti-click tails. These are
   tombstone set, and only its scoped virtual channels are cut.
   Independent roots with numerically colliding frame/cursor IDs
   survive; same-frame PCM and Core ownership regressions are green.
-  **Still outstanding:** UI indications for sources inherited across
-  Sequence orders or selected dynamically, and downstream Note Off/Cut
-  presentation; coincident virtual/NNA and broadcast interactions,
-  lifecycle coverage for nested indirect private mixdowns, release
-  automation, and indefinite scripts.
+  **Step 58: scoped virtual NNA and past-note ownership implemented.**
+  Repeating a scoped or directly targeted virtual note now applies its
+  old voice's own Cut/Continue/Off/Fade policy instead of unconditionally
+  cutting it. Migrated NNA voices retain their original virtual channel
+  and, where applicable, Pattern cursor owner. Canceling a cursor cuts
+  its current and displaced scoped virtual voices without touching
+  sibling virtual IDs. Physical-channel S70-S72 cannot mistake virtual
+  NNA voices for physical host voices. Explicit virtual S73-S76
+  overrides and S70-S72 past-note controls use the same original
+  target identity. AllVirtual reaches displaced voices whereas
+  AllVirtualInScope remains limited to current scoped channels;
+  same-frame starts remain ineligible for broadcasts by design.
+  Red-to-green renderer regressions cover NNA Continue, cutoff,
+  owner isolation, flattened-scope Cut, S70/S74, and exact-frame
+  Off/Fade.
+  **Still outstanding:** editor indications for inherited/dynamic
+  sources and downstream Note Off/Cut; nested indirect Instrument/private
+  mixdown lifetimes, continuing automation and release tails, and
+  long-running script/cancellation stress coverage.
   The incremental merger admits zero-offset Mxx and native channel-volume
   commands alongside flattened starts.
   The detailed target remains in step 48 below.
