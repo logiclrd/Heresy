@@ -904,13 +904,23 @@ public sealed class FmSynthEditorControl : UserControl
 			}
 
 			// A canceled/failed New... action restores the previous
-			// selection, including null for an unassigned FM node.
-			ObjectId committedId =
-				((FmEnvelopeNode)CurrentNode(node.Id)).EnvelopeId;
-			envelopeBox.SelectedItem = committedId.IsNone
-				? null
-				: envelopes.FirstOrDefault(choice =>
-					choice.Id == committedId);
+			// selection, including null for an unassigned FM node. Guard
+			// this programmatic restoration: selecting an existing option
+			// must not accidentally fire an additional user edit.
+			choosing = true;
+			try
+			{
+				ObjectId committedId =
+					((FmEnvelopeNode)CurrentNode(node.Id)).EnvelopeId;
+				envelopeBox.SelectedItem = committedId.IsNone
+					? null
+					: envelopes.FirstOrDefault(choice =>
+						choice.Id == committedId);
+			}
+			finally
+			{
+				choosing = false;
+			}
 		};
 
 		if (node.EnvelopeId.IsNone)
