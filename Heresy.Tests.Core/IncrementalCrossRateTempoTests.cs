@@ -157,6 +157,48 @@ public sealed class IncrementalCrossRateTempoTests
 		});
 	}
 
+	[Test]
+	public void FractionalScaledSEyKeepsAnalyticWallDeadlineInLaterTempoSegment()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		SequencingContext scaled = root.FlattenedChild(
+			playbackSpeedMultiplier: 1.5, physicalChannelOffset: 2);
+		timeline.Add(new RawSource(
+			At(0, 0, new ApplyTrackerPatternDelayCommand(1)),
+			At(0, 0, new ApplyTrackerTempoCommand(0x12))), 1, scaled);
+		timeline.Add(new RawSource(
+			At(0, 0, new ApplyTrackerTempoCommand(0x11))), 1, root);
+		const double atFour = 125 + 40.0 / 3.0;
+		const double atSix = 145;
+		const double atEight = 150;
+		double deadlineSeconds = RampSeconds(125, atFour, 4)
+			+ RampSeconds(atFour, atFour + 10.0 / 3.0, 1);
+		TimeSpan deadline = TimeSpan.FromSeconds(deadlineSeconds);
+		timeline.Add(new RawSource(new NoteEvent(
+			new MusicalTime(deadline, 0), ChannelTarget.Physical(0),
+			[new NoteOffCommand()])), 1,
+			root.FlattenedChild(physicalChannelOffset: 5));
+		List<IncrementalPatternTimelineStep.Emit> emitted = [];
+		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+			if (step is IncrementalPatternTimelineStep.Emit emit)
+				emitted.Add(emit);
+		double? dueTick = emitted.Single(e => e.Note.Commands
+			.Any(c => c is NoteOffCommand)).Tick;
+		SetTempoRampCommand[] ramps = emitted
+			.SelectMany(e => e.Note.Commands)
+			.OfType<SetTempoRampCommand>().ToArray();
+		Assert.Multiple(() =>
+		{
+			Assert.That(ramps.Select(r => r.EndingTempo),
+				Is.EqualTo(new[] { atFour, atSix, atEight }).Within(1e-8));
+			Assert.That(ramps.Select(r => r.TrackerTicks),
+				Is.EqualTo(new[] { 4.0, 2.0, 2.0 }));
+			Assert.That(dueTick, Is.EqualTo(5.0).Within(1e-5));
+			Assert.That(root.State.Tempo, Is.EqualTo(atEight).Within(1e-8));
+		});
+	}
+
 	private static double RampSeconds(double initial, double ending, double ticks)
 		=> Math.Abs(ending - initial) < 1e-9
 			? 2.5 * ticks / initial
