@@ -129,11 +129,14 @@ public sealed class PrivatePitchInheritanceTests
 		unbent.Source.Render(normal.Length, normal);
 		outerBent.Source.Render(outerOnly.Length, outerOnly);
 		bothBent.Source.Render(both.Length, both);
+		string observed = string.Join(" | ", new[] { 0, 1, 2, 10, 20, 50, 90, 99 }
+			.Select(i => $"{i}: {normal[i]:G9}, {outerOnly[i]:G9}, {both[i]:G9}"));
 		Assert.Multiple(() =>
 		{
-			Assert.That(outerOnly[90], Is.GreaterThan(normal[90] * 1.01f));
+			Assert.That(outerOnly[90], Is.GreaterThan(normal[90] * 1.01f),
+				observed);
 			Assert.That(both[90], Is.GreaterThan(outerOnly[90] * 1.01f),
-				"Each private ancestor's pitch modulation must compose per voice.");
+				"Each private ancestor's pitch modulation must compose per voice. " + observed);
 		});
 	}
 
