@@ -755,10 +755,19 @@ public sealed class PreparedIncrementalPlaybackFactory
 				// another instrument or a private Pattern/Sequence voice.
 				// Bind the complete invocation now so its recursive leaf is
 				// tracked before subsequent same-frame lifecycle commands.
+				// A private parent's live pitch is sampled at this child-note
+				// boundary for Instrument tone selection. The child voice's
+				// continuous curve applies only later relative changes.
+				double inheritedPitch =
+					session.InheritedPitchAtFrame?.Invoke(parentFrame) ?? 1.0;
+				if (!(inheritedPitch > 0.0) || !double.IsFinite(inheritedPitch))
+					throw new InvalidOperationException(
+						"Private pitch modulation must be positive and finite.");
+				double selectedPitch = start.PitchMultiplier * inheritedPitch;
 				if (scripts.TryResolve(start.SourceId, out SongObject? selected)
 					&& selected is InstrumentDefinition
 					&& SelectsRecursiveTone(start.SourceId,
-						start.PitchMultiplier, ancestry))
+						selectedPitch, ancestry))
 				{
 					if (note.Target.Kind == ChannelTargetKind.Physical)
 						ReplacePhysical(note.Target.PhysicalChannel,
@@ -772,7 +781,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 						note.Target, owner, note.PhysicalPlaybackOwner, parentFrame,
 						start.ParentSourceScopes)!;
 					SoundInvocation? bound = instrument.CreateInvocation(
-						start.PitchMultiplier,
+						selectedPitch,
 						start.PlaybackSpeedMultiplier * privateClockRate);
 					if (bound is not null)
 					{
