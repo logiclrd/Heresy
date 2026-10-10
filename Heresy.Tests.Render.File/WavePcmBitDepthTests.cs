@@ -97,7 +97,7 @@ public sealed class WavePcmBitDepthTests
 	[TestCase(6, 0x3f)]
 	[TestCase(8, 0x63f)]
 	public void SurroundWavUsesExtensiblePcmHeaderWithSpeakerOrderMask(
-		int channelCount, uint expectedMask)
+		int channelCount, int expectedMask)
 	{
 		using MemoryStream stream = new();
 		using WaveFileSink sink = new(stream,
@@ -118,7 +118,7 @@ public sealed class WavePcmBitDepthTests
 			Assert.That(BinaryPrimitives.ReadUInt16LittleEndian(
 					bytes.AsSpan(38, 2)), Is.EqualTo(24));
 			Assert.That(BinaryPrimitives.ReadUInt32LittleEndian(
-					bytes.AsSpan(40, 4)), Is.EqualTo(expectedMask));
+					bytes.AsSpan(40, 4)), Is.EqualTo((uint)expectedMask));
 			Assert.That(bytes.AsSpan(44, 16).ToArray(),
 					Is.EqualTo(new byte[]
 					{
