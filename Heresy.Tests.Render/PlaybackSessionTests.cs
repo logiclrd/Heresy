@@ -180,6 +180,37 @@ public sealed class PlaybackSessionTests
 	}
 
 	[Test]
+	public void ScopedVirtualNnaOverrideAndPastNoteCutHonorOriginalChannelOwnership()
+	{
+		ObjectId source = (ObjectId)10U;
+		float[] waveform = new float[128];
+		Array.Fill(waveform, 1f);
+		PlaybackSession session = Session(1000, Schedule(),
+			new TestResolver((source, false,
+				Sample(waveform, 1000, NewNotePolicy.Cut))));
+		// S74 changes the old scoped virtual note's displacement policy.
+		session.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+			[new StartNoteCommand(source)]);
+		session.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+			[new SetCurrentVoiceDisplacementActionCommand(
+				NoteDisplacementAction.Continue), new StartNoteCommand(source)]);
+		// Same ID in a sibling invocation must remain independent.
+		session.ApplyScopedEvent(202, ChannelTarget.Virtual(7),
+			[new StartNoteCommand(source)]);
+		session.Render(0, 1, new float[1]);
+		Assert.That(session.VirtualVoices, Has.Count.EqualTo(1));
+
+		// S70 on virtual(7) reaches the displaced old note, but not
+		// its replacement nor same-numbered sibling's note.
+		session.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+			[new ApplyPastNoteActionCommand(TrackerPastNoteAction.Cut)]);
+		Assert.That(session.VirtualVoices, Is.Empty);
+		float[] remaining = new float[20];
+		session.Render(1, remaining.Length, remaining);
+		Assert.That(remaining[19], Is.EqualTo(2f).Within(1e-6f));
+	}
+
+	[Test]
 	public void StartNoteRendersResolvedSound()
 	{
 		ObjectId sourceId = (ObjectId)10U;
