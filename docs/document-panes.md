@@ -57,9 +57,10 @@ Tests: `SongTreeSectionTests`, `SongDocumentJsonTests`,
 `DocumentPaneLayoutTests`, `SongTreeDefaultActivationTests`,
 `EnvelopeDocumentEditorTests` and `SongTreeEditorTests`.
 
-## Follow-on tasks
+## Related completed editors
 
-The graphical ADSR editing control and its embedded FM envelope
-inspector remain separate unfinished work, as does the new
-implicitly-managed Instrument tone-table grid. They are recorded in
-[ui-editor-redesign.md](ui-editor-redesign.md) and [todo.md](todo.md).
+The graphical ADSR editor and its FM Envelope-node inspector integration
+are implemented; see [envelope-graph.md](envelope-graph.md).
+The implicitly managed nine-column Instrument tone grid is implemented;
+see [instrument-tone-grid-model.md](instrument-tone-grid-model.md).
+Neither belongs to the current [TODO list](todo.md).
