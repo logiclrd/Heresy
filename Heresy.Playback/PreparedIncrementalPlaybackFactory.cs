@@ -161,12 +161,20 @@ public sealed class PreparedIncrementalPlaybackFactory
 
 	private sealed class TrackedMixdown(
 		PreparedRecursiveMixdownSound sound, long startFrame,
-		int physicalChannel, long physicalPlaybackOwner)
+		int physicalChannel, long physicalPlaybackOwner,
+		uint? virtualChannelId, long? virtualOwner,
+		IReadOnlyList<long>? enclosingSourceScopes)
 	{
 		public PreparedRecursiveMixdownSound Sound { get; } = sound;
 		public long StartFrame { get; } = startFrame;
 		public int PhysicalChannel { get; } = physicalChannel;
 		public long PhysicalPlaybackOwner { get; } = physicalPlaybackOwner;
+		public uint? VirtualChannelId { get; } = virtualChannelId;
+		public long? VirtualOwner { get; } = virtualOwner;
+		// An indirect Instrument leaf remains a child of every flattened
+		// instigator, even when its independent renderer has a private clock.
+		public IReadOnlyList<long> EnclosingSourceScopes { get; } =
+			enclosingSourceScopes?.ToArray() ?? [];
 		public NoteDisplacementAction Displacement { get; set; } =
 			NoteDisplacementAction.Cut;
 	}
@@ -330,6 +338,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 			foreach (ObjectId id in registeredVoices.Keys)
 				sounds.UnregisterPreparedMixdown(id);
 			registeredVoices.Clear();
+			timeline.ScopeCanceled -= CancelPrivateScope;
 			foreach (PreparedRecursiveMixdownSound voice in privateVoices)
 				voice.Dispose();
 			privateVoices.Clear();
@@ -397,9 +406,58 @@ public sealed class PreparedIncrementalPlaybackFactory
 				displacedVoices.Add(old);
 		}
 
+		void ReplaceVirtual(long owner, uint id, long frame)
+		{
+			if (!scopedVoices.Remove((owner, id), out TrackedMixdown? old))
+				return;
+			Schedule(old, frame, old.Displacement);
+			if (old.Displacement != NoteDisplacementAction.Cut)
+				displacedVoices.Add(old);
+		}
+
+		void ApplyPrivateScopeControl(long scopeId, long frame,
+			NoteDisplacementAction action)
+		{
+			if (action == NoteDisplacementAction.Continue)
+				return;
+			// A flattened source is a *logical note*: Off/Cut/Fade must
+			// reach private renderers hosted by any descendant, including
+			// a tone selected through several Instrument layers and a
+			// private note displaced by NNA. Physical host indices are
+			// not sufficient to express that ownership.
+			TrackedMixdown[] affected = physicalVoices.Values
+				.Concat(scopedVoices.Values).Concat(displacedVoices)
+				.Where(v => v.EnclosingSourceScopes.Contains(scopeId))
+				.Distinct().ToArray();
+			foreach (TrackedMixdown voice in affected)
+				Schedule(voice, frame, action);
+			if (action == NoteDisplacementAction.Cut)
+			{
+				foreach (var pair in physicalVoices.ToArray())
+					if (pair.Value.EnclosingSourceScopes.Contains(scopeId))
+						physicalVoices.Remove(pair.Key);
+				foreach (var pair in scopedVoices.ToArray())
+					if (pair.Value.EnclosingSourceScopes.Contains(scopeId))
+						scopedVoices.Remove(pair.Key);
+				displacedVoices.RemoveAll(
+					v => v.EnclosingSourceScopes.Contains(scopeId));
+			}
+		}
+
+		void CancelPrivateScope(long scopeId)
+			=> ApplyPrivateScopeControl(scopeId, session.NextFrame,
+				NoteDisplacementAction.Cut);
+		timeline.ScopeCanceled += CancelPrivateScope;
+
 		void ProcessControl(ChannelTarget target, long owner,
 			long playbackOwner, long frame, NoteCommand command)
 		{
+			if (command is ControlFlattenedSourceCommand sourceControl)
+			{
+				ApplyPrivateScopeControl(sourceControl.ChildScopeId,
+					frame, sourceControl.Action);
+				return;
+			}
 			if (target.Kind == ChannelTargetKind.Physical)
 			{
 				int channel = target.PhysicalChannel;
@@ -408,7 +466,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 					for (int p = displacedVoices.Count - 1; p >= 0; p--)
 					{
 						TrackedMixdown prior = displacedVoices[p];
-						if (prior.PhysicalChannel != channel
+						if (prior.VirtualChannelId.HasValue
+							|| prior.PhysicalChannel != channel
 							|| prior.PhysicalPlaybackOwner != playbackOwner)
 							continue;
 						NoteDisplacementAction action = past.Action switch
@@ -446,14 +505,41 @@ public sealed class PreparedIncrementalPlaybackFactory
 			if (target.Kind == ChannelTargetKind.Virtual)
 			{
 				var key = (owner, target.VirtualChannelId);
+				if (command is ApplyPastNoteActionCommand past)
+				{
+					NoteDisplacementAction action = past.Action switch
+					{
+						TrackerPastNoteAction.Cut => NoteDisplacementAction.Cut,
+						TrackerPastNoteAction.Off => NoteDisplacementAction.Off,
+						TrackerPastNoteAction.Fade => NoteDisplacementAction.Fade,
+						_ => throw new InvalidOperationException(
+							"Unsupported virtual past-note lifecycle operation."),
+					};
+					for (int p = displacedVoices.Count - 1; p >= 0; p--)
+					{
+						TrackedMixdown prior = displacedVoices[p];
+						if (prior.VirtualChannelId != target.VirtualChannelId
+							|| prior.VirtualOwner != owner)
+							continue;
+						Schedule(prior, frame, action);
+						if (action == NoteDisplacementAction.Cut)
+							displacedVoices.RemoveAt(p);
+					}
+				}
 				if (!scopedVoices.TryGetValue(key, out TrackedMixdown? active))
 					return;
-				if (command is NoteOffCommand)
-					active.Sound.ScheduleRelease(frame);
-				else if (command is NoteCutCommand)
+				switch (command)
 				{
-					active.Sound.ScheduleCut(frame);
-					scopedVoices.Remove(key);
+					case NoteOffCommand:
+						active.Sound.ScheduleRelease(frame);
+						break;
+					case NoteCutCommand:
+						active.Sound.ScheduleCut(frame);
+						scopedVoices.Remove(key);
+						break;
+					case SetCurrentVoiceDisplacementActionCommand nna:
+						active.Displacement = nna.Action;
+						break;
 				}
 				return;
 			}
@@ -476,6 +562,23 @@ public sealed class PreparedIncrementalPlaybackFactory
 						scopedVoices.Remove(pair.Key);
 					}
 				}
+				// AllVirtual includes migrated NNA voices, whereas
+				// AllVirtualInScope intentionally does not.
+				if (target.Kind == ChannelTargetKind.AllVirtual)
+					for (int p = displacedVoices.Count - 1; p >= 0; p--)
+					{
+						TrackedMixdown previous = displacedVoices[p];
+						if (previous.VirtualChannelId is null
+							|| previous.StartFrame >= frame)
+							continue;
+						if (command is NoteOffCommand)
+							previous.Sound.ScheduleRelease(frame);
+						else
+						{
+							previous.Sound.ScheduleCut(frame);
+							displacedVoices.RemoveAt(p);
+						}
+					}
 			}
 		}
 
@@ -531,11 +634,16 @@ public sealed class PreparedIncrementalPlaybackFactory
 		}
 
 		void Track(PreparedRecursiveMixdownSound sound,
-			ChannelTarget target, long owner, long playbackOwner, long frame)
+			ChannelTarget target, long owner, long playbackOwner, long frame,
+			IReadOnlyList<long>? enclosingSourceScopes)
 		{
 			TrackedMixdown tracked = new(sound, frame,
 				target.Kind == ChannelTargetKind.Physical
-					? target.PhysicalChannel : -1, playbackOwner);
+					? target.PhysicalChannel : -1, playbackOwner,
+				target.Kind == ChannelTargetKind.Virtual
+					? target.VirtualChannelId : null,
+				target.Kind == ChannelTargetKind.Virtual ? owner : null,
+				enclosingSourceScopes);
 			if (target.Kind == ChannelTargetKind.Physical)
 				physicalVoices[(playbackOwner, target.PhysicalChannel)] = tracked;
 			else if (target.Kind == ChannelTargetKind.Virtual)
@@ -572,7 +680,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 		// Only a selected tone is visited, so unused instrument branches
 		// cannot cause cycles or unnecessarily instantiate private timelines.
 		ISound? ResolveTone(ObjectId id, IReadOnlyList<ObjectId> path,
-			ChannelTarget target, long owner, long playbackOwner, long frame)
+			ChannelTarget target, long owner, long playbackOwner, long frame,
+			IReadOnlyList<long>? enclosingSourceScopes)
 		{
 			if (scripts.TryResolve(id, out SongObject? definition))
 			{
@@ -580,7 +689,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 				{
 					PreparedRecursiveMixdownSound voice =
 						CreatePrivateSound(id, path, frame);
-					Track(voice, target, owner, playbackOwner, frame);
+					Track(voice, target, owner, playbackOwner, frame,
+						enclosingSourceScopes);
 					return voice;
 				}
 				if (definition is InstrumentDefinition instrument)
@@ -594,7 +704,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 					nextPath[^1] = id;
 					return new InstrumentSound(instrument,
 						new InstrumentToneSoundResolver(child =>
-							ResolveTone(child, nextPath, target, owner, playbackOwner, frame)),
+							ResolveTone(child, nextPath, target, owner, playbackOwner,
+								frame, enclosingSourceScopes)),
 						sounds);
 				}
 			}
@@ -639,12 +750,12 @@ public sealed class PreparedIncrementalPlaybackFactory
 							note.PhysicalPlaybackOwner, parentFrame);
 					else if (note.Target.Kind == ChannelTargetKind.Virtual)
 					{
-						var key = (owner, note.Target.VirtualChannelId);
-						if (scopedVoices.Remove(key, out TrackedMixdown? prior))
-							prior.Sound.ScheduleCut(parentFrame);
+						ReplaceVirtual(owner, note.Target.VirtualChannelId,
+							parentFrame);
 					}
 					ISound instrument = ResolveTone(start.SourceId, ancestry,
-						note.Target, owner, note.PhysicalPlaybackOwner, parentFrame)!;
+						note.Target, owner, note.PhysicalPlaybackOwner, parentFrame,
+						start.ParentSourceScopes)!;
 					SoundInvocation? bound = instrument.CreateInvocation(
 						start.PitchMultiplier,
 						start.PlaybackSpeedMultiplier * privateClockRate);
@@ -677,9 +788,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 								note.PhysicalPlaybackOwner, parentFrame);
 						else if (note.Target.Kind == ChannelTargetKind.Virtual)
 						{
-							var key = (owner, note.Target.VirtualChannelId);
-							if (scopedVoices.Remove(key, out TrackedMixdown? prior))
-								prior.Sound.ScheduleCut(parentFrame);
+							ReplaceVirtual(owner, note.Target.VirtualChannelId,
+								parentFrame);
 						}
 					}
 					commands[i] = command;
@@ -690,16 +800,16 @@ public sealed class PreparedIncrementalPlaybackFactory
 						note.PhysicalPlaybackOwner, parentFrame);
 				else if (note.Target.Kind == ChannelTargetKind.Virtual)
 				{
-					var key = (owner, note.Target.VirtualChannelId);
-					if (scopedVoices.Remove(key, out TrackedMixdown? prior))
-						prior.Sound.ScheduleCut(parentFrame);
+					ReplaceVirtual(owner, note.Target.VirtualChannelId,
+						parentFrame);
 				}
  				PreparedRecursiveMixdownSound privateVoice =
 					CreatePrivateSound(start.SourceId, ancestry, parentFrame);
 				ObjectId preparedId = sounds.RegisterPreparedMixdown(privateVoice);
 			registeredVoices.Add(preparedId, privateVoice);
 				Track(privateVoice, note.Target, owner,
-					note.PhysicalPlaybackOwner, parentFrame);
+					note.PhysicalPlaybackOwner, parentFrame,
+					start.ParentSourceScopes);
 				commands[i] = start with
 				{
 					SourceId = preparedId,
