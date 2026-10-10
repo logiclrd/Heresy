@@ -170,6 +170,63 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 	}
 
 	[Test]
+	public void CanceledPrefetchedEventCannotBlockNewIndependentStartAtSameFrame()
+	{
+		SongDocument document = new();
+		ObjectId canceledSample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(canceledSample,
+			"Canceled", "canceled.wav", LongWave(8192)));
+		ObjectId survivingSample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(survivingSample,
+			"Survives", "survives.wav", LongWave(16384)));
+		ObjectId orderId = document.AllocateObjectId();
+		DataPatternDefinition order = new(orderId, "Order")
+		{
+			RowCount = 4, ChannelCount = 1,
+		};
+		order.Grid.GetOrCreateCell(1, 0).Note =
+			new StartPatternNote(canceledSample);
+		document.Add(order);
+		ObjectId sequenceId = document.AllocateObjectId();
+		DataSequenceDefinition sequence = new(sequenceId, "Sequence");
+		sequence.Entries.Add(new SequenceEntry(orderId));
+		document.Add(sequence);
+		ObjectId otherId = document.AllocateObjectId();
+		DataPatternDefinition other = new(otherId, "New root")
+		{
+			RowCount = 2, ChannelCount = 1,
+		};
+		other.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(survivingSample);
+		document.Add(other);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, sequenceId);
+		MethodInfo prime = typeof(PreparedIncrementalAudioSource).GetMethod(
+			"FindNextEvent", BindingFlags.Instance | BindingFlags.NonPublic)!;
+		prime.Invoke(plan.Source, [1000L]);
+		Assert.That(plan.Source.NextFrame, Is.Zero);
+		Assert.That(plan.Timeline.Elapsed,
+			Is.EqualTo(TimeSpan.FromMilliseconds(120)));
+
+		// The Sequence's raw event has already been prefetched, but its
+		// PCM remains unrendered. Start a separate root on the shared
+		// tick boundary, then cancel the Sequence before frame 120.
+		// The canceled old event must disappear; the new root starts at
+		// that exact output frame, without inheriting the old owner ID.
+		plan.Timeline.AddRoot(otherId);
+		Assert.That(plan.Source.Cancel(plan.RootInvocationId), Is.True);
+		float[] pcm = new float[140];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm[119], Is.Zero.Within(1e-6f));
+		Assert.That(pcm[120], Is.EqualTo(0.5f).Within(1e-6f),
+			"The canceled prefetched event must not block or replace the "
+			+ "independent producer starting on its same PCM frame.");
+		Assert.That(pcm[139], Is.EqualTo(0.5f).Within(1e-6f));
+	}
+
+	[Test]
 	public void HundredsOfFlatInvocationsReclaimRendererMemoryAfterTheirVoicesEnd()
 	{
 		SongDocument document = new();
