@@ -61,6 +61,96 @@ public sealed class PlaybackSessionTests
 	}
 
 	[Test]
+	public void ScopedVirtualRepeatedStartsHonorNnaContinueAndBroadcastBoundaries()
+	{
+		ObjectId source = (ObjectId)10U;
+		float[] waveform = new float[128];
+		Array.Fill(waveform, 1f);
+		PlaybackSession session = Session(1000, Schedule(),
+			new TestResolver((source, false,
+				Sample(waveform, 1000, NewNotePolicy.Continue))));
+		// Two same-frame starts on this virtual channel are distinct
+		// voices when the first source's NNA is Continue.
+		session.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+			[new StartNoteCommand(source)]);
+		session.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+			[new StartNoteCommand(source)]);
+		session.ApplyScopedEvent(202, ChannelTarget.Virtual(7),
+			[new StartNoteCommand(source)]);
+		float[] start = new float[1];
+		session.Render(0, 1, start);
+		Assert.That(start[0], Is.EqualTo(3f).Within(1e-6f));
+		Assert.That(session.VirtualVoices.Count, Is.EqualTo(1),
+			"The displaced virtual voice should continue in the NNA pool.");
+
+		// Scoped broadcasts act on earlier *current* scoped voices.
+		// They do not erase migrated NNA voices or another invocation.
+		session.ApplyScopedEvent(101, ChannelTarget.AllVirtualInScope,
+			[new NoteCutCommand()]);
+		float[] afterScope = new float[20];
+		session.Render(1, afterScope.Length, afterScope);
+		Assert.That(afterScope[19], Is.EqualTo(2f).Within(1e-6f));
+		Assert.That(session.VirtualVoices.Count, Is.EqualTo(1));
+		session.ApplyScopedEvent(101, ChannelTarget.AllVirtual,
+			[new NoteCutCommand()]);
+		float[] afterGlobal = new float[20];
+		session.Render(21, afterGlobal.Length, afterGlobal);
+		Assert.That(afterGlobal[19], Is.Zero.Within(1e-6f));
+	}
+
+	[Test]
+	public void CancelScopedVirtualOwnerCutsMigratedNnaWithoutAffectingOtherOwner()
+	{
+		ObjectId source = (ObjectId)10U;
+		float[] waveform = new float[128];
+		Array.Fill(waveform, 1f);
+		PlaybackSession session = Session(1000, Schedule(),
+			new TestResolver((source, false,
+				Sample(waveform, 1000, NewNotePolicy.Continue))));
+		session.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+			[new StartNoteCommand(source)]);
+		session.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+			[new StartNoteCommand(source)]);
+		session.ApplyScopedEvent(202, ChannelTarget.Virtual(7),
+			[new StartNoteCommand(source)]);
+		session.Render(0, 1, new float[1]);
+		Assert.That(session.VirtualVoices, Has.Count.EqualTo(1));
+		session.CancelScopedVoices(101);
+		Assert.That(session.VirtualVoices, Is.Empty,
+			"The old virtual note is still owned by its original cursor.");
+		float[] remaining = new float[20];
+		session.Render(1, remaining.Length, remaining);
+		Assert.That(remaining[19], Is.EqualTo(1f).Within(1e-6f),
+			"Canceling one invocation must leave the other same-ID virtual channel sounding.");
+	}
+
+	[Test]
+	public void FlattenedScopeCutAlsoReachesNnaMigratedScopedVirtualNotes()
+	{
+		ObjectId source = (ObjectId)10U;
+		float[] waveform = new float[128];
+		Array.Fill(waveform, 1f);
+		PlaybackSession session = Session(1000, Schedule(),
+			new TestResolver((source, false,
+				Sample(waveform, 1000, NewNotePolicy.Continue))));
+		session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+			[new BeginFlattenedSourceVolumeCommand(1, 0.5)]);
+		StartNoteCommand nested = new(source)
+		{
+			ParentSourceScopes = new long[] { 1 },
+		};
+		session.ApplyScopedEvent(101, ChannelTarget.Virtual(7), [nested]);
+		session.ApplyScopedEvent(101, ChannelTarget.Virtual(7), [nested]);
+		session.Render(0, 1, new float[1]);
+		Assert.That(session.VirtualVoices, Has.Count.EqualTo(1));
+		session.ApplyFlattenedScopeAction(1, NoteDisplacementAction.Cut);
+		Assert.That(session.VirtualVoices, Is.Empty);
+		float[] later = new float[20];
+		session.Render(1, later.Length, later);
+		Assert.That(later[19], Is.Zero.Within(1e-6f));
+	}
+
+	[Test]
 	public void StartNoteRendersResolvedSound()
 	{
 		ObjectId sourceId = (ObjectId)10U;
