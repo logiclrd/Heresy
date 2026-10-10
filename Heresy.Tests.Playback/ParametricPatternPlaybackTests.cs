@@ -203,6 +203,41 @@ public sealed class ParametricPatternPlaybackTests
     }
 
     [Test]
+    public void ExplicitCursorCancellationRemovesItsGlobalExpressionWithoutAffectingSibling()
+    {
+        SongDocument song = SongWithTone(out ObjectId first);
+        DataPatternDefinition firstPattern = (DataPatternDefinition)song.Objects[first];
+        firstPattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
+            new ParametricPatternEffect(ParametricEffectParameter.GlobalVolume,
+                TimeSpan.FromSeconds(0.3), "-0.4", commitOnExpire: true));
+        ObjectId sampleId = ((StartPatternNote)firstPattern.Grid[0, 0]!.Note!).SourceId;
+        ObjectId sibling = song.AllocateObjectId();
+        DataPatternDefinition second = new(sibling, "Sibling")
+            { RowCount = 10, ChannelCount = 2 };
+        second.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote(sampleId);
+        song.Add(second);
+        using PreparedIncrementalPlaybackPlan plan =
+            new PreparedIncrementalPlaybackFactory(Mono()).Create(song, first);
+        long siblingInvocation = plan.Timeline.AddRoot(sibling);
+        float[] before = new float[15];
+        plan.Source.Render(before.Length, before);
+        Assert.That(before[7], Is.EqualTo(0.6f).Within(1e-4));
+        Assert.That(plan.Source.Cancel(plan.RootInvocationId), Is.True);
+        Assert.That(plan.Timeline.IsInvocationActive(siblingInvocation), Is.True);
+        float[] after = new float[75];
+        plan.Source.Render(after.Length, after);
+        Assert.Multiple(() =>
+        {
+            Assert.That(after[20], Is.EqualTo(0.5f).Within(1e-4f),
+                "The canceled owner's global delta must be removed while " +
+                "the sibling's voice continues.");
+            Assert.That(plan.Session.ActiveGlobalOperatorCount, Is.Zero);
+            Assert.That(plan.Session.GlobalVolume, Is.EqualTo(1.0).Within(1e-12),
+                "Cancel must not commit an orphaned persistent delta.");
+        });
+    }
+
+    [Test]
     public void InvalidExpressionFailsDuringPreparationNotWhileRendering()
     {
         SongDocument song = SongWithTone(out ObjectId root);
