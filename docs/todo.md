@@ -166,11 +166,18 @@ See [export-workflow.md](export-workflow.md).
 
 ## Playback state and authoring feedback
 
-- [ ] Route **offline export** sequencing diagnostics to the same bounded
-  runtime-diagnostics UI history now used by streaming realtime playback.
-  Realtime HRSEQ001/HRSEQ002 reports are already delivered from the PCM
-  worker via the transport; do not dispatch UI callbacks from that thread.
-  Preserve the 32-message per-context cap and 500-entry UI history.
+**Offline export runtime warnings integrated.** Both realtime and
+export now deliver `SequencingDiagnostic` reports through the same
+bounded runtime Warnings history. The export service drains its
+shared, per-plan diagnostic log after completed PCM blocks and in a
+`finally` path, including on cancellation and failure. Explicit
+private Pattern/Sequence mixdowns reuse the root plan's log, rather
+than isolating their warnings. UI notifications are posted to the
+Avalonia dispatcher; export entries use an `[Export]` prefix and
+the existing 500-entry history/clear action. HRSEQ001/002 and
+HRSEQ003/004 retain their existing 32-individual-message-per-kind
+suppression caps. No script/UI callbacks run in the audio worker.
+See [export-workflow.md](export-workflow.md).
 - [ ] Surface the PCM ring's existing underrun count and worker faults
   through playback transport/UI. Late audio already produces silence without
   skipping unrendered musical frames or blocking SDL; the UI underrun

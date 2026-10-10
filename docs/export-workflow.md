@@ -64,3 +64,46 @@ Regressions cover indeterminate progress and cancellation in an indefinite
 incremental arrangement, explicit finite-duration release-tail events,
 pre-canceled exports, and cancellation after a written body block that must
 preserve the destination and leave no `.heresy-render.tmp` file.
+
+## Bounded runtime sequencing diagnostics
+
+Realtime and offline rendering share the `SequencingDiagnostic` types
+and suppression policy: HRSEQ001 denotes a dropped out-of-order
+note, HRSEQ002 suppresses further such warnings, HRSEQ003 reports
+ignored voice-specific effects on a flattened source, and HRSEQ004
+suppresses further such warnings. `SequencingDiagnosticLog` permits
+up to 32 individual warnings in each category plus its corresponding
+suppression notice. Draining a log does not reset these limits.
+
+`OfflineSongRenderPlan.Diagnostics` exposes the plan's bounded log.
+Flattened child contexts already share this log; recursively created
+**private Pattern/Sequence mixdown contexts** now receive the same
+log explicitly, including private tones selected indirectly by
+Instruments. This keeps nested warnings visible in both export and
+realtime playback without changing their audio or ownership.
+
+`SongExportService.ExportAsync` accepts an optional
+`IProgress<SequencingDiagnostic[]>` argument. Its block progress
+adapter drains the log after each completed PCM block **before**
+notifying the ordinary musical-time progress observer. A `finally`
+drain forwards messages produced after the last progress event if
+encoding, rendering or cancellation aborts the operation. Empty
+batches are never reported. No diagnostic callback is invoked by
+the sequencer itself. A canceled export keeps the destination
+intact but **does not suppress warnings from rendered music**.
+
+The Avalonia `MainWindow` passes a `Progress<SequencingDiagnostic[]>`
+reporter to the export service. UI-context delivery joins export
+messages, prefixed `[Export]`, into the existing Warnings button
+and Runtime Diagnostics window. The existing clear action and
+last-500-history-entry bound apply equally to export and realtime
+reports. The UI never handles callbacks on the PCM worker; a closed
+window discards pending UI notifications safely.
+
+Regression tests cover warning delivery from a 48-row song
+(including the 32-message cap and single suppression notice),
+no duplicate reports across blocks/final cleanup, preservation
+of pending warnings on cancellation and failure, and warnings
+originating inside a private nested mixdown. The existing atomic
+export destination and temporary-file cleanup behavior remains
+unchanged.
