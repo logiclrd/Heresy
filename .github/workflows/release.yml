@@ -30,7 +30,9 @@ jobs:
 
   package:
     needs: validate-tag
-    runs-on: ubuntu-latest
+    # ARM64 libsndfile's NuGet package contains only static .a archives.
+    # Use a native ARM runner to stage actual shared-library builds.
+    runs-on: ${{ matrix.rid == 'linux-arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -64,6 +66,15 @@ jobs:
             -p:FileVersion="$VERSION.0" \
             -p:InformationalVersion="$VERSION" \
             -p:IncludeSourceRevisionInInformationalVersion=false
+
+      - name: Bundle Linux ARM64 shared libsndfile and codec dependencies
+        if: matrix.rid == 'linux-arm64'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsndfile1 patchelf binutils
+          python3 build/stage-linux-arm64-sndfile.py \
+            "$RUNNER_TEMP/heresy-publish/$RID"
 
       - name: Verify every Heresy assembly's embedded release version
         shell: bash

@@ -46,17 +46,6 @@ jobs:
         dotnet publish Heresy/Heresy.csproj -c Release -r win-x64 --self-contained false -p:UseAppHost=true -o "$RUNNER_TEMP/heresy-win-x64"
         python3 build/verify-windows-apphost-icon.py "$RUNNER_TEMP/heresy-win-x64/Heresy.exe"
 
-    - name: Inspect Linux ARM64 libsndfile NuGet assets
-      shell: bash
-      run: |
-        dotnet restore Heresy/Heresy.csproj -r linux-arm64
-        echo "== arm64 native assets =="
-        find "$HOME/.nuget/packages/org.sndfile.runtime.linux-arm64/1.2.2.1" \
-          -type f | sort
-        echo "== x64 native assets (comparison) =="
-        find "$HOME/.nuget/packages/org.sndfile.runtime.linux-x64/1.2.2.1/runtimes/linux-x64/native" \
-          -maxdepth 1 -type f -printf '%f\n' | sort
-
     - name: Smoke test versioned release bundle
       shell: bash
       run: |
@@ -87,3 +76,46 @@ jobs:
         unzip -Z -1 "$windows_archive" | grep -Fx 'Heresy/README.md' >/dev/null
         test "$(unzip -p "$windows_archive" Heresy/BUILD-COMMIT.txt)" = "$(git rev-parse HEAD)"
 
+
+  arm64-release-smoke:
+    name: Publish and validate Linux ARM64 shared codecs
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install .NET 10
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install ARM64 shared codec runtime
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsndfile1 patchelf binutils
+
+      - name: Publish Linux ARM64 release and inspect native libraries
+        shell: bash
+        run: |
+          version="1.2.3"
+          output="$RUNNER_TEMP/heresy-arm64-release-smoke"
+          dotnet publish Heresy/Heresy.csproj -c Release -r linux-arm64 \
+            --self-contained true -p:UseAppHost=true \
+            -p:ContinuousIntegrationBuild=true \
+            -p:Version="$version" -p:AssemblyVersion="$version.0" \
+            -p:FileVersion="$version.0" -p:InformationalVersion="$version" \
+            -p:IncludeSourceRevisionInInformationalVersion=false -o "$output"
+          python3 build/stage-linux-arm64-sndfile.py "$output"
+          dotnet run --project build/ReleaseVersionCheck/ReleaseVersionCheck.csproj \
+            -c Release -- "$output" "$version"
+          readelf -h "$output/Heresy" | grep -q 'Machine:.*AArch64'
+          bash build/package-release.sh "$output" "$version" linux-arm64 \
+            "$(git rev-parse HEAD)" "$RUNNER_TEMP/heresy-release-smoke"
+          archive="$RUNNER_TEMP/heresy-release-smoke/Heresy-${version}-linux-arm64.tar.bz2"
+          bzip2 -t "$archive"
+          tar -tjf "$archive" | grep -Fx 'Heresy/README.md' >/dev/null
+          tar -tjf "$archive" | grep -Fx 'Heresy/libsndfile.so.1' >/dev/null
+          test "$(tar -xOjf "$archive" Heresy/BUILD-COMMIT.txt)" = "$(git rev-parse HEAD)"

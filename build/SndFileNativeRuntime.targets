@@ -23,12 +23,15 @@
 			SkipUnchangedFiles="true" />
 
 		<!--
-			The Linux NuGet contains shared libraries under unversioned file
-			names, while the binaries themselves request their ELF SONAMEs.
-			NuGet cannot preserve the original symlink farm, so reproduce those
-			names as ordinary copies beside the executable.
+			The linux-x64 NuGet provides unversioned shared objects but
+			requires SONAME aliases. linux-arm64 NuGet 1.2.2.1 instead
+			contains ONLY static .a archives. Do not copy nonexistent
+			.so files or pretend .a archives are runnable shared libraries.
+			The Linux ARM64 release stages distribution-built shared
+			codec libraries using build/stage-linux-arm64-sndfile.py
+			on an actual ARM64 runner.
 		-->
-		<Copy Condition="$([System.String]::Copy('$(_SndFileRuntimeRid)').StartsWith('linux-'))"
+		<Copy Condition="'$(_SndFileRuntimeRid)' == 'linux-x64'"
 			SourceFiles="$(TargetDir)libsndfile.so;$(TargetDir)libvorbisenc.so;$(TargetDir)libFLAC.so;$(TargetDir)libopus.so;$(TargetDir)libmp3lame.so;$(TargetDir)libvorbis.so;$(TargetDir)libogg.so"
 			DestinationFiles="$(TargetDir)libsndfile.so.1;$(TargetDir)libvorbisenc.so.2.0.12;$(TargetDir)libFLAC.so.12;$(TargetDir)libopus.so.0;$(TargetDir)libmp3lame.so.0;$(TargetDir)libvorbis.so.0.4.9;$(TargetDir)libogg.so.0"
 			SkipUnchangedFiles="true" />
@@ -43,7 +46,7 @@
 		<Copy SourceFiles="@(_HeresySndFileRuntimePublish)"
 			DestinationFolder="$(PublishDir)"
 			SkipUnchangedFiles="true" />
-		<Copy Condition="$([System.String]::Copy('$(_SndFileRuntimeRid)').StartsWith('linux-'))"
+		<Copy Condition="'$(_SndFileRuntimeRid)' == 'linux-x64'"
 			SourceFiles="$(PublishDir)libsndfile.so;$(PublishDir)libvorbisenc.so;$(PublishDir)libFLAC.so;$(PublishDir)libopus.so;$(PublishDir)libmp3lame.so;$(PublishDir)libvorbis.so;$(PublishDir)libogg.so"
 			DestinationFiles="$(PublishDir)libsndfile.so.1;$(PublishDir)libvorbisenc.so.2.0.12;$(PublishDir)libFLAC.so.12;$(PublishDir)libopus.so.0;$(PublishDir)libmp3lame.so.0;$(PublishDir)libvorbis.so.0.4.9;$(PublishDir)libogg.so.0"
 			SkipUnchangedFiles="true" />

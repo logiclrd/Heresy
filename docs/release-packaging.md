@@ -72,3 +72,35 @@ still require the separate physical validation in
 Do not create a production release tag until the tagged commit's
 normal CI is green. Creating a release tag is a publishing action;
 no automatic tag was created while implementing this workflow.
+
+
+## Linux ARM64 shared codec staging
+
+The `org.sndfile.runtime.linux-arm64` NuGet **1.2.2.1** archive
+contains static `.a` libraries exclusively; the x64 variant also
+contains `.so` shared libraries. Static archives are not executable
+runtime dependencies and cannot be renamed into `.so` files.
+
+The Linux ARM64 release job runs on GitHub's native
+`ubuntu-24.04-arm` runner, installs the Ubuntu ARM64
+`libsndfile1` shared runtime and its codec dependencies, and runs
+`build/stage-linux-arm64-sndfile.py` after `dotnet publish`.
+The staging script copies libsndfile's **transitive non-glibc shared
+dependency closure**, preserves required SONAME filenames, sets
+`$ORIGIN` RPATH on the staged ELF files, and verifies that all
+bundled shared dependencies resolve from the publish directory.
+It also copies available Ubuntu package copyright notices into the
+archive's `THIRD-PARTY-LICENSES` directory. It checks that each
+staged ELF binary is really `AArch64` and rejects missing libraries.
+
+The old x64 SONAME alias copies in `SndFileNativeRuntime.targets`
+remain x64-specific; ARM64 must not accidentally attempt to duplicate
+nonexistent unversioned `.so` files or ship static archives in their
+place. A native ARM64 CI smoke job verifies the actual publish,
+staged shared binaries, package archive and commit provenance before
+the next release is tagged.
+
+The Linux ARM64 build links against Ubuntu 24.04 libraries; other
+Linux distributions may require a sufficiently recent glibc and other
+standard system services. This is not a claim of universal Linux
+distribution binary compatibility.
