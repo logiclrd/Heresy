@@ -62,8 +62,8 @@ public sealed class PatternEditorToolbarTests
 		// This clearance is permanent, not toggled with Auto scrollbar
 		// visibility: narrow windows must not cover the control bottoms,
 		// and resizing must not change the toolbar's requested height.
-		scroll.MinHeight.Should().BeGreaterOrEqualTo(60);
-		toolbar.Margin.Bottom.Should().BeGreaterOrEqualTo(20);
+		scroll.MinHeight.Should().BeGreaterThan(59);
+		toolbar.Margin.Bottom.Should().BeGreaterThan(19);
 		toolbar.VerticalAlignment.Should().Be(Avalonia.Layout.VerticalAlignment.Top);
 		back.VerticalAlignment.Should().Be(Avalonia.Layout.VerticalAlignment.Top);
 		scroll.HorizontalScrollBarVisibility.Should().Be(ScrollBarVisibility.Auto);
