@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 
+using Heresy.Core.Diagnostics;
 using Heresy.Core.Objects;
 using Heresy.Core.Sequences;
 using Heresy.Render.Configuration;
@@ -26,6 +27,10 @@ public sealed class OfflineSongRenderPlan : IDisposable
 	public SongDocumentSnapshot Snapshot => _playback.Snapshot;
 	public Heresy.Render.Playback.PlaybackSession Session => _playback.Session;
 	public PreparedIncrementalAudioSource Source => _playback.Source;
+	/// <summary>Bounded warnings emitted by the same shared sequencing
+	/// context used by nested and private source invocations.</summary>
+	public SequencingDiagnosticLog Diagnostics =>
+		_playback.SequencingContext.Diagnostics;
 	public TimeSpan LogicalDuration => _playback.Source.LogicalDuration;
 
 	public void Dispose() => _playback.Dispose();
