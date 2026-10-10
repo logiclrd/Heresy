@@ -165,6 +165,11 @@ public sealed class PlaybackSession
 	/// worker only for an actual seek/retrigger on a ReplayRequired sound.</summary>
 	public Action<string, long>? ReplayRequiredSeekObserved { get; set; }
 
+	/// <summary>Optional inherited pitch factor for each native private-session
+	/// frame. It bends individual child notes, not this session's tracker clock.
+	/// The private renderer owns the mapping across Oxx/Qxy reconstruction.</summary>
+	public Func<long, double>? InheritedPitchAtFrame { get; set; }
+
 	public long NextFrame => _nextFrame;
 
 	public int SampleRate => _context.Configuration.SampleRate;
@@ -1137,9 +1142,10 @@ public sealed class PlaybackSession
 			return;
 		}
 
+		double inheritedPitch = ReadInheritedPitchAt(eventFrame);
 		SoundInvocation? invocation =
 			sound.CreateInvocation(
-				start.PitchMultiplier,
+				checked(start.PitchMultiplier * inheritedPitch),
 				start.PlaybackSpeedMultiplier);
 		if (invocation is null)
 			return;
@@ -1174,7 +1180,9 @@ public sealed class PlaybackSession
 			originPhysicalChannel: 0,
 			sourceGainMultiplier: start.GainMultiplier,
 			enclosingVolumeChannels: enclosingVolumes,
-			enclosingSourceVolumes: ancestors)
+			enclosingSourceVolumes: ancestors,
+			inheritedPitch: InheritedPitchAtFrame,
+			inheritedPitchAtStart: inheritedPitch)
 		{
 			OriginVirtualChannelId = virtualChannelId,
 			OriginScopedVirtualOwner = scopedOwner,
@@ -1684,6 +1692,15 @@ public sealed class PlaybackSession
 		channel.CaptureCurrentNoteVolume(begin.InitialVolume);
 	}
 
+	private double ReadInheritedPitchAt(long frame)
+	{
+		double value = InheritedPitchAtFrame?.Invoke(frame) ?? 1.0;
+		if (!(value > 0.0) || !double.IsFinite(value))
+			throw new InvalidOperationException(
+				"Private parent pitch modulation must be positive and finite.");
+		return value;
+	}
+
 	private void StartNote(
 		int physicalChannel,
 		PlaybackChannelState channel,
@@ -1709,8 +1726,9 @@ public sealed class PlaybackSession
 			return;
 		}
 
+		double inheritedPitch = ReadInheritedPitchAt(eventFrame);
 		SoundInvocation? invocation = sound.CreateInvocation(
-			start.PitchMultiplier,
+			checked(start.PitchMultiplier * inheritedPitch),
 			start.PlaybackSpeedMultiplier);
 		if (invocation is null)
 			return;
@@ -1750,7 +1768,9 @@ public sealed class PlaybackSession
 			sourceGainMultiplier: start.GainMultiplier,
 			originPhysicalPlaybackOwner: physicalPlaybackOwner,
 			enclosingVolumeChannels: enclosingVolumes,
-			enclosingSourceVolumes: enclosingSources);
+			enclosingSourceVolumes: enclosingSources,
+			inheritedPitch: InheritedPitchAtFrame,
+			inheritedPitchAtStart: inheritedPitch);
 
 		channel.AttachVoice(voice, eventFrame);
 	}
