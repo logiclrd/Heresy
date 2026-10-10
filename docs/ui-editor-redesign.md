@@ -93,22 +93,38 @@ The current document tree has **five** section roots.
   node inspector, along with the New... dropdown/create path, is the
   separate **next** TODO. See [envelope-graph.md](envelope-graph.md).
 
-## FM instrument editor: first-class envelopes
+## FM instrument editor: first-class envelopes — implemented
 
-- A user can add an **Envelope node** even when no envelope objects
-  currently exist: do not display a create-first blocking message.
-- Its reference dropdown starts with **no selected value** on creation.
-  Place an italicized **New...** entry at the *top* of that dropdown.
-  Choosing New... creates a new envelope object and makes it available
-  for selection/assignment without leaving the FM instrument editor.
-  Preserve a distinguishable unassigned/blank state.
-- On selecting an Envelope node, its FM editor detail/inspector pane
-  embeds the reusable graphical envelope editor. Its edits must mutate
-  the same persistent envelope object visible in the Envelopes pane,
-  not a copy. Avoid losing selection or draft state as catalogues refresh.
-- The current `FmSynthEditorControl.AddEnvelope` refuses this operation
-  when no `EnvelopeDefinition` exists, and its inspector only has an
-  envelope selector; both are redesign targets.
+- The FM editor **+ Envelope** action now creates an unassigned
+  `FmEnvelopeNode` even when there are no Envelopes in the song.
+  Its `EnvelopeId` is `ObjectId.None` (zero); the dropdown displays
+  **no selected value** until an assignment is made. Nothing is
+  silently chosen merely because the song already contains an Envelope.
+- An italicized **New...** option appears **first** in the dropdown.
+  It prompts for the new name without navigating away, creates a live
+  `AdsrEnvelopeDefinition` using `EnvelopeDocumentEditor` in the
+  Envelopes section, assigns the resulting stable ObjectId to the FM
+  node and refreshes the inspector. Canceling the prompt restores the
+  prior selection without an extra graph edit.
+- **(None)** appears after New... for deliberately clearing a prior
+  reference; it never deletes the underlying Envelope. Existing
+  Envelopes are listed in name/ID order and can be reassigned.
+  The inspector displays a no-selection hint for an unassigned node.
+- When a live ADSR Envelope is assigned, the inspector embeds the
+  reusable, document-backed `AdsrEnvelopeGraphControl` directly.
+  Drag edits affect the **same** Envelope object that appears in the
+  Envelopes pane. They use the same editor's revision/validation
+  path, preserving playback-snapshot isolation. Missing/not-editable
+  references produce a visible explanation instead of a fabricated
+  editor instance.
+- `FmEnvelopeNode` now explicitly permits `ObjectId.None`.
+  This nonreference serializes as ID 0, evaluates to zero output
+  in the FM renderer, is ignored by reference analysis, and survives
+  JSON load and FM import without allocating a spurious Envelope.
+  Valid nonzero references remain checked by
+  `FmSynthDocumentEditor`. Existing concrete-reference songs are
+  unchanged. Regression tests cover all these model operations and
+  rendering. See [envelope-graph.md](envelope-graph.md).
 
 ## Unsaved-changes dialog and File -> Open
 

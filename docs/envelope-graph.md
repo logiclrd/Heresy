@@ -14,8 +14,39 @@ existing numeric Attack/Decay/Sustain/Release fields. Numeric **Apply**
 updates the graph; completed graph edits update all four numeric fields
 and invoke the usual document-changed/status callback. The graph
 also subscribes to the document's Changed event while attached and
-unsubscribes when detached. The same control is ready to be hosted
-inside the FM synth Envelope inspector in a subsequent milestone.
+unsubscribes when detached. The same control is **also hosted** in the FM synth editor's
+Envelope-node inspector. It edits the exact live envelope object,
+with the same document/audio revision path; switching the FM node's
+selected Envelope rebuilds that panel against the new object.
+
+## FM editor: creating and assigning envelopes
+
+The FM editor permits Envelope nodes without preexisting
+Envelope objects. Every new node initially has an unassigned
+`ObjectId.None` value and a blank selection. The selector starts
+with italicized **New...**, followed by **(None)** (the clearing
+action) and then existing Envelope names/IDs. Choosing New... opens
+a name prompt inside the FM editor, creates an Envelope in the
+first-class Envelopes section, assigns it to the FM node and embeds
+this same graphical control without opening another editor view.
+Canceling the name prompt leaves both the graph and assignment
+unchanged. Assigning another existing Envelope switches which
+shared definition is graphically edited; clearing an assignment
+does not delete it.
+
+Unassigned `FmEnvelopeNode` references use `ObjectId.None` and
+produce zero FM signal, as missing unresolved curves already did.
+ID 0 roundtrips through the current version-one song JSON format
+and is ignored when collecting dependencies for FM import.
+Imports leave such nodes unassigned, whereas concrete Envelope
+references are still imported/remapped normally. Nonzero
+assignments are validated as live Envelopes.
+
+Regression coverage: `FmUnassignedEnvelopeEditorTests`,
+`FmSynthGraphTests`, `FmSynthSoundTests`, and existing
+FM import/persistence tests. A desktop smoke check of New... menu
+formatting, popup focus, cancellation, and embedded graph pointer
+interaction is still desirable.
 
 ## Graph shape, coordinates, and zero-duration handles
 

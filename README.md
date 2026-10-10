@@ -571,8 +571,18 @@ pointer dragging to set such values. A completed drag commits through
 the same audio-affecting document editor/revision path as numeric
 Apply. Both surfaces remain synchronized, and incomplete drags can
 be canceled. See [graphical ADSR editing](docs/envelope-graph.md).
-Embedding that reusable graph into the FM synth Envelope inspector
-remains on the [UI redesign TODO](docs/ui-editor-redesign.md).
+The FM synth editor also embeds the **same graphical control** when
+one of its Envelope nodes has a live ADSR Envelope selected.
+Creating a new FM Envelope node leaves its reference unassigned
+(`ObjectId.None`), even if Envelopes already exist. Its dropdown
+starts blank, with an italicized **New...** entry first, followed by
+**(None)** and existing Envelopes. New... creates a shared Envelope
+in the document's Envelopes section and assigns it without
+leaving the FM editor. Clearing a reference does not delete that
+Envelope. Unassigned FM Envelope nodes serialize as ID 0 and
+evaluate to silence; FM import skips their nonexistent dependency.
+See [graphical ADSR editing](docs/envelope-graph.md) and the
+[UI redesign](docs/ui-editor-redesign.md).
 
 The note field supports direct tracker-keyboard entry. A current toolbar Source
 (sample, instrument, pattern or sequence) and base octave are editor state; the

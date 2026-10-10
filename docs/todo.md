@@ -272,10 +272,21 @@ revisions, while canceled drags revert. Numerical Apply and graph edits
 synchronize in the Envelope editor; the reusable control is ready to
 embed in the FM Envelope inspector (separate remaining TODO).
 See [envelope-graph.md](envelope-graph.md).
-- [ ] In the FM editor, allow creating an Envelope node with no existing
-  envelopes. Its selection starts blank, with an italic top **New...**
-  option that creates an envelope. Embed the same live graphical ADSR
-  editor in the selected Envelope node's detail pane.
+**FM Envelope-node creation, selection and graphical editing implemented.**
+The FM editor can create an unassigned Envelope node with *no*
+existing Envelope objects. Its selector starts blank; italicized
+**New...** is the top option and opens an in-editor naming dialog
+that creates a live Envelope in the separate Envelopes section and
+assigns its ID. A second **(None)** entry clears assignments without
+deleting the Envelope, and existing envelopes remain selectable.
+The inspector embeds `AdsrEnvelopeGraphControl` for the assigned
+shared ADSR object, with ordinary document/audio revision semantics.
+The `FmEnvelopeNode` model now permits `ObjectId.None`, which is
+saved, loaded and imported without inventing an Envelope dependency
+and renders as silence until assigned; all nonzero IDs still require
+a live Envelope when selected. Regression tests cover unassigned
+lifecycle, import, persistence, assignment, clearing and rendering.
+See [envelope-graph.md](envelope-graph.md).
 **Save-changes dialog and picker-first File → Open implemented.**
 The confirmation buttons appear left-to-right as Yes, No, Cancel, with
 Alt+Y / Alt+N / Alt+C access keys; Yes has IsDefault and Cancel has
