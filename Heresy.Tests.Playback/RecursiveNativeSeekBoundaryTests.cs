@@ -373,10 +373,6 @@ public sealed class RecursiveNativeSeekBoundaryTests
 
 	[TestCase(false)]
 	[TestCase(true)]
-	[Explicit("Known missing dynamic pitch propagation from a non-flattened " +
-		"private note to its active child voices; red PCM repro validated " +
-		"on CI run 38038804155. Do not silently repurpose Tempo or " +
-		"resample the completed mixdown PCM.")]
 	public void PrivateNotePitchSlideShouldModulateActiveChildVoicesWithoutChangingClock(
 		bool viaInstrument)
 	{
@@ -405,9 +401,7 @@ public sealed class RecursiveNativeSeekBoundaryTests
 			"The parent private note's pitch curve is definitely active.");
 		Assert.That(modulatedPcm, Is.Not.EqualTo(normalPcm),
 			"Private source note pitch slides should change child note pitch, " +
-			"without altering the child Sequence Tempo/row deadlines. " +
-			"At present PreparedRecursiveMixdownSound.Render ignores its " +
-			"SoundState.PitchTrajectory, so the audible outputs are identical.");
+			"without altering child tracker Tempo or deadlines.");
 	}
 
 	private static PlaybackSession ChildSession(PlaybackVoice parent)
