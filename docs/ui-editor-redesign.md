@@ -170,8 +170,14 @@ selector has no blank clearing entry.
   standard tone divided by **Divisions**. Retain the exact convention
   expressed by the following 48-divisions-per-octave example when
   implementing/testing the integer arithmetic:
-  `C-1, C-1+, C-1++, C#-1-, C#-1, C#-1+, C#-1++, D-1-, ...,
-  B-1-, B-1, B-1+, B-1++`.
+  `C-1, C-1+, C-1++, C#-1-, C#-1, C#-1+, C#-1++,
+  D-1-, D-1, D-1+, D-1++, D#-1-, D#-1, D#-1+, D#-1++,
+  E-1-, E-1, E-1+, E-1++, F-1-, F-1, F-1+, F-1++,
+  F#-1-, F#-1, F#-1+, F#-1++, G-1-, G-1, G-1+, G-1++,
+  G#-1-, G#-1, G#-1+, G#-1++, A-1-, A-1, A-1+, A-1++,
+  A#-1-, A#-1, A#-1+, A#-1++, B-1-, B-1, B-1+, B-1++`.
+  This complete example is an explicit acceptance fixture for note naming,
+  including the negative adjustment immediately below sharp notes.
 - The second closest-note column (column 5) represents the nominal
   note multiplied by the row's pitch multiplier.
   When a user edits the **Pitch multiplier** value, automatically select
