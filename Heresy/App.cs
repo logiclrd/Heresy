@@ -18,15 +18,23 @@ namespace Heresy;
 public sealed class App : Application
 {
 	public override void Initialize()
+		=> RegisterStyles(Styles);
+
+	/// <summary>
+	/// Configures desktop control styles independently of the platform asset
+	/// loader so the actual registration can be verified in headless tests.
+	/// </summary>
+	public static void RegisterStyles(Avalonia.Styling.Styles styles)
 	{
-		Styles.Add(new FluentTheme());
+		ArgumentNullException.ThrowIfNull(styles);
+		styles.Add(new FluentTheme());
 
 		// AvaloniaEdit requires its own Fluent control templates. Without
 		// these styles the scripted Pattern/Sequence editor takes up layout
 		// space but its text surface is not rendered.
 		Uri editorStyles = new(
 			"avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml");
-		Styles.Add(new StyleInclude(editorStyles)
+		styles.Add(new StyleInclude(editorStyles)
 		{
 			Source = editorStyles,
 		});
