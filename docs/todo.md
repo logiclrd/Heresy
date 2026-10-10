@@ -211,12 +211,16 @@ or stored effects. See [source-seek-hints.md](source-seek-hints.md).
 
 ## Startup branding and application identity
 
-- [ ] Use `Heresy.UserInterface/Images/Icon.ico` as the main window icon
-  so the application has its own icon in the title bar, taskbar, Alt-Tab,
-  and other window-manager UI on supported platforms.
-- [ ] Embed `Heresy.UserInterface/Images/Icon.ico` as the Windows executable
-  icon in the Windows build, including the native apphost/stub `.exe` file,
-  while preserving cross-platform builds.
+**Application icon wired into the desktop window and Windows apphost.**
+`Heresy.UserInterface/Images/Icon.ico` is explicitly packaged as an
+Avalonia resource and loaded into `MainWindow.Icon` without relying on
+an installed file path. The executable project sets `ApplicationIcon`
+to that same source file, allowing the .NET SDK to embed the multi-size
+icon in the native Windows `.exe` stub. CI tests the Avalonia resource
+and cross-publishes `win-x64`, inspecting the native PE executable
+for both RT_ICON and RT_GROUP_ICON resources. Linux/macOS builds
+retain their standard platform application hosts. See
+[application-branding.md](application-branding.md).
 - [ ] On startup show the supplied `Heresy.UserInterface/Images/Logo.axaml`
   control in a separate chromeless splash window in front of the main window.
   Dismiss it on any keyboard key, any pointer click, or automatically after
