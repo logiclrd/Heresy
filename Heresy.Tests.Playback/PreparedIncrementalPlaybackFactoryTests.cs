@@ -307,7 +307,10 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		{
 			uninterrupted.Source.Render(frames, whole);
 			Assert.That(whole[0], Is.EqualTo(0.8f).Within(1e-5f));
-			Assert.That(whole[120], Is.EqualTo(0.6875f).Within(1e-5f));
+			// Both private notes remain sounding after the second row-1 start:
+			// 0.5 sibling + 2 * (0.5 PCM * 0.75 * 0.5) = 0.875.
+			// The source-volume update applies live to both voices.
+			Assert.That(whole[120], Is.EqualTo(0.875f).Within(1e-5f));
 			Assert.That(whole[899], Is.Zero.Within(1e-5f));
 			Assert.That(PreparedRegistrationCount(uninterrupted), Is.Zero);
 			Assert.That(uninterrupted.SequencingContext.ScopedMemory.ActiveScopeCount,
