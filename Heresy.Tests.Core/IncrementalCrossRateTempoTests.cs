@@ -210,11 +210,27 @@ public sealed class IncrementalCrossRateTempoTests
 			At(0, 0, new ApplyTrackerPatternDelayCommand(2)),
 			At(0, 0, new ApplyTrackerTempoCommand(0x12))), 1, fast);
 		timeline.Add(new RawSource(
-			At(0.25, ChannelTarget.Global, new SetTempoCommand(200))), 1,
+			At(0.25, 0, new NoteOffCommand())), 1,
 			root.FlattenedChild(physicalChannelOffset: 4));
-		NoteEvent[] notes = Drain(timeline);
+		List<NoteEvent> notes = [];
+		bool inserted = false;
+		while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+		{
+			if (step is not IncrementalPatternTimelineStep.Emit emitted)
+				continue;
+			notes.Add(emitted.Note);
+			if (!inserted && emitted.Note.Commands.Any(c => c is NoteOffCommand))
+			{
+				inserted = true;
+				Assert.That(emitted.Tick, Is.EqualTo(1.5).Within(1e-8));
+				timeline.Add(new RawSource(At(0, ChannelTarget.Global,
+					new SetTempoCommand(200))), 1,
+					root.FlattenedChild(physicalChannelOffset: 5));
+			}
+		}
 		Assert.Multiple(() =>
 		{
+			Assert.That(inserted, Is.True);
 			Assert.That(notes.SelectMany(n => n.Commands)
 				.OfType<SetTempoRampCommand>().Count(), Is.EqualTo(1),
 				"A direct Tempo set must discard all future scaled SEy repeats.");
