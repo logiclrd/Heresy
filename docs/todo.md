@@ -197,10 +197,17 @@ The indicator clears on restart/stop, and live note releases keep their
 existing snapshot until a new note requires refresh. Lazy transport and
 UI-dispatched edit events preserve the single-worker audio model.
 See [playback-snapshots.md](playback-snapshots.md).
-- [ ] Highlight Oxx/offset operations on ReplayRequired mixdown sources when
-  the runtime capability indicates expensive realtime seeking. Explain in a
-  tooltip that export remains correct; provide an option to suppress warnings.
-  Do not prohibit these operations.
+**Expensive native-source seek hints implemented.** The Pattern editor now
+identifies Oxx starts with nonzero effective source-frame offsets and Qxy
+retriggers that may target ReplayRequired private mixdowns, including Source
+recall, repeated Sequence-order occurrences and conditional Instrument or
+script/flow cases. Tooltips explain possible realtime replay costs while
+offline export remains correct. The renderer reports actual ReplayRequired
+bound-voice offsets/retriggers through the shared bounded HRSEQ005/006
+runtime diagnostics sink, including nested private mixdowns. Options →
+Show expensive source seek hints suppresses editor decorations and future
+UI warning display for these hints only; it never changes Oxx/Qxy execution
+or stored effects. See [source-seek-hints.md](source-seek-hints.md).
 
 ## Startup branding and application identity
 
