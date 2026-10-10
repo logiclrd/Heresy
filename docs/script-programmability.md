@@ -56,7 +56,7 @@ remain distinct. Broadcasts act only on voices already started at a
 not retroactively targeted. Scoped broadcast excludes unrelated
 invocations; global virtual broadcast may reach all scopes.
 
-### First slice: note lifecycle, intended helper surface
+### First slice: note lifecycle — implemented
 
 These are *direct statement helpers*, matching existing
 `Note/Off/Cut` syntax and defaults:
@@ -94,6 +94,20 @@ carry positive fixed-wall deadlines. Out-of-order script emissions
 remain subject to the existing silent-drop, rate-capped diagnostic
 contract. No changes to renderer virtual ownership, NNA or
 broadcast eligibility are implied by exposing these helpers.
+
+The `PatternScriptProgram` virtual note-lifecycle helpers are now
+implemented, sharing physical `Note` start validation and emitting
+the existing Core commands. The incremental restricted-C# compiler
+recognizes their direct statements as mandatory yield points and
+rejects nested/statement-expression misuse. No changes to the
+`PlaybackSession` target/ownership implementation were needed.
+
+Automated coverage: `ScriptVirtualChannelTests` (eager/incremental
+equivalence, validation, laziness, Tempo/wall deadlines),
+`ScriptVirtualPlaybackTests` (PCM, same-frame scoped/global
+broadcast, ID reuse, cancellation, chunk invariance) and
+`PlaybackExportPcmParityTests` (production realtime/offline mono
+and 5.1 PCM equivalence).
 
 ### Second slice: virtual controls
 
