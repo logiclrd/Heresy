@@ -390,6 +390,98 @@ public sealed class SongDocumentJsonTests
 			Throws.TypeOf<NotSupportedException>());
 	}
 
+	[Test]
+	public void LegacyFourSectionTreePromotesNestedEnvelopesAndTombstones()
+	{
+		SongDocument song = new();
+		ObjectId instrumentId = song.AllocateObjectId();
+		song.Add(new InstrumentDefinition(instrumentId, "Piano"));
+		ObjectId envelopeId = song.AllocateObjectId();
+		song.Add(new AdsrEnvelopeDefinition(envelopeId, "Volume"));
+		ObjectId deletedId = song.AllocateObjectId();
+		song.Add(new AdsrEnvelopeDefinition(deletedId, "Missing"));
+		song.Remove(deletedId);
+
+		SongTreeFolder instruments =
+			song.GetSectionRoot(SongTreeSection.Instruments);
+		instruments.Children.Clear();
+		song.GetSectionRoot(SongTreeSection.Envelopes).Children.Clear();
+		SongTreeFolder group = new("Keys");
+		group.Children.Add(new SongTreeObject("Piano", instrumentId));
+		SongTreeFolder nested = new("Modulators");
+		nested.Children.Add(new SongTreeObject("Volume", envelopeId));
+		nested.Children.Add(new SongTreeObject("Missing", deletedId));
+		group.Children.Add(nested);
+		instruments.Children.Add(group);
+
+		JsonObject json = JsonNode.Parse(
+			SongDocumentJson.Serialize(song, JsonContextPath))!.AsObject();
+		JsonArray modern = json["tree"]!["children"]!.AsArray();
+		JsonArray old =
+		[
+			modern[0]!.DeepClone(),
+			modern[1]!.DeepClone(),
+			modern[4]!.DeepClone(),
+			modern[2]!.DeepClone(),
+		];
+		old[3]!.AsObject()["name"] = "Samples";
+		json["tree"]!["children"] = old;
+
+		SongDocument restored = SongDocumentJson.Deserialize(
+			json.ToJsonString(), JsonContextPath);
+		Assert.That(restored.DocumentRevision, Is.Zero);
+		Assert.That(restored.AudioRevision, Is.Zero);
+		Assert.That(restored.Root.Children.Select(x => x.Name),
+			Is.EqualTo(new[] { "Sequences", "Patterns",
+				"Patches", "Envelopes", "Instruments" }));
+		Assert.That(restored.Objects.Keys,
+			Is.EquivalentTo(new[] { instrumentId, envelopeId }));
+		Assert.That(restored.Tombstones.ContainsKey(deletedId), Is.True);
+
+		SongTreeFolder restoredGroup = (SongTreeFolder)restored
+			.GetSectionRoot(SongTreeSection.Instruments).Children.Single();
+		Assert.That(restoredGroup.Name, Is.EqualTo("Keys"));
+		Assert.That(((SongTreeObject)restoredGroup.Children[0]).ObjectId,
+			Is.EqualTo(instrumentId));
+		Assert.That(((SongTreeFolder)restoredGroup.Children[1]).Children,
+			Is.Empty);
+
+		SongTreeFolder envGroup = (SongTreeFolder)restored
+			.GetSectionRoot(SongTreeSection.Envelopes).Children.Single();
+		Assert.That(envGroup.Name, Is.EqualTo("Keys"));
+		SongTreeFolder modulators = (SongTreeFolder)envGroup.Children.Single();
+		Assert.That(modulators.Name, Is.EqualTo("Modulators"));
+		Assert.That(modulators.Children.Cast<SongTreeObject>()
+			.Select(x => x.ObjectId),
+			Is.EqualTo(new[] { envelopeId, deletedId }));
+
+		SongDocument reopened = SongDocumentJson.Deserialize(
+			SongDocumentJson.Serialize(restored, JsonContextPath),
+			JsonContextPath);
+		Assert.That(reopened.Root.Children, Has.Count.EqualTo(5));
+		Assert.That(reopened.Tombstones.ContainsKey(deletedId), Is.True);
+	}
+
+	[Test]
+	public void InvalidLegacySectionNamesAreRejectedRatherThanReordered()
+	{
+		SongDocument document = new();
+		JsonObject json = JsonNode.Parse(
+			SongDocumentJson.Serialize(document, JsonContextPath))!.AsObject();
+		JsonArray modern = json["tree"]!["children"]!.AsArray();
+		JsonArray invalid =
+		[
+			modern[0]!.DeepClone(),
+			modern[1]!.DeepClone(),
+			modern[4]!.DeepClone(),
+			modern[2]!.DeepClone(),
+		];
+		json["tree"]!["children"] = invalid;
+		Assert.That(
+			() => SongDocumentJson.Deserialize(json.ToJsonString(), JsonContextPath),
+			Throws.TypeOf<InvalidDataException>());
+	}
+
 	private static SongDocument BuildMixedDocument()
 	{
 		SongDocument document = new();
