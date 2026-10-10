@@ -225,6 +225,17 @@ runs once after the complete mix; private submixes bypass it.
 The UI distinguishes unsaved document changes from the freshness
 of the immutable audio snapshot used for current playback.
 
+Pattern playback-follow is enabled by the **Follow** checkbox in the
+tracker toolbar. It keeps the highlighted playback row near the
+vertical middle of the visible grid, using measured row locations
+to handle Sequence separators and repeated Pattern occurrences.
+Disabling Follow leaves playback highlighting active without
+playback-driven scrolling. Physical **NumPad Period/Decimal**,
+**Ctrl+F**, and **Scroll Lock** all toggle the same flag. The main
+Period key retains its tracker editing role, and **backtick continues
+to enter Note Off**. The follow feature leaves the edit cursor and
+horizontal scrolling unchanged.
+
 The Pattern editor auditions a note with top-row 4, a row with
 top-row 8, and held notes with Caps Lock plus tracker piano keys;
 releases queue Note Off into the same worker-owned playback state.

@@ -239,10 +239,15 @@ implemented simply because they are listed. In particular, keep existing
 Core identity/revision behavior and avoid treating visual grid drafts as
 persisted notes.
 
-- [ ] Add **Follow** playback in the Pattern editor: center the active
-  playback row where scrolling permits, gated by a `Follow` checkbox;
-  toggle via backtick, Ctrl+F or Scroll Lock. Respect Sequence-projected
-  display rows and manual scrolling when Follow is off.
+**Pattern editor playback-follow implemented.** The initially checked
+`Follow` control and physical **NumPad Period**, **Ctrl+F** and
+**Scroll Lock** shortcuts toggle one follow flag. Backtick stays Note
+Off; the ordinary Period retains its editing behavior. During playback
+the highlighted row is centered where scroll boundaries permit,
+including Sequence headers and repeated occurrences, without moving
+the edit cursor or horizontal scroll offset. With Follow off,
+playback highlighting continues but playback does not scroll.
+See [ui-editor-redesign.md](ui-editor-redesign.md).
 - [ ] Promote **Envelopes** to a first-class section/pane: two panes on
   the upper row (Sequences, Patterns) and three below (Samples/Patches,
   Envelopes, Instruments); handle tree-root persistence and placement.

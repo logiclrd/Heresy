@@ -9,30 +9,33 @@ Release and an unrestricted finite SustainLevel, and the document tree
 still has four fixed `SongTreeSection` roots. UI work must reconcile those
 actual models explicitly rather than assuming a redesign is already complete.
 
-## Pattern editor: optional playback-follow
+## Pattern editor: optional playback-follow — implemented
 
-- Add a **Follow** checkbox in the pattern editor. Its value controls a
-  playback-follow flag, not a change to playback/transport state.
-- All three keyboard inputs toggle that same flag: bare backtick (`\``,
-  Renoise), **Ctrl+F** (OpenMPT), and **Scroll Lock** (MilkyTracker).
-  Preserve the priority of the pattern editor's existing key bindings and
-  avoid toggling twice for one key event. The checkbox and keyboard state
-  must remain synchronized. **Known keyboard conflict:** the current
-  tracker Note column uses backtick to enter Note Off (documented in
-  README). The new Follow binding is specifically requested; its
-  interaction with existing Note Off entry must be resolved explicitly
-  by focus/shortcut priority instead of silently dropping either
-  behavior or claiming there is no conflict.
-- While enabled, each new playback-highlighted row should scroll into view
-  **as near the vertical middle of the visible pattern viewport as the
-  available scroll extent allows**. At the start/end, clamp naturally to
-  the document edges. When disabled, playback may continue highlighting
-  rows but must not change the user's scroll position.
-- Handle the existing `PatternEditorContext` display rows, including a
-  Pattern viewed inside a Sequence, sequence segment headers, and recurring
-  references. Follow the row resolved by current playback position without
-  moving the edit cursor or stealing keyboard focus. Keep programmatic
-  viewport tracking separate from manual selection/edit navigation.
+- The Pattern editor now has an initially enabled **Follow** checkbox
+  controlling playback viewport tracking, not the transport state.
+- The three keyboard shortcuts are **NumPad Period/Decimal**
+  (Renoise alternative), **Ctrl+F** (OpenMPT), and **Scroll Lock**
+  (MilkyTracker). They operate on the same checkbox state, ahead of
+  tracker-cell editing, with repeat-key suppression. The shortcut
+  uses physical `NumPadDecimal` independent of keyboard locale.
+  **Backtick remains Note Off** and **regular Period** remains a normal
+  tracker editing key. This intentionally supersedes the original
+  conflicting backtick-follow design.
+- When enabled, a new playback-highlighted row scrolls **as close to
+  the vertical center as the scroll extent allows**, clamping at document
+  edges. When disabled, existing playback highlighting remains visible
+  without playback-driven scrolling. Turning Follow on while a row is
+  already highlighted also requests centering.
+- Existing `PatternEditorContext` mapping resolves the highlighted
+  display rows, including per-Sequence-entry placement and repeated
+  Pattern sources. Measured row-header geometry accounts for variable
+  Sequence segment-header heights; when multiple rows match, the
+  candidate nearest the current viewport center is followed. Horizontal
+  scroll, edit cursor and focus remain unchanged.
+- `PatternPlaybackFollowTests` cover modifier-exact shortcuts, numpad
+  text suppression, ordinary Period/Backquote exclusion, scroll
+  centering/clamping and repeated-order mapping. Actual window-manager
+  focus and viewport behavior can additionally be smoke-tested on desktop.
 
 ## Document panes and vocabulary
 
