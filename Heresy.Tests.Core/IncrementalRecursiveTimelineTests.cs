@@ -1210,6 +1210,54 @@ public sealed class IncrementalRecursiveTimelineTests
 			.OfType<SetPlaybackFrequencyCommand>(), Is.Empty);
 	}
 
+
+	[Test]
+	public void ThreeLevelFlattenedFrequencyAndSiblingUseIndependentPitchScopes()
+	{
+		DataPatternDefinition root = Pattern(1, 1);
+		root.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote((ObjectId)2U, pitchMultiplier: 2.0);
+		root.Grid.GetOrCreateCell(0, 1).Note =
+			new StartPatternNote((ObjectId)5U, pitchMultiplier: 0.25);
+		DataPatternDefinition middle = Pattern(2, 1);
+		middle.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote((ObjectId)3U, pitchMultiplier: 0.5);
+		DataPatternDefinition inner = Pattern(3, 1);
+		inner.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote((ObjectId)4U, pitchMultiplier: 2.0);
+		DataPatternDefinition leaf = Pattern(4, 1);
+		PatternCell deepCell = leaf.Grid.GetOrCreateCell(0, 0);
+		deepCell.Note = new StartPatternNote((ObjectId)99U, pitchMultiplier: 3.0);
+		deepCell.Effects.Add(new SetPlaybackFrequencyPatternEffect(880));
+		DataPatternDefinition sibling = Pattern(5, 1);
+		PatternCell siblingCell = sibling.Grid.GetOrCreateCell(0, 0);
+		siblingCell.Note = new StartPatternNote((ObjectId)98U);
+		siblingCell.Effects.Add(new SetPlaybackFrequencyPatternEffect(440));
+		using IncrementalRecursiveTimeline timeline = new(
+			new SequencingContext(),
+			new Resolver(root, middle, inner, leaf, sibling));
+		timeline.AddRoot(root.Id);
+		NoteEvent[] notes = Drain(timeline);
+		NoteEvent[] frequencies = notes.Where(n => n.Commands.Any(c =>
+			c is SetPlaybackFrequencyCommand)).ToArray();
+		Assert.That(frequencies, Has.Length.EqualTo(2));
+		NoteEvent deep = frequencies.Single(n => n.Target ==
+			ChannelTarget.Physical(0));
+		NoteEvent adjacent = frequencies.Single(n => n.Target ==
+			ChannelTarget.Physical(1));
+		Assert.Multiple(() =>
+		{
+			Assert.That(deep.Commands.OfType<StartNoteCommand>()
+				.Single().PitchMultiplier, Is.EqualTo(6.0));
+			Assert.That(deep.Commands.OfType<SetPlaybackFrequencyCommand>()
+				.Single().LocalPitchContextMultiplier, Is.EqualTo(2.0));
+			Assert.That(adjacent.Commands.OfType<StartNoteCommand>()
+				.Single().PitchMultiplier, Is.EqualTo(0.25));
+			Assert.That(adjacent.Commands.OfType<SetPlaybackFrequencyCommand>()
+				.Single().LocalPitchContextMultiplier, Is.EqualTo(0.25));
+		});
+	}
+
 	private static DataPatternDefinition Pattern(uint id, int rows)
 		=> new((ObjectId)id, "Pattern")
 		{
