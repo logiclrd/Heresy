@@ -221,8 +221,7 @@ and cross-publishes `win-x64`, inspecting the native PE executable
 for both RT_ICON and RT_GROUP_ICON resources. Linux/macOS builds
 retain their standard platform application hosts. See
 [application-branding.md](application-branding.md).
-**Startup splash lifecycle implemented; native placement still needs
-desktop verification.** The existing `Images/Logo.axaml` control is
+**Startup splash lifecycle and X11 placement verified.** The existing `Images/Logo.axaml` control is
 displayed in an owned, chromeless, nontaskbar window above the
 already-opened main window. The one-shot four-second `DispatcherTimer`
 begins when the splash opens; any keypress, pointer click or owner-window
@@ -231,31 +230,17 @@ path and prevents double close/reentrancy. Splash creation is
 dispatcher-posted after main-window opening, never stalls the main window
 or initializes audio. See [application-branding.md](application-branding.md).
 
-**Second splash-placement implementation and main-window maximization
-persistence coded.** The former one-time post-open centering did **not**
-center on a user-tested KDE Plasma 6/X11 desktop configured to place
-new windows under the mouse. The revised approach starts the owned splash
-at CenterScreen with opacity zero, follows owner and splash native
-position changes / owner resize for the first 50 ms after opening,
-and advances opacity to 1 over 250 ms. Maximization changes keep
-triggering a recenter throughout the splash's lifetime. Explicit X11
-session reporting takes precedence over an incidental Wayland display
-variable; Wayland retains the CenterScreen hint without requesting
-unsupported top-level movement. Headless tests cover the event policy,
-pixel geometry, fade timing and state preference, **not actual native
-window-manager behaviour**. The main window's binary maximized state
-continues to be saved/restored as an app-local preference. See
-[application-branding.md](application-branding.md).
-
-- [ ] **Verify splash placement on a real KDE Plasma 6 / X11 desktop**
-  configured to place new windows under the mouse cursor: both normal
-  and maximized main-window startup (including restored maximize), and
-  ideally a second display/scaling arrangement. Confirm the fade avoids
-  visibly flashing an incorrect initial location. If placement still
-  fails, capture native owner/splash coordinates and event order and
-  correct the behaviour before closing this item. Wayland remains
-  compositor-controlled with a CenterScreen fallback; passing
-  non-windowed unit tests alone does not close this TODO.
+**Splash placement and main-window maximization persistence completed.**
+The initial post-open centering did not work with KDE Plasma 6/X11
+configured to position new windows under the mouse. The corrected splash
+starts with CenterScreen and opacity zero, follows native early owner/splash
+position changes for 50 ms, and fades in over 250 ms. Maximization changes
+remain handled throughout its lifetime. **The user tested and confirmed
+the revised splash works perfectly on their KDE Plasma 6/X11 system**.
+Wayland remains a compositor-managed best-effort CenterScreen fallback;
+untested platforms are not asserted to have been empirically verified.
+The main window's maximized state remains an application-local preference.
+See [application-branding.md](application-branding.md).
 
 ## UI polish and requested editor redesign — newly planned
 
