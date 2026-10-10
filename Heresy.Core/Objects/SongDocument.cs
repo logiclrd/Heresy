@@ -8,6 +8,16 @@ namespace Heresy.Core.Objects;
 /// Mutable authoring document. Playback layers are expected to take snapshots
 /// or otherwise capture definitions at invocation boundaries.
 /// </summary>
+public sealed class SongDocumentChangedEventArgs(
+	bool affectsAudio,
+	uint documentRevision,
+	uint audioRevision) : EventArgs
+{
+	public bool AffectsAudio { get; } = affectsAudio;
+	public uint DocumentRevision { get; } = documentRevision;
+	public uint AudioRevision { get; } = audioRevision;
+}
+
 public sealed class SongDocument
 {
 	private readonly Dictionary<ObjectId, SongObject> _objects = [];
@@ -36,6 +46,9 @@ public sealed class SongDocument
 	public SongTreeFolder Root { get; }
 
 	public ObjectId RootSequenceId { get; set; }
+
+	/// <summary>Raised on the editing thread after revisions change.</summary>
+	public event EventHandler<SongDocumentChangedEventArgs>? Changed;
 
 	public uint DocumentRevision { get; private set; }
 	public uint AudioRevision { get; private set; }
@@ -94,6 +107,8 @@ public sealed class SongDocument
 			if (affectsAudio)
 				AudioRevision++;
 		}
+		Changed?.Invoke(this, new SongDocumentChangedEventArgs(
+			affectsAudio, DocumentRevision, AudioRevision));
 	}
 
 	/// <summary>
