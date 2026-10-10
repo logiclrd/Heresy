@@ -339,13 +339,13 @@ public sealed class RecursiveNativeSeekBoundaryTests
 		root.Grid.GetOrCreateCell(0, 0).Effects.Add(
 			new SampleOffsetPatternEffect(1));
 		root.Grid.GetOrCreateCell(1, 0).Effects.Add(
-			new RetriggerPatternEffect(0x01));
+			new RetriggerPatternEffect(0x03));
 		PreparedIncrementalPlaybackFactory factory = new(Mono());
 		using PreparedIncrementalPlaybackPlan withOffset =
 			factory.Create(document, parent);
 		using PreparedIncrementalPlaybackPlan direct =
 			factory.Create(document, sequence);
-		float[] earlier = new float[120];
+		float[] earlier = new float[180];
 		withOffset.Source.Render(earlier.Length, earlier);
 		PlaybackVoice outer = withOffset.Session.GetChannelState(0).CurrentVoice!;
 		PlaybackSession old = ChildSession(outer);
@@ -359,13 +359,13 @@ public sealed class RecursiveNativeSeekBoundaryTests
 		{
 			Assert.That(fresh, Is.Not.SameAs(old));
 			Assert.That(fresh.NextFrame, Is.EqualTo(31L));
-			Assert.That(outer.SoundState.PlaybackOriginFrame, Is.EqualTo(120L));
+			Assert.That(outer.SoundState.PlaybackOriginFrame, Is.EqualTo(180L));
 			Assert.That(outer.SoundState.GetType().GetProperty(
 				"SourceFrameOffset")!.GetValue(outer.SoundState), Is.EqualTo(0L));
 			Assert.That(replayedSample.SoundState.PitchTrajectory.GetPosition(30),
 				Is.EqualTo(referenceSample.SoundState.PitchTrajectory.GetPosition(30))
 					.Within(1e-8),
-				"Qxy must reconstruct child vibrato's integrated phase after Oxx.");
+				"Q03 must reconstruct child vibrato's integrated phase after Oxx.");
 			Assert.That(fresh.GetChannelState(0).CurrentVoice?.StartFrame,
 					Is.EqualTo(0L));
 		});
