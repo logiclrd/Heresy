@@ -108,6 +108,9 @@ public sealed class ScriptVirtualChannelTests
             Assert.That(((RawPatternStep.Emit)iterator.Current).Note.Target,
                 Is.EqualTo(target));
         }
+        Assert.That(iterator.MoveNext(), Is.True,
+            "Incremental scripted Patterns terminate with an explicit Advance.");
+        Assert.That(iterator.Current, Is.TypeOf<RawPatternStep.Advance>());
         Assert.That(iterator.MoveNext(), Is.False);
     }
 
@@ -146,7 +149,7 @@ public sealed class ScriptVirtualChannelTests
 
     [TestCase("NoteVirtual(0, 7U, _O(17), pitchMultiplier: 0);")]
     [TestCase("NoteVirtual(0, 7U, _O(17), volume: 1.1);")]
-    [TestCase("NoteVirtual(0, 7U, _O(0));")]
+    [TestCase("NoteVirtual(0, 7U, default);")]
     [TestCase("CutVirtual(1.5, 7U);")]
     [TestCase("OffVirtualInScope(0, timeOffsetSeconds: 1e300);")]
     [TestCase("CutAllVirtual(0, timeOffsetSeconds: 1e300);")]
