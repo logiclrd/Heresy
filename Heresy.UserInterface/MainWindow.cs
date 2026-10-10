@@ -104,6 +104,14 @@ public sealed class MainWindow : Window
 	private readonly IPlaybackPositionTransport? _playbackPositionTransport;
 	private readonly IPlaybackRuntimeDiagnosticsTransport?
 		_runtimeDiagnosticsTransport;
+	private readonly IPlaybackAudioHealthTransport? _audioHealthTransport;
+	private readonly TextBlock _underrunIndicator = new()
+	{
+		IsVisible = false,
+		VerticalAlignment = VerticalAlignment.Center,
+		Margin = new Thickness(12, 0),
+	};
+	private long _lastAudioHealthSessionId = -1;
 	private readonly Button _diagnosticsButton =
 		new() { Content = "Warnings", IsVisible = false };
 	private readonly List<string> _runtimeDiagnosticMessages = [];
@@ -176,6 +184,10 @@ public sealed class MainWindow : Window
 			playbackTransport as IPlaybackPositionTransport;
 		_runtimeDiagnosticsTransport =
 			playbackTransport as IPlaybackRuntimeDiagnosticsTransport;
+		_audioHealthTransport =
+			playbackTransport as IPlaybackAudioHealthTransport;
+		if (_audioHealthTransport is not null)
+			_audioHealthTransport.AudioHealthChanged += OnAudioHealthChanged;
 		if (_runtimeDiagnosticsTransport is not null)
 			_runtimeDiagnosticsTransport.RuntimeDiagnostics +=
 				OnRuntimeDiagnostics;
@@ -206,6 +218,8 @@ public sealed class MainWindow : Window
 			if (_runtimeDiagnosticsTransport is not null)
 				_runtimeDiagnosticsTransport.RuntimeDiagnostics -=
 					OnRuntimeDiagnostics;
+			if (_audioHealthTransport is not null)
+				_audioHealthTransport.AudioHealthChanged -= OnAudioHealthChanged;
 			_runtimeDiagnosticsWindow?.Close();
 			if (_playbackPositionTransport is not null)
 			{
@@ -235,11 +249,13 @@ public sealed class MainWindow : Window
 				{
 					Children =
 					{
+						_underrunIndicator,
 						_diagnosticsButton,
 						_status,
 					},
 				},
 			};
+		DockPanel.SetDock(_underrunIndicator, Dock.Right);
 		DockPanel.SetDock(_diagnosticsButton, Dock.Right);
 		DockPanel.SetDock(statusBar, Dock.Bottom);
 		root.Children.Add(statusBar);
@@ -2536,6 +2552,35 @@ public sealed class MainWindow : Window
 						position);
 				}
 			});
+	}
+
+	/// <summary>Only UI-thread delivery updates labels or warning history.
+	/// In particular, no UI work is performed on SDL's audio callback.</summary>
+	private void OnAudioHealthChanged(
+		object? sender,
+		PlaybackAudioHealthChangedEventArgs e)
+	{
+		_ = sender;
+		Dispatcher.UIThread.Post(() =>
+		{
+			if (_windowClosed || e.SessionId < _lastAudioHealthSessionId)
+				return;
+			_lastAudioHealthSessionId = e.SessionId;
+			_underrunIndicator.IsVisible = e.IsActive && e.UnderrunCount > 0;
+			if (_underrunIndicator.IsVisible)
+				_underrunIndicator.Text = $"Audio underruns: {e.UnderrunCount:N0}";
+
+			if (e.IsNewFault && e.Fault is not null)
+			{
+				_runtimeDiagnosticMessages.Add(
+					$"[Playback] Audio worker failure: {e.Fault.GetType().Name}: {e.Fault.Message}");
+				if (_runtimeDiagnosticMessages.Count > MaximumVisibleRuntimeDiagnostics)
+					_runtimeDiagnosticMessages.RemoveRange(
+						0, _runtimeDiagnosticMessages.Count - MaximumVisibleRuntimeDiagnostics);
+				UpdateRuntimeDiagnosticsView();
+				SetStatus($"Audio playback failed: {e.Fault.Message}");
+			}
+		});
 	}
 
 	private void OnRuntimeDiagnostics(

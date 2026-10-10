@@ -15,13 +15,15 @@ namespace Heresy.Playback;
 public sealed class LazySongPlaybackTransport
 	: ISongPlaybackTransport,
 		IPlaybackPositionTransport,
-		IPlaybackRuntimeDiagnosticsTransport
+		IPlaybackRuntimeDiagnosticsTransport,
+		IPlaybackAudioHealthTransport
 {
 	private readonly object _gate = new();
 	private readonly Func<ISongPlaybackTransport> _factory;
 	private ISongPlaybackTransport? _inner;
 	private EventHandler<PlaybackPositionChangedEventArgs>? _positionChanged;
 	private EventHandler<PlaybackRuntimeDiagnosticsEventArgs>? _runtimeDiagnostics;
+	private EventHandler<PlaybackAudioHealthChangedEventArgs>? _audioHealthChanged;
 	private bool _disposed;
 
 	public LazySongPlaybackTransport(
@@ -81,6 +83,32 @@ public sealed class LazySongPlaybackTransport
 				_runtimeDiagnostics -= value;
 				if (_inner is IPlaybackRuntimeDiagnosticsTransport diagnostics)
 					diagnostics.RuntimeDiagnostics -= value;
+			}
+		}
+	}
+
+	public event EventHandler<PlaybackAudioHealthChangedEventArgs>?
+		AudioHealthChanged
+	{
+		add
+		{
+			lock (_gate)
+			{
+				ThrowIfDisposed();
+				_audioHealthChanged += value;
+				if (_inner is IPlaybackAudioHealthTransport health)
+					health.AudioHealthChanged += value;
+			}
+		}
+		remove
+		{
+			lock (_gate)
+			{
+				if (_disposed)
+					return;
+				_audioHealthChanged -= value;
+				if (_inner is IPlaybackAudioHealthTransport health)
+					health.AudioHealthChanged -= value;
 			}
 		}
 	}
@@ -185,6 +213,9 @@ public sealed class LazySongPlaybackTransport
 				if (_inner is IPlaybackRuntimeDiagnosticsTransport diagnostics
 					&& _runtimeDiagnostics is not null)
 					diagnostics.RuntimeDiagnostics += _runtimeDiagnostics;
+				if (_inner is IPlaybackAudioHealthTransport health
+					&& _audioHealthChanged is not null)
+					health.AudioHealthChanged += _audioHealthChanged;
 			}
 			return _inner;
 		}
