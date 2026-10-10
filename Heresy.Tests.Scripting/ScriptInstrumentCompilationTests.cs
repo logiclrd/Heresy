@@ -44,6 +44,27 @@ public sealed class ScriptInstrumentCompilationTests
     }
 
     [Test]
+    public void CompiledPitchScaleIsIndependentOfToneSelection()
+    {
+        ScriptInstrumentDefinition definition = new((ObjectId)9U, "Dynamic pitch")
+        {
+            Source = "0",
+            PitchExpression = "pitchMultiplier < 1.5 ? 2.0 : 0.25",
+        };
+        var result = ScriptCompiler.CompileInstrumentPitch(definition);
+        Assert.That(result.Success, Is.True,
+            string.Join("; ", result.Diagnostics.Select(d => d.Message)));
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Program!.GetPitchScale(1.0), Is.EqualTo(2.0));
+            Assert.That(result.Program!.GetPitchScale(2.0), Is.EqualTo(0.25));
+        });
+        definition.PitchExpression = "System.IO.File.ReadAllText(\"path\")";
+        Assert.That(ScriptCompiler.CompileInstrumentPitch(definition).Success,
+            Is.False);
+    }
+
+    [Test]
     public void HugeSelectorIsRejectedByComplexityBudget()
     {
         ScriptInstrumentDefinition definition = new((ObjectId)1U, "Too long")

@@ -90,6 +90,24 @@ public sealed class ScriptInstrumentPlaybackTests
     }
 
     [Test]
+    public void NonPositiveDynamicPitchScaleFailsBeforeBindingSound()
+    {
+        SongDocument song = new();
+        ObjectId sample = Sample(song, 16384);
+        ObjectId id = song.AllocateObjectId();
+        ScriptInstrumentDefinition instrument = new(id, "Bad pitch")
+        { Source = "0", PitchExpression = "0.0" };
+        instrument.ToneSpecifications.Add(new ToneSpecification { SourceId = sample });
+        song.Add(instrument);
+        ObjectId root = ScriptPattern(song, $"Note(0, 0, _O({id.Value}));");
+        using PreparedIncrementalPlaybackPlan plan =
+            new PreparedIncrementalPlaybackFactory(Mono()).Create(song, root);
+        InvalidOperationException? error = Assert.Throws<InvalidOperationException>(
+            () => plan.Source.Render(2, new float[2]));
+        Assert.That(error!.Message, Does.Contain("invalid pitch multiplier"));
+    }
+
+    [Test]
     public void InvalidIndexFailsExplicitlyAndNotAsAnArbitrarySource()
     {
         SongDocument song = new();

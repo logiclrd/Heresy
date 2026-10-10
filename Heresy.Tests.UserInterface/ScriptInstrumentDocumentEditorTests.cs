@@ -37,6 +37,19 @@ public sealed class ScriptInstrumentDocumentEditorTests
         Assert.That(definition.Source, Is.EqualTo(
             "pitchMultiplier < 1.0 ? -1 : 0"));
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(unchanged));
+
+        Assert.Throws<ArgumentException>(() =>
+            ScriptInstrumentDocumentEditor.SetExpressions(workspace, definition,
+                "-1", "System.Environment.TickCount"));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(unchanged));
+        ScriptInstrumentDocumentEditor.SetExpressions(
+            workspace, definition, "-1", "pitchMultiplier * 2.0");
+        Assert.That(definition.PitchExpression, Is.EqualTo("pitchMultiplier * 2.0"));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(unchanged + 1));
+        ScriptInstrumentDocumentEditor.SetExpressions(
+            workspace, definition, "-1", "pitchMultiplier * 2.0");
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(unchanged + 1));
+        // Compatibility helper still changes only the index expression.
         ScriptInstrumentDocumentEditor.SetSource(workspace, definition, "-1");
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(unchanged + 1));
         ScriptInstrumentDocumentEditor.SetSource(workspace, definition, "-1");
