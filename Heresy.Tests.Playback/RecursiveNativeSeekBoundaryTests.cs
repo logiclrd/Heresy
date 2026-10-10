@@ -56,6 +56,10 @@ public sealed class RecursiveNativeSeekBoundaryTests
 		reference.Source.Render(expected.Length, expected);
 		float[] actual = new float[64];
 		sought.Source.Render(1, actual.AsSpan(0, 1));
+		PlaybackVoice active = sought.Session.GetChannelState(0).CurrentVoice!;
+		Assert.That(active.Sound, Is.AssignableTo<ISourceFrameSeekableSound>(),
+			"An Instrument selecting a private Sequence must expose its native " +
+			"source-frame seek capability through the bound tone wrapper.");
 		for (int i = 1; i < actual.Length; i += 7)
 		{
 			int count = Math.Min(7, actual.Length - i);
