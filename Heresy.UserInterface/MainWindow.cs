@@ -410,6 +410,10 @@ public sealed class MainWindow : Window
 			Button newEnvelope = new() { Content = "+ Envelope" };
 			newEnvelope.Click += async (_, _) => await CreateEnvelopeAsync();
 			actions.Children.Add(newEnvelope);
+			Button newScriptEnvelope = new() { Content = "+ Script" };
+			newScriptEnvelope.Click += async (_, _) =>
+				await CreateScriptEnvelopeAsync();
+			actions.Children.Add(newScriptEnvelope);
 		}
 		if (section == SongTreeSection.Samples)
 		{
@@ -1243,6 +1247,32 @@ public sealed class MainWindow : Window
 		catch (Exception ex)
 		{
 			SetStatus($"Could not create envelope: {ex.Message}");
+		}
+	}
+
+	private async Task CreateScriptEnvelopeAsync()
+	{
+		TextPromptDialog dialog =
+			new("New script envelope", "Envelope name:", "Script Envelope");
+		string? name = await dialog.ShowDialog<string?>(this);
+		if (name is null)
+			return;
+
+		try
+		{
+			ScriptEnvelopeDefinition envelope =
+				EnvelopeDocumentEditor.CreateScriptEnvelope(
+					_workspace, name, releaseDuration: TimeSpan.Zero);
+			SongTreeObject? node =
+				FindTreeObject(
+					_workspace.Document.GetSectionRoot(SongTreeSection.Envelopes),
+					envelope.Id);
+			RefreshDocumentView($"Created script Envelope {envelope.Name}", node);
+			ShowEnvelopeEditor(envelope, node);
+		}
+		catch (Exception ex)
+		{
+			SetStatus($"Could not create script Envelope: {ex.Message}");
 		}
 	}
 
@@ -2242,14 +2272,24 @@ public sealed class MainWindow : Window
 	private void ShowEnvelopeEditor(SongTreeItemViewModel item)
 	{
 		if (item.ObjectId is not ObjectId id
-			|| !_workspace.Document.TryGet(id, out SongObject? songObject)
-			|| songObject is not AdsrEnvelopeDefinition envelope)
+			|| !_workspace.Document.TryGet(id, out SongObject? songObject))
 		{
 			SetStatus("The selected envelope is not available.");
 			return;
 		}
 
-		ShowEnvelopeEditor(envelope, item.Node);
+		switch (songObject)
+		{
+			case AdsrEnvelopeDefinition adsr:
+				ShowEnvelopeEditor(adsr, item.Node);
+				break;
+			case ScriptEnvelopeDefinition script:
+				ShowEnvelopeEditor(script, item.Node);
+				break;
+			default:
+				SetStatus("The selected envelope type is not editable.");
+				break;
+		}
 	}
 
 	private void ShowEnvelopeEditor(
@@ -2271,6 +2311,23 @@ public sealed class MainWindow : Window
 		_mainContent.Content = editor;
 		UpdateWindowTitle();
 		SetStatus($"Editing envelope {envelope.Name}");
+	}
+
+	private void ShowEnvelopeEditor(
+		ScriptEnvelopeDefinition envelope, SongTreeNode? selectNode)
+	{
+		ScriptEnvelopeEditorControl editor =
+			new(_workspace, envelope,
+				() => RefreshDocumentView(
+					$"Edited envelope {envelope.Name}", selectNode),
+				message =>
+				{
+					UpdateWindowTitle();
+					SetStatus(message);
+				});
+		_mainContent.Content = editor;
+		UpdateWindowTitle();
+		SetStatus($"Editing script Envelope {envelope.Name}");
 	}
 
 	private void ShowFmSynthEditor(SongTreeItemViewModel item)
