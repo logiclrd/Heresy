@@ -18,6 +18,63 @@ namespace Heresy.Tests.Render;
 public sealed class PlaybackOperatorIntegrationTests
 {
 	[Test]
+	public void NativeParametricSpatialXCommitsOnlyAtWallDeadline()
+	{
+		ObjectId source = (ObjectId)10U;
+		StartParametricEffectCommand effect = new(
+			ParametricEffectParameter.SpatialX,
+			TimeSpan.FromMilliseconds(100),
+			"0.4",
+			CommitOnExpire: true)
+		{
+			CompiledEvaluator = (_, _) => 0.4,
+		};
+		PlaybackSession session = Session(
+			Schedule(Event(Frame(0), new StartNoteCommand(source), effect)),
+			new TestResolver((source, new ConstantSound())));
+		PlaybackChannelState channel = session.GetChannelState(0);
+		session.Render(0, 7, new float[7]);
+		Assert.Multiple(() =>
+		{
+			Assert.That(channel.ActiveOperatorCount, Is.EqualTo(1));
+			Assert.That(channel.Position.X, Is.Zero);
+			Assert.That(channel.CurrentVoice!.SoundState.Position.X,
+				Is.EqualTo(0.4f).Within(1e-6f));
+		});
+		session.Render(7, 5, new float[5]);
+		Assert.Multiple(() =>
+		{
+			Assert.That(channel.ActiveOperatorCount, Is.Zero);
+			Assert.That(channel.Position.X, Is.EqualTo(0.4f).Within(1e-6f));
+		});
+	}
+
+	[Test]
+	public void TransientNativeParametricDoesNotChangeGlobalBaseline()
+	{
+		ObjectId source = (ObjectId)10U;
+		PlaybackSession session = Session(
+			Schedule(GlobalEvent(Frame(0),
+				new StartParametricEffectCommand(
+					ParametricEffectParameter.GlobalVolume,
+					TimeSpan.FromMilliseconds(50), "-0.4")
+				{
+					CompiledEvaluator = (seconds, ticks) => -0.4,
+				}),
+				Event(Frame(0), new StartNoteCommand(source))),
+			new TestResolver((source, new ConstantSound())));
+		float[] output = new float[8];
+		session.Render(0, output.Length, output);
+		Assert.Multiple(() =>
+		{
+			Assert.That(output[2], Is.EqualTo(0.6f).Within(1e-6f));
+			Assert.That(output[6], Is.EqualTo(1.0f).Within(1e-6f));
+			Assert.That(session.GlobalVolume, Is.EqualTo(1.0).Within(1e-12));
+			Assert.That(session.ActiveGlobalOperatorCount, Is.Zero);
+		});
+	}
+
+	[Test]
 	public void PersistentChannelOperatorLeavesBaselineUntouchedUntilExpiry()
 	{
 		ObjectId sourceId = (ObjectId)10U;
