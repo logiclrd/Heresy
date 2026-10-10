@@ -15,6 +15,7 @@ using Heresy.Render.Configuration;
 using Heresy.Render.Playback;
 using Heresy.Render.Samples;
 using Heresy.Render.Sounds;
+using Heresy.Render.Timing;
 
 using NUnit.Framework;
 
