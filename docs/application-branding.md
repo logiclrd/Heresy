@@ -77,13 +77,12 @@ reported `XDG_SESSION_TYPE=x11` overrides an incidental
 Native placement failures are nonfatal (visible in development
 diagnostics); the CenterScreen hint remains the fallback.
 
-**Verification status:** The earlier post-open centering implementation
-passed geometry unit tests but failed a user desktop check on KDE
-Plasma 6/X11 with under-mouse window placement. The 50 ms follow-up
-and 250 ms fade are implemented and covered by headless event-policy
-and fade-math tests, but this revision still requires a **real desktop
-check in normal and maximized states** before declaring placement
-correct. CI cannot verify compositor-enforced positions.
+**Verification:** The revised 50 ms follow-up and 250 ms fade have
+been explicitly confirmed by the user on their KDE Plasma 6/X11 system
+configured for under-mouse window placement. The original one-time
+centering did not work there. Headless event-policy and fade tests
+remain in CI. Other desktop window managers have not been directly
+tested; Wayland exact placement is compositor-dependent.
 
 Once the splash raises `Opened`, a UI-thread `DispatcherTimer` starts
 with a four-second interval and the splash activates for keyboard input.
