@@ -17,10 +17,11 @@ tests supersede contradictory old prose.
 
 ## Original-design programmability
 
-- [Script programmability](script-programmability.md): scoped contracts
-  for Pattern virtual channels, script-defined Instruments and Envelopes,
-  and compiled native parametric effect expressions. These capabilities
-  are **not all implemented**; check [open tasks](todo.md) for status.
+- [Script programmability](script-programmability.md): **implemented**
+  Pattern virtual channels, script-defined Instruments and Envelopes,
+  and compiled native parametric effect expressions. Their supported
+  parameter ranges, restricted-C# contracts and regression tests are
+  documented here; the [remaining TODOs](todo.md) are conditional.
 
 ## Current technical references
 
