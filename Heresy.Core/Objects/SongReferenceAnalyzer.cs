@@ -62,6 +62,37 @@ public static class SongReferenceAnalyzer
 		{
 			switch (songObject)
 			{
+				case ScriptInstrumentDefinition instrument:
+					foreach (ToneSpecification tone in instrument.ToneSpecifications)
+					{
+						AddReference(
+							references,
+							tone.SourceId,
+							instrument.Id,
+							SongReferenceKind.InstrumentSource);
+						AddReference(
+							references,
+							tone.VolumeEnvelopeId,
+							instrument.Id,
+							SongReferenceKind.InstrumentVolumeEnvelope);
+						AddReference(
+							references,
+							tone.PitchEnvelopeId,
+							instrument.Id,
+							SongReferenceKind.InstrumentPitchEnvelope);
+						AddReference(
+							references,
+							tone.PanningEnvelopeId,
+							instrument.Id,
+							SongReferenceKind.InstrumentPanningEnvelope);
+						AddReference(
+							references,
+							tone.FilterEnvelopeId,
+							instrument.Id,
+							SongReferenceKind.InstrumentFilterEnvelope);
+					}
+					break;
+
 				case InstrumentDefinition instrument:
 					foreach (ToneSpecification tone in instrument.ToneSpecifications)
 					{

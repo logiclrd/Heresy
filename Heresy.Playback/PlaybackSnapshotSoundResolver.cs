@@ -29,6 +29,7 @@ internal sealed class PlaybackSnapshotSoundResolver
 	private readonly ISampleDataProvider _sampleDataProvider;
 	private readonly Dictionary<(ObjectId, bool), ISound?> _sounds = [];
 	private readonly Dictionary<ObjectId, IEnvelopeCurve?> _envelopes = [];
+	private readonly Dictionary<ObjectId, IScriptInstrumentToneEvaluator> _instrumentPrograms = [];
 	private readonly ConcurrentDictionary<ObjectId, ISound> _preparedMixdowns = new();
 	private uint _nextPreparedId = uint.MaxValue;
 
@@ -80,7 +81,8 @@ internal sealed class PlaybackSnapshotSoundResolver
 	public void PrepareDirectSources()
 	{
 		foreach (SongObject source in _document.Objects.Values)
-			if (source is SampleDefinition or InstrumentDefinition or FmSynthDefinition)
+			if (source is SampleDefinition or InstrumentDefinition
+				or ScriptInstrumentDefinition or FmSynthDefinition)
 				TryResolve(source.Id, mixdown: false, out _);
 
 		foreach (SongObject source in _document.Objects.Values)
@@ -127,6 +129,13 @@ internal sealed class PlaybackSnapshotSoundResolver
 						instrument,
 						this,
 						this);
+				break;
+
+			case ScriptInstrumentDefinition scripted:
+				// Compile once during source preparation, never in SDL callbacks.
+				GetInstrumentProgram(scripted);
+				sound = new InstrumentSound(
+					pitch => SelectTone(scripted, pitch), this, this);
 				break;
 
 			case FmSynthDefinition fmSynth:
@@ -184,6 +193,51 @@ internal sealed class PlaybackSnapshotSoundResolver
 
 		_envelopes[envelopeId] = curve;
 		return curve is not null;
+	}
+
+	/// <summary>Shared pure selected-tone preflight for recursive binding.</summary>
+	public ToneSpecification? SelectTone(
+		SongObject definition, double pitchMultiplier)
+	{
+		if (!(pitchMultiplier > 0.0) || !double.IsFinite(pitchMultiplier))
+			throw new ArgumentOutOfRangeException(nameof(pitchMultiplier));
+		return definition switch
+		{
+			InstrumentDefinition table =>
+				InstrumentSound.SelectTone(table, pitchMultiplier),
+			ScriptInstrumentDefinition scripted =>
+				SelectScriptTone(scripted, pitchMultiplier),
+			_ => null,
+		};
+	}
+
+	private ToneSpecification? SelectScriptTone(
+		ScriptInstrumentDefinition definition, double pitchMultiplier)
+	{
+		int index = GetInstrumentProgram(definition)
+			.SelectToneIndex(pitchMultiplier);
+		if (index == -1)
+			return null;
+		if ((uint)index >= (uint)definition.ToneSpecifications.Count)
+			throw new InvalidOperationException(
+				$"Instrument '{definition.Name}' selected invalid tone index {index}.");
+		return definition.ToneSpecifications[index];
+	}
+
+	private IScriptInstrumentToneEvaluator GetInstrumentProgram(
+		ScriptInstrumentDefinition definition)
+	{
+		if (_instrumentPrograms.TryGetValue(definition.Id,
+			out IScriptInstrumentToneEvaluator? evaluator))
+			return evaluator;
+		ScriptCompilationResult<IScriptInstrumentToneEvaluator> compiled =
+			ScriptCompiler.CompileInstrument(definition);
+		if (!compiled.Success || compiled.Program is null)
+			throw new InvalidOperationException(
+				$"Instrument '{definition.Name}' failed to compile: " +
+				string.Join("; ", compiled.Diagnostics.Select(d => d.Message)));
+		_instrumentPrograms.Add(definition.Id, compiled.Program);
+		return compiled.Program;
 	}
 
 	private static IEnvelopeCurve CompileScriptEnvelope(

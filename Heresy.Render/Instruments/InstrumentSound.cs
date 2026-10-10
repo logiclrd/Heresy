@@ -25,7 +25,7 @@ public sealed class InstrumentSound : ISound
 		public SoundInvocation? Invocation { get; }
 	}
 
-	private readonly InstrumentDefinition _definition;
+	private readonly Func<double, ToneSpecification?> _selectTone;
 	private readonly ISoundResolver _soundResolver;
 	private readonly IEnvelopeCurveResolver _envelopeResolver;
 
@@ -33,9 +33,23 @@ public sealed class InstrumentSound : ISound
 		InstrumentDefinition definition,
 		ISoundResolver soundResolver,
 		IEnvelopeCurveResolver envelopeResolver)
+		: this(pitch => SelectTone(definition, pitch),
+			soundResolver, envelopeResolver)
 	{
-		_definition = definition
-			?? throw new ArgumentNullException(nameof(definition));
+		ArgumentNullException.ThrowIfNull(definition);
+	}
+
+	/// <summary>
+	/// A selector prepared before rendering. No Roslyn compilation or
+	/// dynamic source discovery occurs inside the renderer.
+	/// </summary>
+	public InstrumentSound(
+		Func<double, ToneSpecification?> selectTone,
+		ISoundResolver soundResolver,
+		IEnvelopeCurveResolver envelopeResolver)
+	{
+		_selectTone = selectTone
+			?? throw new ArgumentNullException(nameof(selectTone));
 		_soundResolver = soundResolver
 			?? throw new ArgumentNullException(nameof(soundResolver));
 		_envelopeResolver = envelopeResolver
@@ -161,7 +175,7 @@ public sealed class InstrumentSound : ISound
 	}
 
 	private ToneSpecification? ResolveTone(double pitchMultiplier)
-		=> SelectTone(_definition, pitchMultiplier);
+		=> _selectTone(pitchMultiplier);
 
 	/// <summary>Pure tone-table selection shared by normal instrument
 	/// binding and recursive playback's indirect-source preflight.

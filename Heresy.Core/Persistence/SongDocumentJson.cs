@@ -426,6 +426,14 @@ public static class SongDocumentJson
 					WriteFmSynthEditorLayout(fmSynth);
 				break;
 
+			case ScriptInstrumentDefinition scripted:
+				result["type"] = "scriptInstrument";
+				result["source"] = scripted.Source;
+				result["toneSpecifications"] =
+					JsonSerializer.SerializeToNode(
+						scripted.ToneSpecifications, JsonOptions);
+				break;
+
 			case InstrumentDefinition instrument:
 				result["type"] = "instrument";
 				result["divisions"] = instrument.Divisions;
@@ -599,6 +607,18 @@ public static class SongDocumentJson
 					name,
 					RequiredObject(node, "graph"),
 					RequiredObject(node, "editorLayout"));
+
+			case "scriptInstrument":
+				{
+					ScriptInstrumentDefinition scripted = new(id, name)
+					{
+						Source = RequiredString(node, "source"),
+					};
+					scripted.ToneSpecifications.AddRange(
+						DeserializeRequired<List<ToneSpecification>>(
+							node, "toneSpecifications"));
+					return scripted;
+				}
 
 			case "instrument":
 				{

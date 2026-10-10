@@ -672,13 +672,14 @@ public sealed class PreparedIncrementalPlaybackFactory
 			IReadOnlyList<ObjectId> path)
 		{
 			if (!scripts.TryResolve(id, out SongObject? definition)
-				|| definition is not InstrumentDefinition instrument)
+				|| definition is not (InstrumentDefinition
+					or ScriptInstrumentDefinition))
 				return false;
 			if (path.Contains(id))
 				throw new InvalidOperationException(
 					$"Recursive instrument source cycle includes object {id.Value}.");
-			ToneSpecification? tone = InstrumentSound.SelectTone(
-				instrument, pitch);
+			ToneSpecification? tone = sounds.SelectTone(
+				definition, pitch);
 			if (tone is null)
 				return false;
 			if (scripts.TryResolve(tone.SourceId, out SongObject? child)
@@ -708,7 +709,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 						enclosingSourceScopes);
 					return voice;
 				}
-				if (definition is InstrumentDefinition instrument)
+				if (definition is InstrumentDefinition
+					or ScriptInstrumentDefinition)
 				{
 					if (path.Contains(id))
 						throw new InvalidOperationException(
@@ -717,7 +719,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 					for (int p = 0; p < path.Count; p++)
 						nextPath[p] = path[p];
 					nextPath[^1] = id;
-					return new InstrumentSound(instrument,
+					return new InstrumentSound(
+						pitch => sounds.SelectTone(definition, pitch),
 						new InstrumentToneSoundResolver(child =>
 							ResolveTone(child, nextPath, target, owner, playbackOwner,
 								frame, enclosingSourceScopes)),
@@ -765,7 +768,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 						"Private pitch modulation must be positive and finite.");
 				double selectedPitch = start.PitchMultiplier * inheritedPitch;
 				if (scripts.TryResolve(start.SourceId, out SongObject? selected)
-					&& selected is InstrumentDefinition
+					&& selected is (InstrumentDefinition or ScriptInstrumentDefinition)
 					&& SelectsRecursiveTone(start.SourceId,
 						selectedPitch, ancestry))
 				{
