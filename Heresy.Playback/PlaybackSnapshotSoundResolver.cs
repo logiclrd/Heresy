@@ -94,7 +94,7 @@ internal sealed class PlaybackSnapshotSoundResolver
 			foreach ((_, _, PatternCell cell) in pattern.Grid.EnumerateNonEmptyCells())
 				foreach (ParametricPatternEffect effect in cell.Effects
 					.OfType<ParametricPatternEffect>())
-					GetParametricEvaluator(effect.Expression);
+					PrepareParametricEvaluator(effect.Expression);
 
 		foreach (SongObject source in _document.Objects.Values)
 			if (source is EnvelopeDefinition)
@@ -284,19 +284,23 @@ internal sealed class PlaybackSnapshotSoundResolver
 	}
 
 	public Func<double, double, double> GetParametricEvaluator(string source)
+		=> _parametricPrograms.TryGetValue(source,
+			out Func<double, double, double>? result)
+			? result
+			: throw new InvalidOperationException(
+				"An expression was not prepared before parametric playback.");
+
+	private void PrepareParametricEvaluator(string source)
 	{
-		if (_parametricPrograms.TryGetValue(source,
-			out Func<double, double, double>? result))
-			return result;
+		if (_parametricPrograms.ContainsKey(source))
+			return;
 		ScriptCompilationResult<IScriptParametricEvaluator> compiled =
 			ScriptCompiler.CompileParametric(source);
 		if (!compiled.Success || compiled.Program is null)
 			throw new InvalidOperationException(
 				"Parametric expression failed to compile: " +
 				string.Join("; ", compiled.Diagnostics.Select(d => d.Message)));
-		result = compiled.Program.Evaluate;
-		_parametricPrograms.Add(source, result);
-		return result;
+		_parametricPrograms.Add(source, compiled.Program.Evaluate);
 	}
 
 	private static IEnvelopeCurve CompileScriptEnvelope(
