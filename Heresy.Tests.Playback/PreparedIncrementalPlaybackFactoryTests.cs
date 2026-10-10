@@ -227,6 +227,271 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 	}
 
 	[Test]
+	public void DeepFlattenedInstrumentSequenceHasChunkInvariantPcmAndRetiresEverySource()
+	{
+		SongDocument doc = new();
+		ObjectId sample = doc.AllocateObjectId();
+		doc.Add(SampleDefinition.CreateImported(sample,
+			"Sustain", "sustain.wav", LongWave(16384, frames: 512)));
+		ObjectId privatePatternId = doc.AllocateObjectId();
+		DataPatternDefinition privatePattern = new(privatePatternId, "Private")
+		{
+			RowCount = 4, ChannelCount = 1,
+		};
+		privatePattern.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sample);
+		privatePattern.Grid.GetOrCreateCell(1, 0).Note =
+			new StartPatternNote(sample);
+		doc.Add(privatePattern);
+		ObjectId privateSequenceId = doc.AllocateObjectId();
+		DataSequenceDefinition privateSequence = new(privateSequenceId, "Private sequence");
+		privateSequence.Entries.Add(new SequenceEntry(privatePatternId));
+		doc.Add(privateSequence);
+		ObjectId innerInstrumentId = doc.AllocateObjectId();
+		InstrumentDefinition innerInstrument = new(innerInstrumentId, "Inner");
+		innerInstrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = privateSequenceId,
+		});
+		innerInstrument.ToneTable.Add(0);
+		doc.Add(innerInstrument);
+		ObjectId outerInstrumentId = doc.AllocateObjectId();
+		InstrumentDefinition outerInstrument = new(outerInstrumentId, "Outer");
+		outerInstrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = innerInstrumentId,
+		});
+		outerInstrument.ToneTable.Add(0);
+		doc.Add(outerInstrument);
+
+		ObjectId leafId = doc.AllocateObjectId();
+		DataPatternDefinition leaf = new(leafId, "Flattened leaf")
+		{
+			RowCount = 4, ChannelCount = 2,
+		};
+		leaf.Grid.GetOrCreateCell(0, 1).Note =
+			new StartPatternNote(outerInstrumentId);
+		doc.Add(leaf);
+		ObjectId middleId = doc.AllocateObjectId();
+		DataPatternDefinition middle = new(middleId, "Flattened middle")
+		{
+			RowCount = 4, ChannelCount = 2,
+		};
+		PatternCell nested = middle.Grid.GetOrCreateCell(0, 0);
+		nested.Note = new StartPatternNote(leafId);
+		nested.Volume = 0.8;
+		middle.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new SetNoteVolumePatternEffect(0.5));
+		doc.Add(middle);
+		ObjectId rootId = doc.AllocateObjectId();
+		DataPatternDefinition root = new(rootId, "Root")
+		{
+			RowCount = 5, ChannelCount = 3,
+		};
+		PatternCell instigator = root.Grid.GetOrCreateCell(0, 0);
+		instigator.Note = new StartPatternNote(middleId);
+		instigator.Volume = 0.75;
+		root.Grid.GetOrCreateCell(0, 2).Note =
+			new StartPatternNote(sample);
+		root.Grid.GetOrCreateCell(2, 0).Note = new PatternNoteOff();
+		PatternCell replacement = root.Grid.GetOrCreateCell(3, 0);
+		replacement.Note = new StartPatternNote(sample);
+		replacement.Volume = 1.0;
+		doc.Add(root);
+
+		const int frames = 900;
+		float[] whole = new float[frames];
+		using (PreparedIncrementalPlaybackPlan uninterrupted =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(doc, rootId))
+		{
+			uninterrupted.Source.Render(frames, whole);
+			Assert.That(whole[0], Is.EqualTo(0.8f).Within(1e-5f));
+			Assert.That(whole[120], Is.EqualTo(0.6875f).Within(1e-5f));
+			Assert.That(whole[899], Is.Zero.Within(1e-5f));
+			Assert.That(PreparedRegistrationCount(uninterrupted), Is.Zero);
+			Assert.That(uninterrupted.SequencingContext.ScopedMemory.ActiveScopeCount,
+				Is.Zero);
+			Assert.That(uninterrupted.Session.RetainedFlattenedSourceControllerCount,
+				Is.Zero);
+			Assert.That(uninterrupted.Session.RetainedScopedPhysicalChannelCount,
+				Is.Zero);
+		}
+
+		using PreparedIncrementalPlaybackPlan chunked =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(doc, rootId);
+		float[] pieces = new float[frames];
+		int[] sizes = [1, 7, 13, 119, 1, 3, 89, 34, 2, 211, 17];
+		int cursor = 0;
+		int chunk = 0;
+		while (cursor < frames)
+		{
+			int size = Math.Min(frames - cursor, sizes[chunk++ % sizes.Length]);
+			chunked.Source.Render(size, pieces.AsSpan(cursor, size));
+			cursor += size;
+		}
+		Assert.That(pieces, Is.EqualTo(whole),
+			"Changing PCM block sizes must not move nested coroutine "
+			+ "events, fade/release boundaries or private mixdown notes.");
+		Assert.That(PreparedRegistrationCount(chunked), Is.Zero);
+		Assert.That(chunked.SequencingContext.ScopedMemory.ActiveScopeCount,
+			Is.Zero);
+		Assert.That(chunked.Session.RetainedScopedPhysicalChannelCount, Is.Zero);
+	}
+
+	[Test]
+	public void IndefiniteScriptOrdersReuseNestedScopesAndCancelWithoutResurrection()
+	{
+		SongDocument doc = new();
+		ObjectId sample = doc.AllocateObjectId();
+		doc.Add(SampleDefinition.CreateImported(sample,
+			"Short", "short.wav", Wave(16384)));
+		ObjectId leafId = doc.AllocateObjectId();
+		DataPatternDefinition leaf = new(leafId, "Child")
+		{
+			RowCount = 1, ChannelCount = 2,
+		};
+		leaf.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote(sample);
+		doc.Add(leaf);
+		ObjectId orderId = doc.AllocateObjectId();
+		DataPatternDefinition order = new(orderId, "Repeated order")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		order.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(leafId);
+		doc.Add(order);
+		ObjectId sequenceId = doc.AllocateObjectId();
+		doc.Add(new ScriptSequenceDefinition(sequenceId, "Indefinite")
+		{
+			Source = $"return Play(_O({orderId.Value}));",
+		});
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(doc, sequenceId);
+		int peakProducer = 0;
+		int peakRender = 0;
+		for (int orderIndex = 0; orderIndex < 160; orderIndex++)
+		{
+			float[] block = new float[120];
+			plan.Source.Render(block.Length, block);
+			Assert.That(block[0], Is.EqualTo(0.5f).Within(1e-6f),
+				$"Indefinite scripted order {orderIndex} lost its first note.");
+			peakProducer = Math.Max(peakProducer,
+				plan.SequencingContext.ScopedMemory.ActiveScopeCount);
+			peakRender = Math.Max(peakRender,
+				plan.Session.RetainedScopedPhysicalChannelCount);
+		}
+		Assert.That(peakProducer, Is.LessThanOrEqualTo(3));
+		Assert.That(peakRender, Is.LessThanOrEqualTo(4));
+		Assert.That(plan.Timeline.IsInvocationActive(plan.RootInvocationId),
+			Is.True);
+		Assert.That(plan.Source.Cancel(plan.RootInvocationId), Is.True);
+		Assert.That(plan.Source.Cancel(plan.RootInvocationId), Is.False);
+		float[] tail = new float[240];
+		plan.Source.Render(tail.Length, tail);
+		Assert.That(tail[80], Is.Zero.Within(1e-6f));
+		Assert.That(plan.SequencingContext.ScopedMemory.ActiveScopeCount, Is.Zero);
+		Assert.That(plan.SequencingContext.ScopedMemory.MaterializedScopeCount,
+			Is.Zero);
+		Assert.That(plan.Session.RetainedScopedPhysicalChannelCount, Is.Zero);
+		Assert.That(plan.Session.RetainedFlattenedSourceControllerCount, Is.Zero);
+	}
+
+	[Test]
+	public void CancelingDeepPrivateSubtreePreservesIndependentProducerWithPendingEvent()
+	{
+		SongDocument doc = new();
+		ObjectId sample = doc.AllocateObjectId();
+		doc.Add(SampleDefinition.CreateImported(sample, "Voice",
+			"voice.wav", LongWave(16384, frames: 512)));
+		ObjectId privateId = doc.AllocateObjectId();
+		DataPatternDefinition privatePattern = new(privateId, "Private")
+		{
+			RowCount = 4, ChannelCount = 1,
+		};
+		privatePattern.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sample);
+		privatePattern.Grid.GetOrCreateCell(2, 0).Note =
+			new StartPatternNote(sample);
+		doc.Add(privatePattern);
+		ObjectId instrumentId = doc.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Recursive tone");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = privateId,
+		});
+		instrument.ToneTable.Add(0);
+		doc.Add(instrument);
+		ObjectId flattenedId = doc.AllocateObjectId();
+		DataPatternDefinition flattened = new(flattenedId, "Deep leaf")
+		{
+			RowCount = 4, ChannelCount = 2,
+		};
+		flattened.Grid.GetOrCreateCell(0, 1).Note =
+			new StartPatternNote(instrumentId);
+		doc.Add(flattened);
+		ObjectId middleId = doc.AllocateObjectId();
+		DataPatternDefinition middle = new(middleId, "Nested")
+		{
+			RowCount = 4, ChannelCount = 2,
+		};
+		middle.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(flattenedId);
+		middle.Grid.GetOrCreateCell(1, 1).Note =
+			new StartPatternNote(sample);
+		doc.Add(middle);
+		ObjectId canceledRoot = doc.AllocateObjectId();
+		DataPatternDefinition root = new(canceledRoot, "Cancelable")
+		{
+			RowCount = 4, ChannelCount = 1,
+		};
+		root.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(middleId);
+		doc.Add(root);
+		ObjectId siblingId = doc.AllocateObjectId();
+		DataPatternDefinition sibling = new(siblingId, "Independent")
+		{
+			RowCount = 4, ChannelCount = 4,
+		};
+		sibling.Grid.GetOrCreateCell(0, 3).Note =
+			new StartPatternNote(sample);
+		doc.Add(sibling);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(doc, canceledRoot);
+		long unrelatedRoot = plan.Timeline.AddRoot(siblingId);
+		float[] intro = new float[1];
+		plan.Source.Render(1, intro);
+		Assert.That(intro[0], Is.EqualTo(1f).Within(1e-5f));
+		MethodInfo prime = typeof(PreparedIncrementalAudioSource).GetMethod(
+			"FindNextEvent", BindingFlags.NonPublic | BindingFlags.Instance)!;
+		prime.Invoke(plan.Source, [1000L]);
+		FieldInfo pendingField = typeof(PreparedIncrementalAudioSource).GetField(
+			"_pendingEvent", BindingFlags.NonPublic | BindingFlags.Instance)!;
+		Assert.That(pendingField.GetValue(plan.Source), Is.Not.Null,
+			"The canceled middle Pattern has a future row-one note prefetched.");
+		Assert.That(plan.Source.Cancel(plan.RootInvocationId), Is.True);
+		Assert.That(plan.Timeline.IsInvocationActive(unrelatedRoot), Is.True);
+		float[] after = new float[650];
+		plan.Source.Render(after.Length, after);
+		Assert.That(after[50], Is.EqualTo(0.5f).Within(1e-5f),
+			"The unrelated root voice must continue while the canceled "
+			+ "private subtree and its prefetched starts are silenced.");
+		Assert.That(after[640], Is.Zero.Within(1e-6f));
+		Assert.That(plan.SequencingContext.ScopedMemory.ActiveScopeCount, Is.Zero);
+		Assert.That(plan.SequencingContext.ScopedMemory.MaterializedScopeCount,
+			Is.Zero);
+		Assert.That(plan.Session.RetainedFlattenedSourceControllerCount, Is.Zero);
+		Assert.That(plan.Session.RetainedScopedPhysicalChannelCount, Is.Zero);
+		Assert.That(PreparedRegistrationCount(plan), Is.Zero,
+			"Indirect private-mixdown registrations must be released after cancellation.");
+	}
+
+	[Test]
 	public void HundredsOfFlatInvocationsReclaimRendererMemoryAfterTheirVoicesEnd()
 	{
 		SongDocument document = new();
