@@ -35,6 +35,12 @@ public sealed class NativePatternEffectEditorTests
 				7));
 		yield return new TestCaseData(
 			new TrackerVolumeColumnPanningPatternEffect(48));
+		yield return new TestCaseData(
+			new ParametricPatternEffect(
+				ParametricEffectParameter.OverallChannelVolume,
+				TimeSpan.FromMilliseconds(125),
+				"Math.Sin(elapsedSeconds) * 0.2 + rowTime * 0.0",
+				commitOnExpire: true));
 	}
 
 	[TestCaseSource(nameof(NativeEffects))]
@@ -80,6 +86,28 @@ public sealed class NativePatternEffectEditorTests
 			nameof(TrackerVolumeColumnEffectKind.TonePortamento));
 		kind.Value.Should().Be(
 			nameof(TrackerVolumeColumnEffectKind.TonePortamento));
+	}
+
+	[Test]
+	public void ParametricEditorRejectsInvalidOrUnsafeExpressionsBeforeMutation()
+	{
+		ParametricPatternEffect original = new(
+			ParametricEffectParameter.GlobalVolume,
+			TimeSpan.FromMilliseconds(100), "-0.5");
+		NativePatternEffectEditModel model =
+			NativePatternEffectEditor.Describe(original, CultureInfo.InvariantCulture);
+		Dictionary<string, string> input = [];
+		foreach (NativePatternEffectField field in model.Fields)
+			input[field.Key] = field.Value;
+		input["expression"] = "System.Environment.TickCount";
+		var unsafeAction = () => NativePatternEffectEditor.Rebuild(
+			original, input, CultureInfo.InvariantCulture);
+		unsafeAction.Should().Throw<ArgumentException>();
+		input["expression"] = "-0.2";
+		input["duration"] = "-1";
+		var badDuration = () => NativePatternEffectEditor.Rebuild(
+			original, input, CultureInfo.InvariantCulture);
+		badDuration.Should().Throw<ArgumentOutOfRangeException>();
 	}
 
 	[Test]
