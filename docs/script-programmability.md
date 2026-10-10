@@ -2,7 +2,7 @@
 
 **Status (October 10, 2026):** current contract for implemented
 Pattern-script virtual channels and script-defined Envelopes, alongside
-still-open script Instruments and native effect expressions. This is a **current design and
+implemented script Instruments and still-open native effect expressions. This is a **current design and
 acceptance contract**, not a historical implementation log. Track
 outstanding work in [todo.md](todo.md).
 
@@ -13,8 +13,7 @@ musical objects. The production architecture already provides restricted
 Roslyn Pattern/Sequence programs, abstract sound/envelope execution,
 recursive/flattened invocation ownership, snapshot-backed playback,
 and independently composed parameter operators. What is missing is
-persistence, safe compilation and authoring for script Instruments
-and authorable native parametric effects.
+persistence, safe compilation and authoring for native parametric effects.
 
 - **One song model:** `SongDocument` stores definitions, IDs and
   references; live edits never mutate an already-created playback
@@ -281,29 +280,103 @@ PCM chunk invariance, FM output, frozen playback revisions
 and compilation failure), and
 `EnvelopeDocumentEditorTests` (transactional UI mutation).
 
-## 3. Script-defined Instruments — planned architecture
+## 3. Script-defined Instruments — implemented
 
-Keep existing data-driven `InstrumentDefinition` and its
-nine-column tone grid unchanged. A script-defined Instrument
-definition must select **one invocation-local tone** using a
-deterministic compiled function of pitch and documented inputs;
-that result contains a sound-source ObjectId, a pitch
-multiplier, optional Volume/Pitch/Panning/Filter Envelope
-overrides, or a silent result. This is not a script that emits
-an eagerly materialized Pattern event schedule.
+A `ScriptInstrumentDefinition` is a first-class persisted
+`SongObjectKind.Instrument`, separate from the data-driven
+`InstrumentDefinition`. The existing nine-column tone grid,
+`Divisions`/`Offset` lookup and round-away-from-zero behavior
+remain unchanged.
 
-Use `ISound.CreateInvocation` to compose pitch/speed and bind the
-selected terminal sound, retaining nested Instrument and
-Pattern/Sequence private-source support. Preserve per-note
-selection, finite releases and inherited Envelope overlays.
-Reject recursive cycles within existing policy. Decide how
-dynamic references are discovered/retained (including tombstones)
-before claiming complete persistence. The script runs under a
-bounded deterministic contract before binding each note; never
-run compilation or uncontrolled side effects on the SDL callback.
+### Per-invocation selection and pitch
 
-Complete JSON/`.hm` round-trips, snapshot isolation, failure
-diagnostics and dedicated UI editing alongside the tone grid.
+The scripted Instrument has two restricted-C# **expressions**:
+
+- **`Source`** (default `-1`): returns a signed **integer tone
+  specification index**, chosen from the Instrument's ordered
+  `ToneSpecifications` collection; `-1` selects silence. Any
+  other out-of-range index is a descriptive runtime error.
+- **`PitchExpression`** (default `1.0`): returns a `double`
+  scaling the chosen specification's positive, fixed
+  `PitchMultiplier`. The resulting ratio must be positive and finite,
+  including after multiplication; otherwise it fails deterministically.
+
+Both receive **`pitchMultiplier`**: the invoked note's positive
+frequency ratio relative to C-4 (`1.0` is C-4). Inherited recursive
+pitch is sampled at the note boundary for selection as in the
+data-driven Instrument path. One expression may choose which of the
+declared sounds to invoke while the other may transform the note's
+pitch continuously or piecewise as a function of its invocation pitch.
+
+For example, a selector
+`pitchMultiplier < 2.0 ? 0 : 1` picks declared tone 0 below one
+octave up and tone 1 at or above it; a pitch expression of
+`pitchMultiplier < 2.0 ? 1.0 : 0.5` applies a different ratio
+depending on the same incoming pitch. This does **not** create two
+simultaneous sounds or eagerly expand future note events.
+
+Each `ToneSpecification` holds its stable source `ObjectId`,
+base pitch multiplier and optional Volume, Pitch, Panning and Filter
+Envelope `ObjectId` overrides. These fields form the actual tone
+output of selection. The script does not return an arbitrary object
+ID: dynamic lookup is **limited to this declared list**, so
+`SongReferenceAnalyzer` discovers every potential source/Envelope
+edge, even for branches the script never selects. Tombstone retention,
+import remapping, serialization and snapshot isolation therefore
+need no opaque dynamic-reference guesses.
+
+### Compilation, binding and source ownership
+
+Both expressions share the bounded single-expression restricted-C#
+profile used by script Envelopes: at most 2,048 characters and
+256 syntax nodes; no statements, allocations, I/O or unrestricted
+framework calls. Approved `Math` operations and the numeric input
+are allowed. Compilation occurs once for each expression in
+`PlaybackSnapshotSoundResolver.PrepareDirectSources` from the
+**frozen playback song**; changing the live source does not mutate
+an existing playback plan. Invalid scripts fail preparation with
+compiler diagnostics rather than supplying a partially initialized
+sound. Individual expression evaluations occur only when invoking
+a note, not once per PCM frame.
+
+`InstrumentSound` accepts the same pure tone-selector delegate
+used by table Instruments, then composes pitch and resolves the
+selected child via `ISound.CreateInvocation`. This preserves the
+existing Envelope overlays, sample volume-tail behavior, New Note
+Action and inherited configurations. The incremental production
+factory uses the same selector to preflight **only the selected
+branch** for nested Instrument/Pattern/Sequence sources, and builds
+independent private mixdowns for selected recursive tones. Cycles
+on the selected path fail explicitly; unselected branches are inert.
+
+### Persistence and desktop authoring
+
+The existing version-one JSON format adds object type
+`scriptInstrument`, `source`, `pitchExpression` and
+`toneSpecifications`. An older scripted Instrument record lacking
+the optional pitch expression loads with neutral multiplier `1.0`.
+Both `.hm.json` and consolidated `.hm` retain the definitions;
+`SongDocumentSnapshot` freezes them using the normal clone path.
+
+The Instruments pane offers **+ Instrument** (unchanged table grid)
+and **+ Script**. `ScriptInstrumentEditorControl` contains both
+expressions and a declared tone list with source selection, fixed
+pitch ratio and four optional Envelope assignments.
+`ScriptInstrumentDocumentEditor` validates both expressions before
+committing a revision and reuses the standard tone specification's
+live source/Envelope validation. Rejected edits never partially
+change the live song or interrupt a playing snapshot.
+
+Regression coverage: `ScriptInstrumentCompilationTests` (bounded
+restricted scripts, pitch-aware selection and dynamic scales);
+`ScriptInstrumentPersistenceTests` (JSON/`.hm`, declared refs,
+legacy default and snapshots);
+`ScriptInstrumentPlaybackTests` (direct source selection,
+actual resampled pitch, private recursive Pattern binding, inherited
+Envelope volume, chunk invariance, selected cycles and bad indices);
+`ScriptInstrumentDocumentEditorTests` (transactional authoring
+and live reference validation). Existing tone-grid and direct
+Instrument tests remain unchanged.
 
 ## 4. Compiled authorable parametric effects — planned architecture
 
@@ -334,7 +407,7 @@ without duplicating the existing effect engine.
 1. Pattern virtual note lifecycle helpers (bounded first slice).
 2. Pattern virtual voice-local controls.
 3. Script Envelope model/compiler and runtime integration (complete).
-4. Script Instrument model/compiler and source binding.
+4. Script Instrument model/compiler and source binding (complete).
 5. Authorable parametric effect expressions.
 
 Steps 3–5 share compilation and snapshotting principles, but

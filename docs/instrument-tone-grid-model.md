@@ -152,3 +152,15 @@ The grid is implemented and covered by automated regressions.
 An optional desktop smoke test can examine focus routing, row
 overflow and keyboard navigation. Log any *observed* defect
 as a new scoped item in [todo.md](todo.md).
+
+
+## Script Instrument editor is separate
+
+`ScriptInstrumentDefinition` offers compiled expression-based selection
+from an explicit list of `ToneSpecifications`, with an optional
+pitch-dependent scale expression. It shares the existing sound/Envelope
+binding semantics but is **not** represented by the nine-column tone grid:
+the Envelopes/pitch-lookup layout described above applies to
+data-driven `InstrumentDefinition` only. Script Instrument authoring
+uses `ScriptInstrumentEditorControl` to manage expressions and
+the declared, stable-ID tone list. See [script programmability](script-programmability.md).

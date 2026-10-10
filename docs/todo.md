@@ -26,20 +26,10 @@ Further work requires a new concrete regression or feature request.
 
 ### Programmable object types
 
-Script-defined Envelopes (expression compilation, bounded release,
-Instrument/FM rendering, persistence and authoring) are complete;
-see [script programmability](script-programmability.md).
-
-- [ ] **Implement script-defined Instruments.** Add a persisted Instrument
-  subtype with a deterministic compiled tone-selection function taking the
-  invoked pitch (and any explicitly documented context), yielding a source,
-  pitch multiplier and per-target optional Envelope overrides, or silence.
-  The selection must occur per note invocation, preserve recursive/private
-  source handling and inherited envelopes, and never run compilation on the
-  SDL callback. Specify bounded evaluation, stable object-reference and
-  tombstone behavior for dynamic selectors, recursive rejection, snapshots,
-  serialization, authoring and diagnostics. Keep existing tone-grid
-  Instruments unchanged and regression-tested.
+Script-defined Envelopes and Instruments are complete: deterministic bounded
+expressions, release and tone-selection contracts, recursive sound binding,
+reference retention, persistence, snapshotting and authoring are implemented.
+See [script programmability](script-programmability.md).
 
 - [ ] **Make native parametric effects authorable as compiled expressions.**
   Define a persisted semantic effect with destination scope/parameter,
