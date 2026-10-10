@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
+using Heresy.Core.Diagnostics;
 using Heresy.Core.Objects;
 using Heresy.Core.Instruments;
 using Heresy.Render.Instruments;
@@ -249,6 +250,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 			PreparedIncrementalAudioSource source = CreatePrivateMixdownAwareSource(
 				timeline, session, scripts, sounds, [root],
 				out Action disposePrivateMixdowns,
+				sequencingContext.Diagnostics,
 				repeatSourceId: repeatPattern ? root : null,
 				repeatStartRow: startRow);
 			return new PreparedIncrementalPlaybackPlan(
@@ -291,7 +293,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 			PreparedIncrementalAudioSource source =
 				CreatePrivateMixdownAwareSource(
 					timeline, session, scripts, sounds, [transient.Id],
-					out Action disposeChildren);
+					out Action disposeChildren,
+					context.Diagnostics);
 			return new PreparedIncrementalPlaybackPlan(
 				frozen, timeline, session, source,
 				invocation, disposeChildren, context);
@@ -318,6 +321,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 		PlaybackSnapshotSoundResolver sounds,
 		IReadOnlyList<ObjectId> ancestry,
 		out Action disposePrivateMixdowns,
+		SequencingDiagnosticLog diagnostics,
 		bool isPrivateChild = false,
 		double privateClockRate = 1.0,
 		ObjectId? repeatSourceId = null,
@@ -602,7 +606,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 				IncrementalRecursiveTimeline childTimeline =
 					scripts.CreateTimeline(new SequencingContext(
 						pitchMultiplier: pitchMultiplier,
-						playbackSpeedMultiplier: playbackSpeedMultiplier));
+						playbackSpeedMultiplier: playbackSpeedMultiplier,
+						diagnostics: diagnostics));
 				try
 				{
 					childTimeline.AddRoot(childSource);
@@ -620,6 +625,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 						CreatePrivateMixdownAwareSource(
 							childTimeline, childSession, scripts, sounds,
 							childAncestry, out Action disposeDescendants,
+							diagnostics,
 							isPrivateChild: true,
 							privateClockRate: playbackSpeedMultiplier);
 					return new PrivateRecursivePlayback(childTimeline,
