@@ -6,9 +6,9 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Avalonia.VisualTree;
 
 using Heresy.Core.Envelopes;
+using Heresy.Core.Objects;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.EnvelopeEditing;
 

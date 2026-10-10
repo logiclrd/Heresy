@@ -26,6 +26,7 @@ public sealed class EnvelopeEditorControl : UserControl
 	private readonly TextBox _decay;
 	private readonly TextBox _sustain;
 	private readonly TextBox _release;
+	private readonly AdsrEnvelopeGraphControl _graph;
 	private readonly TextBlock _message =
 		new()
 		{
@@ -51,6 +52,13 @@ public sealed class EnvelopeEditorControl : UserControl
 		_decay = DurationBox(envelope.Decay);
 		_sustain = ScalarBox(envelope.SustainLevel);
 		_release = DurationBox(envelope.Release);
+		_graph = new AdsrEnvelopeGraphControl(workspace, envelope);
+		_graph.EnvelopeChanged += (_, _) =>
+		{
+			SynchronizeFields();
+			_message.Text = "Envelope updated from graph.";
+			_changed($"Updated envelope {_envelope.Name}");
+		};
 
 		Content = BuildContent();
 	}
@@ -128,11 +136,30 @@ public sealed class EnvelopeEditorControl : UserControl
 				Margin = new Thickness(18, 0, 18, 12),
 			};
 
+		TextBlock graphHint = new()
+		{
+			Text =
+				"Drag the Attack, Decay and Release vertical-line caps (three separate top lanes), or the horizontal Sustain segment. Overlapping zero-duration boundaries can still be separated using their corresponding caps. The graph clips out-of-range Sustain levels visually; the real value is not clamped.",
+			TextWrapping = TextWrapping.Wrap,
+			MaxWidth = 850,
+			Margin = new Thickness(18, 6, 18, 6),
+		};
+		Border graphBorder = new()
+		{
+			Margin = new Thickness(18, 12, 18, 3),
+			BorderBrush = Brushes.Gray,
+			BorderThickness = new Thickness(1),
+			Child = _graph,
+			MaxWidth = 1000,
+			HorizontalAlignment = HorizontalAlignment.Stretch,
+		};
 		StackPanel body =
 			new()
 			{
 				Children =
 				{
+					graphBorder,
+					graphHint,
 					fields,
 					explanation,
 				},
@@ -179,10 +206,8 @@ public sealed class EnvelopeEditorControl : UserControl
 				sustain,
 				release);
 
-			_attack.Text = FormatDuration(_envelope.Attack);
-			_decay.Text = FormatDuration(_envelope.Decay);
-			_sustain.Text = FormatScalar(_envelope.SustainLevel);
-			_release.Text = FormatDuration(_envelope.Release);
+			SynchronizeFields();
+			_graph.RefreshFromEnvelope();
 			_message.Text = "Envelope updated.";
 			_changed($"Updated envelope {_envelope.Name}");
 		}
@@ -190,6 +215,14 @@ public sealed class EnvelopeEditorControl : UserControl
 		{
 			_message.Text = ex.Message;
 		}
+	}
+
+	private void SynchronizeFields()
+	{
+		_attack.Text = FormatDuration(_envelope.Attack);
+		_decay.Text = FormatDuration(_envelope.Decay);
+		_sustain.Text = FormatScalar(_envelope.SustainLevel);
+		_release.Text = FormatDuration(_envelope.Release);
 	}
 
 	private static TextBox DurationBox(TimeSpan value)
