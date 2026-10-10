@@ -489,10 +489,28 @@ public sealed class MainWindow : Window
 			new() { Header = "_Audio Output..." };
 		audioOutputItem.Click += async (_, _) =>
 			await ConfigureAudioOutputAsync();
+		MenuItem expensiveSeekHintsItem = new()
+		{
+			Header = "Show expensive source _seek hints",
+			IsCheckable = true,
+			IsChecked = _uiConfiguration.ShowReplayRequiredSeekHints,
+		};
+		expensiveSeekHintsItem.Click += (_, _) =>
+		{
+			_uiConfiguration.ShowReplayRequiredSeekHints =
+				expensiveSeekHintsItem.IsChecked;
+			if (_mainContent.Content is PatternEditorControl editor)
+				editor.RefreshSeekHints();
+		};
 		MenuItem options = new()
 		{
 			Header = "_Options",
-			ItemsSource = new object[] { audioOutputItem },
+			ItemsSource = new object[]
+			{
+				audioOutputItem,
+				new Separator(),
+				expensiveSeekHintsItem,
+			},
 		};
 		MenuItem diagnosticsItem =
 			new() { Header = "Runtime _Diagnostics..." };
@@ -2705,8 +2723,14 @@ public sealed class MainWindow : Window
 	{
 		string prefix = origin is null ? string.Empty : $"[{origin}] ";
 		foreach (SequencingDiagnostic warning in batch)
+		{
+			if (!_uiConfiguration.ShowReplayRequiredSeekHints
+				&& warning.Code is SequencingDiagnosticLog.ExpensiveSourceSeekCode
+					or SequencingDiagnosticLog.ExpensiveSourceSeekSuppressionCode)
+				continue;
 			_runtimeDiagnosticMessages.Add(
 				$"{prefix}{warning.Code}: {warning.Message}");
+		}
 		if (_runtimeDiagnosticMessages.Count > MaximumVisibleRuntimeDiagnostics)
 			_runtimeDiagnosticMessages.RemoveRange(
 				0,

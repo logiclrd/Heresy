@@ -118,6 +118,15 @@ public sealed class ReplayRequiredSeekWarningsTests
 	}
 
 	[Test]
+	public void SessionPreferenceDefaultsToShowingHintsAndCanHideThem()
+	{
+		Heresy.UserInterface.UserInterfaceConfiguration settings = new();
+		Assert.That(settings.ShowReplayRequiredSeekHints, Is.True);
+		settings.ShowReplayRequiredSeekHints = false;
+		Assert.That(settings.ShowReplayRequiredSeekHints, Is.False);
+	}
+
+	[Test]
 	public void OZeroWithoutRecalledOffsetAndSaxAloneAreNotSeeks()
 	{
 		SongDocument doc = new();

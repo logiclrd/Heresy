@@ -88,6 +88,9 @@ public sealed class PatternEditorControl : UserControl
 	private IReadOnlyDictionary<(int Row, int Channel),
 		FlattenedSourceEditorIndication> _flattenedIndications =
 			new Dictionary<(int Row, int Channel), FlattenedSourceEditorIndication>();
+	private IReadOnlyDictionary<(int Row, int Channel),
+		ReplayRequiredSeekIndication> _seekIndications =
+			new Dictionary<(int Row, int Channel), ReplayRequiredSeekIndication>();
 	private readonly Dictionary<(int Row, int Channel), Border> _noteFields = [];
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _noteTexts = [];
 	private readonly Dictionary<(int Row, int Channel), Border> _sourceFields = [];
@@ -490,6 +493,8 @@ public sealed class PatternEditorControl : UserControl
 		// Repeated Patterns can carry different inherited Sources.
 		_flattenedIndications = FlattenedSourceEffectWarnings.Analyze(
 			_workspace.Document, _context);
+		_seekIndications = ReplayRequiredSeekWarnings.Analyze(
+			_workspace.Document, _context);
 		RemapPlaybackDisplayRows();
 
 		Grid grid = new();
@@ -712,8 +717,10 @@ public sealed class PatternEditorControl : UserControl
 		effects.SetEffects(view.Effects);
 		_flattenedIndications.TryGetValue(
 			(displayRow, channel), out FlattenedSourceEditorIndication? indication);
-		ApplyFlattenedIndication(note, noteField, volumeField,
-			effects, view.NoteText, indication);
+		_seekIndications.TryGetValue(
+			(displayRow, channel), out ReplayRequiredSeekIndication? seek);
+		ApplyEditorIndications(note, noteField, volumeField,
+			effects, view.NoteText, indication, seek);
 
 		Grid content = new();
 		content.ColumnDefinitions.Add(
@@ -3184,26 +3191,39 @@ public sealed class PatternEditorControl : UserControl
 		RefreshCellEffectState(row, channel);
 	}
 
-	private static void ApplyFlattenedIndication(
+	private void ApplyEditorIndications(
 		TextBlock note, Border noteField, Border volumeField,
 		PatternEffectStripControl effects, string noteText,
-		FlattenedSourceEditorIndication? indication)
+		FlattenedSourceEditorIndication? indication,
+		ReplayRequiredSeekIndication? seek)
 	{
-		string? tip = indication?.Message;
+		if (!_configuration.ShowReplayRequiredSeekHints)
+			seek = null;
+		string? tip = indication is null ? seek?.Message
+			: seek is null ? indication.Message
+			: indication.Message + " " + seek.Message;
 		ToolTip.SetTip(noteField, tip);
 		ToolTip.SetTip(volumeField, tip);
 		ToolTip.SetTip(effects, tip);
-		// A conditional '?' never claims an effect is definitely ignored.
-		// An arrow only explains OFF/CUT, which remain valid note actions.
+		// '⚠' describes incompatible flattened operations; '↳'
+		// describes valid lifecycle control. An optional '⏱' is only
+		// a performance hint, not a rejected effect.
 		string prefix = indication is null ? string.Empty
 			: indication.IsConditional ? "? "
 			: indication.HasVoiceSpecificEffects ? "⚠ " : "↳ ";
+		if (seek is not null)
+			prefix += seek.IsConditional ? "? " : "⏱ ";
 		note.Text = prefix + noteText;
 	}
+
+	/// <summary>Reapply the session preference without rebuilding cells.</summary>
+	public void RefreshSeekHints() => RefreshFlattenedIndications();
 
 	private void RefreshFlattenedIndications()
 	{
 		_flattenedIndications = FlattenedSourceEffectWarnings.Analyze(
+			_workspace.Document, _context);
+		_seekIndications = ReplayRequiredSeekWarnings.Analyze(
 			_workspace.Document, _context);
 		foreach (((int row, int channel), TextBlock note) in _noteTexts)
 		{
@@ -3218,8 +3238,10 @@ public sealed class PatternEditorControl : UserControl
 				editorRow.PatternRow, channel).NoteText;
 			_flattenedIndications.TryGetValue(
 				(row, channel), out FlattenedSourceEditorIndication? indication);
-			ApplyFlattenedIndication(note, noteField, volumeField,
-				effects, noteText, indication);
+			_seekIndications.TryGetValue(
+				(row, channel), out ReplayRequiredSeekIndication? seek);
+			ApplyEditorIndications(note, noteField, volumeField,
+				effects, noteText, indication, seek);
 		}
 	}
 
