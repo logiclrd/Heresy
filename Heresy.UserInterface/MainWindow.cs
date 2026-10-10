@@ -669,14 +669,11 @@ public sealed class MainWindow : Window
 		_exportCancellation = cancellation;
 		ExportProgressDialog progressWindow = new(
 			Path.GetFileName(path), cancellation);
-		// Progress<T> captures the UI synchronization context: all
-		// controls are updated on the UI thread, never by the PCM worker.
+		// The dialog coalesces worker progress into at most one pending
+		// UI dispatcher update, even if offline PCM runs much faster than
+		// realtime. The renderer never touches Avalonia controls.
 		IProgress<OfflineRenderProgress> progress =
-			new Progress<OfflineRenderProgress>(update =>
-			{
-				if (!_windowClosed && progressWindow.IsVisible)
-					progressWindow.Update(update);
-			});
+			progressWindow.CreateProgressReporter();
 		SetStatus($"Rendering {Path.GetFileName(path)}...");
 		try
 		{
