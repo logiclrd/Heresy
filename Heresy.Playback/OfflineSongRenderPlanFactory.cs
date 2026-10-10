@@ -37,7 +37,7 @@ public sealed class OfflineSongRenderPlan : IDisposable
 /// </summary>
 public sealed class OfflineSongRenderPlanFactory
 {
-	private readonly RenderConfiguration _configuration;
+	private readonly Func<RenderConfiguration> _configurationSource;
 	private readonly ISampleDataProvider _samples;
 
 	public OfflineSongRenderPlanFactory(RenderConfiguration configuration)
@@ -45,8 +45,21 @@ public sealed class OfflineSongRenderPlanFactory
 
 	public OfflineSongRenderPlanFactory(
 		RenderConfiguration configuration, ISampleDataProvider sampleDataProvider)
+		: this(() => configuration
+			?? throw new ArgumentNullException(nameof(configuration)),
+			sampleDataProvider) { }
+
+	/// <summary>Capture the selected output format when an export begins.
+	/// Subsequent UI changes must never affect a running file render.</summary>
+	public OfflineSongRenderPlanFactory(Func<RenderConfiguration> configurationSource)
+		: this(configurationSource, new InMemorySampleDataProvider()) { }
+
+	public OfflineSongRenderPlanFactory(
+		Func<RenderConfiguration> configurationSource,
+		ISampleDataProvider sampleDataProvider)
 	{
-		_configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+		_configurationSource = configurationSource
+			?? throw new ArgumentNullException(nameof(configurationSource));
 		_samples = sampleDataProvider ?? throw new ArgumentNullException(nameof(sampleDataProvider));
 	}
 
@@ -67,8 +80,11 @@ public sealed class OfflineSongRenderPlanFactory
 		}
 		try
 		{
+			RenderConfiguration configuration = _configurationSource()
+				?? throw new InvalidOperationException(
+					"The export output configuration source returned null.");
 			PreparedIncrementalPlaybackPlan playback =
-				new PreparedIncrementalPlaybackFactory(_configuration, _samples)
+				new PreparedIncrementalPlaybackFactory(configuration, _samples)
 					.Create(snapshot, snapshot.Document.RootSequenceId,
 						shouldFollowOrderJump: FollowJump);
 			return new OfflineSongRenderPlan(playback);
