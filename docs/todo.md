@@ -1,6 +1,6 @@
 # Heresy TODO
 
-This checklist tracks **remaining** work as of 2026-10-09 and summarizes
+This checklist tracks **remaining** work as of 2026-10-10 and summarizes
 completed architectural contracts where they affect open tasks. Historical
 milestones and red-to-green corrections are recorded in
 [incremental-sequencing.md](incremental-sequencing.md). The early exploration
