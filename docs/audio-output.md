@@ -119,9 +119,10 @@ and the UI now persists the selected output across desktop launches.
 Actual hardware-speaker mapping on different SDL devices and
 encoder-specific 5.1/7.1 support still require device/integration
 coverage. No automatic LFE bass management is implemented.
-Those concerns, along with selectable WAV bit depths, remain separate
-from the completed renderer, configuration and preference path in
-[todo.md](todo.md).
+Selectable WAV integer depths (8/16/24/32-bit) and
+WAVEFORMATEXTENSIBLE multichannel masks are already implemented and
+tested. Only physical device and encoder-specific validation remains
+in [todo.md](todo.md).
 
 ## Realtime playback health
 
