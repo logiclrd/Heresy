@@ -39,6 +39,13 @@
   Instrument-selected ADSR volume envelopes, and is covered by
   regression PCM and lifecycle tests. The broader advanced
   delayed-effect/script and multichannel release matrix remains open.
+- **Zero-length release finishes synchronously.** Physical and
+  explicitly targeted virtual Instrument-selected samples with
+  zero-duration volume release retire during Note Off or EndInput,
+  not at the next PCM block. Displaced NNA-Off voices which have
+  already finished at their displacement frame are never added to
+  the virtual voice pool. This uses the renderer's effective
+  source/fade/envelope end and preserves nonzero-duration tails.
 - **Instrument sample releases respect the effective volume envelope.**
   Recursive Instrument binding still resolves to the terminal
   `SampleSound`, but configures its own invocation's sample state

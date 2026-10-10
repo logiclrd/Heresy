@@ -80,6 +80,17 @@ Explicit Cut/Fade, NNA-Off displacement, and natural sample ends
 continue to obey their respective independent termination policies.
 No file-format property or sample metadata change is required.
 
+A **zero-duration** volume-envelope release completes at the exact
+Note Off frame. `PlaybackSession` now retires that voice on delivery
+by consulting its composed source/fade/envelope end, without requiring
+an additional PCM `Render` call. The same rule applies when playback
+input ends and when NNA Off displaces the current Instrument voice:
+an already-ended note is not retained in the displaced-voice pool.
+The `IsQuiescent` state reflects a completed zero-release tail
+immediately, including for an explicitly targeted virtual note.
+Longer envelope releases retain their normal continuation and
+independent retirement times.
+
 ## Loading
 
 Loading a song resolves each sample's encoded data while the document is being

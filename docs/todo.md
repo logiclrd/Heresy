@@ -280,6 +280,21 @@ and native resampling versus pitch compensation. See
   verify paused ADSR with actual looping sample PCM, nested Instrument
   tone selection, NNA-Off tails, and both direct/un-enveloped cutoff
   paths. See [sample-storage.md](sample-storage.md).
+
+  **Zero-release Instrument voice retirement at the exact Off frame (October 10).**
+  `PlaybackSession.CullFinishedCurrentVoice` previously checked only
+  the underlying sound's end, so an Instrument-selected looping
+  Sample with an *immediately completing* volume envelope could
+  remain attached after Note Off or EndInput until another render
+  block. It now checks the same minimum source/fade/volume-envelope
+  deadline used for PCM rendering. NNA-Off displacement likewise
+  does not migrate a voice already finished at its displacement
+  frame into the global displaced-voice pool. Regression coverage
+  verifies physical and explicit virtual Note Off, EndInput
+  quiescence without another render, and zero-release NNA-Off
+  with an independently playing replacement. Nonzero release
+  durations and existing direct Sample cutoff semantics remain intact.
+  The broader delayed/script/recursive lifecycle TODO remains open.
 **Recursive native Oxx/Qxy source-frame seeking verified across
 invocation boundaries.** `RecursiveNativeSeekBoundaryTests` now cover
 O01 as exactly 256 private source frames across multi-order child
