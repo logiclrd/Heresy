@@ -505,6 +505,16 @@ public static class SongDocumentJson
 				result["source"] = sequence.Source;
 				break;
 
+			case ScriptEnvelopeDefinition envelope:
+				result["type"] = "scriptEnvelope";
+				result["source"] = envelope.Source;
+				result["releaseDuration"] =
+					envelope.ReleaseDuration.HasValue
+						? JsonSerializer.SerializeToNode(
+							envelope.ReleaseDuration.Value, JsonOptions)
+						: null;
+				break;
+
 			case AdsrEnvelopeDefinition envelope:
 				result["type"] = "adsrEnvelope";
 				result["attack"] =
@@ -691,6 +701,15 @@ public static class SongDocumentJson
 				return new ScriptSequenceDefinition(id, name)
 				{
 					Source = RequiredString(node, "source"),
+				};
+
+			case "scriptEnvelope":
+				return new ScriptEnvelopeDefinition(id, name)
+				{
+					Source = RequiredString(node, "source"),
+					ReleaseDuration = node["releaseDuration"] is JsonNode release
+						? release.Deserialize<TimeSpan>(JsonOptions)
+						: null,
 				};
 
 			case "adsrEnvelope":

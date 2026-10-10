@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 
+using Heresy.Core.Envelopes;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequences;
@@ -220,6 +221,72 @@ public static class ScriptCompiler
 				startRow,
 				shouldFollowOrderJump),
 			compiled.Diagnostics);
+	}
+
+	/// <summary>
+	/// Validate one scalar expression without generating a persistent script
+	/// assembly. Time inputs are in seconds of active (unpaused) envelope
+	/// time. No loops, object allocations, I/O or arbitrary framework access.
+	/// </summary>
+	public static IReadOnlyList<ScriptAnalysisDiagnostic> AnalyzeEnvelopeSource(
+		string source)
+	{
+		ArgumentNullException.ThrowIfNull(source);
+		IReadOnlyList<ScriptAnalysisDiagnostic> shape =
+			ValidateEnvelopeExpression(source);
+		if (shape.Count != 0)
+			return shape;
+		return PrepareCompilation(source,
+			BuildEnvelopeWrapper("__HeresyEnvelope_Analysis", source)).Diagnostics;
+	}
+
+	public static ScriptCompilationResult<IScriptEnvelopeEvaluator> CompileEnvelope(
+		ScriptEnvelopeDefinition definition)
+	{
+		ArgumentNullException.ThrowIfNull(definition);
+		IReadOnlyList<ScriptAnalysisDiagnostic> shape =
+			ValidateEnvelopeExpression(definition.Source);
+		if (shape.Count != 0)
+			return new(null, shape);
+		string className =
+			"__HeresyEnvelope_" + Guid.NewGuid().ToString("N");
+		ScriptCompilationResult<Type> compiled = CompileType(
+			definition.Source, className,
+			BuildEnvelopeWrapper(className, definition.Source),
+			typeof(IScriptEnvelopeEvaluator));
+		if (!compiled.Success || compiled.Program is null)
+			return new(null, compiled.Diagnostics);
+		return new(
+			Activator.CreateInstance(compiled.Program)
+				as IScriptEnvelopeEvaluator
+					?? throw new InvalidOperationException(
+						"Could not construct a compiled Envelope evaluator."),
+			compiled.Diagnostics);
+	}
+
+	private static IReadOnlyList<ScriptAnalysisDiagnostic>
+		ValidateEnvelopeExpression(string source)
+	{
+		if (string.IsNullOrWhiteSpace(source)
+			|| source.Length > 2048)
+		{
+			return [new ScriptAnalysisDiagnostic(
+				RestrictedFeatureCode, ScriptDiagnosticSeverity.Error,
+				"An Envelope must contain one expression of at most 2048 characters.",
+				new ScriptSourceSpan(0, source.Length))];
+		}
+		ExpressionSyntax expression = SyntaxFactory.ParseExpression(source);
+		if (expression.ContainsDiagnostics
+			|| expression.DescendantTrivia(descendIntoTrivia: true)
+				.Any(trivia => trivia.IsKind(SyntaxKind.SkippedTokensTrivia))
+			|| expression.DescendantNodesAndSelf().Count() > 256)
+		{
+			return [new ScriptAnalysisDiagnostic(
+				RestrictedFeatureCode, ScriptDiagnosticSeverity.Error,
+				"An Envelope script must be a single bounded C# expression.",
+				new ScriptSourceSpan(0, source.Length))];
+		}
+		return [];
 	}
 
 	private static ScriptCompilationResult<Type> CompileType(
@@ -696,6 +763,24 @@ public static class ScriptCompiler
 				{
 			#line 1 "heresy-script"
 			{{source}}
+			#line default
+				}
+			}
+			""";
+
+	private static string BuildEnvelopeWrapper(
+		string className, string source)
+		=> $"""
+			using System;
+			using Heresy.Scripting.Runtime;
+
+			public sealed class {{className}} : IScriptEnvelopeEvaluator
+			{
+				public double Evaluate(
+					double elapsedSeconds, double releaseSeconds)
+				{
+			#line 1 "heresy-script"
+					return ({{source}});
 			#line default
 				}
 			}

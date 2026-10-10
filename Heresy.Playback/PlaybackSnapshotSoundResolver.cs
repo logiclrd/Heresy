@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 
 using Heresy.Core.Envelopes;
 using Heresy.Core.FmSynthesis;
@@ -15,6 +16,8 @@ using Heresy.Render.Instruments;
 using Heresy.Render.Playback;
 using Heresy.Render.Samples;
 using Heresy.Render.Sounds;
+using Heresy.Scripting.Compilation;
+using Heresy.Scripting.Runtime;
 
 namespace Heresy.Playback;
 
@@ -174,10 +177,27 @@ internal sealed class PlaybackSnapshotSoundResolver
 			{
 				AdsrEnvelopeDefinition adsr =>
 					new AdsrEnvelopeCurve(adsr),
+				ScriptEnvelopeDefinition scripted =>
+					CompileScriptEnvelope(scripted),
 				_ => null,
 			};
 
 		_envelopes[envelopeId] = curve;
 		return curve is not null;
+	}
+
+	private static IEnvelopeCurve CompileScriptEnvelope(
+		ScriptEnvelopeDefinition definition)
+	{
+		ScriptCompilationResult<IScriptEnvelopeEvaluator> compiled =
+			ScriptCompiler.CompileEnvelope(definition);
+		if (!compiled.Success || compiled.Program is null)
+		{
+			throw new InvalidOperationException(
+				$"Envelope '{definition.Name}' failed to compile: " +
+				string.Join("; ", compiled.Diagnostics.Select(d => d.Message)));
+		}
+		return new ScriptEnvelopeCurve(
+			compiled.Program.Evaluate, definition.ReleaseDuration);
 	}
 }
