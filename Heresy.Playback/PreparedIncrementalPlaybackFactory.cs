@@ -327,6 +327,11 @@ public sealed class PreparedIncrementalPlaybackFactory
 		ObjectId? repeatSourceId = null,
 		int? repeatStartRow = null)
 	{
+		// The same bounded diagnostic sink is shared by root and nested
+		// private mixdowns. Never invoke the UI from audio rendering.
+		session.ReplayRequiredSeekObserved =
+			(effect, nativeFrame) =>
+				diagnostics.ReportExpensiveSourceSeek(effect, nativeFrame);
 
 		timeline.ReadRememberedNoteVolume = (owner, host, time) =>
 			session.GetRememberedNoteVolume(host, owner,

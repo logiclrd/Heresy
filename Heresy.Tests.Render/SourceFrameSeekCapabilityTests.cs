@@ -112,6 +112,53 @@ public sealed class SourceFrameSeekCapabilityTests
 	}
 
 	[Test]
+	public void SeekHintsFollowActualBoundSoundCapabilityAndDoNotSuppressOffsets()
+	{
+		ObjectId id = (ObjectId)10U;
+		SeekableContractSound replay = new(SourceFrameSeekCost.ReplayRequired);
+		PlaybackSession session = Session(Schedule(Event(
+			new StartNoteCommand(id, Mixdown: true),
+			new SetSourceFrameOffsetCommand(0x3400),
+			new RetriggerCurrentVoiceCommand(0))), new ContractResolver(id,
+				new ContractSound(), replay));
+		List<(string Operation, long Frame)> hints = [];
+		session.ReplayRequiredSeekObserved =
+			(operation, frame) => hints.Add((operation, frame));
+
+		session.Render(0, 1, new float[1]);
+
+		Assert.That(hints, Is.EqualTo(new[]
+		{
+			("Oxx native offset", 0x3400L),
+			("Qxy retrigger", 0L),
+		}));
+		Assert.That(replay.LastSourceFrameOffset, Is.Zero,
+			"Qxy legitimately resets the native offset to the beginning.");
+	}
+
+	[Test]
+	public void DirectAndZeroOffsetNeverProduceAnExpensiveSeekHint()
+	{
+		ObjectId id = (ObjectId)10U;
+		SeekableContractSound direct = new(SourceFrameSeekCost.Direct);
+		SeekableContractSound replay = new(SourceFrameSeekCost.ReplayRequired);
+		int messages = 0;
+		PlaybackSession ordinary = Session(Schedule(Event(
+			new StartNoteCommand(id), new SetSourceFrameOffsetCommand(256),
+			new RetriggerCurrentVoiceCommand(0))),
+			new ContractResolver(id, direct, replay));
+		ordinary.ReplayRequiredSeekObserved = (_, _) => messages++;
+		ordinary.Render(0, 1, new float[1]);
+		PlaybackSession noOffset = Session(Schedule(Event(
+			new StartNoteCommand(id, Mixdown: true),
+			new SetSourceFrameOffsetCommand(0))),
+			new ContractResolver(id, direct, replay));
+		noOffset.ReplayRequiredSeekObserved = (_, _) => messages++;
+		noOffset.Render(0, 1, new float[1]);
+		Assert.That(messages, Is.Zero);
+	}
+
+	[Test]
 	public void SampleSoundReportsDirectSourceFrameSeeking()
 	{
 		SampleSound sound = new(

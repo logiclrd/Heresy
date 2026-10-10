@@ -27,10 +27,32 @@ public sealed class SequencingDiagnosticLog
 	public const string SuppressionCode = "HRSEQ002";
 	public const string IgnoredFlatteningEffectCode = "HRSEQ003";
 	public const string IgnoredFlatteningSuppressionCode = "HRSEQ004";
+	public const string ExpensiveSourceSeekCode = "HRSEQ005";
+	public const string ExpensiveSourceSeekSuppressionCode = "HRSEQ006";
 
 	private readonly ConcurrentQueue<SequencingDiagnostic> _pending = new();
 	private long _droppedOutOfOrderNotes;
 	private long _ignoredFlatteningEffects;
+	private long _expensiveSourceSeeks;
+
+	public long ExpensiveSourceSeeks => Interlocked.Read(ref _expensiveSourceSeeks);
+
+	/// <summary>Advisory diagnostic for an actual ReplayRequired seek or
+	/// retrigger, emitted only after the renderer has resolved the bound
+	/// sound's capability. It never changes musical semantics.</summary>
+	public void ReportExpensiveSourceSeek(string effect, long nativeFrame)
+	{
+		long count = Interlocked.Increment(ref _expensiveSourceSeeks);
+		if (count <= MaximumIndividualMessages)
+			_pending.Enqueue(new SequencingDiagnostic(
+				ExpensiveSourceSeekCode,
+				$"{effect} on a ReplayRequired source (native frame {nativeFrame}) may replay earlier PCM in realtime; offline export remains accurate."));
+		else if (count == MaximumIndividualMessages + 1)
+			_pending.Enqueue(new SequencingDiagnostic(
+				ExpensiveSourceSeekSuppressionCode,
+				"Further expensive native-source-seek hints are suppressed."));
+	}
+
 
 	public long IgnoredFlatteningEffects =>
 		Interlocked.Read(ref _ignoredFlatteningEffects);

@@ -161,6 +161,10 @@ public sealed class PlaybackSession
 			_schedule, _context.Configuration.SampleRate, initialTempo);
 	}
 
+	/// <summary>Optional non-UI reporting hook. Invoked on the PCM rendering
+	/// worker only for an actual seek/retrigger on a ReplayRequired sound.</summary>
+	public Action<string, long>? ReplayRequiredSeekObserved { get; set; }
+
 	public long NextFrame => _nextFrame;
 
 	public int SampleRate => _context.Configuration.SampleRate;
@@ -1359,6 +1363,10 @@ public sealed class PlaybackSession
 					seekable.SetSourceFrameOffset(
 						channel.CurrentVoice.SoundState,
 						sourceFrameOffset.SourceFrameOffset);
+					if (seekable.SeekCost == SourceFrameSeekCost.ReplayRequired
+						&& sourceFrameOffset.SourceFrameOffset > 0)
+						ReplayRequiredSeekObserved?.Invoke("Oxx native offset",
+							sourceFrameOffset.SourceFrameOffset);
 				}
 				break;
 
@@ -1519,6 +1527,9 @@ public sealed class PlaybackSession
 					channel.SetNoteVolume(volume);
 
 					voice.Retrigger(eventFrame);
+					if (voice.Sound is ISourceFrameSeekableSound seekable
+						&& seekable.SeekCost == SourceFrameSeekCost.ReplayRequired)
+						ReplayRequiredSeekObserved?.Invoke("Qxy retrigger", 0);
 				}
 				break;
 
