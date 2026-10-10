@@ -37,7 +37,7 @@ public static class SongTreeDefaultActivation
 				SongTreeActivationKind.Pattern,
 			(SongTreeSection.Instruments, SongObjectKind.Instrument) =>
 				SongTreeActivationKind.Instrument,
-			(SongTreeSection.Instruments, SongObjectKind.Envelope) =>
+			(SongTreeSection.Envelopes, SongObjectKind.Envelope) =>
 				SongTreeActivationKind.Envelope,
 			(SongTreeSection.Samples, SongObjectKind.Sample) =>
 				SongTreeActivationKind.Sample,

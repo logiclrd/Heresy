@@ -13,7 +13,7 @@ public sealed class SongTreeDefaultActivationTests
 	[TestCase(SongTreeSection.Sequences, SongObjectKind.Sequence, SongTreeActivationKind.Sequence)]
 	[TestCase(SongTreeSection.Patterns, SongObjectKind.Pattern, SongTreeActivationKind.Pattern)]
 	[TestCase(SongTreeSection.Instruments, SongObjectKind.Instrument, SongTreeActivationKind.Instrument)]
-	[TestCase(SongTreeSection.Instruments, SongObjectKind.Envelope, SongTreeActivationKind.Envelope)]
+	[TestCase(SongTreeSection.Envelopes, SongObjectKind.Envelope, SongTreeActivationKind.Envelope)]
 	[TestCase(SongTreeSection.Samples, SongObjectKind.Sample, SongTreeActivationKind.Sample)]
 	[TestCase(SongTreeSection.Samples, SongObjectKind.FmSynth, SongTreeActivationKind.FmSynth)]
 	public void EditableObjectsResolveToTheirDefaultEditor(
