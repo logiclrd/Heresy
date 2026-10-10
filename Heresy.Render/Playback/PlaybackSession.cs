@@ -584,7 +584,9 @@ public sealed class PlaybackSession
 			case ChannelTargetKind.Virtual:
 				ApplyVirtualCommands(GetScopedChannel(
 					invocationId, target.VirtualChannelId),
-					commands, _nextFrame, cutIndefiniteAfterNoteOff: false);
+					commands, _nextFrame, cutIndefiniteAfterNoteOff: false,
+					virtualChannelId: target.VirtualChannelId,
+					scopedOwner: invocationId);
 				return;
 			case ChannelTargetKind.AllVirtualInScope:
 			case ChannelTargetKind.AllVirtual:
@@ -619,6 +621,19 @@ public sealed class PlaybackSession
 		foreach (var pair in _scopedVirtualChannels)
 			if (pair.Key.Owner == invocationId)
 				pair.Value.CutCurrentVoice();
+		// NNA Continue/Off/Fade moves the previous scoped virtual voice
+		// into the global displaced-voice pool. Cursor cancellation still
+		// owns those voices; it must not accidentally cut other cursors'
+		// identical virtual IDs or unrelated physical NNA voices.
+		for (int i = _virtualVoices.Count - 1; i >= 0; i--)
+		{
+			PlaybackVoice voice = _virtualVoices[i];
+			if (voice.OriginScopedVirtualOwner != invocationId)
+				continue;
+			voice.AddCutTo(GetScopedChannel(
+				invocationId, voice.OriginVirtualChannelId!.Value).AntiClickTail);
+			_virtualVoices.RemoveAt(i);
+		}
 	}
 
 	private PlaybackChannelState GetScopedChannel(long owner, uint id)
@@ -883,13 +898,16 @@ public sealed class PlaybackSession
 		long eventFrame,
 		bool cutIndefiniteAfterNoteOff)
 		=> ApplyVirtualCommands(GetVirtualChannelState(channelId),
-			commands, eventFrame, cutIndefiniteAfterNoteOff);
+			commands, eventFrame, cutIndefiniteAfterNoteOff,
+			virtualChannelId: channelId);
 
 	private void ApplyVirtualCommands(
 		PlaybackChannelState channel,
 		IReadOnlyList<NoteCommand> commands,
 		long eventFrame,
-		bool cutIndefiniteAfterNoteOff)
+		bool cutIndefiniteAfterNoteOff,
+		uint? virtualChannelId = null,
+		long? scopedOwner = null)
 	{
 		foreach (NoteCommand command in commands)
 		{
@@ -899,7 +917,9 @@ public sealed class PlaybackSession
 					StartVirtualNote(
 						channel,
 						start,
-						eventFrame);
+						eventFrame,
+						virtualChannelId,
+						scopedOwner);
 					break;
 
 				case NoteOffCommand:
@@ -942,9 +962,14 @@ public sealed class PlaybackSession
 	private void StartVirtualNote(
 		PlaybackChannelState channel,
 		StartNoteCommand start,
-		long eventFrame)
+		long eventFrame,
+		uint? virtualChannelId,
+		long? scopedOwner)
 	{
-		channel.CutCurrentVoice();
+		// Virtual channels have the same per-note NNA displacement as
+		// physical channels. Previous voices retain their original scope
+		// after migration to the displaced-voice pool.
+		DisplaceCurrentVoice(channel, eventFrame);
 
 		if (!_soundResolver.TryResolve(
 			start.SourceId,
@@ -992,7 +1017,11 @@ public sealed class PlaybackSession
 			originPhysicalChannel: 0,
 			sourceGainMultiplier: start.GainMultiplier,
 			enclosingVolumeChannels: enclosingVolumes,
-			enclosingSourceVolumes: ancestors);
+			enclosingSourceVolumes: ancestors)
+		{
+			OriginVirtualChannelId = virtualChannelId,
+			OriginScopedVirtualOwner = scopedOwner,
+		};
 
 		channel.AttachVoice(
 			voice,
@@ -1572,7 +1601,8 @@ public sealed class PlaybackSession
 		for (int index = _virtualVoices.Count - 1; index >= 0; index--)
 		{
 			PlaybackVoice voice = _virtualVoices[index];
-			if (voice.OriginPhysicalChannel != physicalChannel
+			if (voice.OriginVirtualChannelId.HasValue
+				|| voice.OriginPhysicalChannel != physicalChannel
 				|| voice.OriginPhysicalPlaybackOwner != channelOwner)
 				continue;
 
