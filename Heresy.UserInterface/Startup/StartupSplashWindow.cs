@@ -64,6 +64,7 @@ public sealed class StartupSplashWindow : Window
 			});
 		_timeout.Tick += OnTimeout;
 		_owner.Closed += OnOwnerClosed;
+		_owner.PropertyChanged += OnOwnerPropertyChanged;
 		Opened += OnOpened;
 		Closed += OnClosed;
 
@@ -126,6 +127,23 @@ public sealed class StartupSplashWindow : Window
 		}
 	}
 
+	private void OnOwnerPropertyChanged(
+		object? sender,
+		AvaloniaPropertyChangedEventArgs e)
+	{
+		// Some compositors complete the startup maximize request only
+		// after the splash has opened. Re-center on the *actual* state
+		// transition instead of trusting the owner's restore geometry.
+		if (_isWayland || e.Property != Window.WindowStateProperty
+			|| _dismissal.IsDismissed)
+			return;
+		Dispatcher.UIThread.Post(() =>
+		{
+			if (IsVisible && !_dismissal.IsDismissed)
+				TryCenterOverOwner();
+		}, DispatcherPriority.Loaded);
+	}
+
 	private void OnAnyKeyDown(object? sender, KeyEventArgs e)
 		=> _dismissal.Dismiss(StartupSplashDismissalReason.KeyPress);
 
@@ -142,6 +160,7 @@ public sealed class StartupSplashWindow : Window
 	{
 		_dismissal.NotifyWindowClosed();
 		_owner.Closed -= OnOwnerClosed;
+		_owner.PropertyChanged -= OnOwnerPropertyChanged;
 		_owner.RemoveHandler(InputElement.KeyDownEvent, OnAnyKeyDown);
 		_owner.RemoveHandler(InputElement.PointerPressedEvent, OnAnyPointerPressed);
 		_timeout.Tick -= OnTimeout;
