@@ -28,6 +28,58 @@
 > [seek hints](source-seek-hints.md), and [remaining TODOs](todo.md).
 > This historical log retains its original step headings for traceability.
 
+## Deferred flattened-owner and virtual-channel routing (October 10, 2026)
+
+`DeferredFlattenedVirtualOwnershipTests` verifies the real
+incremental recursive-source coordinator and PCM renderer when
+independent flattened Pattern roots share one mapped physical host.
+One root launches its child at physical channel 0; the other
+launches at channel 1. Child channel 1 of the first and child
+channel 0 of the second both map to physical host 1, but their
+`PhysicalPlaybackOwner` identities remain independent.
+Each child also uses virtual channel 7; the renderer keys those
+virtual notes by the originating Pattern cursor.
+
+In the broadcast regression, the first child starts two
+virtual-7 notes with NNA Continue, then sends
+`AllVirtualInScope` Cut. That broadcast cuts only the first
+child's *current* virtual voice; it cannot touch its already-
+displaced NNA voice or the same-numbered sibling. The first
+child also uses physical S74 Continue and a delayed S70
+past-note Cut: S70 removes its own displaced physical note
+without cutting the second child's independently owned voice
+on that same mapped physical channel. A subsequent `AllVirtual`
+Cut reaches the remaining virtual current/NNA voices across
+scopes, but never the physical or unrelated root-host notes.
+The PCM regression checks the exact counts of these audible
+voices around every deadline.
+
+In the cancellation regression, the first child has pending
+fixed-wall physical Cut at 90 ms, virtual Off at 100 ms,
+virtual past-note Cut at 110 ms, and physical S7x displacement
+control at 115 ms. Canceling its root at 30 ms removes that
+subtree's current and migrated virtual voices, cuts only its
+mapped physical voice, and invalidates every pending deadline
+(including the possible single-event playback lookahead).
+Its sibling's physical host, virtual 7, independent root-host
+sample and later physical Note Off remain unaffected. The
+resulting PCM matches both whole-block and irregular split
+rendering.
+
+A final regression uses an `ISound` with a fixed 300-frame
+post-Off release. Its child virtual note receives Off at
+20 ms, leaving an audible tail ending at 320 ms. Normal
+Pattern producer retirement at 240 ms leaves that tail
+audible through its own deadline, while explicit cancellation
+at 30 ms cuts it and preserves all sibling notes. These
+cases distinguish **producer lifetime** from **audible voice
+lifetime**, and confirm that cancellation uses the original
+scope/cursor identity even after Note Off.
+
+No audio/scheduler production code or additional event journal
+was introduced. The separate advanced Instrument/private
+release-tail intersection is still open in `todo.md`.
+
 ## Mixed Roslyn/data lifecycle and shared-clock changes (October 10, 2026)
 
 `MixedRoslynDataLifecycleTimingTests` runs an actual

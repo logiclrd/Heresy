@@ -333,6 +333,31 @@ This was a regression-only coverage milestone; no production
 scheduler or audio-path changes were needed. Two other advanced
 lifecycle cross-interaction tasks remain open.
 
+**Deferred flattened-owner / scoped virtual lifecycle routing
+verified (October 10).** `DeferredFlattenedVirtualOwnershipTests`
+constructs two independent flattened Pattern roots whose child
+physical channels both map to host 1 but have separate physical
+playback owners; both children also start scoped virtual channel 7.
+The production `IncrementalRecursiveTimeline`,
+`PreparedIncrementalAudioSource` and `PlaybackSession` are used
+without an eager note schedule. Physical S74 creates a displaced NNA
+voice; a later fixed-wall S70 cuts only that owner's physical NNA,
+leaving the sibling voice on the same mapped host intact. A
+scope-local virtual broadcast cuts its current virtual voice without
+touching a displaced NNA or the sibling's same-numbered virtual
+channel; a global virtual broadcast reaches both remaining virtual
+voices while leaving physical voices untouched. Explicit root
+cancellation after 30 ms removes its physical/virtual current
+voices, displaced scoped NNA voice, and not-yet-delivered physical
+Cut, virtual Off and S7x deadlines. The independent root's later
+Note Off and surviving host/virtual voices execute normally.
+Separate finite-release cases establish that natural completion
+preserves an already-releasing virtual note beyond the producer's
+last row until its own sound-end deadline, whereas explicit
+cancellation cuts that owned release without touching the sibling.
+Tests cover irregular PCM blocks and whole blocks for cancellation.
+No production changes were required; this checkbox is closed.
+
 **Advanced lifecycle — remaining independently closable checks.**
 These checkboxes cover combinations **not yet demonstrated end-to-end**,
 not known production defects. Each may be closed after an explicit
@@ -340,16 +365,6 @@ regression passes on the production incremental path; if it fails,
 add the smallest corrective change and verify red-to-green CI.
 Do not revisit already-complete flattened-source ownership or introduce
 eager schedules, event journals, or a second playback path.
-
-- [ ] **Deferred lifecycle routing across flattened owners and virtual
-  channels.** Exercise two sibling flattened invocations sharing a
-  mapped physical host and/or the same numbered scoped virtual channel,
-  with delayed Off/Cut/S7x actions, displaced NNA voices, a virtual
-  broadcast, and subtree cancellation before a pending deadline.
-  Assert that pending actions from canceled producers cannot affect
-  surviving host/sibling voices, while already-releasing owned tails
-  follow the existing ownership contract. Close after targeted
-  recursive-scheduler and renderer regressions confirm isolation.
 
 - [ ] **Nested Instrument and private-source release-tail intersections.**
   Cover Instrument-selected Sample tones across nested Instruments and
