@@ -310,6 +310,29 @@ No new scheduling implementation or event journal is required.
 This subtask is closed; the three other lifecycle cross-interaction
 checks below remain open.
 
+**Mixed Roslyn/data lifecycle ordering under changing Tempo/Speed verified
+(October 10).** `MixedRoslynDataLifecycleTimingTests` now exercises the
+actual restricted Roslyn compiler, data-grid patterns, one shared-clock
+recursive coordinator and the production `PreparedIncrementalAudioSource`
+PCM worker. A scripted Note establishes a fixed 160-ms deadline at row
+zero, before a separate script changes Tempo to 250 or Speed to 3 at
+row one (120 ms). A competing data note carries SD2 and S74
+(Continue); a later data S70 (past-note Cut) shares its row-two
+boundary with scripted Cut, while scripted Off has an independent
+positive fixed-wall offset. The Tempo branch shifts data SD2 to
+140 ms and keeps the script's 160-ms note fixed; the Speed branch
+preserves the already-started other cursors' row spans and delivers
+both the data SD2 and deferred script note at frame 160, in stable
+data-before-script order. Their other Off, subsequent Note and
+row-two Cut/S70 operations are checked at their exact output frames.
+The resulting NNA overlap, targeted Off and past-note cutoff PCM
+is identical across a single large render and irregular small
+blocks. The tests compare frame-ceiled deadlines to respect the
+renderer’s 1-kHz scheduling rule for fractional tracker TimeSpans.
+This was a regression-only coverage milestone; no production
+scheduler or audio-path changes were needed. Two other advanced
+lifecycle cross-interaction tasks remain open.
+
 **Advanced lifecycle — remaining independently closable checks.**
 These checkboxes cover combinations **not yet demonstrated end-to-end**,
 not known production defects. Each may be closed after an explicit
@@ -317,15 +340,6 @@ regression passes on the production incremental path; if it fails,
 add the smallest corrective change and verify red-to-green CI.
 Do not revisit already-complete flattened-source ownership or introduce
 eager schedules, event journals, or a second playback path.
-
-- [ ] **Mixed Roslyn/data lifecycle ordering under a changing clock.**
-  Run actual incremental script Note/Off/Cut commands concurrently
-  with data-Pattern SDx and S7x commands while another cursor changes
-  Tempo or Speed after a fixed-wall deadline is established. Exercise
-  same-frame ties and distinct deadlines, with production PCM compared
-  across different rendering block sizes. The existing simple
-  script-Off + SD3 + Tempo test is already complete; close after the
-  additional cross-ordering regressions pass (or are corrected).
 
 - [ ] **Deferred lifecycle routing across flattened owners and virtual
   channels.** Exercise two sibling flattened invocations sharing a

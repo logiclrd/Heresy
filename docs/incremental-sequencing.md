@@ -28,6 +28,49 @@
 > [seek hints](source-seek-hints.md), and [remaining TODOs](todo.md).
 > This historical log retains its original step headings for traceability.
 
+## Mixed Roslyn/data lifecycle and shared-clock changes (October 10, 2026)
+
+`MixedRoslynDataLifecycleTimingTests` runs an actual
+`ScriptPatternDefinition` through `RoslynIncrementalScriptSourceCompiler`
+together with independent data Patterns. Three top-level Pattern
+cursors share a physical note host: the data cell starts a note
+with SD2 and S74 (Continue), the Roslyn script emits an earlier-
+authored fixed-wall Note at 160 ms followed by its own wall-delayed
+Off, later Note and Cut, and the third Roslyn cursor changes the
+shared Tempo or Speed at row one (120 ms). A data S70 (past-note
+Cut) also executes at row two, exactly when the scripted Cut does.
+
+For **Tempo 250**, data SD2 advances on the accelerated shared
+tick clock and begins at 140 ms; the independently pending script
+Note stays at 160 ms. Script Off and subsequent Note are emitted
+at their distinct post-change deadlines, with S70 and Cut both
+at frame 180.
+
+For **Speed 3**, a direct Speed change at row one does not
+retroactively resize another cursor's already captured row.
+Data SD2 and the previously established script wall Note
+therefore both fall at frame 160, with the data source's Start
+and S74 processed first. The existing old note is migrated under
+NNA Continue. Script Off, later Note, and row-two S70/Cut run
+at their individually captured later deadlines, the last pair
+at frame 240.
+
+The test fixture traces the incremental emitted NoteEvents and
+renders real looping sample PCM through
+`PreparedIncrementalAudioSource` / `PlaybackSession` in
+both clock scenarios. One 420-frame block and irregularly split
+PCM blocks must produce identical samples, including the
+NNA continuation and terminal past-note Cut. Fractional
+tracker-tick wall `TimeSpan` arithmetic can lie one 100-ns
+unit before an exact millisecond: the trace asserts
+the **ceiled output frame**, which is the actual renderer
+contract, rather than requiring bit-exact decimal milliseconds.
+
+This closes the mixed script/data lifecycle interaction TODO
+without changing production behavior. Independent flattened
+scope/virtual routing and nested Instrument/private release
+intersections remain tracked separately in `todo.md`.
+
 ## Tracker tick and fixed-wall lifecycle collisions (October 10, 2026)
 
 The combined timing check is now covered end-to-end by
