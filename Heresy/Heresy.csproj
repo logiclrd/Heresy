@@ -6,6 +6,8 @@
 		<ImplicitUsings>disable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+		<!-- The SDK uses this icon for the managed assembly and the native Windows apphost. -->
+		<ApplicationIcon>../Heresy.UserInterface/Images/Icon.ico</ApplicationIcon>
 	</PropertyGroup>
 
 	<ItemGroup>

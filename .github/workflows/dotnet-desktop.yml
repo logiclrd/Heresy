@@ -40,3 +40,9 @@ jobs:
         test -f Heresy/bin/Release/net10.0/libsndfile.so
         test -f Heresy/bin/Release/net10.0/libFLAC.so.12
         ! ldd Heresy/bin/Release/net10.0/libsndfile.so | grep -q 'not found'
+
+    - name: Verify Windows apphost embeds icon resources
+      run: |
+        dotnet publish Heresy/Heresy.csproj -c Release -r win-x64 --self-contained false -p:UseAppHost=true -o "$RUNNER_TEMP/heresy-win-x64"
+        python3 build/verify-windows-apphost-icon.py "$RUNNER_TEMP/heresy-win-x64/Heresy.exe"
+

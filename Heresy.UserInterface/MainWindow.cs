@@ -12,6 +12,7 @@ using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
+using Avalonia.Platform;
 using Avalonia.Threading;
 
 using Heresy.Core.Diagnostics;
@@ -216,6 +217,11 @@ public sealed class MainWindow : Window
 			_playbackPositionTransport.PlaybackPositionChanged +=
 				OnPlaybackPositionChanged;
 		}
+
+		// Resolve the compiled Avalonia resource rather than a filesystem path;
+		// the same multi-resolution ICO is used by the Windows native apphost.
+		Icon = new WindowIcon(AssetLoader.Open(
+			new Uri("avares://Heresy.UserInterface/Images/Icon.ico")));
 
 		Width = 1200;
 		Height = 760;

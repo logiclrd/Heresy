@@ -14,6 +14,11 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<!-- Shared icon asset: Avalonia opens it from the UI assembly. -->
+		<AvaloniaResource Include="Images/Icon.ico" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<ProjectReference Include="..\Heresy.Core\Heresy.Core.csproj" />
 		<ProjectReference Include="..\Heresy.Scripting\Heresy.Scripting.csproj" />
 		<ProjectReference Include="..\Heresy.Render\Heresy.Render.csproj" />
