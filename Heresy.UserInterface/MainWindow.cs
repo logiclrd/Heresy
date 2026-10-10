@@ -353,11 +353,11 @@ public sealed class MainWindow : Window
 		Button newFolder = new() { Content = "+ Folder" };
 		newFolder.Click += async (_, _) => await CreateFolderAsync(section);
 
-		StackPanel actions =
+		WrapPanel actions =
 			new()
 			{
 				Orientation = Orientation.Horizontal,
-				Spacing = 6,
+				HorizontalAlignment = HorizontalAlignment.Stretch,
 			};
 		if (section == SongTreeSection.Sequences)
 		{
@@ -409,14 +409,19 @@ public sealed class MainWindow : Window
 		}
 		actions.Children.Add(newFolder);
 
-		DockPanel header =
+		// A third-width Patches pane can have several import/create
+		// actions. Put them below the title and wrap instead of clipping
+		// or forcing the document tree wider than its grid column.
+		foreach (Control action in actions.Children)
+			action.Margin = new Thickness(2, 1);
+		StackPanel header =
 			new()
 			{
 				Margin = new Thickness(8, 6),
+				Spacing = 3,
 			};
-		DockPanel.SetDock(actions, Dock.Right);
-		header.Children.Add(actions);
 		header.Children.Add(title);
+		header.Children.Add(actions);
 
 		Grid pane = new();
 		pane.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
