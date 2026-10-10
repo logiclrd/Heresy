@@ -379,7 +379,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 
 
 		void Schedule(TrackedMixdown voice, long frame,
-			NoteDisplacementAction action)
+			NoteDisplacementAction action, bool newNoteDisplacement = false)
 		{
 			switch (action)
 			{
@@ -392,7 +392,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 					voice.Sound.ScheduleRelease(frame);
 					break;
 				case NoteDisplacementAction.Fade:
-					voice.Sound.ScheduleFade(frame);
+					voice.Sound.ScheduleFade(frame, newNoteDisplacement);
 					break;
 			}
 		}
@@ -401,7 +401,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 		{
 			if (!physicalVoices.Remove((playbackOwner, channel), out TrackedMixdown? old))
 				return;
-			Schedule(old, frame, old.Displacement);
+			Schedule(old, frame, old.Displacement,
+				newNoteDisplacement: true);
 			if (old.Displacement != NoteDisplacementAction.Cut)
 				displacedVoices.Add(old);
 		}
@@ -410,7 +411,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 		{
 			if (!scopedVoices.Remove((owner, id), out TrackedMixdown? old))
 				return;
-			Schedule(old, frame, old.Displacement);
+			Schedule(old, frame, old.Displacement,
+				newNoteDisplacement: true);
 			if (old.Displacement != NoteDisplacementAction.Cut)
 				displacedVoices.Add(old);
 		}
@@ -430,7 +432,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 				.Where(v => v.EnclosingSourceScopes.Contains(scopeId))
 				.Distinct().ToArray();
 			foreach (TrackedMixdown voice in affected)
-				Schedule(voice, frame, action);
+				Schedule(voice, frame, action,
+					newNoteDisplacement: true);
 			if (action == NoteDisplacementAction.Cut)
 			{
 				foreach (var pair in physicalVoices.ToArray())
