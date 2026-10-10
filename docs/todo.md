@@ -104,16 +104,29 @@ tails, which decay to digital silence. Mono/stereo response, speaker
 independence, nested private mixes and chunk invariance are tested.
 See [audio-output.md](audio-output.md).
 
-- [ ] Expose actual **user configuration** for output sample rate, speaker
-  count/layout (including 5.1 and 7.1), positions, positional importance,
-  output filters and cutoff. The engine accepts arbitrary
-  `RenderConfiguration`; the main UI currently chooses stereo defaults.
-  Carry user-selected settings through realtime and offline construction,
-  without confusing voice channels with speaker output feeds.
-- [ ] Extend spatial/speaker-order and final-filter integration tests to
-  arbitrary 5.1/7.1 layouts and actual configured realtime/export routes.
-  Basic mono/stereo filtering, speaker isolation and stable multi-block
-  responses are already regression-tested.
+**User-configurable output implemented:** Options → Audio Output
+now selects mono, stereo, 5.1 or 7.1, sample rate, individual speaker
+position (X/Y/Z), positional importance, and each speaker's None,
+LowPass or HighPass filter with cutoff. The ordered outputs are explicit;
+the LFE speaker feed is **not** automatic bass management. Changes
+stop the existing SDL transport before the next PCM format is selected.
+The application shares one thread-safe, immutable-per-render
+`AudioOutputSettings` snapshot with realtime and export factories.
+A running export retains its starting format even when UI preferences
+change; configuration is session-scoped, not yet persisted to disk.
+Presets, dynamic factory capture, WAV sample rate/channel headers,
+5.1/7.1 speaker ordering and multi-block filtering have regressions.
+See [audio-output.md](audio-output.md).
+
+- [ ] Expand **device-specific** 5.1/7.1 end-to-end coverage:
+  verify SDL hardware mapping and encoder-specific multichannel support
+  with supported physical devices and exported FLAC/MP3 layouts.
+  Engine-side 5.1/7.1 speaker ordering and WAV mono/stereo headers are
+  already tested. Preserve the distinction between ordinary speaker
+  feeds and true bass management.
+- [ ] Optionally persist output preferences between application launches,
+  with versioned validation; settings currently live for the desktop
+  session and do not alter song files.
 
 ## Export workflow
 
@@ -124,8 +137,11 @@ See [audio-output.md](audio-output.md).
   pre-expand future song orders merely to produce an ETA.
 - [ ] Add cooperative cancellation at safe render blocks, preserving the
   atomic temporary-output-file behavior and leaving existing exports intact.
-- [ ] Support user-selectable output configuration for export and additional
-  WAV depths beyond default 16-bit PCM. Retain FLAC as default and MP3/WAV.
+- [ ] Support **additional WAV bit depths** beyond default 16-bit PCM,
+  and check encoder-specific validity for user-selected output rates and
+  channel layouts. Realtime and export already share the chosen sample
+  rate, speaker count, positions and filter configuration; retain FLAC
+  as the default format with MP3/WAV available.
 - [ ] Ensure export and realtime render identically for equal snapshots and
   render configurations, aside from intentionally different end-of-song
   handling and output encoding.

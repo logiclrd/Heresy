@@ -51,11 +51,52 @@ responses, independent speaker histories, unequal PCM block sizes,
 a private recursive Pattern selected as a sound, the None bypass,
 and filter state across the offline tail boundary.
 
+## User-facing configuration and snapshot boundaries
+
+The desktop **Options → Audio Output** dialog edits the selected
+sample rate, speaker layout (mono, stereo, 5.1, 7.1), ordered output
+positions (X/Y/Z), positional importance, filter type and cutoff per
+speaker. It may also reopen a render configuration with custom
+speaker positions and edit that configuration directly. Its 5.1/7.1
+output ordering is front-left, front-right, center, LFE, rear-left,
+rear-right, then side-left/side-right for 7.1. An LFE output is an
+ordinary speaker feed: **no bass-management crossover or implicit
+low-frequency extraction** is inserted. A custom importance of zero
+does not delete the speaker feed.
+
+`AudioOutputSettings.Current` holds the immutable selected
+`RenderConfiguration`, exchanged atomically on Apply. The application
+constructs both `PlaybackRequestAudioSourceFactory` and
+`OfflineSongRenderPlanFactory` with the same configuration provider.
+Each factory captures the choice exactly once at **new render-plan
+creation**; the configuration of an active playback source or export
+is never mutated. Before publishing a new choice, MainWindow awaits
+`StopAsync` to dispose the active SDL stream. The next realtime
+request opens the proper channel-count/sample-rate stream. Offline
+export captures the format synchronously before starting the
+background file render, so changing UI preferences does not change
+the format of an already running file.
+
+Default output is 48 kHz stereo. Settings apply to the **application
+session**, not to the song document; persistence between launches
+is a separate potential enhancement. The user-configurable sample
+rate is limited to 8–384 kHz and active LowPass/HighPass cutoffs must
+lie strictly below Nyquist. Filter fields with type None are ignored.
+
+Tests cover mono/stereo/5.1/7.1 preset ordering, speaker positions
+and filter selections, configuration snapshots across consecutive
+realtime and offline requests, 5.1/7.1 renderer speaker isolation
+with per-output filtering, and actual WAV header sample rate/channel
+counts from two concurrent background exports using successive
+configurations.
+
 ## Still open
 
-The engine accepts explicit output speaker layouts and sample rates,
-but the application does not yet expose complete configurable
-5.1/7.1 layouts, speaker placement, positional importance, per-speaker
-cutoff or sample rate to users. End-to-end configurable realtime and
-file-export speaker ordering and complex layouts also need broader
-coverage. Those tasks remain in [todo.md](todo.md).
+The engine can now render the selected layout through both realtime
+and export and the UI exposes the full setting surface, but actual
+hardware-speaker mapping on a range of SDL output devices and
+encoder-specific 5.1/7.1 support still need device/integration
+coverage. The UI does not yet persist its per-session output settings,
+and no automatic LFE bass management is implemented. Those concerns,
+along with selectable WAV bit depths, remain separate from the
+completed renderer and user-configuration path in [todo.md](todo.md).
