@@ -237,6 +237,38 @@ public sealed class ParametricPatternPlaybackTests
         });
     }
 
+    [TestCase(false, 0.5)]
+    [TestCase(true, 0.35)]
+    public void ZeroDurationEffectUsesExactTerminalPolicy(bool commit, double expected)
+    {
+        SongDocument song = SongWithTone(out ObjectId root);
+        ((DataPatternDefinition)song.Objects[root]).Grid.GetOrCreateCell(0, 0)
+            .Effects.Add(new ParametricPatternEffect(
+                ParametricEffectParameter.GlobalVolume,
+                TimeSpan.Zero, "-0.3", commit));
+        using PreparedIncrementalPlaybackPlan plan =
+            new PreparedIncrementalPlaybackFactory(Mono()).Create(song, root);
+        float[] pcm = new float[5];
+        plan.Source.Render(pcm.Length, pcm);
+        Assert.That(pcm, Is.All.EqualTo((float)expected).Within(1e-4f));
+    }
+
+    [Test]
+    public void NonFiniteExpressionOutputFailsDeterministicallyDuringAudioGeneration()
+    {
+        SongDocument song = SongWithTone(out ObjectId root);
+        ((DataPatternDefinition)song.Objects[root]).Grid.GetOrCreateCell(0, 0)
+            .Effects.Add(new ParametricPatternEffect(
+                ParametricEffectParameter.GlobalVolume,
+                TimeSpan.FromSeconds(0.1), "Math.Sqrt(-1.0)"));
+        using PreparedIncrementalPlaybackPlan plan =
+            new PreparedIncrementalPlaybackFactory(Mono()).Create(song, root);
+        InvalidOperationException? failure =
+            Assert.Throws<InvalidOperationException>(() =>
+                plan.Source.Render(1, new float[1]));
+        Assert.That(failure!.Message, Does.Contain("non-finite parameter delta"));
+    }
+
     [Test]
     public void InvalidExpressionFailsDuringPreparationNotWhileRendering()
     {
