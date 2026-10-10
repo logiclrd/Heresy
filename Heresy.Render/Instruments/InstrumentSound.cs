@@ -4,6 +4,7 @@ using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Render.Envelopes;
 using Heresy.Render.Playback;
+using Heresy.Render.Samples;
 using Heresy.Render.Sounds;
 
 namespace Heresy.Render.Instruments;
@@ -99,6 +100,18 @@ public sealed class InstrumentSound : ISound
 			ResolveEnvelopes(
 				tone,
 				childInvocation.Configuration.Envelopes);
+
+		// Instrument binding flattens to the terminal sound/state, so
+		// SampleSound would otherwise still cut the PCM at Note Off even
+		// while the overlaid volume envelope is releasing. Select this
+		// per-invocation policy only after all envelope overlays at this
+		// level are resolved. An outer nested Instrument may override it.
+		if (childInvocation.Sound is SampleSound
+			&& childInvocation.State is SampleSoundState sampleState)
+		{
+			sampleState.ReleaseIsControlledByVolumeEnvelope =
+				envelopes.Volume is not null;
+		}
 
 		NoteConfigurationSnapshot configuration =
 			new(
