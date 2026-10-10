@@ -144,7 +144,15 @@ mode rather than opening a modal editor. The pattern grid edits semantic note
 carry pitch/playback-speed/mixdown while Source is independent pattern-cell data.
 The editor exposes row/channel dimensions plus minor/major row-highlight
 intervals and warns before shrinking dimensions when populated cells would be
-discarded.
+discarded. The Back control is fixed at the left of the editor header; the
+Pattern name and toolbar controls through **Apply layout** are in a horizontally
+scrollable area with an automatic scrollbar (hidden when there is no overflow).
+Double-clicking the displayed Pattern name overlays an editable text field
+containing its current name. Losing focus or pressing Enter commits a nonblank
+rename through `SongTreeEditor.RenameObject` (synchronizing all document-tree
+placements without an audio revision); Esc cancels and restores the label.
+In Sequence projection mode, renaming edits the underlying current Pattern
+rather than renaming the Sequence or changing its order.
 
 Pattern row divisions are presentation rather than typography: major/minor
 rows use translucent background bands instead of bold text. The shared

@@ -92,6 +92,20 @@ public sealed class PatternEditorControl : UserControl
 			FontWeight = FontWeight.SemiBold,
 			VerticalAlignment = VerticalAlignment.Center,
 		};
+	private readonly TextBox _titleEditor = new()
+	{
+		FontSize = 20,
+		FontWeight = FontWeight.SemiBold,
+		MinWidth = 160,
+		VerticalAlignment = VerticalAlignment.Center,
+		IsVisible = false,
+	};
+	private readonly ScrollViewer _toolbarScroll = new()
+	{
+		HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+		VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+	};
+	private DataPatternDefinition? _editingTitlePattern;
 	private readonly Dictionary<(int Row, int Channel), Border> _cellBorders = [];
 	private readonly Dictionary<int, Border> _rowHeaders = [];
 	private readonly HashSet<int> _playbackDisplayRows = [];
@@ -297,6 +311,9 @@ public sealed class PatternEditorControl : UserControl
 			if (args.Property == ToggleButton.IsCheckedProperty)
 				SetFollowPlayback(_followCheckbox.IsChecked == true);
 		};
+		_title.PointerPressed += OnTitlePointerPressed;
+		_titleEditor.KeyDown += OnTitleEditorKeyDown;
+		_titleEditor.LostFocus += (_, _) => CloseTitleEdit(commit: true);
 
 		Content = BuildContent();
 		AttachedToVisualTree += (_, _) => RequestPlaybackFollow();
@@ -502,16 +519,31 @@ public sealed class PatternEditorControl : UserControl
 		layout.Children.Add(_majorHighlight);
 		layout.Children.Add(applyLayout);
 
-		DockPanel header =
-			new()
-			{
-				Margin = new Thickness(10, 8),
-			};
+		// The Back action is always visible. Everything from the title
+		// through Apply layout scrolls together on narrow windows; Auto
+		// leaves no toolbar scrollbar visible when all controls fit.
+		Grid titleSlot = new()
+		{
+			Margin = new Thickness(0, 0, 16, 0),
+			VerticalAlignment = VerticalAlignment.Center,
+		};
+		titleSlot.Children.Add(_title);
+		titleSlot.Children.Add(_titleEditor);
+		StackPanel toolbar = new()
+		{
+			Orientation = Orientation.Horizontal,
+			Spacing = 6,
+			VerticalAlignment = VerticalAlignment.Center,
+		};
+		toolbar.Children.Add(titleSlot);
+		toolbar.Children.Add(layout);
+		_toolbarScroll.Content = toolbar;
+
+		DockPanel header = new() { Margin = new Thickness(10, 8) };
+		back.Margin = new Thickness(0, 0, 10, 0);
 		DockPanel.SetDock(back, Dock.Left);
-		DockPanel.SetDock(layout, Dock.Right);
 		header.Children.Add(back);
-		header.Children.Add(layout);
-		header.Children.Add(_title);
+		header.Children.Add(_toolbarScroll);
 
 		DockPanel root = new();
 		DockPanel.SetDock(header, Dock.Top);
@@ -560,6 +592,82 @@ public sealed class PatternEditorControl : UserControl
 			RoutingStrategies.Tunnel,
 			handledEventsToo: true);
 		return root;
+	}
+
+	private void OnTitlePointerPressed(object? sender, PointerPressedEventArgs e)
+	{
+		if (e.ClickCount != 2)
+			return;
+		BeginTitleEdit();
+		e.Handled = true;
+	}
+
+	private void BeginTitleEdit()
+	{
+		if (_editingTitlePattern is not null)
+			return;
+		_editingTitlePattern = GetCurrentPattern();
+		_titleEditor.Text = _editingTitlePattern.Name;
+		_titleEditor.Width = Math.Max(160, _title.Bounds.Width + 24);
+		// Preserve the label's layout slot while the textbox covers it.
+		_title.Opacity = 0;
+		_titleEditor.IsVisible = true;
+		_titleEditor.Focus();
+		_titleEditor.SelectAll();
+	}
+
+	private void OnTitleEditorKeyDown(object? sender, KeyEventArgs e)
+	{
+		if (e.Key == Key.Escape)
+		{
+			CloseTitleEdit(commit: false);
+			e.Handled = true;
+			FocusCursorCell();
+		}
+		else if (e.Key == Key.Enter)
+		{
+			CloseTitleEdit(commit: true);
+			e.Handled = true;
+			FocusCursorCell();
+		}
+	}
+
+	private void CloseTitleEdit(bool commit)
+	{
+		DataPatternDefinition? pattern = _editingTitlePattern;
+		if (pattern is null)
+			return;
+
+		// Clear this before hiding the focused control; its LostFocus
+		// handler must not re-commit a cancelled Esc edit.
+		_editingTitlePattern = null;
+		string proposed = _titleEditor.Text?.Trim() ?? string.Empty;
+		_titleEditor.IsVisible = false;
+		_title.Opacity = 1;
+
+		bool renamed = false;
+		if (commit)
+		{
+			if (proposed.Length == 0)
+				_message.Text = "Pattern name cannot be empty.";
+			else if (!string.Equals(pattern.Name, proposed, StringComparison.Ordinal))
+			{
+				try
+				{
+					// Rename every tree placement without changing audio state.
+					SongTreeEditor.RenameObject(_workspace.Document, pattern.Id, proposed);
+					renamed = true;
+				}
+				catch (Exception ex)
+				{
+					_message.Text = ex.Message;
+				}
+			}
+		}
+
+		UpdateCurrentPatternControls();
+		if (renamed)
+			_changed($"Renamed pattern to {proposed}.");
 	}
 
 	private async Task ApplyLayoutAsync()
