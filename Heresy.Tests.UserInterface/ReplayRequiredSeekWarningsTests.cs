@@ -124,6 +124,11 @@ public sealed class ReplayRequiredSeekWarningsTests
 		Assert.That(settings.ShowReplayRequiredSeekHints, Is.True);
 		settings.ShowReplayRequiredSeekHints = false;
 		Assert.That(settings.ShowReplayRequiredSeekHints, Is.False);
+		Assert.That(settings.ShouldDisplayRuntimeDiagnostic("HRSEQ005"), Is.False);
+		Assert.That(settings.ShouldDisplayRuntimeDiagnostic("HRSEQ006"), Is.False);
+		Assert.That(settings.ShouldDisplayRuntimeDiagnostic("HRSEQ001"), Is.True);
+		settings.ShowReplayRequiredSeekHints = true;
+		Assert.That(settings.ShouldDisplayRuntimeDiagnostic("HRSEQ005"), Is.True);
 	}
 
 	[Test]

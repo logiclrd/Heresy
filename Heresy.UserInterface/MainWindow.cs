@@ -2724,9 +2724,7 @@ public sealed class MainWindow : Window
 		string prefix = origin is null ? string.Empty : $"[{origin}] ";
 		foreach (SequencingDiagnostic warning in batch)
 		{
-			if (!_uiConfiguration.ShowReplayRequiredSeekHints
-				&& warning.Code is SequencingDiagnosticLog.ExpensiveSourceSeekCode
-					or SequencingDiagnosticLog.ExpensiveSourceSeekSuppressionCode)
+			if (!_uiConfiguration.ShouldDisplayRuntimeDiagnostic(warning.Code))
 				continue;
 			_runtimeDiagnosticMessages.Add(
 				$"{prefix}{warning.Code}: {warning.Message}");

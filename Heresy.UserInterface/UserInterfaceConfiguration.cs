@@ -1,5 +1,7 @@
 using Avalonia.Media;
 
+using Heresy.Core.Diagnostics;
+
 namespace Heresy.UserInterface;
 
 /// <summary>
@@ -12,6 +14,11 @@ public sealed class UserInterfaceConfiguration
 	/// <summary>Session-only preference. Hides advisory seek hints in
 	/// Pattern editor and UI runtime reports, never changes rendering.</summary>
 	public bool ShowReplayRequiredSeekHints { get; set; } = true;
+
+	public bool ShouldDisplayRuntimeDiagnostic(string code)
+		=> ShowReplayRequiredSeekHints
+			|| code is not (SequencingDiagnosticLog.ExpensiveSourceSeekCode
+				or SequencingDiagnosticLog.ExpensiveSourceSeekSuppressionCode);
 
 	public Color MajorPatternRowHighlight { get; init; } =
 		Color.FromArgb(0x80, 0x80, 0x80, 0x80);
