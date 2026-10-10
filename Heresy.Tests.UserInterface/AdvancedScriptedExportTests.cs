@@ -42,6 +42,9 @@ public sealed class AdvancedScriptedExportTests
 		{
 			Assert.That(result.LogicalFrameCount,
 				Is.EqualTo(second.LogicalFrameCount));
+			Assert.That(result.LogicalFrameCount, Is.EqualTo(300),
+				"Tempo 250 gives 60-ms rows: two scripted rows, " +
+				"one Bxx/Cxx row and two target rows starting at row 1.");
 			Assert.That(result.TailFrameCount, Is.EqualTo(second.TailFrameCount));
 			Assert.That(result.LogicalFrameCount, Is.GreaterThan(0));
 			Assert.That(result.LogicalFrameCount, Is.LessThan(2000));
