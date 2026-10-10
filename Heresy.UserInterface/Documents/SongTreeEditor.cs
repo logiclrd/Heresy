@@ -23,7 +23,7 @@ public static class SongTreeEditor
 		if (ReferenceEquals(parent, document.Root))
 		{
 			throw new InvalidOperationException(
-				"The document root may contain only the four fixed section roots.");
+				"The document root may contain only the five fixed section roots.");
 		}
 
 		SongTreeFolder folder = new(name.Trim());
@@ -260,7 +260,7 @@ public static class SongTreeEditor
 		if (ReferenceEquals(destination, document.Root))
 		{
 			throw new InvalidOperationException(
-				"The document root may contain only the four fixed section roots.");
+				"The document root may contain only the five fixed section roots.");
 		}
 
 		if (node is SongTreeFolder movingFolder
@@ -273,7 +273,7 @@ public static class SongTreeEditor
 		SongTreeSection? sourceSection = GetSection(document, node);
 		SongTreeSection? destinationSection = GetSection(document, destination);
 		if (sourceSection is null || destinationSection is null)
-			throw new InvalidOperationException("Tree nodes must belong to one of the four document sections.");
+			throw new InvalidOperationException("Tree nodes must belong to one of the five document sections.");
 		if (sourceSection != destinationSection)
 			throw new InvalidOperationException("Tree nodes cannot be moved between document sections.");
 	}

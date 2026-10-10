@@ -303,19 +303,23 @@ public sealed class MainWindow : Window
 	private Control BuildDocumentView()
 	{
 		Grid body = new();
-		body.ColumnDefinitions.Add(
-			new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
-		body.ColumnDefinitions.Add(
-			new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+		// Six equal tracks accommodate two equally wide top panes and
+		// three equally wide bottom panes without two separate row grids.
+		for (int column = 0; column < 6; column++)
+		{
+			body.ColumnDefinitions.Add(
+				new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+		}
 		body.RowDefinitions.Add(
 			new RowDefinition(new GridLength(1, GridUnitType.Star)));
 		body.RowDefinitions.Add(
 			new RowDefinition(new GridLength(1, GridUnitType.Star)));
 
-		AddSectionPane(body, SongTreeSection.Sequences, row: 0, column: 0);
-		AddSectionPane(body, SongTreeSection.Patterns, row: 0, column: 1);
-		AddSectionPane(body, SongTreeSection.Samples, row: 1, column: 0);
-		AddSectionPane(body, SongTreeSection.Instruments, row: 1, column: 1);
+		foreach (DocumentPanePosition pane in DocumentPaneLayout.Panes)
+		{
+			AddSectionPane(body, pane.Section, pane.Row, pane.Column,
+				pane.ColumnSpan);
+		}
 		return body;
 	}
 
@@ -323,7 +327,8 @@ public sealed class MainWindow : Window
 		Grid body,
 		SongTreeSection section,
 		int row,
-		int column)
+		int column,
+		int columnSpan)
 	{
 		TreeView tree = new();
 		_trees.Add(section, tree);
@@ -381,7 +386,9 @@ public sealed class MainWindow : Window
 			Button newInstrument = new() { Content = "+ Instrument" };
 			newInstrument.Click += async (_, _) => await CreateInstrumentAsync();
 			actions.Children.Add(newInstrument);
-
+		}
+		if (section == SongTreeSection.Envelopes)
+		{
 			Button newEnvelope = new() { Content = "+ Envelope" };
 			newEnvelope.Click += async (_, _) => await CreateEnvelopeAsync();
 			actions.Children.Add(newEnvelope);
@@ -396,7 +403,7 @@ public sealed class MainWindow : Window
 			importFmSynth.Click += async (_, _) => await ImportFmSynthsAsync();
 			actions.Children.Add(importFmSynth);
 
-			Button import = new() { Content = "+ Import" };
+			Button import = new() { Content = "+ Import Audio" };
 			import.Click += async (_, _) => await ImportSamplesAsync();
 			actions.Children.Add(import);
 		}
@@ -430,6 +437,7 @@ public sealed class MainWindow : Window
 			};
 		Grid.SetRow(border, row);
 		Grid.SetColumn(border, column);
+		Grid.SetColumnSpan(border, columnSpan);
 		body.Children.Add(border);
 	}
 
@@ -1089,7 +1097,7 @@ public sealed class MainWindow : Window
 					name);
 			SongTreeObject? node =
 				FindTreeObject(
-					_workspace.Document.GetSectionRoot(SongTreeSection.Instruments),
+					_workspace.Document.GetSectionRoot(SongTreeSection.Envelopes),
 					envelope.Id);
 			RefreshDocumentView($"Created envelope {envelope.Name}", node);
 			ShowEnvelopeEditor(envelope, node);

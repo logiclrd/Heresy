@@ -289,7 +289,7 @@ public static class SongDocumentJson
 		catch (InvalidOperationException ex)
 		{
 			throw new InvalidDataException(
-				"The persisted song tree does not match the required four-section structure.",
+				"The persisted song tree does not match the required five-section or legacy four-section structure.",
 				ex);
 		}
 
