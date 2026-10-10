@@ -384,7 +384,7 @@ public static class NativePatternEffectEditor
 		return new ParametricPatternEffect(
 			ParseEnum<ParametricEffectParameter>(values, "parameter", "Destination"),
 			TimeSpan.FromSeconds(duration), source,
-			ParseEnum<bool>(values, "commit", "Commit"));
+			bool.Parse(Get(values, "commit", "Commit")));
 	}
 
 	private static NativePatternEffectEditModel Model(
