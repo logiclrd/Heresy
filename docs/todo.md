@@ -288,12 +288,14 @@ and native resampling versus pitch compensation. See
   remain attached after Note Off or EndInput until another render
   block. It now checks the same minimum source/fade/volume-envelope
   deadline used for PCM rendering. NNA-Off displacement likewise
-  does not migrate a voice already finished at its displacement
-  frame into the global displaced-voice pool. Regression coverage
-  verifies physical and explicit virtual Note Off, EndInput
-  quiescence without another render, and zero-release NNA-Off
-  with an independently playing replacement. Nonzero release
-  durations and existing direct Sample cutoff semantics remain intact.
+  avoids migrating a voice whose **volume envelope** has completed
+  at the displacement frame into the global displaced-voice pool;
+  it preserves established NNA bookkeeping for direct samples
+  that end from their underlying sound's own Note Off rule.
+  Regression coverage verifies physical and explicit virtual
+  Note Off, EndInput quiescence without another render, and
+  zero-release NNA-Off with an independently playing replacement.
+  Nonzero release and direct-sample NNA semantics remain intact.
   The broader delayed/script/recursive lifecycle TODO remains open.
 **Recursive native Oxx/Qxy source-frame seeking verified across
 invocation boundaries.** `RecursiveNativeSeekBoundaryTests` now cover

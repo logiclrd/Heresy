@@ -84,10 +84,13 @@ A **zero-duration** volume-envelope release completes at the exact
 Note Off frame. `PlaybackSession` now retires that voice on delivery
 by consulting its composed source/fade/envelope end, without requiring
 an additional PCM `Render` call. The same rule applies when playback
-input ends and when NNA Off displaces the current Instrument voice:
-an already-ended note is not retained in the displaced-voice pool.
-The `IsQuiescent` state reflects a completed zero-release tail
-immediately, including for an explicitly targeted virtual note.
+input ends. When NNA Off displaces an Instrument voice whose volume
+envelope completes at that exact frame, it skips retaining that
+finished envelope tail in the displaced-voice pool. For bare samples
+whose *source* ends at Note Off, the existing NNA migration/cleanup
+contract is preserved. The `IsQuiescent` state reflects a completed
+zero-release tail immediately, including for an explicitly targeted
+virtual note.
 Longer envelope releases retain their normal continuation and
 independent retirement times.
 

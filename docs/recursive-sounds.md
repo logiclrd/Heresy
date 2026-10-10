@@ -43,9 +43,10 @@
   explicitly targeted virtual Instrument-selected samples with
   zero-duration volume release retire during Note Off or EndInput,
   not at the next PCM block. Displaced NNA-Off voices which have
-  already finished at their displacement frame are never added to
-  the virtual voice pool. This uses the renderer's effective
-  source/fade/envelope end and preserves nonzero-duration tails.
+  completed their volume envelope at the displacement frame are
+  not added to the virtual voice pool. Bare-sample NNA migration
+  remains unchanged; physical/targeted virtual channels use the
+  composed source/fade/envelope end for immediate cleanup.
 - **Instrument sample releases respect the effective volume envelope.**
   Recursive Instrument binding still resolves to the terminal
   `SampleSound`, but configures its own invocation's sample state
