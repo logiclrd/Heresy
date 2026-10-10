@@ -4,6 +4,7 @@ using System.Collections.Generic;
 
 using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
+using Heresy.Render.Configuration;
 using Heresy.Render.Filters;
 using Heresy.Render.Sounds;
 using Heresy.Render.Timing;
@@ -17,6 +18,72 @@ namespace Heresy.Render.Playback;
 /// </summary>
 public sealed class PlaybackSession
 {
+	/// <summary>Stateful final-speaker filters. One bank belongs to the
+	/// master output session, never to a private Pattern/Sequence mixer.
+	/// The one-pole RC coefficient is 1-exp(-2π·cutoff/sampleRate), with
+	/// independent low-pass histories for each speaker. A high-pass feed
+	/// is the input minus its low-pass component.</summary>
+	private sealed class OutputSpeakerFilterBank
+	{
+		private const double SilenceThreshold = 1e-7;
+		private readonly OutputFilterType[] _mode;
+		private readonly double[] _alpha;
+		private readonly double[] _low;
+
+		public OutputSpeakerFilterBank(RenderConfiguration configuration)
+		{
+			int count = configuration.OutputChannelCount;
+			_mode = new OutputFilterType[count];
+			_alpha = new double[count];
+			_low = new double[count];
+			for (int speaker = 0; speaker < count; speaker++)
+			{
+				OutputChannelConfiguration channel =
+					configuration.OutputChannels[speaker];
+				_mode[speaker] = channel.FilterType;
+				if (channel.FilterType is not OutputFilterType.None)
+					_alpha[speaker] = -Math.Expm1(
+						-2.0 * Math.PI * channel.CutoffHz!.Value
+							/ configuration.SampleRate);
+			}
+		}
+
+		public bool HasTail
+		{
+			get
+			{
+				for (int i = 0; i < _low.Length; i++)
+					if (Math.Abs(_low[i]) > SilenceThreshold)
+						return true;
+				return false;
+			}
+		}
+
+		public void Apply(Span<float> samples, int channelCount)
+		{
+			for (int sampleIndex = 0; sampleIndex < samples.Length;
+				sampleIndex += channelCount)
+				for (int speaker = 0; speaker < channelCount; speaker++)
+				{
+					OutputFilterType type = _mode[speaker];
+					if (type == OutputFilterType.None)
+						continue;
+					double input = samples[sampleIndex + speaker];
+					double low = _low[speaker]
+						+ _alpha[speaker] * (input - _low[speaker]);
+					// Exact digital silence once the decaying state is
+					// inaudible. This also bounds export tail duration
+					// instead of extending it into infinite denormals.
+					if (Math.Abs(low) <= SilenceThreshold)
+						low = 0.0;
+					_low[speaker] = low;
+					samples[sampleIndex + speaker] = (float)(
+						type == OutputFilterType.LowPass
+							? low : input - low);
+				}
+		}
+	}
+
 	private sealed class ActiveTempoRamp
 	{
 		public required long StartFrame { get; init; }
@@ -31,6 +98,7 @@ public sealed class PlaybackSession
 	}
 
 	private readonly RenderContext _context;
+	private readonly OutputSpeakerFilterBank? _outputSpeakerFilters;
 	private readonly NoteSchedule _schedule;
 	private readonly ISoundResolver _soundResolver;
 	private readonly TrackerTickClock _tickClock;
@@ -66,11 +134,20 @@ public sealed class PlaybackSession
 		RenderContext context,
 		NoteSchedule schedule,
 		ISoundResolver soundResolver,
-		double initialTempo = SequencingConstants.DefaultTempo)
+		double initialTempo = SequencingConstants.DefaultTempo,
+		bool applyFinalSpeakerFilters = true)
 	{
 		_context = context ?? throw new ArgumentNullException(nameof(context));
 		_schedule = schedule ?? throw new ArgumentNullException(nameof(schedule));
 		_soundResolver = soundResolver ?? throw new ArgumentNullException(nameof(soundResolver));
+		// A private recursive mixer contributes an *unfiltered* speaker
+		// buffer to its parent. Only the final output applies the shared
+		// configuration's speaker filters, exactly once after summing all
+		// voices, NNA tails and the global volume.
+		if (applyFinalSpeakerFilters
+			&& Array.Exists(context.Configuration.OutputChannels.ToArray(),
+				channel => channel.FilterType != OutputFilterType.None))
+			_outputSpeakerFilters = new OutputSpeakerFilterBank(context.Configuration);
 		if (!(initialTempo > 0.0) || !double.IsFinite(initialTempo))
 			throw new ArgumentOutOfRangeException(nameof(initialTempo));
 		_tempo = initialTempo;
@@ -97,7 +174,8 @@ public sealed class PlaybackSession
 		{
 			if (!_inputEnded
 				|| _nextEventIndex < _schedule.Count
-				|| _virtualVoices.Count != 0)
+				|| _virtualVoices.Count != 0
+				|| _outputSpeakerFilters?.HasTail == true)
 			{
 				return false;
 			}
@@ -831,6 +909,10 @@ public sealed class PlaybackSession
 		// Events exactly at the end boundary affect the next frame and therefore
 		// are intentionally left for the next Render call.
 		SynchronizeTempoRamp(blockEnd);
+		// The speaker filters own continuous state across render blocks.
+		// Apply *once* after all channels, virtual/NNA voices and master
+		// volume have been mixed; not inside individual voice renderers.
+		_outputSpeakerFilters?.Apply(destination, outputChannelCount);
 		_nextFrame = blockEnd;
 	}
 
