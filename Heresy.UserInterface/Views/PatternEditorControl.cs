@@ -11,6 +11,7 @@ using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Threading;
 
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequencing;
@@ -74,6 +75,15 @@ public sealed class PatternEditorControl : UserControl
 			VerticalAlignment = VerticalAlignment.Center,
 		};
 	private readonly ScrollViewer _scroll;
+	private readonly CheckBox _followCheckbox = new()
+	{
+		Content = "Follow",
+		IsChecked = true,
+		VerticalAlignment = VerticalAlignment.Center,
+	};
+	private readonly HashSet<PhysicalKey> _heldFollowShortcuts = [];
+	private bool _followPlayback = true;
+	private bool _followScrollPosted;
 	private readonly TextBlock _message;
 	private readonly TextBlock _title =
 		new()
@@ -278,11 +288,15 @@ public sealed class PatternEditorControl : UserControl
 			new TextBlock
 			{
 				Text =
-					"Arrow keys move the tracker cursor. Shift+Arrow extends the marked block; Alt+B/Alt+E set its corners, Alt+D marks/expands by the major highlight, Alt+L marks the channel then pattern, and Alt+U unmarks. Ctrl+C/Ctrl+X copy or cut the marked block, Ctrl+V merge-pastes it, Shift+Ctrl+V overwrite-pastes it, and Ctrl+Delete clears it. Ctrl+Alt+Z/X/C/V/B/N/M chooses a chord; Ctrl+Alt+-/+ rotates it, Ctrl+Alt+Numpad */ changes its tone count, Ctrl+Alt+1..9 toggles tones and Ctrl+Alt+= enables all. Type notes directly in the note field; the edit mask controls which Note/Source/Volume fields are stamped, and comma toggles the mask bit for the current field. Hold Caps Lock while pressing tracker piano keys to preview without editing; repeats are ignored and key release sends Note Off. Alt+0–9 selects the note-entry skip (default 1; 0 stays on the row); ordinary held-key repeats enter notes at successive skipped rows. Top-row 4 auditions the current note and 8 auditions the current row, advancing one row. Enter opens detailed note editing or expands a stacked effect strip.",
+					"Arrow keys move the tracker cursor. Shift+Arrow extends the marked block; Alt+B/Alt+E set its corners, Alt+D marks/expands by the major highlight, Alt+L marks the channel then pattern, and Alt+U unmarks. Ctrl+C/Ctrl+X copy or cut the marked block, Ctrl+V merge-pastes it, Shift+Ctrl+V overwrite-pastes it, and Ctrl+Delete clears it. Ctrl+Alt+Z/X/C/V/B/N/M chooses a chord; Ctrl+Alt+-/+ rotates it, Ctrl+Alt+Numpad */ changes its tone count, Ctrl+Alt+1..9 toggles tones and Ctrl+Alt+= enables all. Follow centers the highlighted playback row when enabled (NumPad Period, Ctrl+F, Scroll Lock); main Period and backtick retain their tracker edits. Type notes directly in the note field; the edit mask controls which Note/Source/Volume fields are stamped, and comma toggles the mask bit for the current field. Hold Caps Lock while pressing tracker piano keys to preview without editing; repeats are ignored and key release sends Note Off. Alt+0–9 selects the note-entry skip (default 1; 0 stays on the row); ordinary held-key repeats enter notes at successive skipped rows. Top-row 4 auditions the current note and 8 auditions the current row, advancing one row. Enter opens detailed note editing or expands a stacked effect strip.",
 				TextWrapping = TextWrapping.Wrap,
 			};
 
+		_followCheckbox.Checked += (_, _) => SetFollowPlayback(true);
+		_followCheckbox.Unchecked += (_, _) => SetFollowPlayback(false);
+
 		Content = BuildContent();
+		AttachedToVisualTree += (_, _) => RequestPlaybackFollow();
 		UpdateChordStatus();
 		_owner.Deactivated += OnOwnerDeactivated;
 		RefreshGrid();
@@ -298,6 +312,119 @@ public sealed class PatternEditorControl : UserControl
 		RemapPlaybackDisplayRows();
 		RefreshCursorVisuals();
 		RefreshPlaybackRowHeaders();
+		RequestPlaybackFollow();
+	}
+
+	private void SetFollowPlayback(bool enabled)
+	{
+		_followPlayback = enabled;
+		if (_followCheckbox.IsChecked != enabled)
+			_followCheckbox.IsChecked = enabled;
+		if (enabled)
+			RequestPlaybackFollow();
+	}
+
+	private void RequestPlaybackFollow()
+	{
+		if (!_followPlayback
+			|| _playbackDisplayRows.Count == 0
+			|| _followScrollPosted)
+		{
+			return;
+		}
+
+		// Playback positions may arrive while the grid is rebuilding,
+		// before its Auto segment headers are measured. Coalesce rapid
+		// updates and read *actual* row locations after layout.
+		_followScrollPosted = true;
+		Dispatcher.UIThread.Post(
+			() =>
+			{
+				_followScrollPosted = false;
+				if (_followPlayback)
+					ScrollPlaybackRowIntoView();
+			},
+			DispatcherPriority.Loaded);
+	}
+
+	private void ScrollPlaybackRowIntoView()
+	{
+		if (_patternGrid is not Grid grid
+			|| _playbackDisplayRows.Count == 0
+			|| _scroll.Viewport.Height <= 0)
+		{
+			return;
+		}
+
+		List<(int DisplayRow, double CenterY)> rows = [];
+		foreach (int displayRow in _playbackDisplayRows)
+		{
+			if (!_rowHeaders.TryGetValue(displayRow, out Border? header))
+				continue;
+			Point? center = header.TranslatePoint(
+				new Point(header.Bounds.Width / 2, header.Bounds.Height / 2),
+				grid);
+			if (center is not null)
+				rows.Add((displayRow, center.Value.Y));
+		}
+
+		double viewportCenter = _scroll.Offset.Y + _scroll.Viewport.Height / 2;
+		int? nearest = PatternPlaybackFollowScroll.NearestDisplayRow(
+			rows, viewportCenter);
+		if (nearest is not int nearestRow)
+			return;
+
+		double centerY = 0;
+		foreach ((int displayRow, double candidateCenter) in rows)
+		{
+			if (displayRow == nearestRow)
+			{
+				centerY = candidateCenter;
+				break;
+			}
+		}
+
+		double offset = PatternPlaybackFollowScroll.CenteredOffset(
+			centerY, _scroll.Viewport.Height, _scroll.Extent.Height);
+		if (Math.Abs(_scroll.Offset.Y - offset) > 0.5)
+		{
+			// Preserve horizontal scrolling and the user's edit cursor.
+			_scroll.Offset = new Vector(_scroll.Offset.X, offset);
+		}
+	}
+
+	private void OnFollowKeyDown(object? sender, KeyEventArgs e)
+	{
+		if (!PatternPlaybackFollowKeyboard.IsToggle(
+			e.PhysicalKey, e.KeyModifiers))
+		{
+			return;
+		}
+
+		// Consume repeats rather than oscillating the flag every frame.
+		// Use PhysicalKey so NumPad Decimal never aliases main Period.
+		if (_heldFollowShortcuts.Add(e.PhysicalKey))
+			SetFollowPlayback(!_followPlayback);
+		e.Handled = true;
+	}
+
+	private void OnFollowKeyUp(object? sender, KeyEventArgs e)
+	{
+		if (_heldFollowShortcuts.Remove(e.PhysicalKey))
+			e.Handled = true;
+	}
+
+	private void OnFollowTextInput(object? sender, TextInputEventArgs e)
+	{
+		// On some platforms a handled physical KeyDown can still emit
+		// text. The *keypad* shortcut must not also clear a Source or
+		// edit an effect/volume, even in decimal-comma locales.
+		if (PatternPlaybackFollowKeyboard.IsNumpadDecimalText(
+			_heldFollowShortcuts.Contains(PhysicalKey.NumPadDecimal),
+			e.Text))
+		{
+			e.Handled = true;
+		}
 	}
 
 	private void UpdateSkipValueDisplay()
@@ -333,6 +460,7 @@ public sealed class PatternEditorControl : UserControl
 		});
 		layout.Children.Add(_noteOctave);
 		layout.Children.Add(_skipValueDisplay);
+		layout.Children.Add(_followCheckbox);
 		layout.Children.Add(new TextBlock
 		{
 			Text = "Mask",
@@ -409,6 +537,23 @@ public sealed class PatternEditorControl : UserControl
 		root.AddHandler(
 			InputElement.PointerPressedEvent,
 			OnRootPointerPressed,
+			RoutingStrategies.Tunnel,
+			handledEventsToo: true);
+		// Pattern-wide shortcuts are routed before focused cell editing,
+		// without consuming the physical Backquote or main Period key.
+		root.AddHandler(
+			InputElement.KeyDownEvent,
+			OnFollowKeyDown,
+			RoutingStrategies.Tunnel,
+			handledEventsToo: true);
+		root.AddHandler(
+			InputElement.KeyUpEvent,
+			OnFollowKeyUp,
+			RoutingStrategies.Tunnel,
+			handledEventsToo: true);
+		root.AddHandler(
+			InputElement.TextInputEvent,
+			OnFollowTextInput,
 			RoutingStrategies.Tunnel,
 			handledEventsToo: true);
 		return root;
@@ -572,6 +717,7 @@ public sealed class PatternEditorControl : UserControl
 		UpdateCurrentPatternControls();
 		RefreshCursorVisuals();
 		FocusCursorCell();
+		RequestPlaybackFollow();
 	}
 
 	private Border BuildCell(
@@ -1551,6 +1697,7 @@ public sealed class PatternEditorControl : UserControl
 	{
 		_ = sender;
 		_ = e;
+		_heldFollowShortcuts.Clear();
 		await ReleaseAllHeldPreviewsAsync();
 	}
 
@@ -1558,6 +1705,7 @@ public sealed class PatternEditorControl : UserControl
 		Avalonia.VisualTreeAttachmentEventArgs e)
 	{
 		_owner.Deactivated -= OnOwnerDeactivated;
+		_heldFollowShortcuts.Clear();
 		_ = ReleaseAllHeldPreviewsAsync();
 		base.OnDetachedFromVisualTree(e);
 	}
