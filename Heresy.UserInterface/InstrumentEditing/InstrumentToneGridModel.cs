@@ -101,16 +101,16 @@ public sealed class InstrumentToneGridModel
 		else
 			mapped.Remove(index);
 
+		// Build and commit the Core replacement first. If validation or
+		// table construction throws, the editor's prior drafts remain
+		// intact too (no half-applied transaction).
+		if (previous != (canonical.HasSource ? canonical : null))
+			PublishMappedCells(mapped);
+
 		if (canonical.HasSource)
 			_drafts.Remove(index);
 		else
 			_drafts[index] = canonical;
-
-		// Draft-only changes have no persisted effect and no audio revision.
-		if (previous == (canonical.HasSource ? canonical : null))
-			return;
-
-		PublishMappedCells(mapped);
 	}
 
 	/// <summary>
@@ -210,6 +210,7 @@ public sealed class InstrumentToneGridModel
 	{
 		ObjectId id = cells.SourceId!.Value;
 		if (!_workspace.Document.TryGet(id, out SongObject? source)
+			|| source is null
 			|| !PatternSourceCatalog.IsSoundSource(source.Kind))
 		{
 			throw new InvalidOperationException(
