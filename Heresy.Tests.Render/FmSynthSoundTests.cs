@@ -275,7 +275,7 @@ public sealed class FmSynthSoundTests
 	}
 
 	[Test]
-	public void UnassignedEnvelopeInputRendersZeroWithoutResolverDependency()
+	public void UnassignedEnvelopeAddsNoSignalToEmptyOrExistingMix()
 	{
 		FmSynthSound sound =
 			Sound(
@@ -286,14 +286,25 @@ public sealed class FmSynthSoundTests
 							ObjectId.None),
 					],
 					outputNodeId: 1));
-		float[] output = [1, 1, 1, 1];
+		float[] emptyOutput = new float[4];
 		sound.Render(
 			MonoContext(4),
 			sound.CreateState(),
 			0,
 			4,
-			output);
-		output.Should().OnlyContain(value => value == 0.0f);
+			emptyOutput);
+		emptyOutput.Should().OnlyContain(value => value == 0.0f);
+
+		// Sound.Render adds into its caller's PCM mix; silence must not
+		// erase an existing voice or spuriously contribute to the bus.
+		float[] existingMix = [1, 1, 1, 1];
+		sound.Render(
+			MonoContext(4),
+			sound.CreateState(),
+			0,
+			4,
+			existingMix);
+		existingMix.Should().OnlyContain(value => value == 1.0f);
 	}
 
 	[Test]
