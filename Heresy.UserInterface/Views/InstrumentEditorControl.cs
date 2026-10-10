@@ -6,7 +6,7 @@ using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
-using Avalonia.Data.Templates;
+using Avalonia.Controls.Templates;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
@@ -195,9 +195,10 @@ public sealed class InstrumentEditorControl : UserControl
 			: 0;
 		TextBox pitch = new()
 		{
-			Text = initialLog.ToString("G12", CultureInfo.CurrentCulture),
+			Text = initialLog.ToString("G17", CultureInfo.CurrentCulture),
 			Width = 100,
 		};
+		string? lastCommittedPitchText = pitch.Text;
 		At(grid, pitch, 3);
 
 		ComboBox nearby = new() { Width = 135 };
@@ -274,6 +275,8 @@ public sealed class InstrumentEditorControl : UserControl
 
 		void CommitPitch()
 		{
+			if (pitch.Text == lastCommittedPitchText)
+				return;
 			if (!double.TryParse(pitch.Text, NumberStyles.Float,
 				CultureInfo.CurrentCulture, out double logarithm)
 				|| !double.IsFinite(logarithm))
@@ -289,6 +292,7 @@ public sealed class InstrumentEditorControl : UserControl
 						InstrumentToneNoteNotation.MultiplierFromOffset(logarithm),
 				};
 				CommitCells();
+				lastCommittedPitchText = pitch.Text;
 				RefreshNearest(logarithm);
 			}
 			catch (Exception ex)
@@ -331,8 +335,14 @@ public sealed class InstrumentEditorControl : UserControl
 				|| nearby.SelectedItem is not InstrumentToneNoteChoice selected)
 				return;
 			pitch.Text = selected.LogarithmicOffset.ToString(
-				"G12", CultureInfo.CurrentCulture);
-			CommitPitch(); // explicit selection snaps to exact multiplier
+				"G17", CultureInfo.CurrentCulture);
+			// Use the exact precomputed multiplier. Re-evaluating an
+			// approximate string representation on focus loss would
+			// introduce an unintended second, inexact update.
+			cells = cells with { PitchMultiplier = selected.Multiplier };
+			CommitCells();
+			lastCommittedPitchText = pitch.Text;
+			RefreshNearest(selected.LogarithmicOffset);
 		};
 		RefreshNearest(initialLog);
 
@@ -345,6 +355,9 @@ public sealed class InstrumentEditorControl : UserControl
 				? new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0, 0))
 				: null,
 		};
+		border.AddHandler(InputElement.PointerPressedEvent, (_, _) =>
+			_rows.SelectedItem = projected,
+			RoutingStrategies.Tunnel, handledEventsToo: true);
 		if (projected.IsEntry)
 		{
 			// Only commit when focus leaves the *entire row*.
@@ -353,11 +366,13 @@ public sealed class InstrumentEditorControl : UserControl
 			{
 				Dispatcher.UIThread.Post(() =>
 				{
-					if (border.IsKeyboardFocusWithin || _model.EntryIndex is null
-						|| !_model.CommitEntry())
+					if (border.IsKeyboardFocusWithin)
+						return;
+					int? enteredIndex = _model.EntryIndex;
+					if (enteredIndex is null || !_model.CommitEntry())
 						return;
 					_message.Text = "Inserted/overwrote tone table row.";
-					RefreshRows(_model.EntryIndex);
+					RefreshRows(enteredIndex);
 				}, DispatcherPriority.Loaded);
 			}, RoutingStrategies.Bubble, handledEventsToo: true);
 		}
