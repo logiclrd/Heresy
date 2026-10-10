@@ -96,6 +96,51 @@ public sealed class IncrementalDirectControlScriptTests
     }
 
     [Test]
+    public void ActualRoslynDelayedOffFollowsDataTrackerSDxAndSharedTempo()
+    {
+        ObjectId sampleId = (ObjectId)10U;
+        DataPatternDefinition data = new((ObjectId)1U, "Data")
+        {
+            RowCount = 2,
+            ChannelCount = 1,
+        };
+        PatternCell cell = data.Grid.GetOrCreateCell(0, 0);
+        cell.Note = new StartPatternNote(sampleId);
+        cell.Effects.Add(new TrackerNoteDelayPatternEffect(3));
+
+        ScriptPatternDefinition script = new((ObjectId)2U, "Script")
+        {
+            RowCount = 2,
+            ChannelCount = 1,
+            Source = "Tempo(0, 250); Off(0.5, 0, 0.025);",
+        };
+        var compiled = ScriptCompiler.CompileIncrementalPattern(script);
+        Assert.That(compiled.Success, Is.True,
+            string.Join("; ", compiled.Diagnostics.Select(d => d.Message)));
+
+        SequencingContext context = new();
+        using IncrementalPatternTimeline timeline = new(context);
+        timeline.Add(data, data.RowCount, context);
+        timeline.Add(compiled.Program!, script.RowCount, context);
+
+        NoteEvent[] emitted = Drain(timeline);
+        Assert.That(emitted.Select(n => n.Offset.TimeOffset.TotalSeconds),
+            Is.EqualTo(new[] { 0.0, 0.03, 0.055 }).Within(1e-6,
+            "SD3 follows the tempo-retimed third tracker tick; the Roslyn " +
+            "Off retains its 25-ms wall offset after row 0.5."));
+        Assert.Multiple(() =>
+        {
+            Assert.That(emitted[0].Commands.Single(), Is.EqualTo(
+                new SetTempoCommand(250)));
+            Assert.That(emitted[1].Commands.OfType<StartNoteCommand>()
+                .Single().SourceId, Is.EqualTo(sampleId));
+            Assert.That(emitted[2].Commands.Single(),
+                Is.TypeOf<NoteOffCommand>());
+            Assert.That(context.State.Tempo, Is.EqualTo(250));
+        });
+    }
+
+    [Test]
     public void ScriptHelperValidationIsLazyAndErrorsBeforeEmittingAnInvalidCommand()
     {
         ScriptPatternDefinition definition = new((ObjectId)1U, "Lazy validation")
