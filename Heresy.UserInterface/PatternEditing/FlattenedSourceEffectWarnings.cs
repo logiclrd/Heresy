@@ -182,13 +182,7 @@ public static class FlattenedSourceEffectWarnings
 							break;
 					}
 					SourceKnowledge current = channel.Current;
-					bool lifecycle = cell.Note is PatternNoteOff or PatternNoteCut
-						&& before is SourceKnowledge.Flattened
-							or SourceKnowledge.Unknown;
-					// The previous expression is deliberately parenthesized
-					// below to avoid matching an unknown state on ordinary
-					// non-lifecycle rows.
-					lifecycle = (cell.Note is PatternNoteOff or PatternNoteCut)
+					bool lifecycle = (cell.Note is PatternNoteOff or PatternNoteCut)
 						&& (before is SourceKnowledge.Flattened
 							or SourceKnowledge.Unknown);
 
@@ -198,9 +192,6 @@ public static class FlattenedSourceEffectWarnings
 							"PatternEffect", ""))
 						.ToArray();
 					bool warns = incompatible.Length != 0
-						&& current is SourceKnowledge.Flattened
-							or SourceKnowledge.Unknown;
-					warns = incompatible.Length != 0
 						&& (current is SourceKnowledge.Flattened
 							or SourceKnowledge.Unknown);
 
