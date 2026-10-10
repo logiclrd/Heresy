@@ -429,6 +429,7 @@ public static class SongDocumentJson
 			case ScriptInstrumentDefinition scripted:
 				result["type"] = "scriptInstrument";
 				result["source"] = scripted.Source;
+				result["pitchExpression"] = scripted.PitchExpression;
 				result["toneSpecifications"] =
 					JsonSerializer.SerializeToNode(
 						scripted.ToneSpecifications, JsonOptions);
@@ -613,6 +614,8 @@ public static class SongDocumentJson
 					ScriptInstrumentDefinition scripted = new(id, name)
 					{
 						Source = RequiredString(node, "source"),
+						PitchExpression = node["pitchExpression"] is JsonNode pitchExpression
+							? pitchExpression.GetValue<string>() : "1.0",
 					};
 					scripted.ToneSpecifications.AddRange(
 						DeserializeRequired<List<ToneSpecification>>(

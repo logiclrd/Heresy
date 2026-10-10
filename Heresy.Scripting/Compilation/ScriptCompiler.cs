@@ -224,6 +224,42 @@ public static class ScriptCompiler
 			compiled.Diagnostics);
 	}
 
+	public static IReadOnlyList<ScriptAnalysisDiagnostic> AnalyzeInstrumentPitchSource(
+		string source)
+	{
+		ArgumentNullException.ThrowIfNull(source);
+		IReadOnlyList<ScriptAnalysisDiagnostic> shape =
+			ValidateEnvelopeExpression(source);
+		if (shape.Count != 0)
+			return shape;
+		return PrepareCompilation(source,
+			BuildInstrumentPitchWrapper("__HeresyPitch_Analysis", source)).Diagnostics;
+	}
+
+	public static ScriptCompilationResult<IScriptInstrumentPitchEvaluator>
+		CompileInstrumentPitch(ScriptInstrumentDefinition definition)
+	{
+		ArgumentNullException.ThrowIfNull(definition);
+		IReadOnlyList<ScriptAnalysisDiagnostic> shape =
+			ValidateEnvelopeExpression(definition.PitchExpression);
+		if (shape.Count != 0)
+			return new(null, shape);
+		string className =
+			"__HeresyInstrumentPitch_" + Guid.NewGuid().ToString("N");
+		ScriptCompilationResult<Type> compiled = CompileType(
+			definition.PitchExpression, className,
+			BuildInstrumentPitchWrapper(className, definition.PitchExpression),
+			typeof(IScriptInstrumentPitchEvaluator));
+		if (!compiled.Success || compiled.Program is null)
+			return new(null, compiled.Diagnostics);
+		return new(
+			Activator.CreateInstance(compiled.Program)
+				as IScriptInstrumentPitchEvaluator
+					?? throw new InvalidOperationException(
+						"Could not construct compiled Instrument pitch evaluator."),
+			compiled.Diagnostics);
+	}
+
 	/// <summary>
 	/// Compile a deterministic per-invocation tone index expression. Selection
 	/// is restricted to declared ToneSpecifications: -1 means silence.
@@ -808,6 +844,25 @@ public static class ScriptCompiler
 				}
 			}
 			""";
+
+	private static string BuildInstrumentPitchWrapper(
+		string className, string source)
+		=> """
+			using System;
+			using Heresy.Scripting.Runtime;
+
+			public sealed class __PITCH_CLASS__ : IScriptInstrumentPitchEvaluator
+			{
+				public double GetPitchScale(double pitchMultiplier)
+				{
+			#line 1 "heresy-script"
+					return (__PITCH_EXPRESSION__);
+			#line default
+				}
+			}
+			"""
+			.Replace("__PITCH_CLASS__", className, StringComparison.Ordinal)
+			.Replace("__PITCH_EXPRESSION__", source, StringComparison.Ordinal);
 
 	private static string BuildInstrumentWrapper(
 		string className, string source)

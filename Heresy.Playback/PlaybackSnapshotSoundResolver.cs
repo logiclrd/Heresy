@@ -30,6 +30,7 @@ internal sealed class PlaybackSnapshotSoundResolver
 	private readonly Dictionary<(ObjectId, bool), ISound?> _sounds = [];
 	private readonly Dictionary<ObjectId, IEnvelopeCurve?> _envelopes = [];
 	private readonly Dictionary<ObjectId, IScriptInstrumentToneEvaluator> _instrumentPrograms = [];
+	private readonly Dictionary<ObjectId, IScriptInstrumentPitchEvaluator> _pitchPrograms = [];
 	private readonly ConcurrentDictionary<ObjectId, ISound> _preparedMixdowns = new();
 	private uint _nextPreparedId = uint.MaxValue;
 
@@ -134,6 +135,7 @@ internal sealed class PlaybackSnapshotSoundResolver
 			case ScriptInstrumentDefinition scripted:
 				// Compile once during source preparation, never in SDL callbacks.
 				GetInstrumentProgram(scripted);
+				GetInstrumentPitchProgram(scripted);
 				sound = new InstrumentSound(
 					pitch => SelectTone(scripted, pitch), this, this);
 				break;
@@ -221,7 +223,38 @@ internal sealed class PlaybackSnapshotSoundResolver
 		if ((uint)index >= (uint)definition.ToneSpecifications.Count)
 			throw new InvalidOperationException(
 				$"Instrument '{definition.Name}' selected invalid tone index {index}.");
-		return definition.ToneSpecifications[index];
+		ToneSpecification tone = definition.ToneSpecifications[index];
+		double factor = GetInstrumentPitchProgram(definition)
+			.GetPitchScale(pitchMultiplier);
+		double ratio = tone.PitchMultiplier * factor;
+		if (!(ratio > 0.0) || !double.IsFinite(ratio))
+			throw new InvalidOperationException(
+				$"Instrument '{definition.Name}' produced an invalid pitch multiplier.");
+		return new ToneSpecification
+		{
+			SourceId = tone.SourceId,
+			PitchMultiplier = ratio,
+			VolumeEnvelopeId = tone.VolumeEnvelopeId,
+			PitchEnvelopeId = tone.PitchEnvelopeId,
+			PanningEnvelopeId = tone.PanningEnvelopeId,
+			FilterEnvelopeId = tone.FilterEnvelopeId,
+		};
+	}
+
+	private IScriptInstrumentPitchEvaluator GetInstrumentPitchProgram(
+		ScriptInstrumentDefinition definition)
+	{
+		if (_pitchPrograms.TryGetValue(definition.Id,
+			out IScriptInstrumentPitchEvaluator? program))
+			return program;
+		ScriptCompilationResult<IScriptInstrumentPitchEvaluator> compiled =
+			ScriptCompiler.CompileInstrumentPitch(definition);
+		if (!compiled.Success || compiled.Program is null)
+			throw new InvalidOperationException(
+				$"Instrument '{definition.Name}' pitch expression failed to compile: " +
+				string.Join("; ", compiled.Diagnostics.Select(d => d.Message)));
+		_pitchPrograms.Add(definition.Id, compiled.Program);
+		return compiled.Program;
 	}
 
 	private IScriptInstrumentToneEvaluator GetInstrumentProgram(

@@ -20,6 +20,12 @@ public sealed class ScriptInstrumentDefinition : SongObject
 	public string Source { get; set; } = "-1";
 
 	/// <summary>
+	/// Restricted scalar expression of pitchMultiplier, multiplied by the
+	/// chosen tone's stored pitch ratio on each invocation.
+	/// </summary>
+	public string PitchExpression { get; set; } = "1.0";
+
+	/// <summary>
 	/// Source, pitch ratio, and per-target optional Envelope overrides.
 	/// Selector results are indices into this list; no dynamic ID creation.
 	/// </summary>
