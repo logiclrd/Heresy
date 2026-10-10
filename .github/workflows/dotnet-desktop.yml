@@ -46,3 +46,27 @@ jobs:
         dotnet publish Heresy/Heresy.csproj -c Release -r win-x64 --self-contained false -p:UseAppHost=true -o "$RUNNER_TEMP/heresy-win-x64"
         python3 build/verify-windows-apphost-icon.py "$RUNNER_TEMP/heresy-win-x64/Heresy.exe"
 
+    - name: Smoke test versioned release bundle
+      shell: bash
+      run: |
+        version="1.2.3"
+        output="$RUNNER_TEMP/heresy-linux-release-smoke"
+        dotnet publish Heresy/Heresy.csproj -c Release -r linux-x64 \
+          --self-contained true -p:UseAppHost=true \
+          -p:ContinuousIntegrationBuild=true \
+          -p:Version="$version" \
+          -p:AssemblyVersion="$version.0" \
+          -p:FileVersion="$version.0" \
+          -p:InformationalVersion="$version" \
+          -p:IncludeSourceRevisionInInformationalVersion=false \
+          -o "$output"
+        dotnet run --project build/ReleaseVersionCheck/ReleaseVersionCheck.csproj \
+          -c Release -- "$output" "$version"
+        bash build/package-release.sh "$output" "$version" linux-x64 \
+          "$(git rev-parse HEAD)" "$RUNNER_TEMP/heresy-release-smoke"
+        archive="$RUNNER_TEMP/heresy-release-smoke/Heresy-${version}-linux-x64.tar.bz2"
+        test -s "$archive"
+        bzip2 -t "$archive"
+        tar -tjf "$archive" | grep -q '^Heresy/README.md$'
+        test "$(tar -xOjf "$archive" Heresy/BUILD-COMMIT.txt)" = "$(git rev-parse HEAD)"
+
