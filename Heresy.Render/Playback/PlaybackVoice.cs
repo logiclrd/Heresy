@@ -288,6 +288,14 @@ public sealed class PlaybackVoice
 	/// <summary>Logical channel owning this voice, even after NNA migration.</summary>
 	public long OriginPhysicalPlaybackOwner { get; }
 
+	/// <summary>The explicit virtual target (if any) where this voice
+	/// originated. It survives NNA migration and prevents physical S7x
+	/// past-note controls from stealing virtual-channel voices.</summary>
+	internal uint? OriginVirtualChannelId { get; init; }
+	/// <summary>The cursor owning an invocation-local virtual target.
+	/// Null denotes a legacy/global virtual target or physical voice.</summary>
+	internal long? OriginScopedVirtualOwner { get; init; }
+
 	/// <summary>Immutable invocation-local source gain, separate from the
 	/// mutable shared channel's tracker note volume.</summary>
 	public double SourceGainMultiplier { get; }
