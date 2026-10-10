@@ -29,9 +29,9 @@
   private mixdowns and Instrument-selected recursive tones support
   live parent-note pitch inheritance, initial pitch/playback-speed
   composition, and deterministic seeking.
-- Advanced mixed-rate tracker timing, complex script interactions and
-  advanced mixed-rate effect arbitration remain separate
-  compatibility TODOs. Baseline recursive playback, flattened ownership
+- Advanced mixed-rate tracker timing and complex script/effect
+  interactions remain separate compatibility TODOs.
+  Baseline recursive playback, flattened ownership
   and **Oxx/Qxy native-frame seeking across private invocation boundaries**
   are covered by production-factory regressions. The latter exercise
   independently clocked nested Patterns/Sequences, selected Instrument
