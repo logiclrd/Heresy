@@ -231,6 +231,22 @@ creation is dispatcher-posted after main-window opening, never stalls the
 main window or initializes audio. See
 [application-branding.md](application-branding.md).
 
+- [ ] Center the startup splash **over the actual main window**, rather
+  than relying solely on the platform's `CenterOwner` startup hint.
+  Cover normal **and maximized** main windows, including nonprimary
+  monitors and mixed display scaling. If the Wayland compositor forbids
+  explicit top-level placement, hint **center on the splash's display**
+  instead, keeping the splash owned by the main window; do not require
+  a workaround if the compositor does not support that hint either.
+  Retain nonmodal, chromeless, four-second and input-dismissal behavior.
+- [ ] Persist the main window's **maximized versus normal** state when
+  that state changes, and restore it on the next application startup
+  before showing the window/splash. Minimize/fullscreen transitions
+  must not accidentally overwrite the last maximized preference.
+  Persist this as local application UI state, **not** in the song
+  document; handle first run, malformed state, unavailable storage
+  and platform-specific window-manager behavior without startup failure.
+
 ## UI polish and requested editor redesign — newly planned
 
 The detailed requirements and acceptance contracts are recorded in
