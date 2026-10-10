@@ -372,7 +372,8 @@ public static class SongDocumentJson
 		SongDocument document =
 			Deserialize(
 				File.ReadAllText(fullPath, Encoding.UTF8),
-				storedPath => ResolveStoredPath(directory, storedPath));
+				storedPath => ResolveStoredPath(
+					directory, storedPath, allowMissing: true));
 		await SampleAssetPersistence.HydratePersistedSamplesWithRecoveryAsync(
 			document, locateAsync);
 		return document;
@@ -1194,7 +1195,8 @@ public static class SongDocumentJson
 
 	private static string ResolveStoredPath(
 		string jsonDirectory,
-		string storedPath)
+		string storedPath,
+		bool allowMissing = false)
 	{
 		if (string.IsNullOrWhiteSpace(storedPath))
 			throw new InvalidDataException("External asset paths must be non-empty.");
@@ -1249,10 +1251,8 @@ public static class SongDocumentJson
 			resolved = Path.GetFullPath(Path.Combine(jsonDirectory, nativePath));
 		}
 
-		if (!File.Exists(resolved))
+		if (!allowMissing && !File.Exists(resolved))
 		{
-			// TODO: expose a UI resolution workflow that lets the user locate
-			// missing/foreign assets and then navigate directly to the offending item.
 			throw new FileNotFoundException(
 				$"External asset '{storedPath}' could not be resolved while loading the .hm.json document.",
 				resolved);
