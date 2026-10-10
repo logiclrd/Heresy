@@ -186,22 +186,23 @@ See [incremental-sequencing.md](incremental-sequencing.md).
 The restricted script API does not yet expose a `Frequency` helper;
 the command vocabulary and data Pattern effect are implemented.
 
-- [ ] **Remove dead sample reference-frequency metadata.**
-  `SampleDefinition.ReferenceFrequencyHz` currently defaults to
-  261.6255653005986 and is copied in
-  `SampleDefinition.CreateImportedCopy`, but is not used by
-  `SampleSound` or by musical pitch calculation. It is
-  redundant with the universal C-4 musical tuning contract and
-  the existing PCM-data sample-rate tuning mechanism.
-  Remove the unused property and its copy/serialization,
-  persistence, import/export, snapshot, UI and associated test
-  expectations **where they exist**, after searching the full
-  repository for references; do not remove or reinterpret
-  `SamplePcmData.SampleRate`, which is the **functional**
-  PCM-native frame-rate/tuning input. Update any documentation
-  suggesting the redundant property changes sound frequency,
-  add regression coverage that PCM-native sample-rate tuning
-  still works, and verify the complete CI suite.
+**Dead sample reference-frequency metadata removed (October 10).**
+`SampleDefinition.ReferenceFrequencyHz` was a nonfunctional stub and has
+been removed, including its imported-copy assignment, version-one JSON
+writer/loader requirement, sample editor field and associated metadata
+validation. `SampleDocumentEditor.UpdateMetadata` now updates the sample
+loop alone, without advancing the audio revision for an unchanged loop.
+New `.hm` package manifests and `.hm.json` files no longer emit
+`referenceFrequencyHz`; **older version-one manifests containing it
+still load**, ignoring the obsolete field without changing decoded PCM,
+loop bounds or sound tuning. This is not a file-format version bump.
+`SamplePcmData.SampleRate` and `SampleSound` native-frame resampling
+remain intact, including independent PCM-rate/pitch-multiplier tuning.
+Regressions verify new JSON/package omission, legacy deserialization,
+sample import-copy and persisted PCM rate, loop metadata revision,
+and native resampling versus pitch compensation. See
+[sample-storage.md](sample-storage.md).
+
 - [ ] Extend **advanced** lifecycle compatibility beyond the completed
   flattened-source ownership model, especially interactions between delayed
   tracker effects, mixed data/script timing, multichannel routing, and

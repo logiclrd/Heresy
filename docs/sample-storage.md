@@ -25,6 +25,28 @@ A sample may also have one of two encoded-source states:
 
 These states are mutually exclusive. Decoded PCM is present in both.
 
+## Native PCM rate and musical tuning
+
+Decoded `SamplePcmData.SampleRate` is the **functional native sample
+frame rate**. `SampleSound` calculates source-frame advance from native
+sample rate divided by the output sample rate, multiplied by the note's
+pitch and playback-speed multipliers and its live pitch trajectory.
+Changing the native sample rate (or deliberately tuning a sample through
+its source audio) therefore changes the sound at an otherwise identical
+note invocation. A musically authored sample at unity pitch/speed
+is conventionally tuned to C-4 (261.6255653005986 Hz), the same
+universal reference used by FM, Instrument and recursive sounds.
+
+`SampleDefinition.ReferenceFrequencyHz` was a disconnected, unused
+property and **has been removed**; it never influenced the `SampleSound`
+resampler. Its former “Reference frequency (Hz)” editor field was equally
+ineffective and has been removed, while the editor's loop controls
+remain functional. New version-one `.hm.json` and `.hm` manifests
+omit the old `referenceFrequencyHz` key. Loading preexisting version-one
+documents with that key remains supported: its value is ignored, and
+saving the document drops it. There is no schema-version change or
+source-specific musical reference-frequency API.
+
 ## Loading
 
 Loading a song resolves each sample's encoded data while the document is being
