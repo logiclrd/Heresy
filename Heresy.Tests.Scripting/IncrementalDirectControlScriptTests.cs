@@ -125,7 +125,7 @@ public sealed class IncrementalDirectControlScriptTests
 
         NoteEvent[] emitted = Drain(timeline);
         Assert.That(emitted.Select(n => n.Offset.TimeOffset.TotalSeconds),
-            Is.EqualTo(new[] { 0.0, 0.03, 0.055 }).Within(1e-6,
+            Is.EqualTo(new[] { 0.0, 0.03, 0.055 }).Within(1e-6),
             "SD3 follows the tempo-retimed third tracker tick; the Roslyn " +
             "Off retains its 25-ms wall offset after row 0.5."));
         Assert.Multiple(() =>
