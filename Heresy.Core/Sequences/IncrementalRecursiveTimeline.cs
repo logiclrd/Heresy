@@ -138,25 +138,39 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 	/// Natural completion never publishes these cancellation identities.
 	/// </summary>
 	public bool Cancel(long invocationId, ICollection<long>? canceledInvocations)
+		=> Cancel(invocationId, canceledInvocations, null);
+
+	/// <summary>
+	/// Also collect Pattern cursor IDs, which are distinct from recursive
+	/// frame IDs (especially for Sequence roots and nested orders). The
+	/// renderer keys pending events and scoped virtual channels by cursor.
+	/// </summary>
+	public bool Cancel(long invocationId,
+		ICollection<long>? canceledInvocations,
+		ICollection<long>? canceledPatternCursors)
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		if (!_frames.ContainsKey(invocationId))
 			return false;
 		RemoveSubtree(invocationId, canceledInvocations,
-			cancelAudible: true);
+			cancelAudible: true,
+			canceledPatternCursors: canceledPatternCursors);
 		return true;
 	}
 
 	private void RemoveSubtree(long invocationId,
 		ICollection<long>? canceledInvocations = null,
-		bool cancelAudible = false)
+		bool cancelAudible = false,
+		ICollection<long>? canceledPatternCursors = null)
 	{
 		Invocation frame = _frames[invocationId];
 		foreach (long child in frame.Children.ToArray())
-			RemoveSubtree(child, canceledInvocations, cancelAudible);
+			RemoveSubtree(child, canceledInvocations, cancelAudible,
+				canceledPatternCursors);
 		canceledInvocations?.Add(invocationId);
 		if (frame.PatternId is long pattern)
 		{
+			canceledPatternCursors?.Add(pattern);
 			_timeline.Cancel(pattern);
 			_patternOwners.Remove(pattern);
 		}
