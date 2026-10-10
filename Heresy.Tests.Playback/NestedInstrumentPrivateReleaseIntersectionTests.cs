@@ -53,13 +53,20 @@ public sealed class NestedInstrumentPrivateReleaseIntersectionTests
         {
             Assert.That(big[0], Is.EqualTo(0.5f).Within(1e-6f));
             Assert.That(big[10], Is.EqualTo(0.5f).Within(1e-6f));
-            Assert.That(big[19], Is.EqualTo(0.3875f).Within(1e-6f));
-            Assert.That(big[20], Is.EqualTo(0.375f).Within(1e-6f));
-            Assert.That(big[49], Is.EqualTo(0.375f).Within(1e-6f),
-                "S77 must hold the release even across a repeated Off.");
-            Assert.That(big[50], Is.EqualTo(0.375f).Within(1e-6f));
-            Assert.That(big[51], Is.EqualTo(0.3625f).Within(1e-6f));
-            Assert.That(big[79], Is.EqualTo(0.0125f).Within(1e-6f));
+            Assert.That(big[19], Is.EqualTo(privateSequence
+                ? 0.352625f : 0.3875f).Within(1e-6f));
+            Assert.That(big[20], Is.EqualTo(privateSequence
+                ? 0.3375f : 0.375f).Within(1e-6f));
+            Assert.That(big[49], Is.EqualTo(privateSequence
+                ? 0.22875f : 0.375f).Within(1e-6f),
+                "S77 holds the outer envelope; a private leaf's own " +
+                "release still advances during the pause and repeated Off.");
+            Assert.That(big[50], Is.EqualTo(privateSequence
+                ? 0.225f : 0.375f).Within(1e-6f));
+            Assert.That(big[51], Is.EqualTo(privateSequence
+                ? 0.213875f : 0.3625f).Within(1e-6f));
+            Assert.That(big[79], Is.EqualTo(privateSequence
+                ? 0.003875f : 0.0125f).Within(1e-6f));
             Assert.That(big[80], Is.Zero.Within(1e-6f),
                 "Resume must finish the original 40-ms release at frame 80.");
             Assert.That(big[110], Is.Zero.Within(1e-6f));
@@ -129,13 +136,19 @@ public sealed class NestedInstrumentPrivateReleaseIntersectionTests
             Assert.That(whole[19], Is.EqualTo(0.5f).Within(1e-6f));
             Assert.That(whole[20], Is.EqualTo(1f).Within(1e-6f),
                 "NNA Off must begin releasing the old Instrument note.");
-            Assert.That(whole[30], Is.EqualTo(0.875f).Within(1e-6f));
-            Assert.That(whole[40], Is.EqualTo(0.625f).Within(1e-6f));
-            Assert.That(whole[49], Is.EqualTo(0.5125f).Within(1e-6f));
-            Assert.That(whole[60], Is.EqualTo(0.375f).Within(1e-6f),
+            Assert.That(whole[30], Is.EqualTo(privateSequence
+                ? 0.8375f : 0.875f).Within(1e-6f));
+            Assert.That(whole[40], Is.EqualTo(privateSequence
+                ? 0.5375f : 0.625f).Within(1e-6f));
+            Assert.That(whole[49], Is.EqualTo(privateSequence
+                ? 0.401375f : 0.5125f).Within(1e-6f));
+            Assert.That(whole[60], Is.EqualTo(privateSequence
+                ? 0.2625f : 0.375f).Within(1e-6f),
                 "The old NNA tail finishes without truncating the new one.");
-            Assert.That(whole[70], Is.EqualTo(0.375f).Within(1e-6f));
-            Assert.That(whole[99], Is.EqualTo(0.0125f).Within(1e-6f));
+            Assert.That(whole[70], Is.EqualTo(privateSequence
+                ? 0.225f : 0.375f).Within(1e-6f));
+            Assert.That(whole[99], Is.EqualTo(privateSequence
+                ? 0.003875f : 0.0125f).Within(1e-6f));
             Assert.That(whole[100], Is.Zero.Within(1e-6f));
             Assert.That(quiescent, Is.True);
         });
@@ -183,8 +196,29 @@ public sealed class NestedInstrumentPrivateReleaseIntersectionTests
             {
                 RowCount = 4, ChannelCount = 1,
             };
+            // Private end-input sends Note Off to the child's *own*
+            // voices. A bare Sample stops on that Off regardless of the
+            // enclosing Instrument's volume envelope. Give the leaf its
+            // own finite release so it can tail while the outer envelope
+            // is paused/resumed. The two envelopes compose independently.
+            ObjectId leafEnvelopeId = doc.AllocateObjectId();
+            doc.Add(new AdsrEnvelopeDefinition(leafEnvelopeId, "Leaf release")
+            {
+                SustainLevel = 1.0,
+                Release = TimeSpan.FromMilliseconds(100),
+            });
+            ObjectId leafInstrumentId = doc.AllocateObjectId();
+            InstrumentDefinition leafInstrument =
+                new(leafInstrumentId, "Private leaf Instrument");
+            leafInstrument.ToneSpecifications.Add(new ToneSpecification
+            {
+                SourceId = sampleId,
+                VolumeEnvelopeId = leafEnvelopeId,
+            });
+            leafInstrument.ToneTable.Add(0);
+            doc.Add(leafInstrument);
             pattern.Grid.GetOrCreateCell(0, 0).Note =
-                new StartPatternNote(sampleId);
+                new StartPatternNote(leafInstrumentId);
             doc.Add(pattern);
 
             ObjectId sequenceId = doc.AllocateObjectId();
