@@ -390,6 +390,12 @@ public sealed class PlaybackVoice
 		if (absoluteFrame < StartFrame)
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
 
+		// Note Off is a one-shot release transition. EnvelopePlaybackState
+		// preserves its first release origin, so the terminal sound state
+		// must not restart its release when another Off reaches this voice.
+		if (SoundState.NoteOffTime.HasValue)
+			return;
+
 		long relativeFrame = absoluteFrame - StartFrame;
 		SoundState.NoteOffTime = FrameTime.FrameStartTime(
 			relativeFrame,
