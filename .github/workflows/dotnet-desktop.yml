@@ -69,4 +69,10 @@ jobs:
         bzip2 -t "$archive"
         tar -tjf "$archive" | grep -Fx 'Heresy/README.md' >/dev/null
         test "$(tar -xOjf "$archive" Heresy/BUILD-COMMIT.txt)" = "$(git rev-parse HEAD)"
+        bash build/package-release.sh "$RUNNER_TEMP/heresy-win-x64" "$version" win-x64 \
+          "$(git rev-parse HEAD)" "$RUNNER_TEMP/heresy-release-smoke"
+        windows_archive="$RUNNER_TEMP/heresy-release-smoke/Heresy-${version}-win-x64.zip"
+        unzip -tqq "$windows_archive"
+        unzip -Z -1 "$windows_archive" | grep -Fx 'Heresy/README.md' >/dev/null
+        test "$(unzip -p "$windows_archive" Heresy/BUILD-COMMIT.txt)" = "$(git rev-parse HEAD)"
 
