@@ -137,14 +137,17 @@ internal sealed class PreparedRecursiveMixdownSound :
 		_observedEndFrame = _playback.Source.NextFrame;
 	}
 
-	public void ScheduleFade(long parentFrame)
+	public void ScheduleFade(long parentFrame,
+		bool newNoteDisplacement = false)
 	{
 		AdvanceToParentFrame(parentFrame);
 		// Unlike Off, Fade ends future note production without forcing a
-		// release/cut of already sounding private voices. They receive the
-		// regular fade request and retain their existing tail envelopes.
+		// release/cut of already sounding private voices. A source-level
+		// S76 or NNA Fade uses the new-note fade duration; S72 past-note
+		// Fade uses the ordinary note-fade duration.
 		_playback.Source.StopProducing();
-		_playback.Source.Session.RequestFadeOfActiveVoices();
+		_playback.Source.Session.RequestFadeOfActiveVoices(
+			newNoteDisplacement);
 	}
 
 	private void AdvanceToParentFrame(long parentFrame)
