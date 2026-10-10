@@ -62,6 +62,11 @@ public sealed class PlaybackExportPcmParityTests
 	public void ScriptInstrumentDirectAndSelectedPrivateMixdownMatchOffline(int channels)
 		=> AssertParity(CreateScriptInstrumentSong(), channels, 1000);
 
+	[TestCase(1)]
+	[TestCase(6)]
+	public void NativeParametricOperatorsMatchOfflineAndRealtimePcm(int channels)
+		=> AssertParity(CreateParametricSong(), channels, 1000);
+
 	private static void AssertParity(SongDocument document,
 		int channels, int sampleRate)
 	{
@@ -201,6 +206,44 @@ public sealed class PlaybackExportPcmParityTests
 		sequence.Entries.Add(new SequenceEntry(parentId));
 		document.Add(sequence);
 		document.RootSequenceId = sequenceId;
+		return document;
+	}
+
+	private static SongDocument CreateParametricSong()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(new SampleDefinition(sample, "Memory PCM",
+			new ExternalAssetReference(Path.Combine(Path.GetTempPath(),
+				$"heresy-native-expressions-parity-{sample.Value}.wav"))));
+		ObjectId patternId = document.AllocateObjectId();
+		DataPatternDefinition pattern = new(patternId, "Parametric")
+			{ RowCount = 5, ChannelCount = 2 };
+		PatternCell first = pattern.Grid.GetOrCreateCell(0, 0);
+		first.Note = new StartPatternNote(sample);
+		first.Effects.Add(new ParametricPatternEffect(
+			ParametricEffectParameter.GlobalVolume,
+			TimeSpan.FromMilliseconds(95),
+			"-0.1 * Math.Min(elapsedSeconds / 0.095, 1.0)", true));
+		first.Effects.Add(new ParametricPatternEffect(
+			ParametricEffectParameter.NoteVolume,
+			TimeSpan.FromMilliseconds(75),
+			"-0.2", false));
+		first.Effects.Add(new ParametricPatternEffect(
+			ParametricEffectParameter.OverallChannelVolume,
+			TimeSpan.FromMilliseconds(110),
+			"-0.05", true));
+		first.Effects.Add(new ParametricPatternEffect(
+			ParametricEffectParameter.SpatialX,
+			TimeSpan.FromMilliseconds(120),
+			"0.3 * Math.Sin(elapsedSeconds * 10.0)", false));
+		pattern.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote(sample);
+		document.Add(pattern);
+		ObjectId rootId = document.AllocateObjectId();
+		DataSequenceDefinition root = new(rootId, "Root");
+		root.Entries.Add(new SequenceEntry(patternId));
+		document.Add(root);
+		document.RootSequenceId = rootId;
 		return document;
 	}
 
