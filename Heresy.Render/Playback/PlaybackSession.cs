@@ -2427,10 +2427,10 @@ public sealed class PlaybackSession
 		{
 			ActiveParametricEffect effect = _nativeGlobal[index];
 			if (!effect.Advance(absoluteFrame, _globalOperators,
-				out PlaybackParameterDeltas delta))
+				out PlaybackParameterDeltas? delta))
 				continue;
 			_globalVolume = Math.Clamp(_globalVolume +
-				delta[PlaybackParameter.GlobalVolume], 0.0, 1.0);
+				delta![PlaybackParameter.GlobalVolume], 0.0, 1.0);
 			_nativeGlobal.RemoveAt(index);
 		}
 

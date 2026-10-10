@@ -1188,19 +1188,19 @@ public sealed class PlaybackVoice
 		{
 			ActiveParametricEffect active = _nativeParametric[i];
 			if (!active.Advance(absoluteFrame, _operators,
-				out PlaybackParameterDeltas committed))
+				out PlaybackParameterDeltas? committed))
 				continue;
 			_nativeParametric.RemoveAt(i);
 			if (active.Parameter == ParametricEffectParameter.NoteVolume)
 			{
 				NoteVolume = Math.Clamp(NoteVolume +
-					committed[PlaybackParameter.NoteVolume], 0.0, 1.0);
+					committed![PlaybackParameter.NoteVolume], 0.0, 1.0);
 			}
 			else
 			{
 				_pitchOperators.RemoveAll(binding =>
 					ReferenceEquals(binding.Operator, active.Operator));
-				double delta = committed[PlaybackParameter.PitchLinearUnits];
+				double delta = committed![PlaybackParameter.PitchLinearUnits];
 				if (delta != 0.0)
 					AdjustPitchLinearUnits(absoluteFrame, delta);
 				else

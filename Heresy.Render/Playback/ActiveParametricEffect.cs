@@ -57,7 +57,7 @@ internal sealed class ActiveParametricEffect
 
     /// <summary>True after the operator's final endpoint is evaluated.</summary>
     public bool Advance(long frame, PlaybackOperatorCollection collection,
-        out PlaybackParameterDeltas committed)
+        out PlaybackParameterDeltas? committed)
     {
         long at = Math.Min(Math.Max(StartFrame, frame), EndFrame);
         double seconds = at / (double)_sampleRate;
@@ -68,7 +68,7 @@ internal sealed class ActiveParametricEffect
             return true;
         }
         Operator.Update(seconds, ticks);
-        committed = new PlaybackParameterDeltas();
+        committed = null;
         return false;
     }
 }

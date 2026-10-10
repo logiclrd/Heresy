@@ -525,19 +525,19 @@ public sealed class PlaybackChannelState
 		{
 			ActiveParametricEffect active = _nativeParametric[index];
 			if (!active.Advance(frame, _operators,
-				out PlaybackParameterDeltas delta))
+				out PlaybackParameterDeltas? delta))
 				continue;
 			_nativeParametric.RemoveAt(index);
 			switch (active.Parameter)
 			{
 				case ParametricEffectParameter.OverallChannelVolume:
 					OverallVolume = Math.Clamp(OverallVolume +
-						delta[PlaybackParameter.OverallVolume], 0.0, 1.0);
+						delta![PlaybackParameter.OverallVolume], 0.0, 1.0);
 					break;
 				case ParametricEffectParameter.SpatialX:
 					Position = new Vector3(
 						(float)Math.Clamp(Position.X +
-							delta[PlaybackParameter.SpatialX], -1.0, 1.0),
+							delta![PlaybackParameter.SpatialX], -1.0, 1.0),
 						Position.Y, Position.Z);
 					break;
 			}
