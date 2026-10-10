@@ -90,7 +90,25 @@ public sealed class MainWindow : Window
 		};
 
 	private static readonly FilePickerFileType WaveRenderFileType =
-		new("WAV audio")
+		new("WAV audio (16-bit PCM)")
+		{
+			Patterns = new[] { "*.wav" },
+		};
+
+	private static readonly FilePickerFileType Wave8RenderFileType =
+		new("WAV audio (8-bit PCM)")
+		{
+			Patterns = new[] { "*.wav" },
+		};
+
+	private static readonly FilePickerFileType Wave24RenderFileType =
+		new("WAV audio (24-bit PCM)")
+		{
+			Patterns = new[] { "*.wav" },
+		};
+
+	private static readonly FilePickerFileType Wave32RenderFileType =
+		new("WAV audio (32-bit PCM)")
 		{
 			Patterns = new[] { "*.wav" },
 		};
@@ -737,6 +755,9 @@ public sealed class MainWindow : Window
 							FlacRenderFileType,
 							Mp3RenderFileType,
 							WaveRenderFileType,
+							Wave8RenderFileType,
+							Wave24RenderFileType,
+							Wave32RenderFileType,
 						},
 				});
 
@@ -755,6 +776,8 @@ public sealed class MainWindow : Window
 			ResolveRenderFormat(
 				result.SelectedFileType?.Name,
 				path);
+		WavePcmBitDepth waveBitDepth = ResolveWaveBitDepth(
+			result.SelectedFileType?.Name);
 
 		using CancellationTokenSource cancellation = new();
 		_exportCancellation = cancellation;
@@ -784,7 +807,8 @@ public sealed class MainWindow : Window
 					format,
 					progress,
 					cancellation.Token,
-					exportDiagnostics);
+					exportDiagnostics,
+					waveBitDepth);
 			if (!_windowClosed)
 				SetStatus(
 					$"Rendered {Path.GetFileName(path)} ({render.TotalFrameCount:N0} frames).");
@@ -842,10 +866,14 @@ public sealed class MainWindow : Window
 		{
 			return OfflineAudioFileFormat.Mp3;
 		}
-		if (string.Equals(
-			selectedFileTypeName,
-			WaveRenderFileType.Name,
-			StringComparison.Ordinal))
+		if (string.Equals(selectedFileTypeName, WaveRenderFileType.Name,
+				StringComparison.Ordinal)
+			|| string.Equals(selectedFileTypeName, Wave8RenderFileType.Name,
+					StringComparison.Ordinal)
+			|| string.Equals(selectedFileTypeName, Wave24RenderFileType.Name,
+					StringComparison.Ordinal)
+			|| string.Equals(selectedFileTypeName, Wave32RenderFileType.Name,
+					StringComparison.Ordinal))
 		{
 			return OfflineAudioFileFormat.Wave;
 		}
@@ -863,6 +891,20 @@ public sealed class MainWindow : Window
 			".wav" => OfflineAudioFileFormat.Wave,
 			_ => OfflineAudioFileFormat.Flac,
 		};
+	}
+
+	private static WavePcmBitDepth ResolveWaveBitDepth(string? fileTypeName)
+	{
+		if (string.Equals(fileTypeName, Wave8RenderFileType.Name,
+			StringComparison.Ordinal))
+			return WavePcmBitDepth.Pcm8;
+		if (string.Equals(fileTypeName, Wave24RenderFileType.Name,
+			StringComparison.Ordinal))
+			return WavePcmBitDepth.Pcm24;
+		if (string.Equals(fileTypeName, Wave32RenderFileType.Name,
+			StringComparison.Ordinal))
+			return WavePcmBitDepth.Pcm32;
+		return WavePcmBitDepth.Pcm16;
 	}
 
 	private async Task ConfigureAudioOutputAsync()
