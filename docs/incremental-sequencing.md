@@ -2763,3 +2763,56 @@ not every possible simultaneous-producer tie. Remaining review areas
 include externally canceled pending future frames, NNA-migrated
 virtual voices at coincident deadlines, nested private mixdowns with
 release tails and rapid wall-time/cooperation interactions.
+
+## Fifty-seventh step: cross-producer pending-event cancellation identity
+
+Milestone 56 handled *commands within one emitted event*. The next
+same-frame issue concerned events from different incremental Pattern
+cursors. An external cancellation can occur after the one-event
+`PreparedIncrementalAudioSource` lookahead has already obtained a
+future event but before PCM reaches its output frame. The canceled
+producer must be silenced without suppressing any unrelated producer
+whose event falls on the same frame.
+
+The cancellation implementation had mixed two distinct ID spaces.
+`IncrementalRecursiveTimeline.Cancel(invocationId, removedFrames)`
+collects recursive **frame** IDs (Pattern, Sequence and their order
+frames). But `IncrementalPatternTimelineStep.Emit.InvocationId`,
+the prepared renderer's `PendingEvent.Owner`, and the playback
+session's scoped virtual channels use incremental **Pattern cursor**
+IDs. The respective counters happen to coincide in some simple
+Patterns, but diverge for Sequence order frames and for concurrent
+roots. Recording canceled frame IDs in `PreparedIncrementalAudioSource`
+could therefore suppress an independent Pattern's prefetched note.
+The failure was demonstrated by a red end-to-end regression: canceling
+an unrelated Sequence incorrectly silenced a queued sample start at
+frame 120.
+
+The Core cancellation API now has an overload accepting both optional
+recursive-frame and Pattern-cursor collections. The old overload is
+preserved for callers needing frame IDs. `RemoveSubtree` captures
+each affected Pattern cursor ID before retiring its timeline. Only
+these cursor IDs are used by the renderer to cancel scoped virtual
+voices and invalidate its one prefetched event. A deferred
+`Cooperate` or `Flow` step belonging to the canceled cursor is
+discarded too. **There is no cumulative canceled-ID set**: the
+coordinator itself cancels the remaining future steps, so retaining
+a tombstone for every canceled cursor across indefinite playback
+would be unnecessary and unbounded. Per-event scope-retirement
+ordering from step 56 remains unchanged.
+
+Regressions cover the separation of recursive frame and Pattern cursor
+IDs in Core, cancellation of a Sequence while an unrelated Pattern
+already has a future PCM event prefetched, and the complementary
+case in which the canceled producer's future event is prefetched
+and another root is introduced on that exact musical boundary.
+In both PCM cases the surviving note is audible at frame 120 and
+not delayed or displaced by the canceled producer. The complete
+native-host-enabled GitHub Actions suite verifies the correction.
+
+This closes the **specific external-cancellation/pending-lookahead
+ownership collision**, not every possible simultaneous timing
+or source-lifecycle interaction. Next: scoped virtual/NNA
+displacement and broadcast semantics at coincident deadlines;
+then deeper indirect Instrument/private-mixdown source graphs,
+release/fade automation, and inherited-source UI indications.

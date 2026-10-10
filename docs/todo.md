@@ -97,11 +97,18 @@ preserving audible release and already-captured anti-click tails. These are
   now reaches the renderer after the complete emitted command group,
   never before its Begin controller registration. Exact-frame PCM and
   bounded controller lifetime are regression-tested.
+  **Step 57: cross-producer pending-event ownership implemented.**
+  External Sequence/Pattern cancellation reports actual Pattern cursor
+  IDs separately from recursive frame IDs. A canceled producer's
+  prefetched note is invalidated directly without an accumulating
+  tombstone set, and only its scoped virtual channels are cut.
+  Independent roots with numerically colliding frame/cursor IDs
+  survive; same-frame PCM and Core ownership regressions are green.
   **Still outstanding:** UI indications for sources inherited across
   Sequence orders or selected dynamically, and downstream Note Off/Cut
-  presentation; further simultaneous producer/cancellation and delayed
-  virtual/NNA ties, plus lifecycle coverage for nested indirect private
-  mixdowns and indefinite scripts.
+  presentation; coincident virtual/NNA and broadcast interactions,
+  lifecycle coverage for nested indirect private mixdowns, release
+  automation, and indefinite scripts.
   The incremental merger admits zero-offset Mxx and native channel-volume
   commands alongside flattened starts.
   The detailed target remains in step 48 below.
