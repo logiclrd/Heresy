@@ -2,16 +2,19 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 
+using Heresy.Core.Assets;
 using Heresy.Core.Envelopes;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
+using Heresy.Core.Samples;
 using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
 using Heresy.Render.Configuration;
 using Heresy.Render.Envelopes;
 using Heresy.Render.Instruments;
 using Heresy.Render.Playback;
+using Heresy.Render.Samples;
 using Heresy.Render.Sounds;
 
 using NUnit.Framework;
@@ -22,17 +25,24 @@ namespace Heresy.Tests.Render;
 public sealed class PlaybackDelayedEnvelopeLifecycleTests
 {
     [Test]
-    public void DelayedTrackerEnvelopePauseAndResumeExtendsInstrumentReleaseWithoutRestartingIt()
+    public void DelayedTrackerEnvelopePauseAndResumeKeepsInstrumentSamplePlayingThroughRelease()
     {
         ObjectId instrumentId = (ObjectId)1U;
         ObjectId sampleId = (ObjectId)2U;
         ObjectId envelopeId = (ObjectId)3U;
 
-        // A bare SampleSound stops at Note Off by its existing contract.
-        // This sustaining Instrument tone deliberately lets the ADSR
-        // envelope control the post-Off audible release.
+        // Same looping PCM must be able to sustain an Instrument release
+        // without changing the direct SampleSound Note Off contract.
+        SampleDefinition sampleDefinition = new(
+            sampleId, "Looping PCM", new ExternalAssetReference("pcm.raw"))
+        {
+            Loop = new SampleLoop(SampleLoopMode.Forward, 0, 4),
+        };
+        SampleSound sample = new(
+            sampleDefinition,
+            new MemorySampleData(1000, 1, [1f, 1f, 1f, 1f]));
         SoundResolver sounds = new();
-        sounds.Add(sampleId, new SustainingSound());
+        sounds.Add(sampleId, sample);
         AdsrEnvelopeCurve volume = new(
             new AdsrEnvelopeDefinition(envelopeId, "Release envelope")
             {
@@ -112,28 +122,6 @@ public sealed class PlaybackDelayedEnvelopeLifecycleTests
                 yield return new RawPatternStep.Emit(note);
         }
     }
-
-    private sealed class SustainingSound : ISound
-    {
-        public NoteConfigurationSnapshot SnapshotNoteConfiguration()
-            => NoteConfigurationSnapshot.Default;
-
-        public SoundState CreateState()
-            => new SustainingState();
-
-        public long? GetEndFrameExclusive(RenderContext context, SoundState state)
-            => null;
-
-        public void Render(
-            RenderContext context, SoundState state, long startFrame,
-            int frameCount, Span<float> destination)
-        {
-            for (int i = 0; i < destination.Length; i++)
-                destination[i] += 1.0f;
-        }
-    }
-
-    private sealed class SustainingState : SoundState { }
 
     private sealed class SoundResolver : ISoundResolver
     {
