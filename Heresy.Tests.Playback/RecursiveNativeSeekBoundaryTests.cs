@@ -282,6 +282,44 @@ public sealed class RecursiveNativeSeekBoundaryTests
 				$"on speaker {i % channels}.");
 	}
 
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void ModulatedChildSampleOxxMatchesUninterruptedPrivateSequencePcm(
+		bool viaInstrument)
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId child = AddPattern(document, sample, rows: 5);
+		DataPatternDefinition childPattern =
+			(DataPatternDefinition)document.Objects[child];
+		childPattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new VibratoPatternEffect(0x48));
+		ObjectId sequence = AddSequence(document, child);
+		ObjectId source = viaInstrument
+			? AddInstrument(document, sequence) : sequence;
+		ObjectId parent = AddPattern(document, source, rows: 5,
+			mixdown: !viaInstrument);
+		((DataPatternDefinition)document.Objects[parent])
+			.Grid.GetOrCreateCell(0, 0).Effects.Add(
+				new SampleOffsetPatternEffect(1));
+		PreparedIncrementalPlaybackFactory factory = new(Mono());
+		using PreparedIncrementalPlaybackPlan uninterrupted =
+			factory.Create(document, sequence);
+		using PreparedIncrementalPlaybackPlan withOffset =
+			factory.Create(document, parent);
+		float[] baseline = new float[350];
+		uninterrupted.Source.Render(baseline.Length, baseline);
+		float[] offsetPcm = new float[60];
+		withOffset.Source.Render(1, offsetPcm.AsSpan(0, 1));
+		for (int i = 1; i < offsetPcm.Length; i++)
+			withOffset.Source.Render(1, offsetPcm.AsSpan(i, 1));
+		Assert.That(offsetPcm, Is.EqualTo(
+			baseline.AsSpan(256, offsetPcm.Length).ToArray()).Within(1e-6f),
+			"Oxx must integrate the child voice's own vibrato pitch trajectory " +
+			"while discarding earlier source PCM, even through an Instrument.");
+		Assert.That(offsetPcm.Any(v => v != 0f), Is.True);
+	}
+
 	private static PlaybackSession ChildSession(PlaybackVoice parent)
 		=> (PlaybackSession)parent.Sound.GetType()
 			.GetProperty("Session", BindingFlags.Instance | BindingFlags.Public)!
