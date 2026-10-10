@@ -114,14 +114,53 @@ public sealed class LazySongPlaybackTransportTests
 		received.Should().ContainSingle();
 	}
 
+	[Test]
+	public async Task SnapshotSubscribersSurviveLazyInitializationWithoutEagerAudio()
+	{
+		ProbeTransport? probe = null;
+		int created = 0;
+		using LazySongPlaybackTransport lazy = new(() =>
+		{
+			created++;
+			probe = new ProbeTransport();
+			return probe;
+		});
+		List<PlaybackSnapshotInfo> received = [];
+		EventHandler<PlaybackSnapshotChangedEventArgs> handler =
+			(_, e) => received.Add(e.Snapshot);
+		IPlaybackSnapshotTransport snapshot = lazy;
+		snapshot.PlaybackSnapshotChanged += handler;
+		snapshot.CurrentPlaybackSnapshot.IsActive.Should().BeFalse();
+		created.Should().Be(0);
+		await lazy.PlayPatternAsync(new SongDocument(), (ObjectId)1U);
+		probe!.EmitSnapshot();
+		received.Should().ContainSingle();
+		received[0].IsActive.Should().BeTrue();
+		snapshot.CurrentPlaybackSnapshot.IsActive.Should().BeTrue();
+		snapshot.PlaybackSnapshotChanged -= handler;
+		probe.EmitSnapshot();
+		received.Should().ContainSingle();
+	}
+
 	private sealed class ProbeTransport
 		: ISongPlaybackTransport, IPlaybackRuntimeDiagnosticsTransport,
-			IPlaybackAudioHealthTransport
+			IPlaybackAudioHealthTransport, IPlaybackSnapshotTransport
 	{
 		public event EventHandler<PlaybackRuntimeDiagnosticsEventArgs>?
 			RuntimeDiagnostics;
 		public event EventHandler<PlaybackAudioHealthChangedEventArgs>?
 			AudioHealthChanged;
+		public event EventHandler<PlaybackSnapshotChangedEventArgs>?
+			PlaybackSnapshotChanged;
+		public PlaybackSnapshotInfo CurrentPlaybackSnapshot { get; private set; }
+		public void EmitSnapshot()
+		{
+			CurrentPlaybackSnapshot = new PlaybackSnapshotInfo(
+				CurrentPlaybackSnapshot.Generation + 1,
+				new SongDocument(), 0);
+			PlaybackSnapshotChanged?.Invoke(this,
+				new PlaybackSnapshotChangedEventArgs(CurrentPlaybackSnapshot));
+		}
 		public void EmitHealth()
 			=> AudioHealthChanged?.Invoke(this,
 				new PlaybackAudioHealthChangedEventArgs(
