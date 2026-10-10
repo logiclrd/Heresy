@@ -27,6 +27,61 @@ namespace Heresy.Tests.Playback;
 [TestFixture]
 public sealed class PreparedIncrementalPlaybackFactoryTests
 {
+	[Test]
+	public void PrivateRecursiveMixdownIsFilteredOnlyOnceAtFinalSpeakerOutput()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(
+			sample, "Impulse", "impulse.wav", Wave(16384)));
+		ObjectId privateId = document.AllocateObjectId();
+		DataPatternDefinition privatePattern = new(privateId, "Private")
+		{
+			RowCount = 2, ChannelCount = 1,
+		};
+		privatePattern.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sample);
+		document.Add(privatePattern);
+		ObjectId rootId = document.AllocateObjectId();
+		DataPatternDefinition root = new(rootId, "Root")
+		{
+			RowCount = 2, ChannelCount = 1,
+		};
+		root.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(privateId, mixdown: true);
+		document.Add(root);
+
+		double halfAlphaCutoff =
+			1000.0 * Math.Log(2.0) / (2.0 * Math.PI);
+		RenderConfiguration config = new(1000,
+		[
+			new OutputChannelConfiguration(Vector3.Zero,
+				positionalImportance: 0,
+				filterType: OutputFilterType.LowPass,
+				cutoffHz: halfAlphaCutoff),
+		]);
+		using PreparedIncrementalPlaybackPlan whole =
+			new PreparedIncrementalPlaybackFactory(config)
+				.Create(document, rootId);
+		float[] pcm = new float[8];
+		whole.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm[0], Is.EqualTo(0.25f).Within(1e-6f),
+			"The private child supplies unfiltered 0.5 PCM; "
+			+ "the parent applies the 0.5-alpha filter exactly once.");
+		Assert.That(pcm[1], Is.EqualTo(0.375f).Within(1e-6f));
+		Assert.That(pcm[2], Is.EqualTo(0.4375f).Within(1e-6f));
+
+		using PreparedIncrementalPlaybackPlan split =
+			new PreparedIncrementalPlaybackFactory(config)
+				.Create(document, rootId);
+		float[] output = new float[8];
+		split.Source.Render(1, output.AsSpan(0, 1));
+		split.Source.Render(2, output.AsSpan(1, 2));
+		split.Source.Render(5, output.AsSpan(3, 5));
+		Assert.That(output, Is.EqualTo(pcm),
+			"Nested mixdowns must not reset or double-apply output filters.");
+	}
+
 	[TestCase(false)]
 	[TestCase(true)]
 	public void SameEventFlattenedStartThenCutOrOffDoesNotRetainControllerOrStartChildPcm(
