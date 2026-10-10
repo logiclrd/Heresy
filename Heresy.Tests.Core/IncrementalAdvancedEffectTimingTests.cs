@@ -216,6 +216,39 @@ public sealed class IncrementalAdvancedEffectTimingTests
             Is.Zero, "The cancelled future SA7 row must never execute.");
     }
 
+    [Test]
+    public void SAxMemoryIsolatedAcrossFlattenedInvocationsSharingPhysicalHost()
+    {
+        SequencingContext root = new();
+        SequencingContext child = root.FlattenedChild(physicalChannelOffset: 0);
+        using IncrementalPatternTimeline timeline = new(root);
+        timeline.Add(new RawSource(
+            At(0, 0, new ApplySampleOffsetHighCommand(4)),
+            At(1, 0, new StartNoteCommand((ObjectId)22U),
+                new ApplySampleOffsetCommand(1))), 2, root);
+        timeline.Add(new RawSource(
+            At(0, 0, new StartNoteCommand((ObjectId)11U),
+                new ApplySampleOffsetCommand(2))), 1, child);
+
+        NoteEvent[] notes = Drain(timeline);
+        Assert.Multiple(() =>
+        {
+            Assert.That(notes, Has.Length.EqualTo(2));
+            Assert.That(notes.Select(n => n.Offset.TimeOffset.TotalSeconds),
+                Is.EqualTo(new[] { 0.0, 0.120 }).Within(1e-6));
+            Assert.That(notes[0].Commands,
+                Does.Contain(new SetSourceFrameOffsetCommand(0x00200)),
+                "The child must not inherit its parent's SA4 high offset.");
+            Assert.That(notes[1].Commands,
+                Does.Contain(new SetSourceFrameOffsetCommand(0x40100)),
+                "The parent must retain its own SA4 for its later O01.");
+            Assert.That(root.GetPhysicalChannelState(0).SampleOffsetHigh,
+                Is.EqualTo(4));
+            Assert.That(child.GetPhysicalChannelState(0).SampleOffsetHigh,
+                Is.Zero);
+        });
+    }
+
     private static NoteEvent At(double row, int channel, params NoteCommand[] commands)
         => At(row, TimeSpan.Zero, ChannelTarget.Physical(channel), commands);
 
