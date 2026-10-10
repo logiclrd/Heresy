@@ -835,6 +835,11 @@ public sealed class IncrementalPatternTimeline : IDisposable
 							// explicit commands above at its actual deadline.
 							or ApplyTrackerNewNoteActionCommand
 							or ApplyTrackerPastNoteActionCommand
+							// Physical tracker envelope controls and their semantic
+							// form act on the voice at the fixed-wall deadline.
+							// Virtual envelope controls are not renderer commands.
+							or ApplyTrackerEnvelopeControlCommand
+							or SetEnvelopeEnabledCommand
 							or ApplyTrackerNoteCutCommand
 							or ApplyTrackerNoteDelayCommand
 							or ApplyRetriggerCommand
@@ -883,6 +888,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						// actual row event by PatternNoteProcessor, preserving
 						// SFx channel memory, S7x note ordering, and Wxx memory.
 						or ApplyTrackerEnvelopeControlCommand
+						or SetEnvelopeEnabledCommand
 						or ApplyTrackerMidiMacroSelectCommand
 						or ApplyTrackerMidiMacroCommand
 						or ApplyTrackerGlobalVolumeCommand
