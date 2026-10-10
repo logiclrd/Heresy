@@ -371,6 +371,59 @@ public sealed class PlaybackSessionTests
 			=> destination.Fill(1f);
 	}
 
+	[TestCase(false)]
+	[TestCase(true)]
+	public void StreamingVoiceDiscoveredEndRetiresInSameLargeRenderBlock(
+		bool displacedByNnaContinue)
+	{
+		ObjectId id = (ObjectId)60U;
+		PlaybackSession session = Session(1000, Schedule(),
+			new TestResolver((id, false, new EndDiscoveredWhileRenderingSound())));
+		session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+			[new StartNoteCommand(id)]);
+		if (displacedByNnaContinue)
+			session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+				[new StartNoteCommand(id)]);
+		float[] output = new float[200];
+		session.Render(0, output.Length, output);
+		Assert.That(output[0],
+			Is.EqualTo(displacedByNnaContinue ? 2f : 1f).Within(1e-6f));
+		Assert.That(output[3],
+			Is.EqualTo(displacedByNnaContinue ? 2f : 1f).Within(1e-6f));
+		Assert.That(output[4], Is.Zero.Within(1e-6f));
+		Assert.That(output[^1], Is.Zero.Within(1e-6f));
+		Assert.That(session.GetChannelState(0).CurrentVoice, Is.Null,
+			"A streaming sound which discovered its end within Render "
+			+ "must not require another PCM callback to detach.");
+		Assert.That(session.VirtualVoices, Is.Empty,
+			"NNA-migrated streaming voices must also retire in the same block.");
+	}
+
+	private sealed class EndDiscoveredWhileRenderingSound : IStreamingFiniteSound
+	{
+		private sealed class State : SoundState
+		{
+			public long? ObservedEnd { get; set; }
+		}
+
+		public NoteConfigurationSnapshot SnapshotNoteConfiguration()
+			=> new(NewNotePolicy.Continue);
+
+		public SoundState CreateState() => new State();
+
+		public long? GetEndFrameExclusive(RenderContext context,
+			SoundState state) => ((State)state).ObservedEnd;
+
+		public void Render(RenderContext context, SoundState state,
+			long startFrame, int frameCount, Span<float> destination)
+		{
+			((State)state).ObservedEnd = 4;
+			for (int frame = 0; frame < frameCount; frame++)
+				if (startFrame + frame < 4)
+					destination[frame] += 1f;
+		}
+	}
+
 	[Test]
 	public void StartNoteRendersResolvedSound()
 	{
