@@ -33,7 +33,7 @@ public sealed class ScriptEnvelopeCurveTests
 			(_, _) => { calls++; return -2.0; },
 			TimeSpan.FromMilliseconds(150));
 		Assert.That(curve.GetValue(1, 100, null), Is.EqualTo(-2.0));
-		Assert.That(curve.GetValue(6, 100, 1), Is.Zero);
+		Assert.That(curve.GetValue(16, 100, 1), Is.Zero);
 		Assert.That(calls, Is.EqualTo(1),
 			"An explicit bound must bypass script evaluation after release.");
 		Assert.That(curve.GetEndActiveFrameExclusiveAfterNoteOff(1, 100),
