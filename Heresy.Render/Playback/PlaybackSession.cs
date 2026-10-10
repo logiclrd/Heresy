@@ -1089,6 +1089,11 @@ public sealed class PlaybackSession
 					channel.SetNoteVolume(volume.Volume);
 					break;
 
+				case SetSourceFrameOffsetCommand offset:
+					ApplyNativeSourceFrameOffset(
+						channel, offset, "Script virtual native offset");
+					break;
+
 				case SetCurrentVoiceDisplacementActionCommand displacement:
 					if (channel.CurrentVoice is not null)
 						channel.CurrentVoice.SetNewNoteActionOverride(
@@ -1120,6 +1125,28 @@ public sealed class PlaybackSession
 	/// <summary>S7x on a virtual channel applies only to its own
 	/// NNA-migrated notes, including the original cursor's scope. It
 	/// must not touch the replacement voice or a sibling's same ID.</summary>
+	/// <summary>
+	/// Apply native source-frame seeking to whichever voice is current at the
+	/// event deadline, whether hosted on a physical or scoped virtual channel.
+	/// </summary>
+	private void ApplyNativeSourceFrameOffset(
+		PlaybackChannelState channel,
+		SetSourceFrameOffsetCommand offset,
+		string diagnosticOperation)
+	{
+		if (channel.CurrentVoice is not PlaybackVoice voice
+			|| voice.Sound is not ISourceFrameSeekableSound seekable)
+			return;
+		seekable.SetSourceFrameOffset(
+			voice.SoundState, offset.SourceFrameOffset);
+		if (seekable.SeekCost == SourceFrameSeekCost.ReplayRequired
+			&& offset.SourceFrameOffset > 0)
+		{
+			ReplayRequiredSeekObserved?.Invoke(
+				diagnosticOperation, offset.SourceFrameOffset);
+		}
+	}
+
 	private void ApplyPastVirtualNoteAction(
 		PlaybackChannelState channel, uint virtualChannelId,
 		long? scopedOwner, TrackerPastNoteAction action, long frame)
@@ -1400,17 +1427,8 @@ public sealed class PlaybackSession
 				break;
 
 			case SetSourceFrameOffsetCommand sourceFrameOffset:
-				if (channel.CurrentVoice is not null
-					&& channel.CurrentVoice.Sound is ISourceFrameSeekableSound seekable)
-				{
-					seekable.SetSourceFrameOffset(
-						channel.CurrentVoice.SoundState,
-						sourceFrameOffset.SourceFrameOffset);
-					if (seekable.SeekCost == SourceFrameSeekCost.ReplayRequired
-						&& sourceFrameOffset.SourceFrameOffset > 0)
-						ReplayRequiredSeekObserved?.Invoke("Oxx native offset",
-							sourceFrameOffset.SourceFrameOffset);
-				}
+				ApplyNativeSourceFrameOffset(
+					channel, sourceFrameOffset, "Oxx native offset");
 				break;
 
 			case AdjustPitchLinearUnitsCommand adjust:

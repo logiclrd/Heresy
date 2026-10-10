@@ -213,6 +213,68 @@ public abstract class PatternScriptProgram
 			timeOffsetSeconds);
 	}
 
+	/// <summary>
+	/// Set a virtual channel's current note volume in normalized [0,1] units.
+	/// The channel remembers the volume for later notes on the same scoped ID.
+	/// </summary>
+	protected void VolumeVirtual(
+		double row, uint virtualId, double volume,
+		double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		ValidateUnitInterval(volume, nameof(volume));
+		Append(row, ChannelTarget.Virtual(virtualId),
+			new SetNoteVolumeCommand(volume), timeOffsetSeconds);
+	}
+
+	/// <summary>
+	/// Seek the current virtual voice by native source frames. Unlike the
+	/// physical Seek helper, the units are not elapsed wall seconds.
+	/// Non-seekable sources ignore this request, like physical Oxx.
+	/// </summary>
+	protected void SourceFrameVirtual(
+		double row, uint virtualId, long sourceFrameOffset,
+		double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		if (sourceFrameOffset < 0)
+			throw new ArgumentOutOfRangeException(nameof(sourceFrameOffset));
+		Append(row, ChannelTarget.Virtual(virtualId),
+			new SetSourceFrameOffsetCommand(sourceFrameOffset),
+			timeOffsetSeconds);
+	}
+
+	/// <summary>
+	/// Override how the current virtual voice is displaced by the next start
+	/// on the same scoped ID. Does not change the future replacement's policy.
+	/// </summary>
+	protected void DisplacementVirtual(
+		double row, uint virtualId, NoteDisplacementAction action,
+		double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		if (!Enum.IsDefined(action))
+			throw new ArgumentOutOfRangeException(nameof(action));
+		Append(row, ChannelTarget.Virtual(virtualId),
+			new SetCurrentVoiceDisplacementActionCommand(action),
+			timeOffsetSeconds);
+	}
+
+	/// <summary>
+	/// Act only on displaced/past voices originating from this virtual ID
+	/// and Pattern cursor, never its current or a sibling's voice.
+	/// </summary>
+	protected void PastVirtual(
+		double row, uint virtualId, TrackerPastNoteAction action,
+		double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		if (!Enum.IsDefined(action))
+			throw new ArgumentOutOfRangeException(nameof(action));
+		Append(row, ChannelTarget.Virtual(virtualId),
+			new ApplyPastNoteActionCommand(action), timeOffsetSeconds);
+	}
+
 	/// <summary>Release the voice at one invocation-local virtual ID.</summary>
 	protected void OffVirtual(
 		double row, uint virtualId, double timeOffsetSeconds = 0.0)

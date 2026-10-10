@@ -459,6 +459,14 @@ public static class ScriptCompiler
 					?? throw new InvalidOperationException());
 		INamedTypeSymbol? mathType =
 			compilation.GetTypeByMetadataName("System.Math");
+		INamedTypeSymbol? displacementType =
+			compilation.GetTypeByMetadataName(
+				typeof(NoteDisplacementAction).FullName
+					?? throw new InvalidOperationException());
+		INamedTypeSymbol? pastNoteType =
+			compilation.GetTypeByMetadataName(
+				typeof(TrackerPastNoteAction).FullName
+					?? throw new InvalidOperationException());
 
 		List<ScriptAnalysisDiagnostic> diagnostics = [];
 
@@ -498,7 +506,9 @@ public static class ScriptCompiler
 
 			ISymbol? symbol =
 				semanticModel.GetSymbolInfo(access).Symbol;
-			if (IsAllowedMathMember(symbol, mathType))
+			if (IsAllowedMathMember(symbol, mathType)
+				|| IsAllowedActionEnumMember(symbol,
+					displacementType, pastNoteType))
 				continue;
 
 			AddRestrictedDiagnostic(
@@ -550,6 +560,21 @@ public static class ScriptCompiler
 				mathType);
 	}
 
+	/// <summary>
+	/// Expose only literal fields of the two strongly typed voice-action enums,
+	/// not arbitrary enum/framework member access from restricted C# scripts.
+	/// </summary>
+	private static bool IsAllowedActionEnumMember(
+		ISymbol? symbol,
+		INamedTypeSymbol? displacementType,
+		INamedTypeSymbol? pastNoteType)
+		=> symbol is IFieldSymbol field
+			&& field.HasConstantValue
+			&& (SymbolEqualityComparer.Default.Equals(
+					field.ContainingType, displacementType)
+				|| SymbolEqualityComparer.Default.Equals(
+					field.ContainingType, pastNoteType));
+
 	private static bool IsScriptLocation(Location location)
 	{
 		FileLinePositionSpan mapped =
@@ -590,7 +615,9 @@ public static class ScriptCompiler
 						or "Filter" or "FilterCutoff" or "FilterResonance"
 						or "NoteVirtual" or "OffVirtual" or "CutVirtual"
 						or "OffVirtualInScope" or "CutVirtualInScope"
-						or "OffAllVirtual" or "CutAllVirtual"))
+						or "OffAllVirtual" or "CutAllVirtual"
+						or "VolumeVirtual" or "SourceFrameVirtual"
+						or "DisplacementVirtual" or "PastVirtual"))
 				continue;
 			if (invocation.Parent is ExpressionStatementSyntax statement
 				&& ReferenceEquals(statement.Expression, invocation))
@@ -898,7 +925,9 @@ public static class ScriptCompiler
 						or "Filter" or "FilterCutoff" or "FilterResonance"
 						or "NoteVirtual" or "OffVirtual" or "CutVirtual"
 						or "OffVirtualInScope" or "CutVirtualInScope"
-						or "OffAllVirtual" or "CutAllVirtual"))
+						or "OffAllVirtual" or "CutAllVirtual"
+						or "VolumeVirtual" or "SourceFrameVirtual"
+						or "DisplacementVirtual" or "PastVirtual"))
 				return visited;
 
 			// Execute the original helper (and its validation) exactly once.

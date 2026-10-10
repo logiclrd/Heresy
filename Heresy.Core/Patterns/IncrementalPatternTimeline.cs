@@ -867,11 +867,14 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				bool allowed = note.Target.Kind == ChannelTargetKind.Global
 					? command is SetTempoCommand or SetSpeedCommand
 					: virtualTarget
-						? command is StartNoteCommand or NoteOffCommand
-							or NoteCutCommand or SetNoteVolumeCommand
-							or SetSourceFrameOffsetCommand
-							or SetCurrentVoiceDisplacementActionCommand
-							or ApplyPastNoteActionCommand
+						? note.Target.Kind == ChannelTargetKind.Virtual
+							? command is StartNoteCommand or NoteOffCommand
+								or NoteCutCommand or SetNoteVolumeCommand
+								or SetSourceFrameOffsetCommand
+								or SetCurrentVoiceDisplacementActionCommand
+								or ApplyPastNoteActionCommand
+							: command is NoteOffCommand or NoteCutCommand
+								or SetNoteVolumeCommand
 						: command is StartNoteCommand or NoteOffCommand
 						or NoteCutCommand or SelectPatternSourceCommand
 						or SetPitchSlideCommand or SetNoteVolumeSlideCommand
