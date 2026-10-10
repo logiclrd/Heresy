@@ -354,7 +354,10 @@ flexible content area and a bottom button row, including in resizable import
 and sample dialogs. Standard accept/confirm buttons are the Enter defaults,
 while Cancel (or the Sample editor's Close button) responds to Escape. In the
 unsaved-changes confirmation, Yes is the default, Cancel responds to Escape,
-and No remains an explicit discard choice.
+and No remains an explicit discard choice. The requested Yes/No/Cancel
+button order, mnemonics, and moving the unsaved-change prompt **after**
+the File → Open picker are tracked as future UI changes; the existing
+Open path still prompts before showing the picker.
 
 Opening or creating a data pattern switches the main workspace into pattern
 mode rather than opening a modal editor. The pattern grid edits semantic note
@@ -484,23 +487,22 @@ while pruning tombstones mentioned only in comments or strings. If analysis is
 unreliable because of syntax/reference diagnostics, the opaque safety fallback
 remains active and tombstones are conservatively retained.
 
-The first executable scripting slice compiles each `ScriptPatternDefinition`
-to the existing `IRawPatternNoteGenerator` contract, so generated raw events
-still pass through the common `PatternNoteProcessor`. Script sequences emit
-ordinary `SequenceEntry` values and then delegate to the common
-`SequenceNoteProcessor` through `ISequencePatternResolver`; there is no
-parallel script-only sequencing engine. The initial pattern helper surface is
-`_O(id)`, `Note`, `Off`, `Cut`, `Tempo`, `Speed` and deterministic
-`Random`; sequence scripts expose `_O(id)`, `Play` and `Random`.
-`System.Math` is allowed, while framework/object member access, allocation,
-lambdas/local functions, async/exception control and other unapproved language
-features are rejected with scripting diagnostics. `for`, `while` and `do`
-loops are instrumented with execution checkpoints: an invocation is stopped
-after 1,000,000 expansion units or a runaway-time budget. Every sequencing
-invocation constructs a fresh generated script-program instance, while
-randomness comes from the supplied `SequencingContext`, preserving
-deterministic replay and preventing mutable script state from leaking between
-invocations.
+Script Pattern and Sequence definitions use the same incremental recursive
+timeline as data-driven objects. Restricted-C# scripts are compiled through
+the Roslyn scripting boundary into invocation-local cooperative iterators,
+not eagerly evaluated into a full-song `NoteSchedule`. Pattern scripts
+produce raw `NoteEvent` steps consumed by the common timing/effect processor;
+Sequence scripts select the next order via `GetSequenceEntry(absoluteIndex,
+sequenceIndex, previousSequenceIndex)` and may continue indefinitely.
+The helper surfaces include `_O(id)`, `Note`, `Off`, `Cut`, `Tempo`,
+`Speed`, `Play` (for Sequences), and deterministic `Random`.
+`System.Math` is permitted; disallowed framework access, allocation,
+async/exception control and other unsupported language features are
+rejected with scripting diagnostics. Script loops yield cooperative
+progress checkpoints and retain resource/iteration budgets so an
+unbounded source need not block rendering. Generated state and seeded
+randomness are scoped to an invocation, allowing deterministic
+reconstruction when private sources are rewound.
 
 The current song execution bridge is
 `PreparedIncrementalPlaybackFactory`, not the removed eager

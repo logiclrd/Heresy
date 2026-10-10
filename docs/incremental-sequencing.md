@@ -1,5 +1,33 @@
 # Incremental sequencing pivot (October 8, 2026)
 
+> **Read this first — production state as of October 10, 2026.**
+> This is a chronological engineering log, **not** a list of open
+> architectural work. The first 30+ milestones describe intermediate
+> experiments and must be read in the context of their later corrections.
+> Historical statements below that the production engine uses the eager
+> `SongScheduleCompiler`, prepares note-event queues/replay journals,
+> renders song PCM inside SDL callbacks, supports only unit-speed private
+> mixdowns, lacks indirect recursive Instruments, or has incomplete
+> flattened-instigator Note Off/Cut/NNA/ownership are **superseded**.
+>
+> Current realtime F5/F6/F7, ad-hoc preview and offline export share
+> `PreparedIncrementalPlaybackFactory` →
+> `IncrementalRecursiveTimeline` →
+> `PreparedIncrementalAudioSource`. The dedicated PCM worker evaluates
+> the one-event-lookahead coroutine, shared-clock flattened children and
+> independently clocked private mixdowns synchronously; SDL only drains
+> a bounded PCM ring. Backward source seeking deterministically
+> reconstructs generators, not event journals/cached PCM. Audio samples
+> are decoded during load/import into immutable PCM, never on that worker.
+> Flattened logical instigator and nested lifetime/retirement semantics
+> were closed at step 62; new compatibility problems must have their own
+> reproducible counterexample.
+>
+> Authoritative supporting documents: [sample storage](sample-storage.md),
+> [audio output](audio-output.md), [export workflow](export-workflow.md),
+> [seek hints](source-seek-hints.md), and [remaining TODOs](todo.md).
+> This historical log retains its original step headings for traceability.
+
 ## Goal and existing contracts
 
 Heresy's existing data and script Pattern producers generate **raw**

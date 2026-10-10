@@ -17,7 +17,12 @@ actual models explicitly rather than assuming a redesign is already complete.
   Renoise), **Ctrl+F** (OpenMPT), and **Scroll Lock** (MilkyTracker).
   Preserve the priority of the pattern editor's existing key bindings and
   avoid toggling twice for one key event. The checkbox and keyboard state
-  must remain synchronized.
+  must remain synchronized. **Known keyboard conflict:** the current
+  tracker Note column uses backtick to enter Note Off (documented in
+  README). The new Follow binding is specifically requested; its
+  interaction with existing Note Off entry must be resolved explicitly
+  by focus/shortcut priority instead of silently dropping either
+  behavior or claiming there is no conflict.
 - While enabled, each new playback-highlighted row should scroll into view
   **as near the vertical middle of the visible pattern viewport as the
   available scroll extent allows**. At the start/end, clamp naturally to

@@ -1,20 +1,44 @@
 # Recursive Pattern/Sequence sound sources
 
-> **Historical design record (October 2026):** Most sections below describe
-> early prototypes and explicitly list limitations that were subsequently
-> resolved by the coroutine production cutover and steps 47–62 of
-> flattened-source ownership. In particular, claims that private mixdowns
-> require unit pitch/speed, that Note Off cannot propagate, that eager
-> compilers are still used, or that flattened children share the caller's
-> channel state are **not current**. Consult
-> [incremental-sequencing.md](incremental-sequencing.md) for the current
-> streaming architecture, and [todo.md](todo.md) for remaining work.
-> Do not use this historical list of boundaries as an implementation
-> checklist.
+> **Historical prototype record (October 8, 2026):** Everything below
+> the current-state summary captures *earlier implementation stages*.
+> The first-slice compiler/resolver, eager `SongScheduleCompiler`,
+> `CompiledNestedMixdownSound`, unit-pitch/speed restriction, Note Off
+> limitations and shared flattened child channel-memory descriptions
+> have been **superseded**. They are neither the production architecture
+> nor the current TODO inventory. See [incremental sequencing]
+> (incremental-sequencing.md), [sample storage](sample-storage.md),
+> and [remaining TODOs](todo.md).
 
-This document records the *first executable slice* of recursive playback and
-the contracts still outstanding. The tracked requirements are in
-[docs/todo.md](todo.md); this file does not mark them completed.
+## Current production contract (post-cutover)
+
+- Both realtime and offline export instantiate the snapshot-owned,
+  coroutine-based `PreparedIncrementalPlaybackFactory` and
+  `IncrementalRecursiveTimeline`; future orders/events are **not**
+  compiled into an eager complete song schedule.
+- Data/script Patterns and Sequences generate cooperatively, on the
+  same PCM rendering worker in realtime (or export worker for files).
+  SDL only reads a bounded PCM ring. Nested mixdown sound instances
+  render their own generators/PCM recursively on the same worker;
+  deterministic rewind rebuilds their invocation state, not a replay
+  event journal or cooked PCM cache.
+- Flattened recursive sources share their parent clock but keep
+  invocation/scoped channel memory and one logical instigating note
+  whose live volume, Cut/Off/Fade, NNA, cancellation and release-tail
+  semantics propagate to descendant voices. Independently clocked
+  private mixdowns and Instrument-selected recursive tones support
+  initial pitch/playback-speed composition and deterministic seeking.
+- Advanced mixed-rate tracker timing, complex script interactions and
+  unusual native seeks remain separate compatibility TODOs. The
+  original flattened-source ownership work and baseline recursive
+  playback are **complete**. The bounded runtime/editor hints for
+  costly ReplayRequired Oxx/Qxy seeks are also implemented.
+  See [source-seek hints](source-seek-hints.md).
+
+---
+
+**The sections below are preserved only as the chronological account
+of the initial prototype and must not be read as current behavior.**
 
 ## Original musical model
 
@@ -459,7 +483,12 @@ tempo ramps, other scripted global/effect commands, complex virtual-channel even
 pattern control and delayed note commands still need distinct red tests and
 scheduler integration. The older compiler remains for those cases.
 
-## Boundaries deliberately NOT complete
+## Historical first-slice boundaries (superseded)
+
+The following bullets reproduce the early prototype's unfinished-work
+list. Later milestones **completed or replaced** these assumptions;
+consult the current production contract above and [todo.md](todo.md)
+rather than attempting to implement them a second time.
 
 - Ordinary `Mixdown: false` nested Pattern/Sequence notes are now
   compiled at their parent's active sequencing row, sharing tracker effect

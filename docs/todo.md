@@ -286,13 +286,16 @@ persisted notes.
 
 ## Documentation and later maintenance
 
-- [ ] Update README descriptions of load/import-time WAVE/FLAC/MP3/OGG/AIFF
-  decoding, immutable shared PCM assets and the **production coroutine
-  playback/export cutover**. Mark superseded material in
-  docs/incremental-sequencing.md and docs/recursive-sounds.md as historical,
-  especially old eager scheduling, unit-speed private mixdown, and
-  unimplemented-ownership claims. Treat current code,
-  docs/sample-storage.md and tests as authoritative.
+**Documentation reconciliation completed.** The README now describes
+load/import-time WAVE/FLAC/MP3/OGG/AIFF decoding, immutable PCM shared
+with playback snapshots, and the single production coroutine engine
+for both realtime playback and export. Historical milestones in
+[incremental-sequencing.md](incremental-sequencing.md) and
+[recursive-sounds.md](recursive-sounds.md) explicitly mark obsolete
+eager scheduler, event-journal, callback rendering, unit-speed
+mixdown and incomplete flattened-source ownership claims as superseded.
+The current source, [sample-storage.md](sample-storage.md), regression
+tests and the remaining TODOs are authoritative.
 - [ ] Add format-version migration tooling **only when** actual documents
   require schema evolution; intentionally retain format version 1 during
   pre-release development.
