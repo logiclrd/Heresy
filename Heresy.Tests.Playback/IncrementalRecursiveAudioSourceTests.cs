@@ -136,6 +136,49 @@ public sealed class IncrementalRecursiveAudioSourceTests
 		Assert.That(source.Cancel(canceled), Is.False);
 	}
 
+	[Test]
+	public void CancelingOneRootCutsOnlyItsPhysicalAndMigratedNnaVoices()
+	{
+		TestPattern first = new((ObjectId)21U,
+			At(0, ChannelTarget.Physical(0),
+				new StartNoteCommand(SoundId)),
+			At(0, ChannelTarget.Physical(0),
+				new SetCurrentVoiceDisplacementActionCommand(
+					NoteDisplacementAction.Continue)),
+			At(0, ChannelTarget.Physical(1),
+				new StartNoteCommand(SoundId)));
+		TestPattern sibling = new((ObjectId)22U,
+			At(0.25, ChannelTarget.Physical(0),
+				new StartNoteCommand(SoundId)));
+		using IncrementalRecursiveTimeline timeline =
+			new(new SequencingContext(), new Resolver(first, sibling));
+		long canceled = timeline.AddRoot(first.Id);
+		timeline.AddRoot(sibling.Id);
+		using PreparedIncrementalAudioSource source =
+			new(timeline, Session());
+
+		float[] prefix = new float[40];
+		source.Render(prefix.Length, prefix);
+		Assert.That(prefix[35], Is.EqualTo(3f).Within(1e-6f));
+		Assert.That(source.Session.VirtualVoices, Has.Count.EqualTo(1),
+			"Root 1's old physical-0 note must migrate under NNA Continue.");
+
+		Assert.That(source.Cancel(canceled), Is.True);
+		Assert.Multiple(() =>
+		{
+			Assert.That(source.Session.VirtualVoices, Is.Empty,
+				"Cancellation must remove only its own displaced physical NNA.");
+			Assert.That(source.Session.GetChannelState(1).CurrentVoice, Is.Null,
+				"The root's physical-1 note must be cut.");
+			Assert.That(source.Session.GetChannelState(0).CurrentVoice, Is.Not.Null,
+				"The sibling's later note on physical 0 must survive.");
+		});
+		float[] tail = new float[80];
+		source.Render(tail.Length, tail);
+		Assert.That(tail[50], Is.EqualTo(1f).Within(1e-6f),
+			"Only the sibling root should remain once anti-click tails decay.");
+	}
+
 	private static NoteEvent At(double row, ChannelTarget target,
 		params NoteCommand[] commands)
 		=> new(new MusicalTime(TimeSpan.Zero, row), target, commands);
