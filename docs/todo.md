@@ -231,6 +231,59 @@ creation is dispatcher-posted after main-window opening, never stalls the
 main window or initializes audio. See
 [application-branding.md](application-branding.md).
 
+## UI polish and requested editor redesign — newly planned
+
+The detailed requirements and acceptance contracts are recorded in
+[ui-editor-redesign.md](ui-editor-redesign.md). These items are **not**
+implemented simply because they are listed. In particular, keep existing
+Core identity/revision behavior and avoid treating visual grid drafts as
+persisted notes.
+
+- [ ] Add **Follow** playback in the Pattern editor: center the active
+  playback row where scrolling permits, gated by a `Follow` checkbox;
+  toggle via backtick, Ctrl+F or Scroll Lock. Respect Sequence-projected
+  display rows and manual scrolling when Follow is off.
+- [ ] Promote **Envelopes** to a first-class section/pane: two panes on
+  the upper row (Sequences, Patterns) and three below (Samples/Patches,
+  Envelopes, Instruments); handle tree-root persistence and placement.
+- [ ] Change UI labels **Sample/Samples** to **Patch/Patches** only where
+  the objects represented may also be FM synth generators. Keep
+  sample-specific waveform/file terminology.
+- [ ] Add a reusable **graphical ADSR envelope editor** with right-edge
+  0/Note Volume/Sustain annotations, draggable Attack/Decay/Release
+  vertical boundaries and Sustain horizontal segment. On coincident
+  zero-duration handles, drag the **second** line to increase duration.
+  Retain valid unrestricted finite sustain-scalar semantics.
+- [ ] In the FM editor, allow creating an Envelope node with no existing
+  envelopes. Its selection starts blank, with an italic top **New...**
+  option that creates an envelope. Embed the same live graphical ADSR
+  editor in the selected Envelope node's detail pane.
+- [ ] Polish the unsaved-changes confirmation: Yes, No, Cancel **in that
+  order**, each with an accelerator; Yes is the default action, Cancel
+  is the cancel action.
+- [ ] Show the File → Open picker **before** asking about unsaved changes;
+  canceled/no-path selection should not trigger the save prompt.
+  Prompt before actually loading the chosen file and preserve the old
+  document on cancel/failure.
+- [ ] Redesign the **Instrument tone-table editor** as one grid with
+  implicitly managed specifications. Build the blank top row and
+  reverse-index, ten-octave/C-11-with-Offset rows on load/Divisions
+  change; preserve assigned out-of-range rows in descending order with
+  ARGB `40FF0000` highlighting; support Delete and blank-row
+  focus-loss migration/overwrite.
+- [ ] Implement all **nine tone-grid columns** with the specified
+  heading/blank/readonly/editable and dropdown semantics, including
+  48-divisions-per-octave closest-note `+`/`-` notation, logarithmic
+  pitch offset and the pitch-adjusted closest-note selection range ±0.3.
+  Update closest-note automatically on multiplier edits without
+  snapping the entered value; snap multiplier only when the user
+  actively chooses a note.
+- [ ] Apply Instrument grid changes to Core automatically. Rows with
+  no Source must remain as editor-local drafts (even with other data)
+  and are not persisted; adding/removing a Source publishes/removes
+  its underlying tone assignment without losing draft UI state.
+  Keep shared tone-specification indices and audio revisions correct.
+
 ## Documentation and later maintenance
 
 - [ ] Update README descriptions of load/import-time WAVE/FLAC/MP3/OGG/AIFF
