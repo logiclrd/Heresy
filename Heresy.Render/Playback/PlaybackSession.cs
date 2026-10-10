@@ -952,9 +952,62 @@ public sealed class PlaybackSession
 					channel.SetNoteVolume(volume.Volume);
 					break;
 
+				case SetCurrentVoiceDisplacementActionCommand displacement:
+					if (channel.CurrentVoice is not null)
+						channel.CurrentVoice.SetNewNoteActionOverride(
+							displacement.Action switch
+							{
+								NoteDisplacementAction.Cut => NewNoteAction.Cut,
+								NoteDisplacementAction.Continue => NewNoteAction.Continue,
+								NoteDisplacementAction.Off => NewNoteAction.Off,
+								NoteDisplacementAction.Fade => NewNoteAction.Fade,
+								_ => throw new InvalidOperationException(
+									$"Unsupported virtual displacement {displacement.Action}."),
+							});
+					break;
+
+				case ApplyPastNoteActionCommand past:
+					if (virtualChannelId.HasValue)
+						ApplyPastVirtualNoteAction(
+							channel, virtualChannelId.Value, scopedOwner,
+							past.Action, eventFrame);
+					break;
+
 				default:
 					throw new NotSupportedException(
 						$"Render command {command.GetType().Name} is not supported on an explicitly targeted virtual channel.");
+			}
+		}
+	}
+
+	/// <summary>S7x on a virtual channel applies only to its own
+	/// NNA-migrated notes, including the original cursor's scope. It
+	/// must not touch the replacement voice or a sibling's same ID.</summary>
+	private void ApplyPastVirtualNoteAction(
+		PlaybackChannelState channel, uint virtualChannelId,
+		long? scopedOwner, TrackerPastNoteAction action, long frame)
+	{
+		for (int i = _virtualVoices.Count - 1; i >= 0; i--)
+		{
+			PlaybackVoice voice = _virtualVoices[i];
+			if (voice.OriginVirtualChannelId != virtualChannelId
+				|| voice.OriginScopedVirtualOwner != scopedOwner)
+				continue;
+			switch (action)
+			{
+				case TrackerPastNoteAction.Cut:
+					voice.AddCutTo(channel.AntiClickTail);
+					_virtualVoices.RemoveAt(i);
+					break;
+				case TrackerPastNoteAction.Off:
+					voice.ApplyNoteOff(frame, SampleRate);
+					break;
+				case TrackerPastNoteAction.Fade:
+					voice.RequestNoteFade(frame, SampleRate);
+					break;
+				default:
+					throw new InvalidOperationException(
+						$"Unsupported virtual past-note action {action}.");
 			}
 		}
 	}
