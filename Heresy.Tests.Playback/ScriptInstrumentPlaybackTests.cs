@@ -90,6 +90,42 @@ public sealed class ScriptInstrumentPlaybackTests
     }
 
     [Test]
+    public void DynamicPitchExpressionModulatesActualSamplePlaybackFrequency()
+    {
+        SongDocument song = new();
+        ObjectId sample = song.AllocateObjectId();
+        song.Add(SampleDefinition.CreateImported(
+            sample, "Ramp", "ramp.wav", RampWave()));
+        ObjectId fixedId = song.AllocateObjectId();
+        ScriptInstrumentDefinition fixedInstrument = new(fixedId, "Fixed")
+        { Source = "0", PitchExpression = "1.0" };
+        fixedInstrument.ToneSpecifications.Add(new ToneSpecification { SourceId = sample });
+        song.Add(fixedInstrument);
+        ObjectId dynamicId = song.AllocateObjectId();
+        ScriptInstrumentDefinition dynamicInstrument = new(dynamicId, "Double")
+        { Source = "0", PitchExpression = "pitchMultiplier * 2.0" };
+        dynamicInstrument.ToneSpecifications.Add(new ToneSpecification { SourceId = sample });
+        song.Add(dynamicInstrument);
+        ObjectId fixedRoot = ScriptPattern(song,
+            $"Note(0, 0, _O({fixedId.Value}));");
+        ObjectId dynamicRoot = ScriptPattern(song,
+            $"Note(0, 0, _O({dynamicId.Value}));");
+        PreparedIncrementalPlaybackFactory factory = new(Mono());
+        using PreparedIncrementalPlaybackPlan ordinary = factory.Create(song, fixedRoot);
+        using PreparedIncrementalPlaybackPlan shifted = factory.Create(song, dynamicRoot);
+        float[] plain = new float[30];
+        float[] pitched = new float[30];
+        ordinary.Source.Render(30, plain);
+        shifted.Source.Render(30, pitched);
+        Assert.Multiple(() =>
+        {
+            Assert.That(plain[10], Is.GreaterThan(0.0f));
+            Assert.That(pitched[10], Is.EqualTo(plain[10] * 2.0f).Within(1e-5f));
+            Assert.That(pitched[20], Is.EqualTo(plain[20] * 2.0f).Within(1e-5f));
+        });
+    }
+
+    [Test]
     public void NonPositiveDynamicPitchScaleFailsBeforeBindingSound()
     {
         SongDocument song = new();
@@ -144,6 +180,24 @@ public sealed class ScriptInstrumentPlaybackTests
     private static RenderConfiguration Mono()
         => new(1000, [new OutputChannelConfiguration(
             Vector3.Zero, positionalImportance: 0)]);
+
+    private static byte[] RampWave()
+    {
+        const int frames = 256;
+        using MemoryStream stream = new();
+        using BinaryWriter writer = new(stream, Encoding.ASCII, leaveOpen: true);
+        writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+        writer.Write(36 + 2 * frames);
+        writer.Write(Encoding.ASCII.GetBytes("WAVEfmt "));
+        writer.Write(16); writer.Write((ushort)1); writer.Write((ushort)1);
+        writer.Write(1000); writer.Write(2000);
+        writer.Write((ushort)2); writer.Write((ushort)16);
+        writer.Write(Encoding.ASCII.GetBytes("data"));
+        writer.Write(2 * frames);
+        for (int i = 0; i < frames; i++) writer.Write((short)(i * 100));
+        writer.Flush();
+        return stream.ToArray();
+    }
 
     private static byte[] Wave(short amplitude)
     {
