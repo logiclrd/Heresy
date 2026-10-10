@@ -15,6 +15,31 @@ namespace Heresy.Core.Sequencing;
 public abstract record NoteCommand;
 
 /// <summary>
+/// Additive native effect destination. Tempo is intentionally excluded:
+/// changing the tempo timing map requires a separate integration contract.
+/// </summary>
+public enum ParametricEffectParameter
+{
+	GlobalVolume,
+	OverallChannelVolume,
+	SpatialX,
+}
+
+/// <summary>
+/// Raw semantic parametric command. CompiledEvaluator is attached by the
+/// prepared snapshot factory, never serialized and never compiled in audio.
+/// </summary>
+public sealed record StartParametricEffectCommand(
+	ParametricEffectParameter Parameter,
+	TimeSpan Duration,
+	string Expression,
+	bool CommitOnExpire = false) : NoteCommand
+{
+	public Func<double, double, double>? CompiledEvaluator { get; init; }
+}
+
+
+/// <summary>
 /// Starts one playback note. Volume is an optional initial note-volume value
 /// carried atomically with the start; it has no effect when the source cannot
 /// actually start. GainMultiplier is a separate invocation-local multiplicative

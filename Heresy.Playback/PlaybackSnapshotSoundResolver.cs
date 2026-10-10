@@ -31,6 +31,7 @@ internal sealed class PlaybackSnapshotSoundResolver
 	private readonly Dictionary<ObjectId, IEnvelopeCurve?> _envelopes = [];
 	private readonly Dictionary<ObjectId, IScriptInstrumentToneEvaluator> _instrumentPrograms = [];
 	private readonly Dictionary<ObjectId, IScriptInstrumentPitchEvaluator> _pitchPrograms = [];
+	private readonly Dictionary<string, Func<double, double, double>> _parametricPrograms = new(StringComparer.Ordinal);
 	private readonly ConcurrentDictionary<ObjectId, ISound> _preparedMixdowns = new();
 	private uint _nextPreparedId = uint.MaxValue;
 
@@ -85,6 +86,15 @@ internal sealed class PlaybackSnapshotSoundResolver
 			if (source is SampleDefinition or InstrumentDefinition
 				or ScriptInstrumentDefinition or FmSynthDefinition)
 				TryResolve(source.Id, mixdown: false, out _);
+
+		// All data-grid expression sources must compile *before* any PCM work,
+		// including unreachable patterns and private nested invocations.
+		foreach (DataPatternDefinition pattern in _document.Objects.Values
+			.OfType<DataPatternDefinition>())
+			foreach ((_, _, PatternCell cell) in pattern.Grid.EnumerateNonEmptyCells())
+				foreach (ParametricPatternEffect effect in cell.Effects
+					.OfType<ParametricPatternEffect>())
+					GetParametricEvaluator(effect.Expression);
 
 		foreach (SongObject source in _document.Objects.Values)
 			if (source is EnvelopeDefinition)
@@ -271,6 +281,22 @@ internal sealed class PlaybackSnapshotSoundResolver
 				string.Join("; ", compiled.Diagnostics.Select(d => d.Message)));
 		_instrumentPrograms.Add(definition.Id, compiled.Program);
 		return compiled.Program;
+	}
+
+	public Func<double, double, double> GetParametricEvaluator(string source)
+	{
+		if (_parametricPrograms.TryGetValue(source,
+			out Func<double, double, double>? result))
+			return result;
+		ScriptCompilationResult<IScriptParametricEvaluator> compiled =
+			ScriptCompiler.CompileParametric(source);
+		if (!compiled.Success || compiled.Program is null)
+			throw new InvalidOperationException(
+				"Parametric expression failed to compile: " +
+				string.Join("; ", compiled.Diagnostics.Select(d => d.Message)));
+		result = compiled.Program.Evaluate;
+		_parametricPrograms.Add(source, result);
+		return result;
 	}
 
 	private static IEnvelopeCurve CompileScriptEnvelope(

@@ -737,6 +737,15 @@ public sealed class PreparedIncrementalPlaybackFactory
 			for (int i = 0; i < commands.Length; i++)
 			{
 				NoteCommand command = note.Commands[i];
+				if (command is StartParametricEffectCommand parametric)
+				{
+					commands[i] = parametric with
+					{
+						CompiledEvaluator =
+							sounds.GetParametricEvaluator(parametric.Expression),
+					};
+					continue;
+				}
 				if (command is not StartNoteCommand start)
 				{
 					ProcessControl(note.Target, owner,

@@ -866,6 +866,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			{
 				bool allowed = note.Target.Kind == ChannelTargetKind.Global
 					? command is SetTempoCommand or SetSpeedCommand
+						or StartParametricEffectCommand { Parameter: ParametricEffectParameter.GlobalVolume }
 					: virtualTarget
 						? note.Target.Kind == ChannelTargetKind.Virtual
 							? command is StartNoteCommand or NoteOffCommand
@@ -875,7 +876,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 								or ApplyPastNoteActionCommand
 							: command is NoteOffCommand or NoteCutCommand
 								or SetNoteVolumeCommand
-						: command is StartNoteCommand or NoteOffCommand
+						: command is StartParametricEffectCommand
+						or StartNoteCommand or NoteOffCommand
 						or NoteCutCommand or SelectPatternSourceCommand
 						or SetPitchSlideCommand or SetNoteVolumeSlideCommand
 						or ApplyVolumeSlideCommand or ApplyPitchSlideDownCommand

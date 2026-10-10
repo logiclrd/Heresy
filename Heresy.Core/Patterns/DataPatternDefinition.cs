@@ -292,6 +292,13 @@ public sealed class DataPatternDefinition : PatternDefinition, IDeferredSourcePa
 			case TrackerPatternBreakPatternEffect patternBreak:
 				return new ApplyTrackerPatternBreakCommand(patternBreak.Row);
 
+			case ParametricPatternEffect effect:
+				isGlobal =
+					effect.Parameter == ParametricEffectParameter.GlobalVolume;
+				return new StartParametricEffectCommand(
+					effect.Parameter, effect.Duration, effect.Expression,
+					effect.CommitOnExpire);
+
 			case SetTempoPatternEffect tempo:
 				isGlobal = true;
 				return new SetTempoCommand(tempo.TicksPerDiachron);

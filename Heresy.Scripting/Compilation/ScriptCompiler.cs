@@ -301,6 +301,45 @@ public static class ScriptCompiler
 	}
 
 	/// <summary>
+	/// Compile a bounded stateless absolute-delta expression once per snapshot.
+	/// Native duration always uses wall time; rowTime is an optional
+	/// continuous tracker-tick coordinate from the effect's start.
+	/// </summary>
+	public static IReadOnlyList<ScriptAnalysisDiagnostic> AnalyzeParametricSource(
+		string source)
+	{
+		ArgumentNullException.ThrowIfNull(source);
+		IReadOnlyList<ScriptAnalysisDiagnostic> shape =
+			ValidateEnvelopeExpression(source);
+		if (shape.Count != 0)
+			return shape;
+		return PrepareCompilation(source,
+			BuildParametricWrapper("__Parametric_Analysis", source)).Diagnostics;
+	}
+
+	public static ScriptCompilationResult<IScriptParametricEvaluator>
+		CompileParametric(string source)
+	{
+		ArgumentNullException.ThrowIfNull(source);
+		IReadOnlyList<ScriptAnalysisDiagnostic> shape =
+			ValidateEnvelopeExpression(source);
+		if (shape.Count != 0)
+			return new(null, shape);
+		string className = "__Parametric_" + Guid.NewGuid().ToString("N");
+		ScriptCompilationResult<Type> compiled = CompileType(
+			source, className, BuildParametricWrapper(className, source),
+			typeof(IScriptParametricEvaluator));
+		if (!compiled.Success || compiled.Program is null)
+			return new(null, compiled.Diagnostics);
+		return new(
+			Activator.CreateInstance(compiled.Program)
+				as IScriptParametricEvaluator
+					?? throw new InvalidOperationException(
+						"Cannot construct parametric evaluator."),
+			compiled.Diagnostics);
+	}
+
+	/// <summary>
 	/// Validate one scalar expression without generating a persistent script
 	/// assembly. Time inputs are in seconds of active (unpaused) envelope
 	/// time. No loops, object allocations, I/O or arbitrary framework access.
@@ -882,6 +921,23 @@ public static class ScriptCompiler
 			"""
 			.Replace("__INSTRUMENT_CLASS__", className, StringComparison.Ordinal)
 			.Replace("__INSTRUMENT_EXPRESSION__", source, StringComparison.Ordinal);
+
+	private static string BuildParametricWrapper(string className, string source)
+		=> """
+			using System;
+			using Heresy.Scripting.Runtime;
+			public sealed class __PARAMETRIC_CLASS__ : IScriptParametricEvaluator
+			{
+				public double Evaluate(double elapsedSeconds, double rowTime)
+				{
+			#line 1 "heresy-script"
+					return (__PARAMETRIC_EXPRESSION__);
+			#line default
+				}
+			}
+			"""
+			.Replace("__PARAMETRIC_CLASS__", className, StringComparison.Ordinal)
+			.Replace("__PARAMETRIC_EXPRESSION__", source, StringComparison.Ordinal);
 
 	private static string BuildEnvelopeWrapper(
 		string className, string source)

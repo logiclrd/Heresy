@@ -595,3 +595,31 @@ public sealed record FineVibratoPatternEffect(
 /// </summary>
 public sealed record VibratoVolumeSlidePatternEffect(
 	byte Parameter) : PatternEffect;
+
+/// <summary>
+/// Native wall-time expression contribution to one additive playback coordinate.
+/// The expression receives elapsedSeconds and rowTime; duration is wall-time.
+/// GlobalVolume targets the session, others their physical-channel host.
+/// </summary>
+public sealed record ParametricPatternEffect : PatternEffect
+{
+	public ParametricPatternEffect(
+		ParametricEffectParameter parameter, TimeSpan duration,
+		string expression, bool commitOnExpire = false)
+	{
+		if (!Enum.IsDefined(parameter))
+			throw new ArgumentOutOfRangeException(nameof(parameter));
+		if (duration < TimeSpan.Zero)
+			throw new ArgumentOutOfRangeException(nameof(duration));
+		ArgumentException.ThrowIfNullOrWhiteSpace(expression);
+		Parameter = parameter;
+		Duration = duration;
+		Expression = expression;
+		CommitOnExpire = commitOnExpire;
+	}
+
+	public ParametricEffectParameter Parameter { get; }
+	public TimeSpan Duration { get; }
+	public string Expression { get; }
+	public bool CommitOnExpire { get; }
+}
