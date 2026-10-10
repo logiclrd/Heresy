@@ -123,6 +123,40 @@ public sealed class IncrementalCrossRateTempoTests
 		});
 	}
 
+	[TestCase(true, 33.0, 35.0)]
+	[TestCase(false, 34.0, 32.0)]
+	public void OpposingCrossRateSlidesClampInMappedPhysicalChannelOrder(
+		bool scaledDownFirst, double firstBoundaryTempo, double endingTempo)
+	{
+		SequencingContext root = new();
+		root.State.Tempo = 32;
+		using IncrementalPatternTimeline timeline = new(root);
+		// The scaled voice applies five local changes by shared tick 3;
+		// the unscaled voice applies five through shared tick 6.
+		// Where two local ticks coincide, mapped physical order decides
+		// who clamps to the lower IT Tempo limit before the other acts.
+		SequencingContext fast = root.FlattenedChild(
+			playbackSpeedMultiplier: 2.0,
+			physicalChannelOffset: scaledDownFirst ? 0 : 3);
+		SequencingContext slow = root.FlattenedChild(
+			physicalChannelOffset: scaledDownFirst ? 3 : 0);
+		timeline.Add(new RawSource(At(0, 0,
+			new ApplyTrackerTempoCommand(scaledDownFirst ? (byte)0x01 : (byte)0x11))),
+			1, fast);
+		timeline.Add(new RawSource(At(0, 0,
+			new ApplyTrackerTempoCommand(scaledDownFirst ? (byte)0x11 : (byte)0x01))),
+			1, slow);
+		NoteEvent[] events = Drain(timeline);
+		SetTempoRampCommand[] ramps = events.SelectMany(e => e.Commands)
+			.OfType<SetTempoRampCommand>().ToArray();
+		Assert.Multiple(() =>
+		{
+			Assert.That(ramps.Select(r => r.EndingTempo),
+				Is.EqualTo(new[] { firstBoundaryTempo, endingTempo }).Within(1e-8));
+			Assert.That(root.State.Tempo, Is.EqualTo(endingTempo).Within(1e-8));
+		});
+	}
+
 	private static double RampSeconds(double initial, double ending, double ticks)
 		=> Math.Abs(ending - initial) < 1e-9
 			? 2.5 * ticks / initial
