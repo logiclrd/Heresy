@@ -1,7 +1,10 @@
 using System;
 using System.Buffers.Binary;
 using System.IO;
+using System.Linq;
 using System.Numerics;
+using System.Collections.Generic;
+using System.Threading;
 
 using AwesomeAssertions;
 
@@ -246,6 +249,82 @@ public sealed class WaveOfflineRenderTests
 			new MusicalTime(time, 0.0),
 			ChannelTarget.Physical(0),
 			commands);
+
+	[Test]
+	public void CoroutineProgressUsesRenderedMusicalFramesWithNoInventedTotal()
+	{
+		using MemoryStream stream = new();
+		using WaveFileSink sink = new(stream,
+			new AudioOutputFormat(10, 1), leaveOpen: true);
+		NeverEndingArrangement arrangement = new(
+			Session(10, Schedule(), new Resolver(
+				(ObjectId)99U,
+				new InfiniteSound(NoteConfigurationSnapshot.Default))));
+		List<OfflineRenderProgress> observed = [];
+		using CancellationTokenSource cancel = new();
+		CallbackProgress progress = new(update =>
+		{
+			observed.Add(update);
+			if (update.LogicalFramesRendered == 8)
+				cancel.Cancel();
+		});
+		Assert.Throws<OperationCanceledException>(
+			() => OfflinePlaybackRenderer.Render(arrangement, sink,
+				blockFrameCount: 4,
+				maximumLogicalFrames: 100,
+				progress: progress,
+				cancellationToken: cancel.Token));
+		Assert.That(observed, Has.Count.EqualTo(2));
+		Assert.That(observed[0].Phase,
+			Is.EqualTo(OfflineRenderPhase.LogicalBody));
+		Assert.That(observed[0].LogicalFramesRendered, Is.EqualTo(4));
+		Assert.That(observed[0].RenderedMusicalTime,
+			Is.EqualTo(TimeSpan.FromMilliseconds(400)));
+		Assert.That(observed[1].LogicalFramesRendered, Is.EqualTo(8));
+		Assert.That(observed, Has.All.Matches<OfflineRenderProgress>(
+			item => item.KnownLogicalFrameCount is null));
+		Assert.That(sink.FramesWritten, Is.EqualTo(8),
+			"Canceled exports stop at a complete PCM block boundary.");
+	}
+
+	[Test]
+	public void FiniteRendererReportsKnownLengthAndFiniteReleaseTail()
+	{
+		PlaybackSession session = Session(10,
+			Schedule(Event(TimeSpan.Zero,
+				new StartNoteCommand((ObjectId)1U))),
+			new Resolver((ObjectId)1U,
+				new InfiniteSound(new NoteConfigurationSnapshot(
+					NewNotePolicy.Cut,
+					envelopes: new EnvelopeConfigurationSnapshot(
+						Volume: new AdsrEnvelopeCurve(
+							new AdsrEnvelopeDefinition((ObjectId)2U, "ADSR")
+							{
+								Release = TimeSpan.FromMilliseconds(300),
+								SustainLevel = 1.0,
+							}))))));
+		using MemoryStream stream = new();
+		using WaveFileSink sink = new(stream,
+			new AudioOutputFormat(10, 1), leaveOpen: true);
+		List<OfflineRenderProgress> observed = [];
+		OfflineRenderResult result = OfflinePlaybackRenderer.Render(session,
+			TimeSpan.FromMilliseconds(200), sink, blockFrameCount: 1,
+			progress: new CallbackProgress(observed.Add));
+		Assert.That(observed.Select(x => x.Phase).ToArray(),
+			Does.Contain(OfflineRenderPhase.ReleaseTail));
+		Assert.That(observed[^1].Phase, Is.EqualTo(OfflineRenderPhase.Completed));
+		Assert.That(observed[^1].KnownLogicalFrameCount, Is.EqualTo(2));
+		Assert.That(observed[^1].LogicalFramesRendered, Is.EqualTo(2));
+		Assert.That(observed[^1].TailFramesRendered,
+			Is.EqualTo(result.TailFrameCount));
+		Assert.That(result.TailFrameCount, Is.EqualTo(3));
+	}
+
+	private sealed class CallbackProgress(Action<OfflineRenderProgress> callback)
+		: IProgress<OfflineRenderProgress>
+	{
+		public void Report(OfflineRenderProgress update) => callback(update);
+	}
 
 	[Test]
 	public void InfiniteIncrementalArrangementFailsAtExplicitExportFrameCap()
