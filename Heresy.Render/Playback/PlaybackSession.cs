@@ -1527,8 +1527,8 @@ public sealed class PlaybackSession
 					channel.SetNoteVolume(volume);
 
 					voice.Retrigger(eventFrame);
-					if (voice.Sound is ISourceFrameSeekableSound seekable
-						&& seekable.SeekCost == SourceFrameSeekCost.ReplayRequired)
+					if (voice.Sound is ISourceFrameSeekableSound retriggerSeekable
+						&& retriggerSeekable.SeekCost == SourceFrameSeekCost.ReplayRequired)
 						ReplayRequiredSeekObserved?.Invoke("Qxy retrigger", 0);
 				}
 				break;
