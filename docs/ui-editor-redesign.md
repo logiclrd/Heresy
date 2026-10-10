@@ -37,20 +37,26 @@ actual models explicitly rather than assuming a redesign is already complete.
   centering/clamping and repeated-order mapping. Actual window-manager
   focus and viewport behavior can additionally be smoke-tested on desktop.
 
-## Document panes and vocabulary
+## Document panes and vocabulary — implemented
 
-- Promote **Envelopes** to a first-class document-tree section and its own
-  pane. The document view must have **two upper panes** (Sequences,
-  Patterns) and **three lower panes** (Samples/Patches, Envelopes,
-  Instruments). Update persistence/tree-root mappings, add/create
-  placement, drag/reorder constraints, existing placements/migration policy,
-  selection and editor routing together; object IDs/references must survive.
-- Where UI labels **Sample/Samples** currently denote sources which can
-  also be FM synthesizers, change those labels to **Patch/Patches**.
-  Retain *Sample* where the operation or data is specifically about
-  sampled PCM (e.g. sample import, loop, waveform and sample-format
-  controls). Preserve the underlying Core type names and file formats
-  unless a separate model migration is explicitly warranted.
+- **Envelopes** now has a first-class document-tree section and dedicated
+  pane. The top row has two equal-width panes (Sequences, Patterns), and
+  the bottom row three equal-width panes (Patches, Envelopes,
+  Instruments). The layout uses six star columns with spans of 3/3
+  above and 2/2/2 below, and wraps the pane action buttons.
+- General UI references to the former mixed Sample/FM section now say
+  **Patches**; sample import, PCM formats, waveform and loop editing
+  continue to use Sample where the object really is PCM-backed.
+  The enum `SongTreeSection.Samples` is retained for existing code,
+  and the persisted top-level folder name becomes `Patches`.
+- New Envelopes are placed in their section, and default activation
+  opens the existing Envelope editor. Cross-section tree movements remain
+  prohibited. The former four-root version-1 tree is accepted on load:
+  its Envelopes (including tombstones) move from Instruments into the
+  new root with any containing folder hierarchy mirrored. Non-envelope
+  objects retain their placements. No ObjectId changes, audio edits or
+  version bump occur; saves emit five roots. See
+  [document-panes.md](document-panes.md).
 
 ## Graphical ADSR envelope editor
 

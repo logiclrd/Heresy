@@ -248,12 +248,17 @@ including Sequence headers and repeated occurrences, without moving
 the edit cursor or horizontal scroll offset. With Follow off,
 playback highlighting continues but playback does not scroll.
 See [ui-editor-redesign.md](ui-editor-redesign.md).
-- [ ] Promote **Envelopes** to a first-class section/pane: two panes on
-  the upper row (Sequences, Patterns) and three below (Samples/Patches,
-  Envelopes, Instruments); handle tree-root persistence and placement.
-- [ ] Change UI labels **Sample/Samples** to **Patch/Patches** only where
-  the objects represented may also be FM synth generators. Keep
-  sample-specific waveform/file terminology.
+**Five-pane document layout and Patches terminology implemented.**
+The upper row contains Sequences and Patterns; the lower row
+contains Patches, Envelopes and Instruments. The former mixed Sample/FM
+section displays as **Patches**; PCM-specific operations retain
+**Sample** terminology. New Envelopes use a dedicated fixed tree
+root with their own create action, default editor and drag/drop
+constraints. Existing four-root version-1 JSON/module songs are
+migrated in-memory on load, preserving nested Envelope folder paths,
+tombstones, object identities and audio revisions, and saved in the
+new five-section shape. Pane actions wrap at the narrower width.
+See [document-panes.md](document-panes.md).
 - [ ] Add a reusable **graphical ADSR envelope editor** with right-edge
   0/Note Volume/Sustain annotations, draggable Attack/Decay/Release
   vertical boundaries and Sustain horizontal segment. On coincident

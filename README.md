@@ -17,10 +17,10 @@ The repository is intentionally split by concern.
 - `Heresy.Playback` — shared, snapshot-bound incremental recursive
   Pattern/Sequence composition for realtime playback and file export.
 - `Heresy.UserInterface` — Avalonia single-document tracker UI with the
-  current four panes (Sequences, Patterns, Samples, Instruments), sample
-  import/editing, data/script editors, FM synth graphs, Instruments and ADSR
-  envelopes. Five panes with first-class Envelopes, Patch labels, a graphical
-  ADSR editor and a new Instrument tone grid are **planned**, not yet built.
+  current five panes (Sequences, Patterns, Patches, Envelopes, Instruments),
+  sample import/editing, data/script editors, FM synth graphs, Instruments
+  and ADSR envelopes. Graphical ADSR editing and a redesigned Instrument
+  tone grid are **planned**, not yet built.
   See [UI redesign](docs/ui-editor-redesign.md).
 - `Heresy.Scripting` — Roslyn-backed restricted-C# analysis/compiler boundary.
   Semantic object-reference analysis/projection and the first executable
@@ -272,17 +272,33 @@ names and falls back through tombstones to raw IDs for broken references.
 Tree-only reorganization uses `SongTreeEditor` and advances `DocumentRevision`
 without advancing `AudioRevision`; moving a node never changes its ObjectId.
 
-The **currently implemented** document tree has four fixed top-level sections,
-persisted in clockwise document-view order: Sequences, Patterns,
-Instruments and Samples.
-The Avalonia document mode projects those section subtrees as four panes:
-Sequences top-left, Patterns top-right, Samples bottom-left and Instruments
-bottom-right. The fixed section nodes themselves are not shown because each
-pane is the visual root of its subtree. New objects receive one canonical tree
-placement from `SongDocument.Add`; envelopes are grouped with Instruments.
-Nodes may be reorganized within a section but not moved between sections.
-A five-pane layout with a separate Envelopes root and generalized
-"Patch/Patches" labels is **planned**, not currently implemented.
+The document tree has **five** fixed top-level sections, persisted in
+visual row-major order: Sequences, Patterns, Patches, Envelopes and
+Instruments. The top row has two equal-width panes (Sequences,
+Patterns); the bottom has three (Patches, Envelopes, Instruments).
+The shared six-column grid spans three tracks for each top pane and
+two for each bottom pane. Pane action buttons wrap rather than overflow.
+The fixed root nodes are not shown within their panes because each
+pane already represents one section subtree.
+
+**Patches** is the general UI label for the section containing both
+decoded PCM Samples and FM synthesizers. The Core section enum remains
+`SongTreeSection.Samples` for compatibility. UI labels tied strictly
+to PCM data (sample import, sample file formats, sample waveform and
+loop editing) still say **Sample**. New Envelopes receive canonical
+placements in the first-class Envelopes section rather than under
+Instruments. Folders can be reorganized within a section, not moved
+between sections.
+
+Legacy version-1 `.hm.json` and `.hm` documents with the former
+four-section tree (Sequences, Patterns, Instruments, Samples) are
+upgraded **during load**, without changing the song format version.
+Envelope object/tombstone placements are extracted from the old
+Instruments subtree, preserving their nested folder paths, object IDs
+and references; non-envelope placements remain in Instruments and the
+old Samples section is renamed Patches. Saving writes the new
+five-section tree; migration alone does not increment audio or
+document revision. See [document panes](docs/document-panes.md).
 
 FM synth graph connections are drawn as orthogonal routes from producer to
 consumer, with a small arrowhead **only at the consuming/input end**. Hovering
