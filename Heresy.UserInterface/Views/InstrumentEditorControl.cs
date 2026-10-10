@@ -366,13 +366,31 @@ public sealed class InstrumentEditorControl : UserControl
 			{
 				Dispatcher.UIThread.Post(() =>
 				{
-					if (border.IsKeyboardFocusWithin)
+					// ComboBox popups live in a separate visual tree,
+					// so opening one can temporarily move keyboard focus
+					// outside this row. It must not commit an insertion.
+					if (border.IsKeyboardFocusWithin
+						|| source.IsDropDownOpen
+						|| volume.IsDropDownOpen
+						|| pitchEnvelope.IsDropDownOpen
+						|| panning.IsDropDownOpen
+						|| filter.IsDropDownOpen)
 						return;
 					int? enteredIndex = _model.EntryIndex;
-					if (enteredIndex is null || !_model.CommitEntry())
+					if (enteredIndex is null)
 						return;
-					_message.Text = "Inserted/overwrote tone table row.";
-					RefreshRows(enteredIndex);
+					try
+					{
+						if (!_model.CommitEntry())
+							return;
+						_message.Text = "Inserted/overwrote tone table row.";
+						RefreshRows(enteredIndex);
+						_changed($"Inserted/overwrote tone {enteredIndex.Value} in {_instrument.Name}");
+					}
+					catch (Exception ex)
+					{
+						_message.Text = ex.Message;
+					}
 				}, DispatcherPriority.Loaded);
 			}, RoutingStrategies.Bubble, handledEventsToo: true);
 		}
