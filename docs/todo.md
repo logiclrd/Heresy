@@ -130,13 +130,24 @@ See [audio-output.md](audio-output.md).
 
 ## Export workflow
 
-- [ ] Show offline export **rendered musical-time progress**, without
-  inferring a fixed logical total from an indefinitely scripted Sequence.
-  Use a determinate ratio only when a trustworthy finite total is known;
-  otherwise show an indeterminate elapsed-musical-time status. Never
-  pre-expand future song orders merely to produce an ETA.
-- [ ] Add cooperative cancellation at safe render blocks, preserving the
-  atomic temporary-output-file behavior and leaving existing exports intact.
+**Export progress and cooperative cancellation implemented.**
+`OfflinePlaybackRenderer` reports progress after written PCM blocks in
+logical musical frames and distinct release-tail frames. A fixed-duration
+session may expose its known logical total; the production coroutine
+renderer deliberately reports **no total** until its ending is discovered,
+never eagerly enumerating future Sequence orders or inventing a completion
+percentage/ETA. The UI displays an indeterminate progress indicator and
+elapsed rendered musical time, switching to a release-tail indication.
+Cancellation checks the token at safe PCM-block boundaries, before
+finalizing the sink and immediately before atomic file replacement.
+Canceled exports dispose their private playback plans and temporary files,
+preserving any existing destination. The UI prevents concurrent exports
+and cancels when the progress window or owner closes.
+See [export-workflow.md](export-workflow.md).
+
+- [ ] Optionally add a **determinate** export progress percentage only when
+  a separately proven finite total is available without unrolling an
+  unbounded script; the default coroutine path must stay indeterminate.
 - [ ] Support **additional WAV bit depths** beyond default 16-bit PCM,
   and check encoder-specific validity for user-selected output rates and
   channel layouts. Realtime and export already share the chosen sample
