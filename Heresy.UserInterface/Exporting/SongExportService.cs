@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
+using Heresy.Core.Diagnostics;
 using Heresy.Core.Objects;
 using Heresy.Playback;
 using Heresy.Render.File;
@@ -32,7 +33,8 @@ public sealed class SongExportService
 		string path,
 		OfflineAudioFileFormat format,
 		IProgress<OfflineRenderProgress>? progress = null,
-		CancellationToken cancellationToken = default)
+		CancellationToken cancellationToken = default,
+		IProgress<SequencingDiagnostic[]>? diagnostics = null)
 	{
 		ArgumentNullException.ThrowIfNull(document);
 		ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -51,7 +53,8 @@ public sealed class SongExportService
 				fullPath,
 				format,
 				progress,
-				cancellationToken));
+				cancellationToken,
+				diagnostics));
 	}
 
 	private static OfflineRenderResult ExportPlan(
@@ -59,11 +62,49 @@ public sealed class SongExportService
 		string fullPath,
 		OfflineAudioFileFormat format,
 		IProgress<OfflineRenderProgress>? progress,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		IProgress<SequencingDiagnostic[]>? diagnostics)
 	{
 		using (plan)
-			return ExportOwnedPlan(plan, fullPath, format,
-				progress, cancellationToken);
+		{
+			void DrainDiagnostics()
+			{
+				// Read the same shared bounded log that realtime playback
+				// drains, including messages from nested invocation contexts.
+				// No UI callback is invoked by a coroutine or audio thread.
+				if (diagnostics is null)
+					return;
+				SequencingDiagnostic[] batch = plan.Diagnostics.Drain();
+				if (batch.Length != 0)
+					diagnostics.Report(batch);
+			}
+
+			// Drain after each successfully written block. A final drain
+			// is required if cancellation, a script error or the encoder
+			// interrupts processing before another progress event.
+			IProgress<OfflineRenderProgress> blockProgress =
+				new ExportBlockProgress(progress, DrainDiagnostics);
+			try
+			{
+				return ExportOwnedPlan(plan, fullPath, format,
+					blockProgress, cancellationToken);
+			}
+			finally
+			{
+				DrainDiagnostics();
+			}
+		}
+	}
+
+	private sealed class ExportBlockProgress(
+		IProgress<OfflineRenderProgress>? progress,
+		Action drainDiagnostics) : IProgress<OfflineRenderProgress>
+	{
+		public void Report(OfflineRenderProgress update)
+		{
+			drainDiagnostics();
+			progress?.Report(update);
+		}
 	}
 
 	private static OfflineRenderResult ExportOwnedPlan(
