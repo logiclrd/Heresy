@@ -377,6 +377,37 @@ public sealed class IncrementalRecursiveTimelineTests
 	}
 
 	[Test]
+	public void CancelReportsPatternCursorIdsNotRecursiveSequenceFrameIds()
+	{
+		DataPatternDefinition order = Pattern(1, 4);
+		DataPatternDefinition independent = Pattern(2, 3);
+		independent.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteCut();
+		independent.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteOff();
+		DataSequenceDefinition sequence = new((ObjectId)3U, "Sequence");
+		sequence.Entries.Add(new SequenceEntry(order.Id));
+		using IncrementalRecursiveTimeline timeline = new(
+			new SequencingContext(), new Resolver(sequence, order, independent));
+		long canceledRoot = timeline.AddRoot(sequence.Id);
+		long survivingRoot = timeline.AddRoot(independent.Id);
+		Assert.That(timeline.TryStep(out IncrementalPatternTimelineStep? first),
+			Is.True);
+		Assert.That(first, Is.TypeOf<IncrementalPatternTimelineStep.Emit>());
+
+		List<long> removedFrames = [];
+		List<long> removedCursors = [];
+		Assert.That(timeline.Cancel(canceledRoot, removedFrames, removedCursors),
+			Is.True);
+		Assert.That(removedFrames, Is.EquivalentTo(new long[] { 0, 2 }),
+			"The Sequence frame and its child order are recursive frame IDs.");
+		Assert.That(removedCursors, Is.EqualTo(new long[] { 1 }),
+			"The independent Pattern has cursor 0; only the Sequence's "
+			+ "order cursor 1 may be marked canceled.");
+		Assert.That(timeline.IsInvocationActive(survivingRoot), Is.True);
+		Assert.That(Drain(timeline).Single().Commands.Single(),
+			Is.TypeOf<NoteOffCommand>());
+	}
+
+	[Test]
 	public void CancelParentCancelsDescendantsAndPendingWallNotes()
 	{
 		DataPatternDefinition parent = Pattern(1, 2);
