@@ -87,6 +87,9 @@ public sealed class AssetPersistenceTests
 			manifest["objects"]![id.Value.ToString()]!["asset"]!["sha256"]!
 				.GetValue<string>(),
 			Is.EqualTo(sample.Asset.Sha256));
+		Assert.That(manifest["objects"]![id.Value.ToString()]!
+			.AsObject().ContainsKey("referenceFrequencyHz"), Is.False,
+			"Packages must not emit dead sample tuning metadata.");
 		using Stream stream = zip.GetEntry("pcm/tone.wav")!.Open();
 		using MemoryStream copy = new();
 		stream.CopyTo(copy);
@@ -654,6 +657,8 @@ public sealed class AssetPersistenceTests
 							["path"] = assetPath,
 							["sha256"] = null,
 						},
+						// Legacy version-one modules may carry obsolete metadata.
+						// Loading ignores it without changing PCM tuning.
 						["referenceFrequencyHz"] = 261.6255653005986,
 						["loop"] = new JsonObject
 						{

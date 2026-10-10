@@ -45,6 +45,30 @@ public sealed class SampleSoundTests
 		Assert.That(output, Is.EqualTo(new float[] { 0.0f, 0.5f, 1.0f, 0.5f }));
 	}
 
+
+	[Test]
+	public void NativePcmRateStillControlsFrameAdvanceAndPitchTuning()
+	{
+		float[] ramp = [0f, 1f, 2f, 3f, 4f, 5f, 6f, 7f];
+		SampleSound normal = CreateSound(ramp, sampleRate: 4);
+		SampleSound doubleRate = CreateSound(ramp, sampleRate: 8);
+		RenderContext context = MonoContext(sampleRate: 4);
+		float[] normalPcm = new float[4], fastPcm = new float[4];
+		float[] compensatedPcm = new float[4];
+		normal.Render(context, normal.CreateState(), 0, 4, normalPcm);
+		doubleRate.Render(context, doubleRate.CreateState(), 0, 4, fastPcm);
+		SoundState tuned = doubleRate.CreateState();
+		tuned.PitchMultiplier = 0.5;
+		doubleRate.Render(context, tuned, 0, 4, compensatedPcm);
+		Assert.Multiple(() =>
+		{
+			Assert.That(normalPcm, Is.EqualTo(new float[] { 0, 1, 2, 3 }));
+			Assert.That(fastPcm, Is.EqualTo(new float[] { 0, 2, 4, 6 }));
+			Assert.That(compensatedPcm, Is.EqualTo(normalPcm),
+				"Musical pitch remains composed with decoded native sample rate.");
+		});
+	}
+
 	[Test]
 	public void SplitRenderMatchesSingleRender()
 	{
