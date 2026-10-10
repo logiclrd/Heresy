@@ -866,6 +866,12 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						or ApplyTremorCommand or ApplyPanbrelloCommand
 						or ApplyTrackerTremoloWaveformCommand
 						or ApplyTrackerPanbrelloWaveformCommand
+						or ApplyTrackerGlissandoControlCommand
+						or ApplySampleOffsetHighCommand
+						or ApplyTrackerPanningCommand
+						or ApplyTrackerPanning8BitCommand
+						or ApplyTrackerVolumeColumnPanningCommand
+						or SetSurroundCommand
 						or ApplyTrackerVolumeColumnCommand
 						or ApplyGlobalVolumeSlideCommand or ApplyPanningSlideCommand
 						or SetOverallChannelVolumeSlideCommand
