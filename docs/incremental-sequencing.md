@@ -28,6 +28,50 @@
 > [seek hints](source-seek-hints.md), and [remaining TODOs](todo.md).
 > This historical log retains its original step headings for traceability.
 
+## Current shared-clock cross-rate Tempo arbitration (October 10, 2026)
+
+The production `IncrementalPatternTimeline` now supports **simultaneous
+different-rate tracker Txx slides** and **scaled flattened Txx with SEy
+repeats**. These were the two last explicit cross-rate rejection cases
+in the shared-clock coordinator.
+
+Each `RepeatedTempoSource` retains its captured *local* row tick span,
+flattened clock rate, SEy repetition count, mapped physical channel,
+source order and invocation owner. Its compatibility-row boundaries
+are projected onto the common musical clock as
+`localSpan / tickRate`; every legacy slide still contributes precisely
+`localSpan - 1` native Txx changes per local row. Only bounded row
+metadata is projected: no future Pattern/Sequence event enumeration,
+note-event journal or second playback engine is introduced.
+
+The shared `RebuildCrossTempoPlan` produces piecewise analytic
+`SetTempoRampCommand` segments at contributors' individual expiration
+and repeat boundaries. For non-clamping slides it preserves the
+previous smooth fractional Tempo interpolation, including analytic
+fixed-wall deadline inversion. Near tracker Tempo limits 32 and 255,
+it evaluates the finite local-tick changes in mapped physical-channel
+order, then uses their clipped endpoint; subsequent segments retain
+that ordered-clamp state. When the contributors' total possible
+changes cannot reach a limit, the fast path avoids the local-tick
+clamp projection entirely. Cancellation and global/direct Tempo
+interruptions clear only the affected pending projections; previously
+reached instantaneous Tempo is not rolled back.
+
+`IncrementalCrossRateTempoTests` verify 1×+2× slides with different
+deadlines (3 vs 6 shared ticks), 2× SEy repetitions at ticks 3, 6
+and 9, 1.5× repetition with shared-tick boundaries at 4/6/8,
+analytically inverted fixed-wall deadlines inside a later ramp,
+individual contributor cancellation from instantaneous Tempo,
+direct Tempo set suppression of stale scaled repeats, and opposing
+clamped/unclamped effects at Tempo 32 in both mapped-channel orders.
+The existing equal-rate, eager-parity, independent SEy and tick-effect
+suites remain regression coverage.
+
+The remaining unusual global/script effect combinations are tracked
+separately in [todo.md](todo.md). Historical milestone sections below
+may still describe this cross-rate behavior as unsupported; those
+statements no longer characterize the current production code.
+
 ## Goal and existing contracts
 
 Heresy's existing data and script Pattern producers generate **raw**
