@@ -230,7 +230,7 @@ public sealed class PlaybackSessionTests
 			[new SetCurrentVoiceDisplacementActionCommand(action),
 				new StartNoteCommand(source)]);
 		Assert.That(session.VirtualVoices, Has.Count.EqualTo(1));
-		PlaybackVoice old = session.VirtualVoices.Single();
+		PlaybackVoice old = session.VirtualVoices[0];
 		if (action == NoteDisplacementAction.Off)
 			Assert.That(old.SoundState.NoteOffTime,
 				Is.EqualTo(FrameTime.FrameStartTime(1, 1000)));
