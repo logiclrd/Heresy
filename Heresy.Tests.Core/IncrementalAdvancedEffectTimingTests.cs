@@ -167,6 +167,55 @@ public sealed class IncrementalAdvancedEffectTimingTests
         });
     }
 
+    [Test]
+    public void DelayedOxxResolvesSAxHighByteAtItsActualWallDeadline()
+    {
+        SequencingContext root = new();
+        using IncrementalPatternTimeline timeline = new(root);
+        timeline.Add(new RawSource(
+            At(0, 0, new ApplySampleOffsetHighCommand(3)),
+            At(0.5, TimeSpan.FromMilliseconds(100), 0,
+                new StartNoteCommand((ObjectId)12U),
+                new ApplySampleOffsetCommand(4)),
+            At(1, 0, new ApplySampleOffsetHighCommand(0))), 2, root);
+
+        NoteEvent[] notes = Drain(timeline);
+        Assert.Multiple(() =>
+        {
+            Assert.That(notes, Has.Length.EqualTo(1));
+            Assert.That(notes[0].Offset.TimeOffset.TotalSeconds,
+                Is.EqualTo(0.160).Within(1e-6));
+            Assert.That(notes[0].Commands,
+                Does.Contain(new SetSourceFrameOffsetCommand(0x00400)),
+                "Delayed Oxx must read SA0 at the actual note deadline.");
+            Assert.That(root.GetPhysicalChannelState(0).SampleOffsetHigh,
+                Is.Zero);
+        });
+    }
+
+    [Test]
+    public void CancellingFutureSAxCannotModifyEarlierOxxMemory()
+    {
+        SequencingContext root = new();
+        using IncrementalPatternTimeline timeline = new(root);
+        long future = timeline.Add(new RawSource(
+            At(1, 0, new ApplySampleOffsetHighCommand(7))), 2, root);
+        timeline.Add(new RawSource(
+            At(0.5, 0, new NoteCutCommand())), 1,
+            root.FlattenedChild(physicalChannelOffset: 2));
+
+        while (timeline.TryStep(out IncrementalPatternTimelineStep? step))
+            if (step is IncrementalPatternTimelineStep.Emit emitted
+                && emitted.Note.Commands.Any(c => c is NoteCutCommand))
+            {
+                Assert.That(timeline.Cancel(future), Is.True);
+                break;
+            }
+        Drain(timeline);
+        Assert.That(root.GetPhysicalChannelState(0).SampleOffsetHigh,
+            Is.Zero, "The cancelled future SA7 row must never execute.");
+    }
+
     private static NoteEvent At(double row, int channel, params NoteCommand[] commands)
         => At(row, TimeSpan.Zero, ChannelTarget.Physical(channel), commands);
 
