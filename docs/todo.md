@@ -203,100 +203,140 @@ sample import-copy and persisted PCM rate, loop metadata revision,
 and native resampling versus pitch compensation. See
 [sample-storage.md](sample-storage.md).
 
-- [ ] Extend **advanced** lifecycle compatibility beyond the completed
-  flattened-source ownership model, especially interactions between delayed
-  tracker effects, mixed data/script timing, multichannel routing, and
-  unusual instrument release envelopes. Existing indirect Instrument,
-  S7x, NNA, virtual broadcast, Cut/Off/Fade and private-tail ownership are
-  implemented and tested; avoid reopening those milestones without a
-  demonstrated counterexample.
+**Advanced lifecycle — completed and regression-tested (October 10).**
+These are closed subcases, retained as compatibility contracts rather than
+open tasks. Do not revisit them without a specific failing counterexample.
 
-  **Repeated Note Off release-origin mismatch fixed (October 10).**
-  `PlaybackVoice.ApplyNoteOff` formerly changed `SoundState.NoteOffTime`
-  for every repeated Off, while `EnvelopePlaybackState.NoteOff`
-  retained its first release origin. The source could therefore
-  extend or restart its release after the Instrument volume envelope
-  had already begun releasing. A voice's first Off now fixes both
-  source and envelope release timing; later Off events are idempotent.
-  Red-then-green regressions cover a physical source with finite
-  note-off-relative release, the same semantics on an explicit
-  virtual channel, and an Instrument-selected ADSR envelope whose
-  PCM and terminal sound state agree on the original release time.
-  The broader delayed-effect/script routing and envelope interaction
-  compatibility item remains open for further demonstrated cases.
+**Repeated Note Off release-origin mismatch fixed (October 10).**
+`PlaybackVoice.ApplyNoteOff` formerly changed `SoundState.NoteOffTime`
+for every repeated Off, while `EnvelopePlaybackState.NoteOff`
+retained its first release origin. The source could therefore
+extend or restart its release after the Instrument volume envelope
+had already begun releasing. A voice's first Off now fixes both
+source and envelope release timing; later Off events are idempotent.
+Red-then-green regressions cover a physical source with finite
+note-off-relative release, the same semantics on an explicit
+virtual channel, and an Instrument-selected ADSR envelope whose
+PCM and terminal sound state agree on the original release time.
+Further cross-interaction checks are listed below.
 
-  **Fixed-wall S7x and virtual note-lifecycle controls supported (October 10).**
-  The incremental Pattern merger previously rejected positive
-  `TimeOffset` on physical raw S73–S76 new-note actions/S70–S72
-  past-note actions and on already-resolved physical/virtual
-  `SetCurrentVoiceDisplacementActionCommand` and
-  `ApplyPastNoteActionCommand`, even though the normal renderer
-  already handles those commands. They now stay in the bounded wall
-  queue and resolve at the actual deadline: tracker commands transform
-  only then, and their effects act on whichever voice exists at
-  delivery, not at raw-script emission. Red-then-green scheduler and
-  PCM regressions cover physical/virtual displacement overrides,
-  subsequent independently timed past-note cuts, and preservation of
-  currently sounding replacement notes. A Roslyn/data regression also
-  combines a scripted positive-wall Off, data-Pattern SD3, and an
-  immediate shared Tempo change. This does **not** add a restricted
-  script S7x helper or alter unsupported virtual tracker-memory commands.
-  Broader multichannel, recursive lifecycle and script-effect
-  combinations remain under this TODO.
+**Fixed-wall S7x and virtual note-lifecycle controls supported (October 10).**
+The incremental Pattern merger previously rejected positive
+`TimeOffset` on physical raw S73–S76 new-note actions/S70–S72
+past-note actions and on already-resolved physical/virtual
+`SetCurrentVoiceDisplacementActionCommand` and
+`ApplyPastNoteActionCommand`, even though the normal renderer
+already handles those commands. They now stay in the bounded wall
+queue and resolve at the actual deadline: tracker commands transform
+only then, and their effects act on whichever voice exists at
+delivery, not at raw-script emission. Red-then-green scheduler and
+PCM regressions cover physical/virtual displacement overrides,
+subsequent independently timed past-note cuts, and preservation of
+currently sounding replacement notes. A Roslyn/data regression also
+combines a scripted positive-wall Off, data-Pattern SD3, and an
+immediate shared Tempo change. This does **not** add a restricted
+script S7x helper or alter unsupported virtual tracker-memory commands.
+Further cross-interaction checks are listed below.
 
-  **Fixed-wall Instrument envelope controls and paused release (October 10).**
-  Raw physical tracker S77/S78 volume-envelope disable/enable and
-  S7B/S7C combined pitch/filter controls now accept positive fixed
-  wall-time offsets. The existing physical
-  `SetEnvelopeEnabledCommand` also accepts immediate and delayed
-  raw scheduling; the renderer already supported all these resolved
-  operations. The bounded wall queue resolves raw controls at the
-  delivery instant against the current physical voice rather than
-  processing future controls while preparing the row. Existing
-  virtual-envelope and negative-time restrictions remain.
-  Red-then-green regressions cover direct semantic enable, the
-  two-command pitch/filter expansion, and a later replacement note
-  receiving its own wall-delayed control. An Instrument-backed PCM
-  regression verifies that a sustaining Instrument tone's Note
-  Off at 10 ms, envelope disable at 20 ms and re-enable at 50 ms
-  hold the release at 75% then finish at 80 ms, without restarting
-  the sound or prematurely retiring the voice. The broader
-  mixed-script/recursive compatibility TODO remains open.
+**Fixed-wall Instrument envelope controls and paused release (October 10).**
+Raw physical tracker S77/S78 volume-envelope disable/enable and
+S7B/S7C combined pitch/filter controls now accept positive fixed
+wall-time offsets. The existing physical
+`SetEnvelopeEnabledCommand` also accepts immediate and delayed
+raw scheduling; the renderer already supported all these resolved
+operations. The bounded wall queue resolves raw controls at the
+delivery instant against the current physical voice rather than
+processing future controls while preparing the row. Existing
+virtual-envelope and negative-time restrictions remain.
+Red-then-green regressions cover direct semantic enable, the
+two-command pitch/filter expansion, and a later replacement note
+receiving its own wall-delayed control. An Instrument-backed PCM
+regression verifies that a sustaining Instrument tone's Note
+Off at 10 ms, envelope disable at 20 ms and re-enable at 50 ms
+hold the release at 75% then finish at 80 ms, without restarting
+the sound or prematurely retiring the voice. Further cross-interaction checks are listed below.
 
-  **Instrument-selected sample release contract resolved (October 10).**
-  A Note Off on an Instrument must not terminate its selected sample
-  ahead of the Instrument's effective volume-envelope release. The
-  terminal `SampleSoundState` now captures an invocation-local policy
-  from `InstrumentSound.CreateInvocation`, after that Instrument's
-  envelope overlays resolve. When a volume envelope exists, a
-  SampleSound ignores Note Off for source-end calculation and keeps
-  producing PCM until the normal voice envelope-end limit is reached.
-  This supports paused release and independently released NNA-Off
-  voices, as well as volume envelopes introduced by outer nested
-  Instruments. Natural PCM exhaustion and explicit Cut/Fade retain
-  their existing limits. Direct samples and Instrument tones without
-  a volume envelope **still stop on Note Off**. No shared sample
-  definition or file format changes. Red-then-green regressions
-  verify paused ADSR with actual looping sample PCM, nested Instrument
-  tone selection, NNA-Off tails, and both direct/un-enveloped cutoff
-  paths. See [sample-storage.md](sample-storage.md).
+**Instrument-selected sample release contract resolved (October 10).**
+A Note Off on an Instrument must not terminate its selected sample
+ahead of the Instrument's effective volume-envelope release. The
+terminal `SampleSoundState` now captures an invocation-local policy
+from `InstrumentSound.CreateInvocation`, after that Instrument's
+envelope overlays resolve. When a volume envelope exists, a
+SampleSound ignores Note Off for source-end calculation and keeps
+producing PCM until the normal voice envelope-end limit is reached.
+This supports paused release and independently released NNA-Off
+voices, as well as volume envelopes introduced by outer nested
+Instruments. Natural PCM exhaustion and explicit Cut/Fade retain
+their existing limits. Direct samples and Instrument tones without
+a volume envelope **still stop on Note Off**. No shared sample
+definition or file format changes. Red-then-green regressions
+verify paused ADSR with actual looping sample PCM, nested Instrument
+tone selection, NNA-Off tails, and both direct/un-enveloped cutoff
+paths. See [sample-storage.md](sample-storage.md).
 
-  **Zero-release Instrument voice retirement at the exact Off frame (October 10).**
-  `PlaybackSession.CullFinishedCurrentVoice` previously checked only
-  the underlying sound's end, so an Instrument-selected looping
-  Sample with an *immediately completing* volume envelope could
-  remain attached after Note Off or EndInput until another render
-  block. It now checks the same minimum source/fade/volume-envelope
-  deadline used for PCM rendering. NNA-Off displacement likewise
-  avoids migrating a voice whose **volume envelope** has completed
-  at the displacement frame into the global displaced-voice pool;
-  it preserves established NNA bookkeeping for direct samples
-  that end from their underlying sound's own Note Off rule.
-  Regression coverage verifies physical and explicit virtual
-  Note Off, EndInput quiescence without another render, and
-  zero-release NNA-Off with an independently playing replacement.
-  Nonzero release and direct-sample NNA semantics remain intact.
-  The broader delayed/script/recursive lifecycle TODO remains open.
+**Zero-release Instrument voice retirement at the exact Off frame (October 10).**
+`PlaybackSession.CullFinishedCurrentVoice` previously checked only
+the underlying sound's end, so an Instrument-selected looping
+Sample with an *immediately completing* volume envelope could
+remain attached after Note Off or EndInput until another render
+block. It now checks the same minimum source/fade/volume-envelope
+deadline used for PCM rendering. NNA-Off displacement likewise
+avoids migrating a voice whose **volume envelope** has completed
+at the displacement frame into the global displaced-voice pool;
+it preserves established NNA bookkeeping for direct samples
+that end from their underlying sound's own Note Off rule.
+Regression coverage verifies physical and explicit virtual
+Note Off, EndInput quiescence without another render, and
+zero-release NNA-Off with an independently playing replacement.
+Nonzero release and direct-sample NNA semantics remain intact.
+Further cross-interaction checks are listed below.
+
+**Advanced lifecycle — remaining independently closable checks.**
+These checkboxes cover combinations **not yet demonstrated end-to-end**,
+not known production defects. Each may be closed after an explicit
+regression passes on the production incremental path; if it fails,
+add the smallest corrective change and verify red-to-green CI.
+Do not revisit already-complete flattened-source ownership or introduce
+eager schedules, event journals, or a second playback path.
+
+- [ ] **Tracker tick / fixed-wall lifecycle collisions.** In one physical
+  channel, combine SDx, SCx or Qxy tick actions with S7x lifecycle
+  controls and positive wall offsets, including coincident deadlines,
+  row-end crossings and SEy/S6x row extension. Verify exact emitted
+  order, effect-memory commit timing, and PCM at the affected frames.
+  Existing isolated tick, S7x and fixed-wall tests are prerequisites,
+  **not** part of the remaining implementation work. Close when
+  combined-case regressions pass (or a demonstrated defect is fixed).
+
+- [ ] **Mixed Roslyn/data lifecycle ordering under a changing clock.**
+  Run actual incremental script Note/Off/Cut commands concurrently
+  with data-Pattern SDx and S7x commands while another cursor changes
+  Tempo or Speed after a fixed-wall deadline is established. Exercise
+  same-frame ties and distinct deadlines, with production PCM compared
+  across different rendering block sizes. The existing simple
+  script-Off + SD3 + Tempo test is already complete; close after the
+  additional cross-ordering regressions pass (or are corrected).
+
+- [ ] **Deferred lifecycle routing across flattened owners and virtual
+  channels.** Exercise two sibling flattened invocations sharing a
+  mapped physical host and/or the same numbered scoped virtual channel,
+  with delayed Off/Cut/S7x actions, displaced NNA voices, a virtual
+  broadcast, and subtree cancellation before a pending deadline.
+  Assert that pending actions from canceled producers cannot affect
+  surviving host/sibling voices, while already-releasing owned tails
+  follow the existing ownership contract. Close after targeted
+  recursive-scheduler and renderer regressions confirm isolation.
+
+- [ ] **Nested Instrument and private-source release-tail intersections.**
+  Cover Instrument-selected Sample tones across nested Instruments and
+  private Pattern/Sequence mixdowns when a release overlaps delayed
+  S77/S78 envelope pause/resume, repeated Off, NNA displacement or
+  input/subtree retirement. Verify source natural-end limits, exact
+  zero/nonzero release completion, quiescence, and PCM chunk invariance.
+  The existing separate sample-release, S7x and private-tail cases
+  are already complete; close when the combined cases are verified
+  without regressing direct-sample Note Off behavior.
+
 **Recursive native Oxx/Qxy source-frame seeking verified across
 invocation boundaries.** `RecursiveNativeSeekBoundaryTests` now cover
 O01 as exactly 256 private source frames across multi-order child
