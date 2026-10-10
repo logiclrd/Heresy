@@ -28,6 +28,61 @@
 > [seek hints](source-seek-hints.md), and [remaining TODOs](todo.md).
 > This historical log retains its original step headings for traceability.
 
+## Nested Instrument/private-source release intersections and root cancellation (October 10, 2026)
+
+The fourth and final advanced lifecycle TODO is closed by
+`NestedInstrumentPrivateReleaseIntersectionTests`. These tests run
+the actual `PreparedIncrementalPlaybackFactory.CreateAdHoc` →
+`IncrementalRecursiveTimeline` → `PreparedIncrementalAudioSource`
+pipeline, including snapshot decoding and bound nested Instruments.
+The outer Instrument supplies an ADSR volume envelope while its inner
+Instrument selects either a finite PCM Sample or an independently
+clocked private Sequence playing a data Pattern.
+
+At 1 kHz, a note starts at frame 0, receives Off at 10, S77
+(envelope pause) at 20, repeated Off at 30, and S78 (resume)
+at 50. Its 40-ms outer release finishes at frame 80, not 100:
+the repeated Off cannot restart the release origin. For direct
+Instrument-selected Samples, the volume envelope keeps source PCM
+alive through the 30-ms pause. For private Sequences, the parent
+Off also calls `EndInput` on the private child; the child Sample's
+own Note Off is independent of the outer volume envelope. Thus a
+bare private child Sample stops at the parent Off frame, whereas
+a private child Sample itself selected through an Instrument with
+a finite volume release continues playing. Its child release
+progresses while the outer envelope is paused; the two envelope
+gains multiply rather than sharing one release clock.
+
+Further regressions exercise natural PCM exhaustion at frame 65
+while an otherwise longer paused release remains active, NNA Off
+displacement at frame 20 with independently finishing old/new
+nested Instrument voices, a second Note Off at frame 30, S77/S78
+at frames 40/70, and zero-duration Off retirement without another
+render block. Whole-block PCM must exactly match irregular blocks.
+A long private child envelope survives the Sequence's natural
+480-ms producer completion, finishing at its own frame 720;
+explicit root cancellation instead cuts that audible tail. A
+bare private child Sample still honors its ordinary immediate
+source Note Off rule.
+
+That explicit-cancellation regression revealed a missing identity
+for *direct physical root* voices. Flattened physical voices have
+an independently mapped `PhysicalPlaybackOwner`, but separate
+root Patterns deliberately share owner zero. `PlaybackVoice` now
+also records `OriginPatternCursorId` while a scoped physical
+StartNote is delivered. The cursor ID survives NNA migration;
+`PlaybackSession.CancelScopedVoices` cancels only physical current
+and displaced NNA voices with that origin, in addition to its
+previous scoped virtual cleanup. A separate sibling-root
+regression checks that cancellation removes a first root's
+physical-1 note and migrated physical-0 voice while leaving
+a second root's current physical-0 note intact. Normal/natural
+completion never invokes this cancellation path.
+
+The advanced lifecycle cross-interaction checklist is now
+fully closed. Future issues should be recorded with a concrete
+counterexample, not by reopening these completed modules.
+
 ## Deferred flattened-owner and virtual-channel routing (October 10, 2026)
 
 `DeferredFlattenedVirtualOwnershipTests` verifies the real

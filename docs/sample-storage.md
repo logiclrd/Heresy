@@ -94,6 +94,21 @@ virtual note.
 Longer envelope releases retain their normal continuation and
 independent retirement times.
 
+A private Pattern/Sequence tone obeys an additional lifecycle boundary:
+the enclosing Instrument's Note Off calls `EndInput` on the private
+renderer, which independently sends Note Off to its **child voices**.
+Consequently, the outer Instrument's volume envelope cannot make
+a *bare child Sample* continue after the child's immediate Sample
+Note Off. If the private child itself selects that Sample through
+an Instrument with a volume envelope, the child's release may
+continue normally while the outer envelope also releases; their
+gains multiply and either the finite child PCM end or an envelope
+end can terminate the sound. Delayed S77/S78 controls on the parent
+pause the **outer** envelope, not every independent child envelope.
+Production-path tests cover these distinctions through nested
+Instruments, an actual private Sequence, repeat Off, NNA Off, finite
+samples, and both render block sizes.
+
 ## Loading
 
 Loading a song resolves each sample's encoded data while the document is being

@@ -29,6 +29,25 @@
   private mixdowns and Instrument-selected recursive tones support
   live parent-note pitch inheritance, initial pitch/playback-speed
   composition, and deterministic seeking.
+- **Nested private-source release is not an outer-sample release.**
+  When the parent Instrument Note Off ends private Sequence input,
+  the child `PlaybackSession.EndInput` requests Note Off on its own
+  active voices. A bare child Sample stops immediately, even if the
+  outer Instrument still has an audible release envelope. A child
+  Instrument-selected Sample with its own volume envelope can
+  continue its *own* finite release; outer and inner envelope gains
+  compose independently, including delayed S77/S78 pause/resume.
+  Natural child PCM end still limits both. `NestedInstrumentPrivateReleaseIntersectionTests`
+  cover repeated Off, NNA Off, zero/nonzero release, private Pattern/
+  Sequence natural producer retirement, and PCM chunk invariance.
+- **Root physical notes also retain their originating Pattern cursor.**
+  All top-level Patterns use physical playback owner zero; that
+  shared owner is insufficient to identify a root's own voices
+  during explicit subtree cancellation. `OriginPatternCursorId`
+  now survives displacement, so canceling one root cuts only its
+  physical current and NNA voices, never another root's note on the
+  same host. Normal producer retirement still preserves already-
+  releasing voices. No eager scheduling or extra event journal is used.
 - **Repeated Note Off preserves one release origin.**
   Each `PlaybackVoice` applies its first Note Off to both the terminal
   `SoundState.NoteOffTime` and its instrument/leaf envelope states.
@@ -37,8 +56,9 @@
   `EnvelopePlaybackState` retains the original one. This holds for
   physical and explicitly targeted virtual voices, including
   Instrument-selected ADSR volume envelopes, and is covered by
-  regression PCM and lifecycle tests. The broader advanced
-  delayed-effect/script and multichannel release matrix remains open.
+  regression PCM and lifecycle tests. The dedicated advanced
+  lifecycle cross-interaction matrix is now closed by additional
+  production-path regressions; future gaps need specific counterexamples.
 - **Zero-length release finishes synchronously.** Physical and
   explicitly targeted virtual Instrument-selected samples with
   zero-duration volume release retire during Note Off or EndInput,
@@ -58,8 +78,8 @@
   notes and Instrument tones with no volume envelope retain their
   previous immediate Note Off, and finite PCM can still run out
   naturally. Tests verify the separate per-invocation behavior.
-- Advanced mixed-rate tracker timing and complex script/effect
-  interactions remain separate compatibility TODOs.
+- Advanced mixed-rate tracker timing and script/effect
+  cross-interactions have their own completed production regressions.
   Baseline recursive playback, flattened ownership
   and **Oxx/Qxy native-frame seeking across private invocation boundaries**
   are covered by production-factory regressions. The latter exercise

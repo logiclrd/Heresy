@@ -358,23 +358,47 @@ cancellation cuts that owned release without touching the sibling.
 Tests cover irregular PCM blocks and whole blocks for cancellation.
 No production changes were required; this checkbox is closed.
 
-**Advanced lifecycle — remaining independently closable checks.**
-These checkboxes cover combinations **not yet demonstrated end-to-end**,
-not known production defects. Each may be closed after an explicit
-regression passes on the production incremental path; if it fails,
-add the smallest corrective change and verify red-to-green CI.
-Do not revisit already-complete flattened-source ownership or introduce
-eager schedules, event journals, or a second playback path.
+**Advanced lifecycle cross-interaction series complete
+(October 10).** All four independently scoped checks are now closed:
+tracker tick/fixed-wall collisions, mixed Roslyn/data ordering across
+Tempo and Speed changes, deferred flattened-owner/virtual routing,
+and the nested Instrument/private-source release-tail intersections
+described below. Retain them as regression contracts; add new TODOs
+only for demonstrated additional gaps, rather than reopening an
+unbounded compatibility umbrella.
 
-- [ ] **Nested Instrument and private-source release-tail intersections.**
-  Cover Instrument-selected Sample tones across nested Instruments and
-  private Pattern/Sequence mixdowns when a release overlaps delayed
-  S77/S78 envelope pause/resume, repeated Off, NNA displacement or
-  input/subtree retirement. Verify source natural-end limits, exact
-  zero/nonzero release completion, quiescence, and PCM chunk invariance.
-  The existing separate sample-release, S7x and private-tail cases
-  are already complete; close when the combined cases are verified
-  without regressing direct-sample Note Off behavior.
+**Nested Instrument and private-source release-tail intersections verified
+(October 10).** `NestedInstrumentPrivateReleaseIntersectionTests`
+uses the real snapshot-prepared incremental source, two levels of
+Instrument selection, and either a terminal Sample or a private
+Pattern/Sequence mixdown. Eight baseline parameterized regressions
+cover delayed S77/S78 envelope pause/resume, repeated Off preserving
+the first release origin, NNA Off with overlapping old/new releases,
+finite PCM ending before an extended envelope release, zero-duration
+release, exact quiescence and PCM-block invariance. In a private
+mixdown, parent Note Off also ends the *child's own* input: a bare
+child Sample therefore cuts at Off, even when the outer Instrument
+continues releasing. Adding an Instrument volume envelope to the
+private leaf permits its own finite release; child and outer release
+curves compose without either overriding the other. Three additional
+regressions cover natural private Sequence producer completion while
+the leaf release remains audible, explicit root cancellation of that
+release, and preservation of bare-child immediate Note Off.
+
+The explicit cancellation case exposed a **root-physical ownership
+defect**: direct root Pattern notes share physical playback owner 0,
+so prior cancellation cut only scoped virtual/flattened descendants,
+leaving root-owned direct physical voices (including private mixdowns)
+sounding. `PlaybackVoice.OriginPatternCursorId` now captures the
+originating physical Pattern cursor during StartNote, remaining stable
+through NNA migration. `PlaybackSession.CancelScopedVoices` cuts
+current and displaced physical voices **only** from the canceled
+cursor, alongside its scoped virtual voices. The additional
+`IncrementalRecursiveAudioSourceTests` regression proves cancellation
+of one root's physical/current/NNA notes never cuts another root's
+replacement note on the same physical channel. Natural producer
+retirement still preserves existing release tails. No second
+rendering path, eager schedule, or note-event journal was introduced.
 
 **Recursive native Oxx/Qxy source-frame seeking verified across
 invocation boundaries.** `RecursiveNativeSeekBoundaryTests` now cover
