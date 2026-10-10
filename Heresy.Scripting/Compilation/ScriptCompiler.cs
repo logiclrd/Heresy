@@ -770,21 +770,23 @@ public static class ScriptCompiler
 
 	private static string BuildEnvelopeWrapper(
 		string className, string source)
-		=> $"""
+		=> """
 			using System;
 			using Heresy.Scripting.Runtime;
 
-			public sealed class {{className}} : IScriptEnvelopeEvaluator
+			public sealed class __ENVELOPE_CLASS__ : IScriptEnvelopeEvaluator
 			{
 				public double Evaluate(
 					double elapsedSeconds, double releaseSeconds)
 				{
 			#line 1 "heresy-script"
-					return ({{source}});
+					return (__ENVELOPE_EXPRESSION__);
 			#line default
 				}
 			}
-			""";
+			"""
+			.Replace("__ENVELOPE_CLASS__", className, StringComparison.Ordinal)
+			.Replace("__ENVELOPE_EXPRESSION__", source, StringComparison.Ordinal);
 
 	private static string BuildSequenceWrapper(string className, string source)
 		=> $$"""
