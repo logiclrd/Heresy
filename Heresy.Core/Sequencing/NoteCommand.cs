@@ -142,8 +142,13 @@ public sealed record SetNoteVolumeCommand(double Volume) : NoteCommand;
 /// <summary>Sets the persistent overall volume belonging to the playback channel.</summary>
 public sealed record SetOverallChannelVolumeCommand(double Volume) : NoteCommand;
 
-/// <summary>Sets the current playback frequency in Hz.</summary>
-public sealed record SetPlaybackFrequencyCommand(double Frequency) : NoteCommand;
+/// <summary>Assigns a locally absolute, C-4-referenced musical pitch in Hz.</summary>
+public sealed record SetPlaybackFrequencyCommand(double Frequency) : NoteCommand
+{
+	/// <summary>Multiplicative enclosing flattened-source pitch context.
+	/// Supplied at emission, independently of the physical host channel.</summary>
+	public double LocalPitchContextMultiplier { get; init; } = 1.0;
+}
 
 /// <summary>Moves the current source directly to a new playback time offset.</summary>
 public sealed record SetPlaybackOffsetCommand(TimeSpan Offset) : NoteCommand;

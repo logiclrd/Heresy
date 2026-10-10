@@ -833,6 +833,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 							// their actual wall deadline; they must not apply
 							// while only preparing a future raw script note.
 							or SetPlaybackOffsetCommand
+							or SetPlaybackFrequencyCommand
 							or SetSpatialPositionCommand or SetSurroundCommand
 							or SetResonantFilterCommand
 							or SetResonantFilterCutoffCommand
@@ -887,6 +888,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						or ApplyTrackerVolumeColumnPanningCommand
 						or SetSurroundCommand or SetSpatialPositionCommand
 						or SetPlaybackOffsetCommand
+						or SetPlaybackFrequencyCommand
 						or SetResonantFilterCommand
 						or SetResonantFilterCutoffCommand
 						or SetResonantFilterResonanceCommand

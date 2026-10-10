@@ -480,7 +480,12 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 									});
 								}
 								else
-									retained.Add(command);
+									retained.Add(command is SetPlaybackFrequencyCommand frequency
+										? frequency with
+										{
+											LocalPitchContextMultiplier = frame.Context.PitchMultiplier,
+										}
+										: command);
 								continue;
 							}
 							if (emit.Note.Target.Kind != ChannelTargetKind.Physical)

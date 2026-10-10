@@ -1159,6 +1159,57 @@ public sealed class IncrementalRecursiveTimelineTests
 		Assert.That(context.ScopedMemory.ActiveScopeCount, Is.Zero);
 	}
 
+	[TestCase(0.5, 2.0, 1.0)]
+	[TestCase(2.0, 2.0, 4.0)]
+	[TestCase(0.5, 0.5, 0.25)]
+	public void NestedFrequencyKeepsItsOwnFlattenedPitchContext(
+		double outerPitch, double innerPitch, double composedPitch)
+	{
+		DataPatternDefinition root = Pattern(1, 1);
+		root.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote((ObjectId)2U, pitchMultiplier: outerPitch);
+		DataPatternDefinition middle = Pattern(2, 1);
+		middle.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote((ObjectId)3U, pitchMultiplier: innerPitch);
+		DataPatternDefinition leaf = Pattern(3, 1);
+		PatternCell cell = leaf.Grid.GetOrCreateCell(0, 0);
+		cell.Note = new StartPatternNote((ObjectId)99U, pitchMultiplier: 3.0);
+		cell.Effects.Add(new SetPlaybackFrequencyPatternEffect(880.0));
+		using IncrementalRecursiveTimeline timeline = new(
+			new SequencingContext(), new Resolver(root, middle, leaf));
+		timeline.AddRoot(root.Id);
+		NoteEvent[] notes = Drain(timeline);
+		StartNoteCommand start = notes.SelectMany(n => n.Commands)
+			.OfType<StartNoteCommand>().Single();
+		SetPlaybackFrequencyCommand frequency = notes.SelectMany(n => n.Commands)
+			.OfType<SetPlaybackFrequencyCommand>().Single();
+		Assert.Multiple(() =>
+		{
+			Assert.That(start.PitchMultiplier,
+				Is.EqualTo(3.0 * composedPitch).Within(1e-12));
+			Assert.That(frequency.Frequency, Is.EqualTo(880.0));
+			Assert.That(frequency.LocalPitchContextMultiplier,
+				Is.EqualTo(composedPitch).Within(1e-12));
+		});
+	}
+
+	[Test]
+	public void FlattenedSourceInstigatorIgnoresItsFrequencyEffect()
+	{
+		DataPatternDefinition root = Pattern(1, 1);
+		PatternCell cell = root.Grid.GetOrCreateCell(0, 0);
+		cell.Note = new StartPatternNote((ObjectId)2U);
+		cell.Effects.Add(new SetPlaybackFrequencyPatternEffect(880));
+		DataPatternDefinition child = Pattern(2, 1);
+		child.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote((ObjectId)99U);
+		using IncrementalRecursiveTimeline timeline = new(
+			new SequencingContext(), new Resolver(root, child));
+		timeline.AddRoot(root.Id);
+		Assert.That(Drain(timeline).SelectMany(n => n.Commands)
+			.OfType<SetPlaybackFrequencyCommand>(), Is.Empty);
+	}
+
 	private static DataPatternDefinition Pattern(uint id, int rows)
 		=> new((ObjectId)id, "Pattern")
 		{

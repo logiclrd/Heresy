@@ -1182,7 +1182,8 @@ public sealed class PlaybackSession
 			enclosingVolumeChannels: enclosingVolumes,
 			enclosingSourceVolumes: ancestors,
 			inheritedPitch: InheritedPitchAtFrame,
-			inheritedPitchAtStart: inheritedPitch)
+			inheritedPitchAtStart: inheritedPitch,
+			initialNotePitchMultiplier: start.PitchMultiplier)
 		{
 			OriginVirtualChannelId = virtualChannelId,
 			OriginScopedVirtualOwner = scopedOwner,
@@ -1357,6 +1358,12 @@ public sealed class PlaybackSession
 				channel.SetFilterResonance(
 					eventFrame,
 					filter.Resonance);
+				break;
+
+			case SetPlaybackFrequencyCommand frequency:
+				channel.CurrentVoice?.SetPlaybackFrequency(
+					eventFrame, frequency.Frequency,
+					frequency.LocalPitchContextMultiplier);
 				break;
 
 			case SetPlaybackOffsetCommand playbackOffset:
@@ -1770,7 +1777,8 @@ public sealed class PlaybackSession
 			enclosingVolumeChannels: enclosingVolumes,
 			enclosingSourceVolumes: enclosingSources,
 			inheritedPitch: InheritedPitchAtFrame,
-			inheritedPitchAtStart: inheritedPitch);
+			inheritedPitchAtStart: inheritedPitch,
+			initialNotePitchMultiplier: start.PitchMultiplier);
 
 		channel.AttachVoice(voice, eventFrame);
 	}

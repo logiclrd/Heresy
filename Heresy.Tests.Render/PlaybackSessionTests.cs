@@ -1280,4 +1280,64 @@ public sealed class PlaybackSessionTests
 		Assert.That(session.GetChannelState(0).CurrentVoice, Is.Null);
 	}
 
+	[Test]
+	public void AbsoluteFrequencySameFrameMatchesNeutralC4EvenWithPitchAndSpeed()
+	{
+		ObjectId id = (ObjectId)10U;
+		float[] wave = new float[256];
+		for (int i = 0; i < wave.Length; i++)
+			wave[i] = (float)Math.Sin(i * 0.11);
+		ISound sound = Sample(wave, 1000);
+		PlaybackSession baseline = Session(1000,
+			Schedule(Event(TimeSpan.Zero, 0, new StartNoteCommand(id))),
+			new TestResolver((id, false, sound)));
+		PlaybackSession changed = Session(1000,
+			Schedule(Event(TimeSpan.Zero, 0,
+				new StartNoteCommand(id, PitchMultiplier: 2.0,
+					PlaybackSpeedMultiplier: 2.0),
+				new SetPlaybackFrequencyCommand(
+					SequencingConstants.ReferenceC4FrequencyHz))),
+			new TestResolver((id, false, sound)));
+		float[] expected = new float[45], actual = new float[45];
+		baseline.Render(0, 45, expected);
+		changed.Render(0, 45, actual);
+		Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+		Assert.That(changed.GetChannelState(0).CurrentVoice!
+			.SoundState.PitchTrajectory.GetMultiplier(10),
+			Is.EqualTo(0.25).Within(1e-10));
+	}
+
+	[Test]
+	public void AbsoluteFrequencyCancelsPitchSlideButRetainsTransientVibrato()
+	{
+		ObjectId id = (ObjectId)10U;
+		PlaybackSession session = Session(1000,
+			Schedule(
+				Event(TimeSpan.Zero, 0, new StartNoteCommand(id),
+					new SetPitchSlideCommand(64, TicksPerRow: 6),
+					new SetVibratoCommand(6, 8)),
+				Event(Frame(10, 1000), 0,
+					new SetPlaybackFrequencyCommand(
+						SequencingConstants.ReferenceC4FrequencyHz * 2))),
+			new TestResolver((id, false, Sample(new float[256], 1000))));
+		session.Render(0, 11, new float[11]);
+		PlaybackVoice voice = session.GetChannelState(0).CurrentVoice!;
+		Assert.That(voice.ActiveOperatorCount, Is.EqualTo(1));
+		Assert.That(voice.SoundState.PitchTrajectory.GetMultiplier(10),
+			Is.EqualTo(2.0).Within(1e-9));
+		session.Render(11, 20, new float[20]);
+		Assert.That(voice.SoundState.PitchTrajectory.GetMultiplier(25),
+			Is.Not.EqualTo(2.0).Within(1e-5));
+	}
+
+	[Test]
+	public void FrequencyCommandWithNoVoiceDoesNotStartOne()
+	{
+		PlaybackSession session = Session(1000,
+			Schedule(Event(TimeSpan.Zero, 0,
+				new SetPlaybackFrequencyCommand(440))),
+			new TestResolver());
+		session.Render(0, 1, new float[1]);
+		Assert.That(session.GetChannelState(0).CurrentVoice, Is.Null);
+	}
 }

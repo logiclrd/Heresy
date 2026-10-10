@@ -181,6 +181,7 @@ public sealed class PlaybackVoice
 	private readonly ulong _modulationSeed;
 	private readonly TrackerTickClock _tickClock;
 	private readonly int _sampleRate;
+	private readonly double _initialNotePitchMultiplier;
 	private readonly PlaybackOperatorCollection _operators = new();
 	private readonly List<PitchOperatorBinding> _pitchOperators = [];
 	private readonly Func<long, double>? _inheritedPitch;
@@ -231,7 +232,8 @@ public sealed class PlaybackVoice
 		IReadOnlyList<PlaybackChannelState>? enclosingVolumeChannels = null,
 		IReadOnlyList<FlattenedSourceVolume>? enclosingSourceVolumes = null,
 		Func<long, double>? inheritedPitch = null,
-		double inheritedPitchAtStart = 1.0)
+		double inheritedPitchAtStart = 1.0,
+		double initialNotePitchMultiplier = 1.0)
 	{
 		Sound = sound ?? throw new ArgumentNullException(nameof(sound));
 		SoundState = soundState ?? throw new ArgumentNullException(nameof(soundState));
@@ -251,6 +253,10 @@ public sealed class PlaybackVoice
 		if (!(inheritedPitchAtStart > 0.0)
 			|| !double.IsFinite(inheritedPitchAtStart))
 			throw new ArgumentOutOfRangeException(nameof(inheritedPitchAtStart));
+		if (!(initialNotePitchMultiplier > 0.0)
+			|| !double.IsFinite(initialNotePitchMultiplier))
+			throw new ArgumentOutOfRangeException(nameof(initialNotePitchMultiplier));
+		_initialNotePitchMultiplier = initialNotePitchMultiplier;
 		_inheritedPitch = inheritedPitch;
 		_inheritedPitchAtStart = inheritedPitchAtStart;
 		SourceGainMultiplier = sourceGainMultiplier;
@@ -800,6 +806,56 @@ public sealed class PlaybackVoice
 		_activeTremolo = null;
 		_tremoloVolumeCurve = null;
 		_tremoloVolumeCurveStartFrame = absoluteFrame;
+	}
+
+	/// <summary>Snap the existing voice to a locally absolute musical pitch.
+	/// Cancel persistent slides/portamento, but retain live transient vibrato,
+	/// arpeggio, pitch envelopes and inherited private pitch modulation.</summary>
+	internal void SetPlaybackFrequency(
+		long absoluteFrame, double frequencyHz, double localPitchContext)
+	{
+		if (absoluteFrame < StartFrame)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		if (!(frequencyHz > 0.0) || !double.IsFinite(frequencyHz))
+			throw new ArgumentOutOfRangeException(nameof(frequencyHz));
+		if (!(localPitchContext > 0.0) || !double.IsFinite(localPitchContext))
+			throw new ArgumentOutOfRangeException(nameof(localPitchContext));
+
+		long relativeFrame = absoluteFrame - StartFrame;
+		if (_activePitchSlide is not null)
+		{
+			RemovePitchOperator(_activePitchSlide.Operator);
+			_activePitchSlide = null;
+		}
+		if (_activeTonePortamento is not null)
+		{
+			RemovePitchOperator(_activeTonePortamento.Operator);
+			_activeTonePortamento = null;
+		}
+		_tonePortamentoTargetBaseMultiplier = null;
+		_activeTonePortamentoCurve = null;
+		_tonePortamentoContinuationBaseMultiplier = null;
+
+		// The temporary neutral curve measures only surviving transient
+		// modulation. Do not divide out the current private-parent pitch:
+		// inheritance must remain dynamically transposing this local target.
+		_basePitchCurve = new ConstantPitchCurve(1.0);
+		_basePitchCurveStartFrame = relativeFrame;
+		RecomposePitchTrajectory(relativeFrame);
+		double inheritedRatio = _inheritedPitch is null ? 1.0
+			: _inheritedPitch(absoluteFrame) / _inheritedPitchAtStart;
+		double transient = SoundState.PitchTrajectory.GetMultiplier(relativeFrame)
+			/ inheritedRatio;
+		double composedPitch = frequencyHz
+			/ SequencingConstants.ReferenceC4FrequencyHz * localPitchContext;
+		double newBase = composedPitch
+			/ (_initialNotePitchMultiplier
+				* SoundState.PlaybackSpeedMultiplier * transient);
+		if (!(newBase > 0.0) || !double.IsFinite(newBase))
+			throw new InvalidOperationException(
+				"Absolute frequency yielded a non-finite pitch multiplier.");
+		_basePitchCurve = new ConstantPitchCurve(newBase);
+		RecomposePitchTrajectory(relativeFrame);
 	}
 
 	internal void AdjustPitchLinearUnits(
