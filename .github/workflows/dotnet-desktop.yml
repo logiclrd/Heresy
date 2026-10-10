@@ -67,6 +67,6 @@ jobs:
         archive="$RUNNER_TEMP/heresy-release-smoke/Heresy-${version}-linux-x64.tar.bz2"
         test -s "$archive"
         bzip2 -t "$archive"
-        tar -tjf "$archive" | grep -q '^Heresy/README.md$'
+        tar -tjf "$archive" | grep -Fx 'Heresy/README.md' >/dev/null
         test "$(tar -xOjf "$archive" Heresy/BUILD-COMMIT.txt)" = "$(git rev-parse HEAD)"
 
