@@ -14,6 +14,7 @@ using Heresy.Core.Sequencing;
 using Heresy.Playback;
 using Heresy.Render.Configuration;
 using Heresy.Render.Playback;
+using Heresy.Render.Realtime;
 using Heresy.Render.Sounds;
 
 using NUnit.Framework;
@@ -222,6 +223,63 @@ public sealed class RecursiveNativeSeekBoundaryTests
 			.Within(1e-6f),
 			"Nested source frame offsets must be applied in their own private " +
 			"source frame domain, not a parent note's wall-time domain.");
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void LiveAndOfflineSourceRenderTheSameOxxQxyPcmWithDifferentChunks(
+		bool viaInstrument)
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId child = AddPattern(document, sample, rows: 5);
+		ObjectId sequence = AddSequence(document, child);
+		ObjectId source = viaInstrument
+			? AddInstrument(document, sequence) : sequence;
+		ObjectId parent = AddPattern(document, source, rows: 4,
+			mixdown: !viaInstrument);
+		DataPatternDefinition rootPattern =
+			(DataPatternDefinition)document.Objects[parent];
+		rootPattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new SampleOffsetPatternEffect(1));
+		rootPattern.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new RetriggerPatternEffect(0x01));
+		ObjectId rootSequence = AddSequence(document, parent);
+		document.RootSequenceId = rootSequence;
+
+		RenderConfiguration config = RenderConfiguration.Stereo(1000);
+		PlaybackRequestAudioSourceFactory realtimeFactory = new(config);
+		PlaybackRequest request = SequencePlaybackRequest.Create(
+			document, rootSequence);
+		IAudioOutputSource live = realtimeFactory.Create(request);
+		using IDisposable realtime = (IDisposable)live;
+		using OfflineSongRenderPlan export =
+			new OfflineSongRenderPlanFactory(config).Create(document);
+		const int frames = 220; // Includes O01 and multiple row-1 Q01 retriggers.
+		const int channels = 2;
+		float[] livePcm = new float[frames * channels];
+		int[] blocks = [1, 7, 43, 3, 17, 5];
+		for (int pos = 0, n = 0; pos < frames; n++)
+		{
+			int count = Math.Min(blocks[n % blocks.Length], frames - pos);
+			live.Render(count, livePcm.AsSpan(pos * channels, count * channels));
+			pos += count;
+		}
+		float[] exportPcm = new float[frames * channels];
+		for (int pos = 0; pos < frames;)
+		{
+			int count = Math.Min(64, frames - pos);
+			int produced = export.Source.RenderLogical(count,
+				exportPcm.AsSpan(pos * channels, count * channels));
+			Assert.That(produced, Is.EqualTo(count),
+				"Both paths must still be within the finite logical arrangement.");
+			pos += count;
+		}
+		Assert.That(livePcm.Any(v => Math.Abs(v) > 1e-6f), Is.True,
+			"Silence would not prove native-offset/retrigger parity.");
+		for (int i = 0; i < livePcm.Length; i++)
+			Assert.That(livePcm[i], Is.EqualTo(exportPcm[i]).Within(1e-6f),
+				$"Source PCM mismatch at frame {i / channels} " +
+				$"on speaker {i % channels}.");
 	}
 
 	private static PlaybackSession ChildSession(PlaybackVoice parent)
