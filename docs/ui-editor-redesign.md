@@ -154,21 +154,18 @@ headless dialog-action and picker/guard/transaction regression tests.
 
 ## Instrument Editor: implicit specifications and tone-table grid
 
-**Model milestone implemented; visual grid not yet implemented.**
-The framework-independent `InstrumentToneGridProjection` and
-`InstrumentToneGridModel` implement the row projection and
-Core/draft persistence rules described below. The current Avalonia
-`InstrumentEditorControl` still presents separate specifications
-and tone-table lists. The next milestone must replace those controls
-with one editable grid bound to the model; the nine columns, note
-notation and pitch interactions are still pending. Details and
-explicit boundary decisions are recorded in
-[instrument-tone-grid-model.md](instrument-tone-grid-model.md).
+**Implemented:** The framework-independent
+`InstrumentToneGridProjection`/`InstrumentToneGridModel` and the
+Avalonia `InstrumentEditorControl` now present a **single nine-column
+grid** instead of two independently edited Core lists. Row creation,
+reordering, out-of-range highlights, Source/Envelope selection,
+editor-only drafts, Delete, logarithmic Pitch and dynamic note-choice
+controls use one model. Details and compatibility decisions appear
+in [instrument-tone-grid-model.md](instrument-tone-grid-model.md).
 
-The finished visual editor will stop presenting tone specifications
-and tone table as two separately edited lists. It will present
-**one editable tone-table grid** and manage the Core tone-specification
-list implicitly, without persisting rows lacking a Source.
+The Core still serializes reusable ToneSpecifications and
+ToneTable indices. The visual editor manages those relationships
+implicitly and does not persist entries without a Source.
 
 ### Row setup and ordering
 
@@ -220,21 +217,27 @@ selector has no blank clearing entry.
 
 ### Closest-note notation and pitch coupling
 
-- **Closest note** means nearest standard musical note, decorated with
-  an adjustment of zero or more repeated `+` or `-` characters.
-  The number of characters follows the requested rule: the floor of
-  the difference between the actual scale position and the closest
-  standard tone divided by **Divisions**. Retain the exact convention
-  expressed by the following 48-divisions-per-octave example when
-  implementing/testing the integer arithmetic:
+- **Closest note** is always the nearest standard **12-note chromatic
+  pitch**, found at the row's actual pitch from its `index`,
+  `Divisions` and `Offset`; it is **not** a 48-step fixed scale.
+  An adjustment is one `+` or `-` **per individual instrument-index
+  division step** between the actual index and that chromatic note's
+  rounded nominal index. The number of suffixes is *not* divided by
+  Divisions. Exact chromatic midpoint ties favor the lower note.
+  The following historical 48-divisions-per-octave example illustrates
+  that dynamic rule:
   `C-1, C-1+, C-1++, C#-1-, C#-1, C#-1+, C#-1++,
   D-1-, D-1, D-1+, D-1++, D#-1-, D#-1, D#-1+, D#-1++,
   E-1-, E-1, E-1+, E-1++, F-1-, F-1, F-1+, F-1++,
   F#-1-, F#-1, F#-1+, F#-1++, G-1-, G-1, G-1+, G-1++,
   G#-1-, G#-1, G#-1+, G#-1++, A-1-, A-1, A-1+, A-1++,
   A#-1-, A#-1, A#-1+, A#-1++, B-1-, B-1, B-1+, B-1++`.
-  This complete example is an explicit acceptance fixture for note naming,
-  including the negative adjustment immediately below sharp notes.
+  This example has **47 entries**, ending at `B-1++`.
+  The omitted 48th index is `C-2-` because it lies just one
+  instrument division below the next chromatic C and is therefore
+  closer to C-2 than B-1. That extra boundary is included in the
+  regression fixture. For other division counts, the algorithm
+  chooses chromatic names and suffix counts dynamically.
 - The second closest-note column (column 5) represents the nominal
   note multiplied by the row's pitch multiplier.
   When a user edits the **Pitch multiplier** value, automatically select
@@ -244,10 +247,12 @@ selector has no blank clearing entry.
   snap/write the Pitch multiplier to the *exact* multiplier represented
   by that note choice. Do **not** feed back an automatic selection change
   into a pitch update; the directions are intentionally asymmetric.
-- Column 5 offers closest-note options corresponding to the supplied
-  pitch-multiplier range **±0.3**; define the precise logarithmic
-  coordinate and option-generation boundaries in tests when implementing
-  this control, preserving the user's semitone/sub-note convention.
+- Column 5 offers instrument-grid note choices within **±0.3 of
+  the entered log₂ Pitch offset**, rather than ±0.3 of the linear
+  multiplier. Each option maps to the exact multiplier
+  `2^((chosenIndex - nominalIndex) / Divisions)`; choosing one
+  writes that value directly. The closest option updates on manual
+  Pitch input without snapping the user-entered value.
 
 ### Persistence and editing lifecycle
 

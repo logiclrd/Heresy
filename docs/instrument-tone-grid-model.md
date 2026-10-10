@@ -1,10 +1,15 @@
 # Instrument tone-grid model — implementation milestone
 
-Status: **framework-independent model completed**. The Avalonia
-`InstrumentEditorControl` still uses the existing dual
-ToneSpecifications/ToneTable editor controls. This milestone does
-**not** claim the visual nine-column redesign, note names, direct
-cell editing, or new keyboard interactions are complete.
+Status: **visual nine-column grid and framework-independent
+model implemented**. The Avalonia `InstrumentEditorControl` now
+projects the same `InstrumentToneGridModel` used by regression tests;
+the old dual ToneSpecifications/ToneTable editor controls were removed.
+The editor commits populated cell choices as they change; its Pitch
+TextBox commits on Enter or loss of focus. The reserved blank entry
+row migrates when focus leaves the *whole row*; Delete on a selected
+grid row removes its mapped/draft state. A desktop smoke test remains
+useful for focus behavior, overflow/virtualization and keyboard
+navigation under real window-manager conditions.
 
 ## Projection and exact regular range
 
@@ -102,8 +107,8 @@ Core continues to serialize `InstrumentDefinition.ToneTable`
 Old, unreferenced ToneSpecifications become ineligible for the new
 single-grid presentation and are removed as part of the next effective
 mapped edit. Simply viewing the instrument does not mutate it.
-The existing explicit ToneSpecifications editor remains present
-until the future UI cutover.
+The Core dual-list representation remains a persistence detail,
+not a user-facing second editor.
 
 `SongDocumentSnapshot.Create` continues to isolate playback
 from subsequent tone-grid edits. The test suite
@@ -113,12 +118,37 @@ entry-row overwrites, shared mapping copy-on-write,
 deduplication, deletion, validation, revision counts and
 snapshot isolation.
 
-## Next work
+## Current UI integration
 
-Connect the projected rows and entry-row focus-loss/Delete events
-to the Avalonia Instrument Editor, replacing the separate
-specification list and tone table. Implement exactly nine columns;
-closest musical note +/- decoration; logarithmic pitch offset;
-pitch-adjusted closest-note dropdown with its +/-0.3 option range;
-and asymmetric selection snapping. See
-[ui-editor-redesign.md](ui-editor-redesign.md) and [todo.md](todo.md).
+The nine columns (no-heading index and nominal note, Source, log₂
+Pitch, no-heading pitch-adjusted note, Volume/Pitch/Panning/Filter
+envelopes) are implemented in `InstrumentEditorControl`.
+The indexed rows are read-only in their index column; the blank
+first entry row accepts a new index, Source, Pitch and envelope
+values and has an intentionally blank nearest-note column.
+All source/envelope dropdowns have clearing entries; the
+pitch-adjusted note dropdown has no blank choice.
+
+`InstrumentToneNoteNotation` chooses the nearest standard
+12-note chromatic pitch for each row, breaking exact halfway
+ties toward the lower note. It counts the difference from that
+chromatic pitch's nominal instrument index in **individual steps**
+(`+`/`-`), for arbitrary positive finite Divisions and any
+Offset. The 48-division illustrative sequence has 47 provided
+labels; its final omitted index is `C-2-` (not another B).
+`InstrumentToneNoteNotationTests` cover several divisions,
+fractional divisions, offset and the complete octave boundary.
+
+Pitch editing uses `log₂(multiplier)`. The adjusted-note selector
+offers exact grid pitches within ±0.3 in that logarithmic
+coordinate; changing text picks the nearest listed option
+**without snapping**, while actively selecting an option
+writes its exact multiplier and updates the text. Viewpoint
+refreshes do not discard model drafts. Shared specification
+copy-on-write, revisions and playback snapshot isolation remain
+covered by `InstrumentToneGridModelTests`.
+
+The next work is optional desktop interaction/visual verification
+of focus routing, virtualization, row overflow and text/popup
+keyboard navigation; any observed regressions should be logged
+as targeted bugs in [todo.md](todo.md).

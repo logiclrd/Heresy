@@ -298,39 +298,28 @@ New and Exit retain their original guard behavior. A headless-testable
 action factory and open-flow coordinator cover button roles, choice
 mapping, event ordering, cancellation and failure preservation.
 See [ui-editor-redesign.md](ui-editor-redesign.md).
-**Instrument tone-grid model groundwork completed (not yet connected to UI).**
-A framework-independent `InstrumentToneGridProjection` and
-`InstrumentToneGridModel` provide descending rows, a reserved
-blank entry row, C-11/ten-octave clipping with Offset and fractional
-Divisions, translucent-red out-of-range rows, blank-row migration
-and Delete operations. Unassigned rows remain editor-local drafts.
-Assigning a Source commits the row to Core automatically with
-copy-on-write isolation of shared specifications, deduplication of
-equivalent active specifications and one audio-affecting revision.
-Clearing Source silences its mapping while retaining draft values;
-snapshots remain isolated. The existing InstrumentEditorControl still
-uses the old two-list interface: **the three UI integration and
-closest-note TODOs below remain open**. See
-[instrument-tone-grid-model.md](instrument-tone-grid-model.md).
-
-- [ ] Redesign the **Instrument tone-table editor** as one grid with
-  implicitly managed specifications. Build the blank top row and
-  reverse-index, ten-octave/C-11-with-Offset rows on load/Divisions
-  change; preserve assigned out-of-range rows in descending order with
-  ARGB `40FF0000` highlighting; support Delete and blank-row
-  focus-loss migration/overwrite.
-- [ ] Implement all **nine tone-grid columns** with the specified
-  heading/blank/readonly/editable and dropdown semantics, including
-  48-divisions-per-octave closest-note `+`/`-` notation, logarithmic
-  pitch offset and the pitch-adjusted closest-note selection range ±0.3.
-  Update closest-note automatically on multiplier edits without
-  snapping the entered value; snap multiplier only when the user
-  actively chooses a note.
-- [ ] Apply Instrument grid changes to Core automatically. Rows with
-  no Source must remain as editor-local drafts (even with other data)
-  and are not persisted; adding/removing a Source publishes/removes
-  its underlying tone assignment without losing draft UI state.
-  Keep shared tone-specification indices and audio revisions correct.
+**Unified nine-column Instrument tone-table editor implemented.**
+The former dual-list controls have been replaced with one grid:
+a blank first insertion row, the descending regular note range
+capped by ten octaves/C-11 accounting for Divisions and Offset,
+and mapped out-of-range rows shaded `40FF0000`. A completed
+entry-row focus transition overwrites/inserts the requested index;
+Delete removes the selected indexed row. All nine specified
+columns are present, with Source and four Envelope clearable
+selectors, a logarithmic Pitch offset and a nearby-note selector
+covering ±0.3 of that log₂ offset. The nearest chromatic note
+label uses **twelve-note naming at any Divisions**, with each
+`+`/`-` suffix representing **one actual instrument division
+step** (not a fixed 48-note resolution). Automatic selection
+tracks entered Pitch without changing it; an explicit dropdown
+selection snaps to its exact multiplier. Source-less edits remain
+local drafts; assigning/clearing Source publishes/removes the
+effective mapping through the tested copy-on-write Core model,
+including correct references, revisions and snapshot isolation.
+See [instrument-tone-grid-model.md](instrument-tone-grid-model.md)
+and [ui-editor-redesign.md](ui-editor-redesign.md).
+A desktop visual/keyboard smoke test is advisable for focus
+transitions, dropdown navigation and horizontal overflow.
 
 ## Documentation and later maintenance
 

@@ -544,28 +544,42 @@ export. Errors from invoked scripts remain surfaced through the
 compiler/runtime diagnostic paths, and script layout/source edits
 remain audio-affecting.
 
-The Instruments pane can create an `InstrumentDefinition` and open it in a
-main-workspace tone-table editor. Divisions and offset remain the pitch-to-index
-lookup parameters from Core. Tone specifications are edited independently from
-the tone table: each reusable specification selects any live sound-producing
-song object (sample, instrument, pattern or sequence), composes a positive pitch
-multiplier, and can independently override volume, pitch, panning and filter
-envelope references. The tone table then maps each integer tone index to a
-specification or to `-1` for silence. Removing a specification deliberately
-silences entries that referenced it and decrements later specification indices
-so remaining mappings continue to identify the same definitions. The editor
-projects existing envelope objects, including unresolved references via
-tombstone/raw-ID fallback.
+The Instruments pane creates `InstrumentDefinition` objects and now uses
+**one unified nine-column tone grid**, with implicitly managed
+ToneSpecifications and ToneTable references. Divisions and Offset are
+the pitch-to-index lookup parameters used by the renderer. The
+top blank row creates/overwrites a mapping when the entire row loses
+focus; rows descend from the highest regular pitch, with additional
+mapped out-of-range indices highlighted translucent red (ARGB
+`40FF0000`). Select a row and press Delete to remove its mapping.
+Each mapped row chooses any live sound-producing Source (including
+sample, FM synthesizer, instrument, pattern and sequence), one
+logarithmic **Pitch** offset, and Volume, Pitch, Panning and Filter
+envelope overrides.
 
-The next-generation Instrument tone-grid **model and projection** are now
-implemented and tested separately from this legacy visual editor. Their
-descending row range is capped by 10 × Divisions and C-11 (using the
-renderer’s AwayFromZero pitch-index rounding and Offset), with editor-only
-drafts, out-of-range row highlighting, overwrite/Delete semantics and
-copy-on-write Core tone-specification maintenance. **The visual grid has
-not been installed yet.** The nine-column user interface and closest-note/
-logarithmic-pitch controls remain TODOs; see
-[instrument tone-grid model](docs/instrument-tone-grid-model.md).
+The two nearest-note columns are derived from the **instrument's actual
+Divisions and Offset**. The closest conventional 12-note chromatic
+pitch is named (C, C♯, etc.), followed by one `+` or `-` for
+**each instrument index step** away from that chromatic note's nominal
+index. This notation is not tied to 48 divisions per octave.
+Chromatic ties favor the lower pitch. The editable Pitch column is
+`log2(pitch multiplier)`. Its adjacent note dropdown offers exact
+instrument-grid pitches within ±0.3 of that logarithmic offset.
+Typing a Pitch offset automatically highlights the nearest note
+**without changing the entered value**; choosing a note explicitly
+snaps the multiplier to the exact value.
+
+Source and envelope selectors start with a clearing option. A row
+without a Source keeps its pitch/envelope edits **only while the current
+editor instance remains open**; it is not persisted to the song.
+Assigning a Source automatically publishes the row to Core; removing
+it restores the silent mapping while retaining the editable draft.
+Shared Core tone specifications are copy-on-write, and equivalent
+active specifications are interned when publishing, avoiding stale
+indices and unintended modifications to other rows. Playback's
+frozen document snapshots remain isolated from subsequent edits.
+See [tone-grid implementation](docs/instrument-tone-grid-model.md) and
+[UI design](docs/ui-editor-redesign.md).
 
 ADSR envelopes are first-class objects in the **Envelopes** pane. Its
 editor now combines numeric fields with the **graphical ADSR editor**:
