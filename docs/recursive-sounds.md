@@ -29,6 +29,16 @@
   private mixdowns and Instrument-selected recursive tones support
   live parent-note pitch inheritance, initial pitch/playback-speed
   composition, and deterministic seeking.
+- **Repeated Note Off preserves one release origin.**
+  Each `PlaybackVoice` applies its first Note Off to both the terminal
+  `SoundState.NoteOffTime` and its instrument/leaf envelope states.
+  A second Off delivered while that voice is still releasing is a
+  no-op, rather than shifting the sound's release deadline while
+  `EnvelopePlaybackState` retains the original one. This holds for
+  physical and explicitly targeted virtual voices, including
+  Instrument-selected ADSR volume envelopes, and is covered by
+  regression PCM and lifecycle tests. The broader advanced
+  delayed-effect/script and multichannel release matrix remains open.
 - Advanced mixed-rate tracker timing and complex script/effect
   interactions remain separate compatibility TODOs.
   Baseline recursive playback, flattened ownership

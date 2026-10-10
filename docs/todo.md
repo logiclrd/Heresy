@@ -210,6 +210,20 @@ and native resampling versus pitch compensation. See
   S7x, NNA, virtual broadcast, Cut/Off/Fade and private-tail ownership are
   implemented and tested; avoid reopening those milestones without a
   demonstrated counterexample.
+
+  **Repeated Note Off release-origin mismatch fixed (October 10).**
+  `PlaybackVoice.ApplyNoteOff` formerly changed `SoundState.NoteOffTime`
+  for every repeated Off, while `EnvelopePlaybackState.NoteOff`
+  retained its first release origin. The source could therefore
+  extend or restart its release after the Instrument volume envelope
+  had already begun releasing. A voice's first Off now fixes both
+  source and envelope release timing; later Off events are idempotent.
+  Red-then-green regressions cover a physical source with finite
+  note-off-relative release, the same semantics on an explicit
+  virtual channel, and an Instrument-selected ADSR envelope whose
+  PCM and terminal sound state agree on the original release time.
+  The broader delayed-effect/script routing and envelope interaction
+  compatibility item remains open for further demonstrated cases.
 **Recursive native Oxx/Qxy source-frame seeking verified across
 invocation boundaries.** `RecursiveNativeSeekBoundaryTests` now cover
 O01 as exactly 256 private source frames across multi-order child
