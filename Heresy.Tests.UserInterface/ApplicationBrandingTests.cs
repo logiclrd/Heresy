@@ -3,6 +3,8 @@ using System.IO;
 
 using Avalonia.Platform;
 
+using Heresy.UserInterface;
+
 using NUnit.Framework;
 
 namespace Heresy.Tests.UserInterface;
@@ -16,7 +18,12 @@ public sealed class ApplicationBrandingTests
 		// The window opens this resource without relying on a working
 		// directory, installed executable path or a second copy of the icon.
 		Uri uri = new("avares://Heresy.UserInterface/Images/Icon.ico");
-		using Stream stream = AssetLoader.Open(uri);
+		// The unit-test runner does not initialize the Avalonia platform locator.
+		// Exercise the production resource through the same standard loader
+		// used by the desktop platform, without constructing a Window.
+		StandardAssetLoader loader = new(typeof(MainWindow).Assembly);
+		loader.RegisterResUriParsers();
+		using Stream stream = loader.Open(uri);
 		using BinaryReader icon = new(stream);
 		Assert.Multiple(() =>
 		{
