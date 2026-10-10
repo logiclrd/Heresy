@@ -20,22 +20,24 @@ public sealed class App : Application
 	{
 		if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
 		{
+			// Realtime and export both capture immutable configuration from
+			// the same UI-owned selection when a new render starts.
+			AudioOutputSettings settings = new();
 			desktop.MainWindow =
 				new MainWindow(
 					new LazySongPlaybackTransport(
-						CreatePlaybackTransport));
+						() => CreatePlaybackTransport(settings)),
+					settings);
 		}
 
 		base.OnFrameworkInitializationCompleted();
 	}
 
-	private static ISongPlaybackTransport CreatePlaybackTransport()
+	private static ISongPlaybackTransport CreatePlaybackTransport(
+		AudioOutputSettings settings)
 	{
-		RenderConfiguration configuration =
-			RenderConfiguration.Stereo(
-				sampleRate: 48000);
 		PlaybackRequestAudioSourceFactory sourceFactory =
-			new(configuration);
+			new(() => settings.Current);
 		SdlAudioOutputBackend backend = new();
 
 		return new SongPlaybackTransport(
