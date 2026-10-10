@@ -179,9 +179,113 @@ public sealed class NestedInstrumentPrivateReleaseIntersectionTests
             + "Sequence tone, without an extra PCM block.");
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void PrivateSequenceRetirementPreservesReleaseUnlessRootIsCanceled(
+        bool cancelRoot)
+    {
+        SongDocument document = CreateSong(
+            privateSequence: true, sourceFrames: 1200,
+            releaseMilliseconds: 40,
+            out ObjectId instrumentId, out _,
+            leafReleaseMilliseconds: 600);
+        DataPatternDefinition privatePattern = document.Objects.Values
+            .OfType<DataPatternDefinition>()
+            .Single(p => p.Name == "Private leaf");
+        privatePattern.Grid.GetOrCreateCell(1, 0).Note =
+            new PatternNoteOff();
+
+        // The otherwise silent future root action keeps the root's
+        // invocation live past the child's own 480-ms natural end.
+        // No artificial post-root PCM stream or eager event journal.
+        NoteSchedule notes = Schedule(
+            At(0, new StartNoteCommand(instrumentId)),
+            new NoteEvent(new MusicalTime(TimeSpan.Zero, 4),
+                ChannelTarget.Physical(2),
+                [new SetNoteVolumeCommand(1)]));
+        using PreparedIncrementalPlaybackPlan plan =
+            Factory().CreateAdHoc(SongDocumentSnapshot.Create(document), notes);
+
+        float[] intro = new float[260];
+        plan.Source.Render(intro.Length, intro);
+        Assert.That(intro[259], Is.GreaterThan(0),
+            "The private child is in a long release after row one's Note Off.");
+
+        if (cancelRoot)
+        {
+            Assert.That(plan.Source.Cancel(plan.RootInvocationId), Is.True);
+            Assert.That(plan.Source.Cancel(plan.RootInvocationId), Is.False);
+        }
+
+        float[] rest = new float[520];
+        int[] blocks = [1, 7, 3, 19, 11, 89];
+        for (int i = 0, block = 0; i < rest.Length; block++)
+        {
+            int count = Math.Min(blocks[block % blocks.Length],
+                rest.Length - i);
+            plan.Source.Render(count, rest.AsSpan(i, count));
+            i += count;
+        }
+        Assert.Multiple(() =>
+        {
+            if (cancelRoot)
+            {
+                Assert.That(rest[100], Is.Zero.Within(1e-6f),
+                    "Explicit cancellation cuts the private release.");
+                Assert.That(rest[250], Is.Zero.Within(1e-6f),
+                    "The canceled root's remaining 4th-row commands are inert.");
+            }
+            else
+            {
+                Assert.That(rest[240], Is.GreaterThan(0),
+                    "Private Pattern/Sequence producer retirement at 480 ms " +
+                    "must not prematurely cut the releasing child voice.");
+                Assert.That(rest[459], Is.GreaterThan(0),
+                    "The leaf release remains audible through frame 719.");
+                Assert.That(rest[460], Is.Zero.Within(1e-6f),
+                    "The leaf finishes its 600-ms release at frame 720.");
+            }
+            Assert.That(rest[^1], Is.Zero.Within(1e-6f));
+        });
+    }
+
+    [Test]
+    public void PrivateChildBareSampleStillEndsOnItsOwnInputNoteOff()
+    {
+        SongDocument document = CreateSong(
+            privateSequence: true, sourceFrames: 220,
+            releaseMilliseconds: 40,
+            out ObjectId instrumentId, out ObjectId sampleId);
+        DataPatternDefinition privatePattern = document.Objects.Values
+            .OfType<DataPatternDefinition>()
+            .Single(p => p.Name == "Private leaf");
+        privatePattern.Grid.GetOrCreateCell(0, 0).Note =
+            new StartPatternNote(sampleId);
+
+        NoteSchedule notes = Schedule(
+            At(0, new StartNoteCommand(instrumentId)),
+            At(10, new NoteOffCommand()),
+            At(20, new ApplyTrackerEnvelopeControlCommand(
+                TrackerEnvelopeControlTarget.Volume, false)),
+            At(50, new ApplyTrackerEnvelopeControlCommand(
+                TrackerEnvelopeControlTarget.Volume, true)));
+        float[] output = Render(document, notes, 110, [1, 17, 3],
+            out bool quiescent);
+        Assert.Multiple(() =>
+        {
+            Assert.That(output[9], Is.EqualTo(0.5f).Within(1e-6f));
+            Assert.That(output[10], Is.Zero.Within(1e-6f),
+                "The child's bare Sample must not inherit the enclosing "
+                + "Instrument's release policy across the private boundary.");
+            Assert.That(output[60], Is.Zero.Within(1e-6f));
+            Assert.That(quiescent, Is.True);
+        });
+    }
+
     private static SongDocument CreateSong(
         bool privateSequence, int sourceFrames, int releaseMilliseconds,
-        out ObjectId instrumentId, out ObjectId sampleId)
+        out ObjectId instrumentId, out ObjectId sampleId,
+        int leafReleaseMilliseconds = 100)
     {
         SongDocument doc = new();
         sampleId = doc.AllocateObjectId();
@@ -205,7 +309,7 @@ public sealed class NestedInstrumentPrivateReleaseIntersectionTests
             doc.Add(new AdsrEnvelopeDefinition(leafEnvelopeId, "Leaf release")
             {
                 SustainLevel = 1.0,
-                Release = TimeSpan.FromMilliseconds(100),
+                Release = TimeSpan.FromMilliseconds(leafReleaseMilliseconds),
             });
             ObjectId leafInstrumentId = doc.AllocateObjectId();
             InstrumentDefinition leafInstrument =
