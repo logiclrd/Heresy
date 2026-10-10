@@ -854,6 +854,13 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						or ApplyVibratoCommand or ApplyFineVibratoCommand
 						or ApplyVibratoVolumeSlideCommand
 						or ApplyTrackerVibratoWaveformCommand
+						// These tracker/Instrument effects are resolved at the
+						// actual row event by PatternNoteProcessor, preserving
+						// SFx channel memory, S7x note ordering, and Wxx memory.
+						or ApplyTrackerEnvelopeControlCommand
+						or ApplyTrackerMidiMacroSelectCommand
+						or ApplyTrackerMidiMacroCommand
+						or ApplyTrackerGlobalVolumeCommand
 						or ApplyTrackerVolumeColumnCommand
 						or ApplyGlobalVolumeSlideCommand or ApplyPanningSlideCommand
 						or SetOverallChannelVolumeSlideCommand
