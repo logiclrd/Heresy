@@ -130,7 +130,7 @@ public sealed class IncrementalAdvancedTrackerEffectsTests
         pattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
             new TrackerGlissandoControlPatternEffect(enabled));
         pattern.Grid.GetOrCreateCell(1, 0).Effects.Add(
-            new TrackerTonePortamentoPatternEffect(4));
+            new TonePortamentoPatternEffect(4));
         pattern.Grid.GetOrCreateCell(2, 0).Effects.Add(
             new TrackerGlissandoControlPatternEffect(0));
 
