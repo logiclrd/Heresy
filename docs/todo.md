@@ -178,10 +178,15 @@ the existing 500-entry history/clear action. HRSEQ001/002 and
 HRSEQ003/004 retain their existing 32-individual-message-per-kind
 suppression caps. No script/UI callbacks run in the audio worker.
 See [export-workflow.md](export-workflow.md).
-- [ ] Surface the PCM ring's existing underrun count and worker faults
-  through playback transport/UI. Late audio already produces silence without
-  skipping unrendered musical frames or blocking SDL; the UI underrun
-  indicator must be **hidden until the first underrun**.
+**Realtime PCM health surfaced.** The SDL session exposes the PCM ring's
+atomic underrun count and its already-captured worker/device faults through
+a read-only health contract. The transport samples it on the existing
+non-audio timer, resets status when a playback session is replaced/stopped,
+and reports faults once per session to the existing bounded Warnings UI.
+An underrun is recoverable: the status-bar count remains **hidden until
+the first underrun**, while SDL inserts silence without advancing or
+skipping future musical frames. Live audition and completed pattern-position
+tracking keep status monitoring active. See [audio-output.md](audio-output.md).
 - [ ] Show playback-affecting changes since the most recent playback snapshot,
   separately from unsaved-file status, using document/audio revision tracking.
 - [ ] Highlight Oxx/offset operations on ReplayRequired mixdown sources when

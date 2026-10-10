@@ -2573,7 +2573,7 @@ public sealed class MainWindow : Window
 			if (e.IsNewFault && e.Fault is not null)
 			{
 				_runtimeDiagnosticMessages.Add(
-					$"[Playback] Audio worker failure: {e.Fault.GetType().Name}: {e.Fault.Message}");
+					$"[Playback] Audio output failure: {e.Fault.GetType().Name}: {e.Fault.Message}");
 				if (_runtimeDiagnosticMessages.Count > MaximumVisibleRuntimeDiagnostics)
 					_runtimeDiagnosticMessages.RemoveRange(
 						0, _runtimeDiagnosticMessages.Count - MaximumVisibleRuntimeDiagnostics);

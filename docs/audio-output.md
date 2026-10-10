@@ -100,3 +100,42 @@ coverage. The UI does not yet persist its per-session output settings,
 and no automatic LFE bass management is implemented. Those concerns,
 along with selectable WAV bit depths, remain separate from the
 completed renderer and user-configuration path in [todo.md](todo.md).
+
+## Realtime playback health
+
+The same single PCM worker and bounded ring used by SDL continue to handle
+synthesis and sequencing. `BufferedAudioOutputSource.UnderrunCount` is an
+atomic count of short callback reads; those calls emit silence for missing
+frames **without** advancing the musical generator. `RenderingFault` is
+captured when the PCM worker stops after an exception. SDL also captures its
+own callback/queueing failures in `SdlAudioOutputSession.Fault`.
+
+The SDL output session implements the optional
+`IAudioOutputUnderrunCounter` interface; the existing
+`IAudioOutputSession.Fault` carries either kind of failure. The
+`BackgroundPlaybackController` publishes immutable session identities
+with each open/stop and exposes a read-only `GetAudioHealth()` snapshot.
+Status can be sampled concurrently without taking locks in or invoking
+callbacks from SDL or its PCM worker.
+
+`SongPlaybackTransport` polls this health on the **transport timer thread**
+and publishes `IPlaybackAudioHealthTransport.AudioHealthChanged` only on
+session transitions, count changes or the first observation of a fault.
+Faulty event subscribers are isolated. Finite pattern-position completion
+no longer stops the timer entirely while the audio session is still active;
+ad-hoc audition has the same monitoring. `LazySongPlaybackTransport` relays
+subscriptions without forcing eager SDL initialization.
+
+The Avalonia main window dispatches health notifications to its UI thread.
+Its status-bar **Audio underruns** counter is completely invisible at zero,
+becomes visible on the first underrun and resets for each session.
+Recoverable underruns do not generate an unbounded diagnostic entry per
+audio callback. Worker and SDL output faults are reported **once per
+session**, in the existing bounded last-500-entry Runtime Diagnostics /
+Warnings history and as a playback-failure status. Generation IDs reject
+stale session updates after stop/replacement. The SDL callback still never
+executes scripts, waits, or touches controls.
+
+Regression coverage exercises empty-ring silence, count increments,
+worker-exception retention, per-session observation/reset, duplicate-fault
+suppression, observer isolation and subscriptions through lazy transport.
