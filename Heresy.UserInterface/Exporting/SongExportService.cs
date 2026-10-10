@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 
 using Heresy.Core.Objects;
@@ -29,10 +30,13 @@ public sealed class SongExportService
 	public Task<OfflineRenderResult> ExportAsync(
 		SongDocument document,
 		string path,
-		OfflineAudioFileFormat format)
+		OfflineAudioFileFormat format,
+		IProgress<OfflineRenderProgress>? progress = null,
+		CancellationToken cancellationToken = default)
 	{
 		ArgumentNullException.ThrowIfNull(document);
 		ArgumentException.ThrowIfNullOrWhiteSpace(path);
+		cancellationToken.ThrowIfCancellationRequested();
 
 		// Capture the authoring document synchronously on the caller/UI thread.
 		// Everything below this point consumes only the immutable snapshot.
@@ -45,23 +49,31 @@ public sealed class SongExportService
 			() => ExportPlan(
 				plan,
 				fullPath,
-				format));
+				format,
+				progress,
+				cancellationToken));
 	}
 
 	private static OfflineRenderResult ExportPlan(
 		OfflineSongRenderPlan plan,
 		string fullPath,
-		OfflineAudioFileFormat format)
+		OfflineAudioFileFormat format,
+		IProgress<OfflineRenderProgress>? progress,
+		CancellationToken cancellationToken)
 	{
 		using (plan)
-			return ExportOwnedPlan(plan, fullPath, format);
+			return ExportOwnedPlan(plan, fullPath, format,
+				progress, cancellationToken);
 	}
 
 	private static OfflineRenderResult ExportOwnedPlan(
 		OfflineSongRenderPlan plan,
 		string fullPath,
-		OfflineAudioFileFormat format)
+		OfflineAudioFileFormat format,
+		IProgress<OfflineRenderProgress>? progress,
+		CancellationToken cancellationToken)
 	{
+		cancellationToken.ThrowIfCancellationRequested();
 		string directory =
 			Path.GetDirectoryName(fullPath)
 				?? throw new InvalidOperationException(
@@ -93,10 +105,16 @@ public sealed class SongExportService
 				result =
 					OfflinePlaybackRenderer.Render(
 						plan.Source,
-						sink);
+						sink,
+						progress: progress,
+						cancellationToken: cancellationToken);
+				cancellationToken.ThrowIfCancellationRequested();
 				sink.Complete();
 			}
 
+			// No cancellation is accepted after this atomic commit point:
+			// a canceled export must never overwrite an existing file.
+			cancellationToken.ThrowIfCancellationRequested();
 			File.Move(
 				temporaryPath,
 				fullPath,
