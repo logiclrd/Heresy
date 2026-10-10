@@ -26,8 +26,10 @@ force a greedy expansion merely to obtain a denominator.
 
 Reporting happens only after a complete block has been written.
 `IProgress<OfflineRenderProgress>` lets callers marshal notifications;
-the Avalonia window uses `Progress<T>` on the UI synchronization context
-rather than touching controls from the PCM worker.
+the Avalonia dialog coalesces repeated worker reports into **at most one
+outstanding UI dispatcher post** while retaining the latest musical-time
+position. This avoids an unbounded UI-event backlog if offline PCM renders
+much faster than realtime; the worker never touches controls.
 
 ## Cooperative cancellation
 
