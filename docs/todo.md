@@ -17,16 +17,9 @@ proof that the following authorable features are complete.
 
 ### Pattern-script virtual channels
 
-- [ ] **Expose virtual note lifecycle and scoped/broadcast operations to
-  Pattern scripts.** Add direct-statement script helpers for start, Off and
-  Cut on an invocation-local virtual ID, plus Off/Cut broadcasts to
-  `AllVirtualInScope` and `AllVirtual`. Emit ordinary `NoteEvent` targets;
-  keep physical-channel helper behavior unchanged. The eager and incremental
-  compilers must accept the same helpers. The incremental compiler must yield
-  after *every* helper and reject nested/non-statement emission. Verify
-  fractional row/fixed-wall timing, same-frame order, local ID reuse in
-  flattened siblings, broadcast semantics, cancellation and production
-  realtime/offline parity. **First implementation slice.**
+The first scripted virtual lifecycle slice (start, Off, Cut, scoped/global
+broadcast) is implemented; see [script programmability](script-programmability.md).
+The remaining work is voice-local control helpers.
 
 - [ ] **Expose supported virtual-voice controls from Pattern scripts** after
   the note lifecycle slice is green. Define named typed helpers for the
