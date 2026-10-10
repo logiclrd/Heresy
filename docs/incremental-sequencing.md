@@ -3083,3 +3083,96 @@ re-analysis following a Source edit. The original single-Pattern
 The only remaining flattened-source ownership milestone is the
 step-62 long-running stress/retirement audit; specialized tracker
 timing and seek compatibility are distinct tasks.
+
+## Sixty-second step: final flattened-source ownership stress and retirement audit
+
+This milestone completes the concrete flattened-source instigating-note
+ownership contract established in steps 47–61. It distinguishes *the
+completion of that architecture* from separate compatibility work on
+multi-rate tracker effects, unusual mixed script timing, advanced
+Oxx/Qxy seeking and export/realtime parity. Those separate TODOs
+remain open.
+
+The audit adds end-to-end, actual-PCM stress coverage for:
+
+- **Deep mixed graph and render partition invariance.** A root
+  Pattern with an independent physical-host sibling instigates two
+  levels of non-mixdown flattened Patterns. Their leaf resolves through
+  two Instruments into a private data Sequence and a private Pattern
+  whose notes overlap across rows. Source-note volume automation
+  modifies both existing voices live, and the outer instigator later
+  receives Note Off before another source starts on its original host.
+  The same 900 output frames are rendered in one call and in uneven
+  chunks crossing tracker-row/event boundaries. The float PCM arrays
+  must be **exactly identical**. Once all source and release tails
+  finish, every transient Instrument/private-mixdown registration,
+  active Core scope, renderer source-volume registration and
+  scoped physical-host entry is zero.
+- **Indefinite scripted Sequence.** A script-defined Sequence returns
+  another order indefinitely. Across 160 rendered orders, repeated
+  flattened child invocations receive fresh memory scopes while peak
+  live producer and renderer scope counts stay bounded. Explicitly
+  canceling the Sequence succeeds once and only once, kills the
+  outstanding child and any lookahead, leaves no audible resurrection,
+  and restores all scoped-memory and renderer ownership counts to zero.
+  No arbitrary finite song length is imposed to make this test pass.
+- **Deep subtree cancellation with prefetched music.** The canceled
+  root contains multiple flattened levels and an Instrument-selected
+  private Pattern. Another root renders independently. Cancellation
+  while a future event is already in the one-event lookahead removes
+  only the canceled subtree, stops its future notes and private PCM,
+  preserves the independent sibling voice, and ultimately reclaims
+  private registrations, source-volume controllers and channel hosts.
+- **Overlapping NNA-Continue private tones.** Twenty-four
+  Instrument-selected recursive notes are started on one channel with
+  S74 Continue. Their private generators and PCM tails overlap; the
+  number of transient registrations must stay proportional to
+  simultaneously live voices, rather than all 24 starts. After a
+  single large render block drains the remainder, all registrations
+  and virtual/displaced voices must be retired.
+
+**Renderer defect discovered and corrected.** The NNA registration
+test initially observed seven registrations after seven starts and a
+plateau of seven for repeated rows. More significantly, after a
+single large tail-render block, five apparently finished private
+sounds remained registered. This was a real, chunk-dependent
+**retirement** defect: `PlaybackSession.RenderVoice` evaluated a
+voice's end only before calling its `ISound.Render`. Streaming finite
+sources such as `PreparedRecursiveMixdownSound` can only discover
+their actual final frame **while rendering** that block. The voices'
+PCM could already have ended, but the parent would not detach them
+until an unrelated subsequent render call.
+
+`RenderVoice` now re-queries `GetEffectiveVoiceEndFrameExclusive`
+after rendering an `IStreamingFiniteSound`, clips the active frames
+to the newly observed boundary and reports completion in the same
+block. The existing `RenderSegment` paths then detach ordinary and
+NNA-migrated voices immediately; `RetireFinished` can unregister
+their temporary sound IDs after that block, while anti-click PCM
+remains independent of the detached source. This is **not**
+a speculative timeout or forced release: the renderer uses the
+sound's own observed finite end.
+
+The red-to-green registration history became
+`1,2,3,4,5,6,6,6,…`, rather than `1,2,3,4,5,6,7,7,7,…`.
+After one long tail block, the residual-registration count
+fell from five to zero. A separate renderer regression implements
+a tiny `IStreamingFiniteSound` whose end becomes known partway
+through `Render`. It verifies exact output and immediate detachment
+for both a current voice and one displaced by NNA Continue, without
+requiring a second call to the audio source.
+
+The tests reinforce existing limits: no eager expansion, no
+unbounded per-cancellation tombstones, no note-event journal, no
+cooked private PCM cache and no second note-production thread.
+Resource residency is bounded by live invocations, their voices
+and naturally completing release/anti-click tails. A naturally
+completed producer does not forcibly silence any voice still
+releasing.
+
+**Completion status:** the original flattened-source instigator
+effect handling, ownership, conditional editor warnings,
+cross-producer cancellation and live lifetime contract can now be
+closed. Unrelated advanced tracker timing, source seeking and
+export stress/compatibility TODOs remain open and must not be
+mistaken for unfinished baseline flattened-source ownership.

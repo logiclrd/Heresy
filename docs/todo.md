@@ -27,183 +27,17 @@ nested ownership graphs are reclaimed after the final active voice detaches,
 preserving audible release and already-captured anti-click tails. These are
 **implemented invariants**, not outstanding TODOs.
 
-- [ ] **Complete flattened-source instigating-note effect handling and
-  ownership edge cases.** The first logical-channel isolation milestone is
-  **implemented**: the shared clock now supports independent Source/effect
-  memory per flattened invocation, stable logical render-channel ownership
-  over overlapping physical hosts, separate NNA/cut/off/retrigger voice
-  state, remembered note volume updates on an explicit flattening start,
-  omitted-volume recall from the live renderer, multiplicative child
-  source gain, and live instigating-channel overall-volume ancestry.
-  Nested sources, sibling hosts and repeated Sequence orders have regression
-  coverage. The original shared-channel-memory design and step 47's
-  no-caller-memory claim were **superseded** by the October 9 clarification.
-  **Scoped memory lifecycle implemented:** a single shared
-  `ScopedSequencingChannelMemory` owns scope 0 directly and lazily maps all
-  nested scopes by never-reused 64-bit IDs. Producers retire their maps
-  when their entire invocation subtree/order completes or is cancelled;
-  the renderer retires the matching per-scope physical channel entries
-  after outstanding voices, NNA voices and anti-click tails finish.
-  Repeating recursive music must retain state proportional to live
-  invocations/voices, not the cumulative number of source starts.
-  **Instigating-note effect classification implemented:** direct
-  non-mixdown flattened starts ignore single-voice commands *before*
-  tracker effect memory and tick-operation scheduling. This includes
-  retrigger, tone portamento, glissando, sample offset, pitch/vibrato
-  and other direct-voice effects; global Tempo and channel/volume
-  controls remain meaningful. Playback emits rate-capped HRSEQ003/004
-  warnings while leaving stored Pattern effects untouched; the data
-  Pattern editor shows a nonblocking warning on qualifying effects.
-  **Step 53: live instigating-note volume semantics supersede step 52's
-  whole-effect suppression.** Every flattened invocation now has an
-  independent renderer-side source-note volume controller. At source start
-  the caller remembers the explicit/recalled volume, which initializes the
-  controller, and all descendant voices hold live references to every
-  enclosing controller. Per-sample multiplication composes arbitrarily
-  nested values; volume zero can be raised by later effects. Dxx, native
-  note-volume slide/adjustments and volume-column A-D remain active; Kxx
-  and Lxx keep their *note-volume* slide while discarding and diagnosing
-  only the vibrato/portamento component. Effects entered on later rows of
-  the still-active instigating logical channel also control the source.
-  Mxx/Nxx continue affecting the separate live overall-channel-volume
-  ancestry, not the physical hosts into which child notes splay.
-  Recalled Sources can still reclassify Gxx/Lxx at execution time.
-  Retired scope controller lookups are removed, while sounding descendant
-  voices retain their referenced controller objects until completion.
-  **Step 54: flattened-source note lifecycle implemented.** An active
-  source instigator owns a logical note even though its children are
-  hosted in independent renderer channels. Note Cut and Note Off on
-  its logical channel immediately end future child production and
-  send Cut/Off to all existing descendant voices (including nested,
-  virtual and NNA-migrated voices) without touching siblings or
-  unrelated voices sharing the physical hosts. Natural source
-  completion remains non-destructive to already sounding voices.
-  Replacing the instigator obeys S73-S76 NNA: Cut (default when no
-  single instrument supplies an NNA policy), Continue (old producer
-  keeps generating), Off or Fade (future notes stop, existing voices
-  release/fade). A later row's volume still controls a releasing
-  source until replaced or cut. Explicit subtree cancellation now
-  cuts matching physical/virtual descendant voices and clears scope
-  state; passive retirement remains separate.
-  **Step 55: inherited data-Pattern editor warnings implemented.**
-  Voice-specific effects on later rows of a locally known active
-  flattened instigator now display the nonblocking warning; Source
-  selection without a start, Note Off tails, Cut, and mixdown/new-note
-  displacement are distinguished. Runtime diagnostics remain the
-  authority for dynamically selected/cross-Pattern Sources.
-  **Step 56: same-event source lifecycle ordering implemented.**
-  One raw event may start a flattened source then Cut/Off or displace
-  it with S74 Continue at the very same output frame. Scope retirement
-  now reaches the renderer after the complete emitted command group,
-  never before its Begin controller registration. Exact-frame PCM and
-  bounded controller lifetime are regression-tested.
-  **Step 57: cross-producer pending-event ownership implemented.**
-  External Sequence/Pattern cancellation reports actual Pattern cursor
-  IDs separately from recursive frame IDs. A canceled producer's
-  prefetched note is invalidated directly without an accumulating
-  tombstone set, and only its scoped virtual channels are cut.
-  Independent roots with numerically colliding frame/cursor IDs
-  survive; same-frame PCM and Core ownership regressions are green.
-  **Step 58: scoped virtual NNA and past-note ownership implemented.**
-  Repeating a scoped or directly targeted virtual note now applies its
-  old voice's own Cut/Continue/Off/Fade policy instead of unconditionally
-  cutting it. Migrated NNA voices retain their original virtual channel
-  and, where applicable, Pattern cursor owner. Canceling a cursor cuts
-  its current and displaced scoped virtual voices without touching
-  sibling virtual IDs. Physical-channel S70-S72 cannot mistake virtual
-  NNA voices for physical host voices. Explicit virtual S73-S76
-  overrides and S70-S72 past-note controls use the same original
-  target identity. AllVirtual reaches displaced voices whereas
-  AllVirtualInScope remains limited to current scoped channels;
-  same-frame starts remain ineligible for broadcasts by design.
-  Red-to-green renderer regressions cover NNA Continue, cutoff,
-  owner isolation, flattened-scope Cut, S70/S74, and exact-frame
-  Off/Fade.
-  **Step 59: indirect private-mixdown lifecycle propagation implemented.**
-  Instrument-selected private Pattern/Sequence tones, even through
-  multiple Instrument layers, now retain each flattened ancestor scope
-  in their tracked ownership. Flattened Off/Cut/Fade and explicit
-  subtree cancellation forward lifecycle actions to their private
-  coroutines, independent of overlapping physical host indexes.
-  Private virtual notes track their original cursor/ID across NNA
-  Continue/Off/Fade, with S70-S72 and AllVirtual reaching the proper
-  displaced private voices but not sibling scopes. Resolved virtual
-  NNA and past-note commands now pass the shared-tick validator at
-  supported musical-row deadlines. Source-level Fade stops future
-  private note generation without imposing Off or Cut on existing
-  fading voices; pending one-event lookahead and scope retirements
-  are discarded/settled safely. Red-to-green PCM, private InputEnded,
-  source end-frame, fade-controller, and sibling-isolation tests cover
-  direct mixdowns, nested Instrument chains and private Sequences.
-  **Step 60: source Fade duration and release ancestry verified.**
-  Flattened S76/Fade now applies the selected descendant voice's
-  new-note fade duration, rather than its ordinary note-fade duration,
-  consistently across physical, scoped virtual and displaced NNA voices.
-  Private recursive playback distinguishes S76/NNA Fade from ordinary
-  S72 past-note Fade, preserving their independently configured durations
-  while stopping future private note generation. Releasing descendants
-  retain live source-note and overall-channel volume references even after
-  their producer scope retires; a later replacement note takes over the
-  instigating channel without stealing or re-targeting those references.
-  Four new regression cases verify fade boundary frames, PCM curves,
-  continued release automation and replacement-note isolation.
-  **Step 61: inherited and dynamic source editor indications implemented.**
-  The tracker editor analyzes flattened-note ownership per displayed
-  data-Sequence order occurrence, preserving both active logical notes
-  and Source selections across ordinary order boundaries. The same
-  stored Pattern may show different warnings when invoked twice with
-  different inherited memory; StartRow prefixes are not executed.
-  Non-editable script/missing orders and Bxx/Cxx flow commands mark
-  downstream state as indeterminate; warnings then explicitly say the
-  relevant voice-specific effects **may** be inapplicable, rather than
-  asserting runtime certainty. Static explicit Source selections or
-  subsequent starts restore certainty where justified. Known inherited
-  note and remembered Source-selection origins name their preceding
-  Sequence order in tooltips. OFF and CUT rows show lifecycle notices:
-  Off ends future generation while leaving releasing descendants and
-  their volume controls alive; Cut terminates the source and stops
-  warnings on later rows until another flattened start. Note, effect,
-  and volume fields show distinct definite/conditional/lifecycle
-  indicators without changing persisted effects. Edits re-analyze
-  and refresh downstream warnings immediately, including repeated
-  Pattern appearances in the active Sequence.
-  **Still outstanding:** step-62 cancellation/retirement stress across
-  deep recursive and indefinite scripts, overlapping release envelopes,
-  and chunk-size determinism. Advanced timing, seek, and multi-rate
-  tracker compatibility remain separately tracked.
-  The incremental merger admits zero-offset Mxx and native channel-volume
-  commands alongside flattened starts.
-  The detailed target remains in step 48 below.
+**Flattened-source instigating-note ownership is complete (step 62).**
+The cross-order/scoped memory, live volume-ancestry, NNA and virtual
+channels, recursive private Instrument sources, Cut/Off/Fade,
+diagnostics/UI indications, cancellation, and bounded retirement audits
+from steps 47–62 are implemented and regression-tested. The detailed
+design and red-to-green corrections are in
+[incremental-sequencing.md](incremental-sequencing.md).
+Remaining advanced timing, seeking, export-stress and unusual mixed
+script/effect compatibility are tracked separately below, not as an
+unfinished flattened-source ownership requirement.
 
-  **Original architectural requirement (now partially implemented):** A flattened
-  Pattern/Sequence owns independent logical channel memory (selected Source,
-  note volume, effect parameters, retrigger/portamento, channel automation
-  and current voices) that persists across its own Sequence orders but
-  never leaks into the parent or sibling invocations. It merely **uses**
-  parent physical channel indexes as playback hosts. A host must not lend
-  note volume/effect memory to its guest or be changed by that guest.
-  Only the instigating note updates its caller's remembered note volume.
-  Its **explicit or recalled** volume is captured as an initial source-gain
-  multiplier for the child's notes; its instigating channel's **overall**
-  channel volume is a live parent multiplier for all splayed child voices,
-  regardless of which physical host they use. Child logical channel note/
-  overall volumes remain independent and are multiplicative with this gain.
-  Nested flattening retains independent memories and composes gains;
-  sequences reuse their invocation-local map between order Patterns.
-  No double-application from a host's remembered note volume.
-  Implement stable logical render-channel identities through end-to-end
-  PCM, private mixdown ownership, virtual/NNA lifecycle and cancellation;
-  provide tests for physical-host collisions, parent memory persistence,
-  omitted-volume recall, nested/sibling and multichannel splaying.
-  Classify effects on the *instigating flattening note*: global Tempo and
-  meaningful channel/volume changes still apply, but individual-voice
-  operations such as retrigger, glissando, sample offset or portamento
-  are **ignored before their effect memory changes**, with rate-limited
-  runtime diagnostics and non-blocking UI warnings. Preserve all effects
-  in the stored data (do not reject/erase them). A note *inside* the child
-  can still use those effects normally on its own logical voice.
-  Important: do not consider source-volume step 47 fully correct until
-  both remembered caller volume and private child channel ownership pass.
 - [ ] Complete recursive **dynamic pitch trajectories** and advanced
   cross-rate tracker-effect parity. Initial recursive source volume is now
   inherited by flattened Pattern/Sequence descendants as a per-voice
@@ -223,11 +57,13 @@ preserving audible release and already-captured anti-click tails. These are
   simultaneous Tempo spans, delayed/overlapping command memory, and
   remaining tick/repeat behaviors. Do not apply future Source, Tempo or
   effect state prematurely; reject unsupported combinations explicitly.
-- [ ] Extend lifecycle and cancellation parity for complex recursive
-  graphs: indirect instrument-owned voices, displaced Continue/Off/Fade,
-  S7x past-note controls, per-note fade durations, virtual broadcasts,
-  cancellation during delayed operations, and nested end-of-input tails.
-  Add targeted mixed data/script and multichannel regressions.
+- [ ] Extend **advanced** lifecycle compatibility beyond the completed
+  flattened-source ownership model, especially interactions between delayed
+  tracker effects, mixed data/script timing, multichannel routing, and
+  unusual instrument release envelopes. Existing indirect Instrument,
+  S7x, NNA, virtual broadcast, Cut/Off/Fade and private-tail ownership are
+  implemented and tested; avoid reopening those milestones without a
+  demonstrated counterexample.
 - [ ] Complete edge-case **native source-frame seeking** (Oxx and Qxy
   retrigger) across nested Pattern, Sequence and instrument graphs, including
   offsets crossing lifecycle boundaries and repeated invocations. Backward
@@ -237,10 +73,14 @@ preserving audible release and already-captured anti-click tails. These are
   using deterministic bounded checkpoints **only if** realtime ring-buffer
   underruns warrant it. Do not reintroduce unbounded event journals or
   schedule/PCM pre-rendering.
-- [ ] Expand end-to-end tests for indefinite scripted sequences, recursive
-  cancellation and instrument cycles, realtime/offline PCM parity, and finite
-  export-body/tail limits. Basic cycle protection, cooperation budgets and
-  export limits are already implemented.
+- [ ] Expand end-to-end **export/realtime parity** and advanced script
+  compatibility tests: additional nonterminating script-Pattern cases,
+  complex flow with musical-time adjustments, finite export-body and tail
+  limits, and multi-speaker parity. Step 62 already stress-tests 160
+  indefinitely scripted Sequence orders, deep cancellation, chunk-invariant
+  recursive PCM, overlapping NNA tails and registration reclamation;
+  the existing cycle protection, cooperation budgets and export limits
+  remain implemented.
 
 ## Output audio configuration and physical speaker processing
 
