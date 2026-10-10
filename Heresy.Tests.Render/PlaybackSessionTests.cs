@@ -1371,6 +1371,58 @@ public sealed class PlaybackSessionTests
 		Assert.That(actual[1], Is.Not.EqualTo(0.0f).Within(1e-5f));
 	}
 
+
+	[Test]
+	public void MidNoteAbsoluteFrequencyChangesPitchWithoutResettingSampleCursor()
+	{
+		ObjectId id = (ObjectId)10U;
+		float[] wave = new float[128];
+		for (int i = 0; i < wave.Length; i++)
+			wave[i] = i / 128f;
+		PlaybackSession session = Session(1000,
+			Schedule(Event(TimeSpan.Zero, 0, new StartNoteCommand(id)),
+				Event(Frame(10, 1000), 0,
+					new SetPlaybackFrequencyCommand(
+						2 * SequencingConstants.ReferenceC4FrequencyHz))),
+			new TestResolver((id, false, Sample(wave, 1000))));
+		float[] output = new float[35];
+		session.Render(0, output.Length, output);
+		for (int frame = 0; frame < output.Length; frame++)
+		{
+			int sourceFrame = frame < 10 ? frame : 10 + (frame - 10) * 2;
+			Assert.That(output[frame],
+				Is.EqualTo(wave[sourceFrame]).Within(1e-6f),
+				$"Frame {frame}: preserve consumed PCM position when changing pitch.");
+		}
+	}
+
+	[Test]
+	public void AbsoluteFrequencyUsesMusicalReferenceNotPcmNativeSampleRate()
+	{
+		ObjectId id = (ObjectId)10U;
+		float[] low = new float[256], high = new float[512];
+		for (int i = 0; i < low.Length; i++)
+			low[i] = i / 256f;
+		for (int i = 0; i < high.Length; i++)
+			high[i] = i / 512f;
+		NoteSchedule schedule = Schedule(Event(TimeSpan.Zero, 0,
+			new StartNoteCommand(id, PitchMultiplier: 0.5,
+				PlaybackSpeedMultiplier: 2.0),
+			new SetPlaybackFrequencyCommand(
+				2 * SequencingConstants.ReferenceC4FrequencyHz)));
+		PlaybackSession oneKhz = Session(1000, schedule,
+			new TestResolver((id, false, Sample(low, 1000))));
+		PlaybackSession twoKhz = Session(1000, schedule,
+			new TestResolver((id, false, Sample(high, 2000))));
+		float[] a = new float[45], b = new float[45];
+		oneKhz.Render(0, a.Length, a);
+		twoKhz.Render(0, b.Length, b);
+		Assert.That(b, Is.EqualTo(a).Within(1e-6f),
+			"Independently tuned PCM data at different native rates must "
+			+ "render the same musical pitch without a per-source reference.");
+		Assert.That(a[20], Is.GreaterThan(0.1f));
+	}
+
 	private sealed class EmptyEnvelopeResolver : IEnvelopeCurveResolver
 	{
 		public bool TryResolve(ObjectId id, out IEnvelopeCurve? curve)

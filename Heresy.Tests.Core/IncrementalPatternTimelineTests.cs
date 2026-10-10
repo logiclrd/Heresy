@@ -470,6 +470,25 @@ public sealed class IncrementalPatternTimelineTests
 		}
 	}
 
+
+	[Test]
+	public void PositiveFixedWallFrequencyCommandExecutesAtItsActualDeadline()
+	{
+		SequencingContext context = new();
+		using IncrementalPatternTimeline timeline = new(context);
+		timeline.Add(new RawSource(new NoteEvent(
+			new MusicalTime(TimeSpan.FromMilliseconds(35), 0),
+			ChannelTarget.Physical(0),
+			[new SetPlaybackFrequencyCommand(440)])), 1, context);
+		NoteEvent[] events = DrainNotes(timeline);
+		Assert.That(events, Has.Length.EqualTo(1));
+		Assert.That(events[0].Offset.TimeOffset,
+			Is.EqualTo(TimeSpan.FromMilliseconds(35)),
+			"The delayed command must not execute during raw-note preparation.");
+		Assert.That(events[0].Commands.Single(),
+			Is.EqualTo(new SetPlaybackFrequencyCommand(440)));
+	}
+
 	private static NoteEvent At(double row, int channel, NoteCommand command)
 		=> At(row, ChannelTarget.Physical(channel), command);
 
