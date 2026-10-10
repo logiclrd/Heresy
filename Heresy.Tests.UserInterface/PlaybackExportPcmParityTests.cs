@@ -57,6 +57,11 @@ public sealed class PlaybackExportPcmParityTests
 	public void ScriptVirtualLifecycleMatchesRealtimeAndOfflinePcm(int channels)
 		=> AssertParity(CreateScriptVirtualSong(), channels, 1000);
 
+	[TestCase(1)]
+	[TestCase(6)]
+	public void ScriptInstrumentDirectAndSelectedPrivateMixdownMatchOffline(int channels)
+		=> AssertParity(CreateScriptInstrumentSong(), channels, 1000);
+
 	private static void AssertParity(SongDocument document,
 		int channels, int sampleRate)
 	{
@@ -196,6 +201,50 @@ public sealed class PlaybackExportPcmParityTests
 		sequence.Entries.Add(new SequenceEntry(parentId));
 		document.Add(sequence);
 		document.RootSequenceId = sequenceId;
+		return document;
+	}
+
+	private static SongDocument CreateScriptInstrumentSong()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(new SampleDefinition(sample, "Memory PCM",
+			new ExternalAssetReference(Path.Combine(Path.GetTempPath(),
+				$"heresy-script-instrument-parity-{sample.Value}.wav"))));
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Private tone")
+		{
+			RowCount = 3, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({sample.Value}));",
+		});
+		ObjectId instrumentId = document.AllocateObjectId();
+		ScriptInstrumentDefinition instrument =
+			new(instrumentId, "Program selected")
+			{
+				Source = "pitchMultiplier < 1.5 ? 0 : 1",
+				PitchExpression = "pitchMultiplier < 1.5 ? 1.0 : 0.5",
+			};
+		instrument.ToneSpecifications.Add(new ToneSpecification
+			{ SourceId = sample });
+		instrument.ToneSpecifications.Add(new ToneSpecification
+			{ SourceId = childId });
+		document.Add(instrument);
+		ObjectId patternId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(patternId, "Script Instrument calls")
+		{
+			RowCount = 3, ChannelCount = 2,
+			Source = $"""
+				Note(0, 0, _O({instrumentId.Value}));
+				Note(0, 1, _O({instrumentId.Value}), pitchMultiplier: 2.0);
+				Cut(1, 0);
+				Off(1.5, 1);
+				""",
+		});
+		ObjectId rootId = document.AllocateObjectId();
+		DataSequenceDefinition root = new(rootId, "Root");
+		root.Entries.Add(new SequenceEntry(patternId));
+		document.Add(root);
+		document.RootSequenceId = rootId;
 		return document;
 	}
 
