@@ -124,6 +124,16 @@ def main() -> None:
         if command("patchelf", "--print-rpath", str(target)).strip() != "$ORIGIN":
             raise RuntimeError(f"Missing local RPATH: {target}")
 
+    # ldd alone is not sufficient: prove dlopen and a real exported
+    # libsndfile function work with the exact staged shared objects.
+    import ctypes
+    native = ctypes.CDLL(str(alias))
+    native.sf_version_string.restype = ctypes.c_char_p
+    version = native.sf_version_string()
+    if not version or not version.startswith(b"libsndfile-"):
+        raise RuntimeError(f"Invalid libsndfile native API response: {version!r}")
+    print(f"Successfully loaded ARM64 {version.decode('ascii', 'replace')}")
+
     print("Verified bundled ARM64 shared libsndfile and dependencies:")
     for name in sorted(copied):
         print(f"  {name}")
