@@ -135,9 +135,10 @@ ownership regressions remain independent coverage. These tests
 validate the configured render bounds, **not a guarantee that
 arbitrary user scripts will terminate normally**. Neither the
 single-worker design nor PCM semantics needed modification;
-the remaining specialized concurrent Tempo arbitration and
-unusual mixed-effects scenarios remain separate tasks in
-[todo.md](todo.md).
+subsequent cross-rate Tempo arbitration and mixed lifecycle/effect
+intersections are implemented and regression-tested (see the latest
+sections of [incremental-sequencing.md](incremental-sequencing.md)),
+not open items in [todo.md](todo.md).
 
 ## Export encoding and format-specific constraints
 
