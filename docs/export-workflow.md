@@ -92,9 +92,52 @@ Encoding quantization and physical SDL callback/ring-buffer timing
 are separately tested contracts, and the latter is not compared
 with an actual audio device by this headless suite.
 
-Advanced compatibility testing of unbounded **scripted Patterns**,
-mixed tracker flow/time changes and export body/tail caps remains
-tracked separately in [todo.md](todo.md).
+**Advanced scripted export compatibility is now regression-tested.**
+The new `AdvancedScriptedExportTests` use genuine Roslyn
+`ScriptPatternDefinition` sources inside production offline
+song plans; they do not stand in fake endlessly repeating
+`IIncrementalArrangementSource` implementations. The cases cover:
+
+- Both a silent infinite `while (true)` and a script that emits
+  one Note before spinning forever. The scheduler's **same-tick
+  cooperation budget** aborts both while no PCM block has
+  been committed. (It is an earlier guard than the separate
+  `PreparedIncrementalAudioSource` per-render step budget.)
+- A scripted Tempo change to 250 at row zero, a Note at fractional
+  row 1.5 and adjacent data-driven Bxx/Cxx flow that jumps to a
+  later order **starting at row one**. At 1 kHz, the expected
+  finite logical body is exactly 300 frames, including the
+  skipped first target row. Mono and 5.1 rendering match
+  sample-for-sample across 7-frame and 127-frame blocks.
+- A script Pattern regenerated on each backward Bxx jump.
+  Export suppresses the *third* encounter with the same jump
+  to terminate the arrangement naturally; three repetitions
+  of two 120 ms orders produce 720 logical frames.
+- A script-generated finite body that reaches a specified
+  17-frame export cap. Exactly 17 frames are written in
+  completed blocks (7, 7, 3); export then raises the
+  finite-frame-limit error without transitioning to release.
+- A script-generated finite arrangement with a post-mix
+  15 Hz LowPass speaker filter. Filter memory guarantees
+  a genuine **release-tail residual** after input Note Off:
+  a tail budget of 11 frames writes exactly 11 before
+  rejecting further rendering; a larger budget permits
+  draining to quiescence and reports completion. A
+  naturally completed nonlooping PCM sample without the
+  filter does not have a post-Note-Off tail.
+- Progress only after written complete output blocks, with no
+  fabricated total while the root coroutine is open, and
+  no `Completed` phase after cap failure.
+
+The existing endless scripted **Sequence** order tests, cycle
+detection, cancellation, voice retirement and other flattened
+ownership regressions remain independent coverage. These tests
+validate the configured render bounds, **not a guarantee that
+arbitrary user scripts will terminate normally**. Neither the
+single-worker design nor PCM semantics needed modification;
+the remaining specialized concurrent Tempo arbitration and
+unusual mixed-effects scenarios remain separate tasks in
+[todo.md](todo.md).
 
 ## Export encoding and format-specific constraints
 
