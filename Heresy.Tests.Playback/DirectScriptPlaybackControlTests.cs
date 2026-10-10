@@ -23,7 +23,7 @@ public sealed class DirectScriptPlaybackControlTests
         SongDocument document = new();
         ObjectId sample = document.AllocateObjectId();
         document.Add(SampleDefinition.CreateImported(
-            sample, "PCM ramp", "ramp.wav", RampWave()));
+            sample, "Alternating PCM", "ramp.wav", AlternatingWave()));
         ObjectId root = document.AllocateObjectId();
         ScriptPatternDefinition pattern = new(root, "Live controls")
         {
@@ -50,7 +50,12 @@ public sealed class DirectScriptPlaybackControlTests
         allAtOnce.Source.Render(frames, continuous);
         float[] partial = new float[frames];
         int[] sizes = [1, 7, 13, 3, 53];
-        for (int i = 0, block = 0; i < frames; block++)
+        // Pan occurs at frame 30; inspect it before S91-style surround
+        // intentionally recenters the channel at frame 180.
+        chunked.Source.Render(45, partial.AsSpan(0, 45));
+        bool sawPanning = chunked.Session.GetChannelState(0).Position
+            == new Vector3(-0.5f, 0, 0);
+        for (int i = 45, block = 0; i < frames; block++)
         {
             int count = Math.Min(sizes[block % sizes.Length], frames - i);
             chunked.Source.Render(count, partial.AsSpan(i, count));
@@ -77,10 +82,12 @@ public sealed class DirectScriptPlaybackControlTests
                 Is.EqualTo(baseline.Take(25).ToArray()).Within(1e-6f),
                 "No script effects have run before frame 30.");
             Assert.That(Math.Abs(partial[100] - baseline[100]),
-                Is.GreaterThan(1e-4f),
+                Is.GreaterThan(1e-3f),
                 "The resonant filter must change audible output after its deadline.");
-            Assert.That(channel.Position,
-                Is.EqualTo(new Vector3(-0.5f, 0, 0)));
+            Assert.That(sawPanning, Is.True,
+                "Pan should take effect before the surround command.");
+            Assert.That(channel.Position, Is.EqualTo(Vector3.Zero),
+                "Surround intentionally recenters the channel.");
             Assert.That(channel.Surround, Is.True);
             Assert.That(channel.FilterParameters.Cutoff,
                 Is.EqualTo(0.25).Within(1e-10));
@@ -113,7 +120,7 @@ public sealed class DirectScriptPlaybackControlTests
         writer.Write(Encoding.ASCII.GetBytes("data"));
         writer.Write(frames * 2);
         for (int i = 0; i < frames; i++)
-            writer.Write((short)(i * 40));
+            writer.Write((short)(i % 2 == 0 ? 16000 : -16000));
         writer.Flush();
         return stream.ToArray();
     }
