@@ -187,8 +187,16 @@ An underrun is recoverable: the status-bar count remains **hidden until
 the first underrun**, while SDL inserts silence without advancing or
 skipping future musical frames. Live audition and completed pattern-position
 tracking keep status monitoring active. See [audio-output.md](audio-output.md).
-- [ ] Show playback-affecting changes since the most recent playback snapshot,
-  separately from unsaved-file status, using document/audio revision tracking.
+**Playback snapshot freshness implemented.** Realtime song/Pattern/Sequence
+and live audition sessions now publish the exact frozen `AudioRevision`
+and source-document identity after a successful start. The status bar
+separately marks playback whose audio has changed since its snapshot,
+or playback continuing from a replaced song document; layout-only
+edits, saving the file, and dirty-document status do not imply stale audio.
+The indicator clears on restart/stop, and live note releases keep their
+existing snapshot until a new note requires refresh. Lazy transport and
+UI-dispatched edit events preserve the single-worker audio model.
+See [playback-snapshots.md](playback-snapshots.md).
 - [ ] Highlight Oxx/offset operations on ReplayRequired mixdown sources when
   the runtime capability indicates expensive realtime seeking. Explain in a
   tooltip that export remains correct; provide an option to suppress warnings.
