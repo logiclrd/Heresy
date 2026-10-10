@@ -1,10 +1,12 @@
 # Heresy TODO
 
-This checklist tracks **remaining** work as of 2026-10-09. Completed
-implementation milestones are retained in Git history, not repeated here.
-Design history and detailed sequencing semantics are documented in
-[incremental-sequencing.md](incremental-sequencing.md); its earlier
-experimental milestones are historical, not current production status.
+This checklist tracks **remaining** work as of 2026-10-09 and summarizes
+completed architectural contracts where they affect open tasks. Historical
+milestones and red-to-green corrections are recorded in
+[incremental-sequencing.md](incremental-sequencing.md). The early exploration
+in [recursive-sounds.md](recursive-sounds.md) is historical, not a current
+implementation inventory. The production code and regression tests are
+authoritative whenever an earlier design sketch differs.
 
 ## Recursive playback — remaining compatibility and performance work
 
@@ -38,19 +40,26 @@ Remaining advanced timing, seeking, export-stress and unusual mixed
 script/effect compatibility are tracked separately below, not as an
 unfinished flattened-source ownership requirement.
 
-- [ ] Complete recursive **dynamic pitch trajectories** and advanced
-  cross-rate tracker-effect parity. Initial recursive source volume is now
-  inherited by flattened Pattern/Sequence descendants as a per-voice
-  multiplicative gain, separate from shared tracker channel-volume memory.
-  Nested initial source volumes compose; gains survive note slides, fades
-  and virtual-voice displacement without affecting unrelated parent notes.
-  Private mixdowns retain their renderer-owned parent note-volume semantics
-  and inherit a flattened ancestor's source gain on their outer voice.
-  Initial pitch and private/flattened playback-speed multipliers are already
-  implemented. A single scaled Txx slide is supported, but simultaneous
-  cross-rate slides and scaled Txx-with-SEy remain explicitly unsupported
-  pending complete multi-rate arbitration. Preserve native multichannel
-  speaker feeds, cancellation and deterministic source-frame seeking.
+- [ ] Investigate **remaining recursive pitch-modulation compatibility**
+  with a reproducible note-level or PCM counterexample before changing
+  semantics. `SoundState.PitchTrajectory`, native sample pitch slides,
+  modulation curves, recursive initial pitch transposition and private/
+  flattened playback-speed multipliers already exist. Critically, the
+  flattened *instigating note* intentionally suppresses voice-specific
+  portamento, vibrato, retrigger and pitch effects; this is a completed
+  design rule, not an unimplemented feature to bypass. Audit independent
+  child-note automation and pitch-modulated Instrument/private sound
+  seeking separately, without conflating them with live source-volume
+  ancestry or tracker Tempo.
+- [ ] Extend **shared-clock cross-rate Tempo arbitration** only where
+  the coordinator currently rejects it. Single scaled Txx slides,
+  same-rate simultaneous Txx, SEy repetition across independent
+  unscaled invocations, interruption, and piecewise Tempo ramps already
+  have tests. The concrete unsupported cases are simultaneous
+  *different-rate* Txx slides and scaled flattened Txx combined with
+  SEy repeats; preserve each source's captured tick span, channel-order
+  clamping, deferred deadlines and cancelation without ever eagerly
+  enumerating future orders.
 - [ ] Finish unsupported advanced tracker/script effect combinations in
   the shared-tick coordinator. In particular, verify negative fixed
   wall-time offsets, advanced/global effect deadlines, incompatible
@@ -84,21 +93,35 @@ unfinished flattened-source ownership requirement.
 
 ## Output audio configuration and physical speaker processing
 
-- [ ] Apply configured per-output-channel filtering to the **final speaker
-  feeds**, independently of the existing per-voice tracker resonant filter;
-  cover None, LowPass and HighPass and continuity across render blocks.
-- [ ] Expose configuration of output channel count/layout (including 5.1 and
-  7.1), speaker positions, positional importance, optional speaker filters
-  and cutoff frequencies, and sample rate. Wire the chosen configuration to
-  realtime and offline paths, preserving the same PCM engine and proper
-  distinctions between playback channels and speaker outputs.
-- [ ] Test spatial and filtered output routing, including arbitrary output
-  layouts, stable multi-block rendering, and configured channel ordering.
+**Final-speaker filtering implemented:** `OutputChannelConfiguration`
+already modeled None/LowPass/HighPass and cutoff. The final
+`PlaybackSession` now applies independent stateful one-pole speaker
+filters **once after the complete mix and global volume**, preserving
+continuity across PCM blocks. Private recursive Pattern/Sequence mixer
+sessions intentionally bypass this output stage to avoid filtering their
+sound a second time. Offline quiescence includes the filters' residual
+tails, which decay to digital silence. Mono/stereo response, speaker
+independence, nested private mixes and chunk invariance are tested.
+See [audio-output.md](audio-output.md).
+
+- [ ] Expose actual **user configuration** for output sample rate, speaker
+  count/layout (including 5.1 and 7.1), positions, positional importance,
+  output filters and cutoff. The engine accepts arbitrary
+  `RenderConfiguration`; the main UI currently chooses stereo defaults.
+  Carry user-selected settings through realtime and offline construction,
+  without confusing voice channels with speaker output feeds.
+- [ ] Extend spatial/speaker-order and final-filter integration tests to
+  arbitrary 5.1/7.1 layouts and actual configured realtime/export routes.
+  Basic mono/stereo filtering, speaker isolation and stable multi-block
+  responses are already regression-tested.
 
 ## Export workflow
 
-- [ ] Show offline rendering progress in **rendered musical time** against
-  the logical length (not guessed wall-clock ETA).
+- [ ] Show offline export **rendered musical-time progress**, without
+  inferring a fixed logical total from an indefinitely scripted Sequence.
+  Use a determinate ratio only when a trustworthy finite total is known;
+  otherwise show an indeterminate elapsed-musical-time status. Never
+  pre-expand future song orders merely to produce an ETA.
 - [ ] Add cooperative cancellation at safe render blocks, preserving the
   atomic temporary-output-file behavior and leaving existing exports intact.
 - [ ] Support user-selectable output configuration for export and additional
@@ -150,10 +173,11 @@ unfinished flattened-source ownership requirement.
 
 - [ ] Update README descriptions of load/import-time WAVE/FLAC/MP3/OGG/AIFF
   decoding, immutable shared PCM assets and the **production coroutine
-  playback/export cutover**. Review historical sections of
-  docs/incremental-sequencing.md to make their superseded statements about
-  eager production scheduling unambiguously historical; treat current
-  code and docs/sample-storage.md as authoritative.
+  playback/export cutover**. Mark superseded material in
+  docs/incremental-sequencing.md and docs/recursive-sounds.md as historical,
+  especially old eager scheduling, unit-speed private mixdown, and
+  unimplemented-ownership claims. Treat current code,
+  docs/sample-storage.md and tests as authoritative.
 - [ ] Add format-version migration tooling **only when** actual documents
   require schema evolution; intentionally retain format version 1 during
   pre-release development.

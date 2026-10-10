@@ -1,5 +1,17 @@
 # Recursive Pattern/Sequence sound sources
 
+> **Historical design record (October 2026):** Most sections below describe
+> early prototypes and explicitly list limitations that were subsequently
+> resolved by the coroutine production cutover and steps 47–62 of
+> flattened-source ownership. In particular, claims that private mixdowns
+> require unit pitch/speed, that Note Off cannot propagate, that eager
+> compilers are still used, or that flattened children share the caller's
+> channel state are **not current**. Consult
+> [incremental-sequencing.md](incremental-sequencing.md) for the current
+> streaming architecture, and [todo.md](todo.md) for remaining work.
+> Do not use this historical list of boundaries as an implementation
+> checklist.
+
 This document records the *first executable slice* of recursive playback and
 the contracts still outstanding. The tracked requirements are in
 [docs/todo.md](todo.md); this file does not mark them completed.
