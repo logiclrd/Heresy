@@ -315,7 +315,13 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			List<NoteCommand> repeating = [];
 			foreach (NoteCommand command in note.Commands)
 			{
-				if (command is SetPitchSlideCommand or SetNoteVolumeSlideCommand
+				if (command is SetTonePortamentoCommand tone)
+				{
+					// The first row may establish a new target note; SEy
+					// copies repeat only its movement, never a new target.
+					repeating.Add(tone with { TargetNote = null });
+				}
+				else if (command is SetPitchSlideCommand or SetNoteVolumeSlideCommand
 					or SetOverallChannelVolumeSlideCommand
 					or SetGlobalVolumeSlideCommand or SetSpatialXSlideCommand
 					or AdjustPitchLinearUnitsCommand or AdjustNoteVolumeCommand
@@ -2103,6 +2109,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					&& note.Commands.Count != 0
 					&& note.Commands.All(c => c is ClearPitchSlideCommand
 						or ClearPitchModulationCommand or ClearArpeggioCommand
+						or ClearTonePortamentoCommand
 						or ClearTremoloCommand or ClearTremorCommand
 						or ClearPanbrelloCommand
 						or ClearNoteVolumeSlideCommand or ClearOverallChannelVolumeSlideCommand
@@ -2182,6 +2189,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						&& note.Commands.Count > 0
 						&& note.Commands.All(c => c is ClearPitchSlideCommand
 						or ClearPitchModulationCommand or ClearArpeggioCommand
+						or ClearTonePortamentoCommand
 							or ClearTremoloCommand or ClearTremorCommand
 							or ClearPanbrelloCommand
 							or ClearNoteVolumeSlideCommand
