@@ -99,6 +99,7 @@ public sealed class MainWindow : Window
 	private readonly DocumentWorkspace _workspace;
 	private readonly ISongPlaybackTransport? _playbackTransport;
 	private readonly SongExportService _exportService;
+	private readonly AudioOutputSettings _audioOutputSettings;
 	private readonly IPlaybackPositionTransport? _playbackPositionTransport;
 	private readonly IPlaybackRuntimeDiagnosticsTransport?
 		_runtimeDiagnosticsTransport;
@@ -125,21 +126,16 @@ public sealed class MainWindow : Window
 	private bool _closePromptInProgress;
 
 	public MainWindow()
-		: this(
-			new DocumentWorkspace(),
-			playbackTransport: null,
-			CreateDefaultExportService())
-	{
-	}
+		: this(new DocumentWorkspace(), null, null) { }
 
 	public MainWindow(
 		ISongPlaybackTransport playbackTransport)
-		: this(
-			new DocumentWorkspace(),
-			playbackTransport,
-			CreateDefaultExportService())
-	{
-	}
+		: this(new DocumentWorkspace(), playbackTransport, null) { }
+
+	public MainWindow(
+		ISongPlaybackTransport playbackTransport,
+		AudioOutputSettings settings)
+		: this(new DocumentWorkspace(), playbackTransport, null, settings) { }
 
 	public MainWindow(
 		ISongPlaybackTransport playbackTransport,
@@ -153,34 +149,26 @@ public sealed class MainWindow : Window
 
 	internal MainWindow(
 		DocumentWorkspace workspace)
-		: this(
-			workspace,
-			playbackTransport: null,
-			CreateDefaultExportService())
-	{
-	}
+		: this(workspace, null, null) { }
 
 	internal MainWindow(
 		DocumentWorkspace workspace,
 		ISongPlaybackTransport? playbackTransport)
-		: this(
-			workspace,
-			playbackTransport,
-			CreateDefaultExportService())
-	{
-	}
+		: this(workspace, playbackTransport, null) { }
 
 	internal MainWindow(
 		DocumentWorkspace workspace,
 		ISongPlaybackTransport? playbackTransport,
-		SongExportService exportService)
+		SongExportService? exportService,
+		AudioOutputSettings? audioOutputSettings = null)
 	{
 		_workspace = workspace
 			?? throw new ArgumentNullException(nameof(workspace));
 		_playbackTransport = playbackTransport;
-		_exportService =
-			exportService
-				?? throw new ArgumentNullException(nameof(exportService));
+		_audioOutputSettings = audioOutputSettings ?? new AudioOutputSettings();
+		_exportService = exportService ??
+			new SongExportService(new OfflineSongRenderPlanFactory(
+				() => _audioOutputSettings.Current));
 		_playbackPositionTransport =
 			playbackTransport as IPlaybackPositionTransport;
 		_runtimeDiagnosticsTransport =
@@ -449,6 +437,15 @@ public sealed class MainWindow : Window
 				},
 			};
 
+		MenuItem audioOutputItem =
+			new() { Header = "_Audio Output..." };
+		audioOutputItem.Click += async (_, _) =>
+			await ConfigureAudioOutputAsync();
+		MenuItem options = new()
+		{
+			Header = "_Options",
+			ItemsSource = new object[] { audioOutputItem },
+		};
 		MenuItem diagnosticsItem =
 			new() { Header = "Runtime _Diagnostics..." };
 		diagnosticsItem.Click += (_, _) => ShowRuntimeDiagnostics();
@@ -459,7 +456,7 @@ public sealed class MainWindow : Window
 		};
 		return new Menu
 		{
-			ItemsSource = new object[] { file, view },
+			ItemsSource = new object[] { file, view, options },
 		};
 	}
 
@@ -714,11 +711,31 @@ public sealed class MainWindow : Window
 		};
 	}
 
-	private static SongExportService CreateDefaultExportService()
-		=> new(
-			new OfflineSongRenderPlanFactory(
-				RenderConfiguration.Stereo(
-					sampleRate: 48000)));
+	private async Task ConfigureAudioOutputAsync()
+	{
+		AudioOutputSettingsDialog dialog = new(_audioOutputSettings.Current);
+		RenderConfiguration? configuration =
+			await dialog.ShowDialog<RenderConfiguration?>(this);
+		if (configuration is null)
+			return;
+		try
+		{
+			// SDL output sessions cannot have their sample rate/channel
+			// format changed while callbacks are running. The transport
+			// fully stops the old session before the new configuration
+			// becomes visible to the next playback request.
+			if (_playbackTransport is not null)
+				await _playbackTransport.StopAsync();
+			_audioOutputSettings.Set(configuration);
+			SetStatus($"Audio output: {configuration.SampleRate:N0} Hz, "
+				+ $"{configuration.OutputChannelCount} speaker feeds. "
+				+ "Changes apply to the next playback and export.");
+		}
+		catch (Exception ex)
+		{
+			SetStatus($"Could not change audio output: {ex.Message}");
+		}
+	}
 
 	private async Task<bool> ConfirmCanReplaceDocumentAsync()
 		=> await UnsavedChangesGuard.CanProceedAsync(
