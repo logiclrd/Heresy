@@ -515,3 +515,19 @@ Volume in that cell. A stack replacement is a no-op when values are identical;
 changes involving only inert tracker placeholders advance document revision but
 not audio revision. In sequence context, paste resolves through the same mapped
 cursor and modifies the underlying shared pattern object.
+
+
+## Native parametric effect authoring
+
+The Pattern effect sticker's native insertion/editor dialog includes
+**Parametric expression**. Select a destination (Global volume,
+overall channel volume, spatial X, current note volume or linear
+pitch units), specify a wall-time duration in seconds, write a
+restricted scalar C# expression using `elapsedSeconds` and
+`rowTime`, and choose whether to commit the terminal delta.
+Validation happens before replacing the persisted effect; a
+compilation failure preserves the existing stack and song
+revision. This is independent of tracker effect-letter typing
+and compatibility tick timing. See
+[effect operators](effect-operators.md) and
+[script programmability](script-programmability.md).

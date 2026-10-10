@@ -2,7 +2,7 @@
 
 **Status (October 10, 2026):** current contract for implemented
 Pattern-script virtual channels and script-defined Envelopes, alongside
-implemented script Instruments and still-open native effect expressions. This is a **current design and
+implemented script Instruments and native parametric effects. This is a **current design and
 acceptance contract**, not a historical implementation log. Track
 outstanding work in [todo.md](todo.md).
 
@@ -12,8 +12,8 @@ The original Heresy design allows data-defined *and* program-defined
 musical objects. The production architecture already provides restricted
 Roslyn Pattern/Sequence programs, abstract sound/envelope execution,
 recursive/flattened invocation ownership, snapshot-backed playback,
-and independently composed parameter operators. What is missing is
-persistence, safe compilation and authoring for native parametric effects.
+and independently composed parameter operators. Those original-design programmable authoring gaps now have
+persisted, tested, restricted compilation and editor surfaces.
 
 - **One song model:** `SongDocument` stores definitions, IDs and
   references; live edits never mutate an already-created playback
@@ -378,29 +378,118 @@ Envelope volume, chunk invariance, selected cycles and bad indices);
 and live reference validation). Existing tone-grid and direct
 Instrument tests remain unchanged.
 
-## 4. Compiled authorable parametric effects — planned architecture
+## 4. Authorable compiled parametric effects — implemented
 
-`IRowPlaybackOperator` and
-`FunctionalRowPlaybackOperator` already represent independent,
-absolute delta contributions. They do **not** yet provide a
-persisted authorable expression language or compiler pipeline.
+`ParametricPatternEffect` is a first-class native semantic effect
+in a data-driven Pattern's effect stack; it persists its
+`ParametricEffectParameter`, `TimeSpan Duration`, C# `Expression`,
+and `CommitOnExpire`. The same `NativePatternEffectEditorDialog`
+now creates, validates and edits it with a destination selector,
+duration expressed in seconds, expression field and commit toggle.
+The effect participates in normal Pattern clipboard, editing and
+version-one JSON/`.hm` serialization with no new schema version.
 
-A native parametric effect should persist its destination,
-scope, source expression, lifetime and terminal commit policy.
-Compile to a deterministic, bounded function of **wall time**,
-optionally also explicit tracker `row_t` for a chosen compatibility
-mode. Its output contributes one independent finite delta; it
-cannot overwrite another operator's state. Distinguish a
-persistent value committed at expiry from a transient value
-removed without baseline change. Do not turn native duration
-into tracker ticks implicitly.
+### Source and supported additive destinations
 
-Validate additive coordinate/parameter compatibility, nonfinite
-result and evaluation failure handling, pause/cancel/NNA owner
-lifetime, seek reconstruction and split-render invariance.
-Integrate a semantic Pattern effect, serialization, authoring
-controls, restricted-source compiler and regression PCM tests
-without duplicating the existing effect engine.
+Expressions are **restricted C# scalar expressions** returning
+`double`, with `elapsedSeconds` (wall time since the effect
+started) and optional `rowTime` (continuous tracker ticks since
+the same event). An expression such as
+`-0.2 * Math.Min(elapsedSeconds / 0.5, 1.0)` fades an additive
+volume coordinate over half a second. Wall-time duration **never**
+means a count of tracker ticks. In particular, tempo changes may
+alter `rowTime` but cannot stretch the half-second lifetime.
+`rowTime` is a query coordinate, not ownership of the timing map.
+
+The supported `ParametricEffectParameter` values are:
+
+- `GlobalVolume` — playback-session global volume, requiring
+  a `ChannelTarget.Global` event;
+- `OverallChannelVolume` and `SpatialX` — physical host channel
+  volume and spatial-X baseline, respectively;
+- `NoteVolume` and `PitchLinearUnits` — the *current voice*,
+  following that voice into the NNA displaced pool if necessary.
+
+Voice-specific effects on a flattened invocation with no single
+terminal voice are filtered using the same flattened-source effect
+policy as other voice-specific commands. The native effect cannot
+target the standalone tick-clock `Tempo` coordinate: that would
+also require changing the analytic tempo/time map, a separate
+architectural task rather than an undocumented side effect.
+
+### Compilation and execution
+
+`ScriptCompiler.CompileParametric` and
+`AnalyzeParametricSource` reuse the single-expression restricted
+C# contract: maximum 2,048 source characters and 256 syntax nodes,
+no arbitrary framework calls, I/O, loops or allocations. The
+frozen `SongDocument` is scanned for every data-driven Pattern
+parametric expression, including potential private child sources,
+and each distinct expression is compiled once in
+`PlaybackSnapshotSoundResolver.PrepareDirectSources`. Playback
+event preparation only looks up precompiled delegates: missing
+preparation fails rather than invoking Roslyn in rendering.
+
+The runtime command `StartParametricEffectCommand` is a transient
+semantic NoteCommand and carries the compiled delegate only
+**after** snapshot preparation; the persisted Pattern effect
+contains *source text*, not executable delegates. The renderer
+wraps the function in a `FunctionalRowPlaybackOperator` with an
+independent `PlaybackParameterDeltas` contribution; separate
+effects do not replace or mutate each other's state.
+
+`ActiveParametricEffect` binds an absolute start frame and an
+exclusive end frame derived from the declared wall duration.
+At each output frame it evaluates the scalar using the
+effect-relative wall time and current continuous tracker-tick
+position. At the exact exclusive deadline, the operator evaluates
+its final endpoint then either:
+
+- commits its final delta to its own coordinate's clamped baseline,
+  once, when `CommitOnExpire` is true; or
+- disappears, without modifying baseline, when false.
+
+The renderer rejects a nonfinite function output with a
+deterministic `InvalidOperationException` rather than allowing
+NaN/infinity into PCM. There is no retroactive arbitrary-script
+recovery or silent fallback that might mask malformed projects.
+Expired effects do not allocate per-sample delta buffers.
+
+### Voice lifecycle and cancellation
+
+Channel operators live in `PlaybackChannelState`; pitch/note-volume
+operators belong to `PlaybackVoice` and continue to affect that
+voice if it is migrated by NNA. Global operators live in
+`PlaybackSession`. Natural Pattern completion does not
+truncate an effect's declared duration. Explicit cancellation
+removes that Pattern cursor's unexpired operators **without**
+committing their terminal deltas; an unrelated sibling cursor
+keeps its own voices/operators. Physical channel volume and
+position are resynchronized immediately after removal so a
+surviving sibling does not retain a canceled contribution.
+
+All native effect evaluation and PCM generation use the existing
+prepared coroutine playback and offline pipeline. There is no
+parallel scheduler or journal, no cache of entire future effects,
+and no work is added to SDL's callback.
+
+### Regression coverage
+
+- `ParametricExpressionCompilerTests`: inputs, restricted syntax
+  and deterministic compilation;
+- `ParametricPatternPlaybackTests`: transient/persistent global,
+  channel and voice effects, additive overlap, exact frame
+  deadlines, dynamic pitch, JSON and frozen playback, invalid
+  scripts, chunk invariance and explicit scope cancellation;
+- `PlaybackOperatorIntegrationTests`: independent spatial-X
+  baseline commit, transient global contribution and renderer
+  state restoration;
+- `NativePatternEffectEditorTests` and
+  `NativePatternEffectInsertionTests`: type creation,
+  round-trip editing, invalid-expression rejection and parameter
+  control defaults;
+- `PlaybackExportPcmParityTests`: mono and 5.1
+  realtime/offline expression modulation.
 
 ## Recommended sequence
 
@@ -408,7 +497,7 @@ without duplicating the existing effect engine.
 2. Pattern virtual voice-local controls.
 3. Script Envelope model/compiler and runtime integration (complete).
 4. Script Instrument model/compiler and source binding (complete).
-5. Authorable parametric effect expressions.
+5. Authorable parametric effect expressions (complete).
 
 Steps 3–5 share compilation and snapshotting principles, but
 should remain separate deliverables with specific red/green

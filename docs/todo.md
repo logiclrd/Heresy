@@ -3,9 +3,8 @@
 **Only genuinely unfinished work belongs here.** Completed work and
 red-to-green regressions live in focused [reference docs](README.md)
 or the [chronological engineering log](incremental-sequencing.md).
-Reconciled October 10, 2026. The original design's programmability
-features are **active work**; the hardware/optimization/schema tasks
-below remain conditional. This is not a list of completed milestones.
+Reconciled October 10, 2026. The original-design programmability features are now implemented;
+the hardware/optimization/schema tasks below remain conditional. This is not a list of completed milestones.
 
 ## Original design — remaining programmability
 
@@ -26,22 +25,11 @@ Further work requires a new concrete regression or feature request.
 
 ### Programmable object types
 
-Script-defined Envelopes and Instruments are complete: deterministic bounded
-expressions, release and tone-selection contracts, recursive sound binding,
-reference retention, persistence, snapshotting and authoring are implemented.
+Script-defined Envelopes and Instruments, plus compiled native parametric
+effects, are implemented. Deterministic bounded expressions, release
+and tone-selection contracts, recursive sound binding, reference retention,
+persistence, snapshotting and authoring are covered.
 See [script programmability](script-programmability.md).
-
-- [ ] **Make native parametric effects authorable as compiled expressions.**
-  Define a persisted semantic effect with destination scope/parameter,
-  lifetime, wall-time (and optional tracker row-time) input, persistent versus
-  transient commit policy and expression source. Compile under a bounded
-  deterministic restricted-C# subset before playback and evaluate as a
-  per-frame absolute operator contribution, never by mutating other
-  operators' baselines. Enforce finite outputs/error policy, shared-clock
-  deadlines, lifecycle ownership and chunk-invariant realtime/offline PCM.
-  Add editing, serialization, validation and tests; reuse the existing
-  `FunctionalRowPlaybackOperator` style of composition without treating
-  tracker-specific semantics as native wall-time semantics.
 
 ## Physical validation
 

@@ -176,3 +176,35 @@ tracker timing trajectory. It maps wall time to `row_t` for compatibility
 operators; it does **not** own effect state and it does not redefine native
 wall-time functors. The live global tempo operator and the analytic timing map
 must describe the same trajectory.
+
+
+## Authorable parametric expressions
+
+`ParametricPatternEffect` uses the existing
+`FunctionalRowPlaybackOperator` additive operator model and
+snapshot-owned restricted-C# evaluator. Its `Duration` is a
+**wall-time `TimeSpan`**, independent of tracker tempo; its
+`elapsedSeconds` is relative to the effect's start, while
+`rowTime` is the optional continuous tracker-tick coordinate
+measured from that event. The end frame is exclusive. The
+last expression value is evaluated at expiry and either
+committed once or removed, according to `CommitOnExpire`.
+Multiple simultaneous operators sum their absolute deltas
+against a shared baseline without overwriting one another.
+
+Five destinations are authorable: session
+`GlobalVolume`, channel `OverallChannelVolume` and
+`SpatialX`, and current-voice `NoteVolume` and
+`PitchLinearUnits`. Voice effects follow NNA displacement.
+The separate analytic `Tempo` coordinate is not exposed as
+an arbitrary scripted modulator; tracker tempo/ramp updates
+remain responsible for the timing map.
+
+Every expression is compiled from the frozen document
+before playback begins. Native effects never compile in the
+PCM worker or callback. A nonfinite evaluated delta fails
+deterministically rather than contaminating the mix.
+Explicit Pattern cursor cancellation removes its active
+operators without terminal commit; natural completion permits
+the declared wall duration to finish. Further contracts and
+test names: [script programmability](script-programmability.md).
