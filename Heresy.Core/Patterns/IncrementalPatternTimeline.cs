@@ -851,6 +851,9 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						or SetOverallChannelVolumeCommand
 						or ApplyTonePortamentoCommand
 						or ApplyTonePortamentoVolumeSlideCommand
+						or ApplyVibratoCommand or ApplyFineVibratoCommand
+						or ApplyVibratoVolumeSlideCommand
+						or ApplyTrackerVibratoWaveformCommand
 						or ApplyTrackerVolumeColumnCommand
 						or ApplyGlobalVolumeSlideCommand or ApplyPanningSlideCommand
 						or SetOverallChannelVolumeSlideCommand
@@ -1991,6 +1994,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				if (note.Offset.TimeOffset == nominalDuration
 					&& note.Commands.Count != 0
 					&& note.Commands.All(c => c is ClearPitchSlideCommand
+						or ClearPitchModulationCommand
 						or ClearNoteVolumeSlideCommand or ClearOverallChannelVolumeSlideCommand
 						or ClearGlobalVolumeSlideCommand or ClearSpatialXSlideCommand))
 				{
@@ -2067,6 +2071,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					if (note.Offset.TimeOffset == nominal
 						&& note.Commands.Count > 0
 						&& note.Commands.All(c => c is ClearPitchSlideCommand
+						or ClearPitchModulationCommand
 							or ClearNoteVolumeSlideCommand
 							or ClearOverallChannelVolumeSlideCommand
 							or ClearGlobalVolumeSlideCommand or ClearSpatialXSlideCommand))
