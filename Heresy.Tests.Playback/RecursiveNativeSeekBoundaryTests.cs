@@ -371,6 +371,45 @@ public sealed class RecursiveNativeSeekBoundaryTests
 		});
 	}
 
+	[TestCase(false)]
+	[TestCase(true)]
+	[Explicit("Known gap: a private recursive note captures its initial pitch, " +
+		"but its later parent PitchTrajectory modulation is not propagated to " +
+		"child voice frequencies. Enable this counterexample after defining " +
+		"the dynamic per-child pitch propagation contract.")]
+	public void PrivateNotePitchSlideShouldModulateActiveChildVoicesWithoutChangingClock(
+		bool viaInstrument)
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId child = AddPattern(document, sample, rows: 3);
+		ObjectId source = viaInstrument ? AddInstrument(document, child) : child;
+		ObjectId parent = AddPattern(document, source, rows: 3,
+			mixdown: !viaInstrument);
+		PreparedIncrementalPlaybackFactory factory = new(Mono());
+		using PreparedIncrementalPlaybackPlan noSlide =
+			factory.Create(document, parent);
+
+		((DataPatternDefinition)document.Objects[parent])
+			.Grid.GetOrCreateCell(0, 0).Effects.Add(
+				new PitchSlidePatternEffect(96));
+		using PreparedIncrementalPlaybackPlan slide =
+			factory.Create(document, parent);
+		float[] normalPcm = new float[110];
+		float[] modulatedPcm = new float[110];
+		noSlide.Source.Render(normalPcm.Length, normalPcm);
+		slide.Source.Render(modulatedPcm.Length, modulatedPcm);
+		PlaybackVoice parentVoice =
+			slide.Session.GetChannelState(0).CurrentVoice!;
+		Assert.That(parentVoice.SoundState.PitchTrajectory.GetMultiplier(80),
+			Is.GreaterThan(1.001),
+			"The parent private note's pitch curve is definitely active.");
+		Assert.That(modulatedPcm, Is.Not.EqualTo(normalPcm),
+			"Private source note pitch slides should change child note pitch, " +
+			"without altering the child Sequence Tempo/row deadlines. " +
+			"At present PreparedRecursiveMixdownSound.Render ignores its " +
+			"SoundState.PitchTrajectory, so the audible outputs are identical.");
+	}
+
 	private static PlaybackSession ChildSession(PlaybackVoice parent)
 		=> (PlaybackSession)parent.Sound.GetType()
 			.GetProperty("Session", BindingFlags.Instance | BindingFlags.Public)!
