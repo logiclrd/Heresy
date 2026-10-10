@@ -61,6 +61,42 @@ public sealed class PlaybackSessionTests
 	}
 
 	[Test]
+	public void ExtremelyLowCutoffAccumulatesSubThresholdNonzeroInput()
+	{
+		ObjectId source = (ObjectId)10U;
+		RenderConfiguration config = new(1000,
+		[
+			new OutputChannelConfiguration(Vector3.Zero,
+				positionalImportance: 0, filterType: OutputFilterType.LowPass,
+				cutoffHz: 1e-6),
+		]);
+		PlaybackSession session = new(new RenderContext(config),
+			Schedule(Event(TimeSpan.Zero, 0, new StartNoteCommand(source))),
+			new TestResolver((source, false, new SpeakerConstantSound())));
+		float[] output = new float[40];
+		session.Render(0, 40, output);
+		Assert.That(output[0], Is.GreaterThan(0.0f));
+		Assert.That(output[39], Is.GreaterThan(output[0] * 30.0f),
+			"Continuous nonzero input must accumulate even while the "
+			+ "one-pole state is individually below the tail threshold.");
+	}
+
+	private sealed class SpeakerConstantSound : ISound
+	{
+		public NoteConfigurationSnapshot SnapshotNoteConfiguration()
+			=> NoteConfigurationSnapshot.Default;
+
+		public SoundState CreateState() => new TestSoundState();
+
+		public long? GetEndFrameExclusive(RenderContext context,
+			SoundState state) => 100;
+
+		public void Render(RenderContext context, SoundState state,
+			long startFrame, int frameCount, Span<float> destination)
+			=> destination.Fill(1f);
+	}
+
+	[Test]
 	public void FinalSpeakerFilterTailDelaysQuiescenceButEndsAtDigitalSilence()
 	{
 		ObjectId source = (ObjectId)10U;
