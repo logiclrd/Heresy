@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 
 using Heresy.Core.Envelopes;
+using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequences;
@@ -220,6 +221,46 @@ public static class ScriptCompiler
 				startOrder,
 				startRow,
 				shouldFollowOrderJump),
+			compiled.Diagnostics);
+	}
+
+	/// <summary>
+	/// Compile a deterministic per-invocation tone index expression. Selection
+	/// is restricted to declared ToneSpecifications: -1 means silence.
+	/// </summary>
+	public static IReadOnlyList<ScriptAnalysisDiagnostic> AnalyzeInstrumentSource(
+		string source)
+	{
+		ArgumentNullException.ThrowIfNull(source);
+		IReadOnlyList<ScriptAnalysisDiagnostic> shape =
+			ValidateEnvelopeExpression(source);
+		if (shape.Count != 0)
+			return shape;
+		return PrepareCompilation(source,
+			BuildInstrumentWrapper("__HeresyInstrument_Analysis", source)).Diagnostics;
+	}
+
+	public static ScriptCompilationResult<IScriptInstrumentToneEvaluator>
+		CompileInstrument(ScriptInstrumentDefinition definition)
+	{
+		ArgumentNullException.ThrowIfNull(definition);
+		IReadOnlyList<ScriptAnalysisDiagnostic> shape =
+			ValidateEnvelopeExpression(definition.Source);
+		if (shape.Count != 0)
+			return new(null, shape);
+		string className =
+			"__HeresyInstrument_" + Guid.NewGuid().ToString("N");
+		ScriptCompilationResult<Type> compiled = CompileType(
+			definition.Source, className,
+			BuildInstrumentWrapper(className, definition.Source),
+			typeof(IScriptInstrumentToneEvaluator));
+		if (!compiled.Success || compiled.Program is null)
+			return new(null, compiled.Diagnostics);
+		return new(
+			Activator.CreateInstance(compiled.Program)
+				as IScriptInstrumentToneEvaluator
+					?? throw new InvalidOperationException(
+						"Could not construct a compiled Instrument selector."),
 			compiled.Diagnostics);
 	}
 
@@ -767,6 +808,25 @@ public static class ScriptCompiler
 				}
 			}
 			""";
+
+	private static string BuildInstrumentWrapper(
+		string className, string source)
+		=> """
+			using System;
+			using Heresy.Scripting.Runtime;
+
+			public sealed class __INSTRUMENT_CLASS__ : IScriptInstrumentToneEvaluator
+			{
+				public int SelectToneIndex(double pitchMultiplier)
+				{
+			#line 1 "heresy-script"
+					return (__INSTRUMENT_EXPRESSION__);
+			#line default
+				}
+			}
+			"""
+			.Replace("__INSTRUMENT_CLASS__", className, StringComparison.Ordinal)
+			.Replace("__INSTRUMENT_EXPRESSION__", source, StringComparison.Ordinal);
 
 	private static string BuildEnvelopeWrapper(
 		string className, string source)
