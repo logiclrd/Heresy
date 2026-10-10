@@ -115,7 +115,7 @@ public sealed class ScriptVirtualControlTests
     }
 
     [TestCase("VolumeVirtual(0, 7U, -0.1);")]
-    [TestCase("VolumeVirtual(0, 7U, double.NaN);")]
+    [TestCase("VolumeVirtual(0, 7U, Math.Sqrt(-1));")]
     [TestCase("VolumeVirtual(0, 7U, 1.1);")]
     [TestCase("SourceFrameVirtual(0, 7U, -1);")]
     [TestCase("SourceFrameVirtual(1.1, 7U, 0);")]
