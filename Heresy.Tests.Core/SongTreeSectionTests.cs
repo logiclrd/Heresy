@@ -18,20 +18,22 @@ namespace Heresy.Tests.Core;
 public sealed class SongTreeSectionTests
 {
 	[Test]
-	public void NewDocumentHasFourFixedSectionRootsInDocumentPaneOrder()
+	public void NewDocumentHasFiveFixedSectionRootsInDocumentPaneOrder()
 	{
 		SongDocument document = new();
 
 		document.Root.Children.Should().ContainInOrder(
 			document.GetSectionRoot(SongTreeSection.Sequences),
 			document.GetSectionRoot(SongTreeSection.Patterns),
-			document.GetSectionRoot(SongTreeSection.Instruments),
-			document.GetSectionRoot(SongTreeSection.Samples));
+			document.GetSectionRoot(SongTreeSection.Samples),
+			document.GetSectionRoot(SongTreeSection.Envelopes),
+			document.GetSectionRoot(SongTreeSection.Instruments));
 		document.Root.Children.Select(node => node.Name).Should().Equal(
 			"Sequences",
 			"Patterns",
-			"Instruments",
-			"Samples");
+			"Patches",
+			"Envelopes",
+			"Instruments");
 		document.DocumentRevision.Should().Be(0);
 		document.AudioRevision.Should().Be(0);
 	}
@@ -65,7 +67,9 @@ public sealed class SongTreeSectionTests
 		Ids(document.GetSectionRoot(SongTreeSection.Patterns))
 			.Should().Equal(patternId);
 		Ids(document.GetSectionRoot(SongTreeSection.Instruments))
-			.Should().Equal(instrumentId, envelopeId);
+			.Should().Equal(instrumentId);
+		Ids(document.GetSectionRoot(SongTreeSection.Envelopes))
+			.Should().Equal(envelopeId);
 		Ids(document.GetSectionRoot(SongTreeSection.Samples))
 			.Should().Equal(sampleId);
 	}

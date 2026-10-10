@@ -620,10 +620,10 @@ public sealed class SongDocumentJsonTests
 			scriptSequence.Source,
 			Is.EqualTo("yield return pattern;"));
 
-		Assert.That(document.Root.Children, Has.Count.EqualTo(4));
+		Assert.That(document.Root.Children, Has.Count.EqualTo(5));
 		Assert.That(
 			document.Root.Children.Select(node => node.Name),
-			Is.EqualTo(new[] { "Sequences", "Patterns", "Instruments", "Samples" }));
+			Is.EqualTo(new[] { "Sequences", "Patterns", "Patches", "Envelopes", "Instruments" }));
 
 		SongTreeFolder samples =
 			document.GetSectionRoot(SongTreeSection.Samples);
@@ -639,7 +639,12 @@ public sealed class SongDocumentJsonTests
 				.Children
 				.Cast<SongTreeObject>()
 				.Select(node => node.ObjectId),
-			Is.EqualTo(new[] { (ObjectId)2U, (ObjectId)4U }));
+			Is.EqualTo(new[] { (ObjectId)2U }));
+		Assert.That(
+			document.GetSectionRoot(SongTreeSection.Envelopes)
+				.Children.Cast<SongTreeObject>()
+				.Select(node => node.ObjectId),
+			Is.EqualTo(new[] { (ObjectId)4U }));
 	}
 
 	private sealed class FixedScriptReferenceAnalyzer(
