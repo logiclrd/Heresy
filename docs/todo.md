@@ -135,10 +135,22 @@ preserving audible release and already-captured anti-click tails. These are
   are discarded/settled safely. Red-to-green PCM, private InputEnded,
   source end-frame, fade-controller, and sibling-isolation tests cover
   direct mixdowns, nested Instrument chains and private Sequences.
+  **Step 60: source Fade duration and release ancestry verified.**
+  Flattened S76/Fade now applies the selected descendant voice's
+  new-note fade duration, rather than its ordinary note-fade duration,
+  consistently across physical, scoped virtual and displaced NNA voices.
+  Private recursive playback distinguishes S76/NNA Fade from ordinary
+  S72 past-note Fade, preserving their independently configured durations
+  while stopping future private note generation. Releasing descendants
+  retain live source-note and overall-channel volume references even after
+  their producer scope retires; a later replacement note takes over the
+  instigating channel without stealing or re-targeting those references.
+  Four new regression cases verify fade boundary frames, PCM curves,
+  continued release automation and replacement-note isolation.
   **Still outstanding:** inherited/dynamically selected editor source
-  indications and downstream Note Off/Cut; remaining continuous
-  release/fade-envelope automation nuances, lifecycle stress over
-  indefinitely scripted graphs, and advanced timing/seek compatibility.
+  indications and downstream Note Off/Cut; advanced mixed release
+  envelope/indefinite-script stress coverage, and separate timing/seek
+  compatibility work.
   The incremental merger admits zero-offset Mxx and native channel-volume
   commands alongside flattened starts.
   The detailed target remains in step 48 below.

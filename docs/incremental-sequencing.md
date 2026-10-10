@@ -2948,3 +2948,65 @@ thread is introduced. Unusual overlapping release envelopes and
 more prolonged indefinite-script cancellation/retirement stress remain
 follow-up correctness work, as do the separate multi-rate Tempo and
 advanced seek projects.
+
+## Sixtieth step: S76 fade duration parity and retained release automation
+
+**S76 is a new-note Fade, not an ordinary note Fade.** An instigating
+flattened Pattern/Sequence is one logical note, but its children may be
+different physical, scoped virtual, targeted virtual or NNA-displaced
+voices. The step-54 scope Fade already reached those descendants,
+and step 59 stopped future private note production. However, the
+renderer called `PlaybackVoice.RequestNoteFade(frame, sampleRate)`
+on each descendant, which chooses `NoteFadeDuration` instead of
+`NewNoteFadeDuration`. Direct S76 displacement had always selected
+the new-note duration. This inconsistency changed audible fade slopes
+and voice-retirement frames for flattened descendants.
+
+`PlaybackSession.ApplyFlattenedScopeAction(Fade)` now passes each
+descendant's captured `Configuration.NewNoteFadeDuration` to
+`RequestNoteFade`, both for currently hosted voices and those
+displaced into the session-wide virtual/NNA pool. It continues to
+leave other voices, host channels and any anti-click residue alone.
+If no explicit new-note duration is provided, the normal
+`RequestNoteFade` fallback contract applies: it marks the voice as
+fading without inventing a timed ramp.
+
+**Private mixdowns distinguish S72 and S76.** When a private
+Pattern/Sequence is selected directly or through Instrument tones,
+`PreparedIncrementalPlaybackFactory` now specifies whether a
+scheduled Fade is an NNA/S76 displacement or an ordinary past-note
+S72 Fade. `PreparedRecursiveMixdownSound.ScheduleFade` passes that
+flag to its private renderer's `RequestFadeOfActiveVoices`. The former
+uses each child voice's `NewNoteFadeDuration`; the latter keeps the
+independent `NoteFadeDuration`. Both stop the private source
+producer without forcing an immediate Note Off or Cut. No extra
+PCM buffering or worker is introduced.
+
+A red regression originally measured a flattened S76 descendant's
+end at frame **201** with a 200-ms ordinary fade, even though the
+new-note fade duration was 40 ms at 1000 Hz and the command arrived
+at frame 1. With the correction, physical, virtual and NNA-migrated
+descendants finish at frame **41**. Exact-frame PCM tests verify
+the active ramp, its midpoint and silence after completion. Additional
+private-session coverage independently verifies the 40-ms S76
+duration and 200-ms ordinary S72 duration.
+
+**Release automation survives producer retirement.** A separate
+renderer regression starts a child voice beneath an instigating
+source-volume controller and a parent overall-volume channel. The
+source is Note Off'd and its producer scope is retired, removing its
+lookup registration. The already sounding child continues to hold
+its controller and parent-channel references, so later source-volume
+and Mxx-style overall-volume changes act on its release tail.
+When the instigating channel subsequently starts a replacement note,
+the released child retains its original source-volume value while
+the replacement receives its own direct note volume. The unrelated
+host voice remains audible throughout. This already worked in the
+implementation; the new test now locks down its sample-accurate
+contract.
+
+Step 60 settles the distinction between new-note Fade durations,
+ordinary fade durations and the source-volume lifecycle covered
+above. It does not claim exhaustive parity for every unusual
+instrument release envelope or indefinitely running script; those
+remain stress/compatibility follow-ups.
