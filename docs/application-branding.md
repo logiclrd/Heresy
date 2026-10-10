@@ -45,23 +45,45 @@ After `MainWindow.Opened`, `App` schedules creation at Avalonia's
 `DispatcherPriority.Loaded` (and checks the main window remains visible).
 It calls the nonmodal `Show(mainWindow)` overload, making the splash
 an **owned** auxiliary window rather than the lifetime's main window.
-The splash uses `WindowDecorations.None`, `CanResize = false`
-and `ShowInTaskbar = false`. On Windows, X11 and other environments
-that permit top-level window movement, `StartupSplashWindow`
-explicitly centers itself **after opening**, using the owner's
-actual screen-pixel position and scaled bounds. If its owner is
-maximized, it uses the owner's current display's **WorkingArea**
-instead of stale restore bounds, so centering still works on
-secondary monitors and under display scaling.
+The splash uses `WindowDecorations.None`, `CanResize = false`,
+`ShowInTaskbar = false`, and **always** requests
+`WindowStartupLocation.CenterScreen` when created. The initial
+`Opacity = 0` hides provisional placement while the native window
+manager completes creation. On `Opened`, a UI-thread timer advances
+the window opacity linearly from 0 to 1 over **250 ms**, using a monotonic
+stopwatch and approximately 16 ms timer ticks. Closing the window
+stops the fade; it never delays the main document or the audio backend.
+
+On coordinate-capable windowing backends (notably X11 and Windows),
+the splash is explicitly centered over its owner's physical-pixel
+rectangle after opening. A maximized owner anchors to its current
+display's working area; different display positions and scaling are
+accounted for. On certain KDE Plasma 6/X11 configurations, the window
+manager can relocate a newly created window under the mouse cursor
+after an initial placement request. To accommodate this, the splash
+also observes native `PositionChanged` for **both the owner and the
+splash**, and `Resized` for the owner, during the **first 50 ms after
+opening**. These events request a coalesced UI-thread recenter using
+the latest available native coordinates. Owner maximization/restoration
+state changes continue to trigger recentering throughout the splash's
+lifetime, not just during the initial 50 ms.
 
 On Linux Wayland, ordinary top-level coordinates cannot reliably
-be chosen by a client; the splash remains an **owned** window
-(`Show(mainWindow)`) but sets `WindowStartupLocation.CenterScreen`
-as a best-effort compositor hint. The compositor may ignore this or
-choose a display. Exact placement cannot be guaranteed on Wayland,
-and no arbitrary explicit move is attempted there. The main document
-window and lazy SDL playback transport initialize independently; neither
-is delayed by a four-second await/sleep.
+be chosen by a client; the owned splash requests `CenterScreen`
+as a best-effort compositor hint and does not attempt explicit moves.
+The compositor may ignore the hint or choose a display. An explicitly
+reported `XDG_SESSION_TYPE=x11` overrides an incidental
+`WAYLAND_DISPLAY` variable to avoid suppressing X11 positioning.
+Native placement failures are nonfatal (visible in development
+diagnostics); the CenterScreen hint remains the fallback.
+
+**Verification status:** The earlier post-open centering implementation
+passed geometry unit tests but failed a user desktop check on KDE
+Plasma 6/X11 with under-mouse window placement. The 50 ms follow-up
+and 250 ms fade are implemented and covered by headless event-policy
+and fade-math tests, but this revision still requires a **real desktop
+check in normal and maximized states** before declaring placement
+correct. CI cannot verify compositor-enforced positions.
 
 Once the splash raises `Opened`, a UI-thread `DispatcherTimer` starts
 with a four-second interval and the splash activates for keyboard input.
@@ -108,7 +130,8 @@ preference by themselves.
 `MainWindowStatePreferenceTests` cover missing/malformed files,
 round-trip writes, unavailable storage and transition deduplication.
 `StartupSplashPlacementTests` cover coordinate centering, negative
-secondary-monitor coordinates, maximized work areas, pixel scaling
-and Wayland detection. The CI runner is headless: actual compositor
-positioning and window-manager maximize notifications require a
-desktop smoke test.
+secondary-monitor coordinates, maximized work areas, pixel scaling,
+Wayland/X11 detection, early owner/splash move notifications,
+late maximize changes and the 250 ms fade progression. The CI
+runner is headless: actual compositor positioning and window-manager
+maximize notifications require a desktop smoke test.
