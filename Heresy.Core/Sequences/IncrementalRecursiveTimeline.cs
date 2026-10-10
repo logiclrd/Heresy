@@ -67,6 +67,7 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 			&& definition is PatternDefinition or SequenceDefinition;
 		_timeline = new IncrementalPatternTimeline(root);
 		_timeline.RowBegan += ReportRowBegan;
+		_timeline.RowsEnded += ReportRowsEnded;
 	}
 
 	/// <summary>Realtime playback-follow reports rows of the requested
@@ -75,6 +76,19 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 	/// not replace the position of the Pattern being played in the editor.
 	/// No future orders are traversed to construct this feed.</summary>
 	public event Action<ObjectId, int, ObjectId?, int?, TimeSpan>? RowBegan;
+
+	/// <summary>Playback-loop boundary for a directly played root Pattern.
+	/// A flattened child completing its rows cannot restart its parent;
+	/// a child remaining active cannot postpone the root's boundary.</summary>
+	public event Action<long, TimeSpan>? RootPatternRowsEnded;
+
+	private void ReportRowsEnded(long cursorId, TimeSpan time)
+	{
+		if (_patternOwners.TryGetValue(cursorId, out long frameId)
+			&& _frames.TryGetValue(frameId, out Invocation? frame)
+			&& frame.ParentId is null)
+			RootPatternRowsEnded?.Invoke(frameId, time);
+	}
 
 	private void ReportRowBegan(long cursorId, int row, TimeSpan time)
 	{

@@ -1014,6 +1014,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	/// <summary>Emitted when a cursor finishes preparing a new row.
 	/// This is observability, not an extra note event or audible action.</summary>
 	public event Action<long, int, TimeSpan>? RowBegan;
+	/// <summary>Fires at the exact musical boundary where an invocation
+	/// finishes its final row, independently of unfinished child sources,
+	/// deferred wall-time notes, and sounding playback voices.</summary>
+	public event Action<long, TimeSpan>? RowsEnded;
 	public bool IsComplete => _active.Count == 0
 		&& _delayed.Count == 0 && _queuedTempoEvents.Count == 0
 		&& _futureTempoRamps.Count == 0;
@@ -2334,6 +2338,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			&& n.RowEndTick is double limit
 			&& _tick >= limit - TickTolerance);
 		PatternFlowControl completed = current.FinishRow();
+		if (current.Complete)
+			RowsEnded?.Invoke(current.Sequence, Elapsed);
 		result = completed.HasControl
 			? new IncrementalPatternTimelineStep.Flow(
 				current.Sequence, completed, _tick, Elapsed)

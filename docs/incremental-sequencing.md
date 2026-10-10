@@ -29,6 +29,26 @@
 > [seek hints](source-seek-hints.md), and [remaining TODOs](todo.md).
 > This historical log retains its original step headings for traceability.
 
+## F6 root-Pattern repeat boundaries (October 10, 2026)
+
+F6 repeats a root Pattern at the musical end of **its own source rows**,
+not when the whole recursive timeline falls idle. The incremental Pattern
+merger emits a row-completion notification at the exact shared-clock
+boundary; the recursive coordinator forwards completion only for root
+Pattern invocations. The PCM source adds the next root invocation on the
+same clock without ending input or reconstructing its PlaybackSession.
+A child Pattern/Sequence can still generate events, fixed-wall delayed
+notes can still be pending, and already-rendering voice tails retain their
+normal Off/Cut/new-note/NNA ownership. Looping never implicitly cuts
+those voices or adds the tail duration to the next iteration's row timing.
+Nonrepeating song/export logical completion retains its existing behavior.
+An empty, no-row root retains the whole-timeline completion fallback.
+
+`PlaybackRequestAudioSourceFactoryTests` exercise nested Pattern and
+Sequence sources whose rows outlast their parent's loop boundary,
+NNA Continue across iterations, and a long sample note in the final
+row surviving the next empty first row.
+
 ## Nested Instrument/private-source release intersections and root cancellation (October 10, 2026)
 
 The fourth and final advanced lifecycle TODO is closed by

@@ -448,6 +448,101 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 		output[0].Should().BeApproximately(0.75f, 1e-6f);
 	}
 
+	[TestCase(false)]
+	[TestCase(true)]
+	public void RepeatingPatternBeginsNextCycleWhileFlattenedChildIsStillActive(
+		bool nestedSequence)
+	{
+		SongDocument document = new();
+		ObjectId sampleId = AddSample(document, "Child sound");
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Longer child")
+		{
+			RowCount = 4, ChannelCount = 1,
+		};
+		// This note begins 240 ms after the first invocation, well
+		// beyond the parent's 120 ms repeat boundary.
+		PatternCell delayed = child.Grid.GetOrCreateCell(2, 0);
+		delayed.SourceId = sampleId;
+		delayed.Note = new StartPatternNote();
+		document.Add(child);
+		ObjectId nested = nestedSequence
+			? AddSequence(document, childId) : childId;
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Repeated host")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		PatternCell start = parent.Grid.GetOrCreateCell(0, 0);
+		start.SourceId = nested;
+		start.Note = new StartPatternNote();
+		start.Effects.Add(new TrackerNewNoteActionPatternEffect(
+			NoteDisplacementAction.Continue));
+		document.Add(parent);
+
+		PatternPlaybackRequest request =
+			PatternPlaybackRequest.Create(document, parentId, repeat: true);
+		PlaybackRequestAudioSourceFactory factory = new(
+			MonoConfiguration(100),
+			new RecordingSampleProvider(
+				new MemorySampleData(100, 1, [0.75f])));
+		IAudioOutputSource output = factory.Create(request);
+		factory.TryTakePlaybackPositionTimeline(request,
+			out PlaybackPositionTimeline? position).Should().BeTrue();
+		position.Should().NotBeNull();
+
+		float[] rendered = new float[25];
+		output.Render(rendered.Length, rendered);
+		position!.Entries.Where(e => e.Position.PatternId == parentId)
+			.Select(e => e.Offset)
+			.Take(3)
+			.Should().Equal(TimeSpan.Zero,
+				TimeSpan.FromMilliseconds(120),
+				TimeSpan.FromMilliseconds(240));
+		rendered[24].Should().BeApproximately(0.75f, 1e-6f,
+			"the original child must still be able to produce its late note " +
+			"after the parent has repeated, with NNA Continue");
+		(output as IDisposable)?.Dispose();
+	}
+
+	[Test]
+	public void RepeatingPatternKeepsSampleTailAcrossAnEmptyLoopBoundary()
+	{
+		SongDocument document = new();
+		ObjectId sample = AddSample(document, "Long sample");
+		ObjectId id = document.AllocateObjectId();
+		DataPatternDefinition pattern = new(id, "Last-row note")
+		{
+			RowCount = 2, ChannelCount = 1,
+		};
+		PatternCell last = pattern.Grid.GetOrCreateCell(1, 0);
+		last.SourceId = sample;
+		last.Note = new StartPatternNote();
+		document.Add(pattern);
+		PlaybackRequestAudioSourceFactory factory = new(
+			MonoConfiguration(100),
+			new RecordingSampleProvider(new MemorySampleData(
+				100, 1, Enumerable.Repeat(0.5f, 60).ToArray())));
+		PatternPlaybackRequest request =
+			PatternPlaybackRequest.Create(document, id, repeat: true);
+		IAudioOutputSource output = factory.Create(request);
+		factory.TryTakePlaybackPositionTimeline(request,
+			out PlaybackPositionTimeline? positions).Should().BeTrue();
+
+		float[] rendered = new float[26];
+		output.Render(rendered.Length, rendered);
+		rendered[12].Should().BeApproximately(0.5f, 1e-6f);
+		rendered[24].Should().BeApproximately(0.5f, 1e-6f,
+			"looping an empty row must not cut the final row's sample tail");
+		positions!.Entries.Where(e => e.Position.PatternId == id)
+			.Select(e => (e.Offset, e.Position.PatternRow))
+			.Take(3).Should().Equal(
+				(TimeSpan.Zero, 0),
+				(TimeSpan.FromMilliseconds(120), 1),
+				(TimeSpan.FromMilliseconds(240), 0));
+		(output as IDisposable)?.Dispose();
+	}
+
 	[Test]
 	public void RepeatingPatternRestartsAtBxxBoundary()
 	{

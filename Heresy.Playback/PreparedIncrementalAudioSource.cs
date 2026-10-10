@@ -60,6 +60,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		_afterRender = afterRender;
 		_timeline.ScopeRetired += OnScopeRetired;
 		_timeline.ScopeCanceled += OnScopeCanceled;
+		_timeline.RootPatternRowsEnded += OnRootPatternRowsEnded;
 		if (session.NextFrame != 0)
 			throw new ArgumentException(
 				"The incremental renderer requires a fresh playback session.",
@@ -126,6 +127,16 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 			target, commands);
 		NoteEvent prepared = _transform?.Invoke(raw, frame, -1) ?? raw;
 		_session.ApplyLiveEvent(prepared.Target, prepared.Commands);
+	}
+
+	private void OnRootPatternRowsEnded(long invocationId, TimeSpan time)
+	{
+		// F6 loops the source rows, not its still-sounding notes or
+		// recursively active children. Add the next invocation at this
+		// same shared-clock boundary; all existing voices remain owned
+		// by the uninterrupted PlaybackSession.
+		if (!_inputStopped)
+			_repeatRoot?.Invoke();
 	}
 
 	private void OnScopeCanceled(long scopeId)
@@ -303,5 +314,6 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		_disposed = true;
 		_timeline.ScopeRetired -= OnScopeRetired;
 		_timeline.ScopeCanceled -= OnScopeCanceled;
+		_timeline.RootPatternRowsEnded -= OnRootPatternRowsEnded;
 	}
 }
