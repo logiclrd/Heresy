@@ -12,6 +12,7 @@ using Heresy.Playback;
 using Heresy.Render.Configuration;
 using Heresy.Render.File;
 using Heresy.Render.Realtime;
+using Heresy.UserInterface;
 
 using NUnit.Framework;
 
