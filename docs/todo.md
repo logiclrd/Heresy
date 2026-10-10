@@ -95,16 +95,27 @@ release-tail rendering and codec quantization are deliberately separate
 contracts; physical SDL callback scheduling is not part of this comparison.
 See [export-workflow.md](export-workflow.md).
 
-- [ ] Expand **advanced scripted export compatibility** beyond the
-  completed PCM parity tests: additional nonterminating script-Pattern
-  cases (not merely previously tested indefinite scripted Sequences),
-  complex flow with musical-time adjustments and combined tracker
-  effects, plus finite export-body and release-tail-limit stress.
-  Step 62 already stress-tests 160 indefinitely scripted Sequence orders,
-  deep cancellation, chunk-invariant recursive PCM, overlapping NNA tails
-  and registration reclamation. Existing cycle protection, cooperation
-  budgets and export limits must be preserved; avoid duplicating completed
-  cases without a distinct counterexample.
+**Advanced scripted export compatibility and bounded rendering
+verified.** Production `OfflineSongRenderPlanFactory` →
+`OfflinePlaybackRenderer` regressions now exercise silent
+`while (true)` scripted Patterns and a Pattern that emits a note
+before spinning. Both fail at the shared same-tick cooperation guard
+without committing a partial PCM block. Script Tempo at row zero,
+a fractional-row Note, combined tracker Bxx/Cxx and later
+row-1 entry produce exactly 300 logical frames at 1 kHz,
+identically at different render-block sizes in mono and 5.1.
+Revisiting a scripted Pattern through Bxx regenerates its notes
+until the **third jump encounter** is suppressed for finite export.
+A script-generated finite arrangement also proves exact logical-body
+frame-cap failure, release-tail cap failure after precisely the
+budgeted output frames, and successful bounded decay and completion
+of residual final-speaker filter tails. Progress remains
+indeterminate until the coroutine ends and is only reported for
+completed output blocks. Prior step-62 infinite scripted Sequence
+stress, recursive cancellation, private-tail and voice-retirement
+tests are retained. No eager note schedule, event journal,
+unbounded cache or new playback path was introduced.
+See [export-workflow.md](export-workflow.md).
 
 ## Output audio configuration and physical speaker processing
 
