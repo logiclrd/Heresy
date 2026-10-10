@@ -823,9 +823,18 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					&& !virtualTarget
 					|| note.Commands.Any(c => c is not (StartNoteCommand
 						or NoteOffCommand or NoteCutCommand
-						or SetNoteVolumeCommand or SetSourceFrameOffsetCommand)
+						or SetNoteVolumeCommand or SetSourceFrameOffsetCommand
+						// An explicit note-lifecycle command is safe to defer on
+						// both physical and virtual targets. Resolve it against the
+						// voice present at the actual wall deadline, not the row.
+						or SetCurrentVoiceDisplacementActionCommand
+						or ApplyPastNoteActionCommand)
 						&& (virtualTarget || c is not (SelectPatternSourceCommand
 							or ApplySampleOffsetCommand
+							// Raw physical S7x is translated into one of the
+							// explicit commands above at its actual deadline.
+							or ApplyTrackerNewNoteActionCommand
+							or ApplyTrackerPastNoteActionCommand
 							or ApplyTrackerNoteCutCommand
 							or ApplyTrackerNoteDelayCommand
 							or ApplyRetriggerCommand
