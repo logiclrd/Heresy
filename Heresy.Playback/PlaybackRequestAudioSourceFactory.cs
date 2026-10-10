@@ -33,7 +33,7 @@ public sealed class PlaybackRequestAudioSourceFactory :
 	IPlaybackPositionTimelineProvider,
 	IPlaybackRuntimeDiagnosticReportProvider
 {
-	private readonly RenderConfiguration _configuration;
+	private readonly Func<RenderConfiguration> _configurationSource;
 	private readonly ISampleDataProvider _samples;
 	private readonly object _gate = new();
 	private readonly Dictionary<PlaybackRequest, LiveRecursiveSource>
@@ -46,15 +46,32 @@ public sealed class PlaybackRequestAudioSourceFactory :
 
 	public PlaybackRequestAudioSourceFactory(RenderConfiguration configuration,
 		ISampleDataProvider sampleDataProvider)
+		: this(() => configuration
+			?? throw new ArgumentNullException(nameof(configuration)),
+			sampleDataProvider) { }
+
+	/// <summary>Capture the current render configuration independently for
+	/// each new request, after the transport has stopped the previous audio
+	/// session. A change never mutates a running snapshot.</summary>
+	public PlaybackRequestAudioSourceFactory(Func<RenderConfiguration> configurationSource)
+		: this(configurationSource, new InMemorySampleDataProvider()) { }
+
+	public PlaybackRequestAudioSourceFactory(
+		Func<RenderConfiguration> configurationSource,
+		ISampleDataProvider sampleDataProvider)
 	{
-		_configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+		_configurationSource = configurationSource
+			?? throw new ArgumentNullException(nameof(configurationSource));
 		_samples = sampleDataProvider ?? throw new ArgumentNullException(nameof(sampleDataProvider));
 	}
 
 	public IAudioOutputSource Create(PlaybackRequest request)
 	{
 		ArgumentNullException.ThrowIfNull(request);
-		PreparedIncrementalPlaybackFactory factory = new(_configuration, _samples);
+		RenderConfiguration configuration = _configurationSource()
+			?? throw new InvalidOperationException(
+				"The playback output configuration source returned null.");
+		PreparedIncrementalPlaybackFactory factory = new(configuration, _samples);
 		PreparedIncrementalPlaybackPlan plan;
 		try
 		{
