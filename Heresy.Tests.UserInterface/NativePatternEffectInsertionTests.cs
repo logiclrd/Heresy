@@ -23,7 +23,7 @@ public sealed class NativePatternEffectInsertionTests
 		NativePatternEffectChoice[] choices =
 			NativePatternEffectEditor.GetCreationChoices();
 
-		choices.Should().HaveCount(11);
+		choices.Should().HaveCount(12);
 		choices.Select(choice => choice.Kind)
 			.Should().OnlyHaveUniqueItems();
 		choices.Select(choice => choice.DisplayName)
