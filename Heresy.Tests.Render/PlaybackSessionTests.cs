@@ -151,6 +151,35 @@ public sealed class PlaybackSessionTests
 	}
 
 	[Test]
+	public void PhysicalPastNoteActionDoesNotCutNnaMigratedScopedVirtualVoice()
+	{
+		ObjectId source = (ObjectId)10U;
+		float[] waveform = new float[128];
+		Array.Fill(waveform, 1f);
+		PlaybackSession session = Session(1000, Schedule(),
+			new TestResolver((source, false,
+				Sample(waveform, 1000, NewNotePolicy.Continue))));
+		session.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+			[new StartNoteCommand(source)]);
+		session.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+			[new StartNoteCommand(source)]);
+		session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+			[new StartNoteCommand(source)]);
+		session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+			[new StartNoteCommand(source)]);
+		session.Render(0, 1, new float[1]);
+		Assert.That(session.VirtualVoices, Has.Count.EqualTo(2));
+		session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+			[new ApplyPastNoteActionCommand(TrackerPastNoteAction.Cut)]);
+		Assert.That(session.VirtualVoices, Has.Count.EqualTo(1),
+			"Physical S70 acts on its own displaced voice, not a virtual "
+			+ "note merely assigned the same numeric physical origin.");
+		float[] after = new float[20];
+		session.Render(1, after.Length, after);
+		Assert.That(after[19], Is.EqualTo(3f).Within(1e-6f));
+	}
+
+	[Test]
 	public void StartNoteRendersResolvedSound()
 	{
 		ObjectId sourceId = (ObjectId)10U;
