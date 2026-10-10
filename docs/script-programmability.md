@@ -109,16 +109,73 @@ broadcast, ID reuse, cancellation, chunk invariance) and
 `PlaybackExportPcmParityTests` (production realtime/offline mono
 and 5.1 PCM equivalence).
 
-### Second slice: virtual controls
+### Second slice: virtual controls — implemented
 
-Once note lifecycle works end-to-end, expose **explicitly supported**
-voice-local controls: volume, native frame offset, per-current-voice
-NNA/displacement and past-voice action where supported. Decide
-individual names/argument types from their existing
-`NoteCommand` contracts and prove fixed-wall deferral and
-same-frame semantics. Do *not* map physical-only channel memory,
-global Tempo or tracker effects onto a virtual target by default.
-Document any deliberately unsupported combinations clearly.
+Pattern scripts may now invoke the following **typed, direct-statement**
+helpers, with one raw `NoteEvent` per call and mandatory yielding from
+incremental Roslyn iterators:
+
+```csharp
+VolumeVirtual(row, virtualId, volume, timeOffsetSeconds: 0.0);
+SourceFrameVirtual(row, virtualId, sourceFrameOffset, timeOffsetSeconds: 0.0);
+DisplacementVirtual(row, virtualId, NoteDisplacementAction.Continue,
+    timeOffsetSeconds: 0.0);
+PastVirtual(row, virtualId, TrackerPastNoteAction.Cut,
+    timeOffsetSeconds: 0.0);
+```
+
+- **Volume:** Normalized finite [0,1] value via `SetNoteVolumeCommand`.
+  It modifies the current voice and is remembered on **that scoped
+  virtual channel** for a later note; it does not modify another
+  invocation's same-numbered virtual ID.
+- **Native offset:** `SourceFrameVirtual` takes a nonnegative `long`
+  in **source frames**, not the wall seconds used by the existing
+  physical-script `Seek` helper. At the actual event deadline it seeks
+  the voice then current *only when that bound sound implements*
+  `ISourceFrameSeekableSound`; otherwise it does nothing, as does
+  physical Oxx. Direct and replay-required capabilities retain
+  identical frame semantics. Nonzero replay-required virtual seeks
+  emit the existing rate-limited cost warning under
+  `Script virtual native offset`. No decoded buffers or journal are
+  cached to emulate seeking.
+- **Displacement:** The strongly typed `NoteDisplacementAction`
+  accepts `Cut`, `Continue`, `Off`, or `Fade`. It overrides
+  the **current** voice's behavior on the next start for the same
+  scoped ID; it does not set a permanent policy for replacements.
+- **Past voices:** `TrackerPastNoteAction` accepts `Cut`, `Off`,
+  or `Fade`. It acts only on displaced NNA voices that originated
+  from the same (Pattern-cursor, virtual-ID) pair, never the current
+  replacement or a sibling cursor's voices. Release/fade semantics
+  remain owned by each displaced voice.
+
+Only these two enums' *named constant fields* are newly permitted
+as member accesses by the restricted-C# analyzer; arbitrary
+framework/object member access is still rejected. Runtime validation
+rejects invalid enum casts, negative native offsets, invalid volume,
+rows outside the Pattern, and unrepresentable wall offsets **before**
+emission. Positive fixed-wall offsets execute on the voice present
+at the actual deadline, not when the script merely yields the event.
+
+These controls target `Virtual(id)` only. The existing playback
+broadcast surface supports Note Off/Cut and note volume on eligible
+earlier-started voices. **It does not support** native offsets,
+displacement policy, past-note actions, tracker channel memory, or
+source starts on `AllVirtualInScope` or `AllVirtual`. The
+incremental validation layer rejects those raw broadcast commands
+instead of deferring a renderer exception; no extra broadcast script
+helpers are introduced.
+
+Regression coverage:
+- `ScriptVirtualControlTests`: eager versus incremental command
+  identity, all action enumerators, argument errors, direct-statement
+  restrictions, coroutine yielding and rejected raw target combinations;
+- `ScriptVirtualControlPlaybackTests`: actual PCM for scoped volume,
+  NNA migration, past-note Cut, native seek applied to a later
+  replacement at its real wall deadline, chunk invariance and
+  cancellation before a deferred operation;
+- `SourceFrameSeekCapabilityTests`: seekable/nonseekable virtual
+  sounds, direct and replay-required cost hints and zero-offset behavior.
+  Existing physical source-frame seek tests remain unchanged.
 
 ### Acceptance and regression matrix
 

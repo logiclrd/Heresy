@@ -17,17 +17,12 @@ proof that the following authorable features are complete.
 
 ### Pattern-script virtual channels
 
-The first scripted virtual lifecycle slice (start, Off, Cut, scoped/global
-broadcast) is implemented; see [script programmability](script-programmability.md).
-The remaining work is voice-local control helpers.
-
-- [ ] **Expose supported virtual-voice controls from Pattern scripts** after
-  the note lifecycle slice is green. Define named typed helpers for the
-  renderer-supported note-volume, native source-frame offset, NNA/displacement
-  and past-note actions rather than exposing physical-only tracker
-  memory or channel-wide controls. Verify rejected commands remain rejected,
-  deferred deadlines act on the voice then present, and virtual scopes are
-  isolated. Avoid generalizing unsupported physical commands by accident.
+Both Pattern-script virtual-channel slices are complete: lifecycle and
+broadcast helpers, and the scoped voice-local volume, native frame seek,
+displacement and past-note actions. Their validation and renderer
+semantics are documented in
+[script programmability](script-programmability.md).
+Further work requires a new concrete regression or feature request.
 
 ### Programmable object types
 
