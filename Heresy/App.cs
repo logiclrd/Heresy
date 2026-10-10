@@ -25,7 +25,8 @@ public sealed class App : Application
 		{
 			// Realtime and export both capture immutable configuration from
 			// the same UI-owned selection when a new render starts.
-			AudioOutputSettings settings = new();
+			AudioOutputSettings settings = new(
+				AudioOutputPreference.ForCurrentUser());
 			MainWindow mainWindow =
 				new(
 					new LazySongPlaybackTransport(
