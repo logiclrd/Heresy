@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 
 using Avalonia;
 using Avalonia.Controls;
@@ -21,6 +22,11 @@ public sealed class StartupSplashWindow : Window
 	private readonly DispatcherTimer _timeout;
 	private readonly StartupSplashDismissal _dismissal;
 	private readonly bool _isWayland;
+	private readonly StartupSplashPlacementFollow _placementFollow = new();
+	private readonly DispatcherTimer _nativeMoveWindow;
+	private readonly DispatcherTimer _fadeTimer;
+	private readonly Stopwatch _fadeElapsed = new();
+	private bool _recenterPending;
 
 	public StartupSplashWindow(Window owner)
 	{
@@ -33,15 +39,14 @@ public sealed class StartupSplashWindow : Window
 			OperatingSystem.IsLinux(),
 			Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"),
 			Environment.GetEnvironmentVariable("WAYLAND_DISPLAY"));
-		// Wayland generally denies explicit top-level placement. There
-		// the center-screen startup hint, with Show(owner), is the best
-		// available compositor request for the owner's display.
-		WindowStartupLocation = _isWayland
-			? WindowStartupLocation.CenterScreen
-			: WindowStartupLocation.CenterOwner;
+		// Always start with the compositor's center-screen hint. On
+		// coordinate-capable desktops we'll move to the owner's actual
+		// position after both windows have been mapped.
+		WindowStartupLocation = WindowStartupLocation.CenterScreen;
 		Width = 800;
 		Height = 280;
 		Title = "Heresy";
+		Opacity = 0d; // Hide provisional window-manager placement.
 
 		Content = new Border
 		{
@@ -55,6 +60,14 @@ public sealed class StartupSplashWindow : Window
 		{
 			Interval = StartupSplashDismissal.Timeout,
 		};
+		_nativeMoveWindow = new DispatcherTimer
+		{
+			Interval = StartupSplashPlacementFollow.InitialMoveWindow,
+		};
+		_fadeTimer = new DispatcherTimer
+		{
+			Interval = TimeSpan.FromMilliseconds(16),
+		};
 		_dismissal = new StartupSplashDismissal(
 			() => _timeout.Stop(),
 			() =>
@@ -63,8 +76,13 @@ public sealed class StartupSplashWindow : Window
 					Close();
 			});
 		_timeout.Tick += OnTimeout;
+		_nativeMoveWindow.Tick += OnInitialMoveWindowElapsed;
+		_fadeTimer.Tick += OnFadeTick;
 		_owner.Closed += OnOwnerClosed;
 		_owner.PropertyChanged += OnOwnerPropertyChanged;
+		_owner.PositionChanged += OnOwnerPositionChanged;
+		_owner.Resized += OnOwnerResized;
+		PositionChanged += OnSplashPositionChanged;
 		Opened += OnOpened;
 		Closed += OnClosed;
 
@@ -86,16 +104,23 @@ public sealed class StartupSplashWindow : Window
 
 	private void OnOpened(object? sender, EventArgs e)
 	{
-		if (!_dismissal.IsDismissed)
+		if (_dismissal.IsDismissed)
+			return;
+
+		_placementFollow.Open();
+		// Position after native creation, then follow early X11/Windows
+		// configure notifications (including a compositor moving either
+		// the owner or splash after the initial Show).
+		if (!_isWayland)
 		{
-			// Center after both native windows have been created, when
-			// Position, Bounds, RenderScaling and the owner's current
-			// monitor all describe the real, displayed geometry.
-			if (!_isWayland)
-				TryCenterOverOwner();
-			_timeout.Start();
-			Activate(); // Route the first keypress to the splash, not the song.
+			TryCenterOverOwner();
+			_nativeMoveWindow.Start();
 		}
+
+		_fadeElapsed.Restart();
+		_fadeTimer.Start();
+		_timeout.Start();
+		Activate(); // Route the first keypress to the splash, not the song.
 	}
 
 	private void TryCenterOverOwner()
@@ -118,12 +143,15 @@ public sealed class StartupSplashWindow : Window
 				Bounds.Width > 0 ? Bounds.Width : Width,
 				Bounds.Height > 0 ? Bounds.Height : Height,
 				scaling);
-			Position = StartupSplashPlacement.CenterOver(anchor, splashSize);
+			PixelPoint target = StartupSplashPlacement.CenterOver(anchor, splashSize);
+			if (Position != target)
+				Position = target;
 		}
-		catch (Exception)
+		catch (Exception exception)
 		{
-			// Some platforms expose coordinates but refuse window moves.
-			// Leave Avalonia's CenterOwner startup hint in place.
+			// Some backends expose coordinates but refuse window moves.
+			// The initial CenterScreen hint remains our nonfatal fallback.
+			Debug.WriteLine($"Splash explicit placement unavailable: {exception}");
 		}
 	}
 
@@ -131,17 +159,51 @@ public sealed class StartupSplashWindow : Window
 		object? sender,
 		AvaloniaPropertyChangedEventArgs e)
 	{
-		// Some compositors complete the startup maximize request only
-		// after the splash has opened. Re-center on the *actual* state
-		// transition instead of trusting the owner's restore geometry.
-		if (_isWayland || e.Property != Window.WindowStateProperty
-			|| _dismissal.IsDismissed)
+		if (e.Property == Window.WindowStateProperty)
+			OnPlacementChanged(StartupSplashPositionChange.OwnerWindowState);
+	}
+
+	private void OnOwnerPositionChanged(object? sender, PixelPointEventArgs e)
+		=> OnPlacementChanged(StartupSplashPositionChange.OwnerMoved);
+
+	private void OnOwnerResized(object? sender, WindowResizedEventArgs e)
+		=> OnPlacementChanged(StartupSplashPositionChange.OwnerResized);
+
+	private void OnSplashPositionChanged(object? sender, PixelPointEventArgs e)
+		=> OnPlacementChanged(StartupSplashPositionChange.SplashMoved);
+
+	private void OnPlacementChanged(StartupSplashPositionChange change)
+	{
+		if (!_placementFollow.ShouldRecenter(!_isWayland, change)
+			|| _dismissal.IsDismissed || _recenterPending)
 			return;
+
+		// A native ConfigureNotify can arrive just after Opened, and the
+		// window manager may also reposition the splash itself. Coalesce
+		// notifications and read the latest physical owner coordinates.
+		_recenterPending = true;
 		Dispatcher.UIThread.Post(() =>
 		{
+			_recenterPending = false;
 			if (IsVisible && !_dismissal.IsDismissed)
 				TryCenterOverOwner();
 		}, DispatcherPriority.Loaded);
+	}
+
+	private void OnInitialMoveWindowElapsed(object? sender, EventArgs e)
+	{
+		_nativeMoveWindow.Stop();
+		_placementFollow.EndInitialMoveWindow();
+	}
+
+	private void OnFadeTick(object? sender, EventArgs e)
+	{
+		Opacity = StartupSplashPlacementFollow.OpacityAt(_fadeElapsed.Elapsed);
+		if (Opacity >= 1d)
+		{
+			_fadeTimer.Stop();
+			_fadeElapsed.Stop();
+		}
 	}
 
 	private void OnAnyKeyDown(object? sender, KeyEventArgs e)
@@ -159,11 +221,20 @@ public sealed class StartupSplashWindow : Window
 	private void OnClosed(object? sender, EventArgs e)
 	{
 		_dismissal.NotifyWindowClosed();
+		_placementFollow.Close();
+		_nativeMoveWindow.Stop();
+		_fadeTimer.Stop();
+		_fadeElapsed.Stop();
 		_owner.Closed -= OnOwnerClosed;
 		_owner.PropertyChanged -= OnOwnerPropertyChanged;
+		_owner.PositionChanged -= OnOwnerPositionChanged;
+		_owner.Resized -= OnOwnerResized;
+		PositionChanged -= OnSplashPositionChanged;
 		_owner.RemoveHandler(InputElement.KeyDownEvent, OnAnyKeyDown);
 		_owner.RemoveHandler(InputElement.PointerPressedEvent, OnAnyPointerPressed);
 		_timeout.Tick -= OnTimeout;
+		_nativeMoveWindow.Tick -= OnInitialMoveWindowElapsed;
+		_fadeTimer.Tick -= OnFadeTick;
 		Opened -= OnOpened;
 		Closed -= OnClosed;
 	}
