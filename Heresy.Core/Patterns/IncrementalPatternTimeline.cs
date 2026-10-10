@@ -320,7 +320,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					or SetGlobalVolumeSlideCommand or SetSpatialXSlideCommand
 					or AdjustPitchLinearUnitsCommand or AdjustNoteVolumeCommand
 					or AdjustOverallChannelVolumeCommand
-					or AdjustGlobalVolumeCommand or AdjustSpatialXCommand)
+					or AdjustGlobalVolumeCommand or AdjustSpatialXCommand
+					or SetTremorCommand or SetPanbrelloCommand)
 					repeating.Add(command);
 			}
 			if (repeating.Count == 0)
@@ -861,6 +862,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						or ApplyTrackerMidiMacroSelectCommand
 						or ApplyTrackerMidiMacroCommand
 						or ApplyTrackerGlobalVolumeCommand
+						or ApplyArpeggioCommand or ApplyTremoloCommand
+						or ApplyTremorCommand or ApplyPanbrelloCommand
+						or ApplyTrackerTremoloWaveformCommand
+						or ApplyTrackerPanbrelloWaveformCommand
 						or ApplyTrackerVolumeColumnCommand
 						or ApplyGlobalVolumeSlideCommand or ApplyPanningSlideCommand
 						or SetOverallChannelVolumeSlideCommand
@@ -2091,7 +2096,9 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				if (note.Offset.TimeOffset == nominalDuration
 					&& note.Commands.Count != 0
 					&& note.Commands.All(c => c is ClearPitchSlideCommand
-						or ClearPitchModulationCommand
+						or ClearPitchModulationCommand or ClearArpeggioCommand
+						or ClearTremoloCommand or ClearTremorCommand
+						or ClearPanbrelloCommand
 						or ClearNoteVolumeSlideCommand or ClearOverallChannelVolumeSlideCommand
 						or ClearGlobalVolumeSlideCommand or ClearSpatialXSlideCommand))
 				{
@@ -2168,7 +2175,9 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					if (note.Offset.TimeOffset == nominal
 						&& note.Commands.Count > 0
 						&& note.Commands.All(c => c is ClearPitchSlideCommand
-						or ClearPitchModulationCommand
+						or ClearPitchModulationCommand or ClearArpeggioCommand
+							or ClearTremoloCommand or ClearTremorCommand
+							or ClearPanbrelloCommand
 							or ClearNoteVolumeSlideCommand
 							or ClearOverallChannelVolumeSlideCommand
 							or ClearGlobalVolumeSlideCommand or ClearSpatialXSlideCommand))
