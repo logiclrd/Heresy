@@ -89,8 +89,13 @@ public sealed class RecursiveNativeSeekBoundaryTests
 		plan.Source.Render(before.Length, before);
 		PlaybackVoice voice = plan.Session.GetChannelState(0).CurrentVoice!;
 		PlaybackSession prior = ChildSession(voice);
-		Assert.That(prior.NextFrame, Is.EqualTo(396L),
-			"The original Oxx advanced the child 256 frames before normal play.");
+		Assert.Multiple(() =>
+		{
+			Assert.That(prior.NextFrame, Is.EqualTo(20L),
+				"Q01 already retriggers on row 1's tick zero at frame 120; " +
+				"the restarted source has advanced 20 frames by frame 140.");
+			Assert.That(voice.SoundState.PlaybackOriginFrame, Is.EqualTo(120L));
+		});
 		float[] after = new float[1];
 		plan.Source.Render(1, after);
 		PlaybackSession restarted = ChildSession(voice);
