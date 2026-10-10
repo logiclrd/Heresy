@@ -54,24 +54,29 @@ This does not modify the flattened *instigating note* contract:
 its voice-specific portamento, vibrato, retrigger and pitch effects
 remain intentionally suppressed.
 
-- [ ] Implement **dynamic parent-note pitch modulation of private
-  recursive/Instrument-selected source voices**, with sample-accurate
-  Oxx/Qxy reconstruction. A *confirmed PCM counterexample* now
-  exists in `RecursiveNativeSeekBoundaryTests.PrivateNotePitchSlideShouldModulateActiveChildVoicesWithoutChangingClock`
-  for both private Pattern and Instrument-selected Pattern: an active
-  parent `PitchSlidePatternEffect(96)` changes the parent's
-  `SoundState.PitchTrajectory`, but `PreparedRecursiveMixdownSound.Render`
-  ignores it and outputs **identical PCM** to the unmodulated song.
-  The red regression was executed on CI run 38038804155; the cases
-  are intentionally marked NUnit `Explicit` to avoid accepting the
-  incorrect output as a passing contract while keeping CI green.
-  The eventual solution must transform individual active and future
-  child-voice pitches, including their own pitch slides/envelopes
-  and indirect tone selection, **without** changing the private
-  tracker clock, resampling a completed polyphonic mixdown, or
-  reintroducing event/PCM history. Preserve deterministic
-  reconstruction, independent child Oxx source-frame addressing,
-  and the separate flattened-instigator suppression rule.
+**Dynamic parent-note pitch modulation on private recursive and
+Instrument-selected sources is implemented.** A private child
+`PlaybackSession` receives a live inherited pitch callback from the
+enclosing note's `SoundState.PitchTrajectory`. New child voices and
+pitch-dependent Instrument tones sample that pitch at each note
+start; their existing `OperatorPitchCurve` composes subsequent
+parent modulation relative to that captured initial value, alongside
+each child's local pitch effects and pitch envelopes. Dynamic pitch
+now reaches *individual* descendants through multiple private
+levels, without changing the independently clocked tracker Tempo,
+re-sampling mixed-down PCM or introducing playback caches/journals.
+Oxx native source frames remain source-relative; the callback accounts
+for skipped frames and playback offsets. Qxy and backward seek bind
+freshly reconstructed child sessions to the parent pitch trajectory.
+The previously red `PrivateNotePitchSlideShouldModulateActiveChildVoicesWithoutChangingClock`
+test (CI 38038804155) is enabled and passes for both direct private
+and indirect Instrument paths. `PrivatePitchInheritanceTests` cover
+future row-one notes, initial pitch-based tone selection, nested
+pitch operators, exact mathematically integrated source frames
+after O01 and Q03 with active child vibrato/chunk invariance.
+The flattened instigator's intentionally suppressed voice-specific
+pitch effects remain unchanged. See
+[recursive-sounds.md](recursive-sounds.md).
 - [ ] Extend **shared-clock cross-rate Tempo arbitration** only where
   the coordinator currently rejects it. Single scaled Txx slides,
   same-rate simultaneous Txx, SEy repetition across independent
