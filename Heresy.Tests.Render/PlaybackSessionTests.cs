@@ -210,6 +210,36 @@ public sealed class PlaybackSessionTests
 		Assert.That(remaining[19], Is.EqualTo(2f).Within(1e-6f));
 	}
 
+	[TestCase(NoteDisplacementAction.Off)]
+	[TestCase(NoteDisplacementAction.Fade)]
+	public void ScopedVirtualNnaOverrideReleasesOrFadesOldVoiceAtExactFrame(
+		NoteDisplacementAction action)
+	{
+		ObjectId source = (ObjectId)10U;
+		float[] waveform = new float[128];
+		Array.Fill(waveform, 1f);
+		PlaybackSession session = Session(1000, Schedule(),
+			new TestResolver((source, false,
+				Sample(waveform, 1000, NewNotePolicy.Cut))));
+		session.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+			[new StartNoteCommand(source)]);
+		float[] firstFrame = new float[1];
+		session.Render(0, 1, firstFrame);
+		Assert.That(firstFrame[0], Is.EqualTo(1f).Within(1e-6f));
+		session.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+			[new SetCurrentVoiceDisplacementActionCommand(action),
+				new StartNoteCommand(source)]);
+		Assert.That(session.VirtualVoices, Has.Count.EqualTo(1));
+		PlaybackVoice old = session.VirtualVoices.Single();
+		Assert.That(old.OriginScopedVirtualOwner, Is.EqualTo(101));
+		Assert.That(old.OriginVirtualChannelId, Is.EqualTo(7U));
+		if (action == NoteDisplacementAction.Off)
+			Assert.That(old.SoundState.NoteOffTime,
+				Is.EqualTo(FrameTime.FrameStartTime(1, 1000)));
+		else
+			Assert.That(old.IsNoteFadeRequested, Is.True);
+	}
+
 	[Test]
 	public void StartNoteRendersResolvedSound()
 	{
