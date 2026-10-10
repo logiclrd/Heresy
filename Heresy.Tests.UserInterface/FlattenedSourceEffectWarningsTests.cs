@@ -1,5 +1,6 @@
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
+using Heresy.Core.Sequences;
 using Heresy.UserInterface.PatternEditing;
 
 using NUnit.Framework;
@@ -155,4 +156,129 @@ public sealed class FlattenedSourceEffectWarningsTests
 			doc, parent, 3, 0), Is.Null,
 			"Effects after mixdown replacement cannot target the old source.");
 	}
+	[Test]
+	public void SequenceOrderInheritanceIsOccurrenceSpecificAndSurvivesNoteOffUntilCut()
+	{
+		SongDocument doc = new();
+		ObjectId childId = doc.AllocateObjectId();
+		doc.Add(new DataPatternDefinition(childId, "Flattened")
+			{ RowCount = 1, ChannelCount = 1 });
+		ObjectId firstId = doc.AllocateObjectId();
+		DataPatternDefinition first = new(firstId, "Intro")
+			{ RowCount = 2, ChannelCount = 1 };
+		first.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(childId);
+		doc.Add(first);
+		ObjectId sharedId = doc.AllocateObjectId();
+		DataPatternDefinition shared = new(sharedId, "Shared")
+			{ RowCount = 4, ChannelCount = 1 };
+		shared.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new RetriggerPatternEffect(0xA3));
+		shared.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteOff();
+		shared.Grid.GetOrCreateCell(2, 0).Effects.Add(
+			new SampleOffsetPatternEffect(0x17));
+		shared.Grid.GetOrCreateCell(3, 0).Note = new PatternNoteCut();
+		doc.Add(shared);
+		ObjectId seqId = doc.AllocateObjectId();
+		DataSequenceDefinition seq = new(seqId, "Song");
+		seq.Entries.Add(new SequenceEntry(firstId));
+		seq.Entries.Add(new SequenceEntry(sharedId));
+		seq.Entries.Add(new SequenceEntry(sharedId));
+		doc.Add(seq);
+		PatternEditorContext context =
+			PatternEditorContext.ForSequence(doc, seq, 1);
+
+		var warnings = FlattenedSourceEffectWarnings.Analyze(doc, context);
+		Assert.That(warnings[(2, 0)].Message,
+			Does.Contain("inherited from sequence order 0"));
+		Assert.That(warnings[(2, 0)].IsConditional, Is.False);
+		Assert.That(warnings[(3, 0)].Message, Does.Contain("Note Off"));
+		Assert.That(warnings[(4, 0)].Message, Does.Contain("releasing"));
+		Assert.That(warnings[(5, 0)].Message, Does.Contain("Note Cut"));
+		Assert.That(warnings.ContainsKey((6, 0)), Is.False,
+			"Second occurrence of the same Pattern follows a Cut.");
+		Assert.That(warnings.ContainsKey((7, 0)), Is.False);
+		Assert.That(shared.Grid[0, 0]!.Effects, Has.Count.EqualTo(1));
+	}
+
+	[Test]
+	public void ScriptOrderProducesConditionalWarningsUntilExplicitSourceResolves()
+	{
+		SongDocument doc = new();
+		ObjectId childId = doc.AllocateObjectId();
+		doc.Add(new DataPatternDefinition(childId, "Flat")
+			{ RowCount = 1, ChannelCount = 1 });
+		ObjectId scriptId = doc.AllocateObjectId();
+		doc.Add(new ScriptPatternDefinition(scriptId, "Dynamic")
+			{ Source = "" });
+		ObjectId patternId = doc.AllocateObjectId();
+		DataPatternDefinition pattern = new(patternId, "After script")
+			{ RowCount = 5, ChannelCount = 1 };
+		pattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new RetriggerPatternEffect(0xA3));
+		pattern.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteOff();
+		PatternCell explicitlySelected = pattern.Grid.GetOrCreateCell(2, 0);
+		explicitlySelected.SourceId = childId;
+		explicitlySelected.Note = new StartPatternNote();
+		explicitlySelected.Effects.Add(new ArpeggioPatternEffect(0x12));
+		pattern.Grid.GetOrCreateCell(3, 0).Note = new PatternNoteCut();
+		pattern.Grid.GetOrCreateCell(4, 0).Effects.Add(
+			new SampleOffsetPatternEffect(0x17));
+		doc.Add(pattern);
+		ObjectId seqId = doc.AllocateObjectId();
+		DataSequenceDefinition seq = new(seqId, "Song");
+		seq.Entries.Add(new SequenceEntry(scriptId));
+		seq.Entries.Add(new SequenceEntry(patternId));
+		doc.Add(seq);
+		var context = PatternEditorContext.ForSequence(doc, seq, 1);
+
+		var warnings = FlattenedSourceEffectWarnings.Analyze(doc, context);
+		Assert.That(warnings[(0, 0)].IsConditional, Is.True);
+		Assert.That(warnings[(0, 0)].Message, Does.Contain("script"));
+		Assert.That(warnings[(1, 0)].IsConditional, Is.True);
+		Assert.That(warnings[(1, 0)].Message, Does.Contain("Note Off"));
+		Assert.That(warnings[(2, 0)].IsConditional, Is.False);
+		Assert.That(warnings[(2, 0)].Message, Does.Contain("Arpeggio"));
+		Assert.That(warnings[(3, 0)].Message, Does.Contain("Note Cut"));
+		Assert.That(warnings.ContainsKey((4, 0)), Is.False);
+	}
+
+	[Test]
+	public void SkippedStartRowsAndFlowEffectsPreventFalseDefiniteWarnings()
+	{
+		SongDocument doc = new();
+		ObjectId childId = doc.AllocateObjectId();
+		doc.Add(new DataPatternDefinition(childId, "Flat")
+			{ RowCount = 1, ChannelCount = 1 });
+		ObjectId aId = doc.AllocateObjectId();
+		DataPatternDefinition a = new(aId, "Flow")
+			{ RowCount = 2, ChannelCount = 1 };
+		PatternCell first = a.Grid.GetOrCreateCell(0, 0);
+		first.Note = new StartPatternNote(childId);
+		first.Effects.Add(new TrackerOrderJumpPatternEffect(0));
+		doc.Add(a);
+		ObjectId bId = doc.AllocateObjectId();
+		DataPatternDefinition b = new(bId, "Partial")
+			{ RowCount = 3, ChannelCount = 1 };
+		b.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(childId);
+		b.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new RetriggerPatternEffect(0xA3));
+		b.Grid.GetOrCreateCell(2, 0).Effects.Add(
+			new ArpeggioPatternEffect(0x12));
+		doc.Add(b);
+		ObjectId seqId = doc.AllocateObjectId();
+		DataSequenceDefinition seq = new(seqId, "Song");
+		seq.Entries.Add(new SequenceEntry(aId));
+		seq.Entries.Add(new SequenceEntry(bId, startRow: 1));
+		doc.Add(seq);
+
+		var context = PatternEditorContext.ForSequence(doc, seq, 1);
+		var warnings = FlattenedSourceEffectWarnings.Analyze(doc, context);
+		Assert.That(warnings[(2, 0)].IsConditional, Is.True,
+			"Bxx makes linear progression unknowable statically.");
+		Assert.That(warnings[(3, 0)].IsConditional, Is.True);
+		Assert.That(warnings[(2, 0)].Message, Does.Not.Contain(
+			"definitely ignored"));
+	}
+
+
 }
