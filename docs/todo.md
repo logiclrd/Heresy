@@ -153,46 +153,38 @@ production PCM, filter state, physical-channel state and arbitrary
 audio block sizes. See
 [incremental-sequencing.md](incremental-sequencing.md).
 
-- [ ] **Implement direct absolute-frequency assignment** for
-  `SetPlaybackFrequencyCommand` and `SetPlaybackFrequencyPatternEffect`,
-  using Heresy's **existing universal pitch-1 = C-4**
-  (261.6255653005986 Hz) musical tuning convention. The command
-  requests the note's **perceived musical pitch in Hz**, not a PCM
-  source sample rate or an individual FM oscillator frequency.
-  All sources are authored/tuned so an untransposed pitch-1
-  invocation represents C-4; do **not** introduce an
-  `ISound.ReferenceFrequencyHz` property or per-sound conversion.
-  The **local** pitch target is
-  `frequency / 261.6255653005986`; each enclosing flattened
-  Pattern/Sequence invocation must multiply that target by its
-  inherited pitch factor (nesting composes multiplicatively).
-  This is an **absolute local replacement**, not an extra multiplier
-  on top of the preceding local note pitch. Resolve in the correct
-  logical invocation context, not by assuming the physical host
-  owns one pitch scope. Ordinary leaf notes within a flattened
-  subtree receive its transposition; a frequency effect targeting
-  the **flattened instigating note itself** remains ignored with
-  the existing bounded ignored-voice-effect warning
-  (`FlattenedSourceEffectPolicy` already classifies it that way).
-  Handle already-active voices at the execution frame, reconcile
-  existing `SoundState.PitchMultiplier`, playback speed and pitch
-  trajectories without reselecting an Instrument tone, restarting
-  the source, or resetting its playback position. Preserve existing
-  row/tick effect ordering and cancellation. Specify the lifecycle
-  of active slides, vibrato and envelopes before coding, and test
-  parity of initial pitch versus equivalent frequency-command
-  pitch for PCM, FM, selected Instrument tones, direct/private
-  sources, and **multi-level flattened** transposition (including
-  opposite-octave ancestor shifts and independently scoped sibling
-  voices). The command is **currently unhandled** by
-  `PlaybackSession` and explicitly rejected by the incremental
-  allow-list; do not claim it is implemented.
-  Related unusual scripted/global combinations (mixed
-  global/physical fixed-wall deadlines and overlapping Tempo
-  spans) remain distinct follow-ups. Negative fixed wall offsets
-  still require a safe chronological look-behind contract; preserve
-  explicit errors and never precommit future state or enumerate
-  future Pattern/Sequence visits.
+**Direct absolute-frequency assignment implemented (October 10).**
+`SetPlaybackFrequencyCommand` and the data-grid
+`SetPlaybackFrequencyPatternEffect` now set the active voice's *locally*
+absolute, C-4-referenced musical pitch. The shared
+`SequencingConstants.ReferenceC4FrequencyHz` is
+261.6255653005986 Hz; no `ISound` base-frequency API, PCM rate
+reinterpretation, source restart or Instrument tone reselection is used.
+The recursive coordinator captures `SequencingContext.PitchMultiplier`
+in each emitted frequency command, independently of the physical
+channel's other logical scopes. The sound voice divides out its own
+initial note pitch, playback speed and surviving instantaneous transient
+pitch modulation; thus an assignment replaces that note's local target,
+while arbitrarily nested flattened ancestry multiplies it exactly once.
+Setting the target snaps pitch at the command frame, cancels an active
+pitch slide or tone-portamento movement and its target, and keeps
+vibrato, arpeggio, pitch envelopes and dynamic private-parent inherited
+modulation intact. This never resets source-frame position, envelope
+phase or independently clocked private tracker Tempo. Existing
+flattened-instigating-source policy still suppresses a voice-only
+frequency effect with bounded diagnostic warnings; a leaf inside that
+subtree receives its own legitimate frequency command.
+The incremental coordinator accepts direct physical commands with
+row deadlines or supported *positive* fixed wall-time offsets; negative
+wall-time look-behind and unsupported target families remain guarded.
+Regressions cover direct same-frame pitch/speed cancellation,
+PCM at different native sample rates, FM oscillators, bound Instrument
+tone identity, event-frame sample-cursor continuity, pitch slides with
+surviving vibrato, nested flattened pitch contexts and private mixes,
+block-size invariance, delayed scheduling and instigator suppression.
+See [incremental-sequencing.md](incremental-sequencing.md).
+The restricted script API does not yet expose a `Frequency` helper;
+the command vocabulary and data Pattern effect are implemented.
 
 - [ ] **Remove dead sample reference-frequency metadata.**
   `SampleDefinition.ReferenceFrequencyHz` currently defaults to

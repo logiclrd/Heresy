@@ -28,6 +28,61 @@
 > [seek hints](source-seek-hints.md), and [remaining TODOs](todo.md).
 > This historical log retains its original step headings for traceability.
 
+## Current absolute musical-frequency assignment (October 10, 2026)
+
+The current production renderer supports `SetPlaybackFrequencyCommand`
+(and its data-driven `SetPlaybackFrequencyPatternEffect` front end).
+Earlier chronological entries below that say it is unsupported or
+speculate about per-sound reference frequencies are superseded.
+
+A locally untransposed, musically tuned voice has **C-4 =
+261.6255653005986 Hz** at unity pitch. The requested frequency is
+musical pitch in the invoking Pattern's **own local coordinates**, not
+a sample's native frame rate or any FM oscillator's carrier rate.
+A source is authored to the universal C-4 reference. The logical
+target is `frequencyHz / SequencingConstants.ReferenceC4FrequencyHz`,
+multiplied by the cumulative `SequencingContext.PitchMultiplier`
+of enclosing *flattened* Pattern/Sequence invocations. It replaces
+the leaf's local start-note pitch rather than being compounded onto
+it. This cumulative factor is added to the resolved
+`SetPlaybackFrequencyCommand.LocalPitchContextMultiplier` at
+recursive emission time. Physical channels can host concurrent voices
+from unrelated logical scopes, so the renderer must not derive
+transposition from an ambient host channel.
+
+`PlaybackVoice.SetPlaybackFrequency` acts on the *already selected*
+`SoundInvocation` at the exact scheduled frame, without restarting
+a sample, rebuilding a private mixdown, invoking Instrument tone
+selection again, or altering any source playback-time/frame offset.
+It cancels incompatible ongoing pitch slide and tone-portamento
+operators and target memory, replacing the pitch baseline. Vibrato,
+arpeggio, pitch envelope and live private-parent inherited pitch
+remain in force. The pitch baseline is compensated for the selected
+invocation's initial pitch, playback-speed multiplier and surviving
+instantaneous transient modulation, so the requested pitch is reached
+**at the event frame**, after which those transient modulations may
+again move it. The private inherited-pitch ratio is not cancelled:
+the local note continues to transpose dynamically with its ancestor.
+
+The existing `FlattenedSourceEffectPolicy` drops this voice-specific
+effect *on the flattened instigating note*, with diagnostic reporting,
+but does **not** drop it from ordinary leaf notes emitted inside that
+flattened source. The incremental scheduler supports physical
+same-row and positive wall-delay assignments at their actual due
+frame; negative fixed wall-time offsets remain rejected. Virtual
+targets do not acquire new special frequency semantics. No direct
+restricted-script `Frequency` helper has been added.
+
+Full-stack regressions cover same-frame command ordering, initial
+pitch and playback-speed cancellation, native PCM sample-rate
+independence, FM oscillator phase, Instrument tone-identity retention,
+active pitch-slide cancellation with vibrato preservation, multi-level
+flattened transposition (including offsetting octaves), private parent
+composition, positive wall delay, native sample cursor continuity and
+PCM chunk invariance. Playback remains an incremental coroutine with
+bounded rendering; this feature does not create an event journal or a
+separate eager render path.
+
 ## Current shared-clock cross-rate Tempo arbitration (October 10, 2026)
 
 The production `IncrementalPatternTimeline` now supports **simultaneous
