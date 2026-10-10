@@ -26,6 +26,10 @@ the [documentation index](docs/README.md) for more detail and
 
 The solution is `Heresy.slnx`. GitHub Actions builds and tests on `main`,
 including native desktop packaging checks.
+Release tags `release-A.B.C` also produce versioned, self-contained
+Windows, Linux and macOS downloads with a separate end-user README
+and exact source-commit identification. See
+[release packaging](docs/release-packaging.md).
 
 ## Current playback contract
 
