@@ -113,7 +113,12 @@ stop the existing SDL transport before the next PCM format is selected.
 The application shares one thread-safe, immutable-per-render
 `AudioOutputSettings` snapshot with realtime and export factories.
 A running export retains its starting format even when UI preferences
-change; configuration is session-scoped, not yet persisted to disk.
+change. Audio output selections now persist independently from song
+files in a versioned, validated, atomically replaced local JSON file.
+Missing, malformed, unsupported or inaccessible settings fall back
+to 48 kHz stereo; successful Apply saves after the old SDL session
+is stopped, while cancelled dialogs and failed writes leave active
+render snapshots untouched. See [audio-output.md](audio-output.md).
 Presets, dynamic factory capture, WAV sample rate/channel headers,
 5.1/7.1 speaker ordering and multi-block filtering have regressions.
 See [audio-output.md](audio-output.md).
@@ -124,9 +129,6 @@ See [audio-output.md](audio-output.md).
   Engine-side 5.1/7.1 speaker ordering and WAV mono/stereo headers are
   already tested. Preserve the distinction between ordinary speaker
   feeds and true bass management.
-- [ ] Optionally persist output preferences between application launches,
-  with versioned validation; settings currently live for the desktop
-  session and do not alter song files.
 
 ## Export workflow
 
