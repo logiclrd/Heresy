@@ -14,6 +14,13 @@ tests supersede contradictory old prose.
   chronological engineering log with later corrections and regression
   milestones. **Not a list of unfinished work.**
 
+## Original-design programmability
+
+- [Script programmability](script-programmability.md): scoped contracts
+  for Pattern virtual channels, script-defined Instruments and Envelopes,
+  and compiled native parametric effect expressions. These capabilities
+  are **not all implemented**; check [open tasks](todo.md) for status.
+
 ## Current technical references
 
 | Contract | Document |
