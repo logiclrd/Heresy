@@ -140,6 +140,10 @@ internal sealed class PreparedRecursiveMixdownSound :
 	public void ScheduleFade(long parentFrame)
 	{
 		AdvanceToParentFrame(parentFrame);
+		// Unlike Off, Fade ends future note production without forcing a
+		// release/cut of already sounding private voices. They receive the
+		// regular fade request and retain their existing tail envelopes.
+		_playback.Source.StopProducing();
 		_playback.Source.Session.RequestFadeOfActiveVoices();
 	}
 
