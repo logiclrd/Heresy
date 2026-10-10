@@ -148,7 +148,7 @@ refreshes do not discard model drafts. Shared specification
 copy-on-write, revisions and playback snapshot isolation remain
 covered by `InstrumentToneGridModelTests`.
 
-The next work is optional desktop interaction/visual verification
-of focus routing, virtualization, row overflow and text/popup
-keyboard navigation; any observed regressions should be logged
-as targeted bugs in [todo.md](todo.md).
+The grid is implemented and covered by automated regressions.
+An optional desktop smoke test can examine focus routing, row
+overflow and keyboard navigation. Log any *observed* defect
+as a new scoped item in [todo.md](todo.md).
