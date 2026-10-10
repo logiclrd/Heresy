@@ -42,7 +42,7 @@ public sealed class PlaybackSession
 					configuration.OutputChannels[speaker];
 				_mode[speaker] = channel.FilterType;
 				if (channel.FilterType is not OutputFilterType.None)
-					_alpha[speaker] = -Math.Expm1(
+					_alpha[speaker] = 1.0 - Math.Exp(
 						-2.0 * Math.PI * channel.CutoffHz!.Value
 							/ configuration.SampleRate);
 			}
@@ -144,10 +144,15 @@ public sealed class PlaybackSession
 		// buffer to its parent. Only the final output applies the shared
 		// configuration's speaker filters, exactly once after summing all
 		// voices, NNA tails and the global volume.
-		if (applyFinalSpeakerFilters
-			&& Array.Exists(context.Configuration.OutputChannels.ToArray(),
-				channel => channel.FilterType != OutputFilterType.None))
-			_outputSpeakerFilters = new OutputSpeakerFilterBank(context.Configuration);
+		if (applyFinalSpeakerFilters)
+			foreach (OutputChannelConfiguration channel
+				in context.Configuration.OutputChannels)
+				if (channel.FilterType != OutputFilterType.None)
+				{
+					_outputSpeakerFilters = new OutputSpeakerFilterBank(
+						context.Configuration);
+					break;
+				}
 		if (!(initialTempo > 0.0) || !double.IsFinite(initialTempo))
 			throw new ArgumentOutOfRangeException(nameof(initialTempo));
 		_tempo = initialTempo;
