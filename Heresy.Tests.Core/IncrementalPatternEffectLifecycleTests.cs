@@ -54,6 +54,64 @@ public sealed class IncrementalPatternEffectLifecycleTests
 		Assert.That(timeline.Elapsed, Is.EqualTo(eagerDuration));
 	}
 
+	[TestCase("Hxx")]
+	[TestCase("Uxx")]
+	[TestCase("Kxx")]
+	[TestCase("S3x")]
+	public void VibratoFamilyResolvesEagerParityIncludingRowEndAndMemory(
+		string effectName)
+	{
+		DataPatternDefinition pattern = new((ObjectId)1U, "Vibrato")
+		{
+			RowCount = 2, ChannelCount = 1,
+		};
+		PatternCell first = pattern.Grid.GetOrCreateCell(0, 0);
+		first.Note = new StartPatternNote((ObjectId)17U);
+		first.Effects.Add(effectName switch
+		{
+			"Uxx" => new FineVibratoPatternEffect(0x48),
+			_ => new VibratoPatternEffect(0x48),
+		});
+		if (effectName == "S3x")
+			first.Effects.Insert(0, new TrackerVibratoWaveformPatternEffect(2));
+		PatternCell second = pattern.Grid.GetOrCreateCell(1, 0);
+		second.Effects.Add(effectName == "Kxx"
+			? new VibratoVolumeSlidePatternEffect(0x02)
+			: new VibratoPatternEffect(0x00));
+
+		SequencingContext eagerContext = new()
+			{ ResolvePatternSourcesAtRowTime = true };
+		NoteScheduleBuilder eager = new();
+		PatternNoteProcessor.GenerateNotes(pattern, eagerContext, eager,
+			out TimeSpan duration);
+		NoteEvent[] expected = eager.Freeze().ToArray();
+
+		SequencingContext incrementalContext = new();
+		using IncrementalPatternTimeline timeline = new(incrementalContext);
+		timeline.Add(pattern, pattern.RowCount, incrementalContext);
+		NoteEvent[] actual = Drain(timeline);
+		Assert.Multiple(() =>
+		{
+			Assert.That(actual.Length, Is.EqualTo(expected.Length));
+			Assert.That(timeline.Elapsed, Is.EqualTo(duration));
+		});
+		for (int index = 0; index < expected.Length; index++)
+		{
+			Assert.Multiple(() =>
+			{
+				Assert.That(actual[index].Offset.TimeOffset,
+					Is.EqualTo(expected[index].Offset.TimeOffset),
+					$"{effectName} event {index}: clock");
+				Assert.That(actual[index].Commands,
+					Is.EqualTo(expected[index].Commands),
+					$"{effectName} event {index}: command memory/cleanup");
+			});
+		}
+		Assert.That(actual.SelectMany(x => x.Commands)
+			.OfType<ClearPitchModulationCommand>(), Is.Not.Empty,
+			"Each active vibrato row must clear its transient modulation.");
+	}
+
 	[Test]
 	public void TrackerDxxRecallsSharedVolumeSlideMemoryOnLaterRow()
 	{
