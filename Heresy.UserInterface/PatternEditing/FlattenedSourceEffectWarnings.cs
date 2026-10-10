@@ -143,7 +143,6 @@ public static class FlattenedSourceEffectWarnings
 						continue;
 					AnalysisChannel channel = channels[channelId];
 					SourceKnowledge before = channel.Current;
-					bool wasReleased = channel.Released;
 					int? inheritedOrder = channel.StartOrder;
 
 					ObjectId selection = !cell.SourceId.IsNone
