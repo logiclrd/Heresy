@@ -134,7 +134,7 @@ public sealed class InstrumentSampleReleaseTests
                 Is.Null, "A zero-release voice must retire at the Off frame.");
 
         session.EndInput();
-        Assert.That(session.IsComplete, Is.True,
+        Assert.That(session.IsQuiescent, Is.True,
             "The finished physical/virtual sample must not linger until a later render call.");
     }
 
@@ -156,7 +156,7 @@ public sealed class InstrumentSampleReleaseTests
         session.Render(0, 2, new float[2]);
         session.EndInput();
 
-        Assert.That(session.IsComplete, Is.True,
+        Assert.That(session.IsQuiescent, Is.True,
             "EndInput must synchronously retire a zero-release Instrument sample.");
         if (!virtualTarget)
             Assert.That(session.GetChannelState(0).CurrentVoice, Is.Null);
