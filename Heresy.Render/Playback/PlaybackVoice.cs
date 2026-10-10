@@ -319,6 +319,10 @@ public sealed class PlaybackVoice
 	/// <summary>The cursor owning an invocation-local virtual target.
 	/// Null denotes a legacy/global virtual target or physical voice.</summary>
 	internal long? OriginScopedVirtualOwner { get; init; }
+	/// <summary>Pattern cursor which created this physical voice. Unlike
+	/// PhysicalPlaybackOwner, this separates independently canceled root
+	/// Patterns that share physical owner zero. Retained across NNA.</summary>
+	internal long? OriginPatternCursorId { get; set; }
 
 	/// <summary>Immutable invocation-local source gain, separate from the
 	/// mutable shared channel's tracker note volume.</summary>

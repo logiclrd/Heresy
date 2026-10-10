@@ -118,6 +118,9 @@ public sealed class PlaybackSession
 	private readonly SortedDictionary<(long Owner, uint Id), PlaybackChannelState>
 		_scopedVirtualChannels = [];
 	private readonly List<PlaybackVoice> _virtualVoices = [];
+	// Set only while applying one physical event from the coroutine.
+	// Live previews and prebuilt schedules have no cancelable cursor owner.
+	private long? _activePatternCursorId;
 	private readonly SortedDictionary<(long Owner, int Host), ActiveGlobalVolumeSlide>
 		_globalVolumeSlides = [];
 	private readonly PlaybackOperatorCollection _globalOperators = new();
@@ -700,13 +703,25 @@ public sealed class PlaybackSession
 					commands, _nextFrame);
 				return;
 			case ChannelTargetKind.Physical:
-				ApplyEvent(new NoteEvent(
-					new MusicalTime(FrameTime.FrameStartTime(
-						_nextFrame, _context.Configuration.SampleRate), 0),
-					target, commands)
+				// Physical owner 0 is shared by independent root Patterns.
+				// Record the exact originating cursor at StartNote, so
+				// cancellation can later cut only its current/NNA voices.
+				long? priorCursor = _activePatternCursorId;
+				_activePatternCursorId = invocationId;
+				try
 				{
-					PhysicalPlaybackOwner = physicalPlaybackOwner,
-				}, _nextFrame);
+					ApplyEvent(new NoteEvent(
+						new MusicalTime(FrameTime.FrameStartTime(
+							_nextFrame, _context.Configuration.SampleRate), 0),
+						target, commands)
+					{
+						PhysicalPlaybackOwner = physicalPlaybackOwner,
+					}, _nextFrame);
+				}
+				finally
+				{
+					_activePatternCursorId = priorCursor;
+				}
 				return;
 			default:
 				ApplyLiveEvent(target, commands);
@@ -715,14 +730,19 @@ public sealed class PlaybackSession
 	}
 
 	/// <summary>
-	/// Cancel the audible virtual voices owned by an invocation without
-	/// disturbing identically numbered IDs from sibling invocations.
-	/// Normal Pattern completion does not call this: notes may tail out.
+	/// Cancel audible voices created by this Pattern cursor, both
+	/// physical and scoped virtual (including displaced NNA). Physical
+	/// owner zero is shared by top-level Patterns; the originating
+	/// cursor identity prevents canceling their surviving sibling notes.
+	/// Natural Pattern completion does not call this: notes may tail out.
 	/// </summary>
 	public void CancelScopedVoices(long invocationId)
 	{
 		if (invocationId < 0)
 			throw new ArgumentOutOfRangeException(nameof(invocationId));
+		foreach (PlaybackChannelState channel in _channels.Values)
+			if (channel.CurrentVoice?.OriginPatternCursorId == invocationId)
+				channel.CutCurrentVoice();
 		foreach (var pair in _scopedVirtualChannels)
 			if (pair.Key.Owner == invocationId)
 				pair.Value.CutCurrentVoice();
@@ -733,11 +753,19 @@ public sealed class PlaybackSession
 		for (int i = _virtualVoices.Count - 1; i >= 0; i--)
 		{
 			PlaybackVoice voice = _virtualVoices[i];
-			if (voice.OriginScopedVirtualOwner != invocationId)
-				continue;
-			voice.AddCutTo(GetScopedChannel(
-				invocationId, voice.OriginVirtualChannelId!.Value).AntiClickTail);
-			_virtualVoices.RemoveAt(i);
+			if (voice.OriginScopedVirtualOwner == invocationId)
+			{
+				voice.AddCutTo(GetScopedChannel(
+					invocationId, voice.OriginVirtualChannelId!.Value).AntiClickTail);
+				_virtualVoices.RemoveAt(i);
+			}
+			else if (voice.OriginPatternCursorId == invocationId)
+			{
+				voice.AddCutTo(GetChannelState(
+					voice.OriginPhysicalChannel,
+					voice.OriginPhysicalPlaybackOwner).AntiClickTail);
+				_virtualVoices.RemoveAt(i);
+			}
 		}
 	}
 
@@ -1780,6 +1808,7 @@ public sealed class PlaybackSession
 			inheritedPitchAtStart: inheritedPitch,
 			initialNotePitchMultiplier: start.PitchMultiplier);
 
+		voice.OriginPatternCursorId = _activePatternCursorId;
 		channel.AttachVoice(voice, eventFrame);
 	}
 
