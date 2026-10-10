@@ -292,8 +292,11 @@ public sealed class PatternEditorControl : UserControl
 				TextWrapping = TextWrapping.Wrap,
 			};
 
-		_followCheckbox.Checked += (_, _) => SetFollowPlayback(true);
-		_followCheckbox.Unchecked += (_, _) => SetFollowPlayback(false);
+		_followCheckbox.PropertyChanged += (_, args) =>
+		{
+			if (args.Property == ToggleButton.IsCheckedProperty)
+				SetFollowPlayback(_followCheckbox.IsChecked == true);
+		};
 
 		Content = BuildContent();
 		AttachedToVisualTree += (_, _) => RequestPlaybackFollow();
