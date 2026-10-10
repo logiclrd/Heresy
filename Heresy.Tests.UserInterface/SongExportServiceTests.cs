@@ -24,6 +24,52 @@ namespace Heresy.Tests.UserInterface;
 public sealed class SongExportServiceTests
 {
 	[Test]
+	public async Task ExportConfigurationChangesApplyOnlyToNewFilesAndPreserveWavHeaders()
+	{
+		SongDocument document = CreateSong();
+		RenderConfiguration selected = RenderConfiguration.Stereo(1000);
+		SongExportService service = new(
+			new OfflineSongRenderPlanFactory(() => selected));
+		string firstPath = Path.Combine(Path.GetTempPath(),
+			$"heresy-config-stereo-{Guid.NewGuid():N}.wav");
+		string secondPath = Path.Combine(Path.GetTempPath(),
+			$"heresy-config-mono-{Guid.NewGuid():N}.wav");
+
+		try
+		{
+			// The export's immutable snapshot must be captured before the
+			// background Task starts, not read repeatedly during PCM output.
+			Task<OfflineRenderResult> first = service.ExportAsync(document,
+				firstPath, OfflineAudioFileFormat.Wave);
+			selected = new RenderConfiguration(2000,
+			[
+				new OutputChannelConfiguration(System.Numerics.Vector3.Zero),
+			]);
+			Task<OfflineRenderResult> second = service.ExportAsync(document,
+				secondPath, OfflineAudioFileFormat.Wave);
+			await Task.WhenAll(first, second);
+
+			byte[] stereo = await File.ReadAllBytesAsync(firstPath);
+			byte[] mono = await File.ReadAllBytesAsync(secondPath);
+			Assert.That(BinaryPrimitives.ReadInt16LittleEndian(
+				stereo.AsSpan(22, 2)), Is.EqualTo(2));
+			Assert.That(BinaryPrimitives.ReadInt32LittleEndian(
+				stereo.AsSpan(24, 4)), Is.EqualTo(1000));
+			Assert.That(BinaryPrimitives.ReadInt16LittleEndian(
+				mono.AsSpan(22, 2)), Is.EqualTo(1));
+			Assert.That(BinaryPrimitives.ReadInt32LittleEndian(
+				mono.AsSpan(24, 4)), Is.EqualTo(2000));
+			Assert.That(first.Result.LogicalFrameCount, Is.EqualTo(240));
+			Assert.That(second.Result.LogicalFrameCount, Is.EqualTo(480));
+		}
+		finally
+		{
+			if (File.Exists(firstPath)) File.Delete(firstPath);
+			if (File.Exists(secondPath)) File.Delete(secondPath);
+		}
+	}
+
+	[Test]
 	public async Task ExportWaveRendersRootSequenceAndReplacesDestinationAtomically()
 	{
 		SongDocument document = CreateSong();
