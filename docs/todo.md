@@ -221,11 +221,15 @@ and cross-publishes `win-x64`, inspecting the native PE executable
 for both RT_ICON and RT_GROUP_ICON resources. Linux/macOS builds
 retain their standard platform application hosts. See
 [application-branding.md](application-branding.md).
-- [ ] On startup show the supplied `Heresy.UserInterface/Images/Logo.axaml`
-  control in a separate chromeless splash window in front of the main window.
-  Dismiss it on any keyboard key, any pointer click, or automatically after
-  four seconds, whichever happens first. Do not delay or block main-window
-  initialization or leave the splash open when the main window closes.
+**Startup splash implemented.** The existing `Images/Logo.axaml`
+control is displayed in an owned, centered, chromeless, nontaskbar window
+above the already-opened main window. The one-shot four-second
+`DispatcherTimer` begins when the splash opens; any keypress, pointer
+click or owner-window close dismisses it. The dismissal guard stops the
+timer on every close path and prevents double close/reentrancy. Splash
+creation is dispatcher-posted after main-window opening, never stalls the
+main window or initializes audio. See
+[application-branding.md](application-branding.md).
 
 ## Documentation and later maintenance
 

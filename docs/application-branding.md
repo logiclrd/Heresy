@@ -37,8 +37,33 @@ RT_GROUP_ICON (14). This verifies actual apphost embedding; an
 validates that it is a multi-image ICO. It intentionally doesn't
 create an Avalonia `Window` in the headless test runner.
 
-## Not part of this milestone
+## Startup splash (implemented)
 
-The chromeless, four-second, dismiss-on-input startup splash screen
-remains a separate item. The supplied `Images/Logo.axaml` logo is
-unchanged, ready for that work.
+The supplied `Heresy.UserInterface/Images/Logo.axaml` is used unchanged
+as the content of `StartupSplashWindow`, with no raster conversion.
+After `MainWindow.Opened`, `App` schedules creation at Avalonia's
+`DispatcherPriority.Loaded` (and checks the main window remains visible).
+It calls the nonmodal `Show(mainWindow)` overload, making the splash
+an **owned** auxiliary window rather than the lifetime's main window.
+The splash is centered on its owner, with `SystemDecorations.None`,
+`CanResize = false` and `ShowInTaskbar = false`. The main document
+window and lazy SDL playback transport initialize independently; neither
+is delayed by a four-second await/sleep.
+
+Once the splash raises `Opened`, a UI-thread `DispatcherTimer` starts
+with a four-second interval and the splash activates for keyboard input.
+Routed `KeyDown` and `PointerPressed` are handled during the tunneling
+phase (including previously handled child events). They request immediate
+dismissal, as does the timer tick or a close of the owner window.
+`StartupSplashDismissal` arbitrates all four reasons, marks itself
+dismissed **before** closing the window, and stops the timeout exactly
+once. An external window-manager close also disarms the timer without
+closing twice. `StartupSplashWindow.Closed` releases the owner and timer
+subscriptions, so it cannot survive closing the main application window.
+
+`StartupSplashDismissalTests` cover the exact four-second interval,
+each input/timeout/owner close, external close, and synchronous
+reentrant close events without depending on a live desktop environment.
+The full desktop host is still built and cross-published on CI; the
+headless tests intentionally test the lifecycle contract separately
+from window-manager-specific focus rendering.
