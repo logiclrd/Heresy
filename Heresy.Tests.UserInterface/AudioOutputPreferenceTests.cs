@@ -30,7 +30,7 @@ public sealed class AudioOutputPreferenceTests
 						speaker.Position.Y - i / 8f,
 						speaker.Position.Z),
 					positionalImportance: i / 2d,
-					filterType: i % 3 switch
+					filterType: (i % 3) switch
 					{
 						1 => OutputFilterType.LowPass,
 						2 => OutputFilterType.HighPass,
