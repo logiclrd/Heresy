@@ -95,6 +95,7 @@ public static class FmSynthDocumentEditor
 					synth.Graph.Nodes
 						.OfType<FmEnvelopeNode>())
 				.Select(node => node.EnvelopeId)
+				.Where(id => !id.IsNone)
 				.Distinct()
 				.OrderBy(id => id.Value)
 				.ToArray();
@@ -729,7 +730,9 @@ public static class FmSynthDocumentEditor
 			FmEnvelopeNode envelope =>
 				new FmEnvelopeNode(
 					envelope.Id,
-					envelopeIdMap[envelope.EnvelopeId]),
+					envelope.EnvelopeId.IsNone
+						? ObjectId.None
+						: envelopeIdMap[envelope.EnvelopeId]),
 			FmOperatorNode operation =>
 				new FmOperatorNode(
 					operation.Id,
@@ -806,8 +809,10 @@ public static class FmSynthDocumentEditor
 		SongDocument document,
 		ObjectId envelopeId)
 	{
-		if (envelopeId.IsNone
-			|| !document.TryGet(
+		if (envelopeId.IsNone)
+			return;
+
+		if (!document.TryGet(
 				envelopeId,
 				out SongObject? songObject)
 			|| songObject is not EnvelopeDefinition)

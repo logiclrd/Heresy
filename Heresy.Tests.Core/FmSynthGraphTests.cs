@@ -170,15 +170,11 @@ public sealed class FmSynthGraphTests
 	}
 
 	[Test]
-	public void EnvelopeRequiresConcreteObjectId()
+	public void EnvelopeMayBeUnassignedUntilAnEnvelopeIsChosen()
 	{
-		Action action =
-			() => new FmEnvelopeNode(
-				1,
-				ObjectId.None);
-
-		action.Should()
-			.Throw<ArgumentException>();
+		FmEnvelopeNode node = new(1, ObjectId.None);
+		node.EnvelopeId.Should().Be(ObjectId.None);
+		node.InputNodeIds.Should().BeEmpty();
 	}
 
 	[Test]

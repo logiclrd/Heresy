@@ -89,7 +89,8 @@ public sealed class FmUnassignedEnvelopeEditorTests
 		// Source import should not allocate any envelope ID for None.
 		var imported = FmSynthDocumentEditor.ImportFromSong(
 			destination,
-			new SongFmSynthImportSource(restored, new[] { restoredSynth }),
+			new SongFmSynthImportSource(
+				"unassigned-source.hm", restored, new[] { restoredSynth }),
 			new[] { restoredSynth.Id });
 		imported.Should().ContainSingle();
 		((FmEnvelopeNode)imported[0].Graph.Nodes.Single(n => n.Id == id))

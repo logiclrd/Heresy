@@ -117,11 +117,8 @@ public sealed class FmEnvelopeNode : FmSynthNode
 		ObjectId envelopeId)
 		: base(id)
 	{
-		if (envelopeId.IsNone)
-			throw new ArgumentException(
-				"Envelope nodes require a concrete object ID.",
-				nameof(envelopeId));
-
+		// ObjectId.None is a persistent, unassigned envelope input.
+		// Until a live envelope is selected it produces a zero signal.
 		EnvelopeId = envelopeId;
 	}
 
