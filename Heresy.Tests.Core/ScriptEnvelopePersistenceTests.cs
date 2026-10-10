@@ -41,6 +41,40 @@ public sealed class ScriptEnvelopePersistenceTests
 	}
 
 	[Test]
+	public void ConsolidatedHmPackageRoundTripsScriptEnvelopeWithoutAssets()
+	{
+		SongDocument song = new();
+		ObjectId id = song.AllocateObjectId();
+		song.Add(new ScriptEnvelopeDefinition(id, "Package script")
+		{
+			Source = "releaseSeconds < 0 ? Math.Sin(elapsedSeconds) : -0.5",
+			ReleaseDuration = TimeSpan.FromMilliseconds(275),
+		});
+		string path = System.IO.Path.Combine(
+			System.IO.Path.GetTempPath(),
+			"heresy-script-envelope-" + Guid.NewGuid().ToString("N") + ".hm");
+		try
+		{
+			SongDocumentStorage.Save(path, song);
+			SongDocument loaded = SongDocumentStorage.Load(path);
+			ScriptEnvelopeDefinition restored =
+				(ScriptEnvelopeDefinition)loaded.Objects[id];
+			Assert.Multiple(() =>
+			{
+				Assert.That(restored.Source,
+					Is.EqualTo(((ScriptEnvelopeDefinition)song.Objects[id]).Source));
+				Assert.That(restored.ReleaseDuration,
+					Is.EqualTo(TimeSpan.FromMilliseconds(275)));
+			});
+		}
+		finally
+		{
+			if (System.IO.File.Exists(path))
+				System.IO.File.Delete(path);
+		}
+	}
+
+	[Test]
 	public void UnboundedReleaseRoundTripsWithoutInventingAnEnd()
 	{
 		SongDocument song = new();
