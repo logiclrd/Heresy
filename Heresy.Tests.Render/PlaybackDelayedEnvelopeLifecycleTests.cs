@@ -2,19 +2,16 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 
-using Heresy.Core.Assets;
 using Heresy.Core.Envelopes;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
-using Heresy.Core.Samples;
 using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
 using Heresy.Render.Configuration;
 using Heresy.Render.Envelopes;
 using Heresy.Render.Instruments;
 using Heresy.Render.Playback;
-using Heresy.Render.Samples;
 using Heresy.Render.Sounds;
 
 using NUnit.Framework;
@@ -31,13 +28,11 @@ public sealed class PlaybackDelayedEnvelopeLifecycleTests
         ObjectId sampleId = (ObjectId)2U;
         ObjectId envelopeId = (ObjectId)3U;
 
-        float[] waveform = new float[256];
-        Array.Fill(waveform, 1.0f);
-        SampleSound sample = new(
-            new SampleDefinition(sampleId, "PCM", new ExternalAssetReference("pcm.raw")),
-            new MemorySampleData(1000, 1, waveform));
+        // A bare SampleSound stops at Note Off by its existing contract.
+        // This sustaining Instrument tone deliberately lets the ADSR
+        // envelope control the post-Off audible release.
         SoundResolver sounds = new();
-        sounds.Add(sampleId, sample);
+        sounds.Add(sampleId, new SustainingSound());
         AdsrEnvelopeCurve volume = new(
             new AdsrEnvelopeDefinition(envelopeId, "Release envelope")
             {
@@ -117,6 +112,28 @@ public sealed class PlaybackDelayedEnvelopeLifecycleTests
                 yield return new RawPatternStep.Emit(note);
         }
     }
+
+    private sealed class SustainingSound : ISound
+    {
+        public NoteConfigurationSnapshot SnapshotNoteConfiguration()
+            => NoteConfigurationSnapshot.Default;
+
+        public SoundState CreateState()
+            => new SustainingState();
+
+        public long? GetEndFrameExclusive(RenderContext context, SoundState state)
+            => null;
+
+        public void Render(
+            RenderContext context, SoundState state, long startFrame,
+            int frameCount, Span<float> destination)
+        {
+            for (int i = 0; i < destination.Length; i++)
+                destination[i] += 1.0f;
+        }
+    }
+
+    private sealed class SustainingState : SoundState { }
 
     private sealed class SoundResolver : ISoundResolver
     {
