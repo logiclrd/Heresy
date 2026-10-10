@@ -93,7 +93,7 @@ public sealed class AdvancedScriptedExportTests
 		SongDocument document = CreateScriptSong("Note(0, 0, _O(1));",
 			rowCount: 1, sampleFrames: 1000);
 		using OfflineSongRenderPlan plan = new OfflineSongRenderPlanFactory(
-			AudioOutputSettings.Preset(1000, 1)).Create(document);
+			TailConfiguration()).Create(document);
 		using RecordingSink sink = new(plan.Source.Format);
 		List<OfflineRenderProgress> updates = [];
 		Assert.That(() => OfflinePlaybackRenderer.Render(
@@ -119,7 +119,7 @@ public sealed class AdvancedScriptedExportTests
 	{
 		SongDocument document = CreateScriptSong("Note(0, 0, _O(1));",
 			rowCount: 1, sampleFrames: 200);
-		RenderConfiguration config = AudioOutputSettings.Preset(1000, 1);
+		RenderConfiguration config = TailConfiguration();
 		(_, OfflineRenderResult result, List<OfflineRenderProgress> updates) =
 			Render(document, config, blockSize: 11,
 			maximumLogicalFrames: 500, maximumTailFrames: 500);
@@ -149,7 +149,7 @@ public sealed class AdvancedScriptedExportTests
 			maximumLogicalFrames: 4, maximumTailFrames: 4,
 			progress: new ImmediateProgress(updates.Add)),
 			Throws.InvalidOperationException
-			.With.Message.Contains("per-render step budget"));
+			.With.Message.Contains("same-tick cooperation budget"));
 		Assert.Multiple(() =>
 		{
 			Assert.That(sink.FramesWritten, Is.Zero,
@@ -157,6 +157,14 @@ public sealed class AdvancedScriptedExportTests
 			Assert.That(updates, Is.Empty);
 		});
 	}
+
+	private static RenderConfiguration TailConfiguration()
+		=> new(1000,
+		[
+			new OutputChannelConfiguration(System.Numerics.Vector3.Zero,
+				positionalImportance: 0,
+				filterType: OutputFilterType.LowPass, cutoffHz: 15),
+		]);
 
 	private static SongDocument CreateFlowSong()
 	{
