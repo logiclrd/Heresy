@@ -710,21 +710,10 @@ public sealed class PatternEditorControl : UserControl
 						sourceIndex,
 						targetIndex));
 		effects.SetEffects(view.Effects);
-		if (_flattenedIndications.TryGetValue(
-			(displayRow, channel), out FlattenedSourceEditorIndication? indication))
-		{
-			ToolTip.SetTip(effects, indication.Message);
-			ToolTip.SetTip(noteField, indication.Message);
-			ToolTip.SetTip(volumeField, indication.Message);
-			// Conditional warnings are not claims of runtime certainty.
-			// Lifecycle notices annotate OFF/CUT without marking them invalid.
-			string prefix = indication.IsConditional
-				? "? "
-				: indication.HasVoiceSpecificEffects
-					? "⚠ "
-					: "↳ ";
-			note.Text = prefix + view.NoteText;
-		}
+		_flattenedIndications.TryGetValue(
+			(displayRow, channel), out FlattenedSourceEditorIndication? indication);
+		ApplyFlattenedIndication(note, noteField, volumeField,
+			effects, view.NoteText, indication);
 
 		Grid content = new();
 		content.ColumnDefinitions.Add(
@@ -3195,6 +3184,46 @@ public sealed class PatternEditorControl : UserControl
 		RefreshCellEffectState(row, channel);
 	}
 
+	private static void ApplyFlattenedIndication(
+		TextBlock note, Border noteField, Border volumeField,
+		PatternEffectStripControl effects, string noteText,
+		FlattenedSourceEditorIndication? indication)
+	{
+		string? tip = indication?.Message;
+		ToolTip.SetTip(noteField, tip);
+		ToolTip.SetTip(volumeField, tip);
+		ToolTip.SetTip(effects, tip);
+		// A conditional '?' never claims an effect is definitely ignored.
+		// An arrow only explains OFF/CUT, which remain valid note actions.
+		string prefix = indication is null ? string.Empty
+			: indication.IsConditional ? "? "
+			: indication.HasVoiceSpecificEffects ? "⚠ " : "↳ ";
+		note.Text = prefix + noteText;
+	}
+
+	private void RefreshFlattenedIndications()
+	{
+		_flattenedIndications = FlattenedSourceEffectWarnings.Analyze(
+			_workspace.Document, _context);
+		foreach (((int row, int channel), TextBlock note) in _noteTexts)
+		{
+			if (!_noteFields.TryGetValue((row, channel), out Border? noteField)
+				|| !_volumeFields.TryGetValue((row, channel), out Border? volumeField)
+				|| !_effectStrips.TryGetValue((row, channel),
+					out PatternEffectStripControl? effects))
+				continue;
+			PatternEditorRow editorRow = _context.GetRow(row);
+			PatternCell? cell = editorRow.Pattern.Grid[editorRow.PatternRow, channel];
+			string noteText = PatternCellViewModel.Create(
+				_workspace.Document, editorRow.Pattern,
+				editorRow.PatternRow, channel).NoteText;
+			_flattenedIndications.TryGetValue(
+				(row, channel), out FlattenedSourceEditorIndication? indication);
+			ApplyFlattenedIndication(note, noteField, volumeField,
+				effects, noteText, indication);
+		}
+	}
+
 	private void RefreshUnderlyingCell(
 		DataPatternDefinition pattern,
 		int patternRow,
@@ -3205,6 +3234,10 @@ public sealed class PatternEditorControl : UserControl
 		{
 			RefreshCell(displayRow, channel);
 		}
+		// Source selection, Off/Cut or flow edits can change the meaning
+		// of effects in *later* rows, including another occurrence of
+		// the same Pattern in a Sequence. Refresh all warning decorations.
+		RefreshFlattenedIndications();
 	}
 
 	private void RefreshCursorVisuals()
