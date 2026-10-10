@@ -50,13 +50,15 @@ public sealed class SongPlaybackTransport
 	: ISongPlaybackTransport,
 		IPlaybackPositionTransport,
 		IPlaybackRuntimeDiagnosticsTransport,
-		IPlaybackAudioHealthTransport
+		IPlaybackAudioHealthTransport,
+		IPlaybackSnapshotTransport
 {
 	private readonly BackgroundPlaybackController _controller;
 	private readonly IBackgroundPlaybackSourceFactory _sourceFactory;
 	private readonly SemaphoreSlim _commandGate = new(1, 1);
 	private readonly object _positionGate = new();
 	private readonly Stopwatch _positionStopwatch = new();
+	private PlaybackSnapshotInfo _currentPlaybackSnapshot = new(0, null, 0);
 	private long _lastAudioSessionId = -1;
 	private long _lastAudioUnderruns;
 	private bool _lastAudioFaultReported;
@@ -101,6 +103,17 @@ public sealed class SongPlaybackTransport
 
 	public event EventHandler<PlaybackAudioHealthChangedEventArgs>?
 		AudioHealthChanged;
+	public event EventHandler<PlaybackSnapshotChangedEventArgs>?
+		PlaybackSnapshotChanged;
+
+	public PlaybackSnapshotInfo CurrentPlaybackSnapshot
+	{
+		get
+		{
+			lock (_positionGate)
+				return _currentPlaybackSnapshot;
+		}
+	}
 
 	public PlaybackPatternPosition? CurrentPlaybackPosition
 	{
@@ -134,7 +147,8 @@ public sealed class SongPlaybackTransport
 			SequencePlaybackRequest.Create(
 				document,
 				sequenceId,
-				startPosition));
+				startPosition),
+			document);
 
 	public Task PlayPatternAsync(
 		SongDocument document,
@@ -146,7 +160,8 @@ public sealed class SongPlaybackTransport
 				document,
 				patternId,
 				startRow,
-				repeat));
+				repeat),
+			document);
 
 	public Task PlayAdHocAsync(
 		SongDocument document,
@@ -154,7 +169,8 @@ public sealed class SongPlaybackTransport
 		=> PlayRequestAsync(
 			AdHocPlaybackRequest.Create(
 				document,
-				schedule));
+				schedule),
+			document);
 
 	public async Task SendLiveEventAsync(
 		SongDocument document,
@@ -197,6 +213,7 @@ public sealed class SongPlaybackTransport
 			StopPositionTracking();
 			await _controller.StopAsync().ConfigureAwait(false);
 			PollAudioHealth();
+			PublishPlaybackSnapshot(null, 0);
 		}
 		finally
 		{
@@ -205,7 +222,8 @@ public sealed class SongPlaybackTransport
 	}
 
 	private async Task PlayRequestAsync(
-		PlaybackRequest request)
+		PlaybackRequest request,
+		SongDocument sourceDocument)
 	{
 		ArgumentNullException.ThrowIfNull(request);
 
@@ -216,6 +234,7 @@ public sealed class SongPlaybackTransport
 			_liveAuditionDocument = null;
 			StopPositionTracking();
 			await _controller.PlayAsync(request).ConfigureAwait(false);
+			PublishPlaybackSnapshot(sourceDocument, request.Snapshot.AudioRevision);
 			PollAudioHealth();
 
 			lock (_positionGate)
@@ -236,6 +255,7 @@ public sealed class SongPlaybackTransport
 		catch
 		{
 			StopPositionTracking();
+			PublishPlaybackSnapshot(null, 0);
 			throw;
 		}
 		finally
@@ -271,23 +291,52 @@ public sealed class SongPlaybackTransport
 
 		try
 		{
-			uint revision = document.AudioRevision;
 			PlaybackRequest request = AdHocPlaybackRequest.Create(
 				document, new NoteScheduleBuilder().Freeze());
 			await _controller.PlayAsync(request).ConfigureAwait(false);
+			PublishPlaybackSnapshot(document, request.Snapshot.AudioRevision);
 			lock (_positionGate)
 				_diagnosticRequest = request;
 			_positionTimer.Change(dueTime: 5, period: 50);
 			PollAudioHealth();
 			_liveAuditionActive = true;
 			_liveAuditionDocument = document;
-			_liveAuditionAudioRevision = revision;
+			_liveAuditionAudioRevision = request.Snapshot.AudioRevision;
 		}
 		catch
 		{
 			_liveAuditionActive = false;
 			_liveAuditionDocument = null;
+			PublishPlaybackSnapshot(null, 0);
 			throw;
+		}
+	}
+
+	/// <summary>Publish the revision frozen by the successful request,
+	/// not the author's potentially changed revision after compilation.</summary>
+	private void PublishPlaybackSnapshot(
+		SongDocument? document,
+		uint audioRevision)
+	{
+		PlaybackSnapshotInfo state;
+		lock (_positionGate)
+		{
+			state = new PlaybackSnapshotInfo(
+				_currentPlaybackSnapshot.Generation + 1, document, audioRevision);
+			_currentPlaybackSnapshot = state;
+		}
+
+		if (PlaybackSnapshotChanged is not { } observers)
+			return;
+		PlaybackSnapshotChangedEventArgs args = new(state);
+		foreach (EventHandler<PlaybackSnapshotChangedEventArgs> observer
+			in observers.GetInvocationList())
+		{
+			try { observer(this, args); }
+			catch (Exception)
+			{
+				// UI subscribers must never interrupt playback.
+			}
 		}
 	}
 
