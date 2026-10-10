@@ -12,13 +12,16 @@ The repository is intentionally split by concern.
 - `Heresy.Render` — abstract PCM generation, playback voices/channels,
   spatialization, sample rendering, effect processing and the common renderer.
 - `Heresy.Render.SDL` — SDL3-CS realtime audio-output backend implementing the common float-PCM sink contract.
-- `Heresy.Render.File` — deterministic offline rendering plus streaming FLAC, MP3 and 16-bit PCM RIFF/WAVE sinks. FLAC is the default lossless file format.
-- `Heresy.UserInterface` — Avalonia single-document tracker UI. The current
-  document view projects the four fixed song-tree sections into Sequences,
-  Patterns, Samples and Instruments panes, with sample import/editing, external-
-  asset diagnostics, data-pattern editing, data-sequence arrangement editing,
-  recursive instrument/tone-table editing and ADSR envelope authoring; realtime
-  transport remains separate.
+- `Heresy.Render.File` — deterministic streaming offline PCM and FLAC, MP3,
+  or 16-bit RIFF/WAVE file sinks, with FLAC the default export format.
+- `Heresy.Playback` — shared, snapshot-bound incremental recursive
+  Pattern/Sequence composition for realtime playback and file export.
+- `Heresy.UserInterface` — Avalonia single-document tracker UI with the
+  current four panes (Sequences, Patterns, Samples, Instruments), sample
+  import/editing, data/script editors, FM synth graphs, Instruments and ADSR
+  envelopes. Five panes with first-class Envelopes, Patch labels, a graphical
+  ADSR editor and a new Instrument tone grid are **planned**, not yet built.
+  See [UI redesign](docs/ui-editor-redesign.md).
 - `Heresy.Scripting` — Roslyn-backed restricted-C# analysis/compiler boundary.
   Semantic object-reference analysis/projection and the first executable
   pattern/sequence compiler are implemented while Roslyn remains entirely
@@ -47,7 +50,9 @@ Detailed planned authoring, playback and tracker-workflow items are tracked in
   Source is optional per row and participates in per-physical-channel tracker
   memory; tracker-specific notation and effect-memory behavior are layered on
   top of this semantic grid model.
-- Sequences are finite and entries can specify a `StartRow`.
+- Data-driven Sequence order lists are finite and entries can specify a
+  `StartRow`; scripts and flow can repeat indefinitely, so production
+  playback and export enumerate them lazily.
 - Script object references are persisted in restricted-C# source as `_O(id)`.
   Roslyn semantic analysis ignores comment/string lookalikes and shadowing user
   declarations, reports malformed intrinsic calls, and projects real references
@@ -61,17 +66,32 @@ Detailed planned authoring, playback and tracker-workflow items are tracked in
   change is spread across continuous row time. See
   [Effect operators and tracker compatibility](docs/effect-operators.md).
 - Native source-frame seeking is a semantic capability, not a performance
-  promise. A seekable sound reports either direct or replay-required cost.
-  Replay-required seeks remain fully supported and exact; a future editor may
-  optionally highlight such rows as potentially expensive for realtime playback
-  (with user-configurable suppression) rather than forbidding them. Flattened
-  Pattern/Sequence playback need not expose source-frame seeking because it has
-  no single cooked PCM timeline, while mixdown forms may expose replay-required
-  seeking.
+  promise. Seekable sounds declare direct or replay-required cost. Oxx/Qxy
+  warnings and an optional editor suppression preference now exist, without
+  changing exact source-frame semantics. A private Pattern/Sequence mixdown
+  reconstructs its generator on backward seek; a flattened source need not
+  expose one seekable PCM timeline. See
+  [source-seek hints](docs/source-seek-hints.md).
 
 ## Song persistence and external assets
 
-The authoring model keeps asset locations as **full paths in memory**. Ordinary
+**Decode at load/import time, never on the audio worker.** Supported
+WAVE, FLAC, MP3, OGG Vorbis and AIFF/AIFC encoded sample files are
+decoded via `SampleAudioCodec` into immutable interleaved `SamplePcmData`
+owned by the live `SampleDefinition`. Playback snapshots share this
+immutable PCM. `InMemorySampleDataProvider` exposes it without accessing
+any file/ZIP, hashing a source, or invoking an audio codec during rendering.
+
+An imported sample owns an immutable pending copy of its *encoded* payload
+until that payload is saved into the current document. Already-persisted
+samples retain only their encoded storage identity/signature, not a
+duplicate resident encoded copy. Saving verifies/reuses existing encoded
+data or commits pending bytes as appropriate. Decoded PCM is retained
+throughout. For full lifecycle contracts see
+[sample storage](docs/sample-storage.md).
+
+The authoring model keeps persisted encoded-asset identities as
+**full paths in memory**. Ordinary
 external assets use absolute filesystem paths. Assets loaded from a consolidated
 `.hm` module use directory-like synthetic paths whose `.hm` component names
 the ZIP archive, for example `C:\\Music\\song.hm\\pcm\\kick.wav` on Windows or
@@ -96,189 +116,136 @@ relative to its current filename:
   module's containing directory keeps that relative subdirectory hierarchy.
   Otherwise it is placed under `pcm/`. A literal backslash in a Unix filename
   is replaced by `_` when converted to an archive entry name.
-- Loading `.hm` and importing another sample leaves the new sample pointing at
-  its actual external full path until the next save. Saving the module then
-  copies it into the archive and retargets the in-memory reference to the new
-  synthetic `.hm` path.
+- Loading `.hm` immediately decodes samples into immutable PCM and
+  retains their persisted encoded identity within the current module.
+  Importing another sample copies and decodes the source immediately,
+  rather than depending on its external location after import. The next
+  successful save writes the pending bytes to the current song and
+  replaces the pending payload with a persisted encoded identity.
 - Saving an archive-backed document as bare `.hm.json` extracts its bundled
   assets beside the JSON using the same hierarchy they occupied in the archive,
   and retargets the in-memory references to those extracted files.
 - When loading bare JSON, a path beginning with `/` or containing `:` in its
-  first component is treated as absolute. Absolute paths must match the host OS
-  convention; relative paths may not escape the JSON directory. For now, loading
-  fails if an asset is missing or its absolute-path convention cannot be resolved
-  on the current host. A future UI resolution workflow will let the user locate
-  replacement files or directories instead.
+  first component is treated as absolute. Absolute paths must match the host
+  OS convention and relative paths cannot escape the JSON directory. Missing
+  or unreadable encoded assets fail at **load time**, not at first playback;
+  interactive asset recovery remains a TODO. Successfully loaded PCM does
+  not depend on the continued presence of the original files.
 
 The current persisted schema is format version **1**. During initial pre-release buildout, breaking schema changes intentionally remain version 1 because there are no real-world Heresy documents to migrate yet. Format-version bumps and migrations will begin once the format is in actual use.
 
 ## Offline file rendering boundary
 
-`Heresy.Render.File` is the file-output sibling of the SDL realtime backend.
-`OfflinePlaybackRenderer` consumes the same sequential `PlaybackSession` used
-for realtime rendering and writes it through `IAudioFileSink`. The logical song
-duration is always rendered in full, including silence. At that boundary the
-session receives an explicit end-of-input transition: every still-active voice
-receives Note Off, deterministic sound/envelope/fade releases are allowed to
-finish, and anti-click residue is drained. If a voice still has no deterministic
-finite end after Note Off, offline rendering cuts only that voice at the logical
-song end and drains its ordinary anti-click residue; finite releases remain
-untouched.
+The production `OfflineSongRenderPlanFactory` snapshots the song and
+current output configuration and builds the **same**
+`PreparedIncrementalPlaybackFactory` /
+`IncrementalRecursiveTimeline` /
+`PreparedIncrementalAudioSource` graph used by realtime playback.
+The root Sequence, script-generated orders and nested Pattern/Sequence
+invocations are consumed only as the musical clock advances. There is
+no eager full-song `NoteSchedule`, second recursive engine, replay-event
+journal or cooked private PCM cache.
 
-`WaveFileSink` writes canonical little-endian 16-bit integer PCM RIFF/WAVE
-incrementally, clamps finite float PCM into the signed 16-bit range, rejects
-non-finite samples, and patches RIFF/data sizes on completion. It deliberately
-targets classic RIFF (not RF64), so data beyond the 4-GiB RIFF limit is rejected
-explicitly.
+`OfflinePlaybackRenderer` streams PCM blocks from that incremental
+source to an `IAudioFileSink`; it discovers the arrangement's actual
+end during rendering. It then issues end-of-input, preserves finite
+release envelopes and anti-click tails, and cuts voices without
+a deterministic post-Note-Off end. Explicit logical-body and tail
+frame limits bound unending scripts. The older finite-`PlaybackSession`
+render overload remains available for ordinary callers but is not
+the production song-compilation path.
 
-`FlacFileSink` is the default lossless sink. Heresy deliberately does not
-implement FLAC compression itself: the sink is a thin streaming adapter over
-`NAudio.SoundFile`, which delegates encoding to the mature native
-`libsndfile`/libFLAC stack. Heresy owns PCM validation, accepted-frame
-accounting, stream lifetime and the `IAudioFileSink` contract; FLAC framing,
-prediction, Rice coding and compression decisions remain outside the project.
-The native codec runtime is bundled for the supported desktop RIDs, including
-the ELF SONAME aliases required by the Linux packages, so export does not depend
-on a system-installed codec. Arbitrary caller write sizes and non-seekable FLAC
-streams remain supported without whole-song buffering.
+The export-only Bxx loop policy suppresses a jump on its **third
+encounter** with the same Pattern/row/target, after rendering the
+encountered row; realtime does not have that limit.
+FLAC is the default; MP3 and 16-bit PCM RIFF/WAVE are also available.
+`WaveFileSink` streams and patches file sizes, while MP3/FLAC use
+the `NAudio.SoundFile`/libsndfile native codec boundary.
+The worker writes to a temporary sibling path and atomically replaces
+the destination only after successful completion; cancellation or
+failure preserves the old output file.
 
-`Mp3FileSink` uses the same `NAudio.SoundFile`/libsndfile boundary, leaving
-MPEG framing, psychoacoustics and bit allocation to the native codec stack.
-MP3 export is incremental and bounded-memory, but this libsndfile MPEG writer
-requires a seekable destination; normal file export satisfies that requirement
-and the sink rejects forward-only streams explicitly.
+Export progress is reported after completed PCM blocks, with logical
+body and release-tail phases and cooperative cancellation. An
+incremental script may have no known end, so production export
+normally shows **indeterminate** progress and rendered musical time
+rather than a fabricated percentage or ETA. The bounded sequencing
+warnings from parent and private-child invocations flow to the same
+UI diagnostics history, including at cancellation/failure.
 
-The desktop File -> Render Audio command captures an immutable song snapshot,
-compiles the root sequence through the playback composition layer, then performs
-PCM rendering and encoding on a worker task. FLAC, MP3 and WAV are selectable,
-with FLAC suggested by default. Output is written to a temporary sibling file
-and atomically replaces the selected destination only after a successful render.
-Compilation failures are reported as render failures. Voices with no
-deterministic post-Note-Off end are cut at the logical song boundary while
-ordinary finite release tails continue to completion. Offline sequence
-compilation also guards tracker `Bxx` loops: the third encounter with the same
-order-jump instruction (same pattern, source row and target order) renders that
-row normally but suppresses the jump and treats it as the logical end of the
-arrangement. Realtime playback does not install this guard.
+See [export workflow](docs/export-workflow.md),
+[incremental sequencing](docs/incremental-sequencing.md) and
+[audio output](docs/audio-output.md).
 
 ## Realtime audio boundary
 
-`Heresy.Render.Realtime` defines the backend-neutral realtime PCM contracts.
-`IAudioOutputSource` produces exact blocks of interleaved 32-bit float PCM;
-`IAudioOutputBackend` opens an `IAudioOutputSession` for a fixed sample-rate
-and channel-count format. The existing sequential `PlaybackSession` is adapted
-through `PlaybackSessionAudioSource`, preserving the same frame ordering used
-by offline rendering.
+`Heresy.Render.Realtime` exposes the backend-neutral PCM source,
+output backend and output session contracts. The desktop
+`SongPlaybackTransport` accepts F5 root-Sequence, F6 repeating
+Pattern, F7 Sequence/Pattern start-location and F8 stop commands,
+plus ad-hoc row/note audition and held preview. Each request captures
+an immutable `SongDocumentSnapshot` and its output configuration;
+the SDL backend remains lazily initialized until playback is needed.
 
-`Heresy.Render.SDL` provides the first concrete backend. It opens SDL's default
-playback device as a native-endian F32 stream and feeds it on demand through an
-SDL audio-stream callback. The desktop Avalonia app references this backend
-through a lazy transport wrapper, so SDL is not initialized merely by launching
-or editing in Heresy; the native audio stack is created on the first playback
-command. SDL callback failures never escape the unmanaged
-boundary: the first exception is latched in `IAudioOutputSession.Fault` and
-subsequent callback output is silence. Start/stop are explicit and idempotent,
-and disposing the backend disposes its open sessions before releasing SDL audio.
-The assembly references the managed SDL3-CS bindings and the Windows, Linux and
-macOS native runtime packages at the same SDL version. Those native assets flow
-through the project-reference graph into the desktop host's standard
-`runtimes/<rid>/native/` output tree, where .NET can resolve the matching
-platform library when playback is first requested. The backend deliberately
-knows nothing about songs, patterns or authoring state;
-the background playback worker provides snapshot-backed PCM through the common
-source interface.
+The production `PlaybackRequestAudioSourceFactory` creates the
+**same coroutine-based recursive source** as offline export,
+not a complete eagerly compiled `NoteSchedule`. The
+`IncrementalRecursiveTimeline` advances data or scripted
+Pattern/Sequence invocations cooperatively at sample-exact
+musical frames. Small ad-hoc audition schedules are wrapped as
+temporary raw Patterns and use the same pipeline.
 
+Flattened Pattern/Sequence sources share their parent clock and
+represent one logical instigating note for live source-volume effects,
+Note Off, Cut and new-note displacement, while child voices retain
+independent channel memory, nesting scope and release tails.
+Private nested mixdowns (including Instrument-selected recursive
+tones) use independent incremental generators, output-speaker feeds,
+pitch/playback-speed multipliers and lifecycle state. Forward and
+backward Oxx/Qxy native seeks are handled deterministically;
+rewinds reconstruct nested generator state, without retaining
+event histories or precooked PCM. Remaining unusual advanced
+Tempo/effect combinations are tracked in the TODO rather than
+treated as undone core architecture.
 
-Realtime transport requests now cross an explicit snapshot boundary before they
-reach the worker. `SongDocumentSnapshot.Create` deep-clones the mutable
-`SongDocument`, preserving object IDs, tree organization, script source, asset
-paths and tombstones while recording the source document/audio revision numbers.
-Snapshot creation uses the Core persistence representation without pruning
-unreferenced tombstones and does not mutate the authoring document.
+**The SDL callback never runs song scripts, sequencing or PCM
+synthesis.** One dedicated `BufferedAudioOutputSource` worker
+runs the entire incremental source and nested mixes, supplying
+a bounded single-producer/single-consumer interleaved float-PCM
+ring. The SDL audio-stream callback only reads that ring. On
+underrun it outputs silence without fast-forwarding producer
+musical time; worker failures are captured and exposed as
+runtime diagnostics instead of propagating through native callbacks.
 
-`BackgroundPlaybackController` owns a dedicated command thread and serializes
-play/replace/stop operations there. Requests are immutable descriptions backed
-by their already-captured song snapshot: `SequencePlaybackRequest` carries a
-sequence ID plus an optional order/row starting position,
-`PatternPlaybackRequest` carries a pattern ID/start row/repeat flag, and
-`AdHocPlaybackRequest` carries an immutable `NoteSchedule` for note/row
-audition. Source construction is delegated to
-`IBackgroundPlaybackSourceFactory` on the worker thread, keeping the generic
-transport layer independent of scripting, sample decoding and UI context.
-Starting a new request stops and disposes the previous output session first;
-Stop is safe when idle, and controller disposal tears down the active session
-and backend on the worker before joining it.
+Realtime and export share sample/FM/instrument rendering, the
+`PlaybackSession` voice/effect model, and the configured
+mono/stereo/5.1/7.1 speaker output with positioning and per-speaker
+None/LowPass/HighPass filtering. The final speaker filter stage
+runs once after the complete mix; private submixes bypass it.
+The UI distinguishes unsaved document changes from the freshness
+of the immutable audio snapshot used for current playback.
 
-`Heresy.Playback.PlaybackRequestAudioSourceFactory` is the concrete
-request-to-render-source composition layer. Sequence requests compile the
-requested data/script sequence (including optional order/row start position);
-pattern requests compile the requested data/script pattern and may expose it as
-a repeating source; ad-hoc requests use their already-frozen `NoteSchedule`
-directly. Each resulting schedule receives a snapshot-scoped sound resolver:
-`SampleDefinition` becomes `SampleSound` through an injected
-`ISampleDataProvider`, `InstrumentDefinition` becomes recursive
-`InstrumentSound`, and ADSR envelope references become immutable
-`AdsrEnvelopeCurve` instances. The factory then constructs the ordinary
-`PlaybackSession` / `PlaybackSessionAudioSource` used by the realtime backend.
+The Pattern editor auditions a note with top-row 4, a row with
+top-row 8, and held notes with Caps Lock plus tracker piano keys;
+releases queue Note Off into the same worker-owned playback state.
+Neither these previews nor general realtime playback decode
+encoded assets at render time.
 
-Repeating pattern playback restarts at the pattern's compiled duration. Since
-standalone pattern compilation already consumes tracker sequence-flow commands,
-a `Bxx` encountered during F6-style pattern playback truncates that cycle and
-the repeating source begins again at row zero on the next cycle. Sample decoding
-remains outside this integration layer through `ISampleDataProvider`; the
-desktop host will choose the concrete decoder/cache alongside the SDL backend.
-The desktop UI now binds the tracker transport keys globally:
-`F5` snapshots and plays the root sequence; `F6` plays the pattern under the
-tracker cursor repeatedly from row zero; `F7` starts at the current local
-pattern row using the closest known data-sequence context (the sequence from
-which the editor was opened wins, then the root sequence if it contains the
-pattern, then another containing data sequence, with standalone pattern playback
-as the fallback); and `F8` stops playback. The pattern editor exposes only its
-logical pattern/local-row/sequence-order cursor, leaving ancestry resolution and
-request creation outside Avalonia.
+See [audio output](docs/audio-output.md),
+[playback snapshots](docs/playback-snapshots.md),
+[incremental sequencing](docs/incremental-sequencing.md) and
+[source-seek hints](docs/source-seek-hints.md).
 
-The pattern editor also supports ad-hoc tracker audition while the Note column
-has focus. Top-row `4` compiles and plays only the current cell's
-note/source/volume; top-row `8` compiles and plays the entire current row,
-including its effects. Both commands advance the tracker cursor by one logical
-row, including across flattened sequence-pattern boundaries. Before compiling
-the auditioned location, `PatternAuditionCompiler` sequences earlier rows into
-a discard sink so source selection, timing state and tracker effect-memory
-recalls are primed without playing those earlier events. The resulting frozen
-`NoteSchedule` is submitted as an ordinary `AdHocPlaybackRequest` through
-the same snapshot/background/SDL path as other realtime playback.
+## Documentation history
 
-Held-note preview uses the same sequencing state but a live-event extension of
-that playback path. While the Note column has focus, the physical Caps Lock key
-acts as a momentary preview modifier: pressing a mapped tracker piano key starts
-the note at the current tracker octave without editing the pattern, and releasing
-that same physical key queues `NoteOffCommand` into the same running
-`PlaybackSession`. The operating-system Caps Lock toggle state is deliberately
-ignored. Auto-repeat is consumed entirely by held preview and never falls
-through to ordinary note entry. This remains true even if Caps Lock is released
-before a still-held piano key; repeats become ordinary input only after that
-physical piano key has been released and pressed anew without Caps Lock.
-Concurrently held tracker keys are assigned independent preview channels,
-so one key's release cannot turn off another key's note. If the window deactivates or the pattern
-editor leaves the visual tree while notes are held, all preview voices are
-released proactively so a lost physical key-up cannot strand a sounding voice.
-
-`PlaybackSessionAudioSource` implements `ILiveAudioOutputSource`: UI/worker
-commands enter a thread-safe queue and are applied at the next audio render
-boundary using the session's current frame. This preserves one voice lifecycle
-across key-down/key-up while keeping all renderer mutation on the audio callback
-side. A fresh song snapshot is captured when the first held preview note starts;
-additional simultaneously held notes share that live snapshot, and the next new
-preview group replaces it with a fresh snapshot.
-
-Realtime sample decoding currently uses `WaveSampleDataProvider`. It reads
-RIFF/WAVE assets through `ExternalAssetIntegrity.OpenRead`, so ordinary files
-and samples stored inside consolidated `.hm` archives use the same path. PCM
-8/16/24/32-bit, IEEE float 32/64-bit, and the corresponding extensible WAVE
-subformats are converted to immutable interleaved float PCM and cached by asset
-path plus recorded hash. Authoring may already reference FLAC, MP3, OGG and AIFF
-assets, but realtime decoding for those formats is not implemented yet and
-reports a clear unsupported-WAVE error rather than silently producing audio.
+The older [recursive-sounds design record](docs/recursive-sounds.md)
+and early chapters of [incremental sequencing](docs/incremental-sequencing.md)
+describe intermediate prototypes. Their claims about eager scheduling,
+replay journals, unit-speed-only private mixdowns, incomplete Note Off/
+Cut propagation, or unisolated flattened channel memory are
+**historical**, not current production limitations. The source,
+regression tests, [sample storage](docs/sample-storage.md)
+and [remaining TODOs](docs/todo.md) are authoritative.
 
 ## Toolchain note
 
@@ -294,14 +261,17 @@ names and falls back through tombstones to raw IDs for broken references.
 Tree-only reorganization uses `SongTreeEditor` and advances `DocumentRevision`
 without advancing `AudioRevision`; moving a node never changes its ObjectId.
 
-The document tree has four fixed top-level sections, persisted in
-clockwise document-view order: Sequences, Patterns, Instruments and Samples.
+The **currently implemented** document tree has four fixed top-level sections,
+persisted in clockwise document-view order: Sequences, Patterns,
+Instruments and Samples.
 The Avalonia document mode projects those section subtrees as four panes:
 Sequences top-left, Patterns top-right, Samples bottom-left and Instruments
 bottom-right. The fixed section nodes themselves are not shown because each
 pane is the visual root of its subtree. New objects receive one canonical tree
 placement from `SongDocument.Add`; envelopes are grouped with Instruments.
 Nodes may be reorganized within a section but not moved between sections.
+A five-pane layout with a separate Envelopes root and generalized
+"Patch/Patches" labels is **planned**, not currently implemented.
 
 FM synth graph connections are drawn as orthogonal routes from producer to
 consumer, with a small arrowhead **only at the consuming/input end**. Hovering
@@ -532,18 +502,16 @@ randomness comes from the supplied `SequencingContext`, preserving
 deterministic replay and preventing mutable script state from leaking between
 invocations.
 
-`SongScheduleCompiler` is the current song-level execution bridge. It resolves
-the document's root sequence or an explicitly requested sequence/pattern,
-compiles script definitions on demand, executes data and script structures
-through the same resolver/processor path, and freezes the result into an
-immutable `NoteSchedule` suitable for rendering. Arbitrary sequence compilation
-can begin at an order with an optional row override; standalone pattern
-compilation can likewise begin at a requested row. Script
-patterns are compiled lazily only when the executing sequence actually reaches
-them, so an unused broken script does not block playback; a referenced script
-with compilation errors makes the complete schedule compilation fail with those
-diagnostics instead of silently disappearing. Script source/layout edits are
-audio-affecting authoring changes.
+The current song execution bridge is
+`PreparedIncrementalPlaybackFactory`, not the removed eager
+`SongScheduleCompiler`. It supports root or explicitly requested
+Pattern/Sequence invocations with order/row starting positions, and
+prepares restricted-C# generators for lazy invocation. A script is
+evaluated only when musical progression reaches it; the resulting
+event stream stays incremental throughout realtime playback and
+export. Errors from invoked scripts remain surfaced through the
+compiler/runtime diagnostic paths, and script layout/source edits
+remain audio-affecting.
 
 The Instruments pane can create an `InstrumentDefinition` and open it in a
 main-workspace tone-table editor. Divisions and offset remain the pitch-to-index
@@ -558,7 +526,10 @@ so remaining mappings continue to identify the same definitions. The editor
 projects existing envelope objects, including unresolved references via
 tombstone/raw-ID fallback.
 
-ADSR envelopes are created and edited from the same Instruments pane. Attack,
+ADSR envelopes are currently created and edited numerically from the
+Instruments pane. A separate Envelopes pane, graphical drag-handle
+editor, and embedded FM Envelope inspector are **planned** in
+[the UI redesign](docs/ui-editor-redesign.md). Attack,
 decay and release are non-negative physical-time durations stored as `TimeSpan`
 values; the UI presents them in seconds. Sustain is deliberately an unrestricted
 finite scalar rather than a normalized percentage: negative and above-unity
