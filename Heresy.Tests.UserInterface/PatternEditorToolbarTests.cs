@@ -4,6 +4,7 @@ using System.Reflection;
 
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Headless.NUnit;
 
 using AwesomeAssertions;
 
@@ -19,7 +20,7 @@ namespace Heresy.Tests.UserInterface;
 [TestFixture]
 public sealed class PatternEditorToolbarTests
 {
-	[Test]
+	[AvaloniaTest]
 	public void BackButtonIsOutsideAutoScrollingToolbarContainingTitleThroughApplyLayout()
 	{
 		DocumentWorkspace workspace = new();
@@ -44,7 +45,7 @@ public sealed class PatternEditorToolbarTests
 			.Which.Content.Should().Be("Apply layout");
 	}
 
-	[Test]
+	[AvaloniaTest]
 	public void InlineTitleRenameUpdatesTreeAndDocumentButNotAudio()
 	{
 		DocumentWorkspace workspace = new();
@@ -73,7 +74,7 @@ public sealed class PatternEditorToolbarTests
 		notification.Should().Contain("Renamed pattern");
 	}
 
-	[Test]
+	[AvaloniaTest]
 	public void EscapeCancellationAndBlankNameLeavePatternUntouched()
 	{
 		DocumentWorkspace workspace = new();
