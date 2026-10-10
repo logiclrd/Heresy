@@ -614,7 +614,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 					PlaybackSession childSession = new(
 						new RenderContext(_configuration),
 						new NoteScheduleBuilder().Freeze(), sounds,
-						initialTempo: effectiveTempo);
+						initialTempo: effectiveTempo,
+						applyFinalSpeakerFilters: false);
 					PreparedIncrementalAudioSource childSourceStream =
 						CreatePrivateMixdownAwareSource(
 							childTimeline, childSession, scripts, sounds,
