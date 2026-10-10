@@ -3,8 +3,73 @@
 **Only genuinely unfinished work belongs here.** Completed work and
 red-to-green regressions live in focused [reference docs](README.md)
 or the [chronological engineering log](incremental-sequencing.md).
-Reconciled October 10, 2026: **four open items**. None is an
-unconditional outstanding playback-correctness task.
+Reconciled October 10, 2026. The original design's programmability
+features are **active work**; the hardware/optimization/schema tasks
+below remain conditional. This is not a list of completed milestones.
+
+## Original design — remaining programmability
+
+The [programmability architecture](script-programmability.md) separates
+persisted authoring objects from compiled, snapshot-owned runtime behavior.
+The existing restricted-C# Pattern/Sequence scripts, sound/envelope resolver
+interfaces, and compositional effect operators are starting points, **not**
+proof that the following authorable features are complete.
+
+### Pattern-script virtual channels
+
+- [ ] **Expose virtual note lifecycle and scoped/broadcast operations to
+  Pattern scripts.** Add direct-statement script helpers for start, Off and
+  Cut on an invocation-local virtual ID, plus Off/Cut broadcasts to
+  `AllVirtualInScope` and `AllVirtual`. Emit ordinary `NoteEvent` targets;
+  keep physical-channel helper behavior unchanged. The eager and incremental
+  compilers must accept the same helpers. The incremental compiler must yield
+  after *every* helper and reject nested/non-statement emission. Verify
+  fractional row/fixed-wall timing, same-frame order, local ID reuse in
+  flattened siblings, broadcast semantics, cancellation and production
+  realtime/offline parity. **First implementation slice.**
+
+- [ ] **Expose supported virtual-voice controls from Pattern scripts** after
+  the note lifecycle slice is green. Define named typed helpers for the
+  renderer-supported note-volume, native source-frame offset, NNA/displacement
+  and past-note actions rather than exposing physical-only tracker
+  memory or channel-wide controls. Verify rejected commands remain rejected,
+  deferred deadlines act on the voice then present, and virtual scopes are
+  isolated. Avoid generalizing unsupported physical commands by accident.
+
+### Programmable object types
+
+- [ ] **Implement script-defined Envelopes.** Add a persisted Envelope
+  subtype, restricted deterministic compilation and a snapshot-owned
+  `IEnvelopeCurve` evaluator receiving envelope-active time, sample rate
+  and Note Off origin. Specify and enforce bounded evaluation, nonfinite
+  output handling and a credible finite/endless release contract before
+  integration. Resolve alongside ADSR in Instrument and FM paths; preserve
+  pause/resume, note release, voice retirement, JSON/`.hm` round-trips and
+  live-editor versus playing-snapshot isolation. Provide authoring and
+  diagnostic support with regression tests at each layer.
+
+- [ ] **Implement script-defined Instruments.** Add a persisted Instrument
+  subtype with a deterministic compiled tone-selection function taking the
+  invoked pitch (and any explicitly documented context), yielding a source,
+  pitch multiplier and per-target optional Envelope overrides, or silence.
+  The selection must occur per note invocation, preserve recursive/private
+  source handling and inherited envelopes, and never run compilation on the
+  SDL callback. Specify bounded evaluation, stable object-reference and
+  tombstone behavior for dynamic selectors, recursive rejection, snapshots,
+  serialization, authoring and diagnostics. Keep existing tone-grid
+  Instruments unchanged and regression-tested.
+
+- [ ] **Make native parametric effects authorable as compiled expressions.**
+  Define a persisted semantic effect with destination scope/parameter,
+  lifetime, wall-time (and optional tracker row-time) input, persistent versus
+  transient commit policy and expression source. Compile under a bounded
+  deterministic restricted-C# subset before playback and evaluate as a
+  per-frame absolute operator contribution, never by mutating other
+  operators' baselines. Enforce finite outputs/error policy, shared-clock
+  deadlines, lifecycle ownership and chunk-invariant realtime/offline PCM.
+  Add editing, serialization, validation and tests; reuse the existing
+  `FunctionalRowPlaybackOperator` style of composition without treating
+  tracker-specific semantics as native wall-time semantics.
 
 ## Physical validation
 
