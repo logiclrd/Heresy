@@ -36,6 +36,10 @@ public sealed class DeferredFlattenedVirtualOwnershipTests
     public void ScopedBroadcastAndDeferredPhysicalPastCutKeepSiblingOwnerAlive()
     {
         TestPattern firstChild = Pattern(3, 2,
+            At(0, TimeSpan.FromMilliseconds(50),
+                ChannelTarget.Physical(1),
+                new ApplyTrackerPastNoteActionCommand(
+                    TrackerPastNoteAction.Cut)),
             At(0, ChannelTarget.Physical(1),
                 new StartNoteCommand(SampleId)),
             At(0, ChannelTarget.Virtual(7),
@@ -49,11 +53,7 @@ public sealed class DeferredFlattenedVirtualOwnershipTests
             At(0.3, ChannelTarget.Physical(1),
                 new ApplyTrackerNewNoteActionCommand(
                     NoteDisplacementAction.Continue),
-                new StartNoteCommand(SampleId)),
-            At(0, TimeSpan.FromMilliseconds(50),
-                ChannelTarget.Physical(1),
-                new ApplyTrackerPastNoteActionCommand(
-                    TrackerPastNoteAction.Cut)));
+                new StartNoteCommand(SampleId)));
         TestPattern secondChild = Pattern(4, 1,
             At(0, ChannelTarget.Physical(0),
                 new StartNoteCommand(SampleId)),
@@ -99,10 +99,6 @@ public sealed class DeferredFlattenedVirtualOwnershipTests
                 new StartNoteCommand(SampleId)),
             At(0, ChannelTarget.Virtual(7),
                 new StartNoteCommand(SampleId)),
-            At(0.1, ChannelTarget.Virtual(7),
-                new SetCurrentVoiceDisplacementActionCommand(
-                    NoteDisplacementAction.Continue),
-                new StartNoteCommand(SampleId)),
             At(0, TimeSpan.FromMilliseconds(90),
                 ChannelTarget.Physical(1), new NoteCutCommand()),
             At(0, TimeSpan.FromMilliseconds(100),
@@ -113,7 +109,11 @@ public sealed class DeferredFlattenedVirtualOwnershipTests
             At(0, TimeSpan.FromMilliseconds(115),
                 ChannelTarget.Physical(1),
                 new ApplyTrackerNewNoteActionCommand(
-                    NoteDisplacementAction.Fade)));
+                    NoteDisplacementAction.Fade)),
+            At(0.1, ChannelTarget.Virtual(7),
+                new SetCurrentVoiceDisplacementActionCommand(
+                    NoteDisplacementAction.Continue),
+                new StartNoteCommand(SampleId)));
         TestPattern secondChild = Pattern(4, 1,
             At(0, ChannelTarget.Physical(0),
                 new StartNoteCommand(SampleId)),
