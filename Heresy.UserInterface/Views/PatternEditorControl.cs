@@ -3213,7 +3213,6 @@ public sealed class PatternEditorControl : UserControl
 					out PatternEffectStripControl? effects))
 				continue;
 			PatternEditorRow editorRow = _context.GetRow(row);
-			PatternCell? cell = editorRow.Pattern.Grid[editorRow.PatternRow, channel];
 			string noteText = PatternCellViewModel.Create(
 				_workspace.Document, editorRow.Pattern,
 				editorRow.PatternRow, channel).NoteText;
