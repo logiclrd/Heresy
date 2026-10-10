@@ -76,6 +76,52 @@ public sealed class IncrementalAdvancedTrackerEffectsTests
         Compare(pattern);
     }
 
+    [TestCase("Arpeggio")]
+    [TestCase("Tremolo")]
+    [TestCase("Tremor")]
+    [TestCase("Panbrello")]
+    public void RowScopedModulationsMatchEagerEffectsAndCleanup(string kind)
+    {
+        DataPatternDefinition pattern = Pattern(2, 1);
+        PatternCell first = pattern.Grid.GetOrCreateCell(0, 0);
+        first.Note = new StartPatternNote((ObjectId)10U);
+        first.Effects.Add(kind switch
+        {
+            "Arpeggio" => new ArpeggioPatternEffect(0x37),
+            "Tremolo" => new TremoloPatternEffect(0x48),
+            "Tremor" => new TremorPatternEffect(0x34),
+            _ => new PanbrelloPatternEffect(0x48),
+        });
+        if (kind == "Tremolo")
+            first.Effects.Insert(0, new TrackerTremoloWaveformPatternEffect(2));
+        if (kind == "Panbrello")
+            first.Effects.Insert(0, new TrackerPanbrelloWaveformPatternEffect(1));
+        PatternCell second = pattern.Grid.GetOrCreateCell(1, 0);
+        second.Effects.Add(kind switch
+        {
+            "Arpeggio" => new ArpeggioPatternEffect(0),
+            "Tremolo" => new TremoloPatternEffect(0),
+            "Tremor" => new TremorPatternEffect(0),
+            _ => new PanbrelloPatternEffect(0),
+        });
+
+        Compare(pattern);
+    }
+
+    [TestCase("Tremor")]
+    [TestCase("Panbrello")]
+    public void SEyRepeatsCapturedModulationMemoryAtOwnRowTicks(string kind)
+    {
+        DataPatternDefinition pattern = Pattern(1, 1);
+        PatternCell first = pattern.Grid.GetOrCreateCell(0, 0);
+        first.Note = new StartPatternNote((ObjectId)12U);
+        first.Effects.Add(new TrackerPatternDelayPatternEffect(2));
+        first.Effects.Add(kind == "Tremor"
+            ? new TremorPatternEffect(0x34)
+            : new PanbrelloPatternEffect(0x48));
+        Compare(pattern);
+    }
+
     private static void Compare(DataPatternDefinition pattern,
         SequencingContext? eagerContext = null,
         SequencingContext? liveContext = null)
