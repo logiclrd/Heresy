@@ -1850,7 +1850,13 @@ public sealed class PlaybackSession
 				oldVoice.ApplyNoteOff(
 					eventFrame,
 					_context.Configuration.SampleRate);
-				_virtualVoices.Add(oldVoice);
+				// A zero-release envelope can finish at the very NNA
+				// displacement frame. Do not retain an already-silent
+				// note in the displaced-voice pool until the next PCM block.
+				long? offEnd = GetEffectiveVoiceEndFrameExclusive(
+					oldVoice, eventFrame);
+				if (!offEnd.HasValue || eventFrame < offEnd.Value)
+					_virtualVoices.Add(oldVoice);
 				break;
 
 			case NewNoteAction.Fade:
