@@ -49,7 +49,7 @@ public sealed class ScriptEnvelopeEditorControl : UserControl
 		{
 			Text = envelope.ReleaseDuration?.TotalSeconds.ToString(
 				"R", CultureInfo.InvariantCulture) ?? string.Empty,
-			Watermark = "Blank = unbounded",
+			PlaceholderText = "Blank = unbounded",
 			MinWidth = 160,
 		};
 		Content = Build();
