@@ -221,32 +221,41 @@ and cross-publishes `win-x64`, inspecting the native PE executable
 for both RT_ICON and RT_GROUP_ICON resources. Linux/macOS builds
 retain their standard platform application hosts. See
 [application-branding.md](application-branding.md).
-**Startup splash implemented.** The existing `Images/Logo.axaml`
-control is displayed in an owned, centered, chromeless, nontaskbar window
-above the already-opened main window. The one-shot four-second
-`DispatcherTimer` begins when the splash opens; any keypress, pointer
-click or owner-window close dismisses it. The dismissal guard stops the
-timer on every close path and prevents double close/reentrancy. Splash
-creation is dispatcher-posted after main-window opening, never stalls the
-main window or initializes audio. See
+**Startup splash lifecycle implemented; native placement still needs
+desktop verification.** The existing `Images/Logo.axaml` control is
+displayed in an owned, chromeless, nontaskbar window above the
+already-opened main window. The one-shot four-second `DispatcherTimer`
+begins when the splash opens; any keypress, pointer click or owner-window
+close dismisses it. The dismissal guard stops the timer on every close
+path and prevents double close/reentrancy. Splash creation is
+dispatcher-posted after main-window opening, never stalls the main window
+or initializes audio. See [application-branding.md](application-branding.md).
+
+**Second splash-placement implementation and main-window maximization
+persistence coded.** The former one-time post-open centering did **not**
+center on a user-tested KDE Plasma 6/X11 desktop configured to place
+new windows under the mouse. The revised approach starts the owned splash
+at CenterScreen with opacity zero, follows owner and splash native
+position changes / owner resize for the first 50 ms after opening,
+and advances opacity to 1 over 250 ms. Maximization changes keep
+triggering a recenter throughout the splash's lifetime. Explicit X11
+session reporting takes precedence over an incidental Wayland display
+variable; Wayland retains the CenterScreen hint without requesting
+unsupported top-level movement. Headless tests cover the event policy,
+pixel geometry, fade timing and state preference, **not actual native
+window-manager behaviour**. The main window's binary maximized state
+continues to be saved/restored as an app-local preference. See
 [application-branding.md](application-branding.md).
 
-**Splash placement and main-window maximization persistence implemented.**
-The splash explicitly centers in physical pixels over its owning
-window's current bounds on coordinate-capable desktops and over the
-owner's current display work area when maximized, taking display
-scaling into account. On Wayland, where compositors can prohibit
-top-level movement, the owned splash requests `CenterScreen` as
-a best-effort positioning hint rather than overriding compositor
-placement. The main window stores **maximized vs normal** in a local,
-versioned preference file whenever that state changes and restores
-it on the next startup before scheduling the splash. Minimized and
-fullscreen are not saved as normal. First-run, malformed and
-unavailable preference files do not break startup. Headless tests
-cover monitor geometry, scaling, Wayland detection, state transitions,
-file roundtrips and failures. Manual window-manager smoke testing
-remains advisable, especially on Wayland. See
-[application-branding.md](application-branding.md).
+- [ ] **Verify splash placement on a real KDE Plasma 6 / X11 desktop**
+  configured to place new windows under the mouse cursor: both normal
+  and maximized main-window startup (including restored maximize), and
+  ideally a second display/scaling arrangement. Confirm the fade avoids
+  visibly flashing an incorrect initial location. If placement still
+  fails, capture native owner/splash coordinates and event order and
+  correct the behaviour before closing this item. Wayland remains
+  compositor-controlled with a CenterScreen fallback; passing
+  non-windowed unit tests alone does not close this TODO.
 
 ## UI polish and requested editor redesign — newly planned
 
