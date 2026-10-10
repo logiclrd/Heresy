@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 using Avalonia;
@@ -124,6 +125,7 @@ public sealed class MainWindow : Window
 	private bool _dragInProgress;
 	private bool _closeApproved;
 	private bool _closePromptInProgress;
+	private CancellationTokenSource? _exportCancellation;
 
 	public MainWindow()
 		: this(new DocumentWorkspace(), null, null) { }
@@ -199,6 +201,7 @@ public sealed class MainWindow : Window
 		Closed += (_, _) =>
 		{
 			_windowClosed = true;
+			_exportCancellation?.Cancel();
 			if (_runtimeDiagnosticsTransport is not null)
 				_runtimeDiagnosticsTransport.RuntimeDiagnostics -=
 					OnRuntimeDiagnostics;
@@ -593,6 +596,11 @@ public sealed class MainWindow : Window
 
 	private async Task RenderAudioAsync()
 	{
+		if (_exportCancellation is not null)
+		{
+			SetStatus("An audio export is already running.");
+			return;
+		}
 		if (!StorageProvider.CanSave)
 		{
 			SetStatus("This platform does not provide a save-file picker.");
@@ -638,25 +646,55 @@ public sealed class MainWindow : Window
 				result.SelectedFileType?.Name,
 				path);
 
+		using CancellationTokenSource cancellation = new();
+		_exportCancellation = cancellation;
+		ExportProgressDialog progressWindow = new(
+			Path.GetFileName(path), cancellation);
+		// Progress<T> captures the UI synchronization context: all
+		// controls are updated on the UI thread, never by the PCM worker.
+		IProgress<OfflineRenderProgress> progress =
+			new Progress<OfflineRenderProgress>(update =>
+			{
+				if (!_windowClosed && progressWindow.IsVisible)
+					progressWindow.Update(update);
+			});
 		SetStatus($"Rendering {Path.GetFileName(path)}...");
 		try
 		{
+			progressWindow.Show(this);
 			OfflineRenderResult render =
 				await _exportService.ExportAsync(
 					_workspace.Document,
 					path,
-					format);
-			SetStatus(
-				$"Rendered {Path.GetFileName(path)} ({render.TotalFrameCount:N0} frames).");
+					format,
+					progress,
+					cancellation.Token);
+			if (!_windowClosed)
+				SetStatus(
+					$"Rendered {Path.GetFileName(path)} ({render.TotalFrameCount:N0} frames).");
+		}
+		catch (OperationCanceledException) when (
+			cancellation.IsCancellationRequested)
+		{
+			if (!_windowClosed)
+				SetStatus($"Canceled audio export: {Path.GetFileName(path)}. "
+					+ "Existing destination preserved.");
 		}
 		catch (PlaybackSourceCompilationException ex)
 		{
-			SetStatus(
-				$"Render failed while compiling the song: {ex.Message}");
+			if (!_windowClosed)
+				SetStatus(
+					$"Render failed while compiling the song: {ex.Message}");
 		}
 		catch (Exception ex)
 		{
-			SetStatus($"Render failed: {ex.Message}");
+			if (!_windowClosed)
+				SetStatus($"Render failed: {ex.Message}");
+		}
+		finally
+		{
+			progressWindow.Close();
+			_exportCancellation = null;
 		}
 	}
 
