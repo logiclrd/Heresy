@@ -16,7 +16,8 @@ public sealed class LazySongPlaybackTransport
 	: ISongPlaybackTransport,
 		IPlaybackPositionTransport,
 		IPlaybackRuntimeDiagnosticsTransport,
-		IPlaybackAudioHealthTransport
+		IPlaybackAudioHealthTransport,
+		IPlaybackSnapshotTransport
 {
 	private readonly object _gate = new();
 	private readonly Func<ISongPlaybackTransport> _factory;
@@ -24,6 +25,7 @@ public sealed class LazySongPlaybackTransport
 	private EventHandler<PlaybackPositionChangedEventArgs>? _positionChanged;
 	private EventHandler<PlaybackRuntimeDiagnosticsEventArgs>? _runtimeDiagnostics;
 	private EventHandler<PlaybackAudioHealthChangedEventArgs>? _audioHealthChanged;
+	private EventHandler<PlaybackSnapshotChangedEventArgs>? _playbackSnapshotChanged;
 	private bool _disposed;
 
 	public LazySongPlaybackTransport(
@@ -109,6 +111,45 @@ public sealed class LazySongPlaybackTransport
 				_audioHealthChanged -= value;
 				if (_inner is IPlaybackAudioHealthTransport health)
 					health.AudioHealthChanged -= value;
+			}
+		}
+	}
+
+	public event EventHandler<PlaybackSnapshotChangedEventArgs>?
+		PlaybackSnapshotChanged
+	{
+		add
+		{
+			lock (_gate)
+			{
+				ThrowIfDisposed();
+				_playbackSnapshotChanged += value;
+				if (_inner is IPlaybackSnapshotTransport snapshot)
+					snapshot.PlaybackSnapshotChanged += value;
+			}
+		}
+		remove
+		{
+			lock (_gate)
+			{
+				if (_disposed)
+					return;
+				_playbackSnapshotChanged -= value;
+				if (_inner is IPlaybackSnapshotTransport snapshot)
+					snapshot.PlaybackSnapshotChanged -= value;
+			}
+		}
+	}
+
+	public PlaybackSnapshotInfo CurrentPlaybackSnapshot
+	{
+		get
+		{
+			lock (_gate)
+			{
+				ThrowIfDisposed();
+				return (_inner as IPlaybackSnapshotTransport)?
+					.CurrentPlaybackSnapshot ?? new PlaybackSnapshotInfo(0, null, 0);
 			}
 		}
 	}
@@ -216,6 +257,9 @@ public sealed class LazySongPlaybackTransport
 				if (_inner is IPlaybackAudioHealthTransport health
 					&& _audioHealthChanged is not null)
 					health.AudioHealthChanged += _audioHealthChanged;
+				if (_inner is IPlaybackSnapshotTransport snapshot
+					&& _playbackSnapshotChanged is not null)
+					snapshot.PlaybackSnapshotChanged += _playbackSnapshotChanged;
 			}
 			return _inner;
 		}
