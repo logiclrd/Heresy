@@ -178,6 +178,13 @@ to predict runtime Bxx/Cxx jumps or pattern-break control flow, which remains a
 Core sequencing concern. The Back control becomes **← Sequence** and returns to
 the arrangement list.
 
+During realtime playback, row highlighting and Follow track the Pattern
+being played directly, or the current direct Pattern order when playing a
+Sequence. If a note invokes a flattened Pattern or Sequence sound source,
+its internally generated rows do **not** replace the parent editor's playback
+position. The nested music still runs on the shared clock, including its
+independent timing and effects; this distinction affects UI tracking only.
+
 Script patterns and script sequences can also be created directly from their
 respective document panes and are edited by one shared main-workspace script
 source editor. Script-pattern authoring exposes the same row/channel and

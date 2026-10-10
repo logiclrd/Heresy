@@ -69,8 +69,11 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 		_timeline.RowBegan += ReportRowBegan;
 	}
 
-	/// <summary>Realtime view follows rows as cursors enter them;
-	/// no future sequence orders are traversed to build this feed.</summary>
+	/// <summary>Realtime playback-follow reports rows of the requested
+	/// root Pattern or the direct Pattern orders of a requested root Sequence.
+	/// Flattened child Pattern/Sequence notes run on the same clock, but must
+	/// not replace the position of the Pattern being played in the editor.
+	/// No future orders are traversed to construct this feed.</summary>
 	public event Action<ObjectId, int, ObjectId?, int?, TimeSpan>? RowBegan;
 
 	private void ReportRowBegan(long cursorId, int row, TimeSpan time)
@@ -80,10 +83,15 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 			return;
 		ObjectId? sequenceId = null;
 		int? order = null;
-		if (frame.ParentId is long parent
-			&& _frames.TryGetValue(parent, out Invocation? ancestor)
-			&& ancestor.IsSequence)
+		if (frame.ParentId is long parent)
 		{
+			// Only a direct order of a root Sequence is part of the
+			// arrangement being followed. A flattened child (including an
+			// order of a nested Sequence) is a sound source, not a new
+			// playback cursor in the parent editor.
+			if (!_frames.TryGetValue(parent, out Invocation? ancestor)
+				|| !ancestor.IsSequence || ancestor.ParentId is not null)
+				return;
 			sequenceId = ancestor.SourceId;
 			order = ancestor.Order;
 		}

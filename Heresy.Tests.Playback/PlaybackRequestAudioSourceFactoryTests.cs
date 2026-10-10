@@ -113,6 +113,65 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 		positions.IsComplete(TimeSpan.FromMilliseconds(120)).Should().BeFalse();
 	}
 
+	[TestCase(false, false)]
+	[TestCase(false, true)]
+	[TestCase(true, false)]
+	[TestCase(true, true)]
+	public void FlattenedSoundSourceRowsDoNotDisplaceRequestedPlaybackHighlight(
+		bool playSequence, bool nestedSequence)
+	{
+		// Pattern B plays Pattern A as a note (possibly via a nested
+		// Sequence). The editor follows B, not A's active internal rows.
+		SongDocument document = new();
+		ObjectId sample = AddSample(document, "Leaf");
+		ObjectId child = AddPatternWithNote(document, sample);
+		ObjectId sourceId = nestedSequence
+			? AddSequence(document, child) : child;
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Containing Pattern")
+		{
+			RowCount = 3,
+			ChannelCount = 1,
+		};
+		PatternCell call = parent.Grid.GetOrCreateCell(0, 0);
+		call.SourceId = sourceId;
+		call.Note = new StartPatternNote();
+		document.Add(parent);
+		ObjectId rootSequence = AddSequence(document, parentId);
+		PlaybackRequest request = playSequence
+			? SequencePlaybackRequest.Create(document, rootSequence)
+			: PatternPlaybackRequest.Create(document, parentId);
+		PlaybackRequestAudioSourceFactory factory = new(
+			MonoConfiguration(100),
+			new RecordingSampleProvider(
+				new MemorySampleData(100, 1, [0.75f])));
+		IAudioOutputSource output = factory.Create(request);
+		factory.TryTakePlaybackPositionTimeline(request,
+			out PlaybackPositionTimeline? timeline).Should().BeTrue();
+		timeline.Should().NotBeNull();
+
+		float[] first = new float[1];
+		output.Render(1, first);
+		first[0].Should().BeApproximately(0.75f, 1e-6f,
+			"The nested sound must still play.");
+		PlaybackPatternPosition initial = timeline!.GetPositionAt(TimeSpan.Zero)!;
+		initial.PatternId.Should().Be(parentId);
+		initial.PatternRow.Should().Be(0);
+		initial.SequenceId.Should().Be(playSequence ? rootSequence : null);
+		initial.SequenceEntryIndex.Should().Be(playSequence ? 0 : null);
+
+		// A second parent row must be followed normally even though the
+		// child still belongs to the recursive playback tree.
+		output.Render(14, new float[14]);
+		timeline.GetPositionAt(TimeSpan.FromMilliseconds(120))!
+			.Should().Be(new PlaybackPatternPosition(parentId, 1,
+				playSequence ? rootSequence : null, playSequence ? 0 : null));
+		timeline.Entries.Should().OnlyContain(entry =>
+			entry.Position.PatternId == parentId,
+			"Flattened source rows cannot steal the editor's highlight.");
+		(output as IDisposable)?.Dispose();
+	}
+
 	[Test]
 	public void SequenceRequestRendersSampleFromSnapshot()
 	{
