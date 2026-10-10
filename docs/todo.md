@@ -291,6 +291,25 @@ zero-release NNA-Off with an independently playing replacement.
 Nonzero release and direct-sample NNA semantics remain intact.
 Further cross-interaction checks are listed below.
 
+**Tracker tick / fixed-wall lifecycle collisions verified (October 10).**
+`IncrementalPatternDeferredTimingTests` now compares eager versus
+production incremental ordering for combined S74/S70/S77, SD2, Q02,
+SC2, SE1 and S61 on the same physical host, including coincident
+tracker cut/start, retrigger and wall deadlines. A separate SC5/Q02/
+S74/SD2/S70 trace verifies an ordinary S70 wall deadline at 130 ms
+surviving its nominal 120-ms Pattern row. The eager Pattern's
+musical duration remains 120 ms; the incremental timeline correctly
+drains its pending wall action at 130 ms. A further test observes
+O03 effect-memory availability *between* the SD2 tick at 40 ms
+and the audible wall-delayed S7x/Start event at 48 ms, proving that
+preparing a future row does not commit Oxx memory prematurely.
+`PlaybackTickWallLifecycleCollisionTests` checks exact note
+intersections and constant-sample PCM under large and irregular
+render blocks, including NNA continuation and past-note cutoff.
+No new scheduling implementation or event journal is required.
+This subtask is closed; the three other lifecycle cross-interaction
+checks below remain open.
+
 **Advanced lifecycle — remaining independently closable checks.**
 These checkboxes cover combinations **not yet demonstrated end-to-end**,
 not known production defects. Each may be closed after an explicit
@@ -298,15 +317,6 @@ regression passes on the production incremental path; if it fails,
 add the smallest corrective change and verify red-to-green CI.
 Do not revisit already-complete flattened-source ownership or introduce
 eager schedules, event journals, or a second playback path.
-
-- [ ] **Tracker tick / fixed-wall lifecycle collisions.** In one physical
-  channel, combine SDx, SCx or Qxy tick actions with S7x lifecycle
-  controls and positive wall offsets, including coincident deadlines,
-  row-end crossings and SEy/S6x row extension. Verify exact emitted
-  order, effect-memory commit timing, and PCM at the affected frames.
-  Existing isolated tick, S7x and fixed-wall tests are prerequisites,
-  **not** part of the remaining implementation work. Close when
-  combined-case regressions pass (or a demonstrated defect is fixed).
 
 - [ ] **Mixed Roslyn/data lifecycle ordering under a changing clock.**
   Run actual incremental script Note/Off/Cut commands concurrently

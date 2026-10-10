@@ -28,6 +28,49 @@
 > [seek hints](source-seek-hints.md), and [remaining TODOs](todo.md).
 > This historical log retains its original step headings for traceability.
 
+## Tracker tick and fixed-wall lifecycle collisions (October 10, 2026)
+
+The combined timing check is now covered end-to-end by
+`IncrementalPatternDeferredTimingTests` and
+`PlaybackTickWallLifecycleCollisionTests`. It retains the normal
+production `IncrementalPatternTimeline` cursor; no additional
+queue, eager schedule, or historical rendering path was added.
+
+Single-cell raw S74 (new-note-action Continue), S70 (past-note Cut)
+and S77 (envelope disable) each combine with SD2, Q02, SC2,
+SE1 and S61 on one host, with the incremental event stream and
+remembered Qxy countdown compared to the eager pattern processor.
+Synthetic SDx setup occurs ahead of same-tick Qxy retriggers,
+and SCx cut follows them; the **fixed wall delay applies to the
+resulting tracker-tick operations**, not to the row's tick clock.
+SEy repeats the row span and S6x lengthens each span without
+pre-committing future note/source memory.
+
+A second trace places S74 at 40 ms on the same tick as a Q02
+retrigger, then starts the replacement note through a
+fractional-row SD2 + 5-ms wall delay at 75 ms. SC5 cuts the
+replacement at 100 ms while the displaced NNA-Continue voice
+remains; S70 at 130 ms cuts that old voice, even though the
+Pattern's nominal musical row ended at 120 ms. The elapsed
+clock of a drained incremental timeline includes that 130-ms
+wall tail; `PatternNoteProcessor`'s separate musical duration
+continues to report 120 ms. A 1-kHz constant-sample PCM regression
+checks the corresponding voice overlaps and silence, using both
+one large render and irregular small PCM blocks.
+
+Finally, an SD2 note carrying O03 and S74 commits Oxx effect
+memory at its **40-ms tracker tick**, and publishes its resolved
+sample offset and lifecycle action at its **48-ms wall deadline**.
+Observation events at 30 and 45 ms prove that the memory is
+neither pre-committed during row preparation nor postponed until
+audible delivery. The underlying absolute source-frame operation
+is not duplicated across SEy repeats.
+
+These are regressions for the completed combined timing contract.
+Mixed Roslyn/data timing, flattened-owner virtual routing and
+Instrument/private release intersections have their own open
+checkboxes in `todo.md`.
+
 ## Current absolute musical-frequency assignment (October 10, 2026)
 
 The current production renderer supports `SetPlaybackFrequencyCommand`
