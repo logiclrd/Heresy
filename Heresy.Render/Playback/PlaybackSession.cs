@@ -259,7 +259,8 @@ public sealed class PlaybackSession
 			else if (action == NoteDisplacementAction.Off)
 				voice.ApplyNoteOff(frame, SampleRate);
 			else if (action == NoteDisplacementAction.Fade)
-				voice.RequestNoteFade(frame, SampleRate);
+				voice.RequestNoteFade(frame, SampleRate,
+					voice.Configuration.NewNoteFadeDuration);
 		}
 	}
 
@@ -292,7 +293,11 @@ public sealed class PlaybackSession
 				CullFinishedCurrentVoice(channel, frame);
 				break;
 			case NoteDisplacementAction.Fade:
-				voice.RequestNoteFade(frame, SampleRate);
+				// Flattened-source S76 is an explicit new-note action.
+				// Its descendants use their new-note fade duration, not
+				// their independent ordinary note-fade duration.
+				voice.RequestNoteFade(frame, SampleRate,
+					voice.Configuration.NewNoteFadeDuration);
 				break;
 		}
 	}
@@ -439,19 +444,26 @@ public sealed class PlaybackSession
 	/// prepared frame when the parent applies an NNA/past-note Fade.
 	/// No sequencing work is performed here.
 	/// </summary>
-	public void RequestFadeOfActiveVoices()
+	public void RequestFadeOfActiveVoices(bool newNoteDisplacement = false)
 	{
+		void Fade(PlaybackVoice? voice)
+		{
+			if (voice is null)
+				return;
+			if (newNoteDisplacement)
+				voice.RequestNoteFade(_nextFrame, SampleRate,
+					voice.Configuration.NewNoteFadeDuration);
+			else
+				voice.RequestNoteFade(_nextFrame, SampleRate);
+		}
 		foreach (PlaybackChannelState channel in _channels.Values)
-			channel.CurrentVoice?.RequestNoteFade(
-				_nextFrame, SampleRate);
+			Fade(channel.CurrentVoice);
 		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
-			channel.CurrentVoice?.RequestNoteFade(
-				_nextFrame, SampleRate);
+			Fade(channel.CurrentVoice);
 		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
-			channel.CurrentVoice?.RequestNoteFade(
-				_nextFrame, SampleRate);
+			Fade(channel.CurrentVoice);
 		foreach (PlaybackVoice voice in _virtualVoices)
-			voice.RequestNoteFade(_nextFrame, SampleRate);
+			Fade(voice);
 	}
 
 	public void EndInput()
