@@ -153,19 +153,63 @@ production PCM, filter state, physical-channel state and arbitrary
 audio block sizes. See
 [incremental-sequencing.md](incremental-sequencing.md).
 
-- [ ] Define **direct absolute playback-frequency semantics**
-  separately before enabling `SetPlaybackFrequencyCommand` or
-  adding a `Frequency` script helper: the renderer does not
-  currently implement the absolute-frequency command, and the
-  correct conversion cannot be guessed for sampled/recursive
-  sources with evolving pitch trajectories. Continue uncommon
-  scripted/global command combinations only with reproducible
-  gaps (including incompatible mixed global/physical fixed-wall
-  deadlines and overlapping Tempo spans). Negative fixed wall
-  offsets still require a chronological look-behind contract and
-  remain explicitly rejected. Preserve explicit failures; never
-  commit future Source/effect/Tempo memory early or pre-expand
+- [ ] **Implement direct absolute-frequency assignment** for
+  `SetPlaybackFrequencyCommand` and `SetPlaybackFrequencyPatternEffect`,
+  using Heresy's **existing universal pitch-1 = C-4**
+  (261.6255653005986 Hz) musical tuning convention. The command
+  requests the note's **perceived musical pitch in Hz**, not a PCM
+  source sample rate or an individual FM oscillator frequency.
+  All sources are authored/tuned so an untransposed pitch-1
+  invocation represents C-4; do **not** introduce an
+  `ISound.ReferenceFrequencyHz` property or per-sound conversion.
+  The **local** pitch target is
+  `frequency / 261.6255653005986`; each enclosing flattened
+  Pattern/Sequence invocation must multiply that target by its
+  inherited pitch factor (nesting composes multiplicatively).
+  This is an **absolute local replacement**, not an extra multiplier
+  on top of the preceding local note pitch. Resolve in the correct
+  logical invocation context, not by assuming the physical host
+  owns one pitch scope. Ordinary leaf notes within a flattened
+  subtree receive its transposition; a frequency effect targeting
+  the **flattened instigating note itself** remains ignored with
+  the existing bounded ignored-voice-effect warning
+  (`FlattenedSourceEffectPolicy` already classifies it that way).
+  Handle already-active voices at the execution frame, reconcile
+  existing `SoundState.PitchMultiplier`, playback speed and pitch
+  trajectories without reselecting an Instrument tone, restarting
+  the source, or resetting its playback position. Preserve existing
+  row/tick effect ordering and cancellation. Specify the lifecycle
+  of active slides, vibrato and envelopes before coding, and test
+  parity of initial pitch versus equivalent frequency-command
+  pitch for PCM, FM, selected Instrument tones, direct/private
+  sources, and **multi-level flattened** transposition (including
+  opposite-octave ancestor shifts and independently scoped sibling
+  voices). The command is **currently unhandled** by
+  `PlaybackSession` and explicitly rejected by the incremental
+  allow-list; do not claim it is implemented.
+  Related unusual scripted/global combinations (mixed
+  global/physical fixed-wall deadlines and overlapping Tempo
+  spans) remain distinct follow-ups. Negative fixed wall offsets
+  still require a safe chronological look-behind contract; preserve
+  explicit errors and never precommit future state or enumerate
   future Pattern/Sequence visits.
+
+- [ ] **Remove dead sample reference-frequency metadata.**
+  `SampleDefinition.ReferenceFrequencyHz` currently defaults to
+  261.6255653005986 and is copied in
+  `SampleDefinition.CreateImportedCopy`, but is not used by
+  `SampleSound` or by musical pitch calculation. It is
+  redundant with the universal C-4 musical tuning contract and
+  the existing PCM-data sample-rate tuning mechanism.
+  Remove the unused property and its copy/serialization,
+  persistence, import/export, snapshot, UI and associated test
+  expectations **where they exist**, after searching the full
+  repository for references; do not remove or reinterpret
+  `SamplePcmData.SampleRate`, which is the **functional**
+  PCM-native frame-rate/tuning input. Update any documentation
+  suggesting the redundant property changes sound frequency,
+  add regression coverage that PCM-native sample-rate tuning
+  still works, and verify the complete CI suite.
 - [ ] Extend **advanced** lifecycle compatibility beyond the completed
   flattened-source ownership model, especially interactions between delayed
   tracker effects, mixed data/script timing, multichannel routing, and
