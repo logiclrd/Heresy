@@ -102,7 +102,7 @@ public sealed class DirectScriptPlaybackControlTests
         => new(1000, [new OutputChannelConfiguration(Vector3.Zero,
             positionalImportance: 0)]);
 
-    private static byte[] RampWave()
+    private static byte[] AlternatingWave()
     {
         const int frames = 500;
         using MemoryStream stream = new();
