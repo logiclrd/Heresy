@@ -2574,12 +2574,15 @@ public sealed class PlaybackSession
 		if (voice is null)
 			return;
 
-		long relativeFrame = Math.Max(0, absoluteFrame - voice.StartFrame);
-		long? endFrame = voice.Sound.GetEndFrameExclusive(
-			_context,
-			voice.SoundState);
+		// A volume envelope can finish at this exact Note Off frame
+		// even when its terminal sound (for example an Instrument-bound
+		// looping SampleSound) has no source end. Use the same composed
+		// source/fade/envelope deadline as the PCM renderer, not just the
+		// underlying sound's natural end.
+		long? effectiveEnd = GetEffectiveVoiceEndFrameExclusive(
+			voice, absoluteFrame);
 
-		if (endFrame.HasValue && relativeFrame >= endFrame.Value)
+		if (effectiveEnd.HasValue && absoluteFrame >= effectiveEnd.Value)
 			channel.DetachCurrentVoice();
 	}
 
