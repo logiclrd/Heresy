@@ -6,7 +6,8 @@ tests supersede contradictory old prose.
 
 ## Start here
 
-- [Open work](todo.md): the small set of conditional/deferred TODOs.
+- [Open work](todo.md): original-design programmability milestones
+  plus conditional hardware, optimization and schema tasks.
 - [Root README](../README.md): current architecture, projects and UI.
 - [Recursive sounds](recursive-sounds.md): **current production contract**
   first; early eager/prototype designs are historical below it.
