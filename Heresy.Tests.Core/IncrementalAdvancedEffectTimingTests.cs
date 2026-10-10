@@ -249,6 +249,66 @@ public sealed class IncrementalAdvancedEffectTimingTests
         });
     }
 
+    [Test]
+    public void DelayedPhysicalTrackerS7xAndVirtualLifecycleControlsResolveAtWallDeadline()
+    {
+        SequencingContext root = new();
+        using IncrementalPatternTimeline timeline = new(root);
+        timeline.Add(new RawSource(
+            At(0, 0, new StartNoteCommand((ObjectId)10U)),
+            At(0, ChannelTarget.Virtual(7),
+                new StartNoteCommand((ObjectId)11U)),
+            At(0, TimeSpan.FromMilliseconds(35), 0,
+                new ApplyTrackerNewNoteActionCommand(NoteDisplacementAction.Continue)),
+            At(0, TimeSpan.FromMilliseconds(45), ChannelTarget.Virtual(7),
+                new SetCurrentVoiceDisplacementActionCommand(
+                    NoteDisplacementAction.Continue)),
+            At(0.5, 0, new StartNoteCommand((ObjectId)10U)),
+            At(0.5, ChannelTarget.Virtual(7),
+                new StartNoteCommand((ObjectId)11U)),
+            At(0.5, TimeSpan.FromMilliseconds(20), 0,
+                new ApplyTrackerPastNoteActionCommand(TrackerPastNoteAction.Cut)),
+            At(0.5, TimeSpan.FromMilliseconds(30), ChannelTarget.Virtual(7),
+                new ApplyPastNoteActionCommand(TrackerPastNoteAction.Cut))),
+            2, root);
+
+        NoteEvent[] notes = Drain(timeline);
+        Assert.That(notes, Has.Length.EqualTo(8));
+        Assert.That(notes.Select(n => n.Offset.TimeOffset).OrderBy(t => t),
+            Is.EqualTo(new[]
+            {
+                TimeSpan.Zero, TimeSpan.Zero,
+                TimeSpan.FromMilliseconds(35),
+                TimeSpan.FromMilliseconds(45),
+                TimeSpan.FromMilliseconds(60),
+                TimeSpan.FromMilliseconds(60),
+                TimeSpan.FromMilliseconds(80),
+                TimeSpan.FromMilliseconds(90),
+            }));
+        Assert.Multiple(() =>
+        {
+            Assert.That(notes.Single(n => n.Offset.TimeOffset
+                    == TimeSpan.FromMilliseconds(35)).Commands,
+                Is.EqualTo(new NoteCommand[]
+                {
+                    new SetCurrentVoiceDisplacementActionCommand(
+                        NoteDisplacementAction.Continue),
+                }), "Tracker S74 must resolve when its wall deadline arrives.");
+            Assert.That(notes.Single(n => n.Offset.TimeOffset
+                    == TimeSpan.FromMilliseconds(45)).Target,
+                Is.EqualTo(ChannelTarget.Virtual(7)));
+            Assert.That(notes.Single(n => n.Offset.TimeOffset
+                    == TimeSpan.FromMilliseconds(80)).Commands,
+                Is.EqualTo(new NoteCommand[]
+                {
+                    new ApplyPastNoteActionCommand(TrackerPastNoteAction.Cut),
+                }), "Tracker S70 must resolve at its wall deadline.");
+            Assert.That(notes.Single(n => n.Offset.TimeOffset
+                    == TimeSpan.FromMilliseconds(90)).Target,
+                Is.EqualTo(ChannelTarget.Virtual(7)));
+        });
+    }
+
     private static NoteEvent At(double row, int channel, params NoteCommand[] commands)
         => At(row, TimeSpan.Zero, ChannelTarget.Physical(channel), commands);
 
