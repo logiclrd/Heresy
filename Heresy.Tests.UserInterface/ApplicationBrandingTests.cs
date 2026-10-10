@@ -22,7 +22,7 @@ public sealed class ApplicationBrandingTests
 		// Exercise the production resource through the same standard loader
 		// used by the desktop platform, without constructing a Window.
 		StandardAssetLoader loader = new(typeof(MainWindow).Assembly);
-		loader.RegisterResUriParsers();
+		StandardAssetLoader.RegisterResUriParsers();
 		using Stream stream = loader.Open(uri);
 		using BinaryReader icon = new(stream);
 		Assert.Multiple(() =>
