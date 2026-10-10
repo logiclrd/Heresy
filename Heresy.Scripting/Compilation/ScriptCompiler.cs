@@ -585,7 +585,9 @@ public static class ScriptCompiler
 		{
 			if (invocation.Expression is not IdentifierNameSyntax name
 				|| name.Identifier.ValueText is not
-					("Note" or "Off" or "Cut" or "Tempo" or "Speed"))
+					("Note" or "Off" or "Cut" or "Tempo" or "Speed"
+						or "Seek" or "Pan" or "Surround"
+						or "Filter" or "FilterCutoff" or "FilterResonance"))
 				continue;
 			if (invocation.Parent is ExpressionStatementSyntax statement
 				&& ReferenceEquals(statement.Expression, invocation))
@@ -888,7 +890,9 @@ public static class ScriptCompiler
 			if (node.Expression is not InvocationExpressionSyntax invocation
 				|| invocation.Expression is not IdentifierNameSyntax name
 				|| name.Identifier.ValueText is not
-					("Note" or "Off" or "Cut" or "Tempo" or "Speed"))
+					("Note" or "Off" or "Cut" or "Tempo" or "Speed"
+						or "Seek" or "Pan" or "Surround"
+						or "Filter" or "FilterCutoff" or "FilterResonance"))
 				return visited;
 
 			// Execute the original helper (and its validation) exactly once.
