@@ -28,7 +28,7 @@ public sealed class PrivatePitchInheritanceTests
 		bool viaInstrument)
 	{
 		SongDocument document = new();
-		ObjectId sample = AddSample(document, 1);
+		ObjectId sample = AddSample(document);
 		ObjectId child = AddPattern(document, "Child", 3);
 		((DataPatternDefinition)document.Objects[child])
 			.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote(sample);
@@ -69,7 +69,8 @@ public sealed class PrivatePitchInheritanceTests
 		instrument.ToneSpecifications.Add(new ToneSpecification
 			{ SourceId = raisedSample });
 		instrument.ToneTable.Add(0);
-		instrument.ToneTable.Add(1);
+		for (int index = 1; index < 24; index++)
+			instrument.ToneTable.Add(1);
 		document.Add(instrument);
 		ObjectId child = AddPattern(document, "Child", 3);
 		((DataPatternDefinition)document.Objects[child])
@@ -159,7 +160,7 @@ public sealed class PrivatePitchInheritanceTests
 		return id;
 	}
 
-	private static ObjectId AddSample(SongDocument document, int ignored,
+	private static ObjectId AddSample(SongDocument document,
 		short? constant = null)
 	{
 		ObjectId id = document.AllocateObjectId();
