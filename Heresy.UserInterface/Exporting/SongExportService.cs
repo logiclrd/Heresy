@@ -34,7 +34,8 @@ public sealed class SongExportService
 		OfflineAudioFileFormat format,
 		IProgress<OfflineRenderProgress>? progress = null,
 		CancellationToken cancellationToken = default,
-		IProgress<SequencingDiagnostic[]>? diagnostics = null)
+		IProgress<SequencingDiagnostic[]>? diagnostics = null,
+		WavePcmBitDepth waveBitDepth = WavePcmBitDepth.Pcm16)
 	{
 		ArgumentNullException.ThrowIfNull(document);
 		ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -54,7 +55,8 @@ public sealed class SongExportService
 				format,
 				progress,
 				cancellationToken,
-				diagnostics));
+				diagnostics,
+				waveBitDepth));
 	}
 
 	private static OfflineRenderResult ExportPlan(
@@ -63,7 +65,8 @@ public sealed class SongExportService
 		OfflineAudioFileFormat format,
 		IProgress<OfflineRenderProgress>? progress,
 		CancellationToken cancellationToken,
-		IProgress<SequencingDiagnostic[]>? diagnostics)
+		IProgress<SequencingDiagnostic[]>? diagnostics,
+		WavePcmBitDepth waveBitDepth)
 	{
 		using (plan)
 		{
@@ -87,7 +90,7 @@ public sealed class SongExportService
 			try
 			{
 				return ExportOwnedPlan(plan, fullPath, format,
-					blockProgress, cancellationToken);
+					blockProgress, cancellationToken, waveBitDepth);
 			}
 			finally
 			{
@@ -112,9 +115,14 @@ public sealed class SongExportService
 		string fullPath,
 		OfflineAudioFileFormat format,
 		IProgress<OfflineRenderProgress>? progress,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		WavePcmBitDepth waveBitDepth)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
+		AudioOutputFormat outputFormat = new(
+			plan.Session.SampleRate, plan.Session.OutputChannelCount);
+		// Fail unsupported encoders before creating a temporary output.
+		OfflineAudioFileFormats.ValidateOutput(format, outputFormat, waveBitDepth);
 		string directory =
 			Path.GetDirectoryName(fullPath)
 				?? throw new InvalidOperationException(
@@ -134,15 +142,12 @@ public sealed class SongExportService
 					FileAccess.Write,
 					FileShare.None))
 			{
-				AudioOutputFormat outputFormat =
-					new(
-						plan.Session.SampleRate,
-						plan.Session.OutputChannelCount);
 				using IAudioFileSink sink =
 					CreateSink(
 						stream,
 						outputFormat,
-						format);
+						format,
+						waveBitDepth);
 				result =
 					OfflinePlaybackRenderer.Render(
 						plan.Source,
@@ -179,7 +184,8 @@ public sealed class SongExportService
 	private static IAudioFileSink CreateSink(
 		Stream stream,
 		AudioOutputFormat format,
-		OfflineAudioFileFormat fileFormat)
+		OfflineAudioFileFormat fileFormat,
+		WavePcmBitDepth waveBitDepth)
 		=> fileFormat switch
 		{
 			OfflineAudioFileFormat.Flac =>
@@ -196,7 +202,8 @@ public sealed class SongExportService
 				new WaveFileSink(
 					stream,
 					format,
-					leaveOpen: true),
+					leaveOpen: true,
+					bitDepth: waveBitDepth),
 			_ =>
 				throw new ArgumentOutOfRangeException(
 					nameof(fileFormat)),
