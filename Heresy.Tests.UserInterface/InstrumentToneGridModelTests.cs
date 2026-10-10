@@ -313,6 +313,74 @@ public sealed class InstrumentToneGridModelTests
 			.WithMessage("*exceed*");
 	}
 
+	[Test]
+	public void AudioSnapshotRemainsIsolatedAfterEditingMappedRow()
+	{
+		DocumentWorkspace workspace = new();
+		InstrumentDefinition instrument =
+			InstrumentDocumentEditor.CreateInstrument(workspace, "Lead");
+		ObjectId first = AddSample(workspace, "First");
+		ObjectId second = AddSample(workspace, "Second");
+		var model = new InstrumentToneGridModel(workspace, instrument);
+		model.SetRow(5, new(SourceId: first, PitchMultiplier: 1.0));
+		SongDocumentSnapshot frozen = SongDocumentSnapshot.Create(
+			workspace.Document);
+		uint frozenAudioRevision = frozen.AudioRevision;
+
+		model.SetRow(5, new(SourceId: second, PitchMultiplier: 1.75));
+		InstrumentDefinition snapshotInstrument =
+			(InstrumentDefinition)frozen.Document.Objects[instrument.Id];
+		ToneSpecification oldTone = snapshotInstrument.ToneSpecifications[
+			snapshotInstrument.ToneTable[5]];
+		oldTone.SourceId.Should().Be(first);
+		oldTone.PitchMultiplier.Should().Be(1.0);
+		instrument.ToneSpecifications[instrument.ToneTable[5]]
+			.SourceId.Should().Be(second);
+		workspace.Document.AudioRevision.Should().Be(frozenAudioRevision + 1);
+	}
+
+	[Test]
+	public void RejectedHugeRowAssignmentDoesNotLoseItsPreviousEditorDraft()
+	{
+		DocumentWorkspace workspace = new();
+		InstrumentDefinition instrument =
+			InstrumentDocumentEditor.CreateInstrument(workspace, "Lead");
+		ObjectId sample = AddSample(workspace);
+		var model = new InstrumentToneGridModel(workspace, instrument);
+		const int oversizedIndex = 100_001;
+		model.SetRow(oversizedIndex, new(PitchMultiplier: 0.6));
+		uint revision = workspace.Document.AudioRevision;
+		Action assignment = () => model.SetRow(oversizedIndex,
+			new(SourceId: sample, PitchMultiplier: 1.75));
+		assignment.Should().Throw<InvalidOperationException>();
+		workspace.Document.AudioRevision.Should().Be(revision);
+		instrument.ToneTable.Should().BeEmpty();
+		model.Rows.Single(row => row.Index == oversizedIndex)
+			.Cells.PitchMultiplier.Should().Be(0.6);
+	}
+
+	[Test]
+	public void InvalidPitchAndEnvelopeRejectAssignedEditButAllowUnassignedDraft()
+	{
+		DocumentWorkspace workspace = new();
+		InstrumentDefinition instrument =
+			InstrumentDocumentEditor.CreateInstrument(workspace, "Lead");
+		ObjectId sample = AddSample(workspace);
+		var model = new InstrumentToneGridModel(workspace, instrument);
+		uint revision = workspace.Document.AudioRevision;
+		model.SetRow(2, new(PitchMultiplier: -1.0));
+		model.Rows.Single(row => row.Index == 2)
+			.Cells.PitchMultiplier.Should().Be(-1.0);
+		Action invalidPitch = () => model.SetRow(2,
+			new(SourceId: sample, PitchMultiplier: -1.0));
+		invalidPitch.Should().Throw<ArgumentOutOfRangeException>();
+		Action invalidEnvelope = () => model.SetRow(2,
+			new(SourceId: sample, VolumeEnvelopeId: (ObjectId)1234U));
+		invalidEnvelope.Should().Throw<InvalidOperationException>();
+		instrument.ToneTable.Should().BeEmpty();
+		workspace.Document.AudioRevision.Should().Be(revision);
+	}
+
 	private static ObjectId AddSample(DocumentWorkspace workspace,
 		string name = "A")
 	{
