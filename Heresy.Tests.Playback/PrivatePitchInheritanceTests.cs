@@ -137,6 +137,85 @@ public sealed class PrivatePitchInheritanceTests
 		});
 	}
 
+	[TestCase(false)]
+	[TestCase(true)]
+	public void ParentPitchSlidePlusOxxAdvancesChildNativeFramesAtIntegratedVoicePitch(
+		bool viaInstrument)
+	{
+		SongDocument document = new();
+		ObjectId sample = AddSample(document);
+		ObjectId child = AddPattern(document, "Child", 4);
+		((DataPatternDefinition)document.Objects[child])
+			.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(sample);
+		ObjectId source = viaInstrument ? AddInstrument(document, child) : child;
+		ObjectId root = AddPattern(document, "Parent", 4);
+		DataPatternDefinition parent = (DataPatternDefinition)document.Objects[root];
+		PatternCell first = parent.Grid.GetOrCreateCell(0, 0);
+		first.Note = new StartPatternNote(source, mixdown: !viaInstrument);
+		first.Effects.Add(new SampleOffsetPatternEffect(1));
+		first.Effects.Add(new PitchSlidePatternEffect(96));
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono()).Create(document, root);
+		float[] pcm = new float[80];
+		plan.Source.Render(pcm.Length, pcm);
+		var voice = plan.Session.GetChannelState(0).CurrentVoice!;
+		double sourcePosition = 256.0;
+		for (int frame = 0; frame < pcm.Length; frame++)
+		{
+			Assert.That(pcm[frame],
+				Is.EqualTo((float)(sourcePosition * 10 / 32768))
+					.Within(2e-5f),
+				$"Frame {frame}: O01 must skip exactly 256 native source " +
+				"frames; subsequent source pitch must be the *integral* of " +
+				"the parent bend, not a resampled speaker-mix offset.");
+			sourcePosition += voice.SoundState.PitchTrajectory.GetMultiplier(frame);
+		}
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void ChildVibratoAndParentSlideSurviveOxxQxyWithChunkInvariantPcm(
+		bool viaInstrument)
+	{
+		SongDocument document = new();
+		ObjectId sample = AddSample(document);
+		ObjectId child = AddPattern(document, "Vibrato leaf", 5);
+		PatternCell childStart =
+			((DataPatternDefinition)document.Objects[child])
+			.Grid.GetOrCreateCell(0, 0);
+		childStart.Note = new StartPatternNote(sample);
+		childStart.Effects.Add(new VibratoPatternEffect(0x48));
+		ObjectId source = viaInstrument ? AddInstrument(document, child) : child;
+		ObjectId root = AddPattern(document, "Private slide", 5);
+		DataPatternDefinition parent = (DataPatternDefinition)document.Objects[root];
+		PatternCell first = parent.Grid.GetOrCreateCell(0, 0);
+		first.Note = new StartPatternNote(source, mixdown: !viaInstrument);
+		first.Effects.Add(new SampleOffsetPatternEffect(1));
+		first.Effects.Add(new PitchSlidePatternEffect(96));
+		parent.Grid.GetOrCreateCell(1, 0).Effects.Add(
+			new RetriggerPatternEffect(0x03));
+		PreparedIncrementalPlaybackFactory factory = new(Mono());
+		using PreparedIncrementalPlaybackPlan big = factory.Create(document, root);
+		using PreparedIncrementalPlaybackPlan tiny = factory.Create(document, root);
+		float[] expected = new float[205];
+		float[] actual = new float[205];
+		big.Source.Render(expected.Length, expected);
+		int[] blockSizes = [1, 7, 3, 29, 11];
+		for (int frame = 0, block = 0; frame < actual.Length; block++)
+		{
+			int count = Math.Min(blockSizes[block % blockSizes.Length],
+				actual.Length - frame);
+			tiny.Source.Render(count, actual.AsSpan(frame, count));
+			frame += count;
+		}
+		Assert.That(actual, Is.EqualTo(expected).Within(1e-6f),
+			"Parent pitch, child vibrato and Oxx/Qxy replay must compose " +
+			"independently of worker PCM chunk size.");
+		Assert.That(actual[30], Is.GreaterThan(0.01f));
+		Assert.That(actual[181], Is.GreaterThan(0),
+			"The row-one Q03 must restart the private child's sample.");
+	}
+
 	private static RenderConfiguration Mono()
 		=> new(1000, [new OutputChannelConfiguration(Vector3.Zero,
 			positionalImportance: 0)]);
