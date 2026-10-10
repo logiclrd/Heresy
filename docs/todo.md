@@ -77,15 +77,24 @@ after O01 and Q03 with active child vibrato/chunk invariance.
 The flattened instigator's intentionally suppressed voice-specific
 pitch effects remain unchanged. See
 [recursive-sounds.md](recursive-sounds.md).
-- [ ] Extend **shared-clock cross-rate Tempo arbitration** only where
-  the coordinator currently rejects it. Single scaled Txx slides,
-  same-rate simultaneous Txx, SEy repetition across independent
-  unscaled invocations, interruption, and piecewise Tempo ramps already
-  have tests. The concrete unsupported cases are simultaneous
-  *different-rate* Txx slides and scaled flattened Txx combined with
-  SEy repeats; preserve each source's captured tick span, channel-order
-  clamping, deferred deadlines and cancelation without ever eagerly
-  enumerating future orders.
+**Shared-clock cross-rate Tempo arbitration completed.** The
+incremental coordinator now merges simultaneous Txx slides at
+different flattened clock rates and scaled Txx with repeated SEy
+compatibility rows. It stores each contributing invocation's local
+row tick span, flattened rate, mapped physical channel, repetition
+count and cancellation ownership; boundaries use
+`localSpan / tickRate`. Bounded piecewise shared Tempo ramps
+retain smooth analytic wall-time mapping and never enumerate future
+Pattern/Sequence rows. Ordered local-tick clipping at Tempo 32/255
+preserves mapped physical-channel clamping (with a fast path that
+skips per-tick work when clipping is impossible). A cancellation
+reprojects surviving slides from the instantaneous shared Tempo;
+a direct global set interrupts and discards stale SEy repeats.
+`IncrementalCrossRateTempoTests` cover 1×/2× simultaneous slides,
+2× and 1.5× SEy repetition boundaries, analytic wall-deadline
+inversion, mapped-channel clamp order, cancellation and direct
+Tempo interruption, alongside the earlier equal-rate suite.
+See [incremental-sequencing.md](incremental-sequencing.md).
 - [ ] Finish unsupported advanced tracker/script effect combinations in
   the shared-tick coordinator. In particular, verify negative fixed
   wall-time offsets, advanced/global effect deadlines, incompatible
