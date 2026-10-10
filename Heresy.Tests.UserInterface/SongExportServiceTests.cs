@@ -64,6 +64,99 @@ public sealed class SongExportServiceTests
 	}
 
 	[Test]
+	public async Task WarningsFromNestedPrivateMixdownReachSameExportReport()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = document.AllocateObjectId();
+		document.Add(SampleDefinition.CreateImported(
+			sampleId, "Voice", "voice.wav", OneFrameWave()));
+		ObjectId grandchildId = document.AllocateObjectId();
+		DataPatternDefinition grandchild = new(grandchildId, "Sample")
+		{
+			RowCount = 3, ChannelCount = 2,
+		};
+		grandchild.Grid.GetOrCreateCell(0, 1).Note =
+			new StartPatternNote(sampleId);
+		document.Add(grandchild);
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Private child")
+		{
+			RowCount = 3, ChannelCount = 1,
+		};
+		PatternCell invalid = child.Grid.GetOrCreateCell(0, 0);
+		invalid.Note = new StartPatternNote(grandchildId);
+		invalid.Effects.Add(new TonePortamentoVolumeSlidePatternEffect(0x34));
+		document.Add(child);
+		ObjectId parentId = document.AllocateObjectId();
+		DataPatternDefinition parent = new(parentId, "Mixdown")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(childId, mixdown: true);
+		document.Add(parent);
+		ObjectId rootId = document.AllocateObjectId();
+		DataSequenceDefinition root = new(rootId, "Song");
+		root.Entries.Add(new SequenceEntry(parentId));
+		document.Add(root);
+		document.RootSequenceId = rootId;
+		SongExportService service = new(new OfflineSongRenderPlanFactory(
+			RenderConfiguration.Stereo(1000)));
+		string path = Path.Combine(Path.GetTempPath(),
+			$"heresy-private-warning-{Guid.NewGuid():N}.wav");
+		List<SequencingDiagnostic> warnings = [];
+		try
+		{
+			await service.ExportAsync(document, path,
+				OfflineAudioFileFormat.Wave,
+				diagnostics: new DiagnosticProgress(batch =>
+					warnings.AddRange(batch)));
+			Assert.That(warnings.Count(w => w.Code
+				== SequencingDiagnosticLog.IgnoredFlatteningEffectCode),
+				Is.EqualTo(1),
+				"Private recursive timelines must publish through the "
+				+ "same bounded root log, not silently isolate warnings.");
+		}
+		finally
+		{
+			if (File.Exists(path)) File.Delete(path);
+		}
+	}
+
+	[Test]
+	public async Task FailedExportStillDeliversWarningsProducedBeforeInterruption()
+	{
+		SongDocument document = CreateFlatteningWarningSong(48);
+		SongExportService service = new(new OfflineSongRenderPlanFactory(
+			RenderConfiguration.Stereo(1000)));
+		string path = Path.Combine(Path.GetTempPath(),
+			$"heresy-export-warning-failure-{Guid.NewGuid():N}.wav");
+		await File.WriteAllTextAsync(path, "preserve");
+		List<SequencingDiagnostic> warnings = [];
+		try
+		{
+			Assert.ThrowsAsync<InvalidOperationException>(async () =>
+				await service.ExportAsync(document, path,
+					OfflineAudioFileFormat.Wave,
+					new CallbackProgress(_ =>
+						throw new InvalidOperationException("Stopped after PCM block")),
+					diagnostics: new DiagnosticProgress(batch =>
+						warnings.AddRange(batch))));
+			Assert.That(warnings, Is.Not.Empty,
+				"Failure after generated PCM must not lose diagnostic messages.");
+			Assert.That(await File.ReadAllTextAsync(path),
+				Is.EqualTo("preserve"));
+			Assert.That(Directory.GetFiles(Path.GetTempPath(),
+				$".{Path.GetFileName(path)}.*.heresy-render.tmp"),
+				Is.Empty);
+		}
+		finally
+		{
+			if (File.Exists(path)) File.Delete(path);
+		}
+	}
+
+	[Test]
 	public async Task CanceledExportForwardsPreviouslyGeneratedWarningsAndKeepsDestination()
 	{
 		SongDocument document = CreateFlatteningWarningSong(48);
