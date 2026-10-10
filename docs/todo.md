@@ -258,13 +258,17 @@ persisted notes.
   envelopes. Its selection starts blank, with an italic top **New...**
   option that creates an envelope. Embed the same live graphical ADSR
   editor in the selected Envelope node's detail pane.
-- [ ] Polish the unsaved-changes confirmation: Yes, No, Cancel **in that
-  order**, each with an accelerator; Yes is the default action, Cancel
-  is the cancel action.
-- [ ] Show the File → Open picker **before** asking about unsaved changes;
-  canceled/no-path selection should not trigger the save prompt.
-  Prompt before actually loading the chosen file and preserve the old
-  document on cancel/failure.
+**Save-changes dialog and picker-first File → Open implemented.**
+The confirmation buttons appear left-to-right as Yes, No, Cancel, with
+Alt+Y / Alt+N / Alt+C access keys; Yes has IsDefault and Cancel has
+IsCancel. File → Open selects a usable local path before invoking the
+existing unsaved-change guard, so picker cancellation never triggers a
+save prompt. A canceled/failed guard prevents loading; document and JSON
+save mode are replaced only after a successful load/validation.
+New and Exit retain their original guard behavior. A headless-testable
+action factory and open-flow coordinator cover button roles, choice
+mapping, event ordering, cancellation and failure preservation.
+See [ui-editor-redesign.md](ui-editor-redesign.md).
 - [ ] Redesign the **Instrument tone-table editor** as one grid with
   implicitly managed specifications. Build the blank top row and
   reverse-index, ten-octave/C-11-with-Offset rows on load/Divisions

@@ -353,11 +353,13 @@ Dialog action rows are anchored at the lower-right of their windows using a
 flexible content area and a bottom button row, including in resizable import
 and sample dialogs. Standard accept/confirm buttons are the Enter defaults,
 while Cancel (or the Sample editor's Close button) responds to Escape. In the
-unsaved-changes confirmation, Yes is the default, Cancel responds to Escape,
-and No remains an explicit discard choice. The requested Yes/No/Cancel
-button order, mnemonics, and moving the unsaved-change prompt **after**
-the File → Open picker are tracked as future UI changes; the existing
-Open path still prompts before showing the picker.
+unsaved-changes confirmation, buttons are arranged **Yes / No / Cancel**,
+with Alt+Y / Alt+N / Alt+C access keys. Yes is the Enter default,
+Cancel is the Escape action, and No explicitly discards unsaved changes.
+File → Open now opens its picker **before** prompting: canceling the
+picker does not prompt to save; a chosen usable path is only loaded
+after the existing save/discard/cancel guard permits replacement.
+A failed load preserves the current authoring document and save mode.
 
 Opening or creating a data pattern switches the main workspace into pattern
 mode rather than opening a modal editor. The pattern grid edits semantic note

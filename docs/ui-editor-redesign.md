@@ -102,9 +102,17 @@ actual models explicitly rather than assuming a redesign is already complete.
   chosen, run the existing unsaved-change guard *before* replacing the
   document. Keep the current document unchanged if the user cancels
   or if saving/loading fails. New and Exit retain their existing guards.
-- Current `MainWindow.OpenDocumentAsync` checks the guard before
-  `StorageProvider.OpenFilePickerAsync`; the ordering above is a
-  requested change, not current behavior.
+**Implemented:** `UnsavedChangesDialogActions` supplies the ordered
+`_Yes`, `_No`, `_Cancel` buttons (Alt+Y / Alt+N / Alt+C) and
+`DialogActionLayout.ConfigureButtons` assigns Yes/Cancel the
+Enter/Escape keyboard roles. `DocumentOpenWorkflow.TryOpenAsync` now
+picks a usable path before evaluating the unmodified dirty-document
+guard; a canceled picker leaves the dirty document untouched without
+asking to save. `DocumentWorkspace.Open` validates/decode-loads the
+replacement and resolves JSON path mode before swapping its active
+document or save baseline. The original New/Exit workflows still
+guard before their respective actions. These changes are backed by
+headless dialog-action and picker/guard/transaction regression tests.
 
 ## Instrument Editor: implicit specifications and tone-table grid
 
