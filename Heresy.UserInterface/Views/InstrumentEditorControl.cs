@@ -1,423 +1,390 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Data.Templates;
+using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Threading;
 
 using Heresy.Core.Envelopes;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.UserInterface.Documents;
+using Heresy.UserInterface.InstrumentEditing;
 using Heresy.UserInterface.PatternEditing;
 
 namespace Heresy.UserInterface.Views;
 
 /// <summary>
-/// Main-workspace editor for recursive instruments. The control projects the
-/// existing Core object directly; reusable tone specifications and tone-table
-/// mappings remain separate just as they are in InstrumentDefinition.
+/// Nine-column projected instrument table. The Core's shared specification
+/// list remains an implementation detail of InstrumentToneGridModel.
 /// </summary>
 public sealed class InstrumentEditorControl : UserControl
 {
+	private static readonly int[] ColumnWidths =
+		[66, 114, 196, 108, 140, 145, 145, 145, 145];
+	private static readonly string[] Headings =
+		["", "", "Source", "Pitch", "", "Volume", "Pitch", "Panning", "Filter"];
+
 	private readonly DocumentWorkspace _workspace;
 	private readonly InstrumentDefinition _instrument;
+	private readonly InstrumentToneGridModel _model;
 	private readonly Action _close;
 	private readonly Action<string> _changed;
 	private readonly TextBox _divisions;
 	private readonly TextBox _offset;
-	private readonly TextBox _toneTableLength;
-	private readonly StackPanel _specificationRows = new() { Spacing = 4 };
-	private readonly StackPanel _toneTableRows = new() { Spacing = 4 };
-	private readonly TextBlock _message = new() { TextWrapping = TextWrapping.Wrap };
-
-	private PatternSourceOption[] _sources = [];
-	private EnvelopeOption[] _envelopes = [];
-
-	public InstrumentEditorControl(
-		DocumentWorkspace workspace,
-		InstrumentDefinition instrument,
-		Action close,
-		Action<string> changed)
+	private readonly ListBox _rows;
+	private readonly TextBlock _message = new()
 	{
-		_workspace = workspace
-			?? throw new ArgumentNullException(nameof(workspace));
-		_instrument = instrument
-			?? throw new ArgumentNullException(nameof(instrument));
-		_close = close
-			?? throw new ArgumentNullException(nameof(close));
-		_changed = changed
-			?? throw new ArgumentNullException(nameof(changed));
+		TextWrapping = TextWrapping.Wrap,
+	};
+	private PatternSourceOption[] _sources = [];
+	private EnvelopeChoice[] _envelopes = [];
 
+	public InstrumentEditorControl(DocumentWorkspace workspace,
+		InstrumentDefinition instrument, Action close, Action<string> changed)
+	{
+		_workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
+		_instrument = instrument ?? throw new ArgumentNullException(nameof(instrument));
+		_close = close ?? throw new ArgumentNullException(nameof(close));
+		_changed = changed ?? throw new ArgumentNullException(nameof(changed));
+		_model = new InstrumentToneGridModel(workspace, instrument);
 		_divisions = NumberBox(instrument.Divisions);
 		_offset = NumberBox(instrument.Offset);
-		_toneTableLength = NumberBox(instrument.ToneTable.Count);
-
-		RefreshCatalogs();
+		_rows = new ListBox
+		{
+			MinWidth = ColumnWidths.Sum(),
+			ItemTemplate = new FuncDataTemplate<InstrumentToneGridRow>(
+				(row, _) => BuildRow(row)),
+		};
+		_rows.KeyDown += OnGridKeyDown;
 		Content = BuildContent();
-		Refresh();
+		RefreshRows();
 	}
 
 	private Control BuildContent()
 	{
-		Button back =
-			new()
-			{
-				Content = "← Document",
-				MinWidth = 100,
-			};
+		Button back = new() { Content = "← Document", MinWidth = 100 };
 		back.Click += (_, _) => _close();
-
-		TextBlock title =
-			new()
-			{
-				Text = _instrument.Name,
-				FontSize = 20,
-				FontWeight = FontWeight.SemiBold,
-				VerticalAlignment = VerticalAlignment.Center,
-			};
-
-		DockPanel header =
-			new()
-			{
-				Margin = new Thickness(10, 8),
-			};
+		TextBlock title = new()
+		{
+			Text = _instrument.Name,
+			FontSize = 20,
+			FontWeight = FontWeight.SemiBold,
+			VerticalAlignment = VerticalAlignment.Center,
+		};
+		DockPanel top = new() { Margin = new Thickness(10, 8) };
 		DockPanel.SetDock(back, Dock.Left);
-		header.Children.Add(back);
-		header.Children.Add(title);
+		top.Children.Add(back);
+		top.Children.Add(title);
 
-		Button applyLookup =
-			new()
-			{
-				Content = "Apply lookup",
-			};
-		applyLookup.Click += (_, _) => ApplyLookup();
-
-		StackPanel lookup =
-			new()
-			{
-				Orientation = Orientation.Horizontal,
-				Spacing = 6,
-				Margin = new Thickness(10, 6),
-				VerticalAlignment = VerticalAlignment.Center,
-			};
+		Button apply = new() { Content = "Apply lookup" };
+		apply.Click += (_, _) => ApplyLookup();
+		StackPanel lookup = new()
+		{
+			Orientation = Orientation.Horizontal,
+			Spacing = 6,
+			Margin = new Thickness(10, 6),
+		};
 		lookup.Children.Add(Label("Divisions"));
 		lookup.Children.Add(_divisions);
 		lookup.Children.Add(Label("Offset"));
 		lookup.Children.Add(_offset);
-		lookup.Children.Add(applyLookup);
+		lookup.Children.Add(apply);
 
-		StackPanel specifications = new()
+		Grid headers = NewColumns();
+		headers.Margin = new Thickness(6, 2);
+		for (int i = 0; i < Headings.Length; i++)
 		{
-			Margin = new Thickness(10, 8, 10, 4),
-			Spacing = 6,
-		};
-		specifications.Children.Add(SectionHeading("Tone specifications"));
-		specifications.Children.Add(
-			new TextBlock
-			{
-				Text =
-					"Each specification chooses any sound-producing song object, composes a pitch multiplier, and may override any of the four envelope paths.",
-				TextWrapping = TextWrapping.Wrap,
-			});
-		specifications.Children.Add(BuildAddSpecificationRow());
-		specifications.Children.Add(_specificationRows);
+			TextBlock label = Label(Headings[i]);
+			label.FontWeight = FontWeight.SemiBold;
+			Grid.SetColumn(label, i);
+			headers.Children.Add(label);
+		}
 
-		Button resizeToneTable =
-			new()
-			{
-				Content = "Resize",
-			};
-		resizeToneTable.Click += (_, _) => ResizeToneTable();
+		Grid table = new();
+		table.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+		table.RowDefinitions.Add(
+			new RowDefinition(new GridLength(1, GridUnitType.Star)));
+		Grid.SetRow(headers, 0);
+		Grid.SetRow(_rows, 1);
+		table.Children.Add(headers);
+		table.Children.Add(_rows);
 
-		StackPanel toneTableHeader =
-			new()
-			{
-				Orientation = Orientation.Horizontal,
-				Spacing = 6,
-				VerticalAlignment = VerticalAlignment.Center,
-			};
-		toneTableHeader.Children.Add(SectionHeading("Tone table"));
-		toneTableHeader.Children.Add(Label("Length"));
-		toneTableHeader.Children.Add(_toneTableLength);
-		toneTableHeader.Children.Add(resizeToneTable);
-
-		StackPanel toneTable = new()
+		ScrollViewer horizontal = new()
 		{
-			Margin = new Thickness(10, 8),
-			Spacing = 6,
+			Content = table,
+			HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+			VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
 		};
-		toneTable.Children.Add(toneTableHeader);
-		toneTable.Children.Add(
-			new TextBlock
-			{
-				Text =
-					"Tone indices map to reusable specifications. Silent entries remain -1 in the Core model.",
-				TextWrapping = TextWrapping.Wrap,
-			});
-		toneTable.Children.Add(_toneTableRows);
 
-		StackPanel body = new()
+		TextBlock hint = new()
 		{
-			Spacing = 4,
+			Text = "One grid, highest note first. Source-less rows stay as editor-only drafts. "
+				+ "Pitch is log₂(multiplier). The nearby-note dropdown snaps Pitch only when selected. "
+				+ "Select a row and press Delete to remove it.",
+			TextWrapping = TextWrapping.Wrap,
+			Margin = new Thickness(10, 2),
 		};
-		body.Children.Add(lookup);
-		body.Children.Add(specifications);
-		body.Children.Add(toneTable);
-
-		ScrollViewer scroll =
-			new()
-			{
-				Content = body,
-				HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-				VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-			};
-
-		Border messageBorder =
-			new()
-			{
-				Padding = new Thickness(10, 5),
-				Child = _message,
-			};
 
 		DockPanel root = new();
-		DockPanel.SetDock(header, Dock.Top);
-		DockPanel.SetDock(messageBorder, Dock.Bottom);
-		root.Children.Add(header);
-		root.Children.Add(messageBorder);
-		root.Children.Add(scroll);
+		DockPanel.SetDock(top, Dock.Top);
+		DockPanel.SetDock(lookup, Dock.Top);
+		DockPanel.SetDock(hint, Dock.Top);
+		Border status = new()
+		{
+			Padding = new Thickness(10, 5),
+			Child = _message,
+		};
+		DockPanel.SetDock(status, Dock.Bottom);
+		root.Children.Add(top);
+		root.Children.Add(lookup);
+		root.Children.Add(hint);
+		root.Children.Add(status);
+		root.Children.Add(horizontal);
 		return root;
 	}
 
-	private Control BuildAddSpecificationRow()
+	private static Grid NewColumns()
 	{
-		ComboBox source = SourceBox(ObjectId.None);
-		TextBox pitch = NumberBox(1.0);
-		ComboBox volume = EnvelopeBox(null);
-		ComboBox pitchEnvelope = EnvelopeBox(null);
-		ComboBox panning = EnvelopeBox(null);
-		ComboBox filter = EnvelopeBox(null);
+		Grid grid = new() { MinHeight = 32 };
+		foreach (int width in ColumnWidths)
+			grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(width)));
+		return grid;
+	}
 
-		Button add = new() { Content = "Add specification" };
-		add.Click += (_, _) =>
+	private Control BuildRow(InstrumentToneGridRow projected)
+	{
+		InstrumentToneGridCells cells = projected.IsEntry
+			? _model.EntryCells : projected.Cells;
+		int? index = projected.Index;
+		Grid grid = NewColumns();
+		grid.Margin = new Thickness(6, 2);
+
+		TextBox? entryIndex = null;
+		if (projected.IsEntry)
+		{
+			entryIndex = new TextBox
+			{
+				Text = _model.EntryIndex?.ToString(CultureInfo.CurrentCulture) ?? "",
+				Watermark = "Index",
+				Width = 60,
+			};
+			At(grid, entryIndex, 0);
+		}
+		else
+		{
+			At(grid, Label(index!.Value.ToString(CultureInfo.CurrentCulture)), 0);
+			At(grid, Label(InstrumentToneNoteNotation.Format(index.Value,
+				_instrument.Divisions, _instrument.Offset)), 1);
+		}
+
+		ComboBox source = BuildSourceBox(cells.SourceId);
+		At(grid, source, 2);
+
+		double initialLog = cells.PitchMultiplier > 0 && double.IsFinite(
+			cells.PitchMultiplier)
+			? InstrumentToneNoteNotation.LogarithmicOffset(cells.PitchMultiplier)
+			: 0;
+		TextBox pitch = new()
+		{
+			Text = initialLog.ToString("G12", CultureInfo.CurrentCulture),
+			Width = 100,
+		};
+		At(grid, pitch, 3);
+
+		ComboBox nearby = new() { Width = 135 };
+		if (!projected.IsEntry)
+			At(grid, nearby, 4);
+
+		ComboBox volume = BuildEnvelopeBox(cells.VolumeEnvelopeId);
+		ComboBox pitchEnvelope = BuildEnvelopeBox(cells.PitchEnvelopeId);
+		ComboBox panning = BuildEnvelopeBox(cells.PanningEnvelopeId);
+		ComboBox filter = BuildEnvelopeBox(cells.FilterEnvelopeId);
+		At(grid, volume, 5);
+		At(grid, pitchEnvelope, 6);
+		At(grid, panning, 7);
+		At(grid, filter, 8);
+
+		bool changingNearest = false;
+
+		void UpdateEntry()
+		{
+			int? entered = int.TryParse(entryIndex?.Text,
+				NumberStyles.Integer, CultureInfo.CurrentCulture,
+				out int i) ? i : null;
+			_model.SetEntryDraft(entered, cells);
+		}
+
+		void CommitCells()
 		{
 			try
 			{
-				if (source.SelectedItem is not PatternSourceOption selectedSource)
+				if (projected.IsEntry)
 				{
-					_message.Text =
-						"Create or select a sound source before adding a tone specification.";
+					UpdateEntry();
 					return;
 				}
-
-				InstrumentDocumentEditor.AddToneSpecification(
-					_workspace,
-					_instrument,
-					selectedSource.Id,
-					ParsePositiveDouble(pitch, "Pitch multiplier"),
-					SelectedEnvelope(volume),
-					SelectedEnvelope(pitchEnvelope),
-					SelectedEnvelope(panning),
-					SelectedEnvelope(filter));
-				Refresh();
-				_changed($"Added tone specification to {_instrument.Name}");
+				_model.SetRow(index!.Value, cells);
+				_message.Text = $"Updated tone {index.Value}.";
+				_changed($"Updated tone {index.Value} in {_instrument.Name}");
 			}
 			catch (Exception ex)
 			{
 				_message.Text = ex.Message;
+				// The song and editor drafts are unchanged after a rejected
+				// edit. Restore controls from the last accepted model row.
+				RefreshRows(index);
 			}
-		};
+		}
 
-		return BuildSpecificationFields(
-			"#",
-			source,
-			pitch,
-			volume,
-			pitchEnvelope,
-			panning,
-			filter,
-			add,
-			null);
-	}
-
-	private Control BuildSpecificationRow(int index)
-	{
-		ToneSpecification tone = _instrument.ToneSpecifications[index];
-		ComboBox source = SourceBox(tone.SourceId);
-		TextBox pitch = NumberBox(tone.PitchMultiplier);
-		ComboBox volume = EnvelopeBox(tone.VolumeEnvelopeId);
-		ComboBox pitchEnvelope = EnvelopeBox(tone.PitchEnvelopeId);
-		ComboBox panning = EnvelopeBox(tone.PanningEnvelopeId);
-		ComboBox filter = EnvelopeBox(tone.FilterEnvelopeId);
-
-		Button apply = new() { Content = "Apply" };
-		apply.Click += (_, _) =>
+		void RefreshNearest(double logOffset)
 		{
+			if (projected.IsEntry)
+				return;
 			try
 			{
-				ObjectId sourceId =
-					source.SelectedItem is PatternSourceOption selected
-						? selected.Id
-						: tone.SourceId;
-				InstrumentDocumentEditor.UpdateToneSpecification(
-					_workspace,
-					_instrument,
-					index,
-					sourceId,
-					ParsePositiveDouble(pitch, "Pitch multiplier"),
-					SelectedEnvelopeOrExisting(volume, tone.VolumeEnvelopeId),
-					SelectedEnvelopeOrExisting(pitchEnvelope, tone.PitchEnvelopeId),
-					SelectedEnvelopeOrExisting(panning, tone.PanningEnvelopeId),
-					SelectedEnvelopeOrExisting(filter, tone.FilterEnvelopeId));
-				Refresh();
-				_changed($"Updated tone specification {index}");
+				var options = InstrumentToneNoteNotation.Options(
+					index!.Value, _instrument.Divisions,
+					_instrument.Offset, logOffset);
+				InstrumentToneNoteChoice? nearest =
+					InstrumentToneNoteNotation.Nearest(options, logOffset);
+				changingNearest = true;
+				nearby.ItemsSource = options;
+				nearby.SelectedItem = nearest;
+			}
+			catch (Exception ex)
+			{
+				_message.Text = ex.Message;
+				changingNearest = true;
+				nearby.ItemsSource = Array.Empty<InstrumentToneNoteChoice>();
+			}
+			finally
+			{
+				changingNearest = false;
+			}
+		}
+
+		void CommitPitch()
+		{
+			if (!double.TryParse(pitch.Text, NumberStyles.Float,
+				CultureInfo.CurrentCulture, out double logarithm)
+				|| !double.IsFinite(logarithm))
+			{
+				_message.Text = "Pitch must be a finite logarithmic offset.";
+				return;
+			}
+			try
+			{
+				cells = cells with
+				{
+					PitchMultiplier =
+						InstrumentToneNoteNotation.MultiplierFromOffset(logarithm),
+				};
+				CommitCells();
+				RefreshNearest(logarithm);
 			}
 			catch (Exception ex)
 			{
 				_message.Text = ex.Message;
 			}
-		};
+		}
 
-		Button remove = new() { Content = "Remove" };
-		remove.Click += (_, _) =>
+		if (entryIndex is not null)
+			entryIndex.TextChanged += (_, _) => UpdateEntry();
+		source.SelectionChanged += (_, _) =>
 		{
-			InstrumentDocumentEditor.RemoveToneSpecification(
-				_workspace,
-				_instrument,
-				index);
-			Refresh();
-			_changed($"Removed tone specification {index}");
-		};
-
-		return BuildSpecificationFields(
-			index.ToString(CultureInfo.InvariantCulture),
-			source,
-			pitch,
-			volume,
-			pitchEnvelope,
-			panning,
-			filter,
-			apply,
-			remove);
-	}
-
-	private static Control BuildSpecificationFields(
-		string index,
-		ComboBox source,
-		TextBox pitch,
-		ComboBox volume,
-		ComboBox pitchEnvelope,
-		ComboBox panning,
-		ComboBox filter,
-		Button primary,
-		Button? secondary)
-	{
-		Grid row = new()
-		{
-			MinHeight = 36,
-		};
-		row.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(38)));
-		row.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(220)));
-		row.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(90)));
-		row.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(155)));
-		row.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(155)));
-		row.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(155)));
-		row.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(155)));
-		row.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(170)));
-
-		AddAt(
-			row,
-			new TextBlock
+			cells = cells with
 			{
-				Text = index,
-				VerticalAlignment = VerticalAlignment.Center,
-				Margin = new Thickness(4),
-			},
-			0);
-		AddAt(row, source, 1);
-		AddAt(row, pitch, 2);
-		AddAt(row, volume, 3);
-		AddAt(row, pitchEnvelope, 4);
-		AddAt(row, panning, 5);
-		AddAt(row, filter, 6);
-
-		StackPanel actions = new()
-		{
-			Orientation = Orientation.Horizontal,
-			Spacing = 4,
-		};
-		actions.Children.Add(primary);
-		if (secondary is not null)
-			actions.Children.Add(secondary);
-		AddAt(row, actions, 7);
-
-		return new Border
-		{
-			BorderBrush = Brushes.Gray,
-			BorderThickness = new Thickness(0, 0, 0, 1),
-			Child = row,
-		};
-	}
-
-	private Control BuildToneTableRow(int toneIndex)
-	{
-		ToneMappingOption[] options = GetToneMappingOptions();
-		ComboBox mapping =
-			new()
-			{
-				ItemsSource = options,
-				Width = 360,
+				SourceId = (source.SelectedItem as SourceChoice)?.Id,
 			};
-		int current = _instrument.ToneTable[toneIndex];
-		mapping.SelectedItem =
-			options.FirstOrDefault(option =>
-				option.SpecificationIndex == current)
-			?? options[0];
-
-		Button apply = new() { Content = "Apply" };
-		apply.Click += (_, _) =>
-		{
-			if (mapping.SelectedItem is not ToneMappingOption selected)
-				return;
-
-			InstrumentDocumentEditor.SetToneMapping(
-				_workspace,
-				_instrument,
-				toneIndex,
-				selected.SpecificationIndex);
-			_changed($"Updated tone-table index {toneIndex}");
+			CommitCells();
 		};
-
-		StackPanel row = new()
-		{
-			Orientation = Orientation.Horizontal,
-			Spacing = 8,
-			VerticalAlignment = VerticalAlignment.Center,
-		};
-		row.Children.Add(
-			new TextBlock
+		void BindEnvelope(ComboBox box, Func<ObjectId?, InstrumentToneGridCells> update)
+			=> box.SelectionChanged += (_, _) =>
 			{
-				Text = toneIndex.ToString(CultureInfo.InvariantCulture),
-				Width = 54,
-				VerticalAlignment = VerticalAlignment.Center,
-			});
-		row.Children.Add(mapping);
-		row.Children.Add(apply);
-		return row;
+				cells = update((box.SelectedItem as EnvelopeChoice)?.Id);
+				CommitCells();
+			};
+		BindEnvelope(volume, id => cells with { VolumeEnvelopeId = id });
+		BindEnvelope(pitchEnvelope, id => cells with { PitchEnvelopeId = id });
+		BindEnvelope(panning, id => cells with { PanningEnvelopeId = id });
+		BindEnvelope(filter, id => cells with { FilterEnvelopeId = id });
+		pitch.LostFocus += (_, _) => CommitPitch();
+		pitch.KeyDown += (_, e) =>
+		{
+			if (e.Key != Key.Enter)
+				return;
+			CommitPitch();
+			e.Handled = true;
+		};
+		nearby.SelectionChanged += (_, _) =>
+		{
+			if (changingNearest
+				|| nearby.SelectedItem is not InstrumentToneNoteChoice selected)
+				return;
+			pitch.Text = selected.LogarithmicOffset.ToString(
+				"G12", CultureInfo.CurrentCulture);
+			CommitPitch(); // explicit selection snaps to exact multiplier
+		};
+		RefreshNearest(initialLog);
+
+		Border border = new()
+		{
+			Child = grid,
+			BorderThickness = new Thickness(0, 0, 0, 1),
+			BorderBrush = Brushes.Gray,
+			Background = projected.IsOutOfRange
+				? new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0, 0))
+				: null,
+		};
+		if (projected.IsEntry)
+		{
+			// Only commit when focus leaves the *entire row*.
+			// Tab between index/source/pitch/envelopes must not move it.
+			border.AddHandler(InputElement.LostFocusEvent, (_, _) =>
+			{
+				Dispatcher.UIThread.Post(() =>
+				{
+					if (border.IsKeyboardFocusWithin || _model.EntryIndex is null
+						|| !_model.CommitEntry())
+						return;
+					_message.Text = "Inserted/overwrote tone table row.";
+					RefreshRows(_model.EntryIndex);
+				}, DispatcherPriority.Loaded);
+			}, RoutingStrategies.Bubble, handledEventsToo: true);
+		}
+		return border;
 	}
 
 	private void ApplyLookup()
 	{
 		try
 		{
+			double divisions = double.Parse(_divisions.Text ?? "",
+				CultureInfo.CurrentCulture);
+			int offset = int.Parse(_offset.Text ?? "",
+				CultureInfo.CurrentCulture);
+			// Refuse a projection too large to render before touching Core.
+			int range = InstrumentToneGridProjection.RegularExclusiveEnd(
+				divisions, offset);
+			if (range > InstrumentToneGridProjection.MaxRegularRows)
+				throw new InvalidOperationException("The tone-grid range is too large.");
+
+			bool reconfigured = _instrument.Divisions != divisions
+				|| _instrument.Offset != offset;
 			InstrumentDocumentEditor.UpdateLookup(
-				_workspace,
-				_instrument,
-				ParsePositiveDouble(_divisions, "Divisions"),
-				ParseInt(_offset, "Offset"));
+				_workspace, _instrument, divisions, offset);
+			if (reconfigured)
+				_model.OnDivisionsChanged();
+			RefreshRows();
 			_changed($"Updated lookup for {_instrument.Name}");
 		}
 		catch (Exception ex)
@@ -426,22 +393,21 @@ public sealed class InstrumentEditorControl : UserControl
 		}
 	}
 
-	private void ResizeToneTable()
+	private void OnGridKeyDown(object? sender, KeyEventArgs e)
 	{
+		// Avoid eating the Delete key when a TextBox is actively editing
+		// text or a dropdown is manipulating its own selection.
+		if (e.Key != Key.Delete
+			|| e.Source is TextBox or ComboBox
+			|| _rows.SelectedItem is not InstrumentToneGridRow selected
+			|| selected.Index is not int index)
+			return;
 		try
 		{
-			int length = ParseInt(_toneTableLength, "Tone-table length");
-			if (length < 0)
-				throw new ArgumentOutOfRangeException(
-					nameof(length),
-					"Tone-table length must be non-negative.");
-
-			InstrumentDocumentEditor.ResizeToneTable(
-				_workspace,
-				_instrument,
-				length);
-			Refresh();
-			_changed($"Resized tone table to {length}");
+			_model.DeleteRow(index);
+			RefreshRows();
+			_changed($"Removed tone {index} from {_instrument.Name}");
+			e.Handled = true;
 		}
 		catch (Exception ex)
 		{
@@ -449,259 +415,100 @@ public sealed class InstrumentEditorControl : UserControl
 		}
 	}
 
-	private void Refresh()
+	private void RefreshRows(int? selectedIndex = null)
 	{
-		RefreshCatalogs();
-
-		_divisions.Text =
-			_instrument.Divisions.ToString(CultureInfo.CurrentCulture);
-		_offset.Text =
-			_instrument.Offset.ToString(CultureInfo.CurrentCulture);
-		_toneTableLength.Text =
-			_instrument.ToneTable.Count.ToString(CultureInfo.CurrentCulture);
-
-		_specificationRows.Children.Clear();
-		for (int index = 0;
-			index < _instrument.ToneSpecifications.Count;
-			index++)
+		try
 		{
-			_specificationRows.Children.Add(
-				BuildSpecificationRow(index));
-		}
-		if (_instrument.ToneSpecifications.Count == 0)
-		{
-			_specificationRows.Children.Add(
-				new TextBlock
-				{
-					Text = "No tone specifications yet.",
-					Margin = new Thickness(4, 6),
-				});
-		}
-
-		_toneTableRows.Children.Clear();
-		for (int index = 0; index < _instrument.ToneTable.Count; index++)
-			_toneTableRows.Children.Add(BuildToneTableRow(index));
-		if (_instrument.ToneTable.Count == 0)
-		{
-			_toneTableRows.Children.Add(
-				new TextBlock
-				{
-					Text = "The tone table is empty; the instrument is currently silent.",
-					Margin = new Thickness(4, 6),
-				});
-		}
-	}
-
-	private void RefreshCatalogs()
-	{
-		_sources =
-			PatternSourceCatalog.GetSources(_workspace.Document);
-		_envelopes =
-			new[]
-			{
-				new EnvelopeOption(null, "— inherit / unspecified"),
-			}
-			.Concat(
-				_workspace.Document.Objects.Values
-					.OfType<EnvelopeDefinition>()
-					.OrderBy(
-						envelope => envelope.Name,
-						StringComparer.OrdinalIgnoreCase)
-					.ThenBy(envelope => envelope.Id.Value)
-					.Select(envelope =>
-						new EnvelopeOption(
-							envelope.Id,
-							$"{envelope.Name} <{envelope.Id.Value}>")))
-			.ToArray();
-	}
-
-	private ComboBox SourceBox(ObjectId selectedId)
-	{
-		PatternSourceOption[] choices = _sources;
-		PatternSourceOption? selected =
-			choices.FirstOrDefault(option => option.Id == selectedId);
-
-		if (selected is null && !selectedId.IsNone)
-		{
-			string name =
-				_workspace.Document.Tombstones.TryGetValue(
-					selectedId,
-					out ObjectTombstone? tombstone)
-					? $"⚠ {tombstone.LastKnownName}"
-					: "⚠ Missing source";
-			selected =
-				new PatternSourceOption(
-					selectedId,
-					name,
-					SongObjectKind.Unknown);
-			choices = new[] { selected }.Concat(choices).ToArray();
-		}
-
-		ComboBox box =
-			new()
-			{
-				ItemsSource = choices,
-				Width = 210,
-				SelectedItem = selected,
-			};
-		return box;
-	}
-
-	private ComboBox EnvelopeBox(ObjectId? selectedId)
-	{
-		EnvelopeOption[] choices = _envelopes;
-		EnvelopeOption? selected =
-			choices.FirstOrDefault(option =>
-				option.Id == selectedId);
-
-		if (selected is null
-			&& selectedId.HasValue
-			&& !selectedId.Value.IsNone)
-		{
-			string name =
-				_workspace.Document.Tombstones.TryGetValue(
-					selectedId.Value,
-					out ObjectTombstone? tombstone)
-					? $"⚠ {tombstone.LastKnownName} <{selectedId.Value.Value}>"
-					: $"⚠ <{selectedId.Value.Value}>";
-			selected = new EnvelopeOption(selectedId, name);
-			choices = new[] { choices[0], selected }
-				.Concat(choices.Skip(1))
+			_sources = PatternSourceCatalog.GetSources(_workspace.Document);
+			_envelopes = _workspace.Document.Objects.Values
+				.OfType<EnvelopeDefinition>()
+				.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+				.ThenBy(x => x.Id.Value)
+				.Select(x => new EnvelopeChoice(x.Id,
+					$"{x.Name} <{x.Id.Value}>"))
 				.ToArray();
+			_divisions.Text = _instrument.Divisions.ToString(
+				CultureInfo.CurrentCulture);
+			_offset.Text = _instrument.Offset.ToString(
+				CultureInfo.CurrentCulture);
+			InstrumentToneGridRow[] projected = _model.Rows.ToArray();
+			_rows.ItemsSource = projected;
+			if (selectedIndex.HasValue)
+				_rows.SelectedItem = projected.FirstOrDefault(
+					r => r.Index == selectedIndex);
 		}
+		catch (Exception ex)
+		{
+			_message.Text = ex.Message;
+		}
+	}
 
+	private ComboBox BuildSourceBox(ObjectId? selectedId)
+	{
+		List<SourceChoice> options =
+			[new SourceChoice(null, "")];
+		options.AddRange(_sources.Select(x =>
+			new SourceChoice(x.Id, x.DisplayName)));
+		if (selectedId is ObjectId id && !id.IsNone
+			&& !options.Any(x => x.Id == id))
+		{
+			options.Insert(1, new SourceChoice(id, $"⚠ Missing <{id.Value}>"));
+		}
 		return new ComboBox
 		{
-			ItemsSource = choices,
-			Width = 145,
-			SelectedItem = selected ?? choices[0],
+			Width = 186,
+			ItemsSource = options,
+			SelectedItem = options.FirstOrDefault(x => x.Id == selectedId)
+				?? options[0],
 		};
 	}
 
-	private ToneMappingOption[] GetToneMappingOptions()
+	private ComboBox BuildEnvelopeBox(ObjectId? selectedId)
 	{
-		ToneMappingOption[] result =
-			new ToneMappingOption[
-				_instrument.ToneSpecifications.Count + 1];
-		result[0] =
-			new ToneMappingOption(
-				-1,
-				"— Silent");
-		for (int index = 0;
-			index < _instrument.ToneSpecifications.Count;
-			index++)
+		List<EnvelopeChoice> options = [new EnvelopeChoice(null, "")];
+		options.AddRange(_envelopes);
+		if (selectedId is ObjectId id && !id.IsNone
+			&& !options.Any(x => x.Id == id))
+			options.Insert(1, new EnvelopeChoice(id,
+				$"⚠ Missing <{id.Value}>"));
+		return new ComboBox
 		{
-			ToneSpecification tone =
-				_instrument.ToneSpecifications[index];
-			string source =
-				_sources.FirstOrDefault(option =>
-					option.Id == tone.SourceId)?.DisplayName
-				?? $"⚠ <{tone.SourceId.Value}>";
-			result[index + 1] =
-				new ToneMappingOption(
-					index,
-					$"#{index}: {source}");
-		}
-		return result;
+			Width = 135,
+			ItemsSource = options,
+			SelectedItem = options.FirstOrDefault(x => x.Id == selectedId)
+				?? options[0],
+		};
 	}
 
-	private static ObjectId? SelectedEnvelope(ComboBox box)
-		=> box.SelectedItem is EnvelopeOption option
-			? option.Id
-			: null;
-
-	private static ObjectId? SelectedEnvelopeOrExisting(
-		ComboBox box,
-		ObjectId? existing)
-		=> box.SelectedItem is EnvelopeOption option
-			? option.Id
-			: existing;
-
-	private static TextBlock Label(string text)
-		=> new()
-		{
-			Text = text,
-			VerticalAlignment = VerticalAlignment.Center,
-		};
-
-	private static TextBlock SectionHeading(string text)
-		=> new()
-		{
-			Text = text,
-			FontSize = 17,
-			FontWeight = FontWeight.SemiBold,
-			VerticalAlignment = VerticalAlignment.Center,
-		};
-
-	private static TextBox NumberBox(double value)
-		=> new()
-		{
-			Text = value.ToString(CultureInfo.CurrentCulture),
-			Width = 80,
-		};
-
-	private static TextBox NumberBox(int value)
-		=> new()
-		{
-			Text = value.ToString(CultureInfo.CurrentCulture),
-			Width = 80,
-		};
-
-	private static double ParsePositiveDouble(
-		TextBox box,
-		string label)
+	private static TextBox NumberBox(double x) => new()
 	{
-		if (!double.TryParse(
-			box.Text,
-			NumberStyles.Float,
-			CultureInfo.CurrentCulture,
-			out double value)
-			|| !(value > 0.0)
-			|| double.IsNaN(value)
-			|| double.IsInfinity(value))
-		{
-			throw new ArgumentException(
-				$"{label} must be a finite number greater than zero.");
-		}
-		return value;
-	}
-
-	private static int ParseInt(
-		TextBox box,
-		string label)
+		Text = x.ToString(CultureInfo.CurrentCulture),
+		Width = 88,
+	};
+	private static TextBox NumberBox(int x) => new()
 	{
-		if (!int.TryParse(
-			box.Text,
-			NumberStyles.Integer,
-			CultureInfo.CurrentCulture,
-			out int value))
-		{
-			throw new ArgumentException(
-				$"{label} is not a valid integer.");
-		}
-		return value;
-	}
+		Text = x.ToString(CultureInfo.CurrentCulture),
+		Width = 70,
+	};
+	private static TextBlock Label(string text) => new()
+	{
+		Text = text,
+		Margin = new Thickness(4, 0),
+		VerticalAlignment = VerticalAlignment.Center,
+	};
 
-	private static void AddAt(
-		Grid grid,
-		Control control,
-		int column)
+	private static void At(Grid grid, Control control, int column)
 	{
 		Grid.SetColumn(control, column);
 		grid.Children.Add(control);
 	}
 
-	private sealed record EnvelopeOption(
-		ObjectId? Id,
-		string DisplayName)
+	private sealed record SourceChoice(ObjectId? Id, string Name)
 	{
-		public override string ToString() => DisplayName;
+		public override string ToString() => Name;
 	}
-
-	private sealed record ToneMappingOption(
-		int SpecificationIndex,
-		string DisplayName)
+	private sealed record EnvelopeChoice(ObjectId? Id, string Name)
 	{
-		public override string ToString() => DisplayName;
+		public override string ToString() => Name;
 	}
 }
