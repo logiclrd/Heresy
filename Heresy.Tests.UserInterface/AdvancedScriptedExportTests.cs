@@ -158,6 +158,64 @@ public sealed class AdvancedScriptedExportTests
 		});
 	}
 
+	[Test]
+	public void RevisitedScriptPatternTerminatesOnThirdBxxEncounter()
+	{
+		SongDocument song = CreateScriptSong("Note(0, 0, _O(1));",
+			rowCount: 1, sampleFrames: 8);
+		ObjectId jumper = song.AllocateObjectId();
+		DataPatternDefinition jump = new(jumper, "Repeat root")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		jump.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new TrackerOrderJumpPatternEffect(0));
+		song.Add(jump);
+		DataSequenceDefinition root =
+			(DataSequenceDefinition)song.Objects[song.RootSequenceId];
+		root.Entries.Add(new SequenceEntry(jumper));
+
+		(float[] pcm, OfflineRenderResult result, List<OfflineRenderProgress> progress) =
+			Render(song, AudioOutputSettings.Preset(1000, 1), blockSize: 13,
+				maximumLogicalFrames: 1000);
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(result.LogicalFrameCount, Is.EqualTo(720),
+				"Three visits to two 120-ms orders must stop after " +
+				"the third Bxx, without eagerly expanding repeated scripts.");
+			Assert.That(result.TailFrameCount, Is.Zero);
+			Assert.That(progress.Last().Phase, Is.EqualTo(OfflineRenderPhase.Completed));
+		});
+		foreach (int offset in new[] { 0, 240, 480 })
+			Assert.That(Math.Abs(pcm[offset]), Is.GreaterThan(0.01f),
+				$"The scripted note must regenerate on the visit at {offset} frames.");
+	}
+
+	[Test]
+	public void ScriptThatEmitsOnceThenSpinsFailsWithoutCommittingPartialOutput()
+	{
+		SongDocument document = CreateScriptSong(
+			"Note(0, 0, _O(1)); while (true) { }",
+			rowCount: 1, sampleFrames: 1000);
+		using OfflineSongRenderPlan plan = new OfflineSongRenderPlanFactory(
+			AudioOutputSettings.Preset(1000, 1)).Create(document);
+		using RecordingSink sink = new(plan.Source.Format);
+		List<OfflineRenderProgress> progress = [];
+		Assert.That(() => OfflinePlaybackRenderer.Render(
+			plan.Source, sink, blockFrameCount: 5,
+			maximumLogicalFrames: 20, maximumTailFrames: 20,
+			progress: new ImmediateProgress(progress.Add)),
+			Throws.InvalidOperationException
+			.With.Message.Contains("same-tick cooperation budget"));
+		Assert.Multiple(() =>
+		{
+			Assert.That(sink.FramesWritten, Is.Zero);
+			Assert.That(progress, Is.Empty,
+				"No partial output block can be advertised or committed.");
+		});
+	}
+
 	private static RenderConfiguration TailConfiguration()
 		=> new(1000,
 		[
