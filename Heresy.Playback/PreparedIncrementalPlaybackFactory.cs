@@ -810,7 +810,12 @@ public sealed class PreparedIncrementalPlaybackFactory
 						commands[i] = start;
 					continue;
 				}
-				bool nested = start.Mixdown
+				// Live audition commands arrive outside the recursive Pattern
+				// timeline (owner -1), so they cannot create a flattened child
+				// there. Give a direct Pattern/Sequence preview a private
+				// invocation instead, without changing its saved Mixdown flag.
+				// Ordinary scheduled notes retain their flattened semantics.
+				bool nested = (start.Mixdown || owner == -1)
 					&& scripts.TryResolve(start.SourceId, out SongObject? definition)
 					&& definition is PatternDefinition or SequenceDefinition;
 				if (!nested)

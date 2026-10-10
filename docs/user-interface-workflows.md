@@ -417,7 +417,12 @@ data but generates no playback start. Sequencing source memory survives later
 pattern invocations in the same sequencing context, while mixdown children
 naturally receive independent memory with their independent channel-state map.
 During song compilation, Source selections are resolved as each row executes,
-not precomputed for the entire pattern. A flattened Pattern or Sequence may
+not precomputed for the entire pattern. Direct note entry and held-key
+preview also support Pattern/Sequence Sources: unlike full playback, a live
+event has no originating Pattern timeline to flatten into, so only the
+temporary audition voice runs the child as a private recursive invocation.
+That choice does not alter the saved note's Mixdown setting; normal
+non-Mixdown playback continues to flatten into the shared timeline. A flattened Pattern or Sequence may
 therefore change the mapped channel's remembered source before a later parent
 row, even when the child merely selects a source without starting a note.
 Source changes in skipped rows do not execute; standalone raw-note generator

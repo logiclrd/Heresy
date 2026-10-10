@@ -172,6 +172,76 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 		(output as IDisposable)?.Dispose();
 	}
 
+	[TestCase(false, false)]
+	[TestCase(false, true)]
+	[TestCase(true, false)]
+	[TestCase(true, true)]
+	public void LiveNoteEntryAndHeldPreviewRenderPatternAndSequenceSources(
+		bool nestedSequence, bool heldPreview)
+	{
+		// A non-Mixdown nested source is valid Pattern data. Live entry
+		// bypasses the ordinary recursive row generator, but must still
+		// instantiate the child without editing the Mixdown flag.
+		SongDocument document = new();
+		ObjectId sample = AddSample(document, "Live child sample");
+		ObjectId childId = document.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Child")
+		{
+			RowCount = 2,
+			ChannelCount = 1,
+		};
+		for (int row = 0; row < 2; row++)
+		{
+			PatternCell cell = child.Grid.GetOrCreateCell(row, 0);
+			cell.SourceId = sample;
+			cell.Note = new StartPatternNote();
+		}
+		document.Add(child);
+		ObjectId sourceId = nestedSequence
+			? AddSequence(document, childId) : childId;
+		ObjectId parentId = AddPatternWithNote(document, sourceId);
+		DataPatternDefinition parent =
+			(DataPatternDefinition)document.Objects[parentId];
+
+		LivePlaybackEvent audition = heldPreview
+			? PatternLiveEventCompiler.CompileHeldPreviewStart(
+				parent, row: 0, channel: 0,
+				virtualChannelId: 7, pitchMultiplier: 1)!
+			: PatternLiveEventCompiler.CompileEnteredNote(
+				parent, row: 0, channel: 0)!;
+		audition.Commands.OfType<StartNoteCommand>()
+			.Should().ContainSingle()
+			.Which.Mixdown.Should().BeFalse();
+		((StartPatternNote)parent.Grid[0, 0]!.Note!).Mixdown
+			.Should().BeFalse("preview cannot rewrite the saved note");
+
+		PlaybackRequest request = AdHocPlaybackRequest.Create(
+			document, new NoteScheduleBuilder().Freeze());
+		PlaybackRequestAudioSourceFactory factory = new(
+			MonoConfiguration(100),
+			new RecordingSampleProvider(
+				new MemorySampleData(100, 1, [0.625f])));
+		IAudioOutputSource output = factory.Create(request);
+		ILiveAudioOutputSource live = (ILiveAudioOutputSource)output;
+		live.EnqueueLiveEvent(audition.Target, audition.Commands);
+
+		float[] first = new float[1];
+		output.Render(1, first);
+		first[0].Should().BeApproximately(0.625f, 1e-6f,
+			"the child Pattern's first note must sound on live entry");
+
+		// Row 1 starts after 120 ms at the default tracker tempo.
+		float[] between = new float[11];
+		output.Render(between.Length, between);
+		between.Should().OnlyContain(value => value == 0,
+			"the second child note must wait for its own musical row");
+		float[] second = new float[1];
+		output.Render(1, second);
+		second[0].Should().BeApproximately(0.625f, 1e-6f,
+			"the live preview must run the entire child timeline");
+		(output as IDisposable)?.Dispose();
+	}
+
 	[Test]
 	public void SequenceRequestRendersSampleFromSnapshot()
 	{
