@@ -151,18 +151,10 @@ public static class SampleDocumentEditor
 	public static void UpdateMetadata(
 		DocumentWorkspace workspace,
 		SampleDefinition sample,
-		double referenceFrequencyHz,
 		SampleLoop loop)
 	{
 		ValidateSample(workspace, sample);
 		ArgumentNullException.ThrowIfNull(loop);
-		if (!(referenceFrequencyHz > 0.0)
-			|| double.IsNaN(referenceFrequencyHz)
-			|| double.IsInfinity(referenceFrequencyHz))
-		{
-			throw new ArgumentOutOfRangeException(nameof(referenceFrequencyHz));
-		}
-
 		if (loop.Mode != SampleLoopMode.None
 			&& sample.PcmData is SamplePcmData pcm)
 		{
@@ -176,13 +168,11 @@ public static class SampleDocumentEditor
 			}
 		}
 
-		if (sample.ReferenceFrequencyHz == referenceFrequencyHz
-			&& sample.Loop == loop)
+		if (sample.Loop == loop)
 		{
 			return;
 		}
 
-		sample.ReferenceFrequencyHz = referenceFrequencyHz;
 		sample.Loop = loop;
 		workspace.Document.MarkChanged(affectsAudio: true);
 	}

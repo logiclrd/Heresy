@@ -38,7 +38,6 @@ public sealed class SampleEditorDialog : Window
 	private readonly DocumentWorkspace _workspace;
 	private readonly SampleDefinition _sample;
 	private readonly TextBox _name;
-	private readonly TextBox _referenceFrequency;
 	private readonly ComboBox _loopMode;
 	private readonly TextBox _loopStart;
 	private readonly TextBox _loopEnd;
@@ -69,13 +68,6 @@ public sealed class SampleEditorDialog : Window
 		WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
 		_name = new TextBox { Text = sample.Name };
-		_referenceFrequency =
-			new TextBox
-			{
-				Text = sample.ReferenceFrequencyHz.ToString(
-					"G17",
-					CultureInfo.CurrentCulture),
-			};
 		_loopMode =
 			new ComboBox
 			{
@@ -164,7 +156,6 @@ public sealed class SampleEditorDialog : Window
 		AddFullWidth(form, ref row, _waveformSummary);
 
 		AddField(form, ref row, "Name", _name);
-		AddField(form, ref row, "Reference frequency (Hz)", _referenceFrequency);
 		AddField(form, ref row, "Loop mode", _loopMode);
 		AddField(form, ref row, "Loop start frame", _loopStart);
 		AddField(form, ref row, "Loop end frame (exclusive)", _loopEnd);
@@ -259,15 +250,6 @@ public sealed class SampleEditorDialog : Window
 			if (name.Length == 0)
 				throw new ArgumentException("Sample name must not be empty.");
 
-			if (!double.TryParse(
-				_referenceFrequency.Text,
-				NumberStyles.Float,
-				CultureInfo.CurrentCulture,
-				out double referenceFrequency))
-			{
-				throw new ArgumentException("Reference frequency is not a valid number.");
-			}
-
 			SampleLoop loop =
 				ReadLoopFromFields();
 
@@ -276,7 +258,6 @@ public sealed class SampleEditorDialog : Window
 			SampleDocumentEditor.UpdateMetadata(
 				_workspace,
 				_sample,
-				referenceFrequency,
 				loop);
 			_waveform.SetLoop(loop);
 			PreviewWaveformLoop(loop);
@@ -517,7 +498,6 @@ public sealed class SampleEditorDialog : Window
 			SampleDocumentEditor.UpdateMetadata(
 				_workspace,
 				_sample,
-				_sample.ReferenceFrequencyHz,
 				loop);
 			_loopMode.SelectedItem = loop.Mode;
 			PreviewWaveformLoop(loop);

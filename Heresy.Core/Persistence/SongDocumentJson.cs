@@ -375,7 +375,6 @@ public static class SongDocumentJson
 							sample.Asset?.Sha256
 								?? sample.PendingAsset?.Sha256,
 					};
-				result["referenceFrequencyHz"] = sample.ReferenceFrequencyHz;
 				result["loop"] =
 					JsonSerializer.SerializeToNode(sample.Loop, JsonOptions);
 
@@ -530,10 +529,6 @@ public static class SongDocumentJson
 					SampleDefinition sample =
 						new(id, name, asset)
 						{
-							ReferenceFrequencyHz =
-								RequiredDouble(
-									node,
-									"referenceFrequencyHz"),
 							Loop =
 								DeserializeRequired<SampleLoop>(
 									node,

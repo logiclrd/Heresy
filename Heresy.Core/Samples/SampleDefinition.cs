@@ -57,7 +57,6 @@ public sealed class SampleDefinition : SongObject
 			{
 				PcmData = pcm,
 				PendingAsset = pending,
-				ReferenceFrequencyHz = source.ReferenceFrequencyHz,
 				Loop = source.Loop,
 			};
 		copy.SourceChannelPositions.AddRange(source.SourceChannelPositions);
@@ -143,9 +142,6 @@ public sealed class SampleDefinition : SongObject
 				?? throw new ArgumentNullException(nameof(asset));
 		PendingAsset = null;
 	}
-
-	/// <summary>Frequency represented by an untransposed sample, normally middle C.</summary>
-	public double ReferenceFrequencyHz { get; set; } = 261.6255653005986;
 
 	public SampleLoop Loop { get; set; } = new(SampleLoopMode.None, 0, 0);
 
