@@ -12,6 +12,7 @@ public enum SongTreeSection
 	Patterns,
 	Instruments,
 	Samples,
+	Envelopes,
 }
 
 public static class SongTreeSections
@@ -20,8 +21,9 @@ public static class SongTreeSections
 	[
 		SongTreeSection.Sequences,
 		SongTreeSection.Patterns,
-		SongTreeSection.Instruments,
 		SongTreeSection.Samples,
+		SongTreeSection.Envelopes,
+		SongTreeSection.Instruments,
 	];
 
 	public static string GetName(SongTreeSection section)
