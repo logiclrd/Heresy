@@ -7,7 +7,6 @@ using Heresy.Core.Patterns;
 using Heresy.Core.Sequencing;
 using Heresy.Playback;
 using Heresy.Render.Realtime;
-using Heresy.UserInterface.Playback;
 
 using NUnit.Framework;
 
