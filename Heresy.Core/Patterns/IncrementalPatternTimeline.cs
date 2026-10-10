@@ -931,6 +931,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	private readonly Queue<ActiveTempoRamp> _futureTempoRamps = new();
 	private long _futureTempoOwner = -1;
 	private readonly List<RepeatedTempoSource> _crossTempoSources = [];
+	// After a physical-channel clamp, continue subsequent cross-rate
+	// segments from the exact ordered local-tick result, not a sum
+	// of smooth slopes that could undo the earlier clipping.
+	private bool _crossTempoUseDiscrete;
 	private bool _crossTempoBoundaryPending;
 	private readonly Queue<IncrementalPatternTimelineStep.Emit> _queuedTempoEvents = new();
 	private long _nextSequence;
@@ -1418,6 +1422,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		if (crossInvocationRepeat
 			|| (slides.Count > 1 && slides.Any(x => x.Rate != 1.0)))
 		{
+			_crossTempoUseDiscrete = false;
 			_crossTempoSources.Clear();
 			_crossTempoSources.AddRange(crossSources);
 			RebuildCrossTempoPlan();
@@ -1593,7 +1598,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			.ThenBy(x => x.SourceOrder)
 			.ToArray();
 		if (active.Length == 0)
+		{
+			_crossTempoUseDiscrete = false;
 			return;
+		}
 
 		_futureTempoOwner = active[0].InvocationId;
 		double[] boundaries = active
@@ -1606,6 +1614,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		double startingTick = _tick;
 		double startingTempo = _root.State.Tempo;
 		List<ActiveTempoRamp> segments = [];
+		bool useOrderedClamps = _crossTempoUseDiscrete;
 		for (int i = 0; i < boundaries.Length; i++)
 		{
 			// A repeated T20–TFF set is re-applied at that source's own
@@ -1640,6 +1649,20 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			}
 			double endingTempo = Math.Clamp(
 				startingTempo + slope * (endTick - startingTick), 32, 255);
+			// Ordinary slide envelopes remain smooth and retain their
+			// existing fractional segment endpoints. Near IT clamps,
+			// however, the order of *individual local tracker ticks*
+			// matters: two opposite slides need not cancel at Tempo 32.
+			// Evaluate only the finite current SEy rows (not future
+			// Pattern orders) in mapped physical-channel order.
+			(double steppedTempo, bool clamped) =
+				ResolveOrderedCrossTempoTicks(active,
+					startingTick, endTick, startingTempo);
+			if (clamped || useOrderedClamps)
+				endingTempo = steppedTempo;
+			useOrderedClamps |= clamped;
+			if (i == 0 && useOrderedClamps)
+				_crossTempoUseDiscrete = true;
 			segments.Add(new ActiveTempoRamp(
 				startingTick, endTick, startingTempo, endingTempo,
 				resets.Count == 0 ? null : resets));
@@ -1661,6 +1684,54 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					segments[0].EndTick - segments[0].StartTick)]),
 				_futureTempoOwner);
 		}
+	}
+
+	/// <summary>
+	/// Evaluate the finite local tick changes belonging to the current
+	/// contributors. This only chooses exact clamped endpoints: unclamped
+	/// interpolation remains the ordinary analytic shared-clock ramp.
+	/// At coincident local ticks, mapped physical channel, invocation,
+	/// then raw source order define the same deterministic effect order
+	/// as the common eager tracker processor.
+	/// </summary>
+	private static (double Tempo, bool Clamped) ResolveOrderedCrossTempoTicks(
+		IReadOnlyList<RepeatedTempoSource> sources,
+		double startTick, double endTick, double initialTempo)
+	{
+		var changes = new List<(
+			double Tick, int Channel, long Owner, long Order, byte Parameter)>();
+		foreach (RepeatedTempoSource source in sources)
+		{
+			if (source.Parameter is 0 or >= 0x20)
+				continue;
+			for (int repeat = 0; repeat <= source.Repeats; repeat++)
+			{
+				double origin = source.OriginTick + repeat * source.SharedSpan;
+				for (int local = 1; local < source.Span; local++)
+				{
+					double at = origin + local / source.Rate;
+					if (at <= startTick + TickTolerance
+						|| at > endTick + TickTolerance)
+						continue;
+					changes.Add((at, source.Channel,
+						source.InvocationId, source.SourceOrder, source.Parameter));
+				}
+			}
+		}
+		double tempo = initialTempo;
+		bool clipped = false;
+		foreach (var change in changes.OrderBy(c => c.Tick)
+			.ThenBy(c => c.Channel).ThenBy(c => c.Owner)
+			.ThenBy(c => c.Order))
+		{
+			int step = (change.Parameter < 0x10 ? -1 : 1)
+				* (change.Parameter & 0x0F);
+			if (tempo + step < 32 || tempo + step > 255)
+				clipped = true;
+			tempo = PatternNoteProcessor.ResolveTrackerTempoAtTick(
+				tempo, change.Parameter, firstTick: false);
+		}
+		return (tempo, clipped);
 	}
 
 	// Match the eager processor's equal-wall-time note ordering:
@@ -1781,6 +1852,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		_futureTempoRamps.Clear();
 		_futureTempoOwner = -1;
 		_crossTempoSources.Clear();
+		_crossTempoUseDiscrete = false;
 		_crossTempoBoundaryPending = false;
 		_tempoRamp = new ActiveTempoRamp(
 			_tick, _tick + ramp.TrackerTicks, _root.State.Tempo, ramp.EndingTempo);
