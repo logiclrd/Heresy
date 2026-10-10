@@ -44,6 +44,7 @@ internal sealed class PreparedRecursiveMixdownSound :
 	private readonly Func<double, double, PrivateRecursivePlayback> _reconstruct;
 	private double _pitchMultiplier = 1.0;
 	private double _playbackSpeedMultiplier = 1.0;
+	private NestedState? _boundState;
 	private PrivateRecursivePlayback _playback;
 	private readonly int _sampleRate;
 	private readonly int _channels;
@@ -95,7 +96,24 @@ internal sealed class PreparedRecursiveMixdownSound :
 			_playbackSpeedMultiplier = playbackSpeedMultiplier;
 			_observedEndFrame = -1;
 		}
-		return new SoundInvocation(this, CreateState(), SnapshotNoteConfiguration());
+		NestedState state = new();
+		_boundState = state;
+		BindParentPitch();
+		return new SoundInvocation(this, state, SnapshotNoteConfiguration());
+	}
+
+	/// <summary>Pass the parent's live pitch trajectory to each child voice,
+	/// not to the completed mixdown or the child's tracker Tempo. The
+	/// native source-frame map subtracts Oxx and resets its playback
+	/// origin at Qxy; skipped frames precede note time zero.</summary>
+	private void BindParentPitch()
+	{
+		_playback.Session.InheritedPitchAtFrame = _boundState is { } state
+			? sourceFrame => state.PitchTrajectory.GetMultiplier(
+				Math.Max(0, checked(state.PlaybackOriginFrame
+					+ sourceFrame - state.SourceFrameOffset
+					- FrameTime.Ceiling(state.PlaybackOffset, _sampleRate))))
+			: null;
 	}
 
 	public void SetSourceFrameOffset(SoundState state, long sourceFrameOffset)
@@ -195,6 +213,7 @@ internal sealed class PreparedRecursiveMixdownSound :
 				_pitchMultiplier, _playbackSpeedMultiplier);
 			_playback.Dispose();
 			_playback = fresh;
+			BindParentPitch();
 			_renderOriginFrame = origin;
 			_observedEndFrame = -1;
 		}
