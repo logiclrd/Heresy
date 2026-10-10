@@ -147,10 +147,12 @@ public sealed class DocumentOpenWorkflowTests
 			Path.GetTempPath(), $"heresy-open-missing-{Guid.NewGuid():N}.hm.json");
 
 		Assert.ThrowsAsync<FileNotFoundException>(async () =>
+		{
 			await DocumentOpenWorkflow.TryOpenAsync(
 				() => Task.FromResult<string?>(missing),
 				() => Task.FromResult(true),
-				workspace.Open));
+				workspace.Open);
+		});
 
 		Assert.Multiple(() =>
 		{

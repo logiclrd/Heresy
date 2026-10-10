@@ -5,7 +5,6 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 
-using Heresy.UserInterface.Documents;
 
 namespace Heresy.UserInterface.Dialogs;
 
@@ -23,33 +22,10 @@ public sealed class UnsavedChangesDialog : Window
 		WindowStartupLocation =
 			WindowStartupLocation.CenterOwner;
 
-		Button cancel =
-			new()
-			{
-				Content = "Cancel",
-				MinWidth = 90,
-			};
-		cancel.Click += (_, _) =>
-			Close(UnsavedChangesChoice.Cancel);
-
-		Button no =
-			new()
-			{
-				Content = "No",
-				MinWidth = 90,
-			};
-		no.Click += (_, _) =>
-			Close(UnsavedChangesChoice.Discard);
-
-		Button yes =
-			new()
-			{
-				Content = "Yes",
-				MinWidth = 90,
-			};
-		yes.Click += (_, _) =>
-			Close(UnsavedChangesChoice.Save);
-		DialogActionLayout.ConfigureButtons(yes, cancel);
+		// The access keys (_Yes / _No / _Cancel), Enter/Escape roles,
+		// and left-to-right order share one headless-testable definition.
+		Button[] actions = UnsavedChangesDialogActions.Create(
+			choice => Close(choice));
 
 		StackPanel buttons =
 			new()
@@ -60,9 +36,8 @@ public sealed class UnsavedChangesDialog : Window
 					HorizontalAlignment.Right,
 				Spacing = 8,
 			};
-		buttons.Children.Add(cancel);
-		buttons.Children.Add(no);
-		buttons.Children.Add(yes);
+		foreach (Button action in actions)
+			buttons.Children.Add(action);
 
 		Content =
 			DialogActionLayout.Create(

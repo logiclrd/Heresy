@@ -543,15 +543,35 @@ public sealed class MainWindow : Window
 
 	private async Task OpenDocumentAsync()
 	{
-		if (!await ConfirmCanReplaceDocumentAsync())
-			return;
-
 		if (!StorageProvider.CanOpen)
 		{
 			SetStatus("This platform does not provide an open-file picker.");
 			return;
 		}
 
+		try
+		{
+			// Picker-first: canceling the picker never prompts the user to
+			// save. Once a usable path exists, the same guard as New/Exit
+			// protects the current document before the load begins.
+			await DocumentOpenWorkflow.TryOpenAsync(
+				SelectDocumentPathAsync,
+				ConfirmCanReplaceDocumentAsync,
+				path =>
+				{
+					_workspace.Open(path);
+					RefreshDocumentView($"Opened {_workspace.DisplayName}");
+				});
+		}
+		catch (Exception ex)
+		{
+			// TODO: offer an asset-recovery flow for missing .hm.json files.
+			SetStatus($"Open failed: {ex.Message}");
+		}
+	}
+
+	private async Task<string?> SelectDocumentPathAsync()
+	{
 		IReadOnlyList<IStorageFile> files =
 			await StorageProvider.OpenFilePickerAsync(
 				new FilePickerOpenOptions
@@ -562,26 +582,16 @@ public sealed class MainWindow : Window
 				});
 
 		if (files.Count == 0)
-			return;
+			return null;
 
 		string? path = files[0].TryGetLocalPath();
 		if (path is null)
 		{
 			SetStatus("The selected file does not expose a local filesystem path.");
-			return;
+			return null;
 		}
 
-		try
-		{
-			_workspace.Open(path);
-			RefreshDocumentView($"Opened {_workspace.DisplayName}");
-		}
-		catch (Exception ex)
-		{
-			// TODO: when a .hm.json asset cannot be resolved, offer a workflow
-			// for locating replacement files/directories and retry the load.
-			SetStatus($"Open failed: {ex.Message}");
-		}
+		return path;
 	}
 
 	private async Task<bool> SaveDocumentAsync()

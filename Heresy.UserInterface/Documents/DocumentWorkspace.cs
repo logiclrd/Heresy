@@ -50,11 +50,15 @@ public sealed class DocumentWorkspace
 		string fullPath = Path.GetFullPath(path);
 		SongDocument document = SongDocumentStorage.Load(fullPath);
 
-		Document = document;
-		FilePath = fullPath;
-		JsonPathMode = SongDocumentStorage.IsJsonPath(fullPath)
+		// Decode/load and resolve the persisted path mode *before*
+		// changing the active workspace. A failed load leaves the old
+		// document, dirty state, path and save preference intact.
+		JsonAssetPathMode? mode = SongDocumentStorage.IsJsonPath(fullPath)
 			? SongDocumentStorage.DetectJsonPathMode(fullPath)
 			: null;
+		Document = document;
+		FilePath = fullPath;
+		JsonPathMode = mode;
 		_savedDocumentRevision = document.DocumentRevision;
 	}
 
