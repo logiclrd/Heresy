@@ -933,13 +933,33 @@ public sealed class FmSynthEditorControl : UserControl
 			return;
 		}
 
+		if (_workspace.Document.TryGet(
+			node.EnvelopeId, out SongObject? scriptObject)
+			&& scriptObject is ScriptEnvelopeDefinition scripted)
+		{
+			_inspector.Children.Add(new TextBlock
+			{
+				Text = "Script Envelope (shared object)",
+				FontWeight = FontWeight.SemiBold,
+			});
+			_inspector.Children.Add(new ScriptEnvelopeEditorControl(
+				_workspace, scripted,
+				() => SelectNode(node.Id),
+				message =>
+				{
+					_message.Text = message;
+					_changed(message);
+				}));
+			return;
+		}
+
 		if (!_workspace.Document.TryGet(
 			node.EnvelopeId, out SongObject? selected)
 			|| selected is not AdsrEnvelopeDefinition adsr)
 		{
 			_inspector.Children.Add(new TextBlock
 			{
-				Text = $"Envelope <{node.EnvelopeId.Value}> is missing or is not an editable ADSR envelope.",
+				Text = $"Envelope <{node.EnvelopeId.Value}> is missing or is not a supported Envelope type.",
 				TextWrapping = TextWrapping.Wrap,
 			});
 			return;
