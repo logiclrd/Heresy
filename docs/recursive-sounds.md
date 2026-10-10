@@ -29,10 +29,17 @@
   private mixdowns and Instrument-selected recursive tones support
   initial pitch/playback-speed composition and deterministic seeking.
 - Advanced mixed-rate tracker timing, complex script interactions and
-  unusual native seeks remain separate compatibility TODOs. The
-  original flattened-source ownership work and baseline recursive
-  playback are **complete**. The bounded runtime/editor hints for
-  costly ReplayRequired Oxx/Qxy seeks are also implemented.
+  pitch-modulated Instrument/private seek automation remain separate
+  compatibility TODOs. Baseline recursive playback, flattened ownership
+  and **Oxx/Qxy native-frame seeking across private invocation boundaries**
+  are covered by production-factory regressions. The latter exercise
+  independently clocked nested Patterns/Sequences, selected Instrument
+  tones, offsets that pass finite child boundaries, O00 memory across
+  repeated Sequence order visits, Q01 tick-boundary replay, and
+  realtime/offline PCM parity at different render chunk sizes. Rewinds
+  continue to reconstruct generators on the same PCM worker; no event
+  journal or PCM history is retained. The runtime/editor performance
+  hints for costly ReplayRequired Oxx/Qxy seeks remain advisory.
   See [source-seek hints](source-seek-hints.md).
 
 ---
