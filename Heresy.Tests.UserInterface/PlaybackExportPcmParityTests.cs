@@ -52,6 +52,11 @@ public sealed class PlaybackExportPcmParityTests
 		=> AssertParity(CreateRecursiveSong(scriptChild: false,
 			instrumentChild: true), channels, 1000);
 
+	[TestCase(1)]
+	[TestCase(6)]
+	public void ScriptVirtualLifecycleMatchesRealtimeAndOfflinePcm(int channels)
+		=> AssertParity(CreateScriptVirtualSong(), channels, 1000);
+
 	private static void AssertParity(SongDocument document,
 		int channels, int sampleRate)
 	{
@@ -190,6 +195,37 @@ public sealed class PlaybackExportPcmParityTests
 		DataSequenceDefinition sequence = new(sequenceId, "Root");
 		sequence.Entries.Add(new SequenceEntry(parentId));
 		document.Add(sequence);
+		document.RootSequenceId = sequenceId;
+		return document;
+	}
+
+	private static SongDocument CreateScriptVirtualSong()
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		document.Add(new SampleDefinition(sample, "Memory PCM",
+			new ExternalAssetReference(Path.Combine(Path.GetTempPath(),
+				$"heresy-virtual-parity-{sample.Value}.wav"))));
+
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new ScriptPatternDefinition(childId, "Virtual scripted notes")
+		{
+			RowCount = 3, ChannelCount = 1,
+			Source = $"""
+				NoteVirtual(0, 7U, _O({sample.Value}));
+				NoteVirtual(0, 8U, _O({sample.Value}));
+				CutVirtual(0.5, 7U);
+				NoteVirtual(1, 9U, _O({sample.Value}));
+				OffVirtualInScope(1.5);
+				NoteVirtual(1.75, 10U, _O({sample.Value}));
+				CutAllVirtual(2.25);
+				""",
+		});
+
+		ObjectId sequenceId = document.AllocateObjectId();
+		DataSequenceDefinition root = new(sequenceId, "Virtual root");
+		root.Entries.Add(new SequenceEntry(childId));
+		document.Add(root);
 		document.RootSequenceId = sequenceId;
 		return document;
 	}
