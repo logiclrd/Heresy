@@ -29,7 +29,8 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 	private readonly Action? _repeatRoot;
 	private readonly Func<NoteEvent, long, long, NoteEvent>? _transform;
 	private readonly Action? _afterRender;
-	private readonly HashSet<long> _canceledOwners = [];
+	// Only one event may be prefetched. Cancellation invalidates it by
+	// actual Pattern cursor ID rather than retaining a growing tombstone set.
 	// The timeline can retire a just-started child while it is still
 	// transforming the same NoteEvent (Start followed by Cut/Off).
 	// The renderer must apply the event's Begin command *before* retiring
@@ -130,14 +131,23 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		if (!_timeline.IsInvocationActive(invocationId))
 			return false;
-		List<long> removed = [];
-		if (!_timeline.Cancel(invocationId, removed))
+		List<long> canceledCursors = [];
+		if (!_timeline.Cancel(invocationId, null, canceledCursors))
 			return false;
-		foreach (long owner in removed)
-		{
-			_canceledOwners.Add(owner);
-			_session.CancelScopedVoices(owner);
-		}
+		foreach (long cursor in canceledCursors)
+			_session.CancelScopedVoices(cursor);
+		// PendingEvent.Owner and scoped virtual channels both refer to
+		// Pattern cursor IDs, not recursively nested invocation frame IDs.
+		// Once a cursor is canceled, its sole prefetched event must never
+		// be delivered, even when other roots remain active at that frame.
+		if (_pendingEvent is { } pending
+			&& canceledCursors.Contains(pending.Owner))
+			_pendingEvent = null;
+		if (_deferredStep is IncrementalPatternTimelineStep.Cooperate cooperation
+			&& canceledCursors.Contains(cooperation.InvocationId)
+			|| _deferredStep is IncrementalPatternTimelineStep.Flow flow
+				&& canceledCursors.Contains(flow.InvocationId))
+			_deferredStep = null;
 		FlushRetiredScopes();
 		return true;
 	}
@@ -233,15 +243,12 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 				_pendingEvent = null;
 				try
 				{
-					if (!_canceledOwners.Contains(next.Owner))
-					{
-						_validateNote?.Invoke(next.Note);
-						NoteEvent note = _transform?.Invoke(next.Note, now, next.Owner)
-							?? next.Note;
-						_session.ApplyScopedEvent(
-							next.Owner, note.Target, note.Commands,
-							note.PhysicalPlaybackOwner);
-					}
+					_validateNote?.Invoke(next.Note);
+					NoteEvent note = _transform?.Invoke(next.Note, now, next.Owner)
+						?? next.Note;
+					_session.ApplyScopedEvent(
+						next.Owner, note.Target, note.Commands,
+						note.PhysicalPlaybackOwner);
 				}
 				finally
 				{
