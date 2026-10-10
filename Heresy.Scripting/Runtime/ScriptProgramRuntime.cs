@@ -159,35 +159,10 @@ public abstract class PatternScriptProgram
 	{
 		ValidateRow(row);
 		ValidateChannel(channel);
-		if (sourceId.IsNone)
-			throw new ArgumentOutOfRangeException(nameof(sourceId));
-		ValidatePositiveFinite(
-			pitchMultiplier,
-			nameof(pitchMultiplier));
-		ValidatePositiveFinite(
-			playbackSpeedMultiplier,
-			nameof(playbackSpeedMultiplier));
-		if (volume.HasValue
-			&& (double.IsNaN(volume.Value)
-				|| double.IsInfinity(volume.Value)
-				|| volume.Value < 0.0
-				|| volume.Value > 1.0))
-		{
-			throw new ArgumentOutOfRangeException(nameof(volume));
-		}
-
-		Append(
-			row,
-			ChannelTarget.Physical(channel),
-			new StartNoteCommand(
-				sourceId,
-				pitchMultiplier,
-				playbackSpeedMultiplier,
-				mixdown,
-				volume),
-			timeOffsetSeconds);
+		AppendNoteStart(row, ChannelTarget.Physical(channel),
+			sourceId, pitchMultiplier, playbackSpeedMultiplier,
+			mixdown, volume, timeOffsetSeconds);
 	}
-
 
 	/// <summary>
 	/// Start one invocation-scoped virtual voice. Its id is independent of
@@ -204,6 +179,21 @@ public abstract class PatternScriptProgram
 		double timeOffsetSeconds = 0.0)
 	{
 		ValidateRow(row);
+		AppendNoteStart(row, ChannelTarget.Virtual(virtualId),
+			sourceId, pitchMultiplier, playbackSpeedMultiplier,
+			mixdown, volume, timeOffsetSeconds);
+	}
+
+	private void AppendNoteStart(
+		double row,
+		ChannelTarget target,
+		ObjectId sourceId,
+		double pitchMultiplier,
+		double playbackSpeedMultiplier,
+		bool mixdown,
+		double? volume,
+		double timeOffsetSeconds)
+	{
 		if (sourceId.IsNone)
 			throw new ArgumentOutOfRangeException(nameof(sourceId));
 		ValidatePositiveFinite(pitchMultiplier, nameof(pitchMultiplier));
@@ -216,7 +206,8 @@ public abstract class PatternScriptProgram
 		{
 			throw new ArgumentOutOfRangeException(nameof(volume));
 		}
-		Append(row, ChannelTarget.Virtual(virtualId),
+
+		Append(row, target,
 			new StartNoteCommand(sourceId, pitchMultiplier,
 				playbackSpeedMultiplier, mixdown, volume),
 			timeOffsetSeconds);
