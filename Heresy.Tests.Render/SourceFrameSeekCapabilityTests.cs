@@ -159,6 +159,55 @@ public sealed class SourceFrameSeekCapabilityTests
 	}
 
 	[Test]
+	public void ScopedVirtualNativeFrameSeekUsesTheSameCapabilityAndCostHints()
+	{
+		ObjectId id = (ObjectId)10U;
+		SeekableContractSound sound =
+			new(SourceFrameSeekCost.ReplayRequired);
+		PlaybackSession session = Session(Schedule(),
+			new ContractResolver(id, sound, sound));
+		List<(string Operation, long Frame)> hints = [];
+		session.ReplayRequiredSeekObserved =
+			(operation, frame) => hints.Add((operation, frame));
+
+		session.ApplyScopedEvent(42, ChannelTarget.Virtual(7),
+			[new StartNoteCommand(id)]);
+		session.ApplyScopedEvent(42, ChannelTarget.Virtual(7),
+			[new SetSourceFrameOffsetCommand(512)]);
+		Assert.Multiple(() =>
+		{
+			Assert.That(sound.LastSourceFrameOffset, Is.EqualTo(512));
+			Assert.That(hints,
+				Is.EqualTo(new[] { ("Script virtual native offset", 512L) }));
+		});
+
+		// A zero offset is still applied, without an expensive-seek hint.
+		session.ApplyScopedEvent(42, ChannelTarget.Virtual(7),
+			[new SetSourceFrameOffsetCommand(0)]);
+		Assert.Multiple(() =>
+		{
+			Assert.That(sound.LastSourceFrameOffset, Is.Zero);
+			Assert.That(hints, Has.Count.EqualTo(1));
+		});
+	}
+
+	[Test]
+	public void VirtualNativeSeekOfNonSeekableCurrentSoundIsHarmless()
+	{
+		ObjectId id = (ObjectId)10U;
+		ContractSound plain = new();
+		PlaybackSession session = Session(Schedule(),
+			new ContractResolver(id, plain, plain));
+		session.ApplyScopedEvent(1, ChannelTarget.Virtual(0),
+			[new StartNoteCommand(id)]);
+		Assert.DoesNotThrow(() => session.ApplyScopedEvent(
+			1, ChannelTarget.Virtual(0),
+			[new SetSourceFrameOffsetCommand(1024)]));
+		session.Render(0, 1, new float[1]);
+		Assert.That(plain.RenderCallCount, Is.EqualTo(1));
+	}
+
+	[Test]
 	public void SampleSoundReportsDirectSourceFrameSeeking()
 	{
 		SampleSound sound = new(
