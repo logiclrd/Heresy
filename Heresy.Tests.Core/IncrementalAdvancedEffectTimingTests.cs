@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
+using Heresy.Core.Envelopes;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequencing;
@@ -306,6 +307,63 @@ public sealed class IncrementalAdvancedEffectTimingTests
             Assert.That(notes.Single(n => n.Offset.TimeOffset
                     == TimeSpan.FromMilliseconds(90)).Target,
                 Is.EqualTo(ChannelTarget.Virtual(7)));
+        });
+    }
+
+    [Test]
+    public void DelayedEnvelopeControlsResolveAtWallDeadlineIncludingDualPitchFilterSlot()
+    {
+        SequencingContext root = new();
+        using IncrementalPatternTimeline timeline = new(root);
+        timeline.Add(new RawSource(
+            At(0, 0, new StartNoteCommand((ObjectId)10U)),
+            At(0, TimeSpan.FromMilliseconds(20), 0,
+                new ApplyTrackerEnvelopeControlCommand(
+                    TrackerEnvelopeControlTarget.Volume, false)),
+            At(0, TimeSpan.FromMilliseconds(25), 0,
+                new ApplyTrackerEnvelopeControlCommand(
+                    TrackerEnvelopeControlTarget.PitchOrFilter, false)),
+            At(0, TimeSpan.FromMilliseconds(50), 0,
+                new SetEnvelopeEnabledCommand(EnvelopeTarget.Volume, true)),
+            // This is authored earlier than the 80-ms action but starts later
+            // than the other row-zero events: at 60 ms on the normal clock.
+            At(0, TimeSpan.FromMilliseconds(80), 0,
+                new ApplyTrackerEnvelopeControlCommand(
+                    TrackerEnvelopeControlTarget.Volume, true)),
+            At(0.5, 0, new StartNoteCommand((ObjectId)11U))), 2, root);
+
+        NoteEvent[] emitted = Drain(timeline);
+        Assert.That(emitted.Select(e => e.Offset.TimeOffset),
+            Is.EqualTo(new[]
+            {
+                TimeSpan.Zero,
+                TimeSpan.FromMilliseconds(20),
+                TimeSpan.FromMilliseconds(25),
+                TimeSpan.FromMilliseconds(50),
+                TimeSpan.FromMilliseconds(60),
+                TimeSpan.FromMilliseconds(80),
+            }));
+        Assert.Multiple(() =>
+        {
+            Assert.That(emitted[1].Commands, Is.EqualTo(new NoteCommand[]
+            {
+                new SetEnvelopeEnabledCommand(EnvelopeTarget.Volume, false),
+            }));
+            Assert.That(emitted[2].Commands, Is.EqualTo(new NoteCommand[]
+            {
+                new SetEnvelopeEnabledCommand(EnvelopeTarget.Pitch, false),
+                new SetEnvelopeEnabledCommand(EnvelopeTarget.Filter, false),
+            }), "Shared tracker pitch/filter slot must preserve both targets.");
+            Assert.That(emitted[3].Commands, Is.EqualTo(new NoteCommand[]
+            {
+                new SetEnvelopeEnabledCommand(EnvelopeTarget.Volume, true),
+            }), "Already-semantic envelope commands must be schedulable.");
+            Assert.That(emitted[4].Commands.OfType<StartNoteCommand>()
+                .Single().SourceId, Is.EqualTo((ObjectId)11U));
+            Assert.That(emitted[5].Commands, Is.EqualTo(new NoteCommand[]
+            {
+                new SetEnvelopeEnabledCommand(EnvelopeTarget.Volume, true),
+            }), "The latest action must reach the voice currently present.");
         });
     }
 
