@@ -126,6 +126,7 @@ public sealed class MainWindow : Window
 	private bool _closeApproved;
 	private bool _closePromptInProgress;
 	private CancellationTokenSource? _exportCancellation;
+	private bool _renderAudioPending;
 
 	public MainWindow()
 		: this(new DocumentWorkspace(), null, null) { }
@@ -595,6 +596,24 @@ public sealed class MainWindow : Window
 	}
 
 	private async Task RenderAudioAsync()
+	{
+		if (_renderAudioPending)
+		{
+			SetStatus("An audio export is already being prepared or rendered.");
+			return;
+		}
+		_renderAudioPending = true;
+		try
+		{
+			await RenderAudioCoreAsync();
+		}
+		finally
+		{
+			_renderAudioPending = false;
+		}
+	}
+
+	private async Task RenderAudioCoreAsync()
 	{
 		if (_exportCancellation is not null)
 		{
