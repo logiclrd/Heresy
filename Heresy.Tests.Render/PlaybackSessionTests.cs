@@ -3,11 +3,14 @@ using System.Collections.Generic;
 using System.Numerics;
 
 using Heresy.Core.Assets;
+using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
 using Heresy.Core.Samples;
 using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
 using Heresy.Render.Configuration;
+using Heresy.Render.Envelopes;
+using Heresy.Render.FmSynthesis;
 using Heresy.Render.Playback;
 using Heresy.Render.Samples;
 using Heresy.Render.Sounds;
@@ -1339,5 +1342,41 @@ public sealed class PlaybackSessionTests
 			new TestResolver());
 		session.Render(0, 1, new float[1]);
 		Assert.That(session.GetChannelState(0).CurrentVoice, Is.Null);
+	}
+	[Test]
+	public void FmFrequencyAssignmentMatchesEquivalentInitialPitch()
+	{
+		ObjectId id = (ObjectId)10U;
+		FmSynthSound synth = new(
+			new FmSynthGraph([
+				new FmOscillatorNode(1, FmOscillatorWaveform.Sine,
+					frequencyHz: 37.0),
+			], outputNodeId: 1),
+			new EmptyEnvelopeResolver());
+		PlaybackSession original = Session(1000,
+			Schedule(Event(TimeSpan.Zero, 0,
+				new StartNoteCommand(id, PitchMultiplier: 2.0))),
+			new TestResolver((id, false, synth)));
+		PlaybackSession assigned = Session(1000,
+			Schedule(Event(TimeSpan.Zero, 0,
+				new StartNoteCommand(id, PitchMultiplier: 3.0,
+					PlaybackSpeedMultiplier: 2.0),
+				new SetPlaybackFrequencyCommand(
+					SequencingConstants.ReferenceC4FrequencyHz * 2))),
+			new TestResolver((id, false, synth)));
+		float[] expected = new float[45], actual = new float[45];
+		original.Render(0, expected.Length, expected);
+		assigned.Render(0, actual.Length, actual);
+		Assert.That(actual, Is.EqualTo(expected).Within(1e-5f));
+		Assert.That(actual[1], Is.Not.EqualTo(0.0f).Within(1e-5f));
+	}
+
+	private sealed class EmptyEnvelopeResolver : IEnvelopeCurveResolver
+	{
+		public bool TryResolve(ObjectId id, out IEnvelopeCurve? curve)
+		{
+			curve = null;
+			return false;
+		}
 	}
 }

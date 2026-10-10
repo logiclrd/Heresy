@@ -8,6 +8,7 @@ using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Samples;
+using Heresy.Core.Timing;
 using Heresy.Playback;
 using Heresy.Render.Configuration;
 
@@ -214,6 +215,86 @@ public sealed class PrivatePitchInheritanceTests
 		Assert.That(actual[30], Is.GreaterThan(0.01f));
 		Assert.That(actual[181], Is.GreaterThan(0),
 			"The row-one Q03 must restart the private child's sample.");
+	}
+
+
+	[TestCase(false, 0.5, 2.0)]
+	[TestCase(false, 2.0, 2.0)]
+	[TestCase(false, 0.5, 0.5)]
+	[TestCase(true, 2.0, 0.5)]
+	public void FrequencyWithinRecursiveSourcesMatchesLocalInitialPitch(
+		bool privateOuter, double outerPitch, double innerPitch)
+	{
+		SongDocument doc = new();
+		ObjectId pcm = AddSample(doc);
+		ObjectId leafId = AddPattern(doc, "Leaf", 2);
+		PatternCell leaf = ((DataPatternDefinition)doc.Objects[leafId])
+			.Grid.GetOrCreateCell(0, 0);
+		leaf.Note = new StartPatternNote(pcm, pitchMultiplier: 3.0);
+		leaf.Effects.Add(new SetPlaybackFrequencyPatternEffect(
+			SequencingConstants.ReferenceC4FrequencyHz * 2));
+		ObjectId middleId = AddPattern(doc, "Middle", 2);
+		((DataPatternDefinition)doc.Objects[middleId])
+			.Grid.GetOrCreateCell(0, 0).Note =
+				new StartPatternNote(leafId, pitchMultiplier: innerPitch);
+		ObjectId rootId = AddPattern(doc, "Root", 2);
+		((DataPatternDefinition)doc.Objects[rootId])
+			.Grid.GetOrCreateCell(0, 0).Note =
+				new StartPatternNote(middleId, pitchMultiplier: outerPitch,
+					mixdown: privateOuter);
+		PreparedIncrementalPlaybackFactory factory = new(Mono());
+		using PreparedIncrementalPlaybackPlan assigned = factory.Create(doc, rootId);
+		using PreparedIncrementalPlaybackPlan splitPlan = factory.Create(doc, rootId);
+		leaf.Note = new StartPatternNote(pcm, pitchMultiplier: 2.0);
+		leaf.Effects.Clear();
+		using PreparedIncrementalPlaybackPlan initial = factory.Create(doc, rootId);
+		float[] reference = new float[95], actual = new float[95], pieces = new float[95];
+		initial.Source.Render(reference.Length, reference);
+		assigned.Source.Render(actual.Length, actual);
+		int[] blocks = [1, 7, 3, 11];
+		for (int frame = 0, n = 0; frame < pieces.Length; n++)
+		{
+			int length = Math.Min(blocks[n % blocks.Length], pieces.Length - frame);
+			splitPlan.Source.Render(length, pieces.AsSpan(frame, length));
+			frame += length;
+		}
+		Assert.Multiple(() =>
+		{
+			Assert.That(reference[20], Is.GreaterThan(0.001f));
+			Assert.That(actual, Is.EqualTo(reference).Within(2e-5f),
+				"Ancestor pitch must be composed once for a local frequency assignment.");
+			Assert.That(pieces, Is.EqualTo(actual).Within(1e-6f));
+		});
+	}
+
+	[Test]
+	public void AbsoluteFrequencyDoesNotReselectInstrumentTone()
+	{
+		SongDocument doc = new();
+		ObjectId rising = AddSample(doc);
+		ObjectId negative = AddSample(doc, constant: -10000);
+		ObjectId instrumentId = doc.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Tone identity");
+		instrument.ToneSpecifications.Add(new ToneSpecification { SourceId = rising });
+		instrument.ToneSpecifications.Add(new ToneSpecification { SourceId = negative });
+		for (int i = 0; i <= 12; i++)
+			instrument.ToneTable.Add(i == 12 ? 1 : 0);
+		doc.Add(instrument);
+		ObjectId rootId = AddPattern(doc, "Root", 2);
+		PatternCell cell = ((DataPatternDefinition)doc.Objects[rootId])
+			.Grid.GetOrCreateCell(0, 0);
+		cell.Note = new StartPatternNote(instrumentId);
+		PreparedIncrementalPlaybackFactory factory = new(Mono());
+		using PreparedIncrementalPlaybackPlan baseline = factory.Create(doc, rootId);
+		cell.Effects.Add(new SetPlaybackFrequencyPatternEffect(
+			SequencingConstants.ReferenceC4FrequencyHz * 2));
+		using PreparedIncrementalPlaybackPlan adjusted = factory.Create(doc, rootId);
+		float[] oldPcm = new float[45], newPcm = new float[45];
+		baseline.Source.Render(oldPcm.Length, oldPcm);
+		adjusted.Source.Render(newPcm.Length, newPcm);
+		Assert.That(newPcm[20], Is.GreaterThan(oldPcm[20] * 1.9f));
+		Assert.That(newPcm[20], Is.GreaterThan(0.0f),
+			"Changing frequency must not select the alternative negative tone.");
 	}
 
 	private static RenderConfiguration Mono()
