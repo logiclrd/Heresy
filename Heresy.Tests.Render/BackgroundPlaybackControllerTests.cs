@@ -149,6 +149,41 @@ public sealed class BackgroundPlaybackControllerTests
 		request.Snapshot.Document.Should().NotBeSameAs(document);
 	}
 
+	[Test]
+	public async Task SessionHealthCountersAndFaultsAreSnapshotAndResetAtStop()
+	{
+		RecordingFactory factory = new();
+		TestBackend backend = new();
+		using BackgroundPlaybackController controller = new(backend, factory);
+		SongDocument document = new();
+
+		await controller.PlayAsync(SequencePlaybackRequest.Create(
+			document, (ObjectId)1U));
+		PlaybackAudioHealthSnapshot first = controller.GetAudioHealth();
+		first.IsActive.Should().BeTrue();
+		first.UnderrunCount.Should().Be(0);
+		backend.Opened[0].SetUnderruns(4);
+		backend.Opened[0].SetFault(new InvalidOperationException("Render broke"));
+		PlaybackAudioHealthSnapshot updated = controller.GetAudioHealth();
+		updated.SessionId.Should().Be(first.SessionId);
+		updated.UnderrunCount.Should().Be(4);
+		updated.Fault.Should().BeOfType<InvalidOperationException>();
+
+		await controller.StopAsync();
+		PlaybackAudioHealthSnapshot stopped = controller.GetAudioHealth();
+		stopped.IsActive.Should().BeFalse();
+		stopped.SessionId.Should().BeGreaterThan(first.SessionId);
+		stopped.Fault.Should().BeNull();
+
+		await controller.PlayAsync(SequencePlaybackRequest.Create(
+			document, (ObjectId)2U));
+		PlaybackAudioHealthSnapshot second = controller.GetAudioHealth();
+		second.IsActive.Should().BeTrue();
+		second.SessionId.Should().BeGreaterThan(stopped.SessionId);
+		second.UnderrunCount.Should().Be(0);
+		second.Fault.Should().BeNull();
+	}
+
 	private sealed class RecordingFactory
 		: IBackgroundPlaybackSourceFactory
 	{
@@ -216,14 +251,22 @@ public sealed class BackgroundPlaybackControllerTests
 		}
 	}
 
-	private sealed class TestSession : IAudioOutputSession
+	private sealed class TestSession :
+		IAudioOutputSession, IAudioOutputUnderrunCounter
 	{
 		public TestSession(AudioOutputFormat format)
 			=> Format = format;
 
 		public AudioOutputFormat Format { get; }
 		public bool IsRunning => Started && !Stopped;
-		public Exception? Fault => null;
+		private long _underruns;
+		private Exception? _fault;
+		public long UnderrunCount => Interlocked.Read(ref _underruns);
+		public Exception? Fault => Volatile.Read(ref _fault);
+		public void SetUnderruns(long count) =>
+			Interlocked.Exchange(ref _underruns, count);
+		public void SetFault(Exception fault) =>
+			Volatile.Write(ref _fault, fault);
 		public bool Started { get; private set; }
 		public bool Stopped { get; private set; }
 		public bool Disposed { get; private set; }

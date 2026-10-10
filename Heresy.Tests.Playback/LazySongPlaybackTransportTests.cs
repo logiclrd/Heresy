@@ -88,11 +88,45 @@ public sealed class LazySongPlaybackTransportTests
 		received.Should().ContainSingle();
 	}
 
+	[Test]
+	public async Task HealthSubscriberSurvivesLazyCreationAndCanBeRemoved()
+	{
+		int created = 0;
+		ProbeTransport? probe = null;
+		using LazySongPlaybackTransport lazy = new(() =>
+		{
+			created++;
+			probe = new ProbeTransport();
+			return probe;
+		});
+		List<PlaybackAudioHealthChangedEventArgs> received = [];
+		EventHandler<PlaybackAudioHealthChangedEventArgs> handler =
+			(_, e) => received.Add(e);
+		((IPlaybackAudioHealthTransport)lazy).AudioHealthChanged += handler;
+		created.Should().Be(0);
+		await lazy.PlayPatternAsync(new SongDocument(), (ObjectId)1U);
+		probe!.EmitHealth();
+		received.Should().ContainSingle();
+		received[0].UnderrunCount.Should().Be(2);
+
+		((IPlaybackAudioHealthTransport)lazy).AudioHealthChanged -= handler;
+		probe.EmitHealth();
+		received.Should().ContainSingle();
+	}
+
 	private sealed class ProbeTransport
-		: ISongPlaybackTransport, IPlaybackRuntimeDiagnosticsTransport
+		: ISongPlaybackTransport, IPlaybackRuntimeDiagnosticsTransport,
+			IPlaybackAudioHealthTransport
 	{
 		public event EventHandler<PlaybackRuntimeDiagnosticsEventArgs>?
 			RuntimeDiagnostics;
+		public event EventHandler<PlaybackAudioHealthChangedEventArgs>?
+			AudioHealthChanged;
+		public void EmitHealth()
+			=> AudioHealthChanged?.Invoke(this,
+				new PlaybackAudioHealthChangedEventArgs(
+					new PlaybackAudioHealthSnapshot(7, true, 2, null),
+					isNewFault: false));
 
 		public void EmitDiagnostic()
 			=> RuntimeDiagnostics?.Invoke(this,
