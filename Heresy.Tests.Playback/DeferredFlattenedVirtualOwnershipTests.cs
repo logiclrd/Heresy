@@ -153,6 +153,58 @@ public sealed class DeferredFlattenedVirtualOwnershipTests
         });
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void ReleasedVirtualVoiceOutlivesProducerUnlessItsOwnerIsExplicitlyCanceled(
+        bool cancelProducer)
+    {
+        TestPattern releasingChild = Pattern(3, 2,
+            At(0, ChannelTarget.Virtual(7),
+                new StartNoteCommand(SampleId)),
+            At(0, TimeSpan.FromMilliseconds(20), ChannelTarget.Virtual(7),
+                new NoteOffCommand()));
+        TestPattern sibling = Pattern(4, 1,
+            At(0, ChannelTarget.Physical(0),
+                new StartNoteCommand(SampleId)),
+            At(0, ChannelTarget.Virtual(7),
+                new StartNoteCommand(SampleId)));
+        using Scenario scenario = Create(releasingChild, sibling);
+        using PreparedIncrementalAudioSource pcm =
+            new(scenario.Timeline, Session(new ReleasingSound(300)));
+
+        float[] initial = Render(pcm, 30, [1, 7, 13]);
+        Assert.That(initial[25], Is.EqualTo(4f).Within(1e-6f),
+            "Note Off must not immediately cut a finite release.");
+
+        if (cancelProducer)
+        {
+            Assert.That(pcm.Cancel(scenario.FirstRoot), Is.True);
+            Assert.That(pcm.Session.VirtualVoices, Is.Empty);
+        }
+
+        // Each child has two 120-ms rows. Rendering through frame 260
+        // crosses natural producer completion; it must not force-cut an
+        // existing virtual voice that is still releasing until frame 320.
+        float[] middle = Render(pcm, 240, [1, 3, 89, 7]);
+        Assert.Multiple(() =>
+        {
+            Assert.That(middle[60],
+                Is.EqualTo(cancelProducer ? 3f : 4f).Within(1e-6f),
+                "Only explicit subtree cancellation may cut this tail.");
+            Assert.That(middle[230],
+                Is.EqualTo(cancelProducer ? 3f : 4f).Within(1e-6f),
+                "Natural cursor retirement must preserve an already-" +
+                "releasing scoped virtual note and its sibling.");
+            Assert.That(scenario.Timeline.IsInvocationActive(
+                scenario.FirstRoot), Is.False);
+        });
+
+        float[] afterRelease = Render(pcm, 75, [5, 1, 11]);
+        Assert.That(afterRelease[65], Is.EqualTo(3f).Within(1e-6f),
+            "The releasing voice expires at its own source deadline; " +
+            "the sibling's mapped physical, virtual and host notes survive.");
+    }
+
     private static Scenario Create(TestPattern firstChild, TestPattern secondChild)
     {
         TestPattern first = Pattern(1, 1,
@@ -197,7 +249,7 @@ public sealed class DeferredFlattenedVirtualOwnershipTests
         return buffer;
     }
 
-    private static PlaybackSession Session()
+    private static PlaybackSession Session(ISound? overrideSound = null)
     {
         SampleDefinition definition = new(
             SampleId, "Sample", new ExternalAssetReference("constant.raw"));
@@ -210,7 +262,8 @@ public sealed class DeferredFlattenedVirtualOwnershipTests
             new RenderContext(new RenderConfiguration(1000,
                 [new OutputChannelConfiguration(Vector3.Zero,
                     positionalImportance: 0)])),
-            new NoteScheduleBuilder().Freeze(), new SoundResolver(sound));
+            new NoteScheduleBuilder().Freeze(),
+            new SoundResolver(overrideSound ?? sound));
     }
 
     private sealed class Scenario(
@@ -253,6 +306,32 @@ public sealed class DeferredFlattenedVirtualOwnershipTests
         public bool TryResolve(ObjectId id, out SongObject? value)
             => _objects.TryGetValue(id, out value);
     }
+
+    private sealed class ReleasingSound(int releaseFrames) : ISound
+    {
+        public NoteConfigurationSnapshot SnapshotNoteConfiguration()
+            => NoteConfigurationSnapshot.Default;
+
+        public SoundState CreateState() => new ReleasingState();
+
+        public long? GetEndFrameExclusive(
+            RenderContext context, SoundState state)
+            => state.NoteOffTime is TimeSpan off
+                ? checked(FrameTime.Ceiling(off, context.Configuration.SampleRate)
+                    + releaseFrames)
+                : null;
+
+        public void Render(RenderContext context, SoundState state,
+            long startFrame, int frameCount, Span<float> destination)
+        {
+            long? end = GetEndFrameExclusive(context, state);
+            for (int i = 0; i < frameCount; i++)
+                if (!end.HasValue || startFrame + i < end.Value)
+                    destination[i] += 1f;
+        }
+    }
+
+    private sealed class ReleasingState : SoundState { }
 
     private sealed class SoundResolver(ISound sound) : ISoundResolver
     {
