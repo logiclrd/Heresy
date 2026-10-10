@@ -888,22 +888,24 @@ public sealed class IncrementalPatternTimeline : IDisposable
 	private sealed record TempoBoundarySet(
 		double Tempo, ChannelTarget Target, long InvocationId);
 
-	// Each simultaneous SEy source retains its own row speed, repetition
-	// count, mapped physical target, and cancellation ownership. The combined
-	// ramp is a projection of these sources, never a pre-executed row.
+	// Keep each contributor's captured *local* tick span, flattened
+	// clock rate and independent repeat/cancellation owner. A legacy Txx
+	// slide applies (Span - 1) local tick increments per compatibility
+	// row; only its boundaries are converted to shared musical ticks.
 	private sealed record RepeatedTempoSource(
-		long InvocationId, byte Parameter, int Span, int Repeats,
+		long InvocationId, byte Parameter, int Span, double Rate, int Repeats,
 		int Channel, ChannelTarget Target, long SourceOrder,
 		double OriginTick)
 	{
-		public double EndTick => OriginTick + (double)Span * (Repeats + 1);
+		public double SharedSpan => Span / Rate;
+		public double EndTick => OriginTick + SharedSpan * (Repeats + 1);
 
 		public bool RepeatsAt(double tick)
 		{
 			double offset = tick - OriginTick;
 			if (offset <= TickTolerance || tick >= EndTick - TickTolerance)
 				return false;
-			double repetition = offset / Span;
+			double repetition = offset / SharedSpan;
 			return Math.Abs(repetition - Math.Round(repetition)) <= TickTolerance;
 		}
 	}
@@ -1380,18 +1382,13 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			byte parameter = request.Cursor.Context
 				.GetPhysicalChannelState(raw.Target.PhysicalChannel)
 				.ResolveEffectParameter(EffectMemorySlot.Tempo, input);
-			// SEy repeats have a separate cross-invocation timing map.
-			// Do not schedule their future Txx operations at the wrong
-			// shared-tick boundaries when this cursor runs at a new rate.
-			if (crossInvocationRepeat && parameter != 0
-				&& request.Cursor.TickRate != 1.0)
-				throw new NotSupportedException(
-					"Scaled flattened Txx with SEy repeats requires cross-rate Tempo arbitration.");
-			if (crossInvocationRepeat && parameter != 0)
+			// Preserve the local span for both SEy repeats and concurrent
+			// mixed-rate slides; their projected expiration times differ.
+			if (parameter != 0)
 				crossSources.Add(new RepeatedTempoSource(
 					request.Cursor.Sequence, parameter,
 					checked((int)request.Cursor.EffectiveSpanTicks),
-					request.Cursor.ExtraRowSpans, request.Channel,
+					request.Cursor.TickRate, request.Cursor.ExtraRowSpans, request.Channel,
 					request.Cursor.Context.MapTarget(raw.Target),
 					request.Timing.Order, _tick));
 			if (parameter >= 0x20)
@@ -1418,7 +1415,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			request.Cursor.ConsumeTiming();
 		}
 
-		if (crossInvocationRepeat)
+		if (crossInvocationRepeat
+			|| (slides.Count > 1 && slides.Any(x => x.Rate != 1.0)))
 		{
 			_crossTempoSources.Clear();
 			_crossTempoSources.AddRange(crossSources);
@@ -1434,11 +1432,6 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				// For one scaled Txx, its original per-local-tick delta
 				// spans fewer/more *shared* tracker ticks. Keep the
 				// original IT clamping while mapping the ramp deadline.
-				// Mixed-rate simultaneous slides need multi-slope
-				// arbitration and are not approximated.
-				if (slides.Count != 1)
-					throw new NotSupportedException(
-						"Simultaneous Txx slides at different flattened rates require multi-clock Tempo arbitration.");
 				var slide = slides[0];
 				double ending = _root.State.Tempo;
 				for (int transition = 1; transition < slide.Span; transition++)
@@ -1556,7 +1549,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 				newSources.Add(new RepeatedTempoSource(
 					request.Cursor.Sequence, parameter,
 					checked((int)request.Cursor.EffectiveSpanTicks),
-					request.Cursor.ExtraRowSpans, request.Channel,
+					request.Cursor.TickRate, request.Cursor.ExtraRowSpans, request.Channel,
 					mapped, request.Timing.Order, _tick));
 				if (parameter >= 0x20)
 					sets.Add((request.Channel, request.Cursor.Sequence,
@@ -1605,7 +1598,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 		_futureTempoOwner = active[0].InvocationId;
 		double[] boundaries = active
 			.SelectMany(x => Enumerable.Range(1, x.Repeats + 1)
-				.Select(k => x.OriginTick + (double)x.Span * k))
+				.Select(k => x.OriginTick + x.SharedSpan * k))
 			.Where(t => t > _tick + TickTolerance)
 			.Distinct()
 			.OrderBy(t => t)
@@ -1643,7 +1636,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					continue;
 				int sign = source.Parameter < 0x10 ? -1 : 1;
 				slope += sign * (source.Parameter & 0x0F)
-					* (source.Span - 1.0) / source.Span;
+					* (source.Span - 1.0) / source.SharedSpan;
 			}
 			double endingTempo = Math.Clamp(
 				startingTempo + slope * (endTick - startingTick), 32, 255);
