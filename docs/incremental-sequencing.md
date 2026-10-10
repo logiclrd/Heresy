@@ -23,7 +23,8 @@
 > were closed at step 62; new compatibility problems must have their own
 > reproducible counterexample.
 >
-> Authoritative supporting documents: [sample storage](sample-storage.md),
+> Authoritative supporting documents: [documentation index](README.md),
+> [sample storage](sample-storage.md),
 > [audio output](audio-output.md), [export workflow](export-workflow.md),
 > [seek hints](source-seek-hints.md), and [remaining TODOs](todo.md).
 > This historical log retains its original step headings for traceability.
