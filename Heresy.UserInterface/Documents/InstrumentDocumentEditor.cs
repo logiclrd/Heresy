@@ -185,7 +185,7 @@ public static class InstrumentDocumentEditor
 		workspace.Document.MarkChanged(affectsAudio: true);
 	}
 
-	private static ToneSpecification CreateToneSpecification(
+	internal static ToneSpecification CreateToneSpecification(
 		SongDocument document,
 		ObjectId sourceId,
 		double pitchMultiplier,
