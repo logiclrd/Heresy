@@ -105,6 +105,16 @@ public sealed class MainWindow : Window
 	private readonly IPlaybackRuntimeDiagnosticsTransport?
 		_runtimeDiagnosticsTransport;
 	private readonly IPlaybackAudioHealthTransport? _audioHealthTransport;
+	private readonly IPlaybackSnapshotTransport? _playbackSnapshotTransport;
+	private SongDocument? _observedDocument;
+	private PlaybackSnapshotInfo _playbackSnapshot;
+	private long _lastPlaybackSnapshotGeneration = -1;
+	private readonly TextBlock _playbackSnapshotIndicator = new()
+	{
+		IsVisible = false,
+		VerticalAlignment = VerticalAlignment.Center,
+		Margin = new Thickness(12, 0),
+	};
 	private readonly TextBlock _underrunIndicator = new()
 	{
 		IsVisible = false,
@@ -186,6 +196,15 @@ public sealed class MainWindow : Window
 			playbackTransport as IPlaybackRuntimeDiagnosticsTransport;
 		_audioHealthTransport =
 			playbackTransport as IPlaybackAudioHealthTransport;
+		_playbackSnapshotTransport =
+			playbackTransport as IPlaybackSnapshotTransport;
+		if (_playbackSnapshotTransport is not null)
+		{
+			_playbackSnapshot = _playbackSnapshotTransport.CurrentPlaybackSnapshot;
+			_lastPlaybackSnapshotGeneration = _playbackSnapshot.Generation;
+			_playbackSnapshotTransport.PlaybackSnapshotChanged +=
+				OnPlaybackSnapshotChanged;
+		}
 		if (_audioHealthTransport is not null)
 			_audioHealthTransport.AudioHealthChanged += OnAudioHealthChanged;
 		if (_runtimeDiagnosticsTransport is not null)
@@ -209,6 +228,8 @@ public sealed class MainWindow : Window
 				VerticalAlignment = VerticalAlignment.Center,
 			};
 
+		ToolTip.SetTip(_playbackSnapshotIndicator,
+			"Current playback uses an immutable song snapshot. Restart playback to hear edits.");
 		Content = BuildShell();
 		Closing += OnClosing;
 		Closed += (_, _) =>
@@ -220,6 +241,11 @@ public sealed class MainWindow : Window
 					OnRuntimeDiagnostics;
 			if (_audioHealthTransport is not null)
 				_audioHealthTransport.AudioHealthChanged -= OnAudioHealthChanged;
+			if (_playbackSnapshotTransport is not null)
+				_playbackSnapshotTransport.PlaybackSnapshotChanged -=
+					OnPlaybackSnapshotChanged;
+			if (_observedDocument is not null)
+				_observedDocument.Changed -= OnDocumentChanged;
 			_runtimeDiagnosticsWindow?.Close();
 			if (_playbackPositionTransport is not null)
 			{
@@ -249,12 +275,14 @@ public sealed class MainWindow : Window
 				{
 					Children =
 					{
+						_playbackSnapshotIndicator,
 						_underrunIndicator,
 						_diagnosticsButton,
 						_status,
 					},
 				},
 			};
+		DockPanel.SetDock(_playbackSnapshotIndicator, Dock.Right);
 		DockPanel.SetDock(_underrunIndicator, Dock.Right);
 		DockPanel.SetDock(_diagnosticsButton, Dock.Right);
 		DockPanel.SetDock(statusBar, Dock.Bottom);
@@ -1470,6 +1498,7 @@ public sealed class MainWindow : Window
 		string status,
 		SongTreeNode? selectNode = null)
 	{
+		TrackWorkspaceDocument();
 		if (_documentView is not null)
 			_mainContent.Content = _documentView;
 		UpdateWindowTitle();
@@ -2581,6 +2610,75 @@ public sealed class MainWindow : Window
 				SetStatus($"Audio playback failed: {e.Fault.Message}");
 			}
 		});
+	}
+
+	/// <summary>Document notifications are raised by the editing caller;
+	/// they do not imply that the frozen playback snapshot has changed.</summary>
+	private void OnDocumentChanged(
+		object? sender,
+		SongDocumentChangedEventArgs e)
+	{
+		if (!e.AffectsAudio)
+			return;
+		if (Dispatcher.UIThread.CheckAccess())
+		{
+			if (!_windowClosed && ReferenceEquals(sender, _workspace.Document))
+				UpdatePlaybackSnapshotIndicator();
+		}
+		else
+			Dispatcher.UIThread.Post(() =>
+			{
+				if (!_windowClosed && ReferenceEquals(sender, _workspace.Document))
+					UpdatePlaybackSnapshotIndicator();
+			});
+	}
+
+	private void TrackWorkspaceDocument()
+	{
+		SongDocument document = _workspace.Document;
+		if (!ReferenceEquals(document, _observedDocument))
+		{
+			if (_observedDocument is not null)
+				_observedDocument.Changed -= OnDocumentChanged;
+			_observedDocument = document;
+			document.Changed += OnDocumentChanged;
+		}
+		UpdatePlaybackSnapshotIndicator();
+	}
+
+	private void OnPlaybackSnapshotChanged(
+		object? sender,
+		PlaybackSnapshotChangedEventArgs e)
+	{
+		_ = sender;
+		PlaybackSnapshotInfo snapshot = e.Snapshot;
+		Dispatcher.UIThread.Post(() =>
+		{
+			if (_windowClosed ||
+				snapshot.Generation < _lastPlaybackSnapshotGeneration)
+				return;
+			_lastPlaybackSnapshotGeneration = snapshot.Generation;
+			_playbackSnapshot = snapshot;
+			UpdatePlaybackSnapshotIndicator();
+		});
+	}
+
+	private void UpdatePlaybackSnapshotIndicator()
+	{
+		PlaybackSnapshotIndicatorState state =
+			PlaybackSnapshotIndicator.GetState(
+				_playbackSnapshot, _workspace.Document);
+		_playbackSnapshotIndicator.IsVisible =
+			state is PlaybackSnapshotIndicatorState.AudioEdited
+				or PlaybackSnapshotIndicatorState.DifferentDocument;
+		_playbackSnapshotIndicator.Text = state switch
+		{
+			PlaybackSnapshotIndicatorState.AudioEdited =>
+				"Playback uses older audio",
+			PlaybackSnapshotIndicatorState.DifferentDocument =>
+				"Playback uses another song",
+			_ => string.Empty,
+		};
 	}
 
 	private void OnRuntimeDiagnostics(
