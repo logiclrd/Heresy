@@ -398,10 +398,11 @@ public sealed class IncrementalPatternDeferredTimingTests
 			Event(0.25, TimeSpan.FromMilliseconds(5), ChannelTarget.Physical(0),
 				new StartNoteCommand((Heresy.Core.Objects.ObjectId)11U),
 				new ApplyTrackerNoteDelayCommand(2)));
-		AssertTrackerWallParity(source, 1);
+		AssertTrackerWallParity(source, 1, includeLateWallTail: true);
 	}
 
-	private static void AssertTrackerWallParity(RawSource source, int rowCount)
+	private static void AssertTrackerWallParity(RawSource source, int rowCount,
+		bool includeLateWallTail = false)
 	{
 		SequencingContext eager = new();
 		NoteScheduleBuilder expected = new();
@@ -421,8 +422,15 @@ public sealed class IncrementalPatternDeferredTimingTests
 				Is.EqualTo(baseline[i].Offset.TimeOffset.TotalSeconds)
 					.Within(1e-6));
 		}
+		// Eager Pattern duration ends at its final musical row. A lazy
+		// timeline drains an ordinary positive-wall S7x event even when
+		// that deadline is *after* the musical end of the Pattern.
+		double elapsedExpected = includeLateWallTail
+			? Math.Max(duration.TotalSeconds,
+				baseline.Max(e => e.Offset.TimeOffset.TotalSeconds))
+			: duration.TotalSeconds;
 		Assert.That(timeline.Elapsed.TotalSeconds,
-			Is.EqualTo(duration.TotalSeconds).Within(1e-6));
+			Is.EqualTo(elapsedExpected).Within(1e-6));
 		Assert.That(context.GetPhysicalChannelState(0).RetriggerCountdown,
 			Is.EqualTo(eager.GetPhysicalChannelState(0).RetriggerCountdown));
 	}
