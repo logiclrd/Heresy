@@ -674,6 +674,14 @@ public sealed class MainWindow : Window
 		// realtime. The renderer never touches Avalonia controls.
 		IProgress<OfflineRenderProgress> progress =
 			progressWindow.CreateProgressReporter();
+		// Export reports are delivered on the UI synchronization context,
+		// not from the coroutine worker. Reuse realtime's bounded history.
+		IProgress<SequencingDiagnostic[]> exportDiagnostics =
+			new Progress<SequencingDiagnostic[]>(batch =>
+			{
+				if (!_windowClosed)
+					AppendRuntimeDiagnostics(batch, "Export");
+			});
 		SetStatus($"Rendering {Path.GetFileName(path)}...");
 		try
 		{
@@ -684,7 +692,8 @@ public sealed class MainWindow : Window
 					path,
 					format,
 					progress,
-					cancellation.Token);
+					cancellation.Token,
+					exportDiagnostics);
 			if (!_windowClosed)
 				SetStatus(
 					$"Rendered {Path.GetFileName(path)} ({render.TotalFrameCount:N0} frames).");
@@ -2539,17 +2548,27 @@ public sealed class MainWindow : Window
 		SequencingDiagnostic[] snapshot = e.Diagnostics.ToArray();
 		Dispatcher.UIThread.Post(() =>
 		{
-			if (_windowClosed)
-				return;
-			foreach (SequencingDiagnostic warning in snapshot)
-				_runtimeDiagnosticMessages.Add(
-					$"{warning.Code}: {warning.Message}");
-			if (_runtimeDiagnosticMessages.Count > MaximumVisibleRuntimeDiagnostics)
-				_runtimeDiagnosticMessages.RemoveRange(
-					0,
-					_runtimeDiagnosticMessages.Count - MaximumVisibleRuntimeDiagnostics);
-			UpdateRuntimeDiagnosticsView();
+			if (!_windowClosed)
+				AppendRuntimeDiagnostics(snapshot);
 		});
+	}
+
+	/// <summary>Both realtime and offline reports use the same bounded
+	/// in-app warning history and existing clear/open commands. Call only
+	/// from Avalonia's UI dispatcher.</summary>
+	private void AppendRuntimeDiagnostics(
+		IReadOnlyList<SequencingDiagnostic> batch,
+		string? origin = null)
+	{
+		string prefix = origin is null ? string.Empty : $"[{origin}] ";
+		foreach (SequencingDiagnostic warning in batch)
+			_runtimeDiagnosticMessages.Add(
+				$"{prefix}{warning.Code}: {warning.Message}");
+		if (_runtimeDiagnosticMessages.Count > MaximumVisibleRuntimeDiagnostics)
+			_runtimeDiagnosticMessages.RemoveRange(
+				0,
+				_runtimeDiagnosticMessages.Count - MaximumVisibleRuntimeDiagnostics);
+		UpdateRuntimeDiagnosticsView();
 	}
 
 	private void UpdateRuntimeDiagnosticsView()
