@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 
 using Heresy.Render.Playback;
 using Heresy.Render.Realtime;
@@ -16,6 +17,30 @@ public readonly record struct OfflineRenderResult(
 				+ TailFrameCount);
 }
 
+/// <summary>Reported only after a complete render block has been written.
+/// Logical time is output frames/sample rate, independent of export wall time.
+/// Incrementally scripted arrangements have no knowable total until ending.
+/// </summary>
+public enum OfflineRenderPhase
+{
+	LogicalBody,
+	ReleaseTail,
+	Completed,
+}
+
+public readonly record struct OfflineRenderProgress(
+	OfflineRenderPhase Phase,
+	long LogicalFramesRendered,
+	long TailFramesRendered,
+	int SampleRate,
+	long? KnownLogicalFrameCount = null)
+{
+	public TimeSpan RenderedMusicalTime =>
+		TimeSpan.FromSeconds((double)LogicalFramesRendered / SampleRate);
+	public TimeSpan RenderedTailTime =>
+		TimeSpan.FromSeconds((double)TailFramesRendered / SampleRate);
+}
+
 /// <summary>
 /// Renders a sequential PlaybackSession through its logical arrangement end,
 /// releases every still-active voice, preserves deterministic release tails,
@@ -30,7 +55,9 @@ public static class OfflinePlaybackRenderer
 		PlaybackSession session,
 		TimeSpan logicalDuration,
 		IAudioFileSink sink,
-		int blockFrameCount = DefaultBlockFrameCount)
+		int blockFrameCount = DefaultBlockFrameCount,
+		IProgress<OfflineRenderProgress>? progress = null,
+		CancellationToken cancellationToken = default)
 	{
 		ArgumentNullException.ThrowIfNull(session);
 		ArgumentNullException.ThrowIfNull(sink);
@@ -60,12 +87,16 @@ public static class OfflinePlaybackRenderer
 				"The playback session has already advanced beyond the requested logical render duration.");
 		}
 
+		cancellationToken.ThrowIfCancellationRequested();
 		RenderLogicalBody(
 			session,
 			sink,
 			logicalFrames,
-			blockFrameCount);
+			blockFrameCount,
+			progress,
+			cancellationToken);
 
+		cancellationToken.ThrowIfCancellationRequested();
 		session.EndInput();
 		session.CutIndefiniteActiveVoicesAfterEndInput();
 
@@ -73,8 +104,16 @@ public static class OfflinePlaybackRenderer
 			RenderTail(
 				session,
 				sink,
-				blockFrameCount);
-
+				blockFrameCount,
+				long.MaxValue,
+				progress,
+				cancellationToken,
+				logicalFrames,
+				logicalFrames);
+		cancellationToken.ThrowIfCancellationRequested();
+		progress?.Report(new OfflineRenderProgress(
+			OfflineRenderPhase.Completed, logicalFrames,
+			tailFrames, session.SampleRate, logicalFrames));
 		return new OfflineRenderResult(
 			logicalFrames,
 			tailFrames);
@@ -91,7 +130,9 @@ public static class OfflinePlaybackRenderer
 		IAudioFileSink sink,
 		int blockFrameCount = DefaultBlockFrameCount,
 		long maximumLogicalFrames = 0,
-		long maximumTailFrames = 0)
+		long maximumTailFrames = 0,
+		IProgress<OfflineRenderProgress>? progress = null,
+		CancellationToken cancellationToken = default)
 	{
 		ArgumentNullException.ThrowIfNull(arrangement);
 		ArgumentNullException.ThrowIfNull(sink);
@@ -114,6 +155,7 @@ public static class OfflinePlaybackRenderer
 		long frames = 0;
 		while (true)
 		{
+			cancellationToken.ThrowIfCancellationRequested();
 			int wanted = (int)Math.Min(blockFrameCount,
 				maximumLogicalFrames - frames);
 			if (wanted == 0)
@@ -129,6 +171,9 @@ public static class OfflinePlaybackRenderer
 			{
 				sink.Write(block.Slice(0, produced * arrangement.Format.ChannelCount));
 				frames = checked(frames + produced);
+				progress?.Report(new OfflineRenderProgress(
+					OfflineRenderPhase.LogicalBody, frames, 0,
+					arrangement.Format.SampleRate));
 			}
 			if (produced < wanted)
 			{
@@ -143,11 +188,16 @@ public static class OfflinePlaybackRenderer
 				break;
 		}
 
+		cancellationToken.ThrowIfCancellationRequested();
 		PlaybackSession session = arrangement.Session;
 		session.EndInput();
 		session.CutIndefiniteActiveVoicesAfterEndInput();
 		long tails = RenderTail(session, sink, blockFrameCount,
-			maximumTailFrames);
+			maximumTailFrames, progress, cancellationToken, frames);
+		cancellationToken.ThrowIfCancellationRequested();
+		progress?.Report(new OfflineRenderProgress(
+			OfflineRenderPhase.Completed, frames, tails,
+			arrangement.Format.SampleRate));
 		return new OfflineRenderResult(frames, tails);
 	}
 
@@ -155,7 +205,9 @@ public static class OfflinePlaybackRenderer
 		PlaybackSession session,
 		IAudioFileSink sink,
 		long logicalFrames,
-		int blockFrameCount)
+		int blockFrameCount,
+		IProgress<OfflineRenderProgress>? progress,
+		CancellationToken cancellationToken)
 	{
 		int channels =
 			session.OutputChannelCount;
@@ -167,6 +219,7 @@ public static class OfflinePlaybackRenderer
 
 		while (session.NextFrame < logicalFrames)
 		{
+			cancellationToken.ThrowIfCancellationRequested();
 			int frameCount =
 				(int)Math.Min(
 					blockFrameCount,
@@ -183,6 +236,9 @@ public static class OfflinePlaybackRenderer
 				frameCount,
 				block);
 			sink.Write(block);
+			progress?.Report(new OfflineRenderProgress(
+				OfflineRenderPhase.LogicalBody, session.NextFrame,
+				0, session.SampleRate, logicalFrames));
 		}
 	}
 
@@ -190,7 +246,11 @@ public static class OfflinePlaybackRenderer
 		PlaybackSession session,
 		IAudioFileSink sink,
 		int blockFrameCount,
-		long maximumTailFrames = long.MaxValue)
+		long maximumTailFrames = long.MaxValue,
+		IProgress<OfflineRenderProgress>? progress = null,
+		CancellationToken cancellationToken = default,
+		long logicalFrames = 0,
+		long? knownLogicalFrames = null)
 	{
 		if (session.IsQuiescent)
 			return 0;
@@ -206,6 +266,7 @@ public static class OfflinePlaybackRenderer
 
 		while (!session.IsQuiescent)
 		{
+			cancellationToken.ThrowIfCancellationRequested();
 			if (session.HasIndefiniteActiveVoices)
 				session.CutIndefiniteActiveVoicesAfterEndInput();
 
@@ -232,6 +293,9 @@ public static class OfflinePlaybackRenderer
 					checked(
 						writtenFrames
 							+ framesToWrite);
+				progress?.Report(new OfflineRenderProgress(
+					OfflineRenderPhase.ReleaseTail, logicalFrames,
+					writtenFrames, session.SampleRate, knownLogicalFrames));
 			}
 		}
 
