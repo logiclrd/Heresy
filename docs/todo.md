@@ -243,6 +243,25 @@ and native resampling versus pitch compensation. See
   script S7x helper or alter unsupported virtual tracker-memory commands.
   Broader multichannel, recursive lifecycle and script-effect
   combinations remain under this TODO.
+
+  **Fixed-wall Instrument envelope controls and paused release (October 10).**
+  Raw physical tracker S77/S78 volume-envelope disable/enable and
+  S7B/S7C combined pitch/filter controls now accept positive fixed
+  wall-time offsets. The existing physical
+  `SetEnvelopeEnabledCommand` also accepts immediate and delayed
+  raw scheduling; the renderer already supported all these resolved
+  operations. The bounded wall queue resolves raw controls at the
+  delivery instant against the current physical voice rather than
+  processing future controls while preparing the row. Existing
+  virtual-envelope and negative-time restrictions remain.
+  Red-then-green regressions cover direct semantic enable, the
+  two-command pitch/filter expansion, and a later replacement note
+  receiving its own wall-delayed control. An Instrument-backed PCM
+  regression verifies that Note Off at 10 ms, envelope disable at
+  20 ms and re-enable at 50 ms hold the release at 75% then finish
+  at 80 ms, without restarting the sound or prematurely retiring
+  the voice. The broader mixed-script/recursive compatibility TODO
+  remains open.
 **Recursive native Oxx/Qxy source-frame seeking verified across
 invocation boundaries.** `RecursiveNativeSeekBoundaryTests` now cover
 O01 as exactly 256 private source frames across multi-order child

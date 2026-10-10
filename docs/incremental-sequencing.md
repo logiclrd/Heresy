@@ -83,6 +83,42 @@ PCM chunk invariance. Playback remains an incremental coroutine with
 bounded rendering; this feature does not create an event journal or a
 separate eager render path.
 
+## Fixed-wall Instrument envelope controls (October 10, 2026)
+
+Physical raw tracker envelope controls S77/S78 (volume), S79/S7A
+(panning) and S7B/S7C (the shared pitch/filter switch) now follow
+the same exact-deadline rule as delayed S7x new-note and past-note
+actions. A positive `MusicalTime.TimeOffset` is added when the
+note's musical position is reached and the operation stays in the
+bounded wall-time queue. Tracker commands are expanded by
+`PatternNoteProcessor` **on delivery**, including the two
+independent `SetEnvelopeEnabledCommand` operations produced by
+the shared tracker pitch/filter slot. The already-resolved semantic
+`SetEnvelopeEnabledCommand` is also accepted by the physical
+incremental scheduler, both immediately and with a positive delay.
+No new restricted-script helper is implied.
+
+The renderer's existing `PlaybackVoice.SetEnvelopeEnabled` pauses
+and resumes the envelope's **active** timeline; it does not
+resynchronize or restart the underlying sound, change its note-off
+origin, or re-select an Instrument tone. A delayed control acts
+on the note currently hosted by its target physical channel at
+the deadline, including a replacement note if the original has
+already been displaced. Explicit virtual channels still do **not**
+accept envelope-control commands: their renderer command switch
+has no such operation. Negative fixed wall-time offsets remain
+unsupported.
+
+`IncrementalAdvancedEffectTimingTests` verifies the exact deferred
+order, pitch/filter dual-command expansion, direct semantic control,
+and a later voice replacement. In
+`PlaybackDelayedEnvelopeLifecycleTests`, an Instrument-selected
+40-ms ADSR release begins with Note Off at 10 ms, pauses at
+20 ms with gain 0.75, resumes at 50 ms, and completes at 80 ms
+instead of 50 ms; source PCM is unchanged and voice retirement
+occurs only after the remaining active release has elapsed.
+This is a scheduler coverage fix, not a new renderer envelope engine.
+
 ## Fixed-wall note-lifecycle controls across mixed patterns (October 10, 2026)
 
 The incremental Pattern scheduler now permits **positive fixed wall-time
