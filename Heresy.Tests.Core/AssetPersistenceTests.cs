@@ -4,6 +4,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Text;
 using System.Text.Json.Nodes;
+using System.Threading.Tasks;
 
 using Heresy.Core.Assets;
 using Heresy.Core.Objects;
@@ -17,6 +18,121 @@ namespace Heresy.Tests.Core;
 [TestFixture]
 public sealed class AssetPersistenceTests
 {
+
+	[Test]
+	public async Task MissingJsonSampleCanBeLocatedAndBecomesSongOwnedPendingAsset()
+	{
+		using TempProject project = new();
+		string original = WritePcm16MonoWave(
+			project.Path("songs", "pcm", "tone.wav"), 8000, [12000]);
+		string jsonPath = project.Path("songs", "track.hm.json");
+		SongDocument source = DocumentWithSample(original, out ObjectId id);
+		SongDocumentStorage.Save(jsonPath, source);
+		string relocated = project.Path("recovery", "renamed.wav");
+		Directory.CreateDirectory(Path.GetDirectoryName(relocated)!);
+		File.Move(original, relocated);
+		int requests = 0;
+
+		SongDocument loaded = await SongDocumentStorage.LoadWithRecoveryAsync(
+			jsonPath,
+			request =>
+			{
+				requests++;
+				Assert.That(request.SampleId, Is.EqualTo(id));
+				Assert.That(request.OriginalFullPath, Is.EqualTo(Path.GetFullPath(original)));
+				Assert.That(request.ExpectedSha256, Is.Not.Empty);
+				return Task.FromResult<string?>(relocated);
+			});
+
+		SampleDefinition sample = (SampleDefinition)loaded.Objects[id];
+		Assert.That(requests, Is.EqualTo(1));
+		Assert.That(sample.PcmData!.GetSample(0, 0), Is.EqualTo(12000 / 32768.0f).Within(1e-6));
+		Assert.That(sample.Asset, Is.Null);
+		Assert.That(sample.PendingAsset, Is.Not.Null);
+		File.Delete(relocated);
+		string packagePath = project.Path("songs", "restored.hm");
+		SongDocumentStorage.Save(packagePath, loaded);
+		Assert.That(((SampleDefinition)SongDocumentStorage.Load(packagePath).Objects[id]).PcmData,
+			Is.Not.Null, "Recovered encoding must survive disappearance of the replacement file.");
+	}
+
+	[Test]
+	public async Task RecoveryRejectsDifferentContentAndRetriesWithoutChangingManifestIdentity()
+	{
+		using TempProject project = new();
+		string original = WritePcm16MonoWave(
+			project.Path("songs", "pcm", "tone.wav"), 8000, [8192]);
+		string jsonPath = project.Path("songs", "track.hm.json");
+		SongDocument source = DocumentWithSample(original, out ObjectId id);
+		SongDocumentStorage.Save(jsonPath, source);
+		string correct = project.Path("elsewhere", "correct.wav");
+		string wrong = WritePcm16MonoWave(
+			project.Path("elsewhere", "wrong.wav"), 8000, [-8192]);
+		File.Move(original, correct);
+		int prompts = 0;
+
+		SongDocument loaded = await SongDocumentStorage.LoadWithRecoveryAsync(
+			jsonPath,
+			request =>
+			{
+				prompts++;
+				if (prompts == 2)
+					Assert.That(request.FailureMessage, Does.Contain("SHA-256"));
+				return Task.FromResult<string?>(prompts == 1 ? wrong : correct);
+			});
+
+		Assert.That(prompts, Is.EqualTo(2));
+		Assert.That(((SampleDefinition)loaded.Objects[id]).PcmData!.GetSample(0, 0),
+			Is.GreaterThan(0));
+	}
+
+	[Test]
+	public void CancelingSampleRecoveryAbortsTheEntireLoad()
+	{
+		using TempProject project = new();
+		string original = WritePcm16MonoWave(
+			project.Path("songs", "pcm", "tone.wav"), 8000, [0]);
+		string jsonPath = project.Path("songs", "track.hm.json");
+		SongDocumentStorage.Save(jsonPath, DocumentWithSample(original, out _));
+		File.Delete(original);
+
+		Assert.ThrowsAsync<OperationCanceledException>(async () =>
+			await SongDocumentStorage.LoadWithRecoveryAsync(
+				jsonPath,
+				_ => Task.FromResult<string?>(null)));
+	}
+
+	[Test]
+	public async Task PackageMissingEntryCanRecoverWithoutWeakeningDefaultValidation()
+	{
+		using TempProject project = new();
+		string sourcePath = WritePcm16MonoWave(
+			project.Path("samples", "tone.wav"), 8000, [7000]);
+		string package = project.Path("song", "song.hm");
+		SongDocumentStorage.Save(package, DocumentWithSample(sourcePath, out ObjectId id));
+		string manifest;
+		using (ZipArchive originalZip = ZipFile.OpenRead(package))
+			manifest = ReadEntry(originalZip, "song.hm.json");
+		File.Delete(package);
+		using (FileStream file = File.Create(package))
+		using (ZipArchive archive = new(file, ZipArchiveMode.Create))
+			WriteEntry(archive, "song.hm.json", manifest);
+
+		Assert.That(() => SongDocumentStorage.Load(package),
+			Throws.TypeOf<InvalidDataException>()
+				.With.Message.Contains("missing archive entry"));
+
+		SongDocument recovered = await SongDocumentStorage.LoadWithRecoveryAsync(
+			package,
+			request =>
+			{
+				Assert.That(request.SampleId, Is.EqualTo(id));
+				Assert.That(request.OriginalFullPath, Does.Contain("song.hm"));
+				return Task.FromResult<string?>(sourcePath);
+			});
+		Assert.That(((SampleDefinition)recovered.Objects[id]).PendingAsset, Is.Not.Null);
+	}
+
 	[Test]
 	public void PackageLoadHydratesDecodedPcmAndDropsEncodedBytes()
 	{

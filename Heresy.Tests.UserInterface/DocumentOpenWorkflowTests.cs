@@ -162,6 +162,37 @@ public sealed class DocumentOpenWorkflowTests
 		});
 	}
 
+
+	[Test]
+	public async Task RecoveryOpenKeepsOldDocumentOnCancellationAndCommitsOnlyAfterSuccess()
+	{
+		DocumentWorkspace workspace = DirtyWorkspace();
+		var previous = workspace.Document;
+		List<string> steps = [];
+
+		Assert.ThrowsAsync<OperationCanceledException>(async () =>
+			await DocumentOpenWorkflow.TryOpenWithRecoveryAsync(
+				() => Task.FromResult<string?>("song.hm.json"),
+				() => Task.FromResult(true),
+				_ => { steps.Add("load"); throw new OperationCanceledException(); }));
+
+		Assert.That(steps, Is.EqualTo(new[] { "load" }));
+		Assert.That(workspace.Document, Is.SameAs(previous));
+		Assert.That(workspace.IsModified, Is.True);
+
+		bool success = await DocumentOpenWorkflow.TryOpenWithRecoveryAsync(
+			() => Task.FromResult<string?>("song.hm.json"),
+			() => Task.FromResult(true),
+			async path =>
+			{
+				Assert.That(path, Is.EqualTo("song.hm.json"));
+				await Task.Yield();
+				workspace.New();
+			});
+		Assert.That(success, Is.True);
+		Assert.That(workspace.Document, Is.Not.SameAs(previous));
+	}
+
 	private static DocumentWorkspace DirtyWorkspace()
 	{
 		DocumentWorkspace workspace = new();
