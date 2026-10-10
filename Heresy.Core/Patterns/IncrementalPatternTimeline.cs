@@ -828,7 +828,15 @@ public sealed class IncrementalPatternTimeline : IDisposable
 							or ApplySampleOffsetCommand
 							or ApplyTrackerNoteCutCommand
 							or ApplyTrackerNoteDelayCommand
-							or ApplyRetriggerCommand)))))
+							or ApplyRetriggerCommand
+							// Pure physical-channel controls can be deferred to
+							// their actual wall deadline; they must not apply
+							// while only preparing a future raw script note.
+							or SetPlaybackOffsetCommand
+							or SetSpatialPositionCommand or SetSurroundCommand
+							or SetResonantFilterCommand
+							or SetResonantFilterCutoffCommand
+							or SetResonantFilterResonanceCommand)))))
 				throw new NotSupportedException(
 					"Positive fixed wall-time offsets require standalone global Tempo/Speed or supported physical/virtual note commands.");
 			if (note.Target.Kind is not (ChannelTargetKind.Physical
@@ -877,7 +885,11 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						or ApplyTrackerPanningCommand
 						or ApplyTrackerPanning8BitCommand
 						or ApplyTrackerVolumeColumnPanningCommand
-						or SetSurroundCommand
+						or SetSurroundCommand or SetSpatialPositionCommand
+						or SetPlaybackOffsetCommand
+						or SetResonantFilterCommand
+						or SetResonantFilterCutoffCommand
+						or SetResonantFilterResonanceCommand
 						or ApplyTrackerVolumeColumnCommand
 						or ApplyGlobalVolumeSlideCommand or ApplyPanningSlideCommand
 						or SetOverallChannelVolumeSlideCommand
