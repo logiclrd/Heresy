@@ -401,6 +401,59 @@ public sealed class IncrementalPatternDeferredTimingTests
 		AssertTrackerWallParity(source, 1, includeLateWallTail: true);
 	}
 
+	[Test]
+	public void CombinedS7xAndSdxCommitsOffsetMemoryAtTickNotAtLaterWallDelivery()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		timeline.Add(new RawSource(
+			Event(0, TimeSpan.FromMilliseconds(8), ChannelTarget.Physical(0),
+				new StartNoteCommand((Heresy.Core.Objects.ObjectId)10U),
+				new ApplySampleOffsetCommand(3),
+				new ApplyTrackerNewNoteActionCommand(
+					NoteDisplacementAction.Continue),
+				new ApplyTrackerNoteDelayCommand(2)),
+			// Observe memory before tick 2 (40 ms) and between tick 2
+			// and the fixed-wall delivery (48 ms).
+			Event(0.25, ChannelTarget.Physical(1), new NoteOffCommand()),
+			Event(0.375, ChannelTarget.Physical(1), new NoteOffCommand())),
+			1, root);
+
+		Assert.That(timeline.TryStep(out IncrementalPatternTimelineStep? first),
+			Is.True);
+		Assert.That(first, Is.TypeOf<IncrementalPatternTimelineStep.Emit>());
+		Assert.That(first!.Time, Is.EqualTo(TimeSpan.FromMilliseconds(30)));
+		Assert.That(root.GetPhysicalChannelState(0)
+			.TryGetEffectParameter(EffectMemorySlot.SampleOffset, out _), Is.False,
+			"O03 must not be committed merely by preparing the SDx row.");
+
+		Assert.That(timeline.TryStep(out IncrementalPatternTimelineStep? second),
+			Is.True);
+		Assert.That(second, Is.TypeOf<IncrementalPatternTimelineStep.Emit>());
+		Assert.That(second!.Time, Is.EqualTo(TimeSpan.FromMilliseconds(45)));
+		Assert.Multiple(() =>
+		{
+			Assert.That(root.GetPhysicalChannelState(0)
+				.TryGetEffectParameter(EffectMemorySlot.SampleOffset,
+					out byte remembered), Is.True);
+			Assert.That(remembered, Is.EqualTo(3),
+					"The Oxx effect memory is committed at SD2's 40-ms tick.");
+		});
+
+		NoteEvent[] remaining = Drain(timeline);
+		Assert.That(remaining, Has.Length.EqualTo(1));
+		Assert.Multiple(() =>
+		{
+			Assert.That(remaining[0].Offset.TimeOffset,
+				Is.EqualTo(TimeSpan.FromMilliseconds(48)));
+			Assert.That(remaining[0].Commands,
+				Does.Contain(new SetSourceFrameOffsetCommand(3 * 256)));
+			Assert.That(remaining[0].Commands,
+				Does.Contain(new SetCurrentVoiceDisplacementActionCommand(
+					NoteDisplacementAction.Continue)));
+		});
+	}
+
 	private static void AssertTrackerWallParity(RawSource source, int rowCount,
 		bool includeLateWallTail = false)
 	{
