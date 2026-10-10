@@ -188,6 +188,94 @@ public abstract class PatternScriptProgram
 			timeOffsetSeconds);
 	}
 
+
+	/// <summary>
+	/// Start one invocation-scoped virtual voice. Its id is independent of
+	/// Pattern.ChannelCount and is local to this Pattern cursor invocation.
+	/// </summary>
+	protected void NoteVirtual(
+		double row,
+		uint virtualId,
+		ObjectId sourceId,
+		double pitchMultiplier = 1.0,
+		double playbackSpeedMultiplier = 1.0,
+		bool mixdown = false,
+		double? volume = null,
+		double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		if (sourceId.IsNone)
+			throw new ArgumentOutOfRangeException(nameof(sourceId));
+		ValidatePositiveFinite(pitchMultiplier, nameof(pitchMultiplier));
+		ValidatePositiveFinite(playbackSpeedMultiplier,
+			nameof(playbackSpeedMultiplier));
+		if (volume.HasValue
+			&& (!double.IsFinite(volume.Value)
+				|| volume.Value < 0.0
+				|| volume.Value > 1.0))
+		{
+			throw new ArgumentOutOfRangeException(nameof(volume));
+		}
+		Append(row, ChannelTarget.Virtual(virtualId),
+			new StartNoteCommand(sourceId, pitchMultiplier,
+				playbackSpeedMultiplier, mixdown, volume),
+			timeOffsetSeconds);
+	}
+
+	/// <summary>Release the voice at one invocation-local virtual ID.</summary>
+	protected void OffVirtual(
+		double row, uint virtualId, double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		Append(row, ChannelTarget.Virtual(virtualId),
+			new NoteOffCommand(), timeOffsetSeconds);
+	}
+
+	/// <summary>Cut the voice at one invocation-local virtual ID.</summary>
+	protected void CutVirtual(
+		double row, uint virtualId, double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		Append(row, ChannelTarget.Virtual(virtualId),
+			new NoteCutCommand(), timeOffsetSeconds);
+	}
+
+	/// <summary>Release previously started virtual voices in this scope.</summary>
+	protected void OffVirtualInScope(
+		double row, double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		Append(row, ChannelTarget.AllVirtualInScope,
+			new NoteOffCommand(), timeOffsetSeconds);
+	}
+
+	/// <summary>Cut previously started virtual voices in this scope.</summary>
+	protected void CutVirtualInScope(
+		double row, double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		Append(row, ChannelTarget.AllVirtualInScope,
+			new NoteCutCommand(), timeOffsetSeconds);
+	}
+
+	/// <summary>Release previously started virtual voices in every scope.</summary>
+	protected void OffAllVirtual(
+		double row, double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		Append(row, ChannelTarget.AllVirtual,
+			new NoteOffCommand(), timeOffsetSeconds);
+	}
+
+	/// <summary>Cut previously started virtual voices in every scope.</summary>
+	protected void CutAllVirtual(
+		double row, double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		Append(row, ChannelTarget.AllVirtual,
+			new NoteCutCommand(), timeOffsetSeconds);
+	}
+
 	protected void Off(double row, int channel, double timeOffsetSeconds = 0.0)
 	{
 		ValidateRow(row);
