@@ -492,7 +492,7 @@ public sealed class MainWindow : Window
 		MenuItem expensiveSeekHintsItem = new()
 		{
 			Header = "Show expensive source _seek hints",
-			IsCheckable = true,
+			ToggleType = MenuItemToggleType.CheckBox,
 			IsChecked = _uiConfiguration.ShowReplayRequiredSeekHints,
 		};
 		expensiveSeekHintsItem.Click += (_, _) =>
