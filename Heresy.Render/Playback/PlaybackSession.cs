@@ -1850,12 +1850,14 @@ public sealed class PlaybackSession
 				oldVoice.ApplyNoteOff(
 					eventFrame,
 					_context.Configuration.SampleRate);
-				// A zero-release envelope can finish at the very NNA
-				// displacement frame. Do not retain an already-silent
-				// note in the displaced-voice pool until the next PCM block.
-				long? offEnd = GetEffectiveVoiceEndFrameExclusive(
-					oldVoice, eventFrame);
-				if (!offEnd.HasValue || eventFrame < offEnd.Value)
+				// An already-complete volume envelope needs no
+				// displaced-voice tail. Preserve legacy NNA bookkeeping
+				// for source-level immediate Note Off (e.g. bare samples),
+				// whose pool entries are retired during ordinary rendering.
+				long? envelopeEnd =
+					oldVoice.GetVolumeEnvelopeEndFrameExclusiveAfterNoteOff(
+						eventFrame);
+				if (!envelopeEnd.HasValue || eventFrame < envelopeEnd.Value)
 					_virtualVoices.Add(oldVoice);
 				break;
 
