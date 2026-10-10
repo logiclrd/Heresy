@@ -4,6 +4,7 @@ using System.Numerics;
 using System.Text;
 
 using Heresy.Core.Envelopes;
+using Heresy.Core.FmSynthesis;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -71,6 +72,32 @@ public sealed class ScriptEnvelopePlaybackTests
 			Assert.That(a[5], Is.EqualTo(0.125f).Within(1e-4f));
 			Assert.That(b[5], Is.EqualTo(0.375f).Within(1e-4f));
 		});
+	}
+
+	[Test]
+	public void FmEnvelopeNodeResolvesScriptedExpressionInProductionPlayback()
+	{
+		SongDocument song = new();
+		ObjectId envId = song.AllocateObjectId();
+		song.Add(new ScriptEnvelopeDefinition(envId, "FM modulation")
+		{
+			Source = "Math.Cos(elapsedSeconds * 0.0) * 0.4",
+			ReleaseDuration = null,
+		});
+		ObjectId fmId = song.AllocateObjectId();
+		song.Add(new FmSynthDefinition(fmId, "Envelope output",
+			new FmSynthGraph([new FmEnvelopeNode(1, envId)], outputNodeId: 1)));
+		ObjectId rootId = song.AllocateObjectId();
+		song.Add(new ScriptPatternDefinition(rootId, "Root")
+		{
+			RowCount = 2, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({fmId.Value}));",
+		});
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono()).Create(song, rootId);
+		float[] output = new float[3];
+		plan.Source.Render(output.Length, output);
+		Assert.That(output, Is.All.EqualTo(0.4f).Within(1e-5f));
 	}
 
 	[Test]
