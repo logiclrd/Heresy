@@ -72,6 +72,55 @@ separately in [todo.md](todo.md). Historical milestone sections below
 may still describe this cross-rate behavior as unsupported; those
 statements no longer characterize the current production code.
 
+## S1x, SAx and absolute-panning shared-tick parity (October 10, 2026)
+
+The lazy incremental cursor now accepts the last eager-supported
+**raw tracker command families** that were omitted from its physical
+channel allow-list: **S1x glissando**, **SAx high sample offset**,
+**S8x absolute panning**, **Xxx 8-bit panning**, **volume-column
+absolute panning**, and **S91 surround**. The older S3x/S4x
+vibrato/tremolo waveform selection and panbrello waveform handling
+remain supported. SBx, Bxx/Cxx, SEy and S6x retain their separate
+row/flow preprocessing rather than being treated as ordinary
+playback commands.
+
+Each command is passed to the existing `PatternNoteProcessor`
+only when its originating row event actually executes. S1x updates
+its logical channel's glissando state, and the next Gxx
+tone-portamento command resolves that value. SAx persists the high
+native sample-offset nibble, including explicit SA0 reset, and later
+Oxx (including O00 recall) combines it with the remembered low
+byte. A fixed-wall delayed Oxx reads **the SAx memory at the note's
+actual deadline**, not at raw-event preparation. The memory remains
+isolated between flattened source invocations even when they share
+the same physical playback host. Cancellation before a future SAx
+row leaves that future memory unchanged.
+
+Absolute panning follows the eager IT precedence rules: S8x/Xxx
+override a same-cell volume-column pan independently of effect
+storage order; S91 suppresses the conflicting absolute pan. No
+physical speaker-layout or multichannel device policy changes
+are part of this compatibility pass.
+
+The S1x/Gxx regression also exposed a preexisting incremental
+cleanup omission: `ClearTonePortamentoCommand` must be deferred
+until the owning row end. SEy compatibility copies repeat the
+resolved `SetTonePortamentoCommand` with
+`TargetNote = null`, so they extend movement but cannot restart
+the initial portamento target. Both fixes preserve the existing
+tick-domain clock and cancellation semantics. The new
+`IncrementalAdvancedTrackerEffectsTests` and
+`IncrementalAdvancedEffectTimingTests` cover eager parity,
+row-end cleanup/repetition, source-frame offsets, deferred execution
+and channel-memory isolation.
+
+**Still unsupported:** negative fixed wall-time offsets (which
+would need a chronological look-behind policy), mixed raw global
+and physical commands at the same fixed-wall position where
+unsupported, and other direct script/playback commands outside the
+incremental allow-list. These remain explicit errors, not
+silently ignored operations. See [todo.md](todo.md).
+
 ## Current advanced shared-tick effect and deadline parity (October 10, 2026)
 
 The production incremental `IncrementalPatternTimeline` now delegates
