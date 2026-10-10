@@ -112,22 +112,23 @@ unsupported.
 `IncrementalAdvancedEffectTimingTests` verifies the exact deferred
 order, pitch/filter dual-command expansion, direct semantic control,
 and a later voice replacement. In
-`PlaybackDelayedEnvelopeLifecycleTests`, a sustaining tone selected
-through an Instrument receives a 40-ms ADSR release. It begins
-with Note Off at 10 ms, pauses at 20 ms with gain 0.75, resumes
-at 50 ms, and completes at 80 ms instead of 50 ms. Source PCM is
-unchanged and voice retirement occurs only after the remaining
-active release has elapsed. This is a scheduler coverage fix,
-not a new renderer envelope engine.
+`PlaybackDelayedEnvelopeLifecycleTests`, a looping sample selected
+through an Instrument receives a 40-ms ADSR release. It begins with
+Note Off at 10 ms, pauses at 20 ms with gain 0.75, resumes at
+50 ms, and completes at 80 ms instead of 50 ms. PCM continues
+while the volume envelope has a tail; voice retirement occurs only
+after the remaining active release has elapsed.
 
-**Scope note:** `SampleSound` already ends at Note Off, including
-when used as an Instrument tone; that established sample rule
-precludes a sustained post-Off Instrument release. The new test
-intentionally uses a continuing source to verify envelope
-semantics without changing the sample policy. Whether an
-Instrument-attached sample should instead sustain through its
-volume-envelope release is an unresolved design choice, explicitly
-retained in `todo.md`.
+**Instrument-bound SampleSound semantics:** Unlike a bare sample,
+a terminal sample selected by an Instrument with an effective volume
+envelope ignores Note Off as a *sample source-end* condition. The
+voice still receives Note Off, starts its volume-envelope release,
+and stops at the envelope's end. The policy is per-invocation;
+nested Instrument overlays can supply (or replace/remove) that
+volume envelope. A sample's own natural PCM end still applies,
+and explicit Cut/Fade are unchanged. Bare samples and Instrument
+samples without a volume envelope still stop at Note Off. This
+contract is implemented and tested; see [sample storage](sample-storage.md).
 
 ## Fixed-wall note-lifecycle controls across mixed patterns (October 10, 2026)
 

@@ -47,6 +47,39 @@ documents with that key remains supported: its value is ignored, and
 saving the document drops it. There is no schema-version change or
 source-specific musical reference-frequency API.
 
+## Instrument-selected samples and Note Off
+
+A bare `SampleSound` retains the established direct-sample rule:
+Note Off terminates its PCM at the sample's next eligible output frame.
+However, when an Instrument selects a sample **and provides an
+effective volume envelope**, Note Off must start the envelope's
+release **without cutting the sample source early**. The terminal
+`SampleSoundState.ReleaseIsControlledByVolumeEnvelope` flag is
+invocation-local, established during `InstrumentSound.CreateInvocation`
+after the tone's envelope overlay resolves. It prevents
+`SampleSound.GetEndFrameExclusive` from treating `NoteOffTime` as
+the sample's terminal frame. The Note Off timestamp still reaches
+the sound state, and `PlaybackVoice` controls the actual end from
+its active volume envelope, including pauses/resumes and repeated
+Off being idempotent.
+
+The policy follows recursive Instrument tone selection. An outer
+Instrument that overlays a volume envelope can enable a release for
+a terminal sample selected through an inner Instrument, while an
+outer tone that clears the effective volume envelope restores
+direct cutoff behavior. It is **not** a shared sample setting;
+separate direct and Instrument invocations of the same PCM remain
+independent. An Instrument tone without a volume envelope retains
+the sample's immediate Note Off behavior rather than creating an
+unbounded release.
+
+For an **unlooped finite** sample, ordinary PCM exhaustion can still
+end audio before a long envelope release; no extra PCM is synthesized.
+A looping sample can sustain until the envelope has reached its end.
+Explicit Cut/Fade, NNA-Off displacement, and natural sample ends
+continue to obey their respective independent termination policies.
+No file-format property or sample metadata change is required.
+
 ## Loading
 
 Loading a song resolves each sample's encoded data while the document is being

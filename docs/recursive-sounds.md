@@ -39,6 +39,17 @@
   Instrument-selected ADSR volume envelopes, and is covered by
   regression PCM and lifecycle tests. The broader advanced
   delayed-effect/script and multichannel release matrix remains open.
+- **Instrument sample releases respect the effective volume envelope.**
+  Recursive Instrument binding still resolves to the terminal
+  `SampleSound`, but configures its own invocation's sample state
+  to continue past Note Off if the final selected tone has a volume
+  envelope. The original source Note Off timestamp and the voice's
+  envelope release both occur; the sample does not stop prematurely.
+  This applies through nested Instrument selection, delayed
+  S77/S78 envelope pause/resume, and NNA-Off migration. Bare PCM
+  notes and Instrument tones with no volume envelope retain their
+  previous immediate Note Off, and finite PCM can still run out
+  naturally. Tests verify the separate per-invocation behavior.
 - Advanced mixed-rate tracker timing and complex script/effect
   interactions remain separate compatibility TODOs.
   Baseline recursive playback, flattened ownership

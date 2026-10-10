@@ -263,17 +263,23 @@ and native resampling versus pitch compensation. See
   the sound or prematurely retiring the voice. The broader
   mixed-script/recursive compatibility TODO remains open.
 
-  **Sample-versus-Instrument release contract requires review.**
-  The same initial regression exposed a separate established behavior:
-  bare `SampleSound` ends on Note Off, even when selected by an
-  Instrument that adds a release envelope. Therefore that source
-  cannot itself sustain a post-Off Instrument release. Existing
-  `PlaybackSessionTests.NoteOffLeavesSoundAssociatedButSampleEndsAtOffFrame`
-  specifies the bare-sample behavior; the new ADSR regression uses
-  a sustaining source that does not end on Off. Do not alter sample
-  Note Off or Instrument envelope policy implicitly: determine the
-  intended sample-in-Instrument release contract before changing
-  either rendering or scheduling.
+  **Instrument-selected sample release contract resolved (October 10).**
+  A Note Off on an Instrument must not terminate its selected sample
+  ahead of the Instrument's effective volume-envelope release. The
+  terminal `SampleSoundState` now captures an invocation-local policy
+  from `InstrumentSound.CreateInvocation`, after that Instrument's
+  envelope overlays resolve. When a volume envelope exists, a
+  SampleSound ignores Note Off for source-end calculation and keeps
+  producing PCM until the normal voice envelope-end limit is reached.
+  This supports paused release and independently released NNA-Off
+  voices, as well as volume envelopes introduced by outer nested
+  Instruments. Natural PCM exhaustion and explicit Cut/Fade retain
+  their existing limits. Direct samples and Instrument tones without
+  a volume envelope **still stop on Note Off**. No shared sample
+  definition or file format changes. Red-then-green regressions
+  verify paused ADSR with actual looping sample PCM, nested Instrument
+  tone selection, NNA-Off tails, and both direct/un-enveloped cutoff
+  paths. See [sample-storage.md](sample-storage.md).
 **Recursive native Oxx/Qxy source-frame seeking verified across
 invocation boundaries.** `RecursiveNativeSeekBoundaryTests` now cover
 O01 as exactly 256 private source frames across multi-order child
