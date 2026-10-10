@@ -46,6 +46,17 @@ jobs:
         dotnet publish Heresy/Heresy.csproj -c Release -r win-x64 --self-contained false -p:UseAppHost=true -o "$RUNNER_TEMP/heresy-win-x64"
         python3 build/verify-windows-apphost-icon.py "$RUNNER_TEMP/heresy-win-x64/Heresy.exe"
 
+    - name: Inspect Linux ARM64 libsndfile NuGet assets
+      shell: bash
+      run: |
+        dotnet restore Heresy/Heresy.csproj -r linux-arm64
+        echo "== arm64 native assets =="
+        find "$HOME/.nuget/packages/org.sndfile.runtime.linux-arm64/1.2.2.1" \
+          -type f | sort
+        echo "== x64 native assets (comparison) =="
+        find "$HOME/.nuget/packages/org.sndfile.runtime.linux-x64/1.2.2.1/runtimes/linux-x64/native" \
+          -maxdepth 1 -type f -printf '%f\n' | sort
+
     - name: Smoke test versioned release bundle
       shell: bash
       run: |
