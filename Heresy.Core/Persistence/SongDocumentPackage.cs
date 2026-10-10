@@ -4,6 +4,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 
 using Heresy.Core.Assets;
 using Heresy.Core.Objects;
@@ -114,6 +115,20 @@ public static class SongDocumentPackage
 	}
 
 	public static SongDocument Load(string path)
+		=> ReadDocument(path, allowMissingEntries: false);
+
+	public static async Task<SongDocument> LoadWithRecoveryAsync(
+		string path,
+		Func<SampleAssetRecoveryRequest, Task<string?>> locateAsync)
+	{
+		ArgumentNullException.ThrowIfNull(locateAsync);
+		SongDocument document = ReadDocument(path, allowMissingEntries: true);
+		await SampleAssetPersistence.HydratePersistedSamplesWithRecoveryAsync(
+			document, locateAsync);
+		return document;
+	}
+
+	private static SongDocument ReadDocument(string path, bool allowMissingEntries)
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(path);
 		string packagePath = Path.GetFullPath(path);
@@ -150,7 +165,7 @@ public static class SongDocumentPackage
 							ex);
 					}
 
-					if (archive.GetEntry(storedPath) is null)
+					if (!allowMissingEntries && archive.GetEntry(storedPath) is null)
 					{
 						throw new InvalidDataException(
 							$"The .hm manifest references missing archive entry '{storedPath}'.");
@@ -158,7 +173,8 @@ public static class SongDocumentPackage
 
 					return HeresyModulePath.MakeSyntheticPath(packagePath, storedPath);
 				});
-		SampleAssetPersistence.HydratePersistedSamples(document);
+		if (!allowMissingEntries)
+			SampleAssetPersistence.HydratePersistedSamples(document);
 		return document;
 	}
 

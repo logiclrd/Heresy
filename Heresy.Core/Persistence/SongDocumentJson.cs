@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
+using System.Threading.Tasks;
 
 using Heresy.Core.Assets;
 using Heresy.Core.Envelopes;
@@ -350,6 +351,30 @@ public static class SongDocumentJson
 				File.ReadAllText(fullPath, Encoding.UTF8),
 				storedPath => ResolveStoredPath(directory, storedPath));
 		SampleAssetPersistence.HydratePersistedSamples(document);
+		return document;
+	}
+
+
+	/// <summary>
+	/// Load into a temporary song and permit an interactive replacement when a
+	/// persisted sample cannot be read. Callers publish the result only after
+	/// every asset has been resolved and decoded.
+	/// </summary>
+	public static async Task<SongDocument> LoadWithRecoveryAsync(
+		string path,
+		Func<SampleAssetRecoveryRequest, Task<string?>> locateAsync)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(path);
+		ArgumentNullException.ThrowIfNull(locateAsync);
+		string fullPath = Path.GetFullPath(path);
+		string directory = Path.GetDirectoryName(fullPath)
+			?? throw new ArgumentException("The JSON path must identify a file.", nameof(path));
+		SongDocument document =
+			Deserialize(
+				File.ReadAllText(fullPath, Encoding.UTF8),
+				storedPath => ResolveStoredPath(directory, storedPath));
+		await SampleAssetPersistence.HydratePersistedSamplesWithRecoveryAsync(
+			document, locateAsync);
 		return document;
 	}
 

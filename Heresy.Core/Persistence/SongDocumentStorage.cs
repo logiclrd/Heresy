@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Scripting;
@@ -41,6 +42,22 @@ public static class SongDocumentStorage
 			return SongDocumentPackage.Load(path);
 		if (IsJsonPath(path))
 			return SongDocumentJson.Load(path);
+
+		throw new NotSupportedException(
+			"Heresy songs must use the .hm or .hm.json extension.");
+	}
+
+
+	public static Task<SongDocument> LoadWithRecoveryAsync(
+		string path,
+		Func<SampleAssetRecoveryRequest, Task<string?>> locateAsync)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(path);
+		ArgumentNullException.ThrowIfNull(locateAsync);
+		if (IsPackagePath(path))
+			return SongDocumentPackage.LoadWithRecoveryAsync(path, locateAsync);
+		if (IsJsonPath(path))
+			return SongDocumentJson.LoadWithRecoveryAsync(path, locateAsync);
 
 		throw new NotSupportedException(
 			"Heresy songs must use the .hm or .hm.json extension.");
