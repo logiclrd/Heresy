@@ -257,11 +257,23 @@ and native resampling versus pitch compensation. See
   Red-then-green regressions cover direct semantic enable, the
   two-command pitch/filter expansion, and a later replacement note
   receiving its own wall-delayed control. An Instrument-backed PCM
-  regression verifies that Note Off at 10 ms, envelope disable at
-  20 ms and re-enable at 50 ms hold the release at 75% then finish
-  at 80 ms, without restarting the sound or prematurely retiring
-  the voice. The broader mixed-script/recursive compatibility TODO
-  remains open.
+  regression verifies that a sustaining Instrument tone's Note
+  Off at 10 ms, envelope disable at 20 ms and re-enable at 50 ms
+  hold the release at 75% then finish at 80 ms, without restarting
+  the sound or prematurely retiring the voice. The broader
+  mixed-script/recursive compatibility TODO remains open.
+
+  **Sample-versus-Instrument release contract requires review.**
+  The same initial regression exposed a separate established behavior:
+  bare `SampleSound` ends on Note Off, even when selected by an
+  Instrument that adds a release envelope. Therefore that source
+  cannot itself sustain a post-Off Instrument release. Existing
+  `PlaybackSessionTests.NoteOffLeavesSoundAssociatedButSampleEndsAtOffFrame`
+  specifies the bare-sample behavior; the new ADSR regression uses
+  a sustaining source that does not end on Off. Do not alter sample
+  Note Off or Instrument envelope policy implicitly: determine the
+  intended sample-in-Instrument release contract before changing
+  either rendering or scheduling.
 **Recursive native Oxx/Qxy source-frame seeking verified across
 invocation boundaries.** `RecursiveNativeSeekBoundaryTests` now cover
 O01 as exactly 256 private source frames across multi-order child

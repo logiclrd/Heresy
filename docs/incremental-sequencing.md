@@ -112,12 +112,22 @@ unsupported.
 `IncrementalAdvancedEffectTimingTests` verifies the exact deferred
 order, pitch/filter dual-command expansion, direct semantic control,
 and a later voice replacement. In
-`PlaybackDelayedEnvelopeLifecycleTests`, an Instrument-selected
-40-ms ADSR release begins with Note Off at 10 ms, pauses at
-20 ms with gain 0.75, resumes at 50 ms, and completes at 80 ms
-instead of 50 ms; source PCM is unchanged and voice retirement
-occurs only after the remaining active release has elapsed.
-This is a scheduler coverage fix, not a new renderer envelope engine.
+`PlaybackDelayedEnvelopeLifecycleTests`, a sustaining tone selected
+through an Instrument receives a 40-ms ADSR release. It begins
+with Note Off at 10 ms, pauses at 20 ms with gain 0.75, resumes
+at 50 ms, and completes at 80 ms instead of 50 ms. Source PCM is
+unchanged and voice retirement occurs only after the remaining
+active release has elapsed. This is a scheduler coverage fix,
+not a new renderer envelope engine.
+
+**Scope note:** `SampleSound` already ends at Note Off, including
+when used as an Instrument tone; that established sample rule
+precludes a sustained post-Off Instrument release. The new test
+intentionally uses a continuing source to verify envelope
+semantics without changing the sample policy. Whether an
+Instrument-attached sample should instead sustain through its
+volume-envelope release is an unresolved design choice, explicitly
+retained in `todo.md`.
 
 ## Fixed-wall note-lifecycle controls across mixed patterns (October 10, 2026)
 
