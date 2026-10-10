@@ -122,6 +122,102 @@ public sealed class IncrementalAdvancedTrackerEffectsTests
         Compare(pattern);
     }
 
+    [TestCase((byte)0)]
+    [TestCase((byte)1)]
+    public void S1xGlissandoAffectsLaterTonePortamentoAtItsOwnRow(byte enabled)
+    {
+        DataPatternDefinition pattern = Pattern(3, 1);
+        pattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
+            new TrackerGlissandoControlPatternEffect(enabled));
+        pattern.Grid.GetOrCreateCell(1, 0).Effects.Add(
+            new TrackerTonePortamentoPatternEffect(4));
+        pattern.Grid.GetOrCreateCell(2, 0).Effects.Add(
+            new TrackerGlissandoControlPatternEffect(0));
+
+        SequencingContext eager = new();
+        SequencingContext live = new();
+        Compare(pattern, eager, live);
+        Assert.Multiple(() =>
+        {
+            Assert.That(live.GetPhysicalChannelState(0).GlissandoEnabled, Is.False);
+            Assert.That(eager.GetPhysicalChannelState(0).GlissandoEnabled, Is.False);
+        });
+    }
+
+    [Test]
+    public void SAxPersistsThroughOxxAndExplicitSA0ClearsHighNibble()
+    {
+        DataPatternDefinition pattern = Pattern(4, 1);
+        pattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
+            new SampleOffsetHighPatternEffect(3));
+        PatternCell offset = pattern.Grid.GetOrCreateCell(1, 0);
+        offset.Note = new StartPatternNote((ObjectId)10U);
+        offset.Effects.Add(new SampleOffsetPatternEffect(0x04));
+        pattern.Grid.GetOrCreateCell(2, 0).Effects.Add(
+            new SampleOffsetHighPatternEffect(0));
+        PatternCell reset = pattern.Grid.GetOrCreateCell(3, 0);
+        reset.Note = new StartPatternNote((ObjectId)10U);
+        reset.Effects.Add(new SampleOffsetPatternEffect(0x00));
+
+        SequencingContext eager = new();
+        SequencingContext live = new();
+        Compare(pattern, eager, live);
+        Assert.Multiple(() =>
+        {
+            Assert.That(live.GetPhysicalChannelState(0).SampleOffsetHigh, Is.Zero);
+            Assert.That(live.GetPhysicalChannelState(0).TryGetEffectParameter(
+                EffectMemorySlot.SampleOffset, out byte remembered), Is.True);
+            Assert.That(remembered, Is.EqualTo(0x04));
+        });
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void EffectColumnPanOverridesVolumeColumnRegardlessOfStoredOrder(
+        bool effectFirst)
+    {
+        DataPatternDefinition pattern = Pattern(2, 1);
+        PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+        PatternEffect effectPan = new TrackerPanning8BitPatternEffect(0);
+        PatternEffect volumePan = new TrackerVolumeColumnPanningPatternEffect(64);
+        if (effectFirst)
+        {
+            cell.Effects.Add(effectPan);
+            cell.Effects.Add(volumePan);
+        }
+        else
+        {
+            cell.Effects.Add(volumePan);
+            cell.Effects.Add(effectPan);
+        }
+        pattern.Grid.GetOrCreateCell(1, 0).Effects.Add(
+            new TrackerPanningPatternEffect(15));
+        Compare(pattern);
+    }
+
+    [Test]
+    public void SurroundSuppressesVolumeColumnPanInSameCell()
+    {
+        DataPatternDefinition pattern = Pattern(1, 1);
+        PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+        cell.Effects.Add(new TrackerVolumeColumnPanningPatternEffect(0));
+        cell.Effects.Add(new TrackerSurroundPatternEffect());
+        Compare(pattern);
+    }
+
+    [Test]
+    public void S8xXxxAndVolumePanRunAtFutureRowNotOnCurrentRow()
+    {
+        DataPatternDefinition pattern = Pattern(3, 1);
+        pattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
+            new TrackerPanning8BitPatternEffect(0));
+        pattern.Grid.GetOrCreateCell(1, 0).Effects.Add(
+            new TrackerVolumeColumnPanningPatternEffect(64));
+        pattern.Grid.GetOrCreateCell(2, 0).Effects.Add(
+            new TrackerPanningPatternEffect(15));
+        Compare(pattern);
+    }
+
     private static void Compare(DataPatternDefinition pattern,
         SequencingContext? eagerContext = null,
         SequencingContext? liveContext = null)
