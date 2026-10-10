@@ -45,11 +45,72 @@ public sealed class StartupSplashPlacementTests
 
 	[TestCase(true, "wayland", "", true)]
 	[TestCase(true, "Wayland", null, true)]
-	[TestCase(true, "x11", "wayland-0", true)]
+	[TestCase(true, "x11", "wayland-0", false)]
+	[TestCase(true, "", "wayland-0", true)]
 	[TestCase(true, "x11", null, false)]
 	[TestCase(false, "wayland", "wayland-0", false)]
 	public void WaylandDetectionOnlySuppressesPlacementWhereRelevant(
 		bool isLinux, string? session, string? display, bool expected)
 		=> Assert.That(StartupSplashPlacement.IsWayland(
 			isLinux, session, display), Is.EqualTo(expected));
+	[Test]
+	public void NativeOwnerAndSplashMovesAreFollowedOnlyDuringFirst50Milliseconds()
+	{
+		StartupSplashPlacementFollow follow = new();
+		Assert.That(StartupSplashPlacementFollow.InitialMoveWindow,
+			Is.EqualTo(TimeSpan.FromMilliseconds(50)));
+		Assert.That(follow.ShouldRecenter(true, StartupSplashPositionChange.OwnerMoved),
+			Is.False, "No placement should be queued before Opened.");
+
+		follow.Open();
+		foreach (StartupSplashPositionChange change in new[]
+		{
+			StartupSplashPositionChange.OwnerMoved,
+			StartupSplashPositionChange.OwnerResized,
+			StartupSplashPositionChange.SplashMoved,
+			StartupSplashPositionChange.OwnerWindowState,
+		})
+		{
+			Assert.That(follow.ShouldRecenter(true, change), Is.True,
+				change.ToString());
+			Assert.That(follow.ShouldRecenter(false, change), Is.False,
+				"Wayland must not attempt direct positioning.");
+		}
+
+		follow.EndInitialMoveWindow();
+		Assert.Multiple(() =>
+		{
+			Assert.That(follow.ShouldRecenter(true,
+				StartupSplashPositionChange.OwnerMoved), Is.False);
+			Assert.That(follow.ShouldRecenter(true,
+				StartupSplashPositionChange.OwnerResized), Is.False);
+			Assert.That(follow.ShouldRecenter(true,
+				StartupSplashPositionChange.SplashMoved), Is.False);
+			Assert.That(follow.ShouldRecenter(true,
+				StartupSplashPositionChange.OwnerWindowState), Is.True,
+				"Late maximization still changes the correct centering anchor.");
+		});
+
+		follow.Close();
+		Assert.That(follow.ShouldRecenter(true,
+			StartupSplashPositionChange.OwnerWindowState), Is.False,
+			"Closed splash must not be moved by queued notifications.");
+	}
+
+	[TestCase(-20, 0)]
+	[TestCase(0, 0)]
+	[TestCase(50, 0.2)]
+	[TestCase(125, 0.5)]
+	[TestCase(250, 1)]
+	[TestCase(500, 1)]
+	public void SplashFadeIsLinearAndClampedTo250Milliseconds(
+		int elapsedMilliseconds, double expected)
+	{
+		Assert.That(StartupSplashPlacementFollow.FadeDuration,
+			Is.EqualTo(TimeSpan.FromMilliseconds(250)));
+		Assert.That(StartupSplashPlacementFollow.OpacityAt(
+			TimeSpan.FromMilliseconds(elapsedMilliseconds)),
+			Is.EqualTo(expected).Within(1e-12));
+	}
+
 }
