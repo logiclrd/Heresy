@@ -20,6 +20,7 @@ public sealed class StartupSplashWindow : Window
 	private readonly Window _owner;
 	private readonly DispatcherTimer _timeout;
 	private readonly StartupSplashDismissal _dismissal;
+	private readonly bool _isWayland;
 
 	public StartupSplashWindow(Window owner)
 	{
@@ -28,7 +29,16 @@ public sealed class StartupSplashWindow : Window
 		WindowDecorations = global::Avalonia.Controls.WindowDecorations.None;
 		CanResize = false;
 		ShowInTaskbar = false;
-		WindowStartupLocation = WindowStartupLocation.CenterOwner;
+		_isWayland = StartupSplashPlacement.IsWayland(
+			OperatingSystem.IsLinux(),
+			Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"),
+			Environment.GetEnvironmentVariable("WAYLAND_DISPLAY"));
+		// Wayland generally denies explicit top-level placement. There
+		// the center-screen startup hint, with Show(owner), is the best
+		// available compositor request for the owner's display.
+		WindowStartupLocation = _isWayland
+			? WindowStartupLocation.CenterScreen
+			: WindowStartupLocation.CenterOwner;
 		Width = 800;
 		Height = 280;
 		Title = "Heresy";
@@ -77,8 +87,42 @@ public sealed class StartupSplashWindow : Window
 	{
 		if (!_dismissal.IsDismissed)
 		{
+			// Center after both native windows have been created, when
+			// Position, Bounds, RenderScaling and the owner's current
+			// monitor all describe the real, displayed geometry.
+			if (!_isWayland)
+				TryCenterOverOwner();
 			_timeout.Start();
 			Activate(); // Route the first keypress to the splash, not the song.
+		}
+	}
+
+	private void TryCenterOverOwner()
+	{
+		try
+		{
+			double scaling = RenderScaling > 0
+				? RenderScaling : _owner.RenderScaling;
+			PixelSize ownerSize = StartupSplashPlacement.LogicalSizeInPixels(
+				_owner.Bounds.Width, _owner.Bounds.Height,
+				_owner.RenderScaling);
+			PixelRect ownerRect = new(_owner.Position, ownerSize);
+			PixelRect workArea =
+				_owner.Screens.ScreenFromWindow(_owner)?.WorkingArea
+					?? ownerRect;
+			PixelRect anchor = StartupSplashPlacement.OwnerOrScreenAnchor(
+				ownerRect, workArea,
+				_owner.WindowState == WindowState.Maximized);
+			PixelSize splashSize = StartupSplashPlacement.LogicalSizeInPixels(
+				Bounds.Width > 0 ? Bounds.Width : Width,
+				Bounds.Height > 0 ? Bounds.Height : Height,
+				scaling);
+			Position = StartupSplashPlacement.CenterOver(anchor, splashSize);
+		}
+		catch (Exception)
+		{
+			// Some platforms expose coordinates but refuse window moves.
+			// Leave Avalonia's CenterOwner startup hint in place.
 		}
 	}
 
