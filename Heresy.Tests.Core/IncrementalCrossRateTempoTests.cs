@@ -124,7 +124,7 @@ public sealed class IncrementalCrossRateTempoTests
 	}
 
 	[TestCase(true, 33.0, 35.0)]
-	[TestCase(false, 34.0, 32.0)]
+	[TestCase(false, 34.5, 32.0)]
 	public void OpposingCrossRateSlidesClampInMappedPhysicalChannelOrder(
 		bool scaledDownFirst, double firstBoundaryTempo, double endingTempo)
 	{
