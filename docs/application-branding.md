@@ -45,8 +45,21 @@ After `MainWindow.Opened`, `App` schedules creation at Avalonia's
 `DispatcherPriority.Loaded` (and checks the main window remains visible).
 It calls the nonmodal `Show(mainWindow)` overload, making the splash
 an **owned** auxiliary window rather than the lifetime's main window.
-The splash is centered on its owner, with `WindowDecorations.None`,
-`CanResize = false` and `ShowInTaskbar = false`. The main document
+The splash uses `WindowDecorations.None`, `CanResize = false`
+and `ShowInTaskbar = false`. On Windows, X11 and other environments
+that permit top-level window movement, `StartupSplashWindow`
+explicitly centers itself **after opening**, using the owner's
+actual screen-pixel position and scaled bounds. If its owner is
+maximized, it uses the owner's current display's **WorkingArea**
+instead of stale restore bounds, so centering still works on
+secondary monitors and under display scaling.
+
+On Linux Wayland, ordinary top-level coordinates cannot reliably
+be chosen by a client; the splash remains an **owned** window
+(`Show(mainWindow)`) but sets `WindowStartupLocation.CenterScreen`
+as a best-effort compositor hint. The compositor may ignore this or
+choose a display. Exact placement cannot be guaranteed on Wayland,
+and no arbitrary explicit move is attempted there. The main document
 window and lazy SDL playback transport initialize independently; neither
 is delayed by a four-second await/sleep.
 
@@ -70,3 +83,32 @@ reentrant close events without depending on a live desktop environment.
 The full desktop host is still built and cross-published on CI; the
 headless tests intentionally test the lifecycle contract separately
 from window-manager-specific focus rendering.
+
+## Main window maximization preference (implemented)
+
+The desktop `App` now uses `MainWindowStatePreference` for the
+binary **maximized vs normal** state, not for size/position or song
+content. It stores a short version-one token (`v1:maximized` or
+`v1:normal`) under the user's
+`Environment.SpecialFolder.LocalApplicationData/Heresy/` folder.
+Writing uses an atomic temporary-file rename. Missing, unreadable
+or malformed preferences are nonfatal, and unwritable storage is
+treated as best effort.
+
+At application startup, the preference is read, requested on the
+main window and reapplied when it opens (some platform window
+implementations ignore pre-open state setters). This happens
+**before** the dispatcher posts the splash, so the splash
+can use the restored maximized work area. State changes observed
+through Avalonia's `Window.WindowStateProperty` are written
+immediately, only when the binary preference actually changes.
+Minimized and fullscreen states never write a false/normal
+preference by themselves.
+
+`MainWindowStatePreferenceTests` cover missing/malformed files,
+round-trip writes, unavailable storage and transition deduplication.
+`StartupSplashPlacementTests` cover coordinate centering, negative
+secondary-monitor coordinates, maximized work areas, pixel scaling
+and Wayland detection. The CI runner is headless: actual compositor
+positioning and window-manager maximize notifications require a
+desktop smoke test.

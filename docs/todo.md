@@ -231,21 +231,22 @@ creation is dispatcher-posted after main-window opening, never stalls the
 main window or initializes audio. See
 [application-branding.md](application-branding.md).
 
-- [ ] Center the startup splash **over the actual main window**, rather
-  than relying solely on the platform's `CenterOwner` startup hint.
-  Cover normal **and maximized** main windows, including nonprimary
-  monitors and mixed display scaling. If the Wayland compositor forbids
-  explicit top-level placement, hint **center on the splash's display**
-  instead, keeping the splash owned by the main window; do not require
-  a workaround if the compositor does not support that hint either.
-  Retain nonmodal, chromeless, four-second and input-dismissal behavior.
-- [ ] Persist the main window's **maximized versus normal** state when
-  that state changes, and restore it on the next application startup
-  before showing the window/splash. Minimize/fullscreen transitions
-  must not accidentally overwrite the last maximized preference.
-  Persist this as local application UI state, **not** in the song
-  document; handle first run, malformed state, unavailable storage
-  and platform-specific window-manager behavior without startup failure.
+**Splash placement and main-window maximization persistence implemented.**
+The splash explicitly centers in physical pixels over its owning
+window's current bounds on coordinate-capable desktops and over the
+owner's current display work area when maximized, taking display
+scaling into account. On Wayland, where compositors can prohibit
+top-level movement, the owned splash requests `CenterScreen` as
+a best-effort positioning hint rather than overriding compositor
+placement. The main window stores **maximized vs normal** in a local,
+versioned preference file whenever that state changes and restores
+it on the next startup before scheduling the splash. Minimized and
+fullscreen are not saved as normal. First-run, malformed and
+unavailable preference files do not break startup. Headless tests
+cover monitor geometry, scaling, Wayland detection, state transitions,
+file roundtrips and failures. Manual window-manager smoke testing
+remains advisable, especially on Wayland. See
+[application-branding.md](application-branding.md).
 
 ## UI polish and requested editor redesign — newly planned
 
