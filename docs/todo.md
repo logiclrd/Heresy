@@ -95,12 +95,39 @@ a direct global set interrupts and discards stale SEy repeats.
 inversion, mapped-channel clamp order, cancellation and direct
 Tempo interruption, alongside the earlier equal-rate suite.
 See [incremental-sequencing.md](incremental-sequencing.md).
-- [ ] Finish unsupported advanced tracker/script effect combinations in
-  the shared-tick coordinator. In particular, verify negative fixed
-  wall-time offsets, advanced/global effect deadlines, incompatible
-  simultaneous Tempo spans, delayed/overlapping command memory, and
-  remaining tick/repeat behaviors. Do not apply future Source, Tempo or
-  effect state prematurely; reject unsupported combinations explicitly.
+**Additional shared-tick effect families and deadline crossovers
+are now verified.** The incremental merger now accepts the
+eager-supported tracker **S7x envelope controls, SFx/Zxx MIDI macros,
+Vxx global-volume settings, arpeggio, tremolo, tremor and panbrello**.
+It resolves channel-specific effect memory at each actual event,
+queues the appropriate arpeggio/tremolo/tremor/panbrello clears at the
+owning row's end, and repeats already-resolved tremor/panbrello
+commands across SEy spans without premature memory changes.
+`IncrementalAdvancedTrackerEffectsTests` assert eager/incremental
+event, target, timing and memory parity across all these families.
+`IncrementalAdvancedEffectTimingTests` verify deferred combined
+global Tempo/Speed, shared-boundary global Tempo versus Txx,
+fixed-wall source starts whose execution order differs from raw
+emission order, and cancellation of delayed sample-offset memory.
+Negative wall offsets are intentionally rejected before future
+Source/Tempo state changes; the scheduler neither looks backward
+nor silently reinterprets them as immediate events. Existing
+SCx/SDx/Qxy, fractional global timing and cross-rate Txx/SEy
+tests remain authoritative. See
+[incremental-sequencing.md](incremental-sequencing.md).
+
+- [ ] Continue **remaining advanced tracker/script effect compatibility**
+  only for concrete, reproducible coordinator gaps beyond the verified
+  families. Candidate work includes additional raw tracker effect
+  families present in `PatternNoteProcessor` but still omitted from
+  the incremental command allow-list (for example S1x glissando,
+  SAx sample-offset-high, and other waveform/panning commands),
+  complex overlapping global commands, negative fixed wall-time
+  offsets **only if** a chronological look-behind contract can safely
+  be defined, and subtler simultaneous Tempo/ramp deadlines.
+  Unsupported combinations must continue to fail clearly; never
+  precommit future Source, effect or Tempo memory, or eagerly enumerate
+  future Pattern/Sequence visits.
 - [ ] Extend **advanced** lifecycle compatibility beyond the completed
   flattened-source ownership model, especially interactions between delayed
   tracker effects, mixed data/script timing, multichannel routing, and
