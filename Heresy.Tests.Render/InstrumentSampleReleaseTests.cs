@@ -109,6 +109,59 @@ public sealed class InstrumentSampleReleaseTests
         Assert.That(session.GetChannelState(1).CurrentVoice, Is.Null);
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void ZeroReleaseInstrumentSampleOffRetiresAtExactFrame(
+        bool virtualTarget)
+    {
+        TestSoundResolver sounds = new();
+        sounds.Add(SampleId, LoopingSample());
+        sounds.Add(OuterId, Instrument(OuterId, SampleId,
+            TimeSpan.Zero, sounds));
+        PlaybackSession session = Session(Schedule(), sounds);
+        ChannelTarget target = virtualTarget
+            ? ChannelTarget.Virtual(7)
+            : ChannelTarget.Physical(0);
+
+        session.ApplyLiveEvent(target, [new StartNoteCommand(OuterId)]);
+        float[] beforeOff = new float[2];
+        session.Render(0, 2, beforeOff);
+        Assert.That(beforeOff, Is.EqualTo(new float[] { 1f, 1f }));
+
+        session.ApplyLiveEvent(target, [new NoteOffCommand()]);
+        if (!virtualTarget)
+            Assert.That(session.GetChannelState(0).CurrentVoice,
+                Is.Null, "A zero-release voice must retire at the Off frame.");
+
+        session.EndInput();
+        Assert.That(session.IsComplete, Is.True,
+            "The finished physical/virtual sample must not linger until a later render call.");
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void ZeroReleaseInstrumentSampleRetiresAtEndInputWithoutExtraRender(
+        bool virtualTarget)
+    {
+        TestSoundResolver sounds = new();
+        sounds.Add(SampleId, LoopingSample());
+        sounds.Add(OuterId, Instrument(OuterId, SampleId,
+            TimeSpan.Zero, sounds));
+        PlaybackSession session = Session(Schedule(), sounds);
+        ChannelTarget target = virtualTarget
+            ? ChannelTarget.Virtual(7)
+            : ChannelTarget.Physical(0);
+
+        session.ApplyLiveEvent(target, [new StartNoteCommand(OuterId)]);
+        session.Render(0, 2, new float[2]);
+        session.EndInput();
+
+        Assert.That(session.IsComplete, Is.True,
+            "EndInput must synchronously retire a zero-release Instrument sample.");
+        if (!virtualTarget)
+            Assert.That(session.GetChannelState(0).CurrentVoice, Is.Null);
+    }
+
     [Test]
     public void NnaOffMigratedInstrumentSampleFinishesVolumeReleaseAlongsideReplacement()
     {
