@@ -148,10 +148,16 @@ public sealed class SongDocument
 	{
 		ArgumentNullException.ThrowIfNull(restoredRoot);
 
+		// Older version-1 documents have four roots: Sequences, Patterns,
+		// Instruments (also holding Envelopes), Samples. The five-root model
+		// keeps the same format version and promotes Envelope placements.
+		if (restoredRoot.Children.Count == 4)
+			restoredRoot = UpgradeLegacyFourSectionTree(restoredRoot);
+
 		if (restoredRoot.Children.Count != SongTreeSections.DocumentOrder.Length)
 		{
 			throw new InvalidOperationException(
-				"A song tree must contain exactly the four fixed document sections.");
+				"A song tree must contain exactly the five fixed document sections.");
 		}
 
 		for (int index = 0; index < SongTreeSections.DocumentOrder.Length; index++)
@@ -174,6 +180,75 @@ public sealed class SongDocument
 
 		Root.Name = restoredRoot.Name;
 	}
+
+	private SongTreeFolder UpgradeLegacyFourSectionTree(
+		SongTreeFolder oldRoot)
+	{
+		string[] expected = ["Sequences", "Patterns", "Instruments", "Samples"];
+		for (int index = 0; index < expected.Length; index++)
+		{
+			if (oldRoot.Children[index] is not SongTreeFolder folder
+				|| folder.Name != expected[index])
+			{
+				throw new InvalidOperationException(
+					$"Legacy song-tree section {index} must be '{expected[index]}'.");
+			}
+		}
+
+		SongTreeFolder oldSequences = (SongTreeFolder)oldRoot.Children[0];
+		SongTreeFolder oldPatterns = (SongTreeFolder)oldRoot.Children[1];
+		SongTreeFolder oldInstruments = (SongTreeFolder)oldRoot.Children[2];
+		SongTreeFolder oldSamples = (SongTreeFolder)oldRoot.Children[3];
+
+		SongTreeFolder envelopes = new("Envelopes");
+		// Mirror only ancestor folders that contain Envelope nodes into the
+		// new section. Mixed Instrument/Envelope folders keep their original
+		// Instrument contents and folder organization. Never change ObjectIds,
+		// references, or any audio/document revision when loading.
+		ExtractLegacyEnvelopes(oldInstruments, envelopes);
+
+		SongTreeFolder patches = new("Patches");
+		patches.Children.AddRange(oldSamples.Children);
+		SongTreeFolder migrated = new(oldRoot.Name);
+		migrated.Children.Add(oldSequences);
+		migrated.Children.Add(oldPatterns);
+		migrated.Children.Add(patches);
+		migrated.Children.Add(envelopes);
+		migrated.Children.Add(oldInstruments);
+		return migrated;
+	}
+
+	private void ExtractLegacyEnvelopes(
+		SongTreeFolder instruments,
+		SongTreeFolder envelopes)
+	{
+		for (int index = 0; index < instruments.Children.Count;)
+		{
+			SongTreeNode node = instruments.Children[index];
+			if (node is SongTreeObject reference
+				&& IsEnvelopeTreeReference(reference.ObjectId))
+			{
+				instruments.Children.RemoveAt(index);
+				envelopes.Children.Add(node);
+				continue;
+			}
+
+			if (node is SongTreeFolder folder)
+			{
+				SongTreeFolder envelopeFolder = new(folder.Name);
+				ExtractLegacyEnvelopes(folder, envelopeFolder);
+				if (envelopeFolder.Children.Count != 0)
+					envelopes.Children.Add(envelopeFolder);
+			}
+			index++;
+		}
+	}
+
+	private bool IsEnvelopeTreeReference(ObjectId id)
+		=> (_objects.TryGetValue(id, out SongObject? obj)
+				&& obj.Kind == SongObjectKind.Envelope)
+			|| (_tombstones.TryGetValue(id, out ObjectTombstone? tombstone)
+				&& tombstone.Kind == SongObjectKind.Envelope);
 
 	internal void RestoreNextObjectId(uint nextObjectId)
 	{
