@@ -16,8 +16,10 @@ public static class FlattenedSourceEffectPolicy
 	public static bool IsVoiceSpecific(PatternEffect effect)
 	{
 		ArgumentNullException.ThrowIfNull(effect);
-		return effect is
-			SetPlaybackFrequencyPatternEffect or SetPlaybackOffsetPatternEffect
+		return effect is ParametricPatternEffect
+				{ Parameter: ParametricEffectParameter.NoteVolume
+					or ParametricEffectParameter.PitchLinearUnits }
+			or SetPlaybackFrequencyPatternEffect or SetPlaybackOffsetPatternEffect
 			or VibratoPatternEffect or FineVibratoPatternEffect
 			or VibratoVolumeSlidePatternEffect
 			// Kxx/Lxx contain a valid source-note volume slide; their
@@ -45,8 +47,10 @@ public static class FlattenedSourceEffectPolicy
 	public static bool IsVoiceSpecific(NoteCommand command)
 	{
 		ArgumentNullException.ThrowIfNull(command);
-		return command is
-			SetPlaybackFrequencyCommand or SetPlaybackOffsetCommand
+		return command is StartParametricEffectCommand
+				{ Parameter: ParametricEffectParameter.NoteVolume
+					or ParametricEffectParameter.PitchLinearUnits }
+			or SetPlaybackFrequencyCommand or SetPlaybackOffsetCommand
 			or ApplyVibratoCommand or ApplyFineVibratoCommand
 			or ApplyVibratoVolumeSlideCommand
 			or SetVibratoCommand or ClearPitchModulationCommand

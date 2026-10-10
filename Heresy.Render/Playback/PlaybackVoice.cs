@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Numerics;
 
 using Heresy.Core.Envelopes;
@@ -183,6 +184,7 @@ public sealed class PlaybackVoice
 	private readonly int _sampleRate;
 	private readonly double _initialNotePitchMultiplier;
 	private readonly PlaybackOperatorCollection _operators = new();
+	private readonly List<ActiveParametricEffect> _nativeParametric = [];
 	private readonly List<PitchOperatorBinding> _pitchOperators = [];
 	private readonly Func<long, double>? _inheritedPitch;
 	private readonly double _inheritedPitchAtStart;
@@ -1134,6 +1136,56 @@ public sealed class PlaybackVoice
 		_activeTonePortamentoCurveStartFrame = relativeFrame;
 	}
 
+	internal bool HasActiveNativeParametric
+		=> _nativeParametric.Count != 0;
+
+	internal void BeginNativeParametric(
+		StartParametricEffectCommand command, long absoluteFrame)
+	{
+		if (command.Parameter is not (
+			ParametricEffectParameter.NoteVolume or
+			ParametricEffectParameter.PitchLinearUnits))
+			throw new NotSupportedException(
+				"Voice-native effect requires a note-volume or pitch target.");
+		ActiveParametricEffect active = new(
+			command, absoluteFrame, _sampleRate, _tickClock);
+		if (command.Parameter == ParametricEffectParameter.PitchLinearUnits)
+			AddPitchOperator(active.Operator, absoluteFrame);
+		else
+			_operators.Add(active.Operator);
+		_nativeParametric.Add(active);
+		if (command.Parameter == ParametricEffectParameter.PitchLinearUnits)
+			RecomposePitchTrajectory(absoluteFrame - StartFrame);
+		SynchronizeNativeParametric(absoluteFrame);
+	}
+
+	internal void SynchronizeNativeParametric(long absoluteFrame)
+	{
+		for (int i = _nativeParametric.Count - 1; i >= 0; i--)
+		{
+			ActiveParametricEffect active = _nativeParametric[i];
+			if (!active.Advance(absoluteFrame, _operators,
+				out PlaybackParameterDeltas committed))
+				continue;
+			_nativeParametric.RemoveAt(i);
+			if (active.Parameter == ParametricEffectParameter.NoteVolume)
+			{
+				NoteVolume = Math.Clamp(NoteVolume +
+					committed[PlaybackParameter.NoteVolume], 0.0, 1.0);
+			}
+			else
+			{
+				_pitchOperators.RemoveAll(binding =>
+					ReferenceEquals(binding.Operator, active.Operator));
+				double delta = committed[PlaybackParameter.PitchLinearUnits];
+				if (delta != 0.0)
+					AdjustPitchLinearUnits(absoluteFrame, delta);
+				else
+					RecomposePitchTrajectory(absoluteFrame - StartFrame);
+			}
+		}
+	}
+
 	internal void SetNoteVolume(double volume)
 	{
 		CancelNoteVolumeSlide();
@@ -1242,6 +1294,7 @@ public sealed class PlaybackVoice
 
 	internal double GetBaseNoteVolume(long absoluteFrame)
 	{
+		SynchronizeNativeParametric(absoluteFrame);
 		ActiveNoteVolumeSlide? slide =
 			_activeNoteVolumeSlide;
 		if (slide is not null)
@@ -1264,6 +1317,7 @@ public sealed class PlaybackVoice
 
 	public double GetNoteVolume(long absoluteFrame)
 	{
+		SynchronizeNativeParametric(absoluteFrame);
 		ActiveNoteVolumeSlide? slide =
 			_activeNoteVolumeSlide;
 		if (slide is not null)

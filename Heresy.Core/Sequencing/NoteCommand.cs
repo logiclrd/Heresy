@@ -23,6 +23,8 @@ public enum ParametricEffectParameter
 	GlobalVolume,
 	OverallChannelVolume,
 	SpatialX,
+	NoteVolume,
+	PitchLinearUnits,
 }
 
 /// <summary>

@@ -41,10 +41,17 @@ internal sealed class ActiveParametricEffect
             ParametricEffectParameter.GlobalVolume => PlaybackParameter.GlobalVolume,
             ParametricEffectParameter.OverallChannelVolume => PlaybackParameter.OverallVolume,
             ParametricEffectParameter.SpatialX => PlaybackParameter.SpatialX,
+            ParametricEffectParameter.NoteVolume => PlaybackParameter.NoteVolume,
+            ParametricEffectParameter.PitchLinearUnits => PlaybackParameter.PitchLinearUnits,
             _ => throw new NotSupportedException(),
         };
+        double startWall = startFrame / (double)sampleRate;
+        Func<double, double, double> program = command.CompiledEvaluator;
         Operator = new FunctionalRowPlaybackOperator(
-            coordinate, command.CompiledEvaluator, command.CommitOnExpire);
+            coordinate,
+            (absoluteSeconds, rowTicks) =>
+                program(Math.Max(0.0, absoluteSeconds - startWall), rowTicks),
+            command.CommitOnExpire);
     }
 
     /// <summary>True after the operator's final endpoint is evaluated.</summary>
@@ -52,7 +59,7 @@ internal sealed class ActiveParametricEffect
         out PlaybackParameterDeltas committed)
     {
         long at = Math.Min(Math.Max(StartFrame, frame), EndFrame);
-        double seconds = (at - StartFrame) / (double)_sampleRate;
+        double seconds = at / (double)_sampleRate;
         double ticks = _clock.GetElapsedTicks(StartFrame, at);
         if (frame >= EndFrame)
         {

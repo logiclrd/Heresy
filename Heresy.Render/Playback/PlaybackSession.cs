@@ -1339,7 +1339,12 @@ public sealed class PlaybackSession
 				break;
 
 			case StartParametricEffectCommand parametric:
-				channel.BeginParametric(parametric, eventFrame);
+				if (parametric.Parameter is
+					ParametricEffectParameter.NoteVolume or
+					ParametricEffectParameter.PitchLinearUnits)
+					channel.CurrentVoice?.BeginNativeParametric(parametric, eventFrame);
+				else
+					channel.BeginParametric(parametric, eventFrame);
 				break;
 
 			case SetOverallChannelVolumeCommand volume:
@@ -2467,7 +2472,8 @@ public sealed class PlaybackSession
 		int frameCount,
 		Span<float> destination)
 	{
-		if (frameCount > 1 && voice.HasPanningEnvelope)
+		if (frameCount > 1
+			&& (voice.HasPanningEnvelope || voice.HasActiveNativeParametric))
 		{
 			int panningOutputChannelCount =
 				_context.Configuration.OutputChannelCount;
@@ -2488,6 +2494,7 @@ public sealed class PlaybackSession
 			return false;
 		}
 
+		voice.SynchronizeNativeParametric(absoluteStartFrame);
 		voice.SynchronizePanningEnvelope(absoluteStartFrame);
 
 		long invocationStartFrame = absoluteStartFrame - voice.StartFrame;
