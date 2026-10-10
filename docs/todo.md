@@ -533,10 +533,23 @@ are unchanged. See [export-workflow.md](export-workflow.md).
 
 ## Asset portability
 
-- [ ] Add an interactive recovery flow for missing/unreadable sample assets
-  when opening an existing project: select substitute files or search folders,
-  validate loaded encoded data, and retry without mutating the current
-  document on failure. Preserve in-memory decoded PCM and archive semantics.
+**Interactive sample-asset recovery during File → Open implemented
+(October 10).** When a valid .hm.json or .hm manifest refers to missing,
+unreadable or SHA-mismatched encoded sample data, File → Open now offers
+individual file replacement or a bounded folder search for same-name,
+SHA-256-verified assets. Explicit replacements must match the manifest hash
+when available and pass audio decoding, with retry on invalid selection.
+A canceled/failed recovery preserves the previous authoring document; the
+selected song is published only after all assets are decoded and the JSON
+path mode is determined. Recovered bytes become song-owned pending imports,
+so they survive subsequent deletion of the located file, and the opened
+document is marked modified until saved. Saving materializes recovered
+encoding in .hm or .hm.json without introducing external dependencies.
+Missing ZIP entries are recoverable only through the opt-in recovery load;
+normal strict loading and all manifest entry-path checks remain unchanged.
+Unhashed assets require explicit selection rather than auto-matching by
+filename. Real-time playback still accesses only in-memory PCM. See
+[sample-storage.md](sample-storage.md) and the Core/UI recovery tests.
 
 ## Playback state and authoring feedback
 

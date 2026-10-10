@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading.Tasks;
 
 using AwesomeAssertions;
 
@@ -243,6 +244,58 @@ public sealed class DocumentWorkspaceTests
 			workspace.Open(jsonPath);
 
 			workspace.JsonPathMode.Should().Be(JsonAssetPathMode.Absolute);
+		}
+		finally
+		{
+			if (Directory.Exists(root))
+				Directory.Delete(root, recursive: true);
+		}
+	}
+
+
+	[Test]
+	public async Task RecoveredOpenIsDirtyAndCancelPreservesCurrentWorkspace()
+	{
+		string root = Path.Combine(Path.GetTempPath(),
+			$"heresy-ui-recovery-{Guid.NewGuid():N}");
+		string original = Path.Combine(root, "song", "pcm", "tone.wav");
+		string replacement = Path.Combine(root, "elsewhere", "tone.wav");
+		string song = Path.Combine(root, "song", "track.hm.json");
+		try
+		{
+			WritePcm16MonoWave(original);
+			SongDocument source = new();
+			ObjectId id = source.AllocateObjectId();
+			source.Add(new SampleDefinition(id, "Tone",
+				ExternalAssetIntegrity.CreateReference(original)));
+			SongDocumentStorage.Save(song, source);
+			Directory.CreateDirectory(Path.GetDirectoryName(replacement)!);
+			File.Move(original, replacement);
+
+			DocumentWorkspace workspace = new();
+			workspace.Document.MarkChanged(affectsAudio: false);
+			SongDocument before = workspace.Document;
+			Assert.ThrowsAsync<OperationCanceledException>(async () =>
+				await workspace.OpenWithRecoveryAsync(song,
+					_ => Task.FromResult<string?>(null)));
+			workspace.Document.Should().BeSameAs(before);
+			workspace.FilePath.Should().BeNull();
+			workspace.IsModified.Should().BeTrue();
+
+			await workspace.OpenWithRecoveryAsync(song,
+				_ => Task.FromResult<string?>(replacement));
+			workspace.Document.Should().NotBeSameAs(before);
+			workspace.FilePath.Should().Be(Path.GetFullPath(song));
+			workspace.JsonPathMode.Should().Be(JsonAssetPathMode.Relative);
+			workspace.IsModified.Should().BeTrue(
+				"recovered bytes have not yet been persisted back to the song");
+			((SampleDefinition)workspace.Document.Objects[id]).PendingAsset
+				.Should().NotBeNull();
+			File.Delete(replacement);
+			workspace.Save();
+			workspace.IsModified.Should().BeFalse();
+			((SampleDefinition)SongDocumentStorage.Load(song).Objects[id]).PcmData
+				.Should().NotBeNull();
 		}
 		finally
 		{

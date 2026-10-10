@@ -133,6 +133,63 @@ public sealed class AssetPersistenceTests
 		Assert.That(((SampleDefinition)recovered.Objects[id]).PendingAsset, Is.Not.Null);
 	}
 
+
+	[Test]
+	public async Task RecoveryCanResolveMultipleDistinctMissingAssetsBeforePublishing()
+	{
+		using TempProject project = new();
+		string first = WritePcm16MonoWave(
+			project.Path("song", "pcm", "first.wav"), 8000, [1000]);
+		string second = WritePcm16MonoWave(
+			project.Path("song", "pcm", "second.wav"), 8000, [2000]);
+		SongDocument source = DocumentWithSample(first, out ObjectId firstId);
+		ObjectId secondId = source.AllocateObjectId();
+		source.Add(new SampleDefinition(secondId, "Second",
+			ExternalAssetIntegrity.CreateReference(second)));
+		string path = project.Path("song", "track.hm.json");
+		SongDocumentStorage.Save(path, source);
+		string relocatedFirst = project.Path("relocated", "first.wav");
+		string relocatedSecond = project.Path("relocated", "second.wav");
+		Directory.CreateDirectory(Path.GetDirectoryName(relocatedFirst)!);
+		File.Move(first, relocatedFirst);
+		File.Move(second, relocatedSecond);
+		int attempts = 0;
+
+		SongDocument loaded = await SongDocumentStorage.LoadWithRecoveryAsync(
+			path,
+			request =>
+			{
+				attempts++;
+				return Task.FromResult<string?>(
+					request.SampleId == firstId ? relocatedFirst : relocatedSecond);
+			});
+
+		Assert.That(attempts, Is.EqualTo(2));
+		Assert.That(((SampleDefinition)loaded.Objects[firstId]).PendingAsset, Is.Not.Null);
+		Assert.That(((SampleDefinition)loaded.Objects[secondId]).PendingAsset, Is.Not.Null);
+	}
+
+	[Test]
+	public void InvalidArchiveManifestCannotBeBypassedByRecoveryCallback()
+	{
+		using TempProject project = new();
+		string package = project.Path("song.hm");
+		using (FileStream file = File.Create(package))
+		using (ZipArchive archive = new(file, ZipArchiveMode.Create))
+			WriteEntry(archive, "song.hm.json", MinimalManifest("../outside.wav"));
+		int attempted = 0;
+
+		Assert.ThrowsAsync<InvalidDataException>(async () =>
+			await SongDocumentStorage.LoadWithRecoveryAsync(
+				package,
+				_ =>
+				{
+					attempted++;
+					return Task.FromResult<string?>("irrelevant.wav");
+				}));
+		Assert.That(attempted, Is.Zero);
+	}
+
 	[Test]
 	public void PackageLoadHydratesDecodedPcmAndDropsEncodedBytes()
 	{

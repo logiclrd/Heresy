@@ -123,6 +123,40 @@ A Heresy module must not create a live cross-module sample dependency. Loading
 or importing a sample from another module copies the sample into the current
 song; it does not preserve a link back to the other module.
 
+
+### Interactive recovery when opening a song
+
+File → Open invokes a staged, recovery-aware loader *after* the normal
+picker-first unsaved-change guard. Every persisted sample is decoded before
+the new document replaces the existing workspace. If an encoded file or
+archive entry is missing, unreadable, or fails its manifest hash, the UI
+identifies the sample and original location and offers:
+
+- **Choose File:** explicitly locate the encoded audio (including renamed
+  files); a stored SHA-256 must match exactly, and decoding must succeed.
+  A manifest without a hash may be recovered only by an explicit file choice.
+- **Search Folder:** breadth-first bounded search of the selected directory
+  and its children, excluding symlinks. Automatic substitutions require both
+  the original filename and the manifest SHA-256. Chosen search roots may
+  resolve further samples in the same open operation.
+- **Cancel:** abandon this open. A failed candidate reopens the recovery
+  options with its validation error, without accepting partial recovery.
+
+All substitutions become **pending encoded payloads** belonging to the staged
+song, rather than persisted references to the recovery file. They retain
+decoded PCM and encoded bytes until successfully saved, even if the selected
+file disappears. The successfully opened song is marked *modified* so that
+saving writes these bytes into its own .hm archive or .hm.json PCM subtree,
+then replaces pending bytes with new persisted identities. Neither the
+song's version 1 manifest format nor its existing path-mode rules change.
+
+The original active song, save path and dirty state remain untouched if any
+asset cannot be recovered or the user cancels. In a package, a missing
+referenced ZIP entry may enter the opt-in recovery path, but an invalid entry
+path, malformed manifest, or unreadable root archive is **not** silently
+reinterpreted. Normal noninteractive loading keeps its strict missing-entry
+error. No recovery operation happens in the realtime PCM worker.
+
 ## Importing
 
 Importing an audio file or a sample from another song:
