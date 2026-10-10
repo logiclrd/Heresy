@@ -3010,3 +3010,76 @@ ordinary fade durations and the source-volume lifecycle covered
 above. It does not claim exhaustive parity for every unusual
 instrument release envelope or indefinitely running script; those
 remain stress/compatibility follow-ups.
+
+## Sixty-first step: inherited source and lifecycle editor indications
+
+The existing `FlattenedSourceEffectWarnings.Describe` recognized only
+an explicitly selected/current flattened source *within one data
+Pattern*. That was sufficient for step 55, but a data-driven Sequence
+runs adjacent Patterns on the same logical channel memory. The same
+Pattern can appear at multiple orders and receive different remembered
+Sources or current logical notes. A standalone Pattern-local scan
+therefore could not reliably distinguish voice-specific effects from
+valid note-volume controls after an order boundary, and it had no
+nonblocking presentation for downstream Off/Cut.
+
+A new **framework-independent, sequence-occurrence-aware** analyzer,
+`FlattenedSourceEffectWarnings.Analyze(document, context)`, walks the
+exact `PatternEditorContext.Segments` and displayed row projection.
+It tracks Source selection memory separately from the active note for
+each logical channel, carrying both across normal data-Sequence order
+boundaries. A Source-column selection without a note does not displace
+the current logical note. An omitted Source on a later note can recall
+a selection made in another Sequence order; the tooltip identifies
+that origin separately from an *already-playing* source inherited
+from an earlier order. `SequenceEntry.StartRow` skips the preceding
+rows rather than leaking their nonexistent memory updates into
+static analysis.
+
+The model is intentionally **not** a second runtime interpreter.
+Script Pattern segments, unresolved entries and tracker Bxx/Cxx
+flow changes invalidate the certain linear predecessor history.
+An effect which depends on such memory receives a *conditional*
+warning: the effect **may** be inapplicable if the dynamically or
+previously selected Source is a flattened Pattern/Sequence. The
+editor does not falsely assert that a script has selected any
+specific Source; a subsequent explicit Source selection/start
+recovers definite classification. Source classifications remain
+aligned with `FlattenedSourceEffectPolicy.IsVoiceSpecific`: Dxx,
+Mxx/Nxx, and native source-volume controls are not labeled
+invalid; Kxx/Lxx mention that only their pitch modulation is
+ignored while live source-volume slides remain effective.
+
+**Downstream lifecycle notices** are distinct from effect warnings.
+Note Off reports that the flattened producer stops generating future
+notes but releasing voices and their inherited source-volume
+controls may remain active. A downstream incompatible effect on
+that still-associated releasing logical note is appropriately
+identified. Note Cut reports that future production and descendant
+voices terminate; following rows no longer warn about the cut note.
+Uncertain Off/Cut after a script is described conditionally.
+These are presentations of stored commands, not mutations or
+claims that a valid lifecycle operation should be removed.
+
+`PatternEditorControl` constructs the analysis **once per grid
+refresh**, not independently for every cell. Definite incompatible
+effects use a warning prefix, uncertain cases use a question mark,
+and lifecycle-only rows use an arrow. Tooltip text is attached to
+the note, effect strip, and volume field, and no stored Pattern or
+effect is rewritten. A Source/effect/note edit reruns the analysis
+and updates *all* visible warning decorators, because one edit
+can change the interpretation of later rows or a repeated occurrence
+of the same Pattern in the active Sequence. Script execution or
+runtime diagnostics remain the authority for dynamically selected
+Sources and non-linear orders.
+
+UI-layer NUnit regressions verify distinct repeated Pattern
+occurrences, inherited active notes, Source selections remembered
+across orders, Note Off release association, Cut termination,
+scripted/flow uncertainty, skipped StartRow prefixes, and
+re-analysis following a Source edit. The original single-Pattern
+`Describe` compatibility API remains available.
+
+The only remaining flattened-source ownership milestone is the
+step-62 long-running stress/retirement audit; specialized tracker
+timing and seek compatibility are distinct tasks.

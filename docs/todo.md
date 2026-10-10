@@ -147,10 +147,30 @@ preserving audible release and already-captured anti-click tails. These are
   instigating channel without stealing or re-targeting those references.
   Four new regression cases verify fade boundary frames, PCM curves,
   continued release automation and replacement-note isolation.
-  **Still outstanding:** inherited/dynamically selected editor source
-  indications and downstream Note Off/Cut; advanced mixed release
-  envelope/indefinite-script stress coverage, and separate timing/seek
-  compatibility work.
+  **Step 61: inherited and dynamic source editor indications implemented.**
+  The tracker editor analyzes flattened-note ownership per displayed
+  data-Sequence order occurrence, preserving both active logical notes
+  and Source selections across ordinary order boundaries. The same
+  stored Pattern may show different warnings when invoked twice with
+  different inherited memory; StartRow prefixes are not executed.
+  Non-editable script/missing orders and Bxx/Cxx flow commands mark
+  downstream state as indeterminate; warnings then explicitly say the
+  relevant voice-specific effects **may** be inapplicable, rather than
+  asserting runtime certainty. Static explicit Source selections or
+  subsequent starts restore certainty where justified. Known inherited
+  note and remembered Source-selection origins name their preceding
+  Sequence order in tooltips. OFF and CUT rows show lifecycle notices:
+  Off ends future generation while leaving releasing descendants and
+  their volume controls alive; Cut terminates the source and stops
+  warnings on later rows until another flattened start. Note, effect,
+  and volume fields show distinct definite/conditional/lifecycle
+  indicators without changing persisted effects. Edits re-analyze
+  and refresh downstream warnings immediately, including repeated
+  Pattern appearances in the active Sequence.
+  **Still outstanding:** step-62 cancellation/retirement stress across
+  deep recursive and indefinite scripts, overlapping release envelopes,
+  and chunk-size determinism. Advanced timing, seek, and multi-rate
+  tracker compatibility remain separately tracked.
   The incremental merger admits zero-offset Mxx and native channel-volume
   commands alongside flattened starts.
   The detailed target remains in step 48 below.
