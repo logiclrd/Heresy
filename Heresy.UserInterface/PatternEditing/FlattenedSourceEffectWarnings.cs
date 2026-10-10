@@ -153,6 +153,7 @@ public static class FlattenedSourceEffectWarnings
 					if (!selection.IsNone)
 					{
 						channel.Remembered = Classify(document, selection);
+						channel.SourceSelectionOrder = segment.SequenceEntryIndex;
 						channel.Reason = channel.Remembered == SourceKnowledge.Unknown
 							? "the selected Source is unresolved"
 							: null;
@@ -205,6 +206,13 @@ public static class FlattenedSourceEffectWarnings
 							&& segment.SequenceEntryIndex != started
 								? $" The flattened source was inherited from sequence order {started}."
 								: null;
+						string? inheritedSelection = context.IsSequence
+							&& channel.Current == SourceKnowledge.Flattened
+							&& channel.SourceSelectionOrder is int selectedOrder
+							&& segment.SequenceEntryIndex != selectedOrder
+							&& channel.StartOrder == segment.SequenceEntryIndex
+								? $" The remembered Source selection was inherited from sequence order {selectedOrder}."
+								: null;
 						string lifecycleMessage = cell.Note switch
 						{
 							PatternNoteOff when lifecycle && !conditional =>
@@ -240,7 +248,7 @@ public static class FlattenedSourceEffectWarnings
 								: string.IsNullOrEmpty(effectMessage)
 									? lifecycleMessage
 									: lifecycleMessage + " " + effectMessage)
-								+ inherited + uncertainty + details
+								+ inherited + inheritedSelection + uncertainty + details
 								+ " Stored effects remain editable.",
 							conditional, warns, lifecycle);
 					}
@@ -278,6 +286,7 @@ public static class FlattenedSourceEffectWarnings
 		public SourceKnowledge Current { get; set; }
 		public bool Released { get; set; }
 		public int? StartOrder { get; set; }
+		public int? SourceSelectionOrder { get; set; }
 		public string? Reason { get; set; }
 
 		public void MarkUnknown(string reason)
@@ -286,6 +295,7 @@ public static class FlattenedSourceEffectWarnings
 			Current = SourceKnowledge.Unknown;
 			Released = false;
 			StartOrder = null;
+			SourceSelectionOrder = null;
 			Reason = reason;
 		}
 	}
