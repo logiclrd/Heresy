@@ -103,11 +103,20 @@ public sealed class ParametricPatternPlaybackTests
         pattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
             new ParametricPatternEffect(ParametricEffectParameter.GlobalVolume,
                 TimeSpan.FromMilliseconds(50), "-0.2 + rowTime * 0.0", true));
+        // Exercise manifest round-trip without unrelated imported PCM assets,
+        // whose encoded payload is intentionally still pending persistence.
+        SongDocument persisted = new();
+        ObjectId serializedId = persisted.AllocateObjectId();
+        DataPatternDefinition stored = new(serializedId, "Effects")
+            { RowCount = 1, ChannelCount = 1 };
+        stored.Grid.GetOrCreateCell(0, 0).Effects.Add(
+            pattern.Grid[0, 0]!.Effects.Single());
+        persisted.Add(stored);
         const string path = "/tmp/parametric-effects.hm.json";
         SongDocument round = Heresy.Core.Persistence.SongDocumentJson.Deserialize(
-            Heresy.Core.Persistence.SongDocumentJson.Serialize(song, path), path);
+            Heresy.Core.Persistence.SongDocumentJson.Serialize(persisted, path), path);
         var restored = (ParametricPatternEffect)((DataPatternDefinition)
-            round.Objects[root]).Grid[0, 0]!.Effects.Single();
+            round.Objects[serializedId]).Grid[0, 0]!.Effects.Single();
         Assert.Multiple(() =>
         {
             Assert.That(restored.Parameter, Is.EqualTo(ParametricEffectParameter.GlobalVolume));
