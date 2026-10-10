@@ -557,6 +557,16 @@ so remaining mappings continue to identify the same definitions. The editor
 projects existing envelope objects, including unresolved references via
 tombstone/raw-ID fallback.
 
+The next-generation Instrument tone-grid **model and projection** are now
+implemented and tested separately from this legacy visual editor. Their
+descending row range is capped by 10 × Divisions and C-11 (using the
+renderer’s AwayFromZero pitch-index rounding and Offset), with editor-only
+drafts, out-of-range row highlighting, overwrite/Delete semantics and
+copy-on-write Core tone-specification maintenance. **The visual grid has
+not been installed yet.** The nine-column user interface and closest-note/
+logarithmic-pitch controls remain TODOs; see
+[instrument tone-grid model](docs/instrument-tone-grid-model.md).
+
 ADSR envelopes are first-class objects in the **Envelopes** pane. Its
 editor now combines numeric fields with the **graphical ADSR editor**:
 drag Attack, Decay or Release endpoint handles (separately identifiable

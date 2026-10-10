@@ -298,6 +298,21 @@ New and Exit retain their original guard behavior. A headless-testable
 action factory and open-flow coordinator cover button roles, choice
 mapping, event ordering, cancellation and failure preservation.
 See [ui-editor-redesign.md](ui-editor-redesign.md).
+**Instrument tone-grid model groundwork completed (not yet connected to UI).**
+A framework-independent `InstrumentToneGridProjection` and
+`InstrumentToneGridModel` provide descending rows, a reserved
+blank entry row, C-11/ten-octave clipping with Offset and fractional
+Divisions, translucent-red out-of-range rows, blank-row migration
+and Delete operations. Unassigned rows remain editor-local drafts.
+Assigning a Source commits the row to Core automatically with
+copy-on-write isolation of shared specifications, deduplication of
+equivalent active specifications and one audio-affecting revision.
+Clearing Source silences its mapping while retaining draft values;
+snapshots remain isolated. The existing InstrumentEditorControl still
+uses the old two-list interface: **the three UI integration and
+closest-note TODOs below remain open**. See
+[instrument-tone-grid-model.md](instrument-tone-grid-model.md).
+
 - [ ] Redesign the **Instrument tone-table editor** as one grid with
   implicitly managed specifications. Build the blank top row and
   reverse-index, ten-octave/C-11-with-Offset rows on load/Divisions

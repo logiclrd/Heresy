@@ -154,10 +154,21 @@ headless dialog-action and picker/guard/transaction regression tests.
 
 ## Instrument Editor: implicit specifications and tone-table grid
 
-The visual editor stops presenting tone specifications and tone table as
-two separately edited lists. Present **one editable tone-table grid**;
-manage the Core tone-specification list implicitly. Do not treat visual
-temporary rows as saved musical data until they have an assigned Source.
+**Model milestone implemented; visual grid not yet implemented.**
+The framework-independent `InstrumentToneGridProjection` and
+`InstrumentToneGridModel` implement the row projection and
+Core/draft persistence rules described below. The current Avalonia
+`InstrumentEditorControl` still presents separate specifications
+and tone-table lists. The next milestone must replace those controls
+with one editable grid bound to the model; the nine columns, note
+notation and pitch interactions are still pending. Details and
+explicit boundary decisions are recorded in
+[instrument-tone-grid-model.md](instrument-tone-grid-model.md).
+
+The finished visual editor will stop presenting tone specifications
+and tone table as two separately edited lists. It will present
+**one editable tone-table grid** and manage the Core tone-specification
+list implicitly, without persisting rows lacking a Source.
 
 ### Row setup and ordering
 
