@@ -71,10 +71,11 @@ public sealed class PlaybackSession
 					double input = samples[sampleIndex + speaker];
 					double low = _low[speaker]
 						+ _alpha[speaker] * (input - _low[speaker]);
-					// Exact digital silence once the decaying state is
-					// inaudible. This also bounds export tail duration
-					// instead of extending it into infinite denormals.
-					if (Math.Abs(low) <= SilenceThreshold)
+					// Clear only *decaying silence*, never a very quiet
+					// accumulator under nonzero input. Otherwise an
+					// extremely low cutoff can get stuck at zero forever.
+					// The bounded export tail avoids infinite denormals.
+					if (input == 0.0 && Math.Abs(low) <= SilenceThreshold)
 						low = 0.0;
 					_low[speaker] = low;
 					samples[sampleIndex + speaker] = (float)(
