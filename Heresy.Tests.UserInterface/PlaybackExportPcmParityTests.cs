@@ -118,7 +118,7 @@ public sealed class PlaybackExportPcmParityTests
 		for (int index = 0; index < channels; index++)
 		{
 			OutputChannelConfiguration existing = preset.OutputChannels[index];
-			OutputFilterType filter = index % 3 switch
+			OutputFilterType filter = (index % 3) switch
 			{
 				0 => OutputFilterType.LowPass,
 				1 => OutputFilterType.HighPass,
@@ -179,7 +179,7 @@ public sealed class PlaybackExportPcmParityTests
 		};
 		parent.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(sample);
 		parent.Grid.GetOrCreateCell(0, 1).Note =
-			new StartPatternNote(sourceId, mixdown: instrumentChild);
+			new StartPatternNote(sourceId);
 		parent.Grid.GetOrCreateCell(0, 2).Note =
 			new StartPatternNote(childId, mixdown: true);
 		parent.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote(sample);
