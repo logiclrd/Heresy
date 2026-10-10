@@ -16,6 +16,34 @@ namespace Heresy.Tests.Playback;
 public sealed class OfflineSongRenderPlanFactoryTests
 {
 	[Test]
+	public void OutputConfigurationIsCapturedSeparatelyForEachNewExportPlan()
+	{
+		SongDocument document = new();
+		ObjectId patternId = document.AllocateObjectId();
+		document.Add(new DataPatternDefinition(patternId, "Empty")
+		{
+			RowCount = 1, ChannelCount = 1,
+		});
+		ObjectId sequenceId = document.AllocateObjectId();
+		DataSequenceDefinition seq = new(sequenceId, "Root");
+		seq.Entries.Add(new SequenceEntry(patternId));
+		document.Add(seq);
+		document.RootSequenceId = sequenceId;
+
+		RenderConfiguration selected = RenderConfiguration.Stereo(48000);
+		OfflineSongRenderPlanFactory factory = new(() => selected);
+		using OfflineSongRenderPlan first = factory.Create(document);
+		Assert.That(first.Session.SampleRate, Is.EqualTo(48000));
+		Assert.That(first.Session.OutputChannelCount, Is.EqualTo(2));
+
+		selected = RenderConfiguration.Stereo(96000);
+		using OfflineSongRenderPlan second = factory.Create(document);
+		Assert.That(second.Session.SampleRate, Is.EqualTo(96000));
+		Assert.That(second.Session.OutputChannelCount, Is.EqualTo(2));
+		Assert.That(first.Session.SampleRate, Is.EqualTo(48000),
+			"Previously created offline PCM must retain its original format.");
+	}
+	[Test]
 	public void RequiresRootSequence()
 	{
 		SongDocument document = new();
