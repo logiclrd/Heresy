@@ -73,11 +73,26 @@ unfinished flattened-source ownership requirement.
   S7x, NNA, virtual broadcast, Cut/Off/Fade and private-tail ownership are
   implemented and tested; avoid reopening those milestones without a
   demonstrated counterexample.
-- [ ] Complete edge-case **native source-frame seeking** (Oxx and Qxy
-  retrigger) across nested Pattern, Sequence and instrument graphs, including
-  offsets crossing lifecycle boundaries and repeated invocations. Backward
-  seeks already reconstruct deterministic private generators without
-  retaining event/PCM history; retain that architecture and verify parity.
+**Recursive native Oxx/Qxy source-frame seeking verified across
+invocation boundaries.** `RecursiveNativeSeekBoundaryTests` now cover
+O01 as exactly 256 private source frames across multi-order child
+Sequences, with and without an Instrument tone adapter; tracker Q01
+retrigger at row/tick boundaries resetting earlier Oxx and rebuilding
+the child; O00 effect memory over successive Sequence order
+invocations without reusing earlier private-renderer state; seeking
+beyond the end of a finite child without resurrecting its notes or
+contaminating the following invocation; and a nested private Oxx
+applied to a middle child Sequence. Realtime/offline interleaved PCM
+matches for the same Oxx/Qxy song in stereo, using deliberately
+different block sizes for direct-private and Instrument-selected
+sources. Instrument binding already passes through the actual
+seekable `SoundInvocation.Sound`; no production change was required.
+Deterministic backward seek still rebuilds the entire private
+generator without event/PCM history. The separate unresolved
+**pitch-modulated** native seek investigations and optional
+measured-performance checkpoints remain in their own TODOs.
+See [recursive-sounds.md](recursive-sounds.md) and
+[source-seek-hints.md](source-seek-hints.md).
 - [ ] Optionally optimize expensive long-distance private seek/reconstruction
   using deterministic bounded checkpoints **only if** realtime ring-buffer
   underruns warrant it. Do not reintroduce unbounded event journals or
