@@ -60,8 +60,8 @@ public sealed class PrivatePitchInheritanceTests
 	public void PitchAtFutureChildNoteSelectsTheCorrespondingInstrumentTone()
 	{
 		SongDocument document = new();
-		ObjectId normalSample = AddSample(document, 1, constant: 10000);
-		ObjectId raisedSample = AddSample(document, 1, constant: -10000);
+		ObjectId normalSample = AddSample(document, constant: 10000);
+		ObjectId raisedSample = AddSample(document, constant: -10000);
 		ObjectId instrumentId = document.AllocateObjectId();
 		InstrumentDefinition instrument = new(instrumentId, "Pitch-selected");
 		instrument.ToneSpecifications.Add(new ToneSpecification
