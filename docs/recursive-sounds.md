@@ -27,9 +27,10 @@
   whose live volume, Cut/Off/Fade, NNA, cancellation and release-tail
   semantics propagate to descendant voices. Independently clocked
   private mixdowns and Instrument-selected recursive tones support
-  initial pitch/playback-speed composition and deterministic seeking.
+  live parent-note pitch inheritance, initial pitch/playback-speed
+  composition, and deterministic seeking.
 - Advanced mixed-rate tracker timing, complex script interactions and
-  pitch-modulated Instrument/private seek automation remain separate
+  advanced mixed-rate effect arbitration remain separate
   compatibility TODOs. Baseline recursive playback, flattened ownership
   and **Oxx/Qxy native-frame seeking across private invocation boundaries**
   are covered by production-factory regressions. The latter exercise
@@ -52,20 +53,40 @@
   then verify Q03 rebuilds the child's modulation phase after O01.
   Incremental/eager command-stream parity covers those four families.
 
-- **Remaining confirmed limitation:** A pitch slide or pitch envelope
-  attached to a *private recursive parent's own note* changes that
-  parent voice's `SoundState.PitchTrajectory`, but the private mixdown
-  currently plays its child PCM at the initial pitch without applying
-  later trajectory changes to the underlying child voices. Running
-  `RecursiveNativeSeekBoundaryTests.PrivateNotePitchSlideShouldModulateActiveChildVoicesWithoutChangingClock`
-  without NUnit's `Explicit` marker produces a reproducible red test
-  for both a private Pattern note and an Instrument-selected private
-  Pattern note (CI run 38038804155). The two cases are retained as
-  explicit expectations until pitch modulation can be propagated into
-  individual child voices without re-timing their tracker notes or
-  naively resampling the polyphonic mixdown. Do not conflate this
-  private-voice limitation with the intentionally suppressed
-  voice-specific effects of a **flattened** instigating note.
+- **Dynamic private parent-note pitch modulation is implemented.**
+  Each independently clocked private Pattern/Sequence note now binds
+  its live parent `SoundState.PitchTrajectory` to the child
+  `PlaybackSession.InheritedPitchAtFrame` callback. At every future
+  child-note start, the inherited pitch is sampled and composed with
+  the note's initial pitch, including pitch-dependent Instrument tone
+  selection. Each child `PlaybackVoice` also composes the ongoing
+  inherited **relative** modulation with its existing
+  `OperatorPitchCurve` (native tracker pitch operators and pitch
+  envelope), normalized by the inherited value captured at note
+  start so the initial transposition is never applied twice.
+
+  In `PreparedRecursiveMixdownSound`, the callback maps a native
+  child source frame to the enclosing note's relative frame using
+  `PlaybackOriginFrame` and native Oxx/wall offsets, clamping
+  skipped source-preroll to time zero. After Qxy or a backward seek,
+  the freshly reconstructed private `PlaybackSession` is bound to
+  the same live parent state. The child tracker Tempo and row/event
+  deadlines stay independent: **no mixed-down speaker PCM is
+  resampled**, no child note stream is eagerly materialized, and no
+  replay journal is kept. The pitch factor composes through multiple
+  private levels; descendant notes and their individual effects
+  remain independently audible.
+
+  The previously red parent-pitch PCM counterexample for both direct
+  and Instrument-selected private sources (CI 38038804155) is now
+  enabled and green. `PrivatePitchInheritanceTests` additionally
+  exercise future note onset at the same 120-ms row boundary,
+  pitch-dependent Instrument tone-table selection, composition across
+  two private nesting levels, **O01 with mathematically integrated
+  parent-pitch source-frame positions**, and chunk-invariant Q03
+  retrigger after native Oxx with independent child vibrato. The
+  intentionally suppressed voice-specific pitch effects of a
+  **flattened** instigating note remain suppressed.
 
 ---
 
