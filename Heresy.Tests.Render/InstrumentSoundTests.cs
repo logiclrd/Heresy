@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 
+using Heresy.Core.Envelopes;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
@@ -264,6 +265,52 @@ public sealed class InstrumentSoundTests
 		session.Render(0, 1, output);
 
 		Assert.That(output[0], Is.EqualTo(0.25f).Within(1e-6));
+	}
+
+
+	[Test]
+	public void InstrumentAdsrAndUnderlyingSourceAgreeOnRepeatedNoteOffOrigin()
+	{
+		ObjectId instrumentId = (ObjectId)1U;
+		ObjectId sourceId = (ObjectId)10U;
+		ObjectId envelopeId = (ObjectId)21U;
+		ProbeSound source = new(value: 1.0f);
+		TestSoundResolver sounds = new((sourceId, source));
+		AdsrEnvelopeCurve release = new(
+			new AdsrEnvelopeDefinition(envelopeId, "Short release")
+			{
+				SustainLevel = 1.0,
+				Release = TimeSpan.FromMilliseconds(4),
+			});
+		InstrumentDefinition definition = Instrument(instrumentId);
+		definition.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = sourceId,
+			VolumeEnvelopeId = envelopeId,
+		});
+		definition.ToneTable.Add(0);
+		sounds.Add(instrumentId, new InstrumentSound(
+			definition, sounds, new TestEnvelopeResolver((envelopeId, release))));
+		PlaybackSession session = Session(
+			1000,
+			Schedule(
+				Event(TimeSpan.Zero, new StartNoteCommand(instrumentId)),
+				Event(TimeSpan.FromMilliseconds(2), new NoteOffCommand()),
+				Event(TimeSpan.FromMilliseconds(4), new NoteOffCommand())),
+			sounds);
+		float[] output = new float[9];
+
+		session.Render(0, 5, output.AsSpan(0, 5));
+		Assert.That(
+			session.GetChannelState(0).CurrentVoice!.SoundState.NoteOffTime,
+			Is.EqualTo(TimeSpan.FromMilliseconds(2)),
+			"Instrument release envelope and terminal source must share the first Off.");
+		session.Render(5, 4, output.AsSpan(5, 4));
+
+		Assert.That(output,
+			Is.EqualTo(new float[] { 1f, 1f, 1f, 0.75f, 0.5f, 0.25f, 0f, 0f, 0f })
+				.Within(1e-6f));
+		Assert.That(session.GetChannelState(0).CurrentVoice, Is.Null);
 	}
 
 	[Test]

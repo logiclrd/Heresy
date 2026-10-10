@@ -1283,6 +1283,58 @@ public sealed class PlaybackSessionTests
 		Assert.That(session.GetChannelState(0).CurrentVoice, Is.Null);
 	}
 
+
+	[Test]
+	public void RepeatedNoteOffPreservesEarliestReleaseTimeAndEndFrame()
+	{
+		ObjectId sourceId = (ObjectId)10U;
+		ReleasingTestSound sound = new(NewNotePolicy.Cut, releaseFrames: 3);
+		PlaybackSession session = Session(
+			1,
+			Schedule(
+				Event(Frame(0, 1), 0, new StartNoteCommand(sourceId)),
+				Event(Frame(1, 1), 0, new NoteOffCommand()),
+				Event(Frame(2, 1), 0, new NoteOffCommand())),
+			new TestResolver((sourceId, false, sound)));
+		float[] output = new float[7];
+
+		session.Render(0, 3, output.AsSpan(0, 3));
+		Assert.That(
+			session.GetChannelState(0).CurrentVoice!.SoundState.NoteOffTime,
+			Is.EqualTo(Frame(1, 1)),
+			"Second Off must not move the release origin.");
+		session.Render(3, 4, output.AsSpan(3, 4));
+
+		Assert.That(output,
+			Is.EqualTo(new float[] { 1f, 1f, 1f, 1f, 0f, 0f, 0f }));
+		Assert.That(session.GetChannelState(0).CurrentVoice, Is.Null);
+	}
+
+	[Test]
+	public void RepeatedExplicitVirtualNoteOffPreservesReleaseDeadline()
+	{
+		ObjectId sourceId = (ObjectId)10U;
+		ReleasingTestSound sound = new(NewNotePolicy.Cut, releaseFrames: 3);
+		NoteEvent OnVirtual(long frame, NoteCommand command) => new(
+			new MusicalTime(Frame(frame, 1), 0.0),
+			ChannelTarget.Virtual(7),
+			new[] { command });
+		PlaybackSession session = Session(
+			1,
+			Schedule(
+				OnVirtual(0, new StartNoteCommand(sourceId)),
+				OnVirtual(1, new NoteOffCommand()),
+				OnVirtual(2, new NoteOffCommand())),
+			new TestResolver((sourceId, false, sound)));
+		float[] output = new float[7];
+
+		session.Render(0, 7, output);
+
+		Assert.That(output,
+			Is.EqualTo(new float[] { 1f, 1f, 1f, 1f, 0f, 0f, 0f }),
+			"Virtual channel release must be anchored to the first Note Off.");
+	}
+
 	[Test]
 	public void AbsoluteFrequencySameFrameMatchesNeutralC4EvenWithPitchAndSpeed()
 	{
