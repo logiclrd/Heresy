@@ -1656,8 +1656,10 @@ public sealed class IncrementalPatternTimeline : IDisposable
 			// Evaluate only the finite current SEy rows (not future
 			// Pattern orders) in mapped physical-channel order.
 			(double steppedTempo, bool clamped) =
-				ResolveOrderedCrossTempoTicks(active,
-					startingTick, endTick, startingTempo);
+				useOrderedClamps || CrossTempoMightClip(active, startingTempo)
+					? ResolveOrderedCrossTempoTicks(active,
+						startingTick, endTick, startingTempo)
+					: (endingTempo, false);
 			if (clamped || useOrderedClamps)
 				endingTempo = steppedTempo;
 			useOrderedClamps |= clamped;
@@ -1684,6 +1686,29 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					segments[0].EndTick - segments[0].StartTick)]),
 				_futureTempoOwner);
 		}
+	}
+
+	/// <summary>A conservative interval-independent bound which skips
+	/// enumerating local tick transitions when every possible prefix
+	/// stays strictly between Tempo 32 and 255. Most ordinary songs
+	/// therefore use only the analytic ramp projection.</summary>
+	private static bool CrossTempoMightClip(
+		IReadOnlyList<RepeatedTempoSource> sources, double initialTempo)
+	{
+		double down = 0;
+		double up = 0;
+		foreach (RepeatedTempoSource source in sources)
+		{
+			if (source.Parameter is 0 or >= 0x20)
+				continue;
+			double amount = (source.Parameter & 0x0F)
+				* (source.Span - 1.0) * (source.Repeats + 1);
+			if (source.Parameter < 0x10)
+				down += amount;
+			else
+				up += amount;
+		}
+		return initialTempo - down < 32 || initialTempo + up > 255;
 	}
 
 	/// <summary>
