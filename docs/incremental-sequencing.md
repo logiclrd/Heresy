@@ -72,6 +72,50 @@ separately in [todo.md](todo.md). Historical milestone sections below
 may still describe this cross-rate behavior as unsupported; those
 statements no longer characterize the current production code.
 
+## Current advanced shared-tick effect and deadline parity (October 10, 2026)
+
+The production incremental `IncrementalPatternTimeline` now delegates
+the following additional, previously rejected tracker effects to the
+authoritative `PatternNoteProcessor` at each **actual event tick**:
+
+- **S7x envelope control** (volume, panning, pitch/filter enable and
+  disable), including a note and envelope change in the same cell.
+- **SFx/Zxx macro selection and invocation**, with isolated
+  channel-local macro memory and the preexisting MIDI-macro → resonant
+  filter translation.
+- **Vxx global-volume setting** alongside the existing Wxx
+  global-volume-slide support.
+- **Arpeggio, tremolo, tremor, and panbrello**, including their
+  channel-effect memory, selected waveform, row-end clear commands
+  and, for tremor/panbrello, SEy repeated compatibility-row commands.
+
+The shared-tick cursor recognizes `ClearArpeggioCommand`,
+`ClearTremoloCommand`, `ClearTremorCommand` and
+`ClearPanbrelloCommand` as **row-end** cleanup, deferring them to
+the owner's own dynamically retimed row boundary. SEy copies reuse
+resolved tremor/panbrello commands rather than re-reading effect
+memory or preparing future rows.
+
+`IncrementalAdvancedTrackerEffectsTests` compare complete eager and
+incremental event streams, including commands, targets and times;
+`IncrementalAdvancedEffectTimingTests` separately exercise a deferred
+combined global Tempo+Speed event, a same-boundary deferred global
+Tempo versus physical Txx, overlapping fixed-wall starts that execute
+out of authored order (and resolve Source memory at their *actual*
+deadlines), and invocation cancellation before a queued Oxx-style
+sample-offset command can touch effect memory. Negative wall offsets
+are explicitly rejected *without* committing future state; they
+are **not** silently interpreted as immediate events or allowed to
+roll the chronological coroutine backwards. Existing test coverage
+for tracker SCx/SDx/Qxy positive fixed offsets and SEy/S6x extensions
+is retained.
+
+The incremental merger continues to reject non-whitelisted raw
+commands and incompatible mixed-offset forms with explicit
+`NotSupportedException`. This is intentional, not a claim that every
+eager-only effect or script command is now supported. See
+[todo.md](todo.md) for the remaining compatibility boundaries.
+
 ## Goal and existing contracts
 
 Heresy's existing data and script Pattern producers generate **raw**
