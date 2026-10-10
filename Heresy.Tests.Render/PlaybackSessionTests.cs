@@ -61,6 +61,43 @@ public sealed class PlaybackSessionTests
 	}
 
 	[Test]
+	public void FinalSpeakerFilterTailDelaysQuiescenceButEndsAtDigitalSilence()
+	{
+		ObjectId source = (ObjectId)10U;
+		double halfCutoff = 1000.0 * Math.Log(2.0) / (2.0 * Math.PI);
+		RenderConfiguration config = new(1000,
+		[
+			new OutputChannelConfiguration(Vector3.Zero,
+				positionalImportance: 0, filterType: OutputFilterType.LowPass,
+				cutoffHz: halfCutoff),
+		]);
+		PlaybackSession session = new(new RenderContext(config),
+			Schedule(Event(TimeSpan.Zero, 0,
+				new StartNoteCommand(source))),
+			new TestResolver((source, false, new SpeakerImpulseSound())));
+		float[] body = new float[8];
+		session.Render(0, body.Length, body);
+		session.EndInput();
+		Assert.That(session.IsQuiescent, Is.False,
+			"An impulse response can outlive its input and must be "
+			+ "written into the offline export tail.");
+
+		int tailFrames = 0;
+		bool heardTail = false;
+		while (!session.IsQuiescent && tailFrames < 100)
+		{
+			float[] sample = new float[1];
+			session.Render(session.NextFrame, 1, sample);
+			heardTail |= sample[0] != 0.0f;
+			tailFrames++;
+		}
+		Assert.That(heardTail, Is.True);
+		Assert.That(tailFrames, Is.GreaterThan(0).And.LessThan(100));
+		Assert.That(session.IsQuiescent, Is.True,
+			"The low-pass state must decay to exact digital silence.");
+	}
+
+	[Test]
 	public void UnfilteredOutputAndGlobalMixPreserveOriginalSpeakerFeed()
 	{
 		ObjectId source = (ObjectId)10U;
