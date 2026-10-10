@@ -137,18 +137,35 @@ movement across SEy rows without resetting its target.
 the eager processor and event-level deadlines/cancellation.
 See [incremental-sequencing.md](incremental-sequencing.md).
 
-- [ ] Continue **unusual scripted/global effect compatibility**
-  only with a concrete failing coordinator example. The ordinary
-  eager-supported raw tracker effects are now accounted for; the
-  remaining boundaries concern direct scripting/playback commands
-  not in the incremental allow-list (for example direct frequency,
-  playback-offset and resonant-filter controls), combinations of
-  global and physical commands with incompatible fixed-wall timing,
-  and rare overlapping Tempo/ramp deadlines. Negative fixed wall
-  offsets remain explicitly rejected until a safe chronological
-  look-behind contract can be defined. Keep explicit errors for
-  unsupported cases, and never precommit future Source, Tempo or
-  effect memory or enumerate future Pattern/Sequence visits.
+**Direct scripted physical playback controls implemented.**
+The restricted Pattern script API now exposes `Seek`, `Pan`,
+`Surround`, `Filter`, `FilterCutoff` and
+`FilterResonance` helpers. Their renderer-supported commands are
+accepted by the incremental coordinator at actual row or positive
+fixed-wall deadlines; each helper validates its arguments and
+suspends its Roslyn coroutine after emitting exactly one event.
+`Seek` changes the current voice's *playback-time* offset (not
+tracker Oxx native source frames), panning/surround use normal
+persistent physical-channel rules, and filters use the existing
+normalized [0, 1] IT resonant filter. Regression tests cover helper
+compilation and lazy error handling, Tempo-retimed wall deadlines,
+production PCM, filter state, physical-channel state and arbitrary
+audio block sizes. See
+[incremental-sequencing.md](incremental-sequencing.md).
+
+- [ ] Define **direct absolute playback-frequency semantics**
+  separately before enabling `SetPlaybackFrequencyCommand` or
+  adding a `Frequency` script helper: the renderer does not
+  currently implement the absolute-frequency command, and the
+  correct conversion cannot be guessed for sampled/recursive
+  sources with evolving pitch trajectories. Continue uncommon
+  scripted/global command combinations only with reproducible
+  gaps (including incompatible mixed global/physical fixed-wall
+  deadlines and overlapping Tempo spans). Negative fixed wall
+  offsets still require a chronological look-behind contract and
+  remain explicitly rejected. Preserve explicit failures; never
+  commit future Source/effect/Tempo memory early or pre-expand
+  future Pattern/Sequence visits.
 - [ ] Extend **advanced** lifecycle compatibility beyond the completed
   flattened-source ownership model, especially interactions between delayed
   tracker effects, mixed data/script timing, multichannel routing, and
