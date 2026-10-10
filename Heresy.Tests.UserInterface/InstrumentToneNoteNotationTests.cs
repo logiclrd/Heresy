@@ -42,7 +42,7 @@ public sealed class InstrumentToneNoteNotationTests
 			"B-1", "B-1+", "B-1++",
 		];
 		Enumerable.Range(0, 48).Select(i =>
-			InstrumentToneNoteNotation.Format(i + 144, 48, 0))
+			InstrumentToneNoteNotation.Format(i, 48, 144))
 			.Should().Equal(expected);
 	}
 
