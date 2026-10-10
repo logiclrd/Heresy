@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequencing;
+using Heresy.Scripting.Compilation;
+using Heresy.Scripting.Analysis;
 
 namespace Heresy.UserInterface.PatternEditing;
 
@@ -30,6 +33,7 @@ public enum NativePatternEffectKind
 	NoteVolumeSlide,
 	VolumeColumnCompatibility,
 	VolumeColumnPanning,
+	Parametric,
 }
 
 public sealed record NativePatternEffectChoice(
@@ -59,6 +63,7 @@ public static class NativePatternEffectEditor
 		new(NativePatternEffectKind.NoteVolumeSlide, "Note-volume slide"),
 		new(NativePatternEffectKind.VolumeColumnCompatibility, "Volume-column compatibility"),
 		new(NativePatternEffectKind.VolumeColumnPanning, "Volume-column panning"),
+		new(NativePatternEffectKind.Parametric, "Parametric expression"),
 	];
 
 	public static NativePatternEffectChoice[] GetCreationChoices()
@@ -90,6 +95,10 @@ public static class NativePatternEffectEditor
 				new TrackerVolumeColumnPatternEffect(
 					TrackerVolumeColumnEffectKind.FineVolumeUp,
 					0),
+			NativePatternEffectKind.Parametric =>
+				new ParametricPatternEffect(
+					ParametricEffectParameter.OverallChannelVolume,
+					TimeSpan.FromSeconds(0.1), "0.0"),
 			NativePatternEffectKind.VolumeColumnPanning =>
 				new TrackerVolumeColumnPanningPatternEffect(32),
 			_ => throw new ArgumentOutOfRangeException(nameof(kind)),
@@ -109,7 +118,8 @@ public static class NativePatternEffectEditor
 			or PitchSlidePatternEffect
 			or NoteVolumeSlidePatternEffect
 			or TrackerVolumeColumnPatternEffect
-			or TrackerVolumeColumnPanningPatternEffect;
+			or TrackerVolumeColumnPanningPatternEffect
+			or ParametricPatternEffect;
 	}
 
 	public static NativePatternEffectEditModel Describe(
@@ -126,6 +136,20 @@ public static class NativePatternEffectEditor
 
 		return effect switch
 		{
+			ParametricPatternEffect value =>
+				Model("Native parametric expression",
+					new NativePatternEffectField(
+						"parameter", "Destination",
+						value.Parameter.ToString(),
+						Enum.GetNames<ParametricEffectParameter>()),
+					Field("duration", "Wall duration (seconds)",
+						Format(value.Duration.TotalSeconds)),
+					Field("expression", "C# delta expression (elapsedSeconds, rowTime)",
+						value.Expression),
+					new NativePatternEffectField(
+						"commit", "Commit on expiry",
+						value.CommitOnExpire ? "True" : "False",
+						new[] { "False", "True" })),
 			SetTempoPatternEffect value =>
 				Model(
 					"Tempo",
@@ -239,6 +263,8 @@ public static class NativePatternEffectEditor
 
 		return original switch
 		{
+			ParametricPatternEffect =>
+				RebuildParametric(values, culture),
 			SetTempoPatternEffect =>
 				new SetTempoPatternEffect(
 					ParseDouble(
@@ -340,6 +366,25 @@ public static class NativePatternEffectEditor
 			_ => throw new NotSupportedException(
 				$"Pattern effect {original.GetType().Name} is not a native effect supported by the parameter editor."),
 		};
+	}
+
+	private static ParametricPatternEffect RebuildParametric(
+		IReadOnlyDictionary<string, string> values, CultureInfo culture)
+	{
+		string source = Get(values, "expression", "Expression");
+		var diagnostics = ScriptCompiler.AnalyzeParametricSource(source);
+		if (diagnostics.Any(d => d.Severity == ScriptDiagnosticSeverity.Error))
+			throw new ArgumentException(
+				string.Join("; ", diagnostics.Select(d => d.Message)),
+				nameof(values));
+		double duration = ParseDouble(values, "duration", "Duration", culture);
+		if (!double.IsFinite(duration) || duration < 0.0)
+			throw new ArgumentOutOfRangeException(nameof(values),
+				"Duration must be finite and nonnegative.");
+		return new ParametricPatternEffect(
+			ParseEnum<ParametricEffectParameter>(values, "parameter", "Destination"),
+			TimeSpan.FromSeconds(duration), source,
+			ParseEnum<bool>(values, "commit", "Commit"));
 	}
 
 	private static NativePatternEffectEditModel Model(
