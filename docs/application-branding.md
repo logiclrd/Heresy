@@ -45,7 +45,7 @@ After `MainWindow.Opened`, `App` schedules creation at Avalonia's
 `DispatcherPriority.Loaded` (and checks the main window remains visible).
 It calls the nonmodal `Show(mainWindow)` overload, making the splash
 an **owned** auxiliary window rather than the lifetime's main window.
-The splash is centered on its owner, with `SystemDecorations.None`,
+The splash is centered on its owner, with `WindowDecorations.None`,
 `CanResize = false` and `ShowInTaskbar = false`. The main document
 window and lazy SDL playback transport initialize independently; neither
 is delayed by a four-second await/sleep.

@@ -25,7 +25,7 @@ public sealed class StartupSplashWindow : Window
 	{
 		_owner = owner ?? throw new ArgumentNullException(nameof(owner));
 
-		SystemDecorations = SystemDecorations.None;
+		WindowDecorations = global::Avalonia.Controls.WindowDecorations.None;
 		CanResize = false;
 		ShowInTaskbar = false;
 		WindowStartupLocation = WindowStartupLocation.CenterOwner;
