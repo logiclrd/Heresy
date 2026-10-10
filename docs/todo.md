@@ -82,14 +82,29 @@ unfinished flattened-source ownership requirement.
   using deterministic bounded checkpoints **only if** realtime ring-buffer
   underruns warrant it. Do not reintroduce unbounded event journals or
   schedule/PCM pre-rendering.
-- [ ] Expand end-to-end **export/realtime parity** and advanced script
-  compatibility tests: additional nonterminating script-Pattern cases,
-  complex flow with musical-time adjustments, finite export-body and tail
-  limits, and multi-speaker parity. Step 62 already stress-tests 160
-  indefinitely scripted Sequence orders, deep cancellation, chunk-invariant
-  recursive PCM, overlapping NNA tails and registration reclamation;
-  the existing cycle protection, cooperation budgets and export limits
-  remain implemented.
+**Realtime/offline logical-body PCM parity verified by production-factory
+regressions.** `PlaybackExportPcmParityTests` compare interleaved pre-encoder
+PCM from the realtime request source against `OfflinePlaybackRenderer`
+using the offline root-sequence factory, across mono, stereo, 5.1 and
+7.1 with per-speaker LowPass/HighPass filters and deliberately different
+PCM block sizes. These cover flattened and private recursive Patterns,
+indirect Instrument-bound private sources, scripted notes with tracker
+Tempo changes, and immutable snapshots despite subsequent source edits.
+All channels are compared for the full finite logical body. Offline
+release-tail rendering and codec quantization are deliberately separate
+contracts; physical SDL callback scheduling is not part of this comparison.
+See [export-workflow.md](export-workflow.md).
+
+- [ ] Expand **advanced scripted export compatibility** beyond the
+  completed PCM parity tests: additional nonterminating script-Pattern
+  cases (not merely previously tested indefinite scripted Sequences),
+  complex flow with musical-time adjustments and combined tracker
+  effects, plus finite export-body and release-tail-limit stress.
+  Step 62 already stress-tests 160 indefinitely scripted Sequence orders,
+  deep cancellation, chunk-invariant recursive PCM, overlapping NNA tails
+  and registration reclamation. Existing cycle protection, cooperation
+  budgets and export limits must be preserved; avoid duplicating completed
+  cases without a distinct counterexample.
 
 ## Output audio configuration and physical speaker processing
 
@@ -161,9 +176,7 @@ layout/precision before temporary file creation. Unsupported exports
 preserve any existing destination without creating incomplete files.
 PCM snapshotting, coroutine execution and output speaker processing
 are unchanged. See [export-workflow.md](export-workflow.md).
-- [ ] Ensure export and realtime render identically for equal snapshots and
-  render configurations, aside from intentionally different end-of-song
-  handling and output encoding.
+
 
 ## Asset portability
 
