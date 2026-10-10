@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 
 using Heresy.Core.Sequencing;
@@ -52,6 +53,7 @@ public sealed class PlaybackChannelState
 	private readonly TrackerTickClock _tickClock;
 	private readonly int _sampleRate;
 	private readonly PlaybackOperatorCollection _operators = new();
+	private readonly List<ActiveParametricEffect> _nativeParametric = [];
 	private ActiveSpatialXSlide? _activeSpatialXSlide;
 	private ActiveOverallVolumeSlide? _activeOverallVolumeSlide;
 	private ActiveTremor? _activeTremor;
@@ -111,7 +113,8 @@ public sealed class PlaybackChannelState
 	internal bool HasActiveContinuousState =>
 		_activeSpatialXSlide is not null
 		|| _activeOverallVolumeSlide is not null
-		|| _activePanbrello is not null;
+		|| _activePanbrello is not null
+		|| _nativeParametric.Count != 0;
 
 	internal bool HasActiveTremor =>
 		_activeTremor is not null;
@@ -296,6 +299,7 @@ public sealed class PlaybackChannelState
 
 	private double GetEffectiveOverallVolume(long absoluteFrame)
 	{
+		SynchronizeNativeParametric(absoluteFrame);
 		ActiveOverallVolumeSlide? slide =
 			_activeOverallVolumeSlide;
 		if (slide is not null)
@@ -490,8 +494,47 @@ public sealed class PlaybackChannelState
 			GetEffectivePosition(absoluteFrame));
 	}
 
+	internal void BeginParametric(
+		StartParametricEffectCommand command, long frame)
+	{
+		if (command.Parameter == ParametricEffectParameter.GlobalVolume)
+			throw new NotSupportedException(
+				"Global parametric effects must use the global target.");
+		ActiveParametricEffect active =
+			new(command, frame, _sampleRate, _tickClock);
+		_operators.Add(active.Operator);
+		_nativeParametric.Add(active);
+		SynchronizeNativeParametric(frame);
+	}
+
+	private void SynchronizeNativeParametric(long frame)
+	{
+		for (int index = _nativeParametric.Count - 1; index >= 0; index--)
+		{
+			ActiveParametricEffect active = _nativeParametric[index];
+			if (!active.Advance(frame, _operators,
+				out PlaybackParameterDeltas delta))
+				continue;
+			_nativeParametric.RemoveAt(index);
+			switch (active.Parameter)
+			{
+				case ParametricEffectParameter.OverallChannelVolume:
+					OverallVolume = Math.Clamp(OverallVolume +
+						delta[PlaybackParameter.OverallVolume], 0.0, 1.0);
+					break;
+				case ParametricEffectParameter.SpatialX:
+					Position = new Vector3(
+						(float)Math.Clamp(Position.X +
+							delta[PlaybackParameter.SpatialX], -1.0, 1.0),
+						Position.Y, Position.Z);
+					break;
+			}
+		}
+	}
+
 	internal void SynchronizeContinuousState(long absoluteFrame)
 	{
+		SynchronizeNativeParametric(absoluteFrame);
 		SynchronizePosition(absoluteFrame);
 		SynchronizeOverallVolume(absoluteFrame);
 	}
@@ -643,6 +686,7 @@ public sealed class PlaybackChannelState
 
 	private Vector3 GetEffectivePosition(long absoluteFrame)
 	{
+		SynchronizeNativeParametric(absoluteFrame);
 		if (Surround)
 			return Vector3.Zero;
 

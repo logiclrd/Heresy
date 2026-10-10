@@ -124,6 +124,7 @@ public sealed class PlaybackSession
 	private readonly SortedDictionary<(long Owner, int Host), ActiveGlobalVolumeSlide>
 		_globalVolumeSlides = [];
 	private readonly PlaybackOperatorCollection _globalOperators = new();
+	private readonly List<ActiveParametricEffect> _nativeGlobal = [];
 
 	private ActiveTempoRamp? _activeTempoRamp;
 	private int _nextEventIndex;
@@ -1295,6 +1296,16 @@ public sealed class PlaybackSession
 					envelope.Enabled);
 				break;
 
+			case StartParametricEffectCommand effect:
+				if (effect.Parameter != ParametricEffectParameter.GlobalVolume)
+					throw new NotSupportedException(
+						"Channel parametric effect needs a physical target.");
+				ActiveParametricEffect active = new(
+					effect, eventFrame, _context.Configuration.SampleRate, _tickClock);
+				_globalOperators.Add(active.Operator);
+				_nativeGlobal.Add(active);
+				break;
+
 			case SetGlobalVolumeCommand volume:
 				SetGlobalVolume(eventFrame, volume.Volume);
 				break;
@@ -1335,6 +1346,10 @@ public sealed class PlaybackSession
 				// Starting a flattened collection is a logical note start,
 				// not a modification of an older live physical voice.
 				channel.CaptureCurrentNoteVolume(remembered.Volume);
+				break;
+
+			case StartParametricEffectCommand parametric:
+				channel.BeginParametric(parametric, eventFrame);
 				break;
 
 			case SetOverallChannelVolumeCommand volume:
@@ -2375,6 +2390,17 @@ public sealed class PlaybackSession
 
 	private double GetEffectiveGlobalVolume(long absoluteFrame)
 	{
+		for (int index = _nativeGlobal.Count - 1; index >= 0; index--)
+		{
+			ActiveParametricEffect effect = _nativeGlobal[index];
+			if (!effect.Advance(absoluteFrame, _globalOperators,
+				out PlaybackParameterDeltas delta))
+				continue;
+			_globalVolume = Math.Clamp(_globalVolume +
+				delta[PlaybackParameter.GlobalVolume], 0.0, 1.0);
+			_nativeGlobal.RemoveAt(index);
+		}
+
 		foreach (
 			ActiveGlobalVolumeSlide slide
 				in _globalVolumeSlides.Values)
