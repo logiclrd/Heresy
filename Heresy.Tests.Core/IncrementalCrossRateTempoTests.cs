@@ -199,14 +199,42 @@ public sealed class IncrementalCrossRateTempoTests
 		});
 	}
 
+	[Test]
+	public void DirectTempoSetStopsScaledSEyRepeatsWithoutReinstatingOldSlide()
+	{
+		SequencingContext root = new();
+		using IncrementalPatternTimeline timeline = new(root);
+		SequencingContext fast = root.FlattenedChild(
+			playbackSpeedMultiplier: 2.0, physicalChannelOffset: 2);
+		timeline.Add(new RawSource(
+			At(0, 0, new ApplyTrackerPatternDelayCommand(2)),
+			At(0, 0, new ApplyTrackerTempoCommand(0x12))), 1, fast);
+		timeline.Add(new RawSource(
+			At(0.25, ChannelTarget.Global, new SetTempoCommand(200))), 1,
+			root.FlattenedChild(physicalChannelOffset: 4));
+		NoteEvent[] notes = Drain(timeline);
+		Assert.Multiple(() =>
+		{
+			Assert.That(notes.SelectMany(n => n.Commands)
+				.OfType<SetTempoRampCommand>().Count(), Is.EqualTo(1),
+				"A direct Tempo set must discard all future scaled SEy repeats.");
+			Assert.That(notes.SelectMany(n => n.Commands)
+				.OfType<SetTempoCommand>().Select(c => c.TicksPerDiachron),
+				Is.EqualTo(new[] { 200.0 }));
+			Assert.That(root.State.Tempo, Is.EqualTo(200));
+		});
+	}
+
 	private static double RampSeconds(double initial, double ending, double ticks)
 		=> Math.Abs(ending - initial) < 1e-9
 			? 2.5 * ticks / initial
 			: 2.5 * ticks / (ending - initial) * Math.Log(ending / initial);
 
 	private static NoteEvent At(double row, int channel, NoteCommand command)
-		=> new(new MusicalTime(TimeSpan.Zero, row),
-			ChannelTarget.Physical(channel), [command]);
+		=> At(row, ChannelTarget.Physical(channel), command);
+
+	private static NoteEvent At(double row, ChannelTarget target, NoteCommand command)
+		=> new(new MusicalTime(TimeSpan.Zero, row), target, [command]);
 
 	private static NoteEvent[] Drain(IncrementalPatternTimeline timeline)
 	{
