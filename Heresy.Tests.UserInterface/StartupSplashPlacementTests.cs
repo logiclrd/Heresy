@@ -1,3 +1,5 @@
+using System;
+
 using Avalonia;
 
 using Heresy.UserInterface.Startup;
