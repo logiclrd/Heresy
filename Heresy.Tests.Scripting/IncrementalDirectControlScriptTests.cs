@@ -121,7 +121,7 @@ public sealed class IncrementalDirectControlScriptTests
     [TestCase("Filter(0, 0, -0.01, 0.5);")]
     [TestCase("FilterResonance(0, 0, 1.2);")]
     [TestCase("Seek(0, 0, -0.1);")]
-    [TestCase("Pan(0, 0, double.PositiveInfinity);")]
+    [TestCase("Pan(0, 0, Math.Pow(10, 400));")]
     public void InvalidScriptControlsThrowInsteadOfProducingBadEvents(string source)
     {
         ScriptPatternDefinition definition = new((ObjectId)1U, "Invalid")
