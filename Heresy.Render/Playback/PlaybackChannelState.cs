@@ -495,16 +495,28 @@ public sealed class PlaybackChannelState
 	}
 
 	internal void BeginParametric(
-		StartParametricEffectCommand command, long frame)
+		StartParametricEffectCommand command, long frame, long? ownerId = null)
 	{
 		if (command.Parameter == ParametricEffectParameter.GlobalVolume)
 			throw new NotSupportedException(
 				"Global parametric effects must use the global target.");
 		ActiveParametricEffect active =
-			new(command, frame, _sampleRate, _tickClock);
+			new(command, frame, _sampleRate, _tickClock) { OwnerId = ownerId };
 		_operators.Add(active.Operator);
 		_nativeParametric.Add(active);
 		SynchronizeNativeParametric(frame);
+	}
+
+	internal void CancelNativeParametric(long ownerId)
+	{
+		for (int i = _nativeParametric.Count - 1; i >= 0; i--)
+		{
+			ActiveParametricEffect effect = _nativeParametric[i];
+			if (effect.OwnerId != ownerId)
+				continue;
+			_operators.Remove(effect.Operator);
+			_nativeParametric.RemoveAt(i);
+		}
 	}
 
 	private void SynchronizeNativeParametric(long frame)

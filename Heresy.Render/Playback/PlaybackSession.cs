@@ -703,6 +703,18 @@ public sealed class PlaybackSession
 					target.Kind == ChannelTargetKind.AllVirtual,
 					commands, _nextFrame);
 				return;
+			case ChannelTargetKind.Global:
+				long? previousGlobalOwner = _activePatternCursorId;
+				_activePatternCursorId = invocationId;
+				try
+				{
+					ApplyLiveEvent(target, commands);
+				}
+				finally
+				{
+					_activePatternCursorId = previousGlobalOwner;
+				}
+				return;
 			case ChannelTargetKind.Physical:
 				// Physical owner 0 is shared by independent root Patterns.
 				// Record the exact originating cursor at StartNote, so
@@ -741,6 +753,20 @@ public sealed class PlaybackSession
 	{
 		if (invocationId < 0)
 			throw new ArgumentOutOfRangeException(nameof(invocationId));
+		for (int i = _nativeGlobal.Count - 1; i >= 0; i--)
+		{
+			ActiveParametricEffect active = _nativeGlobal[i];
+			if (active.OwnerId != invocationId)
+				continue;
+			_globalOperators.Remove(active.Operator);
+			_nativeGlobal.RemoveAt(i);
+		}
+		foreach (PlaybackChannelState channel in _channels.Values)
+		{
+			channel.CancelNativeParametric(invocationId);
+			channel.CurrentVoice?.CancelNativeParametric(
+				invocationId, _nextFrame);
+		}
 		foreach (PlaybackChannelState channel in _channels.Values)
 			if (channel.CurrentVoice?.OriginPatternCursorId == invocationId)
 				channel.CutCurrentVoice();
@@ -1342,9 +1368,10 @@ public sealed class PlaybackSession
 				if (parametric.Parameter is
 					ParametricEffectParameter.NoteVolume or
 					ParametricEffectParameter.PitchLinearUnits)
-					channel.CurrentVoice?.BeginNativeParametric(parametric, eventFrame);
+					channel.CurrentVoice?.BeginNativeParametric(parametric, eventFrame,
+						_activePatternCursorId);
 				else
-					channel.BeginParametric(parametric, eventFrame);
+					channel.BeginParametric(parametric, eventFrame, _activePatternCursorId);
 				break;
 
 			case SetOverallChannelVolumeCommand volume:
@@ -1716,7 +1743,8 @@ public sealed class PlaybackSession
 					throw new NotSupportedException(
 						"Channel parametric effect needs a physical target.");
 				ActiveParametricEffect active = new(
-					effect, eventFrame, _context.Configuration.SampleRate, _tickClock);
+					effect, eventFrame, _context.Configuration.SampleRate, _tickClock)
+					{ OwnerId = _activePatternCursorId };
 				_globalOperators.Add(active.Operator);
 				_nativeGlobal.Add(active);
 				break;

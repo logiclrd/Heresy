@@ -14,6 +14,7 @@ internal sealed class ActiveParametricEffect
     private readonly TrackerTickClock _clock;
     private readonly int _sampleRate;
     public ParametricEffectParameter Parameter { get; }
+    public long? OwnerId { get; init; }
     public long StartFrame { get; }
     public long EndFrame { get; }
     public FunctionalRowPlaybackOperator Operator { get; }

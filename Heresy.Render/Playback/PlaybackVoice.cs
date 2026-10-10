@@ -1140,7 +1140,8 @@ public sealed class PlaybackVoice
 		=> _nativeParametric.Count != 0;
 
 	internal void BeginNativeParametric(
-		StartParametricEffectCommand command, long absoluteFrame)
+		StartParametricEffectCommand command, long absoluteFrame,
+		long? ownerId = null)
 	{
 		if (command.Parameter is not (
 			ParametricEffectParameter.NoteVolume or
@@ -1148,7 +1149,8 @@ public sealed class PlaybackVoice
 			throw new NotSupportedException(
 				"Voice-native effect requires a note-volume or pitch target.");
 		ActiveParametricEffect active = new(
-			command, absoluteFrame, _sampleRate, _tickClock);
+			command, absoluteFrame, _sampleRate, _tickClock)
+			{ OwnerId = ownerId };
 		if (command.Parameter == ParametricEffectParameter.PitchLinearUnits)
 			AddPitchOperator(active.Operator, absoluteFrame);
 		else
@@ -1157,6 +1159,27 @@ public sealed class PlaybackVoice
 		if (command.Parameter == ParametricEffectParameter.PitchLinearUnits)
 			RecomposePitchTrajectory(absoluteFrame - StartFrame);
 		SynchronizeNativeParametric(absoluteFrame);
+	}
+
+	internal void CancelNativeParametric(long ownerId, long frame)
+	{
+		bool pitchChanged = false;
+		for (int i = _nativeParametric.Count - 1; i >= 0; i--)
+		{
+			ActiveParametricEffect effect = _nativeParametric[i];
+			if (effect.OwnerId != ownerId)
+				continue;
+			_nativeParametric.RemoveAt(i);
+			_operators.Remove(effect.Operator);
+			if (effect.Parameter == ParametricEffectParameter.PitchLinearUnits)
+			{
+				_pitchOperators.RemoveAll(binding =>
+					ReferenceEquals(binding.Operator, effect.Operator));
+				pitchChanged = true;
+			}
+		}
+		if (pitchChanged)
+			RecomposePitchTrajectory(frame - StartFrame);
 	}
 
 	internal void SynchronizeNativeParametric(long absoluteFrame)
