@@ -1,7 +1,6 @@
 using System;
 using Heresy.Core.Sequencing;
 using Heresy.Render.Timing;
-using Heresy.Render.Clock;
 
 namespace Heresy.Render.Playback;
 
