@@ -1859,11 +1859,11 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 				new SetCurrentVoiceDisplacementActionCommand(
 					NoteDisplacementAction.Continue)]));
 		schedule.Append(new NoteEvent(
-			new Heresy.Core.Timing.MusicalTime(TimeSpan.FromMilliseconds(120), 0),
+			new Heresy.Core.Timing.MusicalTime(TimeSpan.Zero, 1),
 			ChannelTarget.Virtual(7),
 			[new StartNoteCommand(sample)]));
 		schedule.Append(new NoteEvent(
-			new Heresy.Core.Timing.MusicalTime(TimeSpan.FromMilliseconds(240), 0),
+			new Heresy.Core.Timing.MusicalTime(TimeSpan.Zero, 2),
 			ChannelTarget.Virtual(7),
 			[new ApplyPastNoteActionCommand(TrackerPastNoteAction.Off)]));
 
