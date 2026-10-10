@@ -88,22 +88,29 @@ public sealed class AudioOutputSettingsDialog : Window
 				+ "Cutoff is used only for LowPass/HighPass.",
 			TextWrapping = TextWrapping.Wrap,
 		};
-		StackPanel main = new()
+		// Give the speaker table the remaining space instead of
+		// placing an unbounded ScrollViewer inside a StackPanel. This
+		// keeps 7.1 controls and the action footer reachable on a short
+		// desktop window or when the application font is enlarged.
+		Grid main = new()
 		{
-			Spacing = 12,
-			Children =
-			{
-				header,
-				note,
-				new ScrollViewer
-				{
-					Content = _speakers,
-					VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
-					HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
-				},
-				_error,
-			},
+			RowDefinitions = new RowDefinitions("Auto,Auto,*,Auto"),
+			RowSpacing = 12,
 		};
+		ScrollViewer scroll = new()
+		{
+			Content = _speakers,
+			VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+			HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+		};
+		Grid.SetRow(header, 0);
+		Grid.SetRow(note, 1);
+		Grid.SetRow(scroll, 2);
+		Grid.SetRow(_error, 3);
+		main.Children.Add(header);
+		main.Children.Add(note);
+		main.Children.Add(scroll);
+		main.Children.Add(_error);
 
 		Button accept = new()
 		{
