@@ -68,7 +68,7 @@ public sealed class SampleDocumentEditorTests
 	}
 
 	[Test]
-	public void ImportFromSongCopiesMetadataPcmAndEncodedPayloadWithoutSourceDependency()
+	public void ImportFromSongCopiesLoopPcmAndEncodedPayloadWithoutSourceDependency()
 	{
 		using TempProject project = new();
 		string wavePath = project.WriteWave("source", "tone.wav", sample: 8192);
@@ -76,7 +76,6 @@ public sealed class SampleDocumentEditorTests
 		DocumentWorkspace sourceWorkspace = new();
 		SampleDefinition original =
 			SampleDocumentEditor.Import(sourceWorkspace, wavePath, "Imported Tone");
-		original.ReferenceFrequencyHz = 440.0;
 		original.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 1);
 		original.SourceChannelPositions.Add(new Vector3(0.25f, -0.5f, 0.75f));
 		sourceWorkspace.SaveAs(sourcePath);
@@ -94,11 +93,11 @@ public sealed class SampleDocumentEditorTests
 
 		imported.Should().NotBeSameAs(source.Samples.Single());
 		imported.Name.Should().Be("Imported Tone");
-		imported.ReferenceFrequencyHz.Should().Be(440.0);
 		imported.Loop.Should().Be(new SampleLoop(SampleLoopMode.Forward, 0, 1));
 		imported.SourceChannelPositions.Should()
 			.Equal(new Vector3(0.25f, -0.5f, 0.75f));
 		imported.PcmData.Should().BeSameAs(source.Samples.Single().PcmData);
+		imported.PcmData!.SampleRate.Should().Be(8000);
 		imported.PendingAsset.Should().NotBeNull();
 		imported.Asset.Should().BeNull();
 		imported.PendingAsset!.FileName.Should().Be("tone.wav");
@@ -114,6 +113,7 @@ public sealed class SampleDocumentEditorTests
 			reloaded.Objects.Values.OfType<SampleDefinition>().Single();
 		persisted.PcmData!.GetSample(0, 0)
 			.Should().BeApproximately(0.25f, 1e-6f);
+		persisted.PcmData.SampleRate.Should().Be(8000);
 	}
 
 	[Test]
@@ -228,7 +228,6 @@ public sealed class SampleDocumentEditorTests
 			() => SampleDocumentEditor.UpdateMetadata(
 				workspace,
 				sample,
-				sample.ReferenceFrequencyHz,
 				new SampleLoop(
 					SampleLoopMode.Forward,
 					0,
@@ -238,7 +237,17 @@ public sealed class SampleDocumentEditorTests
 			.WithMessage("*decoded sample*");
 	}
 
-
+	[Test]
+	public void UnchangedLoopMetadataDoesNotAdvanceAudioRevision()
+	{
+		using TempProject project = new();
+		DocumentWorkspace workspace = new();
+		SampleDefinition sample = SampleDocumentEditor.Import(
+			workspace, project.WriteWave("unchanged.wav", sample: 0));
+		uint revision = workspace.Document.AudioRevision;
+		SampleDocumentEditor.UpdateMetadata(workspace, sample, sample.Loop);
+		workspace.Document.AudioRevision.Should().Be(revision);
+	}
 
 	private sealed class TempProject : IDisposable
 	{

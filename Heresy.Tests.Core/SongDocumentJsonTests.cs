@@ -69,6 +69,8 @@ public sealed class SongDocumentJsonTests
 
 		JsonObject objects = root["objects"]!.AsObject();
 		Assert.That(objects.Count, Is.EqualTo(7));
+		Assert.That(objects["1"]!.AsObject().ContainsKey("referenceFrequencyHz"),
+			Is.False, "Dead sample tuning metadata must not persist.");
 		Assert.That(objects.ContainsKey("1"), Is.True);
 		Assert.That(objects.ContainsKey("7"), Is.True);
 		Assert.That(
@@ -95,6 +97,26 @@ public sealed class SongDocumentJsonTests
 		Assert.That(
 			restored.AllocateObjectId(),
 			Is.EqualTo((ObjectId)8U));
+	}
+
+
+	[Test]
+	public void LegacySampleFrequencyMetadataIsAcceptedButNotRewritten()
+	{
+		JsonObject manifest = JsonNode.Parse(
+			SongDocumentJson.Serialize(BuildMixedDocument(), JsonContextPath))!
+			.AsObject();
+		manifest["objects"]!["1"]!["referenceFrequencyHz"] = 1234.5;
+		SongDocument loaded = SongDocumentJson.Deserialize(
+			manifest.ToJsonString(), JsonContextPath);
+		SampleDefinition sample = (SampleDefinition)loaded.Objects[(ObjectId)1U];
+		Assert.That(sample.PcmData!.SampleRate, Is.EqualTo(8000));
+		Assert.That(sample.Loop.Mode, Is.EqualTo(SampleLoopMode.PingPong));
+		JsonObject roundTrip = JsonNode.Parse(
+			SongDocumentJson.Serialize(loaded, JsonContextPath))!.AsObject();
+		Assert.That(roundTrip["objects"]!["1"]!.AsObject()
+			.ContainsKey("referenceFrequencyHz"), Is.False,
+			"Obsolete version-one fields may load but must not be emitted.");
 	}
 
 	[Test]
@@ -497,7 +519,6 @@ public sealed class SongDocumentJsonTests
 						"assets",
 						"piano-c4.wav")))
 			{
-				ReferenceFrequencyHz = 440.0,
 				Loop = new SampleLoop(
 					SampleLoopMode.PingPong,
 					10,
@@ -628,7 +649,6 @@ public sealed class SongDocumentJsonTests
 		Assert.That(
 			sample.PcmData!.GetSample(0, 0),
 			Is.EqualTo(0.25f).Within(1e-6));
-		Assert.That(sample.ReferenceFrequencyHz, Is.EqualTo(440.0));
 		Assert.That(
 			sample.Loop,
 			Is.EqualTo(
