@@ -26,15 +26,9 @@ Further work requires a new concrete regression or feature request.
 
 ### Programmable object types
 
-- [ ] **Implement script-defined Envelopes.** Add a persisted Envelope
-  subtype, restricted deterministic compilation and a snapshot-owned
-  `IEnvelopeCurve` evaluator receiving envelope-active time, sample rate
-  and Note Off origin. Specify and enforce bounded evaluation, nonfinite
-  output handling and a credible finite/endless release contract before
-  integration. Resolve alongside ADSR in Instrument and FM paths; preserve
-  pause/resume, note release, voice retirement, JSON/`.hm` round-trips and
-  live-editor versus playing-snapshot isolation. Provide authoring and
-  diagnostic support with regression tests at each layer.
+Script-defined Envelopes (expression compilation, bounded release,
+Instrument/FM rendering, persistence and authoring) are complete;
+see [script programmability](script-programmability.md).
 
 - [ ] **Implement script-defined Instruments.** Add a persisted Instrument
   subtype with a deterministic compiled tone-selection function taking the

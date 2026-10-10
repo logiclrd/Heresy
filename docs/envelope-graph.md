@@ -110,3 +110,17 @@ duration clamps, Sustain hits and scalar preservation. Existing
 changes, no-op updates, invalid durations, and finite but unbounded
 Sustain scalar values. Native GUI pointer/label layout can be
 additionally smoke-tested on desktop.
+
+
+## Script Envelopes are separate from the ADSR graph
+
+An authorable `ScriptEnvelopeDefinition` is a pure compiled scalar
+expression with `elapsedSeconds` and `releaseSeconds` parameters,
+plus an optional finite release bound. It appears under the same
+Envelopes tree root but opens the dedicated
+`ScriptEnvelopeEditorControl`, **not** the ADSR graph. The latter
+remains specific to `AdsrEnvelopeDefinition`. Instruments and FM
+Envelope nodes may resolve and play either Envelope type through
+`IEnvelopeCurveResolver`; the graphical ADSR inspector must not
+silently coerce a script Envelope into attack/decay/sustain/release
+values. See [script programmability](script-programmability.md).

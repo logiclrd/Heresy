@@ -1,8 +1,8 @@
 # Script programmability — original-design completion
 
-**Status (October 10, 2026):** scoped architecture for unfinished
-script-defined objects and native expression effects, plus the first
-Pattern-script virtual-channel slice. This is a **current design and
+**Status (October 10, 2026):** current contract for implemented
+Pattern-script virtual channels and script-defined Envelopes, alongside
+still-open script Instruments and native effect expressions. This is a **current design and
 acceptance contract**, not a historical implementation log. Track
 outstanding work in [todo.md](todo.md).
 
@@ -13,8 +13,8 @@ musical objects. The production architecture already provides restricted
 Roslyn Pattern/Sequence programs, abstract sound/envelope execution,
 recursive/flattened invocation ownership, snapshot-backed playback,
 and independently composed parameter operators. What is missing is
-persistence, safe compilation and authoring for the remaining
-programmable object kinds.
+persistence, safe compilation and authoring for script Instruments
+and authorable native parametric effects.
 
 - **One song model:** `SongDocument` stores definitions, IDs and
   references; live edits never mutate an already-created playback
@@ -188,32 +188,98 @@ Regression coverage:
   Note Off/Cut and realtime/offline parity in unequal block sizes.
 - No altered physical `Note/Off/Cut` or Sequence script semantics.
 
-## 2. Script-defined Envelopes — planned architecture
+## 2. Script-defined Envelopes — implemented
 
-Existing `EnvelopeDefinition`/ADSR storage and
-`IEnvelopeCurve.GetValue(activeFrame, sampleRate,
-noteOffActiveFrame)` form the extension seam. Add a persisted
-script Envelope definition and a compiled, immutable evaluator
-with explicitly defined inputs and scalar output. The *active*
-frame domain pauses under tracker S77/S78 controls and Note Off
-origin is expressed in that domain, so resumed releases must not
-consume paused time. A script may return negative or above-unity
-finite values, as ADSR currently does.
+`ScriptEnvelopeDefinition` is a persisted first-class
+`EnvelopeDefinition` subtype (`type: scriptEnvelope`). It
+contains a restricted-C# `Source` **expression**, not a
+Pattern-style statement program, and an optional
+`TimeSpan? ReleaseDuration`. Both values survive `.hm.json`,
+zip-packaged `.hm`, song snapshots and editor revisions without
+changing version 1 of the document format.
 
-A script envelope needs a trustworthy
-`GetEndActiveFrameExclusiveAfterNoteOff` policy. Define a
-provable finite release bound, or report `null` and handle
-indefinite release under existing end-of-input resource safeguards.
-Do not infer sound retirement from arbitrary samples of the
-function or cut a sample before its owning volume envelope tails.
-Compilation and immutable state preparation precede rendering;
-per-frame evaluation must be bounded and allocation-conscious.
+### Scalar expression contract
 
-Integrate via `IEnvelopeCurveResolver`, including Instrument tone
-overrides, FM Envelope nodes, persistence, named editor navigation,
-diagnostics and reference retention. Confirm split-block/seek
-determinism, Note Off repetitions, nested release ownership,
-pause/resume and replacement-document atomicity.
+Expressions evaluate to `double`, with two numeric inputs:
+
+- `elapsedSeconds`: the total **active** Envelope time since its
+  note began, including time before Note Off; disabled Envelope time
+  is excluded.
+- `releaseSeconds`: exactly `-1.0` before Note Off; after Note
+  Off, nonnegative active time since the Note Off event.
+
+For example, `releaseSeconds < 0 ? 0.7 : 0.7 *
+Math.Max(0, 1 - releaseSeconds / 0.2)` sustains at 0.7 and
+fades for 0.2 active seconds after Note Off. For a guaranteed
+finite end, also set `ReleaseDuration` to 200 milliseconds.
+
+The source must be a **single expression** of at most 2,048
+characters and at most 256 parsed syntax nodes. The same
+restricted-C# analyzer used by Pattern scripts rejects object
+creation, statements, framework access, I/O and unapproved
+calls. Pure `System.Math` functions/constants and the two
+numeric parameters are available. The code is compiled once
+using Roslyn in `Heresy.Scripting`; its stateless
+`IScriptEnvelopeEvaluator` is called by the
+`ScriptEnvelopeCurve` in `Heresy.Render`. No compilation,
+scripts with loops or file operations run inside PCM callbacks.
+
+Values are arbitrary **finite scalars**, not clipped to [0,1]:
+negative values may invert a volume signal, and pitch or filter
+Envelope consumers interpret the scalar in their own units.
+Nonfinite results fail deterministically instead of poisoning
+the PCM buffer. This is a deliberately bounded **expression**
+contract, not unrestricted scripted per-sample C#.
+
+### Release duration and ownership
+
+`ReleaseDuration` is an explicit **enforced** release bound in
+the active Envelope domain, not a duration inferred by sampling
+the expression. The curve returns 0 after the first frame at
+that bound and advertises
+`GetEndActiveFrameExclusiveAfterNoteOff` to the existing
+`EnvelopePlaybackState` and voice-retirement policy.
+A zero-duration release is immediate. A null duration means
+the expression has **no promised finite end**; voice retirement
+must not be guessed even if individual evaluated frames equal
+zero. Existing indefinite-source end-input safeguards apply.
+
+Disabled Envelopes hold their value without consuming active
+release time. Note Off while paused records the correct active
+origin. Retrospective value queries, split PCM rendering and
+snapshot ownership use the same existing Envelope timeline
+semantics as ADSR; a Note Off cannot cut a volume Envelope's
+finite release tail prematurely.
+
+### Integration and authoring
+
+`PlaybackSnapshotSoundResolver` compiles script Envelopes into
+immutable curves while preparing direct sources **before**
+producing PCM. Invalid expressions fail playback preparation
+with compiler diagnostics; they never create partly initialized
+audio sources. Instrument tone Volume/Pitch/Panning/Filter
+Envelope assignments and FM `FmEnvelopeNode` lookups reuse
+the common `IEnvelopeCurveResolver`, without a separate
+rendering path or implicit ADSR conversion.
+
+The Envelopes pane offers **+ Envelope** for graphical ADSR
+and **+ Script** for expression Envelopes. The dedicated
+`ScriptEnvelopeEditorControl` edits the expression and an
+optional release duration in seconds (blank = unbounded);
+`EnvelopeDocumentEditor` validates all edits *before*
+changing either definition or document revision. Failed edits
+preserve the playing snapshot and current authoring document.
+The graphical ADSR control is still ADSR-only.
+
+Tests: `ScriptEnvelopeCompilationTests` (restrictions,
+pure expression determinism), `ScriptEnvelopeCurveTests`
+(boundaries, arbitrary finite values, pause/resume and
+nonfinite rejection), `ScriptEnvelopePersistenceTests` (JSON,
+`.hm` and isolated snapshots),
+`ScriptEnvelopePlaybackTests` (instrument release tails,
+PCM chunk invariance, FM output, frozen playback revisions
+and compilation failure), and
+`EnvelopeDocumentEditorTests` (transactional UI mutation).
 
 ## 3. Script-defined Instruments — planned architecture
 
@@ -267,7 +333,7 @@ without duplicating the existing effect engine.
 
 1. Pattern virtual note lifecycle helpers (bounded first slice).
 2. Pattern virtual voice-local controls.
-3. Script Envelope model/compiler and runtime integration.
+3. Script Envelope model/compiler and runtime integration (complete).
 4. Script Instrument model/compiler and source binding.
 5. Authorable parametric effect expressions.
 
