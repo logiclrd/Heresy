@@ -587,7 +587,10 @@ public static class ScriptCompiler
 				|| name.Identifier.ValueText is not
 					("Note" or "Off" or "Cut" or "Tempo" or "Speed"
 						or "Seek" or "Pan" or "Surround"
-						or "Filter" or "FilterCutoff" or "FilterResonance"))
+						or "Filter" or "FilterCutoff" or "FilterResonance"
+						or "NoteVirtual" or "OffVirtual" or "CutVirtual"
+						or "OffVirtualInScope" or "CutVirtualInScope"
+						or "OffAllVirtual" or "CutAllVirtual"))
 				continue;
 			if (invocation.Parent is ExpressionStatementSyntax statement
 				&& ReferenceEquals(statement.Expression, invocation))
@@ -892,7 +895,10 @@ public static class ScriptCompiler
 				|| name.Identifier.ValueText is not
 					("Note" or "Off" or "Cut" or "Tempo" or "Speed"
 						or "Seek" or "Pan" or "Surround"
-						or "Filter" or "FilterCutoff" or "FilterResonance"))
+						or "Filter" or "FilterCutoff" or "FilterResonance"
+						or "NoteVirtual" or "OffVirtual" or "CutVirtual"
+						or "OffVirtualInScope" or "CutVirtualInScope"
+						or "OffAllVirtual" or "CutAllVirtual"))
 				return visited;
 
 			// Execute the original helper (and its validation) exactly once.
