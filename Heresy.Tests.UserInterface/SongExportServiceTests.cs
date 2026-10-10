@@ -353,6 +353,61 @@ public sealed class SongExportServiceTests
 		}
 	}
 
+	[TestCase(WavePcmBitDepth.Pcm8, 1)]
+	[TestCase(WavePcmBitDepth.Pcm16, 2)]
+	[TestCase(WavePcmBitDepth.Pcm24, 3)]
+	[TestCase(WavePcmBitDepth.Pcm32, 4)]
+	public async Task ExportWaveBitDepthFlowsFromServiceToCommittedPcmFile(
+		WavePcmBitDepth depth, int sampleBytes)
+	{
+		SongExportService service = new(new OfflineSongRenderPlanFactory(
+			RenderConfiguration.Stereo(1000)));
+		string path = Path.Combine(Path.GetTempPath(),
+			$"heresy-wave-depth-{Guid.NewGuid():N}.wav");
+		try
+		{
+			OfflineRenderResult result = await service.ExportAsync(
+				CreateSong(), path, OfflineAudioFileFormat.Wave,
+				waveBitDepth: depth);
+			byte[] wav = await File.ReadAllBytesAsync(path);
+			Assert.That(BinaryPrimitives.ReadUInt16LittleEndian(
+				wav.AsSpan(34, 2)), Is.EqualTo((ushort)depth));
+			Assert.That(BinaryPrimitives.ReadUInt32LittleEndian(
+				wav.AsSpan(40, 4)),
+				Is.EqualTo((uint)(result.TotalFrameCount * 2 * sampleBytes)));
+			Assert.That(wav.Length, Is.EqualTo(44 +
+				result.TotalFrameCount * 2 * sampleBytes));
+		}
+		finally
+		{
+			if (File.Exists(path)) File.Delete(path);
+		}
+	}
+
+	[Test]
+	public async Task UnsupportedMp3FormatFailsBeforeTemporaryCreationAndPreservesDestination()
+	{
+		SongExportService service = new(new OfflineSongRenderPlanFactory(
+			RenderConfiguration.Stereo(96000)));
+		string path = Path.Combine(Path.GetTempPath(),
+			$"heresy-invalid-mp3-{Guid.NewGuid():N}.mp3");
+		await File.WriteAllTextAsync(path, "existing-file");
+		try
+		{
+			Assert.ThrowsAsync<ArgumentException>(async () =>
+				await service.ExportAsync(CreateSong(), path,
+					OfflineAudioFileFormat.Mp3));
+			Assert.That(await File.ReadAllTextAsync(path),
+				Is.EqualTo("existing-file"));
+			Assert.That(Directory.GetFiles(Path.GetTempPath(),
+					$".{Path.GetFileName(path)}.*.heresy-render.tmp"), Is.Empty);
+		}
+		finally
+		{
+			if (File.Exists(path)) File.Delete(path);
+		}
+	}
+
 	[Test]
 	public async Task ExportWaveRendersRootSequenceAndReplacesDestinationAtomically()
 	{
