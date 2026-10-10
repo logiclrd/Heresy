@@ -35,7 +35,7 @@ public sealed class IncrementalAdvancedEffectTimingTests
         Assert.Multiple(() =>
         {
             Assert.That(root.State.Tempo, Is.EqualTo(125));
-            Assert.That(root.GetPhysicalChannelState(0).LastSourceId,
+            Assert.That(root.GetPhysicalChannelState(0).CurrentSourceId,
                 Is.EqualTo(ObjectId.None));
         });
     }
