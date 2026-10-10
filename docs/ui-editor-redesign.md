@@ -1,12 +1,13 @@
-# Planned UI polish and instrument/editor redesign (October 10, 2026)
+# UI editor redesign — implemented contracts (October 10, 2026)
 
-Status: **living implementation and design checklist**. Sections marked
-implemented below describe completed milestones; unmarked instrument-grid
-and FM-inspector requirements remain future work. Core
-`InstrumentDefinition` still has separate `ToneSpecifications` and
-`ToneTable`, while `AdsrEnvelopeDefinition` stores TimeSpan
-Attack/Decay/Release and an unrestricted finite SustainLevel.
-The current document tree has **five** section roots.
+This document preserves accepted behavior and regression expectations
+from the **completed** redesign. It is no longer an open task list.
+Core `InstrumentDefinition` retains `ToneSpecifications` and `ToneTable`
+as persistence data; the editor manages them implicitly.
+`AdsrEnvelopeDefinition` stores TimeSpan Attack/Decay/Release and an
+unrestricted finite SustainLevel. The document tree has five roots.
+See [UI workflows](user-interface-workflows.md) for the full desktop
+behavior contract and [todo.md](todo.md) for open items.
 
 ## Pattern editor: optional playback-follow — implemented
 
@@ -89,9 +90,9 @@ The current document tree has **five** section roots.
   zero-duration overlaps, sustain line hits, unrestricted values,
   duration clamping and preserved fields; GUI appearance and pointer
   capture still merit a manual desktop smoke test.
-- Embedding **this same control** into the FM synth editor's Envelope
-  node inspector, along with the New... dropdown/create path, is the
-  separate **next** TODO. See [envelope-graph.md](envelope-graph.md).
+- The FM editor already embeds this same control and supports the
+  New... create/assign path described below.
+  See [envelope-graph.md](envelope-graph.md).
 
 ## FM instrument editor: first-class envelopes — implemented
 
@@ -126,7 +127,7 @@ The current document tree has **five** section roots.
   unchanged. Regression tests cover all these model operations and
   rendering. See [envelope-graph.md](envelope-graph.md).
 
-## Unsaved-changes dialog and File -> Open
+## Unsaved-changes dialog and File -> Open — implemented
 
 - The **Save changes?** dialog's buttons appear left-to-right:
   **Yes**, **No**, **Cancel**, in that order.
@@ -152,7 +153,7 @@ document or save baseline. The original New/Exit workflows still
 guard before their respective actions. These changes are backed by
 headless dialog-action and picker/guard/transaction regression tests.
 
-## Instrument Editor: implicit specifications and tone-table grid
+## Instrument Editor: implicit specifications and tone-table grid — implemented
 
 **Implemented:** The framework-independent
 `InstrumentToneGridProjection`/`InstrumentToneGridModel` and the
@@ -273,17 +274,3 @@ selector has no blank clearing entry.
 - Changes must advance the existing document/audio revisions
   appropriately and must retain snapshot isolation for already-playing
   audio.
-
-## Suggested implementation order
-
-1. Unsaved-changes dialog and file-picker ordering (contained, testable).
-2. Pattern playback-follow checkbox, hotkeys and viewport behavior.
-3. Patch/Patches labels (only generalized source contexts).
-4. First-class Envelopes tree/pane and persistence/placement, then the
-   reusable ADSR graph.
-5. FM Envelope node creation/embedded editor.
-6. Tone-table grid projection/model tests, draft-row persistence and
-   implicit Core specifications; then keyboard/edit/pitch coupling
-   details and a final integration pass.
-
-The order is a recommendation, not a change to the requested behavior.
