@@ -116,18 +116,39 @@ SCx/SDx/Qxy, fractional global timing and cross-rate Txx/SEy
 tests remain authoritative. See
 [incremental-sequencing.md](incremental-sequencing.md).
 
-- [ ] Continue **remaining advanced tracker/script effect compatibility**
-  only for concrete, reproducible coordinator gaps beyond the verified
-  families. Candidate work includes additional raw tracker effect
-  families present in `PatternNoteProcessor` but still omitted from
-  the incremental command allow-list (for example S1x glissando,
-  SAx sample-offset-high, and other waveform/panning commands),
-  complex overlapping global commands, negative fixed wall-time
-  offsets **only if** a chronological look-behind contract can safely
-  be defined, and subtler simultaneous Tempo/ramp deadlines.
-  Unsupported combinations must continue to fail clearly; never
-  precommit future Source, effect or Tempo memory, or eagerly enumerate
-  future Pattern/Sequence visits.
+**Incremental raw-tracker command-family parity extended.**
+`IncrementalPatternTimeline` now accepts S1x glissando, SAx
+sample-offset-high, S8x absolute panning, Xxx 8-bit panning,
+volume-column absolute panning, and S91 surround; existing
+S3x/S4x and panbrello waveform controls remain supported.
+All raw tracker `Apply*` commands now either pass the physical
+incremental event resolver or use the established separate
+Bxx/Cxx/SBx/SEy/S6x flow/row preprocessing. S1x updates the
+logical channel's subsequent Gxx glissando flag; SAx combines
+with Oxx/O00 at execution time, including after a fixed-wall
+deadline, while parent/child memory stays isolated even on the
+same mapped physical channel. Absolute panning preserves
+effect-column precedence over volume-column panning and
+surround. The Gxx integration also closes the old missing
+`ClearTonePortamentoCommand` row-end cleanup and repeats Gxx
+movement across SEy rows without resetting its target.
+`IncrementalAdvancedTrackerEffectsTests` and
+`IncrementalAdvancedEffectTimingTests` validate these against
+the eager processor and event-level deadlines/cancellation.
+See [incremental-sequencing.md](incremental-sequencing.md).
+
+- [ ] Continue **unusual scripted/global effect compatibility**
+  only with a concrete failing coordinator example. The ordinary
+  eager-supported raw tracker effects are now accounted for; the
+  remaining boundaries concern direct scripting/playback commands
+  not in the incremental allow-list (for example direct frequency,
+  playback-offset and resonant-filter controls), combinations of
+  global and physical commands with incompatible fixed-wall timing,
+  and rare overlapping Tempo/ramp deadlines. Negative fixed wall
+  offsets remain explicitly rejected until a safe chronological
+  look-behind contract can be defined. Keep explicit errors for
+  unsupported cases, and never precommit future Source, Tempo or
+  effect memory or enumerate future Pattern/Sequence visits.
 - [ ] Extend **advanced** lifecycle compatibility beyond the completed
   flattened-source ownership model, especially interactions between delayed
   tracker effects, mixed data/script timing, multichannel routing, and
