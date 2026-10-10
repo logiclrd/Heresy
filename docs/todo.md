@@ -119,10 +119,26 @@ preserving audible release and already-captured anti-click tails. These are
   Red-to-green renderer regressions cover NNA Continue, cutoff,
   owner isolation, flattened-scope Cut, S70/S74, and exact-frame
   Off/Fade.
-  **Still outstanding:** editor indications for inherited/dynamic
-  sources and downstream Note Off/Cut; nested indirect Instrument/private
-  mixdown lifetimes, continuing automation and release tails, and
-  long-running script/cancellation stress coverage.
+  **Step 59: indirect private-mixdown lifecycle propagation implemented.**
+  Instrument-selected private Pattern/Sequence tones, even through
+  multiple Instrument layers, now retain each flattened ancestor scope
+  in their tracked ownership. Flattened Off/Cut/Fade and explicit
+  subtree cancellation forward lifecycle actions to their private
+  coroutines, independent of overlapping physical host indexes.
+  Private virtual notes track their original cursor/ID across NNA
+  Continue/Off/Fade, with S70-S72 and AllVirtual reaching the proper
+  displaced private voices but not sibling scopes. Resolved virtual
+  NNA and past-note commands now pass the shared-tick validator at
+  supported musical-row deadlines. Source-level Fade stops future
+  private note generation without imposing Off or Cut on existing
+  fading voices; pending one-event lookahead and scope retirements
+  are discarded/settled safely. Red-to-green PCM, private InputEnded,
+  source end-frame, fade-controller, and sibling-isolation tests cover
+  direct mixdowns, nested Instrument chains and private Sequences.
+  **Still outstanding:** inherited/dynamically selected editor source
+  indications and downstream Note Off/Cut; remaining continuous
+  release/fade-envelope automation nuances, lifecycle stress over
+  indefinitely scripted graphs, and advanced timing/seek compatibility.
   The incremental merger admits zero-offset Mxx and native channel-volume
   commands alongside flattened starts.
   The detailed target remains in step 48 below.

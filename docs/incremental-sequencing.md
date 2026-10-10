@@ -2873,3 +2873,78 @@ This milestone establishes **renderer-side virtual/NNA lifecycle
 parity** and explicit command semantics. Integration with more
 complex indirect Instrument-selected private mixdowns and deep
 release-envelope graphs is the next separate ownership pass.
+
+## Fifty-ninth step: deep private-mixdown and Instrument source ownership
+
+A private Pattern/Sequence selected through an Instrument is an
+independent coroutine/renderer on the *same* PCM worker. Step 54
+correctly sent flattened source Off/Cut/Fade to the **outer**
+`PlaybackSession`, but the private sequence's input remained live:
+`ControlFlattenedSourceCommand` did not reach the private-mixdown
+tracking maintained in `PreparedIncrementalPlaybackFactory`.
+Consequently, a private child could continue emitting future notes
+even after its flattened ancestor's Note Off. This was reproduced
+end-to-end with both a directly selected private Sequence and the
+same Sequence behind two Instrument tone-selection layers. The tests
+failed because the child `PlaybackSession.InputEnded` stayed false
+after the outer source Off at frame 120.
+
+Each `TrackedMixdown` now captures the originating
+`StartNoteCommand.ParentSourceScopes` rather than relying solely on
+physical channel numbers. This ancestry is passed through recursive
+Instrument resolution into the actual private Pattern/Sequence leaf.
+On flattened source lifecycle control, the producer-side transform
+identifies all active **and NNA-displaced** private mixdowns enclosed
+by the scope and schedules Cut/Off/Fade at the exact parent PCM
+frame. `ScopeCanceled` also cuts the matching private inputs on
+explicit cancellation. The ordinary renderer still handles its
+outer voices and anti-click tails independently, so a root voice
+sharing the same physical host remains unaffected. Finished private
+sounds and temporary resolver IDs continue to be reclaimed only
+once their owning renderer voices detach.
+
+Step 58's virtual NNA logic also needs an equivalent *private input*
+lifecycle: an Instrument-selected private sound started on a virtual
+channel is tracked by its virtual ID and Pattern cursor owner. Its
+old private voice is scheduled according to its remembered S73-S76
+displacement action (including Continue), not always Cut. S70-S72
+on that virtual channel reach only its own displaced private voices;
+a physical S7x or another cursor's matching numeric ID does not.
+`AllVirtual` reaches displaced private virtual notes, whereas
+`AllVirtualInScope` deliberately does not. Resolved virtual
+`SetCurrentVoiceDisplacementActionCommand` and
+`ApplyPastNoteActionCommand` are now permitted by the incremental
+raw-note validator; this deliberately does **not** add unsupported
+positive fixed wall-time offsets for such effect commands. The
+virtual private regression therefore uses real row offsets.
+
+There is a final distinction for **source-level Fade**. Calling
+`RequestFadeOfActiveVoices` on a private session was already audible,
+but its coroutine still produced *new* notes during the fade. The
+new `PreparedIncrementalAudioSource.StopProducing` operation stops
+future note emission, drops its sole prefetched event, and flushes
+associated scope retirement notifications **without** calling
+`PlaybackSession.EndInput`, Note Off, or Cut. A private mixdown's
+`ScheduleFade` now invokes that operation before requesting the
+ordinary active-voice fades. A later explicit Off may still call
+`EndInput` normally, because its guard uses the session's actual
+input-ended state rather than whether production was softly stopped.
+
+Regression coverage includes:
+- Flattened Note Off at frame 120 with a private Sequence selected
+  directly or through two nested Instruments; private input ends
+  while an independent root voice on the shared physical host sounds.
+- A scoped virtual Instrument-selected private Pattern displaced by
+  S74 Continue, then selectively released by S71 without releasing
+  the replacement.
+- Flattened Cut terminating an Instrument-selected private sound
+  at exactly frame 120.
+- Flattened S76 requesting an inner private fade, stopping *future*
+  note generation and preserving already-fading voices without
+  imposing Note Off.
+
+No eager recursive expander, event journal, PCM cache or additional
+thread is introduced. Unusual overlapping release envelopes and
+more prolonged indefinite-script cancellation/retirement stress remain
+follow-up correctness work, as do the separate multi-rate Tempo and
+advanced seek projects.
