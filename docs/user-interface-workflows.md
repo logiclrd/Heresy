@@ -147,6 +147,9 @@ intervals and warns before shrinking dimensions when populated cells would be
 discarded. The Back control is fixed at the left of the editor header; the
 Pattern name and toolbar controls through **Apply layout** are in a horizontally
 scrollable area with an automatic scrollbar (hidden when there is no overflow).
+The scrollable region always measures an extra bottom gutter for the scrollbar,
+including when it is hidden, so narrow windows do not cover the lower halves
+of inputs and resizing does not change the header height.
 Double-clicking the displayed Pattern name overlays an editable text field
 containing its current name. Losing focus or pressing Enter commits a nonblank
 rename through `SongTreeEditor.RenameObject` (synchronizing all document-tree

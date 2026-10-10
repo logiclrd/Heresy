@@ -46,6 +46,30 @@ public sealed class PatternEditorToolbarTests
 	}
 
 	[AvaloniaTest]
+	public void ToolbarAlwaysReservesVerticalScrollbarClearance()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern = PatternDocumentEditor.CreateDataPattern(
+			workspace, "Verse", rowCount: 2, channelCount: 1);
+		PatternEditorControl editor = new(
+			new Window(), workspace, pattern, () => { }, _ => { });
+		DockPanel root = (DockPanel)editor.Content!;
+		DockPanel header = (DockPanel)root.Children[0];
+		Button back = (Button)header.Children[0];
+		ScrollViewer scroll = (ScrollViewer)header.Children[1];
+		StackPanel toolbar = (StackPanel)scroll.Content!;
+
+		// This clearance is permanent, not toggled with Auto scrollbar
+		// visibility: narrow windows must not cover the control bottoms,
+		// and resizing must not change the toolbar's requested height.
+		scroll.MinHeight.Should().BeGreaterOrEqualTo(60);
+		toolbar.Margin.Bottom.Should().BeGreaterOrEqualTo(20);
+		toolbar.VerticalAlignment.Should().Be(Avalonia.Layout.VerticalAlignment.Top);
+		back.VerticalAlignment.Should().Be(Avalonia.Layout.VerticalAlignment.Top);
+		scroll.HorizontalScrollBarVisibility.Should().Be(ScrollBarVisibility.Auto);
+	}
+
+	[AvaloniaTest]
 	public void InlineTitleRenameUpdatesTreeAndDocumentButNotAudio()
 	{
 		DocumentWorkspace workspace = new();

@@ -104,6 +104,9 @@ public sealed class PatternEditorControl : UserControl
 	{
 		HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
 		VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+		// Keep room for a horizontal scrollbar in every window width.
+		// Its visibility must not change the header's measured height.
+		MinHeight = 60,
 	};
 	private DataPatternDefinition? _editingTitlePattern;
 	private readonly Dictionary<(int Row, int Channel), Border> _cellBorders = [];
@@ -533,7 +536,11 @@ public sealed class PatternEditorControl : UserControl
 		{
 			Orientation = Orientation.Horizontal,
 			Spacing = 6,
-			VerticalAlignment = VerticalAlignment.Center,
+			VerticalAlignment = VerticalAlignment.Top,
+			// Fluent's horizontal scrollbar can overlay the viewport.
+			// This permanently measured gutter keeps it below the inputs,
+			// even while Auto hides the scrollbar at larger window widths.
+			Margin = new Thickness(0, 0, 0, 20),
 		};
 		toolbar.Children.Add(titleSlot);
 		toolbar.Children.Add(layout);
@@ -541,6 +548,7 @@ public sealed class PatternEditorControl : UserControl
 
 		DockPanel header = new() { Margin = new Thickness(10, 8) };
 		back.Margin = new Thickness(0, 0, 10, 0);
+		back.VerticalAlignment = VerticalAlignment.Top;
 		DockPanel.SetDock(back, Dock.Left);
 		header.Children.Add(back);
 		header.Children.Add(_toolbarScroll);
