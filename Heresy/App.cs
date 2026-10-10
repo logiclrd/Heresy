@@ -1,11 +1,13 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Themes.Fluent;
+using Avalonia.Threading;
 
 using Heresy.Playback;
 using Heresy.Render.Configuration;
 using Heresy.Render.SDL;
 using Heresy.UserInterface;
+using Heresy.UserInterface.Startup;
 
 namespace Heresy;
 
@@ -23,11 +25,28 @@ public sealed class App : Application
 			// Realtime and export both capture immutable configuration from
 			// the same UI-owned selection when a new render starts.
 			AudioOutputSettings settings = new();
-			desktop.MainWindow =
-				new MainWindow(
+			MainWindow mainWindow =
+				new(
 					new LazySongPlaybackTransport(
 						() => CreatePlaybackTransport(settings)),
 					settings);
+			desktop.MainWindow = mainWindow;
+
+			// The main window remains the application's actual main window;
+			// only open the owned, chromeless splash after it has appeared.
+			// Dispatcher-posting avoids reentering the initial Show sequence.
+			bool splashScheduled = false;
+			mainWindow.Opened += (_, _) =>
+			{
+				if (splashScheduled)
+					return;
+				splashScheduled = true;
+				Dispatcher.UIThread.Post(() =>
+				{
+					if (mainWindow.IsVisible)
+						new StartupSplashWindow(mainWindow).Show(mainWindow);
+				}, DispatcherPriority.Loaded);
+			};
 		}
 
 		base.OnFrameworkInitializationCompleted();
