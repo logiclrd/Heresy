@@ -19,6 +19,15 @@ public readonly record struct InstrumentToneGridCells(
 	ObjectId? PanningEnvelopeId = null,
 	ObjectId? FilterEnvelopeId = null)
 {
+	// Record structs otherwise allow default(PitchMultiplier) = 0, which
+	// would wrongly populate *empty* grid cells with an invalid multiplier.
+	public InstrumentToneGridCells()
+		: this(null, 1.0, null, null, null, null)
+	{
+	}
+
+	public static InstrumentToneGridCells Empty { get; } = new();
+
 	public bool HasSource => SourceId is ObjectId id && !id.IsNone;
 
 	public static InstrumentToneGridCells FromTone(ToneSpecification tone)
@@ -154,7 +163,10 @@ public static class InstrumentToneGridProjection
 		for (int index = regularEnd - 1; index >= 0; index--)
 		{
 			rows.Add(new InstrumentToneGridRow(
-				index, visible.GetValueOrDefault(index), false));
+				index,
+				visible.TryGetValue(index, out InstrumentToneGridCells cells)
+					? cells : InstrumentToneGridCells.Empty,
+				false));
 		}
 		return rows;
 	}
