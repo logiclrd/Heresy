@@ -15,6 +15,7 @@ using Heresy.Core.Envelopes;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
 using Heresy.UserInterface.Documents;
+using Heresy.UserInterface.Dialogs;
 using Heresy.UserInterface.FmEditing;
 using Heresy.UserInterface.PatternEditing;
 
@@ -191,7 +192,7 @@ public sealed class FmSynthEditorControl : UserControl
 			new()
 			{
 				Content = _inspector,
-				Width = 350,
+				Width = 470,
 				HorizontalScrollBarVisibility =
 					ScrollBarVisibility.Disabled,
 				VerticalScrollBarVisibility =
@@ -450,34 +451,13 @@ public sealed class FmSynthEditorControl : UserControl
 	{
 		try
 		{
-			EnvelopeDefinition? envelope =
-				_workspace.Document.Objects.Values
-					.OfType<EnvelopeDefinition>()
-					.OrderBy(
-						item => item.Name,
-						StringComparer.OrdinalIgnoreCase)
-					.ThenBy(
-						item => item.Id.Value)
-					.FirstOrDefault();
-			if (envelope is null)
-			{
-				_message.Text =
-					"Create an envelope before adding an FM envelope node.";
-				return;
-			}
-
-			(double X, double Y) =
-				NextSpawnPosition();
-			int id =
-				FmSynthDocumentEditor.AddEnvelopeNode(
-					_workspace,
-					_synth,
-					envelope.Id,
-					X,
-					Y);
-			AfterGraphChange(
-				id,
-				$"Added FM envelope node #{id}");
+			// New envelope nodes intentionally begin unassigned, even if
+			// this song already contains reusable envelope definitions.
+			(double X, double Y) = NextSpawnPosition();
+			int id = FmSynthDocumentEditor.AddEnvelopeNode(
+				_workspace, _synth, ObjectId.None, X, Y);
+			AfterGraphChange(id,
+				$"Added unassigned FM envelope node #{id}");
 		}
 		catch (Exception ex)
 		{
@@ -831,42 +811,154 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private void AddEnvelopeInspector(FmEnvelopeNode node)
 	{
+		// The New... option is first and italic; (None) can clear an
+		// assignment later. An unassigned node initially has *no selected
+		// ComboBox value*, rather than implicitly selecting a catalogue
+		// envelope or even the (None) choice.
+		ComboBoxItem newEnvelopeItem = new()
+		{
+			Content = new TextBlock
+			{
+				Text = "New...",
+				FontStyle = FontStyle.Italic,
+			},
+		};
+		ComboBoxItem clearEnvelopeItem = new()
+		{
+			Content = "(None)",
+		};
 		EnvelopeChoice[] envelopes =
 			_workspace.Document.Objects.Values
 				.OfType<EnvelopeDefinition>()
-				.OrderBy(envelope => envelope.Name, StringComparer.OrdinalIgnoreCase)
+				.OrderBy(envelope => envelope.Name,
+					StringComparer.OrdinalIgnoreCase)
 				.ThenBy(envelope => envelope.Id.Value)
-				.Select(envelope =>
-					new EnvelopeChoice(
-						envelope.Id,
-						$"{envelope.Name} <{envelope.Id.Value}>"))
+				.Select(envelope => new EnvelopeChoice(
+					envelope.Id,
+					$"{envelope.Name} <{envelope.Id.Value}>"))
 				.ToArray();
-		ComboBox envelopeBox =
-			new()
-			{
-				ItemsSource = envelopes,
-				SelectedItem = envelopes.FirstOrDefault(choice =>
+		List<object> options = [newEnvelopeItem, clearEnvelopeItem];
+		options.AddRange(envelopes);
+		ComboBox envelopeBox = new()
+		{
+			ItemsSource = options,
+			SelectedItem = node.EnvelopeId.IsNone
+				? null
+				: envelopes.FirstOrDefault(choice =>
 					choice.Id == node.EnvelopeId),
-			};
+		};
 		AddField("Envelope", envelopeBox);
-		BindParameterSelection(
-			envelopeBox,
-			() =>
+
+		bool choosing = false;
+		envelopeBox.SelectionChanged += async (_, _) =>
+		{
+			if (choosing || envelopeBox.SelectedItem is not object selection)
+				return;
+			choosing = true;
+			try
 			{
-				ObjectId id = ((FmEnvelopeNode)CurrentNode(node.Id)).EnvelopeId;
-				return envelopes.FirstOrDefault(choice => choice.Id == id);
-			},
-			item =>
-				UpdateParameter(
-					node.Id,
-					current =>
+				if (ReferenceEquals(selection, newEnvelopeItem))
+				{
+					Window? owner = TopLevel.GetTopLevel(this) as Window;
+					if (owner is null)
+						throw new InvalidOperationException(
+							"An open FM editor window is required to create an envelope.");
+
+					TextPromptDialog prompt = new(
+						"New envelope", "Envelope name:", "New Envelope");
+					string? name = await prompt.ShowDialog<string?>(owner);
+					if (name is not null)
 					{
-						FmEnvelopeNode live = (FmEnvelopeNode)current;
-						ObjectId selectedId = ((EnvelopeChoice)item).Id;
-						return live.EnvelopeId == selectedId
-							? null
-							: new FmEnvelopeNode(node.Id, selectedId);
-					}));
+						// New is created in the document's shared Envelopes
+						// section, then assigned by its stable ObjectId.
+						AdsrEnvelopeDefinition created =
+							EnvelopeDocumentEditor.CreateAdsrEnvelope(
+								_workspace, name);
+						AssignEnvelope(node.Id, created.Id);
+						AfterGraphChange(node.Id,
+							$"Created and assigned envelope {created.Name}");
+						return;
+					}
+				}
+				else
+				{
+					ObjectId selectedId =
+						ReferenceEquals(selection, clearEnvelopeItem)
+							? ObjectId.None
+							: ((EnvelopeChoice)selection).Id;
+					AssignEnvelope(node.Id, selectedId);
+					AfterGraphChange(node.Id,
+						selectedId.IsNone
+							? $"Cleared FM envelope node #{node.Id}"
+							: $"Assigned envelope to FM node #{node.Id}");
+					return;
+				}
+			}
+			catch (Exception ex)
+			{
+				_message.Text = ex.Message;
+			}
+			finally
+			{
+				choosing = false;
+			}
+
+			// A canceled/failed New... action restores the previous
+			// selection, including null for an unassigned FM node.
+			ObjectId committedId =
+				((FmEnvelopeNode)CurrentNode(node.Id)).EnvelopeId;
+			envelopeBox.SelectedItem = committedId.IsNone
+				? null
+				: envelopes.FirstOrDefault(choice =>
+					choice.Id == committedId);
+		};
+
+		if (node.EnvelopeId.IsNone)
+		{
+			_inspector.Children.Add(new TextBlock
+			{
+				Text = "No envelope selected. Choose an existing envelope or New... to create one in this song.",
+				TextWrapping = TextWrapping.Wrap,
+			});
+			return;
+		}
+
+		if (!_workspace.Document.TryGet(
+			node.EnvelopeId, out SongObject? selected)
+			|| selected is not AdsrEnvelopeDefinition adsr)
+		{
+			_inspector.Children.Add(new TextBlock
+			{
+				Text = $"Envelope <{node.EnvelopeId.Value}> is missing or is not an editable ADSR envelope.",
+				TextWrapping = TextWrapping.Wrap,
+			});
+			return;
+		}
+
+		_inspector.Children.Add(new TextBlock
+		{
+			Text = "ADSR envelope (shared object)",
+			FontWeight = FontWeight.SemiBold,
+		});
+		AdsrEnvelopeGraphControl graph =
+			new(_workspace, adsr);
+		graph.EnvelopeChanged += (_, _) =>
+		{
+			_message.Text = $"Updated shared envelope {adsr.Name}.";
+			_changed($"Updated envelope {adsr.Name}");
+		};
+		_inspector.Children.Add(graph);
+	}
+
+	private void AssignEnvelope(int nodeId, ObjectId envelopeId)
+	{
+		UpdateParameter(nodeId, current =>
+		{
+			FmEnvelopeNode envelope = (FmEnvelopeNode)current;
+			return envelope.EnvelopeId == envelopeId
+				? null
+				: new FmEnvelopeNode(nodeId, envelopeId);
+		});
 	}
 
 	private void AddOperatorInspector(FmOperatorNode node)
