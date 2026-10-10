@@ -14,10 +14,19 @@ public static class StartupSplashPlacement
 {
 	public static bool IsWayland(
 		bool isLinux, string? sessionType, string? waylandDisplay)
-		=> isLinux
-			&& (string.Equals(sessionType, "wayland",
-				StringComparison.OrdinalIgnoreCase)
-				|| !string.IsNullOrWhiteSpace(waylandDisplay));
+	{
+		if (!isLinux)
+			return false;
+		// A valid X11 session takes precedence over a WAYLAND_DISPLAY
+		// inherited from a nested compositor or unrelated helper.
+		if (string.Equals(sessionType, "x11",
+			StringComparison.OrdinalIgnoreCase))
+			return false;
+		if (string.Equals(sessionType, "wayland",
+			StringComparison.OrdinalIgnoreCase))
+			return true;
+		return !string.IsNullOrWhiteSpace(waylandDisplay);
+	}
 
 	public static PixelPoint CenterOver(
 		PixelRect anchor, PixelSize splashSize)
