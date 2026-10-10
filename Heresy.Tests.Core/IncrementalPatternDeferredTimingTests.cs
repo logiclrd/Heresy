@@ -349,6 +349,58 @@ public sealed class IncrementalPatternDeferredTimingTests
 			.OfType<StartNoteCommand>(), Is.Empty);
 	}
 
+	[TestCase("displacement")]
+	[TestCase("past-note")]
+	[TestCase("envelope")]
+	public void CombinedS7xSDxQxySCxAtSharedTickUsesEagerOrderAcrossSEyS6x(
+		string lifecycleKind)
+	{
+		// SD2 note setup and SC2 note cut share the same tracker tick;
+		// Q02 runs afterward. Their resulting commands also have the
+		// same fixed-wall delay while SE1/S61 repeat the row's tick span.
+		NoteCommand control = lifecycleKind switch
+		{
+			"displacement" => new ApplyTrackerNewNoteActionCommand(
+				NoteDisplacementAction.Continue),
+			"past-note" => new ApplyTrackerPastNoteActionCommand(
+				TrackerPastNoteAction.Cut),
+			_ => new ApplyTrackerEnvelopeControlCommand(
+				Heresy.Core.Envelopes.TrackerEnvelopeControlTarget.Volume,
+				false),
+		};
+		RawSource source = new(Event(0,
+			TimeSpan.FromMilliseconds(8), ChannelTarget.Physical(0),
+			new StartNoteCommand((Heresy.Core.Objects.ObjectId)10U),
+			control,
+			new ApplyTrackerNoteDelayCommand(2),
+			new ApplyRetriggerCommand(0x02),
+			new ApplyTrackerNoteCutCommand(2),
+			new ApplyTrackerFinePatternDelayCommand(1),
+			new ApplyTrackerPatternDelayCommand(1)));
+		AssertTrackerWallParity(source, 1);
+	}
+
+	[Test]
+	public void TrackerS7xDeadlinesAfterRowEndAndDuringSDxPreserveEagerChronology()
+	{
+		RawSource source = new(
+			Event(0, ChannelTarget.Physical(0),
+				new StartNoteCommand((Heresy.Core.Objects.ObjectId)10U),
+				new ApplyRetriggerCommand(0x02)),
+			Event(0, TimeSpan.FromMilliseconds(40), ChannelTarget.Physical(0),
+				new ApplyTrackerNewNoteActionCommand(
+					NoteDisplacementAction.Continue)),
+			Event(0, ChannelTarget.Physical(0),
+				new ApplyTrackerNoteCutCommand(5)),
+			Event(0, TimeSpan.FromMilliseconds(130), ChannelTarget.Physical(0),
+				new ApplyTrackerPastNoteActionCommand(
+					TrackerPastNoteAction.Cut)),
+			Event(0.25, TimeSpan.FromMilliseconds(5), ChannelTarget.Physical(0),
+				new StartNoteCommand((Heresy.Core.Objects.ObjectId)11U),
+				new ApplyTrackerNoteDelayCommand(2)));
+		AssertTrackerWallParity(source, 1);
+	}
+
 	private static void AssertTrackerWallParity(RawSource source, int rowCount)
 	{
 		SequencingContext eager = new();
