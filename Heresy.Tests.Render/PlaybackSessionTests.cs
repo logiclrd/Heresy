@@ -278,6 +278,35 @@ public sealed class PlaybackSessionTests
 		Assert.That(after[64], Is.Zero.Within(1e-6f));
 	}
 
+	[TestCase(false, 201L)]
+	[TestCase(true, 41L)]
+	public void PrivateSessionFadeDistinguishesS72FromS76Durations(
+		bool newNoteDisplacement, long expectedEnd)
+	{
+		ObjectId id = (ObjectId)52U;
+		PlaybackSession session = Session(1000, Schedule(),
+			new TestResolver((id, false, new ConfiguredSustainSound(
+				noteFadeDuration: TimeSpan.FromMilliseconds(200),
+				newNoteFadeDuration: TimeSpan.FromMilliseconds(40)))));
+		session.ApplyScopedEvent(20, ChannelTarget.Virtual(3),
+			[new StartNoteCommand(id),
+				new SetCurrentVoiceDisplacementActionCommand(
+					NoteDisplacementAction.Continue)]);
+		session.ApplyScopedEvent(20, ChannelTarget.Virtual(3),
+			[new StartNoteCommand(id)]);
+		session.Render(0, 1, new float[1]);
+		Assert.That(session.VirtualVoices, Has.Count.EqualTo(1));
+
+		session.RequestFadeOfActiveVoices(newNoteDisplacement);
+		Assert.That(session.VirtualVoices[0].FadeEndFrameExclusive,
+			Is.EqualTo(expectedEnd));
+		Assert.That(session.VirtualVoices[0].IsNoteFadeRequested, Is.True);
+		Assert.That(session.GetChannelState(0).CurrentVoice, Is.Null);
+		float[] after = new float[225];
+		session.Render(1, after.Length, after);
+		Assert.That(after[expectedEnd], Is.Zero.Within(1e-6f));
+	}
+
 	[Test]
 	public void ReleasedFlattenedDescendantRetainsLiveAncestryAfterProducerRetirement()
 	{
