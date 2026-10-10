@@ -1959,10 +1959,24 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			(PlaybackSession)sessionProperty.GetValue(privateVoice.Sound)!;
 		plan.Source.Render(120, new float[120]);
 		if (fade)
+		{
 			Assert.That(childSession.GetChannelState(0).CurrentVoice?
 				.IsNoteFadeRequested, Is.True,
 				"S76 on the flattened instigator must reach the private "
 				+ "Instrument-selected renderer, not only the outer voice.");
+			// Fade stops the private *producer* while retaining existing
+			// voices to complete their normal fade. It must not generate
+			// the child Pattern's future row-2 note during the tail.
+			object privatePlayback = privateVoice.Sound.GetType().GetField(
+				"_playback", BindingFlags.NonPublic | BindingFlags.Instance)!
+				.GetValue(privateVoice.Sound)!;
+			var stream = (PreparedIncrementalAudioSource)privatePlayback
+				.GetType().GetProperty("Source")!.GetValue(privatePlayback)!;
+			Assert.That(stream.IsComplete, Is.True,
+				"A source-level Fade must stop new private note generation.");
+			Assert.That(childSession.InputEnded, Is.False,
+				"Fade must not impose Note Off or Cut on the already fading voices.");
+		}
 		else
 		{
 			long? end = privateVoice.Sound.GetEndFrameExclusive(
