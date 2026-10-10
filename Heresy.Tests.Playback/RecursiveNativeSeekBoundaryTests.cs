@@ -71,14 +71,18 @@ public sealed class RecursiveNativeSeekBoundaryTests
 		Assert.That(actual[0], Is.GreaterThan(0.01f));
 	}
 
-	[Test]
-	public void TrackerQxyRewindsPrivateSequenceAndClearsEarlierOxxOffset()
+	[TestCase(false)]
+	[TestCase(true)]
+	public void TrackerQxyRewindsPrivateSequenceAndClearsEarlierOxxOffset(
+		bool viaInstrument)
 	{
 		SongDocument document = CreateDocument(out ObjectId sample);
 		ObjectId child = AddPattern(document, sample, rows: 5);
 		ObjectId sequence = AddSequence(document, child);
-		ObjectId parent = AddPattern(document, sequence, rows: 4,
-			mixdown: true);
+		ObjectId source = viaInstrument
+			? AddInstrument(document, sequence) : sequence;
+		ObjectId parent = AddPattern(document, source, rows: 4,
+			mixdown: !viaInstrument);
 		DataPatternDefinition pattern =
 			(DataPatternDefinition)document.Objects[parent];
 		pattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
@@ -145,6 +149,53 @@ public sealed class RecursiveNativeSeekBoundaryTests
 		plan.Source.Render(2, next);
 		Assert.That(next[0], Is.GreaterThan(0),
 			"The un-offset second order must still be able to emit its own notes.");
+	}
+
+	[Test]
+	public void RepeatedSequenceOrderRestartsPrivateOxxWithoutLeakingPreviousRenderer()
+	{
+		SongDocument document = CreateDocument(out ObjectId sample);
+		ObjectId privateId = AddPattern(document, sample, rows: 5);
+		ObjectId first = AddPattern(document, privateId, rows: 1, mixdown: true);
+		ObjectId next = AddPattern(document, privateId, rows: 2, mixdown: true);
+		((DataPatternDefinition)document.Objects[first])
+			.Grid.GetOrCreateCell(0, 0).Effects.Add(new SampleOffsetPatternEffect(1));
+		((DataPatternDefinition)document.Objects[next])
+			.Grid.GetOrCreateCell(0, 0).Effects.Add(new SampleOffsetPatternEffect(0));
+		ObjectId root = AddSequence(document, first, next);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono()).Create(document, root);
+		float[] start = new float[1];
+		plan.Source.Render(1, start);
+		PlaybackVoice original = plan.Session.GetChannelState(0).CurrentVoice!;
+		PlaybackSession firstChild = ChildSession(original);
+		Assert.Multiple(() =>
+		{
+			Assert.That(firstChild.NextFrame, Is.EqualTo(257L));
+			Assert.That(original.SoundState.GetType()
+				.GetProperty("SourceFrameOffset")!.GetValue(original.SoundState),
+					Is.EqualTo(256L));
+		});
+		float[] middle = new float[119];
+		plan.Source.Render(middle.Length, middle);
+		float[] secondStart = new float[1];
+		plan.Source.Render(1, secondStart);
+		PlaybackVoice replacement = plan.Session.GetChannelState(0).CurrentVoice!;
+		PlaybackSession secondChild = ChildSession(replacement);
+		Assert.Multiple(() =>
+		{
+			Assert.That(replacement, Is.Not.SameAs(original));
+			Assert.That(secondChild, Is.Not.SameAs(firstChild));
+			Assert.That(secondChild.NextFrame, Is.EqualTo(257L),
+					"O00 recalls O01 from the preceding order in the parent channel, " +
+					"but creates a fresh private child at its own source frame 256.");
+			Assert.That(replacement.SoundState.GetType()
+				.GetProperty("SourceFrameOffset")!.GetValue(replacement.SoundState),
+					Is.EqualTo(256L));
+			Assert.That(firstChild.NextFrame, Is.EqualTo(376L),
+					"The earlier child should not rewind when the next order begins.");
+		});
 	}
 
 	[Test]
