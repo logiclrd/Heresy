@@ -63,6 +63,14 @@ public sealed class StartupSplashWindow : Window
 			RoutingStrategies.Tunnel, handledEventsToo: true);
 		AddHandler(InputElement.PointerPressedEvent, OnAnyPointerPressed,
 			RoutingStrategies.Tunnel, handledEventsToo: true);
+
+		// This is an owned, nonmodal window: the user can still click or
+		// type in its owner. Those interactions should dismiss the splash
+		// too, without consuming the main window's input event.
+		_owner.AddHandler(InputElement.KeyDownEvent, OnAnyKeyDown,
+			RoutingStrategies.Tunnel, handledEventsToo: true);
+		_owner.AddHandler(InputElement.PointerPressedEvent, OnAnyPointerPressed,
+			RoutingStrategies.Tunnel, handledEventsToo: true);
 	}
 
 	private void OnOpened(object? sender, EventArgs e)
@@ -90,6 +98,8 @@ public sealed class StartupSplashWindow : Window
 	{
 		_dismissal.NotifyWindowClosed();
 		_owner.Closed -= OnOwnerClosed;
+		_owner.RemoveHandler(InputElement.KeyDownEvent, OnAnyKeyDown);
+		_owner.RemoveHandler(InputElement.PointerPressedEvent, OnAnyPointerPressed);
 		_timeout.Tick -= OnTimeout;
 		Opened -= OnOpened;
 		Closed -= OnClosed;

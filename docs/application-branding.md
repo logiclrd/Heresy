@@ -52,9 +52,12 @@ is delayed by a four-second await/sleep.
 
 Once the splash raises `Opened`, a UI-thread `DispatcherTimer` starts
 with a four-second interval and the splash activates for keyboard input.
-Routed `KeyDown` and `PointerPressed` are handled during the tunneling
-phase (including previously handled child events). They request immediate
-dismissal, as does the timer tick or a close of the owner window.
+Routed `KeyDown` and `PointerPressed` are observed during the tunneling
+phase (including previously handled child events), **both on the splash and
+its still-interactive owner**. Any input in either window immediately
+dismisses the splash without consuming the owner's normal event processing.
+The owner input subscriptions are removed when the splash closes.
+A timer tick or owner shutdown also requests immediate dismissal.
 `StartupSplashDismissal` arbitrates all four reasons, marks itself
 dismissed **before** closing the window, and stops the timeout exactly
 once. An external window-manager close also disarms the timer without
