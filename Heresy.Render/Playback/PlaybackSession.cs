@@ -1296,16 +1296,6 @@ public sealed class PlaybackSession
 					envelope.Enabled);
 				break;
 
-			case StartParametricEffectCommand effect:
-				if (effect.Parameter != ParametricEffectParameter.GlobalVolume)
-					throw new NotSupportedException(
-						"Channel parametric effect needs a physical target.");
-				ActiveParametricEffect active = new(
-					effect, eventFrame, _context.Configuration.SampleRate, _tickClock);
-				_globalOperators.Add(active.Operator);
-				_nativeGlobal.Add(active);
-				break;
-
 			case SetGlobalVolumeCommand volume:
 				SetGlobalVolume(eventFrame, volume.Volume);
 				break;
@@ -1716,6 +1706,16 @@ public sealed class PlaybackSession
 	{
 		switch (command)
 		{
+			case StartParametricEffectCommand effect:
+				if (effect.Parameter != ParametricEffectParameter.GlobalVolume)
+					throw new NotSupportedException(
+						"Channel parametric effect needs a physical target.");
+				ActiveParametricEffect active = new(
+					effect, eventFrame, _context.Configuration.SampleRate, _tickClock);
+				_globalOperators.Add(active.Operator);
+				_nativeGlobal.Add(active);
+				break;
+
 			case SetTempoCommand tempo:
 				SetBaselineTempo(
 					eventFrame,

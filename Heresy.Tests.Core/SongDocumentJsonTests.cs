@@ -797,6 +797,8 @@ public sealed class SongDocumentJsonTests
 			return 0.5;
 		if (type == typeof(bool))
 			return true;
+		if (type == typeof(string))
+			return "0.0";
 		if (type == typeof(TimeSpan))
 			return TimeSpan.FromMilliseconds(10);
 		if (type.IsEnum)
