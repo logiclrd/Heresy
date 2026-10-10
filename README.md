@@ -557,17 +557,22 @@ so remaining mappings continue to identify the same definitions. The editor
 projects existing envelope objects, including unresolved references via
 tombstone/raw-ID fallback.
 
-ADSR envelopes are currently created and edited numerically from the
-Instruments pane. A separate Envelopes pane, graphical drag-handle
-editor, and embedded FM Envelope inspector are **planned** in
-[the UI redesign](docs/ui-editor-redesign.md). Attack,
-decay and release are non-negative physical-time durations stored as `TimeSpan`
-values; the UI presents them in seconds. Sustain is deliberately an unrestricted
-finite scalar rather than a normalized percentage: negative and above-unity
-values remain valid because envelope consumers interpret the scalar in their own
-domain (for example, a negative volume envelope can invert phase). Editing an
-envelope is an audio-affecting document operation and uses the same referenced-
-object/tombstone behavior as the rest of the flat song graph.
+ADSR envelopes are first-class objects in the **Envelopes** pane. Its
+editor now combines numeric fields with the **graphical ADSR editor**:
+drag Attack, Decay or Release endpoint handles (separately identifiable
+even when segment durations are zero) or the horizontal Sustain line.
+The graph shows the right-edge labels **Note Volume**, **Sustain** and
+**0**. Attack, decay and release are non-negative physical-time
+durations stored as `TimeSpan`; numeric controls show seconds.
+The graph's 0..1 Y range is a visual reference, not a Core constraint.
+Negative or above-unity Sustain values remain valid; the graph clips
+them visually, labels the actual scalar, and permits out-of-bounds
+pointer dragging to set such values. A completed drag commits through
+the same audio-affecting document editor/revision path as numeric
+Apply. Both surfaces remain synchronized, and incomplete drags can
+be canceled. See [graphical ADSR editing](docs/envelope-graph.md).
+Embedding that reusable graph into the FM synth Envelope inspector
+remains on the [UI redesign TODO](docs/ui-editor-redesign.md).
 
 The note field supports direct tracker-keyboard entry. A current toolbar Source
 (sample, instrument, pattern or sequence) and base octave are editor state; the

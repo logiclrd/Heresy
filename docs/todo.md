@@ -259,11 +259,19 @@ migrated in-memory on load, preserving nested Envelope folder paths,
 tombstones, object identities and audio revisions, and saved in the
 new five-section shape. Pane actions wrap at the narrower width.
 See [document-panes.md](document-panes.md).
-- [ ] Add a reusable **graphical ADSR envelope editor** with right-edge
-  0/Note Volume/Sustain annotations, draggable Attack/Decay/Release
-  vertical boundaries and Sustain horizontal segment. On coincident
-  zero-duration handles, drag the **second** line to increase duration.
-  Retain valid unrestricted finite sustain-scalar semantics.
+**Graphical ADSR envelope editor implemented.**
+The reusable `AdsrEnvelopeGraphControl` edits the live Envelope object
+with draggable Attack/Decay/Release endpoint caps and horizontal Sustain
+segment, right-edge Note Volume / 0 / tracking Sustain annotations,
+and three separately accessible duration-handle lanes for coincident
+zero-duration endpoints. Rendering clips Sustain visually to the
+0..1 reference without clamping its valid negative/above-unity stored
+value; the label reports the actual scalar. Each completed drag
+commits through `EnvelopeDocumentEditor`, updating document/audio
+revisions, while canceled drags revert. Numerical Apply and graph edits
+synchronize in the Envelope editor; the reusable control is ready to
+embed in the FM Envelope inspector (separate remaining TODO).
+See [envelope-graph.md](envelope-graph.md).
 - [ ] In the FM editor, allow creating an Envelope node with no existing
   envelopes. Its selection starts blank, with an italic top **New...**
   option that creates an envelope. Embed the same live graphical ADSR

@@ -1,13 +1,12 @@
 # Planned UI polish and instrument/editor redesign (October 10, 2026)
 
-Status: **design/TODO capture only**. The behavior below is requested and not
-implemented by this document. Preserve these acceptance rules when the
-individual UI milestones are built. The current Core `InstrumentDefinition`
-still has a separately stored `ToneSpecifications` list and `ToneTable`
-indices, `AdsrEnvelopeDefinition` currently stores TimeSpan Attack/Decay/
-Release and an unrestricted finite SustainLevel, and the document tree
-still has four fixed `SongTreeSection` roots. UI work must reconcile those
-actual models explicitly rather than assuming a redesign is already complete.
+Status: **living implementation and design checklist**. Sections marked
+implemented below describe completed milestones; unmarked instrument-grid
+and FM-inspector requirements remain future work. Core
+`InstrumentDefinition` still has separate `ToneSpecifications` and
+`ToneTable`, while `AdsrEnvelopeDefinition` stores TimeSpan
+Attack/Decay/Release and an unrestricted finite SustainLevel.
+The current document tree has **five** section roots.
 
 ## Pattern editor: optional playback-follow — implemented
 
@@ -58,27 +57,41 @@ actual models explicitly rather than assuming a redesign is already complete.
   version bump occur; saves emit five roots. See
   [document-panes.md](document-panes.md).
 
-## Graphical ADSR envelope editor
+## Graphical ADSR envelope editor — implemented
 
-- Add a reusable graph-based envelope editor, backed by the **same live
-  `AdsrEnvelopeDefinition`** as the current numeric inspector/editor.
-  Render the shape of Attack, Decay, Sustain and Release.
-- At the **right edge** of the graph, show labels for Y=0 at the bottom,
-  **Note Volume** at the top and a **Sustain** marker tracking the sustain
-  line's actual level. These are the requested conceptual labels.
-- **Attack, Decay and Release** are edited by dragging their boundary
-  *vertical* lines. If a segment duration is zero, its boundaries overlap;
-  a pointer-down on that overlap must move the **second** boundary when
-  dragged, allowing recovery to a positive duration.
-- **Sustain** is edited by dragging the *horizontal sustain-section line*.
-  Preserve the currently valid Core sustain scalar semantics (finite,
-  possibly less than zero or greater than one); the graph's vertical
-  scaling/clipping should be defined and tested without silently
-  normalizing the underlying value to [0,1].
-- Changes should be reflected in the underlying document and revision
-  tracking, with usable synchronization between graphic handles and
-  any retained numerical controls. The reusable editor needs both
-  document-view and embedded-inspector modes.
+- The reusable `AdsrEnvelopeGraphControl` is backed directly by the
+  *same* live `AdsrEnvelopeDefinition` as the numeric Envelope editor;
+  it renders Attack, Decay, held Sustain and Release as an editable line.
+- The graph's right-hand edge has **Note Volume** at reference Y=1,
+  **0** at the lower reference edge and a **Sustain** annotation
+  tracking the line vertically and reporting its current scalar.
+- Attack, Decay and Release are edited by dragging **vertical endpoint
+  handles**. Their marker caps occupy separate Y lanes, so when a
+  segment duration is zero and the lines coincide, dragging its
+  *second/ending* line makes the duration nonzero again, even when both
+  Attack and Decay are zero. On an unmarked overlap, the later
+  endpoint has precedence.
+- Sustain is edited by dragging its **horizontal segment**. Graph
+  Y=0..1 is a visual reference only, not a new Core parameter
+  constraint. Sustain outside this interval is visually clipped to
+  the corresponding graph boundary and explicitly labelled
+  `(clipped)` with the **actual** value. Pointer dragging outside
+  the plot can edit those legal negative/above-unity values.
+- Drags preview the curve without mutating the song. Pointer release
+  commits the result via `EnvelopeDocumentEditor.UpdateAdsrEnvelope`
+  (correct live object, audio/document revisions and no-op semantics);
+  lost capture cancels the preview and reverts. Numeric Apply updates
+  the graph, and committed graphical edits immediately update all four
+  numeric fields. A live document Changed subscription resynchronizes
+  the reusable graph when external changes are made; it is removed
+  on detachment to prevent event leaks.
+- The testable `AdsrGraphGeometry` covers Y mapping, nearest handles,
+  zero-duration overlaps, sustain line hits, unrestricted values,
+  duration clamping and preserved fields; GUI appearance and pointer
+  capture still merit a manual desktop smoke test.
+- Embedding **this same control** into the FM synth editor's Envelope
+  node inspector, along with the New... dropdown/create path, is the
+  separate **next** TODO. See [envelope-graph.md](envelope-graph.md).
 
 ## FM instrument editor: first-class envelopes
 
