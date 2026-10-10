@@ -54,9 +54,46 @@ cancellation is no longer accepted: otherwise the program might report an
 
 Both the GUI and public API retain the previous behavior with no progress
 callback or cancellation token supplied. The renderer's existing finite
-body and tail caps remain in force for looping/infinite scripts. Existing
-FLAC/MP3/WAV sink implementations and the buffered realtime architecture
-are unchanged.
+body and tail caps remain in force for looping/infinite scripts. The FLAC/MP3 sinks retain their existing PCM render path, while the WAV
+sink now supports selectable integer precision and explicit surround
+speaker-channel metadata. The buffered realtime architecture is unchanged.
+
+## Export encoding and format-specific constraints
+
+The **File → Render Audio** save picker offers FLAC (default), MP3,
+and WAV integer PCM at **8, 16, 24 or 32 bits per sample**. WAV stays
+16-bit by default; picking another depth affects that export only.
+All formats receive exactly the same float PCM from the incremental
+rendering engine. WAV clips/quantizes PCM to the selected integer width:
+8-bit samples are unsigned, 16/24/32-bit samples signed little-endian.
+Nonfinite PCM is rejected before a block is written; integer conversion
+is symmetric to the negative full-scale endpoint and saturates positive
+full-scale to the highest representable signed code.
+
+Mono/stereo WAV retains the canonical 44-byte RIFF/PCM header. 5.1/7.1
+WAV uses `WAVEFORMATEXTENSIBLE` with standard ordered speaker masks:
+front L/R, center, LFE, rear L/R and (for 7.1) side L/R. The RIFF
+container uses even-byte padding after odd-sized data, excludes this
+pad from `data` size, and checks the full RIFF size against 32-bit
+limits rather than overflowing at final header rewrite.
+
+Before creating any export temporary file, `SongExportService`
+validates the actual selected output sample rate and channel count
+against encoder constraints. MP3 supports mono/stereo at MPEG rates
+8, 11.025, 12, 16, 22.05, 24, 32, 44.1 or 48 kHz; it explicitly
+rejects unsupported multichannel or high-rate output rather than
+delegating an opaque error to libsndfile. FLAC supports 1–8 channels
+and rates up to 655350 Hz; the application dialog's own range is
+8–384 kHz. WAV supports the application's mono/stereo/5.1/7.1
+layouts and the four named integer precisions. Unsupported combinations
+fail without replacing the existing destination or leaving temporary
+files. These checks do not resample or silently change speaker layouts.
+
+`WavePcmBitDepthTests` and `SongExportServiceTests` cover exact
+quantized sample bytes, header fields, surround channel masks, odd
+RIFF alignment, invalid precision and format combinations, and
+transactional service-level WAV precision selection. A physical
+multichannel codec/device compatibility survey is a separate task.
 
 ## Tests
 
