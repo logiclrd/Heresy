@@ -1727,6 +1727,105 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			"Only selected recursive tone paths need invocation-unique sounds.");
 	}
 
+	[TestCase(false)]
+	[TestCase(true)]
+	public void FlattenedInstigatorOffReleasesIndirectPrivateSequenceInput(
+		bool instrumentSelected)
+	{
+		SongDocument document = new();
+		ObjectId sample = document.AllocateObjectId();
+		SampleDefinition looping = SampleDefinition.CreateImported(
+			sample, "Sustain", "sustain.wav", Wave(16384));
+		looping.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 4);
+		document.Add(looping);
+
+		ObjectId privatePatternId = document.AllocateObjectId();
+		DataPatternDefinition privatePattern = new(privatePatternId, "Private notes")
+		{
+			RowCount = 4, ChannelCount = 1,
+		};
+		privatePattern.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(sample);
+		privatePattern.Grid.GetOrCreateCell(2, 0).Note =
+			new StartPatternNote(sample);
+		document.Add(privatePattern);
+		ObjectId privateSequenceId = document.AllocateObjectId();
+		DataSequenceDefinition privateSequence = new(privateSequenceId, "Private sequence");
+		privateSequence.Entries.Add(new SequenceEntry(privatePatternId));
+		document.Add(privateSequence);
+
+		ObjectId selectedSource = privateSequenceId;
+		if (instrumentSelected)
+		{
+			ObjectId innerId = document.AllocateObjectId();
+			InstrumentDefinition inner = new(innerId, "Inner Instrument");
+			inner.ToneSpecifications.Add(new ToneSpecification
+			{
+				SourceId = privateSequenceId,
+			});
+			inner.ToneTable.Add(0);
+			document.Add(inner);
+			ObjectId outerId = document.AllocateObjectId();
+			InstrumentDefinition outer = new(outerId, "Outer Instrument");
+			outer.ToneSpecifications.Add(new ToneSpecification
+			{
+				SourceId = innerId,
+			});
+			outer.ToneTable.Add(0);
+			document.Add(outer);
+			selectedSource = outerId;
+		}
+
+		ObjectId flattenedId = document.AllocateObjectId();
+		DataPatternDefinition flattened = new(flattenedId, "Flattened")
+		{
+			RowCount = 4, ChannelCount = 2,
+		};
+		flattened.Grid.GetOrCreateCell(0, 1).Note =
+			new StartPatternNote(selectedSource, mixdown: !instrumentSelected);
+		document.Add(flattened);
+		ObjectId root = document.AllocateObjectId();
+		DataPatternDefinition parent = new(root, "Root")
+		{
+			RowCount = 4, ChannelCount = 2,
+		};
+		parent.Grid.GetOrCreateCell(0, 0).Note =
+			new StartPatternNote(flattenedId);
+		// Unrelated voice shares the physical host index (1) but has
+		// independent root ownership, and must not be released.
+		parent.Grid.GetOrCreateCell(0, 1).Note =
+			new StartPatternNote(sample);
+		parent.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteOff();
+		document.Add(parent);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(Mono(1000))
+				.Create(document, root);
+		float[] intro = new float[1];
+		plan.Source.Render(1, intro);
+		Assert.That(intro[0], Is.EqualTo(1f).Within(1e-6f));
+		PlaybackVoice privateVoice =
+			plan.Session.GetChannelState(1, 1).CurrentVoice!;
+		Assert.That(privateVoice.Sound.GetType().Name,
+			Is.EqualTo("PreparedRecursiveMixdownSound"));
+		PropertyInfo childSessionProperty = privateVoice.Sound.GetType()
+			.GetProperty("Session", BindingFlags.Instance | BindingFlags.Public)!;
+		PlaybackSession childSession =
+			(PlaybackSession)childSessionProperty.GetValue(privateVoice.Sound)!;
+		Assert.That(childSession.InputEnded, Is.False);
+
+		float[] beforeOff = new float[119];
+		plan.Source.Render(beforeOff.Length, beforeOff);
+		Assert.That(childSession.InputEnded, Is.False);
+		float[] afterOff = new float[70];
+		plan.Source.Render(afterOff.Length, afterOff);
+		Assert.That(childSession.InputEnded, Is.True,
+			"Flattened Note Off must stop private Sequence input even when "
+			+ "the private sound is selected through nested Instruments.");
+		Assert.That(afterOff[40], Is.EqualTo(0.5f).Within(1e-5f),
+			"The unrelated parent host voice must remain audible.");
+	}
+
 	[Test]
 	public void ParentCutPropagatesIntoInstrumentSelectedRecursiveChild()
 	{
