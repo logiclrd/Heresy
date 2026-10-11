@@ -56,7 +56,7 @@ public sealed class FilterStageDefinition
 		=> new(StageId, name, Kind, _defaults);
 
 	public FilterStageDefinition ChangeKind(FilterKind kind)
-		=> new(StageId, Name, kind);
+		=> kind == Kind ? this : new(StageId, Name, kind);
 
 	public FilterStageDefinition WithDefaults(
 		IEnumerable<KeyValuePair<string, FilterParameterValue>> assignments)
