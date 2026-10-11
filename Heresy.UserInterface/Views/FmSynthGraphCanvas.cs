@@ -579,7 +579,28 @@ public sealed class FmSynthGraphCanvas : UserControl
 				Margin = new Thickness(8, 6),
 			};
 		content.Children.Add(title);
-		content.Children.Add(detail);
+		if (node is FmFilterNode filter)
+		{
+			// The text follows the same stage order and port ordinals as
+			// connection hit-testing, while height grows with port count.
+			content.Spacing = 2;
+			foreach (FmFilterInputPort port in filter.GetPorts())
+			{
+				string label = port.IsAudio ? "Input"
+					: $"{filter.Configuration!.Definition.GetStage(port.StageId).Name}."
+						+ port.ParameterName;
+				content.Children.Add(new TextBlock
+				{
+					Text = label,
+					FontSize = 10,
+					Height = 16,
+					Foreground = Brushes.LightSkyBlue,
+					TextTrimming = TextTrimming.CharacterEllipsis,
+				});
+			}
+		}
+		else
+			content.Children.Add(detail);
 
 		Border border =
 			new()

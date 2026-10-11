@@ -127,6 +127,42 @@ public sealed class FmFilterAuthoringTests
 			.DefaultParameters["CutoffHz"].NumericValue, Is.Not.EqualTo(4400));
 	}
 
+
+	[Test]
+	public void ImportRemapsDependentFilterWithoutMutatingOriginalConfiguration()
+	{
+		DocumentWorkspace sourceWork = new();
+		FilterDefinition definition = FilterDocumentEditor.CreateFilter(
+			sourceWork, "Source Filter");
+		FmSynthDefinition fm = FmSynthDocumentEditor.CreateFmSynth(
+			sourceWork, "Modulated FM");
+		int id = FmSynthDocumentEditor.AddFilterNode(
+			sourceWork, fm, 190, 80);
+		FilterInstance use = new(definition);
+		use.SetStageParameter(1, "CutoffHz",
+			FilterParameterValue.FromNumber(3333));
+		FmSynthDocumentEditor.SetFilterConfiguration(sourceWork, fm, id, use);
+		FmSynthDocumentEditor.ConnectNodes(sourceWork, fm, 0, id, 0);
+		FmSynthDocumentEditor.ConnectNodes(sourceWork, fm, 0, id, 1);
+		SongFmSynthImportSource source = new(
+			"source.hm", sourceWork.Document, new[] { fm });
+		DocumentWorkspace target = new();
+		_ = FilterDocumentEditor.CreateFilter(target, "Unrelated");
+		FmSynthDefinition imported = FmSynthDocumentEditor.ImportFromSong(
+			target, source, new[] { fm.Id }).Single();
+		FmFilterNode clone = imported.Graph.Nodes.OfType<FmFilterNode>().Single();
+		Assert.That(clone.Configuration, Is.Not.Null);
+		Assert.That(clone.Configuration!.DefinitionId,
+			Is.Not.EqualTo(definition.Id));
+		Assert.That(clone.Configuration.Definition,
+			Is.SameAs(target.Document.Objects[clone.Configuration.DefinitionId]));
+		Assert.That(clone.Configuration.GetOverrides(1)["CutoffHz"].NumericValue,
+			Is.EqualTo(3333));
+		Assert.That(clone.GetPorts()[1].SourceNodeId, Is.EqualTo(0));
+		Assert.That(sourceWork.Document.Objects[definition.Id],
+			Is.SameAs(definition));
+	}
+
 	[Test]
 	public void DeletingModulationSourceDisconnectsItWithoutDestroyingFilter()
 	{
