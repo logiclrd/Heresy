@@ -65,11 +65,10 @@ public sealed class FmFilterNodeRenderingTests
 		float[] b = new float[80];
 		actual.Render(Context(), actual.CreateState(), 0, a.Length, a);
 		expected.Render(Context(), expected.CreateState(), 0, b.Length, b);
-		// Retunes use the chain's standard 32-frame coefficient smoothing;
-		// steady-state response must converge to the exact 40-Hz target.
-		Assert.That(a[^1], Is.EqualTo(b[^1]).Within(0.002));
-		Assert.That(a[0], Is.GreaterThan(b[0]),
-			"the 32-frame ramp starts nearer the original higher cutoff");
+		// The One-Pole factory applies a compatible cutoff instantly;
+		// other families may smooth coefficient transitions over 32 frames.
+		Assert.That(a, Is.EqualTo(b),
+			"modulation must supply the authored 40 Hz, not multiply 100 by 40");
 
 		FmSynthSound invalid = Sound(new FmSynthGraph([
 			new FmConstantNode(1, 1),
