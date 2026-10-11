@@ -71,8 +71,8 @@ public sealed class NodeEnvelopeGraphControl : UserControl
 	private void UpdateMatch()
 	{
 		int selected = SelectedNodeIndex;
-		int start = _previewSustainStart;
-		int end = _previewSustainEnd;
+		int start = _envelope.SustainStartIndex;
+		int end = _envelope.SustainEndIndex;
 		bool visible = start != end && (selected == start || selected == end);
 		_match.IsVisible = visible;
 		_match.IsEnabled = visible
@@ -244,8 +244,8 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 			new Point(graph.Left, graph.Bottom),
 			new Point(graph.Right, graph.Bottom));
 
-		int start = _envelope.SustainStartIndex;
-		int end = _envelope.SustainEndIndex;
+		int start = _previewSustainStart;
+		int end = _previewSustainEnd;
 		double sx = graph.Point(start).X;
 		double ex = graph.Point(end).X;
 		context.FillRectangle(Sustain,
