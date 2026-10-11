@@ -580,8 +580,8 @@ public static class FmSynthDocumentEditor
 		int removedNodeId)
 	{
 		if (!node.InputNodeIds.Contains(removedNodeId)
-			&& (node is not FmFilterNode filter
-				|| !filter.Connections.Any(c => c.SourceNodeId == removedNodeId)))
+			&& (node is not FmFilterNode filterCandidate
+				|| !filterCandidate.Connections.Any(c => c.SourceNodeId == removedNodeId)))
 			return node;
 
 		return node switch
