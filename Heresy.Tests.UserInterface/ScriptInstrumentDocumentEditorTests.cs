@@ -64,7 +64,7 @@ public sealed class ScriptInstrumentDocumentEditorTests
         workspace.Document.Add(SampleDefinition.CreateImported(
             sample, "Sample", "source.wav", Wave()));
         ObjectId envelope = workspace.Document.AllocateObjectId();
-        workspace.Document.Add(new AdsrEnvelopeDefinition(envelope, "Volume"));
+        workspace.Document.Add(new NodeEnvelopeDefinition(envelope, "Volume"));
         ScriptInstrumentDefinition instrument =
             ScriptInstrumentDocumentEditor.Create(workspace, "Picker", "0");
         uint baseline = workspace.Document.AudioRevision;

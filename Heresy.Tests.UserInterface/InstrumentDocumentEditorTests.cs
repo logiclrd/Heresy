@@ -286,7 +286,7 @@ public sealed class InstrumentDocumentEditorTests
 	{
 		ObjectId id = workspace.Document.AllocateObjectId();
 		workspace.Document.Add(
-			new AdsrEnvelopeDefinition(id, name));
+			new NodeEnvelopeDefinition(id, name));
 		return id;
 	}
 }

@@ -368,7 +368,7 @@ public sealed class PatternDocumentEditorTests
 			PatternDocumentEditor.CreateDataPattern(workspace, "Pattern");
 		ObjectId envelopeId = workspace.Document.AllocateObjectId();
 		workspace.Document.Add(
-			new Heresy.Core.Envelopes.AdsrEnvelopeDefinition(
+			new Heresy.Core.Envelopes.NodeEnvelopeDefinition(
 				envelopeId,
 				"Envelope"));
 

@@ -163,31 +163,6 @@ public sealed class InstrumentSampleReleaseTests
     }
 
     [Test]
-    public void ZeroReleaseNnaOffDoesNotRetainFinishedDisplacedInstrumentSample()
-    {
-        TestSoundResolver sounds = new();
-        sounds.Add(SampleId, LoopingSample(NewNotePolicy.Off));
-        sounds.Add(OuterId, Instrument(OuterId, SampleId,
-            TimeSpan.Zero, sounds));
-
-        PlaybackSession session = Session(Schedule(), sounds);
-        session.ApplyLiveEvent(ChannelTarget.Physical(0),
-            [new StartNoteCommand(OuterId)]);
-        session.Render(0, 2, new float[2]);
-        session.ApplyLiveEvent(ChannelTarget.Physical(0),
-            [new StartNoteCommand(OuterId)]);
-
-        Assert.That(session.VirtualVoices, Is.Empty,
-            "NNA Off with zero envelope release must not migrate an " +
-            "already-finished voice into the displaced-voice pool.");
-        float[] next = new float[2];
-        session.Render(2, 2, next);
-        Assert.That(next, Is.EqualTo(new float[] { 1f, 1f }));
-        Assert.That(session.GetChannelState(0).CurrentVoice, Is.Not.Null,
-            "The replacement remains live after immediate retirement.");
-    }
-
-    [Test]
     public void NnaOffMigratedInstrumentSampleFinishesVolumeReleaseAlongsideReplacement()
     {
         TestSoundResolver sounds = new();

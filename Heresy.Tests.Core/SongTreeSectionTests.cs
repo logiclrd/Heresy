@@ -53,7 +53,7 @@ public sealed class SongTreeSectionTests
 		document.Add(new InstrumentDefinition(instrumentId, "Instrument"));
 
 		ObjectId envelopeId = document.AllocateObjectId();
-		document.Add(new AdsrEnvelopeDefinition(envelopeId, "Envelope"));
+		document.Add(new NodeEnvelopeDefinition(envelopeId, "Envelope"));
 
 		ObjectId sampleId = document.AllocateObjectId();
 		document.Add(

@@ -2054,10 +2054,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			Source = $"Note(0, 0, _O({sample.Value}));",
 		});
 		ObjectId envelopeId = document.AllocateObjectId();
-		document.Add(new AdsrEnvelopeDefinition(envelopeId, "Quarter")
-		{
-			SustainLevel = 0.25,
-		});
+		document.Add(QuarterEnvelope(envelopeId));
 		ObjectId instrumentId = document.AllocateObjectId();
 		InstrumentDefinition instrument = new(instrumentId, "Instrument");
 		instrument.ToneSpecifications.Add(new ToneSpecification
@@ -2105,10 +2102,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 		sequence.Entries.Add(new SequenceEntry(leaf));
 		document.Add(sequence);
 		ObjectId quarter = document.AllocateObjectId();
-		document.Add(new AdsrEnvelopeDefinition(quarter, "Quarter")
-		{
-			SustainLevel = 0.25,
-		});
+		document.Add(QuarterEnvelope(quarter));
 		ObjectId inner = document.AllocateObjectId();
 		InstrumentDefinition innerInstrument = new(inner, "Inner");
 		innerInstrument.ToneSpecifications.Add(new ToneSpecification
@@ -2930,4 +2924,12 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			return new MemorySampleData(1000, 1, [0.25f, 0.25f]);
 		}
 	}
+	private static NodeEnvelopeDefinition QuarterEnvelope(ObjectId id)
+	{
+		NodeEnvelopeDefinition envelope = new(id, "Quarter");
+		envelope.ReplaceCurve([new EnvelopeNode(TimeSpan.Zero, 0.25)],
+			0, 0, EnvelopeSustainLoopMode.Forward);
+		return envelope;
+	}
+
 }

@@ -40,6 +40,14 @@ public sealed class ScriptInstrumentPlaybackTests
         Assert.That(pcm, Is.All.EqualTo((float)expected).Within(1e-5f));
     }
 
+    private static NodeEnvelopeDefinition HalfEnvelope(ObjectId id)
+    {
+        NodeEnvelopeDefinition envelope = new(id, "Half");
+        envelope.ReplaceCurve([new EnvelopeNode(TimeSpan.Zero, 0.5)],
+            0, 0, EnvelopeSustainLoopMode.Forward);
+        return envelope;
+    }
+
     [Test]
     public void ScriptSelectedNestedPatternRendersWithInheritedEnvelopeAndChunkParity()
     {
@@ -47,7 +55,7 @@ public sealed class ScriptInstrumentPlaybackTests
         ObjectId sample = Sample(song, 16384);
         ObjectId child = ScriptPattern(song, $"Note(0, 0, _O({sample.Value}));");
         ObjectId envelope = song.AllocateObjectId();
-        song.Add(new AdsrEnvelopeDefinition(envelope, "Half") { SustainLevel = 0.5 });
+        song.Add(HalfEnvelope(envelope));
         ObjectId inst = song.AllocateObjectId();
         ScriptInstrumentDefinition definition = new(inst, "Recursive selector")
         { Source = "pitchMultiplier >= 1.0 ? 0 : -1" };

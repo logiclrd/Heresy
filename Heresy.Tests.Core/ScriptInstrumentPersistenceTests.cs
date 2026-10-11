@@ -18,7 +18,7 @@ public sealed class ScriptInstrumentPersistenceTests
         SongDocument song = new();
         ObjectId selected = song.AllocateObjectId();
         ObjectId envelope = song.AllocateObjectId();
-        song.Add(new AdsrEnvelopeDefinition(envelope, "Volume"));
+        song.Add(new NodeEnvelopeDefinition(envelope, "Volume"));
         ObjectId id = song.AllocateObjectId();
         ScriptInstrumentDefinition source = new(id, "Selectable")
         { Source = "pitchMultiplier < 1.2 ? 0 : -1",

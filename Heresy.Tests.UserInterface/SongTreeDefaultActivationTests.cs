@@ -82,7 +82,7 @@ public sealed class SongTreeDefaultActivationTests
 						id,
 						"Instrument"),
 				SongObjectKind.Envelope =>
-					new Heresy.Core.Envelopes.AdsrEnvelopeDefinition(
+					new Heresy.Core.Envelopes.NodeEnvelopeDefinition(
 						id,
 						"Envelope"),
 				SongObjectKind.Sample =>

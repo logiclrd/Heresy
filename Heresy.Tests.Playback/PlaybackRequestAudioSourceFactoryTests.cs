@@ -322,8 +322,16 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 		output[0].Should().BeApproximately(0.5f, 1e-6f);
 	}
 
+	private static NodeEnvelopeDefinition QuarterEnvelope(ObjectId id)
+	{
+		NodeEnvelopeDefinition node = new(id, "Quarter");
+		node.ReplaceCurve([new EnvelopeNode(TimeSpan.Zero, 0.25)],
+			0, 0, EnvelopeSustainLoopMode.Forward);
+		return node;
+	}
+
 	[Test]
-	public void InstrumentAndAdsrEnvelopeResolveFromSnapshot()
+	public void InstrumentAndNodeEnvelopeResolveFromSnapshot()
 	{
 		SongDocument document = new();
 		ObjectId sampleId =
@@ -332,12 +340,7 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 		ObjectId envelopeId =
 			document.AllocateObjectId();
 		document.Add(
-			new AdsrEnvelopeDefinition(
-				envelopeId,
-				"Quarter")
-			{
-				SustainLevel = 0.25,
-			});
+			QuarterEnvelope(envelopeId));
 
 		ObjectId instrumentId =
 			document.AllocateObjectId();

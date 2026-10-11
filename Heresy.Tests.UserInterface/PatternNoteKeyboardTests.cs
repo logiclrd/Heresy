@@ -460,7 +460,7 @@ public sealed class PatternNoteKeyboardTests
 			new DataSequenceDefinition(sequenceId, "Sequence"));
 		ObjectId envelopeId = workspace.Document.AllocateObjectId();
 		workspace.Document.Add(
-			new AdsrEnvelopeDefinition(envelopeId, "Envelope"));
+			new NodeEnvelopeDefinition(envelopeId, "Envelope"));
 
 		PatternSourceOption[] sources =
 			PatternSourceCatalog.GetSources(workspace.Document);

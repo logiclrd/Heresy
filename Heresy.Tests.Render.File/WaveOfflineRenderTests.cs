@@ -94,14 +94,7 @@ public sealed class WaveOfflineRenderTests
 	{
 		const int sampleRate = 10;
 		ObjectId sourceId = (ObjectId)1U;
-		AdsrEnvelopeDefinition envelope =
-			new(
-				(ObjectId)2U,
-				"Volume")
-			{
-				Release = TimeSpan.FromMilliseconds(300),
-				SustainLevel = 1.0,
-			};
+		NodeEnvelopeDefinition envelope = ReleaseEnvelope();
 		InfiniteSound sound =
 			new(
 				new NoteConfigurationSnapshot(
@@ -109,7 +102,7 @@ public sealed class WaveOfflineRenderTests
 					envelopes:
 						new EnvelopeConfigurationSnapshot(
 							Volume:
-								new AdsrEnvelopeCurve(
+								new NodeEnvelopeCurve(
 									envelope))));
 		PlaybackSession session =
 			Session(
@@ -297,12 +290,8 @@ public sealed class WaveOfflineRenderTests
 				new InfiniteSound(new NoteConfigurationSnapshot(
 					NewNotePolicy.Cut,
 					envelopes: new EnvelopeConfigurationSnapshot(
-						Volume: new AdsrEnvelopeCurve(
-							new AdsrEnvelopeDefinition((ObjectId)2U, "ADSR")
-							{
-								Release = TimeSpan.FromMilliseconds(300),
-								SustainLevel = 1.0,
-							}))))));
+						Volume: new NodeEnvelopeCurve(
+							ReleaseEnvelope()))))));
 		using MemoryStream stream = new();
 		using WaveFileSink sink = new(stream,
 			new AudioOutputFormat(10, 1), leaveOpen: true);
@@ -462,4 +451,16 @@ public sealed class WaveOfflineRenderTests
 	private sealed class TestState : SoundState
 	{
 	}
+	private static NodeEnvelopeDefinition ReleaseEnvelope()
+	{
+		NodeEnvelopeDefinition node = new((ObjectId)2U, "Release");
+		node.ReplaceCurve(
+			[
+				new EnvelopeNode(TimeSpan.Zero, 1.0),
+				new EnvelopeNode(TimeSpan.FromMilliseconds(300), 0.0),
+			],
+			0, 0, EnvelopeSustainLoopMode.Forward);
+		return node;
+	}
+
 }

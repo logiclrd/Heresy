@@ -394,7 +394,7 @@ public sealed class InstrumentToneGridModelTests
 	private static ObjectId AddEnvelope(DocumentWorkspace workspace)
 	{
 		ObjectId id = workspace.Document.AllocateObjectId();
-		workspace.Document.Add(new AdsrEnvelopeDefinition(id, "Envelope"));
+		workspace.Document.Add(new NodeEnvelopeDefinition(id, "Envelope"));
 		return id;
 	}
 }
