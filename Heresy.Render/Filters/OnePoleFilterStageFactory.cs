@@ -126,12 +126,8 @@ public sealed class OnePoleFilterStageFactory : IStreamingFilterStageFactory
 }
 
 /// <summary>
-/// Built-in routing for implemented filter kinds. Unimplemented kinds remain
-/// explicit neutral processors, not accidentally treated as One-Pole.
-/// Default DSP routing for One-Pole, biquad, SVF, both ladders, All-Pass,
-/// the feedback comb and the four standard FIR response types;
-/// callers can
-/// still request the all-bypass factory explicitly for an identity chain.
+/// Built-in routing for all 21 selectable kinds. Callers can still request
+/// the all-bypass factory explicitly for an identity chain.
 /// </summary>
 public sealed class BuiltInFilterStageFactory : IStreamingFilterStageFactory
 {
@@ -157,6 +153,8 @@ public sealed class BuiltInFilterStageFactory : IStreamingFilterStageFactory
 			return AllPassFilterStageFactory.Instance.Prepare(stage, sampleRate);
 		if (stage.Kind == FilterKind.CombFeedback)
 			return FeedbackCombFilterStageFactory.Instance.Prepare(stage, sampleRate);
+		if (stage.Kind == FilterKind.CombFeedforward)
+			return FeedforwardCombFilterStageFactory.Instance.Prepare(stage, sampleRate);
 		if (LinearPhaseFirFilterStageFactory.IsStandardFir(stage.Kind))
 			return LinearPhaseFirFilterStageFactory.Instance.Prepare(stage, sampleRate);
 		return BypassFilterStageFactory.Instance.Prepare(stage, sampleRate);
