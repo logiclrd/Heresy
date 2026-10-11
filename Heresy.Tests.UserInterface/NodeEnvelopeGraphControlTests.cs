@@ -433,6 +433,9 @@ public sealed class NodeEnvelopeGraphControlTests
 		BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
 		Button fit = (Button)type.GetField("_fit", flags)!.GetValue(graph)!;
 		object surface = type.GetField("_surface", flags)!.GetValue(graph)!;
+		Control surfaceControl = (Control)surface;
+		surfaceControl.Measure(new Avalonia.Size(460, 250));
+		surfaceControl.Arrange(new Avalonia.Rect(0, 0, 460, 250));
 		Type surfaceType = surface.GetType();
 		System.Reflection.FieldInfo domain = surfaceType.GetField(
 			"_timeDomainTicks", flags)!;
