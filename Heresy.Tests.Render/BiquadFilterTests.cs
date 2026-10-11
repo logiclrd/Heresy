@@ -196,8 +196,8 @@ public sealed class BiquadFilterTests
 			Assert.That(sampleA.All(float.IsFinite), Is.True, kind.ToString());
 			Assert.That(sampleA[0], Is.EqualTo(sampleB[0]).Within(2e-7),
 				$"{kind}: the first post-update sample must preserve the old state.");
-			Assert.That(sampleA.Skip(1).Any((value, index) =>
-				Math.Abs(value - sampleB[index + 1]) > 1e-9), Is.True,
+			Assert.That(sampleA.Skip(1).Where((value, index) =>
+				Math.Abs(value - sampleB[index + 1]) > 1e-9).Any(), Is.True,
 				$"{kind}: numeric changes should gradually take effect.");
 			modified.Reset();
 			float[] reset = { 0f };
