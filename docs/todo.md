@@ -12,9 +12,8 @@ Design source: [filter-design.md](filter-design.md) (incremental implementation)
 
 ### Core model and authoring
 
-The reusable Core Filter SongObject, stable named serial stages, independent parameter overlays and filter-chain composition are implemented. Registration with SongDocument awaits the dedicated Filters tree root below.
+The reusable Core Filter SongObject, stable named serial stages, independent parameter overlays and filter-chain composition are implemented. The six-root Filters document tree, four-column Avalonia projection and version-1 four-/five-root migration are implemented. The standalone Filter creation/editing UI remains withheld until Filter definitions can be persisted and cloned.
 
-- [ ] **Expand the document tree to a sixth Filters root with a four-column grid.** Sequences and Patterns each span two columns in the first row; Patches, Filters, Envelopes and Instruments use one column each in the second. Add compatible four-/five-root loading and six-root restoration without incorrect object moves. Cover tree folders, section-local reorganization, activation and layout tests.
 - [ ] **Persist, clone, snapshot and import Filter objects and references.** Serialize definition stages, instance overrides and chains in .hm.json/.hm, maintain immutable frozen audio snapshots, object-ID remapping, missing references/tombstones and copy-on-write import semantics. Retain version 1 if loading older forms remains unambiguous; test round-trips and no-op/audio revisions.
 - [ ] **Build the standalone Filter definition editor.** Support named serial stages, add/remove/reorder/rename, type dropdown with disabled section headers, per-type parameter defaults and validation, and shared editing/revision-conflict behaviour. Add headless Avalonia tests.
 - [ ] **Build the reusable Filter *instance* parameter editor.** Drive controls and contextual assistance from parameter descriptors, separate configured per-use values from shared defaults, prevent cross-editor draft loss, and show reasonable units/ranges/structural choices. Verify that reconfiguring one use does not mutate another.
