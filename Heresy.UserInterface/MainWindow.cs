@@ -321,9 +321,9 @@ public sealed class MainWindow : Window
 	private Control BuildDocumentView()
 	{
 		Grid body = new();
-		// Six equal tracks accommodate two equally wide top panes and
-		// three equally wide bottom panes without two separate row grids.
-		for (int column = 0; column < 6; column++)
+		// Four equal tracks accommodate two half-width top panes and
+		// four quarter-width bottom panes in a single grid.
+		for (int column = 0; column < DocumentPaneLayout.ColumnCount; column++)
 		{
 			body.ColumnDefinitions.Add(
 				new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
@@ -435,7 +435,7 @@ public sealed class MainWindow : Window
 		}
 		actions.Children.Add(newFolder);
 
-		// A third-width Patches pane can have several import/create
+		// A quarter-width Patches pane can have several import/create
 		// actions. Put them below the title and wrap instead of clipping
 		// or forcing the document tree wider than its grid column.
 		foreach (Control action in actions.Children)
