@@ -268,7 +268,7 @@ public sealed class NodeEnvelopeGraphGeometryTests
 		Assert.That(up.Value, Is.EqualTo(1.2).Within(1e-12));
 		EnvelopeNode zero = NodeEnvelopeGraphGeometry.Nudge(
 			nodes, 0, +1, -1, -10, 10);
-		Assert.That(zero.Time, Is.Zero);
+		Assert.That(zero.Time, Is.EqualTo(TimeSpan.Zero));
 		Assert.That(zero.Value, Is.EqualTo(-0.2).Within(1e-12));
 		EnvelopeNode[] tight =
 		[

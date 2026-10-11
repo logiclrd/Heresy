@@ -285,7 +285,13 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 				throw new InvalidOperationException(
 					"The shared envelope changed since this draft began. "
 					+ "Reload the shared envelope before applying.");
-			List<EnvelopeNode> nodes = ParseNodes(_nodesInput.Text);
+			// Preserve exact TimeSpan ticks and floating-point values
+			// when only display settings or sustain controls change.
+			// Re-parsing an unchanged G17 time in seconds can round a
+			// TimeSpan and accidentally create an audio revision.
+			List<EnvelopeNode> nodes = _nodesInput.Text == _loadedNodesText
+				? _baselineNodes.ToList()
+				: ParseNodes(_nodesInput.Text);
 			int start = ParseIndex(_sustainStart, "Sustain start");
 			int end = ParseIndex(_sustainEnd, "Sustain end");
 			if (_loopMode.SelectedItem is not EnvelopeSustainLoopMode mode)
