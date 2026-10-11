@@ -49,7 +49,12 @@ public sealed class BiquadFilterStageFactory : IStreamingFilterStageFactory
 		else
 		{
 			double slope = stage.Parameters["ShelfSlope"].NumericValue;
-			alpha = 0.5 * sine * Math.Sqrt((a + 1 / a) * (1 / slope - 1) + 2);
+			double radicand = (a + 1 / a) * (1 / slope - 1) + 2;
+			if (!(radicand > 0) || !double.IsFinite(radicand))
+				throw new ArgumentOutOfRangeException(nameof(stage),
+					"ShelfSlope and GainDb combination does not admit a "
+					+ "stable Audio EQ shelving response.");
+			alpha = 0.5 * sine * Math.Sqrt(radicand);
 		}
 
 		double b0;
