@@ -20,10 +20,12 @@ public sealed class FmSynthSound : ISound
 		{
 			Values = new double[nodeCount];
 			Phases = new double[oscillatorCount];
+			Filters = new FmFilterNodeProcessor.State?[nodeCount];
 		}
 
 		public double[] Values { get; }
 		public double[] Phases { get; }
+		public FmFilterNodeProcessor.State?[] Filters { get; }
 		public long NextFrame { get; set; }
 		public int SampleRate { get; set; }
 
@@ -31,6 +33,7 @@ public sealed class FmSynthSound : ISound
 		{
 			Array.Clear(Values);
 			Array.Clear(Phases);
+			Array.Clear(Filters); // never reuse histories after rewind/rate change
 			NextFrame = 0;
 			SampleRate = sampleRate;
 		}
@@ -40,7 +43,8 @@ public sealed class FmSynthSound : ISound
 		FmSynthNode Definition,
 		int[] InputIndices,
 		int OscillatorIndex,
-		IEnvelopeCurve? Envelope);
+		IEnvelopeCurve? Envelope,
+		FmFilterNodeProcessor? Filter);
 
 	private readonly CompiledNode[] _nodes;
 	private readonly int _outputIndex;
@@ -98,7 +102,9 @@ public sealed class FmSynthSound : ISound
 					node,
 					inputs,
 					phaseIndex,
-					curve));
+					curve,
+					node is FmFilterNode filter
+						? new FmFilterNodeProcessor(filter, indexById) : null));
 		}
 
 		_nodes = [.. compiled];
@@ -126,24 +132,43 @@ public sealed class FmSynthSound : ISound
 			_oscillatorCount);
 
 	public long? GetEndFrameExclusive(
-		RenderContext context,
-		SoundState state)
+		RenderContext context, SoundState state)
 	{
 		ArgumentNullException.ThrowIfNull(context);
 		FmSynthState synthState = ValidateState(state);
-		if (!synthState.NoteOffTime.HasValue)
+		long? baseEnd = GetBaseEndFrameExclusive(
+			context.Configuration.SampleRate, synthState.NoteOffTime);
+		if (baseEnd is null)
 			return null;
+		double tailSeconds = 0;
+		foreach (CompiledNode compiled in _nodes)
+		{
+			// The graph is topologically restricted to nodes reachable
+			// from the output. A Filter with no audio connection cannot
+			// retain a contribution, regardless of modulation sources.
+			if (compiled.Definition is FmFilterNode filter
+				&& filter.AudioInputNodeId.HasValue
+				&& filter.Configuration is not null)
+				tailSeconds = Math.Max(tailSeconds, filter.TailSeconds);
+		}
+		double frames = Math.Ceiling(tailSeconds
+			* context.Configuration.SampleRate);
+		if (frames >= long.MaxValue || baseEnd.Value > long.MaxValue - frames)
+			return long.MaxValue;
+		return baseEnd.Value + (long)frames;
+	}
 
-		// FM Envelopes live inside the graph. First find an output-silence
-		// deadline (amplitude gating); otherwise, if the sound is still
-		// audible after its envelopes have finished, end the note at the
-		// last finite release tail. A frequency-only envelope does not
-		// silence an oscillator, but its release is still the intended
-		// lifespan of that note in Pattern playback and live audition.
-		// An FM graph with no envelopes has no tail and stops on Note Off.
-		int sampleRate = context.Configuration.SampleRate;
-		long noteOffFrame = FrameTime.Ceiling(
-			synthState.NoteOffTime.Value, sampleRate);
+	/// <summary>
+	/// Natural FM note boundary, before any manually authored Filter tail.
+	/// During extra tail frames every ordinary source stops excitation while
+	/// each Filter stage keeps processing zero-input frames.
+	/// </summary>
+	private long? GetBaseEndFrameExclusive(
+		int sampleRate, TimeSpan? noteOffTime)
+	{
+		if (!noteOffTime.HasValue)
+			return null;
+		long noteOffFrame = FrameTime.Ceiling(noteOffTime.Value, sampleRate);
 		long?[] silentFrom = new long?[_nodes.Length];
 		long finiteReleaseEnd = checked(noteOffFrame + 1);
 		bool hasIndefiniteEnvelope = false;
@@ -167,8 +192,6 @@ public sealed class FmSynthSound : ISound
 				silentFrom[index] = node.Definition switch
 				{
 					FmEnvelopeNode => 0L,
-					// Authoring milestone: Filter DSP and Tail semantics follow
-					// in the dedicated FM rendering milestone.
 					FmFilterNode filter => filter.AudioInputNodeId.HasValue
 						? silentFrom[node.InputIndices[0]] : 0L,
 					FmOperatorNode op => GetOperatorSilenceEnd(
@@ -179,8 +202,6 @@ public sealed class FmSynthSound : ISound
 		}
 		if (silentFrom[_outputIndex] is long outputSilence)
 			return outputSilence;
-		// An unbounded scripted envelope cannot be assigned a guessed
-		// release length; the existing live safety policy still applies.
 		return hasIndefiniteEnvelope ? null : finiteReleaseEnd;
 	}
 
@@ -271,6 +292,8 @@ public sealed class FmSynthSound : ISound
 					synthState.NoteOffTime.Value,
 					sampleRate)
 				: null;
+		long? baseEnd = GetBaseEndFrameExclusive(
+			sampleRate, synthState.NoteOffTime);
 
 		for (int frame = 0; frame < frameCount; frame++)
 		{
@@ -281,7 +304,7 @@ public sealed class FmSynthSound : ISound
 					context,
 					synthState,
 					relativeFrame,
-					noteOffFrame);
+					noteOffFrame, baseEnd);
 
 			int destinationBase =
 				frame * outputChannelCount;
@@ -316,6 +339,8 @@ public sealed class FmSynthSound : ISound
 					state.NoteOffTime.Value,
 					context.Configuration.SampleRate)
 				: null;
+		long? baseEnd = GetBaseEndFrameExclusive(
+			context.Configuration.SampleRate, state.NoteOffTime);
 
 		while (state.NextFrame < startFrame)
 		{
@@ -323,7 +348,7 @@ public sealed class FmSynthSound : ISound
 				context,
 				state,
 				state.NextFrame,
-				noteOffFrame);
+				noteOffFrame, baseEnd);
 			state.NextFrame++;
 		}
 	}
@@ -332,7 +357,8 @@ public sealed class FmSynthSound : ISound
 		RenderContext context,
 		FmSynthState state,
 		long frame,
-		long? noteOffFrame)
+		long? noteOffFrame,
+		long? baseEnd)
 	{
 		double pitchMultiplier =
 			state.PitchMultiplier
@@ -345,14 +371,15 @@ public sealed class FmSynthSound : ISound
 				"FM synth pitch multiplier became non-positive or non-finite.");
 		}
 
+		bool draining = baseEnd.HasValue && frame >= baseEnd.Value;
 		for (int index = 0;
 			index < _nodes.Length;
 			index++)
 		{
 			CompiledNode compiled =
 				_nodes[index];
-			double value =
-				compiled.Definition switch
+			double value = draining && compiled.Filter is null ? 0.0
+				: compiled.Definition switch
 				{
 					FmConstantNode constant =>
 						constant.Value,
@@ -364,12 +391,11 @@ public sealed class FmSynthSound : ISound
 							context.Configuration.SampleRate,
 							noteOffFrame),
 
-					// Until the FM rendering milestone the Filter node is
-					// an explicit neutral pass-through. A disconnected audio
-					// Input is silent regardless of modulation-only wires.
-					FmFilterNode filter =>
-						filter.AudioInputNodeId.HasValue
-							? state.Values[compiled.InputIndices[0]] : 0.0,
+					FmFilterNode =>
+						compiled.Filter!.Process(
+							state.Filters[index] ??= compiled.Filter.CreateState(
+								context.Configuration.SampleRate),
+							state.Values, draining),
 
 					FmOperatorNode operation =>
 						EvaluateOperator(
