@@ -33,7 +33,7 @@ public sealed class BiquadFilterTests
 		Assert.That(runtime.StageCount, Is.EqualTo(1));
 		Assert.That(runtime.PreparedTailFrames, Is.GreaterThan(0));
 		Assert.That(impulse.All(float.IsFinite), Is.True);
-		Assert.That(impulse[0], Is.Not.EqualTo(1f).Within(1e-5),
+		Assert.That(Math.Abs(impulse[0] - 1f), Is.GreaterThan(1e-5),
 			$"{kind} must not remain the former implicit bypass.");
 		Assert.That(Math.Abs(impulse[^1]), Is.LessThan(1e-5),
 			$"{kind} must have a stable decaying impulse response.");
@@ -153,7 +153,7 @@ public sealed class BiquadFilterTests
 		Assert.Throws<ArgumentOutOfRangeException>(() =>
 			Runtime(CreateUse(FilterKind.BiquadHighShelf, 3000,
 				gainDb: 36, shelfSlope: 2)));
-		Assert.Throws<ArgumentOutOfRangeException>(() =>
+		Assert.Throws<ArgumentException>(() =>
 			BiquadFilterStageFactory.Instance.Prepare(
 				new PreparedFilterStage(0, 0, (ObjectId)1U, 1,
 					FilterKind.OnePole, 0,
