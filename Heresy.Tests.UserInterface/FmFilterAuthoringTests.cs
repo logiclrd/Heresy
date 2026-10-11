@@ -174,6 +174,11 @@ public sealed class FmFilterAuthoringTests
 		FmSynthDocumentEditor.SetFilterConfiguration(
 			work, fm, filterNode, new FilterInstance(filter));
 		FmSynthDocumentEditor.ConnectNodes(work, fm, source, filterNode, 1);
+		// Even an invalidated binding must be purged if its source is
+		// explicitly deleted, rather than becoming a ghost wire in JSON.
+		filter.ChangeStageKind(1, FilterKind.AllPass);
+		Assert.That(fm.Graph.Nodes.OfType<FmFilterNode>().Single()
+			.StaleConnections.Count, Is.EqualTo(1));
 		FmSynthDocumentEditor.RemoveNode(work, fm, source);
 		FmFilterNode remaining = fm.Graph.Nodes.OfType<FmFilterNode>().Single();
 		Assert.That(remaining.Connections, Is.Empty);

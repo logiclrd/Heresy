@@ -1176,6 +1176,16 @@ public sealed class FmSynthEditorControl : UserControl
 				+ "Tail is stored but not yet applied.",
 			TextWrapping = TextWrapping.Wrap,
 		});
+		if (node.StaleConnections.Count > 0)
+			_inspector.Children.Add(new TextBlock
+			{
+				Text = $"{node.StaleConnections.Count} modulation connection(s) "
+					+ "no longer match the shared Filter stage kind/generation. "
+					+ "They are inactive and cannot silently move to another parameter; "
+					+ "reconnect the intended port explicitly.",
+				TextWrapping = TextWrapping.Wrap,
+				Foreground = Brushes.Orange,
+			});
 		if (node.Configuration is not FilterInstance configured)
 			return;
 
