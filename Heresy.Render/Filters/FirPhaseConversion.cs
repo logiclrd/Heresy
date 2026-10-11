@@ -139,7 +139,10 @@ internal static class FirPhaseConversion
 			for (; (j & bit) != 0; bit >>= 1)
 				j ^= bit;
 			j ^= bit;
-			if (i != j)
+			// Each bit-reversed pair must be swapped only once.
+			// Using i != j would undo the swap when the index is
+			// visited again in the reverse direction.
+			if (i < j)
 				(values[i], values[j]) = (values[j], values[i]);
 		}
 
