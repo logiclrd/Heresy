@@ -42,6 +42,7 @@ public sealed class FilterInstance
 
 	private readonly FilterDefinition _definition;
 	private readonly Dictionary<int, StageOverrides> _overrides = [];
+	private long _revision;
 
 	public FilterInstance(FilterDefinition definition)
 	{
@@ -52,11 +53,20 @@ public sealed class FilterInstance
 	private FilterInstance(FilterInstance other)
 	{
 		_definition = other._definition;
+		_revision = other._revision;
 		foreach ((int id, StageOverrides overrides) in other._overrides)
 			_overrides.Add(id, overrides.Clone());
 	}
 
 	public ObjectId DefinitionId => _definition.Id;
+
+	/// <summary>The shared, immutable-by-stage definition underlying this use.
+	/// Authoring should not modify this definition when changing a use.</summary>
+	public FilterDefinition Definition => _definition;
+
+	/// <summary>Monotonic in-memory configuration revision for rejecting stale
+	/// drafts, even when a caller modifies the same instance in place.</summary>
+	public long Revision => _revision;
 
 	/// <summary>Identifies the current definition generation, so persisted
 	/// overrides cannot be rebound to a different stage topology by mistake.</summary>
@@ -110,13 +120,17 @@ public sealed class FilterInstance
 			values[descriptor.Name] = candidate.GetParameter(descriptor.Name);
 		}
 
-		if (values.Count != 0)
+		if (values.Count != 0
+			&& !SameValues(GetOverrides(stageId), values))
+		{
 			_overrides[stageId] = new StageOverrides
 			{
 				Kind = stage.Kind,
 				Generation = _definition.GetStageGeneration(stageId),
 				Values = values,
 			};
+			_revision = checked(_revision + 1);
+		}
 	}
 
 	public void SetStageParameters(
@@ -146,6 +160,55 @@ public sealed class FilterInstance
 			new Dictionary<string, FilterParameterValue>(
 				overrides.Values, StringComparer.OrdinalIgnoreCase));
 	}
+
+	/// <summary>
+	/// Replaces the *entire* explicit override set for one stable stage ID.
+	/// Missing keys inherit future shared defaults. All numeric, structural,
+	/// choice and cross-parameter constraints are checked before mutation.
+	/// Returns false for exact no-op updates; even a value equal to the
+	/// current default remains an explicit override when supplied.
+	/// </summary>
+	public bool ReplaceStageOverrides(
+		int stageId,
+		IEnumerable<KeyValuePair<string, FilterParameterValue>> overrides)
+	{
+		ArgumentNullException.ThrowIfNull(overrides);
+		FilterStageDefinition stage = _definition.GetStage(stageId);
+		FilterSpecificationInstance candidate = stage.CreateParameters();
+		KeyValuePair<string, FilterParameterValue>[] requested = overrides.ToArray();
+		candidate.SetParameters(requested);
+
+		Dictionary<string, FilterParameterValue> validated =
+			new(StringComparer.OrdinalIgnoreCase);
+		foreach ((string name, _) in requested)
+		{
+			FilterParameterDescriptor descriptor = candidate.Parameters
+				.Single(parameter => string.Equals(parameter.Name, name,
+					StringComparison.OrdinalIgnoreCase));
+			validated.Add(descriptor.Name, candidate.GetParameter(descriptor.Name));
+		}
+
+		if (SameValues(GetOverrides(stageId), validated))
+			return false;
+		if (validated.Count == 0)
+			_overrides.Remove(stageId);
+		else
+			_overrides[stageId] = new StageOverrides
+			{
+				Kind = stage.Kind,
+				Generation = _definition.GetStageGeneration(stageId),
+				Values = validated,
+			};
+		_revision = checked(_revision + 1);
+		return true;
+	}
+
+	private static bool SameValues(
+		IReadOnlyDictionary<string, FilterParameterValue> left,
+		IReadOnlyDictionary<string, FilterParameterValue> right)
+		=> left.Count == right.Count
+			&& left.All(item => right.TryGetValue(item.Key,
+				out FilterParameterValue? value) && value == item.Value);
 
 	public FilterInstance Clone() => new(this);
 
