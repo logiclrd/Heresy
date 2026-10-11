@@ -6,8 +6,8 @@ tests supersede contradictory old prose.
 
 ## Start here
 
-- [Open work](todo.md): original-design programmability milestones
-  plus conditional hardware, optimization and schema tasks.
+- [Open work](todo.md): reusable FIR/IIR filter milestones and conditional
+  hardware, optimization and schema tasks.
 - [Root README](../README.md): current architecture, projects and UI.
 - [Recursive sounds](recursive-sounds.md): **current production contract**
   first; early eager/prototype designs are historical below it.
@@ -29,6 +29,7 @@ tests supersede contradictory old prose.
 | --- | --- |
 | Samples, encoded-asset ownership and recovery | [Sample storage](sample-storage.md) |
 | Tracker/native operators and timing | [Effect operators](effect-operators.md) |
+| Reusable FIR/IIR filtering: staged implementation contract and Core parameter schemas | [Filter design](filter-design.md) |
 | Native seek semantics and replay warnings | [Source-seek hints](source-seek-hints.md) |
 | PCM ring, speakers, device settings, filters | [Audio output](audio-output.md) |
 | Export, formats, progress, cancellation and parity | [Export workflow](export-workflow.md) |
