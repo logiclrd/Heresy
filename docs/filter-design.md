@@ -1,6 +1,6 @@
 # Reusable filters — design contract
 
-Status: **incremental implementation** (11 October 2026). The Core filter-type catalogue, parameter descriptors, Filter SongObject definition model, and independently configured stage instances/chains are implemented. Document-tree registration, persistence/UI, DSP and playback integrations remain outstanding in [todo.md](todo.md). Current code still has the tracker-compatible ResonantFilterState and the limited final-speaker low/high-pass filters; neither has been replaced.
+Status: **incremental implementation** (11 October 2026). The Core filter-type catalogue, parameter descriptors, Filter SongObject definition model, and independently configured stage instances/chains are implemented. The six-root Filters document tree and four-column Avalonia layout (including four-/five-root migration) are also implemented. Filter definition persistence, editor/creation UI, DSP and playback integrations remain outstanding in [todo.md](todo.md). Current code still has the tracker-compatible ResonantFilterState and the limited final-speaker low/high-pass filters; neither has been replaced.
 
 ## Intent and governing constraints
 
@@ -89,7 +89,7 @@ Parameter changes and definition edits are validated atomically. In-place edits 
 
 ## Implemented reusable definition and instance model
 
-Core types: `Heresy.Core.Filters.FilterStageDefinition`, `FilterDefinition`, `FilterInstance`, `ConfiguredFilterStage`, and `FilterChain`. The definition extends `SongObject` and uses the reserved `SongObjectKind.Filter` identity. **A Filter is not yet addable to SongDocument**: its six-root Filters section and migration from existing four-/five-root trees are deliberately the next milestone. Do not assign it a temporary unrelated pane. As a consequence, JSON, clones and song snapshots do not yet support Filter song objects; those tasks follow tree registration.
+Core types: `Heresy.Core.Filters.FilterStageDefinition`, `FilterDefinition`, `FilterInstance`, `ConfiguredFilterStage`, and `FilterChain`. The definition extends `SongObject` and uses the reserved `SongObjectKind.Filter` identity. **Filter definitions can now be added to SongDocument**: the six-root Filters section and four-/five-root migration are implemented. Filter creation and editing are deliberately not yet exposed through the UI, because JSON, clones and song snapshots do not yet support live Filter song objects. Those tasks follow in the persistence and standalone editor milestones.
 
 A new definition has one valid `stage1` One-Pole stage; all definitions must remain nonempty. Stages have positive integer IDs, validated unique case-insensitive ASCII identifier names (no ambiguous dots in parameter paths), an independently selected `FilterKind`, and a complete read-only validated set of default parameter values. The definition supports validated atomic `ReplaceStages`, add/remove/rename/reorder/type change and default updates. Automatically assigned stage IDs never reuse deleted IDs. Renaming or moving a stage does not change its ID. Each explicit stage type change advances a generation, so per-use overrides tied to the old type cannot unexpectedly reappear if the type changes back or a stage ID is removed/reintroduced.
 
