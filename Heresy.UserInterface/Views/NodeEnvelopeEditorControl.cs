@@ -24,6 +24,7 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 	private readonly DocumentWorkspace _workspace;
 	private readonly NodeEnvelopeDefinition _envelope;
 	private readonly Action<string> _changed;
+	private readonly NodeEnvelopeGraphControl _graph;
 	private readonly TextBox _nodesInput = new()
 	{
 		AcceptsReturn = true,
@@ -60,7 +61,35 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 			throw new InvalidOperationException(
 				"The envelope is not part of the current song document.");
 
+		_graph = new NodeEnvelopeGraphControl(workspace, envelope);
+		_graph.EnvelopeChanged += (_, _) =>
+		{
+			RefreshFromEnvelope();
+			_message.Text = "Envelope updated from graph.";
+			_changed($"Updated envelope {_envelope.Name}");
+		};
+
 		StackPanel form = new() { Spacing = 8, Margin = new Thickness(14) };
+		form.Children.Add(new TextBlock
+		{
+			Text = "Envelope graph",
+			FontWeight = FontWeight.SemiBold,
+		});
+		form.Children.Add(new Border
+		{
+			BorderBrush = Brushes.Gray,
+			BorderThickness = new Thickness(1),
+			Child = _graph,
+		});
+		form.Children.Add(new TextBlock
+		{
+			Text = "Click within 4 pixels of a node to select it, drag to "
+				+ "adjust its time/value, double-click a node to delete it, "
+				+ "or double-click a line to insert a node. The first node "
+				+ "remains at time 0. Sustain guide dragging and Match "
+				+ "will follow in the next milestone.",
+			TextWrapping = TextWrapping.Wrap,
+		});
 		form.Children.Add(new TextBlock
 		{
 			Text = "Envelope nodes (time in seconds, value)",
@@ -75,8 +104,8 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 		form.Children.Add(_nodesInput);
 		form.Children.Add(new TextBlock
 		{
-			Text = "Interactive node graph will replace this text editor in "
-				+ "the next envelope UI milestone.",
+			Text = "The node list remains available for precise numeric editing "
+				+ "while graphical editing is being completed.",
 			FontStyle = FontStyle.Italic,
 			TextWrapping = TextWrapping.Wrap,
 			Foreground = Brushes.Gray,
@@ -114,6 +143,7 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 
 	public void RefreshFromEnvelope()
 	{
+		_graph.RefreshFromEnvelope();
 		_nodesInput.Text = string.Join("\n", _envelope.Nodes.Select(node =>
 			node.Time.TotalSeconds.ToString("G17", CultureInfo.InvariantCulture)
 			+ ", "

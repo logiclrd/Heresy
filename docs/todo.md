@@ -13,18 +13,10 @@ requested model, sustain timeline semantics, and exact graphical gestures.
 The validated node model, immutable renderer, JSON persistence and
 production authoring cutover are implemented for both Instruments and FM
 graphs. The four-scalar ADSR definition, renderer, and graphical editor have
-been removed without a legacy-song migration. A temporary shared node-list
-editor permits edits while the interactive graph is rebuilt. Continue in
-this order:
-
-- [ ] **Build the interactive node-envelope graph and selection model.**
-  Render linear segments, faint vertical node guides, and the sustain
-  highlight `#04808080`; support one selection at most, a **4 px**
-  nearest-node click threshold, and small non-touching selection brackets
-  2 px taller than the node. Double-click a node to delete, or a segment
-  to insert at the nearest projected point; validate monotonic time,
-  sustain index adjustment, first-node invariants, and deletion limits.
-  Exercise hit testing and projection in framework-independent tests.
+been removed without a legacy-song migration. The shared interactive graph now renders the curve and node guides,
+supports 4 px single-node selection, dragging, line insertion and node
+deletion; the node-list editor stays available for precise values.
+Sustain-guide gestures and Match remain separate. Continue in this order:
 
 - [ ] **Implement sustain-guide gestures and Match editing.**
   Drag either sustain endpoint's guide to another node without crossing

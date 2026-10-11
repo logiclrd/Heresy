@@ -11,8 +11,8 @@ Envelopes remain a distinct supported expression-based envelope type.
 The production authoring and persistence cutover is implemented.
 Ordinary envelopes use the node model, Script Envelopes remain separate,
 and the former ADSR model, renderer, editor, and JSON discriminator were
-removed without a legacy compatibility loader. Until the interactive graph
-is ready, the standalone and FM inspectors share an editable node list.
+removed without a legacy compatibility loader. The standalone and FM inspectors now share an interactive node graph
+with an auxiliary editable node list for precision.
 
 ## Data contract (milestone 1)
 
@@ -67,7 +67,7 @@ permit one. An envelope's last node describes its last defined value,
 which must not be forcibly normalized/clamped. Separate target and voice
 retirement logic must handle tails correctly.
 
-## Graphical editing contract (later milestones)
+## Graphical editing contract (graph and node selection implemented)
 
 The replacement graph draws small nodes and straight interpolating
 segments, faint vertical guides through every node, and a sustain region
@@ -82,7 +82,12 @@ Double-clicking a segment projects onto that segment and inserts a node
 at the nearest valid point along it, retaining strict time ordering.
 Double-clicking a node deletes it and normalizes sustain indices while
 keeping at least one valid node. Node hit testing takes precedence over
-segment insertion. Node moves may not cross neighbours in time.
+segment insertion. Dragging a node edits its time and value against a fixed viewport,
+clamping time to keep it between its neighbours. The first node remains
+at time zero but can change value. Deleting the first node shifts
+the remaining timeline so its next node becomes the zero-time origin.
+Deleting the last remaining node is disallowed. Sustain indices follow
+the same surviving nodes across insertions/deletions.
 
 Dragging either highlighted sustain boundary guide relocates that
 boundary to another node, **never past the opposite boundary**.

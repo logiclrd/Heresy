@@ -447,9 +447,20 @@ Node envelopes are first-class shared objects in the **Envelopes** pane.
 Ordinary New Envelope creates a `NodeEnvelopeDefinition` with a piecewise
 linear sequence of time/value nodes, indexed sustain start and end points,
 and Forward/PingPong looping. Script Envelopes remain a distinct supported
-authoring type. The standalone Envelope editor and the FM synth's
-Envelope-node inspector both use the same temporary **node-list editor**
-until the dedicated interactive graph is delivered.
+authoring type. The standalone Envelope editor and the FM synth's Envelope-node
+inspector both use the same **interactive node graph** and auxiliary
+node-list editor for precision.
+
+The node graph displays connected linear segments, faint vertical
+guides and the sustain band. Click within 4 pixels of a node to select
+it; the selected node gets two small brackets. Dragging a node edits
+its time and value (without crossing neighbours), while the time of
+node zero remains fixed at zero. Double-click a node to delete it,
+or double-click a line to insert a new node at its closest projected
+point. Deleting the first node re-bases the remaining times to zero;
+the last surviving node cannot be deleted. All operations commit
+atomically through the shared envelope document revision path.
+The sustain guide handles and Match action are the next UI milestone.
 
 The node-list editor accepts one `timeSeconds, value` pair per line, using
 invariant-culture decimals. Node 0 must begin at zero and all later times
