@@ -80,18 +80,20 @@ public sealed class OnePoleFilterStageFactory : IStreamingFilterStageFactory
 	}
 
 	private sealed class OnePoleState(
-		OnePolePlan plan, double integrator) : IStreamingFilterStageState
+		OnePolePlan plan, double integrator) : IStreamingFilterStageState,
+		IRealtimeTptFilterState
 	{
 		// A scalar is sufficient for one first-order TPT integrator.
 		// No state is shared with another output channel or invocation.
 		private OnePolePlan _plan = plan;
+		private double _gain = plan.Gain;
 		private double _integrator = integrator;
 
 		public float Process(float sample)
 		{
 			// An invalid PCM sample must not permanently poison the IIR.
 			double input = float.IsFinite(sample) ? sample : 0.0;
-			double v = (input - _integrator) * _plan.Gain;
+			double v = (input - _integrator) * _gain;
 			double low = _integrator + v;
 			double next = low + v;
 			double output = _plan.HighPass ? input - low : low;
@@ -111,7 +113,11 @@ public sealed class OnePoleFilterStageFactory : IStreamingFilterStageFactory
 		}
 
 		public IStreamingFilterStageState Clone()
-			=> new OnePoleState(_plan, _integrator);
+		{
+			OnePoleState result = new(_plan, _integrator);
+			result._gain = _gain;
+			return result;
+		}
 
 		public void Reconfigure(IStreamingFilterStagePlan plan)
 		{
@@ -121,6 +127,29 @@ public sealed class OnePoleFilterStageFactory : IStreamingFilterStageFactory
 			// Cutoff changes preserve the integrator history. Mode is a
 			// structural parameter and the chain replaces the state.
 			_plan = replacement;
+			_gain = replacement.Gain;
+		}
+
+		public bool TryPrepareRealtime(
+			double cutoffHz, double q, int sampleRate,
+			out RealtimeTptCoefficients coefficients)
+		{
+			coefficients = default;
+			if (!double.IsFinite(cutoffHz)
+				|| cutoffHz < 1 || cutoffHz > 20000
+				|| cutoffHz >= sampleRate * 0.5)
+				return false;
+			double warped = Math.Tan(Math.PI * cutoffHz / sampleRate);
+			double gain = warped / (1.0 + warped);
+			if (!double.IsFinite(gain) || gain <= 0 || gain >= 1)
+				return false;
+			coefficients = new RealtimeTptCoefficients(gain, 0);
+			return true;
+		}
+
+		public void CommitRealtime(RealtimeTptCoefficients coefficients)
+		{
+			_gain = coefficients.G;
 		}
 	}
 }

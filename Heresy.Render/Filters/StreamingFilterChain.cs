@@ -185,6 +185,48 @@ public sealed class StreamingFilterChain
 		_tailRemainingFrames = 0;
 	}
 
+	/// <summary>
+	/// Zero-allocation numeric control path for compatible One-Pole/SVF
+	/// stages. The caller supplies scratch sized for updates.Length.
+	/// All stage coefficients are preflighted before any stage commits, so
+	/// invalid values cannot partially reconfigure a serial chain.
+	/// Static/unaddressed stages retain their exact histories and settings.
+	/// This path is intended for a single producer/renderer thread.
+	/// </summary>
+	internal bool TryApplyRealtimeTptUpdates(
+		ReadOnlySpan<RealtimeTptStageUpdate> updates,
+		Span<RealtimeTptCoefficients> scratch)
+	{
+		if (_inputFinished || scratch.Length < updates.Length)
+			return false;
+
+		for (int i = 0; i < updates.Length; i++)
+		{
+			RealtimeTptStageUpdate update = updates[i];
+			if ((uint)update.StageIndex >= (uint)_stages.Length
+				|| _stages[update.StageIndex].Channels[0]
+					is not IRealtimeTptFilterState runtime
+				|| !runtime.TryPrepareRealtime(
+					update.CutoffHz, update.Q, SampleRate, out scratch[i]))
+				return false;
+			for (int j = 0; j < i; j++)
+				if (updates[j].StageIndex == update.StageIndex)
+					return false;
+		}
+
+		for (int i = 0; i < updates.Length; i++)
+		{
+			RealtimeTptStageUpdate update = updates[i];
+			foreach (IStreamingFilterStageState channel in
+				_stages[update.StageIndex].Channels)
+			{
+				((IRealtimeTptFilterState)channel)
+					.CommitRealtime(scratch[i]);
+			}
+		}
+		return true;
+	}
+
 	/// <summary>Advance exactly one output frame in place.</summary>
 	public void ProcessFrame(Span<float> channels)
 	{

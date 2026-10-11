@@ -101,12 +101,14 @@ public sealed class SvfFilterStageFactory : IStreamingFilterStageFactory
 		public IStreamingFilterStageState CreateState() => new SvfState(this);
 	}
 
-	private sealed class SvfState : IStreamingFilterStageState
+	private sealed class SvfState : IStreamingFilterStageState, IRealtimeTptFilterState
 	{
 		private SvfPlan _plan;
 		private IntegratorCoefficients _coefficients;
 		private double _currentG;
 		private double _currentK;
+		private double _targetG;
+		private double _targetK;
 		private double _startG;
 		private double _startK;
 		private int _remaining;
@@ -118,6 +120,8 @@ public sealed class SvfFilterStageFactory : IStreamingFilterStageFactory
 			_plan = plan;
 			_currentG = plan.G;
 			_currentK = plan.K;
+			_targetG = plan.G;
+			_targetK = plan.K;
 			_startG = _currentG;
 			_startK = _currentK;
 			_coefficients = plan.Coefficients;
@@ -129,6 +133,8 @@ public sealed class SvfFilterStageFactory : IStreamingFilterStageFactory
 			_coefficients = source._coefficients;
 			_currentG = source._currentG;
 			_currentK = source._currentK;
+			_targetG = source._targetG;
+			_targetK = source._targetK;
 			_startG = source._startG;
 			_startK = source._startK;
 			_remaining = source._remaining;
@@ -142,8 +148,8 @@ public sealed class SvfFilterStageFactory : IStreamingFilterStageFactory
 			{
 				double t = (double)(ParameterTransitionFrames - _remaining + 1)
 					/ ParameterTransitionFrames;
-				_currentG = _startG + (_plan.G - _startG) * t;
-				_currentK = _startK + (_plan.K - _startK) * t;
+				_currentG = _startG + (_targetG - _startG) * t;
+				_currentK = _startK + (_targetK - _startK) * t;
 				_coefficients = IntegratorCoefficients.From(_currentG, _currentK);
 				_remaining--;
 			}
@@ -190,6 +196,8 @@ public sealed class SvfFilterStageFactory : IStreamingFilterStageFactory
 			if (_currentG == next.G && _currentK == next.K)
 			{
 				_plan = next;
+				_targetG = next.G;
+				_targetK = next.K;
 				_coefficients = next.Coefficients;
 				_startG = next.G;
 				_startK = next.K;
@@ -201,6 +209,55 @@ public sealed class SvfFilterStageFactory : IStreamingFilterStageFactory
 			_startG = _currentG;
 			_startK = _currentK;
 			_plan = next;
+			_targetG = next.G;
+			_targetK = next.K;
+			_remaining = ParameterTransitionFrames;
+		}
+
+		public bool TryPrepareRealtime(
+			double cutoffHz, double q, int sampleRate,
+			out RealtimeTptCoefficients coefficients)
+		{
+			coefficients = default;
+			if (!double.IsFinite(cutoffHz)
+				|| cutoffHz < 1 || cutoffHz > 20000
+				|| cutoffHz >= sampleRate * 0.5
+				|| !double.IsFinite(q) || q < 0.1 || q > 20)
+				return false;
+			double g = Math.Tan(Math.PI * cutoffHz / sampleRate);
+			double k = 1.0 / q;
+			if (!double.IsFinite(g) || g <= 0 || !double.IsFinite(k) || k <= 0)
+				return false;
+			double denominator = 1 + g * (g + k);
+			double a1 = 2 * (g * g - 1) / denominator;
+			double a2 = (1 + g * (g - k)) / denominator;
+			double discriminant = a1 * a1 - 4 * a2;
+			double radius = discriminant < 0
+				? Math.Sqrt(a2)
+				: Math.Max(Math.Abs((-a1 + Math.Sqrt(discriminant)) / 2),
+					Math.Abs((-a1 - Math.Sqrt(discriminant)) / 2));
+			if (!double.IsFinite(radius) || radius >= 1)
+				return false;
+			coefficients = new(g, k);
+			return true;
+		}
+
+		public void CommitRealtime(RealtimeTptCoefficients coefficients)
+		{
+			if (_currentG == coefficients.G && _currentK == coefficients.K)
+			{
+				_targetG = coefficients.G;
+				_targetK = coefficients.K;
+				_startG = _currentG;
+				_startK = _currentK;
+				_coefficients = IntegratorCoefficients.From(_currentG, _currentK);
+				_remaining = 0;
+				return;
+			}
+			_startG = _currentG;
+			_startK = _currentK;
+			_targetG = coefficients.G;
+			_targetK = coefficients.K;
 			_remaining = ParameterTransitionFrames;
 		}
 	}
