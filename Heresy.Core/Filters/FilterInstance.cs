@@ -70,7 +70,7 @@ public sealed class FilterInstance
 
 	/// <summary>Identifies the current definition generation, so persisted
 	/// overrides cannot be rebound to a different stage topology by mistake.</summary>
-	internal long GetStageGenerationForPersistence(int stageId)
+	public long GetStageGenerationForPersistence(int stageId)
 		=> _definition.GetStageGeneration(stageId);
 
 	/// <summary>Constructs a new effective snapshot in the definition's
