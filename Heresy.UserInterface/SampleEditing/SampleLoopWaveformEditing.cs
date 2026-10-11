@@ -65,6 +65,25 @@ public static class SampleLoopWaveformEditing
 		};
 	}
 
+	/// <summary>Select a fresh loop interval from two arbitrary waveform
+	/// positions. Reversed drags are symmetric and even a tiny nonzero drag
+	/// selects at least one decoded PCM frame.</summary>
+	public static SampleLoop SelectRange(
+		SampleLoop loop, long anchorFrame, long pointerFrame, long frameCount)
+	{
+		ArgumentNullException.ThrowIfNull(loop);
+		if (frameCount <= 0)
+			throw new InvalidOperationException(
+				"An active sample loop requires decoded PCM frames.");
+		long start = Math.Clamp(Math.Min(anchorFrame, pointerFrame),
+			0, frameCount - 1);
+		long end = Math.Clamp(Math.Max(anchorFrame, pointerFrame),
+			start + 1, frameCount);
+		return new SampleLoop(
+			loop.Mode == SampleLoopMode.None ? SampleLoopMode.Forward : loop.Mode,
+			start, end);
+	}
+
 	public static bool TryHitBoundary(
 		SampleLoop loop,
 		long frameCount,

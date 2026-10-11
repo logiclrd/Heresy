@@ -12,6 +12,29 @@ namespace Heresy.Tests.UserInterface;
 [TestFixture]
 public sealed class SampleLoopWaveformEditingTests
 {
+	[TestCase(10L, 90L, 10L, 90L)]
+	[TestCase(90L, 10L, 10L, 90L)]
+	[TestCase(-20L, 250L, 0L, 100L)]
+	[TestCase(100L, 100L, 99L, 100L)]
+	public void RangeSelectionIsDirectionIndependentAndClampsToPcm(
+		long anchor, long end, long expectedStart, long expectedEnd)
+	{
+		SampleLoop result = SampleLoopWaveformEditing.SelectRange(
+			new SampleLoop(SampleLoopMode.None, 0, 0),
+			anchor, end, frameCount: 100);
+		result.Should().Be(new SampleLoop(SampleLoopMode.Forward,
+			expectedStart, expectedEnd));
+	}
+
+	[Test]
+	public void RangeSelectionPreservesExistingPingPongLoopMode()
+	{
+		SampleLoopWaveformEditing.SelectRange(
+			new SampleLoop(SampleLoopMode.PingPong, 10, 50),
+			72, 25, frameCount: 100)
+			.Should().Be(new SampleLoop(SampleLoopMode.PingPong, 25, 72));
+	}
+
 	[Test]
 	public void MovingStartClampsBeforeExclusiveEnd()
 	{

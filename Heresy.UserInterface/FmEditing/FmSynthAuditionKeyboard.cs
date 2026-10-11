@@ -30,7 +30,17 @@ public sealed class FmSynthAuditionKeyboard
 	// Keep FM preview voices disjoint from pattern editor preview voices.
 	public const uint VoiceIdBase = 0x464D0000;
 
-	private readonly Dictionary<PhysicalKey, uint> _activeKeys = [];
+	private readonly Dictionary<PhysicalKey, StartFmSynthAuditionNote>
+		_activeKeys = [];
+	private readonly uint _voiceIdBase;
+
+	public FmSynthAuditionKeyboard(uint voiceIdBase = VoiceIdBase)
+		=> _voiceIdBase = voiceIdBase;
+
+	/// <summary>Snapshot the exact held pitches, including their octave at
+	/// key-down, so a changed sound source can restart these same notes.</summary>
+	public IReadOnlyList<StartFmSynthAuditionNote> ActiveNotes
+		=> _activeKeys.Values.ToArray();
 
 	public int BaseOctave { get; private set; } = 4;
 	public int ActiveNoteCount => _activeKeys.Count;
@@ -59,23 +69,21 @@ public sealed class FmSynthAuditionKeyboard
 			return null;
 		}
 
-		uint voiceId = VoiceIdBase + (uint)semitone;
-		_activeKeys.Add(key, voiceId);
+		uint voiceId = _voiceIdBase + (uint)semitone;
 		double pitchMultiplier =
-			Math.Pow(
-				2.0,
+			Math.Pow(2.0,
 				(((BaseOctave - 4) * 12) + semitone) / 12.0);
-		return new StartFmSynthAuditionNote(
-			key,
-			voiceId,
-			pitchMultiplier);
+		StartFmSynthAuditionNote note =
+			new(key, voiceId, pitchMultiplier);
+		_activeKeys.Add(key, note);
+		return note;
 	}
 
 	public ReleaseFmSynthAuditionNote? KeyUp(PhysicalKey key)
 	{
-		if (!_activeKeys.Remove(key, out uint voiceId))
+		if (!_activeKeys.Remove(key, out StartFmSynthAuditionNote? note))
 			return null;
-		return new ReleaseFmSynthAuditionNote(key, voiceId);
+		return new ReleaseFmSynthAuditionNote(key, note.VoiceId);
 	}
 
 	public IReadOnlyList<ReleaseFmSynthAuditionNote> ReleaseAll()
@@ -83,8 +91,7 @@ public sealed class FmSynthAuditionKeyboard
 		ReleaseFmSynthAuditionNote[] actions = _activeKeys
 			.Select(pair =>
 				new ReleaseFmSynthAuditionNote(
-					pair.Key,
-					pair.Value))
+					pair.Key, pair.Value.VoiceId))
 			.ToArray();
 		_activeKeys.Clear();
 		return actions;

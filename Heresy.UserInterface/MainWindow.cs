@@ -2449,7 +2449,15 @@ public sealed class MainWindow : Window
 		SampleDefinition sample,
 		SongTreeNode? selectNode)
 	{
-		SampleEditorDialog dialog = new(_workspace, sample);
+		SampleEditorDialog dialog = new(
+			_workspace, sample,
+			_playbackTransport is null
+				? null
+				: new PatternLiveAuditionActions(liveEvent =>
+					_playbackTransport.SendLiveEventAsync(
+						_workspace.Document, liveEvent.Target, liveEvent.Commands)),
+			_playbackTransport is null
+				? null : () => _playbackTransport.StopAsync());
 		await dialog.ShowDialog(this);
 		RefreshDocumentView($"Updated sample {sample.Name}", selectNode);
 	}

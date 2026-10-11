@@ -114,6 +114,30 @@ overwrite unrelated committed settings. Ordinary commits refresh the graph
 without rebuilding the inspector or disrupting focus.
 
 
+## Sample waveform loops and note audition
+
+In the Sample editor, the decoded waveform supports both dragging an
+existing loop start/end handle and dragging across the waveform to select a
+new interval. A new selection uses the smaller frame position as its start
+regardless of drag direction, and a region must contain at least one decoded
+frame. When the current Loop Mode is None, finishing a selection sets it
+to Forward; existing Forward/PingPong modes remain unchanged. The waveform
+shows the provisional selection during the drag. Releasing the mouse commits
+the loop to the document and synchronizes the start/end text fields.
+
+The Sample editor offers the same focusable **Test** area and physical
+tracker-piano keyboard layout as the FM Patch editor, including octave
+changes via keypad `*` and `/` and key-release Note Off. Its preview
+voices use their own virtual-channel IDs. Editing either loop-frame textbox
+and leaving focus commits the loop, as does the waveform mouse release;
+in both cases any still-held audition notes restart at their *original*
+pitches using the updated sample loop snapshot. The held notes survive
+moving keyboard focus into loop controls so that adjustment can be heard
+immediately. Pressing F8 in the dialog stops playback and clears audition
+key state. Deactivating or closing the dialog releases remaining preview
+notes. Sample metadata, not a cached preview-only loop, remains the source
+of truth for every restart.
+
 ## File menu and unsaved changes
 
 The desktop File menu offers New (`Ctrl+N`), Open (`Ctrl+O`), Save

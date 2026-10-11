@@ -36,6 +36,9 @@ public sealed class SampleWaveformControl : Control
 			0);
 	private SampleLoopBoundary? _dragBoundary;
 	private SampleLoop? _dragOriginalLoop;
+	private long? _dragAnchorFrame;
+	private double _dragAnchorX;
+	private bool _rangeDragged;
 
 	public SampleWaveformControl()
 	{
@@ -245,7 +248,6 @@ public sealed class SampleWaveformControl : Control
 
 		if (_pcm is null
 			|| _pcm.FrameCount == 0
-			|| _loop.Mode == SampleLoopMode.None
 			|| Bounds.Width <= 0)
 		{
 			return;
@@ -258,19 +260,20 @@ public sealed class SampleWaveformControl : Control
 
 		double x =
 			e.GetPosition(this).X;
-		if (!SampleLoopWaveformEditing.TryHitBoundary(
-			_loop,
-			_pcm.FrameCount,
-			Bounds.Width,
-			x,
-			LoopHandleHitTolerance,
-			out SampleLoopBoundary boundary))
-		{
-			return;
-		}
-
-		_dragBoundary = boundary;
 		_dragOriginalLoop = _loop;
+		if (SampleLoopWaveformEditing.TryHitBoundary(
+			_loop, _pcm.FrameCount, Bounds.Width, x,
+			LoopHandleHitTolerance, out SampleLoopBoundary boundary))
+		{
+			_dragBoundary = boundary;
+		}
+		else
+		{
+			_dragAnchorFrame = SampleLoopWaveformEditing.XToFrame(
+				x, Bounds.Width, _pcm.FrameCount);
+			_dragAnchorX = x;
+			_rangeDragged = false;
+		}
 		e.Pointer.Capture(this);
 		e.Handled = true;
 	}
@@ -280,7 +283,7 @@ public sealed class SampleWaveformControl : Control
 	{
 		base.OnPointerMoved(e);
 
-		if (_dragBoundary is not SampleLoopBoundary boundary
+		if ((_dragBoundary is null && _dragAnchorFrame is null)
 			|| _pcm is null
 			|| _pcm.FrameCount == 0
 			|| Bounds.Width <= 0)
@@ -293,11 +296,16 @@ public sealed class SampleWaveformControl : Control
 				e.GetPosition(this).X,
 				Bounds.Width,
 				_pcm.FrameCount);
-		SampleLoop candidate =
-			SampleLoopWaveformEditing.MoveBoundary(
-				_loop,
-				boundary,
-				frame,
+		if (_dragAnchorFrame.HasValue
+			&& Math.Abs(e.GetPosition(this).X - _dragAnchorX) >= 3.0)
+			_rangeDragged = true;
+		if (_dragAnchorFrame.HasValue && !_rangeDragged)
+			return;
+		SampleLoop candidate = _dragBoundary is SampleLoopBoundary boundary
+			? SampleLoopWaveformEditing.MoveBoundary(
+				_loop, boundary, frame, _pcm.FrameCount)
+			: SampleLoopWaveformEditing.SelectRange(
+				_dragOriginalLoop!, _dragAnchorFrame!.Value, frame,
 				_pcm.FrameCount);
 		if (candidate == _loop)
 			return;
@@ -316,17 +324,35 @@ public sealed class SampleWaveformControl : Control
 	{
 		base.OnPointerReleased(e);
 
-		if (_dragBoundary is null)
+		if (_dragBoundary is null && _dragAnchorFrame is null)
 			return;
 
-		SampleLoop? original =
-			_dragOriginalLoop;
-		_dragBoundary = null;
-		_dragOriginalLoop = null;
+		SampleLoop? original = _dragOriginalLoop;
+		if (_pcm is not null && _pcm.FrameCount > 0 && Bounds.Width > 0
+			&& _dragAnchorFrame is long anchor)
+		{
+			// Pointer release may be the first update since the press.
+			double x = e.GetPosition(this).X;
+			if (Math.Abs(x - _dragAnchorX) >= 3.0)
+				_rangeDragged = true;
+			if (_rangeDragged)
+			{
+				_loop = SampleLoopWaveformEditing.SelectRange(
+					original!, anchor,
+					SampleLoopWaveformEditing.XToFrame(
+						x, Bounds.Width, _pcm.FrameCount),
+					_pcm.FrameCount);
+				InvalidateVisual();
+				LoopPreviewChanged?.Invoke(this,
+					new SampleLoopChangedEventArgs(_loop));
+			}
+		}
+		bool commit = _dragBoundary is not null || _rangeDragged;
+		CancelDrag();
 		e.Pointer.Capture(null);
 		e.Handled = true;
 
-		if (original != _loop)
+		if (commit && original != _loop)
 		{
 			LoopCommitted?.Invoke(
 				this,
@@ -340,13 +366,11 @@ public sealed class SampleWaveformControl : Control
 	{
 		base.OnPointerCaptureLost(e);
 
-		if (_dragBoundary is null)
+		if (_dragBoundary is null && _dragAnchorFrame is null)
 			return;
 
-		SampleLoop? original =
-			_dragOriginalLoop;
-		_dragBoundary = null;
-		_dragOriginalLoop = null;
+		SampleLoop? original = _dragOriginalLoop;
+		CancelDrag();
 		if (original is not null
 			&& original != _loop)
 		{
@@ -461,5 +485,7 @@ public sealed class SampleWaveformControl : Control
 	{
 		_dragBoundary = null;
 		_dragOriginalLoop = null;
+		_dragAnchorFrame = null;
+		_rangeDragged = false;
 	}
 }
