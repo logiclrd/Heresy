@@ -378,8 +378,9 @@ public sealed class FmSynthSound : ISound
 		{
 			CompiledNode compiled =
 				_nodes[index];
-			double value = draining && compiled.Filter is null ? 0.0
-				: compiled.Definition switch
+			double value = draining && compiled.Definition is
+				(FmConstantNode or FmEnvelopeNode or FmOscillatorNode)
+				? 0.0 : compiled.Definition switch
 				{
 					FmConstantNode constant =>
 						constant.Value,
