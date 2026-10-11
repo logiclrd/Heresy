@@ -152,6 +152,44 @@ public sealed class FmRealtimeBiquadFastPathTests
 			"invalid biquad gain must leave upstream One-Pole history and settings untouched");
 	}
 
+
+	[Test]
+	public void ShelfSlopeGainCombinationRejectsIndividuallyInRangeInvalidTarget()
+	{
+		FilterDefinition definition = new((ObjectId)64U, "Shelf constraints", [
+			new FilterStageDefinition(1, "tpt", FilterKind.OnePole),
+			new FilterStageDefinition(2, "shelf", FilterKind.BiquadHighShelf),
+		]);
+		FilterInstance use = new(definition);
+		use.SetStageParameter(1, "CutoffHz", FilterParameterValue.FromNumber(100));
+		use.SetStageParameters(2, [
+			new("CutoffHz", FilterParameterValue.FromNumber(140)),
+			new("GainDb", FilterParameterValue.FromNumber(30)),
+		]);
+		FmSynthSound invalid = new(new FmSynthGraph([
+			new FmConstantNode(1, 0.5),
+			new FmConstantNode(2, 80),
+			new FmConstantNode(3, 2),
+			new FmFilterNode(4, 1, use, [
+				new FmFilterParameterConnection(1, FilterKind.OnePole,
+					0, "CutoffHz", 2),
+				new FmFilterParameterConnection(2, FilterKind.BiquadHighShelf,
+					0, "ShelfSlope", 3),
+			]),
+		], 4), new EmptyResolver());
+		FmSynthSound reference = new(new FmSynthGraph([
+			new FmConstantNode(1, 0.5),
+			new FmFilterNode(4, 1, use),
+		], 4), new EmptyResolver());
+		float[] a = new float[64];
+		float[] b = new float[64];
+		invalid.Render(Context(), invalid.CreateState(), 0, a.Length, a);
+		reference.Render(Context(), reference.CreateState(), 0, b.Length, b);
+		Assert.That(a, Is.EqualTo(b),
+			"30 dB gain plus slope 2 violates the RBJ shelf radicand; "
+			+ "the in-range inputs must not partly retune the other stage");
+	}
+
 	[Test]
 	public void RapidModulationWithUnchangedSecondBiquadPreservesInterpolation()
 	{
