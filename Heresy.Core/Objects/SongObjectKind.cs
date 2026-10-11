@@ -9,4 +9,5 @@ public enum SongObjectKind
 	Sequence,
 	Envelope,
 	FmSynth,
+	Filter,
 }
