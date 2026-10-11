@@ -33,7 +33,7 @@ public sealed class OnePoleFilterTests
 		Assert.That(unchanged, Is.EqualTo(new[] { 1f, 0f, 0f }));
 
 		FilterDefinition unimplemented = new((ObjectId)91U, "Pending", new[] {
-			new FilterStageDefinition(1, "stage1", FilterKind.AllPass),
+			new FilterStageDefinition(1, "stage1", FilterKind.FirNotch),
 		});
 		StreamingFilterChain pending = new(
 			new FilterChain(new[] { new FilterInstance(unimplemented) }),
