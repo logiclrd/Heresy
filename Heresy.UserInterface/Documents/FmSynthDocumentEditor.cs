@@ -5,6 +5,7 @@ using System.Linq;
 
 using Heresy.Core.Envelopes;
 using Heresy.Core.FmSynthesis;
+using Heresy.Core.Filters;
 using Heresy.Core.Objects;
 using Heresy.Core.Persistence;
 
@@ -89,6 +90,16 @@ public static class FmSynthDocumentEditor
 		if (selected.Length == 0)
 			return Array.Empty<FmSynthDefinition>();
 
+		ObjectId[] filterIds = selected.SelectMany(synth =>
+			synth.Graph.Nodes.OfType<FmFilterNode>())
+			.Select(filter => filter.Configuration?.DefinitionId ?? ObjectId.None)
+			.Where(id => !id.IsNone).Distinct().OrderBy(id => id.Value).ToArray();
+		foreach (ObjectId filterId in filterIds)
+			if (!source.Document.TryGet(filterId, out SongObject? target)
+				|| target is not FilterDefinition)
+				throw new InvalidOperationException(
+					$"FM synth import requires Filter {filterId.Value}.");
+
 		ObjectId[] envelopeIds =
 			selected
 				.SelectMany(synth =>
@@ -140,6 +151,7 @@ public static class FmSynthDocumentEditor
 				if (node is not FmConstantNode
 					&& node is not FmOscillatorNode
 					&& node is not FmEnvelopeNode
+					&& node is not FmFilterNode
 					&& node is not FmOperatorNode)
 				{
 					throw new NotSupportedException(
@@ -148,6 +160,11 @@ public static class FmSynthDocumentEditor
 			}
 		}
 
+		IReadOnlyDictionary<ObjectId, ObjectId> filterIdMap =
+			FilterDocumentImport.ImportFromSong(workspace,
+				new SongFilterImportSource(source.Path, source.Document,
+					source.Document.Objects.Values.OfType<FilterDefinition>().ToArray()),
+				filterIds);
 		Dictionary<ObjectId, ObjectId> envelopeIdMap = [];
 		foreach (ObjectId sourceId in envelopeIds)
 		{
@@ -177,7 +194,7 @@ public static class FmSynthDocumentEditor
 					CloneSynth(
 						synth,
 						synthIdMap[synth.Id],
-						envelopeIdMap))
+						envelopeIdMap, filterIdMap, workspace.Document))
 				.ToArray();
 
 		foreach (EnvelopeDefinition envelope in importedEnvelopes)
@@ -279,6 +296,41 @@ public static class FmSynthDocumentEditor
 		return id;
 	}
 
+	public static int AddFilterNode(
+		DocumentWorkspace workspace, FmSynthDefinition synth,
+		double x, double y)
+	{
+		int id = NextNodeId(ValidateSynth(workspace, synth));
+		AddNode(workspace, synth, new FmFilterNode(id), x, y);
+		return id;
+	}
+
+	public static void SetFilterConfiguration(
+		DocumentWorkspace workspace, FmSynthDefinition synth,
+		int nodeId, FilterInstance? configuration)
+	{
+		FmFilterNode current = RequireNode(synth, nodeId) as FmFilterNode
+			?? throw new InvalidOperationException("FM node is not a Filter.");
+		FilterInstance? previous = current.Configuration;
+		if (configuration is not null)
+			ValidateFilter(workspace.Document, configuration.DefinitionId);
+		// A new definition is a new selection, not a reuse of the old
+		// definition's parameter bindings (even when stage IDs coincide).
+		FmFilterNode next = new(nodeId, current.AudioInputNodeId,
+			configuration, previous?.DefinitionId == configuration?.DefinitionId
+				? current.Connections : null, current.TailSeconds);
+		UpdateNode(workspace, synth, next);
+	}
+
+	private static void ValidateFilter(
+		SongDocument document, ObjectId filterId)
+	{
+		if (!document.TryGet(filterId, out SongObject? found)
+			|| found is not FilterDefinition)
+			throw new InvalidOperationException(
+				$"Filter {filterId.Value} is not a live shared definition.");
+	}
+
 	public static int AddOperatorNode(
 		DocumentWorkspace workspace,
 		FmSynthDefinition synth,
@@ -345,6 +397,15 @@ public static class FmSynthDocumentEditor
 						oscillator.Constant);
 				break;
 
+			case FmFilterNode filter
+				when targetInputIndex >= 0
+					&& targetInputIndex < filter.GetPorts().Count:
+				FmFilterInputPort port = filter.GetPorts()[targetInputIndex];
+				if (port.SourceNodeId == sourceNodeId)
+					return;
+				replacement = filter.WithParameterConnection(port, sourceNodeId);
+				break;
+
 			case FmOperatorNode operation
 				when targetInputIndex >= 0
 					&& targetInputIndex <= operation.InputNodeIds.Count:
@@ -396,6 +457,9 @@ public static class FmSynthDocumentEditor
 				workspace.Document,
 				envelope.EnvelopeId);
 		}
+		if (replacement is FmFilterNode filter
+			&& filter.Configuration is FilterInstance config)
+			ValidateFilter(workspace.Document, config.DefinitionId);
 
 		FmSynthNode[] nodes =
 			synth.Graph.Nodes
@@ -532,6 +596,14 @@ public static class FmSynthDocumentEditor
 
 			FmOperatorNode operation =>
 				RemoveOperatorInputs(operation, removedNodeId),
+
+			FmFilterNode filter =>
+				new FmFilterNode(filter.Id,
+					filter.AudioInputNodeId == removedNodeId
+						? null : filter.AudioInputNodeId,
+					filter.Configuration,
+					filter.Connections.Where(c => c.SourceNodeId != removedNodeId),
+					filter.TailSeconds),
 
 			_ => throw new NotSupportedException(
 				$"Cannot disconnect a source from FM node type {node.GetType().Name}."),
@@ -690,14 +762,16 @@ public static class FmSynthDocumentEditor
 	private static FmSynthDefinition CloneSynth(
 		FmSynthDefinition source,
 		ObjectId targetId,
-		IReadOnlyDictionary<ObjectId, ObjectId> envelopeIdMap)
+		IReadOnlyDictionary<ObjectId, ObjectId> envelopeIdMap,
+		IReadOnlyDictionary<ObjectId, ObjectId> filterIdMap,
+		SongDocument targetDocument)
 	{
 		FmSynthNode[] nodes =
 			source.Graph.Nodes
 				.Select(node =>
 					CloneNode(
 						node,
-						envelopeIdMap))
+						envelopeIdMap, filterIdMap, targetDocument))
 				.ToArray();
 		FmSynthDefinition result =
 			new(
@@ -724,7 +798,9 @@ public static class FmSynthDocumentEditor
 
 	private static FmSynthNode CloneNode(
 		FmSynthNode node,
-		IReadOnlyDictionary<ObjectId, ObjectId> envelopeIdMap)
+		IReadOnlyDictionary<ObjectId, ObjectId> envelopeIdMap,
+		IReadOnlyDictionary<ObjectId, ObjectId> filterIdMap,
+		SongDocument targetDocument)
 		=> node switch
 		{
 			FmConstantNode constant =>
@@ -752,6 +828,13 @@ public static class FmSynthDocumentEditor
 					operation.Id,
 					operation.Operation,
 					operation.InputNodeIds),
+			FmFilterNode filter =>
+				new FmFilterNode(filter.Id, filter.AudioInputNodeId,
+					filter.Configuration is FilterInstance instance
+						? SongDocumentJson.DeserializeFilterInstance(
+							SongDocumentJson.SerializeFilterInstance(instance),
+							targetDocument, filterIdMap) : null,
+					filter.Connections, filter.TailSeconds),
 			_ => throw new NotSupportedException(
 				$"FM synth import does not support node type {node.GetType().Name}."),
 		};
@@ -880,6 +963,9 @@ public static class FmSynthDocumentEditor
 			graph.Nodes.FirstOrDefault(
 				node =>
 					node.Id == targetNodeId);
+		if (target is FmFilterNode filter)
+			return filter.GetPorts().Any(port => port.Index == targetInputIndex
+				&& port.SourceNodeId == sourceNodeId);
 		return target is not null
 			&& targetInputIndex >= 0
 			&& targetInputIndex < target.InputNodeIds.Count

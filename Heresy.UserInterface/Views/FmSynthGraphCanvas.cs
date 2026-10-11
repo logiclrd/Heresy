@@ -184,23 +184,22 @@ public sealed class FmSynthGraphCanvas : UserControl
 			{
 				continue;
 			}
-			FmSynthLayoutRect targetRect = ToRect(targetPosition);
-			for (int inputIndex = 0;
-				inputIndex < target.InputNodeIds.Count;
-				inputIndex++)
+			FmSynthLayoutRect targetRect = ToRect(targetPosition, target);
+			foreach ((int inputIndex, int sourceId) in
+				FmSynthConnectionPorts.GetConnectedInputs(target))
 			{
-				int sourceId = target.InputNodeIds[inputIndex];
 				if (!_positions.TryGetValue(
 					sourceId,
 					out FmSynthNodePosition sourcePosition))
 				{
 					continue;
 				}
-				FmSynthLayoutRect sourceRect = ToRect(sourcePosition);
+				FmSynthNode sourceNode = nodes.First(node => node.Id == sourceId);
+				FmSynthLayoutRect sourceRect = ToRect(sourcePosition, sourceNode);
 				FmSynthLayoutRect[] obstacles = nodes
 					.Where(node => node.Id != sourceId
 						&& node.Id != target.Id)
-					.Select(node => ToRect(_positions[node.Id]))
+					.Select(node => ToRect(_positions[node.Id], node))
 					.ToArray();
 				FmSynthConnectionRoutingHint? hint =
 					_synth.ConnectionRoutingHints.FirstOrDefault(candidate =>
@@ -219,8 +218,6 @@ public sealed class FmSynthGraphCanvas : UserControl
 						drag.Waypoints, drag.Index, drag.CurrentPoint);
 				}
 
-				FmSynthNode sourceNode =
-					nodes.First(node => node.Id == sourceId);
 				FmSynthRoutePoint startPort =
 					FmSynthConnectionPorts.GetPorts(
 						sourceNode, sourceRect)[0].Center;
@@ -436,7 +433,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 			}
 
 			foreach (FmSynthConnectionPort port in
-				FmSynthConnectionPorts.GetPorts(node, ToRect(position)))
+				FmSynthConnectionPorts.GetPorts(node, ToRect(position, node)))
 			{
 				bool compatible =
 					_dragPort is not FmSynthConnectionPort dragging
@@ -472,7 +469,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 				&& FmSynthConnectionPorts.HitTest(
 					FmSynthConnectionPorts.GetPorts(
 						node,
-						ToRect(position)),
+						ToRect(position, node)),
 					new FmSynthRoutePoint(pointer.X, pointer.Y))
 				is FmSynthConnectionPort port)
 			{
@@ -488,7 +485,8 @@ public sealed class FmSynthGraphCanvas : UserControl
 		const double borderHoverWidth = 12.0;
 		foreach ((int nodeId, FmSynthNodePosition position) in _positions)
 		{
-			FmSynthLayoutRect rect = ToRect(position);
+			FmSynthNode node = _synth.Graph.Nodes.First(item => item.Id == nodeId);
+			FmSynthLayoutRect rect = ToRect(position, node);
 			if (pointer.X < rect.Left - borderHoverWidth
 				|| pointer.X > rect.Right + borderHoverWidth
 				|| pointer.Y < rect.Top - borderHoverWidth
@@ -587,7 +585,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 			new()
 			{
 				Width = NodeWidth,
-				Height = NodeHeight,
+				Height = FmSynthConnectionPorts.GetNodeHeight(node),
 				CornerRadius = new CornerRadius(5),
 				BorderThickness = new Thickness(2),
 				Background =
@@ -833,12 +831,12 @@ public sealed class FmSynthGraphCanvas : UserControl
 			80.0 + ((index / 4) * 130.0));
 
 	private static FmSynthLayoutRect ToRect(
-		FmSynthNodePosition position)
+		FmSynthNodePosition position, FmSynthNode node)
 		=> new(
 			position.X,
 			position.Y,
 			NodeWidth,
-			NodeHeight);
+			FmSynthConnectionPorts.GetNodeHeight(node));
 
 	private static string NodeTypeName(
 		FmSynthNode node)
@@ -847,6 +845,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 			FmConstantNode => "Constant",
 			FmOscillatorNode => "Oscillator",
 			FmEnvelopeNode => "Envelope",
+			FmFilterNode => "Filter",
 			FmOperatorNode => "Operator",
 			_ => node.GetType().Name,
 		};
@@ -864,6 +863,10 @@ public sealed class FmSynthGraphCanvas : UserControl
 				+ $"{oscillator.FrequencyHz.ToString("0.###", CultureInfo.InvariantCulture)} Hz",
 			FmEnvelopeNode envelope =>
 				$"Envelope <{envelope.EnvelopeId.Value}>",
+			FmFilterNode filter =>
+				filter.Configuration is null ? "Input → bypass (unassigned)"
+					: $"Filter <{filter.Configuration.DefinitionId.Value}>, "
+						+ $"{filter.GetPorts().Count - 1} modulation ports",
 			FmOperatorNode op =>
 				$"{op.Operation}: "
 				+ string.Join(

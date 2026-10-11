@@ -276,8 +276,24 @@ public static class SongDocumentJson
 
 		SongDocument document = new();
 
+		// Decode shared Filter definitions first: FM Filter uses resolve by
+		// stable ObjectId, regardless of the serialized object table order.
 		foreach ((string key, JsonNode? value) in objects)
 		{
+			if (value is JsonObject filterNode
+				&& RequiredString(filterNode, "type") == "filter")
+			{
+				document.RestoreObject(FilterJson.ReadDefinition(
+					ParseObjectIdKey(key), RequiredString(filterNode, "name"),
+					filterNode));
+			}
+		}
+
+		foreach ((string key, JsonNode? value) in objects)
+		{
+			if (value is JsonObject knownNode
+				&& RequiredString(knownNode, "type") == "filter")
+				continue;
 			ObjectId id = ParseObjectIdKey(key);
 			if (id.IsNone)
 				throw new InvalidDataException("Song objects may not use ObjectId 0.");
@@ -285,7 +301,7 @@ public static class SongDocumentJson
 				throw new InvalidDataException($"Object {key} must be a JSON object.");
 
 			document.RestoreObject(
-				ReadSongObject(id, objectNode, assetPathResolver));
+				ReadSongObject(id, objectNode, assetPathResolver, document));
 		}
 
 		foreach ((string key, JsonNode? value) in tombstones)
@@ -592,7 +608,8 @@ public static class SongDocumentJson
 	private static SongObject ReadSongObject(
 		ObjectId id,
 		JsonObject node,
-		Func<string, string> assetPathResolver)
+		Func<string, string> assetPathResolver,
+		SongDocument document)
 	{
 		string type = RequiredString(node, "type");
 		string name = RequiredString(node, "name");
@@ -650,7 +667,7 @@ public static class SongDocumentJson
 					id,
 					name,
 					RequiredObject(node, "graph"),
-					RequiredObject(node, "editorLayout"));
+					RequiredObject(node, "editorLayout"), document);
 
 			case "scriptInstrument":
 				{
@@ -839,6 +856,28 @@ public static class SongDocumentJson
 					nodeJson["envelopeId"] = envelope.EnvelopeId.Value;
 					break;
 
+				case FmFilterNode filter:
+					nodeJson["type"] = "filter";
+					nodeJson["tailSeconds"] = filter.TailSeconds;
+					if (filter.AudioInputNodeId is int audio)
+						nodeJson["audioInputNodeId"] = audio;
+					if (filter.Configuration is FilterInstance config)
+						nodeJson["configuration"] = FilterJson.WriteInstance(config);
+					JsonArray connections = [];
+					foreach (FmFilterParameterConnection wire in filter.Connections)
+					{
+						connections.Add(new JsonObject
+						{
+							["stageId"] = wire.StageId,
+							["kind"] = wire.Kind.ToString(),
+							["generation"] = wire.Generation,
+							["parameterName"] = wire.ParameterName,
+							["sourceNodeId"] = wire.SourceNodeId,
+						});
+					}
+					nodeJson["parameterConnections"] = connections;
+					break;
+
 				case FmOperatorNode op:
 					nodeJson["type"] = "operator";
 					nodeJson["operation"] =
@@ -912,11 +951,41 @@ public static class SongDocumentJson
 		};
 	}
 
+	private static FmFilterNode ReadFmFilterNode(
+		int nodeId, JsonObject node, SongDocument document)
+	{
+		FilterInstance? configuration = node["configuration"] is JsonObject item
+			? FilterJson.ReadInstance(item, document) : null;
+		List<FmFilterParameterConnection> connections = [];
+		foreach (JsonNode? raw in RequiredArray(node, "parameterConnections"))
+		{
+			if (raw is not JsonObject wire)
+				throw new InvalidDataException("FM Filter connections must be objects.");
+			string kindText = RequiredString(wire, "kind");
+			if (!Enum.TryParse(kindText, false, out FilterKind kind)
+				|| !Enum.IsDefined(kind)
+				|| kindText != kind.ToString())
+				throw new InvalidDataException("FM Filter wire has unknown stage kind.");
+			connections.Add(new FmFilterParameterConnection(
+				RequiredInt32(wire, "stageId"),
+				kind,
+				wire["generation"]?.GetValue<long>()
+					?? throw new InvalidDataException("Missing FM Filter generation."),
+				RequiredString(wire, "parameterName"),
+				RequiredInt32(wire, "sourceNodeId")));
+		}
+		return new FmFilterNode(nodeId,
+			node["audioInputNodeId"]?.GetValue<int>(),
+			configuration, connections,
+			node["tailSeconds"]?.GetValue<double>() ?? 0);
+	}
+
 	private static FmSynthDefinition ReadFmSynthDefinition(
 		ObjectId id,
 		string name,
 		JsonObject graphNode,
-		JsonObject editorLayout)
+		JsonObject editorLayout,
+		SongDocument document)
 	{
 		List<FmSynthNode> nodes = [];
 		foreach (JsonNode? rawNode in RequiredArray(graphNode, "nodes"))
@@ -954,6 +1023,7 @@ public static class SongDocumentJson
 								RequiredUInt32(
 									node,
 									"envelopeId"))),
+					"filter" => ReadFmFilterNode(nodeId, node, document),
 					"operator" =>
 						new FmOperatorNode(
 							nodeId,

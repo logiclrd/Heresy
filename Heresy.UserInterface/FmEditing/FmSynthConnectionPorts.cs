@@ -36,6 +36,25 @@ public static class FmSynthConnectionPorts
 {
 	public const double HitRadius = 9.0;
 
+	public static double GetNodeHeight(FmSynthNode node) =>
+		node is FmFilterNode filter
+			? Math.Max(72.0, 22.0 * (filter.GetPorts().Count + 1))
+			: 72.0;
+
+	/// <summary>Actual wired inputs with the correct stable port ordinal.
+	/// A Filter's disconnected and invalidated parameter ports cannot
+	/// shift another port into their slot.</summary>
+	public static IReadOnlyList<(int Index, int SourceId)> GetConnectedInputs(
+		FmSynthNode node)
+	{
+		if (node is FmFilterNode filter)
+			return filter.GetPorts()
+				.Where(port => port.SourceNodeId.HasValue)
+				.Select(port => (port.Index, port.SourceNodeId!.Value))
+				.ToArray();
+		return node.InputNodeIds.Select((id, index) => (index, id)).ToArray();
+	}
+
 	public static FmSynthConnectionPort[] GetPorts(
 		FmSynthNode node,
 		FmSynthLayoutRect bounds)
@@ -45,6 +64,7 @@ public static class FmSynthConnectionPorts
 		int inputCount = node switch
 		{
 			FmOscillatorNode => 1,
+			FmFilterNode filter => filter.GetPorts().Count,
 			FmOperatorNode operation => operation.InputNodeIds.Count + 1,
 			_ => 0,
 		};

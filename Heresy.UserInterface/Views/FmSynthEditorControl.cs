@@ -13,6 +13,7 @@ using Avalonia.Media;
 
 using Heresy.Core.Envelopes;
 using Heresy.Core.FmSynthesis;
+using Heresy.Core.Filters;
 using Heresy.Core.Objects;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.Dialogs;
@@ -172,6 +173,7 @@ public sealed class FmSynthEditorControl : UserControl
 			Button(
 				"+ Operator",
 				AddOperator));
+		addButtons.Children.Add(Button("+ Filter", AddFilter));
 
 		StackPanel top = new();
 		top.Children.Add(header);
@@ -465,6 +467,21 @@ public sealed class FmSynthEditorControl : UserControl
 		}
 	}
 
+	private void AddFilter()
+	{
+		try
+		{
+			(double x, double y) = NextSpawnPosition();
+			int id = FmSynthDocumentEditor.AddFilterNode(
+				_workspace, _synth, x, y);
+			AfterGraphChange(id, $"Added unassigned FM Filter node #{id}");
+		}
+		catch (Exception ex)
+		{
+			_message.Text = ex.Message;
+		}
+	}
+
 	private void AddOperator()
 	{
 		try
@@ -668,6 +685,10 @@ public sealed class FmSynthEditorControl : UserControl
 			case FmEnvelopeNode envelope:
 				AddEnvelopeInspector(
 					envelope);
+				break;
+
+			case FmFilterNode filter:
+				AddFilterInspector(filter);
 				break;
 
 			case FmOperatorNode op:
@@ -997,6 +1018,200 @@ public sealed class FmSynthEditorControl : UserControl
 				? null
 				: new FmEnvelopeNode(nodeId, envelopeId);
 		});
+	}
+
+	private void AddFilterInspector(FmFilterNode node)
+	{
+		ComboBoxItem newItem = new()
+		{
+			Content = new TextBlock
+			{
+				Text = "New...",
+				FontStyle = FontStyle.Italic,
+			},
+		};
+		ComboBoxItem noneItem = new() { Content = "(None)" };
+		FilterChoice[] definitions = _workspace.Document.Objects.Values
+			.OfType<FilterDefinition>()
+			.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+			.ThenBy(item => item.Id.Value)
+			.Select(item => new FilterChoice(
+				item.Id, $"{item.Name} <{item.Id.Value}>"))
+			.ToArray();
+		List<object> options = [newItem, noneItem];
+		options.AddRange(definitions);
+		ComboBox selected = new()
+		{
+			ItemsSource = options,
+			SelectedItem = node.Configuration is FilterInstance current
+				? definitions.FirstOrDefault(x => x.Id == current.DefinitionId)
+				: null,
+			MinWidth = 235,
+		};
+		Button editDefinition = Button("Edit Definition...", () =>
+		{
+			try
+			{
+				FmFilterNode active = (FmFilterNode)CurrentNode(node.Id);
+				if (active.Configuration is not FilterInstance configuration)
+					return;
+				Window? owner = TopLevel.GetTopLevel(this) as Window;
+				if (owner is null)
+					throw new InvalidOperationException(
+						"Open the FM editor in a window to edit a definition.");
+				Window popup = new()
+				{
+					Title = $"Edit Filter — {configuration.Definition.Name}",
+					Width = 950,
+					Height = 690,
+				};
+				popup.Content = new FilterEditorControl(
+					_workspace, configuration.Definition,
+					() => popup.Close(), message =>
+					{
+						_message.Text = message;
+						_changed(message);
+						_canvas.Refresh();
+						_canvas.SetSelectedNode(_selectedNodeId);
+					});
+				popup.Closed += (_, _) =>
+				{
+					_canvas.Refresh();
+					RebuildInspector();
+				};
+				popup.Show(owner);
+			}
+			catch (Exception ex)
+			{
+				_message.Text = ex.Message;
+			}
+		});
+		editDefinition.IsEnabled = node.Configuration is not null;
+
+		StackPanel selector = new()
+		{
+			Orientation = Orientation.Horizontal,
+			Spacing = 6,
+		};
+		selector.Children.Add(selected);
+		selector.Children.Add(editDefinition);
+		AddField("Shared Filter definition", selector);
+		bool choosing = false;
+		selected.SelectionChanged += async (_, _) =>
+		{
+			if (choosing || selected.SelectedItem is not object selection)
+				return;
+			choosing = true;
+			try
+			{
+				if (ReferenceEquals(selection, newItem))
+				{
+					Window? owner = TopLevel.GetTopLevel(this) as Window;
+					if (owner is null)
+						throw new InvalidOperationException(
+							"Open the FM editor in a window to create a Filter.");
+					TextPromptDialog prompt = new(
+						"New Filter", "Filter name:", "New Filter");
+					string? name = await prompt.ShowDialog<string?>(owner);
+					if (name is not null)
+					{
+						FilterDefinition created = FilterDocumentEditor.CreateFilter(
+							_workspace, name);
+						FmSynthDocumentEditor.SetFilterConfiguration(
+							_workspace, _synth, node.Id, new FilterInstance(created));
+						AfterGraphChange(node.Id,
+							$"Created and assigned Filter {created.Name}");
+						return;
+					}
+				}
+				else
+				{
+					FilterInstance? proposed = ReferenceEquals(selection, noneItem)
+						? null
+						: new FilterInstance(
+							(FilterDefinition)_workspace.Document.Objects[
+								((FilterChoice)selection).Id]);
+					FmSynthDocumentEditor.SetFilterConfiguration(
+						_workspace, _synth, node.Id, proposed);
+					AfterGraphChange(node.Id, "Updated FM Filter selection");
+					return;
+				}
+			}
+			catch (Exception ex)
+			{
+				_message.Text = ex.Message;
+			}
+			finally { choosing = false; }
+
+			choosing = true;
+			try
+			{
+				FilterInstance? committed =
+					((FmFilterNode)CurrentNode(node.Id)).Configuration;
+				selected.SelectedItem = committed is null ? null
+					: definitions.FirstOrDefault(x =>
+						x.Id == committed.DefinitionId);
+			}
+			finally { choosing = false; }
+		};
+
+		TextBox tail = NumberBox(node.TailSeconds);
+		AddField("Tail (seconds, nonnegative)", tail);
+		BindParameterText(tail, value =>
+		{
+			double seconds = ParseDouble(value, "Tail");
+			UpdateParameter(node.Id, live =>
+			{
+				FmFilterNode filter = (FmFilterNode)live;
+				return filter.TailSeconds == seconds ? null
+					: filter.WithTail(seconds);
+			});
+		});
+		_inspector.Children.Add(new TextBlock
+		{
+			Text = "Audio enters the Input port. Only nonstructural numeric "
+				+ "stage parameters have modulation ports. Disconnected ports "
+				+ "use the per-use static configuration. Until FM Filter "
+				+ "rendering is implemented, this node passes audio unchanged; "
+				+ "Tail is stored but not yet applied.",
+			TextWrapping = TextWrapping.Wrap,
+		});
+		if (node.Configuration is not FilterInstance configured)
+			return;
+
+		foreach (ConfiguredFilterStage stage in configured.GetStages())
+		{
+			FilterParameterDescriptor[] inputs = stage.Parameters.Parameters
+				.Where(descriptor => descriptor.IsModulatable).ToArray();
+			if (inputs.Length > 0)
+				_inspector.Children.Add(new TextBlock
+				{
+					Text = $"{stage.Name} (stage #{stage.StageId}): "
+						+ string.Join(", ", inputs.Select(x => x.Name)),
+					TextWrapping = TextWrapping.Wrap,
+				});
+		}
+		_inspector.Children.Add(new Separator());
+		_inspector.Children.Add(new TextBlock
+		{
+			Text = "This node's independent Filter parameter overrides",
+			FontWeight = FontWeight.SemiBold,
+		});
+		FilterInstanceEditSession session = new(
+			() => ((FmFilterNode)CurrentNode(node.Id)).Configuration
+				?? throw new InvalidOperationException(
+					"FM Filter configuration has been cleared."),
+			proposed =>
+			{
+				UpdateParameter(node.Id, current =>
+					((FmFilterNode)current).WithConfiguration(proposed));
+			});
+		_inspector.Children.Add(new FilterInstanceEditorControl(
+			session, message =>
+			{
+				_message.Text = message;
+				_changed(message);
+			}));
 	}
 
 	private void AddOperatorInspector(FmOperatorNode node)
@@ -1352,6 +1567,7 @@ public sealed class FmSynthEditorControl : UserControl
 			FmConstantNode => "Constant",
 			FmOscillatorNode => "Oscillator",
 			FmEnvelopeNode => "Envelope",
+			FmFilterNode => "Filter",
 			FmOperatorNode => "Operator",
 			_ => node.GetType().Name,
 		};
@@ -1362,6 +1578,11 @@ public sealed class FmSynthEditorControl : UserControl
 	{
 		public override string ToString()
 			=> DisplayName;
+	}
+
+	private sealed record FilterChoice(ObjectId Id, string DisplayName)
+	{
+		public override string ToString() => DisplayName;
 	}
 
 	private sealed record EnvelopeChoice(

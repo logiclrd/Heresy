@@ -167,6 +167,10 @@ public sealed class FmSynthSound : ISound
 				silentFrom[index] = node.Definition switch
 				{
 					FmEnvelopeNode => 0L,
+					// Authoring milestone: Filter DSP and Tail semantics follow
+					// in the dedicated FM rendering milestone.
+					FmFilterNode filter => filter.AudioInputNodeId.HasValue
+						? silentFrom[node.InputIndices[0]] : 0L,
 					FmOperatorNode op => GetOperatorSilenceEnd(
 						op.Operation, node.InputIndices, silentFrom),
 					_ => null,
@@ -359,6 +363,13 @@ public sealed class FmSynthSound : ISound
 							frame,
 							context.Configuration.SampleRate,
 							noteOffFrame),
+
+					// Until the FM rendering milestone the Filter node is
+					// an explicit neutral pass-through. A disconnected audio
+					// Input is silent regardless of modulation-only wires.
+					FmFilterNode filter =>
+						filter.AudioInputNodeId.HasValue
+							? state.Values[compiled.InputIndices[0]] : 0.0,
 
 					FmOperatorNode operation =>
 						EvaluateOperator(
