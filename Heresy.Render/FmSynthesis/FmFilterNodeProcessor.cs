@@ -131,7 +131,7 @@ internal sealed class FmFilterNodeProcessor
 	/// atomically. Invalid or nonfinite modulation leaves the previously
 	/// committed coefficients and histories untouched.
 	/// </summary>
-	public float Process(State state, IReadOnlyList<double> nodeValues,
+	public float Process(State state, double[] nodeValues,
 		bool stopExcitation)
 	{
 		ArgumentNullException.ThrowIfNull(state);
@@ -162,7 +162,7 @@ internal sealed class FmFilterNodeProcessor
 		return sample[0];
 	}
 
-	private void Retune(State state, IReadOnlyList<double> sourceValues)
+	private void Retune(State state, double[] sourceValues)
 	{
 		long debugBeforeFastStart = GC.GetAllocatedBytesForCurrentThread();
 		bool dirty = false;
