@@ -7,8 +7,9 @@ namespace Heresy.Render.Filters;
 /// <summary>
 /// Seven Audio EQ biquad responses. Designs use normalized RBJ audio-EQ
 /// cookbook coefficients; per-channel DSP uses transposed direct form II.
-/// All trigonometry, pole validation and coefficient design are performed
-/// during preparation, never in the PCM render loop.
+/// Coefficients and stability are designed in static preparation or in
+/// atomic realtime-control preflight, before each affected frame's DSP.
+/// The stage's Process function never allocates or rebuilds coefficients.
 /// </summary>
 public sealed class BiquadFilterStageFactory : IStreamingFilterStageFactory
 {
