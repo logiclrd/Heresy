@@ -38,6 +38,7 @@ public sealed class FilterEditorControl : UserControl
 	private readonly Dictionary<string, string> _loadedTexts =
 		new(StringComparer.OrdinalIgnoreCase);
 	private FilterStageDefinition? _baseline;
+	private FilterStageDefinition[] _loadedStages = [];
 	private FilterKind _loadedKind;
 	private string _loadedName = "";
 	private bool _loading;
@@ -268,6 +269,7 @@ public sealed class FilterEditorControl : UserControl
 		try
 		{
 			_baseline = stage;
+			_loadedStages = _filter.Stages.ToArray();
 			_loadedName = stage?.Name ?? "";
 			_name.Text = _loadedName;
 			_loadedKind = stage?.Kind ?? FilterKind.OnePole;
@@ -386,6 +388,9 @@ public sealed class FilterEditorControl : UserControl
 			if (_baseline is null || SelectedKind is not FilterKind kind)
 				throw new InvalidOperationException("Select a Filter stage and type.");
 			int stageId = _baseline.StageId;
+			if (!IsBaselineCurrent())
+				throw new InvalidOperationException(
+					"The shared Filter definition changed in another editor. Reload before applying.");
 			// Parse all fields before changing the definition. An invalid field
 			// must never commit any earlier fields from this draft.
 			List<KeyValuePair<string, FilterParameterValue>> defaults = [];
@@ -497,10 +502,11 @@ public sealed class FilterEditorControl : UserControl
 		=> _workspace.Document.Changed -= OnDocumentChanged;
 
 	private bool IsBaselineCurrent()
-		=> _baseline is null ||
-			_filter.Stages.Any(stage =>
-				stage.StageId == _baseline.StageId
-					&& ReferenceEquals(stage, _baseline));
+		=> _baseline is null
+			|| (_filter.Stages.SequenceEqual(_loadedStages)
+				&& _filter.Stages.Any(stage =>
+					stage.StageId == _baseline.StageId
+						&& ReferenceEquals(stage, _baseline)));
 
 	private void OnDocumentChanged(object? sender, SongDocumentChangedEventArgs e)
 	{
