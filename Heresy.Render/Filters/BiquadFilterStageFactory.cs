@@ -32,28 +32,76 @@ public sealed class BiquadFilterStageFactory : IStreamingFilterStageFactory
 			throw new ArgumentOutOfRangeException(nameof(sampleRate));
 
 		double cutoff = stage.Parameters["CutoffHz"].NumericValue;
-		if (!double.IsFinite(cutoff) || cutoff <= 0 || cutoff >= sampleRate * 0.5)
+		double q = stage.Parameters.TryGetValue("Q", out FilterParameterValue? quality)
+			? quality.NumericValue : 1;
+		double shelfSlope = stage.Parameters.TryGetValue(
+			"ShelfSlope", out FilterParameterValue? slope)
+			? slope.NumericValue : 1;
+		double gainDb = stage.Parameters.TryGetValue(
+			"GainDb", out FilterParameterValue? gain)
+			? gain.NumericValue : 0;
+		if (!TryDesign(stage.Kind, cutoff, q, shelfSlope, gainDb,
+			sampleRate, out Coefficients coefficients))
 			throw new ArgumentOutOfRangeException(nameof(stage),
-				$"Biquad cutoff {cutoff} Hz must be strictly below Nyquist "
-				+ $"({sampleRate * 0.5} Hz).");
+				"Biquad parameter values must admit stable, finite audio-EQ "
+				+ "coefficients with CutoffHz strictly below Nyquist.");
 
+		// Every stable IIR response is formally infinite. Use a generous
+		// -400 dB pole decay budget for unit impulse excitation, plus two
+		// samples, bounded by the chain's maximumTailSeconds allowance.
+		double rootRadius = PoleRadius(coefficients);
+		double frames = rootRadius == 0
+			? 2
+			: Math.Ceiling(Math.Log(1e-20) / Math.Log(rootRadius)) + 2;
+		int tail = !double.IsFinite(frames) || frames >= int.MaxValue
+			? int.MaxValue
+			: Math.Max(2, (int)frames);
+		return new BiquadPlan(stage.Kind, coefficients, tail);
+	}
+
+	public static bool IsBiquad(FilterKind kind)
+		=> kind is FilterKind.BiquadLowPass
+			or FilterKind.BiquadHighPass
+			or FilterKind.BiquadLowShelf
+			or FilterKind.BiquadHighShelf
+			or FilterKind.BiquadPeaking
+			or FilterKind.BiquadBandPass
+			or FilterKind.BiquadNotch;
+
+	private static bool IsShelf(FilterKind kind)
+		=> kind is FilterKind.BiquadLowShelf or FilterKind.BiquadHighShelf;
+
+	/// <summary>
+	/// Common RBJ design shared by immutable plans and the realtime
+	/// preflight. No allocations or exceptions for invalid modulation.
+	/// </summary>
+	private static bool TryDesign(FilterKind kind, double cutoff,
+		double q, double slope, double gainDb, int sampleRate,
+		out Coefficients coefficients)
+	{
+		coefficients = default;
+		if (!IsBiquad(kind) || sampleRate <= 0
+			|| !double.IsFinite(cutoff) || cutoff < 1 || cutoff > 20000
+			|| cutoff >= sampleRate * 0.5
+			|| (!IsShelf(kind) && (!double.IsFinite(q) || q < 0.1 || q > 20))
+			|| (IsShelf(kind) && (!double.IsFinite(slope)
+				|| slope < 0.1 || slope > 2))
+			|| (kind is FilterKind.BiquadPeaking
+				or FilterKind.BiquadLowShelf or FilterKind.BiquadHighShelf)
+				&& (!double.IsFinite(gainDb) || gainDb < -36 || gainDb > 36))
+			return false;
 		double omega = 2 * Math.PI * cutoff / sampleRate;
 		double sine = Math.Sin(omega);
 		double cosine = Math.Cos(omega);
-		double a = stage.Parameters.TryGetValue("GainDb", out FilterParameterValue? gain)
-			? Math.Pow(10, gain.NumericValue / 40.0)
-			: 1;
+		double a = Math.Pow(10, gainDb / 40.0);
 		double alpha;
-		if (stage.Parameters.TryGetValue("Q", out FilterParameterValue? quality))
-			alpha = sine / (2 * quality.NumericValue);
+		if (!IsShelf(kind))
+			alpha = sine / (2 * q);
 		else
 		{
-			double slope = stage.Parameters["ShelfSlope"].NumericValue;
 			double radicand = (a + 1 / a) * (1 / slope - 1) + 2;
 			if (!(radicand > 0) || !double.IsFinite(radicand))
-				throw new ArgumentOutOfRangeException(nameof(stage),
-					"ShelfSlope and GainDb combination does not admit a "
-					+ "stable Audio EQ shelving response.");
+				return false;
 			alpha = 0.5 * sine * Math.Sqrt(radicand);
 		}
 
@@ -64,7 +112,7 @@ public sealed class BiquadFilterStageFactory : IStreamingFilterStageFactory
 		double a1;
 		double a2;
 		double twoRootAAlpha = 2 * Math.Sqrt(a) * alpha;
-		switch (stage.Kind)
+		switch (kind)
 		{
 			case FilterKind.BiquadLowPass:
 				b0 = (1 - cosine) / 2;
@@ -125,46 +173,22 @@ public sealed class BiquadFilterStageFactory : IStreamingFilterStageFactory
 				a2 = (a + 1) - (a - 1) * cosine - twoRootAAlpha;
 				break;
 			default:
-				throw new ArgumentOutOfRangeException(nameof(stage));
+				return false;
 		}
 
-		Coefficients coefficients = new(
+		coefficients = new(
 			b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0);
-		ValidateCoefficients(coefficients);
-
-		// Every stable IIR response is formally infinite. Use a generous
-		// -400 dB pole decay budget for unit impulse excitation, plus two
-		// samples, bounded by the chain's maximumTailSeconds allowance.
-		double rootRadius = PoleRadius(coefficients);
-		double frames = rootRadius == 0
-			? 2
-			: Math.Ceiling(Math.Log(1e-20) / Math.Log(rootRadius)) + 2;
-		int tail = !double.IsFinite(frames) || frames >= int.MaxValue
-			? int.MaxValue
-			: Math.Max(2, (int)frames);
-		return new BiquadPlan(coefficients, tail);
+		return AreCoefficientsValid(coefficients);
 	}
 
-	public static bool IsBiquad(FilterKind kind)
-		=> kind is FilterKind.BiquadLowPass
-			or FilterKind.BiquadHighPass
-			or FilterKind.BiquadLowShelf
-			or FilterKind.BiquadHighShelf
-			or FilterKind.BiquadPeaking
-			or FilterKind.BiquadBandPass
-			or FilterKind.BiquadNotch;
-
-	private static void ValidateCoefficients(Coefficients c)
+	private static bool AreCoefficientsValid(Coefficients c)
 	{
-		if (!double.IsFinite(c.B0) || !double.IsFinite(c.B1)
-			|| !double.IsFinite(c.B2) || !double.IsFinite(c.A1)
-			|| !double.IsFinite(c.A2)
-			|| !(Math.Abs(c.A2) < 1)
-			|| !(1 + c.A1 + c.A2 > 0)
-			|| !(1 - c.A1 + c.A2 > 0))
-			throw new ArgumentOutOfRangeException(nameof(c),
-				"Biquad coefficients are nonfinite or have poles outside "
-				+ "the stable unit disk.");
+		return double.IsFinite(c.B0) && double.IsFinite(c.B1)
+			&& double.IsFinite(c.B2) && double.IsFinite(c.A1)
+			&& double.IsFinite(c.A2)
+			&& Math.Abs(c.A2) < 1
+			&& 1 + c.A1 + c.A2 > 0
+			&& 1 - c.A1 + c.A2 > 0;
 	}
 
 	private static double PoleRadius(Coefficients c)
@@ -190,19 +214,22 @@ public sealed class BiquadFilterStageFactory : IStreamingFilterStageFactory
 	}
 
 	private sealed class BiquadPlan(
-		Coefficients coefficients, int tailFrames) : IStreamingFilterStagePlan
+		FilterKind kind, Coefficients coefficients, int tailFrames) : IStreamingFilterStagePlan
 	{
+		public FilterKind Kind { get; } = kind;
 		public Coefficients Coefficients { get; } = coefficients;
 		public int TailFrames { get; } = tailFrames;
 		public IStreamingFilterStageState CreateState()
 			=> new BiquadState(this);
 	}
 
-	private sealed class BiquadState : IStreamingFilterStageState
+	private sealed class BiquadState : IStreamingFilterStageState,
+		IRealtimeBiquadFilterState
 	{
 		private BiquadPlan _plan;
 		private Coefficients _current;
 		private Coefficients _start;
+		private Coefficients _target;
 		private double _z1;
 		private double _z2;
 		private int _remaining;
@@ -212,6 +239,7 @@ public sealed class BiquadFilterStageFactory : IStreamingFilterStageFactory
 			_plan = plan;
 			_current = plan.Coefficients;
 			_start = _current;
+			_target = _current;
 		}
 
 		private BiquadState(BiquadState source)
@@ -219,6 +247,7 @@ public sealed class BiquadFilterStageFactory : IStreamingFilterStageFactory
 			_plan = source._plan;
 			_current = source._current;
 			_start = source._start;
+			_target = source._target;
 			_z1 = source._z1;
 			_z2 = source._z2;
 			_remaining = source._remaining;
@@ -229,7 +258,7 @@ public sealed class BiquadFilterStageFactory : IStreamingFilterStageFactory
 			if (_remaining != 0)
 			{
 				int elapsed = CoefficientTransitionFrames - _remaining + 1;
-				_current = Coefficients.Lerp(_start, _plan.Coefficients,
+				_current = Coefficients.Lerp(_start, _target,
 					(double)elapsed / CoefficientTransitionFrames);
 				_remaining--;
 			}
@@ -252,24 +281,43 @@ public sealed class BiquadFilterStageFactory : IStreamingFilterStageFactory
 
 		public IStreamingFilterStageState Clone() => new BiquadState(this);
 
-		public void Reconfigure(IStreamingFilterStagePlan plan)
+		public bool TryPrepareRealtime(double cutoff, double q,
+			double shelfSlope, double gainDb, int sampleRate,
+			out RealtimeBiquadCoefficients target)
 		{
-			if (plan is not BiquadPlan next)
-				throw new ArgumentException(
-					"Biquad state requires a Biquad plan.", nameof(plan));
-			if (_current == next.Coefficients)
+			bool valid = TryDesign(_plan.Kind, cutoff, q, shelfSlope,
+				gainDb, sampleRate, out Coefficients designed);
+			target = valid ? new(designed.B0, designed.B1, designed.B2,
+				designed.A1, designed.A2) : default;
+			return valid;
+		}
+
+		public void CommitRealtime(RealtimeBiquadCoefficients target)
+			=> SetTarget(new Coefficients(target.B0, target.B1, target.B2,
+				target.A1, target.A2));
+
+		private void SetTarget(Coefficients next)
+		{
+			if (_current == next)
 			{
-				_plan = next;
-				_start = next.Coefficients;
+				_target = next;
+				_start = next;
 				_remaining = 0;
 				return;
 			}
-			// Do not clear z1/z2. A compatible numeric change begins a
-			// bounded coefficient interpolation from the current state,
-			// even when a previous interpolation has not yet completed.
 			_start = _current;
-			_plan = next;
+			_target = next;
 			_remaining = CoefficientTransitionFrames;
+		}
+
+		public void Reconfigure(IStreamingFilterStagePlan plan)
+		{
+			if (plan is not BiquadPlan next || next.Kind != _plan.Kind)
+				throw new ArgumentException(
+					"Biquad state requires a matching Biquad plan.",
+					nameof(plan));
+			_plan = next;
+			SetTarget(next.Coefficients);
 		}
 	}
 }

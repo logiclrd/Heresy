@@ -18,19 +18,23 @@ internal sealed class FmFilterNodeProcessor
 	private sealed record Binding(int StageId, string ParameterName,
 		int ValueIndex, double InitialValue);
 
-		private readonly FilterInstance? _initial;
+	private readonly FilterInstance? _initial;
 	private readonly Binding[] _bindings;
 	private readonly FastStage[] _fastStages;
-	private readonly bool _useFastTpt;
+	private readonly FastBiquadStage[] _fastBiquads;
+	private readonly bool _useFastNumeric;
 	private readonly int _audioIndex;
 
-	// A single prepared TPT stage may have both cutoff and Q connected.
-	// Indices address the existing ordered binding array, or -1 for an
-	// unconnected parameter that retains its independently authored default.
+	// Each stage stores stable indices into the connected numeric binding
+	// array. A missing input inherits that parameter's authored value.
 	private readonly record struct FastStage(
 		int StageIndex, int CutoffBindingIndex, int QBindingIndex,
 		double BaseCutoff, double BaseQ);
 
+	private readonly record struct FastBiquadStage(
+		int StageIndex, int CutoffBindingIndex, int QBindingIndex,
+		int SlopeBindingIndex, int GainBindingIndex,
+		double BaseCutoff, double BaseQ, double BaseSlope, double BaseGain);
 
 	public FmFilterNodeProcessor(FmFilterNode node,
 		IReadOnlyDictionary<int, int> indexById)
@@ -54,16 +58,24 @@ internal sealed class FmFilterNodeProcessor
 		}
 		_bindings = [.. bindings];
 
-		List<FastStage> fast = [];
-		bool supported = bindings.Count != 0;
+		List<FastStage> tpt = [];
+		List<FastBiquadStage> biquads = [];
+		bool supported = _bindings.Length != 0;
 		ConfiguredFilterStage[] stages = _initial?.GetStages().ToArray() ?? [];
 		for (int stageIndex = 0; stageIndex < stages.Length; stageIndex++)
 		{
 			ConfiguredFilterStage stage = stages[stageIndex];
+			bool isSvf = SvfFilterStageFactory.IsSvf(stage.Kind);
+			bool isBiquad = BiquadFilterStageFactory.IsBiquad(stage.Kind);
+			bool isShelf = stage.Kind is FilterKind.BiquadLowShelf
+				or FilterKind.BiquadHighShelf;
 			int cutoff = -1;
 			int q = -1;
+			int slope = -1;
+			int gain = -1;
 			bool stageBound = false;
-			for (int bindingIndex = 0; bindingIndex < _bindings.Length; bindingIndex++)
+			for (int bindingIndex = 0; bindingIndex < _bindings.Length;
+				bindingIndex++)
 			{
 				Binding binding = _bindings[bindingIndex];
 				if (binding.StageId != stage.StageId)
@@ -74,35 +86,57 @@ internal sealed class FmFilterNodeProcessor
 					cutoff = bindingIndex;
 				else if (string.Equals(binding.ParameterName, "Q",
 					StringComparison.OrdinalIgnoreCase)
-					&& SvfFilterStageFactory.IsSvf(stage.Kind))
+					&& (isSvf || (isBiquad && !isShelf)))
 					q = bindingIndex;
+				else if (string.Equals(binding.ParameterName, "ShelfSlope",
+					StringComparison.OrdinalIgnoreCase) && isShelf)
+					slope = bindingIndex;
+				else if (string.Equals(binding.ParameterName, "GainDb",
+					StringComparison.OrdinalIgnoreCase)
+					&& (isShelf || stage.Kind == FilterKind.BiquadPeaking))
+					gain = bindingIndex;
 				else
 					supported = false;
 			}
 			if (!stageBound)
 				continue;
-			if (stage.Kind != FilterKind.OnePole
-				&& !SvfFilterStageFactory.IsSvf(stage.Kind))
+			double baseCutoff = stage.Parameters
+				.GetParameter("CutoffHz").NumericValue;
+			if (stage.Kind == FilterKind.OnePole || isSvf)
+			{
+				tpt.Add(new FastStage(stageIndex, cutoff, q, baseCutoff,
+					isSvf ? stage.Parameters.GetParameter("Q").NumericValue : 1));
+			}
+			else if (isBiquad)
+			{
+				biquads.Add(new FastBiquadStage(stageIndex,
+					cutoff, q, slope, gain, baseCutoff,
+					isShelf ? 1 : stage.Parameters.GetParameter("Q").NumericValue,
+					isShelf ? stage.Parameters.GetParameter("ShelfSlope").NumericValue
+						: 1,
+					isShelf || stage.Kind == FilterKind.BiquadPeaking
+						? stage.Parameters.GetParameter("GainDb").NumericValue : 0));
+			}
+			else
 				supported = false;
-			if (supported)
-				fast.Add(new FastStage(stageIndex, cutoff, q,
-					stage.Parameters.GetParameter("CutoffHz").NumericValue,
-					q >= 0 || SvfFilterStageFactory.IsSvf(stage.Kind)
-						? stage.Parameters.GetParameter("Q").NumericValue : 1));
 		}
-		_useFastTpt = supported && fast.Count > 0;
-		_fastStages = _useFastTpt ? [.. fast] : [];
+		_useFastNumeric = supported && tpt.Count + biquads.Count > 0;
+		_fastStages = _useFastNumeric ? [.. tpt] : [];
+		_fastBiquads = _useFastNumeric ? [.. biquads] : [];
+
 	}
 
 	public sealed class State
 	{
 		internal State(FilterInstance? initial,
-			double[] initialValues, int sampleRate, int fastCount)
+			double[] initialValues, int sampleRate, int tptCount, int biquadCount)
 		{
 			Configuration = initial?.Clone();
 			Values = (double[])initialValues.Clone();
-			FastUpdates = new RealtimeTptStageUpdate[fastCount];
-			FastScratch = new RealtimeTptCoefficients[fastCount];
+			FastUpdates = new RealtimeTptStageUpdate[tptCount];
+			FastScratch = new RealtimeTptCoefficients[tptCount];
+			BiquadUpdates = new RealtimeBiquadStageUpdate[biquadCount];
+			BiquadScratch = new RealtimeBiquadCoefficients[biquadCount];
 			if (Configuration is not null)
 				Chain = new StreamingFilterChain(
 					new FilterChain([Configuration]), sampleRate, 1);
@@ -113,12 +147,14 @@ internal sealed class FmFilterNodeProcessor
 		internal double[] Values { get; }
 		internal RealtimeTptStageUpdate[] FastUpdates { get; }
 		internal RealtimeTptCoefficients[] FastScratch { get; }
+		internal RealtimeBiquadStageUpdate[] BiquadUpdates { get; }
+		internal RealtimeBiquadCoefficients[] BiquadScratch { get; }
 	}
 
 	public State CreateState(int sampleRate)
 		=> new(_initial,
 			_bindings.Select(item => item.InitialValue).ToArray(),
-			sampleRate, _fastStages.Length);
+			sampleRate, _fastStages.Length, _fastBiquads.Length);
 
 	/// <summary>
 	/// Evaluate all connected parameters as absolute values in the authored
@@ -150,6 +186,17 @@ internal sealed class FmFilterNodeProcessor
 		return state.Chain.ProcessMonoFrame(input);
 	}
 
+	private static bool HasChanged(int bindingIndex, State state,
+		double[] values, Binding[] bindings)
+		=> bindingIndex >= 0
+			&& values[bindings[bindingIndex].ValueIndex]
+				!= state.Values[bindingIndex];
+
+	private static double ValueOrDefault(int bindingIndex, double baseValue,
+		double[] values, Binding[] bindings)
+		=> bindingIndex < 0
+			? baseValue : values[bindings[bindingIndex].ValueIndex];
+
 	private void Retune(State state, double[] sourceValues)
 	{
 		bool dirty = false;
@@ -164,32 +211,53 @@ internal sealed class FmFilterNodeProcessor
 		if (!dirty)
 			return;
 
-		if (!_useFastTpt)
+		if (!_useFastNumeric)
 		{
-			// Keep closure-producing LINQ in a separate method. Otherwise
-			// Roslyn allocates a captured display-class object at Retune
-			// entry on EVERY audio sample, even when the fast path returns
-			// before any fallback expression executes.
+			// The closure-producing LINQ compatibility code deliberately
+			// lives in another method. Keeping it here allocated a
+			// display-class even on the supposedly allocation-free branch.
 			RetuneCompatibility(state, sourceValues);
 			return;
 		}
 
-		for (int i = 0; i < _fastStages.Length; i++)
+		int tptCount = 0;
+		foreach (FastStage stage in _fastStages)
 		{
-			FastStage stage = _fastStages[i];
-			double cutoff = stage.CutoffBindingIndex < 0
-				? stage.BaseCutoff
-				: sourceValues[_bindings[stage.CutoffBindingIndex].ValueIndex];
-			double q = stage.QBindingIndex < 0
-				? stage.BaseQ
-				: sourceValues[_bindings[stage.QBindingIndex].ValueIndex];
-			state.FastUpdates[i] =
-				new RealtimeTptStageUpdate(stage.StageIndex, cutoff, q);
+			if (!HasChanged(stage.CutoffBindingIndex, state, sourceValues, _bindings)
+				&& !HasChanged(stage.QBindingIndex, state, sourceValues, _bindings))
+				continue;
+			state.FastUpdates[tptCount++] = new RealtimeTptStageUpdate(
+				stage.StageIndex,
+				ValueOrDefault(stage.CutoffBindingIndex, stage.BaseCutoff,
+					sourceValues, _bindings),
+				ValueOrDefault(stage.QBindingIndex, stage.BaseQ,
+					sourceValues, _bindings));
 		}
-		if (!state.Chain!.TryApplyRealtimeTptUpdates(
-			state.FastUpdates, state.FastScratch))
-			return;
 
+		int biquadCount = 0;
+		foreach (FastBiquadStage stage in _fastBiquads)
+		{
+			if (!HasChanged(stage.CutoffBindingIndex, state, sourceValues, _bindings)
+				&& !HasChanged(stage.QBindingIndex, state, sourceValues, _bindings)
+				&& !HasChanged(stage.SlopeBindingIndex, state, sourceValues, _bindings)
+				&& !HasChanged(stage.GainBindingIndex, state, sourceValues, _bindings))
+				continue;
+			state.BiquadUpdates[biquadCount++] = new RealtimeBiquadStageUpdate(
+				stage.StageIndex,
+				ValueOrDefault(stage.CutoffBindingIndex, stage.BaseCutoff,
+					sourceValues, _bindings),
+				ValueOrDefault(stage.QBindingIndex, stage.BaseQ,
+					sourceValues, _bindings),
+				ValueOrDefault(stage.SlopeBindingIndex, stage.BaseSlope,
+					sourceValues, _bindings),
+				ValueOrDefault(stage.GainBindingIndex, stage.BaseGain,
+					sourceValues, _bindings));
+		}
+
+		if (!state.Chain!.TryApplyRealtimeNumericUpdates(
+			state.FastUpdates.AsSpan(0, tptCount), state.FastScratch,
+			state.BiquadUpdates.AsSpan(0, biquadCount), state.BiquadScratch))
+			return;
 		for (int i = 0; i < _bindings.Length; i++)
 			state.Values[i] = sourceValues[_bindings[i].ValueIndex];
 	}

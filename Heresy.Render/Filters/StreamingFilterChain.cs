@@ -186,46 +186,75 @@ public sealed class StreamingFilterChain
 	}
 
 	/// <summary>
-	/// Zero-allocation numeric control path for compatible One-Pole/SVF
-	/// stages. The caller supplies scratch sized for updates.Length.
-	/// All stage coefficients are preflighted before any stage commits, so
-	/// invalid values cannot partially reconfigure a serial chain.
-	/// Static/unaddressed stages retain their exact histories and settings.
-	/// This path is intended for a single producer/renderer thread.
+	/// Preflight every affected TPT and Audio EQ biquad stage before applying
+	/// any numeric changes. Mixed-family updates remain atomic, including
+	/// invalid Nyquist, shelving and stability constraints. Caller-owned
+	/// scratch and prepared states keep this path allocation-free.
 	/// </summary>
-	internal bool TryApplyRealtimeTptUpdates(
-		ReadOnlySpan<RealtimeTptStageUpdate> updates,
-		Span<RealtimeTptCoefficients> scratch)
+	internal bool TryApplyRealtimeNumericUpdates(
+		ReadOnlySpan<RealtimeTptStageUpdate> tptUpdates,
+		Span<RealtimeTptCoefficients> tptScratch,
+		ReadOnlySpan<RealtimeBiquadStageUpdate> biquadUpdates,
+		Span<RealtimeBiquadCoefficients> biquadScratch)
 	{
-		if (_inputFinished || scratch.Length < updates.Length)
+		if (_inputFinished || tptScratch.Length < tptUpdates.Length
+			|| biquadScratch.Length < biquadUpdates.Length)
 			return false;
 
-		for (int i = 0; i < updates.Length; i++)
+		for (int i = 0; i < tptUpdates.Length; i++)
 		{
-			RealtimeTptStageUpdate update = updates[i];
+			RealtimeTptStageUpdate update = tptUpdates[i];
 			if ((uint)update.StageIndex >= (uint)_stages.Length
 				|| _stages[update.StageIndex].Channels[0]
 					is not IRealtimeTptFilterState runtime
 				|| !runtime.TryPrepareRealtime(
-					update.CutoffHz, update.Q, SampleRate, out scratch[i]))
+					update.CutoffHz, update.Q, SampleRate, out tptScratch[i]))
 				return false;
 			for (int j = 0; j < i; j++)
-				if (updates[j].StageIndex == update.StageIndex)
+				if (tptUpdates[j].StageIndex == update.StageIndex)
 					return false;
 		}
 
-		for (int i = 0; i < updates.Length; i++)
+		for (int i = 0; i < biquadUpdates.Length; i++)
 		{
-			RealtimeTptStageUpdate update = updates[i];
+			RealtimeBiquadStageUpdate update = biquadUpdates[i];
+			if ((uint)update.StageIndex >= (uint)_stages.Length
+				|| _stages[update.StageIndex].Channels[0]
+					is not IRealtimeBiquadFilterState runtime
+				|| !runtime.TryPrepareRealtime(update.CutoffHz, update.Q,
+					update.ShelfSlope, update.GainDb, SampleRate,
+					out biquadScratch[i]))
+				return false;
+			for (int j = 0; j < i; j++)
+				if (biquadUpdates[j].StageIndex == update.StageIndex)
+					return false;
+			for (int j = 0; j < tptUpdates.Length; j++)
+				if (tptUpdates[j].StageIndex == update.StageIndex)
+					return false;
+		}
+
+		for (int i = 0; i < tptUpdates.Length; i++)
+		{
 			foreach (IStreamingFilterStageState channel in
-				_stages[update.StageIndex].Channels)
-			{
-				((IRealtimeTptFilterState)channel)
-					.CommitRealtime(scratch[i]);
-			}
+				_stages[tptUpdates[i].StageIndex].Channels)
+				((IRealtimeTptFilterState)channel).CommitRealtime(tptScratch[i]);
+		}
+		for (int i = 0; i < biquadUpdates.Length; i++)
+		{
+			foreach (IStreamingFilterStageState channel in
+				_stages[biquadUpdates[i].StageIndex].Channels)
+				((IRealtimeBiquadFilterState)channel)
+					.CommitRealtime(biquadScratch[i]);
 		}
 		return true;
 	}
+
+	internal bool TryApplyRealtimeTptUpdates(
+		ReadOnlySpan<RealtimeTptStageUpdate> updates,
+		Span<RealtimeTptCoefficients> scratch)
+		=> TryApplyRealtimeNumericUpdates(updates, scratch,
+			ReadOnlySpan<RealtimeBiquadStageUpdate>.Empty,
+			Span<RealtimeBiquadCoefficients>.Empty);
 
 	/// <summary>
 	/// Scalar graph-signal path for a preconfigured mono invocation.
