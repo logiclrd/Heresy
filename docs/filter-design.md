@@ -1,6 +1,6 @@
 # Reusable filters — design contract
 
-Status: **approved feature design, not yet implemented** (11 October 2026). The independently actionable implementation milestones are in [todo.md](todo.md). Current code still has the tracker-compatible ResonantFilterState in Heresy.Render and the limited final-speaker low/high-pass filters; this document does not imply either has already been replaced.
+Status: **incremental implementation** (11 October 2026). The Core filter-type catalogue, parameter descriptors and validated per-stage instance contract are implemented. Shared Filter song objects, persistence/UI, DSP and playback integrations remain outstanding in [todo.md](todo.md). Current code still has the tracker-compatible ResonantFilterState and the limited final-speaker low/high-pass filters; neither has been replaced.
 
 ## Intent and governing constraints
 
@@ -44,6 +44,32 @@ Hilbert Transformer and Half-Band are excluded from this pass. Comb feedback is 
 The SVF menu is symmetrical with the biquad submenu, but its four response types may share one internal SVF implementation with an immutable response selector. A two-pole SVF low-pass is not necessarily a new transfer-function family versus a low-pass biquad: both can produce equivalent linear responses. SVF topology has different numerical and modulation characteristics, notably for fast cutoff/resonance modulation. Favor a stable topology-preserving/TPT formulation. There is no requirement to expose SVF response selection as an audio-rate graph input.
 
 Each selectable filter type has an explicitly specified algorithm, numeric constraints, meaningful defaults, parameters, and response/tail tests before that type is marked implemented. Configure nonlinear ladder saturation/drive and oversampling policy explicitly; define all-pass order, and comb delay/feedforward/feedback gain and stability constraints. Avoid claiming all types cost the same.
+
+## Implemented Core parameter contract (initial catalogue milestone)
+
+Core entry points: `Heresy.Core.Filters.FilterCatalogue`, `FilterKind`, `FilterMenuItem`, `FilterParameterDescriptor`, `FilterParameterValue`, `IFilterSpecificationInstance`, and `FilterSpecificationInstance`. The 21 selectable kinds are represented by distinct enum values, while nonselectable category rows exist only in the menu. Descriptors are shared immutable schema objects with canonical property names, units, bounds, defaults, numeric-versus-enum type and continuous-versus-structural classification. Instances use case-insensitive descriptor lookup; choice input is canonicalized on assignment. Batch assignment rejects duplicates and validates before commit. This milestone intentionally does **not** introduce a `SongObject` Filter definition, serialization, DSP state or playback wiring.
+
+Initial conventions (refine responsibly when implementing an algorithm; coordinate with its actual renderer):
+
+| Parameters | Initial range/default | Filter uses |
+| --- | --- | --- |
+| `CutoffHz` | 1–20,000 Hz; 1,000 Hz | SVF, biquads, ladder, all-pass, one-pole, FIR low/high-pass |
+| `Q` | 0.1–20; approx. 0.7071 | SVF, resonant biquads and peaking |
+| `GainDb` | −36 to +36 dB; 0 | Shelf and peaking EQ |
+| `ShelfSlope` | 0.1–2; 1 | Shelf EQ |
+| `Resonance`, `Drive` | 0–1 / 0.1–10; 0.25 / 1 | Ladder; drive only nonlinear |
+| `Oversampling` | 1x, 2x, 4x; 2x | Nonlinear ladder, structural choice |
+| `Order` | 1 or 2; 1 | All-pass, structural choice |
+| `Mode` | LowPass / HighPass; LowPass | One-pole, structural choice |
+| `DelaySeconds` | 0.001–2 s; 0.02 s | Both combs; structural number |
+| `Feedback`, `Feedforward`, `Mix` | −0.95–0.95 / −1–1 / 0–1; 0.5 each | Comb family |
+| `TapCount` | odd integer 3–2047; 127 | Standard FIR, structural number |
+| `TransitionWidthHz` | 1–5,000 Hz; 200 Hz | Standard FIR, structural number |
+| `Window` | Hann / Hamming / Blackman; Hamming | Standard FIR, structural choice |
+| `PhaseResponse` | Linear / Minimum / Maximum; Linear | Standard FIR, structural choice |
+| `LowCutoffHz`, `HighCutoffHz` | 1–20,000 Hz; 400 / 4,000 Hz | FIR band-pass/notch; enforce low strictly less than high |
+
+Current authored frequency limits are sample-rate-independent schema bounds; the eventual renderer must additionally enforce valid Nyquist/sample-rate constraints. A numerical structural property (e.g. `TapCount`) can be assigned through native commands but has no audio-rate FM input, just like enumerated properties. Band-edge cross-validation is atomic, allowing a simultaneous change to both bounds even where a one-at-a-time edit would be temporarily invalid. No DSP behaviour is claimed solely by selecting these initial metadata values.
 
 ## Object model and ownership
 
