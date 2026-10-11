@@ -90,6 +90,66 @@ public sealed class FmFilterNodeRenderingTests
 			"invalid modulation must preserve the previous valid configuration");
 	}
 
+
+	[Test]
+	public void MultiStageInvalidPortSampleCannotPartiallyRetuneEarlierStage()
+	{
+		FilterDefinition definition = new((ObjectId)99U, "two poles", [
+			new FilterStageDefinition(1, "first", FilterKind.OnePole),
+			new FilterStageDefinition(2, "second", FilterKind.OnePole),
+		]);
+		FilterInstance use = new(definition);
+		use.SetStageParameter(1, "CutoffHz", FilterParameterValue.FromNumber(100));
+		use.SetStageParameter(2, "CutoffHz", FilterParameterValue.FromNumber(200));
+
+		FmSynthSound underTest = Sound(new FmSynthGraph([
+			new FmConstantNode(1, 1),
+			new FmConstantNode(2, 50),
+			new FmConstantNode(3, -30),
+			new FmFilterNode(4, 1, use, [
+				new FmFilterParameterConnection(1, FilterKind.OnePole,
+					0, "CutoffHz", 2),
+				new FmFilterParameterConnection(2, FilterKind.OnePole,
+					0, "CutoffHz", 3),
+			]),
+		], 4));
+		FmSynthSound reference = Sound(new FmSynthGraph([
+			new FmConstantNode(1, 1),
+			new FmFilterNode(4, 1, use),
+		], 4));
+		float[] actual = new float[80];
+		float[] expected = new float[80];
+		underTest.Render(Context(), underTest.CreateState(), 0, 80, actual);
+		reference.Render(Context(), reference.CreateState(), 0, 80, expected);
+		Assert.That(actual, Is.EqualTo(expected));
+	}
+
+	[Test]
+	public void PerSampleChangingCutoffIsDeterministicAcrossChunksAndSeek()
+	{
+		FmSynthSound sound = Sound(new FmSynthGraph([
+			new FmConstantNode(1, 0.5),
+			new FmOscillatorNode(2, FmOscillatorWaveform.Sine,
+				frequencyHz: 23, minimum: 80, maximum: 160,
+				constant: true),
+			new FmFilterNode(3, 1, OnePole(120), [
+				new FmFilterParameterConnection(1, FilterKind.OnePole,
+					0, "CutoffHz", 2),
+			]),
+		], 3));
+		float[] reference = new float[240];
+		sound.Render(Context(), sound.CreateState(), 0, 240, reference);
+		SoundState splitState = sound.CreateState();
+		float[] parts = new float[240];
+		sound.Render(Context(), splitState, 0, 7, parts.AsSpan(0, 7));
+		sound.Render(Context(), splitState, 7, 71, parts.AsSpan(7, 71));
+		sound.Render(Context(), splitState, 78, 162, parts.AsSpan(78));
+		Assert.That(parts, Is.EqualTo(reference));
+		float[] seek = new float[90];
+		sound.Render(Context(), splitState, 50, 90, seek);
+		Assert.That(seek, Is.EqualTo(reference[50..140]));
+	}
+
 	[Test]
 	public void StereoNoteStatesChunksAndBackwardsSeekKeepIndependentHistory()
 	{
