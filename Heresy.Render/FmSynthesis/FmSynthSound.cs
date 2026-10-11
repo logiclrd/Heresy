@@ -140,22 +140,49 @@ public sealed class FmSynthSound : ISound
 			context.Configuration.SampleRate, synthState.NoteOffTime);
 		if (baseEnd is null)
 			return null;
-		double tailSeconds = 0;
-		foreach (CompiledNode compiled in _nodes)
-		{
-			// The graph is topologically restricted to nodes reachable
-			// from the output. A Filter with no audio connection cannot
-			// retain a contribution, regardless of modulation sources.
-			if (compiled.Definition is FmFilterNode filter
-				&& filter.AudioInputNodeId.HasValue
-				&& filter.Configuration is not null)
-				tailSeconds = Math.Max(tailSeconds, filter.TailSeconds);
-		}
+		double tailSeconds = GetMaximumAudioPathTailSeconds();
 		double frames = Math.Ceiling(tailSeconds
 			* context.Configuration.SampleRate);
 		if (frames >= long.MaxValue || baseEnd.Value > long.MaxValue - frames)
 			return long.MaxValue;
 		return baseEnd.Value + (long)frames;
+	}
+
+
+	/// <summary>
+	/// Only graph paths carrying audio into the output can leave audible
+	/// Filter residue. Oscillator multiplier/Filter parameter inputs are
+	/// evaluated while the source is active but cannot independently keep
+	/// producing sound after the normal oscillator excitation is stopped.
+	/// </summary>
+	private double GetMaximumAudioPathTailSeconds()
+	{
+		double tail = 0;
+		HashSet<int> visited = [];
+		Visit(_outputIndex);
+		return tail;
+
+		void Visit(int index)
+		{
+			if (!visited.Add(index))
+				return;
+			CompiledNode compiled = _nodes[index];
+			switch (compiled.Definition)
+			{
+				case FmFilterNode filter:
+					if (filter.AudioInputNodeId.HasValue)
+					{
+						if (filter.Configuration is not null)
+							tail = Math.Max(tail, filter.TailSeconds);
+						Visit(compiled.InputIndices[0]);
+					}
+					break;
+				case FmOperatorNode:
+					foreach (int input in compiled.InputIndices)
+						Visit(input);
+					break;
+			}
+		}
 	}
 
 	/// <summary>

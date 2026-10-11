@@ -177,6 +177,22 @@ public sealed class FmFilterNodeRenderingTests
 			Is.EqualTo(unfiltered.GetEndFrameExclusive(Context(), without) + 3));
 	}
 
+
+	[Test]
+	public void FilterUsedOnlyToModulateAnOscillatorDoesNotExtendItsAudioTail()
+	{
+		FmSynthSound sound = Sound(new FmSynthGraph([
+			new FmConstantNode(1, 1),
+			new FmFilterNode(2, 1, OnePole(100), tailSeconds: 0.5),
+			new FmOscillatorNode(3, FmOscillatorWaveform.Sine, 40,
+				multiplierNodeId: 2, constant: true),
+		], 3));
+		SoundState note = sound.CreateState();
+		note.NoteOffTime = TimeSpan.Zero;
+		Assert.That(sound.GetEndFrameExclusive(Context(), note),
+			Is.EqualTo(1), "only audio-path Filter nodes add residual Tail");
+	}
+
 	[Test]
 	public void IndefiniteEnvelopeIsNotMadeFiniteByFilterTail()
 	{
