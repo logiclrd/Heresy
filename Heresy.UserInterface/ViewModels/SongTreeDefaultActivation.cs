@@ -13,6 +13,7 @@ public enum SongTreeActivationKind
 	Envelope,
 	Sample,
 	FmSynth,
+	Filter,
 }
 
 public static class SongTreeDefaultActivation
@@ -43,6 +44,8 @@ public static class SongTreeDefaultActivation
 				SongTreeActivationKind.Sample,
 			(SongTreeSection.Samples, SongObjectKind.FmSynth) =>
 				SongTreeActivationKind.FmSynth,
+			(SongTreeSection.Filters, SongObjectKind.Filter) =>
+				SongTreeActivationKind.Filter,
 			_ =>
 				SongTreeActivationKind.None,
 		};
@@ -64,6 +67,8 @@ public static class SongTreeDefaultActivation
 				"Edit Sample...",
 			SongTreeActivationKind.FmSynth =>
 				"Edit FM Synth...",
+			SongTreeActivationKind.Filter =>
+				"Edit Filter...",
 			SongTreeActivationKind.None =>
 				throw new ArgumentOutOfRangeException(
 					nameof(kind)),
