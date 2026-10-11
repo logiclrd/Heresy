@@ -18,15 +18,25 @@ supports 4 px single-node selection, dragging, line insertion and node
 deletion; the node-list editor stays available for precise values.
 Sustain-guide boundary moves, bidirectional region selection, single-node
 sustain by guide double-click, and selected-endpoint Match are now
-implemented. The remaining node-envelope work concerns whole-UI
-integration and physical audition. Continue in this order:
+implemented. Headless/shared-editor synchronization, numeric draft
+conflict protection, navigation and direct FM/Instrument render lifecycle
+checks are automated. The remaining node-envelope milestone is desktop
+hardware and actual audible playback verification:
 
-- [ ] **Complete node-envelope UI integration and physical audition.**
-  Use the same interactive control in the standalone Envelope editor
-  and FM graph inspector, remove stale ADSR wording, ensure navigation
-  and shared-object edits update correctly, and verify direct/instrument/FM
-  playback through held, releasing and finished stages. Include desktop
-  pointer/keyboard smoke checks and the final CI regression suite.
+- [ ] **Physically validate node-envelope editing and audible release tails.**
+  Automated regression coverage exercises shared standalone/FM editor
+  synchronization, unsaved-draft conflict prevention, navigation,
+  simulated headless pointer dragging, and chunk-invariant held/released/
+  retired rendering for both direct FM and sample-backed Instruments.
+  On a real desktop, check node and guide priority, mouse/touchpad
+  drags in both directions, double-click insertion/deletion and single-
+  node sustain, lost-capture cancellation, and Match button state.
+  Verify that edits made in the FM inspector appear in the standalone
+  editor and survive reopening the song. Audition actual Instrument
+  notes and the FM editor's Test notes through held, Note Off, and
+  final silence, using both Forward and PingPong sustain.
+  This physical-audio and window-system check must remain open until
+  observed on actual desktop hardware; CI/headless cannot certify it.
 
 ## Physical validation
 

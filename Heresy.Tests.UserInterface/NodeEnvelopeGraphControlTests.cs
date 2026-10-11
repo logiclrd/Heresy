@@ -2,7 +2,10 @@ using System;
 using System.Linq;
 using System.Reflection;
 
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Headless;
+using Avalonia.Input;
 using Avalonia.Headless.NUnit;
 
 using AwesomeAssertions;
@@ -216,6 +219,59 @@ public sealed class NodeEnvelopeGraphControlTests
 		type.GetField("_previewSustainEnd", flags)!.GetValue(surface)
 			.Should().Be(envelope.SustainEndIndex);
 		workspace.Document.AudioRevision.Should().Be(revision);
+	}
+
+	[AvaloniaTest]
+	public void HeadlessPointerDragSelectsAndAdjustsSustainBounds()
+	{
+		DocumentWorkspace workspace = new();
+		NodeEnvelopeDefinition envelope =
+			EnvelopeDocumentEditor.CreateNodeEnvelope(workspace, "Pointer");
+		NodeEnvelopeGraphControl graph = new(workspace, envelope);
+		Control surface = (Control)typeof(NodeEnvelopeGraphControl)
+			.GetField("_surface", BindingFlags.Instance
+				| BindingFlags.NonPublic)!.GetValue(graph)!;
+		Window host = new() { Width = 550, Height = 370, Content = graph };
+		host.Show();
+		try
+		{
+			NodeEnvelopeGraphGeometry geometry = new(
+				envelope.Nodes, surface.Bounds.Width, surface.Bounds.Height);
+			Point GuidePosition(int i)
+			{
+				var (x, dotY) = geometry.Point(i);
+				double y = geometry.Top + 8;
+				if (Math.Abs(y - dotY) < 10)
+					y = geometry.Bottom - 8;
+				return surface.TranslatePoint(new Point(x, y), host)!.Value;
+			}
+			void Drag(int from, int to)
+			{
+				Point a = GuidePosition(from);
+				Point b = GuidePosition(to);
+				host.MouseMove(a);
+				host.MouseDown(a, MouseButton.Left);
+				host.MouseMove(b);
+				host.MouseUp(b, MouseButton.Left);
+			}
+			uint revision = workspace.Document.AudioRevision;
+			Drag(0, 3); // Replace the original one-node sustain.
+			envelope.SustainStartIndex.Should().Be(0);
+			envelope.SustainEndIndex.Should().Be(3);
+			workspace.Document.AudioRevision.Should().Be(revision + 1);
+			Drag(0, 1); // Move existing left boundary.
+			envelope.SustainStartIndex.Should().Be(1);
+			envelope.SustainEndIndex.Should().Be(3);
+			Drag(3, 2); // Move existing right boundary.
+			envelope.SustainStartIndex.Should().Be(1);
+			envelope.SustainEndIndex.Should().Be(2);
+			workspace.Document.AudioRevision.Should().Be(revision + 3);
+			Drag(3, 3); // Self drag of an outside guide cannot replace region.
+			envelope.SustainStartIndex.Should().Be(1);
+			envelope.SustainEndIndex.Should().Be(2);
+			workspace.Document.AudioRevision.Should().Be(revision + 3);
+		}
+		finally { host.Close(); }
 	}
 
 	[AvaloniaTest]

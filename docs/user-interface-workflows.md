@@ -662,3 +662,21 @@ revision. This is independent of tracker effect-letter typing
 and compatibility tick timing. See
 [effect operators](effect-operators.md) and
 [script programmability](script-programmability.md).
+
+
+### Shared node-envelope workflow and audition validation
+
+The standalone editor and FM graph inspector share the same live node
+Envelope object. Clean numeric drafts reflect changes from a second
+mounted editor automatically. Unsaved numeric input is never silently
+overwritten: if another view updates the Envelope, the stale draft is
+blocked from committing until **Reload shared envelope** is clicked.
+The two editors retain the same graphical editor control and the
+standalone **← Document** navigation.
+
+The automated playback regressions exercise both Forward and PingPong
+sustain, Note Off release and eventual silence for direct FM graph
+outputs and sample-backed Instrument tone volumes, including irregular
+PCM block boundaries. Real desktop audio audition and native pointer
+behaviour require a physical smoke pass and remain tracked in
+[todo.md](todo.md).

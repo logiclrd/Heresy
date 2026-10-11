@@ -1,10 +1,15 @@
 using System;
+using System.IO;
+using System.Linq;
+using System.Text;
 using System.Numerics;
 
 using Heresy.Core.Envelopes;
 using Heresy.Core.FmSynthesis;
+using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
+using Heresy.Core.Samples;
 using Heresy.Playback;
 using Heresy.Render.Configuration;
 
@@ -15,6 +20,112 @@ namespace Heresy.Tests.Playback;
 [TestFixture]
 public sealed class NodeEnvelopePlaybackTests
 {
+	[TestCase(EnvelopeSustainLoopMode.Forward, false)]
+	[TestCase(EnvelopeSustainLoopMode.PingPong, false)]
+	[TestCase(EnvelopeSustainLoopMode.Forward, true)]
+	[TestCase(EnvelopeSustainLoopMode.PingPong, true)]
+	public void SharedNodeEnvelopePlaysHeldReleaseAndFinishedAcrossBothSources(
+		EnvelopeSustainLoopMode mode, bool throughInstrument)
+	{
+		SongDocument song = new();
+		ObjectId envelopeId = song.AllocateObjectId();
+		NodeEnvelopeDefinition envelope = new(envelopeId, "Shared curve");
+		envelope.ReplaceCurve(
+		[
+			new(TimeSpan.Zero, 0.4),
+			new(TimeSpan.FromMilliseconds(10), 0.8),
+			new(TimeSpan.FromMilliseconds(20), 0.2),
+			new(TimeSpan.FromMilliseconds(90), 0.0),
+		], 1, 2, mode);
+		song.Add(envelope);
+
+		ObjectId sourceId;
+		if (throughInstrument)
+		{
+			ObjectId sampleId = song.AllocateObjectId();
+			song.Add(SampleDefinition.CreateImported(
+				sampleId, "Held", "held.wav", ConstantSample()));
+			ObjectId instrumentId = song.AllocateObjectId();
+			InstrumentDefinition instrument = new(instrumentId, "Enveloped");
+			instrument.ToneSpecifications.Add(new ToneSpecification
+			{
+				SourceId = sampleId, VolumeEnvelopeId = envelopeId,
+			});
+			instrument.ToneTable.Add(0);
+			song.Add(instrument);
+			sourceId = instrumentId;
+		}
+		else
+		{
+			ObjectId fmId = song.AllocateObjectId();
+			song.Add(new FmSynthDefinition(fmId, "FM",
+				new FmSynthGraph(
+					[new FmEnvelopeNode(1, envelopeId)], outputNodeId: 1)));
+			sourceId = fmId;
+		}
+
+		ObjectId rootId = song.AllocateObjectId();
+		song.Add(new ScriptPatternDefinition(rootId, "Play")
+		{
+			RowCount = 4, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({sourceId.Value})); Off(0.5, 0);",
+		});
+		PreparedIncrementalPlaybackFactory factory = new(
+			new RenderConfiguration(1000,
+				[new OutputChannelConfiguration(
+					Vector3.Zero, positionalImportance: 0)]));
+		using PreparedIncrementalPlaybackPlan continuous =
+			factory.Create(song, rootId);
+		using PreparedIncrementalPlaybackPlan chunked =
+			factory.Create(song, rootId);
+		float[] whole = new float[320];
+		continuous.Source.Render(whole.Length, whole);
+		float[] partitioned = new float[whole.Length];
+		int[] chunks = [1, 7, 19, 2, 23];
+		for (int at = 0, batch = 0; at < partitioned.Length; batch++)
+		{
+			int n = Math.Min(chunks[batch % chunks.Length],
+				partitioned.Length - at);
+			chunked.Source.Render(n, partitioned.AsSpan(at, n));
+			at += n;
+		}
+		Assert.Multiple(() =>
+		{
+			Assert.That(partitioned, Is.EqualTo(whole).Within(1e-5f),
+				"the envelope must be independent of renderer block boundaries");
+			Assert.That(Math.Abs(whole[35]), Is.GreaterThan(0.01f),
+				"a held note traverses its sustain region");
+			Assert.That(whole.Skip(75).Take(85).Any(v => Math.Abs(v) > 0.01f),
+				Is.True, "note-off preserves its release tail");
+			Assert.That(whole.Skip(250), Is.All.EqualTo(0f).Within(1e-6f),
+				"finished voices must retire after release");
+		});
+	}
+
+	private static byte[] ConstantSample()
+	{
+		const int frames = 400;
+		using MemoryStream stream = new();
+		using BinaryWriter writer = new(stream, Encoding.ASCII,
+			leaveOpen: true);
+		writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+		writer.Write(36 + frames * 2);
+		writer.Write(Encoding.ASCII.GetBytes("WAVEfmt "));
+		writer.Write(16);
+		writer.Write((ushort)1);
+		writer.Write((ushort)1);
+		writer.Write(1000);
+		writer.Write(2000);
+		writer.Write((ushort)2);
+		writer.Write((ushort)16);
+		writer.Write(Encoding.ASCII.GetBytes("data"));
+		writer.Write(frames * 2);
+		for (int i = 0; i < frames; i++)
+			writer.Write((short)16384);
+		writer.Flush();
+		return stream.ToArray();
+	}
+
 	[Test]
 	public void FmNodeEnvelopeResolvesAndReleasesInPreparedPlayback()
 	{

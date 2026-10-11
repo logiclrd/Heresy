@@ -44,3 +44,41 @@ Numeric node and sustain fields remain synchronized. Full desktop
 physical validation remains tracked in
 [node envelope design](node-envelope-design.md). Script Envelopes
 retain their independent script editor.
+
+## Shared-editor synchronization and desktop verification
+
+The standalone Envelope editor and the FM Envelope-node inspector both
+reference one live Envelope object. When a different mounted editor changes
+that curve, clean numeric fields refresh automatically. If the user has
+uncommitted numeric changes, the editor preserves them and warns that the
+shared object changed: applying the stale draft is refused. **Reload shared
+envelope** explicitly discards that draft and picks up the new curve.
+The graphical view stays subscribed to document changes while mounted.
+
+Headless CI now simulates mouse drags and navigation, and verifies
+synchronization across mounted standalone/FM editors. Playback tests
+render FM graph envelopes and sample-backed Instrument volume envelopes
+through sustain, release and retirement for both loop modes, comparing
+continuous and chunked PCM. These tests do not confirm that real mouse,
+touchpad, Wayland/X11/Windows focus behaviour, or the actual audio
+device matches the headless simulator.
+
+Manual desktop smoke checklist:
+
+1. Open one Envelope via the Envelopes pane and through an FM Envelope
+   node. Add/move/remove dots; drag guides from outside the sustain
+   region in both directions; drag sustain endpoints to one another;
+   double-click a guide *away from the dot* to make a single-node
+   sustain. Confirm the node double-click still deletes.
+2. Select either sustain endpoint and test **Match** enabled and
+   disabled states. Test a pointer release outside the graph, loss
+   of capture, numeric editing, and changing the same Envelope from
+   another view while one numeric draft is unsaved.
+3. Switch between Forward and PingPong and audition a sustained
+   Instrument note, then Note Off. The envelope must continue from
+   its current point and finish naturally. Test the FM editor Test
+   area likewise, including a graph with the Envelope multiplying
+   an oscillator, and verify no premature cut or stuck voice.
+4. Save and reload the song, verify node values and sustain mode,
+   switch views, and repeat. Capture any Wayland/X11-specific
+   pointer or focus discrepancy as a separate reproducible issue.

@@ -7,6 +7,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.VisualTree;
 
 using Heresy.Core.Envelopes;
 using Heresy.Core.Objects;
@@ -15,9 +16,9 @@ using Heresy.UserInterface.Documents;
 namespace Heresy.UserInterface.Views;
 
 /// <summary>
-/// Temporary, functional node-list editor shared by the standalone Envelope
-/// page and FM Envelope inspector. The interactive graph is rebuilt in the
-/// subsequent node-graph milestones; there are no ADSR-style sliders here.
+/// Shared interactive node graph and precision node-list editor for both
+/// standalone Envelopes and FM Envelope nodes. Protects unsaved numeric edits
+/// from concurrent changes to the same shared Envelope object.
 /// </summary>
 public sealed class NodeEnvelopeEditorControl : UserControl
 {
@@ -25,6 +26,12 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 	private readonly NodeEnvelopeDefinition _envelope;
 	private readonly Action<string> _changed;
 	private readonly NodeEnvelopeGraphControl _graph;
+	private bool _loadingFields;
+	private bool _draftDirty;
+	private EnvelopeNode[] _baselineNodes = [];
+	private int _baselineStart;
+	private int _baselineEnd;
+	private EnvelopeSustainLoopMode _baselineMode;
 	private readonly TextBox _nodesInput = new()
 	{
 		AcceptsReturn = true,
@@ -68,6 +75,12 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 			_message.Text = "Envelope updated from graph.";
 			_changed($"Updated envelope {_envelope.Name}");
 		};
+		_nodesInput.TextChanged += (_, _) => MarkDraftDirty();
+		_sustainStart.TextChanged += (_, _) => MarkDraftDirty();
+		_sustainEnd.TextChanged += (_, _) => MarkDraftDirty();
+		_loopMode.SelectionChanged += (_, _) => MarkDraftDirty();
+		AttachedToVisualTree += OnAttached;
+		DetachedFromVisualTree += OnDetached;
 
 		StackPanel form = new() { Spacing = 8, Margin = new Thickness(14) };
 		form.Children.Add(new TextBlock
@@ -125,7 +138,20 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 		form.Children.Add(controls);
 		Button apply = new() { Content = "Apply envelope", MinWidth = 140 };
 		apply.Click += (_, _) => Apply();
-		form.Children.Add(apply);
+		Button reload = new() { Content = "Reload shared envelope" };
+		reload.Click += (_, _) =>
+		{
+			RefreshFromEnvelope();
+			_message.Text = "Numeric editor reloaded from the shared envelope.";
+		};
+		StackPanel actions = new()
+		{
+			Orientation = Orientation.Horizontal,
+			Spacing = 8,
+		};
+		actions.Children.Add(apply);
+		actions.Children.Add(reload);
+		form.Children.Add(actions);
 		form.Children.Add(_message);
 		Content = form;
 		RefreshFromEnvelope();
@@ -144,24 +170,84 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 		grid.Children.Add(editor);
 	}
 
+	private void OnAttached(object? sender, VisualTreeAttachmentEventArgs e)
+	{
+		_workspace.Document.Changed += OnDocumentChanged;
+		if (!BaselineIsCurrent())
+			OnSharedEnvelopeChanged();
+	}
+
+	private void OnDetached(object? sender, VisualTreeAttachmentEventArgs e)
+		=> _workspace.Document.Changed -= OnDocumentChanged;
+
+	private void OnDocumentChanged(object? sender, SongDocumentChangedEventArgs e)
+	{
+		_ = sender;
+		_ = e;
+		if (!BaselineIsCurrent())
+			OnSharedEnvelopeChanged();
+	}
+
+	private void OnSharedEnvelopeChanged()
+	{
+		if (_draftDirty)
+		{
+			_message.Text = "This shared envelope changed in another editor. "
+				+ "Your unsaved numbers are preserved but cannot overwrite the "
+				+ "new curve. Reload the shared envelope before applying.";
+			return;
+		}
+		RefreshFromEnvelope();
+		_message.Text = "Shared envelope updated.";
+	}
+
+	private bool BaselineIsCurrent()
+		=> _baselineStart == _envelope.SustainStartIndex
+			&& _baselineEnd == _envelope.SustainEndIndex
+			&& _baselineMode == _envelope.SustainLoopMode
+			&& _baselineNodes.SequenceEqual(_envelope.Nodes);
+
+	private void MarkDraftDirty()
+	{
+		if (!_loadingFields)
+			_draftDirty = true;
+	}
+
 	public void RefreshFromEnvelope()
 	{
-		_graph.RefreshFromEnvelope();
-		_nodesInput.Text = string.Join("\n", _envelope.Nodes.Select(node =>
-			node.Time.TotalSeconds.ToString("G17", CultureInfo.InvariantCulture)
-			+ ", "
-			+ node.Value.ToString("G17", CultureInfo.InvariantCulture)));
-		_sustainStart.Text = _envelope.SustainStartIndex.ToString(
-			CultureInfo.InvariantCulture);
-		_sustainEnd.Text = _envelope.SustainEndIndex.ToString(
-			CultureInfo.InvariantCulture);
-		_loopMode.SelectedItem = _envelope.SustainLoopMode;
+		_loadingFields = true;
+		try
+		{
+			_graph.RefreshFromEnvelope();
+			_nodesInput.Text = string.Join("\n", _envelope.Nodes.Select(node =>
+				node.Time.TotalSeconds.ToString("G17", CultureInfo.InvariantCulture)
+				+ ", "
+				+ node.Value.ToString("G17", CultureInfo.InvariantCulture)));
+			_sustainStart.Text = _envelope.SustainStartIndex.ToString(
+				CultureInfo.InvariantCulture);
+			_sustainEnd.Text = _envelope.SustainEndIndex.ToString(
+				CultureInfo.InvariantCulture);
+			_loopMode.SelectedItem = _envelope.SustainLoopMode;
+			_baselineNodes = _envelope.Nodes.ToArray();
+			_baselineStart = _envelope.SustainStartIndex;
+			_baselineEnd = _envelope.SustainEndIndex;
+			_baselineMode = _envelope.SustainLoopMode;
+			_draftDirty = false;
+		}
+		finally
+		{
+			_loadingFields = false;
+		}
 	}
 
 	private void Apply()
 	{
 		try
 		{
+			if (!BaselineIsCurrent())
+				throw new InvalidOperationException(
+					"The shared envelope changed since this draft began. "
+					+ "Reload the shared envelope before applying.");
 			List<EnvelopeNode> nodes = ParseNodes(_nodesInput.Text);
 			int start = ParseIndex(_sustainStart, "Sustain start");
 			int end = ParseIndex(_sustainEnd, "Sustain end");
