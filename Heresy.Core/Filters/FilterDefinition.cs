@@ -21,6 +21,7 @@ public sealed class FilterDefinition : SongObject
 {
 	private ReadOnlyCollection<FilterStageDefinition> _stages;
 	private int _nextStageId;
+	private Dictionary<int, long> _stageGenerations = [];
 
 	public FilterDefinition(
 		ObjectId id,
@@ -40,6 +41,12 @@ public sealed class FilterDefinition : SongObject
 	public FilterStageDefinition GetStage(int stageId)
 		=> _stages.FirstOrDefault(stage => stage.StageId == stageId)
 			?? throw new KeyNotFoundException($"Unknown filter stage ID {stageId}.");
+
+	internal long GetStageGeneration(int stageId)
+	{
+		GetStage(stageId);
+		return _stageGenerations[stageId];
+	}
 
 	public FilterStageDefinition GetStage(string name)
 	{
@@ -77,8 +84,24 @@ public sealed class FilterDefinition : SongObject
 			maximumId = Math.Max(maximumId, stage.StageId);
 		}
 
+		// Keep a generation even for removed stages: an old instance override
+		// cannot reappear if its ID is later reused with the original kind,
+		// or if a stage switches kind twice between accesses.
+		Dictionary<int, long> nextGenerations = new(_stageGenerations);
+		Dictionary<int, FilterStageDefinition> previous =
+			_stages.ToDictionary(stage => stage.StageId);
+		foreach (FilterStageDefinition stage in candidate)
+		{
+			if (!_stageGenerations.TryGetValue(stage.StageId, out long generation))
+				nextGenerations[stage.StageId] = 0;
+			else if (!previous.TryGetValue(stage.StageId,
+				out FilterStageDefinition? existing) || existing.Kind != stage.Kind)
+				nextGenerations[stage.StageId] = checked(generation + 1);
+		}
+
 		// A validated replacement is an all-or-nothing definition edit.
 		_stages = Array.AsReadOnly(candidate);
+		_stageGenerations = nextGenerations;
 		_nextStageId = maximumId == int.MaxValue
 			? int.MaxValue
 			: Math.Max(_nextStageId, maximumId + 1);
