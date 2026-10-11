@@ -38,7 +38,7 @@ public sealed class SvfFilterTests
 	public void LowHighBandAndNotchHaveExpectedResponseAndExactComplements()
 	{
 		const double cutoff = 4000;
-		const double q = 1 / Math.Sqrt(2);
+		double q = 1 / Math.Sqrt(2);
 		Assert.That(Magnitude(FilterKind.SvfLowPass, cutoff, 100, q),
 			Is.InRange(0.98, 1.02));
 		Assert.That(Magnitude(FilterKind.SvfLowPass, cutoff, 16000, q),
