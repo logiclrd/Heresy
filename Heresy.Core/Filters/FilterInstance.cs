@@ -58,6 +58,11 @@ public sealed class FilterInstance
 
 	public ObjectId DefinitionId => _definition.Id;
 
+	/// <summary>Identifies the current definition generation, so persisted
+	/// overrides cannot be rebound to a different stage topology by mistake.</summary>
+	internal long GetStageGenerationForPersistence(int stageId)
+		=> _definition.GetStageGeneration(stageId);
+
 	/// <summary>Constructs a new effective snapshot in the definition's
 	/// current serial order. Editing the returned snapshot never changes this
 	/// FilterInstance, its definition or another consumer's configuration.</summary>
