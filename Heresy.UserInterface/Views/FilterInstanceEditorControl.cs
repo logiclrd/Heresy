@@ -162,7 +162,11 @@ public sealed class FilterInstanceEditorControl : UserControl
 			return;
 		}
 		if (_session.IsStale)
+		{
 			_session.Reload();
+			RefreshStages(requestedId);
+			return;
+		}
 		LoadSelectedStage();
 	}
 
@@ -246,8 +250,11 @@ public sealed class FilterInstanceEditorControl : UserControl
 						: ". Continuously modulatable numeric parameter.");
 				ToolTip.SetTip(editor, help);
 				ToolTip.SetTip(toggle, "Unchecked means inherit the shared definition default.");
-				toggle.Checked += (_, _) => editor.IsEnabled = true;
-				toggle.Unchecked += (_, _) => editor.IsEnabled = false;
+				toggle.PropertyChanged += (_, change) =>
+				{
+					if (change.Property == ToggleButton.IsCheckedProperty)
+						editor.IsEnabled = toggle.IsChecked == true;
+				};
 				_overrideToggles.Add(descriptor.Name, toggle);
 				_editors.Add(descriptor.Name, editor);
 				_loadedValues.Add(descriptor.Name, Format(value));
