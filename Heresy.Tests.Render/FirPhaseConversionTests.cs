@@ -76,8 +76,10 @@ public sealed class FirPhaseConversionTests
 		float[] linear = Impulse(CreateUse(
 			FilterKind.FirLowPass, "Linear", taps));
 
+		// Phase differences cannot be resolved in the rejection band,
+		// where both complex responses are approximately zero.
 		foreach (double frequency in new[] {
-			211.0, 833.0, 2301.0, 4100.0, 7800.0,
+			211.0, 833.0, 1700.0, 2301.0, 3000.0, 3500.0,
 		})
 		{
 			double omega = 2 * Math.PI * frequency / SampleRate;
