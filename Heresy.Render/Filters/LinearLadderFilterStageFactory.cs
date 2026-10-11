@@ -88,8 +88,8 @@ public sealed class LinearLadderFilterStageFactory : IStreamingFilterStageFactor
 			double real = -1 + rootRadius * Math.Cos(angle);
 			double imaginary = rootRadius * Math.Sin(angle);
 			double gi = g * imaginary;
-			double numerator = Math.Hypot(1 + g * real, gi);
-			double denominator = Math.Hypot(1 - g * real, gi);
+			double numerator = Math.Sqrt((1 + g * real) * (1 + g * real) + gi * gi);
+			double denominator = Math.Sqrt((1 - g * real) * (1 - g * real) + gi * gi);
 			double mapped = numerator / denominator;
 			if (!double.IsFinite(mapped))
 				return double.NaN;
