@@ -107,6 +107,16 @@ public interface IStreamingFilterStagePlan
 }
 
 /// <summary>
+/// Optional fixed latency for a prepared FIR or other delayed stage.
+/// This is descriptive metadata for future host alignment, not automatic
+/// compensation of dry signals or a mechanism for delaying host playback.
+/// </summary>
+public interface ILatencyAwareFilterStagePlan
+{
+	int LatencyFrames { get; }
+}
+
+/// <summary>
 /// One channel's mutable filter history. Clone must deep-copy all mutable
 /// state. Reconfigure may retain that history when the engine determines
 /// identity and structural compatibility, and may throw without corrupting
