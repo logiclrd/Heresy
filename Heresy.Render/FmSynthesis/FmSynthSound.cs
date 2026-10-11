@@ -129,10 +129,66 @@ public sealed class FmSynthSound : ISound
 		RenderContext context,
 		SoundState state)
 	{
-		_ = context
-			?? throw new ArgumentNullException(nameof(context));
-		ValidateState(state);
-		return null;
+		ArgumentNullException.ThrowIfNull(context);
+		FmSynthState synthState = ValidateState(state);
+		if (!synthState.NoteOffTime.HasValue)
+			return null;
+
+		// The FM graph's envelopes are *inside* this Sound, not in
+		// NoteConfigurationSnapshot.Envelopes.Volume. Expose a sound end
+		// only where graph structure proves its output silent. Otherwise
+		// live virtual audition would cut an envelope's valid release
+		// (or, without a bound, retain a non-silent oscillator forever).
+		int sampleRate = context.Configuration.SampleRate;
+		long noteOffFrame = FrameTime.Ceiling(
+			synthState.NoteOffTime.Value, sampleRate);
+		long?[] silentFrom = new long?[_nodes.Length];
+		for (int index = 0; index < _nodes.Length; index++)
+		{
+			CompiledNode node = _nodes[index];
+			silentFrom[index] = node.Definition switch
+			{
+				FmEnvelopeNode => node.Envelope is null
+					? 0L
+					: node.Envelope.GetEndActiveFrameExclusiveAfterNoteOff(
+						noteOffFrame, sampleRate),
+				FmOperatorNode op => GetOperatorSilenceEnd(
+					op.Operation, node.InputIndices, silentFrom),
+				// A frequency-modulating Envelope does not make its
+				// oscillator's output silent. Nor does a bare constant
+				// provide a release lifecycle.
+				_ => null,
+			};
+		}
+		return silentFrom[_outputIndex];
+	}
+
+	private static long? GetOperatorSilenceEnd(
+		FmOperatorKind operation,
+		IReadOnlyList<int> inputs,
+		IReadOnlyList<long?> silentFrom)
+	{
+		if (operation == FmOperatorKind.Multiply)
+		{
+			// Any factor becoming zero silences the product.
+			long? earliest = null;
+			foreach (int input in inputs)
+				if (silentFrom[input] is long end)
+					earliest = earliest.HasValue
+						? Math.Min(earliest.Value, end) : end;
+			return earliest;
+		}
+
+		// For addition, minimum and maximum, all inputs must be
+		// provably zero before the combination is guaranteed zero.
+		long latest = 0;
+		foreach (int input in inputs)
+		{
+			if (silentFrom[input] is not long end)
+				return null;
+			latest = Math.Max(latest, end);
+		}
+		return latest;
 	}
 
 	public void Render(

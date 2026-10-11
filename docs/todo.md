@@ -6,6 +6,25 @@ architecture and regression history are documented in the
 features, including scripted Patterns, Sequences, Envelopes, Instruments,
 virtual-voice controls, and compiled parametric effects, are implemented.
 
+## FM oscillator pitch independence
+
+- [ ] **Add a per-oscillator `Constant` frequency flag for fixed-rate FM modulation.**
+  Place a checkbox labelled **Constant** directly below the oscillator's
+  **Frequency Hz** field in the FM synth inspector, unchecked by default.
+  When checked, the selected oscillator runs at its configured frequency
+  in wall time, independent of the requested note, inherited instrument
+  pitch, playback-speed pitch scaling, and note-level pitch modulation.
+  Leave its optional connected multiplier input functional: this
+  checkbox removes the *note pitch* multiplier, not modulation supplied
+  explicitly by the FM graph. Other oscillators remain pitch-relative.
+  Store the flag on `FmOscillatorNode`; support all clone/import/graph
+  edit and song JSON round-trip paths, including snapshot isolation.
+  Update `FmSynthSound` to bypass the pitch multiplier for that oscillator
+  only. Add regressions comparing a fixed-rate vibrato LFO at two note
+  pitches, independent oscillators in one graph, modulation inputs,
+  and persisted/reopened patches. Verify the checkbox position and
+  immediate document/audio revision on toggle.
+
 ## Node-envelope redesign
 
 The [node-envelope design contract](node-envelope-design.md) records the

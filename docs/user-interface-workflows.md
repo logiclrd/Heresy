@@ -114,6 +114,26 @@ overwrite unrelated committed settings. Ordinary commits refresh the graph
 without rebuilding the inspector or disrupting focus.
 
 
+## FM editor preview release lifecycle
+
+The FM editor's **Test** area starts one independent virtual voice per
+tracker-piano key, and physical key-up (or loss of Test focus/window focus)
+emits **Note Off**, not **Note Cut**. FM synths calculate their Envelope
+nodes *inside the graph*, so the sound now reports a deterministic end
+when the output graph is proven silent after its embedded envelope tail.
+A bare Envelope output is finite when its envelope declares a release
+bound. Multiplication becomes silent when **any** operand is guaranteed
+zero; addition/minimum/maximum require **all** inputs to become zero.
+An Envelope used only as an oscillator's frequency input does **not**
+prove its output silent. Live audition therefore preserves audible
+release tails for envelope-gated FM sounds without retaining indefinite
+ungated oscillators: unbounded FM sources still use the existing live
+virtual-voice safety cut. Ordinary Pattern playback continues to use
+its existing Note Off semantics without that live-preview fallback.
+
+This is intentionally different from Sample Test: Sample preview notes
+continue after physical key-up, while FM Test notes are released then.
+
 ## Sample waveform loops and note audition
 
 In the Sample editor, the decoded waveform supports both dragging an
