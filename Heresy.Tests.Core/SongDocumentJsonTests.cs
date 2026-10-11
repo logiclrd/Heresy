@@ -443,7 +443,7 @@ public sealed class SongDocumentJsonTests
 		[
 			modern[0]!.DeepClone(),
 			modern[1]!.DeepClone(),
-			modern[4]!.DeepClone(),
+			modern[5]!.DeepClone(),
 			modern[2]!.DeepClone(),
 		];
 		old[3]!.AsObject()["name"] = "Samples";
@@ -455,7 +455,7 @@ public sealed class SongDocumentJsonTests
 		Assert.That(restored.AudioRevision, Is.Zero);
 		Assert.That(restored.Root.Children.Select(x => x.Name),
 			Is.EqualTo(new[] { "Sequences", "Patterns",
-				"Patches", "Envelopes", "Instruments" }));
+				"Patches", "Filters", "Envelopes", "Instruments" }));
 		Assert.That(restored.Objects.Keys,
 			Is.EquivalentTo(new[] { instrumentId, envelopeId }));
 		Assert.That(restored.Tombstones.ContainsKey(deletedId), Is.True);
@@ -480,7 +480,7 @@ public sealed class SongDocumentJsonTests
 		SongDocument reopened = SongDocumentJson.Deserialize(
 			SongDocumentJson.Serialize(restored, JsonContextPath),
 			JsonContextPath);
-		Assert.That(reopened.Root.Children, Has.Count.EqualTo(5));
+		Assert.That(reopened.Root.Children, Has.Count.EqualTo(6));
 		Assert.That(reopened.Tombstones.ContainsKey(deletedId), Is.True);
 	}
 
@@ -495,7 +495,7 @@ public sealed class SongDocumentJsonTests
 		[
 			modern[0]!.DeepClone(),
 			modern[1]!.DeepClone(),
-			modern[4]!.DeepClone(),
+			modern[5]!.DeepClone(),
 			modern[2]!.DeepClone(),
 		];
 		json["tree"]!["children"] = invalid;
@@ -726,10 +726,10 @@ public sealed class SongDocumentJsonTests
 			scriptSequence.Source,
 			Is.EqualTo("yield return pattern;"));
 
-		Assert.That(document.Root.Children, Has.Count.EqualTo(5));
+		Assert.That(document.Root.Children, Has.Count.EqualTo(6));
 		Assert.That(
 			document.Root.Children.Select(node => node.Name),
-			Is.EqualTo(new[] { "Sequences", "Patterns", "Patches", "Envelopes", "Instruments" }));
+			Is.EqualTo(new[] { "Sequences", "Patterns", "Patches", "Filters", "Envelopes", "Instruments" }));
 
 		SongTreeFolder samples =
 			document.GetSectionRoot(SongTreeSection.Samples);
