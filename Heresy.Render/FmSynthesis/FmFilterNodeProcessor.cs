@@ -19,6 +19,9 @@ internal sealed class FmFilterNodeProcessor
 		int ValueIndex, double InitialValue);
 
 	internal static long DebugBeforeFastAllocated;
+	internal static long DebugPreRetuneAllocated;
+	internal static long DebugRetuneCallAllocated;
+	internal static long DebugPostRetuneAllocated;
 	internal static long DebugChainAllocated;
 	internal static long DebugFastSamples;
 	internal static long DebugFastAllocated;
@@ -150,10 +153,15 @@ internal sealed class FmFilterNodeProcessor
 		if (state.Chain is null || state.Configuration is null)
 			return input;
 
+		long debugBeforeRetune = GC.GetAllocatedBytesForCurrentThread();
+		DebugPreRetuneAllocated += debugBeforeRetune - debugProcessStart;
 		if (_bindings.Length != 0 && !stopExcitation)
 			Retune(state, nodeValues);
+		long debugAfterRetune = GC.GetAllocatedBytesForCurrentThread();
+		DebugRetuneCallAllocated += debugAfterRetune - debugBeforeRetune;
 
 		long debugChainStart = GC.GetAllocatedBytesForCurrentThread();
+		DebugPostRetuneAllocated += debugChainStart - debugAfterRetune;
 		float sample = state.Chain.ProcessMonoFrame(input);
 		DebugChainAllocated += GC.GetAllocatedBytesForCurrentThread() - debugChainStart;
 		DebugProcessAllocated += GC.GetAllocatedBytesForCurrentThread() - debugProcessStart;
