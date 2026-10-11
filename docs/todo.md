@@ -17,9 +17,8 @@ The reusable Core Filter SongObject, stable named serial stages, independent par
 
 ### Reusable rendering engine and filter families
 
-The per-invocation streaming runtime, explicit neutral/bypass factory, immutable sample-rate-dependent preparation contract, atomic transition and state-fork/reset/tail policy are implemented in Heresy.Render. Processing all real filter responses remains the separate algorithm milestones below; selecting a kind currently does not make it audible. The reusable runtime is not yet connected to live song hosts.
+The per-invocation streaming runtime, explicit neutral/bypass factory, immutable sample-rate-dependent preparation contract, atomic transition and state-fork/reset/tail policy are implemented in Heresy.Render. The first real DSP implementation, One-Pole (TPT low/high-pass), is complete with sample-rate/Nyquist checks, history-preserving cutoff updates, structural resets, PCM spectral tests and bounded denormal-safe tails. The built-in streaming factory now executes One-Pole; the other twenty kinds remain explicit bypass until their separate algorithm milestones below. The reusable runtime is not yet connected to live song hosts.
 
-- [ ] **Implement the One-Pole (6 dB/octave) type.** Include validated cutoff/response configuration, expected impulse/frequency response, parameter updates, history preservation and denormal-safe tails.
 - [ ] **Implement all seven Audio EQ Biquad types.** Low/high pass, low/high shelf, peaking/bell, band-pass and notch, with validated Q/bandwidth/gain controls where applicable, coefficient stability and modulation/smoothing tests.
 - [ ] **Implement the four SVF types on a shared stable SVF engine.** Low/high/band-pass and notch are distinct selector options, backed by a topology-preserving implementation; test frequency response and rapid modulation against stability and finite-output criteria.
 - [ ] **Implement Ladder (linear).** Define resonance/cutoff, state and stability boundaries; verify modulation, impulse response and numerical safety separately from the nonlinear variant.
