@@ -13,6 +13,8 @@ public sealed class NodeEnvelopeGraphGeometry
 	public const double NodeRadius = 3;
 	public const double NodeHitRadius = 4;
 	public const double SegmentHitRadius = 6;
+	/// <summary>Guides are draggable within two pixels either side.</summary>
+	public const double GuideHitRadius = 2;
 	public const double Padding = 16;
 
 	private readonly EnvelopeNode[] _nodes;
@@ -90,7 +92,7 @@ public sealed class NodeEnvelopeGraphGeometry
 		if (!double.IsFinite(x) || !double.IsFinite(y)
 			|| y < _top || y > _bottom)
 			return -1;
-		double distance = 4.0;
+		double distance = GuideHitRadius;
 		int closest = -1;
 		for (int i = 0; i < Count; i++)
 		{
@@ -124,29 +126,28 @@ public sealed class NodeEnvelopeGraphGeometry
 		return closest;
 	}
 
-	/// <summary>Endpoint drags cannot cross the opposite endpoint.
-	/// Coincident endpoints can be expanded in either direction.</summary>
+	/// <summary>Move exactly the dragged endpoint. Crossing the opposite
+	/// endpoint reverses which stored index is first, rather than clamping
+	/// the pointer or moving the untouched endpoint.</summary>
 	public static (int Start, int End) MoveSustainBoundary(
 		int start, int end, int boundary, int target)
 	{
-		if (start > end || target < 0)
+		if (start < 0 || start > end || target < 0)
 			throw new ArgumentOutOfRangeException(nameof(target));
 		if (boundary != start && boundary != end)
 			throw new ArgumentException(
 				"The dragged guide is not a sustain boundary.",
 				nameof(boundary));
+		// When the endpoints coincide there is just one guide, and
+		// dragging in either direction expands to include the target.
 		if (start == end)
-			return (Math.Min(start, target), Math.Max(end, target));
-		if (boundary == start && target < start)
-			return (target, start);
-		if (boundary == end && target > end)
-			return (end, target);
-		return boundary == start
-			? (Math.Min(target, end), end)
-			: (start, Math.Max(start, target));
+			return (Math.Min(start, target), Math.Max(start, target));
+		if (boundary == start)
+			return (Math.Min(target, end), Math.Max(target, end));
+		return (Math.Min(start, target), Math.Max(start, target));
 	}
 
-	/// <summary>Dragging from an unhighlighted guide replaces the
+	/// <summary>Dragging from any non-endpoint guide replaces the
 	/// entire region; dragging backward is intentionally symmetric.</summary>
 	public static (int Start, int End) SelectSustainRegion(
 		int origin, int target, int originalStart, int originalEnd)

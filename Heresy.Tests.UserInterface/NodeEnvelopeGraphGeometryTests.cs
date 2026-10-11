@@ -63,13 +63,13 @@ public sealed class NodeEnvelopeGraphGeometryTests
 	}
 
 	[Test]
-	public void GuideHitTestingIsVerticalWithFourPixelToleranceAndNearestSnap()
+	public void GuideHitTestingUsesFivePixelDraggableStripAndNearestSnap()
 	{
 		NodeEnvelopeGraphGeometry geometry = Layout();
 		(double x, double y) = geometry.Point(2);
 		Assert.That(geometry.HitGuide(x, geometry.Top), Is.EqualTo(2));
-		Assert.That(geometry.HitGuide(x + 4, geometry.Bottom), Is.EqualTo(2));
-		Assert.That(geometry.HitGuide(x + 4.01, y), Is.EqualTo(-1));
+		Assert.That(geometry.HitGuide(x + 2, geometry.Bottom), Is.EqualTo(2));
+		Assert.That(geometry.HitGuide(x + 2.01, y), Is.EqualTo(-1));
 		Assert.That(geometry.HitGuide(x, geometry.Top - 0.01), Is.EqualTo(-1));
 		Assert.That(geometry.HitGuide(x, geometry.Bottom + 0.01),
 			Is.EqualTo(-1));
@@ -83,26 +83,32 @@ public sealed class NodeEnvelopeGraphGeometryTests
 	}
 
 	[Test]
-	public void SustainBoundaryDragsClampAtOppositeBoundaryAndAllowContraction()
+	public void SustainBoundaryDragsCrossAndSwapOrderingWithoutMovingOtherBoundary()
 	{
 		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
 			1, 3, boundary: 1, target: 2), Is.EqualTo((2, 3)));
 		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
-			1, 3, boundary: 1, target: 99), Is.EqualTo((3, 3)));
+			1, 3, boundary: 1, target: 99), Is.EqualTo((3, 99)));
 		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
 			1, 3, boundary: 3, target: 2), Is.EqualTo((1, 2)));
 		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
-			1, 3, boundary: 3, target: 0), Is.EqualTo((1, 1)));
+			1, 3, boundary: 3, target: 0), Is.EqualTo((0, 1)));
 		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
 			1, 3, boundary: 1, target: 1), Is.EqualTo((1, 3)));
 		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
 			1, 3, boundary: 3, target: 3), Is.EqualTo((1, 3)));
 		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
-			1, 2, boundary: 2, target: 3), Is.EqualTo((2, 3)),
-			"outward dragging the end guide selects the new interval");
+			1, 2, boundary: 2, target: 3), Is.EqualTo((1, 3)),
+			"moving the end does not move the start");
 		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
-			1, 2, boundary: 1, target: 0), Is.EqualTo((0, 1)),
-			"outward dragging the start guide selects the new interval");
+			1, 2, boundary: 1, target: 0), Is.EqualTo((0, 2)),
+			"moving the start does not move the end");
+		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
+			1, 3, boundary: 1, target: 4), Is.EqualTo((3, 4)),
+			"moving the start beyond the end flips their ordering");
+		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
+			1, 3, boundary: 3, target: 0), Is.EqualTo((0, 1)),
+			"moving the end past start flips their ordering");
 		Assert.Throws<ArgumentException>(() =>
 			NodeEnvelopeGraphGeometry.MoveSustainBoundary(1, 3, 2, 3));
 	}
@@ -127,6 +133,9 @@ public sealed class NodeEnvelopeGraphGeometryTests
 			Is.EqualTo((0, 3)));
 		Assert.That(NodeEnvelopeGraphGeometry.SelectSustainRegion(3, 2, 0, 1),
 			Is.EqualTo((2, 3)));
+		Assert.That(NodeEnvelopeGraphGeometry.SelectSustainRegion(2, 0, 1, 3),
+			Is.EqualTo((0, 2)),
+			"an interior non-endpoint guide replaces the whole old region");
 		Assert.That(NodeEnvelopeGraphGeometry.SelectSustainRegion(0, 0, 1, 2),
 			Is.EqualTo((1, 2)),
 			"self drags leave the previous range intact; double-click creates single-node sustain");

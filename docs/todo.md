@@ -26,9 +26,12 @@ hardware and actual audible playback verification:
 - [ ] **Physically validate node-envelope editing and audible release tails.**
   Windows desktop feedback identified inadequate sustain shading,
   ambiguous outward guide drags, missing fixed display bounds, missing
-  drag preview, no-sustain mode, and keyboard interactions. These
-  corrections are implemented and regression-tested, but they still
-  require another hands-on Windows check before closure.
+  drag preview, no-sustain mode, and keyboard interactions. The first
+  corrections are implemented and regression-tested. Subsequent
+  feedback clarified five-pixel guide hit targets, guide hover cursors,
+  crossing boundaries, interior-guide drags, and thicker boundary
+  lines, now covered by further regression tests. A fresh hands-on
+  Windows check is still required before closure.
   Automated regression coverage exercises shared standalone/FM editor
   synchronization, unsaved-draft conflict prevention, navigation,
   simulated headless pointer dragging, and chunk-invariant held/released/

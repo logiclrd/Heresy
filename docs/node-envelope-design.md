@@ -82,9 +82,22 @@ retirement logic must handle tails correctly.
 
 ## Graphical editing contract (interactive graph and sustain gestures implemented)
 
+The sustain fill uses ARGB **#40808080**, or 25% opacity of 50%
+gray. Its two boundary guides are **3 pixels thick**, versus 1 pixel for
+other guides, so a single-node sustain is visible. Vertical guide
+drag targets cover the centerline and **2 pixels on each side**.
+Boundary guides show the `SizeWestEast` cursor on hover; every other
+guide shows `Ibeam`. The cursor image remains unchanged during a drag.
+Moving either boundary past the other swaps their stored index order
+but keeps the untouched endpoint fixed. Dragging any other guide,
+including one inside the existing sustain band, replaces the entire
+range in either direction. The dot still takes priority over its guide
+for selection and deletion.
+
+
 The replacement graph draws small nodes and straight interpolating
 segments, faint vertical guides through every node, and a sustain region
-plus its corresponding lines highlighted with **#04808080**.
+plus its corresponding lines highlighted with **#40808080**.
 At most one node can be selected. A normal click selects the closest
 node if it lies within **4 pixels** of the pointer and otherwise clears
 selection. The selected node is marked with tiny brackets to its
@@ -108,7 +121,7 @@ outward instead selects the interval from that guide to the destination,
 e.g. dragging line 2 to line 4 selects [2,4].
 When start and end coincide, either boundary may expand to a new
 node according to drag direction.
-Dragging from a non-highlighted node's guide to a different node's guide
+Dragging from any non-endpoint node guide to a different node guide
 replaces the entire sustain interval; direction does not matter.
 Dragging from a guide back to itself leaves the region alone;
 **double-clicking a guide** explicitly sets the sustain start and end

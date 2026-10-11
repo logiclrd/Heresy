@@ -194,6 +194,113 @@ public sealed class NodeEnvelopeGraphControlTests
 	}
 
 	[AvaloniaTest]
+	public void GuideHoverUsesDistinctCursorsAndFreezesCursorDuringDrag()
+	{
+		DocumentWorkspace workspace = new();
+		NodeEnvelopeDefinition envelope =
+			EnvelopeDocumentEditor.CreateNodeEnvelope(workspace, "Hover");
+		EnvelopeDocumentEditor.UpdateNodeEnvelope(workspace, envelope,
+			envelope.Nodes, 1, 3, EnvelopeSustainLoopMode.Forward);
+		NodeEnvelopeGraphControl graph = new(workspace, envelope);
+		Control surface = (Control)typeof(NodeEnvelopeGraphControl)
+			.GetField("_surface", BindingFlags.Instance
+				| BindingFlags.NonPublic)!.GetValue(graph)!;
+		surface.Measure(new Size(440, 250));
+		surface.Arrange(new Rect(0, 0, 440, 250));
+		NodeEnvelopeGraphGeometry geometry = new(envelope.Nodes,
+			440, 250, envelope.Vmin, envelope.Vmax);
+		Type type = surface.GetType();
+		BindingFlags privateFlags = BindingFlags.NonPublic
+			| BindingFlags.Instance;
+		BindingFlags staticFlags = BindingFlags.NonPublic
+			| BindingFlags.Static;
+		object endpoint = type.GetField("EndpointCursor", staticFlags)!
+			.GetValue(null)!;
+		object range = type.GetField("RangeCursor", staticFlags)!
+			.GetValue(null)!;
+		object normal = type.GetField("NormalCursor", staticFlags)!
+			.GetValue(null)!;
+		MethodInfo hover = type.GetMethod(
+			"UpdateHoverCursor", privateFlags)!;
+		double y = geometry.Top + 8;
+
+		hover.Invoke(surface, [new Point(geometry.Point(1).X, y)]);
+		surface.Cursor.Should().BeSameAs(endpoint);
+		hover.Invoke(surface, [new Point(geometry.Point(2).X, y)]);
+		surface.Cursor.Should().BeSameAs(range);
+		hover.Invoke(surface, [new Point(geometry.Point(2).X + 2.01, y)]);
+		surface.Cursor.Should().BeSameAs(normal);
+		hover.Invoke(surface, [new Point(geometry.Point(3).X, y)]);
+		surface.Cursor.Should().BeSameAs(endpoint);
+
+		type.GetField("_dragGuide", privateFlags)!.SetValue(surface, 3);
+		hover.Invoke(surface, [new Point(geometry.Point(2).X, y)]);
+		surface.Cursor.Should().BeSameAs(endpoint,
+			"cursor remains as it was at drag start");
+		type.GetMethod("CancelDrag")!.Invoke(surface, []);
+		surface.Cursor.Should().BeSameAs(normal);
+	}
+
+	[AvaloniaTest]
+	public void SustainPreviewMovesCrossingEndpointAndAcceptsInteriorRangeOrigin()
+	{
+		DocumentWorkspace workspace = new();
+		NodeEnvelopeDefinition envelope =
+			EnvelopeDocumentEditor.CreateNodeEnvelope(workspace, "Ranges");
+		EnvelopeDocumentEditor.UpdateNodeEnvelope(workspace, envelope,
+			envelope.Nodes, 1, 3, EnvelopeSustainLoopMode.Forward);
+		NodeEnvelopeGraphControl graph = new(workspace, envelope);
+		object surface = typeof(NodeEnvelopeGraphControl)
+			.GetField("_surface", BindingFlags.Instance
+				| BindingFlags.NonPublic)!.GetValue(graph)!;
+		Type type = surface.GetType();
+		BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+		NodeEnvelopeGraphGeometry geometry = new(envelope.Nodes,
+			440, 250, envelope.Vmin, envelope.Vmax);
+		uint revision = workspace.Document.AudioRevision;
+		void Set(string field, object value) =>
+			type.GetField(field, flags)!.SetValue(surface, value);
+		int Preview(string field) =>
+			(int)type.GetField(field, flags)!.GetValue(surface)!;
+		void Start(int origin)
+		{
+			Set("_dragGuide", origin);
+			Set("_dragNode", -1);
+			Set("_originalSustainStart", 1);
+			Set("_originalSustainEnd", 3);
+			Set("_fixedLayout", geometry);
+			Set("_press", new Point(geometry.Point(origin).X,
+				geometry.Top + 10));
+			Set("_dragMoved", false);
+		}
+		void Move(int target) => type.GetMethod(
+			"UpdateDraggedPosition", flags)!.Invoke(surface,
+				[new Point(geometry.Point(target).X, geometry.Top + 10)]);
+
+		Start(1);
+		Move(3);
+		Preview("_previewSustainStart").Should().Be(3);
+		Preview("_previewSustainEnd").Should().Be(3);
+		type.GetMethod("CancelDrag")!.Invoke(surface, []);
+		Start(1);
+		Move(0);
+		Preview("_previewSustainStart").Should().Be(0);
+		Preview("_previewSustainEnd").Should().Be(3);
+		type.GetMethod("CancelDrag")!.Invoke(surface, []);
+
+		// Starting on guide 2 (inside [1,3]) must replace the range.
+		Start(2);
+		Move(0);
+		Preview("_previewSustainStart").Should().Be(0);
+		Preview("_previewSustainEnd").Should().Be(2);
+		workspace.Document.AudioRevision.Should().Be(revision,
+			"previews never commit audio changes");
+		type.GetMethod("CancelDrag")!.Invoke(surface, []);
+		Preview("_previewSustainStart").Should().Be(1);
+		Preview("_previewSustainEnd").Should().Be(3);
+	}
+
+	[AvaloniaTest]
 	public void CancelledSustainDragRestoresPreviewWithoutDocumentMutation()
 	{
 		DocumentWorkspace workspace = new();

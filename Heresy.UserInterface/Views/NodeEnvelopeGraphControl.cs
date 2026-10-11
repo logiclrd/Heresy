@@ -157,6 +157,12 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		new SolidColorBrush(Color.FromRgb(255, 255, 255));
 	private static readonly IBrush Sustain =
 		new SolidColorBrush(Color.FromArgb(0x40, 0x80, 0x80, 0x80));
+	private static readonly Cursor NormalCursor =
+		new(StandardCursorType.Arrow);
+	private static readonly Cursor EndpointCursor =
+		new(StandardCursorType.SizeWestEast);
+	private static readonly Cursor RangeCursor =
+		new(StandardCursorType.Ibeam);
 
 	private readonly NodeEnvelopeDefinition _envelope;
 	private EnvelopeNode[] _previewNodes;
@@ -220,6 +226,7 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		_dragGuide = -1;
 		_dragMoved = false;
 		_fixedLayout = null;
+		Cursor = NormalCursor;
 		_previewNodes = _envelope.Nodes.ToArray();
 		_previewSustainStart = _envelope.SustainStartIndex;
 		_previewSustainEnd = _envelope.SustainEndIndex;
@@ -266,14 +273,16 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		for (int i = 0; i < graph.Count; i++)
 		{
 			(double x, _) = graph.Point(i);
-			context.DrawLine(new Pen(Guide, 1),
+			bool isBoundary = _envelope.SustainLoopMode
+				!= EnvelopeSustainLoopMode.None
+				&& (i == start || i == end);
+			// Boundary guides stay visible when start == end, and
+			// are three times wider than ordinary 1-pixel guides.
+			context.DrawLine(
+				new Pen(isBoundary ? Sustain : Guide,
+					isBoundary ? 3 : 1),
 				new Point(x, graph.Top),
 				new Point(x, graph.Bottom));
-			if (_envelope.SustainLoopMode != EnvelopeSustainLoopMode.None
-				&& i >= start && i <= end)
-				context.DrawLine(new Pen(Sustain, 2),
-					new Point(x, graph.Top),
-					new Point(x, graph.Bottom));
 		}
 
 		for (int i = 0; i + 1 < graph.Count; i++)
@@ -331,8 +340,9 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		Point pointer = e.GetPosition(this);
 		int selected = graph.HitNode(pointer.X, pointer.Y);
 
-		// The dot wins over its vertical guide, including double-click.
+		// The node dot takes precedence over the 5-pixel-wide guide.
 		int guide = selected < 0
+			&& _envelope.SustainLoopMode != EnvelopeSustainLoopMode.None
 			? graph.HitGuide(pointer.X, pointer.Y) : -1;
 		if (e.ClickCount >= 2)
 		{
@@ -370,11 +380,9 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 
 		Select(selected);
 		Focus();
-		if (selected >= 0 || (guide >= 0
-			&& (guide == _previewSustainStart
-				|| guide == _previewSustainEnd
-				|| guide < _previewSustainStart
-				|| guide > _previewSustainEnd)))
+		// Every non-endpoint guide is a fresh-range origin, including
+		// guides between the current start and stop.
+		if (selected >= 0 || guide >= 0)
 		{
 			_dragNode = selected;
 			_dragGuide = selected >= 0 ? -1 : guide;
@@ -383,6 +391,11 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 			_press = pointer;
 			_dragMoved = false;
 			_fixedLayout = graph;
+			// Keep this image unchanged until capture is released.
+			Cursor = guide < 0 ? NormalCursor
+				: guide == _originalSustainStart
+					|| guide == _originalSustainEnd
+					? EndpointCursor : RangeCursor;
 			e.Pointer.Capture(this);
 		}
 		e.Handled = true;
@@ -391,14 +404,38 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 	protected override void OnPointerMoved(PointerEventArgs e)
 	{
 		base.OnPointerMoved(e);
-		if (!IsDragging || _fixedLayout is null)
-			return;
 		Point pointer = e.GetPosition(this);
+		if (!IsDragging || _fixedLayout is null)
+		{
+			UpdateHoverCursor(pointer);
+			return;
+		}
+		// Cursor is intentionally frozen at the image that was
+		// displayed when pointer capture began.
 		if (!_dragMoved && Math.Abs(pointer.X - _press.X) < 3
 			&& Math.Abs(pointer.Y - _press.Y) < 3)
 			return;
 		UpdateDraggedPosition(pointer);
 		e.Handled = true;
+	}
+
+	private void UpdateHoverCursor(Point pointer)
+	{
+		if (IsDragging)
+			return;
+		NodeEnvelopeGraphGeometry? graph = Layout();
+		if (graph is null
+			|| graph.HitNode(pointer.X, pointer.Y) >= 0
+			|| _envelope.SustainLoopMode == EnvelopeSustainLoopMode.None)
+		{
+			Cursor = NormalCursor;
+			return;
+		}
+		int guide = graph.HitGuide(pointer.X, pointer.Y);
+		Cursor = guide < 0 ? NormalCursor
+			: guide == _previewSustainStart
+				|| guide == _previewSustainEnd
+				? EndpointCursor : RangeCursor;
 	}
 
 	private void UpdateDraggedPosition(Point pointer)
@@ -466,6 +503,7 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		_dragMoved = false;
 		_fixedLayout = null;
 		e.Pointer.Capture(null);
+		UpdateHoverCursor(e.GetPosition(this));
 		if (changed)
 			CommitRequested?.Invoke(result);
 		else

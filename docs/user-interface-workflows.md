@@ -463,12 +463,15 @@ or double-click a line to insert a new node at its closest projected
 point. Deleting the first node re-bases the remaining times to zero;
 the last surviving node cannot be deleted. All operations commit
 atomically through the shared envelope document revision path.
-Dragging a sustain boundary inward snaps it to another node without
-crossing the other endpoint; dragging a boundary outward selects a
-new region between the origin and target, so line 2 to line 4
-produces [2,4]. Dragging from an unhighlighted
-guide defines a new sustain interval in either direction; dragging to
-the same guide is a no-op. Double-clicking any vertical guide away from
+The sustain highlight uses `#40808080` and its endpoint guides are
+3 pixels thick, versus 1 pixel for ordinary guides. Even a single-node
+sustain is visible. Each vertical guide has a 5-pixel-wide drag target
+(2 pixels to either side). Hover over an endpoint shows `SizeWestEast`,
+and hover over another guide shows `Ibeam`. Cursor shape stays fixed
+during capture. Dragging either boundary moves only that boundary,
+crossing and reordering the two indices when necessary. Dragging any
+non-endpoint guide—inside or outside the sustain region—defines
+a new interval in either direction; self-drags do nothing. Double-clicking any vertical guide away from
 its node sets a single-node sustain, whereas double-clicking the dot
 deletes the node. Sustain drags preview before a one-time commit on
 release and cancel if pointer capture is lost. When one of two distinct

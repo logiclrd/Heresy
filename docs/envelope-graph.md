@@ -28,21 +28,30 @@ Tab/Shift-Tab cycles node selection, arrow keys nudge time and value,
 and Ctrl-Tab/Ctrl-Shift-Tab exits the graph. The document editor
 validates the replacement curve atomically, marks audio-affecting
 revisions, and updates the auxiliary numeric node-list editor.
-Sustain boundaries have draggable vertical guides: dragging a start/end
-guide snaps to another node, clamping before the opposite endpoint.
-When both endpoints coincide, a drag can expand the interval in either
-direction. Dragging from a guide **outside the existing sustain region**
-replaces the region between that guide and the destination guide,
-regardless of drag direction. Self-drag leaves the old region untouched;
+The sustain region is filled with ARGB `#40808080` (25% opacity of
+50% gray). Its **start and end vertical guides are 3 pixels thick**,
+three times the ordinary guide width; a coincident start/end therefore
+remains clearly visible even though the filled band has zero width.
+Guide hit targets extend 2 pixels on each side, for a total 5-pixel
+draggable strip. Hovering either endpoint shows `SizeWestEast`;
+hovering another guide shows `Ibeam`. The cursor remains fixed
+throughout each drag.
+
+Dragging a start/end guide moves **only that boundary**, even if it
+crosses the other one; the resulting start/end indices reorder.
+When both endpoints coincide, dragging expands the interval in
+either direction. Dragging from **any other guide**, including one
+inside the existing sustain interval, replaces the entire region
+between that guide and the destination, regardless of direction. Self-drag leaves the old region untouched;
 double-clicking any guide *away from the node dot* explicitly creates
 a single-node sustain. The node dot takes precedence over guide hits,
 so its own double-click still deletes that node. Guide drags preview
 the highlighted interval but commit only on pointer release; pointer
 capture loss discards the preview.
 
-Outward boundary dragging reselects the interval from the origin to
-the target (line 2 to line 4 produces [2,4]); inward dragging still
-resizes the existing region.
+The untouched endpoint retains its original index when a boundary is
+dragged outward or across it; a non-endpoint drag defines a new
+region from scratch.
 
 With a sustain endpoint selected, a **Match** button appears directly
 beneath the graph if and only if sustain start and end differ. It is
