@@ -290,7 +290,7 @@ public static class SongDocumentJson
 		catch (InvalidOperationException ex)
 		{
 			throw new InvalidDataException(
-				"The persisted song tree does not match the required five-section or legacy four-section structure.",
+				"The persisted song tree does not match the required six-section or legacy four-/five-section structure.",
 				ex);
 		}
 
@@ -1542,6 +1542,7 @@ public static class SongDocumentJson
 			SongObjectKind.Sequence => "sequence",
 			SongObjectKind.Envelope => "envelope",
 			SongObjectKind.FmSynth => "fmSynth",
+			SongObjectKind.Filter => "filter",
 			SongObjectKind.Unknown => "unknown",
 			_ => throw new NotSupportedException(
 				$"Unsupported song-object kind {kind}."),
@@ -1557,6 +1558,7 @@ public static class SongDocumentJson
 			"sequence" => SongObjectKind.Sequence,
 			"envelope" => SongObjectKind.Envelope,
 			"fmSynth" => SongObjectKind.FmSynth,
+			"filter" => SongObjectKind.Filter,
 			"unknown" => SongObjectKind.Unknown,
 			_ => throw new InvalidDataException(
 				$"Unknown tombstone object kind '{value}'."),
