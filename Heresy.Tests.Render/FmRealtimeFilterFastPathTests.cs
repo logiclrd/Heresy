@@ -131,12 +131,19 @@ public sealed class FmRealtimeFilterFastPathTests
 			"DebugBeforeFastAllocated", flags)!.GetValue(null)!;
 		long debugChain = (long)processorType.GetField(
 			"DebugChainAllocated", flags)!.GetValue(null)!;
+		long debugPreRetune = (long)processorType.GetField(
+			"DebugPreRetuneAllocated", flags)!.GetValue(null)!;
+		long debugRetuneCall = (long)processorType.GetField(
+			"DebugRetuneCallAllocated", flags)!.GetValue(null)!;
+		long debugPostRetune = (long)processorType.GetField(
+			"DebugPostRetuneAllocated", flags)!.GetValue(null)!;
 		Assert.That(allocated - controlAllocated, Is.LessThan(4096),
 			$"{kind}: 4096 changing cutoff samples allocate {allocated} bytes "
 			+ $"vs {controlAllocated} bytes for the identical unmodulated FM graph. "
 			+ $"Fast samples={debugFastSamples}, before-fast bytes={debugBefore}, "
 			+ $"fast bytes={debugFast}, chain bytes={debugChain}, "
-			+ $"process bytes={debugProcess}");
+			+ $"pre-retune={debugPreRetune}, retune-call={debugRetuneCall}, "
+			+ $"post-retune={debugPostRetune}, process bytes={debugProcess}");
 		Assert.That(pcm[0], Is.GreaterThan(0));
 	}
 
