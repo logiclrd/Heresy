@@ -13,9 +13,8 @@ namespace Heresy.Core.Filters;
 /// invalidates per-use overrides for the previous kind.
 /// </summary>
 /// <remarks>
-/// This is already a SongObject, but the new Filters document-tree root and
-/// registration/persistence are separate milestones. Until that root exists,
-/// SongDocument.Add deliberately cannot assign Filter objects a placement.
+/// Persisted identity metadata includes both the next stage ID and prior
+/// type generations, so reopening a song never resurrects stale overrides.
 /// </remarks>
 public sealed class FilterDefinition : SongObject
 {
@@ -37,6 +36,42 @@ public sealed class FilterDefinition : SongObject
 
 	public override SongObjectKind Kind => SongObjectKind.Filter;
 	public IReadOnlyList<FilterStageDefinition> Stages => _stages;
+
+	/// <summary>Monotonic stage-ID allocator state, including removed IDs.</summary>
+	public int NextStageIdForPersistence => _nextStageId;
+
+	/// <summary>Generation counters also include removed stages whose IDs
+	/// must not regain earlier parameter overrides after restoration.</summary>
+	public IReadOnlyDictionary<int, long> StageGenerationsForPersistence
+		=> new System.Collections.ObjectModel.ReadOnlyDictionary<int, long>(
+			new Dictionary<int, long>(_stageGenerations));
+
+	/// <summary>Restore validated identity metadata without changing stage
+	/// order, names or defaults. Called after constructing the stages from a
+	/// persisted definition; never resets the live document's revisions.</summary>
+	public void RestoreStageIdentity(
+		int nextStageId,
+		IReadOnlyDictionary<int, long> generations)
+	{
+		ArgumentNullException.ThrowIfNull(generations);
+		if (nextStageId < _nextStageId)
+			throw new ArgumentOutOfRangeException(nameof(nextStageId),
+				"Next stage ID cannot precede a persisted stage ID.");
+		Dictionary<int, long> restored = [];
+		foreach ((int id, long generation) in generations)
+		{
+			if (id <= 0 || id >= nextStageId || generation < 0)
+				throw new ArgumentException(
+					"Invalid persisted stage generation metadata.", nameof(generations));
+			restored.Add(id, generation);
+		}
+		foreach (FilterStageDefinition stage in _stages)
+			if (!restored.ContainsKey(stage.StageId))
+				throw new ArgumentException(
+					$"Missing generation for stage {stage.StageId}.", nameof(generations));
+		_stageGenerations = restored;
+		_nextStageId = nextStageId;
+	}
 
 	public FilterStageDefinition GetStage(int stageId)
 		=> _stages.FirstOrDefault(stage => stage.StageId == stageId)
