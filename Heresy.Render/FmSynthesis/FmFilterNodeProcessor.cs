@@ -18,6 +18,8 @@ internal sealed class FmFilterNodeProcessor
 	private sealed record Binding(int StageId, string ParameterName,
 		int ValueIndex, double InitialValue);
 
+	internal static long DebugBeforeFastAllocated;
+	internal static long DebugChainAllocated;
 	internal static long DebugFastSamples;
 	internal static long DebugFastAllocated;
 	internal static long DebugProcessAllocated;
@@ -153,13 +155,16 @@ internal sealed class FmFilterNodeProcessor
 
 		Span<float> sample = stackalloc float[1];
 		sample[0] = input;
+		long debugChainStart = GC.GetAllocatedBytesForCurrentThread();
 		state.Chain.ProcessFrame(sample);
+		DebugChainAllocated += GC.GetAllocatedBytesForCurrentThread() - debugChainStart;
 		DebugProcessAllocated += GC.GetAllocatedBytesForCurrentThread() - debugProcessStart;
 		return sample[0];
 	}
 
 	private void Retune(State state, IReadOnlyList<double> sourceValues)
 	{
+		long debugBeforeFastStart = GC.GetAllocatedBytesForCurrentThread();
 		bool dirty = false;
 		for (int i = 0; i < _bindings.Length; i++)
 		{
@@ -174,6 +179,7 @@ internal sealed class FmFilterNodeProcessor
 
 		if (_useFastTpt)
 		{
+			DebugBeforeFastAllocated += GC.GetAllocatedBytesForCurrentThread() - debugBeforeFastStart;
 			long debugFastStart = GC.GetAllocatedBytesForCurrentThread();
 			DebugFastSamples++;
 			// All frame targets are computed into invocation-owned scratch
