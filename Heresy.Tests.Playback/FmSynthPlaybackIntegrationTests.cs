@@ -2,6 +2,7 @@ using System.Numerics;
 
 using AwesomeAssertions;
 
+using Heresy.Core.Filters;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -58,6 +59,47 @@ public sealed class FmSynthPlaybackIntegrationTests
 		source.Render(1, output);
 
 		output[0].Should().BeApproximately(0.25f, 1e-6f);
+	}
+
+
+	[Test]
+	public void PatternPlaybackUsesRealFmFilterDspFromFrozenSharedDefinition()
+	{
+		SongDocument document = new();
+		ObjectId filterId = document.AllocateObjectId();
+		FilterDefinition definition = new(filterId, "Tone filter");
+		document.Add(definition);
+		FilterInstance use = new(definition);
+		use.SetStageParameter(1, "CutoffHz",
+			FilterParameterValue.FromNumber(100));
+		ObjectId synthId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(synthId, "Filtered constant",
+			new FmSynthGraph([
+				new FmConstantNode(0, 1),
+				new FmFilterNode(1, 0, use),
+			], 1)));
+
+		ObjectId patternId = document.AllocateObjectId();
+		DataPatternDefinition pattern = new(patternId, "FM filter")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+		cell.SourceId = synthId;
+		cell.Note = new StartPatternNote();
+		document.Add(pattern);
+
+		IAudioOutputSource source = new PlaybackRequestAudioSourceFactory(
+			MonoConfiguration(sampleRate: 1000)).Create(
+				PatternPlaybackRequest.Create(document, patternId,
+					repeat: false));
+		float[] output = new float[1];
+		source.Render(1, output);
+
+		double k = System.Math.Tan(System.Math.PI * 100 / 1000);
+		float expectedFirstSample = (float)(k / (1 + k));
+		output[0].Should().BeApproximately(expectedFirstSample, 1e-6f);
 	}
 
 	private static RenderConfiguration MonoConfiguration(
