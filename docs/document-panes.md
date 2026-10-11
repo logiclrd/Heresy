@@ -25,10 +25,10 @@ now admitted by `SongDocument.Add` and placed directly under the Filters
 root; Filter folders can be reorganized within their section, but no objects or
 folders can move between semantic roots. Filter definitions now serialize
 and restore in both song formats, clone through song snapshots and can be
-imported with fresh IDs using `FilterDocumentImport`. **Filter creation and
-editing are not yet exposed in the UI** until the standalone definition
-editor exists. Existing song types retain their current activation and
-creation actions.
+imported with fresh IDs using `FilterDocumentImport`. Filter creation and editing are now available through the **+ Filter**
+button and the **Edit Filter...** tree activation, with stage ordering,
+rename/type selection and parameter defaults in the standalone editor.
+Existing song types retain their current activation and creation actions.
 
 ## Backward-compatible loading
 
