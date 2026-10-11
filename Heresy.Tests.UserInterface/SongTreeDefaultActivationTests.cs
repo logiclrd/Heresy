@@ -16,6 +16,7 @@ public sealed class SongTreeDefaultActivationTests
 	[TestCase(SongTreeSection.Envelopes, SongObjectKind.Envelope, SongTreeActivationKind.Envelope)]
 	[TestCase(SongTreeSection.Samples, SongObjectKind.Sample, SongTreeActivationKind.Sample)]
 	[TestCase(SongTreeSection.Samples, SongObjectKind.FmSynth, SongTreeActivationKind.FmSynth)]
+	[TestCase(SongTreeSection.Filters, SongObjectKind.Filter, SongTreeActivationKind.Filter)]
 	public void EditableObjectsResolveToTheirDefaultEditor(
 		SongTreeSection section,
 		SongObjectKind kind,
@@ -69,6 +70,9 @@ public sealed class SongTreeDefaultActivationTests
 		SongObject songObject =
 			kind switch
 			{
+				SongObjectKind.Filter =>
+					new Heresy.Core.Filters.FilterDefinition(
+						id, "Filter"),
 				SongObjectKind.Pattern =>
 					new Heresy.Core.Patterns.DataPatternDefinition(
 						id,
