@@ -77,7 +77,10 @@ internal sealed class FmFilterNodeProcessor
 	{
 		ArgumentNullException.ThrowIfNull(state);
 		float input = 0;
-		if (!stopExcitation && _audioIndex >= 0)
+		// Upstream oscillators/envelopes/constants are already silenced
+		// by the FM graph at its natural end. A preceding Filter is NOT
+		// silenced: its residual output must flow into subsequent filters.
+		if (_audioIndex >= 0)
 		{
 			double audio = nodeValues[_audioIndex];
 			if (double.IsFinite(audio))
