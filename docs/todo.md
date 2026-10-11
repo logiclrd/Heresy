@@ -12,9 +12,8 @@ Design source: [filter-design.md](filter-design.md) (incremental implementation)
 
 ### Core model and authoring
 
-The reusable Core Filter SongObject, stable named serial stages, independent parameter overlays and filter-chain composition are implemented. The six-root Filters document tree, four-column Avalonia projection and version-1 four-/five-root migration are implemented. Filter definitions and the ID-based instance/chain codec now round-trip through version-one .hm.json/.hm, deep-copy into playback snapshots, and support selected-definition import/remapping. The standalone Filter creation/editing UI is implemented: the Filters pane exposes + Filter; double-click/edit opens a serial-stage editor with validated defaults, hierarchical filter kinds and conflict-safe drafts.
+The reusable Core Filter SongObject, stable named serial stages, independent parameter overlays and filter-chain composition are implemented. The six-root Filters document tree, four-column Avalonia projection and version-1 four-/five-root migration are implemented. Filter definitions and the ID-based instance/chain codec now round-trip through version-one .hm.json/.hm, deep-copy into playback snapshots, and support selected-definition import/remapping. The standalone Filter creation/editing UI is implemented: the Filters pane exposes + Filter; double-click/edit opens a serial-stage editor with validated defaults, hierarchical filter kinds and conflict-safe drafts. The separate descriptor-driven Filter instance editor is also implemented as an embeddable, copy-on-write component with explicit override/inheritance controls; its actual Instrument/FM/note/output hosts will be wired when those persistent owner fields are introduced.
 
-- [ ] **Build the reusable Filter *instance* parameter editor.** Drive controls and contextual assistance from parameter descriptors, separate configured per-use values from shared defaults, prevent cross-editor draft loss, and show reasonable units/ranges/structural choices. Verify that reconfiguring one use does not mutate another.
 
 ### Reusable rendering engine and filter families
 
