@@ -63,7 +63,7 @@ public sealed class FilterPaneTreeTests
 	}
 
 	[Test]
-	public void FilterObjectsProjectIntoNewSectionWithoutPrematureEditorActivation()
+	public void FilterObjectsProjectIntoTheirStandaloneEditor()
 	{
 		SongDocument document = new();
 		ObjectId id = document.AllocateObjectId();
@@ -76,7 +76,6 @@ public sealed class FilterPaneTreeTests
 		Assert.That(view.ObjectId, Is.EqualTo(id));
 		Assert.That(view.Kind, Is.EqualTo(SongObjectKind.Filter));
 		Assert.That(SongTreeDefaultActivation.Resolve(SongTreeSection.Filters, view),
-			Is.EqualTo(SongTreeActivationKind.None),
-			"The standalone Filter editor is a separate milestone.");
+			Is.EqualTo(SongTreeActivationKind.Filter));
 	}
 }
