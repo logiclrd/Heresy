@@ -116,9 +116,21 @@ public sealed class FmRealtimeFilterFastPathTests
 		control.Render(context, controlState, 64, pcm.Length, pcm);
 		long controlAllocated = GC.GetAllocatedBytesForCurrentThread() - controlBefore;
 
+		Type processorType = typeof(FmSynthSound).Assembly.GetType(
+			"Heresy.Render.FmSynthesis.FmFilterNodeProcessor")!;
+		const System.Reflection.BindingFlags flags =
+			System.Reflection.BindingFlags.Static
+				| System.Reflection.BindingFlags.NonPublic;
+		long debugFast = (long)processorType.GetField(
+			"DebugFastAllocated", flags)!.GetValue(null)!;
+		long debugProcess = (long)processorType.GetField(
+			"DebugProcessAllocated", flags)!.GetValue(null)!;
+		long debugFastSamples = (long)processorType.GetField(
+			"DebugFastSamples", flags)!.GetValue(null)!;
 		Assert.That(allocated - controlAllocated, Is.LessThan(4096),
 			$"{kind}: 4096 changing cutoff samples allocate {allocated} bytes "
-			+ $"vs {controlAllocated} bytes for the identical unmodulated FM graph");
+			+ $"vs {controlAllocated} bytes for the identical unmodulated FM graph. "
+			+ $"Fast samples={debugFastSamples}, fast bytes={debugFast}, process bytes={debugProcess}");
 		Assert.That(pcm[0], Is.GreaterThan(0));
 	}
 
