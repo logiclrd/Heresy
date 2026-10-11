@@ -20,7 +20,8 @@ public sealed class StreamingFilterChainTests
 		FilterInstance configured = new(definition);
 		configured.SetStageParameter(1, "CutoffHz", FilterParameterValue.FromNumber(2200));
 		FilterChain chain = new(new[] { configured, configured });
-		StreamingFilterChain runtime = new(chain, 48000, 2);
+		StreamingFilterChain runtime = new(chain, 48000, 2,
+			BypassFilterStageFactory.Instance);
 		float[] input = { -0.5f, 0.25f, 1f, -1f, 0f, 0.75f, 0.5f, -0.25f };
 		float[] expected = (float[])input.Clone();
 
