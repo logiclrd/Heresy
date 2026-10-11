@@ -108,13 +108,21 @@ out-of-range node values.
 
 ## FM editor audition key-up (distinct from Pattern playback)
 
-FM synth notes **already use proper Note Off during Pattern playback**.
-The outstanding defect is specific to previewing notes in the FM editor
-Test area: releasing the piano key should trigger Note Off, not an
-audible premature Cut. The existing preview compiler *already emits*
-`NoteOffCommand`; regression work should investigate live preview voice
-ownership, renderer lifetime, and envelope tail preservation rather than
-change a command which is already correct. Include FM Envelope nodes and
-release during backward ping-pong traversal in the preview regression.
-Keep the FM preview's physical key-up Note Off; it is intentionally
-different from the Sample editor's persistent preview notes.
+FM synth notes **already use proper Note Off during Pattern playback**,
+and the FM editor's Test area already emits `NoteOffCommand` on key-up.
+The premature cutoff was caused by the live virtual-voice safety policy:
+a sound whose finite end could not be determined was cut immediately.
+FM envelopes are compiled **inside** `FmSynthSound`, rather than being
+attached as the voice's ordinary volume envelope, so that path had no
+end bound even when the FM graph would become silent after release.
+
+`FmSynthSound.GetEndFrameExclusive` now recognizes an output graph whose
+embedded Envelopes promise finite silence. A directly output Envelope ends
+at its own deadline; a Multiply becomes silent when any factor ends; an
+Add, Minimum or Maximum requires all inputs to end. An Envelope affecting
+only oscillator frequency does not justify an output-silence guarantee.
+Ungated/unbounded FM output retains the existing safety cut, preventing
+indefinitely sounding preview voices. Live virtual Note Off now preserves
+finite FM release tails, as covered by `FmSynthPreviewReleaseTests`.
+FM preview retains physical key-up Note Off and remains intentionally
+different from the Sample editor's persistent preview-note behaviour.
