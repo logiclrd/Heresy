@@ -23,6 +23,46 @@ public sealed class NodeEnvelopeGraphGeometryTests
 		=> new(nodes ?? Nodes(), 440, 250);
 
 	[Test]
+	public void ExplicitRangeUsesFivePercentMarginsAndNeverNormalizesNodeAmplitude()
+	{
+		EnvelopeNode[] quiet =
+		[
+			new(TimeSpan.Zero, 0.001),
+			new(TimeSpan.FromSeconds(1), 0.002),
+		];
+		EnvelopeNode[] loud =
+		[
+			new(TimeSpan.Zero, 0.1),
+			new(TimeSpan.FromSeconds(1), 0.2),
+		];
+		NodeEnvelopeGraphGeometry q = new(quiet, 440, 250, 0, 1);
+		NodeEnvelopeGraphGeometry l = new(loud, 440, 250, 0, 1);
+		Assert.That(q.Point(1).Y, Is.GreaterThan(l.Point(1).Y));
+		Assert.That(q.Y(1.05), Is.EqualTo(q.Top).Within(1e-9));
+		Assert.That(q.Y(-0.05), Is.EqualTo(q.Bottom).Within(1e-9));
+		Assert.That(q.Value(q.Y(2.5)), Is.EqualTo(2.5).Within(1e-10),
+			"values outside Vmin/Vmax are never clamped");
+		NodeEnvelopeGraphGeometry wider = new(quiet, 440, 250, -10, 10);
+		Assert.That(wider.Value(wider.Y(-3)), Is.EqualTo(-3).Within(1e-10));
+	}
+
+	[Test]
+	public void DragGeometryRendersUpdatedPointsWithoutChangingItsFixedAxes()
+	{
+		EnvelopeNode[] before = Nodes();
+		NodeEnvelopeGraphGeometry initial =
+			new(before, 440, 250, -1, 1);
+		EnvelopeNode[] after = Nodes();
+		after[1] = new(after[1].Time, -0.8);
+		NodeEnvelopeGraphGeometry preview = initial.WithNodes(after);
+		Assert.That(preview.Point(1).Y, Is.Not.EqualTo(initial.Point(1).Y));
+		Assert.That(preview.Point(0), Is.EqualTo(initial.Point(0)));
+		Assert.That(preview.Y(0.5), Is.EqualTo(initial.Y(0.5)));
+		Assert.That(preview.X(TimeSpan.FromSeconds(2).Ticks),
+			Is.EqualTo(initial.X(TimeSpan.FromSeconds(2).Ticks)));
+	}
+
+	[Test]
 	public void GuideHitTestingIsVerticalWithFourPixelToleranceAndNearestSnap()
 	{
 		NodeEnvelopeGraphGeometry geometry = Layout();
@@ -57,6 +97,12 @@ public sealed class NodeEnvelopeGraphGeometryTests
 			1, 3, boundary: 1, target: 1), Is.EqualTo((1, 3)));
 		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
 			1, 3, boundary: 3, target: 3), Is.EqualTo((1, 3)));
+		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
+			1, 2, boundary: 2, target: 3), Is.EqualTo((2, 3)),
+			"outward dragging the end guide selects the new interval");
+		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
+			1, 2, boundary: 1, target: 0), Is.EqualTo((0, 1)),
+			"outward dragging the start guide selects the new interval");
 		Assert.Throws<ArgumentException>(() =>
 			NodeEnvelopeGraphGeometry.MoveSustainBoundary(1, 3, 2, 3));
 	}
@@ -208,6 +254,30 @@ public sealed class NodeEnvelopeGraphGeometryTests
 			nodes, 0, g, g.Right, g.Y(7));
 		Assert.That(first.Time, Is.EqualTo(TimeSpan.Zero));
 		Assert.That(first.Value, Is.EqualTo(7).Within(1e-10));
+	}
+
+	[Test]
+	public void KeyboardNudgesDoNotCrossNeighboursOrClampValues()
+	{
+		EnvelopeNode[] nodes = Nodes();
+		EnvelopeNode left = NodeEnvelopeGraphGeometry.Nudge(
+			nodes, 1, -1, 0, -10, 10);
+		Assert.That(left.Time, Is.EqualTo(TimeSpan.FromMilliseconds(990)));
+		EnvelopeNode up = NodeEnvelopeGraphGeometry.Nudge(
+			nodes, 1, 0, +1, -10, 10);
+		Assert.That(up.Value, Is.EqualTo(1.2).Within(1e-12));
+		EnvelopeNode zero = NodeEnvelopeGraphGeometry.Nudge(
+			nodes, 0, +1, -1, -10, 10);
+		Assert.That(zero.Time, Is.Zero);
+		Assert.That(zero.Value, Is.EqualTo(-0.2).Within(1e-12));
+		EnvelopeNode[] tight =
+		[
+			new(TimeSpan.Zero, 0),
+			new(TimeSpan.FromTicks(2), 5),
+			new(TimeSpan.FromTicks(3), 0),
+		];
+		Assert.That(NodeEnvelopeGraphGeometry.Nudge(
+			tight, 1, +1, 0, 0, 1).Time.Ticks, Is.EqualTo(2));
 	}
 
 	[Test]

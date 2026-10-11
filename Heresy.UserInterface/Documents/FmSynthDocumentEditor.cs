@@ -673,6 +673,7 @@ public static class FmSynthDocumentEditor
 				NodeEnvelopeDefinition clone = new(targetId, nodes.Name);
 				clone.ReplaceCurve(nodes.Nodes, nodes.SustainStartIndex,
 					nodes.SustainEndIndex, nodes.SustainLoopMode);
+				clone.SetDisplayRange(nodes.Vmin, nodes.Vmax);
 				return clone;
 			case ScriptEnvelopeDefinition script:
 				return new ScriptEnvelopeDefinition(targetId, script.Name)

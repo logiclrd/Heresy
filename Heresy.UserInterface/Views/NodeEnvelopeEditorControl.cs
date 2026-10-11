@@ -31,10 +31,14 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 	private string? _loadedNodesText;
 	private string? _loadedStartText;
 	private string? _loadedEndText;
+	private string? _loadedVminText;
+	private string? _loadedVmaxText;
 	private EnvelopeNode[] _baselineNodes = [];
 	private int _baselineStart;
 	private int _baselineEnd;
 	private EnvelopeSustainLoopMode _baselineMode;
+	private double _baselineVmin;
+	private double _baselineVmax;
 	private readonly TextBox _nodesInput = new()
 	{
 		AcceptsReturn = true,
@@ -45,6 +49,8 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 	};
 	private readonly TextBox _sustainStart = new() { Width = 90 };
 	private readonly TextBox _sustainEnd = new() { Width = 90 };
+	private readonly TextBox _vmin = new() { Width = 90 };
+	private readonly TextBox _vmax = new() { Width = 90 };
 	private readonly ComboBox _loopMode = new()
 	{
 		ItemsSource = Enum.GetValues<EnvelopeSustainLoopMode>(),
@@ -81,6 +87,8 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 		_nodesInput.TextChanged += (_, _) => MarkDraftDirty();
 		_sustainStart.TextChanged += (_, _) => MarkDraftDirty();
 		_sustainEnd.TextChanged += (_, _) => MarkDraftDirty();
+		_vmin.TextChanged += (_, _) => MarkDraftDirty();
+		_vmax.TextChanged += (_, _) => MarkDraftDirty();
 		_loopMode.SelectionChanged += (_, _) => MarkDraftDirty();
 		AttachedToVisualTree += OnAttached;
 		DetachedFromVisualTree += OnDetached;
@@ -105,6 +113,9 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 				+ "to move that boundary; drag any guide outside the sustain "
 				+ "region to select a new range (either direction). "
 				+ "Double-click a guide away from its dot to sustain one node. "
+				+ "A loop mode of None plays straight through the curve. "
+				+ "Tab/Shift-Tab selects nodes; arrows nudge them; "
+				+ "Ctrl-Tab exits the graph. "
 				+ "Select a sustain endpoint to use Match below the graph. "
 				+ "Node zero remains at time 0.",
 			TextWrapping = TextWrapping.Wrap,
@@ -133,11 +144,13 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 		{
 			ColumnSpacing = 10, RowSpacing = 6,
 			ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,*"),
-			RowDefinitions = new RowDefinitions("Auto,Auto"),
+			RowDefinitions = new RowDefinitions("Auto,Auto,Auto"),
 		};
 		AddField(controls, "Sustain start index", _sustainStart, 0, 0);
 		AddField(controls, "Sustain end index", _sustainEnd, 0, 2);
 		AddField(controls, "Loop mode", _loopMode, 1, 0);
+		AddField(controls, "Vmin", _vmin, 2, 0);
+		AddField(controls, "Vmax", _vmax, 2, 2);
 		form.Children.Add(controls);
 		Button apply = new() { Content = "Apply envelope", MinWidth = 140 };
 		apply.Click += (_, _) => Apply();
@@ -208,6 +221,8 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 		=> _baselineStart == _envelope.SustainStartIndex
 			&& _baselineEnd == _envelope.SustainEndIndex
 			&& _baselineMode == _envelope.SustainLoopMode
+			&& _baselineVmin == _envelope.Vmin
+			&& _baselineVmax == _envelope.Vmax
 			&& _baselineNodes.SequenceEqual(_envelope.Nodes);
 
 	private void MarkDraftDirty()
@@ -221,6 +236,8 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 			|| _nodesInput.Text != _loadedNodesText
 			|| _sustainStart.Text != _loadedStartText
 			|| _sustainEnd.Text != _loadedEndText
+			|| _vmin.Text != _loadedVminText
+			|| _vmax.Text != _loadedVmaxText
 			|| _loopMode.SelectedItem is not EnvelopeSustainLoopMode mode
 			|| mode != _baselineMode;
 
@@ -239,13 +256,19 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 			_sustainEnd.Text = _envelope.SustainEndIndex.ToString(
 				CultureInfo.InvariantCulture);
 			_loopMode.SelectedItem = _envelope.SustainLoopMode;
+			_vmin.Text = _envelope.Vmin.ToString("G17", CultureInfo.InvariantCulture);
+			_vmax.Text = _envelope.Vmax.ToString("G17", CultureInfo.InvariantCulture);
 			_loadedNodesText = _nodesInput.Text;
 			_loadedStartText = _sustainStart.Text;
 			_loadedEndText = _sustainEnd.Text;
+			_loadedVminText = _vmin.Text;
+			_loadedVmaxText = _vmax.Text;
 			_baselineNodes = _envelope.Nodes.ToArray();
 			_baselineStart = _envelope.SustainStartIndex;
 			_baselineEnd = _envelope.SustainEndIndex;
 			_baselineMode = _envelope.SustainLoopMode;
+			_baselineVmin = _envelope.Vmin;
+			_baselineVmax = _envelope.Vmax;
 			_draftDirty = false;
 		}
 		finally
@@ -267,8 +290,10 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 			int end = ParseIndex(_sustainEnd, "Sustain end");
 			if (_loopMode.SelectedItem is not EnvelopeSustainLoopMode mode)
 				throw new ArgumentException("Select a sustain loop mode.");
+			double vmin = ParseDisplayBound(_vmin, "Vmin");
+			double vmax = ParseDisplayBound(_vmax, "Vmax");
 			EnvelopeDocumentEditor.UpdateNodeEnvelope(
-				_workspace, _envelope, nodes, start, end, mode);
+				_workspace, _envelope, nodes, start, end, mode, vmin, vmax);
 			RefreshFromEnvelope();
 			_message.Text = "Node envelope updated.";
 			_changed($"Updated envelope {_envelope.Name}");
@@ -277,6 +302,15 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 		{
 			_message.Text = ex.Message;
 		}
+	}
+
+	private static double ParseDisplayBound(TextBox box, string label)
+	{
+		if (!double.TryParse(box.Text, NumberStyles.Float,
+			CultureInfo.InvariantCulture, out double number)
+			|| !double.IsFinite(number))
+			throw new ArgumentException($"{label} must be finite.");
+		return number;
 	}
 
 	private static int ParseIndex(TextBox box, string label)

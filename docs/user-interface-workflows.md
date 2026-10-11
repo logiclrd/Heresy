@@ -452,7 +452,10 @@ inspector both use the same **interactive node graph** and auxiliary
 node-list editor for precision.
 
 The node graph displays connected linear segments, faint vertical
-guides and the sustain band. Click within 4 pixels of a node to select
+guides and the sustain band at ARGB `#40808080` (25% gray opacity).
+None mode has no sustain band or looping. Vmin/Vmax controls define
+a persistent, fixed vertical scale with 5% padding above and below,
+independent of actual node values. Click within 4 pixels of a node to select
 it; the selected node gets two small brackets. Dragging a node edits
 its time and value (without crossing neighbours), while the time of
 node zero remains fixed at zero. Double-click a node to delete it,
@@ -460,8 +463,10 @@ or double-click a line to insert a new node at its closest projected
 point. Deleting the first node re-bases the remaining times to zero;
 the last surviving node cannot be deleted. All operations commit
 atomically through the shared envelope document revision path.
-Dragging a sustain boundary's vertical guide snaps that boundary to
-a node without passing the other endpoint. Dragging from an unhighlighted
+Dragging a sustain boundary inward snaps it to another node without
+crossing the other endpoint; dragging a boundary outward selects a
+new region between the origin and target, so line 2 to line 4
+produces [2,4]. Dragging from an unhighlighted
 guide defines a new sustain interval in either direction; dragging to
 the same guide is a no-op. Double-clicking any vertical guide away from
 its node sets a single-node sustain, whereas double-clicking the dot
@@ -469,6 +474,10 @@ deletes the node. Sustain drags preview before a one-time commit on
 release and cancel if pointer capture is lost. When one of two distinct
 sustain endpoints is selected, **Match** appears below the graph and
 copies the opposite endpoint's value only when they differ.
+
+Tab/Shift-Tab while the graph is focused cycles nodes; arrow keys
+nudge time (10 ms) and value (1% of Vmax-Vmin), without clamping
+values. Ctrl-Tab/Ctrl-Shift-Tab navigates to controls outside the graph.
 
 The node-list editor accepts one `timeSeconds, value` pair per line, using
 invariant-culture decimals. Node 0 must begin at zero and all later times

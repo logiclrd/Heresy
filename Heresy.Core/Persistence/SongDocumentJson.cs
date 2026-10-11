@@ -528,6 +528,8 @@ public static class SongDocumentJson
 				result["type"] = "nodeEnvelope";
 				result["nodes"] = JsonSerializer.SerializeToNode(
 					envelope.Nodes, JsonOptions);
+				result["vmin"] = envelope.Vmin;
+				result["vmax"] = envelope.Vmax;
 				result["sustainStartIndex"] = envelope.SustainStartIndex;
 				result["sustainEndIndex"] = envelope.SustainEndIndex;
 				result["sustainLoopMode"] = JsonSerializer.SerializeToNode(
@@ -737,6 +739,9 @@ public static class SongDocumentJson
 						DeserializeRequired<int>(node, "sustainEndIndex"),
 						DeserializeRequired<EnvelopeSustainLoopMode>(
 							node, "sustainLoopMode"));
+					envelope.SetDisplayRange(
+						DeserializeRequired<double>(node, "vmin"),
+						DeserializeRequired<double>(node, "vmax"));
 					return envelope;
 				}
 

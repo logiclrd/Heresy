@@ -25,7 +25,8 @@ public sealed class NodeEnvelopeGraphGeometry
 	private readonly double _highValue;
 
 	public NodeEnvelopeGraphGeometry(
-		IReadOnlyList<EnvelopeNode> nodes, double width, double height)
+		IReadOnlyList<EnvelopeNode> nodes, double width, double height,
+		double vmin = 0, double vmax = 1)
 	{
 		ArgumentNullException.ThrowIfNull(nodes);
 		if (nodes.Count == 0)
@@ -33,6 +34,7 @@ public sealed class NodeEnvelopeGraphGeometry
 		if (!double.IsFinite(width) || !double.IsFinite(height)
 			|| width <= 2 * Padding || height <= 2 * Padding)
 			throw new ArgumentOutOfRangeException(nameof(width));
+		NodeEnvelopeDefinition.ValidateDisplayRange(vmin, vmax);
 		_nodes = nodes.ToArray();
 		_left = Padding;
 		_right = width - Padding;
@@ -40,15 +42,29 @@ public sealed class NodeEnvelopeGraphGeometry
 		_bottom = height - Padding;
 		double maxTicks = Math.Max(1, _nodes[^1].Time.Ticks);
 		_ticksPerPixel = maxTicks * 1.15 / (_right - _left);
-		double min = _nodes.Min(n => n.Value);
-		double max = _nodes.Max(n => n.Value);
-		// The plot is not a 0..1 clamp: signed and above-unity values
-		// retain their real geometric positions.
-		double span = Math.Max(0.2, max - min);
-		double margin = span * 0.15;
-		_highValue = max + margin;
-		_valuePerPixel = (span + 2 * margin) / (_bottom - _top);
+		// View range never depends on node values, even while dragging.
+		double span = vmax - vmin;
+		_highValue = vmax + span * 0.05;
+		_valuePerPixel = (span * 1.1) / (_bottom - _top);
 	}
+
+	private NodeEnvelopeGraphGeometry(
+		NodeEnvelopeGraphGeometry view, IReadOnlyList<EnvelopeNode> nodes)
+	{
+		_nodes = nodes.ToArray();
+		_left = view._left;
+		_right = view._right;
+		_top = view._top;
+		_bottom = view._bottom;
+		_ticksPerPixel = view._ticksPerPixel;
+		_valuePerPixel = view._valuePerPixel;
+		_highValue = view._highValue;
+	}
+
+	/// <summary>The same fixed pixel transform with updated live nodes.
+	/// Avoid drawing from a stale snapshot during node/guide dragging.</summary>
+	public NodeEnvelopeGraphGeometry WithNodes(IReadOnlyList<EnvelopeNode> nodes)
+		=> new(this, nodes);
 
 	public double Left => _left;
 	public double Right => _right;
@@ -121,6 +137,10 @@ public sealed class NodeEnvelopeGraphGeometry
 				nameof(boundary));
 		if (start == end)
 			return (Math.Min(start, target), Math.Max(end, target));
+		if (boundary == start && target < start)
+			return (target, start);
+		if (boundary == end && target > end)
+			return (end, target);
 		return boundary == start
 			? (Math.Min(target, end), end)
 			: (start, Math.Max(start, target));
@@ -255,6 +275,37 @@ public sealed class NodeEnvelopeGraphGeometry
 	/// <summary>Moves the node in the *fixed* drag viewport. First
 	/// node's time remains zero. Neighbour crossing is clamped rather
 	/// than reordering node identities or sustain references.</summary>
+	/// <summary>Keyboard: 10 ms horizontally, 1% of display range vertically.</summary>
+	public static EnvelopeNode Nudge(
+		IReadOnlyList<EnvelopeNode> nodes, int index,
+		int timeDirection, int valueDirection, double vmin, double vmax)
+	{
+		ArgumentNullException.ThrowIfNull(nodes);
+		NodeEnvelopeDefinition.ValidateDisplayRange(vmin, vmax);
+		if (index < 0 || index >= nodes.Count
+			|| Math.Abs(timeDirection) > 1 || Math.Abs(valueDirection) > 1)
+			throw new ArgumentOutOfRangeException(nameof(index));
+		EnvelopeNode node = nodes[index];
+		long ticks = node.Time.Ticks;
+		if (index != 0 && timeDirection != 0)
+		{
+			long min = nodes[index - 1].Time.Ticks + 1;
+			long max = index + 1 < nodes.Count
+				? nodes[index + 1].Time.Ticks - 1
+				: TimeSpan.MaxValue.Ticks;
+			long step = TimeSpan.TicksPerMillisecond * 10;
+			long candidate = timeDirection > 0
+				? ticks > max - step ? max : ticks + step
+				: ticks < min + step ? min : ticks - step;
+			ticks = Math.Clamp(candidate, min, max);
+		}
+		double value = node.Value
+			+ valueDirection * (vmax - vmin) * 0.01;
+		if (!double.IsFinite(value))
+			return node;
+		return new EnvelopeNode(TimeSpan.FromTicks(ticks), value);
+	}
+
 	public static EnvelopeNode Move(
 		IReadOnlyList<EnvelopeNode> nodes, int index,
 		NodeEnvelopeGraphGeometry layout, double x, double y)

@@ -88,6 +88,8 @@ public sealed class NodeEnvelopeCurve : IEnvelopeCurve
 
 	private Position HeldPosition(double ticks)
 	{
+		if (_mode == EnvelopeSustainLoopMode.None)
+			return new Position(ticks, +1);
 		if (ticks < _end)
 			return new Position(ticks, +1);
 		if (_start == _end)

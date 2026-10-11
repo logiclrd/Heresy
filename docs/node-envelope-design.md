@@ -14,6 +14,19 @@ and the former ADSR model, renderer, editor, and JSON discriminator were
 removed without a legacy compatibility loader. The standalone and FM inspectors now share an interactive node graph
 with an auxiliary editable node list for precision.
 
+## Display range and no-sustain playback
+
+Every node Envelope stores **Vmin** and **Vmax** (default 0 and 1).
+These finite, ordered values configure the editor's vertical axis
+only: 5% of (Vmax - Vmin) is displayed beyond both ends. The values
+do not normalize, clamp, or change the sound, and nodes outside these
+bounds remain valid. Display edits produce document revisions without
+audio revisions. JSON, snapshots and FM imports preserve the bounds.
+
+Loop mode **None** simply traverses the nodes once, ignoring sustain
+indices and continuing past them whether or not Note Off occurs.
+The output becomes silent after the final node.
+
 ## Data contract (milestone 1)
 
 A `NodeEnvelopeDefinition` owns at least one immutable value node
@@ -89,8 +102,10 @@ the remaining timeline so its next node becomes the zero-time origin.
 Deleting the last remaining node is disallowed. Sustain indices follow
 the same surviving nodes across insertions/deletions.
 
-Dragging either highlighted sustain boundary guide relocates that
-boundary to another node, **never past the opposite boundary**.
+Dragging an endpoint guide inward resizes the current region,
+without crossing the opposite endpoint. Dragging an endpoint guide
+outward instead selects the interval from that guide to the destination,
+e.g. dragging line 2 to line 4 selects [2,4].
 When start and end coincide, either boundary may expand to a new
 node according to drag direction.
 Dragging from a non-highlighted node's guide to a different node's guide
@@ -107,6 +122,15 @@ show a **Match** button below the graph. It is disabled if both
 endpoint scalar values already agree. Otherwise clicking it sets
 only the selected endpoint's value to the opposite endpoint's value
 and commits through the normal document revision path.
+
+Tab/Shift-Tab cycles through nodes while the graph is focused;
+arrow keys nudge time by 10 ms and value by 1% of Vmax-Vmin.
+Time remains ordered, node zero stays at time zero, and values do
+not clamp. Ctrl-Tab/Ctrl-Shift-Tab navigates out of the graph.
+
+The sustain fill now uses ARGB **#40808080**, and the graph background
+responds to light/dark themes. A fixed viewport transform and live
+node coordinates ensure drag preview updates without vertical rescaling.
 
 The standalone envelope editor and FM Envelope-node inspector must
 share this graphical control, replacing the former ADSR numeric editor

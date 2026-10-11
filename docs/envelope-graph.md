@@ -4,7 +4,7 @@ The standalone Envelope editor and the FM synth Envelope-node inspector
 share `NodeEnvelopeGraphControl`, backed by testable
 `NodeEnvelopeGraphGeometry`. The graph renders a piecewise-linear
 polyline, a faint vertical guide at each node, the sustain interval
-highlighted using ARGB `#04808080`, and a small node dot.
+highlighted using ARGB `#40808080`, and a small node dot.
 Only one node can be selected, and a click selects the nearest dot
 within **4 pixels**; clicking elsewhere clears selection. A selected
 node has small brackets left and right, each **2 pixels taller** than
@@ -20,7 +20,12 @@ the last node cannot be removed. Sustain index references update
 when inserting or deleting nodes.
 
 Changes are committed once on pointer release, with live visual
-feedback and cancellation on capture loss. The document editor
+feedback and cancellation on capture loss. Drag rendering uses the
+current preview nodes, not cached node locations. Vertical scale is
+fixed by persisted Vmin/Vmax, with a 5% margin above and below.
+None mode omits sustain shading and traverses the envelope only once.
+Tab/Shift-Tab cycles node selection, arrow keys nudge time and value,
+and Ctrl-Tab/Ctrl-Shift-Tab exits the graph. The document editor
 validates the replacement curve atomically, marks audio-affecting
 revisions, and updates the auxiliary numeric node-list editor.
 Sustain boundaries have draggable vertical guides: dragging a start/end
@@ -34,6 +39,10 @@ a single-node sustain. The node dot takes precedence over guide hits,
 so its own double-click still deletes that node. Guide drags preview
 the highlighted interval but commit only on pointer release; pointer
 capture loss discards the preview.
+
+Outward boundary dragging reselects the interval from the origin to
+the target (line 2 to line 4 produces [2,4]); inward dragging still
+resizes the existing region.
 
 With a sustain endpoint selected, a **Match** button appears directly
 beneath the graph if and only if sustain start and end differ. It is

@@ -75,6 +75,30 @@ public sealed class NodeEnvelopeDefinitionTests
 	}
 
 	[Test]
+	public void DisplayRangeIsIndependentFromNodesAndRejectsInvalidBounds()
+	{
+		NodeEnvelopeDefinition envelope = new((ObjectId)1U, "Range");
+		EnvelopeNode[] points = envelope.Nodes.ToArray();
+		envelope.SetDisplayRange(-200, 300);
+		Assert.That(envelope.Vmin, Is.EqualTo(-200));
+		Assert.That(envelope.Vmax, Is.EqualTo(300));
+		Assert.That(envelope.Nodes, Is.EqualTo(points));
+		foreach ((double min, double max) in new[]
+		{
+			(1.0, 1.0), (2.0, 1.0),
+			(double.NaN, 1.0),
+			(0.0, double.PositiveInfinity),
+			(-double.MaxValue, double.MaxValue),
+		})
+		{
+			Assert.Throws<ArgumentException>(
+				() => envelope.SetDisplayRange(min, max));
+			Assert.That(envelope.Vmin, Is.EqualTo(-200));
+			Assert.That(envelope.Vmax, Is.EqualTo(300));
+		}
+	}
+
+	[Test]
 	public void SingleNodeAndCoincidentSustainIndicesAreLegal()
 	{
 		NodeEnvelopeDefinition envelope = new((ObjectId)1U, "Curve");
@@ -98,6 +122,7 @@ public sealed class NodeEnvelopeDefinitionTests
 				new(TimeSpan.FromMilliseconds(140), -0.5),
 			],
 			1, 2, EnvelopeSustainLoopMode.PingPong);
+		envelope.SetDisplayRange(-3.0, 5.0);
 		doc.Add(envelope);
 		const string path = "/tmp/node-envelope.hm.json";
 		string json = SongDocumentJson.Serialize(doc, path);
@@ -111,6 +136,8 @@ public sealed class NodeEnvelopeDefinitionTests
 		Assert.That(restored.SustainEndIndex, Is.EqualTo(2));
 		Assert.That(restored.SustainLoopMode,
 			Is.EqualTo(EnvelopeSustainLoopMode.PingPong));
+		Assert.That(restored.Vmin, Is.EqualTo(-3.0));
+		Assert.That(restored.Vmax, Is.EqualTo(5.0));
 
 		SongDocumentSnapshot snapshot = SongDocumentSnapshot.Create(doc);
 		NodeEnvelopeDefinition frozen =
@@ -119,5 +146,7 @@ public sealed class NodeEnvelopeDefinitionTests
 			EnvelopeSustainLoopMode.Forward);
 		Assert.That(frozen.Nodes, Is.EqualTo(restored.Nodes));
 		Assert.That(frozen.SustainEndIndex, Is.EqualTo(2));
+		Assert.That(frozen.Vmin, Is.EqualTo(-3.0));
+		Assert.That(frozen.Vmax, Is.EqualTo(5.0));
 	}
 }

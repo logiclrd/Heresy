@@ -5,6 +5,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Styling;
 using Avalonia.VisualTree;
 
 using Heresy.Core.Envelopes;
@@ -73,7 +74,8 @@ public sealed class NodeEnvelopeGraphControl : UserControl
 		int selected = SelectedNodeIndex;
 		int start = _envelope.SustainStartIndex;
 		int end = _envelope.SustainEndIndex;
-		bool visible = start != end && (selected == start || selected == end);
+		bool visible = _envelope.SustainLoopMode != EnvelopeSustainLoopMode.None
+			&& start != end && (selected == start || selected == end);
 		_match.IsVisible = visible;
 		_match.IsEnabled = visible
 			&& _envelope.Nodes[start].Value != _envelope.Nodes[end].Value;
@@ -139,8 +141,10 @@ public sealed class NodeEnvelopeGraphControl : UserControl
 /// keeping drawing and pointer hit/drag rules identical.</summary>
 internal sealed class NodeEnvelopeGraphSurface : Control
 {
-	private static readonly IBrush Background =
+	private static readonly IBrush DarkBackground =
 		new SolidColorBrush(Color.FromRgb(23, 27, 34));
+	private static readonly IBrush LightBackground =
+		new SolidColorBrush(Color.FromRgb(246, 247, 248));
 	private static readonly IBrush Axis =
 		new SolidColorBrush(Color.FromRgb(110, 120, 140));
 	private static readonly IBrush Guide =
@@ -152,7 +156,7 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 	private static readonly IBrush Bracket =
 		new SolidColorBrush(Color.FromRgb(255, 255, 255));
 	private static readonly IBrush Sustain =
-		new SolidColorBrush(Color.FromArgb(0x04, 0x80, 0x80, 0x80));
+		new SolidColorBrush(Color.FromArgb(0x40, 0x80, 0x80, 0x80));
 
 	private readonly NodeEnvelopeDefinition _envelope;
 	private EnvelopeNode[] _previewNodes;
@@ -181,6 +185,8 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		MinHeight = 200;
 		Height = 250;
 		ClipToBounds = true;
+		Focusable = true;
+		IsTabStop = true;
 	}
 
 	public void RefreshFromEnvelope()
@@ -225,15 +231,19 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		if (Bounds.Width <= 2 * NodeEnvelopeGraphGeometry.Padding
 			|| Bounds.Height <= 2 * NodeEnvelopeGraphGeometry.Padding)
 			return null;
-		return _fixedLayout ??
-			new NodeEnvelopeGraphGeometry(_previewNodes,
-				Bounds.Width, Bounds.Height);
+		return _fixedLayout is not null
+			? _fixedLayout.WithNodes(_previewNodes)
+			: new NodeEnvelopeGraphGeometry(_previewNodes,
+				Bounds.Width, Bounds.Height, _envelope.Vmin, _envelope.Vmax);
 	}
 
 	public override void Render(DrawingContext context)
 	{
 		base.Render(context);
-		context.FillRectangle(Background, new Rect(Bounds.Size));
+		context.FillRectangle(
+			ActualThemeVariant == ThemeVariant.Light
+				? LightBackground : DarkBackground,
+			new Rect(Bounds.Size));
 		NodeEnvelopeGraphGeometry? graph = Layout();
 		if (graph is null)
 			return;
@@ -248,9 +258,10 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		int end = _previewSustainEnd;
 		double sx = graph.Point(start).X;
 		double ex = graph.Point(end).X;
-		context.FillRectangle(Sustain,
-			new Rect(sx, graph.Top, Math.Max(0, ex - sx),
-				graph.Bottom - graph.Top));
+		if (_envelope.SustainLoopMode != EnvelopeSustainLoopMode.None)
+			context.FillRectangle(Sustain,
+				new Rect(sx, graph.Top, Math.Max(0, ex - sx),
+					graph.Bottom - graph.Top));
 
 		for (int i = 0; i < graph.Count; i++)
 		{
@@ -258,7 +269,8 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 			context.DrawLine(new Pen(Guide, 1),
 				new Point(x, graph.Top),
 				new Point(x, graph.Bottom));
-			if (i >= start && i <= end)
+			if (_envelope.SustainLoopMode != EnvelopeSustainLoopMode.None
+				&& i >= start && i <= end)
 				context.DrawLine(new Pen(Sustain, 2),
 					new Point(x, graph.Top),
 					new Point(x, graph.Bottom));
@@ -270,7 +282,8 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 			(double x2, double y2) = graph.Point(i + 1);
 			context.DrawLine(new Pen(Curve, 2),
 				new Point(x1, y1), new Point(x2, y2));
-			if (i >= start && i < end)
+			if (_envelope.SustainLoopMode != EnvelopeSustainLoopMode.None
+				&& i >= start && i < end)
 				context.DrawLine(new Pen(Sustain, 3),
 					new Point(x1, y1), new Point(x2, y2));
 		}
@@ -356,6 +369,7 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		}
 
 		Select(selected);
+		Focus();
 		if (selected >= 0 || (guide >= 0
 			&& (guide == _previewSustainStart
 				|| guide == _previewSustainEnd
@@ -380,6 +394,17 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		if (!IsDragging || _fixedLayout is null)
 			return;
 		Point pointer = e.GetPosition(this);
+		if (!_dragMoved && Math.Abs(pointer.X - _press.X) < 3
+			&& Math.Abs(pointer.Y - _press.Y) < 3)
+			return;
+		UpdateDraggedPosition(pointer);
+		e.Handled = true;
+	}
+
+	private void UpdateDraggedPosition(Point pointer)
+	{
+		if (!IsDragging || _fixedLayout is null)
+			return;
 		if (!_dragMoved && Math.Abs(pointer.X - _press.X) < 3
 			&& Math.Abs(pointer.Y - _press.Y) < 3)
 			return;
@@ -418,7 +443,6 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 				}
 			}
 		}
-		e.Handled = true;
 	}
 
 	protected override void OnPointerReleased(PointerReleasedEventArgs e)
@@ -426,6 +450,9 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		base.OnPointerReleased(e);
 		if (!IsDragging)
 			return;
+		// Render the final pointer position even on platforms which
+		// coalesce the last move directly into pointer release.
+		UpdateDraggedPosition(e.GetPosition(this));
 		int dragged = _dragNode;
 		bool changed = _dragMoved
 			&& (!_previewNodes.SequenceEqual(_envelope.Nodes)
@@ -444,6 +471,65 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		else
 			RefreshFromEnvelope();
 		e.Handled = true;
+	}
+
+	// Return false only for the host-level Ctrl+Tab escape chord.
+	private bool HandleGraphKey(Key key, KeyModifiers modifiers)
+	{
+		if (key == Key.Tab)
+		{
+			if ((modifiers & KeyModifiers.Control) != 0)
+				return false;
+			int next = _selected < 0
+				? (modifiers & KeyModifiers.Shift) != 0
+					? _previewNodes.Length - 1 : 0
+				: (_selected + ((modifiers & KeyModifiers.Shift) != 0
+					? _previewNodes.Length - 1 : 1)) % _previewNodes.Length;
+			Select(next);
+			return true;
+		}
+		if ((modifiers & (KeyModifiers.Control | KeyModifiers.Alt
+			| KeyModifiers.Meta)) != 0)
+			return false;
+		int time = key == Key.Left ? -1 : key == Key.Right ? 1 : 0;
+		int value = key == Key.Down ? -1 : key == Key.Up ? 1 : 0;
+		if (time == 0 && value == 0)
+			return false;
+		if (_selected < 0)
+			Select(0);
+		EnvelopeNode updated = NodeEnvelopeGraphGeometry.Nudge(
+			_previewNodes, _selected, time, value,
+			_envelope.Vmin, _envelope.Vmax);
+		if (updated != _previewNodes[_selected])
+		{
+			EnvelopeNode[] nodes = _previewNodes.ToArray();
+			nodes[_selected] = updated;
+			CommitRequested?.Invoke(new NodeEnvelopeGraphEdit(
+				nodes, _previewSustainStart, _previewSustainEnd, _selected));
+		}
+		return true;
+	}
+
+	protected override void OnKeyDown(KeyEventArgs e)
+	{
+		if (e.Key == Key.Tab
+			&& (e.KeyModifiers & KeyModifiers.Control) != 0)
+		{
+			// Ctrl+Tab always leaves the graph; ordinary Tab stays
+			// within its sequence of envelope nodes.
+			NavigationDirection direction =
+				(e.KeyModifiers & KeyModifiers.Shift) != 0
+					? NavigationDirection.Previous : NavigationDirection.Next;
+			e.Handled = TopLevel.GetTopLevel(this)?.FocusManager
+				.TryMoveFocus(direction, default) ?? false;
+			return;
+		}
+		if (HandleGraphKey(e.Key, e.KeyModifiers))
+		{
+			e.Handled = true;
+			return;
+		}
+		base.OnKeyDown(e);
 	}
 
 	protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)

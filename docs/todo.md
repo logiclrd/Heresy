@@ -24,6 +24,11 @@ checks are automated. The remaining node-envelope milestone is desktop
 hardware and actual audible playback verification:
 
 - [ ] **Physically validate node-envelope editing and audible release tails.**
+  Windows desktop feedback identified inadequate sustain shading,
+  ambiguous outward guide drags, missing fixed display bounds, missing
+  drag preview, no-sustain mode, and keyboard interactions. These
+  corrections are implemented and regression-tested, but they still
+  require another hands-on Windows check before closure.
   Automated regression coverage exercises shared standalone/FM editor
   synchronization, unsaved-draft conflict prevention, navigation,
   simulated headless pointer dragging, and chunk-invariant held/released/

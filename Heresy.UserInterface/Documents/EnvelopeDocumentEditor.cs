@@ -45,13 +45,31 @@ public static class EnvelopeDocumentEditor
 		return created;
 	}
 
+	public static void UpdateNodeEnvelopeDisplayRange(
+		DocumentWorkspace workspace, NodeEnvelopeDefinition envelope,
+		double vmin, double vmax)
+	{
+		ArgumentNullException.ThrowIfNull(workspace);
+		ArgumentNullException.ThrowIfNull(envelope);
+		if (!workspace.Document.TryGet(envelope.Id, out SongObject? stored)
+			|| !ReferenceEquals(stored, envelope))
+			throw new InvalidOperationException(
+				"The envelope is not part of the active song document.");
+		NodeEnvelopeDefinition.ValidateDisplayRange(vmin, vmax);
+		if (envelope.Vmin == vmin && envelope.Vmax == vmax)
+			return;
+		envelope.SetDisplayRange(vmin, vmax);
+		workspace.Document.MarkChanged(affectsAudio: false);
+	}
+
 	public static void UpdateNodeEnvelope(
 		DocumentWorkspace workspace,
 		NodeEnvelopeDefinition envelope,
 		IEnumerable<EnvelopeNode> nodes,
 		int sustainStartIndex,
 		int sustainEndIndex,
-		EnvelopeSustainLoopMode sustainLoopMode)
+		EnvelopeSustainLoopMode sustainLoopMode,
+		double? vmin = null, double? vmax = null)
 	{
 		ArgumentNullException.ThrowIfNull(workspace);
 		ArgumentNullException.ThrowIfNull(envelope);
@@ -64,14 +82,23 @@ public static class EnvelopeDocumentEditor
 		EnvelopeNode[] copy = nodes.ToArray();
 		NodeEnvelopeDefinition.Validate(copy, sustainStartIndex,
 			sustainEndIndex, sustainLoopMode);
-		if (envelope.SustainStartIndex == sustainStartIndex
-			&& envelope.SustainEndIndex == sustainEndIndex
-			&& envelope.SustainLoopMode == sustainLoopMode
-			&& envelope.Nodes.SequenceEqual(copy))
+		double newMin = vmin ?? envelope.Vmin;
+		double newMax = vmax ?? envelope.Vmax;
+		NodeEnvelopeDefinition.ValidateDisplayRange(newMin, newMax);
+		bool audioChanged = envelope.SustainStartIndex != sustainStartIndex
+			|| envelope.SustainEndIndex != sustainEndIndex
+			|| envelope.SustainLoopMode != sustainLoopMode
+			|| !envelope.Nodes.SequenceEqual(copy);
+		bool viewportChanged = envelope.Vmin != newMin
+			|| envelope.Vmax != newMax;
+		if (!audioChanged && !viewportChanged)
 			return;
-		envelope.ReplaceCurve(copy, sustainStartIndex, sustainEndIndex,
-			sustainLoopMode);
-		workspace.Document.MarkChanged(affectsAudio: true);
+		if (audioChanged)
+			envelope.ReplaceCurve(copy, sustainStartIndex, sustainEndIndex,
+				sustainLoopMode);
+		if (viewportChanged)
+			envelope.SetDisplayRange(newMin, newMax);
+		workspace.Document.MarkChanged(affectsAudio: audioChanged);
 	}
 
 	/// <summary>

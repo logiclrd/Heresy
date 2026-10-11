@@ -106,7 +106,7 @@ public sealed class NodeEnvelopeCurveTests
 	public void OneNodeSustainHoldsUntilReleaseThenResumesForward()
 	{
 		foreach (EnvelopeSustainLoopMode mode
-			in Enum.GetValues<EnvelopeSustainLoopMode>())
+			in new[] { EnvelopeSustainLoopMode.Forward, EnvelopeSustainLoopMode.PingPong })
 		{
 			NodeEnvelopeCurve curve = Curve(mode, 1, 1);
 			Near(curve, 10, 1.0);
@@ -118,6 +118,21 @@ public sealed class NodeEnvelopeCurveTests
 			Assert.That(curve.GetEndActiveFrameExclusiveAfterNoteOff(50, 10),
 				Is.EqualTo(81));
 		}
+	}
+
+	[Test]
+	public void NoneModeIgnoresSustainAndProceedsToEndWithOrWithoutNoteOff()
+	{
+		NodeEnvelopeCurve curve = Curve(EnvelopeSustainLoopMode.None, 1, 2);
+		Near(curve, 10, 1.0);
+		Near(curve, 20, 0.25);
+		Near(curve, 30, -0.5);
+		Near(curve, 40, 0.0);
+		Near(curve, 41, 0.0);
+		Near(curve, 20, 0.25, off: 15);
+		Near(curve, 30, -0.5, off: 15);
+		Assert.That(curve.GetEndActiveFrameExclusiveAfterNoteOff(15, 10),
+			Is.EqualTo(41));
 	}
 
 	[Test]

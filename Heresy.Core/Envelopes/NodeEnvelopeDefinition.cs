@@ -16,6 +16,7 @@ public enum EnvelopeSustainLoopMode
 {
 	Forward,
 	PingPong,
+	None,
 }
 
 /// <summary>A point on the envelope's active time axis. Scalar values are
@@ -53,6 +54,25 @@ public sealed class NodeEnvelopeDefinition : EnvelopeDefinition
 	public int SustainStartIndex { get; private set; }
 	public int SustainEndIndex { get; private set; }
 	public EnvelopeSustainLoopMode SustainLoopMode { get; private set; }
+
+	/// <summary>Editor viewport only; never affects sample generation.</summary>
+	public double Vmin { get; private set; } = 0.0;
+	public double Vmax { get; private set; } = 1.0;
+
+	public void SetDisplayRange(double vmin, double vmax)
+	{
+		ValidateDisplayRange(vmin, vmax);
+		Vmin = vmin;
+		Vmax = vmax;
+	}
+
+	public static void ValidateDisplayRange(double vmin, double vmax)
+	{
+		if (!double.IsFinite(vmin) || !double.IsFinite(vmax)
+			|| !double.IsFinite(vmax - vmin) || vmin >= vmax)
+			throw new ArgumentException(
+				"Vmin and Vmax must be finite, with Vmin less than Vmax.");
+	}
 
 	public void ReplaceCurve(
 		IEnumerable<EnvelopeNode> nodes,

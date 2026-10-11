@@ -275,6 +275,43 @@ public sealed class NodeEnvelopeGraphControlTests
 	}
 
 	[AvaloniaTest]
+	public void KeyboardNavigationAndNudgesCommitThroughSharedEditor()
+	{
+		DocumentWorkspace workspace = new();
+		NodeEnvelopeDefinition env =
+			EnvelopeDocumentEditor.CreateNodeEnvelope(workspace, "Keyboard");
+		NodeEnvelopeGraphControl graph = new(workspace, env);
+		object surface = typeof(NodeEnvelopeGraphControl)
+			.GetField("_surface", BindingFlags.Instance
+				| BindingFlags.NonPublic)!.GetValue(graph)!;
+		MethodInfo handle = surface.GetType().GetMethod(
+			"HandleGraphKey", BindingFlags.Instance
+				| BindingFlags.NonPublic)!;
+		bool Press(Avalonia.Input.Key key, Avalonia.Input.KeyModifiers modifiers = 0)
+			=> (bool)handle.Invoke(surface, [key, modifiers])!;
+		Press(Avalonia.Input.Key.Tab).Should().BeTrue();
+		graph.SelectedNodeIndex.Should().Be(0);
+		Press(Avalonia.Input.Key.Tab).Should().BeTrue();
+		graph.SelectedNodeIndex.Should().Be(1);
+		Press(Avalonia.Input.Key.Tab,
+			Avalonia.Input.KeyModifiers.Shift).Should().BeTrue();
+		graph.SelectedNodeIndex.Should().Be(0);
+		Press(Avalonia.Input.Key.Tab,
+			Avalonia.Input.KeyModifiers.Control).Should().BeFalse();
+		Press(Avalonia.Input.Key.Tab,
+			Avalonia.Input.KeyModifiers.Control
+				| Avalonia.Input.KeyModifiers.Shift).Should().BeFalse();
+		Press(Avalonia.Input.Key.Tab).Should().BeTrue();
+		graph.SelectedNodeIndex.Should().Be(1);
+		uint initial = workspace.Document.AudioRevision;
+		Press(Avalonia.Input.Key.Up).Should().BeTrue();
+		env.Nodes[1].Value.Should().Be(1.01);
+		Press(Avalonia.Input.Key.Right).Should().BeTrue();
+		env.Nodes[1].Time.Should().Be(TimeSpan.FromMilliseconds(20));
+		workspace.Document.AudioRevision.Should().Be(initial + 2);
+	}
+
+	[AvaloniaTest]
 	public void GraphDeletionOfSelectedNodePreservesSustainIndicesAndRevision()
 	{
 		DocumentWorkspace workspace = new();

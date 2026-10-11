@@ -67,6 +67,36 @@ public sealed class NodeEnvelopeEditorControlTests
 	}
 
 	[AvaloniaTest]
+	public void DisplaySettingsUpdateWithoutAudioRevisionAndRejectInvalidBounds()
+	{
+		DocumentWorkspace workspace = new();
+		NodeEnvelopeDefinition env =
+			EnvelopeDocumentEditor.CreateNodeEnvelope(workspace, "Scale");
+		NodeEnvelopeEditorControl editor = new(workspace, env, _ => { });
+		TextBox vmin = Field<TextBox>(editor, "_vmin");
+		TextBox vmax = Field<TextBox>(editor, "_vmax");
+		ComboBox loop = Field<ComboBox>(editor, "_loopMode");
+		uint audio = workspace.Document.AudioRevision;
+		uint document = workspace.Document.DocumentRevision;
+		vmin.Text = "-10";
+		vmax.Text = "20";
+		Invoke(editor, "Apply");
+		env.Vmin.Should().Be(-10);
+		env.Vmax.Should().Be(20);
+		workspace.Document.AudioRevision.Should().Be(audio);
+		workspace.Document.DocumentRevision.Should().Be(document + 1);
+		vmax.Text = "-100";
+		Invoke(editor, "Apply");
+		env.Vmax.Should().Be(20);
+		workspace.Document.AudioRevision.Should().Be(audio);
+		vmax.Text = "20";
+		loop.SelectedItem = EnvelopeSustainLoopMode.None;
+		Invoke(editor, "Apply");
+		env.SustainLoopMode.Should().Be(EnvelopeSustainLoopMode.None);
+		workspace.Document.AudioRevision.Should().Be(audio + 1);
+	}
+
+	[AvaloniaTest]
 	public void InvalidNodeTextNeverMutatesCurveOrDocument()
 	{
 		DocumentWorkspace workspace = new();
