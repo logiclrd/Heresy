@@ -27,7 +27,7 @@ public sealed class FilterEditorControlTests
 
 		ComboBoxItem[] options = selector.Items.OfType<ComboBoxItem>().ToArray();
 		Assert.That(options.Length, Is.EqualTo(FilterCatalogue.MenuItems.Count));
-		Assert.That(options.Count(x => !x.IsEnabled), Is.EqualTo(4));
+		Assert.That(options.Count(x => !x.IsEnabled), Is.EqualTo(5));
 		Assert.That(options.Where(x => x.IsEnabled)
 			.Select(x => (FilterKind)x.Tag!),
 			Is.EquivalentTo(Enum.GetValues<FilterKind>()));
