@@ -148,16 +148,18 @@ public sealed class SongDocument
 	{
 		ArgumentNullException.ThrowIfNull(restoredRoot);
 
-		// Older version-1 documents have four roots: Sequences, Patterns,
-		// Instruments (also holding Envelopes), Samples. The five-root model
-		// keeps the same format version and promotes Envelope placements.
+		// Version-1 documents may have the original four roots (with
+		// Envelopes mixed into Instruments), or the later five-root layout.
+		// Upgrade both without allocating IDs or changing revision counters.
 		if (restoredRoot.Children.Count == 4)
 			restoredRoot = UpgradeLegacyFourSectionTree(restoredRoot);
+		if (restoredRoot.Children.Count == 5)
+			restoredRoot = UpgradeLegacyFiveSectionTree(restoredRoot);
 
 		if (restoredRoot.Children.Count != SongTreeSections.DocumentOrder.Length)
 		{
 			throw new InvalidOperationException(
-				"A song tree must contain exactly the five fixed document sections.");
+				"A song tree must contain exactly the six fixed document sections.");
 		}
 
 		for (int index = 0; index < SongTreeSections.DocumentOrder.Length; index++)
@@ -216,6 +218,34 @@ public sealed class SongDocument
 		migrated.Children.Add(envelopes);
 		migrated.Children.Add(oldInstruments);
 		return migrated;
+	}
+
+	/// <summary>Promotes the exact five-root version-1 layout. Existing
+	/// folders and object/tombstone placements are reused, not reclassified.</summary>
+	private static SongTreeFolder UpgradeLegacyFiveSectionTree(
+		SongTreeFolder oldRoot)
+	{
+		string[] expected =
+			["Sequences", "Patterns", "Patches", "Envelopes", "Instruments"];
+		for (int index = 0; index < expected.Length; index++)
+		{
+			if (oldRoot.Children[index] is not SongTreeFolder section
+				|| !string.Equals(section.Name, expected[index],
+					StringComparison.Ordinal))
+			{
+				throw new InvalidOperationException(
+					$"Legacy five-root section {index} must be '{expected[index]}'.");
+			}
+		}
+
+		SongTreeFolder upgraded = new(oldRoot.Name);
+		upgraded.Children.Add(oldRoot.Children[0]); // Sequences
+		upgraded.Children.Add(oldRoot.Children[1]); // Patterns
+		upgraded.Children.Add(oldRoot.Children[2]); // Patches
+		upgraded.Children.Add(new SongTreeFolder("Filters"));
+		upgraded.Children.Add(oldRoot.Children[3]); // Envelopes
+		upgraded.Children.Add(oldRoot.Children[4]); // Instruments
+		return upgraded;
 	}
 
 	private void ExtractLegacyEnvelopes(
