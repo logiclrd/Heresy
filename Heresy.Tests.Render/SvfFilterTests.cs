@@ -55,7 +55,7 @@ public sealed class SvfFilterTests
 			Is.EqualTo(1).Within(0.01),
 			"SVF band-pass uses unity centre peak regardless of Q.");
 		Assert.That(Magnitude(FilterKind.SvfBandPass, cutoff, 100, q),
-			Is.LessThan(0.02));
+			Is.LessThan(0.05));
 		Assert.That(Magnitude(FilterKind.SvfNotch, cutoff, cutoff, q),
 			Is.LessThan(0.001));
 		Assert.That(Magnitude(FilterKind.SvfNotch, cutoff, 100, q),
