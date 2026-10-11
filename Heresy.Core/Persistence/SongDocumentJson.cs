@@ -14,6 +14,7 @@ using System.Threading.Tasks;
 using Heresy.Core.Assets;
 using Heresy.Core.Envelopes;
 using Heresy.Core.FmSynthesis;
+using Heresy.Core.Filters;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -105,6 +106,44 @@ public static class SongDocumentJson
 		}
 
 		return [.. effects];
+	}
+
+	/// <summary>Serialize a configured Filter use as a stable definition ID
+	/// plus per-stage overrides; no mutable processing state is captured.</summary>
+	public static string SerializeFilterInstance(FilterInstance instance)
+	{
+		ArgumentNullException.ThrowIfNull(instance);
+		return FilterJson.WriteInstance(instance).ToJsonString(JsonOptions);
+	}
+
+	public static FilterInstance DeserializeFilterInstance(
+		string json, SongDocument document,
+		IReadOnlyDictionary<ObjectId, ObjectId>? idRemap = null)
+	{
+		ArgumentNullException.ThrowIfNull(json);
+		ArgumentNullException.ThrowIfNull(document);
+		return FilterJson.ReadInstance(
+			JsonNode.Parse(json) as JsonObject
+				?? throw new InvalidDataException("Filter instance must be a JSON object."),
+			document, idRemap);
+	}
+
+	public static string SerializeFilterChain(FilterChain chain)
+	{
+		ArgumentNullException.ThrowIfNull(chain);
+		return FilterJson.WriteChain(chain).ToJsonString(JsonOptions);
+	}
+
+	public static FilterChain DeserializeFilterChain(
+		string json, SongDocument document,
+		IReadOnlyDictionary<ObjectId, ObjectId>? idRemap = null)
+	{
+		ArgumentNullException.ThrowIfNull(json);
+		ArgumentNullException.ThrowIfNull(document);
+		return FilterJson.ReadChain(
+			JsonNode.Parse(json) as JsonObject
+				?? throw new InvalidDataException("Filter chain must be a JSON object."),
+			document, idRemap);
 	}
 
 	public static string Serialize(
@@ -391,6 +430,12 @@ public static class SongDocumentJson
 
 		switch (songObject)
 		{
+			case FilterDefinition filter:
+				result["type"] = "filter";
+				foreach ((string key, JsonNode? value) in FilterJson.WriteDefinition(filter))
+					result[key] = value?.DeepClone();
+				break;
+
 			case SampleDefinition sample:
 				result["type"] = "sample";
 				result["asset"] =
@@ -554,6 +599,9 @@ public static class SongDocumentJson
 
 		switch (type)
 		{
+			case "filter":
+				return FilterJson.ReadDefinition(id, name, node);
+
 			case "sample":
 				{
 					JsonObject assetNode = RequiredObject(node, "asset");
