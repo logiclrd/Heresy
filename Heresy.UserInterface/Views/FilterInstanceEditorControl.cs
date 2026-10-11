@@ -277,6 +277,11 @@ public sealed class FilterInstanceEditorControl : UserControl
 					FontStyle = FontStyle.Italic,
 					Foreground = Brushes.Gray,
 				});
+				group.Children.Add(new TextBlock
+				{
+					Text = rangeText,
+					Foreground = Brushes.Gray,
+				});
 				_parameters.Children.Add(group);
 			}
 			_message.Text = "";
