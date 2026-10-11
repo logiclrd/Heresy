@@ -196,45 +196,33 @@ public sealed class OnePoleFilterTests
 	public void FailedNyquistReconfigurationRetainsAllActiveHistories()
 	{
 		FilterDefinition definition = new((ObjectId)15U, "Atomic");
-		FilterInstance one = new(definition);
-		FilterInstance two = one.Clone();
-		StreamingFilterChain baseline = new(
-			new FilterChain(new[] { one, two }), SampleRate, 1);
-		StreamingFilterChain failed = baseline.Fork();
+		FilterInstance first = new(definition);
+		FilterInstance second = first.Clone();
+		StreamingFilterChain runtime = new(
+			new FilterChain(new[] { first, second }), 32000, 1);
 		float[] warmup = { 1f, -1f, 0.5f, 0f };
-		baseline.ProcessInterleaved((float[])warmup.Clone());
-		failed.ProcessInterleaved((float[])warmup.Clone());
+		runtime.ProcessInterleaved((float[])warmup.Clone());
 
-		// The second serial layer would be invalid at 48 kHz, but the
-		// first layer is also changing. Failure must publish neither.
-		FilterInstance differentFirst = one.Clone();
-		differentFirst.SetStageParameter(1, "CutoffHz",
+		// The first serial layer changes to a valid coefficient, while
+		// the second is invalid at 32 kHz. Neither change may commit.
+		FilterInstance changedFirst = first.Clone();
+		changedFirst.SetStageParameter(1, "CutoffHz",
 			FilterParameterValue.FromNumber(2000));
-		FilterInstance badSecond = two.Clone();
+		FilterInstance badSecond = second.Clone();
 		badSecond.SetStageParameter(1, "CutoffHz",
 			FilterParameterValue.FromNumber(20000));
-		Assert.That(() => failed.Configure(
-			new FilterChain(new[] { differentFirst, badSecond })), Throws.Nothing,
-			"20 kHz is still below Nyquist at 48 kHz.");
-
-		// Instead force a definition-level invalidity that can be
-		// diagnosed at preparation under a 32 kHz sample rate.
-		StreamingFilterChain at32k = new(
-			new FilterChain(new[] { one, two }), 32000, 1);
-		at32k.ProcessInterleaved((float[])warmup.Clone());
-		FilterInstance bad = two.Clone();
-		bad.SetStageParameter(1, "CutoffHz",
-			FilterParameterValue.FromNumber(20000));
 		Assert.Throws<ArgumentOutOfRangeException>(() =>
-			at32k.Configure(new FilterChain(new[] { differentFirst, bad })));
+			runtime.Configure(new FilterChain(new[] { changedFirst, badSecond })));
+
 		StreamingFilterChain untouched = new(
-			new FilterChain(new[] { one, two }), 32000, 1);
+			new FilterChain(new[] { first, second }), 32000, 1);
 		untouched.ProcessInterleaved((float[])warmup.Clone());
 		float[] nextA = { 0f, 0.25f, 0f, -0.5f };
 		float[] nextB = (float[])nextA.Clone();
-		at32k.ProcessInterleaved(nextA);
+		runtime.ProcessInterleaved(nextA);
 		untouched.ProcessInterleaved(nextB);
-		Assert.That(nextA, Is.EqualTo(nextB));
+		Assert.That(nextA, Is.EqualTo(nextB),
+			"Failed preparation must leave earlier stage coefficients and histories untouched.");
 	}
 
 	[Test]
@@ -306,6 +294,20 @@ public sealed class OnePoleFilterTests
 		float[] limited = new float[200];
 		Assert.That(capped.RenderTail(limited), Is.EqualTo(48));
 		Assert.That(limited.Skip(48), Is.All.Zero);
+	}
+
+	[Test]
+	public void ExtremeAlternatingHighPassPcmSaturatesRatherThanEmittingInfinity()
+	{
+		StreamingFilterChain runtime = CreateRuntime("HighPass", 1);
+		float[] alternating = Enumerable.Range(0, 32)
+			.Select(i => (i & 1) == 0 ? float.MaxValue : -float.MaxValue)
+			.ToArray();
+		runtime.ProcessInterleaved(alternating);
+		Assert.That(alternating.All(float.IsFinite), Is.True);
+		Assert.That(alternating.Any(value =>
+			Math.Abs(value) == float.MaxValue), Is.True,
+			"Clipping extreme PCM is preferable to poisoning later stages with Infinity.");
 	}
 
 	[Test]
