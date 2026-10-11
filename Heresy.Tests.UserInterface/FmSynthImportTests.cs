@@ -276,6 +276,8 @@ public sealed class FmSynthImportTests
 			new FmSynthGraph([new FmEnvelopeNode(2, envelopeId)], 2));
 		source.Add(synth);
 		DocumentWorkspace target = new();
+		for (int i = 0; i < 5; i++)
+			target.Document.AllocateObjectId();
 		FmSynthDefinition copied = FmSynthDocumentEditor.ImportFromSong(
 			target,
 			new SongFmSynthImportSource("source.hm.json", source, [synth]),

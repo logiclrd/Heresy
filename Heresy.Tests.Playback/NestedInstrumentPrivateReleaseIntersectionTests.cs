@@ -156,7 +156,7 @@ public sealed class NestedInstrumentPrivateReleaseIntersectionTests
 
     [TestCase(false)]
     [TestCase(true)]
-    public void ZeroReleaseAndEndInputRetireNestedInstrumentWithoutAnotherBlock(
+    public void ShortestNodeReleaseRetiresNestedInstrumentAfterFinalSample(
         bool privateSequence)
     {
         SongDocument document = CreateSong(privateSequence,
@@ -172,11 +172,15 @@ public sealed class NestedInstrumentPrivateReleaseIntersectionTests
         Assert.That(prefix, Is.All.EqualTo(0.5f).Within(1e-6f));
         float[] afterOff = new float[1];
         plan.Source.Render(1, afterOff);
-        Assert.That(afterOff[0], Is.Zero.Within(1e-6f));
+        Assert.That(afterOff[0], Is.EqualTo(0.5f).Within(1e-6f),
+            "The node cannot jump to zero: release starts at its current value.");
+        float[] finalFrame = new float[1];
+        plan.Source.Render(1, finalFrame);
+        Assert.That(finalFrame[0], Is.Zero.Within(1e-6f));
         plan.Source.EndInput();
         Assert.That(plan.Session.IsQuiescent, Is.True,
-            "Zero release must finish immediately even through a private "
-            + "Sequence tone, without an extra PCM block.");
+            "The minimum strictly increasing node release must finish after "
+            + "its final PCM frame, including private Sequence tones.");
     }
 
     [TestCase(false)]

@@ -52,6 +52,8 @@ public sealed class NodeEnvelopeEditorControlTests
 		Invoke(editor, "Apply");
 		workspace.Document.AudioRevision.Should().Be(initial + 1);
 		nodes.Text = "0, 0\n0, 1";
+		start.Text = "0";
+		end.Text = "1";
 		Invoke(editor, "Apply");
 		workspace.Document.AudioRevision.Should().Be(initial + 1);
 		envelope.Nodes[1].Value.Should().Be(1.5);
