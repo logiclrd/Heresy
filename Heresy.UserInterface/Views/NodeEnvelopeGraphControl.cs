@@ -21,6 +21,13 @@ public sealed class NodeEnvelopeGraphControl : UserControl
 	private readonly DocumentWorkspace _workspace;
 	private readonly NodeEnvelopeDefinition _envelope;
 	private readonly NodeEnvelopeGraphSurface _surface;
+	private readonly Button _fit = new()
+	{
+		Content = "↔",
+		IsVisible = false,
+		HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+		MinWidth = 35,
+	};
 	private readonly Button _match = new()
 	{
 		Content = "Match",
@@ -53,12 +60,22 @@ public sealed class NodeEnvelopeGraphControl : UserControl
 			SelectionChanged?.Invoke(this, EventArgs.Empty);
 		};
 		_surface.CommitRequested += Commit;
+		_surface.DomainChanged += UpdateFit;
 		_match.Click += (_, _) => MatchSelected();
+		_fit.Click += (_, _) => _surface.FitTimeDomain();
+		Grid buttons = new()
+		{
+			ColumnDefinitions = new ColumnDefinitions("*,Auto"),
+		};
+		buttons.Children.Add(_match);
+		Grid.SetColumn(_fit, 1);
+		buttons.Children.Add(_fit);
 		StackPanel content = new() { Spacing = 5 };
 		content.Children.Add(_surface);
-		content.Children.Add(_match);
+		content.Children.Add(buttons);
 		Content = content;
 		UpdateMatch();
+		UpdateFit();
 		AttachedToVisualTree += OnAttached;
 		DetachedFromVisualTree += OnDetached;
 	}
@@ -67,7 +84,11 @@ public sealed class NodeEnvelopeGraphControl : UserControl
 	{
 		_surface.RefreshFromEnvelope();
 		UpdateMatch();
+		UpdateFit();
 	}
+
+	private void UpdateFit()
+		=> _fit.IsVisible = _surface.HasUnusedTimeDomain;
 
 	private void UpdateMatch()
 	{
@@ -176,15 +197,29 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 	private bool _dragMoved;
 	private Point _press;
 	private NodeEnvelopeGraphGeometry? _fixedLayout;
+	private long _timeDomainTicks;
 
 	public event Action<NodeEnvelopeGraphEdit>? CommitRequested;
 	public event Action? SelectionChanged;
+	public event Action? DomainChanged;
+	public bool HasUnusedTimeDomain =>
+		Layout()?.UnusedRightPixels > 1.0;
+
+	public void FitTimeDomain()
+	{
+		if (IsDragging || _previewNodes.Length < 2)
+			return;
+		_timeDomainTicks = Math.Max(1, _previewNodes[^1].Time.Ticks);
+		InvalidateVisual();
+		DomainChanged?.Invoke();
+	}
 	public int SelectedNodeIndex => _selected;
 	public bool IsDragging => _dragNode >= 0 || _dragGuide >= 0;
 	public NodeEnvelopeGraphSurface(NodeEnvelopeDefinition envelope)
 	{
 		_envelope = envelope;
 		_previewNodes = envelope.Nodes.ToArray();
+		_timeDomainTicks = Math.Max(1, envelope.Nodes[^1].Time.Ticks);
 		_previewSustainStart = envelope.SustainStartIndex;
 		_previewSustainEnd = envelope.SustainEndIndex;
 		MinWidth = 260;
@@ -200,12 +235,18 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		if (IsDragging)
 			return;
 		_previewNodes = _envelope.Nodes.ToArray();
+		ExpandTimeDomainToFinalNode();
 		_previewSustainStart = _envelope.SustainStartIndex;
 		_previewSustainEnd = _envelope.SustainEndIndex;
 		if (_selected >= _previewNodes.Length)
 			Select(-1);
 		InvalidateVisual();
+		DomainChanged?.Invoke();
 	}
+
+	private void ExpandTimeDomainToFinalNode()
+		=> _timeDomainTicks = Math.Max(
+			_timeDomainTicks, Math.Max(1, _previewNodes[^1].Time.Ticks));
 
 	public void Select(int nodeIndex)
 	{
@@ -228,9 +269,11 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		_fixedLayout = null;
 		Cursor = NormalCursor;
 		_previewNodes = _envelope.Nodes.ToArray();
+		ExpandTimeDomainToFinalNode();
 		_previewSustainStart = _envelope.SustainStartIndex;
 		_previewSustainEnd = _envelope.SustainEndIndex;
 		InvalidateVisual();
+		DomainChanged?.Invoke();
 	}
 
 	private NodeEnvelopeGraphGeometry? Layout()
@@ -241,7 +284,8 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		return _fixedLayout is not null
 			? _fixedLayout.WithNodes(_previewNodes)
 			: new NodeEnvelopeGraphGeometry(_previewNodes,
-				Bounds.Width, Bounds.Height, _envelope.Vmin, _envelope.Vmax);
+				Bounds.Width, Bounds.Height, _envelope.Vmin, _envelope.Vmax,
+				_timeDomainTicks);
 	}
 
 	public override void Render(DrawingContext context)
@@ -454,7 +498,16 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 			if (moved != _previewNodes[_dragNode])
 			{
 				_previewNodes[_dragNode] = moved;
+				if (_dragNode == _previewNodes.Length - 1
+					&& moved.Time.Ticks > _timeDomainTicks)
+				{
+					ExpandTimeDomainToFinalNode();
+					_fixedLayout = new NodeEnvelopeGraphGeometry(
+						_previewNodes, Bounds.Width, Bounds.Height,
+						_envelope.Vmin, _envelope.Vmax, _timeDomainTicks);
+				}
 				InvalidateVisual();
+				DomainChanged?.Invoke();
 			}
 		}
 		else if (_dragGuide >= 0)

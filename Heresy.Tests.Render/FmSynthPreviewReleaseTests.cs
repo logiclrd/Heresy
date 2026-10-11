@@ -97,20 +97,62 @@ public sealed class FmSynthPreviewReleaseTests
 	}
 
 	[Test]
-	public void FmEnvelopeUsedOnlyAsOscillatorFrequencyInputDoesNotProveSilence()
+	public void FrequencyOnlyEnvelopeKeepsTheOscillatorAliveThroughItsTail()
 	{
 		FmSynthSound fm = new(
 			new FmSynthGraph(
 			[
 				new FmEnvelopeNode(1, EnvelopeId),
-				new FmOscillatorNode(2, FmOscillatorWaveform.Sine, 1,
+				new FmOscillatorNode(2, FmOscillatorWaveform.Square, 1,
 					multiplierNodeId: 1),
 			], outputNodeId: 2),
 			new Resolver((EnvelopeId, EnvelopeCurve(400))));
 		SoundState state = fm.CreateState();
 		state.NoteOffTime = TimeSpan.FromMilliseconds(300);
-		fm.GetEndFrameExclusive(Context(), state).Should().BeNull(
-			"a frequency envelope reaching zero does not silence the oscillator");
+		fm.GetEndFrameExclusive(Context(), state).Should().Be(7,
+			"the oscillator does not become silent when its pitch "
+			+ "envelope ends, but the note is retired after the release");
+	}
+
+	[Test]
+	public void LiveFrequencyOnlyFmPreviewKeepsThePitchSlideAfterKeyUp()
+	{
+		PlaybackSession session = Session(new FmSynthGraph(
+		[
+			new FmEnvelopeNode(1, EnvelopeId),
+			new FmOscillatorNode(2, FmOscillatorWaveform.Square, 1,
+				multiplierNodeId: 1),
+		], outputNodeId: 2));
+		PlaybackSessionAudioSource source = new(session);
+		source.EnqueueLiveEvent(ChannelTarget.Virtual(55),
+			[new StartNoteCommand(SourceId)]);
+		float[] before = new float[3];
+		source.Render(before.Length, before);
+		before.Should().OnlyContain(value => Math.Abs(value) > 0.5f);
+
+		source.EnqueueLiveEvent(ChannelTarget.Virtual(55),
+			[new NoteOffCommand()]);
+		float[] released = new float[8];
+		source.Render(released.Length, released);
+		released[..4].Should().OnlyContain(value => Math.Abs(value) > 0.5f,
+			"the pitch modulation may taper to zero but the tone must "
+			+ "continue until its release phase finishes");
+		released[4..].Should().OnlyContain(value => Math.Abs(value) < 1e-6f);
+	}
+
+	[Test]
+	public void FmWithoutAnyEnvelopeEndsJustAfterNoteOff()
+	{
+		FmSynthSound sound = new(
+			new FmSynthGraph(
+			[new FmOscillatorNode(1, FmOscillatorWaveform.Square, 1)],
+			outputNodeId: 1),
+			new Resolver());
+		SoundState state = sound.CreateState();
+		sound.GetEndFrameExclusive(Context(), state).Should().BeNull();
+		state.NoteOffTime = TimeSpan.FromMilliseconds(300);
+		sound.GetEndFrameExclusive(Context(), state).Should().Be(4,
+			"an ungated FM oscillator has no post-Note-Off release tail");
 	}
 
 	[Test]

@@ -23,12 +23,13 @@ public sealed class NodeEnvelopeGraphGeometry
 	private readonly double _top;
 	private readonly double _bottom;
 	private readonly double _ticksPerPixel;
+	private readonly long _domainTicks;
 	private readonly double _valuePerPixel;
 	private readonly double _highValue;
 
 	public NodeEnvelopeGraphGeometry(
 		IReadOnlyList<EnvelopeNode> nodes, double width, double height,
-		double vmin = 0, double vmax = 1)
+		double vmin = 0, double vmax = 1, long? domainTicks = null)
 	{
 		ArgumentNullException.ThrowIfNull(nodes);
 		if (nodes.Count == 0)
@@ -42,8 +43,9 @@ public sealed class NodeEnvelopeGraphGeometry
 		_right = width - Padding;
 		_top = Padding;
 		_bottom = height - Padding;
-		double maxTicks = Math.Max(1, _nodes[^1].Time.Ticks);
-		_ticksPerPixel = maxTicks * 1.15 / (_right - _left);
+		_domainTicks = Math.Max(1, Math.Max(
+			_nodes[^1].Time.Ticks, domainTicks ?? 1));
+		_ticksPerPixel = (double)_domainTicks / (_right - _left);
 		// View range never depends on node values, even while dragging.
 		double span = vmax - vmin;
 		_highValue = vmax + span * 0.05;
@@ -59,6 +61,7 @@ public sealed class NodeEnvelopeGraphGeometry
 		_top = view._top;
 		_bottom = view._bottom;
 		_ticksPerPixel = view._ticksPerPixel;
+		_domainTicks = view._domainTicks;
 		_valuePerPixel = view._valuePerPixel;
 		_highValue = view._highValue;
 	}
@@ -73,6 +76,11 @@ public sealed class NodeEnvelopeGraphGeometry
 	public double Top => _top;
 	public double Bottom => _bottom;
 	public int Count => _nodes.Length;
+	public long DomainTicks => _domainTicks;
+	/// <summary>How many logical pixels lie between the final node and
+	/// the domain's right edge. Not applicable to a single-node curve.</summary>
+	public double UnusedRightPixels =>
+		Count < 2 ? 0.0 : Math.Max(0.0, _right - Point(Count - 1).X);
 
 	public (double X, double Y) Point(int nodeIndex)
 		=> (X(_nodes[nodeIndex].Time.Ticks),

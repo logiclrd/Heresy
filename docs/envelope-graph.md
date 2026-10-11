@@ -19,6 +19,13 @@ Removing the first node re-bases the remaining node times to zero;
 the last node cannot be removed. Sustain index references update
 when inserting or deleting nodes.
 
+The graph starts fitted to the final node and maintains a persistent
+time-domain extent: shortening the envelope does not automatically zoom
+in, while stretching past the right edge expands the domain. When the
+last node leaves more than one pixel of unused space on the right, the
+right-aligned **↔** button refits the view; it never modifies the
+envelope or increments the audio revision.
+
 Changes are committed once on pointer release, with live visual
 feedback and cancellation on capture loss. Drag rendering uses the
 current preview nodes, not cached node locations. Vertical scale is

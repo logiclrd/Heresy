@@ -126,6 +126,63 @@ public sealed class NodeEnvelopePlaybackTests
 		return stream.ToArray();
 	}
 
+	[TestCase(EnvelopeSustainLoopMode.Forward)]
+	[TestCase(EnvelopeSustainLoopMode.PingPong)]
+	[TestCase(EnvelopeSustainLoopMode.None)]
+	public void PatternFmFrequencyOnlyEnvelopeRetiresAfterNoteOff(
+		EnvelopeSustainLoopMode loop)
+	{
+		SongDocument song = new();
+		ObjectId envelopeId = song.AllocateObjectId();
+		NodeEnvelopeDefinition envelope = new(envelopeId, "Pitch contour");
+		envelope.ReplaceCurve(
+		[
+			new(TimeSpan.Zero, 1.0),
+			new(TimeSpan.FromMilliseconds(10), 1.0),
+			new(TimeSpan.FromMilliseconds(100), 0.0),
+		], 1, 1, loop);
+		song.Add(envelope);
+		ObjectId fmId = song.AllocateObjectId();
+		song.Add(new FmSynthDefinition(fmId, "Pitch modulated FM",
+			new FmSynthGraph(
+			[
+				new FmEnvelopeNode(1, envelopeId),
+				new FmOscillatorNode(2, FmOscillatorWaveform.Square, 90,
+					multiplierNodeId: 1),
+			], outputNodeId: 2)));
+		ObjectId patternId = song.AllocateObjectId();
+		song.Add(new ScriptPatternDefinition(patternId, "Release")
+		{
+			RowCount = 4, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({fmId.Value})); Off(0.5, 0);",
+		});
+		PreparedIncrementalPlaybackFactory factory = new(
+			new RenderConfiguration(1000,
+				[new OutputChannelConfiguration(Vector3.Zero,
+					positionalImportance: 0)]));
+		using PreparedIncrementalPlaybackPlan whole = factory.Create(song, patternId);
+		using PreparedIncrementalPlaybackPlan parts = factory.Create(song, patternId);
+		float[] pcm = new float[320];
+		float[] chunked = new float[320];
+		whole.Source.Render(pcm.Length, pcm);
+		for (int at = 0; at < chunked.Length;)
+		{
+			int frames = Math.Min(13, chunked.Length - at);
+			parts.Source.Render(frames, chunked.AsSpan(at, frames));
+			at += frames;
+		}
+		Assert.Multiple(() =>
+		{
+			Assert.That(chunked, Is.EqualTo(pcm).Within(1e-6f));
+			Assert.That(pcm.Skip(70).Take(25)
+				.Any(v => Math.Abs(v) > 0.5f), Is.True,
+				"Pitch envelope notes must keep sounding after Note Off");
+			Assert.That(pcm.Skip(200), Is.All.EqualTo(0f).Within(1e-6f),
+				"An oscillator with only a frequency envelope must "
+				+ "still retire when that release completes");
+		});
+	}
+
 	[Test]
 	public void FmNodeEnvelopeResolvesAndReleasesInPreparedPlayback()
 	{

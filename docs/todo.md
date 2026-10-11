@@ -43,8 +43,25 @@ hardware and actual audible playback verification:
   editor and survive reopening the song. Audition actual Instrument
   notes and the FM editor's Test notes through held, Note Off, and
   final silence, using both Forward and PingPong sustain.
-  This physical-audio and window-system check must remain open until
-  observed on actual desktop hardware; CI/headless cannot certify it.
+  Windows and Linux desktop editing have been exercised manually;
+  the sticky time-domain control and FM release changes still require
+  listening and hands-on verification with the reported patches.
+  CI/headless tests cannot certify the audible outcome.
+
+## FM release and envelope zoom follow-ups
+
+The graph's horizontal time domain stays expanded after shortening the
+last node, and grows automatically when that node moves beyond the right
+edge. The right-aligned **↔** button appears with more than one pixel
+of unused horizontal domain, and refits without changing song data.
+
+FM voices with a finite Envelope used only for frequency modulation now
+retire after its release tail, instead of stopping immediately in live
+preview or potentially lingering in a Pattern. Ungated FM voices with no
+envelope stop at Note Off; unbounded scripted envelope lifetimes remain
+unknown. Automated live and Pattern regressions cover the principal
+release paths. Recheck actual audio playback and the reported patch:
+the original problematic parameter values were not captured.
 
 ## Physical validation
 

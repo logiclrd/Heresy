@@ -692,3 +692,15 @@ outputs and sample-backed Instrument tone volumes, including irregular
 PCM block boundaries. Real desktop audio audition and native pointer
 behaviour require a physical smoke pass and remain tracked in
 [todo.md](todo.md).
+
+
+### Graph time-domain refit and FM pitch envelopes
+
+The graph preserves its expanded horizontal domain when its last node
+moves left. Extending a node beyond the right edge expands the domain;
+the right-aligned **↔** button refits it only when more than one pixel
+of empty domain is visible. Refit changes the view, not the song.
+
+FM synth frequency-modulating envelopes have a post-Note-Off voice
+lifetime, even if the oscillator output is not amplitude-gated.
+The finite release tail is heard before the FM voice retires.

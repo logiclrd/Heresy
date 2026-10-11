@@ -152,6 +152,16 @@ Desktop checks should exercise selection and hit tolerances, duplicate
 time constraints, backward sustain drags, one-node matching, and
 out-of-range node values.
 
+## Persistent graph time domain
+
+The horizontal view starts fitted to the final node. Dragging the last
+node left does **not** automatically contract it; dragging beyond the
+right edge expands it. A right-aligned **↔** button is visible when
+more than one pixel of unused space remains, and refits the view to the
+last node without changing envelope playback or document revisions.
+The time-domain extent belongs to the editor instance rather than the
+persisted envelope definition.
+
 ## FM editor audition key-up (distinct from Pattern playback)
 
 FM synth notes **already use proper Note Off during Pattern playback**,
@@ -166,7 +176,10 @@ end bound even when the FM graph would become silent after release.
 embedded Envelopes promise finite silence. A directly output Envelope ends
 at its own deadline; a Multiply becomes silent when any factor ends; an
 Add, Minimum or Maximum requires all inputs to end. An Envelope affecting
-only oscillator frequency does not justify an output-silence guarantee.
+only oscillator frequency does not prove output silence, but the FM
+voice now retires when its finite post-Note-Off release tail finishes.
+That allows the pitch slide to finish without the live preview cutting
+immediately or Pattern playback retaining an endless oscillator.
 Ungated/unbounded FM output retains the existing safety cut, preventing
 indefinitely sounding preview voices. Live virtual Note Off now preserves
 finite FM release tails, as covered by `FmSynthPreviewReleaseTests`.

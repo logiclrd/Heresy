@@ -421,6 +421,60 @@ public sealed class NodeEnvelopeGraphControlTests
 	}
 
 	[AvaloniaTest]
+	public void ZoomOutTimeDomainPersistsUntilFitButtonIsInvoked()
+	{
+		DocumentWorkspace workspace = new();
+		NodeEnvelopeDefinition envelope =
+			EnvelopeDocumentEditor.CreateNodeEnvelope(workspace, "Sticky time");
+		NodeEnvelopeGraphControl graph = new(workspace, envelope);
+		graph.Measure(new Avalonia.Size(460, 310));
+		graph.Arrange(new Avalonia.Rect(0, 0, 460, 310));
+		Type type = typeof(NodeEnvelopeGraphControl);
+		BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+		Button fit = (Button)type.GetField("_fit", flags)!.GetValue(graph)!;
+		object surface = type.GetField("_surface", flags)!.GetValue(graph)!;
+		Type surfaceType = surface.GetType();
+		System.Reflection.FieldInfo domain = surfaceType.GetField(
+			"_timeDomainTicks", flags)!;
+		long initial = (long)domain.GetValue(surface)!;
+		initial.Should().Be(envelope.Nodes[^1].Time.Ticks);
+		fit.Content.Should().Be("↔");
+		fit.IsVisible.Should().BeFalse();
+
+		EnvelopeNode[] shortened = envelope.Nodes.ToArray();
+		shortened[^1] = shortened[^1] with
+		{
+			Time = TimeSpan.FromMilliseconds(250),
+		};
+		NodeEnvelopeGraphEdit edit = new(
+			shortened, envelope.SustainStartIndex,
+			envelope.SustainEndIndex, -1);
+		type.GetMethod("Commit", flags)!.Invoke(graph, [edit]);
+		((long)domain.GetValue(surface)!).Should().Be(initial,
+			"shrinking the final node must retain the zoomed-out time domain");
+		fit.IsVisible.Should().BeTrue();
+		uint audioBeforeFit = workspace.Document.AudioRevision;
+		surfaceType.GetMethod("FitTimeDomain")!.Invoke(surface, []);
+		((long)domain.GetValue(surface)!).Should()
+			.Be(shortened[^1].Time.Ticks);
+		fit.IsVisible.Should().BeFalse();
+		workspace.Document.AudioRevision.Should().Be(audioBeforeFit,
+			"zoom adjustments never change the actual envelope");
+
+		shortened[^1] = shortened[^1] with
+		{
+			Time = TimeSpan.FromMilliseconds(750),
+		};
+		type.GetMethod("Commit", flags)!.Invoke(graph, [new NodeEnvelopeGraphEdit(
+			shortened, envelope.SustainStartIndex,
+			envelope.SustainEndIndex, -1)]);
+		((long)domain.GetValue(surface)!).Should()
+			.Be(shortened[^1].Time.Ticks,
+				"the domain must expand when the final node passes its edge");
+		fit.IsVisible.Should().BeFalse();
+	}
+
+	[AvaloniaTest]
 	public void GraphDeletionOfSelectedNodePreservesSustainIndicesAndRevision()
 	{
 		DocumentWorkspace workspace = new();

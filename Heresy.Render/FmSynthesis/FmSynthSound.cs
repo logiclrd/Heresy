@@ -134,33 +134,50 @@ public sealed class FmSynthSound : ISound
 		if (!synthState.NoteOffTime.HasValue)
 			return null;
 
-		// The FM graph's envelopes are *inside* this Sound, not in
-		// NoteConfigurationSnapshot.Envelopes.Volume. Expose a sound end
-		// only where graph structure proves its output silent. Otherwise
-		// live virtual audition would cut an envelope's valid release
-		// (or, without a bound, retain a non-silent oscillator forever).
+		// FM Envelopes live inside the graph. First find an output-silence
+		// deadline (amplitude gating); otherwise, if the sound is still
+		// audible after its envelopes have finished, end the note at the
+		// last finite release tail. A frequency-only envelope does not
+		// silence an oscillator, but its release is still the intended
+		// lifespan of that note in Pattern playback and live audition.
+		// An FM graph with no envelopes has no tail and stops on Note Off.
 		int sampleRate = context.Configuration.SampleRate;
 		long noteOffFrame = FrameTime.Ceiling(
 			synthState.NoteOffTime.Value, sampleRate);
 		long?[] silentFrom = new long?[_nodes.Length];
+		long finiteReleaseEnd = checked(noteOffFrame + 1);
+		bool hasIndefiniteEnvelope = false;
 		for (int index = 0; index < _nodes.Length; index++)
 		{
 			CompiledNode node = _nodes[index];
-			silentFrom[index] = node.Definition switch
+			if (node.Definition is FmEnvelopeNode
+				&& node.Envelope is not null)
 			{
-				FmEnvelopeNode => node.Envelope is null
-					? 0L
-					: node.Envelope.GetEndActiveFrameExclusiveAfterNoteOff(
-						noteOffFrame, sampleRate),
-				FmOperatorNode op => GetOperatorSilenceEnd(
-					op.Operation, node.InputIndices, silentFrom),
-				// A frequency-modulating Envelope does not make its
-				// oscillator's output silent. Nor does a bare constant
-				// provide a release lifecycle.
-				_ => null,
-			};
+				long? end =
+					node.Envelope.GetEndActiveFrameExclusiveAfterNoteOff(
+						noteOffFrame, sampleRate);
+				silentFrom[index] = end;
+				if (end is long finite)
+					finiteReleaseEnd = Math.Max(finiteReleaseEnd, finite);
+				else
+					hasIndefiniteEnvelope = true;
+			}
+			else
+			{
+				silentFrom[index] = node.Definition switch
+				{
+					FmEnvelopeNode => 0L,
+					FmOperatorNode op => GetOperatorSilenceEnd(
+						op.Operation, node.InputIndices, silentFrom),
+					_ => null,
+				};
+			}
 		}
-		return silentFrom[_outputIndex];
+		if (silentFrom[_outputIndex] is long outputSilence)
+			return outputSilence;
+		// An unbounded scripted envelope cannot be assigned a guessed
+		// release length; the existing live safety policy still applies.
+		return hasIndefiniteEnvelope ? null : finiteReleaseEnd;
 	}
 
 	private static long? GetOperatorSilenceEnd(

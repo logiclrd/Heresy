@@ -142,6 +142,36 @@ public sealed class NodeEnvelopeGraphGeometryTests
 	}
 
 	[Test]
+	public void DomainUsesExplicitTimeLimitWithoutImplicitTrailingPadding()
+	{
+		EnvelopeNode[] nodes = Nodes();
+		NodeEnvelopeGraphGeometry fitted = Layout(nodes);
+		Assert.That(fitted.UnusedRightPixels, Is.EqualTo(0).Within(1e-8));
+		Assert.That(fitted.Point(3).X, Is.EqualTo(fitted.Right).Within(1e-8));
+
+		NodeEnvelopeGraphGeometry expanded = new(
+			nodes, 440, 250, domainTicks: TimeSpan.FromSeconds(6).Ticks);
+		Assert.That(expanded.DomainTicks,
+			Is.EqualTo(TimeSpan.FromSeconds(6).Ticks));
+		Assert.That(expanded.UnusedRightPixels,
+			Is.GreaterThan(1.0));
+		Assert.That(expanded.Point(3).X,
+			Is.LessThan(fitted.Point(3).X));
+
+		NodeEnvelopeGraphGeometry withMovedNodes =
+			expanded.WithNodes(
+				[new EnvelopeNode(TimeSpan.Zero, 0.0),
+				 new EnvelopeNode(TimeSpan.FromSeconds(1), 1.0),
+				 new EnvelopeNode(TimeSpan.FromSeconds(2), 0.0)]);
+		Assert.That(withMovedNodes.DomainTicks, Is.EqualTo(expanded.DomainTicks));
+		Assert.That(withMovedNodes.UnusedRightPixels,
+			Is.GreaterThan(expanded.UnusedRightPixels));
+		Assert.That(new NodeEnvelopeGraphGeometry(
+			[new EnvelopeNode(TimeSpan.Zero, 0)], 440, 250)
+			.UnusedRightPixels, Is.Zero);
+	}
+
+	[Test]
 	public void SelectionUsesClosestNodeAndExactlyFourPixelCircle()
 	{
 		NodeEnvelopeGraphGeometry geometry = Layout();
