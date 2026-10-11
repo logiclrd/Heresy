@@ -104,7 +104,10 @@ public sealed class OnePoleFilterStageFactory : IStreamingFilterStageFactory
 				_integrator = 0;
 			if (!double.IsFinite(output) || Math.Abs(output) < 1e-20)
 				return 0;
-			return (float)output;
+			// An alternating full-scale input can create a legitimate
+			// transient high-pass amplitude above one float's range.
+			// Saturate it rather than emitting Infinity into the mixer.
+			return (float)Math.Clamp(output, -float.MaxValue, float.MaxValue);
 		}
 
 		public IStreamingFilterStageState Clone()
