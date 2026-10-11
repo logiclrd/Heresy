@@ -12,9 +12,8 @@ Design source: [filter-design.md](filter-design.md) (incremental implementation)
 
 ### Core model and authoring
 
-The reusable Core Filter SongObject, stable named serial stages, independent parameter overlays and filter-chain composition are implemented. The six-root Filters document tree, four-column Avalonia projection and version-1 four-/five-root migration are implemented. Filter definitions and the ID-based instance/chain codec now round-trip through version-one .hm.json/.hm, deep-copy into playback snapshots, and support selected-definition import/remapping. The standalone Filter creation/editing UI remains withheld until its editor is implemented.
+The reusable Core Filter SongObject, stable named serial stages, independent parameter overlays and filter-chain composition are implemented. The six-root Filters document tree, four-column Avalonia projection and version-1 four-/five-root migration are implemented. Filter definitions and the ID-based instance/chain codec now round-trip through version-one .hm.json/.hm, deep-copy into playback snapshots, and support selected-definition import/remapping. The standalone Filter creation/editing UI is implemented: the Filters pane exposes + Filter; double-click/edit opens a serial-stage editor with validated defaults, hierarchical filter kinds and conflict-safe drafts.
 
-- [ ] **Build the standalone Filter definition editor.** Support named serial stages, add/remove/reorder/rename, type dropdown with disabled section headers, per-type parameter defaults and validation, and shared editing/revision-conflict behaviour. Add headless Avalonia tests.
 - [ ] **Build the reusable Filter *instance* parameter editor.** Drive controls and contextual assistance from parameter descriptors, separate configured per-use values from shared defaults, prevent cross-editor draft loss, and show reasonable units/ranges/structural choices. Verify that reconfiguring one use does not mutate another.
 
 ### Reusable rendering engine and filter families
