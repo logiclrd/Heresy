@@ -135,6 +135,20 @@ public sealed class FilterDefinitionTests
 	}
 
 	[Test]
+	public void ReselectingTheSameKindDoesNotDiscardCustomDefaults()
+	{
+		FilterDefinition definition = new((ObjectId)7U, "Retain");
+		definition.SetStageDefaults(1, new[] {
+			Pair("CutoffHz", FilterParameterValue.FromNumber(3000)),
+		});
+		FilterStageDefinition unchanged = definition.GetStage(1);
+		definition.ChangeStageKind(1, FilterKind.OnePole);
+		Assert.That(definition.GetStage(1), Is.SameAs(unchanged));
+		Assert.That(definition.GetStage(1).DefaultParameters["CutoffHz"]
+			.NumericValue, Is.EqualTo(3000));
+	}
+
+	[Test]
 	public void DefinitionMakesImmutableSnapshotsOfMutableInputCollections()
 	{
 		List<FilterStageDefinition> input = [
