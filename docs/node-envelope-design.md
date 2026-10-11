@@ -67,7 +67,7 @@ permit one. An envelope's last node describes its last defined value,
 which must not be forcibly normalized/clamped. Separate target and voice
 retirement logic must handle tails correctly.
 
-## Graphical editing contract (graph and node selection implemented)
+## Graphical editing contract (interactive graph and sustain gestures implemented)
 
 The replacement graph draws small nodes and straight interpolating
 segments, faint vertical guides through every node, and a sustain region
@@ -91,12 +91,16 @@ the same surviving nodes across insertions/deletions.
 
 Dragging either highlighted sustain boundary guide relocates that
 boundary to another node, **never past the opposite boundary**.
+When start and end coincide, either boundary may expand to a new
+node according to drag direction.
 Dragging from a non-highlighted node's guide to a different node's guide
 replaces the entire sustain interval; direction does not matter.
 Dragging from a guide back to itself leaves the region alone;
 **double-clicking a guide** explicitly sets the sustain start and end
 to that same node. Graph preview remains transient during drag, and
-pointer release commits once; lost capture cancels.
+pointer release commits once; lost capture cancels. Double-clicking a
+node dot takes precedence over its guide; guide double-clicks must
+occur away from the dot.
 
 When either sustain endpoint node is selected and the endpoints differ,
 show a **Match** button below the graph. It is disabled if both

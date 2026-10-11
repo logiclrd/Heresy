@@ -23,6 +23,70 @@ public sealed class NodeEnvelopeGraphGeometryTests
 		=> new(nodes ?? Nodes(), 440, 250);
 
 	[Test]
+	public void GuideHitTestingIsVerticalWithFourPixelToleranceAndNearestSnap()
+	{
+		NodeEnvelopeGraphGeometry geometry = Layout();
+		(double x, double y) = geometry.Point(2);
+		Assert.That(geometry.HitGuide(x, geometry.Top), Is.EqualTo(2));
+		Assert.That(geometry.HitGuide(x + 4, geometry.Bottom), Is.EqualTo(2));
+		Assert.That(geometry.HitGuide(x + 4.01, y), Is.EqualTo(-1));
+		Assert.That(geometry.HitGuide(x, geometry.Top - 0.01), Is.EqualTo(-1));
+		Assert.That(geometry.HitGuide(x, geometry.Bottom + 0.01),
+			Is.EqualTo(-1));
+		Assert.That(geometry.HitGuide(double.NaN, y), Is.EqualTo(-1));
+		Assert.That(geometry.HitGuide(x, double.PositiveInfinity),
+			Is.EqualTo(-1));
+		Assert.That(geometry.ClosestGuide(x - 0.01), Is.EqualTo(2));
+		Assert.That(geometry.ClosestGuide(-10000), Is.Zero);
+		Assert.That(geometry.ClosestGuide(10000), Is.EqualTo(3));
+		Assert.That(geometry.ClosestGuide(double.NaN), Is.EqualTo(-1));
+	}
+
+	[Test]
+	public void SustainBoundaryDragsClampAtOppositeBoundaryAndAllowContraction()
+	{
+		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
+			1, 3, boundary: 1, target: 2), Is.EqualTo((2, 3)));
+		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
+			1, 3, boundary: 1, target: 99), Is.EqualTo((3, 3)));
+		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
+			1, 3, boundary: 3, target: 2), Is.EqualTo((1, 2)));
+		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
+			1, 3, boundary: 3, target: 0), Is.EqualTo((1, 1)));
+		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
+			1, 3, boundary: 1, target: 1), Is.EqualTo((1, 3)));
+		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
+			1, 3, boundary: 3, target: 3), Is.EqualTo((1, 3)));
+		Assert.Throws<ArgumentException>(() =>
+			NodeEnvelopeGraphGeometry.MoveSustainBoundary(1, 3, 2, 3));
+	}
+
+	[Test]
+	public void SingleNodeSustainCanExpandEitherBoundaryAndSelfDragIsNoOp()
+	{
+		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
+			2, 2, 2, 0), Is.EqualTo((0, 2)));
+		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
+			2, 2, 2, 3), Is.EqualTo((2, 3)));
+		Assert.That(NodeEnvelopeGraphGeometry.MoveSustainBoundary(
+			2, 2, 2, 2), Is.EqualTo((2, 2)));
+	}
+
+	[Test]
+	public void UnhighlightedGuideDragReplacesRegionSymmetrically()
+	{
+		Assert.That(NodeEnvelopeGraphGeometry.SelectSustainRegion(0, 3, 1, 2),
+			Is.EqualTo((0, 3)));
+		Assert.That(NodeEnvelopeGraphGeometry.SelectSustainRegion(3, 0, 1, 2),
+			Is.EqualTo((0, 3)));
+		Assert.That(NodeEnvelopeGraphGeometry.SelectSustainRegion(3, 2, 0, 1),
+			Is.EqualTo((2, 3)));
+		Assert.That(NodeEnvelopeGraphGeometry.SelectSustainRegion(0, 0, 1, 2),
+			Is.EqualTo((1, 2)),
+			"self drags leave the previous range intact; double-click creates single-node sustain");
+	}
+
+	[Test]
 	public void SelectionUsesClosestNodeAndExactlyFourPixelCircle()
 	{
 		NodeEnvelopeGraphGeometry geometry = Layout();

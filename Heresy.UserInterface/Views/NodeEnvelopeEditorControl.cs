@@ -83,11 +83,14 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 		});
 		form.Children.Add(new TextBlock
 		{
-			Text = "Click within 4 pixels of a node to select it, drag to "
-				+ "adjust its time/value, double-click a node to delete it, "
-				+ "or double-click a line to insert a node. The first node "
-				+ "remains at time 0. Sustain guide dragging and Match "
-				+ "will follow in the next milestone.",
+			Text = "Click a node to select it, drag the dot to move it, "
+				+ "double-click a dot to delete it, or double-click a segment "
+				+ "to add a node. Drag a sustain endpoint's vertical guide "
+				+ "to move that boundary; drag any guide outside the sustain "
+				+ "region to select a new range (either direction). "
+				+ "Double-click a guide away from its dot to sustain one node. "
+				+ "Select a sustain endpoint to use Match below the graph. "
+				+ "Node zero remains at time 0.",
 			TextWrapping = TextWrapping.Wrap,
 		});
 		form.Children.Add(new TextBlock

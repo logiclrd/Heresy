@@ -23,7 +23,24 @@ Changes are committed once on pointer release, with live visual
 feedback and cancellation on capture loss. The document editor
 validates the replacement curve atomically, marks audio-affecting
 revisions, and updates the auxiliary numeric node-list editor.
-Sustain boundary dragging, guide-to-guide region selection, and
-Match editing are planned for the next milestone, documented in
+Sustain boundaries have draggable vertical guides: dragging a start/end
+guide snaps to another node, clamping before the opposite endpoint.
+When both endpoints coincide, a drag can expand the interval in either
+direction. Dragging from a guide **outside the existing sustain region**
+replaces the region between that guide and the destination guide,
+regardless of drag direction. Self-drag leaves the old region untouched;
+double-clicking any guide *away from the node dot* explicitly creates
+a single-node sustain. The node dot takes precedence over guide hits,
+so its own double-click still deletes that node. Guide drags preview
+the highlighted interval but commit only on pointer release; pointer
+capture loss discards the preview.
+
+With a sustain endpoint selected, a **Match** button appears directly
+beneath the graph if and only if sustain start and end differ. It is
+disabled when their values agree. Otherwise it copies the opposite
+endpoint's value into the selected node without changing either time
+or sustain index, committing a single audio-affecting document revision.
+Numeric node and sustain fields remain synchronized. Full desktop
+physical validation remains tracked in
 [node envelope design](node-envelope-design.md). Script Envelopes
 retain their independent script editor.

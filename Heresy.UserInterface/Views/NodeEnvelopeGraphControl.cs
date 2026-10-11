@@ -14,13 +14,20 @@ using Heresy.UserInterface.EnvelopeEditing;
 
 namespace Heresy.UserInterface.Views;
 
-/// <summary>Shared node-envelope polyline editor. Sustain *guide* gestures
-/// and the Match action are deliberately a separate UI milestone.</summary>
+/// <summary>Shared envelope polyline, sustain guides and endpoint matching.</summary>
 public sealed class NodeEnvelopeGraphControl : UserControl
 {
 	private readonly DocumentWorkspace _workspace;
 	private readonly NodeEnvelopeDefinition _envelope;
 	private readonly NodeEnvelopeGraphSurface _surface;
+	private readonly Button _match = new()
+	{
+		Content = "Match",
+		IsVisible = false,
+		IsEnabled = false,
+		HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+		MinWidth = 75,
+	};
 
 	public event EventHandler? EnvelopeChanged;
 	public event EventHandler? SelectionChanged;
@@ -39,15 +46,55 @@ public sealed class NodeEnvelopeGraphControl : UserControl
 				"The envelope is not part of the active document.");
 
 		_surface = new NodeEnvelopeGraphSurface(envelope);
-		_surface.SelectionChanged += () => SelectionChanged?.Invoke(this,
-			EventArgs.Empty);
+		_surface.SelectionChanged += () =>
+		{
+			UpdateMatch();
+			SelectionChanged?.Invoke(this, EventArgs.Empty);
+		};
 		_surface.CommitRequested += Commit;
-		Content = _surface;
+		_match.Click += (_, _) => MatchSelected();
+		StackPanel content = new() { Spacing = 5 };
+		content.Children.Add(_surface);
+		content.Children.Add(_match);
+		Content = content;
+		UpdateMatch();
 		AttachedToVisualTree += OnAttached;
 		DetachedFromVisualTree += OnDetached;
 	}
 
-	public void RefreshFromEnvelope() => _surface.RefreshFromEnvelope();
+	public void RefreshFromEnvelope()
+	{
+		_surface.RefreshFromEnvelope();
+		UpdateMatch();
+	}
+
+	private void UpdateMatch()
+	{
+		int selected = SelectedNodeIndex;
+		int start = _previewSustainStart;
+		int end = _previewSustainEnd;
+		bool visible = start != end && (selected == start || selected == end);
+		_match.IsVisible = visible;
+		_match.IsEnabled = visible
+			&& _envelope.Nodes[start].Value != _envelope.Nodes[end].Value;
+	}
+
+	private void MatchSelected()
+	{
+		if (!_match.IsEnabled || !_match.IsVisible)
+			return;
+		int selected = SelectedNodeIndex;
+		int opposite = selected == _envelope.SustainStartIndex
+			? _envelope.SustainEndIndex : _envelope.SustainStartIndex;
+		EnvelopeNode[] nodes = _envelope.Nodes.ToArray();
+		nodes[selected] = nodes[selected] with
+		{
+			Value = nodes[opposite].Value,
+		};
+		Commit(new NodeEnvelopeGraphEdit(
+			nodes, _envelope.SustainStartIndex, _envelope.SustainEndIndex,
+			selected));
+	}
 
 	private void OnAttached(object? sender, VisualTreeAttachmentEventArgs e)
 	{
@@ -89,7 +136,7 @@ public sealed class NodeEnvelopeGraphControl : UserControl
 }
 
 /// <summary>All editing geometry is delegated to the pure geometry model,
-/// keeping rendering, insertion and drag hit rules identical.</summary>
+/// keeping drawing and pointer hit/drag rules identical.</summary>
 internal sealed class NodeEnvelopeGraphSurface : Control
 {
 	private static readonly IBrush Background =
@@ -111,6 +158,11 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 	private EnvelopeNode[] _previewNodes;
 	private int _selected = -1;
 	private int _dragNode = -1;
+	private int _dragGuide = -1;
+	private int _originalSustainStart;
+	private int _originalSustainEnd;
+	private int _previewSustainStart;
+	private int _previewSustainEnd;
 	private bool _dragMoved;
 	private Point _press;
 	private NodeEnvelopeGraphGeometry? _fixedLayout;
@@ -118,11 +170,13 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 	public event Action<NodeEnvelopeGraphEdit>? CommitRequested;
 	public event Action? SelectionChanged;
 	public int SelectedNodeIndex => _selected;
-	public bool IsDragging => _dragNode >= 0;
+	public bool IsDragging => _dragNode >= 0 || _dragGuide >= 0;
 	public NodeEnvelopeGraphSurface(NodeEnvelopeDefinition envelope)
 	{
 		_envelope = envelope;
 		_previewNodes = envelope.Nodes.ToArray();
+		_previewSustainStart = envelope.SustainStartIndex;
+		_previewSustainEnd = envelope.SustainEndIndex;
 		MinWidth = 260;
 		MinHeight = 200;
 		Height = 250;
@@ -134,6 +188,8 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		if (IsDragging)
 			return;
 		_previewNodes = _envelope.Nodes.ToArray();
+		_previewSustainStart = _envelope.SustainStartIndex;
+		_previewSustainEnd = _envelope.SustainEndIndex;
 		if (_selected >= _previewNodes.Length)
 			Select(-1);
 		InvalidateVisual();
@@ -155,9 +211,12 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		if (!IsDragging)
 			return;
 		_dragNode = -1;
+		_dragGuide = -1;
 		_dragMoved = false;
 		_fixedLayout = null;
 		_previewNodes = _envelope.Nodes.ToArray();
+		_previewSustainStart = _envelope.SustainStartIndex;
+		_previewSustainEnd = _envelope.SustainEndIndex;
 		InvalidateVisual();
 	}
 
@@ -259,15 +318,29 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		Point pointer = e.GetPosition(this);
 		int selected = graph.HitNode(pointer.X, pointer.Y);
 
+		// The dot wins over its vertical guide, including double-click.
+		int guide = selected < 0
+			? graph.HitGuide(pointer.X, pointer.Y) : -1;
 		if (e.ClickCount >= 2)
 		{
+			if (selected < 0)
+				Select(-1);
 			if (selected >= 0)
 			{
 				NodeEnvelopeGraphEdit? edited = NodeEnvelopeGraphGeometry.Delete(
-					_previewNodes, selected, _envelope.SustainStartIndex,
-					_envelope.SustainEndIndex);
+					_previewNodes, selected, _previewSustainStart,
+					_previewSustainEnd);
 				if (edited is not null)
 					CommitRequested?.Invoke(edited);
+			}
+			else if (guide >= 0)
+			{
+				// Double-clicking any guide explicitly creates a
+				// one-node sustain, unlike a self-drag.
+				if (guide != _previewSustainStart
+					|| guide != _previewSustainEnd)
+					CommitRequested?.Invoke(new NodeEnvelopeGraphEdit(
+						_previewNodes.ToArray(), guide, guide, _selected));
 			}
 			else
 			{
@@ -276,16 +349,23 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 				if (segment >= 0 && point is not null)
 					CommitRequested?.Invoke(NodeEnvelopeGraphGeometry.Insert(
 						_previewNodes, segment, point,
-						_envelope.SustainStartIndex, _envelope.SustainEndIndex));
+						_previewSustainStart, _previewSustainEnd));
 			}
 			e.Handled = true;
 			return;
 		}
 
 		Select(selected);
-		if (selected >= 0)
+		if (selected >= 0 || (guide >= 0
+			&& (guide == _previewSustainStart
+				|| guide == _previewSustainEnd
+				|| guide < _previewSustainStart
+				|| guide > _previewSustainEnd)))
 		{
 			_dragNode = selected;
+			_dragGuide = selected >= 0 ? -1 : guide;
+			_originalSustainStart = _previewSustainStart;
+			_originalSustainEnd = _previewSustainEnd;
 			_press = pointer;
 			_dragMoved = false;
 			_fixedLayout = graph;
@@ -304,13 +384,39 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 			&& Math.Abs(pointer.Y - _press.Y) < 3)
 			return;
 		_dragMoved = true;
-		EnvelopeNode moved = NodeEnvelopeGraphGeometry.Move(
-			_previewNodes, _dragNode, _fixedLayout,
-			pointer.X, pointer.Y);
-		if (moved != _previewNodes[_dragNode])
+		if (_dragNode >= 0)
 		{
-			_previewNodes[_dragNode] = moved;
-			InvalidateVisual();
+			EnvelopeNode moved = NodeEnvelopeGraphGeometry.Move(
+				_previewNodes, _dragNode, _fixedLayout,
+				pointer.X, pointer.Y);
+			if (moved != _previewNodes[_dragNode])
+			{
+				_previewNodes[_dragNode] = moved;
+				InvalidateVisual();
+			}
+		}
+		else if (_dragGuide >= 0)
+		{
+			int target = _fixedLayout.ClosestGuide(pointer.X);
+			if (target >= 0)
+			{
+				(int start, int end) =
+					_dragGuide == _originalSustainStart
+						|| _dragGuide == _originalSustainEnd
+					? NodeEnvelopeGraphGeometry.MoveSustainBoundary(
+						_originalSustainStart, _originalSustainEnd,
+						_dragGuide, target)
+					: NodeEnvelopeGraphGeometry.SelectSustainRegion(
+						_dragGuide, target,
+						_originalSustainStart, _originalSustainEnd);
+				if (start != _previewSustainStart
+					|| end != _previewSustainEnd)
+				{
+					_previewSustainStart = start;
+					_previewSustainEnd = end;
+					InvalidateVisual();
+				}
+			}
 		}
 		e.Handled = true;
 	}
@@ -322,10 +428,14 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 			return;
 		int dragged = _dragNode;
 		bool changed = _dragMoved
-			&& !_previewNodes.SequenceEqual(_envelope.Nodes);
+			&& (!_previewNodes.SequenceEqual(_envelope.Nodes)
+				|| _previewSustainStart != _envelope.SustainStartIndex
+				|| _previewSustainEnd != _envelope.SustainEndIndex);
 		NodeEnvelopeGraphEdit result = new(_previewNodes.ToArray(),
-			_envelope.SustainStartIndex, _envelope.SustainEndIndex, dragged);
+			_previewSustainStart, _previewSustainEnd,
+			dragged >= 0 ? dragged : _selected);
 		_dragNode = -1;
+		_dragGuide = -1;
 		_dragMoved = false;
 		_fixedLayout = null;
 		e.Pointer.Capture(null);

@@ -67,6 +67,80 @@ public sealed class NodeEnvelopeGraphGeometry
 	public double Value(double y) =>
 		_highValue - (y - _top) * _valuePerPixel;
 
+	/// <summary>Vertical node-guide hit testing, independent of the
+	/// dot's value position. The dot always takes pointer precedence.</summary>
+	public int HitGuide(double x, double y)
+	{
+		if (!double.IsFinite(x) || !double.IsFinite(y)
+			|| y < _top || y > _bottom)
+			return -1;
+		double distance = 4.0;
+		int closest = -1;
+		for (int i = 0; i < Count; i++)
+		{
+			double gap = Math.Abs(Point(i).X - x);
+			if (gap <= distance)
+			{
+				distance = gap;
+				closest = i;
+			}
+		}
+		return closest;
+	}
+
+	/// <summary>During a guide drag, snap to the closest node even when
+	/// the pointer lies between vertical guides or outside the viewport.</summary>
+	public int ClosestGuide(double x)
+	{
+		if (!double.IsFinite(x))
+			return -1;
+		double distance = double.PositiveInfinity;
+		int closest = 0;
+		for (int i = 0; i < Count; i++)
+		{
+			double gap = Math.Abs(Point(i).X - x);
+			if (gap < distance)
+			{
+				distance = gap;
+				closest = i;
+			}
+		}
+		return closest;
+	}
+
+	/// <summary>Endpoint drags cannot cross the opposite endpoint.
+	/// Coincident endpoints can be expanded in either direction.</summary>
+	public static (int Start, int End) MoveSustainBoundary(
+		int start, int end, int boundary, int target)
+	{
+		if (start > end || target < 0)
+			throw new ArgumentOutOfRangeException(nameof(target));
+		if (boundary != start && boundary != end)
+			throw new ArgumentException(
+				"The dragged guide is not a sustain boundary.",
+				nameof(boundary));
+		if (start == end)
+			return (Math.Min(start, target), Math.Max(end, target));
+		return boundary == start
+			? (Math.Min(target, end), end)
+			: (start, Math.Max(start, target));
+	}
+
+	/// <summary>Dragging from an unhighlighted guide replaces the
+	/// entire region; dragging backward is intentionally symmetric.</summary>
+	public static (int Start, int End) SelectSustainRegion(
+		int origin, int target, int originalStart, int originalEnd)
+	{
+		if (origin < 0 || target < 0 || originalStart < 0
+			|| originalEnd < originalStart)
+			throw new ArgumentOutOfRangeException(nameof(origin));
+		// A self-drag must not create a new single-node region. The
+		// explicit double-click gesture does that instead.
+		if (origin == target)
+			return (originalStart, originalEnd);
+		return (Math.Min(origin, target), Math.Max(origin, target));
+	}
+
 	public int HitNode(double x, double y)
 	{
 		if (!double.IsFinite(x) || !double.IsFinite(y))

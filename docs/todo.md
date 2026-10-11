@@ -16,17 +16,10 @@ graphs. The four-scalar ADSR definition, renderer, and graphical editor have
 been removed without a legacy-song migration. The shared interactive graph now renders the curve and node guides,
 supports 4 px single-node selection, dragging, line insertion and node
 deletion; the node-list editor stays available for precise values.
-Sustain-guide gestures and Match remain separate. Continue in this order:
-
-- [ ] **Implement sustain-guide gestures and Match editing.**
-  Drag either sustain endpoint's guide to another node without crossing
-  the opposite endpoint; dragging a non-highlighted node guide in either
-  direction selects a new region. Self-drag is a no-op, while a
-  double-click on a node guide defines a single-node sustain.
-  Preview during drag; commit on release and cancel on capture loss.
-  When a selected node is one of two distinct sustain endpoints,
-  show Match, disable it when values agree, and otherwise copy the
-  opposite endpoint's value in one audio-revision commit.
+Sustain-guide boundary moves, bidirectional region selection, single-node
+sustain by guide double-click, and selected-endpoint Match are now
+implemented. The remaining node-envelope work concerns whole-UI
+integration and physical audition. Continue in this order:
 
 - [ ] **Complete node-envelope UI integration and physical audition.**
   Use the same interactive control in the standalone Envelope editor

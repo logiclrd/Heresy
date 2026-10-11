@@ -460,7 +460,15 @@ or double-click a line to insert a new node at its closest projected
 point. Deleting the first node re-bases the remaining times to zero;
 the last surviving node cannot be deleted. All operations commit
 atomically through the shared envelope document revision path.
-The sustain guide handles and Match action are the next UI milestone.
+Dragging a sustain boundary's vertical guide snaps that boundary to
+a node without passing the other endpoint. Dragging from an unhighlighted
+guide defines a new sustain interval in either direction; dragging to
+the same guide is a no-op. Double-clicking any vertical guide away from
+its node sets a single-node sustain, whereas double-clicking the dot
+deletes the node. Sustain drags preview before a one-time commit on
+release and cancel if pointer capture is lost. When one of two distinct
+sustain endpoints is selected, **Match** appears below the graph and
+copies the opposite endpoint's value only when they differ.
 
 The node-list editor accepts one `timeSeconds, value` pair per line, using
 invariant-culture decimals. Node 0 must begin at zero and all later times
