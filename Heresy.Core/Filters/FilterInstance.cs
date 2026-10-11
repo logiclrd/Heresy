@@ -26,6 +26,7 @@ public sealed class FilterInstance
 	private sealed class StageOverrides
 	{
 		public required FilterKind Kind { get; init; }
+		public required long Generation { get; init; }
 		public Dictionary<string, FilterParameterValue> Values { get; init; } =
 			new(StringComparer.OrdinalIgnoreCase);
 
@@ -33,6 +34,7 @@ public sealed class FilterInstance
 			=> new()
 			{
 				Kind = Kind,
+				Generation = Generation,
 				Values = new Dictionary<string, FilterParameterValue>(
 					Values, StringComparer.OrdinalIgnoreCase),
 			};
@@ -91,6 +93,7 @@ public sealed class FilterInstance
 		Dictionary<string, FilterParameterValue> values =
 			_overrides.TryGetValue(stageId, out StageOverrides? previous)
 				&& previous.Kind == stage.Kind
+				&& previous.Generation == _definition.GetStageGeneration(stageId)
 				? new(previous.Values, StringComparer.OrdinalIgnoreCase)
 				: new(StringComparer.OrdinalIgnoreCase);
 
@@ -106,6 +109,7 @@ public sealed class FilterInstance
 			_overrides[stageId] = new StageOverrides
 			{
 				Kind = stage.Kind,
+				Generation = _definition.GetStageGeneration(stageId),
 				Values = values,
 			};
 	}
@@ -128,7 +132,8 @@ public sealed class FilterInstance
 	{
 		FilterStageDefinition stage = _definition.GetStage(stageId);
 		if (!_overrides.TryGetValue(stageId, out StageOverrides? overrides)
-			|| overrides.Kind != stage.Kind)
+			|| overrides.Kind != stage.Kind
+			|| overrides.Generation != _definition.GetStageGeneration(stageId))
 			return new ReadOnlyDictionary<string, FilterParameterValue>(
 				new Dictionary<string, FilterParameterValue>(
 					StringComparer.OrdinalIgnoreCase));
@@ -143,7 +148,8 @@ public sealed class FilterInstance
 	{
 		FilterSpecificationInstance parameters = stage.CreateParameters();
 		if (_overrides.TryGetValue(stage.StageId, out StageOverrides? overrides)
-			&& overrides.Kind == stage.Kind)
+			&& overrides.Kind == stage.Kind
+			&& overrides.Generation == _definition.GetStageGeneration(stage.StageId))
 			parameters.SetParameters(overrides.Values);
 		return parameters;
 	}
