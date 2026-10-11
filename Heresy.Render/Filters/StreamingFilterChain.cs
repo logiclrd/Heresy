@@ -49,7 +49,7 @@ public sealed class StreamingFilterChain
 
 		SampleRate = sampleRate;
 		OutputChannelCount = outputChannelCount;
-		_factory = factory ?? BypassFilterStageFactory.Instance;
+		_factory = factory ?? BuiltInFilterStageFactory.Instance;
 		MaximumTailFrames = checked((int)Math.Ceiling(maximumTailSeconds * sampleRate));
 		Configure(chain);
 	}
