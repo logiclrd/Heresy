@@ -10,18 +10,11 @@ virtual-voice controls, and compiled parametric effects, are implemented.
 
 The [node-envelope design contract](node-envelope-design.md) records the
 requested model, sustain timeline semantics, and exact graphical gestures.
-The first milestone (validated node model, atomic authoring, JSON persistence,
-snapshot copy, and regression tests) is implemented; there is deliberately
-no legacy-song migration. Continue in this order:
-
-- [ ] **Replace ADSR curve playback with a node-envelope renderer.**
-  Build an immutable piecewise-linear node curve respecting forward,
-  ping-pong, and single-node sustain, early/mid-loop Note Off without jumps,
-  paused active clocks, reproducible historical queries, and finite-tail
-  bounds. Cover discontinuous forward looping, release while traversing
-  backward, release before sustain, exact boundary-frame cases, negative
-  or above-unity values, and note retirement. Route the existing envelope
-  resolver, instrument, and FM playback through the new curve.
+The validated node model (including atomic authoring, JSON persistence and
+snapshot copies) and the immutable renderer are implemented, with production
+node-envelope resolution for both Instruments and FM graphs. ADSR continues
+temporarily until the explicit editor/format cutover below; there is
+deliberately no legacy-song migration. Continue in this order:
 
 - [ ] **Fix FM editor preview key-release tail (not pattern FM Note Off).**
   In ordinary Pattern playback, FM notes already use the correct Note Off
