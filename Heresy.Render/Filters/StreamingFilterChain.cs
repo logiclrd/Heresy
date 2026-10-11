@@ -32,6 +32,7 @@ public sealed class StreamingFilterChain
 	private readonly IStreamingFilterStageFactory _factory;
 	private RunningStage[] _stages = [];
 	private int _tailBudgetFrames;
+	private int _preparedLatencyFrames;
 	private int _tailRemainingFrames;
 	private bool _inputFinished;
 
@@ -62,6 +63,7 @@ public sealed class StreamingFilterChain
 		_factory = other._factory;
 		_stages = other._stages.Select(stage => stage.Clone()).ToArray();
 		_tailBudgetFrames = other._tailBudgetFrames;
+		_preparedLatencyFrames = other._preparedLatencyFrames;
 		_tailRemainingFrames = other._tailRemainingFrames;
 		_inputFinished = other._inputFinished;
 	}
@@ -76,6 +78,11 @@ public sealed class StreamingFilterChain
 	/// <summary>Finite upper bound from the sum of serial-stage tails,
 	/// clamped to the configured per-invocation maximum.</summary>
 	public int PreparedTailFrames => _tailBudgetFrames;
+
+	/// <summary>Fixed serial group delay in output frames for prepared
+	/// stages that explicitly report latency (currently linear-phase FIR).
+	/// This does not automatically align or delay a host's dry path.</summary>
+	public int PreparedLatencyFrames => _preparedLatencyFrames;
 	public int TailRemainingFrames => _tailRemainingFrames;
 	public bool IsInputFinished => _inputFinished;
 	public int StageCount => _stages.Length;
@@ -156,11 +163,25 @@ public sealed class StreamingFilterChain
 		}
 
 		long requiredTail = 0;
+		long requiredLatency = 0;
 		foreach (RunningStage item in prepared)
+		{
 			requiredTail = Math.Min((long)MaximumTailFrames,
 				requiredTail + item.Plan.TailFrames);
+			if (item.Plan is ILatencyAwareFilterStagePlan latency)
+			{
+				if (latency.LatencyFrames < 0)
+					throw new InvalidOperationException(
+						"Filter plan returned negative latency.");
+				requiredLatency += latency.LatencyFrames;
+				if (requiredLatency > int.MaxValue)
+					throw new InvalidOperationException(
+						"Total filter-chain latency exceeds integer frame range.");
+			}
+		}
 		_stages = prepared.ToArray(); // publish only after all work succeeded
 		_tailBudgetFrames = (int)requiredTail;
+		_preparedLatencyFrames = (int)requiredLatency;
 		_tailRemainingFrames = 0;
 	}
 
