@@ -81,7 +81,7 @@ public static class EnvelopeDocumentEditor
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
 		// Validate before reserving an ObjectId or mutating the document.
 		NodeEnvelopeDefinition candidate = new(
-			new ObjectId(0), name.Trim());
+			(ObjectId)1U, name.Trim());
 		if (nodes is not null)
 			candidate.ReplaceCurve(nodes, sustainStartIndex,
 				sustainEndIndex, sustainLoopMode);
