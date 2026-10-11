@@ -28,6 +28,9 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 	private readonly NodeEnvelopeGraphControl _graph;
 	private bool _loadingFields;
 	private bool _draftDirty;
+	private string? _loadedNodesText;
+	private string? _loadedStartText;
+	private string? _loadedEndText;
 	private EnvelopeNode[] _baselineNodes = [];
 	private int _baselineStart;
 	private int _baselineEnd;
@@ -190,7 +193,7 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 
 	private void OnSharedEnvelopeChanged()
 	{
-		if (_draftDirty)
+		if (HasDraftChanges())
 		{
 			_message.Text = "This shared envelope changed in another editor. "
 				+ "Your unsaved numbers are preserved but cannot overwrite the "
@@ -213,6 +216,14 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 			_draftDirty = true;
 	}
 
+	private bool HasDraftChanges()
+		=> _draftDirty
+			|| _nodesInput.Text != _loadedNodesText
+			|| _sustainStart.Text != _loadedStartText
+			|| _sustainEnd.Text != _loadedEndText
+			|| _loopMode.SelectedItem is not EnvelopeSustainLoopMode mode
+			|| mode != _baselineMode;
+
 	public void RefreshFromEnvelope()
 	{
 		_loadingFields = true;
@@ -228,6 +239,9 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 			_sustainEnd.Text = _envelope.SustainEndIndex.ToString(
 				CultureInfo.InvariantCulture);
 			_loopMode.SelectedItem = _envelope.SustainLoopMode;
+			_loadedNodesText = _nodesInput.Text;
+			_loadedStartText = _sustainStart.Text;
+			_loadedEndText = _sustainEnd.Text;
 			_baselineNodes = _envelope.Nodes.ToArray();
 			_baselineStart = _envelope.SustainStartIndex;
 			_baselineEnd = _envelope.SustainEndIndex;

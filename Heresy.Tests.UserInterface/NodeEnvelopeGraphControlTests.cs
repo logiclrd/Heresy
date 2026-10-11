@@ -259,10 +259,10 @@ public sealed class NodeEnvelopeGraphControlTests
 			envelope.SustainStartIndex.Should().Be(0);
 			envelope.SustainEndIndex.Should().Be(3);
 			workspace.Document.AudioRevision.Should().Be(revision + 1);
-			Drag(0, 1); // Move existing left boundary.
-			envelope.SustainStartIndex.Should().Be(1);
-			envelope.SustainEndIndex.Should().Be(3);
-			Drag(3, 2); // Move existing right boundary.
+			Drag(3, 2); // Move right boundary first, using a new origin.
+			envelope.SustainStartIndex.Should().Be(0);
+			envelope.SustainEndIndex.Should().Be(2);
+			Drag(0, 1); // Now move left boundary without a same-guide double-click.
 			envelope.SustainStartIndex.Should().Be(1);
 			envelope.SustainEndIndex.Should().Be(2);
 			workspace.Document.AudioRevision.Should().Be(revision + 3);
