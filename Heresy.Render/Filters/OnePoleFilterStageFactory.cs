@@ -128,7 +128,7 @@ public sealed class OnePoleFilterStageFactory : IStreamingFilterStageFactory
 /// <summary>
 /// Built-in routing for implemented filter kinds. Unimplemented kinds remain
 /// explicit neutral processors, not accidentally treated as One-Pole.
-/// This is the default factory for One-Pole, biquad, SVF and both ladder responses;
+/// Default DSP routing for One-Pole, biquad, SVF, both ladders and All-Pass;
 /// callers can
 /// still request the all-bypass factory explicitly for an identity chain.
 /// </summary>
@@ -152,6 +152,8 @@ public sealed class BuiltInFilterStageFactory : IStreamingFilterStageFactory
 			return LinearLadderFilterStageFactory.Instance.Prepare(stage, sampleRate);
 		if (stage.Kind == FilterKind.LadderSaturated)
 			return SaturatedLadderFilterStageFactory.Instance.Prepare(stage, sampleRate);
+		if (stage.Kind == FilterKind.AllPass)
+			return AllPassFilterStageFactory.Instance.Prepare(stage, sampleRate);
 		return BypassFilterStageFactory.Instance.Prepare(stage, sampleRate);
 	}
 }
