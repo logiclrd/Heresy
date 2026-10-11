@@ -144,14 +144,16 @@ public sealed class LinearPhaseFirFilterTests
 	}
 
 	[Test]
-	public void MinimumAndMaximumPhaseAreExplicitlyDeferredNotSilentlyRenderedLinear()
+	public void MinimumAndMaximumPhaseArePreparedAndReportNoConstantGroupDelay()
 	{
 		foreach (string phase in new[] { "Minimum", "Maximum" })
 		{
 			FilterInstance instance = CreateUse(FilterKind.FirLowPass,
 				taps: 127, phase: phase);
-			Assert.Throws<NotSupportedException>(() => Runtime(instance),
-				$"{phase} needs the separate FIR phase-conversion milestone.");
+			StreamingFilterChain runtime = Runtime(instance);
+			Assert.That(runtime.PreparedLatencyFrames, Is.Zero,
+				$"{phase} is not a constant-group-delay filter.");
+			Assert.That(runtime.PreparedTailFrames, Is.EqualTo(126));
 		}
 	}
 
