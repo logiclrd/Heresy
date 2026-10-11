@@ -37,31 +37,15 @@ public sealed class LinearLadderFilterStageFactory : IStreamingFilterStageFactor
 			throw new ArgumentOutOfRangeException(nameof(sampleRate));
 
 		double cutoff = stage.Parameters["CutoffHz"].NumericValue;
-		if (!double.IsFinite(cutoff) || cutoff <= 0 || cutoff >= sampleRate * 0.5)
-			throw new ArgumentOutOfRangeException(nameof(stage),
-				$"Linear ladder cutoff {cutoff} Hz must lie strictly below "
-				+ $"Nyquist ({sampleRate * 0.5} Hz).");
 		double resonance = stage.Parameters["Resonance"].NumericValue;
-		if (!double.IsFinite(resonance) || resonance < 0 || resonance > 1)
+		if (!TryPrepareCoefficients(cutoff, resonance, sampleRate,
+			out RealtimeLinearLadderCoefficients coefficients,
+			out double radius))
 			throw new ArgumentOutOfRangeException(nameof(stage),
-				"Linear ladder Resonance must be in [0, 1].");
-
-		double g = Math.Tan(Math.PI * cutoff / sampleRate);
-		double feedback = MaximumFeedback * resonance;
-		if (!double.IsFinite(g) || g <= 0 || !double.IsFinite(feedback)
-			|| feedback < 0 || feedback >= 4)
-			throw new ArgumentOutOfRangeException(nameof(stage),
-				"Linear ladder parameters do not define stable integrators.");
-
-		// Analog characteristic equation for four identical low-pass
-		// poles with negative output feedback: (1 + s/w)^4 + feedback = 0.
-		// At feedback < 4 every analog pole is strictly in the left
-		// half-plane. The TPT/bilinear mapping sends those poles into
-		// the open digital unit circle at every valid sample rate.
-		double radius = MaximumDigitalPoleRadius(g, feedback);
-		if (!(radius >= 0) || !(radius < 1) || !double.IsFinite(radius))
-			throw new ArgumentOutOfRangeException(nameof(stage),
-				"Linear ladder poles do not lie inside the digital unit circle.");
+				"Linear ladder CutoffHz/Resonance must be finite, within "
+				+ "descriptor bounds and stable below Nyquist.");
+		double g = coefficients.G;
+		double feedback = coefficients.Feedback;
 
 		// Four repeated poles at zero resonance require more allowance
 		// than a single exponential: their impulse includes polynomial
@@ -76,6 +60,37 @@ public sealed class LinearLadderFilterStageFactory : IStreamingFilterStageFactor
 			? int.MaxValue
 			: Math.Max(8, (int)budget);
 		return new LadderPlan(g, feedback, tailFrames);
+	}
+
+	/// <summary>
+	/// Bounded, allocation-free parameter preflight shared with full
+	/// immutable preparation. Only the initial Prepare computes tail bounds;
+	/// a compatible realtime change keeps its invocation's tail budget.
+	/// </summary>
+	private static bool TryPrepareCoefficients(double cutoff, double resonance,
+		int sampleRate, out RealtimeLinearLadderCoefficients coefficients,
+		out double radius)
+	{
+		coefficients = default;
+		radius = double.NaN;
+		if (sampleRate <= 0 || !double.IsFinite(cutoff)
+			|| cutoff < 1 || cutoff > 20000 || cutoff >= sampleRate * 0.5
+			|| !double.IsFinite(resonance) || resonance < 0 || resonance > 1)
+			return false;
+		double g = Math.Tan(Math.PI * cutoff / sampleRate);
+		double feedback = MaximumFeedback * resonance;
+		if (!double.IsFinite(g) || g <= 0 || !double.IsFinite(feedback)
+			|| feedback < 0 || feedback >= 4)
+			return false;
+
+		// (1+s/w)^4+feedback has all poles in the analog left half-plane
+		// for feedback < 4. Verify the bilinear-mapped radius, as Prepare
+		// historically does, before publishing any target to the DSP.
+		radius = MaximumDigitalPoleRadius(g, feedback);
+		if (!double.IsFinite(radius) || !(radius >= 0 && radius < 1))
+			return false;
+		coefficients = new(g, feedback);
+		return true;
 	}
 
 	private static double MaximumDigitalPoleRadius(double g, double feedback)
@@ -107,7 +122,8 @@ public sealed class LinearLadderFilterStageFactory : IStreamingFilterStageFactor
 		public IStreamingFilterStageState CreateState() => new LadderState(this);
 	}
 
-	private sealed class LadderState : IStreamingFilterStageState
+	private sealed class LadderState : IStreamingFilterStageState,
+		IRealtimeLinearLadderFilterState
 	{
 		private readonly double[] _integrators = new double[4];
 		private LadderPlan _plan;
@@ -115,6 +131,8 @@ public sealed class LinearLadderFilterStageFactory : IStreamingFilterStageFactor
 		private double _feedback;
 		private double _startG;
 		private double _startFeedback;
+		private double _targetG;
+		private double _targetFeedback;
 		private double _gain;
 		private double _denominatorInverse;
 		private int _remaining;
@@ -126,6 +144,8 @@ public sealed class LinearLadderFilterStageFactory : IStreamingFilterStageFactor
 			_feedback = plan.Feedback;
 			_startG = _g;
 			_startFeedback = _feedback;
+			_targetG = _g;
+			_targetFeedback = _feedback;
 			UpdateCoefficients();
 		}
 
@@ -137,6 +157,8 @@ public sealed class LinearLadderFilterStageFactory : IStreamingFilterStageFactor
 			_feedback = previous._feedback;
 			_startG = previous._startG;
 			_startFeedback = previous._startFeedback;
+			_targetG = previous._targetG;
+			_targetFeedback = previous._targetFeedback;
 			_gain = previous._gain;
 			_denominatorInverse = previous._denominatorInverse;
 			_remaining = previous._remaining;
@@ -155,9 +177,9 @@ public sealed class LinearLadderFilterStageFactory : IStreamingFilterStageFactor
 			{
 				double progress = (double)(ParameterTransitionFrames - _remaining + 1)
 					/ ParameterTransitionFrames;
-				_g = _startG + (_plan.G - _startG) * progress;
+				_g = _startG + (_targetG - _startG) * progress;
 				_feedback = _startFeedback
-					+ (_plan.Feedback - _startFeedback) * progress;
+					+ (_targetFeedback - _startFeedback) * progress;
 				UpdateCoefficients();
 				_remaining--;
 			}
@@ -196,26 +218,43 @@ public sealed class LinearLadderFilterStageFactory : IStreamingFilterStageFactor
 
 		public IStreamingFilterStageState Clone() => new LadderState(this);
 
+		public bool TryPrepareRealtime(double cutoff, double resonance,
+			int sampleRate, out RealtimeLinearLadderCoefficients coefficients)
+			=> TryPrepareCoefficients(cutoff, resonance, sampleRate,
+				out coefficients, out _);
+
+		public void CommitRealtime(RealtimeLinearLadderCoefficients coefficients)
+			=> SetTarget(coefficients.G, coefficients.Feedback);
+
+		private void SetTarget(double g, double feedback)
+		{
+			if (_g == g && _feedback == feedback)
+			{
+				_targetG = g;
+				_targetFeedback = feedback;
+				_startG = g;
+				_startFeedback = feedback;
+				_remaining = 0;
+				return;
+			}
+			// Compatible changes preserve all four integrator histories.
+			// Start again from the currently interpolated g and feedback
+			// if another edit interrupts a 32-frame transition.
+			_startG = _g;
+			_startFeedback = _feedback;
+			_targetG = g;
+			_targetFeedback = feedback;
+			_remaining = ParameterTransitionFrames;
+		}
+
 		public void Reconfigure(IStreamingFilterStagePlan plan)
 		{
 			if (plan is not LadderPlan next)
 				throw new ArgumentException(
 					"Linear ladder state requires a linear ladder plan.",
 					nameof(plan));
-			if (_g == next.G && _feedback == next.Feedback)
-			{
-				_plan = next;
-				_startG = next.G;
-				_startFeedback = next.Feedback;
-				_remaining = 0;
-				return;
-			}
-			// Stage identity/topology remains unchanged; retain all four
-			// histories and interpolate from the current mid-ramp point.
-			_startG = _g;
-			_startFeedback = _feedback;
 			_plan = next;
-			_remaining = ParameterTransitionFrames;
+			SetTarget(next.G, next.Feedback);
 		}
 	}
 }

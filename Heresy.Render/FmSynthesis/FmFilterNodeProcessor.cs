@@ -22,6 +22,7 @@ internal sealed class FmFilterNodeProcessor
 	private readonly Binding[] _bindings;
 	private readonly FastStage[] _fastStages;
 	private readonly FastBiquadStage[] _fastBiquads;
+	private readonly FastLinearLadderStage[] _fastLadders;
 	private readonly bool _useFastNumeric;
 	private readonly int _audioIndex;
 
@@ -35,6 +36,10 @@ internal sealed class FmFilterNodeProcessor
 		int StageIndex, int CutoffBindingIndex, int QBindingIndex,
 		int SlopeBindingIndex, int GainBindingIndex,
 		double BaseCutoff, double BaseQ, double BaseSlope, double BaseGain);
+
+	private readonly record struct FastLinearLadderStage(
+		int StageIndex, int CutoffBindingIndex, int ResonanceBindingIndex,
+		double BaseCutoff, double BaseResonance);
 
 	public FmFilterNodeProcessor(FmFilterNode node,
 		IReadOnlyDictionary<int, int> indexById)
@@ -60,6 +65,7 @@ internal sealed class FmFilterNodeProcessor
 
 		List<FastStage> tpt = [];
 		List<FastBiquadStage> biquads = [];
+		List<FastLinearLadderStage> ladders = [];
 		bool supported = _bindings.Length != 0;
 		ConfiguredFilterStage[] stages = _initial?.GetStages().ToArray() ?? [];
 		for (int stageIndex = 0; stageIndex < stages.Length; stageIndex++)
@@ -73,6 +79,7 @@ internal sealed class FmFilterNodeProcessor
 			int q = -1;
 			int slope = -1;
 			int gain = -1;
+			int resonance = -1;
 			bool stageBound = false;
 			for (int bindingIndex = 0; bindingIndex < _bindings.Length;
 				bindingIndex++)
@@ -95,6 +102,10 @@ internal sealed class FmFilterNodeProcessor
 					StringComparison.OrdinalIgnoreCase)
 					&& (isShelf || stage.Kind == FilterKind.BiquadPeaking))
 					gain = bindingIndex;
+				else if (string.Equals(binding.ParameterName, "Resonance",
+					StringComparison.OrdinalIgnoreCase)
+					&& stage.Kind == FilterKind.LadderLinear)
+					resonance = bindingIndex;
 				else
 					supported = false;
 			}
@@ -117,19 +128,27 @@ internal sealed class FmFilterNodeProcessor
 					isShelf || stage.Kind == FilterKind.BiquadPeaking
 						? stage.Parameters.GetParameter("GainDb").NumericValue : 0));
 			}
+			else if (stage.Kind == FilterKind.LadderLinear)
+			{
+				ladders.Add(new FastLinearLadderStage(
+					stageIndex, cutoff, resonance, baseCutoff,
+					stage.Parameters.GetParameter("Resonance").NumericValue));
+			}
 			else
 				supported = false;
 		}
-		_useFastNumeric = supported && tpt.Count + biquads.Count > 0;
+		_useFastNumeric = supported
+			&& tpt.Count + biquads.Count + ladders.Count > 0;
 		_fastStages = _useFastNumeric ? [.. tpt] : [];
 		_fastBiquads = _useFastNumeric ? [.. biquads] : [];
+		_fastLadders = _useFastNumeric ? [.. ladders] : [];
 
 	}
 
 	public sealed class State
 	{
 		internal State(FilterInstance? initial,
-			double[] initialValues, int sampleRate, int tptCount, int biquadCount)
+			double[] initialValues, int sampleRate, int tptCount, int biquadCount, int ladderCount)
 		{
 			Configuration = initial?.Clone();
 			Values = (double[])initialValues.Clone();
@@ -137,6 +156,8 @@ internal sealed class FmFilterNodeProcessor
 			FastScratch = new RealtimeTptCoefficients[tptCount];
 			BiquadUpdates = new RealtimeBiquadStageUpdate[biquadCount];
 			BiquadScratch = new RealtimeBiquadCoefficients[biquadCount];
+			LadderUpdates = new RealtimeLinearLadderStageUpdate[ladderCount];
+			LadderScratch = new RealtimeLinearLadderCoefficients[ladderCount];
 			if (Configuration is not null)
 				Chain = new StreamingFilterChain(
 					new FilterChain([Configuration]), sampleRate, 1);
@@ -149,12 +170,15 @@ internal sealed class FmFilterNodeProcessor
 		internal RealtimeTptCoefficients[] FastScratch { get; }
 		internal RealtimeBiquadStageUpdate[] BiquadUpdates { get; }
 		internal RealtimeBiquadCoefficients[] BiquadScratch { get; }
+		internal RealtimeLinearLadderStageUpdate[] LadderUpdates { get; }
+		internal RealtimeLinearLadderCoefficients[] LadderScratch { get; }
 	}
 
 	public State CreateState(int sampleRate)
 		=> new(_initial,
 			_bindings.Select(item => item.InitialValue).ToArray(),
-			sampleRate, _fastStages.Length, _fastBiquads.Length);
+			sampleRate, _fastStages.Length, _fastBiquads.Length,
+			_fastLadders.Length);
 
 	/// <summary>
 	/// Evaluate all connected parameters as absolute values in the authored
@@ -254,9 +278,25 @@ internal sealed class FmFilterNodeProcessor
 					sourceValues, _bindings));
 		}
 
+		int ladderCount = 0;
+		foreach (FastLinearLadderStage stage in _fastLadders)
+		{
+			if (!HasChanged(stage.CutoffBindingIndex, state, sourceValues, _bindings)
+				&& !HasChanged(stage.ResonanceBindingIndex,
+					state, sourceValues, _bindings))
+				continue;
+			state.LadderUpdates[ladderCount++] = new RealtimeLinearLadderStageUpdate(
+				stage.StageIndex,
+				ValueOrDefault(stage.CutoffBindingIndex, stage.BaseCutoff,
+					sourceValues, _bindings),
+				ValueOrDefault(stage.ResonanceBindingIndex, stage.BaseResonance,
+					sourceValues, _bindings));
+		}
+
 		if (!state.Chain!.TryApplyRealtimeNumericUpdates(
 			state.FastUpdates.AsSpan(0, tptCount), state.FastScratch,
-			state.BiquadUpdates.AsSpan(0, biquadCount), state.BiquadScratch))
+			state.BiquadUpdates.AsSpan(0, biquadCount), state.BiquadScratch,
+			state.LadderUpdates.AsSpan(0, ladderCount), state.LadderScratch))
 			return;
 		for (int i = 0; i < _bindings.Length; i++)
 			state.Values[i] = sourceValues[_bindings[i].ValueIndex];
@@ -265,7 +305,7 @@ internal sealed class FmFilterNodeProcessor
 	/// <summary>
 	/// Full atomic preparation remains the validated compatibility path
 	/// for filter families without a dedicated numeric update kernel.
-	/// Its closure allocations are isolated from the TPT realtime method.
+	/// Its closure allocations are isolated from the numeric realtime method.
 	/// </summary>
 	private void RetuneCompatibility(State state, double[] sourceValues)
 	{
