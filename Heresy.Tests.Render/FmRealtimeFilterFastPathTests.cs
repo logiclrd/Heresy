@@ -127,10 +127,16 @@ public sealed class FmRealtimeFilterFastPathTests
 			"DebugProcessAllocated", flags)!.GetValue(null)!;
 		long debugFastSamples = (long)processorType.GetField(
 			"DebugFastSamples", flags)!.GetValue(null)!;
+		long debugBefore = (long)processorType.GetField(
+			"DebugBeforeFastAllocated", flags)!.GetValue(null)!;
+		long debugChain = (long)processorType.GetField(
+			"DebugChainAllocated", flags)!.GetValue(null)!;
 		Assert.That(allocated - controlAllocated, Is.LessThan(4096),
 			$"{kind}: 4096 changing cutoff samples allocate {allocated} bytes "
 			+ $"vs {controlAllocated} bytes for the identical unmodulated FM graph. "
-			+ $"Fast samples={debugFastSamples}, fast bytes={debugFast}, process bytes={debugProcess}");
+			+ $"Fast samples={debugFastSamples}, before-fast bytes={debugBefore}, "
+			+ $"fast bytes={debugFast}, chain bytes={debugChain}, "
+			+ $"process bytes={debugProcess}");
 		Assert.That(pcm[0], Is.GreaterThan(0));
 	}
 
