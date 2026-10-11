@@ -42,7 +42,7 @@ tests supersede contradictory old prose.
 | --- | --- |
 | Comprehensive UI and keyboard behavior (formerly in root README) | [UI workflows](user-interface-workflows.md) |
 | Implemented editor redesign requirements | [UI editor redesign](ui-editor-redesign.md) |
-| Five pane roots, legacy four-pane migration | [Document panes](document-panes.md) |
+| Six pane roots, legacy four-/five-pane migration | [Document panes](document-panes.md) |
 | Node envelope editor and upcoming graph | [Node envelope design](node-envelope-design.md) |
 | Nine-column tone grid, chromatic notation | [Instrument tone grid](instrument-tone-grid-model.md) |
 
