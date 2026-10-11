@@ -1,6 +1,6 @@
 # Reusable filters — design contract
 
-Status: **incremental implementation** (11 October 2026). The Core filter-type catalogue, parameter descriptors, Filter SongObject definition model, and independently configured stage instances/chains are implemented. The six-root Filters document tree and four-column Avalonia layout (including four-/five-root migration) are also implemented. Filter definition persistence, editor/creation UI, DSP and playback integrations remain outstanding in [todo.md](todo.md). Current code still has the tracker-compatible ResonantFilterState and the limited final-speaker low/high-pass filters; neither has been replaced.
+Status: **incremental implementation** (11 October 2026). The Core filter-type catalogue, parameter descriptors, Filter SongObject definition model, and independently configured stage instances/chains are implemented. The six-root Filters document tree and four-column Avalonia layout (including four-/five-root migration) are also implemented. Filter definitions now round-trip through .hm.json/.hm and frozen song snapshots; configured instances/chains have reusable ID-based codecs and a validated import/remapping service. Editor/creation UI, DSP and playback integrations remain outstanding in [todo.md](todo.md). Current code still has the tracker-compatible ResonantFilterState and the limited final-speaker low/high-pass filters; neither has been replaced.
 
 ## Intent and governing constraints
 
@@ -89,13 +89,32 @@ Parameter changes and definition edits are validated atomically. In-place edits 
 
 ## Implemented reusable definition and instance model
 
-Core types: `Heresy.Core.Filters.FilterStageDefinition`, `FilterDefinition`, `FilterInstance`, `ConfiguredFilterStage`, and `FilterChain`. The definition extends `SongObject` and uses the reserved `SongObjectKind.Filter` identity. **Filter definitions can now be added to SongDocument**: the six-root Filters section and four-/five-root migration are implemented. Filter creation and editing are deliberately not yet exposed through the UI, because JSON, clones and song snapshots do not yet support live Filter song objects. Those tasks follow in the persistence and standalone editor milestones.
+Core types: `Heresy.Core.Filters.FilterStageDefinition`, `FilterDefinition`, `FilterInstance`, `ConfiguredFilterStage`, and `FilterChain`. The definition extends `SongObject` and uses the reserved `SongObjectKind.Filter` identity. **Filter definitions can now be added to SongDocument**: the six-root Filters section and four-/five-root migration are implemented. Filter definitions can now be saved and cloned in isolated snapshots, but creation and editing are deliberately not yet exposed through the UI because the standalone definition editor remains outstanding.
 
 A new definition has one valid `stage1` One-Pole stage; all definitions must remain nonempty. Stages have positive integer IDs, validated unique case-insensitive ASCII identifier names (no ambiguous dots in parameter paths), an independently selected `FilterKind`, and a complete read-only validated set of default parameter values. The definition supports validated atomic `ReplaceStages`, add/remove/rename/reorder/type change and default updates. Automatically assigned stage IDs never reuse deleted IDs. Renaming or moving a stage does not change its ID. Each explicit stage type change advances a generation, so per-use overrides tied to the old type cannot unexpectedly reappear if the type changes back or a stage ID is removed/reintroduced.
 
 `FilterInstance` references a shared `FilterDefinition` (also exposing its stable ObjectId), and stores only explicitly configured stage overrides. Effective stage parameters inherit current definition defaults unless overridden, preserving independence across uses; resolving stages follows the definition's current serial ordering and names. The stage-parameter getters supply *independent* mutable snapshots; writing to one returned parameter object cannot modify the definition or a different instance. Atomic batch updates validate the effective configuration before committing overrides. Copies do not share mutable overrides. `FilterChain` composes independently owned layers in **inner-to-outer processing order**, preserving recursive Instrument nesting without flattening filters into one set of parameters. Chains are configuration objects, **not DSP history**.
 
-These models are Core-only authoring/definition types. No DSP or graph node is wired to them yet. Later persistence must store Filter instance overrides by stage ID and filter ObjectId, not by mutable stage index/name or raw in-memory reference. The sample-rate-dependent DSP state belongs exclusively to separate render-time processing instances.
+These models are Core-only authoring/definition types. No DSP or graph node is wired to them yet. Persisted Filter instance overrides use stable stage ID and Filter ObjectId, never mutable stage index/name or in-memory definition references. The sample-rate-dependent DSP state belongs exclusively to separate render-time processing instances.
+
+## Implemented persistence, snapshots and import
+
+`SongDocumentJson` now recognizes Filter song objects in the **existing version-one** flat object table. Each serialized definition contains its ordered named stages, canonical filter kinds, validated typed parameter defaults, the monotonic `nextStageId` allocator and a complete `stageGenerations` record (including removed stage identities). This prevents old per-use overrides reappearing after a stage changes kind twice or an old ID is reintroduced. Four-/five-root migration remains independent of object serialization. Both `.hm.json` and packaged `.hm` use the same codec.
+
+`SongDocumentSnapshot.Create` now deep-copies Filter definitions via normal JSON round-trip. Later authoring changes do not touch already-captured snapshots, and snapshot creation does not advance document or audio revisions. A `filter` tombstone kind is persisted and loaded for deleted definitions; a configured use that references a missing/deleted definition is **rejected explicitly**, not silently rebound to another object.
+
+Configurable uses have public helper entry points:
+
+- `SongDocumentJson.SerializeFilterInstance(FilterInstance)`
+- `SongDocumentJson.DeserializeFilterInstance(string, SongDocument, optional ID remap)`
+- `SongDocumentJson.SerializeFilterChain(FilterChain)`
+- `SongDocumentJson.DeserializeFilterChain(string, SongDocument, optional ID remap)`
+
+These codecs persist a Filter ObjectId, stage ID, filter kind, type-generation and **only explicit parameter overrides**; a layer's inherited stage defaults remain in its shared definition. Each deserialized layer is a new independent configuration. The chain preserves inner-to-outer ordering; invalid IDs, kinds, values, conflicting generations or duplicate override blocks fail as invalid data before exposing any partially built configuration. Processing-state histories are deliberately excluded.
+
+`FilterDocumentImport.LoadImportSource` and `ImportFromSong` provide a framework-independent import of selected Filter definitions from another song, with new destination ObjectIds, copied immutable defaults and stage identity history, and an old-to-new ID map for deserializing associated configurations/chains. Missing selections reject before target mutation; unrelated definitions are not imported. The import service is **not yet exposed through a UI command**. No existing Instrument/Pattern/FM object currently contains a new Filter instance or chain: those integration milestones must use the codecs above when they introduce those references. Likewise, recording new Filter references in the generic song reference analyser belongs to the milestone that introduces their owning fields. Do not mistake availability of the codec for completed live playback integration.
+
+Regression coverage: `FilterPersistenceTests` and `FilterImportTests` plus existing snapshot/JSON/module/document-tree tests. The schema remains `version: 1`.
 
 ## Parameter categories and structural changes
 
