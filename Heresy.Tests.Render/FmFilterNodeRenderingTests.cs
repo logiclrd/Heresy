@@ -68,7 +68,8 @@ public sealed class FmFilterNodeRenderingTests
 		// Retunes use the chain's standard 32-frame coefficient smoothing;
 		// steady-state response must converge to the exact 40-Hz target.
 		Assert.That(a[^1], Is.EqualTo(b[^1]).Within(0.002));
-		Assert.That(a[0], Is.GreaterThan(0).And.LessThan(b[0]));
+		Assert.That(a[0], Is.GreaterThan(b[0]),
+			"the 32-frame ramp starts nearer the original higher cutoff");
 
 		FmSynthSound invalid = Sound(new FmSynthGraph([
 			new FmConstantNode(1, 1),
