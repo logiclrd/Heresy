@@ -6,8 +6,9 @@ namespace Heresy.Render.Filters;
 
 /// <summary>
 /// Windowed-sinc finite impulse response designs for low-pass, high-pass,
-/// band-pass, and band-stop (notch). Odd tap counts yield exact Type-I
-/// linear-phase symmetry, with a known integer group delay.
+/// band-pass, and band-stop (notch). Odd tap counts yield Type-I symmetry
+/// and known group delay in Linear mode. Minimum/Maximum mode applies
+/// bounded offline spectral factorization or its time reversal.
 /// </summary>
 public sealed class LinearPhaseFirFilterStageFactory : IStreamingFilterStageFactory
 {
@@ -43,12 +44,12 @@ public sealed class LinearPhaseFirFilterStageFactory : IStreamingFilterStageFact
 		if (sampleRate <= 0)
 			throw new ArgumentOutOfRangeException(nameof(sampleRate));
 
-		// The descriptor deliberately admits all three phase choices for
-		// persistence/editing. The next FIR milestone implements the other
-		// two. Do not silently render an authored Minimum/Maximum as Linear.
-		if (stage.Parameters["PhaseResponse"].ChoiceValue != "Linear")
-			throw new NotSupportedException(
-				"Minimum/Maximum phase FIR processing is not implemented yet.");
+		string phaseResponse = stage.Parameters["PhaseResponse"].ChoiceValue
+			?? throw new ArgumentException("FIR PhaseResponse is missing.", nameof(stage));
+		if (phaseResponse is not ("Linear" or "Minimum" or "Maximum"))
+			throw new ArgumentException(
+				"FIR PhaseResponse must be Linear, Minimum or Maximum.",
+				nameof(stage));
 
 		double tapsValue = stage.Parameters["TapCount"].NumericValue;
 		if (!double.IsFinite(tapsValue) || tapsValue < 3
@@ -166,7 +167,16 @@ public sealed class LinearPhaseFirFilterStageFactory : IStreamingFilterStageFact
 				throw new ArgumentOutOfRangeException(nameof(stage),
 					"FIR design produced nonfinite coefficients.");
 		}
-		return new FirPlan(coefficients, center);
+		// The symmetric windowed-sinc magnitude design is the common
+		// reference for all phase choices. Minimum/Maximum conversion is a
+		// bounded FFT-based preparation step with no PCM-time allocations.
+		// Only Linear has an exact constant group delay; the other modes
+		// have frequency-dependent group delay and report no fixed latency.
+		if (phaseResponse != "Linear")
+			coefficients = FirPhaseConversion.Convert(
+				coefficients, phaseResponse, referenceFrequency, sampleRate);
+		return new FirPlan(coefficients,
+			phaseResponse == "Linear" ? center : 0);
 	}
 
 	private static double SincLowPass(double cutoff, int sampleRate, int offset)
