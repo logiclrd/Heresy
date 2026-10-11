@@ -105,7 +105,7 @@ public sealed class FilterInstanceTests
 		FilterDefinition definition = CreateDefinition();
 		FilterInstance instance = new(definition);
 		instance.SetStageParameter(10, "CutoffHz", FilterParameterValue.FromNumber(2200));
-		Assert.Throws<ArgumentException>(() => instance.SetStageParameters(10, new[] {
+		Assert.Throws<ArgumentOutOfRangeException>(() => instance.SetStageParameters(10, new[] {
 			Pair("CutoffHz", FilterParameterValue.FromNumber(3000)),
 			Pair("Q", FilterParameterValue.FromNumber(-50)),
 		}));
