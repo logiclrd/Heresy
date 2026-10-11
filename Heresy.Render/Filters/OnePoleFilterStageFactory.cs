@@ -128,7 +128,8 @@ public sealed class OnePoleFilterStageFactory : IStreamingFilterStageFactory
 /// <summary>
 /// Built-in routing for implemented filter kinds. Unimplemented kinds remain
 /// explicit neutral processors, not accidentally treated as One-Pole.
-/// This is the default factory for One-Pole and Audio EQ Biquad responses; callers can
+/// This is the default factory for One-Pole, Audio EQ Biquad and SVF responses;
+/// callers can
 /// still request the all-bypass factory explicitly for an identity chain.
 /// </summary>
 public sealed class BuiltInFilterStageFactory : IStreamingFilterStageFactory
@@ -145,6 +146,8 @@ public sealed class BuiltInFilterStageFactory : IStreamingFilterStageFactory
 			return OnePoleFilterStageFactory.Instance.Prepare(stage, sampleRate);
 		if (BiquadFilterStageFactory.IsBiquad(stage.Kind))
 			return BiquadFilterStageFactory.Instance.Prepare(stage, sampleRate);
+		if (SvfFilterStageFactory.IsSvf(stage.Kind))
+			return SvfFilterStageFactory.Instance.Prepare(stage, sampleRate);
 		return BypassFilterStageFactory.Instance.Prepare(stage, sampleRate);
 	}
 }
