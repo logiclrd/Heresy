@@ -23,11 +23,11 @@ the UI calls that pane **Patches**.
 `FilterDefinition` is a `SongObject` with `SongObjectKind.Filter`. It is
 now admitted by `SongDocument.Add` and placed directly under the Filters
 root; Filter folders can be reorganized within their section, but no objects or
-folders can move between semantic roots. **Filter creation and editing are not
-yet exposed in the UI.** Filter definition persistence, song-snapshot
-cloning/import and the standalone Filter editor are separate next milestones;
-unserialized live Filter definitions must not be offered to end users as
-savable song objects. Existing song types retain their current activation and
+folders can move between semantic roots. Filter definitions now serialize
+and restore in both song formats, clone through song snapshots and can be
+imported with fresh IDs using `FilterDocumentImport`. **Filter creation and
+editing are not yet exposed in the UI** until the standalone definition
+editor exists. Existing song types retain their current activation and
 creation actions.
 
 ## Backward-compatible loading
