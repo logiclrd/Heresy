@@ -104,46 +104,10 @@ public sealed class FmRealtimeFilterFastPathTests
 		sound.Render(context, state, 64, pcm.Length, pcm);
 		long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
 
-		FmSynthSound control = new(new FmSynthGraph([
-			new FmConstantNode(1, 0.75),
-			new FmOscillatorNode(2, FmOscillatorWaveform.Sine, 19,
-				minimum: 90, maximum: 150, constant: true),
-			new FmFilterNode(3, 1, filter),
-		], 3), new EmptyResolver());
-		SoundState controlState = control.CreateState();
-		control.Render(context, controlState, 0, warmup.Length, warmup);
-		long controlBefore = GC.GetAllocatedBytesForCurrentThread();
-		control.Render(context, controlState, 64, pcm.Length, pcm);
-		long controlAllocated = GC.GetAllocatedBytesForCurrentThread() - controlBefore;
+		Assert.That(allocated, Is.LessThan(4096),
+			$"{kind}: 4096 rapidly changing cutoff samples must not "
+			+ "allocate on the steady-state FM render path.");
 
-		Type processorType = typeof(FmSynthSound).Assembly.GetType(
-			"Heresy.Render.FmSynthesis.FmFilterNodeProcessor")!;
-		const System.Reflection.BindingFlags flags =
-			System.Reflection.BindingFlags.Static
-				| System.Reflection.BindingFlags.NonPublic;
-		long debugFast = (long)processorType.GetField(
-			"DebugFastAllocated", flags)!.GetValue(null)!;
-		long debugProcess = (long)processorType.GetField(
-			"DebugProcessAllocated", flags)!.GetValue(null)!;
-		long debugFastSamples = (long)processorType.GetField(
-			"DebugFastSamples", flags)!.GetValue(null)!;
-		long debugBefore = (long)processorType.GetField(
-			"DebugBeforeFastAllocated", flags)!.GetValue(null)!;
-		long debugChain = (long)processorType.GetField(
-			"DebugChainAllocated", flags)!.GetValue(null)!;
-		long debugPreRetune = (long)processorType.GetField(
-			"DebugPreRetuneAllocated", flags)!.GetValue(null)!;
-		long debugRetuneCall = (long)processorType.GetField(
-			"DebugRetuneCallAllocated", flags)!.GetValue(null)!;
-		long debugPostRetune = (long)processorType.GetField(
-			"DebugPostRetuneAllocated", flags)!.GetValue(null)!;
-		Assert.That(allocated - controlAllocated, Is.LessThan(4096),
-			$"{kind}: 4096 changing cutoff samples allocate {allocated} bytes "
-			+ $"vs {controlAllocated} bytes for the identical unmodulated FM graph. "
-			+ $"Fast samples={debugFastSamples}, before-fast bytes={debugBefore}, "
-			+ $"fast bytes={debugFast}, chain bytes={debugChain}, "
-			+ $"pre-retune={debugPreRetune}, retune-call={debugRetuneCall}, "
-			+ $"post-retune={debugPostRetune}, process bytes={debugProcess}");
 		Assert.That(pcm[0], Is.GreaterThan(0));
 	}
 

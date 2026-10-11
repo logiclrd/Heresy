@@ -18,14 +18,6 @@ internal sealed class FmFilterNodeProcessor
 	private sealed record Binding(int StageId, string ParameterName,
 		int ValueIndex, double InitialValue);
 
-	internal static long DebugBeforeFastAllocated;
-	internal static long DebugPreRetuneAllocated;
-	internal static long DebugRetuneCallAllocated;
-	internal static long DebugPostRetuneAllocated;
-	internal static long DebugChainAllocated;
-	internal static long DebugFastSamples;
-	internal static long DebugFastAllocated;
-	internal static long DebugProcessAllocated;
 		private readonly FilterInstance? _initial;
 	private readonly Binding[] _bindings;
 	private readonly FastStage[] _fastStages;
@@ -138,7 +130,6 @@ internal sealed class FmFilterNodeProcessor
 		bool stopExcitation)
 	{
 		ArgumentNullException.ThrowIfNull(state);
-		long debugProcessStart = GC.GetAllocatedBytesForCurrentThread();
 		float input = 0;
 		// Upstream oscillators/envelopes/constants are already silenced
 		// by the FM graph at its natural end. A preceding Filter is NOT
@@ -153,24 +144,14 @@ internal sealed class FmFilterNodeProcessor
 		if (state.Chain is null || state.Configuration is null)
 			return input;
 
-		long debugBeforeRetune = GC.GetAllocatedBytesForCurrentThread();
-		DebugPreRetuneAllocated += debugBeforeRetune - debugProcessStart;
 		if (_bindings.Length != 0 && !stopExcitation)
 			Retune(state, nodeValues);
-		long debugAfterRetune = GC.GetAllocatedBytesForCurrentThread();
-		DebugRetuneCallAllocated += debugAfterRetune - debugBeforeRetune;
 
-		long debugChainStart = GC.GetAllocatedBytesForCurrentThread();
-		DebugPostRetuneAllocated += debugChainStart - debugAfterRetune;
-		float sample = state.Chain.ProcessMonoFrame(input);
-		DebugChainAllocated += GC.GetAllocatedBytesForCurrentThread() - debugChainStart;
-		DebugProcessAllocated += GC.GetAllocatedBytesForCurrentThread() - debugProcessStart;
-		return sample;
+		return state.Chain.ProcessMonoFrame(input);
 	}
 
 	private void Retune(State state, double[] sourceValues)
 	{
-		long debugBeforeFastStart = GC.GetAllocatedBytesForCurrentThread();
 		bool dirty = false;
 		for (int i = 0; i < _bindings.Length; i++)
 		{
@@ -183,36 +164,43 @@ internal sealed class FmFilterNodeProcessor
 		if (!dirty)
 			return;
 
-		if (_useFastTpt)
+		if (!_useFastTpt)
 		{
-			DebugBeforeFastAllocated += GC.GetAllocatedBytesForCurrentThread() - debugBeforeFastStart;
-			long debugFastStart = GC.GetAllocatedBytesForCurrentThread();
-			DebugFastSamples++;
-			// All frame targets are computed into invocation-owned scratch
-			// before the streaming chain preflights every selected stage.
-			// No LINQ, DSP plan allocation, FilterInstance cloning or
-			// dictionary construction occurs in this successful path.
-			for (int i = 0; i < _fastStages.Length; i++)
-			{
-				FastStage stage = _fastStages[i];
-				double cutoff = stage.CutoffBindingIndex < 0
-					? stage.BaseCutoff
-					: sourceValues[_bindings[stage.CutoffBindingIndex].ValueIndex];
-				double q = stage.QBindingIndex < 0
-					? stage.BaseQ
-					: sourceValues[_bindings[stage.QBindingIndex].ValueIndex];
-				state.FastUpdates[i] =
-					new RealtimeTptStageUpdate(stage.StageIndex, cutoff, q);
-			}
-			if (!state.Chain!.TryApplyRealtimeTptUpdates(
-				state.FastUpdates, state.FastScratch))
-				return;
-			for (int i = 0; i < _bindings.Length; i++)
-				state.Values[i] = sourceValues[_bindings[i].ValueIndex];
-			DebugFastAllocated += GC.GetAllocatedBytesForCurrentThread() - debugFastStart;
+			// Keep closure-producing LINQ in a separate method. Otherwise
+			// Roslyn allocates a captured display-class object at Retune
+			// entry on EVERY audio sample, even when the fast path returns
+			// before any fallback expression executes.
+			RetuneCompatibility(state, sourceValues);
 			return;
 		}
 
+		for (int i = 0; i < _fastStages.Length; i++)
+		{
+			FastStage stage = _fastStages[i];
+			double cutoff = stage.CutoffBindingIndex < 0
+				? stage.BaseCutoff
+				: sourceValues[_bindings[stage.CutoffBindingIndex].ValueIndex];
+			double q = stage.QBindingIndex < 0
+				? stage.BaseQ
+				: sourceValues[_bindings[stage.QBindingIndex].ValueIndex];
+			state.FastUpdates[i] =
+				new RealtimeTptStageUpdate(stage.StageIndex, cutoff, q);
+		}
+		if (!state.Chain!.TryApplyRealtimeTptUpdates(
+			state.FastUpdates, state.FastScratch))
+			return;
+
+		for (int i = 0; i < _bindings.Length; i++)
+			state.Values[i] = sourceValues[_bindings[i].ValueIndex];
+	}
+
+	/// <summary>
+	/// Full atomic preparation remains the validated compatibility path
+	/// for filter families without a dedicated numeric update kernel.
+	/// Its closure allocations are isolated from the TPT realtime method.
+	/// </summary>
+	private void RetuneCompatibility(State state, double[] sourceValues)
+	{
 		// A full stage batch is essential for coupled constraints, e.g.
 		// LowCutoffHz/HighCutoffHz crossing during an FM modulation frame.
 		// The chain prepares the whole candidate before publishing it.
