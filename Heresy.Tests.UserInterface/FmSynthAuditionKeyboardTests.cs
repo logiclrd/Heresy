@@ -17,28 +17,6 @@ namespace Heresy.Tests.UserInterface;
 public sealed class FmSynthAuditionKeyboardTests
 {
 	[Test]
-	public void HeldPitchesCanBeRestartedAfterSampleEditWithoutChangingOctave()
-	{
-		FmSynthAuditionKeyboard state =
-			new(Heresy.UserInterface.SampleEditing.SampleAuditionCompiler.VoiceIdBase);
-		StartFmSynthAuditionNote first = state.KeyDown(
-			PhysicalKey.Z, KeyModifiers.None)!;
-		state.KeyDown(PhysicalKey.NumPadMultiply, KeyModifiers.None);
-		StartFmSynthAuditionNote second = state.KeyDown(
-			PhysicalKey.X, KeyModifiers.None)!;
-		state.ActiveNotes.Should().BeEquivalentTo(new[] { first, second });
-		var sampleId = new Heresy.Core.Objects.ObjectId(42);
-		var restarted = Heresy.UserInterface.SampleEditing.SampleAuditionCompiler.Start(
-			sampleId, first, restart: true);
-		restarted.Target.Should().Be(ChannelTarget.Virtual(first.VoiceId));
-		restarted.Commands.Should().Equal(new NoteCutCommand(),
-			new StartNoteCommand(sampleId,
-				PitchMultiplier: first.PitchMultiplier));
-		first.PitchMultiplier.Should().Be(1.0);
-		second.PitchMultiplier.Should().Be(Math.Pow(2.0, 2.0 / 12.0) * 2.0);
-	}
-
-	[Test]
 	public void TrackerKeysAuditionOnlyWithinTestAreaWithoutModifier()
 	{
 		FmSynthAuditionKeyboard state = new();

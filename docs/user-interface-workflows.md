@@ -127,16 +127,31 @@ the loop to the document and synchronizes the start/end text fields.
 
 The Sample editor offers the same focusable **Test** area and physical
 tracker-piano keyboard layout as the FM Patch editor, including octave
-changes via keypad `*` and `/` and key-release Note Off. Its preview
-voices use their own virtual-channel IDs. Editing either loop-frame textbox
-and leaving focus commits the loop, as does the waveform mouse release;
-in both cases any still-held audition notes restart at their *original*
-pitches using the updated sample loop snapshot. The held notes survive
-moving keyboard focus into loop controls so that adjustment can be heard
-immediately. Pressing F8 in the dialog stops playback and clears audition
-key state. Deactivating or closing the dialog releases remaining preview
-notes. Sample metadata, not a cached preview-only loop, remains the source
-of truth for every restart.
+changes via keypad `*` and `/`. Unlike FM audition, **releasing a
+physical key does not end the Sample voice**: preview notes remain
+independent of key-press state so users can adjust the loop controls with
+both hands free. A new key press creates a separate virtual-channel
+voice, even when reusing a previously released key. Held-key auto-repeat
+is ignored, and chord notes can overlap.
+
+When the sample's **committed Loop Mode is Forward or PingPong**, each new
+preview note immediately **cuts any previous preview voice strictly closer
+than a minor third** (semitone separation 0, 1, or 2), retaining notes
+at least three semitones away for chords. With Loop Mode None this
+interference guard does not run; one-shot notes may overlap, including
+retriggering the same pitch. The comparison uses the complete chromatic
+index across octave boundaries, not the physical piano key or the note's
+time of release. FM preview retains its own held-key Note Off behaviour.
+
+Editing either loop-frame textbox and leaving focus commits the loop,
+as does waveform mouse release; in both cases the Sample editor restarts
+its tracked continuing voices at their *original* pitches using updated
+loop metadata and their existing distinct voice IDs. Notes are not
+restarted on provisional mouse movement. F8 stops playback and clears
+both continuing voices and pressed-key state. Deactivating or closing
+the dialog explicitly cuts all remaining preview voices. Sample metadata,
+not a cached preview-only loop, remains the source of truth for every
+restart.
 
 ## File menu and unsaved changes
 

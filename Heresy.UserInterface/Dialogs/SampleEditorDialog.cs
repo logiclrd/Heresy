@@ -15,7 +15,6 @@ using Avalonia.Platform.Storage;
 
 using Heresy.Core.Assets;
 using Heresy.Core.Samples;
-using Heresy.UserInterface.FmEditing;
 using Heresy.UserInterface.PatternEditing;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.SampleEditing;
@@ -56,8 +55,7 @@ public sealed class SampleEditorDialog : Window
 	private readonly TextBlock _message;
 	private readonly PatternLiveAuditionActions? _liveAudition;
 	private readonly Func<Task>? _stopAuditionAsync;
-	private readonly FmSynthAuditionKeyboard _auditionKeyboard =
-		new(SampleAuditionCompiler.VoiceIdBase);
+	private readonly SampleAuditionKeyboard _auditionKeyboard = new();
 	private readonly Border _testArea = new()
 	{
 		Focusable = true,
@@ -160,7 +158,8 @@ public sealed class SampleEditorDialog : Window
 			_testArea.BorderBrush = Brushes.LightSkyBlue;
 		_testArea.LostFocus += (_, _) =>
 			_testArea.BorderBrush = Brushes.Gray;
-		// Editing a loop field must not release a held note.
+		// Key-up clears only the pressed key. Sample notes continue
+		// sounding while the user edits the loop controls.
 		AddHandler(InputElement.KeyUpEvent, OnWindowKeyUp,
 			RoutingStrategies.Tunnel, handledEventsToo: true);
 		AddHandler(InputElement.KeyDownEvent, OnWindowStopKeyDown,
@@ -304,8 +303,8 @@ public sealed class SampleEditorDialog : Window
 		description.Children.Add(new TextBlock
 		{
 			Text = "Click Test, then use tracker piano keys (Z S X D C ...). "
-				+ "Keypad * / change octave; release keys to stop. "
-				+ "Editing the loop restarts held notes. F8 stops preview.",
+				+ "Keypad * / change octave; notes keep sounding after key-up. "
+				+ "Loop edits restart sounding notes; F8 stops preview.",
 			FontSize = 11,
 			TextWrapping = TextWrapping.Wrap,
 		});
@@ -327,8 +326,9 @@ public sealed class SampleEditorDialog : Window
 	private async Task OnTestKeyDownAsync(KeyEventArgs e)
 	{
 		int previousOctave = _auditionKeyboard.BaseOctave;
-		StartFmSynthAuditionNote? note =
-			_auditionKeyboard.KeyDown(e.PhysicalKey, e.KeyModifiers);
+		SampleAuditionStart? action = _auditionKeyboard.KeyDown(
+			e.PhysicalKey, e.KeyModifiers,
+			looping: _sample.Loop.Mode != SampleLoopMode.None);
 		if (PatternOctaveKeyboard.TryAdjust(e.PhysicalKey,
 			e.KeyModifiers, previousOctave, out _))
 		{
@@ -342,37 +342,41 @@ public sealed class SampleEditorDialog : Window
 				e.PhysicalKey, out _))
 			return;
 		e.Handled = true;
-		if (note is null)
-			return;
+		if (action is null)
+			return; // Never retrigger a physically held key.
 
 		if (_liveAudition is null)
 		{
+			_auditionKeyboard.Discard(action.Note);
 			_message.Text = "Realtime Sample audition is unavailable in this host.";
-			_auditionKeyboard.KeyUp(note.Key);
 			return;
 		}
 		try
 		{
+			// Every note has an independent voice ID. Looping starts
+			// explicitly Cut old voices strictly closer than three
+			// semitones before introducing the new one.
+			foreach (SampleAuditionVoice old in action.Displaced)
+				await _liveAudition.SendEventAsync(
+					SampleAuditionCompiler.Cut(old));
 			await _liveAudition.SendEventAsync(
-				SampleAuditionCompiler.Start(_sample.Id, note));
+				SampleAuditionCompiler.Start(_sample.Id, action.Note));
 			_message.Text =
 				$"Sample audition: octave {_auditionKeyboard.BaseOctave}.";
 		}
 		catch (Exception ex)
 		{
-			_auditionKeyboard.KeyUp(note.Key);
+			_auditionKeyboard.Discard(action.Note);
 			_message.Text = $"Sample audition failed: {ex.Message}";
 		}
 	}
 
-	private async void OnWindowKeyUp(object? sender, KeyEventArgs e)
+	private void OnWindowKeyUp(object? sender, KeyEventArgs e)
 	{
-		ReleaseFmSynthAuditionNote? note =
-			_auditionKeyboard.KeyUp(e.PhysicalKey);
-		if (note is null)
-			return;
-		e.Handled = true;
-		await ReleaseTestNoteAsync(note);
+		// Physical key-up makes the key available for another note; it
+		// never releases the sounding Sample voice.
+		if (_auditionKeyboard.KeyUp(e.PhysicalKey))
+			e.Handled = true;
 	}
 
 	private async void OnWindowStopKeyDown(object? sender, KeyEventArgs e)
@@ -380,11 +384,15 @@ public sealed class SampleEditorDialog : Window
 		if (e.Key != Key.F8)
 			return;
 		e.Handled = true;
-		_auditionKeyboard.ReleaseAll();
+		IReadOnlyList<SampleAuditionVoice> notes = _auditionKeyboard.StopAll();
 		try
 		{
 			if (_stopAuditionAsync is not null)
 				await _stopAuditionAsync();
+			else if (_liveAudition is not null)
+				foreach (SampleAuditionVoice note in notes)
+					await _liveAudition.SendEventAsync(
+						SampleAuditionCompiler.Cut(note));
 			else
 				_message.Text = "Playback stop is unavailable in this host.";
 		}
@@ -394,37 +402,33 @@ public sealed class SampleEditorDialog : Window
 		}
 	}
 
-	private async Task ReleaseTestNoteAsync(
-		ReleaseFmSynthAuditionNote note)
-	{
-		if (_liveAudition is null)
-			return;
-		try
-		{
-			await _liveAudition.SendEventAsync(
-				SampleAuditionCompiler.Release(note));
-		}
-		catch (Exception ex)
-		{
-			_message.Text = $"Sample audition release failed: {ex.Message}";
-		}
-	}
-
 	private async Task ReleaseAllTestNotesAsync()
 	{
-		foreach (ReleaseFmSynthAuditionNote note
-			in _auditionKeyboard.ReleaseAll())
-			await ReleaseTestNoteAsync(note);
+		IReadOnlyList<SampleAuditionVoice> notes = _auditionKeyboard.StopAll();
+		if (_liveAudition is null)
+			return;
+		foreach (SampleAuditionVoice note in notes)
+		{
+			try
+			{
+				await _liveAudition.SendEventAsync(
+					SampleAuditionCompiler.Cut(note));
+			}
+			catch (Exception ex)
+			{
+				_message.Text = $"Sample audition stop failed: {ex.Message}";
+			}
+		}
 	}
 
-	/// <summary>Restart exact held pitches and voice IDs, including the
-	/// octaves captured at key-down. Document AudioRevision invalidates the
-	/// live audition snapshot at the next Start note.</summary>
-	private async Task RestartHeldNotesAsync()
+	/// <summary>Loop edits restart *all* preview voices which were left
+	/// playing, not just the physically held keys. Original pitches and
+	/// distinct virtual voice IDs are preserved across snapshot refresh.</summary>
+	private async Task RestartOngoingNotesAsync()
 	{
 		if (_liveAudition is null)
 			return;
-		foreach (StartFmSynthAuditionNote note in _auditionKeyboard.ActiveNotes)
+		foreach (SampleAuditionVoice note in _auditionKeyboard.OngoingNotes)
 		{
 			try
 			{
@@ -450,7 +454,7 @@ public sealed class SampleEditorDialog : Window
 				return;
 			SampleDocumentEditor.UpdateMetadata(_workspace, _sample, loop);
 			_waveform.SetLoop(loop);
-			await RestartHeldNotesAsync();
+			await RestartOngoingNotesAsync();
 		}
 		catch (Exception ex)
 		{
@@ -476,7 +480,7 @@ public sealed class SampleEditorDialog : Window
 			_waveform.SetLoop(loop);
 			PreviewWaveformLoop(loop);
 			if (changed)
-				_ = RestartHeldNotesAsync();
+				_ = RestartOngoingNotesAsync();
 
 			Title = $"Sample — {_sample.Name}";
 			_message.Text = "Sample metadata updated.";
@@ -717,7 +721,7 @@ public sealed class SampleEditorDialog : Window
 			_message.Text =
 				$"Loop range updated to frames {loop.StartFrame}..{loop.EndFrameExclusive}.";
 			if (changed)
-				await RestartHeldNotesAsync();
+				await RestartOngoingNotesAsync();
 		}
 		catch (Exception ex)
 		{
