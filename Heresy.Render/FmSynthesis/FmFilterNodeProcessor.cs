@@ -18,7 +18,10 @@ internal sealed class FmFilterNodeProcessor
 	private sealed record Binding(int StageId, string ParameterName,
 		int ValueIndex, double InitialValue);
 
-	private readonly FilterInstance? _initial;
+	internal static long DebugFastSamples;
+	internal static long DebugFastAllocated;
+	internal static long DebugProcessAllocated;
+		private readonly FilterInstance? _initial;
 	private readonly Binding[] _bindings;
 	private readonly FastStage[] _fastStages;
 	private readonly bool _useFastTpt;
@@ -130,6 +133,7 @@ internal sealed class FmFilterNodeProcessor
 		bool stopExcitation)
 	{
 		ArgumentNullException.ThrowIfNull(state);
+		long debugProcessStart = GC.GetAllocatedBytesForCurrentThread();
 		float input = 0;
 		// Upstream oscillators/envelopes/constants are already silenced
 		// by the FM graph at its natural end. A preceding Filter is NOT
@@ -150,6 +154,7 @@ internal sealed class FmFilterNodeProcessor
 		Span<float> sample = stackalloc float[1];
 		sample[0] = input;
 		state.Chain.ProcessFrame(sample);
+		DebugProcessAllocated += GC.GetAllocatedBytesForCurrentThread() - debugProcessStart;
 		return sample[0];
 	}
 
@@ -169,6 +174,8 @@ internal sealed class FmFilterNodeProcessor
 
 		if (_useFastTpt)
 		{
+			long debugFastStart = GC.GetAllocatedBytesForCurrentThread();
+			DebugFastSamples++;
 			// All frame targets are computed into invocation-owned scratch
 			// before the streaming chain preflights every selected stage.
 			// No LINQ, DSP plan allocation, FilterInstance cloning or
@@ -190,6 +197,7 @@ internal sealed class FmFilterNodeProcessor
 				return;
 			for (int i = 0; i < _bindings.Length; i++)
 				state.Values[i] = sourceValues[_bindings[i].ValueIndex];
+			DebugFastAllocated += GC.GetAllocatedBytesForCurrentThread() - debugFastStart;
 			return;
 		}
 
