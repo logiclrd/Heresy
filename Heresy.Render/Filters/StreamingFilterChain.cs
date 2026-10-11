@@ -227,6 +227,24 @@ public sealed class StreamingFilterChain
 		return true;
 	}
 
+	/// <summary>
+	/// Scalar graph-signal path for a preconfigured mono invocation.
+	/// Avoids constructing a temporary frame span for each FM graph sample.
+	/// Shares the same chronological stage/history sequence as ProcessFrame.
+	/// </summary>
+	public float ProcessMonoFrame(float sample)
+	{
+		if (OutputChannelCount != 1)
+			throw new InvalidOperationException(
+				"Scalar processing requires exactly one output channel.");
+		if (_inputFinished)
+			throw new InvalidOperationException(
+				"Cannot accept input after FinishInput; reset first.");
+		foreach (RunningStage stage in _stages)
+			sample = stage.Channels[0].Process(sample);
+		return sample;
+	}
+
 	/// <summary>Advance exactly one output frame in place.</summary>
 	public void ProcessFrame(Span<float> channels)
 	{
