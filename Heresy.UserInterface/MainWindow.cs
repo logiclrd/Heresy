@@ -18,6 +18,7 @@ using Avalonia.Threading;
 using Heresy.Core.Diagnostics;
 using Heresy.Core.Envelopes;
 using Heresy.Core.FmSynthesis;
+using Heresy.Core.Filters;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -408,6 +409,12 @@ public sealed class MainWindow : Window
 			newScriptInstrument.Click += async (_, _) =>
 				await CreateScriptInstrumentAsync();
 			actions.Children.Add(newScriptInstrument);
+		}
+		if (section == SongTreeSection.Filters)
+		{
+			Button newFilter = new() { Content = "+ Filter" };
+			newFilter.Click += async (_, _) => await CreateFilterAsync();
+			actions.Children.Add(newFilter);
 		}
 		if (section == SongTreeSection.Envelopes)
 		{
@@ -1253,6 +1260,30 @@ public sealed class MainWindow : Window
 		}
 	}
 
+	private async Task CreateFilterAsync()
+	{
+		TextPromptDialog dialog =
+			new("New Filter", "Filter name:", "New Filter");
+		string? name = await dialog.ShowDialog<string?>(this);
+		if (name is null)
+			return;
+
+		try
+		{
+			FilterDefinition filter = FilterDocumentEditor.CreateFilter(
+				_workspace, name);
+			SongTreeObject? node = FindTreeObject(
+				_workspace.Document.GetSectionRoot(SongTreeSection.Filters),
+				filter.Id);
+			RefreshDocumentView($"Created Filter {filter.Name}", node);
+			ShowFilterEditor(filter, node);
+		}
+		catch (Exception ex)
+		{
+			SetStatus($"Could not create Filter: {ex.Message}");
+		}
+	}
+
 	private async Task CreateEnvelopeAsync()
 	{
 		TextPromptDialog dialog =
@@ -1970,6 +2001,9 @@ public sealed class MainWindow : Window
 			case SongTreeActivationKind.FmSynth:
 				ShowFmSynthEditor(item);
 				break;
+			case SongTreeActivationKind.Filter:
+				ShowFilterEditor(item);
+				break;
 			case SongTreeActivationKind.None:
 				break;
 			default:
@@ -2263,6 +2297,37 @@ public sealed class MainWindow : Window
 		_mainContent.Content = editor;
 		UpdateWindowTitle();
 		SetStatus($"Editing script sequence {sequence.Name}");
+	}
+
+	private void ShowFilterEditor(SongTreeItemViewModel item)
+	{
+		if (item.ObjectId is not ObjectId id
+			|| !_workspace.Document.TryGet(id, out SongObject? songObject)
+			|| songObject is not FilterDefinition filter)
+		{
+			SetStatus("The selected Filter is not available.");
+			return;
+		}
+
+		ShowFilterEditor(filter, item.Node);
+	}
+
+	private void ShowFilterEditor(
+		FilterDefinition filter, SongTreeNode? selectNode)
+	{
+		FilterEditorControl editor = new(
+			_workspace,
+			filter,
+			() => RefreshDocumentView(
+				$"Edited Filter {filter.Name}", selectNode),
+			message =>
+			{
+				UpdateWindowTitle();
+				SetStatus(message);
+			});
+		_mainContent.Content = editor;
+		UpdateWindowTitle();
+		SetStatus($"Editing Filter {filter.Name}");
 	}
 
 	private void ShowInstrumentEditor(SongTreeItemViewModel item)
