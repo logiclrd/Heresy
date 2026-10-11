@@ -50,8 +50,8 @@ public sealed class SampleAuditionKeyboardTests
 
 		SampleAuditionStart d = keyboard.KeyDown(
 			PhysicalKey.X, KeyModifiers.None, looping: true)!;
-		d.Displaced.Should().Equal(c, eFlat,
-			"D lies two semitones from C and one from E-flat");
+		// D is two semitones from C and one from E-flat.
+		d.Displaced.Should().Equal(new[] { c, eFlat });
 		keyboard.OngoingNotes.Should().Equal(d.Note);
 
 		keyboard.KeyUp(PhysicalKey.X);
@@ -70,8 +70,8 @@ public sealed class SampleAuditionKeyboardTests
 		keyboard.KeyUp(PhysicalKey.M);
 		SampleAuditionStart c5 = keyboard.KeyDown(
 			PhysicalKey.Q, KeyModifiers.None, looping: true)!;
-		c5.Displaced.Should().Equal(b,
-			"B4 and C5 are separated by only one semitone");
+		// B4 and C5 are separated by only one semitone.
+		c5.Displaced.Should().Equal(new[] { b });
 		keyboard.KeyUp(PhysicalKey.Q);
 		SampleAuditionStart repeated = keyboard.KeyDown(
 			PhysicalKey.Q, KeyModifiers.None, looping: true)!;
