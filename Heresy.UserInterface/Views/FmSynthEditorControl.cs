@@ -1065,6 +1065,8 @@ public sealed class FmSynthEditorControl : UserControl
 					Width = 950,
 					Height = 690,
 				};
+				FilterStageDefinition[] originalStages =
+					configuration.Definition.Stages.ToArray();
 				popup.Content = new FilterEditorControl(
 					_workspace, configuration.Definition,
 					() => popup.Close(), message =>
@@ -1077,7 +1079,14 @@ public sealed class FmSynthEditorControl : UserControl
 				popup.Closed += (_, _) =>
 				{
 					_canvas.Refresh();
-					RebuildInspector();
+					// Rebuilding here would silently discard any unfinished
+					// per-use parameter draft. The instance editor remains
+					// mounted and correctly detects a stale shared topology;
+					// reselecting the graph node deliberately refreshes it.
+					if (!configuration.Definition.Stages.SequenceEqual(originalStages))
+						_message.Text = "Shared Filter topology changed. "
+							+ "Reselect this node to refresh its ports and parameters, "
+							+ "or reload your existing per-use draft explicitly.";
 				};
 				popup.Show(owner);
 			}
