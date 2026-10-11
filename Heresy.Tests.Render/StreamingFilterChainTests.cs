@@ -255,7 +255,8 @@ public sealed class StreamingFilterChainTests
 		FilterInstance single = new(Definition());
 		StreamingFilterChain runtime = new(
 			new FilterChain(new[] { single, single }),
-			1000, 2, new FeedbackFactory(4), maximumTailSeconds: 0.005);
+			48000, 2, new FeedbackFactory(3),
+			maximumTailSeconds: 5.0 / 48000);
 		Assert.That(runtime.PreparedTailFrames, Is.EqualTo(5),
 			"Two three-frame tails are capped to five allowed frames.");
 		runtime.ProcessFrame(new float[] { 1f, 0f });
@@ -301,6 +302,7 @@ public sealed class StreamingFilterChainTests
 	private sealed class FeedbackPlan(double coefficient, int tailFrames)
 		: IStreamingFilterStagePlan
 	{
+		public double Coefficient => coefficient;
 		public int TailFrames => tailFrames;
 		public IStreamingFilterStageState CreateState()
 			=> new FeedbackState(coefficient, 0f);
