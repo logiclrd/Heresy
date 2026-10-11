@@ -196,6 +196,8 @@ internal sealed class PlaybackSnapshotSoundResolver
 		curve =
 			envelope switch
 			{
+				NodeEnvelopeDefinition nodes =>
+					new NodeEnvelopeCurve(nodes),
 				AdsrEnvelopeDefinition adsr =>
 					new AdsrEnvelopeCurve(adsr),
 				ScriptEnvelopeDefinition scripted =>

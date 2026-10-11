@@ -106,12 +106,15 @@ Desktop checks should exercise selection and hit tolerances, duplicate
 time constraints, backward sustain drags, one-node matching, and
 out-of-range node values.
 
-## FM Note Off integration
+## FM editor audition key-up (distinct from Pattern playback)
 
-A note using an FM synthesis graph with an assigned Envelope node
-must receive the same continuing **Note Off** semantics as an
-enveloped instrument voice, not a premature Cut. It must have enough
-lifecycle support to play out the node envelope after release.
-FM graphs without an envelope continue their current non-envelope
-behaviour. Test both direct FM notes and FM sources selected indirectly,
-including release during backward ping-pong traversal.
+FM synth notes **already use proper Note Off during Pattern playback**.
+The outstanding defect is specific to previewing notes in the FM editor
+Test area: releasing the piano key should trigger Note Off, not an
+audible premature Cut. The existing preview compiler *already emits*
+`NoteOffCommand`; regression work should investigate live preview voice
+ownership, renderer lifetime, and envelope tail preservation rather than
+change a command which is already correct. Include FM Envelope nodes and
+release during backward ping-pong traversal in the preview regression.
+Keep the FM preview's physical key-up Note Off; it is intentionally
+different from the Sample editor's persistent preview notes.

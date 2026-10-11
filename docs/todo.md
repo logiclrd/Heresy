@@ -23,12 +23,17 @@ no legacy-song migration. Continue in this order:
   or above-unity values, and note retirement. Route the existing envelope
   resolver, instrument, and FM playback through the new curve.
 
-- [ ] **Make FM envelope-backed Note Off continue through release.**
-  An FM graph containing an assigned Envelope must enter a releasing
-  voice state on Note Off rather than cutting the sound. Preserve the
-  envelope's post-sustain tail, deterministic source lifetime, and both
-  direct and indirectly selected FM sources. Graphs without an envelope
-  retain their existing note-off behaviour.
+- [ ] **Fix FM editor preview key-release tail (not pattern FM Note Off).**
+  In ordinary Pattern playback, FM notes already use the correct Note Off
+  path. In the FM editor's **Test** area, physically releasing a key
+  should likewise perform Note Off and let an envelope-backed FM tone play
+  out its release; it must not audibly Cut the voice. The preview compiler
+  already emits `NoteOffCommand`, so investigate its live transport,
+  voice lifecycle and envelope tail handling rather than substituting
+  another redundant Note Off command. Add a reproduction test for the
+  editor's live preview (including a graph with an Envelope node), check
+  focus loss and editor close, and retain the FM preview's key-up release
+  semantics, distinct from Sample preview's persistent-note behaviour.
 
 - [ ] **Cut over production envelope editing and remove ADSR entirely.**
   Replace default Envelope creation, standalone editor, FM node inspector,
