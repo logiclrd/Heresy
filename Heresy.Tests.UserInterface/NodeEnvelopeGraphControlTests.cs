@@ -222,7 +222,9 @@ public sealed class NodeEnvelopeGraphControlTests
 			.GetValue(null)!;
 		MethodInfo hover = type.GetMethod(
 			"UpdateHoverCursor", privateFlags)!;
-		double y = geometry.Top + 8;
+		// Keep cursor tests away from node dots, which intentionally
+		// take precedence over their vertical guide hit regions.
+		double y = (geometry.Top + geometry.Bottom) / 2;
 
 		hover.Invoke(surface, [new Point(geometry.Point(1).X, y)]);
 		surface.Cursor.Should().BeSameAs(endpoint);
