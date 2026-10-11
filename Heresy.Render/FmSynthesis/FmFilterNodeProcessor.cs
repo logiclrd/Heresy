@@ -153,13 +153,11 @@ internal sealed class FmFilterNodeProcessor
 		if (_bindings.Length != 0 && !stopExcitation)
 			Retune(state, nodeValues);
 
-		Span<float> sample = stackalloc float[1];
-		sample[0] = input;
 		long debugChainStart = GC.GetAllocatedBytesForCurrentThread();
-		state.Chain.ProcessFrame(sample);
+		float sample = state.Chain.ProcessMonoFrame(input);
 		DebugChainAllocated += GC.GetAllocatedBytesForCurrentThread() - debugChainStart;
 		DebugProcessAllocated += GC.GetAllocatedBytesForCurrentThread() - debugProcessStart;
-		return sample[0];
+		return sample;
 	}
 
 	private void Retune(State state, double[] sourceValues)
