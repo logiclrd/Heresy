@@ -229,7 +229,8 @@ public static class FmSynthDocumentEditor
 		double minimum = -1.0,
 		double maximum = 1.0,
 		int? multiplierNodeId = null,
-		bool exponentialMultiplier = false)
+		bool exponentialMultiplier = false,
+		bool constant = false)
 	{
 		int id = NextNodeId(
 			ValidateSynth(
@@ -245,7 +246,8 @@ public static class FmSynthDocumentEditor
 				minimum,
 				maximum,
 				multiplierNodeId,
-				exponentialMultiplier),
+				exponentialMultiplier,
+				constant),
 			x,
 			y);
 		return id;
@@ -340,7 +342,8 @@ public static class FmSynthDocumentEditor
 						oscillator.Minimum,
 						oscillator.Maximum,
 						sourceNodeId,
-						oscillator.ExponentialMultiplier);
+						oscillator.ExponentialMultiplier,
+						oscillator.Constant);
 				break;
 
 			case FmOperatorNode operation
@@ -525,7 +528,8 @@ public static class FmSynthDocumentEditor
 					oscillator.Minimum,
 					oscillator.Maximum,
 					multiplierNodeId: null,
-					exponentialMultiplier: oscillator.ExponentialMultiplier),
+					exponentialMultiplier: oscillator.ExponentialMultiplier,
+					constant: oscillator.Constant),
 
 			FmOperatorNode operation =>
 				RemoveOperatorInputs(operation, removedNodeId),
@@ -726,7 +730,8 @@ public static class FmSynthDocumentEditor
 					oscillator.Minimum,
 					oscillator.Maximum,
 					oscillator.MultiplierNodeId,
-					oscillator.ExponentialMultiplier),
+					oscillator.ExponentialMultiplier,
+					oscillator.Constant),
 			FmEnvelopeNode envelope =>
 				new FmEnvelopeNode(
 					envelope.Id,

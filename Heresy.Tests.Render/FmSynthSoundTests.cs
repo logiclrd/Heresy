@@ -97,6 +97,87 @@ public sealed class FmSynthSoundTests
 	}
 
 	[Test]
+	public void ConstantFrequencyIgnoresNotePitchAndPlaybackSpeed()
+	{
+		FmSynthSound constant = Sound(new FmSynthGraph(
+		[
+			new FmOscillatorNode(1, FmOscillatorWaveform.Sine,
+				frequencyHz: 1.0, constant: true),
+		], outputNodeId: 1));
+		RenderContext context = MonoContext(16);
+		float[] original = new float[8];
+		float[] changedPitch = new float[8];
+		SoundState higher = constant.CreateState();
+		higher.PitchMultiplier = 2.0;
+		higher.PlaybackSpeedMultiplier = 1.5;
+
+		constant.Render(context, constant.CreateState(), 0, 8, original);
+		constant.Render(context, higher, 0, 8, changedPitch);
+		changedPitch.Should().Equal(original,
+			"a constant-rate LFO must keep its period at every note pitch");
+
+		FmSynthSound relative = Sound(new FmSynthGraph(
+		[
+			new FmOscillatorNode(1, FmOscillatorWaveform.Sine,
+				frequencyHz: 1.0),
+		], outputNodeId: 1));
+		SoundState pitched = relative.CreateState();
+		pitched.PitchMultiplier = 2.0;
+		float[] relativeOutput = new float[4];
+		relative.Render(context, pitched, 0, 4, relativeOutput);
+		relativeOutput[1].Should().BeApproximately(
+			(float)Math.Sin(Math.PI / 4.0), 1e-6f);
+		Math.Abs(relativeOutput[1] - original[1]).Should()
+			.BeGreaterThan(0.1f);
+	}
+
+	[Test]
+	public void ConstantOscillatorStillRespondsToConnectedLinearAndSemitoneMultipliers()
+	{
+		foreach (bool exponential in new[] { false, true })
+		{
+			FmSynthSound sound = Sound(new FmSynthGraph(
+			[
+				new FmConstantNode(1, exponential ? 12.0 : 2.0),
+				new FmOscillatorNode(2, FmOscillatorWaveform.Sine,
+					frequencyHz: 1.0, multiplierNodeId: 1,
+					exponentialMultiplier: exponential, constant: true),
+			], outputNodeId: 2));
+			SoundState state = sound.CreateState();
+			state.PitchMultiplier = 3.0;
+			float[] output = new float[3];
+			sound.Render(MonoContext(16), state, 0, 3, output);
+			output[2].Should().BeApproximately(1.0f, 1e-6f,
+				"explicit FM multiplication still doubles a fixed-rate oscillator");
+		}
+	}
+
+	[Test]
+	public void ConstantAndRelativeOscillatorsHaveIndependentPitchRulesInOneGraph()
+	{
+		FmSynthSound sound = Sound(new FmSynthGraph(
+		[
+			new FmOscillatorNode(1, FmOscillatorWaveform.Sine,
+				frequencyHz: 1.0, constant: true),
+			new FmOscillatorNode(2, FmOscillatorWaveform.Sine,
+				frequencyHz: 1.0),
+			new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
+		], outputNodeId: 3));
+		RenderContext context = MonoContext(16);
+		SoundState higher = sound.CreateState();
+		higher.PitchMultiplier = 2.0;
+		float[] normal = new float[3];
+		float[] transposed = new float[3];
+		sound.Render(context, sound.CreateState(), 0, 3, normal);
+		sound.Render(context, higher, 0, 3, transposed);
+		double constantPart = Math.Sin(Math.PI / 8.0);
+		normal[1].Should().BeApproximately(
+			(float)(2.0 * constantPart), 1e-6f);
+		transposed[1].Should().BeApproximately(
+			(float)(constantPart + Math.Sin(Math.PI / 4.0)), 1e-6f);
+	}
+
+	[Test]
 	public void LinearMultiplierInputScalesOscillatorFrequency()
 	{
 		FmSynthSound sound =

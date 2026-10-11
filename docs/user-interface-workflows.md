@@ -44,6 +44,28 @@ old Samples section is renamed Patches. Saving writes the new
 five-section tree; migration alone does not increment audio or
 document revision. See [document panes](document-panes.md).
 
+## FM oscillator frequency and Constant mode
+
+Every oscillator's **Frequency Hz** is interpreted relative to the requested
+note by default: its frequency scales with the note's pitch, playback-speed
+pitch multiplier, and live pitch trajectory. This is appropriate for pitched
+carriers and pitched modulators, and is the default for newly created patches.
+
+The **Constant** checkbox sits immediately below the selected oscillator's
+**Frequency Hz** field in the FM graph inspector. When checked, that
+oscillator ignores the note-related pitch multiplier and instead advances at
+its configured frequency in real time. This permits fixed-rate vibrato,
+tremolo, and other LFO sources that don't accelerate when a higher note is
+played. The checkbox applies to the selected oscillator only; other
+oscillators in the same FM graph retain their independent settings.
+
+A connected **Multiplier input** remains active in Constant mode, including
+the **Exponential multiplier (semitones)** interpretation. Constant
+disconnects the oscillator from the *note pitch*, not from deliberate
+FM graph modulation. Changes immediately replace the persistent graph and
+advance audio/document revision, and the flag is preserved across song
+save/load, snapshotting, node connections, disconnections, and synth imports.
+
 ## FM graph editing
 
 FM synth graph connections are drawn as orthogonal routes from producer to

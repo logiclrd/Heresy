@@ -83,6 +83,10 @@ public sealed class FmSynthPersistenceTests
 		oscillator.Maximum.Should().Be(0.75);
 		oscillator.MultiplierNodeId.Should().Be(0);
 		oscillator.ExponentialMultiplier.Should().BeTrue();
+		oscillator.Constant.Should().BeTrue();
+		persisted["graph"]!["nodes"]!.AsArray()
+			.Single(n => n!["id"]!.GetValue<int>() == 1)!
+			["constant"]!.GetValue<bool>().Should().BeTrue();
 
 		FmEnvelopeNode envelope =
 			copy.Graph.Nodes
@@ -108,6 +112,54 @@ public sealed class FmSynthPersistenceTests
 		route.RoutePoints.Should().Equal(
 			new FmSynthRoutePoint(180.0, 80.25),
 			new FmSynthRoutePoint(180.0, 160.0));
+	}
+
+	[Test]
+	public void DefaultRelativeOscillatorRoundTripsAndMissingFlagDefaultsToFalse()
+	{
+		SongDocument document = new();
+		ObjectId id = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(id, "Relative",
+			new FmSynthGraph(
+			[
+				new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 220.0),
+			], outputNodeId: 1)));
+		string json = SongDocumentJson.Serialize(document, JsonContextPath);
+		SongDocument deserialize = SongDocumentJson.Deserialize(json, JsonContextPath);
+		FmSynthDefinition copy = (FmSynthDefinition)deserialize.Objects[id];
+		copy.Graph.Nodes.OfType<FmOscillatorNode>().Single()
+			.Constant.Should().BeFalse();
+
+		JsonNode parsed = JsonNode.Parse(json)!;
+		parsed["objects"]![id.Value.ToString()]!["graph"]!["nodes"]!
+			.AsArray()[0]!.AsObject().Remove("constant").Should().BeTrue();
+		SongDocument withoutFlag = SongDocumentJson.Deserialize(
+			parsed.ToJsonString(), JsonContextPath);
+		((FmSynthDefinition)withoutFlag.Objects[id]).Graph.Nodes
+			.OfType<FmOscillatorNode>().Single().Constant.Should().BeFalse();
+	}
+
+	[Test]
+	public void SnapshotFreezesConstantFlagEvenWhenOriginalGraphChanges()
+	{
+		SongDocument document = new();
+		ObjectId id = document.AllocateObjectId();
+		FmSynthDefinition synth = new(id, "Fixed",
+			new FmSynthGraph(
+			[
+				new FmOscillatorNode(1, FmOscillatorWaveform.Sine,
+					10, constant: true),
+			], outputNodeId: 1));
+		document.Add(synth);
+		SongDocumentSnapshot snapshot = SongDocumentSnapshot.Create(document);
+		synth.Graph = new FmSynthGraph(
+		[
+			new FmOscillatorNode(1, FmOscillatorWaveform.Sine,
+				10, constant: false),
+		], outputNodeId: 1);
+		((FmSynthDefinition)snapshot.Document.Objects[id])
+			.Graph.Nodes.OfType<FmOscillatorNode>()
+			.Single().Constant.Should().BeTrue();
 	}
 
 	[Test]
@@ -281,7 +333,8 @@ public sealed class FmSynthPersistenceTests
 					minimum: -0.75,
 					maximum: 0.75,
 					multiplierNodeId: 0,
-					exponentialMultiplier: true),
+					exponentialMultiplier: true,
+					constant: true),
 				new FmEnvelopeNode(
 					id: 2,
 					envelopeId),

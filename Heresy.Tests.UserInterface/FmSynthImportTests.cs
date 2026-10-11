@@ -93,7 +93,8 @@ public sealed class FmSynthImportTests
 							FmOscillatorWaveform.Sine,
 							frequencyHz: 440.0,
 							multiplierNodeId: 10,
-							exponentialMultiplier: true),
+							exponentialMultiplier: true,
+							constant: true),
 					],
 					outputNodeId: 11));
 		first.NodePositions.Add(
@@ -187,6 +188,8 @@ public sealed class FmSynthImportTests
 				synth.Name == "Carrier");
 		importedFirst.NodePositions.Should()
 			.Equal(first.NodePositions);
+		importedFirst.Graph.Nodes.OfType<FmOscillatorNode>()
+			.Single().Constant.Should().BeTrue();
 		importedFirst.ConnectionRoutingHints
 			.Should().ContainSingle();
 		FmSynthConnectionRoutingHint importedHint =

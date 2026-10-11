@@ -495,7 +495,7 @@ public sealed class FmSynthSound : ISound
 
 		double frequency =
 			oscillator.FrequencyHz
-				* pitchMultiplier
+				* (oscillator.Constant ? 1.0 : pitchMultiplier)
 				* nodeMultiplier;
 		if (!double.IsFinite(frequency))
 		{

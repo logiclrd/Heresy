@@ -816,6 +816,7 @@ public static class SongDocumentJson
 					if (oscillator.MultiplierNodeId.HasValue)
 						nodeJson["multiplierNodeId"] = oscillator.MultiplierNodeId.Value;
 					nodeJson["exponentialMultiplier"] = oscillator.ExponentialMultiplier;
+					nodeJson["constant"] = oscillator.Constant;
 					break;
 
 				case FmEnvelopeNode envelope:
@@ -929,7 +930,8 @@ public static class SongDocumentJson
 							node["multiplierNodeId"] is JsonNode multiplier
 								? multiplier.GetValue<int>()
 								: null,
-							RequiredBoolean(node, "exponentialMultiplier")),
+							RequiredBoolean(node, "exponentialMultiplier"),
+							node["constant"]?.GetValue<bool>() ?? false),
 					"envelope" =>
 						new FmEnvelopeNode(
 							nodeId,

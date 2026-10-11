@@ -733,6 +733,11 @@ public sealed class FmSynthEditorControl : UserControl
 				SelectedItem = node.Waveform,
 			};
 		TextBox frequency = NumberBox(node.FrequencyHz);
+		CheckBox constant = new()
+		{
+			Content = "Constant",
+			IsChecked = node.Constant,
+		};
 		TextBox minimum = NumberBox(node.Minimum);
 		TextBox maximum = NumberBox(node.Maximum);
 
@@ -764,6 +769,7 @@ public sealed class FmSynthEditorControl : UserControl
 
 		AddField("Waveform", waveform);
 		AddField("Frequency Hz", frequency);
+		_inspector.Children.Add(constant);
 		AddField("Vmin", minimum);
 		AddField("Vmax", maximum);
 		AddField("Multiplier input", multiplier);
@@ -779,6 +785,10 @@ public sealed class FmSynthEditorControl : UserControl
 			text => UpdateOscillator(
 				node.Id,
 				frequency: ParsePositiveDouble(text, "Frequency")));
+		BindParameterToggle(
+			constant,
+			() => ((FmOscillatorNode)CurrentNode(node.Id)).Constant,
+			value => UpdateOscillator(node.Id, constant: value));
 		BindParameterText(
 			minimum,
 			text => UpdateOscillator(
@@ -1161,7 +1171,8 @@ public sealed class FmSynthEditorControl : UserControl
 		double? maximum = null,
 		int? multiplierId = null,
 		bool replaceMultiplier = false,
-		bool? exponential = null)
+		bool? exponential = null,
+		bool? constant = null)
 	{
 		UpdateParameter(
 			nodeId,
@@ -1175,17 +1186,19 @@ public sealed class FmSynthEditorControl : UserControl
 				int? multiplier = replaceMultiplier
 					? multiplierId : live.MultiplierNodeId;
 				bool exp = exponential ?? live.ExponentialMultiplier;
+				bool fixedFrequency = constant ?? live.Constant;
 				if (wave == live.Waveform
 					&& freq == live.FrequencyHz
 					&& min == live.Minimum
 					&& max == live.Maximum
 					&& multiplier == live.MultiplierNodeId
-					&& exp == live.ExponentialMultiplier)
+					&& exp == live.ExponentialMultiplier
+					&& fixedFrequency == live.Constant)
 				{
 					return null;
 				}
 				return new FmOscillatorNode(
-					live.Id, wave, freq, min, max, multiplier, exp);
+					live.Id, wave, freq, min, max, multiplier, exp, fixedFrequency);
 			});
 	}
 

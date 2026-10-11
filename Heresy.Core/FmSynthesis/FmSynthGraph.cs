@@ -67,7 +67,8 @@ public sealed class FmOscillatorNode : FmSynthNode
 		double minimum = -1.0,
 		double maximum = 1.0,
 		int? multiplierNodeId = null,
-		bool exponentialMultiplier = false)
+		bool exponentialMultiplier = false,
+		bool constant = false)
 		: base(id)
 	{
 		if (!Enum.IsDefined(waveform))
@@ -93,6 +94,7 @@ public sealed class FmOscillatorNode : FmSynthNode
 		Maximum = maximum;
 		MultiplierNodeId = multiplierNodeId;
 		ExponentialMultiplier = exponentialMultiplier;
+		Constant = constant;
 		_inputs =
 			Array.AsReadOnly(
 				multiplierNodeId.HasValue
@@ -106,6 +108,11 @@ public sealed class FmOscillatorNode : FmSynthNode
 	public double Maximum { get; }
 	public int? MultiplierNodeId { get; }
 	public bool ExponentialMultiplier { get; }
+
+	/// <summary>When true, the oscillator's base frequency follows real
+	/// time rather than the requested note's pitch/speed trajectory. An
+	/// explicitly connected FM multiplier still modulates this frequency.</summary>
+	public bool Constant { get; }
 
 	public override IReadOnlyList<int> InputNodeIds => _inputs;
 }
