@@ -1263,8 +1263,8 @@ public sealed class MainWindow : Window
 
 		try
 		{
-			AdsrEnvelopeDefinition envelope =
-				EnvelopeDocumentEditor.CreateAdsrEnvelope(
+			NodeEnvelopeDefinition envelope =
+				EnvelopeDocumentEditor.CreateNodeEnvelope(
 					_workspace,
 					name);
 			SongTreeObject? node =
@@ -2338,8 +2338,8 @@ public sealed class MainWindow : Window
 
 		switch (songObject)
 		{
-			case AdsrEnvelopeDefinition adsr:
-				ShowEnvelopeEditor(adsr, item.Node);
+			case NodeEnvelopeDefinition nodes:
+				ShowEnvelopeEditor(nodes, item.Node);
 				break;
 			case ScriptEnvelopeDefinition script:
 				ShowEnvelopeEditor(script, item.Node);
@@ -2351,7 +2351,7 @@ public sealed class MainWindow : Window
 	}
 
 	private void ShowEnvelopeEditor(
-		AdsrEnvelopeDefinition envelope,
+		NodeEnvelopeDefinition envelope,
 		SongTreeNode? selectNode)
 	{
 		EnvelopeEditorControl editor =

@@ -10,20 +10,12 @@ virtual-voice controls, and compiled parametric effects, are implemented.
 
 The [node-envelope design contract](node-envelope-design.md) records the
 requested model, sustain timeline semantics, and exact graphical gestures.
-The validated node model (including atomic authoring, JSON persistence and
-snapshot copies) and the immutable renderer are implemented, with production
-node-envelope resolution for both Instruments and FM graphs. ADSR continues
-temporarily until the explicit editor/format cutover below; there is
-deliberately no legacy-song migration. Continue in this order:
-
-- [ ] **Cut over production envelope editing and remove ADSR entirely.**
-  Replace default Envelope creation, standalone editor, FM node inspector,
-  cloning/import, serializers and tests that still assume four ADSR
-  scalars. Remove `AdsrEnvelopeDefinition`, `AdsrEnvelopeCurve`, and
-  old graph/numeric editing code instead of retaining compatibility
-  adapters. A minimal placeholder editor is acceptable during the
-  graphical rebuild; keep Script Envelopes independent. Do not create a
-  persisted-format migration or version bump for nonexistent legacy songs.
+The validated node model, immutable renderer, JSON persistence and
+production authoring cutover are implemented for both Instruments and FM
+graphs. The four-scalar ADSR definition, renderer, and graphical editor have
+been removed without a legacy-song migration. A temporary shared node-list
+editor permits edits while the interactive graph is rebuilt. Continue in
+this order:
 
 - [ ] **Build the interactive node-envelope graph and selection model.**
   Render linear segments, faint vertical node guides, and the sustain

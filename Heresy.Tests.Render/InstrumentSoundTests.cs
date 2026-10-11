@@ -269,19 +269,20 @@ public sealed class InstrumentSoundTests
 
 
 	[Test]
-	public void InstrumentAdsrAndUnderlyingSourceAgreeOnRepeatedNoteOffOrigin()
+	public void InstrumentNodeEnvelopeAndUnderlyingSourceAgreeOnRepeatedNoteOffOrigin()
 	{
 		ObjectId instrumentId = (ObjectId)1U;
 		ObjectId sourceId = (ObjectId)10U;
 		ObjectId envelopeId = (ObjectId)21U;
 		ProbeSound source = new(value: 1.0f);
 		TestSoundResolver sounds = new((sourceId, source));
-		AdsrEnvelopeCurve release = new(
-			new AdsrEnvelopeDefinition(envelopeId, "Short release")
-			{
-				SustainLevel = 1.0,
-				Release = TimeSpan.FromMilliseconds(4),
-			});
+		NodeEnvelopeDefinition node = new(envelopeId, "Short release");
+		node.ReplaceCurve(
+			[
+				new EnvelopeNode(TimeSpan.Zero, 1),
+				new EnvelopeNode(TimeSpan.FromMilliseconds(4), 0),
+			], 0, 0, EnvelopeSustainLoopMode.Forward);
+		NodeEnvelopeCurve release = new(node);
 		InstrumentDefinition definition = Instrument(instrumentId);
 		definition.ToneSpecifications.Add(new ToneSpecification
 		{

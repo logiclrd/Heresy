@@ -212,7 +212,7 @@ public sealed class InstrumentSampleReleaseTests
             1f, 1f, 2f, 1.75f, 1.5f, 1.25f, 1f, 1f, 1f,
         }).Within(1e-6f));
         Assert.That(session.VirtualVoices, Is.Empty,
-            "The migrated old sample retires at its own ADSR release end.");
+            "The migrated old sample retires at its own node-envelope release end.");
         Assert.That(session.GetChannelState(0).CurrentVoice, Is.Not.Null,
             "The replacement remains playing after the old release ends.");
     }
@@ -236,14 +236,19 @@ public sealed class InstrumentSampleReleaseTests
         InstrumentDefinition definition = new(id, "Instrument");
         ToneSpecification tone;
         TestEnvelopeResolver envelopes = new();
-        if (release.HasValue)
+        // A genuinely instantaneous release is represented by the
+        // absence of a release envelope, rather than duplicate-time
+        // nodes (which the new envelope model forbids).
+        if (release.HasValue && release.Value > TimeSpan.Zero)
         {
-            envelopes.Add(EnvelopeId, new AdsrEnvelopeCurve(
-                new AdsrEnvelopeDefinition(EnvelopeId, "Volume")
-                {
-                    SustainLevel = 1.0,
-                    Release = release.Value,
-                }));
+            NodeEnvelopeDefinition node = new(EnvelopeId, "Volume");
+            node.ReplaceCurve(
+                [
+                    new EnvelopeNode(TimeSpan.Zero, 1),
+                    new EnvelopeNode(release.Value, 0),
+                ],
+                0, 0, EnvelopeSustainLoopMode.Forward);
+            envelopes.Add(EnvelopeId, new NodeEnvelopeCurve(node));
             tone = new ToneSpecification
             {
                 SourceId = selected,

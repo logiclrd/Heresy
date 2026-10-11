@@ -881,8 +881,8 @@ public sealed class FmSynthEditorControl : UserControl
 					{
 						// New is created in the document's shared Envelopes
 						// section, then assigned by its stable ObjectId.
-						AdsrEnvelopeDefinition created =
-							EnvelopeDocumentEditor.CreateAdsrEnvelope(
+						NodeEnvelopeDefinition created =
+							EnvelopeDocumentEditor.CreateNodeEnvelope(
 								_workspace, name);
 						AssignEnvelope(node.Id, created.Id);
 						AfterGraphChange(node.Id,
@@ -965,7 +965,7 @@ public sealed class FmSynthEditorControl : UserControl
 
 		if (!_workspace.Document.TryGet(
 			node.EnvelopeId, out SongObject? selected)
-			|| selected is not AdsrEnvelopeDefinition adsr)
+			|| selected is not NodeEnvelopeDefinition nodes)
 		{
 			_inspector.Children.Add(new TextBlock
 			{
@@ -977,17 +977,15 @@ public sealed class FmSynthEditorControl : UserControl
 
 		_inspector.Children.Add(new TextBlock
 		{
-			Text = "ADSR envelope (shared object)",
+			Text = "Node envelope (shared object)",
 			FontWeight = FontWeight.SemiBold,
 		});
-		AdsrEnvelopeGraphControl graph =
-			new(_workspace, adsr);
-		graph.EnvelopeChanged += (_, _) =>
-		{
-			_message.Text = $"Updated shared envelope {adsr.Name}.";
-			_changed($"Updated envelope {adsr.Name}");
-		};
-		_inspector.Children.Add(graph);
+		_inspector.Children.Add(new NodeEnvelopeEditorControl(
+			_workspace, nodes, message =>
+			{
+				_message.Text = message;
+				_changed(message);
+			}));
 	}
 
 	private void AssignEnvelope(int nodeId, ObjectId envelopeId)

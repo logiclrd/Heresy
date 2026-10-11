@@ -44,21 +44,24 @@ public sealed class FmUnassignedEnvelopeEditorTests
 		int id = FmSynthDocumentEditor.AddEnvelopeNode(
 			workspace, synth, ObjectId.None, 220, 180);
 
-		AdsrEnvelopeDefinition envelope =
-			EnvelopeDocumentEditor.CreateAdsrEnvelope(workspace, "New FM Envelope");
+		NodeEnvelopeDefinition envelope =
+			EnvelopeDocumentEditor.CreateNodeEnvelope(workspace, "New FM Envelope");
 		FmSynthDocumentEditor.UpdateNode(workspace, synth,
 			new FmEnvelopeNode(id, envelope.Id));
 		((FmEnvelopeNode)synth.Graph.Nodes.Single(n => n.Id == id))
 			.EnvelopeId.Should().Be(envelope.Id);
 
-		EnvelopeDocumentEditor.UpdateAdsrEnvelope(workspace, envelope,
-			TimeSpan.FromMilliseconds(150),
-			TimeSpan.FromMilliseconds(250),
-			sustainLevel: 0.4,
-			TimeSpan.FromMilliseconds(350));
+		EnvelopeDocumentEditor.UpdateNodeEnvelope(workspace, envelope,
+			[
+				new EnvelopeNode(TimeSpan.Zero, 0.0),
+				new EnvelopeNode(TimeSpan.FromMilliseconds(150), 1.0),
+				new EnvelopeNode(TimeSpan.FromMilliseconds(250), 0.4),
+				new EnvelopeNode(TimeSpan.FromMilliseconds(600), 0.0),
+			],
+			2, 2, EnvelopeSustainLoopMode.Forward);
 		workspace.Document.Objects[envelope.Id].Should().BeSameAs(envelope);
-		((AdsrEnvelopeDefinition)workspace.Document.Objects[envelope.Id])
-			.SustainLevel.Should().Be(0.4);
+		((NodeEnvelopeDefinition)workspace.Document.Objects[envelope.Id])
+			.Nodes[2].Value.Should().Be(0.4);
 
 		FmSynthDocumentEditor.UpdateNode(workspace, synth,
 			new FmEnvelopeNode(id, ObjectId.None));

@@ -43,12 +43,13 @@ public sealed class PlaybackDelayedEnvelopeLifecycleTests
             new MemorySampleData(1000, 1, [1f, 1f, 1f, 1f]));
         SoundResolver sounds = new();
         sounds.Add(sampleId, sample);
-        AdsrEnvelopeCurve volume = new(
-            new AdsrEnvelopeDefinition(envelopeId, "Release envelope")
-            {
-                SustainLevel = 1.0,
-                Release = TimeSpan.FromMilliseconds(40),
-            });
+        NodeEnvelopeDefinition node = new(envelopeId, "Release envelope");
+        node.ReplaceCurve(
+            [
+                new EnvelopeNode(TimeSpan.Zero, 1.0),
+                new EnvelopeNode(TimeSpan.FromMilliseconds(40), 0.0),
+            ], 0, 0, EnvelopeSustainLoopMode.Forward);
+        NodeEnvelopeCurve volume = new(node);
         InstrumentDefinition definition = new(instrumentId, "Tone")
         {
             Divisions = 12.0,
@@ -98,7 +99,7 @@ public sealed class PlaybackDelayedEnvelopeLifecycleTests
             Assert.That(output[19], Is.EqualTo(0.775f).Within(1e-6f));
             Assert.That(output[20], Is.EqualTo(0.75f).Within(1e-6f));
             Assert.That(output[49], Is.EqualTo(0.75f).Within(1e-6f),
-                "The disabled ADSR release must hold its current value.");
+                "The disabled node envelope must hold its current release value.");
             Assert.That(output[50], Is.EqualTo(0.75f).Within(1e-6f));
             Assert.That(output[51], Is.EqualTo(0.725f).Within(1e-6f));
             Assert.That(output[79], Is.EqualTo(0.025f).Within(1e-6f));

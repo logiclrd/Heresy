@@ -134,7 +134,7 @@ public sealed class FmSynthDocumentEditorTests
 
 		ObjectId envelopeId = workspace.Document.AllocateObjectId();
 		workspace.Document.Add(
-			new AdsrEnvelopeDefinition(
+			new NodeEnvelopeDefinition(
 				envelopeId,
 				"Amp"));
 

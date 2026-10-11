@@ -58,22 +58,22 @@ public sealed class FmSynthImportTests
 
 		ObjectId envelopeId =
 			sourceDocument.AllocateObjectId();
-		AdsrEnvelopeDefinition envelope =
-			new(
-				envelopeId,
-				"Shared Amp")
-			{
-				Attack = TimeSpan.FromMilliseconds(10),
-				Decay = TimeSpan.FromMilliseconds(20),
-				SustainLevel = 0.75,
-				Release = TimeSpan.FromMilliseconds(30),
-			};
+		NodeEnvelopeDefinition envelope =
+			new(envelopeId, "Shared Amp");
+		envelope.ReplaceCurve(
+			[
+				new(TimeSpan.Zero, 0.0),
+				new(TimeSpan.FromMilliseconds(10), 1.0),
+				new(TimeSpan.FromMilliseconds(30), 0.75),
+				new(TimeSpan.FromMilliseconds(60), 0.0),
+			],
+			2, 2, EnvelopeSustainLoopMode.PingPong);
 		sourceDocument.Add(envelope);
 
 		ObjectId unusedEnvelopeId =
 			sourceDocument.AllocateObjectId();
 		sourceDocument.Add(
-			new AdsrEnvelopeDefinition(
+			new NodeEnvelopeDefinition(
 				unusedEnvelopeId,
 				"Unused"));
 
@@ -159,20 +159,17 @@ public sealed class FmSynthImportTests
 				id != first.Id
 					&& id != second.Id);
 
-		AdsrEnvelopeDefinition importedEnvelope =
+		NodeEnvelopeDefinition importedEnvelope =
 			target.Document.Objects.Values
-				.OfType<AdsrEnvelopeDefinition>()
+				.OfType<NodeEnvelopeDefinition>()
 				.Should().ContainSingle()
 				.Which;
 		importedEnvelope.Id.Should().NotBe(envelopeId);
 		importedEnvelope.Name.Should().Be("Shared Amp");
-		importedEnvelope.Attack.Should()
-			.Be(TimeSpan.FromMilliseconds(10));
-		importedEnvelope.Decay.Should()
-			.Be(TimeSpan.FromMilliseconds(20));
-		importedEnvelope.SustainLevel.Should().Be(0.75);
-		importedEnvelope.Release.Should()
-			.Be(TimeSpan.FromMilliseconds(30));
+		importedEnvelope.Nodes.Should().Equal(envelope.Nodes);
+		importedEnvelope.SustainStartIndex.Should().Be(2);
+		importedEnvelope.SustainEndIndex.Should().Be(2);
+		importedEnvelope.SustainLoopMode.Should().Be(EnvelopeSustainLoopMode.PingPong);
 
 		foreach (FmSynthDefinition synth in imported)
 		{
@@ -203,7 +200,7 @@ public sealed class FmSynthImportTests
 				180.0));
 
 		target.Document.Objects.Values
-			.OfType<AdsrEnvelopeDefinition>()
+			.OfType<NodeEnvelopeDefinition>()
 			.Should().NotContain(item =>
 				item.Name == "Unused");
 	}
@@ -216,14 +213,14 @@ public sealed class FmSynthImportTests
 		ObjectId firstEnvelopeId =
 			sourceDocument.AllocateObjectId();
 		sourceDocument.Add(
-			new AdsrEnvelopeDefinition(
+			new NodeEnvelopeDefinition(
 				firstEnvelopeId,
 				"First Env"));
 
 		ObjectId secondEnvelopeId =
 			sourceDocument.AllocateObjectId();
 		sourceDocument.Add(
-			new AdsrEnvelopeDefinition(
+			new NodeEnvelopeDefinition(
 				secondEnvelopeId,
 				"Second Env"));
 
@@ -258,9 +255,38 @@ public sealed class FmSynthImportTests
 		imported.Should().ContainSingle()
 			.Which.Name.Should().Be("Second");
 		target.Document.Objects.Values
-			.OfType<AdsrEnvelopeDefinition>()
+			.OfType<NodeEnvelopeDefinition>()
 			.Select(item => item.Name)
 			.Should().Equal("Second Env");
+	}
+
+	[Test]
+	public void ImportRemapsSharedScriptEnvelopeWithoutConvertingItsType()
+	{
+		SongDocument source = new();
+		ObjectId envelopeId = source.AllocateObjectId();
+		ScriptEnvelopeDefinition expression = new(envelopeId, "Generated")
+		{
+			Source = "releaseSeconds < 0 ? 0.25 : 0.0",
+			ReleaseDuration = TimeSpan.FromMilliseconds(90),
+		};
+		source.Add(expression);
+		ObjectId synthId = source.AllocateObjectId();
+		FmSynthDefinition synth = new(synthId, "FM",
+			new FmSynthGraph([new FmEnvelopeNode(2, envelopeId)], 2));
+		source.Add(synth);
+		DocumentWorkspace target = new();
+		FmSynthDefinition copied = FmSynthDocumentEditor.ImportFromSong(
+			target,
+			new SongFmSynthImportSource("source.hm.json", source, [synth]),
+			[synthId]).Single();
+		ObjectId copiedEnvelopeId = copied.Graph.Nodes.OfType<FmEnvelopeNode>()
+			.Single().EnvelopeId;
+		copiedEnvelopeId.Should().NotBe(envelopeId);
+		ScriptEnvelopeDefinition copy = target.Document.Objects[copiedEnvelopeId]
+			.Should().BeOfType<ScriptEnvelopeDefinition>().Subject;
+		copy.Source.Should().Be(expression.Source);
+		copy.ReleaseDuration.Should().Be(expression.ReleaseDuration);
 	}
 
 	[Test]

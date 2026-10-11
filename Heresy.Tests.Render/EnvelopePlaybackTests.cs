@@ -22,17 +22,10 @@ namespace Heresy.Tests.Render;
 public sealed class EnvelopePlaybackTests
 {
 	[Test]
-	public void AdsrCurveRendersAttackDecaySustainAndRelease()
+	public void NodeCurveRendersAttackDecaySustainAndRelease()
 	{
-		AdsrEnvelopeDefinition definition =
-			new((ObjectId)1U, "Envelope")
-			{
-				Attack = TimeSpan.FromSeconds(1),
-				Decay = TimeSpan.FromSeconds(1),
-				SustainLevel = 0.25,
-				Release = TimeSpan.FromSeconds(2),
-			};
-		AdsrEnvelopeCurve curve = new(definition);
+		NodeEnvelopeCurve curve = Curve(
+			[(0, 0), (1, 1), (2, 0.25), (4, 0)], 2);
 
 		Assert.That(curve.GetValue(0, 4, null), Is.EqualTo(0.0));
 		Assert.That(curve.GetValue(2, 4, null), Is.EqualTo(0.5));
@@ -49,17 +42,9 @@ public sealed class EnvelopePlaybackTests
 	}
 
 	[Test]
-	public void AdsrCurveDoesNotClampNegativeEnvelopeValues()
+	public void NodeCurveDoesNotClampNegativeEnvelopeValues()
 	{
-		AdsrEnvelopeDefinition definition =
-			new((ObjectId)1U, "Envelope")
-			{
-				Attack = TimeSpan.Zero,
-				Decay = TimeSpan.Zero,
-				SustainLevel = -0.5,
-				Release = TimeSpan.FromSeconds(1),
-			};
-		AdsrEnvelopeCurve curve = new(definition);
+		NodeEnvelopeCurve curve = Curve([(0, -0.5), (1, 0)], 0);
 
 		Assert.That(curve.GetValue(0, 4, null), Is.EqualTo(-0.5));
 		Assert.That(
@@ -126,14 +111,8 @@ public sealed class EnvelopePlaybackTests
 	public void VolumeEnvelopeMultipliesVoiceOutput()
 	{
 		ObjectId sourceId = (ObjectId)10U;
-		AdsrEnvelopeCurve volumeEnvelope = new(
-			new AdsrEnvelopeDefinition((ObjectId)1U, "Volume")
-			{
-				Attack = TimeSpan.FromSeconds(1),
-				Decay = TimeSpan.Zero,
-				SustainLevel = 1.0,
-				Release = TimeSpan.Zero,
-			});
+		NodeEnvelopeCurve volumeEnvelope =
+			Curve([(0, 0), (1, 1)], 1);
 
 		PlaybackSession session = Session(
 			4,
@@ -161,14 +140,8 @@ public sealed class EnvelopePlaybackTests
 	public void VolumeEnvelopeMayInvertPhase()
 	{
 		ObjectId sourceId = (ObjectId)10U;
-		AdsrEnvelopeCurve volumeEnvelope = new(
-			new AdsrEnvelopeDefinition((ObjectId)1U, "Volume")
-			{
-				Attack = TimeSpan.Zero,
-				Decay = TimeSpan.Zero,
-				SustainLevel = -0.5,
-				Release = TimeSpan.Zero,
-			});
+		NodeEnvelopeCurve volumeEnvelope =
+			Curve([(0, -0.5)], 0);
 
 		PlaybackSession session = Session(
 			4,
@@ -190,14 +163,8 @@ public sealed class EnvelopePlaybackTests
 	public void SemanticEnvelopeEnableCommandPausesAndResumesVolumeEnvelope()
 	{
 		ObjectId sourceId = (ObjectId)10U;
-		AdsrEnvelopeCurve volumeEnvelope = new(
-			new AdsrEnvelopeDefinition((ObjectId)1U, "Volume")
-			{
-				Attack = TimeSpan.FromSeconds(1),
-				Decay = TimeSpan.Zero,
-				SustainLevel = 1.0,
-				Release = TimeSpan.Zero,
-			});
+		NodeEnvelopeCurve volumeEnvelope =
+			Curve([(0, 0), (1, 1)], 1);
 
 		PlaybackSession session = Session(
 			4,
@@ -236,14 +203,8 @@ public sealed class EnvelopePlaybackTests
 	public void NoteOffStartsVolumeEnvelopeRelease()
 	{
 		ObjectId sourceId = (ObjectId)10U;
-		AdsrEnvelopeCurve volumeEnvelope = new(
-			new AdsrEnvelopeDefinition((ObjectId)1U, "Volume")
-			{
-				Attack = TimeSpan.Zero,
-				Decay = TimeSpan.Zero,
-				SustainLevel = 1.0,
-				Release = TimeSpan.FromSeconds(1),
-			});
+		NodeEnvelopeCurve volumeEnvelope =
+			Curve([(0, 1), (1, 0)], 0);
 
 		PlaybackSession session = Session(
 			4,
@@ -269,6 +230,17 @@ public sealed class EnvelopePlaybackTests
 			Is.EqualTo(
 				new[] { 1.0f, 1.0f, 1.0f, 0.75f, 0.5f, 0.25f, 0.0f })
 				.Within(1e-6));
+	}
+
+	private static NodeEnvelopeCurve Curve(
+		(double TimeSeconds, double Value)[] points, int sustainIndex)
+	{
+		NodeEnvelopeDefinition definition = new((ObjectId)1U, "Test envelope");
+		definition.ReplaceCurve(
+			Array.ConvertAll(points, p =>
+				new EnvelopeNode(TimeSpan.FromSeconds(p.TimeSeconds), p.Value)),
+			sustainIndex, sustainIndex, EnvelopeSustainLoopMode.Forward);
+		return new NodeEnvelopeCurve(definition);
 	}
 
 	private static PlaybackSession Session(

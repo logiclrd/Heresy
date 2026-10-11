@@ -534,23 +534,6 @@ public static class SongDocumentJson
 					envelope.SustainLoopMode, JsonOptions);
 				break;
 
-			case AdsrEnvelopeDefinition envelope:
-				result["type"] = "adsrEnvelope";
-				result["attack"] =
-					JsonSerializer.SerializeToNode(
-						envelope.Attack,
-						JsonOptions);
-				result["decay"] =
-					JsonSerializer.SerializeToNode(
-						envelope.Decay,
-						JsonOptions);
-				result["sustainLevel"] = envelope.SustainLevel;
-				result["release"] =
-					JsonSerializer.SerializeToNode(
-						envelope.Release,
-						JsonOptions);
-				break;
-
 			default:
 				throw new NotSupportedException(
 					$"Song object type {songObject.GetType().FullName} is not supported by JSON persistence.");
@@ -756,27 +739,6 @@ public static class SongDocumentJson
 							node, "sustainLoopMode"));
 					return envelope;
 				}
-
-			case "adsrEnvelope":
-				return new AdsrEnvelopeDefinition(id, name)
-				{
-					Attack =
-						DeserializeRequired<TimeSpan>(
-							node,
-							"attack"),
-					Decay =
-						DeserializeRequired<TimeSpan>(
-							node,
-							"decay"),
-					SustainLevel =
-						RequiredDouble(
-							node,
-							"sustainLevel"),
-					Release =
-						DeserializeRequired<TimeSpan>(
-							node,
-							"release"),
-				};
 
 			default:
 				throw new NotSupportedException(

@@ -198,8 +198,6 @@ internal sealed class PlaybackSnapshotSoundResolver
 			{
 				NodeEnvelopeDefinition nodes =>
 					new NodeEnvelopeCurve(nodes),
-				AdsrEnvelopeDefinition adsr =>
-					new AdsrEnvelopeCurve(adsr),
 				ScriptEnvelopeDefinition scripted =>
 					CompileScriptEnvelope(scripted),
 				_ => null,

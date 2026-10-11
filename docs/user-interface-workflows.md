@@ -441,34 +441,35 @@ frozen document snapshots remain isolated from subsequent edits.
 See [tone-grid implementation](instrument-tone-grid-model.md) and
 [UI design](ui-editor-redesign.md).
 
-## Graphical ADSR and FM envelopes
+## Node envelopes and FM envelope editing
 
-ADSR envelopes are first-class objects in the **Envelopes** pane. Its
-editor now combines numeric fields with the **graphical ADSR editor**:
-drag Attack, Decay or Release endpoint handles (separately identifiable
-even when segment durations are zero) or the horizontal Sustain line.
-The graph shows the right-edge labels **Note Volume**, **Sustain** and
-**0**. Attack, decay and release are non-negative physical-time
-durations stored as `TimeSpan`; numeric controls show seconds.
-The graph's 0..1 Y range is a visual reference, not a Core constraint.
-Negative or above-unity Sustain values remain valid; the graph clips
-them visually, labels the actual scalar, and permits out-of-bounds
-pointer dragging to set such values. A completed drag commits through
-the same audio-affecting document editor/revision path as numeric
-Apply. Both surfaces remain synchronized, and incomplete drags can
-be canceled. See [graphical ADSR editing](envelope-graph.md).
-The FM synth editor also embeds the **same graphical control** when
-one of its Envelope nodes has a live ADSR Envelope selected.
+Node envelopes are first-class shared objects in the **Envelopes** pane.
+Ordinary New Envelope creates a `NodeEnvelopeDefinition` with a piecewise
+linear sequence of time/value nodes, indexed sustain start and end points,
+and Forward/PingPong looping. Script Envelopes remain a distinct supported
+authoring type. The standalone Envelope editor and the FM synth's
+Envelope-node inspector both use the same temporary **node-list editor**
+until the dedicated interactive graph is delivered.
+
+The node-list editor accepts one `timeSeconds, value` pair per line, using
+invariant-culture decimals. Node 0 must begin at zero and all later times
+must strictly increase. Values are unrestricted finite scalars. Sustain
+start/end indices and loop mode are edited separately; **Apply envelope**
+validates all fields atomically and creates an audio revision only for an
+actual change. Invalid input does not change the live Envelope. This
+temporary editor replaces the obsolete ADSR numeric fields and drag caps;
+the [node-envelope design](node-envelope-design.md) defines the intended
+next graphical editor.
+
 Creating a new FM Envelope node leaves its reference unassigned
-(`ObjectId.None`), even if Envelopes already exist. Its dropdown
-starts blank, with an italicized **New...** entry first, followed by
-**(None)** and existing Envelopes. New... creates a shared Envelope
-in the document's Envelopes section and assigns it without
-leaving the FM editor. Clearing a reference does not delete that
-Envelope. Unassigned FM Envelope nodes serialize as ID 0 and
-evaluate to silence; FM import skips their nonexistent dependency.
-See [graphical ADSR editing](envelope-graph.md) and the
-[UI redesign](ui-editor-redesign.md).
+(`ObjectId.None`), even if Envelopes already exist. Its dropdown starts
+blank, with italicized **New...** first, then **(None)** and existing
+Envelopes. New... creates a shared **node envelope** in the document's
+Envelopes section and assigns it without leaving the FM editor. Clearing a
+reference does not delete the shared object. Unassigned FM Envelope nodes
+serialize as ID 0 and evaluate to silence; import skips their absent
+dependency. Import copies node envelopes and Script Envelopes as their
+original types, preserving each node curve or expression.
 
 ## Tracker keyboard
 

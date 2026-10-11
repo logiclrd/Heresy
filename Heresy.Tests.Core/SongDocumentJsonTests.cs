@@ -419,9 +419,9 @@ public sealed class SongDocumentJsonTests
 		ObjectId instrumentId = song.AllocateObjectId();
 		song.Add(new InstrumentDefinition(instrumentId, "Piano"));
 		ObjectId envelopeId = song.AllocateObjectId();
-		song.Add(new AdsrEnvelopeDefinition(envelopeId, "Volume"));
+		song.Add(new NodeEnvelopeDefinition(envelopeId, "Volume"));
 		ObjectId deletedId = song.AllocateObjectId();
-		song.Add(new AdsrEnvelopeDefinition(deletedId, "Missing"));
+		song.Add(new NodeEnvelopeDefinition(deletedId, "Missing"));
 		song.Remove(deletedId);
 
 		SongTreeFolder instruments =
@@ -558,13 +558,7 @@ public sealed class SongDocumentJsonTests
 
 		ObjectId envelopeId = document.AllocateObjectId();
 		document.Add(
-			new AdsrEnvelopeDefinition(envelopeId, "Envelope")
-			{
-				Attack = TimeSpan.FromMilliseconds(10),
-				Decay = TimeSpan.FromMilliseconds(20),
-				SustainLevel = 0.75,
-				Release = TimeSpan.FromMilliseconds(30),
-			});
+			BuildNodeEnvelope(envelopeId));
 
 		instrument.ToneSpecifications.Add(
 			new ToneSpecification
@@ -702,12 +696,12 @@ public sealed class SongDocumentJsonTests
 						false),
 				}));
 
-		AdsrEnvelopeDefinition envelope =
-			(AdsrEnvelopeDefinition)document.Objects[(ObjectId)4U];
-		Assert.That(envelope.Attack, Is.EqualTo(TimeSpan.FromMilliseconds(10)));
-		Assert.That(envelope.Decay, Is.EqualTo(TimeSpan.FromMilliseconds(20)));
-		Assert.That(envelope.SustainLevel, Is.EqualTo(0.75));
-		Assert.That(envelope.Release, Is.EqualTo(TimeSpan.FromMilliseconds(30)));
+		NodeEnvelopeDefinition envelope =
+			(NodeEnvelopeDefinition)document.Objects[(ObjectId)4U];
+		Assert.That(envelope.Nodes,
+			Is.EqualTo(BuildNodeEnvelope(envelope.Id).Nodes));
+		Assert.That(envelope.SustainStartIndex, Is.EqualTo(2));
+		Assert.That(envelope.SustainEndIndex, Is.EqualTo(2));
 
 		ScriptPatternDefinition scriptPattern =
 			(ScriptPatternDefinition)document.Objects[(ObjectId)5U];
@@ -831,6 +825,20 @@ public sealed class SongDocumentJsonTests
 		writer.Write(dataBytes);
 		foreach (short sample in samples)
 			writer.Write(sample);
+	}
+
+	private static NodeEnvelopeDefinition BuildNodeEnvelope(ObjectId id)
+	{
+		NodeEnvelopeDefinition envelope = new(id, "Envelope");
+		envelope.ReplaceCurve(
+			[
+				new(TimeSpan.Zero, 0.0),
+				new(TimeSpan.FromMilliseconds(10), 1.0),
+				new(TimeSpan.FromMilliseconds(30), 0.75),
+				new(TimeSpan.FromMilliseconds(60), 0.0),
+			],
+			2, 2, EnvelopeSustainLoopMode.Forward);
+		return envelope;
 	}
 
 }

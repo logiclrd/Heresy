@@ -23,7 +23,7 @@ public sealed class FmSynthPersistenceTests
 	{
 		SongDocument document = new();
 		ObjectId envelopeId = document.AllocateObjectId();
-		document.Add(new AdsrEnvelopeDefinition(envelopeId, "Amp"));
+		document.Add(new NodeEnvelopeDefinition(envelopeId, "Amp"));
 
 		ObjectId synthId = document.AllocateObjectId();
 		FmSynthDefinition synth =
@@ -230,7 +230,7 @@ public sealed class FmSynthPersistenceTests
 	{
 		SongDocument document = new();
 		ObjectId envelopeId = document.AllocateObjectId();
-		document.Add(new AdsrEnvelopeDefinition(envelopeId, "Envelope"));
+		document.Add(new NodeEnvelopeDefinition(envelopeId, "Envelope"));
 
 		ObjectId synthId = document.AllocateObjectId();
 		document.Add(
@@ -256,7 +256,7 @@ public sealed class FmSynthPersistenceTests
 	{
 		SongDocument document = new();
 		ObjectId envelopeId = document.AllocateObjectId();
-		document.Add(new AdsrEnvelopeDefinition(envelopeId, "Envelope"));
+		document.Add(new NodeEnvelopeDefinition(envelopeId, "Envelope"));
 		document.Remove(envelopeId);
 
 		ObjectId synthId = document.AllocateObjectId();

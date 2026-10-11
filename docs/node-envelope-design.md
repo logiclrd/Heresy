@@ -8,11 +8,11 @@ schema, or dual-format maintenance. The cutover will delete the ADSR
 model/editor/renderer once their call sites have been moved. Scripted
 Envelopes remain a distinct supported expression-based envelope type.
 
-This change is delivered in milestones so each commit builds and tests:
-the initial milestone introduces the validated node definition and its JSON
-persistence alongside the old ADSR implementation *temporarily*, not as
-a promised legacy format. In a later milestone the default creation and FM
-inspector switch to node envelopes and ADSR support is removed.
+The production authoring and persistence cutover is implemented.
+Ordinary envelopes use the node model, Script Envelopes remain separate,
+and the former ADSR model, renderer, editor, and JSON discriminator were
+removed without a legacy compatibility loader. Until the interactive graph
+is ready, the standalone and FM inspectors share an editable node list.
 
 ## Data contract (milestone 1)
 

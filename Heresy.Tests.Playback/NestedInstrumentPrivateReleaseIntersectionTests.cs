@@ -306,11 +306,8 @@ public sealed class NestedInstrumentPrivateReleaseIntersectionTests
             // own finite release so it can tail while the outer envelope
             // is paused/resumed. The two envelopes compose independently.
             ObjectId leafEnvelopeId = doc.AllocateObjectId();
-            doc.Add(new AdsrEnvelopeDefinition(leafEnvelopeId, "Leaf release")
-            {
-                SustainLevel = 1.0,
-                Release = TimeSpan.FromMilliseconds(leafReleaseMilliseconds),
-            });
+            doc.Add(ReleaseEnvelope(leafEnvelopeId,
+                leafReleaseMilliseconds));
             ObjectId leafInstrumentId = doc.AllocateObjectId();
             InstrumentDefinition leafInstrument =
                 new(leafInstrumentId, "Private leaf Instrument");
@@ -342,11 +339,7 @@ public sealed class NestedInstrumentPrivateReleaseIntersectionTests
         doc.Add(inner);
 
         ObjectId envelopeId = doc.AllocateObjectId();
-        doc.Add(new AdsrEnvelopeDefinition(envelopeId, "Release")
-        {
-            SustainLevel = 1.0,
-            Release = TimeSpan.FromMilliseconds(releaseMilliseconds),
-        });
+        doc.Add(ReleaseEnvelope(envelopeId, releaseMilliseconds));
         instrumentId = doc.AllocateObjectId();
         InstrumentDefinition outer = new(instrumentId, "Outer Instrument");
         outer.ToneSpecifications.Add(new ToneSpecification
@@ -357,6 +350,21 @@ public sealed class NestedInstrumentPrivateReleaseIntersectionTests
         outer.ToneTable.Add(0);
         doc.Add(outer);
         return doc;
+    }
+
+    private static NodeEnvelopeDefinition ReleaseEnvelope(ObjectId id, int milliseconds)
+    {
+        NodeEnvelopeDefinition envelope = new(id, "Release");
+        envelope.ReplaceCurve(
+            [
+                new(TimeSpan.Zero, 1.0),
+                // A zero-width ADSR release cannot be represented by two
+                // nodes at the same time; use the shortest valid interval.
+                new(milliseconds == 0 ? TimeSpan.FromTicks(1)
+                    : TimeSpan.FromMilliseconds(milliseconds), 0.0),
+            ],
+            0, 0, EnvelopeSustainLoopMode.Forward);
+        return envelope;
     }
 
     private static PreparedIncrementalPlaybackFactory Factory() =>

@@ -100,7 +100,7 @@ public static class FmSynthDocumentEditor
 				.OrderBy(id => id.Value)
 				.ToArray();
 
-		Dictionary<ObjectId, AdsrEnvelopeDefinition> sourceEnvelopes = [];
+		Dictionary<ObjectId, EnvelopeDefinition> sourceEnvelopes = [];
 		foreach (ObjectId envelopeId in envelopeIds)
 		{
 			if (!source.Document.TryGet(
@@ -112,15 +112,14 @@ public static class FmSynthDocumentEditor
 					$"FM synth import requires envelope object {envelopeId.Value}, but that envelope is missing from the source song.");
 			}
 
-			if (envelope is not AdsrEnvelopeDefinition adsr)
+			if (envelope is not NodeEnvelopeDefinition
+				&& envelope is not ScriptEnvelopeDefinition)
 			{
 				throw new NotSupportedException(
 					$"FM synth import does not support source envelope type {envelope.GetType().Name} for object {envelopeId.Value}.");
 			}
 
-			sourceEnvelopes.Add(
-				envelopeId,
-				adsr);
+			sourceEnvelopes.Add(envelopeId, envelope);
 		}
 
 		foreach (FmSynthDefinition synth in selected)
@@ -165,7 +164,7 @@ public static class FmSynthDocumentEditor
 				workspace.Document.AllocateObjectId());
 		}
 
-		AdsrEnvelopeDefinition[] importedEnvelopes =
+		EnvelopeDefinition[] importedEnvelopes =
 			envelopeIds
 				.Select(sourceId =>
 					CloneEnvelope(
@@ -181,7 +180,7 @@ public static class FmSynthDocumentEditor
 						envelopeIdMap))
 				.ToArray();
 
-		foreach (AdsrEnvelopeDefinition envelope in importedEnvelopes)
+		foreach (EnvelopeDefinition envelope in importedEnvelopes)
 		{
 			workspace.Document.Add(
 				envelope,
@@ -665,18 +664,27 @@ public static class FmSynthDocumentEditor
 		}
 	}
 
-	private static AdsrEnvelopeDefinition CloneEnvelope(
-		AdsrEnvelopeDefinition source,
-		ObjectId targetId)
-		=> new(
-			targetId,
-			source.Name)
+	private static EnvelopeDefinition CloneEnvelope(
+		EnvelopeDefinition source, ObjectId targetId)
+	{
+		switch (source)
 		{
-			Attack = source.Attack,
-			Decay = source.Decay,
-			SustainLevel = source.SustainLevel,
-			Release = source.Release,
-		};
+			case NodeEnvelopeDefinition nodes:
+				NodeEnvelopeDefinition clone = new(targetId, nodes.Name);
+				clone.ReplaceCurve(nodes.Nodes, nodes.SustainStartIndex,
+					nodes.SustainEndIndex, nodes.SustainLoopMode);
+				return clone;
+			case ScriptEnvelopeDefinition script:
+				return new ScriptEnvelopeDefinition(targetId, script.Name)
+				{
+					Source = script.Source,
+					ReleaseDuration = script.ReleaseDuration,
+				};
+			default:
+				throw new NotSupportedException(
+					$"Cannot import envelope type {source.GetType().Name}.");
+		}
+	}
 
 	private static FmSynthDefinition CloneSynth(
 		FmSynthDefinition source,
