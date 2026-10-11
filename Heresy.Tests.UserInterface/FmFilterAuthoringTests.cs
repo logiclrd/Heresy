@@ -164,6 +164,23 @@ public sealed class FmFilterAuthoringTests
 	}
 
 	[Test]
+	public void ForeignFilterWithSameObjectIdCannotBeAssignedToFmNode()
+	{
+		DocumentWorkspace work = new();
+		FilterDefinition local = FilterDocumentEditor.CreateFilter(work, "Local");
+		FmSynthDefinition fm = FmSynthDocumentEditor.CreateFmSynth(work, "FM");
+		int id = FmSynthDocumentEditor.AddFilterNode(work, fm, 180, 80);
+		FilterDefinition foreign = new(local.Id, "Foreign");
+		uint revision = work.Document.AudioRevision;
+		Assert.Throws<InvalidOperationException>(() =>
+			FmSynthDocumentEditor.SetFilterConfiguration(
+				work, fm, id, new FilterInstance(foreign)));
+		Assert.That(work.Document.AudioRevision, Is.EqualTo(revision));
+		Assert.That(fm.Graph.Nodes.OfType<FmFilterNode>().Single()
+			.Configuration, Is.Null);
+	}
+
+	[Test]
 	public void DeletingModulationSourceDisconnectsItWithoutDestroyingFilter()
 	{
 		DocumentWorkspace work = new();

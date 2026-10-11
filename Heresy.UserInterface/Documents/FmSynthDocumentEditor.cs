@@ -313,7 +313,7 @@ public static class FmSynthDocumentEditor
 			?? throw new InvalidOperationException("FM node is not a Filter.");
 		FilterInstance? previous = current.Configuration;
 		if (configuration is not null)
-			ValidateFilter(workspace.Document, configuration.DefinitionId);
+			ValidateFilter(workspace.Document, configuration);
 		// A new definition is a new selection, not a reuse of the old
 		// definition's parameter bindings (even when stage IDs coincide).
 		FmFilterNode next = new(nodeId, current.AudioInputNodeId,
@@ -323,12 +323,13 @@ public static class FmSynthDocumentEditor
 	}
 
 	private static void ValidateFilter(
-		SongDocument document, ObjectId filterId)
+		SongDocument document, FilterInstance configuration)
 	{
-		if (!document.TryGet(filterId, out SongObject? found)
-			|| found is not FilterDefinition)
+		if (!document.TryGet(configuration.DefinitionId, out SongObject? found)
+			|| !ReferenceEquals(found, configuration.Definition))
 			throw new InvalidOperationException(
-				$"Filter {filterId.Value} is not a live shared definition.");
+				$"Filter {configuration.DefinitionId.Value} is not the live "
+				+ "shared definition in this document.");
 	}
 
 	public static int AddOperatorNode(
@@ -459,7 +460,7 @@ public static class FmSynthDocumentEditor
 		}
 		if (replacement is FmFilterNode filter
 			&& filter.Configuration is FilterInstance config)
-			ValidateFilter(workspace.Document, config.DefinitionId);
+			ValidateFilter(workspace.Document, config);
 
 		FmSynthNode[] nodes =
 			synth.Graph.Nodes
