@@ -16,7 +16,7 @@ public sealed class OnePoleFilterTests
 	private const int SampleRate = 48000;
 
 	[Test]
-	public void DefaultRuntimeUsesRealOnePoleButOtherKindsRemainNeutral()
+	public void DefaultRuntimeUsesRealOnePoleAndExplicitBypassIsNeutral()
 	{
 		FilterInstance low = CreateUse("LowPass", 3000);
 		StreamingFilterChain processed =
@@ -32,16 +32,27 @@ public sealed class OnePoleFilterTests
 		Assert.That(actual[1], Is.GreaterThan(0f));
 		Assert.That(unchanged, Is.EqualTo(new[] { 1f, 0f, 0f }));
 
-		FilterDefinition unimplemented = new((ObjectId)91U, "Pending", new[] {
+		// The last selectable kind also now executes DSP by default.
+		// Neutral processing must be requested from the explicit
+		// bypass factory, not inferred from a pending implementation.
+		FilterDefinition definition = new((ObjectId)91U, "Comb", new[] {
 			new FilterStageDefinition(1, "stage1", FilterKind.CombFeedforward),
 		});
-		StreamingFilterChain pending = new(
-			new FilterChain(new[] { new FilterInstance(unimplemented) }),
-			SampleRate, 1);
-		float[] neutral = { -0.75f, 0.5f, 1f, 0f };
-		pending.ProcessInterleaved(neutral);
-		Assert.That(neutral, Is.EqualTo(new[] { -0.75f, 0.5f, 1f, 0f }));
-		Assert.That(pending.PreparedTailFrames, Is.Zero);
+		FilterChain chain = new(new[] { new FilterInstance(definition) });
+		StreamingFilterChain comb = new(chain, SampleRate, 1);
+		StreamingFilterChain bypass = new(
+			chain, SampleRate, 1, BypassFilterStageFactory.Instance);
+		float[] impulse = new float[961];
+		impulse[0] = 1;
+		float[] identity = (float[])impulse.Clone();
+		comb.ProcessInterleaved(impulse);
+		bypass.ProcessInterleaved(identity);
+		Assert.That(impulse[0], Is.EqualTo(1));
+		Assert.That(impulse[960], Is.EqualTo(0.25f),
+			"Default Feedforward=0.5 and Mix=0.5 yield one 0.25 echo.");
+		Assert.That(identity[960], Is.Zero);
+		Assert.That(comb.PreparedTailFrames, Is.EqualTo(960));
+		Assert.That(bypass.PreparedTailFrames, Is.Zero);
 	}
 
 	[Test]
