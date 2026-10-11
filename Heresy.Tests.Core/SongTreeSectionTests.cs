@@ -4,6 +4,7 @@ using AwesomeAssertions;
 
 using Heresy.Core.Assets;
 using Heresy.Core.Envelopes;
+using Heresy.Core.Filters;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -18,7 +19,7 @@ namespace Heresy.Tests.Core;
 public sealed class SongTreeSectionTests
 {
 	[Test]
-	public void NewDocumentHasFiveFixedSectionRootsInDocumentPaneOrder()
+	public void NewDocumentHasSixFixedSectionRootsInDocumentPaneOrder()
 	{
 		SongDocument document = new();
 
@@ -26,12 +27,14 @@ public sealed class SongTreeSectionTests
 			document.GetSectionRoot(SongTreeSection.Sequences),
 			document.GetSectionRoot(SongTreeSection.Patterns),
 			document.GetSectionRoot(SongTreeSection.Samples),
+			document.GetSectionRoot(SongTreeSection.Filters),
 			document.GetSectionRoot(SongTreeSection.Envelopes),
 			document.GetSectionRoot(SongTreeSection.Instruments));
 		document.Root.Children.Select(node => node.Name).Should().Equal(
 			"Sequences",
 			"Patterns",
 			"Patches",
+			"Filters",
 			"Envelopes",
 			"Instruments");
 		document.DocumentRevision.Should().Be(0);
@@ -62,6 +65,9 @@ public sealed class SongTreeSectionTests
 				"Sample",
 				new ExternalAssetReference("sample.wav")));
 
+		ObjectId filterId = document.AllocateObjectId();
+		document.Add(new FilterDefinition(filterId, "Filter"));
+
 		Ids(document.GetSectionRoot(SongTreeSection.Sequences))
 			.Should().Equal(sequenceId);
 		Ids(document.GetSectionRoot(SongTreeSection.Patterns))
@@ -72,6 +78,8 @@ public sealed class SongTreeSectionTests
 			.Should().Equal(envelopeId);
 		Ids(document.GetSectionRoot(SongTreeSection.Samples))
 			.Should().Equal(sampleId);
+		Ids(document.GetSectionRoot(SongTreeSection.Filters))
+			.Should().Equal(filterId);
 	}
 
 	[Test]
