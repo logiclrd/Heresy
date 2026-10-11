@@ -96,12 +96,7 @@ public sealed class FilterInstanceEditorControlTests
 			() => current, x => { current = x; commits++; });
 		var toggles = Field<Dictionary<string, CheckBox>>(editor, "_overrideToggles");
 		var inputs = Field<Dictionary<string, Control>>(editor, "_editors");
-		Assert.That(((StackPanel)Field<StackPanel>(editor, "_parameters")
-			.Children.OfType<StackPanel>().Single(row =>
-				row.Children.OfType<StackPanel>().Any(panel =>
-					panel.Children.OfType<TextBlock>()
-						.Any(text => text.Text?.Contains("TapCount") == true))))
-			.Children, Is.Not.Empty);
+		Assert.That(inputs["TapCount"], Is.TypeOf<TextBox>());
 		Assert.That(ToolTip.GetTip(inputs["TapCount"])?.ToString(),
 			Does.Contain("Structural"));
 
