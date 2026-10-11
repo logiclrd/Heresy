@@ -524,6 +524,16 @@ public static class SongDocumentJson
 						: null;
 				break;
 
+			case NodeEnvelopeDefinition envelope:
+				result["type"] = "nodeEnvelope";
+				result["nodes"] = JsonSerializer.SerializeToNode(
+					envelope.Nodes, JsonOptions);
+				result["sustainStartIndex"] = envelope.SustainStartIndex;
+				result["sustainEndIndex"] = envelope.SustainEndIndex;
+				result["sustainLoopMode"] = JsonSerializer.SerializeToNode(
+					envelope.SustainLoopMode, JsonOptions);
+				break;
+
 			case AdsrEnvelopeDefinition envelope:
 				result["type"] = "adsrEnvelope";
 				result["attack"] =
@@ -734,6 +744,18 @@ public static class SongDocumentJson
 						? release.Deserialize<TimeSpan>(JsonOptions)
 						: null,
 				};
+
+			case "nodeEnvelope":
+				{
+					NodeEnvelopeDefinition envelope = new(id, name);
+					envelope.ReplaceCurve(
+						DeserializeRequired<List<EnvelopeNode>>(node, "nodes"),
+						DeserializeRequired<int>(node, "sustainStartIndex"),
+						DeserializeRequired<int>(node, "sustainEndIndex"),
+						DeserializeRequired<EnvelopeSustainLoopMode>(
+							node, "sustainLoopMode"));
+					return envelope;
+				}
 
 			case "adsrEnvelope":
 				return new AdsrEnvelopeDefinition(id, name)

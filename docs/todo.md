@@ -6,6 +6,65 @@ architecture and regression history are documented in the
 features, including scripted Patterns, Sequences, Envelopes, Instruments,
 virtual-voice controls, and compiled parametric effects, are implemented.
 
+## Node-envelope redesign
+
+The [node-envelope design contract](node-envelope-design.md) records the
+requested model, sustain timeline semantics, and exact graphical gestures.
+The first milestone (validated node model, atomic authoring, JSON persistence,
+snapshot copy, and regression tests) is implemented; there is deliberately
+no legacy-song migration. Continue in this order:
+
+- [ ] **Replace ADSR curve playback with a node-envelope renderer.**
+  Build an immutable piecewise-linear node curve respecting forward,
+  ping-pong, and single-node sustain, early/mid-loop Note Off without jumps,
+  paused active clocks, reproducible historical queries, and finite-tail
+  bounds. Cover discontinuous forward looping, release while traversing
+  backward, release before sustain, exact boundary-frame cases, negative
+  or above-unity values, and note retirement. Route the existing envelope
+  resolver, instrument, and FM playback through the new curve.
+
+- [ ] **Make FM envelope-backed Note Off continue through release.**
+  An FM graph containing an assigned Envelope must enter a releasing
+  voice state on Note Off rather than cutting the sound. Preserve the
+  envelope's post-sustain tail, deterministic source lifetime, and both
+  direct and indirectly selected FM sources. Graphs without an envelope
+  retain their existing note-off behaviour.
+
+- [ ] **Cut over production envelope editing and remove ADSR entirely.**
+  Replace default Envelope creation, standalone editor, FM node inspector,
+  cloning/import, serializers and tests that still assume four ADSR
+  scalars. Remove `AdsrEnvelopeDefinition`, `AdsrEnvelopeCurve`, and
+  old graph/numeric editing code instead of retaining compatibility
+  adapters. A minimal placeholder editor is acceptable during the
+  graphical rebuild; keep Script Envelopes independent. Do not create a
+  persisted-format migration or version bump for nonexistent legacy songs.
+
+- [ ] **Build the interactive node-envelope graph and selection model.**
+  Render linear segments, faint vertical node guides, and the sustain
+  highlight `#04808080`; support one selection at most, a **4 px**
+  nearest-node click threshold, and small non-touching selection brackets
+  2 px taller than the node. Double-click a node to delete, or a segment
+  to insert at the nearest projected point; validate monotonic time,
+  sustain index adjustment, first-node invariants, and deletion limits.
+  Exercise hit testing and projection in framework-independent tests.
+
+- [ ] **Implement sustain-guide gestures and Match editing.**
+  Drag either sustain endpoint's guide to another node without crossing
+  the opposite endpoint; dragging a non-highlighted node guide in either
+  direction selects a new region. Self-drag is a no-op, while a
+  double-click on a node guide defines a single-node sustain.
+  Preview during drag; commit on release and cancel on capture loss.
+  When a selected node is one of two distinct sustain endpoints,
+  show Match, disable it when values agree, and otherwise copy the
+  opposite endpoint's value in one audio-revision commit.
+
+- [ ] **Complete node-envelope UI integration and physical audition.**
+  Use the same interactive control in the standalone Envelope editor
+  and FM graph inspector, remove stale ADSR wording, ensure navigation
+  and shared-object edits update correctly, and verify direct/instrument/FM
+  playback through held, releasing and finished stages. Include desktop
+  pointer/keyboard smoke checks and the final CI regression suite.
+
 ## Physical validation
 
 - [ ] **Validate surround playback and encoded multichannel output on real
