@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 using Heresy.Core.Envelopes;
 using Heresy.Core.Patterns;
@@ -6,8 +7,56 @@ using Heresy.Core.Sequencing;
 
 namespace Heresy.UserInterface.PatternEditing;
 
+public sealed record TrackerEffectCommand(
+	char Letter, string Name, Func<byte, PatternEffect> Create)
+{
+	public string DisplayName => $"{Letter} — {Name}";
+}
+
+/// <summary>One ordered source of truth for IT commands supported by both
+/// keyboard entry and the effect-picker menus. Sxx always has a valid fallback.</summary>
 public static class PatternEffectCodec
 {
+	private static readonly IReadOnlyList<TrackerEffectCommand> Commands =
+		Array.AsReadOnly(new TrackerEffectCommand[]
+		{
+			new('A', "Set Speed", p => new TrackerSpeedPatternEffect(p)),
+			new('B', "Position Jump", p => new TrackerOrderJumpPatternEffect(p)),
+			new('C', "Pattern Break", p => new TrackerPatternBreakPatternEffect(p)),
+			new('D', "Volume Slide", p => new TrackerVolumeSlidePatternEffect(p)),
+			new('E', "Portamento Down", p => new TrackerPitchSlideDownPatternEffect(p)),
+			new('F', "Portamento Up", p => new TrackerPitchSlideUpPatternEffect(p)),
+			new('G', "Tone Portamento", p => new TonePortamentoPatternEffect(p)),
+			new('H', "Vibrato", p => new VibratoPatternEffect(p)),
+			new('I', "Tremor", p => new TremorPatternEffect(p)),
+			new('J', "Arpeggio", p => new ArpeggioPatternEffect(p)),
+			new('K', "Vibrato + Volume Slide", p => new VibratoVolumeSlidePatternEffect(p)),
+			new('L', "Tone Portamento + Volume Slide", p => new TonePortamentoVolumeSlidePatternEffect(p)),
+			new('M', "Set Channel Volume", p => new TrackerChannelVolumePatternEffect(p)),
+			new('N', "Channel Volume Slide", p => new TrackerChannelVolumeSlidePatternEffect(p)),
+			new('O', "Sample Offset", p => new SampleOffsetPatternEffect(p)),
+			new('P', "Panning Slide", p => new TrackerPanningSlidePatternEffect(p)),
+			new('Q', "Retrigger Note", p => new RetriggerPatternEffect(p)),
+			new('R', "Tremolo", p => new TremoloPatternEffect(p)),
+			new('S', "Special", CreateSpecialOrUndefined),
+			new('T', "Tempo", p => new TrackerTempoPatternEffect(p)),
+			new('U', "Fine Vibrato", p => new FineVibratoPatternEffect(p)),
+			new('V', "Set Global Volume", p => new TrackerGlobalVolumePatternEffect(p)),
+			new('W', "Global Volume Slide", p => new TrackerGlobalVolumeSlidePatternEffect(p)),
+			new('X', "Set Panning", p => new TrackerPanning8BitPatternEffect(p)),
+			new('Y', "Panbrello", p => new PanbrelloPatternEffect(p)),
+			new('Z', "MIDI Macro", p => new TrackerMidiMacroPatternEffect(p)),
+		});
+
+	public static IReadOnlyList<TrackerEffectCommand> TrackerCommands => Commands;
+
+	public static int TrackerColorKey(char command)
+	{
+		char letter = char.ToUpperInvariant(command);
+		if (letter < 'A' || letter > 'Z')
+			throw new ArgumentOutOfRangeException(nameof(command));
+		return letter - 'A';
+	}
 	public static bool IsTrackerStyle(PatternEffect effect)
 	{
 		ArgumentNullException.ThrowIfNull(effect);
@@ -150,38 +199,18 @@ public static class PatternEffectCodec
 		byte parameter,
 		out PatternEffect? effect)
 	{
-		command = char.ToUpperInvariant(command);
-		effect = command switch
+		char letter = char.ToUpperInvariant(command);
+		if (letter < 'A' || letter > 'Z')
 		{
-            'A' => new TrackerSpeedPatternEffect(parameter),
-			'B' => new TrackerOrderJumpPatternEffect(parameter),
-			'C' => new TrackerPatternBreakPatternEffect(parameter),
-			'D' => new TrackerVolumeSlidePatternEffect(parameter),
-			'E' => new TrackerPitchSlideDownPatternEffect(parameter),
-			'F' => new TrackerPitchSlideUpPatternEffect(parameter),
-			'G' => new TonePortamentoPatternEffect(parameter),
-			'H' => new VibratoPatternEffect(parameter),
-			'I' => new TremorPatternEffect(parameter),
-			'J' => new ArpeggioPatternEffect(parameter),
-			'K' => new VibratoVolumeSlidePatternEffect(parameter),
-			'L' => new TonePortamentoVolumeSlidePatternEffect(parameter),
-			'M' => new TrackerChannelVolumePatternEffect(parameter),
-			'N' => new TrackerChannelVolumeSlidePatternEffect(parameter),
-			'O' => new SampleOffsetPatternEffect(parameter),
-			'P' => new TrackerPanningSlidePatternEffect(parameter),
-			'Q' => new RetriggerPatternEffect(parameter),
-			'R' => new TremoloPatternEffect(parameter),
-			'S' => CreateSpecialOrUndefined(parameter),
-			'T' => new TrackerTempoPatternEffect(parameter),
-			'U' => new FineVibratoPatternEffect(parameter),
-			'V' => new TrackerGlobalVolumePatternEffect(parameter),
-			'W' => new TrackerGlobalVolumeSlidePatternEffect(parameter),
-			'X' => new TrackerPanning8BitPatternEffect(parameter),
-			'Y' => new PanbrelloPatternEffect(parameter),
-			'Z' => new TrackerMidiMacroPatternEffect(parameter),
-			_ => null,
-		};
-		return effect is not null;
+			effect = null;
+			return false;
+		}
+
+		// Catalogue index, menu label, keyboard semantics and sticker
+		// colour are all derived from the same canonical IT letter.
+		TrackerEffectCommand description = Commands[letter - 'A'];
+		effect = description.Create(parameter);
+		return true;
 	}
 
     /// <summary>Editing Sxx always succeeds for any hex byte. Each

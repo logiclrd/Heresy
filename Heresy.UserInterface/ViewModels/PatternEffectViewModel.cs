@@ -48,7 +48,7 @@ public sealed class PatternEffectViewModel
 						: $".{parameter:X2}";
 			int colorKey =
 				command.HasValue
-					? command.Value - 'A'
+					? PatternEffectCodec.TrackerColorKey(command.Value)
 					: 26;
 			return new PatternEffectViewModel(
 				effect,
