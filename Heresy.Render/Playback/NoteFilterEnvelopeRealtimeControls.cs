@@ -57,6 +57,7 @@ internal sealed class NoteFilterEnvelopeRealtimeControls
 	private readonly FilterChain _authored;
 	private ActiveBinding[] _bindings = [];
 	private readonly FirControlPreparationPolicy? _firPolicy;
+    private readonly FirPreparationMailbox? _firMailbox;
 	private readonly FirControlRequest[] _firRequests;
 	private readonly RealtimeFirStageUpdate[] _firUpdates;
 	private PreparedFirControlBatch? _firReady;
@@ -137,6 +138,7 @@ internal sealed class NoteFilterEnvelopeRealtimeControls
 			FirControlPreparationPolicy.MaximumQueuedStages)];
 		_firUpdates = new RealtimeFirStageUpdate[_firRequests.Length];
 		_firPolicy = firCount > 0 ? new FirControlPreparationPolicy(sampleRate) : null;
+        _firMailbox = firCount > 0 ? new FirPreparationMailbox(_authored, sampleRate) : null;
 	}
 
 	/// <summary>Replace the entire binding set after an authored action;
@@ -180,6 +182,20 @@ internal sealed class NoteFilterEnvelopeRealtimeControls
 		_firReady = null;
 		return _firPolicy.TryPreparePending(_authored, out _firReady);
 	}
+
+    /// <summary>Accept a completed immutable control plan only between PCM blocks.</summary>
+    internal bool AdoptPreparedFirs()
+    {
+        PreparedFirControlBatch? ready = _firMailbox?.TakeReady();
+        if (ready is null) return false;
+        _firReady = ready;
+        return true;
+    }
+
+    /// <summary>Coalesce the latest request without running FIR design on PCM.</summary>
+    internal bool QueuePendingFirs(FirPreparationScheduler scheduler)
+        => _firPolicy is not null && _firMailbox is not null
+            && _firMailbox.CapturePending(_firPolicy, scheduler);
 
 	/// <summary>One complete atomic sample's numeric controls. Rejected
 	/// values do not alter any coefficient/history or last accepted value.</summary>

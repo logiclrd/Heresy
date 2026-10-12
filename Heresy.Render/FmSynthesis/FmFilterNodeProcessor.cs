@@ -276,6 +276,9 @@ internal sealed class FmFilterNodeProcessor
 			if (firCount > 0)
 			{
 				FirControl = new FirControlPreparationPolicy(sampleRate);
+                if (Configuration is not null)
+                    FirMailbox = new FirPreparationMailbox(
+                        new FilterChain([Configuration]), sampleRate);
 				FirRequests = new FirControlRequest[
 					Math.Min(firCount, FirControlPreparationPolicy.MaximumQueuedStages)];
 				FirPreparedUpdates = new RealtimeFirStageUpdate[FirRequests.Length];
@@ -303,6 +306,7 @@ internal sealed class FmFilterNodeProcessor
 		internal RealtimeFeedforwardCombStageUpdate[] FeedforwardUpdates { get; }
 		internal RealtimeFeedforwardCombCoefficients[] FeedforwardScratch { get; }
 		internal FirControlPreparationPolicy? FirControl { get; }
+        internal FirPreparationMailbox? FirMailbox { get; }
 		internal FirControlRequest[]? FirRequests { get; }
 		internal RealtimeFirStageUpdate[]? FirPreparedUpdates { get; }
 		internal PreparedFirControlBatch? FirReady { get; set; }
@@ -340,6 +344,18 @@ internal sealed class FmFilterNodeProcessor
 		state.FirReady = prepared;
 		return true;
 	}
+
+    internal bool AdoptPreparedFirs(State state)
+    {
+        PreparedFirControlBatch? ready = state.FirMailbox?.TakeReady();
+        if (ready is null) return false;
+        state.FirReady = ready;
+        return true;
+    }
+
+    internal bool QueuePendingFirs(State state, FirPreparationScheduler scheduler)
+        => state.FirControl is not null && state.FirMailbox is not null
+            && state.FirMailbox.CapturePending(state.FirControl, scheduler);
 
 	/// <summary>
 	/// Evaluate all connected parameters as absolute values in the authored

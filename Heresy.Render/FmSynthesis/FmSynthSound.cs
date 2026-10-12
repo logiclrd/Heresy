@@ -4,13 +4,14 @@ using System.Linq;
 
 using Heresy.Core.FmSynthesis;
 using Heresy.Render.Envelopes;
+using Heresy.Render.Filters;
 using Heresy.Render.Sounds;
 using Heresy.Render.Spatial;
 using Heresy.Render.Timing;
 
 namespace Heresy.Render.FmSynthesis;
 
-public sealed class FmSynthSound : ISound
+public sealed class FmSynthSound : ISound, IFirPreparationSound
 {
 	private sealed class FmSynthState : SoundState
 	{
@@ -157,6 +158,28 @@ public sealed class FmSynthSound : ISound
 		}
 		return prepared;
 	}
+
+    /// <summary>Control snapshots are published on the PCM owner at a
+    /// quantum boundary. Heavy FIR design runs only on the independent
+    /// FirPreparationScheduler worker.</summary>
+    public void AdoptPreparedFirControls(SoundState state)
+    {
+        FmSynthState synthState = ValidateState(state);
+        for (int i = 0; i < _nodes.Length; i++)
+            if (_nodes[i].Filter is { } processor
+                && synthState.Filters[i] is { } filterState)
+                processor.AdoptPreparedFirs(filterState);
+    }
+
+    public void QueuePendingFirControls(SoundState state,
+        FirPreparationScheduler scheduler)
+    {
+        FmSynthState synthState = ValidateState(state);
+        for (int i = 0; i < _nodes.Length; i++)
+            if (_nodes[i].Filter is { } processor
+                && synthState.Filters[i] is { } filterState)
+                processor.QueuePendingFirs(filterState, scheduler);
+    }
 
 	public long? GetEndFrameExclusive(
 		RenderContext context, SoundState state)
