@@ -4,6 +4,7 @@ using System.Threading;
 using Heresy.Core.Filters;
 using Heresy.Core.Objects;
 using Heresy.Render.Filters;
+using Heresy.Render.Realtime;
 
 using NUnit.Framework;
 
@@ -113,6 +114,59 @@ public sealed class FirPreparationSchedulerTests
             scheduler.Dispose();
         }
         Assert.That(scheduler.Fault, Is.Null);
+    }
+
+    [Test]
+    public void BufferedAudioHostRunsAsyncFIRControlHandoffBetweenBlocks()
+    {
+        RealtimeProbe source = new();
+        using BufferedAudioOutputSource buffer =
+            new(source, capacityFrames:64, blockFrames:16);
+        float[] pcm = new float[16];
+        bool delivered = SpinWait.SpinUntil(() =>
+        {
+            buffer.Render(16, pcm);
+            Thread.Sleep(1);
+            return source.Adopted > 0;
+        }, TimeSpan.FromSeconds(5));
+        Assert.That(delivered, Is.True, "the PCM host must later adopt a worker-produced plan");
+        Assert.That(source.Rendered, Is.GreaterThan(0));
+        Assert.That(source.Queued, Is.GreaterThan(0));
+        Assert.That(buffer.RenderingFault, Is.Null);
+    }
+
+    private sealed class RealtimeProbe : IAudioOutputSource, IFirPreparationAudioSource
+    {
+        private readonly FirControlPreparationPolicy _policy = new(Rate);
+        private readonly FirPreparationMailbox _mailbox = new(Chain(), Rate);
+        private int _submitted;
+        private int _queued;
+        private int _rendered;
+        private int _adopted;
+        public AudioOutputFormat Format => new(Rate, 1);
+        public int Queued => Volatile.Read(ref _queued);
+        public int Rendered => Volatile.Read(ref _rendered);
+        public int Adopted => Volatile.Read(ref _adopted);
+
+        public void Render(int frameCount, Span<float> destination)
+        {
+            Interlocked.Increment(ref _rendered);
+            destination.Fill(0.25f);
+            if (Interlocked.Exchange(ref _submitted, 1) == 0)
+                _policy.TryOffer([Request(3500)]);
+        }
+
+        public void AdoptPreparedFirControls()
+        {
+            if (_mailbox.TakeReady() is not null)
+                Interlocked.Increment(ref _adopted);
+        }
+
+        public void QueuePendingFirControls(FirPreparationScheduler scheduler)
+        {
+            if (_mailbox.CapturePending(_policy, scheduler))
+                Interlocked.Increment(ref _queued);
+        }
     }
 
     private static FirControlRequest Request(double cutoff)
