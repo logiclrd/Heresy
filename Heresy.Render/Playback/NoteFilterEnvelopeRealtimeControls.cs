@@ -177,6 +177,25 @@ internal sealed class NoteFilterEnvelopeRealtimeControls
 		_reportedBudget = false;
 	}
 
+    /// <summary>Current validated numeric target of one stage parameter.
+    /// Queried only during authored host command boundaries, never on PCM.</summary>
+    internal bool TryGetAccepted(int layerIndex, int stageId,
+        string parameter, out double accepted)
+    {
+        foreach (Stage stage in _stages)
+            if (stage.LayerIndex == layerIndex && stage.StageId == stageId)
+            {
+                int index = stage.IndexOf(parameter);
+                if (index >= 0)
+                {
+                    accepted = stage.Accepted[index];
+                    return true;
+                }
+            }
+        accepted = 0;
+        return false;
+    }
+
     /// <summary>After a command-boundary fork has been configured with
     /// validated effective envelope overrides, align the numeric controller
     /// with those already accepted target values. This prevents spurious
