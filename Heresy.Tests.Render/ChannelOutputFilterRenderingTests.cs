@@ -466,6 +466,67 @@ public sealed class ChannelOutputFilterRenderingTests
         Assert.That(pcm, Is.All.Zero);
     }
 
+    [Test]
+    public void StructuralChoiceRetuneResetsSaturatedStageWhileInvalidChoiceBatchDoesNot()
+    {
+        TestResolver sounds = new();
+        sounds.Add(PulseId, new PulseSound());
+        FilterDefinition definition = new((ObjectId)1011U, "Ladder", [
+            new FilterStageDefinition(1, "nonlinear", FilterKind.LadderSaturated),
+        ]);
+        FilterInstance instance = new(definition);
+        instance.SetStageParameters(1, [
+            new("CutoffHz", FilterParameterValue.FromNumber(100)),
+            new("Resonance", FilterParameterValue.FromNumber(0.25)),
+            new("Drive", FilterParameterValue.FromNumber(5)),
+            new("Oversampling", FilterParameterValue.FromChoice("1x")),
+        ]);
+
+        PlaybackSession Create()
+        {
+            PlaybackSession playback = Session(sounds);
+            playback.ApplyLiveEvent(ChannelTarget.Physical(0), [
+                new SetChannelFilterCommand { Configuration = instance },
+                new StartNoteCommand(PulseId),
+            ]);
+            return playback;
+        }
+
+        PlaybackSession baseline = Create();
+        PlaybackSession changed = Create();
+        float[] first = new float[1], comparison = new float[1];
+        baseline.Render(0, 1, first);
+        changed.Render(0, 1, comparison);
+        Assert.That(first, Is.EqualTo(comparison));
+
+        List<string> errors = [];
+        changed.ChannelFilterCommandRejected = errors.Add;
+        changed.ApplyLiveEvent(ChannelTarget.Physical(0), [
+            new SetChannelFilterParametersCommand(1, [
+                new("Oversampling", FilterParameterValue.FromChoice("4x")),
+                new("NoSuchParameter", FilterParameterValue.FromNumber(1)),
+            ]),
+        ]);
+        float[] unchanged = new float[6], reference = new float[6];
+        changed.Render(1, 6, unchanged);
+        baseline.Render(1, 6, reference);
+        Assert.That(errors, Has.Count.EqualTo(1));
+        Assert.That(unchanged, Is.EqualTo(reference).Within(1e-6f),
+            "the invalid batch may not partially switch oversampling");
+
+        PlaybackSession switched = Create();
+        switched.Render(0, 1, new float[1]);
+        switched.ApplyLiveEvent(ChannelTarget.Physical(0), [
+            new SetChannelFilterParametersCommand(1, [
+                new("Oversampling", FilterParameterValue.FromChoice("4x")),
+            ]),
+        ]);
+        float[] drained = new float[6];
+        switched.Render(1, 6, drained);
+        Assert.That(drained, Is.All.Zero,
+            "valid structural choice invalidates the old ladder integrators");
+    }
+
     private static FilterInstance Echo(uint id, double seconds)
     {
         FilterDefinition definition = new((ObjectId)id, "Echo", [
