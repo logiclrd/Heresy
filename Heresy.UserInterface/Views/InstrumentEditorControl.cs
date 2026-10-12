@@ -795,6 +795,15 @@ public sealed class InstrumentEditorControl : UserControl
 		}
 	}
 
+	// This guard deliberately leaves ordinary caret navigation and
+	// Shift+Arrow text selection with TextBox until the caret hits an
+	// actual boundary. Up/Down never uses this guard.
+	internal static bool CanTransferTextBoundary(
+		int caret, int length, bool hasSelection, int columnDelta)
+		=> !hasSelection && (columnDelta < 0
+			? caret == 0
+			: columnDelta > 0 && caret == length);
+
 	private bool HandleGridNavigation(KeyEventArgs e)
 	{
 		if (_selection.Focused is not InstrumentToneGridSelection.Cell current)
@@ -821,12 +830,9 @@ public sealed class InstrumentEditorControl : UserControl
 			// Do not hijack normal caret movement or Shift+Arrow text
 			// selection. Only a zero-length selection at the boundary
 			// can transfer keyboard focus to the neighbouring cell.
-			if (input.SelectionStart != input.SelectionEnd)
-				return false;
-			int caret = input.CaretIndex;
-			if (columnDelta < 0 && caret != 0)
-				return false;
-			if (columnDelta > 0 && caret != (input.Text?.Length ?? 0))
+			if (!CanTransferTextBoundary(
+				input.CaretIndex, input.Text?.Length ?? 0,
+				input.SelectionStart != input.SelectionEnd, columnDelta))
 				return false;
 			boundaryShiftLeft =
 				columnDelta < 0 &&
@@ -851,6 +857,7 @@ public sealed class InstrumentEditorControl : UserControl
 			// Selecting the projected item requests its realization in the
 			// virtualizing ListBox. If not realized yet, focus after layout.
 			_rows.SelectedItem = _projectedRows[position];
+			_rows.ScrollIntoView(position);
 			RefreshSelectionVisuals();
 			Dispatcher.UIThread.Post(() =>
 				FocusSelectedCell(next), DispatcherPriority.Loaded);
