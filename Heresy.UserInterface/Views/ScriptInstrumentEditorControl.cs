@@ -12,6 +12,7 @@ using Heresy.Core.Filters;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.UserInterface.Documents;
+using Heresy.UserInterface.InstrumentEditing;
 using Heresy.UserInterface.PatternEditing;
 
 namespace Heresy.UserInterface.Views;
@@ -38,6 +39,13 @@ public sealed class ScriptInstrumentEditorControl : UserControl
     private readonly Action<string> _changed;
     private readonly TextBox _expression;
     private readonly TextBox _pitchExpression;
+    private readonly TextBox _nnaExpression;
+    private readonly TextBox _nnaFadeMilliseconds;
+    private string _loadedNnaExpression;
+    private TimeSpan _loadedNnaFade;
+    private readonly ComboBox _toneNna;
+    private readonly TextBox _toneNnaFade;
+    private InstrumentNnaSetting _loadedToneNna;
     private readonly TextBox _ratio;
     private readonly ComboBox _sound;
     private readonly ComboBox[] _envelopes;
@@ -66,6 +74,26 @@ public sealed class ScriptInstrumentEditorControl : UserControl
             Text = definition.PitchExpression,
             MinWidth = 420,
         };
+        _nnaExpression = new TextBox
+        {
+            Text = definition.NnaExpression, MinWidth = 420,
+        };
+        _nnaFadeMilliseconds = new TextBox
+        {
+            Text = InstrumentNnaEditorValues.FormatMilliseconds(definition.NnaFadeDuration),
+            Width = 115,
+        };
+        _loadedNnaExpression = definition.NnaExpression;
+        _loadedNnaFade = definition.NnaFadeDuration;
+        _toneNna = new ComboBox
+        {
+            MinWidth = 175,
+            ItemsSource = Enum.GetValues<InstrumentNnaAction>(),
+            SelectedItem = InstrumentNnaAction.Inherit,
+        };
+        _toneNnaFade = new TextBox { Width = 115, Text = "100", IsVisible = false };
+        _toneNna.SelectionChanged += (_, _) =>
+            _toneNnaFade.IsVisible = _toneNna.SelectedItem is InstrumentNnaAction.Fade;
         _ratio = new TextBox { Text = "1", MinWidth = 115 };
         _sound = new ComboBox { MinWidth = 260 };
         _envelopes = Enumerable.Range(0, 4)
@@ -132,6 +160,19 @@ public sealed class ScriptInstrumentEditorControl : UserControl
         panel.Children.Add(apply);
         panel.Children.Add(new TextBlock
         {
+            Text = "Note-start NNA expression of the original incoming pitchMultiplier. Return InstrumentNnaAction.Inherit, Cut, Continue, Off or Fade. Example: pitchMultiplier < 1.5 ? InstrumentNnaAction.Continue : InstrumentNnaAction.Inherit",
+            TextWrapping = TextWrapping.Wrap,
+        });
+        panel.Children.Add(_nnaExpression);
+        StackPanel nnaDuration = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
+        nnaDuration.Children.Add(new TextBlock { Text = "NNA Fade duration (ms)", VerticalAlignment = VerticalAlignment.Center });
+        nnaDuration.Children.Add(_nnaFadeMilliseconds);
+        Button applyNna = new() { Content = "Apply NNA expression" };
+        applyNna.Click += (_, _) => ApplyNnaExpression();
+        nnaDuration.Children.Add(applyNna);
+        panel.Children.Add(nnaDuration);
+        panel.Children.Add(new TextBlock
+        {
             Text = "Declared tones (the index is returned by the selector)",
             FontWeight = FontWeight.SemiBold,
         });
@@ -140,6 +181,12 @@ public sealed class ScriptInstrumentEditorControl : UserControl
         panel.Children.Add(_sound);
         panel.Children.Add(new TextBlock { Text = "Pitch multiplier" });
         panel.Children.Add(_ratio);
+        panel.Children.Add(new TextBlock { Text = "Selected tone NNA (Inherit delegates to child)" });
+        StackPanel toneNnaRow = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
+        toneNnaRow.Children.Add(_toneNna);
+        toneNnaRow.Children.Add(new TextBlock { Text = "Fade (ms)", VerticalAlignment = VerticalAlignment.Center });
+        toneNnaRow.Children.Add(_toneNnaFade);
+        panel.Children.Add(toneNnaRow);
         string[] names = ["Volume Envelope", "Pitch Envelope",
             "Panning Envelope", "Filter Envelope"];
         for (int i = 0; i < _envelopes.Length; i++)
@@ -235,7 +282,9 @@ public sealed class ScriptInstrumentEditorControl : UserControl
                 $" P:{Label(tone.PitchEnvelopeId)}" +
                 $" Pan:{Label(tone.PanningEnvelopeId)}" +
                 $" F:{Label(tone.FilterEnvelopeId)}" +
-                $" Filter:{Label(tone.FilterConfiguration?.DefinitionId)}"))
+                $" Filter:{Label(tone.FilterConfiguration?.DefinitionId)}" +
+                " NNA:" + tone.Nna.Action.ToString() +
+                (tone.Nna.FadeDuration is TimeSpan fade ? " (" + InstrumentNnaEditorValues.FormatMilliseconds(fade) + " ms)" : "")))
             .ToArray();
         _tones.ItemsSource = rows;
     }
@@ -252,6 +301,10 @@ public sealed class ScriptInstrumentEditorControl : UserControl
         _sound.SelectedItem = (_sound.ItemsSource as Choice[])?
             .FirstOrDefault(x => x.Id == tone.SourceId);
         _ratio.Text = tone.PitchMultiplier.ToString("R", CultureInfo.InvariantCulture);
+        _loadedToneNna = tone.Nna;
+        _toneNna.SelectedItem = tone.Nna.Action;
+        _toneNnaFade.Text = InstrumentNnaEditorValues.FormatMilliseconds(
+            tone.Nna.FadeDuration ?? TimeSpan.FromMilliseconds(100));
         ObjectId?[] ids = [tone.VolumeEnvelopeId, tone.PitchEnvelopeId,
             tone.PanningEnvelopeId, tone.FilterEnvelopeId];
         for (int i = 0; i < 4; i++)
@@ -282,15 +335,26 @@ public sealed class ScriptInstrumentEditorControl : UserControl
     private double Pitch() =>
         double.Parse(_ratio.Text ?? string.Empty, CultureInfo.InvariantCulture);
 
+    private InstrumentNnaSetting SelectedToneNna()
+        => InstrumentNnaEditorValues.ToneSetting(
+            (InstrumentNnaAction)_toneNna.SelectedItem!, _toneNnaFade.Text);
+
     private void AddTone() =>
         ScriptInstrumentDocumentEditor.AddTone(_workspace, _definition,
             SelectedSource(), Pitch(), Envelope(0), Envelope(1), Envelope(2), Envelope(3),
-            _toneFilter);
+            _toneFilter, SelectedToneNna());
 
-    private void UpdateTone() =>
+    private void UpdateTone()
+    {
+        int index = SelectedIndex();
+        if (_definition.ToneSpecifications[index].Nna != _loadedToneNna)
+            throw new InvalidOperationException(
+                "Selected tone NNA changed elsewhere. Reselect the tone before updating.");
         ScriptInstrumentDocumentEditor.UpdateTone(_workspace, _definition,
-            SelectedIndex(), SelectedSource(), Pitch(),
-            Envelope(0), Envelope(1), Envelope(2), Envelope(3), _toneFilter);
+            index, SelectedSource(), Pitch(),
+            Envelope(0), Envelope(1), Envelope(2), Envelope(3),
+            _toneFilter, SelectedToneNna());
+    }
 
     private void EditToneFilter()
     {
@@ -328,6 +392,26 @@ public sealed class ScriptInstrumentEditorControl : UserControl
                     message => _message.Text = message),
             };
             window.Show(owner);
+        }
+        catch (Exception error) { _message.Text = error.Message; }
+    }
+
+    private void ApplyNnaExpression()
+    {
+        try
+        {
+            if (_definition.NnaExpression != _loadedNnaExpression
+                || _definition.NnaFadeDuration != _loadedNnaFade)
+                throw new InvalidOperationException(
+                    "Script Instrument NNA changed elsewhere. Reopen this editor to reload.");
+            TimeSpan fade = InstrumentNnaEditorValues.ParseFadeMilliseconds(
+                _nnaFadeMilliseconds.Text);
+            ScriptInstrumentDocumentEditor.SetNnaExpression(
+                _workspace, _definition, _nnaExpression.Text ?? string.Empty, fade);
+            _loadedNnaExpression = _definition.NnaExpression;
+            _loadedNnaFade = _definition.NnaFadeDuration;
+            _message.Text = "Script Instrument NNA updated.";
+            _changed("Updated script Instrument NNA " + _definition.Name);
         }
         catch (Exception error) { _message.Text = error.Message; }
     }

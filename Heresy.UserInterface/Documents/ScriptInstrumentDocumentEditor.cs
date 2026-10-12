@@ -82,12 +82,13 @@ public static class ScriptInstrumentDocumentEditor
         ObjectId? pitchEnvelopeId = null,
         ObjectId? panningEnvelopeId = null,
         ObjectId? filterEnvelopeId = null,
-        FilterInstance? filterConfiguration = null)
+        FilterInstance? filterConfiguration = null,
+        InstrumentNnaSetting nna = default)
     {
         ValidateOwner(workspace, definition);
         ToneSpecification tone = InstrumentDocumentEditor.CreateToneSpecification(
             workspace.Document, soundId, pitchMultiplier, volumeEnvelopeId,
-            pitchEnvelopeId, panningEnvelopeId, filterEnvelopeId, filterConfiguration);
+            pitchEnvelopeId, panningEnvelopeId, filterEnvelopeId, filterConfiguration, nna);
         definition.ToneSpecifications.Add(tone);
         workspace.Document.MarkChanged(affectsAudio: true);
         return definition.ToneSpecifications.Count - 1;
