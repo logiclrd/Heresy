@@ -38,6 +38,49 @@ public static class InstrumentToneNoteNotation
 		return $"{Names[note]}-{octave}{suffix}";
 	}
 
+	/// <summary>
+	/// The editable Pitch offset is measured in actual instrument divisions
+	/// rather than octaves. For a twelve-division Instrument, +5 means
+	/// a five-semitone transposition for every selected tone.
+	/// </summary>
+	public static double DisplayPitchOffset(double multiplier, double divisions)
+	{
+		ValidateDivisions(divisions);
+		double result = divisions * LogarithmicOffset(multiplier);
+		if (!double.IsFinite(result))
+			throw new ArgumentOutOfRangeException(nameof(multiplier));
+		return result;
+	}
+
+	public static double MultiplierFromDisplayPitch(double offset, double divisions)
+	{
+		ValidateDivisions(divisions);
+		if (!double.IsFinite(offset))
+			throw new ArgumentOutOfRangeException(nameof(offset));
+		return MultiplierFromOffset(offset / divisions);
+	}
+
+	/// <summary>
+	/// Suppress floating-point near-integer noise in UI *presentation*
+	/// only. The underlying stored multiplier is never rounded or
+	/// overwritten as a consequence of formatting.
+	/// </summary>
+	public static string FormatDisplayPitch(
+		double multiplier, double divisions,
+		IFormatProvider? provider = null)
+	{
+		double value = DisplayPitchOffset(multiplier, divisions);
+		double nearest = Math.Round(value);
+		// About 1000 binary64 machine epsilons, relative to magnitude.
+		// double.Epsilon in .NET is the smallest subnormal, not epsilon.
+		double tolerance = 1000.0 * 2.220446049250313e-16
+			* Math.Max(1.0, Math.Abs(value));
+		if (double.IsFinite(nearest) &&
+			Math.Abs(value - nearest) <= tolerance)
+			value = nearest;
+		return value.ToString("G17", provider);
+	}
+
 	/// <summary>The editable Pitch column stores log2(multiplier).</summary>
 	public static double LogarithmicOffset(double multiplier)
 	{
