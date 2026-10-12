@@ -4,6 +4,8 @@ using System.Reflection;
 
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Headless.NUnit;
+using Avalonia.Input;
 using Avalonia.Media;
 
 using AwesomeAssertions;
@@ -166,6 +168,62 @@ public sealed class InstrumentToneGridSelectionTests
 		bool result = InstrumentEditorControl.CanTransferTextBoundary(
 			caret, length, hasSelection, delta);
 		result.Should().Be(expected);
+	}
+
+	[AvaloniaTest]
+	public void ActualEditorKeyRoutePreservesTextAndTransfersBoundaryShiftLeft()
+	{
+		DocumentWorkspace workspace = new();
+		InstrumentDefinition instrument = InstrumentDocumentEditor.CreateInstrument(
+			workspace, "Keyboard");
+		InstrumentEditorControl editor = new(
+			workspace, instrument, () => { }, _ => { });
+		Window owner = new() { Content = editor, Width = 900, Height = 700 };
+		owner.Show();
+		try
+		{
+			var selection = Field<InstrumentToneGridSelection>(editor, "_selection");
+			var rows = Field<InstrumentToneGridRow[]>(editor, "_projectedRows");
+			selection.BeginAt(new(84, 3), rows);
+			TextBox text = new() { Text = "123", CaretIndex = 1 };
+			bool Send(Key key, KeyModifiers modifiers = KeyModifiers.None,
+				object? source = null)
+			{
+				KeyEventArgs e = new()
+				{
+					Key = key, KeyModifiers = modifiers, Source = source ?? text,
+					RoutedEvent = InputElement.KeyDownEvent,
+				};
+				return (bool)typeof(InstrumentEditorControl)
+					.GetMethod("HandleGridNavigation",
+						BindingFlags.Instance | BindingFlags.NonPublic)!
+					.Invoke(editor, new object[] { e })!;
+			}
+
+			Send(Key.Left, KeyModifiers.Shift).Should().BeFalse();
+			selection.Focused.Should().Be(new InstrumentToneGridSelection.Cell(84, 3));
+			text.CaretIndex = 0;
+			Send(Key.Left, KeyModifiers.Shift).Should().BeTrue();
+			selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(84, 2));
+			selection.Extent.Should().Be(selection.Anchor);
+
+			text.CaretIndex = 1;
+			Send(Key.Down, KeyModifiers.Shift).Should().BeTrue();
+			selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(84, 2));
+			selection.Extent.Should().Be(new InstrumentToneGridSelection.Cell(83, 2));
+
+			ComboBox popup = new()
+			{
+				ItemsSource = new[] { "one", "two" },
+				IsDropDownOpen = true,
+			};
+			Send(Key.Down, source: popup).Should().BeFalse();
+			selection.Focused.Should().Be(new InstrumentToneGridSelection.Cell(83, 2));
+		}
+		finally
+		{
+			owner.Close();
+		}
 	}
 
 	[Test]
