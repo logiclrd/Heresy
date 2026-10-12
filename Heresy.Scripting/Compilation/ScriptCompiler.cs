@@ -260,6 +260,41 @@ public static class ScriptCompiler
 			compiled.Diagnostics);
 	}
 
+    /// <summary>Compile a pure, restricted expression returning Inherit or
+    /// a concrete action from the same incoming pitch used by SelectToneIndex.
+    /// Compilation is completed before playback; no dynamic script execution
+    /// can touch mutable Instrument authoring state during PCM.</summary>
+    public static IReadOnlyList<ScriptAnalysisDiagnostic> AnalyzeInstrumentNnaSource(
+        string source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        var shape = ValidateEnvelopeExpression(source);
+        if (shape.Count != 0) return shape;
+        return PrepareCompilation(source,
+            BuildInstrumentNnaWrapper("__HeresyNna_Analysis", source)).Diagnostics;
+    }
+
+    public static ScriptCompilationResult<IScriptInstrumentNnaEvaluator>
+        CompileInstrumentNna(ScriptInstrumentDefinition definition)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+        var shape = ValidateEnvelopeExpression(definition.NnaExpression);
+        if (shape.Count != 0) return new(null, shape);
+        string className = "__HeresyInstrumentNna_" + Guid.NewGuid().ToString("N");
+        ScriptCompilationResult<Type> compiled = CompileType(
+            definition.NnaExpression, className,
+            BuildInstrumentNnaWrapper(className, definition.NnaExpression),
+            typeof(IScriptInstrumentNnaEvaluator));
+        if (!compiled.Success || compiled.Program is null)
+            return new(null, compiled.Diagnostics);
+        return new(
+            Activator.CreateInstance(compiled.Program)
+                as IScriptInstrumentNnaEvaluator
+                ?? throw new InvalidOperationException(
+                    "Could not construct compiled Instrument NNA evaluator."),
+            compiled.Diagnostics);
+    }
+
 	/// <summary>
 	/// Compile a deterministic per-invocation tone index expression. Selection
 	/// is restricted to declared ToneSpecifications: -1 means silence.
@@ -647,9 +682,13 @@ public static class ScriptCompiler
 				typeof(NoteDisplacementAction).FullName
 					?? throw new InvalidOperationException());
 		INamedTypeSymbol? pastNoteType =
-			compilation.GetTypeByMetadataName(
-				typeof(TrackerPastNoteAction).FullName
-					?? throw new InvalidOperationException());
+            compilation.GetTypeByMetadataName(
+                typeof(TrackerPastNoteAction).FullName
+                    ?? throw new InvalidOperationException());
+        INamedTypeSymbol? instrumentNnaType =
+            compilation.GetTypeByMetadataName(
+                typeof(InstrumentNnaAction).FullName
+                    ?? throw new InvalidOperationException());
 
 		List<ScriptAnalysisDiagnostic> diagnostics = [];
 
@@ -691,7 +730,7 @@ public static class ScriptCompiler
 				semanticModel.GetSymbolInfo(access).Symbol;
 			if (IsAllowedMathMember(symbol, mathType)
 				|| IsAllowedActionEnumMember(symbol,
-					displacementType, pastNoteType))
+                    displacementType, pastNoteType, instrumentNnaType))
 				continue;
 
 			AddRestrictedDiagnostic(
@@ -750,13 +789,16 @@ public static class ScriptCompiler
 	private static bool IsAllowedActionEnumMember(
 		ISymbol? symbol,
 		INamedTypeSymbol? displacementType,
-		INamedTypeSymbol? pastNoteType)
+        INamedTypeSymbol? pastNoteType,
+        INamedTypeSymbol? instrumentNnaType)
 		=> symbol is IFieldSymbol field
 			&& field.HasConstantValue
 			&& (SymbolEqualityComparer.Default.Equals(
 					field.ContainingType, displacementType)
 				|| SymbolEqualityComparer.Default.Equals(
-					field.ContainingType, pastNoteType));
+					field.ContainingType, pastNoteType)
+                || SymbolEqualityComparer.Default.Equals(
+                    field.ContainingType, instrumentNnaType));
 
 	private static bool IsScriptLocation(Location location)
 	{
@@ -904,6 +946,25 @@ public static class ScriptCompiler
 			"""
 			.Replace("__PITCH_CLASS__", className, StringComparison.Ordinal)
 			.Replace("__PITCH_EXPRESSION__", source, StringComparison.Ordinal);
+
+    private static string BuildInstrumentNnaWrapper(string className, string source)
+        => """
+            using System;
+            using Heresy.Core.Instruments;
+            using Heresy.Scripting.Runtime;
+
+            public sealed class __NNA_CLASS__ : IScriptInstrumentNnaEvaluator
+            {
+                public InstrumentNnaAction SelectNna(double pitchMultiplier)
+                {
+            #line 1 "heresy-script"
+                    return (__NNA_EXPRESSION__);
+            #line default
+                }
+            }
+            """
+            .Replace("__NNA_CLASS__", className, StringComparison.Ordinal)
+            .Replace("__NNA_EXPRESSION__", source, StringComparison.Ordinal);
 
 	private static string BuildInstrumentWrapper(
 		string className, string source)
