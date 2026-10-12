@@ -26,6 +26,7 @@ internal sealed class FmFilterNodeProcessor
 	private readonly FastSaturatedLadderStage[] _fastSaturatedLadders;
 	private readonly FastAllPassStage[] _fastAllPasses;
 	private readonly FastFeedbackCombStage[] _fastFeedbackCombs;
+	private readonly FastFeedforwardCombStage[] _fastFeedforwardCombs;
 	private readonly bool _useFastNumeric;
 	private readonly int _audioIndex;
 
@@ -56,6 +57,10 @@ internal sealed class FmFilterNodeProcessor
 		int StageIndex, int FeedbackBindingIndex, int MixBindingIndex,
 		double BaseFeedback, double BaseMix);
 
+	private readonly record struct FastFeedforwardCombStage(
+		int StageIndex, int FeedforwardBindingIndex, int MixBindingIndex,
+		double BaseFeedforward, double BaseMix);
+
 	public FmFilterNodeProcessor(FmFilterNode node,
 		IReadOnlyDictionary<int, int> indexById)
 	{
@@ -84,6 +89,7 @@ internal sealed class FmFilterNodeProcessor
 		List<FastSaturatedLadderStage> saturatedLadders = [];
 		List<FastAllPassStage> allPasses = [];
 		List<FastFeedbackCombStage> feedbackCombs = [];
+		List<FastFeedforwardCombStage> feedforwardCombs = [];
 		bool supported = _bindings.Length != 0;
 		ConfiguredFilterStage[] stages = _initial?.GetStages().ToArray() ?? [];
 		for (int stageIndex = 0; stageIndex < stages.Length; stageIndex++)
@@ -100,6 +106,7 @@ internal sealed class FmFilterNodeProcessor
 			int resonance = -1;
 			int drive = -1;
 			int feedback = -1;
+			int feedforward = -1;
 			int mix = -1;
 			bool stageBound = false;
 			for (int bindingIndex = 0; bindingIndex < _bindings.Length;
@@ -136,18 +143,23 @@ internal sealed class FmFilterNodeProcessor
 					StringComparison.OrdinalIgnoreCase)
 					&& stage.Kind == FilterKind.CombFeedback)
 					feedback = bindingIndex;
+				else if (string.Equals(binding.ParameterName, "Feedforward",
+					StringComparison.OrdinalIgnoreCase)
+					&& stage.Kind == FilterKind.CombFeedforward)
+					feedforward = bindingIndex;
 				else if (string.Equals(binding.ParameterName, "Mix",
 					StringComparison.OrdinalIgnoreCase)
-					&& stage.Kind == FilterKind.CombFeedback)
+					&& stage.Kind is (FilterKind.CombFeedback or FilterKind.CombFeedforward))
 					mix = bindingIndex;
 				else
 					supported = false;
 			}
 			if (!stageBound)
 				continue;
-			// Comb has no CutoffHz: only read that descriptor for
-			// families which actually expose it.
-			double baseCutoff = stage.Kind == FilterKind.CombFeedback
+			// Both Comb kinds have no CutoffHz: only read the
+			// descriptor for families that actually expose it.
+			double baseCutoff = stage.Kind is (FilterKind.CombFeedback
+				or FilterKind.CombFeedforward)
 				? 0 : stage.Parameters.GetParameter("CutoffHz").NumericValue;
 			if (stage.Kind == FilterKind.OnePole || isSvf)
 			{
@@ -184,19 +196,25 @@ internal sealed class FmFilterNodeProcessor
 					stageIndex, feedback, mix,
 					stage.Parameters.GetParameter("Feedback").NumericValue,
 					stage.Parameters.GetParameter("Mix").NumericValue));
+			else if (stage.Kind == FilterKind.CombFeedforward)
+				feedforwardCombs.Add(new FastFeedforwardCombStage(
+					stageIndex, feedforward, mix,
+					stage.Parameters.GetParameter("Feedforward").NumericValue,
+					stage.Parameters.GetParameter("Mix").NumericValue));
 			else
 				supported = false;
 		}
 		_useFastNumeric = supported
 			&& tpt.Count + biquads.Count + ladders.Count
 				+ saturatedLadders.Count + allPasses.Count
-				+ feedbackCombs.Count > 0;
+				+ feedbackCombs.Count + feedforwardCombs.Count > 0;
 		_fastStages = _useFastNumeric ? [.. tpt] : [];
 		_fastBiquads = _useFastNumeric ? [.. biquads] : [];
 		_fastLadders = _useFastNumeric ? [.. ladders] : [];
 		_fastSaturatedLadders = _useFastNumeric ? [.. saturatedLadders] : [];
 		_fastAllPasses = _useFastNumeric ? [.. allPasses] : [];
 		_fastFeedbackCombs = _useFastNumeric ? [.. feedbackCombs] : [];
+		_fastFeedforwardCombs = _useFastNumeric ? [.. feedforwardCombs] : [];
 
 	}
 
@@ -204,7 +222,8 @@ internal sealed class FmFilterNodeProcessor
 	{
 		internal State(FilterInstance? initial,
 			double[] initialValues, int sampleRate, int tptCount, int biquadCount, int ladderCount,
-			int saturatedLadderCount, int allPassCount, int combCount)
+			int saturatedLadderCount, int allPassCount, int combCount,
+			int feedforwardCount)
 		{
 			Configuration = initial?.Clone();
 			Values = (double[])initialValues.Clone();
@@ -220,6 +239,8 @@ internal sealed class FmFilterNodeProcessor
 			AllPassScratch = new RealtimeAllPassCoefficient[allPassCount];
 			CombUpdates = new RealtimeFeedbackCombStageUpdate[combCount];
 			CombScratch = new RealtimeFeedbackCombCoefficients[combCount];
+			FeedforwardUpdates = new RealtimeFeedforwardCombStageUpdate[feedforwardCount];
+			FeedforwardScratch = new RealtimeFeedforwardCombCoefficients[feedforwardCount];
 			if (Configuration is not null)
 				Chain = new StreamingFilterChain(
 					new FilterChain([Configuration]), sampleRate, 1);
@@ -240,6 +261,8 @@ internal sealed class FmFilterNodeProcessor
 		internal RealtimeAllPassCoefficient[] AllPassScratch { get; }
 		internal RealtimeFeedbackCombStageUpdate[] CombUpdates { get; }
 		internal RealtimeFeedbackCombCoefficients[] CombScratch { get; }
+		internal RealtimeFeedforwardCombStageUpdate[] FeedforwardUpdates { get; }
+		internal RealtimeFeedforwardCombCoefficients[] FeedforwardScratch { get; }
 	}
 
 	public State CreateState(int sampleRate)
@@ -247,7 +270,8 @@ internal sealed class FmFilterNodeProcessor
 			_bindings.Select(item => item.InitialValue).ToArray(),
 			sampleRate, _fastStages.Length, _fastBiquads.Length,
 			_fastLadders.Length, _fastSaturatedLadders.Length,
-			_fastAllPasses.Length, _fastFeedbackCombs.Length);
+			_fastAllPasses.Length, _fastFeedbackCombs.Length,
+			_fastFeedforwardCombs.Length);
 
 	/// <summary>
 	/// Evaluate all connected parameters as absolute values in the authored
@@ -410,6 +434,23 @@ internal sealed class FmFilterNodeProcessor
 					sourceValues, _bindings));
 		}
 
+		int feedforwardCount = 0;
+		foreach (FastFeedforwardCombStage stage in _fastFeedforwardCombs)
+		{
+			if (!HasChanged(stage.FeedforwardBindingIndex,
+				state, sourceValues, _bindings)
+				&& !HasChanged(stage.MixBindingIndex,
+					state, sourceValues, _bindings))
+				continue;
+			state.FeedforwardUpdates[feedforwardCount++] =
+				new RealtimeFeedforwardCombStageUpdate(
+					stage.StageIndex,
+					ValueOrDefault(stage.FeedforwardBindingIndex,
+						stage.BaseFeedforward, sourceValues, _bindings),
+					ValueOrDefault(stage.MixBindingIndex, stage.BaseMix,
+						sourceValues, _bindings));
+		}
+
 		if (!state.Chain!.TryApplyRealtimeNumericUpdates(
 			state.FastUpdates.AsSpan(0, tptCount), state.FastScratch,
 			state.BiquadUpdates.AsSpan(0, biquadCount), state.BiquadScratch,
@@ -417,7 +458,9 @@ internal sealed class FmFilterNodeProcessor
 			state.SaturatedUpdates.AsSpan(0, saturatedCount),
 			state.SaturatedScratch,
 			state.AllPassUpdates.AsSpan(0, allPassCount), state.AllPassScratch,
-			state.CombUpdates.AsSpan(0, combCount), state.CombScratch))
+			state.CombUpdates.AsSpan(0, combCount), state.CombScratch,
+			state.FeedforwardUpdates.AsSpan(0, feedforwardCount),
+			state.FeedforwardScratch))
 			return;
 		for (int i = 0; i < _bindings.Length; i++)
 			state.Values[i] = sourceValues[_bindings[i].ValueIndex];
