@@ -83,7 +83,7 @@ public sealed class InstrumentNnaEditorControlTests
         Assert.That(instrument.ToneSpecifications, Is.Empty);
 
         fade.Text = "23";
-        fade.RaiseEvent(new RoutedEventArgs(InputElement.LostFocusEvent));
+        fade.RaiseEvent(new FocusChangedEventArgs(InputElement.LostFocusEvent));
         Assert.That(model.Rows.Single(x => x.Index == 0).Cells.Nna,
             Is.EqualTo(InstrumentNnaSetting.Fade(TimeSpan.FromMilliseconds(23))));
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(baseline));
@@ -131,7 +131,7 @@ public sealed class InstrumentNnaEditorControlTests
             Is.EqualTo(InstrumentNnaAction.Off));
         action.SelectedItem = InstrumentNnaAction.Fade;
         fade.Text = "0";
-        fade.RaiseEvent(new RoutedEventArgs(InputElement.LostFocusEvent));
+        fade.RaiseEvent(new FocusChangedEventArgs(InputElement.LostFocusEvent));
         Assert.That(Field<TextBlock>(editor, "_message").Text, Does.Contain("positive finite"));
         Assert.That(model.Rows.Single(x => x.Index == 0).Cells.Nna,
             Is.EqualTo(InstrumentNnaSetting.Fade(TimeSpan.FromMilliseconds(100))));
@@ -168,6 +168,9 @@ public sealed class InstrumentNnaEditorControlTests
         Invoke(editor, "ApplyNnaExpression");
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(revision + 1));
 
+        ComboBox sound = Field<ComboBox>(editor, "_sound");
+        sound.SelectedItem = sound.ItemsSource!.Cast<object>().Single(x =>
+            (ObjectId?)x.GetType().GetProperty("Id")!.GetValue(x) == source);
         ComboBox toneAction = Field<ComboBox>(editor, "_toneNna");
         TextBox toneFade = Field<TextBox>(editor, "_toneNnaFade");
         toneAction.SelectedItem = InstrumentNnaAction.Fade;

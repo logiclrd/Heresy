@@ -69,6 +69,9 @@ public sealed class InstrumentEditorControl : UserControl
 		_loadedNnaOverride = instrument.NnaOverride;
 		_loadedNnaFade = instrument.NnaFadeDuration;
 		_nnaOverride.SelectionChanged += (_, _) => _nnaFadeMilliseconds.IsVisible = _nnaOverride.SelectedItem is InstrumentNnaOverride.Fade;
+		_nnaOverride.ItemTemplate = new FuncDataTemplate<InstrumentNnaOverride>(
+			(action, _) => new TextBlock { Text = action == InstrumentNnaOverride.UseToneNna
+				? "Use Tone NNA" : action.ToString() });
 		_rows = new ListBox
 		{
 			MinWidth = ColumnWidths.Sum(),
@@ -114,7 +117,11 @@ public sealed class InstrumentEditorControl : UserControl
 		StackPanel nnaHeader = new() { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(10, 2) };
 		nnaHeader.Children.Add(Label("Instrument NNA"));
 		nnaHeader.Children.Add(_nnaOverride);
-		nnaHeader.Children.Add(Label("Fade (ms)"));
+		TextBlock nnaFadeLabel = Label("Fade (ms)");
+		nnaFadeLabel.IsVisible = _nnaFadeMilliseconds.IsVisible;
+		_nnaOverride.SelectionChanged += (_, _) =>
+			nnaFadeLabel.IsVisible = _nnaFadeMilliseconds.IsVisible;
+		nnaHeader.Children.Add(nnaFadeLabel);
 		nnaHeader.Children.Add(_nnaFadeMilliseconds);
 		Button applyNna = new() { Content = "Apply NNA" };
 		applyNna.Click += (_, _) => ApplyNnaOverride();
