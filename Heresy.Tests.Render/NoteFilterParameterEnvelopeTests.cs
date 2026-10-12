@@ -137,6 +137,130 @@ public sealed class NoteFilterParameterEnvelopeTests
         Assert.That(messages[1], Does.Contain("unavailable"));
     }
 
+
+    [Test]
+    public void FlattenedEnvelopeUpdatesAllDescendantsAndDetachesToBaseAtomically()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FixedCurve(0.5));
+        PlaybackSession automated = Session(resolver, Schedule());
+        PlaybackSession typed = Session(resolver, Schedule());
+        foreach (PlaybackSession session in new[] { automated, typed })
+        {
+            session.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+                new BeginFlattenedSourceVolumeCommand(1, 1) {
+                    EventFilterConfiguration = Echo(),
+                },
+            ]);
+            foreach (uint id in new uint[] { 7, 8 })
+                session.ApplyScopedEvent(0, ChannelTarget.Virtual(id), [
+                    new StartNoteCommand(Source) {
+                        ParentSourceScopes = new long[] { 1 },
+                    },
+                ]);
+        }
+
+        float[] actual = new float[7], expected = new float[7];
+        automated.Render(0, 1, actual.AsSpan(0, 1));
+        typed.Render(0, 1, expected.AsSpan(0, 1));
+
+        automated.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new SetNoteFilterParameterEnvelopeCommand(1, "Feedforward", Envelope),
+        ]);
+        typed.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new SetNoteFilterParametersCommand(1, [
+                new("Feedforward", FilterParameterValue.FromNumber(0.5)),
+            ]),
+        ]);
+        automated.Render(1, 3, actual.AsSpan(1, 3));
+        typed.Render(1, 3, expected.AsSpan(1, 3));
+
+        automated.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new SetNoteFilterParameterEnvelopeCommand(1, "Feedforward"),
+        ]);
+        typed.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new SetNoteFilterParametersCommand(1, [
+                new("Feedforward", FilterParameterValue.FromNumber(1.0)),
+            ]),
+        ]);
+        automated.Render(4, 3, actual.AsSpan(4, 3));
+        typed.Render(4, 3, expected.AsSpan(4, 3));
+        Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+    }
+
+    [Test]
+    public void LaterFlattenedDescendantsUseIndependentClocksWithOriginalAttachmentFrame()
+    {
+        TestResolver resolver = new(new ConstantSound(), new RampCurve());
+        PlaybackSession automated = Session(resolver, Schedule());
+        PlaybackSession typed = Session(resolver, Schedule());
+        foreach (PlaybackSession session in new[] { automated, typed })
+            session.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+                new BeginFlattenedSourceVolumeCommand(1, 1) {
+                    EventFilterConfiguration = Echo(),
+                },
+            ]);
+        automated.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new SetNoteFilterParameterEnvelopeCommand(1, "Feedforward", Envelope),
+        ]);
+
+        float[] actual = new float[7], expected = new float[7];
+        for (int frame = 0; frame < actual.Length; frame++)
+        {
+            if (frame == 0 || frame == 2)
+                foreach (PlaybackSession session in new[] { automated, typed })
+                    session.ApplyScopedEvent(0, ChannelTarget.Virtual(
+                        frame == 0 ? 7U : 8U), [
+                        new StartNoteCommand(Source) {
+                            ParentSourceScopes = new long[] { 1 },
+                        },
+                    ]);
+            typed.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+                new SetNoteFilterParametersCommand(1, [
+                    new("Feedforward", FilterParameterValue.FromNumber(
+                        0.2 + frame * 0.1)),
+                ]),
+            ]);
+            automated.Render(frame, 1, actual.AsSpan(frame, 1));
+            typed.Render(frame, 1, expected.AsSpan(frame, 1));
+        }
+        Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+    }
+
+    [Test]
+    public void InvalidFlattenedBindingsCannotPartiallyModifyDescendants()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FixedCurve(0.5));
+        PlaybackSession rejected = Session(resolver, Schedule());
+        PlaybackSession reference = Session(resolver, Schedule());
+        foreach (PlaybackSession session in new[] { rejected, reference })
+        {
+            session.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+                new BeginFlattenedSourceVolumeCommand(1, 1) {
+                    EventFilterConfiguration = Echo(),
+                },
+            ]);
+            foreach (uint id in new uint[] { 7, 8 })
+                session.ApplyScopedEvent(0, ChannelTarget.Virtual(id), [
+                    new StartNoteCommand(Source) {
+                        ParentSourceScopes = new long[] { 1 },
+                    },
+                ]);
+        }
+        List<string> errors = [];
+        rejected.NoteFilterCommandRejected = errors.Add;
+        rejected.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new SetNoteFilterParameterEnvelopeCommand(1, "DelaySeconds", Envelope),
+            new SetNoteFilterParameterEnvelopeCommand(999, "Feedforward", Envelope),
+            new SetNoteFilterParameterEnvelopeCommand(1, "Feedforward",
+                (ObjectId)99999U),
+        ]);
+        float[] actual = new float[6], expected = new float[6];
+        rejected.Render(0, 6, actual);
+        reference.Render(0, 6, expected);
+        Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+        Assert.That(errors, Has.Count.EqualTo(3));
+    }
+
     private static FilterInstance Echo()
     {
         FilterDefinition definition = new((ObjectId)12003U, "Echo", [
