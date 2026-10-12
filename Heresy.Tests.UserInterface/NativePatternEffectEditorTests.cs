@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 
 using AwesomeAssertions;
 
 using Heresy.Core.Patterns;
+using Heresy.Core.Filters;
+using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.PatternEditing;
@@ -67,6 +70,55 @@ public sealed class NativePatternEffectEditorTests
 
 		rebuilt.Should().Be(effect);
 		rebuilt.GetType().Should().Be(effect.GetType());
+	}
+
+	[Test]
+	public void NativeFilterTextEditorUsesDefinitionDescriptorsAndShowsErrorsBeforeSave()
+	{
+		SongDocument document = new();
+		ObjectId filterId = document.AllocateObjectId();
+		document.Add(new FilterDefinition(filterId, "EQ", [
+			new FilterStageDefinition(2, "stage2", FilterKind.BiquadLowPass),
+		]));
+		var original = new SetChannelFilterAssignmentsPatternEffect(
+			"stage2.CutoffHz = 2500", filterId);
+		var fields = NativePatternEffectEditor.Describe(
+			original, CultureInfo.InvariantCulture).Fields;
+		Assert.That(fields.Single(f => f.Key == "assignments").Multiline, Is.True);
+		Dictionary<string, string> inputs = fields.ToDictionary(f => f.Key,
+			f => f.Value);
+		Assert.That(NativePatternEffectEditor.Rebuild(original, inputs,
+			CultureInfo.InvariantCulture, document), Is.EqualTo(original));
+		inputs["assignments"] = """
+			stage2.CutoffHz = 2000
+			stage2.CutoffHz = 2500
+			""";
+		Assert.That(() => NativePatternEffectEditor.Rebuild(original, inputs,
+			CultureInfo.InvariantCulture, document),
+			Throws.ArgumentException.With.Message.Contains("Duplicate"));
+		inputs["assignments"] = "stage2.Unsupported = 7";
+		Assert.That(() => NativePatternEffectEditor.Rebuild(original, inputs,
+			CultureInfo.InvariantCulture, document), Throws.ArgumentException);
+	}
+
+	[Test]
+	public void NativeFilterSelectionEditorRejectsMissingOrWrongTypeDefinition()
+	{
+		SongDocument document = new();
+		ObjectId filterId = document.AllocateObjectId();
+		document.Add(new FilterDefinition(filterId, "EQ"));
+		var selected = new SetChannelFilterPatternEffect(filterId);
+		var fields = NativePatternEffectEditor.Describe(selected).Fields;
+		var input = fields.ToDictionary(f => f.Key, f => f.Value);
+		Assert.That(NativePatternEffectEditor.Rebuild(selected, input,
+			CultureInfo.InvariantCulture, document), Is.EqualTo(selected));
+		input["filterId"] = "999999";
+		Assert.That(() => NativePatternEffectEditor.Rebuild(selected, input,
+			CultureInfo.InvariantCulture, document), Throws.ArgumentException);
+		input["filterId"] = "";
+		Assert.That(NativePatternEffectEditor.Rebuild(selected, input,
+			CultureInfo.InvariantCulture, document),
+			Is.EqualTo(new SetChannelFilterPatternEffect()));
 	}
 
 	[Test]

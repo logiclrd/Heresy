@@ -553,6 +553,72 @@ public sealed class ChannelOutputFilterRenderingTests
             "host now independently applies its newly selected delay-one");
     }
 
+    [Test]
+    public void MultistageHostTextUpdatesPreserveHistoryAndRejectEntireInvalidBatch()
+    {
+        TestResolver sounds = new();
+        sounds.Add(PulseId, new PulseSound());
+        FilterDefinition definition = new((ObjectId)2001U, "Two-stage comb", [
+            new FilterStageDefinition(2, "stage2", FilterKind.CombFeedforward),
+            new FilterStageDefinition(20, "stage20", FilterKind.CombFeedforward),
+        ]);
+        FilterInstance initial = new(definition);
+        initial.SetStageParameters(2, [
+            new("DelaySeconds", FilterParameterValue.FromNumber(0.001)),
+            new("Feedforward", FilterParameterValue.FromNumber(1)),
+            new("Mix", FilterParameterValue.FromNumber(1)),
+        ]);
+        initial.SetStageParameters(20, [
+            new("DelaySeconds", FilterParameterValue.FromNumber(0.002)),
+            new("Feedforward", FilterParameterValue.FromNumber(1)),
+            new("Mix", FilterParameterValue.FromNumber(1)),
+        ]);
+        PlaybackSession baseline = Session(sounds);
+        PlaybackSession changed = Session(sounds);
+        foreach (var session in new[] { baseline, changed })
+        {
+            session.ApplyLiveEvent(ChannelTarget.Physical(0), [
+                new SetChannelFilterCommand { Configuration = initial },
+                new StartNoteCommand(PulseId),
+            ]);
+        }
+        baseline.Render(0, 1, new float[1]);
+        changed.Render(0, 1, new float[1]);
+        List<string> errors = [];
+        changed.ChannelFilterCommandRejected = errors.Add;
+        changed.ApplyLiveEvent(ChannelTarget.Physical(0), [
+            new SetChannelFilterAssignmentsCommand("""
+                stage2.Feedforward = 0.5
+                stage20.Mix = 1
+                stage20.Nonexistent = 3
+                """),
+        ]);
+        float[] unchanged = new float[7], reference = new float[7];
+        changed.Render(1, 7, unchanged);
+        baseline.Render(1, 7, reference);
+        Assert.That(errors, Has.Count.EqualTo(1));
+        Assert.That(unchanged, Is.EqualTo(reference).Within(1e-6f),
+            "no earlier valid parameter or stage may commit on failure");
+
+        PlaybackSession valid = Session(sounds);
+        valid.ApplyLiveEvent(ChannelTarget.Physical(0), [
+            new SetChannelFilterCommand { Configuration = initial },
+            new StartNoteCommand(PulseId),
+        ]);
+        valid.Render(0, 1, new float[1]);
+        valid.ApplyLiveEvent(ChannelTarget.Physical(0), [
+            new SetChannelFilterAssignmentsCommand("""
+                # selectively update a structural-free parameter
+                stage2.Feedforward = 0.5
+                stage20.Mix = 1
+                """),
+        ]);
+        float[] edited = new float[7];
+        valid.Render(1, 7, edited);
+        Assert.That(edited, Is.Not.EqualTo(reference),
+            "valid multi-stage text produces an audible filter change");
+    }
+
     private static FilterInstance Echo(uint id, double seconds)
     {
         FilterDefinition definition = new((ObjectId)id, "Echo", [
