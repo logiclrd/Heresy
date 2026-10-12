@@ -27,6 +27,7 @@ internal sealed class FmFilterNodeProcessor
 	private readonly FastAllPassStage[] _fastAllPasses;
 	private readonly FastFeedbackCombStage[] _fastFeedbackCombs;
 	private readonly FastFeedforwardCombStage[] _fastFeedforwardCombs;
+	private readonly FastFirControlStage[] _fastFirs;
 	private readonly bool _useFastNumeric;
 	private readonly int _audioIndex;
 
@@ -61,6 +62,12 @@ internal sealed class FmFilterNodeProcessor
 		int StageIndex, int FeedforwardBindingIndex, int MixBindingIndex,
 		double BaseFeedforward, double BaseMix);
 
+	private readonly record struct FastFirControlStage(
+		int StageIndex, int StageId, FilterKind Kind,
+		int CutoffBindingIndex, int LowBindingIndex, int HighBindingIndex,
+		double BaseCutoff, double BaseLow, double BaseHigh,
+		int TapCount, double WidthHz, string PhaseResponse);
+
 	public FmFilterNodeProcessor(FmFilterNode node,
 		IReadOnlyDictionary<int, int> indexById)
 	{
@@ -90,6 +97,7 @@ internal sealed class FmFilterNodeProcessor
 		List<FastAllPassStage> allPasses = [];
 		List<FastFeedbackCombStage> feedbackCombs = [];
 		List<FastFeedforwardCombStage> feedforwardCombs = [];
+		List<FastFirControlStage> firs = [];
 		bool supported = _bindings.Length != 0;
 		ConfiguredFilterStage[] stages = _initial?.GetStages().ToArray() ?? [];
 		for (int stageIndex = 0; stageIndex < stages.Length; stageIndex++)
@@ -108,6 +116,8 @@ internal sealed class FmFilterNodeProcessor
 			int feedback = -1;
 			int feedforward = -1;
 			int mix = -1;
+			int lowCutoff = -1;
+			int highCutoff = -1;
 			bool stageBound = false;
 			for (int bindingIndex = 0; bindingIndex < _bindings.Length;
 				bindingIndex++)
@@ -151,6 +161,14 @@ internal sealed class FmFilterNodeProcessor
 					StringComparison.OrdinalIgnoreCase)
 					&& stage.Kind is (FilterKind.CombFeedback or FilterKind.CombFeedforward))
 					mix = bindingIndex;
+				else if (string.Equals(binding.ParameterName, "LowCutoffHz",
+					StringComparison.OrdinalIgnoreCase)
+					&& stage.Kind is (FilterKind.FirBandPass or FilterKind.FirNotch))
+					lowCutoff = bindingIndex;
+				else if (string.Equals(binding.ParameterName, "HighCutoffHz",
+					StringComparison.OrdinalIgnoreCase)
+					&& stage.Kind is (FilterKind.FirBandPass or FilterKind.FirNotch))
+					highCutoff = bindingIndex;
 				else
 					supported = false;
 			}
@@ -159,7 +177,8 @@ internal sealed class FmFilterNodeProcessor
 			// Both Comb kinds have no CutoffHz: only read the
 			// descriptor for families that actually expose it.
 			double baseCutoff = stage.Kind is (FilterKind.CombFeedback
-				or FilterKind.CombFeedforward)
+				or FilterKind.CombFeedforward or FilterKind.FirBandPass
+				or FilterKind.FirNotch)
 				? 0 : stage.Parameters.GetParameter("CutoffHz").NumericValue;
 			if (stage.Kind == FilterKind.OnePole || isSvf)
 			{
@@ -201,13 +220,25 @@ internal sealed class FmFilterNodeProcessor
 					stageIndex, feedforward, mix,
 					stage.Parameters.GetParameter("Feedforward").NumericValue,
 					stage.Parameters.GetParameter("Mix").NumericValue));
+			else if (LinearPhaseFirFilterStageFactory.IsStandardFir(stage.Kind))
+			{
+				bool band = stage.Kind is FilterKind.FirBandPass or FilterKind.FirNotch;
+				firs.Add(new FastFirControlStage(stageIndex, stage.StageId,
+					stage.Kind, cutoff, lowCutoff, highCutoff, baseCutoff,
+					band ? stage.Parameters.GetParameter("LowCutoffHz").NumericValue : 0,
+					band ? stage.Parameters.GetParameter("HighCutoffHz").NumericValue : 0,
+					(int)stage.Parameters.GetParameter("TapCount").NumericValue,
+					stage.Parameters.GetParameter("TransitionWidthHz").NumericValue,
+					stage.Parameters.GetParameter("PhaseResponse").ChoiceValue!));
+			}
 			else
 				supported = false;
 		}
 		_useFastNumeric = supported
 			&& tpt.Count + biquads.Count + ladders.Count
 				+ saturatedLadders.Count + allPasses.Count
-				+ feedbackCombs.Count + feedforwardCombs.Count > 0;
+				+ feedbackCombs.Count + feedforwardCombs.Count
+				+ firs.Count > 0;
 		_fastStages = _useFastNumeric ? [.. tpt] : [];
 		_fastBiquads = _useFastNumeric ? [.. biquads] : [];
 		_fastLadders = _useFastNumeric ? [.. ladders] : [];
@@ -215,6 +246,7 @@ internal sealed class FmFilterNodeProcessor
 		_fastAllPasses = _useFastNumeric ? [.. allPasses] : [];
 		_fastFeedbackCombs = _useFastNumeric ? [.. feedbackCombs] : [];
 		_fastFeedforwardCombs = _useFastNumeric ? [.. feedforwardCombs] : [];
+		_fastFirs = _useFastNumeric ? [.. firs] : [];
 
 	}
 
@@ -223,7 +255,7 @@ internal sealed class FmFilterNodeProcessor
 		internal State(FilterInstance? initial,
 			double[] initialValues, int sampleRate, int tptCount, int biquadCount, int ladderCount,
 			int saturatedLadderCount, int allPassCount, int combCount,
-			int feedforwardCount)
+			int feedforwardCount, int firCount)
 		{
 			Configuration = initial?.Clone();
 			Values = (double[])initialValues.Clone();
@@ -241,6 +273,12 @@ internal sealed class FmFilterNodeProcessor
 			CombScratch = new RealtimeFeedbackCombCoefficients[combCount];
 			FeedforwardUpdates = new RealtimeFeedforwardCombStageUpdate[feedforwardCount];
 			FeedforwardScratch = new RealtimeFeedforwardCombCoefficients[feedforwardCount];
+			if (firCount > 0)
+			{
+				FirControl = new FirControlPreparationPolicy(sampleRate);
+				FirRequests = new FirControlRequest[
+					Math.Min(firCount, FirControlPreparationPolicy.MaximumQueuedStages)];
+			}
 			if (Configuration is not null)
 				Chain = new StreamingFilterChain(
 					new FilterChain([Configuration]), sampleRate, 1);
@@ -263,6 +301,8 @@ internal sealed class FmFilterNodeProcessor
 		internal RealtimeFeedbackCombCoefficients[] CombScratch { get; }
 		internal RealtimeFeedforwardCombStageUpdate[] FeedforwardUpdates { get; }
 		internal RealtimeFeedforwardCombCoefficients[] FeedforwardScratch { get; }
+		internal FirControlPreparationPolicy? FirControl { get; }
+		internal FirControlRequest[]? FirRequests { get; }
 	}
 
 	public State CreateState(int sampleRate)
@@ -271,7 +311,7 @@ internal sealed class FmFilterNodeProcessor
 			sampleRate, _fastStages.Length, _fastBiquads.Length,
 			_fastLadders.Length, _fastSaturatedLadders.Length,
 			_fastAllPasses.Length, _fastFeedbackCombs.Length,
-			_fastFeedforwardCombs.Length);
+			_fastFeedforwardCombs.Length, _fastFirs.Length);
 
 	/// <summary>
 	/// Evaluate all connected parameters as absolute values in the authored
@@ -336,6 +376,51 @@ internal sealed class FmFilterNodeProcessor
 			RetuneCompatibility(state, sourceValues);
 			return;
 		}
+
+		// FIR parameter snapshots are only captured and admitted here:
+		// no windowed-sinc design, phase conversion, FilterInstance clone
+		// or filter history rebuild may happen in this live PCM method.
+		// Until the per-phase FIR consumers are installed, any FIR change
+		// keeps the previous valid kernel and prevents *all* mixed-family
+		// updates in that frame.
+		bool firDirty = false;
+		foreach (FastFirControlStage stage in _fastFirs)
+		{
+			if (HasChanged(stage.CutoffBindingIndex, state, sourceValues, _bindings)
+				|| HasChanged(stage.LowBindingIndex, state, sourceValues, _bindings)
+				|| HasChanged(stage.HighBindingIndex, state, sourceValues, _bindings))
+			{
+				firDirty = true;
+				break;
+			}
+		}
+		if (firDirty)
+		{
+			FirControlRequest[]? requests = state.FirRequests;
+			if (requests is null || _fastFirs.Length > requests.Length)
+			{
+				state.FirControl?.Clear();
+				return;
+			}
+			for (int i = 0; i < _fastFirs.Length; i++)
+			{
+				FastFirControlStage stage = _fastFirs[i];
+				requests[i] = new FirControlRequest(
+					stage.StageIndex, stage.StageId, stage.Kind,
+					ValueOrDefault(stage.CutoffBindingIndex, stage.BaseCutoff,
+						sourceValues, _bindings),
+					ValueOrDefault(stage.LowBindingIndex, stage.BaseLow,
+						sourceValues, _bindings),
+					ValueOrDefault(stage.HighBindingIndex, stage.BaseHigh,
+						sourceValues, _bindings),
+					stage.TapCount, stage.WidthHz, stage.PhaseResponse);
+			}
+			state.FirControl!.TryOffer(requests.AsSpan(0, _fastFirs.Length));
+			return;
+		}
+		// The source returned to its accepted numeric FIR settings:
+		// discard obsolete pending requests before handling other stages.
+		state.FirControl?.Clear();
 
 		int tptCount = 0;
 		foreach (FastStage stage in _fastStages)
