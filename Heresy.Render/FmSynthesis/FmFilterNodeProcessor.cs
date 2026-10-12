@@ -327,6 +327,12 @@ internal sealed class FmFilterNodeProcessor
 		if (state.FirControl is null || state.Configuration is null
 			|| state.FirControl.PendingCount == 0)
 			return false;
+		// Minimum/maximum-phase publication is deliberately owned by
+		// separate milestones. Do not waste an off-loop FFT preparation
+		// that this linear-only consumer would reject anyway.
+		foreach (FastFirControlStage stage in _fastFirs)
+			if (stage.PhaseResponse != "Linear")
+				return false;
 		if (!state.FirControl.TryPreparePending(state.Configuration,
 			out PreparedFirControlBatch? prepared)
 			|| prepared is null || !prepared.AllLinear)
