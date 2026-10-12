@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Threading;
 
 using Heresy.Core.Filters;
 using Heresy.Core.FmSynthesis;
@@ -272,6 +273,51 @@ public sealed class FmRealtimeLinearFirPublicationTests
 		Assert.That(allocated, Is.LessThan(4096),
 			$"admitted 127-tap PCM crossfade allocated {allocated} bytes");
 	}
+
+    [Test]
+    public void MovingFmFirControlUsesAsyncPreparedHeldQuantumAndPreservesPcm()
+    {
+        FilterInstance use = Fir(FilterKind.FirLowPass, 127);
+        FmSynthSound sound = new(new FmSynthGraph([
+            new FmConstantNode(1, 0.65),
+            new FmOscillatorNode(2, FmOscillatorWaveform.Sine, 130,
+                minimum: 3400, maximum: 5200, constant: true),
+            new FmFilterNode(3, 1, use, [
+                new FmFilterParameterConnection(1, FilterKind.FirLowPass,
+                    0, "CutoffHz", 2),
+            ]),
+        ], 3), new EmptyResolver());
+        SoundState state = sound.CreateState();
+        RenderContext context = Context();
+        float[] actual = new float[100];
+        sound.Render(context, state, 0, 1, actual.AsSpan(0, 1));
+        using FirPreparationScheduler worker = new();
+        sound.QueuePendingFirControls(state, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedPreparationCount > 0,
+            TimeSpan.FromSeconds(4)), Is.True);
+        sound.AdoptPreparedFirControls(state);
+        sound.Render(context, state, 1, actual.Length - 1,
+            actual.AsSpan(1));
+
+        FilterInstance selected = use.Clone();
+        selected.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(4300));
+        StreamingFilterChain reference =
+            new(new FilterChain([use]), Rate, 1);
+        Span<float> sample = stackalloc float[1];
+        for (int frame = 0; frame < actual.Length; frame++)
+        {
+            if (frame == 1)
+                reference.Configure(new FilterChain([selected]));
+            sample[0] = 0.65f;
+            reference.ProcessFrame(sample);
+            Assert.That(actual[frame], Is.EqualTo(sample[0]).Within(1e-6f),
+                $"FM held cutoff frame {frame}");
+        }
+        sound.QueuePendingFirControls(state, worker);
+        Assert.That(worker.Fault, Is.Null);
+    }
 
 	private static float[] Scheduled(FmSynthSound sound)
 	{
