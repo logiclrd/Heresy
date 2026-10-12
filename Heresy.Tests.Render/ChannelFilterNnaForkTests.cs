@@ -131,6 +131,43 @@ public sealed class ChannelFilterNnaForkTests
     }
 
     [Test]
+    public void FirstDisplacedVirtualFrameIncludesCopiedOldHistoryWithExactPcm()
+    {
+        // The prior host has a one-frame delay history from the first note.
+        // At frame one the old voice continues on a fork and the physical
+        // host is re-selected with a new two-frame delay. The old note has
+        // no fresh excitation, so its *first virtual frame* outputs exactly
+        // the copied original host's pending echo.
+        PlaybackSession session = CreateSession(new LongPulse(), Schedule(
+            Event(0, new SetChannelFilterCommand {
+                    Configuration = Echo(34050, 0.001),
+                }, new StartNoteCommand(SoundId)),
+            Event(1, new StartNoteCommand(SoundId),
+                new SetChannelFilterCommand {
+                    Configuration = Echo(34051, 0.002),
+                })));
+        float[] entire = new float[6];
+        session.Render(0, entire.Length, entire);
+        Assert.That(entire, Is.EqualTo(new float[] { 1, 2, 0, 1, 0, 0 }),
+            "the fork's first output sample retains its prior ring history; "
+            + "the physical host's next delay is independent");
+
+        PlaybackSession partitioned = CreateSession(new LongPulse(), Schedule(
+            Event(0, new SetChannelFilterCommand {
+                    Configuration = Echo(34052, 0.001),
+                }, new StartNoteCommand(SoundId)),
+            Event(1, new StartNoteCommand(SoundId),
+                new SetChannelFilterCommand {
+                    Configuration = Echo(34053, 0.002),
+                })));
+        float[] split = new float[6];
+        partitioned.Render(0, 1, split.AsSpan(0, 1));
+        partitioned.Render(1, 2, split.AsSpan(1, 2));
+        partitioned.Render(3, 3, split.AsSpan(3, 3));
+        Assert.That(split, Is.EqualTo(entire));
+    }
+
+    [Test]
     public void DisplacedNnaOutputEnvelopeRemainsIndependentAfterPhysicalDetach()
     {
         PlaybackSession session = CreateSession(new LongPulse(), Schedule(
