@@ -59,6 +59,8 @@ internal sealed class NoteFilterEnvelopeRealtimeControls
 	private readonly FirControlPreparationPolicy? _firPolicy;
     private readonly FirPreparationMailbox? _firMailbox;
 	private readonly FirControlRequest[] _firRequests;
+    private readonly FirControlRequest[] _heldRequests;
+    private int _heldCount;
 	private readonly RealtimeFirStageUpdate[] _firUpdates;
 	private PreparedFirControlBatch? _firReady;
 	private bool _reportedBudget;
@@ -137,6 +139,7 @@ internal sealed class NoteFilterEnvelopeRealtimeControls
 		_firRequests = new FirControlRequest[Math.Min(firCount,
 			FirControlPreparationPolicy.MaximumQueuedStages)];
 		_firUpdates = new RealtimeFirStageUpdate[_firRequests.Length];
+        _heldRequests = new FirControlRequest[_firRequests.Length];
 		_firPolicy = firCount > 0 ? new FirControlPreparationPolicy(sampleRate) : null;
         _firMailbox = firCount > 0 ? new FirPreparationMailbox(_authored, sampleRate) : null;
 	}
@@ -169,6 +172,7 @@ internal sealed class NoteFilterEnvelopeRealtimeControls
 		}
 		_bindings = [.. prepared];
 		_firReady = null;
+        _heldCount = 0;
 		_firPolicy?.Clear();
 		_reportedBudget = false;
 	}
@@ -194,8 +198,17 @@ internal sealed class NoteFilterEnvelopeRealtimeControls
 
     /// <summary>Coalesce the latest request without running FIR design on PCM.</summary>
     internal bool QueuePendingFirs(FirPreparationScheduler scheduler)
-        => _firPolicy is not null && _firMailbox is not null
-            && _firMailbox.CapturePending(_firPolicy, scheduler);
+    {
+        if (_firPolicy is null || _firMailbox is null
+            || _firPolicy.PendingCount == 0) return false;
+        // A moving FIR control is sampled once at a quantum boundary and
+        // then held until its prepared kernel can actually be published.
+        // This prevents an audio-rate curve from invalidating every FFT
+        // result before the worker has a chance to finish it.
+        if (_heldCount == 0)
+            _heldCount = _firPolicy.CopyPending(_heldRequests);
+        return _firMailbox.CapturePending(_firPolicy, scheduler);
+    }
 
 	/// <summary>One complete atomic sample's numeric controls. Rejected
 	/// values do not alter any coefficient/history or last accepted value.</summary>
@@ -249,6 +262,21 @@ internal sealed class NoteFilterEnvelopeRealtimeControls
 			}
 			stage.Proposed[binding.ParameterIndex] = value;
 		}
+
+        // Keep the captured FIR target stable while its immutable plan is
+        // designed on the worker. The numeric IIR controls remain sampled
+        // at the current frame, but mixed-family publication is atomic.
+        for (int i = 0; i < _heldCount; i++)
+        {
+            FirControlRequest hold = _heldRequests[i];
+            Stage stage = _stages[hold.StageIndex];
+            int index = stage.IndexOf("CutoffHz");
+            if (index >= 0) stage.Proposed[index] = hold.CutoffHz;
+            index = stage.IndexOf("LowCutoffHz");
+            if (index >= 0) stage.Proposed[index] = hold.LowCutoffHz;
+            index = stage.IndexOf("HighCutoffHz");
+            if (index >= 0) stage.Proposed[index] = hold.HighCutoffHz;
+        }
 
 		bool anyDirty = false, firDirty = false;
 		for (int i = 0; i < _stages.Length; i++)
@@ -357,6 +385,7 @@ internal sealed class NoteFilterEnvelopeRealtimeControls
 				Array.Copy(stage.Proposed, stage.Accepted, stage.Proposed.Length);
 		if (ready is not null)
 		{
+            _heldCount = 0;
 			_firReady = null;
 			_firPolicy!.Clear();
 			_reportedBudget = false;
