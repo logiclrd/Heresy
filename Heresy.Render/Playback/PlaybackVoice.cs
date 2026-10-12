@@ -344,9 +344,6 @@ public sealed class PlaybackVoice
 	// edits made while the envelope was bound).
 	private readonly Dictionary<(int Id, string Parameter), EnvelopePlaybackState>
 		_eventFilterParameterEnvelopes = [];
-	private Dictionary<(int Id, string Parameter), double>
-		_lastAppliedEventEnvelopeValues = [];
-	private bool _refreshEventFilterEnvelopes;
 	private NoteFilterEnvelopeRealtimeControls? _eventEnvelopeRealtime;
 	private NoteFilterEnvelopeRealtimeControls? _enclosingEnvelopeRealtime;
 	public StreamingFilterChain? EventFilterState { get; private set; }
@@ -356,9 +353,6 @@ public sealed class PlaybackVoice
 	// attachment frames, never mutable EnvelopePlaybackState instances.
 	private readonly Dictionary<(FlattenedSourceVolume Scope, int Id, string Parameter),
 		EnvelopePlaybackState> _enclosingFilterParameterEnvelopes = [];
-	private Dictionary<(FlattenedSourceVolume Scope, int Id, string Parameter), double>
-		_lastAppliedEnclosingEnvelopeValues = [];
-	private bool _refreshEnclosingFilterEnvelopes;
 
 
 	/// <summary>The unique dynamic virtual output host created on NNA
@@ -373,8 +367,7 @@ public sealed class PlaybackVoice
 		=> _eventFilterConfiguration?.Clone();
 
 	internal bool HasEventFilterParameterEnvelopes
-		=> _eventFilterParameterEnvelopes.Count != 0
-			|| _refreshEventFilterEnvelopes;
+		=> _eventFilterParameterEnvelopes.Count != 0;
 
 	internal void SetEventFilterParameterEnvelope(
 		int stageId, string parameterName,
@@ -401,7 +394,6 @@ public sealed class PlaybackVoice
 		else
 			_eventFilterParameterEnvelopes[key] =
 				new EnvelopePlaybackState(curve, frame, _sampleRate);
-		_refreshEventFilterEnvelopes = true;
 		RebindEventEnvelopeRealtime();
 	}
 
@@ -448,8 +440,6 @@ public sealed class PlaybackVoice
 	internal void ClearEventFilterParameterEnvelopes()
 	{
 		_eventFilterParameterEnvelopes.Clear();
-		_lastAppliedEventEnvelopeValues.Clear();
-		_refreshEventFilterEnvelopes = false;
 		RebindEventEnvelopeRealtime();
 	}
 
@@ -458,7 +448,6 @@ public sealed class PlaybackVoice
 	{
 		_eventFilterConfiguration = configuration;
 		EventFilterState = state;
-		_refreshEventFilterEnvelopes = true;
 		RebuildEventEnvelopeRealtime();
 	}
 
@@ -479,7 +468,6 @@ public sealed class PlaybackVoice
 		var key = (scope, stageId, parameter);
 		if (state is null) _enclosingFilterParameterEnvelopes.Remove(key);
 		else _enclosingFilterParameterEnvelopes[key] = state;
-		_refreshEnclosingFilterEnvelopes = true;
 		RebindEnclosingEnvelopeRealtime();
 	}
 
@@ -488,7 +476,6 @@ public sealed class PlaybackVoice
 		foreach (var key in _enclosingFilterParameterEnvelopes.Keys
 			.Where(key => ReferenceEquals(key.Scope, scope)).ToArray())
 			_enclosingFilterParameterEnvelopes.Remove(key);
-		_refreshEnclosingFilterEnvelopes = true;
 		RebindEnclosingEnvelopeRealtime();
 	}
 
@@ -559,7 +546,6 @@ public sealed class PlaybackVoice
 		StreamingFilterChain? state)
 	{
 		EnclosingEventFilterState = state;
-		_refreshEnclosingFilterEnvelopes = true;
 		RebuildEnclosingEnvelopeRealtime();
 	}
 
