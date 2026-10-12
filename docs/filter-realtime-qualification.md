@@ -43,3 +43,19 @@ The single-voice 127-tap profile completed both total audio and worst observed q
 The production design retains a dedicated PCM rendering worker and a bounded ring buffer; SDL/system callbacks drain rather than preparing filters or owning DSP computation. Real target-machine qualification must account for concurrent voices, IIR cost and oversampling, 2,047-tap FIR O(N) convolution, buffer depth, worker scheduling, output channel count, and other parts of the song renderer. No automatic CPU-resource admission gate or automatic FIR preparation scheduler is implemented by this milestone. Applications hosting these features must set practical voice/effect budgets or fail gracefully with documented underrun/overload behavior rather than promising arbitrary concurrency. Real devices and other OS/CPU families require their own latency/headroom tests.
 
 **Scope boundary:** This closes the discrete measurement/correctness milestone; it does not implement Instrument tone, note-level, channel-output, or master-output Filter bindings, nor guarantee physical hard-real-time playback under all valid filter settings. No release tag was created.
+
+## Note Filter Envelope numeric-control qualification — 12 October 2026
+
+The new `NoteFilterEnvelopeRealtimeControls` engine processes ordinary note-event and recursively flattened inherited Filter parameter Envelopes through the existing atomic two-phase typed scalar kernels. Attachment, release, replacement and detachment rebuild only control-side routing metadata; per-sample code preflights descriptor bounds and mixed stage proposals, retains the source voice's immutable authored base, and uses the same 32-frame compatible state interpolation as full `StreamingFilterChain.Configure`. Separate regression tests compare frame-exact PCM for mixed Feedforward Comb, OnePole and Biquad Peaking, two inherited layers with colliding stage IDs, invalid all-or-nothing batches, delayed FIR plan publication and nonlinear FIR budget fallback. Session-level tests verify explicitly matching FIR control boundary behavior.
+
+**Observed GitHub-hosted Linux x64 Release benchmark** (Ubuntu runner, .NET 10.0.12, four reported processors; 48 kHz, 4,096 frames = 85.33ms audio; three serial stages with continuously changing numeric controls):
+
+| Workload | Observed PCM/retune wall time | Relative to audio duration | Managed PCM/control allocations |
+| --- | ---: | ---: | ---: |
+| 1 note voice | 6.59 ms | 0.08× | 0 bytes in measured region |
+| 4 independent note voices | 30.18 ms | 0.35× | 0 bytes in measured region |
+| 4,096 additional scalar-only frame retunes | 5.179 ms | 0.06× | 0 bytes |
+
+These are **test workload observations**, not hardware guarantees. The independently measured more expensive nine-stage/saturated-ladder/2,047-tap cases above may still fail their real-time deadline.
+
+**FIR qualification and host boundary:** The FIR policy maintains the existing at-most-four-stage, 131,072 work-unit/2 MiB bounded preparation policy for an *entire* proposal, including multiple inherited Filter layers; candidate publication matches stage/layer identity and exact requested values. No FIR coefficient work executes inside PCM. `PlaybackSession.PreparePendingNoteFilterEnvelopeControls` is an explicit synchronous off-PCM control boundary; `OfflinePlaybackRenderer` invokes it between export blocks and may spend more wall time than the emitted audio. Real-time playback still lacks a separate asynchronous producer for these requests. A new independently actionable TODO tracks non-PCM-worker scheduling/hand-off, scope lifetime/seek, automated cadence and physical device listening. Until then, continuously moving audio-rate FIR Envelopes may remain at their previous valid coefficients during live playback. Do not claim complete real-time FIR automation or universal hard-realtime certification.
