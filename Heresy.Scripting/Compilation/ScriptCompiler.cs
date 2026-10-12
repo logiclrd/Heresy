@@ -1184,6 +1184,7 @@ public static class ScriptCompiler
 						or "Seek" or "Pan" or "Surround"
 						or "Filter" or "FilterCutoff" or "FilterResonance"
 						or "NoteFilter" or "NoteFilterVirtual"
+						or "ChannelFilter" or "ChannelFilterVirtual"
 						or "NoteVirtual" or "OffVirtual" or "CutVirtual"
 						or "OffVirtualInScope" or "CutVirtualInScope"
 						or "OffAllVirtual" or "CutAllVirtual"
