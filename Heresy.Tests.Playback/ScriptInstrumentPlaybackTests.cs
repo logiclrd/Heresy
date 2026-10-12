@@ -21,6 +21,40 @@ namespace Heresy.Tests.Playback;
 [TestFixture]
 public sealed class ScriptInstrumentPlaybackTests
 {
+    [Test]
+    public void PreparedScriptedInstrumentNnaFollowsIncomingPitchAndPreservesBoundVoicePolicy()
+    {
+        SongDocument song = new();
+        ObjectId sample = Sample(song, 16384);
+        ObjectId id = song.AllocateObjectId();
+        ScriptInstrumentDefinition instrument = new(id, "NNA by pitch")
+        {
+            Source = "0",
+            NnaExpression = "pitchMultiplier < 1.5 ? InstrumentNnaAction.Continue : InstrumentNnaAction.Cut",
+        };
+        instrument.ToneSpecifications.Add(new ToneSpecification
+        { SourceId = sample });
+        song.Add(instrument);
+        ObjectId root = ScriptPattern(song,
+            $"Note(0, 0, _O({id.Value}), pitchMultiplier: 1.0); " +
+            $"Note(1, 0, _O({id.Value}), pitchMultiplier: 2.0);");
+
+        using PreparedIncrementalPlaybackPlan stable =
+            new PreparedIncrementalPlaybackFactory(Mono()).Create(song, root);
+        // Source preparation freezes the first note's compiled NNA; changing
+        // the mutable song after plan creation cannot cut a pre-bound voice.
+        instrument.NnaExpression = "InstrumentNnaAction.Cut";
+        using PreparedIncrementalPlaybackPlan cut =
+            new PreparedIncrementalPlaybackFactory(Mono()).Create(song, root);
+        float[] withContinue = new float[160], withCut = new float[160];
+        stable.Source.Render(withContinue.Length, withContinue);
+        cut.Source.Render(withCut.Length, withCut);
+        Assert.That(withContinue[0], Is.EqualTo(0.5f).Within(1e-5f));
+        Assert.That(withContinue[125], Is.GreaterThan(withCut[125] * 1.8f),
+            "the first note's Continue policy survives the second note's "
+            + "Cut selection and stays independent of later authoring edits");
+    }
+
     [TestCase(1.0, 0.5)]
     [TestCase(2.0, 0.25)]
     public void ScriptSelectsDifferentSourceForEachNotePitch(double pitch, double expected)
