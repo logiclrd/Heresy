@@ -13,7 +13,8 @@ namespace Heresy.Render.Filters;
 internal readonly record struct FirControlRequest(
 	int StageIndex, int StageId, FilterKind Kind,
 	double CutoffHz, double LowCutoffHz, double HighCutoffHz,
-	int TapCount, double TransitionWidthHz, string PhaseResponse);
+	int TapCount, double TransitionWidthHz, string PhaseResponse,
+	int LayerIndex = 0);
 
 /// <summary>A control-side prepared plan; publication into running DSP is
 /// deliberately left to the separate per-FIR response milestones.</summary>
@@ -100,7 +101,8 @@ internal sealed class FirControlPreparationPolicy
 			}
 			for (int j = 0; j < i; j++)
 				if (requests[j].StageIndex == req.StageIndex
-					|| requests[j].StageId == req.StageId)
+					|| (requests[j].LayerIndex == req.LayerIndex
+						&& requests[j].StageId == req.StageId))
 				{
 					_count = 0;
 					return false;
@@ -188,6 +190,87 @@ internal sealed class FirControlPreparationPolicy
 			FirControlRequest[] captured = new FirControlRequest[_count];
 			Array.Copy(_pending, captured, _count);
 			prepared = new PreparedFirControlBatch(plans, captured);
+			_count = 0;
+			return true;
+		}
+		catch (Exception error) when (error is ArgumentException
+			or InvalidOperationException or OverflowException)
+		{
+			_count = 0;
+			return false;
+		}
+	}
+
+	/// <summary>Prepare the same bounded atomic FIR batch for a serial chain
+	/// containing several independently configured note/scope Filters.
+	/// StageIndex is the global serial ordinal; StageId is layer-local.
+	/// All authored layers and their histories remain untouched.</summary>
+	public bool TryPreparePending(FilterChain authored,
+		out PreparedFirControlBatch? prepared)
+	{
+		ArgumentNullException.ThrowIfNull(authored);
+		prepared = null;
+		if (_count == 0) return false;
+		try
+		{
+			IReadOnlyList<FilterInstance> layers = authored.Layers;
+			FilterInstance[] proposed = new FilterInstance[layers.Count];
+			for (int i = 0; i < layers.Count; i++)
+				proposed[i] = layers[i].Clone();
+			for (int i = 0; i < _count; i++)
+			{
+				FirControlRequest request = _pending[i];
+				if ((uint)request.LayerIndex >= (uint)proposed.Length)
+					throw new ArgumentException("Unrecognized FIR layer.");
+				if (request.Kind is FilterKind.FirLowPass or FilterKind.FirHighPass)
+					proposed[request.LayerIndex].SetStageParameter(
+						request.StageId, "CutoffHz",
+						FilterParameterValue.FromNumber(request.CutoffHz));
+				else
+					proposed[request.LayerIndex].SetStageParameters(
+						request.StageId, [
+							new("LowCutoffHz", FilterParameterValue.FromNumber(request.LowCutoffHz)),
+							new("HighCutoffHz", FilterParameterValue.FromNumber(request.HighCutoffHz)),
+						]);
+			}
+			PreparedFirControlStage[] stages = new PreparedFirControlStage[_count];
+			for (int i = 0; i < _count; i++)
+			{
+				FirControlRequest request = _pending[i];
+				int ordinal = 0;
+				bool found = false;
+				for (int layerIndex = 0; layerIndex < proposed.Length; layerIndex++)
+				{
+					FilterInstance instance = proposed[layerIndex];
+					foreach (ConfiguredFilterStage stage in instance.GetStages())
+					{
+						if (ordinal++ != request.StageIndex) continue;
+						if (layerIndex != request.LayerIndex
+							|| stage.StageId != request.StageId
+							|| stage.Kind != request.Kind)
+							throw new ArgumentException("FIR stage identity changed.");
+						Dictionary<string, FilterParameterValue> values =
+							new(StringComparer.OrdinalIgnoreCase);
+						foreach (FilterParameterDescriptor descriptor
+							in stage.Parameters.Parameters)
+							values.Add(descriptor.Name,
+								stage.Parameters.GetParameter(descriptor.Name));
+						PreparedFilterStage preparedStage = new(
+							layerIndex, request.StageIndex, instance.DefinitionId,
+							stage.StageId, stage.Kind,
+							instance.GetStageGenerationForPersistence(stage.StageId),
+							values);
+						stages[i] = new PreparedFirControlStage(request.StageIndex,
+							LinearPhaseFirFilterStageFactory.Instance.Prepare(
+								preparedStage, _sampleRate));
+						found = true;
+					}
+				}
+				if (!found) throw new ArgumentException("FIR stage no longer exists.");
+			}
+			FirControlRequest[] requests = new FirControlRequest[_count];
+			Array.Copy(_pending, requests, _count);
+			prepared = new PreparedFirControlBatch(stages, requests);
 			_count = 0;
 			return true;
 		}
