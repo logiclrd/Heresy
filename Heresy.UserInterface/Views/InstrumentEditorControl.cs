@@ -46,6 +46,11 @@ public sealed class InstrumentEditorControl : UserControl
 	private InstrumentNnaOverride _loadedNnaOverride;
 	private TimeSpan _loadedNnaFade;
 	private readonly ListBox _rows;
+	private readonly InstrumentToneGridSelection _selection = new();
+	private InstrumentToneGridRow[] _projectedRows = [];
+	private readonly Dictionary<InstrumentToneGridSelection.Cell,
+		WeakReference<Border>> _visibleCells = [];
+	private bool _movingGridFocus;
 	private readonly TextBlock _message = new()
 	{
 		TextWrapping = TextWrapping.Wrap,
@@ -80,7 +85,10 @@ public sealed class InstrumentEditorControl : UserControl
 			ItemTemplate = new FuncDataTemplate<InstrumentToneGridRow>(
 				(row, _) => row is null ? null : BuildRow(row)),
 		};
-		_rows.KeyDown += OnGridKeyDown;
+		// Tunnel before TextBox/ComboBox consume arrows, but leave
+		// editing and open popups to their native handlers when appropriate.
+		_rows.AddHandler(InputElement.KeyDownEvent, OnGridKeyDown,
+			RoutingStrategies.Tunnel, handledEventsToo: true);
 		Content = BuildContent();
 		RefreshRows();
 	}
@@ -157,7 +165,9 @@ public sealed class InstrumentEditorControl : UserControl
 		{
 			Text = "One grid, highest note first. Source-less rows stay as editor-only drafts. "
 				+ "Pitch is log₂(multiplier). The nearby-note dropdown snaps Pitch only when selected. "
-				+ "Select a row and press Delete to remove it.",
+				+ "Shift+Arrow or Shift+click selects a rectangular block; Tab/click within the block preserves it. "
+				+ "Up/Down navigate cells, Left/Right leave text at the caret boundary. "
+				+ "Focus a tone cell and press Delete to remove its row.",
 			TextWrapping = TextWrapping.Wrap,
 			Margin = new Thickness(10, 2),
 		};
@@ -505,6 +515,7 @@ public sealed class InstrumentEditorControl : UserControl
 		};
 		RefreshNearest(initialLog);
 
+		WrapRowCells(grid, projected);
 		Border border = new()
 		{
 			Child = grid,
@@ -514,9 +525,8 @@ public sealed class InstrumentEditorControl : UserControl
 				? new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0, 0))
 				: null,
 		};
-		border.AddHandler(InputElement.PointerPressedEvent, (_, _) =>
-			_rows.SelectedItem = projected,
-			RoutingStrategies.Tunnel, handledEventsToo: true);
+		// The ListBox may use a selected row for scrolling, but the
+		// rectangular cell selection lives independently in _selection.
 		if (projected.IsEntry)
 		{
 			// Only commit when focus leaves the *entire row*.
@@ -612,12 +622,19 @@ public sealed class InstrumentEditorControl : UserControl
 
 	private void OnGridKeyDown(object? sender, KeyEventArgs e)
 	{
-		// Avoid eating the Delete key when a TextBox is actively editing
-		// text or a dropdown is manipulating its own selection.
+		if (e.Handled)
+			return;
+		if (HandleGridNavigation(e))
+		{
+			e.Handled = true;
+			return;
+		}
+
+		// Delete still acts on a tone row only when no editable child is
+		// consuming it. Never delete the reserved entry row.
 		if (e.Key != Key.Delete
 			|| e.Source is TextBox or ComboBox
-			|| _rows.SelectedItem is not InstrumentToneGridRow selected
-			|| selected.Index is not int index)
+			|| _selection.Focused?.ToneIndex is not int index)
 			return;
 		try
 		{
@@ -655,15 +672,194 @@ public sealed class InstrumentEditorControl : UserControl
 			_offset.Text = _instrument.Offset.ToString(
 				CultureInfo.CurrentCulture);
 			InstrumentToneGridRow[] projected = _model.Rows.ToArray();
+			_projectedRows = projected;
+			_selection.Reconcile(projected);
+			_visibleCells.Clear();
 			_rows.ItemsSource = projected;
 			if (selectedIndex.HasValue)
 				_rows.SelectedItem = projected.FirstOrDefault(
 					r => r.Index == selectedIndex);
+			RefreshSelectionVisuals();
 		}
 		catch (Exception ex)
 		{
 			_message.Text = ex.Message;
 		}
+	}
+
+	/// <summary>Wrap each projected visual column in a selection surface.
+	/// The wrapper is created by the item template, but selection identity
+	/// is the tone index and column: recycled controls never own the range.</summary>
+	private void WrapRowCells(Grid grid, InstrumentToneGridRow projected)
+	{
+		Control[] contents = grid.Children.ToArray();
+		grid.Children.Clear();
+		for (int column = 0; column < InstrumentToneGridSelection.ColumnCount; column++)
+		{
+			Control? content = contents.FirstOrDefault(
+				control => Grid.GetColumn(control) == column);
+			var cell = new InstrumentToneGridSelection.Cell(projected.Index, column);
+			Border surface = new()
+			{
+				Child = content,
+				Focusable = true,
+				BorderThickness = new Thickness(1),
+				BorderBrush = Brushes.Transparent,
+			};
+			Grid.SetColumn(surface, column);
+			grid.Children.Add(surface);
+			// The event source can be a nested TextBox or ComboBox. Handling
+			// the bubbled GotFocus captures Tab and mouse focus traversal
+			// without relying on the ListBox.SelectedItem.
+			surface.AddHandler(InputElement.GotFocusEvent, (_, _) =>
+			{
+				if (_movingGridFocus)
+					return;
+				if (InstrumentToneGridSelection.RowPosition(
+					_projectedRows, projected.Index) < 0)
+					return;
+				_selection.Focus(cell, _projectedRows);
+				RefreshSelectionVisuals();
+			}, RoutingStrategies.Bubble, handledEventsToo: true);
+			surface.AddHandler(InputElement.PointerPressedEvent, (_, e) =>
+			{
+				if (InstrumentToneGridSelection.RowPosition(
+					_projectedRows, projected.Index) < 0)
+					return;
+				if ((e.KeyModifiers & KeyModifiers.Shift) != 0)
+					_selection.Extend(cell, _projectedRows);
+				else
+					_selection.Focus(cell, _projectedRows);
+				RefreshSelectionVisuals();
+			}, RoutingStrategies.Tunnel, handledEventsToo: true);
+			surface.AttachedToVisualTree += (_, _) =>
+			{
+				_visibleCells[cell] = new WeakReference<Border>(surface);
+				PaintSelection(surface, cell);
+			};
+			surface.DetachedFromVisualTree += (_, _) =>
+			{
+				if (_visibleCells.TryGetValue(cell, out var reference)
+					&& reference.TryGetTarget(out Border? active)
+					&& ReferenceEquals(active, surface))
+					_visibleCells.Remove(cell);
+			};
+			// Templates built in unit tests (or prior to layout) must
+			// already reflect the semantic selection state.
+			PaintSelection(surface, cell);
+		}
+	}
+
+	private void RefreshSelectionVisuals()
+	{
+		foreach (var pair in _visibleCells.ToArray())
+		{
+			if (!pair.Value.TryGetTarget(out Border? surface))
+			{
+				_visibleCells.Remove(pair.Key);
+				continue;
+			}
+			PaintSelection(surface, pair.Key);
+		}
+	}
+
+	private void PaintSelection(Border surface,
+		InstrumentToneGridSelection.Cell cell)
+	{
+		bool selected = _selection.Contains(cell, _projectedRows);
+		bool focused = selected && _selection.Focused == cell;
+		surface.Background = selected
+			? new SolidColorBrush(Color.FromArgb(78, 45, 131, 245))
+			: Brushes.Transparent;
+		surface.BorderBrush = focused ? Brushes.DeepSkyBlue
+			: selected ? Brushes.SteelBlue : Brushes.Transparent;
+	}
+
+	private static Control PreferredFocusControl(Border cell)
+	{
+		if (cell.Child is TextBox or ComboBox or Button)
+			return (Control)cell.Child;
+		if (cell.Child is StackPanel panel)
+			return panel.Children.OfType<Control>()
+				.FirstOrDefault(control => control.Focusable && control.IsVisible)
+				?? cell;
+		return cell;
+	}
+
+	private void FocusSelectedCell(InstrumentToneGridSelection.Cell cell)
+	{
+		if (_visibleCells.TryGetValue(cell, out var reference)
+			&& reference.TryGetTarget(out Border? target))
+		{
+			PreferredFocusControl(target).Focus();
+		}
+	}
+
+	private bool HandleGridNavigation(KeyEventArgs e)
+	{
+		if (_selection.Focused is not InstrumentToneGridSelection.Cell current)
+			return false;
+		if ((e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Alt |
+			KeyModifiers.Meta)) != 0)
+			return false;
+		if (e.Source is ComboBox box && box.IsDropDownOpen)
+			return false;
+
+		int rowDelta = 0, columnDelta = 0;
+		switch (e.Key)
+		{
+			case Key.Up: rowDelta = -1; break;
+			case Key.Down: rowDelta = 1; break;
+			case Key.Left: columnDelta = -1; break;
+			case Key.Right: columnDelta = 1; break;
+			default: return false;
+		}
+
+		bool boundaryShiftLeft = false;
+		if (e.Source is TextBox input && columnDelta != 0)
+		{
+			// Do not hijack normal caret movement or Shift+Arrow text
+			// selection. Only a zero-length selection at the boundary
+			// can transfer keyboard focus to the neighbouring cell.
+			if (input.SelectionStart != input.SelectionEnd)
+				return false;
+			int caret = input.CaretIndex;
+			if (columnDelta < 0 && caret != 0)
+				return false;
+			if (columnDelta > 0 && caret != (input.Text?.Length ?? 0))
+				return false;
+			boundaryShiftLeft =
+				columnDelta < 0 &&
+				(e.KeyModifiers & KeyModifiers.Shift) != 0;
+		}
+		InstrumentToneGridSelection.Cell? neighbor =
+			_selection.Neighbor(rowDelta, columnDelta, _projectedRows);
+		if (neighbor is not InstrumentToneGridSelection.Cell next)
+			return false;
+
+		_movingGridFocus = true;
+		try
+		{
+			if (boundaryShiftLeft)
+				_selection.BeginAt(next, _projectedRows);
+			else if ((e.KeyModifiers & KeyModifiers.Shift) != 0)
+				_selection.Extend(next, _projectedRows);
+			else
+				_selection.BeginAt(next, _projectedRows);
+			int position = InstrumentToneGridSelection.RowPosition(
+				_projectedRows, next.ToneIndex);
+			// Selecting the projected item requests its realization in the
+			// virtualizing ListBox. If not realized yet, focus after layout.
+			_rows.SelectedItem = _projectedRows[position];
+			RefreshSelectionVisuals();
+			Dispatcher.UIThread.Post(() =>
+				FocusSelectedCell(next), DispatcherPriority.Loaded);
+		}
+		finally
+		{
+			_movingGridFocus = false;
+		}
+		return true;
 	}
 
 	private ComboBox BuildSourceBox(ObjectId? selectedId)
