@@ -196,6 +196,18 @@ internal sealed class NoteFilterEnvelopeRealtimeControls
         return false;
     }
 
+    /// <summary>Preserve the previous host's accepted targets while
+    /// rebinding envelopes. No DSP coefficients are redesigned by this copy;
+    /// pending numeric changes are applied on a subsequent PCM frame.</summary>
+    internal void CopyAcceptedFrom(NoteFilterEnvelopeRealtimeControls previous)
+    {
+        foreach (Stage stage in _stages)
+            for (int i = 0; i < stage.Descriptors.Length; i++)
+                if (previous.TryGetAccepted(stage.LayerIndex, stage.StageId,
+                    stage.Descriptors[i].Name, out double accepted))
+                    stage.Accepted[i] = accepted;
+    }
+
     /// <summary>After a command-boundary fork has been configured with
     /// validated effective envelope overrides, align the numeric controller
     /// with those already accepted target values. This prevents spurious
