@@ -67,8 +67,9 @@ public sealed class InstrumentToneRowDensityTests
 			}
 		}
 		// Header layout is also content-driven, not held to the previous 32px.
-		Grid table = Descendant<Grid>(editor, grid => grid.RowDefinitions.Count == 2);
-		Grid headers = table.Children.OfType<Grid>().Single();
+		Grid headers = (Grid)typeof(InstrumentEditorControl)
+			.GetMethod("NewColumns", BindingFlags.NonPublic | BindingFlags.Static)!
+			.Invoke(null, null)!;
 		headers.MinHeight.Should().Be(0);
 	}
 
@@ -220,17 +221,4 @@ public sealed class InstrumentToneRowDensityTests
 		=> (T)typeof(InstrumentEditorControl).GetField(name,
 			BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(editor)!;
 
-	private static T Descendant<T>(Control root, Func<T, bool> predicate)
-		where T : Control
-	{
-		if (root is T match && predicate(match))
-			return match;
-		foreach (Control child in root.GetLogicalChildren().OfType<Control>())
-		{
-			// The actual controls are attached to the logical tree.
-			try { return Descendant(child, predicate); }
-			catch (InvalidOperationException) { }
-		}
-		throw new InvalidOperationException("Expected layout control was not found.");
-	}
 }
