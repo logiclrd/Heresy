@@ -9,6 +9,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 
 using Heresy.Render.Configuration;
+using Heresy.Core.Filters;
 
 namespace Heresy.UserInterface.Dialogs;
 
@@ -19,7 +20,10 @@ public sealed class AudioOutputSettingsDialog : Window
 {
 	private sealed record SpeakerRow(
 		TextBox X, TextBox Y, TextBox Z, TextBox Importance,
-		ComboBox Filter, TextBox Cutoff);
+		ComboBox Filter, TextBox Cutoff, Button Edit)
+    {
+        public FilterInstance? Inline { get; set; }
+    }
 
 	private readonly TextBox _sampleRate;
 	private readonly ComboBox _layout;
@@ -85,7 +89,8 @@ public sealed class AudioOutputSettingsDialog : Window
 			Text = "Rows are in physical output order. Position is X/Y/Z. "
 				+ "Importance weights positional routing. "
 				+ "LFE is a normal output feed (no automatic bass management). "
-				+ "Cutoff is used only for LowPass/HighPass.",
+				+ "Legacy RC low/high-pass preserves saved output settings exactly; "
+                + "choose Filter chain and Edit chain to use the reusable serial DSP engine.",
 			TextWrapping = TextWrapping.Wrap,
 		};
 		// Give the speaker table the remaining space instead of
@@ -167,7 +172,7 @@ public sealed class AudioOutputSettingsDialog : Window
 		_rows.Clear();
 		_speakers.Children.Add(new TextBlock
 		{
-			Text = "Speaker                 X           Y          Z       Importance     Filter           Cutoff Hz",
+			Text = "Speaker                 X           Y          Z       Importance     Filter           Cutoff Hz     Chain",
 		});
 		for (int index = 0; index < configuration.OutputChannelCount; index++)
 		{
@@ -178,12 +183,41 @@ public sealed class AudioOutputSettingsDialog : Window
 			TextBox importance = Number(channel.PositionalImportance, 82);
 			ComboBox filter = new()
 			{
-				ItemsSource = new[] { "None", "LowPass", "HighPass" },
+				ItemsSource = new[] { "None", "LowPass (RC)", "HighPass (RC)", "Filter chain" },
 				SelectedIndex = (int)channel.FilterType,
-				Width = 102,
+				Width = 138,
 			};
 			TextBox cutoff = Number(channel.CutoffHz ?? 1000, 82);
-			_rows.Add(new SpeakerRow(x, y, z, importance, filter, cutoff));
+            Button edit = new() { Content = "Edit chain...", MinWidth = 93 };
+            SpeakerRow state = new(x, y, z, importance, filter, cutoff, edit, edit)
+            {
+                Inline = channel.Filter,
+            };
+            _rows.Add(state);
+            void Refresh()
+            {
+                bool custom = filter.SelectedIndex == (int)OutputFilterType.Chain;
+                edit.IsEnabled = custom;
+                cutoff.IsEnabled = filter.SelectedIndex is 1 or 2;
+            }
+            filter.SelectionChanged += (_, _) => Refresh();
+            edit.Click += async (_, _) =>
+            {
+                try
+                {
+                    FilterInstance? proposed = await new SpeakerFilterChainDialog(
+                        state.Inline, ReadSampleRateOrDefault(), index)
+                        .ShowDialog<FilterInstance?>(this);
+                    if (proposed is not null)
+                        state.Inline = proposed;
+                }
+                catch (Exception ex) when (ex is ArgumentException
+                    or InvalidOperationException)
+                {
+                    _error.Text = ex.Message;
+                }
+            };
+            Refresh();
 			StackPanel row = new()
 			{
 				Orientation = Orientation.Horizontal,
@@ -239,10 +273,11 @@ public sealed class AudioOutputSettingsDialog : Window
 					0 => OutputFilterType.None,
 					1 => OutputFilterType.LowPass,
 					2 => OutputFilterType.HighPass,
+                    3 => OutputFilterType.Chain,
 					_ => throw new ArgumentException("Choose a speaker filter."),
 				};
 				double? cutoff = null;
-				if (filter != OutputFilterType.None)
+				if (filter is OutputFilterType.LowPass or OutputFilterType.HighPass)
 				{
 					cutoff = Read(row.Cutoff, $"Speaker {index + 1} cutoff");
 					if (cutoff <= 0 || cutoff >= rate / 2.0)
@@ -250,9 +285,16 @@ public sealed class AudioOutputSettingsDialog : Window
 							$"Speaker {index + 1} cutoff must be above zero "
 							+ "and below the Nyquist frequency.");
 				}
+				FilterInstance? chain = filter == OutputFilterType.Chain
+                    ? SpeakerFilterChainText.Parse(
+                        SpeakerFilterChainText.Format(row.Inline ??
+                            SpeakerFilterChainText.Parse(
+                                SpeakerFilterChainText.Default, rate, index)),
+                        rate, index)
+                    : null;
 				outputs.Add(new OutputChannelConfiguration(
 					new Vector3((float)x, (float)y, (float)z),
-					importance, filter, cutoff));
+					importance, filter, cutoff, chain));
 			}
 			Close(new RenderConfiguration(rate, outputs));
 		}
