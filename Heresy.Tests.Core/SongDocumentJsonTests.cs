@@ -795,6 +795,10 @@ public sealed class SongDocumentJsonTests
 			return "0.0";
 		if (type == typeof(TimeSpan))
 			return TimeSpan.FromMilliseconds(10);
+		if (type == typeof(ObjectId?))
+			return null!;
+		if (type == typeof(ObjectId))
+			return (ObjectId)1U;
 		if (type.IsEnum)
 			return Enum.GetValues(type).GetValue(0)!;
 
