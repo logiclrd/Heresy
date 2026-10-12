@@ -872,13 +872,17 @@ public sealed class IncrementalPatternTimeline : IDisposable
 							? command is StartNoteCommand or NoteOffCommand
 								or NoteCutCommand or SetNoteVolumeCommand
 								or SetSourceFrameOffsetCommand
+								or SetNoteFilterCommand
+								or SetNoteFilterParametersCommand
 								or SetCurrentVoiceDisplacementActionCommand
 								or ApplyPastNoteActionCommand
 							: command is NoteOffCommand or NoteCutCommand
 								or SetNoteVolumeCommand
 						: command is StartParametricEffectCommand
 						or StartNoteCommand or NoteOffCommand
-						or NoteCutCommand or SelectPatternSourceCommand
+						or NoteCutCommand or SetNoteFilterCommand
+						or SetNoteFilterParametersCommand
+						or SelectPatternSourceCommand
 						or SetPitchSlideCommand or SetNoteVolumeSlideCommand
 						or ApplyVolumeSlideCommand or ApplyPitchSlideDownCommand
 						or ApplyPitchSlideUpCommand or ApplyChannelVolumeSlideCommand

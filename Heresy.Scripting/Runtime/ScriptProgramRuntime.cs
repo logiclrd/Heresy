@@ -4,7 +4,6 @@ using System.Diagnostics;
 using System.Numerics;
 
 using Heresy.Core.Diagnostics;
-using Heresy.Core.Filters;
 using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
 using Heresy.Core.Sequences;
@@ -242,59 +241,6 @@ public abstract class PatternScriptProgram
 		ValidateRow(row);
 		Append(row, ChannelTarget.Virtual(virtualId),
 			new SetNoteFilterCommand(definitionId), timeOffsetSeconds);
-	}
-
-	/// <summary>A single typed numeric/choice update. The effect-command
-	/// backend also accepts an atomic batch of any number of typed keys;
-	/// multiline assignment UI is tracked as a separate milestone.</summary>
-	protected void NoteFilterNumber(
-		double row, int channel, int stageId, string parameter,
-		double value, double timeOffsetSeconds = 0.0)
-	{
-		ValidateRow(row);
-		ValidateChannel(channel);
-		Append(row, ChannelTarget.Physical(channel),
-			new SetNoteFilterParametersCommand(stageId, [
-				new KeyValuePair<string, FilterParameterValue>(
-					parameter, FilterParameterValue.FromNumber(value)),
-			]), timeOffsetSeconds);
-	}
-
-	protected void NoteFilterChoice(
-		double row, int channel, int stageId, string parameter,
-		string choice, double timeOffsetSeconds = 0.0)
-	{
-		ValidateRow(row);
-		ValidateChannel(channel);
-		Append(row, ChannelTarget.Physical(channel),
-			new SetNoteFilterParametersCommand(stageId, [
-				new KeyValuePair<string, FilterParameterValue>(
-					parameter, FilterParameterValue.FromChoice(choice)),
-			]), timeOffsetSeconds);
-	}
-
-	protected void NoteFilterNumberVirtual(
-		double row, uint virtualId, int stageId, string parameter,
-		double value, double timeOffsetSeconds = 0.0)
-	{
-		ValidateRow(row);
-		Append(row, ChannelTarget.Virtual(virtualId),
-			new SetNoteFilterParametersCommand(stageId, [
-				new KeyValuePair<string, FilterParameterValue>(
-					parameter, FilterParameterValue.FromNumber(value)),
-			]), timeOffsetSeconds);
-	}
-
-	protected void NoteFilterChoiceVirtual(
-		double row, uint virtualId, int stageId, string parameter,
-		string choice, double timeOffsetSeconds = 0.0)
-	{
-		ValidateRow(row);
-		Append(row, ChannelTarget.Virtual(virtualId),
-			new SetNoteFilterParametersCommand(stageId, [
-				new KeyValuePair<string, FilterParameterValue>(
-					parameter, FilterParameterValue.FromChoice(choice)),
-			]), timeOffsetSeconds);
 	}
 
 	/// <summary>
