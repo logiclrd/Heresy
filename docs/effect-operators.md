@@ -230,10 +230,32 @@ S73–S76 are therefore editable without requiring a pre-existing
 special-effect slot. Unknown Sxx values are explicitly no-op,
 not other S subcommands guessed by prefix.
 
-Separately tracked UI work adds an in-place **Insert Tracker
-Effect...** menu with proper label and existing sticker color
-identity, and a contextual guidance line in the same vertical
-status area as real diagnostics. The native Enter configuration
-dialog already exists and must be called **Configure effect with
-Enter**, not described as a future dialog. A multi-item collapsed
-stack instead says **Expand stacked effects with Enter**.
+The **Insert Tracker Effect...** picker is implemented in both
+empty and occupied effect cells. The empty-cell context menu has a
+direct submenu listing all 26 IT command letters A–Z, each accompanied
+by its conventional full name and a coloured swatch identical to the
+letter-derived sticker colour. Picking one immediately inserts a
+concrete effect with parameter byte 00; S00 is preserved as the
+intentional editable undefined special, not translated to another
+special subtype. On an occupied effect, the picker has **Before
+selected** and **After selected** submenus. Insertion is anchored
+to the actual effect tab whose context menu was opened, even if
+keyboard focus previously selected another tab; the newly inserted
+command is the expanded selected tab, with command field active.
+Stack ordering and later native effects are preserved. The original
+**Insert Tracker Slot Before/After**, **Insert Native Effect Before/After...**,
+copy/paste, and native parameter editor are unchanged. The
+`PatternEffectCodec.TrackerCommands` collection is the single list
+of available letters, names and creation factories. Keyboard entry
+uses the same factory; picker and stickers share
+`PatternEffectCodec.TrackerColorKey` and the existing palette.
+Avalonia and document regression tests cover picker parity, colour
+swatches, contextual submenu hierarchy, clicked-index before/after
+ordering and direct insertion into blank sequence-mapped cells.
+
+The contextual guidance line remains **separately tracked work**,
+sharing the same vertical status area as real diagnostics. The
+native Enter configuration dialog already exists and must be called
+**Configure effect with Enter**, not described as a future dialog.
+A multi-item collapsed stack instead says **Expand stacked effects
+with Enter**.
