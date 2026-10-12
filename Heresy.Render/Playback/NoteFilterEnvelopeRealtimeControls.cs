@@ -177,6 +177,23 @@ internal sealed class NoteFilterEnvelopeRealtimeControls
 		_reportedBudget = false;
 	}
 
+    /// <summary>After a command-boundary fork has been configured with
+    /// validated effective envelope overrides, align the numeric controller
+    /// with those already accepted target values. This prevents spurious
+    /// coefficient smoothing restarts when only an authored base changes.</summary>
+    internal void AlignAcceptedTo(FilterInstance effective)
+    {
+        foreach (Stage stage in _stages)
+        {
+            if (stage.LayerIndex != 0) continue;
+            FilterStageParameters parameters =
+                effective.GetStageParameters(stage.StageId);
+            for (int i = 0; i < stage.Descriptors.Length; i++)
+                stage.Accepted[i] = parameters.GetParameter(
+                    stage.Descriptors[i].Name).NumericValue;
+        }
+    }
+
 	/// <summary>Explicit bounded kernel design call at a control boundary,
 	/// never within ProcessFrame or the system audio callback.</summary>
 	internal bool TryPreparePendingFirs()
