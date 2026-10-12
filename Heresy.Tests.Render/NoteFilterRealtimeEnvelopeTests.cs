@@ -187,6 +187,69 @@ public sealed class NoteFilterRealtimeEnvelopeTests
 		}
 	}
 
+
+	[Test]
+	public void FourVoiceRealtimeEnvelopeQualificationRecordsCpuAndZeroSteadyAllocations()
+	{
+		FilterInstance use = Mixed();
+		NoteFilterEnvelopeRealtimeControls[] automation = new NoteFilterEnvelopeRealtimeControls[4];
+		StreamingFilterChain[] filters = new StreamingFilterChain[4];
+		float[][] samples = new float[4][];
+		for (int i = 0; i < 4; i++)
+		{
+			FilterChain chain = new([use]);
+			filters[i] = new StreamingFilterChain(chain, Rate, 1);
+			automation[i] = new NoteFilterEnvelopeRealtimeControls(chain, Rate);
+			automation[i].SetBindings([
+				new(0, 1, "Feedforward",
+					new(new WaveCurve(0.2, 0.3, 0.029), 0, Rate)),
+				new(0, 2, "CutoffHz",
+					new(new WaveCurve(3000, 800, 0.017), 0, Rate)),
+				new(0, 3, "GainDb",
+					new(new WaveCurve(0, 5, 0.031), 0, Rate)),
+			]);
+			samples[i] = new float[1];
+		}
+		for (int frame = 0; frame < 192; frame++)
+			for (int voice = 0; voice < 4; voice++)
+			{
+				automation[voice].Apply(frame, filters[voice], null);
+				samples[voice][0] = frame % 7 == 0 ? 1 : 0;
+				filters[voice].ProcessFrame(samples[voice]);
+			}
+
+		const int measuredFrames = 4096;
+		long before = GC.GetAllocatedBytesForCurrentThread();
+		long start = Stopwatch.GetTimestamp();
+		for (int frame = 192; frame < 192 + measuredFrames; frame++)
+		{
+			automation[0].Apply(frame, filters[0], null);
+			samples[0][0] = frame % 7 == 0 ? 1 : 0;
+			filters[0].ProcessFrame(samples[0]);
+		}
+		long midpoint = Stopwatch.GetTimestamp();
+		for (int frame = 192 + measuredFrames;
+			frame < 192 + 2 * measuredFrames; frame++)
+			for (int voice = 0; voice < 4; voice++)
+			{
+				automation[voice].Apply(frame, filters[voice], null);
+				samples[voice][0] = frame % 7 == 0 ? 1 : 0;
+				filters[voice].ProcessFrame(samples[voice]);
+			}
+		long end = Stopwatch.GetTimestamp();
+		long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+		double oneMs = (midpoint - start) * 1000.0 / Stopwatch.Frequency;
+		double fourMs = (end - midpoint) * 1000.0 / Stopwatch.Frequency;
+		double audioMs = measuredFrames * 1000.0 / Rate;
+		TestContext.Out.WriteLine(
+			$"note envelope multivoice: {Environment.OSVersion}; .NET {Environment.Version}; " +
+			$"processors {Environment.ProcessorCount}; audio {audioMs:F2}ms; " +
+			$"one voice {oneMs:F2}ms ({oneMs / audioMs:F2}x); " +
+			$"four voices {fourMs:F2}ms ({fourMs / audioMs:F2}x); " +
+			$"managed allocation {allocated} bytes");
+		Assert.That(allocated, Is.EqualTo(0));
+	}
+
 	private static FilterInstance OnePole(uint id, double cutoff)
 	{
 		FilterDefinition definition = new((ObjectId)id, "pole", [
