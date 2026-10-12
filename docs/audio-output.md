@@ -8,23 +8,31 @@ voice host; the output channels are **speaker feeds**, and are not
 one-to-one with tracker channels.
 
 The master `PlaybackSession` mixes all physical, scoped virtual,
-targeted virtual and NNA-displaced voices, their anti-click tails,
-and applies global volume. **After the full mix**, it filters each
-interleaved output-speaker sample independently using the configured
-`OutputFilterType`:
+targeted virtual and NNA-displaced voices, their anti-click tails and
+master gain. **After the full mix**, the final speaker output bank uses
+one `StreamingFilterChain` with a **separate mono history for each
+speaker**. It is applied exactly once, not once per source or host.
+The explicit per-speaker choices are:
 
-- `None`: unchanged PCM.
-- `LowPass`: a one-pole low-pass with the configured cutoff.
-- `HighPass`: original speaker input minus the corresponding
-  one-pole low-pass component.
+- `None`: unchanged PCM, no DSP processing for that speaker.
+- `LowPass (RC)` / `HighPass (RC)`: exact historical exponential
+  one-pole processing, with the configured cutoff and prior preset IDs.
+- `Filter chain`: a frozen inline serial `FilterInstance` containing
+  any sequence of supported reusable Filter stages and parameters.
 
-The discrete coefficient is
-`alpha = 1 - exp(-2*pi*cutoffHz/sampleRate)`.
-Each speaker owns one low-pass state carried across render blocks,
-including note transitions, silence, and replayed NNA voices. The
-filter is **post-mix**, never part of a sample's per-voice tracker
-resonant filter. Configurations with every filter set to `None`
-do not allocate or process an output-filter bank.
+The legacy RC coefficient is
+`alpha=1-exp(-2*pi*cutoffHz/sampleRate)`; the updated low-pass state is
+`low'=low+alpha*(input-low)`. The high-pass output is `input-low'`.
+This recurrence is deliberately different from the normal TPT/bilinear
+`FilterKind.OnePole`; select the explicitly named
+`FilterKind.SpeakerLegacyRc` stage inside a custom chain for an **exact
+match** to the older LowPass/HighPass preference response. It retains
+the prior silent-input 1e-7 state clamp and very-low-cutoff accumulation
+under nonzero input. Existing settings are interpreted without any
+automatic algorithmic reinterpretation or schema migration. When all
+speakers are `None`, no output-filter bank is allocated. Reusable
+Filter stages retain their normal sample-rate-specific preparation,
+serial order, per-channel histories, and bounded tail behavior.
 
 Private recursive Pattern/Sequence mixdowns still emit the configured
 number and order of speaker feeds, but their private
@@ -38,13 +46,13 @@ does not reset the master filter's continuous state.
 
 An impulse response can continue after the last note ends. When
 input has ended, `PlaybackSession.IsQuiescent` therefore also checks
-the speaker-filter tail. Silent input eventually brings the one-pole
-state to exact zero when its decaying magnitude falls below
+the speaker-filter tail. Legacy RC silent input brings its
+state to exact zero once the decaying magnitude falls below
 `1e-7`; **nonzero input is never threshold-clamped**, so even very
-low cutoff frequencies can accumulate correctly. The offline tail
-renderer already drains until quiescence and trims trailing zero
-frames; filter decay is included in its existing bounded-tail
-contract.
+low cutoff frequencies accumulate correctly. All final-speaker
+Filter chains retain an independent bounded tail-frame budget (up
+to the runtime's maximum preparation tail), so offline export
+continues draining until quiescence and trims trailing zero frames.
 
 Regression tests exercise asymmetric stereo LowPass/HighPass impulse
 responses, independent speaker histories, unequal PCM block sizes,
@@ -56,7 +64,15 @@ and filter state across the offline tail boundary.
 The desktop **Options → Audio Output** dialog edits the selected
 sample rate, speaker layout (mono, stereo, 5.1, 7.1), ordered output
 positions (X/Y/Z), positional importance, filter type and cutoff per
-speaker. It may also reopen a render configuration with custom
+speaker. Existing speaker choices are explicitly labeled **LowPass (RC)**
+and **HighPass (RC)** to preserve historical output, while the
+**Filter chain → Edit chain…** option configures an inline reusable
+Filter with one serial stage per line using the `Kind Parameter=Value`
+text form. Parameter names, values, types and choices come from the
+shared Filter catalogue, and the resulting chain is validated by actual
+DSP preparation at the selected sample rate. Stage order is the
+processing order. The chain editor includes a typed example and the
+available Filter kinds. It may also reopen a render configuration with custom
 speaker positions and edit that configuration directly. Its 5.1/7.1
 output ordering is front-left, front-right, center, LFE, rear-left,
 rear-right, then side-left/side-right for 7.1. An LFE output is an
@@ -90,9 +106,13 @@ stop, and startup loading do not rewrite the preference.
 
 The format preserves the sample rate and ordered 1/2/6/8 speaker
 feeds, with each speaker's X/Y/Z position, positional importance,
-filter type and active cutoff. Unknown versions, missing fields,
-invalid layouts, nonfinite/out-of-range parameters and malformed
-JSON are rejected as a **whole snapshot** (never partly restored).
+filter type and active cutoff. Optional per-speaker `FilterChain`
+text is added only for the new mode 3; modes 0,1,2 retain their
+previous representation and meaning. Inline chains serialize complete
+effective stage parameters independent of song-object references.
+Unknown versions, missing fields, invalid layouts, nonfinite/out-of-range
+parameters, invalid Filter chains and malformed JSON are rejected as
+a **whole snapshot** (never partly restored).
 The user-configurable sample rate is limited to 8–384 kHz and
 active LowPass/HighPass cutoffs must lie strictly below Nyquist.
 Filter fields with type None are ignored. Writes use a unique
