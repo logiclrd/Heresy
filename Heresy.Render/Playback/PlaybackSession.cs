@@ -1196,7 +1196,7 @@ public sealed class PlaybackSession
 					break;
 
 				case SetNoteFilterParameterEnvelopeCommand envelope:
-					ApplyCurrentNoteFilterEnvelopeCommand(channel, envelope, frame);
+					ApplyCurrentNoteFilterEnvelopeCommand(channel, envelope, eventFrame);
 					break;
 
 				case SetChannelFilterCommand:
