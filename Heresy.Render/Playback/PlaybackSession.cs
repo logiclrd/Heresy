@@ -104,6 +104,10 @@ public sealed class PlaybackSession
 	/// recursive playback wires this to SequencingDiagnosticLog.</summary>
 	public Action<string>? NoteFilterCommandRejected { get; set; }
 
+	/// <summary>Already-prepared Node/Script Envelope curve provider,
+	/// installed by the production snapshot factory before PCM playback.</summary>
+	public IEnvelopeCurveResolver? NoteFilterEnvelopeResolver { get; set; }
+
 	/// <summary>Control-side diagnostic output for invalid host-channel
 	/// Filter commands. The prepared playback factory rate-limits it.</summary>
 	public Action<string>? ChannelFilterCommandRejected { get; set; }
@@ -1190,6 +1194,10 @@ public sealed class PlaybackSession
 					ApplyCurrentNoteFilterCommand(channel, command);
 					break;
 
+				case SetNoteFilterParameterEnvelopeCommand envelope:
+					ApplyCurrentNoteFilterEnvelopeCommand(channel, envelope, frame);
+					break;
+
 				case SetChannelFilterCommand:
 				case SetChannelFilterParametersCommand:
 				case SetChannelFilterAssignmentsCommand:
@@ -1391,6 +1399,10 @@ public sealed class PlaybackSession
 			case SetNoteFilterParametersCommand:
 			case SetNoteFilterAssignmentsCommand:
 				ApplyCurrentNoteFilterCommand(channel, command);
+				break;
+
+			case SetNoteFilterParameterEnvelopeCommand envelope:
+				ApplyCurrentNoteFilterEnvelopeCommand(channel, envelope, eventFrame);
 				break;
 
 			case SetChannelFilterCommand:
@@ -1949,6 +1961,44 @@ public sealed class PlaybackSession
 		}
 	}
 
+	private void ApplyCurrentNoteFilterEnvelopeCommand(
+		PlaybackChannelState channel,
+		SetNoteFilterParameterEnvelopeCommand command, long frame)
+	{
+		if (channel.CurrentFlattenedSource is not null)
+		{
+			NoteFilterCommandRejected?.Invoke(
+				"Flattened note Filter envelope scope requires descendant binding support.");
+			return;
+		}
+		if (channel.CurrentVoice is not PlaybackVoice voice)
+		{
+			NoteFilterCommandRejected?.Invoke(
+				"No current note for Filter parameter envelope.");
+			return;
+		}
+		try
+		{
+			IEnvelopeCurve? curve = null;
+			if (command.EnvelopeId is ObjectId id)
+			{
+				if (id.IsNone || NoteFilterEnvelopeResolver is null
+					|| !NoteFilterEnvelopeResolver.TryResolve(id, out curve)
+					|| curve is null)
+					throw new ArgumentException(
+						$"Unknown or unavailable Filter Envelope {id.Value}.");
+			}
+			voice.SetEventFilterParameterEnvelope(
+				command.StageId, command.ParameterName, curve, frame);
+		}
+		catch (Exception error) when (error is ArgumentException
+			or InvalidOperationException or KeyNotFoundException
+			or OverflowException)
+		{
+			NoteFilterCommandRejected?.Invoke(error.Message);
+		}
+	}
+
 	private void ApplyCurrentNoteFilterCommand(
 		PlaybackChannelState channel, NoteCommand command)
 	{
@@ -2008,6 +2058,8 @@ public sealed class PlaybackSession
 				var prepared = current!.PrepareEventFilterUpdate(candidate);
 				current.PublishEventFilterUpdate(
 					prepared.Configuration, prepared.State);
+				if (command is SetNoteFilterCommand)
+					current.ClearEventFilterParameterEnvelopes();
 				return;
 			}
 
@@ -3088,6 +3140,8 @@ public sealed class PlaybackSession
 				outputChannelCount);
 
 			voice.ToneFilterState?.ProcessFrame(outputFrame);
+			voice.SynchronizeEventFilterParameterEnvelopes(
+				absoluteFrame, NoteFilterCommandRejected);
 			voice.EventFilterState?.ProcessFrame(outputFrame);
 			voice.EnclosingEventFilterState?.ProcessFrame(outputFrame);
 			if (voice.HasFilterEnvelope)

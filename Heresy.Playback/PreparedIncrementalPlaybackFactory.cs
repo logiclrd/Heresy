@@ -335,6 +335,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 				diagnostics.ReportExpensiveSourceSeek(effect, nativeFrame);
 		session.NoteFilterCommandRejected =
 			diagnostics.ReportNoteFilterCommandIssue;
+		session.NoteFilterEnvelopeResolver = sounds;
 		session.ChannelFilterCommandRejected =
 			diagnostics.ReportChannelFilterCommandIssue;
 

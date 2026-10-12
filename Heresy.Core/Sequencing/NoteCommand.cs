@@ -101,6 +101,13 @@ public sealed record SetNoteFilterParametersCommand(
 /// <summary>Selects or clears the persistent *actual hosting channel*
 /// output Filter; does not change the note's event or Instrument layers.
 /// Prepared playback resolves DefinitionId through its frozen song.</summary>
+/// <summary>Attach, replace or detach an independent Node/Script
+/// Envelope controlling one numeric nonstructural parameter of the current
+/// note's event Filter. Null detaches. Values are absolute descriptor units,
+/// not normalized 0..1, and the clock starts on the command's frame.</summary>
+public sealed record SetNoteFilterParameterEnvelopeCommand(
+	int StageId, string ParameterName, ObjectId? EnvelopeId = null) : NoteCommand;
+
 public sealed record SetChannelFilterCommand(ObjectId? FilterDefinitionId = null)
 	: NoteCommand
 {

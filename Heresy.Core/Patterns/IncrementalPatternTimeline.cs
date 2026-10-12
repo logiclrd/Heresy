@@ -824,7 +824,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					|| note.Commands.Any(c => c is not (StartNoteCommand
 						or NoteOffCommand or NoteCutCommand
 						or SetNoteVolumeCommand or SetSourceFrameOffsetCommand
-						or SetNoteFilterCommand or SetNoteFilterParametersCommand
+						or SetNoteFilterCommand or SetNoteFilterParameterEnvelopeCommand
+						or SetNoteFilterParametersCommand
 						or SetChannelFilterCommand or SetChannelFilterParametersCommand
 						or SetChannelFilterAssignmentsCommand
 						or SetNoteFilterAssignmentsCommand
@@ -877,6 +878,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 								or NoteCutCommand or SetNoteVolumeCommand
 								or SetSourceFrameOffsetCommand
 								or SetNoteFilterCommand
+								or SetNoteFilterParameterEnvelopeCommand
 								or SetNoteFilterParametersCommand
 								or SetChannelFilterCommand
 								or SetChannelFilterParametersCommand
@@ -889,6 +891,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						: command is StartParametricEffectCommand
 						or StartNoteCommand or NoteOffCommand
 						or NoteCutCommand or SetNoteFilterCommand
+						or SetNoteFilterParameterEnvelopeCommand
 						or SetNoteFilterParametersCommand
 						or SetChannelFilterCommand
 						or SetChannelFilterParametersCommand

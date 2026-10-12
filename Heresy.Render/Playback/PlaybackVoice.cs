@@ -328,6 +328,16 @@ public sealed class PlaybackVoice
 	/// layers are never reconfigured by event-targeted commands. Current voice
 	/// owns histories and NNA displacement retains them.</summary>
 	private FilterInstance? _eventFilterConfiguration;
+
+	// Each attachment has its own release-aware absolute active-time origin.
+	// The authored base Filter configuration is never overwritten by
+	// envelope samples; detach restores the current base (including any
+	// edits made while the envelope was bound).
+	private readonly Dictionary<(int Id, string Parameter), EnvelopePlaybackState>
+		_eventFilterParameterEnvelopes = [];
+	private Dictionary<(int Id, string Parameter), double>
+		_lastAppliedEventEnvelopeValues = [];
+	private bool _refreshEventFilterEnvelopes;
 	public StreamingFilterChain? EventFilterState { get; private set; }
 
 	/// <summary>The unique dynamic virtual output host created on NNA
@@ -340,6 +350,86 @@ public sealed class PlaybackVoice
 	/// configuration outside atomic chain publication.</summary>
 	internal FilterInstance? GetEventFilterConfiguration()
 		=> _eventFilterConfiguration?.Clone();
+
+	internal bool HasEventFilterParameterEnvelopes
+		=> _eventFilterParameterEnvelopes.Count != 0
+			|| _refreshEventFilterEnvelopes;
+
+	internal void SetEventFilterParameterEnvelope(
+		int stageId, string parameterName,
+		IEnvelopeCurve? curve, long frame)
+	{
+		if (_eventFilterConfiguration is null)
+			throw new InvalidOperationException(
+				"No note-event Filter is selected.");
+		FilterStageDefinition stage =
+			_eventFilterConfiguration.Definition.GetStage(stageId);
+		FilterParameterDescriptor descriptor =
+			FilterCatalogue.GetParameters(stage.Kind).FirstOrDefault(p =>
+				string.Equals(p.Name, parameterName,
+					StringComparison.OrdinalIgnoreCase))
+			?? throw new ArgumentException(
+				$"Unknown note Filter parameter '{parameterName}'.");
+		if (!descriptor.IsModulatable)
+			throw new ArgumentException(
+				$"Parameter {stage.Name}.{descriptor.Name} is structural or not numeric.");
+		// Validation finishes before the binding dictionary is changed.
+		var key = (stageId, descriptor.Name.ToUpperInvariant());
+		if (curve is null)
+			_eventFilterParameterEnvelopes.Remove(key);
+		else
+			_eventFilterParameterEnvelopes[key] =
+				new EnvelopePlaybackState(curve, frame, _sampleRate);
+		_refreshEventFilterEnvelopes = true;
+	}
+
+	internal void SynchronizeEventFilterParameterEnvelopes(
+		long frame, Action<string>? warn)
+	{
+		if (!HasEventFilterParameterEnvelopes
+			|| _eventFilterConfiguration is null
+			|| EventFilterState is null)
+			return;
+		try
+		{
+			Dictionary<(int Id, string Parameter), double> values = [];
+			FilterInstance candidate = _eventFilterConfiguration.Clone();
+			bool changed = _refreshEventFilterEnvelopes;
+			foreach (var pair in _eventFilterParameterEnvelopes)
+			{
+				double number = pair.Value.GetValue(frame);
+				FilterParameterDescriptor descriptor =
+					FilterCatalogue.GetParameters(
+						candidate.Definition.GetStage(pair.Key.Id).Kind)
+						.First(p => string.Equals(p.Name, pair.Key.Parameter,
+							StringComparison.OrdinalIgnoreCase));
+				descriptor.Normalize(FilterParameterValue.FromNumber(number));
+				values.Add(pair.Key, number);
+				if (!_lastAppliedEventEnvelopeValues.TryGetValue(pair.Key,
+						out double earlier) || earlier != number)
+					changed = true;
+				candidate.SetStageParameter(pair.Key.Id, descriptor.Name,
+					FilterParameterValue.FromNumber(number));
+			}
+			if (!changed
+				&& values.Count == _lastAppliedEventEnvelopeValues.Count)
+				return;
+			StreamingFilterChain prepared = EventFilterState.Fork();
+			prepared.Configure(new FilterChain(new[] { candidate }));
+			EventFilterState = prepared;
+			_lastAppliedEventEnvelopeValues = values;
+			_refreshEventFilterEnvelopes = false;
+		}
+		catch (Exception error) when (error is ArgumentException
+			or InvalidOperationException or KeyNotFoundException
+			or OverflowException)
+		{
+			// Keep the last valid DSP response and authored base untouched.
+			// The session's existing bounded diagnostics sink suppresses
+			// repeatedly invalid Script Envelope samples.
+			warn?.Invoke(error.Message);
+		}
+	}
 
 	/// <summary>Preflight on isolated cloned state; compatible histories
 	/// remain sample-exact while structural changes create fresh stage state.
@@ -359,11 +449,19 @@ public sealed class PlaybackVoice
 		return (copy, candidate);
 	}
 
+	internal void ClearEventFilterParameterEnvelopes()
+	{
+		_eventFilterParameterEnvelopes.Clear();
+		_lastAppliedEventEnvelopeValues.Clear();
+		_refreshEventFilterEnvelopes = false;
+	}
+
 	internal void PublishEventFilterUpdate(
 		FilterInstance? configuration, StreamingFilterChain? state)
 	{
 		_eventFilterConfiguration = configuration;
 		EventFilterState = state;
+		_refreshEventFilterEnvelopes = true;
 	}
 
 	internal StreamingFilterChain? PrepareEnclosingEventFilterUpdate(
@@ -508,6 +606,8 @@ public sealed class PlaybackVoice
 		_pitchEnvelope?.NoteOff(absoluteFrame);
 		_panningEnvelope?.NoteOff(absoluteFrame);
 		_filterEnvelope?.NoteOff(absoluteFrame);
+		foreach (EnvelopePlaybackState envelope in _eventFilterParameterEnvelopes.Values)
+			envelope.NoteOff(absoluteFrame);
 	}
 
 	internal long? GetVolumeEnvelopeEndFrameExclusiveAfterNoteOff(
