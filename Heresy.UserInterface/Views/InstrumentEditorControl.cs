@@ -164,7 +164,9 @@ public sealed class InstrumentEditorControl : UserControl
 		TextBlock hint = new()
 		{
 			Text = "One grid, highest note first. Source-less rows stay as editor-only drafts. "
-				+ "Pitch is log₂(multiplier). The nearby-note dropdown snaps Pitch only when selected. "
+				+ "Pitch is the offset in Instrument divisions (Divisions × log₂(multiplier)). "
+				+ "A selected rectangle applies one field to all included data rows. "
+				+ "The nearby-note dropdown snaps Pitch only when selected. "
 				+ "Shift+Arrow or Shift+click selects a rectangular block; Tab/click within the block preserves it. "
 				+ "Up/Down navigate cells, Left/Right leave text at the caret boundary. "
 				+ "Focus a tone cell and press Delete to remove its row.",
@@ -235,7 +237,10 @@ public sealed class InstrumentEditorControl : UserControl
 			: 0;
 		TextBox pitch = new()
 		{
-			Text = initialLog.ToString("G17", CultureInfo.CurrentCulture),
+			Text = cells.PitchMultiplier > 0 && double.IsFinite(cells.PitchMultiplier)
+				? InstrumentToneNoteNotation.FormatDisplayPitch(
+					cells.PitchMultiplier, _instrument.Divisions, CultureInfo.CurrentCulture)
+				: "0",
 			Width = 100,
 		};
 		string? lastCommittedPitchText = pitch.Text;
@@ -298,25 +303,49 @@ public sealed class InstrumentEditorControl : UserControl
 			_model.SetEntryDraft(entered, cells);
 		}
 
-		void CommitCells()
+		bool CommitField(
+			int column,
+			Func<InstrumentToneGridCells, InstrumentToneGridCells> update)
 		{
 			try
 			{
 				if (projected.IsEntry)
 				{
+					cells = update(_model.EntryCells);
 					UpdateEntry();
-					return;
+					return true;
 				}
-				_model.SetRow(index!.Value, cells);
-				_message.Text = $"Updated tone {index.Value}.";
-				_changed($"Updated tone {index.Value} in {_instrument.Name}");
+				IReadOnlyList<int> targets = _selection.EditTargetRows(
+					new InstrumentToneGridSelection.Cell(index!.Value, column),
+					_projectedRows);
+				if (targets.Count == 0)
+					targets = [index.Value];
+				bool changed = _model.EditRows(targets,
+					(_, old) => update(old));
+				cells = _model.Rows.Single(row => row.Index == index).Cells;
+				if (changed)
+				{
+					_message.Text = targets.Count == 1
+						? $"Updated tone {index.Value}."
+						: $"Updated column {column} across {targets.Count} tones.";
+					_changed($"Updated {targets.Count} tone(s) in {_instrument.Name}");
+				}
+				if (targets.Count > 1 && changed)
+				{
+					// Rebuild edited rows after the active control event
+					// finishes, preserving the semantic rectangle and
+					// avoiding transient ComboBox re-entrancy.
+					Dispatcher.UIThread.Post(
+						() => RefreshRows(index), DispatcherPriority.Loaded);
+				}
+				return true;
 			}
 			catch (Exception ex)
 			{
 				_message.Text = ex.Message;
-				// The song and editor drafts are unchanged after a rejected
-				// edit. Restore controls from the last accepted model row.
+				// Core and all drafts stayed unchanged on failed batch.
 				RefreshRows(index);
+				return false;
 			}
 		}
 
@@ -352,22 +381,24 @@ public sealed class InstrumentEditorControl : UserControl
 			if (pitch.Text == lastCommittedPitchText)
 				return;
 			if (!double.TryParse(pitch.Text, NumberStyles.Float,
-				CultureInfo.CurrentCulture, out double logarithm)
-				|| !double.IsFinite(logarithm))
+				CultureInfo.CurrentCulture, out double displayOffset)
+				|| !double.IsFinite(displayOffset))
 			{
-				_message.Text = "Pitch must be a finite logarithmic offset.";
+				_message.Text = "Pitch must be a finite offset in instrument divisions.";
 				return;
 			}
 			try
 			{
-				cells = cells with
-				{
-					PitchMultiplier =
-						InstrumentToneNoteNotation.MultiplierFromOffset(logarithm),
-				};
-				CommitCells();
+				// A *single constant* transposition across all selected
+				// rows; never a ramp based on tone index or prior pitch.
+				double multiplier =
+					InstrumentToneNoteNotation.MultiplierFromDisplayPitch(
+						displayOffset, _instrument.Divisions);
+				if (!CommitField(3, old =>
+					old with { PitchMultiplier = multiplier }))
+					return;
 				lastCommittedPitchText = pitch.Text;
-				RefreshNearest(logarithm);
+				RefreshNearest(displayOffset / _instrument.Divisions);
 			}
 			catch (Exception ex)
 			{
@@ -382,14 +413,11 @@ public sealed class InstrumentEditorControl : UserControl
 				InstrumentNnaAction action = (InstrumentNnaAction)toneNna.SelectedItem!;
 				InstrumentNnaSetting setting = InstrumentNnaEditorValues.ToneSetting(
 					action, toneFade.Text);
-				InstrumentToneGridCells latest = projected.IsEntry
-					? _model.EntryCells
-					: _model.Rows.Single(row => row.Index == index).Cells;
-				cells = latest with { Nna = setting };
-				CommitCells();
+				CommitField(5, old => old with { Nna = setting });
 			}
 			catch (Exception ex) { _message.Text = ex.Message; }
 		}
+
 		toneNna.SelectionChanged += (_, _) =>
 		{
 			toneFade.IsVisible = toneNna.SelectedItem is InstrumentNnaAction.Fade;
@@ -412,35 +440,30 @@ public sealed class InstrumentEditorControl : UserControl
 			entryIndex.TextChanged += (_, _) => UpdateEntry();
 		source.SelectionChanged += (_, _) =>
 		{
-			cells = cells with
-			{
-				SourceId = (source.SelectedItem as SourceChoice)?.Id,
-			};
-			CommitCells();
+			ObjectId? id = (source.SelectedItem as SourceChoice)?.Id;
+			CommitField(2, old => old with { SourceId = id });
 		};
-		void BindEnvelope(ComboBox box, Func<ObjectId?, InstrumentToneGridCells> update)
+		void BindEnvelope(ComboBox box, int column,
+			Func<InstrumentToneGridCells, ObjectId?, InstrumentToneGridCells> update)
 			=> box.SelectionChanged += (_, _) =>
 			{
-				cells = update((box.SelectedItem as EnvelopeChoice)?.Id);
-				CommitCells();
+				ObjectId? id = (box.SelectedItem as EnvelopeChoice)?.Id;
+				CommitField(column, old => update(old, id));
 			};
-		BindEnvelope(volume, id => cells with { VolumeEnvelopeId = id });
-		BindEnvelope(pitchEnvelope, id => cells with { PitchEnvelopeId = id });
-		BindEnvelope(panning, id => cells with { PanningEnvelopeId = id });
-		BindEnvelope(filter, id => cells with { FilterEnvelopeId = id });
+		BindEnvelope(volume, 6, (old, id) => old with { VolumeEnvelopeId = id });
+		BindEnvelope(pitchEnvelope, 7, (old, id) => old with { PitchEnvelopeId = id });
+		BindEnvelope(panning, 8, (old, id) => old with { PanningEnvelopeId = id });
+		BindEnvelope(filter, 9, (old, id) => old with { FilterEnvelopeId = id });
 		toneFilter.SelectionChanged += (_, _) =>
 		{
 			ObjectId? definitionId = (toneFilter.SelectedItem as FilterChoice)?.Id;
 			if (definitionId == cells.FilterConfiguration?.DefinitionId)
 				return;
-			cells = cells with
-			{
-				FilterConfiguration = definitionId is ObjectId id
-					? new FilterInstance((FilterDefinition)_workspace.Document.Objects[id])
-					: null,
-			};
-			editFilter.IsEnabled = cells.FilterConfiguration is not null;
-			CommitCells();
+			FilterInstance? instance = definitionId is ObjectId id
+				? new FilterInstance((FilterDefinition)_workspace.Document.Objects[id])
+				: null;
+			editFilter.IsEnabled = instance is not null;
+			CommitField(10, old => old with { FilterConfiguration = instance });
 		};
 		editFilter.Click += (_, _) =>
 		{
@@ -461,16 +484,10 @@ public sealed class InstrumentEditorControl : UserControl
 							"This tone no longer has a Filter."),
 					next =>
 					{
-						InstrumentToneGridCells latest = CurrentCells();
-						InstrumentToneGridCells edited = latest with
-							{ FilterConfiguration = next };
-						if (projected.IsEntry)
-							_model.SetEntryDraft(_model.EntryIndex, edited);
-						else
-							_model.SetRow(index!.Value, edited);
-						cells = edited;
-						if (!projected.IsEntry)
-							_changed($"Updated tone Filter for {index!.Value} in {_instrument.Name}");
+						if (!CommitField(10, old => old with
+							{ FilterConfiguration = next }))
+							throw new InvalidOperationException(
+								"Could not apply the selected tone Filter.");
 					});
 				Window window = new()
 				{
@@ -503,13 +520,13 @@ public sealed class InstrumentEditorControl : UserControl
 			if (changingNearest
 				|| nearby.SelectedItem is not InstrumentToneNoteChoice selected)
 				return;
-			pitch.Text = selected.LogarithmicOffset.ToString(
-				"G17", CultureInfo.CurrentCulture);
-			// Use the exact precomputed multiplier. Re-evaluating an
-			// approximate string representation on focus loss would
-			// introduce an unintended second, inexact update.
-			cells = cells with { PitchMultiplier = selected.Multiplier };
-			CommitCells();
+			pitch.Text = InstrumentToneNoteNotation.FormatDisplayPitch(
+				selected.Multiplier, _instrument.Divisions, CultureInfo.CurrentCulture);
+			// Keep the choice's exact multiplier, not its rounded label.
+			// Other selected rows receive precisely the same offset.
+			if (!CommitField(3, old => old with
+				{ PitchMultiplier = selected.Multiplier }))
+				return;
 			lastCommittedPitchText = pitch.Text;
 			RefreshNearest(selected.LogarithmicOffset);
 		};
