@@ -424,6 +424,63 @@ public sealed class ScriptInstrumentPlaybackTests
             "the virtual host alone receives the delayed channel response");
     }
 
+    [Test]
+    public void DataPatternNativeFilterAssignmentTextRendersWithSongSelectionAndChunkParity()
+    {
+        SongDocument song = new();
+        ObjectId sample = Sample(song, 16384);
+        FilterInstance filter = Echo(song, 0.001);
+        ObjectId root = song.AllocateObjectId();
+        DataPatternDefinition pattern = new(root, "Filter text")
+        { ChannelCount = 1, RowCount = 2 };
+        PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+        cell.Note = new StartPatternNote(sample);
+        cell.Effects.Add(new SetChannelFilterPatternEffect(filter.DefinitionId));
+        cell.Effects.Add(new SetChannelFilterAssignmentsPatternEffect(
+            "# delay: set a new structural length\ndelay.DelaySeconds = 0.002",
+            filter.DefinitionId));
+        song.Add(pattern);
+        var factory = new PreparedIncrementalPlaybackFactory(Mono());
+        using PreparedIncrementalPlaybackPlan whole = factory.Create(song, root);
+        using PreparedIncrementalPlaybackPlan split = factory.Create(song, root);
+        float[] pcm = new float[8], chunks = new float[8];
+        whole.Source.Render(8, pcm);
+        split.Source.Render(1, chunks.AsSpan(0, 1));
+        split.Source.Render(7, chunks.AsSpan(1));
+        Assert.That(pcm[0], Is.EqualTo(0.5f).Within(1e-5f));
+        Assert.That(pcm[1], Is.EqualTo(0.5f).Within(1e-5f),
+            "the command sets the delay to two frames before first PCM");
+        Assert.That(pcm[2], Is.EqualTo(1f).Within(1e-5f));
+        Assert.That(chunks, Is.EqualTo(pcm).Within(1e-6f));
+    }
+
+    [Test]
+    public void DataPatternInvalidTextIsDiagnosticNoOpWithoutPartialStageCommit()
+    {
+        SongDocument song = new();
+        ObjectId sample = Sample(song, 16384);
+        FilterInstance filter = Echo(song, 0.001);
+        ObjectId root = song.AllocateObjectId();
+        DataPatternDefinition pattern = new(root, "Invalid Filter text")
+        { RowCount = 2, ChannelCount = 1 };
+        PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+        cell.Note = new StartPatternNote(sample);
+        cell.Effects.Add(new SetChannelFilterPatternEffect(filter.DefinitionId));
+        cell.Effects.Add(new SetChannelFilterAssignmentsPatternEffect(
+            "delay.Feedforward = 0\ndelay.NoSuchParameter = 9",
+            filter.DefinitionId));
+        song.Add(pattern);
+        using PreparedIncrementalPlaybackPlan plan =
+            new PreparedIncrementalPlaybackFactory(Mono()).Create(song, root);
+        float[] pcm = new float[8];
+        plan.Source.Render(8, pcm);
+        Assert.That(pcm[0], Is.EqualTo(0.5f).Within(1e-5f));
+        Assert.That(pcm[1], Is.EqualTo(1f).Within(1e-5f),
+            "an earlier valid assignment must not be published");
+        Assert.That(plan.SequencingContext.Diagnostics.Drain()
+            .Count(x => x.Code == "HRSEQ009"), Is.EqualTo(1));
+    }
+
     private static FilterInstance Echo(SongDocument song, double delay)
     {
         ObjectId filterId = song.AllocateObjectId();
