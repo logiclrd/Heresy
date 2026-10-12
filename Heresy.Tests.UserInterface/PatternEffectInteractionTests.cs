@@ -872,4 +872,110 @@ public sealed class PatternEffectInteractionTests
 			.Should().Be(new TonePortamentoPatternEffect(0x15));
 	}
 
+    [Test]
+    public void SCommandStartsAsEditableUndefinedS00RatherThanBeingRejected()
+    {
+        DocumentWorkspace workspace = new();
+        DataPatternDefinition pattern =
+            PatternDocumentEditor.CreateDataPattern(workspace, "Special");
+        PatternEffectCursor cursor =
+            new(0, 0, PatternCellField.EffectCommand);
+
+        PatternEffectInputResult typed = PatternEffectKeyboardEditor.Type(
+            workspace, pattern, cursor, 'S');
+        typed.Changed.Should().BeTrue();
+        typed.Rejected.Should().BeFalse();
+        pattern.Grid[0, 0]!.Effects[0]
+            .Should().Be(new UndefinedTrackerSpecialPatternEffect(0x00));
+        PatternEffectViewModel.Create(pattern.Grid[0, 0]!.Effects[0])
+            .CompactText.Should().Be("S00");
+        cursor.Row.Should().Be(1);
+    }
+
+    [Test]
+    public void SByteEditsRebindBetweenUndefinedAndS7SemanticEffectsOnEveryNibble()
+    {
+        DocumentWorkspace workspace = new();
+        DataPatternDefinition pattern =
+            PatternDocumentEditor.CreateDataPattern(workspace, "Special");
+        PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+        cell.Effects.Add(new UndefinedTrackerSpecialPatternEffect(0x00));
+        PatternEffectCursor cursor =
+            new(0, 0, PatternCellField.EffectParameter);
+
+        PatternEffectKeyboardEditor.Type(workspace, pattern, cursor, '7');
+        cell.Effects[0].Should().Be(new TrackerPastNoteActionPatternEffect(
+            Heresy.Core.Sequencing.TrackerPastNoteAction.Cut));
+        cursor.Row.Should().Be(0);
+        PatternEffectKeyboardEditor.Type(workspace, pattern, cursor, '4');
+        cell.Effects[0].Should().Be(new TrackerNewNoteActionPatternEffect(
+            Heresy.Core.Sequencing.NoteDisplacementAction.Continue));
+        cursor.Row.Should().Be(1);
+
+        cursor.SetPosition(0, 0, PatternCellField.EffectParameter);
+        PatternEffectKeyboardEditor.Type(workspace, pattern, cursor, '2');
+        cell.Effects[0].Should().Be(new UndefinedTrackerSpecialPatternEffect(0x24));
+        PatternEffectKeyboardEditor.Type(workspace, pattern, cursor, '0');
+        cell.Effects[0].Should().Be(new UndefinedTrackerSpecialPatternEffect(0x20));
+        cursor.Row.Should().Be(1);
+
+        cursor.SetPosition(0, 0, PatternCellField.EffectCommand);
+        PatternEffectKeyboardEditor.Type(workspace, pattern, cursor, 'G');
+        cell.Effects[0].Should().Be(new TonePortamentoPatternEffect(0x20));
+    }
+
+    [Test]
+    public void AllSxxBytesAreRoundTrippableEvenWhenSubtypeRejectsLowNibble()
+    {
+        for (int value = 0; value < 256; value++)
+        {
+            bool created = PatternEffectCodec.TryCreateTracker(
+                'S', (byte)value, out PatternEffect? effect);
+            created.Should().BeTrue();
+            effect.Should().NotBeNull();
+            PatternEffectCodec.TryDecodeTrackerSlot(effect!,
+                out char? command, out byte parameter).Should().BeTrue();
+            command.Should().Be('S');
+            parameter.Should().Be((byte)value);
+            PatternEffectViewModel.Create(effect!).CompactText
+                .Should().Be($"S{value:X2}");
+        }
+    }
+
+    [Test]
+    public void UnknownSxxAndA00SurvivePatternEffectJsonAndClipboardAsInertTypedSlots()
+    {
+        PatternEffect[] values = [
+            new UndefinedTrackerSpecialPatternEffect(0x2F),
+            new UndefinedTrackerSpecialPatternEffect(0x9F),
+            new TrackerSpeedPatternEffect(0),
+            new TrackerSpeedPatternEffect(6),
+        ];
+        string json = Heresy.Core.Persistence.SongDocumentJson.SerializePatternEffects(values);
+        Heresy.Core.Persistence.SongDocumentJson.DeserializePatternEffects(json)
+            .Should().Equal(values);
+        string copied = PatternEffectClipboardCodec.Serialize(values);
+        PatternEffectClipboardCodec.Deserialize(copied).Should().Equal(values);
+    }
+
+    [Test]
+    public void ACommandAndHexParameterRemainEditableAndRoundTrip()
+    {
+        DocumentWorkspace workspace = new();
+        DataPatternDefinition pattern =
+            PatternDocumentEditor.CreateDataPattern(workspace, "Speed");
+        PatternEffectCursor cursor = new(0, 0, PatternCellField.EffectCommand);
+        PatternEffectKeyboardEditor.Type(workspace, pattern, cursor, 'A')
+            .Rejected.Should().BeFalse();
+        pattern.Grid[0,0]!.Effects[0].Should().Be(
+            new TrackerSpeedPatternEffect(0));
+        cursor.SetPosition(0, 0, PatternCellField.EffectParameter);
+        PatternEffectKeyboardEditor.Type(workspace, pattern, cursor, '0');
+        PatternEffectKeyboardEditor.Type(workspace, pattern, cursor, '6');
+        pattern.Grid[0,0]!.Effects[0].Should().Be(
+            new TrackerSpeedPatternEffect(6));
+        PatternEffectViewModel.Create(pattern.Grid[0,0]!.Effects[0])
+            .CompactText.Should().Be("A06");
+    }
+
 }
