@@ -17,6 +17,8 @@ public sealed class InstrumentToneGridSelection
 	public Cell? Anchor { get; private set; }
 	public Cell? Extent { get; private set; }
 	public Cell? Focused { get; private set; }
+	private IReadOnlyList<InstrumentToneGridRow>? _indexedRows;
+	private Dictionary<int, int> _positions = [];
 
 	public void Clear()
 	{
@@ -41,7 +43,7 @@ public sealed class InstrumentToneGridSelection
 	public void Extend(Cell cell, IReadOnlyList<InstrumentToneGridRow> rows)
 	{
 		Validate(cell, rows);
-		if (Anchor is null || RowPosition(rows, Anchor.Value.ToneIndex) < 0)
+		if (Anchor is null || Position(rows, Anchor.Value.ToneIndex) < 0)
 			Anchor = Focused ?? cell;
 		Extent = cell;
 		Focused = cell;
@@ -59,7 +61,7 @@ public sealed class InstrumentToneGridSelection
 	{
 		if (Focused is not Cell focused)
 			return null;
-		int position = RowPosition(rows, focused.ToneIndex);
+		int position = Position(rows, focused.ToneIndex);
 		if (position < 0)
 			return null;
 		int nextRow = position + rowDelta;
@@ -74,9 +76,9 @@ public sealed class InstrumentToneGridSelection
 	{
 		if (Anchor is not Cell start || Extent is not Cell end)
 			return false;
-		int a = RowPosition(rows, start.ToneIndex);
-		int b = RowPosition(rows, end.ToneIndex);
-		int c = RowPosition(rows, cell.ToneIndex);
+		int a = Position(rows, start.ToneIndex);
+		int b = Position(rows, end.ToneIndex);
+		int c = Position(rows, cell.ToneIndex);
 		return a >= 0 && b >= 0 && c >= Math.Min(a, b) &&
 			c <= Math.Max(a, b) &&
 			cell.Column >= Math.Min(start.Column, end.Column) &&
@@ -89,17 +91,17 @@ public sealed class InstrumentToneGridSelection
 	public void Reconcile(IReadOnlyList<InstrumentToneGridRow> rows)
 	{
 		if (Anchor is Cell anchor &&
-			RowPosition(rows, anchor.ToneIndex) >= 0 &&
-			Extent is Cell end && RowPosition(rows, end.ToneIndex) >= 0)
+			Position(rows, anchor.ToneIndex) >= 0 &&
+			Extent is Cell end && Position(rows, end.ToneIndex) >= 0)
 		{
 			if (Focused is Cell focused &&
-				RowPosition(rows, focused.ToneIndex) >= 0)
+				Position(rows, focused.ToneIndex) >= 0)
 				return;
 			Focused = end;
 			return;
 		}
 		if (Focused is Cell surviving &&
-			RowPosition(rows, surviving.ToneIndex) >= 0)
+			Position(rows, surviving.ToneIndex) >= 0)
 		{
 			Anchor = Extent = surviving;
 			return;
@@ -116,12 +118,29 @@ public sealed class InstrumentToneGridSelection
 		return -1;
 	}
 
-	private static void Validate(Cell cell,
+	// Index the current projection once. Contains() is called for every
+	// visible column as virtualization recycles rows; a linear search per
+	// cell would otherwise become quadratic at the 100,000-row limit.
+	private int Position(IReadOnlyList<InstrumentToneGridRow> rows, int? index)
+	{
+		if (!ReferenceEquals(_indexedRows, rows))
+		{
+			Dictionary<int, int> next = new(rows.Count);
+			for (int i = 0; i < rows.Count; i++)
+				next.Add(rows[i].Index ?? -1, i);
+			_positions = next;
+			_indexedRows = rows;
+		}
+		return _positions.TryGetValue(index ?? -1, out int position)
+			? position : -1;
+	}
+
+	private void Validate(Cell cell,
 		IReadOnlyList<InstrumentToneGridRow> rows)
 	{
 		ArgumentNullException.ThrowIfNull(rows);
 		if ((uint)cell.Column >= ColumnCount ||
-			RowPosition(rows, cell.ToneIndex) < 0)
+			Position(rows, cell.ToneIndex) < 0)
 			throw new ArgumentOutOfRangeException(nameof(cell));
 	}
 }
