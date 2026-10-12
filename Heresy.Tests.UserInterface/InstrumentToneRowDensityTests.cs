@@ -123,7 +123,7 @@ public sealed class InstrumentToneRowDensityTests
 			filter.Bounds.Width.Should().BeLessThanOrEqualTo(
 				Column(regularGrid, 10).Bounds.Width + 0.01);
 
-			TestContext.WriteLine(
+			TestContext.Out.WriteLine(
 				$"Compacted instrument rows (Fluent/headless): regular={regular.Bounds.Height:F2}px, " +
 				$"entry={entry.Bounds.Height:F2}px, NNA={nna.Bounds.Height:F2}px, filter={filter.Bounds.Height:F2}px");
 			workspace.Document.AudioRevision.Should().Be(revision);
