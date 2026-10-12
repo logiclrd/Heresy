@@ -70,7 +70,7 @@ public sealed class InstrumentNnaEditorControlTests
         InstrumentEditorControl editor = new(workspace, instrument, () => { }, _ => { });
         InstrumentToneGridModel model = Field<InstrumentToneGridModel>(editor, "_model");
         Grid row = BuildToneRow(editor, 0);
-        StackPanel nnaCell = (StackPanel)row.Children.Single(x => Grid.GetColumn(x) == 5);
+        StackPanel nnaCell = (StackPanel)((Border)row.Children.Single(x => Grid.GetColumn(x) == 5)).Child!;
         ComboBox action = nnaCell.Children.OfType<ComboBox>().Single();
         TextBox fade = nnaCell.Children.OfType<TextBox>().Single();
         uint baseline = workspace.Document.AudioRevision;
@@ -88,7 +88,7 @@ public sealed class InstrumentNnaEditorControlTests
             Is.EqualTo(InstrumentNnaSetting.Fade(TimeSpan.FromMilliseconds(23))));
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(baseline));
 
-        ComboBox source = (ComboBox)row.Children.Single(x => Grid.GetColumn(x) == 2);
+        ComboBox source = (ComboBox)((Border)row.Children.Single(x => Grid.GetColumn(x) == 2)).Child!;
         object choice = source.ItemsSource!.Cast<object>().Single(x =>
             (ObjectId?)x.GetType().GetProperty("Id")!.GetValue(x) == sourceId);
         source.SelectedItem = choice;
@@ -118,7 +118,7 @@ public sealed class InstrumentNnaEditorControlTests
         InstrumentEditorControl editor = new(workspace, instrument, () => { }, _ => { });
         InstrumentToneGridModel model = Field<InstrumentToneGridModel>(editor, "_model");
         Grid row = BuildToneRow(editor, 0);
-        StackPanel cell = (StackPanel)row.Children.Single(x => Grid.GetColumn(x) == 5);
+        StackPanel cell = (StackPanel)((Border)row.Children.Single(x => Grid.GetColumn(x) == 5)).Child!;
         ComboBox action = cell.Children.OfType<ComboBox>().Single();
         TextBox fade = cell.Children.OfType<TextBox>().Single();
         uint revision = workspace.Document.AudioRevision;
