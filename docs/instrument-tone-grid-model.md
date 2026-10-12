@@ -208,3 +208,68 @@ uses `ScriptInstrumentEditorControl` to manage expressions and
 the declared, stable-ID tone list. Each declared tone also has a
 Filter selector and `Edit Filter...` instance override editor; changes
 to a selected tone use atomic publication and revision tracking. See [script programmability](script-programmability.md).
+
+
+## Agreed next-stage interaction specification — 12 October 2026
+
+This section is an **approved design**, not yet implemented. The corresponding
+independently closable items remain in [todo.md](todo.md).
+
+### Hierarchical NNA
+
+Both data-table and Script Instruments use one note-start NNA resolver
+contract, potentially evaluated by a script with the same input as
+the tone selector. Each selected `ToneSpecification` has Inherit as
+its default, or an explicit Cut, Continue, Off or Fade value (and a
+positive Fade duration). A data-driven Instrument has an outer setting
+defaulting to **Use Tone NNA**, or an unconditional action that overrides
+all selected tones. Script Instruments expose a compiled method using
+their tone-selector input and returning Inherit or a concrete NNA.
+An inner source's NNA is the first inherited value; an explicit
+selected-tone result overrides it; an explicit outer data-Instrument
+choice overrides both. The final policy becomes invocation-local
+when the new note begins. Tracker S73–S76 commands independently
+modify the **currently playing** note's displacement action.
+No implicit NNA changes to existing saved Instruments or playing
+notes are permitted.
+
+### Rectangular selection and focus
+
+Selection consists of one anchor cell, one moving end cell and
+the inclusive rectangular span they determine; it is not the
+virtualized ListBox's row selection. Shift+arrow/Shift+click
+expand the region. Ordinary arrow movement or a click **outside**
+the region starts a new one-cell region; moving focus **inside**
+does not collapse the region. This is true for keyboard, mouse
+and Tab; no focus mode may invisibly edit a cell outside the
+selection. Text controls retain standard cursor, selection and
+Shift+Left/Right behavior while inside the text. Up/Down, or an
+attempt to move left/right past the respective text boundary,
+transfers to grid navigation using the original modifiers.
+Specifically, Shift+Left while caret index is zero sets both
+the new anchor and end to the cell to the left. Dropdown navigation
+remains native while an option popup is open. Selection/focus is
+stored independently of virtualized visual containers.
+
+### Multi-row edits, pitch and density
+
+For a field edit inside a selected rectangle, all selected **rows**
+receive the changed value in that field, whether or not other
+columns lie in the rectangle. Source-less rows remain drafts until
+Source is assigned. One validated batch creates at most one song
+revision and is fully atomic, including invalid IDs, pitch and
+independent Filter overlay clones. Row deletion and the reserved
+entry row are not implied by clearing a field. Pitch edits are
+**constant across rows**, not adjacent-index pitch ramps: typing
+`5` transposes every selected tone by five divisions relative to
+its incoming pitch. The displayed Pitch value becomes
+`Divisions * log2(PitchMultiplier)`, rather than bare log₂,
+so familiar twelve-division scales admit integer offsets; fractional
+values are permitted. Present a value within roughly
+`1000 * 2^-52` relative tolerance of an integer as that integer
+in the UI (the C# `double.Epsilon` constant is instead the
+minimum subnormal, not floating-point machine epsilon).
+Keep the actual stored multiplier when rounding display labels.
+Rows should occupy minimum practical height with at least 1px
+above and below all visible control contents, not simply change
+padding while leaving a hard 32px minimum.

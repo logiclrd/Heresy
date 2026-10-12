@@ -23,6 +23,98 @@ virtual-voice controls, and compiled parametric effects, are implemented.
   [sample-storage.md](sample-storage.md). Report audible confirmation
   on the original problem file separately, if available.
 
+## Tracker-effect and Instrument authoring integration
+
+- [ ] **Introduce inherited per-tone and scripted Instrument NNA resolution.**
+  Define a common note-start NNA resolver contract for data-table and Script
+  Instruments, evaluated against the same incoming pitch/tone-selection
+  input as source selection. Each `ToneSpecification` carries an explicit
+  **Inherit / Cut / Continue / Off / Fade** selection (default Inherit),
+  including a validated Fade duration. Data Instruments additionally have
+  an **Use Tone NNA / Cut / Continue / Off / Fade** global override
+  (default Use Tone NNA), applied after tone selection. Script Instruments
+  expose a compiled NNA method/expression with the tone selector's input,
+  returning Inherit or a concrete action (+ duration for Fade).
+  Resolve in order: selected child's policy → tone/script result →
+  data-Instrument blanket override. Freeze the result in the invocation's
+  `NoteConfigurationSnapshot`, preserve tracker S73–S76's existing
+  current-voice override semantics, and persist/backward-load all defaults
+  without altering existing song behavior. Tests: direct Sample,
+  recursively nested Instruments, scripted pitch-varying NNA, S7x
+  overrides, Fade duration, persistence and active-note snapshot isolation.
+
+- [ ] **Expose NNA policies in Instrument authoring.** In data Instruments,
+  add top-level **Use Tone NNA** default plus concrete policy chooser
+  and Fade duration, and per-tone NNA fields (default Inherit) alongside
+  Source/Pitch/Envelopes. In Script Instruments expose a compiled
+  pitch-input NNA-returning method with an Inherit option, diagnostics,
+  and Fade duration contract. Keep the selected tone's NNA independent
+  of other rows; instrument-level override applies only to this
+  instrument's newly started notes. Test UI, serialization and playback.
+
+- [ ] **Add Insert Tracker Effect... to effect-column context menus.**
+  The empty and populated effect-column menus should expose a chooser
+  listing supported IT commands by letter and full name, each with
+  the same stable coloration as the corresponding tracker sticker.
+  Preserve existing Insert Tracker Slot Before/After and native-effect
+  insertion. In a stack define exact insertion position relative to the
+  selected item and keyboard focus; an empty field inserts directly.
+  Share the command catalogue/description/color identity with keyboard
+  entry rather than maintaining a competing whitelist. Regression-test
+  picker/keyboard parity, submenu placement and stack order.
+
+- [ ] **Give effect hints dedicated selection-sensitive messages.**
+  Keep usage hints and diagnostics in the same vertical status area,
+  preferably stacked vertically with diagnostic text preserved.
+  A collapsed multi-effect stack hints “Expand stacked effects with
+  Enter”; a native effect hints “Configure effect with Enter”.
+  Existing native Enter editing works, so remove the misleading
+  “future parameter dialog” claim. Actual editing failures stay
+  diagnostic messages rather than overwriting guidance on hover.
+
+- [ ] **Add cell-anchored rectangular range selection to the data
+  Instrument tone grid.** Track selected anchor, active field and
+  rectangle independently from virtualized `ListBox.SelectedItem`.
+  Arrow keys move among cells, Shift+Arrow extends a rectangle and
+  Shift+click extends to that cell. Focus landing **outside** the
+  selected block (mouse click, Tab or keyboard focus traversal)
+  resets to one selected cell; focusing **inside** preserves the
+  existing block. Text input retains standard caret/editing and
+  Shift+Arrow text selection, *except* Up/Down go to adjacent grid
+  cells and Left/Right at the respective text boundary transfer
+  navigation with the original key modifiers. A Shift+Left from
+  caret index zero establishes the cell on the left as both selected
+  anchor and block end, as explicitly requested. Open dropdowns
+  keep their own native key handling. Preserve selections while
+  recycling and scrolling virtualized rows.
+
+- [ ] **Implement atomic selected-row field propagation in Instrument
+  tone grids.** When a field is edited in a selected rectangular
+  range, change that *same field* in every included row, never the
+  other selected columns. Source-less rows retain unpublished
+  editor-local drafts; assigning Source can publish them. Validate
+  every changed row, commit one song/audio revision for the complete
+  range, and roll back all results if any row fails. Tone Filter
+  configurations are copied independently, with no shared live
+  overrides; clearing a field does not delete a row. Reserved entry
+  row does not participate in bulk edits. Pitch is **one constant
+  transpose offset** applied to every row (no row-wise ramp).
+  Show Pitch as `divisions * log2(multiplier)` so one division
+  corresponds to one displayed unit, accepting fractional values.
+  Snap UI presentation extremely near integers using about
+  `1000 * 2^-52` (machine epsilon, **not** C# `double.Epsilon`)
+  with a suitable magnitude-relative tolerance; preserve the exact
+  stored multiplier and avoid second quantization on commit.
+  Add selection, pitch, batch atomicity, undo/revision and draft
+  regressions.
+
+- [ ] **Compact instrument tone rows without clipping contents.**
+  Remove the present 32-pixel minimum, two-pixel row margins and
+  oversized control-template spacing as needed while retaining
+  at least one pixel above and below each cell's contents.
+  Validate dropdowns, keyboard focus rings, virtualized scroll,
+  readability and cross-platform Avalonia layout.
+
 ## Reusable FIR/IIR filter system
 
 Design source: [filter-design.md](filter-design.md) (incremental implementation). Each checkbox is intended to be a separately closable, tested implementation slice. In particular, filter *definitions*, configured *instances*, and mutable *DSP processing state* are different things. Do not replace existing IT/tracker-compatible voice filters as an accidental side effect. Preserve the recursive incremental renderer, private mixdown isolation, and current native-effect ordering.

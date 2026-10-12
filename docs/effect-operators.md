@@ -208,3 +208,32 @@ Explicit Pattern cursor cancellation removes its active
 operators without terminal commit; natural completion permits
 the declared wall duration to finish. Further contracts and
 test names: [script programmability](script-programmability.md).
+
+
+## Tracker-effect keyboard semantics and authoring follow-ups — 12 October 2026
+
+All supported tracker-effect command letters are parsed from the
+same semantic effect codec. **Axx** now has an editable tracker
+speed record, translated to the existing global SetSpeedCommand
+for nonzero values; A00 is retained as an inert editable byte, never
+a zero-ticks-per-row timing command. The S command is parsed for
+*every possible byte*. Values with supported subcommands select
+their corresponding concrete effects; values without a supported
+meaning use `UndefinedTrackerSpecialPatternEffect(byte)`, which
+persists exactly through song JSON and clipboard and emits no
+playback instruction. This includes S00 when typing the bare S
+command into a blank tracker slot. Each typed parameter nibble
+re-evaluates and replaces the semantic record for the **current
+byte**, including transitions from defined to undefined and back.
+Existing cursor vertical advance remains after the final nibble.
+S73–S76 are therefore editable without requiring a pre-existing
+special-effect slot. Unknown Sxx values are explicitly no-op,
+not other S subcommands guessed by prefix.
+
+Separately tracked UI work adds an in-place **Insert Tracker
+Effect...** menu with proper label and existing sticker color
+identity, and a contextual guidance line in the same vertical
+status area as real diagnostics. The native Enter configuration
+dialog already exists and must be called **Configure effect with
+Enter**, not described as a future dialog. A multi-item collapsed
+stack instead says **Expand stacked effects with Enter**.
