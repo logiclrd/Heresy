@@ -743,6 +743,51 @@ public sealed class ChannelOutputFilterRenderingTests
     }
 
     [Test]
+    public void FirChannelEnvelopeBindingAndDetachmentRequireExplicitOffPcmPreparation()
+    {
+        FilterDefinition definition = new((ObjectId)3200U, "Fir", [
+            new FilterStageDefinition(1, "low", FilterKind.FirLowPass),
+        ]);
+        FilterInstance authored = new(definition);
+        authored.SetStageParameters(1, [
+            new("TapCount", FilterParameterValue.FromNumber(31)),
+            new("TransitionWidthHz", FilterParameterValue.FromNumber(25)),
+            new("CutoffHz", FilterParameterValue.FromNumber(100)),
+            new("PhaseResponse", FilterParameterValue.FromChoice("Linear")),
+        ]);
+
+        ChannelOutputFilterState plain = new(authored, Rate, 1);
+        ChannelOutputFilterState bound = new(authored, Rate, 1)
+            .PrepareParameterEnvelopeUpdate(
+                1, "CutoffHz", new FixedCurve(210), 0);
+        float[] a = new float[7], b = new float[7];
+        a[0] = b[0] = 1;
+        bound.ProcessInterleaved(a, 0, null);
+        plain.ProcessInterleaved(b, 0, null);
+        Assert.That(a, Is.EqualTo(b).Within(1e-7f),
+            "binding cannot publish an FIR kernel before off-PCM preparation");
+        Assert.That(bound.TryPreparePendingFirs(), Is.True);
+
+        ChannelOutputFilterState preparedReference = plain.PrepareParameterUpdate(
+            1, [new("CutoffHz", FilterParameterValue.FromNumber(210))], 7);
+        float[] after = new float[10], expected = new float[10];
+        after[0] = expected[0] = 0.5f;
+        bound.ProcessInterleaved(after, 7, null);
+        preparedReference.ProcessInterleaved(expected, 7, null);
+        Assert.That(after, Is.EqualTo(expected).Within(1e-6f));
+
+        ChannelOutputFilterState detached = bound.PrepareParameterEnvelopeUpdate(
+            1, "CutoffHz", null, 17);
+        float[] beforeReprepare = new float[7], stillAccepted = new float[7];
+        beforeReprepare[0] = stillAccepted[0] = 1;
+        detached.ProcessInterleaved(beforeReprepare, 17, null);
+        bound.ProcessInterleaved(stillAccepted, 17, null);
+        Assert.That(beforeReprepare, Is.EqualTo(stillAccepted).Within(1e-6f),
+            "detaching FIR must hold the accepted kernel until its base is prepared");
+        Assert.That(detached.TryPreparePendingFirs(), Is.True);
+    }
+
+    [Test]
     public void ScopedVirtualEnvelopesAndUnscopedHostStayIndependent()
     {
         PlaybackSession Make(bool useEnvelopes)
