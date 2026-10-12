@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 using Heresy.Core.Objects;
@@ -10,11 +11,34 @@ namespace Heresy.Core.Instruments;
 /// for silence. Explicit specifications preserve all references for import,
 /// tombstones and deterministic snapshot binding.
 /// </summary>
-public sealed class ScriptInstrumentDefinition : SongObject
+public sealed class ScriptInstrumentDefinition : InstrumentDefinitionBase
 {
 	public ScriptInstrumentDefinition(ObjectId id, string name) : base(id, name) { }
 
-	public override SongObjectKind Kind => SongObjectKind.Instrument;
+    /// <summary>Restricted C# expression of incoming pitchMultiplier.
+    /// Returns InstrumentNnaAction.Inherit or Cut/Continue/Off/Fade;
+    /// compiled at source preparation, never in the PCM callback.</summary>
+    public string NnaExpression { get; set; } = "InstrumentNnaAction.Inherit";
+
+    /// <summary>Positive duration used if the scripted NNA returns Fade.</summary>
+    public TimeSpan NnaFadeDuration { get; set; } = TimeSpan.FromMilliseconds(100);
+
+    public override InstrumentNnaSetting ResolveNna(
+        double pitchMultiplier, ToneSpecification selectedTone,
+        Func<double, InstrumentNnaAction>? scriptedEvaluator = null)
+    {
+        ArgumentNullException.ThrowIfNull(selectedTone);
+        InstrumentNnaAction action = scriptedEvaluator?.Invoke(pitchMultiplier)
+            ?? InstrumentNnaAction.Inherit;
+        // An inherited script result delegates to the selected tone;
+        // that tone may itself inherit the terminal source's NNA.
+        InstrumentNnaSetting resolved = action == InstrumentNnaAction.Inherit
+            ? selectedTone.Nna
+            : new InstrumentNnaSetting(action,
+                action == InstrumentNnaAction.Fade ? NnaFadeDuration : null);
+        resolved.Validate();
+        return resolved;
+    }
 
 	/// <summary>Restricted C# integer expression of pitchMultiplier (C4=1).</summary>
 	public string Source { get; set; } = "-1";

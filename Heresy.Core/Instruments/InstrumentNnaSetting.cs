@@ -14,7 +14,7 @@ public enum InstrumentNnaAction
 }
 
 /// <summary>Data-driven Instrument's outermost blanket override.
-— UseToneNna delegates to its selected ToneSpecification.</summary>
+/// UseToneNna delegates to its selected ToneSpecification.</summary>
 public enum InstrumentNnaOverride
 {
     UseToneNna = 0,

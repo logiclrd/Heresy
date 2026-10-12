@@ -15,6 +15,10 @@ public sealed class ToneSpecification
 	public required ObjectId SourceId { get; init; }
 	public double PitchMultiplier { get; init; } = 1.0;
 
+    /// <summary>Explicit NNA override for this selected tone, or Inherit.
+    /// Older saved songs default to Inherit without migration.</summary>
+    public InstrumentNnaSetting Nna { get; init; } = default;
+
 	public ObjectId? VolumeEnvelopeId { get; init; }
 	public ObjectId? PitchEnvelopeId { get; init; }
 	public ObjectId? PanningEnvelopeId { get; init; }
