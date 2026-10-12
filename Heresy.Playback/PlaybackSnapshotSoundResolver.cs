@@ -31,6 +31,7 @@ internal sealed class PlaybackSnapshotSoundResolver
 	private readonly Dictionary<ObjectId, IEnvelopeCurve?> _envelopes = [];
 	private readonly Dictionary<ObjectId, IScriptInstrumentToneEvaluator> _instrumentPrograms = [];
 	private readonly Dictionary<ObjectId, IScriptInstrumentPitchEvaluator> _pitchPrograms = [];
+    private readonly Dictionary<ObjectId, IScriptInstrumentNnaEvaluator> _nnaPrograms = [];
 	private readonly Dictionary<string, Func<double, double, double>> _parametricPrograms = new(StringComparer.Ordinal);
 	private readonly ConcurrentDictionary<ObjectId, ISound> _preparedMixdowns = new();
 	private uint _nextPreparedId = uint.MaxValue;
@@ -146,8 +147,10 @@ internal sealed class PlaybackSnapshotSoundResolver
 				// Compile once during source preparation, never in SDL callbacks.
 				GetInstrumentProgram(scripted);
 				GetInstrumentPitchProgram(scripted);
-				sound = new InstrumentSound(
-					pitch => SelectTone(scripted, pitch), this, this);
+                GetInstrumentNnaProgram(scripted);
+                sound = new InstrumentSound(
+                    pitch => SelectTone(scripted, pitch), this, this,
+                    (pitch, tone) => SelectNna(scripted, pitch, tone));
 				break;
 
 			case FmSynthDefinition fmSynth:
@@ -248,12 +251,41 @@ internal sealed class PlaybackSnapshotSoundResolver
 			PitchEnvelopeId = tone.PitchEnvelopeId,
 			PanningEnvelopeId = tone.PanningEnvelopeId,
 			FilterEnvelopeId = tone.FilterEnvelopeId,
-			// Preserve the independently configured tone Filter while applying
+		        Nna = tone.Nna,
+            // Preserve the independently configured tone Filter while applying
 			// a scripted pitch scale. Reconstructing this tone must not
 			// silently discard its DSP layer.
 			FilterConfiguration = tone.FilterConfiguration?.Clone(),
 		};
 	}
+
+    /// <summary>Resolve the same input pitch as tone selection, without
+    /// performing script compilation during a note's PCM processing.</summary>
+    public InstrumentNnaSetting SelectNna(
+        SongObject definition, double pitch, ToneSpecification tone)
+        => definition switch
+        {
+            InstrumentDefinition table => table.ResolveNna(pitch, tone),
+            ScriptInstrumentDefinition scripted =>
+                scripted.ResolveNna(pitch, tone,
+                    GetInstrumentNnaProgram(scripted).SelectNna),
+            _ => tone.Nna,
+        };
+
+    private IScriptInstrumentNnaEvaluator GetInstrumentNnaProgram(
+        ScriptInstrumentDefinition definition)
+    {
+        if (_nnaPrograms.TryGetValue(definition.Id, out var cached))
+            return cached;
+        ScriptCompilationResult<IScriptInstrumentNnaEvaluator> compiled =
+            ScriptCompiler.CompileInstrumentNna(definition);
+        if (!compiled.Success || compiled.Program is null)
+            throw new InvalidOperationException(
+                $"Instrument '{definition.Name}' NNA expression failed to compile: " +
+                string.Join("; ", compiled.Diagnostics.Select(d => d.Message)));
+        _nnaPrograms.Add(definition.Id, compiled.Program);
+        return compiled.Program;
+    }
 
 	private IScriptInstrumentPitchEvaluator GetInstrumentPitchProgram(
 		ScriptInstrumentDefinition definition)

@@ -726,11 +726,12 @@ public sealed class PreparedIncrementalPlaybackFactory
 						nextPath[p] = path[p];
 					nextPath[^1] = id;
 					return new InstrumentSound(
-						pitch => sounds.SelectTone(definition, pitch),
-						new InstrumentToneSoundResolver(child =>
-							ResolveTone(child, nextPath, target, owner, playbackOwner,
-								frame, enclosingSourceScopes)),
-						sounds);
+                        pitch => sounds.SelectTone(definition, pitch),
+                        new InstrumentToneSoundResolver(child =>
+                            ResolveTone(child, nextPath, target, owner, playbackOwner,
+                                frame, enclosingSourceScopes)),
+                        sounds,
+                        (pitch, tone) => sounds.SelectNna(definition, pitch, tone));
 				}
 			}
 			return sounds.TryResolve(id, mixdown: false, out ISound? direct)

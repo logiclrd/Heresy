@@ -46,6 +46,7 @@ public sealed class InstrumentSound : ISound
 	}
 
 	private readonly Func<double, ToneSpecification?> _selectTone;
+    private readonly Func<double, ToneSpecification, InstrumentNnaSetting> _selectNna;
 	private readonly ISoundResolver _soundResolver;
 	private readonly IEnvelopeCurveResolver _envelopeResolver;
 
@@ -53,8 +54,9 @@ public sealed class InstrumentSound : ISound
 		InstrumentDefinition definition,
 		ISoundResolver soundResolver,
 		IEnvelopeCurveResolver envelopeResolver)
-		: this(pitch => SelectTone(definition, pitch),
-			soundResolver, envelopeResolver)
+        : this(pitch => SelectTone(definition, pitch),
+            soundResolver, envelopeResolver,
+            (pitch, tone) => definition.ResolveNna(pitch, tone))
 	{
 		ArgumentNullException.ThrowIfNull(definition);
 	}
@@ -65,11 +67,13 @@ public sealed class InstrumentSound : ISound
 	/// </summary>
 	public InstrumentSound(
 		Func<double, ToneSpecification?> selectTone,
-		ISoundResolver soundResolver,
-		IEnvelopeCurveResolver envelopeResolver)
-	{
+        ISoundResolver soundResolver,
+        IEnvelopeCurveResolver envelopeResolver,
+        Func<double, ToneSpecification, InstrumentNnaSetting>? selectNna = null)
+    {
 		_selectTone = selectTone
-			?? throw new ArgumentNullException(nameof(selectTone));
+            ?? throw new ArgumentNullException(nameof(selectTone));
+        _selectNna = selectNna ?? ((_, tone) => tone.Nna);
 		_soundResolver = soundResolver
 			?? throw new ArgumentNullException(nameof(soundResolver));
 		_envelopeResolver = envelopeResolver
@@ -147,12 +151,29 @@ public sealed class InstrumentSound : ISound
 				envelopes.Volume is not null;
 		}
 
-		NoteConfigurationSnapshot configuration =
-			new(
-				childInvocation.Configuration.NewNotePolicy,
-				childInvocation.Configuration.NoteFadeDuration,
-				childInvocation.Configuration.NewNoteFadeDuration,
-				envelopes);
+        // Resolve the hierarchy at this invocation's original incoming
+        // pitch (not its child-transposed pitch). The selected child is
+        // already snapshotted, so an outer explicit NNA wins over it.
+        InstrumentNnaSetting selectedNna = _selectNna(pitchMultiplier, tone);
+        selectedNna.Validate();
+        NewNotePolicy resolvedPolicy = selectedNna.Action switch
+        {
+            InstrumentNnaAction.Inherit => childInvocation.Configuration.NewNotePolicy,
+            InstrumentNnaAction.Cut => NewNotePolicy.Cut,
+            InstrumentNnaAction.Continue => NewNotePolicy.Continue,
+            InstrumentNnaAction.Off => NewNotePolicy.Off,
+            InstrumentNnaAction.Fade => NewNotePolicy.Fade(
+                selectedNna.FadeDuration!.Value),
+            _ => throw new ArgumentOutOfRangeException(nameof(selectedNna)),
+        };
+        TimeSpan? selectedFadeDuration = selectedNna.Action == InstrumentNnaAction.Fade
+            ? selectedNna.FadeDuration
+            : childInvocation.Configuration.NewNoteFadeDuration;
+        NoteConfigurationSnapshot configuration =
+            new(resolvedPolicy,
+                childInvocation.Configuration.NoteFadeDuration,
+                selectedFadeDuration,
+                envelopes);
 
 		// Compose tone DSP from the selected terminal source outward. Do not
 		// change the terminal ISound or its SoundState: native source-frame
