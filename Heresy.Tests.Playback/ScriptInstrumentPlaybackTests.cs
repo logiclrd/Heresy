@@ -355,7 +355,7 @@ public sealed class ScriptInstrumentPlaybackTests
     }
 
     [Test]
-    public void ScriptChannelFilterSelectionPersistsAcrossNoteStartsThenClears()
+    public void ScriptChannelFilterSelectionPersistsAcrossBlocksThenClears()
     {
         SongDocument song = new();
         ObjectId sample = Sample(song, 16384);
@@ -363,9 +363,9 @@ public sealed class ScriptInstrumentPlaybackTests
         ObjectId root = ScriptPattern(song, $"""
             ChannelFilter(0, 0, _O({selected.DefinitionId.Value}));
             Note(0, 0, _O({sample.Value}));
-            Note(0.02, 0, _O({sample.Value}));
-            ChannelFilter(0.04, 0);
-            Note(0.04, 0, _O({sample.Value}));
+            // Source continues after its note start: channel filtering is
+            // persistent and the control is deferred to its wall deadline.
+            ChannelFilter(0, 0, timeOffsetSeconds: 0.004);
             """);
         using PreparedIncrementalPlaybackPlan full =
             new PreparedIncrementalPlaybackFactory(Mono()).Create(song, root);
@@ -378,8 +378,9 @@ public sealed class ScriptInstrumentPlaybackTests
         Assert.That(a, Is.EqualTo(b).Within(1e-6f));
         Assert.That(a[0], Is.EqualTo(0.5f).Within(1e-6f));
         Assert.That(a[1], Is.EqualTo(1f).Within(1e-6f));
-        Assert.That(a[40], Is.EqualTo(0.5f).Within(1e-6f),
-            "selection is effective before first row note, and stays until clear");
+        Assert.That(a[3], Is.EqualTo(1f).Within(1e-6f));
+        Assert.That(a[4], Is.EqualTo(0.5f).Within(1e-6f),
+            "the channel Filter clears at its fixed-wall deadline");
     }
 
     [Test]
@@ -401,6 +402,26 @@ public sealed class ScriptInstrumentPlaybackTests
         Assert.That(pcm[1], Is.EqualTo(1f).Within(1e-6f));
         var messages = plan.SequencingContext.Diagnostics.Drain();
         Assert.That(messages.Count(m => m.Code == "HRSEQ009"), Is.EqualTo(1));
+    }
+
+    [Test]
+    public void ScriptVirtualChannelFilterSelectionIsIndependentOfPhysicalOutput()
+    {
+        SongDocument song = new();
+        ObjectId sample = Sample(song, 16384);
+        FilterInstance filter = Echo(song, 0.001);
+        ObjectId root = ScriptPattern(song, $"""
+            ChannelFilterVirtual(0, 7U, _O({filter.DefinitionId.Value}));
+            NoteVirtual(0, 7U, _O({sample.Value}));
+            Note(0, 0, _O({sample.Value}));
+            """);
+        using PreparedIncrementalPlaybackPlan plan =
+            new PreparedIncrementalPlaybackFactory(Mono()).Create(song, root);
+        float[] pcm = new float[5];
+        plan.Source.Render(5, pcm);
+        Assert.That(pcm[0], Is.EqualTo(1f).Within(1e-5f));
+        Assert.That(pcm[1], Is.EqualTo(1.5f).Within(1e-5f),
+            "the virtual host alone receives the delayed channel response");
     }
 
     private static FilterInstance Echo(SongDocument song, double delay)
