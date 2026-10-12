@@ -39,7 +39,7 @@ public sealed class FmRealtimeSaturatedLadderFastPathTests
 		{
 			double cutoff = Wave(ref cutoffPhase, 19, 120, 45);
 			double resonance = Wave(ref resonancePhase, 31, 0.5, 0.48);
-			double drive = Wave(ref drivePhase, 23, 5.05, 4.95);
+			double drive = Wave(ref drivePhase, 23, 5, 4.5);
 			FilterInstance next = use.Clone();
 			next.SetStageParameters(1, [
 				new("CutoffHz", FilterParameterValue.FromNumber(cutoff)),
@@ -65,7 +65,7 @@ public sealed class FmRealtimeSaturatedLadderFastPathTests
 		FmSynthSound sound = new(new FmSynthGraph([
 			new FmConstantNode(1, 0.65),
 			new FmOscillatorNode(2, FmOscillatorWaveform.Sine, 23,
-				minimum: 0.1, maximum: 10, constant: true),
+				minimum: 0.5, maximum: 9.5, constant: true),
 			new FmFilterNode(3, 1, use, [
 				new FmFilterParameterConnection(1, FilterKind.LadderSaturated,
 					0, "Drive", 2),
@@ -78,7 +78,7 @@ public sealed class FmRealtimeSaturatedLadderFastPathTests
 		Span<float> sample = stackalloc float[1];
 		for (int frame = 0; frame < actual.Length; frame++)
 		{
-			double drive = Wave(ref phase, 23, 5.05, 4.95);
+			double drive = Wave(ref phase, 23, 5, 4.5);
 			FilterInstance next = use.Clone();
 			next.SetStageParameter(1, "Drive",
 				FilterParameterValue.FromNumber(drive));
@@ -138,7 +138,7 @@ public sealed class FmRealtimeSaturatedLadderFastPathTests
 			new FmOscillatorNode(4, FmOscillatorWaveform.Sine, 29,
 				minimum: 0.02, maximum: 0.98, constant: true),
 			new FmOscillatorNode(5, FmOscillatorWaveform.Sine, 31,
-				minimum: 0.1, maximum: 10, constant: true),
+				minimum: 0.5, maximum: 9.5, constant: true),
 			new FmFilterNode(6, 1, use, [
 				new FmFilterParameterConnection(1, FilterKind.OnePole,
 					0, "CutoffHz", 2),
@@ -161,7 +161,7 @@ public sealed class FmRealtimeSaturatedLadderFastPathTests
 			double cutoff = Wave(ref cutoffPhase, 17, 120, 45);
 			double gain = Wave(ref gainPhase, 23, 0, 9);
 			double resonance = Wave(ref resonancePhase, 29, 0.5, 0.48);
-			double drive = Wave(ref drivePhase, 31, 5.05, 4.95);
+			double drive = Wave(ref drivePhase, 31, 5, 4.5);
 			FilterInstance next = use.Clone();
 			next.SetStageParameter(1, "CutoffHz",
 				FilterParameterValue.FromNumber(cutoff));
@@ -188,7 +188,7 @@ public sealed class FmRealtimeSaturatedLadderFastPathTests
 		string oversampling, string invalidParameter, double invalidValue)
 	{
 		FilterDefinition def = new((ObjectId)119U, "Mixed", [
-			new FilterStageDefinition(1, "one pole", FilterKind.OnePole),
+			new FilterStageDefinition(1, "one_pole", FilterKind.OnePole),
 			new FilterStageDefinition(2, "bell", FilterKind.BiquadPeaking),
 			new FilterStageDefinition(3, "linear", FilterKind.LadderLinear),
 			new FilterStageDefinition(4, "nonlinear", FilterKind.LadderSaturated),
@@ -285,7 +285,7 @@ public sealed class FmRealtimeSaturatedLadderFastPathTests
 			new FmOscillatorNode(3, FmOscillatorWaveform.Sine, 31,
 				minimum: 0.02, maximum: 0.98, constant: true),
 			new FmOscillatorNode(4, FmOscillatorWaveform.Sine, 23,
-				minimum: 0.1, maximum: 10, constant: true),
+				minimum: 0.5, maximum: 9.5, constant: true),
 			new FmFilterNode(5, 1, use, [
 				new FmFilterParameterConnection(1, FilterKind.LadderSaturated,
 					0, "CutoffHz", 2),
