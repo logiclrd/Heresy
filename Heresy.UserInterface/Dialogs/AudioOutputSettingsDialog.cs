@@ -176,6 +176,7 @@ public sealed class AudioOutputSettingsDialog : Window
 		});
 		for (int index = 0; index < configuration.OutputChannelCount; index++)
 		{
+			int speakerIndex = index;
 			OutputChannelConfiguration channel = configuration.OutputChannels[index];
 			TextBox x = Number(channel.Position.X);
 			TextBox y = Number(channel.Position.Y);
@@ -189,7 +190,7 @@ public sealed class AudioOutputSettingsDialog : Window
 			};
 			TextBox cutoff = Number(channel.CutoffHz ?? 1000, 82);
             Button edit = new() { Content = "Edit chain...", MinWidth = 93 };
-            SpeakerRow state = new(x, y, z, importance, filter, cutoff, edit, edit)
+            SpeakerRow state = new(x, y, z, importance, filter, cutoff, edit)
             {
                 Inline = channel.Filter,
             };
@@ -206,7 +207,7 @@ public sealed class AudioOutputSettingsDialog : Window
                 try
                 {
                     FilterInstance? proposed = await new SpeakerFilterChainDialog(
-                        state.Inline, ReadSampleRateOrDefault(), index)
+                        state.Inline, ReadSampleRateOrDefault(), speakerIndex)
                         .ShowDialog<FilterInstance?>(this);
                     if (proposed is not null)
                         state.Inline = proposed;
@@ -231,7 +232,7 @@ public sealed class AudioOutputSettingsDialog : Window
 						Width = 100,
 						VerticalAlignment = VerticalAlignment.Center,
 					},
-					x, y, z, importance, filter, cutoff,
+					x, y, z, importance, filter, cutoff, edit,
 				},
 			};
 			_speakers.Children.Add(row);
