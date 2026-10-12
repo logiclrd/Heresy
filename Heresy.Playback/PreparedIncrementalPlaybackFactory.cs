@@ -755,10 +755,10 @@ public sealed class PreparedIncrementalPlaybackFactory
 						&& selection.FilterDefinitionId is ObjectId selectedId)
 					{
 						if (scripts.TryResolve(selectedId, out SongObject? candidate)
-							&& candidate is FilterDefinition definition)
+							&& candidate is FilterDefinition selectedFilterDefinition)
 							command = selection with
 							{
-								Configuration = new FilterInstance(definition),
+								Configuration = new FilterInstance(selectedFilterDefinition),
 							};
 						// Missing IDs remain unresolved: the PlaybackSession
 						// produces a rate-limited no-op diagnostic.
