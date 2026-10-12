@@ -371,6 +371,54 @@ public sealed class NoteEventFilterRenderingTests
         Assert.That(errors, Has.Count.EqualTo(1));
     }
 
+    [Test]
+    public void TextNoteAssignmentsMatchTypedCommandAndRejectWholeInvalidBatch()
+    {
+        Resolver resolver = new();
+        resolver.Add(Source, new ProbeSound());
+        PlaybackSession Make()
+        {
+            PlaybackSession session = Session(resolver, Schedule());
+            session.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+                new StartNoteCommand(Source)
+                {
+                    EventFilterConfiguration = Echo(551, 0.002),
+                },
+            ]);
+            return session;
+        }
+
+        PlaybackSession text = Make(), typed = Make(), rejected = Make();
+        text.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new SetNoteFilterAssignmentsCommand("""
+                # delay: a smoothed amplitude change
+                delay.Feedforward = 0.5
+                """),
+        ]);
+        typed.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new SetNoteFilterParametersCommand(1, [
+                new("Feedforward", FilterParameterValue.FromNumber(0.5)),
+            ]),
+        ]);
+        List<string> diagnostics = [];
+        rejected.NoteFilterCommandRejected = diagnostics.Add;
+        rejected.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new SetNoteFilterAssignmentsCommand("""
+                delay.Feedforward = 0.5
+                delay.Invalid = 9
+                """),
+        ]);
+        float[] viaText = new float[8], viaTyped = new float[8], invalid = new float[8];
+        text.Render(0, 8, viaText);
+        typed.Render(0, 8, viaTyped);
+        rejected.Render(0, 8, invalid);
+        Assert.That(viaText, Is.EqualTo(viaTyped).Within(1e-6f));
+        Assert.That(viaText, Is.Not.EqualTo(invalid),
+            "only the fully valid text batch commits");
+        Assert.That(diagnostics, Has.Count.EqualTo(1));
+        Assert.That(invalid[2], Is.EqualTo(1f).Within(1e-6f));
+    }
+
     private static FilterInstance Echo(uint id, double delay)
     {
         FilterDefinition definition = new((ObjectId)id, "Echo", [
