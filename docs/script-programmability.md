@@ -504,3 +504,14 @@ should remain separate deliverables with specific red/green
 regressions. The original design required programmable
 musical behavior; it did not settle an unrestricted C# runtime
 policy or solve arbitrary-script finite-duration proofs.
+
+
+## Script Instrument note-start NNA expressions — 12 October 2026
+
+A scripted Instrument can now supply an independent restricted C# `NnaExpression` evaluated from the same positive finite `pitchMultiplier` as its source and pitch expressions. Its compiled `IScriptInstrumentNnaEvaluator.SelectNna(double pitchMultiplier)` returns `InstrumentNnaAction.Inherit`, `.Cut`, `.Continue`, `.Off`, or `.Fade`. For example:
+
+```csharp
+pitchMultiplier < 1.5 ? InstrumentNnaAction.Continue : InstrumentNnaAction.Inherit
+```
+
+Scripts have no unrestricted object allocation or host framework access: only the five literal `InstrumentNnaAction` enum members were added to the restricted semantic allowlist. The expression is compiled once during playback-source preparation, alongside the tone selector and pitch scaler; no Roslyn compilation occurs in realtime PCM processing. An explicit script result supersedes the selected tone's NNA; Inherit delegates to the selected tone, which can in turn inherit the child source's policy. Fade uses the script Instrument's separately authored positive `NnaFadeDuration`. The resolved policy and duration are captured in the newly created note invocation. Expression and duration are stored as optional version-one Instrument fields; absence means Inherit and a standard positive Fade duration. Invalid expressions fail preparation with diagnostics before sound processing. Script UI editing controls and human-facing validation messages remain a separate follow-up task.
