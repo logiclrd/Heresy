@@ -167,7 +167,8 @@ public sealed class ChannelOutputFilterRenderingTests
         session.ConfigurePhysicalChannelOutputFilter(0, null);
         float[] second = new float[4];
         session.Render(2, 4, second);
-        Assert.That(second, Is.EqualTo(new float[] { 2, 0, 1, 0 }));
+        Assert.That(second, Is.EqualTo(new float[] { 3, 0, 1, 0 }),
+            "other host retains its prior two-frame delay while host zero bypasses");
     }
 
     private static FilterInstance Echo(uint id, double seconds)
