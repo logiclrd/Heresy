@@ -327,8 +327,13 @@ public sealed class FmSynthSound : ISound
 			synthState,
 			startFrame);
 
-		double[] gains =
-			new double[outputChannelCount];
+		// Ordinary mono/stereo/surround renders should not allocate a new
+		// gain array for each PCM block. Extremely wide custom layouts use
+		// a bounded stack path plus a heap fallback instead of unbounded
+		// stack growth.
+		Span<double> gains = outputChannelCount <= 16
+			? stackalloc double[outputChannelCount]
+			: new double[outputChannelCount];
 		for (int outputChannel = 0;
 			outputChannel < outputChannelCount;
 			outputChannel++)
