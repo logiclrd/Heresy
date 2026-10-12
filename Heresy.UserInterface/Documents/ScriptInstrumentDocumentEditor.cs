@@ -32,6 +32,28 @@ public static class ScriptInstrumentDocumentEditor
         return definition;
     }
 
+    /// <summary>Validate and publish the scripted note-start NNA policy.
+    /// This restricted pure expression receives the same pitchMultiplier as
+    /// the tone selector; the Fade duration is configured separately.</summary>
+    public static void SetNnaExpression(DocumentWorkspace workspace,
+        ScriptInstrumentDefinition definition, string expression,
+        TimeSpan fadeDuration)
+    {
+        ValidateOwner(workspace, definition);
+        if (fadeDuration <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(fadeDuration));
+        var diagnostics = ScriptCompiler.AnalyzeInstrumentNnaSource(expression);
+        if (diagnostics.Any(d => d.Severity == ScriptDiagnosticSeverity.Error))
+            throw new ArgumentException(
+                string.Join("; ", diagnostics.Select(d => d.Message)),
+                nameof(expression));
+        if (definition.NnaExpression == expression &&
+            definition.NnaFadeDuration == fadeDuration) return;
+        definition.NnaExpression = expression;
+        definition.NnaFadeDuration = fadeDuration;
+        workspace.Document.MarkChanged(affectsAudio: true);
+    }
+
     public static void SetSource(
         DocumentWorkspace workspace, ScriptInstrumentDefinition definition,
         string source)
@@ -78,7 +100,8 @@ public static class ScriptInstrumentDocumentEditor
         ObjectId? pitchEnvelopeId = null,
         ObjectId? panningEnvelopeId = null,
         ObjectId? filterEnvelopeId = null,
-        FilterInstance? filterConfiguration = null)
+        FilterInstance? filterConfiguration = null,
+        InstrumentNnaSetting? nna = null)
     {
         ValidateOwner(workspace, definition);
         ValidateIndex(definition, index);
@@ -86,7 +109,8 @@ public static class ScriptInstrumentDocumentEditor
             InstrumentDocumentEditor.CreateToneSpecification(
                 workspace.Document, soundId, pitchMultiplier,
                 volumeEnvelopeId, pitchEnvelopeId,
-                panningEnvelopeId, filterEnvelopeId, filterConfiguration);
+                panningEnvelopeId, filterEnvelopeId, filterConfiguration,
+                nna ?? definition.ToneSpecifications[index].Nna);
         ToneSpecification old = definition.ToneSpecifications[index];
         if (old.SourceId == replacement.SourceId
             && old.PitchMultiplier == replacement.PitchMultiplier

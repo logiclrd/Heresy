@@ -38,7 +38,23 @@ public static class InstrumentDocumentEditor
 		return instrument;
 	}
 
-	public static void UpdateLookup(
+	/// <summary>Publish an Instrument-wide NNA policy independently from
+    /// its tone mappings. A duration is retained for a future Fade selection.</summary>
+    public static void SetNnaOverride(DocumentWorkspace workspace,
+        InstrumentDefinition instrument, InstrumentNnaOverride action,
+        TimeSpan fadeDuration)
+    {
+        ValidateInstrument(workspace, instrument);
+        if (!Enum.IsDefined(action) || fadeDuration <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(action));
+        if (instrument.NnaOverride == action &&
+            instrument.NnaFadeDuration == fadeDuration) return;
+        instrument.NnaOverride = action;
+        instrument.NnaFadeDuration = fadeDuration;
+        workspace.Document.MarkChanged(affectsAudio: true);
+    }
+
+    public static void UpdateLookup(
 		DocumentWorkspace workspace,
 		InstrumentDefinition instrument,
 		double divisions,
@@ -88,16 +104,17 @@ public static class InstrumentDocumentEditor
 	}
 
 	public static void UpdateToneSpecification(
-		DocumentWorkspace workspace,
-		InstrumentDefinition instrument,
-		int specificationIndex,
-		ObjectId sourceId,
-		double pitchMultiplier = 1.0,
-		ObjectId? volumeEnvelopeId = null,
-		ObjectId? pitchEnvelopeId = null,
-		ObjectId? panningEnvelopeId = null,
-		ObjectId? filterEnvelopeId = null,
-		FilterInstance? filterConfiguration = null)
+        DocumentWorkspace workspace,
+        InstrumentDefinition instrument,
+        int specificationIndex,
+        ObjectId sourceId,
+        double pitchMultiplier = 1.0,
+        ObjectId? volumeEnvelopeId = null,
+        ObjectId? pitchEnvelopeId = null,
+        ObjectId? panningEnvelopeId = null,
+        ObjectId? filterEnvelopeId = null,
+        FilterInstance? filterConfiguration = null,
+        InstrumentNnaSetting? nna = null)
 	{
 		ValidateInstrument(workspace, instrument);
 		ValidateSpecificationIndex(instrument, specificationIndex);
@@ -111,7 +128,7 @@ public static class InstrumentDocumentEditor
 				pitchEnvelopeId,
 				panningEnvelopeId,
 				filterEnvelopeId,
-                filterConfiguration, nna);
+                filterConfiguration, nna ?? instrument.ToneSpecifications[specificationIndex].Nna);
 		ToneSpecification current =
 			instrument.ToneSpecifications[specificationIndex];
 
