@@ -3,6 +3,7 @@ using System.IO;
 using System.Numerics;
 
 using Heresy.Render.Configuration;
+using Heresy.Core.Filters;
 using Heresy.UserInterface;
 
 using NUnit.Framework;
@@ -65,6 +66,68 @@ public sealed class AudioOutputPreferenceTests
 				Is.Empty);
 		});
 	}
+
+    [Test]
+    public void InlineSerialSpeakerFiltersRoundTripThroughAppPreferenceWithoutSongDependency()
+    {
+        WithPreference((preference, path) =>
+        {
+            FilterInstance filter = SpeakerFilterChainText.Parse(
+                "OnePole CutoffHz=120 Mode=LowPass\n"
+                + "CombFeedforward DelaySeconds=0.002 Feedforward=0.8 Mix=1",
+                48000, 1);
+            RenderConfiguration config = new(48000, [
+                new OutputChannelConfiguration(Vector3.Zero),
+                new OutputChannelConfiguration(new Vector3(1,0,0),
+                    filterType:OutputFilterType.Chain, filter:filter),
+            ]);
+            Assert.That(preference.TrySave(config), Is.True);
+            RenderConfiguration? saved = new AudioOutputPreference(path).Read();
+            Assert.That(saved, Is.Not.Null);
+            Assert.That(saved!.OutputChannels[1].FilterType, Is.EqualTo(OutputFilterType.Chain));
+            Assert.That(saved.OutputChannels[1].CutoffHz, Is.Null);
+            Assert.That(
+                SpeakerFilterChainText.Format(saved.OutputChannels[1].Filter!),
+                Is.EqualTo(SpeakerFilterChainText.Format(config.OutputChannels[1].Filter!)));
+            Assert.That(saved.OutputChannels[0].Filter, Is.Null);
+            // Editing a referenced song definition after applying output
+            // preferences must not alter an existing output snapshot.
+            filter.Definition.ReplaceStages([
+                new FilterStageDefinition(1, "rewritten", FilterKind.SvfHighPass),
+            ]);
+            Assert.That(saved.OutputChannels[1].Filter!.GetStages(),
+                Has.Count.EqualTo(2));
+        });
+    }
+
+    [Test]
+    public void CorruptOrUnavailableInlineFilterLeavesEntireSavedSettingsUnapplied()
+    {
+        WithPreference((preference, path) =>
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path,
+                "{\"Version\":1,\"SampleRate\":48000,\"Speakers\":["
+                + "{\"Position\":[0,0,0],\"PositionalImportance\":1,"
+                + "\"FilterType\":3,\"FilterChain\":\"OnePole CutoffHz=24000\"}]}" );
+            Assert.That(preference.Read(), Is.Null);
+        });
+    }
+
+    [Test]
+    public void SpeakerFilterTextRejectsMalformedStagesAndStructuralInvalidity()
+    {
+        Assert.Throws<ArgumentException>(() => SpeakerFilterChainText.Parse(
+            "NotAFilter CutoffHz=100", 48000, 0));
+        Assert.Throws<ArgumentException>(() => SpeakerFilterChainText.Parse(
+            "OnePole CutoffHz=20000 CutoffHz=100", 48000, 0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => SpeakerFilterChainText.Parse(
+            "OnePole CutoffHz=2000", 1000, 0));
+        FilterInstance parsed = SpeakerFilterChainText.Parse(
+            "OnePole CutoffHz=120 Mode=LowPass", 48000, 0);
+        Assert.That(parsed.GetStages(), Has.Count.EqualTo(1));
+        Assert.That(parsed.GetStages()[0].Kind, Is.EqualTo(FilterKind.OnePole));
+    }
 
 	[Test]
 	public void SettingIsRestoredAtConstructionAndPersistedOnlyAfterApply()
