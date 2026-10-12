@@ -31,7 +31,8 @@ internal sealed class ChannelOutputFilterState
         FilterInstance configuration, StreamingFilterChain chain, int remaining,
         int sampleRate,
         Dictionary<(int StageId, string Parameter), BindingSpec> bindings,
-        FilterInstance? effective = null)
+        FilterInstance? effective = null,
+        NoteFilterEnvelopeRealtimeControls? previous = null)
     {
         _configuration = configuration;
         _chain = chain;
@@ -39,8 +40,10 @@ internal sealed class ChannelOutputFilterState
         _sampleRate = sampleRate;
         _bindings = new(bindings);
         _reportWarning = ReportWarning;
-        RebuildRealtimeBindings();
-        if (effective is not null)
+        RebuildRealtimeBindings(keepEmpty: previous is not null);
+        if (previous is not null)
+            _realtime?.CopyAcceptedFrom(previous);
+        else if (effective is not null)
             _realtime?.AlignAcceptedTo(effective);
     }
 
@@ -59,13 +62,9 @@ internal sealed class ChannelOutputFilterState
     /// <summary>Fork audio history and persistent envelope bindings. The
     /// new host owns its clocks even after the original host changes.</summary>
     public ChannelOutputFilterState Fork()
-    {
-        FilterInstance accepted = BuildEffectiveConfiguration(
-            _configuration, _bindings, 0);
-        return new ChannelOutputFilterState(_configuration.Clone(),
-            _chain.Fork(), _tailRemainingFrames, _sampleRate, _bindings,
-            accepted);
-    }
+        => new(_configuration.Clone(), _chain.Fork(),
+            _tailRemainingFrames, _sampleRate, _bindings,
+            previous: _realtime);
 
     public ChannelOutputFilterState PrepareParameterUpdate(
         int stageId,
@@ -137,16 +136,13 @@ internal sealed class ChannelOutputFilterState
         else
             updated[key] = new BindingSpec(curve, frame);
 
-        // Preserve all still-bound, accepted effective targets. Only the
-        // detached parameter returns to its separately stored authored base.
-        FilterInstance effective = BuildEffectiveConfiguration(
-            _configuration, updated, frame);
-        StreamingFilterChain fork = _chain.Fork();
-        if (!SameEffective(BuildEffectiveConfiguration(
-                _configuration, _bindings, frame), effective))
-            fork.Configure(new FilterChain([effective]));
+        // Attachment/detachment changes only numeric targets. Preserve
+        // every current accepted DSP history and coefficient ramp now;
+        // the fresh controller retunes at the next PCM frame. In particular,
+        // this must not synchronously design a window/FFT for FIR bindings.
         return new ChannelOutputFilterState(_configuration.Clone(),
-            fork, _tailRemainingFrames, _sampleRate, updated, effective);
+            _chain.Fork(), _tailRemainingFrames, _sampleRate, updated,
+            previous: _realtime);
     }
 
     private FilterInstance BuildEffectiveConfiguration(
@@ -200,9 +196,9 @@ internal sealed class ChannelOutputFilterState
         return true;
     }
 
-    private void RebuildRealtimeBindings()
+    private void RebuildRealtimeBindings(bool keepEmpty = false)
     {
-        if (_bindings.Count == 0)
+        if (_bindings.Count == 0 && !keepEmpty)
         {
             _realtime = null;
             return;
