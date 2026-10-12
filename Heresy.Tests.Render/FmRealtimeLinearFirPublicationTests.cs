@@ -319,6 +319,35 @@ public sealed class FmRealtimeLinearFirPublicationTests
         Assert.That(worker.Fault, Is.Null);
     }
 
+    [Test]
+    public void BackwardSeekDiscardedOldAsyncFIRResultCannotRetuneReconstructedFmState()
+    {
+        FmSynthSound sound = Modulated(
+            Fir(FilterKind.FirLowPass, 127), FilterKind.FirLowPass);
+        RenderContext context = Context();
+        SoundState state = sound.CreateState();
+        float[] initial = new float[4];
+        sound.Render(context, state, 0, initial.Length, initial);
+        using FirPreparationScheduler worker = new();
+        sound.QueuePendingFirControls(state, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedPreparationCount > 0,
+            TimeSpan.FromSeconds(4)), Is.True);
+
+        // Rewinding reconstructs the invocation-private FM state. The
+        // completed plan still belongs to its abandoned mailbox, and
+        // must not migrate to this new timeline.
+        float[] replay = new float[80];
+        sound.Render(context, state, 0, 4, replay.AsSpan(0, 4));
+        sound.AdoptPreparedFirControls(state);
+        sound.Render(context, state, 4, 76, replay.AsSpan(4));
+        FmSynthSound baseline = Modulated(
+            Fir(FilterKind.FirLowPass, 127), FilterKind.FirLowPass);
+        float[] expected = new float[80];
+        baseline.Render(context, baseline.CreateState(), 0, 80, expected);
+        Assert.That(replay, Is.EqualTo(expected));
+    }
+
 	private static float[] Scheduled(FmSynthSound sound)
 	{
 		float[] result = new float[260];
