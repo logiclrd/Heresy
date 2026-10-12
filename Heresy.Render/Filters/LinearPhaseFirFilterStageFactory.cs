@@ -176,7 +176,8 @@ public sealed class LinearPhaseFirFilterStageFactory : IStreamingFilterStageFact
 			coefficients = FirPhaseConversion.Convert(
 				coefficients, phaseResponse, referenceFrequency, sampleRate);
 		return new FirPlan(coefficients,
-			phaseResponse == "Linear" ? center : 0);
+			phaseResponse == "Linear" ? center : 0,
+			phaseResponse, window, width);
 	}
 
 	private static double SincLowPass(double cutoff, int sampleRate, int offset)
@@ -185,13 +186,19 @@ public sealed class LinearPhaseFirFilterStageFactory : IStreamingFilterStageFact
 			: Math.Sin(2 * Math.PI * cutoff * offset / sampleRate)
 				/ (Math.PI * offset);
 
-	private sealed class FirPlan(double[] coefficients, int groupDelayFrames)
+	private sealed class FirPlan(double[] coefficients, int groupDelayFrames,
+		string phaseResponse, string window, double transitionWidthHz)
 		: IStreamingFilterStagePlan, ILatencyAwareFilterStagePlan
 	{
 		// Coefficients are privately allocated and never published mutably.
 		// Plans can safely be shared by all output channels.
 		public double[] Coefficients { get; } = coefficients;
 		public int LatencyFrames { get; } = groupDelayFrames;
+		// Structural identity is explicit: Minimum and Maximum both report
+		// zero fixed latency, but may never swap convolution histories.
+		public string PhaseResponse { get; } = phaseResponse;
+		public string Window { get; } = window;
+		public double TransitionWidthHz { get; } = transitionWidthHz;
 		public int TailFrames => Coefficients.Length - 1;
 		public IStreamingFilterStageState CreateState() => new FirState(this);
 	}
@@ -271,7 +278,12 @@ public sealed class LinearPhaseFirFilterStageFactory : IStreamingFilterStageFact
 		public bool TryPrepareRealtime(IStreamingFilterStagePlan plan)
 			=> plan is FirPlan next
 				&& next.Coefficients.Length == _history.Length
-				&& next.LatencyFrames == (_history.Length - 1) / 2
+				&& next.PhaseResponse is "Linear" or "Minimum"
+				&& next.PhaseResponse == _plan.PhaseResponse
+				&& next.Window == _plan.Window
+				&& next.TransitionWidthHz == _plan.TransitionWidthHz
+				&& next.LatencyFrames == (next.PhaseResponse == "Linear"
+					? (_history.Length - 1) / 2 : 0)
 				&& _plan.LatencyFrames == next.LatencyFrames;
 
 		public void CommitRealtime(IStreamingFilterStagePlan plan)
@@ -279,7 +291,7 @@ public sealed class LinearPhaseFirFilterStageFactory : IStreamingFilterStageFact
 			FirPlan next = (FirPlan)plan;
 			if (!TryPrepareRealtime(next))
 				throw new ArgumentException(
-					"Realtime FIR plans must preserve linear phase and tap count.",
+					"Realtime FIR plans must preserve supported phase and FIR structure.",
 					nameof(plan));
 			double[] prior = _plan.Coefficients;
 			if (_remaining > 0)

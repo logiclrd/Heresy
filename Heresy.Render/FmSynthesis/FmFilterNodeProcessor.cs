@@ -327,15 +327,14 @@ internal sealed class FmFilterNodeProcessor
 		if (state.FirControl is null || state.Configuration is null
 			|| state.FirControl.PendingCount == 0)
 			return false;
-		// Minimum/maximum-phase publication is deliberately owned by
-		// separate milestones. Do not waste an off-loop FFT preparation
-		// that this linear-only consumer would reject anyway.
+		// Linear and Minimum are currently publishable. Maximum is a separate
+		// milestone: do not spend off-loop FFT work on a plan we cannot use.
 		foreach (FastFirControlStage stage in _fastFirs)
-			if (stage.PhaseResponse != "Linear")
+			if (stage.PhaseResponse is not ("Linear" or "Minimum"))
 				return false;
 		if (!state.FirControl.TryPreparePending(state.Configuration,
 			out PreparedFirControlBatch? prepared)
-			|| prepared is null || !prepared.AllLinear)
+			|| prepared is null || !prepared.AllLinearOrMinimum)
 			return false;
 		state.FirReady = prepared;
 		return true;
@@ -408,7 +407,7 @@ internal sealed class FmFilterNodeProcessor
 		// Capture changing FIR controls without performing windowed-sinc
 		// preparation here. A control-side caller must explicitly prepare
 		// and publish immutable plans between PCM blocks. The live loop
-		// can consume a prepared linear-phase plan only for an exact match
+		// can consume a supported prepared FIR plan only for an exact match
 		// of the whole captured FIR request snapshot.
 		bool firDirty = false;
 		foreach (FastFirControlStage stage in _fastFirs)
@@ -444,7 +443,7 @@ internal sealed class FmFilterNodeProcessor
 					stage.TapCount, stage.WidthHz, stage.PhaseResponse);
 			}
 			firReady = state.FirReady;
-			if (firReady is null || !firReady.AllLinear
+			if (firReady is null || !firReady.AllLinearOrMinimum
 				|| !firReady.Matches(requests.AsSpan(0, _fastFirs.Length)))
 			{
 				// A stale candidate is not a license to apply changed
