@@ -456,7 +456,8 @@ public sealed class InstrumentToneGridModelTests
 		ScriptInstrumentDocumentEditor.AddTone(workspace, scripted, sample,
 			filterConfiguration: use);
 		string json = SongDocumentJson.Serialize(workspace.Document,
-			System.IO.Path.Combine(System.IO.Path.GetTempPath(), "tone-filters.hm.json"));
+			System.IO.Path.Combine(System.IO.Path.GetTempPath(), "tone-filters.hm.json"),
+			JsonAssetPathMode.Absolute);
 		SongDocument restored = SongDocumentJson.Deserialize(json,
 			System.IO.Path.Combine(System.IO.Path.GetTempPath(), "tone-filters.hm.json"));
 		InstrumentDefinition mappedCopy =
