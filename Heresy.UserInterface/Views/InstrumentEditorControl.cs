@@ -24,15 +24,15 @@ using Heresy.UserInterface.PatternEditing;
 namespace Heresy.UserInterface.Views;
 
 /// <summary>
-/// Ten-column projected instrument table. The Core's shared specification
+/// Eleven-column projected instrument table. The Core's shared specification
 /// list remains an implementation detail of InstrumentToneGridModel.
 /// </summary>
 public sealed class InstrumentEditorControl : UserControl
 {
 	private static readonly int[] ColumnWidths =
-		[66, 114, 196, 108, 140, 145, 145, 145, 145, 250];
+		[66, 114, 196, 108, 140, 190, 145, 145, 145, 145, 250];
 	private static readonly string[] Headings =
-		["", "", "Source", "Pitch", "", "Volume", "Pitch", "Panning", "Filter", "Tone Filter"];
+		["", "", "Source", "Pitch", "", "NNA / fade (ms)", "Volume", "Pitch", "Panning", "Filter", "Tone Filter"];
 
 	private readonly DocumentWorkspace _workspace;
 	private readonly InstrumentDefinition _instrument;
@@ -41,6 +41,10 @@ public sealed class InstrumentEditorControl : UserControl
 	private readonly Action<string> _changed;
 	private readonly TextBox _divisions;
 	private readonly TextBox _offset;
+	private readonly ComboBox _nnaOverride;
+	private readonly TextBox _nnaFadeMilliseconds;
+	private InstrumentNnaOverride _loadedNnaOverride;
+	private TimeSpan _loadedNnaFade;
 	private readonly ListBox _rows;
 	private readonly TextBlock _message = new()
 	{
@@ -60,6 +64,11 @@ public sealed class InstrumentEditorControl : UserControl
 		_model = new InstrumentToneGridModel(workspace, instrument);
 		_divisions = NumberBox(instrument.Divisions);
 		_offset = NumberBox(instrument.Offset);
+		_nnaOverride = new ComboBox { Width = 155, ItemsSource = Enum.GetValues<InstrumentNnaOverride>(), SelectedItem = instrument.NnaOverride };
+		_nnaFadeMilliseconds = new TextBox { Width = 78, Text = InstrumentNnaEditorValues.FormatMilliseconds(instrument.NnaFadeDuration), IsVisible = instrument.NnaOverride == InstrumentNnaOverride.Fade };
+		_loadedNnaOverride = instrument.NnaOverride;
+		_loadedNnaFade = instrument.NnaFadeDuration;
+		_nnaOverride.SelectionChanged += (_, _) => _nnaFadeMilliseconds.IsVisible = _nnaOverride.SelectedItem is InstrumentNnaOverride.Fade;
 		_rows = new ListBox
 		{
 			MinWidth = ColumnWidths.Sum(),
@@ -102,6 +111,14 @@ public sealed class InstrumentEditorControl : UserControl
 		lookup.Children.Add(Label("Offset"));
 		lookup.Children.Add(_offset);
 		lookup.Children.Add(apply);
+		StackPanel nnaHeader = new() { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(10, 2) };
+		nnaHeader.Children.Add(Label("Instrument NNA"));
+		nnaHeader.Children.Add(_nnaOverride);
+		nnaHeader.Children.Add(Label("Fade (ms)"));
+		nnaHeader.Children.Add(_nnaFadeMilliseconds);
+		Button applyNna = new() { Content = "Apply NNA" };
+		applyNna.Click += (_, _) => ApplyNnaOverride();
+		nnaHeader.Children.Add(applyNna);
 
 		Grid headers = NewColumns();
 		headers.Margin = new Thickness(6, 2);
@@ -141,6 +158,7 @@ public sealed class InstrumentEditorControl : UserControl
 		DockPanel root = new();
 		DockPanel.SetDock(top, Dock.Top);
 		DockPanel.SetDock(lookup, Dock.Top);
+		DockPanel.SetDock(nnaHeader, Dock.Top);
 		DockPanel.SetDock(hint, Dock.Top);
 		Border status = new()
 		{
@@ -150,6 +168,7 @@ public sealed class InstrumentEditorControl : UserControl
 		DockPanel.SetDock(status, Dock.Bottom);
 		root.Children.Add(top);
 		root.Children.Add(lookup);
+		root.Children.Add(nnaHeader);
 		root.Children.Add(hint);
 		root.Children.Add(status);
 		root.Children.Add(horizontal);
@@ -213,10 +232,10 @@ public sealed class InstrumentEditorControl : UserControl
 		ComboBox pitchEnvelope = BuildEnvelopeBox(cells.PitchEnvelopeId);
 		ComboBox panning = BuildEnvelopeBox(cells.PanningEnvelopeId);
 		ComboBox filter = BuildEnvelopeBox(cells.FilterEnvelopeId);
-		At(grid, volume, 5);
-		At(grid, pitchEnvelope, 6);
-		At(grid, panning, 7);
-		At(grid, filter, 8);
+		At(grid, volume, 6);
+		At(grid, pitchEnvelope, 7);
+		At(grid, panning, 8);
+		At(grid, filter, 9);
 
 		ComboBox toneFilter = BuildFilterBox(cells.FilterConfiguration?.DefinitionId);
 		Button editFilter = new()
@@ -229,7 +248,27 @@ public sealed class InstrumentEditorControl : UserControl
 			Orientation = Orientation.Horizontal, Spacing = 3,
 			Children = { toneFilter, editFilter },
 		};
-		At(grid, toneFilterCell, 9);
+		At(grid, toneFilterCell, 10);
+
+		ComboBox toneNna = new()
+		{
+			Width = 96,
+			ItemsSource = Enum.GetValues<InstrumentNnaAction>(),
+			SelectedItem = cells.Nna.Action,
+		};
+		TextBox toneFade = new()
+		{
+			Width = 81,
+			Text = InstrumentNnaEditorValues.FormatMilliseconds(
+				cells.Nna.FadeDuration ?? TimeSpan.FromMilliseconds(100)),
+			IsVisible = cells.Nna.Action == InstrumentNnaAction.Fade,
+		};
+		StackPanel toneNnaCell = new()
+		{
+			Orientation = Orientation.Horizontal, Spacing = 3,
+			Children = { toneNna, toneFade },
+		};
+		At(grid, toneNnaCell, 5);
 
 		bool editingFilter = false;
 		bool changingNearest = false;
@@ -318,6 +357,39 @@ public sealed class InstrumentEditorControl : UserControl
 				_message.Text = ex.Message;
 			}
 		}
+
+		void CommitToneNna()
+		{
+			try
+			{
+				InstrumentNnaAction action = (InstrumentNnaAction)toneNna.SelectedItem!;
+				InstrumentNnaSetting setting = InstrumentNnaEditorValues.ToneSetting(
+					action, toneFade.Text);
+				InstrumentToneGridCells latest = projected.IsEntry
+					? _model.EntryCells
+					: _model.Rows.Single(row => row.Index == index).Cells;
+				cells = latest with { Nna = setting };
+				CommitCells();
+			}
+			catch (Exception ex) { _message.Text = ex.Message; }
+		}
+		toneNna.SelectionChanged += (_, _) =>
+		{
+			toneFade.IsVisible = toneNna.SelectedItem is InstrumentNnaAction.Fade;
+			CommitToneNna();
+		};
+		toneFade.LostFocus += (_, _) =>
+		{
+			if (toneNna.SelectedItem is InstrumentNnaAction.Fade)
+				CommitToneNna();
+		};
+		toneFade.KeyDown += (_, e) =>
+		{
+			if (e.Key != Key.Enter) return;
+			if (toneNna.SelectedItem is InstrumentNnaAction.Fade)
+				CommitToneNna();
+			e.Handled = true;
+		};
 
 		if (entryIndex is not null)
 			entryIndex.TextChanged += (_, _) => UpdateEntry();
@@ -456,6 +528,7 @@ public sealed class InstrumentEditorControl : UserControl
 						|| panning.IsDropDownOpen
 						|| filter.IsDropDownOpen
 						|| toneFilter.IsDropDownOpen
+						|| toneNna.IsDropDownOpen
 						|| editingFilter)
 						return;
 					int? enteredIndex = _model.EntryIndex;
@@ -477,6 +550,28 @@ public sealed class InstrumentEditorControl : UserControl
 			}, RoutingStrategies.Bubble, handledEventsToo: true);
 		}
 		return border;
+	}
+
+	private void ApplyNnaOverride()
+	{
+		try
+		{
+			if (_instrument.NnaOverride != _loadedNnaOverride
+				|| _instrument.NnaFadeDuration != _loadedNnaFade)
+				throw new InvalidOperationException(
+					"Instrument NNA changed elsewhere. Reopen this editor to reload before applying.");
+			InstrumentNnaOverride action = (InstrumentNnaOverride)_nnaOverride.SelectedItem!;
+			TimeSpan duration = action == InstrumentNnaOverride.Fade
+				? InstrumentNnaEditorValues.ParseFadeMilliseconds(_nnaFadeMilliseconds.Text)
+				: _loadedNnaFade;
+			InstrumentDocumentEditor.SetNnaOverride(
+				_workspace, _instrument, action, duration);
+			_loadedNnaOverride = _instrument.NnaOverride;
+			_loadedNnaFade = _instrument.NnaFadeDuration;
+			_message.Text = "Instrument NNA updated.";
+			_changed("Updated Instrument NNA in " + _instrument.Name);
+		}
+		catch (Exception ex) { _message.Text = ex.Message; }
 	}
 
 	private void ApplyLookup()
