@@ -153,6 +153,21 @@ public sealed class InstrumentToneGridSelectionTests
 		workspace.Document.AudioRevision.Should().Be(revision);
 	}
 
+	[TestCase(0, 5, false, -1, true)]
+	[TestCase(1, 5, false, -1, false)]
+	[TestCase(0, 5, true, -1, false)]
+	[TestCase(5, 5, false, 1, true)]
+	[TestCase(4, 5, false, 1, false)]
+	[TestCase(5, 5, true, 1, false)]
+	[TestCase(0, 0, false, 1, true)]
+	public void TextBoxTransfersLeftRightOnlyAtAnUnselectedCaretBoundary(
+		int caret, int length, bool hasSelection, int delta, bool expected)
+	{
+		bool result = InstrumentEditorControl.CanTransferTextBoundary(
+			caret, length, hasSelection, delta);
+		result.Should().Be(expected);
+	}
+
 	[Test]
 	public void VirtualizedRowTemplateRebuildUsesTheSameSemanticRectangle()
 	{
