@@ -2878,7 +2878,7 @@ public sealed class PatternEditorControl : UserControl
 				PatternCellField.EffectCommand);
 		}
 
-		NativePatternEffectEditorDialog dialog = new();
+		NativePatternEffectEditorDialog dialog = new(_workspace.Document);
 		NativePatternEffectEditResult? result =
 			await dialog.ShowDialog<NativePatternEffectEditResult?>(
 				_owner);
@@ -2950,7 +2950,7 @@ public sealed class PatternEditorControl : UserControl
 		RefreshCursorVisuals();
 
 		NativePatternEffectEditorDialog dialog =
-			new(effect);
+			new(effect, _workspace.Document);
 		NativePatternEffectEditResult? result =
 			await dialog.ShowDialog<NativePatternEffectEditResult?>(
 				_owner);

@@ -79,6 +79,8 @@ public sealed class PatternEffectViewModel
 			SetPlaybackFrequencyPatternEffect => "Frequency",
 			SetPlaybackOffsetPatternEffect => "Offset",
 			SetResonantFilterPatternEffect => "Filter",
+			SetChannelFilterAssignmentsPatternEffect => "Channel Filter params",
+			SetNoteFilterAssignmentsPatternEffect => "Note Filter params",
 			PitchSlidePatternEffect => "Pitch slide",
 			NoteVolumeSlidePatternEffect => "Volume slide",
 			TrackerVolumeColumnPatternEffect => "Vol column",

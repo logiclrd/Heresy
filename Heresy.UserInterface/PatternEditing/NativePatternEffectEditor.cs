@@ -4,6 +4,8 @@ using System.Globalization;
 using System.Linq;
 
 using Heresy.Core.Patterns;
+using Heresy.Core.Filters;
+using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
 using Heresy.Scripting.Compilation;
 using Heresy.Scripting.Analysis;
@@ -14,7 +16,8 @@ public sealed record NativePatternEffectField(
 	string Key,
 	string Label,
 	string Value,
-	IReadOnlyList<string>? Choices = null);
+	IReadOnlyList<string>? Choices = null,
+	bool Multiline = false);
 
 public sealed record NativePatternEffectEditModel(
 	string Title,
@@ -34,6 +37,8 @@ public enum NativePatternEffectKind
 	VolumeColumnCompatibility,
 	VolumeColumnPanning,
 	Parametric,
+	ChannelFilterAssignments,
+	NoteFilterAssignments,
 }
 
 public sealed record NativePatternEffectChoice(
@@ -64,6 +69,10 @@ public static class NativePatternEffectEditor
 		new(NativePatternEffectKind.VolumeColumnCompatibility, "Volume-column compatibility"),
 		new(NativePatternEffectKind.VolumeColumnPanning, "Volume-column panning"),
 		new(NativePatternEffectKind.Parametric, "Parametric expression"),
+		new(NativePatternEffectKind.ChannelFilterAssignments,
+			"Channel Filter stage assignments"),
+		new(NativePatternEffectKind.NoteFilterAssignments,
+			"Note Filter stage assignments"),
 	];
 
 	public static NativePatternEffectChoice[] GetCreationChoices()
@@ -95,6 +104,10 @@ public static class NativePatternEffectEditor
 				new TrackerVolumeColumnPatternEffect(
 					TrackerVolumeColumnEffectKind.FineVolumeUp,
 					0),
+			NativePatternEffectKind.ChannelFilterAssignments =>
+				new SetChannelFilterAssignmentsPatternEffect(""),
+			NativePatternEffectKind.NoteFilterAssignments =>
+				new SetNoteFilterAssignmentsPatternEffect(""),
 			NativePatternEffectKind.Parametric =>
 				new ParametricPatternEffect(
 					ParametricEffectParameter.OverallChannelVolume,
@@ -119,7 +132,9 @@ public static class NativePatternEffectEditor
 			or NoteVolumeSlidePatternEffect
 			or TrackerVolumeColumnPatternEffect
 			or TrackerVolumeColumnPanningPatternEffect
-			or ParametricPatternEffect;
+			or ParametricPatternEffect
+			or SetChannelFilterAssignmentsPatternEffect
+			or SetNoteFilterAssignmentsPatternEffect;
 	}
 
 	public static NativePatternEffectEditModel Describe(
@@ -136,6 +151,12 @@ public static class NativePatternEffectEditor
 
 		return effect switch
 		{
+			SetChannelFilterAssignmentsPatternEffect text =>
+				FilterAssignmentModel("Channel Filter assignments",
+					text.AssignmentText, text.AuthoringFilterId),
+			SetNoteFilterAssignmentsPatternEffect text =>
+				FilterAssignmentModel("Note Filter assignments",
+					text.AssignmentText, text.AuthoringFilterId),
 			ParametricPatternEffect value =>
 				Model("Native parametric expression",
 					new NativePatternEffectField(
@@ -255,7 +276,8 @@ public static class NativePatternEffectEditor
 	public static PatternEffect Rebuild(
 		PatternEffect original,
 		IReadOnlyDictionary<string, string> values,
-		CultureInfo? culture = null)
+		CultureInfo? culture = null,
+		SongDocument? song = null)
 	{
 		ArgumentNullException.ThrowIfNull(original);
 		ArgumentNullException.ThrowIfNull(values);
@@ -263,6 +285,10 @@ public static class NativePatternEffectEditor
 
 		return original switch
 		{
+			SetChannelFilterAssignmentsPatternEffect =>
+				RebuildFilterAssignments(true, values, song),
+			SetNoteFilterAssignmentsPatternEffect =>
+				RebuildFilterAssignments(false, values, song),
 			ParametricPatternEffect =>
 				RebuildParametric(values, culture),
 			SetTempoPatternEffect =>
@@ -366,6 +392,46 @@ public static class NativePatternEffectEditor
 			_ => throw new NotSupportedException(
 				$"Pattern effect {original.GetType().Name} is not a native effect supported by the parameter editor."),
 		};
+	}
+
+	private static NativePatternEffectEditModel FilterAssignmentModel(
+		string title, string text, ObjectId? id)
+		=> Model(title,
+			Field("filterId", "Filter definition ID (assistant)",
+				id?.ToString() ?? ""),
+			new NativePatternEffectField("assignments",
+				"Stage.parameter = value", text, Multiline: true));
+
+	private static PatternEffect RebuildFilterAssignments(
+		bool channel, IReadOnlyDictionary<string, string> values,
+		SongDocument? song)
+	{
+		string source = Get(values, "assignments", "Assignments");
+		string idText = Get(values, "filterId", "Authoring Filter");
+		ObjectId? id = null;
+		if (!string.IsNullOrWhiteSpace(idText))
+		{
+			if (!uint.TryParse(idText, NumberStyles.None,
+				CultureInfo.InvariantCulture, out uint parsed) || parsed == 0)
+				throw new ArgumentException("Filter assistant ID must be a valid positive object ID.");
+			id = (ObjectId)parsed;
+		}
+		if (string.IsNullOrWhiteSpace(source))
+			throw new ArgumentException("At least one stage assignment is required.");
+		if (song is not null)
+		{
+			if (id is not ObjectId selected ||
+				!song.TryGet(selected, out SongObject? entry) ||
+				entry is not FilterDefinition definition)
+				throw new ArgumentException(
+					"Choose an existing shared Filter definition to validate these assignments.");
+			if (FilterAssignmentText.ParseAndValidate(
+				new FilterInstance(definition), source).Count == 0)
+				throw new ArgumentException("At least one stage assignment is required.");
+		}
+		return channel
+			? new SetChannelFilterAssignmentsPatternEffect(source, id)
+			: new SetNoteFilterAssignmentsPatternEffect(source, id);
 	}
 
 	private static ParametricPatternEffect RebuildParametric(
