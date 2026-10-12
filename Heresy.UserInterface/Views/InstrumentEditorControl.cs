@@ -14,6 +14,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 
 using Heresy.Core.Envelopes;
+using Heresy.Core.Filters;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.UserInterface.Documents;
@@ -23,15 +24,15 @@ using Heresy.UserInterface.PatternEditing;
 namespace Heresy.UserInterface.Views;
 
 /// <summary>
-/// Nine-column projected instrument table. The Core's shared specification
+/// Ten-column projected instrument table. The Core's shared specification
 /// list remains an implementation detail of InstrumentToneGridModel.
 /// </summary>
 public sealed class InstrumentEditorControl : UserControl
 {
 	private static readonly int[] ColumnWidths =
-		[66, 114, 196, 108, 140, 145, 145, 145, 145];
+		[66, 114, 196, 108, 140, 145, 145, 145, 145, 250];
 	private static readonly string[] Headings =
-		["", "", "Source", "Pitch", "", "Volume", "Pitch", "Panning", "Filter"];
+		["", "", "Source", "Pitch", "", "Volume", "Pitch", "Panning", "Filter", "Tone Filter"];
 
 	private readonly DocumentWorkspace _workspace;
 	private readonly InstrumentDefinition _instrument;
@@ -47,6 +48,7 @@ public sealed class InstrumentEditorControl : UserControl
 	};
 	private PatternSourceOption[] _sources = [];
 	private EnvelopeChoice[] _envelopes = [];
+	private FilterChoice[] _filters = [];
 
 	public InstrumentEditorControl(DocumentWorkspace workspace,
 		InstrumentDefinition instrument, Action close, Action<string> changed)
@@ -216,6 +218,20 @@ public sealed class InstrumentEditorControl : UserControl
 		At(grid, panning, 7);
 		At(grid, filter, 8);
 
+		ComboBox toneFilter = BuildFilterBox(cells.FilterConfiguration?.DefinitionId);
+		Button editFilter = new()
+		{
+			Content = "...", Width = 38,
+			IsEnabled = cells.FilterConfiguration is not null,
+		};
+		StackPanel toneFilterCell = new()
+		{
+			Orientation = Orientation.Horizontal, Spacing = 3,
+			Children = { toneFilter, editFilter },
+		};
+		At(grid, toneFilterCell, 9);
+
+		bool editingFilter = false;
 		bool changingNearest = false;
 
 		void UpdateEntry()
@@ -323,6 +339,68 @@ public sealed class InstrumentEditorControl : UserControl
 		BindEnvelope(pitchEnvelope, id => cells with { PitchEnvelopeId = id });
 		BindEnvelope(panning, id => cells with { PanningEnvelopeId = id });
 		BindEnvelope(filter, id => cells with { FilterEnvelopeId = id });
+		toneFilter.SelectionChanged += (_, _) =>
+		{
+			ObjectId? definitionId = (toneFilter.SelectedItem as FilterChoice)?.Id;
+			if (definitionId == cells.FilterConfiguration?.DefinitionId)
+				return;
+			cells = cells with
+			{
+				FilterConfiguration = definitionId is ObjectId id
+					? new FilterInstance((FilterDefinition)_workspace.Document.Objects[id])
+					: null,
+			};
+			editFilter.IsEnabled = cells.FilterConfiguration is not null;
+			CommitCells();
+		};
+		editFilter.Click += (_, _) =>
+		{
+			try
+			{
+				if (cells.FilterConfiguration is null)
+					return;
+				Window? owner = TopLevel.GetTopLevel(this) as Window;
+				if (owner is null)
+					throw new InvalidOperationException(
+						"Open the Instrument editor in a window to edit a tone Filter.");
+				InstrumentToneGridCells CurrentCells()
+					=> projected.IsEntry ? _model.EntryCells
+						: _model.Rows.Single(row => row.Index == index).Cells;
+				FilterInstanceEditSession session = new(
+					() => CurrentCells().FilterConfiguration
+						?? throw new InvalidOperationException(
+							"This tone no longer has a Filter."),
+					next =>
+					{
+						InstrumentToneGridCells latest = CurrentCells();
+						InstrumentToneGridCells edited = latest with
+							{ FilterConfiguration = next };
+						if (projected.IsEntry)
+							_model.SetEntryDraft(_model.EntryIndex, edited);
+						else
+							_model.SetRow(index!.Value, edited);
+						cells = edited;
+						if (!projected.IsEntry)
+							_changed($"Updated tone Filter for {index!.Value} in {_instrument.Name}");
+					});
+				Window window = new()
+				{
+					Title = "Tone Filter — " + _instrument.Name,
+					Width = 910,
+					Height = 600,
+					Content = new FilterInstanceEditorControl(session,
+						message => _message.Text = message),
+				};
+				editingFilter = true;
+				window.Closed += (_, _) =>
+				{
+					editingFilter = false;
+					RefreshRows(index);
+				};
+				window.Show(owner);
+			}
+			catch (Exception ex) { _message.Text = ex.Message; }
+		};
 		pitch.LostFocus += (_, _) => CommitPitch();
 		pitch.KeyDown += (_, e) =>
 		{
@@ -376,7 +454,9 @@ public sealed class InstrumentEditorControl : UserControl
 						|| volume.IsDropDownOpen
 						|| pitchEnvelope.IsDropDownOpen
 						|| panning.IsDropDownOpen
-						|| filter.IsDropDownOpen)
+						|| filter.IsDropDownOpen
+						|| toneFilter.IsDropDownOpen
+						|| editingFilter)
 						return;
 					int? enteredIndex = _model.EntryIndex;
 					if (enteredIndex is null)
@@ -455,6 +535,12 @@ public sealed class InstrumentEditorControl : UserControl
 		try
 		{
 			_sources = PatternSourceCatalog.GetSources(_workspace.Document);
+			_filters = _workspace.Document.Objects.Values
+				.OfType<FilterDefinition>()
+				.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+				.ThenBy(x => x.Id.Value)
+				.Select(x => new FilterChoice(x.Id,
+					$"{x.Name} <{x.Id.Value}>")).ToArray();
 			_envelopes = _workspace.Document.Objects.Values
 				.OfType<EnvelopeDefinition>()
 				.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
@@ -515,6 +601,22 @@ public sealed class InstrumentEditorControl : UserControl
 		};
 	}
 
+	private ComboBox BuildFilterBox(ObjectId? selectedId)
+	{
+		List<FilterChoice> options = [new FilterChoice(null, "(None)")];
+		options.AddRange(_filters);
+		if (selectedId is ObjectId id && !id.IsNone
+			&& !options.Any(x => x.Id == id))
+			options.Insert(1, new FilterChoice(id, $"⚠ Missing <{id.Value}>"));
+		return new ComboBox
+		{
+			Width = 196,
+			ItemsSource = options,
+			SelectedItem = options.FirstOrDefault(x => x.Id == selectedId)
+				?? options[0],
+		};
+	}
+
 	private static TextBox NumberBox(double x) => new()
 	{
 		Text = x.ToString(CultureInfo.CurrentCulture),
@@ -539,6 +641,10 @@ public sealed class InstrumentEditorControl : UserControl
 	}
 
 	private sealed record SourceChoice(ObjectId? Id, string Name)
+	{
+		public override string ToString() => Name;
+	}
+	private sealed record FilterChoice(ObjectId? Id, string Name)
 	{
 		public override string ToString() => Name;
 	}
