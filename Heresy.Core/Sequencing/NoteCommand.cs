@@ -79,6 +79,25 @@ public sealed record StartNoteCommand(
 /// <summary>Begin the live note-volume controller for one non-mixdown
 /// flattened invocation. The scope identity belongs to the invoked
 /// child; control effects continue to target the caller's channel.</summary>
+/// <summary>Selects or clears only the *current* note's outer event
+/// Filter. ID selections are bound to a fresh configured use by the
+/// prepared song factory; direct API calls may supply a typed instance.
+/// A null ID and null configuration explicitly bypass the event layer.</summary>
+public sealed record SetNoteFilterCommand(ObjectId? FilterDefinitionId = null)
+	: NoteCommand
+{
+	public FilterInstance? Configuration { get; init; }
+}
+
+/// <summary>Atomically assigns the supplied typed stage parameters to the
+/// current note's event layer, leaving unspecified values untouched.
+/// Structural changes reset incompatible histories; inherited Instrument
+/// tone layers are never edited. No current note means a diagnostic no-op.</summary>
+public sealed record SetNoteFilterParametersCommand(
+	int StageId,
+	IReadOnlyList<KeyValuePair<string, FilterParameterValue>> Assignments)
+	: NoteCommand;
+
 public sealed record BeginFlattenedSourceVolumeCommand(
 	long ChildScopeId, double InitialVolume,
 	ObjectId? EventFilterDefinitionId = null) : NoteCommand

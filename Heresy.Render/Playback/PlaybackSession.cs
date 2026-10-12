@@ -99,6 +99,10 @@ public sealed class PlaybackSession
 		public required LinearRowPlaybackOperator Operator { get; init; }
 	}
 
+	/// <summary>Optional bounded control-side diagnostic sink. Production
+	/// recursive playback wires this to SequencingDiagnosticLog.</summary>
+	public Action<string>? NoteFilterCommandRejected { get; set; }
+
 	private readonly RenderContext _context;
 	private readonly OutputSpeakerFilterBank? _outputSpeakerFilters;
 	private readonly NoteSchedule _schedule;
@@ -1121,6 +1125,11 @@ public sealed class PlaybackSession
 					channel.SetNoteVolume(volume.Volume);
 					break;
 
+				case SetNoteFilterCommand selection:
+				case SetNoteFilterParametersCommand:
+					ApplyCurrentNoteFilterCommand(channel, command);
+					break;
+
 				case SetSourceFrameOffsetCommand offset:
 					ApplyNativeSourceFrameOffset(
 						channel, offset, "Script virtual native offset");
@@ -1310,6 +1319,11 @@ public sealed class PlaybackSession
 					start,
 					eventFrame,
 					physicalPlaybackOwner);
+				break;
+
+			case SetNoteFilterCommand:
+			case SetNoteFilterParametersCommand:
+				ApplyCurrentNoteFilterCommand(channel, command);
 				break;
 
 			case NoteCutCommand:
@@ -1779,6 +1793,99 @@ public sealed class PlaybackSession
 		}
 	}
 
+
+	/// <summary>Mutate the sole current logical note, not a channel-memory
+	/// slot and never displaced NNA or previous released notes. A flattened
+	/// instigator has many descendants but one controlling scope.</summary>
+	private void ApplyCurrentNoteFilterCommand(
+		PlaybackChannelState channel, NoteCommand command)
+	{
+		FlattenedSourceVolume? controller = channel.CurrentFlattenedSource;
+		PlaybackVoice? current = controller is null ? channel.CurrentVoice : null;
+		if (controller is null && current is null)
+		{
+			NoteFilterCommandRejected?.Invoke("no current note on target channel");
+			return;
+		}
+		try
+		{
+			FilterInstance? previous = controller is null
+				? current!.GetEventFilterConfiguration()
+				: controller.EventFilterConfiguration?.Clone();
+			FilterInstance? candidate;
+			switch (command)
+			{
+				case SetNoteFilterCommand selection:
+					if (selection.FilterDefinitionId.HasValue
+						&& (selection.Configuration is null
+							|| selection.Configuration.DefinitionId
+								!= selection.FilterDefinitionId.Value))
+					{
+						NoteFilterCommandRejected?.Invoke(
+							"selected Filter ID is unavailable or mismatched");
+						return;
+					}
+					candidate = selection.Configuration?.Clone();
+					break;
+				case SetNoteFilterParametersCommand parameters:
+					if (previous is null)
+					{
+						NoteFilterCommandRejected?.Invoke(
+							"no event Filter selected for current note");
+						return;
+					}
+					candidate = previous.Clone();
+					candidate.SetStageParameters(parameters.StageId,
+						parameters.Assignments);
+					break;
+				default:
+					throw new InvalidOperationException(
+						"Unexpected note Filter command.");
+			}
+			if (controller is null)
+			{
+				var prepared = current!.PrepareEventFilterUpdate(candidate);
+				current.PublishEventFilterUpdate(
+					prepared.Configuration, prepared.State);
+				return;
+			}
+
+			// All descendants, including existing voices displaced by NNA,
+			// must be prepared before publishing the logical scope change.
+			// They are owned by this exact scope, not by the physical host.
+			List<(PlaybackVoice Voice, StreamingFilterChain? State)> updates = [];
+			HashSet<PlaybackVoice> seen = [];
+			void Consider(PlaybackVoice? voice)
+			{
+				if (voice is null || !seen.Add(voice)
+					|| !VoiceBelongsToFlattenedSource(voice, controller.ScopeId))
+					return;
+				FilterChain? layers = BuildEnclosingEventFilters(
+					voice.EnclosingSourceVolumes, controller, candidate);
+				StreamingFilterChain? prepared =
+					voice.PrepareEnclosingEventFilterUpdate(layers);
+				updates.Add((voice, prepared));
+			}
+			foreach (PlaybackChannelState state in _channels.Values)
+				Consider(state.CurrentVoice);
+			foreach (PlaybackChannelState state in _scopedVirtualChannels.Values)
+				Consider(state.CurrentVoice);
+			foreach (PlaybackChannelState state in _targetedVirtualChannels.Values)
+				Consider(state.CurrentVoice);
+			foreach (PlaybackVoice voice in _virtualVoices)
+				Consider(voice);
+			controller.PublishEventFilterConfiguration(candidate);
+			foreach (var update in updates)
+				update.Voice.PublishEnclosingEventFilterUpdate(update.State);
+		}
+		catch (Exception exception) when (exception is ArgumentException
+			or InvalidOperationException or KeyNotFoundException
+			or OverflowException)
+		{
+			NoteFilterCommandRejected?.Invoke(exception.Message);
+		}
+	}
+
 	private void BeginFlattenedSource(PlaybackChannelState channel,
 		BeginFlattenedSourceVolumeCommand begin, long frame)
 	{
@@ -1803,7 +1910,9 @@ public sealed class PlaybackSession
 	}
 
 	private static FilterChain? BuildEnclosingEventFilters(
-		IReadOnlyList<FlattenedSourceVolume> ancestors)
+		IReadOnlyList<FlattenedSourceVolume> ancestors,
+		FlattenedSourceVolume? replaced = null,
+		FilterInstance? proposed = null)
 	{
 		// ParentSourceScopes are outer-to-inner. Each descendant's own
 		// note Filter is processed before logical instigator filters;
@@ -1811,8 +1920,12 @@ public sealed class PlaybackSession
 		// shared across different descendant voices.
 		List<FilterInstance> layers = [];
 		for (int i = ancestors.Count - 1; i >= 0; i--)
-			if (ancestors[i].EventFilterConfiguration is FilterInstance filter)
-				layers.Add(filter);
+			{
+				FilterInstance? filter = ReferenceEquals(ancestors[i], replaced)
+					? proposed : ancestors[i].EventFilterConfiguration;
+				if (filter is not null)
+					layers.Add(filter);
+			}
 		return layers.Count == 0 ? null : new FilterChain(layers);
 	}
 

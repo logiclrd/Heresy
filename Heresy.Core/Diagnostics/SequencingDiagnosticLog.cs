@@ -29,11 +29,32 @@ public sealed class SequencingDiagnosticLog
 	public const string IgnoredFlatteningSuppressionCode = "HRSEQ004";
 	public const string ExpensiveSourceSeekCode = "HRSEQ005";
 	public const string ExpensiveSourceSeekSuppressionCode = "HRSEQ006";
+	public const string NoteFilterCommandCode = "HRSEQ007";
+	public const string NoteFilterCommandSuppressionCode = "HRSEQ008";
 
 	private readonly ConcurrentQueue<SequencingDiagnostic> _pending = new();
 	private long _droppedOutOfOrderNotes;
 	private long _ignoredFlatteningEffects;
 	private long _expensiveSourceSeeks;
+	private long _rejectedNoteFilterCommands;
+
+	public long RejectedNoteFilterCommands =>
+		Interlocked.Read(ref _rejectedNoteFilterCommands);
+
+	/// <summary>Control-side advisory for an absent note/Filter, invalid
+	/// stage assignment, or unavailable Filter ID. Never mutate audio state
+	/// or invoke UI callbacks while reporting it.</summary>
+	public void ReportNoteFilterCommandIssue(string reason)
+	{
+		long count = Interlocked.Increment(ref _rejectedNoteFilterCommands);
+		if (count <= MaximumIndividualMessages)
+			_pending.Enqueue(new SequencingDiagnostic(
+				NoteFilterCommandCode, $"Ignored note Filter command: {reason}"));
+		else if (count == MaximumIndividualMessages + 1)
+			_pending.Enqueue(new SequencingDiagnostic(
+				NoteFilterCommandSuppressionCode,
+				"Further invalid note Filter command diagnostics are suppressed."));
+	}
 
 	public long ExpensiveSourceSeeks => Interlocked.Read(ref _expensiveSourceSeeks);
 

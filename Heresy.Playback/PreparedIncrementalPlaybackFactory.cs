@@ -333,6 +333,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 		session.ReplayRequiredSeekObserved =
 			(effect, nativeFrame) =>
 				diagnostics.ReportExpensiveSourceSeek(effect, nativeFrame);
+		session.NoteFilterCommandRejected =
+			diagnostics.ReportNoteFilterCommandIssue;
 
 		timeline.ReadRememberedNoteVolume = (owner, host, time) =>
 			session.GetRememberedNoteVolume(host, owner,
@@ -749,6 +751,18 @@ public sealed class PreparedIncrementalPlaybackFactory
 				}
 				if (command is not StartNoteCommand start)
 				{
+					if (command is SetNoteFilterCommand selection
+						&& selection.FilterDefinitionId is ObjectId selectedId)
+					{
+						if (scripts.TryResolve(selectedId, out SongObject? candidate)
+							&& candidate is FilterDefinition definition)
+							command = selection with
+							{
+								Configuration = new FilterInstance(definition),
+							};
+						// Missing IDs remain unresolved: the PlaybackSession
+						// produces a rate-limited no-op diagnostic.
+					}
 					if (command is BeginFlattenedSourceVolumeCommand begin
 						&& begin.EventFilterDefinitionId is ObjectId beginFilterId)
 					{

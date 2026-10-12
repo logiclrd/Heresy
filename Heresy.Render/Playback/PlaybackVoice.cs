@@ -298,6 +298,7 @@ public sealed class PlaybackVoice
 		ToneFilterState = toneFilters is null || toneFilters.Count == 0
 			? null
 			: new StreamingFilterChain(toneFilters, sampleRate, outputChannelCount);
+		_eventFilterConfiguration = eventFilter?.Clone();
 		EventFilterState = eventFilter is null
 			? null
 			: new StreamingFilterChain(
@@ -326,11 +327,59 @@ public sealed class PlaybackVoice
 	/// <summary>Optional *distinct* outer note-event Filter; inherited tone
 	/// layers are never reconfigured by event-targeted commands. Current voice
 	/// owns histories and NNA displacement retains them.</summary>
+	private FilterInstance? _eventFilterConfiguration;
 	public StreamingFilterChain? EventFilterState { get; private set; }
+
+	/// <summary>Return a copy so callers cannot mutate the voice
+	/// configuration outside atomic chain publication.</summary>
+	internal FilterInstance? GetEventFilterConfiguration()
+		=> _eventFilterConfiguration?.Clone();
+
+	/// <summary>Preflight on isolated cloned state; compatible histories
+	/// remain sample-exact while structural changes create fresh stage state.
+	/// A failed preparation leaves both configuration and DSP untouched.</summary>
+	internal (FilterInstance? Configuration, StreamingFilterChain? State)
+		PrepareEventFilterUpdate(FilterInstance? proposed)
+	{
+		FilterInstance? copy = proposed?.Clone();
+		if (copy is null)
+			return (null, null);
+		StreamingFilterChain candidate = EventFilterState is null
+			? new StreamingFilterChain(new FilterChain(new[] { copy }),
+				_sampleRate, FilterState.OutputChannelCount)
+			: EventFilterState.Fork();
+		if (EventFilterState is not null)
+			candidate.Configure(new FilterChain(new[] { copy }));
+		return (copy, candidate);
+	}
+
+	internal void PublishEventFilterUpdate(
+		FilterInstance? configuration, StreamingFilterChain? state)
+	{
+		_eventFilterConfiguration = configuration;
+		EventFilterState = state;
+	}
+
+	internal StreamingFilterChain? PrepareEnclosingEventFilterUpdate(
+		FilterChain? proposed)
+	{
+		if (proposed is null || proposed.Count == 0)
+			return null;
+		if (EnclosingEventFilterState is null)
+			return new StreamingFilterChain(proposed, _sampleRate,
+				FilterState.OutputChannelCount);
+		StreamingFilterChain candidate = EnclosingEventFilterState.Fork();
+		candidate.Configure(proposed);
+		return candidate;
+	}
+
+	internal void PublishEnclosingEventFilterUpdate(
+		StreamingFilterChain? state)
+		=> EnclosingEventFilterState = state;
 
 	/// <summary>Selected flattened logical note Filters after this voice's
 	/// own event layer, innermost scope first, each history private.</summary>
-	public StreamingFilterChain? EnclosingEventFilterState { get; }
+	public StreamingFilterChain? EnclosingEventFilterState { get; private set; }
 
 	public int ConfiguredFilterTailFrames
 	{

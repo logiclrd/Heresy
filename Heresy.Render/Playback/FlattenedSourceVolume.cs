@@ -45,7 +45,12 @@ internal sealed class FlattenedSourceVolume
 
 	/// <summary>Optional authored event-local Filter on the flattened
 	/// instigating note. Descendants clone it into their own DSP chains.</summary>
-	public FilterInstance? EventFilterConfiguration { get; }
+	public FilterInstance? EventFilterConfiguration { get; private set; }
+
+	/// <summary>Only publish after all current descendant DSP chains have
+	/// successfully prepared the same proposed controller configuration.</summary>
+	internal void PublishEventFilterConfiguration(FilterInstance? configuration)
+		=> EventFilterConfiguration = configuration?.Clone();
 
 	public double Read(long frame)
 	{
