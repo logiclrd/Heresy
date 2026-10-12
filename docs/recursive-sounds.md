@@ -76,7 +76,9 @@
   reside on their own parent or private `PlaybackSession`, never shared
   across private mixdowns. The setup API and native channel
   Filter selection and atomic typed parameter commands are now implemented;
-  stage-aware multiline assignment parsing is the next separate TODO.
+  stage-aware multiline assignment parsing, full-stage atomic
+  validation and descriptor-driven native-effect editor assistance are now
+  implemented. Envelope bindings are tracked next.
   `ChannelOutputFilterRenderingTests` check nonlinear after-sum behavior,
   combined-owner PCM, NNA forks, finite tails and child-scope cancellation.
 - **Nested private-source release is not an outer-sample release.**
