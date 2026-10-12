@@ -8,6 +8,7 @@ using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
 using Heresy.Render.Envelopes;
 using Heresy.Render.Filters;
+using Heresy.Core.Filters;
 using Heresy.Render.Sounds;
 using Heresy.Render.Timing;
 
@@ -235,7 +236,8 @@ public sealed class PlaybackVoice
 		IReadOnlyList<FlattenedSourceVolume>? enclosingSourceVolumes = null,
 		Func<long, double>? inheritedPitch = null,
 		double inheritedPitchAtStart = 1.0,
-		double initialNotePitchMultiplier = 1.0)
+		double initialNotePitchMultiplier = 1.0,
+		FilterChain? toneFilters = null)
 	{
 		Sound = sound ?? throw new ArgumentNullException(nameof(sound));
 		SoundState = soundState ?? throw new ArgumentNullException(nameof(soundState));
@@ -291,6 +293,9 @@ public sealed class PlaybackVoice
 			outputChannelCount,
 			sampleRate,
 			filterParameters);
+		ToneFilterState = toneFilters is null || toneFilters.Count == 0
+			? null
+			: new StreamingFilterChain(toneFilters, sampleRate, outputChannelCount);
 
 		if (_pitchEnvelope is not null || _inheritedPitch is not null)
 			RecomposePitchTrajectory(0);
@@ -303,6 +308,9 @@ public sealed class PlaybackVoice
 	public NoteConfigurationSnapshot Configuration { get; }
 
 	public ResonantFilterState FilterState { get; }
+
+	/// <summary>Inner-to-outer Instrument DSP, owned by this terminal voice.</summary>
+	public StreamingFilterChain? ToneFilterState { get; }
 
 	public long StartFrame { get; }
 
@@ -385,6 +393,7 @@ public sealed class PlaybackVoice
 		}
 
 		SoundState.RestartPlaybackAt(relativeFrame);
+		ToneFilterState?.Reset();
 
 		Array.Clear(_previousOutputFrame);
 		Array.Clear(_lastOutputFrame);

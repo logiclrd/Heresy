@@ -1,4 +1,8 @@
 using System;
+using System.Buffers;
+
+using Heresy.Core.Filters;
+using Heresy.Render.Filters;
 
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
@@ -19,10 +23,26 @@ public sealed class InstrumentSound : ISound
 {
 	private sealed class DirectState : SoundState
 	{
+		private StreamingFilterChain? _filters;
 		public DirectState(SoundInvocation? invocation)
 			=> Invocation = invocation;
-
 		public SoundInvocation? Invocation { get; }
+		public StreamingFilterChain? GetFilters(RenderContext context)
+		{
+			FilterChain? configuration = Invocation?.ToneFilters;
+			if (configuration is null)
+				return null;
+			int rate = context.Configuration.SampleRate;
+			int outputs = context.Configuration.OutputChannelCount;
+			if (_filters is not null)
+			{
+				if (_filters.SampleRate != rate || _filters.OutputChannelCount != outputs)
+					throw new InvalidOperationException(
+						"One Instrument invocation cannot change rendering format.");
+				return _filters;
+			}
+			return _filters = new StreamingFilterChain(configuration, rate, outputs);
+		}
 	}
 
 	private readonly Func<double, ToneSpecification?> _selectTone;
@@ -134,10 +154,20 @@ public sealed class InstrumentSound : ISound
 				childInvocation.Configuration.NewNoteFadeDuration,
 				envelopes);
 
+		// Compose tone DSP from the selected terminal source outward. Do not
+		// change the terminal ISound or its SoundState: native source-frame
+		// offsets, Note Off and flattened source identities must survive.
+		FilterChain? filters = childInvocation.ToneFilters;
+		if (tone.FilterConfiguration is FilterInstance outer)
+			filters = filters is null
+				? new FilterChain(new[] { outer })
+				: filters.Append(outer);
+
 		return new SoundInvocation(
 			childInvocation.Sound,
 			childInvocation.State,
-			configuration);
+			configuration,
+			filters);
 	}
 
 	public long? GetEndFrameExclusive(
@@ -149,9 +179,13 @@ public sealed class InstrumentSound : ISound
 		if (invocation is null)
 			return 0;
 
-		return invocation.Sound.GetEndFrameExclusive(
-			context,
-			invocation.State);
+		long? sourceEnd = invocation.Sound.GetEndFrameExclusive(
+			context, invocation.State);
+		if (!sourceEnd.HasValue)
+			return null;
+		int tail = direct.GetFilters(context)?.PreparedTailFrames ?? 0;
+		return sourceEnd.Value > long.MaxValue - tail
+			? long.MaxValue : sourceEnd.Value + tail;
 	}
 
 	public void Render(
@@ -166,12 +200,34 @@ public sealed class InstrumentSound : ISound
 		if (invocation is null)
 			return;
 
-		invocation.Sound.Render(
-			context,
-			invocation.State,
-			startFrame,
-			frameCount,
-			destination);
+		StreamingFilterChain? filters = direct.GetFilters(context);
+		if (filters is null)
+		{
+			invocation.Sound.Render(context, invocation.State,
+				startFrame, frameCount, destination);
+			return;
+		}
+
+		int channels = context.Configuration.OutputChannelCount;
+		int count = checked(frameCount * channels);
+		float[] rented = ArrayPool<float>.Shared.Rent(count);
+		try
+		{
+			Span<float> isolated = rented.AsSpan(0, count);
+			isolated.Clear();
+			long? end = invocation.Sound.GetEndFrameExclusive(
+				context, invocation.State);
+			int sourceFrames = end.HasValue
+				? (int)Math.Min(frameCount, Math.Max(0, end.Value - startFrame))
+				: frameCount;
+			if (sourceFrames > 0)
+				invocation.Sound.Render(context, invocation.State, startFrame,
+					sourceFrames, isolated.Slice(0, sourceFrames * channels));
+			filters.ProcessInterleaved(isolated);
+			for (int i = 0; i < count; i++)
+				destination[i] += isolated[i];
+		}
+		finally { ArrayPool<float>.Shared.Return(rented); }
 	}
 
 	private ToneSpecification? ResolveTone(double pitchMultiplier)
