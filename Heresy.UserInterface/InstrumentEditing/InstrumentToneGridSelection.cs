@@ -81,6 +81,29 @@ public sealed class InstrumentToneGridSelection
 		return new Cell(rows[nextRow].Index, nextColumn);
 	}
 
+	/// <summary>Return exactly the data rows targeted by an edit of this
+	/// field. Only the edited cell's inclusion matters, not the other
+	/// selected columns. The reserved entry row never participates in
+	/// bulk mutation; an unselected edit changes only its own row.</summary>
+	public IReadOnlyList<int> EditTargetRows(
+		Cell edited, IReadOnlyList<InstrumentToneGridRow> rows)
+	{
+		if (edited.ToneIndex is not int ownIndex)
+			return [];
+		if (!Contains(edited, rows) ||
+			Anchor is not Cell anchor || Extent is not Cell extent)
+			return [ownIndex];
+		int first = Math.Min(Position(rows, anchor.ToneIndex),
+			Position(rows, extent.ToneIndex));
+		int last = Math.Max(Position(rows, anchor.ToneIndex),
+			Position(rows, extent.ToneIndex));
+		List<int> indices = [];
+		for (int i = first; i <= last; i++)
+			if (rows[i].Index is int index)
+				indices.Add(index);
+		return indices;
+	}
+
 	public bool Contains(Cell cell, IReadOnlyList<InstrumentToneGridRow> rows)
 	{
 		if (Anchor is not Cell start || Extent is not Cell end)
