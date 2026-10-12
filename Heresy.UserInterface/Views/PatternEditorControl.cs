@@ -85,6 +85,14 @@ public sealed class PatternEditorControl : UserControl
 	private bool _followPlayback = true;
 	private bool _followScrollPosted;
 	private readonly TextBlock _message;
+	// Context guidance is independent of the diagnostic/status message:
+	// cursor movement and mouse hover must never erase actual failures.
+	private readonly TextBlock _effectHint = new()
+	{
+		TextWrapping = TextWrapping.Wrap,
+		Foreground = Brushes.Gray,
+		IsVisible = false,
+	};
 	private readonly TextBlock _title =
 		new()
 		{
@@ -566,11 +574,18 @@ public sealed class PatternEditorControl : UserControl
 		DockPanel.SetDock(chordBorder, Dock.Top);
 		root.Children.Add(chordBorder);
 
+		StackPanel statusLines = new()
+		{
+			Orientation = Orientation.Vertical,
+			Spacing = 2,
+		};
+		statusLines.Children.Add(_message);
+		statusLines.Children.Add(_effectHint);
 		Border messageBorder =
 			new()
 			{
 				Padding = new Thickness(10, 3),
-				Child = _message,
+				Child = statusLines,
 			};
 		DockPanel.SetDock(messageBorder, Dock.Bottom);
 		root.Children.Add(messageBorder);
@@ -2055,9 +2070,11 @@ public sealed class PatternEditorControl : UserControl
 
 		if (result.Rejected)
 		{
-			_message.Text =
-				"That effect field is not directly editable in its current state. "
-				+ "Expand stacked effects with Enter; native effects use a future parameter dialog.";
+			// This is an actual rejected edit, so keep it on the diagnostic
+			// line. The selection hint remains independently visible.
+			_message.Text = PatternEffectStatusHints.RejectedInput(
+				_cursor,
+				edited.Pattern.Grid[edited.PatternRow, editedChannel]);
 			e.Handled = true;
 			return;
 		}
@@ -3638,6 +3655,27 @@ public sealed class PatternEditorControl : UserControl
 			}
 			RefreshCellEffectState(row, channel);
 		}
+		RefreshEffectHint();
+	}
+
+	private void RefreshEffectHint()
+	{
+		PatternCell? cell = null;
+		if (_context.Rows.Count > 0
+			&& (uint)_cursor.Row < (uint)_context.Rows.Count)
+		{
+			PatternEditorRow row = _context.GetRow(_cursor.Row);
+			if ((uint)_cursor.Channel < (uint)row.Pattern.ChannelCount)
+			{
+				cell = row.Pattern.Grid[row.PatternRow, _cursor.Channel];
+			}
+		}
+
+		string? hint = _context.Rows.Count > 0
+			? PatternEffectStatusHints.ForSelection(_cursor, cell)
+			: null;
+		_effectHint.Text = hint ?? string.Empty;
+		_effectHint.IsVisible = hint is not null;
 	}
 
 	private void RefreshCellEffectState(int row, int channel)
