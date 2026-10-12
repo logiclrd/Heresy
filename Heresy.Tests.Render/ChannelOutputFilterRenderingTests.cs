@@ -757,8 +757,8 @@ public sealed class ChannelOutputFilterRenderingTests
         ]);
 
         ChannelOutputFilterState plain = new(authored, Rate, 1);
-        ChannelOutputFilterState bound = new(authored, Rate, 1)
-            .PrepareParameterEnvelopeUpdate(
+        ChannelOutputFilterState bound = new ChannelOutputFilterState(
+            authored, Rate, 1).PrepareParameterEnvelopeUpdate(
                 1, "CutoffHz", new FixedCurve(210), 0);
         float[] a = new float[7], b = new float[7];
         a[0] = b[0] = 1;
