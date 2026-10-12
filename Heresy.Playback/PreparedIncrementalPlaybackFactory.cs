@@ -5,6 +5,7 @@ using System.Linq;
 using Heresy.Core.Diagnostics;
 using Heresy.Core.Objects;
 using Heresy.Core.Instruments;
+using Heresy.Core.Filters;
 using Heresy.Render.Instruments;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequences;
@@ -762,6 +763,22 @@ public sealed class PreparedIncrementalPlaybackFactory
 						_ => command,
 					};
 					continue;
+				}
+				// Bind the script/data note's Filter definition through the frozen
+				// prepared song snapshot. This is once per note *outside* the
+				// audio-device callback, before the later voice constructor
+				// prepares its private DSP state.
+				if (start.EventFilterDefinitionId is ObjectId eventFilterId)
+				{
+					if (!scripts.TryResolve(eventFilterId,
+						out SongObject? filterObject)
+						|| filterObject is not FilterDefinition filter)
+						throw new InvalidOperationException(
+							$"Note event selects unavailable Filter {eventFilterId.Value}.");
+					start = start with
+					{
+						EventFilterConfiguration = new FilterInstance(filter),
+					};
 				}
 				// An instrument's selected ToneSpecification may lead to
 				// another instrument or a private Pattern/Sequence voice.

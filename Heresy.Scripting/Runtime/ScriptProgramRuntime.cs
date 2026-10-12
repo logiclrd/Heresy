@@ -155,13 +155,14 @@ public abstract class PatternScriptProgram
 		double playbackSpeedMultiplier = 1.0,
 		bool mixdown = false,
 		double? volume = null,
-		double timeOffsetSeconds = 0.0)
+		double timeOffsetSeconds = 0.0,
+		ObjectId? eventFilterDefinitionId = null)
 	{
 		ValidateRow(row);
 		ValidateChannel(channel);
 		AppendNoteStart(row, ChannelTarget.Physical(channel),
 			sourceId, pitchMultiplier, playbackSpeedMultiplier,
-			mixdown, volume, timeOffsetSeconds);
+			mixdown, volume, timeOffsetSeconds, eventFilterDefinitionId);
 	}
 
 	/// <summary>
@@ -176,12 +177,13 @@ public abstract class PatternScriptProgram
 		double playbackSpeedMultiplier = 1.0,
 		bool mixdown = false,
 		double? volume = null,
-		double timeOffsetSeconds = 0.0)
+		double timeOffsetSeconds = 0.0,
+		ObjectId? eventFilterDefinitionId = null)
 	{
 		ValidateRow(row);
 		AppendNoteStart(row, ChannelTarget.Virtual(virtualId),
 			sourceId, pitchMultiplier, playbackSpeedMultiplier,
-			mixdown, volume, timeOffsetSeconds);
+			mixdown, volume, timeOffsetSeconds, eventFilterDefinitionId);
 	}
 
 	private void AppendNoteStart(
@@ -192,8 +194,11 @@ public abstract class PatternScriptProgram
 		double playbackSpeedMultiplier,
 		bool mixdown,
 		double? volume,
-		double timeOffsetSeconds)
+		double timeOffsetSeconds,
+		ObjectId? eventFilterDefinitionId)
 	{
+		if (eventFilterDefinitionId is { IsNone: true })
+			throw new ArgumentOutOfRangeException(nameof(eventFilterDefinitionId));
 		if (sourceId.IsNone)
 			throw new ArgumentOutOfRangeException(nameof(sourceId));
 		ValidatePositiveFinite(pitchMultiplier, nameof(pitchMultiplier));
@@ -209,7 +214,10 @@ public abstract class PatternScriptProgram
 
 		Append(row, target,
 			new StartNoteCommand(sourceId, pitchMultiplier,
-				playbackSpeedMultiplier, mixdown, volume),
+				playbackSpeedMultiplier, mixdown, volume)
+			{
+				EventFilterDefinitionId = eventFilterDefinitionId,
+			},
 			timeOffsetSeconds);
 	}
 

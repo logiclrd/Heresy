@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Numerics;
 
 using Heresy.Core.Envelopes;
+using Heresy.Core.Filters;
 using Heresy.Core.Objects;
 
 namespace Heresy.Core.Sequencing;
@@ -63,6 +64,16 @@ public sealed record StartNoteCommand(
 	/// <summary>Nested flattened invocations whose live note volumes
 	/// multiply this voice, independently of physical playback hosts.</summary>
 	public IReadOnlyList<long>? ParentSourceScopes { get; init; }
+
+	/// <summary>Optional stable Filter reference authored on a data/script
+	/// note start. The prepared song factory resolves it *before* PCM; null
+	/// starts without an event Filter and never inherits the preceding note.</summary>
+	public ObjectId? EventFilterDefinitionId { get; init; }
+
+	/// <summary>Bound, cloned configuration for this note's outermost
+	/// event-local layer; direct callers can supply custom typed overrides.
+	/// Prepared scripts map EventFilterDefinitionId to this property.</summary>
+	public FilterInstance? EventFilterConfiguration { get; init; }
 }
 
 /// <summary>Begin the live note-volume controller for one non-mixdown

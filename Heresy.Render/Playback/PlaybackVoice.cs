@@ -237,7 +237,8 @@ public sealed class PlaybackVoice
 		Func<long, double>? inheritedPitch = null,
 		double inheritedPitchAtStart = 1.0,
 		double initialNotePitchMultiplier = 1.0,
-		FilterChain? toneFilters = null)
+		FilterChain? toneFilters = null,
+		FilterInstance? eventFilter = null)
 	{
 		Sound = sound ?? throw new ArgumentNullException(nameof(sound));
 		SoundState = soundState ?? throw new ArgumentNullException(nameof(soundState));
@@ -296,6 +297,11 @@ public sealed class PlaybackVoice
 		ToneFilterState = toneFilters is null || toneFilters.Count == 0
 			? null
 			: new StreamingFilterChain(toneFilters, sampleRate, outputChannelCount);
+		EventFilterState = eventFilter is null
+			? null
+			: new StreamingFilterChain(
+				new FilterChain(new[] { eventFilter }),
+				sampleRate, outputChannelCount);
 
 		if (_pitchEnvelope is not null || _inheritedPitch is not null)
 			RecomposePitchTrajectory(0);
@@ -311,6 +317,21 @@ public sealed class PlaybackVoice
 
 	/// <summary>Inner-to-outer Instrument DSP, owned by this terminal voice.</summary>
 	public StreamingFilterChain? ToneFilterState { get; }
+
+	/// <summary>Optional *distinct* outer note-event Filter; inherited tone
+	/// layers are never reconfigured by event-targeted commands. Current voice
+	/// owns histories and NNA displacement retains them.</summary>
+	public StreamingFilterChain? EventFilterState { get; private set; }
+
+	public int ConfiguredFilterTailFrames
+	{
+		get
+		{
+			long tail = (long)(ToneFilterState?.PreparedTailFrames ?? 0)
+				+ (EventFilterState?.PreparedTailFrames ?? 0);
+			return (int)Math.Min(int.MaxValue, tail);
+		}
+	}
 
 	public long StartFrame { get; }
 
@@ -394,6 +415,7 @@ public sealed class PlaybackVoice
 
 		SoundState.RestartPlaybackAt(relativeFrame);
 		ToneFilterState?.Reset();
+		EventFilterState?.Reset();
 
 		Array.Clear(_previousOutputFrame);
 		Array.Clear(_lastOutputFrame);

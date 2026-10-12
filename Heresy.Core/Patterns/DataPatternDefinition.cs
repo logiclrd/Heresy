@@ -268,7 +268,10 @@ public sealed class DataPatternDefinition : PatternDefinition, IDeferredSourcePa
 			start.PitchMultiplier,
 			start.PlaybackSpeedMultiplier,
 			start.Mixdown,
-			volume);
+			volume)
+		{
+			EventFilterDefinitionId = start.EventFilterDefinitionId,
+		};
 
 	private static NoteCommand TranslateNote(PatternNoteEntry note)
 		=> note switch

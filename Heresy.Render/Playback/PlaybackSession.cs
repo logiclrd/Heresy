@@ -1270,7 +1270,8 @@ public sealed class PlaybackSession
 			inheritedPitch: InheritedPitchAtFrame,
 			inheritedPitchAtStart: inheritedPitch,
 			initialNotePitchMultiplier: start.PitchMultiplier,
-			toneFilters: invocation.ToneFilters)
+			toneFilters: invocation.ToneFilters,
+			eventFilter: start.EventFilterConfiguration)
 		{
 			OriginVirtualChannelId = virtualChannelId,
 			OriginScopedVirtualOwner = scopedOwner,
@@ -1878,7 +1879,8 @@ public sealed class PlaybackSession
 			inheritedPitch: InheritedPitchAtFrame,
 			inheritedPitchAtStart: inheritedPitch,
 			initialNotePitchMultiplier: start.PitchMultiplier,
-			toneFilters: invocation.ToneFilters);
+			toneFilters: invocation.ToneFilters,
+			eventFilter: start.EventFilterConfiguration);
 
 		voice.OriginPatternCursorId = _activePatternCursorId;
 		channel.AttachVoice(voice, eventFrame);
@@ -2558,7 +2560,7 @@ public sealed class PlaybackSession
 			checked(activeFrames * outputChannelCount));
 
 		int sourceFrames = activeFrames;
-		if (voice.ToneFilterState is not null)
+		if (voice.ToneFilterState is not null || voice.EventFilterState is not null)
 		{
 			long? sourceEnd = voice.Sound.GetEndFrameExclusive(
 				_context, voice.SoundState);
@@ -2605,13 +2607,13 @@ public sealed class PlaybackSession
 		if (voice.SoundState.NaturalEndFrameExclusive is long discovered)
 		{
 			long discoveredRemaining = discovered - invocationStartFrame;
-			if (voice.ToneFilterState is not null)
+			if (voice.ToneFilterState is not null || voice.EventFilterState is not null)
 			{
 				int sourceEnd = discoveredRemaining <= 0 ? 0
 					: (int)Math.Min(activeFrames, discoveredRemaining);
 				activeDestination.Slice(sourceEnd * outputChannelCount).Clear();
 				long tailEnd = AddSaturating(
-					discovered, voice.ToneFilterState.PreparedTailFrames);
+					discovered, voice.ConfiguredFilterTailFrames);
 				long remaining = tailEnd - invocationStartFrame;
 				activeFrames = remaining <= 0 ? 0
 					: (int)Math.Min(activeFrames, remaining);
@@ -2647,6 +2649,7 @@ public sealed class PlaybackSession
 				outputChannelCount);
 
 			voice.ToneFilterState?.ProcessFrame(outputFrame);
+			voice.EventFilterState?.ProcessFrame(outputFrame);
 			if (voice.HasFilterEnvelope)
 				voice.SynchronizeFilterEnvelope(absoluteFrame);
 			voice.FilterState.ProcessFrame(outputFrame);
@@ -2664,7 +2667,7 @@ public sealed class PlaybackSession
 		if (voice.SoundState.NaturalEndFrameExclusive is long naturalEnd
 			&& invocationStartFrame + activeFrames
 				>= AddSaturating(naturalEnd,
-					voice.ToneFilterState?.PreparedTailFrames ?? 0))
+					voice.ConfiguredFilterTailFrames))
 			return true;
 
 		return effectiveEndAbsolute.HasValue
@@ -2682,9 +2685,9 @@ public sealed class PlaybackSession
 		if (voice.SoundState.NaturalEndFrameExclusive is long naturalEnd)
 			soundEndRelative = soundEndRelative.HasValue
 				? Math.Min(soundEndRelative.Value, naturalEnd) : naturalEnd;
-		if (soundEndRelative.HasValue && voice.ToneFilterState is not null)
+		if (soundEndRelative.HasValue && voice.ConfiguredFilterTailFrames > 0)
 			soundEndRelative = AddSaturating(soundEndRelative.Value,
-				voice.ToneFilterState.PreparedTailFrames);
+				voice.ConfiguredFilterTailFrames);
 		long? effectiveEndAbsolute =
 			soundEndRelative.HasValue
 				? AddSaturating(

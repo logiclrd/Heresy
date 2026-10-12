@@ -17,12 +17,14 @@ public sealed record StartPatternNote : PatternNoteEntry
 	public StartPatternNote(
 		double pitchMultiplier = 1.0,
 		double playbackSpeedMultiplier = 1.0,
-		bool mixdown = false)
+		bool mixdown = false,
+		ObjectId? eventFilterDefinitionId = null)
 		: this(
 			ObjectId.None,
 			pitchMultiplier,
 			playbackSpeedMultiplier,
-			mixdown)
+			mixdown,
+			eventFilterDefinitionId)
 	{
 	}
 
@@ -31,9 +33,13 @@ public sealed record StartPatternNote : PatternNoteEntry
 		ObjectId sourceId,
 		double pitchMultiplier = 1.0,
 		double playbackSpeedMultiplier = 1.0,
-		bool mixdown = false)
+		bool mixdown = false,
+		ObjectId? eventFilterDefinitionId = null)
 	{
 		SourceId = sourceId;
+		EventFilterDefinitionId = eventFilterDefinitionId is { IsNone: true }
+			? throw new ArgumentOutOfRangeException(nameof(eventFilterDefinitionId))
+			: eventFilterDefinitionId;
 		PitchMultiplier = ValidateMultiplier(pitchMultiplier, nameof(pitchMultiplier));
 		PlaybackSpeedMultiplier = ValidateMultiplier(playbackSpeedMultiplier, nameof(playbackSpeedMultiplier));
 		Mixdown = mixdown;
@@ -43,6 +49,11 @@ public sealed record StartPatternNote : PatternNoteEntry
 	public double PitchMultiplier { get; }
 	public double PlaybackSpeedMultiplier { get; }
 	public bool Mixdown { get; }
+
+	/// <summary>Optional event Filter definition, separate from Instrument
+	/// tone inheritance. Serialized with the Pattern note and resolved by
+	/// prepared snapshot playback to a fresh default configured use.</summary>
+	public ObjectId? EventFilterDefinitionId { get; }
 
 	private static double ValidateMultiplier(double value, string paramName)
 	{
