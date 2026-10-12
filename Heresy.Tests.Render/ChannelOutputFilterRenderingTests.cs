@@ -211,6 +211,43 @@ public sealed class ChannelOutputFilterRenderingTests
             "nonlinearity must see the single summed host signal");
     }
 
+    [Test]
+    public void FlattenedChildCutAntiClickAndSiblingShareOnePersistentHostFilter()
+    {
+        float[] Render(bool filter)
+        {
+            TestResolver sounds = new();
+            sounds.Add(PulseId, new PulseSound());
+            sounds.Add((ObjectId)999U, new HeldSound());
+            PlaybackSession session = Session(sounds);
+            if (filter)
+                session.ConfigurePhysicalChannelOutputFilter(0, Echo(961, 0.002));
+            session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+                [new BeginFlattenedSourceVolumeCommand(1, 1)]);
+            session.ApplyScopedEvent(21, ChannelTarget.Physical(0),
+                [new StartNoteCommand((ObjectId)999U)
+                {
+                    ParentSourceScopes = new long[] { 1 },
+                }], physicalPlaybackOwner: 21);
+            float[] pcm = new float[10];
+            session.Render(0, 1, pcm.AsSpan(0, 1));
+            session.ApplyFlattenedScopeAction(1, NoteDisplacementAction.Cut);
+            session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+                [new StartNoteCommand(PulseId)]);
+            session.Render(1, 9, pcm.AsSpan(1));
+            return pcm;
+        }
+
+        float[] dryHost = Render(false);
+        float[] wetHost = Render(true);
+        StreamingFilterChain reference = new(
+            new FilterChain([Echo(961, 0.002)]), Rate, 1);
+        reference.ProcessInterleaved(dryHost);
+        Assert.That(wetHost, Is.EqualTo(dryHost).Within(1e-6f),
+            "the single host Filter processes canceled child anti-click " +
+            "samples and a new sibling without scope-owned replacement");
+    }
+
     private static FilterInstance Echo(uint id, double seconds)
     {
         FilterDefinition definition = new((ObjectId)id, "Echo", [
@@ -259,6 +296,17 @@ public sealed class ChannelOutputFilterRenderingTests
         {
             if (startFrame == 0 && frameCount > 0) destination[0] += 1;
         }
+    }
+
+    private sealed class HeldSound : ISound
+    {
+        public NoteConfigurationSnapshot SnapshotNoteConfiguration()
+            => new(NewNotePolicy.Continue);
+        public SoundState CreateState() => new ProbeState();
+        public long? GetEndFrameExclusive(RenderContext context, SoundState state) => 6;
+        public void Render(RenderContext context, SoundState state,
+            long startFrame, int frameCount, Span<float> destination)
+            => destination.Fill(1f);
     }
 
     private sealed class TestResolver : ISoundResolver
