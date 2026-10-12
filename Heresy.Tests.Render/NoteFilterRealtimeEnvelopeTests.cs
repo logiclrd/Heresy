@@ -58,8 +58,9 @@ public sealed class NoteFilterRealtimeEnvelopeTests
 		// should be created by any legal scalar sample.
 		for (int frame = 192; frame < 512; frame++)
 			controls.Apply(frame, actual, null);
+		Stopwatch clock = new();
 		long before = GC.GetAllocatedBytesForCurrentThread();
-		Stopwatch clock = Stopwatch.StartNew();
+		clock.Start();
 		for (int frame = 512; frame < 4608; frame++)
 			controls.Apply(frame, actual, null);
 		clock.Stop();
