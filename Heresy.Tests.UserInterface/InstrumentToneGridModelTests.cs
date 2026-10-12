@@ -19,6 +19,34 @@ namespace Heresy.Tests.UserInterface;
 [TestFixture]
 public sealed class InstrumentToneGridModelTests
 {
+    [Test]
+    public void ToneNnaSurvivesUnrelatedGridChangesAndDraftPublication()
+    {
+        DocumentWorkspace workspace = new();
+        InstrumentDefinition instrument =
+            InstrumentDocumentEditor.CreateInstrument(workspace, "NNA tones");
+        ObjectId sample = AddSample(workspace);
+        InstrumentToneGridModel model = new(workspace, instrument);
+        InstrumentNnaSetting policy = InstrumentNnaSetting.Fade(
+            TimeSpan.FromMilliseconds(23));
+        model.SetRow(0, new InstrumentToneGridCells(
+            PitchMultiplier: 1.5, Nna: policy));
+        instrument.ToneSpecifications.Should().BeEmpty();
+        model.Rows.Single(row => row.Index == 0).Cells.Nna.Should().Be(policy);
+
+        model.SetRow(0, model.Rows.Single(row => row.Index == 0).Cells
+            with { SourceId = sample });
+        instrument.ToneSpecifications.Should().ContainSingle();
+        instrument.ToneSpecifications[0].Nna.Should().Be(policy);
+        model.SetRow(0, model.Rows.Single(row => row.Index == 0).Cells
+            with { PitchMultiplier = 1.25 });
+        instrument.ToneSpecifications[0].Nna.Should().Be(policy);
+
+        InstrumentDocumentEditor.UpdateToneSpecification(
+            workspace, instrument, 0, sample, pitchMultiplier: 1.75);
+        instrument.ToneSpecifications[0].Nna.Should().Be(policy);
+    }
+
 	[Test]
 	public void DefaultTwelveDivisionsUsesC11IndexAndDescendingVisualRows()
 	{
