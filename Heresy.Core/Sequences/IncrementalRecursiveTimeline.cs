@@ -559,7 +559,12 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 							frame.Context.GetPhysicalChannelState(localChannel)
 								.FlattenedSourceDisplacementAction = null;
 							retained.Add(new BeginFlattenedSourceVolumeCommand(
-								child.ScopeId, startingSourceVolume));
+								child.ScopeId, startingSourceVolume,
+								start.EventFilterDefinitionId)
+							{
+								EventFilterConfiguration =
+									start.EventFilterConfiguration?.Clone(),
+							});
 							try
 							{
 								AddInvocation(source, child, frame.Id);

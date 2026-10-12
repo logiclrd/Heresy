@@ -1,5 +1,7 @@
 using System;
 
+using Heresy.Core.Filters;
+
 using Heresy.Core.Sequencing;
 
 namespace Heresy.Render.Playback;
@@ -23,7 +25,8 @@ internal sealed class FlattenedSourceVolume
 	private double _volume;
 
 	public FlattenedSourceVolume(long scopeId, double volume,
-		TrackerTickClock clock, int sampleRate)
+		TrackerTickClock clock, int sampleRate,
+		FilterInstance? eventFilter = null)
 	{
 		if (scopeId <= 0)
 			throw new ArgumentOutOfRangeException(nameof(scopeId));
@@ -32,12 +35,17 @@ internal sealed class FlattenedSourceVolume
 		if (sampleRate <= 0)
 			throw new ArgumentOutOfRangeException(nameof(sampleRate));
 		ScopeId = scopeId;
+		EventFilterConfiguration = eventFilter?.Clone();
 		_volume = volume;
 		_clock = clock ?? throw new ArgumentNullException(nameof(clock));
 		_sampleRate = sampleRate;
 	}
 
 	public long ScopeId { get; }
+
+	/// <summary>Optional authored event-local Filter on the flattened
+	/// instigating note. Descendants clone it into their own DSP chains.</summary>
+	public FilterInstance? EventFilterConfiguration { get; }
 
 	public double Read(long frame)
 	{

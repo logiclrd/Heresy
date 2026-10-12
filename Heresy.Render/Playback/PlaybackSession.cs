@@ -1271,7 +1271,8 @@ public sealed class PlaybackSession
 			inheritedPitchAtStart: inheritedPitch,
 			initialNotePitchMultiplier: start.PitchMultiplier,
 			toneFilters: invocation.ToneFilters,
-			eventFilter: start.EventFilterConfiguration)
+			eventFilter: start.EventFilterConfiguration,
+			enclosingEventFilters: BuildEnclosingEventFilters(ancestors))
 		{
 			OriginVirtualChannelId = virtualChannelId,
 			OriginScopedVirtualOwner = scopedOwner,
@@ -1793,10 +1794,25 @@ public sealed class PlaybackSession
 		channel.ResetPanbrelloOffsetForNewNote();
 		FlattenedSourceVolume source = new(begin.ChildScopeId,
 			begin.InitialVolume, _tickClock,
-			_context.Configuration.SampleRate);
+			_context.Configuration.SampleRate,
+			begin.EventFilterConfiguration);
 		_sourceVolumes.Add(begin.ChildScopeId, source);
 		channel.CurrentFlattenedSource = source;
 		channel.CaptureCurrentNoteVolume(begin.InitialVolume);
+	}
+
+	private static FilterChain? BuildEnclosingEventFilters(
+		IReadOnlyList<FlattenedSourceVolume> ancestors)
+	{
+		// ParentSourceScopes are outer-to-inner. Each descendant's own
+		// note Filter is processed before logical instigator filters;
+		// therefore inherit innermost scope first. No DSP histories are
+		// shared across different descendant voices.
+		List<FilterInstance> layers = [];
+		for (int i = ancestors.Count - 1; i >= 0; i--)
+			if (ancestors[i].EventFilterConfiguration is FilterInstance filter)
+				layers.Add(filter);
+		return layers.Count == 0 ? null : new FilterChain(layers);
 	}
 
 	private double ReadInheritedPitchAt(long frame)
@@ -1880,7 +1896,8 @@ public sealed class PlaybackSession
 			inheritedPitchAtStart: inheritedPitch,
 			initialNotePitchMultiplier: start.PitchMultiplier,
 			toneFilters: invocation.ToneFilters,
-			eventFilter: start.EventFilterConfiguration);
+			eventFilter: start.EventFilterConfiguration,
+			enclosingEventFilters: BuildEnclosingEventFilters(enclosingSources));
 
 		voice.OriginPatternCursorId = _activePatternCursorId;
 		channel.AttachVoice(voice, eventFrame);
@@ -2560,7 +2577,10 @@ public sealed class PlaybackSession
 			checked(activeFrames * outputChannelCount));
 
 		int sourceFrames = activeFrames;
-		if (voice.ToneFilterState is not null || voice.EventFilterState is not null)
+		if (voice.ConfiguredFilterTailFrames > 0
+			|| voice.ToneFilterState is not null
+			|| voice.EventFilterState is not null
+			|| voice.EnclosingEventFilterState is not null)
 		{
 			long? sourceEnd = voice.Sound.GetEndFrameExclusive(
 				_context, voice.SoundState);
@@ -2607,7 +2627,10 @@ public sealed class PlaybackSession
 		if (voice.SoundState.NaturalEndFrameExclusive is long discovered)
 		{
 			long discoveredRemaining = discovered - invocationStartFrame;
-			if (voice.ToneFilterState is not null || voice.EventFilterState is not null)
+			if (voice.ConfiguredFilterTailFrames > 0
+				|| voice.ToneFilterState is not null
+				|| voice.EventFilterState is not null
+				|| voice.EnclosingEventFilterState is not null)
 			{
 				int sourceEnd = discoveredRemaining <= 0 ? 0
 					: (int)Math.Min(activeFrames, discoveredRemaining);
@@ -2650,6 +2673,7 @@ public sealed class PlaybackSession
 
 			voice.ToneFilterState?.ProcessFrame(outputFrame);
 			voice.EventFilterState?.ProcessFrame(outputFrame);
+			voice.EnclosingEventFilterState?.ProcessFrame(outputFrame);
 			if (voice.HasFilterEnvelope)
 				voice.SynchronizeFilterEnvelope(absoluteFrame);
 			voice.FilterState.ProcessFrame(outputFrame);

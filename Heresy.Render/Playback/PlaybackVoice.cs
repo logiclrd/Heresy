@@ -238,7 +238,8 @@ public sealed class PlaybackVoice
 		double inheritedPitchAtStart = 1.0,
 		double initialNotePitchMultiplier = 1.0,
 		FilterChain? toneFilters = null,
-		FilterInstance? eventFilter = null)
+		FilterInstance? eventFilter = null,
+		FilterChain? enclosingEventFilters = null)
 	{
 		Sound = sound ?? throw new ArgumentNullException(nameof(sound));
 		SoundState = soundState ?? throw new ArgumentNullException(nameof(soundState));
@@ -302,6 +303,10 @@ public sealed class PlaybackVoice
 			: new StreamingFilterChain(
 				new FilterChain(new[] { eventFilter }),
 				sampleRate, outputChannelCount);
+		EnclosingEventFilterState =
+			enclosingEventFilters is null || enclosingEventFilters.Count == 0
+				? null : new StreamingFilterChain(enclosingEventFilters,
+					sampleRate, outputChannelCount);
 
 		if (_pitchEnvelope is not null || _inheritedPitch is not null)
 			RecomposePitchTrajectory(0);
@@ -323,12 +328,17 @@ public sealed class PlaybackVoice
 	/// owns histories and NNA displacement retains them.</summary>
 	public StreamingFilterChain? EventFilterState { get; private set; }
 
+	/// <summary>Selected flattened logical note Filters after this voice's
+	/// own event layer, innermost scope first, each history private.</summary>
+	public StreamingFilterChain? EnclosingEventFilterState { get; }
+
 	public int ConfiguredFilterTailFrames
 	{
 		get
 		{
 			long tail = (long)(ToneFilterState?.PreparedTailFrames ?? 0)
-				+ (EventFilterState?.PreparedTailFrames ?? 0);
+				+ (EventFilterState?.PreparedTailFrames ?? 0)
+				+ (EnclosingEventFilterState?.PreparedTailFrames ?? 0);
 			return (int)Math.Min(int.MaxValue, tail);
 		}
 	}
@@ -416,6 +426,7 @@ public sealed class PlaybackVoice
 		SoundState.RestartPlaybackAt(relativeFrame);
 		ToneFilterState?.Reset();
 		EventFilterState?.Reset();
+		EnclosingEventFilterState?.Reset();
 
 		Array.Clear(_previousOutputFrame);
 		Array.Clear(_lastOutputFrame);

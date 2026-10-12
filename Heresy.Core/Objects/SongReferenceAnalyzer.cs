@@ -15,6 +15,7 @@ public enum SongReferenceKind
 	RootSequence,
 	Tree,
 	PatternNoteSource,
+	PatternNoteFilter,
 	SequencePattern,
 	InstrumentSource,
 	InstrumentVolumeEnvelope,
@@ -165,6 +166,12 @@ public static class SongReferenceAnalyzer
 								pattern.Id,
 								SongReferenceKind.PatternNoteSource);
 						}
+						if (cell.Note is StartPatternNote note)
+							AddReference(
+								references,
+								note.EventFilterDefinitionId,
+								pattern.Id,
+								SongReferenceKind.PatternNoteFilter);
 					}
 					break;
 

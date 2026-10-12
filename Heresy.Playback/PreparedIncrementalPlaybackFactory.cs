@@ -749,6 +749,19 @@ public sealed class PreparedIncrementalPlaybackFactory
 				}
 				if (command is not StartNoteCommand start)
 				{
+					if (command is BeginFlattenedSourceVolumeCommand begin
+						&& begin.EventFilterDefinitionId is ObjectId beginFilterId)
+					{
+						if (!scripts.TryResolve(beginFilterId,
+							out SongObject? beginFilterObject)
+							|| beginFilterObject is not FilterDefinition beginDefinition)
+							throw new InvalidOperationException(
+								$"Flattened note selects unavailable Filter {beginFilterId.Value}.");
+						command = begin with
+						{
+							EventFilterConfiguration = new FilterInstance(beginDefinition),
+						};
+					}
 					ProcessControl(note.Target, owner,
 						note.PhysicalPlaybackOwner, parentFrame, command);
 					// Scale only renderer-facing Tempo, leaving the source

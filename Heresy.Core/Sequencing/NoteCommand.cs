@@ -80,7 +80,14 @@ public sealed record StartNoteCommand(
 /// flattened invocation. The scope identity belongs to the invoked
 /// child; control effects continue to target the caller's channel.</summary>
 public sealed record BeginFlattenedSourceVolumeCommand(
-	long ChildScopeId, double InitialVolume) : NoteCommand;
+	long ChildScopeId, double InitialVolume,
+	ObjectId? EventFilterDefinitionId = null) : NoteCommand
+{
+	/// <summary>Prepared at the producer boundary, not inside PCM. A
+	/// flattened logical note passes its initial Filter to each descendant
+	/// voice without inserting a private mixdown.</summary>
+	public FilterInstance? EventFilterConfiguration { get; init; }
+}
 
 /// <summary>Lifecycle operation on a flattened instigating note.
 /// Matches only voices descending from the specified source scope;
