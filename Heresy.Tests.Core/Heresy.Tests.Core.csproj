@@ -22,4 +22,8 @@
 		<ProjectReference Include="..\Heresy.Core\Heresy.Core.csproj" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<None Update="Fixtures\\*.mp3" CopyToOutputDirectory="PreserveNewest" />
+	</ItemGroup>
+
 </Project>

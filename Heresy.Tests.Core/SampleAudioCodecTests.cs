@@ -210,7 +210,14 @@ public sealed class SampleAudioCodecTests
 		for (int group = 0; group < 4; group++)
 			writer.Write(13, 5);
 
-		return frame;
+		// The historical fixture contained just one synthetic frame.
+		// A stream decoder cannot establish continuity or validate a
+		// candidate MPEG header from that alone; supply consecutive
+		// complete Layer II frames so stream synchronization is real.
+		byte[] stream = new byte[frame.Length * 4];
+		for (int i = 0; i < 4; i++)
+			frame.CopyTo(stream, i * frame.Length);
+		return stream;
 	}
 
 	private sealed class BitWriter
