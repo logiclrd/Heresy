@@ -30,18 +30,21 @@ namespace Heresy.Tests.Render;
 public sealed class FmMixedFilterRealtimeQualificationTests
 {
 	private const int Rate = 48000;
-	private const int Voices = 4;
 	private const int Frames = 3072;
 	private const int Block = 256;
 
-	[Test]
-	public void MixedEightNumericFamiliesAnd2047TapFirMeasureRealtimeWorkerBudget()
+	[TestCase(127, 1)]
+	[TestCase(127, 4)]
+	[TestCase(2047, 1)]
+	[TestCase(2047, 4)]
+	public void MixedEightNumericFamiliesMeasureRealtimeWorkerBudget(
+		int taps, int voiceCount)
 	{
-		FmSynthSound sound = MixedSound(MakeMixed(2047), connectFir: false);
+		FmSynthSound sound = MixedSound(MakeMixed(taps), connectFir: false);
 		RenderContext context = Context();
-		SoundState[] states = Enumerable.Range(0, Voices)
+		SoundState[] states = Enumerable.Range(0, voiceCount)
 			.Select(_ => sound.CreateState()).ToArray();
-		float[][] pcm = Enumerable.Range(0, Voices)
+		float[][] pcm = Enumerable.Range(0, voiceCount)
 			.Select(_ => new float[Frames]).ToArray();
 		float[] warm = new float[128];
 		foreach (SoundState state in states)
@@ -51,9 +54,9 @@ public sealed class FmMixedFilterRealtimeQualificationTests
 		}
 
 		// Stopwatch ticks are captured per block without allocating within
-		// the timed region. Four independent invocations exercise separate
+		// the timed region. Multiple independent invocations exercise separate
 		// chains, scratch, histories and the 4x nonlinear ladder solver.
-		long[] blockTicks = new long[Voices * (Frames / Block)];
+		long[] blockTicks = new long[voiceCount * (Frames / Block)];
 		Process process = Process.GetCurrentProcess();
 		TimeSpan cpuBefore = process.TotalProcessorTime;
 		long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
@@ -61,7 +64,7 @@ public sealed class FmMixedFilterRealtimeQualificationTests
 		int measurement = 0;
 		for (int offset = 0; offset < Frames; offset += Block)
 		{
-			for (int voice = 0; voice < Voices; voice++)
+			for (int voice = 0; voice < voiceCount; voice++)
 			{
 				long tick = Stopwatch.GetTimestamp();
 				sound.Render(context, states[voice], 128 + offset, Block,
@@ -79,23 +82,26 @@ public sealed class FmMixedFilterRealtimeQualificationTests
 			blockTicks.Length * 0.95) - 1]);
 		double audioMs = 1000.0 * Frames / Rate;
 		double computeToAudioRatio = wallMs / audioMs;
+		double worstBlockToDeadline = maximumBlockMs / (1000.0 * Block / Rate);
 		TestContext.Progress.WriteLine(
 			$"FM-REALTIME-QUALIFICATION platform={RuntimeInformation.OSDescription}; " +
 			$"architecture={RuntimeInformation.ProcessArchitecture}; " +
 			$"framework={RuntimeInformation.FrameworkDescription}; " +
-			$"processors={Environment.ProcessorCount}; rate={Rate}; voices={Voices}; " +
-			$"framesPerVoice={Frames}; block={Block}; stages=9; firTaps=2047; " +
+			$"processors={Environment.ProcessorCount}; rate={Rate}; voices={voiceCount}; " +
+			$"framesPerVoice={Frames}; block={Block}; stages=9; firTaps={taps}; " +
 			$"ladderOversampling=4x; wallMs={wallMs:F3}; cpuMs={cpu.TotalMilliseconds:F3}; " +
 			$"blockP95Ms={p95BlockMs:F4}; blockMaxMs={maximumBlockMs:F4}; " +
-			$"wallToAudioRatio={computeToAudioRatio:F3}; managedBytes={allocated}; " +
-			$"pcmFIRWorkBound={Voices * Frames * 2047L} tap-multiply-adds " +
+			$"wallToAudioRatio={computeToAudioRatio:F3}; " +
+			$"maxBlockToDeadlineRatio={worstBlockToDeadline:F3}; " +
+			$"managedBytes={allocated}; " +
+			$"pcmFIRWorkBound={voiceCount * Frames * (long)taps} tap-multiply-adds " +
 			"(plus 8 other serial DSP stages and FM graph per frame)");
 
 		// A strict zero managed-allocation budget applies to the warmed
 		// current-thread steady PCM region. Timing numbers are observations
 		// only: shared-hosted CI timings must not assert RT deadline safety.
 		Assert.That(allocated, Is.Zero,
-			"rendering 48 PCM blocks of existing voice states must not allocate");
+			"steady PCM blocks of existing voice states must not allocate");
 		foreach (float[] voice in pcm)
 		{
 			Assert.That(voice.All(float.IsFinite), Is.True);
@@ -307,8 +313,10 @@ public sealed class FmMixedFilterRealtimeQualificationTests
 			new FmOscillatorNode(4, FmOscillatorWaveform.Sine, 23,
 				minimum: 0.2, maximum: 0.8, constant: true),
 			new FmOscillatorNode(5, FmOscillatorWaveform.Sine, 31,
-				minimum: 1, maximum: 4, constant: true),
+				minimum: 7.5, maximum: 9.5, constant: true),
 			new FmConstantNode(6, constantFirControl ? 4900 : 4500),
+			new FmOscillatorNode(9, FmOscillatorWaveform.Sine, 17,
+				minimum: 0.90, maximum: 0.98, constant: true),
 		];
 		if (invalidOnePole)
 			nodes.Add(new FmConstantNode(8, 30000));
@@ -317,7 +325,8 @@ public sealed class FmMixedFilterRealtimeQualificationTests
 				invalidOnePole ? 8 : 2),
 			new(2, FilterKind.SvfLowPass, 0, "CutoffHz", 2),
 			new(3, FilterKind.BiquadPeaking, 0, "GainDb", 3),
-			new(4, FilterKind.LadderLinear, 0, "Resonance", 3),
+			new(4, FilterKind.LadderLinear, 0, "Resonance", 9),
+			new(5, FilterKind.LadderSaturated, 0, "Resonance", 9),
 			new(5, FilterKind.LadderSaturated, 0, "Drive", 5),
 			new(6, FilterKind.AllPass, 0, "CutoffHz", 2),
 			new(7, FilterKind.CombFeedback, 0, "Feedback", 3),
