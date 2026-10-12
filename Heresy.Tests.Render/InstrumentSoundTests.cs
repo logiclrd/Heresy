@@ -344,6 +344,88 @@ public sealed class InstrumentSoundTests
 			Is.SameAs(childEnvelope));
 	}
 
+    [Test]
+    public void InstrumentNnaHierarchicallyInheritsChildThenToneThenBlanket()
+    {
+        ObjectId sampleId = (ObjectId)500U;
+        ObjectId innerId = (ObjectId)501U;
+        ProbeSound sample = new(NewNotePolicy.Continue);
+        TestSoundResolver sounds = new((sampleId, sample));
+
+        InstrumentDefinition inner = Instrument(innerId);
+        inner.ToneSpecifications.Add(new ToneSpecification
+        {
+            SourceId = sampleId,
+            Nna = new InstrumentNnaSetting(InstrumentNnaAction.Off),
+        });
+        inner.ToneTable.Add(0);
+        InstrumentSound innerSound = new(inner, sounds, new TestEnvelopeResolver());
+        sounds.Add(innerId, innerSound);
+
+        InstrumentDefinition outer = Instrument((ObjectId)502U);
+        outer.ToneSpecifications.Add(new ToneSpecification { SourceId = innerId });
+        outer.ToneTable.Add(0);
+        InstrumentSound outerSound = new(outer, sounds, new TestEnvelopeResolver());
+        SoundInvocation inherited = outerSound.CreateInvocation(1, 1)!;
+        Assert.That(inherited.Configuration.NewNotePolicy, Is.EqualTo(NewNotePolicy.Off));
+
+        outer.ToneSpecifications[0] = new ToneSpecification
+        {
+            SourceId = innerId,
+            Nna = new InstrumentNnaSetting(InstrumentNnaAction.Cut),
+        };
+        SoundInvocation toneOverride = outerSound.CreateInvocation(1, 1)!;
+        Assert.That(toneOverride.Configuration.NewNotePolicy, Is.EqualTo(NewNotePolicy.Cut));
+
+        outer.NnaOverride = InstrumentNnaOverride.Fade;
+        outer.NnaFadeDuration = TimeSpan.FromMilliseconds(37);
+        SoundInvocation blanket = outerSound.CreateInvocation(1, 1)!;
+        Assert.That(blanket.Configuration.NewNotePolicy,
+            Is.EqualTo(NewNotePolicy.Fade(TimeSpan.FromMilliseconds(37))));
+        Assert.That(blanket.Configuration.NewNoteFadeDuration,
+            Is.EqualTo(TimeSpan.FromMilliseconds(37)));
+
+        // A changed Instrument definition must not mutate a bound voice.
+        outer.NnaOverride = InstrumentNnaOverride.Continue;
+        Assert.That(blanket.Configuration.NewNotePolicy.Action,
+            Is.EqualTo(NewNoteAction.Fade));
+        Assert.That(outerSound.CreateInvocation(1, 1)!.Configuration.NewNotePolicy,
+            Is.EqualTo(NewNotePolicy.Continue));
+    }
+
+    [Test]
+    public void DataInstrumentSelectsPerToneNnaAndRejectsInvalidFade()
+    {
+        ObjectId sampleId = (ObjectId)510U;
+        TestSoundResolver sounds = new((sampleId, new ProbeSound(NewNotePolicy.Cut)));
+        InstrumentDefinition definition = Instrument((ObjectId)511U);
+        definition.ToneSpecifications.Add(new ToneSpecification
+        {
+            SourceId = sampleId,
+            Nna = new InstrumentNnaSetting(InstrumentNnaAction.Continue),
+        });
+        definition.ToneSpecifications.Add(new ToneSpecification
+        {
+            SourceId = sampleId,
+            Nna = InstrumentNnaSetting.Fade(TimeSpan.FromMilliseconds(12)),
+        });
+        definition.ToneTable.Add(0);
+        for (int n = 1; n < 12; n++) definition.ToneTable.Add(-1);
+        definition.ToneTable.Add(1);
+        InstrumentSound inst = new(definition, sounds, new TestEnvelopeResolver());
+        Assert.That(inst.CreateInvocation(1,1)!.Configuration.NewNotePolicy,
+            Is.EqualTo(NewNotePolicy.Continue));
+        Assert.That(inst.CreateInvocation(2,1)!.Configuration.NewNotePolicy,
+            Is.EqualTo(NewNotePolicy.Fade(TimeSpan.FromMilliseconds(12))));
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new InstrumentNnaSetting(InstrumentNnaAction.Fade,
+                TimeSpan.Zero).Validate());
+        Assert.Throws<ArgumentException>(() =>
+            new InstrumentNnaSetting(InstrumentNnaAction.Off,
+                TimeSpan.FromSeconds(1)).Validate());
+    }
+
 	private static InstrumentDefinition Instrument(ObjectId id)
 		=> new(id, "Instrument")
 		{
