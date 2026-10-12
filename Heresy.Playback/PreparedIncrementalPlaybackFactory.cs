@@ -850,7 +850,9 @@ public sealed class PreparedIncrementalPlaybackFactory
 								parentFrame);
 						}
 					}
-					commands[i] = command;
+					// Forward the newly bound Filter configuration, not the
+					// original raw command lacking its prepared event layer.
+					commands[i] = start;
 					continue;
 				}
 				if (note.Target.Kind == ChannelTargetKind.Physical)
