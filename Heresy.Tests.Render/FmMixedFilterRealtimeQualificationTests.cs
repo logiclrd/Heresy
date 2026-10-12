@@ -57,6 +57,7 @@ public sealed class FmMixedFilterRealtimeQualificationTests
 		// the timed region. Multiple independent invocations exercise separate
 		// chains, scratch, histories and the 4x nonlinear ladder solver.
 		long[] blockTicks = new long[voiceCount * (Frames / Block)];
+		long[] quantumTicks = new long[Frames / Block];
 		Process process = Process.GetCurrentProcess();
 		TimeSpan cpuBefore = process.TotalProcessorTime;
 		long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
@@ -64,6 +65,7 @@ public sealed class FmMixedFilterRealtimeQualificationTests
 		int measurement = 0;
 		for (int offset = 0; offset < Frames; offset += Block)
 		{
+			long quantumStart = Stopwatch.GetTimestamp();
 			for (int voice = 0; voice < voiceCount; voice++)
 			{
 				long tick = Stopwatch.GetTimestamp();
@@ -71,18 +73,23 @@ public sealed class FmMixedFilterRealtimeQualificationTests
 					pcm[voice].AsSpan(offset, Block));
 				blockTicks[measurement++] = Stopwatch.GetTimestamp() - tick;
 			}
+			quantumTicks[offset / Block] = Stopwatch.GetTimestamp() - quantumStart;
 		}
 		long elapsedTicks = Stopwatch.GetTimestamp() - wallBefore;
 		long allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
 		TimeSpan cpu = process.TotalProcessorTime - cpuBefore;
 		Array.Sort(blockTicks);
+		Array.Sort(quantumTicks);
+		double quantumP95Ms = ToMilliseconds(quantumTicks[
+			(int)Math.Ceiling(quantumTicks.Length * 0.95) - 1]);
+		double quantumMaxMs = ToMilliseconds(quantumTicks[^1]);
 		double wallMs = ToMilliseconds(elapsedTicks);
 		double maximumBlockMs = ToMilliseconds(blockTicks[^1]);
 		double p95BlockMs = ToMilliseconds(blockTicks[(int)Math.Ceiling(
 			blockTicks.Length * 0.95) - 1]);
 		double audioMs = 1000.0 * Frames / Rate;
 		double computeToAudioRatio = wallMs / audioMs;
-		double worstBlockToDeadline = maximumBlockMs / (1000.0 * Block / Rate);
+		double worstQuantumToDeadline = quantumMaxMs / (1000.0 * Block / Rate);
 		TestContext.Progress.WriteLine(
 			$"FM-REALTIME-QUALIFICATION platform={RuntimeInformation.OSDescription}; " +
 			$"architecture={RuntimeInformation.ProcessArchitecture}; " +
@@ -90,9 +97,10 @@ public sealed class FmMixedFilterRealtimeQualificationTests
 			$"processors={Environment.ProcessorCount}; rate={Rate}; voices={voiceCount}; " +
 			$"framesPerVoice={Frames}; block={Block}; stages=9; firTaps={taps}; " +
 			$"ladderOversampling=4x; wallMs={wallMs:F3}; cpuMs={cpu.TotalMilliseconds:F3}; " +
-			$"blockP95Ms={p95BlockMs:F4}; blockMaxMs={maximumBlockMs:F4}; " +
+			$"voiceBlockP95Ms={p95BlockMs:F4}; voiceBlockMaxMs={maximumBlockMs:F4}; " +
+			$"quantumP95Ms={quantumP95Ms:F4}; quantumMaxMs={quantumMaxMs:F4}; " +
 			$"wallToAudioRatio={computeToAudioRatio:F3}; " +
-			$"maxBlockToDeadlineRatio={worstBlockToDeadline:F3}; " +
+			$"maxQuantumToDeadlineRatio={worstQuantumToDeadline:F3}; " +
 			$"managedBytes={allocated}; " +
 			$"pcmFIRWorkBound={voiceCount * Frames * (long)taps} tap-multiply-adds " +
 			"(plus 8 other serial DSP stages and FM graph per frame)");
