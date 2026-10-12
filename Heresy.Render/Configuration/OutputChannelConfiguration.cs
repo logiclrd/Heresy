@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using Heresy.Core.Filters;
 
 namespace Heresy.Render.Configuration;
 
@@ -12,7 +13,8 @@ public sealed record OutputChannelConfiguration
 		Vector3 position,
 		double positionalImportance = 1.0,
 		OutputFilterType filterType = OutputFilterType.None,
-		double? cutoffHz = null)
+		double? cutoffHz = null,
+        FilterInstance? filter = null)
 	{
 		if (!IsFinite(position))
 			throw new ArgumentOutOfRangeException(nameof(position));
@@ -23,7 +25,7 @@ public sealed record OutputChannelConfiguration
 			throw new ArgumentOutOfRangeException(nameof(positionalImportance));
 		}
 
-		if (filterType != OutputFilterType.None)
+		if (filterType is OutputFilterType.LowPass or OutputFilterType.HighPass)
 		{
 			if (!cutoffHz.HasValue
 				|| !(cutoffHz.Value > 0.0)
@@ -34,11 +36,23 @@ public sealed record OutputChannelConfiguration
 			}
 		}
 
+        if (filterType == OutputFilterType.Chain && filter is null)
+            throw new ArgumentException("A reusable speaker Filter chain must be selected.", nameof(filter));
+        if (filterType is < OutputFilterType.None or > OutputFilterType.Chain)
+            throw new ArgumentOutOfRangeException(nameof(filterType));
+        if (filterType != OutputFilterType.Chain && filter is not null)
+            throw new ArgumentException("Only a reusable speaker Filter can own an inline chain.", nameof(filter));
+        _filter = filter?.Clone();
 		Position = position;
 		PositionalImportance = positionalImportance;
 		FilterType = filterType;
 		CutoffHz = cutoffHz;
 	}
+
+    private readonly FilterInstance? _filter;
+    /// <summary>A private inline snapshot, never a mutable SongDocument Filter
+    /// reference. Each processing session prepares its own DSP state.</summary>
+    public FilterInstance? Filter => _filter?.Clone();
 
 	public Vector3 Position { get; }
 	public double PositionalImportance { get; }

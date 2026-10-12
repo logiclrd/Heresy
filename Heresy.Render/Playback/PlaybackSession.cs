@@ -22,72 +22,84 @@ namespace Heresy.Render.Playback;
 /// </summary>
 public sealed class PlaybackSession
 {
-	/// <summary>Stateful final-speaker filters. One bank belongs to the
-	/// master output session, never to a private Pattern/Sequence mixer.
-	/// The one-pole RC coefficient is 1-exp(-2π·cutoff/sampleRate), with
-	/// independent low-pass histories for each speaker. A high-pass feed
-	/// is the input minus its low-pass component.</summary>
-	private sealed class OutputSpeakerFilterBank
-	{
-		private const double SilenceThreshold = 1e-7;
-		private readonly OutputFilterType[] _mode;
-		private readonly double[] _alpha;
-		private readonly double[] _low;
+    /// <summary>The master-only final speaker bank uses the same reusable
+    /// streaming DSP engine as instrument and channel filters. Each speaker
+    /// owns one *mono* chain; never share one DSP history across speakers.
+    /// Legacy RC choices use an explicit compatibility stage factory so old
+    /// preference files retain their precise historical response.</summary>
+    private sealed class OutputSpeakerFilterBank
+    {
+        private readonly StreamingFilterChain?[] _speaker;
+        private readonly int[] _remaining;
+        private readonly int[] _tails;
 
-		public OutputSpeakerFilterBank(RenderConfiguration configuration)
-		{
-			int count = configuration.OutputChannelCount;
-			_mode = new OutputFilterType[count];
-			_alpha = new double[count];
-			_low = new double[count];
-			for (int speaker = 0; speaker < count; speaker++)
-			{
-				OutputChannelConfiguration channel =
-					configuration.OutputChannels[speaker];
-				_mode[speaker] = channel.FilterType;
-				if (channel.FilterType is not OutputFilterType.None)
-					_alpha[speaker] = 1.0 - Math.Exp(
-						-2.0 * Math.PI * channel.CutoffHz!.Value
-							/ configuration.SampleRate);
-			}
-		}
+        public OutputSpeakerFilterBank(RenderConfiguration configuration)
+        {
+            int count = configuration.OutputChannelCount;
+            _speaker = new StreamingFilterChain?[count];
+            _remaining = new int[count];
+            _tails = new int[count];
+            for (int i = 0; i < count; i++)
+            {
+                OutputChannelConfiguration channel = configuration.OutputChannels[i];
+                if (channel.FilterType == OutputFilterType.None) continue;
+                FilterInstance instance;
+                IStreamingFilterStageFactory? factory = null;
+                if (channel.FilterType == OutputFilterType.Chain)
+                    instance = channel.Filter!;
+                else
+                {
+                    FilterDefinition definition = new(
+                        (ObjectId)(uint)(0x7F000000 + i),
+                        "SpeakerLegacyRc",
+                        [new FilterStageDefinition(1, "speaker", FilterKind.OnePole)]);
+                    instance = new FilterInstance(definition);
+                    instance.SetStageParameters(1, [
+                        new("CutoffHz", FilterParameterValue.FromNumber(channel.CutoffHz!.Value)),
+                        new("Mode", FilterParameterValue.FromChoice(
+                            channel.FilterType == OutputFilterType.LowPass
+                                ? "LowPass" : "HighPass")),
+                    ]);
+                    factory = LegacySpeakerRcFilterStageFactory.Instance;
+                }
+                StreamingFilterChain chain = new(
+                    new FilterChain([instance]), configuration.SampleRate, 1, factory);
+                _speaker[i] = chain;
+                _tails[i] = chain.PreparedTailFrames;
+            }
+        }
 
-		public bool HasTail
-		{
-			get
-			{
-				for (int i = 0; i < _low.Length; i++)
-					if (Math.Abs(_low[i]) > SilenceThreshold)
-						return true;
-				return false;
-			}
-		}
+        public bool HasTail
+        {
+            get
+            {
+                foreach (int remaining in _remaining)
+                    if (remaining > 0) return true;
+                return false;
+            }
+        }
 
-		public void Apply(Span<float> samples, int channelCount)
-		{
-			for (int sampleIndex = 0; sampleIndex < samples.Length;
-				sampleIndex += channelCount)
-				for (int speaker = 0; speaker < channelCount; speaker++)
-				{
-					OutputFilterType type = _mode[speaker];
-					if (type == OutputFilterType.None)
-						continue;
-					double input = samples[sampleIndex + speaker];
-					double low = _low[speaker]
-						+ _alpha[speaker] * (input - _low[speaker]);
-					// Clear only *decaying silence*, never a very quiet
-					// accumulator under nonzero input. Otherwise an
-					// extremely low cutoff can get stuck at zero forever.
-					// The bounded export tail avoids infinite denormals.
-					if (input == 0.0 && Math.Abs(low) <= SilenceThreshold)
-						low = 0.0;
-					_low[speaker] = low;
-					samples[sampleIndex + speaker] = (float)(
-						type == OutputFilterType.LowPass
-							? low : input - low);
-				}
-		}
-	}
+        public void Apply(Span<float> samples, int channels)
+        {
+            if (channels != _speaker.Length || samples.Length % channels != 0)
+                throw new ArgumentException("Invalid final speaker frame layout.", nameof(samples));
+            Span<float> frame = stackalloc float[1];
+            for (int i = 0; i < samples.Length; i += channels)
+                for (int speaker = 0; speaker < channels; speaker++)
+                {
+                    StreamingFilterChain? chain = _speaker[speaker];
+                    if (chain is null) continue;
+                    float input = samples[i + speaker];
+                    frame[0] = input;
+                    chain.ProcessFrame(frame);
+                    samples[i + speaker] = frame[0];
+                    if (input != 0f)
+                        _remaining[speaker] = _tails[speaker];
+                    else if (_remaining[speaker] > 0)
+                        _remaining[speaker]--;
+                }
+        }
+    }
 
 	private sealed class ActiveTempoRamp
 	{
