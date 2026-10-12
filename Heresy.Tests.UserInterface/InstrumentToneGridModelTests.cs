@@ -444,7 +444,10 @@ public sealed class InstrumentToneGridModelTests
 			InstrumentDocumentEditor.CreateInstrument(workspace, "Mapped");
 		ScriptInstrumentDefinition scripted =
 			ScriptInstrumentDocumentEditor.Create(workspace, "Scripted", "0");
-		ObjectId sample = AddSample(workspace);
+		// Use a valid nested sound source without requiring an external
+		// sample asset to exist during the JSON/snapshot round trip.
+		ObjectId sample = InstrumentDocumentEditor.CreateInstrument(
+			workspace, "Nested").Id;
 		ObjectId filterId = workspace.Document.AllocateObjectId();
 		FilterDefinition definition = new(filterId, "Tone Filter");
 		workspace.Document.Add(definition);
