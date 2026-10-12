@@ -1,9 +1,12 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 using System.Text;
 
 using Heresy.Core.Envelopes;
+using Heresy.Core.Filters;
+using Heresy.Core.Sequences;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -38,6 +41,113 @@ public sealed class ScriptInstrumentPlaybackTests
         float[] pcm = new float[10];
         plan.Source.Render(10, pcm);
         Assert.That(pcm, Is.All.EqualTo((float)expected).Within(1e-5f));
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void ScriptToneFilterProcessesDirectAndPrivatePatternAudio(bool privatePattern)
+    {
+        SongDocument song = new();
+        ObjectId sample = Sample(song, 16384);
+        ObjectId source = privatePattern
+            ? ScriptPattern(song, $"Note(0, 0, _O({sample.Value}));")
+            : sample;
+        FilterInstance filter = Echo(song, 0.001);
+        ObjectId id = song.AllocateObjectId();
+        ScriptInstrumentDefinition scripted = new(id, "Filtered script tone")
+        { Source = "0", PitchExpression = "pitchMultiplier" };
+        scripted.ToneSpecifications.Add(new ToneSpecification
+        {
+            SourceId = source,
+            FilterConfiguration = filter,
+        });
+        song.Add(scripted);
+        ObjectId root = ScriptPattern(song,
+            $"Note(0, 0, _O({id.Value}));");
+        PreparedIncrementalPlaybackFactory factory = new(Mono());
+        using PreparedIncrementalPlaybackPlan whole = factory.Create(song, root);
+        using PreparedIncrementalPlaybackPlan chunked = factory.Create(song, root);
+        float[] expected = new float[12];
+        float[] actual = new float[12];
+        whole.Source.Render(12, expected);
+        chunked.Source.Render(1, actual.AsSpan(0, 1));
+        chunked.Source.Render(2, actual.AsSpan(1, 2));
+        chunked.Source.Render(9, actual.AsSpan(3));
+        Assert.That(expected[0], Is.EqualTo(0.5f).Within(1e-5f));
+        Assert.That(expected[1], Is.EqualTo(1.0f).Within(1e-5f),
+            "the tone Filter must survive compiled script pitch selection");
+        Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void NestedDataToneFiltersComposeThroughPrivatePatternOrSequence(
+        bool viaSequence)
+    {
+        SongDocument song = new();
+        ObjectId sample = Sample(song, 16384);
+        ObjectId pattern = ScriptPattern(song,
+            $"Note(0, 0, _O({sample.Value}));");
+        ObjectId terminal = pattern;
+        if (viaSequence)
+        {
+            ObjectId sequenceId = song.AllocateObjectId();
+            DataSequenceDefinition sequence = new(sequenceId, "Private sequence");
+            sequence.Entries.Add(new SequenceEntry(pattern));
+            song.Add(sequence);
+            terminal = sequenceId;
+        }
+        ObjectId innerId = song.AllocateObjectId();
+        InstrumentDefinition inner = new(innerId, "Inner");
+        inner.ToneSpecifications.Add(new ToneSpecification
+        {
+            SourceId = terminal, FilterConfiguration = Echo(song, 0.001),
+        });
+        inner.ToneTable.Add(0);
+        song.Add(inner);
+        ObjectId outerId = song.AllocateObjectId();
+        InstrumentDefinition outer = new(outerId, "Outer");
+        outer.ToneSpecifications.Add(new ToneSpecification
+        {
+            SourceId = innerId, FilterConfiguration = Echo(song, 0.002),
+        });
+        outer.ToneTable.Add(0);
+        song.Add(outer);
+        ObjectId root = ScriptPattern(song,
+            $"Note(0, 0, _O({outerId.Value}));");
+
+        PreparedIncrementalPlaybackFactory factory = new(Mono());
+        using PreparedIncrementalPlaybackPlan unsplit = factory.Create(song, root);
+        using PreparedIncrementalPlaybackPlan partitioned = factory.Create(song, root);
+        float[] actual = new float[12], reference = new float[12];
+        unsplit.Source.Render(12, actual);
+        for (int pos = 0; pos < reference.Length;)
+        {
+            int count = Math.Min(2, reference.Length - pos);
+            partitioned.Source.Render(count, reference.AsSpan(pos, count));
+            pos += count;
+        }
+        Assert.That(actual.Take(4),
+            Is.EqualTo(new float[] { 0.5f, 1.0f, 1.5f, 2.0f })
+                .Within(1e-5f),
+            "two nested tone Filters apply to the private source PCM, inner to outer");
+        Assert.That(reference, Is.EqualTo(actual).Within(1e-6f));
+    }
+
+    private static FilterInstance Echo(SongDocument song, double delay)
+    {
+        ObjectId filterId = song.AllocateObjectId();
+        FilterDefinition definition = new(filterId, "Tone echo", [
+            new FilterStageDefinition(1, "echo", FilterKind.CombFeedforward),
+        ]);
+        song.Add(definition);
+        FilterInstance instance = new(definition);
+        instance.SetStageParameters(1, [
+            new("DelaySeconds", FilterParameterValue.FromNumber(delay)),
+            new("Feedforward", FilterParameterValue.FromNumber(1)),
+            new("Mix", FilterParameterValue.FromNumber(1)),
+        ]);
+        return instance;
     }
 
     private static NodeEnvelopeDefinition HalfEnvelope(ObjectId id)
