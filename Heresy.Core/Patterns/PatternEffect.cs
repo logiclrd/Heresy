@@ -42,6 +42,15 @@ public sealed record SetNoteFilterAssignmentsPatternEffect(
 public sealed record EmptyTrackerPatternEffect(
 	byte Parameter = 0) : PatternEffect;
 
+/// <summary>A syntactically valid Sxx byte with no defined special action.
+/// Preserve the byte through subsequent edits, save/load and clipboard.
+/// Runtime interpretation is deliberately inert.</summary>
+public sealed record UndefinedTrackerSpecialPatternEffect(byte Parameter)
+    : PatternEffect;
+
+/// <summary>Tracker Axx speed; A00 is an editable no-op, not zero speed.</summary>
+public sealed record TrackerSpeedPatternEffect(byte Parameter) : PatternEffect;
+
 /// <summary>
 /// Tracker Bxx order jump. The byte addresses a sequence order directly.
 /// </summary>

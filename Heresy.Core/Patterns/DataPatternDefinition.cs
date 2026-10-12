@@ -150,7 +150,9 @@ public sealed class DataPatternDefinition : PatternDefinition, IDeferredSourcePa
 
 			foreach (PatternEffect effect in cell.Effects)
 			{
-				if (effect is EmptyTrackerPatternEffect)
+				if (effect is EmptyTrackerPatternEffect
+                    or UndefinedTrackerSpecialPatternEffect
+                    or TrackerSpeedPatternEffect { Parameter: 0 })
 					continue;
 				if (flatteningStart
 					&& effect is (VibratoVolumeSlidePatternEffect
@@ -309,6 +311,10 @@ public sealed class DataPatternDefinition : PatternDefinition, IDeferredSourcePa
 			case SetSpeedPatternEffect speed:
 				isGlobal = true;
 				return new SetSpeedCommand(speed.TicksPerRow);
+
+            case TrackerSpeedPatternEffect { Parameter: > 0 } speed:
+                isGlobal = true;
+                return new SetSpeedCommand(speed.Parameter);
 
 			case TrackerTempoPatternEffect tempo:
 				return new ApplyTrackerTempoCommand(tempo.Parameter);

@@ -12,6 +12,7 @@ public static class PatternEffectCodec
 	{
 		ArgumentNullException.ThrowIfNull(effect);
 		return effect is EmptyTrackerPatternEffect
+            or UndefinedTrackerSpecialPatternEffect
 			|| TryDecodeTracker(effect, out _, out _);
 	}
 
@@ -52,6 +53,10 @@ public static class PatternEffectCodec
 
 		switch (effect)
 		{
+            case UndefinedTrackerSpecialPatternEffect undefined:
+                command = 'S'; parameter = undefined.Parameter; return true;
+            case TrackerSpeedPatternEffect speed:
+                command = 'A'; parameter = speed.Parameter; return true;
 			case TrackerOrderJumpPatternEffect value:
 				command = 'B'; parameter = value.Order; return true;
 			case TrackerPatternBreakPatternEffect value:
@@ -148,6 +153,7 @@ public static class PatternEffectCodec
 		command = char.ToUpperInvariant(command);
 		effect = command switch
 		{
+            'A' => new TrackerSpeedPatternEffect(parameter),
 			'B' => new TrackerOrderJumpPatternEffect(parameter),
 			'C' => new TrackerPatternBreakPatternEffect(parameter),
 			'D' => new TrackerVolumeSlidePatternEffect(parameter),
@@ -165,7 +171,7 @@ public static class PatternEffectCodec
 			'P' => new TrackerPanningSlidePatternEffect(parameter),
 			'Q' => new RetriggerPatternEffect(parameter),
 			'R' => new TremoloPatternEffect(parameter),
-			'S' => CreateSpecial(parameter),
+			'S' => CreateSpecialOrUndefined(parameter),
 			'T' => new TrackerTempoPatternEffect(parameter),
 			'U' => new FineVibratoPatternEffect(parameter),
 			'V' => new TrackerGlobalVolumePatternEffect(parameter),
@@ -177,6 +183,22 @@ public static class PatternEffectCodec
 		};
 		return effect is not null;
 	}
+
+    /// <summary>Editing Sxx always succeeds for any hex byte. Each
+    /// nibble change selects the exact semantic effect or its undefined
+    /// fallback, without inventing a different subcommand.</summary>
+    private static PatternEffect CreateSpecialOrUndefined(byte parameter)
+    {
+        try
+        {
+            return CreateSpecial(parameter)
+                ?? new UndefinedTrackerSpecialPatternEffect(parameter);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return new UndefinedTrackerSpecialPatternEffect(parameter);
+        }
+    }
 
 	private static PatternEffect? CreateSpecial(byte parameter)
 	{
