@@ -1,7 +1,7 @@
 # Instrument tone-grid model — implementation milestone
 
-Status: **visual nine-column grid and framework-independent
-model implemented**. The Avalonia `InstrumentEditorControl` now
+Status: **visual ten-column grid with an independent tone Filter selection
+and per-use override editor, plus framework-independent model implemented**. The Avalonia `InstrumentEditorControl` now
 projects the same `InstrumentToneGridModel` used by regression tests;
 the old dual ToneSpecifications/ToneTable editor controls were removed.
 The editor commits populated cell choices as they change; its Pitch
@@ -51,7 +51,9 @@ rejects projections or tone-table allocations requiring more than
 ## Editor-local draft lifecycle
 
 `InstrumentToneGridCells` carries Source, positive pitch multiplier,
-and optional Volume, Pitch, Panning and Filter envelope IDs.
+optional Volume, Pitch, Panning and Filter envelope IDs, and an optional
+independently configured `FilterInstance` (distinct from the legacy
+`FilterEnvelopeId`).
 New/empty cells use neutral pitch multiplier **1**, never the C#
 record-struct default zero.
 
@@ -93,7 +95,10 @@ Core continues to serialize `InstrumentDefinition.ToneTable`
    assigned pitch multiplier must be positive and finite.
 3. Rebuild compact Core specification/mapping lists transactionally,
    **interning equivalent specs** when more than one row has the
-   same full Source/Pitch/Envelope combination. Editing one member
+   same full Source/Pitch/Envelope/Filter-configuration combination.
+   The Filter identity is its stable shared definition ID plus explicit
+   typed parameter overrides, rather than the mutable instance's reference
+   or revision number. Editing one member
    of an old shared specification therefore copy-on-writes only
    that row and leaves other mapped rows unchanged. Clearing or
    deleting a row correctly renumbers later references.
@@ -120,9 +125,14 @@ snapshot isolation.
 
 ## Current UI integration
 
-The nine columns (no-heading index and nominal note, Source, log₂
+The ten columns (no-heading index and nominal note, Source, log₂
 Pitch, no-heading pitch-adjusted note, Volume/Pitch/Panning/Filter
-envelopes) are implemented in `InstrumentEditorControl`.
+envelopes, plus **Tone Filter**) are implemented in `InstrumentEditorControl`.
+The final column contains the shared Filter-definition selector (including
+None) and an adjacent “...” editor for that tone's independent typed
+parameter overrides, enabled only when a Filter is selected. This editor
+reuses the validated `FilterInstanceEditSession` and embeddable
+`FilterInstanceEditorControl`, never modifying the shared Filter's defaults.
 The indexed rows are read-only in their index column; the blank
 first entry row accepts a new index, Source, Pitch and envelope
 values and has an intentionally blank nearest-note column.
@@ -159,13 +169,37 @@ and keyboard navigation. Log any *observed* defect
 as a new scoped item in [todo.md](todo.md).
 
 
+## Optional tone Filter persistence and snapshot behavior
+
+`ToneSpecification.FilterConfiguration` is nullable, separate from the
+existing tracker-specific `FilterEnvelopeId`. An assigned tone references
+a live `FilterDefinition` from the same document, and owns a cloned use
+with explicit typed stage overrides. Equivalent configurations are interned
+when grid rows are saved; changing one shared row is copy-on-write. Changing
+a Filter selector starts a fresh default instance, while opening “...” uses
+the existing per-use override editor. Unassigned grid rows keep selected
+filters as editor-local drafts only and do not dirty persisted audio.
+
+Both data and scripted Instrument tone arrays now round-trip through
+`SongDocumentJson`'s typed Filter-instance codec, matching the existing FM
+serialization format (`definitionId`, stage IDs/types/generations and
+explicit parameter overrides). Older version-one songs without
+`filterConfiguration` remain valid and load as bypass; a missing/deleted
+Filter reference or tampered overrides fail instead of silently rebinding.
+Snapshots restore independent use copies bound to the cloned shared
+definition. Reference analysis registers `InstrumentToneFilter` links
+for both Instrument kinds. Rendering composed tone Filter chains is a
+**later milestone**; this completes authoring, not audio-path processing.
+
 ## Script Instrument editor is separate
 
 `ScriptInstrumentDefinition` offers compiled expression-based selection
 from an explicit list of `ToneSpecifications`, with an optional
 pitch-dependent scale expression. It shares the existing sound/Envelope
-binding semantics but is **not** represented by the nine-column tone grid:
+binding semantics but is **not** represented by the ten-column tone grid:
 the Envelopes/pitch-lookup layout described above applies to
 data-driven `InstrumentDefinition` only. Script Instrument authoring
 uses `ScriptInstrumentEditorControl` to manage expressions and
-the declared, stable-ID tone list. See [script programmability](script-programmability.md).
+the declared, stable-ID tone list. Each declared tone also has a
+Filter selector and `Edit Filter...` instance override editor; changes
+to a selected tone use atomic publication and revision tracking. See [script programmability](script-programmability.md).
