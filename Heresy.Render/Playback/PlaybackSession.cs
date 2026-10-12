@@ -133,6 +133,11 @@ public sealed class PlaybackSession
 	private readonly SortedDictionary<(long Owner, uint Id), PlaybackChannelState>
 		_scopedVirtualChannels = [];
 	private readonly List<PlaybackVoice> _virtualVoices = [];
+
+	// A finished or cut NNA voice may leave residual DSP state on its own
+	// forked dynamic output host. Keep processing that zero-input tail after
+	// the source voice is removed; never redirect it to its original host.
+	private readonly List<ChannelOutputFilterState> _displacedOutputTails = [];
 	// Set only while applying one physical event from the coroutine.
 	// Live previews and prebuilt schedules have no cancelable cursor owner.
 	private long? _activePatternCursorId;
@@ -246,6 +251,7 @@ public sealed class PlaybackSession
 			if (!_inputEnded
 				|| _nextEventIndex < _schedule.Count
 				|| _virtualVoices.Count != 0
+				|| _displacedOutputTails.Count != 0
 				|| _outputSpeakerFilters?.HasTail == true
 				|| AnyChannelOutputFilterHasTail())
 			{
@@ -404,7 +410,7 @@ public sealed class PlaybackSession
 				voice.AddCutTo(GetChannelState(
 					voice.OriginPhysicalChannel,
 					voice.OriginPhysicalPlaybackOwner).AntiClickTail);
-				_virtualVoices.RemoveAt(i);
+				RetireDisplacedVoiceAt(i);
 			}
 			else if (action == NoteDisplacementAction.Off)
 				voice.ApplyNoteOff(frame, SampleRate);
@@ -723,7 +729,7 @@ public sealed class PlaybackSession
 					voice.OriginPhysicalPlaybackOwner);
 			voice.AddCutTo(
 				origin.AntiClickTail);
-			_virtualVoices.RemoveAt(index);
+			RetireDisplacedVoiceAt(index);
 		}
 	}
 
@@ -841,14 +847,14 @@ public sealed class PlaybackSession
 			{
 				voice.AddCutTo(GetScopedChannel(
 					invocationId, voice.OriginVirtualChannelId!.Value).AntiClickTail);
-				_virtualVoices.RemoveAt(i);
+				RetireDisplacedVoiceAt(i);
 			}
 			else if (voice.OriginPatternCursorId == invocationId)
 			{
 				voice.AddCutTo(GetChannelState(
 					voice.OriginPhysicalChannel,
 					voice.OriginPhysicalPlaybackOwner).AntiClickTail);
-				_virtualVoices.RemoveAt(i);
+				RetireDisplacedVoiceAt(i);
 			}
 		}
 	}
@@ -945,7 +951,7 @@ public sealed class PlaybackSession
 				voice.AddCutTo(GetChannelState(
 					voice.OriginPhysicalChannel,
 					voice.OriginPhysicalPlaybackOwner).AntiClickTail);
-				_virtualVoices.RemoveAt(i);
+				RetireDisplacedVoiceAt(i);
 			}
 		}
 	}
@@ -1250,7 +1256,7 @@ public sealed class PlaybackSession
 			{
 				case TrackerPastNoteAction.Cut:
 					voice.AddCutTo(channel.AntiClickTail);
-					_virtualVoices.RemoveAt(i);
+					RetireDisplacedVoiceAt(i);
 					break;
 				case TrackerPastNoteAction.Off:
 					voice.ApplyNoteOff(frame, SampleRate);
@@ -2084,7 +2090,7 @@ public sealed class PlaybackSession
 			{
 				case TrackerPastNoteAction.Cut:
 					voice.AddCutTo(channel.AntiClickTail);
-					_virtualVoices.RemoveAt(index);
+					RetireDisplacedVoiceAt(index);
 					break;
 
 				case TrackerPastNoteAction.Off:
@@ -2106,6 +2112,31 @@ public sealed class PlaybackSession
 		}
 	}
 
+	private void RetireDisplacedVoiceAt(int index)
+	{
+		PlaybackVoice voice = _virtualVoices[index];
+		if (voice.DisplacedOutputFilterState is { HasTail: true } tail)
+			_displacedOutputTails.Add(tail);
+		_virtualVoices.RemoveAt(index);
+	}
+
+	private ChannelOutputFilterState? ForkHostFilter(PlaybackVoice voice)
+	{
+		if (voice.OriginVirtualChannelId is uint virtualId)
+		{
+			if (voice.OriginScopedVirtualOwner is long owner)
+				return _scopedVirtualOutputFilters.TryGetValue(
+					(owner, virtualId), out ChannelOutputFilterState? scoped)
+					? scoped.Fork() : null;
+			return _targetedVirtualOutputFilters.TryGetValue(
+				virtualId, out ChannelOutputFilterState? targeted)
+				? targeted.Fork() : null;
+		}
+		return _physicalOutputFilters.TryGetValue(
+			voice.OriginPhysicalChannel, out ChannelOutputFilterState? physical)
+			? physical.Fork() : null;
+	}
+
 	private void DisplaceCurrentVoice(
 		PlaybackChannelState channel,
 		long eventFrame)
@@ -2125,6 +2156,7 @@ public sealed class PlaybackSession
 				break;
 
 			case NewNoteAction.Continue:
+				oldVoice.DisplacedOutputFilterState = ForkHostFilter(oldVoice);
 				_virtualVoices.Add(oldVoice);
 				break;
 
@@ -2140,7 +2172,10 @@ public sealed class PlaybackSession
 					oldVoice.GetVolumeEnvelopeEndFrameExclusiveAfterNoteOff(
 						eventFrame);
 				if (!envelopeEnd.HasValue || eventFrame < envelopeEnd.Value)
+				{
+					oldVoice.DisplacedOutputFilterState = ForkHostFilter(oldVoice);
 					_virtualVoices.Add(oldVoice);
+				}
 				break;
 
 			case NewNoteAction.Fade:
@@ -2153,6 +2188,7 @@ public sealed class PlaybackSession
 					eventFrame,
 					_context.Configuration.SampleRate,
 					fadeDuration);
+				oldVoice.DisplacedOutputFilterState = ForkHostFilter(oldVoice);
 				_virtualVoices.Add(oldVoice);
 				break;
 
@@ -2404,6 +2440,23 @@ public sealed class PlaybackSession
 				foreach (var key in emptyScoped)
 					_scopedVirtualChannels.Remove(key);
 
+			// A dynamic host may outlive its displaced source voice while
+			// its finite filter response decays. Render old tails before
+			// the active displaced voices; freshly retired voices join next
+			// segment, so none is processed twice for one PCM frame.
+			for (int index = 0; index < _displacedOutputTails.Count;)
+			{
+				ChannelOutputFilterState tail = _displacedOutputTails[index];
+				Span<float> tailBuffer = rented.AsSpan(0, sampleCount);
+				tailBuffer.Clear();
+				tail.ProcessInterleaved(tailBuffer);
+				AddBuffer(destination, tailBuffer);
+				if (!tail.HasTail)
+					_displacedOutputTails.RemoveAt(index);
+				else
+					index++;
+			}
+
 			for (int index = 0; index < _virtualVoices.Count;)
 			{
 				PlaybackVoice voice = _virtualVoices[index];
@@ -2416,21 +2469,16 @@ public sealed class PlaybackSession
 					frameCount,
 					voiceBuffer);
 
-				if (voice.OriginVirtualChannelId is uint virtualId)
-				{
-					if (voice.OriginScopedVirtualOwner is long owner)
-						AccumulateHost((owner, virtualId), voiceBuffer, destination,
-							_scopedVirtualOutputFilters, scopedBuses, sampleCount);
-					else
-						AccumulateHost(virtualId, voiceBuffer, destination,
-							_targetedVirtualOutputFilters, virtualBuses, sampleCount);
-				}
-				else
-					AccumulateHost(voice.OriginPhysicalChannel, voiceBuffer,
-						destination, _physicalOutputFilters, physicalBuses, sampleCount);
+				// The NNA voice is now its own dynamic virtual host.
+				// Forked history is processed once on its own output feed:
+				// never run this voice through the originating physical or
+				// scoped virtual host's *continuing* Filter a second time.
+				if (voice.DisplacedOutputFilterState is { } displaced)
+					displaced.ProcessInterleaved(voiceBuffer);
+				AddBuffer(destination, voiceBuffer);
 
 				if (finished)
-					_virtualVoices.RemoveAt(index);
+					RetireDisplacedVoiceAt(index);
 				else
 					index++;
 			}

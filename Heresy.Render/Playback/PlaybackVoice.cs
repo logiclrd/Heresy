@@ -330,6 +330,12 @@ public sealed class PlaybackVoice
 	private FilterInstance? _eventFilterConfiguration;
 	public StreamingFilterChain? EventFilterState { get; private set; }
 
+	/// <summary>The unique dynamic virtual output host created on NNA
+	/// displacement. This is a *fork* of its original host's output DSP
+	/// history, not the current physical channel Filter, and must not be
+	/// reconfigured by subsequent physical-channel commands.</summary>
+	internal ChannelOutputFilterState? DisplacedOutputFilterState { get; set; }
+
 	/// <summary>Return a copy so callers cannot mutate the voice
 	/// configuration outside atomic chain publication.</summary>
 	internal FilterInstance? GetEventFilterConfiguration()

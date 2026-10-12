@@ -13,6 +13,18 @@ namespace Heresy.Render.Playback;
 internal sealed class ChannelOutputFilterState
 {
     private readonly StreamingFilterChain _chain;
+
+    private ChannelOutputFilterState(StreamingFilterChain chain, int remaining)
+    {
+        _chain = chain;
+        _tailRemainingFrames = remaining;
+    }
+
+    /// <summary>Displaced NNA hosts begin with an exact history copy at
+    /// the displacement frame, independent from the physical channel's
+    /// continuing filter slot.</summary>
+    public ChannelOutputFilterState Fork()
+        => new(_chain.Fork(), _tailRemainingFrames);
     private int _tailRemainingFrames;
 
     public ChannelOutputFilterState(
