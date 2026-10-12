@@ -186,7 +186,7 @@ internal sealed class NoteFilterEnvelopeRealtimeControls
         foreach (Stage stage in _stages)
         {
             if (stage.LayerIndex != 0) continue;
-            FilterStageParameters parameters =
+            FilterSpecificationInstance parameters =
                 effective.GetStageParameters(stage.StageId);
             for (int i = 0; i < stage.Descriptors.Length; i++)
                 stage.Accepted[i] = parameters.GetParameter(
