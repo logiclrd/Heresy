@@ -671,8 +671,9 @@ public sealed class ChannelOutputFilterRenderingTests
             "host envelope keeps its absolute clock across Note Off and notes");
     }
 
-    [Test]
-    public void ChannelEnvelopeDetachmentRestoresLatestAuthoredBase()
+    [TestCase(false)]
+    [TestCase(true)]
+    public void ChannelEnvelopeDetachmentRestoresLatestAuthoredBase(bool textAssignment)
     {
         TestResolver resolver = new();
         resolver.Add(PulseId, new PulseSound());
@@ -684,9 +685,11 @@ public sealed class ChannelOutputFilterRenderingTests
             }, new SetChannelFilterParameterEnvelopeCommand(
                 1, "Feedforward", (ObjectId)3101U),
                 new StartNoteCommand(PulseId)),
-            Event(3, 0, new SetChannelFilterParametersCommand(1, [
-                new("Feedforward", FilterParameterValue.FromNumber(0.8)),
-            ])),
+            Event(3, 0, textAssignment
+                ? new SetChannelFilterAssignmentsCommand("delay.Feedforward = 0.8")
+                : new SetChannelFilterParametersCommand(1, [
+                    new("Feedforward", FilterParameterValue.FromNumber(0.8)),
+                ])),
             Event(5, 0, new SetChannelFilterParameterEnvelopeCommand(
                 1, "Feedforward"), new StartNoteCommand(PulseId))));
         float[] first = new float[5], after = new float[5];
