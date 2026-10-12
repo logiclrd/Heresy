@@ -105,6 +105,16 @@ public sealed class PlaybackSession
 
 	private readonly RenderContext _context;
 	private readonly OutputSpeakerFilterBank? _outputSpeakerFilters;
+
+	// A physical host is identified by its actual output host index, never
+	// its nested Pattern/Sequence playback owner. Scoped virtual channels
+	// use the (owner, virtual ID) pair to avoid cross-cursor aliasing.
+	private readonly SortedDictionary<int, ChannelOutputFilterState>
+		_physicalOutputFilters = [];
+	private readonly SortedDictionary<uint, ChannelOutputFilterState>
+		_targetedVirtualOutputFilters = [];
+	private readonly SortedDictionary<(long Owner, uint Id), ChannelOutputFilterState>
+		_scopedVirtualOutputFilters = [];
 	private readonly NoteSchedule _schedule;
 	private readonly ISoundResolver _soundResolver;
 	private readonly TrackerTickClock _tickClock;
@@ -192,6 +202,43 @@ public sealed class PlaybackSession
 
 	public bool InputEnded => _inputEnded;
 
+	/// <summary>Configure a persistent output Filter on a real physical
+	/// host (across all nested playback owners). Null removes the slot.
+	/// This is a host setup API; native effect commands are a later milestone.
+	/// Preparation completes before the old state is replaced.</summary>
+	public void ConfigurePhysicalChannelOutputFilter(int host, FilterInstance? use)
+	{
+		if (host < 0) throw new ArgumentOutOfRangeException(nameof(host));
+		ChannelOutputFilterState? prepared = use is null ? null
+			: new ChannelOutputFilterState(use, SampleRate, OutputChannelCount);
+		if (prepared is null)
+			_physicalOutputFilters.Remove(host);
+		else
+			_physicalOutputFilters[host] = prepared;
+	}
+
+	/// <summary>Virtual output host identified by ID and, when set, its
+	/// invocation owner. Null owner is the unscoped targeted virtual host.</summary>
+	public void ConfigureVirtualChannelOutputFilter(
+		uint virtualId, FilterInstance? use, long? scopedOwner = null)
+	{
+		if (scopedOwner is < 0)
+			throw new ArgumentOutOfRangeException(nameof(scopedOwner));
+		ChannelOutputFilterState? prepared = use is null ? null
+			: new ChannelOutputFilterState(use, SampleRate, OutputChannelCount);
+		if (scopedOwner is long owner)
+		{
+			if (prepared is null)
+				_scopedVirtualOutputFilters.Remove((owner, virtualId));
+			else
+				_scopedVirtualOutputFilters[(owner, virtualId)] = prepared;
+		}
+		else if (prepared is null)
+			_targetedVirtualOutputFilters.Remove(virtualId);
+		else
+			_targetedVirtualOutputFilters[virtualId] = prepared;
+	}
+
 	public bool IsQuiescent
 	{
 		get
@@ -199,7 +246,8 @@ public sealed class PlaybackSession
 			if (!_inputEnded
 				|| _nextEventIndex < _schedule.Count
 				|| _virtualVoices.Count != 0
-				|| _outputSpeakerFilters?.HasTail == true)
+				|| _outputSpeakerFilters?.HasTail == true
+				|| AnyChannelOutputFilterHasTail())
 			{
 				return false;
 			}
@@ -2114,6 +2162,72 @@ public sealed class PlaybackSession
 		}
 	}
 
+	private bool AnyChannelOutputFilterHasTail()
+	{
+		foreach (ChannelOutputFilterState state in _physicalOutputFilters.Values)
+			if (state.HasTail) return true;
+		foreach (ChannelOutputFilterState state in _targetedVirtualOutputFilters.Values)
+			if (state.HasTail) return true;
+		foreach (ChannelOutputFilterState state in _scopedVirtualOutputFilters.Values)
+			if (state.HasTail) return true;
+		return false;
+	}
+
+	/// <summary>Unconfigured hosts bypass the extra bus and preserve
+	/// precisely the previous summation ordering. A configured host routes
+	/// all participating voices to one buffer before filtering.</summary>
+	private static void AccumulateHost<TKey>(
+		TKey key, ReadOnlySpan<float> contribution, Span<float> destination,
+		IReadOnlyDictionary<TKey, ChannelOutputFilterState> filters,
+		Dictionary<TKey, float[]>? buses, int sampleCount) where TKey : notnull
+	{
+		if (!filters.ContainsKey(key))
+		{
+			AddBuffer(destination, contribution);
+			return;
+		}
+		if (buses is null)
+			throw new InvalidOperationException("Configured host bus was not prepared.");
+		if (!buses.TryGetValue(key, out float[]? buffer))
+		{
+			buffer = ArrayPool<float>.Shared.Rent(sampleCount);
+			buffer.AsSpan(0, sampleCount).Clear();
+			buses.Add(key, buffer);
+		}
+		AddBuffer(buffer.AsSpan(0, sampleCount), contribution);
+	}
+
+	private static void FlushHostFilters<TKey>(
+		IReadOnlyDictionary<TKey, ChannelOutputFilterState> filters,
+		Dictionary<TKey, float[]>? buses,
+		Span<float> destination, int sampleCount) where TKey : notnull
+	{
+		if (buses is null) return;
+		foreach (var pair in filters)
+		{
+			bool hasBuffer = buses.TryGetValue(pair.Key, out float[]? buffer);
+			if (!hasBuffer && !pair.Value.HasTail)
+				continue;
+			if (!hasBuffer)
+			{
+				buffer = ArrayPool<float>.Shared.Rent(sampleCount);
+				buffer.AsSpan(0, sampleCount).Clear();
+				buses.Add(pair.Key, buffer);
+			}
+			Span<float> samples = buffer!.AsSpan(0, sampleCount);
+			pair.Value.ProcessInterleaved(samples);
+			AddBuffer(destination, samples);
+		}
+	}
+
+	private static void ReturnHostBuffers<TKey>(
+		Dictionary<TKey, float[]>? buses) where TKey : notnull
+	{
+		if (buses is null) return;
+		foreach (float[] buffer in buses.Values)
+			ArrayPool<float>.Shared.Return(buffer);
+	}
+
 	private void RenderSegment(
 		long absoluteStartFrame,
 		int frameCount,
@@ -2122,6 +2236,12 @@ public sealed class PlaybackSession
 		int outputChannelCount = _context.Configuration.OutputChannelCount;
 		int sampleCount = checked(frameCount * outputChannelCount);
 		float[] rented = ArrayPool<float>.Shared.Rent(sampleCount);
+		Dictionary<int, float[]>? physicalBuses =
+			_physicalOutputFilters.Count == 0 ? null : [];
+		Dictionary<uint, float[]>? virtualBuses =
+			_targetedVirtualOutputFilters.Count == 0 ? null : [];
+		Dictionary<(long Owner, uint Id), float[]>? scopedBuses =
+			_scopedVirtualOutputFilters.Count == 0 ? null : [];
 
 		try
 		{
@@ -2201,7 +2321,8 @@ public sealed class PlaybackSession
 					channel.AntiClickTail.RenderFrame(outputFrame);
 				}
 
-				AddBuffer(destination, channelBuffer);
+				AccumulateHost(pair.Key.Host, channelBuffer, destination,
+					_physicalOutputFilters, physicalBuses, sampleCount);
 			}
 
 			List<uint>? emptyVirtualChannels = null;
@@ -2233,9 +2354,8 @@ public sealed class PlaybackSession
 					channel.AntiClickTail.RenderFrame(outputFrame);
 				}
 
-				AddBuffer(
-					destination,
-					channelBuffer);
+				AccumulateHost(pair.Key, channelBuffer, destination,
+					_targetedVirtualOutputFilters, virtualBuses, sampleCount);
 
 				if (channel.CurrentVoice is null
 					&& !channel.AntiClickTail.IsActive)
@@ -2271,7 +2391,8 @@ public sealed class PlaybackSession
 				for (int frame = 0; frame < frameCount; frame++)
 					channel.AntiClickTail.RenderFrame(channelBuffer.Slice(
 						frame * outputChannelCount, outputChannelCount));
-				AddBuffer(destination, channelBuffer);
+				AccumulateHost(pair.Key, channelBuffer, destination,
+					_scopedVirtualOutputFilters, scopedBuses, sampleCount);
 				if (channel.CurrentVoice is null
 					&& !channel.AntiClickTail.IsActive)
 				{
@@ -2295,13 +2416,35 @@ public sealed class PlaybackSession
 					frameCount,
 					voiceBuffer);
 
-				AddBuffer(destination, voiceBuffer);
+				if (voice.OriginVirtualChannelId is uint virtualId)
+				{
+					if (voice.OriginScopedVirtualOwner is long owner)
+						AccumulateHost((owner, virtualId), voiceBuffer, destination,
+							_scopedVirtualOutputFilters, scopedBuses, sampleCount);
+					else
+						AccumulateHost(virtualId, voiceBuffer, destination,
+							_targetedVirtualOutputFilters, virtualBuses, sampleCount);
+				}
+				else
+					AccumulateHost(voice.OriginPhysicalChannel, voiceBuffer,
+						destination, _physicalOutputFilters, physicalBuses, sampleCount);
 
 				if (finished)
 					_virtualVoices.RemoveAt(index);
 				else
 					index++;
 			}
+
+			// A host's current voice, owner-scoped child voices, NNA tails,
+			// and anti-click residue have all been summed at this boundary.
+			// The configured channel Filter runs once on that complete feed,
+			// before global volume and the final speaker filter stage.
+			FlushHostFilters(_physicalOutputFilters, physicalBuses,
+				destination, sampleCount);
+			FlushHostFilters(_targetedVirtualOutputFilters, virtualBuses,
+				destination, sampleCount);
+			FlushHostFilters(_scopedVirtualOutputFilters, scopedBuses,
+				destination, sampleCount);
 
 			ApplyGlobalVolume(
 				absoluteStartFrame,
@@ -2312,6 +2455,9 @@ public sealed class PlaybackSession
 		}
 		finally
 		{
+			ReturnHostBuffers(physicalBuses);
+			ReturnHostBuffers(virtualBuses);
+			ReturnHostBuffers(scopedBuses);
 			ArrayPool<float>.Shared.Return(rented);
 		}
 	}
