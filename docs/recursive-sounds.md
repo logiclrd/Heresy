@@ -60,9 +60,24 @@
   of enclosing scope layers, inner-to-outer, without filtering siblings.
   Bounded tails, retriggers, NNA, cancellation and partitioning remain
   explicit. `NoteEventFilterRenderingTests` and production-factory
-  `ScriptInstrumentPlaybackTests` check these boundaries. Dynamic native
-  the current note-event Filter command pair is implemented; persistent
-  channel-output processing is a separate upcoming task.
+  `ScriptInstrumentPlaybackTests` check these boundaries. The current
+  note-event Filter command pair is implemented.
+- **Persistent channel-output Filter processing is implemented.** A
+  `PlaybackSession` now groups physical output contributions by their
+  actual host index across all nested playback owners; unscoped and
+  owner-scoped virtual hosts retain separate output Filter slots. Each
+  configured Filter processes the **summed host PCM** after note/Instrument
+  layers and gain, not individual notes before mixing. State survives
+  note replacement, nested source termination and anti-click tails.
+  Quiescence accounts for bounded residual Filter output. Displacement
+  to a dynamic NNA virtual host forks the originating host's complete
+  DSP history; the physical host continues independently, and the
+  displaced fork drains even after its voice completes. All host banks
+  reside on their own parent or private `PlaybackSession`, never shared
+  across private mixdowns. The setup API is implemented; native channel
+  Filter selection and parameter commands are the next separate TODO.
+  `ChannelOutputFilterRenderingTests` check nonlinear after-sum behavior,
+  combined-owner PCM, NNA forks, finite tails and child-scope cancellation.
 - **Nested private-source release is not an outer-sample release.**
   When the parent Instrument Note Off ends private Sequence input,
   the child `PlaybackSession.EndInput` requests Note Off on its own

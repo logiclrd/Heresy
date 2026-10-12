@@ -2483,8 +2483,9 @@ public sealed class PlaybackSession
 					index++;
 			}
 
-			// A host's current voice, owner-scoped child voices, NNA tails,
-			// and anti-click residue have all been summed at this boundary.
+			// A host's current voice, owner-scoped child voices and anti-click
+			// residue have all been summed at this boundary. Displaced
+			// NNA voices have independent forked dynamic virtual hosts.
 			// The configured channel Filter runs once on that complete feed,
 			// before global volume and the final speaker filter stage.
 			FlushHostFilters(_physicalOutputFilters, physicalBuses,
