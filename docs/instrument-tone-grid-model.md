@@ -128,9 +128,10 @@ snapshot isolation.
 
 ## Current UI integration
 
-The ten columns (no-heading index and nominal note, Source, log₂
-Pitch, no-heading pitch-adjusted note, Volume/Pitch/Panning/Filter
-envelopes, plus **Tone Filter**) are implemented in `InstrumentEditorControl`.
+The eleven columns (no-heading index and nominal note, Source,
+**Pitch in divisions**, no-heading pitch-adjusted note, **NNA / fade (ms)**,
+Volume/Pitch/Panning/Filter envelopes, plus **Tone Filter**) are implemented
+in `InstrumentEditorControl`.
 The final column contains the shared Filter-definition selector (including
 None) and an adjacent “...” editor for that tone's independent typed
 parameter overrides, enabled only when a Filter is selected. This editor
@@ -152,14 +153,23 @@ labels; its final omitted index is `C-2-` (not another B).
 `InstrumentToneNoteNotationTests` cover several divisions,
 fractional divisions, offset and the complete octave boundary.
 
-Pitch editing uses `log₂(multiplier)`. The adjusted-note selector
-offers exact grid pitches within ±0.3 in that logarithmic
-coordinate; changing text picks the nearest listed option
-**without snapping**, while actively selecting an option
-writes its exact multiplier and updates the text. Viewpoint
-refreshes do not discard model drafts. Shared specification
-copy-on-write, revisions and playback snapshot isolation remain
-covered by `InstrumentToneGridModelTests`.
+Pitch editing now uses `Divisions × log₂(PitchMultiplier)`: an entered
+offset of `5` represents five actual instrument divisions regardless
+of the instrument's scale. Underlying Core pitch multipliers remain
+unchanged in representation. The adjusted-note selector still offers
+exact nearby grid pitches within ±0.3 *octaves* (the logarithmic
+coordinate internally); changing text updates its nearest highlighted
+option **without snapping**, while explicitly choosing an option
+writes its **exact precomputed multiplier** and displays its
+division-based offset. `FormatDisplayPitch` snaps only the *visible
+text* extremely near an integer, with approximately
+`1000 × 2^-52 × max(1, |display value|)` tolerance, not
+`double.Epsilon` (the latter is the smallest .NET subnormal). Leaving
+an unchanged focused input never parses the rounded label back into
+the multiplier. Viewpoint refreshes do not discard model drafts.
+Shared-specification copy-on-write, revisions and playback snapshot
+isolation remain covered by `InstrumentToneGridModelTests` and
+`InstrumentToneGridBatchTests`.
 
 The grid is implemented and covered by automated regressions.
 Avalonia's virtualized `ListBox` can temporarily invoke its row template
@@ -215,10 +225,11 @@ to a selected tone use atomic publication and revision tracking. See [script pro
 
 ## Agreed next-stage interaction specification — 12 October 2026
 
-Hierarchical NNA and cell-anchored rectangular selection are implemented
-through the authoring views described below. Atomic multi-row field
-propagation, revised Pitch display and row-density adjustments remain
-**approved but unimplemented** separate items in [todo.md](todo.md).
+Hierarchical NNA, cell-anchored rectangular selection, atomic
+selected-row field propagation and division-based Pitch display are
+implemented through the authoring views described below. Only
+row-density adjustments in this group remain approved but
+unimplemented in [todo.md](todo.md).
 
 ### Hierarchical NNA
 
@@ -289,25 +300,70 @@ Regression tests validate the pure selection state and actual
 Avalonia wrapper/keyboard paths; real desktop/window-manager
 navigation remains useful follow-up acceptance.
 
-### Multi-row edits, pitch and density
+### Atomic selected-row fields and division Pitch — implemented 12 October 2026
 
-For a field edit inside a selected rectangle, all selected **rows**
-receive the changed value in that field, whether or not other
-columns lie in the rectangle. Source-less rows remain drafts until
-Source is assigned. One validated batch creates at most one song
-revision and is fully atomic, including invalid IDs, pitch and
-independent Filter overlay clones. Row deletion and the reserved
-entry row are not implied by clearing a field. Pitch edits are
-**constant across rows**, not adjacent-index pitch ramps: typing
-`5` transposes every selected tone by five divisions relative to
-its incoming pitch. The displayed Pitch value becomes
-`Divisions * log2(PitchMultiplier)`, rather than bare log₂,
-so familiar twelve-division scales admit integer offsets; fractional
-values are permitted. Present a value within roughly
-`1000 * 2^-52` relative tolerance of an integer as that integer
-in the UI (the C# `double.Epsilon` constant is instead the
-minimum subnormal, not floating-point machine epsilon).
-Keep the actual stored multiplier when rounding display labels.
+An edit **inside** the current rectangular selection targets every
+indexed tone row in that rectangle and modifies *only the edited
+field*, even when the rectangle includes several other columns.
+An edit **outside** that rectangle targets only its own tone row.
+`InstrumentToneGridSelection.EditTargetRows` enumerates the
+included tone indices in visual order, explicitly excluding the
+reserved null-index entry row. The entry row continues to hold
+its own unpublished draft and is never implicitly inserted.
+
+`InstrumentToneGridModel.EditRows(indices, transform)` is the
+atomic authoring boundary: it reads the latest persisted mappings
+and local drafts; supplies each transform with independent detached
+Filter state; validates all resulting assigned rows (positive finite
+pitch, sound Source, live Envelope/Filter references and NNA);
+and constructs a single fully interned replacement. Only after
+that succeeds are the Core mapping and modified drafts published,
+with exactly one audio/document revision if persisted values
+changed. Draft-only edits do not advance revisions. Any validation,
+transformation or allocation failure leaves **all** saved rows,
+drafts and their revisions unchanged. Clearing Source makes a
+source-less draft without deleting its other fields or the regular
+tone row. Assigning a valid Source later can publish an entire
+selected draft range at once. Identical persisted results are no-ops.
+Invalid source-less pitch values can remain editable drafts for
+correction; their references and NNA policies must be valid.
+
+Every edited Filter configuration is deep-cloned per target row.
+The grid's `FromTone` projection also clones a Filter use
+rather than exposing the interned Core specification's mutable
+instance; changing a projected use cannot silently modify
+another row or the document. Equivalent published tones may
+continue to intern as one shared *value*, and editing one
+still copy-on-writes safely. Real Tone Filter definition selectors
+and per-use parameter editors both route through the same atomic
+field edit. All Source, NNA/Fade and Envelope selectors similarly
+apply their own single-field transform; selections in unrelated
+columns do not receive that edit.
+
+The Pitch TextBox uses **`Divisions × log₂(multiplier)`** for
+display and input. The number entered for a batch is one
+constant transposition offset applied to *every* selected row,
+not a row-wise progression and not an increment added to
+existing individual offsets. Fractional divisions are accepted.
+Only display text is snapped near integers using roughly
+`1000 × 2^-52` binary64-relative tolerance; the Core's exact
+multiplier and an explicitly selected nearby-note multiplier
+survive focus changes and serialization without a second
+quantization. Model tests cover no-ops, single revisions,
+transaction rollback with invalid middle rows and Filter
+mutability, source-less publication, shared-tone copy-on-write,
+entry-row exclusion and exact Pitch conversion. Headless
+Avalonia tests cover actual Source/NNA/Envelope/Pitch/Filter
+control paths, including edits outside a rectangle.
+
+**Still open:** physical desktop focus/layout acceptance and
+the independent row-density item. The current workspace does
+not provide a user-visible undo-stack API for these edits;
+the verified contract is transaction rollback on failure and
+one coherent document/audio revision per successful batch.
+
+### Row-density acceptance — approved, not yet implemented
+
 Rows should occupy minimum practical height with at least 1px
 above and below all visible control contents, not simply change
 padding while leaving a hard 32px minimum.

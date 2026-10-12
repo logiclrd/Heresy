@@ -37,25 +37,7 @@ virtual-voice controls, and compiled parametric effects, are implemented.
 
 - [x] **Add cell-anchored rectangular range selection to the data Instrument tone grid (completed 12 October 2026).** New `InstrumentToneGridSelection` retains a tone-index/column **Anchor**, rectangular **Extent** and current **Focused** cell independently from the virtualized `ListBox.SelectedItem`. Each of the eleven columns has a focusable cell wrapper painted from that semantic state, including read-only note labels and the reserved entry row. Plain click/Tab/focus inside an existing rectangle preserves the block; landing outside resets it. Shift+click and Shift+Arrow extend the rectangle in descending tone-display order. The ListBox tunnels navigation ahead of child controls: Up/Down transfer to neighboring rows even inside a TextBox, while Left/Right transfer only when an unselected text caret is at the respective boundary, preserving native caret movement/Shift+selection otherwise. Shift+Left at caret index zero starts a one-cell selection **anchored in the left cell**, as specified; open ComboBox dropdowns keep native handling. Arrow moves explicitly scroll the target virtualized row into view, then restore cell focus. Selection survives template recreation and scrolling, and reprojects by stable tone index when extra rows appear/disappear; row locations are cached per projection to keep painted-cell checks bounded at large grid sizes. Selection alone never mutates the song or audio revision. Existing NNA/filter editing and entry-draft semantics are unchanged. Regression tests cover rectangle geometry, focus retention/reset, reverse extension, entry row, extra/recycled rows, text-caret boundary decisions and routed Avalonia navigation. The separate **atomic multi-row field propagation** task remains open below. See [instrument-tone-grid-model.md](instrument-tone-grid-model.md).
 
-- [ ] **Implement atomic selected-row field propagation in Instrument
-  tone grids.** When a field is edited in a selected rectangular
-  range, change that *same field* in every included row, never the
-  other selected columns. Source-less rows retain unpublished
-  editor-local drafts; assigning Source can publish them. Validate
-  every changed row, commit one song/audio revision for the complete
-  range, and roll back all results if any row fails. Tone Filter
-  configurations are copied independently, with no shared live
-  overrides; clearing a field does not delete a row. Reserved entry
-  row does not participate in bulk edits. Pitch is **one constant
-  transpose offset** applied to every row (no row-wise ramp).
-  Show Pitch as `divisions * log2(multiplier)` so one division
-  corresponds to one displayed unit, accepting fractional values.
-  Snap UI presentation extremely near integers using about
-  `1000 * 2^-52` (machine epsilon, **not** C# `double.Epsilon`)
-  with a suitable magnitude-relative tolerance; preserve the exact
-  stored multiplier and avoid second quantization on commit.
-  Add selection, pitch, batch atomicity, undo/revision and draft
-  regressions.
+- [x] **Implement atomic selected-row field propagation in Instrument tone grids (completed 12 October 2026).** The eleven-column Avalonia editor now routes Source, Pitch, NNA (including Fade), envelopes and Tone Filter definition/parameter editing through one field-specific `InstrumentToneGridModel.EditRows` transaction. Only an edit in the selected rectangle applies that same column's value to every included indexed row, regardless of other selected columns; outside edits remain single-row. The reserved blank entry row never joins a batch. All row transforms and assigned-row validation finish before a single Core mapping/interner publication and one song/audio revision; failed edits preserve the prior Core mapping and *all* drafts. Clearing Source leaves unpublished pitch/envelope/NNA/Filter drafts rather than deleting the row. Source-less-only edits remain document-clean, and assigning a Source can publish multiple drafts at once. Every selected Filter use is cloned, and editor projections never expose shared mutable persisted overrides; mixed shared tones still copy-on-write. Pitch now displays/accepts `Divisions × log₂(PitchMultiplier)`: entering e.g. `5` in a 48-division instrument sets the *same* offset of five divisions on every selected row, never a ramp. Near-integral UI values round at approximately `1000 × 2^-52` binary64 machine-epsilon relative tolerance, while the exact stored multiplier and explicitly chosen nearest-note multiplier remain unchanged by presentation/focus. Model and headless Avalonia tests cover rectangle-to-field targeting, unselected columns, draft publication, invalid middle-row rollback and no partial revisions, shared interning, input Filter alias isolation, native controls, division conversion and exact round-trips. Row-density work remains open below. See [instrument-tone-grid-model.md](instrument-tone-grid-model.md).
 
 - [ ] **Compact instrument tone rows without clipping contents.**
   Remove the present 32-pixel minimum, two-pixel row margins and
