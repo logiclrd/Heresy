@@ -1,15 +1,18 @@
 # Instrument tone-grid model — implementation milestone
 
-Status: **visual eleven-column grid with independent tone NNA and Filter
-selection, per-use Filter override editor, and framework-independent model implemented**. The Avalonia `InstrumentEditorControl` now
+Status: **visual eleven-column grid, independent cell-anchored rectangular
+selection, tone NNA and Filter selection, per-use Filter override editor, and
+framework-independent model implemented**. The Avalonia `InstrumentEditorControl` now
 projects the same `InstrumentToneGridModel` used by regression tests;
 the old dual ToneSpecifications/ToneTable editor controls were removed.
 The editor commits populated cell choices as they change; its Pitch
 TextBox commits on Enter or loss of focus. The reserved blank entry
-row migrates when focus leaves the *whole row*; Delete on a selected
-grid row removes its mapped/draft state. A desktop smoke test remains
-useful for focus behavior, overflow/virtualization and keyboard
-navigation under real window-manager conditions.
+row migrates when focus leaves the *whole row*; Delete from a focused
+non-editable tone cell removes its mapped/draft state. The separate
+`InstrumentToneGridSelection` holds selection independent of ListBox rows.
+A desktop smoke test remains useful for focus behavior,
+overflow/virtualization and keyboard navigation under real window-manager
+conditions.
 
 ## Projection and exact regular range
 
@@ -212,10 +215,10 @@ to a selected tone use atomic publication and revision tracking. See [script pro
 
 ## Agreed next-stage interaction specification — 12 October 2026
 
-Hierarchical NNA is now implemented through the authoring views described
-below. Rectangular selection, multi-row propagation, revised Pitch display and
-row-density adjustments remain **approved but unimplemented** separate items
-in [todo.md](todo.md).
+Hierarchical NNA and cell-anchored rectangular selection are implemented
+through the authoring views described below. Atomic multi-row field
+propagation, revised Pitch display and row-density adjustments remain
+**approved but unimplemented** separate items in [todo.md](todo.md).
 
 ### Hierarchical NNA
 
@@ -252,6 +255,39 @@ Specifically, Shift+Left while caret index is zero sets both
 the new anchor and end to the cell to the left. Dropdown navigation
 remains native while an option popup is open. Selection/focus is
 stored independently of virtualized visual containers.
+
+**Implemented:** `InstrumentToneGridSelection` stores `Cell(int?
+ToneIndex, int Column)` endpoints (`Anchor`, `Extent`) and the
+independent keyboard/pointer `Focused` cell. The first row uses a
+null tone index, distinct from regular index zero. Real tone indices
+are displayed descending and stable across row reordering and
+virtualization. Selection has an inclusive rectangular `Contains`
+query; ordinary focus inside a rectangle changes only `Focused`,
+while focus outside replaces both endpoints. Shift+click and
+Shift+Arrow extend from the original anchor. The boundary-specific
+Shift+Left gesture resets both endpoints to the *left neighbor*
+before later extension. Changing lookup divisions or adding/removing
+extra draft rows reconciles by surviving tone identities rather than
+recycling a visual row position.
+
+Avalonia `InstrumentEditorControl` wraps all eleven projected
+columns with focusable, individually painted cells; actual ComboBox,
+TextBox, envelope and Filter controls remain the children. The
+parent ListBox tunnels arrow input before default text/selection
+processing: Up/Down move to the next visual row, Left/Right
+remain ordinary text-caret/Shift-selection commands until the
+unselected caret is at its actual boundary, and an open ComboBox
+keeps arrow handling. On navigation, `ListBox.ScrollIntoView`
+brings the virtualized destination into view, followed by deferred
+focus on the appropriate editor control. Attached/detached recycled
+cells repaint on realization; the projection's index-to-row cache
+avoids repeated linear scans during paint. Cell-only selection
+does not change persistent Instrument definitions or audio revisions.
+The reserved entry row participates visually in selection but is
+still excluded from the *separately scheduled* bulk-edit contract.
+Regression tests validate the pure selection state and actual
+Avalonia wrapper/keyboard paths; real desktop/window-manager
+navigation remains useful follow-up acceptance.
 
 ### Multi-row edits, pitch and density
 

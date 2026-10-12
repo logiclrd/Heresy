@@ -35,21 +35,7 @@ virtual-voice controls, and compiled parametric effects, are implemented.
 
 - [x] **Give effect hints dedicated selection-sensitive messages (completed 12 October 2026).** The Pattern editor bottom status area now stacks its existing diagnostic/status line above a separately visible, non-destructive, cursor-sensitive effect hint. Only effect fields show guidance: empty slots explain A–Z/right-click entry, single tracker effects explain hex parameter editing, collapsed multi-effect stacks show **Expand stacked effects with Enter**, expanded tracker tabs explain Enter collapse, and selected native effects show **Configure effect with Enter** (including native tabs in mixed stacks). Leaving the effect fields hides the hint; all navigation, expansion, insertion and grid rebuilds recompute it without changing the underlying diagnostic text or song revisions. Rejected direct keyboard entry is still written to the diagnostic line, now distinguishing collapsed stacks, native effects and invalid tracker input; the false **future parameter dialog** claim is removed. Neither tooltips nor pointer hover overwrite diagnostics. Pure-model and headless Avalonia tests verify contextual transitions, invalid/stale expanded indices, vertical status layout, diagnostic persistence and grid rebuild behavior. See [user-interface-workflows.md](user-interface-workflows.md) and [effect-operators.md](effect-operators.md).
 
-- [ ] **Add cell-anchored rectangular range selection to the data
-  Instrument tone grid.** Track selected anchor, active field and
-  rectangle independently from virtualized `ListBox.SelectedItem`.
-  Arrow keys move among cells, Shift+Arrow extends a rectangle and
-  Shift+click extends to that cell. Focus landing **outside** the
-  selected block (mouse click, Tab or keyboard focus traversal)
-  resets to one selected cell; focusing **inside** preserves the
-  existing block. Text input retains standard caret/editing and
-  Shift+Arrow text selection, *except* Up/Down go to adjacent grid
-  cells and Left/Right at the respective text boundary transfer
-  navigation with the original key modifiers. A Shift+Left from
-  caret index zero establishes the cell on the left as both selected
-  anchor and block end, as explicitly requested. Open dropdowns
-  keep their own native key handling. Preserve selections while
-  recycling and scrolling virtualized rows.
+- [x] **Add cell-anchored rectangular range selection to the data Instrument tone grid (completed 12 October 2026).** New `InstrumentToneGridSelection` retains a tone-index/column **Anchor**, rectangular **Extent** and current **Focused** cell independently from the virtualized `ListBox.SelectedItem`. Each of the eleven columns has a focusable cell wrapper painted from that semantic state, including read-only note labels and the reserved entry row. Plain click/Tab/focus inside an existing rectangle preserves the block; landing outside resets it. Shift+click and Shift+Arrow extend the rectangle in descending tone-display order. The ListBox tunnels navigation ahead of child controls: Up/Down transfer to neighboring rows even inside a TextBox, while Left/Right transfer only when an unselected text caret is at the respective boundary, preserving native caret movement/Shift+selection otherwise. Shift+Left at caret index zero starts a one-cell selection **anchored in the left cell**, as specified; open ComboBox dropdowns keep native handling. Arrow moves explicitly scroll the target virtualized row into view, then restore cell focus. Selection survives template recreation and scrolling, and reprojects by stable tone index when extra rows appear/disappear; row locations are cached per projection to keep painted-cell checks bounded at large grid sizes. Selection alone never mutates the song or audio revision. Existing NNA/filter editing and entry-draft semantics are unchanged. Regression tests cover rectangle geometry, focus retention/reset, reverse extension, entry row, extra/recycled rows, text-caret boundary decisions and routed Avalonia navigation. The separate **atomic multi-row field propagation** task remains open below. See [instrument-tone-grid-model.md](instrument-tone-grid-model.md).
 
 - [ ] **Implement atomic selected-row field propagation in Instrument
   tone grids.** When a field is edited in a selected rectangular
