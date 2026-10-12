@@ -19,17 +19,17 @@ namespace Heresy.Tests.UserInterface;
 public sealed class InstrumentEditorVirtualizationTests
 {
 	[Test]
-	public void ToneGridHasTenColumnsIncludingIndependentFilterSelection()
+	public void ToneGridHasElevenColumnsIncludingNnaAndIndependentFilterSelection()
 	{
 		DocumentWorkspace workspace = new();
 		InstrumentDefinition instrument =
-			InstrumentDocumentEditor.CreateInstrument(workspace, "Ten");
+			InstrumentDocumentEditor.CreateInstrument(workspace, "Eleven");
 		InstrumentEditorControl editor = new(
 			workspace, instrument, () => { }, _ => { });
 		int[] widths = (int[])typeof(InstrumentEditorControl).GetField(
 			"ColumnWidths", BindingFlags.Static | BindingFlags.NonPublic)!
 			.GetValue(null)!;
-		widths.Should().HaveCount(10);
+		widths.Should().HaveCount(11);
 		// Exercise the actual projected-row data template: the added cell
 		// contains a Filter selector and adjacent per-instance editor button.
 		ListBox rows = (ListBox)typeof(InstrumentEditorControl).GetField(
@@ -38,11 +38,15 @@ public sealed class InstrumentEditorVirtualizationTests
 		Border border = (Border)rows.ItemTemplate!.Build(
 			new InstrumentToneGridModel(workspace, instrument).Rows[^1])!;
 		Grid row = (Grid)border.Child!;
-		row.ColumnDefinitions.Should().HaveCount(10);
-		Control filterCell = row.Children.Single(control => Grid.GetColumn(control) == 9);
+		row.ColumnDefinitions.Should().HaveCount(11);
+		Control filterCell = row.Children.Single(control => Grid.GetColumn(control) == 10);
 		filterCell.Should().BeOfType<StackPanel>();
 		((StackPanel)filterCell).Children.OfType<ComboBox>().Should().ContainSingle();
 		((StackPanel)filterCell).Children.OfType<Button>().Should().ContainSingle();
+		Control nna = row.Children.Single(control => Grid.GetColumn(control) == 5);
+		nna.Should().BeOfType<StackPanel>();
+		((StackPanel)nna).Children.OfType<ComboBox>().Should().ContainSingle();
+		((StackPanel)nna).Children.OfType<TextBox>().Should().ContainSingle();
 	}
 
 	[Test]
