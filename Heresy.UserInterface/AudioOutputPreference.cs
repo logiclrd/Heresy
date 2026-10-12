@@ -4,6 +4,7 @@ using System.Numerics;
 using System.Text.Json;
 
 using Heresy.Render.Configuration;
+using Heresy.Core.Filters;
 
 namespace Heresy.UserInterface;
 
@@ -64,16 +65,21 @@ public sealed class AudioOutputPreference
 					return null;
 
 				OutputFilterType filter = (OutputFilterType)filterValue;
-				double? cutoff = filter == OutputFilterType.None
-					? null : speaker.CutoffHz;
-				if (filter != OutputFilterType.None
-					&& (cutoff is not double value || !ValidCutoff(value, rate)))
-					return null;
+				double? cutoff = filter is OutputFilterType.LowPass or OutputFilterType.HighPass
+                    ? speaker.CutoffHz : null;
+                if (filter is OutputFilterType.LowPass or OutputFilterType.HighPass
+                    && (cutoff is not double value || !ValidCutoff(value, rate)))
+                    return null;
+                FilterInstance? inline = filter == OutputFilterType.Chain
+                    ? speaker.FilterChain is string text
+                        ? SpeakerFilterChainText.Parse(text, rate, index)
+                        : null
+                    : null;
 
 				channels[index] = new OutputChannelConfiguration(
 					new Vector3((float)coordinates[0],
 						(float)coordinates[1], (float)coordinates[2]),
-					importance, filter, cutoff);
+					importance, filter, cutoff, inline);
 			}
 			return new RenderConfiguration(rate, channels);
 		}
@@ -113,8 +119,12 @@ public sealed class AudioOutputPreference
 						channel.Position.Z],
 					PositionalImportance = channel.PositionalImportance,
 					FilterType = (int)channel.FilterType,
-					CutoffHz = channel.FilterType == OutputFilterType.None
-						? null : channel.CutoffHz,
+					CutoffHz = channel.FilterType is OutputFilterType.LowPass
+                        or OutputFilterType.HighPass
+                        ? channel.CutoffHz : null,
+                    FilterChain = channel.FilterType == OutputFilterType.Chain
+                        ? SpeakerFilterChainText.Format(channel.Filter!)
+                        : null,
 				};
 			}
 			PreferenceDto dto = new()
@@ -152,7 +162,8 @@ public sealed class AudioOutputPreference
 	private static bool ValidFilter(int value)
 		=> value is (int)OutputFilterType.None
 			or (int)OutputFilterType.LowPass
-			or (int)OutputFilterType.HighPass;
+			or (int)OutputFilterType.HighPass
+            or (int)OutputFilterType.Chain;
 
 	private static bool ValidCutoff(double cutoff, int sampleRate)
 		=> double.IsFinite(cutoff) && cutoff > 0
@@ -171,13 +182,32 @@ public sealed class AudioOutputPreference
 				|| !double.IsFinite(channel.PositionalImportance)
 				|| channel.PositionalImportance < 0
 				|| !ValidFilter((int)channel.FilterType)
-				|| (channel.FilterType != OutputFilterType.None
-					&& (channel.CutoffHz is not double cutoff
-						|| !ValidCutoff(cutoff, configuration.SampleRate))))
+				|| (channel.FilterType is OutputFilterType.LowPass or OutputFilterType.HighPass
+                    && (channel.CutoffHz is not double cutoff
+                        || !ValidCutoff(cutoff, configuration.SampleRate)))
+                || (channel.FilterType == OutputFilterType.Chain
+                    && !ValidInline(channel, configuration.SampleRate)))
 				return false;
 		}
 		return true;
 	}
+
+    private static bool ValidInline(OutputChannelConfiguration channel, int sampleRate)
+    {
+        try
+        {
+            FilterInstance? filter = channel.Filter;
+            if (filter is null) return false;
+            SpeakerFilterChainText.Parse(
+                SpeakerFilterChainText.Format(filter), sampleRate, 0);
+            return true;
+        }
+        catch (Exception error) when (error is ArgumentException
+            or InvalidOperationException or OverflowException)
+        {
+            return false;
+        }
+    }
 
 	private sealed class PreferenceDto
 	{
@@ -194,5 +224,6 @@ public sealed class AudioOutputPreference
 		public double? PositionalImportance { get; set; }
 		public int? FilterType { get; set; }
 		public double? CutoffHz { get; set; }
+        public string? FilterChain { get; set; }
 	}
 }
