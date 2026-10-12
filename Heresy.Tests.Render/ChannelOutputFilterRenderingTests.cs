@@ -8,6 +8,7 @@ using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
 using Heresy.Render.Configuration;
+using Heresy.Render.Filters;
 using Heresy.Render.Playback;
 using Heresy.Render.Sounds;
 
@@ -169,6 +170,45 @@ public sealed class ChannelOutputFilterRenderingTests
         session.Render(2, 4, second);
         Assert.That(second, Is.EqualTo(new float[] { 3, 0, 1, 0 }),
             "other host retains its prior two-frame delay while host zero bypasses");
+    }
+
+    [Test]
+    public void SaturatedFilterObservesSummedHostPcmNotTwoSeparateVoiceResponses()
+    {
+        TestResolver sounds = new();
+        sounds.Add(PulseId, new PulseSound());
+        FilterDefinition definition = new((ObjectId)951U, "Saturated", [
+            new FilterStageDefinition(1, "ladder", FilterKind.LadderSaturated),
+        ]);
+        FilterInstance instance = new(definition);
+        instance.SetStageParameters(1, [
+            new("CutoffHz", FilterParameterValue.FromNumber(100)),
+            new("Resonance", FilterParameterValue.FromNumber(0)),
+            new("Drive", FilterParameterValue.FromNumber(10)),
+            new("Oversampling", FilterParameterValue.FromChoice("1x")),
+        ]);
+
+        PlaybackSession session = Session(sounds);
+        session.ConfigurePhysicalChannelOutputFilter(0, instance);
+        session.ApplyScopedEvent(12, ChannelTarget.Physical(0),
+            [new StartNoteCommand(PulseId)], physicalPlaybackOwner: 12);
+        session.ApplyScopedEvent(13, ChannelTarget.Physical(0),
+            [new StartNoteCommand(PulseId)], physicalPlaybackOwner: 13);
+        float[] pcm = new float[12];
+        session.Render(0, pcm.Length, pcm);
+
+        StreamingFilterChain combined = new(new FilterChain([instance]), Rate, 1);
+        float[] expected = new float[pcm.Length];
+        expected[0] = 2;
+        combined.ProcessInterleaved(expected);
+        Assert.That(pcm, Is.EqualTo(expected).Within(1e-6f));
+
+        StreamingFilterChain individual = new(new FilterChain([instance]), Rate, 1);
+        float[] isolated = new float[pcm.Length];
+        isolated[0] = 1;
+        individual.ProcessInterleaved(isolated);
+        Assert.That(Math.Abs(pcm[0] - 2 * isolated[0]), Is.GreaterThan(1e-4f),
+            "nonlinearity must see the single summed host signal");
     }
 
     private static FilterInstance Echo(uint id, double seconds)
