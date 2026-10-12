@@ -27,23 +27,7 @@ virtual-voice controls, and compiled parametric effects, are implemented.
 
 - [x] **Reconcile Axx/Sxx tracker effect keyboard input and undefined S-byte handling (completed 12 October 2026).** The keyboard effect codec now accepts the missing `Axx` speed command and translates positive byte parameters to the existing global `SetSpeedCommand`; `A00` is an editable, musically inert slot (matching IT compatibility). Every `Sxx` byte, including `S00` on initial S entry and unsupported low-nibble combinations, is accepted and stored as either its exact concrete semantic effect or the new `UndefinedTrackerSpecialPatternEffect`. Each parameter nibble reselects the exact type for the new byte without guessing invalid subcommands; undefined values persist in song JSON and effect-stack clipboard, render as `Sxx` in normal tracker colors and never emit playback commands. Tests exhaustively cover all 256 S-byte values, staged S00→S70→S74→undefined editing, Axx keyboard entry, playback routing and inert fallback, JSON and clipboard round-trips. The **in-place Insert Tracker Effect...** menu and dynamic status hints are separately tracked below.
 
-- [ ] **Introduce inherited per-tone and scripted Instrument NNA resolution.**
-  Define a common note-start NNA resolver contract for data-table and Script
-  Instruments, evaluated against the same incoming pitch/tone-selection
-  input as source selection. Each `ToneSpecification` carries an explicit
-  **Inherit / Cut / Continue / Off / Fade** selection (default Inherit),
-  including a validated Fade duration. Data Instruments additionally have
-  an **Use Tone NNA / Cut / Continue / Off / Fade** global override
-  (default Use Tone NNA), applied after tone selection. Script Instruments
-  expose a compiled NNA method/expression with the tone selector's input,
-  returning Inherit or a concrete action (+ duration for Fade).
-  Resolve in order: selected child's policy → tone/script result →
-  data-Instrument blanket override. Freeze the result in the invocation's
-  `NoteConfigurationSnapshot`, preserve tracker S73–S76's existing
-  current-voice override semantics, and persist/backward-load all defaults
-  without altering existing song behavior. Tests: direct Sample,
-  recursively nested Instruments, scripted pitch-varying NNA, S7x
-  overrides, Fade duration, persistence and active-note snapshot isolation.
+- [x] **Introduce inherited per-tone and scripted Instrument NNA resolution (completed 12 October 2026).** Both `InstrumentDefinition` and `ScriptInstrumentDefinition` now implement `InstrumentDefinitionBase.ResolveNna(incomingPitch, selectedTone, preparedScriptEvaluator)`. Every `ToneSpecification` has a validated `InstrumentNnaSetting` defaulting to **Inherit** (Cut, Continue, Off, Fade with mandatory positive duration are also available). The data Instrument additionally has **UseToneNna** default/optional blanket Cut, Continue, Off or Fade and positive blanket Fade duration; the script Instrument has a separately compiled restricted `NnaExpression` from the same **original incoming pitch** as its tone selector, returning Inherit/Cut/Continue/Off/Fade, plus independently authored Fade duration. Actual precedence is child `NewNotePolicy` → per-tone NNA → explicit scripted action when not Inherit → data-Instrument blanket override; only the final bound policy/duration is captured in the immutable invocation `NoteConfigurationSnapshot` (without interfering with S73–S76 current-voice override semantics). All settings round-trip through optional version-one song fields with old-song defaults, snapshot isolation and strict action/Fade validation. Direct and recursive instrument resolution, including private recursive tones, uses the same prepared resolver without Roslyn/authoring work during PCM. Authoring APIs can update policy with one audio revision; existing tone, Source/Pitch/Filter edit paths preserve the previously selected per-tone NNA, including unpublished grid drafts and shared tone interning. Tests cover nested inner/outer inheritance and overrides, Fade and invalid actions, compiled pitch-dependent scripted policies, restricted compilation diagnostics, actual first/second note overlap through prepared playback, in-progress authoring edits, JSON/legacy/snapshot roundtrip and grid preservation. The **Avalonia Instrument NNA controls remain separate and unchecked below**; physical listening is still pending. See [instrument-tone-grid-model.md](instrument-tone-grid-model.md) and [script-programmability.md](script-programmability.md).
 
 - [ ] **Expose NNA policies in Instrument authoring.** In data Instruments,
   add top-level **Use Tone NNA** default plus concrete policy chooser
