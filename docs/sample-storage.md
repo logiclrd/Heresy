@@ -157,6 +157,55 @@ path, malformed manifest, or unreadable root archive is **not** silently
 reinterpreted. Normal noninteractive loading keeps its strict missing-entry
 error. No recovery operation happens in the realtime PCM worker.
 
+## MP3 decoding and Layer III continuity — 12 October 2026
+
+MP3 decoding at import/load now uses the **managed NLayer 3.0.0
+`MpegFile`** decoder rather than Hawkynt's `Mp3Codec.Decompress`.
+One `MpegFile` instance is held open and read sequentially into
+interleaved float PCM until end-of-file. Its MPEG decoder preserves
+the previous frame's **bit reservoir, synthesis filters and overlap
+history** between reads. MPEG Layer III frames are not independent
+buffers: reinitializing synthesis or discarding main-data
+continuation at each boundary can produce repeating audible
+clicks/chirps. The previous decoder's intermediate 16-bit PCM
+path is removed for MP3 only; FLAC, OGG Vorbis, WAVE and AIFF
+continue on their existing codecs.
+
+The `SampleAudioCodec.Decode` entry point still recognizes ID3
+and MPEG sync headers (as well as the `.mp3` filename suffix).
+The decoded `SamplePcmData` remains the same immutable, live
+sample representation. Newly imported audio keeps its **exact
+original encoded bytes** in `PendingSampleAsset`; saving a song
+copies those encoded bytes into the song's PCM subtree/archive
+without transcoding, and reloading decodes them once more before
+playback. No MP3 stream object or codec runs during PCM rendering.
+The Core dependency on Hawkynt remains for FLAC and AIFF, while
+NLayer requires no additional native shared library on ARM64.
+
+Regression evidence is in
+`Heresy.Tests.Core/SampleAudioCodecLayer3Tests.cs` and the committed
+`Fixtures/layer3-continuous-mono.mp3`. This is **real MPEG-1
+Layer III**, not the previous synthetic Layer II single frame:
+an offline-generated 0.46-second, 44.1-kHz mono continuous waveform
+(437, 1139, 2291 Hz components, tapered at both ends) was encoded
+with FFmpeg/libmp3lame at 48 kbit/s CBR, with Xing/ID3 tags
+disabled (`-codec:a libmp3lame -b:a 48k -write_xing 0
+-id3v2_version 0`). Its **19 consecutive complete frames** are
+verified against MPEG-1 Layer III headers, 48-kbit/s bitrate and
+44.1-kHz sample rate, with no trailing partial frame. Fixture
+SHA-256: `86beda29d06aa64683d894669b6265d9908abf56e78a210c779a1306e34961af`.
+
+Tests also verify finite non-silent PCM, bounded differences between
+adjacent samples globally and at every 1,152-sample frame edge,
+equality of NLayer reads at dramatically different buffer sizes,
+and exact original-byte preservation through `.hm` save/reload.
+The historical synthetic Layer II test now supplies four
+consecutive frames to the stream parser. Existing tests continue
+to cover WAV/FLAC/Vorbis/AIFF and all normal sample import/persistence
+formats. These tests prove the fixture remains continuous on the
+managed decode path; they do **not** establish audible confirmation
+for the original reported MP3, which was not supplied for this run.
+
 ## Importing
 
 Importing an audio file or a sample from another song:

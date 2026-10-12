@@ -8,20 +8,7 @@ virtual-voice controls, and compiled parametric effects, are implemented.
 
 ## Sample-import MP3 decoding regression
 
-- [ ] **Fix MP3 Layer III frame-boundary chirping on import.** A real
-  MP3 imported as a Sample audibly contains repeated high-frequency
-  chirps although conversion to WAV outside Heresy works; the defect
-  predates the final-speaker Filter changes. The current load-time
-  `SampleAudioCodec.DecodeMp3` uses the Hawkynt MP3 decoder, while
-  the existing single-frame synthetic test exercises MPEG Layer II,
-  not ordinary multi-frame Layer III. Replace the MP3 import decoder
-  with a reliable, persistent-state managed decoder; retain original
-  encoded bytes for module persistence, decode PCM only during
-  import/load, and keep realtime rendering codec-free. Test a real
-  multi-frame Layer III fixture for waveform continuity and verify
-  all existing import formats and Linux Release/ARM64 CI. Link:
-  [sample-storage.md](sample-storage.md). Report audible confirmation
-  on the original problem file separately, if available.
+- [x] **Fix MP3 Layer III frame-boundary chirping on import (implemented 12 October 2026).** Replaced the Hawkynt `Mp3Codec.Decompress` path with the fully managed NLayer 3.0.0 `MpegFile` stream decoder, keeping one decoder instance alive for the entire file so Layer III's main-data bit reservoir, synthesis/overlap history and channel continuity survive frame boundaries. Decoding now yields interleaved float PCM directly rather than first converting to 16-bit integer PCM. No change to other format decoders or the encoded-asset identity format: original MP3 bytes remain pending through import and are preserved exactly in the saved `.hm` archive; on reload, decoded PCM is in memory and realtime rendering remains codec/file/ZIP-free. The former isolated, synthetic MPEG Layer II test now repeats valid consecutive frame data so the stream-oriented decoder can synchronize. A separate, externally LAME-encoded **19-frame MPEG-1 Layer III** regression asset (`Heresy.Tests.Core/Fixtures/layer3-continuous-mono.mp3`) verifies genuine consecutive headers, smooth PCM and absence of recurring jumps at 1,152-sample frame boundaries, unchanged PCM with small and large decoder read blocks, and exact encoded-byte persistence across `.hm` save/load. The existing WAVE, FLAC, OGG Vorbis, AIFF and Layer II suites and Release/Linux ARM64 CI remain in place. Physical audible confirmation of the **original reported MP3** is not claimed: that particular file was not available for direct re-import/listening. See [sample-storage.md](sample-storage.md).
 
 ## Tracker-effect and Instrument authoring integration
 
