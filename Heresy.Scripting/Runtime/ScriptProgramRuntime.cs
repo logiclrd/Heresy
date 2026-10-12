@@ -243,6 +243,25 @@ public abstract class PatternScriptProgram
 			new SetNoteFilterCommand(definitionId), timeOffsetSeconds);
 	}
 
+	/// <summary>Choose or clear the persistent output Filter on the actual
+	/// physical host, independent of note events and invocation memory.</summary>
+	protected void ChannelFilter(double row, int channel,
+		ObjectId? definitionId = null, double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		ValidateChannel(channel);
+		Append(row, ChannelTarget.Physical(channel),
+			new SetChannelFilterCommand(definitionId), timeOffsetSeconds);
+	}
+
+	protected void ChannelFilterVirtual(double row, uint virtualId,
+		ObjectId? definitionId = null, double timeOffsetSeconds = 0.0)
+	{
+		ValidateRow(row);
+		Append(row, ChannelTarget.Virtual(virtualId),
+			new SetChannelFilterCommand(definitionId), timeOffsetSeconds);
+	}
+
 	/// <summary>
 	/// Set a virtual channel's current note volume in normalized [0,1] units.
 	/// The channel remembers the volume for later notes on the same scoped ID.

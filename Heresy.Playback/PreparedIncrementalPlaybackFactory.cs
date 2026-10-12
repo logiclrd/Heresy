@@ -335,6 +335,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 				diagnostics.ReportExpensiveSourceSeek(effect, nativeFrame);
 		session.NoteFilterCommandRejected =
 			diagnostics.ReportNoteFilterCommandIssue;
+		session.ChannelFilterCommandRejected =
+			diagnostics.ReportChannelFilterCommandIssue;
 
 		timeline.ReadRememberedNoteVolume = (owner, host, time) =>
 			session.GetRememberedNoteVolume(host, owner,
@@ -751,6 +753,18 @@ public sealed class PreparedIncrementalPlaybackFactory
 				}
 				if (command is not StartNoteCommand start)
 				{
+					if (command is SetChannelFilterCommand channelSelection
+						&& channelSelection.FilterDefinitionId is ObjectId channelId)
+					{
+						if (scripts.TryResolve(channelId, out SongObject? channelCandidate)
+							&& channelCandidate is FilterDefinition channelDefinition)
+							command = channelSelection with
+							{
+								Configuration = new FilterInstance(channelDefinition),
+							};
+						// Invalid/deleted/wrong-type definitions reach the
+						// renderer as a diagnosed, non-mutating no-op.
+					}
 					if (command is SetNoteFilterCommand selection
 						&& selection.FilterDefinitionId is ObjectId selectedId)
 					{

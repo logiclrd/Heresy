@@ -103,6 +103,10 @@ public sealed class PlaybackSession
 	/// recursive playback wires this to SequencingDiagnosticLog.</summary>
 	public Action<string>? NoteFilterCommandRejected { get; set; }
 
+	/// <summary>Control-side diagnostic output for invalid host-channel
+	/// Filter commands. The prepared playback factory rate-limits it.</summary>
+	public Action<string>? ChannelFilterCommandRejected { get; set; }
+
 	private readonly RenderContext _context;
 	private readonly OutputSpeakerFilterBank? _outputSpeakerFilters;
 
@@ -209,7 +213,7 @@ public sealed class PlaybackSession
 
 	/// <summary>Configure a persistent output Filter on a real physical
 	/// host (across all nested playback owners). Null removes the slot.
-	/// This is a host setup API; native effect commands are a later milestone.
+	/// Native effects use the same host slot via a separate command path.
 	/// Preparation completes before the old state is replaced.</summary>
 	public void ConfigurePhysicalChannelOutputFilter(int host, FilterInstance? use)
 	{
@@ -1179,9 +1183,14 @@ public sealed class PlaybackSession
 					channel.SetNoteVolume(volume.Volume);
 					break;
 
-				case SetNoteFilterCommand selection:
+				case SetNoteFilterCommand:
 				case SetNoteFilterParametersCommand:
 					ApplyCurrentNoteFilterCommand(channel, command);
+					break;
+
+				case SetChannelFilterCommand:
+				case SetChannelFilterParametersCommand:
+					ApplyHostFilterCommand(command, null, virtualChannelId, scopedOwner);
 					break;
 
 				case SetSourceFrameOffsetCommand offset:
@@ -1378,6 +1387,13 @@ public sealed class PlaybackSession
 			case SetNoteFilterCommand:
 			case SetNoteFilterParametersCommand:
 				ApplyCurrentNoteFilterCommand(channel, command);
+				break;
+
+			case SetChannelFilterCommand:
+			case SetChannelFilterParametersCommand:
+				// Always target the *real physical host* regardless of
+				// PhysicalPlaybackOwner/flattened logical note scope.
+				ApplyHostFilterCommand(command, physicalChannel, null, null);
 				break;
 
 			case NoteCutCommand:
@@ -1851,6 +1867,76 @@ public sealed class PlaybackSession
 	/// <summary>Mutate the sole current logical note, not a channel-memory
 	/// slot and never displaced NNA or previous released notes. A flattened
 	/// instigator has many descendants but one controlling scope.</summary>
+	/// <summary>Apply one selection or atomic parameter batch to the
+	/// actual output host. The per-owner playback-channel memory is *not*
+	/// the channel Filter identity; child cancellation has no rollback.</summary>
+	private void ApplyHostFilterCommand(NoteCommand command,
+		int? physicalHost, uint? virtualId, long? scopedOwner)
+	{
+		try
+		{
+			if (physicalHost is null && virtualId is null)
+				throw new ArgumentException("No real physical or virtual host target.");
+			ChannelOutputFilterState? previous;
+			if (physicalHost is int host)
+				_physicalOutputFilters.TryGetValue(host, out previous);
+			else if (scopedOwner is long owner)
+				_scopedVirtualOutputFilters.TryGetValue(
+					(owner, virtualId!.Value), out previous);
+			else
+				_targetedVirtualOutputFilters.TryGetValue(virtualId!.Value, out previous);
+
+			ChannelOutputFilterState? prepared;
+			switch (command)
+			{
+				case SetChannelFilterCommand selection:
+					if (selection.FilterDefinitionId is ObjectId selected
+						&& (selected.IsNone
+							|| selection.Configuration is null
+							|| selection.Configuration.DefinitionId != selected))
+						throw new ArgumentException(
+							"Selected channel Filter ID is unavailable or mismatched.");
+					// Every explicit select starts a *fresh* DSP history;
+					// clearing discards only this host's state.
+					prepared = selection.Configuration is null ? null
+						: new ChannelOutputFilterState(selection.Configuration,
+							SampleRate, OutputChannelCount);
+					break;
+				case SetChannelFilterParametersCommand update:
+					if (previous is null)
+						throw new InvalidOperationException(
+							"No channel-output Filter selected on the target host.");
+					prepared = previous.PrepareParameterUpdate(
+						update.StageId, update.Assignments);
+					break;
+				default:
+					throw new InvalidOperationException(
+						"Unexpected channel Filter command.");
+			}
+			if (physicalHost is int physical)
+			{
+				if (prepared is null) _physicalOutputFilters.Remove(physical);
+				else _physicalOutputFilters[physical] = prepared;
+			}
+			else if (scopedOwner is long scope)
+			{
+				if (prepared is null)
+					_scopedVirtualOutputFilters.Remove((scope, virtualId!.Value));
+				else _scopedVirtualOutputFilters[(scope, virtualId!.Value)] = prepared;
+			}
+			else
+			{
+				if (prepared is null) _targetedVirtualOutputFilters.Remove(virtualId!.Value);
+				else _targetedVirtualOutputFilters[virtualId!.Value] = prepared;
+			}
+		}
+		catch (Exception failure) when (failure is ArgumentException
+			or InvalidOperationException or KeyNotFoundException or OverflowException)
+		{
+			ChannelFilterCommandRejected?.Invoke(failure.Message);
+		}
+	}
+
 	private void ApplyCurrentNoteFilterCommand(
 		PlaybackChannelState channel, NoteCommand command)
 	{

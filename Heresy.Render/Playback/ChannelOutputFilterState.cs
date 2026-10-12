@@ -13,9 +13,12 @@ namespace Heresy.Render.Playback;
 internal sealed class ChannelOutputFilterState
 {
     private readonly StreamingFilterChain _chain;
+    private readonly FilterInstance _configuration;
 
-    private ChannelOutputFilterState(StreamingFilterChain chain, int remaining)
+    private ChannelOutputFilterState(
+        FilterInstance configuration, StreamingFilterChain chain, int remaining)
     {
+        _configuration = configuration;
         _chain = chain;
         _tailRemainingFrames = remaining;
     }
@@ -24,16 +27,34 @@ internal sealed class ChannelOutputFilterState
     /// the displacement frame, independent from the physical channel's
     /// continuing filter slot.</summary>
     public ChannelOutputFilterState Fork()
-        => new(_chain.Fork(), _tailRemainingFrames);
+        => new(_configuration.Clone(), _chain.Fork(), _tailRemainingFrames);
     private int _tailRemainingFrames;
 
     public ChannelOutputFilterState(
         FilterInstance configuration, int sampleRate, int outputs)
     {
         ArgumentNullException.ThrowIfNull(configuration);
+        _configuration = configuration.Clone();
         _chain = new StreamingFilterChain(
-            new FilterChain(new[] { configuration.Clone() }), sampleRate, outputs);
+            new FilterChain(new[] { _configuration }), sampleRate, outputs);
     }
+
+    /// <summary>Prepare a complete, isolated successor for the specified
+    /// typed assignment batch. Any failure leaves this state unchanged;
+    /// compatible histories and smoothing in the fork are retained.</summary>
+    public ChannelOutputFilterState PrepareParameterUpdate(
+        int stageId,
+        System.Collections.Generic.IReadOnlyList<
+            System.Collections.Generic.KeyValuePair<string, FilterParameterValue>> assignments)
+    {
+        FilterInstance updated = _configuration.Clone();
+        updated.SetStageParameters(stageId, assignments);
+        StreamingFilterChain fork = _chain.Fork();
+        fork.Configure(new FilterChain(new[] { updated }));
+        return new ChannelOutputFilterState(updated, fork, _tailRemainingFrames);
+    }
+
+    public FilterInstance SnapshotConfiguration() => _configuration.Clone();
 
     public bool HasTail => _tailRemainingFrames > 0;
     public int PreparedTailFrames => _chain.PreparedTailFrames;

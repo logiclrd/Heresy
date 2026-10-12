@@ -31,12 +31,31 @@ public sealed class SequencingDiagnosticLog
 	public const string ExpensiveSourceSeekSuppressionCode = "HRSEQ006";
 	public const string NoteFilterCommandCode = "HRSEQ007";
 	public const string NoteFilterCommandSuppressionCode = "HRSEQ008";
+	public const string ChannelFilterCommandCode = "HRSEQ009";
+	public const string ChannelFilterCommandSuppressionCode = "HRSEQ010";
 
 	private readonly ConcurrentQueue<SequencingDiagnostic> _pending = new();
 	private long _droppedOutOfOrderNotes;
 	private long _ignoredFlatteningEffects;
 	private long _expensiveSourceSeeks;
 	private long _rejectedNoteFilterCommands;
+	private long _rejectedChannelFilterCommands;
+
+	public long RejectedChannelFilterCommands =>
+		Interlocked.Read(ref _rejectedChannelFilterCommands);
+
+	public void ReportChannelFilterCommandIssue(string reason)
+	{
+		long count = Interlocked.Increment(ref _rejectedChannelFilterCommands);
+		if (count <= MaximumIndividualMessages)
+			_pending.Enqueue(new SequencingDiagnostic(
+				ChannelFilterCommandCode,
+				$"Ignored channel Filter command: {reason}"));
+		else if (count == MaximumIndividualMessages + 1)
+			_pending.Enqueue(new SequencingDiagnostic(
+				ChannelFilterCommandSuppressionCode,
+				"Further invalid channel Filter command diagnostics are suppressed."));
+	}
 
 	public long RejectedNoteFilterCommands =>
 		Interlocked.Read(ref _rejectedNoteFilterCommands);

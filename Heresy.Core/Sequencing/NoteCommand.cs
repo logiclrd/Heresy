@@ -98,6 +98,23 @@ public sealed record SetNoteFilterParametersCommand(
 	IReadOnlyList<KeyValuePair<string, FilterParameterValue>> Assignments)
 	: NoteCommand;
 
+/// <summary>Selects or clears the persistent *actual hosting channel*
+/// output Filter; does not change the note's event or Instrument layers.
+/// Prepared playback resolves DefinitionId through its frozen song.</summary>
+public sealed record SetChannelFilterCommand(ObjectId? FilterDefinitionId = null)
+	: NoteCommand
+{
+	public FilterInstance? Configuration { get; init; }
+}
+
+/// <summary>Atomic partial typed stage assignments on the selected host's
+/// persistent channel-output Filter. Unassigned parameters are preserved.</summary>
+public sealed record SetChannelFilterParametersCommand(
+	int StageId,
+	IReadOnlyList<KeyValuePair<string, FilterParameterValue>> Assignments)
+	: NoteCommand;
+
+/// <summary>Begin the live volume controller for a flattened source.</summary>
 public sealed record BeginFlattenedSourceVolumeCommand(
 	long ChildScopeId, double InitialVolume,
 	ObjectId? EventFilterDefinitionId = null) : NoteCommand
