@@ -739,6 +739,84 @@ public sealed class ChannelOutputFilterRenderingTests
         Assert.That(pcm.All(float.IsFinite), Is.True);
     }
 
+    [Test]
+    public void ScopedVirtualEnvelopesAndUnscopedHostStayIndependent()
+    {
+        PlaybackSession Make(bool useEnvelopes)
+        {
+            TestResolver resolver = new();
+            resolver.Add(PulseId, new PulseSound());
+            resolver.AddCurve((ObjectId)3110U, new FixedCurve(0.2));
+            resolver.AddCurve((ObjectId)3111U, new FixedCurve(0.8));
+            PlaybackSession session = Session(resolver);
+            session.ApplyScopedEvent(11, ChannelTarget.Virtual(7),
+            [
+                new SetChannelFilterCommand { Configuration = Echo(3112, 0.001) },
+                useEnvelopes
+                    ? new SetChannelFilterParameterEnvelopeCommand(1,
+                        "Feedforward", (ObjectId)3110U)
+                    : new SetChannelFilterParametersCommand(1, [
+                        new("Feedforward", FilterParameterValue.FromNumber(0.2)),
+                    ]),
+                new StartNoteCommand(PulseId),
+            ]);
+            session.ApplyScopedEvent(12, ChannelTarget.Virtual(7),
+            [
+                new SetChannelFilterCommand { Configuration = Echo(3113, 0.001) },
+                useEnvelopes
+                    ? new SetChannelFilterParameterEnvelopeCommand(1,
+                        "Feedforward", (ObjectId)3111U)
+                    : new SetChannelFilterParametersCommand(1, [
+                        new("Feedforward", FilterParameterValue.FromNumber(0.8)),
+                    ]),
+                new StartNoteCommand(PulseId),
+            ]);
+            session.ApplyLiveEvent(ChannelTarget.Virtual(7),
+                [new StartNoteCommand(PulseId)]);
+            return session;
+        }
+        float[] actual = new float[4], expected = new float[4];
+        Make(true).Render(0, 4, actual);
+        Make(false).Render(0, 4, expected);
+        Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+        Assert.That(actual[0], Is.EqualTo(3));
+    }
+
+    [Test]
+    public void FlattenedChildCancellationDoesNotRemovePhysicalHostEnvelope()
+    {
+        PlaybackSession Make(bool envelope)
+        {
+            TestResolver resolver = new();
+            resolver.Add(PulseId, new PulseSound());
+            resolver.AddCurve((ObjectId)3115U, new FixedCurve(0.4));
+            PlaybackSession session = Session(resolver);
+            session.ApplyScopedEvent(21, ChannelTarget.Physical(0),
+            [
+                new BeginFlattenedSourceVolumeCommand(90, 1),
+                new SetChannelFilterCommand { Configuration = Echo(3116, 0.001) },
+                envelope
+                    ? new SetChannelFilterParameterEnvelopeCommand(
+                        1, "Feedforward", (ObjectId)3115U)
+                    : new SetChannelFilterParametersCommand(1, [
+                        new("Feedforward", FilterParameterValue.FromNumber(0.4)),
+                    ]),
+                new StartNoteCommand(PulseId) {
+                    ParentSourceScopes = new long[] { 90 },
+                },
+            ], physicalPlaybackOwner: 21);
+            session.Render(0, 1, new float[1]);
+            session.ApplyFlattenedScopeAction(90, NoteDisplacementAction.Cut);
+            session.ApplyScopedEvent(22, ChannelTarget.Physical(0),
+                [new StartNoteCommand(PulseId)], physicalPlaybackOwner: 22);
+            return session;
+        }
+        float[] a = new float[4], b = new float[4];
+        Make(true).Render(1, 4, a);
+        Make(false).Render(1, 4, b);
+        Assert.That(a, Is.EqualTo(b).Within(1e-6f));
+    }
+
     private sealed class FixedCurve(double value) : IEnvelopeCurve
     {
         public double GetValue(long frame, int sampleRate, long? off) => value;
