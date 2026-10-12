@@ -9,6 +9,7 @@ using Avalonia.Input;
 
 using AwesomeAssertions;
 
+using Heresy.Core.Envelopes;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -66,6 +67,8 @@ public sealed class InstrumentToneGridBatchEditorTests
 		InstrumentDefinition instrument = InstrumentDocumentEditor.CreateInstrument(
 			workspace, "Selective fields");
 		ObjectId source = AddSource(workspace);
+		ObjectId envelope = workspace.Document.AllocateObjectId();
+		workspace.Document.Add(new NodeEnvelopeDefinition(envelope, "Volume"));
 		InstrumentEditorControl editor = new(workspace, instrument,
 			() => { }, _ => { });
 		var model = Field<InstrumentToneGridModel>(editor, "_model");
@@ -87,11 +90,15 @@ public sealed class InstrumentToneGridBatchEditorTests
 		model.Rows.Single(r => r.Index == 2).Cells.Nna.Action
 			.Should().Be(InstrumentNnaAction.Off);
 
-		// Volume envelope column 6 lies outside the rectangle.
-		// A cleared value is a no-op and must not publish a revision.
+		// Volume envelope column 6 lies outside the rectangle. A real
+		// edit changes only its own row, even though the stack still has
+		// a multi-row selection over NNA/Source/Pitch columns.
 		ComboBox volume = RowCell<ComboBox>(editor, 2, 6);
-		volume.SelectedIndex = 0;
-		workspace.Document.AudioRevision.Should().Be(before + 1);
+		object option = volume.ItemsSource!.Cast<object>().Single(x =>
+			(ObjectId?)x.GetType().GetProperty("Id")!.GetValue(x) == envelope);
+		volume.SelectedItem = option;
+		workspace.Document.AudioRevision.Should().Be(before + 2);
+		model.Rows.Single(r => r.Index == 2).Cells.VolumeEnvelopeId.Should().Be(envelope);
 		model.Rows.Single(r => r.Index == 1).Cells.VolumeEnvelopeId.Should().BeNull();
 	}
 
