@@ -24,6 +24,7 @@ internal sealed class FmFilterNodeProcessor
 	private readonly FastBiquadStage[] _fastBiquads;
 	private readonly FastLinearLadderStage[] _fastLadders;
 	private readonly FastSaturatedLadderStage[] _fastSaturatedLadders;
+	private readonly FastAllPassStage[] _fastAllPasses;
 	private readonly bool _useFastNumeric;
 	private readonly int _audioIndex;
 
@@ -46,6 +47,9 @@ internal sealed class FmFilterNodeProcessor
 		int StageIndex, int CutoffBindingIndex, int ResonanceBindingIndex,
 		int DriveBindingIndex, double BaseCutoff, double BaseResonance,
 		double BaseDrive);
+
+	private readonly record struct FastAllPassStage(
+		int StageIndex, int CutoffBindingIndex, double BaseCutoff);
 
 	public FmFilterNodeProcessor(FmFilterNode node,
 		IReadOnlyDictionary<int, int> indexById)
@@ -73,6 +77,7 @@ internal sealed class FmFilterNodeProcessor
 		List<FastBiquadStage> biquads = [];
 		List<FastLinearLadderStage> ladders = [];
 		List<FastSaturatedLadderStage> saturatedLadders = [];
+		List<FastAllPassStage> allPasses = [];
 		bool supported = _bindings.Length != 0;
 		ConfiguredFilterStage[] stages = _initial?.GetStages().ToArray() ?? [];
 		for (int stageIndex = 0; stageIndex < stages.Length; stageIndex++)
@@ -154,16 +159,19 @@ internal sealed class FmFilterNodeProcessor
 					stage.Parameters.GetParameter("Resonance").NumericValue,
 					stage.Parameters.GetParameter("Drive").NumericValue));
 			}
+			else if (stage.Kind == FilterKind.AllPass)
+				allPasses.Add(new FastAllPassStage(stageIndex, cutoff, baseCutoff));
 			else
 				supported = false;
 		}
 		_useFastNumeric = supported
 			&& tpt.Count + biquads.Count + ladders.Count
-				+ saturatedLadders.Count > 0;
+				+ saturatedLadders.Count + allPasses.Count > 0;
 		_fastStages = _useFastNumeric ? [.. tpt] : [];
 		_fastBiquads = _useFastNumeric ? [.. biquads] : [];
 		_fastLadders = _useFastNumeric ? [.. ladders] : [];
 		_fastSaturatedLadders = _useFastNumeric ? [.. saturatedLadders] : [];
+		_fastAllPasses = _useFastNumeric ? [.. allPasses] : [];
 
 	}
 
@@ -171,7 +179,7 @@ internal sealed class FmFilterNodeProcessor
 	{
 		internal State(FilterInstance? initial,
 			double[] initialValues, int sampleRate, int tptCount, int biquadCount, int ladderCount,
-			int saturatedLadderCount)
+			int saturatedLadderCount, int allPassCount)
 		{
 			Configuration = initial?.Clone();
 			Values = (double[])initialValues.Clone();
@@ -183,6 +191,8 @@ internal sealed class FmFilterNodeProcessor
 			LadderScratch = new RealtimeLinearLadderCoefficients[ladderCount];
 			SaturatedUpdates = new RealtimeSaturatedLadderStageUpdate[saturatedLadderCount];
 			SaturatedScratch = new RealtimeSaturatedLadderCoefficients[saturatedLadderCount];
+			AllPassUpdates = new RealtimeAllPassStageUpdate[allPassCount];
+			AllPassScratch = new RealtimeAllPassCoefficient[allPassCount];
 			if (Configuration is not null)
 				Chain = new StreamingFilterChain(
 					new FilterChain([Configuration]), sampleRate, 1);
@@ -199,13 +209,16 @@ internal sealed class FmFilterNodeProcessor
 		internal RealtimeLinearLadderCoefficients[] LadderScratch { get; }
 		internal RealtimeSaturatedLadderStageUpdate[] SaturatedUpdates { get; }
 		internal RealtimeSaturatedLadderCoefficients[] SaturatedScratch { get; }
+		internal RealtimeAllPassStageUpdate[] AllPassUpdates { get; }
+		internal RealtimeAllPassCoefficient[] AllPassScratch { get; }
 	}
 
 	public State CreateState(int sampleRate)
 		=> new(_initial,
 			_bindings.Select(item => item.InitialValue).ToArray(),
 			sampleRate, _fastStages.Length, _fastBiquads.Length,
-			_fastLadders.Length, _fastSaturatedLadders.Length);
+			_fastLadders.Length, _fastSaturatedLadders.Length,
+			_fastAllPasses.Length);
 
 	/// <summary>
 	/// Evaluate all connected parameters as absolute values in the authored
@@ -340,12 +353,25 @@ internal sealed class FmFilterNodeProcessor
 						sourceValues, _bindings));
 		}
 
+		int allPassCount = 0;
+		foreach (FastAllPassStage stage in _fastAllPasses)
+		{
+			if (!HasChanged(stage.CutoffBindingIndex,
+				state, sourceValues, _bindings))
+				continue;
+			state.AllPassUpdates[allPassCount++] = new RealtimeAllPassStageUpdate(
+				stage.StageIndex,
+				ValueOrDefault(stage.CutoffBindingIndex, stage.BaseCutoff,
+					sourceValues, _bindings));
+		}
+
 		if (!state.Chain!.TryApplyRealtimeNumericUpdates(
 			state.FastUpdates.AsSpan(0, tptCount), state.FastScratch,
 			state.BiquadUpdates.AsSpan(0, biquadCount), state.BiquadScratch,
 			state.LadderUpdates.AsSpan(0, ladderCount), state.LadderScratch,
 			state.SaturatedUpdates.AsSpan(0, saturatedCount),
-			state.SaturatedScratch))
+			state.SaturatedScratch,
+			state.AllPassUpdates.AsSpan(0, allPassCount), state.AllPassScratch))
 			return;
 		for (int i = 0; i < _bindings.Length; i++)
 			state.Values[i] = sourceValues[_bindings[i].ValueIndex];

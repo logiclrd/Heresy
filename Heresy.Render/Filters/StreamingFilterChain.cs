@@ -186,9 +186,9 @@ public sealed class StreamingFilterChain
 	}
 
 	/// <summary>
-	/// Preflight every affected TPT, Audio EQ biquad, linear Ladder and
-	/// saturated Ladder stage
-	/// before applying numeric changes. Mixed-family updates remain atomic, including
+	/// Preflight every affected TPT, Audio EQ Biquad, Ladder and All-Pass
+	/// stage before applying numeric changes. Mixed-family updates remain
+	/// atomic, including
 	/// invalid Nyquist, shelving and stability constraints. Caller-owned
 	/// scratch and prepared states keep this path allocation-free.
 	/// </summary>
@@ -200,12 +200,15 @@ public sealed class StreamingFilterChain
 		ReadOnlySpan<RealtimeLinearLadderStageUpdate> ladderUpdates,
 		Span<RealtimeLinearLadderCoefficients> ladderScratch,
 		ReadOnlySpan<RealtimeSaturatedLadderStageUpdate> saturatedUpdates,
-		Span<RealtimeSaturatedLadderCoefficients> saturatedScratch)
+		Span<RealtimeSaturatedLadderCoefficients> saturatedScratch,
+		ReadOnlySpan<RealtimeAllPassStageUpdate> allPassUpdates,
+		Span<RealtimeAllPassCoefficient> allPassScratch)
 	{
 		if (_inputFinished || tptScratch.Length < tptUpdates.Length
 			|| biquadScratch.Length < biquadUpdates.Length
 			|| ladderScratch.Length < ladderUpdates.Length
-			|| saturatedScratch.Length < saturatedUpdates.Length)
+			|| saturatedScratch.Length < saturatedUpdates.Length
+			|| allPassScratch.Length < allPassUpdates.Length)
 			return false;
 
 		for (int i = 0; i < tptUpdates.Length; i++)
@@ -284,6 +287,32 @@ public sealed class StreamingFilterChain
 					return false;
 		}
 
+		for (int i = 0; i < allPassUpdates.Length; i++)
+		{
+			RealtimeAllPassStageUpdate update = allPassUpdates[i];
+			if ((uint)update.StageIndex >= (uint)_stages.Length
+				|| _stages[update.StageIndex].Channels[0]
+					is not IRealtimeAllPassFilterState runtime
+				|| !runtime.TryPrepareRealtime(
+					update.CutoffHz, SampleRate, out allPassScratch[i]))
+				return false;
+			for (int j = 0; j < i; j++)
+				if (allPassUpdates[j].StageIndex == update.StageIndex)
+					return false;
+			for (int j = 0; j < tptUpdates.Length; j++)
+				if (tptUpdates[j].StageIndex == update.StageIndex)
+					return false;
+			for (int j = 0; j < biquadUpdates.Length; j++)
+				if (biquadUpdates[j].StageIndex == update.StageIndex)
+					return false;
+			for (int j = 0; j < ladderUpdates.Length; j++)
+				if (ladderUpdates[j].StageIndex == update.StageIndex)
+					return false;
+			for (int j = 0; j < saturatedUpdates.Length; j++)
+				if (saturatedUpdates[j].StageIndex == update.StageIndex)
+					return false;
+		}
+
 		for (int i = 0; i < tptUpdates.Length; i++)
 		{
 			foreach (IStreamingFilterStageState channel in
@@ -311,8 +340,31 @@ public sealed class StreamingFilterChain
 				((IRealtimeSaturatedLadderFilterState)channel)
 					.CommitRealtime(saturatedScratch[i]);
 		}
+		for (int i = 0; i < allPassUpdates.Length; i++)
+		{
+			foreach (IStreamingFilterStageState channel in
+				_stages[allPassUpdates[i].StageIndex].Channels)
+				((IRealtimeAllPassFilterState)channel)
+					.CommitRealtime(allPassScratch[i]);
+		}
 		return true;
 	}
+
+	// Keep the previous four-family call contract for existing internal users.
+	internal bool TryApplyRealtimeNumericUpdates(
+		ReadOnlySpan<RealtimeTptStageUpdate> tptUpdates,
+		Span<RealtimeTptCoefficients> tptScratch,
+		ReadOnlySpan<RealtimeBiquadStageUpdate> biquadUpdates,
+		Span<RealtimeBiquadCoefficients> biquadScratch,
+		ReadOnlySpan<RealtimeLinearLadderStageUpdate> ladderUpdates,
+		Span<RealtimeLinearLadderCoefficients> ladderScratch,
+		ReadOnlySpan<RealtimeSaturatedLadderStageUpdate> saturatedUpdates,
+		Span<RealtimeSaturatedLadderCoefficients> saturatedScratch)
+		=> TryApplyRealtimeNumericUpdates(tptUpdates, tptScratch,
+			biquadUpdates, biquadScratch, ladderUpdates, ladderScratch,
+			saturatedUpdates, saturatedScratch,
+			ReadOnlySpan<RealtimeAllPassStageUpdate>.Empty,
+			Span<RealtimeAllPassCoefficient>.Empty);
 
 	// Retain the previous 3-family call contract.
 	internal bool TryApplyRealtimeNumericUpdates(

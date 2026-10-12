@@ -30,10 +30,6 @@ public sealed class AllPassFilterStageFactory : IStreamingFilterStageFactory
 			throw new ArgumentOutOfRangeException(nameof(sampleRate));
 
 		double cutoff = stage.Parameters["CutoffHz"].NumericValue;
-		if (!double.IsFinite(cutoff) || cutoff <= 0 || cutoff >= sampleRate * 0.5)
-			throw new ArgumentOutOfRangeException(nameof(stage),
-				$"All-Pass cutoff {cutoff} Hz must be strictly below Nyquist "
-				+ $"({sampleRate * 0.5} Hz).");
 
 		int order = stage.Parameters["Order"].ChoiceValue switch
 		{
@@ -46,11 +42,12 @@ public sealed class AllPassFilterStageFactory : IStreamingFilterStageFactory
 		// H(z) = (a + z^-1)/(1 + a*z^-1).
 		// The bilinear frequency warp places -pi/2 phase at cutoff for
 		// each section, with unity magnitude at *every* frequency.
-		double warped = Math.Tan(Math.PI * cutoff / sampleRate);
-		double coefficient = (warped - 1) / (warped + 1);
-		if (!double.IsFinite(coefficient) || Math.Abs(coefficient) >= 1)
+		if (!TryDesign(cutoff, sampleRate,
+			out RealtimeAllPassCoefficient prepared))
 			throw new ArgumentOutOfRangeException(nameof(stage),
-				"All-Pass coefficient must have a pole inside the unit disk.");
+				"All-Pass cutoff must be finite, within descriptor bounds, "
+				+ "strictly below Nyquist, and produce a stable coefficient.");
+		double coefficient = prepared.Value;
 
 		// A cascade of two repeated poles includes an n polynomial
 		// envelope. Account for that in the estimated finite IIR work
@@ -67,6 +64,26 @@ public sealed class AllPassFilterStageFactory : IStreamingFilterStageFactory
 		return new AllPassPlan(coefficient, order, tail);
 	}
 
+	/// <summary>
+	/// Shared static/realtime coefficient design. Order is structural,
+	/// so cutoff alone determines each section's stable reflection
+	/// coefficient, without allocating any configuration objects.
+	/// </summary>
+	private static bool TryDesign(double cutoff, int sampleRate,
+		out RealtimeAllPassCoefficient prepared)
+	{
+		prepared = default;
+		if (sampleRate <= 0 || !double.IsFinite(cutoff)
+			|| cutoff < 1 || cutoff > 20000 || cutoff >= sampleRate * 0.5)
+			return false;
+		double warped = Math.Tan(Math.PI * cutoff / sampleRate);
+		double coefficient = (warped - 1) / (warped + 1);
+		if (!double.IsFinite(coefficient) || !(Math.Abs(coefficient) < 1))
+			return false;
+		prepared = new(coefficient);
+		return true;
+	}
+
 	private sealed class AllPassPlan(
 		double coefficient, int order, int tailFrames) : IStreamingFilterStagePlan
 	{
@@ -76,11 +93,13 @@ public sealed class AllPassFilterStageFactory : IStreamingFilterStageFactory
 		public IStreamingFilterStageState CreateState() => new AllPassState(this);
 	}
 
-	private sealed class AllPassState : IStreamingFilterStageState
+	private sealed class AllPassState : IStreamingFilterStageState,
+		IRealtimeAllPassFilterState
 	{
 		private AllPassPlan _plan;
 		private double _currentCoefficient;
 		private double _startCoefficient;
+		private double _targetCoefficient;
 		private int _remaining;
 		// Transposed first-order all-pass recurrence:
 		// y = a*x + history; history' = x - a*y.
@@ -94,6 +113,7 @@ public sealed class AllPassFilterStageFactory : IStreamingFilterStageFactory
 			_plan = plan;
 			_currentCoefficient = plan.Coefficient;
 			_startCoefficient = _currentCoefficient;
+			_targetCoefficient = _currentCoefficient;
 		}
 
 		private AllPassState(AllPassState previous)
@@ -101,6 +121,7 @@ public sealed class AllPassFilterStageFactory : IStreamingFilterStageFactory
 			_plan = previous._plan;
 			_currentCoefficient = previous._currentCoefficient;
 			_startCoefficient = previous._startCoefficient;
+			_targetCoefficient = previous._targetCoefficient;
 			_remaining = previous._remaining;
 			_history1 = previous._history1;
 			_history2 = previous._history2;
@@ -114,7 +135,7 @@ public sealed class AllPassFilterStageFactory : IStreamingFilterStageFactory
 					CoefficientTransitionFrames - _remaining + 1)
 					/ CoefficientTransitionFrames;
 				_currentCoefficient = _startCoefficient
-					+ (_plan.Coefficient - _startCoefficient) * position;
+					+ (_targetCoefficient - _startCoefficient) * position;
 				_remaining--;
 			}
 			double input = float.IsFinite(sample) ? sample : 0;
@@ -141,6 +162,29 @@ public sealed class AllPassFilterStageFactory : IStreamingFilterStageFactory
 
 		public IStreamingFilterStageState Clone() => new AllPassState(this);
 
+		public bool TryPrepareRealtime(double cutoff, int sampleRate,
+			out RealtimeAllPassCoefficient coefficient)
+			=> TryDesign(cutoff, sampleRate, out coefficient);
+
+		public void CommitRealtime(RealtimeAllPassCoefficient coefficient)
+			=> SetTarget(coefficient.Value);
+
+		private void SetTarget(double target)
+		{
+			if (_currentCoefficient == target)
+			{
+				_targetCoefficient = target;
+				_startCoefficient = target;
+				_remaining = 0;
+				return;
+			}
+			// Preserve both all-pass section histories. A new cutoff
+			// interrupts the running ramp at the last applied coefficient.
+			_startCoefficient = _currentCoefficient;
+			_targetCoefficient = target;
+			_remaining = CoefficientTransitionFrames;
+		}
+
 		public void Reconfigure(IStreamingFilterStagePlan plan)
 		{
 			if (plan is not AllPassPlan replacement
@@ -148,19 +192,8 @@ public sealed class AllPassFilterStageFactory : IStreamingFilterStageFactory
 				throw new ArgumentException(
 					"All-Pass state requires the same structural order.",
 					nameof(plan));
-			if (_currentCoefficient == replacement.Coefficient)
-			{
-				_plan = replacement;
-				_startCoefficient = replacement.Coefficient;
-				_remaining = 0;
-				return;
-			}
-			// Compatible retuning never discards either section's
-			// delay state. Interruptions restart from the *current*
-			// interpolated coefficient instead of the old target.
-			_startCoefficient = _currentCoefficient;
 			_plan = replacement;
-			_remaining = CoefficientTransitionFrames;
+			SetTarget(replacement.Coefficient);
 		}
 	}
 }
