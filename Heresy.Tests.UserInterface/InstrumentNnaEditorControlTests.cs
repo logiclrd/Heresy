@@ -61,6 +61,52 @@ public sealed class InstrumentNnaEditorControlTests
     }
 
     [AvaloniaTest]
+    public void InstrumentContinueSelectorPublishesImmediatelyButFadeWaitsForValidDuration()
+    {
+        DocumentWorkspace workspace = new();
+        InstrumentDefinition instrument =
+            InstrumentDocumentEditor.CreateInstrument(workspace, "Continue selector");
+        int changed = 0;
+        InstrumentEditorControl editor = new(workspace, instrument,
+            () => { }, _ => changed++);
+        ComboBox action = Field<ComboBox>(editor, "_nnaOverride");
+        TextBox fade = Field<TextBox>(editor, "_nnaFadeMilliseconds");
+        uint before = workspace.Document.AudioRevision;
+
+        action.SelectedItem = InstrumentNnaOverride.Continue;
+        Assert.That(instrument.NnaOverride,
+            Is.EqualTo(InstrumentNnaOverride.Continue),
+            "selecting Continue must not silently leave the active Instrument in Cut mode");
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(before + 1));
+        Assert.That(changed, Is.EqualTo(1));
+        SongDocumentSnapshot saved = SongDocumentSnapshot.Create(workspace.Document);
+        Assert.That(((InstrumentDefinition)saved.Document.Objects[instrument.Id]).NnaOverride,
+            Is.EqualTo(InstrumentNnaOverride.Continue),
+            "a new playback snapshot should see the selection immediately");
+
+        action.SelectedItem = InstrumentNnaOverride.Fade;
+        Assert.That(instrument.NnaOverride, Is.EqualTo(InstrumentNnaOverride.Continue),
+            "Fade needs a valid duration before it can be published");
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(before + 1));
+        fade.Text = "not a duration";
+        Invoke(editor, "ApplyNnaOverride");
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(before + 1));
+        Assert.That(Field<TextBlock>(editor, "_message").Text,
+            Does.Contain("positive finite"));
+
+        fade.Text = "32.5";
+        Invoke(editor, "ApplyNnaOverride");
+        Assert.That(instrument.NnaOverride, Is.EqualTo(InstrumentNnaOverride.Fade));
+        Assert.That(instrument.NnaFadeDuration,
+            Is.EqualTo(TimeSpan.FromMilliseconds(32.5)));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(before + 2));
+        action.SelectedItem = InstrumentNnaOverride.Continue;
+        Assert.That(instrument.NnaOverride, Is.EqualTo(InstrumentNnaOverride.Continue));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(before + 3));
+        Assert.That(changed, Is.EqualTo(3));
+    }
+
+    [AvaloniaTest]
     public void ToneNnaPersistsInSourcelessDraftThenPublishesOnSourceAssignment()
     {
         DocumentWorkspace workspace = new();
