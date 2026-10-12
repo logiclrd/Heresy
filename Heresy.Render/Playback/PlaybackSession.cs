@@ -1983,8 +1983,8 @@ public sealed class PlaybackSession
 				// Prepare every independent descendant clock before publishing
 				// either the controller binding or a single voice update.
 				List<(PlaybackVoice Voice, EnvelopePlaybackState? State)> updates = [];
-				foreach (PlaybackVoice voice in CollectFlattenedDescendants(controller.ScopeId))
-					updates.Add((voice, voice.PrepareEnclosingEnvelopeBinding(
+				foreach (PlaybackVoice descendant in CollectFlattenedDescendants(controller.ScopeId))
+					updates.Add((descendant, descendant.PrepareEnclosingEnvelopeBinding(
 						controller, resolved, frame)));
 				controller.PublishParameterEnvelope(
 					command.StageId, parameter, resolved, frame);
