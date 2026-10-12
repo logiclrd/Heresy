@@ -2,6 +2,7 @@ using System.Linq;
 
 using AwesomeAssertions;
 
+using Heresy.Core.Filters;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -28,7 +29,10 @@ public sealed class SongReferenceAnalyzerTests
 		DataPatternDefinition pattern = new(patternId, "Pattern");
 		PatternCell referenceCell = pattern.Grid.GetOrCreateCell(0, 0);
 		referenceCell.SourceId = targetId;
-		referenceCell.Note = new StartPatternNote();
+		ObjectId filterId = document.AllocateObjectId();
+		document.Add(new FilterDefinition(filterId, "Event Filter"));
+		referenceCell.Note = new StartPatternNote(
+			eventFilterDefinitionId: filterId);
 		document.Add(pattern);
 
 		ObjectId sequenceId = document.AllocateObjectId();
@@ -53,6 +57,9 @@ public sealed class SongReferenceAnalyzerTests
 		kinds.Should().Contain(SongReferenceKind.PatternNoteSource);
 		kinds.Should().Contain(SongReferenceKind.SequencePattern);
 		kinds.Should().Contain(SongReferenceKind.InstrumentSource);
+		analysis.References.Should().Contain(
+			new SongReference(filterId, patternId,
+				SongReferenceKind.PatternNoteFilter));
 	}
 
 	[Test]
