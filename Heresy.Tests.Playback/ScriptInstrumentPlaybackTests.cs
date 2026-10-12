@@ -228,6 +228,60 @@ public sealed class ScriptInstrumentPlaybackTests
             plan.Source.Render(4, new float[4]));
     }
 
+    [Test]
+    public void FlattenedNoteStartFilterIsInheritedByDescendantNotUnrelatedSibling()
+    {
+        SongDocument song = new();
+        ObjectId sample = Sample(song, 16384);
+        ObjectId child = ScriptPattern(song,
+            $"Note(0, 0, _O({sample.Value}));");
+        FilterInstance filter = Echo(song, 0.001);
+        ObjectId root = ScriptPattern(song,
+            $"Note(0, 0, _O({child.Value}), " +
+            $"eventFilterDefinitionId: _O({filter.DefinitionId.Value})); " +
+            $"Note(0, 1, _O({sample.Value}));");
+        ((ScriptPatternDefinition)song.Objects[root]).ChannelCount = 2;
+        PreparedIncrementalPlaybackFactory factory = new(Mono());
+        using PreparedIncrementalPlaybackPlan whole = factory.Create(song, root);
+        using PreparedIncrementalPlaybackPlan parts = factory.Create(song, root);
+        float[] pcm = new float[8], chunked = new float[8];
+        whole.Source.Render(pcm.Length, pcm);
+        parts.Source.Render(1, chunked.AsSpan(0, 1));
+        parts.Source.Render(7, chunked.AsSpan(1));
+        Assert.That(pcm[0], Is.EqualTo(1.0f).Within(1e-5f));
+        Assert.That(pcm[1], Is.EqualTo(1.5f).Within(1e-5f),
+            "the flattened child uses the event Filter, but its sibling does not");
+        Assert.That(chunked, Is.EqualTo(pcm).Within(1e-6f));
+    }
+
+    [Test]
+    public void NestedFlattenedInstigatingNotesComposeTheirEventFilterLayers()
+    {
+        SongDocument song = new();
+        ObjectId sample = Sample(song, 16384);
+        FilterInstance inside = Echo(song, 0.001);
+        FilterInstance outside = Echo(song, 0.002);
+        ObjectId leaf = ScriptPattern(song,
+            $"Note(0, 0, _O({sample.Value}));");
+        ObjectId middle = ScriptPattern(song,
+            $"Note(0, 0, _O({leaf.Value}), " +
+            $"eventFilterDefinitionId: _O({inside.DefinitionId.Value}));");
+        ObjectId root = ScriptPattern(song,
+            $"Note(0, 0, _O({middle.Value}), " +
+            $"eventFilterDefinitionId: _O({outside.DefinitionId.Value}));");
+        PreparedIncrementalPlaybackFactory factory = new(Mono());
+        using PreparedIncrementalPlaybackPlan whole = factory.Create(song, root);
+        using PreparedIncrementalPlaybackPlan chunks = factory.Create(song, root);
+        float[] pcm = new float[8], split = new float[8];
+        whole.Source.Render(8, pcm);
+        for (int i = 0; i < split.Length; i++)
+            chunks.Source.Render(1, split.AsSpan(i, 1));
+        Assert.That(pcm.Take(4),
+            Is.EqualTo(new float[] { 0.5f, 1.0f, 1.5f, 2.0f })
+                .Within(1e-5f));
+        Assert.That(split, Is.EqualTo(pcm).Within(1e-6f));
+    }
+
     private static FilterInstance Echo(SongDocument song, double delay)
     {
         ObjectId filterId = song.AllocateObjectId();
