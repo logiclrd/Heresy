@@ -120,8 +120,14 @@ public sealed class InstrumentToneFilterRenderingTests
         session.ApplyFlattenedScopeAction(1, NoteDisplacementAction.Cut);
         float[] after = new float[4];
         session.Render(1, 4, after);
-        Assert.That(after, Is.EqualTo(new float[] { 0, 1, 0, 0 }),
-            "descendant delay history stops with its scope, not a sibling host");
+        // The cut deliberately contributes an anti-click residue from the
+        // descendant's last sample. At 1 kHz it decays rapidly; its own
+        // two-frame comb echo must *not* continue after cancellation.
+        Assert.That(after[0], Is.EqualTo(0.5f).Within(1e-6f));
+        Assert.That(after[1], Is.GreaterThan(1f).And.LessThan(1.1f),
+            "unscoped sibling retains its exact echo plus short cut residue");
+        Assert.That(Math.Abs(after[2]), Is.LessThan(0.01f));
+        Assert.That(Math.Abs(after[3]), Is.LessThan(0.01f));
     }
 
     [Test]
