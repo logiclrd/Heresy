@@ -299,7 +299,7 @@ public sealed class NativePatternEffectEditorDialog : Window
 		_assistant.Children.Add(parameterFields);
 		TextBox annotation = new()
 		{
-			Watermark = "Describe the Filter behavior or target",
+			PlaceholderText = "Describe the Filter behavior or target",
 		};
 		_assistant.Children.Add(annotation);
 		Button replace = new()
