@@ -88,7 +88,7 @@ internal sealed class ChannelOutputFilterState
     public ChannelOutputFilterState PrepareParameterEnvelopeUpdate(
         int stageId, string parameter, IEnvelopeCurve? curve, long frame)
     {
-        ConfiguredFilterStage stage = _configuration.Definition.GetStage(stageId);
+        FilterStageDefinition stage = _configuration.Definition.GetStage(stageId);
         FilterParameterDescriptor? descriptor = null;
         foreach (FilterParameterDescriptor candidate in
             FilterCatalogue.GetParameters(stage.Kind))
