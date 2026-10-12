@@ -6,6 +6,23 @@ architecture and regression history are documented in the
 features, including scripted Patterns, Sequences, Envelopes, Instruments,
 virtual-voice controls, and compiled parametric effects, are implemented.
 
+## Sample-import MP3 decoding regression
+
+- [ ] **Fix MP3 Layer III frame-boundary chirping on import.** A real
+  MP3 imported as a Sample audibly contains repeated high-frequency
+  chirps although conversion to WAV outside Heresy works; the defect
+  predates the final-speaker Filter changes. The current load-time
+  `SampleAudioCodec.DecodeMp3` uses the Hawkynt MP3 decoder, while
+  the existing single-frame synthetic test exercises MPEG Layer II,
+  not ordinary multi-frame Layer III. Replace the MP3 import decoder
+  with a reliable, persistent-state managed decoder; retain original
+  encoded bytes for module persistence, decode PCM only during
+  import/load, and keep realtime rendering codec-free. Test a real
+  multi-frame Layer III fixture for waveform continuity and verify
+  all existing import formats and Linux Release/ARM64 CI. Link:
+  [sample-storage.md](sample-storage.md). Report audible confirmation
+  on the original problem file separately, if available.
+
 ## Reusable FIR/IIR filter system
 
 Design source: [filter-design.md](filter-design.md) (incremental implementation). Each checkbox is intended to be a separately closable, tested implementation slice. In particular, filter *definitions*, configured *instances*, and mutable *DSP processing state* are different things. Do not replace existing IT/tracker-compatible voice filters as an accidental side effect. Preserve the recursive incremental renderer, private mixdown isolation, and current native-effect ordering.
