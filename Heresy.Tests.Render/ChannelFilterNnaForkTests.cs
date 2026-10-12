@@ -167,6 +167,26 @@ public sealed class ChannelFilterNnaForkTests
         Assert.That(split, Is.EqualTo(entire));
     }
 
+    [TestCase(NoteDisplacementAction.Off)]
+    [TestCase(NoteDisplacementAction.Fade)]
+    public void ReleasedOrFadingNnaRetainsIndependentHostHistory(
+        NoteDisplacementAction action)
+    {
+        PlaybackSession session = CreateSession(new LongPulse(), Schedule(
+            Event(0, new SetChannelFilterCommand {
+                    Configuration = Echo(34060, 0.001),
+                }, new StartNoteCommand(SoundId),
+                new SetCurrentVoiceDisplacementActionCommand(action)),
+            Event(1, new StartNoteCommand(SoundId))));
+        float[] actual = new float[4];
+        session.Render(0, actual.Length, actual);
+        Assert.That(actual, Is.EqualTo(new float[] { 1, 2, 1, 0 }),
+            $"NNA {action} must fork the original host at frame one");
+        Assert.That(session.VirtualVoices, Has.Count.EqualTo(1));
+        Assert.That(session.VirtualVoices[0].DisplacedOutputFilterState,
+            Is.Not.Null);
+    }
+
     [Test]
     public void DisplacedNnaOutputEnvelopeRemainsIndependentAfterPhysicalDetach()
     {
