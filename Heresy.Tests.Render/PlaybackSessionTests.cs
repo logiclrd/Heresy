@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Numerics;
 
 using Heresy.Core.Assets;
+using Heresy.Core.Filters;
+using Heresy.Render.Filters;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
 using Heresy.Core.Samples;
@@ -23,6 +25,90 @@ namespace Heresy.Tests.Render;
 [TestFixture]
 public sealed class PlaybackSessionTests
 {
+    [Test]
+    public void ReusableSerialSpeakerChainMatchesIndependentMonoEngineAndBlockPartitioning()
+    {
+        ObjectId source = (ObjectId)10U;
+        FilterDefinition definition = new((ObjectId)59001U, "Speaker", [
+            new FilterStageDefinition(1, "eq", FilterKind.OnePole),
+            new FilterStageDefinition(2, "delay", FilterKind.CombFeedforward),
+        ]);
+        FilterInstance selected = new(definition);
+        selected.SetStageParameters(1, [
+            new("CutoffHz", FilterParameterValue.FromNumber(120)),
+            new("Mode", FilterParameterValue.FromChoice("LowPass")),
+        ]);
+        selected.SetStageParameters(2, [
+            new("DelaySeconds", FilterParameterValue.FromNumber(0.002)),
+            new("Feedforward", FilterParameterValue.FromNumber(0.6)),
+            new("Mix", FilterParameterValue.FromNumber(1)),
+        ]);
+        RenderConfiguration config = new(1000, [
+            new OutputChannelConfiguration(new Vector3(-1,0,0),
+                positionalImportance:0, filterType:OutputFilterType.Chain, filter:selected),
+            new OutputChannelConfiguration(new Vector3(1,0,0),
+                positionalImportance:0),
+        ]);
+        PlaybackSession Create(bool privateChild = false) => new(new RenderContext(config),
+            Schedule(Event(TimeSpan.Zero, 0, new StartNoteCommand(source))),
+            new TestResolver((source, false, new SpeakerImpulseSound())),
+            applyFinalSpeakerFilters: !privateChild);
+
+        StreamingFilterChain reference = new(
+            new FilterChain([selected]), 1000, 1);
+        float[] actual = new float[24];
+        Create().Render(0, 12, actual);
+        Span<float> frame = stackalloc float[1];
+        for (int i = 0; i < 12; i++)
+        {
+            frame[0] = i == 0 ? 1f : 0f;
+            reference.ProcessFrame(frame);
+            Assert.That(actual[2 * i], Is.EqualTo(frame[0]).Within(1e-7f));
+            Assert.That(actual[2 * i + 1], Is.EqualTo(i == 0 ? 1f : 0f));
+        }
+        PlaybackSession split = Create();
+        float[] chunked = new float[24];
+        split.Render(0, 1, chunked.AsSpan(0, 2));
+        split.Render(1, 4, chunked.AsSpan(2, 8));
+        split.Render(5, 7, chunked.AsSpan(10));
+        Assert.That(chunked, Is.EqualTo(actual));
+        float[] privatePcm = new float[24];
+        Create(privateChild:true).Render(0, 12, privatePcm);
+        Assert.That(privatePcm[0], Is.EqualTo(1),
+            "private recursive mixdown bypasses final-speaker filtering");
+        Assert.That(privatePcm[2], Is.Zero);
+    }
+
+    [Test]
+    public void LegacyRcSpeakerModeAndEquivalentInlineStageAreFrameExact()
+    {
+        ObjectId source = (ObjectId)10U;
+        FilterDefinition definition = new((ObjectId)59002U, "Old RC", [
+            new FilterStageDefinition(1, "old", FilterKind.SpeakerLegacyRc),
+        ]);
+        FilterInstance inline = new(definition);
+        inline.SetStageParameters(1, [
+            new("CutoffHz", FilterParameterValue.FromNumber(135)),
+            new("Mode", FilterParameterValue.FromChoice("HighPass")),
+        ]);
+        RenderConfiguration config = new(1000, [
+            new OutputChannelConfiguration(new Vector3(-1,0,0),
+                positionalImportance:0, filterType:OutputFilterType.HighPass,
+                cutoffHz:135),
+            new OutputChannelConfiguration(new Vector3(1,0,0),
+                positionalImportance:0, filterType:OutputFilterType.Chain,
+                filter:inline),
+        ]);
+        PlaybackSession session = new(new RenderContext(config),
+            Schedule(Event(TimeSpan.Zero, 0, new StartNoteCommand(source))),
+            new TestResolver((source, false, new SpeakerImpulseSound())));
+        float[] pcm = new float[32];
+        session.Render(0, 16, pcm);
+        for (int i = 0; i < 16; i++)
+            Assert.That(pcm[i * 2], Is.EqualTo(pcm[i * 2 + 1]),
+                "old speaker preset and explicit Legacy RC stage must be identical");
+    }
+
 	[Test]
 	public void FinalOutputFiltersUseIndependentSpeakerStatesAndPersistAcrossBlocks()
 	{
