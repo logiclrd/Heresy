@@ -615,6 +615,19 @@ the same concrete Core effect type, and rely on the Core constructors for value
 validation. Applying a change replaces the selected stack member through the
 same stack-editing command path used by the tracker UI.
 
+The bottom status area displays diagnostic/status text and effect-specific
+keyboard guidance on **separate, vertically stacked lines**. Guidance is
+shown only when the tracker cursor selects an effect field. Empty slots
+suggest A–Z or right-click insertion; a single tracker effect describes
+command/hex entry; a collapsed multi-effect stack says **Expand stacked
+effects with Enter**; an expanded tracker effect describes Enter collapse;
+and selecting any native effect says **Configure effect with Enter**.
+Moving out of the effect field hides the guidance without erasing the
+diagnostic/status line. Bad direct input continues to report the actual
+failure in diagnostics (including collapsed stack and native-effect
+restrictions), not on the transient guidance line. Mouse hover/tooltips
+never replace the existing diagnostic text.
+
 The same dialog also creates native effects. Creation adds a type selector backed
 by the native-effect catalog, seeds a valid default instance for the selected
 type, then renders exactly the same semantic parameter fields used for editing.

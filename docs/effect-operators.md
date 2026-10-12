@@ -253,9 +253,20 @@ Avalonia and document regression tests cover picker parity, colour
 swatches, contextual submenu hierarchy, clicked-index before/after
 ordering and direct insertion into blank sequence-mapped cells.
 
-The contextual guidance line remains **separately tracked work**,
-sharing the same vertical status area as real diagnostics. The
-native Enter configuration dialog already exists and must be called
-**Configure effect with Enter**, not described as a future dialog.
-A multi-item collapsed stack instead says **Expand stacked effects
-with Enter**.
+Contextual guidance now occupies a *separate second line* directly
+under the Pattern editor's existing diagnostic/status text. The
+`PatternEffectStatusHints` model reads the actual mapped cursor field,
+collapsed/expanded state and selected effect, and is refreshed after
+pointer selection, keyboard navigation, stack insertion, expansion and
+grid rebuilds. Empty effect fields offer tracker A–Z/right-click
+insertion guidance; single tracker fields explain hexadecimal input;
+collapsed multi-effect stacks say **Expand stacked effects with Enter**;
+expanded tracker effects mention Enter collapsing the stack; native
+effects, single or selected within a stack, say **Configure effect with
+Enter**, which invokes the already-implemented editor. Leaving the
+effect field hides the hint. Diagnostic text is never overwritten by
+guidance or hover, and rejected direct editing writes a specific
+explanation to the original diagnostic line. Both status lines are
+read-only UI: changing focus does not change song/audio revisions.
+Model and headless Avalonia tests cover cursor transitions, stale
+expanded selections and surviving diagnostic messages.
