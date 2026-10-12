@@ -1,7 +1,7 @@
 # Instrument tone-grid model — implementation milestone
 
-Status: **visual ten-column grid with an independent tone Filter selection
-and per-use override editor, plus framework-independent model implemented**. The Avalonia `InstrumentEditorControl` now
+Status: **visual eleven-column grid with independent tone NNA and Filter
+selection, per-use Filter override editor, and framework-independent model implemented**. The Avalonia `InstrumentEditorControl` now
 projects the same `InstrumentToneGridModel` used by regression tests;
 the old dual ToneSpecifications/ToneTable editor controls were removed.
 The editor commits populated cell choices as they change; its Pitch
@@ -212,8 +212,10 @@ to a selected tone use atomic publication and revision tracking. See [script pro
 
 ## Agreed next-stage interaction specification — 12 October 2026
 
-This section is an **approved design**, not yet implemented. The corresponding
-independently closable items remain in [todo.md](todo.md).
+Hierarchical NNA is now implemented through the authoring views described
+below. Rectangular selection, multi-row propagation, revised Pitch display and
+row-density adjustments remain **approved but unimplemented** separate items
+in [todo.md](todo.md).
 
 ### Hierarchical NNA
 
@@ -281,4 +283,37 @@ The shared `InstrumentDefinitionBase.ResolveNna(incomingPitch, selectedTone, pre
 
 At each note start, tone selection uses the caller's positive finite input pitch; recursive binding obtains its child invocation and its already-captured `NewNotePolicy`. The selected tone may override that policy. The data Instrument's non-default global NNA overrides its selected tone; otherwise **UseToneNna** delegates to it. A scripted NNA expression evaluates with that same original input pitch, not the tone's composed/child-transposed pitch, and overrides the tone unless the script returns Inherit. The final concrete `NewNotePolicy`, Fade duration and full Envelope configuration are captured once in `NoteConfigurationSnapshot`, so a previously started voice cannot change when the song's authoring settings or a later note change. Tracker S73–S76 still override the **current** already-playing voice using the existing runtime command pathway, independently of source defaults.
 
-Both styles and all per-tone values are serialized in the unchanged version-one song schema as optional properties. Old documents lacking them load with Inherit/UseToneNna defaults. Invalid policy enums and malformed/nonpositive Fade durations are rejected at decode or bind rather than silently selecting a different voice action. `InstrumentToneGridCells`, shared-tone interning, and the legacy editor API retain these independent NNA values even when the user changes only Source/Pitch/Envelope/Filter fields; a source-less row holds its NNA in an editor-local draft until the row is published. The **Avalonia control surface** for editing these policies is tracked as a subsequent TODO and is *not* part of this model/persistence milestone.
+Both styles and all per-tone values are serialized in the unchanged version-one song schema as optional properties. Old documents lacking them load with Inherit/UseToneNna defaults. Invalid policy enums and malformed/nonpositive Fade durations are rejected at decode or bind rather than silently selecting a different voice action. `InstrumentToneGridCells`, shared-tone interning, and the legacy editor API retain these independent NNA values even when the user changes only Source/Pitch/Envelope/Filter fields; a source-less row holds its NNA in an editor-local draft until the row is published. The Avalonia NNA authoring surface is also implemented. Data Instruments show
+an explicit Instrument-wide chooser with **Use Tone NNA** (the default),
+Cut/Continue/Off/Fade and a Fade-duration field that is visible when Fade is
+selected. Clicking **Apply NNA** validates the positive duration and publishes
+action plus duration in one audio revision; an unchanged setting is a no-op.
+The virtualized grid adds an **NNA / fade (ms)** column alongside Source,
+Pitch and Envelopes. Each row can independently select **Inherit** (default),
+Cut, Continue, Off, or Fade, with a positive per-tone Fade duration.
+Editing the policy of an assigned row publishes one copy-on-write grid change,
+retaining all its Source/Pitch/Envelope/Filter fields, whereas an unassigned
+row remains a source-less draft and does not change the saved audio document.
+The reserved entry row carries its draft NNA through insertion and publication.
+An invalid Fade duration shows a diagnostic without committing a change; the
+duration input commits on Enter or focus loss. A change to one of two previously
+interned tones does not change the other. The Instrument-wide Apply operation
+detects concurrent authoring of its NNA policy and refuses a stale overwrite.
+
+Script Instruments expose their prepared restricted **NNA expression** in a
+separate editor field beside their Source/Pitch expressions, with an example
+of InstrumentNnaAction.Inherit and pitch-dependent Continue. The separately
+configured script Fade duration is in milliseconds; **Apply NNA expression**
+validates both fields atomically through SetNnaExpression. Each declared
+script tone also has a separate Inherit/Cut/Continue/Off/Fade selector and
+Fade duration in the selected-tone details, published together on **Add tone**
+or **Update selected**. Script tone updates detect conflicting external NNA
+edits. Neither interface compiles Roslyn or resolves arbitrary scripts on a
+realtime audio callback.
+
+InstrumentNnaEditorControlTests covers both real Avalonia views, positive
+and malformed duration handling, independent tone editing, source-less drafts,
+shared specification copy-on-write, scripted expression diagnostics, stale
+changes and version-one JSON persistence; previous Core/Script/Playback NNA
+regressions continue covering recursive precedence and note snapshot behavior.
+Physical-device audible NNA acceptance is intentionally still open.

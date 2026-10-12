@@ -514,4 +514,14 @@ A scripted Instrument can now supply an independent restricted C# `NnaExpression
 pitchMultiplier < 1.5 ? InstrumentNnaAction.Continue : InstrumentNnaAction.Inherit
 ```
 
-Scripts have no unrestricted object allocation or host framework access: only the five literal `InstrumentNnaAction` enum members were added to the restricted semantic allowlist. The expression is compiled once during playback-source preparation, alongside the tone selector and pitch scaler; no Roslyn compilation occurs in realtime PCM processing. An explicit script result supersedes the selected tone's NNA; Inherit delegates to the selected tone, which can in turn inherit the child source's policy. Fade uses the script Instrument's separately authored positive `NnaFadeDuration`. The resolved policy and duration are captured in the newly created note invocation. Expression and duration are stored as optional version-one Instrument fields; absence means Inherit and a standard positive Fade duration. Invalid expressions fail preparation with diagnostics before sound processing. Script UI editing controls and human-facing validation messages remain a separate follow-up task.
+Scripts have no unrestricted object allocation or host framework access: only the five literal `InstrumentNnaAction` enum members were added to the restricted semantic allowlist. The expression is compiled once during playback-source preparation, alongside the tone selector and pitch scaler; no Roslyn compilation occurs in realtime PCM processing. An explicit script result supersedes the selected tone's NNA; Inherit delegates to the selected tone, which can in turn inherit the child source's policy. Fade uses the script Instrument's separately authored positive `NnaFadeDuration`. The resolved policy and duration are captured in the newly created note invocation. Expression and duration are stored as optional version-one Instrument fields; absence means Inherit and a standard positive Fade duration. Invalid expressions fail preparation with diagnostics before sound processing. Script UI editing controls are now implemented: ScriptInstrumentEditorControl
+has a distinct NNA expression input, independently authored Fade milliseconds,
+an **Apply NNA expression** action that runs restricted compilation analysis
+and preserves the song on failure, and Inherit/Cut/Continue/Off/Fade with
+per-tone Fade duration in the selected-tone form. Script tone creation and
+updates publish this value together with Source, Pitch, Envelopes and Filter;
+an Inherit result delegates to the selected tone as described above.
+The view refuses stale NNA expression or selected-tone authoring rather than
+silently overwriting an external change. Headless Avalonia tests, version-one
+JSON round-trips and prior prepared-playback regressions cover these controls
+and their non-realtime execution boundary.
