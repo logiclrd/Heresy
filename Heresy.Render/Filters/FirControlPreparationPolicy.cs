@@ -20,10 +20,34 @@ internal readonly record struct FirControlRequest(
 internal readonly record struct PreparedFirControlStage(
 	int StageIndex, IStreamingFilterStagePlan Plan);
 
-internal sealed class PreparedFirControlBatch(PreparedFirControlStage[] stages)
+internal sealed class PreparedFirControlBatch(
+	PreparedFirControlStage[] stages, FirControlRequest[] requests)
 {
 	public IReadOnlyList<PreparedFirControlStage> Stages { get; } =
 		Array.AsReadOnly(stages);
+
+	/// <summary>The exact immutable-value snapshot that was designed off-loop.
+	/// A later PCM frame must match the whole snapshot before publication.</summary>
+	internal bool Matches(ReadOnlySpan<FirControlRequest> proposed)
+	{
+		if (proposed.Length != requests.Length)
+			return false;
+		for (int i = 0; i < requests.Length; i++)
+			if (proposed[i] != requests[i])
+				return false;
+		return true;
+	}
+
+	internal bool AllLinear
+	{
+		get
+		{
+			foreach (FirControlRequest request in requests)
+				if (request.PhaseResponse != "Linear")
+					return false;
+			return true;
+		}
+	}
 }
 
 /// <summary>
@@ -161,7 +185,9 @@ internal sealed class FirControlPreparationPolicy
 				plans[i] = new PreparedFirControlStage(req.StageIndex,
 					LinearPhaseFirFilterStageFactory.Instance.Prepare(stage, _sampleRate));
 			}
-			prepared = new PreparedFirControlBatch(plans);
+			FirControlRequest[] captured = new FirControlRequest[_count];
+			Array.Copy(_pending, captured, _count);
+			prepared = new PreparedFirControlBatch(plans, captured);
 			_count = 0;
 			return true;
 		}

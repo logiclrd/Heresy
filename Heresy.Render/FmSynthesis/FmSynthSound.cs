@@ -131,6 +131,33 @@ public sealed class FmSynthSound : ISound
 			_nodes.Length,
 			_oscillatorCount);
 
+	/// <summary>
+	/// Explicit off-PCM control boundary for FIR modulation. The caller runs
+	/// this *between* Render blocks on the invocation-owning rendering
+	/// thread, never inside the audio-device callback or sample loop.
+	/// Prepares at most one bounded latest-wins FIR snapshot per Filter node.
+	/// A later sample consumes it only if its complete control request still
+	/// matches; otherwise the old kernel is retained. Passing the same
+	/// absolute preparation boundaries when replaying produces identical PCM.
+	/// </summary>
+	public int PreparePendingFilterControls(RenderContext context, SoundState state)
+	{
+		ArgumentNullException.ThrowIfNull(context);
+		FmSynthState synthState = ValidateState(state);
+		if (synthState.SampleRate != context.Configuration.SampleRate)
+			return 0;
+		int prepared = 0;
+		for (int index = 0; index < _nodes.Length; index++)
+		{
+			FmFilterNodeProcessor? processor = _nodes[index].Filter;
+			FmFilterNodeProcessor.State? filterState = synthState.Filters[index];
+			if (processor is not null && filterState is not null
+				&& processor.TryPreparePendingFirs(filterState))
+				prepared++;
+		}
+		return prepared;
+	}
+
 	public long? GetEndFrameExclusive(
 		RenderContext context, SoundState state)
 	{

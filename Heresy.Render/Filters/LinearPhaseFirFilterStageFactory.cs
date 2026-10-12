@@ -196,11 +196,12 @@ public sealed class LinearPhaseFirFilterStageFactory : IStreamingFilterStageFact
 		public IStreamingFilterStageState CreateState() => new FirState(this);
 	}
 
-	private sealed class FirState : IStreamingFilterStageState
+	private sealed class FirState : IStreamingFilterStageState, IRealtimeFirFilterState
 	{
 		private FirPlan _plan;
 		private readonly double[] _history;
 		private double[]? _rampFrom;
+		private readonly double[] _realtimeRampScratch;
 		private int _position;
 		private int _remaining;
 
@@ -208,12 +209,14 @@ public sealed class LinearPhaseFirFilterStageFactory : IStreamingFilterStageFact
 		{
 			_plan = plan;
 			_history = new double[plan.Coefficients.Length];
+			_realtimeRampScratch = new double[plan.Coefficients.Length];
 		}
 
 		private FirState(FirState original)
 		{
 			_plan = original._plan;
 			_history = (double[])original._history.Clone();
+			_realtimeRampScratch = new double[original._realtimeRampScratch.Length];
 			_rampFrom = original._rampFrom is null
 				? null : (double[])original._rampFrom.Clone();
 			_position = original._position;
@@ -264,6 +267,38 @@ public sealed class LinearPhaseFirFilterStageFactory : IStreamingFilterStageFact
 		}
 
 		public IStreamingFilterStageState Clone() => new FirState(this);
+
+		public bool TryPrepareRealtime(IStreamingFilterStagePlan plan)
+			=> plan is FirPlan next
+				&& next.Coefficients.Length == _history.Length
+				&& next.LatencyFrames == (_history.Length - 1) / 2
+				&& _plan.LatencyFrames == next.LatencyFrames;
+
+		public void CommitRealtime(IStreamingFilterStagePlan plan)
+		{
+			FirPlan next = (FirPlan)plan;
+			if (!TryPrepareRealtime(next))
+				throw new ArgumentException(
+					"Realtime FIR plans must preserve linear phase and tap count.",
+					nameof(plan));
+			double[] prior = _plan.Coefficients;
+			if (_remaining > 0)
+			{
+				double progress = (double)(
+					CoefficientTransitionFrames - _remaining)
+					/ CoefficientTransitionFrames;
+				double[] source = _rampFrom!;
+				for (int i = 0; i < _realtimeRampScratch.Length; i++)
+					_realtimeRampScratch[i] = source[i]
+						+ (prior[i] - source[i]) * progress;
+			}
+			else
+				Array.Copy(prior, _realtimeRampScratch,
+					_realtimeRampScratch.Length);
+			_rampFrom = _realtimeRampScratch;
+			_plan = next;
+			_remaining = CoefficientTransitionFrames;
+		}
 
 		public void Reconfigure(IStreamingFilterStagePlan plan)
 		{

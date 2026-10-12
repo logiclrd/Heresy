@@ -278,6 +278,7 @@ internal sealed class FmFilterNodeProcessor
 				FirControl = new FirControlPreparationPolicy(sampleRate);
 				FirRequests = new FirControlRequest[
 					Math.Min(firCount, FirControlPreparationPolicy.MaximumQueuedStages)];
+				FirPreparedUpdates = new RealtimeFirStageUpdate[FirRequests.Length];
 			}
 			if (Configuration is not null)
 				Chain = new StreamingFilterChain(
@@ -303,6 +304,8 @@ internal sealed class FmFilterNodeProcessor
 		internal RealtimeFeedforwardCombCoefficients[] FeedforwardScratch { get; }
 		internal FirControlPreparationPolicy? FirControl { get; }
 		internal FirControlRequest[]? FirRequests { get; }
+		internal RealtimeFirStageUpdate[]? FirPreparedUpdates { get; }
+		internal PreparedFirControlBatch? FirReady { get; set; }
 	}
 
 	public State CreateState(int sampleRate)
@@ -312,6 +315,25 @@ internal sealed class FmFilterNodeProcessor
 			_fastLadders.Length, _fastSaturatedLadders.Length,
 			_fastAllPasses.Length, _fastFeedbackCombs.Length,
 			_fastFeedforwardCombs.Length, _fastFirs.Length);
+
+	/// <summary>
+	/// Control-side operation, called explicitly between rendering blocks.
+	/// FIR design is NEVER performed in Process or in the PCM sample loop.
+	/// The immutable plans are kept on the invocation until a later sample
+	/// requests precisely this validated snapshot. Obsolete plans are ignored.
+	/// </summary>
+	internal bool TryPreparePendingFirs(State state)
+	{
+		if (state.FirControl is null || state.Configuration is null
+			|| state.FirControl.PendingCount == 0)
+			return false;
+		if (!state.FirControl.TryPreparePending(state.Configuration,
+			out PreparedFirControlBatch? prepared)
+			|| prepared is null || !prepared.AllLinear)
+			return false;
+		state.FirReady = prepared;
+		return true;
+	}
 
 	/// <summary>
 	/// Evaluate all connected parameters as absolute values in the authored
@@ -377,12 +399,11 @@ internal sealed class FmFilterNodeProcessor
 			return;
 		}
 
-		// FIR parameter snapshots are only captured and admitted here:
-		// no windowed-sinc design, phase conversion, FilterInstance clone
-		// or filter history rebuild may happen in this live PCM method.
-		// Until the per-phase FIR consumers are installed, any FIR change
-		// keeps the previous valid kernel and prevents *all* mixed-family
-		// updates in that frame.
+		// Capture changing FIR controls without performing windowed-sinc
+		// preparation here. A control-side caller must explicitly prepare
+		// and publish immutable plans between PCM blocks. The live loop
+		// can consume a prepared linear-phase plan only for an exact match
+		// of the whole captured FIR request snapshot.
 		bool firDirty = false;
 		foreach (FastFirControlStage stage in _fastFirs)
 		{
@@ -394,6 +415,7 @@ internal sealed class FmFilterNodeProcessor
 				break;
 			}
 		}
+		PreparedFirControlBatch? firReady = null;
 		if (firDirty)
 		{
 			FirControlRequest[]? requests = state.FirRequests;
@@ -415,12 +437,25 @@ internal sealed class FmFilterNodeProcessor
 						sourceValues, _bindings),
 					stage.TapCount, stage.WidthHz, stage.PhaseResponse);
 			}
-			state.FirControl!.TryOffer(requests.AsSpan(0, _fastFirs.Length));
-			return;
+			firReady = state.FirReady;
+			if (firReady is null || !firReady.AllLinear
+				|| !firReady.Matches(requests.AsSpan(0, _fastFirs.Length)))
+			{
+				// A stale candidate is not a license to apply changed
+				// parameters. All other family changes also roll back
+				// until a matching full FIR batch has been prepared.
+				state.FirReady = null;
+				state.FirControl!.TryOffer(requests.AsSpan(0, _fastFirs.Length));
+				return;
+			}
 		}
-		// The source returned to its accepted numeric FIR settings:
-		// discard obsolete pending requests before handling other stages.
-		state.FirControl?.Clear();
+		else
+		{
+			// Old proposals are no longer requested, so may not be
+			// committed later, even after a stale control-side prepare.
+			state.FirReady = null;
+			state.FirControl?.Clear();
+		}
 
 		int tptCount = 0;
 		foreach (FastStage stage in _fastStages)
@@ -536,6 +571,15 @@ internal sealed class FmFilterNodeProcessor
 						sourceValues, _bindings));
 		}
 
+		int firCount = 0;
+		if (firReady is not null)
+		{
+			RealtimeFirStageUpdate[] updates = state.FirPreparedUpdates!;
+			foreach (PreparedFirControlStage stage in firReady.Stages)
+				updates[firCount++] = new RealtimeFirStageUpdate(
+					stage.StageIndex, stage.Plan);
+		}
+
 		if (!state.Chain!.TryApplyRealtimeNumericUpdates(
 			state.FastUpdates.AsSpan(0, tptCount), state.FastScratch,
 			state.BiquadUpdates.AsSpan(0, biquadCount), state.BiquadScratch,
@@ -545,8 +589,16 @@ internal sealed class FmFilterNodeProcessor
 			state.AllPassUpdates.AsSpan(0, allPassCount), state.AllPassScratch,
 			state.CombUpdates.AsSpan(0, combCount), state.CombScratch,
 			state.FeedforwardUpdates.AsSpan(0, feedforwardCount),
-			state.FeedforwardScratch))
+			state.FeedforwardScratch,
+			state.FirPreparedUpdates is null
+				? ReadOnlySpan<RealtimeFirStageUpdate>.Empty
+				: state.FirPreparedUpdates.AsSpan(0, firCount)))
 			return;
+		if (firReady is not null)
+		{
+			state.FirReady = null;
+			state.FirControl!.Clear();
+		}
 		for (int i = 0; i < _bindings.Length; i++)
 			state.Values[i] = sourceValues[_bindings[i].ValueIndex];
 	}

@@ -206,7 +206,8 @@ public sealed class StreamingFilterChain
 		ReadOnlySpan<RealtimeFeedbackCombStageUpdate> combUpdates,
 		Span<RealtimeFeedbackCombCoefficients> combScratch,
 		ReadOnlySpan<RealtimeFeedforwardCombStageUpdate> feedforwardUpdates,
-		Span<RealtimeFeedforwardCombCoefficients> feedforwardScratch)
+		Span<RealtimeFeedforwardCombCoefficients> feedforwardScratch,
+		ReadOnlySpan<RealtimeFirStageUpdate> firUpdates)
 	{
 		if (_inputFinished || tptScratch.Length < tptUpdates.Length
 			|| biquadScratch.Length < biquadUpdates.Length
@@ -380,6 +381,40 @@ public sealed class StreamingFilterChain
 					return false;
 		}
 
+		for (int i = 0; i < firUpdates.Length; i++)
+		{
+			RealtimeFirStageUpdate update = firUpdates[i];
+			if ((uint)update.StageIndex >= (uint)_stages.Length
+				|| _stages[update.StageIndex].Channels[0]
+					is not IRealtimeFirFilterState fir
+				|| !fir.TryPrepareRealtime(update.Plan))
+				return false;
+			for (int j = 0; j < i; j++)
+				if (firUpdates[j].StageIndex == update.StageIndex)
+					return false;
+			for (int j = 0; j < tptUpdates.Length; j++)
+				if (tptUpdates[j].StageIndex == update.StageIndex)
+					return false;
+			for (int j = 0; j < biquadUpdates.Length; j++)
+				if (biquadUpdates[j].StageIndex == update.StageIndex)
+					return false;
+			for (int j = 0; j < ladderUpdates.Length; j++)
+				if (ladderUpdates[j].StageIndex == update.StageIndex)
+					return false;
+			for (int j = 0; j < saturatedUpdates.Length; j++)
+				if (saturatedUpdates[j].StageIndex == update.StageIndex)
+					return false;
+			for (int j = 0; j < allPassUpdates.Length; j++)
+				if (allPassUpdates[j].StageIndex == update.StageIndex)
+					return false;
+			for (int j = 0; j < combUpdates.Length; j++)
+				if (combUpdates[j].StageIndex == update.StageIndex)
+					return false;
+			for (int j = 0; j < feedforwardUpdates.Length; j++)
+				if (feedforwardUpdates[j].StageIndex == update.StageIndex)
+					return false;
+		}
+
 		for (int i = 0; i < tptUpdates.Length; i++)
 		{
 			foreach (IStreamingFilterStageState channel in
@@ -428,8 +463,37 @@ public sealed class StreamingFilterChain
 				((IRealtimeFeedforwardCombFilterState)channel)
 					.CommitRealtime(feedforwardScratch[i]);
 		}
+		for (int i = 0; i < firUpdates.Length; i++)
+		{
+			foreach (IStreamingFilterStageState channel in
+				_stages[firUpdates[i].StageIndex].Channels)
+				((IRealtimeFirFilterState)channel)
+					.CommitRealtime(firUpdates[i].Plan);
+		}
 		return true;
 	}
+
+	// The previous numeric-only update contract remains in use by tests.
+	internal bool TryApplyRealtimeNumericUpdates(
+		ReadOnlySpan<RealtimeTptStageUpdate> tptUpdates,
+		Span<RealtimeTptCoefficients> tptScratch,
+		ReadOnlySpan<RealtimeBiquadStageUpdate> biquadUpdates,
+		Span<RealtimeBiquadCoefficients> biquadScratch,
+		ReadOnlySpan<RealtimeLinearLadderStageUpdate> ladderUpdates,
+		Span<RealtimeLinearLadderCoefficients> ladderScratch,
+		ReadOnlySpan<RealtimeSaturatedLadderStageUpdate> saturatedUpdates,
+		Span<RealtimeSaturatedLadderCoefficients> saturatedScratch,
+		ReadOnlySpan<RealtimeAllPassStageUpdate> allPassUpdates,
+		Span<RealtimeAllPassCoefficient> allPassScratch,
+		ReadOnlySpan<RealtimeFeedbackCombStageUpdate> combUpdates,
+		Span<RealtimeFeedbackCombCoefficients> combScratch,
+		ReadOnlySpan<RealtimeFeedforwardCombStageUpdate> feedforwardUpdates,
+		Span<RealtimeFeedforwardCombCoefficients> feedforwardScratch)
+		=> TryApplyRealtimeNumericUpdates(tptUpdates, tptScratch,
+			biquadUpdates, biquadScratch, ladderUpdates, ladderScratch,
+			saturatedUpdates, saturatedScratch, allPassUpdates, allPassScratch,
+			combUpdates, combScratch, feedforwardUpdates, feedforwardScratch,
+			ReadOnlySpan<RealtimeFirStageUpdate>.Empty);
 
 	// Retain previous fast-family API for internal callers.
 	internal bool TryApplyRealtimeNumericUpdates(
