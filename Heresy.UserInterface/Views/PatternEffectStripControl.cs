@@ -50,6 +50,7 @@ public sealed class PatternEffectStripControl : UserControl
 	private readonly Action _requestPasteStack;
 	private readonly Action<int> _requestDelete;
 	private readonly Action<int, bool> _requestInsert;
+	private readonly Action<int?, bool, char> _requestInsertTracker;
 	private readonly Action<int, int> _requestReorder;
 	private readonly DispatcherTimer _scrollTimer;
 
@@ -77,7 +78,8 @@ public sealed class PatternEffectStripControl : UserControl
 		Action requestPasteStack,
 		Action<int> requestDelete,
 		Action<int, bool> requestInsert,
-		Action<int, int> requestReorder)
+		Action<int, int> requestReorder,
+		Action<int?, bool, char> requestInsertTracker)
 	{
 		if (!(viewportWidth > 0))
 			throw new ArgumentOutOfRangeException(nameof(viewportWidth));
@@ -109,6 +111,8 @@ public sealed class PatternEffectStripControl : UserControl
 			requestInsert ?? throw new ArgumentNullException(nameof(requestInsert));
 		_requestReorder =
 			requestReorder ?? throw new ArgumentNullException(nameof(requestReorder));
+		_requestInsertTracker =
+			requestInsertTracker ?? throw new ArgumentNullException(nameof(requestInsertTracker));
 
 		Width = collapsedWidth;
 		Height = rowHeight;
@@ -392,6 +396,7 @@ public sealed class PatternEffectStripControl : UserControl
 		items.Add(copyStack);
 		items.Add(pasteStack);
 		items.Add(new Separator());
+		items.Add(BuildPopulatedTrackerPicker(index));
 		items.Add(insertTrackerBefore);
 		items.Add(insertTrackerAfter);
 		items.Add(insertNativeBefore);
@@ -429,10 +434,63 @@ public sealed class PatternEffectStripControl : UserControl
 			{
 				pasteStack,
 				new Separator(),
+				BuildTrackerPicker(command =>
+					_requestInsertTracker(null, false, command)),
 				insertNative,
 			},
 		};
 	}
+
+	/// <summary>
+	/// In a populated stack, menu placement is relative to the *clicked*
+	/// sticker, never whichever item last held the keyboard cursor. Keep
+	/// the existing blank-slot and native-effect actions alongside it.
+	/// </summary>
+	private MenuItem BuildPopulatedTrackerPicker(int effectIndex)
+		=> new()
+		{
+			Header = "Insert Tracker Effect...",
+			ItemsSource = new[]
+			{
+				BuildTrackerPicker(
+					command => _requestInsertTracker(effectIndex, false, command),
+					"Before selected"),
+				BuildTrackerPicker(
+					command => _requestInsertTracker(effectIndex, true, command),
+					"After selected"),
+			},
+		};
+
+	private static MenuItem BuildTrackerCommandChoice(
+		TrackerEffectCommand descriptor, Action<char> onChosen)
+	{
+		MenuItem item = new()
+		{
+			Header = descriptor.DisplayName,
+			// The swatch uses exactly the same palette and key as the
+			// effect sticker, without compromising menu text contrast.
+			Icon = new Border
+			{
+				Width = 12,
+				Height = 12,
+				CornerRadius = new CornerRadius(2),
+				Background = BrushFor(PatternEffectCodec.TrackerColorKey(
+					descriptor.Letter)),
+			},
+		};
+		item.Click += (_, _) => onChosen(descriptor.Letter);
+		return item;
+	}
+
+	private static MenuItem BuildTrackerPicker(
+		Action<char> onChosen, string header = "Insert Tracker Effect...")
+		=> new()
+		{
+			Header = header,
+			ItemsSource = PatternEffectCodec.TrackerCommands
+				.Select(descriptor => BuildTrackerCommandChoice(descriptor, onChosen))
+				.ToArray(),
+		};
 
 	private int GetDragTargetIndex(double canvasX)
 	{

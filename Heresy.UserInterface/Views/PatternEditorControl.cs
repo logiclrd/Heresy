@@ -978,7 +978,14 @@ public sealed class PatternEditorControl : UserControl
 						displayRow,
 						channel,
 						sourceIndex,
-						targetIndex));
+						targetIndex),
+				(effectIndex, after, command) =>
+					InsertTrackerEffectAt(
+						displayRow,
+						channel,
+						effectIndex,
+						after,
+						command));
 		effects.SetEffects(view.Effects);
 		_flattenedIndications.TryGetValue(
 			(displayRow, channel), out FlattenedSourceEditorIndication? indication);
@@ -3048,6 +3055,43 @@ public sealed class PatternEditorControl : UserControl
 			after
 				? "Inserted effect after"
 				: "Inserted effect before");
+	}
+
+	/// <summary>
+	/// An explicit menu choice adds a real IT command with 00 parameter
+	/// immediately. In a stack it is inserted before/after the clicked
+	/// item; the same cursor-selection/sequence-mapping route handles
+	/// native and tracker stack edits.
+	/// </summary>
+	private void InsertTrackerEffectAt(
+		int row, int channel, int? effectIndex, bool after, char command)
+	{
+		if (!PatternEffectCodec.TryCreateTracker(
+			command, 0, out PatternEffect? effect) || effect is null)
+			throw new ArgumentOutOfRangeException(nameof(command));
+
+		if (effectIndex.HasValue)
+		{
+			if (!SelectEffectForStackCommand(
+				row, channel, effectIndex.Value))
+				return;
+		}
+		else
+		{
+			_cursor.SetPosition(
+				row, channel, PatternCellField.EffectCommand);
+		}
+
+		bool changed =
+			PatternEditorContextCursor.EditCurrent(
+				_context, _cursor,
+				mapped => effectIndex.HasValue && after
+					? PatternEffectStackEditor.InsertAfter(
+						_workspace, mapped.Pattern, _cursor, effect)
+					: PatternEffectStackEditor.InsertBefore(
+						_workspace, mapped.Pattern, _cursor, effect));
+		FinishStackMutation(
+			row, channel, changed, $"Inserted tracker effect {command}");
 	}
 
 	private void ReorderEffectByDrag(
