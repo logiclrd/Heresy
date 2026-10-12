@@ -3,6 +3,7 @@ using System.Buffers;
 
 using Heresy.Core.Sequences;
 using Heresy.Render.Playback;
+using Heresy.Render.Filters;
 using Heresy.Render.Sounds;
 using Heresy.Render.Timing;
 
@@ -33,7 +34,7 @@ internal sealed record PrivateRecursivePlayback(
 /// lifecycle queues, replay journals or cooked PCM buffers are retained.
 /// </summary>
 internal sealed class PreparedRecursiveMixdownSound :
-	IStreamingFiniteSound, ISourceFrameSeekableSound, IDisposable
+	IStreamingFiniteSound, ISourceFrameSeekableSound, IFirPreparationSound, IDisposable
 {
 	private const int ScratchFrames = 256;
 	private sealed class NestedState : SoundState
@@ -66,6 +67,15 @@ internal sealed class PreparedRecursiveMixdownSound :
 		_sampleRate = playback.Session.SampleRate;
 		_channels = playback.Session.OutputChannelCount;
 	}
+
+    /// <summary>Private recursive sessions preserve independent DSP and
+    /// FIR mailboxes; their current playback is re-bound after seek/rebuild.</summary>
+    public void AdoptPreparedFirControls(SoundState state)
+        => _playback.Session.AdoptPreparedFirControls();
+
+    public void QueuePendingFirControls(SoundState state,
+        FirPreparationScheduler scheduler)
+        => _playback.Session.QueuePendingFirControls(scheduler);
 
 	public long ParentStartFrame { get; }
 	/// <summary>Current private renderer; replaced on deterministic rewind.</summary>

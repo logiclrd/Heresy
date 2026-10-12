@@ -504,6 +504,41 @@ public sealed class PlaybackSession
 		return prepared;
 	}
 
+    /// <summary>Only the PCM owner calls this, between Render quanta.
+    /// Candidates have already been prepared on a different thread;
+    /// none of this code touches mutable worker-owned preparation state.</summary>
+    public void AdoptPreparedFirControls()
+    {
+        foreach (PlaybackVoice voice in EnumerateDistinctLiveVoices())
+            voice.AdoptPreparedFirControls();
+    }
+
+    /// <summary>Bounded latest-wins capture at the end of a PCM quantum.
+    /// Expensive window/FFT design happens only on the scheduler thread.</summary>
+    public void QueuePendingFirControls(FirPreparationScheduler scheduler)
+    {
+        ArgumentNullException.ThrowIfNull(scheduler);
+        foreach (PlaybackVoice voice in EnumerateDistinctLiveVoices())
+            voice.QueuePendingFirControls(scheduler);
+    }
+
+    private IEnumerable<PlaybackVoice> EnumerateDistinctLiveVoices()
+    {
+        HashSet<PlaybackVoice> seen = [];
+        foreach (PlaybackChannelState channel in _channels.Values)
+            if (channel.CurrentVoice is { } voice && seen.Add(voice))
+                yield return voice;
+        foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+            if (channel.CurrentVoice is { } voice && seen.Add(voice))
+                yield return voice;
+        foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+            if (channel.CurrentVoice is { } voice && seen.Add(voice))
+                yield return voice;
+        foreach (PlaybackVoice voice in _virtualVoices)
+            if (seen.Add(voice))
+                yield return voice;
+    }
+
 	/// <summary>Diagnostic count of non-root logical channel entries,
 	/// including scopes retained for sounding voices or anti-click tails.</summary>
 	public int RetainedScopedPhysicalChannelCount

@@ -521,6 +521,22 @@ public sealed class PlaybackVoice
 		_enclosingEnvelopeRealtime.SetBindings(bindings);
 	}
 
+	internal void AdoptPreparedFirControls()
+    {
+        _eventEnvelopeRealtime?.AdoptPreparedFirs();
+        _enclosingEnvelopeRealtime?.AdoptPreparedFirs();
+        if (Sound is IFirPreparationSound source)
+            source.AdoptPreparedFirControls(SoundState);
+    }
+
+    internal void QueuePendingFirControls(FirPreparationScheduler scheduler)
+    {
+        _eventEnvelopeRealtime?.QueuePendingFirs(scheduler);
+        _enclosingEnvelopeRealtime?.QueuePendingFirs(scheduler);
+        if (Sound is IFirPreparationSound source)
+            source.QueuePendingFirControls(SoundState, scheduler);
+    }
+
 	internal bool TryPreparePendingNoteFilterEnvelopeControls()
 	{
 		bool prepared = _eventEnvelopeRealtime?.TryPreparePendingFirs() ?? false;
