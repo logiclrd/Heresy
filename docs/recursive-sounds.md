@@ -45,6 +45,23 @@
   and the production-factory `ScriptInstrumentPlaybackTests` cover direct
   vs private Pattern/Sequence selection, nested serial layers, chunk
   invariance, NNA, scoped descendant cancellation and finite tails.
+- **Optional note-event Filters are bound and processed.** Data Pattern starts
+  persist an event Filter definition ID and Script Pattern `Note` and
+  `NoteVirtual` helpers accept `eventFilterDefinitionId: _O(id)`.
+  Preparation resolves IDs through the frozen snapshot to independent
+  configured uses of the selected definition's defaults; direct note
+  commands can supply full typed overrides. `PlaybackVoice` owns a distinct
+  outer event-Filter state, never inherited from a prior new note.
+  Instrument-tone layers run before the event layer; the tracker resonant
+  Filter remains separate. A private Pattern/Sequence voice uses its
+  already-prepared mixdown, with no additional wrapper mixer.
+  On flattened instigating notes the existing scope controller holds the
+  initial Filter selection; descendant voices own cloned DSP histories
+  of enclosing scope layers, inner-to-outer, without filtering siblings.
+  Bounded tails, retriggers, NNA, cancellation and partitioning remain
+  explicit. `NoteEventFilterRenderingTests` and production-factory
+  `ScriptInstrumentPlaybackTests` check these boundaries. Dynamic native
+  note-event Filter commands remain a separate upcoming task.
 - **Nested private-source release is not an outer-sample release.**
   When the parent Instrument Note Off ends private Sequence input,
   the child `PlaybackSession.EndInput` requests Note Off on its own
