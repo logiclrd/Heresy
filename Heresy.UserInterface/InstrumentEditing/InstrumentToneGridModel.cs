@@ -84,37 +84,81 @@ public sealed class InstrumentToneGridModel
 	}
 
 	public void SetRow(int index, InstrumentToneGridCells cells)
+		=> EditRows([index], (_, _) => cells);
+
+	/// <summary>
+	/// Apply a field-level edit to a set of tone indices as ONE transaction.
+	/// Reads each row's current independent cells (including unpublished
+	/// drafts), validates all assigned results, builds a single new Core
+	/// mapping, then publishes once. Neither the Core song nor any draft
+	/// is altered if the transform, validation, allocation or interning fails.
+	/// Caller must exclude the reserved null-index entry row.
+	/// </summary>
+	public bool EditRows(
+		IReadOnlyCollection<int> toneIndices,
+		Func<int, InstrumentToneGridCells, InstrumentToneGridCells> transform)
 	{
 		ValidateOwnership();
-		if (index < 0)
-			throw new ArgumentOutOfRangeException(nameof(index));
-
-		InstrumentToneGridCells canonical = NormalizeCells(cells);
-		// Validate first; a failed edit must change neither the Core song
-		// nor the editor's prior drafts.
-		if (canonical.HasSource)
-			ValidateAssignedCells(canonical);
-
+		ArgumentNullException.ThrowIfNull(toneIndices);
+		ArgumentNullException.ThrowIfNull(transform);
 		Dictionary<int, InstrumentToneGridCells> mapped = ReadMappings();
-		InstrumentToneGridCells? previous =
-			mapped.TryGetValue(index, out InstrumentToneGridCells value)
-				? value : null;
+		Dictionary<int, InstrumentToneGridCells> nextDrafts = new(_drafts);
+		bool mappedChanged = false;
+		bool draftChanged = false;
+		foreach (int index in toneIndices.Distinct())
+		{
+			if (index < 0)
+				throw new ArgumentOutOfRangeException(nameof(toneIndices));
+			InstrumentToneGridCells oldCells = nextDrafts.TryGetValue(
+				index, out InstrumentToneGridCells draft)
+				? draft : mapped.TryGetValue(index, out InstrumentToneGridCells assigned)
+					? assigned : InstrumentToneGridCells.Empty;
+			InstrumentToneGridCells updated =
+				NormalizeCells(transform(index, oldCells));
+			// Copies are per row, never shared mutable Filter overlays.
+			// Even a draft result must not alias a caller-owned instance.
+			updated = updated with
+			{
+				FilterConfiguration = updated.FilterConfiguration?.Clone(),
+			};
+			if (updated.HasSource)
+				ValidateAssignedCells(updated);
+			else if (updated.FilterConfiguration is FilterInstance filter)
+				ValidateFilter(filter);
 
-		if (canonical.HasSource)
-			mapped[index] = canonical;
-		else
-			mapped.Remove(index);
+			InstrumentToneGridCells? previousMapped =
+				mapped.TryGetValue(index, out InstrumentToneGridCells original)
+					? original : null;
+			if (!SameMapped(previousMapped,
+				updated.HasSource ? updated : null))
+				mappedChanged = true;
+			if (updated.HasSource)
+			{
+				mapped[index] = updated;
+				nextDrafts.Remove(index);
+			}
+			else
+			{
+				mapped.Remove(index);
+				nextDrafts[index] = updated;
+			}
+			bool hadDraft = _drafts.TryGetValue(
+				index, out InstrumentToneGridCells oldDraft);
+			bool hasDraft = nextDrafts.TryGetValue(
+				index, out InstrumentToneGridCells newDraft);
+			if (hadDraft != hasDraft ||
+				(hadDraft && !CellComparer.Equals(oldDraft, newDraft)))
+				draftChanged = true;
+		}
 
-		// Build and commit the Core replacement first. If validation or
-		// table construction throws, the editor's prior drafts remain
-		// intact too (no half-applied transaction).
-		if (!SameMapped(previous, canonical.HasSource ? canonical : null))
+		if (mappedChanged)
 			PublishMappedCells(mapped);
-
-		if (canonical.HasSource)
-			_drafts.Remove(index);
-		else
-			_drafts[index] = canonical;
+		// Keep editor-local drafts unchanged until the entire Core
+		// replacement successfully commits.
+		_drafts.Clear();
+		foreach ((int index, InstrumentToneGridCells draft) in nextDrafts)
+			_drafts.Add(index, draft);
+		return mappedChanged || draftChanged;
 	}
 
 	/// <summary>
@@ -231,11 +275,16 @@ public sealed class InstrumentToneGridModel
 		ValidateEnvelope(cells.PanningEnvelopeId);
 		ValidateEnvelope(cells.FilterEnvelopeId);
 		cells.Nna.Validate();
-        if (cells.FilterConfiguration is FilterInstance filter
-			&& (!_workspace.Document.TryGet(filter.DefinitionId,
-				out SongObject? filterObject)
-				|| filterObject is not FilterDefinition liveFilter
-				|| !ReferenceEquals(liveFilter, filter.Definition)))
+		if (cells.FilterConfiguration is FilterInstance filter)
+			ValidateFilter(filter);
+	}
+
+	private void ValidateFilter(FilterInstance filter)
+	{
+		if (!_workspace.Document.TryGet(filter.DefinitionId,
+			out SongObject? filterObject)
+			|| filterObject is not FilterDefinition liveFilter
+			|| !ReferenceEquals(liveFilter, filter.Definition))
 			throw new InvalidOperationException(
 				"Tone Filter must reference a live Filter definition in this song.");
 	}
