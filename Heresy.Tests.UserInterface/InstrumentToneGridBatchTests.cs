@@ -191,6 +191,18 @@ public sealed class InstrumentToneGridBatchTests
 		model.EditRows([0, 1], (_, c) => c with { FilterConfiguration = use });
 		workspace.Document.AudioRevision.Should().Be(before + 1);
 		use.SetStageParameter(1, "CutoffHz", FilterParameterValue.FromNumber(4200));
+		FilterInstance firstProjection = model.Rows.Single(r => r.Index == 0)
+			.Cells.FilterConfiguration!;
+		FilterInstance secondProjection = model.Rows.Single(r => r.Index == 1)
+			.Cells.FilterConfiguration!;
+		firstProjection.Should().NotBeSameAs(secondProjection);
+		firstProjection.Should().NotBeSameAs(
+			instrument.ToneSpecifications[instrument.ToneTable[0]].FilterConfiguration);
+		firstProjection.SetStageParameter(1, "CutoffHz",
+			FilterParameterValue.FromNumber(9700));
+		model.Rows.Single(r => r.Index == 0).Cells.FilterConfiguration!
+			.GetStageParameters(1).GetParameter("CutoffHz")
+			.NumericValue.Should().Be(2300);
 		foreach (int i in new[] { 0, 1 })
 			model.Rows.Single(r => r.Index == i).Cells
 				.FilterConfiguration!.GetStageParameters(1)
