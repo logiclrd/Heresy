@@ -78,7 +78,8 @@ public sealed class InstrumentToneGridBatchEditorTests
 		selection.Extend(new(1, 5), rows);
 		uint before = workspace.Document.AudioRevision;
 
-		ComboBox nna = RowCell<ComboBox>(editor, 2, 5);
+		ComboBox nna = RowCell<StackPanel>(editor, 2, 5)
+			.Children.OfType<ComboBox>().Single();
 		nna.SelectedItem = InstrumentNnaAction.Off;
 		workspace.Document.AudioRevision.Should().Be(before + 1);
 		model.Rows.Single(r => r.Index == 1).Cells.Nna.Action
