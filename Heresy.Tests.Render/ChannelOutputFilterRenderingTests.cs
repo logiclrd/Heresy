@@ -527,6 +527,32 @@ public sealed class ChannelOutputFilterRenderingTests
             "valid structural choice invalidates the old ladder integrators");
     }
 
+    [Test]
+    public void SameFramePhysicalHostReplacementDoesNotReconfigureDisplacedNnaFork()
+    {
+        TestResolver sounds = new();
+        sounds.Add(PulseId, new LingeringPulseSound(8));
+        PlaybackSession session = Session(sounds);
+        session.ApplyLiveEvent(ChannelTarget.Physical(0), [
+            new SetChannelFilterCommand { Configuration = Echo(1012, 0.002) },
+            new StartNoteCommand(PulseId),
+        ]);
+        float[] before = new float[1];
+        session.Render(0, 1, before);
+        session.ApplyLiveEvent(ChannelTarget.Physical(0), [
+            // The first voice forks delay-two at this exact boundary.
+            new StartNoteCommand(PulseId),
+            // This new selection belongs to the continuing physical host.
+            new SetChannelFilterCommand { Configuration = Echo(1013, 0.001) },
+        ]);
+        float[] after = new float[5];
+        session.Render(1, 5, after);
+        Assert.That(before, Is.EqualTo(new float[] { 1 }));
+        Assert.That(after, Is.EqualTo(new float[] { 1, 2, 0, 0, 0 }),
+            "virtual NNA retains the old delay-two history; the physical " +
+            "host now independently applies its newly selected delay-one");
+    }
+
     private static FilterInstance Echo(uint id, double seconds)
     {
         FilterDefinition definition = new((ObjectId)id, "Echo", [
