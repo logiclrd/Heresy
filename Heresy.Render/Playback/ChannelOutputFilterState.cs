@@ -120,8 +120,14 @@ internal sealed class ChannelOutputFilterState
         else
             updated[key] = new BindingSpec(curve, frame);
 
+        // Reset the successor's effective configuration to its authored
+        // base before installing the new binding set. In particular, a
+        // detached parameter must not leave its previous envelope override
+        // latched forever in the forked DSP coefficients.
+        StreamingFilterChain fork = _chain.Fork();
+        fork.Configure(new FilterChain([_configuration]));
         return new ChannelOutputFilterState(_configuration.Clone(),
-            _chain.Fork(), _tailRemainingFrames, _sampleRate, updated);
+            fork, _tailRemainingFrames, _sampleRate, updated);
     }
 
     private void RebuildRealtimeBindings()
