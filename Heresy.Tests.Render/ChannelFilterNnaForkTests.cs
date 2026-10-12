@@ -180,8 +180,9 @@ public sealed class ChannelFilterNnaForkTests
             Event(1, new StartNoteCommand(SoundId))));
         float[] actual = new float[4];
         session.Render(0, actual.Length, actual);
-        Assert.That(actual, Is.EqualTo(new float[] { 1, 2, 1, 0 }),
-            $"NNA {action} must fork the original host at frame one");
+        Assert.That(actual, Is.EqualTo(new float[] { 1, 3, 1, 0 }),
+            $"NNA {action} must preserve the previous echo in both the " +
+            "new virtual host and the continuing physical host");
         Assert.That(session.VirtualVoices, Has.Count.EqualTo(1));
         Assert.That(session.VirtualVoices[0].DisplacedOutputFilterState,
             Is.Not.Null);
