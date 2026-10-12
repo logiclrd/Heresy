@@ -362,11 +362,47 @@ not provide a user-visible undo-stack API for these edits;
 the verified contract is transaction rollback on failure and
 one coherent document/audio revision per successful batch.
 
-### Row-density acceptance — approved, not yet implemented
+### Compact tone rows — implemented 12 October 2026
 
-Rows should occupy minimum practical height with at least 1px
-above and below all visible control contents, not simply change
-padding while leaving a hard 32px minimum.
+The old `NewColumns` grid-wide 32px minimum height is removed
+for both column headings and projected data rows. Data rows
+use a horizontal-only `Thickness(6, 0)` margin instead of
+`Thickness(6, 2)`, eliminating the two-pixel top and bottom
+empty bands. *Only* the per-tone projected controls are compacted:
+TextBoxes (index, Pitch, NNA Fade), ComboBoxes (Source, nearest
+note, NNA, Envelope selectors, Tone Filter) and the Filter
+edit button set `MinHeight = 0` with
+`Padding = new Thickness(4, 1)`. Header/lookup-wide controls
+are deliberately unchanged.
+
+No row, cell or editor has a fixed `Height`. Avalonia Fluent
+content and text still determine required size, so localized
+labels, a visible NNA Fade input, adjacent Tone Filter dropdown
+and edit button, and keyboard focus adorners have room to
+expand. Every selectable tone cell retains its 1px border
+and additionally has `Padding = new Thickness(0, 1)`:
+at least one device-independent pixel above and below the
+child template is reserved *inside* the selection ring, rather
+than padding the row while accidentally clipping child controls.
+The existing 1px row divider, fixed column widths and
+virtualization/recycling behavior are unchanged.
+
+`InstrumentToneRowDensityTests` inspects actual eleven-column
+Avalonia row templates and laid-out Fluent controls, including
+the reserved entry row, expanded NNA Fade and Tone Filter
+widgets. It asserts a child fits inside each cell's top/bottom
+padding without clipping, no fixed input heights/minimums,
+the themed ComboBox popup and keyboard focus/selection border,
+and preservation of stable cell-range selection after virtualized
+scroll and recycling. Linux/headless Fluent measurements were
+**25px for both regular and entry rows**, compared with the old
+hard **37px** lower bound (32px minimum + 4px row margins +
+1px row separator). These tests do not impose a 25px production
+height cap: control templates may grow when necessary, without
+clipping. CI also builds Windows/Linux distribution bundles
+and validates Linux ARM64 codecs. Physical Windows/Linux
+display-server and scaling acceptance remains a useful manual
+check, not an assertion about untested window managers.
 
 
 ## Inherited Instrument NNA contract — 12 October 2026

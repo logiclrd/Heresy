@@ -110,6 +110,13 @@ public sealed class InstrumentToneRowDensityTests
 					}
 				}
 			}
+			// The old row could never be shorter than 32px grid
+			// minimum + 2px top/2px bottom margins + 1px separator.
+			// Our current Fluent theme must demonstrate a real density
+			// improvement, without capping production control heights.
+			regular.Bounds.Height.Should().BeLessThan(37);
+			entry.Bounds.Height.Should().BeLessThan(37);
+
 			// Fade activates a second text editor in one column, and the
 			// filter's actual selector and edit button remain side-by-side.
 			Grid regularGrid = (Grid)regular.Child!;
