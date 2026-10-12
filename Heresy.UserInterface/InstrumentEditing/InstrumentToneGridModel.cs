@@ -113,18 +113,35 @@ public sealed class InstrumentToneGridModel
 				index, out InstrumentToneGridCells draft)
 				? draft : mapped.TryGetValue(index, out InstrumentToneGridCells assigned)
 					? assigned : InstrumentToneGridCells.Empty;
+			// Never offer the transformer a live FilterInstance from the
+			// persisted song or drafts: a rejected transaction must not
+			// allow an in-place edit to leak through a reference.
+			InstrumentToneGridCells detached = oldCells with
+			{
+				FilterConfiguration = oldCells.FilterConfiguration?.Clone(),
+			};
 			InstrumentToneGridCells updated =
-				NormalizeCells(transform(index, oldCells));
+				NormalizeCells(transform(index, detached));
 			// Copies are per row, never shared mutable Filter overlays.
 			// Even a draft result must not alias a caller-owned instance.
 			updated = updated with
 			{
 				FilterConfiguration = updated.FilterConfiguration?.Clone(),
 			};
+			// Drafts may retain an as-yet-unusable pitch value for
+			// correction, but their references and NNA must be valid.
+			updated.Nna.Validate();
 			if (updated.HasSource)
 				ValidateAssignedCells(updated);
-			else if (updated.FilterConfiguration is FilterInstance filter)
-				ValidateFilter(filter);
+			else
+			{
+				ValidateEnvelope(updated.VolumeEnvelopeId);
+				ValidateEnvelope(updated.PitchEnvelopeId);
+				ValidateEnvelope(updated.PanningEnvelopeId);
+				ValidateEnvelope(updated.FilterEnvelopeId);
+				if (updated.FilterConfiguration is FilterInstance filter)
+					ValidateFilter(filter);
+			}
 
 			InstrumentToneGridCells? previousMapped =
 				mapped.TryGetValue(index, out InstrumentToneGridCells original)
