@@ -328,6 +328,44 @@ public sealed class NoteFilterParameterEnvelopeTests
         Assert.That(diagnostics, Has.Count.EqualTo(1));
     }
 
+
+    [Test]
+    public void SessionFIRControlBoundaryPublishesOnlyMatchingPreparedEnvelopeTarget()
+    {
+        FilterDefinition definition = new((ObjectId)24001U, "Fir", [
+            new FilterStageDefinition(1, "fir", FilterKind.FirLowPass),
+        ]);
+        FilterInstance selected = new(definition);
+        selected.SetStageParameters(1, [
+            new("CutoffHz", FilterParameterValue.FromNumber(150)),
+            new("TapCount", FilterParameterValue.FromNumber(127)),
+            new("TransitionWidthHz", FilterParameterValue.FromNumber(50)),
+        ]);
+        TestResolver resolver = new(new ConstantSound(), new FixedCurve(225));
+        PlaybackSession automated = Session(resolver, Schedule(
+            Event(0, 0, new StartNoteCommand(Source) {
+                EventFilterConfiguration = selected,
+            }, new SetNoteFilterParameterEnvelopeCommand(1, "CutoffHz", Envelope))));
+        PlaybackSession reference = Session(resolver, Schedule(
+            Event(0, 0, new StartNoteCommand(Source) {
+                EventFilterConfiguration = selected,
+            }),
+            Event(1, 0, new SetNoteFilterParametersCommand(1, [
+                new("CutoffHz", FilterParameterValue.FromNumber(225)),
+            ]))));
+
+        float[] actual = new float[10], expected = new float[10];
+        automated.Render(0, 1, actual.AsSpan(0, 1));
+        reference.Render(0, 1, expected.AsSpan(0, 1));
+        Assert.That(automated.PreparePendingNoteFilterEnvelopeControls(),
+            Is.EqualTo(1), "kernel design is explicitly off the PCM render loop");
+        automated.Render(1, 9, actual.AsSpan(1, 9));
+        reference.Render(1, 9, expected.AsSpan(1, 9));
+        Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+        Assert.That(automated.PreparePendingNoteFilterEnvelopeControls(),
+            Is.EqualTo(0));
+    }
+
     private static FilterInstance Echo()
     {
         FilterDefinition definition = new((ObjectId)12003U, "Echo", [
