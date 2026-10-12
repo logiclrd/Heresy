@@ -30,7 +30,8 @@ internal sealed class ChannelOutputFilterState
     private ChannelOutputFilterState(
         FilterInstance configuration, StreamingFilterChain chain, int remaining,
         int sampleRate,
-        Dictionary<(int StageId, string Parameter), BindingSpec> bindings)
+        Dictionary<(int StageId, string Parameter), BindingSpec> bindings,
+        FilterInstance? effective = null)
     {
         _configuration = configuration;
         _chain = chain;
@@ -39,6 +40,8 @@ internal sealed class ChannelOutputFilterState
         _bindings = new(bindings);
         _reportWarning = ReportWarning;
         RebuildRealtimeBindings();
+        if (effective is not null)
+            _realtime?.AlignAcceptedTo(effective);
     }
 
     public ChannelOutputFilterState(
@@ -56,29 +59,39 @@ internal sealed class ChannelOutputFilterState
     /// <summary>Fork audio history and persistent envelope bindings. The
     /// new host owns its clocks even after the original host changes.</summary>
     public ChannelOutputFilterState Fork()
-        => new(_configuration.Clone(), _chain.Fork(),
-            _tailRemainingFrames, _sampleRate, _bindings);
+    {
+        FilterInstance accepted = BuildEffectiveConfiguration(
+            _configuration, _bindings, 0);
+        return new ChannelOutputFilterState(_configuration.Clone(),
+            _chain.Fork(), _tailRemainingFrames, _sampleRate, _bindings,
+            accepted);
+    }
 
     public ChannelOutputFilterState PrepareParameterUpdate(
         int stageId,
-        IReadOnlyList<KeyValuePair<string, FilterParameterValue>> assignments)
+        IReadOnlyList<KeyValuePair<string, FilterParameterValue>> assignments,
+        long frame = 0)
     {
         FilterInstance updated = _configuration.Clone();
         updated.SetStageParameters(stageId, assignments);
+        FilterInstance effective = BuildEffectiveConfiguration(
+            updated, _bindings, frame);
         StreamingFilterChain fork = _chain.Fork();
-        fork.Configure(new FilterChain([updated]));
+        fork.Configure(new FilterChain([effective]));
         return new ChannelOutputFilterState(updated, fork,
-            _tailRemainingFrames, _sampleRate, _bindings);
+            _tailRemainingFrames, _sampleRate, _bindings, effective);
     }
 
-    public ChannelOutputFilterState PrepareTextUpdate(string text)
+    public ChannelOutputFilterState PrepareTextUpdate(string text, long frame = 0)
     {
         FilterInstance updated = FilterAssignmentText.ApplyToClone(
             _configuration, text);
+        FilterInstance effective = BuildEffectiveConfiguration(
+            updated, _bindings, frame);
         StreamingFilterChain fork = _chain.Fork();
-        fork.Configure(new FilterChain([updated]));
+        fork.Configure(new FilterChain([effective]));
         return new ChannelOutputFilterState(updated, fork,
-            _tailRemainingFrames, _sampleRate, _bindings);
+            _tailRemainingFrames, _sampleRate, _bindings, effective);
     }
 
     /// <summary>Prepare and validate one complete channel binding edit
@@ -120,14 +133,45 @@ internal sealed class ChannelOutputFilterState
         else
             updated[key] = new BindingSpec(curve, frame);
 
-        // Reset the successor's effective configuration to its authored
-        // base before installing the new binding set. In particular, a
-        // detached parameter must not leave its previous envelope override
-        // latched forever in the forked DSP coefficients.
+        // Preserve all still-bound, accepted effective targets. Only the
+        // detached parameter returns to its separately stored authored base.
+        FilterInstance effective = BuildEffectiveConfiguration(
+            _configuration, updated, frame);
         StreamingFilterChain fork = _chain.Fork();
-        fork.Configure(new FilterChain([_configuration]));
+        fork.Configure(new FilterChain([effective]));
         return new ChannelOutputFilterState(_configuration.Clone(),
-            fork, _tailRemainingFrames, _sampleRate, updated);
+            fork, _tailRemainingFrames, _sampleRate, updated, effective);
+    }
+
+    private FilterInstance BuildEffectiveConfiguration(
+        FilterInstance authored,
+        Dictionary<(int StageId, string Parameter), BindingSpec> bindings,
+        long frame)
+    {
+        if (bindings.Count == 0) return authored;
+        FilterInstance effective = authored.Clone();
+        Dictionary<int, List<KeyValuePair<string, FilterParameterValue>>>
+            changes = [];
+        foreach (var entry in bindings)
+        {
+            double value;
+            if (_bindings.TryGetValue(entry.Key, out BindingSpec old)
+                && old.Equals(entry.Value)
+                && _realtime?.TryGetAccepted(0, entry.Key.StageId,
+                    entry.Key.Parameter, out double accepted) == true)
+                value = accepted;
+            else
+                value = new EnvelopePlaybackState(entry.Value.Curve,
+                    entry.Value.StartFrame, _sampleRate)
+                    .GetValue(Math.Max(frame, entry.Value.StartFrame));
+            if (!changes.TryGetValue(entry.Key.StageId, out var stage))
+                changes.Add(entry.Key.StageId, stage = []);
+            stage.Add(new(entry.Key.Parameter,
+                FilterParameterValue.FromNumber(value)));
+        }
+        foreach (var entry in changes)
+            effective.SetStageParameters(entry.Key, entry.Value);
+        return effective;
     }
 
     private void RebuildRealtimeBindings()
