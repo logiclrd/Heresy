@@ -196,7 +196,9 @@ public sealed class InstrumentEditorControl : UserControl
 
 	private static Grid NewColumns()
 	{
-		Grid grid = new() { MinHeight = 32 };
+		// Let controls determine the needed height; the previous 32px floor
+		// needlessly expanded even the shortest row.
+		Grid grid = new();
 		foreach (int width in ColumnWidths)
 			grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(width)));
 		return grid;
@@ -208,7 +210,9 @@ public sealed class InstrumentEditorControl : UserControl
 			? _model.EntryCells : projected.Cells;
 		int? index = projected.Index;
 		Grid grid = NewColumns();
-		grid.Margin = new Thickness(6, 2);
+		// Horizontal inset aligns data with headers; vertical breathing room
+		// belongs inside each selectable cell, not as row-level margins.
+		grid.Margin = new Thickness(6, 0);
 
 		TextBox? entryIndex = null;
 		if (projected.IsEntry)
@@ -219,6 +223,7 @@ public sealed class InstrumentEditorControl : UserControl
 				PlaceholderText = "Index",
 				Width = 60,
 			};
+			CompactRowTextBox(entryIndex);
 			At(grid, entryIndex, 0);
 		}
 		else
@@ -243,10 +248,11 @@ public sealed class InstrumentEditorControl : UserControl
 				: "0",
 			Width = 100,
 		};
+		CompactRowTextBox(pitch);
 		string? lastCommittedPitchText = pitch.Text;
 		At(grid, pitch, 3);
 
-		ComboBox nearby = new() { Width = 135 };
+		ComboBox nearby = CompactRowComboBox(new ComboBox { Width = 135 });
 		if (!projected.IsEntry)
 			At(grid, nearby, 4);
 
@@ -270,6 +276,8 @@ public sealed class InstrumentEditorControl : UserControl
 			Orientation = Orientation.Horizontal, Spacing = 3,
 			Children = { toneFilter, editFilter },
 		};
+		CompactRowComboBox(toneFilter);
+		CompactRowButton(editFilter);
 		At(grid, toneFilterCell, 10);
 
 		ComboBox toneNna = new()
@@ -285,6 +293,8 @@ public sealed class InstrumentEditorControl : UserControl
 				cells.Nna.FadeDuration ?? TimeSpan.FromMilliseconds(100)),
 			IsVisible = cells.Nna.Action == InstrumentNnaAction.Fade,
 		};
+		CompactRowComboBox(toneNna);
+		CompactRowTextBox(toneFade);
 		StackPanel toneNnaCell = new()
 		{
 			Orientation = Orientation.Horizontal, Spacing = 3,
@@ -721,6 +731,10 @@ public sealed class InstrumentEditorControl : UserControl
 				Child = content,
 				Focusable = true,
 				BorderThickness = new Thickness(1),
+				// The 1px top/bottom padding preserves a visible gap
+				// around the entire *actual* control template, including
+				// dropdowns and keyboard focus decorations.
+				Padding = new Thickness(0, 1),
 				BorderBrush = Brushes.Transparent,
 			};
 			Grid.SetColumn(surface, column);
@@ -888,13 +902,13 @@ public sealed class InstrumentEditorControl : UserControl
 		{
 			options.Insert(1, new SourceChoice(id, $"⚠ Missing <{id.Value}>"));
 		}
-		return new ComboBox
+		return CompactRowComboBox(new ComboBox
 		{
 			Width = 186,
 			ItemsSource = options,
 			SelectedItem = options.FirstOrDefault(x => x.Id == selectedId)
 				?? options[0],
-		};
+		});
 	}
 
 	private ComboBox BuildEnvelopeBox(ObjectId? selectedId)
@@ -905,13 +919,13 @@ public sealed class InstrumentEditorControl : UserControl
 			&& !options.Any(x => x.Id == id))
 			options.Insert(1, new EnvelopeChoice(id,
 				$"⚠ Missing <{id.Value}>"));
-		return new ComboBox
+		return CompactRowComboBox(new ComboBox
 		{
 			Width = 135,
 			ItemsSource = options,
 			SelectedItem = options.FirstOrDefault(x => x.Id == selectedId)
 				?? options[0],
-		};
+		});
 	}
 
 	private ComboBox BuildFilterBox(ObjectId? selectedId)
@@ -921,13 +935,40 @@ public sealed class InstrumentEditorControl : UserControl
 		if (selectedId is ObjectId id && !id.IsNone
 			&& !options.Any(x => x.Id == id))
 			options.Insert(1, new FilterChoice(id, $"⚠ Missing <{id.Value}>"));
-		return new ComboBox
+		return CompactRowComboBox(new ComboBox
 		{
 			Width = 196,
 			ItemsSource = options,
 			SelectedItem = options.FirstOrDefault(x => x.Id == selectedId)
 				?? options[0],
-		};
+		});
+	}
+
+	/// <summary>
+	/// Compact only the projected tone-row editors. These are minimum-free,
+	/// content-sized controls with reduced *internal* vertical padding;
+	/// they never use a forced Height, so localized text, focus rings and
+	/// native templates retain their requested size.
+	/// </summary>
+	private static TextBox CompactRowTextBox(TextBox control)
+	{
+		control.MinHeight = 0;
+		control.Padding = new Thickness(4, 1);
+		return control;
+	}
+
+	private static ComboBox CompactRowComboBox(ComboBox control)
+	{
+		control.MinHeight = 0;
+		control.Padding = new Thickness(4, 1);
+		return control;
+	}
+
+	private static Button CompactRowButton(Button control)
+	{
+		control.MinHeight = 0;
+		control.Padding = new Thickness(4, 1);
+		return control;
 	}
 
 	private static TextBox NumberBox(double x) => new()
