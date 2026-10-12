@@ -37,6 +37,8 @@ public enum NativePatternEffectKind
 	VolumeColumnCompatibility,
 	VolumeColumnPanning,
 	Parametric,
+	ChannelFilterSelect,
+	NoteFilterSelect,
 	ChannelFilterAssignments,
 	NoteFilterAssignments,
 }
@@ -69,6 +71,10 @@ public static class NativePatternEffectEditor
 		new(NativePatternEffectKind.VolumeColumnCompatibility, "Volume-column compatibility"),
 		new(NativePatternEffectKind.VolumeColumnPanning, "Volume-column panning"),
 		new(NativePatternEffectKind.Parametric, "Parametric expression"),
+		new(NativePatternEffectKind.ChannelFilterSelect,
+			"Channel Filter — select/clear"),
+		new(NativePatternEffectKind.NoteFilterSelect,
+			"Note Filter — select/clear"),
 		new(NativePatternEffectKind.ChannelFilterAssignments,
 			"Channel Filter stage assignments"),
 		new(NativePatternEffectKind.NoteFilterAssignments,
@@ -104,6 +110,10 @@ public static class NativePatternEffectEditor
 				new TrackerVolumeColumnPatternEffect(
 					TrackerVolumeColumnEffectKind.FineVolumeUp,
 					0),
+			NativePatternEffectKind.ChannelFilterSelect =>
+				new SetChannelFilterPatternEffect(),
+			NativePatternEffectKind.NoteFilterSelect =>
+				new SetNoteFilterPatternEffect(),
 			NativePatternEffectKind.ChannelFilterAssignments =>
 				new SetChannelFilterAssignmentsPatternEffect(""),
 			NativePatternEffectKind.NoteFilterAssignments =>
@@ -134,7 +144,9 @@ public static class NativePatternEffectEditor
 			or TrackerVolumeColumnPanningPatternEffect
 			or ParametricPatternEffect
 			or SetChannelFilterAssignmentsPatternEffect
-			or SetNoteFilterAssignmentsPatternEffect;
+			or SetNoteFilterAssignmentsPatternEffect
+			or SetChannelFilterPatternEffect
+			or SetNoteFilterPatternEffect;
 	}
 
 	public static NativePatternEffectEditModel Describe(
@@ -151,6 +163,14 @@ public static class NativePatternEffectEditor
 
 		return effect switch
 		{
+			SetChannelFilterPatternEffect selected =>
+				Model("Channel Filter selection",
+					Field("filterId", "Filter definition ID (empty clears)",
+						selected.FilterDefinitionId?.ToString() ?? "")),
+			SetNoteFilterPatternEffect selected =>
+				Model("Note Filter selection",
+					Field("filterId", "Filter definition ID (empty clears)",
+						selected.FilterDefinitionId?.ToString() ?? "")),
 			SetChannelFilterAssignmentsPatternEffect text =>
 				FilterAssignmentModel("Channel Filter assignments",
 					text.AssignmentText, text.AuthoringFilterId),
@@ -285,6 +305,10 @@ public static class NativePatternEffectEditor
 
 		return original switch
 		{
+			SetChannelFilterPatternEffect =>
+				new SetChannelFilterPatternEffect(ParseSelectionId(values, song)),
+			SetNoteFilterPatternEffect =>
+				new SetNoteFilterPatternEffect(ParseSelectionId(values, song)),
 			SetChannelFilterAssignmentsPatternEffect =>
 				RebuildFilterAssignments(true, values, song),
 			SetNoteFilterAssignmentsPatternEffect =>
@@ -392,6 +416,21 @@ public static class NativePatternEffectEditor
 			_ => throw new NotSupportedException(
 				$"Pattern effect {original.GetType().Name} is not a native effect supported by the parameter editor."),
 		};
+	}
+
+	private static ObjectId? ParseSelectionId(
+		IReadOnlyDictionary<string, string> values, SongDocument? document)
+	{
+		string text = Get(values, "filterId", "Filter definition ID").Trim();
+		if (text.Length == 0) return null;
+		if (!uint.TryParse(text, NumberStyles.None,
+			CultureInfo.InvariantCulture, out uint id) || id == 0)
+			throw new ArgumentException("Filter selection requires a positive object ID.");
+		if (document is not null
+			&& (!document.TryGet((ObjectId)id, out SongObject? obj)
+				|| obj is not FilterDefinition))
+			throw new ArgumentException("Filter selection requires an existing shared Filter.");
+		return (ObjectId)id;
 	}
 
 	private static NativePatternEffectEditModel FilterAssignmentModel(

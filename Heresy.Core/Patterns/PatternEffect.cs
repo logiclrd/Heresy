@@ -12,6 +12,14 @@ namespace Heresy.Core.Patterns;
 /// </summary>
 public abstract record PatternEffect;
 
+/// <summary>Native persistent channel-Filter selection/clear by song ID.</summary>
+public sealed record SetChannelFilterPatternEffect(
+	Heresy.Core.Objects.ObjectId? FilterDefinitionId = null) : PatternEffect;
+
+/// <summary>Native current-note event-Filter selection/clear.</summary>
+public sealed record SetNoteFilterPatternEffect(
+	Heresy.Core.Objects.ObjectId? FilterDefinitionId = null) : PatternEffect;
+
 /// <summary>Native host Filter text effect. AuthoringFilterId is optional
 /// editor-only descriptor guidance and never silently selects a Filter in
 /// playback; a preceding SetChannelFilterCommand owns selection.</summary>
