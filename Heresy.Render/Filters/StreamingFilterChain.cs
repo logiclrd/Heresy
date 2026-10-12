@@ -186,7 +186,8 @@ public sealed class StreamingFilterChain
 	}
 
 	/// <summary>
-	/// Preflight every affected TPT, Audio EQ biquad and linear Ladder stage
+	/// Preflight every affected TPT, Audio EQ biquad, linear Ladder and
+	/// saturated Ladder stage
 	/// before applying numeric changes. Mixed-family updates remain atomic, including
 	/// invalid Nyquist, shelving and stability constraints. Caller-owned
 	/// scratch and prepared states keep this path allocation-free.
@@ -197,11 +198,14 @@ public sealed class StreamingFilterChain
 		ReadOnlySpan<RealtimeBiquadStageUpdate> biquadUpdates,
 		Span<RealtimeBiquadCoefficients> biquadScratch,
 		ReadOnlySpan<RealtimeLinearLadderStageUpdate> ladderUpdates,
-		Span<RealtimeLinearLadderCoefficients> ladderScratch)
+		Span<RealtimeLinearLadderCoefficients> ladderScratch,
+		ReadOnlySpan<RealtimeSaturatedLadderStageUpdate> saturatedUpdates,
+		Span<RealtimeSaturatedLadderCoefficients> saturatedScratch)
 	{
 		if (_inputFinished || tptScratch.Length < tptUpdates.Length
 			|| biquadScratch.Length < biquadUpdates.Length
-			|| ladderScratch.Length < ladderUpdates.Length)
+			|| ladderScratch.Length < ladderUpdates.Length
+			|| saturatedScratch.Length < saturatedUpdates.Length)
 			return false;
 
 		for (int i = 0; i < tptUpdates.Length; i++)
@@ -256,6 +260,30 @@ public sealed class StreamingFilterChain
 					return false;
 		}
 
+		for (int i = 0; i < saturatedUpdates.Length; i++)
+		{
+			RealtimeSaturatedLadderStageUpdate update = saturatedUpdates[i];
+			if ((uint)update.StageIndex >= (uint)_stages.Length
+				|| _stages[update.StageIndex].Channels[0]
+					is not IRealtimeSaturatedLadderFilterState runtime
+				|| !runtime.TryPrepareRealtime(update.CutoffHz,
+					update.Resonance, update.Drive, SampleRate,
+					out saturatedScratch[i]))
+				return false;
+			for (int j = 0; j < i; j++)
+				if (saturatedUpdates[j].StageIndex == update.StageIndex)
+					return false;
+			for (int j = 0; j < tptUpdates.Length; j++)
+				if (tptUpdates[j].StageIndex == update.StageIndex)
+					return false;
+			for (int j = 0; j < biquadUpdates.Length; j++)
+				if (biquadUpdates[j].StageIndex == update.StageIndex)
+					return false;
+			for (int j = 0; j < ladderUpdates.Length; j++)
+				if (ladderUpdates[j].StageIndex == update.StageIndex)
+					return false;
+		}
+
 		for (int i = 0; i < tptUpdates.Length; i++)
 		{
 			foreach (IStreamingFilterStageState channel in
@@ -276,8 +304,28 @@ public sealed class StreamingFilterChain
 				((IRealtimeLinearLadderFilterState)channel)
 					.CommitRealtime(ladderScratch[i]);
 		}
+		for (int i = 0; i < saturatedUpdates.Length; i++)
+		{
+			foreach (IStreamingFilterStageState channel in
+				_stages[saturatedUpdates[i].StageIndex].Channels)
+				((IRealtimeSaturatedLadderFilterState)channel)
+					.CommitRealtime(saturatedScratch[i]);
+		}
 		return true;
 	}
+
+	// Retain the previous 3-family call contract.
+	internal bool TryApplyRealtimeNumericUpdates(
+		ReadOnlySpan<RealtimeTptStageUpdate> tptUpdates,
+		Span<RealtimeTptCoefficients> tptScratch,
+		ReadOnlySpan<RealtimeBiquadStageUpdate> biquadUpdates,
+		Span<RealtimeBiquadCoefficients> biquadScratch,
+		ReadOnlySpan<RealtimeLinearLadderStageUpdate> ladderUpdates,
+		Span<RealtimeLinearLadderCoefficients> ladderScratch)
+		=> TryApplyRealtimeNumericUpdates(tptUpdates, tptScratch,
+			biquadUpdates, biquadScratch, ladderUpdates, ladderScratch,
+			ReadOnlySpan<RealtimeSaturatedLadderStageUpdate>.Empty,
+			Span<RealtimeSaturatedLadderCoefficients>.Empty);
 
 	// Retain the previous TPT/Biquad overload for existing internal callers.
 	internal bool TryApplyRealtimeNumericUpdates(

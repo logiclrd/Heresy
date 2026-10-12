@@ -23,6 +23,7 @@ internal sealed class FmFilterNodeProcessor
 	private readonly FastStage[] _fastStages;
 	private readonly FastBiquadStage[] _fastBiquads;
 	private readonly FastLinearLadderStage[] _fastLadders;
+	private readonly FastSaturatedLadderStage[] _fastSaturatedLadders;
 	private readonly bool _useFastNumeric;
 	private readonly int _audioIndex;
 
@@ -40,6 +41,11 @@ internal sealed class FmFilterNodeProcessor
 	private readonly record struct FastLinearLadderStage(
 		int StageIndex, int CutoffBindingIndex, int ResonanceBindingIndex,
 		double BaseCutoff, double BaseResonance);
+
+	private readonly record struct FastSaturatedLadderStage(
+		int StageIndex, int CutoffBindingIndex, int ResonanceBindingIndex,
+		int DriveBindingIndex, double BaseCutoff, double BaseResonance,
+		double BaseDrive);
 
 	public FmFilterNodeProcessor(FmFilterNode node,
 		IReadOnlyDictionary<int, int> indexById)
@@ -66,6 +72,7 @@ internal sealed class FmFilterNodeProcessor
 		List<FastStage> tpt = [];
 		List<FastBiquadStage> biquads = [];
 		List<FastLinearLadderStage> ladders = [];
+		List<FastSaturatedLadderStage> saturatedLadders = [];
 		bool supported = _bindings.Length != 0;
 		ConfiguredFilterStage[] stages = _initial?.GetStages().ToArray() ?? [];
 		for (int stageIndex = 0; stageIndex < stages.Length; stageIndex++)
@@ -80,6 +87,7 @@ internal sealed class FmFilterNodeProcessor
 			int slope = -1;
 			int gain = -1;
 			int resonance = -1;
+			int drive = -1;
 			bool stageBound = false;
 			for (int bindingIndex = 0; bindingIndex < _bindings.Length;
 				bindingIndex++)
@@ -104,8 +112,13 @@ internal sealed class FmFilterNodeProcessor
 					gain = bindingIndex;
 				else if (string.Equals(binding.ParameterName, "Resonance",
 					StringComparison.OrdinalIgnoreCase)
-					&& stage.Kind == FilterKind.LadderLinear)
+					&& stage.Kind is (FilterKind.LadderLinear
+						or FilterKind.LadderSaturated))
 					resonance = bindingIndex;
+				else if (string.Equals(binding.ParameterName, "Drive",
+					StringComparison.OrdinalIgnoreCase)
+					&& stage.Kind == FilterKind.LadderSaturated)
+					drive = bindingIndex;
 				else
 					supported = false;
 			}
@@ -134,21 +147,31 @@ internal sealed class FmFilterNodeProcessor
 					stageIndex, cutoff, resonance, baseCutoff,
 					stage.Parameters.GetParameter("Resonance").NumericValue));
 			}
+			else if (stage.Kind == FilterKind.LadderSaturated)
+			{
+				saturatedLadders.Add(new FastSaturatedLadderStage(
+					stageIndex, cutoff, resonance, drive, baseCutoff,
+					stage.Parameters.GetParameter("Resonance").NumericValue,
+					stage.Parameters.GetParameter("Drive").NumericValue));
+			}
 			else
 				supported = false;
 		}
 		_useFastNumeric = supported
-			&& tpt.Count + biquads.Count + ladders.Count > 0;
+			&& tpt.Count + biquads.Count + ladders.Count
+				+ saturatedLadders.Count > 0;
 		_fastStages = _useFastNumeric ? [.. tpt] : [];
 		_fastBiquads = _useFastNumeric ? [.. biquads] : [];
 		_fastLadders = _useFastNumeric ? [.. ladders] : [];
+		_fastSaturatedLadders = _useFastNumeric ? [.. saturatedLadders] : [];
 
 	}
 
 	public sealed class State
 	{
 		internal State(FilterInstance? initial,
-			double[] initialValues, int sampleRate, int tptCount, int biquadCount, int ladderCount)
+			double[] initialValues, int sampleRate, int tptCount, int biquadCount, int ladderCount,
+			int saturatedLadderCount)
 		{
 			Configuration = initial?.Clone();
 			Values = (double[])initialValues.Clone();
@@ -158,6 +181,8 @@ internal sealed class FmFilterNodeProcessor
 			BiquadScratch = new RealtimeBiquadCoefficients[biquadCount];
 			LadderUpdates = new RealtimeLinearLadderStageUpdate[ladderCount];
 			LadderScratch = new RealtimeLinearLadderCoefficients[ladderCount];
+			SaturatedUpdates = new RealtimeSaturatedLadderStageUpdate[saturatedLadderCount];
+			SaturatedScratch = new RealtimeSaturatedLadderCoefficients[saturatedLadderCount];
 			if (Configuration is not null)
 				Chain = new StreamingFilterChain(
 					new FilterChain([Configuration]), sampleRate, 1);
@@ -172,13 +197,15 @@ internal sealed class FmFilterNodeProcessor
 		internal RealtimeBiquadCoefficients[] BiquadScratch { get; }
 		internal RealtimeLinearLadderStageUpdate[] LadderUpdates { get; }
 		internal RealtimeLinearLadderCoefficients[] LadderScratch { get; }
+		internal RealtimeSaturatedLadderStageUpdate[] SaturatedUpdates { get; }
+		internal RealtimeSaturatedLadderCoefficients[] SaturatedScratch { get; }
 	}
 
 	public State CreateState(int sampleRate)
 		=> new(_initial,
 			_bindings.Select(item => item.InitialValue).ToArray(),
 			sampleRate, _fastStages.Length, _fastBiquads.Length,
-			_fastLadders.Length);
+			_fastLadders.Length, _fastSaturatedLadders.Length);
 
 	/// <summary>
 	/// Evaluate all connected parameters as absolute values in the authored
@@ -293,10 +320,32 @@ internal sealed class FmFilterNodeProcessor
 					sourceValues, _bindings));
 		}
 
+		int saturatedCount = 0;
+		foreach (FastSaturatedLadderStage stage in _fastSaturatedLadders)
+		{
+			if (!HasChanged(stage.CutoffBindingIndex, state, sourceValues, _bindings)
+				&& !HasChanged(stage.ResonanceBindingIndex,
+					state, sourceValues, _bindings)
+				&& !HasChanged(stage.DriveBindingIndex,
+					state, sourceValues, _bindings))
+				continue;
+			state.SaturatedUpdates[saturatedCount++] =
+				new RealtimeSaturatedLadderStageUpdate(
+					stage.StageIndex,
+					ValueOrDefault(stage.CutoffBindingIndex, stage.BaseCutoff,
+						sourceValues, _bindings),
+					ValueOrDefault(stage.ResonanceBindingIndex, stage.BaseResonance,
+						sourceValues, _bindings),
+					ValueOrDefault(stage.DriveBindingIndex, stage.BaseDrive,
+						sourceValues, _bindings));
+		}
+
 		if (!state.Chain!.TryApplyRealtimeNumericUpdates(
 			state.FastUpdates.AsSpan(0, tptCount), state.FastScratch,
 			state.BiquadUpdates.AsSpan(0, biquadCount), state.BiquadScratch,
-			state.LadderUpdates.AsSpan(0, ladderCount), state.LadderScratch))
+			state.LadderUpdates.AsSpan(0, ladderCount), state.LadderScratch,
+			state.SaturatedUpdates.AsSpan(0, saturatedCount),
+			state.SaturatedScratch))
 			return;
 		for (int i = 0; i < _bindings.Length; i++)
 			state.Values[i] = sourceValues[_bindings[i].ValueIndex];

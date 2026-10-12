@@ -32,19 +32,8 @@ public sealed class SaturatedLadderFilterStageFactory : IStreamingFilterStageFac
 			throw new ArgumentOutOfRangeException(nameof(sampleRate));
 
 		double cutoff = stage.Parameters["CutoffHz"].NumericValue;
-		if (!double.IsFinite(cutoff) || cutoff <= 0 || cutoff >= sampleRate * 0.5)
-			throw new ArgumentOutOfRangeException(nameof(stage),
-				$"Saturated ladder cutoff {cutoff} Hz must lie strictly below "
-				+ $"base-rate Nyquist ({sampleRate * 0.5} Hz).");
 		double resonance = stage.Parameters["Resonance"].NumericValue;
-		if (!double.IsFinite(resonance) || resonance < 0 || resonance > 1)
-			throw new ArgumentOutOfRangeException(nameof(stage),
-				"Saturated ladder resonance must lie in [0, 1].");
 		double drive = stage.Parameters["Drive"].NumericValue;
-		if (!double.IsFinite(drive) || drive < 0.1 || drive > 10)
-			throw new ArgumentOutOfRangeException(nameof(stage),
-				"Saturated ladder Drive must lie in [0.1, 10].");
-
 		int factor = stage.Parameters["Oversampling"].ChoiceValue switch
 		{
 			"1x" => 1,
@@ -54,26 +43,14 @@ public sealed class SaturatedLadderFilterStageFactory : IStreamingFilterStageFac
 				"Saturated ladder Oversampling must be 1x, 2x or 4x.",
 				nameof(stage)),
 		};
-		// Avoid integer overflow and any need for unbounded oversampled
-		// buffers: the processor works incrementally, in fixed-size state.
-		if ((long)sampleRate * factor > int.MaxValue)
-			throw new ArgumentOutOfRangeException(nameof(sampleRate),
-				"Oversampled sample rate exceeds the supported range.");
+		if (!TryPrepareNumeric(cutoff, resonance, drive, sampleRate, factor,
+			out RealtimeSaturatedLadderCoefficients coefficients, out double radius))
+			throw new ArgumentOutOfRangeException(nameof(stage),
+				"Saturated ladder requires finite in-range cutoff, resonance "
+				+ "and drive with stable poles strictly below base-rate Nyquist.");
+		double g = coefficients.G;
+		double feedback = coefficients.Feedback;
 		int internalRate = sampleRate * factor;
-		double g = Math.Tan(Math.PI * cutoff / internalRate);
-		double feedback = MaximumFeedback * resonance;
-		if (!double.IsFinite(g) || !(g > 0) || !(feedback >= 0)
-			|| !(feedback < 4))
-			throw new ArgumentOutOfRangeException(nameof(stage),
-				"Saturated ladder has invalid integration coefficients.");
-
-		// Tanh has derivative between zero and one, so the maximum
-		// small-signal open-loop feedback gain is the same as for the
-		// stable linear ladder. The nonlinear junction only reduces it.
-		double radius = MaximumDigitalPoleRadius(g, feedback);
-		if (!double.IsFinite(radius) || !(radius >= 0) || !(radius < 1))
-			throw new ArgumentOutOfRangeException(nameof(stage),
-				"Saturated ladder small-signal poles are unstable.");
 
 		// The four repeated poles at zero resonance require an n^3
 		// decay allowance. Convert oversampled work to host PCM frames,
@@ -109,6 +86,39 @@ public sealed class SaturatedLadderFilterStageFactory : IStreamingFilterStageFac
 			reconstructionGain, tailFrames);
 	}
 
+	/// <summary>
+	/// Shared static-plan and realtime numeric preparation. Oversampling is
+	/// fixed structurally; no buffers or immutable objects are built while
+	/// validating an FM frame's candidate parameters.
+	/// </summary>
+	private static bool TryPrepareNumeric(double cutoff, double resonance,
+		double drive, int sampleRate, int factor,
+		out RealtimeSaturatedLadderCoefficients coefficients, out double radius)
+	{
+		coefficients = default;
+		radius = double.NaN;
+		if (sampleRate <= 0 || factor is not (1 or 2 or 4)
+			|| (long)sampleRate * factor > int.MaxValue
+			|| !double.IsFinite(cutoff) || cutoff < 1 || cutoff > 20000
+			|| cutoff >= sampleRate * 0.5
+			|| !double.IsFinite(resonance) || resonance < 0 || resonance > 1
+			|| !double.IsFinite(drive) || drive < 0.1 || drive > 10)
+			return false;
+		double g = Math.Tan(Math.PI * cutoff / (sampleRate * factor));
+		double feedback = MaximumFeedback * resonance;
+		if (!double.IsFinite(g) || !(g > 0)
+			|| !double.IsFinite(feedback) || !(feedback >= 0 && feedback < 4))
+			return false;
+		// tanh's derivative is <= 1: bounded feedback cannot worsen the
+		// linear small-signal stability margin. Apply the same pole test
+		// as normal immutable stage preparation.
+		radius = MaximumDigitalPoleRadius(g, feedback);
+		if (!double.IsFinite(radius) || !(radius >= 0 && radius < 1))
+			return false;
+		coefficients = new(g, feedback, drive);
+		return true;
+	}
+
 	private static double MaximumDigitalPoleRadius(double g, double feedback)
 	{
 		double rootRadius = Math.Sqrt(Math.Sqrt(feedback));
@@ -141,7 +151,8 @@ public sealed class SaturatedLadderFilterStageFactory : IStreamingFilterStageFac
 		public IStreamingFilterStageState CreateState() => new LadderState(this);
 	}
 
-	private sealed class LadderState : IStreamingFilterStageState
+	private sealed class LadderState : IStreamingFilterStageState,
+		IRealtimeSaturatedLadderFilterState
 	{
 		private readonly double[] _integrators = new double[4];
 		private readonly double[] _reconstruction = new double[4];
@@ -152,6 +163,9 @@ public sealed class SaturatedLadderFilterStageFactory : IStreamingFilterStageFac
 		private double _startG;
 		private double _startFeedback;
 		private double _startDrive;
+		private double _targetG;
+		private double _targetFeedback;
+		private double _targetDrive;
 		private double _previousInput;
 		private int _remaining;
 		private double _gain;
@@ -167,6 +181,9 @@ public sealed class SaturatedLadderFilterStageFactory : IStreamingFilterStageFac
 			_startG = _g;
 			_startFeedback = _feedback;
 			_startDrive = _drive;
+			_targetG = _g;
+			_targetFeedback = _feedback;
+			_targetDrive = _drive;
 			UpdateCoefficients();
 		}
 
@@ -181,6 +198,9 @@ public sealed class SaturatedLadderFilterStageFactory : IStreamingFilterStageFac
 			_startG = other._startG;
 			_startFeedback = other._startFeedback;
 			_startDrive = other._startDrive;
+			_targetG = other._targetG;
+			_targetFeedback = other._targetFeedback;
+			_targetDrive = other._targetDrive;
 			_previousInput = other._previousInput;
 			_remaining = other._remaining;
 			_gain = other._gain;
@@ -208,10 +228,10 @@ public sealed class SaturatedLadderFilterStageFactory : IStreamingFilterStageFac
 					double progress = (double)(
 						ParameterTransitionFrames * factor - _remaining + 1)
 						/ (ParameterTransitionFrames * factor);
-					_g = _startG + (_plan.G - _startG) * progress;
+					_g = _startG + (_targetG - _startG) * progress;
 					_feedback = _startFeedback
-						+ (_plan.Feedback - _startFeedback) * progress;
-					_drive = _startDrive + (_plan.Drive - _startDrive) * progress;
+						+ (_targetFeedback - _startFeedback) * progress;
+					_drive = _startDrive + (_targetDrive - _startDrive) * progress;
 					UpdateCoefficients();
 					_remaining--;
 				}
@@ -293,30 +313,48 @@ public sealed class SaturatedLadderFilterStageFactory : IStreamingFilterStageFac
 
 		public IStreamingFilterStageState Clone() => new LadderState(this);
 
-		public void Reconfigure(IStreamingFilterStagePlan plan)
+		public bool TryPrepareRealtime(double cutoff, double resonance,
+			double drive, int sampleRate,
+			out RealtimeSaturatedLadderCoefficients coefficients)
+			=> TryPrepareNumeric(cutoff, resonance, drive, sampleRate,
+				_plan.Factor, out coefficients, out _);
+
+		public void CommitRealtime(RealtimeSaturatedLadderCoefficients coefficients)
+			=> SetTarget(coefficients.G, coefficients.Feedback, coefficients.Drive);
+
+		private void SetTarget(double g, double feedback, double drive)
 		{
-			if (plan is not LadderPlan next || next.Factor != _plan.Factor)
-				throw new ArgumentException(
-					"Saturated ladder must retain its structural oversampling "
-					+ "factor when updating existing histories.", nameof(plan));
-			if (_g == next.G && _feedback == next.Feedback
-				&& _drive == next.Drive)
+			if (_g == g && _feedback == feedback && _drive == drive)
 			{
-				_plan = next;
+				_targetG = g;
+				_targetFeedback = feedback;
+				_targetDrive = drive;
 				_startG = _g;
 				_startFeedback = _feedback;
 				_startDrive = _drive;
 				_remaining = 0;
 				return;
 			}
-			// Keep integrators, reconstruction filter, and input phase.
-			// A new edit during an unfinished transition starts from
-			// its current interpolated values.
+			// Never recreate the four-pole integrators, four-stage anti-alias
+			// reconstruction, or previous-input interpolation history.
+			// A mid-ramp numeric change restarts at the current substep.
 			_startG = _g;
 			_startFeedback = _feedback;
 			_startDrive = _drive;
+			_targetG = g;
+			_targetFeedback = feedback;
+			_targetDrive = drive;
+			_remaining = ParameterTransitionFrames * _plan.Factor;
+		}
+
+		public void Reconfigure(IStreamingFilterStagePlan plan)
+		{
+			if (plan is not LadderPlan next || next.Factor != _plan.Factor)
+				throw new ArgumentException(
+					"Saturated ladder must retain its structural oversampling "
+					+ "factor when updating existing histories.", nameof(plan));
 			_plan = next;
-			_remaining = ParameterTransitionFrames * next.Factor;
+			SetTarget(next.G, next.Feedback, next.Drive);
 		}
 	}
 }
