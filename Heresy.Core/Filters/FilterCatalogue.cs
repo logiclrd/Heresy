@@ -111,6 +111,7 @@ public static class FilterCatalogue
 			new("Ladder (non-linear/saturated)", 1, FilterKind.LadderSaturated),
 			new("All-Pass (Phase Shift)", 1, FilterKind.AllPass),
 			new("One-Pole (6 dB/octave)", 1, FilterKind.OnePole),
+            new("Legacy RC One-Pole (speaker compatibility)", 1, FilterKind.SpeakerLegacyRc),
 			new("Comb (feedback)", 1, FilterKind.CombFeedback),
 			new("Finite Impulse Response (FIR) (Expensive)", 0),
 			new("Standard Arbitrary FIR", 1),

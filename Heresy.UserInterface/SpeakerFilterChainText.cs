@@ -33,7 +33,6 @@ public static class SpeakerFilterChainText
             string[] fields = line.Split(
                 (char[]?)null, StringSplitOptions.RemoveEmptyEntries);
             if (!Enum.TryParse(fields[0], ignoreCase: true, out FilterKind kind)
-                || kind == FilterKind.SpeakerLegacyRc
                 || !Enum.IsDefined(kind))
                 throw new ArgumentException($"Unknown or unavailable speaker Filter type '{fields[0]}'.");
             FilterSpecificationInstance parameters = new(kind);

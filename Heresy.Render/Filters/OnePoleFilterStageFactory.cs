@@ -170,6 +170,8 @@ public sealed class BuiltInFilterStageFactory : IStreamingFilterStageFactory
 		ArgumentNullException.ThrowIfNull(stage);
 		if (stage.Kind == FilterKind.OnePole)
 			return OnePoleFilterStageFactory.Instance.Prepare(stage, sampleRate);
+        if (stage.Kind == FilterKind.SpeakerLegacyRc)
+            return LegacySpeakerRcFilterStageFactory.Instance.Prepare(stage, sampleRate);
 		if (BiquadFilterStageFactory.IsBiquad(stage.Kind))
 			return BiquadFilterStageFactory.Instance.Prepare(stage, sampleRate);
 		if (SvfFilterStageFactory.IsSvf(stage.Kind))
