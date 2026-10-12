@@ -150,7 +150,8 @@ public sealed class PatternEffectStatusHintTests
 
 		cursor.SetPosition(1, 0, PatternCellField.EffectCommand);
 		Invoke(editor, "RefreshCursorVisuals");
-		hint.Text.Should().Contain("two-digit hex parameter");
+		hint.Text.Should().Be("Configure effect with Enter.");
+		diagnostic.Text.Should().Be(existingDiagnostic);
 
 		cursor.SetPosition(2, 0, PatternCellField.EffectParameter);
 		Invoke(editor, "RefreshCursorVisuals");
