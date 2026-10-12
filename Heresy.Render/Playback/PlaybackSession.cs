@@ -476,6 +476,34 @@ public sealed class PlaybackSession
 		}
 	}
 
+	/// <summary>
+	/// Explicit control-side preparation of bounded note-envelope FIR kernels.
+	/// Invoke between PCM Render blocks on the owning playback/session thread,
+	/// never from a device callback. A newly prepared candidate is consumed
+	/// only if its exact complete numeric snapshot matches a later frame.
+	/// This method does not itself advance any sound, envelope or DSP history.
+	/// </summary>
+	public int PreparePendingNoteFilterEnvelopeControls()
+	{
+		int prepared = 0;
+		HashSet<PlaybackVoice> seen = [];
+		void Consider(PlaybackVoice? voice)
+		{
+			if (voice is null || !seen.Add(voice)) return;
+			if (voice.TryPreparePendingNoteFilterEnvelopeControls())
+				prepared++;
+		}
+		foreach (PlaybackChannelState channel in _channels.Values)
+			Consider(channel.CurrentVoice);
+		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+			Consider(channel.CurrentVoice);
+		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+			Consider(channel.CurrentVoice);
+		foreach (PlaybackVoice voice in _virtualVoices)
+			Consider(voice);
+		return prepared;
+	}
+
 	/// <summary>Diagnostic count of non-root logical channel entries,
 	/// including scopes retained for sounding voices or anti-click tails.</summary>
 	public int RetainedScopedPhysicalChannelCount
