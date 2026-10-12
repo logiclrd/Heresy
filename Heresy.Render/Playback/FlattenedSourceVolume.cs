@@ -1,6 +1,9 @@
 using System;
 
 using Heresy.Core.Filters;
+using Heresy.Render.Envelopes;
+using System.Collections.Generic;
+using System.Linq;
 
 using Heresy.Core.Sequencing;
 
@@ -51,6 +54,41 @@ internal sealed class FlattenedSourceVolume
 	/// successfully prepared the same proposed controller configuration.</summary>
 	internal void PublishEventFilterConfiguration(FilterInstance? configuration)
 		=> EventFilterConfiguration = configuration?.Clone();
+
+	private readonly Dictionary<(int Id, string Parameter), (IEnvelopeCurve Curve, long Frame)>
+		_parameterEnvelopes = [];
+
+	internal IReadOnlyDictionary<(int Id, string Parameter), (IEnvelopeCurve Curve, long Frame)>
+		ParameterEnvelopes => _parameterEnvelopes;
+
+	internal long? ParameterEnvelopeReleaseFrame { get; private set; }
+
+	internal string ValidateParameterEnvelope(int stageId, string parameterName)
+	{
+		if (EventFilterConfiguration is null)
+			throw new InvalidOperationException("No flattened note-event Filter is selected.");
+		FilterStageDefinition stage = EventFilterConfiguration.Definition.GetStage(stageId);
+		FilterParameterDescriptor descriptor = FilterCatalogue.GetParameters(stage.Kind)
+			.FirstOrDefault(p => string.Equals(p.Name, parameterName,
+				StringComparison.OrdinalIgnoreCase))
+			?? throw new ArgumentException($"Unknown note Filter parameter '{parameterName}'.");
+		if (!descriptor.IsModulatable)
+			throw new ArgumentException($"Parameter {stage.Name}.{descriptor.Name} is structural or not numeric.");
+		return descriptor.Name.ToUpperInvariant();
+	}
+
+	internal void PublishParameterEnvelope(int stageId, string parameter,
+		IEnvelopeCurve? curve, long frame)
+	{
+		var key = (stageId, parameter);
+		if (curve is null) _parameterEnvelopes.Remove(key);
+		else _parameterEnvelopes[key] = (curve, frame);
+	}
+
+	internal void ClearParameterEnvelopes() => _parameterEnvelopes.Clear();
+
+	internal void ReleaseParameterEnvelopes(long frame)
+		=> ParameterEnvelopeReleaseFrame ??= frame;
 
 	public double Read(long frame)
 	{

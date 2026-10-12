@@ -404,6 +404,9 @@ public sealed class PlaybackSession
 		if (action == NoteDisplacementAction.Continue)
 			return;
 		long frame = _nextFrame;
+		if (action == NoteDisplacementAction.Off
+			&& _sourceVolumes.TryGetValue(scopeId, out FlattenedSourceVolume? owner))
+			owner.ReleaseParameterEnvelopes(frame);
 		foreach (PlaybackChannelState channel in _channels.Values)
 			ApplySourceActionToChannel(channel, scopeId, action, frame);
 		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
@@ -423,7 +426,10 @@ public sealed class PlaybackSession
 				RetireDisplacedVoiceAt(i);
 			}
 			else if (action == NoteDisplacementAction.Off)
+			{
+				voice.ReleaseEnclosingEnvelopeBindings(_sourceVolumes[scopeId], frame);
 				voice.ApplyNoteOff(frame, SampleRate);
+			}
 			else if (action == NoteDisplacementAction.Fade)
 				voice.RequestNoteFade(frame, SampleRate,
 					voice.Configuration.NewNoteFadeDuration);
@@ -455,6 +461,7 @@ public sealed class PlaybackSession
 				channel.CutCurrentVoice();
 				break;
 			case NoteDisplacementAction.Off:
+				voice.ReleaseEnclosingEnvelopeBindings(_sourceVolumes[scopeId], frame);
 				voice.ApplyNoteOff(frame, SampleRate);
 				CullFinishedCurrentVoice(channel, frame);
 				break;
@@ -1966,10 +1973,31 @@ public sealed class PlaybackSession
 		PlaybackChannelState channel,
 		SetNoteFilterParameterEnvelopeCommand command, long frame)
 	{
-		if (channel.CurrentFlattenedSource is not null)
+		if (channel.CurrentFlattenedSource is FlattenedSourceVolume controller)
 		{
-			NoteFilterCommandRejected?.Invoke(
-				"Flattened note Filter envelope scope requires descendant binding support.");
+			try
+			{
+				string parameter = controller.ValidateParameterEnvelope(
+					command.StageId, command.ParameterName);
+				IEnvelopeCurve? resolved = ResolveNoteFilterEnvelope(command);
+				// Prepare every independent descendant clock before publishing
+				// either the controller binding or a single voice update.
+				List<(PlaybackVoice Voice, EnvelopePlaybackState? State)> updates = [];
+				foreach (PlaybackVoice voice in CollectFlattenedDescendants(controller.ScopeId))
+					updates.Add((voice, voice.PrepareEnclosingEnvelopeBinding(
+						controller, resolved, frame)));
+				controller.PublishParameterEnvelope(
+					command.StageId, parameter, resolved, frame);
+				foreach (var update in updates)
+					update.Voice.PublishEnclosingEnvelopeBinding(
+						controller, command.StageId, parameter, update.State);
+			}
+			catch (Exception error) when (error is ArgumentException
+				or InvalidOperationException or KeyNotFoundException
+				or OverflowException)
+			{
+				NoteFilterCommandRejected?.Invoke(error.Message);
+			}
 			return;
 		}
 		if (channel.CurrentVoice is not PlaybackVoice voice)
@@ -1980,15 +2008,7 @@ public sealed class PlaybackSession
 		}
 		try
 		{
-			IEnvelopeCurve? curve = null;
-			if (command.EnvelopeId is ObjectId id)
-			{
-				if (id.IsNone || NoteFilterEnvelopeResolver is null
-					|| !NoteFilterEnvelopeResolver.TryResolve(id, out curve)
-					|| curve is null)
-					throw new ArgumentException(
-						$"Unknown or unavailable Filter Envelope {id.Value}.");
-			}
+			IEnvelopeCurve? curve = ResolveNoteFilterEnvelope(command);
 			voice.SetEventFilterParameterEnvelope(
 				command.StageId, command.ParameterName, curve, frame);
 		}
@@ -1998,6 +2018,39 @@ public sealed class PlaybackSession
 		{
 			NoteFilterCommandRejected?.Invoke(error.Message);
 		}
+	}
+
+	private IEnvelopeCurve? ResolveNoteFilterEnvelope(
+		SetNoteFilterParameterEnvelopeCommand command)
+	{
+		if (command.EnvelopeId is not ObjectId id) return null;
+		if (id.IsNone || NoteFilterEnvelopeResolver is null
+			|| !NoteFilterEnvelopeResolver.TryResolve(id, out IEnvelopeCurve? curve)
+			|| curve is null)
+			throw new ArgumentException(
+				$"Unknown or unavailable Filter Envelope {id.Value}.");
+		return curve;
+	}
+
+	private List<PlaybackVoice> CollectFlattenedDescendants(long scopeId)
+	{
+		List<PlaybackVoice> result = [];
+		HashSet<PlaybackVoice> seen = [];
+		void Consider(PlaybackVoice? voice)
+		{
+			if (voice is not null && seen.Add(voice)
+				&& VoiceBelongsToFlattenedSource(voice, scopeId))
+				result.Add(voice);
+		}
+		foreach (PlaybackChannelState channel in _channels.Values)
+			Consider(channel.CurrentVoice);
+		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+			Consider(channel.CurrentVoice);
+		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+			Consider(channel.CurrentVoice);
+		foreach (PlaybackVoice voice in _virtualVoices)
+			Consider(voice);
+		return result;
 	}
 
 	private void ApplyCurrentNoteFilterCommand(
@@ -2089,8 +2142,14 @@ public sealed class PlaybackSession
 			foreach (PlaybackVoice voice in _virtualVoices)
 				Consider(voice);
 			controller.PublishEventFilterConfiguration(candidate);
+			if (command is SetNoteFilterCommand)
+				controller.ClearParameterEnvelopes();
 			foreach (var update in updates)
+			{
 				update.Voice.PublishEnclosingEventFilterUpdate(update.State);
+				if (command is SetNoteFilterCommand)
+					update.Voice.ClearEnclosingEnvelopeBindings(controller);
+			}
 		}
 		catch (Exception exception) when (exception is ArgumentException
 			or InvalidOperationException or KeyNotFoundException
@@ -3144,6 +3203,8 @@ public sealed class PlaybackSession
 			voice.SynchronizeEventFilterParameterEnvelopes(
 				absoluteFrame, NoteFilterCommandRejected);
 			voice.EventFilterState?.ProcessFrame(outputFrame);
+			voice.SynchronizeEnclosingFilterParameterEnvelopes(
+				absoluteFrame, NoteFilterCommandRejected);
 			voice.EnclosingEventFilterState?.ProcessFrame(outputFrame);
 			if (voice.HasFilterEnvelope)
 				voice.SynchronizeFilterEnvelope(absoluteFrame);

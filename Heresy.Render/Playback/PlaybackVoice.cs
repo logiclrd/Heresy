@@ -309,6 +309,12 @@ public sealed class PlaybackVoice
 			enclosingEventFilters is null || enclosingEventFilters.Count == 0
 				? null : new StreamingFilterChain(enclosingEventFilters,
 					sampleRate, outputChannelCount);
+		foreach (FlattenedSourceVolume ancestor in EnclosingSourceVolumes)
+			foreach (var binding in ancestor.ParameterEnvelopes)
+				PublishEnclosingEnvelopeBinding(ancestor, binding.Key.Id,
+					binding.Key.Parameter,
+					PrepareEnclosingEnvelopeBinding(ancestor, binding.Value.Curve,
+						binding.Value.Frame));
 
 		if (_pitchEnvelope is not null || _inheritedPitch is not null)
 			RecomposePitchTrajectory(0);
@@ -340,6 +346,16 @@ public sealed class PlaybackVoice
 		_lastAppliedEventEnvelopeValues = [];
 	private bool _refreshEventFilterEnvelopes;
 	public StreamingFilterChain? EventFilterState { get; private set; }
+
+	// Every flattened ancestor contributes its own independently clocked
+	// parameter envelopes. Shared controllers contain immutable curves and
+	// attachment frames, never mutable EnvelopePlaybackState instances.
+	private readonly Dictionary<(FlattenedSourceVolume Scope, int Id, string Parameter),
+		EnvelopePlaybackState> _enclosingFilterParameterEnvelopes = [];
+	private Dictionary<(FlattenedSourceVolume Scope, int Id, string Parameter), double>
+		_lastAppliedEnclosingEnvelopeValues = [];
+	private bool _refreshEnclosingFilterEnvelopes;
+
 
 	/// <summary>The unique dynamic virtual output host created on NNA
 	/// displacement. This is a *fork* of its original host's output DSP
@@ -465,6 +481,95 @@ public sealed class PlaybackVoice
 		_refreshEventFilterEnvelopes = true;
 	}
 
+	internal EnvelopePlaybackState? PrepareEnclosingEnvelopeBinding(
+		FlattenedSourceVolume scope, IEnvelopeCurve? curve, long frame)
+	{
+		if (curve is null) return null;
+		EnvelopePlaybackState state = new(curve, frame, _sampleRate);
+		if (scope.ParameterEnvelopeReleaseFrame is long released
+			&& released >= frame)
+			state.NoteOff(released);
+		return state;
+	}
+
+	internal void PublishEnclosingEnvelopeBinding(FlattenedSourceVolume scope,
+		int stageId, string parameter, EnvelopePlaybackState? state)
+	{
+		var key = (scope, stageId, parameter);
+		if (state is null) _enclosingFilterParameterEnvelopes.Remove(key);
+		else _enclosingFilterParameterEnvelopes[key] = state;
+		_refreshEnclosingFilterEnvelopes = true;
+	}
+
+	internal void ClearEnclosingEnvelopeBindings(FlattenedSourceVolume scope)
+	{
+		foreach (var key in _enclosingFilterParameterEnvelopes.Keys
+			.Where(key => ReferenceEquals(key.Scope, scope)).ToArray())
+			_enclosingFilterParameterEnvelopes.Remove(key);
+		_refreshEnclosingFilterEnvelopes = true;
+	}
+
+	internal void ReleaseEnclosingEnvelopeBindings(FlattenedSourceVolume scope,
+		long frame)
+	{
+		foreach (var pair in _enclosingFilterParameterEnvelopes)
+			if (ReferenceEquals(pair.Key.Scope, scope))
+				pair.Value.NoteOff(frame);
+	}
+
+	internal void SynchronizeEnclosingFilterParameterEnvelopes(
+		long frame, Action<string>? warn)
+	{
+		if ((_enclosingFilterParameterEnvelopes.Count == 0
+				&& !_refreshEnclosingFilterEnvelopes)
+			|| EnclosingEventFilterState is null)
+			return;
+		try
+		{
+			List<FilterInstance> layers = [];
+			Dictionary<(FlattenedSourceVolume Scope, int Id, string Parameter), double>
+				values = [];
+			bool changed = _refreshEnclosingFilterEnvelopes;
+			for (int i = EnclosingSourceVolumes.Count - 1; i >= 0; i--)
+			{
+				FlattenedSourceVolume scope = EnclosingSourceVolumes[i];
+				if (scope.EventFilterConfiguration is not FilterInstance baseLayer)
+					continue;
+				FilterInstance candidate = baseLayer.Clone();
+				foreach (var pair in _enclosingFilterParameterEnvelopes)
+				{
+					if (!ReferenceEquals(pair.Key.Scope, scope)) continue;
+					double number = pair.Value.GetValue(frame);
+					FilterParameterDescriptor descriptor =
+						FilterCatalogue.GetParameters(candidate.Definition
+							.GetStage(pair.Key.Id).Kind).First(p =>
+								string.Equals(p.Name, pair.Key.Parameter,
+									StringComparison.OrdinalIgnoreCase));
+					descriptor.Normalize(FilterParameterValue.FromNumber(number));
+					values.Add(pair.Key, number);
+					if (!_lastAppliedEnclosingEnvelopeValues.TryGetValue(pair.Key,
+						out double prior) || prior != number) changed = true;
+					candidate.SetStageParameter(pair.Key.Id, descriptor.Name,
+						FilterParameterValue.FromNumber(number));
+				}
+				layers.Add(candidate);
+			}
+			if (!changed && values.Count == _lastAppliedEnclosingEnvelopeValues.Count)
+				return;
+			StreamingFilterChain prepared = EnclosingEventFilterState.Fork();
+			prepared.Configure(new FilterChain(layers));
+			EnclosingEventFilterState = prepared;
+			_lastAppliedEnclosingEnvelopeValues = values;
+			_refreshEnclosingFilterEnvelopes = false;
+		}
+		catch (Exception error) when (error is ArgumentException
+			or InvalidOperationException or KeyNotFoundException
+			or OverflowException)
+		{
+			warn?.Invoke(error.Message);
+		}
+	}
+
 	internal StreamingFilterChain? PrepareEnclosingEventFilterUpdate(
 		FilterChain? proposed)
 	{
@@ -480,7 +585,10 @@ public sealed class PlaybackVoice
 
 	internal void PublishEnclosingEventFilterUpdate(
 		StreamingFilterChain? state)
-		=> EnclosingEventFilterState = state;
+	{
+		EnclosingEventFilterState = state;
+		_refreshEnclosingFilterEnvelopes = true;
+	}
 
 	/// <summary>Selected flattened logical note Filters after this voice's
 	/// own event layer, innermost scope first, each history private.</summary>
