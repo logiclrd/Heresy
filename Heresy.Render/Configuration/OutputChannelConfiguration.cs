@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using System.Collections.Generic;
 using Heresy.Core.Filters;
 
 namespace Heresy.Render.Configuration;
@@ -42,7 +43,7 @@ public sealed record OutputChannelConfiguration
             throw new ArgumentOutOfRangeException(nameof(filterType));
         if (filterType != OutputFilterType.Chain && filter is not null)
             throw new ArgumentException("Only a reusable speaker Filter can own an inline chain.", nameof(filter));
-        _filter = filter?.Clone();
+        _filter = filter is null ? null : Freeze(filter);
 		Position = position;
 		PositionalImportance = positionalImportance;
 		FilterType = filterType;
@@ -58,6 +59,25 @@ public sealed record OutputChannelConfiguration
 	public double PositionalImportance { get; }
 	public OutputFilterType FilterType { get; }
 	public double? CutoffHz { get; }
+
+    /// <summary>Rebuild the definition from complete effective stage values,
+    /// so edits to a song's FilterDefinition cannot mutate saved audio-device
+    /// preferences or an already-started render snapshot.</summary>
+    private static FilterInstance Freeze(FilterInstance filter)
+    {
+        List<FilterStageDefinition> stages = [];
+        foreach (ConfiguredFilterStage stage in filter.GetStages())
+        {
+            List<KeyValuePair<string, FilterParameterValue>> values = [];
+            foreach (FilterParameterDescriptor descriptor in stage.Parameters.Parameters)
+                values.Add(new(descriptor.Name,
+                    stage.Parameters.GetParameter(descriptor.Name)));
+            stages.Add(new FilterStageDefinition(stage.StageId, stage.Name,
+                stage.Kind, values));
+        }
+        return new FilterInstance(new FilterDefinition(filter.DefinitionId,
+            filter.Definition.Name, stages));
+    }
 
 	private static bool IsFinite(Vector3 value)
 		=> float.IsFinite(value.X)
