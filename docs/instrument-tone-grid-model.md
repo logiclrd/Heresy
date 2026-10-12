@@ -414,8 +414,14 @@ At each note start, tone selection uses the caller's positive finite input pitch
 Both styles and all per-tone values are serialized in the unchanged version-one song schema as optional properties. Old documents lacking them load with Inherit/UseToneNna defaults. Invalid policy enums and malformed/nonpositive Fade durations are rejected at decode or bind rather than silently selecting a different voice action. `InstrumentToneGridCells`, shared-tone interning, and the legacy editor API retain these independent NNA values even when the user changes only Source/Pitch/Envelope/Filter fields; a source-less row holds its NNA in an editor-local draft until the row is published. The Avalonia NNA authoring surface is also implemented. Data Instruments show
 an explicit Instrument-wide chooser with **Use Tone NNA** (the default),
 Cut/Continue/Off/Fade and a Fade-duration field that is visible when Fade is
-selected. Clicking **Apply NNA** validates the positive duration and publishes
-action plus duration in one audio revision; an unchanged setting is a no-op.
+selected. The **Use Tone NNA, Cut, Continue and Off** selections publish
+**immediately** on changing the dropdown, each creating at most one audio
+revision. Fade is the exception: selecting Fade opens the duration input
+and an **Apply Fade** button, and the policy changes only after a valid
+positive duration is applied. An unchanged setting is a no-op. This avoids
+the prior ambiguous state in which the selector visibly showed Continue,
+but the persisted Instrument still used its previous Cut policy until
+a separate Apply NNA button was pressed.
 The virtualized grid adds an **NNA / fade (ms)** column alongside Source,
 Pitch and Envelopes. Each row can independently select **Inherit** (default),
 Cut, Continue, Off, or Fade, with a positive per-tone Fade duration.
@@ -425,8 +431,26 @@ row remains a source-less draft and does not change the saved audio document.
 The reserved entry row carries its draft NNA through insertion and publication.
 An invalid Fade duration shows a diagnostic without committing a change; the
 duration input commits on Enter or focus loss. A change to one of two previously
-interned tones does not change the other. The Instrument-wide Apply operation
-detects concurrent authoring of its NNA policy and refuses a stale overwrite.
+interned tones does not change the other. Instrument-wide commits,
+including immediate non-Fade selections and explicit Fade application,
+detect concurrent authoring of the NNA policy and refuse a stale overwrite.
+
+**C-5/G-5 filtered Continue regression (12 October 2026).**
+`InstrumentNnaToneFilterOverlapTests` exercises a real
+`PreparedIncrementalPlaybackFactory`/incremental one-channel data Pattern:
+C-5 and G-5 are eight rows apart, using separate low-pass and high-pass
+OnePole tone Filters. With the Instrument-wide NNA set to Continue and
+committed, the C-5 voice migrates into `PlaybackSession.VirtualVoices`,
+retains its own tone Filter state, and remains audible in parallel with
+the new G-5 voice. A corresponding Cut variant establishes the opposite
+behavior. The test uses a long sample so natural sample exhaustion
+cannot masquerade as note displacement. Headless Avalonia tests verify
+that choosing Continue immediately advances a single audio revision and
+that a freshly captured playback snapshot contains Continue, while
+Fade requires validating and explicitly applying a duration.
+The specific user-created module that reported an abrupt cutoff was
+not provided, so the original instance of the problem is **not**
+claimed reproduced with an already-committed Continue policy.
 
 Script Instruments expose their prepared restricted **NNA expression** in a
 separate editor field beside their Source/Pitch expressions, with an example
