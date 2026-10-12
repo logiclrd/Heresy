@@ -234,14 +234,16 @@ public sealed class ScriptInstrumentPlaybackTests
         FilterDefinition definition = new(filterId, "Tone echo", [
             new FilterStageDefinition(1, "echo", FilterKind.CombFeedforward),
         ]);
-        song.Add(definition);
-        FilterInstance instance = new(definition);
-        instance.SetStageParameters(1, [
+        // Script/data note starts select a shared Filter *definition*, not
+        // arbitrary overrides on a different, unreferenced use. Configure
+        // the definition's defaults to test the selected audible response.
+        definition.SetStageDefaults(1, [
             new("DelaySeconds", FilterParameterValue.FromNumber(delay)),
             new("Feedforward", FilterParameterValue.FromNumber(1)),
             new("Mix", FilterParameterValue.FromNumber(1)),
         ]);
-        return instance;
+        song.Add(definition);
+        return new FilterInstance(definition);
     }
 
     private static NodeEnvelopeDefinition HalfEnvelope(ObjectId id)
