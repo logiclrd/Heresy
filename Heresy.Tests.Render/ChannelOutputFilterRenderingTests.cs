@@ -102,6 +102,30 @@ public sealed class ChannelOutputFilterRenderingTests
     }
 
     [Test]
+    public void NnaForkPreservesItsOwnResponseAfterOriginalPhysicalHostIsCleared()
+    {
+        TestResolver sounds = new();
+        sounds.Add(PulseId, new LingeringPulseSound());
+        PlaybackSession session = Session(sounds, Schedule(
+            Event(0, 0, new StartNoteCommand(PulseId)),
+            Event(1, 0, new StartNoteCommand(PulseId))));
+        session.ConfigurePhysicalChannelOutputFilter(0, Echo(915, 0.002));
+
+        float[] first = new float[2];
+        session.Render(0, 2, first);
+        Assert.That(first, Is.EqualTo(new float[] { 1, 1 }));
+        Assert.That(session.VirtualVoices, Has.Count.EqualTo(1));
+        // A displaced voice has its own copy of the output Filter history.
+        // Clearing the *physical* host must not clear the virtual host's
+        // pending echo from the first note.
+        session.ConfigurePhysicalChannelOutputFilter(0, null);
+        float[] later = new float[5];
+        session.Render(2, 5, later);
+        Assert.That(later, Is.EqualTo(new float[] { 1, 0, 0, 0, 0 }),
+            "the dynamic NNA host must emit its cloned echo independently");
+    }
+
+    [Test]
     public void ScopedAndUnscopedVirtualOutputHostsDoNotShareHistories()
     {
         TestResolver sounds = new();
@@ -295,6 +319,21 @@ public sealed class ChannelOutputFilterRenderingTests
             long startFrame, int frameCount, Span<float> destination)
         {
             if (startFrame == 0 && frameCount > 0) destination[0] += 1;
+        }
+    }
+
+    private sealed class LingeringPulseSound : ISound
+    {
+        public NoteConfigurationSnapshot SnapshotNoteConfiguration()
+            => new(NewNotePolicy.Continue);
+        public SoundState CreateState() => new ProbeState();
+        public long? GetEndFrameExclusive(RenderContext context, SoundState state)
+            => 8;
+        public void Render(RenderContext context, SoundState state,
+            long startFrame, int frameCount, Span<float> destination)
+        {
+            if (startFrame == 0 && frameCount > 0)
+                destination[0] += 1;
         }
     }
 
