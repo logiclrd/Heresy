@@ -54,6 +54,15 @@ internal sealed class ChannelOutputFilterState
         return new ChannelOutputFilterState(updated, fork, _tailRemainingFrames);
     }
 
+    public ChannelOutputFilterState PrepareTextUpdate(string text)
+    {
+        FilterInstance updated = FilterAssignmentText.ApplyToClone(
+            _configuration, text);
+        StreamingFilterChain fork = _chain.Fork();
+        fork.Configure(new FilterChain(new[] { updated }));
+        return new ChannelOutputFilterState(updated, fork, _tailRemainingFrames);
+    }
+
     public FilterInstance SnapshotConfiguration() => _configuration.Clone();
 
     public bool HasTail => _tailRemainingFrames > 0;

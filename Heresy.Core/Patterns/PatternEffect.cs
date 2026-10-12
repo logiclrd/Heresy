@@ -12,6 +12,19 @@ namespace Heresy.Core.Patterns;
 /// </summary>
 public abstract record PatternEffect;
 
+/// <summary>Native host Filter text effect. AuthoringFilterId is optional
+/// editor-only descriptor guidance and never silently selects a Filter in
+/// playback; a preceding SetChannelFilterCommand owns selection.</summary>
+public sealed record SetChannelFilterAssignmentsPatternEffect(
+	string AssignmentText,
+	Heresy.Core.Objects.ObjectId? AuthoringFilterId = null) : PatternEffect;
+
+/// <summary>Native current-note Filter text effect, validated against the
+/// Filter actually selected for the note at the event frame.</summary>
+public sealed record SetNoteFilterAssignmentsPatternEffect(
+	string AssignmentText,
+	Heresy.Core.Objects.ObjectId? AuthoringFilterId = null) : PatternEffect;
+
 /// <summary>
 /// Persisted editor slot for a newly inserted IT-style effect whose command
 /// has not been chosen yet. It is musically inert until replaced by a concrete

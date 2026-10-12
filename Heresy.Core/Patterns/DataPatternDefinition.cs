@@ -344,6 +344,12 @@ public sealed class DataPatternDefinition : PatternDefinition, IDeferredSourcePa
 			case TrackerMidiMacroPatternEffect macro:
 				return new ApplyTrackerMidiMacroCommand(macro.Parameter);
 
+			case SetChannelFilterAssignmentsPatternEffect text:
+				return new SetChannelFilterAssignmentsCommand(text.AssignmentText);
+
+			case SetNoteFilterAssignmentsPatternEffect text:
+				return new SetNoteFilterAssignmentsCommand(text.AssignmentText);
+
 			case SetResonantFilterPatternEffect filter:
 				return new SetResonantFilterCommand(
 					filter.Cutoff,

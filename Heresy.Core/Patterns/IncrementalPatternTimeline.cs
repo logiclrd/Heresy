@@ -826,6 +826,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						or SetNoteVolumeCommand or SetSourceFrameOffsetCommand
 						or SetNoteFilterCommand or SetNoteFilterParametersCommand
 						or SetChannelFilterCommand or SetChannelFilterParametersCommand
+						or SetChannelFilterAssignmentsCommand
+						or SetNoteFilterAssignmentsCommand
 						// An explicit note-lifecycle command is safe to defer on
 						// both physical and virtual targets. Resolve it against the
 						// voice present at the actual wall deadline, not the row.
@@ -878,6 +880,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 								or SetNoteFilterParametersCommand
 								or SetChannelFilterCommand
 								or SetChannelFilterParametersCommand
+								or SetChannelFilterAssignmentsCommand
+								or SetNoteFilterAssignmentsCommand
 								or SetCurrentVoiceDisplacementActionCommand
 								or ApplyPastNoteActionCommand
 							: command is NoteOffCommand or NoteCutCommand
@@ -888,6 +892,8 @@ public sealed class IncrementalPatternTimeline : IDisposable
 						or SetNoteFilterParametersCommand
 						or SetChannelFilterCommand
 						or SetChannelFilterParametersCommand
+						or SetChannelFilterAssignmentsCommand
+						or SetNoteFilterAssignmentsCommand
 						or SelectPatternSourceCommand
 						or SetPitchSlideCommand or SetNoteVolumeSlideCommand
 						or ApplyVolumeSlideCommand or ApplyPitchSlideDownCommand

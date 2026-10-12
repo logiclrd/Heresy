@@ -1186,11 +1186,13 @@ public sealed class PlaybackSession
 
 				case SetNoteFilterCommand:
 				case SetNoteFilterParametersCommand:
+				case SetNoteFilterAssignmentsCommand:
 					ApplyCurrentNoteFilterCommand(channel, command);
 					break;
 
 				case SetChannelFilterCommand:
 				case SetChannelFilterParametersCommand:
+				case SetChannelFilterAssignmentsCommand:
 					ApplyHostFilterCommand(command, null, virtualChannelId, scopedOwner);
 					break;
 
@@ -1387,11 +1389,13 @@ public sealed class PlaybackSession
 
 			case SetNoteFilterCommand:
 			case SetNoteFilterParametersCommand:
+			case SetNoteFilterAssignmentsCommand:
 				ApplyCurrentNoteFilterCommand(channel, command);
 				break;
 
 			case SetChannelFilterCommand:
 			case SetChannelFilterParametersCommand:
+			case SetChannelFilterAssignmentsCommand:
 				// Always target the *real physical host* regardless of
 				// PhysicalPlaybackOwner/flattened logical note scope.
 				ApplyHostFilterCommand(command, physicalChannel, null, null);
@@ -1911,6 +1915,12 @@ public sealed class PlaybackSession
 					prepared = previous.PrepareParameterUpdate(
 						update.StageId, update.Assignments);
 					break;
+				case SetChannelFilterAssignmentsCommand text:
+					if (previous is null)
+						throw new InvalidOperationException(
+							"No channel-output Filter selected for assignments.");
+					prepared = previous.PrepareTextUpdate(text.Text);
+					break;
 				default:
 					throw new InvalidOperationException(
 						"Unexpected channel Filter command.");
@@ -1979,6 +1989,15 @@ public sealed class PlaybackSession
 					candidate = previous.Clone();
 					candidate.SetStageParameters(parameters.StageId,
 						parameters.Assignments);
+					break;
+				case SetNoteFilterAssignmentsCommand text:
+					if (previous is null)
+					{
+						NoteFilterCommandRejected?.Invoke(
+							"no event Filter selected for assignments");
+						return;
+					}
+					candidate = FilterAssignmentText.ApplyToClone(previous, text.Text);
 					break;
 				default:
 					throw new InvalidOperationException(

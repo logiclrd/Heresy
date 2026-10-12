@@ -115,6 +115,15 @@ public sealed record SetChannelFilterParametersCommand(
 	: NoteCommand;
 
 /// <summary>Begin the live volume controller for a flattened source.</summary>
+/// <summary>Multiline native effect assignment form, resolved against the
+/// channel's currently selected Filter at the event frame. The complete
+/// multi-stage batch must validate before any DSP history is replaced.</summary>
+public sealed record SetChannelFilterAssignmentsCommand(string Text) : NoteCommand;
+
+/// <summary>Like channel assignment text but scoped to the current
+/// note's optional event Filter, including flattened logical notes.</summary>
+public sealed record SetNoteFilterAssignmentsCommand(string Text) : NoteCommand;
+
 public sealed record BeginFlattenedSourceVolumeCommand(
 	long ChildScopeId, double InitialVolume,
 	ObjectId? EventFilterDefinitionId = null) : NoteCommand
