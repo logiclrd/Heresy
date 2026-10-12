@@ -228,6 +228,32 @@ public sealed class FmRealtimeLinearFirPublicationTests
 	}
 
 	[Test]
+	public void BackwardSeekAndExplicitRepreparationReproduceAcceptedPcm()
+	{
+		FmSynthSound sound = Modulated(Fir(FilterKind.FirBandPass, 127),
+			FilterKind.FirBandPass);
+		SoundState state = sound.CreateState();
+		float[] first = new float[190], second = new float[190];
+		sound.Render(Context(), state, 0, Boundary,
+			first.AsSpan(0, Boundary));
+		Assert.That(sound.PreparePendingFilterControls(Context(), state),
+			Is.EqualTo(1));
+		sound.Render(Context(), state, Boundary,
+			first.Length - Boundary, first.AsSpan(Boundary));
+
+		// A backward seek resets the note's mutable DSP and any pending
+		// plans. Replay the same absolute control boundary to reproduce
+		// the accepted coefficient and convolution history trajectory.
+		sound.Render(Context(), state, 0, Boundary,
+			second.AsSpan(0, Boundary));
+		Assert.That(sound.PreparePendingFilterControls(Context(), state),
+			Is.EqualTo(1));
+		sound.Render(Context(), state, Boundary,
+			second.Length - Boundary, second.AsSpan(Boundary));
+		Assert.That(second, Is.EqualTo(first));
+	}
+
+	[Test]
 	public void AcceptedPcmLoopIsAllocationFreeAndReplaysWithIdenticalControlBoundaries()
 	{
 		FmSynthSound sound = Modulated(Fir(FilterKind.FirLowPass, 127),
