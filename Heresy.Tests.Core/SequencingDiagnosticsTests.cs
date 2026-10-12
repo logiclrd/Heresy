@@ -96,6 +96,34 @@ public sealed class SequencingDiagnosticsTests
 	}
 
 	[Test]
+	public void InvalidNoteFilterCommandsShareOneRateLimitedDiagnosticBudgetAcrossDrains()
+	{
+		SequencingContext root = new();
+		SequencingContext child = root.FlattenedChild();
+		Assert.That(child.Diagnostics, Is.SameAs(root.Diagnostics));
+		for (int n = 0; n < 19; n++)
+			root.Diagnostics.ReportNoteFilterCommandIssue("no current note");
+		Assert.That(root.Diagnostics.Drain(), Has.Length.EqualTo(19));
+		for (int n = 0; n < 100; n++)
+			child.Diagnostics.ReportNoteFilterCommandIssue(
+				"invalid structural stage assignment");
+		SequencingDiagnostic[] messages = root.Diagnostics.Drain();
+		Assert.That(messages.Count(m => m.Code
+			== SequencingDiagnosticLog.NoteFilterCommandCode), Is.EqualTo(13));
+		Assert.That(messages.Count(m => m.Code
+			== SequencingDiagnosticLog.NoteFilterCommandSuppressionCode),
+			Is.EqualTo(1));
+		Assert.That(root.Diagnostics.RejectedNoteFilterCommands, Is.EqualTo(119));
+		root.Diagnostics.ReportNoteFilterCommandIssue("missing definition");
+		Assert.That(root.Diagnostics.Drain(), Is.Empty,
+			"draining must not permit warning-spam resurgence");
+		// Rate limiting note Filters must not silence unrelated diagnostics.
+		root.Diagnostics.ReportExpensiveSourceSeek("Oxx", 24);
+		Assert.That(root.Diagnostics.Drain().Single().Code,
+			Is.EqualTo(SequencingDiagnosticLog.ExpensiveSourceSeekCode));
+	}
+
+	[Test]
 	public void ConcurrentProducerAndConsumerPreserveBoundedDiagnostics()
 	{
 		SequencingDiagnosticLog log = new();
