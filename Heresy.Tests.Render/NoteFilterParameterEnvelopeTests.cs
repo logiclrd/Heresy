@@ -263,6 +263,71 @@ public sealed class NoteFilterParameterEnvelopeTests
         Assert.That(errors, Has.Count.EqualTo(3));
     }
 
+
+    [Test]
+    public void FlattenedNoteOffReleasesOnlyItsOwnParameterEnvelopeClock()
+    {
+        TestResolver resolver = new(new ConstantSound(), new ReleaseCurve());
+        PlaybackSession released = Session(resolver, Schedule());
+        PlaybackSession running = Session(resolver, Schedule());
+        foreach (PlaybackSession session in new[] { released, running })
+        {
+            session.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+                new BeginFlattenedSourceVolumeCommand(1, 1) {
+                    EventFilterConfiguration = Echo(),
+                },
+                new SetNoteFilterParameterEnvelopeCommand(1, "Feedforward", Envelope),
+            ]);
+            session.ApplyScopedEvent(0, ChannelTarget.Virtual(7), [
+                new StartNoteCommand(Source) {
+                    ParentSourceScopes = new long[] { 1 },
+                },
+            ]);
+        }
+
+        float[] afterOff = new float[8], stillHeld = new float[8];
+        released.Render(0, 3, afterOff.AsSpan(0, 3));
+        running.Render(0, 3, stillHeld.AsSpan(0, 3));
+        released.ApplyFlattenedScopeAction(1, NoteDisplacementAction.Off);
+        released.Render(3, 5, afterOff.AsSpan(3, 5));
+        running.Render(3, 5, stillHeld.AsSpan(3, 5));
+        Assert.That(afterOff[2], Is.EqualTo(stillHeld[2]).Within(1e-6f));
+        Assert.That(afterOff[5], Is.LessThan(stillHeld[5]),
+            "the instigator's Note Off releases each descendant's scope envelope");
+    }
+
+    [Test]
+    public void NonfiniteInitialFlattenedBindingRollsBackAcrossAllDescendants()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FixedCurve(double.NaN));
+        PlaybackSession faulty = Session(resolver, Schedule());
+        PlaybackSession clean = Session(resolver, Schedule());
+        foreach (PlaybackSession session in new[] { faulty, clean })
+        {
+            session.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+                new BeginFlattenedSourceVolumeCommand(1, 1) {
+                    EventFilterConfiguration = Echo(),
+                },
+            ]);
+            foreach (uint id in new uint[] { 7, 8 })
+                session.ApplyScopedEvent(0, ChannelTarget.Virtual(id), [
+                    new StartNoteCommand(Source) {
+                        ParentSourceScopes = new long[] { 1 },
+                    },
+                ]);
+        }
+        List<string> diagnostics = [];
+        faulty.NoteFilterCommandRejected = diagnostics.Add;
+        faulty.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new SetNoteFilterParameterEnvelopeCommand(1, "Feedforward", Envelope),
+        ]);
+        float[] actual = new float[6], reference = new float[6];
+        faulty.Render(0, 6, actual);
+        clean.Render(0, 6, reference);
+        Assert.That(actual, Is.EqualTo(reference).Within(1e-6f));
+        Assert.That(diagnostics, Has.Count.EqualTo(1));
+    }
+
     private static FilterInstance Echo()
     {
         FilterDefinition definition = new((ObjectId)12003U, "Echo", [
@@ -311,6 +376,11 @@ public sealed class NoteFilterParameterEnvelopeTests
     {
         public double GetValue(long activeFrame, int sampleRate, long? off)
             => value;
+    }
+    private sealed class ReleaseCurve : IEnvelopeCurve
+    {
+        public double GetValue(long activeFrame, int sampleRate, long? off)
+            => off.HasValue ? 0.1 : 0.5;
     }
     private sealed class RampCurve : IEnvelopeCurve
     {
