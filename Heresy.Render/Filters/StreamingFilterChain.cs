@@ -186,8 +186,8 @@ public sealed class StreamingFilterChain
 	}
 
 	/// <summary>
-	/// Preflight every affected TPT, Audio EQ Biquad, Ladder and All-Pass
-	/// stage before applying numeric changes. Mixed-family updates remain
+	/// Preflight every affected TPT, Audio EQ Biquad, Ladder, All-Pass and
+	/// feedback Comb stage before applying numeric changes. Mixed-family updates remain
 	/// atomic, including
 	/// invalid Nyquist, shelving and stability constraints. Caller-owned
 	/// scratch and prepared states keep this path allocation-free.
@@ -202,13 +202,16 @@ public sealed class StreamingFilterChain
 		ReadOnlySpan<RealtimeSaturatedLadderStageUpdate> saturatedUpdates,
 		Span<RealtimeSaturatedLadderCoefficients> saturatedScratch,
 		ReadOnlySpan<RealtimeAllPassStageUpdate> allPassUpdates,
-		Span<RealtimeAllPassCoefficient> allPassScratch)
+		Span<RealtimeAllPassCoefficient> allPassScratch,
+		ReadOnlySpan<RealtimeFeedbackCombStageUpdate> combUpdates,
+		Span<RealtimeFeedbackCombCoefficients> combScratch)
 	{
 		if (_inputFinished || tptScratch.Length < tptUpdates.Length
 			|| biquadScratch.Length < biquadUpdates.Length
 			|| ladderScratch.Length < ladderUpdates.Length
 			|| saturatedScratch.Length < saturatedUpdates.Length
-			|| allPassScratch.Length < allPassUpdates.Length)
+			|| allPassScratch.Length < allPassUpdates.Length
+			|| combScratch.Length < combUpdates.Length)
 			return false;
 
 		for (int i = 0; i < tptUpdates.Length; i++)
@@ -313,6 +316,35 @@ public sealed class StreamingFilterChain
 					return false;
 		}
 
+		for (int i = 0; i < combUpdates.Length; i++)
+		{
+			RealtimeFeedbackCombStageUpdate update = combUpdates[i];
+			if ((uint)update.StageIndex >= (uint)_stages.Length
+				|| _stages[update.StageIndex].Channels[0]
+					is not IRealtimeFeedbackCombFilterState runtime
+				|| !runtime.TryPrepareRealtime(
+					update.Feedback, update.Mix, out combScratch[i]))
+				return false;
+			for (int j = 0; j < i; j++)
+				if (combUpdates[j].StageIndex == update.StageIndex)
+					return false;
+			for (int j = 0; j < tptUpdates.Length; j++)
+				if (tptUpdates[j].StageIndex == update.StageIndex)
+					return false;
+			for (int j = 0; j < biquadUpdates.Length; j++)
+				if (biquadUpdates[j].StageIndex == update.StageIndex)
+					return false;
+			for (int j = 0; j < ladderUpdates.Length; j++)
+				if (ladderUpdates[j].StageIndex == update.StageIndex)
+					return false;
+			for (int j = 0; j < saturatedUpdates.Length; j++)
+				if (saturatedUpdates[j].StageIndex == update.StageIndex)
+					return false;
+			for (int j = 0; j < allPassUpdates.Length; j++)
+				if (allPassUpdates[j].StageIndex == update.StageIndex)
+					return false;
+		}
+
 		for (int i = 0; i < tptUpdates.Length; i++)
 		{
 			foreach (IStreamingFilterStageState channel in
@@ -347,8 +379,33 @@ public sealed class StreamingFilterChain
 				((IRealtimeAllPassFilterState)channel)
 					.CommitRealtime(allPassScratch[i]);
 		}
+		for (int i = 0; i < combUpdates.Length; i++)
+		{
+			foreach (IStreamingFilterStageState channel in
+				_stages[combUpdates[i].StageIndex].Channels)
+				((IRealtimeFeedbackCombFilterState)channel)
+					.CommitRealtime(combScratch[i]);
+		}
 		return true;
 	}
+
+	// Keep the previous five-family call contract for internal users.
+	internal bool TryApplyRealtimeNumericUpdates(
+		ReadOnlySpan<RealtimeTptStageUpdate> tptUpdates,
+		Span<RealtimeTptCoefficients> tptScratch,
+		ReadOnlySpan<RealtimeBiquadStageUpdate> biquadUpdates,
+		Span<RealtimeBiquadCoefficients> biquadScratch,
+		ReadOnlySpan<RealtimeLinearLadderStageUpdate> ladderUpdates,
+		Span<RealtimeLinearLadderCoefficients> ladderScratch,
+		ReadOnlySpan<RealtimeSaturatedLadderStageUpdate> saturatedUpdates,
+		Span<RealtimeSaturatedLadderCoefficients> saturatedScratch,
+		ReadOnlySpan<RealtimeAllPassStageUpdate> allPassUpdates,
+		Span<RealtimeAllPassCoefficient> allPassScratch)
+		=> TryApplyRealtimeNumericUpdates(tptUpdates, tptScratch,
+			biquadUpdates, biquadScratch, ladderUpdates, ladderScratch,
+			saturatedUpdates, saturatedScratch, allPassUpdates, allPassScratch,
+			ReadOnlySpan<RealtimeFeedbackCombStageUpdate>.Empty,
+			Span<RealtimeFeedbackCombCoefficients>.Empty);
 
 	// Keep the previous four-family call contract for existing internal users.
 	internal bool TryApplyRealtimeNumericUpdates(
