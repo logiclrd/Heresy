@@ -73,6 +73,16 @@ internal sealed class FirControlPreparationPolicy
 	private int _count;
 	public int PendingCount => _count;
 
+    /// <summary>Copy a bounded complete PCM proposal into caller-owned
+    /// scratch without creating a live reference to mutable pending slots.</summary>
+    internal int CopyPending(Span<FirControlRequest> destination)
+    {
+        if (destination.Length < _count)
+            throw new ArgumentException("Insufficient FIR snapshot capacity.", nameof(destination));
+        _pending.AsSpan(0, _count).CopyTo(destination);
+        return _count;
+    }
+
 	public FirControlPreparationPolicy(int sampleRate)
 	{
 		if (sampleRate <= 0)
