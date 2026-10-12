@@ -61,7 +61,8 @@
   Bounded tails, retriggers, NNA, cancellation and partitioning remain
   explicit. `NoteEventFilterRenderingTests` and production-factory
   `ScriptInstrumentPlaybackTests` check these boundaries. Dynamic native
-  note-event Filter commands remain a separate upcoming task.
+  the current note-event Filter command pair is implemented; persistent
+  channel-output processing is a separate upcoming task.
 - **Nested private-source release is not an outer-sample release.**
   When the parent Instrument Note Off ends private Sequence input,
   the child `PlaybackSession.EndInput` requests Note Off on its own
