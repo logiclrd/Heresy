@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.Linq;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
