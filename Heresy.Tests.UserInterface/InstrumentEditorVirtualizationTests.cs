@@ -39,11 +39,17 @@ public sealed class InstrumentEditorVirtualizationTests
 			new InstrumentToneGridModel(workspace, instrument).Rows[^1])!;
 		Grid row = (Grid)border.Child!;
 		row.ColumnDefinitions.Should().HaveCount(11);
-		Control filterCell = row.Children.Single(control => Grid.GetColumn(control) == 10);
+		// Selection surfaces are independent of realized ListBox containers
+		// and wrap the original editable controls in each of 11 columns.
+		row.Children.Should().HaveCount(11);
+		row.Children.Should().OnlyContain(control => control is Border);
+		Control filterCell = ((Border)row.Children.Single(
+			control => Grid.GetColumn(control) == 10)).Child!;
 		filterCell.Should().BeOfType<StackPanel>();
 		((StackPanel)filterCell).Children.OfType<ComboBox>().Should().ContainSingle();
 		((StackPanel)filterCell).Children.OfType<Button>().Should().ContainSingle();
-		Control nna = row.Children.Single(control => Grid.GetColumn(control) == 5);
+		Control nna = ((Border)row.Children.Single(
+			control => Grid.GetColumn(control) == 5)).Child!;
 		nna.Should().BeOfType<StackPanel>();
 		((StackPanel)nna).Children.OfType<ComboBox>().Should().ContainSingle();
 		((StackPanel)nna).Children.OfType<TextBox>().Should().ContainSingle();
