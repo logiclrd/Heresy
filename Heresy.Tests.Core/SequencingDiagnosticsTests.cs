@@ -96,6 +96,29 @@ public sealed class SequencingDiagnosticsTests
 	}
 
 	[Test]
+	public void InvalidChannelFilterCommandsRateLimitSeparatelyFromNoteFilterErrors()
+	{
+		SequencingContext parent = new();
+		SequencingContext child = parent.MixdownChild();
+		for (int n = 0; n < 120; n++)
+			child.Diagnostics.ReportChannelFilterCommandIssue("invalid stage");
+		var messages = parent.Diagnostics.Drain();
+		Assert.That(messages.Count(m => m.Code
+			== SequencingDiagnosticLog.ChannelFilterCommandCode),
+			Is.EqualTo(SequencingDiagnosticLog.MaximumIndividualMessages));
+		Assert.That(messages.Count(m => m.Code
+			== SequencingDiagnosticLog.ChannelFilterCommandSuppressionCode),
+			Is.EqualTo(1));
+		Assert.That(parent.Diagnostics.RejectedChannelFilterCommands,
+			Is.EqualTo(120));
+		parent.Diagnostics.ReportChannelFilterCommandIssue("unavailable");
+		Assert.That(parent.Diagnostics.Drain(), Is.Empty);
+		parent.Diagnostics.ReportNoteFilterCommandIssue("no note");
+		Assert.That(parent.Diagnostics.Drain().Single().Code,
+			Is.EqualTo(SequencingDiagnosticLog.NoteFilterCommandCode));
+	}
+
+	[Test]
 	public void InvalidNoteFilterCommandsShareOneRateLimitedDiagnosticBudgetAcrossDrains()
 	{
 		SequencingContext root = new();

@@ -277,6 +277,195 @@ public sealed class ChannelOutputFilterRenderingTests
             "samples and a new sibling without scope-owned replacement");
     }
 
+    [Test]
+    public void NativeHostSelectClearAndReplacementAreOrderedAndPersistAcrossNotes()
+    {
+        TestResolver sounds = new();
+        sounds.Add(PulseId, new PulseSound());
+        PlaybackSession session = Session(sounds, Schedule(
+            Event(0, 0,
+                new SetChannelFilterCommand
+                {
+                    Configuration = Echo(1001, 0.001),
+                },
+                new StartNoteCommand(PulseId)),
+            Event(3, 0, new StartNoteCommand(PulseId)),
+            Event(5, 0, new SetChannelFilterCommand(),
+                new StartNoteCommand(PulseId))));
+        float[] pcm = new float[8];
+        session.Render(0, pcm.Length, pcm);
+        Assert.That(pcm, Is.EqualTo(new float[]
+        {
+            1, 1, 0, 1, 1, 1, 0, 0,
+        }));
+    }
+
+    [Test]
+    public void CompatibleHostParameterUpdateKeepsHistoryAndSmoothedGain()
+    {
+        TestResolver sounds = new();
+        sounds.Add(PulseId, new PulseSound());
+        PlaybackSession session = Session(sounds);
+        session.ApplyScopedEvent(9, ChannelTarget.Physical(0),
+        [
+            new SetChannelFilterCommand
+            {
+                Configuration = Echo(1002, 0.002),
+            },
+            new StartNoteCommand(PulseId),
+        ], physicalPlaybackOwner: 9);
+        float[] first = new float[1];
+        session.Render(0, 1, first);
+        session.ApplyScopedEvent(10, ChannelTarget.Physical(0),
+        [
+            new SetChannelFilterParametersCommand(1, [
+                new("Feedforward", FilterParameterValue.FromNumber(0.5)),
+            ]),
+        ], physicalPlaybackOwner: 10);
+        float[] rest = new float[4];
+        session.Render(1, 4, rest);
+        Assert.That(first, Is.EqualTo(new float[] { 1 }));
+        Assert.That(rest, Is.EqualTo(new float[] { 0, 0.96875f, 0, 0 }),
+            "the actual physical host shares one smoothed history across owners");
+    }
+
+    [Test]
+    public void StructuralHostUpdateResetsOnlyItsOwnIncompatibleHistory()
+    {
+        TestResolver sounds = new();
+        sounds.Add(PulseId, new PulseSound());
+        PlaybackSession session = Session(sounds, Schedule(
+            Event(0, 0, new StartNoteCommand(PulseId)),
+            Event(0, 1, new StartNoteCommand(PulseId))));
+        session.ApplyLiveEvent(ChannelTarget.Physical(0),
+        [
+            new SetChannelFilterCommand { Configuration = Echo(1003, 0.002) },
+        ]);
+        session.ApplyLiveEvent(ChannelTarget.Physical(1),
+        [
+            new SetChannelFilterCommand { Configuration = Echo(1004, 0.002) },
+        ]);
+        session.Render(0, 1, new float[1]);
+        session.ApplyLiveEvent(ChannelTarget.Physical(0),
+        [
+            new SetChannelFilterParametersCommand(1, [
+                new("DelaySeconds", FilterParameterValue.FromNumber(0.001)),
+            ]),
+        ]);
+        float[] pcm = new float[3];
+        session.Render(1, 3, pcm);
+        Assert.That(pcm, Is.EqualTo(new float[] { 0, 1, 0 }),
+            "host 1 retains its delay while host 0 discards obsolete topology");
+    }
+
+    [Test]
+    public void InvalidHostParameterBatchLeavesEveryFieldAndHistoryUntouched()
+    {
+        TestResolver sounds = new();
+        sounds.Add(PulseId, new PulseSound());
+        PlaybackSession session = Session(sounds);
+        List<string> warnings = [];
+        session.ChannelFilterCommandRejected = warnings.Add;
+        session.ApplyLiveEvent(ChannelTarget.Physical(0),
+        [
+            new SetChannelFilterParametersCommand(1, [
+                new("Feedforward", FilterParameterValue.FromNumber(0.5)),
+            ]),
+            new SetChannelFilterCommand { Configuration = Echo(1005, 0.002) },
+            new StartNoteCommand(PulseId),
+        ]);
+        session.Render(0, 1, new float[1]);
+        session.ApplyLiveEvent(ChannelTarget.Physical(0),
+        [
+            new SetChannelFilterParametersCommand(1, [
+                new("Feedforward", FilterParameterValue.FromNumber(0.5)),
+                new("NotARealParameter", FilterParameterValue.FromNumber(1)),
+            ]),
+            new SetChannelFilterCommand((ObjectId)1005U),
+        ]);
+        float[] later = new float[4];
+        session.Render(1, 4, later);
+        Assert.That(later, Is.EqualTo(new float[] { 0, 1, 0, 0 }));
+        Assert.That(warnings, Has.Count.EqualTo(3),
+            "absent stage, invalid partial batch and unbound ID must each diagnose");
+    }
+
+    [Test]
+    public void FlattenedChildCommandTargetsRealPhysicalHostNotChildOwnerMemory()
+    {
+        TestResolver sounds = new();
+        sounds.Add(PulseId, new PulseSound());
+        PlaybackSession session = Session(sounds);
+        session.ApplyScopedEvent(20, ChannelTarget.Physical(0),
+        [
+            new BeginFlattenedSourceVolumeCommand(90, 1),
+            new SetChannelFilterCommand { Configuration = Echo(1006, 0.002) },
+            new StartNoteCommand(PulseId)
+            {
+                ParentSourceScopes = new long[] { 90 },
+            },
+        ], physicalPlaybackOwner: 20);
+        float[] first = new float[1];
+        session.Render(0, 1, first);
+        session.ApplyFlattenedScopeAction(90, NoteDisplacementAction.Cut);
+        session.ApplyScopedEvent(21, ChannelTarget.Physical(0),
+        [
+            new StartNoteCommand(PulseId),
+        ], physicalPlaybackOwner: 21);
+        float[] rest = new float[4];
+        session.Render(1, 4, rest);
+        Assert.That(first[0], Is.EqualTo(1));
+        Assert.That(rest[0], Is.GreaterThanOrEqualTo(1));
+        Assert.That(rest[1], Is.GreaterThanOrEqualTo(1),
+            "the child-selected host filter persists into unrelated owner 21");
+    }
+
+    [Test]
+    public void ScopedVirtualNativeControlsDoNotCrossInvocationNamespaces()
+    {
+        TestResolver sounds = new();
+        sounds.Add(PulseId, new PulseSound());
+        PlaybackSession session = Session(sounds);
+        session.ApplyScopedEvent(11, ChannelTarget.Virtual(7),
+        [
+            new SetChannelFilterCommand { Configuration = Echo(1007, 0.001) },
+            new StartNoteCommand(PulseId),
+        ]);
+        session.ApplyScopedEvent(12, ChannelTarget.Virtual(7),
+        [
+            new SetChannelFilterCommand { Configuration = Echo(1008, 0.002) },
+            new StartNoteCommand(PulseId),
+        ]);
+        session.ApplyLiveEvent(ChannelTarget.Virtual(7),
+        [
+            new StartNoteCommand(PulseId),
+        ]);
+        float[] pcm = new float[5];
+        session.Render(0, 5, pcm);
+        Assert.That(pcm, Is.EqualTo(new float[] { 3, 1, 1, 0, 0 }));
+    }
+
+    [Test]
+    public void ReplacingHostFilterStartsFreshDspAndDoesNotLeakOldDelay()
+    {
+        TestResolver sounds = new();
+        sounds.Add(PulseId, new PulseSound());
+        PlaybackSession session = Session(sounds);
+        session.ApplyLiveEvent(ChannelTarget.Physical(0),
+        [
+            new SetChannelFilterCommand { Configuration = Echo(1009, 0.002) },
+            new StartNoteCommand(PulseId),
+        ]);
+        session.Render(0, 1, new float[1]);
+        session.ApplyLiveEvent(ChannelTarget.Physical(0),
+        [
+            new SetChannelFilterCommand { Configuration = Echo(1010, 0.001) },
+        ]);
+        float[] pcm = new float[4];
+        session.Render(1, 4, pcm);
+        Assert.That(pcm, Is.All.Zero);
+    }
+
     private static FilterInstance Echo(uint id, double seconds)
     {
         FilterDefinition definition = new((ObjectId)id, "Echo", [

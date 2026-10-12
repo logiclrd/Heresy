@@ -354,6 +354,55 @@ public sealed class ScriptInstrumentPlaybackTests
         Assert.That(diagnostics[1].Message, Does.Contain("unavailable"));
     }
 
+    [Test]
+    public void ScriptChannelFilterSelectionPersistsAcrossNoteStartsThenClears()
+    {
+        SongDocument song = new();
+        ObjectId sample = Sample(song, 16384);
+        FilterInstance selected = Echo(song, 0.001);
+        ObjectId root = ScriptPattern(song, $"""
+            ChannelFilter(0, 0, _O({selected.DefinitionId.Value}));
+            Note(0, 0, _O({sample.Value}));
+            Note(0.02, 0, _O({sample.Value}));
+            ChannelFilter(0.04, 0);
+            Note(0.04, 0, _O({sample.Value}));
+            """);
+        using PreparedIncrementalPlaybackPlan full =
+            new PreparedIncrementalPlaybackFactory(Mono()).Create(song, root);
+        using PreparedIncrementalPlaybackPlan blocks =
+            new PreparedIncrementalPlaybackFactory(Mono()).Create(song, root);
+        float[] a = new float[96], b = new float[96];
+        full.Source.Render(96, a);
+        blocks.Source.Render(1, b.AsSpan(0, 1));
+        blocks.Source.Render(95, b.AsSpan(1));
+        Assert.That(a, Is.EqualTo(b).Within(1e-6f));
+        Assert.That(a[0], Is.EqualTo(0.5f).Within(1e-6f));
+        Assert.That(a[1], Is.EqualTo(1f).Within(1e-6f));
+        Assert.That(a[40], Is.EqualTo(0.5f).Within(1e-6f),
+            "selection is effective before first row note, and stays until clear");
+    }
+
+    [Test]
+    public void ScriptInvalidChannelSelectionDiagnosesWithoutCancelingCurrentHostFilter()
+    {
+        SongDocument song = new();
+        ObjectId sample = Sample(song, 16384);
+        FilterInstance selected = Echo(song, 0.001);
+        ObjectId root = ScriptPattern(song, $"""
+            ChannelFilter(0, 0, _O({selected.DefinitionId.Value}));
+            ChannelFilter(0, 0, _O(987654));
+            Note(0, 0, _O({sample.Value}));
+            """);
+        using PreparedIncrementalPlaybackPlan plan =
+            new PreparedIncrementalPlaybackFactory(Mono()).Create(song, root);
+        float[] pcm = new float[8];
+        plan.Source.Render(8, pcm);
+        Assert.That(pcm[0], Is.EqualTo(0.5f).Within(1e-6f));
+        Assert.That(pcm[1], Is.EqualTo(1f).Within(1e-6f));
+        var messages = plan.SequencingContext.Diagnostics.Drain();
+        Assert.That(messages.Count(m => m.Code == "HRSEQ009"), Is.EqualTo(1));
+    }
+
     private static FilterInstance Echo(SongDocument song, double delay)
     {
         ObjectId filterId = song.AllocateObjectId();
