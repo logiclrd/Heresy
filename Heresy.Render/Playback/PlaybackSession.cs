@@ -501,6 +501,17 @@ public sealed class PlaybackSession
 			Consider(channel.CurrentVoice);
 		foreach (PlaybackVoice voice in _virtualVoices)
 			Consider(voice);
+        foreach (ChannelOutputFilterState filter in _physicalOutputFilters.Values)
+            if (filter.TryPreparePendingFirs()) prepared++;
+        foreach (ChannelOutputFilterState filter in _targetedVirtualOutputFilters.Values)
+            if (filter.TryPreparePendingFirs()) prepared++;
+        foreach (ChannelOutputFilterState filter in _scopedVirtualOutputFilters.Values)
+            if (filter.TryPreparePendingFirs()) prepared++;
+        foreach (ChannelOutputFilterState filter in _displacedOutputTails)
+            if (filter.TryPreparePendingFirs()) prepared++;
+        foreach (PlaybackVoice voice in _virtualVoices)
+            if (voice.DisplacedOutputFilterState?.TryPreparePendingFirs() == true)
+                prepared++;
 		return prepared;
 	}
 
@@ -518,7 +529,18 @@ public sealed class PlaybackSession
         foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
             channel.CurrentVoice?.AdoptPreparedFirControls();
         foreach (PlaybackVoice voice in _virtualVoices)
+        {
             voice.AdoptPreparedFirControls();
+            voice.DisplacedOutputFilterState?.AdoptPreparedFirs();
+        }
+        foreach (ChannelOutputFilterState filter in _physicalOutputFilters.Values)
+            filter.AdoptPreparedFirs();
+        foreach (ChannelOutputFilterState filter in _targetedVirtualOutputFilters.Values)
+            filter.AdoptPreparedFirs();
+        foreach (ChannelOutputFilterState filter in _scopedVirtualOutputFilters.Values)
+            filter.AdoptPreparedFirs();
+        foreach (ChannelOutputFilterState filter in _displacedOutputTails)
+            filter.AdoptPreparedFirs();
     }
 
     /// <summary>Bounded latest-wins capture at the end of a PCM quantum.
@@ -533,7 +555,18 @@ public sealed class PlaybackSession
         foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
             channel.CurrentVoice?.QueuePendingFirControls(scheduler);
         foreach (PlaybackVoice voice in _virtualVoices)
+        {
             voice.QueuePendingFirControls(scheduler);
+            voice.DisplacedOutputFilterState?.QueuePendingFirs(scheduler);
+        }
+        foreach (ChannelOutputFilterState filter in _physicalOutputFilters.Values)
+            filter.QueuePendingFirs(scheduler);
+        foreach (ChannelOutputFilterState filter in _targetedVirtualOutputFilters.Values)
+            filter.QueuePendingFirs(scheduler);
+        foreach (ChannelOutputFilterState filter in _scopedVirtualOutputFilters.Values)
+            filter.QueuePendingFirs(scheduler);
+        foreach (ChannelOutputFilterState filter in _displacedOutputTails)
+            filter.QueuePendingFirs(scheduler);
     }
 
 	/// <summary>Diagnostic count of non-root logical channel entries,
@@ -2582,10 +2615,11 @@ public sealed class PlaybackSession
 		AddBuffer(buffer.AsSpan(0, sampleCount), contribution);
 	}
 
-	private static void FlushHostFilters<TKey>(
+	private void FlushHostFilters<TKey>(
 		IReadOnlyDictionary<TKey, ChannelOutputFilterState> filters,
 		Dictionary<TKey, float[]>? buses,
-		Span<float> destination, int sampleCount) where TKey : notnull
+		Span<float> destination, int sampleCount,
+        long absoluteStartFrame) where TKey : notnull
 	{
 		if (buses is null) return;
 		foreach (var pair in filters)
@@ -2600,7 +2634,8 @@ public sealed class PlaybackSession
 				buses.Add(pair.Key, buffer);
 			}
 			Span<float> samples = buffer!.AsSpan(0, sampleCount);
-			pair.Value.ProcessInterleaved(samples);
+			pair.Value.ProcessInterleaved(samples, absoluteStartFrame,
+                ChannelFilterCommandRejected);
 			AddBuffer(destination, samples);
 		}
 	}
@@ -2798,7 +2833,8 @@ public sealed class PlaybackSession
 				ChannelOutputFilterState tail = _displacedOutputTails[index];
 				Span<float> tailBuffer = rented.AsSpan(0, sampleCount);
 				tailBuffer.Clear();
-				tail.ProcessInterleaved(tailBuffer);
+				tail.ProcessInterleaved(tailBuffer, absoluteStartFrame,
+                    ChannelFilterCommandRejected);
 				AddBuffer(destination, tailBuffer);
 				if (!tail.HasTail)
 					_displacedOutputTails.RemoveAt(index);
@@ -2823,7 +2859,8 @@ public sealed class PlaybackSession
 				// never run this voice through the originating physical or
 				// scoped virtual host's *continuing* Filter a second time.
 				if (voice.DisplacedOutputFilterState is { } displaced)
-					displaced.ProcessInterleaved(voiceBuffer);
+					displaced.ProcessInterleaved(voiceBuffer, absoluteStartFrame,
+                        ChannelFilterCommandRejected);
 				AddBuffer(destination, voiceBuffer);
 
 				if (finished)
@@ -2838,11 +2875,11 @@ public sealed class PlaybackSession
 			// The configured channel Filter runs once on that complete feed,
 			// before global volume and the final speaker filter stage.
 			FlushHostFilters(_physicalOutputFilters, physicalBuses,
-				destination, sampleCount);
+				destination, sampleCount, absoluteStartFrame);
 			FlushHostFilters(_targetedVirtualOutputFilters, virtualBuses,
-				destination, sampleCount);
+				destination, sampleCount, absoluteStartFrame);
 			FlushHostFilters(_scopedVirtualOutputFilters, scopedBuses,
-				destination, sampleCount);
+				destination, sampleCount, absoluteStartFrame);
 
 			ApplyGlobalVolume(
 				absoluteStartFrame,
