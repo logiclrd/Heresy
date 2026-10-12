@@ -108,6 +108,13 @@ public sealed record SetNoteFilterParametersCommand(
 public sealed record SetNoteFilterParameterEnvelopeCommand(
 	int StageId, string ParameterName, ObjectId? EnvelopeId = null) : NoteCommand;
 
+/// <summary>Attach, replace or detach one persistent host-channel Filter
+/// parameter Envelope. The absolute wall-frame clock is independent of
+/// any particular note or its Note Off/release.</summary>
+public sealed record SetChannelFilterParameterEnvelopeCommand(
+    int StageId, string ParameterName, ObjectId? EnvelopeId = null)
+    : NoteCommand;
+
 public sealed record SetChannelFilterCommand(ObjectId? FilterDefinitionId = null)
 	: NoteCommand
 {

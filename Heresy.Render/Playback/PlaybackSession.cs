@@ -1273,6 +1273,11 @@ public sealed class PlaybackSession
 					ApplyHostFilterCommand(command, null, virtualChannelId, scopedOwner);
 					break;
 
+                case SetChannelFilterParameterEnvelopeCommand envelope:
+                    ApplyHostFilterEnvelopeCommand(envelope,
+                        null, virtualChannelId, scopedOwner, eventFrame);
+                    break;
+
 				case SetSourceFrameOffsetCommand offset:
 					ApplyNativeSourceFrameOffset(
 						channel, offset, "Script virtual native offset");
@@ -1481,6 +1486,11 @@ public sealed class PlaybackSession
 				// PhysicalPlaybackOwner/flattened logical note scope.
 				ApplyHostFilterCommand(command, physicalChannel, null, null);
 				break;
+
+            case SetChannelFilterParameterEnvelopeCommand envelope:
+                ApplyHostFilterEnvelopeCommand(envelope,
+                    physicalChannel, null, null, eventFrame);
+                break;
 
 			case NoteCutCommand:
 				channel.CutCurrentVoice();
@@ -2030,6 +2040,45 @@ public sealed class PlaybackSession
 		}
 	}
 
+    /// <summary>One actual host owns this envelope across unrelated
+    /// note starts, note releases, and flattened-child completion.</summary>
+    private void ApplyHostFilterEnvelopeCommand(
+        SetChannelFilterParameterEnvelopeCommand command,
+        int? physicalHost, uint? virtualId, long? scopedOwner, long frame)
+    {
+        try
+        {
+            ChannelOutputFilterState? previous;
+            if (physicalHost is int host)
+                _physicalOutputFilters.TryGetValue(host, out previous);
+            else if (scopedOwner is long scope)
+                _scopedVirtualOutputFilters.TryGetValue(
+                    (scope, virtualId!.Value), out previous);
+            else if (virtualId is uint id)
+                _targetedVirtualOutputFilters.TryGetValue(id, out previous);
+            else
+                throw new ArgumentException("No host for channel Filter Envelope.");
+            if (previous is null)
+                throw new InvalidOperationException(
+                    "No channel-output Filter selected for parameter envelope.");
+            IEnvelopeCurve? curve = ResolveFilterEnvelope(command.EnvelopeId);
+            ChannelOutputFilterState prepared = previous.PrepareParameterEnvelopeUpdate(
+                command.StageId, command.ParameterName, curve, frame);
+            if (physicalHost is int physical)
+                _physicalOutputFilters[physical] = prepared;
+            else if (scopedOwner is long owner)
+                _scopedVirtualOutputFilters[(owner, virtualId!.Value)] = prepared;
+            else
+                _targetedVirtualOutputFilters[virtualId!.Value] = prepared;
+        }
+        catch (Exception error) when (error is ArgumentException
+            or InvalidOperationException or KeyNotFoundException
+            or OverflowException)
+        {
+            ChannelFilterCommandRejected?.Invoke(error.Message);
+        }
+    }
+
 	private void ApplyCurrentNoteFilterEnvelopeCommand(
 		PlaybackChannelState channel,
 		SetNoteFilterParameterEnvelopeCommand command, long frame)
@@ -2100,8 +2149,11 @@ public sealed class PlaybackSession
 
 	private IEnvelopeCurve? ResolveNoteFilterEnvelope(
 		SetNoteFilterParameterEnvelopeCommand command)
+        => ResolveFilterEnvelope(command.EnvelopeId);
+
+    private IEnvelopeCurve? ResolveFilterEnvelope(ObjectId? envelopeId)
 	{
-		if (command.EnvelopeId is not ObjectId id) return null;
+		if (envelopeId is not ObjectId id) return null;
 		if (id.IsNone || NoteFilterEnvelopeResolver is null
 			|| !NoteFilterEnvelopeResolver.TryResolve(id, out IEnvelopeCurve? curve)
 			|| curve is null)
