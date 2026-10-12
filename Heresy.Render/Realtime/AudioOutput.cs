@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 
 using Heresy.Core.Sequencing;
+using Heresy.Render.Filters;
 using Heresy.Render.Playback;
 
 namespace Heresy.Render.Realtime;
@@ -40,6 +41,15 @@ public interface IAudioOutputSource
 /// up front. Offline renderers request the remaining logical frames, then
 /// drain the exposed session's existing release tails.
 /// </summary>
+/// <summary>Optional realtime control side of a live audio source. The PCM
+/// producer calls these methods only at its block boundaries. Kernel design
+/// is delegated to the separate FIR scheduler, never to Render or SDL.</summary>
+public interface IFirPreparationAudioSource
+{
+    void AdoptPreparedFirControls();
+    void QueuePendingFirControls(FirPreparationScheduler scheduler);
+}
+
 public interface IIncrementalArrangementSource : IAudioOutputSource
 {
 	PlaybackSession Session { get; }

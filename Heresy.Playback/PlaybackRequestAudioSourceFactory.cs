@@ -6,6 +6,7 @@ using System.Linq;
 using Heresy.Core.Diagnostics;
 using Heresy.Core.Sequencing;
 using Heresy.Render.Configuration;
+using Heresy.Render.Filters;
 using Heresy.Render.Realtime;
 using Heresy.Render.Samples;
 using Heresy.Scripting.Analysis;
@@ -143,7 +144,7 @@ public sealed class PlaybackRequestAudioSourceFactory :
 
 	private sealed class LiveRecursiveSource(
 		PreparedIncrementalPlaybackPlan plan,
-		PlaybackPositionTimeline? positions) : ILiveAudioOutputSource, IDisposable
+		PlaybackPositionTimeline? positions) : ILiveAudioOutputSource, IFirPreparationAudioSource, IDisposable
 	{
 		private readonly ConcurrentQueue<LivePlaybackEvent> _commands = new();
 		private readonly ConcurrentQueue<SequencingDiagnostic> _warnings = new();
@@ -155,6 +156,12 @@ public sealed class PlaybackRequestAudioSourceFactory :
 			return [.. messages];
 		}
 		public AudioOutputFormat Format => plan.Source.Format;
+
+        public void AdoptPreparedFirControls()
+            => plan.Source.Session.AdoptPreparedFirControls();
+
+        public void QueuePendingFirControls(FirPreparationScheduler scheduler)
+            => plan.Source.Session.QueuePendingFirControls(scheduler);
 
 		public void EnqueueLiveEvent(ChannelTarget target,
 			IReadOnlyList<NoteCommand> commands)

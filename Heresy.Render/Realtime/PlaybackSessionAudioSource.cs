@@ -5,11 +5,12 @@ using System.Linq;
 
 using Heresy.Core.Sequencing;
 using Heresy.Render.Playback;
+using Heresy.Render.Filters;
 
 namespace Heresy.Render.Realtime;
 
 public sealed class PlaybackSessionAudioSource
-	: ILiveAudioOutputSource
+	: ILiveAudioOutputSource, IFirPreparationAudioSource
 {
 	private readonly PlaybackSession _playbackSession;
 	private sealed record QueuedPlaybackAction(
@@ -32,6 +33,12 @@ public sealed class PlaybackSessionAudioSource
 	}
 
 	public AudioOutputFormat Format { get; }
+
+    public void AdoptPreparedFirControls()
+        => _playbackSession.AdoptPreparedFirControls();
+
+    public void QueuePendingFirControls(FirPreparationScheduler scheduler)
+        => _playbackSession.QueuePendingFirControls(scheduler);
 
 	public void EnqueueLiveEvent(
 		ChannelTarget target,

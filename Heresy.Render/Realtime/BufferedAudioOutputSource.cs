@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 
 using Heresy.Core.Sequencing;
+using Heresy.Render.Filters;
 
 namespace Heresy.Render.Realtime;
 
@@ -21,6 +22,7 @@ public sealed class BufferedAudioOutputSource : ILiveAudioOutputSource, IDisposa
 	private readonly int _blockFrames;
 	private readonly AutoResetEvent _wake = new(false);
 	private readonly Thread _worker;
+    private readonly FirPreparationScheduler? _firScheduler;
 	private long _readFrames;
 	private long _writtenFrames;
 	private long _underruns;
@@ -41,6 +43,8 @@ public sealed class BufferedAudioOutputSource : ILiveAudioOutputSource, IDisposa
 		_capacityFrames = capacityFrames;
 		_blockFrames = blockFrames;
 		_samples = new float[checked(capacityFrames * Format.ChannelCount)];
+        _firScheduler = source is IFirPreparationAudioSource
+            ? new FirPreparationScheduler() : null;
 		_worker = new Thread(Produce)
 		{
 			IsBackground = true,
@@ -55,7 +59,8 @@ public sealed class BufferedAudioOutputSource : ILiveAudioOutputSource, IDisposa
 	public long BufferedFrames =>
 		Volatile.Read(ref _writtenFrames) - Volatile.Read(ref _readFrames);
 	public long UnderrunCount => Interlocked.Read(ref _underruns);
-	public Exception? RenderingFault => Volatile.Read(ref _fault);
+	public Exception? RenderingFault => Volatile.Read(ref _fault)
+        ?? _firScheduler?.Fault;
 
 	/// <summary>
 	/// The source's own live-event input must be a thread-safe command queue.
@@ -138,7 +143,13 @@ public sealed class BufferedAudioOutputSource : ILiveAudioOutputSource, IDisposa
 				Span<float> output = _samples.AsSpan(
 					position * Format.ChannelCount, count * Format.ChannelCount);
 				output.Clear();
+                if (_firScheduler is { } scheduler
+                    && _source is IFirPreparationAudioSource preparing)
+                    preparing.AdoptPreparedFirControls();
 				_source.Render(count, output);
+                if (_firScheduler is { } worker
+                    && _source is IFirPreparationAudioSource controls)
+                    controls.QueuePendingFirControls(worker);
 			}
 			catch (Exception error)
 			{
@@ -158,6 +169,7 @@ public sealed class BufferedAudioOutputSource : ILiveAudioOutputSource, IDisposa
 			throw new InvalidOperationException(
 				"A PCM rendering worker cannot dispose itself.");
 		_worker.Join();
+        _firScheduler?.Dispose();
 		_wake.Dispose();
 	}
 }
