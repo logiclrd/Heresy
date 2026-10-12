@@ -25,6 +25,8 @@ virtual-voice controls, and compiled parametric effects, are implemented.
 
 ## Tracker-effect and Instrument authoring integration
 
+- [x] **Reconcile Axx/Sxx tracker effect keyboard input and undefined S-byte handling (completed 12 October 2026).** The keyboard effect codec now accepts the missing `Axx` speed command and translates positive byte parameters to the existing global `SetSpeedCommand`; `A00` is an editable, musically inert slot (matching IT compatibility). Every `Sxx` byte, including `S00` on initial S entry and unsupported low-nibble combinations, is accepted and stored as either its exact concrete semantic effect or the new `UndefinedTrackerSpecialPatternEffect`. Each parameter nibble reselects the exact type for the new byte without guessing invalid subcommands; undefined values persist in song JSON and effect-stack clipboard, render as `Sxx` in normal tracker colors and never emit playback commands. Tests exhaustively cover all 256 S-byte values, staged S00→S70→S74→undefined editing, Axx keyboard entry, playback routing and inert fallback, JSON and clipboard round-trips. The **in-place Insert Tracker Effect...** menu and dynamic status hints are separately tracked below.
+
 - [ ] **Introduce inherited per-tone and scripted Instrument NNA resolution.**
   Define a common note-start NNA resolver contract for data-table and Script
   Instruments, evaluated against the same incoming pitch/tone-selection
