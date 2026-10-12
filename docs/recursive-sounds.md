@@ -29,6 +29,22 @@
   private mixdowns and Instrument-selected recursive tones support
   live parent-note pitch inheritance, initial pitch/playback-speed
   composition, and deterministic seeking.
+- **Recursive Instrument tone Filter PCM is implemented.** Each selected
+  data or Script Instrument tone contributes its own configured Filter layer
+  to the bound terminal `SoundInvocation`, ordered from the innermost
+  Instrument outward. The `PlaybackVoice` owns one streaming DSP history
+  per output channel and stage; source-frame Oxx/Qxy seeking, Note Off,
+  NNA migration, and flattened virtual scope ownership remain tied to
+  the original terminal sound/state. The tone Filter runs before tracker
+  resonant filtering and voice gain, with bounded zero-input tail processing
+  after natural finite source completion. Script pitch evaluation retains
+  the cloned tone Filter configuration. Already-existing producer-prepared
+  Pattern/Sequence private mixdowns are reused when selected through
+  Instruments: tone filtering does not fabricate any *additional* mixer,
+  event journal, or PCM future. `InstrumentToneFilterRenderingTests`
+  and the production-factory `ScriptInstrumentPlaybackTests` cover direct
+  vs private Pattern/Sequence selection, nested serial layers, chunk
+  invariance, NNA, scoped descendant cancellation and finite tails.
 - **Nested private-source release is not an outer-sample release.**
   When the parent Instrument Note Off ends private Sequence input,
   the child `PlaybackSession.EndInput` requests Note Off on its own

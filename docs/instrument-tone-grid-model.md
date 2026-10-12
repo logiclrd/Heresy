@@ -188,8 +188,13 @@ explicit parameter overrides). Older version-one songs without
 Filter reference or tampered overrides fail instead of silently rebinding.
 Snapshots restore independent use copies bound to the cloned shared
 definition. Reference analysis registers `InstrumentToneFilter` links
-for both Instrument kinds. Rendering composed tone Filter chains is a
-**later milestone**; this completes authoring, not audio-path processing.
+for both Instrument kinds. Composed tone Filter chains now render in the dedicated per-invocation
+DSP path, inner Instrument first and outer Instrument last, after the
+already-selected terminal sound. The editor milestone itself remains
+restricted to authoring, while the subsequent renderer milestone
+implements the audio processing and preserves the old FilterEnvelopeId
+behaviour. Details and regression coverage are in
+[filter-design.md](filter-design.md).
 
 ## Script Instrument editor is separate
 
