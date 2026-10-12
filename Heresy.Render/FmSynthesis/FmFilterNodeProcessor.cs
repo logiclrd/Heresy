@@ -282,6 +282,7 @@ internal sealed class FmFilterNodeProcessor
 				FirRequests = new FirControlRequest[
 					Math.Min(firCount, FirControlPreparationPolicy.MaximumQueuedStages)];
 				FirPreparedUpdates = new RealtimeFirStageUpdate[FirRequests.Length];
+                FirHeldRequests = new FirControlRequest[FirRequests.Length];
 			}
 			if (Configuration is not null)
 				Chain = new StreamingFilterChain(
@@ -310,6 +311,8 @@ internal sealed class FmFilterNodeProcessor
 		internal FirControlRequest[]? FirRequests { get; }
 		internal RealtimeFirStageUpdate[]? FirPreparedUpdates { get; }
 		internal PreparedFirControlBatch? FirReady { get; set; }
+        internal FirControlRequest[]? FirHeldRequests { get; }
+        internal int FirHoldCount { get; set; }
 	}
 
 	public State CreateState(int sampleRate)
@@ -354,8 +357,13 @@ internal sealed class FmFilterNodeProcessor
     }
 
     internal bool QueuePendingFirs(State state, FirPreparationScheduler scheduler)
-        => state.FirControl is not null && state.FirMailbox is not null
-            && state.FirMailbox.CapturePending(state.FirControl, scheduler);
+    {
+        if (state.FirControl is null || state.FirMailbox is null
+            || state.FirControl.PendingCount == 0) return false;
+        if (state.FirHoldCount == 0)
+            state.FirHoldCount = state.FirControl.CopyPending(state.FirHeldRequests!);
+        return state.FirMailbox.CapturePending(state.FirControl, scheduler);
+    }
 
 	/// <summary>
 	/// Evaluate all connected parameters as absolute values in the authored
@@ -409,7 +417,7 @@ internal sealed class FmFilterNodeProcessor
 			if (value != state.Values[i])
 				dirty = true;
 		}
-		if (!dirty)
+		if (!dirty && state.FirHoldCount == 0)
 			return;
 
 		if (!_useFastNumeric)
@@ -426,7 +434,7 @@ internal sealed class FmFilterNodeProcessor
 		// and publish immutable plans between PCM blocks. The live loop
 		// can consume a supported prepared FIR plan only for an exact match
 		// of the whole captured FIR request snapshot.
-		bool firDirty = false;
+		bool firDirty = state.FirHoldCount > 0;
 		foreach (FastFirControlStage stage in _fastFirs)
 		{
 			if (HasChanged(stage.CutoffBindingIndex, state, sourceValues, _bindings)
@@ -448,6 +456,11 @@ internal sealed class FmFilterNodeProcessor
 			}
 			for (int i = 0; i < _fastFirs.Length; i++)
 			{
+                if (state.FirHoldCount != 0)
+                {
+                    requests[i] = state.FirHeldRequests![i];
+                    continue;
+                }
 				FastFirControlStage stage = _fastFirs[i];
 				requests[i] = new FirControlRequest(
 					stage.StageIndex, stage.StageId, stage.Kind,
@@ -616,13 +629,29 @@ internal sealed class FmFilterNodeProcessor
 				? ReadOnlySpan<RealtimeFirStageUpdate>.Empty
 				: state.FirPreparedUpdates.AsSpan(0, firCount)))
 			return;
-		if (firReady is not null)
-		{
+		for (int i = 0; i < _bindings.Length; i++)
+			state.Values[i] = sourceValues[_bindings[i].ValueIndex];
+        if (firReady is not null)
+        {
+            // The published FIR target was sampled at an earlier control
+            // quantum. Record its actual committed values, not newer FM
+            // graph samples, so the next update remains well-defined.
+            for (int i = 0; i < _fastFirs.Length; i++)
+            {
+                FastFirControlStage stage = _fastFirs[i];
+                FirControlRequest committed = state.FirHoldCount > 0
+                    ? state.FirHeldRequests![i] : state.FirRequests![i];
+                if (stage.CutoffBindingIndex >= 0)
+                    state.Values[stage.CutoffBindingIndex] = committed.CutoffHz;
+                if (stage.LowBindingIndex >= 0)
+                    state.Values[stage.LowBindingIndex] = committed.LowCutoffHz;
+                if (stage.HighBindingIndex >= 0)
+                    state.Values[stage.HighBindingIndex] = committed.HighCutoffHz;
+            }
+            state.FirHoldCount = 0;
 			state.FirReady = null;
 			state.FirControl!.Clear();
 		}
-		for (int i = 0; i < _bindings.Length; i++)
-			state.Values[i] = sourceValues[_bindings[i].ValueIndex];
 	}
 
 	/// <summary>
