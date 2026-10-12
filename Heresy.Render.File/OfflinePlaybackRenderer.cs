@@ -164,6 +164,9 @@ public static class OfflinePlaybackRenderer
 			Span<float> block = samples.AsSpan(0, wanted * arrangement.Format.ChannelCount);
 			block.Clear();
 			int produced = arrangement.RenderLogical(wanted, block);
+			// FIR coefficient design is permitted between export PCM blocks,
+			// never during a sample callback or inside note Filter DSP.
+			arrangement.Session.PreparePendingNoteFilterEnvelopeControls();
 			if (produced < 0 || produced > wanted)
 				throw new InvalidOperationException(
 					"Incremental arrangement returned an invalid frame count.");
@@ -235,6 +238,7 @@ public static class OfflinePlaybackRenderer
 				session.NextFrame,
 				frameCount,
 				block);
+			session.PreparePendingNoteFilterEnvelopeControls();
 			sink.Write(block);
 			progress?.Report(new OfflineRenderProgress(
 				OfflineRenderPhase.LogicalBody, session.NextFrame,
@@ -277,6 +281,7 @@ public static class OfflinePlaybackRenderer
 			int frames = (int)Math.Min(blockFrameCount, budget);
 			Span<float> block = buffer.AsSpan(0, frames * channels);
 			session.Render(session.NextFrame, frames, block);
+			session.PreparePendingNoteFilterEnvelopeControls();
 
 			int framesToWrite = session.IsQuiescent
 				? FindLastNonZeroFrameExclusive(block, channels)
