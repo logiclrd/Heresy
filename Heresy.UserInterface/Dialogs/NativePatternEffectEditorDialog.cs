@@ -213,6 +213,9 @@ public sealed class NativePatternEffectEditorDialog : Window
 		}
 		if (isFilterText)
 			BuildFilterAssistant();
+		else if (_prototype is SetChannelFilterPatternEffect
+			or SetNoteFilterPatternEffect)
+			BuildFilterSelectionAssistant();
 	}
 
 	private static Control BuildInput(
@@ -241,6 +244,42 @@ public sealed class NativePatternEffectEditorDialog : Window
 	/// <summary>Descriptor-driven stage assistant for native Filter text.
 	/// Unlike shared Filter editing, this changes the command's own text
 	/// only. Rewriting does not alter the SongDocument or Filter definition.</summary>
+	/// <summary>Use the song's actual Filter objects instead of making
+	/// users memorize numeric IDs when selecting or clearing a Filter.</summary>
+	private void BuildFilterSelectionAssistant()
+	{
+		if (_document is null)
+			return;
+		FilterChoice[] choices =
+		[
+			new(ObjectId.None, "(Clear current Filter)"),
+			.. _document.Objects.Values.OfType<FilterDefinition>()
+				.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+				.Select(x => new FilterChoice(x.Id, x.Name)),
+		];
+		ComboBox picker = new()
+		{
+			ItemsSource = choices,
+			MinWidth = 260,
+		};
+		_assistant.Children.Add(new TextBlock
+		{
+			Text = "Choose an available shared Filter definition, or clear:",
+		});
+		_assistant.Children.Add(picker);
+		picker.SelectionChanged += (_, _) =>
+		{
+			if (picker.SelectedItem is FilterChoice choice
+				&& _inputs["filterId"] is TextBox id)
+				id.Text = choice.Id.IsNone ? "" : choice.Id.ToString();
+		};
+		string hint = (_inputs["filterId"] as TextBox)?.Text ?? "";
+		picker.SelectedItem = uint.TryParse(hint, NumberStyles.None,
+			CultureInfo.InvariantCulture, out uint id)
+			? choices.FirstOrDefault(x => x.Id == (ObjectId)id) ?? choices[0]
+			: choices[0];
+	}
+
 	private void BuildFilterAssistant()
 	{
 		if (_document is null)
