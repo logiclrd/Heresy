@@ -149,15 +149,16 @@ public sealed class PlaybackSessionTests
 			"Per-speaker filter history must not reset at PCM block boundaries.");
 	}
 
-	[Test]
-	public void ExtremelyLowCutoffAccumulatesSubThresholdNonzeroInput()
+	[TestCase(1e-6)]
+    [TestCase(1e-12)]
+	public void ExtremelyLowCutoffAccumulatesSubThresholdNonzeroInput(double cutoffHz)
 	{
 		ObjectId source = (ObjectId)10U;
 		RenderConfiguration config = new(1000,
 		[
 			new OutputChannelConfiguration(Vector3.Zero,
 				positionalImportance: 0, filterType: OutputFilterType.LowPass,
-				cutoffHz: 1e-6),
+				cutoffHz: cutoffHz),
 		]);
 		PlaybackSession session = new(new RenderContext(config),
 			Schedule(Event(TimeSpan.Zero, 0, new StartNoteCommand(source))),
