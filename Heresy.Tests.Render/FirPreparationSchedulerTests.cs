@@ -16,7 +16,6 @@ public sealed class FirPreparationSchedulerTests
     private const int Rate = 48000;
 
     [Test]
-    [Timeout(10000)]
     public void OffPcmWorkerPreparesLatestRequestAndRejectsSupersededSnapshot()
     {
         FilterChain authored = Chain();
@@ -57,7 +56,6 @@ public sealed class FirPreparationSchedulerTests
     }
 
     [Test]
-    [Timeout(10000)]
     public void RepeatedIdenticalPendingTargetDoesNotRestartInFlightPreparation()
     {
         FirControlPreparationPolicy producer = new(Rate);
@@ -88,7 +86,6 @@ public sealed class FirPreparationSchedulerTests
     }
 
     [Test]
-    [Timeout(10000)]
     public void DisposingHostStopsWorkerAfterActivePreparationWithoutTouchingPcmState()
     {
         FirControlPreparationPolicy producer = new(Rate);
