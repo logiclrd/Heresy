@@ -1303,7 +1303,8 @@ public sealed class PlaybackSession
 				case SetChannelFilterCommand:
 				case SetChannelFilterParametersCommand:
 				case SetChannelFilterAssignmentsCommand:
-					ApplyHostFilterCommand(command, null, virtualChannelId, scopedOwner);
+					ApplyHostFilterCommand(command, null, virtualChannelId, scopedOwner,
+                        eventFrame);
 					break;
 
                 case SetChannelFilterParameterEnvelopeCommand envelope:
@@ -1517,7 +1518,8 @@ public sealed class PlaybackSession
 			case SetChannelFilterAssignmentsCommand:
 				// Always target the *real physical host* regardless of
 				// PhysicalPlaybackOwner/flattened logical note scope.
-				ApplyHostFilterCommand(command, physicalChannel, null, null);
+				ApplyHostFilterCommand(command, physicalChannel, null, null,
+                    eventFrame);
 				break;
 
             case SetChannelFilterParameterEnvelopeCommand envelope:
@@ -2000,7 +2002,8 @@ public sealed class PlaybackSession
 	/// actual output host. The per-owner playback-channel memory is *not*
 	/// the channel Filter identity; child cancellation has no rollback.</summary>
 	private void ApplyHostFilterCommand(NoteCommand command,
-		int? physicalHost, uint? virtualId, long? scopedOwner)
+		int? physicalHost, uint? virtualId, long? scopedOwner,
+        long eventFrame)
 	{
 		try
 		{
@@ -2037,13 +2040,13 @@ public sealed class PlaybackSession
 						throw new InvalidOperationException(
 							"No channel-output Filter selected on the target host.");
 					prepared = previous.PrepareParameterUpdate(
-						update.StageId, update.Assignments);
+						update.StageId, update.Assignments, eventFrame);
 					break;
 				case SetChannelFilterAssignmentsCommand text:
 					if (previous is null)
 						throw new InvalidOperationException(
 							"No channel-output Filter selected for assignments.");
-					prepared = previous.PrepareTextUpdate(text.Text);
+					prepared = previous.PrepareTextUpdate(text.Text, eventFrame);
 					break;
 				default:
 					throw new InvalidOperationException(
