@@ -102,6 +102,7 @@ internal sealed class FirPreparationMailbox
     private readonly FirControlPreparationPolicy _workerPolicy;
     private int _pendingCount;
     private long _version;
+    private long _preparingVersion;
     private bool _queued;
     private PreparedFirControlBatch? _ready;
     internal Action? BeforePrepare { get; set; }
@@ -168,6 +169,7 @@ internal sealed class FirPreparationMailbox
         lock (_gate)
         {
             version = _version;
+            _preparingVersion = version;
             count = _pendingCount;
             Array.Copy(_pending, _workerCopy, count);
         }
@@ -196,10 +198,16 @@ internal sealed class FirPreparationMailbox
 
     internal void MarkFailed(FirPreparationScheduler scheduler)
     {
+        bool retry;
         lock (_gate)
         {
             _ready = null;
-            _queued = false;
+            // A newer request captured while an older worker attempt
+            // faulted must not be stranded in a permanently queued state.
+            // Never retry a known-failing identical snapshot in a loop.
+            retry = _version != _preparingVersion;
+            if (!retry) _queued = false;
         }
+        if (retry) scheduler.Enqueue(this);
     }
 }
