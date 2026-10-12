@@ -101,11 +101,13 @@ public sealed class ChannelOutputFilterRenderingTests
         Assert.That(session.IsQuiescent, Is.True);
     }
 
-    [Test]
-    public void NnaForkPreservesItsOwnResponseAfterOriginalPhysicalHostIsCleared()
+    [TestCase(2)]
+    [TestCase(8)]
+    public void NnaForkPreservesItsOwnResponseAfterOriginalPhysicalHostIsCleared(
+        int sourceFrames)
     {
         TestResolver sounds = new();
-        sounds.Add(PulseId, new LingeringPulseSound());
+        sounds.Add(PulseId, new LingeringPulseSound(sourceFrames));
         PlaybackSession session = Session(sounds, Schedule(
             Event(0, 0, new StartNoteCommand(PulseId)),
             Event(1, 0, new StartNoteCommand(PulseId))));
@@ -114,7 +116,10 @@ public sealed class ChannelOutputFilterRenderingTests
         float[] first = new float[2];
         session.Render(0, 2, first);
         Assert.That(first, Is.EqualTo(new float[] { 1, 1 }));
-        Assert.That(session.VirtualVoices, Has.Count.EqualTo(1));
+        Assert.That(session.VirtualVoices,
+            Has.Count.EqualTo(sourceFrames == 2 ? 0 : 1),
+            "a finished virtual voice must preserve its Filter tail even " +
+            "after removal from the active displaced-voice collection");
         // A displaced voice has its own copy of the output Filter history.
         // Clearing the *physical* host must not clear the virtual host's
         // pending echo from the first note.
@@ -324,11 +329,13 @@ public sealed class ChannelOutputFilterRenderingTests
 
     private sealed class LingeringPulseSound : ISound
     {
+        private readonly int _sourceFrames;
+        public LingeringPulseSound(int sourceFrames) => _sourceFrames = sourceFrames;
         public NoteConfigurationSnapshot SnapshotNoteConfiguration()
             => new(NewNotePolicy.Continue);
         public SoundState CreateState() => new ProbeState();
         public long? GetEndFrameExclusive(RenderContext context, SoundState state)
-            => 8;
+            => _sourceFrames;
         public void Render(RenderContext context, SoundState state,
             long startFrame, int frameCount, Span<float> destination)
         {
