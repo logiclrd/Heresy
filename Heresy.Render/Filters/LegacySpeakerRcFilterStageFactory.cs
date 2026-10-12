@@ -16,8 +16,8 @@ public sealed class LegacySpeakerRcFilterStageFactory : IStreamingFilterStageFac
     public IStreamingFilterStagePlan Prepare(PreparedFilterStage stage, int sampleRate)
     {
         ArgumentNullException.ThrowIfNull(stage);
-        if (stage.Kind != FilterKind.OnePole || sampleRate <= 0)
-            throw new ArgumentException("Legacy speaker RC requires OnePole and valid sample rate.");
+        if (stage.Kind != FilterKind.SpeakerLegacyRc || sampleRate <= 0)
+            throw new ArgumentException("Legacy speaker RC requires SpeakerLegacyRc and valid sample rate.");
         double cutoff = stage.Parameters["CutoffHz"].NumericValue;
         if (!double.IsFinite(cutoff) || cutoff <= 0 || cutoff >= sampleRate * 0.5)
             throw new ArgumentOutOfRangeException(nameof(stage), "Speaker cutoff must be below Nyquist.");

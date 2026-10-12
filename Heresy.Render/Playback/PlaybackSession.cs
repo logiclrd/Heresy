@@ -52,7 +52,7 @@ public sealed class PlaybackSession
                     FilterDefinition definition = new(
                         (ObjectId)(uint)(0x7F000000 + i),
                         "SpeakerLegacyRc",
-                        [new FilterStageDefinition(1, "speaker", FilterKind.OnePole)]);
+                        [new FilterStageDefinition(1, "speaker", FilterKind.SpeakerLegacyRc)]);
                     instance = new FilterInstance(definition);
                     instance.SetStageParameters(1, [
                         new("CutoffHz", FilterParameterValue.FromNumber(channel.CutoffHz!.Value)),

@@ -27,6 +27,8 @@ public enum FilterKind
 	FirBandPass,
 	FirNotch,
 	CombFeedforward,
+    /// <summary>Exact pre-Filter-engine speaker RC compatibility only; not in the Filter authoring menu.</summary>
+    SpeakerLegacyRc,
 }
 
 /// <summary>A menu leaf has a Kind; unselectable grouping labels have none.</summary>
@@ -58,6 +60,8 @@ public static class FilterCatalogue
 		FilterParameterDescriptor.Choice("Oversampling", "2x", "1x", "2x", "4x");
 	private static readonly FilterParameterDescriptor AllPassOrder =
 		FilterParameterDescriptor.Choice("Order", "1", "1", "2");
+	private static readonly FilterParameterDescriptor LegacySpeakerCutoff =
+        FilterParameterDescriptor.Number("CutoffHz", 1000, 1e-9, 192000, "Hz");
 	private static readonly FilterParameterDescriptor OnePoleMode =
 		FilterParameterDescriptor.Choice("Mode", "LowPass", "LowPass", "HighPass");
 	private static readonly FilterParameterDescriptor Delay =
@@ -159,6 +163,7 @@ public static class FilterCatalogue
 		Add(FilterKind.LadderSaturated, Cutoff, Resonance, Drive, Oversampling);
 		Add(FilterKind.AllPass, Cutoff, AllPassOrder);
 		Add(FilterKind.OnePole, Cutoff, OnePoleMode);
+        Add(FilterKind.SpeakerLegacyRc, LegacySpeakerCutoff, OnePoleMode);
 		Add(FilterKind.CombFeedback, Delay, Feedback, Mix);
 		Add(FilterKind.CombFeedforward, Delay, Feedforward, Mix);
 
