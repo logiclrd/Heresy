@@ -112,6 +112,74 @@ public sealed class FmRealtimeSaturatedLadderFastPathTests
 			Assert.That(float.IsFinite(sample), Is.True);
 	}
 
+	[TestCase("1x")]
+	[TestCase("4x")]
+	public void ValidMixedTptBiquadAndLadderUpdatesMatchFullConfiguration(
+		string oversampling)
+	{
+		FilterDefinition definition = new((ObjectId)129U, "Mixed valid", [
+			new FilterStageDefinition(1, "pole", FilterKind.OnePole),
+			new FilterStageDefinition(2, "bell", FilterKind.BiquadPeaking),
+			new FilterStageDefinition(3, "linear", FilterKind.LadderLinear),
+			new FilterStageDefinition(4, "saturated", FilterKind.LadderSaturated),
+		]);
+		FilterInstance use = new(definition);
+		for (int stage = 1; stage <= 4; stage++)
+			use.SetStageParameter(stage, "CutoffHz",
+				FilterParameterValue.FromNumber(120));
+		use.SetStageParameter(4, "Oversampling",
+			FilterParameterValue.FromChoice(oversampling));
+		FmSynthSound sound = new(new FmSynthGraph([
+			new FmConstantNode(1, 0.65),
+			new FmOscillatorNode(2, FmOscillatorWaveform.Sine, 17,
+				minimum: 75, maximum: 165, constant: true),
+			new FmOscillatorNode(3, FmOscillatorWaveform.Sine, 23,
+				minimum: -9, maximum: 9, constant: true),
+			new FmOscillatorNode(4, FmOscillatorWaveform.Sine, 29,
+				minimum: 0.02, maximum: 0.98, constant: true),
+			new FmOscillatorNode(5, FmOscillatorWaveform.Sine, 31,
+				minimum: 0.1, maximum: 10, constant: true),
+			new FmFilterNode(6, 1, use, [
+				new FmFilterParameterConnection(1, FilterKind.OnePole,
+					0, "CutoffHz", 2),
+				new FmFilterParameterConnection(2, FilterKind.BiquadPeaking,
+					0, "GainDb", 3),
+				new FmFilterParameterConnection(3, FilterKind.LadderLinear,
+					0, "Resonance", 4),
+				new FmFilterParameterConnection(4, FilterKind.LadderSaturated,
+					0, "Drive", 5),
+			]),
+		], 6), new EmptyResolver());
+		float[] actual = new float[220];
+		sound.Render(Context(), sound.CreateState(), 0, actual.Length, actual);
+
+		StreamingFilterChain reference = new(new FilterChain([use]), SampleRate, 1);
+		double cutoffPhase = 0, gainPhase = 0, resonancePhase = 0, drivePhase = 0;
+		Span<float> sample = stackalloc float[1];
+		for (int i = 0; i < actual.Length; i++)
+		{
+			double cutoff = Wave(ref cutoffPhase, 17, 120, 45);
+			double gain = Wave(ref gainPhase, 23, 0, 9);
+			double resonance = Wave(ref resonancePhase, 29, 0.5, 0.48);
+			double drive = Wave(ref drivePhase, 31, 5.05, 4.95);
+			FilterInstance next = use.Clone();
+			next.SetStageParameter(1, "CutoffHz",
+				FilterParameterValue.FromNumber(cutoff));
+			next.SetStageParameter(2, "GainDb",
+				FilterParameterValue.FromNumber(gain));
+			next.SetStageParameter(3, "Resonance",
+				FilterParameterValue.FromNumber(resonance));
+			next.SetStageParameter(4, "Drive",
+				FilterParameterValue.FromNumber(drive));
+			reference.Configure(new FilterChain([next]));
+			sample[0] = 0.65f;
+			reference.ProcessFrame(sample);
+			Assert.That(actual[i], Is.EqualTo(sample[0]),
+				$"{oversampling}: mixed-family frame {i}");
+			use = next;
+		}
+	}
+
 	[TestCase("1x", "CutoffHz", 700.0)]
 	[TestCase("2x", "Resonance", 1.1)]
 	[TestCase("4x", "Drive", 11.0)]
