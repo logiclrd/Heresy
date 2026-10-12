@@ -175,6 +175,13 @@ public sealed class FmMixedFilterRealtimeQualificationTests
 				Is.False, $"invalid cutoff {invalid} rejects the whole batch");
 			Assert.That(policy.PendingCount, Is.Zero);
 		}
+		Assert.That(policy.TryOffer([valid]), Is.True,
+			"the next valid cutoff must recover after invalid/nonfinite offers");
+		Assert.That(policy.TryPreparePending(
+			MakeMixed(127, "Maximum"), out PreparedFirControlBatch? recovered),
+			Is.True);
+		Assert.That(recovered, Is.Not.Null);
+		Assert.That(recovered!.Matches([valid]), Is.True);
 	}
 
 	[Test]
@@ -226,6 +233,41 @@ public sealed class FmMixedFilterRealtimeQualificationTests
 			expected.Length, expected);
 		Assert.That(actual, Is.EqualTo(expected),
 			"Nyquist-invalid OnePole blocks valid peaking, ladder, comb and FIR updates");
+	}
+
+	[Test]
+	public void OscillatingNyquistViolationsRecoverAndReplayWithoutHistoryLeakage()
+	{
+		FilterInstance configured = MakeMixed(127);
+		FmSynthSound recovering = MixedSound(configured, connectFir: false,
+			invalidOnePole: true, oscillatingInvalidOnePole: true);
+		FmSynthSound unmodulated = new(new FmSynthGraph([
+			new FmConstantNode(1, 0.65),
+			new FmFilterNode(7, 1, configured),
+		], 7), new EmptyResolver());
+		RenderContext context = Context();
+		float[] contiguous = new float[1050];
+		float[] split = new float[1050];
+		float[] baseline = new float[1050];
+		recovering.Render(context, recovering.CreateState(), 0,
+			contiguous.Length, contiguous);
+		SoundState state = recovering.CreateState();
+		recovering.Render(context, state, 0, 217,
+			split.AsSpan(0, 217));
+		recovering.Render(context, state, 217, 400,
+			split.AsSpan(217, 400));
+		recovering.Render(context, state, 617, 433,
+			split.AsSpan(617));
+		Assert.That(split, Is.EqualTo(contiguous),
+			"legal controls between Nyquist violations must resume atomically");
+		unmodulated.Render(context, unmodulated.CreateState(), 0,
+			baseline.Length, baseline);
+		Assert.That(contiguous.SequenceEqual(baseline), Is.False,
+			"some legal windows must actually commit, not just hold forever");
+		Assert.That(contiguous.All(float.IsFinite), Is.True);
+		float[] seek = new float[1050];
+		recovering.Render(context, state, 0, seek.Length, seek);
+		Assert.That(seek, Is.EqualTo(contiguous));
 	}
 
 	private static float[] Scheduled(FmSynthSound sound,
@@ -310,7 +352,7 @@ public sealed class FmMixedFilterRealtimeQualificationTests
 
 	private static FmSynthSound MixedSound(FilterInstance instance,
 		bool connectFir, bool constantFirControl = false,
-		bool invalidOnePole = false)
+		bool invalidOnePole = false, bool oscillatingInvalidOnePole = false)
 	{
 		List<FmSynthNode> nodes = [
 			new FmConstantNode(1, 0.65),
@@ -327,7 +369,13 @@ public sealed class FmMixedFilterRealtimeQualificationTests
 				minimum: 0.90, maximum: 0.98, constant: true),
 		];
 		if (invalidOnePole)
-			nodes.Add(new FmConstantNode(8, 30000));
+		{
+			if (oscillatingInvalidOnePole)
+				nodes.Add(new FmOscillatorNode(8, FmOscillatorWaveform.Sine, 97,
+					minimum: 1400, maximum: 28000, constant: true));
+			else
+				nodes.Add(new FmConstantNode(8, 30000));
+		}
 		List<FmFilterParameterConnection> connections = [
 			new(1, FilterKind.OnePole, 0, "CutoffHz",
 				invalidOnePole ? 8 : 2),
