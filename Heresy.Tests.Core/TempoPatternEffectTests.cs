@@ -35,6 +35,41 @@ public sealed class TempoPatternEffectTests
 			Is.EqualTo(new ApplyTrackerTempoCommand(0x12)));
 	}
 
+    [Test]
+    public void TrackerA06ControlsGlobalSpeedAndA00HasNoSoundOrTimingEffect()
+    {
+        DataPatternDefinition set = Pattern(1, 1);
+        set.Grid.GetOrCreateCell(0, 0).Effects.Add(
+            new TrackerSpeedPatternEffect(6));
+        NoteScheduleBuilder events = new();
+        set.GenerateRawNotes(new SequencingContext(), events, out _);
+        NoteEvent speed = events.Freeze().Single();
+        Assert.That(speed.Target, Is.EqualTo(ChannelTarget.Global));
+        Assert.That(speed.Commands.Single(), Is.EqualTo(new SetSpeedCommand(6)));
+
+        DataPatternDefinition zero = Pattern(1, 1);
+        zero.Grid.GetOrCreateCell(0, 0).Effects.Add(
+            new TrackerSpeedPatternEffect(0));
+        zero.Grid.GetOrCreateCell(0, 0).Effects.Add(
+            new UndefinedTrackerSpecialPatternEffect(0x2F));
+        NoteScheduleBuilder silent = new();
+        zero.GenerateRawNotes(new SequencingContext(), silent, out _);
+        Assert.That(silent.Freeze(), Is.Empty);
+    }
+
+    [Test]
+    public void UndefinedSpecialNeverChangesSpeedOrTriggersS7NewNotePolicy()
+    {
+        DataPatternDefinition pattern = Pattern(1, 1);
+        pattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
+            new UndefinedTrackerSpecialPatternEffect(0x7F));
+        pattern.Grid.GetOrCreateCell(0, 0).Effects.Add(
+            new UndefinedTrackerSpecialPatternEffect(0x00));
+        NoteScheduleBuilder output = new();
+        pattern.GenerateRawNotes(new SequencingContext(), output, out _);
+        Assert.That(output.Freeze(), Is.Empty);
+    }
+
 	[Test]
 	public void TfaSetsTempoImmediatelyAndControlsWholeRow()
 	{
