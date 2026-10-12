@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 
+using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
 using Heresy.Core.Filters;
@@ -1890,16 +1891,17 @@ public sealed class PlaybackSession
 			switch (command)
 			{
 				case SetChannelFilterCommand selection:
+					FilterInstance? selectedUse = selection.Configuration;
 					if (selection.FilterDefinitionId is ObjectId selected
 						&& (selected.IsNone
-							|| selection.Configuration is null
-							|| selection.Configuration.DefinitionId != selected))
+							|| selectedUse is null
+							|| selectedUse.DefinitionId != selected))
 						throw new ArgumentException(
 							"Selected channel Filter ID is unavailable or mismatched.");
 					// Every explicit select starts a *fresh* DSP history;
 					// clearing discards only this host's state.
-					prepared = selection.Configuration is null ? null
-						: new ChannelOutputFilterState(selection.Configuration,
+					prepared = selectedUse is null ? null
+						: new ChannelOutputFilterState(selectedUse,
 							SampleRate, OutputChannelCount);
 					break;
 				case SetChannelFilterParametersCommand update:
