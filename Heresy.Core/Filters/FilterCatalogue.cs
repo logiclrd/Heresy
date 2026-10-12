@@ -61,7 +61,7 @@ public static class FilterCatalogue
 	private static readonly FilterParameterDescriptor AllPassOrder =
 		FilterParameterDescriptor.Choice("Order", "1", "1", "2");
 	private static readonly FilterParameterDescriptor LegacySpeakerCutoff =
-        FilterParameterDescriptor.Number("CutoffHz", 1000, 1e-9, 192000, "Hz");
+        FilterParameterDescriptor.Number("CutoffHz", 1000, double.Epsilon, 192000, "Hz");
 	private static readonly FilterParameterDescriptor OnePoleMode =
 		FilterParameterDescriptor.Choice("Mode", "LowPass", "LowPass", "HighPass");
 	private static readonly FilterParameterDescriptor Delay =

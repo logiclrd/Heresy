@@ -27,7 +27,7 @@ public sealed class LegacySpeakerRcFilterStageFactory : IStreamingFilterStageFac
             throw new ArgumentException("Unknown speaker RC mode.");
         double alpha = 1.0 - Math.Exp(-2.0 * Math.PI * cutoff / sampleRate);
         double decay = 1.0 - alpha;
-        double frames = decay <= 0 ? 2
+        double frames = alpha <= 0 || decay <= 0 ? 2
             : Math.Ceiling(Math.Log(1e-7) / Math.Log(decay)) + 2;
         int tail = !double.IsFinite(frames) || frames >= int.MaxValue
             ? int.MaxValue : Math.Max(2, (int)frames);
