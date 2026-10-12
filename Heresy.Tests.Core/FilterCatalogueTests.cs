@@ -21,7 +21,7 @@ public sealed class FilterCatalogueTests
 			.Select(item => item.Kind!.Value)
 			.ToArray();
 
-		Assert.That(selected.Length, Is.EqualTo(21));
+		Assert.That(selected.Length, Is.EqualTo(Enum.GetValues<FilterKind>().Length));
 		Assert.That(selected, Is.EquivalentTo(Enum.GetValues<FilterKind>()));
 		Assert.That(selected.Distinct().Count(), Is.EqualTo(selected.Length));
 
