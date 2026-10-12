@@ -3,7 +3,6 @@ using System.Linq;
 using System.Reflection;
 
 using Avalonia.Controls;
-using Avalonia.Input;
 using Avalonia.Headless.NUnit;
 using Avalonia.Input;
 using Avalonia.Media;
