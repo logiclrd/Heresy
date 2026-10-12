@@ -437,7 +437,7 @@ public sealed class ScriptInstrumentPlaybackTests
         cell.Note = new StartPatternNote(sample);
         cell.Effects.Add(new SetChannelFilterPatternEffect(filter.DefinitionId));
         cell.Effects.Add(new SetChannelFilterAssignmentsPatternEffect(
-            "# delay: set a new structural length\ndelay.DelaySeconds = 0.002",
+            "# echo: set a new structural length\necho.DelaySeconds = 0.002",
             filter.DefinitionId));
         song.Add(pattern);
         var factory = new PreparedIncrementalPlaybackFactory(Mono());
@@ -467,7 +467,7 @@ public sealed class ScriptInstrumentPlaybackTests
         cell.Note = new StartPatternNote(sample);
         cell.Effects.Add(new SetChannelFilterPatternEffect(filter.DefinitionId));
         cell.Effects.Add(new SetChannelFilterAssignmentsPatternEffect(
-            "delay.Feedforward = 0\ndelay.NoSuchParameter = 9",
+            "echo.Feedforward = 0\necho.NoSuchParameter = 9",
             filter.DefinitionId));
         song.Add(pattern);
         using PreparedIncrementalPlaybackPlan plan =
