@@ -183,6 +183,44 @@ public sealed class InstrumentToneGridBatchEditorTests
 			.PitchMultiplier.Should().Be(exact);
 	}
 
+	[AvaloniaTest]
+	public void ToneFilterDefinitionChoiceAppliesToSelectedRowsWithIndependentInstances()
+	{
+		DocumentWorkspace workspace = new();
+		InstrumentDefinition instrument = InstrumentDocumentEditor.CreateInstrument(
+			workspace, "Filters");
+		ObjectId source = AddSource(workspace);
+		ObjectId filterId = workspace.Document.AllocateObjectId();
+		Heresy.Core.Filters.FilterDefinition filter = new(filterId, "Filter");
+		workspace.Document.Add(filter);
+		InstrumentEditorControl editor = new(workspace, instrument,
+			() => { }, _ => { });
+		InstrumentToneGridModel model = Field<InstrumentToneGridModel>(editor, "_model");
+		model.SetRow(1, new(SourceId: source));
+		model.SetRow(2, new(SourceId: source));
+		Refresh(editor);
+		var selection = Field<InstrumentToneGridSelection>(editor, "_selection");
+		var rows = Field<InstrumentToneGridRow[]>(editor, "_projectedRows");
+		selection.BeginAt(new(2, 10), rows);
+		selection.Extend(new(1, 10), rows);
+		ComboBox chooser = RowCell<StackPanel>(editor, 2, 10)
+			.Children.OfType<ComboBox>().Single();
+		object choice = chooser.ItemsSource!.Cast<object>().Single(o =>
+			(ObjectId?)o.GetType().GetProperty("Id")!.GetValue(o) == filterId);
+		uint previousRevision = workspace.Document.AudioRevision;
+		chooser.SelectedItem = choice;
+		workspace.Document.AudioRevision.Should().Be(previousRevision + 1);
+		var a = model.Rows.Single(r => r.Index == 1).Cells.FilterConfiguration;
+		var b = model.Rows.Single(r => r.Index == 2).Cells.FilterConfiguration;
+		a.Should().NotBeNull();
+		b.Should().NotBeNull();
+		a!.DefinitionId.Should().Be(filterId);
+		b!.DefinitionId.Should().Be(filterId);
+		a.Should().NotBeSameAs(b);
+		a.Should().NotBeSameAs(
+			instrument.ToneSpecifications[instrument.ToneTable[1]].FilterConfiguration);
+	}
+ 
 	private static T RowCell<T>(InstrumentEditorControl editor,
 		int toneIndex, int column) where T : Control
 	{
