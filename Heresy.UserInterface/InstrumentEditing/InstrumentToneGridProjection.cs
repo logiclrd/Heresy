@@ -41,7 +41,10 @@ public readonly record struct InstrumentToneGridCells(
 			tone.PitchEnvelopeId,
 			tone.PanningEnvelopeId,
 			tone.FilterEnvelopeId,
-			tone.FilterConfiguration,
+			// The Core may intern equivalent ToneSpecifications. Projected
+			// editor rows must never expose their shared mutable Filter
+			// overlay, even before a row is edited or published.
+			tone.FilterConfiguration?.Clone(),
             tone.Nna);
 
 	public ToneSpecification ToTone()
