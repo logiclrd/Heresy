@@ -9,6 +9,7 @@ using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
 using Heresy.Render.Configuration;
 using Heresy.Render.Filters;
+using Heresy.Render.Envelopes;
 using Heresy.Render.Playback;
 using Heresy.Render.Sounds;
 
@@ -619,6 +620,140 @@ public sealed class ChannelOutputFilterRenderingTests
             "valid multi-stage text produces an audible filter change");
     }
 
+    [Test]
+    public void PersistentHostEnvelopeMatchesFramewiseChannelParametersAcrossNoteOffAndNewNote()
+    {
+        static NoteSchedule Make(bool useEnvelope)
+        {
+            List<NoteEvent> events = [
+                Event(0, 0, new SetChannelFilterCommand
+                {
+                    Configuration = Echo(3100, 0.001),
+                }, new StartNoteCommand(PulseId)),
+                Event(1, 0, new NoteOffCommand()),
+                Event(3, 0, new StartNoteCommand(PulseId)),
+                Event(6, 0, new StartNoteCommand(PulseId)),
+            ];
+            if (useEnvelope)
+                events.Add(Event(0, 0,
+                    new SetChannelFilterParameterEnvelopeCommand(
+                        1, "Feedforward", (ObjectId)3101U)));
+            else
+                for (int frame = 0; frame < 9; frame++)
+                    events.Add(Event(frame, 0,
+                        new SetChannelFilterParametersCommand(1, [
+                            new("Feedforward", FilterParameterValue.FromNumber(
+                                0.2 + frame * 0.1)),
+                        ])));
+            return Schedule([.. events]);
+        }
+
+        PlaybackSession MakeSession(bool binding)
+        {
+            TestResolver resolver = new();
+            resolver.Add(PulseId, new PulseSound());
+            resolver.AddCurve((ObjectId)3101U, new RampCurve());
+            return Session(resolver, Make(binding));
+        }
+
+        PlaybackSession automated = MakeSession(true);
+        PlaybackSession typed = MakeSession(false);
+        PlaybackSession partitioned = MakeSession(true);
+        float[] actual = new float[9], reference = new float[9],
+            chunks = new float[9];
+        automated.Render(0, 9, actual);
+        typed.Render(0, 9, reference);
+        partitioned.Render(0, 2, chunks.AsSpan(0, 2));
+        partitioned.Render(2, 3, chunks.AsSpan(2, 3));
+        partitioned.Render(5, 4, chunks.AsSpan(5));
+        Assert.That(chunks, Is.EqualTo(actual).Within(1e-6f));
+        Assert.That(actual, Is.EqualTo(reference).Within(1e-6f),
+            "host envelope keeps its absolute clock across Note Off and notes");
+    }
+
+    [Test]
+    public void ChannelEnvelopeDetachmentRestoresLatestAuthoredBase()
+    {
+        TestResolver resolver = new();
+        resolver.Add(PulseId, new PulseSound());
+        resolver.AddCurve((ObjectId)3101U, new FixedCurve(0.5));
+        PlaybackSession bound = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterCommand
+            {
+                Configuration = Echo(3102, 0.001),
+            }, new SetChannelFilterParameterEnvelopeCommand(
+                1, "Feedforward", (ObjectId)3101U),
+                new StartNoteCommand(PulseId)),
+            Event(3, 0, new SetChannelFilterParametersCommand(1, [
+                new("Feedforward", FilterParameterValue.FromNumber(0.8)),
+            ])),
+            Event(5, 0, new SetChannelFilterParameterEnvelopeCommand(
+                1, "Feedforward"), new StartNoteCommand(PulseId))));
+        float[] first = new float[5], after = new float[5];
+        bound.Render(0, 5, first);
+        bound.Render(5, 5, after);
+        // A clean comparison at the exact detach boundary: a deliberate
+        // channel-output typed retune to the authored value must match.
+        PlaybackSession reference = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterCommand
+            {
+                Configuration = Echo(3103, 0.001),
+            }, new SetChannelFilterParametersCommand(1, [
+                new("Feedforward", FilterParameterValue.FromNumber(0.5)),
+            ]), new StartNoteCommand(PulseId)),
+            Event(5, 0, new SetChannelFilterParametersCommand(1, [
+                new("Feedforward", FilterParameterValue.FromNumber(0.8)),
+            ]), new StartNoteCommand(PulseId))));
+        float[] baseline = new float[10];
+        reference.Render(0, 10, baseline);
+        Assert.That(after, Is.EqualTo(baseline.AsSpan(5).ToArray()).Within(1e-5f));
+    }
+
+    [Test]
+    public void InvalidChannelEnvelopeIsAtomicAndFutureInvalidSamplesWarnOnce()
+    {
+        TestResolver resolver = new();
+        resolver.Add(PulseId, new PulseSound());
+        resolver.AddCurve((ObjectId)3101U, new FixedCurve(0.5));
+        resolver.AddCurve((ObjectId)3104U, new OverflowCurve());
+        PlaybackSession session = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterParameterEnvelopeCommand(
+                1, "Feedforward", (ObjectId)3101U),
+                new SetChannelFilterCommand
+                {
+                    Configuration = Echo(3105, 0.001),
+                },
+                new SetChannelFilterParameterEnvelopeCommand(
+                    1, "DelaySeconds", (ObjectId)3101U),
+                new SetChannelFilterParameterEnvelopeCommand(
+                    999, "Feedforward", (ObjectId)3101U),
+                new SetChannelFilterParameterEnvelopeCommand(
+                    1, "Feedforward", (ObjectId)3104U),
+                new StartNoteCommand(PulseId))));
+        List<string> warnings = [];
+        session.ChannelFilterCommandRejected = warnings.Add;
+        float[] pcm = new float[15];
+        session.Render(0, pcm.Length, pcm);
+        Assert.That(warnings, Has.Count.EqualTo(4),
+            "missing host, structural and missing stage bind, and one invalid sample");
+        Assert.That(pcm.All(float.IsFinite), Is.True);
+    }
+
+    private sealed class FixedCurve(double value) : IEnvelopeCurve
+    {
+        public double GetValue(long frame, int sampleRate, long? off) => value;
+    }
+    private sealed class RampCurve : IEnvelopeCurve
+    {
+        public double GetValue(long frame, int sampleRate, long? off)
+            => 0.2 + frame * 0.1;
+    }
+    private sealed class OverflowCurve : IEnvelopeCurve
+    {
+        public double GetValue(long frame, int sampleRate, long? off)
+            => frame <= 0 ? 0.5 : double.NaN;
+    }
+
     private static FilterInstance Echo(uint id, double seconds)
     {
         FilterDefinition definition = new((ObjectId)id, "Echo", [
@@ -638,7 +773,8 @@ public sealed class ChannelOutputFilterRenderingTests
         => new(new RenderContext(new RenderConfiguration(
                 Rate, [new OutputChannelConfiguration(Vector3.Zero,
                     positionalImportance: 0)])),
-            schedule ?? Schedule(), resolver);
+            schedule ?? Schedule(), resolver)
+        { NoteFilterEnvelopeResolver = resolver };
 
     private static NoteSchedule Schedule(params NoteEvent[] events)
     {
@@ -697,10 +833,14 @@ public sealed class ChannelOutputFilterRenderingTests
             => destination.Fill(1f);
     }
 
-    private sealed class TestResolver : ISoundResolver
+    private sealed class TestResolver : ISoundResolver, IEnvelopeCurveResolver
     {
         private readonly Dictionary<ObjectId, ISound> _sounds = [];
+        private readonly Dictionary<ObjectId, IEnvelopeCurve> _curves = [];
         public void Add(ObjectId id, ISound sound) => _sounds[id] = sound;
+        public void AddCurve(ObjectId id, IEnvelopeCurve curve) => _curves[id] = curve;
+        public bool TryResolve(ObjectId id, out IEnvelopeCurve? curve)
+            => _curves.TryGetValue(id, out curve);
         public bool TryResolve(ObjectId id, bool mixdown, out ISound? sound)
             => _sounds.TryGetValue(id, out sound);
     }
