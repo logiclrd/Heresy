@@ -8,6 +8,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 
 using Heresy.Core.Envelopes;
+using Heresy.Core.Filters;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.UserInterface.Documents;
@@ -40,6 +41,10 @@ public sealed class ScriptInstrumentEditorControl : UserControl
     private readonly TextBox _ratio;
     private readonly ComboBox _sound;
     private readonly ComboBox[] _envelopes;
+    private readonly ComboBox _filter;
+    private readonly Button _editFilter;
+    private FilterInstance? _toneFilter;
+    private bool _loadingFilter;
     private readonly ListBox _tones;
     private readonly TextBlock _message = new() { TextWrapping = TextWrapping.Wrap };
 
@@ -66,6 +71,21 @@ public sealed class ScriptInstrumentEditorControl : UserControl
         _envelopes = Enumerable.Range(0, 4)
             .Select(_ => new ComboBox { MinWidth = 260 })
             .ToArray();
+        _filter = new ComboBox { MinWidth = 260 };
+        _editFilter = new Button { Content = "Edit Filter...", IsEnabled = false };
+        _filter.SelectionChanged += (_, _) =>
+        {
+            if (_loadingFilter)
+                return;
+            ObjectId? id = (_filter.SelectedItem as Choice)?.Id;
+            if (id == _toneFilter?.DefinitionId)
+                return;
+            _toneFilter = id.HasValue
+                ? new FilterInstance((FilterDefinition)_workspace.Document.Objects[id.Value])
+                : null;
+            _editFilter.IsEnabled = _toneFilter is not null;
+        };
+        _editFilter.Click += (_, _) => EditToneFilter();
         _tones = new ListBox { MinWidth = 420, MinHeight = 145 };
         _tones.SelectionChanged += (_, _) => PopulateSelection();
         Content = BuildContent();
@@ -127,6 +147,12 @@ public sealed class ScriptInstrumentEditorControl : UserControl
             panel.Children.Add(new TextBlock { Text = names[i] });
             panel.Children.Add(_envelopes[i]);
         }
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Tone Filter (distinct from Filter Envelope)",
+        });
+        panel.Children.Add(_filter);
+        panel.Children.Add(_editFilter);
         StackPanel actions = new()
         { Orientation = Orientation.Horizontal, Spacing = 10 };
         Button add = new() { Content = "Add tone" };
@@ -181,6 +207,23 @@ public sealed class ScriptInstrumentEditorControl : UserControl
             box.ItemsSource = envelopeChoices;
             box.SelectedItem = envelopeChoices[0];
         }
+        Choice[] filters = [
+            new Choice(null, "(None)"),
+            .. _workspace.Document.Objects.Values
+                .OfType<FilterDefinition>()
+                .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(x => x.Id.Value)
+                .Select(x => new Choice(x.Id, $"{x.Name} [{x.Id.Value}]")),
+        ];
+        _loadingFilter = true;
+        try
+        {
+            _filter.ItemsSource = filters;
+            _filter.SelectedItem = filters[0];
+            _toneFilter = null;
+            _editFilter.IsEnabled = false;
+        }
+        finally { _loadingFilter = false; }
     }
 
     private void RefreshRows()
@@ -191,7 +234,8 @@ public sealed class ScriptInstrumentEditorControl : UserControl
                 $" | V:{Label(tone.VolumeEnvelopeId)}" +
                 $" P:{Label(tone.PitchEnvelopeId)}" +
                 $" Pan:{Label(tone.PanningEnvelopeId)}" +
-                $" F:{Label(tone.FilterEnvelopeId)}"))
+                $" F:{Label(tone.FilterEnvelopeId)}" +
+                $" Filter:{Label(tone.FilterConfiguration?.DefinitionId)}"))
             .ToArray();
         _tones.ItemsSource = rows;
     }
@@ -213,6 +257,15 @@ public sealed class ScriptInstrumentEditorControl : UserControl
         for (int i = 0; i < 4; i++)
             _envelopes[i].SelectedItem = (_envelopes[i].ItemsSource as Choice[])?
                 .FirstOrDefault(c => c.Id == ids[i]);
+        _loadingFilter = true;
+        try
+        {
+            _toneFilter = tone.FilterConfiguration?.Clone();
+            _filter.SelectedItem = (_filter.ItemsSource as Choice[])?
+                .FirstOrDefault(c => c.Id == _toneFilter?.DefinitionId);
+            _editFilter.IsEnabled = _toneFilter is not null;
+        }
+        finally { _loadingFilter = false; }
     }
 
     private int SelectedIndex() =>
@@ -231,12 +284,53 @@ public sealed class ScriptInstrumentEditorControl : UserControl
 
     private void AddTone() =>
         ScriptInstrumentDocumentEditor.AddTone(_workspace, _definition,
-            SelectedSource(), Pitch(), Envelope(0), Envelope(1), Envelope(2), Envelope(3));
+            SelectedSource(), Pitch(), Envelope(0), Envelope(1), Envelope(2), Envelope(3),
+            _toneFilter);
 
     private void UpdateTone() =>
         ScriptInstrumentDocumentEditor.UpdateTone(_workspace, _definition,
             SelectedIndex(), SelectedSource(), Pitch(),
-            Envelope(0), Envelope(1), Envelope(2), Envelope(3));
+            Envelope(0), Envelope(1), Envelope(2), Envelope(3), _toneFilter);
+
+    private void EditToneFilter()
+    {
+        try
+        {
+            if (_toneFilter is null)
+                return;
+            Window? owner = TopLevel.GetTopLevel(this) as Window;
+            if (owner is null)
+                throw new InvalidOperationException(
+                    "Open the Script Instrument editor in a window to edit a tone Filter.");
+            int? selectedIndex = (_tones.SelectedItem as ToneRow)?.Index;
+            FilterInstanceEditSession session = new(
+                () => _toneFilter ?? throw new InvalidOperationException(
+                    "This tone no longer has a Filter."),
+                proposed =>
+                {
+                    _toneFilter = proposed;
+                    if (selectedIndex is int index
+                        && (uint)index < (uint)_definition.ToneSpecifications.Count
+                        && _definition.ToneSpecifications[index]
+                            .FilterConfiguration?.DefinitionId == proposed.DefinitionId)
+                    {
+                        ScriptInstrumentDocumentEditor.SetToneFilterConfiguration(
+                            _workspace, _definition, index, proposed);
+                        _changed($"Updated tone Filter in {_definition.Name}");
+                    }
+                });
+            Window window = new()
+            {
+                Title = "Tone Filter — " + _definition.Name,
+                Width = 910,
+                Height = 600,
+                Content = new FilterInstanceEditorControl(session,
+                    message => _message.Text = message),
+            };
+            window.Show(owner);
+        }
+        catch (Exception error) { _message.Text = error.Message; }
+    }
 
     private void Execute(Action action)
     {
