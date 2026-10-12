@@ -206,20 +206,22 @@ public sealed class NoteFilterParameterEnvelopeTests
         float[] actual = new float[7], expected = new float[7];
         for (int frame = 0; frame < actual.Length; frame++)
         {
-            if (frame == 0 || frame == 2)
+            if (frame == 2)
                 foreach (PlaybackSession session in new[] { automated, typed })
-                    session.ApplyScopedEvent(0, ChannelTarget.Virtual(
-                        frame == 0 ? 7U : 8U), [
+                    session.ApplyScopedEvent(0, ChannelTarget.Virtual(8), [
                         new StartNoteCommand(Source) {
                             ParentSourceScopes = new long[] { 1 },
                         },
                     ]);
-            typed.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
-                new SetNoteFilterParametersCommand(1, [
-                    new("Feedforward", FilterParameterValue.FromNumber(
-                        0.2 + frame * 0.1)),
-                ]),
-            ]);
+            // Prior to the late descendant's first note there is no
+            // matching running DSP to retune in the typed reference.
+            if (frame >= 2)
+                typed.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+                    new SetNoteFilterParametersCommand(1, [
+                        new("Feedforward", FilterParameterValue.FromNumber(
+                            0.2 + frame * 0.1)),
+                    ]),
+                ]);
             automated.Render(frame, 1, actual.AsSpan(frame, 1));
             typed.Render(frame, 1, expected.AsSpan(frame, 1));
         }
