@@ -123,6 +123,22 @@ public sealed class InstrumentToneRowDensityTests
 			filter.Bounds.Width.Should().BeLessThanOrEqualTo(
 				Column(regularGrid, 10).Bounds.Width + 0.01);
 
+			// Exercise the real themed popup and keyboard focus path
+			// without imposing a fixed cell height that could clip either.
+			ComboBox source = (ComboBox)Column(regularGrid, 2).Child!;
+			source.IsDropDownOpen = true;
+			source.IsDropDownOpen.Should().BeTrue();
+			source.IsDropDownOpen = false;
+			TextBox pitch = (TextBox)Column(regularGrid, 3).Child!;
+			pitch.Focus().Should().BeTrue();
+			pitch.IsFocused.Should().BeTrue();
+			InstrumentToneGridSelection selection =
+				Field<InstrumentToneGridSelection>(editor, "_selection");
+			selection.Focused.Should().Be(
+				new InstrumentToneGridSelection.Cell(0, 3));
+			Column(regularGrid, 3).BorderBrush.Should().Be(
+				Avalonia.Media.Brushes.DeepSkyBlue);
+
 			TestContext.Out.WriteLine(
 				$"Compacted instrument rows (Fluent/headless): regular={regular.Bounds.Height:F2}px, " +
 				$"entry={entry.Bounds.Height:F2}px, NNA={nna.Bounds.Height:F2}px, filter={filter.Bounds.Height:F2}px");
