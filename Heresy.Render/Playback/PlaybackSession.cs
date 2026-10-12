@@ -1980,12 +1980,29 @@ public sealed class PlaybackSession
 				string parameter = controller.ValidateParameterEnvelope(
 					command.StageId, command.ParameterName);
 				IEnvelopeCurve? resolved = ResolveNoteFilterEnvelope(command);
-				// Prepare every independent descendant clock before publishing
-				// either the controller binding or a single voice update.
+				// Preflight the parameter and every descendant's release-aware
+				// initial sample before publishing any scope-wide binding.
+				FilterParameterDescriptor descriptor = FilterCatalogue.GetParameters(
+					controller.EventFilterConfiguration!.Definition
+						.GetStage(command.StageId).Kind).First(p =>
+							string.Equals(p.Name, parameter,
+								StringComparison.OrdinalIgnoreCase));
 				List<(PlaybackVoice Voice, EnvelopePlaybackState? State)> updates = [];
 				foreach (PlaybackVoice descendant in CollectFlattenedDescendants(controller.ScopeId))
-					updates.Add((descendant, descendant.PrepareEnclosingEnvelopeBinding(
-						controller, resolved, frame)));
+				{
+					EnvelopePlaybackState? state = descendant.PrepareEnclosingEnvelopeBinding(
+						controller, resolved, frame);
+					if (state is not null)
+						descriptor.Normalize(FilterParameterValue.FromNumber(
+							state.GetValue(frame)));
+					updates.Add((descendant, state));
+				}
+				if (resolved is not null && updates.Count == 0)
+				{
+					EnvelopePlaybackState sample = new(resolved, frame, SampleRate);
+					descriptor.Normalize(FilterParameterValue.FromNumber(
+						sample.GetValue(frame)));
+				}
 				controller.PublishParameterEnvelope(
 					command.StageId, parameter, resolved, frame);
 				foreach (var update in updates)
