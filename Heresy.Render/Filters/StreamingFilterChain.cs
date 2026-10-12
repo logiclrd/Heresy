@@ -495,6 +495,28 @@ public sealed class StreamingFilterChain
 			combUpdates, combScratch, feedforwardUpdates, feedforwardScratch,
 			ReadOnlySpan<RealtimeFirStageUpdate>.Empty);
 
+	/// <summary>
+	/// A prepared FIR-only batch (for control-side/cross-channel callers).
+	/// Preflight every channel before any convolution histories change.
+	/// </summary>
+	internal bool TryApplyRealtimeFirUpdates(ReadOnlySpan<RealtimeFirStageUpdate> updates)
+		=> TryApplyRealtimeNumericUpdates(
+			ReadOnlySpan<RealtimeTptStageUpdate>.Empty,
+			Span<RealtimeTptCoefficients>.Empty,
+			ReadOnlySpan<RealtimeBiquadStageUpdate>.Empty,
+			Span<RealtimeBiquadCoefficients>.Empty,
+			ReadOnlySpan<RealtimeLinearLadderStageUpdate>.Empty,
+			Span<RealtimeLinearLadderCoefficients>.Empty,
+			ReadOnlySpan<RealtimeSaturatedLadderStageUpdate>.Empty,
+			Span<RealtimeSaturatedLadderCoefficients>.Empty,
+			ReadOnlySpan<RealtimeAllPassStageUpdate>.Empty,
+			Span<RealtimeAllPassCoefficient>.Empty,
+			ReadOnlySpan<RealtimeFeedbackCombStageUpdate>.Empty,
+			Span<RealtimeFeedbackCombCoefficients>.Empty,
+			ReadOnlySpan<RealtimeFeedforwardCombStageUpdate>.Empty,
+			Span<RealtimeFeedforwardCombCoefficients>.Empty,
+			updates);
+
 	// Retain previous fast-family API for internal callers.
 	internal bool TryApplyRealtimeNumericUpdates(
 		ReadOnlySpan<RealtimeTptStageUpdate> tptUpdates,
