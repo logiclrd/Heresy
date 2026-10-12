@@ -189,8 +189,9 @@ public sealed class NoteEventFilterRenderingTests
         float[] rest = new float[4];
         session.Render(1, 4, rest);
         Assert.That(first, Is.EqualTo(new float[] { 1 }));
-        Assert.That(rest, Is.EqualTo(new float[] { 0, 0.5f, 0, 0 }),
-            "compatible parameter changes must reuse the delayed sample history");
+        Assert.That(rest, Is.EqualTo(new float[] { 0, 0.96875f, 0, 0 }),
+            "compatible reconfiguration preserves the delayed sample while " +
+            "smoothly ramping feedforward gain across 32 PCM frames");
     }
 
     [Test]
@@ -328,8 +329,9 @@ public sealed class NoteEventFilterRenderingTests
         float[] after = new float[4];
         session.Render(1, 4, after);
         Assert.That(before, Is.EqualTo(new float[] { 2 }));
-        Assert.That(after, Is.EqualTo(new float[] { 0, 1.5f, 0, 0 }),
-            "only the controlled descendant changes; unrelated sibling keeps its echo");
+        Assert.That(after, Is.EqualTo(new float[] { 0, 1.96875f, 0, 0 }),
+            "the controlled descendant ramps toward 0.5, while the " +
+            "unrelated sibling retains its full 1.0 echo");
     }
 
     [Test]
