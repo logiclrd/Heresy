@@ -282,6 +282,56 @@ public sealed class ScriptInstrumentPlaybackTests
         Assert.That(split, Is.EqualTo(pcm).Within(1e-6f));
     }
 
+    [Test]
+    public void ScriptNoteFilterSelectRetuneAndClearAreChronological()
+    {
+        SongDocument song = new();
+        ObjectId sample = Sample(song, 16384);
+        FilterInstance filter = Echo(song, 0.001);
+        ObjectId root = ScriptPattern(song, $"""
+            Note(0, 0, _O({sample.Value}));
+            NoteFilter(0, 0, _O({filter.DefinitionId.Value}));
+            NoteFilterNumber(0, 0, 1, "Feedforward", 0.5,
+                timeOffsetSeconds: 0.001);
+            NoteFilter(0, 0, timeOffsetSeconds: 0.003);
+            """);
+        PreparedIncrementalPlaybackFactory factory = new(Mono());
+        using PreparedIncrementalPlaybackPlan full = factory.Create(song, root);
+        using PreparedIncrementalPlaybackPlan split = factory.Create(song, root);
+        float[] pcm = new float[8], chunks = new float[8];
+        full.Source.Render(8, pcm);
+        split.Source.Render(1, chunks.AsSpan(0, 1));
+        split.Source.Render(2, chunks.AsSpan(1, 2));
+        split.Source.Render(5, chunks.AsSpan(3));
+        Assert.That(pcm[0], Is.EqualTo(0.5f).Within(1e-5f));
+        Assert.That(pcm[1], Is.EqualTo(0.984375f).Within(1e-5f),
+            "native numeric update ramps feedforward from 1.0 over 32 frames");
+        Assert.That(pcm[2], Is.EqualTo(0.984375f).Within(1e-5f));
+        Assert.That(pcm[3], Is.EqualTo(0.5f).Within(1e-5f),
+            "clearing the event Filter affects only the subsequent PCM");
+        Assert.That(chunks, Is.EqualTo(pcm).Within(1e-6f));
+    }
+
+    [Test]
+    public void ScriptVirtualNoteFilterSelectDoesNotTouchPhysicalSibling()
+    {
+        SongDocument song = new();
+        ObjectId sample = Sample(song, 16384);
+        FilterInstance filter = Echo(song, 0.001);
+        ObjectId root = ScriptPattern(song, $"""
+            Note(0, 0, _O({sample.Value}));
+            NoteVirtual(0, 7U, _O({sample.Value}));
+            NoteFilterVirtual(0, 7U, _O({filter.DefinitionId.Value}));
+            """);
+        PreparedIncrementalPlaybackFactory factory = new(Mono());
+        using PreparedIncrementalPlaybackPlan plan = factory.Create(song, root);
+        float[] pcm = new float[5];
+        plan.Source.Render(5, pcm);
+        Assert.That(pcm[0], Is.EqualTo(1f).Within(1e-5f));
+        Assert.That(pcm[1], Is.EqualTo(1.5f).Within(1e-5f),
+            "only virtual note gains the additional delayed sample");
+    }
+
     private static FilterInstance Echo(SongDocument song, double delay)
     {
         ObjectId filterId = song.AllocateObjectId();
