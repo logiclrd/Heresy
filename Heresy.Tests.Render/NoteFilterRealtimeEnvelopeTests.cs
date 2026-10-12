@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Threading;
 
 using Heresy.Core.Filters;
 using Heresy.Core.Objects;
@@ -156,6 +157,47 @@ public sealed class NoteFilterRealtimeEnvelopeTests
 		Assert.That(diagnostics, Has.Count.EqualTo(1));
 		Assert.That(diagnostics[0], Does.Contain("budget"));
 	}
+
+    [Test]
+    public void MovingEnvelopeLatchesOneBoundedAsyncFirTargetUntilPublished()
+    {
+        FilterInstance use = Fir("Linear", 127);
+        StreamingFilterChain actual = new(new FilterChain([use]), Rate, 1);
+        StreamingFilterChain expected = new(new FilterChain([use]), Rate, 1);
+        NoteFilterEnvelopeRealtimeControls controls =
+            new(new FilterChain([use]), Rate);
+        controls.SetBindings([
+            new(0, 1, "CutoffHz",
+                new(new WaveCurve(4500, 800, 0.17), 0, Rate)),
+        ]);
+        float[] a = [1], b = [1];
+        controls.Apply(0, actual, null);
+        actual.ProcessFrame(a);
+        expected.ProcessFrame(b);
+        Assert.That(a, Is.EqualTo(b));
+        using FirPreparationScheduler worker = new();
+        Assert.That(controls.QueuePendingFirs(worker), Is.True);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedPreparationCount > 0,
+            TimeSpan.FromSeconds(4)), Is.True);
+        Assert.That(controls.AdoptPreparedFirs(), Is.True);
+
+        FilterInstance updated = use.Clone();
+        updated.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(4500));
+        expected.Configure(new FilterChain([updated]));
+        for (int i = 1; i < 60; i++)
+        {
+            controls.Apply(i, actual, null);
+            a[0] = b[0] = i % 11 == 0 ? 0.75f : 0;
+            actual.ProcessFrame(a);
+            expected.ProcessFrame(b);
+            Assert.That(a[0], Is.EqualTo(b[0]).Within(1e-6f),
+                $"held FIR frame {i}");
+        }
+        Assert.That(controls.QueuePendingFirs(worker), Is.True);
+        Assert.That(worker.Fault, Is.Null);
+    }
 
 	[Test]
 	public void DuplicateStageIdsInDistinctInheritedLayersRetuneIndependently()
