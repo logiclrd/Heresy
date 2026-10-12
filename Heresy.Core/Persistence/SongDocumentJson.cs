@@ -464,7 +464,8 @@ public static class SongDocumentJson
 					"Tone specification must be a JSON object.");
 			ToneSpecification source = node.Deserialize<ToneSpecification>(JsonOptions)
 				?? throw new InvalidDataException("Tone specification is missing.");
-			FilterInstance? filter = node["filterConfiguration"] is JsonNode config
+			source.Nna.Validate();
+            FilterInstance? filter = node["filterConfiguration"] is JsonNode config
 				? FilterJson.ReadInstance(config as JsonObject
 					?? throw new InvalidDataException(
 						"Tone Filter configuration must be a JSON object."),
@@ -479,7 +480,8 @@ public static class SongDocumentJson
 				PanningEnvelopeId = source.PanningEnvelopeId,
 				FilterEnvelopeId = source.FilterEnvelopeId,
 				FilterConfiguration = filter,
-			});
+                Nna = source.Nna,
+            });
 		}
 		return tones;
 	}
@@ -541,6 +543,9 @@ public static class SongDocumentJson
 				result["type"] = "scriptInstrument";
 				result["source"] = scripted.Source;
 				result["pitchExpression"] = scripted.PitchExpression;
+                result["nnaExpression"] = scripted.NnaExpression;
+                result["nnaFadeDuration"] = JsonSerializer.SerializeToNode(
+                    scripted.NnaFadeDuration, JsonOptions);
 				result["toneSpecifications"] =
 					WriteToneSpecifications(scripted.ToneSpecifications);
 				break;
@@ -549,6 +554,10 @@ public static class SongDocumentJson
 				result["type"] = "instrument";
 				result["divisions"] = instrument.Divisions;
 				result["offset"] = instrument.Offset;
+                result["nnaOverride"] = JsonSerializer.SerializeToNode(
+                    instrument.NnaOverride, JsonOptions);
+                result["nnaFadeDuration"] = JsonSerializer.SerializeToNode(
+                    instrument.NnaFadeDuration, JsonOptions);
 				result["toneSpecifications"] =
 					WriteToneSpecifications(instrument.ToneSpecifications);
 				result["toneTable"] =
@@ -723,7 +732,16 @@ public static class SongDocumentJson
 						Source = RequiredString(node, "source"),
 						PitchExpression = node["pitchExpression"] is JsonNode pitchExpression
 							? pitchExpression.GetValue<string>() : "1.0",
-					};
+                        NnaExpression = node["nnaExpression"] is JsonNode nnaExpression
+                            ? nnaExpression.GetValue<string>()
+                            : "InstrumentNnaAction.Inherit",
+                        NnaFadeDuration = node["nnaFadeDuration"] is JsonNode fade
+                            ? fade.Deserialize<TimeSpan>(JsonOptions)
+                            : TimeSpan.FromMilliseconds(100),
+                    };
+                    if (scripted.NnaFadeDuration <= TimeSpan.Zero)
+                        throw new InvalidDataException(
+                            "Script Instrument NNA Fade duration must be positive.");
 					scripted.ToneSpecifications.AddRange(
 						ReadToneSpecifications(node, document));
 					return scripted;
@@ -736,7 +754,16 @@ public static class SongDocumentJson
 						{
 							Divisions = RequiredDouble(node, "divisions"),
 							Offset = RequiredInt32(node, "offset"),
-						};
+                            NnaOverride = node["nnaOverride"] is JsonNode overrideNode
+                                ? overrideNode.Deserialize<InstrumentNnaOverride>(JsonOptions)
+                                : InstrumentNnaOverride.UseToneNna,
+                            NnaFadeDuration = node["nnaFadeDuration"] is JsonNode durationNode
+                                ? durationNode.Deserialize<TimeSpan>(JsonOptions)
+                                : TimeSpan.FromMilliseconds(100),
+                        };
+                    if (!Enum.IsDefined(instrument.NnaOverride)
+                        || instrument.NnaFadeDuration <= TimeSpan.Zero)
+                        throw new InvalidDataException("Invalid Instrument NNA override.");
 
 					List<ToneSpecification> tones =
 						ReadToneSpecifications(node, document);

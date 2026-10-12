@@ -230,7 +230,8 @@ public sealed class InstrumentToneGridModel
 		ValidateEnvelope(cells.PitchEnvelopeId);
 		ValidateEnvelope(cells.PanningEnvelopeId);
 		ValidateEnvelope(cells.FilterEnvelopeId);
-		if (cells.FilterConfiguration is FilterInstance filter
+		cells.Nna.Validate();
+        if (cells.FilterConfiguration is FilterInstance filter
 			&& (!_workspace.Document.TryGet(filter.DefinitionId,
 				out SongObject? filterObject)
 				|| filterObject is not FilterDefinition liveFilter
@@ -277,14 +278,15 @@ public sealed class InstrumentToneGridModel
 				&& left.PitchEnvelopeId == right.PitchEnvelopeId
 				&& left.PanningEnvelopeId == right.PanningEnvelopeId
 				&& left.FilterEnvelopeId == right.FilterEnvelopeId
+                && left.Nna == right.Nna
 				&& FilterIdentity(left.FilterConfiguration)
 					== FilterIdentity(right.FilterConfiguration);
 
 		public int GetHashCode(InstrumentToneGridCells value)
 			=> HashCode.Combine(value.SourceId, value.PitchMultiplier,
 				value.VolumeEnvelopeId, value.PitchEnvelopeId,
-				value.PanningEnvelopeId, value.FilterEnvelopeId,
-				FilterIdentity(value.FilterConfiguration));
+                value.PanningEnvelopeId, value.FilterEnvelopeId,
+                value.Nna, FilterIdentity(value.FilterConfiguration));
 	}
 
 	// A cloned use is equivalent iff its definition identity and *explicit*

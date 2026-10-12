@@ -19,7 +19,8 @@ public readonly record struct InstrumentToneGridCells(
 	ObjectId? PitchEnvelopeId = null,
 	ObjectId? PanningEnvelopeId = null,
 	ObjectId? FilterEnvelopeId = null,
-	FilterInstance? FilterConfiguration = null)
+	FilterInstance? FilterConfiguration = null,
+    InstrumentNnaSetting Nna = default)
 {
 	// Record structs otherwise allow default(PitchMultiplier) = 0, which
 	// would wrongly populate *empty* grid cells with an invalid multiplier.
@@ -40,7 +41,8 @@ public readonly record struct InstrumentToneGridCells(
 			tone.PitchEnvelopeId,
 			tone.PanningEnvelopeId,
 			tone.FilterEnvelopeId,
-			tone.FilterConfiguration);
+			tone.FilterConfiguration,
+            tone.Nna);
 
 	public ToneSpecification ToTone()
 	{
@@ -55,6 +57,7 @@ public readonly record struct InstrumentToneGridCells(
 			PanningEnvelopeId = PanningEnvelopeId,
 			FilterEnvelopeId = FilterEnvelopeId,
 			FilterConfiguration = FilterConfiguration?.Clone(),
+            Nna = Nna,
 		};
 	}
 }

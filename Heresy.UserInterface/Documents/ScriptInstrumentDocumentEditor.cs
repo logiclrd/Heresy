@@ -94,6 +94,7 @@ public static class ScriptInstrumentDocumentEditor
             && old.PitchEnvelopeId == replacement.PitchEnvelopeId
             && old.PanningEnvelopeId == replacement.PanningEnvelopeId
             && old.FilterEnvelopeId == replacement.FilterEnvelopeId
+            && old.Nna == replacement.Nna
             && (old.FilterConfiguration is null
                 ? replacement.FilterConfiguration is null
                 : replacement.FilterConfiguration is not null
@@ -129,6 +130,7 @@ public static class ScriptInstrumentDocumentEditor
             PanningEnvelopeId = old.PanningEnvelopeId,
             FilterEnvelopeId = old.FilterEnvelopeId,
             FilterConfiguration = copied,
+            Nna = old.Nna,
         };
         workspace.Document.MarkChanged(affectsAudio: true);
     }

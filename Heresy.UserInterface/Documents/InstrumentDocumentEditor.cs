@@ -67,8 +67,9 @@ public static class InstrumentDocumentEditor
 		ObjectId? pitchEnvelopeId = null,
 		ObjectId? panningEnvelopeId = null,
 		ObjectId? filterEnvelopeId = null,
-		FilterInstance? filterConfiguration = null)
-	{
+		FilterInstance? filterConfiguration = null,
+        InstrumentNnaSetting nna = default)
+    {
 		ValidateInstrument(workspace, instrument);
 		ToneSpecification tone =
 			CreateToneSpecification(
@@ -79,7 +80,7 @@ public static class InstrumentDocumentEditor
 				pitchEnvelopeId,
 				panningEnvelopeId,
 				filterEnvelopeId,
-				filterConfiguration);
+                filterConfiguration, nna);
 
 		instrument.ToneSpecifications.Add(tone);
 		workspace.Document.MarkChanged(affectsAudio: true);
@@ -110,7 +111,7 @@ public static class InstrumentDocumentEditor
 				pitchEnvelopeId,
 				panningEnvelopeId,
 				filterEnvelopeId,
-				filterConfiguration);
+                filterConfiguration, nna);
 		ToneSpecification current =
 			instrument.ToneSpecifications[specificationIndex];
 
@@ -199,8 +200,10 @@ public static class InstrumentDocumentEditor
 		ObjectId? pitchEnvelopeId,
 		ObjectId? panningEnvelopeId,
 		ObjectId? filterEnvelopeId,
-		FilterInstance? filterConfiguration)
-	{
+		FilterInstance? filterConfiguration,
+        InstrumentNnaSetting nna = default)
+    {
+        nna.Validate();
 		ValidateSoundSource(document, sourceId);
 		ValidatePitchMultiplier(pitchMultiplier);
 		volumeEnvelopeId = NormalizeEnvelope(document, volumeEnvelopeId);
@@ -219,7 +222,8 @@ public static class InstrumentDocumentEditor
 			PanningEnvelopeId = panningEnvelopeId,
 			FilterEnvelopeId = filterEnvelopeId,
 			FilterConfiguration = copiedFilter,
-		};
+            Nna = nna,
+        };
 	}
 
 	internal static FilterInstance? ValidateFilterConfiguration(
@@ -332,5 +336,6 @@ public static class InstrumentDocumentEditor
 			&& left.PitchEnvelopeId == right.PitchEnvelopeId
 			&& left.PanningEnvelopeId == right.PanningEnvelopeId
 			&& left.FilterEnvelopeId == right.FilterEnvelopeId
+            && left.Nna == right.Nna
 			&& SameFilter(left.FilterConfiguration, right.FilterConfiguration);
 }
