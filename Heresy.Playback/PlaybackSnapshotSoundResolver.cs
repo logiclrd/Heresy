@@ -248,6 +248,10 @@ internal sealed class PlaybackSnapshotSoundResolver
 			PitchEnvelopeId = tone.PitchEnvelopeId,
 			PanningEnvelopeId = tone.PanningEnvelopeId,
 			FilterEnvelopeId = tone.FilterEnvelopeId,
+			// Preserve the independently configured tone Filter while applying
+			// a scripted pitch scale. Reconstructing this tone must not
+			// silently discard its DSP layer.
+			FilterConfiguration = tone.FilterConfiguration?.Clone(),
 		};
 	}
 
