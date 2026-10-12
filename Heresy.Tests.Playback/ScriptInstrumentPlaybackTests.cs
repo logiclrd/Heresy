@@ -330,6 +330,30 @@ public sealed class ScriptInstrumentPlaybackTests
             "only virtual note gains the additional delayed sample");
     }
 
+    [Test]
+    public void ScriptNoNoteAndMissingFilterSelectionsProduceRecoverableDiagnostics()
+    {
+        SongDocument song = new();
+        ObjectId sample = Sample(song, 16384);
+        FilterInstance defined = Echo(song, 0.001);
+        ObjectId root = ScriptPattern(song, $"""
+            NoteFilter(0, 0, _O({defined.DefinitionId.Value}));
+            Note(0, 0, _O({sample.Value}));
+            NoteFilter(0, 0, _O(998877));
+            """);
+        using PreparedIncrementalPlaybackPlan plan =
+            new PreparedIncrementalPlaybackFactory(Mono()).Create(song, root);
+        float[] pcm = new float[5];
+        plan.Source.Render(5, pcm);
+        Assert.That(pcm, Is.All.EqualTo(0.5f).Within(1e-5f),
+            "invalid/no-note updates must never alter the unfiltered voice");
+        var diagnostics = plan.SequencingContext.Diagnostics.Drain();
+        Assert.That(diagnostics, Has.Length.EqualTo(2));
+        Assert.That(diagnostics.All(d => d.Code == "HRSEQ007"), Is.True);
+        Assert.That(diagnostics[0].Message, Does.Contain("no current note"));
+        Assert.That(diagnostics[1].Message, Does.Contain("unavailable"));
+    }
+
     private static FilterInstance Echo(SongDocument song, double delay)
     {
         ObjectId filterId = song.AllocateObjectId();
