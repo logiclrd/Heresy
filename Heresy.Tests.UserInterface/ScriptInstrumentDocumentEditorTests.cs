@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 
 using Heresy.Core.Envelopes;
+using Heresy.Core.Filters;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Samples;
@@ -91,6 +92,55 @@ public sealed class ScriptInstrumentDocumentEditorTests
         ScriptInstrumentDocumentEditor.RemoveTone(workspace, instrument, 0);
         Assert.That(instrument.ToneSpecifications, Is.Empty);
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(updated + 1));
+    }
+
+    [Test]
+    public void ToneFilterSelectionsAndOverridesPublishIndependentlyAndRejectForeignUses()
+    {
+        DocumentWorkspace workspace = new();
+        ObjectId source = workspace.Document.AllocateObjectId();
+        workspace.Document.Add(SampleDefinition.CreateImported(
+            source, "Source", "source.wav", Wave()));
+        FilterDefinition definition = new(workspace.Document.AllocateObjectId(),
+            "Filter");
+        workspace.Document.Add(definition);
+        ScriptInstrumentDefinition instrument =
+            ScriptInstrumentDocumentEditor.Create(workspace, "Selector", "0");
+        FilterInstance use = new(definition);
+        use.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(2100));
+        ScriptInstrumentDocumentEditor.AddTone(workspace, instrument, source,
+            filterConfiguration: use);
+        uint revision = workspace.Document.AudioRevision;
+        ScriptInstrumentDocumentEditor.SetToneFilterConfiguration(
+            workspace, instrument, 0, use.Clone());
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(revision));
+        FilterInstance updated = use.Clone();
+        updated.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(3600));
+        ScriptInstrumentDocumentEditor.SetToneFilterConfiguration(
+            workspace, instrument, 0, updated);
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(revision + 1));
+        Assert.That(instrument.ToneSpecifications[0]
+            .FilterConfiguration!.GetStageParameters(1)
+            .GetParameter("CutoffHz").NumericValue, Is.EqualTo(3600));
+        updated.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(5500));
+        Assert.That(instrument.ToneSpecifications[0]
+            .FilterConfiguration!.GetStageParameters(1)
+            .GetParameter("CutoffHz").NumericValue, Is.EqualTo(3600));
+
+        FilterInstance foreign = new(new FilterDefinition(
+            definition.Id, "Impostor"));
+        Assert.Throws<InvalidOperationException>(() =>
+            ScriptInstrumentDocumentEditor.SetToneFilterConfiguration(
+                workspace, instrument, 0, foreign));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(revision + 1));
+        ScriptInstrumentDocumentEditor.SetToneFilterConfiguration(
+            workspace, instrument, 0, null);
+        Assert.That(instrument.ToneSpecifications[0].FilterConfiguration,
+            Is.Null);
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(revision + 2));
     }
 
     private static byte[] Wave()

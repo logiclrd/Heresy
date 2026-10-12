@@ -5,6 +5,8 @@ using System.Linq;
 using System.Text.Json.Nodes;
 
 using Heresy.Core.Filters;
+using Heresy.Core.Instruments;
+using Heresy.Core.Samples;
 using Heresy.Core.Objects;
 using Heresy.Core.Persistence;
 
@@ -17,6 +19,38 @@ public sealed class FilterPersistenceTests
 {
 	private static readonly string JsonPath =
 		Path.Combine(Path.GetTempPath(), "heresy-filter-persistence.hm.json");
+
+	[Test]
+	public void LegacyToneWithoutFilterLoadsAndTamperedToneFilterRejectsDocument()
+	{
+		SongDocument song = new();
+		ObjectId id = song.AllocateObjectId();
+		InstrumentDefinition instrument = new(id, "Legacy");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = new ObjectId(99),
+		});
+		instrument.ToneTable.Add(0);
+		song.Add(instrument);
+		string json = SongDocumentJson.Serialize(song, JsonPath);
+		JsonObject original = JsonNode.Parse(json)!.AsObject();
+		JsonObject first = original["objects"]![id.Value.ToString()]!
+			["toneSpecifications"]![0]!.AsObject();
+		Assert.That(first.ContainsKey("filterConfiguration"), Is.False);
+		SongDocument restored = SongDocumentJson.Deserialize(json, JsonPath);
+		Assert.That(((InstrumentDefinition)restored.Objects[id])
+			.ToneSpecifications[0].FilterConfiguration, Is.Null);
+
+		JsonObject invalid = original.DeepClone().AsObject();
+		invalid["objects"]![id.Value.ToString()]!["toneSpecifications"]![0]!
+			.AsObject()["filterConfiguration"] = new JsonObject
+			{
+				["definitionId"] = 98765,
+				["overrides"] = new JsonArray(),
+			};
+		Assert.Throws<InvalidDataException>(() =>
+			SongDocumentJson.Deserialize(invalid.ToJsonString(), JsonPath));
+	}
 
 	[Test]
 	public void DefinitionStagesDefaultsAndIdentityHistoryRoundTripVersionOne()

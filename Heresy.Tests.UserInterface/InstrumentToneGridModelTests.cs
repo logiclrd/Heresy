@@ -4,6 +4,8 @@ using System.Linq;
 using AwesomeAssertions;
 
 using Heresy.Core.Envelopes;
+using Heresy.Core.Filters;
+using Heresy.Core.Persistence;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Samples;
@@ -379,6 +381,110 @@ public sealed class InstrumentToneGridModelTests
 		invalidEnvelope.Should().Throw<InvalidOperationException>();
 		instrument.ToneTable.Should().BeEmpty();
 		workspace.Document.AudioRevision.Should().Be(revision);
+	}
+
+	[Test]
+	public void FilterOverridesParticipateInToneMappingCopyOnWriteAndInterning()
+	{
+		DocumentWorkspace workspace = new();
+		InstrumentDefinition instrument =
+			InstrumentDocumentEditor.CreateInstrument(workspace, "Filtered");
+		ObjectId source = AddSample(workspace);
+		ObjectId filterId = workspace.Document.AllocateObjectId();
+		FilterDefinition definition = new(filterId, "One Pole");
+		workspace.Document.Add(definition);
+		FilterInstance selected = new(definition);
+		selected.SetStageParameter(1, "CutoffHz",
+			FilterParameterValue.FromNumber(2300));
+		InstrumentToneGridModel model = new(workspace, instrument);
+		model.SetRow(1, new(SourceId: source, FilterConfiguration: selected));
+		model.SetRow(2, new(SourceId: source, FilterConfiguration: selected.Clone()));
+		instrument.ToneSpecifications.Should().ContainSingle();
+		instrument.ToneTable[1].Should().Be(instrument.ToneTable[2]);
+		uint revision = workspace.Document.AudioRevision;
+
+		// Equivalent independent instances do not spuriously dirty the song.
+		model.SetRow(1, new(SourceId: source,
+			FilterConfiguration: selected.Clone()));
+		workspace.Document.AudioRevision.Should().Be(revision);
+
+		FilterInstance changed = selected.Clone();
+		changed.SetStageParameter(1, "CutoffHz",
+			FilterParameterValue.FromNumber(4400));
+		model.SetRow(1, new(SourceId: source, FilterConfiguration: changed));
+		instrument.ToneSpecifications.Should().HaveCount(2);
+		instrument.ToneSpecifications[instrument.ToneTable[1]]
+			.FilterConfiguration!.GetStageParameters(1)
+			.GetParameter("CutoffHz").NumericValue.Should().Be(4400);
+		instrument.ToneSpecifications[instrument.ToneTable[2]]
+			.FilterConfiguration!.GetStageParameters(1)
+			.GetParameter("CutoffHz").NumericValue.Should().Be(2300);
+		workspace.Document.AudioRevision.Should().Be(revision + 1);
+
+		// The newly edited specification is not just a reference to caller
+		// state: after publish, caller changes cannot mutate the document.
+		changed.SetStageParameter(1, "CutoffHz",
+			FilterParameterValue.FromNumber(7000));
+		instrument.ToneSpecifications[instrument.ToneTable[1]]
+			.FilterConfiguration!.GetStageParameters(1)
+			.GetParameter("CutoffHz").NumericValue.Should().Be(4400);
+
+		FilterInstance foreign = new(new FilterDefinition(filterId, "Foreign"));
+		Action invalid = () => model.SetRow(1, new(
+			SourceId: source, FilterConfiguration: foreign));
+		invalid.Should().Throw<InvalidOperationException>();
+		workspace.Document.AudioRevision.Should().Be(revision + 1);
+	}
+
+	[Test]
+	public void ToneFilterPersistsForBothInstrumentKindsAndPlaybackSnapshotIsIndependent()
+	{
+		DocumentWorkspace workspace = new();
+		InstrumentDefinition instrument =
+			InstrumentDocumentEditor.CreateInstrument(workspace, "Mapped");
+		ScriptInstrumentDefinition scripted =
+			ScriptInstrumentDocumentEditor.Create(workspace, "Scripted", "0");
+		ObjectId sample = AddSample(workspace);
+		ObjectId filterId = workspace.Document.AllocateObjectId();
+		FilterDefinition definition = new(filterId, "Tone Filter");
+		workspace.Document.Add(definition);
+		FilterInstance use = new(definition);
+		use.SetStageParameter(1, "CutoffHz",
+			FilterParameterValue.FromNumber(4100));
+		new InstrumentToneGridModel(workspace, instrument).SetRow(5,
+			new(SourceId: sample, FilterConfiguration: use));
+		ScriptInstrumentDocumentEditor.AddTone(workspace, scripted, sample,
+			filterConfiguration: use);
+		string json = SongDocumentJson.Serialize(workspace.Document,
+			System.IO.Path.Combine(System.IO.Path.GetTempPath(), "tone-filters.hm.json"));
+		SongDocument restored = SongDocumentJson.Deserialize(json,
+			System.IO.Path.Combine(System.IO.Path.GetTempPath(), "tone-filters.hm.json"));
+		InstrumentDefinition mappedCopy =
+			(InstrumentDefinition)restored.Objects[instrument.Id];
+		ScriptInstrumentDefinition scriptCopy =
+			(ScriptInstrumentDefinition)restored.Objects[scripted.Id];
+		FilterInstance first = mappedCopy.ToneSpecifications[0].FilterConfiguration!;
+		FilterInstance second = scriptCopy.ToneSpecifications[0].FilterConfiguration!;
+		first.Definition.Should().BeSameAs(restored.Objects[filterId]);
+		second.Definition.Should().BeSameAs(restored.Objects[filterId]);
+		first.GetStageParameters(1).GetParameter("CutoffHz")
+			.NumericValue.Should().Be(4100);
+		second.GetStageParameters(1).GetParameter("CutoffHz")
+			.NumericValue.Should().Be(4100);
+		first.Should().NotBeSameAs(second);
+
+		SongDocumentSnapshot snapshot = SongDocumentSnapshot.Create(workspace.Document);
+		uint oldRevision = snapshot.AudioRevision;
+		FilterInstance edited = use.Clone();
+		edited.SetStageParameter(1, "CutoffHz",
+			FilterParameterValue.FromNumber(4700));
+		new InstrumentToneGridModel(workspace, instrument).SetRow(5,
+			new(SourceId: sample, FilterConfiguration: edited));
+		InstrumentDefinition frozen =
+			(InstrumentDefinition)snapshot.Document.Objects[instrument.Id];
+		frozen.ToneSpecifications[0].FilterConfiguration!.GetStageParameters(1)
+			.GetParameter("CutoffHz").NumericValue.Should().Be(4100);
+		workspace.Document.AudioRevision.Should().Be(oldRevision + 1);
 	}
 
 	private static ObjectId AddSample(DocumentWorkspace workspace,
