@@ -74,8 +74,9 @@
   DSP history; the physical host continues independently, and the
   displaced fork drains even after its voice completes. All host banks
   reside on their own parent or private `PlaybackSession`, never shared
-  across private mixdowns. The setup API is implemented; native channel
-  Filter selection and parameter commands are the next separate TODO.
+  across private mixdowns. The setup API and native channel
+  Filter selection and atomic typed parameter commands are now implemented;
+  stage-aware multiline assignment parsing is the next separate TODO.
   `ChannelOutputFilterRenderingTests` check nonlinear after-sum behavior,
   combined-owner PCM, NNA forks, finite tails and child-scope cancellation.
 - **Nested private-source release is not an outer-sample release.**
