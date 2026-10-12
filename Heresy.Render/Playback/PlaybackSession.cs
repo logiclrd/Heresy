@@ -4,6 +4,7 @@ using System.Collections.Generic;
 
 using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
+using Heresy.Core.Filters;
 using Heresy.Render.Configuration;
 using Heresy.Render.Filters;
 using Heresy.Render.Sounds;
