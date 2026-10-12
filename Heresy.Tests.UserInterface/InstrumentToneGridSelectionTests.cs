@@ -165,7 +165,7 @@ public sealed class InstrumentToneGridSelectionTests
 	public void TextBoxTransfersLeftRightOnlyAtAnUnselectedCaretBoundary(
 		int caret, int length, bool hasSelection, int delta, bool expected)
 	{
-		bool result = InstrumentEditorControl.CanTransferTextBoundary(
+		bool result = InstrumentToneGridSelection.CanTransferTextBoundary(
 			caret, length, hasSelection, delta);
 		result.Should().Be(expected);
 	}

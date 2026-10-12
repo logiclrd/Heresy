@@ -13,6 +13,15 @@ public sealed class InstrumentToneGridSelection
 {
 	public const int ColumnCount = 11;
 
+	/// <summary>TextBox keeps caret motion and Shift+selection until an
+	/// unselected caret actually reaches the appropriate horizontal edge.
+	/// Up/Down always belongs to grid navigation and bypasses this guard.</summary>
+	public static bool CanTransferTextBoundary(
+		int caret, int length, bool hasSelection, int columnDelta)
+		=> !hasSelection && (columnDelta < 0
+			? caret == 0
+			: columnDelta > 0 && caret == length);
+
 	public readonly record struct Cell(int? ToneIndex, int Column);
 	public Cell? Anchor { get; private set; }
 	public Cell? Extent { get; private set; }

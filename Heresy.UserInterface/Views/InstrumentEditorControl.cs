@@ -795,15 +795,6 @@ public sealed class InstrumentEditorControl : UserControl
 		}
 	}
 
-	// This guard deliberately leaves ordinary caret navigation and
-	// Shift+Arrow text selection with TextBox until the caret hits an
-	// actual boundary. Up/Down never uses this guard.
-	internal static bool CanTransferTextBoundary(
-		int caret, int length, bool hasSelection, int columnDelta)
-		=> !hasSelection && (columnDelta < 0
-			? caret == 0
-			: columnDelta > 0 && caret == length);
-
 	private bool HandleGridNavigation(KeyEventArgs e)
 	{
 		if (_selection.Focused is not InstrumentToneGridSelection.Cell current)
@@ -830,7 +821,7 @@ public sealed class InstrumentEditorControl : UserControl
 			// Do not hijack normal caret movement or Shift+Arrow text
 			// selection. Only a zero-length selection at the boundary
 			// can transfer keyboard focus to the neighbouring cell.
-			if (!CanTransferTextBoundary(
+			if (!InstrumentToneGridSelection.CanTransferTextBoundary(
 				input.CaretIndex, input.Text?.Length ?? 0,
 				input.SelectionStart != input.SelectionEnd, columnDelta))
 				return false;
