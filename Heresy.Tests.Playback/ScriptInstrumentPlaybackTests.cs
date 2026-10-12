@@ -306,7 +306,7 @@ public sealed class ScriptInstrumentPlaybackTests
         Assert.That(pcm[0], Is.EqualTo(0.5f).Within(1e-5f));
         Assert.That(pcm[1], Is.EqualTo(0.984375f).Within(1e-5f),
             "native numeric update ramps feedforward from 1.0 over 32 frames");
-        Assert.That(pcm[2], Is.EqualTo(0.984375f).Within(1e-5f));
+        Assert.That(pcm[2], Is.EqualTo(0.96875f).Within(1e-5f));
         Assert.That(pcm[3], Is.EqualTo(0.5f).Within(1e-5f),
             "clearing the event Filter affects only the subsequent PCM");
         Assert.That(chunks, Is.EqualTo(pcm).Within(1e-6f));
