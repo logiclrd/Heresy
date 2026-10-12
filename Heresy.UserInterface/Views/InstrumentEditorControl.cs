@@ -73,7 +73,18 @@ public sealed class InstrumentEditorControl : UserControl
 		_nnaFadeMilliseconds = new TextBox { Width = 78, Text = InstrumentNnaEditorValues.FormatMilliseconds(instrument.NnaFadeDuration), IsVisible = instrument.NnaOverride == InstrumentNnaOverride.Fade };
 		_loadedNnaOverride = instrument.NnaOverride;
 		_loadedNnaFade = instrument.NnaFadeDuration;
-		_nnaOverride.SelectionChanged += (_, _) => _nnaFadeMilliseconds.IsVisible = _nnaOverride.SelectedItem is InstrumentNnaOverride.Fade;
+		_nnaOverride.SelectionChanged += (_, _) =>
+		{
+			bool fade = _nnaOverride.SelectedItem is InstrumentNnaOverride.Fade;
+			_nnaFadeMilliseconds.IsVisible = fade;
+			// These choices are complete without a separate numeric input.
+			// Commit on selection, just like individual tone NNA cells:
+			// otherwise an uncommitted Continue appears selected while
+			// playback still uses the previously persisted Cut policy.
+			// Fade remains explicitly applied after its duration is valid.
+			if (!fade && _nnaOverride.SelectedItem is InstrumentNnaOverride)
+				ApplyNnaOverride();
+		};
 		_nnaOverride.ItemTemplate = new FuncDataTemplate<InstrumentNnaOverride>(
 			(action, _) => new TextBlock { Text = action == InstrumentNnaOverride.UseToneNna
 				? "Use Tone NNA" : action.ToString() });
@@ -131,8 +142,13 @@ public sealed class InstrumentEditorControl : UserControl
 			nnaFadeLabel.IsVisible = _nnaFadeMilliseconds.IsVisible;
 		nnaHeader.Children.Add(nnaFadeLabel);
 		nnaHeader.Children.Add(_nnaFadeMilliseconds);
-		Button applyNna = new() { Content = "Apply NNA" };
+		Button applyNna = new() { Content = "Apply Fade" };
 		applyNna.Click += (_, _) => ApplyNnaOverride();
+		applyNna.IsVisible =
+			_nnaOverride.SelectedItem is InstrumentNnaOverride.Fade;
+		_nnaOverride.SelectionChanged += (_, _) =>
+			applyNna.IsVisible =
+				_nnaOverride.SelectedItem is InstrumentNnaOverride.Fade;
 		nnaHeader.Children.Add(applyNna);
 
 		Grid headers = NewColumns();
@@ -165,6 +181,7 @@ public sealed class InstrumentEditorControl : UserControl
 		{
 			Text = "One grid, highest note first. Source-less rows stay as editor-only drafts. "
 				+ "Pitch is the offset in Instrument divisions (Divisions × log₂(multiplier)). "
+				+ "Instrument NNA changes immediately except Fade, which needs Apply Fade. "
 				+ "A selected rectangle applies one field to all included data rows. "
 				+ "The nearby-note dropdown snaps Pitch only when selected. "
 				+ "Shift+Arrow or Shift+click selects a rectangular block; Tab/click within the block preserves it. "
