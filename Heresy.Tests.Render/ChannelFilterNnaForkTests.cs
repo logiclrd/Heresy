@@ -189,6 +189,43 @@ public sealed class ChannelFilterNnaForkTests
     }
 
     [Test]
+    public void ScopedVirtualNnaForkRetainsOwnHostAndCannotBorrowSiblingVirtualId()
+    {
+        PlaybackSession session = CreateSession(new LongPulse(), Schedule());
+        session.ApplyScopedEvent(11, ChannelTarget.Virtual(7), [
+            new SetChannelFilterCommand {
+                Configuration = Echo(34070, 0.001),
+            },
+            new StartNoteCommand(SoundId),
+        ]);
+        session.ApplyScopedEvent(12, ChannelTarget.Virtual(7), [
+            new SetChannelFilterCommand {
+                Configuration = Echo(34071, 0.002),
+            },
+            new StartNoteCommand(SoundId),
+        ]);
+
+        float[] initial = new float[1];
+        session.Render(0, 1, initial);
+        Assert.That(initial, Is.EqualTo(new float[] { 2 }));
+
+        session.ApplyScopedEvent(11, ChannelTarget.Virtual(7), [
+            new StartNoteCommand(SoundId),
+        ]);
+        float[] continuation = new float[3];
+        session.Render(1, continuation.Length, continuation);
+        Assert.That(continuation, Is.EqualTo(new float[] { 3, 2, 0 }),
+            "scope 11 forks delay-one from its own host; scope 12 retains delay-two");
+        Assert.That(session.VirtualVoices, Has.Count.EqualTo(1));
+        PlaybackVoice former = session.VirtualVoices[0];
+        Assert.That(former.OriginScopedVirtualOwner, Is.EqualTo(11));
+        Assert.That(former.OriginVirtualChannelId, Is.EqualTo(7u));
+        Assert.That(former.DisplacedOutputFilterState!.SnapshotConfiguration()
+            .GetStageParameters(1).GetParameter("DelaySeconds").NumericValue,
+            Is.EqualTo(0.001), "the sibling owner 12 host must never be selected");
+    }
+
+    [Test]
     public void DisplacedNnaOutputEnvelopeRemainsIndependentAfterPhysicalDetach()
     {
         PlaybackSession session = CreateSession(new LongPulse(), Schedule(
