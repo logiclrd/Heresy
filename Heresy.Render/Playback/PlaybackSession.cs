@@ -509,7 +509,15 @@ public sealed class PlaybackSession
     /// none of this code touches mutable worker-owned preparation state.</summary>
     public void AdoptPreparedFirControls()
     {
-        foreach (PlaybackVoice voice in EnumerateDistinctLiveVoices())
+        // Every voice has exactly one current or displaced host. Avoid an
+        // iterator/list/hashset allocation on each realtime PCM quantum.
+        foreach (PlaybackChannelState channel in _channels.Values)
+            channel.CurrentVoice?.AdoptPreparedFirControls();
+        foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+            channel.CurrentVoice?.AdoptPreparedFirControls();
+        foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+            channel.CurrentVoice?.AdoptPreparedFirControls();
+        foreach (PlaybackVoice voice in _virtualVoices)
             voice.AdoptPreparedFirControls();
     }
 
@@ -518,25 +526,14 @@ public sealed class PlaybackSession
     public void QueuePendingFirControls(FirPreparationScheduler scheduler)
     {
         ArgumentNullException.ThrowIfNull(scheduler);
-        foreach (PlaybackVoice voice in EnumerateDistinctLiveVoices())
-            voice.QueuePendingFirControls(scheduler);
-    }
-
-    private IEnumerable<PlaybackVoice> EnumerateDistinctLiveVoices()
-    {
-        HashSet<PlaybackVoice> seen = [];
         foreach (PlaybackChannelState channel in _channels.Values)
-            if (channel.CurrentVoice is { } voice && seen.Add(voice))
-                yield return voice;
+            channel.CurrentVoice?.QueuePendingFirControls(scheduler);
         foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
-            if (channel.CurrentVoice is { } voice && seen.Add(voice))
-                yield return voice;
+            channel.CurrentVoice?.QueuePendingFirControls(scheduler);
         foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
-            if (channel.CurrentVoice is { } voice && seen.Add(voice))
-                yield return voice;
+            channel.CurrentVoice?.QueuePendingFirControls(scheduler);
         foreach (PlaybackVoice voice in _virtualVoices)
-            if (seen.Add(voice))
-                yield return voice;
+            voice.QueuePendingFirControls(scheduler);
     }
 
 	/// <summary>Diagnostic count of non-root logical channel entries,
