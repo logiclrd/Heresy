@@ -335,28 +335,6 @@ public sealed class FmRealtimeMinimumFirPublicationTests
 	}
 
 	[Test]
-	public void MaximumIsNotYetConsumableAtFmControlBoundary()
-	{
-		FilterInstance maximum = Fir(FilterKind.FirLowPass, 127);
-		maximum.SetStageParameter(1, "PhaseResponse",
-			FilterParameterValue.FromChoice("Maximum"));
-		FmSynthSound sound = Modulated(maximum, FilterKind.FirLowPass);
-		FmSynthSound baselineSound = new(new FmSynthGraph([
-			new FmConstantNode(1, 0.65),
-			new FmFilterNode(4, 1, maximum),
-		], 4), new EmptyResolver());
-		float[] actual = new float[145], expected = new float[145];
-		SoundState state = sound.CreateState();
-		sound.Render(Context(), state, 0, Boundary, actual.AsSpan(0, Boundary));
-		Assert.That(sound.PreparePendingFilterControls(Context(), state), Is.Zero);
-		sound.Render(Context(), state, Boundary, actual.Length - Boundary,
-			actual.AsSpan(Boundary));
-		baselineSound.Render(Context(), baselineSound.CreateState(),
-			0, expected.Length, expected);
-		Assert.That(actual, Is.EqualTo(expected));
-	}
-
-	[Test]
 	public void AboveBudgetMinimumPhaseUpdateRetainsOriginalKernel()
 	{
 		FilterInstance large = Fir(FilterKind.FirLowPass, 129);

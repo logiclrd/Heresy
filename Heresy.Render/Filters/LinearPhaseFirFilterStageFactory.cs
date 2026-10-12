@@ -278,7 +278,7 @@ public sealed class LinearPhaseFirFilterStageFactory : IStreamingFilterStageFact
 		public bool TryPrepareRealtime(IStreamingFilterStagePlan plan)
 			=> plan is FirPlan next
 				&& next.Coefficients.Length == _history.Length
-				&& next.PhaseResponse is "Linear" or "Minimum"
+				&& next.PhaseResponse is "Linear" or "Minimum" or "Maximum"
 				&& next.PhaseResponse == _plan.PhaseResponse
 				&& next.Window == _plan.Window
 				&& next.TransitionWidthHz == _plan.TransitionWidthHz

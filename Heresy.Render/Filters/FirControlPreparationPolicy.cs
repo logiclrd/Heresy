@@ -38,12 +38,12 @@ internal sealed class PreparedFirControlBatch(
 		return true;
 	}
 
-	internal bool AllLinearOrMinimum
+	internal bool AllRealtimePhases
 	{
 		get
 		{
 			foreach (FirControlRequest request in requests)
-				if (request.PhaseResponse is not ("Linear" or "Minimum"))
+				if (request.PhaseResponse is not ("Linear" or "Minimum" or "Maximum"))
 					return false;
 			return true;
 		}

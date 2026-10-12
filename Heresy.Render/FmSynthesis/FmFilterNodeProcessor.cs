@@ -327,14 +327,15 @@ internal sealed class FmFilterNodeProcessor
 		if (state.FirControl is null || state.Configuration is null
 			|| state.FirControl.PendingCount == 0)
 			return false;
-		// Linear and Minimum are currently publishable. Maximum is a separate
-		// milestone: do not spend off-loop FFT work on a plan we cannot use.
+		// All three standalone FIR phase choices now have bounded prepared
+		// publication. Keep the explicit phase guard so no unknown phase
+		// can consume an off-loop candidate in the realtime path.
 		foreach (FastFirControlStage stage in _fastFirs)
-			if (stage.PhaseResponse is not ("Linear" or "Minimum"))
+			if (stage.PhaseResponse is not ("Linear" or "Minimum" or "Maximum"))
 				return false;
 		if (!state.FirControl.TryPreparePending(state.Configuration,
 			out PreparedFirControlBatch? prepared)
-			|| prepared is null || !prepared.AllLinearOrMinimum)
+			|| prepared is null || !prepared.AllRealtimePhases)
 			return false;
 		state.FirReady = prepared;
 		return true;
@@ -443,7 +444,7 @@ internal sealed class FmFilterNodeProcessor
 					stage.TapCount, stage.WidthHz, stage.PhaseResponse);
 			}
 			firReady = state.FirReady;
-			if (firReady is null || !firReady.AllLinearOrMinimum
+			if (firReady is null || !firReady.AllRealtimePhases
 				|| !firReady.Matches(requests.AsSpan(0, _fastFirs.Length)))
 			{
 				// A stale candidate is not a license to apply changed
