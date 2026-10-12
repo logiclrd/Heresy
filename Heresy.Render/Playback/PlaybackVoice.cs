@@ -315,6 +315,8 @@ public sealed class PlaybackVoice
 					binding.Key.Parameter,
 					PrepareEnclosingEnvelopeBinding(ancestor, binding.Value.Curve,
 						binding.Value.Frame));
+		RebuildEventEnvelopeRealtime();
+		RebuildEnclosingEnvelopeRealtime();
 
 		if (_pitchEnvelope is not null || _inheritedPitch is not null)
 			RecomposePitchTrajectory(0);
@@ -345,6 +347,8 @@ public sealed class PlaybackVoice
 	private Dictionary<(int Id, string Parameter), double>
 		_lastAppliedEventEnvelopeValues = [];
 	private bool _refreshEventFilterEnvelopes;
+	private NoteFilterEnvelopeRealtimeControls? _eventEnvelopeRealtime;
+	private NoteFilterEnvelopeRealtimeControls? _enclosingEnvelopeRealtime;
 	public StreamingFilterChain? EventFilterState { get; private set; }
 
 	// Every flattened ancestor contributes its own independently clocked
@@ -398,55 +402,30 @@ public sealed class PlaybackVoice
 			_eventFilterParameterEnvelopes[key] =
 				new EnvelopePlaybackState(curve, frame, _sampleRate);
 		_refreshEventFilterEnvelopes = true;
+		RebindEventEnvelopeRealtime();
 	}
 
 	internal void SynchronizeEventFilterParameterEnvelopes(
 		long frame, Action<string>? warn)
+		=> _eventEnvelopeRealtime?.Apply(frame, EventFilterState!, warn);
+
+	private void RebuildEventEnvelopeRealtime()
 	{
-		if (!HasEventFilterParameterEnvelopes
-			|| _eventFilterConfiguration is null
-			|| EventFilterState is null)
-			return;
-		try
-		{
-			Dictionary<(int Id, string Parameter), double> values = [];
-			FilterInstance candidate = _eventFilterConfiguration.Clone();
-			bool changed = _refreshEventFilterEnvelopes;
-			foreach (var pair in _eventFilterParameterEnvelopes)
-			{
-				double number = pair.Value.GetValue(frame);
-				FilterParameterDescriptor descriptor =
-					FilterCatalogue.GetParameters(
-						candidate.Definition.GetStage(pair.Key.Id).Kind)
-						.First(p => string.Equals(p.Name, pair.Key.Parameter,
-							StringComparison.OrdinalIgnoreCase));
-				descriptor.Normalize(FilterParameterValue.FromNumber(number));
-				values.Add(pair.Key, number);
-				if (!_lastAppliedEventEnvelopeValues.TryGetValue(pair.Key,
-						out double earlier) || earlier != number)
-					changed = true;
-				candidate.SetStageParameter(pair.Key.Id, descriptor.Name,
-					FilterParameterValue.FromNumber(number));
-			}
-			if (!changed
-				&& values.Count == _lastAppliedEventEnvelopeValues.Count)
-				return;
-			StreamingFilterChain prepared = EventFilterState.Fork();
-			prepared.Configure(new FilterChain(new[] { candidate }));
-			EventFilterState = prepared;
-			_lastAppliedEventEnvelopeValues = values;
-			_refreshEventFilterEnvelopes = false;
-		}
-		catch (Exception error) when (error is ArgumentException
-			or InvalidOperationException or KeyNotFoundException
-			or OverflowException)
-		{
-			// Keep the last valid DSP response and authored base untouched.
-			// The session's existing bounded diagnostics sink suppresses
-			// repeatedly invalid Script Envelope samples.
-			warn?.Invoke(error.Message);
-		}
+		_eventEnvelopeRealtime = _eventFilterConfiguration is null
+			? null : new NoteFilterEnvelopeRealtimeControls(
+				new FilterChain([_eventFilterConfiguration]), _sampleRate);
+		RebindEventEnvelopeRealtime();
 	}
+
+	private void RebindEventEnvelopeRealtime()
+	{
+		if (_eventEnvelopeRealtime is null) return;
+		List<NoteFilterEnvelopeRealtimeControls.Binding> bindings = [];
+		foreach (var pair in _eventFilterParameterEnvelopes)
+			bindings.Add(new(0, pair.Key.Id, pair.Key.Parameter, pair.Value));
+		_eventEnvelopeRealtime.SetBindings(bindings);
+	}
+
 
 	/// <summary>Preflight on isolated cloned state; compatible histories
 	/// remain sample-exact while structural changes create fresh stage state.
@@ -471,6 +450,7 @@ public sealed class PlaybackVoice
 		_eventFilterParameterEnvelopes.Clear();
 		_lastAppliedEventEnvelopeValues.Clear();
 		_refreshEventFilterEnvelopes = false;
+		RebindEventEnvelopeRealtime();
 	}
 
 	internal void PublishEventFilterUpdate(
@@ -479,6 +459,7 @@ public sealed class PlaybackVoice
 		_eventFilterConfiguration = configuration;
 		EventFilterState = state;
 		_refreshEventFilterEnvelopes = true;
+		RebuildEventEnvelopeRealtime();
 	}
 
 	internal EnvelopePlaybackState? PrepareEnclosingEnvelopeBinding(
@@ -499,6 +480,7 @@ public sealed class PlaybackVoice
 		if (state is null) _enclosingFilterParameterEnvelopes.Remove(key);
 		else _enclosingFilterParameterEnvelopes[key] = state;
 		_refreshEnclosingFilterEnvelopes = true;
+		RebindEnclosingEnvelopeRealtime();
 	}
 
 	internal void ClearEnclosingEnvelopeBindings(FlattenedSourceVolume scope)
@@ -507,6 +489,7 @@ public sealed class PlaybackVoice
 			.Where(key => ReferenceEquals(key.Scope, scope)).ToArray())
 			_enclosingFilterParameterEnvelopes.Remove(key);
 		_refreshEnclosingFilterEnvelopes = true;
+		RebindEnclosingEnvelopeRealtime();
 	}
 
 	internal void ReleaseEnclosingEnvelopeBindings(FlattenedSourceVolume scope,
@@ -519,56 +502,45 @@ public sealed class PlaybackVoice
 
 	internal void SynchronizeEnclosingFilterParameterEnvelopes(
 		long frame, Action<string>? warn)
+		=> _enclosingEnvelopeRealtime?.Apply(frame, EnclosingEventFilterState!, warn);
+
+	private void RebuildEnclosingEnvelopeRealtime()
 	{
-		if ((_enclosingFilterParameterEnvelopes.Count == 0
-				&& !_refreshEnclosingFilterEnvelopes)
-			|| EnclosingEventFilterState is null)
-			return;
-		try
-		{
-			List<FilterInstance> layers = [];
-			Dictionary<(FlattenedSourceVolume Scope, int Id, string Parameter), double>
-				values = [];
-			bool changed = _refreshEnclosingFilterEnvelopes;
-			for (int i = EnclosingSourceVolumes.Count - 1; i >= 0; i--)
-			{
-				FlattenedSourceVolume scope = EnclosingSourceVolumes[i];
-				if (scope.EventFilterConfiguration is not FilterInstance baseLayer)
-					continue;
-				FilterInstance candidate = baseLayer.Clone();
-				foreach (var pair in _enclosingFilterParameterEnvelopes)
-				{
-					if (!ReferenceEquals(pair.Key.Scope, scope)) continue;
-					double number = pair.Value.GetValue(frame);
-					FilterParameterDescriptor descriptor =
-						FilterCatalogue.GetParameters(candidate.Definition
-							.GetStage(pair.Key.Id).Kind).First(p =>
-								string.Equals(p.Name, pair.Key.Parameter,
-									StringComparison.OrdinalIgnoreCase));
-					descriptor.Normalize(FilterParameterValue.FromNumber(number));
-					values.Add(pair.Key, number);
-					if (!_lastAppliedEnclosingEnvelopeValues.TryGetValue(pair.Key,
-						out double prior) || prior != number) changed = true;
-					candidate.SetStageParameter(pair.Key.Id, descriptor.Name,
-						FilterParameterValue.FromNumber(number));
-				}
-				layers.Add(candidate);
-			}
-			if (!changed && values.Count == _lastAppliedEnclosingEnvelopeValues.Count)
-				return;
-			StreamingFilterChain prepared = EnclosingEventFilterState.Fork();
-			prepared.Configure(new FilterChain(layers));
-			EnclosingEventFilterState = prepared;
-			_lastAppliedEnclosingEnvelopeValues = values;
-			_refreshEnclosingFilterEnvelopes = false;
-		}
-		catch (Exception error) when (error is ArgumentException
-			or InvalidOperationException or KeyNotFoundException
-			or OverflowException)
-		{
-			warn?.Invoke(error.Message);
-		}
+		List<FilterInstance> layers = [];
+		for (int i = EnclosingSourceVolumes.Count - 1; i >= 0; i--)
+			if (EnclosingSourceVolumes[i].EventFilterConfiguration is FilterInstance filter)
+				layers.Add(filter);
+		_enclosingEnvelopeRealtime = layers.Count == 0 ? null
+			: new NoteFilterEnvelopeRealtimeControls(new FilterChain(layers),
+				_sampleRate);
+		RebindEnclosingEnvelopeRealtime();
 	}
+
+	private void RebindEnclosingEnvelopeRealtime()
+	{
+		if (_enclosingEnvelopeRealtime is null) return;
+		List<NoteFilterEnvelopeRealtimeControls.Binding> bindings = [];
+		int layer = 0;
+		for (int i = EnclosingSourceVolumes.Count - 1; i >= 0; i--)
+		{
+			FlattenedSourceVolume scope = EnclosingSourceVolumes[i];
+			if (scope.EventFilterConfiguration is null) continue;
+			foreach (var pair in _enclosingFilterParameterEnvelopes)
+				if (ReferenceEquals(pair.Key.Scope, scope))
+					bindings.Add(new(layer, pair.Key.Id, pair.Key.Parameter,
+						pair.Value));
+			layer++;
+		}
+		_enclosingEnvelopeRealtime.SetBindings(bindings);
+	}
+
+	internal bool TryPreparePendingNoteFilterEnvelopeControls()
+	{
+		bool prepared = _eventEnvelopeRealtime?.TryPreparePendingFirs() ?? false;
+		return (_enclosingEnvelopeRealtime?.TryPreparePendingFirs() ?? false)
+			|| prepared;
+	}
+
 
 	internal StreamingFilterChain? PrepareEnclosingEventFilterUpdate(
 		FilterChain? proposed)
@@ -588,6 +560,7 @@ public sealed class PlaybackVoice
 	{
 		EnclosingEventFilterState = state;
 		_refreshEnclosingFilterEnvelopes = true;
+		RebuildEnclosingEnvelopeRealtime();
 	}
 
 	/// <summary>Selected flattened logical note Filters after this voice's
