@@ -824,6 +824,7 @@ public sealed class IncrementalPatternTimeline : IDisposable
 					|| note.Commands.Any(c => c is not (StartNoteCommand
 						or NoteOffCommand or NoteCutCommand
 						or SetNoteVolumeCommand or SetSourceFrameOffsetCommand
+						or SetNoteFilterCommand or SetNoteFilterParametersCommand
 						// An explicit note-lifecycle command is safe to defer on
 						// both physical and virtual targets. Resolve it against the
 						// voice present at the actual wall deadline, not the row.
