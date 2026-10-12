@@ -139,6 +139,236 @@ public sealed class NoteEventFilterRenderingTests
         Assert.That(second, Is.EqualTo(new float[] { 1, 0 }));
     }
 
+    [Test]
+    public void SameFrameSelectAndClearAffectOnlyCurrentNoteAndPreserveTone()
+    {
+        Resolver resolver = new();
+        resolver.Add(Source, new ProbeSound());
+        FilterInstance tone = Echo(401, 0.002);
+        FilterInstance selection = Echo(402, 0.001);
+        InstrumentDefinition instrument = new(InstrumentId, "tone");
+        instrument.ToneSpecifications.Add(new ToneSpecification
+        {
+            SourceId = Source, FilterConfiguration = tone,
+        });
+        instrument.ToneTable.Add(0);
+        resolver.Add(InstrumentId,
+            new InstrumentSound(instrument, resolver, new NoEnvelopes()));
+        PlaybackSession session = Session(resolver, Schedule());
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+        [
+            new StartNoteCommand(InstrumentId),
+            new SetNoteFilterCommand { Configuration = selection },
+            new SetNoteFilterCommand(), // clears only event layer
+        ]);
+        float[] pcm = new float[5];
+        session.Render(0, pcm.Length, pcm);
+        Assert.That(pcm, Is.EqualTo(new float[] { 1, 0, 1, 0, 0 }),
+            "clearing the event Filter cannot remove an inherited tone Filter");
+    }
+
+    [Test]
+    public void TypedNonstructuralChangesPreserveCurrentImpulseHistory()
+    {
+        Resolver resolver = new();
+        resolver.Add(Source, new ProbeSound());
+        PlaybackSession session = Session(resolver, Schedule());
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+        [
+            new StartNoteCommand(Source),
+            new SetNoteFilterCommand { Configuration = Echo(411, 0.002) },
+        ]);
+        float[] first = new float[1];
+        session.Render(0, 1, first);
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+        [
+            new SetNoteFilterParametersCommand(1, [
+                new("Feedforward", FilterParameterValue.FromNumber(0.5)),
+            ]),
+        ]);
+        float[] rest = new float[4];
+        session.Render(1, 4, rest);
+        Assert.That(first, Is.EqualTo(new float[] { 1 }));
+        Assert.That(rest, Is.EqualTo(new float[] { 0, 0.5f, 0, 0 }),
+            "compatible parameter changes must reuse the delayed sample history");
+    }
+
+    [Test]
+    public void StructuralRetuneResetsHistoryInsteadOfPublishingStaleDelay()
+    {
+        Resolver resolver = new();
+        resolver.Add(Source, new ProbeSound());
+        PlaybackSession session = Session(resolver, Schedule());
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+        [
+            new StartNoteCommand(Source),
+            new SetNoteFilterCommand { Configuration = Echo(421, 0.002) },
+        ]);
+        session.Render(0, 1, new float[1]);
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+        [
+            new SetNoteFilterParametersCommand(1, [
+                new("DelaySeconds", FilterParameterValue.FromNumber(0.001)),
+            ]),
+        ]);
+        float[] remaining = new float[4];
+        session.Render(1, 4, remaining);
+        Assert.That(remaining, Is.All.Zero,
+            "structural delay topology must discard the old impulse history");
+    }
+
+    [Test]
+    public void InvalidBatchIsAtomicAndRepeatedNoNoteCommandsAreDiagnosed()
+    {
+        Resolver resolver = new();
+        resolver.Add(Source, new ProbeSound());
+        PlaybackSession session = Session(resolver, Schedule());
+        List<string> errors = [];
+        session.NoteFilterCommandRejected = errors.Add;
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+        [
+            new SetNoteFilterCommand { Configuration = Echo(430, 0.001) },
+            new SetNoteFilterParametersCommand(1, [
+                new("Mix", FilterParameterValue.FromNumber(0.2)),
+            ]),
+        ]);
+        Assert.That(errors, Has.Count.EqualTo(2));
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+        [
+            new StartNoteCommand(Source),
+            new SetNoteFilterCommand { Configuration = Echo(431, 0.002) },
+            new SetNoteFilterParametersCommand(1, [
+                new("Feedforward", FilterParameterValue.FromNumber(0.25)),
+                new("NoSuchParameter", FilterParameterValue.FromNumber(2)),
+            ]),
+        ]);
+        float[] pcm = new float[5];
+        session.Render(0, pcm.Length, pcm);
+        Assert.That(pcm, Is.EqualTo(new float[] { 1, 0, 1, 0, 0 }),
+            "invalid typed batch must not publish even its first valid field");
+        Assert.That(errors, Has.Count.EqualTo(3));
+    }
+
+    [Test]
+    public void UnavailableSelectionDoesNotErasePreviouslySelectedEventLayer()
+    {
+        Resolver resolver = new();
+        resolver.Add(Source, new ProbeSound());
+        PlaybackSession session = Session(resolver, Schedule());
+        List<string> errors = [];
+        session.NoteFilterCommandRejected = errors.Add;
+        session.ApplyScopedEvent(0, ChannelTarget.Virtual(7),
+        [
+            new StartNoteCommand(Source),
+            new SetNoteFilterCommand { Configuration = Echo(441, 0.001) },
+            new SetNoteFilterCommand((ObjectId)44444U),
+        ]);
+        float[] pcm = new float[4];
+        session.Render(0, 4, pcm);
+        Assert.That(pcm, Is.EqualTo(new float[] { 1, 1, 0, 0 }));
+        Assert.That(errors, Has.Count.EqualTo(1));
+    }
+
+    [Test]
+    public void ChangingCurrentNoteNeverReconfiguresItsDisplacedNnaVoice()
+    {
+        Resolver resolver = new();
+        resolver.Add(Source, new ProbeSound(continueOnDisplacement: true));
+        PlaybackSession session = Session(resolver, Schedule(
+            Event(0, 0,
+                new StartNoteCommand(Source)
+                {
+                    EventFilterConfiguration = Echo(451, 0.002),
+                }),
+            Event(1, 0,
+                new StartNoteCommand(Source),
+                new SetNoteFilterCommand { Configuration = Echo(452, 0.001) })));
+        float[] pcm = new float[5];
+        session.Render(0, pcm.Length, pcm);
+        Assert.That(pcm, Is.EqualTo(new float[] { 1, 1, 2, 0, 0 }),
+            "the old voice's delay-two history and replacement's delay-one echo coexist");
+    }
+
+    [Test]
+    public void FlattenedCurrentNoteUpdatesDescendantsAndNotHostSiblings()
+    {
+        Resolver resolver = new();
+        resolver.Add(Source, new ProbeSound());
+        PlaybackSession session = Session(resolver, Schedule());
+        FilterInstance initial = Echo(461, 0.002);
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+        [
+            new BeginFlattenedSourceVolumeCommand(1, 1)
+            {
+                EventFilterConfiguration = initial,
+            },
+        ]);
+        session.ApplyScopedEvent(0, ChannelTarget.Virtual(7),
+        [
+            new StartNoteCommand(Source)
+            {
+                ParentSourceScopes = new long[] { 1 },
+            },
+        ]);
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(1),
+        [
+            new StartNoteCommand(Source)
+            {
+                EventFilterConfiguration = Echo(462, 0.002),
+            },
+        ]);
+        float[] before = new float[1];
+        session.Render(0, 1, before);
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+        [
+            new SetNoteFilterParametersCommand(1, [
+                new("Feedforward", FilterParameterValue.FromNumber(0.5)),
+            ]),
+        ]);
+        float[] after = new float[4];
+        session.Render(1, 4, after);
+        Assert.That(before, Is.EqualTo(new float[] { 2 }));
+        Assert.That(after, Is.EqualTo(new float[] { 0, 1.5f, 0, 0 }),
+            "only the controlled descendant changes; unrelated sibling keeps its echo");
+    }
+
+    [Test]
+    public void InvalidFlattenedScopeUpdateIsAtomicAcrossExistingDescendantVoices()
+    {
+        Resolver resolver = new();
+        resolver.Add(Source, new ProbeSound());
+        PlaybackSession session = Session(resolver, Schedule());
+        List<string> errors = [];
+        session.NoteFilterCommandRejected = errors.Add;
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+        [
+            new BeginFlattenedSourceVolumeCommand(1, 1)
+            {
+                EventFilterConfiguration = Echo(471, 0.002),
+            },
+        ]);
+        foreach (uint virtualId in new uint[] { 7, 8 })
+            session.ApplyScopedEvent(0, ChannelTarget.Virtual(virtualId),
+            [
+                new StartNoteCommand(Source)
+                {
+                    ParentSourceScopes = new long[] { 1 },
+                },
+            ]);
+        session.Render(0, 1, new float[1]);
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(0),
+        [
+            new SetNoteFilterParametersCommand(1, [
+                new("Feedforward", FilterParameterValue.FromNumber(0.25)),
+                new("DelaySeconds", FilterParameterValue.FromNumber(-1)),
+            ]),
+        ]);
+        float[] remainder = new float[4];
+        session.Render(1, 4, remainder);
+        Assert.That(remainder, Is.EqualTo(new float[] { 0, 2, 0, 0 }));
+        Assert.That(errors, Has.Count.EqualTo(1));
+    }
+
     private static FilterInstance Echo(uint id, double delay)
     {
         FilterDefinition definition = new((ObjectId)id, "Echo", [
@@ -174,8 +404,11 @@ public sealed class NoteEventFilterRenderingTests
     private sealed class ProbeState : SoundState { }
     private sealed class ProbeSound : ISound
     {
+        private readonly bool _continue;
+        public ProbeSound(bool continueOnDisplacement = false)
+            => _continue = continueOnDisplacement;
         public NoteConfigurationSnapshot SnapshotNoteConfiguration()
-            => new(NewNotePolicy.Cut);
+            => new(_continue ? NewNotePolicy.Continue : NewNotePolicy.Cut);
         public SoundState CreateState() => new ProbeState();
         public long? GetEndFrameExclusive(RenderContext context, SoundState state)
             => 1;
