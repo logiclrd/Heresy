@@ -72,6 +72,7 @@ internal sealed class FirControlPreparationPolicy
 	private readonly int _sampleRate;
 	private int _count;
 	public int PendingCount => _count;
+    internal FirControlRequest GetPending(int index) => _pending[index];
 
     /// <summary>Copy a bounded complete PCM proposal into caller-owned
     /// scratch without creating a live reference to mutable pending slots.</summary>

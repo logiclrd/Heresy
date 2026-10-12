@@ -19,6 +19,7 @@ public sealed class FirPreparationScheduler : IDisposable
     private readonly Thread _thread;
     private bool _stopped;
     private Exception? _fault;
+    private long _completed;
 
     public FirPreparationScheduler()
     {
@@ -31,6 +32,8 @@ public sealed class FirPreparationScheduler : IDisposable
     }
 
     public Exception? Fault => Volatile.Read(ref _fault);
+    public long CompletedPreparationCount => Interlocked.Read(ref _completed);
+    internal void RecordCompleted() => Interlocked.Increment(ref _completed);
 
     internal void Enqueue(FirPreparationMailbox mailbox)
     {
@@ -101,6 +104,7 @@ internal sealed class FirPreparationMailbox
     private long _version;
     private bool _queued;
     private PreparedFirControlBatch? _ready;
+    internal Action? BeforePrepare { get; set; }
 
     internal FirPreparationMailbox(FilterChain authored, int sampleRate)
     {
@@ -117,6 +121,22 @@ internal sealed class FirPreparationMailbox
         bool enqueue;
         lock (_gate)
         {
+            int count = producer.PendingCount;
+            if ((_queued || _ready is not null) && count == _pendingCount)
+            {
+                bool identical = true;
+                for (int i = 0; i < count; i++)
+                    if (producer.GetPending(i) != _pending[i])
+                    {
+                        identical = false;
+                        break;
+                    }
+                if (identical)
+                {
+                    producer.Clear();
+                    return false;
+                }
+            }
             _pendingCount = producer.CopyPending(_pending);
             producer.Clear();
             _version++;
@@ -152,6 +172,7 @@ internal sealed class FirPreparationMailbox
             Array.Copy(_pending, _workerCopy, count);
         }
 
+        BeforePrepare?.Invoke(); // optional deterministic concurrency-test gate
         PreparedFirControlBatch? candidate = null;
         if (count > 0
             && _workerPolicy.TryOffer(_workerCopy.AsSpan(0, count)))
@@ -169,6 +190,8 @@ internal sealed class FirPreparationMailbox
         }
         if (retry)
             scheduler.Enqueue(this);
+        else
+            scheduler.RecordCompleted();
     }
 
     internal void MarkFailed(FirPreparationScheduler scheduler)
