@@ -134,6 +134,100 @@ public sealed class ScriptInstrumentPlaybackTests
         Assert.That(reference, Is.EqualTo(actual).Within(1e-6f));
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void ScriptNoteAndVirtualNoteSelectEventFilterWithoutSiblingLeak(
+        bool useVirtual)
+    {
+        SongDocument song = new();
+        ObjectId sample = Sample(song, 16384);
+        FilterInstance selected = Echo(song, 0.001);
+        ObjectId id = ScriptPattern(song,
+            useVirtual
+                ? $"NoteVirtual(0, 7U, _O({sample.Value}), " +
+                  $"eventFilterDefinitionId: _O({selected.DefinitionId.Value})); " +
+                  $"Note(0, 0, _O({sample.Value}));"
+                : $"Note(0, 0, _O({sample.Value}), " +
+                  $"eventFilterDefinitionId: _O({selected.DefinitionId.Value})); " +
+                  $"Note(0, 1, _O({sample.Value}));");
+        if (!useVirtual)
+            ((ScriptPatternDefinition)song.Objects[id]).ChannelCount = 2;
+        PreparedIncrementalPlaybackFactory factory = new(Mono());
+        using PreparedIncrementalPlaybackPlan first = factory.Create(song, id);
+        using PreparedIncrementalPlaybackPlan second = factory.Create(song, id);
+        float[] whole = new float[8], partitioned = new float[8];
+        first.Source.Render(whole.Length, whole);
+        second.Source.Render(1, partitioned.AsSpan(0, 1));
+        second.Source.Render(7, partitioned.AsSpan(1));
+        Assert.That(whole[0], Is.EqualTo(1.0f).Within(1e-5f));
+        Assert.That(whole[1], Is.EqualTo(1.5f).Within(1e-5f),
+            "only the selected note acquires its extra delayed sample");
+        Assert.That(partitioned, Is.EqualTo(whole).Within(1e-6f));
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void SelectedNoteEventFilterIsBoundAcrossDirectAndPrivatePatternSources(
+        bool privatePattern)
+    {
+        SongDocument song = new();
+        ObjectId sample = Sample(song, 16384);
+        ObjectId source = privatePattern
+            ? ScriptPattern(song, $"Note(0, 0, _O({sample.Value}));")
+            : sample;
+        FilterInstance filter = Echo(song, 0.001);
+        ObjectId id = ScriptPattern(song,
+            $"Note(0, 0, _O({source.Value}), mixdown: {privatePattern.ToString().ToLowerInvariant()}, " +
+            $"eventFilterDefinitionId: _O({filter.DefinitionId.Value}));");
+        PreparedIncrementalPlaybackFactory factory = new(Mono());
+        using PreparedIncrementalPlaybackPlan plan = factory.Create(song, id);
+        float[] pcm = new float[12];
+        plan.Source.Render(pcm.Length, pcm);
+        Assert.That(pcm[0], Is.EqualTo(0.5f).Within(1e-5f));
+        Assert.That(pcm[1], Is.EqualTo(1.0f).Within(1e-5f),
+            "the outer event filter is applied to either terminal source");
+    }
+
+    [Test]
+    public void DataPatternEventFilterIdPersistsAndResolvesDuringProductionPlayback()
+    {
+        SongDocument song = new();
+        ObjectId sample = Sample(song, 16384);
+        FilterInstance filter = Echo(song, 0.001);
+        ObjectId id = song.AllocateObjectId();
+        DataPatternDefinition pattern = new(id, "Data event")
+        { RowCount = 3, ChannelCount = 1 };
+        pattern.Grid.GetOrCreateCell(0, 0).Note =
+            new StartPatternNote(sample,
+                eventFilterDefinitionId: filter.DefinitionId);
+        song.Add(pattern);
+        string json = Heresy.Core.Persistence.SongDocumentJson.SerializePatternNote(
+            pattern.Grid[0, 0]!.Note!);
+        StartPatternNote roundtrip =
+            (StartPatternNote)Heresy.Core.Persistence.SongDocumentJson.DeserializePatternNote(json);
+        Assert.That(roundtrip.EventFilterDefinitionId,
+            Is.EqualTo(filter.DefinitionId));
+        using PreparedIncrementalPlaybackPlan plan =
+            new PreparedIncrementalPlaybackFactory(Mono()).Create(song, id);
+        float[] pcm = new float[8];
+        plan.Source.Render(pcm.Length, pcm);
+        Assert.That(pcm[0], Is.EqualTo(0.5f).Within(1e-5f));
+        Assert.That(pcm[1], Is.EqualTo(1.0f).Within(1e-5f));
+    }
+
+    [Test]
+    public void UnknownScriptNoteFilterFailsExplicitlyRatherThanSilentlyBypassing()
+    {
+        SongDocument song = new();
+        ObjectId sample = Sample(song, 16384);
+        ObjectId id = ScriptPattern(song,
+            $"Note(0, 0, _O({sample.Value}), eventFilterDefinitionId: _O(987654));");
+        using PreparedIncrementalPlaybackPlan plan =
+            new PreparedIncrementalPlaybackFactory(Mono()).Create(song, id);
+        Assert.Throws<InvalidOperationException>(() =>
+            plan.Source.Render(4, new float[4]));
+    }
+
     private static FilterInstance Echo(SongDocument song, double delay)
     {
         ObjectId filterId = song.AllocateObjectId();

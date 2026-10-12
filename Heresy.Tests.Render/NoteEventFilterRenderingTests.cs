@@ -171,7 +171,7 @@ public sealed class NoteEventFilterRenderingTests
         => new(new MusicalTime(TimeSpan.FromMilliseconds(milliseconds), 0),
             ChannelTarget.Physical(channel), commands);
 
-    private sealed class ProbeState : SoundState;
+    private sealed class ProbeState : SoundState { }
     private sealed class ProbeSound : ISound
     {
         public NoteConfigurationSnapshot SnapshotNoteConfiguration()
