@@ -77,7 +77,9 @@ internal sealed class ChannelOutputFilterState
         FilterInstance effective = BuildEffectiveConfiguration(
             updated, _bindings, frame);
         StreamingFilterChain fork = _chain.Fork();
-        fork.Configure(new FilterChain([effective]));
+        if (!SameEffective(BuildEffectiveConfiguration(
+                _configuration, _bindings, frame), effective))
+            fork.Configure(new FilterChain([effective]));
         return new ChannelOutputFilterState(updated, fork,
             _tailRemainingFrames, _sampleRate, _bindings, effective);
     }
@@ -89,7 +91,9 @@ internal sealed class ChannelOutputFilterState
         FilterInstance effective = BuildEffectiveConfiguration(
             updated, _bindings, frame);
         StreamingFilterChain fork = _chain.Fork();
-        fork.Configure(new FilterChain([effective]));
+        if (!SameEffective(BuildEffectiveConfiguration(
+                _configuration, _bindings, frame), effective))
+            fork.Configure(new FilterChain([effective]));
         return new ChannelOutputFilterState(updated, fork,
             _tailRemainingFrames, _sampleRate, _bindings, effective);
     }
@@ -138,7 +142,9 @@ internal sealed class ChannelOutputFilterState
         FilterInstance effective = BuildEffectiveConfiguration(
             _configuration, updated, frame);
         StreamingFilterChain fork = _chain.Fork();
-        fork.Configure(new FilterChain([effective]));
+        if (!SameEffective(BuildEffectiveConfiguration(
+                _configuration, _bindings, frame), effective))
+            fork.Configure(new FilterChain([effective]));
         return new ChannelOutputFilterState(_configuration.Clone(),
             fork, _tailRemainingFrames, _sampleRate, updated, effective);
     }
@@ -172,6 +178,26 @@ internal sealed class ChannelOutputFilterState
         foreach (var entry in changes)
             effective.SetStageParameters(entry.Key, entry.Value);
         return effective;
+    }
+
+    /// <summary>Changing only an underlying bound authored value must
+    /// not restart the still-running, click-free effective coefficient ramp.</summary>
+    private static bool SameEffective(FilterInstance left, FilterInstance right)
+    {
+        IReadOnlyList<ConfiguredFilterStage> a = left.GetStages();
+        IReadOnlyList<ConfiguredFilterStage> b = right.GetStages();
+        if (a.Count != b.Count) return false;
+        for (int i = 0; i < a.Count; i++)
+        {
+            if (a[i].StageId != b[i].StageId || a[i].Kind != b[i].Kind)
+                return false;
+            foreach (FilterParameterDescriptor descriptor in
+                FilterCatalogue.GetParameters(a[i].Kind))
+                if (a[i].Parameters.GetParameter(descriptor.Name)
+                    != b[i].Parameters.GetParameter(descriptor.Name))
+                    return false;
+        }
+        return true;
     }
 
     private void RebuildRealtimeBindings()
