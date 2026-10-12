@@ -2,6 +2,8 @@ using System;
 using System.Linq;
 
 using Heresy.Core.Envelopes;
+using Heresy.Core.Filters;
+using Heresy.Core.Persistence;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.UserInterface.PatternEditing;
@@ -64,7 +66,8 @@ public static class InstrumentDocumentEditor
 		ObjectId? volumeEnvelopeId = null,
 		ObjectId? pitchEnvelopeId = null,
 		ObjectId? panningEnvelopeId = null,
-		ObjectId? filterEnvelopeId = null)
+		ObjectId? filterEnvelopeId = null,
+		FilterInstance? filterConfiguration = null)
 	{
 		ValidateInstrument(workspace, instrument);
 		ToneSpecification tone =
@@ -75,7 +78,8 @@ public static class InstrumentDocumentEditor
 				volumeEnvelopeId,
 				pitchEnvelopeId,
 				panningEnvelopeId,
-				filterEnvelopeId);
+				filterEnvelopeId,
+				filterConfiguration);
 
 		instrument.ToneSpecifications.Add(tone);
 		workspace.Document.MarkChanged(affectsAudio: true);
@@ -91,7 +95,8 @@ public static class InstrumentDocumentEditor
 		ObjectId? volumeEnvelopeId = null,
 		ObjectId? pitchEnvelopeId = null,
 		ObjectId? panningEnvelopeId = null,
-		ObjectId? filterEnvelopeId = null)
+		ObjectId? filterEnvelopeId = null,
+		FilterInstance? filterConfiguration = null)
 	{
 		ValidateInstrument(workspace, instrument);
 		ValidateSpecificationIndex(instrument, specificationIndex);
@@ -104,7 +109,8 @@ public static class InstrumentDocumentEditor
 				volumeEnvelopeId,
 				pitchEnvelopeId,
 				panningEnvelopeId,
-				filterEnvelopeId);
+				filterEnvelopeId,
+				filterConfiguration);
 		ToneSpecification current =
 			instrument.ToneSpecifications[specificationIndex];
 
@@ -192,7 +198,8 @@ public static class InstrumentDocumentEditor
 		ObjectId? volumeEnvelopeId,
 		ObjectId? pitchEnvelopeId,
 		ObjectId? panningEnvelopeId,
-		ObjectId? filterEnvelopeId)
+		ObjectId? filterEnvelopeId,
+		FilterInstance? filterConfiguration)
 	{
 		ValidateSoundSource(document, sourceId);
 		ValidatePitchMultiplier(pitchMultiplier);
@@ -200,6 +207,8 @@ public static class InstrumentDocumentEditor
 		pitchEnvelopeId = NormalizeEnvelope(document, pitchEnvelopeId);
 		panningEnvelopeId = NormalizeEnvelope(document, panningEnvelopeId);
 		filterEnvelopeId = NormalizeEnvelope(document, filterEnvelopeId);
+		FilterInstance? copiedFilter = ValidateFilterConfiguration(
+			document, filterConfiguration);
 
 		return new ToneSpecification
 		{
@@ -209,8 +218,29 @@ public static class InstrumentDocumentEditor
 			PitchEnvelopeId = pitchEnvelopeId,
 			PanningEnvelopeId = panningEnvelopeId,
 			FilterEnvelopeId = filterEnvelopeId,
+			FilterConfiguration = copiedFilter,
 		};
 	}
+
+	internal static FilterInstance? ValidateFilterConfiguration(
+		SongDocument document, FilterInstance? configuration)
+	{
+		if (configuration is null)
+			return null;
+		if (!document.TryGet(configuration.DefinitionId,
+			out SongObject? obj)
+			|| obj is not FilterDefinition definition
+			|| !ReferenceEquals(definition, configuration.Definition))
+			throw new InvalidOperationException(
+				"Tone Filter must reference a live Filter definition in this song.");
+		return configuration.Clone();
+	}
+
+	private static bool SameFilter(FilterInstance? first, FilterInstance? second)
+		=> first is null ? second is null
+			: second is not null
+				&& SongDocumentJson.SerializeFilterInstance(first)
+					== SongDocumentJson.SerializeFilterInstance(second);
 
 	private static void ValidateInstrument(
 		DocumentWorkspace workspace,
@@ -301,5 +331,6 @@ public static class InstrumentDocumentEditor
 			&& left.VolumeEnvelopeId == right.VolumeEnvelopeId
 			&& left.PitchEnvelopeId == right.PitchEnvelopeId
 			&& left.PanningEnvelopeId == right.PanningEnvelopeId
-			&& left.FilterEnvelopeId == right.FilterEnvelopeId;
+			&& left.FilterEnvelopeId == right.FilterEnvelopeId
+			&& SameFilter(left.FilterConfiguration, right.FilterConfiguration);
 }

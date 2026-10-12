@@ -434,6 +434,56 @@ public static class SongDocumentJson
 		return document;
 	}
 
+	/// <summary>Persist tone Filter uses with the same typed, generation-checked
+	/// instance format as FM nodes. Legacy tones without a Filter field load as
+	/// bypass; never ask System.Text.Json to traverse shared definitions.</summary>
+	private static JsonArray WriteToneSpecifications(
+		IEnumerable<ToneSpecification> tones)
+	{
+		JsonArray array = [];
+		foreach (ToneSpecification tone in tones)
+		{
+			JsonObject node = JsonSerializer.SerializeToNode(tone, JsonOptions)
+				?.AsObject() ?? throw new InvalidDataException(
+					"Could not serialize tone specification.");
+			if (tone.FilterConfiguration is FilterInstance filter)
+				node["filterConfiguration"] = FilterJson.WriteInstance(filter);
+			array.Add(node);
+		}
+		return array;
+	}
+
+	private static List<ToneSpecification> ReadToneSpecifications(
+		JsonObject owner, SongDocument document)
+	{
+		List<ToneSpecification> tones = [];
+		foreach (JsonNode? raw in RequiredArray(owner, "toneSpecifications"))
+		{
+			if (raw is not JsonObject node)
+				throw new InvalidDataException(
+					"Tone specification must be a JSON object.");
+			ToneSpecification source = node.Deserialize<ToneSpecification>(JsonOptions)
+				?? throw new InvalidDataException("Tone specification is missing.");
+			FilterInstance? filter = node["filterConfiguration"] is JsonNode config
+				? FilterJson.ReadInstance(config as JsonObject
+					?? throw new InvalidDataException(
+						"Tone Filter configuration must be a JSON object."),
+					document)
+				: null;
+			tones.Add(new ToneSpecification
+			{
+				SourceId = source.SourceId,
+				PitchMultiplier = source.PitchMultiplier,
+				VolumeEnvelopeId = source.VolumeEnvelopeId,
+				PitchEnvelopeId = source.PitchEnvelopeId,
+				PanningEnvelopeId = source.PanningEnvelopeId,
+				FilterEnvelopeId = source.FilterEnvelopeId,
+				FilterConfiguration = filter,
+			});
+		}
+		return tones;
+	}
+
 	private static JsonObject WriteSongObject(
 		SongObject songObject,
 		Func<SampleDefinition, string> assetPathSelector)
@@ -492,8 +542,7 @@ public static class SongDocumentJson
 				result["source"] = scripted.Source;
 				result["pitchExpression"] = scripted.PitchExpression;
 				result["toneSpecifications"] =
-					JsonSerializer.SerializeToNode(
-						scripted.ToneSpecifications, JsonOptions);
+					WriteToneSpecifications(scripted.ToneSpecifications);
 				break;
 
 			case InstrumentDefinition instrument:
@@ -501,9 +550,7 @@ public static class SongDocumentJson
 				result["divisions"] = instrument.Divisions;
 				result["offset"] = instrument.Offset;
 				result["toneSpecifications"] =
-					JsonSerializer.SerializeToNode(
-						instrument.ToneSpecifications,
-						JsonOptions);
+					WriteToneSpecifications(instrument.ToneSpecifications);
 				result["toneTable"] =
 					JsonSerializer.SerializeToNode(
 						instrument.ToneTable,
@@ -678,8 +725,7 @@ public static class SongDocumentJson
 							? pitchExpression.GetValue<string>() : "1.0",
 					};
 					scripted.ToneSpecifications.AddRange(
-						DeserializeRequired<List<ToneSpecification>>(
-							node, "toneSpecifications"));
+						ReadToneSpecifications(node, document));
 					return scripted;
 				}
 
@@ -693,9 +739,7 @@ public static class SongDocumentJson
 						};
 
 					List<ToneSpecification> tones =
-						DeserializeRequired<List<ToneSpecification>>(
-							node,
-							"toneSpecifications");
+						ReadToneSpecifications(node, document);
 					instrument.ToneSpecifications.AddRange(tones);
 
 					List<int> toneTable =

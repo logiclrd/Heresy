@@ -1,3 +1,6 @@
+using System.Text.Json.Serialization;
+
+using Heresy.Core.Filters;
 using Heresy.Core.Objects;
 
 namespace Heresy.Core.Instruments;
@@ -16,4 +19,9 @@ public sealed class ToneSpecification
 	public ObjectId? PitchEnvelopeId { get; init; }
 	public ObjectId? PanningEnvelopeId { get; init; }
 	public ObjectId? FilterEnvelopeId { get; init; }
+
+	/// <summary>Independent configured Filter use, after this tone's source.
+	/// This is authoring state, not a live convolution history. Null is bypass.</summary>
+	[JsonIgnore] // Persist with FilterJson, by stable definition ID and typed overrides.
+	public FilterInstance? FilterConfiguration { get; init; }
 }

@@ -21,6 +21,7 @@ public enum SongReferenceKind
 	InstrumentPitchEnvelope,
 	InstrumentPanningEnvelope,
 	InstrumentFilterEnvelope,
+	InstrumentToneFilter,
 	FmSynthEnvelope,
 	ScriptObject,
 }
@@ -90,6 +91,11 @@ public static class SongReferenceAnalyzer
 							tone.FilterEnvelopeId,
 							instrument.Id,
 							SongReferenceKind.InstrumentFilterEnvelope);
+						AddReference(
+							references,
+							tone.FilterConfiguration?.DefinitionId,
+							instrument.Id,
+							SongReferenceKind.InstrumentToneFilter);
 					}
 					break;
 
@@ -121,6 +127,11 @@ public static class SongReferenceAnalyzer
 							tone.FilterEnvelopeId,
 							instrument.Id,
 							SongReferenceKind.InstrumentFilterEnvelope);
+						AddReference(
+							references,
+							tone.FilterConfiguration?.DefinitionId,
+							instrument.Id,
+							SongReferenceKind.InstrumentToneFilter);
 					}
 					break;
 

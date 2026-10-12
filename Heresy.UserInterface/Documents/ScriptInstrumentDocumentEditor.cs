@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
+using Heresy.Core.Filters;
 using Heresy.Core.Instruments;
+using Heresy.Core.Persistence;
 using Heresy.Core.Objects;
 using Heresy.Scripting.Analysis;
 using Heresy.Scripting.Compilation;
@@ -57,12 +59,13 @@ public static class ScriptInstrumentDocumentEditor
         ObjectId? volumeEnvelopeId = null,
         ObjectId? pitchEnvelopeId = null,
         ObjectId? panningEnvelopeId = null,
-        ObjectId? filterEnvelopeId = null)
+        ObjectId? filterEnvelopeId = null,
+        FilterInstance? filterConfiguration = null)
     {
         ValidateOwner(workspace, definition);
         ToneSpecification tone = InstrumentDocumentEditor.CreateToneSpecification(
             workspace.Document, soundId, pitchMultiplier, volumeEnvelopeId,
-            pitchEnvelopeId, panningEnvelopeId, filterEnvelopeId);
+            pitchEnvelopeId, panningEnvelopeId, filterEnvelopeId, filterConfiguration);
         definition.ToneSpecifications.Add(tone);
         workspace.Document.MarkChanged(affectsAudio: true);
         return definition.ToneSpecifications.Count - 1;
@@ -74,7 +77,8 @@ public static class ScriptInstrumentDocumentEditor
         ObjectId? volumeEnvelopeId = null,
         ObjectId? pitchEnvelopeId = null,
         ObjectId? panningEnvelopeId = null,
-        ObjectId? filterEnvelopeId = null)
+        ObjectId? filterEnvelopeId = null,
+        FilterInstance? filterConfiguration = null)
     {
         ValidateOwner(workspace, definition);
         ValidateIndex(definition, index);
@@ -82,16 +86,50 @@ public static class ScriptInstrumentDocumentEditor
             InstrumentDocumentEditor.CreateToneSpecification(
                 workspace.Document, soundId, pitchMultiplier,
                 volumeEnvelopeId, pitchEnvelopeId,
-                panningEnvelopeId, filterEnvelopeId);
+                panningEnvelopeId, filterEnvelopeId, filterConfiguration);
         ToneSpecification old = definition.ToneSpecifications[index];
         if (old.SourceId == replacement.SourceId
             && old.PitchMultiplier == replacement.PitchMultiplier
             && old.VolumeEnvelopeId == replacement.VolumeEnvelopeId
             && old.PitchEnvelopeId == replacement.PitchEnvelopeId
             && old.PanningEnvelopeId == replacement.PanningEnvelopeId
-            && old.FilterEnvelopeId == replacement.FilterEnvelopeId)
+            && old.FilterEnvelopeId == replacement.FilterEnvelopeId
+            && (old.FilterConfiguration is null
+                ? replacement.FilterConfiguration is null
+                : replacement.FilterConfiguration is not null
+                    && SongDocumentJson.SerializeFilterInstance(old.FilterConfiguration)
+                        == SongDocumentJson.SerializeFilterInstance(replacement.FilterConfiguration)))
             return;
         definition.ToneSpecifications[index] = replacement;
+        workspace.Document.MarkChanged(affectsAudio: true);
+    }
+
+    /// <summary>Publish only this tone's Filter override without accidentally
+    /// committing unrelated text fields in the Script Instrument editor.</summary>
+    public static void SetToneFilterConfiguration(
+        DocumentWorkspace workspace, ScriptInstrumentDefinition definition,
+        int index, FilterInstance? configuration)
+    {
+        ValidateOwner(workspace, definition);
+        ValidateIndex(definition, index);
+        ToneSpecification old = definition.ToneSpecifications[index];
+        FilterInstance? copied = InstrumentDocumentEditor.ValidateFilterConfiguration(
+            workspace.Document, configuration);
+        if (old.FilterConfiguration is null ? copied is null
+            : copied is not null
+                && SongDocumentJson.SerializeFilterInstance(old.FilterConfiguration)
+                    == SongDocumentJson.SerializeFilterInstance(copied))
+            return;
+        definition.ToneSpecifications[index] = new ToneSpecification
+        {
+            SourceId = old.SourceId,
+            PitchMultiplier = old.PitchMultiplier,
+            VolumeEnvelopeId = old.VolumeEnvelopeId,
+            PitchEnvelopeId = old.PitchEnvelopeId,
+            PanningEnvelopeId = old.PanningEnvelopeId,
+            FilterEnvelopeId = old.FilterEnvelopeId,
+            FilterConfiguration = copied,
+        };
         workspace.Document.MarkChanged(affectsAudio: true);
     }
 

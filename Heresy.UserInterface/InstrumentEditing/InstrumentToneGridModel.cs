@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 
 using Heresy.Core.Envelopes;
+using Heresy.Core.Filters;
+using Heresy.Core.Persistence;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.UserInterface.Documents;
@@ -22,6 +24,8 @@ public sealed class InstrumentToneGridModel
 	private readonly DocumentWorkspace _workspace;
 	private readonly InstrumentDefinition _instrument;
 	private readonly Dictionary<int, InstrumentToneGridCells> _drafts = [];
+	private static readonly IEqualityComparer<InstrumentToneGridCells> CellComparer =
+		new ToneCellsComparer();
 
 	public InstrumentToneGridModel(
 		DocumentWorkspace workspace,
@@ -104,7 +108,7 @@ public sealed class InstrumentToneGridModel
 		// Build and commit the Core replacement first. If validation or
 		// table construction throws, the editor's prior drafts remain
 		// intact too (no half-applied transaction).
-		if (previous != (canonical.HasSource ? canonical : null))
+		if (!SameMapped(previous, canonical.HasSource ? canonical : null))
 			PublishMappedCells(mapped);
 
 		if (canonical.HasSource)
@@ -156,7 +160,7 @@ public sealed class InstrumentToneGridModel
 		// Construct both lists before mutating Core so allocation/validation
 		// failure cannot leave a partially rewritten instrument.
 		List<ToneSpecification> specifications = [];
-		Dictionary<InstrumentToneGridCells, int> interned = [];
+		Dictionary<InstrumentToneGridCells, int> interned = new(CellComparer);
 		int length = _instrument.ToneTable.Count;
 		if (mapped.Count > 0)
 		{
@@ -226,6 +230,13 @@ public sealed class InstrumentToneGridModel
 		ValidateEnvelope(cells.PitchEnvelopeId);
 		ValidateEnvelope(cells.PanningEnvelopeId);
 		ValidateEnvelope(cells.FilterEnvelopeId);
+		if (cells.FilterConfiguration is FilterInstance filter
+			&& (!_workspace.Document.TryGet(filter.DefinitionId,
+				out SongObject? filterObject)
+				|| filterObject is not FilterDefinition liveFilter
+				|| !ReferenceEquals(liveFilter, filter.Definition)))
+			throw new InvalidOperationException(
+				"Tone Filter must reference a live Filter definition in this song.");
 	}
 
 	private void ValidateEnvelope(ObjectId? id)
@@ -251,6 +262,37 @@ public sealed class InstrumentToneGridModel
 			PanningEnvelopeId = Normalize(cells.PanningEnvelopeId),
 			FilterEnvelopeId = Normalize(cells.FilterEnvelopeId),
 		};
+
+	private static bool SameMapped(
+		InstrumentToneGridCells? left, InstrumentToneGridCells? right)
+		=> left.HasValue == right.HasValue
+			&& (!left.HasValue || CellComparer.Equals(left.Value, right!.Value));
+
+	private sealed class ToneCellsComparer : IEqualityComparer<InstrumentToneGridCells>
+	{
+		public bool Equals(InstrumentToneGridCells left, InstrumentToneGridCells right)
+			=> left.SourceId == right.SourceId
+				&& left.PitchMultiplier == right.PitchMultiplier
+				&& left.VolumeEnvelopeId == right.VolumeEnvelopeId
+				&& left.PitchEnvelopeId == right.PitchEnvelopeId
+				&& left.PanningEnvelopeId == right.PanningEnvelopeId
+				&& left.FilterEnvelopeId == right.FilterEnvelopeId
+				&& FilterIdentity(left.FilterConfiguration)
+					== FilterIdentity(right.FilterConfiguration);
+
+		public int GetHashCode(InstrumentToneGridCells value)
+			=> HashCode.Combine(value.SourceId, value.PitchMultiplier,
+				value.VolumeEnvelopeId, value.PitchEnvelopeId,
+				value.PanningEnvelopeId, value.FilterEnvelopeId,
+				FilterIdentity(value.FilterConfiguration));
+	}
+
+	// A cloned use is equivalent iff its definition identity and *explicit*
+	// typed override set agree. Reference equality or revision counters
+	// would break interning, no-op edits and song snapshot copy-on-write.
+	private static string? FilterIdentity(FilterInstance? filter)
+		=> filter is null ? null
+			: SongDocumentJson.SerializeFilterInstance(filter);
 
 	private static ObjectId? Normalize(ObjectId? id)
 		=> id is ObjectId value && value.IsNone ? null : id;

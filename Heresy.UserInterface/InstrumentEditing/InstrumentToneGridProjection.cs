@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
+using Heresy.Core.Filters;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 
@@ -17,12 +18,13 @@ public readonly record struct InstrumentToneGridCells(
 	ObjectId? VolumeEnvelopeId = null,
 	ObjectId? PitchEnvelopeId = null,
 	ObjectId? PanningEnvelopeId = null,
-	ObjectId? FilterEnvelopeId = null)
+	ObjectId? FilterEnvelopeId = null,
+	FilterInstance? FilterConfiguration = null)
 {
 	// Record structs otherwise allow default(PitchMultiplier) = 0, which
 	// would wrongly populate *empty* grid cells with an invalid multiplier.
 	public InstrumentToneGridCells()
-		: this(null, 1.0, null, null, null, null)
+		: this(null, 1.0, null, null, null, null, null)
 	{
 	}
 
@@ -37,7 +39,8 @@ public readonly record struct InstrumentToneGridCells(
 			tone.VolumeEnvelopeId,
 			tone.PitchEnvelopeId,
 			tone.PanningEnvelopeId,
-			tone.FilterEnvelopeId);
+			tone.FilterEnvelopeId,
+			tone.FilterConfiguration);
 
 	public ToneSpecification ToTone()
 	{
@@ -51,6 +54,7 @@ public readonly record struct InstrumentToneGridCells(
 			PitchEnvelopeId = PitchEnvelopeId,
 			PanningEnvelopeId = PanningEnvelopeId,
 			FilterEnvelopeId = FilterEnvelopeId,
+			FilterConfiguration = FilterConfiguration?.Clone(),
 		};
 	}
 }
