@@ -5,7 +5,7 @@ using System.IO;
 using System.Text;
 
 using Codec.Flac;
-using Codec.Mp3;
+using NLayer;
 using FileFormat.Aiff;
 
 using NVorbis;
@@ -79,21 +79,34 @@ public static class SampleAudioCodec
 	private static SamplePcmData DecodeMp3(
 		ReadOnlySpan<byte> encoded)
 	{
-		byte[] bytes = encoded.ToArray();
-		using MemoryStream input =
-			new(bytes, writable: false);
-		Mp3StreamInfo info =
-			Mp3Codec.ReadStreamInfo(input);
-		input.Position = 0;
-		using MemoryStream output = new();
-		Mp3Codec.Decompress(input, output);
-		return DecodeIntegerPcm(
-			output.ToArray(),
-			info.SampleRate,
-			info.Channels,
-			bitsPerSample: 16,
-			littleEndian: true,
-			eightBitUnsigned: false);
+		// MP3 Layer III frames can borrow compressed main-data from
+		// earlier frames; synthesis, bit reservoir and overlap history
+		// must remain alive for the entire stream. NLayer's one MpegFile
+		// instance owns that state across every ReadSamples call.
+		// It yields interleaved floating-point PCM directly, avoiding
+		// a second lossy 16-bit integer quantization during import.
+		using MemoryStream input = new(encoded.ToArray(), writable: false);
+		using MpegFile reader = new(input);
+		int channels = reader.Channels;
+		int sampleRate = reader.SampleRate;
+		if (channels is < 1 or > 2 || sampleRate <= 0)
+			throw new InvalidDataException(
+				"The MP3 file declares an invalid sample rate or channel count.");
+
+		float[] block = new float[8192];
+		ArrayBufferWriter<float> pcm = new();
+		while (true)
+		{
+			int read = reader.ReadSamples(block, 0, block.Length);
+			if (read <= 0)
+				break;
+			block.AsSpan(0, read).CopyTo(pcm.GetSpan(read));
+			pcm.Advance(read);
+		}
+		if (pcm.WrittenCount == 0 || pcm.WrittenCount % channels != 0)
+			throw new InvalidDataException(
+				"The MP3 decoder produced no complete PCM sample frames.");
+		return new SamplePcmData(sampleRate, channels, pcm.WrittenSpan);
 	}
 
 	private static SamplePcmData DecodeVorbis(
