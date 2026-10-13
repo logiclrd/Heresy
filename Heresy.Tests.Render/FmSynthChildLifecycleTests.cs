@@ -137,6 +137,24 @@ public sealed class FmSynthChildLifecycleTests
         });
         Assert.That(synth.GetEndFrameExclusive(context, state),
             Is.EqualTo(4 + tail));
+
+        int bindings = registry.SoundLookups;
+        synth.PrepareReplay(context, state, targetFrame: 3);
+        Assert.That(registry.SoundLookups, Is.EqualTo(bindings + 1),
+            "the selected Instrument tone is rebound only at the control boundary");
+        int afterPrepare = registry.SoundLookups;
+        float[] replay = new float[output.Length - 3];
+        synth.Render(context, state, 3, replay.Length, replay);
+        Assert.Multiple(() =>
+        {
+            Assert.That(replay,
+                Is.EqualTo(output.AsSpan(3).ToArray()).Within(1e-6f),
+                "replayed Instrument tone Filter must drain the same impulse history");
+            Assert.That(synth.GetEndFrameExclusive(context, state),
+                Is.EqualTo(4 + tail));
+            Assert.That(registry.SoundLookups, Is.EqualTo(afterPrepare),
+                "tone Filter replay does not resolve an asset in PCM");
+        });
     }
 
     [Test]
