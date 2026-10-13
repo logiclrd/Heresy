@@ -34,7 +34,7 @@ public sealed class FmSynthSourceImportTests
         envelope.ReplaceCurve([
             new(TimeSpan.Zero, 0.0),
             new(TimeSpan.FromMilliseconds(5), 1.0),
-        ]);
+        ], 1, 1, EnvelopeSustainLoopMode.Forward);
         song.Add(envelope);
 
         ObjectId filterId = song.AllocateObjectId();
