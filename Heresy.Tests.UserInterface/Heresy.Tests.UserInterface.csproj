@@ -24,4 +24,7 @@
 		<ProjectReference Include="..\Heresy\Heresy.csproj" />
 	</ItemGroup>
 
+	<!-- Real FLAC export acceptance executes libsndfile in this test host. -->
+	<Import Project="..\\build\\SndFileNativeRuntime.targets" />
+
 </Project>
