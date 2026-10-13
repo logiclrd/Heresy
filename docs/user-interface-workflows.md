@@ -90,6 +90,14 @@ new operator input indices. The deletion advances the audio/document revision
 once. The selected output node still cannot be removed until another output
 is selected.
 
+Clicking a graph node also focuses the graph canvas for keyboard shortcuts.
+With a node selected, **Delete** invokes the same **Remove node** action as
+its inspector button, including disconnected consumers, one audio/document
+revision, and selection moving to the remaining output node. Trying to delete
+the output node displays the same refusal as the button. Delete with no node
+selected or with keyboard modifiers is ignored. When a parameter text field
+has focus, Delete continues editing that text and cannot remove a graph node.
+
 Connection routes terminate at the exact input-port positions, including the
 individual inputs of an operator; backward connections travel around an
 exterior lane to reach the fixed port sides. Arrowheads follow the last
