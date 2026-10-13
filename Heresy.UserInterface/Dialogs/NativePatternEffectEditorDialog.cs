@@ -8,6 +8,8 @@ using Heresy.Core.Objects;
 
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 
 using Heresy.Core.Patterns;
@@ -156,6 +158,11 @@ public sealed class NativePatternEffectEditorDialog : Window
 			};
 		apply.Click += (_, _) => Apply();
 		DialogActionLayout.ConfigureButtons(apply, cancel);
+
+		// Tunnel so a focused multiline editor cannot consume Ctrl+Enter
+		// before the dialog sees the explicit Apply/Insert gesture.
+		AddHandler(InputElement.KeyDownEvent, OnDialogKeyDown,
+			RoutingStrategies.Tunnel);
 
 		StackPanel buttons =
 			new()
@@ -474,6 +481,16 @@ public sealed class NativePatternEffectEditorDialog : Window
 	private sealed record FilterChoice(ObjectId Id, string Name)
 	{
 		public override string ToString() => $"{Name} (#{Id.Value})";
+	}
+
+	private void OnDialogKeyDown(object? sender, KeyEventArgs e)
+	{
+		if (e.Handled || e.Key != Key.Enter
+			|| e.KeyModifiers != KeyModifiers.Control)
+			return;
+
+		e.Handled = true;
+		Apply();
 	}
 
 	private void Apply()

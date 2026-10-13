@@ -620,8 +620,13 @@ all open the same generic native-effect parameter dialog. The dialog is driven
 by a framework-independent semantic edit model rather than effect-specific
 Avalonia code: all current native effect shapes project named fields, reconstruct
 the same concrete Core effect type, and rely on the Core constructors for value
-validation. Applying a change replaces the selected stack member through the
-same stack-editing command path used by the tracker UI.
+validation. Clicking **Apply**, or pressing **Ctrl+Enter** anywhere in the
+modal (including a focused multiline Filter-assignment field), submits the
+same validated edit and closes the dialog on success. Invalid fields leave it
+open with diagnostic text so the draft can be corrected and retried; **Cancel**
+and Escape retain their normal cancellation behavior. Applying a change replaces
+the selected stack member through the same stack-editing command path used by
+the tracker UI.
 
 The bottom status area displays diagnostic/status text and effect-specific
 keyboard guidance on **separate, vertically stacked lines**. Guidance is
@@ -639,6 +644,7 @@ never replace the existing diagnostic text.
 The same dialog also creates native effects. Creation adds a type selector backed
 by the native-effect catalog, seeds a valid default instance for the selected
 type, then renders exactly the same semantic parameter fields used for editing.
+**Ctrl+Enter** is equivalent to the creation modal's **Insert** button too.
 All eleven current native effect shapes are available. `Alt+N` inserts a native
 effect before the selected stack member (or into an empty effect column), while
 `Alt+Shift+N` inserts after it. A tab's context menu exposes **Insert Native
