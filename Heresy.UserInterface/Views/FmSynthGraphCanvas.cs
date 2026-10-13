@@ -76,6 +76,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 
 		MinWidth = 1200;
 		MinHeight = 720;
+		Focusable = true;
 		ClipToBounds = false;
 
 		_connectionLayer =
@@ -663,6 +664,9 @@ public sealed class FmSynthGraphCanvas : UserControl
 		if (!point.Properties.IsLeftButtonPressed)
 			return;
 
+		// Node selection must leave keyboard focus on the graph so that
+		// Delete invokes node removal, not the last inspector text field.
+		Focus();
 		_selectedNodeId = nodeId;
 		ApplySelectionVisuals();
 		_selected(nodeId);

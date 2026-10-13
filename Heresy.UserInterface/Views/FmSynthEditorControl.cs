@@ -118,6 +118,9 @@ public sealed class FmSynthEditorControl : UserControl
 			synth.Graph.OutputNodeId;
 		_canvas.SetSelectedNode(
 			_selectedNodeId);
+		// Only graph focus should delete graph nodes. Inspector TextBoxes
+		// retain their normal Delete-key text editing behavior.
+		_canvas.KeyDown += OnGraphKeyDown;
 		Content = BuildContent();
 		RebuildInspector();
 	}
@@ -700,28 +703,47 @@ public sealed class FmSynthEditorControl : UserControl
 		Button remove =
 			Button(
 				"Remove node",
-				() =>
-				{
-					try
-					{
-						FmSynthDocumentEditor.RemoveNode(
-							_workspace,
-							_synth,
-							node.Id);
-						_selectedNodeId =
-							_synth.Graph.OutputNodeId;
-						AfterGraphChange(
-							_selectedNodeId,
-							$"Removed FM node #{node.Id}");
-					}
-					catch (Exception ex)
-					{
-						_message.Text = ex.Message;
-					}
-				});
+				() => RemoveNode(node.Id));
 		_inspector.Children.Add(
 			new Separator());
 		_inspector.Children.Add(remove);
+	}
+
+	/// <summary>
+	/// The graph holds keyboard focus after node selection. Never subscribe
+	/// at the entire editor level: Delete in an inspector TextBox must edit
+	/// its text rather than remove a selected graph node.
+	/// </summary>
+	private void OnGraphKeyDown(object? sender, KeyEventArgs e)
+	{
+		if (e.Handled || e.Key != Key.Delete
+			|| e.KeyModifiers != KeyModifiers.None
+			|| _selectedNodeId is not int nodeId
+			|| !_synth.Graph.Nodes.Any(node => node.Id == nodeId))
+		{
+			return;
+		}
+
+		e.Handled = true;
+		RemoveNode(nodeId);
+	}
+
+	/// <summary>The button and Delete key share identical graph mutation,
+	/// selection, notification and failure semantics.</summary>
+	private void RemoveNode(int nodeId)
+	{
+		try
+		{
+			FmSynthDocumentEditor.RemoveNode(
+				_workspace, _synth, nodeId);
+			AfterGraphChange(
+				_synth.Graph.OutputNodeId,
+				$"Removed FM node #{nodeId}");
+		}
+		catch (Exception ex)
+		{
+			_message.Text = ex.Message;
+		}
 	}
 
 	private void AddConstantInspector(FmConstantNode node)
