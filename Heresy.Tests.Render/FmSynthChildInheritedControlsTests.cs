@@ -262,7 +262,7 @@ public sealed class FmSynthChildInheritedControlsTests
         public double GetValue(long frame, int sampleRate, long? noteOffFrame)
         {
             if (noteOffFrame is long off)
-                return frame - off switch
+                return (frame - off) switch
                 {
                     0 => 1,
                     1 => 0,
