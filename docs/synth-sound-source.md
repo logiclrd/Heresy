@@ -2,9 +2,9 @@
 
 **Status (13 October 2026):** source **reference/data-model foundation**,
 **prepared child-invocation/mono-output**, and **streaming frequency modulation** implemented. Graph editing,
-cross-song import, complete inherited control envelopes/FIR scheduling, full
-transport end/tail qualification, and deterministic backward replay remain
-unimplemented. The UI
+cross-song import, guaranteed off-callback preparation of inherited tone
+Filter/FIR plans, full transport end/tail qualification, and deterministic
+backward replay remain unimplemented. The UI
 must not offer creation of this node until the remaining rendering slices
 are complete. Connected linear/semitone inputs now advance an integrated pitch curve at each
 PCM frame; backwards replay of an advanced source voice still fails
@@ -209,3 +209,32 @@ FIR preparation, detailed graph-tail gating and realtime/offline lifecycle
 acceptance remain separately unchecked in `docs/todo.md`. The independent
 backward-seek and replay milestone is also still pending; do not expose
 creation of this node in the editor yet.
+
+### Child Instrument control-envelope checkpoint (13 October 2026)
+
+Each prepared nested source voice now reads its captured Instrument Pitch
+Envelope in **octaves** and multiplies its streaming `FmSourcePitchCurve` by
+`2^octaves`. Parent Note Off passes into the exact child envelope release
+frame, including the velocity/frequency modulation already applied by the
+source node. This does not re-run Instrument tone selection. Instrument
+Panning Envelopes are evaluated on an isolated **stereo child bus** and
+collapsed to the graph's scalar input before the outer Synth applies its
+only final spatialization. For native stereo Samples the fold averages the
+stereo source image; for mono sources the stereo output is normalized by
+`sqrt(2)` to retain centred equal-power amplitude. A scalar Synth graph
+cannot retain a genuine independent stereo field; this downmix is intentional
+and not a second final speaker pan. A child Filter Envelope follows the
+tracker legacy cutoff convention (absolute normalized [0,1]), updating
+per-voice `ResonantFilterState` after its inherited tone Filter chain and
+before the Volume Envelope, so Filter history is independent for each note.
+
+The parent `IFirPreparationSound` now forwards `AdoptPreparedFirControls`
+and `QueuePendingFirControls` to its already-bound child `ISound`s, and
+explicit `PreparePendingFilterControls` descends into nested Synth
+invocations without resolving song objects inside PCM. **This does not yet
+fix first-render FIR design for static Instrument tone Filters**: those
+`StreamingFilterChain` instances are still constructed at the first
+`PrepareChildRender` for the chosen sample rate. That potentially heavy
+initial preparation requires a separate producer-side prewarm contract before
+real-time use is qualified; it remains unchecked in `docs/todo.md`. Backward
+replay and broad Pattern/transport lifecycle acceptance are also still open.

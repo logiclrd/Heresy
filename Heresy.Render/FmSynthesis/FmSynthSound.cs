@@ -31,6 +31,7 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 		public double OriginalOuterFactor { get; }
 		public FmSourcePitchCurve Pitch { get; }
 		public StreamingFilterChain? Filters { get; set; }
+		public ResonantFilterState? FilterEnvelopeState { get; set; }
 		public bool InputFinished { get; set; }
 		public long? EndFrame { get; set; }
 	}
@@ -53,6 +54,7 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 		public FmFilterNodeProcessor.State?[] Filters { get; }
 		public SourceVoice?[] Sources { get; }
 		public RenderContext? MonoContext { get; set; }
+		public RenderContext? StereoChildContext { get; set; }
 		public long NextFrame { get; set; }
 		public int SampleRate { get; set; }
 
@@ -241,6 +243,10 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 				&& processor.TryPreparePendingFirs(filterState))
 				prepared++;
 		}
+		foreach (SourceVoice? source in synthState.Sources)
+			if (source?.Invocation.Sound is FmSynthSound nested)
+				prepared += nested.PreparePendingFilterControls(context,
+					source.Invocation.State);
 		return prepared;
 	}
 
@@ -254,6 +260,9 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
             if (_nodes[i].Filter is { } processor
                 && synthState.Filters[i] is { } filterState)
                 processor.AdoptPreparedFirs(filterState);
+        foreach (SourceVoice? source in synthState.Sources)
+            if (source?.Invocation.Sound is IFirPreparationSound nested)
+                nested.AdoptPreparedFirControls(source.Invocation.State);
     }
 
     public void QueuePendingFirControls(SoundState state,
@@ -264,6 +273,9 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
             if (_nodes[i].Filter is { } processor
                 && synthState.Filters[i] is { } filterState)
                 processor.QueuePendingFirs(filterState, scheduler);
+        foreach (SourceVoice? source in synthState.Sources)
+            if (source?.Invocation.Sound is IFirPreparationSound nested)
+                nested.QueuePendingFirControls(source.Invocation.State, scheduler);
     }
 
 	public long? GetEndFrameExclusive(
@@ -653,6 +665,12 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 			: state.PitchMultiplier * state.PlaybackSpeedMultiplier
 				* state.PitchTrajectory.GetMultiplier(frame)
 				/ voice.OriginalOuterFactor;
+		long? released = noteOffFrame.HasValue && frame >= noteOffFrame
+			? noteOffFrame : null;
+		// Pitch envelopes are in octaves, as in PlaybackVoice.
+		if (voice.Invocation.Configuration.Envelopes.Pitch is { } pitchEnvelope)
+			multiplier *= Math.Pow(2.0,
+				pitchEnvelope.GetValue(frame, sampleRate, released));
 		double rate = outer * multiplier;
 		if (!double.IsFinite(rate))
 			throw new InvalidOperationException(
@@ -666,8 +684,25 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 		Span<float> mono = stackalloc float[1];
 		if (!voice.EndFrame.HasValue || frame < voice.EndFrame.Value)
 		{
-			voice.Invocation.Sound.Render(state.MonoContext!,
-				voice.Invocation.State, frame, 1, mono);
+			if (voice.Invocation.Configuration.Envelopes.Panning is { } panEnvelope)
+			{
+				// A graph node is scalar: spatialize only on this isolated
+				// stereo bus, then fold it back to mono before graph mixing.
+				double pan = Math.Clamp(panEnvelope.GetValue(
+					frame, sampleRate, released), -1.0, 1.0);
+				voice.Invocation.State.Position = new Vector3((float)pan, 0, 0);
+				Span<float> stereo = stackalloc float[2];
+				voice.Invocation.Sound.Render(state.StereoChildContext!,
+					voice.Invocation.State, frame, 1, stereo);
+				// A native stereo Sample has spatially separated source
+				// channels; a mono source uses equal-power speaker gain.
+				double divisor = voice.Invocation.Sound is SampleSound sample
+					&& sample.SourceChannelCount == 2 ? 2.0 : Math.Sqrt(2);
+				mono[0] = (float)((stereo[0] + stereo[1]) / divisor);
+			}
+			else
+				voice.Invocation.Sound.Render(state.MonoContext!,
+					voice.Invocation.State, frame, 1, mono);
 			// SampleSound discovers a natural end by observing the actual
 			// integrated source position. Modulated sample trajectories are
 			// not efficiently projectable, so retain that first observed
@@ -682,7 +717,8 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 			voice.Filters.FinishInput();
 			voice.InputFinished = true;
 		}
-		if (voice.Invocation.Sound is SampleSound sample)
+		if (voice.Invocation.Configuration.Envelopes.Panning is null
+			&& voice.Invocation.Sound is SampleSound sample)
 			mono[0] /= sample.SourceChannelCount;
 		if (muted)
 			mono[0] = 0;
@@ -693,12 +729,18 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 			else
 				filters.ProcessFrame(mono);
 		}
-		if (voice.Invocation.Configuration.Envelopes.Volume is { } envelope)
+		if (voice.Invocation.Configuration.Envelopes.Filter is { } filterEnvelope)
 		{
-			long? released = noteOffFrame.HasValue && frame >= noteOffFrame
-				? noteOffFrame : null;
-			mono[0] *= (float)envelope.GetValue(frame, sampleRate, released);
+			// The legacy IT Filter Envelope is an absolute normalized
+			// cutoff, independent of the serial tone-Filter layers.
+			double cutoff = Math.Clamp(filterEnvelope.GetValue(
+				frame, sampleRate, released), 0.0, 1.0);
+			voice.FilterEnvelopeState!.SetParameters(
+				new ResonantFilterParameters(cutoff, 0));
+			voice.FilterEnvelopeState.ProcessFrame(mono);
 		}
+		if (voice.Invocation.Configuration.Envelopes.Volume is { } envelope)
+			mono[0] *= (float)envelope.GetValue(frame, sampleRate, released);
 		return mono[0];
 	}
 
@@ -710,12 +752,19 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 			state.MonoContext = new RenderContext(new RenderConfiguration(
 				context.Configuration.SampleRate, [
 				new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0)]));
+			if (state.Sources.Any(source =>
+				source?.Invocation.Configuration.Envelopes.Panning is not null))
+				state.StereoChildContext = new RenderContext(
+					RenderConfiguration.Stereo(context.Configuration.SampleRate));
 			for (int i = 0; i < state.Sources.Length; i++)
 			{
 				SourceVoice? voice = state.Sources[i];
 				if (voice?.Invocation.ToneFilters is { } filters)
 					voice.Filters = new StreamingFilterChain(filters,
 						context.Configuration.SampleRate, 1);
+				if (voice?.Invocation.Configuration.Envelopes.Filter is not null)
+					voice.FilterEnvelopeState = new ResonantFilterState(1,
+						context.Configuration.SampleRate);
 			}
 		}
 		foreach (SourceVoice? voice in state.Sources)
