@@ -387,7 +387,7 @@ public sealed class FmSynthChildLifecycleTests
     }
 
     [Test]
-    public void ControlOnlyEnvelopeDoesNotKeepAnOscillatorAliveAfterNoteOff()
+    public void FrequencyOnlyEnvelopeKeepsMixedOscillatorVoiceThroughRelease()
     {
         Registry registry = new();
         registry.Add(SampleId, MakeSample([1, 1, 1, 1], 8, loop: true));
@@ -403,13 +403,13 @@ public sealed class FmSynthChildLifecycleTests
         RenderContext context = Mono(8);
         SoundState state = synth.CreateState();
         state.NoteOffTime = TimeSpan.FromSeconds(2.0 / 8);
-        Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(3),
-            "a frequency-control-only envelope must not extend oscillator excitation");
+        Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(5),
+            "the existing FM pitch-envelope contract retains oscillator audio until release completes");
         float[] pcm = new float[8];
         synth.Render(context, state, 0, pcm.Length, pcm);
         Assert.That(pcm, Is.EqualTo(new float[]
-            { 2, 2, 1, 0, 0, 0, 0, 0 }));
-        Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(3));
+            { 2, 2, 1, 1, 1, 0, 0, 0 }));
+        Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(5));
     }
 
     [Test]
@@ -474,8 +474,8 @@ public sealed class FmSynthChildLifecycleTests
         RenderContext context = Mono(8);
         SoundState state = synth.CreateState();
         state.NoteOffTime = TimeSpan.FromSeconds(6.0 / 8);
-        Assert.That(synth.GetEndFrameExclusive(context, state), Is.Null,
-            "the child Sample's actual EOF is streaming-only");
+        Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(7),
+            "the outer Note Off already bounds the Sample and oscillator even before streamed EOF");
         float[] pcm = new float[10];
         synth.Render(context, state, 0, pcm.Length, pcm);
         Assert.That(pcm, Is.EqualTo(new float[]

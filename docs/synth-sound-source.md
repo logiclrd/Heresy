@@ -374,28 +374,30 @@ work/tail policy. Remaining Pattern effect envelopes, mixed oscillator gates,
 NNA/virtual-host release, actual codec export, and buffered playback parity
 remain separate acceptance items in `docs/todo.md`.
 
-### Mixed oscillator/source audio versus control lifetimes (13 October 2026)
+### Mixed oscillator/source and FM Envelope release qualification (13 October 2026)
 
-The FM graph has **different kinds of edges**. Operator inputs and a Filter's
-AudioInputNodeId can carry an audible signal to the output, whereas an
-oscillator's multiplier, a source's pitch-multiplier input, and a Filter's
-numeric parameter inputs are control-only. A precomputed boolean mask now
-marks each compiled node reachable from the graph output **through audible
-edges only**. The renderer's release-horizon calculation uses this mask
-when considering an FM Envelope's end: an Envelope referenced exclusively
-as a frequency control cannot accidentally extend the natural one-frame
-post-Note-Off deadline of an audible oscillator. A real amplitude gate
-(oscillator multiplied by an FM Envelope) still sustains its oscillator
-until the Envelope's authored release is finished. The traversal happens
-at graph preparation, not during PCM rendering.
+**Compatibility contract:** An FM Envelope connected to an audible oscillator's
+frequency input still keeps that oscillator playing through the Envelope's
+release. This is intentional: pitch slides are audible after Note Off, even
+when the Envelope is present exclusively on a frequency-control port.
+Existing `FmSynthPreviewReleaseTests` and Pattern `NodeEnvelopePlaybackTests`
+enforce this across live preview and the tracker. The first proposed
+audio-only reachability restriction wrongly shortened those releases, so it
+was **reverted** after CI exposed the conflict. The production lifecycle
+algorithm remains unchanged.
 
-New PCM regressions exercise both cases, plus a control oscillator that
-modulates the accumulated position and EOF of a Sample without independently
-keeping the graph alive, and additive oscillator audio that continues past
-a short Sample's natural EOF until its own Note Off deadline. Unassigned
-sources and input-only control nodes are not treated as independent audio.
-The algebraic end analysis remains deliberately conservative, and separate
-work remains to handle an Envelope on an *independent additive branch*
-without extending unrelated oscillator excitation. Transport pitch effects,
-FIR/export parity and NNA/virtual retirement are independently tracked in
-`docs/todo.md`.
+Four new renderer regressions qualify mixed ISound and oscillator graphs
+without changing this contract: (1) a looping Sample stops at Note Off while
+an independently audible pitch-envelope oscillator finishes its release;
+(2) a true amplitude-gated oscillator sustains through its Envelope;
+(3) a Square oscillator used **only** as source frequency modulation
+integrates the Sample position and does not make the source's finite EOF
+indefinite; (4) an additive audible oscillator outlives the Sample's
+natural EOF until its own Note Off horizon. The last test also confirms
+that a predeclared Note Off may already determine a finite end **before**
+the Sample's streaming EOF has been discovered. No PCM-time re-resolution
+of sources is introduced.
+
+Further lifecycle work remains for moving transport controls, separate
+audio branches, FIR/export parity and displaced NNA/virtual voices. These
+are split into independently verifiable tasks in `docs/todo.md`.
