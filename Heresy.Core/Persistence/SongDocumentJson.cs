@@ -922,6 +922,16 @@ public static class SongDocumentJson
 					nodeJson["constant"] = oscillator.Constant;
 					break;
 
+				case FmSoundSourceNode source:
+					nodeJson["type"] = "soundSource";
+					nodeJson["sourceId"] = source.SourceId.Value;
+					nodeJson["frequencyHz"] = source.FrequencyHz;
+					if (source.MultiplierNodeId is int modulation)
+						nodeJson["multiplierNodeId"] = modulation;
+					nodeJson["exponentialMultiplier"] = source.ExponentialMultiplier;
+					nodeJson["constant"] = source.Constant;
+					break;
+
 				case FmEnvelopeNode envelope:
 					nodeJson["type"] = "envelope";
 					nodeJson["envelopeId"] = envelope.EnvelopeId.Value;
@@ -1086,6 +1096,15 @@ public static class SongDocumentJson
 								? multiplier.GetValue<int>()
 								: null,
 							RequiredBoolean(node, "exponentialMultiplier"),
+							node["constant"]?.GetValue<bool>() ?? false),
+					"soundSource" =>
+						new FmSoundSourceNode(
+							nodeId,
+							new ObjectId(RequiredUInt32(node, "sourceId")),
+							RequiredDouble(node, "frequencyHz"),
+							node["multiplierNodeId"] is JsonNode sourceMod
+								? sourceMod.GetValue<int>() : null,
+							node["exponentialMultiplier"]?.GetValue<bool>() ?? false,
 							node["constant"]?.GetValue<bool>() ?? false),
 					"envelope" =>
 						new FmEnvelopeNode(

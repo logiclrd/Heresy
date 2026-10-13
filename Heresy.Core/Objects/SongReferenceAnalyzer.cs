@@ -24,6 +24,7 @@ public enum SongReferenceKind
 	InstrumentFilterEnvelope,
 	InstrumentToneFilter,
 	FmSynthEnvelope,
+	FmSynthSoundSource,
 	ScriptObject,
 }
 
@@ -137,6 +138,15 @@ public static class SongReferenceAnalyzer
 					break;
 
 				case FmSynthDefinition fmSynth:
+					foreach (FmSoundSourceNode sourceNode in
+						fmSynth.Graph.Nodes.OfType<FmSoundSourceNode>())
+					{
+						AddReference(
+							references,
+							sourceNode.SourceId,
+							fmSynth.Id,
+							SongReferenceKind.FmSynthSoundSource);
+					}
 					foreach (FmEnvelopeNode envelopeNode in
 						fmSynth.Graph.Nodes.OfType<FmEnvelopeNode>())
 					{

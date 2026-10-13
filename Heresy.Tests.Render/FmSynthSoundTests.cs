@@ -514,6 +514,17 @@ public sealed class FmSynthSoundTests
 			.Should().BeNull();
 	}
 
+	[Test]
+	public void ReachableSoundSourceNodeIsRejectedAtPreparationNotDuringPcm()
+	{
+		FmSynthGraph graph = new([
+			new FmSoundSourceNode(1, (ObjectId)9U, 440.0),
+		], 1);
+		Assert.That(() => Sound(graph),
+			Throws.TypeOf<NotSupportedException>().With.Message
+				.Contains("prepared child-invocation"));
+	}
+
 	private static FmSynthSound Sound(
 		FmSynthGraph graph)
 		=> new(

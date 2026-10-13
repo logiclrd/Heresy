@@ -528,6 +528,7 @@ public static class FmSynthDocumentEditor
 				.ToArray();
 		FmSynthGraph replacement =
 			new(nodes, original.OutputNodeId);
+		FmSoundSourceReferences.Validate(workspace.Document, synth.Id, replacement);
 
 		// Surviving operator inputs shift left when earlier operands are
 		// removed. Re-index their waypoint hints to follow the original
@@ -862,6 +863,7 @@ public static class FmSynthDocumentEditor
 			new(
 				nodes,
 				synth.Graph.OutputNodeId);
+		FmSoundSourceReferences.Validate(workspace.Document, synth.Id, replacement);
 
 		synth.Graph = replacement;
 		synth.NodePositions.Add(position);
@@ -880,6 +882,7 @@ public static class FmSynthDocumentEditor
 			new(
 				nodes,
 				outputNodeId);
+		FmSoundSourceReferences.Validate(workspace.Document, synth.Id, replacement);
 		synth.Graph = replacement;
 		PruneRoutingHints(synth);
 		workspace.Document.MarkChanged(

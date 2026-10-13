@@ -117,6 +117,58 @@ public sealed class FmOscillatorNode : FmSynthNode
 	public override IReadOnlyList<int> InputNodeIds => _inputs;
 }
 
+/// <summary>
+/// A reference to a separately prepared ISound. This is a persisted graph
+/// contract, not an inline PCM renderer: each Synth voice must bind its own
+/// child invocation outside the audio callback before this node is executable.
+/// SourceId.None deliberately represents an unassigned (silent) draft.
+/// </summary>
+public sealed class FmSoundSourceNode : FmSynthNode
+{
+	private readonly IReadOnlyList<int> _inputs;
+
+	public FmSoundSourceNode(
+		int id,
+		ObjectId sourceId,
+		double frequencyHz,
+		int? multiplierNodeId = null,
+		bool exponentialMultiplier = false,
+		bool constant = false)
+		: base(id)
+	{
+		if (!(frequencyHz > 0.0) || !double.IsFinite(frequencyHz))
+			throw new ArgumentOutOfRangeException(nameof(frequencyHz));
+		if (multiplierNodeId is < 0)
+			throw new ArgumentOutOfRangeException(nameof(multiplierNodeId));
+		SourceId = sourceId;
+		FrequencyHz = frequencyHz;
+		MultiplierNodeId = multiplierNodeId;
+		ExponentialMultiplier = exponentialMultiplier;
+		Constant = constant;
+		_inputs = Array.AsReadOnly(multiplierNodeId.HasValue
+			? [multiplierNodeId.Value] : Array.Empty<int>());
+	}
+
+	/// <summary>ObjectId resolved from the frozen song at preparation,
+	/// never looked up in the song from inside the per-sample loop.</summary>
+	public ObjectId SourceId { get; }
+
+	/// <summary>Frequency of the requested child note at neutral graph pitch.</summary>
+	public double FrequencyHz { get; }
+
+	/// <summary>An optional graph-domain numeric modulation input.
+	/// When ExponentialMultiplier is true its value is semitones; otherwise
+	/// it is a linear multiplier, matching FmOscillatorNode.</summary>
+	public int? MultiplierNodeId { get; }
+	public bool ExponentialMultiplier { get; }
+
+	/// <summary>Exclude the parent note's pitch multiplier while still
+	/// accepting explicit connected modulation, as constant oscillators do.</summary>
+	public bool Constant { get; }
+
+	public override IReadOnlyList<int> InputNodeIds => _inputs;
+}
+
 public sealed class FmEnvelopeNode : FmSynthNode
 {
 	public FmEnvelopeNode(

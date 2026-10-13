@@ -72,6 +72,13 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 
 		Visit(graph.OutputNodeId);
 
+		// A persisted reference alone must never appear to be a playable
+		// node: until the preparation/invocation adapter is implemented,
+		// reject at compilation, not halfway through a PCM callback.
+		if (ordered.Any(node => node is FmSoundSourceNode))
+			throw new NotSupportedException(
+				"ISound-fed Synth nodes require the prepared child-invocation renderer.");
+
 		Dictionary<int, int> indexById = [];
 		for (int index = 0; index < ordered.Count; index++)
 			indexById.Add(ordered[index].Id, index);
