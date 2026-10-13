@@ -56,6 +56,33 @@ it does **not** introduce the previously discarded mutable per-source
 When `Constant == false`, the outer note's pitch and speed trajectory
 multiply the frequency. `Constant == true` excludes *outer pitch* (not
 the explicitly connected modulation), just as it does for an oscillator.
+
+**Graph editor authoring requirement (requested 13 October 2026):** expose a
+checkbox literally labelled **Constant** directly below the existing
+**Frequency Hz** input, mirroring the oscillator inspector. It defaults
+to unchecked. Unchecked means that Frequency Hz specifies the child's
+requested base **musical** pitch at neutral parent pitch (C4), and playing
+the enclosing Synth at another note transposes the chosen child source
+proportionally. Checked means the child retains that requested pitch no
+matter which note plays the enclosing Synth or how its parent pitch/speed
+transport changes. This is useful for fixed-rate PCM layers, percussion,
+and modulation samples. It does **not** ignore deliberately wired linear
+or semitone frequency control, nor does it mean that the file's decoded
+PCM **sample rate** should be replaced with Frequency Hz: the latter is
+musical pitch, while encoded sample-rate metadata continues to determine
+source-frame playback timing. In either mode the graph still processes
+the resulting scalar audio normally through its subsequent operators and
+Filters. The Core node's existing `Constant` bool already implements this
+distinction and persists as the optional v1 `constant` field; the missing
+authoring capability is the checkbox and its atomic graph mutation. Do
+not introduce another redundant model property or change the song schema.
+Test different outer note pitches, parent transport variations, explicit
+wired modulation with Constant enabled, UI change persistence and
+snapshot/live-state isolation before exposing the node.
+
+The source node is presently `FmSoundSourceNode : FmSynthNode` and resolves
+an `ISound`; the phrase “generic ISource” in discussion refers to this
+existing source-node concept, not a separate `ISource` runtime interface.
 The modulation is applied in the same graph topological order.
 For a nested Instrument, **tone selection and child policy snapshots happen
 once per spawned Synth voice** at the initial requested pitch; a connected
