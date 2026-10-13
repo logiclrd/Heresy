@@ -517,8 +517,8 @@ public sealed class FmSynthChildLifecycleTests
                 $"chunk parity frame {frame}");
         }
         Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(5));
-        Assert.That(registry.SoundLookups, Is.EqualTo(2),
-            "both voices bind once, not while rendering PCM");
+        Assert.That(registry.SoundLookups, Is.EqualTo(1),
+            "the prepared Synth resolves the source once across both voices, never while rendering PCM");
     }
 
     [Test]
