@@ -659,8 +659,9 @@ strictly silent and the physical voice is retired during the logical body.
 
 To probe snapshot isolation, the fixture creates the playback plans and
 realtime source first, then **replaces the original song's Synth graph and
-Sample encoding**. Previously prepared voices remain bitwise consistent:
-only the frozen song and compiled child graph may affect the sound. A
+Sample encoding**. Previously prepared voices remain frame-by-frame consistent within the
+regression tolerance: only the frozen song and compiled child graph may
+affect the sound. A
 guarded `ISampleDataProvider` rejects any further resolution after
 preparation; the realtime worker and both PCM streams complete without
 resolving a Sample in the audio callback.
