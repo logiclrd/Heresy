@@ -429,3 +429,29 @@ existing frequency-only and amplitude-Multiply release regressions.
 
 Changing tempo and inherited moving Pitch Envelope + Sample loop-to-release
 in nested Synth voices remains the next separate qualification milestone.
+
+### Moving inherited Pitch Envelopes and changing nested transport (13 October 2026)
+
+The existing streaming per-child pitch integration is now exercised across a
+**Synth → Synth → Instrument → looping Sample** chain. An authored Instrument
+Pitch Envelope is applied in octaves at every output frame, including its
+moving held shape and the post-Note-Off release. The parent note's pitch
+trajectory changes at exact transport boundaries (1× → 2× → 0.5×); direct
+whole/predeclared rendering matches the live control updates rendered in
+split blocks. A sample-position oracle integrates every output-frame rate,
+including the looping source's wraparound, rather than merely comparing two
+calls to the same renderer. The Instrument Volume Envelope owns the loop's
+three-frame post-Off tail; the nested voice reaches its **exclusive** finite
+end, and source references are never reselected in the PCM loop.
+
+Frozen Pattern playback additionally exercises a real tracker TFA tempo set
+at row one (125 → 250 BPM), a mid-note absolute playback-frequency change,
+and row-two Note Off. At 1000 Hz and speed six, the event boundaries are
+frames 120 and 180; the held Volume Envelope then ends at exclusive frame
+211. Two independent prepared plans render whole and irregularly partitioned
+blocks through those boundaries, while a reference plan without the frequency
+change distinguishes actual source-position changes. Changing the authored
+Pitch Envelope after plan creation cannot retune an already-prepared source.
+The playback session retires the completed physical voice, with no PCM-time
+song object lookup. The next open item compares graph FIR tails, exported FLAC
+and buffered realtime playback. Backwards child-state replay remains separate.

@@ -5,6 +5,7 @@ using System.Text;
 
 using AwesomeAssertions;
 
+using Heresy.Core.Envelopes;
 using Heresy.Core.Filters;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Instruments;
@@ -355,6 +356,135 @@ public sealed class FmSynthPlaybackIntegrationTests
 				"the declared Filter tail is exclusive, including direct long blocks");
 		wholePlan.Session.GetChannelState(0).CurrentVoice.Should().BeNull();
 		splitPlan.Session.GetChannelState(0).CurrentVoice.Should().BeNull();
+	}
+
+	[Test]
+	public void FrozenNestedLoopedInstrumentCombinesTempoAndFrequencyChangeWithEnvelopeRelease()
+	{
+		SongDocument song = new();
+		ObjectId pcmId = song.AllocateObjectId();
+		SampleDefinition sample = SampleDefinition.CreateImported(
+			pcmId, "Looping ramp", "ramp.wav", FourFrameRampWave());
+		sample.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 4);
+		song.Add(sample);
+
+		ObjectId pitchId = song.AllocateObjectId();
+		NodeEnvelopeDefinition pitch = new(pitchId, "Moving pitch");
+		pitch.ReplaceCurve([
+			new(TimeSpan.Zero, 0.0),
+			new(TimeSpan.FromMilliseconds(20), 1.0),
+			new(TimeSpan.FromMilliseconds(40), -1.0),
+			new(TimeSpan.FromMilliseconds(70), 0.0),
+		], 2, 2, EnvelopeSustainLoopMode.Forward);
+		song.Add(pitch);
+
+		ObjectId volumeId = song.AllocateObjectId();
+		NodeEnvelopeDefinition volume = new(volumeId, "Release gain");
+		volume.ReplaceCurve([
+			new(TimeSpan.Zero, 1.0),
+			new(TimeSpan.FromMilliseconds(10), 1.0),
+			new(TimeSpan.FromMilliseconds(40), 0.0),
+		], 1, 1, EnvelopeSustainLoopMode.Forward);
+		song.Add(volume);
+
+		ObjectId instrumentId = song.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Enveloped loop");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = pcmId, PitchEnvelopeId = pitchId,
+			VolumeEnvelopeId = volumeId,
+		});
+		instrument.ToneTable.Add(0);
+		song.Add(instrument);
+		ObjectId innerId = song.AllocateObjectId();
+		song.Add(new FmSynthDefinition(innerId, "Instrument bound Synth",
+			new FmSynthGraph([new FmSoundSourceNode(0, instrumentId,
+				440.0 * Math.Pow(2.0, -9.0 / 12.0))], 0)));
+		ObjectId outerId = song.AllocateObjectId();
+		song.Add(new FmSynthDefinition(outerId, "Nested Synth",
+			new FmSynthGraph([new FmSoundSourceNode(0, innerId,
+				440.0 * Math.Pow(2.0, -9.0 / 12.0))], 0)));
+
+		ObjectId patternId = song.AllocateObjectId();
+		DataPatternDefinition pattern = new(patternId, "Tempo and release")
+		{
+			RowCount = 4, ChannelCount = 1,
+		};
+		PatternCell start = pattern.Grid.GetOrCreateCell(0, 0);
+		start.SourceId = outerId;
+		start.Note = new StartPatternNote();
+		PatternCell faster = pattern.Grid.GetOrCreateCell(1, 0);
+		faster.Effects.Add(new TrackerTempoPatternEffect(0xFA));
+		pattern.Grid.GetOrCreateCell(2, 0).Note = new PatternNoteOff();
+		song.Add(pattern);
+
+		PreparedIncrementalPlaybackFactory factory = new(
+			MonoConfiguration(sampleRate: 1000));
+		using PreparedIncrementalPlaybackPlan baseline = factory.Create(song, patternId);
+		faster.Effects.Add(new SetPlaybackFrequencyPatternEffect(
+			440.0 * Math.Pow(2.0, -9.0 / 12.0) * 2));
+		using PreparedIncrementalPlaybackPlan whole = factory.Create(song, patternId);
+		using PreparedIncrementalPlaybackPlan split = factory.Create(song, patternId);
+
+		// The prepared sources must not observe subsequent mutable authoring
+		// changes to Envelope node values.
+		pitch.ReplaceCurve([
+			new(TimeSpan.Zero, -3.0),
+			new(TimeSpan.FromMilliseconds(20), -3.0),
+			new(TimeSpan.FromMilliseconds(40), -3.0),
+			new(TimeSpan.FromMilliseconds(70), -3.0),
+		], 2, 2, EnvelopeSustainLoopMode.Forward);
+
+		float[] prior = new float[230];
+		float[] pcm = new float[230];
+		float[] pieces = new float[230];
+		baseline.Source.Render(prior.Length, prior);
+		whole.Source.Render(pcm.Length, pcm);
+		int[] chunkSizes = [117, 3, 5, 51, 4, 1, 20, 29];
+		int at = 0;
+		foreach (int count in chunkSizes)
+		{
+			split.Source.Render(count, pieces.AsSpan(at, count));
+			at += count;
+		}
+		Assert.That(at, Is.EqualTo(pcm.Length));
+		Assert.Multiple(() =>
+		{
+			Assert.That(pieces, Is.EqualTo(pcm).Within(1e-5f),
+				"nested pitch, row-one tempo and release must be block invariant");
+			Assert.That(pcm.Take(120), Is.EqualTo(prior.Take(120)).Within(1e-5f),
+				"frequency effect belongs to row one, not earlier audio");
+			Assert.That(pcm.Skip(120).Take(40)
+				.Zip(prior.Skip(120), (a, b) => Math.Abs(a - b))
+				.Any(d => d > 1e-3), Is.True,
+				"row-one transport pitch must change looped source positions");
+			Assert.That(pcm[179], Is.GreaterThan(0.01f));
+			Assert.That(pcm[180], Is.GreaterThan(0.01f),
+				"volume envelope owns release on the 180-frame Note Off");
+			Assert.That(pcm[190], Is.GreaterThan(0.01f));
+			Assert.That(pcm.Skip(211), Is.All.EqualTo(0f),
+				"release ends at the exact exclusive frame 211");
+			Assert.That(whole.Session.GetChannelState(0).CurrentVoice, Is.Null);
+			Assert.That(split.Session.GetChannelState(0).CurrentVoice, Is.Null);
+		});
+	}
+
+	private static byte[] FourFrameRampWave()
+	{
+		using MemoryStream stream = new();
+		using BinaryWriter writer = new(stream, Encoding.ASCII, leaveOpen: true);
+		writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+		writer.Write(44);
+		writer.Write(Encoding.ASCII.GetBytes("WAVEfmt "));
+		writer.Write(16); writer.Write((ushort)1); writer.Write((ushort)1);
+		writer.Write(1000); writer.Write(2000);
+		writer.Write((ushort)2); writer.Write((ushort)16);
+		writer.Write(Encoding.ASCII.GetBytes("data"));
+		writer.Write(8);
+		foreach (short value in new short[] { 8192, 16384, 24576, 30000 })
+			writer.Write(value);
+		writer.Flush();
+		return stream.ToArray();
 	}
 
 	private static byte[] FourFrameWave()

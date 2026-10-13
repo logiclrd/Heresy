@@ -81,6 +81,82 @@ public sealed class FmSynthChildInheritedControlsTests
     }
 
     [Test]
+    public void NestedMovingPitchAndLoopedInstrumentReleaseMatchLiveAndPredeclaredTransport()
+    {
+        Registry resolver = new();
+        resolver.Add(SampleId, LoopedSample([0, 1, 2, 3]));
+        resolver.AddEnvelope(PitchId, new MovingOctaveCurve());
+        resolver.AddEnvelope(VolumeId, new ThreeFrameRelease());
+        resolver.Add(InstrumentId, new InstrumentSound(
+            _ => new ToneSpecification
+            {
+                SourceId = SampleId, PitchEnvelopeId = PitchId,
+                VolumeEnvelopeId = VolumeId,
+            }, resolver, resolver));
+        ObjectId innerId = (ObjectId)207U;
+        FmSynthSound inner = Synth(resolver);
+        resolver.Add(innerId, inner);
+        FmSynthSound outer = new(new FmSynthGraph([
+            new FmSoundSourceNode(0, innerId, C4),
+        ], 0), resolver, soundResolver: resolver);
+
+        RenderContext context = Mono();
+        SoundState planned = outer.CreateState();
+        planned.PitchTrajectory.SetMultiplier(3, 2);
+        planned.PitchTrajectory.SetMultiplier(5, 0.5);
+        planned.NoteOffTime = TimeSpan.FromSeconds(6.0 / Rate);
+        Assert.That(outer.GetEndFrameExclusive(context, planned), Is.EqualTo(9),
+            "the Instrument Volume Envelope owns the release of a looped Sample");
+        int resolutionCount = resolver.SoundLookups;
+        float[] continuous = new float[12];
+        outer.Render(context, planned, 0, continuous.Length, continuous);
+
+        SoundState live = outer.CreateState();
+        int liveResolutionCount = resolver.SoundLookups;
+        Assert.That(outer.GetEndFrameExclusive(context, live), Is.Null);
+        float[] partitioned = new float[12];
+        outer.Render(context, live, 0, 3, partitioned.AsSpan(0, 3));
+        live.PitchTrajectory.SetMultiplier(3, 2);
+        outer.Render(context, live, 3, 2, partitioned.AsSpan(3, 2));
+        live.PitchTrajectory.SetMultiplier(5, 0.5);
+        outer.Render(context, live, 5, 1, partitioned.AsSpan(5, 1));
+        Assert.That(outer.GetEndFrameExclusive(context, live), Is.Null,
+            "a sustaining loop is indefinite until an actual Note Off");
+        live.NoteOffTime = TimeSpan.FromSeconds(6.0 / Rate);
+        Assert.That(outer.GetEndFrameExclusive(context, live), Is.EqualTo(9));
+        outer.Render(context, live, 6, 2, partitioned.AsSpan(6, 2));
+        outer.Render(context, live, 8, 4, partitioned.AsSpan(8, 4));
+
+        // The pitch Envelope moves 0 -> +1 -> -1 octaves, then starts
+        // its release (+1, 0, -1). Combined with transport 1 -> 2 ->
+        // 0.5, source positions integrate as:
+        // 0,1,2,4,8,9,9.25,10.25,10.75 (then silence at frame 9).
+        // The four-frame loop maps positions modulo four, while
+        // Volume release weights frames 6..8 by 1, 2/3 and 1/3.
+        float[] expected =
+            [0, 1, 2, 0, 0, 1, 1.25f, 1.5f, 11f / 12f, 0, 0, 0];
+        for (int frame = 0; frame < expected.Length; frame++)
+        {
+            Assert.That(continuous[frame],
+                Is.EqualTo(expected[frame]).Within(1e-5f),
+                $"nested integrated PCM frame {frame}");
+            Assert.That(partitioned[frame],
+                Is.EqualTo(continuous[frame]).Within(1e-5f),
+                $"live transport/chunk parity frame {frame}");
+        }
+        Assert.Multiple(() =>
+        {
+            Assert.That(outer.GetEndFrameExclusive(context, planned), Is.EqualTo(9));
+            Assert.That(outer.GetEndFrameExclusive(context, live), Is.EqualTo(9));
+            Assert.That(resolutionCount, Is.EqualTo(3),
+                "Synth references resolve during graph preparation; Instrument selects one Sample per voice");
+            Assert.That(liveResolutionCount, Is.EqualTo(4));
+            Assert.That(resolver.SoundLookups, Is.EqualTo(liveResolutionCount),
+                "audio-rate Envelope and transport changes cannot reselect sources");
+        });
+    }
+
+    [Test]
     public void PanningEnvelopeProducesMonoGraphSignalThenOnlyParentSpatialization()
     {
         Registry resolver = new();
@@ -170,6 +246,45 @@ public sealed class FmSynthChildInheritedControlsTests
         new RenderConfiguration(Rate, [
             new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
         ]));
+
+    private static SampleSound LoopedSample(float[] values)
+    {
+        SampleDefinition definition = new(SampleId, "Loop",
+            new ExternalAssetReference("loop.wav"))
+        {
+            Loop = new SampleLoop(SampleLoopMode.Forward, 0, values.Length),
+        };
+        return new SampleSound(definition, new MemorySampleData(Rate, 1, values));
+    }
+
+    private sealed class MovingOctaveCurve : IEnvelopeCurve
+    {
+        public double GetValue(long frame, int sampleRate, long? noteOffFrame)
+        {
+            if (noteOffFrame is long off)
+                return frame - off switch
+                {
+                    0 => 1,
+                    1 => 0,
+                    _ => -1,
+                };
+            return frame < 2 ? 0 : frame < 4 ? 1 : -1;
+        }
+
+        public long? GetEndActiveFrameExclusiveAfterNoteOff(
+            long off, int sampleRate) => off + 3;
+    }
+
+    private sealed class ThreeFrameRelease : IEnvelopeCurve
+    {
+        public double GetValue(long frame, int sampleRate, long? noteOffFrame)
+            => noteOffFrame is long off
+                ? Math.Max(0, 1 - (frame - off) / 3.0)
+                : 1;
+
+        public long? GetEndActiveFrameExclusiveAfterNoteOff(
+            long off, int sampleRate) => off + 3;
+    }
 
     private sealed class ConstantCurve(double value) : IEnvelopeCurve
     {
