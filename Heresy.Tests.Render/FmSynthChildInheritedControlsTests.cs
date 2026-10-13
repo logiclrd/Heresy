@@ -139,7 +139,7 @@ public sealed class FmSynthChildInheritedControlsTests
         {
             Assert.That(continuous[frame],
                 Is.EqualTo(expected[frame]).Within(1e-5f),
-                $"nested integrated PCM frame {frame}");
+                $"nested integrated PCM frame {frame}; actual [{string.Join(", ", continuous)}], split [{string.Join(", ", partitioned)}]");
             Assert.That(partitioned[frame],
                 Is.EqualTo(continuous[frame]).Within(1e-5f),
                 $"live transport/chunk parity frame {frame}");
