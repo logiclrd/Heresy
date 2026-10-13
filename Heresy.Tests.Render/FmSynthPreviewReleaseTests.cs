@@ -175,6 +175,34 @@ public sealed class FmSynthPreviewReleaseTests
 		release[2].Should().Be(0.0f);
 	}
 
+	[Test]
+	public void IndependentAdditiveEnvelopeDoesNotKeepLiveOscillatorAudible()
+	{
+		PlaybackSession session = Session(new FmSynthGraph(
+		[
+			new FmEnvelopeNode(1, EnvelopeId),
+			new FmOscillatorNode(2, FmOscillatorWaveform.Square, 1,
+				minimum: 1, maximum: 1, constant: true),
+			new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
+		], outputNodeId: 3));
+		PlaybackSessionAudioSource source = new(session);
+		source.EnqueueLiveEvent(ChannelTarget.Virtual(55),
+			[new StartNoteCommand(SourceId)]);
+		float[] held = new float[3];
+		source.Render(held.Length, held);
+		held.Should().OnlyContain(value => Math.Abs(value - 1.8f) < 1e-5f);
+
+		source.EnqueueLiveEvent(ChannelTarget.Virtual(55),
+			[new NoteOffCommand()]);
+		float[] release = new float[5];
+		source.Render(release.Length, release);
+		release[0].Should().BeApproximately(1.8f, 1e-5f);
+		release[1].Should().BeApproximately(0.8f * 2f / 3f, 1e-5f);
+		release[2].Should().BeApproximately(0.8f / 3f, 1e-5f);
+		release[3].Should().Be(0f);
+		release[4].Should().Be(0f);
+	}
+
 	private static FmSynthGraph GraphWithEnvelopeOutput()
 		=> new([new FmEnvelopeNode(1, EnvelopeId)], outputNodeId: 1);
 

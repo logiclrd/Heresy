@@ -401,3 +401,31 @@ of sources is introduced.
 Further lifecycle work remains for moving transport controls, separate
 audio branches, FIR/export parity and displaced NNA/virtual voices. These
 are split into independently verifiable tasks in `docs/todo.md`.
+
+### Independent additive oscillator/Envelope release gates (13 October 2026)
+
+An Envelope on a **separate additive audio branch** now releases as its own
+signal, without unintentionally holding an unrelated bare oscillator or
+constant audible until that Envelope finishes. The bare oscillator retains
+its existing one-frame post-Note-Off anti-click boundary; the additive
+Envelope can continue through its own release, and the complete graph retires
+only after every audible branch has become silent. This differs from an
+Envelope in an oscillator's **frequency-control ancestry**, which continues
+to hold the audible oscillator for the full pitch-glide release, and from an
+Envelope in a **multiplicative amplitude gate**, which also preserves the
+oscillator through that gate's release. Those are established compatibility
+contracts, not newly shortened release policies.
+
+Audio dependency relationships are compiled at Synth preparation. Invocation
+end analysis uses the per-branch release horizons, while PCM keeps raw numeric
+values for source/oscillator pitch and Filter parameter controls separate from
+silence-gated audio contributions. Thus a shared oscillator can keep changing
+a looping child Sample's playback rate even after the oscillator itself stops
+being an independent audible summand. Filter audio paths use gated audio
+inputs; the existing **maximum**, not sum, authored graph Filter TailSeconds
+remains the only tail allowance. Whole/split direct PCM and live virtual-note
+checks cover independent Add, shared source pitch, exact exclusive silence and
+existing frequency-only and amplitude-Multiply release regressions.
+
+Changing tempo and inherited moving Pitch Envelope + Sample loop-to-release
+in nested Synth voices remains the next separate qualification milestone.

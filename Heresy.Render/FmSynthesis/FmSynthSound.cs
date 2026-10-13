@@ -44,6 +44,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			SourceVoice?[] sources)
 		{
 			Values = new double[nodeCount];
+			AudioValues = new double[nodeCount];
 			SilentFrom = new long?[nodeCount];
 			Phases = new double[oscillatorCount];
 			Filters = new FmFilterNodeProcessor.State?[nodeCount];
@@ -51,6 +52,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		}
 
 		public double[] Values { get; }
+		public double[] AudioValues { get; }
 		public long?[] SilentFrom { get; }
 		public double[] Phases { get; }
 		public FmFilterNodeProcessor.State?[] Filters { get; }
@@ -67,6 +69,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				throw new NotSupportedException(
 					"Replaying child-source Synth state requires the subsequent seek milestone.");
 			Array.Clear(Values);
+			Array.Clear(AudioValues);
 			Array.Clear(SilentFrom);
 			Array.Clear(Phases);
 			Array.Clear(Filters); // never reuse histories after rewind/rate change
@@ -91,6 +94,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	private readonly PreparedToneFilterStageFactory? _preparedChildFilterFactory;
 	private readonly bool _hasSources;
 	private readonly double _maximumAudioPathTailSeconds;
+	// Prepared once: envelopes that genuinely extend each independent
+	// oscillator/constant audio branch through Note Off.
+	private readonly int[][] _audioReleaseEnvelopeIndices;
 	private const double C4FrequencyHz = 440.0 * 0.59460355750136053336; // 2^(-9/12)
 
 	public FmSynthSound(
@@ -172,6 +178,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		_nodes = [.. compiled];
 		_outputIndex = indexById[graph.OutputNodeId];
 		_oscillatorCount = oscillatorIndex;
+		_audioReleaseEnvelopeIndices = BuildAudioReleaseEnvelopeDependencies();
 		_maximumAudioPathTailSeconds = GetMaximumAudioPathTailSeconds();
 
 		void Visit(int id)
@@ -382,6 +389,96 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	}
 
 	/// <summary>
+	/// An Envelope on an Add sibling is an independent audible branch;
+	/// it must not extend a bare oscillator. An Envelope in the oscillator's
+	/// frequency ancestry or another factor of a downstream Multiply *does*
+	/// keep that oscillator audible through the Envelope's release.
+	/// Precompute these graph relationships outside the PCM path.
+	/// </summary>
+	private int[][] BuildAudioReleaseEnvelopeDependencies()
+	{
+		int[][] dependencies = new int[_nodes.Length][];
+		for (int target = 0; target < _nodes.Length; target++)
+		{
+			CompiledNode node = _nodes[target];
+			if (node.Definition is not (FmOscillatorNode or FmConstantNode))
+			{
+				dependencies[target] = [];
+				continue;
+			}
+			HashSet<int> related = [];
+			if (node.Definition is FmOscillatorNode)
+				foreach (int input in node.InputIndices)
+					CollectEnvelopes(input, related, audioOnly: false);
+
+			// A target's signal can be carried through Add, Multiply and
+			// Filter *audio* connections. Source/oscillator pitch ports are
+			// control paths, not audible ancestry for this traversal.
+			bool[] carries = new bool[_nodes.Length];
+			carries[target] = true;
+			for (int index = target + 1; index < _nodes.Length; index++)
+			{
+				CompiledNode other = _nodes[index];
+				carries[index] = other.Definition switch
+				{
+					FmOperatorNode => other.InputIndices.Any(input => carries[input]),
+					FmFilterNode filter when filter.AudioInputNodeId.HasValue =>
+						carries[other.InputIndices[0]],
+					_ => false,
+				};
+				if (other.Definition is not FmOperatorNode
+					{ Operation: FmOperatorKind.Multiply } || !carries[index])
+					continue;
+				foreach (int input in other.InputIndices)
+					if (!carries[input])
+						CollectEnvelopes(input, related, audioOnly: true);
+			}
+			dependencies[target] = [.. related];
+		}
+		return dependencies;
+
+		void CollectEnvelopes(int index, HashSet<int> found, bool audioOnly)
+		{
+			CompiledNode node = _nodes[index];
+			if (node.Definition is FmEnvelopeNode)
+				found.Add(index);
+			else if (node.Definition is FmFilterNode filter)
+			{
+				if (audioOnly)
+				{
+					if (filter.AudioInputNodeId.HasValue)
+						CollectEnvelopes(node.InputIndices[0], found, true);
+				}
+				else
+					foreach (int input in node.InputIndices)
+						CollectEnvelopes(input, found, false);
+			}
+			else if (node.Definition is FmOperatorNode || !audioOnly
+				&& node.Definition is (FmOscillatorNode or FmSoundSourceNode))
+				foreach (int input in node.InputIndices)
+					CollectEnvelopes(input, found, audioOnly);
+		}
+	}
+
+	private long? GetIndependentAudioReleaseEnd(
+		int nodeIndex, long offFrame, int sampleRate)
+	{
+		long until = checked(offFrame + 1); // existing one-frame anti-click
+		foreach (int envelopeIndex in _audioReleaseEnvelopeIndices[nodeIndex])
+		{
+			IEnvelopeCurve? curve = _nodes[envelopeIndex].Envelope;
+			if (curve is null)
+				continue;
+			long? envelopeEnd = curve.GetEndActiveFrameExclusiveAfterNoteOff(
+				offFrame, sampleRate);
+			if (!envelopeEnd.HasValue)
+				return null;
+			until = Math.Max(until, envelopeEnd.Value);
+		}
+		return until;
+	}
+
+	/// <summary>
 	/// Natural FM note boundary, before any manually authored Filter tail.
 	/// During extra tail frames every ordinary source stops excitation while
 	/// each Filter stage keeps processing zero-input frames.
@@ -400,48 +497,34 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		// allocate a fresh graph array for each end check.
 		long?[] silentFrom = state.SilentFrom;
 		Array.Clear(silentFrom);
-		long finiteReleaseEnd = checked(noteOffFrame + 1);
-		bool hasIndefiniteEnvelope = false;
 		for (int index = 0; index < _nodes.Length; index++)
 		{
 			CompiledNode node = _nodes[index];
-			if (node.Definition is FmEnvelopeNode
-				&& node.Envelope is not null)
+			if (node.Definition is FmEnvelopeNode)
 			{
-				long? end = released.HasValue
-					? node.Envelope.GetEndActiveFrameExclusiveAfterNoteOff(
-						noteOffFrame, sampleRate)
-					: null;
-				silentFrom[index] = end;
-				if (end is long finite)
-					finiteReleaseEnd = Math.Max(finiteReleaseEnd, finite);
-				else
-					hasIndefiniteEnvelope = true;
+				silentFrom[index] = node.Envelope is null ? 0L
+					: released.HasValue
+						? node.Envelope.GetEndActiveFrameExclusiveAfterNoteOff(
+							noteOffFrame, sampleRate)
+						: null;
 			}
 			else
 			{
 				silentFrom[index] = node.Definition switch
 				{
-					FmEnvelopeNode => 0L,
 					FmFilterNode filter => filter.AudioInputNodeId.HasValue
 						? silentFrom[node.InputIndices[0]] : 0L,
 					FmOperatorNode op => GetOperatorSilenceEnd(
 						op.Operation, node.InputIndices, silentFrom),
 					FmSoundSourceNode => GetChildSourceSilenceEnd(state, index),
 					FmConstantNode or FmOscillatorNode => released.HasValue
-						? finiteReleaseEnd : null,
+						? GetIndependentAudioReleaseEnd(index,
+							noteOffFrame, sampleRate) : null,
 					_ => null,
 				};
 			}
 		}
-		if (silentFrom[_outputIndex] is long outputSilence)
-			return outputSilence;
-		// An indefinite source cannot be truncated merely because the
-		// outer note was released. A multiplier or envelope on the actual
-		// audible path must prove that the output has become silent.
-		if (_hasSources)
-			return null;
-		return hasIndefiniteEnvelope ? null : finiteReleaseEnd;
+		return silentFrom[_outputIndex];
 	}
 
 	private static long? GetChildSourceSilenceEnd(FmSynthState state, int index)
@@ -672,10 +755,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 							noteOffFrame),
 
 					FmFilterNode =>
-						compiled.Filter!.Process(
-							state.Filters[index] ??= compiled.Filter.CreateState(
-								context.Configuration.SampleRate),
-							state.Values, draining),
+						ProcessAudioFilter(compiled, state, index,
+							context.Configuration.SampleRate, draining),
 
 					FmOperatorNode operation =>
 						EvaluateOperator(
@@ -707,9 +788,42 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			}
 
 			state.Values[index] = value;
+			// Keep raw graph values for pitch/parameter controls, but gate
+			// the *audible* contribution independently. A single oscillator
+			// may legitimately drive both a Sample pitch port and an Add.
+			state.AudioValues[index] = compiled.Definition switch
+			{
+				FmConstantNode or FmOscillatorNode or FmEnvelopeNode
+					when state.SilentFrom[index] is long silent
+						&& frame >= silent => 0.0,
+				FmOperatorNode op => EvaluateOperator(op.Operation,
+					compiled.InputIndices, state.AudioValues),
+				_ => value,
+			};
 		}
 
-		return state.Values[_outputIndex];
+		return state.AudioValues[_outputIndex];
+	}
+
+	private static double ProcessAudioFilter(CompiledNode node,
+		FmSynthState state, int index, int sampleRate, bool draining)
+	{
+		FmFilterNode filter = (FmFilterNode)node.Definition;
+		FmFilterNodeProcessor.State filterState = state.Filters[index]
+			??= node.Filter!.CreateState(sampleRate);
+		if (!filter.AudioInputNodeId.HasValue)
+			return node.Filter!.Process(filterState, state.Values, draining);
+		int input = node.InputIndices[0];
+		double raw = state.Values[input];
+		state.Values[input] = state.AudioValues[input];
+		try
+		{
+			return node.Filter!.Process(filterState, state.Values, draining);
+		}
+		finally
+		{
+			state.Values[input] = raw;
+		}
 	}
 
 	/// <summary>One isolated mono child frame with per-voice DSP state.

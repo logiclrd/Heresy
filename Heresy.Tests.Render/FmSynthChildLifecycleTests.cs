@@ -483,6 +483,74 @@ public sealed class FmSynthChildLifecycleTests
         Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(7));
     }
 
+    [Test]
+    public void IndependentAdditiveEnvelopeDoesNotExtendBareOscillatorAudio()
+    {
+        Registry registry = new();
+        registry.Add(SampleId, MakeSample([1, 1, 1, 1], 8, loop: true));
+        registry.AddEnvelope(EnvelopeId, new ThreeFrameRelease());
+        FmSynthSound synth = MakeSynth(registry, [
+            new FmSoundSourceNode(0, SampleId, C4),
+            new FmEnvelopeNode(1, EnvelopeId),
+            new FmOscillatorNode(2, FmOscillatorWaveform.Square, 1,
+                minimum: 1, maximum: 1, constant: true),
+            new FmOperatorNode(3, FmOperatorKind.Add, [0, 2]),
+            new FmOperatorNode(4, FmOperatorKind.Add, [3, 1]),
+        ], 4);
+        RenderContext context = Mono(8);
+        SoundState state = synth.CreateState();
+        state.NoteOffTime = TimeSpan.FromSeconds(2.0 / 8);
+        Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(5));
+        float[] whole = new float[8];
+        synth.Render(context, state, 0, whole.Length, whole);
+        float[] split = new float[8];
+        SoundState second = synth.CreateState();
+        second.NoteOffTime = state.NoteOffTime;
+        synth.Render(context, second, 0, 3, split.AsSpan(0, 3));
+        synth.Render(context, second, 3, 5, split.AsSpan(3, 5));
+        float[] expected = [3, 3, 2, 2f / 3, 1f / 3, 0, 0, 0];
+        for (int frame = 0; frame < expected.Length; frame++)
+        {
+            Assert.That(whole[frame], Is.EqualTo(expected[frame]).Within(1e-6),
+                $"independent Envelope frame {frame}");
+            Assert.That(split[frame], Is.EqualTo(whole[frame]).Within(1e-6),
+                $"chunk parity frame {frame}");
+        }
+        Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(5));
+        Assert.That(registry.SoundLookups, Is.EqualTo(2),
+            "both voices bind once, not while rendering PCM");
+    }
+
+    [Test]
+    public void SharedOscillatorStaysAvailableAsSourcePitchControlAfterAudibleCutoff()
+    {
+        Registry registry = new();
+        registry.Add(SampleId, MakeSample(
+            Enumerable.Range(0, 32).Select(i => (float)i).ToArray(), 8,
+            loop: true));
+        registry.AddEnvelope(EnvelopeId, new ThreeFrameRelease());
+        registry.Add(InstrumentId, new InstrumentSound(
+            _ => new ToneSpecification { SourceId = SampleId,
+                VolumeEnvelopeId = EnvelopeId }, registry, registry));
+        FmSynthSound synth = MakeSynth(registry, [
+            new FmOscillatorNode(0, FmOscillatorWaveform.Square, 1,
+                minimum: 2, maximum: 2, constant: true),
+            new FmSoundSourceNode(1, InstrumentId, C4, multiplierNodeId: 0),
+            new FmOperatorNode(2, FmOperatorKind.Add, [0, 1]),
+        ], 2);
+        RenderContext context = Mono(8);
+        SoundState state = synth.CreateState();
+        state.NoteOffTime = TimeSpan.FromSeconds(2.0 / 8);
+        Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(5));
+        float[] pcm = new float[7];
+        synth.Render(context, state, 0, pcm.Length, pcm);
+        float[] expected = [2, 4, 6, 4, 8f / 3, 0, 0];
+        for (int frame = 0; frame < expected.Length; frame++)
+            Assert.That(pcm[frame], Is.EqualTo(expected[frame]).Within(1e-5),
+                $"shared oscillator frame {frame}");
+        Assert.That(registry.SoundLookups, Is.EqualTo(2));
+    }
+
     private static FmSynthSound MakeSynth(Registry registry,
         FmSynthNode[] nodes, int output = 0)
         => new(new FmSynthGraph(nodes, output),
