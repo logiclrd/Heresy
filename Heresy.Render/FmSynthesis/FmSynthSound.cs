@@ -696,8 +696,8 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 					voice.Invocation.State, frame, 1, stereo);
 				// A native stereo Sample has spatially separated source
 				// channels; a mono source uses equal-power speaker gain.
-				double divisor = voice.Invocation.Sound is SampleSound sample
-					&& sample.SourceChannelCount == 2 ? 2.0 : Math.Sqrt(2);
+				double divisor = voice.Invocation.Sound is SampleSound pannedSample
+					&& pannedSample.SourceChannelCount == 2 ? 2.0 : Math.Sqrt(2);
 				mono[0] = (float)((stereo[0] + stereo[1]) / divisor);
 			}
 			else
