@@ -154,6 +154,32 @@ public sealed class FmSynthChildInheritedControlsTests
             Assert.That(resolver.SoundLookups, Is.EqualTo(liveResolutionCount),
                 "audio-rate Envelope and transport changes cannot reselect sources");
         });
+
+        // Replay the same nested pitch/Envelope/loop trajectory from a
+        // mid-note control boundary after EOF, and from zero after release.
+        int beforeReplay = resolver.SoundLookups;
+        outer.PrepareReplay(context, planned, targetFrame: 4);
+        Assert.That(resolver.SoundLookups, Is.EqualTo(beforeReplay + 1),
+            "the Instrument reselects its Sample at the control boundary");
+        int boundLookups = resolver.SoundLookups;
+        float[] midReplay = new float[8];
+        outer.Render(context, planned, 4, midReplay.Length, midReplay);
+        Assert.That(midReplay,
+            Is.EqualTo(continuous.AsSpan(4).ToArray()).Within(1e-5f));
+        Assert.That(resolver.SoundLookups, Is.EqualTo(boundLookups),
+            "warm-up and PCM rendering never resolve new graph references");
+
+        outer.PrepareReplay(context, live, targetFrame: 0);
+        int liveLookups = resolver.SoundLookups;
+        float[] fullReplay = new float[12];
+        outer.Render(context, live, 0, fullReplay.Length, fullReplay);
+        Assert.Multiple(() =>
+        {
+            Assert.That(fullReplay, Is.EqualTo(continuous).Within(1e-5f),
+                "late-created parent transport segments survive replay");
+            Assert.That(outer.GetEndFrameExclusive(context, live), Is.EqualTo(9));
+            Assert.That(resolver.SoundLookups, Is.EqualTo(liveLookups));
+        });
     }
 
     [Test]
