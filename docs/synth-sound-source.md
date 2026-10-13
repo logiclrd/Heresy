@@ -540,3 +540,54 @@ These checks qualify the current sequential voice-retirement lifecycle.
 They do **not** implement deterministic arbitrary backwards replay,
 cross-song import remapping or graph-editor creation; those remain separate
 TODOs. The tests required no production DSP change.
+
+### Explicit ISound child-state replay/seek boundary (13 October 2026)
+
+`FmSynthSound.PrepareReplay(RenderContext, SoundState, targetFrame,
+firPreparationFrames)` is the **off-audio-thread producer/control boundary**
+for deterministic backwards seek, replay and direct unprepared format changes.
+The original, frozen Synth DAG and child `ISound` definitions remain shared.
+The method re-creates *invocation-local* child states (including data/script
+Instrument tone binding), streaming `FmSourcePitchCurve` objects, Sample
+integrated source positions, nested Synth state, native Envelope release
+origins and graph/tone Filter histories. It preserves the outer note's
+original pitch/speed selection, currently authored PitchTrajectory segments,
+actual Note Off time, positional state and other note controls. The rebuilt
+state is replayed **in frame order from zero** up to `targetFrame`, so a
+subsequent `Render(targetFrame, ...)` performs ordinary sequential audio
+generation. This reconstructs *history*, rather than seeking directly to
+an approximate PCM position or restoring a stale IIR/FFT buffer.
+
+Child-source `Render` intentionally throws if asked to rewind or change
+sample rate without calling `PrepareReplay` first. In particular, no
+scripted selection, asset resolution, sound-state allocation, FIR coefficient
+design or unbounded warm-up loop is permitted as an implicit consequence
+of an audio-device callback requesting an earlier frame. The explicit
+producer operation can be computationally proportional to `targetFrame`,
+but its steady subsequent PCM rendering remains bounded and retains the
+existing allocation regression. Unprepared direct sounds can explicitly
+rebuild at another output rate; a frozen prepared-tone/FIR plan is bound
+to its configured sample rate and **rejects** incompatible rate changes
+*before* discarding the current invocation.
+
+A source-containing graph with time-varying FIR parameters may accept a
+new prepared kernel at a discrete control boundary. For deterministic
+replay, the optional ordered `firPreparationFrames` argument records
+those originally **accepted** control-side preparation frames. Replay
+advances up to each boundary and synchronously prepares the corresponding
+pending coefficient requests, outside PCM, before continuing; the
+same acceptance order gives identical convolution histories. If live
+asynchronous FIR publications or other external controls are used, the
+producer must supply their recorded accepted boundaries and replay the
+same external control trajectory; silently inventing publication times
+would not be deterministic.
+
+Regression tests cover arbitrary mid-stream forward warm-up/backward
+replay, looping Sample/Instrument inherited moving Pitch and Volume
+Envelopes, exact Note Off/release, Graph IIR and Instrument tone-Filter
+EOF/tail histories, oscillator frequency modulation with integrated
+child positions, two concurrent independent note states, a published
+minimum-phase FIR cutoff update, direct format rebinding, rejection of
+incompatible frozen-plan formats, and no PCM-loop resolution. Source-node
+editor creation remains a separate TODO; it can now use this explicit
+seek boundary rather than issuing backwards `Render` calls.
