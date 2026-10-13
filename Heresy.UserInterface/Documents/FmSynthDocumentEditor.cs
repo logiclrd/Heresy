@@ -269,6 +269,37 @@ public static class FmSynthDocumentEditor
 		return id;
 	}
 
+	/// <summary>Creates an unassigned Sample/Instrument/Synth source with
+	/// neutral C4 as its musical reference pitch.</summary>
+	public static int AddSoundSourceNode(
+		DocumentWorkspace workspace, FmSynthDefinition synth,
+		double x, double y,
+		ObjectId sourceId = default,
+		double frequencyHz = 440.0 * 0.5946035575013605,
+		bool constant = false)
+	{
+		int id = NextNodeId(ValidateSynth(workspace, synth));
+		ValidateSoundSource(workspace.Document, sourceId);
+		AddNode(workspace, synth,
+			new FmSoundSourceNode(id, sourceId, frequencyHz,
+				constant: constant), x, y);
+		return id;
+	}
+
+	private static void ValidateSoundSource(SongDocument document,
+		ObjectId id)
+	{
+		if (id.IsNone)
+			return;
+		if (!document.TryGet(id, out SongObject? obj)
+			|| obj is not (Heresy.Core.Samples.SampleDefinition
+				or Heresy.Core.Instruments.InstrumentDefinition
+				or Heresy.Core.Instruments.ScriptInstrumentDefinition
+				or FmSynthDefinition))
+			throw new InvalidOperationException(
+				$"Source object #{id.Value} is missing or is not a Sample, Instrument or Synth.");
+	}
+
 	public static int AddEnvelopeNode(
 		DocumentWorkspace workspace,
 		FmSynthDefinition synth,
@@ -398,6 +429,16 @@ public static class FmSynthDocumentEditor
 						oscillator.Constant);
 				break;
 
+			case FmSoundSourceNode sourceNode
+				when targetInputIndex == 0:
+				if (sourceNode.MultiplierNodeId == sourceNodeId)
+					return;
+				replacement = new FmSoundSourceNode(
+					sourceNode.Id, sourceNode.SourceId,
+					sourceNode.FrequencyHz, sourceNodeId,
+					sourceNode.ExponentialMultiplier, sourceNode.Constant);
+				break;
+
 			case FmFilterNode filter
 				when targetInputIndex >= 0
 					&& targetInputIndex < filter.GetPorts().Count:
@@ -452,6 +493,8 @@ public static class FmSynthDocumentEditor
 				$"FM node {replacement.Id} does not exist.");
 		}
 
+		if (replacement is FmSoundSourceNode soundSource)
+			ValidateSoundSource(workspace.Document, soundSource.SourceId);
 		if (replacement is FmEnvelopeNode envelope)
 		{
 			ValidateEnvelope(
@@ -597,6 +640,12 @@ public static class FmSynthDocumentEditor
 					multiplierNodeId: null,
 					exponentialMultiplier: oscillator.ExponentialMultiplier,
 					constant: oscillator.Constant),
+
+			FmSoundSourceNode source =>
+				new FmSoundSourceNode(source.Id, source.SourceId,
+					source.FrequencyHz, multiplierNodeId: null,
+					exponentialMultiplier: source.ExponentialMultiplier,
+					constant: source.Constant),
 
 			FmOperatorNode operation =>
 				RemoveOperatorInputs(operation, removedNodeId),
