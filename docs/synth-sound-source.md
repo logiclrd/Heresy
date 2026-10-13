@@ -299,3 +299,39 @@ This closes the supposedly dynamic scripted-FIR gap **without** an extra
 queue, new voice latency or altered song format. If a future scripting API
 actually gains dynamic Filter construction, it will require new design and
 tests; none of the current code silently performs FFT design in PCM.
+
+### Dynamic source endings and Pattern producer qualification (13 October 2026)
+
+A Synth with ISound source nodes implements `IStreamingFiniteSound`, so the
+existing `PlaybackSession` asks for its effective end **again** following
+each rendered block. This is necessary for SampleSound whose exact natural
+EOF is discovered only while integrating PCM-frame pitch, and for nested
+source-Synths which discover their own terminal bounds during a parent
+frame. Nested end observations propagate to the parent in the same
+source-frame evaluation. The parent refreshes its graph cutoff when a child
+first becomes finite inside a block; it no longer waits for an unrelated
+future Render call to learn that boundary.
+
+Graph-tail accounting computes the longest **audio** path, accumulating
+user-authored Filter tail allowances across serial Filter stages and taking
+the longest of parallel alternatives. Filter parameter wires and oscillator
+frequency controls do not add audible tail paths. Algebraic graph end
+bounds remain conservative: Multiply is provably silent when *any* input
+becomes silent; Add, Minimum and Maximum require *all* contributing inputs
+to have finite silence bounds. A graph Envelope without an actual Note Off
+must not use an imaginary release at time zero when estimating these bounds.
+
+Direct regression fixtures check source/oscillator-style indefinite branches,
+serial and parallel graph Filter tails, multiply/min/max, unreleased versus
+released envelopes and nested Sample → Synth → Synth natural EOF. A frozen
+Pattern producer fixture plays a four-frame sample through nested Synths
+and verifies that the physical voice is detached within the same 16-frame
+render. A parallel fixture with a persistent constant branch correctly
+retains its indefinitely sounding voice. These changes do not alter saved
+song schemas or the existing file-export interfaces.
+
+**Remaining qualification:** moving transport pitch envelopes, loop-to-release
+control interactions, shared oscillator audio/control gates, concurrent NNA
+and virtual voices, and explicit offline FLAC versus buffered realtime
+comparison still need focused tests and possible fixes. Source-bearing
+Synths still reject backward replay and remain unavailable in the editor.

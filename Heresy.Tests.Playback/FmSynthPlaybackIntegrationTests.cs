@@ -1,4 +1,7 @@
+using System;
+using System.IO;
 using System.Numerics;
+using System.Text;
 
 using AwesomeAssertions;
 
@@ -7,6 +10,7 @@ using Heresy.Core.FmSynthesis;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
+using Heresy.Core.Samples;
 using Heresy.Playback;
 using Heresy.Render.Configuration;
 using Heresy.Render.Filters;
@@ -225,6 +229,80 @@ public sealed class FmSynthPlaybackIntegrationTests
 		System.Array.Fill(expected, 1f);
 		reference.ProcessInterleaved(expected);
 		actual.Should().Equal(expected);
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void PatternProducerRetiresDiscoveredFiniteSynthButKeepsIndefiniteBranch(
+		bool indefiniteConstantBranch)
+	{
+		SongDocument song = new();
+		ObjectId pcmId = song.AllocateObjectId();
+		song.Add(SampleDefinition.CreateImported(pcmId,
+			"4-frame PCM", "tiny.wav", FourFrameWave()));
+		ObjectId nestedId = song.AllocateObjectId();
+		song.Add(new FmSynthDefinition(nestedId, "Finite child",
+			new FmSynthGraph([
+				new FmSoundSourceNode(0, pcmId,
+					440.0 * Math.Pow(2.0, -9.0 / 12.0)),
+			], 0)));
+		ObjectId parentId = song.AllocateObjectId();
+		FmSynthNode[] graph = indefiniteConstantBranch
+			? [
+				new FmSoundSourceNode(0, nestedId,
+					440.0 * Math.Pow(2.0, -9.0 / 12.0)),
+				new FmConstantNode(1, 0.25),
+				new FmOperatorNode(2, FmOperatorKind.Add, [0, 1]),
+			  ]
+			: [
+				new FmSoundSourceNode(0, nestedId,
+					440.0 * Math.Pow(2.0, -9.0 / 12.0)),
+			  ];
+		song.Add(new FmSynthDefinition(parentId, "Parent",
+			new FmSynthGraph(graph, indefiniteConstantBranch ? 2 : 0)));
+		ObjectId patternId = song.AllocateObjectId();
+		DataPatternDefinition pattern = new(patternId, "Single note")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+		cell.SourceId = parentId;
+		cell.Note = new StartPatternNote();
+		song.Add(pattern);
+
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(
+				MonoConfiguration(1000)).Create(song, patternId);
+		float[] pcm = new float[16];
+		plan.Source.Render(pcm.Length, pcm);
+		for (int i = 0; i < 4; i++)
+			pcm[i].Should().BeApproximately(
+				indefiniteConstantBranch ? 0.75f : 0.5f, 1e-5f);
+		for (int i = 4; i < pcm.Length; i++)
+			pcm[i].Should().BeApproximately(
+				indefiniteConstantBranch ? 0.25f : 0f, 1e-5f);
+		if (indefiniteConstantBranch)
+			plan.Session.GetChannelState(0).CurrentVoice.Should().NotBeNull();
+		else
+			plan.Session.GetChannelState(0).CurrentVoice.Should().BeNull(
+				"the producer must observe a nested Synth's newly discovered EOF during the same block");
+	}
+
+	private static byte[] FourFrameWave()
+	{
+		using MemoryStream stream = new();
+		using BinaryWriter writer = new(stream, Encoding.ASCII, leaveOpen: true);
+		writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+		writer.Write(44);
+		writer.Write(Encoding.ASCII.GetBytes("WAVEfmt "));
+		writer.Write(16); writer.Write((ushort)1); writer.Write((ushort)1);
+		writer.Write(1000); writer.Write(2000);
+		writer.Write((ushort)2); writer.Write((ushort)16);
+		writer.Write(Encoding.ASCII.GetBytes("data"));
+		writer.Write(8);
+		for (int i = 0; i < 4; i++) writer.Write((short)16384);
+		writer.Flush();
+		return stream.ToArray();
 	}
 
 	[Test]

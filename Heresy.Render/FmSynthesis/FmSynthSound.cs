@@ -16,7 +16,7 @@ using Heresy.Render.Timing;
 
 namespace Heresy.Render.FmSynthesis;
 
-public sealed class FmSynthSound : ISound, IFirPreparationSound
+public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 {
 	private sealed class SourceVoice
 	{
@@ -57,6 +57,7 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 		public RenderContext? StereoChildContext { get; set; }
 		public long NextFrame { get; set; }
 		public int SampleRate { get; set; }
+		public bool ChildEndChanged { get; set; }
 
 		public void Reset(int sampleRate)
 		{
@@ -67,6 +68,7 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 			Array.Clear(Phases);
 			Array.Clear(Filters); // never reuse histories after rewind/rate change
 			NextFrame = 0;
+			ChildEndChanged = false;
 			SampleRate = sampleRate;
 		}
 	}
@@ -336,32 +338,28 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 	/// </summary>
 	private double GetMaximumAudioPathTailSeconds()
 	{
-		double tail = 0;
-		HashSet<int> visited = [];
-		Visit(_outputIndex);
-		return tail;
-
-		void Visit(int index)
+		// A serial cascade accumulates its tail allowances. Parallel paths
+		// use the longest branch. Parameter-only edges are not audio paths.
+		// The compiled node graph is acyclic and each node is visited once.
+		double[] tails = new double[_nodes.Length];
+		for (int index = 0; index < _nodes.Length; index++)
 		{
-			if (!visited.Add(index))
-				return;
 			CompiledNode compiled = _nodes[index];
 			switch (compiled.Definition)
 			{
-				case FmFilterNode filter:
-					if (filter.AudioInputNodeId.HasValue)
-					{
-						if (filter.Configuration is not null)
-							tail = Math.Max(tail, filter.TailSeconds);
-						Visit(compiled.InputIndices[0]);
-					}
+				case FmFilterNode filter when filter.AudioInputNodeId.HasValue:
+					double upstream = tails[compiled.InputIndices[0]];
+					double extra = filter.Configuration is not null
+						? filter.TailSeconds : 0;
+					tails[index] = upstream + extra;
 					break;
 				case FmOperatorNode:
 					foreach (int input in compiled.InputIndices)
-						Visit(input);
+						tails[index] = Math.Max(tails[index], tails[input]);
 					break;
 			}
 		}
+		return tails[_outputIndex];
 	}
 
 	/// <summary>
@@ -387,9 +385,10 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 			if (node.Definition is FmEnvelopeNode
 				&& node.Envelope is not null)
 			{
-				long? end =
-					node.Envelope.GetEndActiveFrameExclusiveAfterNoteOff(
-						noteOffFrame, sampleRate);
+				long? end = released.HasValue
+					? node.Envelope.GetEndActiveFrameExclusiveAfterNoteOff(
+						noteOffFrame, sampleRate)
+					: null;
 				silentFrom[index] = end;
 				if (end is long finite)
 					finiteReleaseEnd = Math.Max(finiteReleaseEnd, finite);
@@ -556,6 +555,16 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 
 			synthState.NextFrame =
 				checked(relativeFrame + 1);
+			if (synthState.ChildEndChanged)
+			{
+				// Sample EOF can become known only after its integrated
+				// pitch trajectory reaches the boundary. Recompute the
+				// containing graph's cutoff within this block, so an
+				// oscillator branch and serial Filter tails do not run
+				// indefinitely after an in-block natural end.
+				synthState.ChildEndChanged = false;
+				baseEnd = GetBaseEndFrameExclusive(sampleRate, synthState);
+			}
 		}
 	}
 
@@ -584,6 +593,12 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 				state.NextFrame,
 				noteOffFrame, baseEnd);
 			state.NextFrame++;
+			if (state.ChildEndChanged)
+			{
+				state.ChildEndChanged = false;
+				baseEnd = GetBaseEndFrameExclusive(
+					context.Configuration.SampleRate, state);
+			}
 		}
 	}
 
@@ -733,13 +748,27 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 			else
 				voice.Invocation.Sound.Render(state.MonoContext!,
 					voice.Invocation.State, frame, 1, mono);
-			// SampleSound discovers a natural end by observing the actual
-			// integrated source position. Modulated sample trajectories are
-			// not efficiently projectable, so retain that first observed
-			// boundary instead of replacing it with an indefinite guess.
-			if (voice.Invocation.State.NaturalEndFrameExclusive is long natural)
-				voice.EndFrame = voice.EndFrame.HasValue
-					? Math.Min(voice.EndFrame.Value, natural) : natural;
+			// Streaming sources discover their finite boundary only while
+			// rendering. A nested Synth does not necessarily publish a
+			// NaturalEndFrameExclusive in SoundState, so explicitly query
+			// its post-render end rather than waiting for another PCM block.
+			long? observed = voice.Invocation.State.NaturalEndFrameExclusive;
+			if (voice.Invocation.Sound is IStreamingFiniteSound streaming)
+			{
+				long? nestedEnd = streaming.GetEndFrameExclusive(
+					state.MonoContext!, voice.Invocation.State);
+				if (nestedEnd.HasValue)
+					observed = observed.HasValue
+						? Math.Min(observed.Value, nestedEnd.Value) : nestedEnd;
+			}
+			if (observed is long natural)
+			{
+				long? previous = voice.EndFrame;
+				voice.EndFrame = previous.HasValue
+					? Math.Min(previous.Value, natural) : natural;
+				if (voice.EndFrame != previous)
+					state.ChildEndChanged = true;
+			}
 		}
 		if (voice.EndFrame.HasValue && frame >= voice.EndFrame.Value
 			&& voice.Filters is not null && !voice.InputFinished)

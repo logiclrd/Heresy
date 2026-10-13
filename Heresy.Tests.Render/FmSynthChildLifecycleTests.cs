@@ -179,6 +179,110 @@ public sealed class FmSynthChildLifecycleTests
         Assert.That(pcm, Is.EqualTo(new float[] { 0.5f, 0.5f, 0.5f, 0, 0, 0 }));
     }
 
+    [Test]
+    public void CascadedGraphFiltersAccumulateAuthoredTailAndParallelBranchesTakeLongest()
+    {
+        Registry registry = new();
+        registry.Add(SampleId, MakeSample([1, 1, 1], 1000));
+        FilterDefinition definition = new((ObjectId)95U, "Graph filter");
+        FilterInstance use = new(definition);
+        use.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(100));
+
+        FmSynthSound synth = MakeSynth(registry, [
+            new FmSoundSourceNode(0, SampleId, C4),
+            new FmFilterNode(1, 0, use, tailSeconds: 0.002),
+            new FmFilterNode(2, 1, use, tailSeconds: 0.003),
+            new FmFilterNode(3, 0, use, tailSeconds: 0.004),
+            new FmOperatorNode(4, FmOperatorKind.Add, [2, 3]),
+        ], 4);
+        SoundState state = synth.CreateState();
+        RenderContext context = Mono(1000);
+        Assert.That(synth, Is.InstanceOf<IStreamingFiniteSound>());
+        Assert.That(synth.GetEndFrameExclusive(context, state), Is.Null);
+        float[] audio = new float[12];
+        synth.Render(context, state, 0, audio.Length, audio);
+        // Source stops at 3; the serial branch's 2+3 frames outlast
+        // the 4-frame parallel branch. Using max(2,3,4) would cut early.
+        Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(8));
+        Assert.That(audio[3], Is.GreaterThan(0));
+    }
+
+    [TestCase(FmOperatorKind.Add, false)]
+    [TestCase(FmOperatorKind.Minimum, false)]
+    [TestCase(FmOperatorKind.Maximum, false)]
+    [TestCase(FmOperatorKind.Multiply, true)]
+    public void MixedFiniteSourceAndIndefiniteConstantAreConservative(
+        FmOperatorKind operation, bool finitelyBounded)
+    {
+        Registry registry = new();
+        registry.Add(SampleId, MakeSample([0.25f, 0.5f, 0.75f], 8));
+        FmSynthSound synth = MakeSynth(registry, [
+            new FmSoundSourceNode(0, SampleId, C4),
+            new FmConstantNode(1, 0.5),
+            new FmOperatorNode(2, operation, [0, 1]),
+        ], 2);
+        SoundState state = synth.CreateState();
+        RenderContext context = Mono(8);
+        Assert.That(synth.GetEndFrameExclusive(context, state), Is.Null);
+        float[] pcm = new float[6];
+        synth.Render(context, state, 0, pcm.Length, pcm);
+        Assert.That(synth.GetEndFrameExclusive(context, state),
+            finitelyBounded ? Is.EqualTo(3) : Is.Null);
+        if (operation == FmOperatorKind.Multiply)
+        {
+            Assert.That(pcm, Is.EqualTo(new float[]
+                { 0.125f, 0.25f, 0.375f, 0, 0, 0 }));
+        }
+    }
+
+    [Test]
+    public void UnreleasedEnvelopeDoesNotInheritHypotheticalNoteOffZero()
+    {
+        Registry registry = new();
+        registry.Add(SampleId, MakeSample([1, 1, 1], 8));
+        registry.AddEnvelope(EnvelopeId, new ThreeFrameRelease());
+        FmSynthSound synth = MakeSynth(registry, [
+            new FmSoundSourceNode(0, SampleId, C4),
+            new FmEnvelopeNode(1, EnvelopeId),
+            new FmOperatorNode(2, FmOperatorKind.Add, [0, 1]),
+        ], 2);
+        SoundState state = synth.CreateState();
+        RenderContext context = Mono(8);
+        Assert.That(synth.GetEndFrameExclusive(context, state), Is.Null,
+            "without Note Off the envelope has no release deadline");
+        float[] audio = new float[4];
+        synth.Render(context, state, 0, 4, audio);
+        Assert.That(synth.GetEndFrameExclusive(context, state), Is.Null,
+            "a finite sample does not end an unreleased envelope branch");
+        Assert.That(audio[3], Is.GreaterThan(0));
+        state.NoteOffTime = TimeSpan.FromSeconds(2.0 / 8);
+        Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(5),
+            "the actual Note Off, not a hypothetical zero, bounds the envelope");
+    }
+
+    [Test]
+    public void NestedStreamingSourceReportsFiniteEndWithinFirstPcmBlock()
+    {
+        Registry registry = new();
+        registry.Add(SampleId, MakeSample([1, 2, 3], 8));
+        ObjectId nestedId = (ObjectId)88U;
+        FmSynthSound nested = MakeSynth(registry, [
+            new FmSoundSourceNode(0, SampleId, C4),
+        ]);
+        registry.Add(nestedId, nested);
+        FmSynthSound parent = MakeSynth(registry, [
+            new FmSoundSourceNode(0, nestedId, C4),
+        ]);
+        SoundState state = parent.CreateState();
+        RenderContext context = Mono(8);
+        Assert.That(parent.GetEndFrameExclusive(context, state), Is.Null);
+        float[] pcm = new float[10];
+        parent.Render(context, state, 0, pcm.Length, pcm);
+        Assert.That(pcm, Is.EqualTo(new float[] { 1, 2, 3, 0, 0, 0, 0, 0, 0, 0 }));
+        Assert.That(parent.GetEndFrameExclusive(context, state), Is.EqualTo(3));
+    }
+
     private static FmSynthSound MakeSynth(Registry registry,
         FmSynthNode[] nodes, int output = 0)
         => new(new FmSynthGraph(nodes, output),
