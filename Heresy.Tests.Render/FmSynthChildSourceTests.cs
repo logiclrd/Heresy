@@ -109,6 +109,33 @@ public sealed class FmSynthChildSourceTests
     }
 
     [Test]
+    public void FrozenPreparedSourceRejectsRateChangesWithoutDiscardingItsState()
+    {
+        ObjectId id = (ObjectId)302U;
+        SampleSound sample = new(new SampleDefinition(id, "Frozen",
+            new ExternalAssetReference("frozen.wav")),
+            new MemorySampleData(8, 1, new float[] { 1, 2, 3, 4 }));
+        Resolver resolver = new((id, sample));
+        PreparedToneFilterStageFactory prepared = new(8);
+        prepared.Freeze();
+        FmSynthSound synth = new(new FmSynthGraph([
+            new FmSoundSourceNode(0, id, C4),
+        ], 0), resolver, soundResolver: resolver,
+            preparedChildFilterFactory: prepared);
+        SoundState state = synth.CreateState();
+        float[] first = new float[2];
+        synth.Render(Mono(8), state, 0, 2, first);
+        Assert.That(first, Is.EqualTo(new float[] { 1, 2 }));
+        Assert.That(() => synth.PrepareReplay(Mono(16), state, 0),
+            Throws.TypeOf<InvalidOperationException>(),
+            "frozen FIR plans are sample-rate-specific and cannot be reused");
+        float[] continued = new float[2];
+        synth.Render(Mono(8), state, 2, 2, continued);
+        Assert.That(continued, Is.EqualTo(new float[] { 3, 4 }),
+            "a rejected seek must leave the original frozen voice intact");
+    }
+
+    [Test]
     public void ConstantPitchIsIndependentOfOuterNoteAndSpeed()
     {
         ObjectId id = (ObjectId)3U;
