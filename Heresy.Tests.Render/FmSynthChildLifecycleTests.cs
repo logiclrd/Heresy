@@ -384,6 +384,22 @@ public sealed class FmSynthChildLifecycleTests
             Assert.That(output.AsSpan(7).ToArray(), Is.All.EqualTo(0f),
                 "direct Render must not exceed its declared exclusive end");
         });
+        synth.PrepareReplay(context, state, targetFrame: 2);
+        int compiledLookups = registry.SoundLookups;
+        float[] reheated = new float[10];
+        synth.Render(context, state, 2, reheated.Length, reheated);
+        Assert.Multiple(() =>
+        {
+            Assert.That(reheated, Is.EqualTo(output.AsSpan(2).ToArray())
+                .Within(1e-6f),
+                "a replayed graph IIR must reproduce its pre-EOF and drained tail");
+            Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(7));
+            Assert.That(registry.SoundLookups, Is.EqualTo(compiledLookups));
+        });
+        synth.PrepareReplay(context, state, targetFrame: 0);
+        float[] fromStart = new float[12];
+        synth.Render(context, state, 0, fromStart.Length, fromStart);
+        Assert.That(fromStart, Is.EqualTo(output).Within(1e-6f));
     }
 
     [Test]
