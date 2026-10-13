@@ -869,6 +869,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		{
 			FmConstantNode => "Constant",
 			FmOscillatorNode => "Oscillator",
+			FmSoundSourceNode => "Source",
 			FmEnvelopeNode => "Envelope",
 			FmFilterNode => "Filter",
 			FmOperatorNode => "Operator",
@@ -886,6 +887,10 @@ public sealed class FmSynthGraphCanvas : UserControl
 			FmOscillatorNode oscillator =>
 				$"{oscillator.Waveform}, "
 				+ $"{oscillator.FrequencyHz.ToString("0.###", CultureInfo.InvariantCulture)} Hz",
+			FmSoundSourceNode source =>
+				$"Source <{source.SourceId.Value}> @ "
+				+ $"{source.FrequencyHz.ToString("0.###", CultureInfo.InvariantCulture)} Hz"
+				+ (source.Constant ? " (Constant)" : ""),
 			FmEnvelopeNode envelope =>
 				$"Envelope <{envelope.EnvelopeId.Value}>",
 			FmFilterNode filter =>
