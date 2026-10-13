@@ -1,8 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 
 using Heresy.Core.FmSynthesis;
+using Heresy.Core.Objects;
+using Heresy.Render.Configuration;
+using Heresy.Render.Playback;
+using Heresy.Render.Samples;
 using Heresy.Render.Envelopes;
 using Heresy.Render.Filters;
 using Heresy.Render.Sounds;
@@ -13,25 +18,44 @@ namespace Heresy.Render.FmSynthesis;
 
 public sealed class FmSynthSound : ISound, IFirPreparationSound
 {
+	private sealed class SourceVoice
+	{
+		public SourceVoice(SoundInvocation invocation)
+		{
+			Invocation = invocation;
+		}
+		public SoundInvocation Invocation { get; }
+		public StreamingFilterChain? Filters { get; set; }
+		public bool InputFinished { get; set; }
+		public long? EndFrame { get; set; }
+	}
+
 	private sealed class FmSynthState : SoundState
 	{
 		public FmSynthState(
 			int nodeCount,
-			int oscillatorCount)
+			int oscillatorCount,
+			SourceVoice?[] sources)
 		{
 			Values = new double[nodeCount];
 			Phases = new double[oscillatorCount];
 			Filters = new FmFilterNodeProcessor.State?[nodeCount];
+			Sources = sources;
 		}
 
 		public double[] Values { get; }
 		public double[] Phases { get; }
 		public FmFilterNodeProcessor.State?[] Filters { get; }
+		public SourceVoice?[] Sources { get; }
+		public RenderContext? MonoContext { get; set; }
 		public long NextFrame { get; set; }
 		public int SampleRate { get; set; }
 
 		public void Reset(int sampleRate)
 		{
+			if (Sources.Any(source => source is not null) && SampleRate != 0)
+				throw new NotSupportedException(
+					"Replaying child-source Synth state requires the subsequent seek milestone.");
 			Array.Clear(Values);
 			Array.Clear(Phases);
 			Array.Clear(Filters); // never reuse histories after rewind/rate change
@@ -45,17 +69,21 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 		int[] InputIndices,
 		int OscillatorIndex,
 		IEnvelopeCurve? Envelope,
-		FmFilterNodeProcessor? Filter);
+		FmFilterNodeProcessor? Filter,
+		ISound? Source);
 
 	private readonly CompiledNode[] _nodes;
 	private readonly int _outputIndex;
 	private readonly int _oscillatorCount;
 	private readonly NewNotePolicy _newNotePolicy;
+	private readonly bool _hasSources;
+	private const double C4FrequencyHz = 440.0 * 0.59460355750136053336; // 2^(-9/12)
 
 	public FmSynthSound(
 		FmSynthGraph graph,
 		IEnvelopeCurveResolver envelopeResolver,
-		NewNotePolicy? newNotePolicy = null)
+		NewNotePolicy? newNotePolicy = null,
+		ISoundResolver? soundResolver = null)
 	{
 		ArgumentNullException.ThrowIfNull(graph);
 		ArgumentNullException.ThrowIfNull(envelopeResolver);
@@ -72,12 +100,15 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 
 		Visit(graph.OutputNodeId);
 
-		// A persisted reference alone must never appear to be a playable
-		// node: until the preparation/invocation adapter is implemented,
-		// reject at compilation, not halfway through a PCM callback.
-		if (ordered.Any(node => node is FmSoundSourceNode))
+		_hasSources = ordered.Any(node => node is FmSoundSourceNode);
+		if (_hasSources && soundResolver is null)
 			throw new NotSupportedException(
-				"ISound-fed Synth nodes require the prepared child-invocation renderer.");
+				"ISound-fed Synth nodes require the prepared child-invocation resolver.");
+		// Audio-rate multipliers require the next milestone's integrated
+		// child pitch trajectory. Never silently ignore a connected input.
+		if (ordered.OfType<FmSoundSourceNode>().Any(node => node.MultiplierNodeId.HasValue))
+			throw new NotSupportedException(
+				"Modulated ISound source nodes require integrated child pitch trajectories.");
 
 		Dictionary<int, int> indexById = [];
 		for (int index = 0; index < ordered.Count; index++)
@@ -105,6 +136,15 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 					? oscillatorIndex++
 					: -1;
 
+			ISound? sourceSound = null;
+			if (node is FmSoundSourceNode sourceNode
+				&& !sourceNode.SourceId.IsNone)
+			{
+				// Resolving is done on the frozen-song preparation thread,
+				// never in CreateInvocation or EvaluateFrame.
+				soundResolver!.TryResolve(sourceNode.SourceId,
+					mixdown: false, out sourceSound);
+			}
 			compiled.Add(
 				new CompiledNode(
 					node,
@@ -112,7 +152,8 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 					phaseIndex,
 					curve,
 					node is FmFilterNode filter
-						? new FmFilterNodeProcessor(filter, indexById) : null));
+						? new FmFilterNodeProcessor(filter, indexById) : null,
+					sourceSound));
 		}
 
 		_nodes = [.. compiled];
@@ -134,10 +175,44 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 	public NoteConfigurationSnapshot SnapshotNoteConfiguration()
 		=> new(_newNotePolicy);
 
-	public SoundState CreateState()
-		=> new FmSynthState(
-			_nodes.Length,
-			_oscillatorCount);
+	public SoundState CreateState() => CreateBoundState(1.0, 1.0);
+
+	public SoundInvocation CreateInvocation(
+		double pitchMultiplier, double playbackSpeedMultiplier)
+	{
+		SoundState state = CreateBoundState(pitchMultiplier,
+			playbackSpeedMultiplier);
+		return new SoundInvocation(this, state, SnapshotNoteConfiguration());
+	}
+
+	private FmSynthState CreateBoundState(
+		double pitchMultiplier, double playbackSpeedMultiplier)
+	{
+		if (!(pitchMultiplier > 0.0) || !double.IsFinite(pitchMultiplier))
+			throw new ArgumentOutOfRangeException(nameof(pitchMultiplier));
+		if (!(playbackSpeedMultiplier > 0.0) || !double.IsFinite(playbackSpeedMultiplier))
+			throw new ArgumentOutOfRangeException(nameof(playbackSpeedMultiplier));
+		SourceVoice?[] sources = new SourceVoice?[_nodes.Length];
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			if (_nodes[i].Definition is not FmSoundSourceNode node
+				|| _nodes[i].Source is not ISound sound)
+				continue;
+			double childPitch = (node.FrequencyHz / C4FrequencyHz)
+				* (node.Constant ? 1.0 : pitchMultiplier);
+			double childSpeed = node.Constant ? 1.0 : playbackSpeedMultiplier;
+			SoundInvocation? invocation = sound.CreateInvocation(
+				childPitch, childSpeed);
+			if (invocation is not null)
+				sources[i] = new SourceVoice(invocation);
+		}
+		FmSynthState state = new(_nodes.Length, _oscillatorCount, sources)
+		{
+			PitchMultiplier = pitchMultiplier,
+			PlaybackSpeedMultiplier = playbackSpeedMultiplier,
+		};
+		return state;
+	}
 
 	/// <summary>
 	/// Explicit off-PCM control boundary for FIR modulation. The caller runs
@@ -250,6 +325,8 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 	private long? GetBaseEndFrameExclusive(
 		int sampleRate, TimeSpan? noteOffTime)
 	{
+		if (_hasSources)
+			return null; // child releases/finite ends are integrated next milestone
 		if (!noteOffTime.HasValue)
 			return null;
 		long noteOffFrame = FrameTime.Ceiling(noteOffTime.Value, sampleRate);
@@ -351,6 +428,7 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 			context.Configuration.SampleRate;
 		if (synthState.SampleRate != sampleRate)
 			synthState.Reset(sampleRate);
+		PrepareChildRender(context, synthState);
 
 		EnsureFrame(
 			context,
@@ -493,6 +571,10 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 							compiled.InputIndices,
 							state.Values),
 
+					FmSoundSourceNode =>
+						EvaluateSource(state, index, frame,
+							context.Configuration.SampleRate, noteOffFrame),
+
 					FmOscillatorNode oscillator =>
 						EvaluateOscillator(
 							oscillator,
@@ -516,6 +598,64 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 		}
 
 		return state.Values[_outputIndex];
+	}
+
+	/// <summary>One isolated mono child frame with per-voice DSP state.
+	/// The mono output speaker has zero positional importance, so it never
+	/// applies the parent's spatialization. SampleSound stereo source channels
+	/// are averaged rather than summed; other ISound implementations already
+	/// own their own scalar mix semantics.</summary>
+	private static double EvaluateSource(FmSynthState state, int index,
+		long frame, int sampleRate, long? noteOffFrame)
+	{
+		SourceVoice? voice = state.Sources[index];
+		if (voice is null)
+			return 0.0;
+		Span<float> mono = stackalloc float[1];
+		if (!voice.EndFrame.HasValue || frame < voice.EndFrame.Value)
+			voice.Invocation.Sound.Render(state.MonoContext!,
+				voice.Invocation.State, frame, 1, mono);
+		else if (voice.Filters is not null && !voice.InputFinished)
+		{
+			voice.Filters.FinishInput();
+			voice.InputFinished = true;
+		}
+		if (voice.Invocation.Sound is SampleSound sample)
+			mono[0] /= sample.SourceChannelCount;
+		voice.Filters?.ProcessFrame(mono);
+		if (voice.Invocation.Configuration.Envelopes.Volume is { } envelope)
+		{
+			long? released = noteOffFrame.HasValue && frame >= noteOffFrame
+				? noteOffFrame : null;
+			mono[0] *= (float)envelope.GetValue(frame, sampleRate, released);
+		}
+		return mono[0];
+	}
+
+	private static void PrepareChildRender(
+		RenderContext context, FmSynthState state)
+	{
+		if (state.MonoContext is null)
+		{
+			state.MonoContext = new RenderContext(new RenderConfiguration(
+				context.Configuration.SampleRate, [
+				new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0)]));
+			for (int i = 0; i < state.Sources.Length; i++)
+			{
+				SourceVoice? voice = state.Sources[i];
+				if (voice?.Invocation.ToneFilters is { } filters)
+					voice.Filters = new StreamingFilterChain(filters,
+						context.Configuration.SampleRate, 1);
+			}
+		}
+		foreach (SourceVoice? voice in state.Sources)
+		{
+			if (voice is null)
+				continue;
+			voice.Invocation.State.NoteOffTime = state.NoteOffTime;
+			voice.EndFrame = voice.Invocation.Sound.GetEndFrameExclusive(
+				state.MonoContext, voice.Invocation.State);
+		}
 	}
 
 	private static double EvaluateEnvelope(

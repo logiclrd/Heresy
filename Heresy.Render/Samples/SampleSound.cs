@@ -47,6 +47,9 @@ public sealed class SampleSound : ISound, ISourceFrameSeekableSound
 	/// </summary>
 	public NewNotePolicy NewNotePolicy { get; set; }
 
+	/// <summary>Original PCM channels before graph-domain mono averaging.</summary>
+	public int SourceChannelCount => _data.ChannelCount;
+
 	public SourceFrameSeekCost SeekCost
 		=> SourceFrameSeekCost.Direct;
 

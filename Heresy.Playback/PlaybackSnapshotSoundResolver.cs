@@ -154,10 +154,11 @@ internal sealed class PlaybackSnapshotSoundResolver
 				break;
 
 			case FmSynthDefinition fmSynth:
-				sound =
-					new FmSynthSound(
-						fmSynth.Graph,
-						this);
+				// Reject cross-object Synth/Instrument cycles before recursively
+				// preparing any referenced sounds. No live-song traversal in PCM.
+				FmSoundSourceReferences.Validate(_document, fmSynth.Id, fmSynth.Graph);
+				sound = new FmSynthSound(fmSynth.Graph, this,
+					soundResolver: this);
 				break;
 
 			case PatternDefinition when mixdown:

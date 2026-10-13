@@ -1,0 +1,215 @@
+using System;
+using System.Collections.Generic;
+using System.Numerics;
+
+using Heresy.Core.Assets;
+using Heresy.Core.FmSynthesis;
+using Heresy.Core.Instruments;
+using Heresy.Core.Objects;
+using Heresy.Core.Samples;
+using Heresy.Render.Configuration;
+using Heresy.Render.Envelopes;
+using Heresy.Render.FmSynthesis;
+using Heresy.Render.Instruments;
+using Heresy.Render.Playback;
+using Heresy.Render.Samples;
+using Heresy.Render.Sounds;
+
+using NUnit.Framework;
+
+namespace Heresy.Tests.Render;
+
+[TestFixture]
+public sealed class FmSynthChildSourceTests
+{
+    private static readonly double C4 = 440.0 * Math.Pow(2.0, -9.0 / 12.0);
+
+    [Test]
+    public void SourceResolutionOccursAtPreparationAndInvocationIsOwnedPerVoice()
+    {
+        ObjectId id = (ObjectId)4U;
+        CountingSound child = new();
+        Resolver resolver = new((id, child));
+        FmSynthSound synth = new(new FmSynthGraph([
+            new FmSoundSourceNode(0, id, C4),
+        ], 0), resolver, soundResolver: resolver);
+        Assert.That(resolver.Calls, Is.EqualTo(1));
+        SoundInvocation first = synth.CreateInvocation(1, 1);
+        SoundInvocation second = synth.CreateInvocation(2, 1);
+        Assert.That(child.Invocations, Is.EqualTo(2));
+        RenderContext context = Mono(8);
+        float[] a = new float[4], b = new float[4];
+        synth.Render(context, first.State, 0, 4, a);
+        synth.Render(context, second.State, 0, 4, b);
+        Assert.Multiple(() =>
+        {
+            Assert.That(resolver.Calls, Is.EqualTo(1));
+            Assert.That(child.Invocations, Is.EqualTo(2));
+            Assert.That(a, Is.EqualTo(new float[] { 1, 2, 3, 4 }));
+            Assert.That(b, Is.EqualTo(new float[] { 2, 4, 6, 8 }));
+        });
+        Assert.That(() => synth.Render(context, first.State, 0, 1, new float[1]),
+            Throws.TypeOf<NotSupportedException>(),
+            "until replay reconstruction exists, seeking must not reuse advanced child state");
+    }
+
+    [Test]
+    public void ConstantPitchIsIndependentOfOuterNoteAndSpeed()
+    {
+        ObjectId id = (ObjectId)3U;
+        CountingSound child = new();
+        Resolver resolver = new((id, child));
+        FmSynthSound synth = new(new FmSynthGraph([
+            new FmSoundSourceNode(1, id, C4 * 2, constant: true),
+        ], 1), resolver, soundResolver: resolver);
+        SoundInvocation state = synth.CreateInvocation(3, 1.5);
+        float[] output = new float[2];
+        synth.Render(Mono(4), state.State, 0, 2, output);
+        Assert.That(output, Is.EqualTo(new float[] { 2, 4 }));
+    }
+
+    [Test]
+    public void StereoSampleUsesArithmeticMonoDownmixThenParentSpatialization()
+    {
+        ObjectId id = (ObjectId)3U;
+        SampleDefinition definition = new(id, "Stereo",
+            new ExternalAssetReference("stereo.wav"));
+        SampleSound sample = new(definition, new MemorySampleData(4, 2,
+            new float[] { 1, -0.5f, 0.5f, 0.5f, -1, 1 }));
+        Resolver resolver = new((id, sample));
+        FmSynthSound synth = new(new FmSynthGraph([
+            new FmSoundSourceNode(0, id, C4),
+        ], 0), resolver, soundResolver: resolver);
+        SoundInvocation inv = synth.CreateInvocation(1, 1);
+        RenderContext stereo = new(RenderConfiguration.Stereo(4));
+        float[] output = new float[6];
+        synth.Render(stereo, inv.State, 0, 3, output);
+        Assert.Multiple(() =>
+        {
+            Assert.That(output[0], Is.EqualTo(0.25f).Within(1e-6f));
+            Assert.That(output[1], Is.EqualTo(0.25f).Within(1e-6f));
+            Assert.That(output[2], Is.EqualTo(0.5f).Within(1e-6f));
+            Assert.That(output[3], Is.EqualTo(0.5f).Within(1e-6f));
+            Assert.That(output[4], Is.EqualTo(0).Within(1e-6f));
+            Assert.That(output[5], Is.EqualTo(0).Within(1e-6f));
+        });
+    }
+
+    [Test]
+    public void NestedInstrumentFlattensItsSampleAndAppliesCapturedVolumeEnvelope()
+    {
+        ObjectId instrumentId = (ObjectId)8U, sampleId = (ObjectId)9U;
+        ObjectId envelopeId = (ObjectId)10U;
+        SampleSound sample = new(new SampleDefinition(sampleId, "P",
+            new ExternalAssetReference("p.wav")),
+            new MemorySampleData(4, 1, new float[] { 1, 1, 1, 1 }));
+        Resolver resolver = new();
+        InstrumentSound instrument = new(
+            pitch => new ToneSpecification {
+                SourceId = sampleId, VolumeEnvelopeId = envelopeId },
+            resolver, resolver);
+        resolver.Add(sampleId, sample);
+        resolver.Add(instrumentId, instrument);
+        resolver.AddEnvelope(envelopeId, new HalfCurve());
+        FmSynthSound synth = new(new FmSynthGraph([
+            new FmSoundSourceNode(0, instrumentId, C4),
+        ], 0), resolver, soundResolver: resolver);
+        SoundInvocation voice = synth.CreateInvocation(1, 1);
+        float[] output = new float[4];
+        synth.Render(Mono(4), voice.State, 0, 4, output);
+        Assert.Multiple(() => {
+            Assert.That(output, Is.EqualTo(new float[] { 0.5f, 0.5f, 0.5f, 0.5f }));
+            Assert.That(resolver.Calls, Is.EqualTo(2),
+                "one lookup during Synth preparation, one at Instrument invocation");
+        });
+    }
+
+    [Test]
+    public void UnassignedAndMissingSourceProduceSilenceWithoutPcmResolverCalls()
+    {
+        Resolver resolver = new();
+        FmSynthSound synth = new(new FmSynthGraph([
+            new FmSoundSourceNode(0, ObjectId.None, C4),
+            new FmSoundSourceNode(1, (ObjectId)555U, C4),
+            new FmOperatorNode(2, FmOperatorKind.Add, [0, 1]),
+        ], 2), resolver, soundResolver: resolver);
+        SoundState state = synth.CreateState();
+        float[] result = [1, 1];
+        synth.Render(Mono(4), state, 0, 2, result);
+        Assert.That(result, Is.EqualTo(new float[] { 1, 1 }));
+        Assert.That(resolver.Calls, Is.EqualTo(1));
+    }
+
+    [Test]
+    public void ModulatedSourcesFailPreflightInsteadOfIgnoringGraphInput()
+    {
+        ObjectId id = (ObjectId)8U;
+        Resolver resolver = new((id, new CountingSound()));
+        Assert.That(() => new FmSynthSound(new FmSynthGraph([
+            new FmConstantNode(0, 2),
+            new FmSoundSourceNode(1, id, C4, multiplierNodeId: 0),
+        ], 1), resolver, soundResolver: resolver),
+            Throws.TypeOf<NotSupportedException>().With.Message
+                .Contains("integrated child pitch"));
+    }
+
+    private static RenderContext Mono(int rate) => new(
+        new RenderConfiguration(rate, [
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
+        ]));
+
+    private sealed class HalfCurve : IEnvelopeCurve
+    {
+        public double GetValue(long activeFrame, int sampleRate,
+            long? noteOffActiveFrame) => 0.5;
+    }
+
+    private sealed class CountingSound : ISound
+    {
+        private sealed class State : SoundState { }
+        public int Invocations { get; private set; }
+        public SoundState CreateState() => new State();
+        public NoteConfigurationSnapshot SnapshotNoteConfiguration() =>
+            NoteConfigurationSnapshot.Default;
+        public SoundInvocation CreateInvocation(double pitchMultiplier,
+            double playbackSpeedMultiplier)
+        {
+            Invocations++;
+            SoundState state = CreateState();
+            state.PitchMultiplier = pitchMultiplier;
+            state.PlaybackSpeedMultiplier = playbackSpeedMultiplier;
+            return new SoundInvocation(this, state, SnapshotNoteConfiguration());
+        }
+        public long? GetEndFrameExclusive(RenderContext context, SoundState state) => null;
+        public void Render(RenderContext context, SoundState state, long startFrame,
+            int frameCount, Span<float> destination)
+        {
+            for (int i = 0; i < frameCount; i++)
+                destination[i] += (float)((startFrame + i + 1)
+                    * state.PitchMultiplier * state.PlaybackSpeedMultiplier);
+        }
+    }
+
+    private sealed class Resolver : ISoundResolver, IEnvelopeCurveResolver
+    {
+        private readonly Dictionary<ObjectId, ISound> _sounds = [];
+        private readonly Dictionary<ObjectId, IEnvelopeCurve> _envelopes = [];
+        public int Calls { get; private set; }
+
+        public Resolver(params (ObjectId Id, ISound Sound)[] sounds)
+        {
+            foreach ((ObjectId id, ISound sound) in sounds)
+                Add(id, sound);
+        }
+        public void Add(ObjectId id, ISound sound) => _sounds.Add(id, sound);
+        public void AddEnvelope(ObjectId id, IEnvelopeCurve envelope) =>
+            _envelopes.Add(id, envelope);
+        public bool TryResolve(ObjectId sourceId, bool mixdown, out ISound? sound)
+        {
+            Calls++;
+            return _sounds.TryGetValue(sourceId, out sound);
+        }
+        public bool TryResolve(ObjectId envelopeId, out IEnvelopeCurve? curve) =>
+            _envelopes.TryGetValue(envelopeId, out curve);
+    }
+}

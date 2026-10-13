@@ -1,12 +1,14 @@
 # Synth graph ISound source — architecture and staged implementation
 
-**Status (13 October 2026):** source **reference/data-model foundation** implemented.
-The prepared child-invocation PCM adapter, public graph editor controls and
-cross-song import are **not yet implemented**. The UI must not offer creation
-of this node until the render path exists. The current renderer fails
-explicitly **during preparation** for a reachable `FmSoundSourceNode`, never
-silently produces plausible but incorrect PCM. Do not mark the overall
-feature complete based only on persistence tests.
+**Status (13 October 2026):** source **reference/data-model foundation** and
+**prepared child-invocation/mono-output slice** implemented. Graph editing,
+cross-song import, integrated audio-rate modulation, full release/tail/end
+semantics, and deterministic backward replay remain unimplemented. The UI
+must not offer creation of this node until the remaining rendering slices
+are complete. Connected modulation inputs fail at preparation rather than
+being silently ignored; backwards replay of an advanced source voice fails
+explicitly instead of reusing stale DSP history. Do not mark the overall
+feature complete based on the playback of constant-frequency source nodes.
 
 ## Persistent graph contract
 
@@ -108,9 +110,20 @@ through `CreateInvocation` where pitch must be positive.
 1. **Reference foundation — complete:** immutable node schema,
    JSON/snapshot/tombstone coverage, numeric and recursive reference cycle
    preflight, and fail-fast render rejection while not yet executable.
-2. **Prepared recursive binding and mono adapter:** resolve eligible source
-   once per frozen graph preparation, flatten child Instrument invocation,
-   capture release/effect policies and produce scalar graph-domain output.
+2. **Prepared recursive binding and mono adapter — complete:** resolve eligible
+   source once per frozen graph preparation, flatten child Instrument invocation,
+   capture volume and per-tone Filter configuration and produce scalar
+   graph-domain output. The adapter has independent per-voice states, a mono
+   render context with zero positional importance and arithmetic averaging of
+   PCM source channels (so stereo L/R become (L+R)/2). A node with no resolved
+   source is silent. It computes the initial child invocation from the
+   requested Hz/C4 ratio, parent pitch/speed or Constant isolation, without
+   dispatching library lookups from its PCM frame loop. Child Tone Filter
+   chains are per-voice and prepared on first render for the render sample
+   rate; their FIR scheduling and end/tail ownership are next-slice work.
+   The parent Synth applies spatialization only after the mono graph output.
+   Existing graphs and renderer constructors without a source remain
+   compatible. The public authoring/editor affordance is intentionally absent.
 3. **Sample-accurate pitch, note release and seek:** implement integrated
    frequency modulation, end/tail ownership, chunking/replay determinism,
    multichannel normalization and no-alloc steady rendering.
@@ -123,3 +136,28 @@ through `CreateInvocation` where pitch must be positive.
 
 Each slice needs its own tests/CI acceptance; **do not expose the node as a
 usable editor feature until slices 2–3 pass**.
+
+### Limitations of the prepared mono slice
+
+The prepared child sound is selected only once for each Synth invocation.
+Nested Instrument tone selection and the captured Volume Envelope are
+honored; the inner Sample/Synth supplies mono signal to the outer graph.
+The neutral frequency uses C4 = 440 * 2^(-9/12) Hz. Constant sources
+receive neither parent note pitch nor playback-speed scaling.
+
+This checkpoint is **not** the full musical execution contract. Connected
+modulation input is rejected at preparation, because altering a sound state's
+instantaneous pitch does not advance its sample position correctly. Source
+voices do not yet support backwards render replay or changing output sample
+rates on an existing state. Any graph containing a child source conservatively
+reports no finite end, preventing the old FM draining logic from cutting a
+child's release but leaving bounded voice-end determination for the next
+milestone. Pitch/Filter/Panning envelopes, child FIR realtime scheduling,
+post-end/filter tail processing and exact transient release behavior must be
+completed and tested before editor exposure. Source resolution occurs while
+constructing the frozen renderer. A node's child voice is created when the
+parent's `CreateInvocation` runs; `ISound` sounds that flatten recursively
+may resolve their already-prepared tone target at that invocation boundary,
+not in PCM render. Mono context/filter preparation occurs only on the
+first PCM render (once per child state and sample rate) pending explicit
+off-audio-thread preparation work.

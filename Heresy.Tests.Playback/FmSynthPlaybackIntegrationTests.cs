@@ -63,6 +63,39 @@ public sealed class FmSynthPlaybackIntegrationTests
 
 
 	[Test]
+	public void FrozenPatternPlaybackBindsNestedSynthSourceBeforeRendering()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(childId, "Child",
+			new FmSynthGraph([new FmConstantNode(0, 0.375)], 0)));
+		ObjectId parentId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(parentId, "Parent",
+			new FmSynthGraph([
+				new FmSoundSourceNode(0, childId,
+					440.0 * System.Math.Pow(2, -9.0 / 12.0)),
+			], 0)));
+
+		ObjectId patternId = document.AllocateObjectId();
+		DataPatternDefinition pattern = new(patternId, "Nested")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+		cell.SourceId = parentId;
+		cell.Note = new StartPatternNote();
+		document.Add(pattern);
+		IAudioOutputSource outputSource = new PlaybackRequestAudioSourceFactory(
+			MonoConfiguration(sampleRate: 100)).Create(
+				PatternPlaybackRequest.Create(document, patternId,
+					repeat: false));
+		float[] output = new float[4];
+		outputSource.Render(4, output);
+		output.Should().Equal(0.375f, 0.375f, 0.375f, 0.375f);
+	}
+
+	[Test]
 	public void PatternPlaybackUsesRealFmFilterDspFromFrozenSharedDefinition()
 	{
 		SongDocument document = new();
