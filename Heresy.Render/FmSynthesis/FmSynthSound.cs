@@ -41,8 +41,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		public FmSynthState(
 			int nodeCount,
 			int oscillatorCount,
-			SourceVoice?[] sources)
+			SourceVoice?[] sources,
+			double boundPitch, double boundSpeed)
 		{
+			BoundPitch = boundPitch;
+			BoundSpeed = boundSpeed;
 			Values = new double[nodeCount];
 			AudioValues = new double[nodeCount];
 			SilentFrom = new long?[nodeCount];
@@ -56,7 +59,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		public long?[] SilentFrom { get; }
 		public double[] Phases { get; }
 		public FmFilterNodeProcessor.State?[] Filters { get; }
-		public SourceVoice?[] Sources { get; }
+		public SourceVoice?[] Sources { get; private set; }
+		public double BoundPitch { get; }
+		public double BoundSpeed { get; }
 		public RenderContext? MonoContext { get; set; }
 		public RenderContext? StereoChildContext { get; set; }
 		public long NextFrame { get; set; }
@@ -66,8 +71,24 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		public void Reset(int sampleRate)
 		{
 			if (Sources.Any(source => source is not null) && SampleRate != 0)
-				throw new NotSupportedException(
-					"Replaying child-source Synth state requires the subsequent seek milestone.");
+				throw new InvalidOperationException(
+					"Seek or format change requires PrepareReplay at a producer/control boundary.");
+			ClearRenderHistory(sampleRate);
+		}
+
+		public void ReplaceForReplay(FmSynthState rebuilt, int sampleRate)
+		{
+			// Rebind rather than rewinding the old PitchTrajectory: child
+			// integrated positions, script-selected tones and filter histories
+			// are invocation-local and must start from fresh state.
+			Sources = rebuilt.Sources;
+			MonoContext = rebuilt.MonoContext;
+			StereoChildContext = rebuilt.StereoChildContext;
+			ClearRenderHistory(sampleRate);
+		}
+
+		private void ClearRenderHistory(int sampleRate)
+		{
 			Array.Clear(Values);
 			Array.Clear(AudioValues);
 			Array.Clear(SilentFrom);
@@ -243,7 +264,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				sources[i] = voice;
 			}
 		}
-		FmSynthState state = new(_nodes.Length, _oscillatorCount, sources)
+		FmSynthState state = new(_nodes.Length, _oscillatorCount, sources,
+			pitchMultiplier, playbackSpeedMultiplier)
 		{
 			PitchMultiplier = pitchMultiplier,
 			PlaybackSpeedMultiplier = playbackSpeedMultiplier,
@@ -261,6 +283,43 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					RenderConfiguration.Stereo(ready.SampleRate));
 		}
 		return state;
+	}
+
+	/// <summary>
+	/// Rebuild a child-source Synth invocation for deterministic random-access
+	/// replay. Call only at an explicit producer/control boundary, never from
+	/// an audio callback. Source definitions and FIR plans are already compiled,
+	/// but Instrument tone selection and the creation of per-voice histories
+	/// can allocate and resolve a prepared child. The parent's authored pitch
+	/// trajectory, note-off, position and playback controls are preserved.
+	/// Replays the exact source-frame timeline from zero to targetFrame, so
+	/// there are no approximate Sample offsets or stale Filter histories.
+	/// </summary>
+	public void PrepareReplay(RenderContext context, SoundState state,
+		long targetFrame = 0)
+	{
+		ArgumentNullException.ThrowIfNull(context);
+		if (targetFrame < 0)
+			throw new ArgumentOutOfRangeException(nameof(targetFrame));
+		FmSynthState current = ValidateState(state);
+		int sampleRate = context.Configuration.SampleRate;
+		if (_preparedChildFilterFactory is { } prepared
+			&& prepared.SampleRate != sampleRate)
+			throw new InvalidOperationException(
+				"Frozen source voices cannot change sample rate after preparation.");
+
+		if (_hasSources)
+		{
+			FmSynthState rebuilt = CreateBoundState(
+				current.BoundPitch, current.BoundSpeed);
+			current.ReplaceForReplay(rebuilt, sampleRate);
+		}
+		else
+			current.Reset(sampleRate);
+		PrepareChildRender(context, current);
+		// Deliberately do all potentially expensive replay/warm-up work at
+		// the boundary. The next Render(targetFrame, ...) stays sequential.
+		EnsureFrame(context, current, targetFrame);
 	}
 
 	/// <summary>
@@ -685,7 +744,12 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		long startFrame)
 	{
 		if (state.NextFrame > startFrame)
+		{
+			if (_hasSources)
+				throw new InvalidOperationException(
+					"Backward Synth source playback requires PrepareReplay at a producer/control boundary.");
 			state.Reset(context.Configuration.SampleRate);
+		}
 
 		long? noteOffFrame =
 			state.NoteOffTime.HasValue
