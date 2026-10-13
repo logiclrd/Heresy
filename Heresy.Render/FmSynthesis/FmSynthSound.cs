@@ -271,8 +271,10 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 	{
 		ArgumentNullException.ThrowIfNull(context);
 		FmSynthState synthState = ValidateState(state);
+		if (_hasSources)
+			PrepareChildRender(context, synthState);
 		long? baseEnd = GetBaseEndFrameExclusive(
-			context.Configuration.SampleRate, synthState.NoteOffTime);
+			context.Configuration.SampleRate, synthState);
 		if (baseEnd is null)
 			return null;
 		double tailSeconds = GetMaximumAudioPathTailSeconds();
@@ -326,13 +328,14 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 	/// each Filter stage keeps processing zero-input frames.
 	/// </summary>
 	private long? GetBaseEndFrameExclusive(
-		int sampleRate, TimeSpan? noteOffTime)
+		int sampleRate, FmSynthState state)
 	{
-		if (_hasSources)
-			return null; // child releases/finite ends are integrated next milestone
-		if (!noteOffTime.HasValue)
+		TimeSpan? noteOffTime = state.NoteOffTime;
+		if (!noteOffTime.HasValue && !_hasSources)
 			return null;
-		long noteOffFrame = FrameTime.Ceiling(noteOffTime.Value, sampleRate);
+		long? released = noteOffTime.HasValue
+			? FrameTime.Ceiling(noteOffTime.Value, sampleRate) : null;
+		long noteOffFrame = released ?? 0;
 		long?[] silentFrom = new long?[_nodes.Length];
 		long finiteReleaseEnd = checked(noteOffFrame + 1);
 		bool hasIndefiniteEnvelope = false;
@@ -360,13 +363,32 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 						? silentFrom[node.InputIndices[0]] : 0L,
 					FmOperatorNode op => GetOperatorSilenceEnd(
 						op.Operation, node.InputIndices, silentFrom),
+					FmSoundSourceNode => GetChildSourceSilenceEnd(state, index),
+					FmConstantNode or FmOscillatorNode => released.HasValue
+						? finiteReleaseEnd : null,
 					_ => null,
 				};
 			}
 		}
 		if (silentFrom[_outputIndex] is long outputSilence)
 			return outputSilence;
+		// An indefinite source cannot be truncated merely because the
+		// outer note was released. A multiplier or envelope on the actual
+		// audible path must prove that the output has become silent.
+		if (_hasSources)
+			return null;
 		return hasIndefiniteEnvelope ? null : finiteReleaseEnd;
+	}
+
+	private static long? GetChildSourceSilenceEnd(FmSynthState state, int index)
+	{
+		SourceVoice? voice = state.Sources[index];
+		if (voice is null)
+			return 0;
+		if (voice.EndFrame is not long end)
+			return null;
+		long tail = voice.Filters?.PreparedTailFrames ?? 0;
+		return end > long.MaxValue - tail ? long.MaxValue : end + tail;
 	}
 
 	private static long? GetOperatorSilenceEnd(
@@ -463,7 +485,7 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 					sampleRate)
 				: null;
 		long? baseEnd = GetBaseEndFrameExclusive(
-			sampleRate, synthState.NoteOffTime);
+			sampleRate, synthState);
 
 		for (int frame = 0; frame < frameCount; frame++)
 		{
@@ -510,7 +532,7 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 					context.Configuration.SampleRate)
 				: null;
 		long? baseEnd = GetBaseEndFrameExclusive(
-			context.Configuration.SampleRate, state.NoteOffTime);
+			context.Configuration.SampleRate, state);
 
 		while (state.NextFrame < startFrame)
 		{
@@ -643,9 +665,19 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 		voice.Pitch.SetFrame(frame, muted ? 1e-12 : Math.Max(rate, 1e-12));
 		Span<float> mono = stackalloc float[1];
 		if (!voice.EndFrame.HasValue || frame < voice.EndFrame.Value)
+		{
 			voice.Invocation.Sound.Render(state.MonoContext!,
 				voice.Invocation.State, frame, 1, mono);
-		else if (voice.Filters is not null && !voice.InputFinished)
+			// SampleSound discovers a natural end by observing the actual
+			// integrated source position. Modulated sample trajectories are
+			// not efficiently projectable, so retain that first observed
+			// boundary instead of replacing it with an indefinite guess.
+			if (voice.Invocation.State.NaturalEndFrameExclusive is long natural)
+				voice.EndFrame = voice.EndFrame.HasValue
+					? Math.Min(voice.EndFrame.Value, natural) : natural;
+		}
+		if (voice.EndFrame.HasValue && frame >= voice.EndFrame.Value
+			&& voice.Filters is not null && !voice.InputFinished)
 		{
 			voice.Filters.FinishInput();
 			voice.InputFinished = true;
@@ -690,9 +722,32 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 		{
 			if (voice is null)
 				continue;
-			voice.Invocation.State.NoteOffTime = state.NoteOffTime;
-			voice.EndFrame = voice.Invocation.Sound.GetEndFrameExclusive(
+			if (voice.Invocation.State.NoteOffTime != state.NoteOffTime)
+				voice.Invocation.State.NoteOffTime = state.NoteOffTime;
+			long? childEnd = voice.Invocation.Sound.GetEndFrameExclusive(
 				state.MonoContext, voice.Invocation.State);
+			if (voice.Invocation.State.NaturalEndFrameExclusive is long natural)
+				childEnd = childEnd.HasValue
+					? Math.Min(childEnd.Value, natural) : natural;
+			// Instrument-selected samples deliberately ignore Note Off until
+			// their Volume envelope has released. The envelope can itself
+			// prove a finite end, even for a looping/indefinite child.
+			if (state.NoteOffTime.HasValue
+				&& voice.Invocation.Configuration.Envelopes.Volume is { } volume)
+			{
+				long release = FrameTime.Ceiling(state.NoteOffTime.Value,
+					context.Configuration.SampleRate);
+				long? volumeEnd = volume.GetEndActiveFrameExclusiveAfterNoteOff(
+					release, context.Configuration.SampleRate);
+				if (volumeEnd.HasValue)
+					childEnd = childEnd.HasValue
+						? Math.Min(childEnd.Value, volumeEnd.Value)
+						: volumeEnd;
+			}
+			// Once the zero-input tail has started, never reopen it merely
+			// because a child cannot project an updated pitch trajectory.
+			if (!voice.InputFinished)
+				voice.EndFrame = childEnd;
 		}
 	}
 

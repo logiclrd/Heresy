@@ -2,8 +2,9 @@
 
 **Status (13 October 2026):** source **reference/data-model foundation**,
 **prepared child-invocation/mono-output**, and **streaming frequency modulation** implemented. Graph editing,
-cross-song import, full release/tail/end
-semantics, and deterministic backward replay remain unimplemented. The UI
+cross-song import, complete inherited control envelopes/FIR scheduling, full
+transport end/tail qualification, and deterministic backward replay remain
+unimplemented. The UI
 must not offer creation of this node until the remaining rendering slices
 are complete. Connected linear/semitone inputs now advance an integrated pitch curve at each
 PCM frame; backwards replay of an advanced source voice still fails
@@ -153,10 +154,11 @@ mute the node and use a tiny positive trajectory multiplier (approximately
 stationary; reverse playback is not offered). Exponential connections treat
 control values as semitones. Nonfinite multipliers reject explicitly. Source
 voices do not yet support backwards render replay or changing output sample
-rates on an existing state. Any graph containing a child source conservatively
-reports no finite end, preventing the old FM draining logic from cutting a
-child's release but leaving bounded voice-end determination for the next
-milestone. Pitch/Filter/Panning envelopes, child FIR realtime scheduling,
+rates on an existing state. Source graphs now derive conservative end bounds when their children or
+an audible graph gate have a provable finite end. This includes observed
+Sample EOF, Instrument Volume Envelope release ceilings, nested Synth
+release and bounded tone Filter drain. Unproven indefinite paths still
+report no finite end. Pitch/Filter/Panning envelopes, child FIR realtime scheduling,
 post-end/filter tail processing and exact transient release behavior must be
 completed and tested before editor exposure. Source resolution occurs while
 constructing the frozen renderer. A node's child voice is created when the
@@ -182,3 +184,28 @@ The tests cover output source-frame positions, linear/semitone inputs,
 continuous modulation, pitch isolation, mute/freeze policy, chunking and
 steady managed-allocation bounds. Completion of note-off/tail propagation and
 arbitrary backward replay is separately tracked in `docs/todo.md`.
+
+### Source natural-end and tone-Filter lifecycle checkpoint (13 October 2026)
+
+The outer Synth no longer returns an unconditional indefinite end merely
+because its graph contains an ISound node. Every source has a private
+invocation and a first-known excitation-end frame. For modulated samples,
+`SampleSoundState.NaturalEndFrameExclusive` is discovered during actual PCM
+rendering instead of projecting the non-constant pitch curve. Parent Note Off
+is forwarded to the child without restarting its release on every render
+block. A bare looping Sample becomes finite on Note Off; Instrument-selected
+Samples retain their release when a bound Volume Envelope owns that release.
+A finite Volume Envelope post-Off end may bound a looping sample or other
+indefinite child. Once excitation stops, the child's per-voice tone Filter
+chain receives exactly one `FinishInput` and emits zero-input DSP history
+through the configured `PreparedTailFrames`. The graph's own Filter-tail
+accounting still extends the source end as needed. Graph operator analysis
+requires all additive branches to end (or any multiplicative factor to
+become silent), and does not prematurely cut a genuinely indefinite input.
+
+This is **not** certification of every inherited effect. In particular,
+Instrument Pitch/Panning/Filter envelope routing, worker scheduling of child
+FIR preparation, detailed graph-tail gating and realtime/offline lifecycle
+acceptance remain separately unchecked in `docs/todo.md`. The independent
+backward-seek and replay milestone is also still pending; do not expose
+creation of this node in the editor yet.
