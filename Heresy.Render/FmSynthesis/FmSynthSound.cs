@@ -91,6 +91,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	private readonly PreparedToneFilterStageFactory? _preparedChildFilterFactory;
 	private readonly bool _hasSources;
 	private readonly double _maximumAudioPathTailSeconds;
+	private readonly bool[] _audioReachable;
 	private const double C4FrequencyHz = 440.0 * 0.59460355750136053336; // 2^(-9/12)
 
 	public FmSynthSound(
@@ -173,6 +174,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		_outputIndex = indexById[graph.OutputNodeId];
 		_oscillatorCount = oscillatorIndex;
 		_maximumAudioPathTailSeconds = GetMaximumAudioPathTailSeconds();
+		_audioReachable = GetAudioReachableNodes();
 
 		void Visit(int id)
 		{
@@ -382,6 +384,38 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	}
 
 	/// <summary>
+	/// Return graph nodes reachable through actual audible connections.
+	/// Frequency multipliers and Filter parameter ports are control-only:
+	/// an Envelope on one of those ports must not extend an oscillator's
+	/// Note Off deadline. This immutable graph walk runs at preparation,
+	/// never inside PCM or GetEndFrameExclusive.
+	/// </summary>
+	private bool[] GetAudioReachableNodes()
+	{
+		bool[] reachable = new bool[_nodes.Length];
+		Visit(_outputIndex);
+		return reachable;
+
+		void Visit(int index)
+		{
+			if (reachable[index])
+				return;
+			reachable[index] = true;
+			CompiledNode compiled = _nodes[index];
+			switch (compiled.Definition)
+			{
+				case FmFilterNode filter when filter.AudioInputNodeId.HasValue:
+					Visit(compiled.InputIndices[0]);
+					break;
+				case FmOperatorNode:
+					foreach (int input in compiled.InputIndices)
+						Visit(input);
+					break;
+			}
+		}
+	}
+
+	/// <summary>
 	/// Natural FM note boundary, before any manually authored Filter tail.
 	/// During extra tail frames every ordinary source stops excitation while
 	/// each Filter stage keeps processing zero-input frames.
@@ -413,10 +447,13 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						noteOffFrame, sampleRate)
 					: null;
 				silentFrom[index] = end;
-				if (end is long finite)
-					finiteReleaseEnd = Math.Max(finiteReleaseEnd, finite);
-				else
-					hasIndefiniteEnvelope = true;
+				if (_audioReachable[index])
+				{
+					if (end is long finite)
+						finiteReleaseEnd = Math.Max(finiteReleaseEnd, finite);
+					else
+						hasIndefiniteEnvelope = true;
+				}
 			}
 			else
 			{

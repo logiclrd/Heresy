@@ -386,6 +386,103 @@ public sealed class FmSynthChildLifecycleTests
         });
     }
 
+    [Test]
+    public void ControlOnlyEnvelopeDoesNotKeepAnOscillatorAliveAfterNoteOff()
+    {
+        Registry registry = new();
+        registry.Add(SampleId, MakeSample([1, 1, 1, 1], 8, loop: true));
+        registry.AddEnvelope(EnvelopeId, new ThreeFrameRelease());
+        FmSynthSound synth = MakeSynth(registry, [
+            new FmSoundSourceNode(0, SampleId, C4),
+            new FmEnvelopeNode(1, EnvelopeId),
+            new FmOscillatorNode(2, FmOscillatorWaveform.Square, 1,
+                minimum: 1, maximum: 1, multiplierNodeId: 1,
+                constant: true),
+            new FmOperatorNode(3, FmOperatorKind.Add, [0, 2]),
+        ], 3);
+        RenderContext context = Mono(8);
+        SoundState state = synth.CreateState();
+        state.NoteOffTime = TimeSpan.FromSeconds(2.0 / 8);
+        Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(3),
+            "a frequency-control-only envelope must not extend oscillator excitation");
+        float[] pcm = new float[8];
+        synth.Render(context, state, 0, pcm.Length, pcm);
+        Assert.That(pcm, Is.EqualTo(new float[]
+            { 2, 2, 1, 0, 0, 0, 0, 0 }));
+        Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(3));
+    }
+
+    [Test]
+    public void AudibleAmplitudeEnvelopeRetainsOscillatorDuringRelease()
+    {
+        Registry registry = new();
+        registry.Add(SampleId, MakeSample([1, 1, 1, 1], 8, loop: true));
+        registry.AddEnvelope(EnvelopeId, new ThreeFrameRelease());
+        FmSynthSound synth = MakeSynth(registry, [
+            new FmSoundSourceNode(0, SampleId, C4),
+            new FmEnvelopeNode(1, EnvelopeId),
+            new FmOscillatorNode(2, FmOscillatorWaveform.Square, 1,
+                minimum: 1, maximum: 1, constant: true),
+            new FmOperatorNode(3, FmOperatorKind.Multiply, [1, 2]),
+            new FmOperatorNode(4, FmOperatorKind.Add, [0, 3]),
+        ], 4);
+        RenderContext context = Mono(8);
+        SoundState state = synth.CreateState();
+        state.NoteOffTime = TimeSpan.FromSeconds(2.0 / 8);
+        Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(5),
+            "the Envelope is on the audible multiplication path");
+        float[] pcm = new float[7];
+        synth.Render(context, state, 0, pcm.Length, pcm);
+        float[] expected = [2, 2, 1, 2f / 3, 1f / 3, 0, 0];
+        for (int i = 0; i < pcm.Length; i++)
+            Assert.That(pcm[i], Is.EqualTo(expected[i]).Within(1e-6),
+                $"frame {i}");
+    }
+
+    [Test]
+    public void ControlOscillatorModulatesFiniteSampleWithoutKeepingGraphAlive()
+    {
+        Registry registry = new();
+        registry.Add(SampleId, MakeSample([0, 1, 2, 3, 4, 5, 6, 7], 8));
+        FmSynthSound synth = MakeSynth(registry, [
+            new FmOscillatorNode(0, FmOscillatorWaveform.Square, 2,
+                minimum: 1, maximum: 2, constant: true),
+            new FmSoundSourceNode(1, SampleId, C4, multiplierNodeId: 0),
+        ], 1);
+        RenderContext context = Mono(8);
+        SoundState state = synth.CreateState();
+        Assert.That(synth.GetEndFrameExclusive(context, state), Is.Null);
+        float[] pcm = new float[10];
+        synth.Render(context, state, 0, pcm.Length, pcm);
+        Assert.That(pcm, Is.EqualTo(new float[]
+            { 0, 2, 4, 5, 6, 0, 0, 0, 0, 0 }));
+        Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(5));
+        Assert.That(registry.SoundLookups, Is.EqualTo(1));
+    }
+
+    [Test]
+    public void AdditiveOscillatorOutlivesShortSampleUntilItsOwnReleaseDeadline()
+    {
+        Registry registry = new();
+        registry.Add(SampleId, MakeSample([0.5f, 0.5f, 0.5f, 0.5f], 8));
+        FmSynthSound synth = MakeSynth(registry, [
+            new FmSoundSourceNode(0, SampleId, C4),
+            new FmOscillatorNode(1, FmOscillatorWaveform.Square, 1,
+                minimum: 1, maximum: 1, constant: true),
+            new FmOperatorNode(2, FmOperatorKind.Add, [0, 1]),
+        ], 2);
+        RenderContext context = Mono(8);
+        SoundState state = synth.CreateState();
+        state.NoteOffTime = TimeSpan.FromSeconds(6.0 / 8);
+        Assert.That(synth.GetEndFrameExclusive(context, state), Is.Null,
+            "the child Sample's actual EOF is streaming-only");
+        float[] pcm = new float[10];
+        synth.Render(context, state, 0, pcm.Length, pcm);
+        Assert.That(pcm, Is.EqualTo(new float[]
+            { 1.5f, 1.5f, 1.5f, 1.5f, 1, 1, 1, 0, 0, 0 }));
+        Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(7));
+    }
+
     private static FmSynthSound MakeSynth(Registry registry,
         FmSynthNode[] nodes, int output = 0)
         => new(new FmSynthGraph(nodes, output),
