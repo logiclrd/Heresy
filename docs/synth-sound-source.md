@@ -591,3 +591,48 @@ minimum-phase FIR cutoff update, direct format rebinding, rejection of
 incompatible frozen-plan formats, and no PCM-loop resolution. Source-node
 editor creation remains a separate TODO; it can now use this explicit
 seek boundary rather than issuing backwards `Render` calls.
+
+### ISound source authoring and cross-song import in the graph editor (13 October 2026)
+
+The visual Synth editor now exposes **+ Source**, creating an unassigned,
+silent `FmSoundSourceNode` at neutral C4. Its inspector selects a live
+**Sample, data Instrument, script Instrument, or nested Synth**, along with
+**Frequency Hz**, a **Constant** checkbox directly beneath Frequency Hz,
+an optional connected multiplier and an **Exponential multiplier
+(semitones)** toggle. Unchecked Constant makes the source's authored
+frequency relative to the enclosing Synth's incoming note and moving
+pitch/speed; checked Constant excludes that outer pitch, but *does not*
+exclude deliberately connected graph modulation. The decoded Sample
+file's source sample rate remains independent of musical Frequency Hz.
+
+The canvas exposes a source modulation input port with the same
+bidirectional wire drag, connection replacement, waypoint routing,
+output selection and Delete semantics as an oscillator. Semantic edits
+replace the graph and invalidate playback snapshots; no-op checkbox and
+source selections do not generate extra audio revisions. Disconnecting
+or deleting a multiplier node preserves the source node, original
+source selection, pitch, and Constant/exponential flags. A dangling
+legacy source reference is displayed explicitly as missing; selecting
+a new source validates its live type and checks nested Synth/Instrument
+cycles before committing the graph.
+
+Cross-song Synth imports follow every referenced source edge recursively,
+including dependencies reachable through data/script Instrument tone
+specifications and nested Synths. For each import batch a shared mapping
+gives fresh destination ObjectIds to all referenced Synths, Instruments,
+Samples, Envelopes and Filter definitions. Both graph Filter instances
+and Instrument tone-Filter uses are rebound to the copied definitions;
+Instrument tone tables, selectors, NNA settings, Envelope references and
+graph geometry are retained. A shared referenced Sample or Envelope is
+copied once even if several graph branches reference it. A referenced
+encoded Sample is copied into its own destination pending asset, including
+when read from inside a source `.hm` archive; it is never left pointing
+into a source song's storage. Preflight rejects missing, invalid and
+cyclic references before changing the destination. Only the Synths
+explicitly selected by the user are returned for opening, but all
+necessary reachable child Synths are imported too.
+
+This is an *authoring and import* milestone. Whole Pattern/realtime
+producer/export acceptance with every source type remains the separate
+next TODO. Direct playback of a newly inserted source still relies on
+the existing frozen preparation, release and explicit replay contracts.
