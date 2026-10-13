@@ -645,6 +645,23 @@ The same dialog also creates native effects. Creation adds a type selector backe
 by the native-effect catalog, seeds a valid default instance for the selected
 type, then renders exactly the same semantic parameter fields used for editing.
 **Ctrl+Enter** is equivalent to the creation modal's **Insert** button too.
+
+The Set Note/Channel Filter Stage Assignments assistant reads the current
+multiline assignment script each time a Filter stage is selected. An
+unambiguous last recognized comment (`# Filter: name`, `# name: description`
+for a Filter, or a uniquely identifying `# stageName: description`) helps
+choose the Filter/stage; otherwise the saved authoring hint and first available
+stage are used. Existing individually valid assignments populate each numeric
+or choice field; absent or malformed values use that Filter stage's defaults.
+Opening the assistant never edits the script. **Update this stage's
+assignments** changes existing matching parameter rows in place and adds only
+missing rows beside them. Existing section annotations, unrelated comments,
+other stages and manually authored text stay where they were. A new
+`# stageName:` section comment is emitted only for a completely new stage
+without assignments or a heading. Repeating the same update is idempotent.
+If other script lines remain invalid, the assistant may still update the
+unsaved draft and report validation errors; saving still requires the native
+effect editor's strict validation.
 All eleven current native effect shapes are available. `Alt+N` inserts a native
 effect before the selected stack member (or into an empty effect column), while
 `Alt+Shift+N` inserts after it. A tab's context menu exposes **Insert Native

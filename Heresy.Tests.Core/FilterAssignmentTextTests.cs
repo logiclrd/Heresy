@@ -16,17 +16,17 @@ namespace Heresy.Tests.Core;
 public sealed class FilterAssignmentTextTests
 {
     [Test]
-    public void StageSpecificRewriterRemovesAllOldAnnotationsAndAssignments()
+    public void RewriterUpsertsExistingRowsInPlaceAndPreservesEveryOtherLine()
     {
         FilterInstance filter = Create();
         string original = """
-            # stage2: obsolete annotation
-            stage2.CutoffHz = 300
+            # stage2: existing annotation remains
+              STAGE2.cutoffhz  =  300
             # unrelated keeps its exact text
             stage20.CutoffHz = 1200
-            # stage2: second obsolete block
+            # stage2: second annotation also remains
             STAGE2.Q = 1.4
-            # stage20: must survive verbatim
+            # stage20: untouched
             stage20.Q = 0.9
             """;
         var changes = new[]
@@ -37,34 +37,98 @@ public sealed class FilterAssignmentTextTests
                 "Q", FilterParameterValue.FromNumber(0.7071067811865476)),
         };
         string rewritten = FilterAssignmentText.RewriteStage(
-            filter, original, 2, changes, "Low-pass filter at 2500 Hz");
-        Assert.That(rewritten, Does.Contain("# stage2: Low-pass filter at 2500 Hz"));
-        Assert.That(rewritten, Does.Contain("stage2.CutoffHz = 2500"));
-        Assert.That(rewritten, Does.Not.Contain("obsolete"));
-        Assert.That(rewritten, Does.Not.Contain("STAGE2.Q = 1.4"));
-        Assert.That(rewritten, Does.Contain("stage20.CutoffHz = 1200"));
-        Assert.That(rewritten, Does.Contain("# stage20: must survive verbatim"));
-        Assert.That(rewritten, Does.Contain("# unrelated keeps its exact text"));
-        Assert.That(FilterAssignmentText.RewriteStage(filter,
-            rewritten, 2, changes, "Low-pass filter at 2500 Hz"),
-            Is.EqualTo(rewritten), "repeat wizard rewrites cannot accumulate annotations");
+            filter, original, 2, changes, "SHOULD NOT APPEAR");
+        Assert.That(rewritten, Is.EqualTo("""
+            # stage2: existing annotation remains
+              STAGE2.cutoffhz  =  2500
+            # unrelated keeps its exact text
+            stage20.CutoffHz = 1200
+            # stage2: second annotation also remains
+            STAGE2.Q = 0.70710678118654757
+            # stage20: untouched
+            stage20.Q = 0.9
+            """));
+        Assert.That(FilterAssignmentText.RewriteStage(
+            filter, rewritten, 2, changes, "new annotation"),
+            Is.EqualTo(rewritten));
+        Assert.That(FilterAssignmentText.ParseAndValidate(filter, rewritten)
+            .Select(x => x.StageId), Is.EqualTo(new[] { 2, 20 }));
     }
 
     [Test]
-    public void RewriterAppendsAbsentStageAndPreservesOtherStageWithSimilarPrefix()
+    public void MissingParametersAppendBesideStageRowsWithoutAddingHeader()
     {
         FilterInstance filter = Create();
-        string source = "# stage20: existing\nstage20.CutoffHz = 250\n";
+        string original = "stage2.CutoffHz = 250\n# preserve\nstage20.CutoffHz = 500";
         string rewritten = FilterAssignmentText.RewriteStage(
-            filter, source, 2, [
+            filter, original, 2, [
+                new("CutoffHz", FilterParameterValue.FromNumber(700)),
+                new("Q", FilterParameterValue.FromNumber(1.1)),
+            ], "NO HEADER");
+        Assert.That(rewritten, Is.EqualTo(
+            "stage2.CutoffHz = 700\nstage2.Q = 1.1000000000000001\n# preserve\nstage20.CutoffHz = 500"));
+        Assert.That(rewritten, Does.Not.Contain("# stage2:"));
+        Assert.That(FilterAssignmentText.RewriteStage(filter, rewritten, 2, [
+            new("CutoffHz", FilterParameterValue.FromNumber(700)),
+            new("Q", FilterParameterValue.FromNumber(1.1)),
+        ], "NO HEADER"), Is.EqualTo(rewritten));
+    }
+
+    [Test]
+    public void NewStageGetsOneHeadingButExistingHeadingIsReused()
+    {
+        FilterInstance filter = Create();
+        string other = "# stage20: existing\nstage20.CutoffHz = 250\n";
+        string inserted = FilterAssignmentText.RewriteStage(
+            filter, other, 2, [
                 new("CutoffHz", FilterParameterValue.FromNumber(1000)),
             ], "New stage");
-        Assert.That(rewritten, Does.StartWith("# stage20: existing"));
-        Assert.That(rewritten, Does.Contain("stage20.CutoffHz = 250"));
-        Assert.That(rewritten, Does.Contain("# stage2: New stage"));
-        Assert.That(FilterAssignmentText.RewriteStage(filter, rewritten, 2, [
-                new("CutoffHz", FilterParameterValue.FromNumber(1000)),
-            ], "New stage"), Is.EqualTo(rewritten));
+        Assert.That(inserted, Does.Contain("# stage2: New stage"));
+        Assert.That(inserted, Does.Contain("stage2.CutoffHz = 1000"));
+        Assert.That(inserted, Does.Contain("stage20.CutoffHz = 250"));
+        Assert.That(FilterAssignmentText.RewriteStage(filter, inserted, 2, [
+            new("CutoffHz", FilterParameterValue.FromNumber(1000)),
+        ], "replaced"), Is.EqualTo(inserted));
+
+        string headingOnly = "# stage2: already defined\n# keep this too\n";
+        string reused = FilterAssignmentText.RewriteStage(filter, headingOnly, 2, [
+            new("CutoffHz", FilterParameterValue.FromNumber(1000)),
+        ], "must not duplicate");
+        Assert.That(reused, Does.Contain("# stage2: already defined"));
+        Assert.That(reused, Does.Not.Contain("must not duplicate"));
+        Assert.That(reused.Split("# stage2:").Length, Is.EqualTo(2));
+    }
+
+    [Test]
+    public void PreviewReadsValidNumericAndChoiceFieldsDespiteMalformedLines()
+    {
+        FilterInstance filter = Create();
+        string source = """
+            # stage2: already existing
+            stage2.CutoffHz = 400
+            unrelated text ignored by preview
+            stage20.CutoffHz = 550
+            stage2.Q = broken
+            stage2.Q = 0.9
+            stage2.CutoffHz = 700
+            stage2.invalid = 3
+            """;
+        var preview = FilterAssignmentText.PreviewStage(filter, source, 2);
+        Assert.That(preview["CutoffHz"].NumericValue, Is.EqualTo(700));
+        Assert.That(preview["Q"].NumericValue, Is.EqualTo(0.9));
+        Assert.That(preview.ContainsKey("invalid"), Is.False);
+        Assert.That(filter.GetStageParameters(2)
+            .GetParameter("CutoffHz").NumericValue, Is.Not.EqualTo(700));
+        Assert.That(() => FilterAssignmentText.ParseAndValidate(filter, source),
+            Throws.ArgumentException, "strict Save still rejects invalid text");
+
+        FilterDefinition definition = new((ObjectId)54U, "Choice", [
+            new FilterStageDefinition(1, "comb", FilterKind.LadderSaturated),
+        ]);
+        var choices = FilterAssignmentText.PreviewStage(new FilterInstance(definition),
+            "comb.Oversampling = unsupported\ncomb.Drive = 5\ncomb.Oversampling = 4x", 1);
+        Assert.That(choices["Drive"].NumericValue, Is.EqualTo(5));
+        Assert.That(choices["Oversampling"].ChoiceValue, Is.EqualTo("4x"));
     }
 
     [Test]

@@ -350,7 +350,7 @@ public sealed class NativePatternEffectEditorDialog : Window
 		_assistant.Children.Add(annotation);
 		Button replace = new()
 		{
-			Content = "Replace this stage's assignments",
+			Content = "Update this stage's assignments",
 			HorizontalAlignment = HorizontalAlignment.Left,
 		};
 		_assistant.Children.Add(replace);
@@ -366,6 +366,12 @@ public sealed class NativePatternEffectEditorDialog : Window
 				return;
 			FilterStageDefinition stage = choice.Stage;
 			annotation.Text = stage.Kind.ToString();
+			// Populate directly from the current authoring text, never from
+			// a cached preview that could have become stale after manual edits.
+			var preview = FilterAssignmentText.PreviewStage(
+				new FilterInstance(selectedFilter),
+				(_inputs["assignments"] as TextBox)?.Text ?? "",
+				stage.StageId);
 			foreach (FilterParameterDescriptor descriptor in
 				FilterCatalogue.GetParameters(stage.Kind))
 			{
@@ -386,6 +392,16 @@ public sealed class NativePatternEffectEditorDialog : Window
 						Text = defaultText,
 						MinWidth = 155,
 					};
+				if (preview.TryGetValue(descriptor.Name, out FilterParameterValue authored))
+				{
+					string presented = authored.Kind == FilterParameterValueKind.Number
+						? authored.NumericValue.ToString("G17", CultureInfo.InvariantCulture)
+						: authored.ChoiceValue!;
+					if (input is TextBox authoredText)
+						authoredText.Text = presented;
+					else if (input is ComboBox authoredChoice)
+						authoredChoice.SelectedItem = presented;
+				}
 				string limits = descriptor.Kind == FilterParameterValueKind.Number
 					? $" [{descriptor.Minimum:G}..{descriptor.Maximum:G}]{descriptor.Units}"
 					: $" ({string.Join(", ", descriptor.Choices)})";
@@ -408,9 +424,10 @@ public sealed class NativePatternEffectEditorDialog : Window
 				parameterFields.Children.Add(line);
 			}
 			guidance.Text = $"{stage.Name}: {stage.Kind}. "
-				+ "Values and option lists come from this Filter type's actual "
-				+ "parameter descriptors. Only this stage's block is replaced; "
-				+ "all other stage assignments and comments remain untouched.";
+				+ "Parameters start with valid values from the current script, "
+				+ "otherwise with the definition's defaults. Updating edits "
+				+ "existing rows in place and adds missing parameters; "
+				+ "unrelated lines and comments remain untouched.";
 		}
 		filterPicker.SelectionChanged += (_, _) =>
 		{
@@ -460,22 +477,112 @@ public sealed class NativePatternEffectEditorDialog : Window
 				string rewritten = FilterAssignmentText.RewriteStage(
 					selected, sourceInput.Text ?? "", selection.Stage.StageId,
 					assignments, annotation.Text ?? "");
-				FilterAssignmentText.ParseAndValidate(selected, rewritten);
+				// Update the text draft regardless of unrelated malformed rows.
+				// Strict Apply/Insert validation still prevents saving them.
 				sourceInput.Text = rewritten;
-				_message.Text = $"Replaced {selection.Stage.Name} assignments.";
+				try
+				{
+					FilterAssignmentText.ParseAndValidate(selected, rewritten);
+					_message.Text = $"Updated {selection.Stage.Name} assignments.";
+				}
+				catch (ArgumentException ex)
+				{
+					_message.Text = $"Updated draft; remaining validation issue: {ex.Message}";
+				}
 			}
 			catch (Exception ex)
 			{
 				_message.Text = ex.Message;
 			}
 		};
+		string source = (_inputs["assignments"] as TextBox)?.Text ?? "";
 		string? hintId = (_inputs["filterId"] as TextBox)?.Text;
 		ObjectId? hinted = uint.TryParse(hintId,
 			NumberStyles.None, CultureInfo.InvariantCulture, out uint id)
 			? (ObjectId)id : null;
+		(FilterDefinition? fromComment, string? heading) =
+			FindLastRecognizedFilterComment(filters, source);
 		FilterChoice[] available = (FilterChoice[])filterPicker.ItemsSource!;
+		ObjectId wanted = fromComment?.Id ?? hinted ?? available[0].Id;
 		filterPicker.SelectedItem = available.FirstOrDefault(choice =>
-			choice.Id == hinted) ?? available[0];
+			choice.Id == wanted) ?? available[0];
+		if (selectedFilter is not null)
+		{
+			string? stageName = heading
+				?? FindLastStageInScript(selectedFilter, source);
+			if (stageName is not null
+				&& stagePicker.ItemsSource is IEnumerable<StageChoice> stages)
+			{
+				StageChoice? item = stages.FirstOrDefault(stage =>
+					string.Equals(stage.Stage.Name, stageName,
+						StringComparison.OrdinalIgnoreCase));
+				if (item is not null)
+					stagePicker.SelectedItem = item;
+			}
+		}
+	}
+
+	// Explicit Filter comments and stage headings that uniquely identify
+	// a Filter take precedence over the optional authoring hint; the latest
+	// recognized comment wins. Ambiguous labels never select arbitrarily.
+	private static (FilterDefinition?, string?) FindLastRecognizedFilterComment(
+		FilterDefinition[] filters, string source)
+	{
+		foreach (string line in source.Replace("\r\n", "\n")
+			.Replace('\r', '\n').Split('\n').Reverse())
+		{
+			string trimmed = line.TrimStart();
+			if (!trimmed.StartsWith('#')) continue;
+			string comment = trimmed[1..].TrimStart();
+			int colon = comment.IndexOf(':');
+			if (colon < 0) continue;
+			string key = comment[..colon].Trim();
+			string value = comment[(colon + 1)..].Trim();
+			string name = key.Equals("Filter", StringComparison.OrdinalIgnoreCase)
+				? value : key;
+			FilterDefinition[] named = filters.Where(f =>
+				string.Equals(f.Name, name,
+					StringComparison.OrdinalIgnoreCase)).ToArray();
+			if (named.Length == 1) return (named[0], null);
+			if (named.Length > 1
+				|| key.Equals("Filter", StringComparison.OrdinalIgnoreCase))
+				continue;
+			FilterDefinition[] owners = filters.Where(filter =>
+				filter.Stages.Any(stage => string.Equals(stage.Name, key,
+					StringComparison.OrdinalIgnoreCase))).ToArray();
+			if (owners.Length == 1) return (owners[0], key);
+		}
+		return (null, null);
+	}
+
+	private static string? FindLastStageInScript(
+		FilterDefinition filter, string source)
+	{
+		foreach (string line in source.Replace("\r\n", "\n")
+			.Replace('\r', '\n').Split('\n').Reverse())
+		{
+			string trimmed = line.Trim();
+			string key;
+			if (trimmed.StartsWith('#'))
+			{
+				string comment = trimmed[1..].TrimStart();
+				int colon = comment.IndexOf(':');
+				if (colon < 0) continue;
+				key = comment[..colon].Trim();
+			}
+			else
+			{
+				int equals = trimmed.IndexOf('=');
+				if (equals < 0) continue;
+				int dot = trimmed.IndexOf('.');
+				if (dot <= 0 || dot >= equals) continue;
+				key = trimmed[..dot].Trim();
+			}
+			if (filter.Stages.Any(stage => string.Equals(stage.Name, key,
+					StringComparison.OrdinalIgnoreCase)))
+				return key;
+		}
+		return null;
 	}
 
 	private sealed record FilterChoice(ObjectId Id, string Name)

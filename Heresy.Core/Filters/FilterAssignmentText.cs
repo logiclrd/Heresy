@@ -109,11 +109,60 @@ public static class FilterAssignmentText
     }
 
     /// <summary>
-    /// Deterministic assistant/wizard rewrite: remove *all* assignments to
-    /// the requested stage and its # stageName: annotations, preserving the
-    /// exact original text of every other line (including stage20). The new
-    /// block is inserted at the old stage's first position, or appended.
-    /// Rewriting an already generated block with the same content is stable.
+    /// Best-effort, read-only preview of authored parameters for one stage.
+    /// A malformed or unrelated line cannot prevent other valid fields from
+    /// appearing in the assistant. The strict save parser remains separate.
+    /// Repeated parseable rows are previewed in their authored (last-wins)
+    /// order; strict validation still diagnoses duplicates.
+    /// </summary>
+    public static IReadOnlyDictionary<string, FilterParameterValue> PreviewStage(
+        FilterInstance selected, string original, int stageId)
+    {
+        ArgumentNullException.ThrowIfNull(selected);
+        ArgumentNullException.ThrowIfNull(original);
+        FilterStageDefinition stage = selected.Definition.GetStage(stageId);
+        Dictionary<string, FilterParameterValue> values =
+            new(StringComparer.OrdinalIgnoreCase);
+        foreach (string line in Lines(original))
+        {
+            if (!TryAssignment(line, stage.Name, out string parameter, out int equals))
+                continue;
+            FilterParameterDescriptor? descriptor =
+                FilterCatalogue.GetParameters(stage.Kind).FirstOrDefault(p =>
+                    string.Equals(p.Name, parameter, StringComparison.OrdinalIgnoreCase));
+            if (descriptor is null)
+                continue;
+            string raw = line[(equals + 1)..].Trim();
+            try
+            {
+                FilterParameterValue parsed;
+                if (descriptor.Kind == FilterParameterValueKind.Number)
+                {
+                    if (!double.TryParse(raw, NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out double number))
+                        continue;
+                    parsed = FilterParameterValue.FromNumber(number);
+                }
+                else
+                    parsed = FilterParameterValue.FromChoice(raw);
+                values[descriptor.Name] = descriptor.Normalize(parsed);
+            }
+            catch (ArgumentException)
+            {
+                // Invalid fields do not suppress valid preview fields.
+            }
+        }
+        return values;
+    }
+
+    /// <summary>
+    /// Upsert the assistant's stage parameters into the current authored text.
+    /// Each existing stage.parameter row is edited where it stands (retaining
+    /// its original path spelling and spacing). Absent parameters are inserted
+    /// after the last row for that stage. Unrelated rows, annotations, malformed
+    /// lines and ordering are not owned or rearranged by this helper.
+    /// A new section comment is added only if this stage had no rows and
+    /// did not already have a heading. The operation is idempotent.
     /// </summary>
     public static string RewriteStage(
         FilterInstance selected, string original, int stageId,
@@ -128,70 +177,115 @@ public static class FilterAssignmentText
         KeyValuePair<string, FilterParameterValue>[] batch = assignments.ToArray();
         FilterInstance validation = selected.Clone();
         validation.SetStageParameters(stageId, batch);
-        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        List<string> block =
-        [
-            $"# {stage.Name}: {annotation.Trim()}",
-        ];
+
+        Dictionary<string, string> printed = new(StringComparer.OrdinalIgnoreCase);
         foreach ((string name, FilterParameterValue _) in batch)
         {
             FilterParameterDescriptor descriptor =
                 FilterCatalogue.GetParameters(stage.Kind).First(p =>
                     string.Equals(name, p.Name, StringComparison.OrdinalIgnoreCase));
-            if (!used.Add(descriptor.Name))
+            if (printed.ContainsKey(descriptor.Name))
                 throw new ArgumentException(
                     $"Duplicate wizard assignment for {stage.Name}.{descriptor.Name}.");
             FilterParameterValue value = validation.GetStageParameters(stageId)
                 .GetParameter(descriptor.Name);
-            string printed = value.Kind == FilterParameterValueKind.Number
+            printed.Add(descriptor.Name, value.Kind == FilterParameterValueKind.Number
                 ? value.NumericValue.ToString("G17", CultureInfo.InvariantCulture)
-                : value.ChoiceValue!;
-            block.Add($"{stage.Name}.{descriptor.Name} = {printed}");
+                : value.ChoiceValue!);
         }
 
         string newline = original.Contains("\r\n", StringComparison.Ordinal)
-            ? "\r\n" : "\n";
-        string[] lines = original.Replace("\r\n", "\n")
-            .Replace('\r', '\n').Split('\n');
-        List<string> result = [];
+            ? "\r\n" : original.Contains('\r') ? "\r" : "\n";
+        List<string> lines = Lines(original).ToList();
+        HashSet<string> updated = new(StringComparer.OrdinalIgnoreCase);
+        bool hasStageRows = false;
+        bool hasStageHeading = false;
         int insertion = -1;
-        foreach (string line in lines)
+        for (int i = 0; i < lines.Count; i++)
         {
-            if (MatchesStage(line, stage.Name))
+            string text = lines[i];
+            if (IsStageHeading(text, stage.Name))
             {
-                if (insertion < 0) insertion = result.Count;
-                continue;
+                hasStageHeading = true;
+                if (insertion < 0)
+                    insertion = i + 1;
             }
-            result.Add(line);
+            if (!TryAssignment(text, stage.Name, out string parameter, out int equals))
+                continue;
+
+            hasStageRows = true;
+            insertion = i + 1;
+            if (!printed.TryGetValue(parameter, out string? replacement))
+                continue;
+            // Keep the typed path and surrounding whitespace; only the
+            // actual value changes, so comments/other formatting survive.
+            string suffix = text[(equals + 1)..];
+            int lead = suffix.Length - suffix.TrimStart().Length;
+            int tail = suffix.Length - suffix.TrimEnd().Length;
+            lines[i] = text[..(equals + 1)] + suffix[..lead]
+                + replacement + (tail == 0 ? "" : suffix[^tail..]);
+            updated.Add(parameter);
         }
-        if (insertion < 0)
+
+        List<string> additions = [];
+        if (!hasStageRows && !hasStageHeading)
+            additions.Add($"# {stage.Name}: {annotation.Trim()}");
+        foreach ((string name, string value) in printed)
+            if (!updated.Contains(name))
+                additions.Add($"{stage.Name}.{name} = {value}");
+        if (additions.Count == 0)
+            return original;
+
+        if (insertion >= 0)
+            lines.InsertRange(insertion, additions);
+        else
         {
-            // Avoid accumulating empty spacer lines during append.
-            while (result.Count > 0 && result[^1].Length == 0)
-                result.RemoveAt(result.Count - 1);
-            if (result.Count > 0)
-                result.Add("");
-            insertion = result.Count;
+            // Keep the existing final newline, if any, and avoid inserting
+            // a fresh stage heading in the middle of unrelated assignments.
+            if (lines.Count == 1 && lines[0].Length == 0)
+                lines.Clear();
+            else if (lines.Count > 0 && lines[^1].Length == 0)
+                lines.Insert(lines.Count - 1, "");
+            else if (lines.Count > 0)
+                lines.Add("");
+            lines.AddRange(additions);
         }
-        result.InsertRange(insertion, block);
-        return string.Join(newline, result).TrimEnd('\r', '\n');
+        return string.Join(newline, lines);
     }
 
-    private static bool MatchesStage(string line, string stageName)
+    private static string[] Lines(string text) =>
+        text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+
+    private static bool IsStageHeading(string line, string stageName)
     {
         string trimmed = line.TrimStart();
+        if (!trimmed.StartsWith('#'))
+            return false;
+        string rest = trimmed[1..].TrimStart();
+        int colon = rest.IndexOf(':');
+        return colon >= 0 && string.Equals(rest[..colon].Trim(),
+            stageName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryAssignment(string line, string stageName,
+        out string parameter, out int equals)
+    {
+        parameter = "";
+        equals = -1;
+        string trimmed = line.TrimStart();
         if (trimmed.StartsWith('#'))
-        {
-            string rest = trimmed[1..].TrimStart();
-            int colon = rest.IndexOf(':');
-            return colon >= 0 && string.Equals(rest[..colon].Trim(),
-                stageName, StringComparison.OrdinalIgnoreCase);
-        }
-        int equals = trimmed.IndexOf('=');
-        int dot = trimmed.IndexOf('.');
-        return dot > 0 && equals > dot
-            && string.Equals(trimmed[..dot].Trim(), stageName,
-                StringComparison.OrdinalIgnoreCase);
+            return false;
+        equals = line.IndexOf('=');
+        if (equals < 0 || line.IndexOf('=', equals + 1) >= 0)
+            return false;
+        string path = line[..equals].Trim();
+        int dot = path.IndexOf('.');
+        if (dot <= 0 || dot != path.LastIndexOf('.') || dot == path.Length - 1
+            || !string.Equals(path[..dot].Trim(),
+                stageName, StringComparison.OrdinalIgnoreCase))
+            return false;
+        parameter = path[(dot + 1)..].Trim();
+        return parameter.Length > 0;
     }
 
     private static ArgumentException Invalid(int zeroBasedLine, string issue)
