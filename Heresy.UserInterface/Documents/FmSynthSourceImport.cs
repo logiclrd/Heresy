@@ -213,16 +213,16 @@ internal static class FmSynthSourceImport
                     workspace.Document.Add(clone);
                     break;
                 case ScriptInstrumentDefinition instrument:
-                    ScriptInstrumentDefinition clone = new(map[id], instrument.Name)
+                    ScriptInstrumentDefinition scriptedCopy = new(map[id], instrument.Name)
                     {
                         Source = instrument.Source,
                         PitchExpression = instrument.PitchExpression,
                         NnaExpression = instrument.NnaExpression,
                         NnaFadeDuration = instrument.NnaFadeDuration,
                     };
-                    clone.ToneSpecifications.AddRange(
+                    scriptedCopy.ToneSpecifications.AddRange(
                         instrument.ToneSpecifications.Select(CloneTone));
-                    workspace.Document.Add(clone);
+                    workspace.Document.Add(scriptedCopy);
                     break;
             }
 
