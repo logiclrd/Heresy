@@ -56,6 +56,113 @@ public sealed class FirPhaseAssignmentScopeTests
             "Maximum phase must not retain the Minimum FIR kernel.");
     }
 
+    [Test]
+    public void ChannelPhaseAssignmentsProduceStableDistinctTickIslandsAndOrderedEnergyCentroids()
+    {
+        // Render the actual 64-row Pattern through the frozen playback
+        // factory. Find islands from the PCM itself: don't infer note
+        // boundaries from tracker rows, frame counts, or MIDI timing.
+        Trace trace = RenderScenario(useChannelAssignments: true);
+        IReadOnlyList<float[]> islands = IsolateNonzeroIslands(trace.Pcm);
+
+        Assert.That(islands, Has.Count.EqualTo(64),
+            "Every short tick should form one island separated by real silence.");
+
+        // Four groups: dry (rows 0-15), Linear (16-31),
+        // Minimum (32-47), Maximum (48-63).
+        // Test *all* 16 notes in each group, not just the first/last.
+        for (int group = 0; group < 4; group++)
+        {
+            float[] first = islands[group * 16];
+            Assert.That(first.Length, Is.GreaterThanOrEqualTo(20));
+            Assert.That(first.Length, Is.LessThan(256),
+                "One tick plus a 127-tap finite FIR cannot fill the row gap.");
+
+            for (int offset = 1; offset < 16; offset++)
+                Assert.That(islands[group * 16 + offset],
+                    Is.EqualTo(first),
+                    $"Islands in phase group {group} differ at offset {offset}.");
+        }
+
+        float[][] templates = [islands[0], islands[16], islands[32], islands[48]];
+        for (int earlier = 0; earlier < templates.Length; earlier++)
+        {
+            for (int later = earlier + 1; later < templates.Length; later++)
+                Assert.That(templates[earlier].SequenceEqual(templates[later]),
+                    Is.False,
+                    $"Phase/treatment groups {earlier} and {later} must be distinct.");
+        }
+
+        double dry = EnergyCentroid(templates[0]);
+        double linear = EnergyCentroid(templates[1]);
+        double minimum = EnergyCentroid(templates[2]);
+        double maximum = EnergyCentroid(templates[3]);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(dry, Is.LessThan(linear),
+                "The dry short tick should be earlier than Linear FIR.");
+            Assert.That(minimum, Is.LessThan(linear - 10),
+                "Minimum phase must concentrate energy earlier than Linear.");
+            Assert.That(maximum, Is.GreaterThan(linear + 10),
+                "Maximum phase must concentrate energy later than Linear.");
+        });
+
+        TestContext.WriteLine(
+            $"64 tick-islands: dry={dry:F2}, Linear={linear:F2}, " +
+            $"Minimum={minimum:F2}, Maximum={maximum:F2} samples " +
+            "(relative to each island's first non-silent frame).");
+    }
+
+    // We discover island limits from rendered audio, not from the Pattern
+    // schedule. For FIR ringing there may be interior zero crossings and
+    // near-zero taps; only a *long* run of silence divides two islands.
+    // The normal row separation is much larger than 256 PCM frames.
+    private static IReadOnlyList<float[]> IsolateNonzeroIslands(float[] pcm)
+    {
+        const float nonSilenceThreshold = 1e-8f;
+        const int separationFrames = 256;
+        List<float[]> islands = [];
+        int start = -1, lastAudible = -1;
+
+        for (int frame = 0; frame < pcm.Length; frame++)
+        {
+            if (MathF.Abs(pcm[frame]) <= nonSilenceThreshold)
+                continue;
+
+            if (start >= 0 && frame - lastAudible > separationFrames)
+            {
+                islands.Add(pcm[start..(lastAudible + 1)]);
+                start = -1;
+            }
+
+            if (start < 0)
+                start = frame;
+            lastAudible = frame;
+        }
+
+        if (start >= 0)
+            islands.Add(pcm[start..(lastAudible + 1)]);
+
+        return islands;
+    }
+
+    // The energy-weighted sample-position average, measured *relative*
+    // to the first significant output sample in the isolated island.
+    private static double EnergyCentroid(float[] island)
+    {
+        double energySum = 0, weightedIndexSum = 0;
+        for (int i = 0; i < island.Length; i++)
+        {
+            double energy = (double)island[i] * island[i];
+            energySum += energy;
+            weightedIndexSum += i * energy;
+        }
+        Assert.That(energySum, Is.GreaterThan(1e-10),
+            "The island cannot be silent when computing its centroid.");
+        return weightedIndexSum / energySum;
+    }
+
     private static Trace RenderScenario(bool useChannelAssignments)
     {
         SongDocument song = new();
