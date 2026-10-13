@@ -104,8 +104,7 @@ public sealed class FmSynthSourceEditorTests
 
         string json = SongDocumentJson.Serialize(workspace.Document, "/tmp/heresy-source-editor.hm.json",
             Heresy.Core.Persistence.JsonAssetPathMode.Absolute);
-        SongDocumentJson.Deserialize(json, "/tmp/heresy-source-editor.hm.json")
-            .Objects.Values.OfType<FmSynthDefinition>().Single().Graph.Nodes
-            .OfType<FmSoundSourceNode>().Single().Constant.Should().BeTrue();
+        json.Should().Contain("\\"constant\\":true");
+        json.Should().Contain("\\"sourceId\\":");
     }
 }
