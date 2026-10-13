@@ -636,3 +636,45 @@ This is an *authoring and import* milestone. Whole Pattern/realtime
 producer/export acceptance with every source type remains the separate
 next TODO. Direct playback of a newly inserted source still relies on
 the existing frozen preparation, release and explicit replay contracts.
+
+### Frozen Pattern, realtime buffer and FLAC acceptance (13 October 2026)
+
+The generic `FmSoundSourceNode` has now passed **complete production
+transport acceptance** for every supported directly invocable source:
+**Sample**, **data Instrument**, **script Instrument**, and **nested Synth**.
+Each of these four cases is verified in both mono and stereo by
+`Heresy.Tests.UserInterface/FmSynthSourcePlaybackExportAcceptanceTests.cs`.
+
+Each case starts a voice through a **frozen two-row data Pattern** using a
+four-frame looping Sample. Row one issues Note Off; Instrument cases release
+through the inherited Volume Envelope, while an outer graph IIR Filter (and
+a second inner Filter for the nested-Synth case) drains within its authored
+finite tail. Tests compare entire PCM streams from a single logical block,
+irregularly sized split blocks, and a **bounded buffered realtime producer**
+with realistic varying callback lengths. They also decode a **real exported
+FLAC** and compare each output frame and channel against the frozen Pattern
+PCM to 16-bit encoding precision. Sound remains audible before release and
+after Note Off when an Instrument release is configured, then becomes
+strictly silent and the physical voice is retired during the logical body.
+
+To probe snapshot isolation, the fixture creates the playback plans and
+realtime source first, then **replaces the original song's Synth graph and
+Sample encoding**. Previously prepared voices remain bitwise consistent:
+only the frozen song and compiled child graph may affect the sound. A
+guarded `ISampleDataProvider` rejects any further resolution after
+preparation; the realtime worker and both PCM streams complete without
+resolving a Sample in the audio callback.
+
+Four negative variants deliberately put a **Pattern** or **Sequence**
+under an `FmSoundSourceNode`, directly or through a data Instrument tone
+specification. Frozen preparation throws rather than silently instantiating
+a private recursive Pattern/Sequence mixdown. Ordinary Pattern/Sequence
+mixdowns selected by the surrounding arrangement keep their separate,
+existing supported producer-owned path.
+
+All twelve new variants pass alongside the earlier source-graph import,
+explicit seek, inherited Envelope/Filter, NNA lifecycle and FIR phase
+regressions; no further production DSP or persistence changes were
+necessary. The next Synth graph milestone is the **native-rate
+deterministically seeded white-noise source**, which is deliberately a
+separate node rather than an `ISound` lookup.
