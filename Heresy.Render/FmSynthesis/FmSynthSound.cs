@@ -338,28 +338,35 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	/// </summary>
 	private double GetMaximumAudioPathTailSeconds()
 	{
-		// A serial cascade accumulates its tail allowances. Parallel paths
-		// use the longest branch. Parameter-only edges are not audio paths.
-		// The compiled node graph is acyclic and each node is visited once.
-		double[] tails = new double[_nodes.Length];
-		for (int index = 0; index < _nodes.Length; index++)
+		// User-authored TailSeconds is a graph-wide maximum allowance,
+		// deliberately NOT the sum of serial Filter tails. This preserves
+		// the explicit FM Filter budget independently of physical DSP tails.
+		double tail = 0;
+		HashSet<int> visited = [];
+		Visit(_outputIndex);
+		return tail;
+
+		void Visit(int index)
 		{
+			if (!visited.Add(index))
+				return;
 			CompiledNode compiled = _nodes[index];
 			switch (compiled.Definition)
 			{
-				case FmFilterNode filter when filter.AudioInputNodeId.HasValue:
-					double upstream = tails[compiled.InputIndices[0]];
-					double extra = filter.Configuration is not null
-						? filter.TailSeconds : 0;
-					tails[index] = upstream + extra;
+				case FmFilterNode filter:
+					if (filter.AudioInputNodeId.HasValue)
+					{
+						if (filter.Configuration is not null)
+							tail = Math.Max(tail, filter.TailSeconds);
+						Visit(compiled.InputIndices[0]);
+					}
 					break;
 				case FmOperatorNode:
 					foreach (int input in compiled.InputIndices)
-						tails[index] = Math.Max(tails[index], tails[input]);
+						Visit(input);
 					break;
 			}
 		}
-		return tails[_outputIndex];
 	}
 
 	/// <summary>

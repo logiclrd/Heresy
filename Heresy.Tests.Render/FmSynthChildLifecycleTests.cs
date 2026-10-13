@@ -180,7 +180,7 @@ public sealed class FmSynthChildLifecycleTests
     }
 
     [Test]
-    public void CascadedGraphFiltersAccumulateAuthoredTailAndParallelBranchesTakeLongest()
+    public void CascadedAndParallelGraphFiltersUseMaximumAuthoredTailAllowance()
     {
         Registry registry = new();
         registry.Add(SampleId, MakeSample([1, 1, 1], 1000));
@@ -202,9 +202,10 @@ public sealed class FmSynthChildLifecycleTests
         Assert.That(synth.GetEndFrameExclusive(context, state), Is.Null);
         float[] audio = new float[12];
         synth.Render(context, state, 0, audio.Length, audio);
-        // Source stops at 3; the serial branch's 2+3 frames outlast
-        // the 4-frame parallel branch. Using max(2,3,4) would cut early.
-        Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(8));
+        // Source stops at 3, then the FM Filter authoring contract adds
+        // max(2,3,4) = 4 frames, NOT the sum of serial stages. Their
+        // physical Filter histories still process during this budget.
+        Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(7));
         Assert.That(audio[3], Is.GreaterThan(0));
     }
 

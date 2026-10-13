@@ -312,10 +312,12 @@ source-frame evaluation. The parent refreshes its graph cutoff when a child
 first becomes finite inside a block; it no longer waits for an unrelated
 future Render call to learn that boundary.
 
-Graph-tail accounting computes the longest **audio** path, accumulating
-user-authored Filter tail allowances across serial Filter stages and taking
-the longest of parallel alternatives. Filter parameter wires and oscillator
-frequency controls do not add audible tail paths. Algebraic graph end
+Graph-tail accounting preserves the existing explicit FM Filter-node
+budget: the **maximum** authored `TailSeconds` among Filter nodes on
+reachable **audio** paths, not the sum of serial Filter allowances. Serial
+physical DSP tails may be longer than that budget and can intentionally be
+truncated; the user controls this maximum. Filter parameter wires and
+oscillator frequency controls do not add audible tail paths. Algebraic graph end
 bounds remain conservative: Multiply is provably silent when *any* input
 becomes silent; Add, Minimum and Maximum require *all* contributing inputs
 to have finite silence bounds. A graph Envelope without an actual Note Off
