@@ -141,19 +141,33 @@ public sealed class NativePatternEffectDialogKeyboardTests
 		using Modal modal = new(new SetSpeedPatternEffect(6));
 		TextBox input = modal.Input("ticksPerRow");
 		input.Text = "10";
+		// Test this dialog's explicit shortcut filter in isolation:
+		// Avalonia's existing IsDefault button may independently process
+		// other Enter combinations in the complete routed keyboard pipeline.
 		foreach (KeyModifiers modifiers in new[] {
-			KeyModifiers.Shift, KeyModifiers.Alt,
+			KeyModifiers.None, KeyModifiers.Shift, KeyModifiers.Alt,
 			KeyModifiers.Control | KeyModifiers.Shift,
 			KeyModifiers.Control | KeyModifiers.Alt,
 		})
 		{
-			Press(input, Key.Enter, modifiers);
-			// TextBox may consume an Enter gesture itself; what matters is
-			// that the dialog did not apply or close for other modifiers.
+			KeyEventArgs other = new()
+			{
+				RoutedEvent = InputElement.KeyDownEvent,
+				Key = Key.Enter,
+				KeyModifiers = modifiers,
+			};
+			InvokeShortcutHandler(modal.Dialog, other);
+			Assert.That(other.Handled, Is.False);
 			Assert.That(modal.Result.IsCompleted, Is.False);
 		}
-		KeyEventArgs prior = Press(input, Key.Enter, KeyModifiers.Control,
-			alreadyHandled: true);
+		KeyEventArgs prior = new()
+		{
+			RoutedEvent = InputElement.KeyDownEvent,
+			Key = Key.Enter,
+			KeyModifiers = KeyModifiers.Control,
+			Handled = true,
+		};
+		InvokeShortcutHandler(modal.Dialog, prior);
 		Assert.That(prior.Handled, Is.True);
 		Assert.That(modal.Result.IsCompleted, Is.False);
 		Assert.That(modal.Button("Cancel").IsCancel, Is.True);
@@ -163,6 +177,13 @@ public sealed class NativePatternEffectDialogKeyboardTests
 		Assert.That(modal.Result.IsCompletedSuccessfully, Is.True);
 		Assert.That(modal.Result.Result, Is.Null);
 	}
+
+	private static void InvokeShortcutHandler(
+		NativePatternEffectEditorDialog dialog, KeyEventArgs e) =>
+		typeof(NativePatternEffectEditorDialog)
+			.GetMethod("OnDialogKeyDown",
+				BindingFlags.Instance | BindingFlags.NonPublic)!
+			.Invoke(dialog, [dialog, e]);
 
 	private static KeyEventArgs Press(Control target, Key key,
 		KeyModifiers modifiers = KeyModifiers.None, bool alreadyHandled = false)
