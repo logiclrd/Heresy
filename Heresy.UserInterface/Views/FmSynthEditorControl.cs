@@ -15,6 +15,8 @@ using Heresy.Core.Envelopes;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Filters;
 using Heresy.Core.Objects;
+using Heresy.Core.Samples;
+using Heresy.Core.Instruments;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.Dialogs;
 using Heresy.UserInterface.FmEditing;
@@ -168,6 +170,7 @@ public sealed class FmSynthEditorControl : UserControl
 			Button(
 				"+ Oscillator",
 				AddOscillator));
+		addButtons.Children.Add(Button("+ Source", AddSoundSource));
 		addButtons.Children.Add(
 			Button(
 				"+ Envelope",
@@ -452,6 +455,18 @@ public sealed class FmSynthEditorControl : UserControl
 		}
 	}
 
+	private void AddSoundSource()
+	{
+		try
+		{
+			(double x, double y) = NextSpawnPosition();
+			int id = FmSynthDocumentEditor.AddSoundSourceNode(
+				_workspace, _synth, x, y);
+			AfterGraphChange(id, $"Added unassigned FM source node #{id}");
+		}
+		catch (Exception ex) { _message.Text = ex.Message; }
+	}
+
 	private void AddEnvelope()
 	{
 		try
@@ -685,6 +700,10 @@ public sealed class FmSynthEditorControl : UserControl
 					oscillator);
 				break;
 
+			case FmSoundSourceNode source:
+				AddSoundSourceInspector(source);
+				break;
+
 			case FmEnvelopeNode envelope:
 				AddEnvelopeInspector(
 					envelope);
@@ -860,6 +879,81 @@ public sealed class FmSynthEditorControl : UserControl
 			exponential,
 			() => ((FmOscillatorNode)CurrentNode(node.Id)).ExponentialMultiplier,
 			value => UpdateOscillator(node.Id, exponential: value));
+	}
+
+	private void AddSoundSourceInspector(FmSoundSourceNode node)
+	{
+		SourceChoice[] choices = _workspace.Document.Objects.Values
+			.Where(obj => obj is SampleDefinition or InstrumentDefinition
+				or ScriptInstrumentDefinition or FmSynthDefinition)
+			.OrderBy(obj => obj.Name, StringComparer.OrdinalIgnoreCase)
+			.ThenBy(obj => obj.Id.Value)
+			.Select(obj => new SourceChoice(obj.Id,
+				$"{obj.Name} <{obj.Id.Value}> ({obj.Kind})"))
+			.ToArray();
+		SourceChoice unassigned = new(ObjectId.None, "(None)");
+		SourceChoice? missing = node.SourceId.IsNone || choices.Any(c => c.Id == node.SourceId)
+			? null : new(node.SourceId,
+				$"Missing source <{node.SourceId.Value}> — select a valid source");
+		SourceChoice[] options = missing is null
+			? [unassigned, .. choices] : [unassigned, missing, .. choices];
+		ComboBox source = new()
+		{
+			ItemsSource = options,
+			SelectedItem = options.First(c => c.Id == node.SourceId),
+		};
+		AddField("Source (Sample / Instrument / Synth)", source);
+		if (missing is not null)
+			_inspector.Children.Add(new TextBlock
+			{
+				Text = $"Source object #{node.SourceId.Value} does not exist in this song. Select a live source to play it.",
+				TextWrapping = TextWrapping.Wrap,
+			});
+		TextBox frequency = NumberBox(node.FrequencyHz);
+		CheckBox constant = new()
+		{
+			Content = "Constant",
+			IsChecked = node.Constant,
+		};
+		AddField("Frequency Hz", frequency);
+		_inspector.Children.Add(constant);
+		NodeChoice[] multipliers =
+			[new NodeChoice(null, "— none"),
+			 .. _synth.Graph.Nodes.Where(n => n.Id != node.Id)
+				.Select(n => new NodeChoice(n.Id, $"#{n.Id} {NodeName(n)}"))];
+		ComboBox multiplier = new()
+		{
+			ItemsSource = multipliers,
+			SelectedItem = multipliers.FirstOrDefault(c => c.NodeId == node.MultiplierNodeId)
+				?? multipliers[0],
+		};
+		CheckBox exponential = new()
+		{
+			Content = "Exponential multiplier (semitones)",
+			IsChecked = node.ExponentialMultiplier,
+		};
+		AddField("Multiplier input", multiplier);
+		_inspector.Children.Add(exponential);
+		BindParameterSelection(source,
+			() => options.FirstOrDefault(c => c.Id ==
+				((FmSoundSourceNode)CurrentNode(node.Id)).SourceId) ?? unassigned,
+			item => UpdateSoundSource(node.Id, sourceId: ((SourceChoice)item).Id));
+		BindParameterText(frequency,
+			text => UpdateSoundSource(node.Id,
+				frequency: ParsePositiveDouble(text, "Frequency")));
+		BindParameterToggle(constant,
+			() => ((FmSoundSourceNode)CurrentNode(node.Id)).Constant,
+			value => UpdateSoundSource(node.Id, constant: value));
+		BindParameterSelection(multiplier,
+			() => multipliers.FirstOrDefault(c => c.NodeId ==
+				((FmSoundSourceNode)CurrentNode(node.Id)).MultiplierNodeId)
+					?? multipliers[0],
+			item => UpdateSoundSource(node.Id,
+				multiplierId: ((NodeChoice)item).NodeId,
+				replaceMultiplier: true));
+		BindParameterToggle(exponential,
+			() => ((FmSoundSourceNode)CurrentNode(node.Id)).ExponentialMultiplier,
+			value => UpdateSoundSource(node.Id, exponential: value));
 	}
 
 	private void AddEnvelopeInspector(FmEnvelopeNode node)
@@ -1417,6 +1511,26 @@ public sealed class FmSynthEditorControl : UserControl
 			?? throw new InvalidOperationException(
 					$"FM node #{nodeId} no longer exists.");
 
+	private void UpdateSoundSource(int nodeId,
+		ObjectId? sourceId = null, double? frequency = null,
+		int? multiplierId = null, bool replaceMultiplier = false,
+		bool? exponential = null, bool? constant = null)
+	{
+		UpdateParameter(nodeId, current =>
+		{
+			FmSoundSourceNode live = (FmSoundSourceNode)current;
+			ObjectId id = sourceId ?? live.SourceId;
+			double freq = frequency ?? live.FrequencyHz;
+			int? input = replaceMultiplier ? multiplierId : live.MultiplierNodeId;
+			bool exp = exponential ?? live.ExponentialMultiplier;
+			bool fixedPitch = constant ?? live.Constant;
+			return id == live.SourceId && freq == live.FrequencyHz
+				&& input == live.MultiplierNodeId
+				&& exp == live.ExponentialMultiplier && fixedPitch == live.Constant
+				? null : new FmSoundSourceNode(nodeId, id, freq, input, exp, fixedPitch);
+		});
+	}
+
 	private void UpdateOscillator(
 		int nodeId,
 		FmOscillatorWaveform? waveform = null,
@@ -1607,6 +1721,7 @@ public sealed class FmSynthEditorControl : UserControl
 		{
 			FmConstantNode => "Constant",
 			FmOscillatorNode => "Oscillator",
+			FmSoundSourceNode => "Source",
 			FmEnvelopeNode => "Envelope",
 			FmFilterNode => "Filter",
 			FmOperatorNode => "Operator",
@@ -1619,6 +1734,11 @@ public sealed class FmSynthEditorControl : UserControl
 	{
 		public override string ToString()
 			=> DisplayName;
+	}
+
+	private sealed record SourceChoice(ObjectId Id, string DisplayName)
+	{
+		public override string ToString() => DisplayName;
 	}
 
 	private sealed record FilterChoice(ObjectId Id, string DisplayName)
