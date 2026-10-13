@@ -9,6 +9,12 @@ namespace Heresy.Render.Sounds;
 public abstract class SoundState
 {
 	private readonly PitchTrajectory _pitchTrajectory = new();
+	/// <summary>Deterministic voice noise seed. Production PlaybackVoice
+	/// assigns a unique reproducible seed per note; direct render callers
+	/// can choose a seed to obtain independent concurrent voices.</summary>
+	public ulong NoiseSeed { get; private set; } = 0x4845524553590001UL;
+
+	public virtual void SetNoiseSeed(ulong seed) => NoiseSeed = seed;
 	private double _pitchMultiplier = 1.0;
 	private double _playbackSpeedMultiplier = 1.0;
 	private TimeSpan _playbackOffset;
