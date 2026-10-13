@@ -100,7 +100,7 @@ internal static class FmSynthSourceImport
                             case FmSoundSourceNode sourceNode:
                                 Visit(sourceNode.SourceId);
                                 break;
-                            case FmConstantNode or FmOscillatorNode or FmOperatorNode:
+                            case FmConstantNode or FmNoiseNode or FmOscillatorNode or FmOperatorNode:
                                 break;
                             default:
                                 throw new NotSupportedException(
