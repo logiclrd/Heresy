@@ -294,13 +294,29 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	/// trajectory, note-off, position and playback controls are preserved.
 	/// Replays the exact source-frame timeline from zero to targetFrame, so
 	/// there are no approximate Sample offsets or stale Filter histories.
+	/// Supply the *original accepted* synchronous FIR preparation boundaries
+	/// for graph automation that commits off-thread kernel updates. This
+	/// reconstructs the same off-PCM publication schedule; asynchronous
+	/// publications need their actual acceptance frames recorded by the producer.
 	/// </summary>
 	public void PrepareReplay(RenderContext context, SoundState state,
-		long targetFrame = 0)
+		long targetFrame = 0,
+		IReadOnlyList<long>? firPreparationFrames = null)
 	{
 		ArgumentNullException.ThrowIfNull(context);
 		if (targetFrame < 0)
 			throw new ArgumentOutOfRangeException(nameof(targetFrame));
+		if (firPreparationFrames is not null)
+		{
+			long previous = -1;
+			foreach (long boundary in firPreparationFrames)
+			{
+				if (boundary <= previous || boundary > targetFrame)
+					throw new ArgumentOutOfRangeException(nameof(firPreparationFrames),
+						"Control publication boundaries must be unique, ascending and at or before targetFrame.");
+				previous = boundary;
+			}
+		}
 		FmSynthState current = ValidateState(state);
 		int sampleRate = context.Configuration.SampleRate;
 		if (_preparedChildFilterFactory is { } prepared
@@ -317,6 +333,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		else
 			current.Reset(sampleRate);
 		PrepareChildRender(context, current);
+		// Reconstruct accepted FIR candidates at their original off-PCM
+		// boundaries. This may design kernels and must never run in a callback.
+		if (firPreparationFrames is not null)
+			foreach (long boundary in firPreparationFrames)
+			{
+				EnsureFrame(context, current, boundary);
+				PreparePendingFilterControls(context, current);
+			}
 		// Deliberately do all potentially expensive replay/warm-up work at
 		// the boundary. The next Render(targetFrame, ...) stays sequential.
 		EnsureFrame(context, current, targetFrame);
