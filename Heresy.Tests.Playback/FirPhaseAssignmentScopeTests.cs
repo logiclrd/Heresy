@@ -108,7 +108,7 @@ public sealed class FirPhaseAssignmentScopeTests
                 "Maximum phase must concentrate energy later than Linear.");
         });
 
-        TestContext.WriteLine(
+        TestContext.Out.WriteLine(
             $"64 tick-islands: dry={dry:F2}, Linear={linear:F2}, " +
             $"Minimum={minimum:F2}, Maximum={maximum:F2} samples " +
             "(relative to each island's first non-silent frame).");
