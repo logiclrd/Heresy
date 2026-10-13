@@ -98,6 +98,8 @@ public sealed class FmNoiseNodeTests
             index += length;
         }
         Assert.That(actual, Is.EqualTo(expected));
+        // Render adds to its destination, so clear the replayed subrange.
+        actual.AsSpan(17, 231).Clear();
         sound.Render(Mono, split, 17, 231, actual.AsSpan(17, 231));
         Assert.That(actual, Is.EqualTo(expected),
             "a rewind must regenerate frame-indexed noise, not repeat a shifted PRNG stream");
