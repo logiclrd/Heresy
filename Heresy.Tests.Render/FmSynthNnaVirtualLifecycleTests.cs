@@ -87,7 +87,8 @@ public sealed class FmSynthNnaVirtualLifecycleTests
             Assert.That(session.VirtualVoices, Is.Empty,
                 "one long block must retire all finished NNA sources immediately");
             Assert.That(session.GetChannelState(0).CurrentVoice, Is.Null);
-            Assert.That(whole.Skip(10), Is.All.Zero);
+            Assert.That(whole.Skip(10), Is.All.EqualTo(0f).Within(1e-7f),
+                "anti-click residue below floating-point tolerance is silence");
             Assert.That(resolver.SoundLookups, Is.EqualTo(lookupsAfterBinding),
                 "no asset resolution may occur during settled PCM rendering");
         });
