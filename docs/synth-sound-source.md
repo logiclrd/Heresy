@@ -510,3 +510,33 @@ This closes nested graph FIR/FLAC/buffer parity without DSP changes or song
 schema migration. Physical device listening, displaced NNA/virtual voice
 retirement, and backwards replay of nested source states remain separate
 planned qualifications.
+
+### Nested ISound NNA and virtual-channel voice retirement (13 October 2026)
+
+Regression coverage now exercises **Cut, Continue, Off and Fade** as the
+displacement policies of actual prepared **Synth → Synth → Sample** voices.
+The old `PlaybackVoice` migrates into the dynamic virtual host for
+Continue/Off/Fade, keeping its separate Synth child invocation and graph
+Filter history; Cut does not retain it. A four-frame Fade owns an exclusive
+end; Off propagates the actual displacement-frame Note Off into the nested
+sound. Under a single long render block the streaming Synth's newly observed
+source end removes the completed displaced voice immediately; whole and
+irregularly partitioned PCM and the resulting voice state agree. Cut may
+leave only sub-audible floating-point anti-click residue below test
+tolerance, not a retained note.
+
+For indefinite looping input, separate tests use **Synth → Synth →
+Instrument → looping Sample** with an inherited three-frame Volume Envelope
+and a graph Filter with two authored tail frames. Off preserves the release,
+Fade uses its own configured deadline, and an explicit Note Off releases the
+new virtual voice; neither loop nor downstream Filter can retain completed
+voices indefinitely. A third test gives two producer scopes the same
+`Virtual(7)` identity and displaces a note in only one scope: the other
+owner's active note is never borrowed or replaced. Resolver counters
+confirm that source selection happens at preparation/voice binding, not
+while PCM samples are produced.
+
+These checks qualify the current sequential voice-retirement lifecycle.
+They do **not** implement deterministic arbitrary backwards replay,
+cross-song import remapping or graph-editor creation; those remain separate
+TODOs. The tests required no production DSP change.
