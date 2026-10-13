@@ -280,6 +280,8 @@ public sealed class PlaybackVoice
 			?? throw new ArgumentNullException(nameof(tickClock));
 		_sampleRate = sampleRate;
 		_modulationSeed = modulationSeed;
+		// Reuse the stable per-note modulation seed for independent Synth noise.
+		SoundState.SetNoiseSeed(modulationSeed);
 
 		_previousOutputFrame = new float[outputChannelCount];
 		_lastOutputFrame = new float[outputChannelCount];
