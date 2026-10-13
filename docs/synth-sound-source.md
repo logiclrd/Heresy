@@ -679,3 +679,56 @@ regressions; no further production DSP or persistence changes were
 necessary. The next Synth graph milestone is the **native-rate
 deterministically seeded white-noise source**, which is deliberately a
 separate node rather than an `ISound` lookup.
+
+### Native-rate white-noise graph node (13 October 2026)
+
+`FmNoiseNode(id)` is an independent native-rate **white-noise audio
+source** in the Synth graph, represented as `"type": "noise"` in the
+existing v1 song format. It has a **single output port**, no numeric
+inputs, no Frequency Hz and no implicit EQ, low-pass or resampler.
+Multiplying or adding its output with graph operators and applying
+explicit Filter nodes supplies any user-desired amplitude envelope or
+spectral shaping. As with oscillators and constant audio branches,
+it respects Note Off, dependent release Envelopes and downstream
+authored Filter tail budgets.
+
+The algorithm uses a *counter-based*, fixed SplitMix64 output-finalizer
+over **the per-voice noise seed, stable graph node ID and relative
+native output frame number**. Each frame generates a uniformly distributed
+floating-point sample on [-1, 1), with expected variance 1/3 and
+broadband flat power rather than pitch-following or frequency-scaled
+noise. The same triplet yields the same sample without storing PRNG
+history. No `System.Random`, process entropy, shared mutable random
+state, heap allocations or compiler/asset lookups are needed in the
+per-frame renderer.
+
+`PlaybackVoice` binds the same stable, deterministic note seed already
+used for tracker modulation into `SoundState.SetNoiseSeed`. Separate
+physical/virtual voices obtain separate, reproducible streams even
+when playing the same Synth at the same note. `FmSynthState` recursively
+derives separate child streams for nested Synth source invocations
+without allocating in PCM. Recreating the children in
+`FmSynthSound.PrepareReplay` **reapplies the original parent noise seed**,
+so an explicitly reconstructed backward seek does not change its
+child samples. Direct-Render callers may explicitly seed new
+`SoundState` instances; the default seed is stable if not overridden.
+Output spatialization is the same mono-source-to-speakers path as
+existing oscillator output, not independent random data for each speaker.
+
+The editor offers **+ Noise**, displaying the node as **White Noise**
+with a single output port and an explanatory no-frequency inspector.
+Graph output selection, movement, Delete, wiring into Filter/Operator
+inputs, snapshots, ordinary cross-song Synth cloning and recursive
+source dependency imports all recognize this node. The song never
+persists voice random seeds, random history or a synthetic frequency.
+
+Acceptance includes 32,768 native-rate PCM frames tested for mean,
+variance/power and extrema; adjacent-frame correlation; 8 distributed
+FFT bin bands accumulated over 32 windows; exact direct whole/split/
+backward replay and pitch/speed invariance; distinct seeds and node IDs;
+centered stereo spatialization; Note Off retirement; bounded steady
+PCM allocation; JSON round-trip and frozen snapshots; headless editor
+node creation/deletion and import paths; and two simultaneous Pattern
+voices with independent noise plus block-invariant rendering.
+A separate nested Synth regression verifies that explicit producer-
+boundary replay preserves the original child stream identity.
