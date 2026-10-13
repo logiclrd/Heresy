@@ -907,6 +907,10 @@ public static class SongDocumentJson
 					nodeJson["value"] = constant.Value;
 					break;
 
+				case FmNoiseNode:
+					nodeJson["type"] = "noise";
+					break;
+
 				case FmOscillatorNode oscillator:
 					nodeJson["type"] = "oscillator";
 					nodeJson["waveform"] =
@@ -1083,6 +1087,7 @@ public static class SongDocumentJson
 						new FmConstantNode(
 							nodeId,
 							RequiredDouble(node, "value")),
+					"noise" => new FmNoiseNode(nodeId),
 					"oscillator" =>
 						new FmOscillatorNode(
 							nodeId,
