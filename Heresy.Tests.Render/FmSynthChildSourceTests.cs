@@ -145,16 +145,21 @@ public sealed class FmSynthChildSourceTests
     }
 
     [Test]
-    public void ModulatedSourcesFailPreflightInsteadOfIgnoringGraphInput()
+    public void PreparedSourceAcceptsConnectedGraphModulationWithoutPcmResolution()
     {
         ObjectId id = (ObjectId)8U;
-        Resolver resolver = new((id, new CountingSound()));
-        Assert.That(() => new FmSynthSound(new FmSynthGraph([
+        CountingSound child = new();
+        Resolver resolver = new((id, child));
+        FmSynthSound sound = new(new FmSynthGraph([
             new FmConstantNode(0, 2),
             new FmSoundSourceNode(1, id, C4, multiplierNodeId: 0),
-        ], 1), resolver, soundResolver: resolver),
-            Throws.TypeOf<NotSupportedException>().With.Message
-                .Contains("integrated child pitch"));
+        ], 1), resolver, soundResolver: resolver);
+        Assert.That(resolver.Calls, Is.EqualTo(1));
+        float[] mono = new float[3];
+        sound.Render(Mono(8), sound.CreateState(), 0, 3, mono);
+        Assert.That(mono, Is.EqualTo(new float[] { 1, 2, 3 }));
+        Assert.That(resolver.Calls, Is.EqualTo(1),
+            "modulation must use the prepared child rather than per-frame lookup");
     }
 
     private static RenderContext Mono(int rate) => new(
