@@ -28,35 +28,35 @@ public sealed class FirPhaseAssignmentScopeTests
     [Test]
     public void NoteAssignmentsDoNotModifyPersistentChannelFir()
     {
-        float[] pcm = RenderScenario(useChannelAssignments: false);
-        float[] linear = Tick(pcm, 16);
-        Assert.That(Tick(pcm, 32), Is.EqualTo(linear).Within(1e-6f),
+        Trace trace = RenderScenario(useChannelAssignments: false);
+        float[] linear = Tick(trace, 16);
+        Assert.That(Tick(trace, 32), Is.EqualTo(linear).Within(1e-6f),
             "A Note Filter assignment must not modify a Channel Filter.");
-        Assert.That(Tick(pcm, 48), Is.EqualTo(linear).Within(1e-6f),
+        Assert.That(Tick(trace, 48), Is.EqualTo(linear).Within(1e-6f),
             "Later notes without an event Filter must not reconfigure the host.");
     }
 
     [Test]
     public void ChannelAssignmentsChangeFirPhaseAtRows32And48()
     {
-        float[] pcm = RenderScenario(useChannelAssignments: true);
-        float[] dry = Tick(pcm, 0);
-        float[] linear = Tick(pcm, 16);
-        float[] minimum = Tick(pcm, 32);
-        float[] maximum = Tick(pcm, 48);
+        Trace trace = RenderScenario(useChannelAssignments: true);
+        float[] dry = Tick(trace, 0);
+        float[] linear = Tick(trace, 16);
+        float[] minimum = Tick(trace, 32);
+        float[] maximum = Tick(trace, 48);
 
         Assert.That(linear, Is.Not.EqualTo(dry),
             "Channel FIR selection must change the tick waveform at row 16.");
-        Assert.That(Tick(pcm, 31), Is.EqualTo(linear).Within(1e-6f));
-        Assert.That(Tick(pcm, 47), Is.EqualTo(minimum).Within(1e-6f));
-        Assert.That(Tick(pcm, 63), Is.EqualTo(maximum).Within(1e-6f));
+        Assert.That(Tick(trace, 31), Is.EqualTo(linear).Within(1e-6f));
+        Assert.That(Tick(trace, 47), Is.EqualTo(minimum).Within(1e-6f));
+        Assert.That(Tick(trace, 63), Is.EqualTo(maximum).Within(1e-6f));
         Assert.That(Difference(linear, minimum), Is.GreaterThan(0.02),
             "Minimum phase must not retain the original Linear FIR kernel.");
         Assert.That(Difference(minimum, maximum), Is.GreaterThan(0.02),
             "Maximum phase must not retain the Minimum FIR kernel.");
     }
 
-    private static float[] RenderScenario(bool useChannelAssignments)
+    private static Trace RenderScenario(bool useChannelAssignments)
     {
         SongDocument song = new();
         ObjectId sampleId = song.AllocateObjectId();
@@ -106,8 +106,7 @@ public sealed class FirPhaseAssignmentScopeTests
         List<int> ticks = FindTicks(result);
         Assert.That(ticks, Has.Count.EqualTo(64),
             "One isolated click should sound on each of the 64 rows.");
-        _onsets = ticks.ToArray();
-        return result;
+        return new Trace(result, ticks.ToArray());
     }
 
     // A 20-sample pulse exceeds 0.2 per tick, while the FIR impulse tail
@@ -127,12 +126,12 @@ public sealed class FirPhaseAssignmentScopeTests
         return result;
     }
 
-    private static int[] _onsets = [];
+    private sealed record Trace(float[] Pcm, int[] Onsets);
 
-    private static float[] Tick(float[] pcm, int row)
+    private static float[] Tick(Trace trace, int row)
     {
-        int start = Math.Max(0, _onsets[row] - 16);
-        return pcm.Skip(start).Take(180).ToArray();
+        int start = Math.Max(0, trace.Onsets[row] - 16);
+        return trace.Pcm.Skip(start).Take(180).ToArray();
     }
 
     private static double Difference(float[] a, float[] b)
