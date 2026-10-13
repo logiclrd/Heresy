@@ -31,6 +31,7 @@ public sealed class FmSynthChildInheritedControlsTests
     private static readonly ObjectId PitchId = (ObjectId)203U;
     private static readonly ObjectId PanningId = (ObjectId)204U;
     private static readonly ObjectId FilterId = (ObjectId)205U;
+    private static readonly ObjectId VolumeId = (ObjectId)206U;
 
     [Test]
     public void InstrumentPitchEnvelopeUsesOctavesAndDoesNotReselectChildTone()
@@ -64,9 +65,13 @@ public sealed class FmSynthChildInheritedControlsTests
         resolver.Add(SampleId, Sample(Enumerable.Range(0, 32)
             .Select(i => (float)i).ToArray(), 1));
         resolver.AddEnvelope(PitchId, new ReleasePitchCurve());
+        // The selected Sample's Volume envelope owns release so its native
+        // Note Off must not cut the PCM before the Pitch envelope responds.
+        resolver.AddEnvelope(VolumeId, new ConstantCurve(1.0));
         resolver.Add(InstrumentId, new InstrumentSound(
             _ => new ToneSpecification { SourceId = SampleId,
-                PitchEnvelopeId = PitchId }, resolver, resolver));
+                PitchEnvelopeId = PitchId, VolumeEnvelopeId = VolumeId },
+            resolver, resolver));
         FmSynthSound synth = Synth(resolver);
         SoundState state = synth.CreateState();
         state.NoteOffTime = TimeSpan.FromSeconds(2.0 / Rate);
