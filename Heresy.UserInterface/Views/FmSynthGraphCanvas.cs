@@ -868,6 +868,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		=> node switch
 		{
 			FmConstantNode => "Constant",
+			FmNoiseNode => "White Noise",
 			FmOscillatorNode => "Oscillator",
 			FmSoundSourceNode => "Source",
 			FmEnvelopeNode => "Envelope",
@@ -880,6 +881,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 		FmSynthNode node)
 		=> node switch
 		{
+			FmNoiseNode => "Native-rate, unfiltered white noise",
 			FmConstantNode constant =>
 				constant.Value.ToString(
 					"0.###",
