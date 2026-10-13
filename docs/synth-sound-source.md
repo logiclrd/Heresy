@@ -312,6 +312,13 @@ source-frame evaluation. The parent refreshes its graph cutoff when a child
 first becomes finite inside a block; it no longer waits for an unrelated
 future Render call to learn that boundary.
 
+Because a containing Synth can poll a nested sound's finite end once per
+PCM frame, `FmSynthState` now owns reusable per-invocation end-analysis
+scratch, and the graph's maximum authored Filter-tail allowance is compiled
+once from its immutable DAG. End queries no longer build an array/HashSet
+per sample; a warmed nested looping-source regression checks bounded
+managed allocations across repeated PCM blocks.
+
 Graph-tail accounting preserves the existing explicit FM Filter-node
 budget: the **maximum** authored `TailSeconds` among Filter nodes on
 reachable **audio** paths, not the sum of serial Filter allowances. Serial

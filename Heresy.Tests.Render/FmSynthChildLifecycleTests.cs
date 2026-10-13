@@ -284,6 +284,39 @@ public sealed class FmSynthChildLifecycleTests
         Assert.That(parent.GetEndFrameExclusive(context, state), Is.EqualTo(3));
     }
 
+    [Test]
+    public void NestedIndefiniteSourceEndQueriesStayAllocationFreeDuringStreaming()
+    {
+        // A parent's child-end observer polls the nested Synth every
+        // rendered PCM frame. Its graph-bound and tail analysis must not
+        // allocate a fresh scratch array or HashSet for those queries.
+        Registry registry = new();
+        registry.Add(SampleId, MakeSample([0.5f, 0.5f, 0.5f, 0.5f],
+            48000, loop: true));
+        ObjectId nestedId = (ObjectId)89U;
+        FmSynthSound child = MakeSynth(registry, [
+            new FmSoundSourceNode(0, SampleId, C4),
+        ]);
+        registry.Add(nestedId, child);
+        FmSynthSound parent = MakeSynth(registry, [
+            new FmSoundSourceNode(0, nestedId, C4),
+        ]);
+        SoundState state = parent.CreateState();
+        RenderContext context = Mono(48000);
+        float[] pcm = new float[128];
+        for (int block = 0; block < 4; block++)
+            parent.Render(context, state, block * pcm.Length,
+                pcm.Length, pcm);
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int block = 4; block < 20; block++)
+            parent.Render(context, state, block * pcm.Length,
+                pcm.Length, pcm);
+        long managedBytes = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.That(managedBytes, Is.LessThanOrEqualTo(8192),
+            "prepared nested source lifecycle queries must not allocate per PCM frame");
+        Assert.That(parent.GetEndFrameExclusive(context, state), Is.Null);
+    }
+
     private static FmSynthSound MakeSynth(Registry registry,
         FmSynthNode[] nodes, int output = 0)
         => new(new FmSynthGraph(nodes, output),

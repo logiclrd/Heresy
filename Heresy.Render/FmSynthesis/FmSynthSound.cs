@@ -44,12 +44,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			SourceVoice?[] sources)
 		{
 			Values = new double[nodeCount];
+			SilentFrom = new long?[nodeCount];
 			Phases = new double[oscillatorCount];
 			Filters = new FmFilterNodeProcessor.State?[nodeCount];
 			Sources = sources;
 		}
 
 		public double[] Values { get; }
+		public long?[] SilentFrom { get; }
 		public double[] Phases { get; }
 		public FmFilterNodeProcessor.State?[] Filters { get; }
 		public SourceVoice?[] Sources { get; }
@@ -65,6 +67,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				throw new NotSupportedException(
 					"Replaying child-source Synth state requires the subsequent seek milestone.");
 			Array.Clear(Values);
+			Array.Clear(SilentFrom);
 			Array.Clear(Phases);
 			Array.Clear(Filters); // never reuse histories after rewind/rate change
 			NextFrame = 0;
@@ -87,6 +90,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	private readonly NewNotePolicy _newNotePolicy;
 	private readonly PreparedToneFilterStageFactory? _preparedChildFilterFactory;
 	private readonly bool _hasSources;
+	private readonly double _maximumAudioPathTailSeconds;
 	private const double C4FrequencyHz = 440.0 * 0.59460355750136053336; // 2^(-9/12)
 
 	public FmSynthSound(
@@ -168,6 +172,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		_nodes = [.. compiled];
 		_outputIndex = indexById[graph.OutputNodeId];
 		_oscillatorCount = oscillatorIndex;
+		_maximumAudioPathTailSeconds = GetMaximumAudioPathTailSeconds();
 
 		void Visit(int id)
 		{
@@ -321,7 +326,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			context.Configuration.SampleRate, synthState);
 		if (baseEnd is null)
 			return null;
-		double tailSeconds = GetMaximumAudioPathTailSeconds();
+		double tailSeconds = _maximumAudioPathTailSeconds;
 		double frames = Math.Ceiling(tailSeconds
 			* context.Configuration.SampleRate);
 		if (frames >= long.MaxValue || baseEnd.Value > long.MaxValue - frames)
@@ -383,7 +388,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		long? released = noteOffTime.HasValue
 			? FrameTime.Ceiling(noteOffTime.Value, sampleRate) : null;
 		long noteOffFrame = released ?? 0;
-		long?[] silentFrom = new long?[_nodes.Length];
+		// Nested streaming Synths may be queried once per PCM frame by a
+		// parent's source lifecycle. Reuse per-invocation scratch, never
+		// allocate a fresh graph array for each end check.
+		long?[] silentFrom = state.SilentFrom;
+		Array.Clear(silentFrom);
 		long finiteReleaseEnd = checked(noteOffFrame + 1);
 		bool hasIndefiniteEnvelope = false;
 		for (int index = 0; index < _nodes.Length; index++)
