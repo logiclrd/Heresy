@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 
 using Heresy.Core.Envelopes;
+using Heresy.Core.Filters;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
@@ -11,6 +12,7 @@ using Heresy.Core.Patterns;
 using Heresy.Core.Sequences;
 using Heresy.Core.Samples;
 using Heresy.Render.Envelopes;
+using Heresy.Render.Filters;
 using Heresy.Render.FmSynthesis;
 using Heresy.Render.Instruments;
 using Heresy.Render.Playback;
@@ -35,6 +37,7 @@ internal sealed class PlaybackSnapshotSoundResolver
 	private readonly Dictionary<string, Func<double, double, double>> _parametricPrograms = new(StringComparer.Ordinal);
 	private readonly ConcurrentDictionary<ObjectId, ISound> _preparedMixdowns = new();
 	private uint _nextPreparedId = uint.MaxValue;
+	private readonly PreparedToneFilterStageFactory? _toneFilterPlans;
 
 	/// <summary>
 	/// Reserve an invocation-unique source identity before publishing its
@@ -63,7 +66,8 @@ internal sealed class PlaybackSnapshotSoundResolver
 
 	public PlaybackSnapshotSoundResolver(
 		SongDocument document,
-		ISampleDataProvider sampleDataProvider)
+		ISampleDataProvider sampleDataProvider,
+		int? preparedSampleRate = null)
 	{
 		_document =
 			document
@@ -71,6 +75,9 @@ internal sealed class PlaybackSnapshotSoundResolver
 		_sampleDataProvider =
 			sampleDataProvider
 				?? throw new ArgumentNullException(nameof(sampleDataProvider));
+		if (preparedSampleRate.HasValue)
+			_toneFilterPlans = new PreparedToneFilterStageFactory(
+				preparedSampleRate.Value);
 	}
 
 	/// <summary>
@@ -83,6 +90,18 @@ internal sealed class PlaybackSnapshotSoundResolver
 	/// </summary>
 	public void PrepareDirectSources()
 	{
+		if (_toneFilterPlans is not null)
+		{
+			// The frozen, output-rate-aware producer precompiles every authored
+			// data-Instrument tone's static stage plans. Deeply nested tone
+			// layers reuse these immutable kernels, but never their histories.
+			foreach (InstrumentDefinition instrument in
+				_document.Objects.Values.OfType<InstrumentDefinition>())
+				foreach (ToneSpecification tone in instrument.ToneSpecifications)
+					if (tone.FilterConfiguration is FilterInstance filter)
+						_toneFilterPlans.Prewarm(filter);
+			_toneFilterPlans.Freeze();
+		}
 		foreach (SongObject source in _document.Objects.Values)
 			if (source is SampleDefinition or InstrumentDefinition
 				or ScriptInstrumentDefinition or FmSynthDefinition)
@@ -158,7 +177,7 @@ internal sealed class PlaybackSnapshotSoundResolver
 				// preparing any referenced sounds. No live-song traversal in PCM.
 				FmSoundSourceReferences.Validate(_document, fmSynth.Id, fmSynth.Graph);
 				sound = new FmSynthSound(fmSynth.Graph, this,
-					soundResolver: this);
+					soundResolver: this, preparedChildFilterFactory: _toneFilterPlans);
 				break;
 
 			case PatternDefinition when mixdown:

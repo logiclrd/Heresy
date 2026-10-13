@@ -233,7 +233,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 		SongDocumentSnapshot rendererSnapshot =
 			SongDocumentSnapshot.Create(frozen.Document);
 		PlaybackSnapshotSoundResolver sounds =
-			new(rendererSnapshot.Document, _samples);
+			new(rendererSnapshot.Document, _samples,
+				_configuration.SampleRate);
 		// Resolve every direct sample/synth/instrument and envelope now so
 		// injected providers and codec-dependent work cannot run in Render.
 		sounds.PrepareDirectSources();
@@ -279,7 +280,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 			SongDocumentSnapshot.Create(snapshot.Document);
 		PreparedRoslynIncrementalScriptSources scripts = new(frozen);
 		PlaybackSnapshotSoundResolver sounds = new(
-			SongDocumentSnapshot.Create(frozen.Document).Document, _samples);
+			SongDocumentSnapshot.Create(frozen.Document).Document, _samples,
+			_configuration.SampleRate);
 		sounds.PrepareDirectSources();
 		AdHocPattern transient = new(frozen.Document.AllocateObjectId(), schedule);
 		SequencingContext context = new();

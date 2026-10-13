@@ -4,10 +4,12 @@ using AwesomeAssertions;
 
 using Heresy.Core.Filters;
 using Heresy.Core.FmSynthesis;
+using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Playback;
 using Heresy.Render.Configuration;
+using Heresy.Render.Filters;
 using Heresy.Render.Realtime;
 
 using NUnit.Framework;
@@ -93,6 +95,61 @@ public sealed class FmSynthPlaybackIntegrationTests
 		float[] output = new float[4];
 		outputSource.Render(4, output);
 		output.Should().Equal(0.375f, 0.375f, 0.375f, 0.375f);
+	}
+
+	[Test]
+	public void FrozenNestedInstrumentToneFirIsPreparedBeforeFirstPcmFrame()
+	{
+		SongDocument document = new();
+		ObjectId filterId = document.AllocateObjectId();
+		FilterDefinition definition = new(filterId, "Linear FIR", [
+			new FilterStageDefinition(1, "low", FilterKind.FirLowPass),
+		]);
+		document.Add(definition);
+		FilterInstance instance = new(definition);
+		instance.SetStageParameter(1, "TapCount",
+			FilterParameterValue.FromNumber(65));
+
+		ObjectId leafId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(leafId, "Excitation",
+			new FmSynthGraph([new FmConstantNode(0, 1)], 0)));
+		ObjectId instrumentId = document.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Filtered instrument");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = leafId, FilterConfiguration = instance,
+		});
+		instrument.ToneTable.Add(0);
+		document.Add(instrument);
+		ObjectId parentId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(parentId, "Source parent",
+			new FmSynthGraph([
+				new FmSoundSourceNode(0, instrumentId,
+					440.0 * System.Math.Pow(2.0, -9.0 / 12.0)),
+			], 0)));
+		ObjectId patternId = document.AllocateObjectId();
+		DataPatternDefinition pattern = new(patternId, "FIR source")
+		{
+			RowCount = 1, ChannelCount = 1,
+		};
+		PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+		cell.SourceId = parentId;
+		cell.Note = new StartPatternNote();
+		document.Add(pattern);
+
+		const int rate = 48000;
+		IAudioOutputSource source = new PlaybackRequestAudioSourceFactory(
+			MonoConfiguration(rate)).Create(
+				PatternPlaybackRequest.Create(document, patternId, repeat: false));
+		float[] actual = new float[96];
+		source.Render(actual.Length, actual);
+
+		StreamingFilterChain reference = new(
+			new FilterChain([instance]), rate, 1);
+		float[] expected = new float[actual.Length];
+		System.Array.Fill(expected, 1f);
+		reference.ProcessInterleaved(expected);
+		actual.Should().Equal(expected);
 	}
 
 	[Test]

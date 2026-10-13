@@ -83,6 +83,7 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 	private readonly int _outputIndex;
 	private readonly int _oscillatorCount;
 	private readonly NewNotePolicy _newNotePolicy;
+	private readonly PreparedToneFilterStageFactory? _preparedChildFilterFactory;
 	private readonly bool _hasSources;
 	private const double C4FrequencyHz = 440.0 * 0.59460355750136053336; // 2^(-9/12)
 
@@ -90,7 +91,8 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 		FmSynthGraph graph,
 		IEnvelopeCurveResolver envelopeResolver,
 		NewNotePolicy? newNotePolicy = null,
-		ISoundResolver? soundResolver = null)
+		ISoundResolver? soundResolver = null,
+		PreparedToneFilterStageFactory? preparedChildFilterFactory = null)
 	{
 		ArgumentNullException.ThrowIfNull(graph);
 		ArgumentNullException.ThrowIfNull(envelopeResolver);
@@ -98,6 +100,7 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 		_newNotePolicy =
 			newNotePolicy
 				?? NewNotePolicy.Cut;
+		_preparedChildFilterFactory = preparedChildFilterFactory;
 
 		Dictionary<int, FmSynthNode> byId =
 			graph.Nodes.ToDictionary(
@@ -208,14 +211,41 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 			SoundInvocation? invocation = sound.CreateInvocation(
 				childPitch, childSpeed);
 			if (invocation is not null)
-				sources[i] = new SourceVoice(invocation,
+			{
+				SourceVoice voice = new(invocation,
 					node.Constant ? 1.0 : pitchMultiplier * playbackSpeedMultiplier);
+				// For a frozen live plan, even expensive maximum/minimum-phase
+				// FIR designs are already immutable: this only instantiates
+				// per-voice histories from prepared plans at the note boundary.
+				if (_preparedChildFilterFactory is { } prepared)
+				{
+					if (invocation.ToneFilters is { } filters)
+						voice.Filters = new StreamingFilterChain(filters,
+							prepared.SampleRate, 1, prepared);
+					if (invocation.Configuration.Envelopes.Filter is not null)
+						voice.FilterEnvelopeState = new ResonantFilterState(1,
+							prepared.SampleRate);
+				}
+				sources[i] = voice;
+			}
 		}
 		FmSynthState state = new(_nodes.Length, _oscillatorCount, sources)
 		{
 			PitchMultiplier = pitchMultiplier,
 			PlaybackSpeedMultiplier = playbackSpeedMultiplier,
 		};
+		if (_preparedChildFilterFactory is { } ready && _hasSources)
+		{
+			// All sample-rate-specific contexts are constructed at the
+			// invocation boundary, before the first PCM sample is processed.
+			state.MonoContext = new RenderContext(new RenderConfiguration(
+				ready.SampleRate, [
+				new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0)]));
+			if (sources.Any(source =>
+				source?.Invocation.Configuration.Envelopes.Panning is not null))
+				state.StereoChildContext = new RenderContext(
+					RenderConfiguration.Stereo(ready.SampleRate));
+		}
 		return state;
 	}
 
@@ -744,9 +774,13 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 		return mono[0];
 	}
 
-	private static void PrepareChildRender(
+	private void PrepareChildRender(
 		RenderContext context, FmSynthState state)
 	{
+		if (_preparedChildFilterFactory is { } prepared
+			&& prepared.SampleRate != context.Configuration.SampleRate)
+			throw new InvalidOperationException(
+				"Frozen source voices cannot change sample rate after preparation.");
 		if (state.MonoContext is null)
 		{
 			state.MonoContext = new RenderContext(new RenderConfiguration(
@@ -759,12 +793,26 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 			for (int i = 0; i < state.Sources.Length; i++)
 			{
 				SourceVoice? voice = state.Sources[i];
-				if (voice?.Invocation.ToneFilters is { } filters)
+				if (voice?.Invocation.ToneFilters is { } filters
+					&& voice.Filters is null)
+				{
+					if (_preparedChildFilterFactory is not null)
+						throw new InvalidOperationException(
+							"Frozen tone Filter plans must exist before PCM rendering.");
+					// Legacy direct ISound users that did not supply a producer
+					// preparation context retain their existing lazy behavior.
 					voice.Filters = new StreamingFilterChain(filters,
 						context.Configuration.SampleRate, 1);
-				if (voice?.Invocation.Configuration.Envelopes.Filter is not null)
+				}
+				if (voice?.Invocation.Configuration.Envelopes.Filter is not null
+					&& voice.FilterEnvelopeState is null)
+				{
+					if (_preparedChildFilterFactory is not null)
+						throw new InvalidOperationException(
+							"Frozen Filter envelope state must exist before PCM rendering.");
 					voice.FilterEnvelopeState = new ResonantFilterState(1,
 						context.Configuration.SampleRate);
+				}
 			}
 		}
 		foreach (SourceVoice? voice in state.Sources)

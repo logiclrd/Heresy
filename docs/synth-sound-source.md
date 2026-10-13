@@ -120,8 +120,11 @@ through `CreateInvocation` where pitch must be positive.
    source is silent. It computes the initial child invocation from the
    requested Hz/C4 ratio, parent pitch/speed or Constant isolation, without
    dispatching library lookups from its PCM frame loop. Child Tone Filter
-   chains are per-voice and prepared on first render for the render sample
-   rate; their FIR scheduling and end/tail ownership are next-slice work.
+   chains are per-voice; in frozen production playback their immutable static
+   Filter/FIR plans are precompiled for the output rate before the producer
+   starts, and independent histories are instantiated when voices bind.
+   Direct standalone sounds without a prepared-plan provider retain the
+   legacy first-render fallback for compatibility.
    The parent Synth applies spatialization only after the mono graph output.
    Existing graphs and renderer constructors without a source remain
    compatible. The public authoring/editor affordance is intentionally absent.
@@ -164,9 +167,10 @@ completed and tested before editor exposure. Source resolution occurs while
 constructing the frozen renderer. A node's child voice is created when the
 parent's `CreateInvocation` runs; `ISound` sounds that flatten recursively
 may resolve their already-prepared tone target at that invocation boundary,
-not in PCM render. Mono context/filter preparation occurs only on the
-first PCM render (once per child state and sample rate) pending explicit
-off-audio-thread preparation work.
+not in PCM render. For frozen playback, output-rate mono/stereo child contexts and Filter
+histories are constructed during the source voice's initial invocation;
+static FIR plans were already prepared before playback. Standalone callers
+that do not supply the producer's plan cache retain the old fallback.
 
 ### Streaming frequency-modulation checkpoint (13 October 2026)
 
@@ -231,10 +235,41 @@ before the Volume Envelope, so Filter history is independent for each note.
 The parent `IFirPreparationSound` now forwards `AdoptPreparedFirControls`
 and `QueuePendingFirControls` to its already-bound child `ISound`s, and
 explicit `PreparePendingFilterControls` descends into nested Synth
-invocations without resolving song objects inside PCM. **This does not yet
-fix first-render FIR design for static Instrument tone Filters**: those
-`StreamingFilterChain` instances are still constructed at the first
-`PrepareChildRender` for the chosen sample rate. That potentially heavy
-initial preparation requires a separate producer-side prewarm contract before
-real-time use is qualified; it remains unchecked in `docs/todo.md`. Backward
-replay and broad Pattern/transport lifecycle acceptance are also still open.
+invocations without resolving song objects inside PCM. **Static Instrument tone-Filter plan preparation is now fixed in frozen
+playback** by the producer prewarm described below; the fallback for direct
+standalone `FmSynthSound` callers is deliberately retained. Dynamic scripted
+Filter parameter combinations outside that prewarm cache still need a
+nonblocking worker handoff policy, and backward replay / transport acceptance
+remain open.
+
+### Static inherited tone-Filter prewarm checkpoint (13 October 2026)
+
+`PreparedIncrementalPlaybackFactory` supplies the actual output sample rate
+when creating `PlaybackSnapshotSoundResolver`. Its producer-side
+`PrepareDirectSources()` scans frozen **data-driven Instrument** tone
+specifications, prepares all distinct configured Filter stage kernels
+(including FFT-based FIR phase conversion), then freezes a read-only
+`PreparedToneFilterStageFactory`. Preparation and validation happen before
+any PCM producer/callback can render; stage identity, generation, numeric and
+structural parameters and sample rate are matched exactly. A stage may appear
+at multiple nested Instrument layers while sharing **only** its immutable
+plan, never mutable convolution histories. The per-voice Synth invocation
+instantiates its own `StreamingFilterChain` from those prepared plans, plus
+output-rate mono/stereo child contexts and optional legacy resonant Filter
+Envelope state, before its first rendered frame. The first `Render` or
+`GetEndFrameExclusive` in frozen playback does not call a Filter stage
+factory or design a FIR kernel. Live playback remains behind the existing
+`BufferedAudioOutputSource` producer and its independent FIR-control
+scheduler; offline Pattern rendering uses the same frozen prewarm route.
+
+A script-generated tone Filter with parameters absent from the frozen cache
+**throws a clear NotSupportedException rather than running sample-rate DSP
+preparation in PCM**. This is an intentional unsupported dynamic path, not
+silent bypass. The separate TODO tracks handing previously unknown script
+parameter sets to a bounded worker and deciding how to start those voices.
+Standalone direct `FmSynthSound` use without the optional prepared factory
+retains the earlier first-render fallback for compatibility, and is not a
+realtime-prepared invocation. Frozen voices reject output sample-rate changes
+and must be recreated from a different sample-rate snapshot to change the
+rendering format. Wider end/tail transport acceptance and backward replay
+remain distinct open tasks.
