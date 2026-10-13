@@ -234,7 +234,7 @@ public static class FilterAssignmentText
             if (!updated.Contains(name))
                 additions.Add($"{stage.Name}.{name} = {value}");
         if (additions.Count == 0)
-            return original;
+            return string.Join(newline, lines);
 
         if (insertion >= 0)
             lines.InsertRange(insertion, additions);

@@ -392,7 +392,8 @@ public sealed class NativePatternEffectEditorDialog : Window
 						Text = defaultText,
 						MinWidth = 155,
 					};
-				if (preview.TryGetValue(descriptor.Name, out FilterParameterValue authored))
+				if (preview.TryGetValue(descriptor.Name, out FilterParameterValue? authored)
+					&& authored is not null)
 				{
 					string presented = authored.Kind == FilterParameterValueKind.Number
 						? authored.NumericValue.ToString("G17", CultureInfo.InvariantCulture)
