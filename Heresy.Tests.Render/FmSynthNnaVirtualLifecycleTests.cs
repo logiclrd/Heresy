@@ -273,7 +273,12 @@ public sealed class FmSynthNnaVirtualLifecycleTests
         public bool TryResolve(ObjectId id, bool mixdown, out ISound? sound)
         {
             SoundLookups++;
-            return !mixdown && _sounds.TryGetValue(id, out sound);
+            if (mixdown)
+            {
+                sound = null;
+                return false;
+            }
+            return _sounds.TryGetValue(id, out sound);
         }
         public bool TryResolve(ObjectId id, out IEnvelopeCurve? envelope)
             => _envelopes.TryGetValue(id, out envelope);
