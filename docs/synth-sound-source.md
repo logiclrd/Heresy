@@ -482,3 +482,31 @@ Pitch Envelope after plan creation cannot retune an already-prepared source.
 The playback session retires the completed physical voice, with no PCM-time
 song object lookup. The next open item compares graph FIR tails, exported FLAC
 and buffered realtime playback. Backwards child-state replay remains separate.
+
+### Nested FIR tail and file/buffer parity qualification (13 October 2026)
+
+A regression now renders an imported one-frame PCM impulse through an inner
+Synth graph FIR and an outer Synth graph FIR. Both use 31 taps, with separate
+minimum- or maximum-phase configurations. At 8000 Hz the inner graph has 64
+frames of authored tail and the outer graph has 56 frames. Including the
+one-frame excitation, the nested voice reaches its **exclusive end at frame
+121**. The two nested Synth invocations have independent tail budgets;
+serial Filter nodes *within one graph* still use the existing **maximum**,
+never sum, of their authored TailSeconds.
+
+Five new tests cover minimum-/maximum-phase squared-energy centroids,
+whole/split-block deterministic PCM, exact same-block voice retirement,
+bounded buffered realtime PCM with zero underruns, and **actual FLAC encoding
+and decoding** for both mono and stereo. The tests compare every decoded FLAC
+frame with the corresponding frozen unencoded PCM within 16-bit quantization
+tolerance. The 8000 Hz, one-row arrangement has 960 logical frames, which
+fully contains the finite nested tail; export therefore requires no extra
+post-arrangement frames for this fixture. The UI integration test project
+now imports the established native-codec staging targets so libsndfile
+executes during the real file export rather than being silently bypassed.
+Both phase responses produce genuinely distinct audible impulse envelopes.
+
+This closes nested graph FIR/FLAC/buffer parity without DSP changes or song
+schema migration. Physical device listening, displaced NNA/virtual voice
+retirement, and backwards replay of nested source states remain separate
+planned qualifications.
