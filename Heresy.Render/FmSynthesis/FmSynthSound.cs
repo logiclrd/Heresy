@@ -324,11 +324,18 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			PrepareChildRender(context, synthState);
 		long? baseEnd = GetBaseEndFrameExclusive(
 			context.Configuration.SampleRate, synthState);
-		if (baseEnd is null)
+		return AddAuthoredTailFrames(baseEnd, context.Configuration.SampleRate);
+	}
+
+	/// <summary>Source excitation stops at the graph's known finite base
+	/// end; Filter histories are allowed only their authored maximum tail
+	/// budget. Both the session and direct ISound.Render calls enforce the
+	/// same exclusive last frame.</summary>
+	private long? AddAuthoredTailFrames(long? baseEnd, int sampleRate)
+	{
+		if (!baseEnd.HasValue)
 			return null;
-		double tailSeconds = _maximumAudioPathTailSeconds;
-		double frames = Math.Ceiling(tailSeconds
-			* context.Configuration.SampleRate);
+		double frames = Math.Ceiling(_maximumAudioPathTailSeconds * sampleRate);
 		if (frames >= long.MaxValue || baseEnd.Value > long.MaxValue - frames)
 			return long.MaxValue;
 		return baseEnd.Value + (long)frames;
@@ -543,17 +550,21 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				: null;
 		long? baseEnd = GetBaseEndFrameExclusive(
 			sampleRate, synthState);
+		long? finalEnd = AddAuthoredTailFrames(baseEnd, sampleRate);
 
 		for (int frame = 0; frame < frameCount; frame++)
 		{
 			long relativeFrame =
 				checked(startFrame + frame);
-			double value =
-				EvaluateFrame(
-					context,
-					synthState,
-					relativeFrame,
-					noteOffFrame, baseEnd);
+			// A direct ISound.Render caller may request frames beyond the
+			// advertised lifetime, just as the Pattern transport can. Keep
+			// these frames exactly silent even when a recursive IIR would
+			// otherwise retain a tiny residual after its explicit budget.
+			double value = finalEnd.HasValue
+				&& relativeFrame >= finalEnd.Value
+				? 0.0
+				: EvaluateFrame(context, synthState,
+					relativeFrame, noteOffFrame, baseEnd);
 
 			int destinationBase =
 				frame * outputChannelCount;
@@ -580,6 +591,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				// indefinitely after an in-block natural end.
 				synthState.ChildEndChanged = false;
 				baseEnd = GetBaseEndFrameExclusive(sampleRate, synthState);
+				finalEnd = AddAuthoredTailFrames(baseEnd, sampleRate);
 			}
 		}
 	}
@@ -600,20 +612,22 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				: null;
 		long? baseEnd = GetBaseEndFrameExclusive(
 			context.Configuration.SampleRate, state);
+		long? finalEnd = AddAuthoredTailFrames(
+			baseEnd, context.Configuration.SampleRate);
 
 		while (state.NextFrame < startFrame)
 		{
-			EvaluateFrame(
-				context,
-				state,
-				state.NextFrame,
-				noteOffFrame, baseEnd);
+			if (!finalEnd.HasValue || state.NextFrame < finalEnd.Value)
+				EvaluateFrame(context, state, state.NextFrame,
+					noteOffFrame, baseEnd);
 			state.NextFrame++;
 			if (state.ChildEndChanged)
 			{
 				state.ChildEndChanged = false;
 				baseEnd = GetBaseEndFrameExclusive(
 					context.Configuration.SampleRate, state);
+				finalEnd = AddAuthoredTailFrames(
+					baseEnd, context.Configuration.SampleRate);
 			}
 		}
 	}

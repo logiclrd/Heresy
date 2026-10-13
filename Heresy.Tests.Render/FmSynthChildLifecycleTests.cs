@@ -317,6 +317,75 @@ public sealed class FmSynthChildLifecycleTests
         Assert.That(parent.GetEndFrameExclusive(context, state), Is.Null);
     }
 
+    [Test]
+    public void ParentPitchChangesDuringPlaybackIntegrateChildSourcePositionAndEof()
+    {
+        Registry registry = new();
+        registry.Add(SampleId, MakeSample(
+            [0, 1, 2, 3, 4, 5, 6, 7], 8));
+        FmSynthSound synth = MakeSynth(registry, [
+            new FmSoundSourceNode(0, SampleId, C4),
+        ]);
+        RenderContext context = Mono(8);
+        SoundState changedLive = synth.CreateState();
+        float[] split = new float[9];
+        // Simulates a tracker pitch automation being committed at a
+        // producer boundary, after PCM up to that frame was emitted.
+        synth.Render(context, changedLive, 0, 3, split.AsSpan(0, 3));
+        changedLive.PitchTrajectory.SetMultiplier(3, 2.0);
+        synth.Render(context, changedLive, 3, 6, split.AsSpan(3, 6));
+
+        SoundState predeclared = synth.CreateState();
+        predeclared.PitchTrajectory.SetMultiplier(3, 2.0);
+        float[] whole = new float[9];
+        synth.Render(context, predeclared, 0, 9, whole);
+        float[] expected = [0, 1, 2, 3, 5, 7, 0, 0, 0];
+        Assert.Multiple(() =>
+        {
+            Assert.That(split, Is.EqualTo(expected));
+            Assert.That(whole, Is.EqualTo(expected));
+            Assert.That(synth.GetEndFrameExclusive(context, changedLive),
+                Is.EqualTo(6));
+            Assert.That(synth.GetEndFrameExclusive(context, predeclared),
+                Is.EqualTo(6));
+            Assert.That(registry.SoundLookups, Is.EqualTo(1),
+                "a moving pitch trajectory must not re-resolve child source");
+        });
+    }
+
+    [Test]
+    public void MovingSourceWithDownstreamIirRespectsExclusiveGraphTailBoundary()
+    {
+        Registry registry = new();
+        registry.Add(SampleId, MakeSample([1, 1, 1, 1], 1000));
+        FilterDefinition definition = new((ObjectId)96U, "Tail IIR");
+        FilterInstance filter = new(definition);
+        filter.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(100));
+        FmSynthSound synth = MakeSynth(registry, [
+            new FmSoundSourceNode(0, SampleId, C4),
+            new FmFilterNode(1, 0, filter, tailSeconds: 0.004),
+        ], 1);
+        RenderContext context = Mono(1000);
+        SoundState state = synth.CreateState();
+        // First two frames are played at 1x; the remaining two source
+        // frames are consumed at 2x, so EOF is first seen at output 3.
+        float[] output = new float[12];
+        synth.Render(context, state, 0, 2, output.AsSpan(0, 2));
+        state.PitchTrajectory.SetMultiplier(2, 2.0);
+        synth.Render(context, state, 2, 10, output.AsSpan(2, 10));
+        Assert.Multiple(() =>
+        {
+            Assert.That(synth.GetEndFrameExclusive(context, state),
+                Is.EqualTo(7), "3-frame source plus four authored tail frames");
+            Assert.That(output[3], Is.GreaterThan(0),
+                "the downstream IIR should be able to ring after source EOF");
+            Assert.That(output[6], Is.GreaterThan(0));
+            Assert.That(output.AsSpan(7).ToArray(), Is.All.EqualTo(0f),
+                "direct Render must not exceed its declared exclusive end");
+        });
+    }
+
     private static FmSynthSound MakeSynth(Registry registry,
         FmSynthNode[] nodes, int output = 0)
         => new(new FmSynthGraph(nodes, output),

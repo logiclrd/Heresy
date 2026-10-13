@@ -288,6 +288,75 @@ public sealed class FmSynthPlaybackIntegrationTests
 				"the producer must observe a nested Synth's newly discovered EOF during the same block");
 	}
 
+	[Test]
+	public void PatternNoteOffDrainsNestedLoopedSampleThroughGraphFilterInSplitBlocks()
+	{
+		SongDocument song = new();
+		ObjectId sampleId = song.AllocateObjectId();
+		SampleDefinition pcm = SampleDefinition.CreateImported(sampleId,
+			"Looping four frames", "loop.wav", FourFrameWave());
+		pcm.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 4);
+		song.Add(pcm);
+
+		ObjectId filterId = song.AllocateObjectId();
+		FilterDefinition definition = new(filterId, "Tail filter");
+		song.Add(definition);
+		FilterInstance filter = new(definition);
+		filter.SetStageParameter(1, "CutoffHz",
+			FilterParameterValue.FromNumber(100));
+
+		ObjectId childId = song.AllocateObjectId();
+		song.Add(new FmSynthDefinition(childId, "Nested loop", new FmSynthGraph([
+			new FmSoundSourceNode(0, sampleId,
+				440.0 * Math.Pow(2.0, -9.0 / 12.0)),
+		], 0)));
+		ObjectId outerId = song.AllocateObjectId();
+		song.Add(new FmSynthDefinition(outerId, "Filtered source",
+			new FmSynthGraph([
+				new FmSoundSourceNode(0, childId,
+					440.0 * Math.Pow(2.0, -9.0 / 12.0)),
+				new FmFilterNode(1, 0, filter, tailSeconds: 0.004),
+			], 1)));
+
+		ObjectId patternId = song.AllocateObjectId();
+		DataPatternDefinition pattern = new(patternId, "Release at row one")
+		{
+			RowCount = 3, ChannelCount = 1,
+		};
+		PatternCell first = pattern.Grid.GetOrCreateCell(0, 0);
+		first.SourceId = outerId;
+		first.Note = new StartPatternNote();
+		pattern.Grid.GetOrCreateCell(1, 0).Note = new PatternNoteOff();
+		song.Add(pattern);
+
+		PreparedIncrementalPlaybackFactory factory = new(
+			MonoConfiguration(sampleRate: 1000));
+		using PreparedIncrementalPlaybackPlan wholePlan =
+			factory.Create(song, patternId);
+		using PreparedIncrementalPlaybackPlan splitPlan =
+			factory.Create(song, patternId);
+		float[] whole = new float[136];
+		float[] split = new float[136];
+		wholePlan.Source.Render(whole.Length, whole);
+		splitPlan.Source.Render(116, split.AsSpan(0, 116));
+		splitPlan.Source.Render(4, split.AsSpan(116, 4));
+		splitPlan.Source.Render(4, split.AsSpan(120, 4));
+		splitPlan.Source.Render(12, split.AsSpan(124, 12));
+
+		// Tracker defaults are 125 BPM and six 20ms ticks per row
+		// at 1000 Hz. The Note Off is therefore frame 120, and
+		// the graph's explicit tail budget ends at frame 124.
+		split.Should().Equal(whole);
+		whole[119].Should().BeGreaterThan(0.1f);
+		whole[120].Should().BeGreaterThan(0,
+			"the graph IIR must ring after the nested Sample receives Off");
+		for (int frame = 124; frame < whole.Length; frame++)
+			whole[frame].Should().Be(0f,
+				"the declared Filter tail is exclusive, including direct long blocks");
+		wholePlan.Session.GetChannelState(0).CurrentVoice.Should().BeNull();
+		splitPlan.Session.GetChannelState(0).CurrentVoice.Should().BeNull();
+	}
+
 	private static byte[] FourFrameWave()
 	{
 		using MemoryStream stream = new();

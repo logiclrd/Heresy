@@ -344,3 +344,32 @@ control interactions, shared oscillator audio/control gates, concurrent NNA
 and virtual voices, and explicit offline FLAC versus buffered realtime
 comparison still need focused tests and possible fixes. Source-bearing
 Synths still reject backward replay and remain unavailable in the editor.
+
+### Moving pitch, Pattern Note Off and exclusive graph-tail enforcement (13 October 2026)
+
+Two distinct source-lifecycle modes have dedicated regression coverage. A
+parent Synth may receive a tracker/transport pitch multiplier change after
+rendering an initial frame range; the change enters the child's streaming
+`FmSourcePitchCurve` at exactly that frame and `SampleSound` integrates the
+resulting source position, yielding the same PCM/EOF as a single uninterrupted
+render where the same change was declared before rendering. The source is
+selected only once and no additional song object lookup occurs during PCM.
+
+A frozen `DataPatternDefinition` now has an explicit lifecycle fixture with a
+forward-looping imported four-frame Sample inside two nested Synths, a Pattern
+Note Off at the next row (120 output frames using tracker defaults at
+1000 Hz), and a downstream one-pole graph Filter with 4 ms authored Tail.
+It compares uninterrupted 136-frame playback to a split render that crosses
+frame 120 and checks the still-audible Filter residue, exact silence from
+frame 124 onward and physical voice retirement in both cases. The existing
+`TailSeconds` **maximum among applicable FM Filter nodes** remains unchanged.
+
+The direct `FmSynthSound.Render` contract now shares the same exclusive final
+end as `GetEndFrameExclusive`: even if the caller requests extra frames,
+it will not continue generating IIR residue beyond the authored bounded
+tail. This matters for manual preview/direct rendering that does not delegate
+truncation to `PlaybackSession`, and for split PCM consistency. It is not an
+assertion of mathematical IIR silence—this is the existing explicit bounded
+work/tail policy. Remaining Pattern effect envelopes, mixed oscillator gates,
+NNA/virtual-host release, actual codec export, and buffered playback parity
+remain separate acceptance items in `docs/todo.md`.
