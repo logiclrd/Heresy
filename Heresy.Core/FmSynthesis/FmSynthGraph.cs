@@ -56,6 +56,13 @@ public sealed class FmConstantNode : FmSynthNode
 		Array.Empty<int>();
 }
 
+/// <summary>Native output-rate, unfiltered white noise. Has no frequency or
+/// pitch inputs; one deterministic sample is emitted per output frame.</summary>
+public sealed class FmNoiseNode(int id) : FmSynthNode(id)
+{
+	public override IReadOnlyList<int> InputNodeIds { get; } = Array.Empty<int>();
+}
+
 public sealed class FmOscillatorNode : FmSynthNode
 {
 	private readonly IReadOnlyList<int> _inputs;
