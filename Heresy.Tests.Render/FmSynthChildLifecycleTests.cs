@@ -421,6 +421,57 @@ public sealed class FmSynthChildLifecycleTests
     }
 
     [Test]
+    public void SourceGraphFirReplayReconstructsPublishedKernelAtControlBoundary()
+    {
+        const int rate = 48000;
+        Registry registry = new();
+        registry.Add(SampleId, MakeSample(
+            Enumerable.Repeat(0.65f, 256).ToArray(), rate));
+        FilterDefinition definition = new((ObjectId)10090U, "Minimum FIR", [
+            new FilterStageDefinition(1, "low", FilterKind.FirLowPass),
+        ]);
+        FilterInstance fir = new(definition);
+        fir.SetStageParameter(1, "TapCount",
+            FilterParameterValue.FromNumber(31));
+        fir.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(3700));
+        fir.SetStageParameter(1, "PhaseResponse",
+            FilterParameterValue.FromChoice("Minimum"));
+        FmSynthSound synth = MakeSynth(registry, [
+            new FmSoundSourceNode(0, SampleId, C4),
+            new FmConstantNode(1, 4900),
+            new FmFilterNode(2, 0, fir, [
+                new FmFilterParameterConnection(1, FilterKind.FirLowPass,
+                    0, "CutoffHz", 1),
+            ]),
+        ], 2);
+        RenderContext context = Mono(rate);
+        SoundState state = synth.CreateState();
+        float[] original = new float[142];
+        synth.Render(context, state, 0, 21, original.AsSpan(0, 21));
+        Assert.That(synth.PreparePendingFilterControls(context, state),
+            Is.EqualTo(1), "kernel design belongs to the control boundary");
+        synth.Render(context, state, 21, 121, original.AsSpan(21));
+
+        synth.PrepareReplay(context, state, targetFrame: 53,
+            firPreparationFrames: [21]);
+        int lookupCount = registry.SoundLookups;
+        float[] replay = new float[89];
+        synth.Render(context, state, 53, replay.Length, replay);
+        Assert.Multiple(() =>
+        {
+            Assert.That(replay, Is.EqualTo(original.AsSpan(53).ToArray())
+                .Within(1e-6f),
+                "reconstructed FIR publication retains the identical convolution history");
+            Assert.That(registry.SoundLookups, Is.EqualTo(lookupCount));
+        });
+        Assert.That(() => synth.PrepareReplay(context, state, 53,
+            firPreparationFrames: [21, 21]),
+            Throws.TypeOf<ArgumentOutOfRangeException>(),
+            "a duplicated preparation boundary cannot define deterministic replay");
+    }
+
+    [Test]
     public void FrequencyOnlyEnvelopeKeepsMixedOscillatorVoiceThroughRelease()
     {
         Registry registry = new();
