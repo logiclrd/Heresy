@@ -65,6 +65,10 @@ public sealed class FmSynthChildSourceTests
             Assert.That(second.State, Is.Not.SameAs(first.State),
                 "rebuilding one voice must not mutate another");
         });
+        float[] independent = new float[2];
+        synth.Render(context, second.State, 4, independent.Length, independent);
+        Assert.That(independent, Is.EqualTo(new float[] { 10, 12 }),
+            "seeking another note never rewinds this voice's child state");
     }
 
     [Test]
