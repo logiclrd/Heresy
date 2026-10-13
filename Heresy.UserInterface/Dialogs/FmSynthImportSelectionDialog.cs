@@ -34,7 +34,7 @@ public sealed class FmSynthImportSelectionDialog : Window
 			new()
 			{
 				Text =
-					$"Choose synths to import from {System.IO.Path.GetFileName(source.Path)}. Referenced envelopes are imported automatically with fresh object IDs.",
+					$"Choose synths to import from {System.IO.Path.GetFileName(source.Path)}. Referenced source Synths, Instruments, Samples, Filters and envelopes are imported with new object IDs; encoded Sample assets are copied into the destination song.",
 				TextWrapping =
 					Avalonia.Media.TextWrapping.Wrap,
 			};
