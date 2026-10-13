@@ -245,6 +245,45 @@ public sealed class FmSynthChildSourceTests
             "modulation must use the prepared child rather than per-frame lookup");
     }
 
+    [Test]
+    public void NestedWhiteNoiseRetainsDistinctVoiceSeedsAfterExplicitReplay()
+    {
+        const int rate = 48000;
+        ObjectId childId = (ObjectId)933U;
+        Resolver resolver = new();
+        FmSynthSound inner = new(new FmSynthGraph([
+            new FmNoiseNode(7),
+        ], 7), resolver);
+        resolver.Add(childId, inner);
+        FmSynthSound outer = new(new FmSynthGraph([
+            new FmSoundSourceNode(3, childId, C4),
+        ], 3), resolver, soundResolver: resolver);
+        SoundState first = outer.CreateState();
+        SoundState second = outer.CreateState();
+        first.SetNoiseSeed(1001UL);
+        second.SetNoiseSeed(1002UL);
+        RenderContext context = Mono(rate);
+        float[] reference = new float[256];
+        float[] independent = new float[256];
+        outer.Render(context, first, 0, reference.Length, reference);
+        outer.Render(context, second, 0, independent.Length, independent);
+        Assert.That(reference, Is.Not.EqualTo(independent),
+            "the child Synth must inherit a derived, not global, voice seed");
+        Assert.That(resolver.Calls, Is.EqualTo(1));
+        Assert.That(() => outer.Render(context, first, 60, 1, new float[1]),
+            Throws.TypeOf<InvalidOperationException>());
+        outer.PrepareReplay(context, first, targetFrame: 60);
+        float[] replay = new float[196];
+        outer.Render(context, first, 60, replay.Length, replay);
+        Assert.Multiple(() =>
+        {
+            Assert.That(replay, Is.EqualTo(reference.AsSpan(60).ToArray()),
+                "explicit rewind must propagate the original noise identity into the rebuilt child");
+            Assert.That(resolver.Calls, Is.EqualTo(1),
+                "source resolution is frozen even for nested noise replay");
+        });
+    }
+
     private static RenderContext Mono(int rate) => new(
         new RenderConfiguration(rate, [
             new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
