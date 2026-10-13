@@ -97,8 +97,13 @@ public sealed class FmSynthChildFrequencyModulationTests
         sound.Render(context, other, 5, 7, split.AsSpan(5, 7));
         Assert.That(split, Is.EqualTo(one));
         Assert.That(() => sound.Render(context, state, 0, 1, new float[1]),
-            Throws.TypeOf<NotSupportedException>(),
+            Throws.TypeOf<InvalidOperationException>(),
             "backward replay requires a separate prepared reconstruction boundary");
+        sound.PrepareReplay(context, state, targetFrame: 5);
+        float[] rewind = new float[7];
+        sound.Render(context, state, 5, 7, rewind);
+        Assert.That(rewind, Is.EqualTo(one.AsSpan(5).ToArray()).Within(1e-5f),
+            "oscillator phase and child Sample pitch positions must replay together");
     }
 
     [Test]
