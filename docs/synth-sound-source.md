@@ -2,9 +2,9 @@
 
 **Status (13 October 2026):** source **reference/data-model foundation**,
 **prepared child-invocation/mono-output**, and **streaming frequency modulation** implemented. Graph editing,
-cross-song import, guaranteed off-callback preparation of inherited tone
-Filter/FIR plans, full transport end/tail qualification, and deterministic
-backward replay remain unimplemented. The UI
+cross-song import, full transport end/tail qualification, and deterministic
+backward replay remain unimplemented. Both data and scripted Instrument
+Filter plans are now producer-prewarmed for frozen playback. The UI
 must not offer creation of this node until the remaining rendering slices
 are complete. Connected linear/semitone inputs now advance an integrated pitch curve at each
 PCM frame; backwards replay of an advanced source voice still fails
@@ -237,17 +237,17 @@ and `QueuePendingFirControls` to its already-bound child `ISound`s, and
 explicit `PreparePendingFilterControls` descends into nested Synth
 invocations without resolving song objects inside PCM. **Static Instrument tone-Filter plan preparation is now fixed in frozen
 playback** by the producer prewarm described below; the fallback for direct
-standalone `FmSynthSound` callers is deliberately retained. Dynamic scripted
-Filter parameter combinations outside that prewarm cache still need a
-nonblocking worker handoff policy, and backward replay / transport acceptance
-remain open.
+standalone `FmSynthSound` callers is deliberately retained. Scripted Instrument tones are selected from finite, persisted specifications;
+all of their Filter combinations are now prewarmed too. There is no existing
+API for scripts to generate new Filter parameter sets. Backward replay and
+transport acceptance remain open.
 
 ### Static inherited tone-Filter prewarm checkpoint (13 October 2026)
 
 `PreparedIncrementalPlaybackFactory` supplies the actual output sample rate
 when creating `PlaybackSnapshotSoundResolver`. Its producer-side
-`PrepareDirectSources()` scans frozen **data-driven Instrument** tone
-specifications, prepares all distinct configured Filter stage kernels
+`PrepareDirectSources()` scans frozen **data-driven and scripted Instrument** tone
+specifications (including unselected scripted branches), prepares all distinct configured Filter stage kernels
 (including FFT-based FIR phase conversion), then freezes a read-only
 `PreparedToneFilterStageFactory`. Preparation and validation happen before
 any PCM producer/callback can render; stage identity, generation, numeric and
@@ -262,14 +262,40 @@ factory or design a FIR kernel. Live playback remains behind the existing
 `BufferedAudioOutputSource` producer and its independent FIR-control
 scheduler; offline Pattern rendering uses the same frozen prewarm route.
 
-A script-generated tone Filter with parameters absent from the frozen cache
-**throws a clear NotSupportedException rather than running sample-rate DSP
-preparation in PCM**. This is an intentional unsupported dynamic path, not
-silent bypass. The separate TODO tracks handing previously unknown script
-parameter sets to a bounded worker and deciding how to start those voices.
+Scripted Instruments do not construct Filter configurations dynamically:
+`ScriptInstrumentDefinition.Source` selects an integer index from its finite
+`ToneSpecifications`, and `PitchExpression` returns a scalar pitch factor.
+Both data and scripted tone specifications (including branches never selected
+at preparation time) now enter the same frozen prewarm pass. Consequently, the
+notional queue for unknown scripted Filter configurations is unnecessary in
+the current architecture: no script can produce such a configuration. The
+cache still throws for a genuinely unprepared parameter set, protecting the
+PCM path if some **future** plugin or API gains dynamic Filter authoring.
+That future feature would need its own explicit preparation and latency
+contract, not a speculative realtime queue today.
 Standalone direct `FmSynthSound` use without the optional prepared factory
 retains the earlier first-render fallback for compatibility, and is not a
 realtime-prepared invocation. Frozen voices reject output sample-rate changes
 and must be recreated from a different sample-rate snapshot to change the
 rendering format. Wider end/tail transport acceptance and backward replay
 remain distinct open tasks.
+
+### Scripted tone table prewarm checkpoint (13 October 2026)
+
+The script `Source` expression returns only a **zero-based index** into
+`ScriptInstrumentDefinition.ToneSpecifications` (or -1 for silence).
+`PitchExpression` returns a pitch multiplier. Script evaluation cannot
+construct a new `FilterInstance` or change stage parameters; even a
+pitch-sensitive selection is constrained to the finite declared table.
+During frozen-song preparation, `PlaybackSnapshotSoundResolver` therefore
+prewarms every static and scripted tone's `FilterConfiguration` at the
+known output sample rate *before* any note rendering or worker startup,
+including choices that will be selected only by subsequent notes.
+The Filter plan cache is sealed, and a nested Synth's selected tone reuses
+only its prepared immutable plan while owning a fresh DSP history. Tests
+exercise minimum- and maximum-phase FIRs selected by scripted pitch split,
+comparing the actual Pattern output with an independently rendered reference.
+This closes the supposedly dynamic scripted-FIR gap **without** an extra
+queue, new voice latency or altered song format. If a future scripting API
+actually gains dynamic Filter construction, it will require new design and
+tests; none of the current code silently performs FFT design in PCM.

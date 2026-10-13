@@ -6,11 +6,13 @@ using Heresy.Core.Filters;
 namespace Heresy.Render.Filters;
 
 /// <summary>
-/// Frozen preparation-time cache of immutable Filter stage plans for selected
-/// Instrument tone configurations. Prewarming may design expensive FIR/FFT
-/// kernels, and MUST run before the PCM producer starts. The sealed cache is
-/// read-only: a dynamic scripted tone must never silently fall back to plan
-/// design inside the audio producer. A per-invocation StreamingFilterChain
+/// Frozen preparation-time cache of immutable Filter stage plans for declared
+/// data and scripted Instrument tones. Prewarming may design expensive FIR/FFT
+/// kernels, and MUST run before the PCM producer starts. Scripted Instruments
+/// select from a finite authored tone table, so all of their configurations
+/// can be prewarmed without a runtime request queue. The sealed cache is
+/// read-only: no unexpected configuration can silently trigger plan design
+/// inside the audio producer. A per-invocation StreamingFilterChain
 /// still creates its own mutable DSP histories from the cached plans.
 /// </summary>
 public sealed class PreparedToneFilterStageFactory : IStreamingFilterStageFactory
@@ -85,8 +87,8 @@ public sealed class PreparedToneFilterStageFactory : IStreamingFilterStageFactor
         return Find(published, normalized)?.Plan
             ?? throw new NotSupportedException(
                 "The selected tone Filter has parameters not prepared in the " +
-                "frozen playback snapshot. Dynamic scripted Filter designs " +
-                "must be prepared before rendering, not on the audio thread.");
+                "frozen playback snapshot. Filter design cannot run on " +
+                "the audio producer thread.");
     }
 
     private static Entry? Find(IEnumerable<Entry> entries, PreparedFilterStage request)

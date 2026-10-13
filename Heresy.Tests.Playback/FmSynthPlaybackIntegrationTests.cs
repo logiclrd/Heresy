@@ -152,6 +152,81 @@ public sealed class FmSynthPlaybackIntegrationTests
 		actual.Should().Equal(expected);
 	}
 
+	[TestCase(1.0, 0)]
+	[TestCase(2.0, 1)]
+	public void ScriptInstrumentDeclaredFirBranchesArePreparedBeforeSynthVoiceStarts(
+		double notePitch, int selected)
+	{
+		// The selector is evaluated at note start, but *both* FIR designs
+		// must be ready before the producer begins PCM. No script can
+		// generate a new Filter configuration outside this finite table.
+		SongDocument song = new();
+		ObjectId filterId = song.AllocateObjectId();
+		FilterDefinition definition = new(filterId, "Script tone FIR", [
+			new FilterStageDefinition(1, "lp", FilterKind.FirLowPass),
+		]);
+		song.Add(definition);
+		FilterInstance minimum = new(definition);
+		minimum.SetStageParameter(1, "TapCount",
+			FilterParameterValue.FromNumber(31));
+		minimum.SetStageParameter(1, "PhaseResponse",
+			FilterParameterValue.FromChoice("Minimum"));
+		FilterInstance maximum = new(definition);
+		maximum.SetStageParameter(1, "TapCount",
+			FilterParameterValue.FromNumber(65));
+		maximum.SetStageParameter(1, "PhaseResponse",
+			FilterParameterValue.FromChoice("Maximum"));
+
+		ObjectId leafId = song.AllocateObjectId();
+		song.Add(new FmSynthDefinition(leafId, "Wave",
+			new FmSynthGraph([new FmConstantNode(0, 1)], 0)));
+		ObjectId instrumentId = song.AllocateObjectId();
+		ScriptInstrumentDefinition scripted = new(instrumentId, "Key split")
+		{
+			Source = "pitchMultiplier < 1.5 ? 0 : 1",
+			PitchExpression = "1.0",
+		};
+		scripted.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = leafId, FilterConfiguration = minimum,
+		});
+		scripted.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = leafId, FilterConfiguration = maximum,
+		});
+		song.Add(scripted);
+		ObjectId parentId = song.AllocateObjectId();
+		song.Add(new FmSynthDefinition(parentId, "Nested scripted tone",
+			new FmSynthGraph([
+				new FmSoundSourceNode(0, instrumentId,
+					440 * System.Math.Pow(2.0, -9.0 / 12.0)),
+			], 0)));
+		ObjectId patternId = song.AllocateObjectId();
+		string pitch = notePitch.ToString(
+			System.Globalization.CultureInfo.InvariantCulture);
+		song.Add(new ScriptPatternDefinition(patternId, "Select tone")
+		{
+			Source = $"Note(0, 0, _O({parentId.Value}), pitchMultiplier: {pitch});",
+			RowCount = 1,
+			ChannelCount = 1,
+		});
+
+		const int sampleRate = 48000;
+		using PreparedIncrementalPlaybackPlan plan =
+			new PreparedIncrementalPlaybackFactory(
+				MonoConfiguration(sampleRate)).Create(song, patternId);
+		float[] actual = new float[100];
+		plan.Source.Render(actual.Length, actual);
+
+		FilterInstance chosen = selected == 0 ? minimum : maximum;
+		StreamingFilterChain reference = new(
+			new FilterChain([chosen]), sampleRate, 1);
+		float[] expected = new float[100];
+		System.Array.Fill(expected, 1f);
+		reference.ProcessInterleaved(expected);
+		actual.Should().Equal(expected);
+	}
+
 	[Test]
 	public void PatternPlaybackUsesRealFmFilterDspFromFrozenSharedDefinition()
 	{

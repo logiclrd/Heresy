@@ -92,14 +92,26 @@ internal sealed class PlaybackSnapshotSoundResolver
 	{
 		if (_toneFilterPlans is not null)
 		{
-			// The frozen, output-rate-aware producer precompiles every authored
-			// data-Instrument tone's static stage plans. Deeply nested tone
-			// layers reuse these immutable kernels, but never their histories.
-			foreach (InstrumentDefinition instrument in
-				_document.Objects.Values.OfType<InstrumentDefinition>())
-				foreach (ToneSpecification tone in instrument.ToneSpecifications)
+			// Both Instrument kinds select from a finite, persisted list
+			// of tone specifications. A script computes only the index and
+			// pitch factor: it cannot invent a Filter configuration. Prepare
+			// every declared tone, INCLUDING unselected script branches,
+			// before any producer or realtime worker renders PCM.
+			foreach (SongObject instrument in _document.Objects.Values)
+			{
+				IEnumerable<ToneSpecification>? tones = instrument switch
+				{
+					InstrumentDefinition data => data.ToneSpecifications,
+					ScriptInstrumentDefinition scripted =>
+						scripted.ToneSpecifications,
+					_ => null,
+				};
+				if (tones is null)
+					continue;
+				foreach (ToneSpecification tone in tones)
 					if (tone.FilterConfiguration is FilterInstance filter)
 						_toneFilterPlans.Prewarm(filter);
+			}
 			_toneFilterPlans.Freeze();
 		}
 		foreach (SongObject source in _document.Objects.Values)
