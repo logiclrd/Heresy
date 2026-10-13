@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 
@@ -22,10 +23,10 @@ public sealed class FmSynthGraphDeletionKeyboardTests
     public void DeleteKeyAndRemoveButtonShareMutationSelectionAndNotification()
     {
         (DocumentWorkspace keyWork, FmSynthDefinition keySynth,
-            FmSynthEditorControl keyEditor, int keyNode, string? keyChange) =
+            FmSynthEditorControl keyEditor, int keyNode, List<string> keyChanges) =
             CreateEditor();
         (DocumentWorkspace buttonWork, FmSynthDefinition buttonSynth,
-            FmSynthEditorControl buttonEditor, int buttonNode, string? buttonChange) =
+            FmSynthEditorControl buttonEditor, int buttonNode, List<string> buttonChanges) =
             CreateEditor();
 
         Select(keyEditor, keyNode);
@@ -53,6 +54,14 @@ public sealed class FmSynthGraphDeletionKeyboardTests
                 Is.False);
             Assert.That(buttonSynth.Graph.Nodes.Any(node => node.Id == buttonNode),
                 Is.False);
+            Assert.That(keySynth.Graph.Nodes.OfType<FmOperatorNode>().Single()
+                    .InputNodeIds,
+                Is.EqualTo(buttonSynth.Graph.Nodes.OfType<FmOperatorNode>()
+                    .Single().InputNodeIds));
+            Assert.That(keySynth.Graph.Nodes.OfType<FmOperatorNode>().Single()
+                    .InputNodeIds,
+                Is.EqualTo(new[] { 0 }),
+                "Deleting a referenced node must also disconnect it.");
             Assert.That(keySynth.NodePositions.Any(x => x.NodeId == keyNode),
                 Is.False);
             Assert.That(buttonSynth.NodePositions.Any(x => x.NodeId == buttonNode),
@@ -69,6 +78,12 @@ public sealed class FmSynthGraphDeletionKeyboardTests
                 Is.EqualTo(keySynth.Graph.OutputNodeId));
             Assert.That(Field<int?>(buttonEditor, "_selectedNodeId"),
                 Is.EqualTo(buttonSynth.Graph.OutputNodeId));
+            Assert.That(keyChanges, Is.EqualTo(new[] {
+                $"Removed FM node #{keyNode}",
+            }));
+            Assert.That(buttonChanges, Is.EqualTo(new[] {
+                $"Removed FM node #{buttonNode}",
+            }));
         });
     }
 
@@ -76,7 +91,7 @@ public sealed class FmSynthGraphDeletionKeyboardTests
     public void DeleteOnOutputShowsSameFailureAsRemoveButtonWithoutMutatingDocument()
     {
         (DocumentWorkspace workspace, FmSynthDefinition synth,
-            FmSynthEditorControl editor, int extra, string? _) = CreateEditor();
+            FmSynthEditorControl editor, int extra, List<string> notifications) = CreateEditor();
         Select(editor, synth.Graph.OutputNodeId);
         uint audio = workspace.Document.AudioRevision;
         uint document = workspace.Document.DocumentRevision;
@@ -97,13 +112,14 @@ public sealed class FmSynthGraphDeletionKeyboardTests
         Assert.That(Field<TextBlock>(editor, "_message").Text,
             Is.EqualTo(error));
         Assert.That(workspace.Document.DocumentRevision, Is.EqualTo(document));
+        Assert.That(notifications, Is.Empty);
     }
 
     [AvaloniaTest]
     public void DeleteIgnoresMissingSelectionModifiersAndInspectorTextFields()
     {
         (DocumentWorkspace workspace, FmSynthDefinition synth,
-            FmSynthEditorControl editor, int selected, string? _) =
+            FmSynthEditorControl editor, int selected, List<string> notifications) =
             CreateEditor();
         Select(editor, selected);
         FmSynthGraphCanvas canvas = Field<FmSynthGraphCanvas>(editor, "_canvas");
@@ -125,6 +141,7 @@ public sealed class FmSynthGraphDeletionKeyboardTests
         KeyEventArgs noSelection = Press(canvas, Key.Delete);
         Assert.That(noSelection.Handled, Is.False);
         Assert.That(workspace.Document.DocumentRevision, Is.EqualTo(revision));
+        Assert.That(notifications, Is.Empty);
     }
 
     private static KeyEventArgs Press(Control target, Key key,
@@ -141,16 +158,21 @@ public sealed class FmSynthGraphDeletionKeyboardTests
     }
 
     private static (DocumentWorkspace, FmSynthDefinition,
-        FmSynthEditorControl, int, string?) CreateEditor()
+        FmSynthEditorControl, int, List<string>) CreateEditor()
     {
         DocumentWorkspace work = new();
         FmSynthDefinition synth =
             FmSynthDocumentEditor.CreateFmSynth(work, "Delete");
         int node = FmSynthDocumentEditor.AddConstantNode(
             work, synth, 0.5, 240, 80);
+        int operatorId = FmSynthDocumentEditor.AddOperatorNode(
+            work, synth, FmOperatorKind.Add, [0, node],
+            x: 400.0, y: 80.0);
+        FmSynthDocumentEditor.SetOutputNode(work, synth, operatorId);
+        List<string> notifications = [];
         FmSynthEditorControl editor = new(
-            work, synth, () => { }, _ => { });
-        return (work, synth, editor, node, null);
+            work, synth, () => { }, notifications.Add);
+        return (work, synth, editor, node, notifications);
     }
 
     private static void Select(FmSynthEditorControl editor, int id)
