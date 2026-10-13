@@ -1,12 +1,12 @@
 # Synth graph ISound source — architecture and staged implementation
 
-**Status (13 October 2026):** source **reference/data-model foundation** and
-**prepared child-invocation/mono-output slice** implemented. Graph editing,
-cross-song import, integrated audio-rate modulation, full release/tail/end
+**Status (13 October 2026):** source **reference/data-model foundation**,
+**prepared child-invocation/mono-output**, and **streaming frequency modulation** implemented. Graph editing,
+cross-song import, full release/tail/end
 semantics, and deterministic backward replay remain unimplemented. The UI
 must not offer creation of this node until the remaining rendering slices
-are complete. Connected modulation inputs fail at preparation rather than
-being silently ignored; backwards replay of an advanced source voice fails
+are complete. Connected linear/semitone inputs now advance an integrated pitch curve at each
+PCM frame; backwards replay of an advanced source voice still fails
 explicitly instead of reusing stale DSP history. Do not mark the overall
 feature complete based on the playback of constant-frequency source nodes.
 
@@ -146,8 +146,12 @@ The neutral frequency uses C4 = 440 * 2^(-9/12) Hz. Constant sources
 receive neither parent note pitch nor playback-speed scaling.
 
 This checkpoint is **not** the full musical execution contract. Connected
-modulation input is rejected at preparation, because altering a sound state's
-instantaneous pitch does not advance its sample position correctly. Source
+modulation advances a per-child two-frame streaming `PitchCurve` without
+per-frame allocation. `PitchTrajectory` then integrates the prior frames
+when SampleSound requests source positions. Linear inputs at or below zero
+mute the node and use a tiny positive trajectory multiplier (approximately
+stationary; reverse playback is not offered). Exponential connections treat
+control values as semitones. Nonfinite multipliers reject explicitly. Source
 voices do not yet support backwards render replay or changing output sample
 rates on an existing state. Any graph containing a child source conservatively
 reports no finite end, preventing the old FM draining logic from cutting a
@@ -161,3 +165,20 @@ may resolve their already-prepared tone target at that invocation boundary,
 not in PCM render. Mono context/filter preparation occurs only on the
 first PCM render (once per child state and sample rate) pending explicit
 off-audio-thread preparation work.
+
+### Streaming frequency-modulation checkpoint (13 October 2026)
+
+A reachable `FmSoundSourceNode` now accepts its connected numeric input, in
+normal graph topological order. `FmSourcePitchCurve` retains the **current and
+previous frame** value, which is enough for sequential calls to the existing
+`PitchTrajectory.GetPosition(frame)`; no per-frame `SetMultiplier` segments
+or growing pitch journal are allocated. Each outer frame writes the effective
+relative rate once, including the parent's current transport trajectory and
+`Constant` isolation. This is deliberately a *streaming-only* curve: arbitrary
+backward reads require the next task's producer-prepared reset and replay.
+Unassigned sources remain silent and stable. Source tone selection is still
+performed once on binding; audio-rate input never reselects Instrument tones.
+The tests cover output source-frame positions, linear/semitone inputs,
+continuous modulation, pitch isolation, mute/freeze policy, chunking and
+steady managed-allocation bounds. Completion of note-off/tail propagation and
+arbitrary backward replay is separately tracked in `docs/todo.md`.

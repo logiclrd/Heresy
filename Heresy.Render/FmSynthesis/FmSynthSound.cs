@@ -20,11 +20,16 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 {
 	private sealed class SourceVoice
 	{
-		public SourceVoice(SoundInvocation invocation)
+			public SourceVoice(SoundInvocation invocation, double originalOuterFactor)
 		{
 			Invocation = invocation;
+			OriginalOuterFactor = originalOuterFactor;
+			Pitch = new FmSourcePitchCurve();
+			invocation.State.PitchTrajectory.SetCurve(0, Pitch);
 		}
 		public SoundInvocation Invocation { get; }
+		public double OriginalOuterFactor { get; }
+		public FmSourcePitchCurve Pitch { get; }
 		public StreamingFilterChain? Filters { get; set; }
 		public bool InputFinished { get; set; }
 		public long? EndFrame { get; set; }
@@ -104,11 +109,8 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 		if (_hasSources && soundResolver is null)
 			throw new NotSupportedException(
 				"ISound-fed Synth nodes require the prepared child-invocation resolver.");
-		// Audio-rate multipliers require the next milestone's integrated
-		// child pitch trajectory. Never silently ignore a connected input.
-		if (ordered.OfType<FmSoundSourceNode>().Any(node => node.MultiplierNodeId.HasValue))
-			throw new NotSupportedException(
-				"Modulated ISound source nodes require integrated child pitch trajectories.");
+		// Input modulation is evaluated in graph order and drives the
+		// invocation-local child pitch trajectory once per rendered frame.
 
 		Dictionary<int, int> indexById = [];
 		for (int index = 0; index < ordered.Count; index++)
@@ -204,7 +206,8 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 			SoundInvocation? invocation = sound.CreateInvocation(
 				childPitch, childSpeed);
 			if (invocation is not null)
-				sources[i] = new SourceVoice(invocation);
+				sources[i] = new SourceVoice(invocation,
+					node.Constant ? 1.0 : pitchMultiplier * playbackSpeedMultiplier);
 		}
 		FmSynthState state = new(_nodes.Length, _oscillatorCount, sources)
 		{
@@ -571,9 +574,9 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 							compiled.InputIndices,
 							state.Values),
 
-					FmSoundSourceNode =>
-						EvaluateSource(state, index, frame,
-							context.Configuration.SampleRate, noteOffFrame),
+					FmSoundSourceNode sourceNode =>
+						EvaluateSource(sourceNode, compiled, state, index,
+							frame, context.Configuration.SampleRate, noteOffFrame),
 
 					FmOscillatorNode oscillator =>
 						EvaluateOscillator(
@@ -605,12 +608,39 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 	/// applies the parent's spatialization. SampleSound stereo source channels
 	/// are averaged rather than summed; other ISound implementations already
 	/// own their own scalar mix semantics.</summary>
-	private static double EvaluateSource(FmSynthState state, int index,
+	private static double EvaluateSource(FmSoundSourceNode node,
+		CompiledNode compiled, FmSynthState state, int index,
 		long frame, int sampleRate, long? noteOffFrame)
 	{
 		SourceVoice? voice = state.Sources[index];
 		if (voice is null)
 			return 0.0;
+
+		// The child is selected once per voice. Its relative pitch curve is
+		// then integrated by SampleSound (or evaluated by nested Synths).
+		// Mutating SoundState.PitchMultiplier instead would retune every
+		// sample against the same source position, breaking continuous FM.
+		double modulation = compiled.InputIndices.Length == 0 ? 1.0
+			: state.Values[compiled.InputIndices[0]];
+		double multiplier = node.ExponentialMultiplier
+			? Math.Pow(2.0, modulation / 12.0) : modulation;
+		if (!double.IsFinite(multiplier))
+			throw new InvalidOperationException(
+				$"Synth source {node.Id} produced non-finite modulation.");
+		double outer = node.Constant ? 1.0
+			: state.PitchMultiplier * state.PlaybackSpeedMultiplier
+				* state.PitchTrajectory.GetMultiplier(frame)
+				/ voice.OriginalOuterFactor;
+		double rate = outer * multiplier;
+		if (!double.IsFinite(rate))
+			throw new InvalidOperationException(
+				$"Synth source {node.Id} produced non-finite playback rate.");
+		// A non-positive linear input is a silent, stationary source,
+		// not reverse playback. The smallest positive rate avoids exposing
+		// an invalid SoundState while keeping source position effectively
+		// frozen. The graph emits zero until the input becomes positive.
+		bool muted = rate <= 0.0;
+		voice.Pitch.SetFrame(frame, muted ? 1e-12 : Math.Max(rate, 1e-12));
 		Span<float> mono = stackalloc float[1];
 		if (!voice.EndFrame.HasValue || frame < voice.EndFrame.Value)
 			voice.Invocation.Sound.Render(state.MonoContext!,
@@ -622,7 +652,15 @@ public sealed class FmSynthSound : ISound, IFirPreparationSound
 		}
 		if (voice.Invocation.Sound is SampleSound sample)
 			mono[0] /= sample.SourceChannelCount;
-		voice.Filters?.ProcessFrame(mono);
+		if (muted)
+			mono[0] = 0;
+		if (voice.Filters is { } filters)
+		{
+			if (voice.InputFinished)
+				filters.RenderTail(mono);
+			else
+				filters.ProcessFrame(mono);
+		}
 		if (voice.Invocation.Configuration.Envelopes.Volume is { } envelope)
 		{
 			long? released = noteOffFrame.HasValue && frame >= noteOffFrame
