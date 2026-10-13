@@ -98,7 +98,7 @@ public static class FmSynthDocumentEditor
 			if (!source.Document.TryGet(filterId, out SongObject? target)
 				|| target is not FilterDefinition)
 				throw new InvalidOperationException(
-					$"FM synth import requires Filter {filterId.Value}.");
+					$"Synth import requires Filter {filterId.Value}.");
 
 		ObjectId[] envelopeIds =
 			selected
@@ -120,14 +120,14 @@ public static class FmSynthDocumentEditor
 				|| songObject is not EnvelopeDefinition envelope)
 			{
 				throw new InvalidOperationException(
-					$"FM synth import requires envelope object {envelopeId.Value}, but that envelope is missing from the source song.");
+					$"Synth import requires envelope object {envelopeId.Value}, but that envelope is missing from the source song.");
 			}
 
 			if (envelope is not NodeEnvelopeDefinition
 				&& envelope is not ScriptEnvelopeDefinition)
 			{
 				throw new NotSupportedException(
-					$"FM synth import does not support source envelope type {envelope.GetType().Name} for object {envelopeId.Value}.");
+					$"Synth import does not support source envelope type {envelope.GetType().Name} for object {envelopeId.Value}.");
 			}
 
 			sourceEnvelopes.Add(envelopeId, envelope);
@@ -143,7 +143,7 @@ public static class FmSynthDocumentEditor
 					synth))
 			{
 				throw new InvalidOperationException(
-					$"FM synth object {synth.Id.Value} is not part of the selected source song.");
+					$"Synth object {synth.Id.Value} is not part of the selected source song.");
 			}
 
 			foreach (FmSynthNode node in synth.Graph.Nodes)
@@ -155,7 +155,7 @@ public static class FmSynthDocumentEditor
 					&& node is not FmOperatorNode)
 				{
 					throw new NotSupportedException(
-						$"FM synth import does not support node type {node.GetType().Name}.");
+						$"Synth import does not support node type {node.GetType().Name}.");
 				}
 			}
 		}
@@ -839,7 +839,7 @@ public static class FmSynthDocumentEditor
 							targetDocument, filterIdMap) : null,
 					filter.Connections, filter.TailSeconds),
 			_ => throw new NotSupportedException(
-				$"FM synth import does not support node type {node.GetType().Name}."),
+				$"Synth import does not support node type {node.GetType().Name}."),
 		};
 
 	private static void AddNode(
@@ -900,7 +900,7 @@ public static class FmSynthDocumentEditor
 				synth))
 		{
 			throw new InvalidOperationException(
-				"The FM synth is not part of the active song document.");
+				"The synth is not part of the active song document.");
 		}
 		return synth.Graph;
 	}

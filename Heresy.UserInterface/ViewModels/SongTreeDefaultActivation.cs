@@ -66,7 +66,7 @@ public static class SongTreeDefaultActivation
 			SongTreeActivationKind.Sample =>
 				"Edit Sample...",
 			SongTreeActivationKind.FmSynth =>
-				"Edit FM Synth...",
+				"Edit Synth...",
 			SongTreeActivationKind.Filter =>
 				"Edit Filter...",
 			SongTreeActivationKind.None =>

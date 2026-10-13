@@ -8,7 +8,7 @@ The desktop document view projects six fixed `SongTreeSection` roots:
 |---|---|---|---|
 | Top-left (2 columns) | Sequences | Sequences | Sequences |
 | Top-right (2 columns) | Patterns | Patterns | Patterns |
-| Bottom 1 | Patches | Samples | PCM Samples and FM Synths |
+| Bottom 1 | Patches | Samples | PCM Samples and Synths |
 | Bottom 2 | Filters | Filters | Reusable Filter definitions |
 | Bottom 3 | Envelopes | Envelopes | Envelopes |
 | Bottom 4 | Instruments | Instruments | Instruments |
@@ -18,7 +18,7 @@ span two columns; each bottom pane spans one. All panes retain separate tree
 projections, section-local folder organization, drag/move validation and
 rename/delete actions. Headers use wrapping actions to avoid clipping in
 quarter-width panes. The `Samples` enum retains its historical name while
-the UI calls that pane **Patches**.
+the UI calls that pane **Patches**. Synth-specific UI controls use **Synth**/**Synths** without the FM qualifier (`+ Synth`, `+ Import Synths`, and `Edit Synth...`). The implementation still uses `FmSynthDefinition`, `SongObjectKind.FmSynth` and the same v1 persistence representation; this is a presentation-only rename.
 
 `FilterDefinition` is a `SongObject` with `SongObjectKind.Filter`. It is
 now admitted by `SongDocument.Add` and placed directly under the Filters

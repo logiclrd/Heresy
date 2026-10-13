@@ -428,11 +428,11 @@ public sealed class MainWindow : Window
 		}
 		if (section == SongTreeSection.Samples)
 		{
-			Button newFmSynth = new() { Content = "+ FM Synth" };
+			Button newFmSynth = new() { Content = "+ Synth" };
 			newFmSynth.Click += async (_, _) => await CreateFmSynthAsync();
 			actions.Children.Add(newFmSynth);
 
-			Button importFmSynth = new() { Content = "+ Import FM" };
+			Button importFmSynth = new() { Content = "+ Import Synths" };
 			importFmSynth.Click += async (_, _) => await ImportFmSynthsAsync();
 			actions.Children.Add(importFmSynth);
 
@@ -1340,7 +1340,7 @@ public sealed class MainWindow : Window
 	private async Task CreateFmSynthAsync()
 	{
 		TextPromptDialog dialog =
-			new("New FM synth", "FM synth name:", "New FM Synth");
+			new("New Synth", "Synth name:", "New Synth");
 		string? name = await dialog.ShowDialog<string?>(this);
 		if (name is null)
 			return;
@@ -1357,7 +1357,7 @@ public sealed class MainWindow : Window
 						SongTreeSection.Samples),
 					synth.Id);
 			RefreshDocumentView(
-				$"Created FM synth {synth.Name}",
+				$"Created synth {synth.Name}",
 				node);
 			ShowFmSynthEditor(
 				synth,
@@ -1366,7 +1366,7 @@ public sealed class MainWindow : Window
 		catch (Exception ex)
 		{
 			SetStatus(
-				$"Could not create FM synth: {ex.Message}");
+				$"Could not create synth: {ex.Message}");
 		}
 	}
 
@@ -1382,7 +1382,7 @@ public sealed class MainWindow : Window
 			await StorageProvider.OpenFilePickerAsync(
 				new FilePickerOpenOptions
 				{
-					Title = "Import FM synths",
+					Title = "Import synths",
 					AllowMultiple = true,
 					FileTypeFilter =
 						new[]
@@ -1412,7 +1412,7 @@ public sealed class MainWindow : Window
 				if (source.Synths.Count == 0)
 				{
 					SetStatus(
-						$"{file.Name} contains no FM synths to import.");
+						$"{file.Name} contains no synths to import.");
 					continue;
 				}
 
@@ -1446,20 +1446,20 @@ public sealed class MainWindow : Window
 			catch (Exception ex)
 			{
 				SetStatus(
-					$"FM synth import failed for {file.Name}: {ex.Message}");
+					$"Synth import failed for {file.Name}: {ex.Message}");
 			}
 		}
 
 		if (imported == 0)
 		{
-			SetStatus("No FM synths were imported.");
+			SetStatus("No synths were imported.");
 			return;
 		}
 
 		RefreshDocumentView(
 			imported == 1
-				? "Imported 1 FM synth"
-				: $"Imported {imported} FM synths",
+				? "Imported 1 synth"
+				: $"Imported {imported} synths",
 			selectNode);
 
 		if (imported == 1
@@ -2459,7 +2459,7 @@ public sealed class MainWindow : Window
 			|| !_workspace.Document.TryGet(id, out SongObject? songObject)
 			|| songObject is not FmSynthDefinition synth)
 		{
-			SetStatus("The selected FM synth is not available.");
+			SetStatus("The selected synth is not available.");
 			return;
 		}
 
@@ -2477,7 +2477,7 @@ public sealed class MainWindow : Window
 				_workspace,
 				synth,
 				() => RefreshDocumentView(
-					$"Edited FM synth {synth.Name}",
+					$"Edited synth {synth.Name}",
 					selectNode),
 				message =>
 				{
@@ -2494,7 +2494,7 @@ public sealed class MainWindow : Window
 								liveEvent.Commands)));
 		_mainContent.Content = editor;
 		UpdateWindowTitle();
-		SetStatus($"Editing FM synth {synth.Name}");
+		SetStatus($"Editing synth {synth.Name}");
 	}
 
 	private async Task ShowSampleEditorAsync(SongTreeItemViewModel item)

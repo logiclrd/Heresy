@@ -22,7 +22,7 @@ public sealed class FmSynthImportSelectionDialog : Window
 	{
 		ArgumentNullException.ThrowIfNull(source);
 
-		Title = "Import FM synths from Heresy song";
+		Title = "Import synths from Heresy song";
 		Width = 540;
 		Height = 460;
 		MinWidth = 380;
@@ -34,7 +34,7 @@ public sealed class FmSynthImportSelectionDialog : Window
 			new()
 			{
 				Text =
-					$"Choose FM synths to import from {System.IO.Path.GetFileName(source.Path)}. Referenced envelopes are imported automatically with fresh object IDs.",
+					$"Choose synths to import from {System.IO.Path.GetFileName(source.Path)}. Referenced envelopes are imported automatically with fresh object IDs.",
 				TextWrapping =
 					Avalonia.Media.TextWrapping.Wrap,
 			};

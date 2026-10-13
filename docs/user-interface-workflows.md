@@ -26,7 +26,7 @@ The fixed root nodes are not shown within their panes because each
 pane already represents one section subtree.
 
 **Patches** is the general UI label for the section containing both
-decoded PCM Samples and FM synthesizers. The Core section enum remains
+decoded PCM Samples and Synths. The user-visible New/Edit/Import names now say **Synth**, including `+ Synth`, `+ Import Synths`, `Edit Synth...`, and the corresponding dialogs and status messages. Existing saved Synth objects retain the same FM implementation type and IDs. The Core section enum remains
 `SongTreeSection.Samples` for compatibility. UI labels tied strictly
 to PCM data (sample import, sample file formats, sample waveform and
 loop editing) still say **Sample**. New Envelopes receive canonical

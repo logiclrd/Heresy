@@ -86,9 +86,10 @@ See [sample storage](docs/sample-storage.md).
 
 ## Desktop authoring
 
-Five panes organize the document into **Sequences, Patterns, Patches,
-Envelopes and Instruments**. Patches include Samples and FM synths;
-PCM-specific actions still say Sample. Existing four-pane trees migrate
+Six panes organize the document into **Sequences, Patterns, Patches,
+Filters, Envelopes and Instruments**. Patches include Samples and Synths;
+PCM-specific actions still say Sample. User-facing actions say **Synth**, while the
+existing FM-backed internal object type and persisted song representation remain unchanged. Existing four-pane trees migrate
 in memory without a format-version bump.
 
 Implemented UI features include tracker note/volume/source/effect columns,
