@@ -66,6 +66,15 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		public RenderContext? StereoChildContext { get; set; }
 		public long NextFrame { get; set; }
 		public int SampleRate { get; set; }
+
+		public override void SetNoiseSeed(ulong seed)
+		{
+			base.SetNoiseSeed(seed);
+			for (int i = 0; i < Sources.Length; i++)
+				if (Sources[i] is { } child)
+					child.Invocation.State.SetNoiseSeed(unchecked(
+						seed ^ (0x9E3779B97F4A7C15UL * (ulong)(i + 1))));
+		}
 		public bool ChildEndChanged { get; set; }
 
 		public void Reset(int sampleRate)
@@ -84,6 +93,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			Sources = rebuilt.Sources;
 			MonoContext = rebuilt.MonoContext;
 			StereoChildContext = rebuilt.StereoChildContext;
+			SetNoiseSeed(NoiseSeed); // propagate original invocation identity
 			ClearRenderHistory(sampleRate);
 		}
 
@@ -270,6 +280,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			PitchMultiplier = pitchMultiplier,
 			PlaybackSpeedMultiplier = playbackSpeedMultiplier,
 		};
+		// Direct CreateState also initializes nested deterministic streams.
+		// PlaybackVoice may rebind these to its unique producer voice seed.
+		state.SetNoiseSeed(state.NoiseSeed);
 		if (_preparedChildFilterFactory is { } ready && _hasSources)
 		{
 			// All sample-rate-specific contexts are constructed at the
@@ -484,7 +497,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		for (int target = 0; target < _nodes.Length; target++)
 		{
 			CompiledNode node = _nodes[target];
-			if (node.Definition is not (FmOscillatorNode or FmConstantNode))
+			if (node.Definition is not (FmOscillatorNode or FmConstantNode or FmNoiseNode))
 			{
 				dependencies[target] = [];
 				continue;
@@ -600,7 +613,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					FmOperatorNode op => GetOperatorSilenceEnd(
 						op.Operation, node.InputIndices, silentFrom),
 					FmSoundSourceNode => GetChildSourceSilenceEnd(state, index),
-					FmConstantNode or FmOscillatorNode => released.HasValue
+					FmConstantNode or FmOscillatorNode or FmNoiseNode => released.HasValue
 						? GetIndependentAudioReleaseEnd(index,
 							noteOffFrame, sampleRate) : null,
 					_ => null,
@@ -829,11 +842,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			CompiledNode compiled =
 				_nodes[index];
 			double value = draining && compiled.Definition is
-				(FmConstantNode or FmEnvelopeNode or FmOscillatorNode)
+				(FmConstantNode or FmEnvelopeNode or FmOscillatorNode or FmNoiseNode)
 				? 0.0 : compiled.Definition switch
 				{
 					FmConstantNode constant =>
 						constant.Value,
+
+					FmNoiseNode noise =>
+						EvaluateNoise(noise, state.NoiseSeed, frame),
 
 					FmEnvelopeNode =>
 						EvaluateEnvelope(
@@ -881,7 +897,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			// may legitimately drive both a Sample pitch port and an Add.
 			state.AudioValues[index] = compiled.Definition switch
 			{
-				FmConstantNode or FmOscillatorNode or FmEnvelopeNode
+				FmConstantNode or FmOscillatorNode or FmNoiseNode or FmEnvelopeNode
 					when state.SilentFrom[index] is long silent
 						&& frame >= silent => 0.0,
 				FmOperatorNode op => EvaluateOperator(op.Operation,
@@ -1166,6 +1182,26 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		}
 
 		return result;
+	}
+
+	/// <summary>Counter-based SplitMix64 whitening. One full-band random
+	/// sample per native output frame. No evolving RNG state is necessary:
+	/// seed, node and frame identify an exact sample after arbitrary seeks.</summary>
+	private static double EvaluateNoise(FmNoiseNode node, ulong voiceSeed, long frame)
+	{
+		unchecked
+		{
+			ulong word = voiceSeed
+				^ ((ulong)(uint)node.Id * 0xD6E8FEB86659FD93UL)
+				^ ((ulong)frame * 0x9E3779B97F4A7C15UL)
+				^ 0x4E4F495345484552UL;
+			word ^= word >> 30;
+			word *= 0xBF58476D1CE4E5B9UL;
+			word ^= word >> 27;
+			word *= 0x94D049BB133111EBUL;
+			word ^= word >> 31;
+			return (word >> 11) * (2.0 / (1UL << 53)) - 1.0;
+		}
 	}
 
 	private static double EvaluateOscillator(
