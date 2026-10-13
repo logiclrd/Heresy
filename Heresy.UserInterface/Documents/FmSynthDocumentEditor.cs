@@ -152,6 +152,7 @@ public static class FmSynthDocumentEditor
 			foreach (FmSynthNode node in synth.Graph.Nodes)
 			{
 				if (node is not FmConstantNode
+					&& node is not FmNoiseNode
 					&& node is not FmOscillatorNode
 					&& node is not FmEnvelopeNode
 					&& node is not FmFilterNode
@@ -235,6 +236,15 @@ public static class FmSynthDocumentEditor
 				value),
 			x,
 			y);
+		return id;
+	}
+
+	public static int AddNoiseNode(
+		DocumentWorkspace workspace, FmSynthDefinition synth,
+		double x, double y)
+	{
+		int id = NextNodeId(ValidateSynth(workspace, synth));
+		AddNode(workspace, synth, new FmNoiseNode(id), x, y);
 		return id;
 	}
 
@@ -861,6 +871,7 @@ public static class FmSynthDocumentEditor
 		IReadOnlyDictionary<ObjectId, ObjectId>? sourceIdMap)
 		=> node switch
 		{
+			FmNoiseNode noise => new FmNoiseNode(noise.Id),
 			FmConstantNode constant =>
 				new FmConstantNode(
 					constant.Id,
