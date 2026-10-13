@@ -49,8 +49,59 @@ public sealed class FmSynthChildSourceTests
             Assert.That(b, Is.EqualTo(new float[] { 2, 4, 6, 8 }));
         });
         Assert.That(() => synth.Render(context, first.State, 0, 1, new float[1]),
-            Throws.TypeOf<NotSupportedException>(),
-            "until replay reconstruction exists, seeking must not reuse advanced child state");
+            Throws.TypeOf<InvalidOperationException>(),
+            "audio callbacks must not rebuild child invocations on an unprepared seek");
+        int priorInvocations = child.Invocations;
+        synth.PrepareReplay(context, first.State, targetFrame: 2);
+        Assert.That(child.Invocations, Is.EqualTo(priorInvocations + 1),
+            "control-side replay creates exactly one new child invocation");
+        float[] replay = new float[2];
+        synth.Render(context, first.State, 2, 2, replay);
+        Assert.Multiple(() =>
+        {
+            Assert.That(replay, Is.EqualTo(new float[] { 3, 4 }));
+            Assert.That(resolver.Calls, Is.EqualTo(1),
+                "replay must use the already-compiled child ISound");
+            Assert.That(second.State, Is.Not.SameAs(first.State),
+                "rebuilding one voice must not mutate another");
+        });
+    }
+
+    [Test]
+    public void DirectSampleReplayAcrossFormatChangesMatchesFreshState()
+    {
+        ObjectId id = (ObjectId)301U;
+        SampleSound sample = new(new SampleDefinition(id, "PCM",
+            new ExternalAssetReference("rates.wav")),
+            new MemorySampleData(8, 1, new float[] { 0, 1, 2, 3 }));
+        Resolver resolver = new((id, sample));
+        FmSynthSound synth = new(new FmSynthGraph([
+            new FmSoundSourceNode(0, id, C4),
+        ], 0), resolver, soundResolver: resolver);
+        SoundState changing = synth.CreateState();
+        float[] original = new float[6];
+        synth.Render(Mono(8), changing, 0, 6, original);
+        Assert.That(original, Is.EqualTo(new float[] { 0, 1, 2, 3, 0, 0 }));
+        Assert.That(() => synth.Render(Mono(16), changing, 6, 1,
+            new float[1]), Throws.TypeOf<InvalidOperationException>(),
+            "a live format change is not a PCM callback operation");
+
+        SoundState fresh = synth.CreateState();
+        float[] expected = new float[12];
+        synth.Render(Mono(16), fresh, 0, 12, expected);
+        synth.PrepareReplay(Mono(16), changing, targetFrame: 3);
+        float[] afterSwitch = new float[9];
+        synth.Render(Mono(16), changing, 3, 9, afterSwitch);
+        Assert.That(afterSwitch, Is.EqualTo(expected.AsSpan(3).ToArray()).Within(1e-6f));
+        synth.PrepareReplay(Mono(8), changing, targetFrame: 0);
+        float[] returned = new float[6];
+        synth.Render(Mono(8), changing, 0, 6, returned);
+        Assert.Multiple(() =>
+        {
+            Assert.That(returned, Is.EqualTo(original));
+            Assert.That(resolver.Calls, Is.EqualTo(1),
+                "no re-resolution occurs across format-specific invocation rebuilds");
+        });
     }
 
     [Test]
