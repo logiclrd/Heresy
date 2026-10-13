@@ -89,6 +89,9 @@ public static class FmSynthDocumentEditor
 				.ToArray();
 		if (selected.Length == 0)
 			return Array.Empty<FmSynthDefinition>();
+		if (selected.Any(synth => synth.Graph.Nodes
+			.OfType<FmSoundSourceNode>().Any()))
+			return FmSynthSourceImport.ImportFromSong(workspace, source, selected);
 
 		ObjectId[] filterIds = selected.SelectMany(synth =>
 			synth.Graph.Nodes.OfType<FmFilterNode>())
@@ -789,7 +792,7 @@ public static class FmSynthDocumentEditor
 		}
 	}
 
-	private static EnvelopeDefinition CloneEnvelope(
+	internal static EnvelopeDefinition CloneEnvelope(
 		EnvelopeDefinition source, ObjectId targetId)
 	{
 		switch (source)
@@ -812,19 +815,20 @@ public static class FmSynthDocumentEditor
 		}
 	}
 
-	private static FmSynthDefinition CloneSynth(
+	internal static FmSynthDefinition CloneSynth(
 		FmSynthDefinition source,
 		ObjectId targetId,
 		IReadOnlyDictionary<ObjectId, ObjectId> envelopeIdMap,
 		IReadOnlyDictionary<ObjectId, ObjectId> filterIdMap,
-		SongDocument targetDocument)
+		SongDocument targetDocument,
+		IReadOnlyDictionary<ObjectId, ObjectId>? sourceIdMap = null)
 	{
 		FmSynthNode[] nodes =
 			source.Graph.Nodes
 				.Select(node =>
 					CloneNode(
 						node,
-						envelopeIdMap, filterIdMap, targetDocument))
+						envelopeIdMap, filterIdMap, targetDocument, sourceIdMap))
 				.ToArray();
 		FmSynthDefinition result =
 			new(
@@ -853,7 +857,8 @@ public static class FmSynthDocumentEditor
 		FmSynthNode node,
 		IReadOnlyDictionary<ObjectId, ObjectId> envelopeIdMap,
 		IReadOnlyDictionary<ObjectId, ObjectId> filterIdMap,
-		SongDocument targetDocument)
+		SongDocument targetDocument,
+		IReadOnlyDictionary<ObjectId, ObjectId>? sourceIdMap)
 		=> node switch
 		{
 			FmConstantNode constant =>
@@ -870,6 +875,13 @@ public static class FmSynthDocumentEditor
 					oscillator.MultiplierNodeId,
 					oscillator.ExponentialMultiplier,
 					oscillator.Constant),
+			FmSoundSourceNode source =>
+				new FmSoundSourceNode(source.Id,
+					source.SourceId.IsNone ? ObjectId.None
+						: (sourceIdMap ?? throw new InvalidOperationException(
+							"Synth source nodes require dependency-remapped import."))[source.SourceId],
+					source.FrequencyHz, source.MultiplierNodeId,
+					source.ExponentialMultiplier, source.Constant),
 			FmEnvelopeNode envelope =>
 				new FmEnvelopeNode(
 					envelope.Id,
