@@ -84,12 +84,16 @@ public sealed class FmSynthChildSourceTests
         RenderContext stereo = new(RenderConfiguration.Stereo(4));
         float[] output = new float[6];
         synth.Render(stereo, inv.State, 0, 3, output);
+        // A centre-positioned Synth is distributed at 1/sqrt(2) to
+        // each stereo output; its child PCM has already been folded to
+        // mono, so it is not independently spatialized twice.
+        float parentGain = (float)(1 / Math.Sqrt(2));
         Assert.Multiple(() =>
         {
-            Assert.That(output[0], Is.EqualTo(0.25f).Within(1e-6f));
-            Assert.That(output[1], Is.EqualTo(0.25f).Within(1e-6f));
-            Assert.That(output[2], Is.EqualTo(0.5f).Within(1e-6f));
-            Assert.That(output[3], Is.EqualTo(0.5f).Within(1e-6f));
+            Assert.That(output[0], Is.EqualTo(0.25f * parentGain).Within(1e-6f));
+            Assert.That(output[1], Is.EqualTo(0.25f * parentGain).Within(1e-6f));
+            Assert.That(output[2], Is.EqualTo(0.5f * parentGain).Within(1e-6f));
+            Assert.That(output[3], Is.EqualTo(0.5f * parentGain).Within(1e-6f));
             Assert.That(output[4], Is.EqualTo(0).Within(1e-6f));
             Assert.That(output[5], Is.EqualTo(0).Within(1e-6f));
         });
