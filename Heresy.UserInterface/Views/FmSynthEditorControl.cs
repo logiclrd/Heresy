@@ -170,6 +170,7 @@ public sealed class FmSynthEditorControl : UserControl
 			Button(
 				"+ Oscillator",
 				AddOscillator));
+		addButtons.Children.Add(Button("+ Noise", AddNoise));
 		addButtons.Children.Add(Button("+ Source", AddSoundSource));
 		addButtons.Children.Add(
 			Button(
@@ -455,6 +456,17 @@ public sealed class FmSynthEditorControl : UserControl
 		}
 	}
 
+	private void AddNoise()
+	{
+		try
+		{
+			(double x, double y) = NextSpawnPosition();
+			int id = FmSynthDocumentEditor.AddNoiseNode(_workspace, _synth, x, y);
+			AfterGraphChange(id, $"Added FM white-noise node #{id}");
+		}
+		catch (Exception ex) { _message.Text = ex.Message; }
+	}
+
 	private void AddSoundSource()
 	{
 		try
@@ -690,6 +702,14 @@ public sealed class FmSynthEditorControl : UserControl
 
 		switch (node)
 		{
+			case FmNoiseNode:
+				_inspector.Children.Add(new TextBlock
+				{
+					Text = "White noise at the native output sample rate (no Frequency Hz). Use graph Filter nodes to shape the spectrum.",
+					TextWrapping = TextWrapping.Wrap,
+				});
+				break;
+
 			case FmConstantNode constant:
 				AddConstantInspector(
 					constant);
@@ -1720,6 +1740,7 @@ public sealed class FmSynthEditorControl : UserControl
 		=> node switch
 		{
 			FmConstantNode => "Constant",
+			FmNoiseNode => "White Noise",
 			FmOscillatorNode => "Oscillator",
 			FmSoundSourceNode => "Source",
 			FmEnvelopeNode => "Envelope",
