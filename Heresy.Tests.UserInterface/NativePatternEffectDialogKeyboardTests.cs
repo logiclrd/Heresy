@@ -136,6 +136,48 @@ public sealed class NativePatternEffectDialogKeyboardTests
 	}
 
 	[AvaloniaTest]
+	public void FilterInvalidDraftWarnsFirstAndOnlyUnchangedSecondApplyCommits()
+	{
+		SongDocument song = new();
+		ObjectId id = song.AllocateObjectId();
+		song.Add(new FilterDefinition(id, "EQ", [
+			new FilterStageDefinition(2, "stage2", FilterKind.BiquadLowPass),
+		]));
+		using Modal modal = new(new SetNoteFilterAssignmentsPatternEffect(
+			"stage2.CutoffHz = 1200", id), song);
+		TextBox assignments = modal.Input("assignments");
+		assignments.Text = "stage2.CutoffHz = 1500\nstage2.Invalid = 12";
+		modal.Button("Apply").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+		Assert.Multiple(() =>
+		{
+			Assert.That(modal.Result.IsCompleted, Is.False);
+			Assert.That(modal.Message.Text, Does.Contain("warning").IgnoreCase);
+			Assert.That(modal.Message.Text, Does.Contain("again"));
+		});
+		// Editing after the warning is a new draft requiring another warning.
+		assignments.Text = "stage2.CutoffHz = 1700\nstage2.Invalid = 12";
+		modal.Button("Apply").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+		Assert.That(modal.Result.IsCompleted, Is.False);
+		modal.Button("Apply").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+		Assert.That(modal.Result.IsCompletedSuccessfully, Is.True);
+		Assert.That(modal.Result.Result!.Effect,
+			Is.EqualTo(new SetNoteFilterAssignmentsPatternEffect(
+				"stage2.CutoffHz = 1700\nstage2.Invalid = 12", id)));
+	}
+
+	[AvaloniaTest]
+	public void InvalidFilterSelectionCannotBeBypassedByRepeatedApply()
+	{
+		SongDocument song = new();
+		using Modal modal = new(new SetChannelFilterAssignmentsPatternEffect(
+			"stage2.CutoffHz = 1500", (ObjectId)999U), song);
+		modal.Button("Apply").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+		modal.Button("Apply").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+		Assert.That(modal.Result.IsCompleted, Is.False);
+		Assert.That(modal.Message.Text, Does.Contain("existing shared Filter"));
+	}
+
+	[AvaloniaTest]
 	public void OtherModifiersHandledKeysAndCancellationDoNotApplyShortcut()
 	{
 		using Modal modal = new(new SetSpeedPatternEffect(6));
