@@ -246,9 +246,9 @@ zero. Existing indefinite-source end-input safeguards apply.
 Disabled Envelopes hold their value without consuming active
 release time. Note Off while paused records the correct active
 origin. Retrospective value queries, split PCM rendering and
-snapshot ownership use the same existing Envelope timeline
-semantics as ADSR; a Note Off cannot cut a volume Envelope's
-finite release tail prematurely.
+snapshot ownership use the same shared Envelope timeline
+semantics as node-defined Envelopes; a Note Off cannot cut a volume
+Envelope's finite release tail prematurely.
 
 ### Integration and authoring
 
@@ -261,14 +261,15 @@ Envelope assignments and FM `FmEnvelopeNode` lookups reuse
 the common `IEnvelopeCurveResolver`, without a separate
 rendering path or implicit ADSR conversion.
 
-The Envelopes pane offers **+ Envelope** for graphical ADSR
-and **+ Script** for expression Envelopes. The dedicated
-`ScriptEnvelopeEditorControl` edits the expression and an
-optional release duration in seconds (blank = unbounded);
-`EnvelopeDocumentEditor` validates all edits *before*
-changing either definition or document revision. Failed edits
-preserve the playing snapshot and current authoring document.
-The graphical ADSR control is still ADSR-only.
+The Envelopes pane offers **+ Envelope** for interactive
+node-based Envelopes and **+ Script** for expression Envelopes.
+The standalone and FM inspectors share the current
+[node graph](envelope-graph.md); Script Envelopes retain the dedicated
+`ScriptEnvelopeEditorControl` for editing expressions and an optional
+release duration in seconds (blank = unbounded).
+`EnvelopeDocumentEditor` validates edits *before* changing a definition
+or document revision. Failed edits preserve the playing snapshot and
+the current authoring document. No scalar ADSR-only editor remains.
 
 Tests: `ScriptEnvelopeCompilationTests` (restrictions,
 pure expression determinism), `ScriptEnvelopeCurveTests`
@@ -284,9 +285,11 @@ and compilation failure), and
 
 A `ScriptInstrumentDefinition` is a first-class persisted
 `SongObjectKind.Instrument`, separate from the data-driven
-`InstrumentDefinition`. The existing nine-column tone grid,
-`Divisions`/`Offset` lookup and round-away-from-zero behavior
-remain unchanged.
+`InstrumentDefinition`. The **eleven-column** data Instrument
+tone grid, including per-tone NNA and Filter controls, is described
+in [instrument tone grid](instrument-tone-grid-model.md). The
+`Divisions`/`Offset` lookup and round-away-from-zero semantics
+are unchanged by script-defined Instrument support.
 
 ### Per-invocation selection and pitch
 
