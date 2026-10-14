@@ -629,13 +629,15 @@ public sealed class PatternNoteKeyboardTests
 	}
 
 	[Test]
-	public void CursorTraversesNoteSourceVolumeThenEffect()
+	public void CursorTraversesNoteOctaveSourceVolumeThenEffect()
 	{
 		DataPatternDefinition pattern =
 			new((ObjectId)1U, "Pattern");
 		PatternEffectCursor cursor =
 			new(0, 0, PatternCellField.Note);
 
+		cursor.MoveRight(pattern);
+		cursor.Field.Should().Be(PatternCellField.Octave);
 		cursor.MoveRight(pattern);
 		cursor.Field.Should().Be(PatternCellField.Source);
 		cursor.MoveRight(pattern);

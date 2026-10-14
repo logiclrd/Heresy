@@ -124,6 +124,9 @@ public sealed class PatternEffectInteractionTests
 			new(row: 3, channel: 2, PatternCellField.Note);
 
 		cursor.MoveRight(rowCount: 64, channelCount: 8);
+		cursor.Field.Should().Be(PatternCellField.Octave);
+
+		cursor.MoveRight(rowCount: 64, channelCount: 8);
 		cursor.Field.Should().Be(PatternCellField.Source);
 
 		cursor.MoveRight(rowCount: 64, channelCount: 8);
@@ -490,6 +493,10 @@ public sealed class PatternEffectInteractionTests
 			new SetPlaybackFrequencyPatternEffect(440));
 		PatternEffectCursor cursor =
 			new(row: 0, channel: 0, PatternCellField.Note);
+
+		cursor.MoveRight(pattern);
+		cursor.Channel.Should().Be(0);
+		cursor.Field.Should().Be(PatternCellField.Octave);
 
 		cursor.MoveRight(pattern);
 		cursor.Channel.Should().Be(0);
