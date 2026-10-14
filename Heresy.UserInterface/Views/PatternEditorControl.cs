@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Threading.Tasks;
 
@@ -146,6 +147,9 @@ public sealed class PatternEditorControl : UserControl
 	private PatternEffectCursor _cursor =
 		new(0, 0, PatternCellField.Note);
 	private Grid? _patternGrid;
+	// Last completed row-shift profile, deliberately independent of the
+	// persistent song and its audio revision.
+	private PatternRowMutationTiming? _lastRowMutationTiming;
 	private (int Row, int Channel)? _expandedCell;
 	private PlaybackPatternPosition? _playbackPosition;
 
@@ -869,6 +873,80 @@ public sealed class PatternEditorControl : UserControl
 		RequestPlaybackFollow();
 	}
 
+	/// <summary>
+	/// Fixed-length row shifts do not change the context projection, grid
+	/// dimensions or controls' display-row coordinates. Mutate the document
+	/// once and redraw the affected row/channel cells in place, preserving
+	/// all existing UI controls, focus, selection and scroll offsets.
+	/// </summary>
+	private bool ApplyRowMutation(PatternRowMutationKind kind, bool allChannels)
+	{
+		long started = Stopwatch.GetTimestamp();
+		PatternEditorRow current = _context.GetRow(_cursor.Row);
+		int? affectedChannel = allChannels ? null : _cursor.Channel;
+		bool changed = PatternEditorRowMutation.Apply(
+			_workspace, _context, _cursor, kind, allChannels);
+		long mutated = Stopwatch.GetTimestamp();
+		_volumeInput.Reset();
+		_volumePreviewAddress = null;
+		if (!changed)
+		{
+			_lastRowMutationTiming = new(
+				Stopwatch.GetElapsedTime(started, mutated),
+				TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero,
+				Stopwatch.GetElapsedTime(started),
+				0, _cellBorders.Count);
+			_message.Text = "No populated row data was shifted.";
+			RefreshCursorVisuals();
+			FocusCursorCell();
+			return false;
+		}
+
+		// An expanded effect cursor can reference a cell shifted to another
+		// row or discarded by Insert/Delete. Collapse it before repainting.
+		CollapseVisualEffects(collapseCursor: true);
+		int repainted = 0;
+		for (int display = 0; display < _context.Rows.Count; display++)
+		{
+			PatternEditorRow row = _context.GetRow(display);
+			if (!ReferenceEquals(row.Pattern, current.Pattern)
+				|| row.PatternRow < current.PatternRow)
+				continue;
+			int from = affectedChannel ?? 0;
+			int through = affectedChannel ?? row.Pattern.ChannelCount - 1;
+			for (int channel = from; channel <= through; channel++)
+			{
+				RefreshCell(display, channel);
+				repainted++;
+			}
+		}
+		long painted = Stopwatch.GetTimestamp();
+
+		// Source inheritance, flow control and flattened ranges can affect
+		// subsequent rows and repeated Pattern occurrences. Re-analyze those
+		// projections once, not once per cell. Their controls stay in place.
+		RefreshFlattenedIndications();
+		RefreshFlattenedRanges();
+		long decorated = Stopwatch.GetTimestamp();
+		// Focus did not move. Refreshing borders for every cell would
+		// reintroduce the old full-grid cost; affected effect visuals
+		// were already repainted by RefreshCell.
+		RefreshEffectHint();
+		FocusCursorCell();
+		long finished = Stopwatch.GetTimestamp();
+		_lastRowMutationTiming = new(
+			Stopwatch.GetElapsedTime(started, mutated),
+			Stopwatch.GetElapsedTime(mutated, painted),
+			Stopwatch.GetElapsedTime(painted, decorated),
+			Stopwatch.GetElapsedTime(decorated, finished),
+			Stopwatch.GetElapsedTime(started, finished),
+			repainted, _cellBorders.Count);
+		_changed(
+			$"{(kind == PatternRowMutationKind.Insert ? "Inserted" : "Deleted")} row data in {current.Pattern.Name} row {current.PatternRow}"
+				+ (allChannels ? " across all channels" : $", channel {_cursor.Channel + 1}"));
+		return true;
+	}
+
 	private Border BuildCell(
 		int displayRow,
 		PatternEditorRow row,
@@ -1499,36 +1577,11 @@ public sealed class PatternEditorControl : UserControl
 		}
 
 		if (PatternRowMutationKeyboard.TryGet(
-			e.Key,
-			e.KeyModifiers,
-			effectField,
+			e.Key, e.KeyModifiers, effectField,
 			out PatternRowMutationKind rowMutation,
 			out bool allChannels))
 		{
-			bool changed =
-				PatternEditorRowMutation.Apply(
-					_workspace,
-					_context,
-					_cursor,
-					rowMutation,
-					allChannels);
-			_volumeInput.Reset();
-			if (changed)
-			{
-				PatternEditorRow current =
-					_context.GetRow(_cursor.Row);
-				_changed(
-					$"{(rowMutation == PatternRowMutationKind.Insert ? "Inserted" : "Deleted")} row data in {current.Pattern.Name} row {current.PatternRow}"
-						+ (allChannels ? " across all channels" : $", channel {_cursor.Channel + 1}"));
-				RefreshGrid();
-			}
-			else
-			{
-				_message.Text =
-					"No populated row data was shifted.";
-				RefreshCursorVisuals();
-				FocusCursorCell();
-			}
+			ApplyRowMutation(rowMutation, allChannels);
 			e.Handled = true;
 			return;
 		}
