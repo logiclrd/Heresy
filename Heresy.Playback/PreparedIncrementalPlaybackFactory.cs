@@ -338,6 +338,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 		session.NoteFilterCommandRejected =
 			diagnostics.ReportNoteFilterCommandIssue;
 		session.NoteFilterEnvelopeResolver = sounds;
+		session.FilterAssignmentNames = sounds.FilterAssignmentNames;
 		session.ChannelFilterCommandRejected =
 			diagnostics.ReportChannelFilterCommandIssue;
 

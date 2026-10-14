@@ -122,6 +122,10 @@ public sealed class PlaybackSession
 	/// installed by the production snapshot factory before PCM playback.</summary>
 	public IEnvelopeCurveResolver? NoteFilterEnvelopeResolver { get; set; }
 
+	/// <summary>Immutable Envelope-name identities captured from the same
+	/// frozen song as the prepared resolver, never the editable live song.</summary>
+	public FilterAssignmentEnvelopeNames? FilterAssignmentNames { get; set; }
+
 	/// <summary>Control-side diagnostic output for invalid host-channel
 	/// Filter commands. The prepared playback factory rate-limits it.</summary>
 	public Action<string>? ChannelFilterCommandRejected { get; set; }
@@ -1305,7 +1309,7 @@ public sealed class PlaybackSession
 				case SetNoteFilterCommand:
 				case SetNoteFilterParametersCommand:
 				case SetNoteFilterAssignmentsCommand:
-					ApplyCurrentNoteFilterCommand(channel, command);
+					ApplyCurrentNoteFilterCommand(channel, command, eventFrame);
 					break;
 
 				case SetNoteFilterParameterEnvelopeCommand envelope:
@@ -1518,7 +1522,7 @@ public sealed class PlaybackSession
 			case SetNoteFilterCommand:
 			case SetNoteFilterParametersCommand:
 			case SetNoteFilterAssignmentsCommand:
-				ApplyCurrentNoteFilterCommand(channel, command);
+				ApplyCurrentNoteFilterCommand(channel, command, eventFrame);
 				break;
 
 			case SetNoteFilterParameterEnvelopeCommand envelope:
@@ -2031,6 +2035,7 @@ public sealed class PlaybackSession
 				_targetedVirtualOutputFilters.TryGetValue(virtualId!.Value, out previous);
 
 			ChannelOutputFilterState? prepared;
+			IReadOnlyList<FilterAssignmentEnvelopeBinding> bindings = [];
 			switch (command)
 			{
 				case SetChannelFilterCommand selection:
@@ -2059,6 +2064,9 @@ public sealed class PlaybackSession
 						throw new InvalidOperationException(
 							"No channel-output Filter selected for assignments.");
 					prepared = previous.PrepareTextUpdate(text.Text, eventFrame);
+					if (FilterAssignmentNames is not null)
+						bindings = FilterAssignmentEnvelopeText.ResolveValidBindings(
+							previous.SnapshotConfiguration(), text.Text, FilterAssignmentNames);
 					break;
 				default:
 					throw new InvalidOperationException(
@@ -2080,6 +2088,14 @@ public sealed class PlaybackSession
 				if (prepared is null) _targetedVirtualOutputFilters.Remove(virtualId!.Value);
 				else _targetedVirtualOutputFilters[virtualId!.Value] = prepared;
 			}
+			// Reuse the typed channel parameter-Envelope command: each
+			// accepted binding is prepared from a frozen curve and published
+			// to the correct physical/scoped host at this command's frame.
+			foreach (FilterAssignmentEnvelopeBinding binding in bindings)
+				ApplyHostFilterEnvelopeCommand(
+					new SetChannelFilterParameterEnvelopeCommand(
+						binding.StageId, binding.ParameterName, binding.EnvelopeId),
+					physicalHost, virtualId, scopedOwner, eventFrame);
 		}
 		catch (Exception failure) when (failure is ArgumentException
 			or InvalidOperationException or KeyNotFoundException or OverflowException)
@@ -2275,7 +2291,7 @@ public sealed class PlaybackSession
 	}
 
 	private void ApplyCurrentNoteFilterCommand(
-		PlaybackChannelState channel, NoteCommand command)
+		PlaybackChannelState channel, NoteCommand command, long eventFrame)
 	{
 		FlattenedSourceVolume? controller = channel.CurrentFlattenedSource;
 		PlaybackVoice? current = controller is null ? channel.CurrentVoice : null;
@@ -2290,6 +2306,7 @@ public sealed class PlaybackSession
 				? current!.GetEventFilterConfiguration()
 				: controller.EventFilterConfiguration?.Clone();
 			FilterInstance? candidate;
+			IReadOnlyList<FilterAssignmentEnvelopeBinding> bindings = [];
 			switch (command)
 			{
 				case SetNoteFilterCommand selection:
@@ -2324,7 +2341,10 @@ public sealed class PlaybackSession
 					}
 					candidate = FilterAssignmentText.ApplyValidToClone(previous, text.Text,
                         trial => CanPrepareNoteTextCandidate(controller, current, trial));
-					if (candidate.Revision == previous.Revision)
+					if (FilterAssignmentNames is not null)
+						bindings = FilterAssignmentEnvelopeText.ResolveValidBindings(
+							previous, text.Text, FilterAssignmentNames);
+					if (candidate.Revision == previous.Revision && bindings.Count == 0)
 						return; // no valid effective edits: preserve histories
 					break;
 				default:
@@ -2338,6 +2358,11 @@ public sealed class PlaybackSession
 					prepared.Configuration, prepared.State);
 				if (command is SetNoteFilterCommand)
 					current.ClearEventFilterParameterEnvelopes();
+				foreach (FilterAssignmentEnvelopeBinding binding in bindings)
+					ApplyCurrentNoteFilterEnvelopeCommand(channel,
+						new SetNoteFilterParameterEnvelopeCommand(
+							binding.StageId, binding.ParameterName, binding.EnvelopeId),
+						eventFrame);
 				return;
 			}
 
@@ -2374,6 +2399,11 @@ public sealed class PlaybackSession
 				if (command is SetNoteFilterCommand)
 					update.Voice.ClearEnclosingEnvelopeBindings(controller);
 			}
+			foreach (FilterAssignmentEnvelopeBinding binding in bindings)
+				ApplyCurrentNoteFilterEnvelopeCommand(channel,
+					new SetNoteFilterParameterEnvelopeCommand(
+						binding.StageId, binding.ParameterName, binding.EnvelopeId),
+					eventFrame);
 		}
 		catch (Exception exception) when (exception is ArgumentException
 			or InvalidOperationException or KeyNotFoundException

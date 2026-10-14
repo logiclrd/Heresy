@@ -4,6 +4,7 @@ using System.Linq;
 using System.Numerics;
 
 using Heresy.Core.Filters;
+using Heresy.Core.Envelopes;
 using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
@@ -364,6 +365,156 @@ public sealed class NoteFilterParameterEnvelopeTests
         Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
         Assert.That(automated.PreparePendingNoteFilterEnvelopeControls(),
             Is.EqualTo(0));
+    }
+
+
+    [Test]
+    public void AuthoredNoteEnvelopeReferenceMatchesTypedParameterEnvelopeAndNumericEdits()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FixedCurve(0.5));
+        var names = Names();
+        PlaybackSession authored = Session(resolver, Schedule(
+            Event(0, 0, new StartNoteCommand(Source) {
+                EventFilterConfiguration = Echo(),
+            }, new SetNoteFilterAssignmentsCommand(
+                "echo.Mix = 0.6\necho.Feedforward = @\"Sweep\""))));
+        authored.FilterAssignmentNames = names;
+        PlaybackSession typed = Session(resolver, Schedule(
+            Event(0, 0, new StartNoteCommand(Source) {
+                EventFilterConfiguration = Echo(),
+            }, new SetNoteFilterParametersCommand(1, [
+                new("Mix", FilterParameterValue.FromNumber(0.6)),
+            ]), new SetNoteFilterParameterEnvelopeCommand(1, "Feedforward", Envelope))));
+
+        float[] actual = new float[10], expected = new float[10];
+        authored.Render(0, 10, actual);
+        typed.Render(0, 10, expected);
+        Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+        Assert.That(authored.GetChannelState(0).CurrentVoice!
+            .GetEventFilterConfiguration()!.GetStageParameters(1)
+            .GetParameter("Mix").NumericValue, Is.EqualTo(0.6));
+    }
+
+    [Test]
+    public void AuthoredChannelEnvelopeMatchesTypedCommandOnPhysicalHost()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FixedCurve(0.5));
+        PlaybackSession authored = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterCommand { Configuration = Echo() },
+                new StartNoteCommand(Source),
+                new SetChannelFilterAssignmentsCommand(
+                    "echo.Mix = 0.75\necho.Feedforward = @\"Sweep\""))));
+        authored.FilterAssignmentNames = Names();
+        PlaybackSession typed = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterCommand { Configuration = Echo() },
+                new StartNoteCommand(Source),
+                new SetChannelFilterParametersCommand(1, [
+                    new("Mix", FilterParameterValue.FromNumber(0.75)),
+                ]), new SetChannelFilterParameterEnvelopeCommand(
+                    1, "Feedforward", Envelope))));
+
+        float[] actual = new float[10], expected = new float[10];
+        authored.Render(0, 10, actual);
+        typed.Render(0, 10, expected);
+        Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+    }
+
+    [Test]
+    public void FrozenNameResolutionSurvivesAuthoringRenameAndSkipsInvalidSiblings()
+    {
+        SongDocument song = new();
+        NodeEnvelopeDefinition original = new(Envelope, "Sweep");
+        song.Add(original);
+        var frozen = FilterAssignmentEnvelopeNames.Capture(song);
+        original.Name = "Later";
+        song.Add(new ScriptEnvelopeDefinition((ObjectId)12099U, "Sweep"));
+
+        TestResolver resolver = new(new ConstantSound(), new FixedCurve(0.5));
+        PlaybackSession authored = Session(resolver, Schedule(
+            Event(0, 0, new StartNoteCommand(Source) {
+                EventFilterConfiguration = Echo(),
+            }, new SetNoteFilterAssignmentsCommand(
+                "unknown.CutoffHz = @\"Sweep\"\n"
+                + "echo.Feedforward = @\"Sweep\"\n"
+                + "echo.DelaySeconds = @\"Sweep\"\n"
+                + "echo.Mix = @\"Missing\"\n"
+                + "echo.Mix = 0.8"))));
+        authored.FilterAssignmentNames = frozen;
+        PlaybackSession typed = Session(resolver, Schedule(
+            Event(0, 0, new StartNoteCommand(Source) {
+                EventFilterConfiguration = Echo(),
+            }, new SetNoteFilterParameterEnvelopeCommand(1, "Feedforward", Envelope),
+                new SetNoteFilterParametersCommand(1, [
+                    new("Mix", FilterParameterValue.FromNumber(0.8)),
+                ]))));
+
+        float[] actual = new float[10], expected = new float[10];
+        authored.Render(0, 10, actual);
+        typed.Render(0, 10, expected);
+        Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+    }
+
+    [Test]
+    public void LaterLiteralOverridesEarlierEnvelopeWithinOneAssignmentText()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FixedCurve(0.5));
+        PlaybackSession authored = Session(resolver, Schedule(
+            Event(0, 0, new StartNoteCommand(Source) {
+                EventFilterConfiguration = Echo(),
+            }, new SetNoteFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Sweep\"\necho.Feedforward = 0.8"))));
+        authored.FilterAssignmentNames = Names();
+        PlaybackSession typed = Session(resolver, Schedule(
+            Event(0, 0, new StartNoteCommand(Source) {
+                EventFilterConfiguration = Echo(),
+            }, new SetNoteFilterParametersCommand(1, [
+                new("Feedforward", FilterParameterValue.FromNumber(0.8)),
+            ]))));
+        float[] actual = new float[7], expected = new float[7];
+        authored.Render(0, 7, actual);
+        typed.Render(0, 7, expected);
+        Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+    }
+
+    [Test]
+    public void AuthoredFlattenedEnvelopeControlsOnlyItsOwnSourceDescendants()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FixedCurve(0.5));
+        PlaybackSession authored = Session(resolver, Schedule());
+        PlaybackSession typed = Session(resolver, Schedule());
+        authored.FilterAssignmentNames = Names();
+        foreach (PlaybackSession session in new[] { authored, typed })
+        {
+            session.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+                new BeginFlattenedSourceVolumeCommand(1, 1) {
+                    EventFilterConfiguration = Echo(),
+                },
+            ]);
+            foreach (uint id in new uint[] { 7, 8 })
+                session.ApplyScopedEvent(0, ChannelTarget.Virtual(id), [
+                    new StartNoteCommand(Source) {
+                        ParentSourceScopes = new long[] { 1 },
+                    },
+                ]);
+        }
+        authored.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new SetNoteFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Sweep\""),
+        ]);
+        typed.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new SetNoteFilterParameterEnvelopeCommand(1, "Feedforward", Envelope),
+        ]);
+        float[] actual = new float[8], expected = new float[8];
+        authored.Render(0, 8, actual);
+        typed.Render(0, 8, expected);
+        Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+    }
+
+    private static FilterAssignmentEnvelopeNames Names()
+    {
+        SongDocument song = new();
+        song.Add(new NodeEnvelopeDefinition(Envelope, "Sweep"));
+        return FilterAssignmentEnvelopeNames.Capture(song);
     }
 
     private static FilterInstance Echo()

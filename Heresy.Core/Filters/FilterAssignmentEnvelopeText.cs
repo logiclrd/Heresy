@@ -152,6 +152,62 @@ public static class FilterAssignmentEnvelopeText
             Array.AsReadOnly(bindings.ToArray()));
     }
 
+    /// <summary>
+    /// Runtime salvage of individually valid Envelope references in their
+    /// authored order. Invalid lines remain inert, as they are for numeric
+    /// ApplyValidToClone. A later valid numeric assignment to the same
+    /// parameter overrides an earlier Envelope reference; later references
+    /// override earlier bindings. All lookups use the supplied frozen index.
+    /// No editable song objects or script compilers are consulted here.
+    /// </summary>
+    public static IReadOnlyList<FilterAssignmentEnvelopeBinding> ResolveValidBindings(
+        FilterInstance selected, string text, FilterAssignmentEnvelopeNames names)
+    {
+        ArgumentNullException.ThrowIfNull(selected);
+        ArgumentNullException.ThrowIfNull(text);
+        ArgumentNullException.ThrowIfNull(names);
+        Dictionary<(int StageId, string Parameter),
+            FilterAssignmentEnvelopeBinding> selectedBindings = [];
+        string[] rows = text.Replace("\r\n", "\n")
+            .Replace('\r', '\n').Split('\n');
+        for (int i = 0; i < rows.Length; i++)
+        {
+            string row = rows[i].Trim();
+            if (row.Length == 0 || row.StartsWith('#'))
+                continue;
+            try
+            {
+                if (row.Contains("= @\"", StringComparison.Ordinal)
+                    || row.Split('=', 2).Last().TrimStart()
+                        .StartsWith("@", StringComparison.Ordinal))
+                {
+                    foreach (FilterAssignmentEnvelopeBinding binding
+                        in ParseAndValidate(selected, row, names).EnvelopeBindings)
+                    {
+                        selectedBindings[(binding.StageId,
+                            binding.ParameterName.ToUpperInvariant())] =
+                            binding with { LineNumber = i + 1 };
+                    }
+                }
+                else
+                {
+                    // A later valid literal wins over an earlier reference.
+                    // Bad numeric lines cannot silently detach a valid one.
+                    foreach (FilterStageAssignmentBatch batch in
+                        FilterAssignmentText.ParseAndValidate(selected, row))
+                        foreach (var item in batch.Assignments)
+                            selectedBindings.Remove((batch.StageId,
+                                item.Key.ToUpperInvariant()));
+                }
+            }
+            catch (ArgumentException)
+            {
+                // Runtime's existing invalid-line salvage policy.
+            }
+        }
+        return selectedBindings.Values.OrderBy(item => item.LineNumber).ToArray();
+    }
+
     private static string ReadQuotedName(string literal, int lineIndex)
     {
         StringBuilder name = new();

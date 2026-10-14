@@ -28,6 +28,8 @@ internal sealed class PlaybackSnapshotSoundResolver
 		IEnvelopeCurveResolver
 {
 	private readonly SongDocument _document;
+	internal FilterAssignmentEnvelopeNames FilterAssignmentNames { get; }
+
 	private readonly ISampleDataProvider _sampleDataProvider;
 	private readonly Dictionary<(ObjectId, bool), ISound?> _sounds = [];
 	private readonly Dictionary<ObjectId, IEnvelopeCurve?> _envelopes = [];
@@ -72,6 +74,7 @@ internal sealed class PlaybackSnapshotSoundResolver
 		_document =
 			document
 				?? throw new ArgumentNullException(nameof(document));
+		FilterAssignmentNames = FilterAssignmentEnvelopeNames.Capture(_document);
 		_sampleDataProvider =
 			sampleDataProvider
 				?? throw new ArgumentNullException(nameof(sampleDataProvider));
