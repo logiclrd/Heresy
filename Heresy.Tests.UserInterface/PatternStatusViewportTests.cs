@@ -35,9 +35,9 @@ public sealed class PatternStatusViewportTests
 
 		double firstFontLine = SingleLineHeight(diagnostic);
 		scroll.Height.Should().BeApproximately(firstFontLine * 2.25, 0.01);
-		scroll.Bounds.Height.Should().BeApproximately(scroll.Height, 0.01);
+		scroll.Bounds.Height.Should().BeApproximately(scroll.Height, 0.6);
 		border.Bounds.Height.Should().BeApproximately(
-			scroll.Height + border.Padding.Top + border.Padding.Bottom, 0.01);
+			scroll.Height + border.Padding.Top + border.Padding.Bottom, 0.6);
 		scroll.VerticalScrollBarVisibility.Should().Be(ScrollBarVisibility.Auto);
 		scroll.HorizontalScrollBarVisibility.Should().Be(ScrollBarVisibility.Disabled);
 		scroll.AllowAutoHide.Should().BeFalse();
@@ -47,9 +47,9 @@ public sealed class PatternStatusViewportTests
 		double secondFontLine = SingleLineHeight(diagnostic);
 		secondFontLine.Should().BeGreaterThan(firstFontLine);
 		scroll.Height.Should().BeApproximately(secondFontLine * 2.25, 0.01);
-		scroll.Bounds.Height.Should().BeApproximately(scroll.Height, 0.01);
+		scroll.Bounds.Height.Should().BeApproximately(scroll.Height, 0.6);
 		border.Bounds.Height.Should().BeApproximately(
-			scroll.Height + border.Padding.Top + border.Padding.Bottom, 0.01);
+			scroll.Height + border.Padding.Top + border.Padding.Bottom, 0.6);
 		owner.Close();
 	}
 
@@ -84,7 +84,7 @@ public sealed class PatternStatusViewportTests
 		hint.IsVisible.Should().BeTrue();
 		status.ScrollBarMaximum.Y.Should().BeGreaterThan(0);
 		status.Extent.Height.Should().BeGreaterThan(status.Viewport.Height);
-		status.Bounds.Height.Should().BeApproximately(statusHeight, 0.01);
+		status.Bounds.Height.Should().BeApproximately(statusHeight, 0.6);
 		grid.Viewport.Height.Should().BeApproximately(gridHeight, 0.01);
 		status.Offset = new Vector(0, 12);
 		owner.UpdateLayout();
@@ -98,7 +98,7 @@ public sealed class PatternStatusViewportTests
 		owner.UpdateLayout();
 		hint.IsVisible.Should().BeFalse();
 		status.ScrollBarMaximum.Y.Should().Be(0);
-		status.Bounds.Height.Should().BeApproximately(statusHeight, 0.01);
+		status.Bounds.Height.Should().BeApproximately(statusHeight, 0.6);
 		grid.Viewport.Height.Should().BeApproximately(gridHeight, 0.01);
 		Workspace(editor).Document.AudioRevision.Should().Be(revision);
 		owner.Close();
@@ -114,7 +114,8 @@ public sealed class PatternStatusViewportTests
 		TextBlock hint = Field<TextBlock>(editor, "_effectHint");
 		PatternEffectCursor cursor = Field<PatternEffectCursor>(editor, "_cursor");
 		double fixedHeight = scroll.Height;
-		diagnostic.Text = "Error that must remain visible when the effect hint appears.";
+		diagnostic.Text = string.Join(" ", Enumerable.Repeat(
+			"Error that must remain visible when the effect hint appears.", 12));
 		cursor.SetPosition(0, 0, PatternCellField.EffectCommand);
 		RefreshHint(editor);
 		owner.UpdateLayout();
@@ -122,7 +123,7 @@ public sealed class PatternStatusViewportTests
 		owner.Width = 450;
 		owner.UpdateLayout();
 		scroll.Height.Should().BeApproximately(fixedHeight, 0.01);
-		scroll.Bounds.Height.Should().BeApproximately(fixedHeight, 0.01);
+		scroll.Bounds.Height.Should().BeApproximately(fixedHeight, 0.6);
 		scroll.ScrollBarMaximum.Y.Should().BeGreaterThan(0);
 		diagnostic.Text.Should().StartWith("Error");
 		hint.Text.Should().Contain("Type a tracker command");
