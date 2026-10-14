@@ -108,7 +108,7 @@ public sealed class FmSynthDefinition : SongObject
 		ObjectId id,
 		string name,
 		FmSynthGraph graph)
-		: base(id, name)
+		: base(id, name, isSoundSource: true)
 	{
 		_graph =
 			graph
