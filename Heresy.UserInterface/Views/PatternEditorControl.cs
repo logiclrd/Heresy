@@ -142,6 +142,7 @@ public sealed class PatternEditorControl : UserControl
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _volumeTexts = [];
 	private readonly Dictionary<(int Row, int Channel), PatternEffectStripControl> _effectStrips = [];
 	private readonly PatternVolumeInputState _volumeInput = new();
+	private bool _suppressPhysicalPunctuationTextInput;
 	// Display-row identity of an uncommitted two-digit Volume preview.
 	private (int Row, int Channel)? _volumePreviewAddress;
 	private readonly PatternSelectionState _selection = new();
@@ -1160,6 +1161,9 @@ public sealed class PatternEditorControl : UserControl
 		int channel,
 		KeyEventArgs e)
 	{
+		// Each new key event expires any unmatched suppressed TextInput
+		// from the preceding physically handled punctuation key.
+		_suppressPhysicalPunctuationTextInput = false;
 		if (_cursor.Row != row || _cursor.Channel != channel)
 			_cursor.SetPosition(row, channel, PatternCellField.Note);
 
@@ -1201,16 +1205,18 @@ public sealed class PatternEditorControl : UserControl
 			return;
 		}
 
-		// A Dvorak comma/period is produced by the physical QWERTY
-		// W/E positions. Dispatch its layout-produced punctuation before
-		// interpreting those same positions as tracker piano notes. The
-		// handled Note-field KeyDown also suppresses the matching TextInput
-		// (which is otherwise ignored by the Note field).
-		if (_cursor.Field == PatternCellField.Note
+		// Tracker punctuation is identified ONLY by the physical
+		// QWERTY comma/period key positions, like the physical piano.
+		// Effect editing is deliberately excluded: its TextInput is
+		// layout-sensitive (e.g. Dvorak QWERTY-period gives effect V).
+		if ((_cursor.Field is PatternCellField.Note
+			or PatternCellField.Source
+			or PatternCellField.Volume)
 			&& PatternPunctuationKeyboard.TryGetCommand(
-				e.PhysicalKey, e.Key, e.KeySymbol, e.KeyModifiers,
+				e.PhysicalKey, e.KeyModifiers,
 				out PatternPunctuationCommand punctuation))
 		{
+			_suppressPhysicalPunctuationTextInput = true;
 			_volumeInput.Reset();
 			RefreshVolumePreview();
 			switch (punctuation)
@@ -1224,26 +1230,58 @@ public sealed class PatternEditorControl : UserControl
 						$"Edit mask: {PatternEditMaskEditor.Describe(_noteInputState.EditMask)}.";
 					break;
 
-				case PatternPunctuationCommand.ClearCell:
-					bool changed = PatternRegionClipboardEditor.Clear(
-						_workspace,
-						_context,
-						new PatternSelectionRegion(row, channel, row, channel));
-					if (changed)
+				case PatternPunctuationCommand.ClearField:
+					if (_cursor.Field == PatternCellField.Note)
 					{
-						RefreshUnderlyingCell(
-							editorRow.Pattern, editorRow.PatternRow, channel);
-						_changed(
-							$"Cleared tracker cell in {editorRow.Pattern.Name} row {editorRow.PatternRow}, channel {channel + 1}");
+						// Only the Note field clears the whole logical cell.
+						bool changed = PatternRegionClipboardEditor.Clear(
+							_workspace, _context,
+							new PatternSelectionRegion(row, channel, row, channel));
+						if (changed)
+						{
+							RefreshUnderlyingCell(
+								editorRow.Pattern, editorRow.PatternRow, channel);
+							_changed(
+									$"Cleared tracker cell in {editorRow.Pattern.Name} row {editorRow.PatternRow}, channel {channel + 1}");
+						}
+						_message.Text = changed
+							? "Cleared tracker cell."
+							: "The tracker cell is already empty.";
 					}
-					_message.Text = changed
-						? "Cleared tracker cell."
-						: "The tracker cell is already empty.";
+					else if (_cursor.Field == PatternCellField.Source)
+					{
+						ClearSource(row, channel);
+						_message.Text = "Cleared Source field.";
+					}
+					else
+					{
+						// Retain the Volume keyboard's established clear/advance
+						// semantics and only reset this field, not the Note/FX.
+						PatternVolumeInputResult result =
+							PatternEditorContextCursor.EditCurrent(
+								_context, _cursor,
+								mapped => PatternVolumeKeyboardEditor.Type(
+									_workspace, mapped.Pattern, _cursor,
+									_volumeInput, '.'));
+						_noteInputState.CurrentVolume =
+							editorRow.Pattern.Grid[
+								editorRow.PatternRow, channel]?.Volume;
+						UpdateEditStateDisplay();
+						if (result.Changed)
+						{
+							RefreshUnderlyingCell(
+								editorRow.Pattern, editorRow.PatternRow, channel);
+							_changed(
+									$"Cleared volume in {editorRow.Pattern.Name} row {editorRow.PatternRow}, channel {channel + 1}");
+						}
+						_message.Text = "Cleared Volume field.";
+					}
 					break;
 
 				default:
 					throw new ArgumentOutOfRangeException(nameof(punctuation));
 			}
+
 			e.Handled = true;
 			UpdateCurrentPatternControls();
 			RefreshCursorVisuals();
@@ -2046,30 +2084,26 @@ public sealed class PatternEditorControl : UserControl
 		if (_cursor.Row != row || _cursor.Channel != channel)
 			_cursor.SetPosition(row, channel, PatternCellField.Note);
 
-		char value = e.Text[0];
-		// Note-field punctuation was already dispatched from KeyDown using
-		// the actual keyboard-layout glyph, *before* W/E physical piano
-		// mapping. Its follow-up TextInput must not toggle the mask again.
-		// Other fields keep their established TextInput comma behaviour.
-		if (value == ',' && _cursor.Field == PatternCellField.Note)
+		// A physical punctuation KeyDown may have already consumed this
+		// character. Ignore its matching TextInput, whatever letter a
+		// non-QWERTY layout assigns to that key position.
+		if (_suppressPhysicalPunctuationTextInput)
 		{
+			_suppressPhysicalPunctuationTextInput = false;
 			e.Handled = true;
 			return;
 		}
-		if (value == ','
-			&& PatternEditMaskEditor.TryToggle(
-				_noteInputState.EditMask,
-				_cursor.Field,
-				out PatternEditMask editMask))
+
+		char value = e.Text[0];
+		// This is still a tracker field, so punctuation commands are
+		// physical-only: Dvorak W/E text ','/'.' must NOT toggle/clear
+		// Note, Source, or Volume. Effect text stays layout-sensitive.
+		if ((_cursor.Field is PatternCellField.Note
+			or PatternCellField.Source
+			or PatternCellField.Volume)
+			&& value is ',' or '.')
 		{
-			_volumeInput.Reset();
-			RefreshVolumePreview();
-			_noteInputState.EditMask = editMask;
-			UpdateEditStateDisplay();
-			_message.Text =
-				$"Edit mask: {PatternEditMaskEditor.Describe(editMask)}.";
 			e.Handled = true;
-			FocusCursorCell();
 			return;
 		}
 

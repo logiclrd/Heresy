@@ -79,6 +79,22 @@ public static class PatternEffectKeyboardEditor
 
 		if (field == PatternCellField.EffectCommand)
 		{
+			if (value == '.')
+			{
+				// Clear only the tracker effect *command*. Retain its
+				// two-digit data/parameter (and every other effect in the
+				// stack). Native effects are rejected by decoding above.
+				if (existing is null)
+					return new PatternEffectInputResult(false, false);
+				bool changed = SetEffect(
+					workspace, pattern, cursor.Row, cursor.Channel,
+					effectIndex, new EmptyTrackerPatternEffect(parameter));
+				cursor.ResetPendingNibble();
+				if (!cursor.IsExpanded)
+					cursor.AdvanceAfterCollapsedEntry(pattern.RowCount);
+				return new PatternEffectInputResult(changed, false);
+			}
+
 			if (!char.IsLetter(value))
 				return new PatternEffectInputResult(false, true);
 
