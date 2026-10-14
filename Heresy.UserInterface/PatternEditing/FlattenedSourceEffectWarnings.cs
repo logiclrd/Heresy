@@ -44,11 +44,7 @@ public static class FlattenedSourceEffectWarnings
 			PatternCell? earlier = pattern.Grid[previous, channel];
 			if (earlier is null)
 				continue;
-			ObjectId selection = !earlier.SourceId.IsNone
-				? earlier.SourceId
-				: earlier.Note is StartPatternNote inline
-					? inline.SourceId
-					: ObjectId.None;
+			ObjectId selection = PatternSourceSelection.ResolveSourceSelection(earlier);
 			if (!selection.IsNone)
 				rememberedSource = selection;
 
@@ -145,11 +141,7 @@ public static class FlattenedSourceEffectWarnings
 					SourceKnowledge before = channel.Current;
 					int? inheritedOrder = channel.StartOrder;
 
-					ObjectId selection = !cell.SourceId.IsNone
-						? cell.SourceId
-						: cell.Note is StartPatternNote inline
-							? inline.SourceId
-							: ObjectId.None;
+					ObjectId selection = PatternSourceSelection.ResolveSourceSelection(cell);
 					if (!selection.IsNone)
 					{
 						channel.Remembered = Classify(document, selection);

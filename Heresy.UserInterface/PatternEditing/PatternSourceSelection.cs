@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 
 using Heresy.Core.Patterns;
+using Heresy.Core.Objects;
 
 namespace Heresy.UserInterface.PatternEditing;
 
@@ -12,6 +13,15 @@ namespace Heresy.UserInterface.PatternEditing;
 /// </summary>
 public static class PatternSourceSelection
 {
+	/// <summary>One canonical per-cell Source selection shared with the
+	/// flattened-source analysis. Source-column selection takes precedence
+	/// over a StartNote inline ID; omission means keep channel memory.</summary>
+	public static ObjectId ResolveSourceSelection(PatternCell? cell)
+		=> cell is null ? ObjectId.None
+			: !cell.SourceId.IsNone ? cell.SourceId
+			: cell.Note is StartPatternNote start ? start.SourceId
+			: ObjectId.None;
+
 	public static PatternSourceOption? FindExplicitSource(
 		PatternCell? cell,
 		IReadOnlyList<PatternSourceOption> sources)
