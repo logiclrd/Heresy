@@ -207,6 +207,7 @@ internal static class FmSynthSourceImport
                         NnaOverride = instrument.NnaOverride,
                         NnaFadeDuration = instrument.NnaFadeDuration,
                     };
+                    clone.CopySourceColourFrom(instrument);
                     clone.ToneSpecifications.AddRange(
                         instrument.ToneSpecifications.Select(CloneTone));
                     clone.ToneTable.AddRange(instrument.ToneTable);
@@ -220,6 +221,7 @@ internal static class FmSynthSourceImport
                         NnaExpression = instrument.NnaExpression,
                         NnaFadeDuration = instrument.NnaFadeDuration,
                     };
+                    scriptedCopy.CopySourceColourFrom(instrument);
                     scriptedCopy.ToneSpecifications.AddRange(
                         instrument.ToneSpecifications.Select(CloneTone));
                     workspace.Document.Add(scriptedCopy);
