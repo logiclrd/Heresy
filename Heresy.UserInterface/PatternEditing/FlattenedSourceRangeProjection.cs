@@ -29,19 +29,41 @@ public readonly record struct FlattenedSourceRangeCell(
 /// </summary>
 public sealed class FlattenedSourceRangeProjection
 {
+    public const uint ConflictingNoteStartArgb = 0x80FF0000U;
     private FlattenedSourceRangeProjection(
         IReadOnlyList<FlattenedSourceRange> ranges,
         IReadOnlyDictionary<(int Row, int Channel),
-            IReadOnlyList<FlattenedSourceRangeCell>> cells)
+            IReadOnlyList<FlattenedSourceRangeCell>> cells,
+        IReadOnlySet<(int Row, int Channel)> conflictingNoteStarts)
     {
         Ranges = ranges;
         Cells = cells;
+        ConflictingNoteStarts = conflictingNoteStarts;
     }
 
     public IReadOnlyList<FlattenedSourceRange> Ranges { get; }
 
     public IReadOnlyDictionary<(int Row, int Channel),
         IReadOnlyList<FlattenedSourceRangeCell>> Cells { get; }
+
+    /// <summary>Later authored Note starts in a preceding flattening range,
+    /// ordered by ascending display row then channel. Their own Source colour
+    /// is replaced by the red conflict diagnostic, not their note or routing.</summary>
+    public IReadOnlySet<(int Row, int Channel)> ConflictingNoteStarts { get; }
+
+    /// <summary>Compose red diagnostic tints above ordinary effective-source
+    /// colours without changing the source attribution projection or notes.
+    /// Unresolved later authored starts can still carry a conflict warning,
+    /// but never acquire a fictional playable-source colour.</summary>
+    public IReadOnlyDictionary<(int Row, int Channel), uint> ApplyConflictTints(
+        IReadOnlyDictionary<(int Row, int Channel), uint> sourceTints)
+    {
+        ArgumentNullException.ThrowIfNull(sourceTints);
+        Dictionary<(int Row, int Channel), uint> display = new(sourceTints);
+        foreach (var address in ConflictingNoteStarts)
+            display[address] = ConflictingNoteStartArgb;
+        return display;
+    }
 
     public static FlattenedSourceRangeProjection Analyze(
         SongDocument document, PatternEditorContext context)
@@ -52,61 +74,79 @@ public sealed class FlattenedSourceRangeProjection
         List<FlattenedSourceRange> ranges = [];
         Dictionary<(int Row, int Channel),
             List<FlattenedSourceRangeCell>> cells = [];
+        HashSet<(int Row, int Channel)> conflicts = [];
 
         // The same live source-memory projection supplies base note tinting.
         // Avoid separately guessing inline Source, missing refs or Bxx/Cxx.
         var starts = PatternSourceTintResolver.ResolveNoteStarts(document, context);
-        foreach (var (address, source) in starts.OrderBy(item => item.Key.Row)
-            .ThenBy(item => item.Key.Channel))
+        // Traverse every *authored* Note start in row-major order, including
+        // starts whose Source is currently unknown. A known earlier flattened
+        // shadow plus an authored later start is a visible overlap regardless
+        // of whether the later start can resolve to a playable Source.
+        // Crucially, inspect the already accumulated cells BEFORE inserting
+        // the current start's own range: a range never conflicts with itself.
+        for (int displayRow = 0; displayRow < context.Rows.Count; displayRow++)
         {
-            PatternEditorRow editorRow = context.GetRow(address.Row);
-            PatternCell? cell = editorRow.Pattern.Grid[
-                editorRow.PatternRow, address.Channel];
-            if (cell?.Note is not StartPatternNote { Mixdown: false }
-                || source.SourceColourArgb is not uint tint
-                || !TryGetFootprint(document, source,
-                    out int height, out int width))
-                continue;
-
-            // A displayed Sequence entry represents only its own (possibly
-            // StartRow-skipped) part of the host Pattern. Never leak its range
-            // into the next order or a separate occurrence of that Pattern.
-            var (_, segmentLastRow) =
-                context.GetPatternDisplayBounds(address.Row);
-            int lastRow = (int)Math.Min(segmentLastRow,
-                Math.Min((long)address.Row + height - 1,
-                    (long)address.Row + editorRow.Pattern.RowCount
-                        - editorRow.PatternRow - 1));
-            int lastChannel = (int)Math.Min(
-                editorRow.Pattern.ChannelCount - 1,
-                (long)address.Channel + width - 1);
-            if (lastRow < address.Row || lastChannel < address.Channel)
-                continue;
-
-            uint outline = (tint & 0x00FFFFFFU)
-                | ((uint)Math.Min(255, (int)(tint >> 24) * 2) << 24);
-            ranges.Add(new FlattenedSourceRange(
-                source.Id, address.Row, address.Channel,
-                lastRow, lastChannel, tint, outline));
-
-            for (int row = address.Row; row <= lastRow; row++)
+            PatternEditorRow editorRow = context.GetRow(displayRow);
+            for (int hostChannel = 0; hostChannel < editorRow.Pattern.ChannelCount; hostChannel++)
             {
-                for (int channel = address.Channel;
-                    channel <= lastChannel; channel++)
+                PatternCell? cell = editorRow.Pattern.Grid[
+                    editorRow.PatternRow, hostChannel];
+                if (cell?.Note is not StartPatternNote start)
+                    continue;
+
+                var address = (Row: displayRow, Channel: hostChannel);
+                if (cells.TryGetValue(address, out var earlierRanges)
+                    && earlierRanges.Count != 0)
+                    conflicts.Add(address);
+
+                if (start.Mixdown
+                    || !starts.TryGetValue(address, out SongObject? source)
+                    || source.SourceColourArgb is not uint tint
+                    || !TryGetFootprint(document, source,
+                        out int height, out int width))
+                    continue;
+
+                // A displayed Sequence entry represents only its own (possibly
+                // StartRow-skipped) part of the host Pattern. Never leak its range
+                // into the next order or a separate occurrence of that Pattern.
+                var (_, segmentLastRow) =
+                    context.GetPatternDisplayBounds(address.Row);
+                int lastRow = (int)Math.Min(segmentLastRow,
+                    Math.Min((long)address.Row + height - 1,
+                        (long)address.Row + editorRow.Pattern.RowCount
+                            - editorRow.PatternRow - 1));
+                int lastChannel = (int)Math.Min(
+                    editorRow.Pattern.ChannelCount - 1,
+                    (long)address.Channel + width - 1);
+                if (lastRow < address.Row || lastChannel < address.Channel)
+                    continue;
+
+                uint outline = (tint & 0x00FFFFFFU)
+                    | ((uint)Math.Min(255, (int)(tint >> 24) * 2) << 24);
+                ranges.Add(new FlattenedSourceRange(
+                    source.Id, address.Row, address.Channel,
+                    lastRow, lastChannel, tint, outline));
+
+                for (int row = address.Row; row <= lastRow; row++)
                 {
-                    var position = (row, channel);
-                    if (!cells.TryGetValue(position, out var layers))
+                    for (int channel = address.Channel;
+                        channel <= lastChannel; channel++)
                     {
-                        layers = [];
-                        cells.Add(position, layers);
+                        var position = (row, channel);
+                        if (!cells.TryGetValue(position, out var layers))
+                        {
+                            layers = [];
+                            cells.Add(position, layers);
+                        }
+                        layers.Add(new FlattenedSourceRangeCell(
+                            source.Id, tint, outline,
+                            row == address.Row && channel == address.Channel,
+                            channel == address.Channel,
+                            row == address.Row,
+                            channel == lastChannel,
+                            row == lastRow));
                     }
-                    layers.Add(new FlattenedSourceRangeCell(
-                        source.Id, tint, outline,
-                        row == address.Row && channel == address.Channel,
-                        channel == address.Channel,
-                        row == address.Row,
-                        channel == lastChannel,
-                        row == lastRow));
                 }
             }
         }
@@ -115,7 +155,7 @@ public sealed class FlattenedSourceRangeProjection
             IReadOnlyList<FlattenedSourceRangeCell>> projected = [];
         foreach (var (address, layers) in cells)
             projected.Add(address, layers.ToArray());
-        return new FlattenedSourceRangeProjection(ranges, projected);
+        return new FlattenedSourceRangeProjection(ranges, projected, conflicts);
     }
 
     private static bool TryGetFootprint(SongDocument document,

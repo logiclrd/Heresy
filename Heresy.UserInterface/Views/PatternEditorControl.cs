@@ -784,10 +784,10 @@ public sealed class PatternEditorControl : UserControl
 			_workspace.Document, _context);
 		_seekIndications = ReplayRequiredSeekWarnings.Analyze(
 			_workspace.Document, _context);
-		_sourceTints = PatternSourceTintResolver.Analyze(
-			_workspace.Document, _context);
 		_flattenedRanges = FlattenedSourceRangeProjection.Analyze(
 			_workspace.Document, _context);
+		_sourceTints = _flattenedRanges.ApplyConflictTints(
+			PatternSourceTintResolver.Analyze(_workspace.Document, _context));
 		RemapPlaybackDisplayRows();
 
 		Grid grid = new();
@@ -3619,19 +3619,19 @@ public sealed class PatternEditorControl : UserControl
 		// of effects in *later* rows, including another occurrence of
 		// the same Pattern in a Sequence. Refresh all warning decorations.
 		RefreshFlattenedIndications();
-		RefreshSourceTints();
 		RefreshFlattenedRanges();
 	}
 
-	/// <summary>Recalculate channel Source memory after an edit, but only
-	/// repaint entire cell-content tint layers whose effective source changed.
-	/// The separate row/selection/playback shade, focus borders and independently
-	/// coloured effect strips are untouched. Sequence occurrences are evaluated
-	/// separately in display order.</summary>
-	private void RefreshSourceTints()
+	/// <summary>Recalculate known Source memory, then override the tint of
+	/// each *later* authored Note start inside an earlier flattened range with
+	/// exactly 0x80FF0000. The range fragments/strong outlines remain on top,
+	/// while row/selection shades, focus borders and effect tabs stay independent.
+	/// Changes only the affected full-cell backgrounds in place.</summary>
+	private void RefreshSourceTints(FlattenedSourceRangeProjection projection)
 	{
 		IReadOnlyDictionary<(int Row, int Channel), uint> updated =
-			PatternSourceTintResolver.Analyze(_workspace.Document, _context);
+			projection.ApplyConflictTints(
+				PatternSourceTintResolver.Analyze(_workspace.Document, _context));
 		foreach (((int row, int channel), Grid tintLayer) in _cellTintLayers)
 		{
 			bool previously = _sourceTints.TryGetValue((row, channel), out uint oldTint);
@@ -3649,6 +3649,9 @@ public sealed class PatternEditorControl : UserControl
 	{
 		FlattenedSourceRangeProjection updated =
 			FlattenedSourceRangeProjection.Analyze(_workspace.Document, _context);
+		// Conflict detection uses these exact new rectangles. Repaint their
+		// red Note-start backgrounds before replacing any changed range pieces.
+		RefreshSourceTints(updated);
 		foreach (var (address, layer) in _rangeOverlayLayers)
 		{
 			_flattenedRanges!.Cells.TryGetValue(
