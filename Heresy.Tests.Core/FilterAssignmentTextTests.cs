@@ -217,6 +217,118 @@ public sealed class FilterAssignmentTextTests
         Assert.That(decoded, Is.EqualTo(effect));
     }
 
+    [Test]
+    public void RuntimeRetainsValidRowsWhileStrictEditorRejectsTheSameText()
+    {
+        FilterInstance filter = Create();
+        string source = """
+            # only one malformed row is ignored, not its valid siblings
+            stage2.CutoffHz = 1600
+            stage20.Q = broken
+            unknown.CutoffHz = 500
+            stage2.Q = 0.8
+            stage2.CutoffHz = nope
+            stage2.CutoffHz = 1700
+            stage2.Nonexistent = 11
+            stage20.Q = 1.1
+            stage20.Q = NaN
+            stage2.Q = 0.9
+            invalid line
+            """;
+        FilterInstance result = FilterAssignmentText.ApplyValidToClone(filter, source);
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.GetStageParameters(2)
+                .GetParameter("CutoffHz").NumericValue, Is.EqualTo(1700));
+            Assert.That(result.GetStageParameters(2)
+                .GetParameter("Q").NumericValue, Is.EqualTo(0.9));
+            Assert.That(result.GetStageParameters(20)
+                .GetParameter("Q").NumericValue, Is.EqualTo(1.1));
+            Assert.That(filter.GetStageParameters(2)
+                .GetParameter("CutoffHz").NumericValue, Is.Not.EqualTo(1700));
+            Assert.That(() => FilterAssignmentText.ParseAndValidate(filter, source),
+                Throws.ArgumentException,
+                "the editor must continue diagnosing incorrect authored rows");
+        });
+        Assert.That(FilterAssignmentText.ApplyValidToClone(filter,
+            "unknown.nope=2\n# okay\nstage2.Q = nonsense").Revision,
+            Is.EqualTo(filter.Revision), "all-invalid text must be a no-op");
+    }
+
+    [Test]
+    public void RuntimeAcceptsCoupledFirPairAndDropsOnlyConflictingLaterCutoff()
+    {
+        FilterDefinition definition = new((ObjectId)834U, "Band", [
+            new FilterStageDefinition(1, "band", FilterKind.FirBandPass),
+            new FilterStageDefinition(2, "other", FilterKind.OnePole),
+        ]);
+        FilterInstance original = new(definition);
+        FilterInstance both = FilterAssignmentText.ApplyValidToClone(original, """
+            band.LowCutoffHz = 5000
+            band.HighCutoffHz = 6000
+            band.TapCount = 129
+            other.CutoffHz = 900
+            """);
+        Assert.Multiple(() =>
+        {
+            Assert.That(both.GetStageParameters(1).GetParameter("LowCutoffHz")
+                .NumericValue, Is.EqualTo(5000));
+            Assert.That(both.GetStageParameters(1).GetParameter("HighCutoffHz")
+                .NumericValue, Is.EqualTo(6000),
+                "both values must be validated as one atomic coupled pair");
+            Assert.That(both.GetStageParameters(1).GetParameter("TapCount")
+                .NumericValue, Is.EqualTo(129));
+        });
+
+        FilterInstance conflict = FilterAssignmentText.ApplyValidToClone(original, """
+            band.LowCutoffHz = 2000
+            band.HighCutoffHz = 1500
+            band.TapCount = 129
+            band.TapCount = 128
+            other.CutoffHz = 900
+            """);
+        Assert.Multiple(() =>
+        {
+            Assert.That(conflict.GetStageParameters(1).GetParameter("LowCutoffHz")
+                .NumericValue, Is.EqualTo(2000));
+            Assert.That(conflict.GetStageParameters(1).GetParameter("HighCutoffHz")
+                .NumericValue, Is.EqualTo(4000),
+                "later conflicting cutoff is dropped, earlier valid one retained");
+            Assert.That(conflict.GetStageParameters(1).GetParameter("TapCount")
+                .NumericValue, Is.EqualTo(129),
+                "an invalid duplicate does not erase a valid earlier value");
+            Assert.That(conflict.GetStageParameters(2).GetParameter("CutoffHz")
+                .NumericValue, Is.EqualTo(900));
+        });
+    }
+
+    [Test]
+    public void RuntimePreflightDropsOnlyAnUnsupportedFieldWithoutCommittingTrials()
+    {
+        FilterInstance original = Create();
+        int probes = 0;
+        FilterInstance accepted = FilterAssignmentText.ApplyValidToClone(original,
+            "stage2.CutoffHz = 7000\nstage2.Q = 0.85\nstage20.CutoffHz = 600",
+            proposed =>
+            {
+                probes++;
+                return proposed.GetStageParameters(2)
+                    .GetParameter("CutoffHz").NumericValue <= 5000;
+            });
+        Assert.Multiple(() =>
+        {
+            Assert.That(probes, Is.GreaterThan(1));
+            Assert.That(accepted.GetStageParameters(2)
+                .GetParameter("CutoffHz").NumericValue, Is.EqualTo(1000));
+            Assert.That(accepted.GetStageParameters(2)
+                .GetParameter("Q").NumericValue, Is.EqualTo(0.85));
+            Assert.That(accepted.GetStageParameters(20)
+                .GetParameter("CutoffHz").NumericValue, Is.EqualTo(600));
+            Assert.That(original.Revision, Is.Zero,
+                "preflight probes only evaluate clones of the original Filter");
+        });
+    }
+
     private static FilterInstance Create()
     {
         FilterDefinition definition = new((ObjectId)53U, "Test", [
