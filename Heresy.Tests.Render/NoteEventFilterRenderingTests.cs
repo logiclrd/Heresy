@@ -372,7 +372,7 @@ public sealed class NoteEventFilterRenderingTests
     }
 
     [Test]
-    public void TextNoteAssignmentsMatchTypedCommandAndRejectWholeInvalidBatch()
+    public void TextNoteAssignmentsMatchTypedCommandWithInvalidSibling()
     {
         Resolver resolver = new();
         resolver.Add(Source, new ProbeSound());
@@ -413,10 +413,14 @@ public sealed class NoteEventFilterRenderingTests
         typed.Render(0, 8, viaTyped);
         rejected.Render(0, 8, invalid);
         Assert.That(viaText, Is.EqualTo(viaTyped).Within(1e-6f));
-        Assert.That(viaText, Is.Not.EqualTo(invalid),
-            "only the fully valid text batch commits");
-        Assert.That(diagnostics, Has.Count.EqualTo(1));
-        Assert.That(invalid[2], Is.EqualTo(1f).Within(1e-6f));
+        Assert.Multiple(() =>
+        {
+            Assert.That(invalid, Is.EqualTo(viaTyped).Within(1e-6f),
+                "valid note text must match typed commands despite invalid siblings");
+            Assert.That(diagnostics, Is.Empty,
+                "runtime must ignore unsupported property names silently");
+            Assert.That(invalid[2], Is.EqualTo(0.5f).Within(1e-6f));
+        });
     }
 
     private static FilterInstance Echo(uint id, double delay)
