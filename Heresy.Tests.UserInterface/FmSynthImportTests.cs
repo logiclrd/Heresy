@@ -150,6 +150,8 @@ public sealed class FmSynthImportTests
 				[first.Id, second.Id]);
 
 		imported.Should().HaveCount(2);
+		imported[0].SourceColourArgb.Should().Be(first.SourceColourArgb);
+		imported[1].SourceColourArgb.Should().Be(second.SourceColourArgb);
 		imported.Select(synth => synth.Name)
 			.Should().Equal(
 				"Carrier",
