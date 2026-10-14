@@ -44,6 +44,7 @@ tests supersede contradictory old prose.
 | --- | --- |
 | Comprehensive UI and keyboard behavior (formerly in root README) | [UI workflows](user-interface-workflows.md) |
 | Planned source tints and flattened-note shadow/overlap visualization | [Pattern source highlighting](pattern-source-highlighting.md) |
+| Pattern row Insert/Delete performance, measured Release baseline and localized redraw | [Pattern row mutation performance](pattern-row-mutation-performance.md) |
 | Implemented editor redesign requirements | [UI editor redesign](ui-editor-redesign.md) |
 | Six pane roots, legacy four-/five-pane migration | [Document panes](document-panes.md) |
 | Node envelope editor and upcoming graph | [Node envelope design](node-envelope-design.md) |
