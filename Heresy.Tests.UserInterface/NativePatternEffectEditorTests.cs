@@ -102,6 +102,36 @@ public sealed class NativePatternEffectEditorTests
 	}
 
 	[Test]
+	public void ConfirmedInvalidFilterAssignmentDraftRetainsExactAuthoredText()
+	{
+		SongDocument song = new();
+		ObjectId id = song.AllocateObjectId();
+		song.Add(new FilterDefinition(id, "EQ", [
+			new FilterStageDefinition(2, "stage2", FilterKind.BiquadLowPass),
+		]));
+		var original = new SetNoteFilterAssignmentsPatternEffect(
+			"stage2.CutoffHz = 2500", id);
+		const string text = "stage2.CutoffHz = 1800\nstage2.Unknown = 3";
+		var draft = NativePatternEffectEditor.Describe(original)
+			.Fields.ToDictionary(field => field.Key, field => field.Value);
+		draft["assignments"] = text;
+		Assert.That(() => NativePatternEffectEditor.Rebuild(
+			original, draft, CultureInfo.InvariantCulture, song),
+			Throws.ArgumentException,
+			"the default API still provides strict validation");
+		Assert.That(NativePatternEffectEditor.Rebuild(
+			original, draft, CultureInfo.InvariantCulture, song,
+			allowInvalidFilterAssignments: true),
+			Is.EqualTo(new SetNoteFilterAssignmentsPatternEffect(text, id)),
+			"explicit confirmation preserves the original authored text");
+		draft["filterId"] = "99999";
+		Assert.That(() => NativePatternEffectEditor.Rebuild(
+			original, draft, CultureInfo.InvariantCulture, song,
+			allowInvalidFilterAssignments: true), Throws.ArgumentException,
+			"confirming invalid fields must not bypass Filter object validation");
+	}
+
+	[Test]
 	public void NativeFilterSelectionEditorRejectsMissingOrWrongTypeDefinition()
 	{
 		SongDocument document = new();
