@@ -182,9 +182,9 @@ public sealed class InstrumentEditorControl : UserControl
 			Text = "One grid, highest note first. Source-less rows stay as editor-only drafts. "
 				+ "Pitch is the offset in Instrument divisions (Divisions × log₂(multiplier)). "
 				+ "Instrument NNA changes immediately except Fade, which needs Apply Fade. "
-				+ "A selected rectangle applies one field to all included data rows. "
+				+ "A selected range covers complete rows; editing any field applies it to all selected tones. "
 				+ "The nearby-note dropdown snaps Pitch only when selected. "
-				+ "Shift+Arrow or Shift+click selects a rectangular block; Tab/click within the block preserves it. "
+				+ "Shift+Up/Down or Shift+click extends selected rows; Tab/click within those rows preserves the range. "
 				+ "Up/Down navigate cells, Left/Right leave text at the caret boundary. "
 				+ "Focus a tone cell and press Delete to remove its row.",
 			TextWrapping = TextWrapping.Wrap,
@@ -354,13 +354,13 @@ public sealed class InstrumentEditorControl : UserControl
 				{
 					_message.Text = targets.Count == 1
 						? $"Updated tone {index.Value}."
-						: $"Updated column {column} across {targets.Count} tones.";
+						: $"Updated field {column} across {targets.Count} selected tones.";
 					_changed($"Updated {targets.Count} tone(s) in {_instrument.Name}");
 				}
 				if (targets.Count > 1 && changed)
 				{
 					// Rebuild edited rows after the active control event
-					// finishes, preserving the semantic rectangle and
+					// finishes, preserving the semantic row range and
 					// avoiding transient ComboBox re-entrancy.
 					Dispatcher.UIThread.Post(
 						() => RefreshRows(index), DispatcherPriority.Loaded);
@@ -570,7 +570,7 @@ public sealed class InstrumentEditorControl : UserControl
 				: null,
 		};
 		// The ListBox may use a selected row for scrolling, but the
-		// rectangular cell selection lives independently in _selection.
+		// whole-row selection lives independently in _selection.
 		if (projected.IsEntry)
 		{
 			// Only commit when focus leaves the *entire row*.
@@ -863,7 +863,6 @@ public sealed class InstrumentEditorControl : UserControl
 			default: return false;
 		}
 
-		bool boundaryShiftLeft = false;
 		if (e.Source is TextBox input && columnDelta != 0)
 		{
 			// Do not hijack normal caret movement or Shift+Arrow text
@@ -873,9 +872,6 @@ public sealed class InstrumentEditorControl : UserControl
 				input.CaretIndex, input.Text?.Length ?? 0,
 				input.SelectionStart != input.SelectionEnd, columnDelta))
 				return false;
-			boundaryShiftLeft =
-				columnDelta < 0 &&
-				(e.KeyModifiers & KeyModifiers.Shift) != 0;
 		}
 		InstrumentToneGridSelection.Cell? neighbor =
 			_selection.Neighbor(rowDelta, columnDelta, _projectedRows);
@@ -885,10 +881,16 @@ public sealed class InstrumentEditorControl : UserControl
 		_movingGridFocus = true;
 		try
 		{
-			if (boundaryShiftLeft)
-				_selection.BeginAt(next, _projectedRows);
-			else if ((e.KeyModifiers & KeyModifiers.Shift) != 0)
-				_selection.Extend(next, _projectedRows);
+			if ((e.KeyModifiers & KeyModifiers.Shift) != 0)
+			{
+				if (rowDelta != 0)
+					_selection.Extend(next, _projectedRows);
+				else
+					// Shift+Left/Right moves keyboard focus within the row;
+					// selection is row-only, so it must not collapse the
+					// existing multi-row range or create a column range.
+					_selection.Focus(next, _projectedRows);
+			}
 			else
 				_selection.BeginAt(next, _projectedRows);
 			int position = InstrumentToneGridSelection.RowPosition(

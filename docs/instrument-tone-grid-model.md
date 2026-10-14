@@ -1,8 +1,8 @@
 # Instrument tone-grid model — implementation milestone
 
-Status: **visual eleven-column grid, independent cell-anchored rectangular
-selection, tone NNA and Filter selection, per-use Filter override editor, and
-framework-independent model implemented**. The Avalonia `InstrumentEditorControl` now
+Status: **visual eleven-column grid, independent whole-row range selection
+with cell-specific keyboard focus, tone NNA and Filter selection, per-use
+Filter override editor, and framework-independent model implemented**. The Avalonia `InstrumentEditorControl` now
 projects the same `InstrumentToneGridModel` used by regression tests;
 the old dual ToneSpecifications/ToneTable editor controls were removed.
 The editor commits populated cell choices as they change; its Pitch
@@ -249,63 +249,47 @@ modify the **currently playing** note's displacement action.
 No implicit NNA changes to existing saved Instruments or playing
 notes are permitted.
 
-### Rectangular selection and focus
+### Whole-row selection and independent cell focus (14 October 2026)
 
-Selection consists of one anchor cell, one moving end cell and
-the inclusive rectangular span they determine; it is not the
-virtualized ListBox's row selection. Shift+arrow/Shift+click
-expand the region. Ordinary arrow movement or a click **outside**
-the region starts a new one-cell region; moving focus **inside**
-does not collapse the region. This is true for keyboard, mouse
-and Tab; no focus mode may invisibly edit a cell outside the
-selection. Text controls retain standard cursor, selection and
-Shift+Left/Right behavior while inside the text. Up/Down, or an
-attempt to move left/right past the respective text boundary,
-transfers to grid navigation using the original modifiers.
-Specifically, Shift+Left while caret index is zero sets both
-the new anchor and end to the cell to the left. Dropdown navigation
-remains native while an option popup is open. Selection/focus is
-stored independently of virtualized visual containers.
+Selection stores the tone-index identity of an anchor and moving extent;
+**every column of every row between them is selected**. The eleven-column
+layout remains as before, but the columns recorded by `Cell(ToneIndex,
+Column)` are now *only for focus* and keyboard editing, not rectangle bounds.
+The independent `Focused` cell allows a specific Source, Pitch, NNA, Envelope
+or Filter editor to receive input without reducing a previously selected
+multi-row range. Ordinary mouse, Tab and keyboard focus into **any column of
+a selected row** preserves that range; focus outside selects only the new row.
+Shift+click or Shift+Up/Down expands or reverses the inclusive row extent
+from the original tone anchor. Horizontal Shift+Left/Right at a TextBox
+boundary moves cell focus within the same row without creating a column
+selection or collapsing a multi-row range. An ordinary unmodified arrow
+navigation starts a one-row range at its destination. Text caret and
+selection still take precedence inside TextBox content, and open ComboBoxes
+keep native popup arrows.
 
-**Implemented:** `InstrumentToneGridSelection` stores `Cell(int?
-ToneIndex, int Column)` endpoints (`Anchor`, `Extent`) and the
-independent keyboard/pointer `Focused` cell. The first row uses a
-null tone index, distinct from regular index zero. Real tone indices
-are displayed descending and stable across row reordering and
-virtualization. Selection has an inclusive rectangular `Contains`
-query; ordinary focus inside a rectangle changes only `Focused`,
-while focus outside replaces both endpoints. Shift+click and
-Shift+Arrow extend from the original anchor. The boundary-specific
-Shift+Left gesture resets both endpoints to the *left neighbor*
-before later extension. Changing lookup divisions or adding/removing
-extra draft rows reconciles by surviving tone identities rather than
-recycling a visual row position.
+`InstrumentToneGridSelection` keeps stable tone identities across
+projection changes and virtualization. The reserved entry row (null tone
+index, distinct from index zero) can participate *visually* in a row range
+but is excluded from every bulk edit; its unpublished entry draft behaves
+normally. Disappearing extra rows fall back to surviving focused tone
+identities, not recycled ListBox positions. All eleven focusable cell
+surfaces paint as selected on any selected row, while the exact focused
+cell alone gets its focus border. Keyboard navigation scrolls/realizes
+the destination through the virtualized ListBox and then focuses the
+appropriate underlying control. Repainting or moving focus has no
+document/audio revision effects.
 
-Avalonia `InstrumentEditorControl` wraps all eleven projected
-columns with focusable, individually painted cells; actual ComboBox,
-TextBox, envelope and Filter controls remain the children. The
-parent ListBox tunnels arrow input before default text/selection
-processing: Up/Down move to the next visual row, Left/Right
-remain ordinary text-caret/Shift-selection commands until the
-unselected caret is at its actual boundary, and an open ComboBox
-keeps arrow handling. On navigation, `ListBox.ScrollIntoView`
-brings the virtualized destination into view, followed by deferred
-focus on the appropriate editor control. Attached/detached recycled
-cells repaint on realization; the projection's index-to-row cache
-avoids repeated linear scans during paint. Cell-only selection
-does not change persistent Instrument definitions or audio revisions.
-The reserved entry row participates visually in selection but is
-still excluded from the *separately scheduled* bulk-edit contract.
-Regression tests validate the pure selection state and actual
-Avalonia wrapper/keyboard paths; real desktop/window-manager
-navigation remains useful follow-up acceptance.
+Tests assert every column of a selected row is included, a column change
+inside a range preserves it, outside-row focus collapses it, Shift range
+reversal, keyboard boundary navigation, source-less/entry exclusion,
+reprojection survival and virtualized cell-template selection paint.
 
 ### Atomic selected-row fields and division Pitch — implemented 12 October 2026
 
-An edit **inside** the current rectangular selection targets every
-indexed tone row in that rectangle and modifies *only the edited
-field*, even when the rectangle includes several other columns.
-An edit **outside** that rectangle targets only its own tone row.
+An edit of **any field on any selected row** targets every selected
+indexed tone row and modifies **only that edited field**, regardless of
+where the user originally anchored or extended the row range.
+An edit on a row outside the selected range targets only its own row.
 `InstrumentToneGridSelection.EditTargetRows` enumerates the
 included tone indices in visual order, explicitly excluding the
 reserved null-index entry row. The entry row continues to hold
@@ -337,8 +321,8 @@ continue to intern as one shared *value*, and editing one
 still copy-on-writes safely. Real Tone Filter definition selectors
 and per-use parameter editors both route through the same atomic
 field edit. All Source, NNA/Fade and Envelope selectors similarly
-apply their own single-field transform; selections in unrelated
-columns do not receive that edit.
+apply their own single-field transform; all selected rows receive it,
+regardless of the edited column.
 
 The Pitch TextBox uses **`Divisions × log₂(multiplier)`** for
 display and input. The number entered for a batch is one
@@ -354,7 +338,8 @@ transaction rollback with invalid middle rows and Filter
 mutability, source-less publication, shared-tone copy-on-write,
 entry-row exclusion and exact Pitch conversion. Headless
 Avalonia tests cover actual Source/NNA/Envelope/Pitch/Filter
-control paths, including edits outside a rectangle.
+control paths, including edits in columns outside the formerly
+rectangular horizontal bounds, which now correctly reach all selected rows.
 
 **Still open:** physical desktop focus/layout acceptance and
 the independent row-density item. The current workspace does

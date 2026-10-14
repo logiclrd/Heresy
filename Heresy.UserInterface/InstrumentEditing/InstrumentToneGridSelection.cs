@@ -4,7 +4,8 @@ using System.Collections.Generic;
 namespace Heresy.UserInterface.InstrumentEditing;
 
 /// <summary>
-/// Rectangle in projected (descending-tone) row order and fixed grid columns.
+/// Whole-row selection in projected (descending-tone) order. A column is
+/// retained only for keyboard focus, never for selection or bulk-edit bounds.
 /// Stored by tone index rather than Avalonia row-container identity so virtual
 /// scrolling, item recycling and reprojection cannot alter the selection.
 /// The reserved entry row has a distinct null-index identity.
@@ -36,8 +37,9 @@ public sealed class InstrumentToneGridSelection
 		Focused = null;
 	}
 
-	/// <summary>Ordinary click/Tab/focus traversal preserves a range when
-	/// landing inside it; outside focus starts a single-cell selection.</summary>
+	/// <summary>Click/Tab/focus inside any column of an already selected
+	/// row preserves the row range; outside focus starts a one-row selection.
+	/// The exact cell remains tracked independently for typing.</summary>
 	public void Focus(Cell cell, IReadOnlyList<InstrumentToneGridRow> rows)
 	{
 		Validate(cell, rows);
@@ -46,9 +48,8 @@ public sealed class InstrumentToneGridSelection
 		Focused = cell;
 	}
 
-	/// <summary>Shift+click or Shift+Arrow extends the rectangle from its
-	/// original anchor. The special boundary Shift+Left is separately handled
-	/// by BeginAt for a left-hand cell newly becoming the anchor.</summary>
+	/// <summary>Shift+click and vertical Shift+Arrow extend the inclusive
+	/// row span from its original anchor. The endpoint's column is focus-only.</summary>
 	public void Extend(Cell cell, IReadOnlyList<InstrumentToneGridRow> rows)
 	{
 		Validate(cell, rows);
@@ -81,10 +82,9 @@ public sealed class InstrumentToneGridSelection
 		return new Cell(rows[nextRow].Index, nextColumn);
 	}
 
-	/// <summary>Return exactly the data rows targeted by an edit of this
-	/// field. Only the edited cell's inclusion matters, not the other
-	/// selected columns. The reserved entry row never participates in
-	/// bulk mutation; an unselected edit changes only its own row.</summary>
+	/// <summary>All selected data rows receive an edit of *any* field on
+	/// a selected row, regardless of which column had focus when the
+	/// selection began. The reserved entry row never receives bulk edits.</summary>
 	public IReadOnlyList<int> EditTargetRows(
 		Cell edited, IReadOnlyList<InstrumentToneGridRow> rows)
 	{
@@ -112,9 +112,7 @@ public sealed class InstrumentToneGridSelection
 		int b = Position(rows, end.ToneIndex);
 		int c = Position(rows, cell.ToneIndex);
 		return a >= 0 && b >= 0 && c >= Math.Min(a, b) &&
-			c <= Math.Max(a, b) &&
-			cell.Column >= Math.Min(start.Column, end.Column) &&
-			cell.Column <= Math.Max(start.Column, end.Column);
+			c <= Math.Max(a, b);
 	}
 
 	/// <summary>Keep surviving tones across changes to Divisions, Offset

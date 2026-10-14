@@ -25,7 +25,7 @@ namespace Heresy.Tests.UserInterface;
 public sealed class InstrumentToneGridBatchEditorTests
 {
 	[AvaloniaTest]
-	public void SourceSelectionAcrossRectanglePublishesMultipleDraftsInOneRevision()
+	public void SourceSelectionAcrossRowsPublishesMultipleDraftsInOneRevision()
 	{
 		DocumentWorkspace workspace = new();
 		InstrumentDefinition instrument = InstrumentDocumentEditor.CreateInstrument(
@@ -61,7 +61,7 @@ public sealed class InstrumentToneGridBatchEditorTests
 	}
 
 	[AvaloniaTest]
-	public void EditingColumnOutsideRectangleAffectsOnlyFocusedRow()
+	public void EditingAnyColumnOnSelectedRowUpdatesEverySelectedRow()
 	{
 		DocumentWorkspace workspace = new();
 		InstrumentDefinition instrument = InstrumentDocumentEditor.CreateInstrument(
@@ -90,16 +90,16 @@ public sealed class InstrumentToneGridBatchEditorTests
 		model.Rows.Single(r => r.Index == 2).Cells.Nna.Action
 			.Should().Be(InstrumentNnaAction.Off);
 
-		// Volume envelope column 6 lies outside the rectangle. A real
-		// edit changes only its own row, even though the stack still has
-		// a multi-row selection over NNA/Source/Pitch columns.
+		// Volume column 6 lies outside the old rectangular horizontal
+		// bounds. Whole-row selection must still propagate this field
+		// across both selected tones using ONE atomic edit transaction.
 		ComboBox volume = RowCell<ComboBox>(editor, 2, 6);
 		object option = volume.ItemsSource!.Cast<object>().Single(x =>
 			(ObjectId?)x.GetType().GetProperty("Id")!.GetValue(x) == envelope);
 		volume.SelectedItem = option;
 		workspace.Document.AudioRevision.Should().Be(before + 2);
 		model.Rows.Single(r => r.Index == 2).Cells.VolumeEnvelopeId.Should().Be(envelope);
-		model.Rows.Single(r => r.Index == 1).Cells.VolumeEnvelopeId.Should().BeNull();
+		model.Rows.Single(r => r.Index == 1).Cells.VolumeEnvelopeId.Should().Be(envelope);
 	}
 
 	[AvaloniaTest]

@@ -22,7 +22,7 @@ namespace Heresy.Tests.UserInterface;
 public sealed class InstrumentToneGridSelectionTests
 {
 	[Test]
-	public void RectangularExtensionUsesDescendingVisualToneOrderAndOnlyIncludedColumns()
+	public void RowExtensionUsesDescendingVisualToneOrderAndIncludesEveryColumn()
 	{
 		var (rows, selection) = NewSelection();
 		selection.BeginAt(new(84, 3), rows);
@@ -31,17 +31,17 @@ public sealed class InstrumentToneGridSelectionTests
 		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(84, 3));
 		selection.Extent.Should().Be(new InstrumentToneGridSelection.Cell(81, 6));
 		foreach (int index in new[] { 84, 83, 82, 81 })
-			foreach (int column in new[] { 3, 4, 5, 6 })
+			foreach (int column in Enumerable.Range(0, 11))
 				selection.Contains(new(index, column), rows).Should().BeTrue();
 
 		selection.Contains(new(80, 4), rows).Should().BeFalse();
-		selection.Contains(new(83, 2), rows).Should().BeFalse();
-		selection.Contains(new(83, 7), rows).Should().BeFalse();
+		selection.Contains(new(83, 2), rows).Should().BeTrue();
+		selection.Contains(new(83, 7), rows).Should().BeTrue();
 		selection.Contains(new(85, 4), rows).Should().BeFalse();
 	}
 
 	[Test]
-	public void FocusInsidePreservesExistingRectangleOutsideFocusResetsIt()
+	public void FocusInAnyColumnOfSelectedRowPreservesRangeOtherRowsReset()
 	{
 		var (rows, selection) = NewSelection();
 		selection.BeginAt(new(82, 3), rows);
@@ -54,7 +54,13 @@ public sealed class InstrumentToneGridSelectionTests
 		selection.Contains(new(79, 7), rows).Should().BeTrue();
 
 		selection.Focus(new(81, 8), rows);
-		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(81, 8));
+		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(82, 3));
+		selection.Extent.Should().Be(new InstrumentToneGridSelection.Cell(79, 7));
+		selection.Focused.Should().Be(new InstrumentToneGridSelection.Cell(81, 8));
+		selection.Contains(new(82, 0), rows).Should().BeTrue();
+
+		selection.Focus(new(78, 8), rows);
+		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(78, 8));
 		selection.Extent.Should().Be(selection.Anchor);
 		selection.Focused.Should().Be(selection.Anchor);
 		selection.Contains(new(82, 3), rows).Should().BeFalse();
@@ -92,19 +98,21 @@ public sealed class InstrumentToneGridSelectionTests
 	}
 
 	[Test]
-	public void BoundaryShiftLeftEstablishesLeftCellAsBothAnchorAndExtent()
+	public void HorizontalFocusChangesTheEditingCellWithoutChangingSelectedRows()
 	{
 		var (rows, selection) = NewSelection();
 		selection.BeginAt(new(82, 4), rows);
+		selection.Extend(new(80, 7), rows);
 		InstrumentToneGridSelection.Cell? left = selection.Neighbor(0, -1, rows);
 		left.Should().NotBeNull();
-		selection.BeginAt(left!.Value, rows);
-		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(82, 3));
-		selection.Extent.Should().Be(selection.Anchor);
-		selection.Focused.Should().Be(selection.Anchor);
-		selection.Extend(new(80, 4), rows);
-		selection.Contains(new(81, 3), rows).Should().BeTrue();
-		selection.Contains(new(82, 4), rows).Should().BeTrue();
+		selection.Focus(left!.Value, rows);
+		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(82, 4));
+		selection.Extent.Should().Be(new InstrumentToneGridSelection.Cell(80, 7));
+		selection.Focused.Should().Be(new InstrumentToneGridSelection.Cell(80, 6));
+		selection.Contains(new(81, 0), rows).Should().BeTrue();
+		selection.Contains(new(82, 10), rows).Should().BeTrue();
+		selection.EditTargetRows(new(81, 9), rows)
+			.Should().BeEquivalentTo([82, 81, 80]);
 	}
 
 	[Test]
@@ -203,12 +211,13 @@ public sealed class InstrumentToneGridSelectionTests
 			selection.Focused.Should().Be(new InstrumentToneGridSelection.Cell(84, 3));
 			text.CaretIndex = 0;
 			Send(Key.Left, KeyModifiers.Shift).Should().BeTrue();
-			selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(84, 2));
+			selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(84, 3));
 			selection.Extent.Should().Be(selection.Anchor);
+			selection.Focused.Should().Be(new InstrumentToneGridSelection.Cell(84, 2));
 
 			text.CaretIndex = 1;
 			Send(Key.Down, KeyModifiers.Shift).Should().BeTrue();
-			selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(84, 2));
+			selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(84, 3));
 			selection.Extent.Should().Be(new InstrumentToneGridSelection.Cell(83, 2));
 
 			ComboBox popup = new()
@@ -226,7 +235,7 @@ public sealed class InstrumentToneGridSelectionTests
 	}
 
 	[Test]
-	public void VirtualizedRowTemplateRebuildUsesTheSameSemanticRectangle()
+	public void VirtualizedRowTemplateRebuildPaintsEveryColumnOfSelectedRows()
 	{
 		DocumentWorkspace workspace = new();
 		InstrumentDefinition instrument = InstrumentDocumentEditor.CreateInstrument(
@@ -247,14 +256,15 @@ public sealed class InstrumentToneGridSelectionTests
 		Grid firstGrid = (Grid)first.Child!;
 		AssertSelection(firstGrid, 2, true);
 		AssertSelection(firstGrid, 5, true);
-		AssertSelection(firstGrid, 6, false);
+		AssertSelection(firstGrid, 6, true);
 		first = null!; // model remains; recycled UI is disposable
 
 		Border rebuilt = (Border)rows.ItemTemplate.Build(
 			projected.Single(row => row.Index == 83))!;
 		Grid grid = (Grid)rebuilt.Child!;
 		AssertSelection(grid, 3, true);
-		AssertSelection(grid, 1, false);
+		AssertSelection(grid, 1, true);
+		AssertSelection(grid, 10, true);
 		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(84, 2));
 		selection.Extent.Should().Be(new InstrumentToneGridSelection.Cell(82, 5));
 		workspace.Document.AudioRevision.Should().Be(revision);
