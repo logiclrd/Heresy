@@ -300,8 +300,22 @@ public static class SongDocumentJson
 			if (value is not JsonObject objectNode)
 				throw new InvalidDataException($"Object {key} must be a JSON object.");
 
-			document.RestoreObject(
-				ReadSongObject(id, objectNode, assetPathResolver, document));
+			SongObject restored =
+				ReadSongObject(id, objectNode, assetPathResolver, document);
+			if (objectNode["sourceColourArgb"] is JsonNode storedColour)
+			{
+				try
+				{
+					restored.RestoreSourceColour(storedColour.GetValue<uint>());
+				}
+				catch (Exception error) when (error is ArgumentException
+					or InvalidOperationException or FormatException)
+				{
+					throw new InvalidDataException(
+						$"Object {id.Value} has an invalid source colour.", error);
+				}
+			}
+			document.RestoreObject(restored);
 		}
 
 		foreach ((string key, JsonNode? value) in tombstones)
@@ -495,6 +509,8 @@ public static class SongDocumentJson
 			{
 				["name"] = songObject.Name,
 			};
+		if (songObject.SourceColourArgb is uint tint)
+			result["sourceColourArgb"] = tint;
 
 		switch (songObject)
 		{
