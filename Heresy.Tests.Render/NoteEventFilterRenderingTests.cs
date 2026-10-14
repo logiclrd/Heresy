@@ -335,6 +335,66 @@ public sealed class NoteEventFilterRenderingTests
     }
 
     [Test]
+    public void TolerantTextOnFlattenedNoteUpdatesOnlyDescendantsAndIsSilent()
+    {
+        Resolver resolver = new();
+        resolver.Add(Source, new ProbeSound());
+        PlaybackSession Make()
+        {
+            PlaybackSession session = Session(resolver, Schedule());
+            session.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+                new BeginFlattenedSourceVolumeCommand(1, 1)
+                {
+                    EventFilterConfiguration = Echo(4621, 0.002),
+                },
+            ]);
+            foreach (uint id in new uint[] { 7, 8 })
+                session.ApplyScopedEvent(0, ChannelTarget.Virtual(id), [
+                    new StartNoteCommand(Source)
+                    {
+                        ParentSourceScopes = new long[] { 1 },
+                    },
+                ]);
+            session.ApplyScopedEvent(0, ChannelTarget.Physical(1), [
+                new StartNoteCommand(Source)
+                {
+                    EventFilterConfiguration = Echo(4622, 0.002),
+                },
+            ]);
+            session.Render(0, 1, new float[1]);
+            return session;
+        }
+        PlaybackSession text = Make(), typed = Make(), unchanged = Make();
+        List<string> warnings = [];
+        text.NoteFilterCommandRejected = warnings.Add;
+        text.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new SetNoteFilterAssignmentsCommand("""
+                delay.Feedforward = 0.5
+                delay.Missing = 9
+                delay.DelaySeconds = NaN
+                """),
+        ]);
+        typed.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new SetNoteFilterParametersCommand(1, [
+                new("Feedforward", FilterParameterValue.FromNumber(0.5)),
+            ]),
+        ]);
+        float[] actual = new float[5], expected = new float[5],
+            reference = new float[5];
+        text.Render(1, actual.Length, actual);
+        typed.Render(1, expected.Length, expected);
+        unchanged.Render(1, reference.Length, reference);
+        Assert.Multiple(() =>
+        {
+            Assert.That(actual, Is.EqualTo(expected).Within(1e-6f),
+                "both flattened children receive exactly the accepted command");
+            Assert.That(actual, Is.Not.EqualTo(reference));
+            Assert.That(warnings, Is.Empty,
+                "bad text fields are not diagnostics for a flattened note");
+        });
+    }
+
+    [Test]
     public void InvalidFlattenedScopeUpdateIsAtomicAcrossExistingDescendantVoices()
     {
         Resolver resolver = new();
