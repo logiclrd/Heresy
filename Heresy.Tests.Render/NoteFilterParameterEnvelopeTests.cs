@@ -1107,6 +1107,178 @@ public sealed class NoteFilterParameterEnvelopeTests
         Assert.That(stopped, Is.Zero);
     }
 
+    [Test]
+    public void HostThenOffReleasesOriginalNnaVoiceAndNotItsReplacement()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FiniteCurve());
+        PlaybackSession whole = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterCommand { Configuration = Echo() },
+                new StartNoteCommand(Source),
+                new SetChannelFilterAssignmentsCommand(
+                    "echo.Feedforward = @\"Sweep\" THEN OFF")),
+            Event(1, 0, new StartNoteCommand(Source))));
+        PlaybackSession split = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterCommand { Configuration = Echo() },
+                new StartNoteCommand(Source),
+                new SetChannelFilterAssignmentsCommand(
+                    "echo.Feedforward = @\"Sweep\" THEN OFF")),
+            Event(1, 0, new StartNoteCommand(Source))));
+        whole.FilterAssignmentNames = Names();
+        split.FilterAssignmentNames = Names();
+        float[] a = new float[8], b = new float[8];
+        split.Render(0, 2, b.AsSpan(0, 2));
+        PlaybackVoice old = split.VirtualVoices.Single();
+        Assert.That(old.SoundState.NoteOffTime, Is.Null);
+        split.Render(2, 2, b.AsSpan(2, 2));
+        Assert.That(old.SoundState.NoteOffTime,
+            Is.EqualTo(TimeSpan.FromMilliseconds(3)),
+            "the host action must release its original NNA voice at frame 3");
+        Assert.That(split.GetChannelState(0).CurrentVoice, Is.Not.Null,
+            "the new current voice never inherits the completion action");
+        split.Render(4, 4, b.AsSpan(4, 4));
+        whole.Render(0, a.Length, a);
+        Assert.That(b, Is.EqualTo(a).Within(1e-6f));
+    }
+
+    [Test]
+    public void HostThenCutOnlyCutsOriginalVoiceOnSharedPhysicalHost()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FiniteCurve());
+        PlaybackSession session = Session(resolver, Schedule());
+        session.FilterAssignmentNames = Names();
+        session.ApplyScopedEvent(11, ChannelTarget.Physical(0), [
+            new SetChannelFilterCommand { Configuration = Echo() },
+            new StartNoteCommand(Source),
+            new SetChannelFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Sweep\" THEN CUT"),
+        ], physicalPlaybackOwner: 91);
+        float[] pcm = new float[7];
+        session.Render(0, 1, pcm.AsSpan(0, 1));
+        session.ApplyScopedEvent(12, ChannelTarget.Physical(0), [
+            new StartNoteCommand(Source),
+        ], physicalPlaybackOwner: 92);
+        PlaybackVoice sibling = session.GetChannelState(0, 92).CurrentVoice!;
+        session.Render(1, 3, pcm.AsSpan(1, 3));
+        Assert.That(session.GetChannelState(0, 91).CurrentVoice, Is.Null);
+        Assert.That(session.GetChannelState(0, 92).CurrentVoice, Is.SameAs(sibling),
+            "shared output Filter cannot authorize cutting a sibling owner");
+        session.Render(4, 3, pcm.AsSpan(4, 3));
+        Assert.That(pcm[6], Is.GreaterThan(0));
+    }
+
+    [Test]
+    public void HostThenCutOnSustainWaitsForOriginalNotesExternalOff()
+    {
+        TestResolver resolver = new(new ConstantSound(), new SustainingReleaseCurve());
+        PlaybackSession session = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterCommand { Configuration = Echo() },
+                new StartNoteCommand(Source),
+                new SetChannelFilterAssignmentsCommand(
+                    "echo.Feedforward = @\"Sweep\" THEN CUT")),
+            Event(3, 0, new NoteOffCommand())));
+        session.FilterAssignmentNames = Names();
+        float[] pcm = new float[7];
+        session.Render(0, 5, pcm.AsSpan(0, 5));
+        Assert.That(session.GetChannelState(0).CurrentVoice, Is.Not.Null);
+        session.Render(5, 2, pcm.AsSpan(5, 2));
+        Assert.That(session.GetChannelState(0).CurrentVoice, Is.Null,
+            "host's action follower releases; host's numeric clock does not");
+    }
+
+    [Test]
+    public void HostThenCutWithoutNoteOnlyAttachesNumericHostEnvelope()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FiniteCurve());
+        PlaybackSession action = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterCommand { Configuration = Echo() },
+                new SetChannelFilterAssignmentsCommand(
+                    "echo.Feedforward = @\"Sweep\" THEN CUT")),
+            Event(1, 0, new StartNoteCommand(Source))));
+        PlaybackSession baseline = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterCommand { Configuration = Echo() },
+                new SetChannelFilterAssignmentsCommand(
+                    "echo.Feedforward = @\"Sweep\"")),
+            Event(1, 0, new StartNoteCommand(Source))));
+        action.FilterAssignmentNames = Names();
+        baseline.FilterAssignmentNames = Names();
+        float[] actual = new float[8], expected = new float[8];
+        action.Render(0, 8, actual);
+        baseline.Render(0, 8, expected);
+        Assert.That(action.GetChannelState(0).CurrentVoice, Is.Not.Null);
+        Assert.That(actual, Is.EqualTo(expected).Within(1e-6f),
+            "THEN has no target without a logical note, but host modulation continues");
+    }
+
+    [Test]
+    public void HostNumericDetachmentCancelsPendingActionWithoutCuttingNote()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FiniteCurve());
+        PlaybackSession session = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterCommand { Configuration = Echo() },
+                new StartNoteCommand(Source),
+                new SetChannelFilterAssignmentsCommand(
+                    "echo.Feedforward = @\"Sweep\" THEN CUT")),
+            Event(1, 0, new SetChannelFilterAssignmentsCommand(
+                "echo.Feedforward = 0.8"))));
+        session.FilterAssignmentNames = Names();
+        float[] pcm = new float[7];
+        session.Render(0, 7, pcm);
+        Assert.That(session.GetChannelState(0).CurrentVoice, Is.Not.Null);
+    }
+
+    [Test]
+    public void ScopedVirtualHostActionCannotRetargetOtherScopeUsingSameId()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FiniteCurve());
+        PlaybackSession session = Session(resolver, Schedule());
+        session.FilterAssignmentNames = Names();
+        session.ApplyScopedEvent(71, ChannelTarget.Virtual(7), [
+            new SetChannelFilterCommand { Configuration = Echo() },
+            new StartNoteCommand(Source),
+            new SetChannelFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Sweep\" THEN CUT"),
+        ]);
+        float[] pcm = new float[8];
+        session.Render(0, 1, pcm.AsSpan(0, 1));
+        session.ApplyScopedEvent(72, ChannelTarget.Virtual(7), [
+            new SetChannelFilterCommand { Configuration = Echo() },
+            new StartNoteCommand(Source),
+        ]);
+        session.Render(1, 7, pcm.AsSpan(1, 7));
+        Assert.That(pcm[7], Is.GreaterThan(0),
+            "a sibling scoped-virtual host must continue sounding after scope 71 cuts");
+    }
+
+    [Test]
+    public void HostThenCutTargetsOriginalFlattenedControllerAfterHostReplacement()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FiniteCurve());
+        PlaybackSession session = Session(resolver, Schedule());
+        session.FilterAssignmentNames = Names();
+        List<(long Scope, long Frame)> stopped = [];
+        session.FlattenedCompletionStoppedProducer = (scope, frame) =>
+            stopped.Add((scope, frame));
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new SetChannelFilterCommand { Configuration = Echo() },
+            new BeginFlattenedSourceVolumeCommand(250, 1),
+            new SetChannelFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Sweep\" THEN CUT"),
+        ]);
+        session.ApplyScopedEvent(0, ChannelTarget.Virtual(3), [
+            new StartNoteCommand(Source) { ParentSourceScopes = [250] },
+        ]);
+        float[] pcm = new float[7];
+        session.Render(0, 1, pcm.AsSpan(0, 1));
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new StartNoteCommand(Source),
+        ]);
+        PlaybackVoice replacement = session.GetChannelState(0).CurrentVoice!;
+        session.Render(1, 6, pcm.AsSpan(1, 6));
+        Assert.That(stopped, Is.EqualTo(new[] { (250L, 3L) }));
+        Assert.That(session.GetChannelState(0).CurrentVoice, Is.SameAs(replacement));
+        Assert.That(pcm[6], Is.GreaterThan(0));
+    }
+
     private static FilterAssignmentEnvelopeNames Names()
     {
         SongDocument song = new();

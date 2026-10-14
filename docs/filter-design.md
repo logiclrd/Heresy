@@ -790,3 +790,43 @@ original-controller host replacement, parameter detachment and one-block vs
 partitioned PCM with a future prefetched descendant. Channel Filter
 completion ownership and full exported-WAV/private-seek qualification remain
 separate open TODOs.
+
+
+### Persistent Channel Filter completion actions: host clock versus note ownership (14 October 2026)
+
+The numeric Filter Envelope remains owned by the **actual channel-output host**
+(physical host index, unscoped virtual ID, or exact invocation-scoped virtual
+owner/ID). Its authored attachment time, parameter updates, DSP history,
+coefficient interpolation and independent clock continue across all note
+starts, Note Off events and NNA displacement. In contrast, a text-selected
+`THEN OFF` / `THEN CUT` creates a separate `EnvelopePlaybackState` action
+follower that freezes the **current logical note identity at assignment**:
+either the exact `PlaybackVoice` or the current `FlattenedSourceVolume`
+controller. A command without a current logical note still attaches its
+numeric Envelope to the host but creates no lifecycle action; a later note
+cannot inherit that action. An independent logical playback owner sharing
+one physical output host is not an eligible target.
+
+The follower observes external Note Off through the original voice's release
+frame or flattened controller's release frame; only proven natural/release
+completion triggers the action at the first frame after the last sample.
+One-shot Cut outranks simultaneous Off for actions on the same note; an
+already-released target cannot receive another Off. The follower and its
+identity are independent of the durable host modulation state. Host
+re-selection, explicit detachment and valid numeric replacement for the same
+stage/parameter invalidate that host's previous action binding only; another
+host's actions and modulation continue. Direct host reconfiguration also
+clears its completion followers. Displaced NNA notes remain eligible while
+they are still active, and Cut uses existing anti-click/displaced DSP tail
+handling. A flattened logical target controls its descendant voices and
+stops future recursive production through the same exact-frame callback as
+Note Filter completion actions.
+
+The Channel-host renderer regressions exercise the original NNA voice, host
+replacement without note retargeting, a physical host shared between two
+logical owners, separately scoped virtual hosts with the same virtual ID,
+external release followed by Cut, no-current-note binding, numeric detach,
+flattened controller source replacement and PCM block partitions. Full
+production WAV/export/private seek qualification, plus the separately
+tracked explicit `THEN OFF` genuinely-prefetched-event regression, remain
+independent TODO items.

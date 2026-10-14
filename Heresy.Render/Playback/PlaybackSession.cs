@@ -158,6 +158,17 @@ public sealed class PlaybackSession
 	// completion actions are held here; never retarget via the host channel.
 	private readonly Dictionary<long, FlattenedSourceVolume>
 		_pendingFlattenedCompletionOwners = [];
+	// The *numeric* channel Envelope belongs to its host. Only a THEN
+	// action captures a specific logical note at its assignment frame.
+	private readonly record struct HostCompletionKey(
+		int? Physical, uint? VirtualId, long? ScopedOwner,
+		int Stage, string Parameter);
+	private sealed record HostCompletionBinding(
+		EnvelopePlaybackState Follower, long StartFrame,
+		FilterEnvelopeCompletionAction Action,
+		PlaybackVoice? Voice, FlattenedSourceVolume? Scope);
+	private readonly Dictionary<HostCompletionKey, HostCompletionBinding>
+		_hostCompletionActions = [];
 	/// <summary>On an Envelope-triggered logical Off/Cut, the incremental
 	/// owner stops future source events (including one prefetched event).
 	/// Existing descendant voice tails are controlled locally.</summary>
@@ -257,6 +268,7 @@ public sealed class PlaybackSession
 			_physicalOutputFilters.Remove(host);
 		else
 			_physicalOutputFilters[host] = prepared;
+		ClearHostCompletionActions(host, null, null);
 	}
 
 	/// <summary>Virtual output host identified by ID and, when set, its
@@ -279,6 +291,7 @@ public sealed class PlaybackSession
 			_targetedVirtualOutputFilters.Remove(virtualId);
 		else
 			_targetedVirtualOutputFilters[virtualId] = prepared;
+		ClearHostCompletionActions(null, virtualId, scopedOwner);
 	}
 
 	public bool IsQuiescent
@@ -1260,6 +1273,13 @@ public sealed class PlaybackSession
 			next = Math.Min(next, voice.GetNextEventFilterCompletionFrame(frame));
 		foreach (FlattenedSourceVolume owner in _pendingFlattenedCompletionOwners.Values)
 			next = Math.Min(next, owner.NextCompletionFrame(frame));
+		foreach (HostCompletionBinding binding in _hostCompletionActions.Values)
+			if (HostActionTargetAlive(binding))
+			{
+				UpdateHostActionRelease(binding);
+				if (binding.Follower.GetCompletionFrameExclusive(frame) is long end)
+					next = Math.Min(next, end);
+			}
 		return next;
 	}
 
@@ -1267,6 +1287,7 @@ public sealed class PlaybackSession
 	{
 		if (!_hasNoteFilterCompletionActions) return;
 		ProcessFlattenedCompletionActions(frame);
+		ProcessHostCompletionActions(frame);
 		foreach (PlaybackChannelState channel in _channels.Values)
 			ApplyCompletionToCurrentVoice(channel, frame);
 		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
@@ -1314,6 +1335,151 @@ public sealed class PlaybackSession
 			// been replaced or the producer has naturally retired already.
 			FlattenedCompletionStoppedProducer?.Invoke(item.Owner.ScopeId, frame);
 		}
+	}
+
+	private bool HostActionTargetAlive(HostCompletionBinding binding)
+	{
+		if (binding.Scope is FlattenedSourceVolume scope)
+		{
+			if (scope.IsCut) return false;
+			if (_sourceVolumes.TryGetValue(scope.ScopeId, out var active)
+				&& ReferenceEquals(active, scope)) return true;
+			foreach (PlaybackChannelState channel in _channels.Values)
+				if (channel.CurrentVoice is { } voice
+					&& voice.EnclosingSourceVolumes.Contains(scope)) return true;
+			foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+				if (channel.CurrentVoice is { } voice
+					&& voice.EnclosingSourceVolumes.Contains(scope)) return true;
+			foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+				if (channel.CurrentVoice is { } voice
+					&& voice.EnclosingSourceVolumes.Contains(scope)) return true;
+			foreach (PlaybackVoice voice in _virtualVoices)
+				if (voice.EnclosingSourceVolumes.Contains(scope)) return true;
+			return false;
+		}
+		if (binding.Voice is not PlaybackVoice target) return false;
+		foreach (PlaybackChannelState channel in _channels.Values)
+			if (ReferenceEquals(channel.CurrentVoice, target)) return true;
+		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+			if (ReferenceEquals(channel.CurrentVoice, target)) return true;
+		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+			if (ReferenceEquals(channel.CurrentVoice, target)) return true;
+		return _virtualVoices.Contains(target);
+	}
+
+	private void UpdateHostActionRelease(HostCompletionBinding binding)
+	{
+		if (binding.Follower.NoteOffActiveFrame.HasValue) return;
+		long? release = binding.Scope?.ParameterEnvelopeReleaseFrame;
+		if (binding.Voice is PlaybackVoice voice
+			&& voice.SoundState.NoteOffTime is TimeSpan relative)
+			release = checked(voice.StartFrame + FrameTime.Ceiling(relative, SampleRate));
+		if (release.HasValue)
+			binding.Follower.NoteOff(Math.Max(binding.StartFrame, release.Value));
+	}
+
+	private void ProcessHostCompletionActions(long frame)
+	{
+		if (_hostCompletionActions.Count == 0) return;
+		List<HostCompletionKey>? remove = null;
+		Dictionary<PlaybackVoice, FilterEnvelopeCompletionAction>? voices = null;
+		Dictionary<FlattenedSourceVolume, FilterEnvelopeCompletionAction>? scopes = null;
+		foreach (var pair in _hostCompletionActions)
+		{
+			HostCompletionBinding binding = pair.Value;
+			bool alive = HostActionTargetAlive(binding);
+			if (alive) UpdateHostActionRelease(binding);
+			long? end = alive ? binding.Follower.GetCompletionFrameExclusive(frame) : null;
+			if (alive && (!end.HasValue || end.Value > frame)) continue;
+			(remove ??= []).Add(pair.Key);
+			if (!alive) continue;
+			if (binding.Voice is PlaybackVoice voice)
+			{
+				if (binding.Action == FilterEnvelopeCompletionAction.Off
+					&& voice.SoundState.NoteOffTime.HasValue) continue;
+				voices ??= [];
+				voices.TryGetValue(voice, out FilterEnvelopeCompletionAction previous);
+				if (binding.Action > previous) voices[voice] = binding.Action;
+			}
+			else if (binding.Scope is FlattenedSourceVolume scope)
+			{
+				if (binding.Action == FilterEnvelopeCompletionAction.Off
+					&& scope.ParameterEnvelopeReleaseFrame.HasValue) continue;
+				scopes ??= [];
+				scopes.TryGetValue(scope, out FilterEnvelopeCompletionAction previous);
+				if (binding.Action > previous) scopes[scope] = binding.Action;
+			}
+		}
+		if (remove is not null)
+			foreach (HostCompletionKey key in remove)
+				_hostCompletionActions.Remove(key);
+		// All due bindings for a given original note are resolved together:
+		// Cut wins over Off, regardless of assignment or dictionary order.
+		if (voices is not null)
+			foreach (var item in voices)
+				ApplyHostCompletionToVoice(item.Key, item.Value, frame);
+		if (scopes is not null)
+			foreach (var item in scopes)
+			{
+				ApplyFlattenedScopeActionAtFrame(item.Key.ScopeId, item.Key,
+					item.Value == FilterEnvelopeCompletionAction.Cut
+						? NoteDisplacementAction.Cut : NoteDisplacementAction.Off, frame);
+				FlattenedCompletionStoppedProducer?.Invoke(item.Key.ScopeId, frame);
+			}
+	}
+
+	private void ApplyHostCompletionToVoice(PlaybackVoice voice,
+		FilterEnvelopeCompletionAction action, long frame)
+	{
+		foreach (PlaybackChannelState channel in _channels.Values)
+			if (ReferenceEquals(channel.CurrentVoice, voice))
+			{
+				CompleteHostCurrentVoice(channel, voice, action, frame);
+				return;
+			}
+		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+			if (ReferenceEquals(channel.CurrentVoice, voice))
+			{
+				CompleteHostCurrentVoice(channel, voice, action, frame);
+				return;
+			}
+		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+			if (ReferenceEquals(channel.CurrentVoice, voice))
+			{
+				CompleteHostCurrentVoice(channel, voice, action, frame);
+				return;
+			}
+		int index = _virtualVoices.IndexOf(voice);
+		if (index < 0) return;
+		if (action == FilterEnvelopeCompletionAction.Cut)
+		{
+			voice.AddCutTo(GetChannelState(voice.OriginPhysicalChannel,
+				voice.OriginPhysicalPlaybackOwner).AntiClickTail);
+			RetireDisplacedVoiceAt(index);
+		}
+		else if (action == FilterEnvelopeCompletionAction.Off)
+			voice.ApplyNoteOff(frame, SampleRate);
+	}
+
+	private void CompleteHostCurrentVoice(PlaybackChannelState channel,
+		PlaybackVoice voice, FilterEnvelopeCompletionAction action, long frame)
+	{
+		if (action == FilterEnvelopeCompletionAction.Cut)
+			channel.CutCurrentVoice();
+		else if (action == FilterEnvelopeCompletionAction.Off)
+		{
+			voice.ApplyNoteOff(frame, SampleRate);
+			CullFinishedCurrentVoice(channel, frame);
+		}
+	}
+
+	private void ClearHostCompletionActions(
+		int? physical, uint? virtualId, long? scopedOwner)
+	{
+		foreach (HostCompletionKey key in _hostCompletionActions.Keys
+			.Where(k => k.Physical == physical && k.VirtualId == virtualId
+				&& k.ScopedOwner == scopedOwner).ToArray())
+			_hostCompletionActions.Remove(key);
 	}
 
 	private void ApplyCompletionToCurrentVoice(PlaybackChannelState channel, long frame)
@@ -1459,12 +1625,12 @@ public sealed class PlaybackSession
 				case SetChannelFilterParametersCommand:
 				case SetChannelFilterAssignmentsCommand:
 					ApplyHostFilterCommand(command, null, virtualChannelId, scopedOwner,
-                        eventFrame);
+						eventFrame, channel);
 					break;
 
                 case SetChannelFilterParameterEnvelopeCommand envelope:
                     ApplyHostFilterEnvelopeCommand(envelope,
-                        null, virtualChannelId, scopedOwner, eventFrame);
+                        null, virtualChannelId, scopedOwner, eventFrame, channel);
                     break;
 
 				case SetSourceFrameOffsetCommand offset:
@@ -1678,12 +1844,12 @@ public sealed class PlaybackSession
 				// Always target the *real physical host* regardless of
 				// PhysicalPlaybackOwner/flattened logical note scope.
 				ApplyHostFilterCommand(command, physicalChannel, null, null,
-                    eventFrame);
+					eventFrame, channel);
 				break;
 
             case SetChannelFilterParameterEnvelopeCommand envelope:
                 ApplyHostFilterEnvelopeCommand(envelope,
-                    physicalChannel, null, null, eventFrame);
+                    physicalChannel, null, null, eventFrame, channel);
                 break;
 
 			case NoteCutCommand:
@@ -2162,7 +2328,7 @@ public sealed class PlaybackSession
 	/// the channel Filter identity; child cancellation has no rollback.</summary>
 	private void ApplyHostFilterCommand(NoteCommand command,
 		int? physicalHost, uint? virtualId, long? scopedOwner,
-        long eventFrame)
+		long eventFrame, PlaybackChannelState logicalChannel)
 	{
 		try
 		{
@@ -2231,6 +2397,8 @@ public sealed class PlaybackSession
 				if (prepared is null) _targetedVirtualOutputFilters.Remove(virtualId!.Value);
 				else _targetedVirtualOutputFilters[virtualId!.Value] = prepared;
 			}
+			if (command is SetChannelFilterCommand)
+				ClearHostCompletionActions(physicalHost, virtualId, scopedOwner);
 			// Reuse the typed channel parameter-Envelope command: each
 			// accepted binding is prepared from a frozen curve and published
 			// to the correct physical/scoped host at this command's frame.
@@ -2241,7 +2409,8 @@ public sealed class PlaybackSession
 					ApplyHostFilterEnvelopeCommand(
 						new SetChannelFilterParameterEnvelopeCommand(
 							action.StageId, action.ParameterName, action.EnvelopeId),
-						physicalHost, virtualId, scopedOwner, eventFrame);
+						physicalHost, virtualId, scopedOwner, eventFrame,
+						logicalChannel, action.CompletionAction);
 		}
 		catch (Exception failure) when (failure is ArgumentException
 			or InvalidOperationException or KeyNotFoundException or OverflowException)
@@ -2255,7 +2424,9 @@ public sealed class PlaybackSession
     /// note starts, note releases, and flattened-child completion.</summary>
     private void ApplyHostFilterEnvelopeCommand(
         SetChannelFilterParameterEnvelopeCommand command,
-        int? physicalHost, uint? virtualId, long? scopedOwner, long frame)
+        int? physicalHost, uint? virtualId, long? scopedOwner, long frame,
+        PlaybackChannelState logicalChannel,
+        FilterEnvelopeCompletionAction completionAction = FilterEnvelopeCompletionAction.None)
     {
         try
         {
@@ -2281,6 +2452,33 @@ public sealed class PlaybackSession
                 _scopedVirtualOutputFilters[(owner, virtualId!.Value)] = prepared;
             else
                 _targetedVirtualOutputFilters[virtualId!.Value] = prepared;
+
+            // The persistent numeric Envelope above stays owned by its host.
+            // The separate action follower belongs to the exact current
+            // logical voice/controller, or has no target if there is none.
+            FilterStageDefinition stage = previous.SnapshotConfiguration()
+                .Definition.GetStage(command.StageId);
+            string parameter = FilterCatalogue.GetParameters(stage.Kind)
+                .First(d => string.Equals(d.Name, command.ParameterName,
+                    StringComparison.OrdinalIgnoreCase)).Name.ToUpperInvariant();
+            HostCompletionKey key = new(
+                physicalHost, virtualId, scopedOwner, command.StageId, parameter);
+            _hostCompletionActions.Remove(key);
+            if (curve is not null
+                && completionAction != FilterEnvelopeCompletionAction.None)
+            {
+                FlattenedSourceVolume? scope = logicalChannel.CurrentFlattenedSource;
+                PlaybackVoice? voice = scope is null ? logicalChannel.CurrentVoice : null;
+                if (scope is not null || voice is not null)
+                {
+                    EnvelopePlaybackState follower = new(curve, frame, SampleRate);
+                    HostCompletionBinding binding = new(
+                        follower, frame, completionAction, voice, scope);
+                    UpdateHostActionRelease(binding);
+                    _hostCompletionActions[key] = binding;
+                    _hasNoteFilterCompletionActions = true;
+                }
+            }
         }
         catch (Exception error) when (error is ArgumentException
             or InvalidOperationException or KeyNotFoundException
