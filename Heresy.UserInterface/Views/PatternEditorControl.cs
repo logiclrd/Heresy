@@ -121,6 +121,8 @@ public sealed class PatternEditorControl : UserControl
 	// Translucent source colour belongs to the whole cell content layer,
 	// above row/selection/playback shading and below independent effect tabs.
 	private readonly Dictionary<(int Row, int Channel), Grid> _cellTintLayers = [];
+	private readonly Dictionary<(int Row, int Channel), Grid> _rangeOverlayLayers = [];
+	private FlattenedSourceRangeProjection? _flattenedRanges;
 	private readonly Dictionary<int, Border> _rowHeaders = [];
 	private readonly HashSet<int> _playbackDisplayRows = [];
 	private IReadOnlyDictionary<(int Row, int Channel),
@@ -766,6 +768,7 @@ public sealed class PatternEditorControl : UserControl
 		CollapseVisualEffects(collapseCursor: true);
 		_cellBorders.Clear();
 		_cellTintLayers.Clear();
+		_rangeOverlayLayers.Clear();
 		_rowHeaders.Clear();
 		_noteFields.Clear();
 		_noteTexts.Clear();
@@ -782,6 +785,8 @@ public sealed class PatternEditorControl : UserControl
 		_seekIndications = ReplayRequiredSeekWarnings.Analyze(
 			_workspace.Document, _context);
 		_sourceTints = PatternSourceTintResolver.Analyze(
+			_workspace.Document, _context);
+		_flattenedRanges = FlattenedSourceRangeProjection.Analyze(
 			_workspace.Document, _context);
 		RemapPlaybackDisplayRows();
 
@@ -1034,11 +1039,20 @@ public sealed class PatternEditorControl : UserControl
 			new ColumnDefinition(new GridLength(VolumeWidth)));
 		content.ColumnDefinitions.Add(
 			new ColumnDefinition(new GridLength(EffectWidth)));
+		// Per-cell pieces of finite flattened rectangles form a continuous
+		// outlined host range. They paint above the base source/row tint,
+		// but beneath editable fields, independently coloured effect stickers
+		// and all cursor/focus borders. No overlay receives pointer input.
+		Grid rangeLayer = new() { IsHitTestVisible = false };
+		Grid.SetColumnSpan(rangeLayer, 4);
+		PopulateRangeOverlays(rangeLayer, _flattenedRanges!,
+			(displayRow, channel));
 		Grid.SetColumn(noteField, 0);
 		Grid.SetColumn(sourceField, 1);
 		Grid.SetColumn(volumeField, 2);
 		Grid.SetColumn(effects, 0);
 		Grid.SetColumnSpan(effects, 4);
+		content.Children.Add(rangeLayer);
 		content.Children.Add(noteField);
 		content.Children.Add(sourceField);
 		content.Children.Add(volumeField);
@@ -1068,6 +1082,7 @@ public sealed class PatternEditorControl : UserControl
 
 		_cellBorders[(displayRow, channel)] = cell;
 		_cellTintLayers[(displayRow, channel)] = content;
+		_rangeOverlayLayers[(displayRow, channel)] = rangeLayer;
 		_noteFields[(displayRow, channel)] = noteField;
 		_noteTexts[(displayRow, channel)] = note;
 		_sourceFields[(displayRow, channel)] = sourceField;
@@ -3605,6 +3620,7 @@ public sealed class PatternEditorControl : UserControl
 		// the same Pattern in a Sequence. Refresh all warning decorations.
 		RefreshFlattenedIndications();
 		RefreshSourceTints();
+		RefreshFlattenedRanges();
 	}
 
 	/// <summary>Recalculate channel Source memory after an edit, but only
@@ -3624,6 +3640,68 @@ public sealed class PatternEditorControl : UserControl
 				tintLayer.Background = now ? TintBrush(newTint) : Brushes.Transparent;
 		}
 		_sourceTints = updated;
+	}
+
+	/// <summary>Rebuild only changed flattened-range cell fragments after edits.
+	/// A rectangle's projection (including Sequence clipping and reused Source
+	/// memory) is derived once; no individual cell searches other Patterns.</summary>
+	private void RefreshFlattenedRanges()
+	{
+		FlattenedSourceRangeProjection updated =
+			FlattenedSourceRangeProjection.Analyze(_workspace.Document, _context);
+		foreach (var (address, layer) in _rangeOverlayLayers)
+		{
+			_flattenedRanges!.Cells.TryGetValue(
+				address, out IReadOnlyList<FlattenedSourceRangeCell>? previous);
+			updated.Cells.TryGetValue(
+				address, out IReadOnlyList<FlattenedSourceRangeCell>? current);
+			if (!SameRangePieces(previous, current))
+				PopulateRangeOverlays(layer, updated, address);
+		}
+		_flattenedRanges = updated;
+	}
+
+	private static bool SameRangePieces(
+		IReadOnlyList<FlattenedSourceRangeCell>? left,
+		IReadOnlyList<FlattenedSourceRangeCell>? right)
+	{
+		if (ReferenceEquals(left, right))
+			return true;
+		int count = left?.Count ?? 0;
+		if (count != (right?.Count ?? 0))
+			return false;
+		for (int index = 0; index < count; index++)
+		{
+			if (left![index] != right![index])
+				return false;
+		}
+		return true;
+	}
+
+	private void PopulateRangeOverlays(
+		Grid layer, FlattenedSourceRangeProjection projection,
+		(int Row, int Channel) address)
+	{
+		layer.Children.Clear();
+		if (!projection.Cells.TryGetValue(address, out var pieces))
+			return;
+		foreach (FlattenedSourceRangeCell piece in pieces)
+		{
+			layer.Children.Add(new Border
+			{
+				// The originating cell already has its 20%-alpha source tint;
+				// do not double its fill. It still receives the 40% outline.
+				Background = piece.IsOrigin
+					? Brushes.Transparent : TintBrush(piece.FillArgb),
+				BorderBrush = TintBrush(piece.OutlineArgb),
+				BorderThickness = new Thickness(
+					piece.LeftEdge ? 2 : 0,
+					piece.TopEdge ? 2 : 0,
+					piece.RightEdge ? 2 : 0,
+					piece.BottomEdge ? 2 : 0),
+				IsHitTestVisible = false,
+			});
+		}
 	}
 
 	private IBrush GetSourceTintBrush(int row, int channel)

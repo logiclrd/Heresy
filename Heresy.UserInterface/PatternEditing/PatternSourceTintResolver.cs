@@ -18,21 +18,23 @@ namespace Heresy.UserInterface.PatternEditing;
 /// </summary>
 public static class PatternSourceTintResolver
 {
-    public static IReadOnlyDictionary<(int Row, int Channel), uint> Analyze(
+    /// <summary>Shared effective Source attribution for a real Note start.
+    /// The same projection powers both base tinting and flattened-range paint;
+    /// no source is guessed across unknown Sequence or flow-control history.</summary>
+    public static IReadOnlyDictionary<(int Row, int Channel), SongObject> ResolveNoteStarts(
         SongDocument document, PatternEditorContext context)
     {
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(context);
 
-        Dictionary<(int Row, int Channel), uint> tints = [];
+        Dictionary<(int Row, int Channel), SongObject> resolved = [];
         ObjectId[] sources = new ObjectId[context.MaxChannelCount];
 
         foreach (PatternEditorSegment segment in context.Segments)
         {
             if (segment.Pattern is null)
             {
-                // A Script Pattern or unavailable order can change the source
-                // of every channel. Never give subsequent notes a stale tint.
+                // A Script Pattern or unavailable order can change any Source.
                 Array.Fill(sources, ObjectId.None);
                 continue;
             }
@@ -56,16 +58,13 @@ public static class PatternSourceTintResolver
                     if (!selected.IsNone)
                         sources[channel] = selected;
 
-                    // OFF/CUT, source-only, volume-only and effects-only cells
-                    // are not note starts; they never receive a tint.
                     if (cell.Note is StartPatternNote
                         && !sources[channel].IsNone
                         && document.TryGet(sources[channel], out SongObject? source)
                         && source is not null
-                        && source.SourceColourArgb is uint colour
                         && PatternSourceCatalog.IsSoundSource(source.Kind))
                     {
-                        tints[(displayRow, channel)] = colour;
+                        resolved[(displayRow, channel)] = source;
                     }
 
                     foreach (PatternEffect effect in cell.Effects)
@@ -79,11 +78,22 @@ public static class PatternSourceTintResolver
                     }
                 }
 
-                // The current row was processed in deterministic order, but
-                // later rows can be skipped, repeated or entered mid-pattern.
+                // Later rows may be skipped, repeated or entered mid-Pattern.
                 if (uncertainFlow)
                     Array.Fill(sources, ObjectId.None);
             }
+        }
+        return resolved;
+    }
+
+    public static IReadOnlyDictionary<(int Row, int Channel), uint> Analyze(
+        SongDocument document, PatternEditorContext context)
+    {
+        Dictionary<(int Row, int Channel), uint> tints = [];
+        foreach (var (address, source) in ResolveNoteStarts(document, context))
+        {
+            if (source.SourceColourArgb is uint colour)
+                tints[address] = colour;
         }
         return tints;
     }
