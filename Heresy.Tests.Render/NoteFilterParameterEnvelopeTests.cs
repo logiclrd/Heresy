@@ -945,6 +945,168 @@ public sealed class NoteFilterParameterEnvelopeTests
         public long? GetEndActiveFrameExclusiveAfterNoteOff(long off, int rate) => off + 2;
     }
 
+    [Test]
+    public void FlattenedThenCutActsOnOriginalControllerAfterHostReplacementAndNna()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FiniteCurve());
+        PlaybackSession session = Session(resolver, Schedule());
+        session.FilterAssignmentNames = Names();
+        List<(long Scope, long Frame)> producerStops = [];
+        session.FlattenedCompletionStoppedProducer = (scope, frame) =>
+            producerStops.Add((scope, frame));
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new BeginFlattenedSourceVolumeCommand(31, 1) {
+                EventFilterConfiguration = Echo(),
+            },
+            new SetNoteFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Sweep\" THEN CUT"),
+        ]);
+        session.ApplyScopedEvent(0, ChannelTarget.Virtual(7), [
+            new StartNoteCommand(Source) { ParentSourceScopes = [31] },
+        ]);
+        float[] pcm = new float[6];
+        session.Render(0, 1, pcm.AsSpan(0, 1));
+        session.ApplyScopedEvent(0, ChannelTarget.Virtual(7), [
+            new StartNoteCommand(Source) { ParentSourceScopes = [31] },
+        ]);
+        Assert.That(session.VirtualVoices, Has.Count.EqualTo(1),
+            "NNA Continue migrates the first child but retains scope identity");
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new StartNoteCommand(Source),
+        ]);
+        session.ApplyScopedEvent(0, ChannelTarget.Virtual(8), [
+            new StartNoteCommand(Source) { ParentSourceScopes = [31] },
+        ]);
+        session.Render(1, 2, pcm.AsSpan(1, 2));
+        Assert.That(session.VirtualVoices, Has.Count.EqualTo(1));
+        session.Render(3, 3, pcm.AsSpan(3, 3));
+        Assert.That(producerStops, Is.EqualTo(new[] { (31L, 3L) }),
+            "one exact-frame producer stop, not a host-relative cancellation");
+        Assert.That(session.VirtualVoices, Is.Empty);
+        Assert.That(session.GetChannelState(0).CurrentVoice, Is.Not.Null,
+            "the replacement physical voice is unrelated and must survive");
+        session.ApplyScopedEvent(0, ChannelTarget.Virtual(9), [
+            new StartNoteCommand(Source) { ParentSourceScopes = [31] },
+        ]);
+        Assert.That(session.VirtualVoices, Is.Empty);
+    }
+
+    [Test]
+    public void FlattenedThenOffReleasesExistingAndLaterDescendantsAtAttachmentClock()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FiniteCurve());
+        PlaybackSession session = Session(resolver, Schedule());
+        session.FilterAssignmentNames = Names();
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new BeginFlattenedSourceVolumeCommand(40, 1) {
+                EventFilterConfiguration = Echo(),
+            },
+        ]);
+        session.ApplyScopedEvent(0, ChannelTarget.Virtual(7), [
+            new StartNoteCommand(Source) { ParentSourceScopes = [40] },
+        ]);
+        float[] pcm = new float[7];
+        session.Render(0, 1, pcm.AsSpan(0, 1));
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new SetNoteFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Sweep\" THEN OFF"),
+        ]);
+        session.Render(1, 2, pcm.AsSpan(1, 2));
+        session.ApplyScopedEvent(0, ChannelTarget.Virtual(7), [
+            new StartNoteCommand(Source) { ParentSourceScopes = [40] },
+        ]);
+        Assert.That(session.VirtualVoices, Has.Count.EqualTo(1));
+        PlaybackVoice original = session.VirtualVoices[0];
+        session.Render(3, 1, pcm.AsSpan(3, 1));
+        Assert.That(original.SoundState.NoteOffTime, Is.Null);
+        // At the first frame after the final Envelope sample, the entire
+        // original controller (including NNA-displaced descendants) releases.
+        session.Render(4, 3, pcm.AsSpan(4, 3));
+        Assert.That(original.SoundState.NoteOffTime,
+            Is.EqualTo(TimeSpan.FromMilliseconds(4)));
+    }
+
+    [Test]
+    public void FlattenedSustainCutCompletesAfterExternalOffAndNoAdditionalOffFires()
+    {
+        TestResolver resolver = new(new ConstantSound(), new SustainingReleaseCurve());
+        PlaybackSession session = Session(resolver, Schedule());
+        session.FilterAssignmentNames = Names();
+        int triggered = 0;
+        session.FlattenedCompletionStoppedProducer = (_, _) => triggered++;
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new BeginFlattenedSourceVolumeCommand(55, 1) {
+                EventFilterConfiguration = Echo(),
+            },
+            new SetNoteFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Sweep\" THEN CUT"),
+        ]);
+        session.ApplyScopedEvent(0, ChannelTarget.Virtual(7), [
+            new StartNoteCommand(Source) { ParentSourceScopes = [55] },
+        ]);
+        float[] pcm = new float[7];
+        session.Render(0, 3, pcm.AsSpan(0, 3));
+        Assert.That(triggered, Is.Zero, "sustain cannot complete while held");
+        session.ApplyFlattenedScopeAction(55, NoteDisplacementAction.Off);
+        session.Render(3, 2, pcm.AsSpan(3, 2));
+        Assert.That(triggered, Is.Zero, "the last release sample still belongs to the note");
+        session.Render(5, 2, pcm.AsSpan(5, 2));
+        Assert.That(triggered, Is.EqualTo(1));
+    }
+
+    [Test]
+    public void FlattenedSustainingThenOffIsInertAfterExternalRelease()
+    {
+        TestResolver resolver = new(new ConstantSound(), new SustainingReleaseCurve());
+        PlaybackSession session = Session(resolver, Schedule());
+        session.FilterAssignmentNames = Names();
+        int completed = 0;
+        session.FlattenedCompletionStoppedProducer = (_, _) => completed++;
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new BeginFlattenedSourceVolumeCommand(56, 1) {
+                EventFilterConfiguration = Echo(),
+            },
+            new SetNoteFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Sweep\" THEN OFF"),
+        ]);
+        session.ApplyScopedEvent(0, ChannelTarget.Virtual(7), [
+            new StartNoteCommand(Source) { ParentSourceScopes = [56] },
+        ]);
+        float[] pcm = new float[9];
+        session.Render(0, 3, pcm.AsSpan(0, 3));
+        session.ApplyFlattenedScopeAction(56, NoteDisplacementAction.Off);
+        session.Render(3, 6, pcm.AsSpan(3, 6));
+        Assert.That(completed, Is.Zero,
+            "the external Off owns release and completion must not emit another Off");
+    }
+
+    [Test]
+    public void FlattenedNumericDetachmentCancelsOnlyOriginalParameterAction()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FiniteCurve());
+        PlaybackSession session = Session(resolver, Schedule());
+        session.FilterAssignmentNames = Names();
+        int stopped = 0;
+        session.FlattenedCompletionStoppedProducer = (_, _) => stopped++;
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new BeginFlattenedSourceVolumeCommand(65, 1) {
+                EventFilterConfiguration = Echo(),
+            },
+            new SetNoteFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Sweep\" THEN CUT"),
+        ]);
+        session.ApplyScopedEvent(0, ChannelTarget.Virtual(7), [
+            new StartNoteCommand(Source) { ParentSourceScopes = [65] },
+        ]);
+        float[] pcm = new float[6];
+        session.Render(0, 1, pcm.AsSpan(0, 1));
+        session.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new SetNoteFilterAssignmentsCommand("echo.Feedforward = 0.8"),
+        ]);
+        session.Render(1, 5, pcm.AsSpan(1, 5));
+        Assert.That(stopped, Is.Zero);
+    }
+
     private static FilterAssignmentEnvelopeNames Names()
     {
         SongDocument song = new();

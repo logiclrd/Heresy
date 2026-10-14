@@ -153,6 +153,16 @@ public sealed class PlaybackSession
 	// Scope-unique controllers outlive the instigating note's assignment
 	// to a logical channel. Descendant voices hold direct references.
 	private readonly Dictionary<long, FlattenedSourceVolume> _sourceVolumes = [];
+	// A bound controller may outlive its producer lookup while previously
+	// started descendants continue their release tails. Only controllers with
+	// completion actions are held here; never retarget via the host channel.
+	private readonly Dictionary<long, FlattenedSourceVolume>
+		_pendingFlattenedCompletionOwners = [];
+	/// <summary>On an Envelope-triggered logical Off/Cut, the incremental
+	/// owner stops future source events (including one prefetched event).
+	/// Existing descendant voice tails are controlled locally.</summary>
+	public Action<long, long>? FlattenedCompletionStoppedProducer { get; set; }
+
 	private readonly SortedDictionary<uint, PlaybackChannelState> _targetedVirtualChannels = [];
 	// A Pattern's virtual ID is local to its invocation, not a global
 	// playback channel. The legacy live-preview dictionary above remains
@@ -418,12 +428,23 @@ public sealed class PlaybackSession
 	{
 		if (scopeId <= 0)
 			throw new ArgumentOutOfRangeException(nameof(scopeId));
+		if (!_sourceVolumes.TryGetValue(scopeId, out FlattenedSourceVolume? owner))
+			_pendingFlattenedCompletionOwners.TryGetValue(scopeId, out owner);
+		ApplyFlattenedScopeActionAtFrame(scopeId, owner, action, _nextFrame);
+	}
+
+	private void ApplyFlattenedScopeActionAtFrame(
+		long scopeId, FlattenedSourceVolume? owner,
+		NoteDisplacementAction action, long frame)
+	{
 		if (action == NoteDisplacementAction.Continue)
 			return;
-		long frame = _nextFrame;
-		if (action == NoteDisplacementAction.Off
-			&& _sourceVolumes.TryGetValue(scopeId, out FlattenedSourceVolume? owner))
-			owner.ReleaseParameterEnvelopes(frame);
+		if (action == NoteDisplacementAction.Off)
+			owner?.ReleaseParameterEnvelopes(frame);
+		else if (action == NoteDisplacementAction.Cut)
+			owner?.MarkCut();
+		if (owner is not null)
+			TrackFlattenedCompletionOwner(owner);
 		foreach (PlaybackChannelState channel in _channels.Values)
 			ApplySourceActionToChannel(channel, scopeId, action, frame);
 		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
@@ -444,7 +465,8 @@ public sealed class PlaybackSession
 			}
 			else if (action == NoteDisplacementAction.Off)
 			{
-				voice.ReleaseEnclosingEnvelopeBindings(_sourceVolumes[scopeId], frame);
+				if (GetVoiceFlattenedScope(voice, scopeId) is { } scope)
+					voice.ReleaseEnclosingEnvelopeBindings(scope, frame);
 				voice.ApplyNoteOff(frame, SampleRate);
 			}
 			else if (action == NoteDisplacementAction.Fade)
@@ -453,14 +475,29 @@ public sealed class PlaybackSession
 		}
 	}
 
-	private static bool VoiceBelongsToFlattenedSource(
+	private void TrackFlattenedCompletionOwner(FlattenedSourceVolume owner)
+	{
+		if (owner.HasCompletionActions && !owner.IsCut)
+		{
+			_pendingFlattenedCompletionOwners[owner.ScopeId] = owner;
+			_hasNoteFilterCompletionActions = true;
+		}
+		else
+			_pendingFlattenedCompletionOwners.Remove(owner.ScopeId);
+	}
+
+	private static FlattenedSourceVolume? GetVoiceFlattenedScope(
 		PlaybackVoice voice, long scopeId)
 	{
 		foreach (FlattenedSourceVolume source in voice.EnclosingSourceVolumes)
 			if (source.ScopeId == scopeId)
-				return true;
-		return false;
+				return source;
+		return null;
 	}
+
+	private static bool VoiceBelongsToFlattenedSource(
+		PlaybackVoice voice, long scopeId)
+		=> GetVoiceFlattenedScope(voice, scopeId) is not null;
 
 	private void ApplySourceActionToChannel(
 		PlaybackChannelState channel, long scopeId,
@@ -478,7 +515,8 @@ public sealed class PlaybackSession
 				channel.CutCurrentVoice();
 				break;
 			case NoteDisplacementAction.Off:
-				voice.ReleaseEnclosingEnvelopeBindings(_sourceVolumes[scopeId], frame);
+				if (GetVoiceFlattenedScope(voice, scopeId) is { } scope)
+					voice.ReleaseEnclosingEnvelopeBindings(scope, frame);
 				voice.ApplyNoteOff(frame, SampleRate);
 				CullFinishedCurrentVoice(channel, frame);
 				break;
@@ -609,6 +647,10 @@ public sealed class PlaybackSession
 		// No new child voice may be created once its entire producer tree
 		// has retired; existing voices hold the controller directly.
 		_sourceVolumes.Remove(scopeId);
+		// No new descendant can appear after producer retirement. In the
+		// absence of existing voices there is no possible note action target.
+		if (CollectFlattenedDescendants(scopeId).Count == 0)
+			_pendingFlattenedCompletionOwners.Remove(scopeId);
 		ReclaimRetiredPhysicalScopes();
 	}
 
@@ -1216,12 +1258,15 @@ public sealed class PlaybackSession
 				next = Math.Min(next, voice.GetNextEventFilterCompletionFrame(frame));
 		foreach (PlaybackVoice voice in _virtualVoices)
 			next = Math.Min(next, voice.GetNextEventFilterCompletionFrame(frame));
+		foreach (FlattenedSourceVolume owner in _pendingFlattenedCompletionOwners.Values)
+			next = Math.Min(next, owner.NextCompletionFrame(frame));
 		return next;
 	}
 
 	private void ProcessNoteFilterCompletionActions(long frame)
 	{
 		if (!_hasNoteFilterCompletionActions) return;
+		ProcessFlattenedCompletionActions(frame);
 		foreach (PlaybackChannelState channel in _channels.Values)
 			ApplyCompletionToCurrentVoice(channel, frame);
 		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
@@ -1243,6 +1288,31 @@ public sealed class PlaybackSession
 					voice.ApplyNoteOff(frame, SampleRate);
 					break;
 			}
+		}
+	}
+
+	private void ProcessFlattenedCompletionActions(long frame)
+	{
+		// Avoid mutating the pending owner dictionary during iteration, and
+		// avoid allocations on ordinary frames without any due action.
+		List<(FlattenedSourceVolume Owner, FilterEnvelopeCompletionAction Action)>? due = null;
+		foreach (FlattenedSourceVolume owner in _pendingFlattenedCompletionOwners.Values)
+		{
+			FilterEnvelopeCompletionAction action = owner.ConsumeCompletion(frame);
+			if (action != FilterEnvelopeCompletionAction.None || !owner.HasCompletionActions)
+				(due ??= []).Add((owner, action));
+		}
+		if (due is null) return;
+		foreach (var item in due)
+		{
+			TrackFlattenedCompletionOwner(item.Owner);
+			if (item.Action == FilterEnvelopeCompletionAction.None) continue;
+			ApplyFlattenedScopeActionAtFrame(item.Owner.ScopeId, item.Owner,
+				item.Action == FilterEnvelopeCompletionAction.Cut
+					? NoteDisplacementAction.Cut : NoteDisplacementAction.Off, frame);
+			// Stop any future producer events, even if its logical host has
+			// been replaced or the producer has naturally retired already.
+			FlattenedCompletionStoppedProducer?.Invoke(item.Owner.ScopeId, frame);
 		}
 	}
 
@@ -1496,6 +1566,8 @@ public sealed class PlaybackSession
 		// after migration to the displaced-voice pool.
 		DisplaceCurrentVoice(channel, eventFrame);
 
+		if (ParentSourceIsCut(start.ParentSourceScopes))
+			return;
 		if (!_soundResolver.TryResolve(
 			start.SourceId,
 			start.Mixdown,
@@ -1575,8 +1647,10 @@ public sealed class PlaybackSession
 				break;
 
 			case ControlFlattenedSourceCommand control:
-				ApplyFlattenedScopeAction(
-					control.ChildScopeId, control.Action);
+				_sourceVolumes.TryGetValue(control.ChildScopeId,
+					out FlattenedSourceVolume? sourceOwner);
+				ApplyFlattenedScopeActionAtFrame(
+					control.ChildScopeId, sourceOwner, control.Action, eventFrame);
 				break;
 
 			case StartNoteCommand start:
@@ -2252,7 +2326,8 @@ public sealed class PlaybackSession
 						sample.GetValue(frame)));
 				}
 				controller.PublishParameterEnvelope(
-					command.StageId, parameter, resolved, frame);
+					command.StageId, parameter, resolved, frame, completionAction);
+				TrackFlattenedCompletionOwner(controller);
 				foreach (var update in updates)
 					update.Voice.PublishEnclosingEnvelopeBinding(
 						controller, command.StageId, parameter, update.State);
@@ -2554,6 +2629,16 @@ public sealed class PlaybackSession
 		return value;
 	}
 
+	private bool ParentSourceIsCut(IReadOnlyList<long>? parentScopes)
+	{
+		if (parentScopes is null) return false;
+		foreach (long scopeId in parentScopes)
+			if (_sourceVolumes.TryGetValue(scopeId, out FlattenedSourceVolume? scope)
+				&& scope.IsCut)
+				return true;
+		return false;
+	}
+
 	private void StartNote(
 		int physicalChannel,
 		PlaybackChannelState channel,
@@ -2561,6 +2646,8 @@ public sealed class PlaybackSession
 		long eventFrame,
 		long physicalPlaybackOwner)
 	{
+		if (ParentSourceIsCut(start.ParentSourceScopes))
+			return;
 		channel.SynchronizeContinuousState(eventFrame);
 
 		if (channel.CurrentFlattenedSource is { } previousSource)

@@ -359,14 +359,27 @@ public sealed class IncrementalRecursiveTimeline : IDisposable
 	/// invocations; any unrelated commands in the same event are retained.
 	/// </summary>
 	private void StopSourceProducer(long scopeId)
+		=> StopFlattenedSourceProducer(scopeId);
+
+	/// <summary>Stop only the producer belonging to this flattened logical
+	/// note, without cutting audible descendants. Called when its Filter
+	/// Envelope completes, possibly while an event has been prefetched.
+	/// Collect cursor IDs so the PCM owner can discard that one event.
+	/// A naturally retired source is already stopped, so this is idempotent.</summary>
+	public void StopFlattenedSourceProducer(long scopeId,
+		ICollection<long>? stoppedPatternCursors = null)
 	{
-		// Sequence order Frames reuse the same scope. Select its owning
-		// top-level invocation rather than only cancelling the active order.
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		if (scopeId <= 0)
+			throw new ArgumentOutOfRangeException(nameof(scopeId));
+		// Sequence order frames reuse this scope. Stop its highest owning
+		// invocation rather than just the currently active order.
 		Invocation? owner = _frames.Values
 			.Where(f => f.Context.ScopeId == scopeId)
 			.OrderBy(f => f.Depth).FirstOrDefault();
 		if (owner is not null)
-			RemoveSubtree(owner.Id);
+			RemoveSubtree(owner.Id,
+				canceledPatternCursors: stoppedPatternCursors);
 	}
 
 	/// <summary>Physical note events can redirect to scope-owned

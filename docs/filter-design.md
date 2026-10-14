@@ -752,3 +752,41 @@ suppressed; simultaneous actions on the same voice prefer Cut. The renderer
 only observes frozen per-voice curves, not live song definitions or callback-
 side script compilation. Channel-host and flattened-controller completion
 ownership remain explicitly **open**.
+
+
+### Flattened logical-source completion actions (14 October 2026)
+
+Text-selected Note Filter `THEN OFF` / `THEN CUT` actions on a flattened
+Pattern or Sequence attach to the original `FlattenedSourceVolume` controller,
+**not** to one child voice or the later physical-channel occupant. The
+controller owns an independent `EnvelopePlaybackState` follower for each
+parameter with an action; its immutable curve, command-time attachment
+frame, release frame, and canonical parameter identity determine the first
+eligible completion frame. Active descendants and later-started children
+continue to use independent per-voice DSP histories. Rebinding/detaching a
+parameter or replacing the controlling Filter invalidates only the matching
+completion follower. Cut supersedes an Off due on the same frame; an earlier
+external Off cancels repeated Off while releasing an eligible Cut follower.
+
+A completion event is processed before PCM for its exclusive finishing frame.
+It controls all voices belonging to that exact flattened scope, including
+scoped virtual voices, nested descendants and displaced NNA voices, while
+preserving another note that subsequently started on the old controller's
+physical channel. Off preserves ordinary sound/Envelope release tails; Cut
+ends existing voices with their usual anticlick/DSP-tail handling. A pending
+controller action may remain after natural source-producer retirement as long
+as previously started descendants still need it; it is not looked up by
+stale channel memory. The incremental owner receives the completed scope ID
+and exact frame, stops that scope's *future* recursive producer work, and
+invalidates the one prefetched event if it belongs to a removed Pattern
+cursor; siblings continue normally. Defensive descendant-start checks also
+ignore starts under an already cut controller. No eager song expansion,
+callback-side script work, schema change or channel-host Envelope clock reset
+is introduced.
+
+Render and prepared-production regressions cover late attachment, natural
+Off/Cut, sustaining release-end Cut, inert sustaining Off, NNA displacement,
+original-controller host replacement, parameter detachment and one-block vs
+partitioned PCM with a future prefetched descendant. Channel Filter
+completion ownership and full exported-WAV/private-seek qualification remain
+separate open TODOs.

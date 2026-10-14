@@ -61,6 +61,7 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		_timeline.ScopeRetired += OnScopeRetired;
 		_timeline.ScopeCanceled += OnScopeCanceled;
 		_timeline.RootPatternRowsEnded += OnRootPatternRowsEnded;
+		_session.FlattenedCompletionStoppedProducer += OnFlattenedCompletionStoppedProducer;
 		if (session.NextFrame != 0)
 			throw new ArgumentException(
 				"The incremental renderer requires a fresh playback session.",
@@ -137,6 +138,25 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		// by the uninterrupted PlaybackSession.
 		if (!_inputStopped)
 			_repeatRoot?.Invoke();
+	}
+
+	private void OnFlattenedCompletionStoppedProducer(long scopeId, long frame)
+	{
+		// Stop future notes on the same PCM worker. One already-prefetched
+		// event can belong to the stopped subtree: invalidate it by its
+		// Pattern cursor identity, not by physical output channel.
+		List<long> stoppedCursors = [];
+		_timeline.StopFlattenedSourceProducer(scopeId, stoppedCursors);
+		if (_pendingEvent is { } pending && stoppedCursors.Contains(pending.Owner))
+		{
+			_pendingEvent = null;
+			_lastEventFrame = Math.Min(_lastEventFrame, frame);
+		}
+		if (_deferredStep is IncrementalPatternTimelineStep.Cooperate cooperation
+			&& stoppedCursors.Contains(cooperation.InvocationId)
+			|| _deferredStep is IncrementalPatternTimelineStep.Flow flow
+				&& stoppedCursors.Contains(flow.InvocationId))
+			_deferredStep = null;
 	}
 
 	private void OnScopeCanceled(long scopeId)
@@ -315,5 +335,6 @@ public sealed class PreparedIncrementalAudioSource : IIncrementalArrangementSour
 		_timeline.ScopeRetired -= OnScopeRetired;
 		_timeline.ScopeCanceled -= OnScopeCanceled;
 		_timeline.RootPatternRowsEnded -= OnRootPatternRowsEnded;
+		_session.FlattenedCompletionStoppedProducer -= OnFlattenedCompletionStoppedProducer;
 	}
 }

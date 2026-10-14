@@ -63,6 +63,57 @@ internal sealed class FlattenedSourceVolume
 
 	internal long? ParameterEnvelopeReleaseFrame { get; private set; }
 
+	// A flattened instigator owns these action followers independently of
+	// descendant DSP Envelopes. Its identity survives controlling-channel
+	// replacement, voice NNA displacement and producer retirement.
+	private readonly Dictionary<(int Id, string Parameter),
+		(EnvelopePlaybackState State, FilterEnvelopeCompletionAction Action)>
+		_completionActions = [];
+	internal bool HasCompletionActions => _completionActions.Count != 0;
+	internal bool IsCut { get; private set; }
+
+	internal long NextCompletionFrame(long frame)
+	{
+		long next = long.MaxValue;
+		foreach (var binding in _completionActions.Values)
+			if (binding.State.GetCompletionFrameExclusive(frame) is long end)
+				next = Math.Min(next, end);
+		return next;
+	}
+
+	/// <summary>Consume all due actions once. Cut wins over Off, and an
+	/// existing external Off makes another Off inert. The follower is not
+	/// a descendant's individual DSP timeline.</summary>
+	internal FilterEnvelopeCompletionAction ConsumeCompletion(long frame)
+	{
+		FilterEnvelopeCompletionAction result = FilterEnvelopeCompletionAction.None;
+		List<(int Id, string Parameter)>? due = null;
+		foreach (var pair in _completionActions)
+		{
+			if (pair.Value.State.GetCompletionFrameExclusive(frame) is not long end
+				|| end > frame)
+				continue;
+			(due ??= []).Add(pair.Key);
+			if (pair.Value.Action == FilterEnvelopeCompletionAction.Cut)
+				result = FilterEnvelopeCompletionAction.Cut;
+			else if (pair.Value.Action == FilterEnvelopeCompletionAction.Off
+				&& !ParameterEnvelopeReleaseFrame.HasValue
+				&& result == FilterEnvelopeCompletionAction.None)
+				result = FilterEnvelopeCompletionAction.Off;
+		}
+		if (due is not null)
+			foreach (var key in due)
+				_completionActions.Remove(key);
+		return result;
+	}
+
+	internal void MarkCut()
+	{
+		IsCut = true;
+		_completionActions.Clear();
+	}
+
+
 	internal string ValidateParameterEnvelope(int stageId, string parameterName)
 	{
 		if (EventFilterConfiguration is null)
@@ -78,17 +129,45 @@ internal sealed class FlattenedSourceVolume
 	}
 
 	internal void PublishParameterEnvelope(int stageId, string parameter,
-		IEnvelopeCurve? curve, long frame)
+		IEnvelopeCurve? curve, long frame,
+		FilterEnvelopeCompletionAction completionAction = FilterEnvelopeCompletionAction.None)
 	{
 		var key = (stageId, parameter);
 		if (curve is null) _parameterEnvelopes.Remove(key);
 		else _parameterEnvelopes[key] = (curve, frame);
+		_completionActions.Remove(key);
+		if (curve is not null && completionAction != FilterEnvelopeCompletionAction.None)
+		{
+			EnvelopePlaybackState state = new(curve, frame, _sampleRate);
+			if (ParameterEnvelopeReleaseFrame.HasValue)
+				state.NoteOff(Math.Max(frame, ParameterEnvelopeReleaseFrame.Value));
+			_completionActions[key] = (state, completionAction);
+		}
 	}
 
-	internal void ClearParameterEnvelopes() => _parameterEnvelopes.Clear();
+	internal void ClearParameterEnvelopes()
+	{
+		_parameterEnvelopes.Clear();
+		_completionActions.Clear();
+	}
 
 	internal void ReleaseParameterEnvelopes(long frame)
-		=> ParameterEnvelopeReleaseFrame ??= frame;
+	{
+		if (ParameterEnvelopeReleaseFrame.HasValue) return;
+		ParameterEnvelopeReleaseFrame = frame;
+		// A second Off from a completion action would restart nothing and
+		// must not act on later notes, so discard its pending follower now.
+		List<(int Id, string Parameter)>? discard = null;
+		foreach (var pair in _completionActions)
+		{
+			if (pair.Value.Action == FilterEnvelopeCompletionAction.Off)
+				(discard ??= []).Add(pair.Key);
+			else
+				pair.Value.State.NoteOff(frame);
+		}
+		if (discard is not null)
+			foreach (var key in discard) _completionActions.Remove(key);
+	}
 
 	public double Read(long frame)
 	{

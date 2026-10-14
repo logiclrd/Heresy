@@ -2926,6 +2926,54 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			SongDocumentSnapshot.Create(document), badId));
 	}
 
+	[Test]
+	public void FlattenedThenCutStopsPrefetchedFutureChildNotesInProductionPipeline()
+	{
+		SongDocument song = new();
+		ObjectId envelopeId = song.AllocateObjectId();
+		NodeEnvelopeDefinition natural = new(envelopeId, "Done");
+		natural.ReplaceCurve([
+			new EnvelopeNode(TimeSpan.Zero, 0.5),
+			new EnvelopeNode(TimeSpan.FromMilliseconds(40), 0.5),
+		], 0, 0, EnvelopeSustainLoopMode.None);
+		song.Add(natural);
+		ObjectId filterId = song.AllocateObjectId();
+		song.Add(new FilterDefinition(filterId, "Echo", [
+			new FilterStageDefinition(1, "echo", FilterKind.CombFeedforward),
+		]));
+		ObjectId sample = song.AllocateObjectId();
+		song.Add(SampleDefinition.CreateImported(sample,
+			"Long", "long.wav", LongWave(16384)));
+		ObjectId childId = song.AllocateObjectId();
+		DataPatternDefinition child = new(childId, "Flattened child")
+			{ RowCount = 3, ChannelCount = 3 };
+		child.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote(sample);
+		child.Grid.GetOrCreateCell(2, 2).Note = new StartPatternNote(sample);
+		song.Add(child);
+		ObjectId rootId = song.AllocateObjectId();
+		DataPatternDefinition root = new(rootId, "Parent")
+			{ RowCount = 3, ChannelCount = 1 };
+		PatternCell origin = root.Grid.GetOrCreateCell(0, 0);
+		origin.Note = new StartPatternNote(childId);
+		origin.Effects.Add(new SetNoteFilterPatternEffect(filterId));
+		origin.Effects.Add(new SetNoteFilterAssignmentsPatternEffect(
+			"echo.Feedforward = @\"Done\" THEN CUT"));
+		song.Add(root);
+		PreparedIncrementalPlaybackFactory factory = new(Mono(1000));
+		using PreparedIncrementalPlaybackPlan whole = factory.Create(song, rootId);
+		using PreparedIncrementalPlaybackPlan partitioned = factory.Create(song, rootId);
+		float[] full = new float[300], chunks = new float[300];
+		whole.Source.Render(full.Length, full);
+		partitioned.Source.Render(1, chunks.AsSpan(0, 1));
+		partitioned.Source.Render(70, chunks.AsSpan(1, 70));
+		partitioned.Source.Render(chunks.Length - 71, chunks.AsSpan(71));
+		Assert.That(chunks, Is.EqualTo(full).Within(1e-6f),
+			"producer cancellation at Envelope completion must be block independent");
+		Assert.That(full[0], Is.Not.Zero.Within(1e-6f));
+		Assert.That(full[260], Is.Zero.Within(1e-5f),
+			"the prefetched later descendant must never begin after THEN CUT");
+	}
+
 	[TestCase(false)]
 	[TestCase(true)]
 	public void FlattenedInstigatorCutOrOffHaltsFutureNotesWithoutCuttingHost(
