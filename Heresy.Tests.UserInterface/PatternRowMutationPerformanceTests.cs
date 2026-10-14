@@ -9,7 +9,7 @@ using Avalonia.Headless.NUnit;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
-using Heresy.Core.Sequencing;
+using Heresy.Core.Sequences;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.PatternEditing;
 using Heresy.UserInterface.Views;
