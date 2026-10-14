@@ -9,7 +9,7 @@ public abstract class PatternDefinition : SongObject
 	private int _rowCount = 64;
 	private int _channelCount = 8;
 
-	protected PatternDefinition(ObjectId id, string name) : base(id, name) { }
+	protected PatternDefinition(ObjectId id, string name) : base(id, name, isSoundSource: true) { }
 
 	public override SongObjectKind Kind => SongObjectKind.Pattern;
 
