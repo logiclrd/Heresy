@@ -127,6 +127,9 @@ public sealed class PatternEditorControl : UserControl
 		ReplayRequiredSeekIndication> _seekIndications =
 			new Dictionary<(int Row, int Channel), ReplayRequiredSeekIndication>();
 	private readonly Dictionary<(int Row, int Channel), Border> _noteFields = [];
+	private IReadOnlyDictionary<(int Row, int Channel), uint> _sourceTints =
+		new Dictionary<(int Row, int Channel), uint>();
+	private readonly Dictionary<uint, IBrush> _sourceTintBrushes = [];
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _noteTexts = [];
 	private readonly Dictionary<(int Row, int Channel), Border> _sourceFields = [];
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _sourceTexts = [];
@@ -774,6 +777,8 @@ public sealed class PatternEditorControl : UserControl
 			_workspace.Document, _context);
 		_seekIndications = ReplayRequiredSeekWarnings.Analyze(
 			_workspace.Document, _context);
+		_sourceTints = PatternSourceTintResolver.Analyze(
+			_workspace.Document, _context);
 		RemapPlaybackDisplayRows();
 
 		Grid grid = new();
@@ -884,7 +889,7 @@ public sealed class PatternEditorControl : UserControl
 				VerticalAlignment = VerticalAlignment.Center,
 				BorderBrush = Brushes.Transparent,
 				BorderThickness = new Thickness(1),
-				Background = Brushes.Transparent,
+				Background = GetSourceTintBrush(displayRow, channel),
 				Child = note,
 			};
 
@@ -3587,6 +3592,40 @@ public sealed class PatternEditorControl : UserControl
 		// of effects in *later* rows, including another occurrence of
 		// the same Pattern in a Sequence. Refresh all warning decorations.
 		RefreshFlattenedIndications();
+		RefreshSourceTints();
+	}
+
+	/// <summary>Recalculate channel Source memory after an edit, but only
+	/// repaint Note fields whose resolved tint actually changed. Existing
+	/// selection, playback rows, focus borders and effect strips are untouched.
+	/// Sequence occurrences are evaluated separately in display order.</summary>
+	private void RefreshSourceTints()
+	{
+		IReadOnlyDictionary<(int Row, int Channel), uint> updated =
+			PatternSourceTintResolver.Analyze(_workspace.Document, _context);
+		foreach (((int row, int channel), Border field) in _noteFields)
+		{
+			bool previously = _sourceTints.TryGetValue((row, channel), out uint oldTint);
+			bool now = updated.TryGetValue((row, channel), out uint newTint);
+			if (previously != now || (now && oldTint != newTint))
+				field.Background = now ? TintBrush(newTint) : Brushes.Transparent;
+		}
+		_sourceTints = updated;
+	}
+
+	private IBrush GetSourceTintBrush(int row, int channel)
+		=> _sourceTints.TryGetValue((row, channel), out uint tint)
+			? TintBrush(tint) : Brushes.Transparent;
+
+	private IBrush TintBrush(uint argb)
+	{
+		if (_sourceTintBrushes.TryGetValue(argb, out IBrush? cached))
+			return cached;
+		IBrush brush = new SolidColorBrush(Color.FromArgb(
+			(byte)(argb >> 24), (byte)(argb >> 16),
+			(byte)(argb >> 8), (byte)argb));
+		_sourceTintBrushes.Add(argb, brush);
+		return brush;
 	}
 
 	private void RefreshCursorVisuals()
