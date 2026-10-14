@@ -1,6 +1,6 @@
 # Pattern editor — source tints, flattened-range shadows and overlap diagnostics
 
-**Status:** Design and TODO capture, 13 October 2026. **Not implemented.** See [todo.md](todo.md) for separately closable tasks. The feature visualizes already-existing recursive source semantics without changing their scheduling, rendering or new-note actions.
+**Status:** Source-colour persistence implemented 13 October 2026; note-cell tinting, flattened-range overlays and overlap indicators remain separate unchecked milestones. See [todo.md](todo.md) for separately closable tasks. The feature visualizes already-existing recursive source semantics without changing their scheduling, rendering or new-note actions.
 
 ## Source colour ownership and persistence
 
@@ -33,3 +33,50 @@ If a later note start lies inside a previous note's already depicted region, **t
 ### Relationship to observed Filter behavior
 
 The 13 October manual test confirmed that a **flattened** nested Pattern's channel Filter persists on the **real host** after the instigator stops, whereas the same child played as a **private mixdown** does not affect later outer-channel notes. This is a backend processing distinction. The requested range shading must represent that distinction without altering it. See [filter-physical-acceptance.md](filter-physical-acceptance.md).
+
+## Implemented source-colour persistence (13 October 2026)
+
+The Core helper `SongSourceColour` uses a cryptographically uniform discrete
+HSV hue in the interval [0, 360), with saturation **0.75**, value **1.0**
+and alpha **0x33** (51/255, 20%). RGB components are rounded to bytes;
+the resulting visual metadata is a platform-neutral `uint` encoded as
+**0xAARRGGBB**. `SongObject.SourceColourArgb` is nullable and deliberately
+exists only on playable source kinds: Samples, data/script Instruments,
+FM Synths, data/script Patterns, and data/script Sequences. Filters and
+Envelopes have no source tint. No UI-specific brush or theme colour is
+stored in Core.
+
+Each source initializes its tint when constructed. Serializers write an
+optional `sourceColourArgb` integer alongside the object's other v1 JSON
+fields; existing documents without the field initialize a random tint
+during load. The next save writes that assigned value, and all later loads,
+playback snapshots and editor openings reuse the exact serialized value.
+Malformed alpha values are rejected rather than silently treated as a
+different source tint. Neither the audio revision nor document revision
+advances as a side effect of load/snapshot colour migration. The source
+colour is not read by audio playback or used as a PRNG seed for notes;
+it does not participate in any song sound state or routing decisions.
+
+**Copy/import identity policy:** source-copy operations that create a new
+ObjectId but represent a copy of an existing musical source **retain
+the original source's visual tint**, preserving cross-song visual
+recognition. A new, independently authored sound source draws a fresh
+hue. `SampleDefinition.CreateImportedCopy` preserves the tint;
+`FmSynthDocumentEditor.CloneSynth` preserves it for simple and recursive
+graph imports; recursively imported data and script Instruments also
+preserve it. Imports retain their existing normal song/document audio
+revision changes for new objects, with no extra audio revision merely
+for copying colour metadata. No ID is reused or derived from the colour.
+
+Core tests in `SongSourceColourTests` verify primary and secondary HSV
+hues, alpha, saturation/value across randomized samples, playable versus
+non-source kinds, full v1 JSON and packed `.hm` round trips, legacy absent
+fields assigned once and then persisted, immutable snapshot preservation,
+non-audio revision behavior, and invalid fields. The UI import regressions
+cover both standalone and nested graph imports with fresh ObjectIds
+while preserving the source, Instrument and Sample tints.
+
+**Not part of this milestone:** attaching a translucent brush to the
+Pattern editor's effective note-start Source cells, theme-dependent brush
+construction, cached flattened bounds, range shadows, or red overlap
+indicators. Those remain the following independent TODOs.
