@@ -1,6 +1,6 @@
 # Pattern editor — source tints, flattened-range shadows and overlap diagnostics
 
-**Status:** Source-colour persistence implemented 13 October 2026; note-cell tinting, flattened-range overlays and overlap indicators remain separate unchecked milestones. See [todo.md](todo.md) for separately closable tasks. The feature visualizes already-existing recursive source semantics without changing their scheduling, rendering or new-note actions.
+**Status:** Source-colour persistence and effective-source Note-start resolution/Note-field painting implemented 13 October 2026. **User correction (13 October): tint the entire tracker grid cell, not just the Note field; whole-cell paint remains unchecked.** Bounds caching, flattened-range overlays and overlap indicators remain separate tasks. See [todo.md](todo.md) for separately closable tasks. The feature visualizes already-existing recursive source semantics without changing their scheduling, rendering or new-note actions.
 
 ## Source colour ownership and persistence
 
@@ -8,7 +8,7 @@ Every playable source (Sample, Synth, Instrument, Pattern, Sequence) has a stabl
 
 ## Note-cell highlight
 
-Render a translucent highlight for a note start based on its **effective resolved source**. A Pattern cell may have separate note and Source columns, and source selection can be inherited; the tint must follow the source that actually plays. Leave tracker note text, note focus border, selection and effect overlays visible. A source-less, invalid or non-start note must not appear to have a valid source colour.
+Render a translucent highlight for a note start based on its **effective resolved source**. A Pattern cell may have separate Note, Source and Volume fields, and source selection can be inherited; the tint must follow the source that actually plays. **The 20%-alpha colour fills the background of the entire logical row/channel grid cell** (behind the Note, Source and Volume subfields), not only the Note field. Effect stickers/overlays are drawn above the cell tint and continue to use **their own independent effect colours**. Keep note/text, cursor, focus, selection, row/beat/playback shades, and effect overlays legible and functional: this is a cell background layer, not a recolouring of child controls or effects. A source-less, invalid or non-start note must not appear to have a valid source colour. The original 13 October Note-field-only implementation is an intermediate milestone, not the intended final paint coverage.
 
 ## Cache and flattened range
 
@@ -81,7 +81,7 @@ Pattern editor's effective note-start Source cells, theme-dependent brush
 construction, cached flattened bounds, range shadows, or red overlap
 indicators. Those remain the following independent TODOs.
 
-## Implemented — base Note-field source colouring (13 October 2026)
+## Implemented — base effective-source resolution and initial Note-field painting (13 October 2026)
 
 `PatternSourceTintResolver.Analyze(document, context)` projects **the
 persisted `SongObject.SourceColourArgb` of the effective note-start
@@ -106,6 +106,7 @@ or skipped prefix is treated as unknown, not guessed from object IDs.
 The analyzer does not change note routing, flow, playback or persisted
 song data.
 
+**Interim implementation before the whole-cell correction:**
 `PatternEditorControl` draws a `SolidColorBrush` representing the
 existing 20%-alpha ARGB tint **only behind the Note text** within the
 Note-field `Border`. Its parent cell still renders the selected,
@@ -132,3 +133,22 @@ uncertain flow, deleted references, and headless Avalonia field
 alpha, refresh, focus/row layering and revision invariance. The
 **flattened source range/cache/overlap** implementation is explicitly
 not part of this milestone.
+
+## Paint-area correction requested 13 October 2026 — open implementation
+
+The user explicitly clarified that the colour attached to an effective Note start
+must tint the **entire grid cell**, including its Note, Source and Volume field
+areas; the existing Note-field-only brush is too narrow. Keep the current
+`PatternSourceTintResolver` and all source-memory/Sequence semantics. Project its
+colour onto the row/channel parent cell background rather than the Note-field
+background, with row/beat/playback-follow shade visible through the alpha.
+Children retain legible text and selection/focus/edit outlines. Stacked effect
+stickers remain above the tinted cell and independently coloured according to
+the effect palette, with no inheritance of the source tint. Changes to upstream
+Source memory must repaint affected **cells**, including repeated Sequence
+occurrences, in place without changing the song or causing a full rebuild.
+
+This is tracked as an independent unchecked TODO before the note-event bounds
+cache and flattened range work. The earlier historical description remains a
+record of the successfully implemented interim Note-field milestone; it does
+**not** supersede this correction.
