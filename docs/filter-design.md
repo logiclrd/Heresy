@@ -549,6 +549,41 @@ two-step dialog confirmation, including stale-draft and wrong-Filter
 safety. The original selected Filter instance and its snapshot remain
 unchanged by parsing or by abandoned control-side preflight trials.
 
+### Native assignment editor: explicit warning acknowledgement (14 October 2026)
+
+Both **Note Filter Stage Assignments** and **Channel Filter Stage Assignments**
+use the native multiline effect editor's strict validation on Apply/Insert.
+When the selected Filter exists and the script is nonempty but strict
+validation reports an invalid stage, parameter, value, duplicated parameter
+or Envelope reference, the first gesture **does not save or dismiss**. It
+shows the strict diagnostic with authoring context and explains that runtime
+will skip invalid lines. The user may leave the text as-is and deliberately
+Apply/Insert a second time. The subsequent gesture saves the exact
+unmodified authoring string—including comments, unknown rows, spacing and
+line breaks—and the original optional Filter ID hint. No invalid line is
+reformatted or silently corrected. Inserting through Ctrl+Enter follows
+the exact same two-stage path as pressing the dialog button.
+
+Acknowledgement is permission for one **uninterrupted editing gesture**,
+not simply equality of values on two submissions. The remembered draft also
+compares the effect type, original authored assignment string and selected
+Filter ID, and is revoked *immediately* on property changes to the raw text
+or Filter selection. Even editing and undoing back to the original bytes
+requires a new warning. Assistant Filter/stage choices, the annotation,
+assistant numeric/choice controls and stage-update actions also revoke
+acknowledgement, even before the assistant publishes replacement text.
+The warning prompt disappears once invalidated; another invalid Apply/Insert
+shows a fresh diagnostic. Valid text still saves on its first gesture,
+and Cancel remains nonmutating. Invalid or absent Filter IDs, nonpositive
+selection IDs and empty text are rejected even after repeated submission.
+
+This is intentionally **editor-only**: tolerant runtime command evaluation
+still accepts valid lines while skipping malformed ones, and persistence
+retains the raw authored effect. Tests include both Note/Channel effects,
+Ctrl+Enter creation mode, edit-and-restore of raw text/Filter ID/stage,
+assistant changes, error context, exact whitespace preservation,
+valid first-save, wrong Filter rejection and Cancel-without-commit.
+
 ## Quoted stage-parameter Envelope references — authoring groundwork (14 October 2026)
 
 Filter Stage Assignment native effects now accept `stage.parameter = @"Envelope name"`
