@@ -37,9 +37,11 @@ public static class PatternVolumePreviewRenderer
         ArgumentNullException.ThrowIfNull(focusOutlineBrush);
 
         string digits = PendingText(tensDigit, committedText);
-        // TextBlock's inline model clears plain Text automatically when
-        // the first Run is inserted. The unstyled second Run inherits the
-        // normal theme foreground (including light/dark variants).
+        // TextBlock's plain Text is represented as an existing inline
+        // when its inline model activates. Clear Text *first*, then the
+        // collection, so the committed digits are not prepended to the two
+        // provisional Runs. The second Run inherits the active theme.
+        display.Text = null;
         display.Inlines!.Clear();
         display.Inlines.Add(new Run(digits[..1])
         {
