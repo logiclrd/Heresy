@@ -838,3 +838,35 @@ entire PCM stream must match, proving action completion does not restart the
 host's modulation or filter history. A separate regression confirms that
 reassigning the same host parameter captures a new original note and cancels
 its preceding owner's completion action.
+
+
+### Full frozen production, seek and real WAV qualification (14 October 2026)
+
+New independent regressions exercise the complete action system using the
+actual frozen Pattern/Sequence compiler and renderer, not merely typed
+session commands. A combined authored fixture has three independent numeric
+Filter Envelopes: a Note Filter `THEN OFF`, a Channel Filter `THEN CUT`,
+and a flattened Pattern controller `THEN CUT`. The test includes a
+no-suffix control that remains audibly different after completion, guarding
+against false passes caused by silent or inert fixture construction. Frozen
+prepared PCM with a single body block matches arbitrary small/large PCM
+partitions, the actual playback-request PCM source, and the *decoded samples*
+of an exported mono/stereo PCM16 WAV from `SongExportService`. Real RIFF,
+rate, speaker count, bit depth and quantization tolerance are checked.
+
+The private seek fixture places the completion action in the nested note's
+text-selected Filter and tests both `THEN OFF` and `THEN CUT`. An initial
+frame is followed by a forward source-frame seek beyond completion, a
+backward reconstruction before completion (fresh child session), and another
+forward seek past the same action. Each emitted sample is compared against
+an independently rendered direct private Pattern. This qualifies replay of
+the original Envelope action lifecycle rather than reuse of cached PCM.
+
+The release-boundary fixture uses a sustaining action follower whose external
+Note Off at frame 5 gives a provable released completion boundary at frame 7.
+The automatic `THEN CUT` PCM and complete real WAV (header, logical body
+and drained anti-click/release tail) must match an explicit Note Cut at frame
+7, including when the two versions use different PCM partitions. A separate
+without-Cut control proves the action is audible, not merely an equivalent
+scheduler no-op. Manual listening and the separately requested **genuinely
+prefetched** flattened `THEN OFF` observer test are still open TODOs.
