@@ -122,6 +122,26 @@ public sealed class FlattenedSourceRangeProjection
                 if (lastRow < address.Row || lastChannel < address.Channel)
                     continue;
 
+                // The originating host channel owns the flattened logical
+                // note. A later Start, OFF or CUT on that same channel ends
+                // its entire multichannel flattened footprint BEFORE the
+                // terminating row. Notes in the other covered channels are
+                // independent of this controller and remain genuine
+                // overlapping starts (red diagnostics). This is purely
+                // an editor footprint: it never changes note lifetimes.
+                for (int laterRow = address.Row + 1; laterRow <= lastRow; laterRow++)
+                {
+                    PatternEditorRow later = context.GetRow(laterRow);
+                    PatternNoteEntry? laterNote = later.Pattern.Grid[
+                        later.PatternRow, address.Channel]?.Note;
+                    if (laterNote is StartPatternNote
+                        or PatternNoteOff or PatternNoteCut)
+                    {
+                        lastRow = laterRow - 1;
+                        break;
+                    }
+                }
+
                 uint outline = (tint & 0x00FFFFFFU)
                     | ((uint)Math.Min(255, (int)(tint >> 24) * 2) << 24);
                 ranges.Add(new FlattenedSourceRange(

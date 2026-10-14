@@ -72,8 +72,10 @@ public sealed class PatternFlattenedOverlapTests
             Assert.That(displayTints.ContainsKey((3, 2)), Is.False);
         });
         Assert.That(ranges.Cells[(2, 3)].Select(piece => piece.SourceId),
-            Is.EquivalentTo(new[] { first.Id, second.Id, ordinary.Id }),
-            "both earlier range fills and borders survive alongside the later origin");
+            Is.EquivalentTo(new[] { first.Id, ordinary.Id }),
+            "the OFF on channel 2 terminates only the second range before row 1");
+        Assert.That(ranges.Ranges.Single(range => range.SourceId == second.Id).LastRow,
+            Is.EqualTo(0));
         Assert.That(ranges.Cells[(0, 2)].Any(piece =>
             piece.SourceId == first.Id && !piece.IsOrigin), Is.True);
         Assert.That(ranges.Cells[(0, 2)].Any(piece =>
@@ -264,6 +266,204 @@ public sealed class PatternFlattenedOverlapTests
         AssertBrush(conflictLayer.Background, Red);
         Assert.That(fragments[(1, 1)].Children, Has.Count.EqualTo(2));
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(beforeAudio + 2));
+    }
+
+
+    [Test]
+    public void SixtyFourRowDrumRegionStopsBeforeReplacementOnItsControllingChannel()
+    {
+        SongDocument song = new();
+        DataPatternDefinition drum = Pattern(song, "Drum", 64, 1);
+        drum.Grid.GetOrCreateCell(63, 0).Note = new PatternNoteOff();
+        DataPatternDefinition next = Pattern(song, "Next", 1, 1);
+        DataPatternDefinition host = Pattern(song, "Host", 72, 2);
+        host.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(drum.Id);
+        host.Grid.GetOrCreateCell(10, 0).SourceId = next.Id; // Not a terminator.
+        host.Grid.GetOrCreateCell(12, 0).Effects.Add(
+            new TrackerVolumeSlidePatternEffect(0x12)); // Not a terminator.
+        host.Grid.GetOrCreateCell(24, 0).Note = new StartPatternNote(next.Id);
+
+        var context = PatternEditorContext.ForPattern(song, host);
+        var projection = FlattenedSourceRangeProjection.Analyze(song, context);
+        var display = projection.ApplyConflictTints(
+            PatternSourceTintResolver.Analyze(song, context));
+        Assert.That(projection.Ranges, Has.Count.EqualTo(2));
+        FlattenedSourceRange drumRange = projection.Ranges.Single(x => x.SourceId == drum.Id);
+        Assert.That((drumRange.FirstRow, drumRange.LastRow), Is.EqualTo((0, 23)));
+        Assert.That(projection.Cells.ContainsKey((23, 0)), Is.True);
+        Assert.That(projection.Cells[(23, 0)].Single().BottomEdge, Is.True);
+        Assert.That(projection.Cells[(23, 0)].Single().RightEdge, Is.True);
+        Assert.That(projection.Cells[(23, 0)].Single().LeftEdge, Is.True);
+        Assert.That(projection.Cells[(24, 0)].All(x => x.SourceId != drum.Id), Is.True);
+        Assert.That(projection.Cells.ContainsKey((25, 0)), Is.False);
+        Assert.That(projection.ConflictingNoteStarts, Is.Empty);
+        Assert.That(display[(24, 0)], Is.EqualTo(next.SourceColourArgb));
+        Assert.That(host.Grid[24, 0]!.Note, Is.TypeOf<StartPatternNote>());
+    }
+
+    [Test]
+    public void OffAndCutTerminateOnlyTheControllingChannelAndPreserveRedElsewhere()
+    {
+        foreach (PatternNoteEntry end in new PatternNoteEntry[]
+            { new PatternNoteOff(), new PatternNoteCut() })
+        {
+            SongDocument song = new();
+            DataPatternDefinition nested = Pattern(song, "Nested", 64, 3);
+            nested.Grid.GetOrCreateCell(63, 2).Note = new PatternNoteOff();
+            DataPatternDefinition ordinary = Pattern(song, "Ordinary", 1, 1);
+            DataPatternDefinition host = Pattern(song, "Host", 70, 5);
+            host.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote(nested.Id);
+            host.Grid.GetOrCreateCell(7, 2).Note = new StartPatternNote(ordinary.Id);
+            host.Grid.GetOrCreateCell(14, 1).Note = end;
+            host.Grid.GetOrCreateCell(16, 2).Note = new StartPatternNote(ordinary.Id);
+            var context = PatternEditorContext.ForPattern(song, host);
+
+            var projection = FlattenedSourceRangeProjection.Analyze(song, context);
+            var tints = projection.ApplyConflictTints(
+                PatternSourceTintResolver.Analyze(song, context));
+            Assert.That(projection.Ranges.Single(x => x.SourceId == nested.Id).LastRow,
+                Is.EqualTo(13), end.GetType().Name);
+            Assert.That(projection.Cells[(13, 3)].Single().BottomEdge, Is.True);
+            Assert.That(projection.Cells.ContainsKey((14, 3)), Is.False);
+            Assert.That(projection.Cells.ContainsKey((15, 3)), Is.False);
+            Assert.That(projection.ConflictingNoteStarts,
+                Is.EquivalentTo(new[] { (7, 2) }));
+            Assert.That(tints[(7, 2)], Is.EqualTo(Red));
+            Assert.That(tints[(16, 2)], Is.EqualTo(ordinary.SourceColourArgb));
+            Assert.That(tints.ContainsKey((14, 1)), Is.False,
+                "the terminating OFF/CUT is not a Note start and cannot become red");
+        }
+    }
+
+    [Test]
+    public void ReplacementIsRedOnlyIfAnotherUnterminatedRangeAlsoCoversIt()
+    {
+        SongDocument song = new();
+        DataPatternDefinition broad = Pattern(song, "Broad", 7, 3);
+        broad.Grid.GetOrCreateCell(6, 2).Note = new PatternNoteCut();
+        DataPatternDefinition inner = Pattern(song, "Inner", 7, 1);
+        inner.Grid.GetOrCreateCell(6, 0).Note = new PatternNoteOff();
+        DataPatternDefinition next = Pattern(song, "Next", 1, 1);
+        DataPatternDefinition host = Pattern(song, "Host", 9, 4);
+        host.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(broad.Id);
+        host.Grid.GetOrCreateCell(1, 1).Note = new StartPatternNote(inner.Id);
+        host.Grid.GetOrCreateCell(3, 1).Note = new StartPatternNote(next.Id);
+        var context = PatternEditorContext.ForPattern(song, host);
+
+        var projection = FlattenedSourceRangeProjection.Analyze(song, context);
+        Assert.That(projection.Ranges.Single(r => r.SourceId == inner.Id).LastRow,
+            Is.EqualTo(2));
+        Assert.That(projection.Ranges.Single(r => r.SourceId == broad.Id).LastRow,
+            Is.EqualTo(6));
+        Assert.That(projection.ConflictingNoteStarts,
+            Is.EquivalentTo(new[] { (1, 1), (3, 1) }));
+        Assert.That(projection.Cells[(3, 1)].Select(p => p.SourceId),
+            Is.EquivalentTo(new[] { broad.Id, next.Id }),
+            "old inner range is gone, but unrelated still-active broad range remains");
+        Assert.That(projection.ApplyConflictTints(
+            PatternSourceTintResolver.Analyze(song, context))[(3, 1)],
+            Is.EqualTo(Red));
+
+        // Stop the *broad* range at row 2, before the channel-1
+        // replacement. Both old regions have now terminated.
+        host.Grid.GetOrCreateCell(2, 0).Note = new PatternNoteCut();
+        var truncated = FlattenedSourceRangeProjection.Analyze(song, context);
+        Assert.That(truncated.Ranges.Single(r => r.SourceId == broad.Id).LastRow,
+            Is.EqualTo(1));
+        Assert.That(truncated.ConflictingNoteStarts, Is.EquivalentTo(new[] { (1, 1) }));
+        Assert.That(truncated.ApplyConflictTints(
+            PatternSourceTintResolver.Analyze(song, context))[(3, 1)],
+            Is.EqualTo(next.SourceColourArgb));
+    }
+
+    [Test]
+    public void TruncationUsesDisplayedSequenceOccurrenceRowsAndNeverLeaksToNextOrder()
+    {
+        SongDocument song = new();
+        DataPatternDefinition nested = Pattern(song, "Nested", 64, 2);
+        nested.Grid.GetOrCreateCell(63, 1).Note = new PatternNoteOff();
+        DataPatternDefinition next = Pattern(song, "Next", 1, 1);
+        DataPatternDefinition parent = Pattern(song, "Parent", 6, 3);
+        parent.Grid.GetOrCreateCell(1, 0).Note = new StartPatternNote(nested.Id);
+        parent.Grid.GetOrCreateCell(3, 0).Note = new StartPatternNote(next.Id);
+        DataPatternDefinition separator = Pattern(song, "Separator", 2, 1);
+        DataSequenceDefinition order = new(song.AllocateObjectId(), "Order");
+        order.Entries.Add(new SequenceEntry(parent.Id));
+        order.Entries.Add(new SequenceEntry(separator.Id));
+        order.Entries.Add(new SequenceEntry(parent.Id, startRow: 1));
+        song.Add(order);
+        var context = PatternEditorContext.ForSequence(song, order, 0);
+
+        var projection = FlattenedSourceRangeProjection.Analyze(song, context);
+        var nestedRanges = projection.Ranges.Where(r => r.SourceId == nested.Id)
+            .OrderBy(r => r.FirstRow).ToArray();
+        Assert.That(nestedRanges, Has.Length.EqualTo(2));
+        Assert.That((nestedRanges[0].FirstRow, nestedRanges[0].LastRow),
+            Is.EqualTo((1, 2)));
+        Assert.That((nestedRanges[1].FirstRow, nestedRanges[1].LastRow),
+            Is.EqualTo((8, 9)));
+        Assert.That(projection.ConflictingNoteStarts, Is.Empty);
+        Assert.That(projection.Cells.ContainsKey((6, 1)), Is.False);
+        Assert.That(projection.Cells.ContainsKey((7, 1)), Is.False);
+        Assert.That(projection.Cells[(2, 1)].Single().BottomEdge, Is.True);
+        Assert.That(projection.Cells[(9, 1)].Single().BottomEdge, Is.True);
+    }
+
+    [AvaloniaTest]
+    public void EditingControllerCutMovesBottomEdgeAndRestoresColoursInPlace()
+    {
+        DocumentWorkspace workspace = new();
+        DataPatternDefinition wide =
+            PatternDocumentEditor.CreateDataPattern(workspace, "Wide", 64, 2);
+        wide.Grid.GetOrCreateCell(63, 1).Note = new PatternNoteOff();
+        DataPatternDefinition ordinary =
+            PatternDocumentEditor.CreateDataPattern(workspace, "Ordinary", 1, 1);
+        DataPatternDefinition host =
+            PatternDocumentEditor.CreateDataPattern(workspace, "Host", 32, 3);
+        PatternDocumentEditor.SetNote(workspace, host, 0, 0,
+            new StartPatternNote(wide.Id));
+        PatternDocumentEditor.SetNote(workspace, host, 8, 1,
+            new StartPatternNote(ordinary.Id));
+        PatternDocumentEditor.SetNote(workspace, host, 12, 0,
+            new PatternNoteCut());
+
+        PatternEditorControl editor = new(new Window(), workspace, host,
+            () => { }, _ => { });
+        var content = Layers<Grid>(editor, "_cellTintLayers");
+        var fragments = Layers<Grid>(editor, "_rangeOverlayLayers");
+        var effects = Layers<PatternEffectStripControl>(editor, "_effectStrips");
+        Grid laterCell = content[(8, 1)];
+        Grid cutRow = fragments[(12, 1)];
+        Border originalBottom = (Border)fragments[(11, 1)].Children.Single();
+        Assert.That(originalBottom.BorderThickness.Bottom, Is.EqualTo(2));
+        Assert.That(cutRow.Children, Is.Empty);
+        AssertBrush(laterCell.Background, Red);
+        uint originalAudio = workspace.Document.AudioRevision;
+
+        // Delete the host controller CUT, restoring the prior full footprint.
+        PatternDocumentEditor.SetNote(workspace, host, 12, 0, null);
+        Invoke(editor, "RefreshUnderlyingCell", host, 12, 0);
+        Assert.That(fragments[(12, 1)].Children, Has.Count.EqualTo(1));
+        Assert.That(((Border)fragments[(11, 1)].Children.Single())
+            .BorderThickness.Bottom, Is.Zero);
+        Assert.That(content[(8, 1)], Is.SameAs(laterCell));
+        AssertBrush(laterCell.Background, Red);
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(originalAudio + 1));
+
+        // Replace the flattened note on its controlling channel: new note
+        // receives its *own* tint, while an independent channel-1 note at
+        // row 8 remains a true conflict with the earlier two-channel range.
+        PatternDocumentEditor.SetNote(workspace, host, 12, 0,
+            new StartPatternNote(ordinary.Id));
+        Invoke(editor, "RefreshUnderlyingCell", host, 12, 0);
+        AssertBrush(content[(12, 0)].Background, ordinary.SourceColourArgb!.Value);
+        Assert.That(fragments[(12, 1)].Children, Is.Empty);
+        Assert.That(fragments[(11, 1)].Children, Has.Count.EqualTo(1));
+        Assert.That(((Border)fragments[(11, 1)].Children.Single())
+            .BorderThickness.Bottom, Is.EqualTo(2));
+        AssertBrush(laterCell.Background, Red);
+        Assert.That(effects[(8, 1)], Is.Not.Null);
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(originalAudio + 2));
     }
 
     private static DataPatternDefinition Pattern(
