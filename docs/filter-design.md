@@ -548,3 +548,37 @@ routing; authoring API strict/permissive differentiation and headless
 two-step dialog confirmation, including stale-draft and wrong-Filter
 safety. The original selected Filter instance and its snapshot remain
 unchanged by parsing or by abandoned control-side preflight trials.
+
+## Quoted stage-parameter Envelope references — authoring groundwork (14 October 2026)
+
+Filter Stage Assignment native effects now accept `stage.parameter = @"Envelope name"`
+for numerical, nonstructural stage parameters, alongside the old invariant-
+culture numeric and canonical-choice assignments. Backslash escapes a literal
+quote or another backslash within the quoted name; spaces and equals signs
+within a name are literal. Name matching is case-insensitive against only the
+same song's Node/Script Envelope objects. An immutable
+`FilterAssignmentEnvelopeNames.Capture(song)` index holds the ordered
+`ObjectId`/name pairs at the authoring or frozen-source boundary, preventing a
+later live rename or same-named addition from silently switching references.
+Missing/ambiguous targets, malformed quotations or unsupported structural or
+choice parameters are explicit authoring diagnostics. Duplicate canonical
+stage+parameter paths are rejected across numeric and Envelope forms.
+
+`FilterAssignmentEnvelopeText.ParseAndValidate` returns canonical numeric
+batches and separate resolved Envelope-binding records with line locations. It
+does not manufacture numerical values for Envelopes; existing numeric
+validation and interdependent constraints remain unchanged. The native Note
+and Channel effect editor and assistant use the new strict validation. Both
+still save the exact authored text in the existing version-one effect JSON,
+including comments, whitespace and Envelope reference spellings. Invalid text
+can follow the existing two-click warning acknowledgement policy.
+
+**Scope boundary:** This checkpoint supports *authoring validation, identity
+resolution and persistence only*. It does **not** yet attach an Envelope to a
+running Filter: the older numeric runtime interpretation currently skips
+non-numeric reference rows. The next independent task in `todo.md` is to
+compile and apply those resolved references in frozen playback plans, reusing
+the established typed note/channel parameter-Envelope commands. Subsequent
+milestones separately qualify absolute song-clock origins and `THEN OFF` /
+`THEN CUT` note actions. Do not present this partial groundwork as audible
+Envelope modulation.
