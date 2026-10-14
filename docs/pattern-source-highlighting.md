@@ -1,6 +1,6 @@
 # Pattern editor — source tints, flattened-range shadows and overlap diagnostics
 
-**Status:** Source-colour persistence and effective-source Note-start resolution/Note-field painting implemented 13 October 2026. **User correction (13 October): tint the entire tracker grid cell, not just the Note field; whole-cell paint remains unchecked.** Bounds caching, flattened-range overlays and overlap indicators remain separate tasks. See [todo.md](todo.md) for separately closable tasks. The feature visualizes already-existing recursive source semantics without changing their scheduling, rendering or new-note actions.
+**Status:** Source-colour persistence and effective-source Note-start resolution/Note-field painting implemented 13 October 2026. **User correction (13 October): tint the entire tracker grid cell, not just the Note field; whole-cell paint remains unchecked.** Bounds caching is implemented; flattened-range overlays and overlap indicators remain open. See [todo.md](todo.md) for separately closable tasks. The feature visualizes already-existing recursive source semantics without changing their scheduling, rendering or new-note actions.
 
 ## Source colour ownership and persistence
 
@@ -152,3 +152,37 @@ This is tracked as an independent unchecked TODO before the note-event bounds
 cache and flattened range work. The earlier historical description remains a
 record of the successfully implemented interim Note-field milestone; it does
 **not** supersede this correction.
+
+## Implemented — nonserialized Pattern note-event footprint (13 October 2026)
+
+`DataPatternDefinition.NoteEventBounds` forwards to its live
+`PatternGrid.NoteEventBounds` value. `PatternNoteEventBounds` contains inclusive
+maximum `LastRow` and `LastChannel`, a separate `HasNoteEvents` discriminator,
+and `RowCount`/`ChannelCount` as inclusive maxima plus one. The empty case has
+`HasNoteEvents = false` and a minimum 1×1 visual footprint. All actual
+`PatternCell.Note` events count (Start, Off and Cut); trailing Source selections,
+Volume and Effect stacks do not.
+
+The cache is **derived, nonserialized, lazy, and shared by all consumers of a
+Data Pattern**. It scans the grid only on the first query after invalidation;
+unchanged later reads are O(1). `PatternCell.Note` mutations notify its current
+containing `PatternGrid`, including changes made directly through Core without
+`PatternDocumentEditor`. The grid subscribes/unsubscribes with reference counts
+when cells are created, assigned, replaced or removed (including when the same
+cell instance occupies more than one address). Single-/all-channel row
+insertions/deletions, truncating/expanding resizes and indexer changes invalidate
+cached bounds; surviving shifted cells retain their change subscriptions.
+
+A loaded Pattern starts with a fresh dirty cache and computes current bounds
+from deserialized notes on demand. An editor switch, editor exit or Sequence
+projection refresh cannot leave behind a stale occurrence-specific value,
+because occurrences refer to the live source Pattern's single, self-invalidating
+cache. Reading/rebuilding bounds changes neither audio nor document revision.
+Neither JSON nor `.hm` contains cache state, and no schema version change is
+introduced.
+
+`PatternNoteEventBoundsTests` exercises occupancy, mutable membership,
+shifts, resize, empty minimum, JSON/package reload and revision neutrality.
+`PatternNoteBoundsProjectionTests` covers reused Sequence entries and switching
+among their live Pattern references. This cache is the base for the still-open
+flattened-range rectangle rendering milestone.
