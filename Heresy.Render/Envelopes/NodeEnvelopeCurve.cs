@@ -64,6 +64,20 @@ public sealed class NodeEnvelopeCurve : IEnvelopeCurve
 		return Interpolate(position.Ticks);
 	}
 
+	public long? GetEndActiveFrameExclusiveWithoutNoteOff(int sampleRate)
+	{
+		if (sampleRate <= 0)
+			throw new ArgumentOutOfRangeException(nameof(sampleRate));
+		if (_mode != EnvelopeSustainLoopMode.None)
+			return null;
+		// Include the final node's own sample even when nonzero.
+		double frames = Math.Floor(
+			_last * sampleRate / TimeSpan.TicksPerSecond) + 1.0;
+		if (!double.IsFinite(frames) || frames >= long.MaxValue)
+			throw new OverflowException("Envelope end exceeds the frame timeline.");
+		return (long)frames;
+	}
+
 	public long? GetEndActiveFrameExclusiveAfterNoteOff(
 		long noteOffActiveFrame, int sampleRate)
 	{

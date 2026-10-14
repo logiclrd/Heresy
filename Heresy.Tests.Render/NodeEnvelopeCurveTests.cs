@@ -198,6 +198,44 @@ public sealed class NodeEnvelopeCurveTests
 	}
 
 	[Test]
+	public void NaturalCompletionIsFiniteOnlyWithoutSustainAndIncludesFinalSample()
+	{
+		NodeEnvelopeCurve finite = Curve(EnvelopeSustainLoopMode.None);
+		Assert.That(finite.GetEndActiveFrameExclusiveWithoutNoteOff(10),
+			Is.EqualTo(41));
+		Assert.That(finite.GetValue(40, 10, null), Is.Zero);
+		Assert.That(finite.GetValue(41, 10, null), Is.Zero);
+		foreach (EnvelopeSustainLoopMode mode in new[]
+			{ EnvelopeSustainLoopMode.Forward, EnvelopeSustainLoopMode.PingPong })
+			Assert.That(Curve(mode).GetEndActiveFrameExclusiveWithoutNoteOff(10),
+				Is.Null, "held sustaining curves cannot complete naturally");
+		Assert.That(new ScriptEnvelopeCurve((_, _) => 0.0, TimeSpan.FromSeconds(1))
+			.GetEndActiveFrameExclusiveWithoutNoteOff(10), Is.Null,
+			"zero script samples do not prove natural completion");
+	}
+
+	[Test]
+	public void CompletionTimelineHonorsAttachmentPauseResumeAndRelease()
+	{
+		EnvelopePlaybackState finite = new(
+			Curve(EnvelopeSustainLoopMode.None), startFrame: 10, sampleRate: 10);
+		Assert.That(finite.GetCompletionFrameExclusive(10), Is.EqualTo(51));
+		Assert.That(finite.GetCompletionFrameExclusive(19), Is.EqualTo(51));
+		finite.SetEnabled(20, false);
+		Assert.That(finite.GetCompletionFrameExclusive(29), Is.Null);
+		finite.SetEnabled(30, true);
+		Assert.That(finite.GetCompletionFrameExclusive(30), Is.EqualTo(61));
+		Assert.That(finite.GetCompletionFrameExclusive(61), Is.EqualTo(61));
+
+		EnvelopePlaybackState sustaining = new(
+			Curve(EnvelopeSustainLoopMode.Forward), startFrame: 5, sampleRate: 10);
+		Assert.That(sustaining.GetCompletionFrameExclusive(20), Is.Null);
+		sustaining.NoteOff(20);
+		Assert.That(sustaining.GetCompletionFrameExclusive(20), Is.EqualTo(46));
+		Assert.That(sustaining.GetCompletionFrameExclusive(46), Is.EqualTo(46));
+	}
+
+	[Test]
 	public void InvalidArgumentsAreRejected()
 	{
 		NodeEnvelopeCurve curve = Curve();

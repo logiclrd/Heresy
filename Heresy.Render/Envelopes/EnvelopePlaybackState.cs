@@ -98,6 +98,26 @@ public sealed class EnvelopePlaybackState
 				+ remaining);
 	}
 
+	/// <summary>First absolute frame beyond the curve's natural or released
+	/// endpoint, or null when sustaining, paused or unbounded. Read-only
+	/// observation does not emit a lifecycle action.</summary>
+	public long? GetCompletionFrameExclusive(long absoluteFrame)
+	{
+		if (absoluteFrame < _startFrame)
+			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
+		if (_noteOffAbsoluteFrame.HasValue
+			&& absoluteFrame >= _noteOffAbsoluteFrame.Value)
+			return GetEndFrameExclusiveAfterNoteOff(absoluteFrame);
+		if (!Enabled)
+			return null;
+		long? activeEnd = _curve.GetEndActiveFrameExclusiveWithoutNoteOff(_sampleRate);
+		if (!activeEnd.HasValue)
+			return null;
+		long activeFrame = GetActiveFrame(absoluteFrame);
+		Observe(absoluteFrame, activeFrame);
+		return checked(absoluteFrame + Math.Max(0, activeEnd.Value - activeFrame));
+	}
+
 	public void SetEnabled(long absoluteFrame, bool enabled)
 	{
 		EnsureChronologicalMutation(absoluteFrame);

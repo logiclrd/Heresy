@@ -717,3 +717,20 @@ For simultaneous completions on one original note, Cut takes precedence.
 A finite envelope boundary is the first frame **after** its final sample;
 Script Envelopes with no provable finite endpoint must not cause invented
 completion events. No callback-side scripting or per-sample allocation.
+
+
+### Provable finite Envelope boundaries (14 October 2026)
+
+`IEnvelopeCurve.GetEndActiveFrameExclusiveWithoutNoteOff` now reports the
+first active frame **after** natural completion for a no-sustain Node Envelope.
+Sustaining Node curves return null until an external Note Off; Script curves
+return null for held natural completion because a changing script's numeric
+samples, even zeros, cannot prove it is permanently finished. The existing
+released-tail bound remains available independently.
+`EnvelopePlaybackState.GetCompletionFrameExclusive` translates either
+provable boundary through the individual attachment's start frame, enabled
+active-frame clock and release origin; it reports null while paused or while
+completion is unbounded. This is read-only observation and does not call
+Note Off, Cut or any host method. Tests assert the exclusive final sample,
+nonzero start, pause/resume and sustain release. The runtime trigger is the
+next unchecked TODO, not part of this milestone.
