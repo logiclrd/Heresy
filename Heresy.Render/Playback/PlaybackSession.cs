@@ -2232,6 +2232,48 @@ public sealed class PlaybackSession
 		return result;
 	}
 
+	/// <summary>Validate candidate Note Filter DSP without publishing it.
+	/// Runtime text uses this only at the note/control boundary. A single
+	/// sample-rate-unsupported field cannot prevent valid siblings from
+	/// applying, even for a flattened logical note with multiple descendants.</summary>
+	private bool CanPrepareNoteTextCandidate(
+		FlattenedSourceVolume? controller, PlaybackVoice? current,
+		FilterInstance candidate)
+	{
+		try
+		{
+			if (controller is null)
+			{
+				current!.PrepareEventFilterUpdate(candidate);
+			}
+			else
+			{
+				List<PlaybackVoice> descendants =
+					CollectFlattenedDescendants(controller.ScopeId);
+				if (descendants.Count == 0)
+				{
+					// Also validate a logical source whose first nested voice
+					// has not started yet, at the actual output sample rate.
+					_ = new StreamingFilterChain(
+						new FilterChain([candidate]), SampleRate, OutputChannelCount);
+				}
+				foreach (PlaybackVoice voice in descendants)
+				{
+					FilterChain? layers = BuildEnclosingEventFilters(
+						voice.EnclosingSourceVolumes, controller, candidate);
+					voice.PrepareEnclosingEventFilterUpdate(layers);
+				}
+			}
+			return true;
+		}
+		catch (Exception error) when (error is ArgumentException
+			or InvalidOperationException or NotSupportedException
+			or KeyNotFoundException or OverflowException)
+		{
+			return false;
+		}
+	}
+
 	private void ApplyCurrentNoteFilterCommand(
 		PlaybackChannelState channel, NoteCommand command)
 	{
@@ -2280,7 +2322,8 @@ public sealed class PlaybackSession
 							"no event Filter selected for assignments");
 						return;
 					}
-					candidate = FilterAssignmentText.ApplyValidToClone(previous, text.Text);
+					candidate = FilterAssignmentText.ApplyValidToClone(previous, text.Text,
+                        trial => CanPrepareNoteTextCandidate(controller, current, trial));
 					if (candidate.Revision == previous.Revision)
 						return; // no valid effective edits: preserve histories
 					break;
