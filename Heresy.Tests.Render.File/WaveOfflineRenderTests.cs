@@ -9,6 +9,7 @@ using System.Threading;
 using AwesomeAssertions;
 
 using Heresy.Core.Envelopes;
+using Heresy.Core.Filters;
 using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
@@ -27,6 +28,70 @@ namespace Heresy.Tests.Render.File;
 [TestFixture]
 public sealed class WaveOfflineRenderTests
 {
+
+    [Test]
+    public void ExportedWaveSamplesMatchLiveTextSelectedEnvelopeAtLateSongFrame()
+    {
+        const int rate = 1000;
+        ObjectId sourceId = (ObjectId)17001U;
+        ObjectId curveId = (ObjectId)17002U;
+        NodeEnvelopeDefinition definition = new(curveId, "Sweep");
+        definition.ReplaceCurve([
+            new EnvelopeNode(TimeSpan.Zero, 0.2),
+            new EnvelopeNode(TimeSpan.FromMilliseconds(10), 0.7),
+        ], 0, 0, EnvelopeSustainLoopMode.Forward);
+        SongDocument song = new();
+        song.Add(definition);
+        FilterAssignmentEnvelopeNames names = FilterAssignmentEnvelopeNames.Capture(song);
+        FilterInstance selected = new(new FilterDefinition((ObjectId)17003U,
+            "Comb", [new FilterStageDefinition(1, "echo", FilterKind.CombFeedforward)]));
+        selected.SetStageParameters(1, [
+            new("DelaySeconds", FilterParameterValue.FromNumber(0.002)),
+            new("Feedforward", FilterParameterValue.FromNumber(0.2)),
+            new("Mix", FilterParameterValue.FromNumber(1)),
+        ]);
+        EnvelopeFileResolver resolver =
+            new(sourceId, new QuietSound(), curveId, new NodeEnvelopeCurve(definition));
+        NoteScheduleBuilder builder = new();
+        builder.Append(Event(TimeSpan.Zero, new StartNoteCommand(sourceId) {
+            EventFilterConfiguration = selected,
+        }));
+        builder.Append(Event(TimeSpan.FromMilliseconds(5),
+            new SetNoteFilterAssignmentsCommand("echo.Feedforward = @\"Sweep\"")));
+        NoteSchedule schedule = builder.Freeze();
+
+        PlaybackSession Create()
+            => new(new RenderContext(new RenderConfiguration(rate, [
+                    new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
+                ])), schedule, resolver)
+            {
+                NoteFilterEnvelopeResolver = resolver,
+                FilterAssignmentNames = names,
+            };
+
+        float[] live = new float[15];
+        Create().Render(0, live.Length, live);
+        using MemoryStream stream = new();
+        using (WaveFileSink sink = new(stream,
+            new AudioOutputFormat(rate, 1), leaveOpen: true))
+        {
+            OfflinePlaybackRenderer.Render(Create(),
+                TimeSpan.FromMilliseconds(15), sink,
+                blockFrameCount: 3);
+            sink.Complete();
+        }
+        byte[] wave = stream.ToArray();
+        Assert.That(wave.Length, Is.GreaterThanOrEqualTo(44 + live.Length * 2));
+        for (int i = 0; i < live.Length; i++)
+        {
+            short pcm = BinaryPrimitives.ReadInt16LittleEndian(
+                wave.AsSpan(44 + 2 * i, 2));
+            float decoded = pcm / 32768f;
+            Assert.That(decoded, Is.EqualTo(live[i]).Within(2f / 32768f),
+                $"WAV PCM at frame {i} must use the same Envelope clock as live playback");
+        }
+    }
+
 	[Test]
 	public void WaveFileSinkWritesCanonicalPcm16HeaderAndSamples()
 	{
@@ -347,6 +412,35 @@ public sealed class WaveOfflineRenderTests
 		public void Render(int frameCount, Span<float> destination)
 			=> RenderLogical(frameCount, destination);
 	}
+
+
+    private sealed class QuietSound : ISound
+    {
+        public NoteConfigurationSnapshot SnapshotNoteConfiguration()
+            => NoteConfigurationSnapshot.Default;
+        public SoundState CreateState() => new TestState();
+        public long? GetEndFrameExclusive(RenderContext context, SoundState state)
+            => 15;
+        public void Render(RenderContext context, SoundState state,
+            long startFrame, int frameCount, Span<float> destination)
+            => destination.Fill(0.25f);
+    }
+
+    private sealed class EnvelopeFileResolver(
+        ObjectId sourceId, ISound sound, ObjectId envelopeId, IEnvelopeCurve curve)
+        : ISoundResolver, IEnvelopeCurveResolver
+    {
+        public bool TryResolve(ObjectId id, bool mixdown, out ISound? resolved)
+        {
+            resolved = id == sourceId ? sound : null;
+            return resolved is not null;
+        }
+        public bool TryResolve(ObjectId id, out IEnvelopeCurve? resolved)
+        {
+            resolved = id == envelopeId ? curve : null;
+            return resolved is not null;
+        }
+    }
 
 	private sealed class Resolver : ISoundResolver
 	{
