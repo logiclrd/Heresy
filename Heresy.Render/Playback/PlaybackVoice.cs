@@ -346,6 +346,9 @@ public sealed class PlaybackVoice
 	// edits made while the envelope was bound).
 	private readonly Dictionary<(int Id, string Parameter), EnvelopePlaybackState>
 		_eventFilterParameterEnvelopes = [];
+	// A lifecycle action belongs to this exact voice even after NNA migration.
+	private readonly Dictionary<(int Id, string Parameter), FilterEnvelopeCompletionAction>
+		_eventFilterCompletionActions = [];
 	private NoteFilterEnvelopeRealtimeControls? _eventEnvelopeRealtime;
 	private NoteFilterEnvelopeRealtimeControls? _enclosingEnvelopeRealtime;
 	public StreamingFilterChain? EventFilterState { get; private set; }
@@ -377,7 +380,8 @@ public sealed class PlaybackVoice
 
 	internal void SetEventFilterParameterEnvelope(
 		int stageId, string parameterName,
-		IEnvelopeCurve? curve, long frame)
+		IEnvelopeCurve? curve, long frame,
+		FilterEnvelopeCompletionAction completionAction = FilterEnvelopeCompletionAction.None)
 	{
 		if (_eventFilterConfiguration is null)
 			throw new InvalidOperationException(
@@ -400,7 +404,52 @@ public sealed class PlaybackVoice
 		else
 			_eventFilterParameterEnvelopes[key] =
 				new EnvelopePlaybackState(curve, frame, _sampleRate);
+		// A new binding or a numeric detachment cancels its prior action,
+		// without disturbing any other parameter or unrelated note.
+		_eventFilterCompletionActions.Remove(key);
+		if (curve is not null && completionAction != FilterEnvelopeCompletionAction.None)
+			_eventFilterCompletionActions[key] = completionAction;
 		RebindEventEnvelopeRealtime();
+	}
+
+	/// <summary>The earliest provable completion on this original voice.
+	/// No user note action is emitted by this pure lookup.</summary>
+	internal long GetNextEventFilterCompletionFrame(long frame)
+	{
+		long next = long.MaxValue;
+		foreach (var entry in _eventFilterCompletionActions)
+			if (_eventFilterParameterEnvelopes.TryGetValue(entry.Key,
+				out EnvelopePlaybackState? state)
+				&& state.GetCompletionFrameExclusive(frame) is long end)
+				next = Math.Min(next, end);
+		return next;
+	}
+
+	/// <summary>Consume all due actions once; Cut outranks Off for the
+	/// same voice. Earlier explicit Off makes a subsequent Off inert.</summary>
+	internal FilterEnvelopeCompletionAction ConsumeEventFilterCompletion(long frame)
+	{
+		FilterEnvelopeCompletionAction result = FilterEnvelopeCompletionAction.None;
+		List<(int Id, string Parameter)>? completed = null;
+		foreach (var entry in _eventFilterCompletionActions)
+		{
+			if (!_eventFilterParameterEnvelopes.TryGetValue(entry.Key,
+				out EnvelopePlaybackState? state)
+				|| state.GetCompletionFrameExclusive(frame) is not long end
+				|| end > frame)
+				continue;
+			(completed ??= []).Add(entry.Key);
+			if (entry.Value == FilterEnvelopeCompletionAction.Cut)
+				result = FilterEnvelopeCompletionAction.Cut;
+			else if (entry.Value == FilterEnvelopeCompletionAction.Off
+				&& !SoundState.NoteOffTime.HasValue
+				&& result == FilterEnvelopeCompletionAction.None)
+				result = FilterEnvelopeCompletionAction.Off;
+		}
+		if (completed is not null)
+			foreach (var key in completed)
+				_eventFilterCompletionActions.Remove(key);
+		return result;
 	}
 
 	internal void SynchronizeEventFilterParameterEnvelopes(
@@ -446,6 +495,7 @@ public sealed class PlaybackVoice
 	internal void ClearEventFilterParameterEnvelopes()
 	{
 		_eventFilterParameterEnvelopes.Clear();
+		_eventFilterCompletionActions.Clear();
 		RebindEventEnvelopeRealtime();
 	}
 

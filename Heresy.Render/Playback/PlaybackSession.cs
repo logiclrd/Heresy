@@ -1147,8 +1147,10 @@ public sealed class PlaybackSession
 		while (cursor < blockEnd)
 		{
 			ProcessEventsThrough(cursor);
+			ProcessNoteFilterCompletionActions(cursor);
 
-			long nextEventFrame = GetNextEventFrame();
+			long nextEventFrame = Math.Min(GetNextEventFrame(),
+				GetNextNoteFilterCompletionFrame(cursor));
 			long segmentEnd = nextEventFrame <= cursor
 				? cursor
 				: Math.Min(blockEnd, nextEventFrame);
@@ -1190,6 +1192,67 @@ public sealed class PlaybackSession
 
 			ApplyEvent(noteEvent, Math.Max(eventFrame, 0));
 			_nextEventIndex++;
+		}
+	}
+
+	/// <summary>A provable Envelope completion splits the rendered PCM at
+	/// its own frame, never at the end of the caller's arbitrary block.</summary>
+	private long GetNextNoteFilterCompletionFrame(long frame)
+	{
+		long next = long.MaxValue;
+		foreach (PlaybackChannelState channel in _channels.Values)
+			if (channel.CurrentVoice is PlaybackVoice voice)
+				next = Math.Min(next, voice.GetNextEventFilterCompletionFrame(frame));
+		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+			if (channel.CurrentVoice is PlaybackVoice voice)
+				next = Math.Min(next, voice.GetNextEventFilterCompletionFrame(frame));
+		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+			if (channel.CurrentVoice is PlaybackVoice voice)
+				next = Math.Min(next, voice.GetNextEventFilterCompletionFrame(frame));
+		foreach (PlaybackVoice voice in _virtualVoices)
+			next = Math.Min(next, voice.GetNextEventFilterCompletionFrame(frame));
+		return next;
+	}
+
+	private void ProcessNoteFilterCompletionActions(long frame)
+	{
+		foreach (PlaybackChannelState channel in _channels.Values)
+			ApplyCompletionToCurrentVoice(channel, frame);
+		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+			ApplyCompletionToCurrentVoice(channel, frame);
+		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+			ApplyCompletionToCurrentVoice(channel, frame);
+		for (int i = _virtualVoices.Count - 1; i >= 0; i--)
+		{
+			PlaybackVoice voice = _virtualVoices[i];
+			switch (voice.ConsumeEventFilterCompletion(frame))
+			{
+				case FilterEnvelopeCompletionAction.Cut:
+					voice.AddCutTo(GetChannelState(
+						voice.OriginPhysicalChannel,
+						voice.OriginPhysicalPlaybackOwner).AntiClickTail);
+					RetireDisplacedVoiceAt(i);
+					break;
+				case FilterEnvelopeCompletionAction.Off:
+					voice.ApplyNoteOff(frame, SampleRate);
+					break;
+			}
+		}
+	}
+
+	private void ApplyCompletionToCurrentVoice(PlaybackChannelState channel, long frame)
+	{
+		PlaybackVoice? voice = channel.CurrentVoice;
+		if (voice is null) return;
+		switch (voice.ConsumeEventFilterCompletion(frame))
+		{
+			case FilterEnvelopeCompletionAction.Cut:
+				channel.CutCurrentVoice();
+				break;
+			case FilterEnvelopeCompletionAction.Off:
+				voice.ApplyNoteOff(frame, SampleRate);
+				CullFinishedCurrentVoice(channel, frame);
+				break;
 		}
 	}
 
@@ -2149,7 +2212,8 @@ public sealed class PlaybackSession
 
 	private void ApplyCurrentNoteFilterEnvelopeCommand(
 		PlaybackChannelState channel,
-		SetNoteFilterParameterEnvelopeCommand command, long frame)
+		SetNoteFilterParameterEnvelopeCommand command, long frame,
+		FilterEnvelopeCompletionAction completionAction = FilterEnvelopeCompletionAction.None)
 	{
 		if (channel.CurrentFlattenedSource is FlattenedSourceVolume controller)
 		{
@@ -2205,7 +2269,8 @@ public sealed class PlaybackSession
 		{
 			IEnvelopeCurve? curve = ResolveNoteFilterEnvelope(command);
 			voice.SetEventFilterParameterEnvelope(
-				command.StageId, command.ParameterName, curve, frame);
+				command.StageId, command.ParameterName, curve, frame,
+				completionAction);
 		}
 		catch (Exception error) when (error is ArgumentException
 			or InvalidOperationException or KeyNotFoundException
@@ -2374,7 +2439,7 @@ public sealed class PlaybackSession
 						ApplyCurrentNoteFilterEnvelopeCommand(channel,
 							new SetNoteFilterParameterEnvelopeCommand(
 								action.StageId, action.ParameterName, action.EnvelopeId),
-							eventFrame);
+							eventFrame, action.CompletionAction);
 				return;
 			}
 
@@ -2418,7 +2483,7 @@ public sealed class PlaybackSession
 					ApplyCurrentNoteFilterEnvelopeCommand(channel,
 						new SetNoteFilterParameterEnvelopeCommand(
 							action.StageId, action.ParameterName, action.EnvelopeId),
-						eventFrame);
+						eventFrame, action.CompletionAction);
 		}
 		catch (Exception exception) when (exception is ArgumentException
 			or InvalidOperationException or KeyNotFoundException

@@ -855,6 +855,96 @@ public sealed class NoteFilterParameterEnvelopeTests
         Assert.That(authored.PreparePendingNoteFilterEnvelopeControls(), Is.Zero);
     }
 
+    [Test]
+    public void ThenOffReleasesAtNaturalCompletionWithBlockIndependentPcm()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FiniteCurve());
+        NoteSchedule schedule = Schedule(Event(0, 0,
+            new StartNoteCommand(Source) { EventFilterConfiguration = Echo() },
+            new SetNoteFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Sweep\" THEN OFF")));
+        PlaybackSession whole = Session(resolver, schedule);
+        PlaybackSession split = Session(resolver, schedule);
+        whole.FilterAssignmentNames = Names();
+        split.FilterAssignmentNames = Names();
+        float[] a = new float[7], b = new float[7];
+        split.Render(0, 3, b.AsSpan(0, 3));
+        Assert.That(split.GetChannelState(0).CurrentVoice!.SoundState.NoteOffTime,
+            Is.Null, "the last envelope sample is not yet completion");
+        split.Render(3, 1, b.AsSpan(3, 1));
+        Assert.That(split.GetChannelState(0).CurrentVoice!.SoundState.NoteOffTime,
+            Is.EqualTo(TimeSpan.FromMilliseconds(3)));
+        split.Render(4, 3, b.AsSpan(4, 3));
+        whole.Render(0, 7, a);
+        Assert.That(whole.GetChannelState(0).CurrentVoice!.SoundState.NoteOffTime,
+            Is.EqualTo(TimeSpan.FromMilliseconds(3)));
+        Assert.That(a, Is.EqualTo(b).Within(1e-6f));
+    }
+
+    [Test]
+    public void ThenCutOnlyCutsOriginalDisplacedVoiceAfterNnaContinue()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FiniteCurve());
+        PlaybackSession session = Session(resolver, Schedule(
+            Event(0, 0, new StartNoteCommand(Source) { EventFilterConfiguration = Echo() },
+                new SetNoteFilterAssignmentsCommand(
+                    "echo.Feedforward = @\"Sweep\" THEN CUT")),
+            Event(1, 0, new StartNoteCommand(Source))));
+        session.FilterAssignmentNames = Names();
+        float[] samples = new float[4];
+        session.Render(0, 2, samples.AsSpan(0, 2));
+        Assert.That(session.VirtualVoices, Has.Count.EqualTo(1));
+        session.Render(2, 2, samples.AsSpan(2, 2));
+        Assert.That(session.VirtualVoices, Is.Empty);
+        Assert.That(session.GetChannelState(0).CurrentVoice, Is.Not.Null,
+            "the replacement never inherits its predecessor's action");
+    }
+
+    [Test]
+    public void ThenCutOnSustainWaitsForExternalOffAndFiniteReleaseTail()
+    {
+        TestResolver resolver = new(new ConstantSound(), new SustainingReleaseCurve());
+        PlaybackSession session = Session(resolver, Schedule(
+            Event(0, 0, new StartNoteCommand(Source) { EventFilterConfiguration = Echo() },
+                new SetNoteFilterAssignmentsCommand(
+                    "echo.Feedforward = @\"Sweep\" THEN CUT")),
+            Event(3, 0, new NoteOffCommand())));
+        session.FilterAssignmentNames = Names();
+        float[] values = new float[7];
+        session.Render(0, 5, values.AsSpan(0, 5));
+        Assert.That(session.GetChannelState(0).CurrentVoice, Is.Not.Null);
+        session.Render(5, 2, values.AsSpan(5, 2));
+        Assert.That(session.GetChannelState(0).CurrentVoice, Is.Null,
+            "released note is cut on the Envelope's exclusive end frame");
+    }
+
+    [Test]
+    public void SimultaneousOffAndCutOnSameOriginalVoicePreferCut()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FiniteCurve());
+        PlaybackSession session = Session(resolver, Schedule(Event(0, 0,
+            new StartNoteCommand(Source) { EventFilterConfiguration = Echo() },
+            new SetNoteFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Sweep\" THEN OFF\necho.Mix = @\"Sweep\" THEN CUT"))));
+        session.FilterAssignmentNames = Names();
+        float[] values = new float[4];
+        session.Render(0, 4, values);
+        Assert.That(session.GetChannelState(0).CurrentVoice, Is.Null);
+    }
+
+    private sealed class FiniteCurve : IEnvelopeCurve
+    {
+        public double GetValue(long activeFrame, int rate, long? off) => 0.5;
+        public long? GetEndActiveFrameExclusiveWithoutNoteOff(int rate) => 3;
+        public long? GetEndActiveFrameExclusiveAfterNoteOff(long off, int rate) => off + 2;
+    }
+
+    private sealed class SustainingReleaseCurve : IEnvelopeCurve
+    {
+        public double GetValue(long activeFrame, int rate, long? off) => 0.5;
+        public long? GetEndActiveFrameExclusiveAfterNoteOff(long off, int rate) => off + 2;
+    }
+
     private static FilterAssignmentEnvelopeNames Names()
     {
         SongDocument song = new();

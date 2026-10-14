@@ -734,3 +734,21 @@ completion is unbounded. This is read-only observation and does not call
 Note Off, Cut or any host method. Tests assert the exclusive final sample,
 nonzero start, pause/resume and sustain release. The runtime trigger is the
 next unchecked TODO, not part of this milestone.
+
+
+### Note-owned completion actions (14 October 2026)
+
+For Note Filter assignments (excluding flattened logical controllers, tracked
+separately), the parsed `THEN OFF` / `THEN CUT` suffix attaches a one-shot
+action to the specific `PlaybackVoice` and its particular parameter binding.
+Detaching/replacing the binding cancels the older action; new Notes never
+acquire it by host reuse. NNA Continue retains it on the displaced original
+voice. Completion is a real render-segment boundary at the first frame after
+the final Envelope sample, so large and small PCM blocks agree. A naturally
+ending no-sustain Envelope can send Off or Cut; a sustaining Envelope has no
+held completion, but after external Note Off, Cut may terminate its original
+released voice before the normal sound tail. Another Off after user Off is
+suppressed; simultaneous actions on the same voice prefer Cut. The renderer
+only observes frozen per-voice curves, not live song definitions or callback-
+side script compilation. Channel-host and flattened-controller completion
+ownership remain explicitly **open**.
