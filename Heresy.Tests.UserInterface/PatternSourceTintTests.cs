@@ -154,7 +154,7 @@ public sealed class PatternSourceTintTests
     }
 
     [AvaloniaTest]
-    public void NoteTintComposesBelowTextAndRefreshesOnlyAffectedFields()
+    public void WholeCellTintComposesOverRowShadeBelowIndependentEffectTabs()
     {
         DocumentWorkspace workspace = new();
         DataPatternDefinition sourceA =
@@ -168,42 +168,128 @@ public sealed class PatternSourceTintTests
             new StartPatternNote());
         PatternDocumentEditor.SetNote(workspace, pattern, 3, 0,
             new StartPatternNote());
+        pattern.Grid.GetOrCreateCell(1, 0).Effects.Add(
+            new TrackerVolumeSlidePatternEffect(0x12));
         PatternEditorControl editor = new(new Window(), workspace, pattern,
             () => { }, _ => { });
         var notes = Fields(editor, "_noteFields");
         var sources = Fields(editor, "_sourceFields");
+        var volumes = Fields(editor, "_volumeFields");
         var cells = Fields(editor, "_cellBorders");
-        AssertTint(notes[(1, 0)], sourceA.SourceColourArgb!.Value);
-        AssertTint(notes[(3, 0)], sourceA.SourceColourArgb!.Value);
-        Assert.That(notes[(0, 0)].Background, Is.SameAs(Brushes.Transparent));
+        var tints = TintLayers(editor);
+        var effects = EffectStrips(editor);
+
+        // The entire inner grid has the translucent source background, not
+        // the Note-only subfield. Its border parent's row shade remains a
+        // distinct underlayer for beat/selection/playback-follow repaint.
+        Assert.That(cells[(1, 0)].Child, Is.SameAs(tints[(1, 0)]));
+        AssertTint(tints[(1, 0)], sourceA.SourceColourArgb!.Value);
+        AssertTint(tints[(3, 0)], sourceA.SourceColourArgb!.Value);
+        Assert.That(tints[(0, 0)].Background, Is.SameAs(Brushes.Transparent));
+        Assert.That(notes[(1, 0)].Background, Is.SameAs(Brushes.Transparent));
         Assert.That(sources[(1, 0)].Background, Is.SameAs(Brushes.Transparent));
+        Assert.That(volumes[(1, 0)].Background, Is.SameAs(Brushes.Transparent));
         Assert.That(cells[(1, 0)].BorderBrush, Is.SameAs(Brushes.Gray));
-        IBrush original = notes[(1, 0)].Background!;
+        IBrush rowShade = cells[(1, 0)].Background!;
+        IBrush original = tints[(1, 0)].Background!;
+
+        // Sticker is the last painted overlay; it has its own opaque effect
+        // palette background and never inherits the underlying source hue.
+        Assert.That(tints[(1, 0)].Children.Last(), Is.SameAs(effects[(1, 0)]));
+        Canvas effectCanvas = (Canvas)effects[(1, 0)].Content!;
+        Border effectTab = effectCanvas.Children.OfType<Border>().Single();
+        IBrush effectBrush = effectTab.Background!;
+        Assert.That(effectBrush, Is.TypeOf<SolidColorBrush>());
+        Assert.That(((SolidColorBrush)effectBrush).Color.A, Is.EqualTo(255));
         uint audio = workspace.Document.AudioRevision;
 
-        // Source-only edit on row zero updates *later* inherited note fields,
-        // but does not reconstruct controls or change an unrelated note.
+        // A Source-only edit repaints *later* inherited whole cells in-place,
+        // not their child fields, border/focus/selection shading or stickers.
         PatternDocumentEditor.SetSource(workspace, pattern, 0, 0, sourceB.Id);
         Invoke(editor, "RefreshUnderlyingCell", pattern, 0, 0);
-        AssertTint(notes[(1, 0)], sourceB.SourceColourArgb!.Value);
-        AssertTint(notes[(3, 0)], sourceB.SourceColourArgb!.Value);
-        Assert.That(notes[(1, 0)].Background, Is.Not.SameAs(original));
-        IBrush retained = notes[(1, 0)].Background!;
+        AssertTint(tints[(1, 0)], sourceB.SourceColourArgb!.Value);
+        AssertTint(tints[(3, 0)], sourceB.SourceColourArgb!.Value);
+        Assert.That(tints[(1, 0)].Background, Is.Not.SameAs(original));
+        Assert.That(cells[(1, 0)].Background, Is.SameAs(rowShade));
+        Assert.That(notes[(1, 0)].Background, Is.SameAs(Brushes.Transparent));
+        Assert.That(sources[(1, 0)].Background, Is.SameAs(Brushes.Transparent));
+        Assert.That(volumes[(1, 0)].Background, Is.SameAs(Brushes.Transparent));
+        Assert.That(effectTab.Background, Is.SameAs(effectBrush));
+        IBrush retained = tints[(1, 0)].Background!;
 
-        // A note-off edit does not displace source memory.
+        // Reapplying focus, row and selection presentation cannot erase the
+        // independent cell tint. Note Off never acquires a source colour.
+        Invoke(editor, "RefreshCursorVisuals");
+        Assert.That(tints[(1, 0)].Background, Is.SameAs(retained));
         PatternDocumentEditor.SetNote(workspace, pattern, 2, 0,
             new PatternNoteOff());
         Invoke(editor, "RefreshUnderlyingCell", pattern, 2, 0);
-        Assert.That(notes[(1, 0)].Background, Is.SameAs(retained));
-        Assert.That(notes[(2, 0)].Background, Is.SameAs(Brushes.Transparent));
+        Assert.That(tints[(1, 0)].Background, Is.SameAs(retained));
+        Assert.That(tints[(2, 0)].Background, Is.SameAs(Brushes.Transparent));
         PatternDocumentEditor.SetSource(workspace, pattern, 0, 0, ObjectId.None);
         Invoke(editor, "RefreshUnderlyingCell", pattern, 0, 0);
+        Assert.That(tints[(1, 0)].Background, Is.SameAs(Brushes.Transparent));
+        Assert.That(tints[(3, 0)].Background, Is.SameAs(Brushes.Transparent));
         Assert.That(notes[(1, 0)].Background, Is.SameAs(Brushes.Transparent));
-        Assert.That(notes[(3, 0)].Background, Is.SameAs(Brushes.Transparent));
-        Assert.That(sources[(1, 0)].Background, Is.SameAs(Brushes.Transparent));
+        Assert.That(effectTab.Background, Is.SameAs(effectBrush));
         Assert.That(cells[(1, 0)].BorderBrush, Is.SameAs(Brushes.Gray));
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 3),
             "only explicit song edits advance revisions, not UI tint refresh");
+    }
+
+    [AvaloniaTest]
+    public void RepeatedSequenceOccurrencesUpdateOnlyAffectedWholeCellTints()
+    {
+        DocumentWorkspace workspace = new();
+        DataPatternDefinition sourceA =
+            PatternDocumentEditor.CreateDataPattern(workspace, "A", 1, 1);
+        DataPatternDefinition sourceB =
+            PatternDocumentEditor.CreateDataPattern(workspace, "B", 1, 1);
+        DataPatternDefinition selectA =
+            PatternDocumentEditor.CreateDataPattern(workspace, "Select A", 1, 1);
+        DataPatternDefinition selectB =
+            PatternDocumentEditor.CreateDataPattern(workspace, "Select B", 1, 1);
+        DataPatternDefinition repeat =
+            PatternDocumentEditor.CreateDataPattern(workspace, "Repeat", 2, 1);
+        PatternDocumentEditor.SetSource(workspace, selectA, 0, 0, sourceA.Id);
+        PatternDocumentEditor.SetSource(workspace, selectB, 0, 0, sourceB.Id);
+        PatternDocumentEditor.SetNote(workspace, repeat, 0, 0, new StartPatternNote());
+        PatternDocumentEditor.SetNote(workspace, repeat, 1, 0, new StartPatternNote());
+        DataSequenceDefinition sequence = new(workspace.Document.AllocateObjectId(), "Order");
+        sequence.Entries.Add(new SequenceEntry(selectA.Id));
+        sequence.Entries.Add(new SequenceEntry(repeat.Id));
+        sequence.Entries.Add(new SequenceEntry(selectB.Id));
+        sequence.Entries.Add(new SequenceEntry(repeat.Id));
+        workspace.Document.Add(sequence);
+        PatternEditorContext context =
+            PatternEditorContext.ForSequence(workspace.Document, sequence, 0);
+        PatternEditorControl editor = new(new Window(), workspace, context,
+            () => { }, _ => { });
+        var cells = Fields(editor, "_cellBorders");
+        var tints = TintLayers(editor);
+        AssertTint(tints[(1, 0)], sourceA.SourceColourArgb!.Value);
+        AssertTint(tints[(2, 0)], sourceA.SourceColourArgb!.Value);
+        AssertTint(tints[(4, 0)], sourceB.SourceColourArgb!.Value);
+        AssertTint(tints[(5, 0)], sourceB.SourceColourArgb!.Value);
+        Assert.That(tints[(0, 0)].Background, Is.SameAs(Brushes.Transparent),
+            "a Source-only row is never a Note-start tint");
+        IBrush unaffected = tints[(4, 0)].Background!;
+        Grid previous = tints[(1, 0)];
+        Border cell = cells[(1, 0)];
+        uint audio = workspace.Document.AudioRevision;
+
+        PatternDocumentEditor.SetSource(workspace, selectA, 0, 0, sourceB.Id);
+        Invoke(editor, "RefreshUnderlyingCell", selectA, 0, 0);
+        Assert.That(tints[(1, 0)], Is.SameAs(previous));
+        Assert.That(cells[(1, 0)], Is.SameAs(cell),
+            "a downstream change must not rebuild the tracker grid");
+        AssertTint(tints[(1, 0)], sourceB.SourceColourArgb!.Value);
+        AssertTint(tints[(2, 0)], sourceB.SourceColourArgb!.Value);
+        Assert.That(tints[(4, 0)].Background, Is.SameAs(unaffected));
+        Assert.That(tints[(5, 0)].Background, Is.SameAs(unaffected));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 1));
+        Assert.That(repeat.Grid[0, 0]!.SourceId.IsNone, Is.True,
+            "projected tints cannot write inherited Source IDs into a Pattern");
     }
 
     private static DataPatternDefinition Source(SongDocument song, string name)
@@ -213,6 +299,18 @@ public sealed class PatternSourceTintTests
         song.Add(source);
         return source;
     }
+
+    private static Dictionary<(int Row, int Channel), Grid> TintLayers(
+        PatternEditorControl editor)
+        => (Dictionary<(int Row, int Channel), Grid>)
+            typeof(PatternEditorControl).GetField("_cellTintLayers",
+                BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(editor)!;
+
+    private static Dictionary<(int Row, int Channel), PatternEffectStripControl> EffectStrips(
+        PatternEditorControl editor)
+        => (Dictionary<(int Row, int Channel), PatternEffectStripControl>)
+            typeof(PatternEditorControl).GetField("_effectStrips",
+                BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(editor)!;
 
     private static Dictionary<(int Row, int Channel), Border> Fields(
         PatternEditorControl editor, string name)
@@ -225,7 +323,7 @@ public sealed class PatternSourceTintTests
         => typeof(PatternEditorControl).GetMethod(name,
             BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(editor, args);
 
-    private static void AssertTint(Border field, uint argb)
+    private static void AssertTint(Grid field, uint argb)
     {
         Assert.That(field.Background, Is.TypeOf<SolidColorBrush>());
         Color c = ((SolidColorBrush)field.Background!).Color;

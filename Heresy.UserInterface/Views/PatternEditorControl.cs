@@ -118,6 +118,9 @@ public sealed class PatternEditorControl : UserControl
 	};
 	private DataPatternDefinition? _editingTitlePattern;
 	private readonly Dictionary<(int Row, int Channel), Border> _cellBorders = [];
+	// Translucent source colour belongs to the whole cell content layer,
+	// above row/selection/playback shading and below independent effect tabs.
+	private readonly Dictionary<(int Row, int Channel), Grid> _cellTintLayers = [];
 	private readonly Dictionary<int, Border> _rowHeaders = [];
 	private readonly HashSet<int> _playbackDisplayRows = [];
 	private IReadOnlyDictionary<(int Row, int Channel),
@@ -762,6 +765,7 @@ public sealed class PatternEditorControl : UserControl
 	{
 		CollapseVisualEffects(collapseCursor: true);
 		_cellBorders.Clear();
+		_cellTintLayers.Clear();
 		_rowHeaders.Clear();
 		_noteFields.Clear();
 		_noteTexts.Clear();
@@ -889,7 +893,7 @@ public sealed class PatternEditorControl : UserControl
 				VerticalAlignment = VerticalAlignment.Center,
 				BorderBrush = Brushes.Transparent,
 				BorderThickness = new Thickness(1),
-				Background = GetSourceTintBrush(displayRow, channel),
+				Background = Brushes.Transparent,
 				Child = note,
 			};
 
@@ -1014,7 +1018,14 @@ public sealed class PatternEditorControl : UserControl
 		ApplyEditorIndications(note, noteField, volumeField,
 			effects, view.NoteText, indication, seek);
 
-		Grid content = new();
+		// The cell parent retains the theme/row/selection shade. Its child
+		// provides the source tint across Note, Source, Volume and the effect
+		// edge, while the effect tabs remain opaque independently coloured
+		// children painted on top.
+		Grid content = new()
+		{
+			Background = GetSourceTintBrush(displayRow, channel),
+		};
 		content.ColumnDefinitions.Add(
 			new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
 		content.ColumnDefinitions.Add(
@@ -1056,6 +1067,7 @@ public sealed class PatternEditorControl : UserControl
 			OnCellTextInput(displayRow, channel, e);
 
 		_cellBorders[(displayRow, channel)] = cell;
+		_cellTintLayers[(displayRow, channel)] = content;
 		_noteFields[(displayRow, channel)] = noteField;
 		_noteTexts[(displayRow, channel)] = note;
 		_sourceFields[(displayRow, channel)] = sourceField;
@@ -3596,19 +3608,20 @@ public sealed class PatternEditorControl : UserControl
 	}
 
 	/// <summary>Recalculate channel Source memory after an edit, but only
-	/// repaint Note fields whose resolved tint actually changed. Existing
-	/// selection, playback rows, focus borders and effect strips are untouched.
-	/// Sequence occurrences are evaluated separately in display order.</summary>
+	/// repaint entire cell-content tint layers whose effective source changed.
+	/// The separate row/selection/playback shade, focus borders and independently
+	/// coloured effect strips are untouched. Sequence occurrences are evaluated
+	/// separately in display order.</summary>
 	private void RefreshSourceTints()
 	{
 		IReadOnlyDictionary<(int Row, int Channel), uint> updated =
 			PatternSourceTintResolver.Analyze(_workspace.Document, _context);
-		foreach (((int row, int channel), Border field) in _noteFields)
+		foreach (((int row, int channel), Grid tintLayer) in _cellTintLayers)
 		{
 			bool previously = _sourceTints.TryGetValue((row, channel), out uint oldTint);
 			bool now = updated.TryGetValue((row, channel), out uint newTint);
 			if (previously != now || (now && oldTint != newTint))
-				field.Background = now ? TintBrush(newTint) : Brushes.Transparent;
+				tintLayer.Background = now ? TintBrush(newTint) : Brushes.Transparent;
 		}
 		_sourceTints = updated;
 	}
