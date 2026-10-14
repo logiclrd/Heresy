@@ -2,7 +2,6 @@ using System;
 using System.Reflection;
 using System.Threading.Tasks;
 
-using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless.NUnit;
 using Avalonia.Input;
@@ -166,16 +165,16 @@ public sealed class PatternPageNavigationTests
 		DocumentWorkspace workspace = new();
 		DataPatternDefinition pattern = PatternDocumentEditor.CreateDataPattern(
 			workspace, "Visible rows", rowCount: 96, channelCount: 2);
+		Window owner = new() { Width = 920, Height = 880 };
 		PatternEditorControl editor = new(
-			new Window(), workspace,
+			owner, workspace,
 			PatternEditorContext.ForPattern(workspace.Document, pattern),
 			() => { }, _ => { });
-
-		// Measure/arrange the real editor so the ScrollViewer reports the
-		// usable grid viewport, not the window (which includes toolbars,
-		// chord controls, status text, and possibly a horizontal scrollbar).
-		editor.Measure(new Size(920, 880));
-		editor.Arrange(new Rect(0, 0, 920, 880));
+		// Avalonia ScrollViewer.Viewport is calculated by a templated
+		// ScrollContentPresenter only once attached to a TopLevel.
+		owner.Content = editor;
+		owner.Show();
+		owner.UpdateLayout();
 		ScrollViewer scroll = (ScrollViewer)typeof(PatternEditorControl)
 			.GetField("_scroll", BindingFlags.NonPublic | BindingFlags.Instance)!
 			.GetValue(editor)!;
@@ -212,10 +211,12 @@ public sealed class PatternPageNavigationTests
 		DocumentWorkspace workspace = new();
 		DataPatternDefinition pattern = PatternDocumentEditor.CreateDataPattern(
 			workspace, "Page selection", rowCount: 70, channelCount: 1);
+		Window owner = new() { Width = 1100, Height = 820 };
 		PatternEditorControl editor = new(
-			new Window(), workspace, pattern, () => { }, _ => { });
-		editor.Measure(new Size(1100, 820));
-		editor.Arrange(new Rect(0, 0, 1100, 820));
+			owner, workspace, pattern, () => { }, _ => { });
+		owner.Content = editor;
+		owner.Show();
+		owner.UpdateLayout();
 		ScrollViewer scroll = (ScrollViewer)typeof(PatternEditorControl)
 			.GetField("_scroll", BindingFlags.NonPublic | BindingFlags.Instance)!
 			.GetValue(editor)!;
