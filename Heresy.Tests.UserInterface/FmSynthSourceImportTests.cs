@@ -113,6 +113,13 @@ public sealed class FmSynthSourceImportTests
         copy.Id.Should().NotBe(rootId);
         clonedNested.Id.Should().NotBe(nestedId);
         clonedSample.Id.Should().NotBe(sampleId);
+        copy.SourceColourArgb.Should().Be(root.SourceColourArgb);
+        clonedNested.SourceColourArgb.Should().Be(nested.SourceColourArgb);
+        clonedSample.SourceColourArgb.Should().Be(sample.SourceColourArgb);
+        clonedInstrument.SourceColourArgb.Should().Be(instrument.SourceColourArgb);
+        clonedScript.SourceColourArgb.Should().Be(scripted.SourceColourArgb);
+        target.Document.AudioRevision.Should().Be(target.Document.DocumentRevision,
+            "colour-preserving imports create normal song objects without an extra revision");
         clonedSample.PendingAsset.Should().NotBeNull();
         clonedSample.PendingAsset!.Bytes.ToArray().Should().Equal(Wave());
         clonedSample.Asset.Should().BeNull(
