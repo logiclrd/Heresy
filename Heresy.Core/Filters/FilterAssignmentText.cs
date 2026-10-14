@@ -124,7 +124,8 @@ public static class FilterAssignmentText
     /// before publishing anything to a live host/note.
     /// </summary>
     public static FilterInstance ApplyValidToClone(
-        FilterInstance selected, string text)
+        FilterInstance selected, string text,
+        Func<FilterInstance, bool>? canPrepare = null)
     {
         ArgumentNullException.ThrowIfNull(selected);
         ArgumentNullException.ThrowIfNull(text);
@@ -240,6 +241,49 @@ public static class FilterAssignmentText
                 try { result.SetStageParameters(stageId, [assignment]); }
                 catch (ArgumentException) { }
             }
+        }
+        // A value may satisfy the authoring descriptor yet be unsupported
+        // by this specific runtime (e.g. above the current Nyquist limit).
+        // Retry outside PCM against the caller's full DSP preflight, first
+        // as whole stages, then by omitting one suspect value, and finally
+        // as individual accepted changes. No trial is ever published.
+        if (canPrepare is not null && result.Revision != selected.Revision
+            && !canPrepare(result))
+        {
+            FilterInstance accepted = selected.Clone();
+            foreach (int stageId in entries.Select(e => e.Id).Distinct())
+            {
+                var stage = entries.Where(e => e.Id == stageId)
+                    .Select(e => new KeyValuePair<string, FilterParameterValue>(
+                        e.Name, e.Value)).ToArray();
+                bool TryAccept(KeyValuePair<string, FilterParameterValue>[] batch)
+                {
+                    FilterInstance trial = accepted.Clone();
+                    try
+                    {
+                        trial.SetStageParameters(stageId, batch);
+                        if (!canPrepare(trial))
+                            return false;
+                        accepted = trial;
+                        return true;
+                    }
+                    catch (ArgumentException) { return false; }
+                }
+                if (TryAccept(stage))
+                    continue;
+                bool oneRejected = false;
+                for (int omitted = stage.Length - 1; omitted >= 0; omitted--)
+                    if (TryAccept(stage.Where((_, i) => i != omitted).ToArray()))
+                    {
+                        oneRejected = true;
+                        break;
+                    }
+                if (oneRejected)
+                    continue;
+                foreach (var entry in stage)
+                    TryAccept([entry]);
+            }
+            result = accepted;
         }
         return result;
     }
