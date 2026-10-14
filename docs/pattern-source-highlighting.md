@@ -1,6 +1,6 @@
 # Pattern editor — source tints, flattened-range shadows and overlap diagnostics
 
-**Status:** Source-colour persistence, effective-source Note-start resolution, whole-cell source tinting, nonserialized bounds caching and **finite flattened Pattern/Sequence rectangle overlays** are implemented as of 13 October 2026. The separate malformed-overlap red warning remains open. See [todo.md](todo.md) for separately closable tasks. The feature visualizes already-existing recursive source semantics without changing their scheduling, rendering or new-note actions.
+**Status:** All planned Pattern source-colour visualization milestones are implemented as of 14 October 2026: persistent source tints, effective-source whole-cell colouring, nonserialized bounds, finite flattened Pattern/Sequence range overlays, and malformed-overlap red diagnostics. See [todo.md](todo.md) for future independently actionable work. See [todo.md](todo.md) for separately closable tasks. The feature visualizes already-existing recursive source semantics without changing their scheduling, rendering or new-note actions.
 
 ## Source colour ownership and persistence
 
@@ -20,7 +20,11 @@ Use the source's 20%-alpha colour for the interior and an outside edge/border of
 
 ## Conflicts and priority
 
-If a later note start lies inside a previous note's already depicted region, **the later note's own highlight is exactly `0x80FF0000` (ARGB)** instead of its normal source tint. Keep the previous flattening range and stronger border **present underneath/around that cell**. This marks an existing malformed overlap for the editor user, without reinterpreting renderer precedence. Use deterministic ordering by ascending row, then ascending channel (later row beats earlier; within one row later channel beats earlier), including multiple overlapping nested regions. Clarify any deliberately different playback-level collision precedence separately; a painting rule must not silently change actual note processing.
+If a later authored Note start lies inside a previously projected finite flattened range, **the later note's entire cell background is exactly `0x80FF0000` (ARGB)** instead of its normal source tint. All preceding range fills and stronger exterior outlines remain present in separate overlays above that background, including under/around the conflicting cell. The diagnostic does not remove the later start's own flattening range when it has one.
+
+Precedence is **ascending displayed row, then ascending channel**: a start only collides with ranges contributed by earlier positions, and never with its own 1×1 origin. Within one row, a larger channel index is later; across rows, the larger row index is later regardless of channel. Multiple earlier ranges may cover the same later Note start; red is still a single exact diagnostic brush and none of those earlier fills/borders are erased. A later *authored* `StartPatternNote` is sufficient to warn even if its effective Source is unresolved; that does **not** invent a source tint or imply that the Note will actually play. Source-only, effects-only, Off and Cut cells do not trigger red diagnostics.
+
+This is an **editor visualization of overlapping authoring footprints**, not a mutation of renderer precedence, channel lifetime, Mixdown routing or source selection. It preserves the author's notes/effects, real Source identity and tooltips, selection/focus borders and independent effect-sticker colours.
 
 ## Required coverage
 
@@ -226,6 +230,54 @@ Sequence duration/skip calculations, no invented Script/flow bounds,
 distinct repeated host occurrences, live bounds edits, mixdown
 negative controls, and headless Avalonia placement/colour/focus tests.
 
-The **next independent milestone** is the pre-specified red
-`0x80FF0000` malformed-overlap indication on later Note starts,
-while preserving earlier range fills and outlines.
+The subsequent malformed-overlap red diagnostic was implemented on
+14 October 2026, as documented below.
+
+## Implemented — malformed-overlap red Note-start diagnostics (14 October 2026)
+
+`FlattenedSourceRangeProjection` now materializes two distinct results
+from one **row-major, channel-minor** walk of the displayed Pattern:
+(1) the existing ordered independent finite flattened-range fragments,
+and (2) `ConflictingNoteStarts`, the set of authored later
+`StartPatternNote` addresses already occupied by an *earlier* range
+when encountered. Conflict lookup happens **before** appending the
+current start's own projected rectangle. An isolated origin (including
+a 1×1 footprint) cannot conflict with itself. The scan is deterministic
+for same-row/later-column as well as later-row starts, intersecting
+several earlier rectangles, and repeated Sequence occurrences.
+Uncertain/scripted sources create no guessed range; an authored later
+start with an unresolved Source can nevertheless be flagged where a
+*known earlier* finite range provides a definite painted conflict.
+Non-start events (Off/Cut, Source-only, Volume-only, effects-only) are
+never marked.
+
+`ApplyConflictTints` produces a **display-only** copy of the existing
+effective-source tint projection, replacing only those conflicting
+start addresses with exactly **`0x80FF0000`**. This does not change
+`PatternSourceTintResolver.Analyze`, `SongObject.SourceColourArgb`,
+inherited/explicit Source precedence, Source-column labels or tooltips.
+A later flattened start can be red at its origin and still contribute
+its independently colour-coded range. Private mixdown starts can be red
+inside a previous shadow but contribute no flattened rectangle.
+
+`PatternEditorControl` builds the current finite-range projection
+before constructing the base tint layer. On edit, a **single new
+projection** supplies both `RefreshSourceTints(projection)` (only changed
+whole-cell backgrounds) and fragment-by-fragment range repainting
+(only changed separate outlines/fills). The earlier ranges stay in their
+noninteractive layered `Grid`, visibly above the red translucent
+background and below text, independently opaque effect stickers and
+cursor/focus borders. No authored note is removed or normalized, no
+playback/rendering effect is changed, and paint-only refresh never
+advances document or audio revision or changes v1 persistence.
+
+`PatternFlattenedOverlapTests` covers exact ARGB colour, stable
+row/channel precedence, intersecting multiple older flattened
+rectangles, self-origin exclusion, unresolved and mixdown later
+starts, non-start exclusions, Source-memory edits and revocation,
+different repeated Sequence-order inheritance, and headless Avalonia
+compositing, untouched earlier edges/sticker/tooltip identities and
+in-place add/remove of the red indication.
+
+This completes the source-colour visualization feature. Remaining
+editor tasks are tracked separately in `todo.md`.
