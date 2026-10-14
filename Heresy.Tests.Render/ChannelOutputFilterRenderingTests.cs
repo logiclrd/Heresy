@@ -627,6 +627,43 @@ public sealed class ChannelOutputFilterRenderingTests
     }
 
     [Test]
+    public void EntirelyInvalidHostTextPreservesSelectedFilterAndExactHistory()
+    {
+        TestResolver sounds = new();
+        sounds.Add(PulseId, new PulseSound());
+        PlaybackSession Make()
+        {
+            PlaybackSession session = Session(sounds);
+            session.ApplyLiveEvent(ChannelTarget.Physical(0), [
+                new SetChannelFilterCommand { Configuration = Echo(22211, 0.002) },
+                new StartNoteCommand(PulseId),
+            ]);
+            session.Render(0, 1, new float[1]);
+            return session;
+        }
+        PlaybackSession mixed = Make(), baseline = Make();
+        List<string> warnings = [];
+        mixed.ChannelFilterCommandRejected = warnings.Add;
+        mixed.ApplyLiveEvent(ChannelTarget.Physical(0), [
+            new SetChannelFilterAssignmentsCommand("""
+                echo.Unknown = 9
+                echo.DelaySeconds = NaN
+                echo.Feedforward = nonsense
+                other.Mix = 0
+                """),
+        ]);
+        float[] actual = new float[8], expected = new float[8];
+        mixed.Render(1, actual.Length, actual);
+        baseline.Render(1, expected.Length, expected);
+        Assert.Multiple(() =>
+        {
+            Assert.That(warnings, Is.Empty);
+            Assert.That(actual, Is.EqualTo(expected),
+                "an all-invalid command must preserve the very same DSP history");
+        });
+    }
+
+    [Test]
     public void UnsupportedNyquistTextValueDoesNotSuppressSupportedHostMode()
     {
         TestResolver sounds = new();
