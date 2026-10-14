@@ -130,7 +130,9 @@ public sealed class InstrumentToneGridSelection
 			if (Focused is Cell focused &&
 				Position(rows, focused.ToneIndex) >= 0)
 				return;
-			Focused = end;
+			// Endpoints are rows; focused editing still requires an exact
+			// column even when its previously focused tone disappeared.
+			Focused = new Cell(end.ToneIndex, Focused?.Column ?? 0);
 			return;
 		}
 		if (Focused is Cell surviving &&
