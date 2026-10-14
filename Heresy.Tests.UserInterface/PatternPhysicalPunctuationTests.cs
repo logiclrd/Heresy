@@ -85,12 +85,23 @@ public sealed class PatternPhysicalPunctuationTests
         PatternEditorControl editor = Editor(workspace, pattern);
         uint revision = workspace.Document.AudioRevision;
         Assert.That(Input(editor).EditMask, Is.EqualTo(PatternEditMask.Default));
+        PatternEditMaskStatusCell mask = MaskCell(editor);
+        Assert.Multiple(() =>
+        {
+            Assert.That(mask.NoteSegment.Opacity, Is.EqualTo(1));
+            Assert.That(mask.SourceSegment.Opacity, Is.EqualTo(1));
+            Assert.That(mask.VolumeSegment.Opacity, Is.EqualTo(1));
+            Assert.That(mask.EffectSegment.Opacity, Is.EqualTo(0.6));
+        });
 
         var first = await Press(editor, 0, 0,
             PhysicalKey.Comma, Key.W, "w");
         Assert.That(first.Handled, Is.True);
         Assert.That(Input(editor).EditMask,
             Is.EqualTo(PatternEditMask.Source | PatternEditMask.Volume));
+        Assert.That(mask.NoteSegment.Opacity, Is.EqualTo(0.6));
+        Assert.That(mask.SourceSegment.Opacity, Is.EqualTo(1));
+        Assert.That(mask.VolumeSegment.Opacity, Is.EqualTo(1));
         // A trailing text event must not trigger an unrelated command.
         Text(editor, 0, 0, "w");
         Assert.That(Input(editor).EditMask,
@@ -101,6 +112,8 @@ public sealed class PatternPhysicalPunctuationTests
         await Press(editor, 0, 0, PhysicalKey.Comma, Key.OemComma, ",");
         Text(editor, 0, 0, ",");
         Assert.That(Input(editor).EditMask, Is.EqualTo(PatternEditMask.Default));
+        Assert.That(mask.NoteSegment.Opacity, Is.EqualTo(1),
+            "the physical comma must re-enable the Note bit and its visual");
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(revision));
 
         // Source and Volume fields have their own mask bits, independently
@@ -109,12 +122,15 @@ public sealed class PatternPhysicalPunctuationTests
         await Press(editor, 0, 0, PhysicalKey.Comma, Key.Z, "z");
         Assert.That(Input(editor).EditMask,
             Is.EqualTo(PatternEditMask.Note | PatternEditMask.Volume));
+        Assert.That(mask.SourceSegment.Opacity, Is.EqualTo(0.6));
         Text(editor, 0, 0, "z");
         Assert.That(Input(editor).EditMask,
             Is.EqualTo(PatternEditMask.Note | PatternEditMask.Volume));
         SetCursor(editor, 0, 0, PatternCellField.Volume);
         await Press(editor, 0, 0, PhysicalKey.Comma, Key.W, "w");
         Assert.That(Input(editor).EditMask, Is.EqualTo(PatternEditMask.Note));
+        Assert.That(mask.VolumeSegment.Opacity, Is.EqualTo(0.6));
+        Assert.That(mask.EffectSegment.Opacity, Is.EqualTo(0.6));
         Text(editor, 0, 0, "w");
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(revision));
     }
@@ -473,6 +489,11 @@ public sealed class PatternPhysicalPunctuationTests
     private static PatternEditorControl Editor(
         DocumentWorkspace workspace, DataPatternDefinition pattern)
         => new(new Window(), workspace, pattern, () => { }, _ => { });
+
+    private static PatternEditMaskStatusCell MaskCell(PatternEditorControl editor)
+        => (PatternEditMaskStatusCell)typeof(PatternEditorControl)
+            .GetField("_editMaskDisplay", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(editor)!;
 
     private static PatternNoteInputState Input(PatternEditorControl editor)
         => (PatternNoteInputState)typeof(PatternEditorControl)

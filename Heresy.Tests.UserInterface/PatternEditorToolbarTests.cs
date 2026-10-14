@@ -4,11 +4,14 @@ using System.Reflection;
 
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Media;
+using Avalonia;
 using Avalonia.Headless.NUnit;
 
 using AwesomeAssertions;
 
 using Heresy.Core.Patterns;
+using Heresy.UserInterface.PatternEditing;
 using Heresy.Core.Objects;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.Views;
@@ -67,6 +70,81 @@ public sealed class PatternEditorToolbarTests
 		toolbar.VerticalAlignment.Should().Be(Avalonia.Layout.VerticalAlignment.Top);
 		back.VerticalAlignment.Should().Be(Avalonia.Layout.VerticalAlignment.Top);
 		scroll.HorizontalScrollBarVisibility.Should().Be(ScrollBarVisibility.Auto);
+	}
+
+	[AvaloniaTest]
+	public void MaskMiniatureAlwaysShowsTheSameCellTextAndIndependentFieldOpacities()
+	{
+		PatternEditMaskStatusCell miniature = new();
+		StackPanel content = (StackPanel)miniature.Child!;
+		TextBlock[] segments =
+		[
+			miniature.NoteSegment, miniature.SourceSegment,
+			miniature.VolumeSegment, miniature.EffectSegment,
+		];
+		segments.Should().OnlyContain(x => content.Children.Contains(x));
+		string.Join(" ", segments.Select(x => x.Text)).Should().Be("C-5 src 48 ...");
+		content.Orientation.Should().Be(Avalonia.Layout.Orientation.Horizontal);
+		content.Spacing.Should().BeGreaterThan(0);
+		for (int bits = 0; bits < 8; bits++)
+		{
+			PatternEditMask mask = (PatternEditMask)bits;
+			miniature.SetMask(mask);
+			segments[0].Opacity.Should().Be(
+				(mask & PatternEditMask.Note) != 0 ? 1.0 : 0.6);
+			segments[1].Opacity.Should().Be(
+				(mask & PatternEditMask.Source) != 0 ? 1.0 : 0.6);
+			segments[2].Opacity.Should().Be(
+				(mask & PatternEditMask.Volume) != 0 ? 1.0 : 0.6);
+			segments[3].Opacity.Should().Be(0.6);
+			string.Join(" ", segments.Select(x => x.Text))
+				.Should().Be("C-5 src 48 ...");
+		}
+	}
+
+	[AvaloniaTest]
+	public void MaskMiniatureUsesExactSourceHueAndReservesAtLeastOneEnOnRight()
+	{
+		PatternEditMaskStatusCell miniature = new();
+		uint argb = SongSourceColour.FromHue(280);
+		SolidColorBrush brush = miniature.Background.Should()
+			.BeOfType<SolidColorBrush>().Which;
+		brush.Color.Should().Be(Color.FromArgb(
+			(byte)(argb >> 24), (byte)(argb >> 16),
+			(byte)(argb >> 8), (byte)argb));
+		miniature.Margin.Right.Should().BeGreaterThanOrEqualTo(
+			miniature.NoteSegment.FontSize,
+			"the right gutter must exceed even a full 14-DIP em, not merely one en");
+		miniature.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+		((StackPanel)miniature.Child!).DesiredSize.Width.Should().BeGreaterThan(0);
+		miniature.DesiredSize.Width.Should().BeGreaterThanOrEqualTo(
+			((StackPanel)miniature.Child!).DesiredSize.Width + miniature.Margin.Right,
+			"the right gutter must be included in the measured width for narrow toolbars");
+
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern = PatternDocumentEditor.CreateDataPattern(
+			workspace, "Verse", rowCount: 2, channelCount: 1);
+		PatternEditorControl editor = new(
+			new Window(), workspace, pattern, () => { }, _ => { });
+		PatternEditMaskStatusCell actual = Field<PatternEditMaskStatusCell>(
+			editor, "_editMaskDisplay");
+		actual.Should().NotBeNull();
+		DockPanel root = (DockPanel)editor.Content!;
+		DockPanel header = (DockPanel)root.Children[0];
+		ScrollViewer scroll = (ScrollViewer)header.Children[1];
+		StackPanel toolbar = (StackPanel)scroll.Content!;
+		StackPanel controls = (StackPanel)toolbar.Children[1];
+		int index = controls.Children.IndexOf(actual);
+		index.Should().BeGreaterThan(0);
+		((TextBlock)controls.Children[index - 1]).Text.Should().Be("Mask");
+		((TextBlock)controls.Children[index + 1]).Text.Should().Be("Edit Vol");
+		scroll.HorizontalScrollBarVisibility.Should().Be(ScrollBarVisibility.Auto);
+		actual.Margin.Right.Should().BeGreaterThanOrEqualTo(
+			actual.NoteSegment.FontSize);
+		uint revision = workspace.Document.AudioRevision;
+		actual.SetMask(PatternEditMask.None);
+		workspace.Document.AudioRevision.Should().Be(revision,
+			"the visual mask example never mutates the song");
 	}
 
 	[AvaloniaTest]

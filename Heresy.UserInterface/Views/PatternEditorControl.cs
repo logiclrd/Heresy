@@ -54,11 +54,7 @@ public sealed class PatternEditorControl : UserControl
 	{
 		VerticalAlignment = VerticalAlignment.Center,
 	};
-	private readonly TextBlock _editMaskDisplay =
-		new()
-		{
-			VerticalAlignment = VerticalAlignment.Center,
-		};
+	private readonly PatternEditMaskStatusCell _editMaskDisplay = new();
 	private readonly TextBlock _editVolumeDisplay =
 		new()
 		{
@@ -2541,9 +2537,7 @@ public sealed class PatternEditorControl : UserControl
 
 	private void UpdateEditStateDisplay()
 	{
-		_editMaskDisplay.Text =
-			PatternEditMaskEditor.Describe(
-				_noteInputState.EditMask);
+		_editMaskDisplay.SetMask(_noteInputState.EditMask);
 		_editVolumeDisplay.Text =
 			_noteInputState.CurrentVolume is double volume
 				? Math.Round(
