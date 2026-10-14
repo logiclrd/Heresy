@@ -10,6 +10,7 @@ using Heresy.Render.Playback;
 using System.Text;
 
 using Heresy.Core.Objects;
+using Heresy.Core.Filters;
 using Heresy.Core.Instruments;
 using Heresy.Core.Envelopes;
 using Heresy.Core.Patterns;
@@ -27,6 +28,104 @@ namespace Heresy.Tests.Playback;
 [TestFixture]
 public sealed class PreparedIncrementalPlaybackFactoryTests
 {
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void ShiftedTextEnvelopeInPreparedSongRestartsAtEventFrameAndMatchesBlocks(
+        bool privateMixdown)
+    {
+        SongDocument document = new();
+        ObjectId curveId = document.AllocateObjectId();
+        NodeEnvelopeDefinition sweep = new(curveId, "Sweep");
+        sweep.ReplaceCurve([
+            new EnvelopeNode(TimeSpan.Zero, 0.2),
+            new EnvelopeNode(TimeSpan.FromMilliseconds(60), 0.8),
+        ], 0, 0, EnvelopeSustainLoopMode.Forward);
+        document.Add(sweep);
+
+        ObjectId filterId = document.AllocateObjectId();
+        document.Add(new FilterDefinition(filterId, "Echo", [
+            new FilterStageDefinition(1, "echo", FilterKind.CombFeedforward),
+        ]));
+        ObjectId sampleId = document.AllocateObjectId();
+        document.Add(SampleDefinition.CreateImported(sampleId,
+            "Sustain", "sustain.wav", LongWave(16000)));
+
+        ObjectId playedId = sampleId;
+        if (privateMixdown)
+        {
+            ObjectId childId = document.AllocateObjectId();
+            DataPatternDefinition child = new(childId, "Private") {
+                RowCount = 3, ChannelCount = 1,
+            };
+            PatternCell childCell = child.Grid.GetOrCreateCell(0, 0);
+            childCell.Note = new StartPatternNote(sampleId);
+            childCell.Effects.Add(new SetNoteFilterPatternEffect(filterId));
+            childCell.Effects.Add(new SetNoteFilterAssignmentsPatternEffect(
+                "echo.Feedforward = @\"Sweep\""));
+            document.Add(child);
+            playedId = childId;
+        }
+
+        ObjectId earlyId = document.AllocateObjectId();
+        ObjectId lateId = document.AllocateObjectId();
+        foreach ((ObjectId id, int row) in new[] {
+            (earlyId, 0), (lateId, 2),
+        })
+        {
+            DataPatternDefinition root = new(id, "Root") {
+                RowCount = 4, ChannelCount = 1,
+            };
+            PatternCell cell = root.Grid.GetOrCreateCell(row, 0);
+            cell.Note = new StartPatternNote(playedId, mixdown: privateMixdown);
+            if (!privateMixdown)
+            {
+                cell.Effects.Add(new SetNoteFilterPatternEffect(filterId));
+                cell.Effects.Add(new SetNoteFilterAssignmentsPatternEffect(
+                    "echo.Feedforward = @\"Sweep\""));
+            }
+            document.Add(root);
+        }
+
+        float[] early = RenderPrepared(earlyId);
+        float[] late = RenderPrepared(lateId);
+        int earlyStart = Array.FindIndex(early, value => MathF.Abs(value) > 0.00001f);
+        int lateStart = Array.FindIndex(late, value => MathF.Abs(value) > 0.00001f);
+        Assert.That(earlyStart, Is.GreaterThanOrEqualTo(0));
+        Assert.That(lateStart, Is.GreaterThan(earlyStart + 100),
+            "the second note is started two Pattern rows later");
+        Assert.That(late.AsSpan(lateStart, 90).ToArray(),
+            Is.EqualTo(early.AsSpan(earlyStart, 90).ToArray()).Within(1e-5f),
+            "a shifted event must restart the Envelope at its own song position");
+
+        using PreparedIncrementalPlaybackPlan partitioned =
+            new PreparedIncrementalPlaybackFactory(Mono(1000))
+                .Create(document, lateId);
+        float[] split = new float[late.Length];
+        int offset = 0;
+        foreach (int size in new[] { 7, 37, 109, 81, 193, 53 })
+        {
+            if (offset == split.Length) break;
+            int count = Math.Min(size, split.Length - offset);
+            partitioned.Source.Render(count, split.AsSpan(offset, count));
+            offset += count;
+        }
+        if (offset < split.Length)
+            partitioned.Source.Render(split.Length - offset, split.AsSpan(offset));
+        Assert.That(split, Is.EqualTo(late).Within(1e-6f),
+            "realtime-sized chunks and offline output must share event origins");
+
+        float[] RenderPrepared(ObjectId id)
+        {
+            using PreparedIncrementalPlaybackPlan plan =
+                new PreparedIncrementalPlaybackFactory(Mono(1000))
+                    .Create(document, id);
+            float[] pcm = new float[480];
+            plan.Source.Render(pcm.Length, pcm);
+            return pcm;
+        }
+    }
+
     [Test]
     public void PreparedRootSessionCapturesEnvelopeNamesFromItsFrozenSongNotLiveEditor()
     {

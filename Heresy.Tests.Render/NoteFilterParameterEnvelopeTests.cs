@@ -599,6 +599,166 @@ public sealed class NoteFilterParameterEnvelopeTests
         Assert.That(diagnostics, Has.Count.EqualTo(1));
     }
 
+
+    [Test]
+    public void LateSongNoteBindingStartsAtAssignmentFrameNotNoteStartOrSongZero()
+    {
+        TestResolver resolver = new(new ConstantSound(), new RampCurve());
+        FilterInstance selected = Echo();
+        PlaybackSession authored = Session(resolver, Schedule(
+            Event(1, 0, new StartNoteCommand(Source) {
+                EventFilterConfiguration = selected,
+            }),
+            Event(5, 0, new SetNoteFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Sweep\""))));
+        authored.FilterAssignmentNames = Names();
+
+        PlaybackSession typed = Session(resolver, Schedule(
+            Event(1, 0, new StartNoteCommand(Source) {
+                EventFilterConfiguration = selected,
+            }),
+            Event(5, 0, new SetNoteFilterParameterEnvelopeCommand(
+                1, "Feedforward", Envelope))));
+
+        // The expected control surface is indexed relative to frame FIVE,
+        // not the note's start at frame one. Each target is sent on precisely
+        // the same frame as the corresponding live envelope sample.
+        NoteScheduleBuilder referenceBuilder = new();
+        referenceBuilder.Append(Event(1, 0, new StartNoteCommand(Source) {
+            EventFilterConfiguration = selected,
+        }));
+        for (int frame = 5; frame < 11; frame++)
+            referenceBuilder.Append(Event(frame, 0, new SetNoteFilterParametersCommand(
+                1, [new("Feedforward", FilterParameterValue.FromNumber(
+                    0.2 + (frame - 5) * 0.1))])));
+        PlaybackSession reference = Session(resolver, referenceBuilder.Freeze());
+
+        float[] output = new float[11], typedOutput = new float[11],
+            perFrame = new float[11], partitioned = new float[11];
+        authored.Render(0, output.Length, output);
+        typed.Render(0, typedOutput.Length, typedOutput);
+        reference.Render(0, perFrame.Length, perFrame);
+        Assert.That(output, Is.EqualTo(typedOutput).Within(1e-6f),
+            "authored text must select the identical absolute-frame origin as typed attachment");
+        Assert.That(output, Is.EqualTo(perFrame).Within(1e-6f),
+            "the resulting curve must start at t=0 on frame five");
+        Assert.That(output[0], Is.Zero);
+
+        PlaybackSession split = Session(resolver, Schedule(
+            Event(1, 0, new StartNoteCommand(Source) {
+                EventFilterConfiguration = selected,
+            }),
+            Event(5, 0, new SetNoteFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Sweep\""))));
+        split.FilterAssignmentNames = Names();
+        split.Render(0, 3, partitioned.AsSpan(0, 3));
+        split.Render(3, 3, partitioned.AsSpan(3, 3));
+        split.Render(6, 5, partitioned.AsSpan(6, 5));
+        Assert.That(partitioned, Is.EqualTo(output).Within(1e-6f),
+            "device and offline block partitions must be sample identical");
+    }
+
+    [Test]
+    public void LateChannelBindingPersistsThroughReplacementNotesAndHasHostClock()
+    {
+        TestResolver resolver = new(new ConstantSound(), new RampCurve());
+        PlaybackSession authored = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterCommand { Configuration = Echo() },
+                new StartNoteCommand(Source)),
+            Event(4, 0, new SetChannelFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Sweep\"")),
+            Event(6, 0, new StartNoteCommand(Source))));
+        authored.FilterAssignmentNames = Names();
+        PlaybackSession typed = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterCommand { Configuration = Echo() },
+                new StartNoteCommand(Source)),
+            Event(4, 0, new SetChannelFilterParameterEnvelopeCommand(
+                1, "Feedforward", Envelope)),
+            Event(6, 0, new StartNoteCommand(Source))));
+
+        float[] actual = new float[14], reference = new float[14];
+        authored.Render(0, actual.Length, actual);
+        typed.Render(0, reference.Length, reference);
+        Assert.That(actual, Is.EqualTo(reference).Within(1e-6f),
+            "channel modulation must neither reset at a later note nor migrate to note time");
+        Assert.That(actual[7], Is.GreaterThan(0));
+    }
+
+    [Test]
+    public void LateNoteAttachmentReleasesAtOffAndSurvivesNnaDisplacement()
+    {
+        TestResolver resolver = new(new ConstantSound(), new ReleaseCurve());
+        PlaybackSession authored = Session(resolver, Schedule(
+            Event(0, 0, new StartNoteCommand(Source) {
+                EventFilterConfiguration = Echo(),
+            }),
+            Event(2, 0, new SetNoteFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Sweep\"")),
+            Event(4, 0, new NoteOffCommand()),
+            Event(5, 0, new StartNoteCommand(Source))));
+        authored.FilterAssignmentNames = Names();
+        PlaybackSession typed = Session(resolver, Schedule(
+            Event(0, 0, new StartNoteCommand(Source) {
+                EventFilterConfiguration = Echo(),
+            }),
+            Event(2, 0, new SetNoteFilterParameterEnvelopeCommand(
+                1, "Feedforward", Envelope)),
+            Event(4, 0, new NoteOffCommand()),
+            Event(5, 0, new StartNoteCommand(Source))));
+
+        float[] actual = new float[12], reference = new float[12];
+        authored.Render(0, actual.Length, actual);
+        typed.Render(0, reference.Length, reference);
+        Assert.That(actual, Is.EqualTo(reference).Within(1e-6f));
+        Assert.That(authored.VirtualVoices, Has.Count.GreaterThan(0),
+            "old off/released voice must retain its own envelope after replacement");
+    }
+
+    [Test]
+    public void LateFlattenedReferenceTracksControllerAndLaterDescendantAtOriginalFrame()
+    {
+        TestResolver resolver = new(new ConstantSound(), new RampCurve());
+        PlaybackSession authored = Session(resolver, Schedule());
+        PlaybackSession typed = Session(resolver, Schedule());
+        authored.FilterAssignmentNames = Names();
+        foreach (PlaybackSession session in new[] { authored, typed })
+        {
+            session.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+                new BeginFlattenedSourceVolumeCommand(20, 20) {
+                    EventFilterConfiguration = Echo(),
+                },
+            ]);
+            session.ApplyScopedEvent(0, ChannelTarget.Virtual(7), [
+                new StartNoteCommand(Source) {
+                    ParentSourceScopes = new long[] { 20 },
+                },
+            ]);
+        }
+
+        float[] actual = new float[9], reference = new float[9];
+        authored.Render(0, 3, actual.AsSpan(0, 3));
+        typed.Render(0, 3, reference.AsSpan(0, 3));
+        authored.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new SetNoteFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Sweep\""),
+        ]);
+        typed.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new SetNoteFilterParameterEnvelopeCommand(1, "Feedforward", Envelope),
+        ]);
+        authored.Render(3, 3, actual.AsSpan(3, 3));
+        typed.Render(3, 3, reference.AsSpan(3, 3));
+        foreach (PlaybackSession session in new[] { authored, typed })
+            session.ApplyScopedEvent(0, ChannelTarget.Virtual(8), [
+                new StartNoteCommand(Source) {
+                    ParentSourceScopes = new long[] { 20 },
+                },
+            ]);
+        authored.Render(6, 3, actual.AsSpan(6, 3));
+        typed.Render(6, 3, reference.AsSpan(6, 3));
+        Assert.That(actual, Is.EqualTo(reference).Within(1e-6f),
+            "later descendants must use the controller's earlier attachment frame");
+    }
+
     private static FilterAssignmentEnvelopeNames Names()
     {
         SongDocument song = new();
