@@ -3010,53 +3010,188 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			SongDocumentSnapshot.Create(document), badId));
 	}
 
-	[Test]
-	public void FlattenedThenCutStopsPrefetchedFutureChildNotesInProductionPipeline()
-	{
-		SongDocument song = new();
-		ObjectId envelopeId = song.AllocateObjectId();
-		NodeEnvelopeDefinition natural = new(envelopeId, "Done");
-		natural.ReplaceCurve([
-			new EnvelopeNode(TimeSpan.Zero, 0.5),
-			new EnvelopeNode(TimeSpan.FromMilliseconds(40), 0.5),
-		], 0, 0, EnvelopeSustainLoopMode.None);
-		song.Add(natural);
-		ObjectId filterId = song.AllocateObjectId();
-		song.Add(new FilterDefinition(filterId, "Echo", [
-			new FilterStageDefinition(1, "echo", FilterKind.CombFeedforward),
-		]));
-		ObjectId sample = song.AllocateObjectId();
-		song.Add(SampleDefinition.CreateImported(sample,
-			"Long", "long.wav", LongWave(16384)));
-		ObjectId childId = song.AllocateObjectId();
-		DataPatternDefinition child = new(childId, "Flattened child")
-			{ RowCount = 3, ChannelCount = 3 };
-		child.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote(sample);
-		child.Grid.GetOrCreateCell(2, 2).Note = new StartPatternNote(sample);
-		song.Add(child);
-		ObjectId rootId = song.AllocateObjectId();
-		DataPatternDefinition root = new(rootId, "Parent")
-			{ RowCount = 3, ChannelCount = 1 };
-		PatternCell origin = root.Grid.GetOrCreateCell(0, 0);
-		origin.Note = new StartPatternNote(childId);
-		origin.Effects.Add(new SetNoteFilterPatternEffect(filterId));
-		origin.Effects.Add(new SetNoteFilterAssignmentsPatternEffect(
-			"echo.Feedforward = @\"Done\" THEN CUT"));
-		song.Add(root);
-		PreparedIncrementalPlaybackFactory factory = new(Mono(1000));
-		using PreparedIncrementalPlaybackPlan whole = factory.Create(song, rootId);
-		using PreparedIncrementalPlaybackPlan partitioned = factory.Create(song, rootId);
-		float[] full = new float[300], chunks = new float[300];
-		whole.Source.Render(full.Length, full);
-		partitioned.Source.Render(1, chunks.AsSpan(0, 1));
-		partitioned.Source.Render(70, chunks.AsSpan(1, 70));
-		partitioned.Source.Render(chunks.Length - 71, chunks.AsSpan(71));
-		Assert.That(chunks, Is.EqualTo(full).Within(1e-6f),
-			"producer cancellation at Envelope completion must be block independent");
-		Assert.That(full[0], Is.Not.Zero.Within(1e-6f));
-		Assert.That(full[260], Is.Zero.Within(1e-5f),
-			"the prefetched later descendant must never begin after THEN CUT");
-	}
+    [TestCase("THEN OFF")]
+    [TestCase("THEN CUT")]
+    public void FlattenedCompletionCancelsConfirmedPrefetchedFutureChildAndPreservesTails(
+        string suffix)
+    {
+        (SongDocument song, ObjectId root, ObjectId laterSource) =
+            CreateFlattenedCompletionPrefetchFixture(suffix, laterChild: true);
+        PreparedIncrementalPlaybackFactory factory = new(Mono(1000));
+        using PreparedIncrementalPlaybackPlan uninterrupted =
+            factory.Create(song, root);
+        using PreparedIncrementalPlaybackPlan partitioned =
+            factory.Create(song, root);
+        const int frames = 320;
+        float[] full = new float[frames], chunks = new float[frames];
+        uninterrupted.Source.Render(frames, full);
+
+        // Begin both child and unrelated sibling. Then look ahead *before*
+        // completion, exactly as the production single-event producer does.
+        partitioned.Source.Render(1, chunks.AsSpan(0, 1));
+        Assert.That(partitioned.Source.NextFrame, Is.EqualTo(1));
+        MethodInfo prime = typeof(PreparedIncrementalAudioSource).GetMethod(
+            "FindNextEvent", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        FieldInfo pendingField = typeof(PreparedIncrementalAudioSource).GetField(
+            "_pendingEvent", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        prime.Invoke(partitioned.Source, [500L]);
+        object pending = pendingField.GetValue(partitioned.Source)
+            ?? throw new AssertionException(
+                "A future child event must actually be prefetched before completion.");
+        Type pendingType = pending.GetType();
+        long frame = (long)pendingType.GetProperty("Frame")!.GetValue(pending)!;
+        long cursor = (long)pendingType.GetProperty("Owner")!.GetValue(pending)!;
+        NoteEvent note = (NoteEvent)pendingType.GetProperty("Note")!
+            .GetValue(pending)!;
+        Assert.Multiple(() =>
+        {
+            Assert.That(frame, Is.EqualTo(240L),
+                "row two's event must be prefetched 199 frames after completion");
+            Assert.That(cursor, Is.GreaterThan(0L),
+                "the pending event must retain the actual child Pattern cursor");
+            Assert.That(note.Commands.OfType<StartNoteCommand>()
+                .Any(command => command.SourceId == laterSource), Is.True,
+                "the pending event must be the *later child note*, not an unrelated step");
+            Assert.That(note.Target.Kind, Is.EqualTo(ChannelTargetKind.Physical));
+        });
+
+        // This block crosses the exact exclusive completion frame 41.
+        // The callback must remove the existing pending child event by its
+        // *cursor* identity, without affecting an unrelated sibling voice.
+        partitioned.Source.Render(41, chunks.AsSpan(1, 41));
+        Assert.That(partitioned.Source.NextFrame, Is.EqualTo(42L));
+        Assert.That(pendingField.GetValue(partitioned.Source), Is.Null,
+            "the specific already-prefetched event must be invalidated at completion");
+        int written = 42;
+        int[] sizes = [1, 13, 3, 59, 2, 7, 31];
+        for (int block = 0; written < frames; block++)
+        {
+            int count = Math.Min(sizes[block % sizes.Length], frames - written);
+            partitioned.Source.Render(count, chunks.AsSpan(written, count));
+            written += count;
+        }
+        Assert.That(chunks, Is.EqualTo(full).Within(1e-6f),
+            "a prefetched note cancelled by completion must be identical "
+            + "for one large block and irregular, explicitly primed blocks");
+
+        (SongDocument withoutLate, ObjectId noLateRoot, _) =
+            CreateFlattenedCompletionPrefetchFixture(suffix, laterChild: false);
+        using PreparedIncrementalPlaybackPlan noLate =
+            factory.Create(withoutLate, noLateRoot);
+        float[] expectedWithoutLate = new float[frames];
+        noLate.Source.Render(frames, expectedWithoutLate);
+        Assert.That(full, Is.EqualTo(expectedWithoutLate).Within(1e-6f),
+            "the entire audible result must equal a song where that "
+            + "prefetched child was never authored, not merely sound quiet at one frame");
+
+        (SongDocument controlSong, ObjectId controlRoot, _) =
+            CreateFlattenedCompletionPrefetchFixture("", laterChild: true);
+        using PreparedIncrementalPlaybackPlan noCompletion =
+            factory.Create(controlSong, controlRoot);
+        float[] controlPcm = new float[frames];
+        noCompletion.Source.Render(frames, controlPcm);
+        Assert.Multiple(() =>
+        {
+            Assert.That(Math.Abs(controlPcm[270] - full[270]),
+                Is.GreaterThan(0.2f),
+                "without completion, the future child must actually start and be audible");
+            Assert.That(Math.Abs(full[200]), Is.GreaterThan(0.01f),
+                "the independent sibling must remain audible after this scope stops");
+        });
+
+        if (suffix == "THEN OFF")
+        {
+            (SongDocument cutSong, ObjectId cutRoot, _) =
+                CreateFlattenedCompletionPrefetchFixture("THEN CUT",
+                    laterChild: true);
+            using PreparedIncrementalPlaybackPlan cut =
+                factory.Create(cutSong, cutRoot);
+            float[] cutPcm = new float[frames];
+            cut.Source.Render(frames, cutPcm);
+            Assert.That(Math.Abs(full[70]) - Math.Abs(cutPcm[70]),
+                Is.GreaterThan(0.1f),
+                "THEN OFF must retain the original instrument's audible "
+                + "volume-envelope release tail, unlike THEN CUT");
+            Assert.That(full[155], Is.EqualTo(expectedWithoutLate[155])
+                .Within(1e-6f), "the old child's release tail must eventually end");
+        }
+    }
+
+    private static (SongDocument Song, ObjectId Root, ObjectId LaterSource)
+        CreateFlattenedCompletionPrefetchFixture(string suffix, bool laterChild)
+    {
+        SongDocument song = new();
+        ObjectId completionId = song.AllocateObjectId();
+        NodeEnvelopeDefinition completion = new(completionId, "Done");
+        completion.ReplaceCurve([
+            new EnvelopeNode(TimeSpan.Zero, 0.5),
+            new EnvelopeNode(TimeSpan.FromMilliseconds(40), 0.5),
+        ], 0, 0, EnvelopeSustainLoopMode.None);
+        song.Add(completion);
+
+        ObjectId releaseId = song.AllocateObjectId();
+        NodeEnvelopeDefinition release = new(releaseId, "Release");
+        release.ReplaceCurve([
+            new EnvelopeNode(TimeSpan.Zero, 1.0),
+            new EnvelopeNode(TimeSpan.FromMilliseconds(10), 1.0),
+            new EnvelopeNode(TimeSpan.FromMilliseconds(95), 0.0),
+        ], 1, 1, EnvelopeSustainLoopMode.Forward);
+        song.Add(release);
+
+        ObjectId filterId = song.AllocateObjectId();
+        song.Add(new FilterDefinition(filterId, "Echo", [
+            new FilterStageDefinition(1, "echo", FilterKind.CombFeedforward),
+        ]));
+
+        ObjectId heldSampleId = song.AllocateObjectId();
+        SampleDefinition held = SampleDefinition.CreateImported(
+            heldSampleId, "Sustained", "held.wav", LongWave(16384));
+        held.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 512);
+        song.Add(held);
+        ObjectId instrumentId = song.AllocateObjectId();
+        InstrumentDefinition instrument = new(instrumentId, "Release instrument");
+        instrument.ToneSpecifications.Add(new ToneSpecification
+        {
+            SourceId = heldSampleId,
+            VolumeEnvelopeId = releaseId,
+        });
+        instrument.ToneTable.Add(0);
+        song.Add(instrument);
+
+        ObjectId lateSampleId = song.AllocateObjectId();
+        song.Add(SampleDefinition.CreateImported(lateSampleId,
+            "Future child", "later.wav", LongWave(16384)));
+        ObjectId siblingSampleId = song.AllocateObjectId();
+        song.Add(SampleDefinition.CreateImported(siblingSampleId,
+            "Independent", "sibling.wav", LongWave(4096)));
+
+        ObjectId childId = song.AllocateObjectId();
+        DataPatternDefinition child = new(childId, "Flattened child")
+        {
+            RowCount = 3, ChannelCount = 3,
+        };
+        child.Grid.GetOrCreateCell(0, 1).Note = new StartPatternNote(instrumentId);
+        if (laterChild)
+            child.Grid.GetOrCreateCell(2, 2).Note =
+                new StartPatternNote(lateSampleId);
+        song.Add(child);
+
+        ObjectId rootId = song.AllocateObjectId();
+        DataPatternDefinition root = new(rootId, "Parent")
+        {
+            RowCount = 3, ChannelCount = 2,
+        };
+        PatternCell origin = root.Grid.GetOrCreateCell(0, 0);
+        origin.Note = new StartPatternNote(childId);
+        origin.Effects.Add(new SetNoteFilterPatternEffect(filterId));
+        origin.Effects.Add(new SetNoteFilterAssignmentsPatternEffect(
+            "echo.DelaySeconds = 0.002\necho.Mix = 0\necho.Feedforward = @\"Done\""
+            + (suffix.Length == 0 ? "" : " " + suffix)));
+        root.Grid.GetOrCreateCell(0, 1).Note =
+            new StartPatternNote(siblingSampleId);
+        song.Add(root);
+        return (song, rootId, lateSampleId);
+    }
 
 	[TestCase(false)]
 	[TestCase(true)]
