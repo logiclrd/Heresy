@@ -88,7 +88,7 @@ internal sealed class ChannelOutputFilterState
     public ChannelOutputFilterState PrepareTextUpdate(string text, long frame = 0)
     {
         FilterInstance updated = FilterAssignmentText.ApplyValidToClone(
-            _configuration, text);
+            _configuration, text, candidate => CanPrepareTextCandidate(candidate, frame));
         FilterInstance effective = BuildEffectiveConfiguration(
             updated, _bindings, frame);
         StreamingFilterChain fork = _chain.Fork();
@@ -97,6 +97,31 @@ internal sealed class ChannelOutputFilterState
             fork.Configure(new FilterChain([effective]));
         return new ChannelOutputFilterState(updated, fork,
             _tailRemainingFrames, _sampleRate, _bindings, effective);
+    }
+
+    /// <summary>Only invoked at a host command boundary, never in the PCM
+    /// loop. Test the same effective configuration and fork preparation as
+    /// the actual publish, without mutating this host's DSP or bindings.</summary>
+    private bool CanPrepareTextCandidate(FilterInstance candidate, long frame)
+    {
+        try
+        {
+            FilterInstance effective = BuildEffectiveConfiguration(
+                candidate, _bindings, frame);
+            if (!SameEffective(BuildEffectiveConfiguration(
+                _configuration, _bindings, frame), effective))
+            {
+                StreamingFilterChain fork = _chain.Fork();
+                fork.Configure(new FilterChain([effective]));
+            }
+            return true;
+        }
+        catch (Exception e) when (e is ArgumentException
+            or InvalidOperationException or NotSupportedException
+            or KeyNotFoundException or OverflowException)
+        {
+            return false;
+        }
     }
 
     /// <summary>Prepare and validate one complete channel binding edit
