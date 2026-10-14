@@ -1,6 +1,12 @@
 # Pattern editor — source tints, flattened-range shadows and overlap diagnostics
 
-**Status:** All planned Pattern source-colour visualization milestones are implemented as of 14 October 2026: persistent source tints, effective-source whole-cell colouring, nonserialized bounds, finite flattened Pattern/Sequence range overlays, malformed-overlap red diagnostics, and correct controlling-channel termination of those overlays. See [todo.md](todo.md) for future independently actionable work. See [todo.md](todo.md) for separately closable tasks. The feature visualizes already-existing recursive source semantics without changing their scheduling, rendering or new-note actions.
+**Current status:** Pattern source-colour visualization is implemented:
+persistent source tints, effective-source whole-cell colouring, nonserialized
+bounds, finite flattened Pattern/Sequence range overlays, malformed-overlap
+red diagnostics, and controlling-channel range termination. The dated
+milestones below preserve their implementation history; interim `TODO`
+references are **historical** and do not represent current open work.
+See [open work](todo.md) for independent editor acceptance.
 
 ## Source colour ownership and persistence
 
@@ -80,10 +86,10 @@ non-audio revision behavior, and invalid fields. The UI import regressions
 cover both standalone and nested graph imports with fresh ObjectIds
 while preserving the source, Instrument and Sample tints.
 
-**Not part of this milestone:** attaching a translucent brush to the
-Pattern editor's effective note-start Source cells, theme-dependent brush
-construction, cached flattened bounds, range shadows, or red overlap
-indicators. Those remain the following independent TODOs.
+**Not yet part of this historical milestone:** attaching a translucent
+brush to effective note-start Source cells, theme-dependent brush
+construction, cached flattened bounds, range shadows or red overlap
+indicators. Their completed implementations are documented below.
 
 ## Implemented — base effective-source resolution and initial Note-field painting (13 October 2026)
 
@@ -172,7 +178,8 @@ flatten/mixdown semantics or persisted schema changes.
 Headless Avalonia tests in `PatternSourceTintTests` cover full cell
 coverage, transparent field backgrounds, retained row shade and focus,
 opaque independent effect stickers, in-place upstream source changes
-and multiple occurrences of one Pattern in a Sequence. The preceding bounds-cache milestone and subsequent finite range overlay are implemented. The remaining independent visual task is malformed-overlap diagnostics.
+and multiple occurrences of one Pattern in a Sequence. The bounds cache and finite range overlay were completed separately;
+the subsequently implemented malformed-overlap diagnostics appear below.
 
 ## Implemented — finite flattened Pattern/Sequence range shading (13 October 2026)
 

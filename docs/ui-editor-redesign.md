@@ -1,13 +1,18 @@
-# UI editor redesign — implemented contracts (October 10, 2026)
+# October 10, 2026 UI redesign — historical implementation snapshot
 
-This document preserves accepted behavior and regression expectations
-from the **completed** redesign. It is no longer an open task list.
-Core `InstrumentDefinition` retains `ToneSpecifications` and `ToneTable`
-as persistence data; the editor manages them implicitly.
-`AdsrEnvelopeDefinition` stores TimeSpan Attack/Decay/Release and an
-unrestricted finite SustainLevel. The document tree has five roots.
-See [UI workflows](user-interface-workflows.md) for the full desktop
-behavior contract and [todo.md](todo.md) for open items.
+**Historical record, not a current contract or open-task list.** The
+milestone below predates the later six-pane Filters integration, node-based
+Envelope model/graph and eleven-column Instrument tone grid. In particular,
+references to five panes, the original scalar ADSR model, or nine Instrument
+columns describe **superseded implementation states**; do not use them to
+guide new work. The current behavior is specified in
+[UI workflows](user-interface-workflows.md),
+[document panes](document-panes.md),
+[envelope graph](envelope-graph.md), and
+[instrument tone grid](instrument-tone-grid-model.md).
+For remaining action items use [open work](todo.md).
+
+The sections below are retained as the October 10 engineering snapshot.
 
 ## Pattern editor: optional playback-follow — implemented
 

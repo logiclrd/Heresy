@@ -60,10 +60,12 @@ Tests: `SongTreeSectionTests`, `FilterTreeMigrationTests`,
 `FilterPaneTreeTests`, `SongTreeDefaultActivationTests`,
 `EnvelopeDocumentEditorTests`, and `SongTreeEditorTests`.
 
-## Related completed editors
+## Related current editors
 
-The graphical ADSR editor and its FM Envelope-node inspector integration
-are implemented; see [envelope-graph.md](envelope-graph.md).
-The implicitly managed nine-column Instrument tone grid is implemented;
-see [instrument-tone-grid-model.md](instrument-tone-grid-model.md).
-Neither belongs to the current [TODO list](todo.md).
+The standalone Envelope editor and FM Envelope-node inspector share an
+interactive **node-envelope graph**; see [envelope graph](envelope-graph.md).
+The implicitly managed **eleven-column Instrument tone grid** includes
+per-tone NNA and Filter settings; see
+[instrument tone grid](instrument-tone-grid-model.md).
+Physical interaction and audible release acceptance remains separately
+tracked in [open work](todo.md).

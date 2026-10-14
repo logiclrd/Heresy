@@ -1,6 +1,22 @@
 # Reusable filters — design contract
 
-Status: **incremental implementation** (11 October 2026). The Core filter-type catalogue, parameter descriptors, Filter SongObject definition model, and independently configured stage instances/chains are implemented. The six-root Filters document tree and four-column Avalonia layout (including four-/five-root migration) are also implemented. Filter definitions now round-trip through .hm.json/.hm and frozen song snapshots; configured instances/chains have reusable ID-based codecs and a validated import/remapping service. The standalone Filter definition editor and + Filter creation action are implemented. The embeddable Filter instance parameter editor and copy-on-write authoring session are implemented. A separate streaming Render engine, explicit bypass processor, state/transition contract, One-Pole low/high-pass, all seven Audio EQ Biquads, all four SVF responses, both linear and saturated four-pole ladders, first-/second-order All-Pass phase shifting, both feedback IIR and feedforward FIR combs, and all four standard FIR responses in **Linear, Minimum and Maximum** phase modes are implemented. FM Filter-node authoring, stable dynamic ports, independent per-note DSP, authored Tail processing, per-use editing, import and version-one graph persistence are implemented; audio-rate modulation fast-path optimization and rendered connections to Instrument tones and other hosts remain outstanding in [todo.md](todo.md). Current code still has the tracker-compatible ResonantFilterState and the limited final-speaker low/high-pass filters; neither has been replaced.
+**Current status (14 October 2026):** The reusable Filter catalogue,
+parameter schemas, definition/instance editors, v1 persistence/import,
+streaming FIR/IIR processors, FM graph and Instrument integrations,
+per-note and physical/virtual Channel hosts, Envelope modulation, and
+final per-speaker reusable Filter chains are implemented. The engine
+retains tracker-compatible filter behavior where required; legacy
+speaker RC choices coexist with newer reusable chains. Filter Envelope
+completion actions (`THEN OFF`/`THEN CUT`) have frozen playback,
+producer-prefetch cancellation, WAV/export and private-seek regressions.
+Remaining **real-device listening, speaker-settings audition and
+Windows/Linux realtime-versus-export acceptance** are in
+[open work](todo.md) and [physical filter acceptance](filter-physical-acceptance.md).
+
+**Engineering log:** This document also retains chronological milestones
+from October 11–14. Statements below that a later integration step is
+`outstanding` or a future `TODO` refer to that historical checkpoint;
+later sections supersede them. This is not an alternative live backlog.
 
 ## Intent and governing constraints
 
@@ -730,10 +746,9 @@ unchanged. The parser now carries a typed
 `FilterEnvelopeCompletionAction` through authoring, preview and runtime
 resolution; a later numeric assignment clears that parameter's action.
 
-**This is a foundation milestone, not a functioning Note Off/Cut trigger.**
-The playback dispatcher does not yet act on the parsed completion token.
-The remaining renderer, flattened scope, Channel-host and export slices are
-tracked separately in `docs/todo.md`.
+**At this foundation milestone only**, parsing existed without a functioning
+Note Off/Cut trigger. Later sections document the playback dispatcher,
+flattened scope, Channel-host, export and seek integration.
 
 **Required ownership contract for subsequent implementation:** A Note Filter
 completion action belongs to the **exact PlaybackVoice** or flattened
@@ -822,9 +837,9 @@ is introduced.
 Render and prepared-production regressions cover late attachment, natural
 Off/Cut, sustaining release-end Cut, inert sustaining Off, NNA displacement,
 original-controller host replacement, parameter detachment and one-block vs
-partitioned PCM with a future prefetched descendant. Channel Filter
-completion ownership and full exported-WAV/private-seek qualification remain
-separate open TODOs.
+partitioned PCM with a future prefetched descendant. At this checkpoint,
+Channel Filter completion ownership and exported-WAV/private-seek
+qualification were pending; later sections document their completion.
 
 
 ### Persistent Channel Filter completion actions: host clock versus note ownership (14 October 2026)
@@ -861,10 +876,9 @@ The Channel-host renderer regressions exercise the original NNA voice, host
 replacement without note retargeting, a physical host shared between two
 logical owners, separately scoped virtual hosts with the same virtual ID,
 external release followed by Cut, no-current-note binding, numeric detach,
-flattened controller source replacement and PCM block partitions. Full
-production WAV/export/private seek qualification, plus the separately
-tracked explicit `THEN OFF` genuinely-prefetched-event regression, remain
-independent TODO items.
+flattened controller source replacement and PCM block partitions. Full production WAV/export/private seek qualification and the explicit
+`THEN OFF` genuinely-prefetched-event regression were next; both are
+documented in the later qualification sections.
 
 A further direct equivalence regression compares Channel-Filter `THEN CUT` at its
 exclusive natural boundary against an explicit Note Cut at the same frame,
@@ -903,8 +917,8 @@ The automatic `THEN CUT` PCM and complete real WAV (header, logical body
 and drained anti-click/release tail) must match an explicit Note Cut at frame
 7, including when the two versions use different PCM partitions. A separate
 without-Cut control proves the action is audible, not merely an equivalent
-scheduler no-op. Manual listening and the separately requested **genuinely
-prefetched** flattened `THEN OFF` observer test are still open TODOs.
+scheduler no-op. Manual listening remained open; the requested **genuinely prefetched**
+flattened `THEN OFF` observer test was completed in the next section.
 
 
 ### Explicit prefetched future-child cancellation qualification (14 October 2026)

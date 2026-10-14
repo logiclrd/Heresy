@@ -51,7 +51,9 @@ The production pipeline is `PreparedIncrementalPlaybackFactory` →
   PCM worker. The SDL callback **only drains the ring**, outputting silence
   during underruns. Offline export uses the same incremental engine.
 - Output layouts include mono/stereo/5.1/7.1 with configurable speaker
-  positions and a single final per-speaker None/LowPass/HighPass filter stage.
+  positions and final per-speaker `None`, legacy `LowPass (RC)` /
+  `HighPass (RC)`, or reusable serial Filter-chain processing.
+  Independent mono histories are applied once after the full mix.
   Physical hardware/encoder surround validation remains an
   [open task](docs/todo.md).
 
@@ -92,11 +94,13 @@ PCM-specific actions still say Sample. User-facing actions say **Synth**, while 
 existing FM-backed internal object type and persisted song representation remain unchanged. Existing four-pane trees migrate
 in memory without a format-version bump.
 
-Implemented UI features include tracker note/volume/source/effect columns,
-script editing with semantic object-reference highlighting and diagnostics,
-FM graph routing, playback-follow, a graphical ADSR envelope editor
-(also embedded in the FM inspector), and the unified nine-column Instrument
-tone grid with chromatic-note notation based on actual Divisions.
+Implemented UI features include tracker Note-name/Octave/Source/Volume/effect
+fields, masked editing, source/flattened-range visualizations, cursor-first
+Page Up/Down, and fixed-height scrollable diagnostics. The desktop also has
+script editing with object-reference highlighting, FM graph routing,
+playback-follow, a shared interactive **node-envelope graph** (standalone and
+FM inspectors), and an **eleven-column Instrument tone grid** with
+Divisions-based note labels, per-tone NNA and Filter editing.
 
 File → Open chooses a path before the dirty-document prompt. The current
 document remains intact if opening or asset recovery fails. The UI displays

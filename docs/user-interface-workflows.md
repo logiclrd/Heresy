@@ -3,11 +3,12 @@
 This is the detailed **implemented** UI contract preserved from the former
 root README (October 10, 2026), not an open implementation checklist.
 For focused controls see [the documentation index](README.md) and
-[editor redesign](ui-editor-redesign.md); for genuinely open items see
-[todo.md](todo.md). Source code and current tests win over dated prose.
+[document panes](document-panes.md); for genuinely open items see
+[todo.md](todo.md). The [October 10 redesign snapshot](ui-editor-redesign.md)
+is historical; source code and current tests win over dated prose.
 
 
-## Document identity and five panes
+## Document identity and six panes
 
 The UI is a projection/editor of the semantic Core model rather than a second
 song model. `DocumentWorkspace` owns the one active `SongDocument` plus its
@@ -16,14 +17,14 @@ names and falls back through tombstones to raw IDs for broken references.
 Tree-only reorganization uses `SongTreeEditor` and advances `DocumentRevision`
 without advancing `AudioRevision`; moving a node never changes its ObjectId.
 
-The document tree has **five** fixed top-level sections, persisted in
-visual row-major order: Sequences, Patterns, Patches, Envelopes and
-Instruments. The top row has two equal-width panes (Sequences,
-Patterns); the bottom has three (Patches, Envelopes, Instruments).
-The shared six-column grid spans three tracks for each top pane and
-two for each bottom pane. Pane action buttons wrap rather than overflow.
-The fixed root nodes are not shown within their panes because each
-pane already represents one section subtree.
+The document tree has **six** fixed top-level sections, persisted in
+visual row-major order: Sequences, Patterns, Patches, Filters, Envelopes
+and Instruments. The top row has two half-width panes (Sequences and
+Patterns); the bottom has four quarter-width panes (Patches, Filters,
+Envelopes and Instruments). The shared **four-column** grid spans two
+columns for each top pane and one for each bottom pane. Pane action
+buttons wrap rather than overflow. The fixed root nodes are not shown
+within their panes because each pane represents one section subtree.
 
 **Patches** is the general UI label for the section containing both
 decoded PCM Samples and Synths. The user-visible New/Edit/Import names now say **Synth**, including `+ Synth`, `+ Import Synths`, `Edit Synth...`, and the corresponding dialogs and status messages. Existing saved Synth objects retain the same FM implementation type and IDs. The Core section enum remains
@@ -34,15 +35,16 @@ placements in the first-class Envelopes section rather than under
 Instruments. Folders can be reorganized within a section, not moved
 between sections.
 
-Legacy version-1 `.hm.json` and `.hm` documents with the former
-four-section tree (Sequences, Patterns, Instruments, Samples) are
-upgraded **during load**, without changing the song format version.
-Envelope object/tombstone placements are extracted from the old
-Instruments subtree, preserving their nested folder paths, object IDs
-and references; non-envelope placements remain in Instruments and the
-old Samples section is renamed Patches. Saving writes the new
-five-section tree; migration alone does not increment audio or
-document revision. See [document panes](document-panes.md).
+Legacy version-1 `.hm.json` and `.hm` documents load into the
+current six-section tree **without a song format version change**.
+Four-section trees (Sequences, Patterns, Instruments, Samples) move
+Envelope placements/tombstones out of Instruments while preserving
+folder paths and object IDs, then rename Samples to Patches. Five-section
+trees (Sequences, Patterns, Patches, Envelopes, Instruments) gain the
+Filters section between Patches and Envelopes. Current six-section trees
+load directly. Saving writes six sections, and migration itself does not
+increment audio or document revisions. See
+[document panes](document-panes.md).
 
 ## FM oscillator frequency and Constant mode
 
@@ -413,8 +415,10 @@ remain audio-affecting.
 ## Instrument tone grid
 
 The Instruments pane creates `InstrumentDefinition` objects and now uses
-**one unified nine-column tone grid**, with implicitly managed
-ToneSpecifications and ToneTable references. Divisions and Offset are
+**one unified eleven-column tone grid**, with implicitly managed
+ToneSpecifications and ToneTable references. The additional per-tone
+NNA and Filter fields are described in
+[instrument tone grid](instrument-tone-grid-model.md). Divisions and Offset are
 the pitch-to-index lookup parameters used by the renderer. The
 top blank row creates/overwrites a mapping when the entire row loses
 focus; rows descend from the highest regular pitch, with additional
@@ -447,7 +451,7 @@ active specifications are interned when publishing, avoiding stale
 indices and unintended modifications to other rows. Playback's
 frozen document snapshots remain isolated from subsequent edits.
 See [tone-grid implementation](instrument-tone-grid-model.md) and
-[UI design](ui-editor-redesign.md).
+[historical redesign snapshot](ui-editor-redesign.md).
 
 ## Node envelopes and FM envelope editing
 
@@ -496,9 +500,10 @@ must strictly increase. Values are unrestricted finite scalars. Sustain
 start/end indices and loop mode are edited separately; **Apply envelope**
 validates all fields atomically and creates an audio revision only for an
 actual change. Invalid input does not change the live Envelope. This
-temporary editor replaces the obsolete ADSR numeric fields and drag caps;
-the [node-envelope design](node-envelope-design.md) defines the intended
-next graphical editor.
+precise text editor complements the implemented interactive node graph,
+which replaces the obsolete ADSR numeric fields and drag caps; see
+[node-envelope design](node-envelope-design.md) and
+[envelope graph](envelope-graph.md).
 
 Creating a new FM Envelope node leaves its reference unassigned
 (`ObjectId.None`), even if Envelopes already exist. Its dropdown starts

@@ -1,15 +1,20 @@
-# Synth graph ISound source — architecture and staged implementation
+# Synth graph ISound source — production contract and engineering history
 
-**Status (13 October 2026):** source **reference/data-model foundation**,
-**prepared child-invocation/mono-output**, and **streaming frequency modulation** implemented. Graph editing,
-cross-song import, full transport end/tail qualification, and deterministic
-backward replay remain unimplemented. Both data and scripted Instrument
-Filter plans are now producer-prewarmed for frozen playback. The UI
-must not offer creation of this node until the remaining rendering slices
-are complete. Connected linear/semitone inputs now advance an integrated pitch curve at each
-PCM frame; backwards replay of an advanced source voice still fails
-explicitly instead of reusing stale DSP history. Do not mark the overall
-feature complete based on the playback of constant-frequency source nodes.
+**Current contract (14 October 2026):** Synth source nodes support
+reference/cycle validation, frozen recursive child preparation, audio-rate
+frequency modulation, release/tail propagation, deterministic source-frame
+seek/reconstruction, editor creation and cross-song dependency import.
+End-to-end Pattern, realtime PCM and decoded FLAC regressions cover direct
+Sample, data/script Instrument and nested Synth sources in mono/stereo.
+Native-rate deterministically seeded graph noise is also implemented.
+Direct Pattern/Sequence sources remain **deliberately unsupported** inside
+an ISound graph node; their producer-owned private-mixdown path is separate.
+
+**Historical milestone log:** The dated sections below trace this feature
+through earlier incomplete states. Statements that graph creation, import,
+backward replay, lifecycle work or later test slices are `TODO` applied
+**at that milestone**, not to the current implementation.
+Refer only to [open work](todo.md) for outstanding tasks.
 
 ## Persistent graph contract
 
@@ -213,8 +218,8 @@ Unassigned sources remain silent and stable. Source tone selection is still
 performed once on binding; audio-rate input never reselects Instrument tones.
 The tests cover output source-frame positions, linear/semitone inputs,
 continuous modulation, pitch isolation, mute/freeze policy, chunking and
-steady managed-allocation bounds. Completion of note-off/tail propagation and
-arbitrary backward replay is separately tracked in `docs/todo.md`.
+steady managed-allocation bounds. At this checkpoint note-off/tail propagation and backward replay were still
+pending; the later milestone sections document their completion.
 
 ### Source natural-end and tone-Filter lifecycle checkpoint (13 October 2026)
 
@@ -235,11 +240,10 @@ requires all additive branches to end (or any multiplicative factor to
 become silent), and does not prematurely cut a genuinely indefinite input.
 
 This is **not** certification of every inherited effect. In particular,
-Instrument Pitch/Panning/Filter envelope routing, worker scheduling of child
-FIR preparation, detailed graph-tail gating and realtime/offline lifecycle
-acceptance remain separately unchecked in `docs/todo.md`. The independent
-backward-seek and replay milestone is also still pending; do not expose
-creation of this node in the editor yet.
+Instrument Pitch/Panning/Filter envelope routing, child FIR preparation,
+detailed graph-tail gating, realtime/offline lifecycle and backward replay
+were still pending **at this checkpoint**. Subsequent sections document
+those results and the eventual editor creation.
 
 ### Child Instrument control-envelope checkpoint (13 October 2026)
 
@@ -397,9 +401,9 @@ it will not continue generating IIR residue beyond the authored bounded
 tail. This matters for manual preview/direct rendering that does not delegate
 truncation to `PlaybackSession`, and for split PCM consistency. It is not an
 assertion of mathematical IIR silence—this is the existing explicit bounded
-work/tail policy. Remaining Pattern effect envelopes, mixed oscillator gates,
-NNA/virtual-host release, actual codec export, and buffered playback parity
-remain separate acceptance items in `docs/todo.md`.
+work/tail policy. Pattern effect envelopes, mixed oscillator gates, NNA/virtual-host release,
+codec export and buffered playback parity were later milestone tasks.
+Their results appear in the subsequent sections.
 
 ### Mixed oscillator/source and FM Envelope release qualification (13 October 2026)
 
@@ -425,9 +429,9 @@ that a predeclared Note Off may already determine a finite end **before**
 the Sample's streaming EOF has been discovered. No PCM-time re-resolution
 of sources is introduced.
 
-Further lifecycle work remains for moving transport controls, separate
-audio branches, FIR/export parity and displaced NNA/virtual voices. These
-are split into independently verifiable tasks in `docs/todo.md`.
+At this point moving transport controls, separate audio branches,
+FIR/export parity and displaced NNA/virtual voices were still pending;
+later sections document their completion.
 
 ### Independent additive oscillator/Envelope release gates (13 October 2026)
 
@@ -588,9 +592,8 @@ Envelopes, exact Note Off/release, Graph IIR and Instrument tone-Filter
 EOF/tail histories, oscillator frequency modulation with integrated
 child positions, two concurrent independent note states, a published
 minimum-phase FIR cutoff update, direct format rebinding, rejection of
-incompatible frozen-plan formats, and no PCM-loop resolution. Source-node
-editor creation remains a separate TODO; it can now use this explicit
-seek boundary rather than issuing backwards `Render` calls.
+incompatible frozen-plan formats, and no PCM-loop resolution. Source-node editor creation was the next milestone and could use this
+explicit seek boundary rather than issuing backwards `Render` calls.
 
 ### ISound source authoring and cross-song import in the graph editor (13 October 2026)
 
