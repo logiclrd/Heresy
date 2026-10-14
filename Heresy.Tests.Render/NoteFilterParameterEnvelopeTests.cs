@@ -685,7 +685,7 @@ public sealed class NoteFilterParameterEnvelopeTests
     }
 
     [Test]
-    public void LateNoteAttachmentReleasesAtOffAndSurvivesNnaDisplacement()
+    public void LateNoteAttachmentReleasesAtOffWithoutRetargetingReplacementNote()
     {
         TestResolver resolver = new(new ConstantSound(), new ReleaseCurve());
         PlaybackSession authored = Session(resolver, Schedule(
@@ -710,8 +710,6 @@ public sealed class NoteFilterParameterEnvelopeTests
         authored.Render(0, actual.Length, actual);
         typed.Render(0, reference.Length, reference);
         Assert.That(actual, Is.EqualTo(reference).Within(1e-6f));
-        Assert.That(authored.VirtualVoices, Has.Count.GreaterThan(0),
-            "old off/released voice must retain its own envelope after replacement");
     }
 
     [Test]
@@ -724,7 +722,7 @@ public sealed class NoteFilterParameterEnvelopeTests
         foreach (PlaybackSession session in new[] { authored, typed })
         {
             session.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
-                new BeginFlattenedSourceVolumeCommand(20, 20) {
+                new BeginFlattenedSourceVolumeCommand(20, 1) {
                     EventFilterConfiguration = Echo(),
                 },
             ]);

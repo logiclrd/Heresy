@@ -29,6 +29,72 @@ namespace Heresy.Tests.Playback;
 public sealed class PreparedIncrementalPlaybackFactoryTests
 {
 
+
+    [Test]
+    public void PrivateSourceFrameSeekAndRewindReconstructTextFilterEnvelopeClock()
+    {
+        SongDocument document = new();
+        ObjectId envelopeId = document.AllocateObjectId();
+        NodeEnvelopeDefinition sweep = new(envelopeId, "Sweep");
+        sweep.ReplaceCurve([
+            new EnvelopeNode(TimeSpan.Zero, 0.2),
+            new EnvelopeNode(TimeSpan.FromMilliseconds(60), 0.8),
+        ], 0, 0, EnvelopeSustainLoopMode.Forward);
+        document.Add(sweep);
+        ObjectId filterId = document.AllocateObjectId();
+        document.Add(new FilterDefinition(filterId, "Echo", [
+            new FilterStageDefinition(1, "echo", FilterKind.CombFeedforward),
+        ]));
+        ObjectId sampleId = document.AllocateObjectId();
+        document.Add(SampleDefinition.CreateImported(sampleId,
+            "Sustain", "sample.wav", LongWave(16384)));
+
+        ObjectId childId = document.AllocateObjectId();
+        DataPatternDefinition child = new(childId, "Child") {
+            RowCount = 4, ChannelCount = 1,
+        };
+        PatternCell note = child.Grid.GetOrCreateCell(0, 0);
+        note.Note = new StartPatternNote(sampleId);
+        note.Effects.Add(new SetNoteFilterPatternEffect(filterId));
+        note.Effects.Add(new SetNoteFilterAssignmentsPatternEffect(
+            "echo.Feedforward = @\"Sweep\""));
+        document.Add(child);
+        ObjectId parentId = document.AllocateObjectId();
+        DataPatternDefinition parent = new(parentId, "Parent") {
+            RowCount = 4, ChannelCount = 1,
+        };
+        parent.Grid.GetOrCreateCell(0, 0).Note =
+            new StartPatternNote(childId, mixdown: true);
+        document.Add(parent);
+
+        PreparedIncrementalPlaybackFactory factory = new(Mono(1000));
+        using PreparedIncrementalPlaybackPlan direct =
+            factory.Create(document, childId);
+        using PreparedIncrementalPlaybackPlan nested =
+            factory.Create(document, parentId);
+        float[] reference = new float[45];
+        direct.Source.Render(reference.Length, reference);
+        Assert.That(reference[7], Is.GreaterThan(reference[3]),
+            "the Envelope must audibly increase Feedforward after the initial transient");
+
+        float[] first = new float[1];
+        nested.Source.Render(1, first);
+        Assert.That(first[0], Is.EqualTo(reference[0]).Within(1e-6f));
+        PlaybackVoice voice = nested.Session.GetChannelState(0).CurrentVoice!;
+        ISourceFrameSeekableSound seekable = (ISourceFrameSeekableSound)voice.Sound;
+        seekable.SetSourceFrameOffset(voice.SoundState, 10);
+        float[] sought = new float[1];
+        nested.Source.Render(1, sought);
+        Assert.That(sought[0], Is.EqualTo(reference[11]).Within(1e-6f),
+            "forward seek must replay the curve at the correct child-local origin");
+
+        seekable.SetSourceFrameOffset(voice.SoundState, 0);
+        float[] rewound = new float[1];
+        nested.Source.Render(1, rewound);
+        Assert.That(rewound[0], Is.EqualTo(reference[2]).Within(1e-6f),
+            "backward reconstruction must restore the same text-selected Envelope");
+    }
+
     [TestCase(false)]
     [TestCase(true)]
     public void ShiftedTextEnvelopeInPreparedSongRestartsAtEventFrameAndMatchesBlocks(
