@@ -27,6 +27,44 @@ namespace Heresy.Tests.Playback;
 [TestFixture]
 public sealed class PreparedIncrementalPlaybackFactoryTests
 {
+    [Test]
+    public void PreparedRootSessionCapturesEnvelopeNamesFromItsFrozenSongNotLiveEditor()
+    {
+        SongDocument song = new();
+        ObjectId envelopeId = song.AllocateObjectId();
+        NodeEnvelopeDefinition envelope = new(envelopeId, "Filter Sweep");
+        envelope.ReplaceCurve([new EnvelopeNode(TimeSpan.Zero, 0.5)],
+            0, 0, EnvelopeSustainLoopMode.Forward);
+        song.Add(envelope);
+
+        ObjectId sampleId = song.AllocateObjectId();
+        song.Add(SampleDefinition.CreateImported(sampleId,
+            "Tone", "tone.wav", LongWave(16384)));
+        ObjectId rootId = song.AllocateObjectId();
+        DataPatternDefinition root = new(rootId, "Root") {
+            RowCount = 2, ChannelCount = 1,
+        };
+        root.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(sampleId);
+        song.Add(root);
+
+        using PreparedIncrementalPlaybackPlan plan =
+            new PreparedIncrementalPlaybackFactory(Mono(1000)).Create(song, rootId);
+        Assert.That(plan.Session.FilterAssignmentNames, Is.Not.Null);
+        Assert.That(plan.Session.FilterAssignmentNames!.Resolve("FILTER SWEEP"),
+            Is.EqualTo(envelopeId));
+        // This edit touches the live authoring objects, never the song that
+        // the already-prepared producer and playback session captured.
+        envelope.Name = "Renamed By Editor";
+        song.Add(new ScriptEnvelopeDefinition(song.AllocateObjectId(), "Filter Sweep"));
+        Assert.That(plan.Session.FilterAssignmentNames.Resolve("Filter Sweep"),
+            Is.EqualTo(envelopeId));
+        Assert.That(() => plan.Session.FilterAssignmentNames.Resolve("Renamed By Editor"),
+            Throws.ArgumentException);
+        float[] rendered = new float[8];
+        plan.Source.Render(rendered.Length, rendered);
+        Assert.That(rendered[0], Is.GreaterThan(0));
+    }
+
 	[Test]
 	public void RecursiveOxxReportsActualReplayRequiredCapabilityThroughPlanDiagnostics()
 	{
