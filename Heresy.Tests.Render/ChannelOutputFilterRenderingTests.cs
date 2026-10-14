@@ -627,6 +627,59 @@ public sealed class ChannelOutputFilterRenderingTests
     }
 
     [Test]
+    public void UnsupportedNyquistTextValueDoesNotSuppressSupportedHostMode()
+    {
+        TestResolver sounds = new();
+        sounds.Add(PulseId, new PulseSound());
+        FilterDefinition definition = new((ObjectId)81117U, "One pole", [
+            new FilterStageDefinition(1, "pole", FilterKind.OnePole),
+        ]);
+        FilterInstance initial = new(definition);
+        initial.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(100));
+
+        PlaybackSession Make()
+        {
+            PlaybackSession session = Session(sounds);
+            session.ApplyLiveEvent(ChannelTarget.Physical(0), [
+                new SetChannelFilterCommand { Configuration = initial },
+                new StartNoteCommand(PulseId),
+            ]);
+            session.Render(0, 1, new float[1]);
+            return session;
+        }
+        PlaybackSession mixed = Make(), typed = Make(), baseline = Make();
+        List<string> warnings = [];
+        mixed.ChannelFilterCommandRejected = warnings.Add;
+        mixed.ApplyLiveEvent(ChannelTarget.Physical(0), [
+            new SetChannelFilterAssignmentsCommand("""
+                pole.CutoffHz = 700
+                pole.Mode = HighPass
+                pole.CutoffHz = not-a-number
+                nonexistent.CutoffHz = 300
+                """),
+        ]);
+        typed.ApplyLiveEvent(ChannelTarget.Physical(0), [
+            new SetChannelFilterParametersCommand(1, [
+                new("Mode", FilterParameterValue.FromChoice("HighPass")),
+            ]),
+        ]);
+        float[] actual = new float[8], expected = new float[8],
+            unchanged = new float[8];
+        mixed.Render(1, 8, actual);
+        typed.Render(1, 8, expected);
+        baseline.Render(1, 8, unchanged);
+        Assert.Multiple(() =>
+        {
+            Assert.That(warnings, Is.Empty);
+            Assert.That(actual, Is.EqualTo(expected).Within(1e-6f),
+                "the unsupported cutoff above Nyquist is dropped at DSP preflight");
+            Assert.That(actual, Is.Not.EqualTo(unchanged),
+                "the independent valid choice still changes audible DSP");
+        });
+    }
+
+    [Test]
     public void PersistentHostEnvelopeMatchesFramewiseChannelParametersAcrossNoteOffAndNewNote()
     {
         static NoteSchedule Make(bool useEnvelope)
