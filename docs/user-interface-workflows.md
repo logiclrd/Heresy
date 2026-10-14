@@ -569,6 +569,21 @@ advance by Skip within that same field; a blank, OFF or CUT Note is not
 replaced. Piano keys and the physical QWERTY comma/period positions do nothing
 in Octave focus. Clicking any field moves the cursor there, including blank
 space.
+
+Plain **Page Up/Page Down** moves the focused Pattern cursor by
+`floor(grid viewport height / complete row height)` rows—the same effect
+as repeatedly pressing Up or Down that many times. The row height includes
+each row's top border, which is shared with the preceding row; the bottom
+border is not counted separately. Navigation crosses flattened Sequence
+Pattern boundaries, clamps the channel at every intermediate narrower
+Pattern, and preserves the focused Note-name/Octave/Source/Volume/effect
+subfield. Expanded effect strips collapse as with ordinary vertical arrows.
+**Shift+Page Up/Down** extends the rectangular selection as repeated
+Shift+Arrow presses would; plain Page leaves the existing selection
+unchanged. The editor scrolls only as much as necessary to reveal the
+new cursor and does not independently scroll a whole page of content.
+**Ctrl+Page Up/Down** still uses the existing Pattern-boundary navigation
+shortcut, not this viewport-based cursor movement.
 When Source is already focused, clicking it again opens a field-anchored picker
 wide enough to show full source names; `Alt+Down` opens the same picker.
 Space copies the Source selected in the pattern toolbar into the field, `.`
