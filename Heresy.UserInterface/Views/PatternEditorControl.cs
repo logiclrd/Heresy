@@ -142,7 +142,7 @@ public sealed class PatternEditorControl : UserControl
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _volumeTexts = [];
 	private readonly Dictionary<(int Row, int Channel), PatternEffectStripControl> _effectStrips = [];
 	private readonly PatternVolumeInputState _volumeInput = new();
-	private bool _suppressPhysicalPunctuationTextInput;
+	private bool _suppressHandledTrackerKeyTextInput;
 	// Display-row identity of an uncommitted two-digit Volume preview.
 	private (int Row, int Channel)? _volumePreviewAddress;
 	private readonly PatternSelectionState _selection = new();
@@ -1163,7 +1163,7 @@ public sealed class PatternEditorControl : UserControl
 	{
 		// Each new key event expires any unmatched suppressed TextInput
 		// from the preceding physically handled punctuation key.
-		_suppressPhysicalPunctuationTextInput = false;
+		_suppressHandledTrackerKeyTextInput = false;
 		if (_cursor.Row != row || _cursor.Channel != channel)
 			_cursor.SetPosition(row, channel, PatternCellField.Note);
 
@@ -1216,7 +1216,7 @@ public sealed class PatternEditorControl : UserControl
 				e.PhysicalKey, e.KeyModifiers,
 				out PatternPunctuationCommand punctuation))
 		{
-			_suppressPhysicalPunctuationTextInput = true;
+			_suppressHandledTrackerKeyTextInput = true;
 			_volumeInput.Reset();
 			RefreshVolumePreview();
 			switch (punctuation)
@@ -1702,6 +1702,10 @@ public sealed class PatternEditorControl : UserControl
 					}
 				}
 
+				// A handled physical piano event may still be followed by a
+				// platform TextInput for the *old* row after cursor advance.
+				// Consume it before it can reset the cursor or trigger commands.
+				_suppressHandledTrackerKeyTextInput = true;
 				e.Handled = true;
 				UpdateCurrentPatternControls();
 				RefreshCursorVisuals();
@@ -2081,18 +2085,18 @@ public sealed class PatternEditorControl : UserControl
 		if (string.IsNullOrEmpty(e.Text))
 			return;
 
-		if (_cursor.Row != row || _cursor.Channel != channel)
-			_cursor.SetPosition(row, channel, PatternCellField.Note);
-
-		// A physical punctuation KeyDown may have already consumed this
-		// character. Ignore its matching TextInput, whatever letter a
-		// non-QWERTY layout assigns to that key position.
-		if (_suppressPhysicalPunctuationTextInput)
+		// A handled physical Note/punctuation KeyDown may have already
+		// advanced to a different row. Ignore the follow-up TextInput
+		// BEFORE any cursor re-mapping, regardless of its layout glyph.
+		if (_suppressHandledTrackerKeyTextInput)
 		{
-			_suppressPhysicalPunctuationTextInput = false;
+			_suppressHandledTrackerKeyTextInput = false;
 			e.Handled = true;
 			return;
 		}
+
+		if (_cursor.Row != row || _cursor.Channel != channel)
+			_cursor.SetPosition(row, channel, PatternCellField.Note);
 
 		char value = e.Text[0];
 		// This is still a tracker field, so punctuation commands are

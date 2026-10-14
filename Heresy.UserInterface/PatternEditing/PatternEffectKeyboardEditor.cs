@@ -86,13 +86,13 @@ public static class PatternEffectKeyboardEditor
 				// stack). Native effects are rejected by decoding above.
 				if (existing is null)
 					return new PatternEffectInputResult(false, false);
-				bool changed = SetEffect(
+				bool commandCleared = SetEffect(
 					workspace, pattern, cursor.Row, cursor.Channel,
 					effectIndex, new EmptyTrackerPatternEffect(parameter));
 				cursor.ResetPendingNibble();
 				if (!cursor.IsExpanded)
 					cursor.AdvanceAfterCollapsedEntry(pattern.RowCount);
-				return new PatternEffectInputResult(changed, false);
+				return new PatternEffectInputResult(commandCleared, false);
 			}
 
 			if (!char.IsLetter(value))
