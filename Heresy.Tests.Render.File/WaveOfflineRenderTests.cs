@@ -30,6 +30,104 @@ public sealed class WaveOfflineRenderTests
 {
 
     [Test]
+    public void ReleasedCompletionCutMatchesExplicitCutAtSameFrameIncludingRealWavTail()
+    {
+        const int rate = 1000;
+        ObjectId source = (ObjectId)18001U;
+        ObjectId envelopeId = (ObjectId)18002U;
+        NodeEnvelopeDefinition authored = new(envelopeId, "ReleaseGate");
+        authored.ReplaceCurve([
+            new EnvelopeNode(TimeSpan.Zero, 0.4),
+            new EnvelopeNode(TimeSpan.FromMilliseconds(10), 0.4),
+        ], 0, 0, EnvelopeSustainLoopMode.Forward);
+        SongDocument song = new();
+        song.Add(authored);
+        FilterAssignmentEnvelopeNames names = FilterAssignmentEnvelopeNames.Capture(song);
+        IEnvelopeCurve curve = new FiniteReleasedCurve();
+        EnvelopeFileResolver resolver =
+            new(source, new QuietSound(), envelopeId, curve);
+        FilterInstance filter = new(new FilterDefinition((ObjectId)18003U,
+            "Echo", [new FilterStageDefinition(1, "echo", FilterKind.CombFeedforward)]));
+        filter.SetStageParameters(1, [
+            new("DelaySeconds", FilterParameterValue.FromNumber(0.002)),
+            new("Mix", FilterParameterValue.FromNumber(0)),
+            new("Feedforward", FilterParameterValue.FromNumber(0.4)),
+        ]);
+        PlaybackSession Create(bool automated, bool noCut = false)
+        {
+            NoteScheduleBuilder builder = new();
+            builder.Append(Event(TimeSpan.Zero, new StartNoteCommand(source)
+            {
+                EventFilterConfiguration = filter,
+            }, new SetNoteFilterAssignmentsCommand(
+                "echo.Feedforward = @\"ReleaseGate\""
+                + (automated ? " THEN CUT" : ""))));
+            builder.Append(Event(TimeSpan.FromMilliseconds(5),
+                new NoteOffCommand()));
+            if (!automated && !noCut)
+                builder.Append(Event(TimeSpan.FromMilliseconds(7),
+                    new NoteCutCommand()));
+            PlaybackSession session = Session(rate, builder.Freeze(), resolver);
+            session.NoteFilterEnvelopeResolver = resolver;
+            session.FilterAssignmentNames = names;
+            return session;
+        }
+
+        float[] actual = new float[20], explicitCut = new float[20],
+            held = new float[20];
+        Create(true).Render(0, actual.Length, actual);
+        PlaybackSession manual = Create(false);
+        manual.Render(0, 6, explicitCut.AsSpan(0, 6));
+        manual.Render(6, 14, explicitCut.AsSpan(6, 14));
+        Create(false, noCut: true).Render(0, held.Length, held);
+        Assert.That(actual, Is.EqualTo(explicitCut).Within(1e-6f),
+            "release-end THEN CUT must be sample-identical to explicit Note Cut at frame 7");
+        Assert.That(actual.Take(5).Any(x => Math.Abs(x) > 0.05f), Is.True);
+        Assert.That(Enumerable.Range(7, 8).Any(i =>
+            Math.Abs(held[i] - actual[i]) > 0.001f), Is.True,
+            "a no-action control must remain audible beyond the release-end Cut");
+
+        (byte[] Data, OfflineRenderResult Result) Export(bool automated)
+        {
+            using MemoryStream stream = new();
+            using (WaveFileSink sink = new(stream,
+                new AudioOutputFormat(rate, 1), leaveOpen: true))
+            {
+                OfflineRenderResult result = OfflinePlaybackRenderer.Render(
+                    Create(automated), TimeSpan.FromMilliseconds(20), sink,
+                    blockFrameCount: automated ? 3 : 11);
+                sink.Complete();
+                return (stream.ToArray(), result);
+            }
+        }
+        var completed = Export(true);
+        var reference = Export(false);
+        Assert.Multiple(() =>
+        {
+            Assert.That(completed.Result.TotalFrameCount,
+                Is.EqualTo(reference.Result.TotalFrameCount),
+                "both cut paths must drain exactly the same release / anti-click tail");
+            Assert.That(completed.Data, Is.EqualTo(reference.Data),
+                "real encoded WAV, including its header and tail, must be byte-identical");
+        });
+        for (int frame = 0; frame < actual.Length; frame++)
+        {
+            short pcm = BinaryPrimitives.ReadInt16LittleEndian(
+                completed.Data.AsSpan(44 + 2 * frame, 2));
+            Assert.That(pcm / 32768f, Is.EqualTo(actual[frame])
+                .Within(2f / 32768f),
+                $"release-boundary WAV body frame {frame}");
+        }
+    }
+
+    private sealed class FiniteReleasedCurve : IEnvelopeCurve
+    {
+        public double GetValue(long frame, int rate, long? off) => 0.4;
+        public long? GetEndActiveFrameExclusiveAfterNoteOff(long off, int rate)
+            => off + 2;
+    }
+
+    [Test]
     public void ExportedWaveSamplesMatchLiveTextSelectedEnvelopeAtLateSongFrame()
     {
         const int rate = 1000;
