@@ -67,6 +67,19 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
             new StartPatternNote(childId, mixdown: true);
         document.Add(parent);
 
+        // A separate unautomated reference with otherwise identical DSP
+        // proves that the text-bound Envelope actually reaches audible PCM.
+        ObjectId constantId = document.AllocateObjectId();
+        DataPatternDefinition constant = new(constantId, "Constant") {
+            RowCount = 4, ChannelCount = 1,
+        };
+        PatternCell constantNote = constant.Grid.GetOrCreateCell(0, 0);
+        constantNote.Note = new StartPatternNote(sampleId);
+        constantNote.Effects.Add(new SetNoteFilterPatternEffect(filterId));
+        constantNote.Effects.Add(new SetNoteFilterAssignmentsPatternEffect(
+            "echo.DelaySeconds = 0.002\\necho.Mix = 1\\necho.Feedforward = 0.2"));
+        document.Add(constant);
+
         PreparedIncrementalPlaybackFactory factory = new(Mono(1000));
         using PreparedIncrementalPlaybackPlan direct =
             factory.Create(document, childId);
@@ -74,8 +87,13 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
             factory.Create(document, parentId);
         float[] reference = new float[45];
         direct.Source.Render(reference.Length, reference);
-        Assert.That(reference[7], Is.GreaterThan(reference[3]),
-            "the Envelope must audibly increase Feedforward after the initial transient");
+        using PreparedIncrementalPlaybackPlan baseline =
+            factory.Create(document, constantId);
+        float[] basePcm = new float[45];
+        baseline.Source.Render(basePcm.Length, basePcm);
+        Assert.That(Enumerable.Range(4, 25).Any(frame =>
+                MathF.Abs(reference[frame] - basePcm[frame]) > 0.001f),
+            Is.True, "the authored Envelope must audibly differ from constant-parameter PCM");
 
         float[] first = new float[1];
         nested.Source.Render(1, first);

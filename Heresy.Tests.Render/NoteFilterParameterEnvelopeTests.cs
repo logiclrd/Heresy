@@ -757,6 +757,104 @@ public sealed class NoteFilterParameterEnvelopeTests
             "later descendants must use the controller's earlier attachment frame");
     }
 
+
+    [Test]
+    public void TextSelectedEnvelopeSurvivesNoteNnaContinueOnItsOriginalVoice()
+    {
+        TestResolver resolver = new(new ConstantSound(), new RampCurve());
+        PlaybackSession authored = Session(resolver, Schedule(
+            Event(0, 0, new StartNoteCommand(Source) {
+                EventFilterConfiguration = Echo(),
+            }),
+            Event(2, 0, new SetNoteFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Sweep\"")),
+            Event(4, 0, new StartNoteCommand(Source))));
+        authored.FilterAssignmentNames = Names();
+        PlaybackSession typed = Session(resolver, Schedule(
+            Event(0, 0, new StartNoteCommand(Source) {
+                EventFilterConfiguration = Echo(),
+            }),
+            Event(2, 0, new SetNoteFilterParameterEnvelopeCommand(
+                1, "Feedforward", Envelope)),
+            Event(4, 0, new StartNoteCommand(Source))));
+
+        float[] actual = new float[8], reference = new float[8];
+        authored.Render(0, actual.Length, actual);
+        typed.Render(0, reference.Length, reference);
+        Assert.That(actual, Is.EqualTo(reference).Within(1e-6f));
+        Assert.That(authored.VirtualVoices, Has.Count.EqualTo(1),
+            "the old voice continues and retains its own Filter Envelope");
+        Assert.That(typed.VirtualVoices, Has.Count.EqualTo(1));
+    }
+
+    [Test]
+    public void TwoPhysicalHostsAttachTextEnvelopesAtIndependentSongFrames()
+    {
+        TestResolver resolver = new(new ConstantSound(), new RampCurve());
+        PlaybackSession authored = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterCommand { Configuration = Echo() },
+                new StartNoteCommand(Source)),
+            Event(1, 1, new SetChannelFilterCommand { Configuration = Echo() },
+                new StartNoteCommand(Source)),
+            Event(3, 0, new SetChannelFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Sweep\"")),
+            Event(6, 1, new SetChannelFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Sweep\""))));
+        authored.FilterAssignmentNames = Names();
+        PlaybackSession typed = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterCommand { Configuration = Echo() },
+                new StartNoteCommand(Source)),
+            Event(1, 1, new SetChannelFilterCommand { Configuration = Echo() },
+                new StartNoteCommand(Source)),
+            Event(3, 0, new SetChannelFilterParameterEnvelopeCommand(
+                1, "Feedforward", Envelope)),
+            Event(6, 1, new SetChannelFilterParameterEnvelopeCommand(
+                1, "Feedforward", Envelope))));
+
+        float[] actual = new float[13], reference = new float[13];
+        authored.Render(0, actual.Length, actual);
+        typed.Render(0, reference.Length, reference);
+        Assert.That(actual, Is.EqualTo(reference).Within(1e-6f),
+            "one host's attachment must not reset another host's independent clock");
+    }
+
+    [Test]
+    public void TextSelectedFirEnvelopeRetainsPreparedWorkerBoundary()
+    {
+        FilterDefinition definition = new((ObjectId)24001U, "Fir", [
+            new FilterStageDefinition(1, "fir", FilterKind.FirLowPass),
+        ]);
+        FilterInstance selected = new(definition);
+        selected.SetStageParameters(1, [
+            new("CutoffHz", FilterParameterValue.FromNumber(150)),
+            new("TapCount", FilterParameterValue.FromNumber(127)),
+            new("TransitionWidthHz", FilterParameterValue.FromNumber(50)),
+        ]);
+        TestResolver resolver = new(new ConstantSound(), new FixedCurve(225));
+        PlaybackSession authored = Session(resolver, Schedule(
+            Event(0, 0, new StartNoteCommand(Source) {
+                EventFilterConfiguration = selected,
+            }, new SetNoteFilterAssignmentsCommand(
+                "fir.CutoffHz = @\"Sweep\""))));
+        authored.FilterAssignmentNames = Names();
+        PlaybackSession typed = Session(resolver, Schedule(
+            Event(0, 0, new StartNoteCommand(Source) {
+                EventFilterConfiguration = selected,
+            }, new SetNoteFilterParameterEnvelopeCommand(
+                1, "CutoffHz", Envelope))));
+
+        float[] actual = new float[10], reference = new float[10];
+        authored.Render(0, 1, actual.AsSpan(0, 1));
+        typed.Render(0, 1, reference.AsSpan(0, 1));
+        Assert.That(authored.PreparePendingNoteFilterEnvelopeControls(),
+            Is.EqualTo(1), "FIR design still happens outside PCM rendering");
+        Assert.That(typed.PreparePendingNoteFilterEnvelopeControls(), Is.EqualTo(1));
+        authored.Render(1, 9, actual.AsSpan(1, 9));
+        typed.Render(1, 9, reference.AsSpan(1, 9));
+        Assert.That(actual, Is.EqualTo(reference).Within(1e-6f));
+        Assert.That(authored.PreparePendingNoteFilterEnvelopeControls(), Is.Zero);
+    }
+
     private static FilterAssignmentEnvelopeNames Names()
     {
         SongDocument song = new();
