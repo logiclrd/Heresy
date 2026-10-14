@@ -297,7 +297,8 @@ public static class NativePatternEffectEditor
 		PatternEffect original,
 		IReadOnlyDictionary<string, string> values,
 		CultureInfo? culture = null,
-		SongDocument? song = null)
+		SongDocument? song = null,
+		bool allowInvalidFilterAssignments = false)
 	{
 		ArgumentNullException.ThrowIfNull(original);
 		ArgumentNullException.ThrowIfNull(values);
@@ -310,9 +311,9 @@ public static class NativePatternEffectEditor
 			SetNoteFilterPatternEffect =>
 				new SetNoteFilterPatternEffect(ParseSelectionId(values, song)),
 			SetChannelFilterAssignmentsPatternEffect =>
-				RebuildFilterAssignments(true, values, song),
+				RebuildFilterAssignments(true, values, song, allowInvalidFilterAssignments),
 			SetNoteFilterAssignmentsPatternEffect =>
-				RebuildFilterAssignments(false, values, song),
+				RebuildFilterAssignments(false, values, song, allowInvalidFilterAssignments),
 			ParametricPatternEffect =>
 				RebuildParametric(values, culture),
 			SetTempoPatternEffect =>
@@ -443,7 +444,7 @@ public static class NativePatternEffectEditor
 
 	private static PatternEffect RebuildFilterAssignments(
 		bool channel, IReadOnlyDictionary<string, string> values,
-		SongDocument? song)
+		SongDocument? song, bool allowInvalid)
 	{
 		string source = Get(values, "assignments", "Assignments");
 		string idText = Get(values, "filterId", "Authoring Filter");
@@ -464,7 +465,7 @@ public static class NativePatternEffectEditor
 				entry is not FilterDefinition definition)
 				throw new ArgumentException(
 					"Choose an existing shared Filter definition to validate these assignments.");
-			if (FilterAssignmentText.ParseAndValidate(
+			if (!allowInvalid && FilterAssignmentText.ParseAndValidate(
 				new FilterInstance(definition), source).Count == 0)
 				throw new ArgumentException("At least one stage assignment is required.");
 		}
