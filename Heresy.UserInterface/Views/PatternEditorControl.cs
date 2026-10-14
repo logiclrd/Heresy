@@ -1201,6 +1201,56 @@ public sealed class PatternEditorControl : UserControl
 			return;
 		}
 
+		// A Dvorak comma/period is produced by the physical QWERTY
+		// W/E positions. Dispatch its layout-produced punctuation before
+		// interpreting those same positions as tracker piano notes. The
+		// handled Note-field KeyDown also suppresses the matching TextInput
+		// (which is otherwise ignored by the Note field).
+		if (_cursor.Field == PatternCellField.Note
+			&& PatternPunctuationKeyboard.TryGetCommand(
+				e.PhysicalKey, e.Key, e.KeySymbol, e.KeyModifiers,
+				out PatternPunctuationCommand punctuation))
+		{
+			_volumeInput.Reset();
+			RefreshVolumePreview();
+			switch (punctuation)
+			{
+				case PatternPunctuationCommand.ToggleEditMask:
+					_noteInputState.EditMask =
+						PatternEditMaskEditor.Toggle(
+							_noteInputState.EditMask, _cursor.Field);
+					UpdateEditStateDisplay();
+					_message.Text =
+						$"Edit mask: {PatternEditMaskEditor.Describe(_noteInputState.EditMask)}.";
+					break;
+
+				case PatternPunctuationCommand.ClearCell:
+					bool changed = PatternRegionClipboardEditor.Clear(
+						_workspace,
+						_context,
+						new PatternSelectionRegion(row, channel, row, channel));
+					if (changed)
+					{
+						RefreshUnderlyingCell(
+							editorRow.Pattern, editorRow.PatternRow, channel);
+						_changed(
+							$"Cleared tracker cell in {editorRow.Pattern.Name} row {editorRow.PatternRow}, channel {channel + 1}");
+					}
+					_message.Text = changed
+						? "Cleared tracker cell."
+						: "The tracker cell is already empty.";
+					break;
+
+				default:
+					throw new ArgumentOutOfRangeException(nameof(punctuation));
+			}
+			e.Handled = true;
+			UpdateCurrentPatternControls();
+			RefreshCursorVisuals();
+			FocusCursorCell();
+			return;
+		}
+
 		PatternCell? cell =
 			editorRow.Pattern.Grid[editorRow.PatternRow, channel];
 		(int Row, int Channel)? previouslyExpanded = _expandedCell;
