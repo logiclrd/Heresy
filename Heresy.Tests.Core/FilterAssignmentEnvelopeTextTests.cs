@@ -123,6 +123,77 @@ public sealed class FilterAssignmentEnvelopeTextTests
         }
     }
 
+    [TestCase("low.Q = @\"x\" ThEn OfF", FilterEnvelopeCompletionAction.Off)]
+    [TestCase("low.Q = @\"x\" THEN CUT", FilterEnvelopeCompletionAction.Cut)]
+    [TestCase("low.Q = @\"x\"  then   cut  ", FilterEnvelopeCompletionAction.Cut)]
+    [TestCase("low.Q = @\"x\"", FilterEnvelopeCompletionAction.None)]
+    public void OptionalCompletionSuffixProducesTypedAction(
+        string source, FilterEnvelopeCompletionAction expected)
+    {
+        var selected = Filter();
+        var names = FilterAssignmentEnvelopeNames.Capture(Song("x"));
+        var binding = FilterAssignmentEnvelopeText.ParseAndValidate(selected, source, names)
+            .EnvelopeBindings.Single();
+        var action = FilterAssignmentEnvelopeText.ResolveRuntimeActions(
+            selected, source, names).Single();
+        var preview = FilterAssignmentEnvelopeText.ResolveValidBindings(
+            selected, source, names).Single();
+        Assert.Multiple(() =>
+        {
+            Assert.That(binding.CompletionAction, Is.EqualTo(expected));
+            Assert.That(action.CompletionAction, Is.EqualTo(expected));
+            Assert.That(preview.CompletionAction, Is.EqualTo(expected));
+        });
+    }
+
+    [TestCase("low.Q = @\"x\"THEN CUT")]
+    [TestCase("low.Q = @\"x\" THEN")]
+    [TestCase("low.Q = @\"x\" THEN STOP")]
+    [TestCase("low.Q = @\"x\" THEN OFF THEN CUT")]
+    [TestCase("low.Q = @\"x\" CUT")]
+    public void InvalidCompletionSuffixIsRejectedButDoesNotClobberRuntimeSibling(
+        string malformed)
+    {
+        var selected = Filter();
+        var names = FilterAssignmentEnvelopeNames.Capture(Song("x"));
+        Assert.That(() => FilterAssignmentEnvelopeText.ParseAndValidate(
+            selected, malformed, names),
+            Throws.ArgumentException.With.Message.Contains("Unexpected"));
+        var actions = FilterAssignmentEnvelopeText.ResolveRuntimeActions(
+            selected, "low.Q = @\"x\" THEN OFF\n" + malformed, names);
+        Assert.That(actions.Single().CompletionAction,
+            Is.EqualTo(FilterEnvelopeCompletionAction.Off));
+    }
+
+    [Test]
+    public void LaterNumericAssignmentDetachesAndLaterEnvelopeOverridesCompletionAction()
+    {
+        var selected = Filter();
+        var names = FilterAssignmentEnvelopeNames.Capture(Song("x"));
+        var actions = FilterAssignmentEnvelopeText.ResolveRuntimeActions(selected,
+            "low.Q = @\"x\" THEN OFF\nlow.Q = 0.7\nlow.Q = @\"x\" THEN CUT",
+            names);
+        Assert.That(actions, Has.Count.EqualTo(1));
+        Assert.That(actions[0].CompletionAction,
+            Is.EqualTo(FilterEnvelopeCompletionAction.Cut));
+        Assert.That(actions[0].LineNumber, Is.EqualTo(3));
+        var detached = FilterAssignmentEnvelopeText.ResolveRuntimeActions(
+            selected, "low.Q = @\"x\" THEN CUT\nlow.Q = 0.6", names);
+        Assert.That(detached.Single().EnvelopeId, Is.Null);
+        Assert.That(detached.Single().CompletionAction,
+            Is.EqualTo(FilterEnvelopeCompletionAction.None));
+    }
+
+    [Test]
+    public void QuotedNameMayContainThenWordsWithoutBecomingAnAction()
+    {
+        var names = FilterAssignmentEnvelopeNames.Capture(Song("Attack THEN OFF"));
+        var binding = FilterAssignmentEnvelopeText.ParseAndValidate(
+            Filter(), "low.Q = @\"Attack THEN OFF\" THEN CUT", names)
+            .EnvelopeBindings.Single();
+        Assert.That(binding.CompletionAction, Is.EqualTo(FilterEnvelopeCompletionAction.Cut));
+    }
+
     [Test]
     public void CapturedNamesDoNotShiftWhenSongIsRenamedOrNewAmbiguousObjectAdded()
     {
@@ -141,7 +212,7 @@ public sealed class FilterAssignmentEnvelopeTextTests
     [Test]
     public void AuthoredEnvelopeReferenceSurvivesBothNativeEffectsAndJsonWithoutRewriting()
     {
-        const string text = "# editor preserves the reference\nlow.Q = @\"Envelope One\"";
+        const string text = "# editor preserves the reference\nlow.Q = @\"Envelope One\" THEN CUT";
         var a = new SetNoteFilterAssignmentsPatternEffect(text, (ObjectId)301U);
         var b = new SetChannelFilterAssignmentsPatternEffect(text, (ObjectId)301U);
         string serialized = SongDocumentJson.SerializePatternEffects([a, b]);

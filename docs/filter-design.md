@@ -679,3 +679,41 @@ audible Filter. This is automated parity/transport qualification,
 not a claim of completed speaker-device listening tests. The
 `THEN OFF`/`THEN CUT` Envelope-end actions remain the next independent
 implementation task.
+
+
+## Filter Envelope completion suffix — grammar and ownership foundation (14 October 2026)
+
+The authoring language now parses optional, case-insensitive `THEN OFF` and
+`THEN CUT` following a quoted numeric Filter Envelope reference, e.g.
+`low.CutoffHz = @"Sweep" THEN CUT`. The token must be separated from
+its closing quote by whitespace; an escaped quote or literal `THEN` inside
+the quoted name remains part of that name. Invalid trailing tokens report
+strict authoring errors; runtime safely ignores only those invalid lines.
+The existing frozen name/ID resolution, last-valid-wins updates, numeric
+replacement/detach precedence, and v1 raw effect-text persistence are
+unchanged. The parser now carries a typed
+`FilterEnvelopeCompletionAction` through authoring, preview and runtime
+resolution; a later numeric assignment clears that parameter's action.
+
+**This is a foundation milestone, not a functioning Note Off/Cut trigger.**
+The playback dispatcher does not yet act on the parsed completion token.
+The remaining renderer, flattened scope, Channel-host and export slices are
+tracked separately in `docs/todo.md`.
+
+**Required ownership contract for subsequent implementation:** A Note Filter
+completion action belongs to the **exact PlaybackVoice** or flattened
+`FlattenedSourceVolume` controller targeted when the assignment executes,
+not whatever note later occupies the same channel. Replacement and NNA must
+never retarget it. A Channel Filter's *numeric* Envelope belongs to the
+physical/scoped host and retains its independent attachment clock across
+notes. A Channel Filter *completion action* must instead capture the
+assignment event's own logical current note or controller; when that command
+has no current note, there is no lifecycle target. Do not pick a different
+owner's voice simply because it shares the physical output bus. Its
+release-aware action follower must not release, restart or destroy the
+persistent numeric Channel modulation. Earlier external Cut extinguishes
+an action target; Off is one-shot and must not restart a released tail.
+For simultaneous completions on one original note, Cut takes precedence.
+A finite envelope boundary is the first frame **after** its final sample;
+Script Envelopes with no provable finite endpoint must not cause invented
+completion events. No callback-side scripting or per-sample allocation.

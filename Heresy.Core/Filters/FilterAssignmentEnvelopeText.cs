@@ -47,18 +47,29 @@ public sealed class FilterAssignmentEnvelopeNames
     }
 }
 
+/// <summary>Optional note-lifecycle consequence of a parameter Envelope's
+/// natural or release completion. Parsing alone never fires a note action.</summary>
+public enum FilterEnvelopeCompletionAction
+{
+    None,
+    Off,
+    Cut,
+}
+
 /// <summary>One nonstructural numeric Filter slot controlled by an
 /// explicitly resolved same-song Envelope. Stage and parameter are canonical;
 /// EnvelopeId is bound from the supplied immutable name snapshot, never from
 /// a live name lookup during PCM playback.</summary>
 public sealed record FilterAssignmentEnvelopeBinding(
-    int StageId, string ParameterName, ObjectId EnvelopeId, int LineNumber);
+    int StageId, string ParameterName, ObjectId EnvelopeId, int LineNumber,
+    FilterEnvelopeCompletionAction CompletionAction = FilterEnvelopeCompletionAction.None);
 
 /// <summary>One last-valid-wins authored parameter operation. Null EnvelopeId
 /// means a valid numeric assignment explicitly detaches an older Envelope
 /// from that exact stage/parameter; the numeric base is applied separately.</summary>
 public sealed record FilterAssignmentRuntimeAction(
-    int StageId, string ParameterName, ObjectId? EnvelopeId, int LineNumber);
+    int StageId, string ParameterName, ObjectId? EnvelopeId, int LineNumber,
+    FilterEnvelopeCompletionAction CompletionAction = FilterEnvelopeCompletionAction.None);
 
 /// <summary>Result of strict authoring validation. Numeric and Envelope
 /// bindings remain separate so no fictional numeric value is assigned before
@@ -136,11 +147,12 @@ public static class FilterAssignmentEnvelopeText
                 throw Invalid(i,
                     $"{stage.Name}.{descriptor.Name} cannot use an Envelope (structural or choice parameter).");
 
-            string envelopeName = ReadQuotedName(rawValue, i);
+            (string envelopeName, FilterEnvelopeCompletionAction completion) =
+                ReadQuotedReference(rawValue, i);
             try
             {
                 bindings.Add(new FilterAssignmentEnvelopeBinding(
-                    stage.StageId, descriptor.Name, names.Resolve(envelopeName), i + 1));
+                    stage.StageId, descriptor.Name, names.Resolve(envelopeName), i + 1, completion));
             }
             catch (ArgumentException ex)
             {
@@ -190,7 +202,7 @@ public static class FilterAssignmentEnvelopeText
                         final[(binding.StageId,
                             binding.ParameterName.ToUpperInvariant())] =
                             new(binding.StageId, binding.ParameterName,
-                                binding.EnvelopeId, i + 1);
+                                binding.EnvelopeId, i + 1, binding.CompletionAction);
                 }
                 else
                 {
@@ -217,10 +229,11 @@ public static class FilterAssignmentEnvelopeText
             .Where(action => action.EnvelopeId.HasValue)
             .Select(action => new FilterAssignmentEnvelopeBinding(
                 action.StageId, action.ParameterName,
-                action.EnvelopeId!.Value, action.LineNumber))
+                action.EnvelopeId!.Value, action.LineNumber, action.CompletionAction))
             .ToArray();
 
-    private static string ReadQuotedName(string literal, int lineIndex)
+    private static (string Name, FilterEnvelopeCompletionAction CompletionAction)
+        ReadQuotedReference(string literal, int lineIndex)
     {
         StringBuilder name = new();
         for (int i = 2; i < literal.Length; i++)
@@ -228,12 +241,25 @@ public static class FilterAssignmentEnvelopeText
             char c = literal[i];
             if (c == '"')
             {
-                if (i != literal.Length - 1)
-                    throw Invalid(lineIndex,
-                        "Unexpected text after the quoted Envelope name.");
                 if (string.IsNullOrWhiteSpace(name.ToString()))
                     throw Invalid(lineIndex, "Envelope name cannot be empty.");
-                return name.ToString();
+                if (i == literal.Length - 1)
+                    return (name.ToString(), FilterEnvelopeCompletionAction.None);
+                if (!char.IsWhiteSpace(literal[i + 1]))
+                    throw Invalid(lineIndex,
+                        "Unexpected text after the quoted Envelope name.");
+                string[] words = literal[(i + 1)..].Split(
+                    (char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                if (words.Length == 2
+                    && string.Equals(words[0], "THEN", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (string.Equals(words[1], "OFF", StringComparison.OrdinalIgnoreCase))
+                        return (name.ToString(), FilterEnvelopeCompletionAction.Off);
+                    if (string.Equals(words[1], "CUT", StringComparison.OrdinalIgnoreCase))
+                        return (name.ToString(), FilterEnvelopeCompletionAction.Cut);
+                }
+                throw Invalid(lineIndex,
+                    "Unexpected text after the quoted Envelope name; expected THEN OFF or THEN CUT.");
             }
             if (c != '\\')
             {
