@@ -573,12 +573,58 @@ still save the exact authored text in the existing version-one effect JSON,
 including comments, whitespace and Envelope reference spellings. Invalid text
 can follow the existing two-click warning acknowledgement policy.
 
-**Scope boundary:** This checkpoint supports *authoring validation, identity
-resolution and persistence only*. It does **not** yet attach an Envelope to a
-running Filter: the older numeric runtime interpretation currently skips
-non-numeric reference rows. The next independent task in `todo.md` is to
-compile and apply those resolved references in frozen playback plans, reusing
-the established typed note/channel parameter-Envelope commands. Subsequent
-milestones separately qualify absolute song-clock origins and `THEN OFF` /
-`THEN CUT` note actions. Do not present this partial groundwork as audible
-Envelope modulation.
+**Historical scope boundary (superseded by the following playback milestone):**
+This checkpoint originally supplied only authoring validation, identity
+resolution and persistence, not audible modulation. The frozen playback
+binding milestone below now adds audible Note/Channel Filter modulation;
+absolute song-clock qualification and `THEN OFF` / `THEN CUT` actions
+remain separate tasks.
+
+## Frozen playback binding for text-selected Filter Envelopes (14 October 2026)
+
+**Implemented:** `@"Envelope name"` now attaches an actual Filter parameter
+Envelope during production playback. The prepared
+`PlaybackSnapshotSoundResolver` captures an immutable
+`FilterAssignmentEnvelopeNames` index from its own frozen song before
+the audio worker starts. `PreparedIncrementalPlaybackFactory` supplies
+that index and the existing prewarmed Node/Script Curve resolver to both
+root and nested private `PlaybackSession` instances. Renaming, creating or
+deleting an Envelope in the *editable* document cannot silently retarget a
+currently playing reference.
+
+At the native Note/Channel Filter text-command boundary, the runtime
+applies the same `FilterAssignmentText.ApplyValidToClone` numerical/choice
+batch handling as before, including tolerant invalid-line salvage and DSP
+preflight. It additionally reads valid `@"name"` references through
+`FilterAssignmentEnvelopeText.ResolveRuntimeActions`, retaining deterministic
+last-valid-wins canonical stage+parameter paths. An accepted name binds
+its frozen ObjectId through the existing
+`SetNoteFilterParameterEnvelopeCommand` or
+`SetChannelFilterParameterEnvelopeCommand` machinery at the command's
+event frame, leveraging those paths' parameter validation, DSP state
+isolation, per-host clock state, NNA and flattened-descendant controls. A
+later valid numeric assignment to the same parameter detaches the earlier
+Envelope so the new numeric base takes effect; unrelated bindings remain
+independent. A nonexistent or malformed reference line is silently skipped
+at runtime; strict authoring diagnostics still report the issue before
+save unless the user confirms unchanged invalid text. An unavailable
+prepared curve is rejected by the existing typed control preflight, without
+clobbering its previous binding.
+
+The authored text and optional editor Filter ID remain persisted exactly
+as before, with no new format-version or DSP parameter syntax.
+
+**Verification:** Render regressions compare text bindings against equivalent
+typed Note/Channel Envelope commands, mixed literal+Envelope updates,
+frozen-reference identity after live rename/replacement, invalid-line
+salvage, flattened multi-voice inheritance, subsequent numeric detachment
+on both hosts, and rejected Envelope replacement. The existing typed
+Envelope tests continue to qualify independent host/NNA histories and
+out-of-PCM prepared FIR adoption.
+
+**Not yet completed:** broader end-to-end qualification of *absolute
+song-time* alignment through late attachment, nested/private transport,
+real-time seek/export, channel versus note release and completion actions.
+Those are separately unchecked in `todo.md`, including `THEN OFF` and
+`THEN CUT`. This playback-binding milestone reuses established typed event
+timing but does not claim those remaining scenarios have been proven.
