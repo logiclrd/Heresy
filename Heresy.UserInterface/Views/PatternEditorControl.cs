@@ -2047,6 +2047,15 @@ public sealed class PatternEditorControl : UserControl
 			_cursor.SetPosition(row, channel, PatternCellField.Note);
 
 		char value = e.Text[0];
+		// Note-field punctuation was already dispatched from KeyDown using
+		// the actual keyboard-layout glyph, *before* W/E physical piano
+		// mapping. Its follow-up TextInput must not toggle the mask again.
+		// Other fields keep their established TextInput comma behaviour.
+		if (value == ',' && _cursor.Field == PatternCellField.Note)
+		{
+			e.Handled = true;
+			return;
+		}
 		if (value == ','
 			&& PatternEditMaskEditor.TryToggle(
 				_noteInputState.EditMask,
