@@ -423,6 +423,57 @@ public sealed class NoteEventFilterRenderingTests
         });
     }
 
+    [Test]
+    public void UnsupportedNyquistNoteTextSkipsOnlyBadValueAndRemainsSilent()
+    {
+        Resolver resolver = new();
+        resolver.Add(Source, new ProbeSound());
+        FilterDefinition definition = new((ObjectId)81118U, "One pole", [
+            new FilterStageDefinition(1, "pole", FilterKind.OnePole),
+        ]);
+        FilterInstance initial = new(definition);
+        initial.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(100));
+        PlaybackSession Make()
+        {
+            PlaybackSession session = Session(resolver, Schedule());
+            session.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+                new StartNoteCommand(Source) { EventFilterConfiguration = initial },
+            ]);
+            session.Render(0, 1, new float[1]);
+            return session;
+        }
+        PlaybackSession mixed = Make(), typed = Make(), baseline = Make();
+        List<string> warnings = [];
+        mixed.NoteFilterCommandRejected = warnings.Add;
+        mixed.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new SetNoteFilterAssignmentsCommand("""
+                pole.CutoffHz = 700
+                pole.Mode = HighPass
+                pole.CutoffHz = bad
+                pole.Mode = invalid-choice
+                """),
+        ]);
+        typed.ApplyScopedEvent(0, ChannelTarget.Physical(0), [
+            new SetNoteFilterParametersCommand(1, [
+                new("Mode", FilterParameterValue.FromChoice("HighPass")),
+            ]),
+        ]);
+        float[] actual = new float[8], expected = new float[8],
+            unchanged = new float[8];
+        mixed.Render(1, 8, actual);
+        typed.Render(1, 8, expected);
+        baseline.Render(1, 8, unchanged);
+        Assert.Multiple(() =>
+        {
+            Assert.That(warnings, Is.Empty);
+            Assert.That(actual, Is.EqualTo(expected).Within(1e-6f),
+                "the sample-rate-invalid Note field cannot poison a valid setting");
+            Assert.That(actual, Is.Not.EqualTo(unchanged),
+                "valid mode updates are still applied at the note boundary");
+        });
+    }
+
     private static FilterInstance Echo(uint id, double delay)
     {
         FilterDefinition definition = new((ObjectId)id, "Echo", [
