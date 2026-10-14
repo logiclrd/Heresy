@@ -209,7 +209,7 @@ public sealed class NodeEnvelopeCurveTests
 			{ EnvelopeSustainLoopMode.Forward, EnvelopeSustainLoopMode.PingPong })
 			Assert.That(Curve(mode).GetEndActiveFrameExclusiveWithoutNoteOff(10),
 				Is.Null, "held sustaining curves cannot complete naturally");
-		Assert.That(new ScriptEnvelopeCurve((_, _) => 0.0, TimeSpan.FromSeconds(1))
+		Assert.That(((IEnvelopeCurve)new ScriptEnvelopeCurve((_, _) => 0.0, TimeSpan.FromSeconds(1)))
 			.GetEndActiveFrameExclusiveWithoutNoteOff(10), Is.Null,
 			"zero script samples do not prove natural completion");
 	}
