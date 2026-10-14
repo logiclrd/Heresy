@@ -42,6 +42,7 @@ public sealed class NativePatternEffectEditorDialog : Window
 
 	private PatternEffect _prototype;
 	private NativePatternEffectEditModel _model;
+	private (Type EffectType, string Assignments, string FilterId)? _warnedDraft;
 
 	public NativePatternEffectEditorDialog(
 		PatternEffect effect, SongDocument? document = null)
@@ -182,6 +183,7 @@ public sealed class NativePatternEffectEditorDialog : Window
 
 	private void ChangeCreationType()
 	{
+		_warnedDraft = null;
 		if (_typeSelector?.SelectedItem
 			is not NativePatternEffectChoice selected)
 		{
@@ -479,7 +481,7 @@ public sealed class NativePatternEffectEditorDialog : Window
 					selected, sourceInput.Text ?? "", selection.Stage.StageId,
 					assignments, annotation.Text ?? "");
 				// Update the text draft regardless of unrelated malformed rows.
-				// Strict Apply/Insert validation still prevents saving them.
+				// Apply/Insert warns on first invalid draft and confirms unchanged text on second.
 				sourceInput.Text = rewritten;
 				try
 				{
@@ -622,12 +624,40 @@ public sealed class NativePatternEffectEditorDialog : Window
 				values.Add(field.Key, value);
 			}
 
+			bool isFilterText = _prototype is
+				SetChannelFilterAssignmentsPatternEffect
+				or SetNoteFilterAssignmentsPatternEffect;
+			var draft = (_prototype.GetType(),
+				values.GetValueOrDefault("assignments", ""),
+				values.GetValueOrDefault("filterId", ""));
+			bool confirmed = isFilterText && _warnedDraft == draft;
+			if (isFilterText && _document is not null && !confirmed)
+			{
+				try
+				{
+					// Strictly validate the exact first-save draft.
+					NativePatternEffectEditor.Rebuild(_prototype, values,
+						CultureInfo.CurrentCulture, _document);
+				}
+				catch (ArgumentException error)
+				{
+					// Only offer confirmation when the Filter selection and the
+					// rest of the command are valid; the strict parser alone failed.
+					NativePatternEffectEditor.Rebuild(_prototype, values,
+						CultureInfo.CurrentCulture, _document,
+						allowInvalidFilterAssignments: true);
+					_warnedDraft = draft;
+					_message.Text =
+						$"Assignment warning: {error.Message} " +
+						"Invalid lines will be ignored during playback. " +
+						"Press Apply/Insert again without editing to save this draft.";
+					return;
+				}
+			}
 			PatternEffect rebuilt =
 				NativePatternEffectEditor.Rebuild(
-					_prototype,
-					values,
-					CultureInfo.CurrentCulture,
-					_document);
+					_prototype, values, CultureInfo.CurrentCulture,
+					_document, allowInvalidFilterAssignments: confirmed);
 			Close(
 				new NativePatternEffectEditResult(
 					rebuilt));
