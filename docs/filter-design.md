@@ -477,3 +477,74 @@ Binding and detachment update the controller transactionally **without configuri
 **Implementation and ownership verified:** The displaced note is the original `PlaybackVoice`, not a synthesized replacement. On Continue, Off (when an audible displaced lifecycle remains), and Fade, `PlaybackSession.DisplaceCurrentVoice` detaches that note from its logical playback channel and obtains `ForkHostFilter` using the *actual originating output host*: physical host ID, unscoped targeted virtual ID, or (invocation owner, virtual ID) for a scoped host. The host's `ChannelOutputFilterState.Fork()` deep-forks the serial `StreamingFilterChain` (including independent speaker histories, delay rings, convolution state and active interpolation), copies the immutable-by-clone authored Filter configuration, and binds an independent per-host Envelope controller to the original absolute attachment frames. Existing accepted effective numeric targets are copied from the original controller; the previous active host is never overwritten. The original voice and its tone/event/flattened-source Filter chains are moved intact into `_virtualVoices`. Its PCM is filtered through the new dynamic host exactly once. On completed source playback, any still-active dynamic Filter tail moves to the separate displaced-tail collection and drains using silent input without touching the physical or scoped original host.
 
 **Exact boundary qualification:** `ChannelFilterNnaForkTests` compare paired stereo Filter hosts after a shared input history and an actual fork, including the **first output frame** on the new host. Further input/structural parameter edits prove the two forks diverge independently. A live `PlaybackSession` regression checks the precise displaced virtual-host PCM contribution on a same-frame physical-host re-selection and identical whole-block versus split-block output. Other tests verify an active numeric parameter Envelope mid-way through a coefficient ramp, an independent physical detach, original note-event Filter-chain reference identity, Continue/Off/Fade paths and two separate recursive owners reusing one virtual-channel ID. **Important nuance:** the historical signal contributed to an original host before displacement is represented in *both* independent continuation histories afterward, because the complete host state is cloned. This intentionally does not mathematically isolate prior voices from one another; an old ring tap may therefore emit once on each branch. New notes and subsequent authored commands change only their own host state. No extra private mixdown, PCM replay, history reset or double routing through the source host is introduced. The separate physical Windows/Linux listening task remains open.
+
+### Runtime-tolerant Filter assignment text; strict authoring (13 October 2026)
+
+Native **Set Channel Filter Stage Assignments** and **Set Note Filter Stage
+Assignments** effects still persist their original multiline
+`stageName.parameterName = value` text and optional editor-only Filter
+selection hint; neither song format nor typed-parameter commands change.
+There are deliberately **two interpretations** of this language:
+
+- **Strict authoring**: `FilterAssignmentText.ParseAndValidate` and
+  `ApplyToClone` remain unchanged. Invalid lines, duplicate assignments,
+  unknown stages/properties, out-of-range numbers, unsupported choices and
+  invalid FIR band-edge combinations produce diagnostics rather than a
+  false assurance that the authored script is completely correct. The
+  per-stage assistant still previews valid rows, retains formatting,
+  updates existing rows in place and leaves unrelated text alone.
+  The native effect dialog displays the strict diagnostic **on the
+  first Apply/Insert**. An identical second Apply/Insert explicitly saves
+  the draft intact, understanding that runtime will skip bad lines; any
+  change in the authored text, Filter ID or effect type resets that
+  confirmation. A missing/wrong Filter selection and empty text remain
+  errors, including on a confirmed draft.
+- **Tolerant runtime**: `FilterAssignmentText.ApplyValidToClone` resolves
+  stage names, canonical descriptor names and invariant-culture numeric
+  and choice values independently. Blank/comment rows, malformed
+  syntax, unknown stages/properties, invalid or nonfinite numbers,
+  invalid choices/ranges and unpreparable DSP values are **silently
+  ignored**. A later valid duplicate takes precedence, but an invalid
+  duplicate never erases an earlier valid row. The last valid values
+  for a stage are grouped and validated as a complete atomic batch,
+  so simultaneously moving both FIR cutoffs across existing limits
+  works when their *new pair* is valid. If the new pair conflicts,
+  retain the earlier independently valid cutoff before attempting
+  the later one; keep unrelated valid properties in the same stage
+  and across other stages.
+  
+  The prepared runtime can additionally provide a nonpublishing DSP
+  suitability check at the actual sample rate. If a field passes Core
+  descriptors but cannot produce a legal DSP plan (e.g. cutoff at or
+  above Nyquist), runtime tries whole-stage candidate batches and
+  then smaller subsets to retain independently preparable changes.
+  The control-side tests fork histories and prepare plans only **at
+  the command boundary**, never in per-sample processing. Rejected
+  candidate plans, stage edits and intermediate coefficient states
+  are discarded; only the complete, fully preflighted successor
+  configuration and forked DSP histories may be published.
+
+A text effect with no accepted semantic changes is a true runtime no-op:
+it neither replaces the selected channel state nor publishes a new
+note/flattened-source DSP snapshot. A text effect with some accepted
+changes publishes those changes atomically, respecting same-frame
+effect order, physical/scoped virtual host selection, and Note Filter
+scope. For flattened recursive sources, *all descendants* must
+pass preparation before any descendant or instigator controller
+is modified. Invalid **individual text fields** do not invoke
+`ChannelFilterCommandRejected` or `NoteFilterCommandRejected` and
+do not add `HRSEQ007/HRSEQ009` entries; genuine structural targeting
+errors such as no selected Filter retain their existing diagnostics.
+Unlike tolerant text, the existing *typed* stage commands intentionally
+continue rejecting an invalid entire typed batch atomically.
+
+Regressions include Core mixed valid/invalid lines, canonical duplicate
+ordering, valid and conflicting FIR cutoff pairs and an injected
+sample-rate rejection; Channel and Note PCM equivalence against typed
+commands with independently unsupported cutoff and valid mode;
+intact channel history/structural response; recursive Data Pattern
+execution without a warning; flattened multi-descendant versus sibling
+routing; authoring API strict/permissive differentiation and headless
+two-step dialog confirmation, including stale-draft and wrong-Filter
+safety. The original selected Filter instance and its snapshot remain
+unchanged by parsing or by abandoned control-side preflight trials.
