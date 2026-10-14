@@ -1195,10 +1195,15 @@ public sealed class PlaybackSession
 		}
 	}
 
+	// Most songs do not use completion actions; avoid a full active-voice
+	// scan on every segment of their established hot playback pathway.
+	private bool _hasNoteFilterCompletionActions;
+
 	/// <summary>A provable Envelope completion splits the rendered PCM at
 	/// its own frame, never at the end of the caller's arbitrary block.</summary>
 	private long GetNextNoteFilterCompletionFrame(long frame)
 	{
+		if (!_hasNoteFilterCompletionActions) return long.MaxValue;
 		long next = long.MaxValue;
 		foreach (PlaybackChannelState channel in _channels.Values)
 			if (channel.CurrentVoice is PlaybackVoice voice)
@@ -1216,6 +1221,7 @@ public sealed class PlaybackSession
 
 	private void ProcessNoteFilterCompletionActions(long frame)
 	{
+		if (!_hasNoteFilterCompletionActions) return;
 		foreach (PlaybackChannelState channel in _channels.Values)
 			ApplyCompletionToCurrentVoice(channel, frame);
 		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
@@ -2271,6 +2277,8 @@ public sealed class PlaybackSession
 			voice.SetEventFilterParameterEnvelope(
 				command.StageId, command.ParameterName, curve, frame,
 				completionAction);
+			if (curve is not null && completionAction != FilterEnvelopeCompletionAction.None)
+				_hasNoteFilterCompletionActions = true;
 		}
 		catch (Exception error) when (error is ArgumentException
 			or InvalidOperationException or KeyNotFoundException
