@@ -555,7 +555,7 @@ public sealed class ChannelOutputFilterRenderingTests
     }
 
     [Test]
-    public void MultistageHostTextUpdatesPreserveHistoryAndRejectEntireInvalidBatch()
+    public void MultistageHostTextUpdatesPreserveHistoryAndIgnoreInvalidField()
     {
         TestResolver sounds = new();
         sounds.Add(PulseId, new PulseSound());
@@ -597,9 +597,10 @@ public sealed class ChannelOutputFilterRenderingTests
         float[] unchanged = new float[7], reference = new float[7];
         changed.Render(1, 7, unchanged);
         baseline.Render(1, 7, reference);
-        Assert.That(errors, Has.Count.EqualTo(1));
-        Assert.That(unchanged, Is.EqualTo(reference).Within(1e-6f),
-            "no earlier valid parameter or stage may commit on failure");
+        Assert.That(errors, Is.Empty,
+            "invalid individual lines are not runtime diagnostics");
+        Assert.That(unchanged, Is.Not.EqualTo(reference),
+            "valid fields must commit even with another malformed stage property");
 
         PlaybackSession valid = Session(sounds);
         valid.ApplyLiveEvent(ChannelTarget.Physical(0), [
@@ -616,8 +617,13 @@ public sealed class ChannelOutputFilterRenderingTests
         ]);
         float[] edited = new float[7];
         valid.Render(1, 7, edited);
-        Assert.That(edited, Is.Not.EqualTo(reference),
-            "valid multi-stage text produces an audible filter change");
+        Assert.Multiple(() =>
+        {
+            Assert.That(edited, Is.Not.EqualTo(reference),
+                "valid multi-stage text produces an audible filter change");
+            Assert.That(unchanged, Is.EqualTo(edited).Within(1e-6f),
+                "the extra invalid stage parameter cannot suppress valid settings");
+        });
     }
 
     [Test]
