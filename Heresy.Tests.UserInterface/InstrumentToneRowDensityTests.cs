@@ -176,9 +176,11 @@ public sealed class InstrumentToneRowDensityTests
 			rows.ScrollIntoView(projected.Length - 1);
 			rows.ScrollIntoView(0);
 			selection.Anchor.Should().Be(
-				new InstrumentToneGridSelection.Cell(84, 2));
+				new InstrumentToneGridSelection.Row(84));
 			selection.Extent.Should().Be(
-				new InstrumentToneGridSelection.Cell(80, 10));
+				new InstrumentToneGridSelection.Row(80));
+			selection.Contains(new(82, 0), projected).Should().BeTrue();
+			selection.Contains(new(82, 10), projected).Should().BeTrue();
 			rows.ItemTemplate!.Build(null).Should().BeNull();
 			Border regular = BuildRow(editor, 0);
 			ComboBox combo = (ComboBox)Column((Grid)regular.Child!, 2).Child!;
