@@ -80,3 +80,55 @@ while preserving the source, Instrument and Sample tints.
 Pattern editor's effective note-start Source cells, theme-dependent brush
 construction, cached flattened bounds, range shadows, or red overlap
 indicators. Those remain the following independent TODOs.
+
+## Implemented — base Note-field source colouring (13 October 2026)
+
+`PatternSourceTintResolver.Analyze(document, context)` projects **the
+persisted `SongObject.SourceColourArgb` of the effective note-start
+source**, indexed by displayed Pattern row and channel. It uses the
+same `PatternSourceSelection.ResolveSourceSelection` precedence shared
+with existing flattened-source effect warnings: explicit Source-column
+value first, inline `StartPatternNote.SourceId` second, then the
+channel's remembered Source from preceding displayed rows. A Source
+selection without a note still updates memory. Only actual
+`StartPatternNote` cells with a live playable-source ID receive a tint:
+`PatternNoteOff`, `PatternNoteCut`, effect-only, volume-only,
+source-only, invalid and tombstoned sources are not coloured.
+
+For a Sequence editor, the projection processes its known, editable
+data-Pattern segments in display order, so two occurrences of the
+same Pattern can inherit *different* preceding Sources without
+changing that Pattern's stored cells. It does not invent Source
+memory across Script/unavailable segments or following Bxx/Cxx
+flow-control transfers: those reset the known projection until the
+next explicit selection. A source inherited from an unseen caller
+or skipped prefix is treated as unknown, not guessed from object IDs.
+The analyzer does not change note routing, flow, playback or persisted
+song data.
+
+`PatternEditorControl` draws a `SolidColorBrush` representing the
+existing 20%-alpha ARGB tint **only behind the Note text** within the
+Note-field `Border`. Its parent cell still renders the selected,
+playback-follow or minor/major beat row shade; Source, Volume and the
+interactive right-hand effect stickers are untouched. Note cursor
+and outer selection borders remain on top. Brushes are cached by
+their portable ARGB values and produced in Avalonia only at the
+presentation boundary.
+
+On an ordinary cell edit, the renderer recomputes the lightweight
+visual Source-memory projection and updates **only Note fields whose
+resolved tint changed**; it never reconstructs the grid just to
+replace a brush. This covers a Source-only edit whose effect is
+felt by later note starts, and a reused Pattern visible in several
+Sequence order occurrences. Full grid/navigation refreshes project
+the current context; no audio or document revision is incremented by
+visual refresh. Alpha compositing is independent of the light/dark
+theme, with the row background still visible through it.
+
+`PatternSourceTintTests` covers direct/source-only and inline starts,
+per-channel memory, OFF/CUT/FX omissions, Source-column precedence,
+multi-occurrence Sequence inheritance, scripted/missing orders,
+uncertain flow, deleted references, and headless Avalonia field
+alpha, refresh, focus/row layering and revision invariance. The
+**flattened source range/cache/overlap** implementation is explicitly
+not part of this milestone.
