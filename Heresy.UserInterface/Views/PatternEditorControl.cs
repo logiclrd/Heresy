@@ -1972,6 +1972,33 @@ public sealed class PatternEditorControl : UserControl
 			return;
 		}
 
+		// Page keys move the tracker cursor (including intermediate Sequence
+		// channel clamps) first. The ScrollViewer only corrects visibility
+		// afterward; it must never page independently of keyboard focus.
+		// Shift+Page repeats Shift+Up/Down's rectangular selection extension.
+		if ((e.KeyModifiers is KeyModifiers.None or KeyModifiers.Shift)
+			&& e.Key is Key.PageUp or Key.PageDown)
+		{
+			int fromRow = _cursor.Row;
+			int fromChannel = _cursor.Channel;
+			_volumeInput.Reset();
+			int movedRows = PatternPageNavigation.Move(
+				_context, _cursor, _scroll.Viewport.Height, RowHeight,
+				down: e.Key == Key.PageDown);
+			if (previouslyExpanded is not null)
+				CollapseVisualEffects(collapseCursor: false);
+			if (e.KeyModifiers == KeyModifiers.Shift && movedRows > 0)
+				_selection.Extend(fromRow, fromChannel,
+					_cursor.Row, _cursor.Channel);
+
+			e.Handled = true;
+			UpdateCurrentPatternControls();
+			RefreshCursorVisuals();
+			FocusCursorCell();
+			ScrollCursorIntoView();
+			return;
+		}
+
 		switch (e.Key)
 		{
 			case Key.Left:
@@ -4253,6 +4280,28 @@ public sealed class PatternEditorControl : UserControl
 		{
 			border.Focus();
 		}
+	}
+
+	/// <summary>Page navigation has already moved the cursor. Scroll the
+	/// least distance needed to expose the focused row, not a separate page
+	/// offset. Row geometry is in the actual scroll content coordinates,
+	/// including Auto-height Sequence headers between Patterns.</summary>
+	private void ScrollCursorIntoView()
+	{
+		if (_patternGrid is not Grid grid
+			|| !_cellBorders.TryGetValue(
+				(_cursor.Row, _cursor.Channel), out Border? border)
+			|| _scroll.Viewport.Height <= 0)
+			return;
+
+		Point? top = border.TranslatePoint(new Point(0, 0), grid);
+		if (top is null)
+			return;
+		double desired = PatternPageNavigation.OffsetToKeepVisible(
+			top.Value.Y, border.Bounds.Height,
+			_scroll.Offset.Y, _scroll.Viewport.Height, _scroll.Extent.Height);
+		if (Math.Abs(desired - _scroll.Offset.Y) > 0.001)
+			_scroll.Offset = new Vector(_scroll.Offset.X, desired);
 	}
 
 	internal PatternEditorPlaybackCursor GetPlaybackCursor()
