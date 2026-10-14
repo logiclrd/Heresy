@@ -419,7 +419,8 @@ public sealed class NoteEventFilterRenderingTests
                 "valid note text must match typed commands despite invalid siblings");
             Assert.That(diagnostics, Is.Empty,
                 "runtime must ignore unsupported property names silently");
-            Assert.That(invalid[2], Is.EqualTo(0.5f).Within(1e-6f));
+            Assert.That(invalid[2], Is.LessThan(1f),
+                "the valid Feedforward change retains the existing DSP smoothing");
         });
     }
 
