@@ -489,7 +489,7 @@ public sealed class ScriptInstrumentPlaybackTests
     }
 
     [Test]
-    public void DataPatternInvalidTextIsDiagnosticNoOpWithoutPartialStageCommit()
+    public void DataPatternMixedTextCommitsValidFieldWithoutRuntimeDiagnostics()
     {
         SongDocument song = new();
         ObjectId sample = Sample(song, 16384);
@@ -509,10 +509,11 @@ public sealed class ScriptInstrumentPlaybackTests
         float[] pcm = new float[8];
         plan.Source.Render(8, pcm);
         Assert.That(pcm[0], Is.EqualTo(0.5f).Within(1e-5f));
-        Assert.That(pcm[1], Is.EqualTo(1f).Within(1e-5f),
-            "an earlier valid assignment must not be published");
+        Assert.That(pcm[1], Is.LessThan(1f),
+            "the valid Feedforward change must be published despite a bad sibling");
         Assert.That(plan.SequencingContext.Diagnostics.Drain()
-            .Count(x => x.Code == "HRSEQ009"), Is.EqualTo(1));
+            .Count(x => x.Code == "HRSEQ009"), Is.Zero,
+            "individual invalid text assignments must be silent at runtime");
     }
 
     private static FilterInstance Echo(SongDocument song, double delay)
