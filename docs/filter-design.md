@@ -870,3 +870,34 @@ and drained anti-click/release tail) must match an explicit Note Cut at frame
 without-Cut control proves the action is audible, not merely an equivalent
 scheduler no-op. Manual listening and the separately requested **genuinely
 prefetched** flattened `THEN OFF` observer test are still open TODOs.
+
+
+### Explicit prefetched future-child cancellation qualification (14 October 2026)
+
+The frozen incremental production regression now exercises **both**
+`THEN OFF` and `THEN CUT` with an **observed**, not merely inferred,
+future child event. After frame 0 starts the flattened source and an
+unrelated sibling, the test explicitly asks the single-owner producer for
+one lookahead and inspects its existing private pending-event slot. Its
+frame must be 240; it must carry an actual child Pattern cursor owner and
+a `StartNoteCommand` referencing the specific future sample. All this is
+established **before** the instigator's non-sustaining Filter Envelope
+completes at exclusive frame 41. Rendering through that frame must
+immediately clear the previously observed pending slot.
+
+For both actions, one-block PCM is sample-identical to irregular chunks that
+were explicitly primed ahead of completion. The entire PCM is also compared
+to the same song **without** that future child Note; a negative control
+without either `THEN` suffix shows the future child really would become
+audible. This tests both pending-event invalidation and its musical result,
+not only the late waveform sample value. An independently started sibling
+remains audible after controller completion, proving that other owners are
+unaffected.
+
+The first descendant is a looping PCM sample wrapped in a data Instrument
+with a finite, release-aware volume Envelope. The `THEN OFF` variant must
+retain audible post-Off release PCM that the corresponding `THEN CUT`
+variant does not, while both suppress all future child starts. Its release
+must still finish normally. Thus the regression qualifies exact lifecycle
+ownership, producer cancellation, existing voice release tails and PCM
+partition invariance together, with no public or runtime debug hooks added.
