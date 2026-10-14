@@ -848,6 +848,7 @@ public static class FmSynthDocumentEditor
 					nodes,
 					source.Graph.OutputNodeId));
 
+		result.CopySourceColourFrom(source);
 		result.NodePositions.AddRange(
 			source.NodePositions);
 		foreach (FmSynthConnectionRoutingHint hint in
