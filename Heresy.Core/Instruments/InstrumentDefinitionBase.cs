@@ -8,7 +8,7 @@ namespace Heresy.Core.Instruments;
 /// immutable incoming pitch is the exact input used for tone selection;
 /// a scripted implementation receives its precompiled pure evaluator.</summary>
 public abstract class InstrumentDefinitionBase(ObjectId id, string name)
-    : SongObject(id, name)
+    : SongObject(id, name, isSoundSource: true)
 {
     public sealed override SongObjectKind Kind => SongObjectKind.Instrument;
 
