@@ -10,13 +10,13 @@ namespace Heresy.Core.Samples;
 public sealed class SampleDefinition : SongObject
 {
 	public SampleDefinition(ObjectId id, string name, ExternalAssetReference asset)
-		: base(id, name)
+		: base(id, name, isSoundSource: true)
 	{
 		Asset = asset ?? throw new ArgumentNullException(nameof(asset));
 	}
 
 	private SampleDefinition(ObjectId id, string name)
-		: base(id, name)
+		: base(id, name, isSoundSource: true)
 	{
 	}
 
@@ -60,6 +60,7 @@ public sealed class SampleDefinition : SongObject
 				Loop = source.Loop,
 			};
 		copy.SourceChannelPositions.AddRange(source.SourceChannelPositions);
+		copy.CopySourceColourFrom(source);
 		return copy;
 	}
 
