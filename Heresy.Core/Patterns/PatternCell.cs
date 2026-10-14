@@ -11,8 +11,23 @@ namespace Heresy.Core.Patterns;
 public sealed class PatternCell
 {
 	private double? _volume;
+	private PatternNoteEntry? _note;
 
-	public PatternNoteEntry? Note { get; set; }
+	/// <summary>Fires whenever the actual Note event changes, so a containing
+	/// PatternGrid can invalidate its derived note-event bounds.</summary>
+	internal event Action? NoteChanged;
+
+	public PatternNoteEntry? Note
+	{
+		get => _note;
+		set
+		{
+			if (ReferenceEquals(_note, value))
+				return;
+			_note = value;
+			NoteChanged?.Invoke();
+		}
+	}
 
 	/// <summary>
 	/// Optional explicit sound source in the tracker Source column. ObjectId.None

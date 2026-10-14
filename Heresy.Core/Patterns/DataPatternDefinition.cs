@@ -21,6 +21,12 @@ public sealed class DataPatternDefinition : PatternDefinition, IDeferredSourcePa
 
 	public PatternGrid Grid { get; }
 
+	/// <summary>
+	/// Derived nonserialized inclusive Note-event footprint, shared by every
+	/// editor/Sequence occurrence referencing this live Pattern object.
+	/// </summary>
+	public PatternNoteEventBounds NoteEventBounds => Grid.NoteEventBounds;
+
 	// Compatibility bridge: the established processor continues to receive
 	// all raw notes at once. New sequencing cursors may instead suspend the
 	// underlying generator at any Emit or silent Advance step.
