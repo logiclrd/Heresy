@@ -56,8 +56,8 @@ public sealed class InstrumentToneGridBatchEditorTests
 		foreach (int i in new[] { 1, 2, 3 })
 			model.Rows.Single(r => r.Index == i).Cells.SourceId.Should().Be(sourceId);
 		model.Rows.Single(r => r.Index == 0).Cells.SourceId.Should().BeNull();
-		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(3, 2));
-		selection.Extent.Should().Be(new InstrumentToneGridSelection.Cell(1, 5));
+		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Row(3));
+		selection.Extent.Should().Be(new InstrumentToneGridSelection.Row(1));
 	}
 
 	[AvaloniaTest]

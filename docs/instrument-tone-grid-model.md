@@ -225,11 +225,10 @@ to a selected tone use atomic publication and revision tracking. See [script pro
 
 ## Agreed next-stage interaction specification — 12 October 2026
 
-Hierarchical NNA, cell-anchored rectangular selection, atomic
-selected-row field propagation and division-based Pitch display are
-implemented through the authoring views described below. Only
-row-density adjustments in this group remain approved but
-unimplemented in [todo.md](todo.md).
+Hierarchical NNA, whole-row range selection with cell-specific keyboard
+focus, atomic selected-row field propagation and division-based Pitch
+display are implemented through the authoring views described below.
+Row-density adjustments were completed separately.
 
 ### Hierarchical NNA
 
@@ -251,10 +250,11 @@ notes are permitted.
 
 ### Whole-row selection and independent cell focus (14 October 2026)
 
-Selection stores the tone-index identity of an anchor and moving extent;
-**every column of every row between them is selected**. The eleven-column
-layout remains as before, but the columns recorded by `Cell(ToneIndex,
-Column)` are now *only for focus* and keyboard editing, not rectangle bounds.
+Selection stores anchor and moving extent explicitly as
+`Row(int? ToneIndex)` identities; **every column of every row between them
+is selected**. The eleven-column layout remains as before, but
+`Cell(ToneIndex, Column)` exists solely for the independent `Focused`
+keyboard/pointer editing location, never as a selection endpoint.
 The independent `Focused` cell allows a specific Source, Pitch, NNA, Envelope
 or Filter editor to receive input without reducing a previously selected
 multi-row range. Ordinary mouse, Tab and keyboard focus into **any column of

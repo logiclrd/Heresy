@@ -28,8 +28,8 @@ public sealed class InstrumentToneGridSelectionTests
 		selection.BeginAt(new(84, 3), rows);
 		selection.Extend(new(81, 6), rows);
 
-		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(84, 3));
-		selection.Extent.Should().Be(new InstrumentToneGridSelection.Cell(81, 6));
+		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Row(84));
+		selection.Extent.Should().Be(new InstrumentToneGridSelection.Row(81));
 		foreach (int index in new[] { 84, 83, 82, 81 })
 			foreach (int column in Enumerable.Range(0, 11))
 				selection.Contains(new(index, column), rows).Should().BeTrue();
@@ -48,21 +48,21 @@ public sealed class InstrumentToneGridSelectionTests
 		selection.Extend(new(79, 7), rows);
 
 		selection.Focus(new(81, 5), rows);
-		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(82, 3));
-		selection.Extent.Should().Be(new InstrumentToneGridSelection.Cell(79, 7));
+		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Row(82));
+		selection.Extent.Should().Be(new InstrumentToneGridSelection.Row(79));
 		selection.Focused.Should().Be(new InstrumentToneGridSelection.Cell(81, 5));
 		selection.Contains(new(79, 7), rows).Should().BeTrue();
 
 		selection.Focus(new(81, 8), rows);
-		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(82, 3));
-		selection.Extent.Should().Be(new InstrumentToneGridSelection.Cell(79, 7));
+		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Row(82));
+		selection.Extent.Should().Be(new InstrumentToneGridSelection.Row(79));
 		selection.Focused.Should().Be(new InstrumentToneGridSelection.Cell(81, 8));
 		selection.Contains(new(82, 0), rows).Should().BeTrue();
 
 		selection.Focus(new(78, 8), rows);
-		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(78, 8));
+		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Row(78));
 		selection.Extent.Should().Be(selection.Anchor);
-		selection.Focused.Should().Be(selection.Anchor);
+		selection.Focused.Should().Be(new InstrumentToneGridSelection.Cell(78, 8));
 		selection.Contains(new(82, 3), rows).Should().BeFalse();
 	}
 
@@ -73,8 +73,8 @@ public sealed class InstrumentToneGridSelectionTests
 		selection.BeginAt(new(81, 8), rows);
 		selection.Extend(new(84, 2), rows);
 		selection.Extend(new(79, 5), rows);
-		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(81, 8));
-		selection.Extent.Should().Be(new InstrumentToneGridSelection.Cell(79, 5));
+		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Row(81));
+		selection.Extent.Should().Be(new InstrumentToneGridSelection.Row(79));
 		selection.Contains(new(80, 7), rows).Should().BeTrue();
 		selection.Contains(new(83, 7), rows).Should().BeFalse();
 	}
@@ -106,8 +106,8 @@ public sealed class InstrumentToneGridSelectionTests
 		InstrumentToneGridSelection.Cell? left = selection.Neighbor(0, -1, rows);
 		left.Should().NotBeNull();
 		selection.Focus(left!.Value, rows);
-		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(82, 4));
-		selection.Extent.Should().Be(new InstrumentToneGridSelection.Cell(80, 7));
+		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Row(82));
+		selection.Extent.Should().Be(new InstrumentToneGridSelection.Row(80));
 		selection.Focused.Should().Be(new InstrumentToneGridSelection.Cell(80, 6));
 		selection.Contains(new(81, 0), rows).Should().BeTrue();
 		selection.Contains(new(82, 10), rows).Should().BeTrue();
@@ -129,8 +129,8 @@ public sealed class InstrumentToneGridSelectionTests
 		model.SetRow(100, new InstrumentToneGridCells(PitchMultiplier: 1.5));
 		InstrumentToneGridRow[] withExtra = model.Rows.ToArray();
 		selection.Reconcile(withExtra);
-		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(84, 2));
-		selection.Extent.Should().Be(new InstrumentToneGridSelection.Cell(82, 8));
+		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Row(84));
+		selection.Extent.Should().Be(new InstrumentToneGridSelection.Row(82));
 		selection.Contains(new(83, 6), withExtra).Should().BeTrue();
 		selection.Contains(new(100, 6), withExtra).Should().BeFalse();
 
@@ -141,7 +141,7 @@ public sealed class InstrumentToneGridSelectionTests
 		model.DeleteRow(100);
 		InstrumentToneGridRow[] withoutExtra = model.Rows.ToArray();
 		selection.Reconcile(withoutExtra);
-		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(84, 3));
+		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Row(84));
 		selection.Extent.Should().Be(selection.Anchor);
 	}
 
@@ -211,14 +211,23 @@ public sealed class InstrumentToneGridSelectionTests
 			selection.Focused.Should().Be(new InstrumentToneGridSelection.Cell(84, 3));
 			text.CaretIndex = 0;
 			Send(Key.Left, KeyModifiers.Shift).Should().BeTrue();
-			selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(84, 3));
+			selection.Anchor.Should().Be(new InstrumentToneGridSelection.Row(84));
 			selection.Extent.Should().Be(selection.Anchor);
 			selection.Focused.Should().Be(new InstrumentToneGridSelection.Cell(84, 2));
 
 			text.CaretIndex = 1;
 			Send(Key.Down, KeyModifiers.Shift).Should().BeTrue();
-			selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(84, 3));
-			selection.Extent.Should().Be(new InstrumentToneGridSelection.Cell(83, 2));
+			selection.Anchor.Should().Be(new InstrumentToneGridSelection.Row(84));
+			selection.Extent.Should().Be(new InstrumentToneGridSelection.Row(83));
+
+			// Shift+Left from another selected row moves to its previous
+			// cell, but cannot shrink the two-row range or select columns.
+			text.CaretIndex = 0;
+			Send(Key.Left, KeyModifiers.Shift).Should().BeTrue();
+			selection.Anchor.Should().Be(new InstrumentToneGridSelection.Row(84));
+			selection.Extent.Should().Be(new InstrumentToneGridSelection.Row(83));
+			selection.Focused.Should().Be(new InstrumentToneGridSelection.Cell(83, 1));
+			selection.Contains(new(84, 10), rows).Should().BeTrue();
 
 			ComboBox popup = new()
 			{
@@ -265,8 +274,8 @@ public sealed class InstrumentToneGridSelectionTests
 		AssertSelection(grid, 3, true);
 		AssertSelection(grid, 1, true);
 		AssertSelection(grid, 10, true);
-		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Cell(84, 2));
-		selection.Extent.Should().Be(new InstrumentToneGridSelection.Cell(82, 5));
+		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Row(84));
+		selection.Extent.Should().Be(new InstrumentToneGridSelection.Row(82));
 		workspace.Document.AudioRevision.Should().Be(revision);
 	}
 
