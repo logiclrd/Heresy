@@ -55,8 +55,8 @@ public sealed class FilterAssignmentEnvelopeAuthoringTests
                 _ => throw new Exception("Wrong effect"),
             };
             Assert.That(authored, Is.EqualTo(text));
-            Assert.That(built is SetNoteFilterAssignmentsPatternEffect n
-                ? n.AuthoringFilterId
+            Assert.That(built is SetNoteFilterAssignmentsPatternEffect noteEffect
+                ? noteEffect.AuthoringFilterId
                 : ((SetChannelFilterAssignmentsPatternEffect)built).AuthoringFilterId,
                 Is.EqualTo(filter.Id));
             Assert.That(NativePatternEffectEditor.Describe(built)
