@@ -1,6 +1,6 @@
 # Pattern editor — source tints, flattened-range shadows and overlap diagnostics
 
-**Status:** All planned Pattern source-colour visualization milestones are implemented as of 14 October 2026: persistent source tints, effective-source whole-cell colouring, nonserialized bounds, finite flattened Pattern/Sequence range overlays, and malformed-overlap red diagnostics. See [todo.md](todo.md) for future independently actionable work. See [todo.md](todo.md) for separately closable tasks. The feature visualizes already-existing recursive source semantics without changing their scheduling, rendering or new-note actions.
+**Status:** All planned Pattern source-colour visualization milestones are implemented as of 14 October 2026: persistent source tints, effective-source whole-cell colouring, nonserialized bounds, finite flattened Pattern/Sequence range overlays, malformed-overlap red diagnostics, and correct controlling-channel termination of those overlays. See [todo.md](todo.md) for future independently actionable work. See [todo.md](todo.md) for separately closable tasks. The feature visualizes already-existing recursive source semantics without changing their scheduling, rendering or new-note actions.
 
 ## Source colour ownership and persistence
 
@@ -20,9 +20,9 @@ Use the source's 20%-alpha colour for the interior and an outside edge/border of
 
 ## Conflicts and priority
 
-If a later authored Note start lies inside a previously projected finite flattened range, **the later note's entire cell background is exactly `0x80FF0000` (ARGB)** instead of its normal source tint. All preceding range fills and stronger exterior outlines remain present in separate overlays above that background, including under/around the conflicting cell. The diagnostic does not remove the later start's own flattening range when it has one.
+If a later authored Note start lies inside a **still-active** previously projected finite flattened range, **the later note's entire cell background is exactly `0x80FF0000` (ARGB)** instead of its normal source tint. All active preceding range fills and stronger exterior outlines remain present in separate overlays above that background, including under/around the conflicting cell. The diagnostic does not remove the later start's own flattening range when it has one. **A note on the earlier flattened source's controlling channel first terminates that earlier range**, however, so that same earlier source does not cause a spurious red warning. Other live ranges can still cause a valid red warning at the same cell.
 
-Precedence is **ascending displayed row, then ascending channel**: a start only collides with ranges contributed by earlier positions, and never with its own 1×1 origin. Within one row, a larger channel index is later; across rows, the larger row index is later regardless of channel. Multiple earlier ranges may cover the same later Note start; red is still a single exact diagnostic brush and none of those earlier fills/borders are erased. A later *authored* `StartPatternNote` is sufficient to warn even if its effective Source is unresolved; that does **not** invent a source tint or imply that the Note will actually play. Source-only, effects-only, Off and Cut cells do not trigger red diagnostics.
+Precedence is **ascending displayed row, then ascending channel**: a start only collides with ranges contributed by earlier positions, and never with its own 1×1 origin. Within one row, a larger channel index is later; across rows, the larger row index is later regardless of channel. Multiple still-active earlier ranges may cover the same later Note start; red is still a single exact diagnostic brush and none of those active earlier fills/borders are erased. A range terminated on its original controlling channel is first cropped above that event and cannot contribute either colour or a red conflict below its new bottom edge. A later *authored* `StartPatternNote` is sufficient to warn even if its effective Source is unresolved; that does **not** invent a source tint or imply that the Note will actually play. Source-only, effects-only, Off and Cut cells do not trigger red diagnostics.
 
 This is an **editor visualization of overlapping authoring footprints**, not a mutation of renderer precedence, channel lifetime, Mixdown routing or source selection. It preserves the author's notes/effects, real Source identity and tooltips, selection/focus borders and independent effect-sticker colours.
 
@@ -31,7 +31,7 @@ This is an **editor visualization of overlapping authoring footprints**, not a m
 - HSV generator: hue range, S = .75, V = 1, A = 20%; stable JSON/package roundtrip; legacy missing-field assignment exactly once; no fresh colours on repeated editor open or snapshot.
 - Bounds: note events only, not effects or Source-only cells; add/remove, insert/delete, resize, on-load and on-editor-switch; repeated Pattern occurrences.
 - Rectangles: 1×1 outline, upper and right edges, row/channel clipping, sequence entry bounds, missing source, nested source, private mixdown.
-- Overlap: occupied shadow with later conflicting note painted red `0x80FF0000`, older flattened outline retained, stable row/column priority, multiple intersections and unchanged song/sound data.
+- Overlap: occupied **non-controlling** shadow with later conflicting note painted red `0x80FF0000`; source owner Start/Off/Cut crops the old range before that row, retaining a moved bottom edge; concurrent still-active ranges continue to warn; stable row/column priority, multiple intersections and unchanged song/sound data.
 - Avalonia headless render: theme/selection/focus contrast, effects overlay coexistence, per-cell refresh without excessive full-grid redraw.
 
 ### Relationship to observed Filter behavior
@@ -279,5 +279,52 @@ different repeated Sequence-order inheritance, and headless Avalonia
 compositing, untouched earlier edges/sticker/tooltip identities and
 in-place add/remove of the red indication.
 
-This completes the source-colour visualization feature. Remaining
-editor tasks are tracked separately in `todo.md`.
+The follow-up controlling-channel termination refinement is implemented as described below. Remaining editor tasks are tracked separately in `todo.md`.
+
+## Implemented — stop flattened overlays at controlling-channel end (14 October 2026)
+
+**Playback ownership, not rectangular occupancy, determines when a
+flattened shadow ends.** The host `StartPatternNote` has exactly one
+controlling channel: the *host channel in which it was authored*.
+When a later Start, OFF or CUT is authored in that same channel,
+the earlier flattened source's overlay ends at the **end of the
+immediately preceding displayed row**. This is an editor-only
+projection of the host event's end: playback and audible release
+tails retain their existing semantics. A note merely present in one
+of the flattened source's *other covered host channels* does not
+replace or stop that source. Those non-controlling-channel starts are
+still genuine red overlap conflicts when the earlier range is active.
+
+`FlattenedSourceRangeProjection.Analyze` now computes each range's
+natural extent from its cached Pattern/data Sequence note-event
+bounds, clips it to the current host Pattern/Sequence order segment
+and available host channels, **then scans only later displayed rows
+of that same segment on the originating controlling channel**.
+The first later `StartPatternNote`, `PatternNoteOff` or
+`PatternNoteCut` moves the range's inclusive `LastRow` to one
+row before that event. Source-only/Volume-only/effect-only changes
+never stop its range. If no such event exists, the natural clipped
+length is unchanged. Existing rendering logic computes the source
+colour fill and doubled-alpha outer perimeter from the revised
+rectangle, so its bottom edge moves to the actual termination
+row and 1×1 cases still receive all four edges.
+
+Range footprints are shortened **before** building their per-cell
+overlay fragments or checking later authored Note starts for red
+conflicts. Consequently, the new note in the controlling channel
+inherits its own normal source tint (not red from the old source),
+while red `0x80FF0000` remains correct if a *different* active
+flattened region also covers its cell. Separate sources keep
+independently clipped ownership even where their rectangles
+overlap. Sequence-entry/StartRow clipping prevents any shadow
+spilling into another order or repeated occurrence.
+
+Core projection and headless Avalonia regressions cover a 64-row
+drum source replaced in its host channel, OFF and CUT before its
+natural end, unchanged Source/FX-only rows, red starts in covered
+non-controlling channels, simultaneous active ranges, independently
+red replacement under a *different* owner, repeated Sequence
+occurrences with `StartRow`, in-place edit refresh, and outline
+movement/restoration after deleting the terminating event.
+All song data, effects, source-memory attribution, rendering and
+audio/document revisions retain their previous behaviour.
