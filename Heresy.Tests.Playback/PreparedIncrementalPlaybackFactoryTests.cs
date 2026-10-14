@@ -57,7 +57,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
         note.Note = new StartPatternNote(sampleId);
         note.Effects.Add(new SetNoteFilterPatternEffect(filterId));
         note.Effects.Add(new SetNoteFilterAssignmentsPatternEffect(
-            "echo.Feedforward = @\"Sweep\""));
+            "echo.DelaySeconds = 0.002\necho.Mix = 1\necho.Feedforward = @\"Sweep\""));
         document.Add(child);
         ObjectId parentId = document.AllocateObjectId();
         DataPatternDefinition parent = new(parentId, "Parent") {
@@ -128,7 +128,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
             childCell.Note = new StartPatternNote(sampleId);
             childCell.Effects.Add(new SetNoteFilterPatternEffect(filterId));
             childCell.Effects.Add(new SetNoteFilterAssignmentsPatternEffect(
-                "echo.Feedforward = @\"Sweep\""));
+                "echo.DelaySeconds = 0.002\necho.Mix = 1\necho.Feedforward = @\"Sweep\""));
             document.Add(child);
             playedId = childId;
         }
@@ -148,7 +148,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
             {
                 cell.Effects.Add(new SetNoteFilterPatternEffect(filterId));
                 cell.Effects.Add(new SetNoteFilterAssignmentsPatternEffect(
-                    "echo.Feedforward = @\"Sweep\""));
+                    "echo.DelaySeconds = 0.002\necho.Mix = 1\necho.Feedforward = @\"Sweep\""));
             }
             document.Add(root);
         }
