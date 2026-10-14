@@ -527,12 +527,14 @@ C4 reference convention, so multiplier 1.0 is displayed as `C-4`; exact
 equal-tempered semitone multipliers are projected as tracker note names, while
 arbitrary multipliers remain visible numerically. `1` enters note cut and
 backtick enters note off. The tracker note-entry **skip value** starts at 1.
-Press Alt+0 through Alt+9 (the physical top-row digits) to choose 0–9 rows
-to advance after every recognized note/cut/off entry. Skip 0 leaves the
-cursor on the same row; other values move it just as pressing Down that many
-times would, clamping at the final row and crossing projected sequence-pattern
-boundaries. Chord entry uses the same skip value, and the chosen value is
-shown in the pattern toolbar and retained when switching standalone patterns.
+The toolbar's integer Skip spinner accepts 0–128 rows to advance after a
+recognized note/cut/off entry; physical Alt+0 through Alt+9 remain convenient
+shortcuts for the corresponding presets and synchronize the spinner. Skip 0
+leaves the cursor on the same row; other values move as though Down were
+pressed that many times, clamping at the final row and crossing projected
+sequence-pattern boundaries (including channel clamps at narrower intermediate
+Patterns). Chord entry and completed field-clearing actions use the same Skip.
+The selected value is retained when switching standalone patterns.
 With Caps Lock *not* pressed, physical key auto-repeat continues inserting
 notes in successive rows using this skip; with Caps Lock pressed, repeats
 remain preview-only. Replacing an existing start note changes its pitch
@@ -559,12 +561,27 @@ therefore change the mapped channel's remembered source before a later parent
 row, even when the child merely selects a source without starting a note.
 Source changes in skipped rows do not execute; standalone raw-note generator
 callers retain their previous eager resolution behavior.
-The cursor order is **Note → Source → Volume → Effect Command → Effect
-Parameter**. Clicking any field moves the cursor there, including blank space.
+The cursor order is **Note-name → Octave → Source → Volume → Effect
+Command → Effect Parameter**. The Octave digit is a separately focusable
+subfield: physical top-row or keypad digits change only an existing pitched
+Note's octave (preserving its pitch class and other cell properties), then
+advance by Skip within that same field; a blank, OFF or CUT Note is not
+replaced. Piano keys and the physical QWERTY comma/period positions do nothing
+in Octave focus. Clicking any field moves the cursor there, including blank
+space.
 When Source is already focused, clicking it again opens a field-anchored picker
 wide enough to show full source names; `Alt+Down` opens the same picker.
 Space copies the Source selected in the pattern toolbar into the field, `.`
 clears it, and the Source field's right-click menu also provides **Clear**.
+In the focused Note-name field, physical QWERTY-period (regardless of OS
+keyboard layout) always clears the Note and the entire tracker/native effect
+stack. It clears Source only when the Source edit-mask bit is enabled, and
+Volume only when the Volume bit is enabled, even if the Note mask bit is off.
+Disabled fields retain their values; genuine no-ops do not change the song
+revision, and the cursor advances by Skip. Clearing from Source or Volume
+focus still clears only that focused field. Effect-field punctuation remains
+layout-sensitive and clipboard-region Clear remains a separate whole-cell
+operation.
 
 Volume is first-class pattern-cell data, independent of the effect stack. It is
 stored as an optional normalized value and presented in the tracker grid as a
