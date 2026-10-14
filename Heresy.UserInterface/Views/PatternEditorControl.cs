@@ -1417,20 +1417,23 @@ public sealed class PatternEditorControl : UserControl
 				case PatternPunctuationCommand.ClearField:
 					if (_cursor.Field == PatternCellField.Note)
 					{
-						// Only the Note field clears the whole logical cell.
-						bool changed = PatternRegionClipboardEditor.Clear(
-							_workspace, _context,
-							new PatternSelectionRegion(row, channel, row, channel));
+						// Note and every effect clear unconditionally. Source
+						// and Volume clear only when their edit-mask bits are
+						// enabled. Unlike clipboard-region Clear, disabled
+						// columns retain their exact existing values.
+						bool changed = PatternDocumentEditor.ClearNoteSubfield(
+							_workspace, editorRow.Pattern, editorRow.PatternRow,
+							channel, _noteInputState.EditMask);
 						if (changed)
 						{
 							RefreshUnderlyingCell(
 								editorRow.Pattern, editorRow.PatternRow, channel);
 							_changed(
-									$"Cleared tracker cell in {editorRow.Pattern.Name} row {editorRow.PatternRow}, channel {channel + 1}");
+								$"Cleared tracker Note and enabled fields in {editorRow.Pattern.Name} row {editorRow.PatternRow}, channel {channel + 1}");
 						}
 						_message.Text = changed
-							? "Cleared tracker cell."
-							: "The tracker cell is already empty.";
+							? "Cleared Note, effects, and enabled Source/Volume fields."
+							: "No enabled fields or effects needed clearing.";
 						AdvanceAfterTrackerClear();
 					}
 					else if (_cursor.Field == PatternCellField.Source)

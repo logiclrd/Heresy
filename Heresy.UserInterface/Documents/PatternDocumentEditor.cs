@@ -131,6 +131,49 @@ public static class PatternDocumentEditor
 		workspace.Document.MarkChanged(affectsAudio: true);
 	}
 
+	/// <summary>
+	/// Physical QWERTY-period while focused on the Note-name subfield:
+	/// always remove the Note and its entire ordered effect stack, but
+	/// preserve Source/Volume when their edit-mask bits are disabled.
+	/// The Note mask bit does not gate clearing a focused Note field.
+	/// This is intentionally distinct from clearing a clipboard region.
+	/// </summary>
+	public static bool ClearNoteSubfield(
+		DocumentWorkspace workspace,
+		DataPatternDefinition pattern,
+		int row,
+		int channel,
+		PatternEditMask editMask)
+	{
+		ValidatePattern(workspace, pattern);
+		PatternCell? cell = pattern.Grid[row, channel];
+		if (cell is null)
+			return false;
+
+		bool clearSource = (editMask & PatternEditMask.Source) != 0;
+		bool clearVolume = (editMask & PatternEditMask.Volume) != 0;
+		bool changed =
+			cell.Note is not null
+				|| cell.Effects.Count != 0
+				|| (clearSource && !cell.SourceId.IsNone)
+				|| (clearVolume && cell.Volume is not null);
+		if (!changed)
+			return false;
+
+		cell.Note = null;
+		cell.Effects.Clear();
+		if (clearSource)
+			cell.SourceId = ObjectId.None;
+		if (clearVolume)
+			cell.Volume = null;
+
+		if (cell.IsEmpty)
+			pattern.Grid.ClearCell(row, channel);
+
+		workspace.Document.MarkChanged(affectsAudio: true);
+		return true;
+	}
+
 	public static bool SetMaskedEntry(
 		DocumentWorkspace workspace,
 		DataPatternDefinition pattern,
