@@ -90,6 +90,15 @@ public sealed class PatternEditorControl : UserControl
 	private bool _followPlayback = true;
 	private bool _followScrollPosted;
 	private readonly TextBlock _message;
+	private readonly ScrollViewer _statusScroll = new()
+	{
+		HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+		VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+		// The bar itself should not disappear while overflowing content
+		// remains; Auto controls whether a bar is required at all.
+		AllowAutoHide = false,
+	};
+	private const double StatusViewportTextRows = 2.25;
 	// Context guidance is independent of the diagnostic/status message:
 	// cursor movement and mouse hover must never erase actual failures.
 	private readonly TextBlock _effectHint = new()
@@ -355,6 +364,22 @@ public sealed class PatternEditorControl : UserControl
 				TextWrapping = TextWrapping.Wrap,
 			};
 
+		// Effective typography may be supplied by a theme after attachment,
+		// or change at runtime. Keep the two-and-a-quarter-line viewport
+		// measured from the actual status font in both situations.
+		_message.PropertyChanged += (_, args) =>
+		{
+			if (args.Property == TextBlock.FontSizeProperty
+				|| args.Property == TextBlock.FontFamilyProperty
+				|| args.Property == TextBlock.FontWeightProperty
+				|| args.Property == TextBlock.FontStyleProperty
+				|| args.Property == TextBlock.LineHeightProperty
+				|| args.Property == TextBlock.LineSpacingProperty)
+			{
+				UpdateStatusViewportHeight();
+			}
+		};
+
 		_followCheckbox.PropertyChanged += (_, args) =>
 		{
 			if (args.Property == ToggleButton.IsCheckedProperty)
@@ -365,7 +390,12 @@ public sealed class PatternEditorControl : UserControl
 		_titleEditor.LostFocus += (_, _) => CloseTitleEdit(commit: true);
 
 		Content = BuildContent();
-		AttachedToVisualTree += (_, _) => RequestPlaybackFollow();
+		UpdateStatusViewportHeight();
+		AttachedToVisualTree += (_, _) =>
+		{
+			UpdateStatusViewportHeight();
+			RequestPlaybackFollow();
+		};
 		UpdateChordStatus();
 		_owner.Deactivated += OnOwnerDeactivated;
 		RefreshGrid();
@@ -628,12 +658,12 @@ public sealed class PatternEditorControl : UserControl
 		};
 		statusLines.Children.Add(_message);
 		statusLines.Children.Add(_effectHint);
-		Border messageBorder =
-			new()
-			{
-				Padding = new Thickness(10, 3),
-				Child = statusLines,
-			};
+		_statusScroll.Content = statusLines;
+		Border messageBorder = new()
+		{
+			Padding = new Thickness(10, 3),
+			Child = _statusScroll,
+		};
 		DockPanel.SetDock(messageBorder, Dock.Bottom);
 		root.Children.Add(messageBorder);
 		root.Children.Add(_scroll);
@@ -662,6 +692,33 @@ public sealed class PatternEditorControl : UserControl
 			RoutingStrategies.Tunnel,
 			handledEventsToo: true);
 		return root;
+	}
+
+	/// <summary>
+	/// Hold the bottom status *content viewport* at 2.25 actual font lines.
+	/// A separate unwrapped probe measures the themed TextBlock line metrics:
+	/// the diagnostic itself can contain arbitrary wrapped/multiline text.
+	/// The surrounding border's padding is intentionally outside this
+	/// content-height contract.
+	/// </summary>
+	private void UpdateStatusViewportHeight()
+	{
+		TextBlock probe = new()
+		{
+			Text = "Ag",
+			TextWrapping = TextWrapping.NoWrap,
+			FontFamily = _message.FontFamily,
+			FontSize = _message.FontSize,
+			FontStyle = _message.FontStyle,
+			FontWeight = _message.FontWeight,
+			LineHeight = _message.LineHeight,
+			LineSpacing = _message.LineSpacing,
+		};
+		probe.Measure(new Size(
+			double.PositiveInfinity, double.PositiveInfinity));
+		double lineHeight = probe.DesiredSize.Height;
+		if (double.IsFinite(lineHeight) && lineHeight > 0)
+			_statusScroll.Height = lineHeight * StatusViewportTextRows;
 	}
 
 	private void OnTitlePointerPressed(object? sender, PointerPressedEventArgs e)

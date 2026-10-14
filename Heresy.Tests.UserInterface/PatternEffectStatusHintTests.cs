@@ -123,9 +123,14 @@ public sealed class PatternEffectStatusHintTests
 		PatternEffectCursor cursor = Field<PatternEffectCursor>(editor, "_cursor");
 		DockPanel root = (DockPanel)editor.Content!;
 		Border status = root.Children.OfType<Border>()
-			.Single(b => b.Child is StackPanel p && p.Children.Contains(diagnostic));
-		StackPanel lines = (StackPanel)status.Child!;
+			.Single(b => b.Child is ScrollViewer viewer
+				&& viewer.Content is StackPanel p
+				&& p.Children.Contains(diagnostic));
+		ScrollViewer scroll = (ScrollViewer)status.Child!;
+		StackPanel lines = (StackPanel)scroll.Content!;
 		lines.Children.Should().Equal(diagnostic, hint);
+		scroll.VerticalScrollBarVisibility.Should().Be(
+			Avalonia.Controls.Primitives.ScrollBarVisibility.Auto);
 		hint.IsVisible.Should().BeFalse();
 
 		string existingDiagnostic = "MP3 decode diagnostic must remain visible.";
