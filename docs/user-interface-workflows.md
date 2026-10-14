@@ -660,8 +660,16 @@ and Escape retain their normal cancellation behavior. Applying a change replaces
 the selected stack member through the same stack-editing command path used by
 the tracker UI.
 
-The bottom status area displays diagnostic/status text and effect-specific
-keyboard guidance on **separate, vertically stacked lines**. Guidance is
+The bottom status area uses a fixed-height content viewport equal to
+**2.25 measured lines of its actual themed diagnostic font**, plus its
+existing padding. Both diagnostic/status text and effect-specific keyboard
+guidance remain **separate, vertically stacked text blocks** inside that
+viewport. The vertical scrollbar appears only when the text (including
+wrapped multiline messages) exceeds the viewport, stays visible while
+overflow exists, and disappears when everything fits. Changing a message
+or selecting a longer effect hint never resizes the Pattern grid; the entire
+text can be scrolled into view. Font/theme changes update the measured
+viewport height rather than relying on a fixed pixel estimate. Guidance is
 shown only when the tracker cursor selects an effect field. Empty slots
 suggest A–Z or right-click insertion; a single tracker effect describes
 command/hex entry; a collapsed multi-effect stack says **Expand stacked
