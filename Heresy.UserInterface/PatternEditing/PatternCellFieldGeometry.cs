@@ -15,7 +15,9 @@ public static class PatternCellFieldGeometry
 		double volumeWidth,
 		double effectWidth,
 		int effectCount,
-		bool singleEffectIsTrackerStyle)
+		bool singleEffectIsTrackerStyle,
+		double octaveLeft = double.PositiveInfinity,
+		double octaveWidth = 0)
 	{
 		if (!(cellWidth > 0))
 			throw new ArgumentOutOfRangeException(nameof(cellWidth));
@@ -27,6 +29,8 @@ public static class PatternCellFieldGeometry
 		}
 		if (effectCount < 0)
 			throw new ArgumentOutOfRangeException(nameof(effectCount));
+		if (octaveWidth < 0)
+			throw new ArgumentOutOfRangeException(nameof(octaveWidth));
 
 		double clampedX = Math.Clamp(x, 0, cellWidth);
 		double effectLeft = cellWidth - effectWidth;
@@ -34,7 +38,11 @@ public static class PatternCellFieldGeometry
 		double sourceLeft = volumeLeft - sourceWidth;
 
 		if (clampedX < sourceLeft)
-			return PatternCellField.Note;
+			return octaveWidth > 0
+				&& clampedX >= octaveLeft
+				&& clampedX < octaveLeft + octaveWidth
+					? PatternCellField.Octave
+					: PatternCellField.Note;
 		if (clampedX < volumeLeft)
 			return PatternCellField.Source;
 		if (clampedX < effectLeft)

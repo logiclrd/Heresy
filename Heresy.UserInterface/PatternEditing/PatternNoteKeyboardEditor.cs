@@ -25,9 +25,9 @@ public sealed class PatternNoteInputState
 		get => _skipRows;
 		set
 		{
-			if (value < 0)
+			if (value is < 0 or > 128)
 				throw new ArgumentOutOfRangeException(nameof(value),
-					"Tracker note skip must be non-negative.");
+					"Tracker note skip must be in the range 0..128.");
 			_skipRows = value;
 		}
 	}

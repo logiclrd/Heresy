@@ -96,7 +96,14 @@ Headless Avalonia scale regressions include:
 CI: **3,277 tests passed; zero build warnings and errors**. Both the
 Release bundle smoke check and Linux ARM64 packaging succeeded.
 
-**Not claimed:** live mouse/key timing on a physical Windows or Linux
-desktop, perceived responsiveness with GPU/compositor load, or sound-device
-underrun measurements. Those require physical smoke testing and remain
-tracked separately in `todo.md`.
+**Physical Linux desktop observation reported by the user, 14 October 2026:**
+The localized implementation provides a substantial perceived speedup.
+Single-channel Insert/Delete keeps up with normal keyboard repeat.
+All-channel Insert/Delete still has modest latency, approximately **4–5
+updates per second**, but is significantly faster than before. This is a
+qualitative observation, not a controlled frame-time benchmark.
+
+**Still unchecked:** Windows performance, detailed scroll/focus/selection
+behavior, repeated Sequence occurrences, Effect-stack comparison,
+live-playback/underruns and platform-specific compositor effects.
+The physical acceptance task in `todo.md` remains open.

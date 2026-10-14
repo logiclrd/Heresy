@@ -32,6 +32,8 @@ public sealed class PatternEditorControl : UserControl
 	private const double SourceWidth = 96;
 	private const double VolumeWidth = 34;
 	private const double EffectWidth = 54;
+	private const double NoteNameWidth = 44;
+	private const double NoteOctaveWidth = 22;
 
 	private readonly Window _owner;
 	private readonly DocumentWorkspace _workspace;
@@ -54,7 +56,7 @@ public sealed class PatternEditorControl : UserControl
 	private readonly NumericUpDown _skipEditor = new()
 	{
 		Minimum = 0,
-		Maximum = int.MaxValue,
+		Maximum = 128,
 		Increment = 1,
 		FormatString = "0",
 		ParsingNumberStyle = NumberStyles.None,
@@ -139,6 +141,9 @@ public sealed class PatternEditorControl : UserControl
 		new Dictionary<(int Row, int Channel), uint>();
 	private readonly Dictionary<uint, IBrush> _sourceTintBrushes = [];
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _noteTexts = [];
+	private readonly Dictionary<(int Row, int Channel), Border> _octaveFields = [];
+	private readonly Dictionary<(int Row, int Channel), TextBlock> _octaveTexts = [];
+	private readonly Dictionary<(int Row, int Channel), TextBlock> _noteSuffixTexts = [];
 	private readonly Dictionary<(int Row, int Channel), Border> _sourceFields = [];
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _sourceTexts = [];
 	private readonly Dictionary<(int Row, int Channel), Border> _volumeFields = [];
@@ -284,7 +289,7 @@ public sealed class PatternEditorControl : UserControl
 				CurrentVolume =
 					initialState?.CurrentVolume,
 				SkipRows =
-					initialState?.SkipRows ?? 1,
+					Math.Min(initialState?.SkipRows ?? 1, 128),
 			};
 		UpdateSkipValueDisplay();
 		_skipEditor.ValueChanged += (_, _) =>
@@ -808,6 +813,9 @@ public sealed class PatternEditorControl : UserControl
 		_rowHeaders.Clear();
 		_noteFields.Clear();
 		_noteTexts.Clear();
+		_octaveFields.Clear();
+		_octaveTexts.Clear();
+		_noteSuffixTexts.Clear();
 		_sourceFields.Clear();
 		_sourceTexts.Clear();
 		_volumeFields.Clear();
@@ -991,26 +999,49 @@ public sealed class PatternEditorControl : UserControl
 				row.PatternRow,
 				channel);
 
-		TextBlock note =
-			new()
-			{
-				Text = view.NoteText,
-				FontWeight = FontWeight.Normal,
-				VerticalAlignment = VerticalAlignment.Center,
-				Margin = new Thickness(5, 0),
-				TextTrimming = TextTrimming.CharacterEllipsis,
-			};
-		Border noteField =
-			new()
-			{
-				Height = RowHeight - 4,
-				HorizontalAlignment = HorizontalAlignment.Stretch,
-				VerticalAlignment = VerticalAlignment.Center,
-				BorderBrush = Brushes.Transparent,
-				BorderThickness = new Thickness(1),
-				Background = Brushes.Transparent,
-				Child = note,
-			};
+		TextBlock note = new()
+		{
+			FontWeight = FontWeight.Normal,
+			VerticalAlignment = VerticalAlignment.Center,
+			Margin = new Thickness(2, 0),
+			TextTrimming = TextTrimming.CharacterEllipsis,
+		};
+		Border noteField = new()
+		{
+			Width = NoteNameWidth,
+			Height = RowHeight - 4,
+			VerticalAlignment = VerticalAlignment.Center,
+			BorderBrush = Brushes.Transparent,
+			BorderThickness = new Thickness(1),
+			Background = Brushes.Transparent,
+			Child = note,
+		};
+		TextBlock octaveText = new()
+		{
+			FontWeight = FontWeight.Normal,
+			VerticalAlignment = VerticalAlignment.Center,
+			HorizontalAlignment = HorizontalAlignment.Center,
+		};
+		Border octaveField = new()
+		{
+			Width = NoteOctaveWidth,
+			Height = RowHeight - 4,
+			VerticalAlignment = VerticalAlignment.Center,
+			BorderBrush = Brushes.Transparent,
+			BorderThickness = new Thickness(1),
+			Background = Brushes.Transparent,
+			Child = octaveText,
+		};
+		TextBlock noteSuffix = new()
+		{
+			VerticalAlignment = VerticalAlignment.Center,
+			TextTrimming = TextTrimming.CharacterEllipsis,
+			IsHitTestVisible = false,
+		};
+		StackPanel noteParts = new() { Orientation = Orientation.Horizontal };
+		noteParts.Children.Add(noteField);
+		noteParts.Children.Add(octaveField);
+		noteParts.Children.Add(noteSuffix);
 
 		TextBlock sourceText =
 			new()
@@ -1130,7 +1161,8 @@ public sealed class PatternEditorControl : UserControl
 			(displayRow, channel), out FlattenedSourceEditorIndication? indication);
 		_seekIndications.TryGetValue(
 			(displayRow, channel), out ReplayRequiredSeekIndication? seek);
-		ApplyEditorIndications(note, noteField, volumeField,
+		ApplyEditorIndications(note, octaveText, noteSuffix,
+			noteField, octaveField, volumeField,
 			effects, view.NoteText, indication, seek);
 
 		// The cell parent retains the theme/row/selection shade. Its child
@@ -1157,13 +1189,13 @@ public sealed class PatternEditorControl : UserControl
 		Grid.SetColumnSpan(rangeLayer, 4);
 		PopulateRangeOverlays(rangeLayer, _flattenedRanges!,
 			(displayRow, channel));
-		Grid.SetColumn(noteField, 0);
+		Grid.SetColumn(noteParts, 0);
 		Grid.SetColumn(sourceField, 1);
 		Grid.SetColumn(volumeField, 2);
 		Grid.SetColumn(effects, 0);
 		Grid.SetColumnSpan(effects, 4);
 		content.Children.Add(rangeLayer);
-		content.Children.Add(noteField);
+		content.Children.Add(noteParts);
 		content.Children.Add(sourceField);
 		content.Children.Add(volumeField);
 		content.Children.Add(effects);
@@ -1203,6 +1235,9 @@ public sealed class PatternEditorControl : UserControl
 		_rangeOverlayLayers[(displayRow, channel)] = rangeLayer;
 		_noteFields[(displayRow, channel)] = noteField;
 		_noteTexts[(displayRow, channel)] = note;
+		_octaveFields[(displayRow, channel)] = octaveField;
+		_octaveTexts[(displayRow, channel)] = octaveText;
+		_noteSuffixTexts[(displayRow, channel)] = noteSuffix;
 		_sourceFields[(displayRow, channel)] = sourceField;
 		_sourceTexts[(displayRow, channel)] = sourceText;
 		_volumeFields[(displayRow, channel)] = volumeField;
@@ -1241,7 +1276,9 @@ public sealed class PatternEditorControl : UserControl
 				VolumeWidth,
 				EffectWidth,
 				effectCount,
-				singleTrackerStyle);
+				singleTrackerStyle,
+				octaveLeft: NoteNameWidth,
+				octaveWidth: NoteOctaveWidth);
 
 		if (_expandedCell == (row, channel))
 			CollapseVisualEffects(collapseCursor: true);
@@ -1282,6 +1319,48 @@ public sealed class PatternEditorControl : UserControl
 			_message.Text = $"Tracker note skip set to {skipRows}.";
 			e.Handled = true;
 			return;
+		}
+
+		// The separately focused octave digit accepts a decimal key but no
+		// tracker piano key, mask punctuation or whole-cell Clear command.
+		// Physical key positions keep digit entry layout-independent.
+		if (_cursor.Field == PatternCellField.Octave)
+		{
+			if (PatternOctaveKeyboardEditor.TryGetDigit(
+				e.PhysicalKey, e.KeyModifiers, out int enteredOctave))
+			{
+				int editedRow = _cursor.Row;
+				int editedChannel = _cursor.Channel;
+				PatternEditorRow edited = _context.GetRow(editedRow);
+				bool changed = PatternEditorContextCursor.EditCurrent(
+					_context, _cursor, mapped =>
+						PatternOctaveKeyboardEditor.Type(
+							_workspace, mapped.Pattern, _cursor,
+							enteredOctave, _noteInputState.SkipRows));
+				if (changed)
+				{
+					RefreshUnderlyingCell(edited.Pattern, edited.PatternRow,
+						editedChannel);
+					_changed(
+						$"Changed tracker octave in {edited.Pattern.Name} row {edited.PatternRow}, channel {editedChannel + 1}");
+				}
+				_suppressHandledTrackerKeyTextInput = true;
+				e.Handled = true;
+				UpdateCurrentPatternControls();
+				RefreshCursorVisuals();
+				FocusCursorCell();
+				return;
+			}
+			if (e.PhysicalKey is PhysicalKey.Comma or PhysicalKey.Period
+				|| PatternNoteKeyboard.TryGetTrackerCharacter(
+					e.PhysicalKey, out _))
+			{
+				// Also suppress TextInput from physically handled keys.
+				// In particular comma and period must never edit/advance.
+				_suppressHandledTrackerKeyTextInput = true;
+				e.Handled = true;
+				return;
+			}
 		}
 
 		if (_cursor.Field == PatternCellField.Note
@@ -2174,6 +2253,14 @@ public sealed class PatternEditorControl : UserControl
 		if (_suppressHandledTrackerKeyTextInput)
 		{
 			_suppressHandledTrackerKeyTextInput = false;
+			e.Handled = true;
+			return;
+		}
+
+		// The octave digit edits only through the physical numeric KeyDown
+		// path. Do not interpret any trailing layout-aware TextInput.
+		if (_cursor.Field == PatternCellField.Octave)
+		{
 			e.Handled = true;
 			return;
 		}
@@ -3767,7 +3854,11 @@ public sealed class PatternEditorControl : UserControl
 				editorRow.Pattern,
 				editorRow.PatternRow,
 				channel);
-		note.Text = view.NoteText;
+		if (_octaveTexts.TryGetValue((row, channel), out TextBlock? octave)
+			&& _noteSuffixTexts.TryGetValue((row, channel), out TextBlock? suffix))
+		{
+			SetNoteParts(note, octave, suffix, view.NoteText, string.Empty);
+		}
 		source.Text = view.SourceText;
 		if (_sourceFields.TryGetValue((row, channel), out Border? sourceField))
 			ToolTip.SetTip(sourceField, view.SourceText);
@@ -3777,7 +3868,8 @@ public sealed class PatternEditorControl : UserControl
 	}
 
 	private void ApplyEditorIndications(
-		TextBlock note, Border noteField, Border volumeField,
+		TextBlock note, TextBlock octave, TextBlock suffix,
+		Border noteField, Border octaveField, Border volumeField,
 		PatternEffectStripControl effects, string noteText,
 		FlattenedSourceEditorIndication? indication,
 		ReplayRequiredSeekIndication? seek)
@@ -3788,6 +3880,7 @@ public sealed class PatternEditorControl : UserControl
 			: seek is null ? indication.Message
 			: indication.Message + " " + seek.Message;
 		ToolTip.SetTip(noteField, tip);
+		ToolTip.SetTip(octaveField, tip);
 		ToolTip.SetTip(volumeField, tip);
 		ToolTip.SetTip(effects, tip);
 		// '⚠' describes incompatible flattened operations; '↳'
@@ -3798,7 +3891,34 @@ public sealed class PatternEditorControl : UserControl
 			: indication.HasVoiceSpecificEffects ? "⚠ " : "↳ ";
 		if (seek is not null)
 			prefix += seek.IsConditional ? "? " : "⏱ ";
-		note.Text = prefix + noteText;
+		SetNoteParts(note, octave, suffix, noteText, prefix);
+	}
+
+	/// <summary>Preserve the tracker pitch's separate octave keyboard stop
+	/// without introducing another persisted Note property. Non-pitched and
+	/// custom-pitch descriptions stay in the normal Note-name area.</summary>
+	private static void SetNoteParts(
+		TextBlock note, TextBlock octave, TextBlock suffix,
+		string noteText, string prefix)
+	{
+		if (noteText.Length >= 3
+			&& noteText[0] is >= 'A' and <= 'G'
+			&& noteText[1] is '-' or '#'
+			&& char.IsDigit(noteText[2]))
+		{
+			int end = 2;
+			while (end < noteText.Length && char.IsDigit(noteText[end]))
+				end++;
+			note.Text = prefix + noteText[..2];
+			octave.Text = noteText[2..end];
+			suffix.Text = noteText[end..];
+		}
+		else
+		{
+			note.Text = prefix + noteText;
+			octave.Text = string.Empty;
+			suffix.Text = string.Empty;
+		}
 	}
 
 	/// <summary>Reapply the session preference without rebuilding cells.</summary>
@@ -3825,7 +3945,12 @@ public sealed class PatternEditorControl : UserControl
 				(row, channel), out FlattenedSourceEditorIndication? indication);
 			_seekIndications.TryGetValue(
 				(row, channel), out ReplayRequiredSeekIndication? seek);
-			ApplyEditorIndications(note, noteField, volumeField,
+			if (!_octaveTexts.TryGetValue((row, channel), out TextBlock? octave)
+				|| !_noteSuffixTexts.TryGetValue((row, channel), out TextBlock? suffix)
+				|| !_octaveFields.TryGetValue((row, channel), out Border? octaveField))
+				continue;
+			ApplyEditorIndications(note, octave, suffix,
+				noteField, octaveField, volumeField,
 				effects, noteText, indication, seek);
 		}
 	}
@@ -3988,6 +4113,16 @@ public sealed class PatternEditorControl : UserControl
 					noteActive ? Brushes.DeepSkyBlue : Brushes.Transparent;
 				noteField.BorderThickness =
 					noteActive ? new Thickness(2) : new Thickness(1);
+			}
+			if (_octaveFields.TryGetValue(
+				(row, channel), out Border? octaveField))
+			{
+				bool octaveActive =
+					active && _cursor.Field == PatternCellField.Octave;
+				octaveField.BorderBrush =
+					octaveActive ? Brushes.DeepSkyBlue : Brushes.Transparent;
+				octaveField.BorderThickness =
+					octaveActive ? new Thickness(2) : new Thickness(1);
 			}
 			if (_sourceFields.TryGetValue(
 				(row, channel),

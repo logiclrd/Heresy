@@ -52,7 +52,7 @@ public sealed class PatternSkipAndPreviewTests
 	}
 
 	[Test]
-	public void SkipDefaultsToOneAndAllowsAnyNonnegativeInt()
+	public void SkipDefaultsToOneAndValidatesZeroThrough128()
 	{
 		PatternNoteInputState state = new(ObjectId.None, 4);
 		state.SkipRows.Should().Be(1);
@@ -62,11 +62,13 @@ public sealed class PatternSkipAndPreviewTests
 		state.SkipRows.Should().Be(9);
 		state.SkipRows = 25;
 		state.SkipRows.Should().Be(25);
-		state.SkipRows = int.MaxValue;
-		state.SkipRows.Should().Be(int.MaxValue);
+		state.SkipRows = 128;
+		state.SkipRows.Should().Be(128);
 		Action below = () => state.SkipRows = -1;
+		Action above = () => state.SkipRows = 129;
 		below.Should().Throw<ArgumentOutOfRangeException>();
-		state.SkipRows.Should().Be(int.MaxValue);
+		above.Should().Throw<ArgumentOutOfRangeException>();
+		state.SkipRows.Should().Be(128);
 	}
 
 
@@ -89,14 +91,14 @@ public sealed class PatternSkipAndPreviewTests
 
 		spinner.Value.Should().Be(1);
 		spinner.Minimum.Should().Be(0);
-		spinner.Maximum.Should().Be(int.MaxValue);
+		spinner.Maximum.Should().Be(128);
 		spinner.Increment.Should().Be(1);
 		spinner.Value = 0;
 		input.SkipRows.Should().Be(0);
 		spinner.Value = 25;
 		input.SkipRows.Should().Be(25);
-		spinner.Value = int.MaxValue;
-		input.SkipRows.Should().Be(int.MaxValue);
+		spinner.Value = 128;
+		input.SkipRows.Should().Be(128);
 
 		KeyEventArgs shortcut = new()
 		{
@@ -124,7 +126,7 @@ public sealed class PatternSkipAndPreviewTests
 			workspace, "Large skip", rowCount: 8, channelCount: 1);
 		PatternNoteInputState input = new(ObjectId.None, 4)
 		{
-			SkipRows = int.MaxValue,
+			SkipRows = 128,
 		};
 		PatternEffectCursor cursor = new(0, 0, PatternCellField.Note);
 		PatternNoteKeyboardEditor.TypePhysical(
@@ -161,7 +163,7 @@ public sealed class PatternSkipAndPreviewTests
 		PatternEffectCursor cursor = new(0, 2, PatternCellField.Note);
 		PatternNoteInputState input = new(ObjectId.None, 4)
 		{
-			SkipRows = int.MaxValue,
+			SkipRows = 128,
 		};
 		PatternEditorContextCursor.EditCurrent(context, cursor,
 			row => PatternNoteKeyboardEditor.TypePhysical(

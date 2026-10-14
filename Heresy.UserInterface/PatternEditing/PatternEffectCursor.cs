@@ -12,6 +12,7 @@ public enum PatternCellField
 	Volume,
 	EffectCommand,
 	EffectParameter,
+	Octave,
 }
 
 public enum ExpandedEffectField
@@ -113,8 +114,11 @@ public sealed class PatternEffectCursor
 				}
 				break;
 
-			case PatternCellField.Source:
+			case PatternCellField.Octave:
 				Field = PatternCellField.Note;
+				break;
+			case PatternCellField.Source:
+				Field = PatternCellField.Octave;
 				break;
 
 			case PatternCellField.Volume:
@@ -148,6 +152,9 @@ public sealed class PatternEffectCursor
 		switch (Field)
 		{
 			case PatternCellField.Note:
+				Field = PatternCellField.Octave;
+				break;
+			case PatternCellField.Octave:
 				Field = PatternCellField.Source;
 				break;
 
@@ -207,8 +214,11 @@ public sealed class PatternEffectCursor
 					Field = PatternCellField.EffectParameter;
 				}
 				break;
-			case PatternCellField.Source:
+			case PatternCellField.Octave:
 				Field = PatternCellField.Note;
+				break;
+			case PatternCellField.Source:
+				Field = PatternCellField.Octave;
 				break;
 
 			case PatternCellField.Volume:
@@ -241,6 +251,9 @@ public sealed class PatternEffectCursor
 		switch (Field)
 		{
 			case PatternCellField.Note:
+				Field = PatternCellField.Octave;
+				break;
+			case PatternCellField.Octave:
 				Field = PatternCellField.Source;
 				break;
 
