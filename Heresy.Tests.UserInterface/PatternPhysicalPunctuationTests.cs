@@ -139,9 +139,11 @@ public sealed class PatternPhysicalPunctuationTests
         Assert.That(pattern.Grid[0, 0], Is.Null);
         Assert.That(pattern.Grid[0, 1]!.Note, Is.TypeOf<PatternNoteOff>());
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(revision + 1));
-        Assert.That(Cursor(editor).Row, Is.Zero);
+        Assert.That(Cursor(editor).Row, Is.EqualTo(1));
         Text(editor, 0, 0, "v");
-        await Press(editor, 0, 0, PhysicalKey.Period, Key.OemPeriod, ".");
+        await Press(editor, 1, 0, PhysicalKey.Period, Key.OemPeriod, ".");
+        Assert.That(Cursor(editor).Row, Is.EqualTo(2),
+            "an already-empty Note cell must still advance");
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(revision + 1),
             "clearing an already empty Note cell is a no-op");
     }
@@ -307,6 +309,149 @@ public sealed class PatternPhysicalPunctuationTests
         SetCursor(editor, 3, 0, PatternCellField.Note);
         await Press(editor, 3, 0, PhysicalKey.Period, Key.V, "v");
         Assert.That(pattern.Grid[0, 0], Is.Null);
+    }
+
+    [AvaloniaTest]
+    public async Task RepeatedNoteClearMovesDownEachRowEvenAfterAllCellsAreEmpty()
+    {
+        DocumentWorkspace workspace = new();
+        DataPatternDefinition pattern =
+            PatternDocumentEditor.CreateDataPattern(workspace, "Repeated clear", 4, 2);
+        for (int row = 0; row < 4; row++)
+        {
+            PatternCell cell = pattern.Grid.GetOrCreateCell(row, 0);
+            cell.Note = new StartPatternNote();
+            cell.Volume = 0.5;
+            cell.Effects.Add(new TrackerPitchSlideDownPatternEffect(0x12));
+            pattern.Grid.GetOrCreateCell(row, 1).Note = new PatternNoteOff();
+        }
+        PatternEditorControl editor = Editor(workspace, pattern);
+        for (int row = 0; row < 4; row++)
+        {
+            await Press(editor, row, 0,
+                PhysicalKey.Period, Key.V, "v"); // physical QWERTY period on Dvorak
+            Assert.That(pattern.Grid[row, 0], Is.Null);
+            Assert.That(pattern.Grid[row, 1]!.Note, Is.TypeOf<PatternNoteOff>());
+            Assert.That(Cursor(editor).Row, Is.EqualTo(Math.Min(row + 1, 3)));
+            Assert.That(Cursor(editor).Channel, Is.Zero);
+            Assert.That(Cursor(editor).Field, Is.EqualTo(PatternCellField.Note));
+        }
+        // Clamped at the last row, repeating Clear is still a harmless entry.
+        await Press(editor, 3, 0, PhysicalKey.Period, Key.V, "v");
+        Assert.That(Cursor(editor).Row, Is.EqualTo(3));
+    }
+
+    [AvaloniaTest]
+    public async Task ClearingSourceVolumeAndEmptyFieldsHonoursConfiguredSkipIncludingZero()
+    {
+        DocumentWorkspace workspace = new();
+        DataPatternDefinition pattern =
+            PatternDocumentEditor.CreateDataPattern(workspace, "Skip fields", 9, 1);
+        DataPatternDefinition source =
+            PatternDocumentEditor.CreateDataPattern(workspace, "Source", 2, 1);
+        PatternCell first = pattern.Grid.GetOrCreateCell(0, 0);
+        first.Note = new StartPatternNote();
+        first.SourceId = source.Id;
+        first.Volume = 0.75;
+        first.Effects.Add(new TrackerPitchSlideDownPatternEffect(0x35));
+        PatternEditorControl editor = Editor(workspace, pattern);
+        Input(editor).SkipRows = 3;
+        SetCursor(editor, 0, 0, PatternCellField.Source);
+        await Press(editor, 0, 0, PhysicalKey.Period, Key.E, "e");
+        Assert.That(Cursor(editor).Row, Is.EqualTo(3));
+        Assert.That(first.Note, Is.TypeOf<StartPatternNote>());
+        Assert.That(first.SourceId.IsNone, Is.True);
+        Assert.That(first.Volume, Is.EqualTo(0.75));
+        Assert.That(first.Effects[0], Is.EqualTo(
+            new TrackerPitchSlideDownPatternEffect(0x35)));
+
+        // Even an empty source field must advance, but Skip=0 stays put.
+        await Press(editor, 3, 0, PhysicalKey.Period, Key.V, "v");
+        Assert.That(Cursor(editor).Row, Is.EqualTo(6));
+        Input(editor).SkipRows = 0;
+        await Press(editor, 6, 0, PhysicalKey.Period, Key.V, "v");
+        Assert.That(Cursor(editor).Row, Is.EqualTo(6));
+
+        Input(editor).SkipRows = 2;
+        SetCursor(editor, 0, 0, PatternCellField.Volume);
+        await Press(editor, 0, 0, PhysicalKey.Period, Key.V, "v");
+        Assert.That(Cursor(editor).Row, Is.EqualTo(2));
+        Assert.That(first.Volume, Is.Null);
+        Assert.That(first.Note, Is.TypeOf<StartPatternNote>());
+        SetCursor(editor, 2, 0, PatternCellField.Volume);
+        await Press(editor, 2, 0, PhysicalKey.Period, Key.V, "v");
+        Assert.That(Cursor(editor).Row, Is.EqualTo(4),
+            "empty Volume clear must also move by the configured Skip");
+    }
+
+    [AvaloniaTest]
+    public async Task PhysicalClearCrossesIntoNextSequencePatternUsingEntrySkip()
+    {
+        DocumentWorkspace workspace = new();
+        DataPatternDefinition first =
+            PatternDocumentEditor.CreateDataPattern(workspace, "First", 2, 2);
+        DataPatternDefinition second =
+            PatternDocumentEditor.CreateDataPattern(workspace, "Second", 3, 1);
+        for (int row = 0; row < 2; row++)
+            first.Grid.GetOrCreateCell(row, 1).Note = new StartPatternNote();
+        second.Grid.GetOrCreateCell(0, 0).Note = new PatternNoteOff();
+        DataSequenceDefinition sequence =
+            new(workspace.Document.AllocateObjectId(), "Steps");
+        sequence.Entries.Add(new SequenceEntry(first.Id));
+        sequence.Entries.Add(new SequenceEntry(second.Id));
+        workspace.Document.Add(sequence);
+        PatternEditorContext context =
+            PatternEditorContext.ForSequence(workspace.Document, sequence, 0);
+        PatternEditorControl editor = new(new Window(), workspace,
+            context, () => { }, _ => { });
+        Input(editor).SkipRows = 2;
+        SetCursor(editor, 1, 1, PatternCellField.Note);
+        await Press(editor, 1, 1, PhysicalKey.Period, Key.V, "v");
+        Assert.That(first.Grid[1, 1], Is.Null);
+        Assert.That(Cursor(editor).Row, Is.EqualTo(3),
+            "Skip=2 must cross the Pattern boundary using display-row coordinates");
+        Assert.That(Cursor(editor).Channel, Is.Zero,
+            "narrower next Pattern clamps the active channel");
+        Assert.That(second.Grid[0, 0]!.Note, Is.TypeOf<PatternNoteOff>());
+        Assert.That(second.Grid[1, 0], Is.Null);
+        Input(editor).SkipRows = 1;
+        await Press(editor, 3, 0, PhysicalKey.Period, Key.OemPeriod, ".");
+        Assert.That(Cursor(editor).Row, Is.EqualTo(4));
+    }
+
+    [AvaloniaTest]
+    public async Task LayoutAwareEffectDotAdvancesBySkipWithoutRemovingItsData()
+    {
+        DocumentWorkspace workspace = new();
+        DataPatternDefinition pattern =
+            PatternDocumentEditor.CreateDataPattern(workspace, "Effect skip", 7, 1);
+        PatternCell cell = pattern.Grid.GetOrCreateCell(0, 0);
+        cell.Effects.Add(new TrackerPitchSlideDownPatternEffect(0x52));
+        PatternEditorControl editor = Editor(workspace, pattern);
+        Input(editor).SkipRows = 3;
+        SetCursor(editor, 0, 0, PatternCellField.EffectCommand);
+        await Press(editor, 0, 0, PhysicalKey.E, Key.OemPeriod, "."); // Dvorak dot
+        Text(editor, 0, 0, ".");
+        Assert.That(cell.Effects[0], Is.EqualTo(new EmptyTrackerPatternEffect(0x52)));
+        Assert.That(Cursor(editor).Row, Is.EqualTo(3));
+
+        // A bare Effect command is empty but remains an accepted Clear.
+        SetCursor(editor, 3, 0, PatternCellField.EffectCommand);
+        Text(editor, 3, 0, ".");
+        Assert.That(Cursor(editor).Row, Is.EqualTo(6));
+
+        Input(editor).SkipRows = 2;
+        SetCursor(editor, 0, 0, PatternCellField.EffectParameter);
+        Text(editor, 0, 0, ".");
+        Assert.That(cell.Effects[0], Is.EqualTo(new EmptyTrackerPatternEffect(0)));
+        Assert.That(Cursor(editor).Row, Is.EqualTo(2));
+        // Physical period maps to V on Dvorak, not Clear.
+        SetCursor(editor, 0, 0, PatternCellField.EffectCommand);
+        await Press(editor, 0, 0, PhysicalKey.Period, Key.V, "v");
+        Text(editor, 0, 0, "v");
+        Assert.That(cell.Effects[0], Is.EqualTo(new TrackerGlobalVolumePatternEffect(0)));
+        Assert.That(Cursor(editor).Row, Is.EqualTo(1),
+            "normal effect typing keeps its existing one-row advance");
     }
 
     [AvaloniaTest]

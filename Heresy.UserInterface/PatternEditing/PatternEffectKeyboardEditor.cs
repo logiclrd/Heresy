@@ -16,7 +16,8 @@ public static class PatternEffectKeyboardEditor
 		DocumentWorkspace workspace,
 		DataPatternDefinition pattern,
 		PatternEffectCursor cursor,
-		char value)
+		char value,
+		int clearSkipRows = 1)
 	{
 		ArgumentNullException.ThrowIfNull(workspace);
 		ArgumentNullException.ThrowIfNull(pattern);
@@ -38,7 +39,11 @@ public static class PatternEffectKeyboardEditor
 
 		PatternCell? cell = pattern.Grid[cursor.Row, cursor.Channel];
 		if (!cursor.IsExpanded && (cell?.Effects.Count ?? 0) > 1)
-			return new PatternEffectInputResult(false, true);
+		{
+			if (value != '.') return new PatternEffectInputResult(false, true);
+			AdvanceAfterClear(cursor, pattern.RowCount, clearSkipRows);
+			return new PatternEffectInputResult(false, false);
+		}
 
 		int effectIndex = cursor.IsExpanded
 			? cursor.ExpandedEffectIndex
@@ -50,7 +55,9 @@ public static class PatternEffectKeyboardEditor
 				|| (uint)effectIndex >= (uint)cell.Effects.Count
 				|| cursor.ExpandedField == ExpandedEffectField.Native)
 			{
-				return new PatternEffectInputResult(false, true);
+				if (value != '.') return new PatternEffectInputResult(false, true);
+				AdvanceAfterClear(cursor, pattern.RowCount, clearSkipRows);
+				return new PatternEffectInputResult(false, false);
 			}
 		}
 
@@ -67,7 +74,9 @@ public static class PatternEffectKeyboardEditor
 				out command,
 				out parameter))
 		{
-			return new PatternEffectInputResult(false, true);
+			if (value != '.') return new PatternEffectInputResult(false, true);
+			AdvanceAfterClear(cursor, pattern.RowCount, clearSkipRows);
+			return new PatternEffectInputResult(false, false);
 		}
 
 		PatternCellField field =
@@ -85,13 +94,14 @@ public static class PatternEffectKeyboardEditor
 				// two-digit data/parameter (and every other effect in the
 				// stack). Native effects are rejected by decoding above.
 				if (existing is null)
+				{
+					AdvanceAfterClear(cursor, pattern.RowCount, clearSkipRows);
 					return new PatternEffectInputResult(false, false);
+				}
 				bool commandCleared = SetEffect(
 					workspace, pattern, cursor.Row, cursor.Channel,
 					effectIndex, new EmptyTrackerPatternEffect(parameter));
-				cursor.ResetPendingNibble();
-				if (!cursor.IsExpanded)
-					cursor.AdvanceAfterCollapsedEntry(pattern.RowCount);
+				AdvanceAfterClear(cursor, pattern.RowCount, clearSkipRows);
 				return new PatternEffectInputResult(commandCleared, false);
 			}
 
@@ -122,7 +132,12 @@ public static class PatternEffectKeyboardEditor
 		}
 
 		if (existing is null)
-			return new PatternEffectInputResult(false, true);
+		{
+			if (value != '.')
+				return new PatternEffectInputResult(false, true);
+			AdvanceAfterClear(cursor, pattern.RowCount, clearSkipRows);
+			return new PatternEffectInputResult(false, false);
+		}
 
 		if (value == '.')
 		{
@@ -143,9 +158,7 @@ public static class PatternEffectKeyboardEditor
 					cursor.Channel,
 					effectIndex,
 					replacement);
-			cursor.ResetPendingNibble();
-			if (!cursor.IsExpanded)
-				cursor.AdvanceAfterCollapsedEntry(pattern.RowCount);
+			AdvanceAfterClear(cursor, pattern.RowCount, clearSkipRows);
 			return new PatternEffectInputResult(changed, false);
 		}
 
@@ -193,6 +206,16 @@ public static class PatternEffectKeyboardEditor
 			cursor.AdvanceAfterCollapsedEntry(pattern.RowCount);
 
 		return new PatternEffectInputResult(parameterChanged, false);
+	}
+
+	private static void AdvanceAfterClear(
+		PatternEffectCursor cursor, int rowCount, int skipRows)
+	{
+		if (skipRows is < 0 or > 9)
+			throw new ArgumentOutOfRangeException(nameof(skipRows));
+		cursor.ResetPendingNibble();
+		for (int step = 0; step < skipRows; step++)
+			cursor.MoveDown(rowCount);
 	}
 
 	private static bool SetEffect(

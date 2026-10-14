@@ -31,7 +31,8 @@ public static class PatternVolumeKeyboardEditor
 		DataPatternDefinition pattern,
 		PatternEffectCursor cursor,
 		PatternVolumeInputState state,
-		char value)
+		char value,
+		int clearSkipRows = 1)
 	{
 		ArgumentNullException.ThrowIfNull(workspace);
 		ArgumentNullException.ThrowIfNull(pattern);
@@ -52,7 +53,10 @@ public static class PatternVolumeKeyboardEditor
 				cursor.Channel,
 				null);
 			state.Reset();
-			cursor.AdvanceAfterCollapsedEntry(pattern.RowCount);
+			if (clearSkipRows is < 0 or > 9)
+				throw new ArgumentOutOfRangeException(nameof(clearSkipRows));
+			for (int step = 0; step < clearSkipRows; step++)
+				cursor.MoveDown(pattern.RowCount);
 			return new PatternVolumeInputResult(true, cleared, false)
 			{
 				Completed = true,

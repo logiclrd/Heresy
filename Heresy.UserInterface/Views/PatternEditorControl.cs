@@ -1247,11 +1247,13 @@ public sealed class PatternEditorControl : UserControl
 						_message.Text = changed
 							? "Cleared tracker cell."
 							: "The tracker cell is already empty.";
+						AdvanceAfterTrackerClear();
 					}
 					else if (_cursor.Field == PatternCellField.Source)
 					{
 						ClearSource(row, channel);
 						_message.Text = "Cleared Source field.";
+						AdvanceAfterTrackerClear();
 					}
 					else
 					{
@@ -1262,7 +1264,8 @@ public sealed class PatternEditorControl : UserControl
 								_context, _cursor,
 								mapped => PatternVolumeKeyboardEditor.Type(
 									_workspace, mapped.Pattern, _cursor,
-									_volumeInput, '.'));
+									_volumeInput, '.',
+									clearSkipRows: _noteInputState.SkipRows));
 						_noteInputState.CurrentVolume =
 							editorRow.Pattern.Grid[
 								editorRow.PatternRow, channel]?.Volume;
@@ -2153,6 +2156,7 @@ public sealed class PatternEditorControl : UserControl
 			if (value == '.')
 			{
 				ClearSource(row, channel);
+				AdvanceAfterTrackerClear();
 				e.Handled = true;
 			}
 			return;
@@ -2178,7 +2182,8 @@ public sealed class PatternEditorControl : UserControl
 							mapped.Pattern,
 							_cursor,
 							_volumeInput,
-							value));
+							value,
+							clearSkipRows: _noteInputState.SkipRows));
 
 			if (!volumeResult.Handled)
 				return;
@@ -2227,7 +2232,8 @@ public sealed class PatternEditorControl : UserControl
 						_workspace,
 						mapped.Pattern,
 						_cursor,
-						value));
+						value,
+						clearSkipRows: _noteInputState.SkipRows));
 
 		if (result.Rejected)
 		{
@@ -3583,6 +3589,15 @@ public sealed class PatternEditorControl : UserControl
 		_changed(
 			$"Edited source in {editorRow.Pattern.Name} row {editorRow.PatternRow}, channel {channel + 1}");
 		FocusCursorCell();
+	}
+
+	/// <summary>Clear is a completed tracker entry even for an empty field.
+	/// Follow the same flattened display-row path as keyboard note entry,
+	/// including Sequence boundaries and a zero-row Skip.</summary>
+	private void AdvanceAfterTrackerClear()
+	{
+		for (int step = 0; step < _noteInputState.SkipRows; step++)
+			PatternEditorContextCursor.MoveDown(_context, _cursor);
 	}
 
 	private void ClearSource(int row, int channel)
