@@ -2084,7 +2084,8 @@ public sealed class PlaybackSession
 		catch (Exception failure) when (failure is ArgumentException
 			or InvalidOperationException or KeyNotFoundException or OverflowException)
 		{
-			ChannelFilterCommandRejected?.Invoke(failure.Message);
+			if (command is not SetChannelFilterAssignmentsCommand)
+				ChannelFilterCommandRejected?.Invoke(failure.Message);
 		}
 	}
 
@@ -2279,7 +2280,9 @@ public sealed class PlaybackSession
 							"no event Filter selected for assignments");
 						return;
 					}
-					candidate = FilterAssignmentText.ApplyToClone(previous, text.Text);
+					candidate = FilterAssignmentText.ApplyValidToClone(previous, text.Text);
+					if (candidate.Revision == previous.Revision)
+						return; // no valid effective edits: preserve histories
 					break;
 				default:
 					throw new InvalidOperationException(
@@ -2333,6 +2336,7 @@ public sealed class PlaybackSession
 			or InvalidOperationException or KeyNotFoundException
 			or OverflowException)
 		{
+			if (command is not SetNoteFilterAssignmentsCommand)
 			NoteFilterCommandRejected?.Invoke(exception.Message);
 		}
 	}
