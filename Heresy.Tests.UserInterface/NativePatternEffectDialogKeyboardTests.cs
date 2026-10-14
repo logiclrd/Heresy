@@ -302,6 +302,44 @@ public sealed class NativePatternEffectDialogKeyboardTests
 	}
 
 	[AvaloniaTest]
+	public void AssistantEditsAndRestoredStageSelectionRevokeAnEarlierWarning()
+	{
+		SongDocument song = new();
+		ObjectId id = song.AllocateObjectId();
+		song.Add(new FilterDefinition(id, "EQ", [
+			new FilterStageDefinition(2, "stage2", FilterKind.BiquadLowPass),
+			new FilterStageDefinition(3, "stage3", FilterKind.BiquadLowPass),
+		]));
+		const string invalid = "stage2.CutoffHz = 1800\nstage2.Unknown = 4";
+		using Modal modal = new(new SetChannelFilterAssignmentsPatternEffect(
+			invalid, id), song);
+		modal.Button("Apply").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+		Assert.That(modal.Message.Text, Does.Contain("Assignment warning:"));
+		// The assistant's independent draft controls count as editing,
+		// even before its Update button changes the effect's raw text.
+		TextBox annotation = modal.Assistant.Children.OfType<TextBox>().Single();
+		string originalAnnotation = annotation.Text ?? "";
+		annotation.Text = "temporary explanation";
+		annotation.Text = originalAnnotation;
+		Assert.That(modal.Message.Text, Is.Empty);
+		modal.Button("Apply").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+		Assert.That(modal.Result.IsCompleted, Is.False,
+			"editing then restoring assistant fields still requires a fresh warning");
+		StackPanel selector = modal.Assistant.Children.OfType<StackPanel>().First();
+		ComboBox stage = selector.Children.OfType<ComboBox>().Last();
+		stage.SelectedIndex = 1;
+		stage.SelectedIndex = 0;
+		Assert.That(modal.Message.Text, Is.Empty);
+		modal.Button("Apply").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+		Assert.That(modal.Result.IsCompleted, Is.False,
+			"changing and restoring a stage must also revoke acknowledgement");
+		modal.Button("Apply").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+		Assert.That(modal.Result.IsCompletedSuccessfully, Is.True);
+		Assert.That(modal.Result.Result!.Effect,
+			Is.EqualTo(new SetChannelFilterAssignmentsPatternEffect(invalid, id)));
+	}
+
+	[AvaloniaTest]
 	public void InvalidFilterSelectionCannotBeBypassedByRepeatedApply()
 	{
 		SongDocument song = new();
@@ -397,6 +435,7 @@ public sealed class NativePatternEffectDialogKeyboardTests
 			(TextBox)Field<Dictionary<string, Control>>("_inputs")[key];
 
 		public TextBlock Message => Field<TextBlock>("_message");
+		public StackPanel Assistant => Field<StackPanel>("_assistant");
 		public ComboBox TypeSelector => Field<ComboBox>("_typeSelector");
 
 		public Button Button(string label) =>

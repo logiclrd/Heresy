@@ -223,7 +223,11 @@ public sealed class NativePatternEffectEditorDialog : Window
 			// Editing and undoing back to the same bytes must warn again.
 			if (isFilterText && (field.Key is "assignments" or "filterId")
 				&& input is TextBox text)
-				text.TextChanged += (_, _) => InvalidateFilterWarningAcknowledgement();
+				text.PropertyChanged += (_, change) =>
+				{
+					if (change.Property == TextBox.TextProperty)
+						InvalidateFilterWarningAcknowledgement();
+				};
 			AddField(_form, ref row, field.Label, input);
 		}
 		if (isFilterText)
@@ -355,6 +359,11 @@ public sealed class NativePatternEffectEditorDialog : Window
 		{
 			PlaceholderText = "Describe the Filter behavior or target",
 		};
+		annotation.PropertyChanged += (_, change) =>
+		{
+			if (change.Property == TextBox.TextProperty)
+				InvalidateFilterWarningAcknowledgement();
+		};
 		_assistant.Children.Add(annotation);
 		Button replace = new()
 		{
@@ -429,6 +438,20 @@ public sealed class NativePatternEffectEditorDialog : Window
 					VerticalAlignment = VerticalAlignment.Center,
 				});
 				line.Children.Add(input);
+				// Assistant edits are still editing gestures even before the
+				// "Update this stage's assignments" button publishes text.
+				if (input is TextBox parameterText)
+					parameterText.PropertyChanged += (_, change) =>
+					{
+						if (change.Property == TextBox.TextProperty)
+							InvalidateFilterWarningAcknowledgement();
+					};
+				else if (input is ComboBox parameterChoice)
+					parameterChoice.PropertyChanged += (_, change) =>
+					{
+						if (change.Property == ComboBox.SelectedItemProperty)
+							InvalidateFilterWarningAcknowledgement();
+					};
 				parameters.Add(descriptor.Name, input);
 				parameterFields.Children.Add(line);
 			}
@@ -438,6 +461,11 @@ public sealed class NativePatternEffectEditorDialog : Window
 				+ "existing rows in place and adds missing parameters; "
 				+ "unrelated lines and comments remain untouched.";
 		}
+		filterPicker.PropertyChanged += (_, change) =>
+		{
+			if (change.Property == ComboBox.SelectedItemProperty)
+				InvalidateFilterWarningAcknowledgement();
+		};
 		filterPicker.SelectionChanged += (_, _) =>
 		{
 			if (filterPicker.SelectedItem is not FilterChoice selected
@@ -451,9 +479,15 @@ public sealed class NativePatternEffectEditorDialog : Window
 				definition.Stages.Select(stage => new StageChoice(stage)).ToArray();
 			stagePicker.SelectedIndex = 0;
 		};
+		stagePicker.PropertyChanged += (_, change) =>
+		{
+			if (change.Property == ComboBox.SelectedItemProperty)
+				InvalidateFilterWarningAcknowledgement();
+		};
 		stagePicker.SelectionChanged += (_, _) => LoadStage();
 		replace.Click += (_, _) =>
 		{
+			InvalidateFilterWarningAcknowledgement();
 			try
 			{
 				if (selectedFilter is null
