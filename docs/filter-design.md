@@ -830,3 +830,11 @@ flattened controller source replacement and PCM block partitions. Full
 production WAV/export/private seek qualification, plus the separately
 tracked explicit `THEN OFF` genuinely-prefetched-event regression, remain
 independent TODO items.
+
+A further direct equivalence regression compares Channel-Filter `THEN CUT` at its
+exclusive natural boundary against an explicit Note Cut at the same frame,
+with an identical moving host numeric Envelope and a subsequent note. The
+entire PCM stream must match, proving action completion does not restart the
+host's modulation or filter history. A separate regression confirms that
+reassigning the same host parameter captures a new original note and cancels
+its preceding owner's completion action.

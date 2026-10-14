@@ -1279,6 +1279,69 @@ public sealed class NoteFilterParameterEnvelopeTests
         Assert.That(pcm[6], Is.GreaterThan(0));
     }
 
+    [Test]
+    public void HostNumericClockContinuesAfterThenCutJustLikeExplicitCut()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FiniteRampingCurve());
+        PlaybackSession automated = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterCommand { Configuration = Echo() },
+                new StartNoteCommand(Source),
+                new SetChannelFilterAssignmentsCommand(
+                    "echo.Feedforward = @\"Sweep\" THEN CUT")),
+            Event(4, 0, new StartNoteCommand(Source))));
+        PlaybackSession reference = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterCommand { Configuration = Echo() },
+                new StartNoteCommand(Source),
+                new SetChannelFilterAssignmentsCommand(
+                    "echo.Feedforward = @\"Sweep\"")),
+            Event(3, 0, new NoteCutCommand()),
+            Event(4, 0, new StartNoteCommand(Source))));
+        automated.FilterAssignmentNames = Names();
+        reference.FilterAssignmentNames = Names();
+        float[] actual = new float[12], expected = new float[12];
+        automated.Render(0, actual.Length, actual);
+        reference.Render(0, expected.Length, expected);
+        Assert.That(actual, Is.EqualTo(expected).Within(1e-6f),
+            "THEN CUT must cut only the note, not reset the host's numeric clock "
+            + "or its Filter/DSP history");
+        Assert.That(automated.GetChannelState(0).CurrentVoice, Is.Not.Null);
+    }
+
+    [Test]
+    public void RebindingHostActionCancelsOldOwnerAndCapturesNewOwner()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FiniteCurve());
+        PlaybackSession session = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterCommand { Configuration = Echo() },
+                new StartNoteCommand(Source),
+                new SetChannelFilterAssignmentsCommand(
+                    "echo.Feedforward = @\"Sweep\" THEN CUT")),
+            Event(1, 0, new StartNoteCommand(Source),
+                new SetChannelFilterAssignmentsCommand(
+                    "echo.Feedforward = @\"Sweep\" THEN OFF"))));
+        session.FilterAssignmentNames = Names();
+        float[] pcm = new float[7];
+        session.Render(0, 2, pcm.AsSpan(0, 2));
+        PlaybackVoice old = session.VirtualVoices.Single();
+        session.Render(2, 2, pcm.AsSpan(2, 2));
+        Assert.That(session.VirtualVoices, Has.Count.EqualTo(1),
+            "the old binding was replaced: the original note is not cut at frame 3");
+        Assert.That(old.SoundState.NoteOffTime, Is.Null);
+        session.Render(4, 3, pcm.AsSpan(4, 3));
+        Assert.That(session.GetChannelState(0).CurrentVoice!.SoundState.NoteOffTime,
+            Is.EqualTo(TimeSpan.FromMilliseconds(3)),
+            "the replacement binding releases only the new note on frame 4");
+    }
+
+    private sealed class FiniteRampingCurve : IEnvelopeCurve
+    {
+        public double GetValue(long activeFrame, int rate, long? off)
+            => activeFrame < 3 ? 0.2 + activeFrame * 0.1 : 0.0;
+        public long? GetEndActiveFrameExclusiveWithoutNoteOff(int rate) => 3;
+        public long? GetEndActiveFrameExclusiveAfterNoteOff(long off, int rate)
+            => off + 2;
+    }
+
     private static FilterAssignmentEnvelopeNames Names()
     {
         SongDocument song = new();
