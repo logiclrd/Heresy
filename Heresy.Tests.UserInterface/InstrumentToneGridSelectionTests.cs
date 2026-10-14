@@ -146,6 +146,31 @@ public sealed class InstrumentToneGridSelectionTests
 	}
 
 	[Test]
+	public void MissingFocusedToneFallsBackToSurvivingExtentWithoutLosingColumn()
+	{
+		DocumentWorkspace workspace = new();
+		InstrumentDefinition instrument =
+			InstrumentDocumentEditor.CreateInstrument(workspace, "Focus fallback");
+		InstrumentToneGridModel model = new(workspace, instrument);
+		foreach (int index in new[] { 100, 101, 102 })
+			model.SetRow(index, new(PitchMultiplier: 1.5));
+		InstrumentToneGridRow[] withExtras = model.Rows.ToArray();
+		InstrumentToneGridSelection selection = new();
+		selection.BeginAt(new(102, 2), withExtras);
+		selection.Extend(new(100, 8), withExtras);
+		selection.Focus(new(101, 5), withExtras);
+		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Row(102));
+		selection.Extent.Should().Be(new InstrumentToneGridSelection.Row(100));
+		model.DeleteRow(101);
+		InstrumentToneGridRow[] withoutMiddle = model.Rows.ToArray();
+		selection.Reconcile(withoutMiddle);
+		selection.Anchor.Should().Be(new InstrumentToneGridSelection.Row(102));
+		selection.Extent.Should().Be(new InstrumentToneGridSelection.Row(100));
+		selection.Focused.Should().Be(new InstrumentToneGridSelection.Cell(100, 5));
+		selection.Contains(new(102, 10), withoutMiddle).Should().BeTrue();
+	}
+
+	[Test]
 	public void EntryRowIsDistinctAndCanBeSelectedWithoutSongMutation()
 	{
 		DocumentWorkspace workspace = new();
@@ -235,7 +260,7 @@ public sealed class InstrumentToneGridSelectionTests
 				IsDropDownOpen = true,
 			};
 			Send(Key.Down, source: popup).Should().BeFalse();
-			selection.Focused.Should().Be(new InstrumentToneGridSelection.Cell(83, 2));
+			selection.Focused.Should().Be(new InstrumentToneGridSelection.Cell(83, 1));
 		}
 		finally
 		{
