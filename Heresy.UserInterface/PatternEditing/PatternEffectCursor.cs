@@ -24,7 +24,7 @@ public enum ExpandedEffectField
 public sealed class PatternEffectCursor
 {
 	private int? _pendingHighNibble;
-	private int _verticalAdvanceGeneration;
+	private long _verticalAdvanceGeneration;
 
 	public PatternEffectCursor(
 		int row,
@@ -48,7 +48,7 @@ public sealed class PatternEffectCursor
 	public int ExpandedEffectIndex { get; private set; } = -1;
 	public ExpandedEffectField ExpandedField { get; private set; }
 	internal bool HasPendingHighNibble => _pendingHighNibble.HasValue;
-	internal int VerticalAdvanceGeneration => _verticalAdvanceGeneration;
+	internal long VerticalAdvanceGeneration => _verticalAdvanceGeneration;
 
 	public void SetPosition(
 		int row,
@@ -358,14 +358,23 @@ public sealed class PatternEffectCursor
 	}
 
 	public void MoveDown(int rowCount)
+		=> AdvanceDown(rowCount, 1);
+
+	/// <summary>Record the full desired advance even when the local Pattern
+	/// clamps earlier. The Sequence adapter consumes the recorded steps.</summary>
+	public void AdvanceDown(int rowCount, int steps)
 	{
 		if (rowCount <= 0)
 			throw new ArgumentOutOfRangeException(nameof(rowCount));
+		if (steps < 0)
+			throw new ArgumentOutOfRangeException(nameof(steps));
+		if (steps == 0)
+			return;
 		if (IsExpanded)
 			Collapse();
 		ResetPendingNibble();
-		_verticalAdvanceGeneration++;
-		Row = Math.Min(rowCount - 1, Row + 1);
+		_verticalAdvanceGeneration += steps;
+		Row = (int)Math.Min((long)rowCount - 1, (long)Row + steps);
 	}
 
 	public void HandleEnter(PatternCell? cell)
@@ -480,11 +489,7 @@ public sealed class PatternEffectCursor
 		=> _pendingHighNibble = null;
 
 	internal void AdvanceAfterCollapsedEntry(int rowCount)
-	{
-		ResetPendingNibble();
-		_verticalAdvanceGeneration++;
-		Row = Math.Min(rowCount - 1, Row + 1);
-	}
+		=> AdvanceDown(rowCount, 1);
 
 	internal void RemapRow(int row)
 	{

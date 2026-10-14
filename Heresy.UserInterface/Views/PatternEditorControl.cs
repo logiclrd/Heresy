@@ -51,8 +51,14 @@ public sealed class PatternEditorControl : UserControl
 	private readonly PatternSourceOption[] _noteSources;
 	private readonly ComboBox _noteSource;
 	private readonly ComboBox _noteOctave;
-	private readonly TextBlock _skipValueDisplay = new()
+	private readonly NumericUpDown _skipEditor = new()
 	{
+		Minimum = 0,
+		Maximum = int.MaxValue,
+		Increment = 1,
+		FormatString = "0",
+		ParsingNumberStyle = NumberStyles.None,
+		Width = 106,
 		VerticalAlignment = VerticalAlignment.Center,
 	};
 	private readonly PatternEditMaskStatusCell _editMaskDisplay = new();
@@ -281,6 +287,22 @@ public sealed class PatternEditorControl : UserControl
 					initialState?.SkipRows ?? 1,
 			};
 		UpdateSkipValueDisplay();
+		_skipEditor.ValueChanged += (_, _) =>
+		{
+			decimal? candidate = _skipEditor.Value;
+			if (candidate is decimal value
+				&& value >= 0 && value <= int.MaxValue
+				&& value == decimal.Truncate(value))
+			{
+				_noteInputState.SkipRows = (int)value;
+			}
+			else if (candidate.HasValue)
+			{
+				// Reject invalid values without changing the active Skip.
+				UpdateSkipValueDisplay();
+			}
+		};
+		_skipEditor.LostFocus += (_, _) => UpdateSkipValueDisplay();
 		if (initialState?.Chord is PatternChordInputSnapshot chord)
 			_chordInputState.Restore(chord);
 		UpdateEditStateDisplay();
@@ -470,7 +492,11 @@ public sealed class PatternEditorControl : UserControl
 	}
 
 	private void UpdateSkipValueDisplay()
-		=> _skipValueDisplay.Text = $"Skip {_noteInputState.SkipRows}";
+	{
+		_skipEditor.Value = _noteInputState.SkipRows;
+		_skipEditor.Text = _noteInputState.SkipRows.ToString(
+			CultureInfo.InvariantCulture);
+	}
 
 	private Control BuildContent()
 	{
@@ -501,7 +527,12 @@ public sealed class PatternEditorControl : UserControl
 			VerticalAlignment = VerticalAlignment.Center,
 		});
 		layout.Children.Add(_noteOctave);
-		layout.Children.Add(_skipValueDisplay);
+		layout.Children.Add(new TextBlock
+		{
+			Text = "Skip",
+			VerticalAlignment = VerticalAlignment.Center,
+		});
+		layout.Children.Add(_skipEditor);
 		layout.Children.Add(_followCheckbox);
 		layout.Children.Add(new TextBlock
 		{
@@ -3643,7 +3674,10 @@ public sealed class PatternEditorControl : UserControl
 	/// including Sequence boundaries and a zero-row Skip.</summary>
 	private void AdvanceAfterTrackerClear()
 	{
-		for (int step = 0; step < _noteInputState.SkipRows; step++)
+		// Extra Down presses after the last display row are inert.
+		int available = Math.Max(0, _context.Rows.Count - 1 - _cursor.Row);
+		int steps = Math.Min(_noteInputState.SkipRows, available);
+		for (int step = 0; step < steps; step++)
 			PatternEditorContextCursor.MoveDown(_context, _cursor);
 	}
 

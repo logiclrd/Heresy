@@ -25,9 +25,9 @@ public sealed class PatternNoteInputState
 		get => _skipRows;
 		set
 		{
-			if (value is < 0 or > 9)
+			if (value < 0)
 				throw new ArgumentOutOfRangeException(nameof(value),
-					"Tracker note skip must be in the range 0..9.");
+					"Tracker note skip must be non-negative.");
 			_skipRows = value;
 		}
 	}
@@ -173,8 +173,7 @@ public static class PatternNoteKeyboardEditor
 				state.SourceId,
 				state.CurrentVolume);
 
-		for (int step = 0; step < state.SkipRows; step++)
-			cursor.MoveDown(pattern.RowCount);
+		cursor.AdvanceDown(pattern.RowCount, state.SkipRows);
 
 		return new PatternNoteInputResult(
 			true,

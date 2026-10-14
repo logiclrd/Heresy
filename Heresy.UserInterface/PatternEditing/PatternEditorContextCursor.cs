@@ -34,7 +34,7 @@ public static class PatternEditorContextCursor
 				"The editor cursor channel lies outside the underlying pattern row.");
 		}
 
-		int advanceGeneration = cursor.VerticalAdvanceGeneration;
+		long advanceGeneration = cursor.VerticalAdvanceGeneration;
 		cursor.RemapRow(row.PatternRow);
 
 		try
@@ -43,13 +43,13 @@ public static class PatternEditorContextCursor
 		}
 		finally
 		{
-			// A note entry advances by the chosen tracker skip (0–9).
-			// Mapping it as a boolean used to discard all but the first
-			// step when the editor presents a flattened sequence.
-			int steps = cursor.VerticalAdvanceGeneration - advanceGeneration;
+			// Keep every requested step (including >9), while traversing
+			// only display rows that exist and clamping each channel.
+			long steps = cursor.VerticalAdvanceGeneration - advanceGeneration;
 			int restoredDisplayRow = displayRow;
-			for (int step = 0; step < steps
-				&& restoredDisplayRow < context.Rows.Count - 1; step++)
+			int traversableSteps = (int)Math.Min(
+				steps, context.Rows.Count - 1 - restoredDisplayRow);
+			for (int step = 0; step < traversableSteps; step++)
 			{
 				restoredDisplayRow++;
 				// Repeated Down presses clamp the channel at EVERY row,

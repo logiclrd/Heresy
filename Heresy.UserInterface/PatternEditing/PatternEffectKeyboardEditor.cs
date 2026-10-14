@@ -211,11 +211,9 @@ public static class PatternEffectKeyboardEditor
 	private static void AdvanceAfterClear(
 		PatternEffectCursor cursor, int rowCount, int skipRows)
 	{
-		if (skipRows is < 0 or > 9)
+		if (skipRows < 0)
 			throw new ArgumentOutOfRangeException(nameof(skipRows));
-		cursor.ResetPendingNibble();
-		for (int step = 0; step < skipRows; step++)
-			cursor.MoveDown(rowCount);
+		cursor.AdvanceDown(rowCount, skipRows);
 	}
 
 	private static bool SetEffect(

@@ -3,6 +3,12 @@ using System;
 using AwesomeAssertions;
 
 using Avalonia.Input;
+using Avalonia.Controls;
+using Avalonia.Headless.NUnit;
+using System.Reflection;
+using System.Threading.Tasks;
+
+using Heresy.UserInterface.Views;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -46,7 +52,7 @@ public sealed class PatternSkipAndPreviewTests
 	}
 
 	[Test]
-	public void SkipDefaultsToOneAndValidatesRange()
+	public void SkipDefaultsToOneAndAllowsAnyNonnegativeInt()
 	{
 		PatternNoteInputState state = new(ObjectId.None, 4);
 		state.SkipRows.Should().Be(1);
@@ -54,11 +60,115 @@ public sealed class PatternSkipAndPreviewTests
 		state.SkipRows.Should().Be(0);
 		state.SkipRows = 9;
 		state.SkipRows.Should().Be(9);
+		state.SkipRows = 25;
+		state.SkipRows.Should().Be(25);
+		state.SkipRows = int.MaxValue;
+		state.SkipRows.Should().Be(int.MaxValue);
 		Action below = () => state.SkipRows = -1;
-		Action above = () => state.SkipRows = 10;
 		below.Should().Throw<ArgumentOutOfRangeException>();
-		above.Should().Throw<ArgumentOutOfRangeException>();
-		state.SkipRows.Should().Be(9);
+		state.SkipRows.Should().Be(int.MaxValue);
+	}
+
+
+	[AvaloniaTest]
+	public async Task SpinnerSynchronizesWithShortcutAndNeverChangesSongRevisions()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern = PatternDocumentEditor.CreateDataPattern(
+			workspace, "Spinner", rowCount: 6, channelCount: 1);
+		PatternEditorControl editor = new(
+			new Window(), workspace, pattern, () => { }, _ => { });
+		NumericUpDown spinner = (NumericUpDown)typeof(PatternEditorControl)
+			.GetField("_skipEditor", BindingFlags.NonPublic | BindingFlags.Instance)!
+			.GetValue(editor)!;
+		PatternNoteInputState input = (PatternNoteInputState)typeof(PatternEditorControl)
+			.GetField("_noteInputState", BindingFlags.NonPublic | BindingFlags.Instance)!
+			.GetValue(editor)!;
+		uint documentRevision = workspace.Document.DocumentRevision;
+		uint audioRevision = workspace.Document.AudioRevision;
+
+		spinner.Value.Should().Be(1);
+		spinner.Minimum.Should().Be(0);
+		spinner.Maximum.Should().Be(int.MaxValue);
+		spinner.Increment.Should().Be(1);
+		spinner.Value = 0;
+		input.SkipRows.Should().Be(0);
+		spinner.Value = 25;
+		input.SkipRows.Should().Be(25);
+		spinner.Value = int.MaxValue;
+		input.SkipRows.Should().Be(int.MaxValue);
+
+		KeyEventArgs shortcut = new()
+		{
+			PhysicalKey = PhysicalKey.Digit3,
+			Key = Key.D3,
+			KeyModifiers = KeyModifiers.Alt,
+		};
+		Task keyTask = (Task)typeof(PatternEditorControl)
+			.GetMethod("OnCellKeyDownAsync",
+				BindingFlags.NonPublic | BindingFlags.Instance)!
+			.Invoke(editor, [0, 0, shortcut])!;
+		await keyTask;
+		shortcut.Handled.Should().BeTrue();
+		input.SkipRows.Should().Be(3);
+		spinner.Value.Should().Be(3);
+		workspace.Document.DocumentRevision.Should().Be(documentRevision);
+		workspace.Document.AudioRevision.Should().Be(audioRevision);
+	}
+
+	[Test]
+	public void VeryLargeSkipClampsNoteVolumeClearAndEffectsWithoutLooping()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition pattern = PatternDocumentEditor.CreateDataPattern(
+			workspace, "Large skip", rowCount: 8, channelCount: 1);
+		PatternNoteInputState input = new(ObjectId.None, 4)
+		{
+			SkipRows = int.MaxValue,
+		};
+		PatternEffectCursor cursor = new(0, 0, PatternCellField.Note);
+		PatternNoteKeyboardEditor.TypePhysical(
+			workspace, pattern, cursor, input, PhysicalKey.Z);
+		cursor.Row.Should().Be(7);
+
+		cursor.SetPosition(0, 0, PatternCellField.Volume);
+		PatternVolumeKeyboardEditor.Type(workspace, pattern, cursor,
+			new PatternVolumeInputState(), '.', int.MaxValue);
+		cursor.Row.Should().Be(7);
+		cursor.SetPosition(0, 0, PatternCellField.EffectCommand);
+		PatternEffectKeyboardEditor.Type(workspace, pattern, cursor,
+			'.', int.MaxValue);
+		cursor.Row.Should().Be(7);
+	}
+
+	[Test]
+	public void VeryLargeSkipTraversesSequenceAndClampsEachIntermediateChannel()
+	{
+		DocumentWorkspace workspace = new();
+		DataPatternDefinition wide = PatternDocumentEditor.CreateDataPattern(
+			workspace, "Wide", 2, 3);
+		DataPatternDefinition narrow = PatternDocumentEditor.CreateDataPattern(
+			workspace, "Narrow", 1, 1);
+		DataPatternDefinition wideAgain = PatternDocumentEditor.CreateDataPattern(
+			workspace, "Wide again", 2, 3);
+		DataSequenceDefinition sequence =
+			SequenceDocumentEditor.CreateDataSequence(workspace, "Sequence");
+		sequence.Entries.Add(new SequenceEntry(wide.Id));
+		sequence.Entries.Add(new SequenceEntry(narrow.Id));
+		sequence.Entries.Add(new SequenceEntry(wideAgain.Id));
+		PatternEditorContext context = PatternEditorContext.ForSequence(
+			workspace.Document, sequence, 0);
+		PatternEffectCursor cursor = new(0, 2, PatternCellField.Note);
+		PatternNoteInputState input = new(ObjectId.None, 4)
+		{
+			SkipRows = int.MaxValue,
+		};
+		PatternEditorContextCursor.EditCurrent(context, cursor,
+			row => PatternNoteKeyboardEditor.TypePhysical(
+				workspace, row.Pattern, cursor, input, PhysicalKey.Z));
+		cursor.Row.Should().Be(4);
+		cursor.Channel.Should().Be(0);
+		wide.Grid[0, 2]!.Note.Should().BeOfType<StartPatternNote>();
 	}
 
 	[Test]

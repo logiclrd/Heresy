@@ -44,6 +44,8 @@ public static class PatternVolumeKeyboardEditor
 
 		if (value == '.')
 		{
+			if (clearSkipRows < 0)
+				throw new ArgumentOutOfRangeException(nameof(clearSkipRows));
 			bool cleared =
 				pattern.Grid[cursor.Row, cursor.Channel]?.Volume is not null;
 			PatternDocumentEditor.SetVolume(
@@ -53,10 +55,7 @@ public static class PatternVolumeKeyboardEditor
 				cursor.Channel,
 				null);
 			state.Reset();
-			if (clearSkipRows is < 0 or > 9)
-				throw new ArgumentOutOfRangeException(nameof(clearSkipRows));
-			for (int step = 0; step < clearSkipRows; step++)
-				cursor.MoveDown(pattern.RowCount);
+			cursor.AdvanceDown(pattern.RowCount, clearSkipRows);
 			return new PatternVolumeInputResult(true, cleared, false)
 			{
 				Completed = true,

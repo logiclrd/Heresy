@@ -608,8 +608,7 @@ public static class PatternChordEditor
 			workspace.Document.MarkChanged(
 				affectsAudio: true);
 
-		for (int step = 0; step < noteState.SkipRows; step++)
-			cursor.MoveDown(pattern.RowCount);
+		cursor.AdvanceDown(pattern.RowCount, noteState.SkipRows);
 
 		return new PatternChordInputResult(
 			true,
