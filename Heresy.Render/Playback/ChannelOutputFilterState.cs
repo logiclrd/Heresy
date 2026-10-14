@@ -73,6 +73,8 @@ internal sealed class ChannelOutputFilterState
     {
         FilterInstance updated = _configuration.Clone();
         updated.SetStageParameters(stageId, assignments);
+        if (updated.Revision == _configuration.Revision)
+            return this; // malformed or unchanged text: no DSP fork
         FilterInstance effective = BuildEffectiveConfiguration(
             updated, _bindings, frame);
         StreamingFilterChain fork = _chain.Fork();
@@ -85,7 +87,7 @@ internal sealed class ChannelOutputFilterState
 
     public ChannelOutputFilterState PrepareTextUpdate(string text, long frame = 0)
     {
-        FilterInstance updated = FilterAssignmentText.ApplyToClone(
+        FilterInstance updated = FilterAssignmentText.ApplyValidToClone(
             _configuration, text);
         FilterInstance effective = BuildEffectiveConfiguration(
             updated, _bindings, frame);
