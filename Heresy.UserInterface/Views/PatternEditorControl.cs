@@ -142,6 +142,8 @@ public sealed class PatternEditorControl : UserControl
 	private readonly Dictionary<(int Row, int Channel), TextBlock> _volumeTexts = [];
 	private readonly Dictionary<(int Row, int Channel), PatternEffectStripControl> _effectStrips = [];
 	private readonly PatternVolumeInputState _volumeInput = new();
+	// Display-row identity of an uncommitted two-digit Volume preview.
+	private (int Row, int Channel)? _volumePreviewAddress;
 	private readonly PatternSelectionState _selection = new();
 
 	private PatternEffectCursor _cursor =
@@ -765,6 +767,8 @@ public sealed class PatternEditorControl : UserControl
 
 	private void RefreshGrid()
 	{
+		_volumeInput.Reset();
+		_volumePreviewAddress = null;
 		CollapseVisualEffects(collapseCursor: true);
 		_cellBorders.Clear();
 		_cellTintLayers.Clear();
@@ -1071,6 +1075,14 @@ public sealed class PatternEditorControl : UserControl
 				Child = content,
 			};
 
+		cell.LostFocus += (_, _) =>
+		{
+			if (_volumePreviewAddress == (displayRow, channel))
+			{
+				_volumeInput.Reset();
+				RefreshVolumePreview();
+			}
+		};
 		cell.PointerPressed += (_, e) =>
 			OnCellPointerPressed(displayRow, channel, cell, e);
 		cell.KeyDown += async (_, e) =>
@@ -1871,6 +1883,8 @@ public sealed class PatternEditorControl : UserControl
 		_ = sender;
 		_ = e;
 		_heldFollowShortcuts.Clear();
+		_volumeInput.Reset();
+		RefreshVolumePreview();
 		await ReleaseAllHeldPreviewsAsync();
 	}
 
@@ -1989,6 +2003,8 @@ public sealed class PatternEditorControl : UserControl
 				_cursor.Field,
 				out PatternEditMask editMask))
 		{
+			_volumeInput.Reset();
+			RefreshVolumePreview();
 			_noteInputState.EditMask = editMask;
 			UpdateEditStateDisplay();
 			_message.Text =
@@ -2002,6 +2018,8 @@ public sealed class PatternEditorControl : UserControl
 			value,
 			out int patternDelta))
 		{
+			_volumeInput.Reset();
+			RefreshVolumePreview();
 			SwitchPattern(patternDelta);
 			e.Handled = true;
 			return;
@@ -2011,6 +2029,8 @@ public sealed class PatternEditorControl : UserControl
 			value,
 			out int sourceDelta))
 		{
+			_volumeInput.Reset();
+			RefreshVolumePreview();
 			MoveCurrentSource(sourceDelta);
 			e.Handled = true;
 			FocusCursorCell();
@@ -2043,6 +2063,14 @@ public sealed class PatternEditorControl : UserControl
 
 		if (_cursor.Field == PatternCellField.Volume)
 		{
+			if (_volumePreviewAddress is (int previousRow, int previousChannel)
+				&& (previousRow != editedRow || previousChannel != editedChannel))
+			{
+				// Never interpret a second digit as belonging to another
+				// displayed Sequence occurrence or another focused cell.
+				_volumeInput.Reset();
+				RefreshVolumePreview();
+			}
 			PatternVolumeInputResult volumeResult =
 				PatternEditorContextCursor.EditCurrent(
 					_context,
@@ -2057,6 +2085,10 @@ public sealed class PatternEditorControl : UserControl
 
 			if (!volumeResult.Handled)
 				return;
+
+			if (!volumeResult.Completed && !volumeResult.Rejected
+				&& _volumeInput.PendingTensDigit.HasValue)
+				_volumePreviewAddress = (editedRow, editedChannel);
 
 			if (volumeResult.Rejected)
 			{
@@ -3788,7 +3820,44 @@ public sealed class PatternEditorControl : UserControl
 			}
 			RefreshCellEffectState(row, channel);
 		}
+		RefreshVolumePreview();
 		RefreshEffectHint();
+	}
+
+	/// <summary>Repaint only the pending Volume display. Its first digit
+	/// uses the already-painted focus outline; the second digit inherits the
+	/// normal theme foreground. Changes to focus, channel, row or entry mode
+	/// restore the committed value without creating a song edit.</summary>
+	private void RefreshVolumePreview()
+	{
+		(int Row, int Channel)? address = _volumePreviewAddress;
+		bool stillFocused = address is (int row, int channel)
+			&& _cursor.Row == row
+			&& _cursor.Channel == channel
+			&& _cursor.Field == PatternCellField.Volume
+			&& _volumeInput.PendingTensDigit is not null;
+		if (address is (int priorRow, int priorChannel)
+			&& _volumeTexts.TryGetValue((priorRow, priorChannel), out TextBlock? display))
+		{
+			PatternEditorRow editorRow = _context.GetRow(priorRow);
+			string committed = PatternCellViewModel.Create(
+				_workspace.Document, editorRow.Pattern,
+				editorRow.PatternRow, priorChannel).VolumeText;
+			if (stillFocused
+				&& _volumeInput.PendingTensDigit is int digit
+				&& _volumeFields.TryGetValue((priorRow, priorChannel), out Border? field))
+			{
+				PatternVolumePreviewRenderer.ShowPending(
+					display, digit, committed, field.BorderBrush!);
+				return;
+			}
+			PatternVolumePreviewRenderer.Restore(display, committed);
+		}
+		if (!stillFocused)
+		{
+			_volumeInput.Reset();
+			_volumePreviewAddress = null;
+		}
 	}
 
 	private void RefreshEffectHint()
