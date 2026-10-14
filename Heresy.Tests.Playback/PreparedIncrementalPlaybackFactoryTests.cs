@@ -113,6 +113,90 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
             "backward reconstruction must restore the same text-selected Envelope");
     }
 
+    [TestCase("THEN OFF")]
+    [TestCase("THEN CUT")]
+    public void PrivateForwardAndBackwardSourceSeekReconstructsCompletedNoteFilterAction(
+        string completion)
+    {
+        SongDocument song = new();
+        ObjectId envelopeId = song.AllocateObjectId();
+        NodeEnvelopeDefinition envelope = new(envelopeId, "Finish");
+        envelope.ReplaceCurve([
+            new EnvelopeNode(TimeSpan.Zero, 0.4),
+            new EnvelopeNode(TimeSpan.FromMilliseconds(40), 0.4),
+        ], 0, 0, EnvelopeSustainLoopMode.None);
+        song.Add(envelope);
+        ObjectId filterId = song.AllocateObjectId();
+        song.Add(new FilterDefinition(filterId, "Echo", [
+            new FilterStageDefinition(1, "echo", FilterKind.CombFeedforward),
+        ]));
+        ObjectId sampleId = song.AllocateObjectId();
+        song.Add(SampleDefinition.CreateImported(sampleId,
+            "Long", "long.wav", LongWave(8192)));
+        ObjectId childId = song.AllocateObjectId();
+        DataPatternDefinition child = new(childId, "Private")
+        {
+            RowCount = 4, ChannelCount = 1,
+        };
+        PatternCell note = child.Grid.GetOrCreateCell(0, 0);
+        note.Note = new StartPatternNote(sampleId);
+        note.Effects.Add(new SetNoteFilterPatternEffect(filterId));
+        note.Effects.Add(new SetNoteFilterAssignmentsPatternEffect(
+            "echo.DelaySeconds = 0.002\necho.Mix = 1\necho.Feedforward = @\"Finish\" "
+            + completion));
+        song.Add(child);
+        ObjectId rootId = song.AllocateObjectId();
+        DataPatternDefinition root = new(rootId, "Root")
+        {
+            RowCount = 4, ChannelCount = 1,
+        };
+        root.Grid.GetOrCreateCell(0, 0).Note =
+            new StartPatternNote(childId, mixdown: true);
+        song.Add(root);
+
+        PreparedIncrementalPlaybackFactory factory = new(Mono(1000));
+        using PreparedIncrementalPlaybackPlan direct = factory.Create(song, childId);
+        using PreparedIncrementalPlaybackPlan nested = factory.Create(song, rootId);
+        float[] reference = new float[90];
+        direct.Source.Render(reference.Length, reference);
+        Assert.That(reference.Take(12).Any(x => Math.Abs(x) > 0.01f),
+            Is.True, "a seek fixture must include audible original notes");
+        Assert.That(reference[70], Is.Zero.Within(1e-5f),
+            "the original voice must have finished before this seek");
+
+        float[] first = new float[1];
+        nested.Source.Render(1, first);
+        Assert.That(first[0], Is.EqualTo(reference[0]).Within(1e-6f));
+        PlaybackVoice originalVoice = nested.Session.GetChannelState(0).CurrentVoice!;
+        ISourceFrameSeekableSound seekable = (ISourceFrameSeekableSound)originalVoice.Sound;
+        PropertyInfo sessionProperty = originalVoice.Sound.GetType().GetProperty(
+            "Session", BindingFlags.Public | BindingFlags.Instance)!;
+        PlaybackSession before = (PlaybackSession)sessionProperty.GetValue(
+            originalVoice.Sound)!;
+
+        seekable.SetSourceFrameOffset(originalVoice.SoundState, 49);
+        float[] beyondCompletion = new float[1];
+        nested.Source.Render(1, beyondCompletion);
+        Assert.That(beyondCompletion[0], Is.EqualTo(reference[50]).Within(1e-6f),
+            "forward seek must replay the completion frame and its tail");
+
+        seekable.SetSourceFrameOffset(originalVoice.SoundState, 0);
+        float[] backBeforeCompletion = new float[1];
+        nested.Source.Render(1, backBeforeCompletion);
+        Assert.That(backBeforeCompletion[0], Is.EqualTo(reference[2]).Within(1e-6f),
+            "backward seek must reconstruct the still-active note and action");
+        PlaybackSession rebuilt = (PlaybackSession)sessionProperty.GetValue(
+            originalVoice.Sound)!;
+        Assert.That(rebuilt, Is.Not.SameAs(before),
+            "private rewind must create a fresh controller and completion clock");
+
+        seekable.SetSourceFrameOffset(originalVoice.SoundState, 65);
+        float[] forwardAgain = new float[1];
+        nested.Source.Render(1, forwardAgain);
+        Assert.That(forwardAgain[0], Is.EqualTo(reference[68]).Within(1e-6f),
+            "a second forward seek must fire the reconstructed action exactly once");
+    }
+
     [TestCase(false)]
     [TestCase(true)]
     public void ShiftedTextEnvelopeInPreparedSongRestartsAtEventFrameAndMatchesBlocks(
