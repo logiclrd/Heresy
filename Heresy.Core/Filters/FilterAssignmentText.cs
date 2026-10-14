@@ -109,6 +109,142 @@ public static class FilterAssignmentText
     }
 
     /// <summary>
+    /// Runtime-only best-effort interpretation of authored stage assignments.
+    /// Unknown stages, malformed lines, invalid values and duplicate paths
+    /// cannot abort other valid assignments. For duplicate canonical paths,
+    /// the last *valid* occurrence wins. Existing authoring validation stays
+    /// strict in ParseAndValidate / ApplyToClone.
+    ///
+    /// Interdependent stage fields are submitted as one batch first: this
+    /// permits a valid pair of FIR cutoffs that would individually violate
+    /// the old bounds. If the entire batch conflicts, prefer retaining the
+    /// earlier valid cutoff and drop the conflicting later one; independent
+    /// fields in the stage and other stages are still applied. All operations
+    /// affect only a clone; callers must still preflight the final DSP fork
+    /// before publishing anything to a live host/note.
+    /// </summary>
+    public static FilterInstance ApplyValidToClone(
+        FilterInstance selected, string text)
+    {
+        ArgumentNullException.ThrowIfNull(selected);
+        ArgumentNullException.ThrowIfNull(text);
+        List<(int Id, string Name, FilterParameterValue Value)> entries = [];
+
+        foreach (string rawLine in Lines(text))
+        {
+            string line = rawLine.Trim();
+            if (line.Length == 0 || line.StartsWith('#'))
+                continue;
+            int equals = line.IndexOf('=');
+            if (equals < 0 || equals != line.LastIndexOf('='))
+                continue;
+            string path = line[..equals].Trim();
+            string raw = line[(equals + 1)..].Trim();
+            int dot = path.IndexOf('.');
+            if (dot <= 0 || dot != path.LastIndexOf('.') ||
+                dot == path.Length - 1 || raw.Length == 0)
+                continue;
+            FilterStageDefinition stage;
+            try { stage = selected.Definition.GetStage(path[..dot].Trim()); }
+            catch (KeyNotFoundException) { continue; }
+            FilterParameterDescriptor? descriptor =
+                FilterCatalogue.GetParameters(stage.Kind).FirstOrDefault(p =>
+                    string.Equals(p.Name, path[(dot + 1)..].Trim(),
+                        StringComparison.OrdinalIgnoreCase));
+            if (descriptor is null)
+                continue;
+            try
+            {
+                FilterParameterValue value;
+                if (descriptor.Kind == FilterParameterValueKind.Number)
+                {
+                    if (!double.TryParse(raw, NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out double number))
+                        continue;
+                    value = FilterParameterValue.FromNumber(number);
+                }
+                else
+                    value = FilterParameterValue.FromChoice(raw);
+                value = descriptor.Normalize(value);
+                // Last valid duplicate replaces an earlier valid assignment;
+                // an invalid duplicate must never erase a valid predecessor.
+                entries.RemoveAll(item => item.Id == stage.StageId &&
+                    string.Equals(item.Name, descriptor.Name,
+                        StringComparison.OrdinalIgnoreCase));
+                entries.Add((stage.StageId, descriptor.Name, value));
+            }
+            catch (ArgumentException)
+            {
+                // One invalid authored line is not a runtime diagnostic.
+            }
+        }
+
+        FilterInstance result = selected.Clone();
+        foreach (int stageId in entries.Select(e => e.Id).Distinct())
+        {
+            var stageEntries = entries.Where(e => e.Id == stageId).ToArray();
+            KeyValuePair<string, FilterParameterValue>[] batch = stageEntries
+                .Select(e => new KeyValuePair<string, FilterParameterValue>(
+                    e.Name, e.Value)).ToArray();
+            try
+            {
+                result.SetStageParameters(stageId, batch);
+                continue;
+            }
+            catch (ArgumentException)
+            {
+                // A coupled conflict: retain the largest valid authored
+                // subset and never leave a partially applied invalid stage.
+            }
+
+            FilterStageDefinition stage = selected.Definition.GetStage(stageId);
+            if (stage.Kind is FilterKind.FirBandPass or FilterKind.FirNotch)
+            {
+                // Only low/high cutoff have a cross-field constraint today.
+                // Omit the later conflicting cutoff first. Other parameters
+                // remain in the same atomic stage batch.
+                var cutoffs = stageEntries
+                    .Select((entry, index) => (entry, index))
+                    .Where(item => item.entry.Name is "LowCutoffHz" or "HighCutoffHz")
+                    .ToArray();
+                bool resolved = false;
+                foreach (var omitted in cutoffs.Reverse())
+                {
+                    var remaining = batch.Where((_, index) =>
+                        index != omitted.index).ToArray();
+                    try
+                    {
+                        result.SetStageParameters(stageId, remaining);
+                        resolved = true;
+                        break;
+                    }
+                    catch (ArgumentException) { }
+                }
+                if (resolved)
+                    continue;
+                var independents = batch.Where(e =>
+                    e.Key is not ("LowCutoffHz" or "HighCutoffHz")).ToArray();
+                try
+                {
+                    result.SetStageParameters(stageId, independents);
+                    continue;
+                }
+                catch (ArgumentException) { }
+            }
+
+            // Extensible fallback for other future coupled constraints:
+            // individual changes are applied in authored order and each is
+            // validated against the previously accepted snapshot.
+            foreach (var assignment in batch)
+            {
+                try { result.SetStageParameters(stageId, [assignment]); }
+                catch (ArgumentException) { }
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
     /// Best-effort, read-only preview of authored parameters for one stage.
     /// A malformed or unrelated line cannot prevent other valid fields from
     /// appearing in the assistant. The strict save parser remains separate.
