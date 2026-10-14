@@ -510,6 +510,95 @@ public sealed class NoteFilterParameterEnvelopeTests
         Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
     }
 
+
+    [Test]
+    public void SubsequentNumericTextDetachesOnlyPreviouslyBoundNoteParameter()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FixedCurve(0.5));
+        PlaybackSession authored = Session(resolver, Schedule(
+            Event(0, 0, new StartNoteCommand(Source) {
+                EventFilterConfiguration = Echo(),
+            }, new SetNoteFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Sweep\"")),
+            Event(4, 0, new SetNoteFilterAssignmentsCommand(
+                "echo.Feedforward = 0.8"))));
+        authored.FilterAssignmentNames = Names();
+        PlaybackSession typed = Session(resolver, Schedule(
+            Event(0, 0, new StartNoteCommand(Source) {
+                EventFilterConfiguration = Echo(),
+            }, new SetNoteFilterParameterEnvelopeCommand(1, "Feedforward", Envelope)),
+            Event(4, 0, new SetNoteFilterParametersCommand(1, [
+                new("Feedforward", FilterParameterValue.FromNumber(0.8)),
+            ]), new SetNoteFilterParameterEnvelopeCommand(1, "Feedforward"))));
+
+        float[] actual = new float[10], expected = new float[10];
+        authored.Render(0, 10, actual);
+        typed.Render(0, 10, expected);
+        Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+        Assert.That(actual[3], Is.Not.EqualTo(actual[5]),
+            "after detachment the newly authored numeric base takes effect");
+    }
+
+    [Test]
+    public void SubsequentNumericTextDetachesOnlyPreviouslyBoundHostParameter()
+    {
+        TestResolver resolver = new(new ConstantSound(), new FixedCurve(0.5));
+        PlaybackSession authored = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterCommand { Configuration = Echo() },
+                new StartNoteCommand(Source),
+                new SetChannelFilterAssignmentsCommand(
+                    "echo.Feedforward = @\"Sweep\"")),
+            Event(4, 0, new SetChannelFilterAssignmentsCommand(
+                "echo.Feedforward = 0.8"))));
+        authored.FilterAssignmentNames = Names();
+        PlaybackSession typed = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterCommand { Configuration = Echo() },
+                new StartNoteCommand(Source),
+                new SetChannelFilterParameterEnvelopeCommand(
+                    1, "Feedforward", Envelope)),
+            Event(4, 0, new SetChannelFilterParametersCommand(1, [
+                new("Feedforward", FilterParameterValue.FromNumber(0.8)),
+            ]), new SetChannelFilterParameterEnvelopeCommand(1, "Feedforward"))));
+        float[] actual = new float[10], expected = new float[10];
+        authored.Render(0, 10, actual);
+        typed.Render(0, 10, expected);
+        Assert.That(actual, Is.EqualTo(expected).Within(1e-6f));
+    }
+
+    [Test]
+    public void ReplacingEnvelopeByAnotherNameUsesNewCurveOnTheExactHost()
+    {
+        // A second identity bound by text replaces the previously attached
+        // name, with no resurrection of the first reference at future rows.
+        SongDocument namesSong = new();
+        namesSong.Add(new NodeEnvelopeDefinition(Envelope, "Sweep"));
+        namesSong.Add(new ScriptEnvelopeDefinition((ObjectId)12099U, "Other"));
+        var frozen = FilterAssignmentEnvelopeNames.Capture(namesSong);
+        // The resolver intentionally only implements the first curve;
+        // the second binding is rejected without erasing the first.
+        TestResolver resolver = new(new ConstantSound(), new FixedCurve(0.5));
+        PlaybackSession authored = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterCommand { Configuration = Echo() },
+                new StartNoteCommand(Source),
+                new SetChannelFilterAssignmentsCommand(
+                    "echo.Feedforward = @\"Sweep\"")),
+            Event(4, 0, new SetChannelFilterAssignmentsCommand(
+                "echo.Feedforward = @\"Other\""))));
+        authored.FilterAssignmentNames = frozen;
+        List<string> diagnostics = [];
+        authored.ChannelFilterCommandRejected = diagnostics.Add;
+        PlaybackSession typed = Session(resolver, Schedule(
+            Event(0, 0, new SetChannelFilterCommand { Configuration = Echo() },
+                new StartNoteCommand(Source),
+                new SetChannelFilterParameterEnvelopeCommand(1, "Feedforward", Envelope))));
+        float[] actual = new float[10], expected = new float[10];
+        authored.Render(0, 10, actual);
+        typed.Render(0, 10, expected);
+        Assert.That(actual, Is.EqualTo(expected).Within(1e-6f),
+            "rejected replacement must preserve the earlier host binding");
+        Assert.That(diagnostics, Has.Count.EqualTo(1));
+    }
+
     private static FilterAssignmentEnvelopeNames Names()
     {
         SongDocument song = new();

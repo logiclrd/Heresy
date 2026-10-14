@@ -371,6 +371,10 @@ public sealed class PlaybackVoice
 	internal bool HasEventFilterParameterEnvelopes
 		=> _eventFilterParameterEnvelopes.Count != 0;
 
+	internal bool HasEventFilterParameterEnvelope(int stageId, string parameter)
+		=> _eventFilterParameterEnvelopes.ContainsKey(
+			(stageId, parameter.ToUpperInvariant()));
+
 	internal void SetEventFilterParameterEnvelope(
 		int stageId, string parameterName,
 		IEnvelopeCurve? curve, long frame)

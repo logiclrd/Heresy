@@ -54,6 +54,12 @@ public sealed class FilterAssignmentEnvelopeNames
 public sealed record FilterAssignmentEnvelopeBinding(
     int StageId, string ParameterName, ObjectId EnvelopeId, int LineNumber);
 
+/// <summary>One last-valid-wins authored parameter operation. Null EnvelopeId
+/// means a valid numeric assignment explicitly detaches an older Envelope
+/// from that exact stage/parameter; the numeric base is applied separately.</summary>
+public sealed record FilterAssignmentRuntimeAction(
+    int StageId, string ParameterName, ObjectId? EnvelopeId, int LineNumber);
+
 /// <summary>Result of strict authoring validation. Numeric and Envelope
 /// bindings remain separate so no fictional numeric value is assigned before
 /// the playback control boundary. The authored text remains unchanged.</summary>
@@ -153,21 +159,20 @@ public static class FilterAssignmentEnvelopeText
     }
 
     /// <summary>
-    /// Runtime salvage of individually valid Envelope references in their
-    /// authored order. Invalid lines remain inert, as they are for numeric
-    /// ApplyValidToClone. A later valid numeric assignment to the same
-    /// parameter overrides an earlier Envelope reference; later references
-    /// override earlier bindings. All lookups use the supplied frozen index.
-    /// No editable song objects or script compilers are consulted here.
+    /// Runtime's last-valid-wins interpretation of a mixed numeric/Envelope
+    /// assignment. Numeric base updates still use ApplyValidToClone, while
+    /// these operations determine only which Envelope to bind or detach.
+    /// Invalid lines never replace earlier valid operations. The frozen name
+    /// index is consulted on control boundaries, never against the live song.
     /// </summary>
-    public static IReadOnlyList<FilterAssignmentEnvelopeBinding> ResolveValidBindings(
+    public static IReadOnlyList<FilterAssignmentRuntimeAction> ResolveRuntimeActions(
         FilterInstance selected, string text, FilterAssignmentEnvelopeNames names)
     {
         ArgumentNullException.ThrowIfNull(selected);
         ArgumentNullException.ThrowIfNull(text);
         ArgumentNullException.ThrowIfNull(names);
         Dictionary<(int StageId, string Parameter),
-            FilterAssignmentEnvelopeBinding> selectedBindings = [];
+            FilterAssignmentRuntimeAction> final = [];
         string[] rows = text.Replace("\r\n", "\n")
             .Replace('\r', '\n').Split('\n');
         for (int i = 0; i < rows.Length; i++)
@@ -177,36 +182,43 @@ public static class FilterAssignmentEnvelopeText
                 continue;
             try
             {
-                if (row.Contains("= @\"", StringComparison.Ordinal)
-                    || row.Split('=', 2).Last().TrimStart()
-                        .StartsWith("@", StringComparison.Ordinal))
+                if (row.Contains('=') && row[(row.IndexOf('=') + 1)..]
+                    .TrimStart().StartsWith("@", StringComparison.Ordinal))
                 {
                     foreach (FilterAssignmentEnvelopeBinding binding
                         in ParseAndValidate(selected, row, names).EnvelopeBindings)
-                    {
-                        selectedBindings[(binding.StageId,
+                        final[(binding.StageId,
                             binding.ParameterName.ToUpperInvariant())] =
-                            binding with { LineNumber = i + 1 };
-                    }
+                            new(binding.StageId, binding.ParameterName,
+                                binding.EnvelopeId, i + 1);
                 }
                 else
                 {
-                    // A later valid literal wins over an earlier reference.
-                    // Bad numeric lines cannot silently detach a valid one.
-                    foreach (FilterStageAssignmentBatch batch in
-                        FilterAssignmentText.ParseAndValidate(selected, row))
+                    foreach (FilterStageAssignmentBatch batch
+                        in FilterAssignmentText.ParseAndValidate(selected, row))
                         foreach (var item in batch.Assignments)
-                            selectedBindings.Remove((batch.StageId,
-                                item.Key.ToUpperInvariant()));
+                            final[(batch.StageId, item.Key.ToUpperInvariant())] =
+                                new(batch.StageId, item.Key, null, i + 1);
                 }
             }
             catch (ArgumentException)
             {
-                // Runtime's existing invalid-line salvage policy.
+                // Runtime keeps valid siblings when another line is invalid.
             }
         }
-        return selectedBindings.Values.OrderBy(item => item.LineNumber).ToArray();
+        return final.Values.OrderBy(item => item.LineNumber).ToArray();
     }
+
+    /// <summary>Only actual Envelope references after canonical
+    /// last-valid-wins numeric precedence; useful for preview-only callers.</summary>
+    public static IReadOnlyList<FilterAssignmentEnvelopeBinding> ResolveValidBindings(
+        FilterInstance selected, string text, FilterAssignmentEnvelopeNames names)
+        => ResolveRuntimeActions(selected, text, names)
+            .Where(action => action.EnvelopeId.HasValue)
+            .Select(action => new FilterAssignmentEnvelopeBinding(
+                action.StageId, action.ParameterName,
+                action.EnvelopeId!.Value, action.LineNumber))
+            .ToArray();
 
     private static string ReadQuotedName(string literal, int lineIndex)
     {

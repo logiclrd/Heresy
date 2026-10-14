@@ -21,6 +21,9 @@ internal sealed class ChannelOutputFilterState
     private readonly int _sampleRate;
     private readonly Dictionary<(int StageId, string Parameter), BindingSpec>
         _bindings;
+
+    internal bool HasParameterEnvelope(int stageId, string parameter)
+        => _bindings.ContainsKey((stageId, parameter));
     private NoteFilterEnvelopeRealtimeControls? _realtime;
     private readonly Action<string> _reportWarning;
     private Action<string>? _warningSink;
