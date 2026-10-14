@@ -166,6 +166,142 @@ public sealed class NativePatternEffectDialogKeyboardTests
 	}
 
 	[AvaloniaTest]
+	public void EditingThenRestoringOriginalInvalidFilterTextRequiresFreshWarning()
+	{
+		SongDocument song = new();
+		ObjectId id = song.AllocateObjectId();
+		song.Add(new FilterDefinition(id, "EQ", [
+			new FilterStageDefinition(2, "stage2", FilterKind.BiquadLowPass),
+		]));
+		using Modal modal = new(new SetNoteFilterAssignmentsPatternEffect(
+			"stage2.CutoffHz = 1200", id), song);
+		TextBox input = modal.Input("assignments");
+		const string exact = "# Keep this comment  \nstage2.CutoffHz = 1800 \nstage2.Unknown = 3\n";
+		input.Text = exact;
+		modal.Button("Apply").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+		Assert.Multiple(() =>
+		{
+			Assert.That(modal.Result.IsCompleted, Is.False);
+			Assert.That(modal.Message.Text, Does.Contain("Assignment warning:"));
+			Assert.That(modal.Message.Text, Does.Contain("Unknown"));
+			Assert.That(input.Text, Is.EqualTo(exact));
+		});
+		// Restoring byte-for-byte identical values is still an *edit*.
+		// Comparing only the final draft tuple would incorrectly accept it.
+		input.Text = exact + " ";
+		input.Text = exact;
+		Assert.That(modal.Message.Text, Is.Empty,
+			"the old confirmation prompt must not survive an editing gesture");
+		modal.Button("Apply").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+		Assert.Multiple(() =>
+		{
+			Assert.That(modal.Result.IsCompleted, Is.False);
+			Assert.That(modal.Message.Text, Does.Contain("Assignment warning:"));
+			Assert.That(modal.Message.Text, Does.Contain("again"));
+		});
+		modal.Button("Apply").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+		Assert.That(modal.Result.IsCompletedSuccessfully, Is.True);
+		Assert.That(modal.Result.Result!.Effect,
+			Is.EqualTo(new SetNoteFilterAssignmentsPatternEffect(exact, id)),
+			"explicit acknowledgement must preserve exact user text, "
+			+ "including comments, trailing whitespace and unknown lines");
+	}
+
+	[AvaloniaTest]
+	public void ChangingThenRestoringFilterSelectionRevokesChannelTextAcknowledgement()
+	{
+		SongDocument song = new();
+		ObjectId originalId = song.AllocateObjectId();
+		ObjectId otherId = song.AllocateObjectId();
+		song.Add(new FilterDefinition(originalId, "EQ", [
+			new FilterStageDefinition(2, "stage2", FilterKind.BiquadLowPass),
+		]));
+		song.Add(new FilterDefinition(otherId, "Second Filter", [
+			new FilterStageDefinition(2, "stage2", FilterKind.BiquadLowPass),
+		]));
+		const string invalid = "stage2.CutoffHz = 1600\nstage2.Missing = 1";
+		using Modal modal = new(new SetChannelFilterAssignmentsPatternEffect(
+			invalid, originalId), song);
+		modal.Button("Apply").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+		Assert.That(modal.Result.IsCompleted, Is.False);
+		TextBox selection = modal.Input("filterId");
+		selection.Text = otherId.ToString();
+		selection.Text = originalId.ToString();
+		Assert.That(modal.Message.Text, Is.Empty);
+		modal.Button("Apply").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+		Assert.That(modal.Result.IsCompleted, Is.False,
+			"a prior warning is not acknowledgement for an edited-and-restored selection");
+		modal.Button("Apply").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+		Assert.That(modal.Result.IsCompletedSuccessfully, Is.True);
+		Assert.That(modal.Result.Result!.Effect,
+			Is.EqualTo(new SetChannelFilterAssignmentsPatternEffect(invalid, originalId)));
+	}
+
+	[AvaloniaTest]
+	public void InsertingInvalidFilterAssignmentsViaControlEnterRequiresTwoActions()
+	{
+		SongDocument song = new();
+		ObjectId id = song.AllocateObjectId();
+		song.Add(new FilterDefinition(id, "EQ", [
+			new FilterStageDefinition(2, "stage2", FilterKind.BiquadLowPass),
+		]));
+		using Modal modal = new(song: song);
+		NativePatternEffectChoice choice =
+			((IEnumerable<NativePatternEffectChoice>)modal.TypeSelector.ItemsSource!)
+			.Single(x => x.Kind == NativePatternEffectKind.ChannelFilterAssignments);
+		modal.TypeSelector.SelectedItem = choice;
+		modal.Input("filterId").Text = id.ToString();
+		TextBox source = modal.Input("assignments");
+		const string authored = "stage2.CutoffHz = 2200\nstage2.Unsupported = 2";
+		source.Text = authored;
+		Assert.That(source.Focus(), Is.True);
+		KeyEventArgs warning = Press(source, Key.Enter, KeyModifiers.Control);
+		Assert.Multiple(() =>
+		{
+			Assert.That(warning.Handled, Is.True);
+			Assert.That(modal.Result.IsCompleted, Is.False);
+			Assert.That(modal.Message.Text, Does.Contain("warning").IgnoreCase);
+			Assert.That(source.Text, Is.EqualTo(authored),
+				"Ctrl+Enter should not insert newlines into multiline assignment text");
+		});
+		KeyEventArgs accepted = Press(source, Key.Enter, KeyModifiers.Control);
+		Assert.That(accepted.Handled, Is.True);
+		Assert.That(modal.Result.IsCompletedSuccessfully, Is.True);
+		Assert.That(modal.Result.Result!.Effect,
+			Is.EqualTo(new SetChannelFilterAssignmentsPatternEffect(authored, id)));
+	}
+
+	[AvaloniaTest]
+	public void ValidFilterAssignmentAppliesImmediatelyAndCancelAfterWarningDoesNotCommit()
+	{
+		SongDocument song = new();
+		ObjectId id = song.AllocateObjectId();
+		song.Add(new FilterDefinition(id, "EQ", [
+			new FilterStageDefinition(2, "stage2", FilterKind.BiquadLowPass),
+		]));
+		const string valid = "stage2.CutoffHz = 2100";
+		using (Modal modal = new(new SetNoteFilterAssignmentsPatternEffect(
+			"stage2.CutoffHz = 1200", id), song))
+		{
+			modal.Input("assignments").Text = valid;
+			modal.Button("Apply").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+			Assert.That(modal.Result.IsCompletedSuccessfully, Is.True);
+			Assert.That(modal.Result.Result!.Effect,
+				Is.EqualTo(new SetNoteFilterAssignmentsPatternEffect(valid, id)));
+		}
+		using (Modal modal = new(new SetChannelFilterAssignmentsPatternEffect(
+			valid, id), song))
+		{
+			modal.Input("assignments").Text = "stage2.Unknown = 9";
+			modal.Button("Apply").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+			Assert.That(modal.Result.IsCompleted, Is.False);
+			modal.Button("Cancel").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+			Assert.That(modal.Result.IsCompletedSuccessfully, Is.True);
+			Assert.That(modal.Result.Result, Is.Null);
+		}
+	}
+
+	[AvaloniaTest]
 	public void InvalidFilterSelectionCannotBeBypassedByRepeatedApply()
 	{
 		SongDocument song = new();

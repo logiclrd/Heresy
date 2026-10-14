@@ -218,6 +218,12 @@ public sealed class NativePatternEffectEditorDialog : Window
 		{
 			Control input = BuildInput(field);
 			_inputs.Add(field.Key, input);
+			// A confirmation is permission for one *unchanged editing gesture*,
+			// not a standing exemption for text that happens to compare equal.
+			// Editing and undoing back to the same bytes must warn again.
+			if (isFilterText && (field.Key is "assignments" or "filterId")
+				&& input is TextBox text)
+				text.TextChanged += (_, _) => InvalidateFilterWarningAcknowledgement();
 			AddField(_form, ref row, field.Label, input);
 		}
 		if (isFilterText)
@@ -604,6 +610,19 @@ public sealed class NativePatternEffectEditorDialog : Window
 		Apply();
 	}
 
+	/// <summary>An intervening edit invalidates acknowledgement even when
+	/// the user later restores exactly the previously warned text/selection.
+	/// Keep all user-authored bytes; this only revokes the pending permission.</summary>
+	private void InvalidateFilterWarningAcknowledgement()
+	{
+		if (_warnedDraft is null)
+			return;
+		_warnedDraft = null;
+		if (_message.Text?.StartsWith("Assignment warning:",
+			StringComparison.Ordinal) == true)
+			_message.Text = string.Empty;
+	}
+
 	private void Apply()
 	{
 		try
@@ -631,6 +650,8 @@ public sealed class NativePatternEffectEditorDialog : Window
 			var draft = (_prototype.GetType(),
 				values.GetValueOrDefault("assignments", ""),
 				values.GetValueOrDefault("filterId", ""));
+			// Value equality is necessary, but edits also proactively revoke
+			// _warnedDraft. An edit-then-undo cannot silently reuse permission.
 			bool confirmed = isFilterText && _warnedDraft == draft;
 			if (isFilterText && _document is not null && !confirmed)
 			{
