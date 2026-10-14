@@ -465,8 +465,9 @@ public static class NativePatternEffectEditor
 				entry is not FilterDefinition definition)
 				throw new ArgumentException(
 					"Choose an existing shared Filter definition to validate these assignments.");
-			if (!allowInvalid && FilterAssignmentText.ParseAndValidate(
-				new FilterInstance(definition), source).Count == 0)
+			if (!allowInvalid && FilterAssignmentEnvelopeText.ParseAndValidate(
+				new FilterInstance(definition), source,
+				FilterAssignmentEnvelopeNames.Capture(song)).Count == 0)
 				throw new ArgumentException("At least one stage assignment is required.");
 		}
 		return channel

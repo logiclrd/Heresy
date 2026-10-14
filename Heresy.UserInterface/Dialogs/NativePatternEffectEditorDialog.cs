@@ -485,7 +485,8 @@ public sealed class NativePatternEffectEditorDialog : Window
 				sourceInput.Text = rewritten;
 				try
 				{
-					FilterAssignmentText.ParseAndValidate(selected, rewritten);
+					FilterAssignmentEnvelopeText.ParseAndValidate(selected, rewritten,
+						FilterAssignmentEnvelopeNames.Capture(_document));
 					_message.Text = $"Updated {selection.Stage.Name} assignments.";
 				}
 				catch (ArgumentException ex)
