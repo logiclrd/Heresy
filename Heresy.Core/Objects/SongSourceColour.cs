@@ -26,12 +26,12 @@ public static class SongSourceColour
         double x = 0.75 * (1.0 - Math.Abs(sector % 2.0 - 1.0));
         (double r, double g, double b) = sector switch
         {
-            < 1 => (0.75, x, 0),
-            < 2 => (x, 0.75, 0),
-            < 3 => (0, 0.75, x),
-            < 4 => (0, x, 0.75),
-            < 5 => (x, 0, 0.75),
-            _ => (0.75, 0, x),
+            < 1 => (0.75, x, 0.0),
+            < 2 => (x, 0.75, 0.0),
+            < 3 => (0.0, 0.75, x),
+            < 4 => (0.0, x, 0.75),
+            < 5 => (x, 0.0, 0.75),
+            _ => (0.75, 0.0, x),
         };
         static uint Byte(double component)
             => (uint)Math.Round((component + 0.25) * 255,
