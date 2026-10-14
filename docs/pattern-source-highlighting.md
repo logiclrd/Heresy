@@ -1,6 +1,6 @@
 # Pattern editor — source tints, flattened-range shadows and overlap diagnostics
 
-**Status:** Source-colour persistence, effective-source Note-start resolution, **whole-cell source tinting** (corrected 13 October 2026), and nonserialized bounds caching are implemented. Flattened-range overlays and overlap indicators remain open. See [todo.md](todo.md) for separately closable tasks. The feature visualizes already-existing recursive source semantics without changing their scheduling, rendering or new-note actions.
+**Status:** Source-colour persistence, effective-source Note-start resolution, whole-cell source tinting, nonserialized bounds caching and **finite flattened Pattern/Sequence rectangle overlays** are implemented as of 13 October 2026. The separate malformed-overlap red warning remains open. See [todo.md](todo.md) for separately closable tasks. The feature visualizes already-existing recursive source semantics without changing their scheduling, rendering or new-note actions.
 
 ## Source colour ownership and persistence
 
@@ -168,7 +168,64 @@ flatten/mixdown semantics or persisted schema changes.
 Headless Avalonia tests in `PatternSourceTintTests` cover full cell
 coverage, transparent field backgrounds, retained row shade and focus,
 opaque independent effect stickers, in-place upstream source changes
-and multiple occurrences of one Pattern in a Sequence. The note-event
-bounds cache was implemented in the preceding milestone; the next
-independent visual task is **flattened Pattern/Sequence rectangle shading
-and its stronger outline**, followed by malformed-overlap diagnostics.
+and multiple occurrences of one Pattern in a Sequence. The preceding bounds-cache milestone and subsequent finite range overlay are implemented. The remaining independent visual task is malformed-overlap diagnostics.
+
+## Implemented — finite flattened Pattern/Sequence range shading (13 October 2026)
+
+`FlattenedSourceRangeProjection.Analyze(document, context)` is a pure,
+nonserialized editor projection. It uses the shared effective note-source
+resolver (`PatternSourceTintResolver.ResolveNoteStarts`) rather than
+reimplementing Source-column/inline/inherited precedence. For each real
+`StartPatternNote` with `Mixdown == false` and a live colour-bearing data
+Pattern or data Sequence source, it produces a rectangle in **display-row
+and host-channel coordinates**. A private mixdown gets only its ordinary
+whole-cell Note-start tint. Script/unknown sources are not given invented
+finite bounds.
+
+Data Pattern footprints read the already implemented, cheaply queried
+`PatternNoteEventBounds`: each inclusive final Note-event row/channel is
+extended by one for visual dimensions, and empty Patterns retain a 1×1
+footprint. For a data Sequence, the projector advances through the
+**played row counts** of its constituent data Pattern entries, honoring
+each `SequenceEntry.StartRow`. The final row/channel derive from actual
+Note events within the played portion of each entry; a suffix skipped by
+`StartRow` cannot contribute a trailing note or channel. Unknown,
+missing, scripted entries, unsafe flow-control jumps/breaks and
+overflowing/unbounded structures suppress the misleading rectangle;
+arbitrary script schedules are never eagerly evaluated or estimated.
+
+The origin is the **actual displayed Note start**, not the beginning of
+the referenced Pattern. The far sides clamp independently to the
+available host Pattern rows and channels, and in a Sequence editor also
+to that entry's displayed segment. Thus repeated occurrences of one
+Pattern can have different effective Source identities, while shading
+never leaks across intervening/unrelated Sequence orders.
+
+For each clipped rectangle, the projection materializes its participating
+cells once, each with the source's persisted ARGB **0x33** interior tint
+and an exterior-edge-only ARGB **0x66** border (the same RGB and double
+alpha). The outer stroke is two pixels wide; a 1×1 range has all four
+edges. The origin already has its baseline source tint, so its range
+fragment omits duplicate fill while **retaining its stronger outline**.
+Multiple simultaneous ranges contribute separate ordered fragments;
+their intersections remain visible, pending the later red diagnostic.
+
+`PatternEditorControl` keeps per-cell noninteractive Grid layers
+(`_rangeOverlayLayers`) beneath the Note, Source, Volume and effect
+controls, above the ordinary row/beat/selection background. Effect
+stickers remain opaque and independently palette-coloured; cursor
+focus and field borders are never replaced by range borders. The
+projection is refreshed after edits and on navigation/rebuild, and
+only cells with changed fragment lists reconstruct their overlay
+Borders. Range decoration does not rewrite Notes, change playback,
+trigger DSP work or change the document/audio revision.
+
+`FlattenedSourceRangeProjectionTests` covers Pattern event extents,
+trailing-effects exclusions, both clipping dimensions, 1×1 outlines,
+Sequence duration/skip calculations, no invented Script/flow bounds,
+distinct repeated host occurrences, live bounds edits, mixdown
+negative controls, and headless Avalonia placement/colour/focus tests.
+
+The **next independent milestone** is the pre-specified red
+`0x80FF0000` malformed-overlap indication on later Note starts,
+while preserving earlier range fills and outlines.
