@@ -622,9 +622,60 @@ on both hosts, and rejected Envelope replacement. The existing typed
 Envelope tests continue to qualify independent host/NNA histories and
 out-of-PCM prepared FIR adoption.
 
-**Not yet completed:** broader end-to-end qualification of *absolute
-song-time* alignment through late attachment, nested/private transport,
-real-time seek/export, channel versus note release and completion actions.
-Those are separately unchecked in `todo.md`, including `THEN OFF` and
-`THEN CUT`. This playback-binding milestone reuses established typed event
-timing but does not claim those remaining scenarios have been proven.
+**Follow-up qualification:** The separate absolute song-time
+regression milestone below now verifies late attachment, nested/private
+transport, seek/export, note release and independent channel host clocks.
+The `THEN OFF` / `THEN CUT` completion actions and physical listening
+acceptance remain open.
+
+## Absolute song-time alignment and export qualification (14 October 2026)
+
+**Qualified without changes to audio implementation.** A text-selected
+Envelope is bound at the frame of the **executed assignment command**;
+the mechanism reuses the same `SetNoteFilterParameterEnvelopeCommand` /
+`SetChannelFilterParameterEnvelopeCommand` handlers as explicitly typed
+modulation. Its phase does not start when the containing note was first
+created unless the assignment was itself executed at that moment. The
+per-Envelope state holds an attachment frame and derives elapsed Envelope
+time from the current render frame minus that attachment frame. For root
+sessions these are song-frame coordinates; private recursively mixed
+sessions have invocation-local frame coordinates whose origin is translated
+with the parent start. The elapsed-time difference is invariant under that
+translation. This is an *effective musical-time* guarantee, not a claim
+that every private renderer stores parent absolute frames internally.
+
+**Note scope:** Event Filter bindings are attached to the current logical
+note or its flattened source controller. A late Note Off releases the
+parameter Envelope according to that same note's lifetime; an NNA-forked
+voice retains its prior binding and a later note does not acquire it.
+A flattened controller records the original binding frame; both active
+descendants and descendants started later use that original origin.
+**Channel scope:** Each physical/scoped host has its own independent
+attachment frame. Channel Envelope progress persists across unrelated note
+starts and is not reset at those notes' sample-local time zero.
+
+**Automated evidence:** `NoteFilterParameterEnvelopeTests` compares
+text-selected, explicitly typed and exact frame-by-frame numerical
+controls for late Note attachment (note starts at frame 1, binding at
+frame 5); verifies sample-exact output across different render blocks,
+late Channel attachments and independent physical hosts, release then
+replacement, NNA continuation, flattened controllers with a child begun
+*after* the attachment, and the existing FIR design/adoption boundary
+outside the PCM loop. `PreparedIncrementalPlaybackFactoryTests` compares
+two-row-shifted Data Pattern roots and nested private mixdowns, their
+offline-style bulk versus realtime-style partitioned renders, and
+private source-frame forward seeking/backward reconstruction with an
+*audible* reference against otherwise identical constant-parameter
+Filtering. `WaveOfflineRenderTests` verifies the WAV PCM samples
+produced by the actual offline export pipeline against a separately
+rendered live reference whose text-selected Envelope begins at a
+nonzero song frame. Matching outputs include the same note/speaker
+Filter processing and event ordering, with no fabricated Envelope
+samples or live-song name lookups during PCM rendering.
+
+No changes to Filter DSP, JSON, source-memory attribution or runtime
+clock math were required once the fixtures used a genuinely wet
+audible Filter. This is automated parity/transport qualification,
+not a claim of completed speaker-device listening tests. The
+`THEN OFF`/`THEN CUT` Envelope-end actions remain the next independent
+implementation task.
