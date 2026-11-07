@@ -7,25 +7,6 @@ Do not reintroduce completed-task checklists here.
 
 ## Synth oscillator curvature and realtime visualization
 
-- [ ] **Apply a range-preserving exponential curvature transform in the
-  per-sample oscillator generator, with a zero-curvature fast path.**
-  For the waveform's unshaped sample `v` in `[-1, +1]`, define
-  `f_0(v) = v`; for `k != 0` use
-  `f_k(v) = 2 * (exp(k*v) - exp(-k)) / (exp(k) - exp(-k)) - 1`.
-  This correction includes the final **`- 1`**, so the endpoints map
-  `-1 -> -1` and `+1 -> +1`, the interior stays within range,
-  and negative `k` reverses the curvature. Apply the transform to the
-  oscillator's waveform output before downstream Synth-graph processing.
-  At `k = 0`, bypass exponentiation and curvature arithmetic entirely.
-  For nonzero `k`, minimize per-sample cost by precomputing reusable
-  constants and/or using a suitable approximation/LUT; consider a
-  numerically stable equivalent such as
-  `2 * expm1(k*(v+1)) / expm1(2*k) - 1` near zero, and guard against
-  overflow at allowed extremes. Require endpoint/range, continuity as
-  `k -> 0`, positive/negative curvature, approximation accuracy,
-  block-size determinism, and zero-path performance tests. See
-  [Synth graph sound sources](synth-sound-source.md).
-
 - [ ] **Add an oscillator-waveform preview beside the Waveform and Curvature
   controls in the Synth editor.** Arrange those two controls in the
   **left cell of a two-column row** and a waveform graph in the
