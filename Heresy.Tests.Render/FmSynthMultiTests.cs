@@ -3,11 +3,15 @@ using System.Linq;
 using System.Numerics;
 
 using AwesomeAssertions;
+using Heresy.Core.Assets;
 using Heresy.Core.FmSynthesis;
+using Heresy.Core.Samples;
 using Heresy.Core.Objects;
 using Heresy.Render.Configuration;
 using Heresy.Render.Envelopes;
 using Heresy.Render.FmSynthesis;
+using Heresy.Render.Playback;
+using Heresy.Render.Samples;
 using Heresy.Render.Sounds;
 using NUnit.Framework;
 
@@ -96,6 +100,48 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void SampleBackedSquareWaveReceivesRealIndependentOffsetsAndReplaysExactly()
+    {
+        ObjectId sampleId = (ObjectId)408U;
+        // The PCM carries a 100-sample square-wave cycle even though no
+        // oscillator node exposes that period to the graph.
+        float[] pcm = Enumerable.Range(0, 4000)
+            .Select(i => i % 100 < 50 ? 1.0f : -1.0f).ToArray();
+        SampleSound sample = new(new SampleDefinition(sampleId, "PCM square",
+            new ExternalAssetReference("square.wav")),
+            new MemorySampleData(48000, 1, pcm));
+        SourceResolver resolver = new(sampleId, sample);
+        FmSynthGraph alignedGraph = new([
+            new FmSoundSourceNode(1, sampleId, FmMultiNode.NeutralFrequencyHz),
+            new FmMultiNode(2, 1, voiceCount: 7,
+                cycleLength: 100, randomizePhase: false,
+                gainCompensation: true),
+        ], 2);
+        FmSynthGraph randomizedGraph = new([
+            new FmSoundSourceNode(1, sampleId, FmMultiNode.NeutralFrequencyHz),
+            new FmMultiNode(2, 1, voiceCount: 7,
+                cycleLength: 100, randomizePhase: true,
+                gainCompensation: true),
+        ], 2);
+        FmSynthSound aligned = new(alignedGraph, resolver, soundResolver: resolver);
+        FmSynthSound randomized = new(randomizedGraph, resolver, soundResolver: resolver);
+        float[] withoutRandomization = new float[400];
+        aligned.Render(Mono(), aligned.CreateState(), 0, 400, withoutRandomization);
+        withoutRandomization[0].Should().BeApproximately(1.0f, 1e-6f);
+        SoundState voice = randomized.CreateState();
+        voice.SetNoiseSeed(42);
+        float[] withRandomization = new float[400];
+        randomized.Render(Mono(), voice, 0, 400, withRandomization);
+        withRandomization[0].Should().BeLessThan(0.5f);
+        // Reconstructed independent sample playheads must follow the same
+        // exact sub-frame pitch integration and time displacement.
+        randomized.PrepareReplay(Mono(), voice, targetFrame: 200);
+        float[] replay = new float[200];
+        randomized.Render(Mono(), voice, 200, replay.Length, replay);
+        replay.Should().Equal(withRandomization.AsSpan(200).ToArray());
+    }
+
+    [Test]
     public void ConstituentNoteOffDoesNotMoveWithTheInitialSkip()
     {
         FmSynthGraph graph = new([
@@ -126,6 +172,26 @@ public sealed class FmSynthMultiTests
     [
         new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
     ]));
+
+    private sealed class SourceResolver : ISoundResolver, IEnvelopeCurveResolver
+    {
+        private readonly ObjectId _id;
+        private readonly ISound _sound;
+        public SourceResolver(ObjectId id, ISound sound)
+        {
+            _id = id; _sound = sound;
+        }
+        public bool TryResolve(ObjectId sourceId, bool mixdown, out ISound? sound)
+        {
+            sound = sourceId == _id ? _sound : null;
+            return sound is not null;
+        }
+        public bool TryResolve(ObjectId id, out IEnvelopeCurve? curve)
+        {
+            curve = null;
+            return false;
+        }
+    }
 
     private sealed class EmptyEnvelopes : IEnvelopeCurveResolver
     {
