@@ -66,7 +66,8 @@ public sealed class FmSynthDocumentEditorTests
 					maximum: 0.75,
 					multiplierNodeId: 0,
 					exponentialMultiplier: true,
-					constant: true));
+					constant: true,
+					curvature: -2.5));
 		FmSynthDocumentEditor.SetOutputNode(
 			workspace,
 				synth,
@@ -81,6 +82,7 @@ public sealed class FmSynthDocumentEditorTests
 		oscillator.MultiplierNodeId.Should().Be(0);
 		oscillator.ExponentialMultiplier.Should().BeTrue();
 		oscillator.Constant.Should().BeTrue();
+		oscillator.Curvature.Should().Be(-2.5);
 		workspace.Document.AudioRevision.Should().Be(revision + 3);
 	}
 
@@ -92,7 +94,7 @@ public sealed class FmSynthDocumentEditorTests
 			workspace, "Vibrato");
 		int oscillatorId = FmSynthDocumentEditor.AddOscillatorNode(
 			workspace, synth, FmOscillatorWaveform.Sine, 5.0,
-			200.0, 100.0, constant: true);
+			200.0, 100.0, constant: true, curvature: 1.5);
 		uint before = workspace.Document.AudioRevision;
 		FmSynthDocumentEditor.ConnectNodes(
 			workspace, synth, sourceNodeId: 0,
@@ -100,6 +102,7 @@ public sealed class FmSynthDocumentEditorTests
 		FmOscillatorNode oscillator = synth.Graph.Nodes
 			.OfType<FmOscillatorNode>().Single();
 		oscillator.Constant.Should().BeTrue();
+		oscillator.Curvature.Should().Be(1.5);
 		workspace.Document.AudioRevision.Should().Be(before + 1);
 
 		FmSynthDocumentEditor.ConnectNodes(
@@ -110,10 +113,13 @@ public sealed class FmSynthDocumentEditorTests
 			new FmOscillatorNode(oscillatorId, oscillator.Waveform,
 				oscillator.FrequencyHz, oscillator.Minimum,
 				oscillator.Maximum, oscillator.MultiplierNodeId,
-				oscillator.ExponentialMultiplier, constant: false));
+				oscillator.ExponentialMultiplier, constant: false,
+				curvature: oscillator.Curvature));
 		workspace.Document.AudioRevision.Should().Be(before + 2);
 		synth.Graph.Nodes.OfType<FmOscillatorNode>()
 			.Single().Constant.Should().BeFalse();
+		synth.Graph.Nodes.OfType<FmOscillatorNode>()
+			.Single().Curvature.Should().Be(1.5);
 	}
 
 	[Test]
@@ -353,7 +359,7 @@ public sealed class FmSynthDocumentEditorTests
 			workspace, synth, FmOscillatorWaveform.Square, 330.0,
 			300.0, 200.0, minimum: -0.5, maximum: 0.75,
 			multiplierNodeId: removed, exponentialMultiplier: true,
-			constant: true);
+			constant: true, curvature: -3.0);
 		int op = FmSynthDocumentEditor.AddOperatorNode(
 			workspace, synth, FmOperatorKind.Add, [oscillator],
 			500.0, 200.0);
@@ -376,6 +382,7 @@ public sealed class FmSynthDocumentEditorTests
 		remaining.Maximum.Should().Be(0.75);
 		remaining.ExponentialMultiplier.Should().BeTrue();
 		remaining.Constant.Should().BeTrue();
+		remaining.Curvature.Should().Be(-3.0);
 		synth.ConnectionRoutingHints.Should().ContainSingle()
 			.Which.Should().BeEquivalentTo(
 				new FmSynthConnectionRoutingHint(
