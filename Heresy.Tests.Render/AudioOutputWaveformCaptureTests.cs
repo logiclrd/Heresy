@@ -55,7 +55,7 @@ public sealed class AudioOutputWaveformCaptureTests
 		var snapshot = capture.ReadLatest(one, unused);
 		Assert.That(snapshot.VisibleFrames, Is.EqualTo(16));
 		for (int i = 0; i < one.Length; i++)
-			Assert.That(one[i], Is.EqualTo(samples[^16 + i]));
+			Assert.That(one[i], Is.EqualTo(samples[samples.Length - 16 + i]));
 		Assert.That(unused, Is.All.NaN);
 	}
 
