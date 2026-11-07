@@ -1111,9 +1111,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				? off + TimeSpan.FromSeconds((double)voice.SkipFrames / sampleRate)
 				: null;
 			if (child is FmSynthState inner)
-				inner.InheritedAudioReleaseEnd = externalEnd is long end
-					? end >= long.MaxValue - voice.SkipFrames
-						? long.MaxValue : end + voice.SkipFrames
+				inner.InheritedAudioReleaseEnd = externalEnd is long releaseEnd
+					? releaseEnd >= long.MaxValue - voice.SkipFrames
+						? long.MaxValue : releaseEnd + voice.SkipFrames
 					: null;
 			sample[0] = 0;
 			voice.Invocation.Sound.Render(state.MonoContext!, child,
