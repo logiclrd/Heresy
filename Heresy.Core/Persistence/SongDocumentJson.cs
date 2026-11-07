@@ -934,6 +934,7 @@ public static class SongDocumentJson
 							oscillator.Waveform,
 							JsonOptions);
 					nodeJson["frequencyHz"] = oscillator.FrequencyHz;
+					nodeJson["curvature"] = oscillator.Curvature;
 					nodeJson["minimum"] = oscillator.Minimum;
 					nodeJson["maximum"] = oscillator.Maximum;
 					if (oscillator.MultiplierNodeId.HasValue)
@@ -1117,7 +1118,9 @@ public static class SongDocumentJson
 								? multiplier.GetValue<int>()
 								: null,
 							RequiredBoolean(node, "exponentialMultiplier"),
-							node["constant"]?.GetValue<bool>() ?? false),
+							node["constant"]?.GetValue<bool>() ?? false,
+							node["curvature"] is null
+								? 0.0 : RequiredDouble(node, "curvature")),
 					"soundSource" =>
 						new FmSoundSourceNode(
 							nodeId,

@@ -65,6 +65,9 @@ public sealed class FmNoiseNode(int id) : FmSynthNode(id)
 
 public sealed class FmOscillatorNode : FmSynthNode
 {
+	// Bounds keep the future exponential waveshaper numerically well behaved.
+	public const double MaximumCurvatureMagnitude = 32.0;
+
 	private readonly IReadOnlyList<int> _inputs;
 
 	public FmOscillatorNode(
@@ -75,7 +78,8 @@ public sealed class FmOscillatorNode : FmSynthNode
 		double maximum = 1.0,
 		int? multiplierNodeId = null,
 		bool exponentialMultiplier = false,
-		bool constant = false)
+		bool constant = false,
+		double curvature = 0.0)
 		: base(id)
 	{
 		if (!Enum.IsDefined(waveform))
@@ -89,6 +93,9 @@ public sealed class FmOscillatorNode : FmSynthNode
 			throw new ArgumentOutOfRangeException(nameof(minimum));
 		if (!double.IsFinite(maximum))
 			throw new ArgumentOutOfRangeException(nameof(maximum));
+		if (!double.IsFinite(curvature)
+			|| Math.Abs(curvature) > MaximumCurvatureMagnitude)
+			throw new ArgumentOutOfRangeException(nameof(curvature));
 		if (multiplierNodeId.HasValue
 			&& multiplierNodeId.Value < 0)
 		{
@@ -102,6 +109,7 @@ public sealed class FmOscillatorNode : FmSynthNode
 		MultiplierNodeId = multiplierNodeId;
 		ExponentialMultiplier = exponentialMultiplier;
 		Constant = constant;
+		Curvature = curvature;
 		_inputs =
 			Array.AsReadOnly(
 				multiplierNodeId.HasValue
@@ -111,6 +119,9 @@ public sealed class FmOscillatorNode : FmSynthNode
 
 	public FmOscillatorWaveform Waveform { get; }
 	public double FrequencyHz { get; }
+	/// <summary>Zero preserves the unshaped waveform. The exponential
+	/// transform itself is a separate DSP implementation milestone.</summary>
+	public double Curvature { get; }
 	public double Minimum { get; }
 	public double Maximum { get; }
 	public int? MultiplierNodeId { get; }
