@@ -7,18 +7,6 @@ Do not reintroduce completed-task checklists here.
 
 ## Synth oscillator curvature and realtime visualization
 
-- [ ] **Add per-oscillator Curvature (`k`) to the Synth graph and editor.**
-  Each oscillator has an independent finite numeric `k` parameter, default
-  `0`, labelled **Curvature** in the Synth editor. Place its label and
-  numeric input directly **beneath Waveform** in the selected oscillator's
-  inspector. `k = 0` means unchanged/linear amplitude mapping, regardless
-  of the selected waveform. Preserve the parameter through graph edits,
-  cloning, snapshots, save/load, and Synth import, while older saved
-  oscillators without the field load as `k = 0`. Establish sensible
-  validation/limits for nonfinite and extreme values without breaking the
-  existing v1 persistence contract. See [UI workflows](user-interface-workflows.md)
-  and [Synth graph sound sources](synth-sound-source.md).
-
 - [ ] **Apply a range-preserving exponential curvature transform in the
   per-sample oscillator generator, with a zero-curvature fast path.**
   For the waveform's unshaped sample `v` in `[-1, +1]`, define
