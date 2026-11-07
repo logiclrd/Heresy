@@ -16,6 +16,46 @@ backward replay, lifecycle work or later test slices are `TODO` applied
 **at that milestone**, not to the current implementation.
 Refer only to [open work](todo.md) for outstanding tasks.
 
+## Oscillator curvature transfer (7 November 2026)
+
+Each `FmOscillatorNode` has a persisted `Curvature` parameter `k`
+(default `0`, accepted range `[-32,32]`). In the renderer, the raw
+waveform's normalized amplitude `v` in `[-1,1]` is passed through
+
+```text
+f_0(v) = v
+f_k(v) = 2 * (exp(k*(v+1)) - 1) / (exp(2*k) - 1) - 1  (k != 0)
+```
+
+before scaling by the oscillator's `Minimum` and `Maximum`.
+This is equivalent to the symmetric endpoint-anchored expression
+`2*(exp(k*v)-exp(-k))/(exp(k)-exp(-k))-1`. Both endpoints stay
+exactly `-1` and `+1`, positive `k` bends the ramp upward (initially
+slow rise), and negative `k` reverses the curvature. A Square waveform
+is unchanged because it contains only endpoint values.
+
+The graph compilation/preparation step constructs an immutable
+`FmOscillatorCurvatureShaper` once per **distinct nonzero** `k`, shared
+within the compiled Synth. Its 4,097 double-precision entries describe
+4,096 monotonic linear-interpolation segments. Table construction uses a
+small-argument `expm1` approximation for numerical stability near
+`k=0`, and preserves exact endpoint entries. The worst-case interpolation
+error across the supported `k` range is under approximately `0.00006`
+relative to the analytic function. Normal sample generation uses only a
+table lookup and interpolation, with no per-sample exponentiation or
+allocation; `k=0` uses a **null shaper/direct linear fast path**. The
+prepared transfer table does not contain voice phase/history and is safe
+to share among independent voices. This is a static waveshaper, not a
+pitch-control exponential converter.
+
+The existing normalized waveform, optional input frequency modulation,
+per-voice phase integration, downstream graph arithmetic/filters, and
+realtime/offline PCM architecture remain unchanged. Tests cover
+analytical fidelity, range/monotonicity, extreme and near-zero `k`,
+identity compatibility, all four waveform types, `Vmin/Vmax` ordering,
+zero per-sample allocation, and identical output across PCM block
+boundaries/phase replay.
+
 ## Persistent graph contract
 
 `FmSoundSourceNode : FmSynthNode` has immutable `SourceId` (stable

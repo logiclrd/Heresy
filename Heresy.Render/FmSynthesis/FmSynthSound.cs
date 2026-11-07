@@ -114,6 +114,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		FmSynthNode Definition,
 		int[] InputIndices,
 		int OscillatorIndex,
+		FmOscillatorCurvatureShaper? Curvature,
 		IEnvelopeCurve? Envelope,
 		FmFilterNodeProcessor? Filter,
 		ISound? Source);
@@ -165,6 +166,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			indexById.Add(ordered[index].Id, index);
 
 		List<CompiledNode> compiled = [];
+		// Preparation cache only: per-frame DSP never computes exponentials.
+		Dictionary<double, FmOscillatorCurvatureShaper> curvatureByK = [];
 		int oscillatorIndex = 0;
 		foreach (FmSynthNode node in ordered)
 		{
@@ -186,6 +189,16 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					? oscillatorIndex++
 					: -1;
 
+			FmOscillatorCurvatureShaper? curvature = null;
+			if (node is FmOscillatorNode oscillator && oscillator.Curvature != 0.0)
+			{
+				if (!curvatureByK.TryGetValue(oscillator.Curvature, out curvature))
+				{
+					curvature = new FmOscillatorCurvatureShaper(oscillator.Curvature);
+					curvatureByK.Add(oscillator.Curvature, curvature);
+				}
+			}
+
 			ISound? sourceSound = null;
 			if (node is FmSoundSourceNode sourceNode
 				&& !sourceNode.SourceId.IsNone)
@@ -200,6 +213,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					node,
 					inputs,
 					phaseIndex,
+					curvature,
 					curve,
 					node is FmFilterNode filter
 						? new FmFilterNodeProcessor(filter, indexById) : null,
@@ -1237,6 +1251,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					throw new ArgumentOutOfRangeException(
 						nameof(oscillator.Waveform)),
 			};
+
+		// k == 0 takes this direct branch: no table or exponential work.
+		if (compiled.Curvature is { } curvature)
+			normalized = curvature.Transform(normalized);
 
 		double midpoint =
 			(oscillator.Minimum
