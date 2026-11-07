@@ -154,6 +154,7 @@ public static class FmSynthDocumentEditor
 				if (node is not FmConstantNode
 					&& node is not FmNoiseNode
 					&& node is not FmOscillatorNode
+					&& node is not FmMultiNode
 					&& node is not FmEnvelopeNode
 					&& node is not FmFilterNode
 					&& node is not FmOperatorNode)
@@ -342,6 +343,15 @@ public static class FmSynthDocumentEditor
 		return id;
 	}
 
+	public static int AddMultiNode(
+		DocumentWorkspace workspace, FmSynthDefinition synth,
+		double x, double y)
+	{
+		int id = NextNodeId(ValidateSynth(workspace, synth));
+		AddNode(workspace, synth, new FmMultiNode(id), x, y);
+		return id;
+	}
+
 	public static int AddFilterNode(
 		DocumentWorkspace workspace, FmSynthDefinition synth,
 		double x, double y)
@@ -443,6 +453,12 @@ public static class FmSynthDocumentEditor
 						oscillator.ExponentialMultiplier,
 						oscillator.Constant,
 						oscillator.Curvature);
+				break;
+
+			case FmMultiNode multi when targetInputIndex == 0:
+				if (multi.InputNodeId == sourceNodeId)
+					return;
+				replacement = multi.WithInput(sourceNodeId);
 				break;
 
 			case FmSoundSourceNode sourceNode
@@ -657,6 +673,8 @@ public static class FmSynthDocumentEditor
 					exponentialMultiplier: oscillator.ExponentialMultiplier,
 					constant: oscillator.Constant,
 					curvature: oscillator.Curvature),
+
+			FmMultiNode multi => multi.WithInput(null),
 
 			FmSoundSourceNode source =>
 				new FmSoundSourceNode(source.Id, source.SourceId,
@@ -892,6 +910,10 @@ public static class FmSynthDocumentEditor
 					oscillator.ExponentialMultiplier,
 					oscillator.Constant,
 					oscillator.Curvature),
+			FmMultiNode multi => new FmMultiNode(multi.Id, multi.InputNodeId,
+				multi.Distribution, multi.Detune, multi.VoiceCount,
+				multi.HarmonicComponents, multi.ChordComponents,
+				multi.RandomizePhase, multi.GainCompensation, multi.CycleLength),
 			FmSoundSourceNode source =>
 				new FmSoundSourceNode(source.Id,
 					source.SourceId.IsNone ? ObjectId.None
