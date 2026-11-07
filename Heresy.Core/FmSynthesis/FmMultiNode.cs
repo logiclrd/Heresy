@@ -27,7 +27,7 @@ public sealed class FmMultiNode : FmSynthNode
         double detune = 12.0, int voiceCount = 7,
         string harmonicComponents = "1 2 3",
         string chordComponents = "0 4 7",
-        bool randomizePhase = true, bool gainCompensation = true,
+        bool randomizePhase = true, bool? gainCompensation = null,
         double? cycleLength = null)
         : base(id)
     {
@@ -54,7 +54,10 @@ public sealed class FmMultiNode : FmSynthNode
         HarmonicComponents = harmonicComponents;
         ChordComponents = chordComponents;
         RandomizePhase = randomizePhase;
-        GainCompensation = gainCompensation;
+        GainCompensation = gainCompensation ?? distribution == FmMultiDistribution.Spread;
+        if (GetFrequencyRatios().Any(ratio => !double.IsFinite(ratio) || ratio <= 0))
+            throw new ArgumentOutOfRangeException(nameof(chordComponents),
+                "Component frequencies must resolve to positive finite ratios.");
         CycleLength = cycleLength;
     }
 
