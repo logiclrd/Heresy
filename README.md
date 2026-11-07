@@ -106,6 +106,16 @@ File → Open chooses a path before the dirty-document prompt. The current
 document remains intact if opening or asset recovery fails. The UI displays
 audio health and bounded sequencing/export diagnostics.
 
+**View → Output oscilloscope** opens a resizable pane that can dock on the
+left, right, top or bottom of the workspace. It plots the final PCM samples
+queued to SDL after mixing, spatialization and per-speaker processing,
+including underrun silence—not a microphone or hardware loopback recording.
+Its roughly 30 Hz display uses a native PCM frame per horizontal pixel,
+overlays front-left/front-right traces by default, and lets the user select
+individual mono, stereo, 5.1 or 7.1 channels. The bounded capture is disabled
+while the pane is hidden and never blocks the SDL callback.
+See [audio output](docs/audio-output.md).
+
 Detailed editing and keyboard contracts were **moved, not discarded**, from
 the former oversized README to [UI workflows](docs/user-interface-workflows.md).
 Additional references: [editor redesign](docs/ui-editor-redesign.md),
@@ -113,6 +123,55 @@ Additional references: [editor redesign](docs/ui-editor-redesign.md),
 [envelope graph](docs/envelope-graph.md),
 [instrument tone grid](docs/instrument-tone-grid-model.md) and
 [playback snapshots](docs/playback-snapshots.md).
+
+## Synth graph and sound shaping
+
+A **Synth** patch is a persistent audio graph with Sine, Triangle, Sawtooth
+and Square oscillators, native-rate noise, constants, shared Envelopes,
+arithmetic Operators, reusable Filter chains, and **Source** nodes that can
+play a Sample, Instrument or another Synth. Oscillator and Source frequencies
+normally follow the played note; each also has a **Constant** option for
+fixed-rate sound or modulation, independent of the requested note's pitch.
+Graph wiring and parameters survive song save/reload and cross-song imports.
+
+Oscillators offer a **Curvature** parameter (−32 to +32) for exponential
+waveshaping *before* the configured minimum/maximum amplitude bounds;
+zero preserves the unshaped waveform. The inspector displays a live,
+resizable **three-cycle waveform preview** that responds to Waveform and
+Curvature changes. This shows the oscillator's normalized waveform,
+not the audio currently being sent to the device.
+
+### Multi: unison, harmonics and chords
+
+A **Multi** node accepts one upstream audio subgraph, plays independently
+pitched instances of it, then mixes their outputs. Each instance has its
+own oscillator phases, sample playheads and stateful filters; it works with
+PCM-backed Sources and nested graph expressions, not just oscillators.
+
+| Distribution | Configuration | Example |
+| --- | --- | --- |
+| **Spread** | Voice Count and total Detune width in cents; pitches are evenly spaced around the requested note | 7 voices over 12 cents |
+| **Harmonic** | Whitespace-separated frequency ratios, including fractions | `1/2 1 2 3` |
+| **Chord** | Whitespace-separated signed semitone offsets, also accepting fractions/microtones | `0 4 7` or `0 7/2 12` |
+
+**Gain Compensation** selects an arithmetic mean instead of additive
+mixing; its default is on for Spread and off for Harmonic/Chord, but can be
+overridden. **Randomize Phase** starts each input instance at a reproducible
+independent position within a cycle—even for PCM samples—with an onset
+fade proportional to the skipped samples. An optional **Override cycle**
+specifies fractional samples per cycle at neutral C4 and a 48 kHz reference
+rate; otherwise the period is inferred from a simple oscillator or from the
+requested note's nominal pitch.
+
+The **Presets** selector provides **Super saw/super square** (7 voices,
+12 cents), **Unison** (2, 15 cents), **Chorus** (4, 25 cents), **Power Chord**
+(`1 3/2 2` harmonic ratios), and Major/Minor **Third**, **Sixth** and
+**Triad** chord presets. Applying a preset always enables phase randomization
+and resets Gain Compensation for that distribution, even if the distribution
+was already selected; users can then adjust either setting manually.
+
+See the [Synth graph design and rendering contract](docs/synth-sound-source.md)
+and [Synth editing workflows](docs/user-interface-workflows.md) for details.
 
 ## Source of truth
 
