@@ -5,25 +5,6 @@ architecture and implemented behavior belong in the [documentation index](README
 and linked design contracts; completed milestones remain available in Git history.
 Do not reintroduce completed-task checklists here.
 
-## Synth oscillator curvature and realtime visualization
-
-- [ ] **Add a realtime output-waveform dock to the main window.**
-  Make the pane toggleable, dockable by dragging to **any window edge**,
-  and resizable. When visible, draw the **latest audio actually delivered
-  to the SDL output stream**, including output-channel processing and
-  underrun-filled silence, rather than an upstream synth-only preview.
-  Display **one output PCM frame per horizontal pixel column** (no
-  peak/envelope downsampling), using the newest available frames.
-  Refresh at a UI-safe realtime cadence; gaps in observed samples or
-  overwritten intermediate blocks are acceptable when updates are
-  farther apart. Keep capture bounded and thread-safe, with no blocking,
-  allocation-heavy work, or UI calls in the SDL callback, and no impact
-  on realtime audio deadlines. Specify a readable channel-display policy
-  for mono/stereo/surround output during implementation. Verify docking,
-  visibility, resizing, start/stop, session replacement, underruns, and
-  lack of observable audio regression. See [audio output](audio-output.md)
-  and [UI workflows](user-interface-workflows.md).
-
 ## Desktop and listening acceptance
 
 ### Pattern editing
