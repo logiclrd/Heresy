@@ -259,7 +259,8 @@ public static class FmSynthDocumentEditor
 		double maximum = 1.0,
 		int? multiplierNodeId = null,
 		bool exponentialMultiplier = false,
-		bool constant = false)
+		bool constant = false,
+		double curvature = 0.0)
 	{
 		int id = NextNodeId(
 			ValidateSynth(
@@ -276,7 +277,8 @@ public static class FmSynthDocumentEditor
 				maximum,
 				multiplierNodeId,
 				exponentialMultiplier,
-				constant),
+				constant,
+				curvature),
 			x,
 			y);
 		return id;
@@ -439,7 +441,8 @@ public static class FmSynthDocumentEditor
 						oscillator.Maximum,
 						sourceNodeId,
 						oscillator.ExponentialMultiplier,
-						oscillator.Constant);
+						oscillator.Constant,
+						oscillator.Curvature);
 				break;
 
 			case FmSoundSourceNode sourceNode
@@ -652,7 +655,8 @@ public static class FmSynthDocumentEditor
 					oscillator.Maximum,
 					multiplierNodeId: null,
 					exponentialMultiplier: oscillator.ExponentialMultiplier,
-					constant: oscillator.Constant),
+					constant: oscillator.Constant,
+					curvature: oscillator.Curvature),
 
 			FmSoundSourceNode source =>
 				new FmSoundSourceNode(source.Id, source.SourceId,
@@ -886,7 +890,8 @@ public static class FmSynthDocumentEditor
 					oscillator.Maximum,
 					oscillator.MultiplierNodeId,
 					oscillator.ExponentialMultiplier,
-					oscillator.Constant),
+					oscillator.Constant,
+					oscillator.Curvature),
 			FmSoundSourceNode source =>
 				new FmSoundSourceNode(source.Id,
 					source.SourceId.IsNone ? ObjectId.None
