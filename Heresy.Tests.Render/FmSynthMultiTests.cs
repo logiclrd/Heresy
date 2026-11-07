@@ -100,6 +100,31 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void DownstreamEnvelopeReleaseKeepsWrappedOscillatorAudible()
+    {
+        ObjectId envelopeId = (ObjectId)801U;
+        FmSynthGraph graph = new([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Square, 50),
+            new FmMultiNode(2, 1, voiceCount: 1, randomizePhase: false),
+            new FmEnvelopeNode(3, envelopeId),
+            new FmOperatorNode(4, FmOperatorKind.Multiply, [2, 3]),
+        ], 4);
+        FmSynthSound sound = new(graph, new TenFrameRelease(envelopeId));
+        SoundState state = sound.CreateState();
+        state.NoteOffTime = TimeSpan.FromSeconds(3.0 / 1000);
+        RenderContext context = new(new RenderConfiguration(1000, [
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
+        ]));
+        float[] output = new float[20];
+        sound.Render(context, state, 0, output.Length, output);
+        Math.Abs(output[8]).Should().BeGreaterThan(0.1f,
+            "an audible downstream release envelope must keep the internal oscillator alive");
+        Math.Abs(output[12]).Should().BeGreaterThan(0.1f);
+        output[13].Should().Be(0);
+        output[18].Should().Be(0);
+    }
+
+    [Test]
     public void SampleBackedSquareWaveReceivesRealIndependentOffsetsAndReplaysExactly()
     {
         ObjectId sampleId = (ObjectId)408U;
@@ -172,6 +197,23 @@ public sealed class FmSynthMultiTests
     [
         new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
     ]));
+
+    private sealed class TenFrameRelease : IEnvelopeCurveResolver, IEnvelopeCurve
+    {
+        private readonly ObjectId _id;
+        public TenFrameRelease(ObjectId id) => _id = id;
+        public bool TryResolve(ObjectId id, out IEnvelopeCurve? curve)
+        {
+            curve = id == _id ? this : null;
+            return curve is not null;
+        }
+        public double GetValue(long activeFrame, int sampleRate,
+            long? noteOffActiveFrame)
+            => noteOffActiveFrame.HasValue
+                && activeFrame >= noteOffActiveFrame.Value + 10 ? 0 : 1;
+        public long? GetEndActiveFrameExclusiveAfterNoteOff(
+            long noteOffActiveFrame, int sampleRate) => noteOffActiveFrame + 10;
+    }
 
     private sealed class SourceResolver : ISoundResolver, IEnvelopeCurveResolver
     {
