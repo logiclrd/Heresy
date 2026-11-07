@@ -158,6 +158,30 @@ public sealed class FmSynthGraphTests
 	}
 
 	[Test]
+	public void OscillatorCurvatureDefaultsToZeroAndAcceptsSignedValues()
+	{
+		new FmOscillatorNode(1, FmOscillatorWaveform.Sawtooth, 440.0)
+			.Curvature.Should().Be(0.0);
+		new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 440.0,
+			curvature: -2.5).Curvature.Should().Be(-2.5);
+		new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 440.0,
+			curvature: FmOscillatorNode.MaximumCurvatureMagnitude)
+			.Curvature.Should().Be(FmOscillatorNode.MaximumCurvatureMagnitude);
+	}
+
+	[TestCase(double.NaN)]
+	[TestCase(double.PositiveInfinity)]
+	[TestCase(double.NegativeInfinity)]
+	[TestCase(32.01)]
+	[TestCase(-32.01)]
+	public void OscillatorRejectsInvalidCurvature(double curvature)
+	{
+		Action create = () => new FmOscillatorNode(1,
+			FmOscillatorWaveform.Sine, 440.0, curvature: curvature);
+		create.Should().Throw<ArgumentOutOfRangeException>();
+	}
+
+	[Test]
 	public void ConstantMustBeFinite()
 	{
 		Action action =
