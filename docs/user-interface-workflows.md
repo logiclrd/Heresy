@@ -59,9 +59,11 @@ node and advances the document/audio revision; no-op edits do not.
 Curvature is saved on the oscillator node as `curvature` and retained by
 graph connections/disconnections, cross-song Synth imports, and playback
 snapshots without a persisted schema-version increment. The **sample-level
-exponential shaping** is tracked as a separate open implementation task in
-[todo.md](todo.md): until it is implemented, changing Curvature changes
-the authored parameter but not the generated PCM waveform.
+exponential shaping** is now applied by the prepared oscillator renderer:
+nonzero Curvature shapes the normalized waveform before Vmin/Vmax, while
+zero Curvature preserves the original PCM path. See the
+[Synth sound source contract](synth-sound-source.md) for its transfer function,
+lookup-table approximation, and realtime-performance guarantees.
 
 ## FM oscillator frequency and Constant mode
 
