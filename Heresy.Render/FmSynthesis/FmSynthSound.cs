@@ -36,12 +36,33 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		public long? EndFrame { get; set; }
 	}
 
+
+	private sealed class MultiVoice
+	{
+		public MultiVoice(SoundInvocation invocation, double ratio,
+			FmMultiNode definition, int index)
+		{
+			Invocation = invocation;
+			Ratio = ratio;
+			Definition = definition;
+			Index = index;
+		}
+		public SoundInvocation Invocation { get; }
+		public double Ratio { get; }
+		public FmMultiNode Definition { get; }
+		public int Index { get; }
+		public int SkipFrames { get; set; }
+		public int FadeFrames { get; set; }
+		public bool Initialized { get; set; }
+		public long? SilenceEnd { get; set; }
+	}
+
 	private sealed class FmSynthState : SoundState
 	{
 		public FmSynthState(
 			int nodeCount,
 			int oscillatorCount,
-			SourceVoice?[] sources,
+			SourceVoice?[] sources, MultiVoice[][] multis,
 			double boundPitch, double boundSpeed)
 		{
 			BoundPitch = boundPitch;
@@ -52,6 +73,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			Phases = new double[oscillatorCount];
 			Filters = new FmFilterNodeProcessor.State?[nodeCount];
 			Sources = sources;
+			Multis = multis;
 		}
 
 		public double[] Values { get; }
@@ -60,6 +82,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		public double[] Phases { get; }
 		public FmFilterNodeProcessor.State?[] Filters { get; }
 		public SourceVoice?[] Sources { get; private set; }
+		public MultiVoice[][] Multis { get; private set; }
 		public double BoundPitch { get; }
 		public double BoundSpeed { get; }
 		public RenderContext? MonoContext { get; set; }
@@ -74,12 +97,25 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				if (Sources[i] is { } child)
 					child.Invocation.State.SetNoiseSeed(unchecked(
 						seed ^ (0x9E3779B97F4A7C15UL * (ulong)(i + 1))));
+			foreach (MultiVoice[] voices in Multis)
+				foreach (MultiVoice voice in voices)
+				{
+					voice.Invocation.State.SetNoiseSeed(MultiHash(seed
+						^ ((ulong)(uint)voice.Definition.Id << 32)
+						^ (ulong)(uint)(voice.Index + 1)));
+					voice.Initialized = false;
+					voice.SilenceEnd = null;
+				}
 		}
 		public bool ChildEndChanged { get; set; }
+		// Preserve an external Multiply-envelope release through a Multi
+		// boundary without changing the inner subgraph's note-off event.
+		public long? InheritedAudioReleaseEnd { get; set; }
 
 		public void Reset(int sampleRate)
 		{
-			if (Sources.Any(source => source is not null) && SampleRate != 0)
+			if ((Sources.Any(source => source is not null)
+				|| Multis.Any(voices => voices.Length != 0)) && SampleRate != 0)
 				throw new InvalidOperationException(
 					"Seek or format change requires PrepareReplay at a producer/control boundary.");
 			ClearRenderHistory(sampleRate);
@@ -91,6 +127,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			// integrated positions, script-selected tones and filter histories
 			// are invocation-local and must start from fresh state.
 			Sources = rebuilt.Sources;
+			Multis = rebuilt.Multis;
 			MonoContext = rebuilt.MonoContext;
 			StereoChildContext = rebuilt.StereoChildContext;
 			SetNoiseSeed(NoiseSeed); // propagate original invocation identity
@@ -104,8 +141,15 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			Array.Clear(SilentFrom);
 			Array.Clear(Phases);
 			Array.Clear(Filters); // never reuse histories after rewind/rate change
+			foreach (MultiVoice[] voices in Multis)
+				foreach (MultiVoice voice in voices)
+				{
+					voice.Initialized = false;
+					voice.SilenceEnd = null;
+				}
 			NextFrame = 0;
 			ChildEndChanged = false;
+			InheritedAudioReleaseEnd = null;
 			SampleRate = sampleRate;
 		}
 	}
@@ -117,7 +161,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		FmOscillatorCurvatureShaper? Curvature,
 		IEnvelopeCurve? Envelope,
 		FmFilterNodeProcessor? Filter,
-		ISound? Source);
+		ISound? Source,
+		FmSynthSound? MultiInput);
 
 	private readonly CompiledNode[] _nodes;
 	private readonly int _outputIndex;
@@ -154,8 +199,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 
 		Visit(graph.OutputNodeId);
 
-		_hasSources = ordered.Any(node => node is FmSoundSourceNode);
-		if (_hasSources && soundResolver is null)
+		_hasSources = ordered.Any(node => node is FmSoundSourceNode or FmMultiNode);
+		if (ordered.Any(node => node is FmSoundSourceNode) && soundResolver is null)
 			throw new NotSupportedException(
 				"ISound-fed Synth nodes require the prepared child-invocation resolver.");
 		// Input modulation is evaluated in graph order and drives the
@@ -171,10 +216,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		int oscillatorIndex = 0;
 		foreach (FmSynthNode node in ordered)
 		{
-			int[] inputs =
-				node.InputNodeIds
-					.Select(id => indexById[id])
-					.ToArray();
+			int[] inputs = node is FmMultiNode
+				? [] : node.InputNodeIds.Select(id => indexById[id]).ToArray();
 
 			IEnvelopeCurve? curve = null;
 			if (node is FmEnvelopeNode envelope)
@@ -208,6 +251,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				soundResolver!.TryResolve(sourceNode.SourceId,
 					mixdown: false, out sourceSound);
 			}
+			FmSynthSound? multiInput = node is FmMultiNode { InputNodeId: int multiId }
+				? new FmSynthSound(new FmSynthGraph(graph.Nodes, multiId),
+					envelopeResolver, newNotePolicy, soundResolver, preparedChildFilterFactory)
+				: null;
 			compiled.Add(
 				new CompiledNode(
 					node,
@@ -217,12 +264,27 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					curve,
 					node is FmFilterNode filter
 						? new FmFilterNodeProcessor(filter, indexById) : null,
-					sourceSound));
+					sourceSound, multiInput));
 		}
 
 		_nodes = [.. compiled];
 		_outputIndex = indexById[graph.OutputNodeId];
 		_oscillatorCount = oscillatorIndex;
+		if (CountMultiVoices(graph.OutputNodeId) > FmMultiNode.MaximumVoices)
+			throw new NotSupportedException("Multi graph exceeds the 128-voice realtime limit.");
+
+		int CountMultiVoices(int id)
+		{
+			FmSynthNode node = byId[id];
+			if (node is FmMultiNode multi)
+				return multi.InputNodeId is int input
+					? checked(multi.GetFrequencyRatios().Length * CountMultiVoices(input)) : 0;
+			if (node is FmOperatorNode operation)
+				return operation.InputNodeIds.Sum(CountMultiVoices);
+			if (node is FmFilterNode filter && filter.AudioInputNodeId is int audio)
+				return CountMultiVoices(audio);
+			return 1;
+		}
 		_audioReleaseEnvelopeIndices = BuildAudioReleaseEnvelopeDependencies();
 		_maximumAudioPathTailSeconds = GetMaximumAudioPathTailSeconds();
 
@@ -232,8 +294,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				return;
 
 			FmSynthNode node = byId[id];
-			foreach (int inputId in node.InputNodeIds)
-				Visit(inputId);
+			// Multi's input is compiled as a distinct, independently-instantiated
+			// subgraph, never evaluated in the parent's voice state.
+			if (node is not FmMultiNode)
+				foreach (int inputId in node.InputNodeIds)
+					Visit(inputId);
 			ordered.Add(node);
 		}
 	}
@@ -259,6 +324,27 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		if (!(playbackSpeedMultiplier > 0.0) || !double.IsFinite(playbackSpeedMultiplier))
 			throw new ArgumentOutOfRangeException(nameof(playbackSpeedMultiplier));
 		SourceVoice?[] sources = new SourceVoice?[_nodes.Length];
+		MultiVoice[][] multis = new MultiVoice[_nodes.Length][];
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			CompiledNode compiled = _nodes[i];
+			if (compiled.Definition is not FmMultiNode multi
+				|| compiled.MultiInput is not FmSynthSound input)
+			{
+				multis[i] = [];
+				continue;
+			}
+			double[] ratios = multi.GetFrequencyRatios();
+			MultiVoice[] voices = new MultiVoice[ratios.Length];
+			for (int j = 0; j < ratios.Length; j++)
+			{
+				SoundInvocation invocation = input.CreateInvocation(
+					pitchMultiplier * ratios[j], playbackSpeedMultiplier);
+				voices[j] = new MultiVoice(invocation, ratios[j], multi, j);
+			}
+			multis[i] = voices;
+		}
+
 		for (int i = 0; i < _nodes.Length; i++)
 		{
 			if (_nodes[i].Definition is not FmSoundSourceNode node
@@ -288,7 +374,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				sources[i] = voice;
 			}
 		}
-		FmSynthState state = new(_nodes.Length, _oscillatorCount, sources,
+		FmSynthState state = new(_nodes.Length, _oscillatorCount, sources, multis,
 			pitchMultiplier, playbackSpeedMultiplier)
 		{
 			PitchMultiplier = pitchMultiplier,
@@ -401,6 +487,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			if (source?.Invocation.Sound is FmSynthSound nested)
 				prepared += nested.PreparePendingFilterControls(context,
 					source.Invocation.State);
+		foreach (MultiVoice[] voices in synthState.Multis)
+			foreach (MultiVoice voice in voices)
+				if (voice.Invocation.Sound is FmSynthSound nested)
+					prepared += nested.PreparePendingFilterControls(
+						synthState.MonoContext ?? context, voice.Invocation.State);
 		return prepared;
 	}
 
@@ -417,6 +508,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
         foreach (SourceVoice? source in synthState.Sources)
             if (source?.Invocation.Sound is IFirPreparationSound nested)
                 nested.AdoptPreparedFirControls(source.Invocation.State);
+        foreach (MultiVoice[] voices in synthState.Multis)
+            foreach (MultiVoice voice in voices)
+                if (voice.Invocation.Sound is IFirPreparationSound nested)
+                    nested.AdoptPreparedFirControls(voice.Invocation.State);
     }
 
     public void QueuePendingFirControls(SoundState state,
@@ -430,6 +525,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
         foreach (SourceVoice? source in synthState.Sources)
             if (source?.Invocation.Sound is IFirPreparationSound nested)
                 nested.QueuePendingFirControls(source.Invocation.State, scheduler);
+        foreach (MultiVoice[] voices in synthState.Multis)
+            foreach (MultiVoice voice in voices)
+                if (voice.Invocation.Sound is IFirPreparationSound nested)
+                    nested.QueuePendingFirControls(voice.Invocation.State, scheduler);
     }
 
 	public long? GetEndFrameExclusive(
@@ -494,6 +593,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					foreach (int input in compiled.InputIndices)
 						Visit(input);
 					break;
+				case FmMultiNode:
+					// Subgraph's internal filters already own their tails.
+					break;
 			}
 		}
 	}
@@ -511,7 +613,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		for (int target = 0; target < _nodes.Length; target++)
 		{
 			CompiledNode node = _nodes[target];
-			if (node.Definition is not (FmOscillatorNode or FmConstantNode or FmNoiseNode))
+			if (node.Definition is not (FmOscillatorNode or FmConstantNode or FmNoiseNode or FmMultiNode))
 			{
 				dependencies[target] = [];
 				continue;
@@ -571,9 +673,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	}
 
 	private long? GetIndependentAudioReleaseEnd(
-		int nodeIndex, long offFrame, int sampleRate)
+		int nodeIndex, long offFrame, int sampleRate, FmSynthState state)
 	{
 		long until = checked(offFrame + 1); // existing one-frame anti-click
+		if (state.InheritedAudioReleaseEnd is long inherited)
+			until = Math.Max(until, inherited);
 		foreach (int envelopeIndex in _audioReleaseEnvelopeIndices[nodeIndex])
 		{
 			IEnvelopeCurve? curve = _nodes[envelopeIndex].Envelope;
@@ -627,14 +731,27 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					FmOperatorNode op => GetOperatorSilenceEnd(
 						op.Operation, node.InputIndices, silentFrom),
 					FmSoundSourceNode => GetChildSourceSilenceEnd(state, index),
+					FmMultiNode => GetMultiSilenceEnd(state, index),
 					FmConstantNode or FmOscillatorNode or FmNoiseNode => released.HasValue
 						? GetIndependentAudioReleaseEnd(index,
-							noteOffFrame, sampleRate) : null,
+							noteOffFrame, sampleRate, state) : null,
 					_ => null,
 				};
 			}
 		}
 		return silentFrom[_outputIndex];
+	}
+
+	private static long? GetMultiSilenceEnd(FmSynthState state, int index)
+	{
+		long max = 0;
+		foreach (MultiVoice voice in state.Multis[index])
+		{
+			if (voice.SilenceEnd is not long end)
+				return null;
+			max = Math.Max(max, end);
+		}
+		return max;
 	}
 
 	private static long? GetChildSourceSilenceEnd(FmSynthState state, int index)
@@ -886,6 +1003,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						EvaluateSource(sourceNode, compiled, state, index,
 							frame, context.Configuration.SampleRate, noteOffFrame),
 
+					FmMultiNode multi => EvaluateMulti(multi, state, index,
+						frame, context),
+
 					FmOscillatorNode oscillator =>
 						EvaluateOscillator(
 							oscillator,
@@ -921,6 +1041,103 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		}
 
 		return state.AudioValues[_outputIndex];
+	}
+
+	private static ulong MultiHash(ulong word)
+	{
+		unchecked
+		{
+			word += 0x9E3779B97F4A7C15UL;
+			word = (word ^ (word >> 30)) * 0xBF58476D1CE4E5B9UL;
+			word = (word ^ (word >> 27)) * 0x94D049BB133111EBUL;
+			return word ^ (word >> 31);
+		}
+	}
+
+	private double EvaluateMulti(FmMultiNode multi, FmSynthState state,
+		int index, long frame, RenderContext context)
+	{
+		MultiVoice[] voices = state.Multis[index];
+		if (voices.Length == 0)
+			return 0.0;
+		int sampleRate = context.Configuration.SampleRate;
+		long? externalEnd = null;
+		if (state.NoteOffTime is TimeSpan releasedTime)
+		{
+			long releaseFrame = FrameTime.Ceiling(releasedTime, sampleRate);
+			externalEnd = GetIndependentAudioReleaseEnd(index,
+				releaseFrame, sampleRate, state) ?? long.MaxValue;
+		}
+		double sum = 0.0;
+		Span<float> sample = stackalloc float[1];
+		foreach (MultiVoice voice in voices)
+		{
+			SoundState child = voice.Invocation.State;
+			// Maintain the parent's pitch trajectory without a seek or
+			// child invocation allocation during ordinary sample evaluation.
+			child.PitchMultiplier = state.PitchMultiplier * voice.Ratio
+				* state.PitchTrajectory.GetMultiplier(frame);
+			child.PlaybackSpeedMultiplier = state.PlaybackSpeedMultiplier;
+			if (!voice.Initialized)
+			{
+				double frequency = FmMultiNode.NeutralFrequencyHz
+					* child.PitchMultiplier * child.PlaybackSpeedMultiplier;
+				// A sole unmodulated oscillator has a knowable cycle;
+				// other graphs inherit the requested note's nominal pitch.
+				if (multi.CycleLength is null && _nodes[index].MultiInput is { } sub
+					&& sub._nodes[sub._outputIndex].Definition is FmOscillatorNode
+						{ MultiplierNodeId: null } oscillator)
+					frequency = oscillator.FrequencyHz *
+						(oscillator.Constant ? 1.0
+							: child.PitchMultiplier * child.PlaybackSpeedMultiplier);
+				double length = multi.CycleLength is double overrideLength
+					? overrideLength * sampleRate / FmMultiNode.ReferenceSampleRate
+						* FmMultiNode.NeutralFrequencyHz / frequency
+					: sampleRate / frequency;
+				if (!double.IsFinite(length) || length > 1000000.0)
+					throw new InvalidOperationException(
+						"Multi cycle length exceeds the one-million-frame safety limit.");
+				int cycle = Math.Max(1, (int)Math.Round(length));
+				voice.SkipFrames = multi.RandomizePhase
+					? (int)(MultiHash(state.NoiseSeed
+						^ ((ulong)(uint)multi.Id << 32)
+						^ (ulong)(uint)(voice.Index + 1)) % (ulong)cycle)
+					: 0;
+				voice.FadeFrames = (voice.SkipFrames + 1) / 2;
+				voice.Initialized = true;
+			}
+			long displaced = checked(frame + voice.SkipFrames);
+			child.NoteOffTime = state.NoteOffTime is TimeSpan off
+				? off + TimeSpan.FromSeconds((double)voice.SkipFrames / sampleRate)
+				: null;
+			if (child is FmSynthState inner)
+				inner.InheritedAudioReleaseEnd = externalEnd is long releaseEnd
+					? releaseEnd >= long.MaxValue - voice.SkipFrames
+						? long.MaxValue : releaseEnd + voice.SkipFrames
+					: null;
+			sample[0] = 0;
+			voice.Invocation.Sound.Render(state.MonoContext!, child,
+				displaced, 1, sample);
+			double amplitude = sample[0];
+			if (voice.FadeFrames > 0 && frame < voice.FadeFrames)
+			{
+				double t = (double)frame / voice.FadeFrames;
+				amplitude *= 0.5 - 0.5 * Math.Cos(Math.PI * t);
+			}
+			sum += amplitude;
+			long? end = voice.Invocation.Sound.GetEndFrameExclusive(
+				state.MonoContext!, child);
+			if (end.HasValue)
+			{
+					long audibleEnd = Math.Max(0L, end.Value - voice.SkipFrames);
+					if (voice.SilenceEnd != audibleEnd)
+					{
+						voice.SilenceEnd = audibleEnd;
+						state.ChildEndChanged = true;
+					}
+				}
+		}
+		return multi.GainCompensation ? sum / voices.Length : sum;
 	}
 
 	private static double ProcessAudioFilter(CompiledNode node,

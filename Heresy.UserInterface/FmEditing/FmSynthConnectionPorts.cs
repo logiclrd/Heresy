@@ -65,6 +65,7 @@ public static class FmSynthConnectionPorts
 		{
 			FmOscillatorNode => 1,
 			FmSoundSourceNode => 1,
+			FmMultiNode => 1,
 			FmFilterNode filter => filter.GetPorts().Count,
 			FmOperatorNode operation => operation.InputNodeIds.Count + 1,
 			_ => 0,

@@ -16,6 +16,62 @@ backward replay, lifecycle work or later test slices are `TODO` applied
 **at that milestone**, not to the current implementation.
 Refer only to [open work](todo.md) for outstanding tasks.
 
+## Multi polyphonic input wrapper (7 November 2026)
+
+`FmMultiNode` is a first-class Synth graph node with one optional audio
+input. Unlike a serial Filter stage, it compiles that input's graph ancestry
+as an independent `FmSynthSound` definition. The immutable compiled
+definition may be shared, but each constituent receives a separate
+`SoundInvocation`, oscillator phases, nested Sources, pitch curves and
+Filter histories. Upstream graph nodes may also have non-Multi consumers;
+those consumers retain their own independent state. Nested Multis are
+permitted subject to a 128-concurrent-constituent preparation cap.
+
+A Multi expresses its distribution as frequency ratios relative to the
+requested note. Spread places `VoiceCount` pitches evenly over `Detune`
+total cents, symmetric around zero; a single voice is exactly centered.
+Harmonic lists positive ratios; Chord lists floating semitones and converts
+each to `2^(s/12)`. Whitespace-separated decimal or `numerator/denominator`
+notations are accepted in both. Separate inactive Harmonic/Chord authored
+texts are retained so mode switching does not reinterpret an invalid
+harmonic zero from a Chord component.
+
+`Gain Compensation` applies an arithmetic average when enabled and a raw
+sum otherwise. Changing Distribution resets this checkbox to enabled for
+Spread and disabled for Harmonic/Chord. `Randomize Phase` is a separate
+persisted checkbox, enabled initially and unchanged by manual Distribution
+changes. Selecting any of the ten presets always reapplies its parameters,
+resets Gain Compensation for its mode and **enables** Randomize Phase even
+when Distribution did not actually change. Presets do not modify the cycle
+override.
+
+Random phase is a deterministic voice-local displacement of the *entire*
+input playback graph, including PCM and stateful filters, rather than an
+oscillator-only phase tweak. A pseudorandom number of frames is skipped
+between zero and one inferred or overridden cycle. The audio from that
+displaced state is faded in over half the number of skipped samples with a
+half-cosine envelope; zero skip needs no fade. The child note-off timestamp
+is adjusted by the skip so the audible note-off remains at the authored
+parent time. Each note's seed, Multi identity and constituent index
+determine repeatable phase offsets, including after explicit replay.
+
+The optional persisted `Cycle Length` is a positive finite fractional
+sample count at **C4** and **48,000 Hz**. The renderer scales it by actual
+sample rate and requested constituent frequency before rounding to an
+integer. Without an override, a simple oscillator with no multiplier input
+supplies its own known frequency; all other graphs assume their requested
+nominal musical pitch. The inferred value is never serialized. In the UI,
+`Override cycle` controls whether the field is visible and persisted:
+when unchecked, the inspector retains an unpublished draft until the user
+leaves this node, but the graph retains `null`. The processor enforces a
+bounded 16,384-reference-sample override and a million-frame resolved-cycle
+safety limit.
+
+The voice-level output is always scalar, after each constituent's own
+processing and optional phase fade. This design does not assume a specific
+waveform generator; sampled square-wave inputs receive independent phase
+offsets just as synthesized square waves do.
+
 ## Oscillator curvature transfer (7 November 2026)
 
 Each `FmOscillatorNode` has a persisted `Curvature` parameter `k`
