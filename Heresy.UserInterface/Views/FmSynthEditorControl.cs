@@ -850,8 +850,46 @@ public sealed class FmSynthEditorControl : UserControl
 				IsChecked = node.ExponentialMultiplier,
 			};
 
-		AddField("Waveform", waveform);
-		AddField("Curvature", curvature);
+		// Waveform and Curvature share the left cell; their live three-cycle
+		// preview fills the right cell without rebuilding the inspector.
+		FmSynthWaveformPreview preview =
+			new(node.Waveform, node.Curvature);
+		StackPanel waveformControls = new()
+		{
+			Spacing = 6,
+			Margin = new Thickness(0, 0, 6, 0),
+		};
+		waveformControls.Children.Add(new TextBlock
+		{
+			Text = "Waveform",
+			FontWeight = FontWeight.SemiBold,
+		});
+		waveformControls.Children.Add(waveform);
+		waveformControls.Children.Add(new TextBlock
+		{
+			Text = "Curvature",
+			FontWeight = FontWeight.SemiBold,
+		});
+		waveformControls.Children.Add(curvature);
+
+		Grid waveformRow = new();
+		waveformRow.ColumnDefinitions.Add(
+			new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+		waveformRow.ColumnDefinitions.Add(
+			new ColumnDefinition(new GridLength(1, GridUnitType.Star)));
+		waveformRow.Children.Add(waveformControls);
+		Border previewBorder = new()
+		{
+			BorderBrush = Brushes.Gray,
+			BorderThickness = new Thickness(1),
+			CornerRadius = new CornerRadius(4),
+			Background = Brushes.Black,
+			Margin = new Thickness(6, 0, 0, 0),
+			Child = preview,
+		};
+		Grid.SetColumn(previewBorder, 1);
+		waveformRow.Children.Add(previewBorder);
+		_inspector.Children.Add(waveformRow);
 		AddField("Frequency Hz", frequency);
 		_inspector.Children.Add(constant);
 		AddField("Vmin", minimum);
@@ -859,12 +897,26 @@ public sealed class FmSynthEditorControl : UserControl
 		AddField("Multiplier input", multiplier);
 		_inspector.Children.Add(exponential);
 
+		void RefreshPreview()
+		{
+			FmOscillatorNode current = (FmOscillatorNode)CurrentNode(node.Id);
+			preview.SetParameters(current.Waveform, current.Curvature);
+		}
 		BindParameterSelection(
 			waveform,
 			() => ((FmOscillatorNode)CurrentNode(node.Id)).Waveform,
-			item => UpdateOscillator(node.Id, waveform: (FmOscillatorWaveform)item));
-		BindParameterText(curvature, text => UpdateOscillator(node.Id,
-			curvature: ParseDouble(text, "Curvature")));
+			item =>
+			{
+				UpdateOscillator(node.Id,
+					waveform: (FmOscillatorWaveform)item);
+				RefreshPreview();
+			});
+		BindParameterText(curvature, text =>
+		{
+			UpdateOscillator(node.Id,
+				curvature: ParseDouble(text, "Curvature"));
+			RefreshPreview();
+		});
 
 		BindParameterText(
 			frequency,
