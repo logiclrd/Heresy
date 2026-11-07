@@ -56,6 +56,20 @@ numeric entry and the existing Enter/focus-loss commit and Escape draft-revert
 behavior. Each successful change replaces that oscillator's immutable graph
 node and advances the document/audio revision; no-op edits do not.
 
+**Oscillator waveform preview:** Waveform and Curvature controls occupy the
+left cell of a two-column inspector row. The right cell contains a
+resizable graph of exactly three cycles of the selected oscillator's
+*normalized waveform*, over continuous phase `[0.5, 3.5]`; the left/right
+edges correspond to phases 0.5/3.5 and integer-phase cycle resets occur
+at 1, 2, and 3. The graph uses the renderer's shared waveform evaluator
+and the same prepared Curvature transfer function; it shows the wave
+*before* `Vmin`/`Vmax` scaling. Both Waveform selection and committed
+Curvature edits update the graph immediately without rebuilding the
+inspector or discarding another field's draft. A rejected numeric edit
+does not alter the preview. The graph redraws at the current layout width
+when its inspector is resized; it is an authoring aid, not a live PCM
+oscilloscope.
+
 Curvature is saved on the oscillator node as `curvature` and retained by
 graph connections/disconnections, cross-song Synth imports, and playback
 snapshots without a persisted schema-version increment. The **sample-level
