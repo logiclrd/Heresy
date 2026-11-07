@@ -36,7 +36,7 @@ public sealed class OutputScopeDockTests
 		{
 			host.DockTo(edge);
 			Assert.That(host.Edge, Is.EqualTo(edge));
-			Assert.That(host.Children.OfType<GridSplitter>(), Has.Count.EqualTo(1));
+			Assert.That(host.Children.OfType<GridSplitter>().Count(), Is.EqualTo(1));
 			Assert.That(host.Children.Contains(content), Is.True);
 			if (edge is OutputScopeDockEdge.Top or OutputScopeDockEdge.Bottom)
 			{
