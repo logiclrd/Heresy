@@ -108,6 +108,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				}
 		}
 		public bool ChildEndChanged { get; set; }
+		// Preserve an external Multiply-envelope release through a Multi
+		// boundary without changing the inner subgraph's note-off event.
+		public long? InheritedAudioReleaseEnd { get; set; }
 
 		public void Reset(int sampleRate)
 		{
@@ -146,6 +149,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				}
 			NextFrame = 0;
 			ChildEndChanged = false;
+			InheritedAudioReleaseEnd = null;
 			SampleRate = sampleRate;
 		}
 	}
@@ -609,7 +613,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		for (int target = 0; target < _nodes.Length; target++)
 		{
 			CompiledNode node = _nodes[target];
-			if (node.Definition is not (FmOscillatorNode or FmConstantNode or FmNoiseNode))
+			if (node.Definition is not (FmOscillatorNode or FmConstantNode or FmNoiseNode or FmMultiNode))
 			{
 				dependencies[target] = [];
 				continue;
@@ -669,9 +673,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	}
 
 	private long? GetIndependentAudioReleaseEnd(
-		int nodeIndex, long offFrame, int sampleRate)
+		int nodeIndex, long offFrame, int sampleRate, FmSynthState state)
 	{
 		long until = checked(offFrame + 1); // existing one-frame anti-click
+		if (state.InheritedAudioReleaseEnd is long inherited)
+			until = Math.Max(until, inherited);
 		foreach (int envelopeIndex in _audioReleaseEnvelopeIndices[nodeIndex])
 		{
 			IEnvelopeCurve? curve = _nodes[envelopeIndex].Envelope;
@@ -728,7 +734,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					FmMultiNode => GetMultiSilenceEnd(state, index),
 					FmConstantNode or FmOscillatorNode or FmNoiseNode => released.HasValue
 						? GetIndependentAudioReleaseEnd(index,
-							noteOffFrame, sampleRate) : null,
+							noteOffFrame, sampleRate, state) : null,
 					_ => null,
 				};
 			}
@@ -1055,6 +1061,13 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		if (voices.Length == 0)
 			return 0.0;
 		int sampleRate = context.Configuration.SampleRate;
+		long? externalEnd = null;
+		if (state.NoteOffTime is TimeSpan releasedTime)
+		{
+			long releaseFrame = FrameTime.Ceiling(releasedTime, sampleRate);
+			externalEnd = GetIndependentAudioReleaseEnd(index,
+				releaseFrame, sampleRate, state) ?? long.MaxValue;
+		}
 		double sum = 0.0;
 		Span<float> sample = stackalloc float[1];
 		foreach (MultiVoice voice in voices)
@@ -1097,6 +1110,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			child.NoteOffTime = state.NoteOffTime is TimeSpan off
 				? off + TimeSpan.FromSeconds((double)voice.SkipFrames / sampleRate)
 				: null;
+			if (child is FmSynthState inner)
+				inner.InheritedAudioReleaseEnd = externalEnd is long end
+					? end >= long.MaxValue - voice.SkipFrames
+						? long.MaxValue : end + voice.SkipFrames
+					: null;
 			sample[0] = 0;
 			voice.Invocation.Sound.Render(state.MonoContext!, child,
 				displaced, 1, sample);
