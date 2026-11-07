@@ -54,7 +54,8 @@ public sealed class OutputScopeDockHost : Grid
 			_dragging = false;
 			Point drop = e.GetPosition(this);
 			e.Pointer.Capture(null);
-			if ((drop - _dragStart).Length > 8.0)
+			if (Math.Abs(drop.X - _dragStart.X)
+				+ Math.Abs(drop.Y - _dragStart.Y) > 8.0)
 				DockTo(NearestEdge(drop, Bounds.Size));
 			e.Handled = true;
 		};
