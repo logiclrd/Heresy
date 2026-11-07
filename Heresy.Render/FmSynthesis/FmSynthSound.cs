@@ -195,7 +195,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		Visit(graph.OutputNodeId);
 
 		_hasSources = ordered.Any(node => node is FmSoundSourceNode or FmMultiNode);
-		if (_hasSources && soundResolver is null)
+		if (ordered.Any(node => node is FmSoundSourceNode) && soundResolver is null)
 			throw new NotSupportedException(
 				"ISound-fed Synth nodes require the prepared child-invocation resolver.");
 		// Input modulation is evaluated in graph order and drives the
