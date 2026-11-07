@@ -16,6 +16,7 @@ public enum FmMultiDistribution
 /// when compiling a Synth, never by parsing text in the PCM sample loop.</summary>
 public sealed class FmMultiNode : FmSynthNode
 {
+    private readonly IReadOnlyList<int> _inputs;
     public const double NeutralFrequencyHz = 440.0 * 0.59460355750136053336;
     public const int ReferenceSampleRate = 48000;
     public const int MaximumVoices = 128;
@@ -48,6 +49,8 @@ public sealed class FmMultiNode : FmSynthNode
         ParseComponents(harmonicComponents, requirePositive: true);
         ParseComponents(chordComponents, requirePositive: false);
         InputNodeId = inputNodeId;
+        _inputs = inputNodeId is int input
+            ? Array.AsReadOnly(new[] { input }) : Array.Empty<int>();
         Distribution = distribution;
         Detune = detune;
         VoiceCount = voiceCount;
@@ -73,8 +76,7 @@ public sealed class FmMultiNode : FmSynthNode
     public bool GainCompensation { get; }
     /// <summary>Optional cycle length in samples at C4 and 48 kHz.</summary>
     public double? CycleLength { get; }
-    public override IReadOnlyList<int> InputNodeIds => InputNodeId is int id
-        ? new[] { id } : Array.Empty<int>();
+    public override IReadOnlyList<int> InputNodeIds => _inputs;
 
     public FmMultiNode With(
         int? inputNodeId, FmMultiDistribution distribution,
