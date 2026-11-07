@@ -943,6 +943,22 @@ public static class SongDocumentJson
 					nodeJson["constant"] = oscillator.Constant;
 					break;
 
+				case FmMultiNode multi:
+					nodeJson["type"] = "multi";
+					if (multi.InputNodeId is int multiInput)
+						nodeJson["inputNodeId"] = multiInput;
+					nodeJson["distribution"] = JsonSerializer.SerializeToNode(
+						multi.Distribution, JsonOptions);
+					nodeJson["detune"] = multi.Detune;
+					nodeJson["voiceCount"] = multi.VoiceCount;
+					nodeJson["harmonicComponents"] = multi.HarmonicComponents;
+					nodeJson["chordComponents"] = multi.ChordComponents;
+					nodeJson["randomizePhase"] = multi.RandomizePhase;
+					nodeJson["gainCompensation"] = multi.GainCompensation;
+					if (multi.CycleLength is double cycle)
+						nodeJson["cycleLength"] = cycle;
+					break;
+
 				case FmSoundSourceNode source:
 					nodeJson["type"] = "soundSource";
 					nodeJson["sourceId"] = source.SourceId.Value;
@@ -1121,6 +1137,18 @@ public static class SongDocumentJson
 							node["constant"]?.GetValue<bool>() ?? false,
 							node["curvature"] is null
 								? 0.0 : RequiredDouble(node, "curvature")),
+					"multi" =>
+						new FmMultiNode(
+							nodeId,
+							node["inputNodeId"]?.GetValue<int>(),
+							DeserializeRequired<FmMultiDistribution>(node, "distribution"),
+							RequiredDouble(node, "detune"),
+							RequiredInt32(node, "voiceCount"),
+							RequiredString(node, "harmonicComponents"),
+							RequiredString(node, "chordComponents"),
+							RequiredBoolean(node, "randomizePhase"),
+							RequiredBoolean(node, "gainCompensation"),
+							node["cycleLength"]?.GetValue<double>()),
 					"soundSource" =>
 						new FmSoundSourceNode(
 							nodeId,
