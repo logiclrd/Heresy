@@ -111,7 +111,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 
 		public void Reset(int sampleRate)
 		{
-			if (Sources.Any(source => source is not null) && SampleRate != 0)
+			if ((Sources.Any(source => source is not null)
+				|| Multis.Any(voices => voices.Length != 0)) && SampleRate != 0)
 				throw new InvalidOperationException(
 					"Seek or format change requires PrepareReplay at a producer/control boundary.");
 			ClearRenderHistory(sampleRate);
