@@ -153,6 +153,8 @@ public sealed class MainWindow : Window
 	private readonly Dictionary<SongTreeSection, TreeView> _trees = [];
 	private readonly TextBlock _status;
 	private readonly ContentControl _mainContent = new();
+	private readonly OutputScopeDockHost _scopeHost;
+	private MenuItem? _scopeMenuItem;
 	private Control? _documentView;
 
 	private SongTreeItemViewModel? _selectedItem;
@@ -175,8 +177,10 @@ public sealed class MainWindow : Window
 
 	public MainWindow(
 		ISongPlaybackTransport playbackTransport,
-		AudioOutputSettings settings)
-		: this(new DocumentWorkspace(), playbackTransport, null, settings) { }
+		AudioOutputSettings settings,
+		AudioOutputWaveformCapture? scopeCapture = null)
+		: this(new DocumentWorkspace(), playbackTransport, null,
+			settings, scopeCapture) { }
 
 	public MainWindow(
 		ISongPlaybackTransport playbackTransport,
@@ -201,8 +205,16 @@ public sealed class MainWindow : Window
 		DocumentWorkspace workspace,
 		ISongPlaybackTransport? playbackTransport,
 		SongExportService? exportService,
-		AudioOutputSettings? audioOutputSettings = null)
+		AudioOutputSettings? audioOutputSettings = null,
+		AudioOutputWaveformCapture? scopeCapture = null)
 	{
+		_scopeHost = new OutputScopeDockHost(_mainContent,
+			scopeCapture ?? new AudioOutputWaveformCapture());
+		_scopeHost.ScopeVisibilityChanged += (_, _) =>
+		{
+			if (_scopeMenuItem is not null)
+				_scopeMenuItem.IsChecked = _scopeHost.ScopeVisible;
+		};
 		_workspace = workspace
 			?? throw new ArgumentNullException(nameof(workspace));
 		_playbackTransport = playbackTransport;
@@ -272,6 +284,7 @@ public sealed class MainWindow : Window
 			if (_observedDocument is not null)
 				_observedDocument.Changed -= OnDocumentChanged;
 			_runtimeDiagnosticsWindow?.Close();
+			_scopeHost.Shutdown();
 			if (_playbackPositionTransport is not null)
 			{
 				_playbackPositionTransport.PlaybackPositionChanged -=
@@ -315,7 +328,7 @@ public sealed class MainWindow : Window
 
 		_documentView = BuildDocumentView();
 		_mainContent.Content = _documentView;
-		root.Children.Add(_mainContent);
+		root.Children.Add(_scopeHost);
 		return root;
 	}
 
@@ -564,13 +577,27 @@ public sealed class MainWindow : Window
 				expensiveSeekHintsItem,
 			},
 		};
+		MenuItem scopeItem = new()
+		{
+			Header = "Output _oscilloscope",
+			ToggleType = MenuItemToggleType.CheckBox,
+			IsChecked = _scopeHost.ScopeVisible,
+		};
+		scopeItem.Click += (_, _) =>
+			_scopeHost.SetScopeVisible(scopeItem.IsChecked);
+		_scopeMenuItem = scopeItem;
 		MenuItem diagnosticsItem =
 			new() { Header = "Runtime _Diagnostics..." };
 		diagnosticsItem.Click += (_, _) => ShowRuntimeDiagnostics();
 		MenuItem view = new()
 		{
 			Header = "_View",
-			ItemsSource = new object[] { diagnosticsItem },
+			ItemsSource = new object[]
+			{
+				scopeItem,
+				new Separator(),
+				diagnosticsItem,
+			},
 		};
 		return new Menu
 		{

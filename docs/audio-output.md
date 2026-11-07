@@ -182,3 +182,43 @@ executes scripts, waits, or touches controls.
 Regression coverage exercises empty-ring silence, count increments,
 worker-exception retention, per-session observation/reset, duplicate-fault
 suppression, observer isolation and subscriptions through lazy transport.
+
+## Global output scope — SDL delivery tap
+
+`AudioOutputWaveformCapture` mirrors the final interleaved **float PCM
+successfully queued to the SDL output stream**, immediately after
+`SdlAudioOutputSession.FeedAudio` calls `PutAudioStreamData`. This is
+the already-mixed, spatialized and per-speaker-filtered signal: the
+`BufferedAudioOutputSource` has also supplied zeros wherever its
+realtime ring under-ran. This is **not** an upstream oscillator preview.
+A failed SDL queue is not captured; the sample stream is what was
+submitted to SDL, not a hardware loopback measurement.
+
+The bounded history holds at most **16,384 output frames**, with the
+first eight interleaved output channels. Supported desktop layouts
+(mono, stereo, 5.1 and 7.1) therefore retain every channel. Each SDL
+session creates independent ring storage and an identity token; closing
+an old session cannot clear its replacement or republish old PCM. The
+callback is the single writer and uses per-frame sequence stamps to
+permit concurrent reader snapshots without locks or torn channel frames.
+The callback performs **no UI calls, blocking, or new allocations**.
+Capture is disabled while the View-menu pane is hidden and is reset
+to the newest frames when reopened. Gaps or overwritten frames are
+rendered as gaps rather than fabricated silence.
+
+The Avalonia view refreshes at approximately **30 Hz** on the UI timer
+and draws exactly **one captured PCM frame per physical horizontal
+pixel column** (no peak/envelope downsampling). The newest frames
+appear at the right edge; older history outside the visible width is
+discarded. A real zero sample draws at the center line. Mono uses a
+single light-blue trace; stereo and surround initially overlay front
+left (blue) and front right (orange), with a selector for each speaker
+in canonical order (FL, FR, Center, LFE, Rear L, Rear R, Side L, Side R
+as available). Other channels can be inspected separately. The
+vertical viewport is clamped to ±1 for display without modifying PCM.
+
+The capture is optional: the playback backend constructor and the
+main window may receive a shared capture object. The app creates one
+at startup and supplies it to both, preserving lazy audio
+initialization. Hiding/closing the scope stops the UI timer and disables
+capture without stopping playback. Stop/replacement clears history.

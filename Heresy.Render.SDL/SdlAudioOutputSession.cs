@@ -15,6 +15,8 @@ internal sealed class SdlAudioOutputSession
 	private readonly BufferedAudioOutputSource _source;
 	private readonly Action<SdlAudioOutputSession> _onDisposed;
 	private readonly SdlApi.AudioStreamCallback _callback;
+	private readonly AudioOutputWaveformCapture? _waveformCapture;
+	private readonly AudioOutputWaveformCapture.Session? _captureSession;
 
 	private IntPtr _stream;
 	private Exception? _fault;
@@ -24,7 +26,8 @@ internal sealed class SdlAudioOutputSession
 	public SdlAudioOutputSession(
 		AudioOutputFormat format,
 		IAudioOutputSource source,
-		Action<SdlAudioOutputSession> onDisposed)
+		Action<SdlAudioOutputSession> onDisposed,
+		AudioOutputWaveformCapture? waveformCapture = null)
 	{
 		Format = format;
 		ArgumentNullException.ThrowIfNull(source);
@@ -60,6 +63,8 @@ internal sealed class SdlAudioOutputSession
 		// worker owns the source and publishes bounded interleaved PCM.
 		_source = source as BufferedAudioOutputSource
 			?? new BufferedAudioOutputSource(source);
+		_waveformCapture = waveformCapture;
+		_captureSession = waveformCapture?.BeginSession(format);
 	}
 
 	public AudioOutputFormat Format { get; }
@@ -130,6 +135,8 @@ internal sealed class SdlAudioOutputSession
 
 		if (stream != IntPtr.Zero)
 			SdlApi.DestroyAudioStream(stream);
+		if (_captureSession is { } capture)
+			_waveformCapture!.EndSession(capture);
 		_source.Dispose();
 
 		_onDisposed(this);
@@ -200,6 +207,12 @@ internal sealed class SdlAudioOutputSession
 					SetFault(
 						new InvalidOperationException(
 							$"SDL could not queue audio data: {SdlApi.GetError()}"));
+				}
+				else if (_captureSession is { } capture)
+				{
+					// This is the actual post-mix/filter/underrun-pad PCM that
+					// SDL accepted, not an earlier synthesized source buffer.
+					_waveformCapture!.Publish(capture, destination);
 				}
 			}
 			finally

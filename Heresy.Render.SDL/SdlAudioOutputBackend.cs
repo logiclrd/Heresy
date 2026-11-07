@@ -12,10 +12,12 @@ public sealed class SdlAudioOutputBackend
 {
 	private readonly object _gate = new();
 	private readonly HashSet<SdlAudioOutputSession> _sessions = [];
+	private readonly AudioOutputWaveformCapture? _waveformCapture;
 	private bool _disposed;
 
-	public SdlAudioOutputBackend()
+	public SdlAudioOutputBackend(AudioOutputWaveformCapture? waveformCapture = null)
 	{
+		_waveformCapture = waveformCapture;
 		if (!SdlApi.InitSubSystem(SdlApi.InitFlags.Audio))
 		{
 			throw new InvalidOperationException(
@@ -44,7 +46,8 @@ public sealed class SdlAudioOutputBackend
 				new(
 					format,
 					source,
-					OnSessionDisposed);
+					OnSessionDisposed,
+					_waveformCapture);
 			_sessions.Add(session);
 			return session;
 		}
