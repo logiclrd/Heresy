@@ -5,6 +5,67 @@ architecture and implemented behavior belong in the [documentation index](README
 and linked design contracts; completed milestones remain available in Git history.
 Do not reintroduce completed-task checklists here.
 
+## Synth oscillator curvature and realtime visualization
+
+- [ ] **Add per-oscillator Curvature (`k`) to the Synth graph and editor.**
+  Each oscillator has an independent finite numeric `k` parameter, default
+  `0`, labelled **Curvature** in the Synth editor. Place its label and
+  numeric input directly **beneath Waveform** in the selected oscillator's
+  inspector. `k = 0` means unchanged/linear amplitude mapping, regardless
+  of the selected waveform. Preserve the parameter through graph edits,
+  cloning, snapshots, save/load, and Synth import, while older saved
+  oscillators without the field load as `k = 0`. Establish sensible
+  validation/limits for nonfinite and extreme values without breaking the
+  existing v1 persistence contract. See [UI workflows](user-interface-workflows.md)
+  and [Synth graph sound sources](synth-sound-source.md).
+
+- [ ] **Apply a range-preserving exponential curvature transform in the
+  per-sample oscillator generator, with a zero-curvature fast path.**
+  For the waveform's unshaped sample `v` in `[-1, +1]`, define
+  `f_0(v) = v`; for `k != 0` use
+  `f_k(v) = 2 * (exp(k*v) - exp(-k)) / (exp(k) - exp(-k)) - 1`.
+  This correction includes the final **`- 1`**, so the endpoints map
+  `-1 -> -1` and `+1 -> +1`, the interior stays within range,
+  and negative `k` reverses the curvature. Apply the transform to the
+  oscillator's waveform output before downstream Synth-graph processing.
+  At `k = 0`, bypass exponentiation and curvature arithmetic entirely.
+  For nonzero `k`, minimize per-sample cost by precomputing reusable
+  constants and/or using a suitable approximation/LUT; consider a
+  numerically stable equivalent such as
+  `2 * expm1(k*(v+1)) / expm1(2*k) - 1` near zero, and guard against
+  overflow at allowed extremes. Require endpoint/range, continuity as
+  `k -> 0`, positive/negative curvature, approximation accuracy,
+  block-size determinism, and zero-path performance tests. See
+  [Synth graph sound sources](synth-sound-source.md).
+
+- [ ] **Add an oscillator-waveform preview beside the Waveform and Curvature
+  controls in the Synth editor.** Arrange those two controls in the
+  **left cell of a two-column row** and a waveform graph in the
+  **right cell**. The graph shows exactly **three cycles**, with phase
+  increasing from **0.5 at its left edge to 3.5 at its right edge**.
+  It uses the selected waveform and the same curvature mapping as
+  realtime generation, and updates when either control changes.
+  Preserve legibility when the editor is resized and verify the
+  graph's values and reset locations against the generator. See
+  [UI workflows](user-interface-workflows.md).
+
+- [ ] **Add a realtime output-waveform dock to the main window.**
+  Make the pane toggleable, dockable by dragging to **any window edge**,
+  and resizable. When visible, draw the **latest audio actually delivered
+  to the SDL output stream**, including output-channel processing and
+  underrun-filled silence, rather than an upstream synth-only preview.
+  Display **one output PCM frame per horizontal pixel column** (no
+  peak/envelope downsampling), using the newest available frames.
+  Refresh at a UI-safe realtime cadence; gaps in observed samples or
+  overwritten intermediate blocks are acceptable when updates are
+  farther apart. Keep capture bounded and thread-safe, with no blocking,
+  allocation-heavy work, or UI calls in the SDL callback, and no impact
+  on realtime audio deadlines. Specify a readable channel-display policy
+  for mono/stereo/surround output during implementation. Verify docking,
+  visibility, resizing, start/stop, session replacement, underruns, and
+  lack of observable audio regression. See [audio output](audio-output.md)
+  and [UI workflows](user-interface-workflows.md).
+
 ## Desktop and listening acceptance
 
 ### Pattern editing
