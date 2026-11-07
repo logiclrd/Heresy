@@ -20,13 +20,13 @@ public sealed class FmMultiNodeTests
         double[] seven = odd.GetFrequencyRatios();
         seven.Should().HaveCount(7);
         seven[3].Should().BeApproximately(1, 1e-12);
-        seven[0] * seven[6].Should().BeApproximately(1, 1e-12);
+        (seven[0] * seven[6]).Should().BeApproximately(1, 1e-12);
         seven[0].Should().BeApproximately(Math.Pow(2, -6.0 / 1200), 1e-12);
         double[] even = new FmMultiNode(1, voiceCount: 2).GetFrequencyRatios();
         even.Should().HaveCount(2);
         even[0].Should().BeLessThan(1);
         even[1].Should().BeGreaterThan(1);
-        even[0] * even[1].Should().BeApproximately(1, 1e-12);
+        (even[0] * even[1]).Should().BeApproximately(1, 1e-12);
         new FmMultiNode(1, voiceCount: 1).GetFrequencyRatios()
             .Should().Equal(1.0);
     }
