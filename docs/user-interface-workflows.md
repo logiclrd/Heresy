@@ -826,3 +826,26 @@ of empty domain is visible. Refit changes the view, not the song.
 FM synth frequency-modulating envelopes have a post-Note-Off voice
 lifetime, even if the oscillator output is not amplitude-gated.
 The finite release tail is heard before the FM voice retires.
+
+## Global output oscilloscope
+
+**View → Output oscilloscope** toggles a live dock around the current
+main-window content without replacing the active document editor.
+The scope starts hidden. It can dock on **Top, Bottom, Left, or Right**:
+drag the scope title bar toward the desired edge and release. A
+6-pixel `GridSplitter` between the scope and document allows resizing
+its thickness; horizontal and vertical dock thicknesses are remembered
+within the window session. The small × control closes it and
+synchronizes the View-menu checkmark.
+
+The display shows the newest **final SDL-queued output frames** with
+one frame per horizontal physical pixel, refreshing at approximately
+30 Hz. The display does not synthesize or aggregate waveform peaks.
+An empty capture or stopped playback is blank (not invented silence);
+actual underrun-inserted PCM zeros appear as a flat center line.
+Mono has one blue trace. Stereo and surround default to overlaid
+front L (blue) and front R (orange); the header selector can switch
+to any individual speaker, including Center, LFE and rear/side
+surround channels. The view is the actual interleaved speaker output
+after all final processing, independent of the currently selected
+instrument or song editor. See [audio output](audio-output.md).
