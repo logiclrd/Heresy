@@ -234,6 +234,98 @@ public sealed class FmSynthSoundTests
 			value => Math.Abs(value) < 1e-6f);
 	}
 
+
+	[TestCase(FmOscillatorWaveform.Sine)]
+	[TestCase(FmOscillatorWaveform.Triangle)]
+	[TestCase(FmOscillatorWaveform.Sawtooth)]
+	[TestCase(FmOscillatorWaveform.Square)]
+	public void ExplicitZeroCurvatureIsBitIdenticalToPreviousOscillator(
+		FmOscillatorWaveform waveform)
+	{
+		FmSynthSound original = Sound(new FmSynthGraph(
+		[
+			new FmOscillatorNode(1, waveform, frequencyHz: 3.0),
+		], outputNodeId: 1));
+		FmSynthSound zero = Sound(new FmSynthGraph(
+		[
+			new FmOscillatorNode(1, waveform, frequencyHz: 3.0,
+				curvature: 0.0),
+		], outputNodeId: 1));
+		RenderContext context = MonoContext(32);
+		float[] expected = new float[64];
+		float[] actual = new float[64];
+		original.Render(context, original.CreateState(), 0, 64, expected);
+		zero.Render(context, zero.CreateState(), 0, 64, actual);
+		actual.Should().Equal(expected);
+	}
+
+	[TestCase(FmOscillatorWaveform.Sine, 2.0)]
+	[TestCase(FmOscillatorWaveform.Sine, -2.0)]
+	[TestCase(FmOscillatorWaveform.Triangle, 2.0)]
+	[TestCase(FmOscillatorWaveform.Triangle, -2.0)]
+	[TestCase(FmOscillatorWaveform.Sawtooth, 2.0)]
+	[TestCase(FmOscillatorWaveform.Sawtooth, -2.0)]
+	[TestCase(FmOscillatorWaveform.Square, 2.0)]
+	[TestCase(FmOscillatorWaveform.Square, -2.0)]
+	[TestCase(FmOscillatorWaveform.Sawtooth, 32.0)]
+	[TestCase(FmOscillatorWaveform.Sawtooth, -32.0)]
+	public void CurveIsAppliedToNormalizedWaveformBeforeVminVmax(
+		FmOscillatorWaveform waveform, double curvature)
+	{
+		FmSynthSound unshaped = Sound(new FmSynthGraph(
+		[
+			new FmOscillatorNode(1, waveform, frequencyHz: 1.0),
+		], outputNodeId: 1));
+		FmSynthSound shaped = Sound(new FmSynthGraph(
+		[
+			new FmOscillatorNode(1, waveform, frequencyHz: 1.0,
+				minimum: 2.0, maximum: 4.0, curvature: curvature),
+		], outputNodeId: 1));
+
+		RenderContext context = MonoContext(32);
+		float[] original = new float[32];
+		float[] output = new float[32];
+		unshaped.Render(context, unshaped.CreateState(), 0, 32, original);
+		shaped.Render(context, shaped.CreateState(), 0, 32, output);
+
+		for (int i = 0; i < output.Length; i++)
+		{
+			double expectedCurve = 2.0 *
+				(Math.Exp(curvature * (original[i] + 1.0)) - 1.0)
+				/ (Math.Exp(2.0 * curvature) - 1.0) - 1.0;
+			double expected = 3.0 + expectedCurve;
+			output[i].Should().BeApproximately((float)expected, 0.0002f,
+				$"waveform {waveform} k={curvature} frame={i}");
+			output[i].Should().BeInRange(2.0f, 4.0f);
+		}
+	}
+
+	[Test]
+	public void CurvedOutputIsDeterministicAcrossRenderSplitsAndPhaseSeek()
+	{
+		FmSynthSound sound = Sound(new FmSynthGraph(
+		[
+			new FmOscillatorNode(1, FmOscillatorWaveform.Sawtooth,
+				frequencyHz: 137.0, curvature: 2.0),
+			new FmOscillatorNode(2, FmOscillatorWaveform.Sine,
+				frequencyHz: 219.0, curvature: -3.0),
+			new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
+		], outputNodeId: 3));
+		RenderContext context = MonoContext(48000);
+		float[] full = new float[96];
+		sound.Render(context, sound.CreateState(), 0, 96, full);
+
+		SoundState splitState = sound.CreateState();
+		float[] split = new float[96];
+		sound.Render(context, splitState, 0, 17, split.AsSpan(0, 17));
+		sound.Render(context, splitState, 17, 79, split.AsSpan(17, 79));
+		split.Should().Equal(full);
+
+		float[] seek = new float[23];
+		sound.Render(context, sound.CreateState(), 73, 23, seek);
+		seek.Should().Equal(full[73..96]);
+	}
+
 	[Test]
 	public void OscillatorMapsWaveformIntoConfiguredOutputRange()
 	{
