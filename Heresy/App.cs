@@ -10,6 +10,7 @@ using Avalonia.Threading;
 using Heresy.Playback;
 using Heresy.Render.Configuration;
 using Heresy.Render.SDL;
+using Heresy.Render.Realtime;
 using Heresy.UserInterface;
 using Heresy.UserInterface.Startup;
 
@@ -48,11 +49,13 @@ public sealed class App : Application
 			// the same UI-owned selection when a new render starts.
 			AudioOutputSettings settings = new(
 				AudioOutputPreference.ForCurrentUser());
+			AudioOutputWaveformCapture scopeCapture = new();
 			MainWindow mainWindow =
 				new(
 					new LazySongPlaybackTransport(
-						() => CreatePlaybackTransport(settings)),
-					settings);
+						() => CreatePlaybackTransport(settings, scopeCapture)),
+					settings,
+					scopeCapture);
 			desktop.MainWindow = mainWindow;
 
 			// The persisted maximization preference is local desktop UI
@@ -115,11 +118,12 @@ public sealed class App : Application
 	}
 
 	private static ISongPlaybackTransport CreatePlaybackTransport(
-		AudioOutputSettings settings)
+		AudioOutputSettings settings,
+		AudioOutputWaveformCapture scopeCapture)
 	{
 		PlaybackRequestAudioSourceFactory sourceFactory =
 			new(() => settings.Current);
-		SdlAudioOutputBackend backend = new();
+		SdlAudioOutputBackend backend = new(scopeCapture);
 
 		return new SongPlaybackTransport(
 			backend,
