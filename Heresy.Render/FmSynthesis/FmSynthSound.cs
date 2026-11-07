@@ -1055,6 +1055,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			return 0.0;
 		int sampleRate = context.Configuration.SampleRate;
 		double sum = 0.0;
+		Span<float> sample = stackalloc float[1];
 		foreach (MultiVoice voice in voices)
 		{
 			SoundState child = voice.Invocation.State;
@@ -1095,7 +1096,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			child.NoteOffTime = state.NoteOffTime is TimeSpan off
 				? off + TimeSpan.FromSeconds((double)voice.SkipFrames / sampleRate)
 				: null;
-			Span<float> sample = stackalloc float[1];
+			sample[0] = 0;
 			voice.Invocation.Sound.Render(state.MonoContext!, child,
 				displaced, 1, sample);
 			double amplitude = sample[0];
