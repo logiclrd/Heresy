@@ -46,6 +46,23 @@ load directly. Saving writes six sections, and migration itself does not
 increment audio or document revisions. See
 [document panes](document-panes.md).
 
+## Synth oscillator Curvature (authoring and persistence)
+
+A Synth oscillator has an independent **Curvature** numeric parameter, shown
+immediately beneath **Waveform** in the graph inspector. Its default is `0`,
+including when opening version-1 songs that predate the parameter. The editor
+accepts finite values from `-32` through `+32`, using invariant-culture
+numeric entry and the existing Enter/focus-loss commit and Escape draft-revert
+behavior. Each successful change replaces that oscillator's immutable graph
+node and advances the document/audio revision; no-op edits do not.
+
+Curvature is saved on the oscillator node as `curvature` and retained by
+graph connections/disconnections, cross-song Synth imports, and playback
+snapshots without a persisted schema-version increment. The **sample-level
+exponential shaping** is tracked as a separate open implementation task in
+[todo.md](todo.md): until it is implemented, changing Curvature changes
+the authored parameter but not the generated PCM waveform.
+
 ## FM oscillator frequency and Constant mode
 
 Every oscillator's **Frequency Hz** is interpreted relative to the requested
