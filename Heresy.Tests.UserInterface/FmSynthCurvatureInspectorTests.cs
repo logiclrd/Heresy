@@ -20,7 +20,7 @@ namespace Heresy.Tests.UserInterface;
 public sealed class FmSynthCurvatureInspectorTests
 {
 	[AvaloniaTest]
-	public void CurvatureIsDirectlyBelowWaveformAndEditsOnlyTheSelectedOscillator()
+	public void CurvatureAndWaveformShareLeftCellWithReactiveRightHandPreview()
 	{
 		DocumentWorkspace workspace = new();
 		FmSynthDefinition synth =
@@ -36,38 +36,47 @@ public sealed class FmSynthCurvatureInspectorTests
 			new(workspace, synth, () => { }, _ => { });
 
 		StackPanel inspector = Inspector(editor);
-		int waveformIndex = inspector.Children
-			.Select((child, index) => (child, index))
-			.Single(x => x.child is TextBlock label
-				&& label.Text == "Waveform").index;
-		ComboBox waveform = inspector.Children[waveformIndex + 1]
+		Grid row = inspector.Children.OfType<Grid>().Single();
+		row.ColumnDefinitions.Should().HaveCount(2);
+		StackPanel left = WaveformControls(inspector);
+		Grid.GetColumn(left).Should().Be(0);
+		left.Children[0].Should().BeOfType<TextBlock>()
+			.Which.Text.Should().Be("Waveform");
+		ComboBox waveform = left.Children[1]
 			.Should().BeOfType<ComboBox>().Which;
-		inspector.Children[waveformIndex + 2]
-			.Should().BeOfType<TextBlock>().Which.Text.Should().Be("Curvature");
-		TextBox curvature = inspector.Children[waveformIndex + 3]
-			.Should().BeOfType<TextBox>().Which;
+		left.Children[2].Should().BeOfType<TextBlock>()
+			.Which.Text.Should().Be("Curvature");
+		TextBox curvature = CurvatureInput(inspector);
 		curvature.Text.Should().Be("0");
+		FmSynthWaveformPreview preview = WaveformPreview(inspector);
+		preview.Curvature.Should().Be(0.0);
+		preview.Waveform.Should().Be(FmOscillatorWaveform.Sawtooth);
+		preview.ValueAtFraction(0.0).Should().Be(0.0);
 		uint startRevision = workspace.Document.AudioRevision;
 
 		curvature.Text = "2.25";
 		Press(curvature, Key.Enter);
 		Oscillator(synth, firstId).Curvature.Should().Be(2.25);
 		Oscillator(synth, secondId).Curvature.Should().Be(0.0);
+		preview.Curvature.Should().Be(2.25);
+		preview.ValueAtFraction(0.0).Should().BeLessThan(0.0);
 		workspace.Document.AudioRevision.Should().Be(startRevision + 1);
 
-		// A repeated commit is a no-op; other fields must preserve curvature.
+		// Repeating the commit is a no-op; changing waveform keeps curvature.
 		Press(curvature, Key.Enter);
 		workspace.Document.AudioRevision.Should().Be(startRevision + 1);
 		waveform.SelectedItem = FmOscillatorWaveform.Triangle;
 		Oscillator(synth, firstId).Waveform.Should().Be(
 			FmOscillatorWaveform.Triangle);
 		Oscillator(synth, firstId).Curvature.Should().Be(2.25);
+		preview.Waveform.Should().Be(FmOscillatorWaveform.Triangle);
 		workspace.Document.AudioRevision.Should().Be(startRevision + 2);
 
-		// Invalid values leave the committed graph and Escape baseline intact.
+		// Rejected edits do not misrepresent the committed waveform.
 		curvature.Text = "33";
 		Press(curvature, Key.Enter);
 		Oscillator(synth, firstId).Curvature.Should().Be(2.25);
+		preview.Curvature.Should().Be(2.25);
 		workspace.Document.AudioRevision.Should().Be(startRevision + 2);
 		Press(curvature, Key.Escape);
 		curvature.Text.Should().Be("2.25");
@@ -76,13 +85,16 @@ public sealed class FmSynthCurvatureInspectorTests
 		inspector = Inspector(editor);
 		TextBox otherCurvature = CurvatureInput(inspector);
 		otherCurvature.Text.Should().Be("0");
+		WaveformPreview(inspector).Curvature.Should().Be(0.0);
 		otherCurvature.Text = "-1.5";
 		Press(otherCurvature, Key.Enter);
 		Oscillator(synth, secondId).Curvature.Should().Be(-1.5);
+		WaveformPreview(inspector).Curvature.Should().Be(-1.5);
 		Oscillator(synth, firstId).Curvature.Should().Be(2.25);
 
 		Select(editor, firstId);
 		CurvatureInput(Inspector(editor)).Text.Should().Be("2.25");
+		WaveformPreview(Inspector(editor)).Curvature.Should().Be(2.25);
 	}
 
 	private static StackPanel Inspector(FmSynthEditorControl editor)
@@ -91,14 +103,22 @@ public sealed class FmSynthCurvatureInspectorTests
 				| BindingFlags.NonPublic)!
 			.GetValue(editor)!;
 
+	private static StackPanel WaveformControls(StackPanel inspector)
+		=> inspector.Children.OfType<Grid>().Single()
+			.Children.OfType<StackPanel>().Single();
+
 	private static TextBox CurvatureInput(StackPanel inspector)
-	{
-		int index = inspector.Children
-			.Select((child, i) => (child, i))
-			.Single(x => x.child is TextBlock label
-				&& label.Text == "Curvature").i;
-		return inspector.Children[index + 1]
+		=> WaveformControls(inspector).Children[3]
 			.Should().BeOfType<TextBox>().Which;
+
+	private static FmSynthWaveformPreview WaveformPreview(
+		StackPanel inspector)
+	{
+		Grid row = inspector.Children.OfType<Grid>().Single();
+		Border border = row.Children.OfType<Border>().Single();
+		Grid.GetColumn(border).Should().Be(1);
+		return border.Child.Should()
+			.BeOfType<FmSynthWaveformPreview>().Which;
 	}
 
 	private static FmOscillatorNode Oscillator(FmSynthDefinition synth, int id)

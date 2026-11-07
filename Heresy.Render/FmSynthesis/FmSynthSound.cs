@@ -1228,29 +1228,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		double phase =
 			state.Phases[
 				compiled.OscillatorIndex];
-		double normalized =
-			oscillator.Waveform switch
-			{
-				FmOscillatorWaveform.Sine =>
-					Math.Sin(
-						2.0
-							* Math.PI
-							* phase),
-				FmOscillatorWaveform.Triangle =>
-					1.0
-						- (4.0
-							* Math.Abs(
-								phase - 0.5)),
-				FmOscillatorWaveform.Sawtooth =>
-					(2.0 * phase) - 1.0,
-				FmOscillatorWaveform.Square =>
-					phase < 0.5
-						? 1.0
-						: -1.0,
-				_ =>
-					throw new ArgumentOutOfRangeException(
-						nameof(oscillator.Waveform)),
-			};
+		double normalized = FmOscillatorWaveformEvaluator.EvaluateNormalized(
+			oscillator.Waveform, phase);
 
 		// k == 0 takes this direct branch: no table or exponential work.
 		if (compiled.Curvature is { } curvature)
