@@ -94,7 +94,8 @@ public sealed class FmSynthImportTests
 							frequencyHz: 440.0,
 							multiplierNodeId: 10,
 							exponentialMultiplier: true,
-							constant: true),
+							constant: true,
+							curvature: 2.0),
 					],
 					outputNodeId: 11));
 		first.NodePositions.Add(
@@ -150,6 +151,8 @@ public sealed class FmSynthImportTests
 				[first.Id, second.Id]);
 
 		imported.Should().HaveCount(2);
+		imported[0].Graph.Nodes.OfType<FmOscillatorNode>()
+			.Single().Curvature.Should().Be(2.0);
 		imported[0].SourceColourArgb.Should().Be(first.SourceColourArgb);
 		imported[1].SourceColourArgb.Should().Be(second.SourceColourArgb);
 		imported.Select(synth => synth.Name)
