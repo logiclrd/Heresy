@@ -230,7 +230,8 @@ public sealed class OutputScopeWaveformGraph : Control
 		}
 		_capture.ReadLatest(_first, _second, _firstChannel, _secondChannel);
 
-		context.DrawRectangle(Brushes.Black, null, Bounds);
+		context.DrawRectangle(Brushes.Black, null,
+			new Rect(0.0, 0.0, Bounds.Width, Bounds.Height));
 		double center = Bounds.Height / 2.0;
 		context.DrawLine(AxisPen, new Point(0, center),
 			new Point(Bounds.Width, center));
@@ -254,8 +255,9 @@ public sealed class OutputScopeWaveformGraph : Control
 			double clamped = Math.Clamp(samples[i], -1.0f, 1.0f);
 			Point next = new((i + 0.5) / scaling,
 				center - (clamped * amplitude));
-			if (hasPrevious)
-				context.DrawLine(pen, previous, next);
+			// Draw isolated samples too; a one-frame observation is
+			// still one visible PCM column, not an invisible path.
+			context.DrawLine(pen, hasPrevious ? previous : next, next);
 			previous = next;
 			hasPrevious = true;
 		}
