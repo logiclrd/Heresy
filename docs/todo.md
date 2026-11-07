@@ -7,17 +7,6 @@ Do not reintroduce completed-task checklists here.
 
 ## Synth oscillator curvature and realtime visualization
 
-- [ ] **Add an oscillator-waveform preview beside the Waveform and Curvature
-  controls in the Synth editor.** Arrange those two controls in the
-  **left cell of a two-column row** and a waveform graph in the
-  **right cell**. The graph shows exactly **three cycles**, with phase
-  increasing from **0.5 at its left edge to 3.5 at its right edge**.
-  It uses the selected waveform and the same curvature mapping as
-  realtime generation, and updates when either control changes.
-  Preserve legibility when the editor is resized and verify the
-  graph's values and reset locations against the generator. See
-  [UI workflows](user-interface-workflows.md).
-
 - [ ] **Add a realtime output-waveform dock to the main window.**
   Make the pane toggleable, dockable by dragging to **any window edge**,
   and resizable. When visible, draw the **latest audio actually delivered
