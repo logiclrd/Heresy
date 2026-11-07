@@ -1306,8 +1306,10 @@ public sealed class FmSynthEditorControl : UserControl
 				randomize.IsChecked = live.RandomizePhase;
 				gain.IsChecked = live.GainCompensation;
 				overrideCycle.IsChecked = live.CycleLength.HasValue;
-				if (updateCycleDraft && live.CycleLength is double length)
-					cycleLength.Text = length.ToString("R", CultureInfo.InvariantCulture);
+				if (updateCycleDraft)
+					cycleLength.Text = (live.CycleLength
+						?? FmMultiNode.ReferenceSampleRate / FmMultiNode.NeutralFrequencyHz)
+						.ToString("R", CultureInfo.InvariantCulture);
 				bool spread = live.Distribution == FmMultiDistribution.Spread;
 				detuneLabel.IsVisible = detune.IsVisible = spread;
 				voicesLabel.IsVisible = voiceCount.IsVisible = spread;
@@ -1327,7 +1329,7 @@ public sealed class FmSynthEditorControl : UserControl
 			catch (Exception ex)
 			{
 				_message.Text = ex.Message;
-				RefreshFields();
+				RefreshFields(updateCycleDraft: cycle);
 			}
 		}
 
@@ -1422,7 +1424,8 @@ public sealed class FmSynthEditorControl : UserControl
 			Apply(m => m.With(m.InputNodeId, m.Distribution, m.Detune,
 				m.VoiceCount, m.HarmonicComponents, m.ChordComponents,
 				m.RandomizePhase, m.GainCompensation,
-				enabled ? ParseDouble(cycleLength.Text, "Cycle Length") : null));
+				enabled ? ParseDouble(cycleLength.Text, "Cycle Length") : null),
+				cycle: enabled);
 		};
 		RefreshFields();
 	}
