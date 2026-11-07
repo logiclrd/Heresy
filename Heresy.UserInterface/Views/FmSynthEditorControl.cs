@@ -181,6 +181,7 @@ public sealed class FmSynthEditorControl : UserControl
 				"+ Operator",
 				AddOperator));
 		addButtons.Children.Add(Button("+ Filter", AddFilter));
+		addButtons.Children.Add(Button("+ Multi", AddMulti));
 
 		StackPanel top = new();
 		top.Children.Add(header);
@@ -497,6 +498,18 @@ public sealed class FmSynthEditorControl : UserControl
 		}
 	}
 
+	private void AddMulti()
+	{
+		try
+		{
+			(double x, double y) = NextSpawnPosition();
+			int id = FmSynthDocumentEditor.AddMultiNode(
+				_workspace, _synth, x, y);
+			AfterGraphChange(id, $"Added FM Multi node #{id}");
+		}
+		catch (Exception ex) { _message.Text = ex.Message; }
+	}
+
 	private void AddFilter()
 	{
 		try
@@ -731,6 +744,10 @@ public sealed class FmSynthEditorControl : UserControl
 
 			case FmFilterNode filter:
 				AddFilterInspector(filter);
+				break;
+
+			case FmMultiNode multi:
+				AddMultiInspector(multi);
 				break;
 
 			case FmOperatorNode op:
@@ -1210,6 +1227,204 @@ public sealed class FmSynthEditorControl : UserControl
 				? null
 				: new FmEnvelopeNode(nodeId, envelopeId);
 		});
+	}
+
+	private void AddMultiInspector(FmMultiNode node)
+	{
+		// Preset actions are unconditional, even if the mode does not change.
+		// The inspector owns transient cycle-length drafts, while document
+		// state contains only an enabled, validated override.
+		ComboBox presets = new()
+		{
+			ItemsSource = (new[] { "Presets" }).Concat(FmMultiNode.Presets).ToArray(),
+			SelectedIndex = 0,
+		};
+		AddField("Presets", presets);
+		ComboBox distribution = new()
+		{
+			ItemsSource = Enum.GetValues<FmMultiDistribution>(),
+			SelectedItem = node.Distribution,
+		};
+		AddField("Distribution", distribution);
+		TextBox detune = NumberBox(node.Detune);
+		TextBox voiceCount = new()
+		{
+			Text = node.VoiceCount.ToString(CultureInfo.InvariantCulture),
+		};
+		TextBlock detuneLabel = new() { Text = "Detune (total cents)" };
+		TextBlock voicesLabel = new() { Text = "Voice Count" };
+		_inspector.Children.Add(detuneLabel);
+		_inspector.Children.Add(detune);
+		_inspector.Children.Add(voicesLabel);
+		_inspector.Children.Add(voiceCount);
+		TextBlock componentsLabel = new() { Text = "Components" };
+		TextBox components = new()
+		{
+			Text = node.Components,
+			AcceptsReturn = false,
+		};
+		_inspector.Children.Add(componentsLabel);
+		_inspector.Children.Add(components);
+		CheckBox randomize = new()
+		{
+			Content = "Randomize Phase",
+			IsChecked = node.RandomizePhase,
+		};
+		CheckBox gain = new()
+		{
+			Content = "Gain Compensation",
+			IsChecked = node.GainCompensation,
+		};
+		_inspector.Children.Add(randomize);
+		_inspector.Children.Add(gain);
+		CheckBox overrideCycle = new()
+		{
+			Content = "Override cycle",
+			IsChecked = node.CycleLength.HasValue,
+		};
+		_inspector.Children.Add(overrideCycle);
+		TextBlock cycleLabel = new() { Text = "Cycle Length (samples at C4 / 48 kHz)" };
+		// An unchecked override keeps this draft for the selected inspector
+		// only; leaving and reselecting constructs a new draft.
+		TextBox cycleLength = NumberBox(node.CycleLength
+			?? FmMultiNode.ReferenceSampleRate / FmMultiNode.NeutralFrequencyHz);
+		_inspector.Children.Add(cycleLabel);
+		_inspector.Children.Add(cycleLength);
+		bool syncing = false;
+		FmMultiNode Current() => (FmMultiNode)CurrentNode(node.Id);
+
+		void RefreshFields(bool updateCycleDraft = false)
+		{
+			FmMultiNode live = Current();
+			syncing = true;
+			try
+			{
+				distribution.SelectedItem = live.Distribution;
+				detune.Text = live.Detune.ToString("R", CultureInfo.InvariantCulture);
+				voiceCount.Text = live.VoiceCount.ToString(CultureInfo.InvariantCulture);
+				components.Text = live.Components;
+				randomize.IsChecked = live.RandomizePhase;
+				gain.IsChecked = live.GainCompensation;
+				overrideCycle.IsChecked = live.CycleLength.HasValue;
+				if (updateCycleDraft && live.CycleLength is double length)
+					cycleLength.Text = length.ToString("R", CultureInfo.InvariantCulture);
+				bool spread = live.Distribution == FmMultiDistribution.Spread;
+				detuneLabel.IsVisible = detune.IsVisible = spread;
+				voicesLabel.IsVisible = voiceCount.IsVisible = spread;
+				componentsLabel.IsVisible = components.IsVisible = !spread;
+				cycleLabel.IsVisible = cycleLength.IsVisible = live.CycleLength.HasValue;
+			}
+			finally { syncing = false; }
+		}
+
+		void Apply(Func<FmMultiNode, FmMultiNode> change, bool cycle = false)
+		{
+			try
+			{
+				UpdateParameter(node.Id, current => change((FmMultiNode)current));
+				RefreshFields(cycle);
+			}
+			catch (Exception ex)
+			{
+				_message.Text = ex.Message;
+				RefreshFields();
+			}
+		}
+
+		void BindText(TextBox box, Func<FmMultiNode, string, FmMultiNode> change)
+		{
+			void Commit()
+			{
+				if (syncing || box.Text is null)
+					return;
+				Apply(current => change(current, box.Text));
+			}
+			box.KeyDown += (_, e) =>
+			{
+				if (e.Key == Key.Enter) { Commit(); e.Handled = true; }
+				else if (e.Key == Key.Escape)
+				{
+					RefreshFields();
+					e.Handled = true;
+				}
+			};
+			box.LostFocus += (_, _) => Commit();
+		}
+
+		BindText(detune, (m, value) => m.With(m.InputNodeId, m.Distribution,
+			ParseDouble(value, "Detune"), m.VoiceCount,
+			m.HarmonicComponents, m.ChordComponents, m.RandomizePhase,
+			m.GainCompensation, m.CycleLength));
+		BindText(voiceCount, (m, value) => m.With(m.InputNodeId, m.Distribution,
+			m.Detune, int.Parse(value, NumberStyles.Integer, CultureInfo.InvariantCulture),
+			m.HarmonicComponents, m.ChordComponents, m.RandomizePhase,
+			m.GainCompensation, m.CycleLength));
+		BindText(components, (m, value) => m.With(m.InputNodeId, m.Distribution,
+			m.Detune, m.VoiceCount,
+			m.Distribution == FmMultiDistribution.Harmonic ? value : m.HarmonicComponents,
+			m.Distribution == FmMultiDistribution.Chord ? value : m.ChordComponents,
+			m.RandomizePhase, m.GainCompensation, m.CycleLength));
+		void CommitCycle()
+		{
+			if (syncing || !Current().CycleLength.HasValue) return;
+			Apply(m => m.With(m.InputNodeId, m.Distribution, m.Detune,
+				m.VoiceCount, m.HarmonicComponents, m.ChordComponents,
+				m.RandomizePhase, m.GainCompensation,
+				ParseDouble(cycleLength.Text, "Cycle Length")), cycle: true);
+		}
+		cycleLength.KeyDown += (_, e) =>
+		{
+			if (e.Key == Key.Enter) { CommitCycle(); e.Handled = true; }
+			else if (e.Key == Key.Escape)
+			{
+				RefreshFields(updateCycleDraft: true);
+				e.Handled = true;
+			}
+		};
+		cycleLength.LostFocus += (_, _) => CommitCycle();
+		distribution.SelectionChanged += (_, _) =>
+		{
+			if (syncing || distribution.SelectedItem is not FmMultiDistribution choice)
+				return;
+			Apply(m => m.WithDistribution(choice));
+		};
+		presets.SelectionChanged += (_, _) =>
+		{
+			if (syncing || presets.SelectedIndex <= 0
+				|| presets.SelectedItem is not string name)
+				return;
+			Apply(m => m.WithPreset(name));
+			syncing = true;
+			try { presets.SelectedIndex = 0; }
+			finally { syncing = false; }
+		};
+		randomize.PropertyChanged += (_, args) =>
+		{
+			if (syncing || args.Property != ToggleButton.IsCheckedProperty)
+				return;
+			Apply(m => m.With(m.InputNodeId, m.Distribution, m.Detune,
+				m.VoiceCount, m.HarmonicComponents, m.ChordComponents,
+				randomize.IsChecked == true, m.GainCompensation, m.CycleLength));
+		};
+		gain.PropertyChanged += (_, args) =>
+		{
+			if (syncing || args.Property != ToggleButton.IsCheckedProperty)
+				return;
+			Apply(m => m.With(m.InputNodeId, m.Distribution, m.Detune,
+				m.VoiceCount, m.HarmonicComponents, m.ChordComponents,
+				m.RandomizePhase, gain.IsChecked == true, m.CycleLength));
+		};
+		overrideCycle.PropertyChanged += (_, args) =>
+		{
+			if (syncing || args.Property != ToggleButton.IsCheckedProperty)
+				return;
+			bool enabled = overrideCycle.IsChecked == true;
+			Apply(m => m.With(m.InputNodeId, m.Distribution, m.Detune,
+				m.VoiceCount, m.HarmonicComponents, m.ChordComponents,
+				m.RandomizePhase, m.GainCompensation,
+				enabled ? ParseDouble(cycleLength.Text, "Cycle Length") : null));
+		};
+		RefreshFields();
 	}
 
 	private void AddFilterInspector(FmFilterNode node)
