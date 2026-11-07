@@ -815,6 +815,7 @@ public sealed class FmSynthEditorControl : UserControl
 				SelectedItem = node.Waveform,
 			};
 		TextBox frequency = NumberBox(node.FrequencyHz);
+		TextBox curvature = NumberBox(node.Curvature);
 		CheckBox constant = new()
 		{
 			Content = "Constant",
@@ -850,6 +851,7 @@ public sealed class FmSynthEditorControl : UserControl
 			};
 
 		AddField("Waveform", waveform);
+		AddField("Curvature", curvature);
 		AddField("Frequency Hz", frequency);
 		_inspector.Children.Add(constant);
 		AddField("Vmin", minimum);
@@ -861,6 +863,8 @@ public sealed class FmSynthEditorControl : UserControl
 			waveform,
 			() => ((FmOscillatorNode)CurrentNode(node.Id)).Waveform,
 			item => UpdateOscillator(node.Id, waveform: (FmOscillatorWaveform)item));
+		BindParameterText(curvature, text => UpdateOscillator(node.Id,
+			curvature: ParseDouble(text, "Curvature")));
 
 		BindParameterText(
 			frequency,
@@ -1560,7 +1564,8 @@ public sealed class FmSynthEditorControl : UserControl
 		int? multiplierId = null,
 		bool replaceMultiplier = false,
 		bool? exponential = null,
-		bool? constant = null)
+		bool? constant = null,
+		double? curvature = null)
 	{
 		UpdateParameter(
 			nodeId,
@@ -1569,6 +1574,7 @@ public sealed class FmSynthEditorControl : UserControl
 				FmOscillatorNode live = (FmOscillatorNode)current;
 				FmOscillatorWaveform wave = waveform ?? live.Waveform;
 				double freq = frequency ?? live.FrequencyHz;
+				double curve = curvature ?? live.Curvature;
 				double min = minimum ?? live.Minimum;
 				double max = maximum ?? live.Maximum;
 				int? multiplier = replaceMultiplier
@@ -1576,6 +1582,7 @@ public sealed class FmSynthEditorControl : UserControl
 				bool exp = exponential ?? live.ExponentialMultiplier;
 				bool fixedFrequency = constant ?? live.Constant;
 				if (wave == live.Waveform
+					&& curve == live.Curvature
 					&& freq == live.FrequencyHz
 					&& min == live.Minimum
 					&& max == live.Maximum
@@ -1586,7 +1593,8 @@ public sealed class FmSynthEditorControl : UserControl
 					return null;
 				}
 				return new FmOscillatorNode(
-					live.Id, wave, freq, min, max, multiplier, exp, fixedFrequency);
+					live.Id, wave, freq, min, max, multiplier, exp, fixedFrequency,
+					curve);
 			});
 	}
 
