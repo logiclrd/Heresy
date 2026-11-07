@@ -871,6 +871,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 			FmNoiseNode => "White Noise",
 			FmOscillatorNode => "Oscillator",
 			FmSoundSourceNode => "Source",
+			FmMultiNode => "Multi",
 			FmEnvelopeNode => "Envelope",
 			FmFilterNode => "Filter",
 			FmOperatorNode => "Operator",
@@ -889,6 +890,7 @@ public sealed class FmSynthGraphCanvas : UserControl
 			FmOscillatorNode oscillator =>
 				$"{oscillator.Waveform}, "
 				+ $"{oscillator.FrequencyHz.ToString("0.###", CultureInfo.InvariantCulture)} Hz",
+			FmMultiNode multi => $"{multi.Distribution}, {multi.GetFrequencyRatios().Length} voices",
 			FmSoundSourceNode source =>
 				$"Source <{source.SourceId.Value}> @ "
 				+ $"{source.FrequencyHz.ToString("0.###", CultureInfo.InvariantCulture)} Hz"
