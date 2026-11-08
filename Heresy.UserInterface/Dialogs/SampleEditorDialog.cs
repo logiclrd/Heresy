@@ -390,7 +390,8 @@ public sealed class SampleEditorDialog : Window
 		if (e.Key != Key.F8)
 			return;
 		e.Handled = true;
-		_heldTestKeys.Clear();
+		// Stop the sounding voices, but retain physical held-key tracking.
+		// Otherwise a still-held key would retrigger on its next X11 repeat.
 		IReadOnlyList<SampleAuditionVoice> notes = _auditionKeyboard.StopAll();
 		try
 		{
