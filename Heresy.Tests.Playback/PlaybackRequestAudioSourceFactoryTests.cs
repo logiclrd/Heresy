@@ -7,6 +7,7 @@ using AwesomeAssertions;
 
 using Heresy.Core.Assets;
 using Heresy.Core.Envelopes;
+using Heresy.Core.FmSynthesis;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -26,6 +27,73 @@ namespace Heresy.Tests.Playback;
 [TestFixture]
 public sealed class PlaybackRequestAudioSourceFactoryTests
 {
+	[Test]
+	public void PublishedSynthRevisionChangesFutureNotesWithoutRestartingExistingVoices()
+	{
+		SongDocument document = new();
+		ObjectId synthId = document.AllocateObjectId();
+		FmSynthDefinition synth = new(synthId, "Live",
+			new FmSynthGraph([new FmConstantNode(0, 0.25)], 0));
+		document.Add(synth);
+
+		PlaybackRequestAudioSourceFactory factory =
+			new(MonoConfiguration(100));
+		IAudioOutputSource output = factory.Create(AdHocPlaybackRequest.Create(
+			document, new NoteScheduleBuilder().Freeze()));
+		try
+		{
+			ILiveAudioOutputSource notes = (ILiveAudioOutputSource)output;
+			ILiveSynthSourceRevisionOutput revisions =
+				(ILiveSynthSourceRevisionOutput)output;
+
+			notes.EnqueueLiveEvent(ChannelTarget.Virtual(10),
+				[new StartNoteCommand(synthId)]);
+			float[] before = new float[1];
+			output.Render(1, before);
+			before[0].Should().BeApproximately(0.25f, 1e-6f);
+
+			synth.Graph = new FmSynthGraph(
+				[new FmConstantNode(0, 0.5)], 0);
+			document.MarkChanged(affectsAudio: true);
+			revisions.EnqueueLiveSynthSource(synthId,
+				factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(document), synthId));
+			notes.EnqueueLiveEvent(ChannelTarget.Virtual(11),
+				[new StartNoteCommand(synthId)]);
+			float[] together = new float[1];
+			output.Render(1, together);
+			together[0].Should().BeApproximately(0.75f, 1e-6f,
+				"the first voice is still on 0.25 and the second starts on 0.5");
+
+			// Even a structural graph change can be used by the next NoteOn,
+			// while the old two generations continue their original sounds.
+			synth.Graph = new FmSynthGraph(
+				[new FmConstantNode(0, 0.125),
+				 new FmConstantNode(1, 0)], 0);
+			document.MarkChanged(affectsAudio: true);
+			revisions.EnqueueLiveSynthSource(synthId,
+				factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(document), synthId));
+			notes.EnqueueLiveEvent(ChannelTarget.Virtual(12),
+				[new StartNoteCommand(synthId)]);
+			float[] threeGenerations = new float[1];
+			output.Render(1, threeGenerations);
+			threeGenerations[0].Should().BeApproximately(0.875f, 1e-6f,
+				"running voices must not be reconstructed when publishing a newer graph");
+
+			notes.EnqueueLiveEvent(ChannelTarget.Virtual(11),
+				[new NoteCutCommand()]);
+			float[] remaining = new float[1];
+			output.Render(1, remaining);
+			remaining[0].Should().BeApproximately(0.375f, 1e-6f,
+				"cutting a newer voice must not interfere with an older generation");
+		}
+		finally
+		{
+			(output as IDisposable)?.Dispose();
+		}
+	}
+
 	[Test]
 	public void RealtimeFactoryCapturesFreshOutputConfigurationForEachNewRequest()
 	{
