@@ -1922,7 +1922,6 @@ public sealed class PatternEditorControl : UserControl
 						_changed(
 							$"Edited tracker entry in {edited.Pattern.Name} row {edited.PatternRow}, channel {editedChannel + 1}");
 					}
-
 				}
 				UpdateCurrentPatternControls();
 				RefreshCursorVisuals();
