@@ -39,27 +39,37 @@ public sealed class PianoTestCapsLockRefreshTests
             query);
         Border area = Field<Border>(control, "_testArea");
         TextBlock label = Field<TextBlock>(control, "_mode");
-
-        label.Text.Should().Be("Mode: Latch");
-
-        area.RaiseEvent(new KeyEventArgs
+        Window window = new() { Content = control };
+        try
         {
-            RoutedEvent = InputElement.KeyDownEvent,
-            Key = Key.CapsLock,
-            PhysicalKey = PhysicalKey.CapsLock,
-        });
-        label.Text.Should().Be("Mode: Latch",
-            "the native query has not yet observed the transition");
+            // The newer preview control observes Caps Lock on the owning
+            // window, even when another child is focused.
+            window.Show();
+            label.Text.Should().Be("Mode: Latch");
 
-        query.Current = false;
-        area.RaiseEvent(new KeyEventArgs
+            area.RaiseEvent(new KeyEventArgs
+            {
+                RoutedEvent = InputElement.KeyDownEvent,
+                Key = Key.CapsLock,
+                PhysicalKey = PhysicalKey.CapsLock,
+            });
+            label.Text.Should().Be("Mode: Latch",
+                "the native query has not yet observed the transition");
+
+            query.Current = false;
+            area.RaiseEvent(new KeyEventArgs
+            {
+                RoutedEvent = InputElement.KeyUpEvent,
+                Key = Key.CapsLock,
+                PhysicalKey = PhysicalKey.CapsLock,
+            });
+            label.Text.Should().Be("Mode: Hold",
+                "Caps Lock KeyUp must refresh the visible state proactively");
+        }
+        finally
         {
-            RoutedEvent = InputElement.KeyUpEvent,
-            Key = Key.CapsLock,
-            PhysicalKey = PhysicalKey.CapsLock,
-        });
-        label.Text.Should().Be("Mode: Hold",
-            "Caps Lock KeyUp must refresh the visible state proactively");
+            window.Close();
+        }
     }
 
     private static T Field<T>(object owner, string name)

@@ -15,15 +15,16 @@ using Heresy.UserInterface.Keyboard;
 namespace Heresy.UserInterface.Views;
 
 /// <summary>
-/// Common Test area for Synth and Sample editors. This control owns all
-/// keyboard, octave, Caps Lock, F8 and Xephyr repeat behavior. Its consumers
-/// receive only musical preview events; they never inspect keyboard state.
+/// Common Test area for Synth and Sample editors. This control owns Test
+/// piano and octave gestures plus window-wide Caps Lock and F8 observation.
+/// Its consumers receive only musical preview events, not keyboard state.
 /// </summary>
 public sealed class PianoTestControl : UserControl
 {
     private readonly PianoPreviewKeyboard _keyboard = new();
     private readonly HeldPhysicalKeyRepeatFilter _repeats;
-    private readonly ICapsLockQuery _caps;
+    private readonly HeldPhysicalKeyRepeatFilter _capsRepeats;
+    private readonly PianoPreviewCapsLockMode _capsMode;
     private readonly Func<PianoPreviewEvent, Task> _onEvent;
     private readonly Func<bool> _hasVoices;
     private readonly Func<Task> _stopOwnVoices;
@@ -31,11 +32,6 @@ public sealed class PianoTestControl : UserControl
     private readonly TextBlock _octave = new();
     private readonly TextBlock _mode = new();
     private Window? _owner;
-    // Unknown is meaningful on native Wayland: there is no portable
-    // independent compositor lock-state query. Once Caps Lock is pressed
-    // inside Test, the fallback becomes known for this focused session.
-    private bool? _localCapsLock;
-
     public PianoTestControl(
         Func<PianoPreviewEvent, Task> onEvent,
         Func<bool> hasVoices,
@@ -45,9 +41,13 @@ public sealed class PianoTestControl : UserControl
         _onEvent = onEvent ?? throw new ArgumentNullException(nameof(onEvent));
         _hasVoices = hasVoices ?? throw new ArgumentNullException(nameof(hasVoices));
         _stopOwnVoices = stopOwnVoices ?? throw new ArgumentNullException(nameof(stopOwnVoices));
-        _caps = capsLockQuery ?? new PlatformCapsLockQuery();
+        _capsMode = new PianoPreviewCapsLockMode(
+            capsLockQuery ?? new PlatformCapsLockQuery());
         _repeats = new HeldPhysicalKeyRepeatFilter(
             key => DispatchConfirmedRelease(key));
+        // Caps Lock is observed even when Test is not focused; do not clear
+        // its repeat history when the Test area loses focus.
+        _capsRepeats = new HeldPhysicalKeyRepeatFilter(_ => { });
 
         _testArea = new Border
         {
@@ -93,9 +93,9 @@ public sealed class PianoTestControl : UserControl
         description.Children.Add(new TextBlock
         {
             Text = "Click Test, then use tracker piano keys (Z S X D C ...). "
-                + "Keypad * / changes octave. Caps Lock off: hold notes; "
-                + "Caps Lock on: latch notes and suppress close neighbours. "
-                + "F8 stops all preview voices.",
+                + "Keypad * / changes octave. Caps Lock switches Hold/Latch: "
+                + "Hold releases keys; Latch keeps notes and suppresses close "
+                + "neighbours. F8 stops all preview voices.",
             FontSize = 11,
             TextWrapping = TextWrapping.Wrap,
         });
@@ -113,45 +113,25 @@ public sealed class PianoTestControl : UserControl
 
     public int BaseOctave => _keyboard.BaseOctave;
 
-    private bool CapsLockOn()
-    {
-        bool? native = _caps.IsCapsLockOn();
-        if (native.HasValue)
-            _localCapsLock = native;
-        return native ?? _localCapsLock ?? false;
-    }
-
     private void UpdateLabels()
     {
         _octave.Text = $"Audition octave: {_keyboard.BaseOctave}";
-        bool active = CapsLockOn();
-        bool known = _caps.IsCapsLockOn().HasValue;
-        _mode.Text = !known && !_localCapsLock.HasValue
-            ? "Mode: Hold (Caps Lock state unavailable)"
-            : $"Mode: {(active ? "Latch" : "Hold")}"
-                + (known ? "" : " (locally tracked)");
+        _mode.Text = $"Mode: {(_capsMode.IsLatch ? "Latch" : "Hold")}"
+            + (_capsMode.IsNativeStateAvailable ? "" : " (locally tracked)");
     }
 
     private void OnTestKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.PhysicalKey == PhysicalKey.CapsLock)
-        {
-            e.Handled = true;
-            if (_repeats.KeyDown(e.PhysicalKey))
-            {
-                bool? native = _caps.IsCapsLockOn();
-                _localCapsLock = native ?? !(_localCapsLock ?? false);
-                UpdateLabels();
-            }
-            return;
-        }
         if (!PianoPreviewKeyboard.IsApplicable(e.PhysicalKey, e.KeyModifiers))
             return;
         e.Handled = true;
         if (!_repeats.KeyDown(e.PhysicalKey))
             return;
+        // Refresh authoritative OS state for each newly started note.
+        // When unavailable, Refresh preserves the in-application mode.
+        _capsMode.Refresh();
         PianoPreviewEvent? preview = _keyboard.KeyDown(
-            e.PhysicalKey, e.KeyModifiers, CapsLockOn());
+            e.PhysicalKey, e.KeyModifiers, _capsMode.IsLatch);
         if (preview is not null)
             Emit(preview);
         UpdateLabels();
@@ -161,13 +141,6 @@ public sealed class PianoTestControl : UserControl
     {
         if (_repeats.KeyUp(e.PhysicalKey))
             e.Handled = true;
-
-        // X11 can dispatch Caps Lock KeyDown before XKB's locked modifier
-        // state is observable through our separate query connection.
-        // Query again on KeyUp so turning Caps Lock off updates the mode
-        // without requiring a subsequent piano key event.
-        if (e.PhysicalKey == PhysicalKey.CapsLock)
-            UpdateLabels();
     }
 
     private void DispatchConfirmedRelease(PhysicalKey key)
@@ -187,11 +160,34 @@ public sealed class PianoTestControl : UserControl
             Emit(evt);
     }
 
+    private void OnOwnerActivated(object? sender, EventArgs e)
+    {
+        // Resynchronize if the user toggled Caps Lock while another window
+        // was active. An unavailable query leaves the local mode unchanged.
+        _capsMode.Refresh();
+        UpdateLabels();
+    }
+
     private void OnOwnerDeactivated(object? sender, EventArgs e)
-        => ReleaseHeldKeys();
+    {
+        ReleaseHeldKeys();
+        _capsRepeats.Clear();
+    }
 
     private void OnOwnerKeyDown(object? sender, KeyEventArgs e)
     {
+        if (e.PhysicalKey == PhysicalKey.CapsLock)
+        {
+            // Tunnel from the containing window, even for controls that
+            // handle their own keyboard events. We observe without handling.
+            if (_capsRepeats.KeyDown(e.PhysicalKey))
+            {
+                _capsMode.OnCapsLockPressed();
+                UpdateLabels();
+            }
+            return;
+        }
+
         if (e.Key != Key.F8 || (!_hasVoices() && !_testArea.IsFocused))
             return;
         e.Handled = true;
@@ -201,6 +197,17 @@ public sealed class PianoTestControl : UserControl
 
     private void OnOwnerKeyUp(object? sender, KeyEventArgs e)
     {
+        if (e.PhysicalKey == PhysicalKey.CapsLock)
+        {
+            _capsRepeats.KeyUp(e.PhysicalKey);
+            // X11 may report the old locked state at KeyDown, but the
+            // updated state by KeyUp. Always requery: an unavailable native
+            // provider preserves the locally tracked mode unchanged.
+            _capsMode.Refresh();
+            UpdateLabels();
+            return;
+        }
+
         if (e.Key == Key.F8 && _repeats.KeyUp(e.PhysicalKey))
             e.Handled = true;
     }
@@ -212,6 +219,7 @@ public sealed class PianoTestControl : UserControl
         _owner = TopLevel.GetTopLevel(this) as Window;
         if (_owner is not null)
         {
+            _owner.Activated += OnOwnerActivated;
             _owner.Deactivated += OnOwnerDeactivated;
             _owner.AddHandler(InputElement.KeyDownEvent,
                 OnOwnerKeyDown, RoutingStrategies.Tunnel,
@@ -220,6 +228,7 @@ public sealed class PianoTestControl : UserControl
                 OnOwnerKeyUp, RoutingStrategies.Tunnel,
                 handledEventsToo: true);
         }
+        _capsMode.Refresh();
         UpdateLabels();
     }
 
@@ -228,12 +237,14 @@ public sealed class PianoTestControl : UserControl
     {
         if (_owner is not null)
         {
+            _owner.Activated -= OnOwnerActivated;
             _owner.Deactivated -= OnOwnerDeactivated;
             _owner.RemoveHandler(InputElement.KeyDownEvent, OnOwnerKeyDown);
             _owner.RemoveHandler(InputElement.KeyUpEvent, OnOwnerKeyUp);
             _owner = null;
         }
         ReleaseHeldKeys();
+        _capsRepeats.Clear();
         _ = _stopOwnVoices();
         base.OnDetachedFromVisualTree(e);
     }
