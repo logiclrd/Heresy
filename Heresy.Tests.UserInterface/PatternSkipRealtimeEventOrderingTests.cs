@@ -59,24 +59,30 @@ public sealed class PatternSkipRealtimeEventOrderingTests
             KeyModifiers = KeyModifiers.None,
         };
         Task action = InvokeAsync(editor, "OnCellKeyDownAsync", 0, 0, keyDown);
-        auditionReached.Should().BeTrue(
-            "the test must exercise the incomplete realtime playback await");
-        action.IsCompleted.Should().BeFalse();
-        pattern.Grid[0, 0]!.Note.Should().BeOfType<StartPatternNote>();
-        cursor.Row.Should().Be(1, "Skip is applied synchronously at note entry");
-        keyDown.Handled.Should().BeTrue(
-            "the key event must be consumed before the live-audio await");
+        try
+        {
+            auditionReached.Should().BeTrue(
+                "the test must exercise the incomplete realtime playback await");
+            action.IsCompleted.Should().BeFalse();
+            pattern.Grid[0, 0]!.Note.Should().BeOfType<StartPatternNote>();
+            cursor.Row.Should().Be(1, "Skip is applied synchronously at note entry");
+            keyDown.Handled.Should().BeTrue(
+                "the key event must be consumed before the live-audio await");
 
-        // Avalonia may deliver the old source cell's TextInput before the
-        // asynchronous audio acknowledgement completes.
-        TextInputEventArgs trailingText = new() { Text = "z" };
-        Invoke(editor, "OnCellTextInput", 0, 0, trailingText);
-        trailingText.Handled.Should().BeTrue();
-        cursor.Row.Should().Be(1,
-            "trailing text for the old row must never restore the cursor");
-
-        playback.SetResult();
-        await action;
+            // Avalonia may deliver the old source cell's TextInput before
+            // asynchronous audio acknowledgement finishes.
+            TextInputEventArgs trailingText = new() { Text = "z" };
+            Invoke(editor, "OnCellTextInput", 0, 0, trailingText);
+            trailingText.Handled.Should().BeTrue();
+            cursor.Row.Should().Be(1,
+                "trailing text for the old row must never restore the cursor");
+        }
+        finally
+        {
+            // An intentionally red test must not strand its preview Task.
+            playback.TrySetResult();
+            await action;
+        }
         cursor.Row.Should().Be(1);
         cursor.Field.Should().Be(PatternCellField.Note);
     }
