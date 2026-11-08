@@ -21,6 +21,20 @@ Do not reintroduce completed-task checklists here.
   **not** Windows/device/functional acceptance. Record observations in
   [Pattern row mutation performance](pattern-row-mutation-performance.md).
 
+- [ ] **Physically audition flattened-source Gxx and instantaneous GFF on
+  Windows and Linux.** Confirm that Gxx/G00/Lxx retune ongoing nested
+  Pattern and Sequence notes without restarting them or altering their
+  row timing, that future Instrument notes receive the changed pitch,
+  that displaced/NNA voices and nested scopes behave independently of
+  unrelated channels, and that GFF also switches base pitch immediately
+  for ordinary Samples, Instruments, Synths and private mixdowns.
+  Check vibrato/envelope continuity, sample-position continuity and
+  the editor's warning/Note presentation. Automated PCM and producer
+  regressions cannot establish physical audio/UI acceptance; record
+  any audible clicks or platform-specific defects separately. See
+  [effect operators](effect-operators.md) and
+  [UI workflow](user-interface-workflows.md).
+
 ### Filters
 
 - [ ] **Finish physical filter-feature listening and desktop acceptance.**

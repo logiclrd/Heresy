@@ -313,6 +313,44 @@ public sealed class PlaybackTonePortamentoTests
 		});
 	}
 
+	[Test]
+	public void FlattenedGffRetunesDisplacedNnaVoiceAlongsideItsCurrentSibling()
+	{
+		ObjectId sourceId = (ObjectId)10U;
+		SampleSound sound = RampSample(500, 1000);
+		StartNoteCommand child = new(sourceId)
+		{
+			ParentSourceScopes = new long[] { 88 },
+		};
+		PlaybackSession session = Session(1000, Schedule(
+			OnChannel(0, 0, new BeginFlattenedSourceVolumeCommand(88, 1.0)),
+			OnChannel(1, 0, child),
+			OnChannel(1, 20,
+				new SetCurrentVoiceDisplacementActionCommand(
+					NoteDisplacementAction.Continue), child),
+			OnChannel(0, 40, new SetTonePortamentoCommand(
+				1020.0, new StartNoteCommand(sourceId, PitchMultiplier: 2.0),
+				Instant: true))), new TestResolver((sourceId, false, sound)));
+		session.Render(0, 60, new float[60]);
+		Assert.That(session.VirtualVoices, Has.Count.EqualTo(1),
+			"NNA Continue must preserve the earlier descendant.");
+		PlaybackVoice displaced = session.VirtualVoices[0];
+		PlaybackVoice current = session.GetChannelState(1).CurrentVoice!;
+		Assert.Multiple(() =>
+		{
+			Assert.That(displaced.SoundState.PitchTrajectory.GetMultiplier(39),
+				Is.EqualTo(1.0));
+			Assert.That(displaced.SoundState.PitchTrajectory.GetMultiplier(40),
+				Is.EqualTo(2.0));
+			Assert.That(current.SoundState.PitchTrajectory.GetMultiplier(19),
+				Is.EqualTo(1.0));
+			Assert.That(current.SoundState.PitchTrajectory.GetMultiplier(20),
+				Is.EqualTo(2.0));
+			Assert.That(current.StartFrame, Is.EqualTo(20));
+			Assert.That(displaced.StartFrame, Is.EqualTo(0));
+		});
+	}
+
 	private static NoteEvent OnChannel(int channel, long frame,
 		params NoteCommand[] commands)
 		=> new(new MusicalTime(Frame(frame, 1000), 0.0),

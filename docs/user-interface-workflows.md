@@ -579,6 +579,29 @@ remain preview-only. Replacing an existing start note changes its pitch
 but preserves its playback-speed multiplier and mixdown flag; Enter remains
 available for the detailed semantic note dialog.
 
+## Gxx tone portamento and GFF snap
+
+Gxx changes the **base pitch** of an ongoing note, without restarting its
+sample, Synth, Instrument, private mixdown, or non-mixdown flattened
+Pattern/Sequence source. A note in the same cell supplies the target; if
+there is no playing source, the target note can start it instead.
+`G01`–`GFE` glide continuously; **`GFF` snaps to the target at the
+effect frame**. `G00` recalls the last G byte, including FF's snap mode.
+`Lxx` combines that remembered pitch action with its volume slide.
+Independent modulation (for example vibrato) continues.
+
+For a flattened nested Pattern/Sequence the controller retunes existing
+descendant voices and supplies the updated transposition to future notes,
+including Instrument tone selection. Its Pattern-row timing is unchanged.
+The editor warns only for effects that are still voice-specific and genuinely
+inapplicable to the flattened logical source. For a precise architecture
+contract see [effect operators](effect-operators.md).
+
+Tracker users familiar with Impulse Tracker may notice that its GFF means
+maximum *finite slide speed*; Heresy deliberately uses FF for an immediate
+pitch switch. This comparison is a helpful usage note, not a compatibility
+goal.
+
 ## Source and volume cells
 
 Source is a separate tracker column and may be omitted. An explicit Source value
