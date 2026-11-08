@@ -86,30 +86,45 @@ Do not reintroduce completed-task checklists here.
 
 ## Synth editor — live parameter audition
 
-- [ ] **Apply compatible Synth parameter edits to ongoing preview notes in
-  realtime, without restarting them.** Today, already-playing Synth preview
-  voices generally retain their prepared graph snapshot even after a
-  parameter-only editor change. Introduce versioned, immutable, preprepared
-  parameter updates from committed Synth inspector edits to active held and
-  latched preview voices. Initially cover oscillator **Frequency Hz**,
-  **Waveform**, **Curvature**, and Filter **CutoffHz**, maintaining oscillator
-  phase, note/release envelopes, child-source playback position and compatible
-  filter histories. Define graph compatibility by stable compiled structure
-  (node identities/types, connectivity and DSP state requirements), not
-  merely by AudioRevision: parameter-only changes should apply; incompatible
-  graph topology, node types or state layouts may leave existing voices on
-  their earlier captured definition while new notes use the edited graph.
-  Preserve the distinction across later edits, avoiding updates to voices
-  from an incompatible graph generation. Prepare costly DSP resources
-  (including curvature lookup tables and any filter/FIR redesign) away from
-  the audio callback, publish at a safe block boundary, and preserve
-  deterministic realtime/offline behavior, ordering, and sensible transition
-  smoothing where needed. Test simultaneous held and latched notes, repeated
-  rapid edits, filter-state continuity, incompatible edits, voice retirement,
-  latency, PCM correctness and underruns, plus physical listening. Keep live
-  MIDI pitch bend as an *independent per-voice/per-MIDI-channel control*, not
-  an authored graph mutation, while allowing it to reuse the safe realtime
-  control/publication infrastructure. See [Synth sound source](synth-sound-source.md),
+- [ ] **Apply *all non-structural Synth property changes* to ongoing preview
+  notes in realtime, without restarting them.** Already-playing Synth preview
+  voices currently retain their prepared graph snapshot after edits. The
+  requirement covers every editable property whose change leaves the Synth
+  graph structurally compatible, **not merely a selected set of parameters**.
+  Oscillator Frequency Hz, Waveform and Curvature, and Filter CutoffHz are
+  representative examples, **not a minimum viable subset or exhaustive list**.
+  Audit the full Synth inspector's editable properties (across node types,
+  including nested/source, filter and Multi parameters) and ensure each
+  non-structural property has realtime-update support and regression coverage.
+  A property must not be excluded just because applying it requires
+  recomputing prepared resources, rebuilding DSP coefficients, or migrating
+  compatible per-voice state.
+
+  Introduce versioned, immutable, preprepared parameter updates from
+  committed Synth edits to all active held and latched preview voices.
+  Preserve continuity of oscillator phase, note/release envelopes,
+  child-source playback position and stateful DSP histories wherever
+  semantically possible; define explicit, click-safe state migration or
+  transition behavior when a non-structural parameter changes the processing
+  configuration. Graph **structural** changes (such as adding/removing nodes,
+  changing node identity/type, rewiring connections or changing effective
+  processing topology) may leave existing voices on the earlier captured
+  definition while new notes use the edited graph. Decide structural
+  compatibility from actual graph/runtime structure, never merely from
+  AudioRevision or whether a parameter has a prepared implementation.
+  Preserve graph-generation isolation for subsequent edits. Prepare costly
+  resources (including curvature tables and filter/FIR redesign) outside the
+  audio callback and publish safely at an audio block boundary.
+
+  Acceptance requires a complete property-by-property audit, automated
+  realtime/PCM tests of **every non-structural editable property**, simultaneous
+  held and latched notes, rapid successive edits, consistent voice/release
+  lifetimes, filter/state transitions, structural-change isolation, latency,
+  underruns and physical listening; do not claim the milestone complete after
+  testing only the illustrative properties above. Keep live MIDI pitch bend
+  as an *independent per-voice/per-MIDI-channel control*, not an authored
+  graph mutation, while allowing it to reuse the realtime control/publication
+  infrastructure. See [Synth sound source](synth-sound-source.md),
   [UI workflow](user-interface-workflows.md) and [audio output](audio-output.md).
 
 ## Conditional improvements
