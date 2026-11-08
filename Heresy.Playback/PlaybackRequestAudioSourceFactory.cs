@@ -4,11 +4,15 @@ using System.Collections.Generic;
 using System.Linq;
 
 using Heresy.Core.Diagnostics;
+using Heresy.Core.FmSynthesis;
+using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
 using Heresy.Render.Configuration;
 using Heresy.Render.Filters;
 using Heresy.Render.Realtime;
+using Heresy.Render.FmSynthesis;
 using Heresy.Render.Samples;
+using Heresy.Render.Sounds;
 using Heresy.Scripting.Analysis;
 
 namespace Heresy.Playback;
@@ -32,7 +36,8 @@ public sealed class PlaybackSourceCompilationException : InvalidOperationExcepti
 public sealed class PlaybackRequestAudioSourceFactory :
 	IBackgroundPlaybackSourceFactory,
 	IPlaybackPositionTimelineProvider,
-	IPlaybackRuntimeDiagnosticReportProvider
+	IPlaybackRuntimeDiagnosticReportProvider,
+	ILiveSynthSourcePreparationFactory
 {
 	private readonly Func<RenderConfiguration> _configurationSource;
 	private readonly ISampleDataProvider _samples;
@@ -64,6 +69,32 @@ public sealed class PlaybackRequestAudioSourceFactory :
 		_configurationSource = configurationSource
 			?? throw new ArgumentNullException(nameof(configurationSource));
 		_samples = sampleDataProvider ?? throw new ArgumentNullException(nameof(sampleDataProvider));
+	}
+
+	/// <summary>Compile a replacement Synth from a detached song revision.
+	/// Run only on the playback control worker, never the PCM producer or SDL
+	/// callback. The immutable sound owns nested prepared resources.</summary>
+	public ISound PrepareLiveSynthSource(
+		SongDocumentSnapshot snapshot, ObjectId sourceId)
+	{
+		ArgumentNullException.ThrowIfNull(snapshot);
+		if (!snapshot.Document.TryGet(sourceId, out SongObject? node)
+			|| node is not FmSynthDefinition)
+			throw new ArgumentException(
+				"Live Synth publication requires an existing Synth source.",
+				nameof(sourceId));
+		RenderConfiguration configuration = _configurationSource()
+			?? throw new InvalidOperationException(
+				"The playback output configuration source returned null.");
+		PlaybackSnapshotSoundResolver sounds = new(
+			SongDocumentSnapshot.Create(snapshot.Document).Document,
+			_samples, configuration.SampleRate);
+		sounds.PrepareDirectSources();
+		if (!sounds.TryResolve(sourceId, mixdown: false, out ISound? result)
+			|| result is not FmSynthSound)
+			throw new InvalidOperationException(
+				"Could not prepare the requested Synth revision.");
+		return result;
 	}
 
 	public IAudioOutputSource Create(PlaybackRequest request)
@@ -144,9 +175,14 @@ public sealed class PlaybackRequestAudioSourceFactory :
 
 	private sealed class LiveRecursiveSource(
 		PreparedIncrementalPlaybackPlan plan,
-		PlaybackPositionTimeline? positions) : ILiveAudioOutputSource, IFirPreparationAudioSource, IDisposable
+		PlaybackPositionTimeline? positions) : ILiveAudioOutputSource, ILiveSynthSourceRevisionOutput,
+		IFirPreparationAudioSource, IDisposable
 	{
-		private readonly ConcurrentQueue<LivePlaybackEvent> _commands = new();
+		// Publication and note messages share FIFO ordering on the producer.
+		private abstract record LiveAction;
+		private sealed record NoteAction(LivePlaybackEvent Event) : LiveAction;
+		private sealed record SynthAction(ObjectId Id, ISound Sound) : LiveAction;
+		private readonly ConcurrentQueue<LiveAction> _commands = new();
 		private readonly ConcurrentQueue<SequencingDiagnostic> _warnings = new();
 		public SequencingDiagnostic[] DrainRuntimeDiagnostics()
 		{
@@ -167,12 +203,29 @@ public sealed class PlaybackRequestAudioSourceFactory :
 			IReadOnlyList<NoteCommand> commands)
 		{
 			ArgumentNullException.ThrowIfNull(commands);
-			_commands.Enqueue(new LivePlaybackEvent(target, commands.ToArray()));
+			_commands.Enqueue(new NoteAction(
+				new LivePlaybackEvent(target, commands.ToArray())));
+		}
+		public void EnqueueLiveSynthSource(ObjectId sourceId, ISound preparedSound)
+		{
+			ArgumentNullException.ThrowIfNull(preparedSound);
+			_commands.Enqueue(new SynthAction(sourceId, preparedSound));
 		}
 		public void Render(int frameCount, Span<float> destination)
 		{
-			while (_commands.TryDequeue(out LivePlaybackEvent? command))
-				plan.Source.ApplyLiveEvent(command.Target, command.Commands);
+			while (_commands.TryDequeue(out LiveAction? action))
+			{
+				switch (action)
+				{
+					case NoteAction note:
+						plan.Source.ApplyLiveEvent(
+							note.Event.Target, note.Event.Commands);
+						break;
+					case SynthAction synth:
+						plan.AdoptPreparedLiveSynth(synth.Id, synth.Sound);
+						break;
+				}
+			}
 			plan.Source.Render(frameCount, destination);
 			// Drain in the same worker that owns sequencing diagnostics.
 			// Transport/UI readers see only immutable queued records.
