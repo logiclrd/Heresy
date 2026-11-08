@@ -693,6 +693,237 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 		}
 	}
 
+
+	[Test]
+	public void TwoAuthoredFilterStagesAdoptTogetherWithPreservedIirHistories()
+	{
+		SongDocument song = new();
+		ObjectId filterId = song.AllocateObjectId();
+		FilterDefinition definition = new(filterId, "Serial", [
+			new FilterStageDefinition(1, "first", FilterKind.OnePole,
+				[new("CutoffHz", FilterParameterValue.FromNumber(200))]),
+			new FilterStageDefinition(2, "second", FilterKind.OnePole,
+				[new("CutoffHz", FilterParameterValue.FromNumber(300))])]);
+		song.Add(definition);
+		ObjectId authoredId = song.AllocateObjectId();
+		FmSynthDefinition authored = new(authoredId, "Authored", new FmSynthGraph([
+			new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 1500),
+			new FmFilterNode(1, 0, new FilterInstance(definition))], 1));
+		song.Add(authored);
+
+		FmFilterNode controlled = new(1, 0, new FilterInstance(definition));
+		controlled = controlled.WithParameterConnection(
+			controlled.GetPorts().Single(p => p.StageId == 1
+				&& p.ParameterName == "CutoffHz"), 2);
+		controlled = controlled.WithParameterConnection(
+			controlled.GetPorts().Single(p => p.StageId == 2
+				&& p.ParameterName == "CutoffHz"), 3);
+		ObjectId controlId = song.AllocateObjectId();
+		FmSynthDefinition reference = new(controlId, "FM Reference",
+			new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 1500),
+				controlled,
+				new FmConstantNode(2, 200),
+				new FmConstantNode(3, 300)], 1));
+		song.Add(reference);
+
+		PlaybackRequestAudioSourceFactory factory = new(MonoConfiguration(48000));
+		NoteSchedule empty = new NoteScheduleBuilder().Freeze();
+		IAudioOutputSource edited = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		IAudioOutputSource control = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		try
+		{
+			((ILiveAudioOutputSource)edited).EnqueueLiveEvent(ChannelTarget.Virtual(61),
+				[new StartNoteCommand(authoredId)]);
+			((ILiveAudioOutputSource)control).EnqueueLiveEvent(ChannelTarget.Virtual(61),
+				[new StartNoteCommand(controlId)]);
+			float[] beforeA = new float[190], beforeB = new float[190];
+			edited.Render(beforeA.Length, beforeA);
+			control.Render(beforeB.Length, beforeB);
+			for (int i = 0; i < beforeA.Length; i++)
+				beforeA[i].Should().BeApproximately(beforeB[i], 1e-5f);
+
+			FilterInstance changes = new(definition);
+			changes.SetStageParameter(1, "CutoffHz",
+				FilterParameterValue.FromNumber(2500));
+			changes.SetStageParameter(2, "CutoffHz",
+				FilterParameterValue.FromNumber(4500));
+			authored.Graph = new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 1500),
+				new FmFilterNode(1, 0, changes)], 1);
+			reference.Graph = new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 1500),
+				controlled, new FmConstantNode(2, 2500),
+				new FmConstantNode(3, 4500)], 1);
+			song.MarkChanged(affectsAudio: true);
+			foreach ((IAudioOutputSource output, ObjectId synth) in
+				new[] { (edited, authoredId), (control, controlId) })
+				((ILiveSynthSourceRevisionOutput)output).EnqueueLiveSynthParameters(
+					synth, factory.PrepareLiveSynthSource(
+						SongDocumentSnapshot.Create(song), synth));
+			float[] afterA = new float[220], afterB = new float[220];
+			edited.Render(afterA.Length, afterA);
+			control.Render(afterB.Length, afterB);
+			for (int i = 0; i < afterA.Length; i++)
+				afterA[i].Should().BeApproximately(afterB[i], 1e-5f,
+					"both serial coefficients must adopt at the same PCM boundary");
+		}
+		finally
+		{
+			(edited as IDisposable)?.Dispose();
+			(control as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
+	public void NestedMultiConstituentsAtomicallyAdoptTwoFilterProcessors()
+	{
+		SongDocument song = new();
+		ObjectId firstId = song.AllocateObjectId();
+		FilterDefinition first = new(firstId, "First", [
+			new FilterStageDefinition(1, "first", FilterKind.OnePole,
+				[new("CutoffHz", FilterParameterValue.FromNumber(200))])]);
+		song.Add(first);
+		ObjectId secondId = song.AllocateObjectId();
+		FilterDefinition second = new(secondId, "Second", [
+			new FilterStageDefinition(1, "second", FilterKind.OnePole,
+				[new("CutoffHz", FilterParameterValue.FromNumber(350))])]);
+		song.Add(second);
+		ObjectId authoredId = song.AllocateObjectId();
+		FmMultiNode multi = new(4, inputNodeId: 3, detune: 0,
+			voiceCount: 2, randomizePhase: false, gainCompensation: true);
+		FmSynthDefinition authored = new(authoredId, "Multi", new FmSynthGraph([
+			new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 1100),
+			new FmFilterNode(2, 0, new FilterInstance(first)),
+			new FmFilterNode(3, 2, new FilterInstance(second)),
+			multi], 4));
+		song.Add(authored);
+		FmFilterNode controlledFirst = new(2, 0, new FilterInstance(first));
+		controlledFirst = controlledFirst.WithParameterConnection(
+			controlledFirst.GetPorts().Single(p => p.ParameterName == "CutoffHz"), 5);
+		FmFilterNode controlledSecond = new(3, 2, new FilterInstance(second));
+		controlledSecond = controlledSecond.WithParameterConnection(
+			controlledSecond.GetPorts().Single(p => p.ParameterName == "CutoffHz"), 6);
+		ObjectId controlId = song.AllocateObjectId();
+		FmSynthDefinition reference = new(controlId, "Multi Reference",
+			new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 1100),
+				controlledFirst, controlledSecond, multi,
+				new FmConstantNode(5, 200), new FmConstantNode(6, 350)], 4));
+		song.Add(reference);
+
+		PlaybackRequestAudioSourceFactory factory = new(MonoConfiguration(48000));
+		NoteSchedule empty = new NoteScheduleBuilder().Freeze();
+		IAudioOutputSource edited = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		IAudioOutputSource control = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		try
+		{
+			((ILiveAudioOutputSource)edited).EnqueueLiveEvent(ChannelTarget.Virtual(61),
+				[new StartNoteCommand(authoredId)]);
+			((ILiveAudioOutputSource)control).EnqueueLiveEvent(ChannelTarget.Virtual(61),
+				[new StartNoteCommand(controlId)]);
+			float[] beforeA = new float[170], beforeB = new float[170];
+			edited.Render(beforeA.Length, beforeA);
+			control.Render(beforeB.Length, beforeB);
+			for (int i = 0; i < beforeA.Length; i++)
+				beforeA[i].Should().BeApproximately(beforeB[i], 1e-5f);
+			FilterInstance revisedFirst = new(first);
+			revisedFirst.SetStageParameter(1, "CutoffHz",
+				FilterParameterValue.FromNumber(3200));
+			FilterInstance revisedSecond = new(second);
+			revisedSecond.SetStageParameter(1, "CutoffHz",
+				FilterParameterValue.FromNumber(4500));
+			authored.Graph = new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 1100),
+				new FmFilterNode(2, 0, revisedFirst),
+				new FmFilterNode(3, 2, revisedSecond), multi], 4);
+			reference.Graph = new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 1100),
+				controlledFirst, controlledSecond, multi,
+				new FmConstantNode(5, 3200), new FmConstantNode(6, 4500)], 4);
+			song.MarkChanged(affectsAudio: true);
+			foreach ((IAudioOutputSource output, ObjectId synth) in
+				new[] { (edited, authoredId), (control, controlId) })
+				((ILiveSynthSourceRevisionOutput)output).EnqueueLiveSynthParameters(
+					synth, factory.PrepareLiveSynthSource(
+						SongDocumentSnapshot.Create(song), synth));
+			float[] afterA = new float[180], afterB = new float[180];
+			edited.Render(afterA.Length, afterA);
+			control.Render(afterB.Length, afterB);
+			for (int i = 0; i < afterA.Length; i++)
+				afterA[i].Should().BeApproximately(afterB[i], 1e-5f,
+					"every nested constituent must retain both Filter histories");
+		}
+		finally
+		{
+			(edited as IDisposable)?.Dispose();
+			(control as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
+	public void RejectedSecondFilterUpdateLeavesFirstFilterAndOldVoiceUntouched()
+	{
+		SongDocument song = new();
+		ObjectId firstId = song.AllocateObjectId();
+		FilterDefinition first = new(firstId, "First", [
+			new FilterStageDefinition(1, "one", FilterKind.OnePole,
+				[new("CutoffHz", FilterParameterValue.FromNumber(100))])]);
+		song.Add(first);
+		ObjectId secondId = song.AllocateObjectId();
+		FilterDefinition second = new(secondId, "Second", [
+			new FilterStageDefinition(1, "two", FilterKind.OnePole,
+				[new("CutoffHz", FilterParameterValue.FromNumber(120))])]);
+		song.Add(second);
+		ObjectId synthId = song.AllocateObjectId();
+		FmSynthDefinition synth = new(synthId, "Cascade", new FmSynthGraph([
+			new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 80),
+			new FmFilterNode(1, 0, new FilterInstance(first)),
+			new FmFilterNode(2, 1, new FilterInstance(second))], 2));
+		song.Add(synth);
+		PlaybackRequestAudioSourceFactory factory = new(MonoConfiguration(1000));
+		NoteSchedule empty = new NoteScheduleBuilder().Freeze();
+		IAudioOutputSource edited = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		IAudioOutputSource unchanged = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		try
+		{
+			foreach (IAudioOutputSource output in new[] { edited, unchanged })
+				((ILiveAudioOutputSource)output).EnqueueLiveEvent(
+					ChannelTarget.Virtual(70), [new StartNoteCommand(synthId)]);
+			float[] beforeA = new float[80], beforeB = new float[80];
+			edited.Render(beforeA.Length, beforeA);
+			unchanged.Render(beforeB.Length, beforeB);
+			beforeA.Should().Equal(beforeB);
+
+			FilterInstance firstChange = new(first);
+			firstChange.SetStageParameter(1, "CutoffHz",
+				FilterParameterValue.FromNumber(250));
+			FilterInstance invalidSecond = new(second);
+			// Valid as an authored parameter, but above the 1000-Hz
+			// output's Nyquist frequency and therefore not admissible.
+			invalidSecond.SetStageParameter(1, "CutoffHz",
+				FilterParameterValue.FromNumber(4000));
+			synth.Graph = new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 80),
+				new FmFilterNode(1, 0, firstChange),
+				new FmFilterNode(2, 1, invalidSecond)], 2);
+			song.MarkChanged(affectsAudio: true);
+			((ILiveSynthSourceRevisionOutput)edited).EnqueueLiveSynthParameters(
+				synthId, factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(song), synthId));
+			float[] afterA = new float[140], afterB = new float[140];
+			edited.Render(afterA.Length, afterA);
+			unchanged.Render(afterB.Length, afterB);
+			afterA.Should().Equal(afterB,
+				"a later invalid coefficient must not partially commit an earlier Filter");
+		}
+		finally
+		{
+			(edited as IDisposable)?.Dispose();
+			(unchanged as IDisposable)?.Dispose();
+		}
+	}
+
 	[Test]
 	public void RealtimeFactoryCapturesFreshOutputConfigurationForEachNewRequest()
 	{
