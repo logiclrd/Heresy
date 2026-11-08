@@ -270,3 +270,44 @@ explanation to the original diagnostic line. Both status lines are
 read-only UI: changing focus does not change song/audio revisions.
 Model and headless Avalonia tests cover cursor transitions, stale
 expanded selections and surviving diagnostic messages.
+
+## Heresy tone portamento, GFF and flattened logical sources
+
+Heresy borrows familiar tracker command letters without requiring exact
+Impulse Tracker behavior. Tracker-style effects operate under Heresy's
+continuous pitch and row-time model.
+
+- `G01`–`GFE` move the **current note's base pitch** continuously
+  toward the pitch of a note in the same cell without restarting its
+  sound. A later `G00` continues toward the last target using remembered
+  `Gxx` speed; `Lxx` combines the remembered tone movement with its
+  independent note-volume slide.
+- **`GFF` is an instantaneous base-pitch retuning** at the effect frame,
+  not a very fast finite slide. It preserves the current sound/invocation,
+  playback position, oscillator state and envelopes. Transient vibrato
+  and other independent pitch modulation remain composed on top of the
+  new base. `G00` recalls the `FF` mode; `Lxx` uses that shared G memory.
+  Without an existing target, a targetless snap does nothing.
+- A **non-mixdown flattened Pattern or Sequence is one logical source
+  note** and owns a scope-local pitch controller alongside its live
+  volume controller. Tone portamento retunes that controller, never an
+  arbitrary physical-channel voice or the already mixed speaker PCM.
+  Existing descendant voices, including displaced NNA and nested voices,
+  follow the live transposition. Future notes inherit the pitch at their
+  actual start frame, including Instrument tone selection. Nested
+  controller multipliers compose multiplicatively, without leaking to
+  siblings that share a physical output host.
+- A note alongside `Gxx` on an already-running flattened source supplies
+  a pitch **target**, not a new Pattern/Sequence invocation. If no
+  flattened source is running, that note remains a normal fallback start.
+  Child Pattern rows retain their original musical timing: pitch changes
+  do not speed up or delay the Pattern/Sequence producer.
+- Pitch changes preserve an immutable, chronologically segmented history
+  to support integral source positions, replay/seek, and PCM chunk
+  invariance. This matters especially for pitched PCM Samples.
+
+*For readers familiar with Impulse Tracker:* IT interprets `GFF` as the
+maximum numerical portamento speed, whereas Heresy snaps immediately.
+This is a useful correspondence note for tracker users, **not** a claim
+that Impulse Tracker compatibility is a Heresy design objective.
+

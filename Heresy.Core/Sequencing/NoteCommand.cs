@@ -142,6 +142,9 @@ public sealed record BeginFlattenedSourceVolumeCommand(
 	long ChildScopeId, double InitialVolume,
 	ObjectId? EventFilterDefinitionId = null) : NoteCommand
 {
+	/// <summary>Local pitch baked into this flattened source's child context.
+	/// Live Gxx transposition is relative to this immutable starting pitch.</summary>
+	public double InitialPitchMultiplier { get; init; } = 1.0;
 	/// <summary>Prepared at the producer boundary, not inside PCM. A
 	/// flattened logical note passes its initial Filter to each descendant
 	/// voice without inserting a private mixdown.</summary>
@@ -398,7 +401,9 @@ public sealed record SetTonePortamentoCommand(
 	double LinearUnitsPerTick,
 	StartNoteCommand? TargetNote = null,
 	int? TicksPerRow = null,
-	bool Glissando = false) : NoteCommand;
+	bool Glissando = false,
+	// Heresy GFF: snap to the target at the effect frame, without retriggering.
+	bool Instant = false) : NoteCommand;
 
 /// <summary>
 /// Stops tone-portamento movement for the row while retaining its target.

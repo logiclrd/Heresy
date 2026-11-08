@@ -1409,7 +1409,7 @@ public sealed class PreparedIncrementalPlaybackFactoryTests
 			"0.5 PCM * captured source gain 0.5 * instigator M32/64; "
 			+ "the host's M16/64 must not affect the flattened child.");
 		Assert.That(plan.SequencingContext.Diagnostics.IgnoredFlatteningEffects,
-			Is.EqualTo(1), "Lxx is discarded without disrupting the source.");
+			Is.Zero, "Lxx is a supported logical-source pitch and volume effect.");
 	}
 
 	[TestCase(false)]

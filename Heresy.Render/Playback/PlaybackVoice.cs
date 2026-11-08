@@ -37,6 +37,8 @@ public sealed class PlaybackVoice
 		private readonly int _sampleRate;
 		private readonly Func<long, double>? _inheritedPitch;
 		private readonly double _inheritedPitchAtStart;
+		private readonly IReadOnlyList<FlattenedSourceVolume> _enclosingPitch;
+		private readonly double[] _enclosingPitchAtStart;
 
 		public OperatorPitchCurve(
 			PitchCurve baseCurve,
@@ -46,7 +48,9 @@ public sealed class PlaybackVoice
 			long segmentAbsoluteStartFrame,
 			int sampleRate,
 			Func<long, double>? inheritedPitch,
-			double inheritedPitchAtStart)
+			double inheritedPitchAtStart,
+			IReadOnlyList<FlattenedSourceVolume> enclosingPitch,
+			double[] enclosingPitchAtStart)
 		{
 			_baseCurve = baseCurve
 				?? throw new ArgumentNullException(nameof(baseCurve));
@@ -67,6 +71,8 @@ public sealed class PlaybackVoice
 			_sampleRate = sampleRate;
 			_inheritedPitch = inheritedPitch;
 			_inheritedPitchAtStart = inheritedPitchAtStart;
+			_enclosingPitch = enclosingPitch;
+			_enclosingPitchAtStart = enclosingPitchAtStart;
 		}
 
 		public override double GetMultiplier(long frameOffset)
@@ -110,6 +116,9 @@ public sealed class PlaybackVoice
 			if (_inheritedPitch is not null)
 				multiplier *= _inheritedPitch(absoluteFrame)
 					/ _inheritedPitchAtStart;
+			for (int index = 0; index < _enclosingPitch.Count; index++)
+				multiplier *= _enclosingPitch[index].ReadPitchRatio(absoluteFrame)
+					/ _enclosingPitchAtStart[index];
 			if (!(multiplier > 0.0)
 				|| double.IsNaN(multiplier)
 				|| double.IsInfinity(multiplier))
@@ -190,6 +199,7 @@ public sealed class PlaybackVoice
 	private readonly List<PitchOperatorBinding> _pitchOperators = [];
 	private readonly Func<long, double>? _inheritedPitch;
 	private readonly double _inheritedPitchAtStart;
+	private readonly double[] _enclosingPitchAtStart;
 
 	private byte _vibratoPhase;
 	private long _vibratoRandomAnchorIndex = -1;
@@ -271,6 +281,10 @@ public sealed class PlaybackVoice
 			?? Array.Empty<PlaybackChannelState>();
 		EnclosingSourceVolumes = enclosingSourceVolumes
 			?? Array.Empty<FlattenedSourceVolume>();
+		_enclosingPitchAtStart = new double[EnclosingSourceVolumes.Count];
+		for (int index = 0; index < EnclosingSourceVolumes.Count; index++)
+			_enclosingPitchAtStart[index] =
+				EnclosingSourceVolumes[index].ReadPitchRatio(startFrame);
 		StartFrame = startFrame;
 		OriginPhysicalChannel = originPhysicalChannel;
 		OriginPhysicalPlaybackOwner = originPhysicalPlaybackOwner;
@@ -320,7 +334,8 @@ public sealed class PlaybackVoice
 		RebuildEventEnvelopeRealtime();
 		RebuildEnclosingEnvelopeRealtime();
 
-		if (_pitchEnvelope is not null || _inheritedPitch is not null)
+		if (_pitchEnvelope is not null || _inheritedPitch is not null
+			|| EnclosingSourceVolumes.Count != 0)
 			RecomposePitchTrajectory(0);
 	}
 
@@ -1326,7 +1341,8 @@ public sealed class PlaybackVoice
 		int sampleRate,
 		double linearUnitsPerTick,
 		double? targetPitchMultiplier,
-		bool glissando)
+		bool glissando,
+		bool instant = false)
 	{
 		if (absoluteFrame < StartFrame)
 			throw new ArgumentOutOfRangeException(nameof(absoluteFrame));
@@ -1359,9 +1375,23 @@ public sealed class PlaybackVoice
 
 		CommitTonePortamento(
 			absoluteFrame,
-			preserveContinuousContinuation: true);
+			preserveContinuousContinuation: !instant);
 
 		long relativeFrame = absoluteFrame - StartFrame;
+		if (instant)
+		{
+			// GFF changes only the existing voice's base pitch: its
+			// source position, envelopes, vibrato and other operators
+			// continue without retriggering or an artificial speed ramp.
+			_basePitchCurve = new ConstantPitchCurve(
+				_tonePortamentoTargetBaseMultiplier.Value);
+			_basePitchCurveStartFrame = relativeFrame;
+			_activeTonePortamentoCurve = null;
+			_activeTonePortamentoCurveStartFrame = relativeFrame;
+			_tonePortamentoContinuationBaseMultiplier = null;
+			RecomposePitchTrajectory(relativeFrame);
+			return;
+		}
 		double audibleBase = GetBasePitchMultiplier(relativeFrame);
 		double continuousBase =
 			_tonePortamentoContinuationBaseMultiplier
@@ -1833,7 +1863,20 @@ public sealed class PlaybackVoice
 				checked(StartFrame + relativeFrame),
 				_sampleRate,
 				_inheritedPitch,
-				_inheritedPitchAtStart));
+				_inheritedPitchAtStart,
+				EnclosingSourceVolumes,
+				_enclosingPitchAtStart));
+	}
+
+	/// <summary>
+	/// Close the current sample-position integration segment at the precise
+	/// enclosing-source pitch change. The new curve reads the source's
+	/// immutable chronological pitch history; no sample is restarted.
+	/// </summary>
+	internal void RecomposeEnclosingPitch(long absoluteFrame)
+	{
+		if (absoluteFrame >= StartFrame)
+			RecomposePitchTrajectory(absoluteFrame - StartFrame);
 	}
 
 	private void CommitVibratoPhaseThrough(long absoluteFrame)

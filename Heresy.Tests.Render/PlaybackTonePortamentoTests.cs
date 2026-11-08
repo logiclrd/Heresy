@@ -211,6 +211,151 @@ public sealed class PlaybackTonePortamentoTests
 		Assert.That(split, Is.EqualTo(one));
 	}
 
+	[Test]
+	public void HeresyGffSnapsExistingVoiceWithoutResettingItsIntegratedSamplePosition()
+	{
+		ObjectId sourceId = (ObjectId)10U;
+		SampleSound sound = RampSample(500, 1000);
+		PlaybackSession session = Session(1000, Schedule(
+			Event(TimeSpan.Zero, new StartNoteCommand(sourceId)),
+			Event(Frame(40, 1000), new SetTonePortamentoCommand(
+				0xFF * 4.0,
+				new StartNoteCommand(sourceId, PitchMultiplier: 2.0),
+				Instant: true))), new TestResolver((sourceId, false, sound)));
+
+		session.Render(0, 40, new float[40]);
+		PlaybackVoice voice = session.GetChannelState(0).CurrentVoice!;
+		SoundState state = voice.SoundState;
+		float[] pcm = new float[40];
+		session.Render(40, 40, pcm);
+		Assert.Multiple(() =>
+		{
+			Assert.That(session.GetChannelState(0).CurrentVoice, Is.SameAs(voice));
+			Assert.That(voice.SoundState, Is.SameAs(state));
+			Assert.That(voice.StartFrame, Is.Zero);
+			Assert.That(state.PitchTrajectory.GetMultiplier(39), Is.EqualTo(1.0));
+			Assert.That(state.PitchTrajectory.GetMultiplier(40), Is.EqualTo(2.0));
+			Assert.That(state.PitchTrajectory.GetMultiplier(79), Is.EqualTo(2.0));
+			Assert.That(state.PitchTrajectory.GetPosition(40), Is.EqualTo(40.0).Within(1e-10));
+			Assert.That(state.PitchTrajectory.GetPosition(41), Is.EqualTo(42.0).Within(1e-10));
+		});
+	}
+
+	[Test]
+	public void FlattenedGffRetunesExistingAndFutureDescendantsButNotUnrelatedVoices()
+	{
+		ObjectId sourceId = (ObjectId)10U;
+		SampleSound sound = RampSample(500, 1000);
+		StartNoteCommand child = new(sourceId)
+		{
+			ParentSourceScopes = new long[] { 88 },
+		};
+		PlaybackSession session = Session(1000, Schedule(
+			OnChannel(0, 0, new BeginFlattenedSourceVolumeCommand(88, 1.0)),
+			OnChannel(1, 0, child),
+			OnChannel(3, 0, new StartNoteCommand(sourceId)),
+			OnChannel(0, 40, new SetTonePortamentoCommand(
+				0xFF * 4.0, new StartNoteCommand(sourceId, PitchMultiplier: 2.0),
+				Instant: true)),
+			OnChannel(2, 50, child)), new TestResolver((sourceId, false, sound)));
+
+		session.Render(0, 40, new float[40]);
+		PlaybackVoice first = session.GetChannelState(1).CurrentVoice!;
+		session.Render(40, 40, new float[40]);
+		PlaybackVoice later = session.GetChannelState(2).CurrentVoice!;
+		PitchTrajectory trajectory = first.SoundState.PitchTrajectory;
+		Assert.Multiple(() =>
+		{
+			Assert.That(session.GetChannelState(1).CurrentVoice, Is.SameAs(first));
+			Assert.That(trajectory.GetMultiplier(39), Is.EqualTo(1.0));
+			Assert.That(trajectory.GetMultiplier(40), Is.EqualTo(2.0));
+			Assert.That(trajectory.GetPosition(40), Is.EqualTo(40.0).Within(1e-10));
+			Assert.That(trajectory.GetPosition(41), Is.EqualTo(42.0).Within(1e-10));
+			Assert.That(later.SoundState.PitchMultiplier, Is.EqualTo(2.0));
+			Assert.That(later.SoundState.PitchTrajectory.GetMultiplier(0), Is.EqualTo(1.0),
+				"Future voices must capture the new pitch once, not multiply it twice.");
+			Assert.That(session.GetChannelState(3).CurrentVoice!
+				.SoundState.PitchTrajectory.GetMultiplier(60), Is.EqualTo(1.0),
+				"Sharing the physical session is not scope membership.");
+		});
+	}
+
+	[Test]
+	public void NestedFlattenedGffRatiosComposeAcrossSourceScopesAndRetainHistory()
+	{
+		ObjectId sourceId = (ObjectId)10U;
+		SampleSound sound = RampSample(500, 1000);
+		PlaybackSession session = Session(1000, Schedule(
+			OnChannel(0, 0, new BeginFlattenedSourceVolumeCommand(100, 1.0)),
+			OnChannel(1, 0, new BeginFlattenedSourceVolumeCommand(200, 1.0)),
+			OnChannel(2, 0, new StartNoteCommand(sourceId)
+			{
+				ParentSourceScopes = new long[] { 100, 200 },
+			}),
+			OnChannel(0, 20, new SetTonePortamentoCommand(
+				1020.0, new StartNoteCommand(sourceId, PitchMultiplier: 2.0),
+				Instant: true)),
+			OnChannel(1, 40, new SetTonePortamentoCommand(
+				1020.0, new StartNoteCommand(sourceId, PitchMultiplier: 1.5),
+				Instant: true))), new TestResolver((sourceId, false, sound)));
+		session.Render(0, 70, new float[70]);
+		PitchTrajectory trajectory = session.GetChannelState(2).CurrentVoice!
+			.SoundState.PitchTrajectory;
+		Assert.Multiple(() =>
+		{
+			Assert.That(trajectory.GetMultiplier(19), Is.EqualTo(1.0));
+			Assert.That(trajectory.GetMultiplier(20), Is.EqualTo(2.0));
+			Assert.That(trajectory.GetMultiplier(39), Is.EqualTo(2.0));
+			Assert.That(trajectory.GetMultiplier(40), Is.EqualTo(3.0));
+			Assert.That(trajectory.GetPosition(20), Is.EqualTo(20.0).Within(1e-10));
+			Assert.That(trajectory.GetPosition(40), Is.EqualTo(60.0).Within(1e-10));
+			Assert.That(trajectory.GetPosition(41), Is.EqualTo(63.0).Within(1e-10));
+		});
+	}
+
+	[Test]
+	public void FlattenedGffRetunesDisplacedNnaVoiceAlongsideItsCurrentSibling()
+	{
+		ObjectId sourceId = (ObjectId)10U;
+		SampleSound sound = RampSample(500, 1000);
+		StartNoteCommand child = new(sourceId)
+		{
+			ParentSourceScopes = new long[] { 88 },
+		};
+		PlaybackSession session = Session(1000, Schedule(
+			OnChannel(0, 0, new BeginFlattenedSourceVolumeCommand(88, 1.0)),
+			OnChannel(1, 0, child),
+			OnChannel(1, 20,
+				new SetCurrentVoiceDisplacementActionCommand(
+					NoteDisplacementAction.Continue), child),
+			OnChannel(0, 40, new SetTonePortamentoCommand(
+				1020.0, new StartNoteCommand(sourceId, PitchMultiplier: 2.0),
+				Instant: true))), new TestResolver((sourceId, false, sound)));
+		session.Render(0, 60, new float[60]);
+		Assert.That(session.VirtualVoices, Has.Count.EqualTo(1),
+			"NNA Continue must preserve the earlier descendant.");
+		PlaybackVoice displaced = session.VirtualVoices[0];
+		PlaybackVoice current = session.GetChannelState(1).CurrentVoice!;
+		Assert.Multiple(() =>
+		{
+			Assert.That(displaced.SoundState.PitchTrajectory.GetMultiplier(39),
+				Is.EqualTo(1.0));
+			Assert.That(displaced.SoundState.PitchTrajectory.GetMultiplier(40),
+				Is.EqualTo(2.0));
+			Assert.That(current.SoundState.PitchTrajectory.GetMultiplier(19),
+				Is.EqualTo(1.0));
+			Assert.That(current.SoundState.PitchTrajectory.GetMultiplier(20),
+				Is.EqualTo(2.0));
+			Assert.That(current.StartFrame, Is.EqualTo(20));
+			Assert.That(displaced.StartFrame, Is.EqualTo(0));
+		});
+	}
+
+	private static NoteEvent OnChannel(int channel, long frame,
+		params NoteCommand[] commands)
+		=> new(new MusicalTime(Frame(frame, 1000), 0.0),
+			ChannelTarget.Physical(channel), commands);
+
 	private static PlaybackSession Session(
 		int sampleRate,
 		NoteSchedule schedule,

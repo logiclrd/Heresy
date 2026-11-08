@@ -21,6 +21,27 @@ Do not reintroduce completed-task checklists here.
   **not** Windows/device/functional acceptance. Record observations in
   [Pattern row mutation performance](pattern-row-mutation-performance.md).
 
+- [ ] **Complete broader physical acceptance of flattened-source Gxx and
+  instantaneous GFF.** **Manually verified (limited):** a single-channel
+  Pattern used as an instrument inside another Pattern responded correctly
+  to both `G01` (slow continuous portamento) and `GFF` (instant tone
+  change). This verifies the core use case, **not** the complexities below.
+  **Not yet explicitly manually verified:** multi-channel nested Patterns,
+  nested Sequence sources, multiple levels of flattening, simultaneous
+  unrelated channels sharing physical hosts, displaced/NNA and virtual
+  descendant voices, `G00` target/speed memory, `Lxx` combined pitch and
+  volume effects, future Instrument-tone selection after retuning,
+  interactions with vibrato, envelopes and glissando, release and native
+  sample-position continuity, and `GFF` on ordinary Samples, Instruments,
+  Synths and private mixdowns. Recheck the Pattern editor's note/`?` and
+  unsupported-effect warning presentation, and verify no inadvertent
+  source restarts, altered child-row timing, clicks or underruns. Test on
+  Windows and Linux where practicable and record results per case rather
+  than treating the one-channel test as blanket acceptance. Automated
+  PCM, NNA, nesting and producer tests passed, but do not replace these
+  physical listening/UI checks. See [effect operators](effect-operators.md)
+  and [UI workflow](user-interface-workflows.md).
+
 ### Filters
 
 - [ ] **Finish physical filter-feature listening and desktop acceptance.**

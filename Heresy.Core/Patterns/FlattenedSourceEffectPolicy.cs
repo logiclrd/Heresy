@@ -22,11 +22,10 @@ public static class FlattenedSourceEffectPolicy
 			or SetPlaybackFrequencyPatternEffect or SetPlaybackOffsetPatternEffect
 			or VibratoPatternEffect or FineVibratoPatternEffect
 			or VibratoVolumeSlidePatternEffect
-			// Kxx/Lxx contain a valid source-note volume slide; their
-			// incompatible pitch component is ignored separately.
+			// Kxx retains its valid note-volume slide; vibrato
+			// remains voice-specific. Gxx/Lxx now control the scope pitch.
 			or PitchSlidePatternEffect or TrackerPitchSlideDownPatternEffect
 			or TrackerPitchSlideUpPatternEffect
-			or TonePortamentoPatternEffect or TonePortamentoVolumeSlidePatternEffect
 			or ArpeggioPatternEffect or TremoloPatternEffect
 			or TremorPatternEffect or PanbrelloPatternEffect
 			or RetriggerPatternEffect or SampleOffsetPatternEffect
@@ -40,7 +39,6 @@ public static class FlattenedSourceEffectPolicy
 			or TrackerVolumeColumnPatternEffect
 				{ Kind: TrackerVolumeColumnEffectKind.PitchSlideDown
 					or TrackerVolumeColumnEffectKind.PitchSlideUp
-					or TrackerVolumeColumnEffectKind.TonePortamento
 					or TrackerVolumeColumnEffectKind.Vibrato };
 	}
 
@@ -57,8 +55,6 @@ public static class FlattenedSourceEffectPolicy
 			or SetPitchSlideCommand or ClearPitchSlideCommand
 			or ApplyPitchSlideDownCommand or ApplyPitchSlideUpCommand
 			or AdjustPitchLinearUnitsCommand
-			or ApplyTonePortamentoCommand or ApplyTonePortamentoVolumeSlideCommand
-			or SetTonePortamentoCommand or ClearTonePortamentoCommand
 			or ApplyArpeggioCommand or SetArpeggioCommand or ClearArpeggioCommand
 			or ApplyTremoloCommand or SetTremoloCommand or ClearTremoloCommand
 			or ApplyTremorCommand or SetTremorCommand or ClearTremorCommand
@@ -76,7 +72,6 @@ public static class FlattenedSourceEffectPolicy
 			or ApplyTrackerVolumeColumnCommand
 				{ Kind: TrackerVolumeColumnEffectKind.PitchSlideDown
 					or TrackerVolumeColumnEffectKind.PitchSlideUp
-					or TrackerVolumeColumnEffectKind.TonePortamento
 					or TrackerVolumeColumnEffectKind.Vibrato };
 	}
 
@@ -129,9 +124,6 @@ public static class FlattenedSourceEffectPolicy
 			switch (command)
 			{
 				case ApplyVibratoVolumeSlideCommand combined:
-					filtered.Add(new ApplyVolumeSlideCommand(combined.Parameter));
-					break;
-				case ApplyTonePortamentoVolumeSlideCommand combined:
 					filtered.Add(new ApplyVolumeSlideCommand(combined.Parameter));
 					break;
 			}

@@ -85,7 +85,7 @@ public sealed class SongExportServiceTests
 		};
 		PatternCell invalid = child.Grid.GetOrCreateCell(0, 0);
 		invalid.Note = new StartPatternNote(grandchildId);
-		invalid.Effects.Add(new TonePortamentoVolumeSlidePatternEffect(0x34));
+		invalid.Effects.Add(new RetriggerPatternEffect(0xA3));
 		document.Add(child);
 		ObjectId parentId = document.AllocateObjectId();
 		DataPatternDefinition parent = new(parentId, "Mixdown")
@@ -221,7 +221,7 @@ public sealed class SongExportServiceTests
 		{
 			PatternCell call = parent.Grid.GetOrCreateCell(row, 0);
 			call.Note = new StartPatternNote(childId);
-			call.Effects.Add(new TonePortamentoVolumeSlidePatternEffect(0x34));
+			call.Effects.Add(new RetriggerPatternEffect(0xA3));
 		}
 		document.Add(parent);
 		ObjectId rootId = document.AllocateObjectId();

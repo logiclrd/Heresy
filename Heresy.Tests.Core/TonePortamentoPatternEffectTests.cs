@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
@@ -213,6 +214,43 @@ public sealed class TonePortamentoPatternEffectTests
 
 		Assert.That(output.Freeze(), Is.Empty,
 			"G00 without local Gxx memory has no tone trajectory to start.");
+	}
+
+	[Test]
+	public void GffIsInstantAndG00AndLxxRecallItsSharedMode()
+	{
+		SequencingContext context = new();
+		NoteScheduleBuilder initial = new();
+		PatternNoteProcessor.GenerateNotes(
+			PatternWithTonePortamento(0xFF, 2.0), context, initial, out _);
+		SetTonePortamentoCommand first =
+			(SetTonePortamentoCommand)initial.Freeze()[0].Commands[0];
+		Assert.That(first.Instant, Is.True);
+		Assert.That(first.TargetNote!.PitchMultiplier, Is.EqualTo(2.0));
+
+		NoteScheduleBuilder recalled = new();
+		PatternNoteProcessor.GenerateNotes(
+			PatternWithTonePortamento(0x00, 3.0), context, recalled, out _);
+		SetTonePortamentoCommand g00 =
+			(SetTonePortamentoCommand)recalled.Freeze()[0].Commands[0];
+		Assert.That(g00.Instant, Is.True,
+			"G00 must recall the GFF byte, including its snap mode.");
+		Assert.That(g00.TargetNote!.PitchMultiplier, Is.EqualTo(3.0));
+
+		DataPatternDefinition combined = new((ObjectId)33U, "Lxx")
+		{
+			RowCount = 1,
+			ChannelCount = 1,
+		};
+		combined.Grid.GetOrCreateCell(0, 0).Effects.Add(
+			new TonePortamentoVolumeSlidePatternEffect(0x10));
+		NoteScheduleBuilder pair = new();
+		PatternNoteProcessor.GenerateNotes(combined, context, pair, out _);
+		SetTonePortamentoCommand fromL = (SetTonePortamentoCommand)
+			Array.Find(pair.Freeze()[0].Commands.ToArray(),
+				command => command is SetTonePortamentoCommand)!;
+		Assert.That(fromL.Instant, Is.True,
+			"Lxx follows the same remembered GFF snap semantics.");
 	}
 
 	private static DataPatternDefinition PatternWithTonePortamento(

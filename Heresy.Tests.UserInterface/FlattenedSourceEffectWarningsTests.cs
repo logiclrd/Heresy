@@ -52,12 +52,17 @@ public sealed class FlattenedSourceEffectWarningsTests
 		start.Effects.Add(new TrackerVolumeSlidePatternEffect(0x21));
 		string? warning = FlattenedSourceEffectWarnings.Describe(
 			doc, parent, 0, 0);
-		Assert.That(warning, Does.Contain("TonePortamentoVolumeSlide"));
+		Assert.That(warning, Does.Not.Contain("TonePortamentoVolumeSlide"),
+			"Lxx now retunes the flattened logical source as well as sliding volume.");
 		Assert.That(warning, Does.Contain("VibratoVolumeSlide"));
 		Assert.That(warning, Does.Not.Contain("TrackerVolumeSlide"),
 			"Dxx is a meaningful live note-volume effect on the flattened source.");
 		Assert.That(warning, Does.Not.Contain("TrackerChannelVolume"));
 		Assert.That(start.Effects, Has.Count.EqualTo(4));
+		start.Effects.Clear();
+		start.Effects.Add(new TonePortamentoPatternEffect(0xFF));
+		Assert.That(FlattenedSourceEffectWarnings.Describe(doc, parent, 0, 0),
+			Is.Null, "GFF is a supported live flattened pitch change.");
 	}
 
 	[Test]

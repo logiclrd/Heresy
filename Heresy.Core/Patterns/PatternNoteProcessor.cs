@@ -1616,12 +1616,13 @@ public static class PatternNoteProcessor
 				{
 					StartNoteCommand? resolved = ResolvePortamentoStart(target, channelState);
 					changed = true;
-					if (IsFlatteningPortamentoTarget(resolved, context))
+					if (IsFlatteningPortamentoTarget(resolved, context)
+						&& channelState.ActiveFlattenedSourceScopeId <= 0)
 					{
-						// The generator cannot know a recalled Source until
-						// this row executes. A Gxx targeting a Pattern must
-						// still start that Pattern, then the voice-only Gxx
-						// is discarded by the common effect policy.
+						// With no live flattened instigator, Gxx's source
+						// note is a fallback start. Once a flattened source
+						// is playing, its G target retunes the existing
+						// invocation without restarting its producer.
 						commands.Add(resolved!);
 						commands.Add(tone with { TargetNote = null });
 					}
@@ -1635,7 +1636,8 @@ public static class PatternNoteProcessor
 				{
 					StartNoteCommand? resolved = ResolvePortamentoStart(target, channelState);
 					changed = true;
-					if (IsFlatteningPortamentoTarget(resolved, context))
+					if (IsFlatteningPortamentoTarget(resolved, context)
+						&& channelState.ActiveFlattenedSourceScopeId <= 0)
 					{
 						commands.Add(resolved!);
 						commands.Add(combined with { TargetNote = null });
@@ -1650,7 +1652,8 @@ public static class PatternNoteProcessor
 				{
 					StartNoteCommand? resolved = ResolvePortamentoStart(target, channelState);
 					changed = true;
-					if (IsFlatteningPortamentoTarget(resolved, context))
+					if (IsFlatteningPortamentoTarget(resolved, context)
+						&& channelState.ActiveFlattenedSourceScopeId <= 0)
 					{
 						commands.Add(resolved!);
 						commands.Add(volume with { TargetNote = null });
@@ -2184,7 +2187,8 @@ public static class PatternNoteProcessor
 								new SetTonePortamentoCommand(
 									parameter * 4.0,
 									tonePortamento.TargetNote,
-									Glissando: channelState.GlissandoEnabled),
+									Glissando: channelState.GlissandoEnabled,
+									Instant: parameter == 0xFF),
 								rowTicksOverride)!;
 						transformed.Add(resolved);
 						repeatCommands.Add(
@@ -2219,7 +2223,8 @@ public static class PatternNoteProcessor
 									toneParameter * 4.0,
 									combined.TargetNote,
 									Glissando:
-										channelState.GlissandoEnabled),
+										channelState.GlissandoEnabled,
+									Instant: toneParameter == 0xFF),
 								rowTicksOverride)!;
 
 						transformed.Add(tone);
