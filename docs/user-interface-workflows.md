@@ -46,6 +46,32 @@ load directly. Saving writes six sections, and migration itself does not
 increment audio or document revisions. See
 [document panes](document-panes.md).
 
+## Held-key input and nested X11 servers
+
+The Synth **Test** area, Sample **Test** area, and Pattern editor's momentary
+Caps Lock piano preview and playback-follow toggle use **physical** held-key
+tracking. On X11 servers without detectable autorepeat, including some
+Xephyr configurations, a repeating key can generate a synthetic
+`KeyUp`/`KeyDown` pair. An immediate key-up used to release notes or rearm
+a shortcut would therefore retrigger the held key on every repeat.
+
+These four held-key paths defer individual physical key releases for a
+**40 ms grace interval**. A new keydown during that interval cancels the
+pending release and is ignored as a repeat. A release without a matching
+keydown then sends Note Off (Synth/Pattern preview), re-enables a Sample
+Test piano key for another distinct note, or rearms the playback-follow
+toggle. Multiple held keys are tracked separately. Focus loss, window
+deactivation, and editor detachment discard pending releases and perform
+the previous immediate cleanup; the Sample dialog intentionally lets
+released sample notes continue sounding until explicitly stopped,
+displaced, or finished.
+
+Ordinary tracker note entry, editing, text fields and navigation retain
+their normal key-repeat behavior. Confirmed physical key releases incur
+at most roughly 40–50 ms of extra latency (grace interval plus UI timer
+scheduling); this is deliberate to distinguish X11 synthetic repeat
+pairs without requiring platform-specific Xlib hooks.
+
 ## Synth oscillator Curvature (authoring and persistence)
 
 A Synth oscillator has an independent **Curvature** numeric parameter, shown
