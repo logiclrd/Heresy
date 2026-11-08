@@ -242,8 +242,8 @@ without rebuilding the inspector or disrupting focus.
 
 ## FM editor preview release lifecycle
 
-With Caps Lock off, Test key-up (or loss of Test focus/window focus)
-emits **Note Off**, not **Note Cut**. With Caps Lock on, the key-up does
+In Hold mode, Test key-up (or loss of Test focus/window focus)
+emits **Note Off**, not **Note Cut**. In Latch mode, the key-up does
 not issue Note Off; the same underlying FM envelope and finite-tail rules
 still apply to latched Synth voices. FM synths calculate their Envelope
 nodes *inside the graph*, so the sound now reports a deterministic end
