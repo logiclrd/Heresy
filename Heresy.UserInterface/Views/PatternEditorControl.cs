@@ -19,6 +19,7 @@ using Heresy.Core.Sequencing;
 using Heresy.Playback;
 using Heresy.UserInterface.Dialogs;
 using Heresy.UserInterface.Documents;
+using Heresy.UserInterface.Keyboard;
 using Heresy.UserInterface.PatternEditing;
 using Heresy.UserInterface.ViewModels;
 
@@ -44,6 +45,8 @@ public sealed class PatternEditorControl : UserControl
 	private readonly PatternLiveAuditionActions? _liveAudition;
 	private readonly Action<PatternEditorSwitchRequest>? _switchPattern;
 	private readonly HeldNotePreviewKeyState _heldPreviewKeys = new();
+	private readonly HeldPhysicalKeyRepeatFilter _previewRepeatKeys;
+	private readonly HeldPhysicalKeyRepeatFilter _followRepeatKeys;
 	private readonly string _backLabel;
 	private readonly UserInterfaceConfiguration _configuration;
 	private readonly TextBox _rowCount;
@@ -86,7 +89,6 @@ public sealed class PatternEditorControl : UserControl
 		IsChecked = true,
 		VerticalAlignment = VerticalAlignment.Center,
 	};
-	private readonly HashSet<PhysicalKey> _heldFollowShortcuts = [];
 	private bool _followPlayback = true;
 	private bool _followScrollPosted;
 	private readonly TextBlock _message;
@@ -220,6 +222,9 @@ public sealed class PatternEditorControl : UserControl
 		_changed = changed ?? throw new ArgumentNullException(nameof(changed));
 		_audition = audition;
 		_liveAudition = liveAudition;
+		_previewRepeatKeys = new HeldPhysicalKeyRepeatFilter(
+			key => _ = OnConfirmedPreviewKeyUpAsync(key));
+		_followRepeatKeys = new HeldPhysicalKeyRepeatFilter(_ => { });
 		_switchPattern = switchPattern;
 		_backLabel = backLabel ?? throw new ArgumentNullException(nameof(backLabel));
 		_configuration = configuration ?? new UserInterfaceConfiguration();
@@ -502,14 +507,14 @@ public sealed class PatternEditorControl : UserControl
 
 		// Consume repeats rather than oscillating the flag every frame.
 		// Use PhysicalKey so NumPad Decimal never aliases main Period.
-		if (_heldFollowShortcuts.Add(e.PhysicalKey))
+		if (_followRepeatKeys.KeyDown(e.PhysicalKey))
 			SetFollowPlayback(!_followPlayback);
 		e.Handled = true;
 	}
 
 	private void OnFollowKeyUp(object? sender, KeyEventArgs e)
 	{
-		if (_heldFollowShortcuts.Remove(e.PhysicalKey))
+		if (_followRepeatKeys.KeyUp(e.PhysicalKey))
 			e.Handled = true;
 	}
 
@@ -519,7 +524,7 @@ public sealed class PatternEditorControl : UserControl
 		// text. The *keypad* shortcut must not also clear a Source or
 		// edit an effect/volume, even in decimal-comma locales.
 		if (PatternPlaybackFollowKeyboard.IsNumpadDecimalText(
-			_heldFollowShortcuts.Contains(PhysicalKey.NumPadDecimal),
+			_followRepeatKeys.IsHeld(PhysicalKey.NumPadDecimal),
 			e.Text))
 		{
 			e.Handled = true;
@@ -1282,8 +1287,7 @@ public sealed class PatternEditorControl : UserControl
 			OnCellPointerPressed(displayRow, channel, cell, e);
 		cell.KeyDown += async (_, e) =>
 			await OnCellKeyDownAsync(displayRow, channel, e);
-		cell.KeyUp += async (_, e) =>
-			await OnCellKeyUpAsync(e);
+		cell.KeyUp += (_, e) => OnCellKeyUp(e);
 		cell.TextInput += (_, e) =>
 			OnCellTextInput(displayRow, channel, e);
 
@@ -1423,9 +1427,9 @@ public sealed class PatternEditorControl : UserControl
 		if (_cursor.Field == PatternCellField.Note
 			&& e.PhysicalKey == PhysicalKey.CapsLock)
 		{
-			_heldPreviewKeys.KeyDown(
-				e.PhysicalKey,
-				_noteInputState.BaseOctave);
+			if (_previewRepeatKeys.KeyDown(e.PhysicalKey))
+				_heldPreviewKeys.KeyDown(
+					e.PhysicalKey, _noteInputState.BaseOctave);
 			e.Handled = true;
 			return;
 		}
@@ -1435,9 +1439,12 @@ public sealed class PatternEditorControl : UserControl
 		{
 			// Auto-repeat remains preview-only, even when Caps Lock is
 			// released before the still-held piano key.
+			bool firstPress = _previewRepeatKeys.KeyDown(e.PhysicalKey);
+			e.Handled = true;
+			if (!firstPress)
+				return;
 			HeldNotePreviewAction? action = _heldPreviewKeys.KeyDown(
 				e.PhysicalKey, _noteInputState.BaseOctave);
-			e.Handled = true;
 			if (_liveAudition is not null
 				&& action is StartHeldNotePreviewAction preview)
 			{
@@ -2223,7 +2230,8 @@ public sealed class PatternEditorControl : UserControl
 	{
 		_ = sender;
 		_ = e;
-		_heldFollowShortcuts.Clear();
+		_followRepeatKeys.Clear();
+		_previewRepeatKeys.Clear();
 		_volumeInput.Reset();
 		RefreshVolumePreview();
 		await ReleaseAllHeldPreviewsAsync();
@@ -2233,7 +2241,8 @@ public sealed class PatternEditorControl : UserControl
 		Avalonia.VisualTreeAttachmentEventArgs e)
 	{
 		_owner.Deactivated -= OnOwnerDeactivated;
-		_heldFollowShortcuts.Clear();
+		_followRepeatKeys.Clear();
+		_previewRepeatKeys.Clear();
 		_ = ReleaseAllHeldPreviewsAsync();
 		base.OnDetachedFromVisualTree(e);
 	}
@@ -2262,31 +2271,32 @@ public sealed class PatternEditorControl : UserControl
 		}
 	}
 
-	private async Task OnCellKeyUpAsync(
-		KeyEventArgs e)
+	private void OnCellKeyUp(KeyEventArgs e)
 	{
-		HeldNotePreviewAction? action =
-			_heldPreviewKeys.KeyUp(
-				e.PhysicalKey);
+		// Xephyr can send a fake key-up before its next repeat keydown.
+		// Only a confirmed release should disarm Caps Lock preview or
+		// send Note Off for a held tracker piano key.
+		if (_previewRepeatKeys.KeyUp(e.PhysicalKey))
+			e.Handled = true;
+	}
+
+	private async Task OnConfirmedPreviewKeyUpAsync(PhysicalKey key)
+	{
+		HeldNotePreviewAction? action = _heldPreviewKeys.KeyUp(key);
 		if (action is not ReleaseHeldNotePreviewAction release)
 			return;
-
-		e.Handled = true;
 		if (_liveAudition is null)
 			return;
-
 		try
 		{
 			await _liveAudition.SendEventAsync(
 				PatternLiveEventCompiler.CompileHeldPreviewRelease(
 					(uint)release.VoiceId));
-			_message.Text =
-				"Released preview note.";
+			_message.Text = "Released preview note.";
 		}
 		catch (Exception ex)
 		{
-			_message.Text =
-				$"Preview release failed: {ex.Message}";
+			_message.Text = $"Preview release failed: {ex.Message}";
 		}
 	}
 
