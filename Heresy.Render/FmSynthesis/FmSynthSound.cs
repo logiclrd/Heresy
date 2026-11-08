@@ -405,43 +405,44 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					return false;
 			}
 		}
-		// Across distinct Filter nodes a later failed runtime validation
-		// could otherwise leave an earlier Filter retuned while the voice
-		// still points to the old sound. Defer multiple changed Filter
-		// processors until a complete two-phase transaction is available.
-		return CountChangedFilterProcessors(next) <= 1;
+		return true;
 	}
 
-	private int CountChangedFilterProcessors(FmSynthSound next)
+	/// <summary>Transactional preflight over all Filters and nested Multi
+	/// constituents. Every chain validates its targets into owned scratch
+	/// before the voice can commit any DSP state or child sound binding.</summary>
+	public bool TryPrepareRunningState(FmSynthSound next, SoundState state)
 	{
-		int count = 0;
+		if (!CanAdoptRunningState(next, state))
+			return false;
+		FmSynthState live = ValidateState(state);
+		for (int i = 0; i < _nodes.Length; i++)
+			if (_nodes[i].Filter is { } oldFilter
+				&& next._nodes[i].Filter is { } revisedFilter
+				&& !oldFilter.TryPrepareLiveStateConfiguration(
+					revisedFilter, live.Filters[i]))
+				return false;
 		for (int i = 0; i < _nodes.Length; i++)
 		{
-			if (_nodes[i].Filter is { } oldFilter
-				&& next._nodes[i].Filter is { } newFilter
-				&& oldFilter.HasChangedEffectiveParameters(newFilter))
-				++count;
-			if (_nodes[i].MultiInput is { } priorChild
-				&& next._nodes[i].MultiInput is { } revisedChild)
-				count += priorChild.CountChangedFilterProcessors(revisedChild);
-			if (count > 1) return count;
+			if (_nodes[i].Definition is not FmMultiNode
+				|| next._nodes[i].MultiInput is not FmSynthSound revised)
+				continue;
+			foreach (MultiVoice child in live.Multis[i])
+				if (!child.Sound.TryPrepareRunningState(
+					revised, child.Invocation.State))
+					return false;
 		}
-		return count;
+		return true;
 	}
 
-	/// <summary>Apply after the entire tree passed preflight. This method
-	/// changes no note lifetime, oscillator phase or mutable DSP history.</summary>
-	public bool AdoptRunningState(FmSynthSound next, SoundState state)
+	/// <summary>Commit only an entirely preflighted state tree. No validation
+	/// after this boundary can leave multiple Filters partially updated.</summary>
+	public void CommitPreparedRunningState(FmSynthSound next, SoundState state)
 	{
 		FmSynthState live = ValidateState(state);
 		for (int i = 0; i < _nodes.Length; i++)
-		{
-			if (_nodes[i].Filter is { } oldFilter
-				&& next._nodes[i].Filter is { } revisedFilter
-				&& !oldFilter.TryAdoptStateConfiguration(
-					revisedFilter, live.Filters[i]))
-				return false;
-		}
+			if (_nodes[i].Filter is { } oldFilter)
+				oldFilter.CommitPreparedLiveStateConfiguration(live.Filters[i]);
 		for (int i = 0; i < _nodes.Length; i++)
 		{
 			if (_nodes[i].Definition is not FmMultiNode
@@ -449,13 +450,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				continue;
 			foreach (MultiVoice child in live.Multis[i])
 			{
-				if (!child.Sound.AdoptRunningState(
-					revised, child.Invocation.State))
-					return false;
+				child.Sound.CommitPreparedRunningState(
+					revised, child.Invocation.State);
 				child.Sound = revised;
 			}
 		}
-		return true;
 	}
 
 	public NoteConfigurationSnapshot SnapshotNoteConfiguration()
