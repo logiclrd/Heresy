@@ -10,6 +10,46 @@
 - **Critical transport dependency:** `SongPlaybackTransport.EnsureLiveAuditionCoreAsync` currently re-creates its *entire playback session* when the next `StartNoteCommand` follows an AudioRevision change. That can discard voices previously latched/held across edits. A successful live-parameter implementation must remove/replace this revision-triggered session teardown for compatible voice generations; it cannot solve the requirement solely by updating a mutable oscillator field. The *next note* must use current graph parameters while *older notes* retain identity/phase and either receive compatible updates or stay on the earlier generation for structural changes. Multi-version prepared source binding or an equivalent safe voice-local mechanism is needed.
 - Source resolver and shared Filters/Envelopes can be prepared from frozen song snapshots; live controls must not recompile scripts, decode assets, rebuild expensive FIR or resolve song objects inside the PCM callback.
 
+## Second foundation slice: versioned new-note definitions
+
+**Implemented on the PR branch; not the completion of realtime parameter
+audition.** On a direct Synth `StartNoteCommand` after a document audio
+revision, `SongPlaybackTransport` now takes the cautious *same-session*
+path when the active source factory provides prepared Synth publication.
+It captures a frozen snapshot, asks the dedicated playback worker to prepare
+an immutable replacement `FmSynthSound` and all nested dependencies,
+then enqueues the result through the source's **same FIFO control stream**
+as NoteOn and NoteOff. On the PCM producer, a `PublishedLiveSynthResolver`
+overlays the original frozen resolver for subsequent direct Synth starts.
+The old `PlaybackVoice` objects own their original sounds and states,
+so they continue independently across arbitrary later graph revisions.
+One original, one parameter-updated and one structurally different graph
+can consequently sound simultaneously without restarting the output session.
+
+- Publication is **per Synth source ID and audio revision**, avoiding the
+  mistaken assumption that updating one Synth makes the original entire
+  song snapshot current. The session-wide frozen-base revision remains
+  unchanged. Unsupported source factories retain prior full-session-restart
+  behavior. A non-Synth NoteOn after an audio edit also retains that
+  conservative behavior. Ordinary arrangement/export sessions are untouched.
+- The current `PreparedIncrementalAudioSource` event transform still captures
+  its **initial** song's recursive Pattern/Instrument lookup and dynamic
+  bindings. Only **direct Synth** NoteOn is opted into the nonrestarting
+  path; recursive Pattern/Sequence or Instrument note starts are not.
+- This is a lifetime and preparation prerequisite, **not yet the requested
+  parameter edit behavior**: notes already sounding do **not** receive new
+  waveform/oscillator/filter/etc. parameters. The subsequent phase must
+  prepare and publish compatible per-voice parameter updates *when edits
+  occur*, without requiring another NoteOn.
+- Re-preparation is currently triggered by a future Synth NoteOn and may
+  require significant control-worker time for complex songs. Later work
+  should push prepared revisions proactively (and coalesce obsolete edits)
+  while protecting note event order and GUI responsiveness.
+- Check correctness of frozen-document preparation, source generations,
+  per-source caching, audio routing, note release, and acoustic overlap in
+  tests. The live PCM producer alone may adopt and mutate the resolver;
+  the background worker only enqueues fully prepared immutable sounds.
+
 ## Property-by-property editor audit
 
 An edit being a parameter change does **not** imply that existing renderer state may be blindly reused. It may require a prepared-resource replacement and *migration*. The full property scope is as follows:
