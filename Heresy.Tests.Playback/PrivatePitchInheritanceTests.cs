@@ -8,6 +8,7 @@ using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Samples;
+using Heresy.Core.Sequences;
 using Heresy.Core.Timing;
 using Heresy.Playback;
 using Heresy.Render.Configuration;
@@ -295,6 +296,148 @@ public sealed class PrivatePitchInheritanceTests
 		Assert.That(newPcm[20], Is.GreaterThan(oldPcm[20] * 1.9f));
 		Assert.That(newPcm[20], Is.GreaterThan(0.0f),
 			"Changing frequency must not select the alternative negative tone.");
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void FlattenedGffChangesCurrentDescendantPitchWithoutRestartingItsProducer(
+		bool useSequence)
+	{
+		SongDocument document = new();
+		ObjectId sample = AddSample(document);
+		ObjectId childId = AddPattern(document, "Continuous child", 4);
+		DataPatternDefinition child = (DataPatternDefinition)document.Objects[childId];
+		child.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(sample);
+		ObjectId source = childId;
+		if (useSequence)
+		{
+			ObjectId sequenceId = document.AllocateObjectId();
+			DataSequenceDefinition sequence = new(sequenceId, "Nested sequence");
+			sequence.Entries.Add(new SequenceEntry(childId));
+			document.Add(sequence);
+			source = sequenceId;
+		}
+
+		ObjectId rootId = AddPattern(document, "Caller", 4);
+		DataPatternDefinition root = (DataPatternDefinition)document.Objects[rootId];
+		root.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(source);
+		PatternCell target = root.Grid.GetOrCreateCell(1, 0);
+		target.Note = new StartPatternNote(source, pitchMultiplier: 2.0);
+		target.Effects.Add(new TonePortamentoPatternEffect(0xFF));
+
+		PreparedIncrementalPlaybackFactory factory = new(Mono());
+		using PreparedIncrementalPlaybackPlan whole = factory.Create(document, rootId);
+		using PreparedIncrementalPlaybackPlan partitioned = factory.Create(document, rootId);
+		float[] expected = new float[280];
+		float[] actual = new float[280];
+		whole.Source.Render(expected.Length, expected);
+		int[] sizes = [1, 17, 3, 29, 7];
+		for (int offset = 0, block = 0; offset < actual.Length; block++)
+		{
+			int count = Math.Min(sizes[block % sizes.Length],
+				actual.Length - offset);
+			partitioned.Source.Render(count, actual.AsSpan(offset, count));
+			offset += count;
+		}
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(actual, Is.EqualTo(expected).Within(1e-6f),
+				"Flattened pitch interpolation must be PCM-chunk invariant.");
+			Assert.That(expected[119], Is.GreaterThan(0.01f));
+			Assert.That(expected[120], Is.GreaterThan(expected[119]),
+				"GFF must not restart the child at its row-zero sample.");
+			Assert.That(expected[121] - expected[120],
+				Is.GreaterThan((expected[119] - expected[118]) * 1.8f),
+				"Frequency must snap at the effect frame.");
+			Assert.That(expected[180], Is.GreaterThan(expected[119] * 1.8f));
+		});
+	}
+
+	[Test]
+	public void FlattenedGffChangesPitchOfFutureInstrumentNotesWithoutChangingRowTiming()
+	{
+		SongDocument document = new();
+		ObjectId normalSample = AddSample(document, constant: 10000);
+		ObjectId raisedSample = AddSample(document, constant: -10000);
+		ObjectId instrumentId = document.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Pitch-selected");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+			{ SourceId = normalSample });
+		instrument.ToneSpecifications.Add(new ToneSpecification
+			{ SourceId = raisedSample });
+		instrument.ToneTable.Add(0);
+		for (int index = 1; index < 24; index++)
+			instrument.ToneTable.Add(1);
+		document.Add(instrument);
+		ObjectId childId = AddPattern(document, "Future note child", 4);
+		DataPatternDefinition child = (DataPatternDefinition)document.Objects[childId];
+		child.Grid.GetOrCreateCell(2, 0).Note =
+			new StartPatternNote(instrumentId);
+		ObjectId rootId = AddPattern(document, "Pitch caller", 4);
+		DataPatternDefinition root = (DataPatternDefinition)document.Objects[rootId];
+		root.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(childId);
+		PatternCell target = root.Grid.GetOrCreateCell(1, 0);
+		target.Note = new StartPatternNote(childId, pitchMultiplier: 2.0);
+		target.Effects.Add(new TonePortamentoPatternEffect(0xFF));
+		PreparedIncrementalPlaybackFactory factory = new(Mono());
+		using PreparedIncrementalPlaybackPlan shifted = factory.Create(document, rootId);
+		target.Effects.Clear();
+		target.Note = null;
+		using PreparedIncrementalPlaybackPlan unshifted = factory.Create(document, rootId);
+		float[] bent = new float[270];
+		float[] plain = new float[270];
+		shifted.Source.Render(bent.Length, bent);
+		unshifted.Source.Render(plain.Length, plain);
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(bent[239], Is.Zero);
+			Assert.That(plain[239], Is.Zero);
+			Assert.That(plain[241], Is.GreaterThan(0.1f));
+			Assert.That(bent[241], Is.LessThan(-0.1f),
+				"Future child Instrument tone selection must see its live parent pitch.");
+		});
+	}
+
+	[Test]
+	public void FlattenedGxxMovesContinuouslyAndCarriesItsCurrentBaseIntoG00()
+	{
+		SongDocument document = new();
+		ObjectId sample = AddSample(document);
+		ObjectId childId = AddPattern(document, "Gliding child", 5);
+		((DataPatternDefinition)document.Objects[childId])
+			.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(sample);
+		ObjectId rootId = AddPattern(document, "Gliding caller", 5);
+		DataPatternDefinition root = (DataPatternDefinition)document.Objects[rootId];
+		root.Grid.GetOrCreateCell(0, 0).Note = new StartPatternNote(childId);
+		PatternCell target = root.Grid.GetOrCreateCell(1, 0);
+		target.Note = new StartPatternNote(childId, pitchMultiplier: 2.0);
+		target.Effects.Add(new TonePortamentoPatternEffect(0x20));
+		root.Grid.GetOrCreateCell(2, 0).Effects.Add(
+			new TonePortamentoPatternEffect(0x00));
+		PreparedIncrementalPlaybackFactory factory = new(Mono());
+		using PreparedIncrementalPlaybackPlan sliding = factory.Create(document, rootId);
+		target.Effects.Clear();
+		target.Note = null;
+		root.Grid.GetOrCreateCell(2, 0).Effects.Clear();
+		using PreparedIncrementalPlaybackPlan baseline = factory.Create(document, rootId);
+		float[] glide = new float[320];
+		float[] plain = new float[320];
+		sliding.Source.Render(glide.Length, glide);
+		baseline.Source.Render(plain.Length, plain);
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(glide[119], Is.EqualTo(plain[119]).Within(1e-6f));
+			Assert.That(glide[121], Is.GreaterThan(plain[121]),
+				"Slow glide should start changing pitch immediately.");
+			Assert.That(glide[165], Is.GreaterThan(plain[165] * 1.02f));
+			Assert.That(glide[165], Is.LessThan(plain[165] * 2.0f),
+				"G20 must not snap like GFF.");
+			Assert.That(glide[300], Is.GreaterThan(plain[300] * 1.1f),
+				"G00 must resume the remembered slide in the second row.");
+		});
 	}
 
 	private static RenderConfiguration Mono()

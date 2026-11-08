@@ -70,16 +70,14 @@ public static class FlattenedSourceEffectWarnings
 			.ToArray();
 		if (ignored.Length == 0)
 			return null;
-		bool hasCombinedSlide = cell.Effects.Any(e =>
-			e is VibratoVolumeSlidePatternEffect
-				or TonePortamentoVolumeSlidePatternEffect);
+		bool hasCombinedSlide = cell.Effects.Any(e => e is VibratoVolumeSlidePatternEffect);
 		return "Warning: these effects contain voice-specific operations "
 			+ "which do not apply to the current non-mixdown flattened source: "
 			+ string.Join(", ", ignored)
 			+ ". "
 			+ (hasCombinedSlide
-				? "Kxx/Lxx retain their live source-note volume slides; "
-					+ "only vibrato/portamento is ignored. "
+				? "Kxx retains its live source-note volume slide; "
+					+ "only vibrato is ignored. "
 				: "")
 			+ "The effects remain stored and editable.";
 	}
@@ -226,10 +224,9 @@ public static class FlattenedSourceEffectWarnings
 								+ string.Join(", ", incompatible) + "."
 							: string.Empty;
 						bool combined = warns && cell.Effects.Any(effect =>
-							effect is VibratoVolumeSlidePatternEffect
-								or TonePortamentoVolumeSlidePatternEffect);
+							effect is VibratoVolumeSlidePatternEffect);
 						string details = combined
-							? " Kxx/Lxx retain their live source-note volume slides; only vibrato/portamento is ignored."
+							? " Kxx retains its live source-note volume slide; only vibrato is ignored."
 							: string.Empty;
 						string uncertainty = conditional && channel.Reason is not null
 							? " This is conditional because " + channel.Reason + "."

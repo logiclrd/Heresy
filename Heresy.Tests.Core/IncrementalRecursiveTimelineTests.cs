@@ -829,7 +829,7 @@ public sealed class IncrementalRecursiveTimelineTests
 	}
 
 	[Test]
-	public void DataFlatteningStartDoesNotBecomePortamentoTarget()
+	public void FirstFlattenedGxxStartsSourceAndRemembersItsPitchSpeed()
 	{
 		DataPatternDefinition root = Pattern(1, 1);
 		PatternCell cell = root.Grid.GetOrCreateCell(0, 0);
@@ -849,18 +849,19 @@ public sealed class IncrementalRecursiveTimelineTests
 			"The Pattern still starts, even with Gxx in its stored cell.");
 		Assert.That(context.GetPhysicalChannelState(0)
 			.TryGetEffectParameter(EffectMemorySlot.TonePortamento, out _),
-			Is.False);
+			Is.True, "Gxx now retains meaningful pitch memory for a flattened source.");
 		Assert.That(context.GetPhysicalChannelState(0)
 			.TryGetEffectParameter(EffectMemorySlot.Retrigger, out _),
 			Is.False);
 		Assert.That(context.State.Tempo, Is.EqualTo(128));
-		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(2));
+		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(1),
+			"Only the genuinely voice-only retrigger remains ignored.");
 		Assert.That(cell.Effects, Has.Count.EqualTo(3),
 			"Playback filtering must never mutate stored Pattern effects.");
 	}
 
 	[Test]
-	public void FlattenedStartAppliesNoteVolumePortionsOfCombinedEffectsButIgnoresPitchParts()
+	public void FlattenedStartKeepsKVolumeOnlyAndSupportsFullLPortamentoAndVolume()
 	{
 		DataPatternDefinition parent = Pattern(1, 2);
 		PatternCell call = parent.Grid.GetOrCreateCell(0, 0);
@@ -881,10 +882,10 @@ public sealed class IncrementalRecursiveTimelineTests
 		NoteEvent[] events = Drain(timeline);
 		Assert.That(events.SelectMany(e => e.Commands).OfType<NoteOffCommand>()
 			.Count(), Is.EqualTo(1),
-			"Gxx+volume-slide must not turn the flattened start into a pitch target.");
+			"A first G/L target must still start a flattened source when none is active.");
 		Assert.That(events.SelectMany(e => e.Commands)
 			.OfType<SetNoteVolumeSlideCommand>(), Is.Not.Empty,
-			"Dxx, Kxx, Lxx and volume-column slides must control the instigating source.");
+			"Dxx, Kxx, Lxx and volume-column slides control the instigating source.");
 		Assert.That(events.SelectMany(e => e.Commands)
 			.OfType<AdjustCurrentNoteVolumeCommand>(), Is.Empty);
 		Assert.That(events.SelectMany(e => e.Commands)
@@ -896,19 +897,21 @@ public sealed class IncrementalRecursiveTimelineTests
 			Assert.That(context.GetPhysicalChannelState(0)
 				.TryGetEffectParameter(slot, out _), Is.True,
 				$"Source-volume effect must remember its {slot} parameter.");
-		foreach (EffectMemorySlot slot in new[] {
-			EffectMemorySlot.TonePortamento, EffectMemorySlot.Vibrato })
-			Assert.That(context.GetPhysicalChannelState(0)
-				.TryGetEffectParameter(slot, out _), Is.False,
-				$"Ignored pitch effect must not seed {slot} memory.");
+		Assert.That(context.GetPhysicalChannelState(0)
+			.TryGetEffectParameter(EffectMemorySlot.Vibrato, out _), Is.False,
+			"Kxx vibrato is still voice-only on a flattened instigator.");
+		Assert.That(context.GetPhysicalChannelState(0)
+			.TryGetEffectParameter(EffectMemorySlot.TonePortamento, out _), Is.False,
+			"Lxx recalls G speed but does not invent G memory.");
 		Assert.That(context.GetPhysicalChannelState(0).NoteVolume,
 			Is.EqualTo(0.6), "Caller still remembers the explicit start volume.");
-		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(2));
+		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(1),
+			"Only Kxx vibrato is ignored; Lxx portamento is now supported.");
 		Assert.That(call.Effects, Has.Count.EqualTo(5));
 	}
 
 	[Test]
-	public void LaterRowCombinedEffectsControlActiveSourceVolumeWithoutPitchMemory()
+	public void LaterRowCombinedEffectsKeepKVolumeAndSupportLPortamento()
 	{
 		DataPatternDefinition parent = Pattern(1, 3);
 		parent.Grid.GetOrCreateCell(0, 0).Note =
@@ -937,7 +940,7 @@ public sealed class IncrementalRecursiveTimelineTests
 		Assert.That(root.GetPhysicalChannelState(0)
 			.TryGetEffectParameter(EffectMemorySlot.TonePortamento, out _),
 			Is.False);
-		Assert.That(root.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(2));
+		Assert.That(root.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(1));
 	}
 
 	[Test]
@@ -959,11 +962,12 @@ public sealed class IncrementalRecursiveTimelineTests
 		Assert.That(events.SelectMany(e => e.Commands).OfType<NoteOffCommand>()
 			.Count(), Is.EqualTo(1));
 		Assert.That(events.Any(e => e.PhysicalPlaybackOwner > 0), Is.True);
-		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(2));
+		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.Zero,
+			"Gxx and Lxx are no longer forbidden on flattened source starts.");
 	}
 
 	[Test]
-	public void RawScriptedFlatteningKeepsCombinedVolumeSlideWithoutPitchPart()
+	public void RawScriptedFlatteningKeepsLPortamentoAndVolumeSlide()
 	{
 		StreamingPattern parent = new((ObjectId)1U, 1,
 			new NoteEvent(MusicalTime.Zero, ChannelTarget.Physical(0),
@@ -989,7 +993,8 @@ public sealed class IncrementalRecursiveTimelineTests
 			.TryGetEffectParameter(EffectMemorySlot.VolumeSlide, out _), Is.True);
 		Assert.That(context.GetPhysicalChannelState(0)
 			.TryGetEffectParameter(EffectMemorySlot.ChannelVolumeSlide, out _), Is.False);
-		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(2));
+		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(1),
+			"Kxx still drops vibrato; Lxx is not an ignored operation.");
 	}
 
 	[Test]
@@ -1077,11 +1082,13 @@ public sealed class IncrementalRecursiveTimelineTests
 			Is.EqualTo(new[] { (ObjectId)2U }),
 			"An omitted Source is judged when it actually resolves, not at generator lookahead.");
 		Assert.That(resolved.SelectMany(e => e.Commands)
-			.OfType<SetTonePortamentoCommand>(), Is.Empty);
+			.OfType<SetTonePortamentoCommand>().Select(x => x.TargetNote),
+			Is.EqualTo(new StartNoteCommand?[] { null }),
+			"First Gxx starts the source and leaves no second note target.");
 		Assert.That(context.GetPhysicalChannelState(0)
 			.TryGetEffectParameter(EffectMemorySlot.TonePortamento, out _),
-			Is.False);
-		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.EqualTo(1));
+			Is.True);
+		Assert.That(context.Diagnostics.IgnoredFlatteningEffects, Is.Zero);
 	}
 
 	private sealed class SourceChangingDeferredGenerator(

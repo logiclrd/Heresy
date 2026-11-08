@@ -22,8 +22,8 @@ public static class FlattenedSourceEffectPolicy
 			or SetPlaybackFrequencyPatternEffect or SetPlaybackOffsetPatternEffect
 			or VibratoPatternEffect or FineVibratoPatternEffect
 			or VibratoVolumeSlidePatternEffect
-			// Kxx/Lxx contain a valid source-note volume slide; their
-			// incompatible pitch component is ignored separately.
+			// Kxx retains its valid note-volume slide; vibrato
+			// remains voice-specific. Gxx/Lxx now control the scope pitch.
 			or PitchSlidePatternEffect or TrackerPitchSlideDownPatternEffect
 			or TrackerPitchSlideUpPatternEffect
 			or ArpeggioPatternEffect or TremoloPatternEffect
@@ -124,9 +124,6 @@ public static class FlattenedSourceEffectPolicy
 			switch (command)
 			{
 				case ApplyVibratoVolumeSlideCommand combined:
-					filtered.Add(new ApplyVolumeSlideCommand(combined.Parameter));
-					break;
-				case ApplyTonePortamentoVolumeSlideCommand combined:
 					filtered.Add(new ApplyVolumeSlideCommand(combined.Parameter));
 					break;
 			}

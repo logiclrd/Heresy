@@ -161,16 +161,14 @@ public sealed class DataPatternDefinition : PatternDefinition, IDeferredSourcePa
                     or TrackerSpeedPatternEffect { Parameter: 0 })
 					continue;
 				if (flatteningStart
-					&& effect is (VibratoVolumeSlidePatternEffect
-						or TonePortamentoVolumeSlidePatternEffect))
+					&& effect is VibratoVolumeSlidePatternEffect vibratoCombined)
 				{
-					byte parameter = effect switch
-					{
-						VibratoVolumeSlidePatternEffect k => k.Parameter,
-						TonePortamentoVolumeSlidePatternEffect l => l.Parameter,
-						_ => throw new InvalidOperationException(),
-					};
-					channelCommands.Add(new ApplyVolumeSlideCommand(parameter));
+					// Kxx retains only its live note-volume movement on a
+					// flattened instigator. Lxx is different: both its
+					// portamento and volume components are now supported
+					// by that logical note's pitch/volume controllers.
+					channelCommands.Add(
+						new ApplyVolumeSlideCommand(vibratoCombined.Parameter));
 					context.Diagnostics.ReportIgnoredFlatteningEffect(
 						effect.GetType().Name, row);
 					continue;
