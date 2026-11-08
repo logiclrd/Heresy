@@ -5,6 +5,7 @@ using System.Linq;
 using AwesomeAssertions;
 
 using Heresy.Core.FmSynthesis;
+using Heresy.Core.Filters;
 using Heresy.Core.Objects;
 
 using NUnit.Framework;
@@ -119,6 +120,38 @@ public sealed class FmSynthLiveGraphShapeTests
         foreach (FmSynthGraph after in changed)
             FmSynthLiveGraphShape.HasSameWiring(before, after)
                 .Should().BeFalse();
+    }
+
+    [Test]
+    public void FilterWireIdentityMattersEvenWhenTheEndpointsAreIdentical()
+    {
+        FilterDefinition definition = new(
+            new ObjectId(200), "Parametric",
+            [new FilterStageDefinition(1, "Peak", FilterKind.BiquadPeaking)]);
+        FilterInstance initial = new(definition);
+        FmFilterNode filter = new(5, audioInputNodeId: 2,
+            configuration: initial);
+        FmFilterInputPort cutoff = filter.GetPorts()
+            .Single(p => p.ParameterName == "CutoffHz");
+        FmFilterInputPort gain = filter.GetPorts()
+            .Single(p => p.ParameterName == "GainDb");
+
+        FmFilterNode cutoffWired = filter.WithParameterConnection(cutoff, 1);
+        FmFilterNode gainWired = filter.WithParameterConnection(gain, 1);
+        cutoffWired.InputNodeIds.Should().Equal(gainWired.InputNodeIds);
+
+        FmSynthGraph before = Replace(StartingGraph(), cutoffWired);
+        FmSynthGraph rewired = Replace(before, gainWired);
+        FmSynthLiveGraphShape.HasSameWiring(before, rewired)
+            .Should().BeFalse("a source must not be silently moved from cutoff to gain");
+
+        FilterInstance changedParameters = initial.Clone();
+        changedParameters.SetStageParameter(
+            1, "CutoffHz", FilterParameterValue.FromNumber(1200));
+        FmSynthGraph parameterOnly = Replace(before,
+            cutoffWired.WithConfiguration(changedParameters));
+        FmSynthLiveGraphShape.HasSameWiring(before, parameterOnly)
+            .Should().BeTrue("only a filter parameter value changed");
     }
 
     [Test]
