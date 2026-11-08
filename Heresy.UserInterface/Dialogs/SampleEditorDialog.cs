@@ -17,6 +17,7 @@ using Heresy.Core.Assets;
 using Heresy.Core.Samples;
 using Heresy.UserInterface.PatternEditing;
 using Heresy.UserInterface.Documents;
+using Heresy.UserInterface.Keyboard;
 using Heresy.UserInterface.SampleEditing;
 using Heresy.UserInterface.Views;
 
@@ -56,6 +57,7 @@ public sealed class SampleEditorDialog : Window
 	private readonly PatternLiveAuditionActions? _liveAudition;
 	private readonly Func<Task>? _stopAuditionAsync;
 	private readonly SampleAuditionKeyboard _auditionKeyboard = new();
+	private readonly HeldPhysicalKeyRepeatFilter _heldTestKeys;
 	private readonly Border _testArea = new()
 	{
 		Focusable = true,
@@ -86,6 +88,8 @@ public sealed class SampleEditorDialog : Window
 			?? throw new ArgumentNullException(nameof(sample));
 		_liveAudition = liveAudition;
 		_stopAuditionAsync = stopAuditionAsync;
+		_heldTestKeys = new HeldPhysicalKeyRepeatFilter(
+			key => _auditionKeyboard.KeyUp(key));
 
 		Title = $"Sample — {sample.Name}";
 		Width = 700;
@@ -326,24 +330,29 @@ public sealed class SampleEditorDialog : Window
 	private async Task OnTestKeyDownAsync(KeyEventArgs e)
 	{
 		int previousOctave = _auditionKeyboard.BaseOctave;
+		bool octaveCommand = PatternOctaveKeyboard.TryAdjust(
+			e.PhysicalKey, e.KeyModifiers, previousOctave, out _);
+		bool pianoKey =
+			(e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Alt
+				| KeyModifiers.Meta)) == 0
+			&& PatternNoteKeyboard.TryGetSemitoneOffset(
+				e.PhysicalKey, out _);
+		if (!octaveCommand && !pianoKey)
+			return;
+		e.Handled = true;
+		if (!_heldTestKeys.KeyDown(e.PhysicalKey))
+			return; // Synthetic X11 release+press is still the same held key.
+
 		SampleAuditionStart? action = _auditionKeyboard.KeyDown(
 			e.PhysicalKey, e.KeyModifiers,
 			looping: _sample.Loop.Mode != SampleLoopMode.None);
-		if (PatternOctaveKeyboard.TryAdjust(e.PhysicalKey,
-			e.KeyModifiers, previousOctave, out _))
+		if (octaveCommand)
 		{
 			UpdateAuditionOctave();
-			e.Handled = true;
 			return;
 		}
-		if ((e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Alt
-			| KeyModifiers.Meta)) != 0
-			|| !PatternNoteKeyboard.TryGetSemitoneOffset(
-				e.PhysicalKey, out _))
-			return;
-		e.Handled = true;
 		if (action is null)
-			return; // Never retrigger a physically held key.
+			return;
 
 		if (_liveAudition is null)
 		{
@@ -353,9 +362,6 @@ public sealed class SampleEditorDialog : Window
 		}
 		try
 		{
-			// Every note has an independent voice ID. Looping starts
-			// explicitly Cut old voices strictly closer than three
-			// semitones before introducing the new one.
 			foreach (SampleAuditionVoice old in action.Displaced)
 				await _liveAudition.SendEventAsync(
 					SampleAuditionCompiler.Cut(old));
@@ -373,9 +379,9 @@ public sealed class SampleEditorDialog : Window
 
 	private void OnWindowKeyUp(object? sender, KeyEventArgs e)
 	{
-		// Physical key-up makes the key available for another note; it
-		// never releases the sounding Sample voice.
-		if (_auditionKeyboard.KeyUp(e.PhysicalKey))
+		// Even though Sample notes persist beyond key release, do not
+		// rearm a held key on an X11 synthetic autorepeat KeyUp.
+		if (_heldTestKeys.KeyUp(e.PhysicalKey))
 			e.Handled = true;
 	}
 
@@ -384,6 +390,8 @@ public sealed class SampleEditorDialog : Window
 		if (e.Key != Key.F8)
 			return;
 		e.Handled = true;
+		// Stop the sounding voices, but retain physical held-key tracking.
+		// Otherwise a still-held key would retrigger on its next X11 repeat.
 		IReadOnlyList<SampleAuditionVoice> notes = _auditionKeyboard.StopAll();
 		try
 		{
@@ -404,6 +412,7 @@ public sealed class SampleEditorDialog : Window
 
 	private async Task ReleaseAllTestNotesAsync()
 	{
+		_heldTestKeys.Clear();
 		IReadOnlyList<SampleAuditionVoice> notes = _auditionKeyboard.StopAll();
 		if (_liveAudition is null)
 			return;

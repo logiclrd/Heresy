@@ -20,6 +20,7 @@ using Heresy.Core.Instruments;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.Dialogs;
 using Heresy.UserInterface.FmEditing;
+using Heresy.UserInterface.Keyboard;
 using Heresy.UserInterface.PatternEditing;
 
 namespace Heresy.UserInterface.Views;
@@ -38,6 +39,7 @@ public sealed class FmSynthEditorControl : UserControl
 	private readonly FmSynthGraphCanvas _canvas;
 	private readonly PatternLiveAuditionActions? _liveAudition;
 	private readonly FmSynthAuditionKeyboard _auditionKeyboard = new();
+	private readonly HeldPhysicalKeyRepeatFilter _heldTestKeys;
 	private readonly Border _testArea = new()
 	{
 		Focusable = true,
@@ -90,6 +92,8 @@ public sealed class FmSynthEditorControl : UserControl
 			changed
 				?? throw new ArgumentNullException(nameof(changed));
 		_liveAudition = liveAudition;
+		_heldTestKeys = new HeldPhysicalKeyRepeatFilter(
+			key => _ = OnConfirmedTestKeyUpAsync(key));
 
 		_testArea.PointerPressed += (_, e) =>
 		{
@@ -98,8 +102,7 @@ public sealed class FmSynthEditorControl : UserControl
 		};
 		_testArea.KeyDown += async (_, e) =>
 			await OnTestKeyDownAsync(e);
-		_testArea.KeyUp += async (_, e) =>
-			await OnTestKeyUpAsync(e);
+		_testArea.KeyUp += (_, e) => OnTestKeyUp(e);
 		_testArea.GotFocus += (_, _) =>
 			_testArea.BorderBrush = Brushes.LightSkyBlue;
 		_testArea.LostFocus += async (_, _) =>
@@ -297,35 +300,31 @@ public sealed class FmSynthEditorControl : UserControl
 	private async Task OnTestKeyDownAsync(KeyEventArgs e)
 	{
 		int previousOctave = _auditionKeyboard.BaseOctave;
-		StartFmSynthAuditionNote? note =
-			_auditionKeyboard.KeyDown(e.PhysicalKey, e.KeyModifiers);
-
-		bool octaveCommand =
-			PatternOctaveKeyboard.TryAdjust(
-				e.PhysicalKey,
-				e.KeyModifiers,
-				previousOctave,
-				out _);
-		if (octaveCommand)
-		{
-			UpdateAuditionOctave();
-			e.Handled = true;
-			return;
-		}
-
+		bool octaveCommand = PatternOctaveKeyboard.TryAdjust(
+			e.PhysicalKey, e.KeyModifiers, previousOctave, out _);
 		bool pianoKey =
 			(e.KeyModifiers & (KeyModifiers.Control
 				| KeyModifiers.Alt | KeyModifiers.Meta)) == 0
 			&& PatternNoteKeyboard.TryGetSemitoneOffset(
-				e.PhysicalKey,
-				out _);
-		if (!pianoKey)
+				e.PhysicalKey, out _);
+		if (!octaveCommand && !pianoKey)
 			return;
 
 		e.Handled = true;
-		if (note is null)
-			return; // Keyboard auto-repeat never retriggers a held note.
+		// Xephyr may synthesize KeyUp/KeyDown for *every* repeat.
+		// Keep the pressed key through those pairs, including octave keys.
+		if (!_heldTestKeys.KeyDown(e.PhysicalKey))
+			return;
 
+		StartFmSynthAuditionNote? note =
+			_auditionKeyboard.KeyDown(e.PhysicalKey, e.KeyModifiers);
+		if (octaveCommand)
+		{
+			UpdateAuditionOctave();
+			return;
+		}
+		if (note is null)
+			return;
 		if (_liveAudition is null)
 		{
 			_message.Text = "Realtime FM audition is unavailable in this host.";
@@ -344,14 +343,17 @@ public sealed class FmSynthEditorControl : UserControl
 		}
 	}
 
-	private async Task OnTestKeyUpAsync(KeyEventArgs e)
+	private void OnTestKeyUp(KeyEventArgs e)
 	{
-		ReleaseFmSynthAuditionNote? release =
-			_auditionKeyboard.KeyUp(e.PhysicalKey);
-		if (release is null)
-			return;
-		e.Handled = true;
-		await ReleaseTestNoteAsync(release);
+		if (_heldTestKeys.KeyUp(e.PhysicalKey))
+			e.Handled = true;
+	}
+
+	private async Task OnConfirmedTestKeyUpAsync(PhysicalKey key)
+	{
+		ReleaseFmSynthAuditionNote? release = _auditionKeyboard.KeyUp(key);
+		if (release is not null)
+			await ReleaseTestNoteAsync(release);
 	}
 
 	private async Task ReleaseTestNoteAsync(
@@ -373,6 +375,7 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private async Task ReleaseAllTestNotesAsync()
 	{
+		_heldTestKeys.Clear();
 		foreach (ReleaseFmSynthAuditionNote release
 			in _auditionKeyboard.ReleaseAll())
 		{
