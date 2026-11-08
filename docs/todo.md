@@ -127,6 +127,28 @@ Do not reintroduce completed-task checklists here.
   infrastructure. See [Synth sound source](synth-sound-source.md),
   [UI workflow](user-interface-workflows.md) and [audio output](audio-output.md).
 
+## MIDI keyboard input (deferred until Synth live-parameter infrastructure)
+
+- [ ] **Implement cross-platform MIDI keyboard input, Program Change Source
+  control, and continuous microtonal preview pitch bend.** Preserve all
+  decisions, routing, device management, acceptance cases and unresolved
+  hardware expectations in the [MIDI keyboard design](midi-keyboard-input-design.md).
+  Pattern MIDI Note On inserts the pitch at the tracker cursor regardless
+  of field focus, redirects focus to Note and advances Skip; Note Off does
+  not mutate the pattern. Program Change navigation uses raw base program
+  **100**, sends reset Program Change back to the keyboard, moves current
+  Source by the signed delta with **clamping**, and is gated by a conditional,
+  default-checked **MIDI Control** checkbox. MIDI Synth/Sample audition is
+  independent of computer-keyboard Hold/Latch, always Hold, and updates
+  ongoing MIDI voices per channel for pitch bend. Capture arbitrary bent
+  pitch multipliers in Pattern notes without recording continuous bend
+  automation. Implement synthetic and cross-platform virtual-port tests
+  before buying or obtaining physical hardware; the MIDIPLUS EK490+ input
+  response and program-counter reset semantics remain **unverified**.
+  Prefer completing the [Synth live-parameter audition](todo.md) milestone
+  first, sharing safe control/publication machinery without conflating
+  authored graph parameters with MIDI voice pitch.
+
 ## Conditional improvements
 
 These are contingent on evidence; they are **not** authorization to
