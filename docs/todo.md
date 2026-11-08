@@ -84,6 +84,34 @@ Do not reintroduce completed-task checklists here.
   physical-device and codec evidence is still required. See
   [audio output](audio-output.md) and [export workflow](export-workflow.md).
 
+## Synth editor — live parameter audition
+
+- [ ] **Apply compatible Synth parameter edits to ongoing preview notes in
+  realtime, without restarting them.** Today, already-playing Synth preview
+  voices generally retain their prepared graph snapshot even after a
+  parameter-only editor change. Introduce versioned, immutable, preprepared
+  parameter updates from committed Synth inspector edits to active held and
+  latched preview voices. Initially cover oscillator **Frequency Hz**,
+  **Waveform**, **Curvature**, and Filter **CutoffHz**, maintaining oscillator
+  phase, note/release envelopes, child-source playback position and compatible
+  filter histories. Define graph compatibility by stable compiled structure
+  (node identities/types, connectivity and DSP state requirements), not
+  merely by AudioRevision: parameter-only changes should apply; incompatible
+  graph topology, node types or state layouts may leave existing voices on
+  their earlier captured definition while new notes use the edited graph.
+  Preserve the distinction across later edits, avoiding updates to voices
+  from an incompatible graph generation. Prepare costly DSP resources
+  (including curvature lookup tables and any filter/FIR redesign) away from
+  the audio callback, publish at a safe block boundary, and preserve
+  deterministic realtime/offline behavior, ordering, and sensible transition
+  smoothing where needed. Test simultaneous held and latched notes, repeated
+  rapid edits, filter-state continuity, incompatible edits, voice retirement,
+  latency, PCM correctness and underruns, plus physical listening. Keep live
+  MIDI pitch bend as an *independent per-voice/per-MIDI-channel control*, not
+  an authored graph mutation, while allowing it to reuse the safe realtime
+  control/publication infrastructure. See [Synth sound source](synth-sound-source.md),
+  [UI workflow](user-interface-workflows.md) and [audio output](audio-output.md).
+
 ## Conditional improvements
 
 These are contingent on evidence; they are **not** authorization to
