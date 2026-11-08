@@ -26,6 +26,7 @@ public sealed class PianoTestControl : UserControl
     private readonly ICapsLockQuery _caps;
     private readonly Func<PianoPreviewEvent, Task> _onEvent;
     private readonly Func<bool> _hasVoices;
+    private readonly Func<Task> _stopOwnVoices;
     private readonly Border _testArea;
     private readonly TextBlock _octave = new();
     private readonly TextBlock _mode = new();
@@ -38,10 +39,12 @@ public sealed class PianoTestControl : UserControl
     public PianoTestControl(
         Func<PianoPreviewEvent, Task> onEvent,
         Func<bool> hasVoices,
+        Func<Task> stopOwnVoices,
         ICapsLockQuery? capsLockQuery = null)
     {
         _onEvent = onEvent ?? throw new ArgumentNullException(nameof(onEvent));
         _hasVoices = hasVoices ?? throw new ArgumentNullException(nameof(hasVoices));
+        _stopOwnVoices = stopOwnVoices ?? throw new ArgumentNullException(nameof(stopOwnVoices));
         _caps = capsLockQuery ?? new PlatformCapsLockQuery();
         _repeats = new HeldPhysicalKeyRepeatFilter(
             key => DispatchConfirmedRelease(key));
@@ -224,7 +227,7 @@ public sealed class PianoTestControl : UserControl
             _owner = null;
         }
         ReleaseHeldKeys();
-        Emit(new PianoPreviewStopAll());
+        _ = _stopOwnVoices();
         base.OnDetachedFromVisualTree(e);
     }
 }
