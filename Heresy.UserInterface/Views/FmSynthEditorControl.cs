@@ -78,7 +78,8 @@ public sealed class FmSynthEditorControl : UserControl
 			liveAudition, onError: error => _message.Text = error);
 		_pianoTest = new PianoTestControl(
 			_previewPlayback.HandleAsync,
-			() => _previewPlayback.HasVoices);
+			() => _previewPlayback.HasVoices,
+			_previewPlayback.StopOwnVoicesAsync);
 
 		_canvas =
 			new FmSynthGraphCanvas(
