@@ -114,3 +114,23 @@ a structural revision and compatible edits to the new generation.
 notifications outside the active editor, all-property UI-to-PCM coverage,
 continuous smoothing/crossfade, stress/rapid-edit qualification and physical
 listening. The authoritative all-properties TODO remains open.
+
+## Fourth slice: stateful ancestry and nested Multi adoption
+
+Envelope nodes use frame/note-off-relative immutable curves, so newly
+prepared Envelope references and shared curve edits can be adopted without
+resetting the voice timeline. A Filter with unchanged stage identity, effective
+parameters and controls can retain its existing IIR/FIR state while upstream
+parameters or its TailSeconds change. Source nodes can carry their unchanged
+prepared child invocation through compatible *parent* edits without losing
+nested Sample position or Filter state. Multi retains its individual
+constituent states across outer GainCompensation edits and recursively
+compatible subgraph edits by updating each child sound binding. All nested
+constituents are preflighted before changing any of their bindings.
+
+**Not yet supported:** changed Filter coefficients/FIR plans or shared stage
+parameters, Source reference/frequency/constant/modulation-mode changes,
+Multi distribution/voice-count/components/cycle/randomized-phase migrations.
+Source *dependency* changes remain captured in its old child, even when
+the parent itself can be adopted; these still need invalidation and
+migration. Work is incremental; the all-properties TODO remains open.

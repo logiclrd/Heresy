@@ -250,6 +250,48 @@ internal sealed class FmFilterNodeProcessor
 
 	}
 
+	/// <summary>Only identically prepared stages may retain a Filter's
+	/// existing histories. Effective stage parameter values are compared,
+	/// not FilterInstance reference identity or authoring revision.</summary>
+	internal bool HasSameStateConfiguration(FmFilterNodeProcessor next)
+	{
+		ArgumentNullException.ThrowIfNull(next);
+		if (_audioIndex != next._audioIndex
+			|| _bindings.Length != next._bindings.Length
+			|| _useFastNumeric != next._useFastNumeric)
+			return false;
+		for (int i = 0; i < _bindings.Length; i++)
+			if (_bindings[i] != next._bindings[i])
+				return false;
+		if (_initial is null || next._initial is null)
+			return _initial is null && next._initial is null;
+		if (_initial.DefinitionId != next._initial.DefinitionId)
+			return false;
+
+		IReadOnlyList<ConfiguredFilterStage> before = _initial.GetStages();
+		IReadOnlyList<ConfiguredFilterStage> after = next._initial.GetStages();
+		if (before.Count != after.Count)
+			return false;
+		for (int i = 0; i < before.Count; i++)
+		{
+			ConfiguredFilterStage a = before[i];
+			ConfiguredFilterStage b = after[i];
+			if (a.StageId != b.StageId || a.Kind != b.Kind
+				|| _initial.GetStageGenerationForPersistence(a.StageId)
+					!= next._initial.GetStageGenerationForPersistence(b.StageId)
+				|| a.Parameters.Parameters.Count != b.Parameters.Parameters.Count)
+				return false;
+			foreach (FilterParameterDescriptor parameter in a.Parameters.Parameters)
+				if (!b.Parameters.Parameters.Any(p =>
+						string.Equals(p.Name, parameter.Name,
+							StringComparison.OrdinalIgnoreCase))
+					|| a.Parameters.GetParameter(parameter.Name)
+						!= b.Parameters.GetParameter(parameter.Name))
+					return false;
+		}
+		return true;
+	}
+
 	public sealed class State
 	{
 		internal State(FilterInstance? initial,

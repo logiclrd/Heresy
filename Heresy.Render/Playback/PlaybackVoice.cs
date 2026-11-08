@@ -356,6 +356,7 @@ public sealed class PlaybackVoice
 			|| nextSound is not FmSynthSound next
 			|| !previous.CanAdoptRunningState(next, SoundState))
 			return false;
+		previous.AdoptRunningState(next, SoundState);
 		Sound = next;
 		return true;
 	}

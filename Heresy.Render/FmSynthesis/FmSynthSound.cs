@@ -43,11 +43,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			FmMultiNode definition, int index)
 		{
 			Invocation = invocation;
+			Sound = (FmSynthSound)invocation.Sound;
 			Ratio = ratio;
 			Definition = definition;
 			Index = index;
 		}
 		public SoundInvocation Invocation { get; }
+		// A compatible child revision changes compiled code, not the child state.
+		public FmSynthSound Sound { get; set; }
 		public double Ratio { get; }
 		public FmMultiNode Definition { get; }
 		public int Index { get; }
@@ -305,10 +308,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		}
 	}
 
-	/// <summary>True when a running voice can safely retain its mutable DSP
-	/// state with a different immutable compiled definition. This first slice
-	/// supports stateless nodes and the persistent oscillator phase array only.
-	/// Sources, filters, envelopes and Multi need explicit state migration.</summary>
+	/// <summary>Preflight the entire running voice before changing its sound.
+	/// Stateful nodes must prove that their existing invocation histories
+	/// remain valid. A declined edit leaves the old graph generation intact.</summary>
 	public bool CanAdoptRunningState(FmSynthSound next, SoundState state)
 	{
 		ArgumentNullException.ThrowIfNull(next);
@@ -323,17 +325,96 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 
 		for (int i = 0; i < _nodes.Length; i++)
 		{
-			CompiledNode before = _nodes[i];
-			CompiledNode after = next._nodes[i];
-			if (before.Definition is not
-					(FmConstantNode or FmOscillatorNode or FmOperatorNode or FmNoiseNode)
-				|| before.Definition.Id != after.Definition.Id
-				|| before.Definition.GetType() != after.Definition.GetType()
-				|| before.OscillatorIndex != after.OscillatorIndex
-				|| !before.InputIndices.SequenceEqual(after.InputIndices))
+			CompiledNode old = _nodes[i];
+			CompiledNode revised = next._nodes[i];
+			if (old.Definition.Id != revised.Definition.Id
+				|| old.Definition.GetType() != revised.Definition.GetType()
+				|| old.OscillatorIndex != revised.OscillatorIndex
+				|| !old.InputIndices.SequenceEqual(revised.InputIndices))
 				return false;
+			switch (old.Definition)
+			{
+				case FmConstantNode:
+				case FmOscillatorNode:
+				case FmOperatorNode:
+				case FmNoiseNode:
+				case FmEnvelopeNode:
+					// Envelope curves evaluate directly from the existing
+					// frame/note-off timeline; they have no node-local state.
+					break;
+
+				case FmFilterNode:
+					// An unchanged Filter stage plan can keep its existing
+					// IIR/FIR histories. TailSeconds and upstream edits
+					// require no history rebuild.
+					if (old.Filter is null || revised.Filter is null
+						|| !old.Filter.HasSameStateConfiguration(revised.Filter))
+						return false;
+					break;
+
+				case FmSoundSourceNode source:
+					FmSoundSourceNode newSource =
+						(FmSoundSourceNode)revised.Definition;
+					// Preserve the bound child playback position, pitch
+					// integration and envelopes. Binding changes still
+					// require their own migration implementation.
+					if (source.SourceId != newSource.SourceId
+						|| source.FrequencyHz != newSource.FrequencyHz
+						|| source.Constant != newSource.Constant
+						|| source.ExponentialMultiplier != newSource.ExponentialMultiplier)
+						return false;
+					break;
+
+				case FmMultiNode multi:
+					FmMultiNode nextMulti = (FmMultiNode)revised.Definition;
+					// GainCompensation lives outside the individual child
+					// invocations, so it can change while the constituents
+					// retain their individual phase, playback age and seed.
+					if (multi.Distribution != nextMulti.Distribution
+						|| multi.Detune != nextMulti.Detune
+						|| multi.VoiceCount != nextMulti.VoiceCount
+						|| multi.HarmonicComponents != nextMulti.HarmonicComponents
+						|| multi.ChordComponents != nextMulti.ChordComponents
+						|| multi.RandomizePhase != nextMulti.RandomizePhase
+						|| multi.CycleLength != nextMulti.CycleLength
+						|| (old.MultiInput is null) != (revised.MultiInput is null))
+						return false;
+					if (old.MultiInput is not null)
+					{
+						if (live.Multis[i].Length == 0)
+							return false;
+						foreach (MultiVoice child in live.Multis[i])
+							if (!child.Sound.CanAdoptRunningState(
+								revised.MultiInput!, child.Invocation.State))
+								return false;
+					}
+					else if (live.Multis[i].Length != 0)
+						return false;
+					break;
+
+				default:
+					return false;
+			}
 		}
 		return true;
+	}
+
+	/// <summary>Apply after the entire tree passed preflight. This method
+	/// changes no note lifetime, oscillator phase or mutable DSP history.</summary>
+	public void AdoptRunningState(FmSynthSound next, SoundState state)
+	{
+		FmSynthState live = ValidateState(state);
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			if (_nodes[i].Definition is not FmMultiNode
+				|| next._nodes[i].MultiInput is not FmSynthSound revised)
+				continue;
+			foreach (MultiVoice child in live.Multis[i])
+			{
+				child.Sound.AdoptRunningState(revised, child.Invocation.State);
+				child.Sound = revised;
+			}
+		}
 	}
 
 	public NoteConfigurationSnapshot SnapshotNoteConfiguration()
@@ -522,9 +603,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					source.Invocation.State);
 		foreach (MultiVoice[] voices in synthState.Multis)
 			foreach (MultiVoice voice in voices)
-				if (voice.Invocation.Sound is FmSynthSound nested)
-					prepared += nested.PreparePendingFilterControls(
-						synthState.MonoContext ?? context, voice.Invocation.State);
+				prepared += voice.Sound.PreparePendingFilterControls(
+					synthState.MonoContext ?? context, voice.Invocation.State);
 		return prepared;
 	}
 
@@ -543,8 +623,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
                 nested.AdoptPreparedFirControls(source.Invocation.State);
         foreach (MultiVoice[] voices in synthState.Multis)
             foreach (MultiVoice voice in voices)
-                if (voice.Invocation.Sound is IFirPreparationSound nested)
-                    nested.AdoptPreparedFirControls(voice.Invocation.State);
+                voice.Sound.AdoptPreparedFirControls(voice.Invocation.State);
     }
 
     public void QueuePendingFirControls(SoundState state,
@@ -560,8 +639,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
                 nested.QueuePendingFirControls(source.Invocation.State, scheduler);
         foreach (MultiVoice[] voices in synthState.Multis)
             foreach (MultiVoice voice in voices)
-                if (voice.Invocation.Sound is IFirPreparationSound nested)
-                    nested.QueuePendingFirControls(voice.Invocation.State, scheduler);
+                voice.Sound.QueuePendingFirControls(voice.Invocation.State, scheduler);
     }
 
 	public long? GetEndFrameExclusive(
@@ -1149,7 +1227,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						? long.MaxValue : releaseEnd + voice.SkipFrames
 					: null;
 			sample[0] = 0;
-			voice.Invocation.Sound.Render(state.MonoContext!, child,
+			voice.Sound.Render(state.MonoContext!, child,
 				displaced, 1, sample);
 			double amplitude = sample[0];
 			if (voice.FadeFrames > 0 && frame < voice.FadeFrames)
@@ -1158,7 +1236,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				amplitude *= 0.5 - 0.5 * Math.Cos(Math.PI * t);
 			}
 			sum += amplitude;
-			long? end = voice.Invocation.Sound.GetEndFrameExclusive(
+			long? end = voice.Sound.GetEndFrameExclusive(
 				state.MonoContext!, child);
 			if (end.HasValue)
 			{
