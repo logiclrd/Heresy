@@ -366,9 +366,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					// affect its subsequent trajectory frames.
 					if (source.SourceId != newSource.SourceId)
 						return false;
-					if (live.Sources[i] is { } child
+					if (live.Sources[i] is { } boundSource
 						&& !double.IsFinite(
-							newSource.FrequencyHz / child.OriginalFrequencyHz))
+							newSource.FrequencyHz / boundSource.OriginalFrequencyHz))
 						return false;
 					break;
 
