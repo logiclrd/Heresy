@@ -18,6 +18,7 @@ using Heresy.Core.Samples;
 using Heresy.UserInterface.PatternEditing;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.Keyboard;
+using Heresy.UserInterface.Keyboard;
 using Heresy.UserInterface.SampleEditing;
 using Heresy.UserInterface.Views;
 
@@ -54,27 +55,8 @@ public sealed class SampleEditorDialog : Window
 	private readonly SampleWaveformControl _waveform;
 	private readonly TextBlock _waveformSummary;
 	private readonly TextBlock _message;
-	private readonly PatternLiveAuditionActions? _liveAudition;
-	private readonly Func<Task>? _stopAuditionAsync;
-	private readonly SampleAuditionKeyboard _auditionKeyboard = new();
-	private readonly HeldPhysicalKeyRepeatFilter _heldTestKeys;
-	private readonly Border _testArea = new()
-	{
-		Focusable = true,
-		Background = Brushes.DimGray,
-		BorderBrush = Brushes.Gray,
-		BorderThickness = new Thickness(2),
-		CornerRadius = new CornerRadius(5),
-		Padding = new Thickness(22, 9),
-		Child = new TextBlock
-		{
-			Text = "Test",
-			FontSize = 17,
-			FontWeight = FontWeight.SemiBold,
-			Foreground = Brushes.White,
-		},
-	};
-	private readonly TextBlock _auditionOctave = new();
+	private readonly PianoPreviewPlaybackController _previewPlayback;
+	private readonly PianoTestControl _pianoTest;
 
 	public SampleEditorDialog(
 		DocumentWorkspace workspace,
@@ -86,10 +68,13 @@ public sealed class SampleEditorDialog : Window
 			?? throw new ArgumentNullException(nameof(workspace));
 		_sample = sample
 			?? throw new ArgumentNullException(nameof(sample));
-		_liveAudition = liveAudition;
-		_stopAuditionAsync = stopAuditionAsync;
-		_heldTestKeys = new HeldPhysicalKeyRepeatFilter(
-			key => _auditionKeyboard.KeyUp(key));
+		_previewPlayback = new PianoPreviewPlaybackController(
+			sample.Id, PianoPreviewPlaybackController.SampleVoiceIdBase,
+			liveAudition, globalStop: stopAuditionAsync,
+			onError: error => _message.Text = error);
+		_pianoTest = new PianoTestControl(
+			_previewPlayback.HandleAsync,
+			() => _previewPlayback.HasVoices);
 
 		Title = $"Sample — {sample.Name}";
 		Width = 700;
@@ -152,27 +137,9 @@ public sealed class SampleEditorDialog : Window
 				TextWrapping = TextWrapping.Wrap,
 			};
 
-		_testArea.PointerPressed += (_, e) =>
-		{
-			_testArea.Focus();
-			e.Handled = true;
-		};
-		_testArea.KeyDown += async (_, e) => await OnTestKeyDownAsync(e);
-		_testArea.GotFocus += (_, _) =>
-			_testArea.BorderBrush = Brushes.LightSkyBlue;
-		_testArea.LostFocus += (_, _) =>
-			_testArea.BorderBrush = Brushes.Gray;
-		// Key-up clears only the pressed key. Sample notes continue
-		// sounding while the user edits the loop controls.
-		AddHandler(InputElement.KeyUpEvent, OnWindowKeyUp,
-			RoutingStrategies.Tunnel, handledEventsToo: true);
-		AddHandler(InputElement.KeyDownEvent, OnWindowStopKeyDown,
-			RoutingStrategies.Tunnel, handledEventsToo: true);
-		Deactivated += async (_, _) => await ReleaseAllTestNotesAsync();
-		Closed += async (_, _) => await ReleaseAllTestNotesAsync();
+		Closed += (_, _) => _ = _previewPlayback.StopOwnVoicesAsync();
 		_loopStart.LostFocus += (_, _) => CommitLoopFields();
 		_loopEnd.LostFocus += (_, _) => CommitLoopFields();
-		UpdateAuditionOctave();
 
 		Content = BuildContent();
 		RefreshWaveform();
@@ -296,161 +263,12 @@ public sealed class SampleEditorDialog : Window
 			new Thickness(18));
 	}
 
-	private Control BuildAuditionArea()
-	{
-		StackPanel description = new()
-		{
-			Spacing = 4,
-			VerticalAlignment = VerticalAlignment.Center,
-		};
-		description.Children.Add(_auditionOctave);
-		description.Children.Add(new TextBlock
-		{
-			Text = "Click Test, then use tracker piano keys (Z S X D C ...). "
-				+ "Keypad * / change octave; notes keep sounding after key-up. "
-				+ "Loop edits restart sounding notes; F8 stops preview.",
-			FontSize = 11,
-			TextWrapping = TextWrapping.Wrap,
-		});
-		StackPanel row = new()
-		{
-			Orientation = Orientation.Horizontal,
-			Spacing = 12,
-			Margin = new Thickness(0, 6, 0, 10),
-		};
-		row.Children.Add(_testArea);
-		row.Children.Add(description);
-		return row;
-	}
+	private Control BuildAuditionArea() => _pianoTest;
 
-	private void UpdateAuditionOctave()
-		=> _auditionOctave.Text =
-			$"Audition octave: {_auditionKeyboard.BaseOctave}";
-
-	private async Task OnTestKeyDownAsync(KeyEventArgs e)
-	{
-		int previousOctave = _auditionKeyboard.BaseOctave;
-		bool octaveCommand = PatternOctaveKeyboard.TryAdjust(
-			e.PhysicalKey, e.KeyModifiers, previousOctave, out _);
-		bool pianoKey =
-			(e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Alt
-				| KeyModifiers.Meta)) == 0
-			&& PatternNoteKeyboard.TryGetSemitoneOffset(
-				e.PhysicalKey, out _);
-		if (!octaveCommand && !pianoKey)
-			return;
-		e.Handled = true;
-		if (!_heldTestKeys.KeyDown(e.PhysicalKey))
-			return; // Synthetic X11 release+press is still the same held key.
-
-		SampleAuditionStart? action = _auditionKeyboard.KeyDown(
-			e.PhysicalKey, e.KeyModifiers,
-			looping: _sample.Loop.Mode != SampleLoopMode.None);
-		if (octaveCommand)
-		{
-			UpdateAuditionOctave();
-			return;
-		}
-		if (action is null)
-			return;
-
-		if (_liveAudition is null)
-		{
-			_auditionKeyboard.Discard(action.Note);
-			_message.Text = "Realtime Sample audition is unavailable in this host.";
-			return;
-		}
-		try
-		{
-			foreach (SampleAuditionVoice old in action.Displaced)
-				await _liveAudition.SendEventAsync(
-					SampleAuditionCompiler.Cut(old));
-			await _liveAudition.SendEventAsync(
-				SampleAuditionCompiler.Start(_sample.Id, action.Note));
-			_message.Text =
-				$"Sample audition: octave {_auditionKeyboard.BaseOctave}.";
-		}
-		catch (Exception ex)
-		{
-			_auditionKeyboard.Discard(action.Note);
-			_message.Text = $"Sample audition failed: {ex.Message}";
-		}
-	}
-
-	private void OnWindowKeyUp(object? sender, KeyEventArgs e)
-	{
-		// Even though Sample notes persist beyond key release, do not
-		// rearm a held key on an X11 synthetic autorepeat KeyUp.
-		if (_heldTestKeys.KeyUp(e.PhysicalKey))
-			e.Handled = true;
-	}
-
-	private async void OnWindowStopKeyDown(object? sender, KeyEventArgs e)
-	{
-		if (e.Key != Key.F8)
-			return;
-		e.Handled = true;
-		// Stop the sounding voices, but retain physical held-key tracking.
-		// Otherwise a still-held key would retrigger on its next X11 repeat.
-		IReadOnlyList<SampleAuditionVoice> notes = _auditionKeyboard.StopAll();
-		try
-		{
-			if (_stopAuditionAsync is not null)
-				await _stopAuditionAsync();
-			else if (_liveAudition is not null)
-				foreach (SampleAuditionVoice note in notes)
-					await _liveAudition.SendEventAsync(
-						SampleAuditionCompiler.Cut(note));
-			else
-				_message.Text = "Playback stop is unavailable in this host.";
-		}
-		catch (Exception ex)
-		{
-			_message.Text = $"Could not stop audition: {ex.Message}";
-		}
-	}
-
-	private async Task ReleaseAllTestNotesAsync()
-	{
-		_heldTestKeys.Clear();
-		IReadOnlyList<SampleAuditionVoice> notes = _auditionKeyboard.StopAll();
-		if (_liveAudition is null)
-			return;
-		foreach (SampleAuditionVoice note in notes)
-		{
-			try
-			{
-				await _liveAudition.SendEventAsync(
-					SampleAuditionCompiler.Cut(note));
-			}
-			catch (Exception ex)
-			{
-				_message.Text = $"Sample audition stop failed: {ex.Message}";
-			}
-		}
-	}
-
-	/// <summary>Loop edits restart *all* preview voices which were left
-	/// playing, not just the physically held keys. Original pitches and
-	/// distinct virtual voice IDs are preserved across snapshot refresh.</summary>
-	private async Task RestartOngoingNotesAsync()
-	{
-		if (_liveAudition is null)
-			return;
-		foreach (SampleAuditionVoice note in _auditionKeyboard.OngoingNotes)
-		{
-			try
-			{
-				await _liveAudition.SendEventAsync(
-					SampleAuditionCompiler.Start(_sample.Id, note,
-						restart: true));
-			}
-			catch (Exception ex)
-			{
-				_message.Text = $"Sample preview restart failed: {ex.Message}";
-			}
-		}
-	}
+	/// <summary>Loop edits restart all currently sounding preview voices,
+	/// preserving their original pitch and distinct voice ID.</summary>
+	private Task RestartOngoingNotesAsync()
+		=> _previewPlayback.RestartSoundingAsync();
 
 	/// <summary>Commit the waveform's frame-range on focus loss, without
 	/// forcing the user to click Apply for a loop-audition adjustment.</summary>
