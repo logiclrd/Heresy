@@ -93,9 +93,9 @@ public sealed class PianoTestControl : UserControl
         description.Children.Add(new TextBlock
         {
             Text = "Click Test, then use tracker piano keys (Z S X D C ...). "
-                + "Keypad * / changes octave. Caps Lock off: hold notes; "
-                + "Caps Lock on: latch notes and suppress close neighbours. "
-                + "F8 stops all preview voices.",
+                + "Keypad * / changes octave. Caps Lock switches Hold/Latch: "
+                + "Hold releases keys; Latch keeps notes and suppresses close "
+                + "neighbours. F8 stops all preview voices.",
             FontSize = 11,
             TextWrapping = TextWrapping.Wrap,
         });
