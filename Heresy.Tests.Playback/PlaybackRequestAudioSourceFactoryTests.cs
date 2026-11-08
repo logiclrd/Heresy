@@ -925,6 +925,105 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
+	public void MixedFirAndIirRevisionAdoptsBothHistoriesAtOneBoundary()
+	{
+		SongDocument song = new();
+		ObjectId firId = song.AllocateObjectId();
+		FilterDefinition fir = new(firId, "FIR", [
+			new FilterStageDefinition(1, "fir", FilterKind.FirLowPass,
+				[new("CutoffHz", FilterParameterValue.FromNumber(250))])]);
+		song.Add(fir);
+		ObjectId iirId = song.AllocateObjectId();
+		FilterDefinition iir = new(iirId, "IIR", [
+			new FilterStageDefinition(1, "iir", FilterKind.OnePole,
+				[new("CutoffHz", FilterParameterValue.FromNumber(300))])]);
+		song.Add(iir);
+		ObjectId synthId = song.AllocateObjectId();
+
+		FmSynthGraph Graph(double firCutoff, double iirCutoff)
+		{
+			FilterInstance firUse = new(fir);
+			firUse.SetStageParameter(1, "CutoffHz",
+				FilterParameterValue.FromNumber(firCutoff));
+			FilterInstance iirUse = new(iir);
+			iirUse.SetStageParameter(1, "CutoffHz",
+				FilterParameterValue.FromNumber(iirCutoff));
+			return new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 3000,
+					minimum: -0.2, maximum: 0.2, constant: true),
+				new FmFilterNode(1, 0, firUse),
+				new FmOscillatorNode(2, FmOscillatorWaveform.Sine, 700,
+					minimum: -0.2, maximum: 0.2, constant: true),
+				new FmFilterNode(3, 2, iirUse),
+				new FmOperatorNode(4, FmOperatorKind.Add, [1, 3])], 4);
+		}
+
+		FmSynthDefinition synth = new(synthId, "Mixed", Graph(250, 300));
+		song.Add(synth);
+		PlaybackRequestAudioSourceFactory factory = new(MonoConfiguration(48000));
+		NoteSchedule empty = new NoteScheduleBuilder().Freeze();
+		IAudioOutputSource unchanged = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		IAudioOutputSource firOnly = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		IAudioOutputSource iirOnly = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		IAudioOutputSource both = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		IAudioOutputSource[] outputs = [unchanged, firOnly, iirOnly, both];
+		try
+		{
+			foreach (IAudioOutputSource output in outputs)
+			{
+				((ILiveAudioOutputSource)output).EnqueueLiveEvent(
+					ChannelTarget.Virtual(91), [new StartNoteCommand(synthId)]);
+				output.Render(350, new float[350]);
+			}
+
+			void Publish(IAudioOutputSource output, double firCutoff, double iirCutoff)
+			{
+				synth.Graph = Graph(firCutoff, iirCutoff);
+				song.MarkChanged(affectsAudio: true);
+				((ILiveSynthSourceRevisionOutput)output).EnqueueLiveSynthParameters(
+					synthId, factory.PrepareLiveSynthSource(
+						SongDocumentSnapshot.Create(song), synthId));
+			}
+
+			Publish(firOnly, 4500, 300);
+			Publish(iirOnly, 250, 4000);
+			Publish(both, 4500, 4000);
+			float[] baseline = new float[500];
+			float[] firOnlyPcm = new float[500];
+			float[] iirOnlyPcm = new float[500];
+			float[] bothPcm = new float[500];
+			unchanged.Render(500, baseline);
+			firOnly.Render(500, firOnlyPcm);
+			iirOnly.Render(500, iirOnlyPcm);
+			both.Render(500, bothPcm);
+
+			double firEffect = 0, iirEffect = 0;
+			for (int i = 0; i < bothPcm.Length; i++)
+			{
+				float expected = firOnlyPcm[i] + iirOnlyPcm[i] - baseline[i];
+				bothPcm[i].Should().BeApproximately(expected, 1e-4f,
+					"both compatible stages must commit together without restarting the note");
+				if (i >= 200)
+				{
+					firEffect = Math.Max(firEffect,
+						Math.Abs(firOnlyPcm[i] - baseline[i]));
+					iirEffect = Math.Max(iirEffect,
+						Math.Abs(iirOnlyPcm[i] - baseline[i]));
+				}
+			}
+			firEffect.Should().BeGreaterThan(0.03,
+				"the prepared FIR revision must affect existing notes");
+			iirEffect.Should().BeGreaterThan(0.03,
+				"the prepared IIR revision must affect existing notes");
+		}
+		finally
+		{
+			foreach (IAudioOutputSource output in outputs)
+				(output as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
 	public void RealtimeFactoryCapturesFreshOutputConfigurationForEachNewRequest()
 	{
 		SongDocument document = new();
