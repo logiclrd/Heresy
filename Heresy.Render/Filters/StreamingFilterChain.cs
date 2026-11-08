@@ -209,6 +209,32 @@ public sealed class StreamingFilterChain
 		Span<RealtimeFeedforwardCombCoefficients> feedforwardScratch,
 		ReadOnlySpan<RealtimeFirStageUpdate> firUpdates)
 	{
+		if (!TryPreflightRealtimeNumericUpdates(tptUpdates, tptScratch, biquadUpdates, biquadScratch, ladderUpdates, ladderScratch, saturatedUpdates, saturatedScratch, allPassUpdates, allPassScratch, combUpdates, combScratch, feedforwardUpdates, feedforwardScratch, firUpdates))
+			return false;
+		CommitPreparedRealtimeNumericUpdates(tptUpdates, tptScratch, biquadUpdates, biquadScratch, ladderUpdates, ladderScratch, saturatedUpdates, saturatedScratch, allPassUpdates, allPassScratch, combUpdates, combScratch, feedforwardUpdates, feedforwardScratch, firUpdates);
+		return true;
+	}
+
+	/// <summary>Preflight every selected stage into preallocated coefficient
+	/// scratch without changing any PCM history. Separate Filter chains can
+	/// all validate before the Synth transaction begins committing.</summary>
+	internal bool TryPreflightRealtimeNumericUpdates(
+		ReadOnlySpan<RealtimeTptStageUpdate> tptUpdates,
+		Span<RealtimeTptCoefficients> tptScratch,
+		ReadOnlySpan<RealtimeBiquadStageUpdate> biquadUpdates,
+		Span<RealtimeBiquadCoefficients> biquadScratch,
+		ReadOnlySpan<RealtimeLinearLadderStageUpdate> ladderUpdates,
+		Span<RealtimeLinearLadderCoefficients> ladderScratch,
+		ReadOnlySpan<RealtimeSaturatedLadderStageUpdate> saturatedUpdates,
+		Span<RealtimeSaturatedLadderCoefficients> saturatedScratch,
+		ReadOnlySpan<RealtimeAllPassStageUpdate> allPassUpdates,
+		Span<RealtimeAllPassCoefficient> allPassScratch,
+		ReadOnlySpan<RealtimeFeedbackCombStageUpdate> combUpdates,
+		Span<RealtimeFeedbackCombCoefficients> combScratch,
+		ReadOnlySpan<RealtimeFeedforwardCombStageUpdate> feedforwardUpdates,
+		Span<RealtimeFeedforwardCombCoefficients> feedforwardScratch,
+		ReadOnlySpan<RealtimeFirStageUpdate> firUpdates)
+	{
 		if (_inputFinished || tptScratch.Length < tptUpdates.Length
 			|| biquadScratch.Length < biquadUpdates.Length
 			|| ladderScratch.Length < ladderUpdates.Length
@@ -415,6 +441,28 @@ public sealed class StreamingFilterChain
 					return false;
 		}
 
+		return true;
+	}
+
+	/// <summary>Commit only already-preflighted updates. The sole producer
+	/// cannot interleave rendering or another transaction between phases.</summary>
+	internal void CommitPreparedRealtimeNumericUpdates(
+		ReadOnlySpan<RealtimeTptStageUpdate> tptUpdates,
+		Span<RealtimeTptCoefficients> tptScratch,
+		ReadOnlySpan<RealtimeBiquadStageUpdate> biquadUpdates,
+		Span<RealtimeBiquadCoefficients> biquadScratch,
+		ReadOnlySpan<RealtimeLinearLadderStageUpdate> ladderUpdates,
+		Span<RealtimeLinearLadderCoefficients> ladderScratch,
+		ReadOnlySpan<RealtimeSaturatedLadderStageUpdate> saturatedUpdates,
+		Span<RealtimeSaturatedLadderCoefficients> saturatedScratch,
+		ReadOnlySpan<RealtimeAllPassStageUpdate> allPassUpdates,
+		Span<RealtimeAllPassCoefficient> allPassScratch,
+		ReadOnlySpan<RealtimeFeedbackCombStageUpdate> combUpdates,
+		Span<RealtimeFeedbackCombCoefficients> combScratch,
+		ReadOnlySpan<RealtimeFeedforwardCombStageUpdate> feedforwardUpdates,
+		Span<RealtimeFeedforwardCombCoefficients> feedforwardScratch,
+		ReadOnlySpan<RealtimeFirStageUpdate> firUpdates)
+	{
 		for (int i = 0; i < tptUpdates.Length; i++)
 		{
 			foreach (IStreamingFilterStageState channel in
@@ -470,7 +518,6 @@ public sealed class StreamingFilterChain
 				((IRealtimeFirFilterState)channel)
 					.CommitRealtime(firUpdates[i].Plan);
 		}
-		return true;
 	}
 
 	// The previous numeric-only update contract remains in use by tests.
