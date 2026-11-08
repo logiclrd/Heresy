@@ -21,7 +21,6 @@ using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.Dialogs;
 using Heresy.UserInterface.FmEditing;
 using Heresy.UserInterface.Keyboard;
-using Heresy.UserInterface.Keyboard;
 using Heresy.UserInterface.PatternEditing;
 
 namespace Heresy.UserInterface.Views;
