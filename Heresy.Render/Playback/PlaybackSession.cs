@@ -1744,9 +1744,11 @@ public sealed class PlaybackSession
 		}
 
 		double inheritedPitch = ReadInheritedPitchAt(eventFrame);
+		double enclosingPitch = ReadEnclosingSourcePitch(
+			start.ParentSourceScopes, eventFrame);
 		SoundInvocation? invocation =
 			sound.CreateInvocation(
-				checked(start.PitchMultiplier * inheritedPitch),
+				checked(start.PitchMultiplier * inheritedPitch * enclosingPitch),
 				start.PlaybackSpeedMultiplier);
 		if (invocation is null)
 			return;
@@ -2064,29 +2066,47 @@ public sealed class PlaybackSession
 				break;
 
 			case SetTonePortamentoCommand tonePortamento:
-				if (channel.CurrentVoice is null
-					&& tonePortamento.TargetNote is not null)
+				if (channel.CurrentFlattenedSource is { } flattenedPitch)
 				{
-					StartNote(
-						physicalChannel,
-						channel,
-						tonePortamento.TargetNote,
-						eventFrame,
-						physicalPlaybackOwner);
+					// A flattened Pattern is one logical note with a live
+					// pitch baseline shared by its existing and future
+					// descendants, not a single PlaybackVoice.
+					RecomposeFlattenedDescendantPitch(
+						flattenedPitch.ScopeId, eventFrame);
+					flattenedPitch.SetTonePortamento(
+						eventFrame, tonePortamento.TicksPerRow ?? _speed,
+						tonePortamento.LinearUnitsPerTick,
+						tonePortamento.TargetNote?.PitchMultiplier,
+						tonePortamento.Glissando, tonePortamento.Instant);
 				}
-
-				channel.CurrentVoice?.SetTonePortamento(
-					eventFrame,
-					_tempo,
-					tonePortamento.TicksPerRow ?? _speed,
-					_context.Configuration.SampleRate,
-					tonePortamento.LinearUnitsPerTick,
-					tonePortamento.TargetNote?.PitchMultiplier,
-					tonePortamento.Glissando);
+				else
+				{
+					if (channel.CurrentVoice is null
+						&& tonePortamento.TargetNote is not null)
+					{
+						StartNote(
+							physicalChannel, channel,
+							tonePortamento.TargetNote, eventFrame,
+							physicalPlaybackOwner);
+					}
+					channel.CurrentVoice?.SetTonePortamento(
+						eventFrame, _tempo,
+						tonePortamento.TicksPerRow ?? _speed,
+						_context.Configuration.SampleRate,
+						tonePortamento.LinearUnitsPerTick,
+						tonePortamento.TargetNote?.PitchMultiplier,
+						tonePortamento.Glissando, tonePortamento.Instant);
+				}
 				break;
 
 			case ClearTonePortamentoCommand:
-				channel.CurrentVoice?.ClearTonePortamento(eventFrame);
+				if (channel.CurrentFlattenedSource is { } clearedPitch)
+				{
+					RecomposeFlattenedDescendantPitch(clearedPitch.ScopeId, eventFrame);
+					clearedPitch.ClearTonePortamento(eventFrame);
+				}
+				else
+					channel.CurrentVoice?.ClearTonePortamento(eventFrame);
 				break;
 
 			case SetPitchSlideCommand slide:
@@ -2792,7 +2812,8 @@ public sealed class PlaybackSession
 		FlattenedSourceVolume source = new(begin.ChildScopeId,
 			begin.InitialVolume, _tickClock,
 			_context.Configuration.SampleRate,
-			begin.EventFilterConfiguration);
+			begin.EventFilterConfiguration,
+			begin.InitialPitchMultiplier);
 		_sourceVolumes.Add(begin.ChildScopeId, source);
 		channel.CurrentFlattenedSource = source;
 		channel.CaptureCurrentNoteVolume(begin.InitialVolume);
@@ -2816,6 +2837,52 @@ public sealed class PlaybackSession
 					layers.Add(filter);
 			}
 		return layers.Count == 0 ? null : new FilterChain(layers);
+	}
+
+	/// <summary>New descendants need the parent pitch at their actual
+	/// start frame for tone selection, not merely a future modulation curve.
+	/// The same scope ratios remain live on the voice for later retuning.</summary>
+	private double ReadEnclosingSourcePitch(
+		IReadOnlyList<long>? sourceScopes, long frame)
+	{
+		double pitch = 1.0;
+		if (sourceScopes is null)
+			return pitch;
+		foreach (long scopeId in sourceScopes)
+		{
+			if (!_sourceVolumes.TryGetValue(scopeId,
+				out FlattenedSourceVolume? source))
+				throw new InvalidOperationException(
+					"Flattened pitch controller was not activated before its descendant.");
+			pitch *= source.ReadPitchRatio(frame);
+		}
+		if (!(pitch > 0.0) || !double.IsFinite(pitch))
+			throw new InvalidOperationException(
+				"Nested flattened pitch product must be positive and finite.");
+		return pitch;
+	}
+
+	/// <summary>Split descendant pitch integration at an enclosing source
+	/// retuning boundary. Displaced/NNA and virtual voices retain their own
+	/// source scope and are never retuned merely by sharing a physical host.</summary>
+	private void RecomposeFlattenedDescendantPitch(long scopeId, long frame)
+	{
+		HashSet<PlaybackVoice> seen = [];
+		void Visit(PlaybackVoice? voice)
+		{
+			if (voice is null || !seen.Add(voice)
+				|| !VoiceBelongsToFlattenedSource(voice, scopeId))
+				return;
+			voice.RecomposeEnclosingPitch(frame);
+		}
+		foreach (PlaybackChannelState state in _channels.Values)
+			Visit(state.CurrentVoice);
+		foreach (PlaybackChannelState state in _scopedVirtualChannels.Values)
+			Visit(state.CurrentVoice);
+		foreach (PlaybackChannelState state in _targetedVirtualChannels.Values)
+			Visit(state.CurrentVoice);
+		foreach (PlaybackVoice voice in _virtualVoices)
+			Visit(voice);
 	}
 
 	private double ReadInheritedPitchAt(long frame)
@@ -2865,8 +2932,10 @@ public sealed class PlaybackSession
 		}
 
 		double inheritedPitch = ReadInheritedPitchAt(eventFrame);
+		double enclosingPitch = ReadEnclosingSourcePitch(
+			start.ParentSourceScopes, eventFrame);
 		SoundInvocation? invocation = sound.CreateInvocation(
-			checked(start.PitchMultiplier * inheritedPitch),
+			checked(start.PitchMultiplier * inheritedPitch * enclosingPitch),
 			start.PlaybackSpeedMultiplier);
 		if (invocation is null)
 			return;

@@ -2,6 +2,7 @@ using System;
 
 using Heresy.Core.Filters;
 using Heresy.Render.Envelopes;
+using Heresy.Render.Sounds;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -11,7 +12,7 @@ namespace Heresy.Render.Playback;
 
 /// <summary>
 /// A flattened Pattern/Sequence acts as one logical instigating note for
-/// note-volume automation, despite producing many independent audible voices.
+/// note-volume and pitch automation, despite producing many independent audible voices.
 /// Descendant voices retain this object by reference after the instigator's
 /// logical channel has moved on to another note. A separate instance exists
 /// for every invocation scope, so overlapping/nested starts never share
@@ -21,6 +22,20 @@ internal sealed class FlattenedSourceVolume
 {
 	private readonly TrackerTickClock _clock;
 	private readonly int _sampleRate;
+	// Every pitch segment is immutable once published. A descendant's
+	// PitchTrajectory may query earlier frames when reconstructing its sample
+	// position; replacing a mutable current-pitch value would retroactively
+	// change previously rendered audio.
+	private readonly List<(long StartFrame, PitchCurve Curve)> _pitchHistory =
+	[
+		(0, new ConstantPitchCurve(1.0)),
+	];
+	private readonly double _initialPitchMultiplier;
+	private double? _tonePitchTargetRatio;
+	private TrackerTonePortamentoCurve? _activeTonePitchCurve;
+	private long _activeTonePitchStartFrame;
+	private int _activeTonePitchTicksPerRow;
+	private double? _continuousTonePitchAtBoundary;
 	private readonly PlaybackOperatorCollection _operators = new();
 	private LinearRowPlaybackOperator? _slide;
 	private long _slideStartFrame;
@@ -29,7 +44,8 @@ internal sealed class FlattenedSourceVolume
 
 	public FlattenedSourceVolume(long scopeId, double volume,
 		TrackerTickClock clock, int sampleRate,
-		FilterInstance? eventFilter = null)
+		FilterInstance? eventFilter = null,
+		double initialPitchMultiplier = 1.0)
 	{
 		if (scopeId <= 0)
 			throw new ArgumentOutOfRangeException(nameof(scopeId));
@@ -37,6 +53,9 @@ internal sealed class FlattenedSourceVolume
 			throw new ArgumentOutOfRangeException(nameof(volume));
 		if (sampleRate <= 0)
 			throw new ArgumentOutOfRangeException(nameof(sampleRate));
+		if (!(initialPitchMultiplier > 0.0) || !double.IsFinite(initialPitchMultiplier))
+			throw new ArgumentOutOfRangeException(nameof(initialPitchMultiplier));
+		_initialPitchMultiplier = initialPitchMultiplier;
 		ScopeId = scopeId;
 		EventFilterConfiguration = eventFilter?.Clone();
 		_volume = volume;
@@ -167,6 +186,107 @@ internal sealed class FlattenedSourceVolume
 		}
 		if (discard is not null)
 			foreach (var key in discard) _completionActions.Remove(key);
+	}
+
+	/// <summary>
+	/// Current transposition relative to the pitch baked into this flattened
+	/// invocation's SequencingContext. This changes descendant sound pitch,
+	/// not the tempo or the musical deadlines of its internal Pattern.
+	/// History is retained because voices may reconstruct earlier source frames.
+	/// </summary>
+	internal double ReadPitchRatio(long frame)
+	{
+		if (frame < 0)
+			throw new ArgumentOutOfRangeException(nameof(frame));
+		int low = 0, high = _pitchHistory.Count - 1;
+		while (low < high)
+		{
+			int middle = low + (high - low + 1) / 2;
+			if (_pitchHistory[middle].StartFrame <= frame)
+				low = middle;
+			else
+				high = middle - 1;
+		}
+		var segment = _pitchHistory[low];
+		return segment.Curve.GetMultiplier(frame - segment.StartFrame);
+	}
+
+	private void PublishPitchCurve(long frame, PitchCurve curve)
+	{
+		if (frame < _pitchHistory[^1].StartFrame)
+			throw new InvalidOperationException(
+				"Flattened source pitch changes must be chronological.");
+		if (frame == _pitchHistory[^1].StartFrame)
+			_pitchHistory[^1] = (frame, curve);
+		else
+			_pitchHistory.Add((frame, curve));
+	}
+
+	private double ReadContinuousTonePitch(long frame)
+	{
+		if (_activeTonePitchCurve is null)
+			return _continuousTonePitchAtBoundary ?? ReadPitchRatio(frame);
+		return _activeTonePitchCurve.GetContinuousMultiplierForRowTime(
+			ToneRowTime(frame));
+	}
+
+	private double ToneRowTime(long frame)
+		=> Math.Clamp(_clock.GetElapsedTicks(
+			_activeTonePitchStartFrame,
+			Math.Max(frame, _activeTonePitchStartFrame)),
+			0, _activeTonePitchTicksPerRow);
+
+	/// <summary>
+	/// A note on the caller's Gxx row is a new logical target, not a restart.
+	/// FF is Heresy's explicit instantaneous-target mode. G00 and Lxx
+	/// recall its byte from the same existing tracker memory.
+	/// </summary>
+	internal void SetTonePortamento(long frame, int ticksPerRow,
+		double linearUnitsPerTick, double? targetPitchMultiplier,
+		bool glissando, bool instant)
+	{
+		if (ticksPerRow <= 0)
+			throw new ArgumentOutOfRangeException(nameof(ticksPerRow));
+		if (frame < 0 || !double.IsFinite(linearUnitsPerTick)
+			|| linearUnitsPerTick < 0)
+			throw new ArgumentOutOfRangeException(nameof(linearUnitsPerTick));
+		if (targetPitchMultiplier.HasValue)
+		{
+			if (!(targetPitchMultiplier.Value > 0)
+				|| !double.IsFinite(targetPitchMultiplier.Value))
+				throw new ArgumentOutOfRangeException(nameof(targetPitchMultiplier));
+			_tonePitchTargetRatio = targetPitchMultiplier.Value
+				/ _initialPitchMultiplier;
+		}
+		if (!_tonePitchTargetRatio.HasValue)
+			return;
+		double continuous = ReadContinuousTonePitch(frame);
+		_activeTonePitchCurve = null;
+		_continuousTonePitchAtBoundary = null;
+		if (instant)
+		{
+			PublishPitchCurve(frame,
+				new ConstantPitchCurve(_tonePitchTargetRatio.Value));
+			return;
+		}
+		TrackerTonePortamentoCurve curve = new(
+			continuous, _tonePitchTargetRatio.Value, linearUnitsPerTick,
+			_clock, frame, ticksPerRow, glissando);
+		_activeTonePitchCurve = curve;
+		_activeTonePitchStartFrame = frame;
+		_activeTonePitchTicksPerRow = ticksPerRow;
+		PublishPitchCurve(frame, curve);
+	}
+
+	internal void ClearTonePortamento(long frame)
+	{
+		if (_activeTonePitchCurve is null)
+			return;
+		double audible = ReadPitchRatio(frame);
+		double continuous = ReadContinuousTonePitch(frame);
+		_activeTonePitchCurve = null;
+		_continuousTonePitchAtBoundary = continuous;
+		PublishPitchCurve(frame, new ConstantPitchCurve(audible));
 	}
 
 	public double Read(long frame)
