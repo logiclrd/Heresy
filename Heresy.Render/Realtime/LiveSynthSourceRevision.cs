@@ -14,6 +14,10 @@ namespace Heresy.Render.Realtime;
 public interface ILiveSynthSourceRevisionOutput
 {
     void EnqueueLiveSynthSource(ObjectId sourceId, ISound preparedSound);
+
+    /// <summary>Use this separate commit publication to update eligible
+    /// already-sounding voices as well as the resolver for future notes.</summary>
+    void EnqueueLiveSynthParameters(ObjectId sourceId, ISound preparedSound);
 }
 
 /// <summary>

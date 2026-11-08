@@ -2518,7 +2518,11 @@ public sealed class MainWindow : Window
 							_playbackTransport.SendLiveEventAsync(
 								_workspace.Document,
 								liveEvent.Target,
-								liveEvent.Commands)));
+								liveEvent.Commands)),
+				_playbackTransport is ILiveSynthEditTransport synthEdits
+					? () => synthEdits.PublishSynthEditAsync(
+						_workspace.Document, synth.Id)
+					: null);
 		_mainContent.Content = editor;
 		UpdateWindowTitle();
 		SetStatus($"Editing synth {synth.Name}");

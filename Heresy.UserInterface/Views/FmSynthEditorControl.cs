@@ -36,6 +36,8 @@ public sealed class FmSynthEditorControl : UserControl
 	private readonly FmSynthDefinition _synth;
 	private readonly Action _close;
 	private readonly Action<string> _changed;
+	private readonly Func<Task>? _publishSynthEditAsync;
+	private uint _lastNotifiedAudioRevision;
 	private readonly FmSynthGraphCanvas _canvas;
 	private readonly PianoPreviewPlaybackController _previewPlayback;
 	private readonly PianoTestControl _pianoTest;
@@ -58,7 +60,8 @@ public sealed class FmSynthEditorControl : UserControl
 		FmSynthDefinition synth,
 		Action close,
 		Action<string> changed,
-		PatternLiveAuditionActions? liveAudition = null)
+		PatternLiveAuditionActions? liveAudition = null,
+		Func<Task>? publishSynthEditAsync = null)
 	{
 		_workspace =
 			workspace
@@ -69,9 +72,19 @@ public sealed class FmSynthEditorControl : UserControl
 		_close =
 			close
 				?? throw new ArgumentNullException(nameof(close));
-		_changed =
-			changed
-				?? throw new ArgumentNullException(nameof(changed));
+		ArgumentNullException.ThrowIfNull(changed);
+		_publishSynthEditAsync = publishSynthEditAsync;
+		_lastNotifiedAudioRevision = workspace.Document.AudioRevision;
+		_changed = message =>
+		{
+			changed(message);
+			uint revision = _workspace.Document.AudioRevision;
+			if (revision == _lastNotifiedAudioRevision)
+				return; // presentation-only changes must not publish
+			_lastNotifiedAudioRevision = revision;
+			if (_publishSynthEditAsync is not null)
+				_ = PublishCommittedEditAsync();
+		};
 		_previewPlayback = new PianoPreviewPlaybackController(
 			synth.Id, PianoPreviewPlaybackController.SynthVoiceIdBase,
 			liveAudition, onError: error => _message.Text = error);
@@ -1692,6 +1705,18 @@ public sealed class FmSynthEditorControl : UserControl
 					live.Id, wave, freq, min, max, multiplier, exp, fixedFrequency,
 					curve);
 			});
+	}
+
+	private async Task PublishCommittedEditAsync()
+	{
+		try
+		{
+			await _publishSynthEditAsync!();
+		}
+		catch (Exception error)
+		{
+			_message.Text = $"Could not apply live Synth edit: {error.Message}";
+		}
 	}
 
 	private void UpdateParameter(

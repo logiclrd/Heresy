@@ -17,7 +17,8 @@ public sealed class LazySongPlaybackTransport
 		IPlaybackPositionTransport,
 		IPlaybackRuntimeDiagnosticsTransport,
 		IPlaybackAudioHealthTransport,
-		IPlaybackSnapshotTransport
+		IPlaybackSnapshotTransport,
+		ILiveSynthEditTransport
 {
 	private readonly object _gate = new();
 	private readonly Func<ISongPlaybackTransport> _factory;
@@ -206,6 +207,16 @@ public sealed class LazySongPlaybackTransport
 			document,
 			target,
 			commands);
+
+	public Task PublishSynthEditAsync(SongDocument document, ObjectId sourceId)
+	{
+		lock (_gate)
+		{
+			ThrowIfDisposed();
+			return (_inner as ILiveSynthEditTransport)?.PublishSynthEditAsync(
+				document, sourceId) ?? Task.CompletedTask;
+		}
+	}
 
 	public Task StopAsync()
 	{

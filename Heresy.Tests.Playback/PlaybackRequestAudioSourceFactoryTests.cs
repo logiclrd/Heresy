@@ -100,6 +100,69 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
+	public void CommittedSynthEditsAdoptHeldVoicesWithoutNewNotesAndIsolateStructuralGenerations()
+	{
+		SongDocument document = new();
+		ObjectId synthId = document.AllocateObjectId();
+		FmSynthDefinition synth = new(synthId, "Live",
+			new FmSynthGraph([new FmConstantNode(0, 0.25)], 0));
+		document.Add(synth);
+		PlaybackRequestAudioSourceFactory factory = new(MonoConfiguration(100));
+		IAudioOutputSource output = factory.Create(AdHocPlaybackRequest.Create(
+			document, new NoteScheduleBuilder().Freeze()));
+		try
+		{
+			ILiveAudioOutputSource notes = (ILiveAudioOutputSource)output;
+			ILiveSynthSourceRevisionOutput edits =
+				(ILiveSynthSourceRevisionOutput)output;
+			void Commit(FmSynthGraph graph)
+			{
+				synth.Graph = graph;
+				document.MarkChanged(affectsAudio: true);
+				edits.EnqueueLiveSynthParameters(synthId,
+					factory.PrepareLiveSynthSource(
+						SongDocumentSnapshot.Create(document), synthId));
+			}
+			float Next()
+			{
+				float[] pcm = new float[1];
+				output.Render(1, pcm);
+				return pcm[0];
+			}
+
+			notes.EnqueueLiveEvent(ChannelTarget.Virtual(10),
+				[new StartNoteCommand(synthId)]);
+			notes.EnqueueLiveEvent(ChannelTarget.Virtual(11),
+				[new StartNoteCommand(synthId)]);
+			Next().Should().BeApproximately(0.5f, 1e-6f);
+
+			Commit(new FmSynthGraph([new FmConstantNode(0, 0.375)], 0));
+			Next().Should().BeApproximately(0.75f, 1e-6f,
+				"both existing voices adopt the edited scalar without NoteOn");
+
+			Commit(new FmSynthGraph([
+				new FmConstantNode(0, 0.125),
+				new FmConstantNode(1, 0)], 0));
+			Next().Should().BeApproximately(0.75f, 1e-6f,
+				"even an unreachable node addition changes graph generation");
+
+			notes.EnqueueLiveEvent(ChannelTarget.Virtual(12),
+				[new StartNoteCommand(synthId)]);
+			Next().Should().BeApproximately(0.875f, 1e-6f);
+
+			Commit(new FmSynthGraph([
+				new FmConstantNode(0, 0.2),
+				new FmConstantNode(1, 0)], 0));
+			Next().Should().BeApproximately(0.95f, 1e-6f,
+				"the newest compatible generation updates, not older voices");
+		}
+		finally
+		{
+			(output as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
 	public void RealtimeFactoryCapturesFreshOutputConfigurationForEachNewRequest()
 	{
 		SongDocument document = new();

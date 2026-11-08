@@ -88,3 +88,29 @@ An edit being a parameter change does **not** imply that existing renderer state
 ## Incremental implementation rule
 
 Early foundation commits (graph wiring identity comparison, renderer dependency inventory and tests) **must not** imply that parameter publication or live sound changes work. Keep the TODO open until end-to-end realtime behavior and *all nonstructural properties* are verified.
+
+## Third slice: committed edits to eligible already-running voices
+
+**Initial end-to-end slice (still incomplete overall):** The Synth editor now
+notifies an optional transport after committed audio revisions, including
+shared Envelope/Filter edits surfaced in the editor. Canvas-only changes do
+not publish. The transport serializes frozen snapshots with NoteOn/Off;
+the control worker prepares the replacement and queues it before the PCM
+producer attempts active-voice adoption, then updates future-note resolution.
+
+Adoption requires identical *complete* authored graph wiring (including
+unreachable nodes), equal compiled state slots and only reachable Constant,
+Oscillator, Operator and Noise nodes. Their old phase, note/release and noise
+state are preserved while new compiled parameter resources are used.
+Filter, Envelope, Source and Multi graphs deliberately retain old sound
+definitions for already-playing voices until dedicated state migration exists.
+Structural generations stay independent: subsequent edits only update voices
+holding the immediately prior published sound, not historical generations.
+Released/displaced voices are included; detached anti-click tails cannot
+be resurrected. One deterministic PCM test covers the active scalar change,
+a structural revision and compatible edits to the new generation.
+
+**Still open:** stateful property migration, cross-object dependency
+notifications outside the active editor, all-property UI-to-PCM coverage,
+continuous smoothing/crossfade, stress/rapid-edit qualification and physical
+listening. The authoritative all-properties TODO remains open.

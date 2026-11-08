@@ -33,7 +33,7 @@ public sealed class BackgroundPlaybackController
 
 	private sealed record PublishSynthCommand(
 		SongDocumentSnapshot Snapshot, ObjectId SourceId,
-		TaskCompletionSource Completion)
+		bool ApplyToExistingVoices, TaskCompletionSource Completion)
 		: Command(Completion);
 
 	private sealed record StopCommand(
@@ -138,7 +138,20 @@ public sealed class BackgroundPlaybackController
 		if (sourceId.IsNone)
 			throw new ArgumentOutOfRangeException(nameof(sourceId));
 		TaskCompletionSource completion = NewCompletion();
-		Enqueue(new PublishSynthCommand(snapshot, sourceId, completion));
+		Enqueue(new PublishSynthCommand(snapshot, sourceId, false, completion));
+		return completion.Task;
+	}
+
+	/// <summary>Off-thread preparation, ordered with all pending note events,
+	/// followed by active-voice adoption at the PCM producer boundary.</summary>
+	public Task PublishLiveSynthParametersAsync(
+		SongDocumentSnapshot snapshot, ObjectId sourceId)
+	{
+		ArgumentNullException.ThrowIfNull(snapshot);
+		if (sourceId.IsNone)
+			throw new ArgumentOutOfRangeException(nameof(sourceId));
+		TaskCompletionSource completion = NewCompletion();
+		Enqueue(new PublishSynthCommand(snapshot, sourceId, true, completion));
 		return completion.Task;
 	}
 
@@ -204,7 +217,8 @@ public sealed class BackgroundPlaybackController
 						break;
 
 					case PublishSynthCommand revision:
-						PublishSynthRevision(revision.Snapshot, revision.SourceId);
+						PublishSynthRevision(revision.Snapshot, revision.SourceId,
+							revision.ApplyToExistingVoices);
 						command.Completion.SetResult();
 						break;
 
@@ -267,7 +281,8 @@ public sealed class BackgroundPlaybackController
 	}
 
 	private void PublishSynthRevision(
-		SongDocumentSnapshot snapshot, ObjectId sourceId)
+		SongDocumentSnapshot snapshot, ObjectId sourceId,
+		bool applyToExistingVoices)
 	{
 		if (_sourceFactory is not ILiveSynthSourcePreparationFactory factory
 			|| _source is not ILiveSynthSourceRevisionOutput live)
@@ -278,7 +293,10 @@ public sealed class BackgroundPlaybackController
 		// worker. The fully prepared sound is then queued before any later
 		// NoteOn from this same serialized command stream.
 		var prepared = factory.PrepareLiveSynthSource(snapshot, sourceId);
-		live.EnqueueLiveSynthSource(sourceId, prepared);
+		if (applyToExistingVoices)
+			live.EnqueueLiveSynthParameters(sourceId, prepared);
+		else
+			live.EnqueueLiveSynthSource(sourceId, prepared);
 	}
 
 	private void SendLiveEvent(

@@ -244,6 +244,27 @@ public sealed class PlaybackSession
 
 	public long NextFrame => _nextFrame;
 
+	/// <summary>PCM-producer-only publication to active physical, virtual,
+	/// displaced and released voices. Matching the immediately previous sound
+	/// keeps incompatible historical graph generations isolated.</summary>
+	public void AdoptLiveSynthParameters(ObjectId sourceId,
+		ISound previousSound, ISound nextSound)
+	{
+		void Adopt(PlaybackVoice? voice)
+		{
+			if (voice is not null)
+				voice.TryAdoptLiveSynth(sourceId, previousSound, nextSound);
+		}
+		foreach (PlaybackChannelState channel in _channels.Values)
+			Adopt(channel.CurrentVoice);
+		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+			Adopt(channel.CurrentVoice);
+		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+			Adopt(channel.CurrentVoice);
+		foreach (PlaybackVoice voice in _virtualVoices)
+			Adopt(voice);
+	}
+
 	public int SampleRate => _context.Configuration.SampleRate;
 
 	public int OutputChannelCount => _context.Configuration.OutputChannelCount;
@@ -1793,6 +1814,7 @@ public sealed class PlaybackSession
 		{
 			OriginVirtualChannelId = virtualChannelId,
 			OriginScopedVirtualOwner = scopedOwner,
+			OriginSourceId = start.Mixdown ? ObjectId.None : start.SourceId,
 		};
 
 		channel.AttachVoice(
@@ -2983,6 +3005,7 @@ public sealed class PlaybackSession
 			eventFilter: start.EventFilterConfiguration,
 			enclosingEventFilters: BuildEnclosingEventFilters(enclosingSources));
 
+		voice.OriginSourceId = start.Mixdown ? ObjectId.None : start.SourceId;
 		voice.OriginPatternCursorId = _activePatternCursorId;
 		channel.AttachVoice(voice, eventFrame);
 	}

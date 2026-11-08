@@ -40,6 +40,13 @@ public interface ISongPlaybackTransport
 	Task StopAsync();
 }
 
+/// <summary>Optional committed Synth editor update. No playback session is
+/// created if no audition is already active.</summary>
+public interface ILiveSynthEditTransport
+{
+	Task PublishSynthEditAsync(SongDocument document, ObjectId sourceId);
+}
+
 public interface IPlaybackPositionTransport
 {
 	event EventHandler<PlaybackPositionChangedEventArgs>? PlaybackPositionChanged;
@@ -52,7 +59,8 @@ public sealed class SongPlaybackTransport
 		IPlaybackPositionTransport,
 		IPlaybackRuntimeDiagnosticsTransport,
 		IPlaybackAudioHealthTransport,
-		IPlaybackSnapshotTransport
+		IPlaybackSnapshotTransport,
+		ILiveSynthEditTransport
 {
 	private readonly BackgroundPlaybackController _controller;
 	private readonly IBackgroundPlaybackSourceFactory _sourceFactory;
@@ -201,6 +209,34 @@ public sealed class SongPlaybackTransport
 			_liveAuditionDocument = null;
 			_preparedSynthRevisions.Clear();
 			throw;
+		}
+		finally
+		{
+			_commandGate.Release();
+		}
+	}
+
+	/// <summary>Prepare and publish the current committed Synth edit without
+	/// waiting for a new NoteOn. The existing command gate preserves ordering.</summary>
+	public async Task PublishSynthEditAsync(SongDocument document, ObjectId sourceId)
+	{
+		ArgumentNullException.ThrowIfNull(document);
+		if (sourceId.IsNone)
+			throw new ArgumentOutOfRangeException(nameof(sourceId));
+		await _commandGate.WaitAsync().ConfigureAwait(false);
+		try
+		{
+			if (!_liveAuditionActive
+				|| !ReferenceEquals(_liveAuditionDocument, document)
+				|| !_controller.SupportsLiveSynthPublication)
+				return;
+			if (_preparedSynthRevisions.TryGetValue(sourceId, out uint revision)
+				&& revision == document.AudioRevision)
+				return;
+			SongDocumentSnapshot snapshot = SongDocumentSnapshot.Create(document);
+			await _controller.PublishLiveSynthParametersAsync(snapshot, sourceId)
+				.ConfigureAwait(false);
+			_preparedSynthRevisions[sourceId] = snapshot.AudioRevision;
 		}
 		finally
 		{

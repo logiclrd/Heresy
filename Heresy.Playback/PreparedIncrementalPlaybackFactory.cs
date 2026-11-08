@@ -51,12 +51,18 @@ public sealed class PreparedIncrementalPlaybackPlan : IDisposable
 
 	/// <summary>Called only from the live PCM producer between events,
 	/// never from the document UI or the native audio callback.</summary>
-	internal void AdoptPreparedLiveSynth(ObjectId sourceId, ISound preparedSound)
+	internal void AdoptPreparedLiveSynth(ObjectId sourceId, ISound preparedSound,
+		bool applyToExistingVoices = false)
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
 		if (_liveSynthResolver is null)
 			throw new InvalidOperationException(
 				"This playback plan does not allow Synth publication.");
+		if (applyToExistingVoices
+			&& _liveSynthResolver.TryResolve(sourceId, mixdown: false,
+				out ISound? previousSound)
+			&& previousSound is not null)
+			Session.AdoptLiveSynthParameters(sourceId, previousSound, preparedSound);
 		_liveSynthResolver.Publish(sourceId, preparedSound);
 	}
 

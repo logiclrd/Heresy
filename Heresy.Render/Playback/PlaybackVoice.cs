@@ -5,6 +5,8 @@ using System.Linq;
 using System.Numerics;
 
 using Heresy.Core.Envelopes;
+using Heresy.Core.Objects;
+using Heresy.Render.FmSynthesis;
 using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
 using Heresy.Render.Envelopes;
@@ -339,7 +341,24 @@ public sealed class PlaybackVoice
 			RecomposePitchTrajectory(0);
 	}
 
-	public ISound Sound { get; }
+	/// <summary>Only the ordered PCM producer may adopt a new prepared sound.
+	/// The existing SoundState and all note-level controls remain intact.</summary>
+	public ISound Sound { get; private set; }
+
+	internal ObjectId OriginSourceId { get; set; } = ObjectId.None;
+
+	internal bool TryAdoptLiveSynth(ObjectId sourceId,
+		ISound previousSound, ISound nextSound)
+	{
+		if (OriginSourceId != sourceId
+			|| !ReferenceEquals(Sound, previousSound)
+			|| Sound is not FmSynthSound previous
+			|| nextSound is not FmSynthSound next
+			|| !previous.CanAdoptRunningState(next, SoundState))
+			return false;
+		Sound = next;
+		return true;
+	}
 
 	public SoundState SoundState { get; }
 

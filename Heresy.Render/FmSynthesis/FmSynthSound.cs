@@ -164,6 +164,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		ISound? Source,
 		FmSynthSound? MultiInput);
 
+	private readonly FmSynthGraph _graph;
 	private readonly CompiledNode[] _nodes;
 	private readonly int _outputIndex;
 	private readonly int _oscillatorCount;
@@ -185,6 +186,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	{
 		ArgumentNullException.ThrowIfNull(graph);
 		ArgumentNullException.ThrowIfNull(envelopeResolver);
+		_graph = graph;
 
 		_newNotePolicy =
 			newNotePolicy
@@ -301,6 +303,37 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					Visit(inputId);
 			ordered.Add(node);
 		}
+	}
+
+	/// <summary>True when a running voice can safely retain its mutable DSP
+	/// state with a different immutable compiled definition. This first slice
+	/// supports stateless nodes and the persistent oscillator phase array only.
+	/// Sources, filters, envelopes and Multi need explicit state migration.</summary>
+	public bool CanAdoptRunningState(FmSynthSound next, SoundState state)
+	{
+		ArgumentNullException.ThrowIfNull(next);
+		if (state is not FmSynthState live
+			|| !FmSynthLiveGraphShape.HasSameWiring(_graph, next._graph)
+			|| _outputIndex != next._outputIndex
+			|| _oscillatorCount != next._oscillatorCount
+			|| _nodes.Length != next._nodes.Length
+			|| live.Values.Length != _nodes.Length
+			|| live.Phases.Length != _oscillatorCount)
+			return false;
+
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			CompiledNode before = _nodes[i];
+			CompiledNode after = next._nodes[i];
+			if (before.Definition is not
+					(FmConstantNode or FmOscillatorNode or FmOperatorNode or FmNoiseNode)
+				|| before.Definition.Id != after.Definition.Id
+				|| before.Definition.GetType() != after.Definition.GetType()
+				|| before.OscillatorIndex != after.OscillatorIndex
+				|| !before.InputIndices.SequenceEqual(after.InputIndices))
+				return false;
+		}
+		return true;
 	}
 
 	public NoteConfigurationSnapshot SnapshotNoteConfiguration()

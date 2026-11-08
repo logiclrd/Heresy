@@ -181,7 +181,8 @@ public sealed class PlaybackRequestAudioSourceFactory :
 		// Publication and note messages share FIFO ordering on the producer.
 		private abstract record LiveAction;
 		private sealed record NoteAction(LivePlaybackEvent Event) : LiveAction;
-		private sealed record SynthAction(ObjectId Id, ISound Sound) : LiveAction;
+		private sealed record SynthAction(ObjectId Id, ISound Sound,
+			bool ApplyToExistingVoices) : LiveAction;
 		private readonly ConcurrentQueue<LiveAction> _commands = new();
 		private readonly ConcurrentQueue<SequencingDiagnostic> _warnings = new();
 		public SequencingDiagnostic[] DrainRuntimeDiagnostics()
@@ -209,7 +210,12 @@ public sealed class PlaybackRequestAudioSourceFactory :
 		public void EnqueueLiveSynthSource(ObjectId sourceId, ISound preparedSound)
 		{
 			ArgumentNullException.ThrowIfNull(preparedSound);
-			_commands.Enqueue(new SynthAction(sourceId, preparedSound));
+			_commands.Enqueue(new SynthAction(sourceId, preparedSound, false));
+		}
+		public void EnqueueLiveSynthParameters(ObjectId sourceId, ISound preparedSound)
+		{
+			ArgumentNullException.ThrowIfNull(preparedSound);
+			_commands.Enqueue(new SynthAction(sourceId, preparedSound, true));
 		}
 		public void Render(int frameCount, Span<float> destination)
 		{
@@ -222,7 +228,8 @@ public sealed class PlaybackRequestAudioSourceFactory :
 							note.Event.Target, note.Event.Commands);
 						break;
 					case SynthAction synth:
-						plan.AdoptPreparedLiveSynth(synth.Id, synth.Sound);
+						plan.AdoptPreparedLiveSynth(synth.Id, synth.Sound,
+							synth.ApplyToExistingVoices);
 						break;
 				}
 			}
