@@ -18,7 +18,6 @@ using Heresy.Core.Samples;
 using Heresy.UserInterface.PatternEditing;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.Keyboard;
-using Heresy.UserInterface.Keyboard;
 using Heresy.UserInterface.SampleEditing;
 using Heresy.UserInterface.Views;
 
@@ -68,14 +67,6 @@ public sealed class SampleEditorDialog : Window
 			?? throw new ArgumentNullException(nameof(workspace));
 		_sample = sample
 			?? throw new ArgumentNullException(nameof(sample));
-		_previewPlayback = new PianoPreviewPlaybackController(
-			sample.Id, PianoPreviewPlaybackController.SampleVoiceIdBase,
-			liveAudition, globalStop: stopAuditionAsync,
-			onError: error => _message.Text = error);
-		_pianoTest = new PianoTestControl(
-			_previewPlayback.HandleAsync,
-			() => _previewPlayback.HasVoices,
-			_previewPlayback.StopOwnVoicesAsync);
 
 		Title = $"Sample — {sample.Name}";
 		Width = 700;
@@ -137,6 +128,15 @@ public sealed class SampleEditorDialog : Window
 			{
 				TextWrapping = TextWrapping.Wrap,
 			};
+
+		_previewPlayback = new PianoPreviewPlaybackController(
+			sample.Id, PianoPreviewPlaybackController.SampleVoiceIdBase,
+			liveAudition, globalStop: stopAuditionAsync,
+			onError: error => _message.Text = error);
+		_pianoTest = new PianoTestControl(
+			_previewPlayback.HandleAsync,
+			() => _previewPlayback.HasVoices,
+			_previewPlayback.StopOwnVoicesAsync);
 
 		Closed += (_, _) => _ = _previewPlayback.StopOwnVoicesAsync();
 		_loopStart.LostFocus += (_, _) => CommitLoopFields();
