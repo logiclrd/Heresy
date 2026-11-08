@@ -74,7 +74,8 @@ public sealed class SampleEditorDialog : Window
 			onError: error => _message.Text = error);
 		_pianoTest = new PianoTestControl(
 			_previewPlayback.HandleAsync,
-			() => _previewPlayback.HasVoices);
+			() => _previewPlayback.HasVoices,
+			_previewPlayback.StopOwnVoicesAsync);
 
 		Title = $"Sample — {sample.Name}";
 		Width = 700;
