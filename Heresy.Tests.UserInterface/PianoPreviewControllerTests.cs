@@ -188,7 +188,7 @@ public sealed class PianoPreviewControllerTests
                 2, 4, Math.Pow(2, 4.0 / 12), SuppressNeighbours: true));
             await playback.HandleAsync(new PianoPreviewStopAll());
 
-            sent.Should().HaveCount(4);
+            sent.Should().HaveCount(5);
             sent[0].Commands.Should().ContainSingle()
                 .Which.Should().BeOfType<StartNoteCommand>();
             sent[1].Commands.Should().ContainSingle()
@@ -196,6 +196,8 @@ public sealed class PianoPreviewControllerTests
             sent[2].Commands.Should().ContainSingle()
                 .Which.Should().BeOfType<StartNoteCommand>();
             sent[3].Commands.Should().ContainSingle()
+                .Which.Should().BeOfType<NoteCutCommand>();
+            sent[4].Commands.Should().ContainSingle()
                 .Which.Should().BeOfType<NoteCutCommand>();
             sent[0].Target.Should().Be(ChannelTarget.Virtual(baseId));
             sent[2].Target.Should().Be(ChannelTarget.Virtual(baseId + 1));
