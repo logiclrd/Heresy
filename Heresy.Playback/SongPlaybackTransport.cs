@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
+using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
 using Heresy.Render.Realtime;
@@ -70,6 +71,9 @@ public sealed class SongPlaybackTransport
 	private bool _liveAuditionActive;
 	private SongDocument? _liveAuditionDocument;
 	private uint _liveAuditionAudioRevision;
+	// Do not advance the session's frozen base revision for a partial
+	// Synth publication: other direct Sounds still use that snapshot.
+	private readonly Dictionary<ObjectId, uint> _preparedSynthRevisions = [];
 
 	public SongPlaybackTransport(
 		IAudioOutputBackend backend,
@@ -195,6 +199,7 @@ public sealed class SongPlaybackTransport
 		{
 			_liveAuditionActive = false;
 			_liveAuditionDocument = null;
+			_preparedSynthRevisions.Clear();
 			throw;
 		}
 		finally
@@ -210,6 +215,7 @@ public sealed class SongPlaybackTransport
 		{
 			_liveAuditionActive = false;
 			_liveAuditionDocument = null;
+			_preparedSynthRevisions.Clear();
 			StopPositionTracking();
 			await _controller.StopAsync().ConfigureAwait(false);
 			PollAudioHealth();
@@ -232,6 +238,7 @@ public sealed class SongPlaybackTransport
 		{
 			_liveAuditionActive = false;
 			_liveAuditionDocument = null;
+			_preparedSynthRevisions.Clear();
 			StopPositionTracking();
 			await _controller.PlayAsync(request).ConfigureAwait(false);
 			PublishPlaybackSnapshot(sourceDocument, request.Snapshot.AudioRevision);
@@ -289,6 +296,32 @@ public sealed class SongPlaybackTransport
 			return;
 		}
 
+		// A direct Synth NoteOn can use a newer prepared graph without
+		// tearing down the running session. Previously started voices
+		// retain their existing ISound/SoundState; new starts resolve through
+		// an audio-boundary-published overlay. Other sources still take the
+		// established conservative full-session refresh path.
+		if (_liveAuditionActive
+			&& ReferenceEquals(_liveAuditionDocument, document)
+			&& _controller.SupportsLiveSynthPublication
+			&& TryGetDirectSynthStarts(document, commands,
+				out IReadOnlyList<ObjectId> synthStarts))
+		{
+			SongDocumentSnapshot? snapshot = null;
+			foreach (ObjectId sourceId in synthStarts)
+			{
+				if (_preparedSynthRevisions.TryGetValue(sourceId,
+					out uint publishedRevision)
+					&& publishedRevision == document.AudioRevision)
+					continue;
+				snapshot ??= SongDocumentSnapshot.Create(document);
+				await _controller.PublishLiveSynthAsync(snapshot, sourceId)
+					.ConfigureAwait(false);
+				_preparedSynthRevisions[sourceId] = snapshot.AudioRevision;
+			}
+			return;
+		}
+
 		try
 		{
 			PlaybackRequest request = AdHocPlaybackRequest.Create(
@@ -302,14 +335,44 @@ public sealed class SongPlaybackTransport
 			_liveAuditionActive = true;
 			_liveAuditionDocument = document;
 			_liveAuditionAudioRevision = request.Snapshot.AudioRevision;
+			_preparedSynthRevisions.Clear();
 		}
 		catch
 		{
 			_liveAuditionActive = false;
 			_liveAuditionDocument = null;
+			_preparedSynthRevisions.Clear();
 			PublishPlaybackSnapshot(null, 0);
 			throw;
 		}
+	}
+
+	/// <summary>Only allow direct Synth NoteOn updates through the current
+	/// proof-of-concept version-aware route. Mixed starts, Instruments and
+	/// recursive Pattern/Sequence sources require more preparation semantics
+	/// and retain the existing session-refresh behavior.</summary>
+	private static bool TryGetDirectSynthStarts(
+		SongDocument document,
+		IReadOnlyList<NoteCommand> commands,
+		out IReadOnlyList<ObjectId> sourceIds)
+	{
+		List<ObjectId> found = [];
+		foreach (NoteCommand command in commands)
+		{
+			if (command is not StartNoteCommand start)
+				continue;
+			if (start.Mixdown
+				|| !document.TryGet(start.SourceId, out SongObject? source)
+				|| source is not FmSynthDefinition)
+			{
+				sourceIds = [];
+				return false;
+			}
+			if (!found.Contains(start.SourceId))
+				found.Add(start.SourceId);
+		}
+		sourceIds = found;
+		return found.Count > 0;
 	}
 
 	/// <summary>Publish the revision frozen by the successful request,
