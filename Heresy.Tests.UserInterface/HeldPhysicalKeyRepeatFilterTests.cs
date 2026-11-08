@@ -96,22 +96,18 @@ public sealed class HeldPhysicalKeyRepeatFilterTests
     }
 
     [Test]
-    public void CapsLockPreviewAndFollowToggleAreIndependentAndRepeatSafe()
+    public void ShiftPreviewAndFollowToggleAreIndependentAndRepeatSafe()
     {
         HeldPhysicalKeyRepeatState previewKeys = new();
         HeldNotePreviewKeyState preview = new();
         HeldPhysicalKeyRepeatState follow = new();
 
-        previewKeys.KeyDown(PhysicalKey.CapsLock).Should().BeTrue();
-        preview.KeyDown(PhysicalKey.CapsLock, 4).Should().BeNull();
         previewKeys.KeyDown(PhysicalKey.Z).Should().BeTrue();
-        preview.KeyDown(PhysicalKey.Z, 4)
+        preview.KeyDown(PhysicalKey.Z, 4, KeyModifiers.Shift)
             .Should().BeOfType<StartHeldNotePreviewAction>();
-        previewKeys.KeyUp(PhysicalKey.CapsLock, 0).Should().BeTrue();
-        previewKeys.KeyDown(PhysicalKey.CapsLock).Should().BeFalse();
         previewKeys.KeyUp(PhysicalKey.Z, 5).Should().BeTrue();
         previewKeys.KeyDown(PhysicalKey.Z).Should().BeFalse();
-        preview.CapsLockHeld.Should().BeTrue();
+        preview.KeyDown(PhysicalKey.Z, 4, KeyModifiers.None).Should().BeNull();
         preview.ActiveNoteCount.Should().Be(1);
 
         int toggles = 0;
