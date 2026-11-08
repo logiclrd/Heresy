@@ -354,10 +354,9 @@ public sealed class PlaybackVoice
 			|| !ReferenceEquals(Sound, previousSound)
 			|| Sound is not FmSynthSound previous
 			|| nextSound is not FmSynthSound next
-			|| !previous.CanAdoptRunningState(next, SoundState))
+			|| !previous.TryPrepareRunningState(next, SoundState))
 			return false;
-		if (!previous.AdoptRunningState(next, SoundState))
-			return false;
+		previous.CommitPreparedRunningState(next, SoundState);
 		Sound = next;
 		return true;
 	}
