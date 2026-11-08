@@ -46,6 +46,7 @@ tests supersede contradictory old prose.
 | Contract | Document |
 | --- | --- |
 | Comprehensive UI and keyboard behavior (formerly in root README) | [UI workflows](user-interface-workflows.md) |
+| **Proposed** USB MIDI keyboard input (Pattern note entry, Program Change Source navigation, microtonal notes and preview bend) | [MIDI keyboard design](midi-keyboard-input-design.md) |
 | Implemented source tints, finite flattened-source overlays and overlap diagnostics | [Pattern source highlighting](pattern-source-highlighting.md) |
 | Pattern row Insert/Delete performance, measured Release baseline and localized redraw | [Pattern row mutation performance](pattern-row-mutation-performance.md) |
 | October 10 editor redesign **historical snapshot** (ADSR and older pane/grid counts superseded) | [UI editor redesign archive](ui-editor-redesign.md) |
