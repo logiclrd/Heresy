@@ -48,8 +48,8 @@ increment audio or document revisions. See
 
 ## Held-key input and nested X11 servers
 
-The Synth **Test** area, Sample **Test** area, and Pattern editor's momentary
-Caps Lock piano preview and playback-follow toggle use **physical** held-key
+The Synth **Test** area, Sample **Test** area, Pattern editor's momentary
+Shift piano preview, and playback-follow toggle use **physical** held-key
 tracking. On X11 servers without detectable autorepeat, including some
 Xephyr configurations, a repeating key can generate a synthetic
 `KeyUp`/`KeyDown` pair. An immediate key-up used to release notes or rearm
@@ -179,18 +179,40 @@ waypoint clears the routing hint, restoring automatic routing. The old raw
 text waypoint editor and its buttons have been removed; these layout-only
 edits never advance the audio revision.
 
-The FM editor has a focusable `Test` audition area. With keyboard focus there,
-the same layout-independent tracker piano keys as the pattern editor
-(`Z S X D C` and higher rows) start notes on independent live virtual voices
-without requiring Caps Lock. Repeated physical key-downs do not retrigger;
-releasing each key sends Note Off to its own voice. The physical keypad
-`*` and `/` keys adjust audition octave (initially 4, clamped to 0–8),
-reusing the pattern editor's octave-shortcut rules. Moving focus away,
-deactivating the window or leaving the editor releases all held notes.
-The live audition uses the FM synth as its sound source and never changes
-the song merely by previewing a note. New note starts after semantic audio
-edits refresh the live playback snapshot; note releases and layout-only
-changes do not restart an existing playback session.
+The FM editor and Sample editor use the **same focusable Test control**, the
+layout-independent tracker piano (`Z S X D C` and higher rows), and the
+keypad `*`/`/` octave shortcuts (initially octave 4, bounded to 0–8).
+With **Caps Lock OFF**, each note is held until its own confirmed key release
+and then receives **Note Off**. With **Caps Lock ON**, notes remain playing
+after key release, ending naturally or when F8 explicitly cuts the preview;
+each latched note start also **cuts any existing note fewer than three
+semitones away**, including an identical pitch and across octave boundaries.
+The rule applies equally to Sample and Synth, not only looping samples.
+A note's release-on-keyup mode is captured at note start; changing Caps Lock
+while holding a note does not retroactively change that note's lifetime.
+Every press has its own identity and a unique virtual voice. Synthetic X11
+repeat events cannot retrigger a held key; F8 doesn't rearm any keys still
+physically held. Moving focus away or deactivating the window releases only
+momentary notes, leaving latched notes alive; closing the editor cuts all
+of its remaining preview voices. Ordinary song data remains unmodified.
+
+The Test **keyboard controller** is separate from its **voice controller**.
+The input emits NoteOn with pitch, press identity and `SuppressNeighbours`,
+NoteOff by press identity, or StopAll. No modifier or lock-state query reaches
+the voice layer. The voice layer handles unique voice IDs, suppression,
+Note Off, Note Cut, release-tail tracking and Sample loop-edit restarts.
+Both editors reuse the same control and voice controller, with an adapter
+that compiles ordered events to the existing live-note transport. The mode
+label displays Hold or Latch.
+
+Native Caps Lock query uses Win32 `GetKeyState(VK_CAPITAL)`, CoreGraphics
+`CGEventSourceFlagsState`, or X11 `XkbGetState` against the active `DISPLAY`
+(which includes Xephyr). Native Wayland does not provide a generally
+queryable global lock-state API outside the compositor's keyboard protocol;
+if a native query is unavailable the Test control reports this visibly,
+starts in Hold, and tracks subsequent Caps Lock presses locally while
+focused. The local fallback cannot discover an already-enabled Caps Lock
+state until the user toggles it inside Test.
 
 FM node-parameter fields commit individually on Enter or loss of keyboard
 focus; dropdowns and checkboxes commit as soon as their selection changes.
@@ -207,9 +229,10 @@ without rebuilding the inspector or disrupting focus.
 
 ## FM editor preview release lifecycle
 
-The FM editor's **Test** area starts one independent virtual voice per
-tracker-piano key, and physical key-up (or loss of Test focus/window focus)
-emits **Note Off**, not **Note Cut**. FM synths calculate their Envelope
+With Caps Lock off, Test key-up (or loss of Test focus/window focus)
+emits **Note Off**, not **Note Cut**. With Caps Lock on, the key-up does
+not issue Note Off; the same underlying FM envelope and finite-tail rules
+still apply to latched Synth voices. FM synths calculate their Envelope
 nodes *inside the graph*, so the sound now reports a deterministic end
 when the output graph is proven silent after its embedded envelope tail.
 A bare Envelope output is finite when its envelope declares a release
@@ -222,9 +245,6 @@ ungated oscillators: unbounded FM sources still use the existing live
 virtual-voice safety cut. Ordinary Pattern playback continues to use
 its existing Note Off semantics without that live-preview fallback.
 
-This is intentionally different from Sample Test: Sample preview notes
-continue after physical key-up, while FM Test notes are released then.
-
 ## Sample waveform loops and note audition
 
 In the Sample editor, the decoded waveform supports both dragging an
@@ -236,31 +256,22 @@ to Forward; existing Forward/PingPong modes remain unchanged. The waveform
 shows the provisional selection during the drag. Releasing the mouse commits
 the loop to the document and synchronizes the start/end text fields.
 
-The Sample editor offers the same focusable **Test** area and physical
-tracker-piano keyboard layout as the FM Patch editor, including octave
-changes via keypad `*` and `/`. Unlike FM audition, **releasing a
-physical key does not end the Sample voice**: preview notes remain
-independent of key-press state so users can adjust the loop controls with
-both hands free. A new key press creates a separate virtual-channel
-voice, even when reusing a previously released key. Held-key auto-repeat
-is ignored, and chord notes can overlap.
-
-When the sample's **committed Loop Mode is Forward or PingPong**, each new
-preview note immediately **cuts any previous preview voice strictly closer
-than a minor third** (semitone separation 0, 1, or 2), retaining notes
-at least three semitones away for chords. With Loop Mode None this
-interference guard does not run; one-shot notes may overlap, including
-retriggering the same pitch. The comparison uses the complete chromatic
-index across octave boundaries, not the physical piano key or the note's
-time of release. FM preview retains its own held-key Note Off behaviour.
+Sample Test has the same Hold/Latch Caps Lock contract as Synth Test,
+including press-specific Note Off, neighbour suppression when latched,
+and independent voices even when repeatedly striking the same key. A
+non-looping sample can end naturally while the Test control retains its
+voice identity for future note cuts; held Sample keys are not treated
+as automatically persistent. The adjacent-note rule is driven by the
+NoteOn event's policy flag, never by the Sample controller reading
+Caps Lock or Loop Mode.
 
 Editing either loop-frame textbox and leaving focus commits the loop,
 as does waveform mouse release; in both cases the Sample editor restarts
 its tracked continuing voices at their *original* pitches using updated
 loop metadata and their existing distinct voice IDs. Notes are not
-restarted on provisional mouse movement. F8 stops playback and clears
-both continuing voices and pressed-key state. Deactivating or closing
-the dialog explicitly cuts all remaining preview voices. Sample metadata,
+restarted on provisional mouse movement. F8 stops playback, but does not falsely rearm still-held physical keys.
+Deactivating the dialog releases its momentary notes; its latched voices
+continue while the user edits, and closing it cuts all remaining voices. Sample metadata,
 not a cached preview-only loop, remains the source of truth for every
 restart.
 
@@ -599,9 +610,12 @@ pressed that many times, clamping at the final row and crossing projected
 sequence-pattern boundaries (including channel clamps at narrower intermediate
 Patterns). Chord entry and completed field-clearing actions use the same Skip.
 The selected value is retained when switching standalone patterns.
-With Caps Lock *not* pressed, physical key auto-repeat continues inserting
-notes in successive rows using this skip; with Caps Lock pressed, repeats
-remain preview-only. Replacing an existing start note changes its pitch
+Without Shift, physical key auto-repeat continues inserting notes in
+successive rows using this skip; while Shift is held, piano keys preview
+without editing the Pattern. Once a piano key enters preview, its repeats
+remain preview-only until the key itself is released, even if Shift is
+released earlier. Non-piano Shift shortcuts (selection, Tab navigation,
+clipboard actions) retain their previous behavior. Replacing an existing start note changes its pitch
 but preserves its playback-speed multiplier and mixdown flag; Enter remains
 available for the detailed semantic note dialog.
 

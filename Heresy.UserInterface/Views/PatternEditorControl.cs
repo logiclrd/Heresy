@@ -365,7 +365,7 @@ public sealed class PatternEditorControl : UserControl
 			new TextBlock
 			{
 				Text =
-					"Arrow keys move the tracker cursor. Shift+Arrow extends the marked block; Alt+B/Alt+E set its corners, Alt+D marks/expands by the major highlight, Alt+L marks the channel then pattern, and Alt+U unmarks. Ctrl+C/Ctrl+X copy or cut the marked block, Ctrl+V merge-pastes it, Shift+Ctrl+V overwrite-pastes it, and Ctrl+Delete clears it. Ctrl+Alt+Z/X/C/V/B/N/M chooses a chord; Ctrl+Alt+-/+ rotates it, Ctrl+Alt+Numpad */ changes its tone count, Ctrl+Alt+1..9 toggles tones and Ctrl+Alt+= enables all. Follow centers the highlighted playback row when enabled (NumPad Period, Ctrl+F, Scroll Lock); main Period and backtick retain their tracker edits. Type notes directly in the note field; the edit mask controls which Note/Source/Volume fields are stamped, and comma toggles the mask bit for the current field. Hold Caps Lock while pressing tracker piano keys to preview without editing; repeats are ignored and key release sends Note Off. Alt+0–9 selects the note-entry skip (default 1; 0 stays on the row); ordinary held-key repeats enter notes at successive skipped rows. Top-row 4 auditions the current note and 8 auditions the current row, advancing one row. Enter opens detailed note editing or expands a stacked effect strip.",
+					"Arrow keys move the tracker cursor. Shift+Arrow extends the marked block; Alt+B/Alt+E set its corners, Alt+D marks/expands by the major highlight, Alt+L marks the channel then pattern, and Alt+U unmarks. Ctrl+C/Ctrl+X copy or cut the marked block, Ctrl+V merge-pastes it, Shift+Ctrl+V overwrite-pastes it, and Ctrl+Delete clears it. Ctrl+Alt+Z/X/C/V/B/N/M chooses a chord; Ctrl+Alt+-/+ rotates it, Ctrl+Alt+Numpad */ changes its tone count, Ctrl+Alt+1..9 toggles tones and Ctrl+Alt+= enables all. Follow centers the highlighted playback row when enabled (NumPad Period, Ctrl+F, Scroll Lock); main Period and backtick retain their tracker edits. Type notes directly in the note field; the edit mask controls which Note/Source/Volume fields are stamped, and comma toggles the mask bit for the current field. Hold Shift while pressing tracker piano keys in the Note column to preview without editing; repeats are ignored and key release sends Note Off. Alt+0–9 selects the note-entry skip (default 1; 0 stays on the row); ordinary held-key repeats enter notes at successive skipped rows. Top-row 4 auditions the current note and 8 auditions the current row, advancing one row. Enter opens detailed note editing or expands a stacked effect strip.",
 				TextWrapping = TextWrapping.Wrap,
 			};
 
@@ -1425,31 +1425,22 @@ public sealed class PatternEditorControl : UserControl
 		}
 
 		if (_cursor.Field == PatternCellField.Note
-			&& e.PhysicalKey == PhysicalKey.CapsLock)
-		{
-			if (_previewRepeatKeys.KeyDown(e.PhysicalKey))
-				_heldPreviewKeys.KeyDown(
-					e.PhysicalKey, _noteInputState.BaseOctave);
-			e.Handled = true;
-			return;
-		}
-		if (_cursor.Field == PatternCellField.Note
 			&& PatternPreviewKeyRouting.IsPreviewOnly(
-				_heldPreviewKeys, e.PhysicalKey))
+				_heldPreviewKeys, e.PhysicalKey, e.KeyModifiers))
 		{
-			// Auto-repeat remains preview-only, even when Caps Lock is
-			// released before the still-held piano key.
+			// Shift+piano previews; an already previewing key remains
+			// preview-only until its own release, even if Shift goes up.
+			// Ignore Xephyr's synthetic release/press repeat pairs.
 			bool firstPress = _previewRepeatKeys.KeyDown(e.PhysicalKey);
 			e.Handled = true;
+			_suppressHandledTrackerKeyTextInput = true;
 			if (!firstPress)
 				return;
 			HeldNotePreviewAction? action = _heldPreviewKeys.KeyDown(
-				e.PhysicalKey, _noteInputState.BaseOctave);
+				e.PhysicalKey, _noteInputState.BaseOctave, e.KeyModifiers);
 			if (_liveAudition is not null
 				&& action is StartHeldNotePreviewAction preview)
-			{
 				await StartHeldPreviewAsync(editorRow, channel, preview);
-			}
 			return;
 		}
 
@@ -2274,7 +2265,7 @@ public sealed class PatternEditorControl : UserControl
 	private void OnCellKeyUp(KeyEventArgs e)
 	{
 		// Xephyr can send a fake key-up before its next repeat keydown.
-		// Only a confirmed release should disarm Caps Lock preview or
+		// Only a confirmed release should disarm Shift+piano preview or
 		// send Note Off for a held tracker piano key.
 		if (_previewRepeatKeys.KeyUp(e.PhysicalKey))
 			e.Handled = true;

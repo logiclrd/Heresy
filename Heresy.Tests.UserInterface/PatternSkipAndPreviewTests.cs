@@ -174,36 +174,29 @@ public sealed class PatternSkipAndPreviewTests
 	}
 
 	[Test]
-	public void HeldCapsPreviewConsumesAllRepeatsWithoutRestartOrNoteEntry()
+	public void ShiftPreviewConsumesRepeatsAndNeverTurnsIntoNoteEntry()
 	{
 		HeldNotePreviewKeyState state = new();
-		state.KeyDown(PhysicalKey.CapsLock, 4);
-
-		PatternPreviewKeyRouting.IsPreviewOnly(state, PhysicalKey.Z)
-			.Should().BeTrue();
-		state.KeyDown(PhysicalKey.Z, 4)
+		PatternPreviewKeyRouting.IsPreviewOnly(
+			state, PhysicalKey.Z, KeyModifiers.Shift).Should().BeTrue();
+		state.KeyDown(PhysicalKey.Z, 4, KeyModifiers.Shift)
 			.Should().BeOfType<StartHeldNotePreviewAction>();
 		for (int n = 0; n < 5; n++)
 		{
-			PatternPreviewKeyRouting.IsPreviewOnly(state, PhysicalKey.Z)
-				.Should().BeTrue();
-			state.KeyDown(PhysicalKey.Z, 4).Should().BeNull();
+			PatternPreviewKeyRouting.IsPreviewOnly(
+				state, PhysicalKey.Z, KeyModifiers.None).Should().BeTrue();
+			state.KeyDown(PhysicalKey.Z, 4, KeyModifiers.None)
+				.Should().BeNull();
 		}
 		state.ActiveNoteCount.Should().Be(1);
-
-		// Caps Lock can be released before the held tracker note, but
-		// auto-repeat must still not become document input.
-		state.KeyUp(PhysicalKey.CapsLock);
-		PatternPreviewKeyRouting.IsPreviewOnly(state, PhysicalKey.Z)
-			.Should().BeTrue();
 		state.KeyUp(PhysicalKey.Z)
 			.Should().BeOfType<ReleaseHeldNotePreviewAction>();
-		PatternPreviewKeyRouting.IsPreviewOnly(state, PhysicalKey.Z)
-			.Should().BeFalse();
+		PatternPreviewKeyRouting.IsPreviewOnly(
+			state, PhysicalKey.Z, KeyModifiers.None).Should().BeFalse();
 	}
 
 	[Test]
-	public void WithoutCapsTrackerAutoRepeatRemainsOrdinaryEntry()
+	public void WithoutShiftTrackerAutoRepeatRemainsOrdinaryEntry()
 	{
 		HeldNotePreviewKeyState preview = new();
 		DocumentWorkspace workspace = new();
@@ -218,7 +211,8 @@ public sealed class PatternSkipAndPreviewTests
 
 		for (int n = 0; n < 4; n++)
 		{
-			PatternPreviewKeyRouting.IsPreviewOnly(preview, PhysicalKey.Z)
+			PatternPreviewKeyRouting.IsPreviewOnly(
+				preview, PhysicalKey.Z, KeyModifiers.None)
 				.Should().BeFalse();
 			PatternNoteKeyboardEditor.TypePhysical(
 				workspace, pattern, cursor, input, PhysicalKey.Z)

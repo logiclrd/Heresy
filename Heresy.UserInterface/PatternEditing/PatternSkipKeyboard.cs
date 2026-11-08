@@ -32,15 +32,18 @@ public static class PatternSkipKeyboard
 }
 
 /// <summary>
-/// A held tracker piano key belongs exclusively to live preview while Caps
-/// Lock is physically down, including auto-repeat. If Caps is released before
-/// the piano key, its remaining repeats still cannot turn into note entries.
+/// Shift+piano in the Note field previews; Ctrl/Alt/Meta remain reserved
+/// for editing commands. An already previewing key remains preview-only
+/// until its own release, even if Shift changes mid-press.
 /// </summary>
 public static class PatternPreviewKeyRouting
 {
-	public static bool IsPreviewOnly(
-		HeldNotePreviewKeyState state,
-		PhysicalKey key)
-		=> PatternNoteKeyboard.TryGetSemitoneOffset(key, out _)
-			&& (state.CapsLockHeld || state.IsPreviewKeyActive(key));
+    public static bool IsPreviewOnly(
+        HeldNotePreviewKeyState state, PhysicalKey key,
+        KeyModifiers modifiers)
+        => PatternNoteKeyboard.TryGetSemitoneOffset(key, out _)
+            && (state.IsPreviewKeyActive(key)
+                || ((modifiers & (KeyModifiers.Control
+                    | KeyModifiers.Alt | KeyModifiers.Meta)) == 0
+                    && (modifiers & KeyModifiers.Shift) != 0));
 }

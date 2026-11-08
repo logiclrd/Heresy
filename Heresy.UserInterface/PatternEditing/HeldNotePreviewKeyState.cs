@@ -9,109 +9,63 @@ namespace Heresy.UserInterface.PatternEditing;
 public abstract record HeldNotePreviewAction;
 
 public sealed record StartHeldNotePreviewAction(
-	PhysicalKey Key,
-	int VoiceId,
-	double PitchMultiplier)
-	: HeldNotePreviewAction;
+    PhysicalKey Key, int VoiceId, double PitchMultiplier)
+    : HeldNotePreviewAction;
 
 public sealed record ReleaseHeldNotePreviewAction(
-	PhysicalKey Key,
-	int VoiceId)
-	: HeldNotePreviewAction;
+    PhysicalKey Key, int VoiceId)
+    : HeldNotePreviewAction;
 
 /// <summary>
-/// Treats the physical Caps Lock key as a momentary tracker-preview modifier.
-/// The locking/toggled state is deliberately irrelevant: preview mode exists
-/// only while the key is physically held.
+/// Pattern preview is enabled by Shift on a piano key press in the Note
+/// field, not by Caps Lock's physical or toggled state. Once a key starts
+/// preview it remains exclusive to preview until its own confirmed release,
+/// even if Shift is released earlier.
 /// </summary>
 public sealed class HeldNotePreviewKeyState
 {
-	private readonly HashSet<PhysicalKey> _activeNotes = [];
-	private bool _capsLockHeld;
+    private readonly HashSet<PhysicalKey> _activeNotes = [];
 
-	public bool CapsLockHeld => _capsLockHeld;
+    public int ActiveNoteCount => _activeNotes.Count;
 
-	public int ActiveNoteCount => _activeNotes.Count;
+    public bool IsPreviewKeyActive(PhysicalKey key)
+        => _activeNotes.Contains(key);
 
-	public bool IsPreviewKeyActive(PhysicalKey key)
-		=> _activeNotes.Contains(key);
+    public HeldNotePreviewAction? KeyDown(
+        PhysicalKey key, int baseOctave, KeyModifiers modifiers)
+    {
+        if (baseOctave is < 0 or > 8)
+            throw new ArgumentOutOfRangeException(nameof(baseOctave));
 
-	public HeldNotePreviewAction? KeyDown(
-		PhysicalKey key,
-		int baseOctave)
-	{
-		if (baseOctave is < 0 or > 8)
-			throw new ArgumentOutOfRangeException(nameof(baseOctave));
+        if (!PatternPreviewKeyRouting.IsPreviewOnly(this, key, modifiers)
+            || !_activeNotes.Add(key)
+            || !PatternNoteKeyboard.TryGetSemitoneOffset(
+                key, out int semitone))
+            return null;
 
-		if (key == PhysicalKey.CapsLock)
-		{
-			_capsLockHeld = true;
-			return null;
-		}
+        double pitchMultiplier = Math.Pow(2.0,
+            (((baseOctave - 4) * 12) + semitone) / 12.0);
+        return new StartHeldNotePreviewAction(key, semitone, pitchMultiplier);
+    }
 
-		if (!_capsLockHeld
-			|| !PatternNoteKeyboard.TryGetSemitoneOffset(
-				key,
-				out int semitoneOffset)
-			|| !_activeNotes.Add(key))
-		{
-			return null;
-		}
+    public IReadOnlyList<ReleaseHeldNotePreviewAction> ReleaseAll()
+    {
+        ReleaseHeldNotePreviewAction[] releases = _activeNotes
+            .Select(key =>
+            {
+                PatternNoteKeyboard.TryGetSemitoneOffset(key, out int semitone);
+                return new ReleaseHeldNotePreviewAction(key, semitone);
+            })
+            .ToArray();
+        _activeNotes.Clear();
+        return releases;
+    }
 
-		int relativeSemitone =
-			((baseOctave - 4) * 12)
-				+ semitoneOffset;
-		double pitchMultiplier =
-			Math.Pow(
-				2.0,
-				relativeSemitone / 12.0);
-
-		return new StartHeldNotePreviewAction(
-			key,
-			semitoneOffset,
-			pitchMultiplier);
-	}
-
-	public IReadOnlyList<ReleaseHeldNotePreviewAction> ReleaseAll()
-	{
-		ReleaseHeldNotePreviewAction[] releases =
-			_activeNotes
-				.Select(
-					key =>
-					{
-						PatternNoteKeyboard.TryGetSemitoneOffset(
-							key,
-							out int semitoneOffset);
-						return new ReleaseHeldNotePreviewAction(
-							key,
-							semitoneOffset);
-					})
-				.ToArray();
-
-		_activeNotes.Clear();
-		_capsLockHeld = false;
-		return releases;
-	}
-
-	public HeldNotePreviewAction? KeyUp(
-		PhysicalKey key)
-	{
-		if (key == PhysicalKey.CapsLock)
-		{
-			_capsLockHeld = false;
-			return null;
-		}
-
-		if (!_activeNotes.Remove(key)
-			|| !PatternNoteKeyboard.TryGetSemitoneOffset(
-				key,
-				out int semitoneOffset))
-		{
-			return null;
-		}
-
-		return new ReleaseHeldNotePreviewAction(
-			key,
-			semitoneOffset);
-	}
+    public HeldNotePreviewAction? KeyUp(PhysicalKey key)
+    {
+        if (!_activeNotes.Remove(key)
+            || !PatternNoteKeyboard.TryGetSemitoneOffset(key, out int semitone))
+            return null;
+        return new ReleaseHeldNotePreviewAction(key, semitone);
+    }
 }
