@@ -34,6 +34,7 @@ tests supersede contradictory old prose.
 | Reusable FIR/IIR filter catalogue, runtime/authoring contracts and historical integration milestones | [Filter design](filter-design.md) |
 | Realtime processing limits and measured filter qualification | [Filter realtime qualification](filter-realtime-qualification.md) |
 | Synth graph recursive ISound sources and implementation chronology | [Synth graph sound sources](synth-sound-source.md) |
+| **In progress** live editing of all nonstructural Synth parameters, including renderer/transport dependencies | [Synth realtime parameter plan](synth-live-parameter-plan.md) |
 | Physical Filter audition status and outstanding Windows/Linux acceptance cases | [Filter manual acceptance](filter-physical-acceptance.md) |
 | Native seek semantics and replay warnings | [Source-seek hints](source-seek-hints.md) |
 | PCM ring, speakers, device settings, filters | [Audio output](audio-output.md) |
