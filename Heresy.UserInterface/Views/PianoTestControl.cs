@@ -200,13 +200,11 @@ public sealed class PianoTestControl : UserControl
         if (e.PhysicalKey == PhysicalKey.CapsLock)
         {
             _capsRepeats.KeyUp(e.PhysicalKey);
-            // Some platform queries are updated after KeyDown; read again
-            // after the actual toggle key has been released.
-            if (_capsMode.IsNativeStateAvailable)
-            {
-                _capsMode.Refresh();
-                UpdateLabels();
-            }
+            // X11 may report the old locked state at KeyDown, but the
+            // updated state by KeyUp. Always requery: an unavailable native
+            // provider preserves the locally tracked mode unchanged.
+            _capsMode.Refresh();
+            UpdateLabels();
             return;
         }
 
