@@ -1,15 +1,18 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 
 using AwesomeAssertions;
 
 using Heresy.Core.Diagnostics;
+using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequencing;
 using Heresy.Playback;
 using Heresy.Render.Realtime;
+using Heresy.Render.Sounds;
 
 using NUnit.Framework;
 
@@ -293,6 +296,114 @@ public sealed class SongPlaybackTransportTests
 		backend.OpenCount.Should().Be(2);
 	}
 
+
+	[Test]
+	public async Task NewSynthNoteAfterAudioEditPublishesWithoutReopeningSession()
+	{
+		SongDocument document = new();
+		ObjectId synthId = document.AllocateObjectId();
+		FmSynthDefinition synth = new(synthId, "Live",
+			new FmSynthGraph([new FmConstantNode(0, 0.25)], 0));
+		document.Add(synth);
+		PublishingFactory factory = new();
+		TestBackend backend = new();
+		using SongPlaybackTransport transport = new(backend, factory);
+
+		await transport.SendLiveEventAsync(document, ChannelTarget.Virtual(20),
+			[new StartNoteCommand(synthId)]);
+		backend.OpenCount.Should().Be(1);
+		factory.Source.Order.Should().Equal("Start:20");
+
+		synth.Graph = new FmSynthGraph([new FmConstantNode(0, 0.5)], 0);
+		document.MarkChanged(affectsAudio: true);
+
+		// Releasing an already-playing voice after the edit must stay on
+		// the same live renderer; the next note uses the prepared revision.
+		await transport.SendLiveEventAsync(document, ChannelTarget.Virtual(20),
+			[new NoteOffCommand()]);
+		await transport.SendLiveEventAsync(document, ChannelTarget.Virtual(21),
+			[new StartNoteCommand(synthId)]);
+
+		backend.OpenCount.Should().Be(1,
+			"audio revisions of a direct Synth must not discard other voices");
+		factory.PreparedValues.Should().Equal(0.5);
+		factory.Source.Order.Should().Equal(
+			"Start:20", "Off:20", "Publish", "Start:21");
+
+		// Multiple note starts at the same revision use the cached source.
+		await transport.SendLiveEventAsync(document, ChannelTarget.Virtual(22),
+			[new StartNoteCommand(synthId)]);
+		factory.PreparedValues.Should().HaveCount(1);
+		backend.OpenCount.Should().Be(1);
+
+		// Structural changes are likewise deferred to *future* note starts;
+		// the older voices are neither retargeted nor stopped here.
+		synth.Graph = new FmSynthGraph(
+			[new FmConstantNode(0, 0.75), new FmConstantNode(1, 0)], 0);
+		document.MarkChanged(affectsAudio: true);
+		await transport.SendLiveEventAsync(document, ChannelTarget.Virtual(23),
+			[new StartNoteCommand(synthId)]);
+		factory.PreparedValues.Should().Equal(0.5, 0.75);
+		backend.OpenCount.Should().Be(1);
+	}
+
+	private sealed class PublishingFactory :
+		IBackgroundPlaybackSourceFactory, ILiveSynthSourcePreparationFactory
+	{
+		public PublishingLiveSource Source { get; } = new();
+		public List<double> PreparedValues { get; } = [];
+
+		public IAudioOutputSource Create(PlaybackRequest request)
+			=> Source;
+
+		public ISound PrepareLiveSynthSource(
+			SongDocumentSnapshot snapshot, ObjectId sourceId)
+		{
+			snapshot.Document.TryGet(sourceId, out SongObject? obj)
+				.Should().BeTrue();
+			FmSynthDefinition synth = obj.Should()
+				.BeOfType<FmSynthDefinition>().Which;
+			double value = ((FmConstantNode)synth.Graph.Nodes[0]).Value;
+			PreparedValues.Add(value);
+			return new PublishingDummySound();
+		}
+	}
+
+	private sealed class PublishingLiveSource :
+		ILiveAudioOutputSource, ILiveSynthSourceRevisionOutput
+	{
+		public List<string> Order { get; } = [];
+		public AudioOutputFormat Format => new(48000, 2);
+
+		public void EnqueueLiveSynthSource(ObjectId sourceId, ISound sound)
+		{
+			sound.Should().BeOfType<PublishingDummySound>();
+			Order.Add("Publish");
+		}
+
+		public void EnqueueLiveEvent(ChannelTarget target,
+			IReadOnlyList<NoteCommand> commands)
+		{
+			string operation = commands.Any(c => c is StartNoteCommand)
+				? "Start" : "Off";
+			Order.Add($"{operation}:{target.VirtualChannelId}");
+		}
+		public void Render(int frameCount, Span<float> destination)
+			=> destination.Clear();
+	}
+
+	private sealed class PublishingDummyState : SoundState { }
+	private sealed class PublishingDummySound : ISound
+	{
+		public NoteConfigurationSnapshot SnapshotNoteConfiguration()
+			=> NoteConfigurationSnapshot.Default;
+		public SoundState CreateState() => new PublishingDummyState();
+		public long? GetEndFrameExclusive(RenderContext context, SoundState state)
+			=> null;
+		public void Render(RenderContext context, SoundState state,
+			long startFrame, int frameCount, Span<float> destination)
+			=> destination.Clear();
+	}
 
 	private sealed class LiveFactory
 		: IBackgroundPlaybackSourceFactory
