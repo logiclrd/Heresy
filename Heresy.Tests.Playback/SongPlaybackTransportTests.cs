@@ -375,8 +375,7 @@ public sealed class SongPlaybackTransportTests
 		await transport.SendLiveEventAsync(document, ChannelTarget.Virtual(21),
 			[new StartNoteCommand(synthId)]);
 		await transport.PublishSynthEditAsync(document, synthId);
-		factory.Source.Order.Should().Equal("Start:20", "Update", "Start:21",
-			"an edit is committed without a future NoteOn and not prepared twice");
+		factory.Source.Order.Should().Equal("Start:20", "Update", "Start:21");
 		factory.PreparedValues.Should().HaveCount(1);
 		backend.OpenCount.Should().Be(1);
 	}
