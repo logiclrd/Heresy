@@ -182,8 +182,9 @@ edits never advance the audio revision.
 The FM editor and Sample editor use the **same focusable Test control**, the
 layout-independent tracker piano (`Z S X D C` and higher rows), and the
 keypad `*`/`/` octave shortcuts (initially octave 4, bounded to 0–8).
-With **Caps Lock OFF**, each note is held until its own confirmed key release
-and then receives **Note Off**. With **Caps Lock ON**, notes remain playing
+In **Hold mode** (Caps Lock off on platforms with a native state query),
+each note is held until its own confirmed key release and receives
+**Note Off**. In **Latch mode**, notes remain playing
 after key release, ending naturally or when F8 explicitly cuts the preview;
 each latched note start also **cuts any existing note fewer than three
 semitones away**, including an identical pitch and across octave boundaries.
@@ -207,12 +208,24 @@ label displays Hold or Latch.
 
 Native Caps Lock query uses Win32 `GetKeyState(VK_CAPITAL)`, CoreGraphics
 `CGEventSourceFlagsState`, or X11 `XkbGetState` against the active `DISPLAY`
-(which includes Xephyr). Native Wayland does not provide a generally
-queryable global lock-state API outside the compositor's keyboard protocol;
-if a native query is unavailable the Test control reports this visibly,
-starts in Hold, and tracks subsequent Caps Lock presses locally while
-focused. The local fallback cannot discover an already-enabled Caps Lock
-state until the user toggles it inside Test.
+(which includes Xephyr). The Test control observes Caps Lock **throughout
+its containing window**, not only while Test has keyboard focus. Its separate
+held-key repeat filter prevents a synthetic Xephyr KeyUp/KeyDown pair from
+changing the mode twice; changing focus within the window does not rearm it.
+The window-wide observer does not mark Caps Lock as handled, leaving other
+controls free to process the event. The Test piano keys themselves only work
+while Test is focused.
+
+Native Wayland does not provide a generally queryable global lock-state API
+outside the compositor's keyboard protocol. If a native query is unavailable,
+the preview starts in Hold, labels its state `(locally tracked)`, and each
+confirmed Caps Lock KeyDown toggles **Heresy's own** Hold/Latch mode regardless
+of the actual keyboard LED. An already-on Caps Lock LED could therefore
+correspond to Heresy's Hold mode on initial display; the visible mode is
+authoritative for preview behavior. Focus changes and window deactivation do
+not reset the local mode. When the window activates again, a *known* native
+state resynchronizes the mode; an unavailable query leaves it unchanged.
+The mode captured at each piano NoteOn remains unchanged for that note.
 
 FM node-parameter fields commit individually on Enter or loss of keyboard
 focus; dropdowns and checkboxes commit as soon as their selection changes.
