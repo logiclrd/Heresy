@@ -610,9 +610,12 @@ pressed that many times, clamping at the final row and crossing projected
 sequence-pattern boundaries (including channel clamps at narrower intermediate
 Patterns). Chord entry and completed field-clearing actions use the same Skip.
 The selected value is retained when switching standalone patterns.
-With Caps Lock *not* pressed, physical key auto-repeat continues inserting
-notes in successive rows using this skip; with Caps Lock pressed, repeats
-remain preview-only. Replacing an existing start note changes its pitch
+Without Shift, physical key auto-repeat continues inserting notes in
+successive rows using this skip; while Shift is held, piano keys preview
+without editing the Pattern. Once a piano key enters preview, its repeats
+remain preview-only until the key itself is released, even if Shift is
+released earlier. Non-piano Shift shortcuts (selection, Tab navigation,
+clipboard actions) retain their previous behavior. Replacing an existing start note changes its pitch
 but preserves its playback-speed multiplier and mixdown flag; Enter remains
 available for the detailed semantic note dialog.
 
