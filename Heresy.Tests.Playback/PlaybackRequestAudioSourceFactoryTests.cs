@@ -680,7 +680,7 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			float[] afterB = new float[550];
 			edited.Render(afterA.Length, afterA);
 			unchanged.Render(afterB.Length, afterB);
-			afterA.Should().OnlyContain(float.IsFinite);
+			afterA.Should().OnlyContain(sample => float.IsFinite(sample));
 			float difference = Enumerable.Range(200, afterA.Length - 200)
 				.Max(i => Math.Abs(afterA[i] - afterB[i]));
 			difference.Should().BeGreaterThan(0.15f,
