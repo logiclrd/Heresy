@@ -83,10 +83,15 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 
 			notes.EnqueueLiveEvent(ChannelTarget.Virtual(11),
 				[new NoteCutCommand()]);
-			float[] remaining = new float[1];
-			output.Render(1, remaining);
-			remaining[0].Should().BeApproximately(0.375f, 1e-6f,
-				"cutting a newer voice must not interfere with an older generation");
+			// Note Cut intentionally carries a short anti-click residue:
+			// first frame must retain the waveform, then only the older
+			// generation (0.25) and third generation (0.125) remain.
+			float[] afterCut = new float[8];
+			output.Render(afterCut.Length, afterCut);
+			afterCut[0].Should().BeApproximately(0.875f, 1e-6f,
+				"the anti-click tail preserves the cut voice's last sample");
+			afterCut[^1].Should().BeApproximately(0.375f, 1e-6f,
+				"retired newer voices must not alter older generations");
 		}
 		finally
 		{
