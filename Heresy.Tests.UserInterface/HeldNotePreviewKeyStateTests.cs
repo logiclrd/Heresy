@@ -36,7 +36,7 @@ public sealed class HeldNotePreviewKeyStateTests
         PatternPreviewKeyRouting.IsPreviewOnly(
             state, PhysicalKey.Tab, KeyModifiers.Shift).Should().BeFalse();
         PatternPreviewKeyRouting.IsPreviewOnly(
-            state, PhysicalKey.Left, KeyModifiers.Shift).Should().BeFalse();
+            state, PhysicalKey.F5, KeyModifiers.Shift).Should().BeFalse();
 
         state.KeyDown(PhysicalKey.Z, 4, KeyModifiers.Shift)
             .Should().Be(new StartHeldNotePreviewAction(
