@@ -549,6 +549,150 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 		}
 	}
 
+
+	[Test]
+	public void AuthoredOnePoleCutoffEditMatchesRealtimeFmRetuneOfSameHeldHistory()
+	{
+		SongDocument document = new();
+		ObjectId filterId = document.AllocateObjectId();
+		FilterDefinition filter = new(filterId, "Lowpass");
+		filter.SetStageDefaults(1, [new("CutoffHz",
+			FilterParameterValue.FromNumber(250))]);
+		document.Add(filter);
+		ObjectId authoredId = document.AllocateObjectId();
+		FmSynthDefinition authored = new(authoredId, "Authored",
+			new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 440),
+				new FmFilterNode(1, 0, new FilterInstance(filter))], 1));
+		document.Add(authored);
+
+		ObjectId referenceId = document.AllocateObjectId();
+		FmFilterNode connected = new FmFilterNode(1, 0,
+			new FilterInstance(filter));
+		connected = connected.WithParameterConnection(
+			connected.GetPorts().Single(p => p.ParameterName == "CutoffHz"), 2);
+		FmSynthDefinition reference = new(referenceId, "Reference",
+			new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 440),
+				connected,
+				new FmConstantNode(2, 250)], 1));
+		document.Add(reference);
+		PlaybackRequestAudioSourceFactory factory =
+			new(MonoConfiguration(48000));
+		NoteSchedule empty = new NoteScheduleBuilder().Freeze();
+		IAudioOutputSource authoredOutput = factory.Create(
+			AdHocPlaybackRequest.Create(document, empty));
+		IAudioOutputSource referenceOutput = factory.Create(
+			AdHocPlaybackRequest.Create(document, empty));
+		try
+		{
+			((ILiveAudioOutputSource)authoredOutput).EnqueueLiveEvent(
+				ChannelTarget.Virtual(1), [new StartNoteCommand(authoredId)]);
+			((ILiveAudioOutputSource)referenceOutput).EnqueueLiveEvent(
+				ChannelTarget.Virtual(1), [new StartNoteCommand(referenceId)]);
+			float[] beforeA = new float[140];
+			float[] beforeB = new float[140];
+			authoredOutput.Render(beforeA.Length, beforeA);
+			referenceOutput.Render(beforeB.Length, beforeB);
+			for (int i = 0; i < beforeA.Length; i++)
+				beforeA[i].Should().BeApproximately(beforeB[i], 1e-5f);
+
+			// Both voices have identical history; the reference changes its
+			// connected FM numeric cutoff and uses the existing per-frame
+			// atomic realtime retune. The authored edit must match it.
+			FilterInstance revision = new(filter);
+			revision.SetStageParameter(1, "CutoffHz",
+				FilterParameterValue.FromNumber(4000));
+			authored.Graph = new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 440),
+				new FmFilterNode(1, 0, revision)], 1);
+			reference.Graph = new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 440),
+				connected, new FmConstantNode(2, 4000)], 1);
+			document.MarkChanged(affectsAudio: true);
+			foreach ((IAudioOutputSource output, ObjectId id) in
+				new[] { (authoredOutput, authoredId),
+					(referenceOutput, referenceId) })
+				((ILiveSynthSourceRevisionOutput)output).EnqueueLiveSynthParameters(
+					id, factory.PrepareLiveSynthSource(
+						SongDocumentSnapshot.Create(document), id));
+			float[] afterA = new float[170];
+			float[] afterB = new float[170];
+			authoredOutput.Render(afterA.Length, afterA);
+			referenceOutput.Render(afterB.Length, afterB);
+			for (int i = 0; i < afterA.Length; i++)
+				afterA[i].Should().BeApproximately(afterB[i], 1e-5f,
+					"authored coefficients must use the same live IIR history");
+		}
+		finally
+		{
+			(authoredOutput as IDisposable)?.Dispose();
+			(referenceOutput as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
+	public void CommittedFirCutoffUsesOffThreadPreparedPlanOnTheHeldVoice()
+	{
+		SongDocument document = new();
+		ObjectId filterId = document.AllocateObjectId();
+		FilterDefinition definition = new(filterId, "FIR", [
+			new FilterStageDefinition(1, "lowpass", FilterKind.FirLowPass,
+				[new("CutoffHz", FilterParameterValue.FromNumber(250))])]);
+		document.Add(definition);
+		ObjectId synthId = document.AllocateObjectId();
+		FmSynthDefinition synth = new(synthId, "FIR Synth",
+			new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 2000,
+					constant: true),
+				new FmFilterNode(1, 0, new FilterInstance(definition))], 1));
+		document.Add(synth);
+		PlaybackRequestAudioSourceFactory factory =
+			new(MonoConfiguration(48000));
+		NoteSchedule empty = new NoteScheduleBuilder().Freeze();
+		IAudioOutputSource edited = factory.Create(
+			AdHocPlaybackRequest.Create(document, empty));
+		IAudioOutputSource unchanged = factory.Create(
+			AdHocPlaybackRequest.Create(document, empty));
+		try
+		{
+			foreach (IAudioOutputSource output in new[] { edited, unchanged })
+				((ILiveAudioOutputSource)output).EnqueueLiveEvent(
+					ChannelTarget.Virtual(30), [new StartNoteCommand(synthId)]);
+			float[] firstA = new float[350];
+			float[] firstB = new float[350];
+			edited.Render(firstA.Length, firstA);
+			unchanged.Render(firstB.Length, firstB);
+			firstA.Should().Equal(firstB);
+
+			FilterInstance revised = new(definition);
+			revised.SetStageParameter(1, "CutoffHz",
+				FilterParameterValue.FromNumber(4000));
+			synth.Graph = new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 2000,
+					constant: true),
+				new FmFilterNode(1, 0, revised)], 1);
+			document.MarkChanged(affectsAudio: true);
+			((ILiveSynthSourceRevisionOutput)edited).EnqueueLiveSynthParameters(
+				synthId, factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(document), synthId));
+			float[] afterA = new float[550];
+			float[] afterB = new float[550];
+			edited.Render(afterA.Length, afterA);
+			unchanged.Render(afterB.Length, afterB);
+			afterA.Should().OnlyContain(float.IsFinite);
+			float difference = Enumerable.Range(200, afterA.Length - 200)
+				.Max(i => Math.Abs(afterA[i] - afterB[i]));
+			difference.Should().BeGreaterThan(0.15f,
+				"the prepared FIR cutoff must change the sound of the existing voice");
+		}
+		finally
+		{
+			(edited as IDisposable)?.Dispose();
+			(unchanged as IDisposable)?.Dispose();
+		}
+	}
+
 	[Test]
 	public void RealtimeFactoryCapturesFreshOutputConfigurationForEachNewRequest()
 	{
