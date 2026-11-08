@@ -1851,6 +1851,11 @@ public sealed class PatternEditorControl : UserControl
 
 				if (chordResult.Handled)
 				{
+					// The edit and Skip have already moved the cursor. Consume
+					// the physical key and redirect focus before awaiting audio:
+					// an old-cell TextInput can arrive during the await.
+					_suppressHandledTrackerKeyTextInput = true;
+					e.Handled = true;
 					if (chordResult.Changed)
 					{
 						foreach (int chordChannel in chordResult.Channels)
@@ -1864,6 +1869,11 @@ public sealed class PatternEditorControl : UserControl
 							$"Entered chord in {edited.Pattern.Name} row {edited.PatternRow}, starting at channel {editedChannel + 1}");
 					}
 
+					UpdateChordStatus();
+					UpdateCurrentPatternControls();
+					RefreshCursorVisuals();
+					FocusCursorCell();
+
 					if (chordResult.NoteApplied)
 					{
 						foreach (int chordChannel in chordResult.Channels)
@@ -1873,12 +1883,6 @@ public sealed class PatternEditorControl : UserControl
 								chordChannel);
 						}
 					}
-
-					UpdateChordStatus();
-					e.Handled = true;
-					UpdateCurrentPatternControls();
-					RefreshCursorVisuals();
-					FocusCursorCell();
 					return;
 				}
 			}
@@ -1897,6 +1901,11 @@ public sealed class PatternEditorControl : UserControl
 
 			if (noteResult.Handled)
 			{
+				// KeyDown can produce TextInput from the previously focused
+				// row before an asynchronous live audition finishes. Suppress
+				// it immediately, not after awaiting the audio callback.
+				_suppressHandledTrackerKeyTextInput = true;
+				e.Handled = true;
 				if (noteResult.Rejected)
 				{
 					_message.Text =
@@ -1914,22 +1923,13 @@ public sealed class PatternEditorControl : UserControl
 							$"Edited tracker entry in {edited.Pattern.Name} row {edited.PatternRow}, channel {editedChannel + 1}");
 					}
 
-					if (noteResult.NoteApplied)
-					{
-						await PlayEnteredNoteAsync(
-							edited,
-							editedChannel);
-					}
 				}
-
-				// A handled physical piano event may still be followed by a
-				// platform TextInput for the *old* row after cursor advance.
-				// Consume it before it can reset the cursor or trigger commands.
-				_suppressHandledTrackerKeyTextInput = true;
-				e.Handled = true;
 				UpdateCurrentPatternControls();
 				RefreshCursorVisuals();
 				FocusCursorCell();
+
+				if (!noteResult.Rejected && noteResult.NoteApplied)
+					await PlayEnteredNoteAsync(edited, editedChannel);
 				return;
 			}
 		}
