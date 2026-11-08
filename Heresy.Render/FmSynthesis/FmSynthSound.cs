@@ -273,7 +273,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					curvature,
 					curve,
 					node is FmFilterNode filter
-						? new FmFilterNodeProcessor(filter, indexById) : null,
+						? new FmFilterNodeProcessor(filter, indexById,
+							preparedChildFilterFactory?.SampleRate) : null,
 					sourceSound, multiInput));
 		}
 
@@ -353,7 +354,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					// IIR/FIR histories. TailSeconds and upstream edits
 					// require no history rebuild.
 					if (old.Filter is null || revised.Filter is null
-						|| !old.Filter.HasSameStateConfiguration(revised.Filter))
+						|| !old.Filter.CanAdoptStateConfiguration(
+							revised.Filter, live.Filters[i]))
 						return false;
 					break;
 
@@ -408,9 +410,17 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 
 	/// <summary>Apply after the entire tree passed preflight. This method
 	/// changes no note lifetime, oscillator phase or mutable DSP history.</summary>
-	public void AdoptRunningState(FmSynthSound next, SoundState state)
+	public bool AdoptRunningState(FmSynthSound next, SoundState state)
 	{
 		FmSynthState live = ValidateState(state);
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			if (_nodes[i].Filter is { } oldFilter
+				&& next._nodes[i].Filter is { } revisedFilter
+				&& !oldFilter.TryAdoptStateConfiguration(
+					revisedFilter, live.Filters[i]))
+				return false;
+		}
 		for (int i = 0; i < _nodes.Length; i++)
 		{
 			if (_nodes[i].Definition is not FmMultiNode
@@ -418,10 +428,13 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				continue;
 			foreach (MultiVoice child in live.Multis[i])
 			{
-				child.Sound.AdoptRunningState(revised, child.Invocation.State);
+				if (!child.Sound.AdoptRunningState(
+					revised, child.Invocation.State))
+					return false;
 				child.Sound = revised;
 			}
 		}
+		return true;
 	}
 
 	public NoteConfigurationSnapshot SnapshotNoteConfiguration()

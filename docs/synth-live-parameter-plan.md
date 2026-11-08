@@ -148,3 +148,24 @@ Source pitch integration, note-off and child Filter/envelope histories remain
 unchanged. New/reassigned child SourceId still requires a prepared
 invocation migration/crossfade; shared child-definition updates are not yet
 propagated into already-bound child instances.
+
+## Sixth slice: compatible authored Filter coefficients
+
+Committed edits to **one** unmodulated Filter stage per compatible Synth
+graph revision can now use the existing allocation-free realtime numeric
+retune protocol for OnePole, SVF, Biquad, Ladder, AllPass and both Comb
+families. It preflights changed coefficients before committing any of
+the stage's history; the voice's own filter state is not reconstructed.
+Stage identity, generation, kind, order, and all structural parameters must
+remain unchanged. Edits on a Filter that has live connected parameter
+modulation are still held on its previous generation until binding-policy
+migration exists.
+
+For linear/minimum/maximum-phase FIR stages, the detached revision compiles
+a bounded candidate plan on the control worker using
+FirControlPreparationPolicy; the PCM producer publishes that immutable plan
+through TryApplyRealtimeFirUpdates, preserving the convolution history.
+No tap/FFT design occurs at publication. FIR batches exceeding bounded
+preparation limits or changes to TapCount, TransitionWidthHz, or PhaseResponse
+remain unsupported for live voice adoption. Multiple changed stages in one
+Filter are deferred until multi-stage atomic publication is implemented.
