@@ -134,3 +134,17 @@ Multi distribution/voice-count/components/cycle/randomized-phase migrations.
 Source *dependency* changes remain captured in its old child, even when
 the parent itself can be adopted; these still need invalidation and
 migration. Work is incremental; the all-properties TODO remains open.
+
+## Source scalar pitch migration (fifth slice)
+
+For an unchanged selected child SourceId, the live Source node can now adopt
+FrequencyHz, Constant and ExponentialMultiplier edits without replacing the
+child SoundState. The child keeps its *original* pitch/playback-speed scale
+and its original baseline frequency. The new authored rate is expressed as
+a ratio in the forward-integrated FmSourcePitchCurve. This is important for
+SampleSound: multiplying its bound pitch after the note starts would
+retroactively rescale its accumulated source position and cause a seek.
+Source pitch integration, note-off and child Filter/envelope histories remain
+unchanged. New/reassigned child SourceId still requires a prepared
+invocation migration/crossfade; shared child-definition updates are not yet
+propagated into already-bound child instances.

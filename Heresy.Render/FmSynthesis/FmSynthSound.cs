@@ -20,15 +20,20 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 {
 	private sealed class SourceVoice
 	{
-			public SourceVoice(SoundInvocation invocation, double originalOuterFactor)
+			public SourceVoice(SoundInvocation invocation, double originalOuterFactor,
+			double originalFrequencyHz)
 		{
 			Invocation = invocation;
 			OriginalOuterFactor = originalOuterFactor;
+			OriginalFrequencyHz = originalFrequencyHz;
 			Pitch = new FmSourcePitchCurve();
 			invocation.State.PitchTrajectory.SetCurve(0, Pitch);
 		}
 		public SoundInvocation Invocation { get; }
 		public double OriginalOuterFactor { get; }
+		// Child pitch and speed are *never* retroactively rescaled. Edits
+		// alter only the forward-integrated FmSourcePitchCurve.
+		public double OriginalFrequencyHz { get; }
 		public FmSourcePitchCurve Pitch { get; }
 		public StreamingFilterChain? Filters { get; set; }
 		public ResonantFilterState? FilterEnvelopeState { get; set; }
@@ -355,13 +360,15 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				case FmSoundSourceNode source:
 					FmSoundSourceNode newSource =
 						(FmSoundSourceNode)revised.Definition;
-					// Preserve the bound child playback position, pitch
-					// integration and envelopes. Binding changes still
-					// require their own migration implementation.
-					if (source.SourceId != newSource.SourceId
-						|| source.FrequencyHz != newSource.FrequencyHz
-						|| source.Constant != newSource.Constant
-						|| source.ExponentialMultiplier != newSource.ExponentialMultiplier)
+					// The child invocation retains the *original* pitch
+					// scale and integrated position. The new authored
+					// frequency, Constant flag and modulation mode only
+					// affect its subsequent trajectory frames.
+					if (source.SourceId != newSource.SourceId)
+						return false;
+					if (live.Sources[i] is { } child
+						&& !double.IsFinite(
+							newSource.FrequencyHz / child.OriginalFrequencyHz))
 						return false;
 					break;
 
@@ -472,7 +479,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			if (invocation is not null)
 			{
 				SourceVoice voice = new(invocation,
-					node.Constant ? 1.0 : pitchMultiplier * playbackSpeedMultiplier);
+					node.Constant ? 1.0 : pitchMultiplier * playbackSpeedMultiplier,
+					node.FrequencyHz);
 				// For a frozen live plan, even expensive maximum/minimum-phase
 				// FIR designs are already immutable: this only instantiates
 				// per-voice histories from prepared plans at the note boundary.
@@ -1296,10 +1304,15 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		if (!double.IsFinite(multiplier))
 			throw new InvalidOperationException(
 				$"Synth source {node.Id} produced non-finite modulation.");
+		// Keep the child's initial SampleSound/PitchTrajectory scale fixed:
+		// changing it would retroactively multiply *all* previously
+		// integrated sample positions. Instead retune only the current and
+		// subsequent frames of the forward-integrated pitch curve.
 		double outer = node.Constant ? 1.0
 			: state.PitchMultiplier * state.PlaybackSpeedMultiplier
-				* state.PitchTrajectory.GetMultiplier(frame)
-				/ voice.OriginalOuterFactor;
+				* state.PitchTrajectory.GetMultiplier(frame);
+		outer *= (node.FrequencyHz / voice.OriginalFrequencyHz)
+			/ voice.OriginalOuterFactor;
 		long? released = noteOffFrame.HasValue && frame >= noteOffFrame
 			? noteOffFrame : null;
 		// Pitch envelopes are in octaves, as in PlaybackVoice.

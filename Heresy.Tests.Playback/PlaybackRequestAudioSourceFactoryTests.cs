@@ -438,6 +438,118 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
+	public void LiveSourceFrequencyAndConstantEditsPreserveSamplePosition()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = AddSample(document, "Ramp");
+		ObjectId synthId = document.AllocateObjectId();
+		FmSynthDefinition synth = new(synthId, "Source",
+			new FmSynthGraph([
+				new FmSoundSourceNode(0, sampleId,
+					FmMultiNode.NeutralFrequencyHz)], 0));
+		document.Add(synth);
+		float[] ramp = Enumerable.Range(0, 30)
+			.Select(i => i / 20.0f).ToArray();
+		PlaybackRequestAudioSourceFactory factory = new(
+			MonoConfiguration(1000),
+			new RecordingSampleProvider(new MemorySampleData(
+				1000, 1, ramp)));
+		IAudioOutputSource output = factory.Create(AdHocPlaybackRequest.Create(
+			document, new NoteScheduleBuilder().Freeze()));
+		try
+		{
+			((ILiveAudioOutputSource)output).EnqueueLiveEvent(
+				ChannelTarget.Virtual(51), [new StartNoteCommand(synthId)]);
+			float[] before = new float[6];
+			output.Render(before.Length, before);
+			for (int i = 0; i < before.Length; i++)
+				before[i].Should().BeApproximately(i / 20.0f, 1e-6f);
+
+			// Double the rate without changing the source's base pitch.
+			// Frame 6 must read sample 6, NOT retroactively jump to 12.
+			synth.Graph = new FmSynthGraph([
+				new FmSoundSourceNode(0, sampleId,
+					FmMultiNode.NeutralFrequencyHz * 2)], 0);
+			document.MarkChanged(affectsAudio: true);
+			((ILiveSynthSourceRevisionOutput)output).EnqueueLiveSynthParameters(
+				synthId, factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(document), synthId));
+			float[] doubled = new float[3];
+			output.Render(doubled.Length, doubled);
+			doubled[0].Should().BeApproximately(6 / 20.0f, 1e-6f);
+			doubled[1].Should().BeApproximately(8 / 20.0f, 1e-6f);
+			doubled[2].Should().BeApproximately(10 / 20.0f, 1e-6f);
+
+			// Constant mode ignores the parent pitch multiplier. With
+			// a neutral note, the current rate remains 2x; the position
+			// must still continue from the same phase.
+			synth.Graph = new FmSynthGraph([
+				new FmSoundSourceNode(0, sampleId,
+					FmMultiNode.NeutralFrequencyHz * 2,
+					constant: true)], 0);
+			document.MarkChanged(affectsAudio: true);
+			((ILiveSynthSourceRevisionOutput)output).EnqueueLiveSynthParameters(
+				synthId, factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(document), synthId));
+			float[] continued = new float[2];
+			output.Render(2, continued);
+			continued[0].Should().BeApproximately(12 / 20.0f, 1e-6f);
+			continued[1].Should().BeApproximately(14 / 20.0f, 1e-6f);
+		}
+		finally
+		{
+			(output as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
+	public void LiveSourceConstantToggleRetunesBentNoteWithoutRewindingSample()
+	{
+		SongDocument document = new();
+		ObjectId sampleId = AddSample(document, "Ramp");
+		ObjectId synthId = document.AllocateObjectId();
+		FmSynthDefinition synth = new(synthId, "Source",
+			new FmSynthGraph([
+				new FmSoundSourceNode(0, sampleId,
+					FmMultiNode.NeutralFrequencyHz)], 0));
+		document.Add(synth);
+		PlaybackRequestAudioSourceFactory factory = new(
+			MonoConfiguration(1000),
+			new RecordingSampleProvider(new MemorySampleData(1000, 1,
+				Enumerable.Range(0, 30).Select(i => i / 20.0f).ToArray())));
+		IAudioOutputSource output = factory.Create(AdHocPlaybackRequest.Create(
+			document, new NoteScheduleBuilder().Freeze()));
+		try
+		{
+			((ILiveAudioOutputSource)output).EnqueueLiveEvent(
+				ChannelTarget.Virtual(52),
+				[new StartNoteCommand(synthId, PitchMultiplier: 2.0)]);
+			float[] before = new float[3];
+			output.Render(3, before);
+			before[0].Should().BeApproximately(0, 1e-6f);
+			before[1].Should().BeApproximately(2 / 20.0f, 1e-6f);
+			before[2].Should().BeApproximately(4 / 20.0f, 1e-6f);
+
+			synth.Graph = new FmSynthGraph([
+				new FmSoundSourceNode(0, sampleId,
+					FmMultiNode.NeutralFrequencyHz, constant: true)], 0);
+			document.MarkChanged(affectsAudio: true);
+			((ILiveSynthSourceRevisionOutput)output).EnqueueLiveSynthParameters(
+				synthId, factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(document), synthId));
+			float[] after = new float[3];
+			output.Render(3, after);
+			after[0].Should().BeApproximately(6 / 20.0f, 1e-6f);
+			after[1].Should().BeApproximately(7 / 20.0f, 1e-6f);
+			after[2].Should().BeApproximately(8 / 20.0f, 1e-6f);
+		}
+		finally
+		{
+			(output as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
 	public void RealtimeFactoryCapturesFreshOutputConfigurationForEachNewRequest()
 	{
 		SongDocument document = new();
