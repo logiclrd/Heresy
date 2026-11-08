@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
+using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
 
 namespace Heresy.Render.Realtime;
@@ -27,6 +28,11 @@ public sealed class BackgroundPlaybackController
 	private sealed record LiveEventCommand(
 		ChannelTarget Target,
 		IReadOnlyList<NoteCommand> Commands,
+		TaskCompletionSource Completion)
+		: Command(Completion);
+
+	private sealed record PublishSynthCommand(
+		SongDocumentSnapshot Snapshot, ObjectId SourceId,
 		TaskCompletionSource Completion)
 		: Command(Completion);
 
@@ -117,6 +123,25 @@ public sealed class BackgroundPlaybackController
 		return completion.Task;
 	}
 
+	/// <summary>True only when source preparation is supported. The live
+	/// output still validates publication when the worker executes it.</summary>
+	public bool SupportsLiveSynthPublication =>
+		_sourceFactory is ILiveSynthSourcePreparationFactory;
+
+	/// <summary>Enqueue a detached authoring revision for worker-side Synth
+	/// preparation, followed by ordered publication to the live PCM producer.
+	/// Neither preparation nor graph traversal occurs in the audio callback.</summary>
+	public Task PublishLiveSynthAsync(
+		SongDocumentSnapshot snapshot, ObjectId sourceId)
+	{
+		ArgumentNullException.ThrowIfNull(snapshot);
+		if (sourceId.IsNone)
+			throw new ArgumentOutOfRangeException(nameof(sourceId));
+		TaskCompletionSource completion = NewCompletion();
+		Enqueue(new PublishSynthCommand(snapshot, sourceId, completion));
+		return completion.Task;
+	}
+
 	public Task StopAsync()
 	{
 		TaskCompletionSource completion =
@@ -178,6 +203,11 @@ public sealed class BackgroundPlaybackController
 						command.Completion.SetResult();
 						break;
 
+					case PublishSynthCommand revision:
+						PublishSynthRevision(revision.Snapshot, revision.SourceId);
+						command.Completion.SetResult();
+						break;
+
 					case StopCommand:
 						StopCurrent();
 						command.Completion.SetResult();
@@ -234,6 +264,21 @@ public sealed class BackgroundPlaybackController
 			(source as IDisposable)?.Dispose();
 			throw;
 		}
+	}
+
+	private void PublishSynthRevision(
+		SongDocumentSnapshot snapshot, ObjectId sourceId)
+	{
+		if (_sourceFactory is not ILiveSynthSourcePreparationFactory factory
+			|| _source is not ILiveSynthSourceRevisionOutput live)
+			throw new NotSupportedException(
+				"The active live audio source does not support prepared Synth revisions.");
+
+		// All potentially expensive work stays on this background control
+		// worker. The fully prepared sound is then queued before any later
+		// NoteOn from this same serialized command stream.
+		var prepared = factory.PrepareLiveSynthSource(snapshot, sourceId);
+		live.EnqueueLiveSynthSource(sourceId, prepared);
 	}
 
 	private void SendLiveEvent(
