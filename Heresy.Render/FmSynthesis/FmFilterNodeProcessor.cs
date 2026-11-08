@@ -357,6 +357,34 @@ internal sealed class FmFilterNodeProcessor
 				or FilterKind.CombFeedforward
 			|| LinearPhaseFirFilterStageFactory.IsStandardFir(kind);
 
+	/// <summary>Count changed effective parameters without examining or
+	/// touching a running DSP state. The enclosing Synth preflight uses this
+	/// to reject multiple independently retuned Filter processors atomically
+	/// until cross-processor two-phase commit is supported.</summary>
+	internal bool HasChangedEffectiveParameters(FmFilterNodeProcessor next)
+	{
+		if (_effectiveStages.Length != next._effectiveStages.Length)
+			return true;
+		for (int i = 0; i < _effectiveStages.Length; i++)
+		{
+			ConfiguredFilterStage old = _effectiveStages[i];
+			ConfiguredFilterStage revised = next._effectiveStages[i];
+			if (old.Kind != revised.Kind
+				|| old.Parameters.Parameters.Count != revised.Parameters.Parameters.Count)
+				return true;
+			foreach (FilterParameterDescriptor parameter in old.Parameters.Parameters)
+			{
+				if (!revised.Parameters.Parameters.Any(p =>
+					string.Equals(p.Name, parameter.Name,
+						StringComparison.OrdinalIgnoreCase))
+					|| old.Parameters.GetParameter(parameter.Name)
+						!= revised.Parameters.GetParameter(parameter.Name))
+					return true;
+			}
+		}
+		return false;
+	}
+
 	/// <summary>Commit one preflighted authored numeric stage update into
 	/// the existing histories. The realtime chain validates every target
 	/// before committing; FIR kernels are immutable off-thread plans.</summary>

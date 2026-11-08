@@ -405,7 +405,28 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					return false;
 			}
 		}
-		return true;
+		// Across distinct Filter nodes a later failed runtime validation
+		// could otherwise leave an earlier Filter retuned while the voice
+		// still points to the old sound. Defer multiple changed Filter
+		// processors until a complete two-phase transaction is available.
+		return CountChangedFilterProcessors(next) <= 1;
+	}
+
+	private int CountChangedFilterProcessors(FmSynthSound next)
+	{
+		int count = 0;
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			if (_nodes[i].Filter is { } oldFilter
+				&& next._nodes[i].Filter is { } newFilter
+				&& oldFilter.HasChangedEffectiveParameters(newFilter))
+				++count;
+			if (_nodes[i].MultiInput is { } priorChild
+				&& next._nodes[i].MultiInput is { } revisedChild)
+				count += priorChild.CountChangedFilterProcessors(revisedChild);
+			if (count > 1) return count;
+		}
+		return count;
 	}
 
 	/// <summary>Apply after the entire tree passed preflight. This method

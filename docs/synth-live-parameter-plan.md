@@ -169,3 +169,9 @@ No tap/FFT design occurs at publication. FIR batches exceeding bounded
 preparation limits or changes to TapCount, TransitionWidthHz, or PhaseResponse
 remain unsupported for live voice adoption. Multiple changed stages in one
 Filter are deferred until multi-stage atomic publication is implemented.
+
+A whole Synth revision also rejects more than one changed Filter processor
+across the compiled nested graph (not merely within a single Filter object).
+This protects the currently one-processor commit path from partially updating
+a live voice if a later processor were to reject a publication. Cross-filter
+two-phase preflight/commit remains a separate follow-up.
