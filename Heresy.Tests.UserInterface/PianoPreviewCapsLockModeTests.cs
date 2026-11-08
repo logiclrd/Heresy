@@ -168,6 +168,58 @@ public sealed class PianoPreviewCapsLockModeTests
         }
     }
 
+    [AvaloniaTest]
+    public void NativeCapsLockOffStateArrivingAfterKeyDownUpdatesOnWindowKeyUp()
+    {
+        Query native = new() { Value = true };
+        List<PianoPreviewEvent> events = [];
+        PianoTestControl test = new(
+            evt =>
+            {
+                events.Add(evt);
+                return Task.CompletedTask;
+            },
+            () => false,
+            () => Task.CompletedTask,
+            native);
+        TextBox otherField = new() { Text = "Not Test" };
+        StackPanel stack = new();
+        stack.Children.Add(test);
+        stack.Children.Add(otherField);
+        Window window = new() { Content = stack };
+        try
+        {
+            window.Show();
+            TextBlock modeLabel = Field<TextBlock>(test, "_mode");
+            Border testArea = Field<Border>(test, "_testArea");
+            modeLabel.Text.Should().Be("Mode: Latch");
+
+            // An X11 backend may deliver the keydown while the independent
+            // XKB state query still reports the old locked state.
+            otherField.Focus();
+            otherField.RaiseEvent(KeyEvent(InputElement.KeyDownEvent,
+                PhysicalKey.CapsLock, Key.CapsLock));
+            modeLabel.Text.Should().Be("Mode: Latch");
+
+            native.Value = false; // The native state catches up on release.
+            otherField.RaiseEvent(KeyEvent(InputElement.KeyUpEvent,
+                PhysicalKey.CapsLock, Key.CapsLock));
+            modeLabel.Text.Should().Be("Mode: Hold",
+                "key release must refresh without another piano key");
+
+            testArea.Focus();
+            testArea.RaiseEvent(KeyEvent(InputElement.KeyDownEvent,
+                PhysicalKey.Z, Key.Z));
+            events.Should().ContainSingle()
+                .Which.Should().BeOfType<PianoPreviewNoteOn>()
+                .Which.SuppressNeighbours.Should().BeFalse();
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     private static KeyEventArgs KeyEvent(
         RoutedEvent routedEvent, PhysicalKey physical, Key logical)
         => new()
