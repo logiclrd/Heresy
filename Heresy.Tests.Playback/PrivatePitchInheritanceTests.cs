@@ -430,8 +430,8 @@ public sealed class PrivatePitchInheritanceTests
 		Assert.Multiple(() =>
 		{
 			Assert.That(glide[119], Is.EqualTo(plain[119]).Within(1e-6f));
-			Assert.That(glide[121], Is.GreaterThan(plain[121]),
-				"Slow glide should start changing pitch immediately.");
+			Assert.That(glide[126], Is.GreaterThan(plain[126]),
+				"Slow glide changes the integrated sample position over several output frames.");
 			Assert.That(glide[165], Is.GreaterThan(plain[165] * 1.02f));
 			Assert.That(glide[165], Is.LessThan(plain[165] * 2.0f),
 				"G20 must not snap like GFF.");

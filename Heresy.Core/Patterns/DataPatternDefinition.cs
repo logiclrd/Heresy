@@ -123,7 +123,7 @@ public sealed class DataPatternDefinition : PatternDefinition, IDeferredSourcePa
 				// current-note command path below.
 				tonePortamentoTarget =
 					deferSource || !resolvedSourceId.IsNone
-						? TranslateStartNote(start, resolvedSourceId)
+						? TranslateStartNote(start, resolvedSourceId, cell.Volume)
 						: null;
 			}
 			else if (cell.Note is StartPatternNote startNote)
