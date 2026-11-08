@@ -175,3 +175,40 @@ across the compiled nested graph (not merely within a single Filter object).
 This protects the currently one-processor commit path from partially updating
 a live voice if a later processor were to reject a publication. Cross-filter
 two-phase preflight/commit remains a separate follow-up.
+
+## Seventh slice: full-tree atomic Filter coefficient publication
+
+The single-stage/single-processor admission guard is replaced with an explicit
+**two-phase Filter transaction**. Each realtime Filter chain now exposes a
+non-mutating numerical/FIR preflight, which validates and fills its existing
+invocation-owned coefficient scratch arrays. A separate non-failing commit
+consumes those prepared arrays without repeating stage validation or designing
+FIR taps. The older single-chain realtime-update method still calls both
+phases and retains its original atomic contract.
+
+A Filter processor batches **all changed stages** together rather than
+returning after the first changed stage. Preallocated scratch is now sized
+for the entire authored stage count, covering multiple stages of the same
+family as well as mixed OnePole/SVF/Biquad/Ladder/AllPass/Comb/FIR changes.
+Compatible FIR kernels are still prepared on the playback control worker
+under bounded admission rules, never within the PCM thread.
+
+The Synth recursively validates the complete graph and then preflights
+all Filter processors and every nested Multi constituent. On a rejection
+(including a sample-rate-invalid later stage), the producer leaves *all*
+histories and sound references unchanged. Only after every constituent
+passes does one ordered second traversal commit every prepared Filter
+batch and publish compatible Multi child sound definitions. Voice phase,
+envelope age, IIR delay state and FIR convolution buffers are retained.
+There is no copying/forking of Filter chains during publication.
+
+Regression coverage compares two simultaneously changed serial OnePole
+stages with the independent existing FM realtime-coefficient path; verifies
+simultaneous retuning of separate Filter processors across nested Multi
+constituents; and verifies a later invalid Filter cutoff cannot partially
+commit an earlier valid Filter change.
+
+Remaining exclusions: edits to parameters with active FM Filter input
+bindings, structural stage edits, child-source rebinding, Multi topology,
+and click-safe edit smoothing. Per-voice acceptance remains independent,
+and the all-properties Synth TODO remains open.
