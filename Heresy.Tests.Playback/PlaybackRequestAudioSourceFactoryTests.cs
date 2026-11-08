@@ -163,6 +163,57 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
+	public void LiveOscillatorRangeEditPreservesTheExistingVoicePhase()
+	{
+		SongDocument document = new();
+		ObjectId synthId = document.AllocateObjectId();
+		FmSynthDefinition synth = new(synthId, "Oscillator",
+			new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 100.0)], 0));
+		document.Add(synth);
+		PlaybackRequestAudioSourceFactory factory =
+			new(MonoConfiguration(1000));
+		NoteSchedule empty = new NoteScheduleBuilder().Freeze();
+		IAudioOutputSource control = factory.Create(
+			AdHocPlaybackRequest.Create(document, empty));
+		IAudioOutputSource edited = factory.Create(
+			AdHocPlaybackRequest.Create(document, empty));
+		try
+		{
+			((ILiveAudioOutputSource)control).EnqueueLiveEvent(
+				ChannelTarget.Virtual(10), [new StartNoteCommand(synthId)]);
+			((ILiveAudioOutputSource)edited).EnqueueLiveEvent(
+				ChannelTarget.Virtual(10), [new StartNoteCommand(synthId)]);
+			float[] firstControl = new float[7];
+			float[] firstEdited = new float[7];
+			control.Render(7, firstControl);
+			edited.Render(7, firstEdited);
+			firstEdited.Should().Equal(firstControl);
+
+			synth.Graph = new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 100.0,
+					minimum: -2.0, maximum: 2.0)], 0);
+			document.MarkChanged(affectsAudio: true);
+			((ILiveSynthSourceRevisionOutput)edited).EnqueueLiveSynthParameters(
+				synthId, factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(document), synthId));
+			float[] continuedControl = new float[13];
+			float[] continuedEdited = new float[13];
+			control.Render(13, continuedControl);
+			edited.Render(13, continuedEdited);
+			for (int i = 0; i < continuedControl.Length; i++)
+				continuedEdited[i].Should().BeApproximately(
+					continuedControl[i] * 2.0f, 1e-5f,
+					"amplitude changes while the original phase continues");
+		}
+		finally
+		{
+			(control as IDisposable)?.Dispose();
+			(edited as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
 	public void RealtimeFactoryCapturesFreshOutputConfigurationForEachNewRequest()
 	{
 		SongDocument document = new();

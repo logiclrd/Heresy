@@ -347,6 +347,40 @@ public sealed class SongPlaybackTransportTests
 		backend.OpenCount.Should().Be(1);
 	}
 
+	[Test]
+	public async Task CommittedSynthEditPublishesIntoExistingAuditionBeforeNextNote()
+	{
+		SongDocument document = new();
+		ObjectId synthId = document.AllocateObjectId();
+		FmSynthDefinition synth = new(synthId, "Live",
+			new FmSynthGraph([new FmConstantNode(0, 0.25)], 0));
+		document.Add(synth);
+		PublishingFactory factory = new();
+		TestBackend backend = new();
+		using SongPlaybackTransport transport = new(backend, factory);
+
+		// An edit before the first audition must not open audio.
+		await transport.PublishSynthEditAsync(document, synthId);
+		backend.OpenCount.Should().Be(0);
+
+		await transport.SendLiveEventAsync(document, ChannelTarget.Virtual(20),
+			[new StartNoteCommand(synthId)]);
+		synth.Graph = new FmSynthGraph([new FmConstantNode(0, 0.5)], 0);
+		document.MarkChanged(affectsAudio: true);
+		await transport.PublishSynthEditAsync(document, synthId);
+		factory.Source.Order.Should().Equal("Start:20", "Update");
+		factory.PreparedValues.Should().Equal(0.5);
+		backend.OpenCount.Should().Be(1);
+
+		await transport.SendLiveEventAsync(document, ChannelTarget.Virtual(21),
+			[new StartNoteCommand(synthId)]);
+		await transport.PublishSynthEditAsync(document, synthId);
+		factory.Source.Order.Should().Equal("Start:20", "Update", "Start:21",
+			"an edit is committed without a future NoteOn and not prepared twice");
+		factory.PreparedValues.Should().HaveCount(1);
+		backend.OpenCount.Should().Be(1);
+	}
+
 	private sealed class PublishingFactory :
 		IBackgroundPlaybackSourceFactory, ILiveSynthSourcePreparationFactory
 	{
@@ -379,6 +413,12 @@ public sealed class SongPlaybackTransportTests
 		{
 			sound.Should().BeOfType<PublishingDummySound>();
 			Order.Add("Publish");
+		}
+
+		public void EnqueueLiveSynthParameters(ObjectId sourceId, ISound sound)
+		{
+			sound.Should().BeOfType<PublishingDummySound>();
+			Order.Add("Update");
 		}
 
 		public void EnqueueLiveEvent(ChannelTarget target,
