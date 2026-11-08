@@ -21,6 +21,7 @@ using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.Dialogs;
 using Heresy.UserInterface.FmEditing;
 using Heresy.UserInterface.Keyboard;
+using Heresy.UserInterface.Keyboard;
 using Heresy.UserInterface.PatternEditing;
 
 namespace Heresy.UserInterface.Views;
@@ -37,27 +38,8 @@ public sealed class FmSynthEditorControl : UserControl
 	private readonly Action _close;
 	private readonly Action<string> _changed;
 	private readonly FmSynthGraphCanvas _canvas;
-	private readonly PatternLiveAuditionActions? _liveAudition;
-	private readonly FmSynthAuditionKeyboard _auditionKeyboard = new();
-	private readonly HeldPhysicalKeyRepeatFilter _heldTestKeys;
-	private readonly Border _testArea = new()
-	{
-		Focusable = true,
-		Background = Brushes.DimGray,
-		BorderBrush = Brushes.Gray,
-		BorderThickness = new Thickness(2),
-		CornerRadius = new CornerRadius(5),
-		Padding = new Thickness(22, 9),
-		Child = new TextBlock
-		{
-			Text = "Test",
-			FontSize = 17,
-			FontWeight = FontWeight.SemiBold,
-			Foreground = Brushes.White,
-		},
-	};
-	private readonly TextBlock _auditionOctave = new();
-	private Window? _auditionOwner;
+	private readonly PianoPreviewPlaybackController _previewPlayback;
+	private readonly PianoTestControl _pianoTest;
 	private readonly StackPanel _inspector =
 		new()
 		{
@@ -91,26 +73,12 @@ public sealed class FmSynthEditorControl : UserControl
 		_changed =
 			changed
 				?? throw new ArgumentNullException(nameof(changed));
-		_liveAudition = liveAudition;
-		_heldTestKeys = new HeldPhysicalKeyRepeatFilter(
-			key => _ = OnConfirmedTestKeyUpAsync(key));
-
-		_testArea.PointerPressed += (_, e) =>
-		{
-			_testArea.Focus();
-			e.Handled = true;
-		};
-		_testArea.KeyDown += async (_, e) =>
-			await OnTestKeyDownAsync(e);
-		_testArea.KeyUp += (_, e) => OnTestKeyUp(e);
-		_testArea.GotFocus += (_, _) =>
-			_testArea.BorderBrush = Brushes.LightSkyBlue;
-		_testArea.LostFocus += async (_, _) =>
-		{
-			_testArea.BorderBrush = Brushes.Gray;
-			await ReleaseAllTestNotesAsync();
-		};
-		UpdateAuditionOctave();
+		_previewPlayback = new PianoPreviewPlaybackController(
+			synth.Id, PianoPreviewPlaybackController.SynthVoiceIdBase,
+			liveAudition, onError: error => _message.Text = error);
+		_pianoTest = new PianoTestControl(
+			_previewPlayback.HandleAsync,
+			() => _previewPlayback.HasVoices);
 
 		_canvas =
 			new FmSynthGraphCanvas(
@@ -266,152 +234,7 @@ public sealed class FmSynthEditorControl : UserControl
 		return root;
 	}
 
-	private Control BuildAuditionArea()
-	{
-		StackPanel text = new()
-		{
-			Spacing = 4,
-			VerticalAlignment = VerticalAlignment.Center,
-		};
-		text.Children.Add(_auditionOctave);
-		text.Children.Add(
-			new TextBlock
-			{
-				Text = "Click Test, then use tracker piano keys (Z S X D C ...). Keypad * / change octave. Release keys to stop.",
-				FontSize = 11,
-				TextWrapping = TextWrapping.Wrap,
-			});
-
-		StackPanel row = new()
-		{
-			Orientation = Orientation.Horizontal,
-			Spacing = 12,
-			Margin = new Thickness(10, 0, 10, 10),
-		};
-		row.Children.Add(_testArea);
-		row.Children.Add(text);
-		return row;
-	}
-
-	private void UpdateAuditionOctave()
-		=> _auditionOctave.Text =
-			$"Audition octave: {_auditionKeyboard.BaseOctave}";
-
-	private async Task OnTestKeyDownAsync(KeyEventArgs e)
-	{
-		int previousOctave = _auditionKeyboard.BaseOctave;
-		bool octaveCommand = PatternOctaveKeyboard.TryAdjust(
-			e.PhysicalKey, e.KeyModifiers, previousOctave, out _);
-		bool pianoKey =
-			(e.KeyModifiers & (KeyModifiers.Control
-				| KeyModifiers.Alt | KeyModifiers.Meta)) == 0
-			&& PatternNoteKeyboard.TryGetSemitoneOffset(
-				e.PhysicalKey, out _);
-		if (!octaveCommand && !pianoKey)
-			return;
-
-		e.Handled = true;
-		// Xephyr may synthesize KeyUp/KeyDown for *every* repeat.
-		// Keep the pressed key through those pairs, including octave keys.
-		if (!_heldTestKeys.KeyDown(e.PhysicalKey))
-			return;
-
-		StartFmSynthAuditionNote? note =
-			_auditionKeyboard.KeyDown(e.PhysicalKey, e.KeyModifiers);
-		if (octaveCommand)
-		{
-			UpdateAuditionOctave();
-			return;
-		}
-		if (note is null)
-			return;
-		if (_liveAudition is null)
-		{
-			_message.Text = "Realtime FM audition is unavailable in this host.";
-			return;
-		}
-
-		try
-		{
-			await _liveAudition.SendEventAsync(
-				FmSynthAuditionCompiler.Start(_synth.Id, note));
-			_message.Text = $"FM audition: octave {_auditionKeyboard.BaseOctave}.";
-		}
-		catch (Exception ex)
-		{
-			_message.Text = $"FM audition failed: {ex.Message}";
-		}
-	}
-
-	private void OnTestKeyUp(KeyEventArgs e)
-	{
-		if (_heldTestKeys.KeyUp(e.PhysicalKey))
-			e.Handled = true;
-	}
-
-	private async Task OnConfirmedTestKeyUpAsync(PhysicalKey key)
-	{
-		ReleaseFmSynthAuditionNote? release = _auditionKeyboard.KeyUp(key);
-		if (release is not null)
-			await ReleaseTestNoteAsync(release);
-	}
-
-	private async Task ReleaseTestNoteAsync(
-		ReleaseFmSynthAuditionNote release)
-	{
-		if (_liveAudition is null)
-			return;
-
-		try
-		{
-			await _liveAudition.SendEventAsync(
-				FmSynthAuditionCompiler.Release(release));
-		}
-		catch (Exception ex)
-		{
-			_message.Text = $"FM audition release failed: {ex.Message}";
-		}
-	}
-
-	private async Task ReleaseAllTestNotesAsync()
-	{
-		_heldTestKeys.Clear();
-		foreach (ReleaseFmSynthAuditionNote release
-			in _auditionKeyboard.ReleaseAll())
-		{
-			await ReleaseTestNoteAsync(release);
-		}
-	}
-
-	private async void OnAuditionOwnerDeactivated(
-		object? sender,
-		EventArgs e)
-	{
-		_ = sender;
-		_ = e;
-		await ReleaseAllTestNotesAsync();
-	}
-
-	protected override void OnAttachedToVisualTree(
-		VisualTreeAttachmentEventArgs e)
-	{
-		base.OnAttachedToVisualTree(e);
-		_auditionOwner = TopLevel.GetTopLevel(this) as Window;
-		if (_auditionOwner is not null)
-			_auditionOwner.Deactivated += OnAuditionOwnerDeactivated;
-	}
-
-	protected override void OnDetachedFromVisualTree(
-		VisualTreeAttachmentEventArgs e)
-	{
-		if (_auditionOwner is not null)
-		{
-			_auditionOwner.Deactivated -= OnAuditionOwnerDeactivated;
-			_auditionOwner = null;
-		}
-		_ = ReleaseAllTestNotesAsync();
-		base.OnDetachedFromVisualTree(e);
-	}
+	private Control BuildAuditionArea() => _pianoTest;
 
 	private void AddConstant()
 	{
