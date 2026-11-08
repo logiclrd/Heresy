@@ -161,6 +161,13 @@ public sealed class PianoTestControl : UserControl
     {
         if (_repeats.KeyUp(e.PhysicalKey))
             e.Handled = true;
+
+        // X11 can dispatch Caps Lock KeyDown before XKB's locked modifier
+        // state is observable through our separate query connection.
+        // Query again on KeyUp so turning Caps Lock off updates the mode
+        // without requiring a subsequent piano key event.
+        if (e.PhysicalKey == PhysicalKey.CapsLock)
+            UpdateLabels();
     }
 
     private void DispatchConfirmedRelease(PhysicalKey key)

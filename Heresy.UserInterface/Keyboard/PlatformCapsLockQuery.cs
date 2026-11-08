@@ -61,13 +61,18 @@ public sealed class PlatformCapsLockQuery : ICapsLockQuery
         }
     }
 
+    // Match XkbStateRec in X11/extensions/XKBstr.h byte-for-byte.
+    // The modern X11 layout has two 16-bit group fields and places
+    // locked_group BEFORE them. Treating every group field as a byte
+    // inadvertently makes LockedMods alias native base_mods (the modifier
+    // held down right now), so Caps Lock appears to turn off on key-up.
     [StructLayout(LayoutKind.Sequential)]
     private struct XkbState
     {
         public byte Group;
-        public byte BaseGroup;
-        public byte LatchedGroup;
         public byte LockedGroup;
+        public ushort BaseGroup;
+        public ushort LatchedGroup;
         public byte Mods;
         public byte BaseMods;
         public byte LatchedMods;
