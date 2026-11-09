@@ -297,6 +297,41 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void NestedMultiCanRetireAndReviveConstituentsWithoutRestartingParent()
+    {
+        FmSynthGraph Graph(int innerCount) => new([
+            new FmConstantNode(1, 0.1),
+            new FmMultiNode(2, 1, voiceCount: innerCount, detune: 0,
+                gainCompensation: false, randomizePhase: false),
+            new FmMultiNode(3, 2, voiceCount: 2, detune: 0,
+                gainCompensation: false, randomizePhase: false),
+        ], 3);
+        FmSynthSound old = new(Graph(3), new EmptyEnvelopes());
+        SoundState state = old.CreateState();
+        RenderContext context = Mono();
+        float[] initial = new float[80];
+        old.Render(context, state, 0, 80, initial);
+        initial.Should().OnlyContain(x => Math.Abs(x - 0.6f) < 1e-6f);
+
+        FmSynthSound reduced = new(Graph(1), new EmptyEnvelopes());
+        old.TryPrepareRunningState(reduced, state).Should().BeTrue();
+        old.CommitPreparedRunningState(reduced, state);
+        float[] after = new float[100];
+        reduced.Render(context, state, 80, after.Length, after);
+        after[0].Should().BeApproximately(0.6f, 1e-6f);
+        after[90].Should().BeApproximately(0.2f, 1e-6f,
+            "both parent constituents must migrate their inner Multi state");
+
+        FmSynthSound revived = new(Graph(3), new EmptyEnvelopes());
+        reduced.TryPrepareRunningState(revived, state).Should().BeTrue();
+        reduced.CommitPreparedRunningState(revived, state);
+        float[] comeback = new float[110];
+        revived.Render(context, state, 180, comeback.Length, comeback);
+        comeback[0].Should().BeApproximately(0.2f, 1e-6f);
+        comeback[90].Should().BeApproximately(0.6f, 1e-6f);
+    }
+
+    [Test]
     public void LiveMultiGrowthBeyondPreparedCapacityIsRejectedWithoutPartialChanges()
     {
         FmSynthGraph Graph(int count, double gain) => new([
