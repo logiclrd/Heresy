@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Threading;
 
 using AwesomeAssertions;
 
@@ -17,6 +18,7 @@ using Heresy.Core.Sequences;
 using Heresy.Core.Sequencing;
 using Heresy.Playback;
 using Heresy.Render.Configuration;
+using Heresy.Render.Filters;
 using Heresy.Render.Realtime;
 using Heresy.Render.Samples;
 using Heresy.Render.Timing;
@@ -1370,6 +1372,97 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			for (int i = 0; i < nextA.Length; i++)
 				nextA[i].Should().BeApproximately(nextB[i], 2e-5f,
 					"GainDb and Drive changes must coexist with two active FM cutoffs");
+		}
+		finally
+		{
+			(edited as IDisposable)?.Dispose();
+			(control as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
+	public void ActiveFmBandPassFirsAdoptPerVoiceAuthoredHighCutoffAfterWorkerPreparation()
+	{
+		SongDocument song = new();
+		ObjectId filterId = song.AllocateObjectId();
+		FilterDefinition filter = new(filterId, "BandPass", [
+			new FilterStageDefinition(1, "band", FilterKind.FirBandPass, [
+				new("LowCutoffHz", FilterParameterValue.FromNumber(350)),
+				new("HighCutoffHz", FilterParameterValue.FromNumber(900)),
+				new("TapCount", FilterParameterValue.FromNumber(127))])]);
+		song.Add(filter);
+		ObjectId synthId = song.AllocateObjectId();
+
+		FmSynthGraph Graph(double high)
+		{
+			FilterInstance configured = new(filter);
+			configured.SetStageParameter(1, "HighCutoffHz",
+				FilterParameterValue.FromNumber(high));
+			FmFilterNode band = new(1, 0, configured);
+			band = band.WithParameterConnection(
+				band.GetPorts().Single(p => p.ParameterName == "LowCutoffHz"), 2);
+			return new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 2100,
+					constant: true),
+				band, new FmConstantNode(2, 350)], 1);
+		}
+
+		FmSynthDefinition synth = new(synthId, "Live FIR", Graph(900));
+		song.Add(synth);
+		PlaybackRequestAudioSourceFactory factory = new(MonoConfiguration(48000));
+		NoteSchedule empty = new NoteScheduleBuilder().Freeze();
+		IAudioOutputSource edited = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		IAudioOutputSource control = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		try
+		{
+			foreach (IAudioOutputSource output in new[] { edited, control })
+			{
+				((ILiveAudioOutputSource)output).EnqueueLiveEvent(
+					ChannelTarget.Virtual(79), [new StartNoteCommand(synthId)]);
+				output.Render(350, new float[350]);
+			}
+
+			// Both snapshots must be accepted as compatible, but no new
+			// kernel may be designed in this event's PCM callback. The
+			// second revision supersedes the first before any worker runs.
+			synth.Graph = Graph(3100);
+			song.MarkChanged(affectsAudio: true);
+			((ILiveSynthSourceRevisionOutput)edited).EnqueueLiveSynthParameters(
+				synthId, factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(song), synthId));
+			float[] beforeA = new float[1], beforeB = new float[1];
+			edited.Render(1, beforeA);
+			control.Render(1, beforeB);
+			beforeA.Should().Equal(beforeB,
+				"the whole voice must stay on the old FIR until worker preparation");
+
+			synth.Graph = Graph(4500);
+			song.MarkChanged(affectsAudio: true);
+			((ILiveSynthSourceRevisionOutput)edited).EnqueueLiveSynthParameters(
+				synthId, factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(song), synthId));
+			edited.Render(1, beforeA);
+			control.Render(1, beforeB);
+			beforeA.Should().Equal(beforeB,
+				"superseding an unprepared revision must not partially migrate");
+
+			using FirPreparationScheduler worker = new();
+			((IFirPreparationAudioSource)edited).QueuePendingFirControls(worker);
+			Assert.That(SpinWait.SpinUntil(() =>
+				worker.CompletedPreparationCount >= 1,
+				TimeSpan.FromSeconds(5)), Is.True,
+				"an off-PCM worker should prepare this voice's FIR design");
+			((IFirPreparationAudioSource)edited).AdoptPreparedFirControls();
+
+			float[] afterA = new float[800], afterB = new float[800];
+			edited.Render(afterA.Length, afterA);
+			control.Render(afterB.Length, afterB);
+			afterA.Should().OnlyContain(sample => float.IsFinite(sample));
+			double difference = Enumerable.Range(250, 550)
+				.Max(i => Math.Abs(afterA[i] - afterB[i]));
+			difference.Should().BeGreaterThan(0.10,
+				"the latest HighCutoffHz edit must affect the already-playing note");
+			worker.Fault.Should().BeNull();
 		}
 		finally
 		{
