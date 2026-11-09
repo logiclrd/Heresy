@@ -477,3 +477,34 @@ reordered chord components, fully audible re-randomization via
 crossfade, efficient retirement of silent child histories, stress/
 underrun measurements, smoothing for other Synth families and
 physical listening. The all-properties milestone remains open.
+
+## Follow-up: reserve Multi growth capacity only in live audition
+
+Dormant Multi growth capacity is now opt-in rather than a property of
+every `FmSynthSound`. The ordinary constructor defaults to
+`reserveMultiHeadroom: false`; pattern/sequence playback, ordinary
+ad-hoc rendering and offline export therefore allocate **only the
+authored Multi constituents**, with no extra dormant child invocations.
+
+`AdHocPlaybackRequest.ReserveSynthMultiHeadroom` defaults to false.
+The interactive `SongPlaybackTransport.EnsureLiveAuditionCoreAsync`
+opts into this setting when opening a live audition. The flag travels
+through `PlaybackRequestAudioSourceFactory.Create`,
+`PreparedIncrementalPlaybackFactory.CreateAdHoc` and
+`PlaybackSnapshotSoundResolver` to the prepared root `FmSynthSound`.
+Revisions built by `PrepareLiveSynthSource` also opt in so that later
+audition notes can accept further compatible growth.
+
+The optional headroom remains capped at four dormant child invocations
+per eligible Multi, sixteen total per top-level Synth and the remaining
+part of the 128-constituent budget. Nested Multi subgraphs do not
+recursively reserve extra voices. Dormant state has only its
+memory/initialization cost and skips normal per-frame DSP. Once
+activated and subsequently retired, a constituent continues advancing
+silently for phase-accurate revival.
+
+Regressions distinguish default versus explicitly opted-in capacity at
+the sound, playback-source-factory and transport boundaries. The
+existing live Multi growth and smoothing tests now opt in rather than
+depending on an always-on constructor default. All other compatible
+nonstructural edit migrations still work without a reserve.
