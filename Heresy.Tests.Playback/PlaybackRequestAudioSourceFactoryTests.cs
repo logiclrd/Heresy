@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Numerics;
@@ -390,6 +391,75 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 		{
 			(ordinary as IDisposable)?.Dispose();
 			(live as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
+	public void BufferedLiveMultiBurstReportsWorkerCostsWithoutCallbackUnderruns()
+	{
+		SongDocument document = new();
+		ObjectId id = document.AllocateObjectId();
+		FmSynthGraph Graph(int count) => new([
+			new FmConstantNode(0, 0.015625),
+			new FmMultiNode(1, 0, voiceCount: count, detune: 0,
+				randomizePhase: false, gainCompensation: false)], 1);
+		FmSynthDefinition synth = new(id, "Buffered stress", Graph(2));
+		document.Add(synth);
+		PlaybackRequestAudioSourceFactory factory =
+			new(MonoConfiguration(48000));
+		IAudioOutputSource raw = factory.Create(AdHocPlaybackRequest.Create(
+			document, new NoteScheduleBuilder().Freeze(),
+			reserveSynthMultiHeadroom: true));
+		using BufferedAudioOutputSource buffered = new(raw,
+			capacityFrames: 512, blockFrames: 64);
+		try
+		{
+			for (uint i = 0; i < 6; i++)
+				buffered.EnqueueLiveEvent(ChannelTarget.Virtual(100 + i),
+					[new StartNoteCommand(id)]);
+			synth.Graph = Graph(64);
+			document.MarkChanged(affectsAudio: true);
+			((ILiveSynthSourceRevisionOutput)raw).EnqueueLiveSynthParameters(
+				id, factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(document), id));
+
+			TimeSpan cpuBefore = Process.GetCurrentProcess().TotalProcessorTime;
+			long wallStart = Stopwatch.GetTimestamp();
+			float max = 0;
+			for (int block = 0; block < 32; block++)
+			{
+				Assert.That(SpinWait.SpinUntil(() =>
+					buffered.BufferedFrames >= 64
+						|| buffered.RenderingFault is not null,
+					TimeSpan.FromSeconds(5)), Is.True,
+					"buffered producer must keep filling while Multi preparation runs");
+				buffered.RenderingFault.Should().BeNull();
+				float[] pcm = new float[64];
+				buffered.Render(64, pcm);
+				pcm.Should().OnlyContain(float.IsFinite);
+				max = Math.Max(max, pcm.Max());
+			}
+			buffered.UnderrunCount.Should().Be(0,
+				"each controlled callback consumed only already-buffered PCM");
+			buffered.RenderingFault.Should().BeNull();
+			TimeSpan wall = Stopwatch.GetElapsedTime(wallStart);
+			TimeSpan cpu = Process.GetCurrentProcess().TotalProcessorTime - cpuBefore;
+			TestContext.Progress.WriteLine(
+				$"Buffered Multi: 6 voices, 2->64 constituents, 2048 callback frames, " +
+				$"underruns={buffered.UnderrunCount}, " +
+				$"expansions={buffered.CompletedMultiExpansions}, " +
+				$"cancelled={buffered.CancelledMultiExpansions}, " +
+				$"prepared children={buffered.PreparedMultiConstituents}, " +
+				$"peak queue={buffered.PeakPreparationQueueDepth}, " +
+				$"allocated bytes={buffered.MultiPreparationAllocatedBytes}, " +
+				$"worker elapsed ms={buffered.MultiPreparationElapsedTime.TotalMilliseconds:F2}, " +
+				$"wall ms={wall.TotalMilliseconds:F2}, " +
+				$"process CPU ms={cpu.TotalMilliseconds:F2}, " +
+				$"peak sample={max:F4}");
+		}
+		finally
+		{
+			(raw as IDisposable)?.Dispose();
 		}
 	}
 
