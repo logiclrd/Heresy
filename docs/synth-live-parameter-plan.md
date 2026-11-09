@@ -1,6 +1,6 @@
 # Realtime Synth parameter audition — implementation plan and audit
 
-**Status:** Foundation work in progress, not an implemented live-edit feature. The authoritative open acceptance item is [todo.md](todo.md), requiring **every non-structural editable property**, not a first phase limited to Frequency Hz, Waveform, Curvature or filter CutoffHz.
+**Status:** Compatible live edits already migrate many *existing* held/latched Synth voices, with versioned preparation, whole-tree preflight, Filter/Source/Multi state retention and bounded off-thread growth. **The complete all-property live-edit feature is not finished.** The authoritative open acceptance item is [todo.md](todo.md), requiring **every non-structural editable property**, not only Frequency Hz, Waveform, Curvature or Filter CutoffHz. Read the later slices chronologically; early exclusions document historical implementation stages.
 
 ## Existing implementation boundaries discovered
 
@@ -793,3 +793,54 @@ and nested Source work. These are hypotheses, not profiled conclusions.
 Use the CI comparison to select one isolated optimization, preserving
 per-voice histories, note release/tails and audition-only headroom.
 Do not close the full all-property live-edit milestone.
+
+### Neutral-spatialization fast path and first measured comparison
+
+A code inspection following the scaling matrix found that each one-frame
+Multi child render called `Spatializer.CalculateGain` for its mono
+output, whose `PositionalImportance` is exactly zero. The spatializer
+was nevertheless calculating `Math.Pow(2, 0)` for *every child frame*.
+For finite source positions, a zero-importance speaker's gain is provably
+1.0 regardless of its position. The renderer now returns that value
+before performing the expensive power calculation. Non-finite source
+positions still follow the old NaN-producing path rather than being
+silently masked; existing neutral-gain and new invalid-position tests
+protect this behavior. This optimization is shared by all neutral
+output channels but does not change Multi voice allocation, audible
+phase/age, or the device-facing ring callback.
+
+Measured comparison from two successful **Release CI** test runs on
+9 November 2026 (same scaling test, independent shared-runner runs):
+
+| Steady-state case | Before, µs/output frame (run #42617569499) | After, µs/output frame (run #42618113183) |
+| --- | ---: | ---: |
+| 8 direct Constant notes | 11.444 | 1.124 |
+| 8 direct Oscillator notes | 6.139 | 1.610 |
+| 8 nested Synth Source oscillator notes | 13.801 | 3.871 |
+| 8 notes × 8 Constant Multi constituents | 37.540 | 4.909 |
+| 8 notes × 32 Constant Multi constituents | 134.524 | 16.488 |
+| 8 notes × 64 Constant Multi constituents | 258.540 | 32.233 |
+| 8 notes × 64 Oscillator Multi constituents | 378.216 | 58.501 |
+
+The 8x64 Constant Multi example improved roughly 8.0-fold. Its live
+headroom variant went from 258.339 to 31.971 µs/output frame, confirming
+no measurable per-frame headroom penalty *within these observations*.
+Render-thread measured allocations remained approximately 117 KB per
+2,048 frames with eight notes, independent of constituent count.
+
+The separate paced one-second 8x64 Multi edit showed 178 underruns and
+3,584 produced frames in the baseline run, versus 82 underruns and
+28,160 produced frames after the fast path. Its callback Render remained
+allocation-free (0 bytes) in both. The producer's longest measured block
+fell from 121.877 ms to 21.750 ms. **These are shared-CI observations,
+not deterministic performance guarantees or a paired scientific
+benchmark.** Even after optimization, the 8x64 steady-state Constant
+profile requires 32.233 µs to generate an output frame when nominal
+48-kHz audio has only 20.833 µs available: sustained worst-case
+throughput is still inadequate in that environment. The Oscillator Multi
+case remains costlier; real device/OS profiling and additional per-child
+render optimizations remain necessary. Do not write an assertion
+requiring a particular number of underruns.
+
+The all-properties milestone and crossfade-only live transitions remain
+open; no physical hardware acceptance was performed.
