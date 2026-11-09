@@ -865,8 +865,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		live.PreparedExpansion = null;
 		for (int i = 0; i < _nodes.Length; i++)
 		{
-			if (live.Sources[i] is { Sound: FmSynthSound child } source)
-				child.CancelPendingMultiExpansion(source.Invocation.State);
+			if (live.Sources[i] is { Sound: FmSynthSound nestedSource } source)
+				nestedSource.CancelPendingMultiExpansion(source.Invocation.State);
 			foreach (MultiVoice child in live.Multis[i])
 				child.Sound.CancelPendingMultiExpansion(child.Invocation.State);
 		}
