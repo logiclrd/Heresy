@@ -99,6 +99,8 @@ public static class EnvelopeDocumentEditor
 		if (viewportChanged)
 			envelope.SetDisplayRange(newMin, newMax);
 		workspace.Document.MarkChanged(affectsAudio: audioChanged);
+		if (audioChanged)
+			workspace.NotifySharedAudioObjectCommitted(envelope.Id);
 	}
 
 	/// <summary>
@@ -140,6 +142,7 @@ public static class EnvelopeDocumentEditor
 		envelope.Source = source;
 		envelope.ReleaseDuration = releaseDuration;
 		workspace.Document.MarkChanged(affectsAudio: true);
+		workspace.NotifySharedAudioObjectCommitted(envelope.Id);
 	}
 
 	private static void ValidateScript(string source, TimeSpan? releaseDuration)
