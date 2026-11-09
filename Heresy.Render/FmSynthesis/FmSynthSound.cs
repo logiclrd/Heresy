@@ -24,12 +24,17 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			double originalFrequencyHz)
 		{
 			Invocation = invocation;
+			// The invocation retains its original state/configuration. A
+			// compatible referenced Synth revision can replace its compiled
+			// sound without rewinding the child or its pitch trajectory.
+			Sound = invocation.Sound;
 			OriginalOuterFactor = originalOuterFactor;
 			OriginalFrequencyHz = originalFrequencyHz;
 			Pitch = new FmSourcePitchCurve();
 			invocation.State.PitchTrajectory.SetCurve(0, Pitch);
 		}
 		public SoundInvocation Invocation { get; }
+		public ISound Sound { get; set; }
 		public double OriginalOuterFactor { get; }
 		// Child pitch and speed are *never* retroactively rescaled. Edits
 		// alter only the forward-integrated FmSourcePitchCurve.
@@ -366,7 +371,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					// scale and integrated position. The new authored
 					// frequency, Constant flag and modulation mode only
 					// affect its subsequent trajectory frames.
-					if (source.SourceId != newSource.SourceId)
+					if (source.SourceId != newSource.SourceId
+						&& !CanMigrateSourceChild(live.Sources[i], revised.Source))
 						return false;
 					if (live.Sources[i] is { } boundSource
 						&& !double.IsFinite(
@@ -408,6 +414,17 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return true;
 	}
 
+	/// <summary>Only a compatible referenced Synth can inherit a bound
+	/// child invocation's original SoundState. In particular, an arbitrary
+	/// Sample/Instrument definition cannot be substituted into a different
+	/// implementation's state. A structural edit to the SAME referenced
+	/// Synth stays on its old child generation while the parent may adopt
+	/// otherwise compatible changes.</summary>
+	private static bool CanMigrateSourceChild(SourceVoice? voice, ISound? revised)
+		=> voice?.Sound is FmSynthSound original
+			&& revised is FmSynthSound next
+			&& original.CanAdoptRunningState(next, voice.Invocation.State);
+
 	/// <summary>Transactional preflight over all Filters and nested Multi
 	/// constituents. Every chain validates its targets into owned scratch
 	/// before the voice can commit any DSP state or child sound binding.</summary>
@@ -432,6 +449,16 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					revised, child.Invocation.State))
 					return false;
 		}
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			SourceVoice? child = live.Sources[i];
+			if (!CanMigrateSourceChild(child, next._nodes[i].Source))
+				continue;
+			FmSynthSound previous = (FmSynthSound)child!.Sound;
+			FmSynthSound revised = (FmSynthSound)next._nodes[i].Source!;
+			if (!previous.TryPrepareRunningState(revised, child.Invocation.State))
+				return false;
+		}
 		return true;
 	}
 
@@ -453,6 +480,15 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				requested = true;
 		for (int i = 0; i < _nodes.Length; i++)
 		{
+			SourceVoice? child = live.Sources[i];
+			if (CanMigrateSourceChild(child, next._nodes[i].Source))
+				requested = ((FmSynthSound)child!.Sound)
+					.RequestBoundLiveFirPreparation(
+						(FmSynthSound)next._nodes[i].Source!,
+						child.Invocation.State) || requested;
+		}
+		for (int i = 0; i < _nodes.Length; i++)
+		{
 			if (_nodes[i].Definition is not FmMultiNode
 				|| next._nodes[i].MultiInput is not FmSynthSound revised)
 				continue;
@@ -471,6 +507,16 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		for (int i = 0; i < _nodes.Length; i++)
 			if (_nodes[i].Filter is { } oldFilter)
 				oldFilter.CommitPreparedLiveStateConfiguration(live.Filters[i]);
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			SourceVoice? child = live.Sources[i];
+			if (!CanMigrateSourceChild(child, next._nodes[i].Source))
+				continue;
+			FmSynthSound revised = (FmSynthSound)next._nodes[i].Source!;
+			((FmSynthSound)child!.Sound).CommitPreparedRunningState(
+				revised, child.Invocation.State);
+			child.Sound = revised;
+		}
 		for (int i = 0; i < _nodes.Length; i++)
 		{
 			if (_nodes[i].Definition is not FmMultiNode
@@ -1401,23 +1447,23 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					frame, sampleRate, released), -1.0, 1.0);
 				voice.Invocation.State.Position = new Vector3((float)pan, 0, 0);
 				Span<float> stereo = stackalloc float[2];
-				voice.Invocation.Sound.Render(state.StereoChildContext!,
+				voice.Sound.Render(state.StereoChildContext!,
 					voice.Invocation.State, frame, 1, stereo);
 				// A native stereo Sample has spatially separated source
 				// channels; a mono source uses equal-power speaker gain.
-				double divisor = voice.Invocation.Sound is SampleSound pannedSample
+				double divisor = voice.Sound is SampleSound pannedSample
 					&& pannedSample.SourceChannelCount == 2 ? 2.0 : Math.Sqrt(2);
 				mono[0] = (float)((stereo[0] + stereo[1]) / divisor);
 			}
 			else
-				voice.Invocation.Sound.Render(state.MonoContext!,
+				voice.Sound.Render(state.MonoContext!,
 					voice.Invocation.State, frame, 1, mono);
 			// Streaming sources discover their finite boundary only while
 			// rendering. A nested Synth does not necessarily publish a
 			// NaturalEndFrameExclusive in SoundState, so explicitly query
 			// its post-render end rather than waiting for another PCM block.
 			long? observed = voice.Invocation.State.NaturalEndFrameExclusive;
-			if (voice.Invocation.Sound is IStreamingFiniteSound streaming)
+			if (voice.Sound is IStreamingFiniteSound streaming)
 			{
 				long? nestedEnd = streaming.GetEndFrameExclusive(
 					state.MonoContext!, voice.Invocation.State);
@@ -1441,7 +1487,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			voice.InputFinished = true;
 		}
 		if (voice.Invocation.Configuration.Envelopes.Panning is null
-			&& voice.Invocation.Sound is SampleSound sample)
+			&& voice.Sound is SampleSound sample)
 			mono[0] /= sample.SourceChannelCount;
 		if (muted)
 			mono[0] = 0;
@@ -1514,7 +1560,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				continue;
 			if (voice.Invocation.State.NoteOffTime != state.NoteOffTime)
 				voice.Invocation.State.NoteOffTime = state.NoteOffTime;
-			long? childEnd = voice.Invocation.Sound.GetEndFrameExclusive(
+			long? childEnd = voice.Sound.GetEndFrameExclusive(
 				state.MonoContext, voice.Invocation.State);
 			if (voice.Invocation.State.NaturalEndFrameExclusive is long natural)
 				childEnd = childEnd.HasValue
