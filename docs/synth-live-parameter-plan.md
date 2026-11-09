@@ -508,3 +508,63 @@ the sound, playback-source-factory and transport boundaries. The
 existing live Multi growth and smoothing tests now opt in rather than
 depending on an always-on constructor default. All other compatible
 nonstructural edit migrations still work without a reserve.
+
+## Thirteenth slice: off-PCM Multi expansion beyond initial audition reserve
+
+The four-constituent audition reserve is now an optimization for *immediate*
+growth, not a permanent hard limit on editable held notes. Larger valid Multi
+increases use the existing independent FIR preparation worker's bounded
+control handoff, without reconstructing existing constituent histories or
+allocating new SoundInvocations inside the audio producer.
+
+- Live-editable Synth invocations (and nested Multi subgraph invocations)
+  own one private `MultiExpansionMailbox`. Ordinary frozen playback,
+  offline export and non-editable ad-hoc rendering construct **no**
+  mailbox and retain their authored-only constituent counts.
+- When an otherwise structurally compatible revision needs more children
+  than the running invocation prepared, the PCM owner captures the
+  **immutable target Synth revision**, original bound pitch/speed,
+  deterministic per-voice seed and per-Multi existing capacities. Its
+  captured request does **not** expose the running child's phase, PCM,
+  Filter, Source, envelope or Sample history to the other thread.
+- The same single `FirPreparationScheduler` thread that handles FIR
+  kernels also handles immutable Multi expansion requests. It constructs
+  **only the missing** child SoundInvocations and completely allocated
+  replacement arrays; slots for retained children remain placeholders.
+  Worker submissions are latest-wins and versioned, so an old or
+  superseded prepared layout cannot publish after a newer revision.
+- At a subsequent PCM block boundary, the producer checks the prepared
+  result against the proposed Synth identity and original capacity,
+  pitch, speed and seed. The complete recursive preflight still validates
+  every Filter, Source and nested Multi before any DSP mutation.
+  Only then does the producer splice the **same original child
+  references** into the preallocated arrays and retune/fade-in new
+  constituents through the existing 64-frame smoothstep. Original child
+  oscillator phases, integrated Sample/Source positions, release state and
+  FIR/IIR histories remain untouched. The newly introduced children
+  begin their own local clocks on the actual acceptance frame.
+- A pending expansion blocks the **entire** revision, including
+  compatible upstream scalar or Filter changes, until all nested
+  expansion plans are ready. If an incompatible structural change or
+  insufficient capacity makes migration impossible, the held voice
+  retains its previous generation; later notes use the new definition.
+- Boundaries remain the Synth graph's existing valid 128-constituent
+  limit and the runtime voice-state compatibility checks. Expansion
+  workload may take multiple blocks; the audio producer never waits
+  for the control worker, and no committed note is replayed to catch up.
+  A voice can already have other pending FIR updates: both mechanisms
+  share the scheduler but each keeps its own invocation-private
+  mailbox and the whole Synth state must pass a common preflight.
+
+Direct PCM regressions cover an edit from two to nine constituents,
+unchanged output while preparation runs, exact smooth post-publication
+output, latest-revision supersession, and recursively prepared nested
+Multi growth. Playback regression checks the same deferred two-to-nine
+growth on a held live-audition voice. The existing ordinary-versus-
+preview tests ensure normal playback incurs no extra capacity cost.
+
+Further work: deterministic stress/underrun and peak-memory profiling
+with thousands of concurrent voices, cancellation of jobs for retired
+notes, explicit constituent identity matching when a chord is reordered,
+audible re-randomization via state crossfades, and physical listening.
+This does not yet close the general all-properties live-editing TODO.
