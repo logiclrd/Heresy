@@ -353,10 +353,12 @@ internal sealed class FmFilterNodeProcessor
 			changes = true;
 			if (!CanUpdateKind(b.Kind)
 				|| (_bindings.Length != 0 && !_useFastNumeric)
+
 				|| (LinearPhaseFirFilterStageFactory.IsStandardFir(b.Kind)
-					&& (HasBoundStage(a.StageId)
-						|| next._liveFirPlans is null
-						|| next._preparedSampleRate != live?.Chain?.SampleRate)))
+					&& (next._preparedSampleRate != live?.Chain?.SampleRate
+						|| (HasBoundStage(a.StageId)
+							? live?.LiveFirControl is null
+							: next._liveFirPlans is null))))
 				return false;
 		}
 		return !changes || live?.Chain is null
@@ -474,9 +476,18 @@ internal sealed class FmFilterNodeProcessor
 			}
 			else if (LinearPhaseFirFilterStageFactory.IsStandardFir(kind))
 			{
-				if (next._liveFirPlans is null) return false;
+				// A bound FIR must be designed against THIS voice's last
+				// accepted FM parameters, not against the authored fallback.
+				// The off-loop worker publishes an exact-snapshot candidate;
+				// until then the entire voice transaction is deferred.
+				PreparedFirControlBatch? plans = HasBoundStage(a.StageId)
+					? ReferenceEquals(live.LiveFirRevision, next)
+						&& LiveFirSnapshotMatches(next, live)
+							? live.LiveFirReady : null
+					: next._liveFirPlans;
+				if (plans is null) return false;
 				bool found = false;
-				foreach (PreparedFirControlStage plan in next._liveFirPlans.Stages)
+				foreach (PreparedFirControlStage plan in plans.Stages)
 					if (plan.StageIndex == i)
 					{
 						live.LiveFirUpdates[fir++] =
@@ -507,6 +518,78 @@ internal sealed class FmFilterNodeProcessor
 			live.FeedforwardUpdates.AsSpan(0, feedforward),
 			live.FeedforwardScratch,
 			live.LiveFirUpdates.AsSpan(0, fir));
+	}
+
+	/// <summary>Build a voice-specific, bounded FIR batch from the last
+	/// successfully committed *absolute* FM controls and the newly authored
+	/// unconnected parameters. Caller-supplied scratch is invocation owned.
+	/// No Filter cloning, kernel preparation or audio-state mutation here.</summary>
+	private int CaptureBoundLiveFirRequests(
+		FmFilterNodeProcessor next, State live)
+	{
+		FirControlRequest[] requests = live.LiveFirRequests!;
+		int count = 0;
+		for (int i = 0; i < _effectiveStages.Length; i++)
+		{
+			ConfiguredFilterStage before = _effectiveStages[i];
+			ConfiguredFilterStage after = next._effectiveStages[i];
+			if (!LinearPhaseFirFilterStageFactory.IsStandardFir(after.Kind)
+				|| !HasBoundStage(before.StageId))
+				continue;
+			bool changed = false;
+			foreach (FilterParameterDescriptor parameter in before.Parameters.Parameters)
+				if (!IsBound(before.StageId, parameter.Name)
+					&& before.Parameters.GetParameter(parameter.Name)
+						!= after.Parameters.GetParameter(parameter.Name))
+				{
+					changed = true;
+					break;
+				}
+			if (!changed) continue;
+			if (count >= requests.Length)
+				return -1;
+			bool band = after.Kind is FilterKind.FirBandPass or FilterKind.FirNotch;
+			double Number(string name) => EffectiveNumber(after, live, name);
+			requests[count++] = new FirControlRequest(i, after.StageId,
+				after.Kind, band ? 0 : Number("CutoffHz"),
+				band ? Number("LowCutoffHz") : 0,
+				band ? Number("HighCutoffHz") : 0,
+				(int)after.Parameters.GetParameter("TapCount").NumericValue,
+				after.Parameters.GetParameter("TransitionWidthHz").NumericValue,
+				after.Parameters.GetParameter("PhaseResponse").ChoiceValue!);
+		}
+		live.LiveFirRequestCount = count;
+		return count;
+	}
+
+	private bool LiveFirSnapshotMatches(FmFilterNodeProcessor next, State live)
+	{
+		int count = CaptureBoundLiveFirRequests(next, live);
+		return count > 0 && live.LiveFirReady?.Matches(
+			live.LiveFirRequests!.AsSpan(0, count)) == true;
+	}
+
+	/// <summary>Offer at most one latest-wins pending request per running
+	/// Filter and revision. The normal per-frame FM FIR worker/mailbox is
+	/// independent: the old DSP kernel cannot accidentally adopt this
+	/// candidate while the complete Synth transaction is still pending.</summary>
+	internal bool RequestBoundLiveFirPreparation(
+		FmFilterNodeProcessor next, State? live)
+	{
+		if (live?.LiveFirControl is null || live.LiveFirMailbox is null)
+			return false;
+		int count = CaptureBoundLiveFirRequests(next, live);
+		if (count <= 0) return false;
+		if (ReferenceEquals(live.LiveFirRevision, next)
+			&& live.LiveFirReady?.Matches(
+				live.LiveFirRequests!.AsSpan(0, count)) == true)
+			return true;
+		if (!live.LiveFirControl.TryOffer(
+			live.LiveFirRequests!.AsSpan(0, count)))
+			return false;
+		live.LiveFirRevision = next;
+		live.LiveFirReady = null;
+		return true;
 	}
 
 	/// <summary>Commit only the scratch previously admitted by the complete
@@ -553,9 +636,15 @@ internal sealed class FmFilterNodeProcessor
 			if (firCount > 0)
 			{
 				FirControl = new FirControlPreparationPolicy(sampleRate);
+				LiveFirControl = new FirControlPreparationPolicy(sampleRate);
+				LiveFirRequests = new FirControlRequest[
+					FirControlPreparationPolicy.MaximumQueuedStages];
                 if (Configuration is not null)
                     FirMailbox = new FirPreparationMailbox(
                         new FilterChain([Configuration]), sampleRate);
+				if (Configuration is not null)
+					LiveFirMailbox = new FirPreparationMailbox(
+						new FilterChain([Configuration]), sampleRate);
 				FirRequests = new FirControlRequest[
 					Math.Min(firCount, FirControlPreparationPolicy.MaximumQueuedStages)];
 				FirPreparedUpdates = new RealtimeFirStageUpdate[FirRequests.Length];
@@ -585,6 +674,12 @@ internal sealed class FmFilterNodeProcessor
 		internal RealtimeFeedforwardCombCoefficients[] FeedforwardScratch { get; }
 		internal FirControlPreparationPolicy? FirControl { get; }
         internal FirPreparationMailbox? FirMailbox { get; }
+		internal FirControlPreparationPolicy? LiveFirControl { get; }
+		internal FirPreparationMailbox? LiveFirMailbox { get; }
+		internal FirControlRequest[]? LiveFirRequests { get; }
+		internal int LiveFirRequestCount { get; set; }
+		internal FmFilterNodeProcessor? LiveFirRevision { get; set; }
+		internal PreparedFirControlBatch? LiveFirReady { get; set; }
 		internal FirControlRequest[]? FirRequests { get; }
 		internal RealtimeFirStageUpdate[]? FirPreparedUpdates { get; }
 		internal RealtimeFirStageUpdate[] LiveFirUpdates { get; }
@@ -637,18 +732,30 @@ internal sealed class FmFilterNodeProcessor
     internal bool AdoptPreparedFirs(State state)
     {
         PreparedFirControlBatch? ready = state.FirMailbox?.TakeReady();
-        if (ready is null) return false;
-        state.FirReady = ready;
-        return true;
+		PreparedFirControlBatch? liveReady = state.LiveFirMailbox?.TakeReady();
+		if (ready is not null)
+			state.FirReady = ready;
+		if (liveReady is not null)
+			state.LiveFirReady = liveReady;
+		return ready is not null || liveReady is not null;
     }
 
     internal bool QueuePendingFirs(State state, FirPreparationScheduler scheduler)
     {
-        if (state.FirControl is null || state.FirMailbox is null
-            || state.FirControl.PendingCount == 0) return false;
-        if (state.FirHoldCount == 0)
-            state.FirHoldCount = state.FirControl.CopyPending(state.FirHeldRequests!);
-        return state.FirMailbox.CapturePending(state.FirControl, scheduler);
+		bool queued = false;
+		if (state.FirControl is not null && state.FirMailbox is not null
+			&& state.FirControl.PendingCount != 0)
+		{
+			if (state.FirHoldCount == 0)
+				state.FirHoldCount = state.FirControl.CopyPending(state.FirHeldRequests!);
+			queued = state.FirMailbox.CapturePending(state.FirControl, scheduler);
+		}
+		if (state.LiveFirControl is not null
+			&& state.LiveFirMailbox is not null
+			&& state.LiveFirControl.PendingCount != 0)
+			queued = state.LiveFirMailbox.CapturePending(
+				state.LiveFirControl, scheduler) || queued;
+		return queued;
     }
 
 	/// <summary>
