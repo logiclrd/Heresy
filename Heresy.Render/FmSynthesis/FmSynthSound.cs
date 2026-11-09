@@ -230,6 +230,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			{
 				version = _version;
 				_workingVersion = version;
+				_pending = false;
 				next = _revision!;
 				seed = _seed;
 				pitch = _pitch;
@@ -852,13 +853,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		// seeded on the control worker. Splice in old references before
 		// committing any Filter, Source, or Multi parameter updates.
 		PreparedMultiExpansion? expansion = live.PreparedExpansion;
+		bool expansionMatches = expansion?.Matches(next, live) == true;
 		for (int i = 0; i < _nodes.Length; i++)
 		{
 			MultiVoice[] oldVoices = live.Multis[i];
 			if (next._multiRatios[i].Length <= oldVoices.Length)
 				continue;
-			if (expansion?.Matches(next, live) != true
-				|| expansion.Slots[i] is not MultiVoice[] grown)
+			if (!expansionMatches
+				|| expansion!.Slots[i] is not MultiVoice[] grown)
 				throw new InvalidOperationException(
 					"Multi expansion must be preflighted and prepared off-thread.");
 			Array.Copy(oldVoices, grown, oldVoices.Length);
