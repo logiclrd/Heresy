@@ -457,6 +457,112 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
+	public void PacedCallbacksProfileSustainedMultiExpansionWithoutHardwareDeadlineAssumptions()
+	{
+		// A one-second mono 48-kHz callback simulation. The scheduling
+		// jitter, missed callback deadlines and producer underruns are
+		// *observations*, not CI pass/fail performance thresholds.
+		const int sampleRate = 48000;
+		const int framesPerCallback = 256;
+		const int callbackCount = 192;
+		SongDocument document = new();
+		ObjectId id = document.AllocateObjectId();
+		FmSynthGraph Graph(int count) => new([
+			new FmConstantNode(0, 0.01),
+			new FmMultiNode(1, 0, voiceCount: count, detune: 0,
+				randomizePhase: false, gainCompensation: false)], 1);
+		FmSynthDefinition synth = new(id, "Paced callback stress", Graph(2));
+		document.Add(synth);
+		PlaybackRequestAudioSourceFactory factory =
+			new(MonoConfiguration(sampleRate));
+		IAudioOutputSource raw = factory.Create(AdHocPlaybackRequest.Create(
+			document, new NoteScheduleBuilder().Freeze(),
+			reserveSynthMultiHeadroom: true));
+		BufferedAudioOutputSource buffered = new(raw,
+			capacityFrames: 2048, blockFrames: 256);
+		try
+		{
+			for (uint i = 0; i < 8; i++)
+				buffered.EnqueueLiveEvent(ChannelTarget.Virtual(210 + i),
+					[new StartNoteCommand(id)]);
+			Assert.That(SpinWait.SpinUntil(
+				() => buffered.BufferedFrames >= 512
+					|| buffered.RenderingFault is not null,
+				TimeSpan.FromSeconds(5)), Is.True);
+			buffered.RenderingFault.Should().BeNull();
+			synth.Graph = Graph(64);
+			document.MarkChanged(affectsAudio: true);
+			var revision = factory.PrepareLiveSynthSource(
+				SongDocumentSnapshot.Create(document), id);
+			((ILiveSynthSourceRevisionOutput)raw).EnqueueLiveSynthParameters(
+				id, revision);
+
+			long callbackPeriodTicks = (long)Math.Round(
+				(double)Stopwatch.Frequency * framesPerCallback / sampleRate);
+			long epoch = Stopwatch.GetTimestamp();
+			long beforeCpu = Process.GetCurrentProcess().TotalProcessorTime.Ticks;
+			long callbackAllocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+			long maxCallbackTicks = 0;
+			long maxStartJitterTicks = 0;
+			long callbackOverBudget = 0;
+			long lateCallbackStarts = 0;
+			int minimumBufferedFrames = int.MaxValue;
+			float[] pcm = new float[framesPerCallback];
+			for (int i = 0; i < callbackCount; i++)
+			{
+				long due = epoch + i * callbackPeriodTicks;
+				long remaining;
+				while ((remaining = due - Stopwatch.GetTimestamp()) > 0)
+				{
+					if (remaining > Stopwatch.Frequency / 500)
+						Thread.Sleep(1);
+					else
+						Thread.SpinWait(64);
+				}
+				long began = Stopwatch.GetTimestamp();
+				long jitter = Math.Max(0, began - due);
+				maxStartJitterTicks = Math.Max(maxStartJitterTicks, jitter);
+				if (jitter >= callbackPeriodTicks)
+					lateCallbackStarts++;
+				minimumBufferedFrames = Math.Min(minimumBufferedFrames,
+					(int)buffered.BufferedFrames);
+				buffered.Render(framesPerCallback, pcm);
+				long duration = Stopwatch.GetTimestamp() - began;
+				maxCallbackTicks = Math.Max(maxCallbackTicks, duration);
+				if (duration >= callbackPeriodTicks)
+					callbackOverBudget++;
+				pcm.Should().OnlyContain(sample => float.IsFinite(sample));
+				buffered.RenderingFault.Should().BeNull();
+			}
+			long callbackAllocatedBytes = GC.GetAllocatedBytesForCurrentThread()
+				- callbackAllocatedBefore;
+			long cpuTicks = Process.GetCurrentProcess().TotalProcessorTime.Ticks
+				- beforeCpu;
+			TestContext.Progress.WriteLine(
+				$"Paced Multi: 8 notes, 2->64 children, " +
+				$"{callbackCount} callbacks / {framesPerCallback} frames, " +
+				$"wall ms={Stopwatch.GetElapsedTime(epoch).TotalMilliseconds:F2}, " +
+				$"process CPU ms={TimeSpan.FromTicks(cpuTicks).TotalMilliseconds:F2}, " +
+				$"max callback ms={(1000.0 * maxCallbackTicks / Stopwatch.Frequency):F3}, " +
+				$"max scheduling jitter ms={(1000.0 * maxStartJitterTicks / Stopwatch.Frequency):F3}, " +
+				$"callbacks over budget={callbackOverBudget}, " +
+				$"late callback starts={lateCallbackStarts}, " +
+				$"PCM underruns={buffered.UnderrunCount}, " +
+				$"minimum buffered frames={minimumBufferedFrames}, " +
+				$"callback-thread allocated bytes={callbackAllocatedBytes}, " +
+				$"prepared expansions={buffered.CompletedMultiExpansions}, " +
+				$"worker allocated bytes={buffered.MultiPreparationAllocatedBytes}, " +
+				$"worker prep ms={buffered.MultiPreparationElapsedTime.TotalMilliseconds:F3}");
+			buffered.RenderingFault.Should().BeNull();
+		}
+		finally
+		{
+			buffered.Dispose();
+			(raw as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
 	public void BufferedLiveMultiBurstReportsWorkerCostsWithoutCallbackUnderruns()
 	{
 		SongDocument document = new();
