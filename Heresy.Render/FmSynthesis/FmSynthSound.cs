@@ -371,8 +371,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					// scale and integrated position. The new authored
 					// frequency, Constant flag and modulation mode only
 					// affect its subsequent trajectory frames.
+					// Reassignment also changes the selected Source's
+					// note configuration. Keep the already-captured envelope,
+					// fade and past-note semantics only when the newly
+					// selected Synth advertises an equivalent snapshot.
 					if (source.SourceId != newSource.SourceId
-						&& !CanMigrateSourceChild(live.Sources[i], revised.Source))
+						&& (!CanMigrateSourceChild(live.Sources[i], revised.Source)
+							|| live.Sources[i]!.Invocation.Configuration
+								!= revised.Source!.SnapshotNoteConfiguration()))
 						return false;
 					if (live.Sources[i] is { } boundSource
 						&& !double.IsFinite(
