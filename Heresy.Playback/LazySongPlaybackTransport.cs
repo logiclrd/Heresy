@@ -218,6 +218,19 @@ public sealed class LazySongPlaybackTransport
 		}
 	}
 
+	/// <summary>Never instantiate the inner audio transport solely to
+	/// publish a shared Envelope/Filter authoring edit. If an audition is
+	/// already running, forward it through the inner command gate.</summary>
+	public Task PublishSharedObjectEditAsync(SongDocument document, ObjectId objectId)
+	{
+		lock (_gate)
+		{
+			ThrowIfDisposed();
+			return (_inner as ILiveSynthEditTransport)?.PublishSharedObjectEditAsync(
+				document, objectId) ?? Task.CompletedTask;
+		}
+	}
+
 	public Task StopAsync()
 	{
 		lock (_gate)
