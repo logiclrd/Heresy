@@ -914,3 +914,70 @@ Further work should profile oscillator/recursive node dispatch,
 multi-constituent lifecycle/end checks, concrete UI-to-PCM property
 coverage, and the still-missing dual-state crossfade transitions.
 Do not mark the full Synth live-edit TODO complete or merge this PR.
+
+## Eighteenth slice: single-oscillator graph dispatch and shared Multi pitch sampling
+
+The prior Multi-child microbenchmark established that oscillator-heavy
+graphs can be more expensive than Constant-only graphs, but the absolute
+times vary greatly between shared GitHub CI runners. This bounded
+follow-up reduces two forms of repeated work without changing oscillator
+waveform approximations, phase integration, release lifetimes or
+live-edit compatibility.
+
+1. A compiled `FmSynthSound` with **exactly one reachable node**, an
+   unmodulated output `FmOscillatorNode`, now takes a private direct
+   dispatch inside `EvaluateFrame`. It calls the **same**
+   `EvaluateOscillator` function and retains the original pitch validation,
+   draining/NoteOff behavior, finite-value validation and raw/audible
+   scratch-slot updates. Graphs with connected multiplier nodes,
+   Operators, Filters, Source, Multi, or any additional reachable node
+   continue through the existing generic dispatch. An authored parameter
+   revision selects a matching fresh immutable compiled definition;
+   running phases still belong to the unchanged `FmSynthState`.
+2. `EvaluateFrame` now fetches its own `PitchTrajectory.GetMultiplier`
+   **once per frame** and passes that already-fetched value to
+   `EvaluateMulti`. Previously every constituent looked up the same
+   outer pitch segment again, even though the parent had already
+   evaluated it. The constituent pitch expression retains the exact
+   prior multiplication order (`parentPitch * RatioAt * parentCurve`);
+   the child's independent pitch curve, speed and state migration remain
+   unchanged. The optimization applies to ordinary playback and live
+   audition without adding Multi reserves to ordinary rendering.
+
+PCM correctness:
+- `SingleOscillatorMatchesGenericGraphAcrossLiveEditsPitchAndRelease`
+  compares the direct path against the same oscillator through a
+  generic graph with an identity Multiply. It checks all four waveforms,
+  constant and relative pitch, nonzero curvature, a piecewise pitch
+  trajectory, compatible live waveform/frequency/curvature adoption
+  and NoteOff, sample for sample.
+- `MultiSharesOuterPitchTrajectoryAcrossConstituentsWithoutChangingPhase`
+  compares a two-constituent Multi against twice a standalone
+  oscillator over multiple piecewise pitch changes, irregular
+  block boundaries and an explicit release, guarding against stale
+  pitch samples, changed phase integration and timeline shifts.
+- Existing Source/Filter/Multi and callback regressions continue to
+  pass. The final combined changes passed the Release suite and ARM64
+  codec validation in [CI #42627430163](https://github.com/logiclrd/Heresy/actions/runs/42627430163).
+
+**Performance qualification:** The shared hosted CI measurements are
+too noisy to attribute a speedup to either optimization. An earlier
+post-Multi-specialization run (#42619961201) measured 8×64 Constant
+Multi at 14.677 µs/output frame and Oscillator Multi at
+33.209 µs/output frame; the subsequent combined run #42627430163
+measured 316.149 and 395.265 µs/output frame respectively, with
+large slowdowns in unrelated graphs too. The later paced 8-voice
+2→64 stress recorded 171 PCM underruns, 5,376 producer frames in
+about one second and **zero callback Render allocations**. These
+figures represent materially different shared host contention;
+neither a regression nor an improvement can be established by
+comparing the raw totals. Do **not** make performance threshold tests
+from them.
+
+Next, gather paired within-process A/B render profiles under controlled
+CPU load (ideally on the available Linux/Windows development machines),
+record CPU sampling data for oscillator evaluation and recursive
+GetEndFrameExclusive/lifecycle calls, then choose another hotspot
+based on those results. Actual audio hardware and listening tests
+remain open. Crossfade-only sound transitions and the complete
+all-properties live audition milestone are **not** finished.
