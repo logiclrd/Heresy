@@ -265,18 +265,15 @@ public sealed class SongPlaybackTransport
 		SongDocument document, ObjectId changedSourceId)
 	{
 		List<ObjectId> ordered = [];
-		HashSet<ObjectId> visited = [];
+		List<ObjectId> frontier = [changedSourceId];
+		HashSet<ObjectId> visited = [changedSourceId];
 		if (document.TryGet(changedSourceId, out SongObject? changed)
-			&& changed is FmSynthDefinition
-			&& visited.Add(changedSourceId))
+			&& changed is FmSynthDefinition)
 			ordered.Add(changedSourceId);
-		else
-			visited.Add(changedSourceId);
 
-		for (int i = 0; i < visited.Count; i++)
+		for (int i = 0; i < frontier.Count; i++)
 		{
-			ObjectId affected = i < ordered.Count
-				? ordered[i] : changedSourceId;
+			ObjectId affected = frontier[i];
 			foreach (SongObject candidate in document.Objects.Values)
 			{
 				if (candidate is not FmSynthDefinition synth
@@ -287,6 +284,7 @@ public sealed class SongPlaybackTransport
 						&& source.SourceId == affected)
 					{
 						visited.Add(synth.Id);
+						frontier.Add(synth.Id);
 						ordered.Add(synth.Id);
 						break;
 					}
