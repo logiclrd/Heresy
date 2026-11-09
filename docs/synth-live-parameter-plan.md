@@ -354,3 +354,56 @@ from editors of shared Filter/Envelope objects outside the active
 Synth editor, and click-safe smoothing/physical listening. The
 all-nonstructural-properties TODO remains open; source dependency
 publication is not a claim of generalized cross-object invalidation.
+
+## Eleventh slice: shared Envelope/Filter editor notifications and dependency fanout
+
+Shared Filter and Envelope definitions previously supported many compatible
+held-voice parameter changes in the renderer, but edits made from their
+**standalone editors** were not automatically sent through the Synth
+live-publication transport. Merely incrementing a document revision cannot
+identify which Synths need an updated compiled sound.
+
+- Successful audio-affecting commits in `FilterDocumentEditor` and
+  `EnvelopeDocumentEditor` now raise a
+  `DocumentWorkspace.SharedAudioObjectCommitted` notification containing
+  the changed object ID, active document identity and new audio revision.
+  This occurs **after** the atomic authoring mutation and revision bump.
+  Invalid drafts, repeat no-op edits, and node Envelope Vmin/Vmax-only
+  display changes emit **no** shared-audio notification. Creating a
+  currently unreferenced definition likewise does not trigger publication.
+- `MainWindow` subscribes once to workspace-level committed changes
+  (regardless of which editor control initiated them), delegates to the
+  optional live Synth transport and unsubscribes on window close.
+  Notifications from documents replaced by New/Open are ignored; no
+  background audio session is opened just because a shared object changed.
+- The transport now exposes
+  `ILiveSynthEditTransport.PublishSharedObjectEditAsync`. Its existing
+  serialized publication path discovers every Synth graph with an
+  `FmEnvelopeNode.EnvelopeId` or
+  `FmFilterNode.Configuration.DefinitionId` referring to the changed
+  shared object; then it walks transitive `FmSoundSourceNode.SourceId`
+  parent Synth dependencies. It publishes each affected Synth in
+  child-before-parent order from one detached song snapshot, deduplicating
+  per Synth/audio revision and skipping unrelated Synths. Playback session
+  and the frozen base revision are not reset. This combines with the
+  existing Source/Filter/Envelope state-compatible PCM preflight; structurally
+  incompatible generations retain their old running DSP state.
+- `LazySongPlaybackTransport` forwards the optional shared-object method
+  **only if** the inner transport already exists. Shared edits cannot
+  eagerly construct an audio backend.
+- The same notification operates when shared Envelopes or Filters are
+  edited through an embedded Synth inspector or its Filter popup; the
+  prior Synth-local publication may also fire, but transport revision
+  deduplication prevents duplicate dependent publications.
+- Regression tests cover the framework-independent editor event contract
+  (successful vs invalid/no-op/presentation-only edits), direct and
+  transitive Envelope/Filter dependency fanout, unrelated Synth isolation,
+  audio-session continuity and repeated same-revision deduplication, plus
+  lazy-inner transport forwarding. Previous held-note PCM regressions
+  continue to validate state-preserving adoption after publication.
+
+**Still outstanding:** changes originating from other authoring paths
+that bypass these shared editor mutation APIs, general note/Instrument
+shared-object invalidation, incompatible structural changes requiring
+migration or crossfade, continuous-FM FIR liveness, smoothing, stress and
+physical listening. The full all-properties live-editing TODO remains open.
