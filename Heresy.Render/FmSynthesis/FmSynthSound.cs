@@ -250,7 +250,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		/// <summary>Report cancellation without retaining partial arrays
 		/// or enqueueing an obsolete follow-up. A newer offered revision is
 		/// retried through the same capped admission path.</summary>
-		private void DiscardStale(long version, FirPreparationScheduler scheduler)
+		private void DiscardStale(long version, FirPreparationScheduler scheduler,
+			int builtChildren, long startingAllocation)
 		{
 			lock (_gate)
 			{
@@ -265,7 +266,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				_pending = _revision is not null;
 				_ready = null;
 			}
-			scheduler.RecordCancelledMultiExpansion();
+			scheduler.RecordCancelledMultiExpansion(builtChildren,
+				Math.Max(0, GC.GetAllocatedBytesForCurrentThread()
+					- startingAllocation));
 			Queue(scheduler);
 		}
 
@@ -300,7 +303,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			{
 				if (!IsCurrent(version))
 				{
-					DiscardStale(version, scheduler);
+					DiscardStale(version, scheduler, addedChildren, beforeBytes);
 					return;
 				}
 				int target = next._multiRatios[i].Length;
@@ -316,7 +319,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				{
 					if (!IsCurrent(version))
 					{
-						DiscardStale(version, scheduler);
+						DiscardStale(version, scheduler, addedChildren, beforeBytes);
 						return;
 					}
 					double ratio = next._multiRatios[i][j];
@@ -329,12 +332,13 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						^ (ulong)(uint)(j + 1)));
 					voices[j] = child;
 					addedChildren++;
+					scheduler.AfterMultiConstituentPrepared?.Invoke();
 				}
 				slots[i] = voices;
 			}
 			if (!IsCurrent(version))
 			{
-				DiscardStale(version, scheduler);
+				DiscardStale(version, scheduler, addedChildren, beforeBytes);
 				return;
 			}
 			PreparedMultiExpansion candidate = new(next, slots,
@@ -351,7 +355,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			}
 			if (stale)
 			{
-				DiscardStale(version, scheduler);
+				DiscardStale(version, scheduler, addedChildren, beforeBytes);
 				return;
 			}
 			scheduler.RecordMultiExpansion(
