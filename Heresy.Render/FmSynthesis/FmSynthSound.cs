@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Numerics;
 using System.Threading;
@@ -189,25 +190,45 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				_speed = state.BoundSpeed;
 				for (int i = 0; i < _capacities.Length; i++)
 					_capacities[i] = state.Multis[i].Length;
+				// Invalidate work from an earlier generation. A running
+				// worker checks this version after every new child.
 				_version++;
 				_pending = true;
 				_ready = null;
 			}
 		}
 
-		public void Queue(FirPreparationScheduler scheduler)
+		/// <summary>Invalidate pending/ready work and release the frozen
+		/// revision immediately when the invocation is retired, superseded
+		/// or accepted. A running worker finishes its current child only,
+		/// then detects cancellation at the next checkpoint.</summary>
+		public void Cancel()
 		{
-			bool enqueue;
 			lock (_gate)
 			{
-				enqueue = _pending && !_queued;
-				if (enqueue)
-				{
-					_pending = false;
-					_queued = true;
-				}
+				_version++;
+				_revision = null;
+				_pending = false;
+				_ready = null;
+				// _queued remains true until the queued worker slot has
+				// actually been consumed, avoiding duplicate admissions.
 			}
-			if (enqueue) scheduler.Enqueue(this);
+		}
+
+		public void Queue(FirPreparationScheduler scheduler)
+		{
+			lock (_gate)
+			{
+				if (!_pending || _queued || _revision is null)
+					return;
+				// Bounded admission, nonblocking on the PCM owner. If the
+				// worker queue is full, keep the request in this mailbox
+				// and retry at the next audio-block boundary.
+				if (!scheduler.TryEnqueueMultiExpansion(this))
+					return;
+				_pending = false;
+				_queued = true;
+			}
 		}
 
 		public PreparedMultiExpansion? TakeReady()
@@ -220,6 +241,34 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			}
 		}
 
+		private bool IsCurrent(long version)
+		{
+			lock (_gate)
+				return _revision is not null && _version == version;
+		}
+
+		/// <summary>Report cancellation without retaining partial arrays
+		/// or enqueueing an obsolete follow-up. A newer offered revision is
+		/// retried through the same capped admission path.</summary>
+		private void DiscardStale(long version, FirPreparationScheduler scheduler)
+		{
+			lock (_gate)
+			{
+				if (_version == version)
+				{
+					// Only an explicit Cancel() can make an otherwise
+					// unchanged version invalid; keep the guard defensive.
+					_revision = null;
+					_pending = false;
+				}
+				_queued = false;
+				_pending = _revision is not null;
+				_ready = null;
+			}
+			scheduler.RecordCancelledMultiExpansion();
+			Queue(scheduler);
+		}
+
 		public void Prepare(FirPreparationScheduler scheduler)
 		{
 			FmSynthSound next;
@@ -228,18 +277,32 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			long version;
 			lock (_gate)
 			{
+				if (_revision is null)
+				{
+					_queued = false;
+					scheduler.RecordCancelledMultiExpansion();
+					return;
+				}
 				version = _version;
 				_workingVersion = version;
 				_pending = false;
-				next = _revision!;
+				next = _revision;
 				seed = _seed;
 				pitch = _pitch;
 				speed = _speed;
 				Array.Copy(_capacities, _workCapacities, _capacities.Length);
 			}
+			long beforeTicks = Stopwatch.GetTimestamp();
+			long beforeBytes = GC.GetAllocatedBytesForCurrentThread();
+			int addedChildren = 0;
 			MultiVoice[]?[] slots = new MultiVoice[]?[next._nodes.Length];
 			for (int i = 0; i < next._nodes.Length; i++)
 			{
+				if (!IsCurrent(version))
+				{
+					DiscardStale(version, scheduler);
+					return;
+				}
 				int target = next._multiRatios[i].Length;
 				int retained = _workCapacities[i];
 				if (target <= retained)
@@ -251,6 +314,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				MultiVoice[] voices = new MultiVoice[target];
 				for (int j = retained; j < target; j++)
 				{
+					if (!IsCurrent(version))
+					{
+						DiscardStale(version, scheduler);
+						return;
+					}
 					double ratio = next._multiRatios[i][j];
 					SoundInvocation invocation =
 						input.CreateInvocation(pitch * ratio, speed);
@@ -260,35 +328,48 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						^ ((ulong)(uint)multi.Id << 32)
 						^ (ulong)(uint)(j + 1)));
 					voices[j] = child;
+					addedChildren++;
 				}
 				slots[i] = voices;
 			}
+			if (!IsCurrent(version))
+			{
+				DiscardStale(version, scheduler);
+				return;
+			}
 			PreparedMultiExpansion candidate = new(next, slots,
 				(int[])_workCapacities.Clone(), seed, pitch, speed);
-			bool retry;
+			bool stale;
 			lock (_gate)
 			{
-				retry = _version != version;
-				if (!retry)
+				stale = version != _version || _revision is null;
+				if (!stale)
 				{
 					_ready = candidate;
 					_queued = false;
 				}
 			}
-			if (retry) scheduler.Enqueue(this);
-			else scheduler.RecordCompleted();
+			if (stale)
+			{
+				DiscardStale(version, scheduler);
+				return;
+			}
+			scheduler.RecordMultiExpansion(
+				addedChildren,
+				Stopwatch.GetTimestamp() - beforeTicks,
+				Math.Max(0, GC.GetAllocatedBytesForCurrentThread() - beforeBytes));
 		}
 
 		public void MarkFailed(FirPreparationScheduler scheduler)
 		{
-			bool retry;
 			lock (_gate)
 			{
 				_ready = null;
-				retry = _version != _workingVersion;
-				if (!retry) _queued = false;
+				_pending = _revision is not null
+					&& _version != _workingVersion;
+				_queued = false;
 			}
-			if (retry) scheduler.Enqueue(this);
+			Queue(scheduler);
 		}
 	}
 
