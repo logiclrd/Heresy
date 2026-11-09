@@ -33,7 +33,7 @@ public sealed class SynthPairedRenderProfileTests
     private const int MultiConstituents = 64;
     private const int BlockFrames = 256;
     private const int WarmupBlocks = 3;
-    private const int PairedRounds = 7;
+    private const int DefaultPairedRounds = 7;
 
     [Test]
     public void AlternatePairedSynthGraphShapesAndCheckEveryPcmBlock()
@@ -70,10 +70,11 @@ public sealed class SynthPairedRenderProfileTests
         Array.Clear(warmup);
         RenderVoices(b, statesB, context, 0, warmup.Length, warmup);
 
-        double[] microsA = new double[PairedRounds];
-        double[] microsB = new double[PairedRounds];
+        int rounds = ProfileRounds();
+        double[] microsA = new double[rounds];
+        double[] microsB = new double[rounds];
         long allocatedA = 0, allocatedB = 0;
-        for (int round = 0; round < PairedRounds; round++)
+        for (int round = 0; round < rounds; round++)
         {
             int start = (WarmupBlocks + round) * BlockFrames;
             Array.Clear(pcmA);
@@ -103,7 +104,7 @@ public sealed class SynthPairedRenderProfileTests
                 Assert.That(float.IsFinite(value), Is.True);
         }
 
-        double[] ratios = Enumerable.Range(0, PairedRounds)
+        double[] ratios = Enumerable.Range(0, rounds)
             .Select(i => microsB[i] / Math.Max(microsA[i], 1e-9))
             .ToArray();
         TestContext.Progress.WriteLine(
@@ -113,11 +114,25 @@ public sealed class SynthPairedRenderProfileTests
             $"logical CPUs={Environment.ProcessorCount}, " +
             $"notes={Notes}, Multi children per note={MultiConstituents}, " +
             $"sample rate={SampleRate}, block frames={BlockFrames}, " +
-            $"rounds={PairedRounds}, A median us/frame={Median(microsA) / BlockFrames:F3}, " +
+            $"rounds={rounds}, A median us/frame={Median(microsA) / BlockFrames:F3}, " +
             $"B median us/frame={Median(microsB) / BlockFrames:F3}, " +
             $"paired B/A median={Median(ratios):F3}, " +
             $"paired B/A range={ratios.Min():F3}..{ratios.Max():F3}, " +
             $"render-thread bytes A={allocatedA}, B={allocatedB}");
+    }
+
+    /// <summary>
+    /// Longer runs enable local CPU sampling with perf or dotnet-trace.
+    /// The default remains short enough for the portable CI suite; no
+    /// performance number ever becomes a pass/fail threshold.
+    /// </summary>
+    private static int ProfileRounds()
+    {
+        string? requested = Environment.GetEnvironmentVariable(
+            "HERESY_SYNTH_PROFILE_ROUNDS");
+        return int.TryParse(requested, out int rounds)
+            ? Math.Clamp(rounds, DefaultPairedRounds, 512)
+            : DefaultPairedRounds;
     }
 
     private static void Measure(FmSynthSound sound, SoundState[] voices,
