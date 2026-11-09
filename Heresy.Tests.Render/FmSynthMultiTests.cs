@@ -184,6 +184,36 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void OrdinarySynthUsesOnlyAuthoredMultiCapacityUnlessAuditionOptsIn()
+    {
+        FmSynthGraph Graph(int count) => new([
+            new FmConstantNode(1, 0.25),
+            new FmMultiNode(2, 1, voiceCount: count, detune: 0,
+                randomizePhase: false, gainCompensation: false),
+        ], 2);
+        FmSynthSound ordinary = new(Graph(2), new EmptyEnvelopes());
+        FmSynthSound audition = new(Graph(2), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        FmSynthSound revision = new(Graph(4), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        SoundState ordinaryVoice = ordinary.CreateState();
+        SoundState auditionVoice = audition.CreateState();
+
+        ordinary.CanAdoptRunningState(revision, ordinaryVoice).Should().BeFalse(
+            "ordinary playback has no dormant children for live growth");
+        ordinary.TryPrepareRunningState(revision, ordinaryVoice).Should().BeFalse();
+        audition.CanAdoptRunningState(revision, auditionVoice).Should().BeTrue(
+            "live audition reserves dormant children at note creation");
+        audition.TryPrepareRunningState(revision, auditionVoice).Should().BeTrue();
+
+        float[] standard = new float[4], live = new float[4];
+        ordinary.Render(Mono(), ordinaryVoice, 0, 4, standard);
+        audition.Render(Mono(), auditionVoice, 0, 4, live);
+        standard.Should().Equal(live,
+            "dormant constituents must not affect the authored audio");
+    }
+
+    [Test]
     public void LiveMultiCountGrowthAndRetirementCrossfadeWithoutRebuildingChildVoices()
     {
         FmSynthGraph Graph(int count) => new([
@@ -193,7 +223,7 @@ public sealed class FmSynthMultiTests
         ], 2);
 
         RenderContext context = Mono();
-        FmSynthSound current = new(Graph(2), new EmptyEnvelopes());
+        FmSynthSound current = new(Graph(2), new EmptyEnvelopes(), reserveMultiHeadroom: true);
         SoundState voice = current.CreateState();
         float[] before = new float[80];
         current.Render(context, voice, 0, 80, before);
@@ -305,7 +335,7 @@ public sealed class FmSynthMultiTests
                 randomizePhase: false, gainCompensation: false),
         ], 2);
         RenderContext context = Mono();
-        FmSynthSound old = new(Graph(2), new EmptyEnvelopes());
+        FmSynthSound old = new(Graph(2), new EmptyEnvelopes(), reserveMultiHeadroom: true);
         SoundState voice = old.CreateState();
         old.Render(context, voice, 0, 80, new float[80]);
         FmSynthSound expanded = new(Graph(4), new EmptyEnvelopes());
@@ -373,7 +403,7 @@ public sealed class FmSynthMultiTests
             new FmMultiNode(2, 1, detune: 0, voiceCount: count,
                 randomizePhase: false, gainCompensation: false),
         ], 2);
-        FmSynthSound old = new(Graph(2, 0.25), new EmptyEnvelopes());
+        FmSynthSound old = new(Graph(2, 0.25), new EmptyEnvelopes(), reserveMultiHeadroom: true);
         SoundState voice = old.CreateState();
         RenderContext context = Mono();
         old.Render(context, voice, 0, 80, new float[80]);
