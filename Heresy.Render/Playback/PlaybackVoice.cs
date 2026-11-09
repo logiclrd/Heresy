@@ -347,18 +347,36 @@ public sealed class PlaybackVoice
 
 	internal ObjectId OriginSourceId { get; set; } = ObjectId.None;
 
+	// The PCM owner holds at most one deferred, latest-wins Synth revision.
+	// A bound FIR stage may need an invocation-local off-thread design
+	// before the *whole* old voice can migrate in one atomic transaction.
+	private FmSynthSound? _pendingLiveSynth;
+
 	internal bool TryAdoptLiveSynth(ObjectId sourceId,
 		ISound previousSound, ISound nextSound)
 	{
 		if (OriginSourceId != sourceId
-			|| !ReferenceEquals(Sound, previousSound)
-			|| Sound is not FmSynthSound previous
+			|| Sound is not FmSynthSound current
 			|| nextSound is not FmSynthSound next
-			|| !previous.TryPrepareRunningState(next, SoundState))
+			|| (!ReferenceEquals(Sound, previousSound)
+				&& !ReferenceEquals(_pendingLiveSynth, previousSound)))
 			return false;
-		previous.CommitPreparedRunningState(next, SoundState);
-		Sound = next;
-		return true;
+
+		// When a second edit supersedes a not-yet-prepared first edit,
+		// compare it with the actual sounding generation, not the
+		// superseded candidate. Obsolete worker results cannot publish it.
+		_pendingLiveSynth = null;
+		if (!current.CanAdoptRunningState(next, SoundState))
+			return false;
+		if (current.TryPrepareRunningState(next, SoundState))
+		{
+			current.CommitPreparedRunningState(next, SoundState);
+			Sound = next;
+			return true;
+		}
+		if (current.RequestBoundLiveFirPreparation(next, SoundState))
+			_pendingLiveSynth = next;
+		return false;
 	}
 
 	public SoundState SoundState { get; }
@@ -618,6 +636,22 @@ public sealed class PlaybackVoice
         _enclosingEnvelopeRealtime?.AdoptPreparedFirs();
         if (Sound is IFirPreparationSound source)
             source.AdoptPreparedFirControls(SoundState);
+		if (_pendingLiveSynth is not FmSynthSound revised
+			|| Sound is not FmSynthSound current)
+			return;
+		if (!current.CanAdoptRunningState(revised, SoundState))
+		{
+			_pendingLiveSynth = null;
+			return;
+		}
+		if (current.TryPrepareRunningState(revised, SoundState))
+		{
+			current.CommitPreparedRunningState(revised, SoundState);
+			Sound = revised;
+			_pendingLiveSynth = null;
+		}
+		else if (!current.RequestBoundLiveFirPreparation(revised, SoundState))
+			_pendingLiveSynth = null;
     }
 
     internal void QueuePendingFirControls(FirPreparationScheduler scheduler)
