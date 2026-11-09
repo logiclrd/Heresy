@@ -449,6 +449,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			// Rebind rather than rewinding the old PitchTrajectory: child
 			// integrated positions, script-selected tones and filter histories
 			// are invocation-local and must start from fresh state.
+			MultiExpansion?.Cancel();
 			Sources = rebuilt.Sources;
 			Multis = rebuilt.Multis;
 			PreparedExpansion = null;
@@ -465,6 +466,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			Array.Clear(SilentFrom);
 			Array.Clear(Phases);
 			Array.Clear(Filters); // never reuse histories after rewind/rate change
+			MultiExpansion?.Cancel();
 			PreparedExpansion = null;
 			foreach (MultiVoice[] voices in Multis)
 				foreach (MultiVoice voice in voices)
@@ -845,6 +847,25 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				return false;
 		}
 		return true;
+	}
+
+	/// <summary>Release any obsolete off-thread Multi expansion payloads
+	/// when a running voice is retired, rewound or its edited revision is
+	/// superseded. Each nested invocation owns a separate mailbox, so walk
+	/// the same live Source/Multi tree as audio preparation. This does not
+	/// cancel unrelated sound generations or release DSP state.</summary>
+	public void CancelPendingMultiExpansion(SoundState state)
+	{
+		FmSynthState live = ValidateState(state);
+		live.MultiExpansion?.Cancel();
+		live.PreparedExpansion = null;
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			if (live.Sources[i] is { Sound: FmSynthSound child } source)
+				child.CancelPendingMultiExpansion(source.Invocation.State);
+			foreach (MultiVoice child in live.Multis[i])
+				child.Sound.CancelPendingMultiExpansion(child.Invocation.State);
+		}
 	}
 
 	/// <summary>Schedule only the missing Multi children, retaining every
