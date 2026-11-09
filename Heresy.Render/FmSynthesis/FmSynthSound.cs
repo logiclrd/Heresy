@@ -323,8 +323,23 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						return;
 					}
 					double ratio = next._multiRatios[i][j];
-					SoundInvocation invocation =
-						input.CreateInvocation(pitch * ratio, speed);
+					// A descendant may have a large nested Multi tree.
+					// Check the same immutable revision token throughout
+					// child construction rather than only *between* the
+					// outer children. No active DSP state crosses threads.
+					SoundInvocation invocation;
+					try
+					{
+						invocation = input.CreateInvocationForLiveExpansion(
+							pitch * ratio, speed,
+							() => !IsCurrent(version),
+							scheduler.AfterNestedMultiChildStateCreated);
+					}
+					catch (OperationCanceledException) when (!IsCurrent(version))
+					{
+						DiscardStale(version, scheduler, addedChildren, beforeBytes);
+						return;
+					}
 					MultiVoice child = new(invocation, ratio, multi, j,
 						initialMixGain: 0.0, started: false);
 					child.Invocation.State.SetNoiseSeed(MultiHash(seed
@@ -1023,9 +1038,34 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return new SoundInvocation(this, state, SnapshotNoteConfiguration());
 	}
 
-	private FmSynthState CreateBoundState(
-		double pitchMultiplier, double playbackSpeedMultiplier)
+	/// <summary>Worker-only cancellable construction of a fresh child
+	/// invocation. Existing voices never use this path; the callback is
+	/// checked between expensive nested operations, and cancellation
+	/// discards the new state before it can become audible.</summary>
+	internal SoundInvocation CreateInvocationForLiveExpansion(
+		double pitchMultiplier, double playbackSpeedMultiplier,
+		Func<bool> cancellationRequested,
+		Action? afterNestedChild = null)
 	{
+		ArgumentNullException.ThrowIfNull(cancellationRequested);
+		SoundState state = CreateBoundState(pitchMultiplier,
+			playbackSpeedMultiplier, cancellationRequested, afterNestedChild);
+		return new SoundInvocation(this, state, SnapshotNoteConfiguration());
+	}
+
+	private FmSynthState CreateBoundState(
+		double pitchMultiplier, double playbackSpeedMultiplier,
+		Func<bool>? cancellationRequested = null,
+		Action? afterNestedChild = null)
+	{
+		void CheckCancellation()
+		{
+			if (cancellationRequested?.Invoke() == true)
+				throw new OperationCanceledException(
+					"Obsolete live Multi expansion child construction.");
+		}
+
+		CheckCancellation();
 		if (!(pitchMultiplier > 0.0) || !double.IsFinite(pitchMultiplier))
 			throw new ArgumentOutOfRangeException(nameof(pitchMultiplier));
 		if (!(playbackSpeedMultiplier > 0.0) || !double.IsFinite(playbackSpeedMultiplier))
@@ -1034,6 +1074,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		MultiVoice[][] multis = new MultiVoice[_nodes.Length][];
 		for (int i = 0; i < _nodes.Length; i++)
 		{
+			CheckCancellation();
 			CompiledNode compiled = _nodes[i];
 			if (compiled.Definition is not FmMultiNode multi
 				|| compiled.MultiInput is not FmSynthSound input)
@@ -1046,26 +1087,39 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			double initialMix = multi.GainCompensation ? 1.0 / ratios.Length : 1.0;
 			for (int j = 0; j < voices.Length; j++)
 			{
+				CheckCancellation();
 				bool started = j < ratios.Length;
 				double ratio = started ? ratios[j] : 1.0;
-				SoundInvocation invocation = input.CreateInvocation(
-					pitchMultiplier * ratio, playbackSpeedMultiplier);
+				SoundInvocation invocation = cancellationRequested is null
+					? input.CreateInvocation(
+						pitchMultiplier * ratio, playbackSpeedMultiplier)
+					: input.CreateInvocationForLiveExpansion(
+						pitchMultiplier * ratio, playbackSpeedMultiplier,
+						cancellationRequested, afterNestedChild);
 				voices[j] = new MultiVoice(invocation, ratio, multi, j,
 					started ? initialMix : 0.0, started);
+				afterNestedChild?.Invoke(); // off-worker test gate only
+				CheckCancellation();
 			}
 			multis[i] = voices;
 		}
 
 		for (int i = 0; i < _nodes.Length; i++)
 		{
+			CheckCancellation();
 			if (_nodes[i].Definition is not FmSoundSourceNode node
 				|| _nodes[i].Source is not ISound sound)
 				continue;
 			double childPitch = (node.FrequencyHz / C4FrequencyHz)
 				* (node.Constant ? 1.0 : pitchMultiplier);
 			double childSpeed = node.Constant ? 1.0 : playbackSpeedMultiplier;
-			SoundInvocation? invocation = sound.CreateInvocation(
-				childPitch, childSpeed);
+			SoundInvocation? invocation = sound is FmSynthSound nested
+				&& cancellationRequested is not null
+					? nested.CreateInvocationForLiveExpansion(
+						childPitch, childSpeed, cancellationRequested,
+						afterNestedChild)
+					: sound.CreateInvocation(childPitch, childSpeed);
+			CheckCancellation();
 			if (invocation is not null)
 			{
 				SourceVoice voice = new(invocation,
@@ -1085,7 +1139,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				}
 				sources[i] = voice;
 			}
+			CheckCancellation();
 		}
+		CheckCancellation();
 		FmSynthState state = new(_nodes.Length, _oscillatorCount, sources, multis,
 			pitchMultiplier, playbackSpeedMultiplier, _allowMultiExpansion)
 		{
@@ -1095,6 +1151,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		// Direct CreateState also initializes nested deterministic streams.
 		// PlaybackVoice may rebind these to its unique producer voice seed.
 		state.SetNoiseSeed(state.NoiseSeed);
+		CheckCancellation();
 		if (_preparedChildFilterFactory is { } ready && _hasSources)
 		{
 			// All sample-rate-specific contexts are constructed at the
@@ -1107,6 +1164,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				state.StereoChildContext = new RenderContext(
 					RenderConfiguration.Stereo(ready.SampleRate));
 		}
+		CheckCancellation();
 		return state;
 	}
 
