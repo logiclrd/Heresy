@@ -394,6 +394,57 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
+	public void HeldMultiExpansionPastAuditionReserveWaitsForOffPcmPreparation()
+	{
+		SongDocument document = new();
+		ObjectId id = document.AllocateObjectId();
+		FmSynthGraph Graph(int count) => new([
+			new FmConstantNode(0, 0.25),
+			new FmMultiNode(1, 0, voiceCount: count, detune: 0,
+				randomizePhase: false, gainCompensation: false)], 1);
+		FmSynthDefinition synth = new(id, "Expansion", Graph(2));
+		document.Add(synth);
+		PlaybackRequestAudioSourceFactory factory = new(MonoConfiguration(48000));
+		IAudioOutputSource output = factory.Create(
+			AdHocPlaybackRequest.Create(document,
+				new NoteScheduleBuilder().Freeze(),
+				reserveSynthMultiHeadroom: true));
+		try
+		{
+			((ILiveAudioOutputSource)output).EnqueueLiveEvent(
+				ChannelTarget.Virtual(60), [new StartNoteCommand(id)]);
+			output.Render(90, new float[90]);
+			synth.Graph = Graph(9);
+			document.MarkChanged(affectsAudio: true);
+			((ILiveSynthSourceRevisionOutput)output).EnqueueLiveSynthParameters(
+				id, factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(document), id));
+
+			float[] pending = new float[32];
+			output.Render(pending.Length, pending);
+			pending.Should().OnlyContain(x => Math.Abs(x - 0.5f) < 1e-6f,
+				"the submitted edit cannot construct missing child states in PCM");
+			using FirPreparationScheduler worker = new();
+			((IFirPreparationAudioSource)output).QueuePendingFirControls(worker);
+			Assert.That(SpinWait.SpinUntil(() =>
+				worker.CompletedPreparationCount >= 1,
+				TimeSpan.FromSeconds(5)), Is.True,
+				"the non-PCM worker must prepare the three children missing from the reserve");
+			((IFirPreparationAudioSource)output).AdoptPreparedFirControls();
+			float[] expanded = new float[120];
+			output.Render(expanded.Length, expanded);
+			expanded[0].Should().BeApproximately(0.5f, 1e-6f);
+			expanded[100].Should().BeApproximately(2.25f, 1e-5f,
+				"the original two constituents and seven additional ones must coexist");
+			worker.Fault.Should().BeNull();
+		}
+		finally
+		{
+			(output as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
 	public void CommittedMultiVoiceCountEditFadesNewConstituentsIntoLatchedNote()
 	{
 		SongDocument document = new();
