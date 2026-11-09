@@ -39,10 +39,14 @@ public sealed class FirPreparationScheduler : IDisposable
     private long _completedMulti;
     private long _cancelledMulti;
     private long _preparedMultiConstituents;
+    private long _abandonedMultiConstituents;
     private long _multiPreparationTicks;
     private long _multiPreparationAllocatedBytes;
+    private long _abandonedMultiPreparationAllocatedBytes;
     private long _peakMultiPreparationAllocatedBytes;
     internal Action? BeforePrepareWorkItem { get; set; }
+    // Deterministic concurrency-test gate on the OFF-PCM worker only.
+    internal Action? AfterMultiConstituentPrepared { get; set; }
 
     public FirPreparationScheduler()
     {
@@ -60,8 +64,12 @@ public sealed class FirPreparationScheduler : IDisposable
     public long CancelledMultiExpansionCount => Interlocked.Read(ref _cancelledMulti);
     public long PreparedMultiConstituentCount =>
         Interlocked.Read(ref _preparedMultiConstituents);
+    public long AbandonedMultiConstituentCount =>
+        Interlocked.Read(ref _abandonedMultiConstituents);
     public long MultiPreparationAllocatedBytes =>
         Interlocked.Read(ref _multiPreparationAllocatedBytes);
+    public long AbandonedMultiPreparationAllocatedBytes =>
+        Interlocked.Read(ref _abandonedMultiPreparationAllocatedBytes);
     public long PeakMultiPreparationAllocatedBytes =>
         Interlocked.Read(ref _peakMultiPreparationAllocatedBytes);
     public TimeSpan MultiPreparationElapsedTime =>
@@ -69,8 +77,15 @@ public sealed class FirPreparationScheduler : IDisposable
             / Stopwatch.Frequency);
     public int PeakQueuedWorkItems => Volatile.Read(ref _peakQueuedWorkItems);
     internal void RecordCompleted() => Interlocked.Increment(ref _completed);
-    internal void RecordCancelledMultiExpansion() =>
+    internal void RecordCancelledMultiExpansion(
+        int abandonedChildren = 0, long abandonedAllocatedBytes = 0)
+    {
         Interlocked.Increment(ref _cancelledMulti);
+        Interlocked.Add(ref _abandonedMultiConstituents, abandonedChildren);
+        Interlocked.Add(ref _abandonedMultiPreparationAllocatedBytes,
+            abandonedAllocatedBytes);
+        Max(ref _peakMultiPreparationAllocatedBytes, abandonedAllocatedBytes);
+    }
 
     private static void Max(ref long target, long observed)
     {
