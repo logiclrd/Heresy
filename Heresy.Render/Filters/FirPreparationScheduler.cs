@@ -47,6 +47,8 @@ public sealed class FirPreparationScheduler : IDisposable
     internal Action? BeforePrepareWorkItem { get; set; }
     // Deterministic concurrency-test gate on the OFF-PCM worker only.
     internal Action? AfterMultiConstituentPrepared { get; set; }
+    // Off-thread-only deterministic test hook for deep child construction.
+    internal Action? AfterNestedMultiChildStateCreated { get; set; }
 
     public FirPreparationScheduler()
     {
