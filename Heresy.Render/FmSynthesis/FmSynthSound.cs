@@ -515,6 +515,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 
 	private readonly FmSynthGraph _graph;
 	private readonly CompiledNode[] _nodes;
+	// Single output oscillators are common in Multi child subgraphs. Their
+	// stateful DSP still uses EvaluateOscillator, without the generic graph
+	// dispatch and redundant audible Operator routing on each sample.
+	private readonly CompiledNode? _singleOutputOscillator;
 	// All target ratios are calculated by the preparation worker, never
 	// inside PCM publication or per-frame child rendering.
 	private readonly double[][] _multiRatios;
@@ -632,6 +636,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		}
 
 		_nodes = [.. compiled];
+		_singleOutputOscillator = _nodes.Length == 1
+			&& _nodes[0].Definition is FmOscillatorNode
+			&& _nodes[0].InputIndices.Length == 0
+			? _nodes[0] : null;
 		_multiRatios = _nodes.Select(node => node.Definition is FmMultiNode multi
 			? multi.GetFrequencyRatios() : Array.Empty<double>()).ToArray();
 		_multiReserve = new int[_nodes.Length];
@@ -1791,6 +1799,25 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		}
 
 		bool draining = baseEnd.HasValue && frame >= baseEnd.Value;
+		if (_singleOutputOscillator is { } outputOscillator)
+		{
+			// The single oscillator has no FM ports, downstream Operator,
+			// Filter or other graph state to dispatch. Preserve the exact
+			// original oscillator evaluator, finite checks, phase timing and
+			// both raw/audible value slots for live voice adoption.
+			FmOscillatorNode oscillator =
+				(FmOscillatorNode)outputOscillator.Definition;
+			double value = draining ? 0.0 : EvaluateOscillator(
+				oscillator, outputOscillator, state, pitchMultiplier,
+				context.Configuration.SampleRate);
+			if (!double.IsFinite(value))
+				throw new InvalidOperationException(
+					$"FM node {oscillator.Id} produced a non-finite value.");
+			state.Values[0] = value;
+			state.AudioValues[0] = state.SilentFrom[0] is long silent
+				&& frame >= silent ? 0.0 : value;
+			return state.AudioValues[0];
+		}
 		for (int index = 0;
 			index < _nodes.Length;
 			index++)
