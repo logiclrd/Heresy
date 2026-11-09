@@ -589,6 +589,16 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	/// Stateful nodes must prove that their existing invocation histories
 	/// remain valid. A declined edit leaves the old graph generation intact.</summary>
 	public bool CanAdoptRunningState(FmSynthSound next, SoundState state)
+		=> CanAdoptRunningState(next, state, allowUnpreparedExpansion: false);
+
+	/// <summary>Check structure without requiring an already prepared
+	/// expansion. Used only to admit an off-thread worker request; never
+	/// authorizes a partial or allocation-heavy PCM commit.</summary>
+	public bool CanPrepareMultiExpansion(FmSynthSound next, SoundState state)
+		=> CanAdoptRunningState(next, state, allowUnpreparedExpansion: true);
+
+	private bool CanAdoptRunningState(FmSynthSound next, SoundState state,
+		bool allowUnpreparedExpansion)
 	{
 		ArgumentNullException.ThrowIfNull(next);
 		if (state is not FmSynthState live
@@ -642,13 +652,28 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					// fade and past-note semantics only when the newly
 					// selected Synth advertises an equivalent snapshot.
 					if (source.SourceId != newSource.SourceId
-						&& (!CanMigrateSourceChild(live.Sources[i], revised.Source)
+						&& (!CanMigrateSourceChild(live.Sources[i], revised.Source,
+								allowUnpreparedExpansion)
 							|| live.Sources[i]!.Invocation.Configuration
 								!= revised.Source!.SnapshotNoteConfiguration()))
 						return false;
 					if (live.Sources[i] is { } boundSource
 						&& !double.IsFinite(
 							newSource.FrequencyHz / boundSource.OriginalFrequencyHz))
+						return false;
+					// An otherwise compatible child Synth with an unprepared
+					// Multi expansion must defer the enclosing parent too.
+					// Truly structural child changes still leave the parent
+					// free to adopt its independent scalar edits.
+					if (!allowUnpreparedExpansion
+						&& source.SourceId == newSource.SourceId
+						&& live.Sources[i] is { } childSource
+						&& childSource.Sound is FmSynthSound oldChild
+						&& revised.Source is FmSynthSound newChild
+						&& oldChild.CanAdoptRunningState(newChild,
+							childSource.Invocation.State, true)
+						&& !oldChild.CanAdoptRunningState(newChild,
+							childSource.Invocation.State))
 						return false;
 					break;
 
@@ -665,11 +690,16 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						return false;
 					if (old.MultiInput is not null)
 					{
-						if (next._multiRatios[i].Length > live.Multis[i].Length)
-							return false; // beyond bounded preallocated headroom
+						if (next._multiRatios[i].Length > live.Multis[i].Length
+							&& (live.MultiExpansion is null
+								|| (!allowUnpreparedExpansion
+									&& live.PreparedExpansion?.Matches(next, live)
+										!= true)))
+							return false;
 						foreach (MultiVoice child in live.Multis[i])
 							if (!child.Sound.CanAdoptRunningState(
-								revised.MultiInput!, child.Invocation.State))
+								revised.MultiInput!, child.Invocation.State,
+								allowUnpreparedExpansion))
 								return false;
 					}
 					else if (live.Multis[i].Length != 0
@@ -690,10 +720,13 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	/// implementation's state. A structural edit to the SAME referenced
 	/// Synth stays on its old child generation while the parent may adopt
 	/// otherwise compatible changes.</summary>
-	private static bool CanMigrateSourceChild(SourceVoice? voice, ISound? revised)
+	private static bool CanMigrateSourceChild(
+		SourceVoice? voice, ISound? revised,
+		bool allowUnpreparedExpansion = false)
 		=> voice?.Sound is FmSynthSound original
 			&& revised is FmSynthSound next
-			&& original.CanAdoptRunningState(next, voice.Invocation.State);
+			&& original.CanAdoptRunningState(
+				next, voice.Invocation.State, allowUnpreparedExpansion);
 
 	/// <summary>Transactional preflight over all Filters and nested Multi
 	/// constituents. Every chain validates its targets into owned scratch
@@ -730,6 +763,47 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				return false;
 		}
 		return true;
+	}
+
+	/// <summary>Schedule only the missing Multi children, retaining every
+	/// old child invocation. A single invocation-private mailbox prepares
+	/// all newly needed slots outside the PCM loop. Nested Multi and
+	/// referenced Synths use their own independent mailboxes.</summary>
+	public bool RequestMultiExpansionPreparation(FmSynthSound next, SoundState state)
+	{
+		if (!CanPrepareMultiExpansion(next, state))
+			return false;
+		FmSynthState live = ValidateState(state);
+		bool requested = false;
+		for (int i = 0; i < _nodes.Length; i++)
+			if (next._multiRatios[i].Length > live.Multis[i].Length)
+			{
+				requested = true;
+				if (live.PreparedExpansion?.Matches(next, live) != true)
+					live.MultiExpansion!.Offer(next, live);
+				break; // one request prepares every expanded node in this state
+			}
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			if (_nodes[i].Definition is not FmMultiNode
+				|| next._nodes[i].MultiInput is not FmSynthSound revised)
+				continue;
+			foreach (MultiVoice child in live.Multis[i])
+				requested = child.Sound.RequestMultiExpansionPreparation(
+					revised, child.Invocation.State) || requested;
+		}
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			SourceVoice? child = live.Sources[i];
+			if (!CanMigrateSourceChild(
+				child, next._nodes[i].Source, allowUnpreparedExpansion: true))
+				continue;
+			requested = ((FmSynthSound)child!.Sound)
+				.RequestMultiExpansionPreparation(
+					(FmSynthSound)next._nodes[i].Source!,
+					child.Invocation.State) || requested;
+		}
+		return requested;
 	}
 
 	/// <summary>After structural compatibility was established but a
@@ -774,6 +848,23 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	public void CommitPreparedRunningState(FmSynthSound next, SoundState state)
 	{
 		FmSynthState live = ValidateState(state);
+		// All expansion arrays and child SoundInvocations were allocated and
+		// seeded on the control worker. Splice in old references before
+		// committing any Filter, Source, or Multi parameter updates.
+		PreparedMultiExpansion? expansion = live.PreparedExpansion;
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			MultiVoice[] oldVoices = live.Multis[i];
+			if (next._multiRatios[i].Length <= oldVoices.Length)
+				continue;
+			if (expansion?.Matches(next, live) != true
+				|| expansion.Slots[i] is not MultiVoice[] grown)
+				throw new InvalidOperationException(
+					"Multi expansion must be preflighted and prepared off-thread.");
+			Array.Copy(oldVoices, grown, oldVoices.Length);
+			live.ReplaceMultiVoices(i, grown);
+		}
+		live.PreparedExpansion = null;
 		for (int i = 0; i < _nodes.Length; i++)
 			if (_nodes[i].Filter is { } oldFilter)
 				oldFilter.CommitPreparedLiveStateConfiguration(live.Filters[i]);
@@ -1013,6 +1104,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
     public void AdoptPreparedFirControls(SoundState state)
     {
         FmSynthState synthState = ValidateState(state);
+		if (synthState.MultiExpansion?.TakeReady() is { } expansion)
+			synthState.PreparedExpansion = expansion;
         for (int i = 0; i < _nodes.Length; i++)
             if (_nodes[i].Filter is { } processor
                 && synthState.Filters[i] is { } filterState)
@@ -1029,6 +1122,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
         FirPreparationScheduler scheduler)
     {
         FmSynthState synthState = ValidateState(state);
+		synthState.MultiExpansion?.Queue(scheduler);
         for (int i = 0; i < _nodes.Length; i++)
             if (_nodes[i].Filter is { } processor
                 && synthState.Filters[i] is { } filterState)
