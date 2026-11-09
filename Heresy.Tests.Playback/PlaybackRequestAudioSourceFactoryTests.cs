@@ -1620,13 +1620,16 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 				outputs[i].Render(400, new float[400]);
 			}
 			// 0: baseline; 1: IIR-only; 2: bound-FIR-only;
-			// 3: both. The last branch must commit NEITHER edited stage
-			// until its private FIR kernel is prepared by the worker.
+			// 3: both. The IIR-only branch is prepared now but enqueued
+			// only when the FIR worker is ready, so its coefficient change
+			// occurs at precisely the same sample as the deferred branch.
+			// Otherwise the IIR state histories are legitimately different
+			// even when the two trajectories have equal final coefficients.
 			synths[1].Graph = Graph(900, 5000);
 			synths[2].Graph = Graph(4500, 100);
 			synths[3].Graph = Graph(4500, 5000);
 			song.MarkChanged(affectsAudio: true);
-			for (int i = 1; i < outputs.Length; i++)
+			for (int i = 2; i < outputs.Length; i++)
 				((ILiveSynthSourceRevisionOutput)outputs[i]).EnqueueLiveSynthParameters(
 					ids[i], factory.PrepareLiveSynthSource(
 						SongDocumentSnapshot.Create(song), ids[i]));
@@ -1637,10 +1640,8 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 				outputs[i].Render(55, before[i]);
 			before[3].Should().Equal(before[0],
 				"the bound FIR must block the entire FIR+IIR revision before preparation");
-			double iirBefore = Enumerable.Range(0, 55)
-				.Max(i => Math.Abs(before[1][i] - before[0][i]));
-			iirBefore.Should().BeGreaterThan(0.01,
-				"the IIR-only reference must already have changed");
+			before[1].Should().Equal(before[0],
+				"the independent IIR reference must retain the old state until the same commit boundary");
 
 			using FirPreparationScheduler worker = new();
 			((IFirPreparationAudioSource)outputs[2]).QueuePendingFirControls(worker);
@@ -1650,6 +1651,9 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 				TimeSpan.FromSeconds(5)), Is.True);
 			((IFirPreparationAudioSource)outputs[2]).AdoptPreparedFirControls();
 			((IFirPreparationAudioSource)outputs[3]).AdoptPreparedFirControls();
+			((ILiveSynthSourceRevisionOutput)outputs[1]).EnqueueLiveSynthParameters(
+				ids[1], factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(song), ids[1]));
 
 			float[][] after = Enumerable.Range(0, 4)
 				.Select(_ => new float[700]).ToArray();
