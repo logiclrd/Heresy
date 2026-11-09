@@ -172,7 +172,7 @@ public sealed class FilterDocumentEditorTests
 		FilterDocumentEditor.RemoveStage(
 			workspace, filter, added.StageId, filter.GetStage(added.StageId));
 		Assert.That(notifications.Count, Is.EqualTo(4));
-		Assert.Throws<InvalidOperationException>(() =>
+		Assert.Throws<ArgumentException>(() =>
 			FilterDocumentEditor.RemoveStage(
 				workspace, filter, 1, filter.GetStage(1)));
 		Assert.That(notifications.Count, Is.EqualTo(4));
