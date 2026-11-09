@@ -336,6 +336,64 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
+	public void OnlyExplicitAuditionPreparesDormantMultiCapacityForHeldNotes()
+	{
+		SongDocument document = new();
+		ObjectId id = document.AllocateObjectId();
+		FmSynthGraph Graph(int count) => new([
+			new FmConstantNode(0, 0.25),
+			new FmMultiNode(1, inputNodeId: 0, detune: 0,
+				voiceCount: count, randomizePhase: false,
+				gainCompensation: false)], 1);
+		FmSynthDefinition synth = new(id, "Multi", Graph(2));
+		document.Add(synth);
+		PlaybackRequestAudioSourceFactory factory = new(MonoConfiguration(48000));
+		NoteSchedule schedule = new NoteScheduleBuilder().Freeze();
+		AdHocPlaybackRequest ordinaryRequest =
+			AdHocPlaybackRequest.Create(document, schedule);
+		AdHocPlaybackRequest liveRequest = AdHocPlaybackRequest.Create(
+			document, schedule, reserveSynthMultiHeadroom: true);
+		ordinaryRequest.ReserveSynthMultiHeadroom.Should().BeFalse();
+		liveRequest.ReserveSynthMultiHeadroom.Should().BeTrue();
+
+		IAudioOutputSource ordinary = factory.Create(ordinaryRequest);
+		IAudioOutputSource live = factory.Create(liveRequest);
+		try
+		{
+			foreach (IAudioOutputSource output in new[] { ordinary, live })
+			{
+				((ILiveAudioOutputSource)output).EnqueueLiveEvent(
+					ChannelTarget.Virtual(53), [new StartNoteCommand(id)]);
+				float[] initial = new float[90];
+				output.Render(initial.Length, initial);
+				initial.Should().OnlyContain(x => Math.Abs(x - 0.5f) < 1e-6f);
+			}
+			synth.Graph = Graph(4);
+			document.MarkChanged(affectsAudio: true);
+			var revision = factory.PrepareLiveSynthSource(
+				SongDocumentSnapshot.Create(document), id);
+			foreach (IAudioOutputSource output in new[] { ordinary, live })
+				((ILiveSynthSourceRevisionOutput)output).EnqueueLiveSynthParameters(
+					id, revision);
+
+			float[] ordinaryPcm = new float[120];
+			float[] livePcm = new float[120];
+			ordinary.Render(ordinaryPcm.Length, ordinaryPcm);
+			live.Render(livePcm.Length, livePcm);
+			ordinaryPcm.Should().OnlyContain(x => Math.Abs(x - 0.5f) < 1e-6f,
+				"ordinary playback must not prepare dormant Multi constituents");
+			livePcm[0].Should().BeApproximately(0.5f, 1e-6f);
+			livePcm[100].Should().BeApproximately(1.0f, 1e-6f,
+				"explicitly live-editable audition grows using prepared children");
+		}
+		finally
+		{
+			(ordinary as IDisposable)?.Dispose();
+			(live as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
 	public void CommittedMultiVoiceCountEditFadesNewConstituentsIntoLatchedNote()
 	{
 		SongDocument document = new();
@@ -352,7 +410,8 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			new(MonoConfiguration(48000));
 		IAudioOutputSource output = factory.Create(
 			AdHocPlaybackRequest.Create(document,
-				new NoteScheduleBuilder().Freeze()));
+				new NoteScheduleBuilder().Freeze(),
+				reserveSynthMultiHeadroom: true));
 		try
 		{
 			((ILiveAudioOutputSource)output).EnqueueLiveEvent(
