@@ -633,3 +633,89 @@ complex nested Source/FIR children, cancellation inside an individual
 expensive child constructor, priority/fairness between heterogeneous
 FIR and Multi jobs, and full physical listening acceptance.
 The all-properties live-editing milestone remains open.
+
+## Fifteenth slice: nested-construction cancellation and paced callback instrumentation
+
+### Cancellation within a newly prepared child
+
+The Multi worker previously stopped obsolete jobs between *top-level*
+new children. A child may itself instantiate many nested Multi voices or
+referenced Synth Sources; waiting for that entire constructor to finish
+can waste substantial worker time after the sounding voice has ended.
+
+- Worker-only `FmSynthSound.CreateInvocationForLiveExpansion` now carries
+  an invocation-local cancellation predicate into recursive
+  `CreateBoundState`. It checks before entering each nested Multi/Source
+  node, between nested constituent invocations, after each child
+  construction and after prepared DSP/source context initialization.
+  It recurses through referenced `FmSynthSound` Source invocations,
+  not just through Multi subgraphs.
+- An obsolete snapshot aborts by throwing `OperationCanceledException`
+  *inside new, private worker construction only*. The enclosing Multi
+  expansion mailbox catches it **only when the request really was
+  superseded/cancelled**, discards partial state, records abandoned
+  allocation costs and lets the latest valid request retry. Ordinary
+  sound creation, frozen/offline playback, and the PCM producer never
+  enter this cancellation path.
+- A deterministic worker-gated regression cancels an expansion while
+  it is creating the first of sixty **nested** constituent states.
+  No subsequent nested child is constructed, no obsolete plan can
+  publish, no live DSP history is changed and no scheduler fault is
+  recorded.
+- External `ISound` implementations without the specialized Synth
+  construction interface remain *atomic* child constructors: we
+  check before and after their `CreateInvocation` call but cannot
+  interrupt an arbitrary third-party implementation's internals.
+  Likewise, any individual blocking native DSP constructor requires
+  its own cooperative checkpoints to interrupt mid-operation.
+
+### Sustained simulated callback profile
+
+A one-second, 48-kHz, mono, 256-frame/callback paced regression
+stresses eight live Synth notes requesting 64 Multi constituents
+each. The observer distinguishes **callback execution duration**
+from **host scheduling jitter** and **producer underruns**; it
+records the longest callback, callbacks whose render duration
+exceeded the 5.333-ms nominal period, callbacks started at least
+one period late, actual ring underrun count, minimum buffered
+frames, allocation bytes strictly around `Render`, completed
+off-worker preparation and CPU/wall times.
+
+The assertions enforce safe control behavior, finite PCM and lack
+of rendering failures; **machine-specific timing numbers and
+underrun counts are observations rather than portable CI acceptance
+thresholds**. This simulation is not a substitute for sustained
+hardware tests with real PortAudio/ALSA/CoreAudio/WASAPI device
+callbacks and competing workload. For physical acceptance, measure
+at several block sizes and CPU contention levels on each available
+platform, including audible artifacts and both callback and worker
+allocation profiles.
+
+### Next crossfade-only sound transitions
+
+Two classes still need explicit state-migration policy rather than
+mistaking sudden state replacement for nonstructural live editing:
+
+1. For a Multi `RandomizePhase` / `CycleLength` edit, an already
+   initialized constituent currently retains its original onset.
+   To *hear* revised onset parameters on sustained notes, prepare
+   a **replacement constituent invocation off-thread** with the new
+   phase/cycle state, then transition between old and new rendered
+   contributions over a bounded smooth or equal-power window.
+   Existing phase history is retained until the crossfade completes;
+   a rejected or superseded candidate must leave it untouched.
+2. For structurally incompatible Synth-to-Synth Source or
+   Sample/Instrument reassignment, retain the old child and allow
+   new notes to use the new definition. If the product should
+   migrate an existing note, create a compatible, isolated new
+   child with well-defined note age/position/release policy and
+   crossfade the *audio* without replaying old DSP on the PCM
+   producer. This requires explicit semantics per child type.
+
+Crossfade setup and destruction must occur outside the callback,
+publication must use the existing FIFO revision ordering, and
+multiple overlapping edits must have deterministic latest-wins
+handling. Regression acceptance should verify old-generation
+continuity, finite PCM, bounded amplitude derivative, release
+behavior, nested graph interactions and no on-PCM construction.
+**Neither crossfade policy is claimed implemented in this slice.**
