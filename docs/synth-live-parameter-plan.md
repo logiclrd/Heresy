@@ -981,3 +981,67 @@ GetEndFrameExclusive/lifecycle calls, then choose another hotspot
 based on those results. Actual audio hardware and listening tests
 remain open. Crossfade-only sound transitions and the complete
 all-properties live audition milestone are **not** finished.
+
+## Nineteenth slice: paired in-process profiling and CPU-sampling procedure
+
+The extreme spread in adjacent hosted CI runs after the single-oscillator
+fast path made cross-run before/after timing ratios untrustworthy. The
+next instrumentation slice adds `SynthPairedRenderProfileTests` in
+`Heresy.Tests.Render`, which directly exercises the real
+`FmSynthSound.Render` implementation but controls graph shape,
+identity, PCM timeline, process and trial order.
+
+- Each arm owns a fresh immutable prepared sound and four independent
+  invocation histories, with 64 active Multi children per note at
+  48 kHz. Both arms are warmed independently before measuring seven
+  256-frame rounds in alternating A/B and B/A order. They generate
+  **exactly equal PCM buffers every round**, asserted as a semantic
+  invariant. Only diagnostic timing and managed allocation values
+  are logged; no machine-specific performance assertion was added.
+- A **Sine-versus-identical-Sine** control reveals measurement/order
+  noise in the same process. Two comparisons run a fast-path
+  unmodulated Sine or Square oscillator graph against the identical
+  oscillator with an additional Constant(1) and identity Multiply
+  on the audio path. This intentionally forces the general evaluator.
+  The reference therefore performs more actual DSP work; the
+  observed B/A is a graph-complexity ratio, **not an isolated
+  previous-versus-current implementation speedup**.
+- Logs report runtime, OS, logical CPU count, absolute median
+  microseconds/output-frame, median **paired** B/A ratio, each ratio's
+  min/max and managed bytes allocated on the measured render thread.
+  A later test-only option `HERESY_SYNTH_PROFILE_ROUNDS` accepts
+  7–512 rounds to support sustained local CPU-sampling sessions,
+  while portable CI remains seven rounds. No new instrumentation or
+  profiling switch was placed in production PCM paths.
+
+### First within-process observations
+
+The initial successfully completed Linux Release CI
+[run #42712794635](https://github.com/logiclrd/Heresy/actions/runs/42712794635)
+used .NET 10.0.14 on Ubuntu 26.04.1 with four reported logical CPUs.
+Values are diagnostic **host-specific measurements**, not acceptance
+thresholds:
+
+| Pair | A median µs/output frame | B median µs/output frame | Median paired B/A | Range |
+| --- | ---: | ---: | ---: | ---: |
+| Sine versus Sine control | 161.558 | 158.833 | 0.924 | 0.572–1.044 |
+| Direct Sine versus Sine + identity Multiply | 162.645 | 308.476 | 1.874 | 1.572–1.992 |
+| Direct Square versus Square + identity Multiply | 15.279 | 23.013 | 1.553 | 1.506–2.729 |
+
+Each comparison had **zero managed bytes allocated on the rendering
+thread** during measured blocks and exact PCM equality. The
+same-graph control was not perfectly stable. The consistent separation
+between the direct and expanded graphs supports further investigation
+of graph dispatch, Operator evaluation and per-node audio-value
+routing; it does **not** alone identify a specific hot instruction.
+
+A separate guide, [synth-render-profiling.md](synth-render-profiling.md),
+documents Release commands, the optional longer measurement window,
+Linux `perf` CPU sampling, Windows testhost process sampling, and
+how to distinguish elapsed time from CPU samples. No hardware-specific
+CPU profile or device listening was captured during this slice. Next,
+collect representative local managed stacks on available hosts, inspect
+oscillator graph dispatch and recursive lifecycle/end checks, and
+choose a change only when supported by those samples. The
+all-properties live-edit TODO, crossfade migration and physical
+acceptance remain open. PR #12 stays draft.
