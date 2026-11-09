@@ -366,7 +366,7 @@ public sealed class PlaybackVoice
 		// compare it with the actual sounding generation, not the
 		// superseded candidate. Obsolete worker results cannot publish it.
 		_pendingLiveSynth = null;
-		if (!current.CanAdoptRunningState(next, SoundState))
+		if (!current.CanPrepareMultiExpansion(next, SoundState))
 			return false;
 		if (current.TryPrepareRunningState(next, SoundState))
 		{
@@ -374,7 +374,10 @@ public sealed class PlaybackVoice
 			Sound = next;
 			return true;
 		}
-		if (current.RequestBoundLiveFirPreparation(next, SoundState))
+		bool pending = current.RequestMultiExpansionPreparation(next, SoundState);
+		pending = current.RequestBoundLiveFirPreparation(next, SoundState)
+			|| pending;
+		if (pending)
 			_pendingLiveSynth = next;
 		return false;
 	}
@@ -639,7 +642,7 @@ public sealed class PlaybackVoice
 		if (_pendingLiveSynth is not FmSynthSound revised
 			|| Sound is not FmSynthSound current)
 			return;
-		if (!current.CanAdoptRunningState(revised, SoundState))
+		if (!current.CanPrepareMultiExpansion(revised, SoundState))
 		{
 			_pendingLiveSynth = null;
 			return;
@@ -650,8 +653,15 @@ public sealed class PlaybackVoice
 			Sound = revised;
 			_pendingLiveSynth = null;
 		}
-		else if (!current.RequestBoundLiveFirPreparation(revised, SoundState))
-			_pendingLiveSynth = null;
+		else
+		{
+			bool pending = current.RequestMultiExpansionPreparation(
+				revised, SoundState);
+			pending = current.RequestBoundLiveFirPreparation(
+				revised, SoundState) || pending;
+			if (!pending)
+				_pendingLiveSynth = null;
+		}
     }
 
     internal void QueuePendingFirControls(FirPreparationScheduler scheduler)
