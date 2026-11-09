@@ -132,6 +132,78 @@ public sealed class FmSynthSoundTests
 	}
 
 	[Test]
+	public void SingleOscillatorMatchesGenericGraphAcrossLiveEditsPitchAndRelease()
+	{
+		const int sampleRate = 48000;
+		RenderContext context = MonoContext(sampleRate);
+		foreach (FmOscillatorWaveform waveform in Enum.GetValues<FmOscillatorWaveform>())
+		{
+			foreach (bool constant in new[] { false, true })
+			{
+				FmSynthGraph Graph(FmOscillatorWaveform kind, double frequency,
+					double curvature, bool generic)
+				{
+					FmOscillatorNode oscillator = new(1, kind, frequency,
+						minimum: -0.6, maximum: 0.8, curvature: curvature,
+						constant: constant);
+					return generic
+						? new FmSynthGraph([
+							oscillator, new FmConstantNode(2, 1.0),
+							new FmOperatorNode(3, FmOperatorKind.Multiply, [1, 2])
+						], outputNodeId: 3)
+						: new FmSynthGraph([oscillator], outputNodeId: 1);
+				}
+				FmSynthSound direct = Sound(Graph(waveform, 631, 2.5, false));
+				FmSynthSound generic = Sound(Graph(waveform, 631, 2.5, true));
+				SoundState directState = direct.CreateState();
+				SoundState genericState = generic.CreateState();
+				foreach (SoundState state in new[] { directState, genericState })
+				{
+					state.PitchMultiplier = 1.375;
+					state.PlaybackSpeedMultiplier = 0.75;
+					state.PitchTrajectory.SetMultiplier(95, 1.15);
+				}
+				float[] directPcm = new float[350];
+				float[] genericPcm = new float[350];
+				direct.Render(context, directState, 0, 119,
+					directPcm.AsSpan(0, 119));
+				generic.Render(context, genericState, 0, 119,
+					genericPcm.AsSpan(0, 119));
+
+				// Change all authored oscillator parameters that are legal
+				// non-structural edits while retaining the original phase.
+				FmOscillatorWaveform editedWaveform =
+					waveform == FmOscillatorWaveform.Sine
+						? FmOscillatorWaveform.Sawtooth
+						: FmOscillatorWaveform.Sine;
+				FmSynthSound directRevision = Sound(Graph(
+					editedWaveform, 417, -1.5, false));
+				FmSynthSound genericRevision = Sound(Graph(
+					editedWaveform, 417, -1.5, true));
+				direct.TryPrepareRunningState(directRevision, directState)
+					.Should().BeTrue();
+				generic.TryPrepareRunningState(genericRevision, genericState)
+					.Should().BeTrue();
+				direct.CommitPreparedRunningState(directRevision, directState);
+				generic.CommitPreparedRunningState(genericRevision, genericState);
+				directState.NoteOffTime =
+					TimeSpan.FromSeconds(205.0 / sampleRate);
+				genericState.NoteOffTime = directState.NoteOffTime;
+				directRevision.Render(context, directState, 119, 231,
+					directPcm.AsSpan(119));
+				genericRevision.Render(context, genericState, 119, 231,
+					genericPcm.AsSpan(119));
+
+				directPcm.Should().Equal(genericPcm,
+					"the optimized single oscillator must preserve generic graph " +
+					"waveform math, pitch timeline, live revision phase and release");
+				directPcm[^1].Should().Be(0,
+					"Note Off still ends the standalone oscillator");
+			}
+		}
+	}
+
+	[Test]
 	public void ConstantOscillatorStillRespondsToConnectedLinearAndSemitoneMultipliers()
 	{
 		foreach (bool exponential in new[] { false, true })
