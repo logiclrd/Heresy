@@ -1683,6 +1683,54 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		}
 	}
 
+
+	/// <summary>
+	/// Multi constituents are known FmSynthSound invocations on an isolated
+	/// mono child bus. Render one frame without rebuilding a gain array or
+	/// repeating the generic multi-channel/block dispatch for every child.
+	/// The same per-frame lifecycle, seeking and natural-end bookkeeping as
+	/// Render must apply: this is not a stateless oscillator shortcut.
+	/// </summary>
+	private float RenderMultiChildFrame(
+		RenderContext context, SoundState state, long frame)
+	{
+		FmSynthState child = ValidateState(state);
+		int sampleRate = context.Configuration.SampleRate;
+		if (child.SampleRate != sampleRate)
+			child.Reset(sampleRate);
+		PrepareChildRender(context, child);
+		// Sequential child frames are the common path. EnsureFrame is
+		// necessary only after a first randomized-phase offset, a gap or
+		// an explicit replay, and it may itself render missing history.
+		if (child.NextFrame != frame)
+			EnsureFrame(context, child, frame);
+
+		long? noteOffFrame = child.NoteOffTime.HasValue
+			? FrameTime.Ceiling(child.NoteOffTime.Value, sampleRate) : null;
+		long? baseEnd = GetBaseEndFrameExclusive(sampleRate, child);
+		long? finalEnd = AddAuthoredTailFrames(baseEnd, sampleRate);
+		double value = finalEnd.HasValue && frame >= finalEnd.Value
+			? 0.0
+			: EvaluateFrame(context, child, frame, noteOffFrame, baseEnd);
+
+		child.NextFrame = checked(frame + 1);
+		if (child.ChildEndChanged)
+		{
+			child.ChildEndChanged = false;
+			// Keep the same in-block natural-end reconciliation as Render.
+			// This updates SilentFrom after a newly discovered Sample EOF.
+			GetBaseEndFrameExclusive(sampleRate, child);
+		}
+		// No positional gain may be silently dropped. The Multi mono bus
+		// has zero positional importance, so the spatializer's neutral
+		// fast path returns unity for finite positions, while preserving
+		// its existing non-finite diagnostic behavior.
+		float amplitude = 0;
+		amplitude += (float)(value * Spatializer.CalculateGain(
+			child.Position, context.Configuration.OutputChannels[0]));
+		return amplitude;
+	}
+
 	private void EnsureFrame(
 		RenderContext context,
 		FmSynthState state,
@@ -1846,7 +1894,6 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				releaseFrame, sampleRate, state) ?? long.MaxValue;
 		}
 		double sum = 0.0;
-		Span<float> sample = stackalloc float[1];
 		foreach (MultiVoice voice in voices)
 		{
 			if (!voice.HasStarted)
@@ -1898,10 +1945,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						: Math.Max(0, releaseEnd - voice.StartFrame
 							+ voice.SkipFrames)
 					: null;
-			sample[0] = 0;
-			voice.Sound.Render(state.MonoContext!, child,
-				displaced, 1, sample);
-			double amplitude = sample[0];
+			double amplitude = voice.Sound.RenderMultiChildFrame(
+				state.MonoContext!, child, displaced);
 			if (voice.FadeFrames > 0 && localFrame < voice.FadeFrames)
 			{
 				double t = (double)localFrame / voice.FadeFrames;
