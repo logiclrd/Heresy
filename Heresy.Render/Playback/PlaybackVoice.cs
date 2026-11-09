@@ -352,6 +352,17 @@ public sealed class PlaybackVoice
 	// before the *whole* old voice can migrate in one atomic transaction.
 	private FmSynthSound? _pendingLiveSynth;
 
+	/// <summary>Explicit owner retirement/cut or a new authored revision
+	/// invalidates this voice's pending expansion work. The worker may
+	/// finish the child it was already constructing, but cannot publish
+	/// or retain the obsolete prepared arrays afterward.</summary>
+	internal void CancelPendingLivePreparation()
+	{
+		_pendingLiveSynth = null;
+		if (Sound is FmSynthSound current)
+			current.CancelPendingMultiExpansion(SoundState);
+	}
+
 	internal bool TryAdoptLiveSynth(ObjectId sourceId,
 		ISound previousSound, ISound nextSound)
 	{
@@ -365,12 +376,15 @@ public sealed class PlaybackVoice
 		// When a second edit supersedes a not-yet-prepared first edit,
 		// compare it with the actual sounding generation, not the
 		// superseded candidate. Obsolete worker results cannot publish it.
+		if (_pendingLiveSynth is not null)
+			CancelPendingLivePreparation();
 		_pendingLiveSynth = null;
 		if (!current.CanPrepareMultiExpansion(next, SoundState))
 			return false;
 		if (current.TryPrepareRunningState(next, SoundState))
 		{
 			current.CommitPreparedRunningState(next, SoundState);
+			current.CancelPendingMultiExpansion(SoundState);
 			Sound = next;
 			return true;
 		}
@@ -644,12 +658,13 @@ public sealed class PlaybackVoice
 			return;
 		if (!current.CanPrepareMultiExpansion(revised, SoundState))
 		{
-			_pendingLiveSynth = null;
+			CancelPendingLivePreparation();
 			return;
 		}
 		if (current.TryPrepareRunningState(revised, SoundState))
 		{
 			current.CommitPreparedRunningState(revised, SoundState);
+			current.CancelPendingMultiExpansion(SoundState);
 			Sound = revised;
 			_pendingLiveSynth = null;
 		}
@@ -660,7 +675,7 @@ public sealed class PlaybackVoice
 			pending = current.RequestBoundLiveFirPreparation(
 				revised, SoundState) || pending;
 			if (!pending)
-				_pendingLiveSynth = null;
+				CancelPendingLivePreparation();
 		}
     }
 
