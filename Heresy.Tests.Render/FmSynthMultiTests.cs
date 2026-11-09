@@ -297,6 +297,45 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void RapidSecondMultiEditStartsFromInterpolatedMixInsteadOfJumping()
+    {
+        FmSynthGraph Graph(int count) => new([
+            new FmConstantNode(1, 0.25),
+            new FmMultiNode(2, 1, voiceCount: count, detune: 0,
+                randomizePhase: false, gainCompensation: false),
+        ], 2);
+        RenderContext context = Mono();
+        FmSynthSound old = new(Graph(2), new EmptyEnvelopes());
+        SoundState voice = old.CreateState();
+        old.Render(context, voice, 0, 80, new float[80]);
+        FmSynthSound expanded = new(Graph(4), new EmptyEnvelopes());
+        old.TryPrepareRunningState(expanded, voice).Should().BeTrue();
+        old.CommitPreparedRunningState(expanded, voice);
+        float[] halfFade = new float[32];
+        expanded.Render(context, voice, 80, halfFade.Length, halfFade);
+
+        FmSynthSound reduced = new(Graph(1), new EmptyEnvelopes());
+        expanded.TryPrepareRunningState(reduced, voice).Should().BeTrue();
+        expanded.CommitPreparedRunningState(reduced, voice);
+        float[] second = new float[96];
+        reduced.Render(context, voice, 112, second.Length, second);
+        // At the edit boundary all four constituents start their new
+        // transitions from their currently interpolated gains.
+        double t = 31.0 / 64.0;
+        double smooth = t * t * (3.0 - 2.0 * t);
+        double priorOutput = 0.5 + 0.5 * smooth;
+        second[0].Should().BeApproximately((float)(
+            0.5 + 0.5 * 0.5), 1e-6f,
+            "the previous 32-frame blend must not be restarted at zero");
+        // Before publication was at frame 111; the proposed next-frame
+        // interpolation is at 112, one step further into the first fade.
+        second[0].Should().BeApproximately((float)(
+            0.5 + 0.5 * 0.5), 1e-6f);
+        second[80].Should().BeApproximately(0.25f, 1e-6f);
+        priorOutput.Should().BeGreaterThan(0.5);
+    }
+
+    [Test]
     public void NestedMultiCanRetireAndReviveConstituentsWithoutRestartingParent()
     {
         FmSynthGraph Graph(int innerCount) => new([
