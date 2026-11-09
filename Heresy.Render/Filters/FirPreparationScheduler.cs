@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 
 using Heresy.Core.Filters;
@@ -29,6 +30,19 @@ public sealed class FirPreparationScheduler : IDisposable
     private bool _stopped;
     private Exception? _fault;
     private long _completed;
+    // Only Multi expansion admissions are capped here. FIR mailboxes retain
+    // their existing bounded, per-stage latest-wins scheduling contract.
+    // A refused Multi request stays in its invocation mailbox and retries
+    // on a later producer block without blocking the audio thread.
+    public const int MaximumQueuedMultiExpansions = 64;
+    private int _peakQueuedWorkItems;
+    private long _completedMulti;
+    private long _cancelledMulti;
+    private long _preparedMultiConstituents;
+    private long _multiPreparationTicks;
+    private long _multiPreparationAllocatedBytes;
+    private long _peakMultiPreparationAllocatedBytes;
+    internal Action? BeforePrepareWorkItem { get; set; }
 
     public FirPreparationScheduler()
     {
@@ -42,7 +56,65 @@ public sealed class FirPreparationScheduler : IDisposable
 
     public Exception? Fault => Volatile.Read(ref _fault);
     public long CompletedPreparationCount => Interlocked.Read(ref _completed);
+    public long CompletedMultiExpansionCount => Interlocked.Read(ref _completedMulti);
+    public long CancelledMultiExpansionCount => Interlocked.Read(ref _cancelledMulti);
+    public long PreparedMultiConstituentCount =>
+        Interlocked.Read(ref _preparedMultiConstituents);
+    public long MultiPreparationAllocatedBytes =>
+        Interlocked.Read(ref _multiPreparationAllocatedBytes);
+    public long PeakMultiPreparationAllocatedBytes =>
+        Interlocked.Read(ref _peakMultiPreparationAllocatedBytes);
+    public TimeSpan MultiPreparationElapsedTime =>
+        TimeSpan.FromSeconds((double)Interlocked.Read(ref _multiPreparationTicks)
+            / Stopwatch.Frequency);
+    public int PeakQueuedWorkItems => Volatile.Read(ref _peakQueuedWorkItems);
     internal void RecordCompleted() => Interlocked.Increment(ref _completed);
+    internal void RecordCancelledMultiExpansion() =>
+        Interlocked.Increment(ref _cancelledMulti);
+
+    private static void Max(ref long target, long observed)
+    {
+        long old;
+        while ((old = Interlocked.Read(ref target)) < observed
+            && Interlocked.CompareExchange(ref target, observed, old) != old)
+        {
+        }
+    }
+
+    private void UpdatePeakQueue()
+    {
+        int count = _queue.Count;
+        int old;
+        while ((old = Volatile.Read(ref _peakQueuedWorkItems)) < count
+            && Interlocked.CompareExchange(
+                ref _peakQueuedWorkItems, count, old) != old)
+        {
+        }
+    }
+
+    internal void RecordMultiExpansion(int childCount,
+        long elapsedTicks, long allocatedBytes)
+    {
+        Interlocked.Increment(ref _completedMulti);
+        Interlocked.Add(ref _preparedMultiConstituents, childCount);
+        Interlocked.Add(ref _multiPreparationTicks, elapsedTicks);
+        Interlocked.Add(ref _multiPreparationAllocatedBytes, allocatedBytes);
+        Max(ref _peakMultiPreparationAllocatedBytes, allocatedBytes);
+        RecordCompleted();
+    }
+
+    internal bool TryEnqueueMultiExpansion(IRealtimePreparationWorkItem mailbox)
+    {
+        lock (_gate)
+        {
+            if (_stopped || _queue.Count >= MaximumQueuedMultiExpansions)
+                return false;
+            _queue.Enqueue(mailbox);
+            UpdatePeakQueue();
+            Monitor.Pulse(_gate);
+            return true;
+        }
+    }
 
     internal void Enqueue(IRealtimePreparationWorkItem mailbox)
     {
@@ -50,6 +122,7 @@ public sealed class FirPreparationScheduler : IDisposable
         {
             if (_stopped) return;
             _queue.Enqueue(mailbox);
+            UpdatePeakQueue();
             Monitor.Pulse(_gate);
         }
     }
@@ -68,6 +141,7 @@ public sealed class FirPreparationScheduler : IDisposable
             }
             try
             {
+                BeforePrepareWorkItem?.Invoke(); // deterministic test gate
                 next.Prepare(this);
             }
             catch (Exception exception)
