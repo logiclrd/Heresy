@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 
@@ -20,6 +21,12 @@ public sealed class BufferedAudioOutputSource : ILiveAudioOutputSource, IDisposa
 	private readonly float[] _samples;
 	private readonly int _capacityFrames;
 	private readonly int _blockFrames;
+	private readonly bool _profileProducerRender;
+	private long _producerBlockCount;
+	private long _producerRenderedFrames;
+	private long _producerRenderTicks;
+	private long _peakProducerRenderTicks;
+	private long _producerBlocksOverBudget;
 	private readonly AutoResetEvent _wake = new(false);
 	private readonly Thread _worker;
     private readonly FirPreparationScheduler? _firScheduler;
@@ -32,7 +39,8 @@ public sealed class BufferedAudioOutputSource : ILiveAudioOutputSource, IDisposa
 	public BufferedAudioOutputSource(
 		IAudioOutputSource source,
 		int capacityFrames = 2048,
-		int blockFrames = 256)
+		int blockFrames = 256,
+		bool profileProducerRender = false)
 	{
 		_source = source ?? throw new ArgumentNullException(nameof(source));
 		if (capacityFrames <= 0)
@@ -42,6 +50,7 @@ public sealed class BufferedAudioOutputSource : ILiveAudioOutputSource, IDisposa
 		Format = source.Format;
 		_capacityFrames = capacityFrames;
 		_blockFrames = blockFrames;
+		_profileProducerRender = profileProducerRender;
 		_samples = new float[checked(capacityFrames * Format.ChannelCount)];
         _firScheduler = source is IFirPreparationAudioSource
             ? new FirPreparationScheduler() : null;
@@ -59,6 +68,19 @@ public sealed class BufferedAudioOutputSource : ILiveAudioOutputSource, IDisposa
 	public long BufferedFrames =>
 		Volatile.Read(ref _writtenFrames) - Volatile.Read(ref _readFrames);
 	public long UnderrunCount => Interlocked.Read(ref _underruns);
+	/// <summary>Optional wall-time profile of source.Render on the PCM
+	/// producer, disabled by default to avoid timestamp overhead in ordinary
+	/// playback. The measurements include OS scheduling preemption and
+	/// exclude the separate FIR/Multi preparation worker.</summary>
+	public long ProducerRenderBlockCount => Interlocked.Read(ref _producerBlockCount);
+	public long ProducerRenderedFrames => Interlocked.Read(ref _producerRenderedFrames);
+	public long ProducerBlocksOverBudget => Interlocked.Read(ref _producerBlocksOverBudget);
+	public TimeSpan ProducerRenderElapsedTime => TimeSpan.FromSeconds(
+		(double)Interlocked.Read(ref _producerRenderTicks)
+		/ Stopwatch.Frequency);
+	public TimeSpan PeakProducerRenderBlockTime => TimeSpan.FromSeconds(
+		(double)Interlocked.Read(ref _peakProducerRenderTicks)
+		/ Stopwatch.Frequency);
 	/// <summary>Read-only, allocation-free diagnostics sampled from the
 	/// off-PCM preparation worker. They do not affect callback deadlines.</summary>
 	public long CompletedMultiExpansions =>
@@ -162,7 +184,26 @@ public sealed class BufferedAudioOutputSource : ILiveAudioOutputSource, IDisposa
                 if (_firScheduler is { } scheduler
                     && _source is IFirPreparationAudioSource preparing)
                     preparing.AdoptPreparedFirControls();
+				long started = _profileProducerRender
+					? Stopwatch.GetTimestamp() : 0;
 				_source.Render(count, output);
+				if (_profileProducerRender)
+				{
+					long ticks = Stopwatch.GetTimestamp() - started;
+					Interlocked.Increment(ref _producerBlockCount);
+					Interlocked.Add(ref _producerRenderedFrames, count);
+					Interlocked.Add(ref _producerRenderTicks, ticks);
+					long prior;
+					while ((prior = Interlocked.Read(ref _peakProducerRenderTicks))
+						< ticks
+						&& Interlocked.CompareExchange(
+							ref _peakProducerRenderTicks, ticks, prior) != prior)
+					{
+					}
+					if ((double)ticks / Stopwatch.Frequency
+						> (double)count / Format.SampleRate)
+						Interlocked.Increment(ref _producerBlocksOverBudget);
+				}
                 if (_firScheduler is { } worker
                     && _source is IFirPreparationAudioSource controls)
                     controls.QueuePendingFirControls(worker);
