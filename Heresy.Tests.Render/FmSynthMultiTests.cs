@@ -321,18 +321,13 @@ public sealed class FmSynthMultiTests
         reduced.Render(context, voice, 112, second.Length, second);
         // At the edit boundary all four constituents start their new
         // transitions from their currently interpolated gains.
-        double t = 31.0 / 64.0;
-        double smooth = t * t * (3.0 - 2.0 * t);
-        double priorOutput = 0.5 + 0.5 * smooth;
-        second[0].Should().BeApproximately((float)(
-            0.5 + 0.5 * 0.5), 1e-6f,
-            "the previous 32-frame blend must not be restarted at zero");
-        // Before publication was at frame 111; the proposed next-frame
-        // interpolation is at 112, one step further into the first fade.
-        second[0].Should().BeApproximately((float)(
-            0.5 + 0.5 * 0.5), 1e-6f);
+        // Frame 111 was just before the second edit, frame 112 is the
+        // next sample. At 32/64 the old blend is exactly halfway.
+        second[0].Should().BeApproximately(0.75f, 1e-6f,
+            "the second edit must begin from the interpolated current mix");
+        Math.Abs(second[0] - halfFade[31]).Should().BeLessThan(0.02f,
+            "a rapid edit must not cause an audible gain discontinuity");
         second[80].Should().BeApproximately(0.25f, 1e-6f);
-        priorOutput.Should().BeGreaterThan(0.5);
     }
 
     [Test]
