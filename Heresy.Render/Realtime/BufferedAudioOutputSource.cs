@@ -59,6 +59,22 @@ public sealed class BufferedAudioOutputSource : ILiveAudioOutputSource, IDisposa
 	public long BufferedFrames =>
 		Volatile.Read(ref _writtenFrames) - Volatile.Read(ref _readFrames);
 	public long UnderrunCount => Interlocked.Read(ref _underruns);
+	/// <summary>Read-only, allocation-free diagnostics sampled from the
+	/// off-PCM preparation worker. They do not affect callback deadlines.</summary>
+	public long CompletedMultiExpansions =>
+		_firScheduler?.CompletedMultiExpansionCount ?? 0;
+	public long CancelledMultiExpansions =>
+		_firScheduler?.CancelledMultiExpansionCount ?? 0;
+	public long PreparedMultiConstituents =>
+		_firScheduler?.PreparedMultiConstituentCount ?? 0;
+	public long MultiPreparationAllocatedBytes =>
+		_firScheduler?.MultiPreparationAllocatedBytes ?? 0;
+	public long AbandonedMultiPreparationAllocatedBytes =>
+		_firScheduler?.AbandonedMultiPreparationAllocatedBytes ?? 0;
+	public int PeakPreparationQueueDepth =>
+		_firScheduler?.PeakQueuedWorkItems ?? 0;
+	public TimeSpan MultiPreparationElapsedTime =>
+		_firScheduler?.MultiPreparationElapsedTime ?? TimeSpan.Zero;
 	public Exception? RenderingFault => Volatile.Read(ref _fault)
         ?? _firScheduler?.Fault;
 
