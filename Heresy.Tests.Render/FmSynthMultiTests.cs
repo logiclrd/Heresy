@@ -502,9 +502,9 @@ public sealed class FmSynthMultiTests
         using FirPreparationScheduler worker = new();
         old.QueuePendingFirControls(state, worker);
         Assert.That(SpinWait.SpinUntil(() =>
-            worker.CompletedPreparationCount >= 6,
+            worker.CompletedPreparationCount >= 2,
             TimeSpan.FromSeconds(5)), Is.True,
-            "every existing outer constituent has an independent inner state");
+            "nested Multi graphs have only two real outer voices, each with a separate inner state");
         old.AdoptPreparedFirControls(state);
         old.TryPrepareRunningState(expanded, state).Should().BeTrue();
         old.CommitPreparedRunningState(expanded, state);
