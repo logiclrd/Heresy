@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Numerics;
+using System.Threading;
 
 using AwesomeAssertions;
 using Heresy.Core.Assets;
@@ -10,6 +11,7 @@ using Heresy.Core.Objects;
 using Heresy.Render.Configuration;
 using Heresy.Render.Envelopes;
 using Heresy.Render.FmSynthesis;
+using Heresy.Render.Filters;
 using Heresy.Render.Playback;
 using Heresy.Render.Samples;
 using Heresy.Render.Sounds;
@@ -393,6 +395,124 @@ public sealed class FmSynthMultiTests
         revived.Render(context, state, 180, comeback.Length, comeback);
         comeback[0].Should().BeApproximately(0.2f, 1e-6f);
         comeback[90].Should().BeApproximately(0.6f, 1e-6f);
+    }
+
+    [Test]
+    public void OffThreadMultiExpansionAddsMissingChildrenWithoutRewindingHeldState()
+    {
+        FmSynthGraph Graph(int count, double value) => new([
+            new FmConstantNode(1, value),
+            new FmMultiNode(2, 1, voiceCount: count, detune: 0,
+                randomizePhase: false, gainCompensation: false),
+        ], 2);
+        RenderContext context = Mono();
+        FmSynthSound original = new(Graph(2, 0.25), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        SoundState held = original.CreateState();
+        original.Render(context, held, 0, 101, new float[101]);
+        FmSynthSound revised = new(Graph(9, 0.40), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+
+        original.CanPrepareMultiExpansion(revised, held).Should().BeTrue();
+        original.CanAdoptRunningState(revised, held).Should().BeFalse(
+            "the new child invocations have not yet been created off-thread");
+        original.TryPrepareRunningState(revised, held).Should().BeFalse();
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeTrue();
+        float[] unchanged = new float[18];
+        original.Render(context, held, 101, unchanged.Length, unchanged);
+        unchanged.Should().OnlyContain(x => Math.Abs(x - 0.5f) < 1e-6f,
+            "neither changed constant nor new children may publish prematurely");
+
+        using FirPreparationScheduler worker = new();
+        original.QueuePendingFirControls(held, worker);
+        Assert.That(SpinWait.SpinUntil(() =>
+            worker.CompletedPreparationCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        original.AdoptPreparedFirControls(held);
+        original.CanAdoptRunningState(revised, held).Should().BeTrue();
+        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, held);
+        float[] result = new float[130];
+        revised.Render(context, held, 119, result.Length, result);
+        result[0].Should().BeApproximately(0.8f, 1e-6f,
+            "the two existing children immediately adopt the authored value");
+        result[32].Should().BeInRange(0.8f, 3.6f);
+        result[100].Should().BeApproximately(3.6f, 1e-5f,
+            "seven additional constituents fade in, including three prepared by the worker");
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
+    public void OffThreadMultiExpansionPublishesOnlyTheLatestPreparedRevision()
+    {
+        FmSynthGraph Graph(int count) => new([
+            new FmConstantNode(1, 0.125),
+            new FmMultiNode(2, 1, voiceCount: count, detune: 0,
+                randomizePhase: false, gainCompensation: false),
+        ], 2);
+        FmSynthSound old = new(Graph(2), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        SoundState state = old.CreateState();
+        old.Render(Mono(), state, 0, 100, new float[100]);
+        FmSynthSound superseded = new(Graph(9), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        FmSynthSound current = new(Graph(11), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        old.RequestMultiExpansionPreparation(superseded, state).Should().BeTrue();
+        old.RequestMultiExpansionPreparation(current, state).Should().BeTrue();
+
+        using FirPreparationScheduler worker = new();
+        old.QueuePendingFirControls(state, worker);
+        Assert.That(SpinWait.SpinUntil(() =>
+            worker.CompletedPreparationCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        old.AdoptPreparedFirControls(state);
+        old.CanAdoptRunningState(superseded, state).Should().BeFalse(
+            "superseded worker plans may not publish stale constituent counts");
+        old.CanAdoptRunningState(current, state).Should().BeTrue();
+        old.TryPrepareRunningState(current, state).Should().BeTrue();
+        old.CommitPreparedRunningState(current, state);
+        float[] rendered = new float[120];
+        current.Render(Mono(), state, 100, 120, rendered);
+        rendered[0].Should().BeApproximately(0.25f, 1e-6f);
+        rendered[100].Should().BeApproximately(1.375f, 1e-6f);
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
+    public void OffThreadMultiExpansionRecursesIntoNestedConstituentStates()
+    {
+        FmSynthGraph Graph(int innerCount) => new([
+            new FmConstantNode(1, 0.1),
+            new FmMultiNode(2, 1, voiceCount: innerCount, detune: 0,
+                gainCompensation: false, randomizePhase: false),
+            new FmMultiNode(3, 2, voiceCount: 2, detune: 0,
+                gainCompensation: false, randomizePhase: false),
+        ], 3);
+        RenderContext context = Mono();
+        FmSynthSound old = new(Graph(3), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        SoundState state = old.CreateState();
+        old.Render(context, state, 0, 90, new float[90]);
+        FmSynthSound expanded = new(Graph(9), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        old.CanPrepareMultiExpansion(expanded, state).Should().BeTrue();
+        old.CanAdoptRunningState(expanded, state).Should().BeFalse();
+        old.RequestMultiExpansionPreparation(expanded, state).Should().BeTrue();
+        using FirPreparationScheduler worker = new();
+        old.QueuePendingFirControls(state, worker);
+        Assert.That(SpinWait.SpinUntil(() =>
+            worker.CompletedPreparationCount >= 6,
+            TimeSpan.FromSeconds(5)), Is.True,
+            "every existing outer constituent has an independent inner state");
+        old.AdoptPreparedFirControls(state);
+        old.TryPrepareRunningState(expanded, state).Should().BeTrue();
+        old.CommitPreparedRunningState(expanded, state);
+        float[] result = new float[120];
+        expanded.Render(context, state, 90, 120, result);
+        result[0].Should().BeApproximately(0.6f, 1e-6f);
+        result[100].Should().BeApproximately(1.8f, 1e-5f);
+        worker.Fault.Should().BeNull();
     }
 
     [Test]
