@@ -68,6 +68,56 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void MultiSharesOuterPitchTrajectoryAcrossConstituentsWithoutChangingPhase()
+    {
+        // Two identical Multi children should match a doubled standalone
+        // oscillator even as the parent's piecewise pitch changes. This
+        // guards the per-frame trajectory lookup against accidentally
+        // reusing an old pitch, changing multiplication semantics or
+        // advancing independent child clocks at the wrong frame.
+        FmOscillatorNode oscillator = new(1, FmOscillatorWaveform.Sine,
+            frequencyHz: 330, minimum: -0.7, maximum: 0.8, curvature: 2);
+        FmSynthSound standalone = new(new FmSynthGraph([oscillator], 1),
+            new EmptyEnvelopes());
+        FmSynthSound multi = new(new FmSynthGraph([
+            oscillator,
+            new FmMultiNode(2, 1, voiceCount: 2, detune: 0,
+                randomizePhase: false, gainCompensation: false),
+        ], 2), new EmptyEnvelopes());
+
+        SoundState soloState = standalone.CreateState();
+        SoundState multiState = multi.CreateState();
+        foreach (SoundState state in new[] { soloState, multiState })
+        {
+            state.PitchMultiplier = 1.5;
+            state.PlaybackSpeedMultiplier = 0.5;
+            state.PitchTrajectory.SetMultiplier(53, 1.25);
+            state.PitchTrajectory.SetMultiplier(113, 0.75);
+            state.PitchTrajectory.SetMultiplier(241, 1.875);
+            state.NoteOffTime = TimeSpan.FromSeconds(301.0 / 48000);
+        }
+
+        const int frames = 360;
+        float[] solo = new float[frames];
+        float[] combined = new float[frames];
+        RenderContext context = Mono();
+        standalone.Render(context, soloState, 0, frames, solo);
+        int offset = 0;
+        foreach (int length in new[] { 1, 52, 60, 128, 58, 61 })
+        {
+            multi.Render(context, multiState, offset, length,
+                combined.AsSpan(offset, length));
+            offset += length;
+        }
+        offset.Should().Be(frames);
+        for (int i = 0; i < frames; i++)
+            combined[i].Should().BeApproximately(solo[i] * 2, 1e-5f,
+                "a shared outer trajectory must retune every Multi child " +
+                "without changing oscillator integration or release frames");
+        combined[^1].Should().Be(0);
+    }
+
+    [Test]
     public void NestedMultiCreatesIndependentSubgraphInvocations()
     {
         FmSynthGraph graph = new([
