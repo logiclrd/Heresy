@@ -310,14 +310,23 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			((ILiveSynthSourceRevisionOutput)edited).EnqueueLiveSynthParameters(
 				synthId, factory.PrepareLiveSynthSource(
 					SongDocumentSnapshot.Create(document), synthId));
-			float[] continuedControl = new float[13];
-			float[] continuedEdited = new float[13];
-			control.Render(13, continuedControl);
-			edited.Render(13, continuedEdited);
+			float[] continuedControl = new float[100];
+			float[] continuedEdited = new float[100];
+			control.Render(100, continuedControl);
+			edited.Render(100, continuedEdited);
 			for (int i = 0; i < continuedControl.Length; i++)
+			{
+				// The oscillator's expanded range applies immediately,
+				// but disabling Multi gain compensation now crossfades
+				// each constituent from 1/2 gain to 1 over 64 frames.
+				// All oscillator phases must remain continuous throughout.
+				double t = Math.Min(1.0, (double)i / 64);
+				double smooth = t * t * (3.0 - 2.0 * t);
+				float gain = (float)(2.0 + 2.0 * smooth);
 				continuedEdited[i].Should().BeApproximately(
-					continuedControl[i] * 4.0f, 1e-5f,
-					"each existing constituent retains phase while its prepared sound changes");
+					continuedControl[i] * gain, 1e-5f,
+					"all existing constituents preserve phase during smoothed gain compensation edits");
+			}
 		}
 		finally
 		{
