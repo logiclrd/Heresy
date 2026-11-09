@@ -410,7 +410,7 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 		IAudioOutputSource raw = factory.Create(AdHocPlaybackRequest.Create(
 			document, new NoteScheduleBuilder().Freeze(),
 			reserveSynthMultiHeadroom: true));
-		using BufferedAudioOutputSource buffered = new(raw,
+		BufferedAudioOutputSource buffered = new(raw,
 			capacityFrames: 512, blockFrames: 64);
 		try
 		{
@@ -459,6 +459,7 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 		}
 		finally
 		{
+			buffered.Dispose();
 			(raw as IDisposable)?.Dispose();
 		}
 	}
