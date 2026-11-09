@@ -183,6 +183,140 @@ public sealed class FmSynthMultiTests
         output[275].Should().Be(0.0f);
     }
 
+    [Test]
+    public void LiveMultiCountGrowthAndRetirementCrossfadeWithoutRebuildingChildVoices()
+    {
+        FmSynthGraph Graph(int count) => new([
+            new FmConstantNode(1, 0.25),
+            new FmMultiNode(2, 1, voiceCount: count, detune: 0,
+                randomizePhase: false, gainCompensation: false),
+        ], 2);
+
+        RenderContext context = Mono();
+        FmSynthSound current = new(Graph(2), new EmptyEnvelopes());
+        SoundState voice = current.CreateState();
+        float[] before = new float[80];
+        current.Render(context, voice, 0, 80, before);
+        before.Should().OnlyContain(x => Math.Abs(x - 0.5f) < 1e-6f);
+
+        FmSynthSound grown = new(Graph(4), new EmptyEnvelopes());
+        current.CanAdoptRunningState(grown, voice).Should().BeTrue();
+        current.TryPrepareRunningState(grown, voice).Should().BeTrue();
+        current.CommitPreparedRunningState(grown, voice);
+        float[] growth = new float[130];
+        grown.Render(context, voice, 80, growth.Length, growth);
+        growth[0].Should().BeApproximately(0.5f, 1e-6f,
+            "new children must fade in, not start at full output");
+        growth[32].Should().BeInRange(0.5f, 1.0f);
+        growth[100].Should().BeApproximately(1.0f, 1e-6f);
+
+        FmSynthSound shrunk = new(Graph(1), new EmptyEnvelopes());
+        grown.TryPrepareRunningState(shrunk, voice).Should().BeTrue();
+        grown.CommitPreparedRunningState(shrunk, voice);
+        float[] shrink = new float[130];
+        shrunk.Render(context, voice, 210, shrink.Length, shrink);
+        shrink[0].Should().BeApproximately(1.0f, 1e-6f);
+        shrink[32].Should().BeInRange(0.25f, 1.0f);
+        shrink[100].Should().BeApproximately(0.25f, 1e-6f);
+
+        // Previously retired children keep advancing their own states
+        // silently, so reactivating within the original reserve needs no
+        // note restart, child allocation, or catch-up replay.
+        FmSynthSound revived = new(Graph(3), new EmptyEnvelopes());
+        shrunk.TryPrepareRunningState(revived, voice).Should().BeTrue();
+        shrunk.CommitPreparedRunningState(revived, voice);
+        float[] revival = new float[130];
+        revived.Render(context, voice, 340, revival.Length, revival);
+        revival[0].Should().BeApproximately(0.25f, 1e-6f);
+        revival[100].Should().BeApproximately(0.75f, 1e-6f);
+    }
+
+    [Test]
+    public void LiveDistributionAndDetuneEditsGlideConstituentsWithoutResettingPhases()
+    {
+        FmSynthGraph Graph(FmMultiNode multi) => new([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 150),
+            multi,
+        ], 2);
+        FmMultiNode original = new(2, 1, detune: 0, voiceCount: 2,
+            randomizePhase: false, gainCompensation: false);
+        FmMultiNode harmonic = new(2, 1,
+            distribution: FmMultiDistribution.Harmonic,
+            harmonicComponents: "1 2", randomizePhase: true,
+            gainCompensation: false, cycleLength: 300);
+        FmSynthSound old = new(Graph(original), new EmptyEnvelopes());
+        FmSynthSound control = new(Graph(original), new EmptyEnvelopes());
+        SoundState voice = old.CreateState();
+        SoundState comparison = control.CreateState();
+        RenderContext context = Mono();
+        old.Render(context, voice, 0, 117, new float[117]);
+        control.Render(context, comparison, 0, 117, new float[117]);
+
+        FmSynthSound next = new(Graph(harmonic), new EmptyEnvelopes());
+        old.CanAdoptRunningState(next, voice).Should().BeTrue();
+        old.TryPrepareRunningState(next, voice).Should().BeTrue();
+        old.CommitPreparedRunningState(next, voice);
+        float[] edited = new float[300], reference = new float[300];
+        next.Render(context, voice, 117, 300, edited);
+        control.Render(context, comparison, 117, 300, reference);
+        edited[0].Should().BeApproximately(reference[0], 1e-5f,
+            "the first sample after publication must continue both old phases");
+        edited.Should().OnlyContain(x => float.IsFinite(x));
+        Enumerable.Range(130, 170)
+            .Max(i => Math.Abs(edited[i] - reference[i]))
+            .Should().BeGreaterThan(0.2f,
+                "the second constituent must take its new harmonic pitch");
+    }
+
+    [Test]
+    public void LiveMultiRandomPhaseAndCycleChangesKeepOldOffsetsAndAffectNewNotes()
+    {
+        FmSynthGraph Graph(bool random, double cycle) => new([
+            new FmConstantNode(1, 1),
+            new FmMultiNode(2, 1, detune: 0, voiceCount: 3,
+                randomizePhase: random, cycleLength: cycle,
+                gainCompensation: true),
+        ], 2);
+        FmSynthSound old = new(Graph(false, 100), new EmptyEnvelopes());
+        SoundState voice = old.CreateState();
+        RenderContext context = Mono();
+        old.Render(context, voice, 0, 140, new float[140]);
+        FmSynthSound updated = new(Graph(true, 1024), new EmptyEnvelopes());
+        old.TryPrepareRunningState(updated, voice).Should().BeTrue();
+        old.CommitPreparedRunningState(updated, voice);
+        float[] retained = new float[200];
+        updated.Render(context, voice, 140, retained.Length, retained);
+        retained.Should().OnlyContain(x => Math.Abs(x - 1.0f) < 1e-6f,
+            "already-initialized constituents retain their established offsets");
+        SoundState fresh = updated.CreateState();
+        fresh.SetNoiseSeed(17);
+        float[] onset = new float[1];
+        updated.Render(context, fresh, 0, 1, onset);
+        onset[0].Should().BeLessThan(1.0f,
+            "new notes use the revised randomized onset and cycle policy");
+    }
+
+    [Test]
+    public void LiveMultiGrowthBeyondPreparedCapacityIsRejectedWithoutPartialChanges()
+    {
+        FmSynthGraph Graph(int count, double gain) => new([
+            new FmConstantNode(1, gain),
+            new FmMultiNode(2, 1, detune: 0, voiceCount: count,
+                randomizePhase: false, gainCompensation: false),
+        ], 2);
+        FmSynthSound old = new(Graph(2, 0.25), new EmptyEnvelopes());
+        SoundState voice = old.CreateState();
+        RenderContext context = Mono();
+        old.Render(context, voice, 0, 80, new float[80]);
+        FmSynthSound tooLarge = new(Graph(7, 0.8), new EmptyEnvelopes());
+        old.CanAdoptRunningState(tooLarge, voice).Should().BeFalse(
+            "two existing and four dormant constituents cannot grow to seven");
+        old.TryPrepareRunningState(tooLarge, voice).Should().BeFalse();
+        float[] unchanged = new float[80];
+        old.Render(context, voice, 80, unchanged.Length, unchanged);
+        unchanged.Should().OnlyContain(x => Math.Abs(x - 0.5f) < 1e-6f);
+    }
+
     private static float[] Render(FmSynthGraph graph, int count, ulong seed = 1)
     {
         FmSynthSound sound = new(graph, new EmptyEnvelopes());
