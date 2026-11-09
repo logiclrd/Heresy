@@ -482,28 +482,26 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 
 				case FmMultiNode multi:
 					FmMultiNode nextMulti = (FmMultiNode)revised.Definition;
-					// GainCompensation lives outside the individual child
-					// invocations, so it can change while the constituents
-					// retain their individual phase, playback age and seed.
-					if (multi.Distribution != nextMulti.Distribution
-						|| multi.Detune != nextMulti.Detune
-						|| multi.VoiceCount != nextMulti.VoiceCount
-						|| multi.HarmonicComponents != nextMulti.HarmonicComponents
-						|| multi.ChordComponents != nextMulti.ChordComponents
-						|| multi.RandomizePhase != nextMulti.RandomizePhase
-						|| multi.CycleLength != nextMulti.CycleLength
-						|| (old.MultiInput is null) != (revised.MultiInput is null))
+					// Each constituent's original phase, local time and
+					// Source/Filter histories survive. New detune/distribution
+					// ratios are precompiled and glide forward, while a
+					// change to the active count fades constituents in/out.
+					// No child invocation is constructed during publication.
+					// RandomizePhase and CycleLength are onset settings:
+					// initialized children retain their captured offset.
+					if ((old.MultiInput is null) != (revised.MultiInput is null))
 						return false;
 					if (old.MultiInput is not null)
 					{
-						if (live.Multis[i].Length == 0)
-							return false;
+						if (next._multiRatios[i].Length > live.Multis[i].Length)
+							return false; // beyond bounded preallocated headroom
 						foreach (MultiVoice child in live.Multis[i])
 							if (!child.Sound.CanAdoptRunningState(
 								revised.MultiInput!, child.Invocation.State))
 								return false;
 					}
-					else if (live.Multis[i].Length != 0)
+					else if (live.Multis[i].Length != 0
+						|| next._multiRatios[i].Length != 0)
 						return false;
 					break;
 
@@ -628,6 +626,16 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					revised, child.Invocation.State);
 				child.Sound = revised;
 			}
+			// Every compatible child was fully admitted before we change
+			// the mix. Retuning only preallocated entries is allocation-free.
+			MultiVoice[] voices = live.Multis[i];
+			double[] ratios = next._multiRatios[i];
+			FmMultiNode layout = (FmMultiNode)next._nodes[i].Definition;
+			double mix = layout.GainCompensation ? 1.0 / ratios.Length : 1.0;
+			for (int j = 0; j < voices.Length; j++)
+				voices[j].Retune(
+					j < ratios.Length ? ratios[j] : voices[j].RatioAt(live.NextFrame),
+					j < ratios.Length ? mix : 0.0, live.NextFrame);
 		}
 	}
 
@@ -1077,6 +1085,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		long max = 0;
 		foreach (MultiVoice voice in state.Multis[index])
 		{
+			// Dormant reserves and fully faded-out constituents cannot
+			// extend an otherwise finished note's audible lifetime.
+			if (!voice.CanAffectOutput(state.NextFrame))
+				continue;
 			if (voice.SilenceEnd is not long end)
 				return null;
 			max = Math.Max(max, end);
@@ -1402,10 +1414,13 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		Span<float> sample = stackalloc float[1];
 		foreach (MultiVoice voice in voices)
 		{
+			if (!voice.HasStarted)
+				continue; // dormant growth reserve needs no DSP work
 			SoundState child = voice.Invocation.State;
-			// Maintain the parent's pitch trajectory without a seek or
-			// child invocation allocation during ordinary sample evaluation.
-			child.PitchMultiplier = state.PitchMultiplier * voice.Ratio
+			long localFrame = frame - voice.StartFrame;
+			// Glide the ratio forward without resetting oscillator phase or
+			// re-scaling already-integrated Source playback positions.
+			child.PitchMultiplier = state.PitchMultiplier * voice.RatioAt(frame)
 				* state.PitchTrajectory.GetMultiplier(frame);
 			child.PlaybackSpeedMultiplier = state.PlaybackSpeedMultiplier;
 			if (!voice.Initialized)
@@ -1436,30 +1451,34 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				voice.FadeFrames = (voice.SkipFrames + 1) / 2;
 				voice.Initialized = true;
 			}
-			long displaced = checked(frame + voice.SkipFrames);
+			long displaced = checked(localFrame + voice.SkipFrames);
 			child.NoteOffTime = state.NoteOffTime is TimeSpan off
-				? off + TimeSpan.FromSeconds((double)voice.SkipFrames / sampleRate)
+				? off - TimeSpan.FromSeconds((double)voice.StartFrame / sampleRate)
+					+ TimeSpan.FromSeconds((double)voice.SkipFrames / sampleRate)
 				: null;
 			if (child is FmSynthState inner)
 				inner.InheritedAudioReleaseEnd = externalEnd is long releaseEnd
 					? releaseEnd >= long.MaxValue - voice.SkipFrames
-						? long.MaxValue : releaseEnd + voice.SkipFrames
+						? long.MaxValue
+						: Math.Max(0, releaseEnd - voice.StartFrame
+							+ voice.SkipFrames)
 					: null;
 			sample[0] = 0;
 			voice.Sound.Render(state.MonoContext!, child,
 				displaced, 1, sample);
 			double amplitude = sample[0];
-			if (voice.FadeFrames > 0 && frame < voice.FadeFrames)
+			if (voice.FadeFrames > 0 && localFrame < voice.FadeFrames)
 			{
-				double t = (double)frame / voice.FadeFrames;
+				double t = (double)localFrame / voice.FadeFrames;
 				amplitude *= 0.5 - 0.5 * Math.Cos(Math.PI * t);
 			}
-			sum += amplitude;
+			sum += amplitude * voice.MixAt(frame);
 			long? end = voice.Sound.GetEndFrameExclusive(
 				state.MonoContext!, child);
 			if (end.HasValue)
 			{
-					long audibleEnd = Math.Max(0L, end.Value - voice.SkipFrames);
+					long audibleEnd = Math.Max(0L,
+						end.Value - voice.SkipFrames + voice.StartFrame);
 					if (voice.SilenceEnd != audibleEnd)
 					{
 						voice.SilenceEnd = audibleEnd;
@@ -1467,7 +1486,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					}
 				}
 		}
-		return multi.GainCompensation ? sum / voices.Length : sum;
+		return sum;
 	}
 
 	private static double ProcessAudioFilter(CompiledNode node,
