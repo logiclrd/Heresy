@@ -395,6 +395,68 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
+	public void CuttingHeldNoteCancelsQueuedMultiExpansionBeforeWorkerAllocation()
+	{
+		SongDocument document = new();
+		ObjectId id = document.AllocateObjectId();
+		FmSynthGraph Graph(int count) => new([
+			new FmConstantNode(0, 0.015625),
+			new FmMultiNode(1, 0, voiceCount: count, detune: 0,
+				randomizePhase: false, gainCompensation: false)], 1);
+		FmSynthDefinition synth = new(id, "Cut expansion", Graph(2));
+		document.Add(synth);
+		PlaybackRequestAudioSourceFactory factory =
+			new(MonoConfiguration(48000));
+		IAudioOutputSource output = factory.Create(AdHocPlaybackRequest.Create(
+			document, new NoteScheduleBuilder().Freeze(),
+			reserveSynthMultiHeadroom: true));
+		using ManualResetEventSlim workerEntered = new(false);
+		using ManualResetEventSlim workerRelease = new(false);
+		using FirPreparationScheduler worker = new();
+		worker.BeforePrepareWorkItem = () =>
+		{
+			workerEntered.Set();
+			workerRelease.Wait(TimeSpan.FromSeconds(10));
+		};
+		try
+		{
+			((ILiveAudioOutputSource)output).EnqueueLiveEvent(
+				ChannelTarget.Virtual(132), [new StartNoteCommand(id)]);
+			output.Render(80, new float[80]);
+			synth.Graph = Graph(120);
+			document.MarkChanged(affectsAudio: true);
+			((ILiveSynthSourceRevisionOutput)output).EnqueueLiveSynthParameters(
+				id, factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(document), id));
+			output.Render(1, new float[1]);
+			((IFirPreparationAudioSource)output).QueuePendingFirControls(worker);
+			Assert.That(workerEntered.Wait(TimeSpan.FromSeconds(5)), Is.True,
+				"the Multi worker must be queued before the voice is cut");
+
+			((ILiveAudioOutputSource)output).EnqueueLiveEvent(
+				ChannelTarget.Virtual(132), [new NoteCutCommand()]);
+			output.Render(1, new float[1]);
+		}
+		finally
+		{
+			workerRelease.Set();
+		}
+		try
+		{
+			Assert.That(SpinWait.SpinUntil(() =>
+				worker.CancelledMultiExpansionCount >= 1,
+				TimeSpan.FromSeconds(5)), Is.True);
+			worker.PreparedMultiConstituentCount.Should().Be(0,
+				"retiring the active channel must invalidate the queued plan");
+			worker.Fault.Should().BeNull();
+		}
+		finally
+		{
+			(output as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
 	public void BufferedLiveMultiBurstReportsWorkerCostsWithoutCallbackUnderruns()
 	{
 		SongDocument document = new();
