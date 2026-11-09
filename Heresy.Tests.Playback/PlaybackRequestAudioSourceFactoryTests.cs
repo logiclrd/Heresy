@@ -1660,7 +1660,9 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			{
 				float expected = after[2][i] + after[1][i] - after[0][i];
 				after[3][i].Should().BeApproximately(expected, 1e-4f,
-					"the complete deferred revision must equal the independent FIR+IIR branches");
+					$"frame {i}: baseline={after[0][i]}, IIR-only={after[1][i]}, " +
+					$"FIR-only={after[2][i]}, combined={after[3][i]}; " +
+					"the complete deferred revision must equal independent branches");
 				if (i < 250) continue;
 				firEffect = Math.Max(firEffect,
 					Math.Abs(after[2][i] - after[0][i]));
