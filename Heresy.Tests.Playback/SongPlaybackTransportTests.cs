@@ -5,6 +5,8 @@ using System.Threading.Tasks;
 
 using AwesomeAssertions;
 
+using Heresy.Core.Envelopes;
+using Heresy.Core.Filters;
 using Heresy.Core.Diagnostics;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
@@ -430,6 +432,76 @@ public sealed class SongPlaybackTransportTests
 		factory.PreparedIds.Should().Equal(childId, middleId, siblingId, outerId,
 			childId, middleId, siblingId, outerId);
 		backend.OpenCount.Should().Be(1);
+	}
+
+	[Test]
+	public async Task SharedEnvelopeAndFilterEditsPublishOnlyDependentSynthsAndParents()
+	{
+		SongDocument document = new();
+		ObjectId envelopeId = document.AllocateObjectId();
+		NodeEnvelopeDefinition envelope = new(envelopeId, "Shared Env");
+		document.Add(envelope);
+		ObjectId filterId = document.AllocateObjectId();
+		FilterDefinition filter = new(filterId, "Shared Filter");
+		document.Add(filter);
+		ObjectId rootId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(rootId, "Root", new FmSynthGraph([
+			new FmEnvelopeNode(0, envelopeId),
+			new FmFilterNode(1, 0, new FilterInstance(filter))], 1)));
+		ObjectId parentId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(parentId, "Source Parent",
+			new FmSynthGraph([
+				new FmSoundSourceNode(0, rootId, FmMultiNode.NeutralFrequencyHz)], 0)));
+		ObjectId filterOnlyId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(filterOnlyId, "Filter Only",
+			new FmSynthGraph([
+				new FmConstantNode(0, 0.25),
+				new FmFilterNode(1, 0, new FilterInstance(filter))], 1)));
+		ObjectId envelopeOnlyId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(envelopeOnlyId, "Envelope Only",
+			new FmSynthGraph([new FmEnvelopeNode(0, envelopeId)], 0)));
+		ObjectId unrelatedId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(unrelatedId, "Unrelated",
+			new FmSynthGraph([new FmConstantNode(0, 0.5)], 0)));
+		ObjectId unreferencedId = document.AllocateObjectId();
+		document.Add(new FilterDefinition(unreferencedId, "Unreferenced"));
+
+		PublishingFactory factory = new();
+		TestBackend backend = new();
+		using SongPlaybackTransport transport = new(backend, factory);
+		await transport.PublishSharedObjectEditAsync(document, envelopeId);
+		backend.OpenCount.Should().Be(0,
+			"editing a shared object must never start an audition");
+
+		await transport.SendLiveEventAsync(document, ChannelTarget.Virtual(11),
+			[new StartNoteCommand(parentId)]);
+
+		envelope.ReplaceCurve([new EnvelopeNode(TimeSpan.Zero, 0.75)],
+			0, 0, EnvelopeSustainLoopMode.Forward);
+		document.MarkChanged(affectsAudio: true);
+		await transport.PublishSharedObjectEditAsync(document, envelopeId);
+		factory.PreparedIds.Should().Equal(rootId, envelopeOnlyId, parentId);
+		factory.Source.Order.Should().Equal(
+			"Start:11", "Update", "Update", "Update");
+		backend.OpenCount.Should().Be(1);
+
+		await transport.PublishSharedObjectEditAsync(document, envelopeId);
+		factory.PreparedIds.Should().HaveCount(3,
+			"each dependent Synth is published only once per audio revision");
+
+		filter.SetStageDefaults(1, [
+			new("CutoffHz", FilterParameterValue.FromNumber(2300))]);
+		document.MarkChanged(affectsAudio: true);
+		await transport.PublishSharedObjectEditAsync(document, filterId);
+		factory.PreparedIds.Should().Equal(
+			rootId, envelopeOnlyId, parentId,
+			rootId, filterOnlyId, parentId);
+		backend.OpenCount.Should().Be(1);
+
+		await transport.PublishSharedObjectEditAsync(document, unreferencedId);
+		factory.PreparedIds.Should().HaveCount(6,
+			"unreferenced changes must not republish unrelated Synths");
+		factory.PreparedIds.Should().NotContain(unrelatedId);
 	}
 
 	private sealed class PublishingFactory :
