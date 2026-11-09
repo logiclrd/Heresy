@@ -265,7 +265,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		NewNotePolicy? newNotePolicy = null,
 		ISoundResolver? soundResolver = null,
 		PreparedToneFilterStageFactory? preparedChildFilterFactory = null,
-		bool reserveMultiHeadroom = true)
+		bool reserveMultiHeadroom = false)
 	{
 		ArgumentNullException.ThrowIfNull(graph);
 		ArgumentNullException.ThrowIfNull(envelopeResolver);
@@ -364,10 +364,12 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		int actualConstituents = CountMultiVoices(graph.OutputNodeId);
 		if (actualConstituents > FmMultiNode.MaximumVoices)
 			throw new NotSupportedException("Multi graph exceeds the 128-voice realtime limit.");
-		// Reserve at most four dormant children per top-level, non-nested
-		// Multi, and bound the total reserve by the remaining 128-voice
-		// allowance. Nested Multi subgraphs never recursively reserve
-		// their own growth pool (which could multiply state allocations).
+		// Reserve dormant children ONLY for an explicitly live-editable
+		// audition. Normal pattern/sequence playback, ordinary ad-hoc
+		// rendering and offline export use exactly the authored voice count.
+		// Optional reserve: at most four per top-level, non-nested Multi,
+		// bounded by the remaining 128-voice budget. Nested Multi child
+		// graphs never recursively reserve growth headroom.
 		if (reserveMultiHeadroom)
 		{
 			int free = Math.Min(16, FmMultiNode.MaximumVoices - actualConstituents);

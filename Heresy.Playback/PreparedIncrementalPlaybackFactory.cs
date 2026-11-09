@@ -292,7 +292,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 	/// renderer; only the supplied already-resolved NoteSchedule is transient.
 	/// </summary>
 	public PreparedIncrementalPlaybackPlan CreateAdHoc(
-		SongDocumentSnapshot snapshot, NoteSchedule schedule)
+		SongDocumentSnapshot snapshot, NoteSchedule schedule,
+		bool reserveSynthMultiHeadroom = false)
 	{
 		ArgumentNullException.ThrowIfNull(snapshot);
 		ArgumentNullException.ThrowIfNull(schedule);
@@ -301,7 +302,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 		PreparedRoslynIncrementalScriptSources scripts = new(frozen);
 		PlaybackSnapshotSoundResolver sounds = new(
 			SongDocumentSnapshot.Create(frozen.Document).Document, _samples,
-			_configuration.SampleRate);
+			_configuration.SampleRate, reserveSynthMultiHeadroom);
 		sounds.PrepareDirectSources();
 		AdHocPattern transient = new(frozen.Document.AllocateObjectId(), schedule);
 		SequencingContext context = new();

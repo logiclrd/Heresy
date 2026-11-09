@@ -438,7 +438,8 @@ public sealed class SongPlaybackTransport
 		try
 		{
 			PlaybackRequest request = AdHocPlaybackRequest.Create(
-				document, new NoteScheduleBuilder().Freeze());
+				document, new NoteScheduleBuilder().Freeze(),
+				reserveSynthMultiHeadroom: true);
 			await _controller.PlayAsync(request).ConfigureAwait(false);
 			PublishPlaybackSnapshot(document, request.Snapshot.AudioRevision);
 			lock (_positionGate)

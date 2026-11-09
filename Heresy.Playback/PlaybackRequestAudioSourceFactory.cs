@@ -86,9 +86,12 @@ public sealed class PlaybackRequestAudioSourceFactory :
 		RenderConfiguration configuration = _configurationSource()
 			?? throw new InvalidOperationException(
 				"The playback output configuration source returned null.");
+		// Replacement Synth generations are prepared for live editing.
+		// They must retain headroom for subsequent audition revisions.
 		PlaybackSnapshotSoundResolver sounds = new(
 			SongDocumentSnapshot.Create(snapshot.Document).Document,
-			_samples, configuration.SampleRate);
+			_samples, configuration.SampleRate,
+			reserveSynthMultiHeadroom: true);
 		sounds.PrepareDirectSources();
 		if (!sounds.TryResolve(sourceId, mixdown: false, out ISound? result)
 			|| result is not FmSynthSound)
@@ -118,7 +121,8 @@ public sealed class PlaybackRequestAudioSourceFactory :
 					startRow: pattern.StartRow,
 					repeatPattern: pattern.Repeat),
 				AdHocPlaybackRequest adHoc =>
-					factory.CreateAdHoc(adHoc.Snapshot, adHoc.Schedule),
+					factory.CreateAdHoc(adHoc.Snapshot, adHoc.Schedule,
+						reserveSynthMultiHeadroom: adHoc.ReserveSynthMultiHeadroom),
 				_ => throw new NotSupportedException(
 					$"Unsupported playback request: {request.GetType().Name}"),
 			};
