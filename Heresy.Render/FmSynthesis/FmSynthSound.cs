@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Threading;
 
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
@@ -134,14 +135,173 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		}
 	}
 
+	/// <summary>Fresh Multi children and replacement arrays constructed off
+	/// the PCM thread. Existing histories are inserted only when the entire
+	/// voice has passed atomic preflight, not read by this worker.</summary>
+	private sealed class PreparedMultiExpansion(
+		FmSynthSound revision, MultiVoice[]?[] slots, int[] capacities,
+		ulong seed, double pitch, double speed)
+	{
+		public MultiVoice[]?[] Slots { get; } = slots;
+		public bool Matches(FmSynthSound next, FmSynthState state)
+		{
+			if (!ReferenceEquals(revision, next) || seed != state.NoiseSeed
+				|| pitch != state.BoundPitch || speed != state.BoundSpeed)
+				return false;
+			for (int i = 0; i < capacities.Length; i++)
+				if (capacities[i] != state.Multis[i].Length)
+					return false;
+			return true;
+		}
+	}
+
+	/// <summary>Latest-wins per-invocation mailbox. The producer captures
+	/// only immutable definitions and scalar state at its own boundary;
+	/// the existing off-PCM FIR scheduler also prepares these new children.
+	/// Superseded results cannot be published by an older worker request.</summary>
+	private sealed class MultiExpansionMailbox(int nodeCount)
+		: IRealtimePreparationWorkItem
+	{
+		private readonly object _gate = new();
+		private readonly int[] _capacities = new int[nodeCount];
+		private readonly int[] _workCapacities = new int[nodeCount];
+		private FmSynthSound? _revision;
+		private ulong _seed;
+		private double _pitch, _speed;
+		private long _version, _workingVersion;
+		private bool _pending, _queued;
+		private PreparedMultiExpansion? _ready;
+
+		public void Offer(FmSynthSound next, FmSynthState state)
+		{
+			lock (_gate)
+			{
+				bool identical = ReferenceEquals(_revision, next)
+					&& _seed == state.NoiseSeed && _pitch == state.BoundPitch
+					&& _speed == state.BoundSpeed;
+				for (int i = 0; identical && i < _capacities.Length; i++)
+					identical = _capacities[i] == state.Multis[i].Length;
+				if (identical && (_pending || _queued || _ready is not null))
+					return;
+				_revision = next;
+				_seed = state.NoiseSeed;
+				_pitch = state.BoundPitch;
+				_speed = state.BoundSpeed;
+				for (int i = 0; i < _capacities.Length; i++)
+					_capacities[i] = state.Multis[i].Length;
+				_version++;
+				_pending = true;
+				_ready = null;
+			}
+		}
+
+		public void Queue(FirPreparationScheduler scheduler)
+		{
+			bool enqueue;
+			lock (_gate)
+			{
+				enqueue = _pending && !_queued;
+				if (enqueue)
+				{
+					_pending = false;
+					_queued = true;
+				}
+			}
+			if (enqueue) scheduler.Enqueue(this);
+		}
+
+		public PreparedMultiExpansion? TakeReady()
+		{
+			lock (_gate)
+			{
+				PreparedMultiExpansion? ready = _ready;
+				_ready = null;
+				return ready;
+			}
+		}
+
+		public void Prepare(FirPreparationScheduler scheduler)
+		{
+			FmSynthSound next;
+			double pitch, speed;
+			ulong seed;
+			long version;
+			lock (_gate)
+			{
+				version = _version;
+				_workingVersion = version;
+				next = _revision!;
+				seed = _seed;
+				pitch = _pitch;
+				speed = _speed;
+				Array.Copy(_capacities, _workCapacities, _capacities.Length);
+			}
+			MultiVoice[]?[] slots = new MultiVoice[]?[next._nodes.Length];
+			for (int i = 0; i < next._nodes.Length; i++)
+			{
+				int target = next._multiRatios[i].Length;
+				int retained = _workCapacities[i];
+				if (target <= retained)
+					continue;
+				FmSynthSound input = next._nodes[i].MultiInput
+					?? throw new InvalidOperationException(
+						"Multi expansion requires a prepared child sound.");
+				FmMultiNode multi = (FmMultiNode)next._nodes[i].Definition;
+				MultiVoice[] voices = new MultiVoice[target];
+				for (int j = retained; j < target; j++)
+				{
+					double ratio = next._multiRatios[i][j];
+					SoundInvocation invocation =
+						input.CreateInvocation(pitch * ratio, speed);
+					MultiVoice child = new(invocation, ratio, multi, j,
+						initialMixGain: 0.0, started: false);
+					child.Invocation.State.SetNoiseSeed(MultiHash(seed
+						^ ((ulong)(uint)multi.Id << 32)
+						^ (ulong)(uint)(j + 1)));
+					voices[j] = child;
+				}
+				slots[i] = voices;
+			}
+			PreparedMultiExpansion candidate = new(next, slots,
+				(int[])_workCapacities.Clone(), seed, pitch, speed);
+			bool retry;
+			lock (_gate)
+			{
+				retry = _version != version;
+				if (!retry)
+				{
+					_ready = candidate;
+					_queued = false;
+				}
+			}
+			if (retry) scheduler.Enqueue(this);
+			else scheduler.RecordCompleted();
+		}
+
+		public void MarkFailed(FirPreparationScheduler scheduler)
+		{
+			bool retry;
+			lock (_gate)
+			{
+				_ready = null;
+				retry = _version != _workingVersion;
+				if (!retry) _queued = false;
+			}
+			if (retry) scheduler.Enqueue(this);
+		}
+	}
+
 	private sealed class FmSynthState : SoundState
 	{
 		public FmSynthState(
 			int nodeCount,
 			int oscillatorCount,
 			SourceVoice?[] sources, MultiVoice[][] multis,
-			double boundPitch, double boundSpeed)
+			double boundPitch, double boundSpeed,
+			bool allowMultiExpansion)
 		{
+			MultiExpansion = allowMultiExpansion
+				? new MultiExpansionMailbox(nodeCount) : null;
 			BoundPitch = boundPitch;
 			BoundSpeed = boundSpeed;
 			Values = new double[nodeCount];
@@ -160,6 +320,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		public FmFilterNodeProcessor.State?[] Filters { get; }
 		public SourceVoice?[] Sources { get; private set; }
 		public MultiVoice[][] Multis { get; private set; }
+		public MultiExpansionMailbox? MultiExpansion { get; }
+		public PreparedMultiExpansion? PreparedExpansion { get; set; }
+		public void ReplaceMultiVoices(int index, MultiVoice[] voices)
+			=> Multis[index] = voices;
 		public double BoundPitch { get; }
 		public double BoundSpeed { get; }
 		public RenderContext? MonoContext { get; set; }
@@ -205,6 +369,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			// are invocation-local and must start from fresh state.
 			Sources = rebuilt.Sources;
 			Multis = rebuilt.Multis;
+			PreparedExpansion = null;
 			MonoContext = rebuilt.MonoContext;
 			StereoChildContext = rebuilt.StereoChildContext;
 			SetNoiseSeed(NoiseSeed); // propagate original invocation identity
@@ -218,6 +383,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			Array.Clear(SilentFrom);
 			Array.Clear(Phases);
 			Array.Clear(Filters); // never reuse histories after rewind/rate change
+			PreparedExpansion = null;
 			foreach (MultiVoice[] voices in Multis)
 				foreach (MultiVoice voice in voices)
 				{
@@ -248,6 +414,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	private readonly double[][] _multiRatios;
 	private readonly int[] _multiReserve;
 	private readonly bool _hasMulti;
+	private readonly bool _allowMultiExpansion;
 	private readonly int _outputIndex;
 	private readonly int _oscillatorCount;
 	private readonly NewNotePolicy _newNotePolicy;
@@ -265,11 +432,13 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		NewNotePolicy? newNotePolicy = null,
 		ISoundResolver? soundResolver = null,
 		PreparedToneFilterStageFactory? preparedChildFilterFactory = null,
-		bool reserveMultiHeadroom = false)
+		bool reserveMultiHeadroom = false,
+		bool enableLiveMultiExpansion = false)
 	{
 		ArgumentNullException.ThrowIfNull(graph);
 		ArgumentNullException.ThrowIfNull(envelopeResolver);
 		_graph = graph;
+		_allowMultiExpansion = reserveMultiHeadroom || enableLiveMultiExpansion;
 
 		_newNotePolicy =
 			newNotePolicy
@@ -340,7 +509,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			FmSynthSound? multiInput = node is FmMultiNode { InputNodeId: int multiId }
 				? new FmSynthSound(new FmSynthGraph(graph.Nodes, multiId),
 					envelopeResolver, newNotePolicy, soundResolver,
-					preparedChildFilterFactory, reserveMultiHeadroom: false)
+					preparedChildFilterFactory, reserveMultiHeadroom: false,
+					enableLiveMultiExpansion: _allowMultiExpansion)
 				: null;
 			compiled.Add(
 				new CompiledNode(
@@ -718,7 +888,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			}
 		}
 		FmSynthState state = new(_nodes.Length, _oscillatorCount, sources, multis,
-			pitchMultiplier, playbackSpeedMultiplier)
+			pitchMultiplier, playbackSpeedMultiplier, _allowMultiExpansion)
 		{
 			PitchMultiplier = pitchMultiplier,
 			PlaybackSpeedMultiplier = playbackSpeedMultiplier,
