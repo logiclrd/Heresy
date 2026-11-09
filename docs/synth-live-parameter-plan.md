@@ -212,3 +212,46 @@ Remaining exclusions: edits to parameters with active FM Filter input
 bindings, structural stage edits, child-source rebinding, Multi topology,
 and click-safe edit smoothing. Per-voice acceptance remains independent,
 and the all-properties Synth TODO remains open.
+
+## Eighth slice: authored controls alongside active FM Filter bindings
+
+Authoring a Filter parameter and driving that parameter through an FM input
+have different semantics. A connected numeric port supplies an **absolute**
+control value to the DSP; the authored value is its fallback, not an offset.
+Consequently, changing a connected port's authored fallback must neither
+reset the held voice nor silently overwrite its last accepted modulation.
+
+For live migration, Filter processor comparison now checks connected stage,
+parameter and compiled source routing **without comparing authored
+InitialValue**. Unchanged routing and stage identities remain mandatory.
+Changes to *connected* authored fallback values are DSP no-ops for that
+voice; the revised definition still applies to later new notes.
+
+For changed **unconnected** numeric parameters in a Filter with active
+connections, the two-phase transaction builds effective coefficient targets
+using each bound parameter's existing, accepted invocation-local
+`state.Values`, and each unbound parameter's newly authored value. This
+preserves live cutoff/Q/resonance/etc. controls and stateful IIR histories
+while applying changes to other numeric properties of the same stage.
+Subsequent FM changes continue to use the newly compiled static defaults.
+The change composes with the prior whole-tree atomic cross-Filter/Multi
+preflight: an invalid later target rejects the entire voice's adoption.
+
+Only supported allocation-free numeric IIR families can retune an unbound
+parameter on an actively modulated Filter. Unmodulated FIR stages elsewhere
+in that Filter can still use off-thread-prepared FIR plans; an FIR stage
+with its **own connected controls** cannot yet adopt a change to another
+unbound FIR design parameter, because its new kernel would have to be
+prepared against the invocation's actual bound-control snapshot rather
+than the authored fallback. Connected-only FIR fallback edits are no-ops
+and remain compatible. Unsupported slow compatibility-family retunes and
+FM port rewiring still conservatively retain the previous sound for
+existing notes.
+
+PCM regressions compare authored Q changes with an independent
+FM-controlled-Q reference while cutoff remains continuously modulated,
+test silent edits to connected fallback and later FM retuning, test shared
+Filter definition defaults without changing the Synth graph, and test
+whole-voice rollback when an FM-bound later Filter has an invalid
+unbound coefficient. The all-properties TODO remains open, including
+bound-FIR mixed-parameter kernel preparation and smoothing.
