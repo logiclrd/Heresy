@@ -217,6 +217,7 @@ public sealed class MainWindow : Window
 		};
 		_workspace = workspace
 			?? throw new ArgumentNullException(nameof(workspace));
+		_workspace.SharedAudioObjectCommitted += OnSharedAudioObjectCommitted;
 		_playbackTransport = playbackTransport;
 		_audioOutputSettings = audioOutputSettings ?? new AudioOutputSettings();
 		_exportService = exportService ??
@@ -283,6 +284,7 @@ public sealed class MainWindow : Window
 					OnPlaybackSnapshotChanged;
 			if (_observedDocument is not null)
 				_observedDocument.Changed -= OnDocumentChanged;
+			_workspace.SharedAudioObjectCommitted -= OnSharedAudioObjectCommitted;
 			_runtimeDiagnosticsWindow?.Close();
 			_scopeHost.Shutdown();
 			if (_playbackPositionTransport is not null)
@@ -3009,6 +3011,42 @@ public sealed class MainWindow : Window
 				SetStatus($"Audio playback failed: {e.Fault.Message}");
 			}
 		});
+	}
+
+	/// <summary>Shared authoring editors identify the exact Filter/Envelope
+	/// whose audio content was committed. Queue dependent Synth publications
+	/// through the transport's command gate; never reopen playback here.</summary>
+	private void OnSharedAudioObjectCommitted(
+		object? sender, SharedAudioObjectCommittedEventArgs e)
+	{
+		if (_windowClosed || !ReferenceEquals(sender, _workspace)
+			|| !ReferenceEquals(e.Document, _workspace.Document)
+			|| _playbackTransport is not ILiveSynthEditTransport)
+			return;
+		if (Dispatcher.UIThread.CheckAccess())
+			_ = PublishSharedAudioObjectEditAsync(e.Document, e.ObjectId);
+		else
+			Dispatcher.UIThread.Post(() =>
+			{
+				if (!_windowClosed && ReferenceEquals(e.Document, _workspace.Document))
+					_ = PublishSharedAudioObjectEditAsync(e.Document, e.ObjectId);
+			});
+	}
+
+	private async Task PublishSharedAudioObjectEditAsync(
+		SongDocument document, ObjectId objectId)
+	{
+		if (_playbackTransport is not ILiveSynthEditTransport edits)
+			return;
+		try
+		{
+			await edits.PublishSharedObjectEditAsync(document, objectId);
+		}
+		catch (Exception error)
+		{
+			if (!_windowClosed && ReferenceEquals(document, _workspace.Document))
+				SetStatus($"Could not publish shared Synth dependency: {error.Message}");
+		}
 	}
 
 	/// <summary>Document notifications are raised by the editing caller;
