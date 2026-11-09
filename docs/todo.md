@@ -84,6 +84,26 @@ Do not reintroduce completed-task checklists here.
   physical-device and codec evidence is still required. See
   [audio output](audio-output.md) and [export workflow](export-workflow.md).
 
+## Synth editor — UI defects
+
+- [ ] **Distinguish Caps Lock from Shift in Synth numeric text input under
+  Xephyr.** With the Synth preview mode set to **Latch** (Caps Lock on),
+  entering `0.2` into Vmax currently produces `)>@`, as if Shift were
+  held down. Investigate keyboard modifier translation in the Xephyr/X11
+  input path and ensure Caps Lock affects alphabetic case without shifting
+  digit/punctuation characters. Reproduce with Latch/Caps Lock on and off,
+  verify `0.2` and symbols in numeric fields, and regression-test modifier
+  handling where possible. Do not alter Latch's intended Caps Lock behavior.
+  See [UI workflow](user-interface-workflows.md).
+
+- [ ] **Align Synth graph node attachment points with their labels.**
+  Input/output connection anchors currently appear visually displaced from
+  the corresponding node-port labels. Audit the graph editor's label,
+  socket, hit-target and connection-line coordinates (including any scaling
+  or text metrics), correct the visual alignment, and verify mouse hit
+  testing and wire drawing stay aligned at different node layouts/scales.
+  See [UI workflow](user-interface-workflows.md).
+
 ## Synth editor — live parameter audition
 
 - [ ] **Apply *all non-structural Synth property changes* to ongoing preview
