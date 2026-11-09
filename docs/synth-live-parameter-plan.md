@@ -255,3 +255,49 @@ Filter definition defaults without changing the Synth graph, and test
 whole-voice rollback when an FM-bound later Filter has an invalid
 unbound coefficient. The all-properties TODO remains open, including
 bound-FIR mixed-parameter kernel preparation and smoothing.
+
+## Ninth slice: per-voice off-thread FIR designs for mixed bound/unbound parameters
+
+The previously deferred case of a **live FM-controlled FIR stage** whose
+other non-structural cutoff is edited now uses a bounded, invocation-local
+preparation path instead of falling back to the old captured Synth forever.
+
+- A Filter with a partial FIR binding (for example a BandPass whose
+  `LowCutoffHz` is driven by FM and whose `HighCutoffHz` is edited)
+  captures a complete FIR control request from the voice's **last accepted
+  absolute FM values**, plus the new unbound authored values. It never
+  substitutes the edited authored *fallback* for a connected port.
+- The request is admitted by the established FIR work/memory policy, then
+  queued in a dedicated per-voice latest-wins `FirPreparationMailbox` on
+  the normal FIR scheduler thread. It is independent of that same Filter's
+  existing realtime FM-control mailbox: a pending authoring kernel cannot
+  accidentally be applied by ordinary PCM modulation.
+- The original voice, including other edited IIR stages and nested Multi
+  constituents, **remains on its previous generation** until its complete
+  new Synth definition can be atomically preflighted and committed.
+  Prepared kernels are checked against the current accepted controls:
+  stale plans are rejected, and later revisions supersede unprepared edits.
+  If modulation changes while the worker runs, a new bounded snapshot can
+  be offered at the next PCM control boundary.
+- The already-established two-phase IIR/FIR transaction then commits all
+  compatible live changes together without rewinding oscillator phase,
+  envelope age, or FIR/IIR histories. FIR tap/window/FFT design, Filter
+  cloning, and kernel preparation remain entirely outside the audio loop.
+- The existing buffered audio host drives the per-voice work through its
+  normal `QueuePendingFirControls` and `AdoptPreparedFirControls`
+  boundaries. Standalone/direct output can explicitly drive the same
+  `IFirPreparationAudioSource` handoff for deterministic testing.
+
+PCM tests cover an FM-bound FIR BandPass cutoff whose other cutoff changes
+while the note is held, no publication before preparation, latest-edit wins,
+a connected FM value differing from the edited authored fallback, and a
+simultaneous FIR+IIR change whose **entire** update waits for the FIR
+worker and then matches independent branch superposition.
+
+The per-voice pending snapshot is bounded; continually moving audio-rate
+FM targets may starve a never-matching FIR design rather than allowing a
+stale or mismatched kernel through. Profile that case, policy decisions for
+resampling/quantizing held controls, further fallback behavior, callbacks,
+allocation budgets and physical listening separately before closing the
+all-properties milestone. Structural FIR modifications, FM port rewiring,
+Source rebinding, Multi topology and click-safe smoothing remain open.
