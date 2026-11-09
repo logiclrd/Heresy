@@ -230,18 +230,69 @@ public sealed class SongPlaybackTransport
 				|| !ReferenceEquals(_liveAuditionDocument, document)
 				|| !_controller.SupportsLiveSynthPublication)
 				return;
-			if (_preparedSynthRevisions.TryGetValue(sourceId, out uint revision)
-				&& revision == document.AudioRevision)
-				return;
-			SongDocumentSnapshot snapshot = SongDocumentSnapshot.Create(document);
-			await _controller.PublishLiveSynthParametersAsync(snapshot, sourceId)
-				.ConfigureAwait(false);
-			_preparedSynthRevisions[sourceId] = snapshot.AudioRevision;
+			// A Synth may itself be the child Source of one or more other
+			// Synths. Publish all affected parents from the SAME detached
+			// snapshot; publishing only the edited object would strand
+			// latched parent voices and the next parent NoteOn on old data.
+			// The edited child precedes direct and transitive parents.
+			IReadOnlyList<ObjectId> affected =
+				GetDependentSynths(document, sourceId);
+			SongDocumentSnapshot? snapshot = null;
+			foreach (ObjectId affectedId in affected)
+			{
+				if (_preparedSynthRevisions.TryGetValue(affectedId,
+					out uint revision)
+					&& revision == document.AudioRevision)
+					continue;
+				snapshot ??= SongDocumentSnapshot.Create(document);
+				await _controller.PublishLiveSynthParametersAsync(
+						snapshot, affectedId).ConfigureAwait(false);
+				_preparedSynthRevisions[affectedId] = snapshot.AudioRevision;
+			}
 		}
 		finally
 		{
 			_commandGate.Release();
 		}
+	}
+
+	/// <summary>Collect a Synth and its transitive Source dependents
+	/// without traversing the live PCM graph. Reference cycles are already
+	/// forbidden by the authoring validator; the visited set also keeps
+	/// redundant parent routes from triggering duplicate publications.
+	/// No audio revision is advanced for unrelated Synths.</summary>
+	private static IReadOnlyList<ObjectId> GetDependentSynths(
+		SongDocument document, ObjectId changedSourceId)
+	{
+		List<ObjectId> ordered = [];
+		HashSet<ObjectId> visited = [];
+		if (document.TryGet(changedSourceId, out SongObject? changed)
+			&& changed is FmSynthDefinition
+			&& visited.Add(changedSourceId))
+			ordered.Add(changedSourceId);
+		else
+			visited.Add(changedSourceId);
+
+		for (int i = 0; i < visited.Count; i++)
+		{
+			ObjectId affected = i < ordered.Count
+				? ordered[i] : changedSourceId;
+			foreach (SongObject candidate in document.Objects.Values)
+			{
+				if (candidate is not FmSynthDefinition synth
+					|| visited.Contains(synth.Id))
+					continue;
+				foreach (FmSynthNode node in synth.Graph.Nodes)
+					if (node is FmSoundSourceNode source
+						&& source.SourceId == affected)
+					{
+						visited.Add(synth.Id);
+						ordered.Add(synth.Id);
+						break;
+					}
+			}
+		}
+		return ordered;
 	}
 
 	public async Task StopAsync()
