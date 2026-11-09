@@ -719,3 +719,50 @@ handling. Regression acceptance should verify old-generation
 continuity, finite PCM, bounded amplitude derivative, release
 behavior, nested graph interactions and no on-PCM construction.
 **Neither crossfade policy is claimed implemented in this slice.**
+
+### First source-render block timing results (CI runner, diagnostic only)
+
+A follow-up paced regression with opt-in `BufferedAudioOutputSource`
+producer timing separated callback copying, OS wake-up jitter, PCM
+rendering and detached Multi-state construction. At 48 kHz with
+eight simultaneously sounding Synth notes, each edited from 2 to 64
+Multi constituents, one successful full-suite CI run (#42562130547)
+reported:
+
+- 192 simulated callbacks of 256 frames, spanning approximately
+  **1.02 s** of wall time.
+- `BufferedAudioOutputSource.Render` maximum callback duration
+  **0.013 ms**; **zero allocations** during the callbacks; no
+  callback execution exceeded the 5.33-ms nominal block period.
+- Host scheduling jitter up to **49.2 ms** and nine callback starts
+  delayed by a full block interval. Thus the synthetic callback
+  pacing itself is not a faithful low-jitter device host.
+- **140 PCM buffer underrun events** while attempting to consume
+  one second of output. Only **13,312 frames** were produced across
+  52 measured PCM producer blocks in that interval.
+- Source `Render` spent **1,006.1 ms** generating those blocks,
+  with the longest producer block taking **43.6 ms**. **46 of 52**
+  blocks exceeded their own nominal audio duration, so the
+  workload was *not* capable of keeping up with nominal sample
+  time on this shared CI runner.
+- All eight new Multi expansions completed, using **1.695 ms** total
+  of the separate preparation worker's measured time, and 521,792
+  bytes of worker allocation. The shortage is therefore mainly
+  sustained PCM production rather than expansion construction
+  or device-facing ring copying.
+
+The exact counts and durations vary with CI host scheduling, CPU
+capacity and test contention; these are measurements, **not stable
+pass/fail thresholds**. Passing the regression means finite PCM,
+allocation-free device-facing callback behavior, live dependency
+publication and no renderer failures—not uninterrupted realtime
+output under this heavy load. Avoid converting the observed underrun
+count into a required invariant. The next performance work should
+profile per-constituent rendering, graph traversal, mixing and
+state dispatch under controlled single-thread baselines and assess
+scaling at realistic live-note/constituent counts. A listening/device
+acceptance pass on supported hosts remains necessary.
+
+Opt-in producer render timing is disabled for ordinary playback.
+The callback itself still performs no new timing instrumentation
+unless the diagnostic test wraps the call.
