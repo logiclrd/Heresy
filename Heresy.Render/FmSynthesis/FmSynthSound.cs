@@ -298,6 +298,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			long beforeTicks = Stopwatch.GetTimestamp();
 			long beforeBytes = GC.GetAllocatedBytesForCurrentThread();
 			int addedChildren = 0;
+			// One cancellation delegate per worker batch, shared by every
+			// nested child constructor; never one allocation per voice.
+			Func<bool> cancelRequested = () => !IsCurrent(version);
 			MultiVoice[]?[] slots = new MultiVoice[]?[next._nodes.Length];
 			for (int i = 0; i < next._nodes.Length; i++)
 			{
@@ -332,7 +335,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					{
 						invocation = input.CreateInvocationForLiveExpansion(
 							pitch * ratio, speed,
-							() => !IsCurrent(version),
+							cancelRequested,
 							scheduler.AfterNestedMultiChildStateCreated);
 					}
 					catch (OperationCanceledException) when (!IsCurrent(version))
