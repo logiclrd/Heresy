@@ -366,7 +366,7 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
-    public void LiveMultiGrowthBeyondPreparedCapacityIsRejectedWithoutPartialChanges()
+    public void UnpreparedMultiGrowthCannotPartiallyModifyTheExistingVoice()
     {
         FmSynthGraph Graph(int count, double gain) => new([
             new FmConstantNode(1, gain),
