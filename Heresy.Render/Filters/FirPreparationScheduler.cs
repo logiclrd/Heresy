@@ -6,6 +6,15 @@ using Heresy.Core.Filters;
 
 namespace Heresy.Render.Filters;
 
+/// <summary>Independent bounded preparation request, served by the one
+/// existing non-PCM control worker. An invocation owns its own latest-wins
+/// mailbox; no mutable DSP state crosses into this thread.</summary>
+internal interface IRealtimePreparationWorkItem
+{
+    void Prepare(FirPreparationScheduler scheduler);
+    void MarkFailed(FirPreparationScheduler scheduler);
+}
+
 /// <summary>
 /// One off-PCM preparation thread per live audio producer. Each invocation
 /// owns a mailbox: only the rendering thread publishes requests/consumes
@@ -15,7 +24,7 @@ namespace Heresy.Render.Filters;
 public sealed class FirPreparationScheduler : IDisposable
 {
     private readonly object _gate = new();
-    private readonly Queue<FirPreparationMailbox> _queue = new();
+    private readonly Queue<IRealtimePreparationWorkItem> _queue = new();
     private readonly Thread _thread;
     private bool _stopped;
     private Exception? _fault;
@@ -35,7 +44,7 @@ public sealed class FirPreparationScheduler : IDisposable
     public long CompletedPreparationCount => Interlocked.Read(ref _completed);
     internal void RecordCompleted() => Interlocked.Increment(ref _completed);
 
-    internal void Enqueue(FirPreparationMailbox mailbox)
+    internal void Enqueue(IRealtimePreparationWorkItem mailbox)
     {
         lock (_gate)
         {
@@ -49,7 +58,7 @@ public sealed class FirPreparationScheduler : IDisposable
     {
         while (true)
         {
-            FirPreparationMailbox next;
+            IRealtimePreparationWorkItem next;
             lock (_gate)
             {
                 while (!_stopped && _queue.Count == 0)
@@ -91,7 +100,7 @@ public sealed class FirPreparationScheduler : IDisposable
 /// Version checking prevents a worker result prepared from a superseded
 /// snapshot from becoming visible to the rendering thread.
 /// </summary>
-internal sealed class FirPreparationMailbox
+internal sealed class FirPreparationMailbox : IRealtimePreparationWorkItem
 {
     private readonly object _gate = new();
     private readonly FilterChain _authored;
@@ -162,7 +171,7 @@ internal sealed class FirPreparationMailbox
         }
     }
 
-    internal void Prepare(FirPreparationScheduler scheduler)
+    public void Prepare(FirPreparationScheduler scheduler)
     {
         long version;
         int count;
@@ -196,7 +205,7 @@ internal sealed class FirPreparationMailbox
             scheduler.RecordCompleted();
     }
 
-    internal void MarkFailed(FirPreparationScheduler scheduler)
+    public void MarkFailed(FirPreparationScheduler scheduler)
     {
         bool retry;
         lock (_gate)
