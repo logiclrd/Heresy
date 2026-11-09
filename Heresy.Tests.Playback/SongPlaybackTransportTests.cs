@@ -150,6 +150,23 @@ public sealed class SongPlaybackTransportTests
 	}
 
 	[Test]
+	public async Task OrdinaryAdHocPlaybackDoesNotReserveSynthMultiHeadroom()
+	{
+		SongDocument document = new();
+		RecordingFactory factory = new();
+		TestBackend backend = new();
+		using SongPlaybackTransport transport = new(backend, factory);
+
+		await transport.PlayAdHocAsync(document, new NoteScheduleBuilder().Freeze());
+
+		factory.Requests.Should().ContainSingle()
+			.Which.Should().BeOfType<AdHocPlaybackRequest>()
+			.Which.ReserveSynthMultiHeadroom.Should().BeFalse(
+				"ordinary ad-hoc playback must not reserve latent Multi voices");
+		backend.OpenCount.Should().Be(1);
+	}
+
+	[Test]
 	public async Task LiveAuditionStartsOneSessionAndQueuesStartThenNoteOff()
 	{
 		SongDocument document = new();
@@ -579,7 +596,9 @@ public sealed class SongPlaybackTransportTests
 		public IAudioOutputSource Create(
 			PlaybackRequest request)
 		{
-			request.Should().BeOfType<AdHocPlaybackRequest>();
+			request.Should().BeOfType<AdHocPlaybackRequest>()
+				.Which.ReserveSynthMultiHeadroom.Should().BeTrue(
+					"live audition sessions alone need spare Multi constituents");
 			return Source;
 		}
 	}
