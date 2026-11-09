@@ -380,11 +380,64 @@ public sealed class SongPlaybackTransportTests
 		backend.OpenCount.Should().Be(1);
 	}
 
+	[Test]
+	public async Task EditingNestedSynthPublishesDirectAndTransitiveParentsInDependencyOrder()
+	{
+		SongDocument document = new();
+		ObjectId childId = document.AllocateObjectId();
+		FmSynthDefinition child = new(childId, "Child",
+			new FmSynthGraph([new FmConstantNode(0, 0.25)], 0));
+		document.Add(child);
+		ObjectId middleId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(middleId, "Middle",
+			new FmSynthGraph([
+				new FmSoundSourceNode(0, childId, FmMultiNode.NeutralFrequencyHz)], 0)));
+		ObjectId outerId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(outerId, "Outer",
+			new FmSynthGraph([
+				new FmSoundSourceNode(0, middleId, FmMultiNode.NeutralFrequencyHz)], 0)));
+		ObjectId siblingId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(siblingId, "Sibling",
+			new FmSynthGraph([
+				new FmSoundSourceNode(0, childId, FmMultiNode.NeutralFrequencyHz)], 0)));
+		ObjectId unrelatedId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(unrelatedId, "Unrelated",
+			new FmSynthGraph([new FmConstantNode(0, 0.75)], 0)));
+
+		PublishingFactory factory = new();
+		TestBackend backend = new();
+		using SongPlaybackTransport transport = new(backend, factory);
+		await transport.SendLiveEventAsync(document, ChannelTarget.Virtual(11),
+			[new StartNoteCommand(outerId)]);
+
+		child.Graph = new FmSynthGraph([new FmConstantNode(0, 0.5)], 0);
+		document.MarkChanged(affectsAudio: true);
+		await transport.PublishSynthEditAsync(document, childId);
+		factory.PreparedIds.Should().Equal(childId, middleId, siblingId, outerId);
+		factory.Source.Order.Should().Equal("Start:11",
+			"Update", "Update", "Update", "Update");
+		backend.OpenCount.Should().Be(1);
+
+		// All affected revisions were already published for this exact
+		// audio snapshot, so repeated child notifications do no work.
+		await transport.PublishSynthEditAsync(document, childId);
+		factory.PreparedIds.Should().HaveCount(4);
+		backend.OpenCount.Should().Be(1);
+
+		child.Graph = new FmSynthGraph([new FmConstantNode(0, 0.8)], 0);
+		document.MarkChanged(affectsAudio: true);
+		await transport.PublishSynthEditAsync(document, childId);
+		factory.PreparedIds.Should().Equal(childId, middleId, siblingId, outerId,
+			childId, middleId, siblingId, outerId);
+		backend.OpenCount.Should().Be(1);
+	}
+
 	private sealed class PublishingFactory :
 		IBackgroundPlaybackSourceFactory, ILiveSynthSourcePreparationFactory
 	{
 		public PublishingLiveSource Source { get; } = new();
 		public List<double> PreparedValues { get; } = [];
+		public List<ObjectId> PreparedIds { get; } = [];
 
 		public IAudioOutputSource Create(PlaybackRequest request)
 			=> Source;
@@ -396,7 +449,9 @@ public sealed class SongPlaybackTransportTests
 				.Should().BeTrue();
 			FmSynthDefinition synth = obj.Should()
 				.BeOfType<FmSynthDefinition>().Which;
-			double value = ((FmConstantNode)synth.Graph.Nodes[0]).Value;
+			PreparedIds.Add(sourceId);
+			double value = synth.Graph.Nodes.OfType<FmConstantNode>()
+				.FirstOrDefault()?.Value ?? 0;
 			PreparedValues.Add(value);
 			return new PublishingDummySound();
 		}
