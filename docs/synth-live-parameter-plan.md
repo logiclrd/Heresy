@@ -301,3 +301,56 @@ resampling/quantizing held controls, further fallback behavior, callbacks,
 allocation budgets and physical listening separately before closing the
 all-properties milestone. Structural FIR modifications, FM port rewiring,
 Source rebinding, Multi topology and click-safe smoothing remain open.
+
+## Tenth slice: referenced Synth Source migration and dependent publications
+
+A Synth Source node's bound child has an immutable original
+`SoundInvocation` and mutable, invocation-local `SoundState`. Previously
+the Source renderer always called `Invocation.Sound`, so even when a
+parent Synth was recompiled, changing the referenced Synth's parameters
+could not propagate into its ongoing child note.
+
+- `SourceVoice.Sound` now holds the currently adopted compiled child sound,
+  initialized to the invocation's original sound. Rendering, natural-end
+  queries, nested FIR handoff and prepared-child end calculations use this
+  adopted sound, while preserving the original bound child
+  `SoundState`, `SoundInvocation.Configuration`, integrated pitch
+  trajectory, note/release age and voice-owned Filter histories.
+- When the old and newly prepared Source child are both `FmSynthSound`
+  and their effective runtime graphs are state-compatible, the existing
+  whole-tree two-phase preflight recursively checks the child before
+  publishing either parent or child. FIR authoring preparation requests
+  recurse through Source-bound Synths too. Commit publishes the revised
+  child `FmSynthSound` only after all parent, Multi and nested Source
+  stages have passed; no child invocation is reconstructed.
+- This applies to a **same-SourceId child definition edit**, multiple
+  levels of nested Synth Sources, and **SourceId reassignment between
+  two structurally compatible Synths**. A SourceId reassignment to
+  unrelated Sample/Instrument implementations is still rejected for
+  existing voices, because their native `SoundState` and envelope/tone
+  semantics are not interchangeable. Future notes use the newly
+  selected Source. When the SourceId is unchanged but its referenced
+  child Synth becomes structurally incompatible, the parent may still
+  adopt independent compatible edits; the existing child remains on
+  the previous captured generation until it ends.
+- `SongPlaybackTransport.PublishSynthEditAsync` discovers transitive
+  parent Synths that reference an edited Synth in their Source nodes.
+  It prepares all affected revisions from one detached document
+  snapshot, publishes child before parents through the existing ordered
+  live event queue, and deduplicates each affected Synth by audio
+  revision. Unrelated Synths are left alone; the audio session is not
+  reopened and the frozen base snapshot's revision is unchanged.
+- PCM regressions verify phase-continuous Grandchild -> Middle ->
+  Parent adoption with no ancestor graph edit, compatible Synth
+  SourceId reassignment, and isolation of an incompatible nested
+  child while a parent's scalar gain still changes. Transport
+  regression verifies direct/transitive dependent fanout,
+  publication ordering, revision deduplication and session continuity.
+
+Still deferred: migration/crossfade of structurally incompatible
+Sample/Instrument child formats, adding/removing a bound child invocation,
+structural changes inside Multi distributions, automatic notifications
+from editors of shared Filter/Envelope objects outside the active
+Synth editor, and click-safe smoothing/physical listening. The
+all-nonstructural-properties TODO remains open; source dependency
+publication is not a claim of generalized cross-object invalidation.
