@@ -327,6 +327,61 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
+	public void CommittedMultiVoiceCountEditFadesNewConstituentsIntoLatchedNote()
+	{
+		SongDocument document = new();
+		ObjectId id = document.AllocateObjectId();
+		FmSynthGraph Graph(int count) => new([
+			new FmConstantNode(0, 0.25),
+			new FmMultiNode(1, inputNodeId: 0, detune: 0,
+				voiceCount: count, randomizePhase: false,
+				gainCompensation: false)], 1);
+		FmSynthDefinition synth = new(id, "Live Multi", Graph(2));
+		document.Add(synth);
+
+		PlaybackRequestAudioSourceFactory factory =
+			new(MonoConfiguration(48000));
+		IAudioOutputSource output = factory.Create(
+			AdHocPlaybackRequest.Create(document,
+				new NoteScheduleBuilder().Freeze()));
+		try
+		{
+			((ILiveAudioOutputSource)output).EnqueueLiveEvent(
+				ChannelTarget.Virtual(52), [new StartNoteCommand(id)]);
+			float[] before = new float[90];
+			output.Render(before.Length, before);
+			before.Should().OnlyContain(x => Math.Abs(x - 0.5f) < 1e-6f);
+
+			synth.Graph = Graph(4);
+			document.MarkChanged(affectsAudio: true);
+			((ILiveSynthSourceRevisionOutput)output).EnqueueLiveSynthParameters(
+				id, factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(document), id));
+			float[] after = new float[150];
+			output.Render(after.Length, after);
+			after[0].Should().BeApproximately(0.5f, 1e-6f,
+				"the existing latched note must not jump in amplitude at publication");
+			after[32].Should().BeInRange(0.5f, 1.0f);
+			after[100].Should().BeApproximately(1.0f, 1e-6f,
+				"both preprepared constituents become audible in the same held note");
+
+			synth.Graph = Graph(1);
+			document.MarkChanged(affectsAudio: true);
+			((ILiveSynthSourceRevisionOutput)output).EnqueueLiveSynthParameters(
+				id, factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(document), id));
+			float[] reduced = new float[150];
+			output.Render(reduced.Length, reduced);
+			reduced[0].Should().BeApproximately(1.0f, 1e-6f);
+			reduced[100].Should().BeApproximately(0.25f, 1e-6f);
+		}
+		finally
+		{
+			(output as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
 	public void EditedParentOperatorKeepsBoundSourceChildPlaybackPosition()
 	{
 		SongDocument document = new();
