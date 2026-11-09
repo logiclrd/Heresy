@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Linq;
 using System.Numerics;
 using System.Threading;
@@ -551,6 +552,208 @@ public sealed class FmSynthMultiTests
         result[0].Should().BeApproximately(0.6f, 1e-6f);
         result[100].Should().BeApproximately(1.8f, 1e-5f);
         worker.Fault.Should().BeNull();
+    }
+
+    [Test]
+    public void CancelledInFlightMultiExpansionStopsAtNextChildBoundary()
+    {
+        FmSynthGraph Graph(int count) => new([
+            new FmConstantNode(1, 0.25),
+            new FmMultiNode(2, 1, voiceCount: count, detune: 0,
+                randomizePhase: false, gainCompensation: false),
+        ], 2);
+        FmSynthSound sound = new(Graph(2), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        FmSynthSound expanded = new(Graph(120), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        SoundState state = sound.CreateState();
+        RenderContext context = Mono();
+        sound.Render(context, state, 0, 60, new float[60]);
+        sound.RequestMultiExpansionPreparation(expanded, state).Should().BeTrue();
+
+        using ManualResetEventSlim firstChild = new(false);
+        using ManualResetEventSlim release = new(false);
+        using FirPreparationScheduler worker = new();
+        int built = 0;
+        worker.AfterMultiConstituentPrepared = () =>
+        {
+            if (Interlocked.Increment(ref built) == 1)
+            {
+                firstChild.Set();
+                release.Wait(TimeSpan.FromSeconds(10));
+            }
+        };
+        try
+        {
+            sound.QueuePendingFirControls(state, worker);
+            Assert.That(firstChild.Wait(TimeSpan.FromSeconds(5)), Is.True);
+            sound.CancelPendingMultiExpansion(state);
+        }
+        finally
+        {
+            release.Set();
+        }
+        Assert.That(SpinWait.SpinUntil(() =>
+            worker.CancelledMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        Volatile.Read(ref built).Should().Be(1,
+            "a canceled job must not keep building more child states");
+        worker.PreparedMultiConstituentCount.Should().Be(0);
+        worker.AbandonedMultiConstituentCount.Should().Be(1);
+        worker.AbandonedMultiPreparationAllocatedBytes.Should().BeGreaterThan(0);
+        sound.CanAdoptRunningState(expanded, state).Should().BeFalse();
+        float[] oldPcm = new float[100];
+        sound.Render(context, state, 60, oldPcm.Length, oldPcm);
+        oldPcm.Should().OnlyContain(x => Math.Abs(x - 0.5f) < 1e-6f);
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
+    public void SupersededInFlightMultiExpansionPreparesOnlyLatestRevision()
+    {
+        FmSynthGraph Graph(int count) => new([
+            new FmConstantNode(1, 0.125),
+            new FmMultiNode(2, 1, voiceCount: count, detune: 0,
+                randomizePhase: false, gainCompensation: false),
+        ], 2);
+        FmSynthSound sound = new(Graph(2), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        SoundState state = sound.CreateState();
+        FmSynthSound stale = new(Graph(120), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        FmSynthSound latest = new(Graph(9), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        sound.RequestMultiExpansionPreparation(stale, state).Should().BeTrue();
+
+        using ManualResetEventSlim firstChild = new(false);
+        using ManualResetEventSlim release = new(false);
+        using FirPreparationScheduler worker = new();
+        int built = 0;
+        worker.AfterMultiConstituentPrepared = () =>
+        {
+            if (Interlocked.Increment(ref built) == 1)
+            {
+                firstChild.Set();
+                release.Wait(TimeSpan.FromSeconds(10));
+            }
+        };
+        try
+        {
+            sound.QueuePendingFirControls(state, worker);
+            Assert.That(firstChild.Wait(TimeSpan.FromSeconds(5)), Is.True);
+            sound.RequestMultiExpansionPreparation(latest, state).Should().BeTrue();
+        }
+        finally
+        {
+            release.Set();
+        }
+        Assert.That(SpinWait.SpinUntil(() =>
+            worker.CompletedMultiExpansionCount >= 1
+            && worker.CancelledMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        worker.AbandonedMultiConstituentCount.Should().Be(1);
+        worker.PreparedMultiConstituentCount.Should().Be(3,
+            "only three missing children are needed for the latest nine-voice revision");
+        sound.AdoptPreparedFirControls(state);
+        sound.CanAdoptRunningState(stale, state).Should().BeFalse();
+        sound.TryPrepareRunningState(latest, state).Should().BeTrue();
+        sound.CommitPreparedRunningState(latest, state);
+        float[] result = new float[100];
+        latest.Render(Mono(), state, 0, result.Length, result);
+        result[99].Should().BeApproximately(1.125f, 1e-5f);
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
+    public void MultiExpansionWorkerQueueIsBoundedAndRetriesSurvivingVoices()
+    {
+        FmSynthGraph Graph(int count) => new([
+            new FmConstantNode(1, 0.0625),
+            new FmMultiNode(2, 1, voiceCount: count, detune: 0,
+                randomizePhase: false, gainCompensation: false),
+        ], 2);
+        FmSynthSound sound = new(Graph(2), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        FmSynthSound expanded = new(Graph(48), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        SoundState[] states = Enumerable.Range(0, 96)
+            .Select(i =>
+            {
+                SoundState state = sound.CreateState();
+                state.SetNoiseSeed((ulong)(i + 1));
+                return state;
+            }).ToArray();
+
+        using ManualResetEventSlim workerEntered = new(false);
+        using ManualResetEventSlim release = new(false);
+        using FirPreparationScheduler worker = new();
+        int gateCount = 0;
+        worker.BeforePrepareWorkItem = () =>
+        {
+            if (Interlocked.Increment(ref gateCount) == 1)
+            {
+                workerEntered.Set();
+                release.Wait(TimeSpan.FromSeconds(10));
+            }
+        };
+        TimeSpan cpuBefore = Process.GetCurrentProcess().TotalProcessorTime;
+        long started = Stopwatch.GetTimestamp();
+        try
+        {
+            foreach (SoundState state in states)
+                sound.RequestMultiExpansionPreparation(expanded, state)
+                    .Should().BeTrue();
+            sound.QueuePendingFirControls(states[0], worker);
+            Assert.That(workerEntered.Wait(TimeSpan.FromSeconds(5)), Is.True);
+            for (int i = 1; i < states.Length; i++)
+                sound.QueuePendingFirControls(states[i], worker);
+            worker.PeakQueuedWorkItems.Should()
+                .BeLessThanOrEqualTo(FirPreparationScheduler.MaximumQueuedMultiExpansions,
+                    "the PCM producer cannot enqueue an unbounded expansion backlog");
+            // Retire 84 of the voices before the worker is allowed to run.
+            // Their queued slots must become cheap cancellations. Refused
+            // admissions must not silently discard the surviving requests.
+            for (int i = 12; i < states.Length; i++)
+                sound.CancelPendingMultiExpansion(states[i]);
+        }
+        finally
+        {
+            release.Set();
+        }
+        Assert.That(SpinWait.SpinUntil(() =>
+        {
+            for (int i = 0; i < 12; i++)
+                sound.QueuePendingFirControls(states[i], worker);
+            return worker.CompletedMultiExpansionCount >= 12;
+        }, TimeSpan.FromSeconds(10)), Is.True,
+            "all twelve live voices must eventually prepare despite initial queue saturation");
+
+        for (int i = 0; i < 12; i++)
+        {
+            sound.AdoptPreparedFirControls(states[i]);
+            sound.TryPrepareRunningState(expanded, states[i]).Should().BeTrue();
+            sound.CommitPreparedRunningState(expanded, states[i]);
+        }
+        worker.CancelledMultiExpansionCount.Should().BeGreaterThan(0,
+            "retired queued voices must be discarded without new child allocation");
+        worker.PreparedMultiConstituentCount.Should().Be(12 * (48 - 6));
+        worker.MultiPreparationAllocatedBytes.Should().BeGreaterThan(0);
+        worker.PeakMultiPreparationAllocatedBytes.Should().BeGreaterThan(0);
+        worker.Fault.Should().BeNull();
+
+        TimeSpan elapsed = Stopwatch.GetElapsedTime(started);
+        TimeSpan cpu = Process.GetCurrentProcess().TotalProcessorTime - cpuBefore;
+        TestContext.Progress.WriteLine(
+            $"Multi stress: 96 requests, 84 retired, " +
+            $"completed={worker.CompletedMultiExpansionCount}, " +
+            $"cancelled={worker.CancelledMultiExpansionCount}, " +
+            $"peak queue={worker.PeakQueuedWorkItems}, " +
+            $"prepared children={worker.PreparedMultiConstituentCount}, " +
+            $"prep bytes={worker.MultiPreparationAllocatedBytes}, " +
+            $"peak/job={worker.PeakMultiPreparationAllocatedBytes}, " +
+            $"worker prep ms={worker.MultiPreparationElapsedTime.TotalMilliseconds:F2}, " +
+            $"test elapsed ms={elapsed.TotalMilliseconds:F2}, " +
+            $"process CPU ms={cpu.TotalMilliseconds:F2}");
     }
 
     [Test]
