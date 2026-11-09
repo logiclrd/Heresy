@@ -287,11 +287,11 @@ internal sealed class FmFilterNodeProcessor
 		}
 	}
 
-	/// <summary>Check immutable stage identity and all structural
-	/// parameters. This deliberately excludes actively modulated Filters
-	/// from authored-coefficient migration until binding reconciliation is
-	/// supported; unchanged modulated Filters can still follow parent edits.
-	/// All compatible authored stages may be preflighted together.</summary>
+	/// <summary>Check immutable Filter stage identity and wiring. Authored
+	/// values of connected numeric ports are fallback values: the running
+	/// modulation owns their effective DSP values. Unbound numeric edits
+	/// may retune that same stage using its last committed bound controls.
+	/// Binding rewiring and structural parameters remain incompatible.</summary>
 	internal bool CanAdoptStateConfiguration(FmFilterNodeProcessor next,
 		State? live)
 	{
@@ -301,8 +301,18 @@ internal sealed class FmFilterNodeProcessor
 			|| _useFastNumeric != next._useFastNumeric)
 			return false;
 		for (int i = 0; i < _bindings.Length; i++)
-			if (_bindings[i] != next._bindings[i])
+		{
+			Binding a = _bindings[i];
+			Binding b = next._bindings[i];
+			if (a.StageId != b.StageId
+				|| !string.Equals(a.ParameterName, b.ParameterName,
+					StringComparison.OrdinalIgnoreCase)
+				|| a.ValueIndex != b.ValueIndex)
 				return false;
+			// InitialValue belongs to the authored fallback, NOT the live
+			// modulation routing. A revised fallback cannot replace a
+			// connected parameter's already-committed DSP control value.
+		}
 		if (_initial is null || next._initial is null)
 			return _initial is null && next._initial is null;
 		if (_initial.DefinitionId != next._initial.DefinitionId
@@ -333,20 +343,57 @@ internal sealed class FmFilterNodeProcessor
 					continue;
 				if (parameter.IsStructural)
 					return false;
-				changed = true;
+				// Connected parameters have absolute FM inputs. Editing
+				// their fallback alone must not retune a sounding voice.
+				if (!IsBound(a.StageId, parameter.Name))
+					changed = true;
 			}
 			if (!changed)
 				continue;
 			changes = true;
-			if (_bindings.Length != 0
-				|| !CanUpdateKind(b.Kind)
+			if (!CanUpdateKind(b.Kind)
+				|| (_bindings.Length != 0 && !_useFastNumeric)
 				|| (LinearPhaseFirFilterStageFactory.IsStandardFir(b.Kind)
-					&& (next._liveFirPlans is null
+					&& (HasBoundStage(a.StageId)
+						|| next._liveFirPlans is null
 						|| next._preparedSampleRate != live?.Chain?.SampleRate)))
 				return false;
 		}
 		return !changes || live?.Chain is null
 			|| !live.Chain.IsInputFinished;
+	}
+
+	private int FindBindingIndex(int stageId, string parameterName)
+	{
+		for (int i = 0; i < _bindings.Length; i++)
+			if (_bindings[i].StageId == stageId
+				&& string.Equals(_bindings[i].ParameterName, parameterName,
+					StringComparison.OrdinalIgnoreCase))
+				return i;
+		return -1;
+	}
+
+	private bool IsBound(int stageId, string parameterName)
+		=> FindBindingIndex(stageId, parameterName) >= 0;
+
+	private bool HasBoundStage(int stageId)
+	{
+		foreach (Binding binding in _bindings)
+			if (binding.StageId == stageId)
+				return true;
+		return false;
+	}
+
+	/// <summary>A bound parameter's latest accepted absolute control
+	/// value, not its (possibly edited) authored fallback. Unconnected
+	/// controls always use the newly prepared authoring snapshot.</summary>
+	private double EffectiveNumber(ConfiguredFilterStage stage,
+		State live, string parameterName)
+	{
+		int index = FindBindingIndex(stage.StageId, parameterName);
+		return index < 0
+			? stage.Parameters.GetParameter(parameterName).NumericValue
+			: live.Values[index];
 	}
 
 	private static bool CanUpdateKind(FilterKind kind)
@@ -374,14 +421,15 @@ internal sealed class FmFilterNodeProcessor
 			ConfiguredFilterStage b = next._effectiveStages[i];
 			bool changed = false;
 			foreach (FilterParameterDescriptor parameter in a.Parameters.Parameters)
-				if (a.Parameters.GetParameter(parameter.Name)
-					!= b.Parameters.GetParameter(parameter.Name))
+				if (!IsBound(a.StageId, parameter.Name)
+					&& a.Parameters.GetParameter(parameter.Name)
+						!= b.Parameters.GetParameter(parameter.Name))
 				{
 					changed = true;
 					break;
 				}
 			if (!changed) continue;
-			double Number(string name) => b.Parameters.GetParameter(name).NumericValue;
+			double Number(string name) => EffectiveNumber(b, live, name);
 			FilterKind kind = b.Kind;
 			if (kind == FilterKind.OnePole || SvfFilterStageFactory.IsSvf(kind))
 			{
