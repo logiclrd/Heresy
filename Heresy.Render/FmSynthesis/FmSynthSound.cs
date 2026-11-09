@@ -47,27 +47,91 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	}
 
 
+	// Small, predictable transitions run on the PCM owner, but never
+	// allocate or reconstruct a child invocation. One transition is 64 frames
+	// in the *outer* voice's sample clock (about 1.3 ms at 48 kHz).
+	private const int MultiEditTransitionFrames = 64;
+	private const int MultiGrowthReservePerNode = 4;
+
 	private sealed class MultiVoice
 	{
 		public MultiVoice(SoundInvocation invocation, double ratio,
-			FmMultiNode definition, int index)
+			FmMultiNode definition, int index, double initialMixGain,
+			bool started)
 		{
 			Invocation = invocation;
 			Sound = (FmSynthSound)invocation.Sound;
-			Ratio = ratio;
+			RatioFrom = RatioTo = ratio;
+			MixFrom = MixTo = initialMixGain;
 			Definition = definition;
 			Index = index;
+			HasStarted = started;
 		}
 		public SoundInvocation Invocation { get; }
 		// A compatible child revision changes compiled code, not the child state.
 		public FmSynthSound Sound { get; set; }
-		public double Ratio { get; }
 		public FmMultiNode Definition { get; }
 		public int Index { get; }
+		// A dormant, preallocated child is first audible at StartFrame. Its
+		// local playback clock starts at zero then; existing children stay
+		// at StartFrame=0 and are never rewound or reconstructed.
+		public long StartFrame { get; private set; }
+		public bool HasStarted { get; private set; }
+		private double RatioFrom { get; set; }
+		private double RatioTo { get; set; }
+		private long RatioEditFrame { get; set; }
+		private double MixFrom { get; set; }
+		private double MixTo { get; set; }
+		private long MixEditFrame { get; set; }
 		public int SkipFrames { get; set; }
 		public int FadeFrames { get; set; }
 		public bool Initialized { get; set; }
 		public long? SilenceEnd { get; set; }
+
+		private static double Interpolate(double from, double to,
+			long startFrame, long frame)
+		{
+			if (from == to) return to;
+			double t = Math.Clamp(
+				(double)(frame - startFrame) / MultiEditTransitionFrames, 0.0, 1.0);
+			t = t * t * (3.0 - 2.0 * t);
+			return from + (to - from) * t;
+		}
+
+		public double RatioAt(long frame)
+			=> Interpolate(RatioFrom, RatioTo, RatioEditFrame, frame);
+		public double MixAt(long frame)
+			=> Interpolate(MixFrom, MixTo, MixEditFrame, frame);
+		public bool CanAffectOutput(long frame)
+			=> HasStarted && (MixTo != 0.0 || MixAt(frame) != 0.0);
+
+		public void Retune(double ratio, double mix, long frame)
+		{
+			double currentRatio = RatioAt(frame);
+			double currentMix = MixAt(frame);
+			if (!HasStarted && mix > 0.0)
+			{
+				HasStarted = true;
+				StartFrame = frame;
+				// This child has never run. Its first sample is local 0,
+				// faded in alongside the already-running constituents.
+				Initialized = false;
+				SilenceEnd = null;
+				currentMix = 0;
+			}
+			if (ratio != RatioTo)
+			{
+				RatioFrom = currentRatio;
+				RatioTo = ratio;
+				RatioEditFrame = frame;
+			}
+			if (mix != MixTo)
+			{
+				MixFrom = currentMix;
+				MixTo = mix;
+				MixEditFrame = frame;
+			}
+		}
 	}
 
 	private sealed class FmSynthState : SoundState
@@ -179,6 +243,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 
 	private readonly FmSynthGraph _graph;
 	private readonly CompiledNode[] _nodes;
+	// All target ratios are calculated by the preparation worker, never
+	// inside PCM publication or per-frame child rendering.
+	private readonly double[][] _multiRatios;
+	private readonly int[] _multiReserve;
+	private readonly bool _hasMulti;
 	private readonly int _outputIndex;
 	private readonly int _oscillatorCount;
 	private readonly NewNotePolicy _newNotePolicy;
@@ -195,7 +264,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		IEnvelopeCurveResolver envelopeResolver,
 		NewNotePolicy? newNotePolicy = null,
 		ISoundResolver? soundResolver = null,
-		PreparedToneFilterStageFactory? preparedChildFilterFactory = null)
+		PreparedToneFilterStageFactory? preparedChildFilterFactory = null,
+		bool reserveMultiHeadroom = true)
 	{
 		ArgumentNullException.ThrowIfNull(graph);
 		ArgumentNullException.ThrowIfNull(envelopeResolver);
@@ -215,6 +285,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		Visit(graph.OutputNodeId);
 
 		_hasSources = ordered.Any(node => node is FmSoundSourceNode or FmMultiNode);
+		_hasMulti = ordered.Any(node => node is FmMultiNode);
 		if (ordered.Any(node => node is FmSoundSourceNode) && soundResolver is null)
 			throw new NotSupportedException(
 				"ISound-fed Synth nodes require the prepared child-invocation resolver.");
@@ -268,7 +339,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			}
 			FmSynthSound? multiInput = node is FmMultiNode { InputNodeId: int multiId }
 				? new FmSynthSound(new FmSynthGraph(graph.Nodes, multiId),
-					envelopeResolver, newNotePolicy, soundResolver, preparedChildFilterFactory)
+					envelopeResolver, newNotePolicy, soundResolver,
+					preparedChildFilterFactory, reserveMultiHeadroom: false)
 				: null;
 			compiled.Add(
 				new CompiledNode(
@@ -284,10 +356,32 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		}
 
 		_nodes = [.. compiled];
+		_multiRatios = _nodes.Select(node => node.Definition is FmMultiNode multi
+			? multi.GetFrequencyRatios() : Array.Empty<double>()).ToArray();
+		_multiReserve = new int[_nodes.Length];
 		_outputIndex = indexById[graph.OutputNodeId];
 		_oscillatorCount = oscillatorIndex;
-		if (CountMultiVoices(graph.OutputNodeId) > FmMultiNode.MaximumVoices)
+		int actualConstituents = CountMultiVoices(graph.OutputNodeId);
+		if (actualConstituents > FmMultiNode.MaximumVoices)
 			throw new NotSupportedException("Multi graph exceeds the 128-voice realtime limit.");
+		// Reserve at most four dormant children per top-level, non-nested
+		// Multi, and bound the total reserve by the remaining 128-voice
+		// allowance. Nested Multi subgraphs never recursively reserve
+		// their own growth pool (which could multiply state allocations).
+		if (reserveMultiHeadroom)
+		{
+			int free = Math.Min(16, FmMultiNode.MaximumVoices - actualConstituents);
+			for (int i = 0; i < _nodes.Length && free > 0; i++)
+				if (_nodes[i].Definition is FmMultiNode
+					&& _nodes[i].MultiInput is { _hasMulti: false }
+					&& _multiRatios[i].Length < FmMultiNode.MaximumVoices)
+				{
+					_multiReserve[i] = Math.Min(free, Math.Min(
+						MultiGrowthReservePerNode,
+						FmMultiNode.MaximumVoices - _multiRatios[i].Length));
+					free -= _multiReserve[i];
+				}
+		}
 
 		int CountMultiVoices(int id)
 		{
@@ -568,13 +662,17 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				multis[i] = [];
 				continue;
 			}
-			double[] ratios = multi.GetFrequencyRatios();
-			MultiVoice[] voices = new MultiVoice[ratios.Length];
-			for (int j = 0; j < ratios.Length; j++)
+			double[] ratios = _multiRatios[i];
+			MultiVoice[] voices = new MultiVoice[ratios.Length + _multiReserve[i]];
+			double initialMix = multi.GainCompensation ? 1.0 / ratios.Length : 1.0;
+			for (int j = 0; j < voices.Length; j++)
 			{
+				bool started = j < ratios.Length;
+				double ratio = started ? ratios[j] : 1.0;
 				SoundInvocation invocation = input.CreateInvocation(
-					pitchMultiplier * ratios[j], playbackSpeedMultiplier);
-				voices[j] = new MultiVoice(invocation, ratios[j], multi, j);
+					pitchMultiplier * ratio, playbackSpeedMultiplier);
+				voices[j] = new MultiVoice(invocation, ratio, multi, j,
+					started ? initialMix : 0.0, started);
 			}
 			multis[i] = voices;
 		}
