@@ -1561,6 +1561,124 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
+	public void BoundFirAndIirEditsRemainWholeVoiceAtomicUntilTheFirWorkerCompletes()
+	{
+		SongDocument song = new();
+		ObjectId firId = song.AllocateObjectId();
+		FilterDefinition fir = new(firId, "FIR", [
+			new FilterStageDefinition(1, "band", FilterKind.FirBandPass, [
+				new("LowCutoffHz", FilterParameterValue.FromNumber(350)),
+				new("HighCutoffHz", FilterParameterValue.FromNumber(900)),
+				new("TapCount", FilterParameterValue.FromNumber(127))])]);
+		song.Add(fir);
+		ObjectId iirId = song.AllocateObjectId();
+		FilterDefinition iir = new(iirId, "IIR", [
+			new FilterStageDefinition(1, "lowpass", FilterKind.OnePole, [
+				new("CutoffHz", FilterParameterValue.FromNumber(100))])]);
+		song.Add(iir);
+
+		FmSynthGraph Graph(double high, double iirCutoff)
+		{
+			FilterInstance firUse = new(fir);
+			firUse.SetStageParameter(1, "HighCutoffHz",
+				FilterParameterValue.FromNumber(high));
+			FilterInstance iirUse = new(iir);
+			iirUse.SetStageParameter(1, "CutoffHz",
+				FilterParameterValue.FromNumber(iirCutoff));
+			FmFilterNode bound = new(1, 0, firUse);
+			bound = bound.WithParameterConnection(
+				bound.GetPorts().Single(p => p.ParameterName == "LowCutoffHz"), 2);
+			return new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 2100,
+					minimum: -0.35, maximum: 0.35, constant: true),
+				bound, new FmConstantNode(2, 350),
+				new FmOscillatorNode(3, FmOscillatorWaveform.Sine, 450,
+					minimum: -0.35, maximum: 0.35, constant: true),
+				new FmFilterNode(4, 3, iirUse),
+				new FmOperatorNode(5, FmOperatorKind.Add, [1, 4])], 5);
+		}
+
+		ObjectId[] ids = new ObjectId[4];
+		FmSynthDefinition[] synths = new FmSynthDefinition[4];
+		for (int i = 0; i < synths.Length; i++)
+		{
+			ids[i] = song.AllocateObjectId();
+			synths[i] = new FmSynthDefinition(ids[i], "Branch " + i,
+				Graph(900, 100));
+			song.Add(synths[i]);
+		}
+		PlaybackRequestAudioSourceFactory factory = new(MonoConfiguration(48000));
+		NoteSchedule empty = new NoteScheduleBuilder().Freeze();
+		IAudioOutputSource[] outputs = ids.Select(id =>
+			factory.Create(AdHocPlaybackRequest.Create(song, empty))).ToArray();
+		try
+		{
+			for (int i = 0; i < outputs.Length; i++)
+			{
+				((ILiveAudioOutputSource)outputs[i]).EnqueueLiveEvent(
+					ChannelTarget.Virtual(99), [new StartNoteCommand(ids[i])]);
+				outputs[i].Render(400, new float[400]);
+			}
+			// 0: baseline; 1: IIR-only; 2: bound-FIR-only;
+			// 3: both. The last branch must commit NEITHER edited stage
+			// until its private FIR kernel is prepared by the worker.
+			synths[1].Graph = Graph(900, 5000);
+			synths[2].Graph = Graph(4500, 100);
+			synths[3].Graph = Graph(4500, 5000);
+			song.MarkChanged(affectsAudio: true);
+			for (int i = 1; i < outputs.Length; i++)
+				((ILiveSynthSourceRevisionOutput)outputs[i]).EnqueueLiveSynthParameters(
+					ids[i], factory.PrepareLiveSynthSource(
+						SongDocumentSnapshot.Create(song), ids[i]));
+
+			float[][] before = Enumerable.Range(0, 4)
+				.Select(_ => new float[55]).ToArray();
+			for (int i = 0; i < outputs.Length; i++)
+				outputs[i].Render(55, before[i]);
+			before[3].Should().Equal(before[0],
+				"the bound FIR must block the entire FIR+IIR revision before preparation");
+			double iirBefore = Enumerable.Range(0, 55)
+				.Max(i => Math.Abs(before[1][i] - before[0][i]));
+			iirBefore.Should().BeGreaterThan(0.01,
+				"the IIR-only reference must already have changed");
+
+			using FirPreparationScheduler worker = new();
+			((IFirPreparationAudioSource)outputs[2]).QueuePendingFirControls(worker);
+			((IFirPreparationAudioSource)outputs[3]).QueuePendingFirControls(worker);
+			Assert.That(SpinWait.SpinUntil(
+				() => worker.CompletedPreparationCount >= 2,
+				TimeSpan.FromSeconds(5)), Is.True);
+			((IFirPreparationAudioSource)outputs[2]).AdoptPreparedFirControls();
+			((IFirPreparationAudioSource)outputs[3]).AdoptPreparedFirControls();
+
+			float[][] after = Enumerable.Range(0, 4)
+				.Select(_ => new float[700]).ToArray();
+			for (int i = 0; i < outputs.Length; i++)
+				outputs[i].Render(700, after[i]);
+			double firEffect = 0, iirEffect = 0;
+			for (int i = 0; i < 700; i++)
+			{
+				float expected = after[2][i] + after[1][i] - after[0][i];
+				after[3][i].Should().BeApproximately(expected, 1e-4f,
+					"the complete deferred revision must equal the independent FIR+IIR branches");
+				if (i < 250) continue;
+				firEffect = Math.Max(firEffect,
+					Math.Abs(after[2][i] - after[0][i]));
+				iirEffect = Math.Max(iirEffect,
+					Math.Abs(after[1][i] - after[0][i]));
+			}
+			firEffect.Should().BeGreaterThan(0.05);
+			iirEffect.Should().BeGreaterThan(0.05);
+			worker.Fault.Should().BeNull();
+		}
+		finally
+		{
+			foreach (IAudioOutputSource output in outputs)
+				(output as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
 	public void RealtimeFactoryCapturesFreshOutputConfigurationForEachNewRequest()
 	{
 		SongDocument document = new();
