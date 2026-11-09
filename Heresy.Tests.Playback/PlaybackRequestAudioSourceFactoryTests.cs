@@ -541,6 +541,10 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 						samplesFinite = false;
 			}
 			samplesFinite.Should().BeTrue("audio samples must remain finite");
+			callbackAllocatedBytes.Should().Be(0,
+				"the device-facing callback must not allocate PCM or DSP objects");
+			buffered.ProducerRenderBlockCount.Should().BeGreaterThan(0,
+				"opt-in producer timing must observe actual source render blocks");
 			long cpuTicks = Process.GetCurrentProcess().TotalProcessorTime.Ticks
 				- beforeCpu;
 			TestContext.Progress.WriteLine(
