@@ -187,6 +187,83 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void SequentialMonoMultiChildrenMatchSplitBlocksThroughRandomPhaseAndNoteOff()
+    {
+        FmSynthGraph graph = new([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 330),
+            new FmMultiNode(2, 1, voiceCount: 3, detune: 0.1,
+                randomizePhase: true, cycleLength: 97,
+                gainCompensation: true),
+            new FmMultiNode(3, 2, voiceCount: 2, detune: 0,
+                randomizePhase: false, gainCompensation: false),
+        ], 3);
+        FmSynthSound full = new(graph, new EmptyEnvelopes());
+        FmSynthSound segmented = new(graph, new EmptyEnvelopes());
+        SoundState oneVoice = full.CreateState();
+        SoundState splitVoice = segmented.CreateState();
+        oneVoice.SetNoiseSeed(871);
+        splitVoice.SetNoiseSeed(871);
+        oneVoice.NoteOffTime = TimeSpan.FromMilliseconds(10);
+        splitVoice.NoteOffTime = TimeSpan.FromMilliseconds(10);
+        RenderContext context = Mono();
+        float[] expected = new float[620];
+        float[] actual = new float[620];
+        full.Render(context, oneVoice, 0, expected.Length, expected);
+        int offset = 0;
+        foreach (int count in new[] { 1, 7, 93, 31, 233, 54, 201 })
+        {
+            segmented.Render(context, splitVoice, offset, count,
+                actual.AsSpan(offset, count));
+            offset += count;
+        }
+        offset.Should().Be(expected.Length);
+        actual.Should().Equal(expected,
+            "per-frame Multi child rendering must preserve phase, seeded onset, " +
+            "split-block continuity and the exact note-release boundary");
+        actual[^1].Should().Be(0);
+    }
+
+    [Test]
+    public void MonoMultiChildrenRetainSampleEOFAndPitchHistoryAcrossBlockSplits()
+    {
+        ObjectId sampleId = (ObjectId)1703U;
+        float[] data = Enumerable.Range(0, 240)
+            .Select(i => (float)Math.Sin(2.0 * Math.PI * i / 41.0)).ToArray();
+        SampleSound sample = new(new SampleDefinition(sampleId, "Finite PCM",
+            new ExternalAssetReference("finite.wav")),
+            new MemorySampleData(48000, 1, data));
+        SourceResolver resolver = new(sampleId, sample);
+        FmSynthGraph graph = new([
+            new FmSoundSourceNode(1, sampleId, FmMultiNode.NeutralFrequencyHz),
+            new FmMultiNode(2, 1, voiceCount: 5, detune: 0,
+                randomizePhase: true, cycleLength: 61,
+                gainCompensation: true),
+        ], 2);
+        FmSynthSound full = new(graph, resolver, soundResolver: resolver);
+        FmSynthSound segmented = new(graph, resolver, soundResolver: resolver);
+        SoundState oneVoice = full.CreateState();
+        SoundState splitVoice = segmented.CreateState();
+        oneVoice.SetNoiseSeed(29);
+        splitVoice.SetNoiseSeed(29);
+        RenderContext context = Mono();
+        float[] expected = new float[420];
+        float[] actual = new float[420];
+        full.Render(context, oneVoice, 0, expected.Length, expected);
+        int offset = 0;
+        foreach (int count in new[] { 1, 17, 42, 111, 61, 188 })
+        {
+            segmented.Render(context, splitVoice, offset, count,
+                actual.AsSpan(offset, count));
+            offset += count;
+        }
+        offset.Should().Be(expected.Length);
+        actual.Should().Equal(expected,
+            "a finite nested Sample must discover its natural end and preserve " +
+            "its forward-integrated playback position across block boundaries");
+        actual[^1].Should().Be(0);
+    }
+
+    [Test]
     public void OrdinarySynthUsesOnlyAuthoredMultiCapacityUnlessAuditionOptsIn()
     {
         FmSynthGraph Graph(int count) => new([
