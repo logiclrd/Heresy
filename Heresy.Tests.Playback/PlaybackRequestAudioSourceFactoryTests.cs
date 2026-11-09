@@ -1685,6 +1685,174 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
+	public void EditingReferencedGrandchildSynthUpdatesHeldSourceWithoutRewindingNestedPhases()
+	{
+		SongDocument song = new();
+		ObjectId childId = song.AllocateObjectId();
+		FmSynthDefinition child = new(childId, "Grandchild",
+			new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 100)], 0));
+		song.Add(child);
+		ObjectId middleId = song.AllocateObjectId();
+		song.Add(new FmSynthDefinition(middleId, "Middle",
+			new FmSynthGraph([
+				new FmSoundSourceNode(1, childId, FmMultiNode.NeutralFrequencyHz)], 1)));
+		ObjectId outerId = song.AllocateObjectId();
+		song.Add(new FmSynthDefinition(outerId, "Outer",
+			new FmSynthGraph([
+				new FmSoundSourceNode(2, middleId, FmMultiNode.NeutralFrequencyHz),
+				new FmConstantNode(3, 0.5),
+				new FmOperatorNode(4, FmOperatorKind.Multiply, [2, 3])], 4)));
+
+		PlaybackRequestAudioSourceFactory factory = new(MonoConfiguration(1000));
+		NoteSchedule empty = new NoteScheduleBuilder().Freeze();
+		IAudioOutputSource control = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		IAudioOutputSource edited = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		try
+		{
+			foreach (IAudioOutputSource output in new[] { control, edited })
+				((ILiveAudioOutputSource)output).EnqueueLiveEvent(
+					ChannelTarget.Virtual(111), [new StartNoteCommand(outerId)]);
+			float[] beforeA = new float[7], beforeB = new float[7];
+			control.Render(7, beforeA);
+			edited.Render(7, beforeB);
+			beforeB.Should().Equal(beforeA);
+
+			// No ancestor Synth graph changes at all. The prepared parent
+			// depends on a newly compiled child from the detached snapshot.
+			child.Graph = new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 100,
+					minimum: -2, maximum: 2)], 0);
+			song.MarkChanged(affectsAudio: true);
+			((ILiveSynthSourceRevisionOutput)edited).EnqueueLiveSynthParameters(
+				outerId, factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(song), outerId));
+			float[] controlPcm = new float[23], editedPcm = new float[23];
+			control.Render(controlPcm.Length, controlPcm);
+			edited.Render(editedPcm.Length, editedPcm);
+			for (int i = 0; i < editedPcm.Length; i++)
+				editedPcm[i].Should().BeApproximately(controlPcm[i] * 2, 1e-5f,
+					"each Source level must migrate compatible child code while preserving its original oscillator phase and age");
+		}
+		finally
+		{
+			(control as IDisposable)?.Dispose();
+			(edited as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
+	public void CompatibleSynthSourceIdReassignmentKeepsOriginalChildPlaybackState()
+	{
+		SongDocument song = new();
+		ObjectId firstId = song.AllocateObjectId();
+		song.Add(new FmSynthDefinition(firstId, "First",
+			new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 100)], 0)));
+		ObjectId secondId = song.AllocateObjectId();
+		song.Add(new FmSynthDefinition(secondId, "Second",
+			new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 100,
+					minimum: -3, maximum: 3)], 0)));
+		ObjectId parentId = song.AllocateObjectId();
+		FmSynthDefinition parent = new(parentId, "Parent",
+			new FmSynthGraph([
+				new FmSoundSourceNode(0, firstId,
+					FmMultiNode.NeutralFrequencyHz)], 0));
+		song.Add(parent);
+		PlaybackRequestAudioSourceFactory factory = new(MonoConfiguration(1000));
+		NoteSchedule empty = new NoteScheduleBuilder().Freeze();
+		IAudioOutputSource control = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		IAudioOutputSource edited = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		try
+		{
+			foreach (IAudioOutputSource output in new[] { control, edited })
+				((ILiveAudioOutputSource)output).EnqueueLiveEvent(
+					ChannelTarget.Virtual(112), [new StartNoteCommand(parentId)]);
+			float[] firstA = new float[9], firstB = new float[9];
+			control.Render(firstA.Length, firstA);
+			edited.Render(firstB.Length, firstB);
+			firstB.Should().Equal(firstA);
+
+			parent.Graph = new FmSynthGraph([
+				new FmSoundSourceNode(0, secondId,
+					FmMultiNode.NeutralFrequencyHz)], 0);
+			song.MarkChanged(affectsAudio: true);
+			((ILiveSynthSourceRevisionOutput)edited).EnqueueLiveSynthParameters(
+				parentId, factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(song), parentId));
+			float[] before = new float[21], after = new float[21];
+			control.Render(before.Length, before);
+			edited.Render(after.Length, after);
+			for (int i = 0; i < after.Length; i++)
+				after[i].Should().BeApproximately(before[i] * 3, 1e-5f,
+					"compatible SourceId changes must inherit the sounding child's time and oscillator phase");
+		}
+		finally
+		{
+			(control as IDisposable)?.Dispose();
+			(edited as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
+	public void IncompatibleNestedSynthKeepsOldSourceGenerationWhileParentGainChanges()
+	{
+		SongDocument song = new();
+		ObjectId childId = song.AllocateObjectId();
+		FmSynthDefinition child = new(childId, "Child",
+			new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 100)], 0));
+		song.Add(child);
+		ObjectId parentId = song.AllocateObjectId();
+		FmSynthDefinition parent = new(parentId, "Parent", new FmSynthGraph([
+			new FmSoundSourceNode(0, childId, FmMultiNode.NeutralFrequencyHz),
+			new FmConstantNode(1, 0.25),
+			new FmOperatorNode(2, FmOperatorKind.Multiply, [0, 1])], 2));
+		song.Add(parent);
+
+		PlaybackRequestAudioSourceFactory factory = new(MonoConfiguration(1000));
+		NoteSchedule empty = new NoteScheduleBuilder().Freeze();
+		IAudioOutputSource control = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		IAudioOutputSource edited = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		try
+		{
+			foreach (IAudioOutputSource output in new[] { control, edited })
+				((ILiveAudioOutputSource)output).EnqueueLiveEvent(
+					ChannelTarget.Virtual(113), [new StartNoteCommand(parentId)]);
+			control.Render(7, new float[7]);
+			edited.Render(7, new float[7]);
+
+			// The new child graph is structurally incompatible. Only the
+			// parent's independent gain change should affect this voice;
+			// the original child keeps rendering its captured generation.
+			child.Graph = new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 100,
+					minimum: -3, maximum: 3),
+				new FmConstantNode(1, 0)], 0);
+			parent.Graph = new FmSynthGraph([
+				new FmSoundSourceNode(0, childId, FmMultiNode.NeutralFrequencyHz),
+				new FmConstantNode(1, 0.5),
+				new FmOperatorNode(2, FmOperatorKind.Multiply, [0, 1])], 2);
+			song.MarkChanged(affectsAudio: true);
+			((ILiveSynthSourceRevisionOutput)edited).EnqueueLiveSynthParameters(
+				parentId, factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(song), parentId));
+			float[] oldVoice = new float[17], revisedParent = new float[17];
+			control.Render(oldVoice.Length, oldVoice);
+			edited.Render(revisedParent.Length, revisedParent);
+			for (int i = 0; i < revisedParent.Length; i++)
+				revisedParent[i].Should().BeApproximately(oldVoice[i] * 2, 1e-5f,
+					"an incompatible referenced sound must remain on its original captured child, while independent parent edits still adopt");
+		}
+		finally
+		{
+			(control as IDisposable)?.Dispose();
+			(edited as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
 	public void RealtimeFactoryCapturesFreshOutputConfigurationForEachNewRequest()
 	{
 		SongDocument document = new();
