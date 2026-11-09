@@ -498,7 +498,7 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 				buffered.RenderingFault.Should().BeNull();
 				float[] pcm = new float[64];
 				buffered.Render(64, pcm);
-				pcm.Should().OnlyContain(float.IsFinite);
+				pcm.Should().OnlyContain(sample => float.IsFinite(sample));
 				max = Math.Max(max, pcm.Max());
 			}
 			buffered.UnderrunCount.Should().Be(0,
