@@ -1787,10 +1787,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		long? noteOffFrame,
 		long? baseEnd)
 	{
+		// The same authored pitch segment is shared by all Multi children
+		// at this outer frame. Reuse the fetched value when retuning each
+		// constituent, retaining the original multiplication order.
+		double trajectoryMultiplier = state.PitchTrajectory.GetMultiplier(frame);
 		double pitchMultiplier =
 			state.PitchMultiplier
 				* state.PlaybackSpeedMultiplier
-				* state.PitchTrajectory.GetMultiplier(frame);
+				* trajectoryMultiplier;
 		if (!double.IsFinite(pitchMultiplier)
 			|| !(pitchMultiplier > 0.0))
 		{
@@ -1856,7 +1860,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 							frame, context.Configuration.SampleRate, noteOffFrame),
 
 					FmMultiNode multi => EvaluateMulti(multi, state, index,
-						frame, context),
+						frame, context, trajectoryMultiplier),
 
 					FmOscillatorNode oscillator =>
 						EvaluateOscillator(
@@ -1907,7 +1911,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	}
 
 	private double EvaluateMulti(FmMultiNode multi, FmSynthState state,
-		int index, long frame, RenderContext context)
+		int index, long frame, RenderContext context,
+		double pitchTrajectoryMultiplier)
 	{
 		MultiVoice[] voices = state.Multis[index];
 		if (voices.Length == 0)
@@ -1930,7 +1935,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			// Glide the ratio forward without resetting oscillator phase or
 			// re-scaling already-integrated Source playback positions.
 			child.PitchMultiplier = state.PitchMultiplier * voice.RatioAt(frame)
-				* state.PitchTrajectory.GetMultiplier(frame);
+				* pitchTrajectoryMultiplier;
 			child.PlaybackSpeedMultiplier = state.PlaybackSpeedMultiplier;
 			if (!voice.Initialized)
 			{
