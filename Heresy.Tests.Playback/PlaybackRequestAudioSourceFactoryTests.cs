@@ -1472,6 +1472,95 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
+	public void PreparedPerVoiceFirUsesAcceptedFmValueRatherThanEditedAuthoredFallback()
+	{
+		SongDocument song = new();
+		ObjectId filterId = song.AllocateObjectId();
+		FilterDefinition filter = new(filterId, "Band", [
+			new FilterStageDefinition(1, "band", FilterKind.FirBandPass, [
+				new("LowCutoffHz", FilterParameterValue.FromNumber(700)),
+				new("HighCutoffHz", FilterParameterValue.FromNumber(1200)),
+				new("TapCount", FilterParameterValue.FromNumber(127))])]);
+		song.Add(filter);
+
+		FmSynthGraph Graph(double fallbackLow, double high)
+		{
+			FilterInstance use = new(filter);
+			use.SetStageParameters(1, [
+				new("LowCutoffHz", FilterParameterValue.FromNumber(fallbackLow)),
+				new("HighCutoffHz", FilterParameterValue.FromNumber(high))]);
+			FmFilterNode band = new(1, 4, use);
+			band = band.WithParameterConnection(
+				band.GetPorts().Single(p => p.ParameterName == "LowCutoffHz"), 2);
+			return new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 550,
+					minimum: -0.35, maximum: 0.35, constant: true),
+				band, new FmConstantNode(2, 700),
+				new FmOscillatorNode(3, FmOscillatorWaveform.Sine, 2100,
+					minimum: -0.35, maximum: 0.35, constant: true),
+				new FmOperatorNode(4, FmOperatorKind.Add, [0, 3])], 1);
+		}
+
+		ObjectId editedId = song.AllocateObjectId();
+		FmSynthDefinition editedSynth = new(editedId, "Edited",
+			Graph(700, 1200));
+		song.Add(editedSynth);
+		ObjectId referenceId = song.AllocateObjectId();
+		FmSynthDefinition referenceSynth = new(referenceId, "Reference",
+			Graph(700, 1200));
+		song.Add(referenceSynth);
+		PlaybackRequestAudioSourceFactory factory = new(MonoConfiguration(48000));
+		NoteSchedule empty = new NoteScheduleBuilder().Freeze();
+		IAudioOutputSource edited = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		IAudioOutputSource reference = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		try
+		{
+			foreach ((IAudioOutputSource output, ObjectId id) in new[] {
+				(edited, editedId), (reference, referenceId) })
+			{
+				((ILiveAudioOutputSource)output).EnqueueLiveEvent(
+					ChannelTarget.Virtual(86), [new StartNoteCommand(id)]);
+				output.Render(400, new float[400]);
+			}
+			// Identical original histories, but only the edited branch
+			// changes the bound input's *authored fallback* to 250 Hz.
+			// Both actual FM signals remain 700 Hz.
+			editedSynth.Graph = Graph(250, 4500);
+			referenceSynth.Graph = Graph(700, 4500);
+			song.MarkChanged(affectsAudio: true);
+			foreach ((IAudioOutputSource output, ObjectId id) in new[] {
+				(edited, editedId), (reference, referenceId) })
+				((ILiveSynthSourceRevisionOutput)output).EnqueueLiveSynthParameters(
+					id, factory.PrepareLiveSynthSource(
+						SongDocumentSnapshot.Create(song), id));
+			edited.Render(1, new float[1]);
+			reference.Render(1, new float[1]);
+
+			using FirPreparationScheduler worker = new();
+			((IFirPreparationAudioSource)edited).QueuePendingFirControls(worker);
+			((IFirPreparationAudioSource)reference).QueuePendingFirControls(worker);
+			Assert.That(SpinWait.SpinUntil(
+				() => worker.CompletedPreparationCount >= 2,
+				TimeSpan.FromSeconds(5)), Is.True,
+				"both active voices require their own off-loop prepared design");
+			((IFirPreparationAudioSource)edited).AdoptPreparedFirControls();
+			((IFirPreparationAudioSource)reference).AdoptPreparedFirControls();
+			float[] actual = new float[650], expected = new float[650];
+			edited.Render(actual.Length, actual);
+			reference.Render(expected.Length, expected);
+			for (int i = 0; i < actual.Length; i++)
+				actual[i].Should().BeApproximately(expected[i], 2e-5f,
+					"the published kernel must use the voice's 700-Hz FM value, not its edited 250-Hz fallback");
+			worker.Fault.Should().BeNull();
+		}
+		finally
+		{
+			(edited as IDisposable)?.Dispose();
+			(reference as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
 	public void RealtimeFactoryCapturesFreshOutputConfigurationForEachNewRequest()
 	{
 		SongDocument document = new();
