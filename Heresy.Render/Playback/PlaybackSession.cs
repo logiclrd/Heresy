@@ -3056,6 +3056,7 @@ public sealed class PlaybackSession
 		PlaybackVoice voice = _virtualVoices[index];
 		if (voice.DisplacedOutputFilterState is { HasTail: true } tail)
 			_displacedOutputTails.Add(tail);
+		voice.CancelPendingLivePreparation();
 		_virtualVoices.RemoveAt(index);
 	}
 
@@ -3092,6 +3093,7 @@ public sealed class PlaybackSession
 		{
 			case NewNoteAction.Cut:
 				oldVoice.AddCutTo(channel.AntiClickTail);
+				oldVoice.CancelPendingLivePreparation();
 				break;
 
 			case NewNoteAction.Continue:
@@ -3115,6 +3117,8 @@ public sealed class PlaybackSession
 					oldVoice.DisplacedOutputFilterState = ForkHostFilter(oldVoice);
 					_virtualVoices.Add(oldVoice);
 				}
+				else
+					oldVoice.CancelPendingLivePreparation();
 				break;
 
 			case NewNoteAction.Fade:
@@ -4018,7 +4022,7 @@ public sealed class PlaybackSession
 			voice, absoluteFrame);
 
 		if (effectiveEnd.HasValue && absoluteFrame >= effectiveEnd.Value)
-			channel.DetachCurrentVoice();
+			channel.DetachCurrentVoice()?.CancelPendingLivePreparation();
 	}
 
 	private static void AddBuffer(Span<float> destination, ReadOnlySpan<float> source)
