@@ -143,6 +143,49 @@ public sealed class FilterDocumentEditorTests
 		Assert.That(workspace.Document.DocumentRevision, Is.Zero);
 	}
 
+	[Test]
+	public void SuccessfulSharedFilterCommitsNotifyExactlyOnceWithoutNoOpOrFailedDrafts()
+	{
+		DocumentWorkspace workspace = new();
+		List<SharedAudioObjectCommittedEventArgs> notifications = [];
+		workspace.SharedAudioObjectCommitted += (_, e) => notifications.Add(e);
+		FilterDefinition filter = FilterDocumentEditor.CreateFilter(workspace, "Shared");
+		Assert.That(notifications, Is.Empty);
+
+		FilterStageDefinition added = FilterDocumentEditor.AddStage(workspace, filter);
+		Assert.That(notifications.Count, Is.EqualTo(1));
+		Assert.That(FilterDocumentEditor.MoveStage(
+			workspace, filter, added.StageId, 0, added), Is.True);
+		Assert.That(notifications.Count, Is.EqualTo(2));
+		Assert.That(FilterDocumentEditor.MoveStage(
+			workspace, filter, added.StageId, 0, added), Is.False);
+		Assert.That(notifications.Count, Is.EqualTo(2));
+
+		Assert.That(FilterDocumentEditor.ApplyStage(
+			workspace, filter, added.StageId, added,
+			"renamed", added.Kind, added.DefaultParameters), Is.True);
+		Assert.That(FilterDocumentEditor.ApplyStage(
+			workspace, filter, added.StageId, filter.GetStage(added.StageId),
+			"renamed", added.Kind, added.DefaultParameters), Is.False);
+		Assert.That(notifications.Count, Is.EqualTo(3));
+
+		FilterDocumentEditor.RemoveStage(
+			workspace, filter, added.StageId, filter.GetStage(added.StageId));
+		Assert.That(notifications.Count, Is.EqualTo(4));
+		Assert.Throws<InvalidOperationException>(() =>
+			FilterDocumentEditor.RemoveStage(
+				workspace, filter, 1, filter.GetStage(1)));
+		Assert.That(notifications.Count, Is.EqualTo(4));
+		foreach (SharedAudioObjectCommittedEventArgs e in notifications)
+		{
+			Assert.That(e.Document, Is.SameAs(workspace.Document));
+			Assert.That(e.ObjectId, Is.EqualTo(filter.Id));
+		}
+		for (int i = 1; i < notifications.Count; i++)
+			Assert.That(notifications[i].AudioRevision,
+				Is.GreaterThan(notifications[i - 1].AudioRevision));
+	}
+
 	private static KeyValuePair<string, FilterParameterValue> Pair(
 		string name, FilterParameterValue value) => new(name, value);
 }
