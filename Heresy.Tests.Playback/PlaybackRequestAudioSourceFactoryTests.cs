@@ -479,7 +479,8 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			document, new NoteScheduleBuilder().Freeze(),
 			reserveSynthMultiHeadroom: true));
 		BufferedAudioOutputSource buffered = new(raw,
-			capacityFrames: 2048, blockFrames: 256);
+			capacityFrames: 2048, blockFrames: 256,
+			profileProducerRender: true);
 		try
 		{
 			for (uint i = 0; i < 8; i++)
@@ -555,6 +556,11 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 				$"minimum buffered frames={minimumBufferedFrames}, " +
 				$"callback Render allocated bytes={callbackAllocatedBytes}, " +
 				$"prepared expansions={buffered.CompletedMultiExpansions}, " +
+				$"producer blocks={buffered.ProducerRenderBlockCount}, " +
+				$"produced frames={buffered.ProducerRenderedFrames}, " +
+				$"producer render ms={buffered.ProducerRenderElapsedTime.TotalMilliseconds:F3}, " +
+				$"peak producer block ms={buffered.PeakProducerRenderBlockTime.TotalMilliseconds:F3}, " +
+				$"producer blocks over budget={buffered.ProducerBlocksOverBudget}, " +
 				$"worker allocated bytes={buffered.MultiPreparationAllocatedBytes}, " +
 				$"worker prep ms={buffered.MultiPreparationElapsedTime.TotalMilliseconds:F3}");
 			buffered.RenderingFault.Should().BeNull();
