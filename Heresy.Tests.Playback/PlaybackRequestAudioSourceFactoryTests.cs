@@ -1278,6 +1278,107 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
+	public void LiveBiquadGainAndSaturatedLadderDriveRetuneBesideFmCutoffs()
+	{
+		SongDocument song = new();
+		ObjectId eqId = song.AllocateObjectId();
+		FilterDefinition equalizer = new(eqId, "EQ", [
+			new FilterStageDefinition(1, "peak", FilterKind.BiquadPeaking,
+				[new("CutoffHz", FilterParameterValue.FromNumber(600)),
+				 new("GainDb", FilterParameterValue.FromNumber(0))])]);
+		song.Add(equalizer);
+		ObjectId ladderId = song.AllocateObjectId();
+		FilterDefinition ladder = new(ladderId, "Ladder", [
+			new FilterStageDefinition(1, "saturate", FilterKind.LadderSaturated,
+				[new("CutoffHz", FilterParameterValue.FromNumber(900)),
+				 new("Drive", FilterParameterValue.FromNumber(1))])]);
+		song.Add(ladder);
+
+		FmSynthGraph Graph(bool connectGainAndDrive, double gain, double drive)
+		{
+			FilterInstance eqUse = new(equalizer);
+			FilterInstance ladderUse = new(ladder);
+			if (!connectGainAndDrive)
+			{
+				eqUse.SetStageParameter(1, "GainDb",
+					FilterParameterValue.FromNumber(gain));
+				ladderUse.SetStageParameter(1, "Drive",
+					FilterParameterValue.FromNumber(drive));
+			}
+			FmFilterNode eq = new(1, 0, eqUse);
+			eq = eq.WithParameterConnection(
+				eq.GetPorts().Single(p => p.ParameterName == "CutoffHz"), 2);
+			FmFilterNode saturation = new(3, 1, ladderUse);
+			saturation = saturation.WithParameterConnection(
+				saturation.GetPorts().Single(p => p.ParameterName == "CutoffHz"), 4);
+			if (connectGainAndDrive)
+			{
+				eq = eq.WithParameterConnection(
+					eq.GetPorts().Single(p => p.ParameterName == "GainDb"), 5);
+				saturation = saturation.WithParameterConnection(
+					saturation.GetPorts().Single(p => p.ParameterName == "Drive"), 6);
+			}
+			if (connectGainAndDrive)
+				return new FmSynthGraph([
+					new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 1200),
+					eq, new FmConstantNode(2, 1700), saturation,
+					new FmConstantNode(4, 2500),
+					new FmConstantNode(5, gain),
+					new FmConstantNode(6, drive)], 3);
+			return new FmSynthGraph([
+				new FmOscillatorNode(0, FmOscillatorWaveform.Sine, 1200),
+				eq, new FmConstantNode(2, 1700), saturation,
+				new FmConstantNode(4, 2500)], 3);
+		}
+
+		ObjectId authoredId = song.AllocateObjectId();
+		FmSynthDefinition authored = new(authoredId, "Authored",
+			Graph(false, 0, 1));
+		song.Add(authored);
+		ObjectId referenceId = song.AllocateObjectId();
+		FmSynthDefinition reference = new(referenceId, "FM Controls",
+			Graph(true, 0, 1));
+		song.Add(reference);
+
+		PlaybackRequestAudioSourceFactory factory = new(MonoConfiguration(48000));
+		NoteSchedule empty = new NoteScheduleBuilder().Freeze();
+		IAudioOutputSource edited = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		IAudioOutputSource control = factory.Create(AdHocPlaybackRequest.Create(song, empty));
+		try
+		{
+			((ILiveAudioOutputSource)edited).EnqueueLiveEvent(
+				ChannelTarget.Virtual(96), [new StartNoteCommand(authoredId)]);
+			((ILiveAudioOutputSource)control).EnqueueLiveEvent(
+				ChannelTarget.Virtual(96), [new StartNoteCommand(referenceId)]);
+			float[] firstA = new float[200], firstB = new float[200];
+			edited.Render(firstA.Length, firstA);
+			control.Render(firstB.Length, firstB);
+			for (int i = 0; i < firstA.Length; i++)
+				firstA[i].Should().BeApproximately(firstB[i], 2e-5f);
+
+			authored.Graph = Graph(false, 12, 3);
+			reference.Graph = Graph(true, 12, 3);
+			song.MarkChanged(affectsAudio: true);
+			foreach ((IAudioOutputSource output, ObjectId id) in
+				new[] { (edited, authoredId), (control, referenceId) })
+				((ILiveSynthSourceRevisionOutput)output).EnqueueLiveSynthParameters(
+					id, factory.PrepareLiveSynthSource(
+						SongDocumentSnapshot.Create(song), id));
+			float[] nextA = new float[230], nextB = new float[230];
+			edited.Render(nextA.Length, nextA);
+			control.Render(nextB.Length, nextB);
+			for (int i = 0; i < nextA.Length; i++)
+				nextA[i].Should().BeApproximately(nextB[i], 2e-5f,
+					"GainDb and Drive changes must coexist with two active FM cutoffs");
+		}
+		finally
+		{
+			(edited as IDisposable)?.Dispose();
+			(control as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
 	public void RealtimeFactoryCapturesFreshOutputConfigurationForEachNewRequest()
 	{
 		SongDocument document = new();
