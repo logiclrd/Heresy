@@ -4,6 +4,8 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 
+using Heresy.Core.Envelopes;
+using Heresy.Core.Filters;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
@@ -45,6 +47,10 @@ public interface ISongPlaybackTransport
 public interface ILiveSynthEditTransport
 {
 	Task PublishSynthEditAsync(SongDocument document, ObjectId sourceId);
+
+	/// <summary>Publish all Synths referencing a successfully edited shared
+	/// Envelope/Filter, then their transitive Synth Source parents.</summary>
+	Task PublishSharedObjectEditAsync(SongDocument document, ObjectId objectId);
 }
 
 public interface IPlaybackPositionTransport
@@ -216,9 +222,24 @@ public sealed class SongPlaybackTransport
 		}
 	}
 
-	/// <summary>Prepare and publish the current committed Synth edit without
-	/// waiting for a new NoteOn. The existing command gate preserves ordering.</summary>
-	public async Task PublishSynthEditAsync(SongDocument document, ObjectId sourceId)
+	/// <summary>Prepare and publish a committed Synth edit without waiting
+	/// for a new NoteOn, including its transitive Synth Source parents.</summary>
+	public Task PublishSynthEditAsync(SongDocument document, ObjectId sourceId)
+		=> PublishAffectedSynthEditsAsync(document, sourceId);
+
+	/// <summary>Notify every Synth that references this shared Envelope or
+	/// Filter. No playback is opened if no live audition is active.</summary>
+	public Task PublishSharedObjectEditAsync(SongDocument document, ObjectId objectId)
+	{
+		ArgumentNullException.ThrowIfNull(document);
+		if (!document.TryGet(objectId, out SongObject? shared)
+			|| shared is not (EnvelopeDefinition or FilterDefinition))
+			return Task.CompletedTask;
+		return PublishAffectedSynthEditsAsync(document, objectId);
+	}
+
+	private async Task PublishAffectedSynthEditsAsync(
+		SongDocument document, ObjectId sourceId)
 	{
 		ArgumentNullException.ThrowIfNull(document);
 		if (sourceId.IsNone)
@@ -230,11 +251,10 @@ public sealed class SongPlaybackTransport
 				|| !ReferenceEquals(_liveAuditionDocument, document)
 				|| !_controller.SupportsLiveSynthPublication)
 				return;
-			// A Synth may itself be the child Source of one or more other
-			// Synths. Publish all affected parents from the SAME detached
-			// snapshot; publishing only the edited object would strand
-			// latched parent voices and the next parent NoteOn on old data.
-			// The edited child precedes direct and transitive parents.
+			// A changed Synth, shared Filter or shared Envelope can affect
+			// several Synth definitions. Resolve all direct dependencies plus
+			// transitive Source parents from one detached revision, then publish
+			// them in child-before-parent order through the ordered live queue.
 			IReadOnlyList<ObjectId> affected =
 				GetDependentSynths(document, sourceId);
 			SongDocumentSnapshot? snapshot = null;
@@ -256,11 +276,11 @@ public sealed class SongPlaybackTransport
 		}
 	}
 
-	/// <summary>Collect a Synth and its transitive Source dependents
-	/// without traversing the live PCM graph. Reference cycles are already
-	/// forbidden by the authoring validator; the visited set also keeps
-	/// redundant parent routes from triggering duplicate publications.
-	/// No audio revision is advanced for unrelated Synths.</summary>
+	/// <summary>Collect direct Filter/Envelope/Synth references, then
+	/// transitive Synth Source parents. This scans immutable authoring
+	/// structure on the control thread, never within the PCM callback.
+	/// The visited set gives child-before-parent order and avoids duplicates.
+	/// No unrelated Synths or frozen base snapshot are changed.</summary>
 	private static IReadOnlyList<ObjectId> GetDependentSynths(
 		SongDocument document, ObjectId changedSourceId)
 	{
@@ -280,14 +300,22 @@ public sealed class SongPlaybackTransport
 					|| visited.Contains(synth.Id))
 					continue;
 				foreach (FmSynthNode node in synth.Graph.Nodes)
-					if (node is FmSoundSourceNode source
-						&& source.SourceId == affected)
+				{
+					bool refersToChanged = node switch
 					{
-						visited.Add(synth.Id);
-						frontier.Add(synth.Id);
-						ordered.Add(synth.Id);
-						break;
-					}
+						FmSoundSourceNode source => source.SourceId == affected,
+						FmEnvelopeNode envelope => envelope.EnvelopeId == affected,
+						FmFilterNode filter =>
+							filter.Configuration?.DefinitionId == affected,
+						_ => false,
+					};
+					if (!refersToChanged)
+						continue;
+					visited.Add(synth.Id);
+					frontier.Add(synth.Id);
+					ordered.Add(synth.Id);
+					break;
+				}
 			}
 		}
 		return ordered;
