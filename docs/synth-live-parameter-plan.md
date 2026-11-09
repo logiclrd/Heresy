@@ -844,3 +844,73 @@ requiring a particular number of underruns.
 
 The all-properties milestone and crossfade-only live transitions remain
 open; no physical hardware acceptance was performed.
+
+## Seventeenth slice: specialized one-frame Multi child rendering
+
+The steady-state scaling data showed that the remaining cost after
+neutral-spatializer optimization was strongly concentrated in the
+per-constituent recursive render path. A Multi constituent is always an
+`FmSynthSound` invocation rendered onto an isolated one-channel,
+zero-positional-importance bus. For every constituent/output frame, the
+generic `ISound.Render(context, state, frame, 1, span)` route repeated
+argument/shape validation, prepared-child setup, `EnsureFrame` (including
+an unnecessary end-of-note graph traversal even when already sequential),
+gain-array preparation and multi-channel dispatch. These costs scale
+with the full live constituent count.
+
+`FmSynthSound.RenderMultiChildFrame` is now a *private* optimized
+single-frame route, used only by `EvaluateMulti`. It retains
+per-invocation SoundState, Sample/Source pitch integration, oscillator
+phase, Filter histories and the original absolute frame and NoteOff
+semantics. It still applies the actual mono spatializer gain, including
+non-finite diagnostics; checks for sample-rate/replay discontinuities;
+calls `PrepareChildRender` and recomputes natural/silent boundaries
+when a child discovers its Sample EOF. Only the provably redundant
+`EnsureFrame` work for sequential child frames, temporary gain array,
+generic output-channel loop and Span dispatch are eliminated. Randomized
+start offsets, gaps and replay still traverse the original
+`EnsureFrame` warm-up path. The prepared live-revision FIFO,
+whole-tree compatibility preflight, off-thread Multi expansion and
+audition-only reserve are unchanged.
+
+Two new PCM regressions in `FmSynthMultiTests` compare single-pass and
+irregular block-split output, sample for sample, through (a) nested Multi
+and randomized oscillator phase with a Note Off boundary and (b) a
+randomized Multi wrapping a finite Sample source, including its natural
+EOF and integrated position. Existing Multi phase/replay, Source, Filter,
+expansion and transport tests still run. Full Release CI for the test
+commit **passed** in [run #42619961201](https://github.com/logiclrd/Heresy/actions/runs/42619961201).
+
+The unchanged single-thread 48-kHz/256-frame scaling matrix reported
+the following observations. Both columns are separate green Release
+CI runners on 9 November 2026, not a controlled same-machine CPU
+benchmark:
+
+| Steady-state case | Prior, µs/output frame, #42618113183 | Specialized, µs/output frame, #42619961201 |
+| --- | ---: | ---: |
+| 8 direct Constant notes | 1.124 | 0.855 |
+| 8 direct Oscillator notes | 1.610 | 1.222 |
+| 8 nested Synth Source Oscillator notes | 3.871 | 3.060 |
+| 8 notes × 8 Constant Multi constituents | 4.909 | 2.349 |
+| 8 notes × 32 Constant Multi constituents | 16.488 | 6.919 |
+| 8 notes × 64 Constant Multi constituents | 32.233 | 14.677 |
+| 8 notes × 64 Oscillator Multi constituents | 58.501 | 33.209 |
+
+The repeated 8x64 Constant profile is about 2.2x faster, and the
+Oscillator case about 1.8x faster. The callback-paced 8-note 2→64
+Multi edit observed 20 underruns and 44,032 produced frames over
+~1.02 s, versus 82 underruns and 28,160 producer frames on the
+earlier run; device callback managed allocations remained **0**.
+Measured render-thread managed allocation was approximately
+117 KB/2,048 frames with eight voices in both scaling runs.
+Neither these counts nor the observed durations are assertions:
+host scheduling, JIT/cache warm-up and multi-tenant CI contention vary.
+
+At 48 kHz there are nominally 20.833 µs per output frame; the
+steady-state 8x64 Constant profile now fits that isolated budget on
+this CI run, while the Oscillator profile still exceeds it. The paced
+simulation **still underruns** and is not device hardware acceptance.
+Further work should profile oscillator/recursive node dispatch,
+multi-constituent lifecycle/end checks, concrete UI-to-PCM property
+coverage, and the still-missing dual-state crossfade transitions.
+Do not mark the full Synth live-edit TODO complete or merge this PR.
