@@ -766,3 +766,30 @@ acceptance pass on supported hosts remains necessary.
 Opt-in producer render timing is disabled for ordinary playback.
 The callback itself still performs no new timing instrumentation
 unless the diagnostic test wraps the call.
+
+## Sixteenth slice: steady-state PCM-producer scaling profile (in progress)
+
+The negative paced eight-note, 64-constituent CI result is not a reliable
+measure of which inner DSP operation costs the most: it mixes audio work,
+worker activity and shared-runner scheduling. A new non-gating regression,
+`SynthProducerScalingProfileTests`, runs **the real ad-hoc playback source
+on one calling thread** (not the buffered output worker) after warming up
+each independent case. It measures eight successive 256-frame render
+blocks at 48 kHz for direct Constant and Oscillator graphs, a nested Synth
+Source, and two-, eight-, 32- and 64-constituent Multi graphs, with both
+single-note and eight-held-note configurations. The 8x64 Multi baseline
+is exercised with and without audition-only dormant reserve; Multi
+Oscillator cases separate graph/oscillator work from Constant mixing.
+
+The profile reports total elapsed time, microseconds per output frame
+and rendering-thread managed allocations. It does **not** assert any
+machine-dependent latency, allocation or underrun count, and is not
+a substitute for CPU sampling/profiling or hardware deadline testing.
+The existing paced test remains the sustained-callback and producer
+instrumentation reference. Expected code-level cost centers to investigate
+are each Multi child performing its own one-frame `ISound.Render`,
+per-call Synth setup/end-frame queries, whole-graph per-sample dispatch,
+and nested Source work. These are hypotheses, not profiled conclusions.
+Use the CI comparison to select one isolated optimization, preserving
+per-voice histories, note release/tails and audition-only headroom.
+Do not close the full all-property live-edit milestone.
