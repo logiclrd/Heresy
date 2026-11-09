@@ -480,6 +480,44 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void TwoIndependentMultiNodesExpandFromOneAtomicPreparedWorkerBatch()
+    {
+        FmSynthGraph Graph(int count) => new([
+            new FmConstantNode(1, 0.25),
+            new FmMultiNode(2, 1, voiceCount: count, detune: 0,
+                randomizePhase: false, gainCompensation: false),
+            new FmMultiNode(3, 1, voiceCount: count, detune: 0,
+                randomizePhase: false, gainCompensation: false),
+            new FmOperatorNode(4, FmOperatorKind.Add, [2, 3]),
+        ], 4);
+        FmSynthSound original = new(Graph(2), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        SoundState held = original.CreateState();
+        RenderContext context = Mono();
+        original.Render(context, held, 0, 100, new float[100]);
+        FmSynthSound revision = new(Graph(9), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        original.CanPrepareMultiExpansion(revision, held).Should().BeTrue();
+        original.CanAdoptRunningState(revision, held).Should().BeFalse();
+        original.RequestMultiExpansionPreparation(revision, held).Should().BeTrue();
+        using FirPreparationScheduler worker = new();
+        original.QueuePendingFirControls(held, worker);
+        Assert.That(SpinWait.SpinUntil(() =>
+            worker.CompletedPreparationCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True,
+            "one invocation-level worker plan must prepare both enlarged arrays");
+        original.AdoptPreparedFirControls(held);
+        original.TryPrepareRunningState(revision, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revision, held);
+        float[] after = new float[120];
+        revision.Render(context, held, 100, 120, after);
+        after[0].Should().BeApproximately(1.0f, 1e-6f);
+        after[100].Should().BeApproximately(4.5f, 1e-5f,
+            "both expanded Multi nodes must commit at the same audio boundary");
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
     public void OffThreadMultiExpansionRecursesIntoNestedConstituentStates()
     {
         FmSynthGraph Graph(int innerCount) => new([
