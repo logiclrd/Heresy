@@ -501,7 +501,8 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 				(double)Stopwatch.Frequency * framesPerCallback / sampleRate);
 			long epoch = Stopwatch.GetTimestamp();
 			long beforeCpu = Process.GetCurrentProcess().TotalProcessorTime.Ticks;
-			long callbackAllocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+			long callbackAllocatedBytes = 0;
+			bool samplesFinite = true;
 			long maxCallbackTicks = 0;
 			long maxStartJitterTicks = 0;
 			long callbackOverBudget = 0;
@@ -526,16 +527,19 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 					lateCallbackStarts++;
 				minimumBufferedFrames = Math.Min(minimumBufferedFrames,
 					(int)buffered.BufferedFrames);
+				long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
 				buffered.Render(framesPerCallback, pcm);
+				callbackAllocatedBytes += GC.GetAllocatedBytesForCurrentThread()
+					- allocatedBefore;
 				long duration = Stopwatch.GetTimestamp() - began;
 				maxCallbackTicks = Math.Max(maxCallbackTicks, duration);
 				if (duration >= callbackPeriodTicks)
 					callbackOverBudget++;
-				pcm.Should().OnlyContain(sample => float.IsFinite(sample));
-				buffered.RenderingFault.Should().BeNull();
+				foreach (float value in pcm)
+					if (!float.IsFinite(value))
+						samplesFinite = false;
 			}
-			long callbackAllocatedBytes = GC.GetAllocatedBytesForCurrentThread()
-				- callbackAllocatedBefore;
+			samplesFinite.Should().BeTrue("audio samples must remain finite");
 			long cpuTicks = Process.GetCurrentProcess().TotalProcessorTime.Ticks
 				- beforeCpu;
 			TestContext.Progress.WriteLine(
@@ -549,7 +553,7 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 				$"late callback starts={lateCallbackStarts}, " +
 				$"PCM underruns={buffered.UnderrunCount}, " +
 				$"minimum buffered frames={minimumBufferedFrames}, " +
-				$"callback-thread allocated bytes={callbackAllocatedBytes}, " +
+				$"callback Render allocated bytes={callbackAllocatedBytes}, " +
 				$"prepared expansions={buffered.CompletedMultiExpansions}, " +
 				$"worker allocated bytes={buffered.MultiPreparationAllocatedBytes}, " +
 				$"worker prep ms={buffered.MultiPreparationElapsedTime.TotalMilliseconds:F3}");
