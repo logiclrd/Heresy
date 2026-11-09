@@ -435,6 +435,34 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return true;
 	}
 
+	/// <summary>After structural compatibility was established but a
+	/// voice-specific FIR plan was not yet prepared, capture each affected
+	/// Filter's most recently accepted absolute modulation values. The
+	/// PCM owner queues these bounded snapshots to the existing off-loop
+	/// FIR worker; the whole Synth tree stays on the old definition until
+	/// every requested plan and non-FIR update passes atomic preflight.</summary>
+	public bool RequestBoundLiveFirPreparation(FmSynthSound next, SoundState state)
+	{
+		FmSynthState live = ValidateState(state);
+		bool requested = false;
+		for (int i = 0; i < _nodes.Length; i++)
+			if (_nodes[i].Filter is { } oldFilter
+				&& next._nodes[i].Filter is { } revisedFilter
+				&& oldFilter.RequestBoundLiveFirPreparation(
+					revisedFilter, live.Filters[i]))
+				requested = true;
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			if (_nodes[i].Definition is not FmMultiNode
+				|| next._nodes[i].MultiInput is not FmSynthSound revised)
+				continue;
+			foreach (MultiVoice child in live.Multis[i])
+				requested = child.Sound.RequestBoundLiveFirPreparation(
+					revised, child.Invocation.State) || requested;
+		}
+		return requested;
+	}
+
 	/// <summary>Commit only an entirely preflighted state tree. No validation
 	/// after this boundary can leave multiple Filters partially updated.</summary>
 	public void CommitPreparedRunningState(FmSynthSound next, SoundState state)
