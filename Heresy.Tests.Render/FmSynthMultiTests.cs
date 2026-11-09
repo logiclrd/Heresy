@@ -555,6 +555,64 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void CancellationInsideOneNestedMultiChildStopsBeforePreparingSiblingStates()
+    {
+        // The outer Multi's second child would itself allocate 60 inner
+        // constituents. The old worker checked cancellation only after
+        // completing all 60; the child-construction path must now check
+        // between each nested invocation as well.
+        FmSynthGraph Graph(int outerCount) => new([
+            new FmConstantNode(1, 0.01),
+            new FmMultiNode(2, 1, voiceCount: 60, detune: 0,
+                randomizePhase: false, gainCompensation: false),
+            new FmMultiNode(3, 2, voiceCount: outerCount, detune: 0,
+                randomizePhase: false, gainCompensation: false),
+        ], 3);
+        FmSynthSound old = new(Graph(1), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        FmSynthSound expanded = new(Graph(2), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        SoundState voice = old.CreateState();
+        old.Render(Mono(), voice, 0, 40, new float[40]);
+        old.RequestMultiExpansionPreparation(expanded, voice).Should().BeTrue();
+
+        using ManualResetEventSlim innerConstructed = new(false);
+        using ManualResetEventSlim resume = new(false);
+        using FirPreparationScheduler worker = new();
+        int nestedChildren = 0;
+        worker.AfterNestedMultiChildStateCreated = () =>
+        {
+            if (Interlocked.Increment(ref nestedChildren) == 1)
+            {
+                innerConstructed.Set();
+                resume.Wait(TimeSpan.FromSeconds(10));
+            }
+        };
+        try
+        {
+            old.QueuePendingFirControls(voice, worker);
+            Assert.That(innerConstructed.Wait(TimeSpan.FromSeconds(5)),
+                Is.True, "the worker must enter nested state construction");
+            old.CancelPendingMultiExpansion(voice);
+        }
+        finally
+        {
+            resume.Set();
+        }
+        Assert.That(SpinWait.SpinUntil(() =>
+            worker.CancelledMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        Volatile.Read(ref nestedChildren).Should().Be(1,
+            "cancellation must propagate inside an expensive nested child constructor");
+        worker.PreparedMultiConstituentCount.Should().Be(0);
+        old.CanAdoptRunningState(expanded, voice).Should().BeFalse();
+        float[] pcm = new float[80];
+        old.Render(Mono(), voice, 40, 80, pcm);
+        pcm.Should().OnlyContain(x => Math.Abs(x - 0.6f) < 1e-5f);
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
     public void CancelledInFlightMultiExpansionStopsAtNextChildBoundary()
     {
         FmSynthGraph Graph(int count) => new([
