@@ -568,3 +568,68 @@ with thousands of concurrent voices, cancellation of jobs for retired
 notes, explicit constituent identity matching when a chord is reordered,
 audible re-randomization via state crossfades, and physical listening.
 This does not yet close the general all-properties live-editing TODO.
+
+## Fourteenth slice: bounded worker demand, obsolete-job cancellation and diagnostics
+
+Live Multi growth now has explicit resource-management semantics rather than
+relying only on latest-wins *publication*. A superseded revision or a retired
+voice no longer needs to finish constructing every unused child invocation.
+
+- `FirPreparationScheduler` continues as the single non-PCM worker per
+  buffered live producer. Its Multi-expansion admission path caps **queued
+  Multi requests at 64 total queued work items** (FIR requests also occupy
+  the shared queue). No audio producer waits when that queue is full:
+  the versioned request remains in the owning invocation mailbox and
+  retries at a later audio-block boundary. This is backpressure, **not**
+  silent abandonment of a still-live requested change.
+- Every `MultiExpansionMailbox` has a cooperative cancellation/version
+  mechanism. Newer authoring revisions invalidate an older snapshot
+  immediately; workers check that version before every node and before
+  constructing each new constituent. A cut, completed, displaced/retired
+  or explicitly superseded voice clears its pending and ready plans,
+  releases references to frozen obsolete revisions and invalidates
+  already-queued jobs. A worker already inside a single child
+  construction finishes only that child, then abandons the rest.
+  This cancellation does not rewind or mutate other notes' DSP histories.
+- Retirement wiring is centralized at the real playback lifecycle:
+  `PlaybackChannelState.CutCurrentVoice`, natural end culling,
+  NNA Cut, completed NNA Off, displaced-voice retirement, and
+  `PlaybackVoice`'s superseded/successfully committed revision
+  boundaries. Multi and referenced child Synth state trees are
+  traversed recursively; surviving NNA Continue/Off/Fade voices keep
+  their work until *their own* eventual retirement.
+- Off-thread metrics are readable without allocation from both
+  `FirPreparationScheduler` and `BufferedAudioOutputSource`:
+  number of prepared/cancelled expansion batches, accepted/abandoned
+  constituents, total and peak allocated bytes, cumulative worker
+  preparation wall-clock time, and peak queued work items. The existing
+  buffered output's underrun count and rendering fault are retained.
+  The callbacks remain ring-buffer reads with no preparation activity.
+- Deterministic concurrency regressions gate the worker after exactly
+  one prepared child and show that cancelling or superseding that
+  invocation stops extra work without publishing stale arrays.
+  A 96-voice burst verifies the queue limit and eventual completion
+  of 12 surviving voices after the other 84 are cancelled.
+  The playback-level lifecycle regression cuts a note after its
+  queued expansion is captured and verifies no child allocation by the
+  worker. A real buffered audition test consumes already-available PCM
+  while six held voices request larger Multi expansions and records
+  elapsed/CPU time, worker allocations and observed underruns.
+- Reference measurement from **one GitHub CI runner** during the
+  96-request burst: peak queued work items 64, cancelled queued
+  batches 53, completed batches 12, 504 accepted prepared
+  constituents, 566,880 worker-allocated bytes, largest accepted
+  batch 47,240 bytes and 0.69 ms cumulative worker preparation
+  time. The test's entire process consumed about 6.65 ms CPU over
+  6.55 ms elapsed during that measured portion. These measurements
+  are observations, **not performance thresholds or hardware
+  guarantees**; no test should assert machine-specific latency,
+  memory or throughput numbers.
+
+Still outstanding: broad performance sampling on real target systems,
+true sustained callback-deadline testing under contention (controlled
+ring consumption is not the same thing), memory allocation budgets for
+complex nested Source/FIR children, cancellation inside an individual
+expensive child constructor, priority/fairness between heterogeneous
+FIR and Multi jobs, and full physical listening acceptance.
+The all-properties live-editing milestone remains open.
