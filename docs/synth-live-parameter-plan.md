@@ -407,3 +407,73 @@ that bypass these shared editor mutation APIs, general note/Instrument
 shared-object invalidation, incompatible structural changes requiring
 migration or crossfade, continuous-FM FIR liveness, smoothing, stress and
 physical listening. The full all-properties live-editing TODO remains open.
+
+## Twelfth slice: bounded Multi constituent migration and 64-frame transitions
+
+A compatible Multi node edit now migrates constituent state instead of
+rejecting all layout changes other than GainCompensation. The policy is
+deliberately **state-preserving and bounded**:
+
+- Preparation precompiles the new Multi frequency-ratio array, before the
+  PCM callback. Each existing constituent is identified **by index**
+  and keeps its original child invocation, oscillator phase, Filter/FIR
+  histories, Sample/Source position, noise seed and release state.
+  Changes to Spread Detune, Harmonic or Chord component ratios, or
+  Distribution with a compatible compiled child graph adjust those
+  *same* constituents' future pitch.
+- Ratio changes use a deterministic, allocation-free **64-frame
+  smoothstep glide**. Mix gains have the same 64-frame transition.
+  This includes GainCompensation changes, reductions in VoiceCount,
+  changes in the number of Harmonic/Chord components, and activation
+  of previously prepared constituents. The first sample of an edit
+  uses the prior gain/ratio; rapid subsequent edits begin at the
+  interpolated current value rather than restarting a fade from zero.
+- Up to **four dormant child invocations per eligible Multi node** are
+  prepared at the original note boundary. Total reserve is capped at
+  sixteen across a top-level compiled Synth and limited by the unused
+  portion of the 128-voice budget. No additional reserve is recursively
+  created inside Multi-subgraph children. A count increase that fits
+  the existing constituent array wakes unused voices with a local
+  clock starting on the publication frame and a silent-to-target
+  mix fade; **no SoundState allocation, child replay, reseeding or
+  FIR design occurs inside the PCM edit callback**. Count increases
+  exceeding prepared headroom are conservatively refused for the
+  held note; new notes always use the new layout.
+- Retired constituent histories **continue advancing silently**
+  after their gain reaches zero. Thus an edit that reactivates one
+  within the original capacity preserves its phase and Sample
+  position without a rewind. This continuity policy is bounded by
+  the initially prepared Multi capacity, but it intentionally does
+  **not** reclaim retired child CPU during an existing note. Profile
+  this tradeoff and consider off-worker migration/state fast-forward
+  for larger growth and long-lived retired voices.
+- RandomizePhase and CycleLength are *initial-onset* controls.
+  Existing initialized constituents retain their sampled start
+  offsets/cycle and are not forced through a discontinuous phase
+  jump; untouched or newly activated constituents and future notes
+  use the revised values. Applying a new randomized phase layout
+  to already-running children requires a separate prepared
+  dual-state crossfade.
+- The whole-voice recursive preflight still checks every retained
+  nested Multi, Source and Filter processor before **any** commit.
+  An incompatible child graph or oversized count rejects the entire
+  update; the running voice stays on its previous generation.
+  The note's release and audible end handling excludes dormant
+  constituents and completed fade-outs, so a reserved child cannot
+  indefinitely prolong a finite note.
+
+Regressions verify growth/shrink/revival with exact first-frame and
+fully transitioned PCM, distribution/harmonic retune with oscillator
+phase continuity, changed onset controls only affecting new notes,
+nested Multi retirement and revival, an over-capacity rejection,
+and live audition publication on an existing latched note. The
+existing gain-compensation regression now verifies its smooth 64-frame
+envelope rather than testing an undesirable instantaneous amplitude
+jump.
+
+Remaining work includes prepared growth **beyond** the bounded
+reserve, new explicit identities/voice matching for arbitrarily
+reordered chord components, fully audible re-randomization via
+crossfade, efficient retirement of silent child histories, stress/
+underrun measurements, smoothing for other Synth families and
+physical listening. The all-properties milestone remains open.
