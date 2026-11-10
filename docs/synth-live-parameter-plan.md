@@ -2208,3 +2208,85 @@ Instrument-selected Sample/Envelope/panning/filter chains, modified
 Source bindings, nested stateful Multi, complex FM graph migration,
 and physical click/underrun acceptance are still outstanding.
 The all-properties TODO remains open, and PR #12 stays draft/unmerged.
+
+
+## Thirty-sixth slice: longer exact variable-rate Sample rewind, bounded PCM transfer
+
+Slice 35 established an exact 128-frame recent-history rewind for direct bare
+Sample children of eligible held/latched audition Multi nodes. A phase reset
+from a longer randomized skip was still refused even when the integrated
+Sample position had **actually been rendered** earlier in the same live
+Source history. This slice widens that deterministic, non-speculative
+lookback without making realtime publication work proportional to the
+total history retained.
+
+**Separate, fixed capture and publication budgets:**
+
+- Only the audition-opted-in `SampleSoundState` now retains the last
+  **1,024** exact `double` integrated pitch positions, consuming
+  **8 KiB per eligible Sample invocation**. The ring is allocated as
+  part of initial/prepared voice construction, never during audio
+  production. Ordinary arrangement playback/export remains unchanged
+  and does not allocate it.
+- An eligible changed Multi onset may rewind to **any recorded target
+  position within that window**, with exactly the same Sample identity,
+  Source-control, voice-lifetime, held-note, constant-ratio and full-tree
+  preflight gates as slice 35. No old audio or historical rate stream
+  is replayed to obtain the position.
+- Copying history during atomic PCM publication remains bounded to
+  **at most 128 recorded positions**, into the detached replacement's
+  already-allocated ring. Thus enlarging the retained lookback does
+  **not** turn a 1,024-frame edit into an O(1,024) PCM copy. The
+  replacement inherits an exact target position and the immediately
+  preceding 128-frame prefix only; any still-earlier prefix not
+  copied is intentionally unavailable for another later rephase
+  until newly rendered positions establish a usable window.
+- This distinction matters: being within 1,024 frames of the
+  **currently rendered Source frame** is not sufficient by itself
+  if the proposed target was never recorded (for example, a
+  randomized first-onset frame skipped past it with no replay).
+  Missing history, changes before the recorded beginning, and
+  offsets exceeding 1,024 continue to fall back immediately.
+  Independent scalar edits remain live and no impossible worker
+  preparation is queued.
+- Positive variable-rate skips are still not eligible merely because
+  the past is retained. Their target position lies in the unobserved
+  **future** of that specific invocation and may depend on pitch
+  edits or modulation yet to occur. Substituting
+  `lastRate * skipDelta` is not an exact historical integral.
+  A future feature must define a separate causal/forward policy or
+  a truly immutable prepared trajectory, rather than treating
+  a current-rate extrapolation as already-known history.
+
+**Red-before-fix acceptance:** Multi ID 2 with seed 137 and 800-frame
+cycle starts two randomized bare Sample constituents with skips 725
+and 735. Parent rate changes from 1 to 1.3 at **outer frame 200**.
+At outer frame **800**, removing randomization requires their
+previously rendered **local frame 800**: both Sample histories have
+already integrated that position at rate 1, well before the later
+parent rate change reaches either displaced Source clock. The
+recorded integral is precisely **800**, whereas projecting
+backwards 725 or 735 frames at the *current* 1.3 rate gives the
+wrong answer. The new regression demands worker preparation and
+checks every frame of the 64-frame outgoing/incoming PCM crossfade
+against an independently interpolated Sample oracle starting at
+position 800 and then advancing at 1.3. It also asserts first-frame
+parity, all-sample finite PCM, and **zero managed allocations** in
+the edited render. It fails against the previous 128-frame window.
+
+The existing out-of-window/non-starvation test was retained as
+the same desired invariant, moving its randomized cycle to
+5,000 frames: the deterministic old skips are 3,125 and
+3,735, both exceeding the new 1,024-frame retained lookback.
+The independent Constant still commits while the phase onset
+remains unchanged. Existing direct-Sample EOF/Note Off/fade
+lifetime, late-revision supersession, and the original
+constant-rate O(1) forward/backward skip behavior are unchanged.
+
+**Still outstanding:** exact variable-rate **future** advances
+without an assumed rate, rewinds outside 1,024 already-recorded
+frames, arbitrary seeks, Instrument-selected Sample/Envelope/panning
+and tone-Filter migration, changed Source assignments, nested
+stateful graphs, all-property inspector audit, and physical
+listening/throughput acceptance. The whole all-properties TODO
+stays open and PR #12 stays **draft and unmerged**.
