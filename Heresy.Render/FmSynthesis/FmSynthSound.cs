@@ -781,6 +781,63 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return true;
 	}
 
+	/// <summary>Eligible Source child: the same already resolved bare
+	/// SampleSound, with unchanged playback properties and no FM input.
+	/// Its Sample playhead can be migrated without replay only while its
+	/// forward-integrated Source pitch rate has remained constant.</summary>
+	private static bool CanRephaseDirectSampleSource(
+		CompiledNode old, CompiledNode revised)
+	{
+		return old.Definition is FmSoundSourceNode source
+			&& revised.Definition is FmSoundSourceNode next
+			&& source.SourceId == next.SourceId
+			&& source.MultiplierNodeId is null
+			&& next.MultiplierNodeId is null
+			&& source.FrequencyHz == next.FrequencyHz
+			&& source.Constant == next.Constant
+			&& source.ExponentialMultiplier == next.ExponentialMultiplier
+			&& old.Source is SampleSound sample
+			&& ReferenceEquals(sample, revised.Source)
+			&& sample.SourceChannelCount is >= 1 and <= 2;
+	}
+
+	private static bool CanTransferPreparedDirectSample(
+		SourceVoice? original, SourceVoice? replacement,
+		long oldFrame, long nextFrame)
+	{
+		if (original?.Sound is not SampleSound sourceSample
+			|| replacement?.Sound is not SampleSound preparedSample
+			|| !ReferenceEquals(sourceSample, preparedSample)
+			|| original.Invocation.State is not SampleSoundState previous
+			|| replacement.Invocation.State is not SampleSoundState destination
+			|| original.EndFrame.HasValue || original.InputFinished
+			|| original.Filters is not null || replacement.Filters is not null
+			|| original.FilterEnvelopeState is not null
+			|| replacement.FilterEnvelopeState is not null
+			|| previous.ReleaseIsControlledByVolumeEnvelope
+			|| destination.ReleaseIsControlledByVolumeEnvelope
+			|| previous.NaturalEndFrameExclusive.HasValue
+			|| previous.HasNoteOffTime
+			|| original.OriginalFrequencyHz != replacement.OriginalFrequencyHz
+			|| original.OriginalOuterFactor != replacement.OriginalOuterFactor
+			|| !original.Pitch.HasConstantRateHistory
+			|| original.Pitch.LastFrame != oldFrame - 1
+			|| oldFrame < 0 || nextFrame < 0
+			|| !previous.PitchTrajectory.CanSeedPreparedStreamingPosition
+			|| !destination.PitchTrajectory.CanSeedPreparedStreamingPosition)
+			return false;
+		var envelopes = original.Invocation.Configuration.Envelopes;
+		if (envelopes.Volume is not null || envelopes.Pitch is not null
+			|| envelopes.Filter is not null || envelopes.Panning is not null
+			|| original.Invocation.Configuration != replacement.Invocation.Configuration)
+			return false;
+		// Restrict this first direct-Sample migration to a bounded offset.
+		// Complex historic changes need prepared replay rather than an
+		// instantaneous-rate projection.
+		double extra = (nextFrame - oldFrame) * original.Pitch.LastRate;
+		return double.IsFinite(extra) && Math.Abs(extra) <= 1000000.0;
+	}
+
 	/// <summary>Allow a new onset only when histories are independent
 	/// unmodulated oscillator phases and, optionally, unbound OnePole IIR
 	/// integrators that can be copied into worker-prepared states.
@@ -789,11 +846,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	private static bool CanRephaseOscillatorGraph(
 		FmSynthSound original, FmSynthSound revised)
 	{
-		if (original._oscillatorCount == 0
-			|| original._oscillatorCount != revised._oscillatorCount
+		if (original._oscillatorCount != revised._oscillatorCount
 			|| original._outputIndex != revised._outputIndex
 			|| original._nodes.Length != revised._nodes.Length)
 			return false;
+		bool hasTimeDependentInput = false;
 		for (int i = 0; i < original._nodes.Length; i++)
 		{
 			CompiledNode a = original._nodes[i];
@@ -817,6 +874,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						&& oscillator.Constant == updated.Constant
 						&& oscillator.ExponentialMultiplier
 							== updated.ExponentialMultiplier:
+					hasTimeDependentInput = true;
 					break;
 				case FmConstantNode constant
 					when b.Definition is FmConstantNode updated
@@ -825,6 +883,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				case FmOperatorNode operation
 					when b.Definition is FmOperatorNode updated
 						&& operation.Operation == updated.Operation:
+					break;
+				case FmSoundSourceNode
+					when CanRephaseDirectSampleSource(a, b):
+					hasTimeDependentInput = true;
 					break;
 				case FmFilterNode filterNode
 					when b.Definition is FmFilterNode revisedNode
@@ -837,13 +899,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					return false;
 			}
 		}
-		return true;
+		return hasTimeDependentInput;
 	}
 
 	/// <summary>Eligible live audition: held notes and unchanged ratios,
-	/// with identical unmodulated oscillator/constant/operator and
-	/// optional unbound OnePole IIR child graphs. Source, other Filter
-	/// families, Envelope and nested Multi remain excluded.</summary>
+	/// with identical unmodulated oscillator/constant/operator,
+	/// optional unbound OnePole IIR, and bare same-instance direct Sample
+	/// children with constant-rate histories. Other Source/Sample states,
+	/// Filter families, Envelope and nested Multi remain excluded.</summary>
 	private bool NeedsMultiOnsetReplacement(
 		FmSynthSound next, FmSynthState live, int index)
 	{
