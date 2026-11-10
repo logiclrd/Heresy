@@ -1866,9 +1866,11 @@ Added functional regressions:
 - A randomized onset with a real offset and a OnePole stage must keep
   the exact old first PCM sample, then become audibly different after
   the 64-frame fade; worker preparation must finish without faults.
-- An otherwise identical OnePole Filter with a bound numeric FM input
-  stays on its original initialized onset, with no unsupported
-  rephase worker request.
+- A graph whose OnePole Filter has a bound FM input remains
+  *bit-identically unchanged before publication*, whether or not
+  preparation is admitted in a future generalized implementation.
+  This tests the durable isolation invariant, not the current lack
+  of a particular history migration.
 - A Note Off inside the crossfade with an authored 96-frame OnePole
   tail must retain the original exclusive end and yield zero output
   after that end; neither incoming nor outgoing history can prolong
