@@ -197,6 +197,9 @@ public sealed class SampleSound : ISound, ISourceFrameSeekableSound
 		for (int outputFrame = 0; outputFrame < activeFrames; outputFrame++)
 		{
 			long invocationFrame = startFrame + outputFrame;
+			// Only live Synth auditions opt in. Store the exact accumulated
+			// position used by the Sample interpolator, including rate edits.
+			sampleState.RecordLiveOnsetPitchPosition(invocationFrame, pitchPosition);
 			double sourcePosition =
 				sourceOffsetFrames + pitchPosition * step;
 
