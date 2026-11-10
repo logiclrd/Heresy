@@ -1121,11 +1121,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return requested;
 	}
 
-	/// <summary>Adopt an already worker-constructed oscillator invocation.
-	/// Onset rephasing uses only the existing oscillator's scalar phase and
-	/// its deterministic skip delta, never replaying skipped samples on
-	/// the PCM producer. Restricted by NeedsMultiOnsetReplacement to the
-	/// identical oscillator definition, same ratios and held notes.</summary>
+	/// <summary>Adopt already worker-constructed oscillator histories.
+	/// For each independent unmodulated oscillator, shift only its phase by
+	/// the deterministic onset-offset delta, without replaying child samples
+	/// inside PCM. Eligibility guarantees identical stateless-operator graphs,
+	/// same ratios and held note configuration across the edit.</summary>
 	private void AttachPreparedOscillatorOnset(
 		FmSynthState parent, int index,
 		MultiVoice outgoing, MultiVoice replacement, long frame)
@@ -1133,8 +1133,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		FmSynthState previous = ValidateState(outgoing.Invocation.State);
 		FmSynthState created = ValidateState(replacement.Invocation.State);
 		FmMultiNode multi = (FmMultiNode)_nodes[index].Definition;
-		FmOscillatorNode oscillator = (FmOscillatorNode)
-			_nodes[index].MultiInput!._singleOutputOscillator!.Definition;
+		FmSynthSound childGraph = _nodes[index].MultiInput!;
 
 		created.PitchMultiplier = parent.PitchMultiplier
 			* outgoing.RatioAt(frame)
@@ -1147,17 +1146,24 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			created.PitchMultiplier, created.PlaybackSpeedMultiplier,
 			parent.SampleRate);
 
-		// The old child phase is the next sample's oscillator phase, so
-		// account only for the DIFFERENCE in deterministic onset offsets.
-		// A full replay would be unbounded work inside an audio quantum.
-		double frequency = oscillator.FrequencyHz
-			* (oscillator.Constant ? 1.0
-				: created.PitchMultiplier * created.PlaybackSpeedMultiplier);
-		double phase = previous.Phases[0]
-			+ (replacement.SkipFrames - outgoing.SkipFrames)
-				* frequency / parent.SampleRate;
-		phase -= Math.Floor(phase);
-		created.Phases[0] = phase;
+		// Each independent oscillator has its own phase integration
+		// history. Stateless constants/operators need no migration, and
+		// modulation, Source, Filter and nested Multi are excluded by
+		// CanRephaseOscillatorGraph. No replay of skipped frames is needed.
+		int offset = replacement.SkipFrames - outgoing.SkipFrames;
+		foreach (CompiledNode node in childGraph._nodes)
+		{
+			if (node.Definition is not FmOscillatorNode oscillator)
+				continue;
+			int phaseIndex = node.OscillatorIndex;
+			double frequency = oscillator.FrequencyHz
+				* (oscillator.Constant ? 1.0
+					: created.PitchMultiplier * created.PlaybackSpeedMultiplier);
+			double phase = previous.Phases[phaseIndex]
+				+ offset * frequency / parent.SampleRate;
+			phase -= Math.Floor(phase);
+			created.Phases[phaseIndex] = phase;
+		}
 		created.SampleRate = parent.SampleRate;
 		created.NextFrame = checked(frame - outgoing.StartFrame
 			+ replacement.SkipFrames);
