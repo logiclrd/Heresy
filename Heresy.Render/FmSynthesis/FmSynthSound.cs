@@ -953,14 +953,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return hasTimeDependentInput;
 	}
 
-	/// <summary>A late direct Sample rephase may use its O(1) pitch
-	/// snapshot only when the active forward-integrated Source has
-	/// maintained a constant rate and has not reached its EOF. If not,
-	/// keep the captured onset (as for unsupported stateful graphs)
-	/// rather than leave the whole compatible Synth revision waiting
-	/// forever for a history transfer this worker cannot provide.</summary>
+	/// <summary>Allow a direct Sample onset with either a constant-rate
+	/// streaming curve or an exact, recent integrated position when the
+	/// new skip rewinds within the audition-only 128-frame history.
+	/// Forward variable-rate projections and older histories fall back
+	/// immediately: the independent scalar edit must not be starved
+	/// waiting on a worker that could never prepare this onset.</summary>
 	private bool HasDirectSampleOnsetSnapshot(
-		SoundState activeState, long nextLocalFrame)
+		SoundState activeState, long oldLocalFrame, long newLocalFrame)
 	{
 		FmSynthState active = ValidateState(activeState);
 		for (int i = 0; i < _nodes.Length; i++)
@@ -968,13 +968,16 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			if (_nodes[i].Definition is not FmSoundSourceNode)
 				continue;
 			SourceVoice? source = active.Sources[i];
-			if (nextLocalFrame <= 0
+			if (oldLocalFrame <= 0 || newLocalFrame < 0
 				|| source?.Sound is not SampleSound
-				|| !source.Pitch.HasConstantRateHistory
-				|| source.Pitch.LastFrame != nextLocalFrame - 1
+				|| source.Pitch.LastFrame != oldLocalFrame - 1
 				|| source.InputFinished || source.EndFrame.HasValue
 				|| source.Invocation.State.HasNoteOffTime
-				|| source.Invocation.State.NaturalEndFrameExclusive.HasValue)
+				|| source.Invocation.State.NaturalEndFrameExclusive.HasValue
+				|| (!source.Pitch.HasConstantRateHistory
+					&& (source.Invocation.State is not SampleSoundState sample
+						|| !sample.CanTransferLiveOnsetPosition(
+							oldLocalFrame, newLocalFrame))))
 				return false;
 		}
 		return true;
@@ -982,9 +985,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 
 	/// <summary>Eligible live audition: held notes and unchanged ratios,
 	/// with identical unmodulated oscillator/constant/operator,
-	/// optional unbound OnePole IIR, and bare same-instance direct Sample
-	/// children with constant-rate histories. Other Source/Sample states,
-	/// Filter families, Envelope and nested Multi remain excluded.</summary>
+	/// optional unbound OnePole IIR, and bare same-asset direct Sample
+	/// children with constant-rate or bounded recent variable-rate histories.
+	/// Other Source/Instrument, Filter, Envelope and nested Multi remain excluded.</summary>
 	private bool NeedsMultiOnsetReplacement(
 		FmSynthSound next, FmSynthState live, int index)
 	{
@@ -1009,11 +1012,26 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			// integrated Sample history, or the old onsets are retained.
 			// Do not leave scalar/property publication blocked indefinitely.
 			foreach (MultiVoice active in live.Multis[index])
-				if (active.HasStarted && active.Initialized
-					&& !originalChild.HasDirectSampleOnsetSnapshot(
+			{
+				if (!active.HasStarted || !active.Initialized)
+					continue;
+				// The target skip is a pure, bounded calculation; compute it
+				// before worker admission so a variable-rate rewind beyond
+				// the history ring never enters a permanently failing retry.
+				double pitch = live.PitchMultiplier
+					* active.RatioAt(live.NextFrame)
+					* live.PitchTrajectory.GetMultiplier(live.NextFrame);
+				int targetSkip = next.CalculateMultiSkip(
+					updated, live.NoiseSeed, index, active.Index, pitch,
+					live.PlaybackSpeedMultiplier, live.SampleRate);
+				long local = live.NextFrame - active.StartFrame;
+				if (local < 0 || local > long.MaxValue
+					- Math.Max(active.SkipFrames, targetSkip)
+					|| !originalChild.HasDirectSampleOnsetSnapshot(
 						active.Invocation.State,
-						live.NextFrame - active.StartFrame + active.SkipFrames))
+						local + active.SkipFrames, local + targetSkip))
 					return false;
+			}
 			return true;
 		}
 		return false;
@@ -2466,8 +2484,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	/// Keep the exact existing hash, cycle arithmetic, rounding and fade
 	/// semantics so changing a Multi's initial phase policy cannot alter
 	/// unrelated notes or seeded replay.</summary>
-	private void InitializeMultiOnset(FmMultiNode multi, ulong noiseSeed,
-		int index, MultiVoice voice, double pitch, double speed, int sampleRate)
+	private int CalculateMultiSkip(FmMultiNode multi, ulong noiseSeed,
+		int index, int voiceIndex, double pitch, double speed, int sampleRate)
 	{
 		double frequency = FmMultiNode.NeutralFrequencyHz * pitch * speed;
 		// A sole unmodulated oscillator has a knowable cycle;
@@ -2485,11 +2503,18 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			throw new InvalidOperationException(
 				"Multi cycle length exceeds the one-million-frame safety limit.");
 		int cycle = Math.Max(1, (int)Math.Round(length));
-		voice.SkipFrames = multi.RandomizePhase
+		return multi.RandomizePhase
 			? (int)(MultiHash(noiseSeed
 				^ ((ulong)(uint)multi.Id << 32)
-				^ (ulong)(uint)(voice.Index + 1)) % (ulong)cycle)
+				^ (ulong)(uint)(voiceIndex + 1)) % (ulong)cycle)
 			: 0;
+	}
+
+	private void InitializeMultiOnset(FmMultiNode multi, ulong noiseSeed,
+		int index, MultiVoice voice, double pitch, double speed, int sampleRate)
+	{
+		voice.SkipFrames = CalculateMultiSkip(
+			multi, noiseSeed, index, voice.Index, pitch, speed, sampleRate);
 		voice.FadeFrames = (voice.SkipFrames + 1) / 2;
 		voice.Initialized = true;
 	}
