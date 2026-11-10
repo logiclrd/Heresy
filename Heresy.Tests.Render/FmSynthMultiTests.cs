@@ -996,6 +996,83 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void LiveSampleOnsetAcceptsFreshWrappersOverTheSameFrozenPcm()
+    {
+        // Production revisions use a new PlaybackSnapshotSoundResolver and
+        // therefore a different SampleSound wrapper. Frozen song snapshots
+        // share immutable SamplePcmData, not their mutable SoundState.
+        ObjectId id = (ObjectId)7604U;
+        const int frames = 4096;
+        float[] values = Enumerable.Range(0, frames)
+            .Select(i => (float)Math.Sin(2.0 * Math.PI * i / 79.0))
+            .ToArray();
+        using System.IO.MemoryStream wave = new();
+        using (System.IO.BinaryWriter writer = new(wave,
+            System.Text.Encoding.ASCII, leaveOpen: true))
+        {
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
+            writer.Write(36 + frames * 2);
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("WAVEfmt "));
+            writer.Write(16);
+            writer.Write((ushort)1);
+            writer.Write((ushort)1);
+            writer.Write(48000);
+            writer.Write(96000);
+            writer.Write((ushort)2);
+            writer.Write((ushort)16);
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("data"));
+            writer.Write(frames * 2);
+            for (int i = 0; i < frames; i++)
+                writer.Write((short)Math.Round(values[i] * 30000));
+        }
+        SampleDefinition originalDefinition = SampleDefinition.CreateImported(
+            id, "Frozen", "frozen.wav", wave.ToArray());
+        SampleDefinition revisedDefinition = SampleDefinition.CreateImportedCopy(
+            id, originalDefinition, "frozen-copy.wav", wave.ToArray());
+        ReferenceEquals(originalDefinition, revisedDefinition).Should().BeFalse();
+        ReferenceEquals(originalDefinition.PcmData, revisedDefinition.PcmData)
+            .Should().BeTrue();
+
+        SampleSound originalSample = new(originalDefinition,
+            new MemorySampleData(48000, 1, values));
+        SampleSound revisedSample = new(revisedDefinition,
+            new MemorySampleData(48000, 1, values));
+        SourceResolver oldResolver = new(id, originalSample);
+        SourceResolver revisedResolver = new(id, revisedSample);
+        FmSynthGraph Graph(bool random) => new([
+            new FmSoundSourceNode(1, id, FmMultiNode.NeutralFrequencyHz),
+            new FmMultiNode(2, 1, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 0.001,
+                gainCompensation: true),
+        ], 2);
+        FmSynthSound original = new(Graph(false), oldResolver,
+            soundResolver: oldResolver, enableLiveMultiExpansion: true);
+        FmSynthSound revised = new(Graph(true), revisedResolver,
+            soundResolver: revisedResolver, enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState state = original.CreateState();
+        SoundState unchanged = original.CreateState();
+        original.Render(context, state, 0, 160, new float[160]);
+        original.Render(context, unchanged, 0, 160, new float[160]);
+        original.RequestMultiExpansionPreparation(revised, state).Should().BeTrue(
+            "the same immutable SamplePcmData authorizes onset migration across wrappers");
+        using FirPreparationScheduler worker = new();
+        original.QueuePendingFirControls(state, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        original.AdoptPreparedFirControls(state);
+        original.TryPrepareRunningState(revised, state).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, state);
+        float[] actual = new float[160], expected = new float[160];
+        revised.Render(context, state, 160, actual.Length, actual);
+        original.Render(context, unchanged, 160, expected.Length, expected);
+        actual.Should().Equal(expected,
+            "recompiling a frozen wrapper must not reset the Sample's integrated position");
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
     public void DirectSampleMultiLiveRephasePreservesExactIntegratedPositionWithoutPcmAllocations()
     {
         // Cycle length rounds to one frame. Although the authored
