@@ -1073,6 +1073,114 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void OutgoingSampleEofDuringFadeDoesNotTruncateLaterIncomingPlayback()
+    {
+        // Multi ID 2, seed 21 and cycle 100 produce skip 44 for
+        // each randomized outgoing voice. A 170-frame Sample thus
+        // ends at outer frame 126, during the 80..143 fade. Its
+        // new, aligned incoming playhead must survive until frame 170.
+        ObjectId id = (ObjectId)7611U;
+        float[] pcm = Enumerable.Range(0, 170)
+            .Select(i => (float)(0.15 + 0.4 * Math.Sin(2 * Math.PI * i / 61.0)))
+            .ToArray();
+        SampleSound sample = new(new SampleDefinition(id, "Eof during fade",
+            new ExternalAssetReference("eof-during-fade.wav")),
+            new MemorySampleData(48000, 1, pcm));
+        SourceResolver resolver = new(id, sample);
+        FmSynthGraph Graph(bool random) => new([
+            new FmSoundSourceNode(1, id, FmMultiNode.NeutralFrequencyHz),
+            new FmMultiNode(2, 1, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 100,
+                gainCompensation: true),
+        ], 2);
+        FmSynthSound original = new(Graph(true), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound revised = new(Graph(false), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        SoundState outgoingReference = original.CreateState();
+        SoundState incomingReference = revised.CreateState();
+        held.SetNoiseSeed(21);
+        outgoingReference.SetNoiseSeed(21);
+        incomingReference.SetNoiseSeed(21);
+        original.Render(context, held, 0, 80, new float[80]);
+        original.Render(context, outgoingReference, 0, 80, new float[80]);
+        revised.Render(context, incomingReference, 0, 80, new float[80]);
+        using FirPreparationScheduler worker = new();
+        PublishPreparedSampleRephase(original, revised, held, worker);
+
+        float[] mixed = new float[160];
+        float[] oldPcm = new float[160];
+        float[] newPcm = new float[160];
+        revised.Render(context, held, 80, mixed.Length, mixed);
+        original.Render(context, outgoingReference, 80, oldPcm.Length, oldPcm);
+        revised.Render(context, incomingReference, 80, newPcm.Length, newPcm);
+        mixed[0].Should().Be(oldPcm[0],
+            "the publication frame must use the original early-ending Sample");
+        oldPcm.Skip(46).Should().OnlyContain(x => x == 0,
+            "the randomized outgoing Sample ends at frame 126");
+        for (int i = 64; i < 90; i++)
+            mixed[i].Should().BeApproximately(newPcm[i], 1e-6f,
+                "after the fade the surviving incoming Sample owns the PCM");
+        mixed[85].Should().NotBe(0f,
+            "incoming Sample audio survives the outgoing EOF");
+        mixed.Skip(90).Should().OnlyContain(x => x == 0f);
+        revised.GetEndFrameExclusive(context, held).Should().Be(170,
+            "the incoming Sample determines the final lifetime");
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
+    public void DirectSampleNoteOffWithinOnsetFadeSilencesBothDisplacedPlayheads()
+    {
+        ObjectId id = (ObjectId)7612U;
+        float[] pcm = Enumerable.Range(0, 500)
+            .Select(i => (float)(0.4 + 0.2 * Math.Cos(2 * Math.PI * i / 79.0)))
+            .ToArray();
+        SampleSound sample = new(new SampleDefinition(id, "Release PCM",
+            new ExternalAssetReference("release-during-fade.wav")),
+            new MemorySampleData(48000, 1, pcm));
+        SourceResolver resolver = new(id, sample);
+        FmSynthGraph Graph(bool random) => new([
+            new FmSoundSourceNode(1, id, FmMultiNode.NeutralFrequencyHz),
+            new FmMultiNode(2, 1, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 800,
+                gainCompensation: true),
+        ], 2);
+        FmSynthSound original = new(Graph(false), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound revised = new(Graph(true), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        SoundState reference = original.CreateState();
+        held.SetNoiseSeed(137);
+        reference.SetNoiseSeed(137);
+        original.Render(context, held, 0, 80, new float[80]);
+        original.Render(context, reference, 0, 80, new float[80]);
+        using FirPreparationScheduler worker = new();
+        PublishPreparedSampleRephase(original, revised, held, worker);
+
+        // The new skipped playheads are already beyond natural EOF,
+        // but the original active Sample should remain audible until
+        // the actual Note Off at frame 96, not to fade frame 144.
+        held.NoteOffTime = TimeSpan.FromSeconds(96.0 / 48000);
+        reference.NoteOffTime = held.NoteOffTime;
+        float[] mixed = new float[160], oldPcm = new float[160];
+        revised.Render(context, held, 80, mixed.Length, mixed);
+        original.Render(context, reference, 80, oldPcm.Length, oldPcm);
+        mixed[0].Should().Be(oldPcm[0]);
+        mixed[8].Should().BeGreaterThan(0.02f,
+            "the outgoing Sample still sounds before Note Off");
+        mixed.Skip(16).Should().OnlyContain(x => x == 0f,
+            "neither displaced Sample may extend audio past frame 96");
+        revised.GetEndFrameExclusive(context, held).Should().Be(96,
+            "a bare Sample's Note Off is exclusive even during an onset fade");
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
     public void EarlyIncomingSampleEofRetainsOutgoingAudioOnlyUntilCrossfadeBoundary()
     {
         // For Multi node 2, seed 137 and cycle 800, the two
@@ -1879,6 +1987,21 @@ public sealed class FmSynthMultiTests
         public long FrameCount => ImmutablePcm.FrameCount;
         public float GetSample(long frame, int channel)
             => ImmutablePcm.GetSample(frame, channel);
+    }
+
+    private static void PublishPreparedSampleRephase(
+        FmSynthSound previous, FmSynthSound next, SoundState state,
+        FirPreparationScheduler worker)
+    {
+        previous.TryPrepareRunningState(next, state).Should().BeFalse();
+        previous.RequestMultiExpansionPreparation(next, state).Should().BeTrue();
+        previous.QueuePendingFirControls(state, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        previous.AdoptPreparedFirControls(state);
+        previous.TryPrepareRunningState(next, state).Should().BeTrue();
+        previous.CommitPreparedRunningState(next, state);
     }
 
     private sealed class SourceResolver : ISoundResolver, IEnvelopeCurveResolver
