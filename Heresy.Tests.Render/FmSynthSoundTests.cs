@@ -43,6 +43,71 @@ public sealed class FmSynthSoundTests
 	}
 
 	[Test]
+	public void RunningConstantEditsGlideAndRapidEditsBeginAtCurrentValue()
+	{
+		// A held note keeps its invocation. A second edit midway through the
+		// first transition starts at the interpolated value rather than
+		// stepping or restarting the first ramp.
+		FmSynthSound SoundAt(double value) => Sound(new FmSynthGraph(
+		[
+			new FmConstantNode(1, value),
+		], outputNodeId: 1));
+		FmSynthSound first = SoundAt(0.25);
+		SoundState state = first.CreateState();
+		RenderContext context = MonoContext(48000);
+		float[] initial = new float[80];
+		first.Render(context, state, 0, initial.Length, initial);
+		initial.Should().OnlyContain(v => v == 0.25f);
+
+		FmSynthSound second = SoundAt(1.0);
+		first.TryPrepareRunningState(second, state).Should().BeTrue();
+		first.CommitPreparedRunningState(second, state);
+		float[] start = new float[16];
+		second.Render(context, state, 80, start.Length, start);
+		start[0].Should().BeApproximately(0.25f, 1e-6f);
+		// The first edit progresses for 16 of 64 frames, then a new edit
+		// supersedes it without a discontinuity at the publication boundary.
+		const double midway = 0.25 + (1.0 - 0.25) * (0.15625);
+		FmSynthSound third = SoundAt(-0.5);
+		second.TryPrepareRunningState(third, state).Should().BeTrue();
+		second.CommitPreparedRunningState(third, state);
+		float[] updated = new float[80];
+		third.Render(context, state, 96, updated.Length, updated);
+		updated[0].Should().BeApproximately((float)midway, 1e-6f);
+		updated[32].Should().BeApproximately(
+			(float)((midway - 0.5) * 0.5), 1e-6f);
+		updated[64].Should().BeApproximately(-0.5f, 1e-6f);
+		updated[79].Should().Be(-0.5f);
+	}
+
+	[Test]
+	public void RunningConstantEditsReachNestedMultiChildrenWithoutPhaseReset()
+	{
+		FmSynthSound SoundAt(double value) => Sound(new FmSynthGraph(
+		[
+			new FmConstantNode(1, value),
+			new FmMultiNode(2, 1, voiceCount: 2,
+				randomizePhase: false, gainCompensation: false),
+		], outputNodeId: 2));
+		RenderContext context = MonoContext(48000);
+		FmSynthSound first = SoundAt(0.25);
+		SoundState state = first.CreateState();
+		float[] held = new float[80];
+		first.Render(context, state, 0, held.Length, held);
+		held.Should().OnlyContain(v => v == 0.5f);
+
+		FmSynthSound revised = SoundAt(0.5);
+		first.TryPrepareRunningState(revised, state).Should().BeTrue();
+		first.CommitPreparedRunningState(revised, state);
+		float[] continued = new float[81];
+		revised.Render(context, state, 80, continued.Length, continued);
+		continued[0].Should().BeApproximately(0.5f, 1e-6f);
+		continued[32].Should().BeApproximately(0.75f, 1e-6f);
+		continued[64].Should().BeApproximately(1.0f, 1e-6f);
+		continued[80].Should().Be(1.0f);
+	}
+
+	[Test]
 	public void SineOscillatorAdvancesAtConfiguredFrequency()
 	{
 		FmSynthSound sound =
