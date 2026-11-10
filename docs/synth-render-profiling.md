@@ -145,6 +145,77 @@ Inspect inclusive and exclusive samples under
 caller/assembly mapping rather than concluding it costs zero.
 Classify every result by waveform type and rendered constituent count.
 
+## Isolate the graph shape before interpreting method percentages
+
+The ordinary paired test runs three comparisons in one NUnit
+testhost. A flat `perf` report of that process mixes direct Sine,
+Sine with identity Multiply, and Square with identity Multiply.
+It cannot tell which path owns the sampled calls.
+
+To isolate **one shape per test process**, set
+`HERESY_SYNTH_PROFILE_CASE` to one of:
+
+- `sine-direct`: single-oscillator Sine children, no Operator.
+- `sine-generic`: equivalent Sine children followed by Constant(1)
+  and identity Multiply.
+- `square-direct`: single-oscillator Square children.
+- `square-generic`: equivalent Square children with identity Multiply.
+
+An unset selector retains the complete ordinary paired PCM test and
+all of its exact-output assertions. A nonempty unrecognized selector
+fails immediately rather than silently profiling the wrong case.
+The isolated mode warms a single graph/voice set and renders its
+sequential blocks; its printed duration is diagnostic, not a CI
+performance threshold. The same test-filter command selects the
+fixture in both modes.
+
+**After checking out the desired PR commit**, build its Release testhost:
+
+```sh
+dotnet build Heresy.Tests.Render/Heresy.Tests.Render.csproj -c Release
+```
+
+Then, for a Linux userspace-only CPU profile of each case (after
+restoring any host `perf_event_paranoid` changes you no longer need):
+
+```sh
+mkdir -p synth-perf
+for shape in sine-direct sine-generic square-direct square-generic; do
+  HERESY_SYNTH_PROFILE_CASE="$shape" \
+  HERESY_SYNTH_PROFILE_ROUNDS=512 \
+  DOTNET_PerfMapEnabled=3 \
+  DOTNET_EnableWriteXorExecute=0 \
+    perf record --no-buildid-mmap -e cycles:u -F 99 \
+      --call-graph dwarf -o "synth-perf/$shape.perf.data" \
+      -- dotnet test Heresy.Tests.Render/Heresy.Tests.Render.csproj \
+      -c Release --no-build \
+      --filter FullyQualifiedName~SynthPairedRenderProfileTests
+
+  perf --no-pager report -i "synth-perf/$shape.perf.data" \
+    --stdio --stdio-color=never --no-children -g none \
+    --sort symbol > "synth-perf/$shape.txt"
+done
+```
+
+The loop yields four separately symbolized profiles, one from each
+NUnit testhost invocation. Do **not** regard their percentages as
+absolute cycle counts or compare report totals without considering
+the `perf` sample count and the duration of the measured phase.
+The profiler records startup, JIT, and test work too, although the
+long single-case render should dominate. Sampling and diagnostic
+JIT mapping differ from uninstrumented performance conditions.
+
+First compare `GetBaseEndFrameExclusive`,
+`RenderMultiChildFrame`, `EvaluateOscillator`, and
+`EvaluateOperator` in the **Sine direct** vs **Sine generic**
+reports. If most end-check samples belong to the generic reference,
+that explains the surprising overall movement when optimization
+made direct oscillator children cheaper. Then check Square's two
+graphs to separate waveform expense from lifecycle dispatch.
+Only if a path still needs explanation should you next inspect its
+individual instructions with `perf annotate`. Do not add a
+generalized lifetime shortcut solely on the mixed-workload samples.
+
 ## Interpretation and remaining acceptance
 
 A strongly consistent paired B/A difference above the same-vs-same
