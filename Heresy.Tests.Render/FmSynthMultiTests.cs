@@ -1101,6 +1101,53 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void LiveScalarEditIsNotBlockedByNonconstantSampleOnsetHistory()
+    {
+        // A past pitch change invalidates the constant-rate shortcut.
+        // It must not starve an independent, immediately compatible
+        // authored Constant edit in the same parent Synth.
+        ObjectId id = (ObjectId)7603U;
+        float[] pcm = Enumerable.Range(0, 8192)
+            .Select(i => (float)Math.Sin(2 * Math.PI * i / 91.0)).ToArray();
+        SampleSound sample = new(new SampleDefinition(id, "Retuned PCM",
+            new ExternalAssetReference("live-retuned.wav")),
+            new MemorySampleData(48000, 1, pcm));
+        SourceResolver resolver = new(id, sample);
+        FmSynthGraph Graph(bool random, double value) => new([
+            new FmSoundSourceNode(1, id, FmMultiNode.NeutralFrequencyHz),
+            new FmMultiNode(2, 1, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 830,
+                gainCompensation: true),
+            new FmConstantNode(3, value),
+            new FmOperatorNode(4, FmOperatorKind.Add, [2, 3]),
+        ], 4);
+        FmSynthSound original = new(Graph(false, 0.25), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound revised = new(Graph(true, 0.5), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState state = original.CreateState();
+        SoundState baseline = original.CreateState();
+        original.Render(context, state, 0, 80, new float[80]);
+        original.Render(context, baseline, 0, 80, new float[80]);
+        state.PitchTrajectory.SetMultiplier(80, 1.3);
+        baseline.PitchTrajectory.SetMultiplier(80, 1.3);
+        original.Render(context, state, 80, 48, new float[48]);
+        original.Render(context, baseline, 80, 48, new float[48]);
+
+        // A finite replay history has not been prepared. Publication
+        // must retain the old onset and still accept the scalar change.
+        original.TryPrepareRunningState(revised, state).Should().BeTrue(
+            "a nonconstant Sample trajectory must not block unrelated live controls");
+        original.CommitPreparedRunningState(revised, state);
+        float[] actual = new float[128], expected = new float[128];
+        revised.Render(context, state, 128, actual.Length, actual);
+        original.Render(context, baseline, 128, expected.Length, expected);
+        for (int i = 0; i < actual.Length; i++)
+            (actual[i] - expected[i]).Should().BeApproximately(0.25f, 1e-6f);
+    }
+
+    [Test]
     public void SeededMultiOnsetCycleCalculationIsInvariantAcrossRenderSplits()
     {
         // The initial offset calculation is shared with upcoming prepared
