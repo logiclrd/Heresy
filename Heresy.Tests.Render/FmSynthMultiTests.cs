@@ -1073,6 +1073,69 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void EarlyIncomingSampleEofRetainsOutgoingAudioOnlyUntilCrossfadeBoundary()
+    {
+        // For Multi node 2, seed 137 and cycle 800, the two
+        // deterministic skips are 725 and 735 frames. Both incoming
+        // Sample playheads therefore start beyond this 400-frame
+        // asset, while the outgoing nonrandomized voices have audio
+        // long after the 64-frame crossfade finishes.
+        ObjectId id = (ObjectId)7610U;
+        float[] samples = Enumerable.Range(0, 400)
+            .Select(i => (float)(0.35 + 0.25 * Math.Sin(2 * Math.PI * i / 97.0)))
+            .ToArray();
+        SampleSound sound = new(new SampleDefinition(id, "Short PCM",
+            new ExternalAssetReference("sample-eof-short.wav")),
+            new MemorySampleData(48000, 1, samples));
+        SourceResolver resolver = new(id, sound);
+        FmSynthGraph Graph(bool random) => new([
+            new FmSoundSourceNode(1, id, FmMultiNode.NeutralFrequencyHz),
+            new FmMultiNode(2, 1, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 800,
+                gainCompensation: true),
+        ], 2);
+        FmSynthSound original = new(Graph(false), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound revised = new(Graph(true), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState state = original.CreateState();
+        SoundState referenceState = original.CreateState();
+        state.SetNoiseSeed(137);
+        referenceState.SetNoiseSeed(137);
+        original.Render(context, state, 0, 80, new float[80]);
+        original.Render(context, referenceState, 0, 80, new float[80]);
+        using FirPreparationScheduler worker = new();
+        original.RequestMultiExpansionPreparation(revised, state).Should().BeTrue();
+        original.QueuePendingFirControls(state, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        original.AdoptPreparedFirControls(state);
+        original.TryPrepareRunningState(revised, state).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, state);
+
+        float[] actual = new float[176], reference = new float[176];
+        revised.Render(context, state, 80, actual.Length, actual);
+        original.Render(context, referenceState, 80, reference.Length, reference);
+        for (int i = 0; i < actual.Length; i++)
+        {
+            double t = Math.Clamp(i / 64.0, 0, 1);
+            double weight = t * t * (3 - 2 * t);
+            actual[i].Should().BeApproximately(
+                (float)(reference[i] * (1.0 - weight)), 1e-5f,
+                "the outgoing Sample contributes only while the new playhead fades in");
+        }
+        actual[20].Should().BeGreaterThan(0.03f,
+            "an early incoming EOF must not prematurely cut the outgoing Sample");
+        actual.Skip(64).Should().OnlyContain(x => x == 0,
+            "an outgoing Sample cannot extend a note beyond the 64-frame fade");
+        revised.GetEndFrameExclusive(context, state).Should().Be(144,
+            "the last audible outgoing frame is 143 even if its Sample ends at 400");
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
     public void DirectSampleMultiLiveRephasePreservesExactIntegratedPositionWithoutPcmAllocations()
     {
         // Cycle length rounds to one frame. Although the authored
