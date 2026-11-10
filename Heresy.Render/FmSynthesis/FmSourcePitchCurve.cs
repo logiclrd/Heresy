@@ -25,6 +25,7 @@ internal sealed class FmSourcePitchCurve : PitchCurve
     // Otherwise an onset-offset change requires historical replay.
     internal bool HasConstantRateHistory => _hasRate && !_hasVaried;
     internal double LastRate => _current;
+    internal long LastFrame => _frame;
 
     /// <summary>Attach the worker-created pitch curve to a Sample state
     /// whose full accumulated position was seeded at the PCM boundary.
