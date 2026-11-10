@@ -1941,6 +1941,39 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		}
 	}
 
+	/// <summary>Pure, allocation-free onset calculation shared by the
+	/// ordinary note path and future off-worker replacement preparation.
+	/// Keep the exact existing hash, cycle arithmetic, rounding and fade
+	/// semantics so changing a Multi's initial phase policy cannot alter
+	/// unrelated notes or seeded replay.</summary>
+	private void InitializeMultiOnset(FmMultiNode multi, ulong noiseSeed,
+		int index, MultiVoice voice, double pitch, double speed, int sampleRate)
+	{
+		double frequency = FmMultiNode.NeutralFrequencyHz * pitch * speed;
+		// A sole unmodulated oscillator has a knowable cycle;
+		// other graphs inherit the requested note's nominal pitch.
+		if (multi.CycleLength is null && _nodes[index].MultiInput is { } sub
+			&& sub._nodes[sub._outputIndex].Definition is FmOscillatorNode
+				{ MultiplierNodeId: null } oscillator)
+			frequency = oscillator.FrequencyHz
+				* (oscillator.Constant ? 1.0 : pitch * speed);
+		double length = multi.CycleLength is double overrideLength
+			? overrideLength * sampleRate / FmMultiNode.ReferenceSampleRate
+				* FmMultiNode.NeutralFrequencyHz / frequency
+			: sampleRate / frequency;
+		if (!double.IsFinite(length) || length > 1000000.0)
+			throw new InvalidOperationException(
+				"Multi cycle length exceeds the one-million-frame safety limit.");
+		int cycle = Math.Max(1, (int)Math.Round(length));
+		voice.SkipFrames = multi.RandomizePhase
+			? (int)(MultiHash(noiseSeed
+				^ ((ulong)(uint)multi.Id << 32)
+				^ (ulong)(uint)(voice.Index + 1)) % (ulong)cycle)
+			: 0;
+		voice.FadeFrames = (voice.SkipFrames + 1) / 2;
+		voice.Initialized = true;
+	}
+
 	private double EvaluateMulti(FmMultiNode multi, FmSynthState state,
 		int index, long frame, RenderContext context,
 		double pitchTrajectoryMultiplier)
@@ -1969,33 +2002,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				* pitchTrajectoryMultiplier;
 			child.PlaybackSpeedMultiplier = state.PlaybackSpeedMultiplier;
 			if (!voice.Initialized)
-			{
-				double frequency = FmMultiNode.NeutralFrequencyHz
-					* child.PitchMultiplier * child.PlaybackSpeedMultiplier;
-				// A sole unmodulated oscillator has a knowable cycle;
-				// other graphs inherit the requested note's nominal pitch.
-				if (multi.CycleLength is null && _nodes[index].MultiInput is { } sub
-					&& sub._nodes[sub._outputIndex].Definition is FmOscillatorNode
-						{ MultiplierNodeId: null } oscillator)
-					frequency = oscillator.FrequencyHz *
-						(oscillator.Constant ? 1.0
-							: child.PitchMultiplier * child.PlaybackSpeedMultiplier);
-				double length = multi.CycleLength is double overrideLength
-					? overrideLength * sampleRate / FmMultiNode.ReferenceSampleRate
-						* FmMultiNode.NeutralFrequencyHz / frequency
-					: sampleRate / frequency;
-				if (!double.IsFinite(length) || length > 1000000.0)
-					throw new InvalidOperationException(
-						"Multi cycle length exceeds the one-million-frame safety limit.");
-				int cycle = Math.Max(1, (int)Math.Round(length));
-				voice.SkipFrames = multi.RandomizePhase
-					? (int)(MultiHash(state.NoiseSeed
-						^ ((ulong)(uint)multi.Id << 32)
-						^ (ulong)(uint)(voice.Index + 1)) % (ulong)cycle)
-					: 0;
-				voice.FadeFrames = (voice.SkipFrames + 1) / 2;
-				voice.Initialized = true;
-			}
+				InitializeMultiOnset(multi, state.NoiseSeed, index, voice,
+					child.PitchMultiplier, child.PlaybackSpeedMultiplier, sampleRate);
 			long displaced = checked(localFrame + voice.SkipFrames);
 			child.NoteOffTime = state.NoteOffTime is TimeSpan off
 				? off - TimeSpan.FromSeconds((double)voice.StartFrame / sampleRate)
