@@ -1303,3 +1303,66 @@ PR #12 stays draft and unmerged. Broader real-time
 Synth property coverage, sound-generation crossfade
 transitions, and physical-device/listening acceptance
 remain unfinished.
+
+## Twenty-fourth slice: Ryzen before/after disproves a large runtime win
+
+The user ran the prescribed uninstrumented **8192-round, same Sine-direct
+graph** benchmark in alternating `before/after/after/before/
+before/after/after/before` order, using separate Release builds:
+`before` = commit `792cea4` before the
+`RenderMultiChildFrame` lifetime-call bypass;
+`after` = PR head including the bypass. Every test reported
+`render-thread allocated bytes=0` and the **identical**
+`PCM probe=-419683.9955374971`. The actual per-frame
+durations (microseconds):
+
+| Run | Version | µs/output frame |
+| --- | --- | ---: |
+| 1 | before | 10.742 |
+| 2 | after | 10.715 |
+| 3 | after | 10.708 |
+| 4 | before | 10.670 |
+| 5 | before | 10.644 |
+| 6 | after | 10.642 |
+| 7 | after | 10.865 |
+| 8 | before | 10.776 |
+
+Before: mean **10.708**, median **10.706**, range
+**10.644–10.776** µs/frame. After: mean **10.7325**,
+median **10.7115**, range **10.642–10.865** µs/frame.
+The median after-minus-before difference is
+**+0.0055 µs/frame (+0.051%)**; mean difference
+**+0.0245 µs/frame (+0.229%)**. Both are smaller
+than run-to-run dispersion. **No measurable improvement
+or meaningful regression is established.**
+
+This is a particularly important counterexample: preceding
+isolated `perf` runs reproducibly attributed roughly
+**63–70% of exclusive sampled cycles** to the held
+`GetBaseEndFrameExclusive` early-return method, yet removing
+that call showed no practical throughput improvement.
+The previous high sampling percentages **must not be cited
+as a validated time contribution or projected speedup**.
+Possible explanations include misleading JIT instruction
+attribution, cost migration among memory accesses/generated
+instructions, or an incorrect/stale after build (not yet
+excluded independently). The identical probe is a
+correctness consistency signal, not proof that both intended
+binaries were used, nor proof of complete PCM equality.
+
+Next diagnostic, **before changing production code again**:
+verify the after checkout SHA and Release rebuild, then capture
+one fresh isolated `sine-direct` after JIT-perf recording at
+8,192 rounds with exactly the baseline symbolization settings.
+Check whether the method's share disappears as predicted.
+If it does, the hotspot was removed from the profiler but
+not from elapsed time; re-examine overall attribution and
+retire any assumption that percentage corresponds to avoidable
+runtime. If it remains high, investigate call sites and
+whether the expected executable was profiled. Consider
+`perf stat` cycles/instructions for both binaries as an
+independent counter-based comparison if the result remains
+ambiguous. Keep the one-line bypass pending evidence; do
+not broaden this shortcut into additional graph shapes
+on the assumption of speedup. No speedup threshold belongs
+in CI. PR #12 remains draft and unmerged.
