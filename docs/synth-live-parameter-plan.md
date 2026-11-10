@@ -2125,3 +2125,86 @@ nested Multi, arbitrary Sample seeks, or physical click/load
 acceptance. It retains the preexisting whole-tree worker and
 release/EOF guards. All-properties acceptance remains open; PR #12
 stays draft and unmerged.
+
+
+## Thirty-fifth slice: exact bounded variable-rate direct Sample rewind
+
+This slice admits a concrete, previously excluded **variable-rate Source
+history** for held/latched Synth audition Multi onset changes. In the
+eligible case, the new Multi phase skip is *earlier* than the old one
+and its target Sample playhead frame is within a **128-frame retained
+window of actual integrated Sample positions**. The integration may
+cross any number of authored/parent pitch-rate changes within that
+window; the change does not use a current-rate approximation and does
+not replay historical audio.
+
+**History capture and transfer**
+
+- Only Sample invocations in the live Synth/Multi audition path opt in
+  to a fixed 128-double circular history in `SampleSoundState`. The
+  Sample renderer records exactly the `double pitchPosition` it uses
+  for each already-rendered Source frame. Ordinary playback/export
+  does not allocate the ring; no ring allocations occur in PCM.
+- The preflight knows the target deterministic Multi skip **before**
+  requesting a worker replacement. The pure skip arithmetic is shared
+  by ordinary onset initialization and the eligibility check. A
+  variable-rate future skip or rewind older than the retained window
+  is not worker-queued or retried indefinitely; independent valid
+  scalar edits still adopt normally.
+- A detached replacement Sample/Source invocation, Filter preparation,
+  and destination history ring are constructed on the worker. Whole
+  voice admission still checks same immutable Sample PCM/definition,
+  unbound Source, unchanged Source controls except eligible FrequencyHz,
+  positive/finite rates, compatible release/state, no EOF, no Source
+  envelope or tone Filters, unchanged Multi ratios and the original
+  no-overlapping-fades policy.
+- At the PCM publication boundary, an admissible variable-rate
+  **backward** skip copies the exact previously rendered pitch integral
+  at the revised local frame. The existing `PitchTrajectory` and
+  `FmSourcePitchCurve` recipients are seeded in O(1), and up to 128
+  prior recorded positions are copied into the already allocated
+  destination ring so a subsequent compatible rewind can retain
+  historical continuity. No source is rebuilt, no previous audio
+  rendered and **no managed PCM memory allocated**. The outgoing
+  and incoming Samples evolve independently through the existing
+  64-output-frame smoothstep.
+- Crucially the incoming Source retains the previous
+  `OriginalFrequencyHz` basis and the previous *has-ever-varied*
+  Source pitch-history classification. Reseeding it must not
+  accidentally make a later variable-rate forward skip appear
+  constant-rate eligible.
+
+**Red/green regression**
+
+The first regression proves exact integration across a discontinuous
+parent pitch change. Multi ID 2, seed 21 and cycle 100 give both
+original randomized voices skip 44. Parent rate changes from 1 to
+1.3 at outer frame 80, then the onset becomes aligned at outer frame
+128. The outgoing child's local frame is 172, the incoming's is 128;
+the true historical integral at 128 is
+`124 * 1 + 4 * 1.3 = 129.2`, not `128` and not the result of
+subtracting 44 frames at today's 1.3 rate. Every frame in the
+64-frame crossfade is compared against the outgoing PCM and a
+separately computed interpolated Sample oracle using the recorded
+position advanced at 1.3 per new frame. The test also checks
+old-frame parity, zero managed render-thread allocations and that a
+subsequent forward phase edit does not falsely assume a constant
+rate. The second regression uses seed 137/cycle 800 to force a
+rewind well outside the ring and verifies the independent Constant
+edit still publishes without scheduling impossible preparation.
+Both tests initially ran red against the original implementation
+(the first lacked requested onset preparation); implementation
+and full CI subsequently ran green.
+
+**Limits and next work**
+
+The original O(1) constant-rate projection remains valid for positive
+or negative offsets. **Variable-rate migration here is only an
+exact, recorded nonforward shift**: positive/future skip, older than
+128 frames, an unrecorded history, or a prior changed Source state that
+fails whole-voice preflight stays on the previous onset rather than
+using a guessed rate. General seeks, longer history transfer,
+Instrument-selected Sample/Envelope/panning/filter chains, modified
+Source bindings, nested stateful Multi, complex FM graph migration,
+and physical click/underrun acceptance are still outstanding.
+The all-properties TODO remains open, and PR #12 stays draft/unmerged.
