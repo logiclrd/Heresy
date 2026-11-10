@@ -100,6 +100,22 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		public int FadeFrames { get; set; }
 		public bool Initialized { get; set; }
 		public long? SilenceEnd { get; set; }
+		// Only the prepared replacement holds the outgoing voice, so
+		// overlapping phase edits cannot accumulate unbounded fade chains.
+		public MultiVoice? OnsetFadeFrom { get; private set; }
+		public long OnsetFadeStartFrame { get; private set; }
+
+		public void BeginPreparedOnsetFade(MultiVoice outgoing, long frame)
+		{
+			if (outgoing.OnsetFadeFrom is not null)
+				throw new InvalidOperationException(
+					"An overlapping Multi onset fade must finish before replacement.");
+			StartFrame = outgoing.StartFrame;
+			HasStarted = true;
+			OnsetFadeFrom = outgoing;
+			OnsetFadeStartFrame = frame;
+		}
+		public void FinishOnsetFade() => OnsetFadeFrom = null;
 
 		private static double Interpolate(double from, double to,
 			long startFrame, long frame)
