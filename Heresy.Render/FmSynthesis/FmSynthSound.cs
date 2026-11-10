@@ -804,7 +804,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			&& source.Constant == next.Constant
 			&& source.ExponentialMultiplier == next.ExponentialMultiplier
 			&& old.Source is SampleSound sample
-			&& ReferenceEquals(sample, revised.Source)
+			&& revised.Source is SampleSound prepared
+			&& sample.CanSharePreparedOnsetTimelineWith(prepared)
 			&& sample.SourceChannelCount is >= 1 and <= 2;
 	}
 
@@ -814,7 +815,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	{
 		if (original?.Sound is not SampleSound sourceSample
 			|| replacement?.Sound is not SampleSound preparedSample
-			|| !ReferenceEquals(sourceSample, preparedSample)
+			|| !sourceSample.CanSharePreparedOnsetTimelineWith(preparedSample)
 			|| original.Invocation.State is not SampleSoundState previous
 			|| replacement.Invocation.State is not SampleSoundState destination
 			|| original.EndFrame.HasValue || original.InputFinished
