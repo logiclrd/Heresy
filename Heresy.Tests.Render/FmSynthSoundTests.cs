@@ -291,6 +291,38 @@ public sealed class FmSynthSoundTests
 	}
 
 	[Test]
+	public void HeldOscillatorAdoptsExponentialMultiplierModeWithoutRewindingPhase()
+	{
+		// The same connected FM input means either twelve semitones or a
+		// twelvefold linear ratio; switching mode is an authored parameter
+		// change, not graph rewiring or permission to reset the held note.
+		FmSynthSound SoundWithMode(bool exponential) => Sound(new FmSynthGraph(
+		[
+			new FmConstantNode(1, 12.0),
+			new FmOscillatorNode(2, FmOscillatorWaveform.Sine, 100,
+				multiplierNodeId: 1, exponentialMultiplier: exponential),
+		], outputNodeId: 2));
+		RenderContext context = MonoContext(48000);
+		FmSynthSound before = SoundWithMode(true);
+		SoundState held = before.CreateState();
+		SoundState reference = before.CreateState();
+		float[] start = new float[128];
+		before.Render(context, held, 0, start.Length, start);
+		float[] unchanged = new float[136];
+		before.Render(context, reference, 0, unchanged.Length, unchanged);
+
+		FmSynthSound revised = SoundWithMode(false);
+		before.TryPrepareRunningState(revised, held).Should().BeTrue();
+		before.CommitPreparedRunningState(revised, held);
+		float[] after = new float[8];
+		revised.Render(context, held, 128, after.Length, after);
+		after[0].Should().BeApproximately(unchanged[128], 1e-6f,
+			"an FM interpretation edit must not change accumulated phase");
+		Math.Abs(after[1] - unchanged[129]).Should().BeGreaterThan(0.05f,
+			"the newly authored linear multiplier must affect the next phase step");
+	}
+
+	[Test]
 	public void ConstantAndRelativeOscillatorsHaveIndependentPitchRulesInOneGraph()
 	{
 		FmSynthSound sound = Sound(new FmSynthGraph(
