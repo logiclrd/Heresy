@@ -996,6 +996,111 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void DirectSampleMultiLiveRephasePreservesExactIntegratedPositionWithoutPcmAllocations()
+    {
+        // Cycle length rounds to one frame. Although the authored
+        // Randomize Phase flag changes, the actual skip stays zero,
+        // making every output sample an exact history-copy oracle.
+        ObjectId id = (ObjectId)7601U;
+        float[] pcm = Enumerable.Range(0, 4096)
+            .Select(i => (float)(0.35 * Math.Sin(2 * Math.PI * i / 71.0)
+                + 0.1 * Math.Cos(2 * Math.PI * i / 19.0))).ToArray();
+        SampleSound sample = new(new SampleDefinition(id, "PCM",
+            new ExternalAssetReference("live-direct-sample.wav")),
+            new MemorySampleData(48000, 1, pcm));
+        SourceResolver resolver = new(id, sample);
+        FmSynthGraph Graph(bool random) => new([
+            new FmSoundSourceNode(1, id, FmMultiNode.NeutralFrequencyHz),
+            new FmMultiNode(2, 1, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 0.001,
+                gainCompensation: true),
+        ], 2);
+        FmSynthSound original = new(Graph(false), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound revised = new(Graph(true), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState state = original.CreateState();
+        SoundState comparison = original.CreateState();
+        state.SetNoiseSeed(0x7601UL);
+        comparison.SetNoiseSeed(0x7601UL);
+        original.Render(context, state, 0, 192, new float[192]);
+        original.Render(context, comparison, 0, 192, new float[192]);
+
+        original.TryPrepareRunningState(revised, state).Should().BeFalse();
+        original.RequestMultiExpansionPreparation(revised, state).Should().BeTrue();
+        using FirPreparationScheduler worker = new();
+        original.QueuePendingFirControls(state, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        original.AdoptPreparedFirControls(state);
+        original.TryPrepareRunningState(revised, state).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, state);
+        float[] actual = new float[160];
+        float[] expected = new float[160];
+        long beforeBytes = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, state, 192, actual.Length, actual);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - beforeBytes;
+        allocated.Should().Be(0L,
+            "the Sample's integrated position is transferred without PCM replay");
+        original.Render(context, comparison, 192, expected.Length, expected);
+        actual.Should().Equal(expected,
+            "identical onset skips must retain every interpolated Sample frame");
+        worker.PreparedMultiConstituentCount.Should().Be(2);
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
+    public void DirectSampleMultiLiveRephaseShiftsPlayheadButKeepsFirstFrame()
+    {
+        ObjectId id = (ObjectId)7602U;
+        float[] pcm = Enumerable.Range(0, 8192)
+            .Select(i => (float)Math.Sin(2 * Math.PI * i / 107.0)).ToArray();
+        SampleSound sample = new(new SampleDefinition(id, "Long PCM",
+            new ExternalAssetReference("live-rephase.wav")),
+            new MemorySampleData(48000, 1, pcm));
+        SourceResolver resolver = new(id, sample);
+        FmSynthGraph Graph(bool random) => new([
+            new FmSoundSourceNode(1, id, FmMultiNode.NeutralFrequencyHz),
+            new FmMultiNode(2, 1, voiceCount: 3, detune: 0,
+                randomizePhase: random, cycleLength: 1700,
+                gainCompensation: true),
+        ], 2);
+        FmSynthSound original = new(Graph(false), resolver,
+            soundResolver: resolver, reserveMultiHeadroom: true);
+        FmSynthSound revised = new(Graph(true), resolver,
+            soundResolver: resolver, reserveMultiHeadroom: true);
+        RenderContext context = Mono();
+        SoundState state = original.CreateState();
+        SoundState baseline = original.CreateState();
+        state.SetNoiseSeed(0x7602UL);
+        baseline.SetNoiseSeed(0x7602UL);
+        original.Render(context, state, 0, 112, new float[112]);
+        original.Render(context, baseline, 0, 112, new float[112]);
+        original.RequestMultiExpansionPreparation(revised, state).Should().BeTrue();
+        using FirPreparationScheduler worker = new();
+        original.QueuePendingFirControls(state, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        original.AdoptPreparedFirControls(state);
+        original.TryPrepareRunningState(revised, state).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, state);
+        float[] actual = new float[192], expected = new float[192];
+        revised.Render(context, state, 112, actual.Length, actual);
+        original.Render(context, baseline, 112, expected.Length, expected);
+        actual[0].Should().Be(expected[0],
+            "the first publication frame uses exactly the outgoing playhead");
+        actual.Should().OnlyContain(x => float.IsFinite(x));
+        Enumerable.Range(65, 127).Max(i => Math.Abs(actual[i] - expected[i]))
+            .Should().BeGreaterThan(0.05f,
+                "the prepared Sample playheads must adopt the new phase offsets");
+        worker.PreparedMultiConstituentCount.Should().Be(3);
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
     public void SeededMultiOnsetCycleCalculationIsInvariantAcrossRenderSplits()
     {
         // The initial offset calculation is shared with upcoming prepared
