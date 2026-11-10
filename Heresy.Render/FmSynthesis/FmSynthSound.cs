@@ -2159,56 +2159,90 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		{
 			if (!voice.HasStarted)
 				continue; // dormant growth reserve needs no DSP work
-			SoundState child = voice.Invocation.State;
-			long localFrame = frame - voice.StartFrame;
-			// Glide the ratio forward without resetting oscillator phase or
-			// re-scaling already-integrated Source playback positions.
-			child.PitchMultiplier = state.PitchMultiplier * voice.RatioAt(frame)
-				* pitchTrajectoryMultiplier;
-			child.PlaybackSpeedMultiplier = state.PlaybackSpeedMultiplier;
-			if (!voice.Initialized)
-				InitializeMultiOnset(multi, state.NoiseSeed, index, voice,
-					child.PitchMultiplier, child.PlaybackSpeedMultiplier, sampleRate);
-			long displaced = checked(localFrame + voice.SkipFrames);
-			child.NoteOffTime = state.NoteOffTime is TimeSpan off
-				? off - TimeSpan.FromSeconds((double)voice.StartFrame / sampleRate)
-					+ TimeSpan.FromSeconds((double)voice.SkipFrames / sampleRate)
-				: null;
-			if (child is FmSynthState inner)
-				inner.InheritedAudioReleaseEnd = externalEnd is long releaseEnd
-					? releaseEnd >= long.MaxValue - voice.SkipFrames
-						? long.MaxValue
-						: Math.Max(0, releaseEnd - voice.StartFrame
-							+ voice.SkipFrames)
-					: null;
-			double amplitude = voice.Sound.RenderMultiChildFrame(
-				state.MonoContext!, child, displaced);
-			if (voice.FadeFrames > 0 && localFrame < voice.FadeFrames)
+			double incoming = RenderMultiConstituent(multi, state, index,
+				frame, sampleRate, externalEnd, pitchTrajectoryMultiplier, voice);
+			if (voice.OnsetFadeFrom is { } outgoing)
 			{
-				double t = (double)localFrame / voice.FadeFrames;
-				amplitude *= 0.5 - 0.5 * Math.Cos(Math.PI * t);
-			}
-			sum += amplitude * voice.MixAt(frame);
-			// A held one-node oscillator has no natural EOF. Avoid
-			// querying its whole lifetime for every Multi child/sample.
-			// Released voices still use the complete inherited-release
-			// calculation, and Source/Filter/nested graphs remain untouched.
-			long? end = voice.Sound._singleOutputOscillator is not null
-				&& child.NoteOffTime is null ? null
-				: voice.Sound.GetEndFrameExclusive(
-					state.MonoContext!, child);
-			if (end.HasValue)
-			{
-					long audibleEnd = Math.Max(0L,
-						end.Value - voice.SkipFrames + voice.StartFrame);
-					if (voice.SilenceEnd != audibleEnd)
-					{
-						voice.SilenceEnd = audibleEnd;
-						state.ChildEndChanged = true;
-					}
+				double weight = MultiTransitionWeight(
+					voice.OnsetFadeStartFrame, frame);
+				if (weight >= 1.0)
+				{
+					voice.FinishOnsetFade();
+					sum += incoming;
 				}
+				else
+				{
+					double previous = RenderMultiConstituent(
+						multi, state, index, frame, sampleRate, externalEnd,
+						pitchTrajectoryMultiplier, outgoing);
+					sum += weight <= 0.0
+						? previous
+						: previous + (incoming - previous) * weight;
+				}
+			}
+			else
+				sum += incoming;
 		}
 		return sum;
+	}
+
+	/// <summary>One constituent's original audio and release bookkeeping,
+	/// shared by normal Multi rendering and the two bounded, preallocated
+	/// children of a live-onset crossfade. No invocation is built or
+	/// replayed while rendering an audio quantum.</summary>
+	private double RenderMultiConstituent(
+		FmMultiNode multi, FmSynthState state, int index, long frame,
+		int sampleRate, long? externalEnd, double pitchTrajectoryMultiplier,
+		MultiVoice voice)
+	{
+		SoundState child = voice.Invocation.State;
+		long localFrame = frame - voice.StartFrame;
+		// Glide the ratio forward without resetting oscillator phase or
+		// re-scaling already-integrated Source playback positions.
+		child.PitchMultiplier = state.PitchMultiplier * voice.RatioAt(frame)
+			* pitchTrajectoryMultiplier;
+		child.PlaybackSpeedMultiplier = state.PlaybackSpeedMultiplier;
+		if (!voice.Initialized)
+			InitializeMultiOnset(multi, state.NoiseSeed, index, voice,
+				child.PitchMultiplier, child.PlaybackSpeedMultiplier, sampleRate);
+		long displaced = checked(localFrame + voice.SkipFrames);
+		child.NoteOffTime = state.NoteOffTime is TimeSpan off
+			? off - TimeSpan.FromSeconds((double)voice.StartFrame / sampleRate)
+				+ TimeSpan.FromSeconds((double)voice.SkipFrames / sampleRate)
+			: null;
+		if (child is FmSynthState inner)
+			inner.InheritedAudioReleaseEnd = externalEnd is long releaseEnd
+				? releaseEnd >= long.MaxValue - voice.SkipFrames
+					? long.MaxValue
+					: Math.Max(0, releaseEnd - voice.StartFrame
+						+ voice.SkipFrames)
+				: null;
+		double amplitude = voice.Sound.RenderMultiChildFrame(
+			state.MonoContext!, child, displaced);
+		if (voice.FadeFrames > 0 && localFrame < voice.FadeFrames)
+		{
+			double t = (double)localFrame / voice.FadeFrames;
+			amplitude *= 0.5 - 0.5 * Math.Cos(Math.PI * t);
+		}
+		// A held one-node oscillator has no natural EOF. Avoid querying its
+		// whole lifetime every child/sample. Released voices still use the
+		// complete inherited-release calculation; Source/Filter/nested graphs
+		// retain their existing paths.
+		long? end = voice.Sound._singleOutputOscillator is not null
+			&& child.NoteOffTime is null ? null
+			: voice.Sound.GetEndFrameExclusive(
+				state.MonoContext!, child);
+		if (end.HasValue)
+		{
+			long audibleEnd = Math.Max(0L,
+				end.Value - voice.SkipFrames + voice.StartFrame);
+			if (voice.SilenceEnd != audibleEnd)
+			{
+				voice.SilenceEnd = audibleEnd;
+				state.ChildEndChanged = true;
+			}
+		}
+		return amplitude * voice.MixAt(frame);
 	}
 
 	private static double ProcessAudioFilter(CompiledNode node,
