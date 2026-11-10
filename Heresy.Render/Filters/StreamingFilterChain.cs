@@ -6,6 +6,15 @@ using Heresy.Core.Filters;
 
 namespace Heresy.Render.Filters;
 
+/// <summary>Optional in-place copy of an already prepared IIR history.
+/// A replacement chain owns its own state objects; the PCM owner copies
+/// scalar integrators into them only after whole-voice compatibility preflight.
+/// No clone, new stage, coefficient design or worker access to live histories.</summary>
+internal interface IPreparedOnePoleHistoryTransfer
+{
+	void CopyHistoryFrom(IPreparedOnePoleHistoryTransfer source);
+}
+
 /// <summary>
 /// Invocation-owned incremental serial filter chain. A single instance is
 /// never shared by unrelated notes, output hosts or private mixdowns.
@@ -86,6 +95,51 @@ public sealed class StreamingFilterChain
 	public int TailRemainingFrames => _tailRemainingFrames;
 	public bool IsInputFinished => _inputFinished;
 	public int StageCount => _stages.Length;
+
+	/// <summary>Preflight a frozen OnePole-only chain and its independent,
+	/// preallocated destination histories. Other DSP families need their
+	/// own history-transfer semantics and must not enter this fast path.</summary>
+	internal bool CanCopyPreparedOnePoleHistoryFrom(StreamingFilterChain source)
+	{
+		if (source is null || SampleRate != source.SampleRate
+			|| OutputChannelCount != source.OutputChannelCount
+			|| _stages.Length == 0 || _stages.Length != source._stages.Length
+			|| _inputFinished || source._inputFinished)
+			return false;
+		for (int i = 0; i < _stages.Length; i++)
+		{
+			RunningStage to = _stages[i];
+			RunningStage from = source._stages[i];
+			if (to.Stage.Kind != FilterKind.OnePole
+				|| !to.Stage.IsHistoryCompatibleWith(from.Stage)
+				|| !to.Stage.HasSameParameters(from.Stage)
+				|| to.Channels.Length != from.Channels.Length)
+				return false;
+			for (int j = 0; j < to.Channels.Length; j++)
+				if (to.Channels[j] is not IPreparedOnePoleHistoryTransfer
+					|| from.Channels[j] is not IPreparedOnePoleHistoryTransfer)
+					return false;
+		}
+		return true;
+	}
+
+	/// <summary>Only call after CanCopyPreparedOnePoleHistoryFrom
+	/// succeeded on the same pair at the publication boundary. It copies
+	/// live scalar integrators into already allocated destination states;
+	/// every subsequent sample evolves each branch independently.</summary>
+	internal void CopyPreparedOnePoleHistoryFrom(StreamingFilterChain source)
+	{
+		for (int i = 0; i < _stages.Length; i++)
+		{
+			IStreamingFilterStageState[] to = _stages[i].Channels;
+			IStreamingFilterStageState[] from = source._stages[i].Channels;
+			for (int j = 0; j < to.Length; j++)
+				((IPreparedOnePoleHistoryTransfer)to[j]).CopyHistoryFrom(
+					(IPreparedOnePoleHistoryTransfer)from[j]);
+		}
+		_tailRemainingFrames = source._tailRemainingFrames;
+		_inputFinished = source._inputFinished;
+	}
 
 	/// <summary>
 	/// Prepares and validates all stages before publishing any changes.
