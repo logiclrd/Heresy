@@ -53,7 +53,44 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	// allocate or reconstruct a child invocation. One transition is 64 frames
 	// in the *outer* voice's sample clock (about 1.3 ms at 48 kHz).
 	private const int MultiEditTransitionFrames = 64;
+	// Authored Constant changes are smoothed per held invocation so an
+	// abrupt scalar step does not click or abruptly retune a connected port.
+	private const int ConstantEditTransitionFrames = 64;
 	private const int MultiGrowthReservePerNode = 4;
+
+	// This is invocation-owned history, never stored in an immutable
+	// compiled graph. Allocate the slots with the note, not on a live edit.
+	private struct ConstantTransition
+	{
+		public double From;
+		public double To;
+		public long StartFrame;
+		public bool Active;
+
+		public double ValueAt(long frame)
+		{
+			if (!Active)
+				return To;
+			long elapsed = frame - StartFrame;
+			if (elapsed >= ConstantEditTransitionFrames)
+			{
+				Active = false;
+				return To;
+			}
+			double t = Math.Clamp(
+				(double)elapsed / ConstantEditTransitionFrames, 0.0, 1.0);
+			t = t * t * (3.0 - 2.0 * t);
+			return From + (To - From) * t;
+		}
+
+		public void Retune(double from, double to, long frame)
+		{
+			From = from;
+			To = to;
+			StartFrame = frame;
+			Active = true;
+		}
+	}
 
 	private sealed class MultiVoice
 	{
@@ -410,6 +447,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			BoundSpeed = boundSpeed;
 			Values = new double[nodeCount];
 			AudioValues = new double[nodeCount];
+			ConstantTransitions = new ConstantTransition[nodeCount];
 			SilentFrom = new long?[nodeCount];
 			Phases = new double[oscillatorCount];
 			Filters = new FmFilterNodeProcessor.State?[nodeCount];
@@ -419,6 +457,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 
 		public double[] Values { get; }
 		public double[] AudioValues { get; }
+		public ConstantTransition[] ConstantTransitions { get; }
 		public long?[] SilentFrom { get; }
 		public double[] Phases { get; }
 		public FmFilterNodeProcessor.State?[] Filters { get; }
@@ -485,6 +524,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		{
 			Array.Clear(Values);
 			Array.Clear(AudioValues);
+			Array.Clear(ConstantTransitions);
 			Array.Clear(SilentFrom);
 			Array.Clear(Phases);
 			Array.Clear(Filters); // never reuse histories after rewind/rate change
@@ -999,6 +1039,22 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			live.ReplaceMultiVoices(i, grown);
 		}
 		live.PreparedExpansion = null;
+		// All live Constant transitions are represented in preallocated
+		// invocation state. Revisions may arrive during an earlier ramp:
+		// begin the next transition at that ramp's exact current value.
+		// This runs only after whole-tree admission has succeeded.
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			if (_nodes[i].Definition is not FmConstantNode original
+				|| next._nodes[i].Definition is not FmConstantNode revised
+				|| original.Value == revised.Value)
+				continue;
+			ref ConstantTransition transition =
+				ref live.ConstantTransitions[i];
+			double from = transition.Active
+				? transition.ValueAt(live.NextFrame) : original.Value;
+			transition.Retune(from, revised.Value, live.NextFrame);
+		}
 		for (int i = 0; i < _nodes.Length; i++)
 			if (_nodes[i].Filter is { } oldFilter)
 				oldFilter.CommitPreparedLiveStateConfiguration(live.Filters[i]);
@@ -1864,7 +1920,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				? 0.0 : compiled.Definition switch
 				{
 					FmConstantNode constant =>
-						constant.Value,
+						state.ConstantTransitions[index].Active
+							? state.ConstantTransitions[index].ValueAt(frame)
+							: constant.Value,
 
 					FmNoiseNode noise =>
 						EvaluateNoise(noise, state.NoiseSeed, frame),
