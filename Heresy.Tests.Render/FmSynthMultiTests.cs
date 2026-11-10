@@ -7,6 +7,7 @@ using System.Threading;
 using AwesomeAssertions;
 using Heresy.Core.Assets;
 using Heresy.Core.FmSynthesis;
+using Heresy.Core.Filters;
 using Heresy.Core.Samples;
 using Heresy.Core.Objects;
 using Heresy.Render.Configuration;
@@ -792,6 +793,149 @@ public sealed class FmSynthMultiTests
         reference.Render(context, referenceState, 96, expected.Length, expected);
         after.Should().Equal(expected,
             "unsupported modulation retains already-playing onset history");
+    }
+
+    [Test]
+    public void PreparedMultiOnePoleRephaseCopiesLiveIirHistoryWithoutPcmAllocations()
+    {
+        // A cycle length smaller than one sample rounds to one frame:
+        // both old and new onset skips are precisely zero. The incoming
+        // Filter must therefore produce the same PCM as the outgoing
+        // Filter if and only if its accumulated integrator was copied.
+        FilterDefinition definition = new((ObjectId)6401U, "IIR", [
+            new FilterStageDefinition(1, "low", FilterKind.OnePole, [
+                new("CutoffHz", FilterParameterValue.FromNumber(110))])]);
+        FmSynthGraph Graph(bool randomized) => new([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 315,
+                minimum: 0.2, maximum: 0.8, constant: true),
+            new FmFilterNode(2, 1, new FilterInstance(definition)),
+            new FmMultiNode(3, 2, voiceCount: 2, detune: 0,
+                randomizePhase: randomized, cycleLength: 0.001,
+                gainCompensation: true),
+        ], 3);
+        RenderContext context = Mono();
+        FmSynthSound original = new(Graph(false), new EmptyEnvelopes(),
+            enableLiveMultiExpansion: true);
+        FmSynthSound revised = new(Graph(true), new EmptyEnvelopes(),
+            enableLiveMultiExpansion: true);
+        SoundState held = original.CreateState();
+        SoundState referenceState = original.CreateState();
+        held.SetNoiseSeed(0x4801UL);
+        referenceState.SetNoiseSeed(0x4801UL);
+        original.Render(context, held, 0, 192, new float[192]);
+        original.Render(context, referenceState, 0, 192, new float[192]);
+
+        original.TryPrepareRunningState(revised, held).Should().BeFalse(
+            "the live OnePole integrator requires a prepared independent chain");
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeTrue();
+        using FirPreparationScheduler worker = new();
+        original.QueuePendingFirControls(held, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        original.AdoptPreparedFirControls(held);
+        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, held);
+        float[] after = new float[160];
+        float[] expected = new float[160];
+        long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, 192, after.Length, after);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+        allocated.Should().Be(0L,
+            "the worker must allocate the destination OnePole chain before PCM");
+        original.Render(context, referenceState, 192, expected.Length, expected);
+        after.Should().Equal(expected,
+            "same phase and copied integrators must reproduce the held Filter history");
+        worker.PreparedMultiConstituentCount.Should().Be(2);
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
+    public void OnePoleMultiCrossfadePreservesFirstSampleThenAdoptsNewPhase()
+    {
+        FilterDefinition definition = new((ObjectId)6402U, "IIR", [
+            new FilterStageDefinition(1, "low", FilterKind.OnePole, [
+                new("CutoffHz", FilterParameterValue.FromNumber(1200))])]);
+        FmSynthGraph Graph(bool randomized) => new([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 1250),
+            new FmFilterNode(2, 1, new FilterInstance(definition)),
+            new FmMultiNode(3, 2, voiceCount: 3, detune: 0,
+                randomizePhase: randomized, cycleLength: 950,
+                gainCompensation: true),
+        ], 3);
+        RenderContext context = Mono();
+        FmSynthSound original = new(Graph(false), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        FmSynthSound revised = new(Graph(true), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        SoundState held = original.CreateState();
+        SoundState referenceState = original.CreateState();
+        held.SetNoiseSeed(0x4802UL);
+        referenceState.SetNoiseSeed(0x4802UL);
+        original.Render(context, held, 0, 100, new float[100]);
+        original.Render(context, referenceState, 0, 100, new float[100]);
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeTrue();
+        using FirPreparationScheduler worker = new();
+        original.QueuePendingFirControls(held, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        original.AdoptPreparedFirControls(held);
+        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, held);
+
+        float[] after = new float[192];
+        float[] reference = new float[192];
+        revised.Render(context, held, 100, after.Length, after);
+        original.Render(context, referenceState, 100, reference.Length, reference);
+        after[0].Should().Be(reference[0],
+            "the prepared OnePole histories must not alter the publication frame");
+        after.Should().OnlyContain(x => float.IsFinite(x));
+        Enumerable.Range(65, 127).Max(i => Math.Abs(after[i] - reference[i]))
+            .Should().BeGreaterThan(0.02f,
+                "the incoming chain must evolve independently with its revised onset");
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
+    public void ModulatedOnePoleMultiDoesNotAttemptUnsupportedHistoryMigration()
+    {
+        FilterDefinition definition = new((ObjectId)6403U, "Controlled", [
+            new FilterStageDefinition(1, "low", FilterKind.OnePole, [
+                new("CutoffHz", FilterParameterValue.FromNumber(300))])]);
+        FmSynthGraph Graph(bool randomized)
+        {
+            FmFilterNode filter = new(3, 2, new FilterInstance(definition));
+            filter = filter.WithParameterConnection(
+                filter.GetPorts().Single(p => p.ParameterName == "CutoffHz"), 1);
+            return new FmSynthGraph([
+                new FmConstantNode(1, 300),
+                new FmOscillatorNode(2, FmOscillatorWaveform.Sine, 800),
+                filter,
+                new FmMultiNode(4, 3, voiceCount: 2, detune: 0,
+                    randomizePhase: randomized, cycleLength: 950,
+                    gainCompensation: true),
+            ], 4);
+        }
+        RenderContext context = Mono();
+        FmSynthSound original = new(Graph(false), new EmptyEnvelopes(),
+            enableLiveMultiExpansion: true);
+        FmSynthSound updated = new(Graph(true), new EmptyEnvelopes(),
+            enableLiveMultiExpansion: true);
+        FmSynthSound reference = new(Graph(false), new EmptyEnvelopes());
+        SoundState held = original.CreateState();
+        SoundState uninterrupted = reference.CreateState();
+        original.Render(context, held, 0, 80, new float[80]);
+        reference.Render(context, uninterrupted, 0, 80, new float[80]);
+        original.RequestMultiExpansionPreparation(updated, held).Should().BeFalse(
+            "bound OnePole controls need more than a frozen integrator copy");
+        original.TryPrepareRunningState(updated, held).Should().BeTrue();
+        original.CommitPreparedRunningState(updated, held);
+        float[] actual = new float[128];
+        float[] expected = new float[128];
+        updated.Render(context, held, 80, actual.Length, actual);
+        reference.Render(context, uninterrupted, 80, expected.Length, expected);
+        actual.Should().Equal(expected);
     }
 
     [Test]
