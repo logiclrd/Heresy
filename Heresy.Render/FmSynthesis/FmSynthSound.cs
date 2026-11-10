@@ -1762,6 +1762,18 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		long max = 0;
 		foreach (MultiVoice voice in state.Multis[index])
 		{
+			// The outer renderer can stop calling EvaluateMulti as soon
+			// as this note reaches its finite end. Retire a fully silent
+			// outgoing state HERE as well, preserving the later of the
+			// two proven ends for subsequent end-frame queries.
+			if (voice.OnsetFadeFrom is { } silentOutgoing
+				&& voice.SilenceEnd is long incomingEnd
+				&& silentOutgoing.SilenceEnd is long outgoingEnd
+				&& state.NextFrame >= Math.Max(incomingEnd, outgoingEnd))
+			{
+				voice.SilenceEnd = Math.Max(incomingEnd, outgoingEnd);
+				voice.FinishOnsetFade();
+			}
 			// A crossfade carries TWO independently ending child histories.
 			// Never retire a released note from the incoming end alone while
 			// the outgoing contribution can still be audible.
