@@ -190,6 +190,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		private readonly object _gate = new();
 		private readonly int[] _capacities = new int[nodeCount];
 		private readonly int[] _workCapacities = new int[nodeCount];
+		// Captured from the PCM owner; the worker never visits live voices.
+		private readonly bool[] _rephase = new bool[nodeCount];
+		private readonly bool[] _workRephase = new bool[nodeCount];
 		private FmSynthSound? _revision;
 		private ulong _seed;
 		private double _pitch, _speed;
@@ -197,7 +200,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		private bool _pending, _queued;
 		private PreparedMultiExpansion? _ready;
 
-		public void Offer(FmSynthSound next, FmSynthState state)
+		public void Offer(FmSynthSound original, FmSynthSound next,
+			FmSynthState state)
 		{
 			lock (_gate)
 			{
@@ -213,7 +217,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				_pitch = state.BoundPitch;
 				_speed = state.BoundSpeed;
 				for (int i = 0; i < _capacities.Length; i++)
+				{
 					_capacities[i] = state.Multis[i].Length;
+					_rephase[i] = original.NeedsMultiOnsetReplacement(next, state, i);
+				}
 				// Invalidate work from an earlier generation. A running
 				// worker checks this version after every new child.
 				_version++;
@@ -318,6 +325,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				pitch = _pitch;
 				speed = _speed;
 				Array.Copy(_capacities, _workCapacities, _capacities.Length);
+				Array.Copy(_rephase, _workRephase, _rephase.Length);
 			}
 			long beforeTicks = Stopwatch.GetTimestamp();
 			long beforeBytes = GC.GetAllocatedBytesForCurrentThread();
@@ -335,15 +343,18 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				}
 				int target = next._multiRatios[i].Length;
 				int retained = _workCapacities[i];
-				if (target <= retained)
+				bool rephase = _workRephase[i];
+				if (target <= retained && !rephase)
 					continue;
 				FmSynthSound input = next._nodes[i].MultiInput
 					?? throw new InvalidOperationException(
 						"Multi expansion requires a prepared child sound.");
 				FmMultiNode multi = (FmMultiNode)next._nodes[i].Definition;
-				MultiVoice[] voices = new MultiVoice[target];
-				for (int j = retained; j < target; j++)
+				MultiVoice[] voices = new MultiVoice[Math.Max(target, retained)];
+				for (int j = 0; j < target; j++)
 				{
+					if (j < retained && !rephase)
+						continue;
 					if (!IsCurrent(version))
 					{
 						DiscardStale(version, scheduler, addedChildren, beforeBytes);
@@ -368,7 +379,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						return;
 					}
 					MultiVoice child = new(invocation, ratio, multi, j,
-						initialMixGain: 0.0, started: false);
+						initialMixGain: rephase && j < retained
+							? (multi.GainCompensation ? 1.0 / target : 1.0) : 0.0,
+						started: rephase && j < retained);
 					child.Invocation.State.SetNoiseSeed(MultiHash(seed
 						^ ((ulong)(uint)multi.Id << 32)
 						^ (ulong)(uint)(j + 1)));
