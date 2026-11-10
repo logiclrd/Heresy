@@ -1568,3 +1568,66 @@ where an exclusive instruction histogram suffices.
 No further code changes, optimizations, or merges
 are justified solely by this IBS profile.
 PR #12 remains draft and unmerged.
+
+## Twenty-eighth slice: preserve authored scalar timing, expand nonstructural PCM acceptance
+
+After concluding the Ryzen profiling investigation, development
+returned to the unfinished all-properties Synth audition milestone.
+A first prototype attempted 64-frame per-voice smoothstep
+transitions for every live `FmConstantNode.Value` change.
+It preallocated transition state per node and started rapid
+successive ramps at the current interpolated value. That
+prototype is **reverted**: CI revealed it violated several
+important existing exact-output invariants, including
+instantaneous authored Constant gain publication on held
+notes, preserved Source child audio at the publication frame,
+and exact comparison of authored Filter coefficient edits
+against the equivalent realtime-FM retuning of the same
+IIR histories. Those are real behavioral contracts, **not**
+undesirable assertions to rewrite merely to pass the suite.
+The prototype's replacement of existing expected values
+was also reverted. No global implicit Constant smoothing
+remains in production.
+
+The engineering consequence is that *click-safe smoothing*
+should be a separate, explicit output/transition mechanism
+with well-defined opt-in/audition semantics, not an implicit
+change to all Constant control values (which can route
+directly into oscillator FM or Filter coefficients).
+The existing 64-frame Multi voice gain/ratio glides retain
+their previously specified semantics. Incompatible
+Source/Multi onset changes still need dedicated prepared
+dual-state crossfades; this slice does **not** claim that
+capability.
+
+Instead, this slice extends correctness coverage of the
+functional publication path, keeping the already tested
+immediate scalar semantics:
+
+- New held Constant regressions exercise two rapid
+  compatible revisions on the same voice without NoteOn,
+  and verify no old revision leaks into later samples.
+- A second regression checks that a Constant change
+  propagates to the retained child invocations inside a
+  two-voice Multi graph, with publication on the first
+  resumed output frame.
+- Expanded the single-oscillator-versus-generic-graph
+  exact-PCM live-edit regression across changes to the
+  *full unbound Oscillator inspector scalar set*: waveform,
+  frequency, curvature, Vmin/Vmax, Constant (absolute
+  frequency mode), and the unbound Exponential multiplier
+  interpretation flag (inert without an FM wire).
+  The old/new configurations use the same node wiring,
+  including Note Off and held pitch-trajectory history.
+- A separate connected FM port regression changes
+  Exponential multiplier interpretation to Linear while
+  keeping the same connected source, verifying the first
+  edited frame's phase continuity and the next sample's
+  changed phase increment.
+
+These are functional tests, not a claim that all properties
+are implemented or smooth. They do not assert wall-clock
+performance or change the native renderer's PCM semantics.
+The all-property TODO, explicit click-safe transition
+design, Source reassignment and Multi re-randomization
+remain outstanding; PR #12 stays draft and unmerged.
