@@ -59,7 +59,11 @@ public sealed class SampleSound : ISound, ISourceFrameSeekableSound
 			return true;
 		if (next is null || _definition.Id != next._definition.Id
 			|| _definition.PcmData is null
+			|| _data is not IImmutableSamplePcmIdentity oldData
+			|| next._data is not IImmutableSamplePcmIdentity nextData
 			|| !ReferenceEquals(_definition.PcmData, next._definition.PcmData)
+			|| !ReferenceEquals(oldData.ImmutablePcm, _definition.PcmData)
+			|| !ReferenceEquals(nextData.ImmutablePcm, _definition.PcmData)
 			|| _definition.Loop != next._definition.Loop
 			|| _data.SampleRate != next._data.SampleRate
 			|| _data.ChannelCount != next._data.ChannelCount
