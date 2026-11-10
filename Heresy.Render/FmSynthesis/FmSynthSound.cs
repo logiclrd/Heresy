@@ -23,7 +23,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	private sealed class SourceVoice
 	{
 			public SourceVoice(SoundInvocation invocation, double originalOuterFactor,
-			double originalFrequencyHz)
+			double originalFrequencyHz, bool trackSampleHistory)
 		{
 			Invocation = invocation;
 			// The invocation retains its original state/configuration. A
@@ -34,6 +34,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			OriginalFrequencyHz = originalFrequencyHz;
 			Pitch = new FmSourcePitchCurve();
 			invocation.State.PitchTrajectory.SetCurve(0, Pitch);
+			// Reserved exclusively for interactive live-audition Sample
+			// onsets; normal playback/export retains no history ring.
+			if (trackSampleHistory && Sound is SampleSound
+				&& invocation.State is SampleSoundState sampleState)
+				sampleState.EnableLiveOnsetPositionHistory();
 		}
 		public SoundInvocation Invocation { get; }
 		public ISound Sound { get; set; }
@@ -862,7 +867,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| !double.IsFinite(replacement.OriginalFrequencyHz
 				/ original.OriginalFrequencyHz)
 			|| original.OriginalOuterFactor != replacement.OriginalOuterFactor
-			|| !original.Pitch.HasConstantRateHistory
+			|| (!original.Pitch.HasConstantRateHistory
+				&& !previous.CanTransferLiveOnsetPosition(oldFrame, nextFrame))
 			|| original.Pitch.LastFrame != oldFrame - 1
 			|| oldFrame < 0 || nextFrame < 0
 			|| !previous.PitchTrajectory.CanSeedPreparedStreamingPosition
@@ -873,9 +879,12 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| envelopes.Filter is not null || envelopes.Panning is not null
 			|| original.Invocation.Configuration != replacement.Invocation.Configuration)
 			return false;
-		// Restrict this first direct-Sample migration to a bounded offset.
-		// Complex historic changes need prepared replay rather than an
-		// instantaneous-rate projection.
+		// Constant-rate onsets keep the original O(1) skip projection.
+		// For variable-rate onsets the exact recorded integral must be
+		// within the 128-frame backwards window (checked above). Never
+		// extrapolate future historical samples using the current rate.
+		if (!original.Pitch.HasConstantRateHistory)
+			return true;
 		double extra = (nextFrame - oldFrame) * original.Pitch.LastRate;
 		return double.IsFinite(extra) && Math.Abs(extra) <= 1000000.0;
 	}
@@ -1354,8 +1363,16 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		SampleSoundState oldState = (SampleSoundState)original.Invocation.State;
 		SampleSoundState newState = (SampleSoundState)replacement.Invocation.State;
 		double rate = original.Pitch.LastRate;
-		double position = oldState.PitchTrajectory.GetPosition(oldFrame)
-			+ (newFrame - oldFrame) * rate;
+		double position;
+		if (!original.Pitch.HasConstantRateHistory && newFrame < oldFrame)
+		{
+			if (!oldState.TryGetRecordedPitchPosition(newFrame, out position))
+				throw new InvalidOperationException(
+					"Variable-rate Sample onset lacked a preflighted historical position.");
+		}
+		else
+			position = oldState.PitchTrajectory.GetPosition(oldFrame)
+				+ (newFrame - oldFrame) * rate;
 		newState.PitchMultiplier = oldState.PitchMultiplier;
 		newState.PlaybackSpeedMultiplier = oldState.PlaybackSpeedMultiplier;
 		newState.PlaybackOffset = oldState.PlaybackOffset;
@@ -1363,6 +1380,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		newState.Position = oldState.Position;
 		newState.NoteOffTime = oldState.NoteOffTime;
 		newState.PitchTrajectory.SeedPreparedStreamingPosition(newFrame, position);
+		newState.CopyLiveOnsetPositionsBeforeFrame(oldState, newFrame);
 		replacement.RetainOriginalFrequencyBasis(original);
 		replacement.Pitch.SeedBeforeFrame(newFrame, rate);
 	}
@@ -1614,7 +1632,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			{
 				SourceVoice voice = new(invocation,
 					node.Constant ? 1.0 : pitchMultiplier * playbackSpeedMultiplier,
-					node.FrequencyHz);
+					node.FrequencyHz, _allowMultiExpansion);
 				// For a frozen live plan, even expensive maximum/minimum-phase
 				// FIR designs are already immutable: this only instantiates
 				// per-voice histories from prepared plans at the note boundary.
