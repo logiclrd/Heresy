@@ -1034,9 +1034,9 @@ public sealed class FmSynthMultiTests
             .Should().BeTrue();
 
         SampleSound originalSample = new(originalDefinition,
-            new MemorySampleData(48000, 1, values));
+            new FrozenPcmData(originalDefinition.PcmData!));
         SampleSound revisedSample = new(revisedDefinition,
-            new MemorySampleData(48000, 1, values));
+            new FrozenPcmData(revisedDefinition.PcmData!));
         SourceResolver oldResolver = new(id, originalSample);
         SourceResolver revisedResolver = new(id, revisedSample);
         FmSynthGraph Graph(bool random) => new([
@@ -1803,6 +1803,19 @@ public sealed class FmSynthMultiTests
                 && activeFrame >= noteOffActiveFrame.Value + 10 ? 0 : 1;
         public long? GetEndActiveFrameExclusiveAfterNoteOff(
             long noteOffActiveFrame, int sampleRate) => noteOffActiveFrame + 10;
+    }
+
+    // Mimics the production frozen-song provider: distinct adapters can
+    // advertise identical immutable SamplePcmData across revisions.
+    private sealed class FrozenPcmData(SamplePcmData pcm)
+        : ISampleData, IImmutableSamplePcmIdentity
+    {
+        public SamplePcmData ImmutablePcm { get; } = pcm;
+        public int SampleRate => ImmutablePcm.SampleRate;
+        public int ChannelCount => ImmutablePcm.ChannelCount;
+        public long FrameCount => ImmutablePcm.FrameCount;
+        public float GetSample(long frame, int channel)
+            => ImmutablePcm.GetSample(frame, channel);
     }
 
     private sealed class SourceResolver : ISoundResolver, IEnvelopeCurveResolver
