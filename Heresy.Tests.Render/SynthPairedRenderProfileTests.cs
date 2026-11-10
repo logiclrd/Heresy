@@ -38,6 +38,18 @@ public sealed class SynthPairedRenderProfileTests
     [Test]
     public void AlternatePairedSynthGraphShapesAndCheckEveryPcmBlock()
     {
+        // A deliberately separate, opt-in CPU sampling mode exercises
+        // exactly one renderer, so a perf recording cannot mix direct
+        // and identity-Operator samples. Ordinary CI stays paired and
+        // retains its byte-for-byte PCM assertions.
+        string? focused = Environment.GetEnvironmentVariable(
+            "HERESY_SYNTH_PROFILE_CASE");
+        if (!string.IsNullOrWhiteSpace(focused))
+        {
+            ProfileSingleGraphShape(focused.Trim());
+            return;
+        }
+
         // The same-vs-same control measures order/scheduling noise. The
         // other pairs differ only by an inaudible identity Multiply node
         // after the oscillator; the actual waveform/phase math is shared.
@@ -47,6 +59,67 @@ public sealed class SynthPairedRenderProfileTests
             genericLeft: false, genericRight: true);
         Compare("square identity operator", FmOscillatorWaveform.Square,
             genericLeft: false, genericRight: true);
+    }
+
+    private static void ProfileSingleGraphShape(string name)
+    {
+        // Only the selected arm is ever created or rendered in this
+        // invocation. Use one process per graph shape when sampling CPU:
+        // otherwise JIT code and all three ordinary comparison pairs
+        // would contribute to the same perf report.
+        (FmOscillatorWaveform waveform, bool generic) = name switch
+        {
+            "sine-direct" => (FmOscillatorWaveform.Sine, false),
+            "sine-generic" => (FmOscillatorWaveform.Sine, true),
+            "square-direct" => (FmOscillatorWaveform.Square, false),
+            "square-generic" => (FmOscillatorWaveform.Square, true),
+            _ => throw new ArgumentException(
+                "HERESY_SYNTH_PROFILE_CASE must be one of: " +
+                "sine-direct, sine-generic, square-direct, square-generic."),
+        };
+
+        FmSynthSound sound = MakeSound(waveform, generic);
+        SoundState[] states = CreateVoices(sound);
+        RenderContext context = new(new RenderConfiguration(SampleRate,
+        [
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
+        ]));
+        float[] warmup = new float[WarmupBlocks * BlockFrames];
+        RenderVoices(sound, states, context, 0, warmup.Length, warmup);
+
+        int rounds = ProfileRounds();
+        float[] pcm = new float[BlockFrames];
+        double probe = 0.0;
+        long beforeAllocation = GC.GetAllocatedBytesForCurrentThread();
+        long before = Stopwatch.GetTimestamp();
+        for (int round = 0; round < rounds; round++)
+        {
+            Array.Clear(pcm);
+            RenderVoices(sound, states, context,
+                (WarmupBlocks + round) * BlockFrames, BlockFrames, pcm);
+            // Keep the output observable without adding PCM assertions to
+            // the hot loop or introducing any extra voices/graph paths.
+            probe += pcm[round % BlockFrames];
+        }
+        long elapsedTicks = Stopwatch.GetTimestamp() - before;
+        long allocation = GC.GetAllocatedBytesForCurrentThread()
+            - beforeAllocation;
+        Assert.That(double.IsFinite(probe), Is.True);
+        foreach (float sample in pcm)
+            Assert.That(float.IsFinite(sample), Is.True);
+
+        double microseconds = (double)elapsedTicks * 1_000_000
+            / Stopwatch.Frequency;
+        TestContext.Progress.WriteLine(
+            $"Isolated Synth renderer: {name}, " +
+            $"runtime={RuntimeInformation.FrameworkDescription}, " +
+            $"OS={RuntimeInformation.OSDescription}, " +
+            $"logical CPUs={Environment.ProcessorCount}, " +
+            $"notes={Notes}, Multi children per note={MultiConstituents}, " +
+            $"sample rate={SampleRate}, block frames={BlockFrames}, " +
+            $"rounds={rounds}, us/output frame={microseconds / (rounds * BlockFrames):F3}, " +
+            $"render-thread allocated bytes={allocation}, " +
+            $"PCM probe={probe:R}");
     }
 
     private static void Compare(string label, FmOscillatorWaveform waveform,
