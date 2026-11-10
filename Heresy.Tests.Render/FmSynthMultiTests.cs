@@ -557,6 +557,49 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void SeededMultiOnsetCycleCalculationIsInvariantAcrossRenderSplits()
+    {
+        // The initial offset calculation is shared with upcoming prepared
+        // re-phase candidates. Split rendering and cycle overrides must
+        // keep every constituent's seeded phase and onset fade identical.
+        foreach (double? cycleLength in new double?[] { null, 320.0 })
+        foreach (bool randomized in new[] { false, true })
+        {
+            FmSynthGraph graph = new([
+                new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 185),
+                new FmMultiNode(2, 1, voiceCount: 3, detune: 0.12,
+                    randomizePhase: randomized, cycleLength: cycleLength,
+                    gainCompensation: true),
+            ], 2);
+            FmSynthSound sound = new(graph, new EmptyEnvelopes());
+            SoundState continuous = sound.CreateState();
+            SoundState split = sound.CreateState();
+            continuous.SetNoiseSeed(0x1234567UL);
+            split.SetNoiseSeed(0x1234567UL);
+            continuous.PitchMultiplier = split.PitchMultiplier = 1.25;
+            continuous.PlaybackSpeedMultiplier =
+                split.PlaybackSpeedMultiplier = 0.75;
+            RenderContext context = Mono();
+            float[] expected = new float[512];
+            float[] actual = new float[512];
+
+            sound.Render(context, continuous, 0, expected.Length, expected);
+            int offset = 0;
+            foreach (int count in new[] { 1, 7, 40, 4, 93, 367 })
+            {
+                sound.Render(context, split, offset, count,
+                    actual.AsSpan(offset, count));
+                offset += count;
+            }
+            offset.Should().Be(expected.Length);
+            actual.Should().Equal(expected,
+                "Multi randomized onset and cycle override must not depend " +
+                "on how the audio producer partitions the render blocks");
+            actual.Should().OnlyContain(float.IsFinite);
+        }
+    }
+
+    [Test]
     public void RapidSecondMultiEditStartsFromInterpolatedMixInsteadOfJumping()
     {
         FmSynthGraph Graph(int count) => new([
