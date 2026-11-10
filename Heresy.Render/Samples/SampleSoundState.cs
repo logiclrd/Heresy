@@ -11,9 +11,12 @@ public sealed class SampleSoundState : SoundState
 	// A live Synth audition alone may retain a small history of *already
 	// integrated* Sample positions. These are the actual streaming doubles,
 	// not a reconstruction from current pitch or a replay of prior audio.
-	// A 128-frame cap also bounds the cost of copying recent positions into
-	// a worker-prepared Multi onset recipient at an audio boundary.
-	internal const int LiveOnsetPositionHistoryFrames = 128;
+	// Keep up to 1024 exact frames (8 KiB per Sample invocation) for
+	// longer rewinds, but copy at most 128 already-allocated positions
+	// into a replacement at an audio boundary. Both limits are fixed;
+	// neither adds managed allocations to the PCM producer.
+	internal const int LiveOnsetPositionHistoryFrames = 1024;
+	internal const int LiveOnsetTransferHistoryFrames = 128;
 	private double[]? _recentPitchPositions;
 	private long _lastRecordedPitchFrame = -1;
 	private int _recordedPitchFrames;
@@ -59,16 +62,18 @@ public sealed class SampleSoundState : SoundState
 			&& (newFrame == oldFrame
 				|| TryGetRecordedPitchPosition(newFrame, out _));
 
-	/// <summary>Retain bounded, exact prior integrals when a detached
-	/// Sample takes over a shorter local onset clock. The outgoing and
-	/// incoming histories remain independent after the atomic copy.</summary>
+	/// <summary>Retain at most 128 recently preceding exact integrals
+	/// when a detached Sample takes over an earlier local onset clock.
+	/// The 1024-frame lookback only authorizes a transfer: it does not
+	/// make the entire lookback part of the PCM publication workload.
+	/// Outgoing and incoming histories evolve independently thereafter.</summary>
 	internal void CopyLiveOnsetPositionsBeforeFrame(
 		SampleSoundState source, long newFrame)
 	{
 		if (_recentPitchPositions is null || source._recentPitchPositions is null)
 			return;
 		long first = Math.Max(0, Math.Max(
-			newFrame - LiveOnsetPositionHistoryFrames,
+			newFrame - LiveOnsetTransferHistoryFrames,
 			source._lastRecordedPitchFrame - source._recordedPitchFrames + 1));
 		int copied = 0;
 		for (long frame = first; frame < newFrame; frame++)
