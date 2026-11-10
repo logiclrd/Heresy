@@ -557,6 +557,103 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void HeldOscillatorMultiRephasesThroughWorkerPreparedSixtyFourFrameCrossfade()
+    {
+        FmSynthGraph Graph(bool random, double cycle) => new([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 185),
+            new FmMultiNode(2, 1, detune: 0, voiceCount: 3,
+                randomizePhase: random, cycleLength: cycle,
+                gainCompensation: true),
+        ], 2);
+        RenderContext context = Mono();
+        FmSynthSound original = new(Graph(false, 128), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        SoundState held = original.CreateState();
+        SoundState referenceState = original.CreateState();
+        held.SetNoiseSeed(17);
+        referenceState.SetNoiseSeed(17);
+        original.Render(context, held, 0, 80, new float[80]);
+        original.Render(context, referenceState, 0, 80, new float[80]);
+
+        FmSynthSound edited = new(Graph(true, 820), new EmptyEnvelopes(),
+            reserveMultiHeadroom: true);
+        original.TryPrepareRunningState(edited, held).Should().BeFalse(
+            "an initialized oscillator onset change needs a detached worker state");
+        original.RequestMultiExpansionPreparation(edited, held).Should().BeTrue();
+
+        using FirPreparationScheduler worker = new();
+        original.QueuePendingFirControls(held, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        original.AdoptPreparedFirControls(held);
+        original.TryPrepareRunningState(edited, held).Should().BeTrue();
+        original.CommitPreparedRunningState(edited, held);
+        float[] actual = new float[160];
+        float[] reference = new float[160];
+        edited.Render(context, held, 80, actual.Length, actual);
+        original.Render(context, referenceState, 80, reference.Length, reference);
+        actual[0].Should().Be(reference[0],
+            "the new phase has zero mix on the first publication frame");
+        actual.Should().OnlyContain(float.IsFinite);
+        Enumerable.Range(64, 96).Max(i => Math.Abs(actual[i] - reference[i]))
+            .Should().BeGreaterThan(0.05f,
+                "the held oscillators must actually adopt the revised onset");
+        worker.PreparedMultiConstituentCount.Should().Be(3,
+            "three detached active replacements, not per-sample construction");
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
+    public void SecondMultiRephaseWaitsForPriorFadeWithoutLosingPreparedWork()
+    {
+        FmSynthGraph Graph(bool random, double cycle) => new([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 110),
+            new FmMultiNode(2, 1, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: cycle,
+                gainCompensation: true),
+        ], 2);
+        RenderContext context = Mono();
+        FmSynthSound original = new(Graph(false, 120), new EmptyEnvelopes(),
+            enableLiveMultiExpansion: true);
+        SoundState held = original.CreateState();
+        held.SetNoiseSeed(41);
+        original.Render(context, held, 0, 80, new float[80]);
+        FmSynthSound first = new(Graph(true, 800), new EmptyEnvelopes(),
+            enableLiveMultiExpansion: true);
+        FmSynthSound second = new(Graph(false, 120), new EmptyEnvelopes(),
+            enableLiveMultiExpansion: true);
+        using FirPreparationScheduler worker = new();
+
+        void Prepare(FmSynthSound previous, FmSynthSound target, int completed)
+        {
+            previous.RequestMultiExpansionPreparation(target, held).Should().BeTrue();
+            previous.QueuePendingFirControls(held, worker);
+            Assert.That(SpinWait.SpinUntil(
+                () => worker.CompletedMultiExpansionCount >= completed,
+                TimeSpan.FromSeconds(5)), Is.True);
+            previous.AdoptPreparedFirControls(held);
+        }
+
+        Prepare(original, first, 1);
+        original.TryPrepareRunningState(first, held).Should().BeTrue();
+        original.CommitPreparedRunningState(first, held);
+        Prepare(first, second, 2);
+        first.TryPrepareRunningState(second, held).Should().BeFalse(
+            "a second onset must not form an unbounded transition chain");
+
+        // The old/new pair is mixed for frames 80..143. At frame 144 the
+        // prior transition completes; the prepared latest revision waits.
+        first.Render(context, held, 80, 65, new float[65]);
+        first.TryPrepareRunningState(second, held).Should().BeTrue();
+        first.CommitPreparedRunningState(second, held);
+        float[] continued = new float[100];
+        second.Render(context, held, 145, continued.Length, continued);
+        continued.Should().OnlyContain(float.IsFinite);
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
     public void SeededMultiOnsetCycleCalculationIsInvariantAcrossRenderSplits()
     {
         // The initial offset calculation is shared with upcoming prepared
