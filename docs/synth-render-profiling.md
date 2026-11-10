@@ -372,6 +372,42 @@ measurement or cross-host CI timings. Do not convert these numbers
 into portable pass/fail thresholds. Remove the temporary worktree
 with `git worktree remove ../Heresy-profile-before` after recording.
 
+## Result of the controlled lifetime-bypass comparison
+
+The user's actual Ryzen 7 7840HS, Ubuntu 26.04, .NET 10.0.14
+**uninstrumented** alternating Sine-direct A/B experiment
+contradicted the expectation of a substantial speedup despite the
+prechange `GetBaseEndFrameExclusive` method's roughly 63–70%
+CPU sample attribution. Before times were
+`10.742, 10.670, 10.644, 10.776` µs/output frame;
+after times were `10.715, 10.708, 10.642, 10.865`.
+Median **before 10.706**, **after 10.7115** µs/frame,
+a +0.0055 µs/frame (roughly **+0.05%**) difference, well
+within the observed run-to-run variation. Every recorded run
+allocated **zero rendering-thread bytes** and printed the
+identical PCM probe `-419683.9955374971`. This is
+**no measurable speed improvement**, not evidence of a
+small definite regression. The probe is not an exact-PCM
+comparison of every rendered frame; the unit tests are.
+
+Do **not** interpret the dramatic percentage in the previous
+prechange instruction-level reports as a proportional runtime
+cost. Independent perf repetitions showed reproducible
+attribution, but that alone neither determines causal
+instruction costs nor predicts an optimization's benefit.
+
+The next optional experiment is **one fresh after-build**
+per-shape `sine-direct` sampling run. Ensure that the PR-head
+Release assembly was rebuilt and record the selected SHA.
+Re-use the same 8,192-round, 499 Hz JIT-dump command above,
+then check whether `GetBaseEndFrameExclusive` vanishes from
+the flat method profile. If it does, the call was skipped but
+its sampled share was a misleading performance predictor.
+If it remains large, check the actual binaries, alternative
+callers, and JIT attribution before drawing conclusions.
+Do not increase sampling frequency or broaden lifecycle
+shortcuts without this check.
+
 ## Interpretation and remaining acceptance
 
 A strongly consistent paired B/A difference above the same-vs-same
