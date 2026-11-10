@@ -21,6 +21,12 @@ public sealed class PitchTrajectory
 		private long _cachedFrameCount;
 		private double _cachedPosition;
 
+		public void SeedPosition(long frame, double position)
+		{
+			_cachedFrameCount = frame;
+			_cachedPosition = position;
+		}
+
 		public double GetPositionDelta(long frameCount)
 		{
 			if (frameCount < 0)
@@ -53,6 +59,24 @@ public sealed class PitchTrajectory
 			Curve = new ConstantPitchCurve(1.0),
 		},
 	];
+
+	/// <summary>Only for a detached, already-constructed direct Sample
+	/// source at the ordered publication boundary. A continuous one-segment
+	/// streaming curve has already integrated through the old invocation;
+	/// seed the replacement's cached integral at its new logical frame in
+	/// constant time, rather than replaying prior audio in PCM.</summary>
+	internal bool CanSeedPreparedStreamingPosition
+		=> _segments.Count == 1 && _segments[0].StartFrame == 0
+			&& _segments[0].EndFrameExclusive is null;
+
+	internal void SeedPreparedStreamingPosition(long nextFrame, double position)
+	{
+		if (!CanSeedPreparedStreamingPosition || nextFrame < 0
+			|| !double.IsFinite(position) || position < 0.0)
+			throw new InvalidOperationException(
+					"Only a finite nonnegative position in a single streaming segment can be seeded.");
+		_segments[0].SeedPosition(nextFrame, position);
+	}
 
 	public double CurrentMultiplier => _segments[^1].Curve.GetMultiplier(0);
 
