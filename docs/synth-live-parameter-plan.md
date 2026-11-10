@@ -1141,3 +1141,48 @@ baseline checkout or controlled A/B builds. Further live-edit
 property coverage, crossfade-only transitions, device listening
 and aggregate CPU budgeting remain open. Keep PR #12 draft and
 unmerged.
+
+## Twenty-first slice: isolate CPU sampling per oscillator graph shape
+
+The user's second local `perf` run after the single-oscillator
+lifecycle specialization showed exclusive samples moving:
+`RenderMultiChildFrame` 35.63% → 12.57%,
+`GetBaseEndFrameExclusive` 2.91% → 23.76%, and
+`EvaluateOscillator` 4.58% → 8.17%.
+Percentages alone are not absolute times, but the
+oscillator-to-end-check ratio changed from approximately 1.57
+to 0.34 (roughly 4.6-fold). A shorter total render time by
+itself cannot explain that ratio shift.
+
+**Do not immediately generalize the lifetime shortcut.** The
+three ordinary profiler comparisons have different graph paths
+and run sequentially in one testhost. The previous specialization
+made the direct oscillator path lighter while leaving the
+identity-Multiply general child path largely unchanged. A
+mixed-workload `perf` report cannot distinguish a true change
+in end-check work from this redistribution, JIT inlining or
+sampling/host noise.
+
+To isolate the issue, the existing
+`SynthPairedRenderProfileTests` now offers an **explicit
+diagnostic-only** `HERESY_SYNTH_PROFILE_CASE` selector:
+`sine-direct`, `sine-generic`, `square-direct`, or
+`square-generic`. Each selected run creates **one graph shape**
+and only its own four voices, each with 64 Multi constituents.
+It warms up that path, then renders the chosen number of
+consecutive 256-frame blocks, logging duration and rendering-thread
+allocation. An invalid selector fails; an unset selector preserves
+the existing exact PCM paired acceptance in regular CI.
+No production audio path or hardware performance invariant changes.
+
+The updated [profiling guide](synth-render-profiling.md)
+includes one-process-per-shape Linux `perf` commands and clean
+per-shape flat report collection. The next step is a **local**
+512-round sample for all four shapes on the same CPU under
+comparable conditions. Review direct vs generic Sine first to
+identify which shape owns `GetBaseEndFrameExclusive` samples,
+then both Square shapes to separate waveform expense. Request
+`perf annotate` for a specific method only if the per-shape
+profiles remain ambiguous. The all-properties live editing,
+crossfade migration and physical-device acceptance still remain
+open; PR #12 must remain draft and unmerged.
