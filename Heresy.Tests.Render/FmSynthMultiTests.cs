@@ -1512,6 +1512,12 @@ public sealed class FmSynthMultiTests
                 "the incoming Sample must use the historical, not nominal, pitch integral");
         }
         mixed[0].Should().Be(outgoing[0]);
+        // The migration must not reclassify the historical variable rate
+        // as a constant segment. A subsequent *forward* skip has no
+        // previously recorded future integral and must not be projected
+        // using the current 1.3 rate merely because the child was reseeded.
+        revised.RequestMultiExpansionPreparation(old, held).Should().BeFalse(
+            "a later forward phase edit must still respect prior rate changes");
         worker.Fault.Should().BeNull();
     }
 
