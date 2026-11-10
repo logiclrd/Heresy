@@ -117,6 +117,31 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		}
 		public void FinishOnsetFade() => OnsetFadeFrom = null;
 
+		/// <summary>The outgoing branch is structurally incapable of
+		/// contributing after the last crossfade frame, even if its
+		/// own Sample or Filter would otherwise play indefinitely.</summary>
+		public long OnsetFadeEndFrame => OnsetFadeStartFrame >=
+			long.MaxValue - MultiEditTransitionFrames
+			? long.MaxValue : OnsetFadeStartFrame + MultiEditTransitionFrames;
+
+		/// <summary>Keep the proved last audible contribution of the
+		/// retired branch. The incoming Sample can have reached EOF before
+		/// the fade ended; adopting only its EOF would retroactively
+		/// truncate the note's actual mixed audio.</summary>
+		public void CompleteOnsetFade()
+		{
+			if (OnsetFadeFrom is not { } outgoing)
+				return;
+			if (SilenceEnd is long incomingEnd)
+			{
+				long outgoingBound = outgoing.SilenceEnd is long knownEnd
+					? Math.Min(knownEnd, OnsetFadeEndFrame)
+					: OnsetFadeEndFrame;
+				SilenceEnd = Math.Max(incomingEnd, outgoingBound);
+			}
+			OnsetFadeFrom = null;
+		}
+
 		private static double Interpolate(double from, double to,
 			long startFrame, long frame)
 		{
@@ -1982,23 +2007,19 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		long max = 0;
 		foreach (MultiVoice voice in state.Multis[index])
 		{
-			// The outer renderer can stop calling EvaluateMulti as soon
-			// as this note reaches its finite end. Retire a fully silent
-			// outgoing state HERE as well, preserving the later of the
-			// two proven ends for subsequent end-frame queries.
-			if (voice.OnsetFadeFrom is { } silentOutgoing
-				&& voice.SilenceEnd is long completedIncomingEnd
-				&& silentOutgoing.SilenceEnd is long completedOutgoingEnd
-				&& state.NextFrame >= Math.Max(
-					completedIncomingEnd, completedOutgoingEnd))
-			{
-				voice.SilenceEnd = Math.Max(
-					completedIncomingEnd, completedOutgoingEnd);
-				voice.FinishOnsetFade();
-			}
-			// A crossfade carries TWO independently ending child histories.
-			// Never retire a released note from the incoming end alone while
-			// the outgoing contribution can still be audible.
+			// A replacement that has already reached EOF may still carry
+			// audible outgoing Sample frames until the fade boundary. At
+			// that boundary, or when BOTH children are proved silent
+			// earlier, retire the old state while retaining its bounded
+			// contribution to the final reported note end.
+			if (voice.OnsetFadeFrom is { } retiring
+				&& (state.NextFrame >= voice.OnsetFadeEndFrame
+					|| (voice.SilenceEnd is long incomingEnd
+						&& retiring.SilenceEnd is long outgoingEnd
+						&& state.NextFrame >= Math.Max(
+							incomingEnd, outgoingEnd))))
+				voice.CompleteOnsetFade();
+
 			if (voice.CanAffectOutput(state.NextFrame))
 			{
 				if (voice.SilenceEnd is not long incomingEnd)
@@ -2006,13 +2027,15 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				max = Math.Max(max, incomingEnd);
 			}
 			if (voice.OnsetFadeFrom is { } outgoing
-				&& MultiTransitionWeight(
-					voice.OnsetFadeStartFrame, state.NextFrame) < 1.0
 				&& outgoing.CanAffectOutput(state.NextFrame))
 			{
-				if (outgoing.SilenceEnd is not long outgoingEnd)
-					return null;
-				max = Math.Max(max, outgoingEnd);
+				// The outgoing voice's known EOF may be later than the
+				// crossfade, or not yet discoverable at all. Neither
+				// extends its audible contribution beyond fadeEnd.
+				long boundedEnd = outgoing.SilenceEnd is long childEnd
+					? Math.Min(childEnd, voice.OnsetFadeEndFrame)
+					: voice.OnsetFadeEndFrame;
+				max = Math.Max(max, boundedEnd);
 			}
 		}
 		return max;
@@ -2469,7 +2492,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					voice.OnsetFadeStartFrame, frame);
 				if (weight >= 1.0)
 				{
-					voice.FinishOnsetFade();
+					voice.CompleteOnsetFade();
+					state.ChildEndChanged = true;
 					sum += incoming;
 				}
 				else
@@ -2486,7 +2510,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					if (voice.SilenceEnd is long incomingEnd
 						&& outgoing.SilenceEnd is long outgoingEnd
 						&& frame >= incomingEnd && frame >= outgoingEnd)
-						voice.FinishOnsetFade();
+					{
+						voice.CompleteOnsetFade();
+						state.ChildEndChanged = true;
+					}
 				}
 			}
 			else
