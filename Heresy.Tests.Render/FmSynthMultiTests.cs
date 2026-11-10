@@ -692,7 +692,13 @@ public sealed class FmSynthMultiTests
         original.CommitPreparedRunningState(revised, held);
         float[] after = new float[160];
         float[] reference = new float[160];
+        long renderBytesBefore = GC.GetAllocatedBytesForCurrentThread();
         revised.Render(context, held, 128, after.Length, after);
+        long renderBytes = GC.GetAllocatedBytesForCurrentThread()
+            - renderBytesBefore;
+        renderBytes.Should().Be(0L,
+            "worker-prepared multi-oscillator crossfades must allocate " +
+            "nothing on the realtime PCM producer");
         original.Render(context, referenceState, 128, reference.Length, reference);
         after[0].Should().Be(reference[0],
             "the first publication frame must contain only the outgoing graph");
