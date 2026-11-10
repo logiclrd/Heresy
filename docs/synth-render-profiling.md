@@ -86,18 +86,45 @@ call-stack sample profile:
 
 ```sh
 dotnet build Heresy.Tests.Render/Heresy.Tests.Render.csproj -c Release
-HERESY_SYNTH_PROFILE_ROUNDS=200 DOTNET_PerfMapEnabled=1 \
-  perf record -F 99 --call-graph dwarf -o heresy-synth.perf.data \
+HERESY_SYNTH_PROFILE_ROUNDS=200 \
+DOTNET_PerfMapEnabled=3 DOTNET_EnableWriteXorExecute=0 \
+  perf record --no-buildid-mmap -e cycles:u -F 99 \
+  --call-graph dwarf -o heresy-synth.perf.data \
   -- dotnet test Heresy.Tests.Render/Heresy.Tests.Render.csproj \
   -c Release --no-build \
   --filter FullyQualifiedName~SynthPairedRenderProfileTests
-perf report -i heresy-synth.perf.data --stdio
+perf --no-pager report -i heresy-synth.perf.data \
+  --stdio --stdio-color=never --no-children -g none --sort symbol \
+  > heresy-synth-report.txt
 ```
 
-The Linux performance-event policy may prohibit sampling, or a
-given .NET/runtime configuration may lack usable managed symbols.
-Record that limitation; do not loosen system-wide permission
-settings solely for this test without considering the host policy.
+This example captures userspace cycles and uses textual .NET JIT
+perf maps. On Ubuntu 26.04/.NET 10, the default JIT double mapping
+was observed to leave samples as `memfd:doublemapper (deleted)`
+hex addresses; the **profiling-only** `DOTNET_EnableWriteXorExecute=0`
+environment setting, combined with `DOTNET_PerfMapEnabled=3`,
+resolved Heresy's actual method names. Disabling the JIT's W^X
+memory-protection mode is not recommended for regular application
+execution or benchmark throughput comparisons. It is used here
+only to resolve CPU hotspots in a temporary diagnostic subprocess.
+
+On machines reporting `perf_event_paranoid=4`, unprivileged perf
+sampling can be blocked. With permission to administer the machine,
+temporarily setting `sudo sysctl -w kernel.perf_event_paranoid=2`
+may permit this userspace-only run; first record the original value
+from `/proc/sys/kernel/perf_event_paranoid` and **restore it immediately
+after recording**. This sysctl affects the entire host while changed.
+Do not make a permanent system-wide relaxation merely to run these
+tests.
+
+`--no-buildid-mmap` suppresses a Linux-kernel build-ID warning on
+affected systems. `--no-pager` and `--stdio-color=never` produce
+plain-text reports, avoiding terminal escape sequences in `less`.
+The flat report (`-g none`) prioritizes exclusive hotspots;
+drop `-g none` for caller-stack detail. JIT helper inlining
+means that exclusive samples attributed to a managed method may
+also represent inlined callees. Keep instrumentation and timing
+measurements separate.
 
 For Windows, run the longer test in one terminal and attach a
 CPU sampling profiler to the **actual testhost process** (not the
