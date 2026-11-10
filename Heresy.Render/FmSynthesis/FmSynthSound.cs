@@ -1742,7 +1742,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		// GetBaseEndFrameExclusive would immediately return null without
 		// modifying the audio-silence scratch; avoid doing that per child,
 		// per sample. Released children retain the inherited release gate.
-		long? baseEnd = singleOscillator && child.NoteOffTime is null
+		long? baseEnd = singleOscillator && !child.HasNoteOffTime
 			? null : GetBaseEndFrameExclusive(sampleRate, child);
 		// The single-oscillator graph has no authored Filter tail. The
 		// per-frame evaluator does not use noteOffFrame in this shape.
