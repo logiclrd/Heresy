@@ -2081,3 +2081,47 @@ release, nested stateful child graphs and physical listening
 remain separate acceptance milestones.
 
 Keep the all-properties TODO open and PR #12 draft/unmerged.
+
+
+## Thirty-fourth slice: concurrent direct Sample Source retune and Multi onset change
+
+A held or latched audition may change a direct bare Sample Source's
+authored **FrequencyHz** in the same Synth revision as its Multi
+`RandomizePhase`/`CycleLength` onset policy. The previous narrow onset
+migration required the two Source frequencies to be identical, so the
+scalar Source retune was accepted while the new phase-onset was silently
+retained. The replacement now uses the existing worker-prepared Sample
+history transfer and the same bounded 64-output-frame onset crossfade.
+
+The replacement Source invocation is constructed off-PCM using the
+**new** authored FrequencyHz, but transferring the old Sample's
+`PitchMultiplier`/speed/playhead into it must also retain the
+**outgoing voice's original FrequencyHz basis**. The live Source rate
+uses `node.FrequencyHz / voice.OriginalFrequencyHz`: retaining the
+worker-created *new* denominator after copying the old Sample scale
+would incorrectly normalize the edited frequency back to one. A
+preflight requires finite, positive old/new frequencies and their
+ratio; the PCM commit copies only the previous frequency basis,
+integrated position, scalar state and streaming curve into preallocated
+destinations. No Sample replay, child construction or managed PCM
+allocations are introduced.
+
+The red regression
+`FrequencyRetuneAndDirectSampleOnsetEditShareTheOriginalPlayhead`
+first demonstrated that the old code accepted the combined revision
+without requesting any onset preparation. It compares 160 exact-frame
+outputs against two independently rendered references: unchanged
+outgoing Sample pitch and an in-place, forward-integrated Source
+frequency retune, combined through the established smoothstep at
+frames 0–64. The first frame must equal the old voice; after frame 64
+the output must match the retuned reference, with zero managed
+allocations during the PCM render.
+
+This does **not** yet generalize the migration to previously variable
+Source pitch-rate histories, concurrent `Constant` or
+`ExponentialMultiplier` mode changes, FM-modulated Source pitch,
+Source reassignment, Instrument/Envelope/panning/tone-Filter state,
+nested Multi, arbitrary Sample seeks, or physical click/load
+acceptance. It retains the preexisting whole-tree worker and
+release/EOF guards. All-properties acceptance remains open; PR #12
+stays draft and unmerged.
