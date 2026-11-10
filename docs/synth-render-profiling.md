@@ -303,6 +303,75 @@ Only consider a larger 50,000–60,000 sample study if the
 independent runs disagree or instruction-level distinction
 materially affects a proposed optimization.
 
+## Before/after throughput for the held single-oscillator lifetime bypass
+
+The first **independent, longer** `sine-direct` JIT recordings (one
+8,192-round calibration plus two replicated runs) consistently attributed
+most direct-graph samples to the early-return path of
+`GetBaseEndFrameExclusive`; the corresponding identity-Multiply graph
+attributed only approximately 3% there. In the direct runs,
+roughly 93–95% of samples local to the method landed on the three
+instructions implementing the nullable Note Off value copy and nearby
+branches. Repeated attribution is useful for finding a redundant call,
+**not** accurate per-instruction cycle cost accounting: skid and
+different machine code can move samples among adjacent instructions.
+
+The implementation now bypasses `GetBaseEndFrameExclusive` in
+`RenderMultiChildFrame` **only** for a single-oscillator child with no
+`NoteOffTime`, where the skipped function deterministically returns
+`null` and changes no state. This is a correctness-preserving
+hypothesis about overhead, **not** a measured performance result.
+Released children, inherited release extensions, Source/Filter/Operator
+graphs, spatialization and discontinuous replay retain the existing
+semantics. The exact PCM suite now explicitly crosses held frames,
+a nonsequential frame gap, a compatible live revision, Note Off,
+and the downstream-envelope release boundary.
+
+Measure actual benefit with two separately built copies of **the same
+8,192-round Sine-direct isolated benchmark**, one on the prior commit
+`792cea4` and the other on the new PR head. For example, from the
+current checkout root:
+
+```sh
+git worktree add --detach ../Heresy-profile-before 792cea4
+dotnet build Heresy.Tests.Render/Heresy.Tests.Render.csproj -c Release
+(cd ../Heresy-profile-before &&
+  dotnet build Heresy.Tests.Render/Heresy.Tests.Render.csproj -c Release)
+mkdir -p synth-perf/ab
+
+i=0
+for variant in before after after before before after after before; do
+  i=$((i + 1))
+  case "$variant" in
+    before) root="../Heresy-profile-before" ;;
+    after) root="." ;;
+  esac
+  echo "=== run $i: $variant ==="
+  (cd "$root" &&
+    env -u DOTNET_PerfMapEnabled -u DOTNET_PerfMapStubGranularity \
+        -u DOTNET_EnableWriteXorExecute \
+      HERESY_SYNTH_PROFILE_CASE=sine-direct \
+      HERESY_SYNTH_PROFILE_ROUNDS=8192 \
+      dotnet test Heresy.Tests.Render/Heresy.Tests.Render.csproj \
+        -c Release --no-build \
+        --filter FullyQualifiedName~SynthPairedRenderProfileTests \
+        --logger 'console;verbosity=detailed') \
+    2>&1 | tee "synth-perf/ab/$i-$variant.log" \
+    | grep -E 'Isolated Synth renderer:|Failed:'
+done
+```
+
+Run without `perf` or the profiling-only JIT memory flags, and avoid
+unrelated heavy work during the comparison. The alternating
+`before/after` ordering dampens drift, but thermal behavior,
+scheduling, CPU frequency, per-run tier transitions and JIT
+optimizations still affect timing. Each test logs
+`us/output frame` and zero expected managed rendering-thread
+allocations; compare medians and run-to-run ranges, not one isolated
+measurement or cross-host CI timings. Do not convert these numbers
+into portable pass/fail thresholds. Remove the temporary worktree
+with `git worktree remove ../Heresy-profile-before` after recording.
+
 ## Interpretation and remaining acceptance
 
 A strongly consistent paired B/A difference above the same-vs-same
