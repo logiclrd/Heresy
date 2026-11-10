@@ -34,6 +34,10 @@ public sealed class SynthPairedRenderProfileTests
     private const int BlockFrames = 256;
     private const int WarmupBlocks = 3;
     private const int DefaultPairedRounds = 7;
+    private const int MaxPairedRounds = 512;
+    // Long isolated recordings gather samples from a single JIT code path.
+    // Do not extend CI's paired PCM test's duration or allocation footprint.
+    private const int MaxIsolatedRounds = 65536;
 
     [Test]
     public void AlternatePairedSynthGraphShapesAndCheckEveryPcmBlock()
@@ -87,7 +91,7 @@ public sealed class SynthPairedRenderProfileTests
         float[] warmup = new float[WarmupBlocks * BlockFrames];
         RenderVoices(sound, states, context, 0, warmup.Length, warmup);
 
-        int rounds = ProfileRounds();
+        int rounds = ProfileRounds(isolated: true);
         float[] pcm = new float[BlockFrames];
         double probe = 0.0;
         long beforeAllocation = GC.GetAllocatedBytesForCurrentThread();
@@ -195,16 +199,18 @@ public sealed class SynthPairedRenderProfileTests
     }
 
     /// <summary>
-    /// Longer runs enable local CPU sampling with perf or dotnet-trace.
-    /// The default remains short enough for the portable CI suite; no
-    /// performance number ever becomes a pass/fail threshold.
+    /// Long per-shape sampling may need thousands of rounds. Keep the
+    /// exact-PCM paired comparison capped at 512 rounds, even when the
+    /// opt-in isolated profiler accepts larger counts. Neither path
+    /// turns host-specific timing into a correctness assertion.
     /// </summary>
-    private static int ProfileRounds()
+    private static int ProfileRounds(bool isolated = false)
     {
         string? requested = Environment.GetEnvironmentVariable(
             "HERESY_SYNTH_PROFILE_ROUNDS");
+        int maximum = isolated ? MaxIsolatedRounds : MaxPairedRounds;
         return int.TryParse(requested, out int rounds)
-            ? Math.Clamp(rounds, DefaultPairedRounds, 512)
+            ? Math.Clamp(rounds, DefaultPairedRounds, maximum)
             : DefaultPairedRounds;
     }
 
