@@ -2007,3 +2007,77 @@ Multi state, incoming/outgoing Sample EOF during the fade,
 complex release tails, and full UI/live listening acceptance.
 The broad all-properties TODO remains open; PR #12 remains
 **draft and unmerged**.
+
+## Thirty-third slice: Sample EOF and Note Off across a Multi onset fade
+
+This slice completes explicit lifetime accounting for the initial
+direct-Sample Multi rephase (§32) and the earlier oscillator/OnePole
+onset crossfades. It does **not** widen the eligible Source/Filter
+state migrations or alter ordinary/non-preview playback.
+
+**Problem reproduced by a red regression:** a 400-frame Sample
+played unrandomized until an onset edit at outer frame 80. The
+edited Multi randomized both incoming playheads beyond the asset's
+natural EOF on their first frame (deterministic offsets 725 and
+735). The outgoing Sample remained audible under the smoothstep
+through frame 143, then correctly became silent, but
+`GetEndFrameExclusive` returned **80**: retiring the outgoing
+history discarded the note's *actual* last audible contribution.
+The regression correctly requires exclusive end **144**.
+
+**Lifetime policy:** for a transition starting at frame `S`,
+its outgoing branch can contribute no later than `S + 64`,
+regardless of the child Sample's natural EOF or any otherwise
+infinite authored lifetime. While the fade remains active, the
+outgoing upper bound is:
+
+`min(outgoingNaturalEnd ?? (S + 64), S + 64)`
+
+The voice's overall end includes the maximum of this bound
+and the incoming branch's known end. When the fade completes
+(or both branches have already proved silent), the outgoing
+invocation reference is retired; if the incoming end is finite,
+the voice **preserves the outgoing branch's bounded audible
+end** rather than incorrectly replacing that end with the
+incoming Sample's earlier EOF. `GetMultiSilenceEnd` performs
+the same bounded reconciliation for lifetime queries made
+between render blocks or after the outer renderer has already
+stopped evaluating a finished note. On an in-render fade
+completion or proven early silence, `ChildEndChanged` is set
+so parent `baseEnd` and `finalEnd` recompute within the
+block. The end arithmetic saturates at `long.MaxValue`
+instead of overflowing a frame counter.
+
+**Regressions:** three exact, deterministic acceptance cases:
+
+- Incoming Sample EOF **before the first edited frame**,
+  outgoing Sample naturally audible beyond the fade.
+  Randomizing at outer frame 80 must retain the old PCM
+  weighted by `1 - smoothstep(frame / 64)`, stay nonzero
+  during the fade, become exactly zero from frame **144**,
+  and report exclusive end **144** even when queried
+  **in the middle of a split-block fade**.
+- Outgoing randomized Sample EOF at frame **126**, while
+  the new aligned playhead remains audible until frame
+  **170**. The fade must not truncate the incoming Sample
+  when the outgoing one ends; PCM after the fade must
+  equal a continuously playing aligned reference, and
+  exclusive end must be **170**.
+- A held bare Sample rephase at frame 80 with Note Off
+  at frame **96**. Both original and newly displaced
+  playheads must be silent from frame 96, **not** extended
+  to fade end 144 or to the incoming Sample's offset.
+  The first edited PCM sample matches the outgoing
+  state and the natural end is **96**.
+
+The base renderer still stops invoking finished children at
+their proven end; the transition neither allocates an
+additional SoundState nor reconstructs playback history
+inside PCM. Outside the eligible held direct-Sample shape,
+previous captured-onset behavior is unchanged. Ordinary
+note-off/loop support, arbitrary variable-rate Source
+history, alternate Sample assignments, Instrument/Envelope
+release, nested stateful child graphs and physical listening
+remain separate acceptance milestones.
+
+Keep the all-properties TODO open and PR #12 draft/unmerged.
