@@ -199,11 +199,12 @@ public sealed class FmSynthSoundTests
 			foreach (bool constant in new[] { false, true })
 			{
 				FmSynthGraph Graph(FmOscillatorWaveform kind, double frequency,
-					double curvature, bool generic)
+					double curvature, double minimum, double maximum,
+					bool constantRate, bool exponential, bool generic)
 				{
 					FmOscillatorNode oscillator = new(1, kind, frequency,
-						minimum: -0.6, maximum: 0.8, curvature: curvature,
-						constant: constant);
+						minimum: minimum, maximum: maximum, curvature: curvature,
+						constant: constantRate, exponentialMultiplier: exponential);
 					return generic
 						? new FmSynthGraph([
 							oscillator, new FmConstantNode(2, 1.0),
@@ -211,8 +212,10 @@ public sealed class FmSynthSoundTests
 						], outputNodeId: 3)
 						: new FmSynthGraph([oscillator], outputNodeId: 1);
 				}
-				FmSynthSound direct = Sound(Graph(waveform, 631, 2.5, false));
-				FmSynthSound generic = Sound(Graph(waveform, 631, 2.5, true));
+				FmSynthSound direct = Sound(Graph(waveform, 631, 2.5,
+					-0.6, 0.8, constant, false, false));
+				FmSynthSound generic = Sound(Graph(waveform, 631, 2.5,
+					-0.6, 0.8, constant, false, true));
 				SoundState directState = direct.CreateState();
 				SoundState genericState = generic.CreateState();
 				foreach (SoundState state in new[] { directState, genericState })
@@ -234,10 +237,15 @@ public sealed class FmSynthSoundTests
 					waveform == FmOscillatorWaveform.Sine
 						? FmOscillatorWaveform.Sawtooth
 						: FmOscillatorWaveform.Sine;
+				// Vmin/Vmax, constant frequency, and the exponential-FM
+				// interpretation are also authored non-wire properties.
+				// The latter is an inert setting when no multiplier is bound.
 				FmSynthSound directRevision = Sound(Graph(
-					editedWaveform, 417, -1.5, false));
+					editedWaveform, 417, -1.5,
+					-0.2, 0.55, !constant, true, false));
 				FmSynthSound genericRevision = Sound(Graph(
-					editedWaveform, 417, -1.5, true));
+					editedWaveform, 417, -1.5,
+					-0.2, 0.55, !constant, true, true));
 				direct.TryPrepareRunningState(directRevision, directState)
 					.Should().BeTrue();
 				generic.TryPrepareRunningState(genericRevision, genericState)
