@@ -1901,8 +1901,12 @@ replayed from the beginning inside the PCM callback.
 
 - A held, live-audition Multi note with unchanged constituent ratios,
   whose child graph contains identical direct
-  `FmSoundSourceNode` Source nodes; the old/new compiler resolves
-  each to the **exact same existing SampleSound instance**.
+  `FmSoundSourceNode` Source nodes. Either both revisions resolve
+  the **same SampleSound instance**, or their distinct wrappers use
+  `IImmutableSamplePcmIdentity` adapters exposing the **same frozen
+  SamplePcmData object**. Definition ID, loop, sample rate,
+  channel count, frame count and channel positions must also match.
+  Arbitrary ISampleData providers are not presumed compatible.
 - Source ID, authored frequency, Constant mode, Exponential mode
   and absence of a connected multiplier must match. Mono/stereo
   bare Samples are allowed; Instrument selections, Source envelopes,
@@ -1917,6 +1921,18 @@ replayed from the beginning inside the PCM callback.
 - The new/old deterministic Multi skip displacement is bounded.
   The same prepared worker mailbox, latest-wins cancellation,
   whole-voice preflight and no-overlapping-fades gates apply.
+
+The production `PlaybackRequestAudioSourceFactory.PrepareLiveSynthSource`
+constructs a new `PlaybackSnapshotSoundResolver` for each revision.
+That resolver also constructs a new `SampleSound` and
+`InMemorySampleDataProvider.Adapter` for the sample. A pure
+`ReferenceEquals(SampleSound)` gate would incorrectly reject
+real editor-preview revisions. `SongDocumentSnapshot.Create`
+shares the immutable `SamplePcmData` object across snapshots,
+and `InMemorySampleDataProvider.Adapter` now declares precisely
+that data identity. This prevents false matches between custom
+providers whose IDs and format metadata happen to agree but whose
+readable audio is different.
 
 **State transfer**
 
@@ -1966,6 +1982,11 @@ or a different time-warp migration contract.
   **exact PCM** across 160 frames after the worker-prepared
   migration, despite complex interpolated PCM source data.
   The PCM `Render` call allocates **zero managed bytes**.
+- Another test constructs distinct frozen SampleDefinition and
+  SampleSound wrappers with the same underlying immutable
+  SamplePcmData but separate provider adapters; a direct-Sample
+  live onset must still prepare and preserve exact PCM.
+  The production snapshot resolver uses the same identity contract.
 - A second 3-voice Sample case changes a real seeded phase
   offset, is exactly unchanged on the first publication sample,
   becomes audibly different after the 64-frame fade and keeps
