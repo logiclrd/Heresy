@@ -881,7 +881,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			return false;
 		// Constant-rate onsets keep the original O(1) skip projection.
 		// For variable-rate onsets the exact recorded integral must be
-		// within the 128-frame backwards window (checked above). Never
+		// within the 1024-frame backwards window (checked above). Never
 		// extrapolate future historical samples using the current rate.
 		if (!original.Pitch.HasConstantRateHistory)
 			return true;
@@ -955,7 +955,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 
 	/// <summary>Allow a direct Sample onset with either a constant-rate
 	/// streaming curve or an exact, recent integrated position when the
-	/// new skip rewinds within the audition-only 128-frame history.
+	/// new skip rewinds within the audition-only 1024-frame history.
 	/// Forward variable-rate projections and older histories fall back
 	/// immediately: the independent scalar edit must not be starved
 	/// waiting on a worker that could never prepare this onset.</summary>
