@@ -736,11 +736,63 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		}
 	}
 
-	/// <summary>First crossfade slice: live audition only, held notes,
-	/// unchanged constituent ratios and a single unmodulated oscillator
-	/// with identical authored oscillator parameters. More complex child
-	/// state shapes retain their previous onset until separately supported.
-	/// No allocation or construction occurs when checking this.</summary>
+	/// <summary>Allow a new onset phase origin only where every stored DSP
+	/// history is an independent, unmodulated oscillator phase. Constants
+	/// and operators have no histories; any Source, Filter, Envelope,
+	/// noise, nested Multi or FM input requires a separate transition
+	/// policy. The old and new graph must have identical audible
+	/// parameters and wiring, so this edit changes ONLY the onset.</summary>
+	private static bool CanRephaseOscillatorGraph(
+		FmSynthSound original, FmSynthSound revised)
+	{
+		if (original._oscillatorCount == 0
+			|| original._oscillatorCount != revised._oscillatorCount
+			|| original._outputIndex != revised._outputIndex
+			|| original._nodes.Length != revised._nodes.Length)
+			return false;
+		for (int i = 0; i < original._nodes.Length; i++)
+		{
+			CompiledNode a = original._nodes[i];
+			CompiledNode b = revised._nodes[i];
+			if (a.Definition.Id != b.Definition.Id
+				|| a.Definition.GetType() != b.Definition.GetType()
+				|| a.OscillatorIndex != b.OscillatorIndex
+				|| !a.InputIndices.SequenceEqual(b.InputIndices))
+				return false;
+			switch (a.Definition)
+			{
+				case FmOscillatorNode oscillator
+					when b.Definition is FmOscillatorNode updated
+						&& oscillator.MultiplierNodeId is null
+						&& updated.MultiplierNodeId is null
+						&& oscillator.Waveform == updated.Waveform
+						&& oscillator.FrequencyHz == updated.FrequencyHz
+						&& oscillator.Minimum == updated.Minimum
+						&& oscillator.Maximum == updated.Maximum
+						&& oscillator.Curvature == updated.Curvature
+						&& oscillator.Constant == updated.Constant
+						&& oscillator.ExponentialMultiplier
+							== updated.ExponentialMultiplier:
+					break;
+				case FmConstantNode constant
+					when b.Definition is FmConstantNode updated
+						&& constant.Value == updated.Value:
+					break;
+				case FmOperatorNode operation
+					when b.Definition is FmOperatorNode updated
+						&& operation.Operation == updated.Operation:
+					break;
+				default:
+					return false;
+			}
+		}
+		return true;
+	}
+
+	/// <summary>Eligible live audition: held notes and unchanged ratios,
+	/// with identical unmodulated oscillator/constant/operator child graphs.
+	/// Stateful Source, Filter, Envelope and nested Multi still retain their
+	/// captured onset until separately supported. No PCM allocations.</summary>
 	private bool NeedsMultiOnsetReplacement(
 		FmSynthSound next, FmSynthState live, int index)
 	{
@@ -750,19 +802,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| (!original.RandomizePhase && !updated.RandomizePhase)
 			|| _multiRatios[index].Length != next._multiRatios[index].Length
 			|| !_multiRatios[index].SequenceEqual(next._multiRatios[index])
-			|| _nodes[index].MultiInput?._singleOutputOscillator?.Definition
-				is not FmOscillatorNode oldOscillator
-			|| next._nodes[index].MultiInput?._singleOutputOscillator?.Definition
-				is not FmOscillatorNode newOscillator
-			|| oldOscillator.Id != newOscillator.Id
-			|| oldOscillator.Waveform != newOscillator.Waveform
-			|| oldOscillator.FrequencyHz != newOscillator.FrequencyHz
-			|| oldOscillator.Minimum != newOscillator.Minimum
-			|| oldOscillator.Maximum != newOscillator.Maximum
-			|| oldOscillator.Curvature != newOscillator.Curvature
-			|| oldOscillator.Constant != newOscillator.Constant
-			|| oldOscillator.ExponentialMultiplier
-				!= newOscillator.ExponentialMultiplier)
+			|| _nodes[index].MultiInput is not FmSynthSound originalChild
+			|| next._nodes[index].MultiInput is not FmSynthSound updatedChild
+			|| !CanRephaseOscillatorGraph(originalChild, updatedChild))
 			return false;
 		foreach (MultiVoice voice in live.Multis[index])
 			if (voice.HasStarted && voice.Initialized
