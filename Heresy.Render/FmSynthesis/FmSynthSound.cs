@@ -736,6 +736,68 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		}
 	}
 
+	/// <summary>First crossfade slice: live audition only, held notes,
+	/// unchanged constituent ratios and a single unmodulated oscillator
+	/// with identical authored oscillator parameters. More complex child
+	/// state shapes retain their previous onset until separately supported.
+	/// No allocation or construction occurs when checking this.</summary>
+	private bool NeedsMultiOnsetReplacement(
+		FmSynthSound next, FmSynthState live, int index)
+	{
+		if (live.MultiExpansion is null || live.HasNoteOffTime
+			|| _nodes[index].Definition is not FmMultiNode original
+			|| next._nodes[index].Definition is not FmMultiNode updated
+			|| (!original.RandomizePhase && !updated.RandomizePhase)
+			|| _multiRatios[index].Length != next._multiRatios[index].Length
+			|| !_multiRatios[index].SequenceEqual(next._multiRatios[index])
+			|| _nodes[index].MultiInput?._singleOutputOscillator?.Definition
+				is not FmOscillatorNode oldOscillator
+			|| next._nodes[index].MultiInput?._singleOutputOscillator?.Definition
+				is not FmOscillatorNode newOscillator
+			|| oldOscillator.Id != newOscillator.Id
+			|| oldOscillator.Waveform != newOscillator.Waveform
+			|| oldOscillator.FrequencyHz != newOscillator.FrequencyHz
+			|| oldOscillator.Minimum != newOscillator.Minimum
+			|| oldOscillator.Maximum != newOscillator.Maximum
+			|| oldOscillator.Curvature != newOscillator.Curvature
+			|| oldOscillator.Constant != newOscillator.Constant
+			|| oldOscillator.ExponentialMultiplier
+				!= newOscillator.ExponentialMultiplier)
+			return false;
+		foreach (MultiVoice voice in live.Multis[index])
+			if (voice.HasStarted && voice.Initialized
+				&& (voice.Definition.RandomizePhase != updated.RandomizePhase
+					|| ((voice.Definition.RandomizePhase || updated.RandomizePhase)
+						&& voice.Definition.CycleLength != updated.CycleLength)))
+				return true;
+		return false;
+	}
+
+	private bool CanCommitMultiOnsetReplacement(
+		FmSynthSound next, FmSynthState live, int index)
+	{
+		if (!NeedsMultiOnsetReplacement(next, live, index))
+			return true;
+		if (live.PreparedExpansion?.Matches(next, live) != true
+			|| live.PreparedExpansion.Slots[index] is null)
+			return false;
+		// Do not chain crossfades or interrupt an unfinished ratio/mix
+		// transition. The held voice keeps the latest pending edit and
+		// retries at a later block boundary; the worker result is reused.
+		double[] ratios = next._multiRatios[index];
+		FmMultiNode layout = (FmMultiNode)next._nodes[index].Definition;
+		double mix = layout.GainCompensation ? 1.0 / ratios.Length : 1.0;
+		for (int j = 0; j < ratios.Length; j++)
+		{
+			MultiVoice voice = live.Multis[index][j];
+			if (voice.OnsetFadeFrom is not null
+				|| voice.RatioAt(live.NextFrame) != ratios[j]
+				|| voice.MixAt(live.NextFrame) != mix)
+				return false;
+		}
+		return true;
+	}
+
 	/// <summary>Preflight the entire running voice before changing its sound.
 	/// Stateful nodes must prove that their existing invocation histories
 	/// remain valid. A declined edit leaves the old graph generation intact.</summary>
@@ -841,6 +903,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						return false;
 					if (old.MultiInput is not null)
 					{
+						if (!allowUnpreparedExpansion
+							&& !CanCommitMultiOnsetReplacement(next, live, i))
+							return false;
 						if (next._multiRatios[i].Length > live.Multis[i].Length
 							&& (live.MultiExpansion is null
 								|| (!allowUnpreparedExpansion
@@ -946,12 +1011,13 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		FmSynthState live = ValidateState(state);
 		bool requested = false;
 		for (int i = 0; i < _nodes.Length; i++)
-			if (next._multiRatios[i].Length > live.Multis[i].Length)
+			if (next._multiRatios[i].Length > live.Multis[i].Length
+				|| NeedsMultiOnsetReplacement(next, live, i))
 			{
 				requested = true;
 				if (live.PreparedExpansion?.Matches(next, live) != true)
-					live.MultiExpansion!.Offer(next, live);
-				break; // one request prepares every expanded node in this state
+					live.MultiExpansion!.Offer(this, next, live);
+				break; // one worker request prepares every changed slot
 			}
 		for (int i = 0; i < _nodes.Length; i++)
 		{
