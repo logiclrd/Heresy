@@ -768,16 +768,23 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	/// preconstructed filter histories. The following PCM publication
 	/// copies scalar integrators only after this whole-voice admission.</summary>
 	private bool CanTransferPreparedOnsetHistoriesTo(
-		FmSynthSound next, SoundState outgoing, SoundState incoming)
+		FmSynthSound next, SoundState outgoing, SoundState incoming,
+		long oldFrame, long newFrame)
 	{
 		FmSynthState before = ValidateState(outgoing);
 		FmSynthState after = ValidateState(incoming);
 		for (int i = 0; i < _nodes.Length; i++)
+		{
 			if (_nodes[i].Filter is { } original
 				&& (next._nodes[i].Filter is not { } revised
 					|| !original.CanTransferPreparedOnePoleHistoryTo(
 						revised, before.Filters[i], after.Filters[i])))
 				return false;
+			if (_nodes[i].Definition is FmSoundSourceNode
+				&& !CanTransferPreparedDirectSample(
+					before.Sources[i], after.Sources[i], oldFrame, newFrame))
+				return false;
+		}
 		return true;
 	}
 
@@ -954,12 +961,26 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				&& (voice.Definition.RandomizePhase != layout.RandomizePhase
 					|| ((voice.Definition.RandomizePhase || layout.RandomizePhase)
 						&& voice.Definition.CycleLength != layout.CycleLength));
-			if (changedOnset
-				&& (preparedSlots[j] is not MultiVoice replacement
+			if (changedOnset)
+			{
+				if (preparedSlots[j] is not MultiVoice replacement)
+					return false;
+				// Compute the exact authored new skip using the same pure
+				// arithmetic as normal note onset before checking each
+				// preallocated Source/Filter destination.
+				double pitch = live.PitchMultiplier * voice.RatioAt(live.NextFrame)
+					* live.PitchTrajectory.GetMultiplier(live.NextFrame);
+				next.InitializeMultiOnset(layout, live.NoiseSeed, index,
+					replacement, pitch, live.PlaybackSpeedMultiplier, live.SampleRate);
+				long local = live.NextFrame - voice.StartFrame;
+				if (local < 0 || local > long.MaxValue -
+					Math.Max(voice.SkipFrames, replacement.SkipFrames)
 					|| !voice.Sound.CanTransferPreparedOnsetHistoriesTo(
 						replacement.Sound, voice.Invocation.State,
-						replacement.Invocation.State)))
-				return false;
+						replacement.Invocation.State,
+						local + voice.SkipFrames, local + replacement.SkipFrames))
+					return false;
+			}
 		}
 		return true;
 	}
