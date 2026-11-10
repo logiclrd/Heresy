@@ -88,6 +88,11 @@ public abstract class SoundState
 		}
 	}
 
+	// Test the nullable presence flag without materializing the entire
+	// 16-byte TimeSpan? through the NoteOffTime getter on hot render paths.
+	// This remains derived from the existing field: no duplicated state.
+	internal bool HasNoteOffTime => _noteOffTime.HasValue;
+
 	public TimeSpan? NoteOffTime
 	{
 		get => _noteOffTime;
