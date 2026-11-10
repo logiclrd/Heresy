@@ -1142,6 +1142,13 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			* parent.PitchTrajectory.GetMultiplier(frame);
 		created.PlaybackSpeedMultiplier = parent.PlaybackSpeedMultiplier;
 		created.Position = previous.Position;
+		// The parent prepared this immutable mono bus before the original
+		// note began. Reuse it: the generic multi-oscillator child would
+		// otherwise lazily allocate a RenderContext on its first PCM frame.
+		// Eligibility excludes all Source/Filter descendants.
+		created.MonoContext = parent.MonoContext
+			?? throw new InvalidOperationException(
+					"Multi onset migration requires a prepared mono child bus.");
 		created.NoteOffTime = previous.NoteOffTime;
 		created.InheritedAudioReleaseEnd = previous.InheritedAudioReleaseEnd;
 		InitializeMultiOnset(multi, parent.NoiseSeed, index, replacement,
