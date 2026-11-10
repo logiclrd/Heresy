@@ -595,7 +595,7 @@ public sealed class FmSynthMultiTests
         original.Render(context, referenceState, 80, reference.Length, reference);
         actual[0].Should().Be(reference[0],
             "the new phase has zero mix on the first publication frame");
-        actual.Should().OnlyContain(float.IsFinite);
+        actual.Should().OnlyContain(x => float.IsFinite(x));
         Enumerable.Range(64, 96).Max(i => Math.Abs(actual[i] - reference[i]))
             .Should().BeGreaterThan(0.05f,
                 "the held oscillators must actually adopt the revised onset");
@@ -649,7 +649,7 @@ public sealed class FmSynthMultiTests
         first.CommitPreparedRunningState(second, held);
         float[] continued = new float[100];
         second.Render(context, held, 145, continued.Length, continued);
-        continued.Should().OnlyContain(float.IsFinite);
+        continued.Should().OnlyContain(x => float.IsFinite(x));
         worker.Fault.Should().BeNull();
     }
 
@@ -692,7 +692,7 @@ public sealed class FmSynthMultiTests
             actual.Should().Equal(expected,
                 "Multi randomized onset and cycle override must not depend " +
                 "on how the audio producer partitions the render blocks");
-            actual.Should().OnlyContain(float.IsFinite);
+            actual.Should().OnlyContain(x => float.IsFinite(x));
         }
     }
 
