@@ -1079,6 +1079,49 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return requested;
 	}
 
+	/// <summary>Adopt an already worker-constructed oscillator invocation.
+	/// Onset rephasing uses only the existing oscillator's scalar phase and
+	/// its deterministic skip delta, never replaying skipped samples on
+	/// the PCM producer. Restricted by NeedsMultiOnsetReplacement to the
+	/// identical oscillator definition, same ratios and held notes.</summary>
+	private void AttachPreparedOscillatorOnset(
+		FmSynthState parent, int index,
+		MultiVoice outgoing, MultiVoice replacement, long frame)
+	{
+		FmSynthState previous = ValidateState(outgoing.Invocation.State);
+		FmSynthState created = ValidateState(replacement.Invocation.State);
+		FmMultiNode multi = (FmMultiNode)_nodes[index].Definition;
+		FmOscillatorNode oscillator = (FmOscillatorNode)
+			_nodes[index].MultiInput!._singleOutputOscillator!.Definition;
+
+		created.PitchMultiplier = parent.PitchMultiplier
+			* outgoing.RatioAt(frame)
+			* parent.PitchTrajectory.GetMultiplier(frame);
+		created.PlaybackSpeedMultiplier = parent.PlaybackSpeedMultiplier;
+		created.Position = previous.Position;
+		created.NoteOffTime = previous.NoteOffTime;
+		created.InheritedAudioReleaseEnd = previous.InheritedAudioReleaseEnd;
+		InitializeMultiOnset(multi, parent.NoiseSeed, index, replacement,
+			created.PitchMultiplier, created.PlaybackSpeedMultiplier,
+			parent.SampleRate);
+
+		// The old child phase is the next sample's oscillator phase, so
+		// account only for the DIFFERENCE in deterministic onset offsets.
+		// A full replay would be unbounded work inside an audio quantum.
+		double frequency = oscillator.FrequencyHz
+			* (oscillator.Constant ? 1.0
+				: created.PitchMultiplier * created.PlaybackSpeedMultiplier);
+		double phase = previous.Phases[0]
+			+ (replacement.SkipFrames - outgoing.SkipFrames)
+				* frequency / parent.SampleRate;
+		phase -= Math.Floor(phase);
+		created.Phases[0] = phase;
+		created.SampleRate = parent.SampleRate;
+		created.NextFrame = checked(frame - outgoing.StartFrame
+			+ replacement.SkipFrames);
+		replacement.BeginPreparedOnsetFade(outgoing, frame);
+	}
+
 	/// <summary>Commit only an entirely preflighted state tree. No validation
 	/// after this boundary can leave multiple Filters partially updated.</summary>
 	public void CommitPreparedRunningState(FmSynthSound next, SoundState state)
@@ -1092,13 +1135,32 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		for (int i = 0; i < _nodes.Length; i++)
 		{
 			MultiVoice[] oldVoices = live.Multis[i];
-			if (next._multiRatios[i].Length <= oldVoices.Length)
+			bool rephase = NeedsMultiOnsetReplacement(next, live, i);
+			if (next._multiRatios[i].Length <= oldVoices.Length && !rephase)
 				continue;
 			if (!expansionMatches
 				|| expansion!.Slots[i] is not MultiVoice[] grown)
 				throw new InvalidOperationException(
-					"Multi expansion must be preflighted and prepared off-thread.");
-			Array.Copy(oldVoices, grown, oldVoices.Length);
+					"Multi growth/onset preparation must be completed off-thread.");
+			FmMultiNode newMulti = (FmMultiNode)next._nodes[i].Definition;
+			for (int j = 0; j < oldVoices.Length; j++)
+			{
+				MultiVoice previous = oldVoices[j];
+				bool changedOnset = rephase && j < next._multiRatios[i].Length
+					&& previous.HasStarted && previous.Initialized
+					&& (previous.Definition.RandomizePhase != newMulti.RandomizePhase
+						|| ((previous.Definition.RandomizePhase
+							|| newMulti.RandomizePhase)
+							&& previous.Definition.CycleLength != newMulti.CycleLength));
+				if (changedOnset)
+				{
+					MultiVoice replacement = grown[j];
+					next.AttachPreparedOscillatorOnset(live, i, previous,
+						replacement, live.NextFrame);
+				}
+				else
+					grown[j] = previous;
+			}
 			live.ReplaceMultiVoices(i, grown);
 		}
 		live.PreparedExpansion = null;
