@@ -165,13 +165,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	/// voice has passed atomic preflight, not read by this worker.</summary>
 	private sealed class PreparedMultiExpansion(
 		FmSynthSound revision, MultiVoice[]?[] slots, int[] capacities,
-		ulong seed, double pitch, double speed)
+		ulong seed, double pitch, double speed, int sampleRate)
 	{
 		public MultiVoice[]?[] Slots { get; } = slots;
 		public bool Matches(FmSynthSound next, FmSynthState state)
 		{
 			if (!ReferenceEquals(revision, next) || seed != state.NoiseSeed
-				|| pitch != state.BoundPitch || speed != state.BoundSpeed)
+				|| pitch != state.BoundPitch || speed != state.BoundSpeed
+				|| sampleRate != state.SampleRate)
 				return false;
 			for (int i = 0; i < capacities.Length; i++)
 				if (capacities[i] != state.Multis[i].Length)
@@ -195,6 +196,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		private readonly bool[] _workRephase = new bool[nodeCount];
 		private FmSynthSound? _revision;
 		private ulong _seed;
+		private int _sampleRate;
 		private double _pitch, _speed;
 		private long _version, _workingVersion;
 		private bool _pending, _queued;
@@ -207,13 +209,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			{
 				bool identical = ReferenceEquals(_revision, next)
 					&& _seed == state.NoiseSeed && _pitch == state.BoundPitch
-					&& _speed == state.BoundSpeed;
+					&& _speed == state.BoundSpeed && _sampleRate == state.SampleRate;
 				for (int i = 0; identical && i < _capacities.Length; i++)
 					identical = _capacities[i] == state.Multis[i].Length;
 				if (identical && (_pending || _queued || _ready is not null))
 					return;
 				_revision = next;
 				_seed = state.NoiseSeed;
+				_sampleRate = state.SampleRate;
 				_pitch = state.BoundPitch;
 				_speed = state.BoundSpeed;
 				for (int i = 0; i < _capacities.Length; i++)
@@ -308,6 +311,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			FmSynthSound next;
 			double pitch, speed;
 			ulong seed;
+			int sampleRate;
 			long version;
 			lock (_gate)
 			{
@@ -322,6 +326,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				_pending = false;
 				next = _revision;
 				seed = _seed;
+				sampleRate = _sampleRate;
 				pitch = _pitch;
 				speed = _speed;
 				Array.Copy(_capacities, _workCapacities, _capacities.Length);
@@ -378,6 +383,12 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						DiscardStale(version, scheduler, addedChildren, beforeBytes);
 						return;
 					}
+					// Only the detached replacement receives fresh OnePole
+					// channel histories. The active voice is never touched by
+					// the worker. PCM publication will copy its live integrators
+					// into these already allocated states after preflight.
+					if (rephase && j < retained)
+						input.PrepareOnePoleOnsetStates(invocation.State, sampleRate);
 					MultiVoice child = new(invocation, ratio, multi, j,
 						initialMixGain: rephase && j < retained
 							? (multi.GainCompensation ? 1.0 / target : 1.0) : 0.0,
@@ -397,7 +408,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				return;
 			}
 			PreparedMultiExpansion candidate = new(next, slots,
-				(int[])_workCapacities.Clone(), seed, pitch, speed);
+				(int[])_workCapacities.Clone(), seed, pitch, speed, sampleRate);
 			bool stale;
 			lock (_gate)
 			{
