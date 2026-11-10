@@ -1224,7 +1224,14 @@ public sealed class FmSynthMultiTests
         original.CommitPreparedRunningState(revised, state);
 
         float[] actual = new float[176], reference = new float[176];
-        revised.Render(context, state, 80, actual.Length, actual);
+        // EOF is discovered on the first incoming frame. Check that
+        // an in-flight query already predicts the finite fade-bound
+        // and that querying it cannot change later PCM or playback.
+        revised.Render(context, state, 80, 16, actual.AsSpan(0, 16));
+        revised.GetEndFrameExclusive(context, state).Should().Be(144,
+            "outgoing Sample audio has a 64-frame maximum fade lifetime");
+        revised.Render(context, state, 96, actual.Length - 16,
+            actual.AsSpan(16));
         original.Render(context, referenceState, 80, reference.Length, reference);
         for (int i = 0; i < actual.Length; i++)
         {
