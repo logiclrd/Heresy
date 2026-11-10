@@ -2014,10 +2014,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			// contribution to the final reported note end.
 			if (voice.OnsetFadeFrom is { } retiring
 				&& (state.NextFrame >= voice.OnsetFadeEndFrame
-					|| (voice.SilenceEnd is long incomingEnd
-						&& retiring.SilenceEnd is long outgoingEnd
+					|| (voice.SilenceEnd is long finishedIncomingEnd
+						&& retiring.SilenceEnd is long finishedOutgoingEnd
 						&& state.NextFrame >= Math.Max(
-							incomingEnd, outgoingEnd))))
+							finishedIncomingEnd, finishedOutgoingEnd))))
 				voice.CompleteOnsetFade();
 
 			if (voice.CanAffectOutput(state.NextFrame))
