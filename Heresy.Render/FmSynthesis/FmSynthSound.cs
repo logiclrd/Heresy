@@ -1482,6 +1482,18 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		int sampleRate, FmSynthState state)
 	{
 		TimeSpan? noteOffTime = state.NoteOffTime;
+		// A single unmodulated output oscillator has no Source EOF,
+		// downstream Filter, Operator or release Envelope to traverse.
+		// Preserve the same one-frame release/inherited-release rule and
+		// scratch gate used by the generic graph calculation.
+		if (_singleOutputOscillator is not null && noteOffTime.HasValue)
+		{
+			long offFrame = FrameTime.Ceiling(noteOffTime.Value, sampleRate);
+			long? end = GetIndependentAudioReleaseEnd(0,
+				offFrame, sampleRate, state);
+			state.SilentFrom[0] = end;
+			return end;
+		}
 		if (!noteOffTime.HasValue && !_hasSources)
 			return null;
 		long? released = noteOffTime.HasValue
@@ -1706,17 +1718,30 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		int sampleRate = context.Configuration.SampleRate;
 		if (child.SampleRate != sampleRate)
 			child.Reset(sampleRate);
-		PrepareChildRender(context, child);
+		// Single-oscillator children cannot contain Source preparations,
+		// panning, Filter state or a nested Multi context. Preserve the
+		// frozen preparation sample-rate invariant without invoking the
+		// generic Source traversal on every sample.
+		bool singleOscillator = _singleOutputOscillator is not null;
+		if (!singleOscillator)
+			PrepareChildRender(context, child);
+		else if (_preparedChildFilterFactory is { } prepared
+			&& prepared.SampleRate != sampleRate)
+			throw new InvalidOperationException(
+				"Frozen source voices cannot change sample rate after preparation.");
 		// Sequential child frames are the common path. EnsureFrame is
 		// necessary only after a first randomized-phase offset, a gap or
 		// an explicit replay, and it may itself render missing history.
 		if (child.NextFrame != frame)
 			EnsureFrame(context, child, frame);
 
-		long? noteOffFrame = child.NoteOffTime.HasValue
+		long? noteOffFrame = !singleOscillator && child.NoteOffTime.HasValue
 			? FrameTime.Ceiling(child.NoteOffTime.Value, sampleRate) : null;
 		long? baseEnd = GetBaseEndFrameExclusive(sampleRate, child);
-		long? finalEnd = AddAuthoredTailFrames(baseEnd, sampleRate);
+		// The single-oscillator graph has no authored Filter tail. The
+		// per-frame evaluator does not use noteOffFrame in this shape.
+		long? finalEnd = singleOscillator
+			? baseEnd : AddAuthoredTailFrames(baseEnd, sampleRate);
 		double value = finalEnd.HasValue && frame >= finalEnd.Value
 			? 0.0
 			: EvaluateFrame(context, child, frame, noteOffFrame, baseEnd);
@@ -1985,8 +2010,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				amplitude *= 0.5 - 0.5 * Math.Cos(Math.PI * t);
 			}
 			sum += amplitude * voice.MixAt(frame);
-			long? end = voice.Sound.GetEndFrameExclusive(
-				state.MonoContext!, child);
+			// A held one-node oscillator has no natural EOF. Avoid
+			// querying its whole lifetime for every Multi child/sample.
+			// Released voices still use the complete inherited-release
+			// calculation, and Source/Filter/nested graphs remain untouched.
+			long? end = voice.Sound._singleOutputOscillator is not null
+				&& child.NoteOffTime is null ? null
+				: voice.Sound.GetEndFrameExclusive(
+					state.MonoContext!, child);
 			if (end.HasValue)
 			{
 					long audibleEnd = Math.Max(0L,
