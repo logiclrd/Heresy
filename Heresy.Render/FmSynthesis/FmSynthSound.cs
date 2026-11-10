@@ -1266,6 +1266,30 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return requested;
 	}
 
+	/// <summary>Copy a bare Sample source's accumulated *integral*
+	/// rather than a nominal oscillator phase. Only called after the
+	/// same-asset, unmodulated, constant-rate source preflight. This is
+	/// O(1): the ongoing Sample interpolation and playback offset live
+	/// in the new SoundState, and the outgoing playhead stays independent.</summary>
+	private static void TransferPreparedDirectSample(
+		SourceVoice original, SourceVoice replacement,
+		long oldFrame, long newFrame)
+	{
+		SampleSoundState oldState = (SampleSoundState)original.Invocation.State;
+		SampleSoundState newState = (SampleSoundState)replacement.Invocation.State;
+		double rate = original.Pitch.LastRate;
+		double position = oldState.PitchTrajectory.GetPosition(oldFrame)
+			+ (newFrame - oldFrame) * rate;
+		newState.PitchMultiplier = oldState.PitchMultiplier;
+		newState.PlaybackSpeedMultiplier = oldState.PlaybackSpeedMultiplier;
+		newState.PlaybackOffset = oldState.PlaybackOffset;
+		newState.SourceFrameOffset = oldState.SourceFrameOffset;
+		newState.Position = oldState.Position;
+		newState.NoteOffTime = oldState.NoteOffTime;
+		newState.PitchTrajectory.SeedPreparedStreamingPosition(newFrame, position);
+		replacement.Pitch.SeedBeforeFrame(newFrame, rate);
+	}
+
 	/// <summary>Adopt already worker-constructed oscillator and OnePole
 	/// histories. Shift each independent phase by the onset-offset delta,
 	/// then copy the still-sounding IIR integrators into separately prepared
@@ -1319,9 +1343,16 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		// independently during the 64-frame crossfade.
 		FmSynthSound previousGraph = outgoing.Sound;
 		for (int i = 0; i < childGraph._nodes.Length; i++)
+		{
 			if (previousGraph._nodes[i].Filter is { } oldFilter)
 				oldFilter.TransferPreparedOnePoleHistoryTo(
 					previous.Filters[i]!, created.Filters[i]!);
+			if (previousGraph._nodes[i].Definition is FmSoundSourceNode)
+				TransferPreparedDirectSample(
+					previous.Sources[i]!, created.Sources[i]!,
+					frame - outgoing.StartFrame + outgoing.SkipFrames,
+					frame - outgoing.StartFrame + replacement.SkipFrames);
+		}
 		created.SampleRate = parent.SampleRate;
 		created.NextFrame = checked(frame - outgoing.StartFrame
 			+ replacement.SkipFrames);
