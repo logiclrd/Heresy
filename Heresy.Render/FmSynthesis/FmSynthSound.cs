@@ -40,7 +40,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		public double OriginalOuterFactor { get; }
 		// Child pitch and speed are *never* retroactively rescaled. Edits
 		// alter only the forward-integrated FmSourcePitchCurve.
-		public double OriginalFrequencyHz { get; }
+		// The frequency baseline must survive an authored retune and a
+		// worker-prepared Multi onset replacement.
+		public double OriginalFrequencyHz { get; private set; }
+		public void RetainOriginalFrequencyBasis(SourceVoice original)
+			=> OriginalFrequencyHz = original.OriginalFrequencyHz;
 		public FmSourcePitchCurve Pitch { get; }
 		public StreamingFilterChain? Filters { get; set; }
 		public ResonantFilterState? FilterEnvelopeState { get; set; }
@@ -813,10 +817,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return true;
 	}
 
-	/// <summary>Eligible Source child: the same already resolved bare
-	/// SampleSound, with unchanged playback properties and no FM input.
-	/// Its Sample playhead can be migrated without replay only while its
-	/// forward-integrated Source pitch rate has remained constant.</summary>
+	/// <summary>Eligible Source child: the same bare Sample with no FM input. A
+	/// simultaneous authored FrequencyHz edit is supported by preserving
+	/// the outgoing voice's original pitch baseline. The integrated Source
+	/// pitch history must still have a constant positive rate.</summary>
 	private static bool CanRephaseDirectSampleSource(
 		CompiledNode old, CompiledNode revised)
 	{
@@ -825,7 +829,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			&& source.SourceId == next.SourceId
 			&& source.MultiplierNodeId is null
 			&& next.MultiplierNodeId is null
-			&& source.FrequencyHz == next.FrequencyHz
+			&& source.FrequencyHz > 0.0
+			&& next.FrequencyHz > 0.0
+			&& double.IsFinite(next.FrequencyHz / source.FrequencyHz)
 			&& source.Constant == next.Constant
 			&& source.ExponentialMultiplier == next.ExponentialMultiplier
 			&& old.Source is SampleSound sample
@@ -851,7 +857,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| destination.ReleaseIsControlledByVolumeEnvelope
 			|| previous.NaturalEndFrameExclusive.HasValue
 			|| previous.HasNoteOffTime
-			|| original.OriginalFrequencyHz != replacement.OriginalFrequencyHz
+			|| !(original.OriginalFrequencyHz > 0.0)
+			|| !(replacement.OriginalFrequencyHz > 0.0)
+			|| !double.IsFinite(replacement.OriginalFrequencyHz
+				/ original.OriginalFrequencyHz)
 			|| original.OriginalOuterFactor != replacement.OriginalOuterFactor
 			|| !original.Pitch.HasConstantRateHistory
 			|| original.Pitch.LastFrame != oldFrame - 1
@@ -1333,7 +1342,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 
 	/// <summary>Copy a bare Sample source's accumulated *integral*
 	/// rather than a nominal oscillator phase. Only called after the
-	/// same-asset, unmodulated, constant-rate source preflight. This is
+	/// same-asset, unmodulated, constant-rate source preflight. When
+	/// Source FrequencyHz changes concurrently, the replacement's rate
+	/// continues relative to the old invocation's original basis. This is
 	/// O(1): the ongoing Sample interpolation and playback offset live
 	/// in the new SoundState, and the outgoing playhead stays independent.</summary>
 	private static void TransferPreparedDirectSample(
@@ -1352,6 +1363,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		newState.Position = oldState.Position;
 		newState.NoteOffTime = oldState.NoteOffTime;
 		newState.PitchTrajectory.SeedPreparedStreamingPosition(newFrame, position);
+		replacement.RetainOriginalFrequencyBasis(original);
 		replacement.Pitch.SeedBeforeFrame(newFrame, rate);
 	}
 
