@@ -408,6 +408,49 @@ callers, and JIT attribution before drawing conclusions.
 Do not increase sampling frequency or broaden lifecycle
 shortcuts without this check.
 
+## Follow-up: the bypass moves exclusive samples to its caller
+
+After a confirmed clean Release build of PR head `5f20f3d`,
+the user captured **12,622** `sine-direct` CPU samples with
+the same isolated 8,192-round, 499 Hz Linux JIT-perf settings.
+`GetBaseEndFrameExclusive` no longer appeared in the selected
+flat symbol matches; `RenderMultiChildFrame` accounted for
+**78.88%** of exclusive samples (versus roughly 6–7% before
+the bypass). `EvaluateMulti` had 4.12% and
+`EvaluateOscillator` 3.27%. The test reported
+**10.901 µs/output frame with perf attached**, zero
+render-thread managed allocations and the identical PCM
+probe. Do **not** compare that profiled time against the
+earlier **uninstrumented** A/B medians.
+
+The earlier uninstrumented before/after median times,
+**10.706** and **10.7115 µs/output frame**, were
+effectively identical despite the large shift in reported
+exclusive method samples. This strongly establishes that
+`perf`'s sample attribution to the eliminated callee
+was not equivalent to removable elapsed CPU time.
+Potential explanation: JIT code location changes or
+instruction sampling skid, but neither is yet proven.
+
+No additional `perf record` pass is needed for the
+next inspection. Annotate the existing after-bypass
+injected file to find out which instructions of
+`RenderMultiChildFrame` receive most samples:
+
+```sh
+perf --no-pager annotate \
+  -i synth-perf/after-bypass-injected.perf.data \
+  --stdio --stdio-color=never --no-source \
+  --percent-limit=1 \
+  > synth-perf/after-bypass-annotate.txt
+sed -n '1,130p' synth-perf/after-bypass-annotate.txt
+```
+
+As before, an instruction pointer can represent delayed
+retirement or skid rather than the actual instruction
+that consumed all the attributed cycles. Do not make
+a second optimization based only on this annotation.
+
 ## Interpretation and remaining acceptance
 
 A strongly consistent paired B/A difference above the same-vs-same
