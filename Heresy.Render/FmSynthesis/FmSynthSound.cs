@@ -55,6 +55,17 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	private const int MultiEditTransitionFrames = 64;
 	private const int MultiGrowthReservePerNode = 4;
 
+	// A single 64-frame smoothstep is already the accepted ratio/mix
+	// transition contract. A future dual-state onset crossfade must use
+	// the same bounded frame clock instead of introducing a separate
+	// sample-count rule or allocating an envelope inside the PCM loop.
+	private static double MultiTransitionWeight(long startFrame, long frame)
+	{
+		double t = Math.Clamp(
+			(double)(frame - startFrame) / MultiEditTransitionFrames, 0.0, 1.0);
+		return t * t * (3.0 - 2.0 * t);
+	}
+
 	private sealed class MultiVoice
 	{
 		public MultiVoice(SoundInvocation invocation, double ratio,
@@ -94,10 +105,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			long startFrame, long frame)
 		{
 			if (from == to) return to;
-			double t = Math.Clamp(
-				(double)(frame - startFrame) / MultiEditTransitionFrames, 0.0, 1.0);
-			t = t * t * (3.0 - 2.0 * t);
-			return from + (to - from) * t;
+			return from + (to - from) * MultiTransitionWeight(startFrame, frame);
 		}
 
 		public double RatioAt(long frame)
