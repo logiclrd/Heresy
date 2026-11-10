@@ -1800,3 +1800,86 @@ UI/PCM acceptance remain outstanding.
 
 PR #12 stays draft and unmerged. The feature is not
 claimed complete.
+
+## Thirty-first slice: worker-prepared OnePole IIR histories during live Multi onset fades
+
+The previous 64-frame Multi onset transition supported only independent
+unmodulated oscillator phases, Constants, and stateless Operators. The
+first genuinely history-bearing descendant is now supported:
+**unmodulated, unchanged OnePole IIR Filter chains**, including
+multiple serial OnePole stages, on **held Synth-preview** Multi notes.
+Sources, Samples, FIR, SVF, Biquad, Ladder, Comb, Noise, Envelopes,
+FM-modulated Filter inputs, nested Multi and any structural changes
+are intentionally **not** covered by this migration.
+
+The explicit eligibility guard in `CanRephaseOscillatorGraph`
+requires identical child node indices/identities/wiring, oscillator
+and Constant parameters, Operator kinds, and Filter tail allowances.
+For every Filter it delegates to
+`FmFilterNodeProcessor.CanRephasePreparedOnePoleHistoryTo`,
+which accepts only unchanged, unbound OnePole chains with matching
+shared definition, stage IDs/generations, CutoffHz and structural Mode.
+This is a *live onset-policy* edit, not a generic Filter parameter
+retune: actual Filter property changes still follow the existing
+separate atomic live-edit mechanism.
+
+The bounded latest-wins Multi preparation mailbox now also captures
+the live owner's **sample rate** as immutable scalar preparation data,
+including it in candidate matches. When the worker builds a detached
+replacement child invocation for a rephase, it constructs
+the child's entire OnePole Filter `State` and `StreamingFilterChain`
+at that sample rate, outside the PCM callback. The worker never reads
+active DSP histories.
+
+At the ordered publication boundary, the parent first checks
+**every** active child through
+`CanTransferPreparedOnsetHistoriesTo`.
+For every OnePole chain, the already allocated destination stages
+must match topology, type/generation, precise parameters, sample rate,
+channel count and remaining lifecycle. The existing
+`StreamingFilterChain.CanCopyPreparedOnePoleHistoryFrom` uses
+nonallocating direct OnePole parameter lookups rather than LINQ-based
+per-stage comparisons. When all child preflights succeed,
+`AttachPreparedOscillatorOnset` transfers each independent oscillator
+phase as before **and** copies each OnePole stage's active integrator
+and realtime coefficient into its own separately allocated stage state.
+There is no Filter clone, initial FIR design, history reconstruction or
+skipped-frame replay in the PCM callback. Outgoing and incoming
+OnePole stages then evolve independently through the same 64-frame
+smoothstep crossfade. Per-voice note lifetimes, tail budgets, and
+outgoing reference retirement use the §30 two-state logic.
+
+The copy is a conscious boundary-continuation policy: it preserves
+the Filter's audible current history, while the *incoming oscillator*
+adopts the new phase origin; it does not claim that the Filter had
+actually processed a phase-shifted input over all past frames.
+Higher-order/non-IIR history and Sample/Source position reconstruction
+remain separate work.
+
+Added functional regressions:
+- A **one-frame cycle length** makes the old and new phase skips
+  exactly equal. With a nonzero accumulated OnePole integrator,
+  the worker-prepared crossfade must output **exactly identical PCM**
+  to the continuous old Filter across 160 frames. This detects both
+  history resets and inadvertent state sharing. The PCM render call
+  must allocate **zero managed bytes**.
+- A randomized onset with a real offset and a OnePole stage must keep
+  the exact old first PCM sample, then become audibly different after
+  the 64-frame fade; worker preparation must finish without faults.
+- An otherwise identical OnePole Filter with a bound numeric FM input
+  stays on its original initialized onset, with no unsupported
+  rephase worker request.
+- A Note Off inside the crossfade with an authored 96-frame OnePole
+  tail must retain the original exclusive end and yield zero output
+  after that end; neither incoming nor outgoing history can prolong
+  or truncate the shared lifetime.
+
+The zero-PCM-allocation invariant applies to **rendering** the prepared
+transition; initial Filter state construction runs only on the worker.
+The existing live-publication architecture and held-state safety checks
+remain in force. Broader stateful transitions require a separate
+prepared replay/snapshot policy for FM histories, FIR buffers,
+Source/Sample playback positions and nested Multi. All-property
+audition completion and physical listening remain TODOs.
+
+PR #12 stays **draft and unmerged**.
