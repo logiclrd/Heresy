@@ -749,12 +749,43 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		}
 	}
 
-	/// <summary>Allow a new onset phase origin only where every stored DSP
-	/// history is an independent, unmodulated oscillator phase. Constants
-	/// and operators have no histories; any Source, Filter, Envelope,
-	/// noise, nested Multi or FM input requires a separate transition
-	/// policy. The old and new graph must have identical audible
-	/// parameters and wiring, so this edit changes ONLY the onset.</summary>
+	/// <summary>Worker-only preparation for a detached replacement
+	/// that will inherit live OnePole integrators at publication. Building
+	/// FilterInstance/StreamingFilterChain histories can allocate and MUST
+	/// never happen in the realtime audio callback.</summary>
+	private void PrepareOnePoleOnsetStates(SoundState state, int sampleRate)
+	{
+		FmSynthState prepared = ValidateState(state);
+		if (sampleRate <= 0)
+			throw new InvalidOperationException(
+					"Multi onset history preparation requires a valid sample rate.");
+		for (int i = 0; i < _nodes.Length; i++)
+			if (_nodes[i].Filter is { } filter)
+				prepared.Filters[i] = filter.CreateState(sampleRate);
+	}
+
+	/// <summary>Preflight both independently owned child graphs and all
+	/// preconstructed filter histories. The following PCM publication
+	/// copies scalar integrators only after this whole-voice admission.</summary>
+	private bool CanTransferPreparedOnsetHistoriesTo(
+		FmSynthSound next, SoundState outgoing, SoundState incoming)
+	{
+		FmSynthState before = ValidateState(outgoing);
+		FmSynthState after = ValidateState(incoming);
+		for (int i = 0; i < _nodes.Length; i++)
+			if (_nodes[i].Filter is { } original
+				&& (next._nodes[i].Filter is not { } revised
+					|| !original.CanTransferPreparedOnePoleHistoryTo(
+						revised, before.Filters[i], after.Filters[i])))
+				return false;
+		return true;
+	}
+
+	/// <summary>Allow a new onset only when histories are independent
+	/// unmodulated oscillator phases and, optionally, unbound OnePole IIR
+	/// integrators that can be copied into worker-prepared states.
+	/// Constants/operators are stateless; other DSP families remain
+	/// ineligible until their history and timeline semantics are defined.</summary>
 	private static bool CanRephaseOscillatorGraph(
 		FmSynthSound original, FmSynthSound revised)
 	{
@@ -795,6 +826,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					when b.Definition is FmOperatorNode updated
 						&& operation.Operation == updated.Operation:
 					break;
+				case FmFilterNode
+					when a.Filter is { } filter
+						&& b.Filter is { } revisedFilter
+						&& filter.CanRephasePreparedOnePoleHistoryTo(revisedFilter):
+					break;
 				default:
 					return false;
 			}
@@ -803,9 +839,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	}
 
 	/// <summary>Eligible live audition: held notes and unchanged ratios,
-	/// with identical unmodulated oscillator/constant/operator child graphs.
-	/// Stateful Source, Filter, Envelope and nested Multi still retain their
-	/// captured onset until separately supported. No PCM allocations.</summary>
+	/// with identical unmodulated oscillator/constant/operator and
+	/// optional unbound OnePole IIR child graphs. Source, other Filter
+	/// families, Envelope and nested Multi remain excluded.</summary>
 	private bool NeedsMultiOnsetReplacement(
 		FmSynthSound next, FmSynthState live, int index)
 	{
