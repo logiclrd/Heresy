@@ -1231,3 +1231,75 @@ PR #12 must remain draft and unmerged. Open Synth all-properties
 live parameter adoption, graph-incompatible crossfades and
 physical audio acceptance remain unaffected by this test-only
 measurement change.
+
+## Twenty-third slice: verified redundant held-oscillator lifetime query
+
+The user's independent, extended Ryzen 7 7840HS Linux recordings
+delivered the missing replication data: `sine-direct`
+`GetBaseEndFrameExclusive` accounted for 69.8%, 63.48%, and
+62.77% of exclusive CPU samples across the 8,192-round
+calibration and two fresh recordings. Its instruction-level
+annotation contained 9,458, 8,229, and 8,092 method samples,
+with 93.21%, 94.22%, and 94.52% of those attributed to the
+three nearby instructions on the early-return path. In the
+independent `sine-generic` reference recordings, only 2.60%,
+2.80%, and 3.06% of the total samples were attributed to
+the method, versus roughly 33–36% in
+`RenderMultiChildFrame`. These figures are attribution,
+**not** calibrated absolute instruction-cycle costs, and
+the disproportionate JIT-method attribution remains
+unexplained. Repeating the same sampling more times cannot
+remove instruction-pointer skid.
+
+The direct Sine recordings returned approximately
+**11.667–11.756 µs/output frame**, while the three generic
+identity-Multiply reference runs returned
+**16.630–16.730 µs/output frame**, but these are profiled,
+independently run **different graph shapes**, not a controlled
+before/after performance estimate. The user supplied the
+`*.log`, `*.report.txt` and `*.annotate.txt` records
+as an archived dataset. They corroborate that the repeated
+early-return work is a worthwhile optimization candidate.
+
+After examining this evidence, the production change is
+intentionally one conditional bypass in
+`FmSynthSound.RenderMultiChildFrame`: when the immutable
+compiled sound is a **single unmodulated oscillator** and
+the child has **no Note Off**, do not call
+`GetBaseEndFrameExclusive`; assign `baseEnd = null`
+directly. The skipped method would return exactly `null`
+without mutating the child state. It continues to run for
+Note Off (and inherited external release), or any other graph
+shape, while nonsequential calls still execute the established
+`EnsureFrame` phase catch-up path. This does **not**
+generalize the shortcut to Operator/Source/Filter graphs.
+
+The existing
+`OscillatorOnlyMultiMatchesGeneralGraphThroughRandomPhaseLiveEditAndRelease`
+exact-PCM regression has been expanded to keep both paths
+unreleased across several post-publication blocks, skip 14
+outer frames (exercising `EnsureFrame`), then set Note Off
+and compare the rest of the split render. The
+`DownstreamEnvelopeReleaseKeepsWrappedOscillatorAudible`
+regression now starts held for three frames before
+Note Off, proving that the nested single oscillator inherits
+the downstream Multiply envelope's authored release rather
+than truncating immediately. All four oscillator waveform
+variants, phase randomization, detune, pitch trajectories,
+compatible live edits and finite silence checks remain
+covered. No test asserts a hardware speed threshold.
+
+The [profiling guide](synth-render-profiling.md) includes
+an uninstrumented, same-graph **8,192-round** before/after
+protocol with two independent Release builds (prior
+`792cea4` versus the PR head), alternating repeated runs
+and logging per-run duration and managed render-thread
+allocations. The user must run this locally for a meaningful
+Ryzen speedup estimate. Short shared-host CI timing and
+additional JIT-sampling percentages must not be presented
+as a verified speedup.
+
+PR #12 stays draft and unmerged. Broader real-time
+Synth property coverage, sound-generation crossfade
+transitions, and physical-device/listening acceptance
+remain unfinished.
