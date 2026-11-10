@@ -1366,3 +1366,59 @@ ambiguous. Keep the one-line bypass pending evidence; do
 not broaden this shortcut into additional graph shapes
 on the assumption of speedup. No speedup threshold belongs
 in CI. PR #12 remains draft and unmerged.
+
+## Twenty-fifth slice: after-bypass JIT profile confirms attributed hotspot relocation
+
+The user rebuilt the current feature-branch Release solution after
+pulling `9177bac..5f20f3d`. The `dotnet build -c Release`
+succeeded, and the isolated 8,192-round `sine-direct`
+`.NET 10.0.14` test completed successfully on Ubuntu 26.04
+with `render-thread allocated bytes=0` and the same
+`PCM probe=-419683.9955374971`. The JIT-symbolized
+`perf record` at `-F 499 -e cycles:u` captured
+**12,622 samples**; the flat, exclusive report showed:
+
+- **78.88%** attributed to `RenderMultiChildFrame`
+  (`OptimizedTier1`), approximately 9,956 samples.
+- **4.12%** attributed to `EvaluateMulti` (`OptimizedTier1`).
+- **3.27%** attributed to `EvaluateOscillator`
+  (`OptimizedTier1`).
+- `GetBaseEndFrameExclusive` **did not appear among the
+  displayed symbol matches** (consistent with the eliminated
+  held-child invocation). Do not claim this proves no calls
+  whatsoever from other paths.
+
+Before the bypass, 63–70% of sampled cycles were attributed
+to the callee `GetBaseEndFrameExclusive` and roughly 6–7%
+to `RenderMultiChildFrame`; after, the dominant hotspot
+became the caller. Crucially, the alternating,
+**uninstrumented** A/B timing comparison remained
+essentially tied (before 10.706 versus after 10.7115
+µs/output frame median; same PCM probe, zero managed
+render-thread allocations). The fresh Release rebuild
+rules out the plausible stale-binary explanation.
+
+**Conclusion:** the source-level redundant call was
+successfully bypassed on the held single-oscillator path,
+but its earlier method-local `perf` attribution was
+a poor predictor of avoidable runtime. The relocation
+can arise from JIT-generated/inlined code, sampled
+instruction-pointer precision/skid, and the cost of
+shared memory accesses or surrounding operations; the
+available data do not distinguish those mechanisms.
+Do not claim a speedup or describe the before-profile
+sample share as literal time saved.
+
+If further diagnosis is useful, **do not rerun the
+long benchmark yet**: use the existing
+`synth-perf/after-bypass-injected.perf.data` with
+`perf annotate --stdio --no-source` and examine the
+hot instructions inside `RenderMultiChildFrame`.
+This determines whether samples have moved to the
+same nullable Note Off check now performed by the
+caller or elsewhere in its compiled frame path.
+Counter-based `perf stat` comparisons are optional.
+The no-speedup special-case remains in the draft PR
+pending engineering judgment; avoid generalizing
+it to other graphs. No further optimization is
+authorized by high exclusive sample percentages alone.
