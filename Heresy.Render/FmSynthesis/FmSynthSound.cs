@@ -1400,7 +1400,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		newState.PitchTrajectory.SeedPreparedStreamingPosition(newFrame, position);
 		newState.CopyLiveOnsetPositionsBeforeFrame(oldState, newFrame);
 		replacement.RetainOriginalFrequencyBasis(original);
-		replacement.Pitch.SeedBeforeFrame(newFrame, rate);
+		replacement.Pitch.SeedBeforeFrame(newFrame, rate,
+			hasVariedRateHistory: !original.Pitch.HasConstantRateHistory);
 	}
 
 	/// <summary>Adopt already worker-constructed oscillator and OnePole
