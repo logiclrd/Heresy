@@ -451,6 +451,113 @@ retirement or skid rather than the actual instruction
 that consumed all the attributed cycles. Do not make
 a second optimization based only on this annotation.
 
+## Direct Note Off presence accessor experiment
+
+The annotated post-bypass `RenderMultiChildFrame` profile contains
+9,641 method-local samples, **59.30%** attributed to a
+`vmovups` store of the 16-byte nullable `TimeSpan?` and
+**35.35%** to the neighboring `HasValue` comparison/branch.
+These reproduce the hot instruction sequence previously seen
+inside `GetBaseEndFrameExclusive`: the old one-line bypass
+relocated the same nullable check into its caller, explaining
+why a large JIT symbol-attribution shift produced **no
+measurable uninstrumented speedup**. The instruction percentages
+do **not** prove these instructions themselves consume
+94.65% of execution time.
+
+The new, deliberately narrow experiment adds an **internal**
+`SoundState.HasNoteOffTime => _noteOffTime.HasValue` property.
+`RenderMultiChildFrame` now uses `!child.HasNoteOffTime`
+rather than `child.NoteOffTime is null` for the
+single-oscillator held-child bypass. Its private nullable
+field, public value getter/setter and lifecycle semantics
+remain unchanged; it stores **no extra Boolean**.
+An inlined accessor might allow the JIT to test the flag
+in place rather than copy a whole 16-byte nullable to stack.
+This is a hypothesis to verify, not a promised speedup.
+Other `NoteOffTime` call sites have not been changed.
+
+**First**, compare the old checked-nullable bypass commit
+`a925705` against the new PR head using the **same**
+uninstrumented 8,192-round `sine-direct` workload:
+
+```sh
+git worktree add --detach ../Heresy-noteoff-before a925705
+dotnet build Heresy.Tests.Render/Heresy.Tests.Render.csproj -c Release
+(cd ../Heresy-noteoff-before &&
+  dotnet build Heresy.Tests.Render/Heresy.Tests.Render.csproj -c Release)
+mkdir -p synth-perf/noteoff-ab
+
+i=0
+for variant in before after after before before after after before; do
+  i=$((i + 1))
+  case "$variant" in
+    before) root="../Heresy-noteoff-before" ;;
+    after) root="." ;;
+  esac
+  echo "=== run $i: $variant ==="
+  (cd "$root" &&
+    env -u DOTNET_PerfMapEnabled -u DOTNET_PerfMapStubGranularity \
+        -u DOTNET_EnableWriteXorExecute \
+      HERESY_SYNTH_PROFILE_CASE=sine-direct \
+      HERESY_SYNTH_PROFILE_ROUNDS=8192 \
+      dotnet test Heresy.Tests.Render/Heresy.Tests.Render.csproj \
+        -c Release --no-build \
+        --filter FullyQualifiedName~SynthPairedRenderProfileTests \
+        --logger 'console;verbosity=detailed') \
+      2>&1 | tee "synth-perf/noteoff-ab/$i-$variant.log" \
+      | grep -E 'Isolated Synth renderer:|Failed:'
+done
+```
+
+No `perf` overhead should contaminate throughput measurements.
+Keep independent baseline and candidate Release binaries;
+check all runs report `rounds=8192`, zero managed
+render-thread allocations and matching PCM probes.
+
+**Second**, use a fresh **after-only** JIT-symbolized
+8,192-round perf recording with the established 499 Hz
+settings, to see whether the generated code removes
+`vmovups`:
+
+```sh
+mkdir -p synth-perf/noteoff-ab
+HERESY_SYNTH_PROFILE_CASE=sine-direct \
+HERESY_SYNTH_PROFILE_ROUNDS=8192 \
+DOTNET_PerfMapEnabled=2 \
+DOTNET_PerfMapStubGranularity=4 \
+DOTNET_EnableWriteXorExecute=0 \
+perf record -k mono --no-buildid-mmap -e cycles:u -F 499 \
+  --call-graph dwarf \
+  -o synth-perf/noteoff-ab/after-perf.data \
+  -- dotnet test Heresy.Tests.Render/Heresy.Tests.Render.csproj \
+    -c Release --no-build \
+    --filter FullyQualifiedName~SynthPairedRenderProfileTests
+
+perf inject --jit -i synth-perf/noteoff-ab/after-perf.data \
+  -o synth-perf/noteoff-ab/after-injected.perf.data
+perf --no-pager annotate \
+  -i synth-perf/noteoff-ab/after-injected.perf.data \
+  --stdio --stdio-color=never --no-source --percent-limit=1 \
+  > synth-perf/noteoff-ab/after-annotate.txt
+perf --no-pager report -i synth-perf/noteoff-ab/after-injected.perf.data \
+  --stdio --stdio-color=never --no-children -g none --sort symbol \
+  > synth-perf/noteoff-ab/after-report.txt
+```
+
+Inspect the `RenderMultiChildFrame[OptimizedTier1]`
+annotation to verify direct flag access and compare the
+hot-method samples with the previous run. A lower sampled
+percentage without lower uninstrumented duration is **not**
+a verified optimization.
+
+The processor advertises `ibs_op` and `ibs_fetch`
+in `perf list`; if ordinary instruction attribution
+remains puzzling, an AMD IBS-based recording may provide
+more precise sampling. This is optional and separate from
+the throughput experiment, since ISA-level attribution
+alone does not prove an end-to-end speedup.
+
 ## Interpretation and remaining acceptance
 
 A strongly consistent paired B/A difference above the same-vs-same
