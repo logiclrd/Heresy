@@ -1767,11 +1767,13 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			// outgoing state HERE as well, preserving the later of the
 			// two proven ends for subsequent end-frame queries.
 			if (voice.OnsetFadeFrom is { } silentOutgoing
-				&& voice.SilenceEnd is long incomingEnd
-				&& silentOutgoing.SilenceEnd is long outgoingEnd
-				&& state.NextFrame >= Math.Max(incomingEnd, outgoingEnd))
+				&& voice.SilenceEnd is long completedIncomingEnd
+				&& silentOutgoing.SilenceEnd is long completedOutgoingEnd
+				&& state.NextFrame >= Math.Max(
+					completedIncomingEnd, completedOutgoingEnd))
 			{
-				voice.SilenceEnd = Math.Max(incomingEnd, outgoingEnd);
+				voice.SilenceEnd = Math.Max(
+					completedIncomingEnd, completedOutgoingEnd);
 				voice.FinishOnsetFade();
 			}
 			// A crossfade carries TWO independently ending child histories.
