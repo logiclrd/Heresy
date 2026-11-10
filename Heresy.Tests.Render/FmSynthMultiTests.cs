@@ -804,7 +804,9 @@ public sealed class FmSynthMultiTests
         // Filter if and only if its accumulated integrator was copied.
         FilterDefinition definition = new((ObjectId)6401U, "IIR", [
             new FilterStageDefinition(1, "low", FilterKind.OnePole, [
-                new("CutoffHz", FilterParameterValue.FromNumber(110))])]);
+                new("CutoffHz", FilterParameterValue.FromNumber(110))]),
+            new FilterStageDefinition(2, "second", FilterKind.OnePole, [
+                new("CutoffHz", FilterParameterValue.FromNumber(380))])]);
         FmSynthGraph Graph(bool randomized) => new([
             new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 315,
                 minimum: 0.2, maximum: 0.8, constant: true),
@@ -845,7 +847,7 @@ public sealed class FmSynthMultiTests
             "the worker must allocate the destination OnePole chain before PCM");
         original.Render(context, referenceState, 192, expected.Length, expected);
         after.Should().Equal(expected,
-            "same phase and copied integrators must reproduce the held Filter history");
+            "both serial OnePole integrators must match continuous held history");
         worker.PreparedMultiConstituentCount.Should().Be(2);
         worker.Fault.Should().BeNull();
     }
