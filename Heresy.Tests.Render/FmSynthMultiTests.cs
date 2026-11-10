@@ -125,12 +125,28 @@ public sealed class FmSynthMultiTests
                 .Should().BeTrue();
             optimized.CommitPreparedRunningState(optimizedRevision, fastState);
             reference.CommitPreparedRunningState(referenceRevision, referenceState);
+
+            // Continue through several held frames after the live edit.
+            // No oscillator child has a finite end until Note Off, even
+            // across pitch changes and its randomized initial phase skip.
+            int offset = 111;
+            foreach (int count in new[] { 1, 51, 30 })
+            {
+                optimizedRevision.Render(context, fastState, offset, count,
+                    fast.AsSpan(offset, count));
+                referenceRevision.Render(context, referenceState, offset,
+                    count, generic.AsSpan(offset, count));
+                offset += count;
+            }
+            offset.Should().Be(193);
+
+            // Skip fourteen outer frames. Both the optimized and general
+            // graph must catch up child oscillator phase/history exactly.
+            offset = 207;
             TimeSpan release = TimeSpan.FromSeconds(229.0 / 48000);
             fastState.NoteOffTime = release;
             referenceState.NoteOffTime = release;
-
-            int offset = 111;
-            foreach (int count in new[] { 1, 51, 67, 41, 69 })
+            foreach (int count in new[] { 1, 21, 67, 44 })
             {
                 optimizedRevision.Render(context, fastState, offset, count,
                     fast.AsSpan(offset, count));
@@ -243,12 +259,17 @@ public sealed class FmSynthMultiTests
         ], 4);
         FmSynthSound sound = new(graph, new TenFrameRelease(envelopeId));
         SoundState state = sound.CreateState();
-        state.NoteOffTime = TimeSpan.FromSeconds(3.0 / 1000);
         RenderContext context = new(new RenderConfiguration(1000, [
             new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
         ]));
         float[] output = new float[20];
-        sound.Render(context, state, 0, output.Length, output);
+        // Start with a held oscillator, then publish Note Off at the
+        // exact frame of release. The child must inherit the downstream
+        // Multiply-envelope's tail rather than stop at its own boundary.
+        sound.Render(context, state, 0, 3, output.AsSpan(0, 3));
+        state.NoteOffTime = TimeSpan.FromSeconds(3.0 / 1000);
+        sound.Render(context, state, 3, output.Length - 3,
+            output.AsSpan(3));
         Math.Abs(output[8]).Should().BeGreaterThan(0.1f,
             "an audible downstream release envelope must keep the internal oscillator alive");
         Math.Abs(output[12]).Should().BeGreaterThan(0.1f);
