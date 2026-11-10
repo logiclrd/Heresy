@@ -1045,3 +1045,99 @@ oscillator graph dispatch and recursive lifecycle/end checks, and
 choose a change only when supported by those samples. The
 all-properties live-edit TODO, crossfade migration and physical
 acceptance remain open. PR #12 stays draft.
+
+## Twentieth slice: oscillator-only Multi child lifecycle fast path
+
+The first extended local CPU profile was supplied from a Linux laptop
+(Ryzen 7 7840HS, eight physical cores / 16 logical threads, 32 GiB RAM)
+after a **200-round** same-process PCM profile. Its A/B medians were:
+Sine/Sine control **1.004** (12.964 and 13.000 µs/output frame);
+direct Sine vs identity-Multiply **1.287** (12.872 vs 16.582);
+direct Square vs identity-Multiply **1.600** (8.097 vs 12.981).
+All compared PCM matched; measured render-thread allocations were zero.
+The test's reference has an additional graph node; it is **not**
+an exact before/after comparison.
+
+The user then recorded a JIT-symbolized Linux `perf` sampling trace.
+The following were *exclusive* proportions for this mixed
+Sine/Square and direct/general comparison workload:
+
+| Sampled method | Exclusive CPU share |
+| --- | ---: |
+| `FmSynthSound.RenderMultiChildFrame` | **35.63%** |
+| `FmSynthSound.EvaluateMulti` | 10.87% |
+| `FmSynthSound.EvaluateFrame` | 5.19% |
+| `FmSynthSound.EvaluateOscillator` | 4.58% |
+| `FmSynthSound.EvaluateOperator` | 3.81% |
+| `FmSynthSound.GetBaseEndFrameExclusive` | 2.91% |
+
+The JIT can inline callees into a method whose **exclusive** samples
+are being counted, so the 35.63% does **not** mean that method's
+source-level dispatch alone consumes that share. Nevertheless the
+relative concentration justified checking per-child lifecycle work
+before changing oscillators, approximations or graph semantics.
+
+### Applied lifecycle specialization
+
+In `FmSynthSound`, only a graph with **one reachable output node,
+an unmodulated oscillator**, uses the following shortcuts:
+
+1. `RenderMultiChildFrame` skips `PrepareChildRender`'s generic
+   Source traversal / mono-context setup, since the child graph has
+   no Sources, Filters or nested Multi nodes. If a prepared Filter
+   factory exists, its sample-rate consistency check is retained.
+   Nonsequential frames still pass through `EnsureFrame` to replay
+   phase history.
+2. `GetBaseEndFrameExclusive` directly computes the oscillator's
+   release end and updates its sole `SilentFrom[0]` audio gate,
+   preserving `GetIndependentAudioReleaseEnd` (the authored
+   one-frame anti-click and inherited release extension) without
+   clearing and traversing a generic graph array. Unreleased
+   single-oscillator graphs retain their prior indefinite behavior.
+3. `EvaluateMulti` does not query
+   `GetEndFrameExclusive` for **held** single-oscillator children
+   without Note Off. No natural Source EOF is possible for this
+   shape, so that query could not yield a finite end. On Note Off,
+   including inherited release envelopes, the complete end check
+   remains. All other graph shapes continue down the existing path.
+4. Authored oscillator evaluation, every per-voice phase and pitch
+   history, randomized Multi onset, live nonstructural revisions,
+   child state reset/seek semantics, sample-rate validation and
+   spatialization remain unchanged.
+
+A new reference-PCM test
+`OscillatorOnlyMultiMatchesGeneralGraphThroughRandomPhaseLiveEditAndRelease`
+compares the pure child path against a graph with Constant(1) and
+identity Multiply, across **all four waveforms**, Multi randomized
+phase and detune, split rendering, piecewise parent pitch, nonzero
+curvature, compatible live revision of waveform/frequency/curvature,
+and Note Off. It asserts sample-for-sample equality and final
+silence; it does **not** assert timing or any prior undesirable
+behavior. Existing downstream-envelope release and sample-backed
+replay/EOF tests cover the graph shapes that must retain the
+general path.
+
+The implementation and new test passed
+[Release/ARM64 CI #42727771453](https://github.com/logiclrd/Heresy/actions/runs/42727771453).
+This run's short seven-round *diagnostic* same-process pairs were:
+Sine control B/A **0.970**, direct Sine vs identity Multiply
+**2.504**, direct Square vs identity Multiply **2.609**;
+measured render-thread allocations were **zero**. Different CI
+runs exhibit significant CPU contention and do not provide a
+controlled before/after speedup estimate. The separate paced
+8-voice 2→64 expansion still observed 169 PCM underruns in this
+run (device callback managed allocations zero). There is no
+hardware listening acceptance claim.
+
+The [Linux/Windows profiling guide](synth-render-profiling.md) now
+records the tested .NET 10 Linux JIT-symbolization workaround
+(`DOTNET_PerfMapEnabled=3` and
+**profiling-only** `DOTNET_EnableWriteXorExecute=0`),
+the user-space perf-event permission caution and clean
+plain-text reports. To measure the actual benefit, repeat the
+200-round paired profile on the same Linux laptop at the updated
+branch head under comparable conditions, ideally with a local
+baseline checkout or controlled A/B builds. Further live-edit
+property coverage, crossfade-only transitions, device listening
+and aggregate CPU budgeting remain open. Keep PR #12 draft and
+unmerged.
