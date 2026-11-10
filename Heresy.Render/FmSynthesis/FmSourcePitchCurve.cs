@@ -31,7 +31,8 @@ internal sealed class FmSourcePitchCurve : PitchCurve
     /// whose full accumulated position was seeded at the PCM boundary.
     /// The next SetFrame must be precisely nextFrame; no old frames are
     /// evaluated, replayed or retained from the outgoing invocation.</summary>
-    internal void SeedBeforeFrame(long nextFrame, double previousRate)
+    internal void SeedBeforeFrame(long nextFrame, double previousRate,
+        bool hasVariedRateHistory = false)
     {
         if (nextFrame < 0 || !(previousRate > 0.0)
             || !double.IsFinite(previousRate))
@@ -39,7 +40,11 @@ internal sealed class FmSourcePitchCurve : PitchCurve
         _frame = nextFrame - 1;
         _previous = _current = previousRate;
         _hasRate = true;
-        _hasVaried = false;
+        // Preserve the source's historical variability even though its
+        // exact integrated position has been moved into the new clock.
+        // Later phase edits must not mistake a variable-rate past for a
+        // single constant segment merely because this curve was seeded.
+        _hasVaried = hasVariedRateHistory;
     }
 
     public void SetFrame(long frame, double multiplier)
