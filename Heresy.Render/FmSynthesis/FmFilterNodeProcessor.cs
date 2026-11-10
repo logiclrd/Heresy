@@ -309,17 +309,13 @@ internal sealed class FmFilterNodeProcessor
 				|| old.StageId != revised.StageId
 				|| _initial.GetStageGenerationForPersistence(old.StageId)
 					!= next._initial.GetStageGenerationForPersistence(revised.StageId)
-				|| old.Parameters.Parameters.Count != revised.Parameters.Parameters.Count)
+				|| old.Parameters.Parameters.Count != 2
+				|| revised.Parameters.Parameters.Count != 2
+				|| old.Parameters.GetParameter("CutoffHz")
+					!= revised.Parameters.GetParameter("CutoffHz")
+				|| old.Parameters.GetParameter("Mode")
+					!= revised.Parameters.GetParameter("Mode"))
 				return false;
-			foreach (FilterParameterDescriptor parameter in old.Parameters.Parameters)
-			{
-				if (!revised.Parameters.Parameters.Any(p =>
-					string.Equals(p.Name, parameter.Name,
-						StringComparison.OrdinalIgnoreCase))
-					|| old.Parameters.GetParameter(parameter.Name)
-						!= revised.Parameters.GetParameter(parameter.Name))
-					return false;
-			}
 		}
 		return true;
 	}
