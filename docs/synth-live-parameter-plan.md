@@ -1474,3 +1474,97 @@ alternating independent runs, then a new
 removed. AMD IBS can be explored if skid
 continues to obscure instruction attribution.
 PR #12 remains **draft/unmerged**.
+
+## Twenty-seventh slice: precise IBS Op sampling contradicts ordinary instruction hotspots
+
+The user's Ryzen 7 7840HS exposes `ibs_op`/`ibs_fetch`;
+`perf record -e ibs_op//` initially failed because this
+Ubuntu kernel requires system-wide/per-CPU monitoring.
+The working experiment used `-a -C 4`, a pinned
+`taskset -c 4` testhost, userspace software filtering
+`-e ibs_op/swfilt=1/u`, `-c 100000`, JIT-dump
+symbols and DWARF call graphs. System-wide IBS required
+a temporary `kernel.perf_event_paranoid` adjustment;
+the original setting should be restored afterward.
+
+The result was an unexpectedly large **~9.7 GB**
+`perf.data` recording and an additional ~9.7 GB
+injected copy. The archived textual report was ~32 MB,
+the annotation ~219 KB, and `tar.xz` compressed the
+two to ~215 KB. The report recorded approximately
+**1.15 million IBS samples**, with **4,790 lost**
+(roughly 0.4%). The IBS flat report differed
+dramatically from the earlier ordinary
+`cycles:u` JIT-perf run on the accessor build:
+
+| Method | Ordinary `cycles:u` share | Precise IBS Op share |
+| --- | ---: | ---: |
+| `__sin_fma` | 49.74% | 8.74% |
+| `EvaluateOscillator` | 14.11% | 23.06% |
+| `RenderMultiChildFrame` | 7.89% | 20.59% |
+| `EvaluateFrame` | 10.57% | 18.37% |
+| `EvaluateMulti` | 5.62% | 14.46% |
+
+These are **distinct sampling methods** and their
+percentages must not be compared as identical measures
+of elapsed cycles or instruction latency. IBS precisely
+identifies tagged/sampled instructions without ordinary
+PMU IP skid; its default IBS Op configuration counts
+cycles between selected operations, not necessarily
+weighted time lost to each selected operation.
+Deterministic fixed-period sampling of a highly
+repetitive signal could introduce periodic selection
+bias even with accurate IPs.
+
+In the 100,514-sample `libm` annotation for the
+region identified by the report as `__sin_fma`,
+the earlier apparent ~79% single-instruction
+concentration on the `mov` immediately following
+`vstmxcsr` **did not reproduce**. Instead,
+`vstmxcsr -0x18(%rbp)` had **5.92%** of the
+libm-local IBS samples, while the dependent
+`mov -0x18(%rbp),%edx` had **2.01%**,
+with nearby instructions also receiving samples.
+This is consistent with the previous large
+post-`vstmxcsr` sample share being affected by
+ordinary sampling skid; it does not rule out a
+real floating-point-state dependency latency.
+
+In the 236,834-sample JIT `RenderMultiChildFrame`
+annotation, the internal
+`HasNoteOffTime` check compiled to direct
+`cmpb $0x0,0x48(%r13)` (**0.65%** local)
+followed by `jne` (**0.68%** local): no
+16-byte nullable stack copy. This corroborates
+the previous JIT verification. Compared with
+the original >90% local clustering around a
+nullable copy and branch, IBS sampling distributes
+work across the rest of the frame and oscillator
+pipeline.
+
+The eight **uninstrumented** same-graph accessor
+A/B measurements were also supplied: old checked
+nullable bypass: `10.744, 11.006, 10.779, 14.098`
+µs/output frame; direct-accessor candidate:
+`10.708, 10.685, 10.572, 10.673`.
+All reported zero render-thread allocations and
+the same PCM probe. Before median was 10.8925,
+after median 10.679 (1.96% smaller), but the
+14.098 before outlier heavily affects this
+estimate. Excluding it, the before median is
+10.779 (~0.93% greater than after). This is
+**promising but not sufficient** to claim a
+reproducible speedup of a specific magnitude.
+
+The major lesson is to prefer **uninstrumented
+controlled before/after throughput** for performance
+claims and treat ordinary `cycles:u` JIT instruction
+attribution as a debugging clue, not a cost breakdown.
+IBS reduces skid but sampled-op proportions alone
+still are not instruction latency. Further optional
+counter work should avoid multi-GB recordings:
+increase the IBS period and drop DWARF call graphs
+where an exclusive instruction histogram suffices.
+No further code changes, optimizations, or merges
+are justified solely by this IBS profile.
+PR #12 remains draft and unmerged.
