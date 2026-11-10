@@ -216,6 +216,93 @@ Only if a path still needs explanation should you next inspect its
 individual instructions with `perf annotate`. Do not add a
 generalized lifetime shortcut solely on the mixed-workload samples.
 
+## Repeated long-form JIT instruction samples
+
+The first per-shape Linux profiles on a Ryzen 7 7840HS attributed
+`GetBaseEndFrameExclusive` to **34.19%** of exclusive samples for
+`sine-direct`, **31.78%** for `square-direct`, but only 1.98%
+and 2.53% for the generic identity-Multiply shapes. The first
+`sine-direct` JIT annotation placed about **600 samples** in
+`GetBaseEndFrameExclusive`, of which 60.16% were attributed to a
+nullable stack copy and 32.84% to two nearby conditional tests.
+The other graph-traversal instructions had no samples. This
+corresponds to the method's *held/no-Source early return*, rather
+than traversing the graph. However, sampled instruction pointers
+can skid and correlated CPU samples are not independent
+observations; these percentages are not actual per-instruction
+cycle accounting.
+
+To increase sample yield and test reproducibility, the opt-in
+**isolated** mode now allows up to **65,536 rounds**. Normal
+paired exact-PCM tests keep their **512-round cap** and default
+seven-round CI workload. The isolated mode still uses one shape
+per process, persistent voice state and the same waveform graph;
+it neither asserts an execution-time threshold nor changes the
+production renderer.
+
+Use the **same JIT dump settings** that already produced usable
+annotation on this laptop, and keep the sampling rate at 499 Hz.
+Start with one 8,192-round `sine-direct` calibration:
+
+```sh
+mkdir -p synth-perf/long
+
+HERESY_SYNTH_PROFILE_CASE=sine-direct \
+HERESY_SYNTH_PROFILE_ROUNDS=8192 \
+DOTNET_PerfMapEnabled=2 \
+DOTNET_PerfMapStubGranularity=4 \
+DOTNET_EnableWriteXorExecute=0 \
+perf record -k mono --no-buildid-mmap -e cycles:u -F 499 \
+  --call-graph dwarf \
+  -o synth-perf/long/sine-direct-calibration.perf.data \
+  -- dotnet test Heresy.Tests.Render/Heresy.Tests.Render.csproj \
+  -c Release --no-build \
+  --filter FullyQualifiedName~SynthPairedRenderProfileTests
+
+perf inject --jit \
+  -i synth-perf/long/sine-direct-calibration.perf.data \
+  -o synth-perf/long/sine-direct-calibration-injected.perf.data
+
+perf --no-pager annotate \
+  -i synth-perf/long/sine-direct-calibration-injected.perf.data \
+  --stdio --stdio-color=never --no-source --percent-limit=1 \
+  > synth-perf/long/sine-direct-calibration-annotate.txt
+```
+
+Inspect the `GetBaseEndFrameExclusive` annotation's
+`(N samples, percent: local period)` header. The earlier
+512-round run had about 600 samples *in that method*; 8,192
+rounds may produce several thousand samples, though startup,
+tiering, profiler overhead and differing CPU load prevent
+reliable linear scaling. If fewer than approximately 5,000
+samples land in the method, increase the isolated rounds to
+16,384 or 32,768 for subsequent recordings (not `-F`).
+If the count is at least roughly 5,000, keep **8,192 rounds**
+for the repeated comparison.
+
+Next, capture **three fresh, independent testhost recordings**
+of both `sine-direct` and `sine-generic`, using distinct
+`*.perf.data` outputs, identical rounds/sampling rate, and
+the same JIT settings. Collect a flat `perf report` and
+`perf annotate` for each run with the commands above, replacing
+the output basename. Compare the independent within-method
+hot-instruction proportions before pooling counts; the generic
+recordings also show whether its short lifetime path receives
+samples. An optional third independent `square-direct`
+set can test whether the pattern is waveform-dependent,
+but Sine is the first priority.
+
+Aiming for 5,000–10,000 per-method samples per run is a
+pragmatic first target, not a statistical guarantee. Additional
+samples reduce random uncertainty but **do not correct**
+nonrepresentative workloads, instruction-pointer skid, JIT
+tier transitions, or inlining differences. Therefore record
+`perf` capture sample counts, the per-method annotation counts,
+and each diagnostic `Isolated Synth renderer:` timing line.
+Only consider a larger 50,000–60,000 sample study if the
+independent runs disagree or instruction-level distinction
+materially affects a proposed optimization.
+
 ## Interpretation and remaining acceptance
 
 A strongly consistent paired B/A difference above the same-vs-same
