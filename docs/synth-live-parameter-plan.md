@@ -1422,3 +1422,55 @@ The no-speedup special-case remains in the draft PR
 pending engineering judgment; avoid generalizing
 it to other graphs. No further optimization is
 authorized by high exclusive sample percentages alone.
+
+## Twenty-sixth slice: direct nullable presence accessor experiment
+
+The user observed that the JIT-annotated hot path used
+GNU/AT&T `vmovups` to copy the entire 16-byte nullable
+`TimeSpan?` into a stack temporary before testing
+`HasValue`. In the post-bypass `RenderMultiChildFrame`
+profile (9,641 local samples), **59.30%** were attributed
+to the store at `+0xbd` and another **35.35%** to
+the adjacent comparison/branch. This strongly resembles
+the sampled instruction distribution previously seen
+inside `GetBaseEndFrameExclusive`; it does **not**
+prove actual instruction-cycle cost or that misalignment
+caused it. Nullable `TimeSpan?` already contains a
+separate flag; no sentinel tick value is involved.
+Ordinary unaligned moves are not necessarily slower
+than aligned moves if they do not cross problematic
+boundaries. The user confirmed that the host's
+`perf list` includes `ibs_op` and `ibs_fetch`,
+offering optional precise sampling later.
+
+To isolate whether copying the nullable value is
+avoidable by changing the *access pattern*, this
+slice adds an **internal derived property**
+`SoundState.HasNoteOffTime => _noteOffTime.HasValue`,
+leaving the private nullable field and existing public
+`NoteOffTime` getter/setter unchanged. The
+single-output-oscillator held-path in
+`FmSynthSound.RenderMultiChildFrame` uses
+`!child.HasNoteOffTime` in place of
+`child.NoteOffTime is null`. No second flag is
+stored; validation, release transitions, other graph
+paths, and existing PCM behavior remain unchanged.
+The JIT is free to inline that accessor and use a
+direct one-byte test, but this must be observed rather
+than assumed.
+
+Prior exact-PCM regressions include four waveforms,
+live compatible edits, held blocks, a 14-frame catch-up
+gap, downstream inherited release, and non-null Note Off.
+They are preserved. No performance number becomes
+a CI assertion. This change has **no measured speedup**
+yet. The profiling guide specifies a controlled
+uninstrumented `8192`-round, same-Sine-direct
+comparison between old checked-nullable bypass
+commit **`a925705`** and the candidate, in
+alternating independent runs, then a new
+`perf record` / `inject --jit` /
+`annotate` to inspect whether the 16-byte copy was
+removed. AMD IBS can be explored if skid
+continues to obscure instruction attribution.
+PR #12 remains **draft/unmerged**.
