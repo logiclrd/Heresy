@@ -104,15 +104,34 @@ public sealed class StreamingFilterChain
 		if (source is null || SampleRate != source.SampleRate
 			|| OutputChannelCount != source.OutputChannelCount
 			|| _stages.Length == 0 || _stages.Length != source._stages.Length
+			|| _tailBudgetFrames != source._tailBudgetFrames
+			|| _preparedLatencyFrames != source._preparedLatencyFrames
 			|| _inputFinished || source._inputFinished)
 			return false;
 		for (int i = 0; i < _stages.Length; i++)
 		{
 			RunningStage to = _stages[i];
 			RunningStage from = source._stages[i];
-			if (to.Stage.Kind != FilterKind.OnePole
-				|| !to.Stage.IsHistoryCompatibleWith(from.Stage)
-				|| !to.Stage.HasSameParameters(from.Stage)
+			PreparedFilterStage stage = to.Stage;
+			PreparedFilterStage previous = from.Stage;
+			// OnePole has precisely CutoffHz and structural Mode. Direct
+			// dictionary lookups avoid the LINQ closures/enumerators in
+			// HasSameParameters during an audio-boundary preflight.
+			if (stage.Kind != FilterKind.OnePole
+				|| previous.Kind != FilterKind.OnePole
+				|| stage.LayerIndex != previous.LayerIndex
+				|| stage.StageIndex != previous.StageIndex
+				|| stage.DefinitionId != previous.DefinitionId
+				|| stage.StageId != previous.StageId
+				|| stage.Generation != previous.Generation
+				|| stage.Parameters.Count != 2
+				|| previous.Parameters.Count != 2
+				|| !stage.Parameters.TryGetValue("CutoffHz", out var cutoff)
+				|| !previous.Parameters.TryGetValue("CutoffHz", out var oldCutoff)
+				|| cutoff != oldCutoff
+				|| !stage.Parameters.TryGetValue("Mode", out var mode)
+				|| !previous.Parameters.TryGetValue("Mode", out var oldMode)
+				|| mode != oldMode
 				|| to.Channels.Length != from.Channels.Length)
 				return false;
 			for (int j = 0; j < to.Channels.Length; j++)
