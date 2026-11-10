@@ -487,6 +487,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						^ (ulong)(uint)(voice.Index + 1)));
 					voice.Initialized = false;
 					voice.SilenceEnd = null;
+					voice.FinishOnsetFade();
 				}
 		}
 		public bool ChildEndChanged { get; set; }
@@ -532,6 +533,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				{
 					voice.Initialized = false;
 					voice.SilenceEnd = null;
+					voice.FinishOnsetFade();
 				}
 			NextFrame = 0;
 			ChildEndChanged = false;
@@ -1753,13 +1755,24 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		long max = 0;
 		foreach (MultiVoice voice in state.Multis[index])
 		{
-			// Dormant reserves and fully faded-out constituents cannot
-			// extend an otherwise finished note's audible lifetime.
-			if (!voice.CanAffectOutput(state.NextFrame))
-				continue;
-			if (voice.SilenceEnd is not long end)
-				return null;
-			max = Math.Max(max, end);
+			// A crossfade carries TWO independently ending child histories.
+			// Never retire a released note from the incoming end alone while
+			// the outgoing contribution can still be audible.
+			if (voice.CanAffectOutput(state.NextFrame))
+			{
+				if (voice.SilenceEnd is not long incomingEnd)
+					return null;
+				max = Math.Max(max, incomingEnd);
+			}
+			if (voice.OnsetFadeFrom is { } outgoing
+				&& MultiTransitionWeight(
+					voice.OnsetFadeStartFrame, state.NextFrame) < 1.0
+				&& outgoing.CanAffectOutput(state.NextFrame))
+			{
+				if (outgoing.SilenceEnd is not long outgoingEnd)
+					return null;
+				max = Math.Max(max, outgoingEnd);
+			}
 		}
 		return max;
 	}
@@ -2226,6 +2239,13 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					sum += weight <= 0.0
 						? previous
 						: previous + (incoming - previous) * weight;
+					// If Note Off makes BOTH child histories permanently
+					// silent before the 64-frame fade ends, promptly release
+					// the outgoing state instead of retaining a dead tail.
+					if (voice.SilenceEnd is long incomingEnd
+						&& outgoing.SilenceEnd is long outgoingEnd
+						&& frame >= incomingEnd && frame >= outgoingEnd)
+						voice.FinishOnsetFade();
 				}
 			}
 			else
