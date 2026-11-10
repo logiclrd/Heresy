@@ -939,6 +939,60 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void RephasedOnePoleChildrenKeepTheAuthoredTailThroughNoteOff()
+    {
+        FilterDefinition definition = new((ObjectId)6404U, "Tail", [
+            new FilterStageDefinition(1, "low", FilterKind.OnePole, [
+                new("CutoffHz", FilterParameterValue.FromNumber(550))])]);
+        FmSynthGraph Graph(bool randomized) => new([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sawtooth, 320),
+            new FmFilterNode(2, 1, new FilterInstance(definition),
+                tailSeconds: 0.002),
+            new FmMultiNode(3, 2, voiceCount: 2, detune: 0,
+                randomizePhase: randomized, cycleLength: 1050,
+                gainCompensation: true),
+        ], 3);
+        RenderContext context = Mono();
+        FmSynthSound original = new(Graph(false), new EmptyEnvelopes(),
+            enableLiveMultiExpansion: true);
+        FmSynthSound revised = new(Graph(true), new EmptyEnvelopes(),
+            enableLiveMultiExpansion: true);
+        SoundState held = original.CreateState();
+        SoundState unchanged = original.CreateState();
+        held.SetNoiseSeed(0xBEEFUL);
+        unchanged.SetNoiseSeed(0xBEEFUL);
+        original.Render(context, held, 0, 80, new float[80]);
+        original.Render(context, unchanged, 0, 80, new float[80]);
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeTrue();
+        using FirPreparationScheduler worker = new();
+        original.QueuePendingFirControls(held, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        original.AdoptPreparedFirControls(held);
+        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, held);
+
+        // The original note stops exciting the Filter at frame 97 and
+        // provides 96 additional authored tail frames: exclusive end 193.
+        // Neither incoming nor outgoing child is allowed to truncate or
+        // prolong this shared lifetime during the 80..143 onset fade.
+        held.NoteOffTime = TimeSpan.FromSeconds(96.0 / 48000);
+        unchanged.NoteOffTime = held.NoteOffTime;
+        float[] output = new float[150];
+        float[] reference = new float[150];
+        revised.Render(context, held, 80, output.Length, output);
+        original.Render(context, unchanged, 80, reference.Length, reference);
+        output[0].Should().Be(reference[0]);
+        output.Should().OnlyContain(x => float.IsFinite(x));
+        output.Skip(113).Should().OnlyContain(x => x == 0f,
+            "Note Off and authored IIR tail must bound both crossfade histories");
+        revised.GetEndFrameExclusive(context, held).Should().Be(193,
+            "the two prepared Filter histories share the original release end");
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
     public void SeededMultiOnsetCycleCalculationIsInvariantAcrossRenderSplits()
     {
         // The initial offset calculation is shared with upcoming prepared
