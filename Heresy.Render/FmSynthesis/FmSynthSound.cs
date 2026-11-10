@@ -1737,7 +1737,13 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 
 		long? noteOffFrame = !singleOscillator && child.NoteOffTime.HasValue
 			? FrameTime.Ceiling(child.NoteOffTime.Value, sampleRate) : null;
-		long? baseEnd = GetBaseEndFrameExclusive(sampleRate, child);
+		// Without Note Off, the single-oscillator graph has no Source
+		// or nested child that could discover a finite natural end.
+		// GetBaseEndFrameExclusive would immediately return null without
+		// modifying the audio-silence scratch; avoid doing that per child,
+		// per sample. Released children retain the inherited release gate.
+		long? baseEnd = singleOscillator && child.NoteOffTime is null
+			? null : GetBaseEndFrameExclusive(sampleRate, child);
 		// The single-oscillator graph has no authored Filter tail. The
 		// per-frame evaluator does not use noteOffFrame in this shape.
 		long? finalEnd = singleOscillator
