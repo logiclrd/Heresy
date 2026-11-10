@@ -81,7 +81,7 @@ public sealed class OnePoleFilterStageFactory : IStreamingFilterStageFactory
 
 	private sealed class OnePoleState(
 		OnePolePlan plan, double integrator) : IStreamingFilterStageState,
-		IRealtimeTptFilterState
+		IRealtimeTptFilterState, IPreparedOnePoleHistoryTransfer
 	{
 		// A scalar is sufficient for one first-order TPT integrator.
 		// No state is shared with another output channel or invocation.
@@ -110,6 +110,20 @@ public sealed class OnePoleFilterStageFactory : IStreamingFilterStageFactory
 			// transient high-pass amplitude above one float's range.
 			// Saturate it rather than emitting Infinity into the mixer.
 			return (float)Math.Clamp(output, -float.MaxValue, float.MaxValue);
+		}
+
+		// Copy an existing integrator into a detached, worker-prepared
+		// state. No aliasing or heap allocation: the original and replacement
+		// OnePole histories can now render different phase trajectories.
+		void IPreparedOnePoleHistoryTransfer.CopyHistoryFrom(
+			IPreparedOnePoleHistoryTransfer source)
+		{
+			if (source is not OnePoleState previous)
+				throw new ArgumentException(
+					"OnePole history requires another OnePole state.",
+					nameof(source));
+			_integrator = previous._integrator;
+			_gain = previous._gain;
 		}
 
 		public IStreamingFilterStageState Clone()
