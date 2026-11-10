@@ -68,6 +68,85 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void OscillatorOnlyMultiMatchesGeneralGraphThroughRandomPhaseLiveEditAndRelease()
+    {
+        // The optimized child is a single oscillator; the reference's
+        // identity Multiply forces the general child render and lifetime
+        // paths. The authored operator must not change audio, even when
+        // phase skips, compatible edits and Note Off overlap.
+        foreach (FmOscillatorWaveform waveform in Enum.GetValues<FmOscillatorWaveform>())
+        {
+            FmSynthGraph Graph(bool general, FmOscillatorWaveform wave,
+                double frequency, double curvature)
+            {
+                FmOscillatorNode oscillator = new(1, wave, frequency,
+                    minimum: -0.65, maximum: 0.85, curvature: curvature);
+                FmMultiNode multi = new(4, general ? 3 : 1,
+                    voiceCount: 4, detune: 0.07, randomizePhase: true,
+                    cycleLength: 73, gainCompensation: true);
+                return general ? new FmSynthGraph([
+                    oscillator, new FmConstantNode(2, 1.0),
+                    new FmOperatorNode(3, FmOperatorKind.Multiply, [1, 2]),
+                    multi,
+                ], 4) : new FmSynthGraph([oscillator, multi], 4);
+            }
+
+            FmSynthSound optimized = new(
+                Graph(false, waveform, 330, 1.5), new EmptyEnvelopes());
+            FmSynthSound reference = new(
+                Graph(true, waveform, 330, 1.5), new EmptyEnvelopes());
+            SoundState fastState = optimized.CreateState();
+            SoundState referenceState = reference.CreateState();
+            foreach (SoundState state in new[] { fastState, referenceState })
+            {
+                state.SetNoiseSeed(7721);
+                state.PitchMultiplier = 1.3;
+                state.PlaybackSpeedMultiplier = 0.8;
+                state.PitchTrajectory.SetMultiplier(83, 1.2);
+                state.PitchTrajectory.SetMultiplier(163, 0.95);
+            }
+
+            RenderContext context = Mono();
+            float[] fast = new float[340];
+            float[] generic = new float[340];
+            optimized.Render(context, fastState, 0, 111, fast.AsSpan(0, 111));
+            reference.Render(context, referenceState, 0, 111,
+                generic.AsSpan(0, 111));
+            FmOscillatorWaveform revisedWaveform =
+                waveform == FmOscillatorWaveform.Sine
+                    ? FmOscillatorWaveform.Square : FmOscillatorWaveform.Sine;
+            FmSynthSound optimizedRevision = new(
+                Graph(false, revisedWaveform, 440, -1.0), new EmptyEnvelopes());
+            FmSynthSound referenceRevision = new(
+                Graph(true, revisedWaveform, 440, -1.0), new EmptyEnvelopes());
+            optimized.TryPrepareRunningState(optimizedRevision, fastState)
+                .Should().BeTrue();
+            reference.TryPrepareRunningState(referenceRevision, referenceState)
+                .Should().BeTrue();
+            optimized.CommitPreparedRunningState(optimizedRevision, fastState);
+            reference.CommitPreparedRunningState(referenceRevision, referenceState);
+            TimeSpan release = TimeSpan.FromSeconds(229.0 / 48000);
+            fastState.NoteOffTime = release;
+            referenceState.NoteOffTime = release;
+
+            int offset = 111;
+            foreach (int count in new[] { 1, 51, 67, 41, 69 })
+            {
+                optimizedRevision.Render(context, fastState, offset, count,
+                    fast.AsSpan(offset, count));
+                referenceRevision.Render(context, referenceState, offset,
+                    count, generic.AsSpan(offset, count));
+                offset += count;
+            }
+            offset.Should().Be(fast.Length);
+            fast.Should().Equal(generic,
+                "single-oscillator lifecycle shortcuts must not alter " +
+                "randomized phase, live-edit continuity or release timing");
+            fast[^1].Should().Be(0);
+        }
+    }
+
+    [Test]
     public void MultiSharesOuterPitchTrajectoryAcrossConstituentsWithoutChangingPhase()
     {
         // Two identical Multi children should match a doubled standalone
