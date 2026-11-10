@@ -1186,3 +1186,48 @@ then both Square shapes to separate waveform expense. Request
 profiles remain ambiguous. The all-properties live editing,
 crossfade migration and physical-device acceptance still remain
 open; PR #12 must remain draft and unmerged.
+
+## Twenty-second slice: calibrate and replicate longer instruction-level sampling
+
+After the four isolated recordings and JIT annotation, the user
+challenged the **small absolute sample count**: the annotated
+`sine-direct` `GetBaseEndFrameExclusive` method had only about
+**600** CPU samples while the fixture rendered
+4 × 64 × 512 × 256 = **33,554,432** constituent frames. This is
+normal for 499 Hz sampled CPU cycles, since it does not trace
+each function call. Nevertheless, 600 observations and particularly
+correlated instruction-pointer skid do **not** justify precise
+instruction-level cost attribution or an asserted optimization
+speedup. The method's 93% combined sample concentration near its
+held/no-Source early return is suggestive, not proof of why each
+instruction costs cycles.
+
+For more reliable evidence before further source changes,
+`SynthPairedRenderProfileTests` now caps
+`HERESY_SYNTH_PROFILE_ROUNDS` at **65,536** in the
+`HERESY_SYNTH_PROFILE_CASE` isolated test mode only. The regular
+paired mode still caps at **512** rounds (seven by default),
+keeps exact-PCM comparisons, and remains compatible with normal
+CI runtime. The diagnostic longer path does not introduce
+production-renderer changes or pass/fail speed thresholds.
+
+The [profiling guide](synth-render-profiling.md) now documents a
+two-stage experiment. First, one isolated **8,192-round
+`sine-direct`** JIT-dump and `perf inject --jit` recording
+with the already validated .NET 10 Linux settings, 499 Hz
+userspace sampling, then inspect the
+`GetBaseEndFrameExclusive` annotation's local sample count.
+If at least roughly **5,000 samples** land in this method,
+proceed to three independent records of both
+`sine-direct` and `sine-generic` at 8,192 rounds.
+If the method count is smaller, calibrate up to 16,384 or
+32,768 rounds without raising sampling frequency. Record
+sample counts and timings for each run; compare independently
+before pooling, and avoid equating percentages with exact cycles
+or attributing all skew to source-level computation. No new
+lifecycle optimization is approved by these profiles alone.
+
+PR #12 must remain draft and unmerged. Open Synth all-properties
+live parameter adoption, graph-incompatible crossfades and
+physical audio acceptance remain unaffected by this test-only
+measurement change.
