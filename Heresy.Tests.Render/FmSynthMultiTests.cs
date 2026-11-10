@@ -900,7 +900,7 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
-    public void ModulatedOnePoleMultiDoesNotAttemptUnsupportedHistoryMigration()
+    public void UnpublishedMultiOnsetPreparationNeverMutatesFmDrivenFilterHistory()
     {
         FilterDefinition definition = new((ObjectId)6403U, "Controlled", [
             new FilterStageDefinition(1, "low", FilterKind.OnePole, [
@@ -929,15 +929,16 @@ public sealed class FmSynthMultiTests
         SoundState uninterrupted = reference.CreateState();
         original.Render(context, held, 0, 80, new float[80]);
         reference.Render(context, uninterrupted, 0, 80, new float[80]);
-        original.RequestMultiExpansionPreparation(updated, held).Should().BeFalse(
-            "bound OnePole controls need more than a frozen integrator copy");
-        original.TryPrepareRunningState(updated, held).Should().BeTrue();
-        original.CommitPreparedRunningState(updated, held);
+        // A preparation request, whether admitted now or in a future
+        // more general Filter-history implementation, must NEVER
+        // alter the active child's FM-driven state before publication.
+        original.RequestMultiExpansionPreparation(updated, held);
         float[] actual = new float[128];
         float[] expected = new float[128];
         updated.Render(context, held, 80, actual.Length, actual);
         reference.Render(context, uninterrupted, 80, expected.Length, expected);
-        actual.Should().Equal(expected);
+        actual.Should().Equal(expected,
+            "unpublished revisions must not alter existing FM Filter histories");
     }
 
     [Test]
