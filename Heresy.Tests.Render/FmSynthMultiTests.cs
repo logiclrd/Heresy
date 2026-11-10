@@ -1440,6 +1440,133 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void VariableRateSampleOnsetRewindUsesItsRecordedIntegratedPosition()
+    {
+        // Seed 21 and a 100-frame cycle give both outgoing voices skip 44.
+        // At outer frame 80 the rate changes from 1 to 1.3. At outer
+        // frame 128, outgoing local frame is 172 and the new aligned
+        // onset is at local frame 128. Its *historical* integral is
+        // 124 * 1 + 4 * 1.3 = 129.2, not 128 nor a 44-frame rewind
+        // computed using the current 1.3 rate.
+        ObjectId id = (ObjectId)7621U;
+        float[] pcm = Enumerable.Range(0, 8192)
+            .Select(i => (float)(0.33 * Math.Sin(2 * Math.PI * i / 83.0)
+                + 0.12 * Math.Cos(2 * Math.PI * i / 27.0))).ToArray();
+        SampleSound sample = new(new SampleDefinition(id, "Varying sample",
+            new ExternalAssetReference("varied-source.wav")),
+            new MemorySampleData(48000, 1, pcm));
+        SourceResolver resolver = new(id, sample);
+        FmSynthGraph Graph(bool random) => new([
+            new FmSoundSourceNode(1, id, FmMultiNode.NeutralFrequencyHz),
+            new FmMultiNode(2, 1, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 100,
+                gainCompensation: true),
+        ], 2);
+        FmSynthSound old = new(Graph(true), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound revised = new(Graph(false), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState held = old.CreateState();
+        SoundState outgoingReference = old.CreateState();
+        held.SetNoiseSeed(21);
+        outgoingReference.SetNoiseSeed(21);
+        old.Render(context, held, 0, 80, new float[80]);
+        old.Render(context, outgoingReference, 0, 80, new float[80]);
+        held.PitchTrajectory.SetMultiplier(80, 1.3);
+        outgoingReference.PitchTrajectory.SetMultiplier(80, 1.3);
+        old.Render(context, held, 80, 48, new float[48]);
+        old.Render(context, outgoingReference, 80, 48, new float[48]);
+
+        old.TryPrepareRunningState(revised, held).Should().BeFalse(
+            "a variable-rate Sample rewind needs a detached onset replacement");
+        old.RequestMultiExpansionPreparation(revised, held).Should().BeTrue(
+            "the rewound Sample position is already recorded exactly");
+        using FirPreparationScheduler worker = new();
+        old.QueuePendingFirControls(held, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        old.AdoptPreparedFirControls(held);
+        old.TryPrepareRunningState(revised, held).Should().BeTrue();
+        old.CommitPreparedRunningState(revised, held);
+
+        float[] mixed = new float[160], outgoing = new float[160];
+        long beforeBytes = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, 128, mixed.Length, mixed);
+        (GC.GetAllocatedBytesForCurrentThread() - beforeBytes).Should().Be(0,
+            "recorded Sample history migration must allocate no PCM memory");
+        old.Render(context, outgoingReference, 128, outgoing.Length, outgoing);
+        for (int i = 0; i < mixed.Length; i++)
+        {
+            double t = Math.Clamp(i / 64.0, 0.0, 1.0);
+            double weight = t * t * (3 - 2 * t);
+            double position = 129.2 + i * 1.3;
+            int baseFrame = (int)Math.Floor(position);
+            float incoming = pcm[baseFrame]
+                + (pcm[baseFrame + 1] - pcm[baseFrame])
+                    * (float)(position - baseFrame);
+            float expected = (float)(outgoing[i] * (1 - weight)
+                + incoming * weight);
+            mixed[i].Should().BeApproximately(expected, 2e-5f,
+                "the incoming Sample must use the historical, not nominal, pitch integral");
+        }
+        mixed[0].Should().Be(outgoing[0]);
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
+    public void OutOfWindowVariableRateSampleOnsetKeepsScalarEditsLive()
+    {
+        // An old randomized onset can be hundreds of frames ahead.
+        // Rewinding farther than the bounded stored integral must
+        // not substitute a current-rate approximation or starve an
+        // independent Constant edit.
+        ObjectId id = (ObjectId)7622U;
+        float[] pcm = Enumerable.Range(0, 16384)
+            .Select(i => (float)(0.4 * Math.Sin(2 * Math.PI * i / 87.0)))
+            .ToArray();
+        SampleSound sample = new(new SampleDefinition(id, "Long rewind",
+            new ExternalAssetReference("long-rewind.wav")),
+            new MemorySampleData(48000, 1, pcm));
+        SourceResolver resolver = new(id, sample);
+        FmSynthGraph Graph(bool random, double gain) => new([
+            new FmSoundSourceNode(1, id, FmMultiNode.NeutralFrequencyHz),
+            new FmMultiNode(2, 1, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 800,
+                gainCompensation: true),
+            new FmConstantNode(3, gain),
+            new FmOperatorNode(4, FmOperatorKind.Add, [2, 3]),
+        ], 4);
+        FmSynthSound original = new(Graph(true, 0.25), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound revised = new(Graph(false, 0.5), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        SoundState reference = original.CreateState();
+        held.SetNoiseSeed(137);
+        reference.SetNoiseSeed(137);
+        original.Render(context, held, 0, 80, new float[80]);
+        original.Render(context, reference, 0, 80, new float[80]);
+        held.PitchTrajectory.SetMultiplier(80, 1.3);
+        reference.PitchTrajectory.SetMultiplier(80, 1.3);
+        original.Render(context, held, 80, 48, new float[48]);
+        original.Render(context, reference, 80, 48, new float[48]);
+
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeFalse(
+            "the phase rewind is beyond the exact-history retention bound");
+        original.TryPrepareRunningState(revised, held).Should().BeTrue(
+            "unsupported phase migrations cannot delay independent parameters");
+        original.CommitPreparedRunningState(revised, held);
+        float[] actual = new float[96], expected = new float[96];
+        revised.Render(context, held, 128, actual.Length, actual);
+        original.Render(context, reference, 128, expected.Length, expected);
+        for (int i = 0; i < actual.Length; i++)
+            (actual[i] - expected[i]).Should().BeApproximately(0.25f, 2e-6f);
+    }
+
+    [Test]
     public void LiveScalarEditIsNotBlockedByNonconstantSampleOnsetHistory()
     {
         // A past pitch change invalidates the constant-rate shortcut.
