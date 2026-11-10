@@ -1711,3 +1711,92 @@ replay semantics for non-oscillator descendants, state lifetime/CPU
 profiling under simultaneous transitions, all-property UI-driven tests
 and actual physical listening. Keep the full live audition TODO open
 and PR #12 **draft/unmerged**.
+
+## Thirtieth slice: Multi crossfade child lifetime and independent oscillator subgraphs
+
+The first prepared onset crossfade (§29) used one unmodulated
+output oscillator per Multi constituent. This slice extends the
+**same bounded audition-only mechanism** to a first wider set
+of safely migratable child graphs: one or more independent,
+unmodulated oscillators feeding unchanged stateless
+`FmOperatorNode` combinations, optionally through
+unchanged `FmConstantNode` values.
+
+An eligibility check, `CanRephaseOscillatorGraph`, compares
+the fully compiled child graphs' node order/identities/types,
+wiring, output identity, oscillator indices, constants,
+operator kinds and **every authored oscillator parameter**.
+All oscillator `MultiplierNodeId` ports must be unbound.
+It rejects Source, Sample, Filter, Envelope, Noise, nested
+Multi and any FM-modulated oscillator child. Such
+ineligible graphs retain the established policy of keeping
+an initialized constituent's previous onset until the
+proper state-replay/crossfade policy is available; new
+notes always use the edited definition. This is **not**
+a general stateful Source/Filter migration.
+
+For eligible graphs, the already-cancellable off-PCM worker
+still creates the detached child invocations. At ordered
+publication, `AttachPreparedOscillatorOnset` copies
+the outgoing phase of **each oscillator index**, applying
+only the new-minus-old deterministic skip-frame delta
+at that oscillator's own fixed or note-relative
+instantaneous frequency. Stateless Constant/Operator
+scratch values are recomputed on the next sample;
+nothing is replayed or reconstructed in the PCM loop.
+The incoming state reuses the parent's **already prepared
+mono RenderContext**: unlike the single-oscillator fast
+path, generic oscillator/Operator graphs would otherwise
+perform a lazy RenderContext allocation on the first
+replaced PCM sample. A regression now checks **zero
+managed render-thread allocations** for the complete
+prepared crossfade.
+
+Release and state-lifetime bookkeeping also change:
+`GetMultiSilenceEnd` takes the maximum of the
+still-audible **incoming AND outgoing** child ends
+while the 64-frame crossfade is unfinished, rather
+than prematurely dropping the old child's end.
+If Note Off makes *both* children definitively
+silent before the transition window ends, the
+outgoing state reference is cleared as soon as this
+can be established. The old reference also clears
+at normal fade completion; fresh seed/reset clears
+stale fade pointers. The outgoing child is never
+discarded just because a new phase is prepared,
+and neither child can independently lengthen the
+original note's audible release without an authored
+tail or inherited release envelope.
+
+New tests cover:
+- A live rephase on a Multi wrapping two independent
+  oscillators, a constant and Add/Multiply operators,
+  including exact continuation on the first publication
+  frame, audible new onset after 64 frames, and two
+  worker-prepared replacement invocations.
+- **Zero managed allocations** across the realtime
+  PCM Render call during that state transition.
+- **Note Off at frame 96 during a fade begun at 80**:
+  both original and replacement children end at the
+  original exclusive frame 97, even though the
+  64-frame crossfade would normally finish at 144.
+- A Multi whose oscillator has a connected FM multiplier:
+  its initialized held state must remain unchanged
+  through the edit, and no unsupported rephase worker
+  construction occurs.
+
+These invariants are functional, not performance-time
+thresholds. The single-output-oscillator crossfade,
+Multi growth/release, and related PCM tests still apply.
+The transition still uses the phase-delta approximation
+at the instant of publication, not a reconstruction of
+historic pitch changes across arbitrary skipped frames.
+It does not yet support Filter histories, Envelope
+release trajectories, Sample/Source playback position,
+nested stateful Multi nodes, simultaneous ratio and
+onset rephase, or a released note *starting* a new
+transition. Physical listening and the full all-properties
+UI/PCM acceptance remain outstanding.
+
+PR #12 stays draft and unmerged. The feature is not
+claimed complete.
