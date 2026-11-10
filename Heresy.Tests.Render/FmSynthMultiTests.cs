@@ -663,8 +663,8 @@ public sealed class FmSynthMultiTests
         float[] result = new float[130];
         revised.Render(context, held, 119, result.Length, result);
         result[0].Should().BeApproximately(0.5f, 1e-6f,
-            "the two existing children begin their scalar glide at the
-            previously sounding value, while newly activated children fade in");
+            "existing children begin their scalar glide at the prior " +
+            "value, while newly activated children fade in");
         result[32].Should().BeInRange(0.8f, 3.6f);
         result[100].Should().BeApproximately(3.6f, 1e-5f,
             "seven additional constituents fade in, including three prepared by the worker");
