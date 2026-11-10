@@ -909,6 +909,33 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return hasTimeDependentInput;
 	}
 
+	/// <summary>A late direct Sample rephase may use its O(1) pitch
+	/// snapshot only when the active forward-integrated Source has
+	/// maintained a constant rate and has not reached its EOF. If not,
+	/// keep the captured onset (as for unsupported stateful graphs)
+	/// rather than leave the whole compatible Synth revision waiting
+	/// forever for a history transfer this worker cannot provide.</summary>
+	private bool HasDirectSampleOnsetSnapshot(
+		SoundState activeState, long nextLocalFrame)
+	{
+		FmSynthState active = ValidateState(activeState);
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			if (_nodes[i].Definition is not FmSoundSourceNode)
+				continue;
+			SourceVoice? source = active.Sources[i];
+			if (nextLocalFrame <= 0
+				|| source?.Sound is not SampleSound
+				|| !source.Pitch.HasConstantRateHistory
+				|| source.Pitch.LastFrame != nextLocalFrame - 1
+				|| source.InputFinished || source.EndFrame.HasValue
+				|| source.Invocation.State.HasNoteOffTime
+				|| source.Invocation.State.NaturalEndFrameExclusive.HasValue)
+				return false;
+		}
+		return true;
+	}
+
 	/// <summary>Eligible live audition: held notes and unchanged ratios,
 	/// with identical unmodulated oscillator/constant/operator,
 	/// optional unbound OnePole IIR, and bare same-instance direct Sample
@@ -928,11 +955,23 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| !CanRephaseOscillatorGraph(originalChild, updatedChild))
 			return false;
 		foreach (MultiVoice voice in live.Multis[index])
-			if (voice.HasStarted && voice.Initialized
-				&& (voice.Definition.RandomizePhase != updated.RandomizePhase
-					|| ((voice.Definition.RandomizePhase || updated.RandomizePhase)
-						&& voice.Definition.CycleLength != updated.CycleLength)))
-				return true;
+		{
+			if (!voice.HasStarted || !voice.Initialized
+				|| (voice.Definition.RandomizePhase == updated.RandomizePhase
+					&& (!(voice.Definition.RandomizePhase || updated.RandomizePhase)
+						|| voice.Definition.CycleLength == updated.CycleLength)))
+				continue;
+			// Every initialized constituent must have a migratable
+			// integrated Sample history, or the old onsets are retained.
+			// Do not leave scalar/property publication blocked indefinitely.
+			foreach (MultiVoice active in live.Multis[index])
+				if (active.HasStarted && active.Initialized
+					&& !originalChild.HasDirectSampleOnsetSnapshot(
+						active.Invocation.State,
+						live.NextFrame - active.StartFrame + active.SkipFrames))
+					return false;
+			return true;
+		}
 		return false;
 	}
 
