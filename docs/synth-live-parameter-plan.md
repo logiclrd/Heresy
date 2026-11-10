@@ -2192,9 +2192,9 @@ subsequent forward phase edit does not falsely assume a constant
 rate. The second regression uses seed 137/cycle 800 to force a
 rewind well outside the ring and verifies the independent Constant
 edit still publishes without scheduling impossible preparation.
-Both tests initially ran red against the original implementation
-(the first lacked requested onset preparation); implementation
-and full CI subsequently ran green.
+The test-only commit initially ran red because the variable-rate
+rewind did not request onset preparation; the out-of-window scalar
+fallback was already correct. Implementation and full CI then ran green.
 
 **Limits and next work**
 
