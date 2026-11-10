@@ -1522,12 +1522,89 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void VariableRateSampleRewindBeyond128FramesUsesExactHistoricalIntegral()
+    {
+        // Multi ID 2, seed 137, cycle 800 yields old skips 725 and 735.
+        // At outer frame 200, the Source rate changes from 1 to 1.3;
+        // at outer frame 800, the aligned incoming local frame is 800.
+        // It was already integrated while the old randomized playhead
+        // advanced from zero, but it is >128 frames behind both active
+        // Source histories. Its *exact* historical integral is 800,
+        // not a projection backward at the current rate of 1.3.
+        ObjectId id = (ObjectId)7623U;
+        float[] pcm = Enumerable.Range(0, 8192)
+            .Select(i => (float)(0.36 * Math.Sin(2 * Math.PI * i / 91.0)
+                + 0.11 * Math.Cos(2 * Math.PI * i / 37.0))).ToArray();
+        SampleSound sample = new(new SampleDefinition(id, "Long history PCM",
+            new ExternalAssetReference("long-history-pcm.wav")),
+            new MemorySampleData(48000, 1, pcm));
+        SourceResolver resolver = new(id, sample);
+        FmSynthGraph Graph(bool random) => new([
+            new FmSoundSourceNode(1, id, FmMultiNode.NeutralFrequencyHz),
+            new FmMultiNode(2, 1, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 800,
+                gainCompensation: true),
+        ], 2);
+        FmSynthSound original = new(Graph(true), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound revised = new(Graph(false), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        SoundState outgoingReference = original.CreateState();
+        held.SetNoiseSeed(137);
+        outgoingReference.SetNoiseSeed(137);
+        original.Render(context, held, 0, 200, new float[200]);
+        original.Render(context, outgoingReference, 0, 200, new float[200]);
+        held.PitchTrajectory.SetMultiplier(200, 1.3);
+        outgoingReference.PitchTrajectory.SetMultiplier(200, 1.3);
+        original.Render(context, held, 200, 600, new float[600]);
+        original.Render(context, outgoingReference, 200, 600, new float[600]);
+
+        original.TryPrepareRunningState(revised, held).Should().BeFalse(
+            "a changed onset requires worker-prepared independent Sample states");
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeTrue(
+            "the earlier integrated position is available, despite a >128-frame rewind");
+        using FirPreparationScheduler worker = new();
+        original.QueuePendingFirControls(held, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        original.AdoptPreparedFirControls(held);
+        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, held);
+
+        float[] actual = new float[160], outgoing = new float[160];
+        long beforeBytes = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, 800, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - beforeBytes).Should().Be(0L,
+            "a long rewind may only copy preallocated history, not allocate PCM state");
+        original.Render(context, outgoingReference, 800, outgoing.Length, outgoing);
+        for (int i = 0; i < actual.Length; i++)
+        {
+            double t = Math.Clamp(i / 64.0, 0.0, 1.0);
+            double weight = t * t * (3.0 - 2.0 * t);
+            double position = 800.0 + i * 1.3;
+            int frame0 = (int)Math.Floor(position);
+            float incoming = pcm[frame0]
+                + (pcm[frame0 + 1] - pcm[frame0])
+                    * (float)(position - frame0);
+            float expected = (float)(outgoing[i] * (1 - weight)
+                + incoming * weight);
+            actual[i].Should().BeApproximately(expected, 2e-5f,
+                "the incoming Sample must start at the previously integrated position");
+        }
+        actual[0].Should().Be(outgoing[0]);
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
     public void OutOfWindowVariableRateSampleOnsetKeepsScalarEditsLive()
     {
-        // An old randomized onset can be hundreds of frames ahead.
-        // Rewinding farther than the bounded stored integral must
-        // not substitute a current-rate approximation or starve an
-        // independent Constant edit.
+        // A very old randomized onset has both children more than
+        // 1024 frames ahead. Even the larger retained history cannot
+        // reach the target and must neither guess a position nor starve
+        // an independent Constant edit.
         ObjectId id = (ObjectId)7622U;
         float[] pcm = Enumerable.Range(0, 16384)
             .Select(i => (float)(0.4 * Math.Sin(2 * Math.PI * i / 87.0)))
@@ -1539,7 +1616,7 @@ public sealed class FmSynthMultiTests
         FmSynthGraph Graph(bool random, double gain) => new([
             new FmSoundSourceNode(1, id, FmMultiNode.NeutralFrequencyHz),
             new FmMultiNode(2, 1, voiceCount: 2, detune: 0,
-                randomizePhase: random, cycleLength: 800,
+                randomizePhase: random, cycleLength: 5000,
                 gainCompensation: true),
             new FmConstantNode(3, gain),
             new FmOperatorNode(4, FmOperatorKind.Add, [2, 3]),
