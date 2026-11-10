@@ -1885,3 +1885,104 @@ Source/Sample playback positions and nested Multi. All-property
 audition completion and physical listening remain TODOs.
 
 PR #12 stays **draft and unmerged**.
+
+## Thirty-second slice: direct Sample source playheads in live Multi onset crossfades
+
+The first Source/Sample milestone extends the bounded 64-frame
+off-thread-prepared Multi onset transition to a tightly specified
+**direct Sample-backed Source node**. This is a different kind of
+state migration from oscillator phase and OnePole integrators:
+SampleSound's position is a sub-frame **integral of its source
+pitch curve**, not just the most recently requested frequency.
+It cannot be reset, copied as a nominal output-frame index, or
+replayed from the beginning inside the PCM callback.
+
+**Eligible shape and assumptions**
+
+- A held, live-audition Multi note with unchanged constituent ratios,
+  whose child graph contains identical direct
+  `FmSoundSourceNode` Source nodes; the old/new compiler resolves
+  each to the **exact same existing SampleSound instance**.
+- Source ID, authored frequency, Constant mode, Exponential mode
+  and absence of a connected multiplier must match. Mono/stereo
+  bare Samples are allowed; Instrument selections, Source envelopes,
+  Source tone Filters, and other ISound types remain excluded.
+  The graph may still contain compatible independent Oscillators,
+  Constants, unbound OnePole IIR stages and stateless Operators.
+- Each actively sounding Source pitch curve must have a single,
+  **constant positive finite rate over its lifetime**. A history
+  with any previously accepted rate change is not approximated
+  as a constant. The Source must be sequential, not past a known
+  natural EOF, and not released; the parent must remain held.
+- The new/old deterministic Multi skip displacement is bounded.
+  The same prepared worker mailbox, latest-wins cancellation,
+  whole-voice preflight and no-overlapping-fades gates apply.
+
+**State transfer**
+
+`FmSourcePitchCurve` tracks whether its integrated rate has ever
+changed (a single flag checked on each chronological `SetFrame`),
+and exposes the last accepted source frame/rate. The Sample's
+`PitchTrajectory` can seed the cache of its sole existing segment
+at a chosen logical frame and accumulated position in O(1),
+without allocating another segment. A worker constructs an
+entirely independent new Sample invocation and `FmSourcePitchCurve`
+before acceptance; the worker never reads playing DSP state.
+
+At the ordered PCM publication boundary, the preflight validates
+every active child and its ready Source destination, including its
+sequential last frame, one-segment trajectory, original pitch scale,
+unmodified note configuration, release and natural-end states.
+The already-prepared recipient is positioned at:
+
+`newPosition = oldTrajectory.GetPosition(oldFrame)
+               + (newSkip - oldSkip) * constantSourceRate`
+
+The original accumulated position is queried one sequential frame
+ahead of its prior cache; the *constant-rate* precondition makes
+the offset delta exact in this supported shape. The new Sample
+inherits its fixed original pitch/speed scale, source-frame offset,
+playback offset and spatial position. Its preallocated trajectory
+receives `newPosition`, and its `FmSourcePitchCurve` is seeded
+immediately before the revised local frame so future frames
+continue integrating normally without reading any old historical
+frames. Outgoing and incoming Sample interpolators thereafter
+evolve independently through the 64-frame smoothstep fade.
+The first publication frame remains 100% the outgoing Sample.
+
+**Stale/unsupported history policy**
+
+A played Source that has already changed its rate or reached
+its known end cannot use this O(1) shortcut. Such onsets retain
+their captured phase instead of stalling the entire Synth revision
+forever: compatible scalar edits can still publish. This is not
+a claim that these general Source histories are fundamentally
+impossible; they require a prepared historical snapshot/replay
+or a different time-warp migration contract.
+
+**Regression contracts**
+
+- A one-frame randomized cycle (equal old/new skips) retains
+  **exact PCM** across 160 frames after the worker-prepared
+  migration, despite complex interpolated PCM source data.
+  The PCM `Render` call allocates **zero managed bytes**.
+- A second 3-voice Sample case changes a real seeded phase
+  offset, is exactly unchanged on the first publication sample,
+  becomes audibly different after the 64-frame fade and keeps
+  all samples finite.
+- A prior parent-pitch change causes a nonconstant Sample
+  Source trajectory; a simultaneous, compatible authored
+  Constant change outside the Multi must still publish.
+  This protects the durable *no starvation of independent
+  scalar edits* invariant, not a refusal of future full
+  Source-history support.
+
+**Still excluded / next work:** variable-rate integrated Sample
+positions and user-controlled seeks, full Instrument-selected
+Sample/Envelope/pan histories, Source assignment changes and
+crossfading two different source definitions, stereo tone-Filter
+histories, Source/Filter combinations with modulation, nested
+Multi state, incoming/outgoing Sample EOF during the fade,
+complex release tails, and full UI/live listening acceptance.
+The broad all-properties TODO remains open; PR #12 remains
+**draft and unmerged**.
