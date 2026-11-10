@@ -1631,3 +1631,83 @@ performance or change the native renderer's PCM semantics.
 The all-property TODO, explicit click-safe transition
 design, Source reassignment and Multi re-randomization
 remain outstanding; PR #12 stays draft and unmerged.
+
+## Twenty-ninth slice: first prepared Multi onset crossfade for held oscillators
+
+This slice begins the previously deferred audible adoption of
+`FmMultiNode.RandomizePhase` and `CycleLength` on **already initialized
+live-audition** constituents. It deliberately limits the first sound
+transition to **held** notes containing a **single unmodulated oscillator**
+as each Multi child, with **unchanged frequency ratios and identical
+oscillator properties** across the edit. It is not yet the general
+nested/Sample/Filter child transition architecture.
+
+Previously, an initialized child always retained its old skip/cycle,
+while subsequent fresh notes followed the edited onset. That existing
+policy is preserved for ordinary playback and for graphs outside this
+first eligible live-audition shape. On an eligible edit, the owner now
+marks the whole running-voice revision **pending**, instead of claiming
+immediate successful migration without updating the onset.
+
+- The existing bounded, per-voice, latest-wins Multi-expansion mailbox
+  snapshots whether each Multi needs onset replacements at its PCM
+  owner boundary. The worker reads only the **frozen next definition**,
+  saved scalar seed/pitch/speed and captured capacity/eligibility
+  flags—not live `FmSynthState` or active oscillator arrays.
+- The same scheduler's cancellable worker constructs detached child
+  `SoundInvocation` instances for the eligible existing constituents
+  in addition to any expansion children. This is done **off the PCM
+  producer**, without changing the outgoing children. Cancellation,
+  seed identity, revision matches and worker admission remain shared
+  with normal Multi expansion.
+- The nonallocating onset calculation has been extracted into
+  `InitializeMultiOnset` so both initial notes and prepared rephase
+  candidates use identical cycle rounding, deterministic hash and
+  skip-frame/fade rules. Likewise `MultiTransitionWeight` unifies
+  the established 64-frame smoothstep used by Multi gain/ratio glides
+  and the new dual-state crossfade.
+- After the existing whole-tree preflight passes, the PCM owner
+  attaches the **already constructed** child invocations at the
+  ordered publication boundary. For this identical unmodulated
+  oscillator shape only, it derives the replacement phase from the
+  outgoing oscillator's next phase and the difference between old/new
+  seeded skip offsets. The replacement's `NextFrame` is set to the
+  corresponding local frame, so **no unbounded history replay or
+  new SoundState construction occurs in the PCM callback**.
+- Over the next **64 outer frames**, each affected Multi child
+  renders both the outgoing and incoming state, with a bounded
+  smoothstep mix. The outgoing child's oscillator phase continues
+  advancing independently. The first edited frame uses only the
+  outgoing value, then the old state is released from the active
+  reference once the fade reaches full weight.
+- A subsequent onset edit arriving while an earlier fade is still
+  active can be worker-prepared, but is not published until the
+  previous 64-frame fade completes. This avoids an unbounded
+  incoming/outgoing state chain. A newer authored revision supersedes
+  pending worker plans using the existing mailbox versioning.
+  Non-onset scalar, ratio, Filter and Source updates retain their
+  previous admission behavior unless independently incompatible.
+- The initial scope does **not** reinterpret pitch-history changes
+  accumulated before the publication frame. The rephase delta is
+  defined using the oscillator's instantaneous prepared pitch at
+  publication. Rebuilding a full historic pitch/phase trajectory
+  off-worker is explicitly deferred to a later, more generalized
+  prepared-state transition; active phases and original note/release
+  lifetimes are retained wherever this narrow scope permits.
+
+Regressions assert deterministic seeded/cycle onset across split blocks,
+worker admission instead of immediate held-note publication, identical
+first edited PCM sample, genuinely changed audible phase after the
+64-frame window, zero failed worker preparations, and a second
+onset revision waiting for an existing fade rather than allocating
+a chain. Existing unrelated Multi growth and release tests remain
+mandatory invariants; *no* timing/underrun thresholds are asserted.
+
+**Outstanding for the next slices:** complete stateful Sample/Instrument,
+Source and Filter child crossfades, arbitrary nested Multi graphs, ratio
+and onset changes in the same publication, edited notes already in
+release, phase positioning under complex pitch trajectories, prepared
+replay semantics for non-oscillator descendants, state lifetime/CPU
+profiling under simultaneous transitions, all-property UI-driven tests
+and actual physical listening. Keep the full live audition TODO open
+and PR #12 **draft/unmerged**.
