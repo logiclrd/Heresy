@@ -287,6 +287,53 @@ internal sealed class FmFilterNodeProcessor
 		}
 	}
 
+	/// <summary>First prepared Multi onset migration: unchanged,
+	/// unmodulated OnePole-only audio stages. Their integrator histories
+	/// can be copied into preallocated independent stage state at the
+	/// publication boundary; other DSP families require a later policy.</summary>
+	internal bool CanRephasePreparedOnePoleHistoryTo(
+		FmFilterNodeProcessor next)
+	{
+		if (next is null || _audioIndex < 0 || _audioIndex != next._audioIndex
+			|| _initial is null || next._initial is null
+			|| _initial.DefinitionId != next._initial.DefinitionId
+			|| _bindings.Length != 0 || next._bindings.Length != 0
+			|| _effectiveStages.Length == 0
+			|| _effectiveStages.Length != next._effectiveStages.Length)
+			return false;
+		for (int i = 0; i < _effectiveStages.Length; i++)
+		{
+			ConfiguredFilterStage old = _effectiveStages[i];
+			ConfiguredFilterStage revised = next._effectiveStages[i];
+			if (old.Kind != FilterKind.OnePole || revised.Kind != FilterKind.OnePole
+				|| old.StageId != revised.StageId
+				|| _initial.GetStageGenerationForPersistence(old.StageId)
+					!= next._initial.GetStageGenerationForPersistence(revised.StageId)
+				|| old.Parameters.Parameters.Count != revised.Parameters.Parameters.Count)
+				return false;
+			foreach (FilterParameterDescriptor parameter in old.Parameters.Parameters)
+			{
+				if (!revised.Parameters.Parameters.Any(p =>
+					string.Equals(p.Name, parameter.Name,
+						StringComparison.OrdinalIgnoreCase))
+					|| old.Parameters.GetParameter(parameter.Name)
+						!= revised.Parameters.GetParameter(parameter.Name))
+					return false;
+			}
+		}
+		return true;
+	}
+
+	internal bool CanTransferPreparedOnePoleHistoryTo(
+		FmFilterNodeProcessor next, State? previous, State? prepared)
+		=> CanRephasePreparedOnePoleHistoryTo(next)
+			&& previous?.Chain is { } source
+			&& prepared?.Chain is { } destination
+			&& destination.CanCopyPreparedOnePoleHistoryFrom(source);
+
+	internal void TransferPreparedOnePoleHistoryTo(State previous, State prepared)
+		=> prepared.Chain!.CopyPreparedOnePoleHistoryFrom(previous.Chain!);
+
 	/// <summary>Check immutable Filter stage identity and wiring. Authored
 	/// values of connected numeric ports are fallback values: the running
 	/// modulation owns their effective DSP values. Unbound numeric edits
