@@ -1251,6 +1251,90 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void FrequencyRetuneAndDirectSampleOnsetEditShareTheOriginalPlayhead()
+    {
+        // A new Sample invocation is prepared with the *edited* frequency,
+        // but its migrated timeline must retain the old voice's pitch
+        // baseline. Otherwise the first frame aligns but the new playhead
+        // continues at the wrong rate after the crossfade.
+        ObjectId id = (ObjectId)7620U;
+        float[] pcm = Enumerable.Range(0, 8192)
+            .Select(i => (float)(0.3 * Math.Sin(2 * Math.PI * i / 79.0)
+                + 0.12 * Math.Cos(2 * Math.PI * i / 31.0))).ToArray();
+        SampleSound sample = new(new SampleDefinition(id, "Retunable PCM",
+            new ExternalAssetReference("retunable-sample.wav")),
+            new MemorySampleData(48000, 1, pcm));
+        SourceResolver resolver = new(id, sample);
+        double initialFrequency = FmMultiNode.NeutralFrequencyHz;
+        double editedFrequency = initialFrequency * 1.5;
+        FmSynthGraph Graph(bool random, double frequency) => new([
+            new FmSoundSourceNode(1, id, frequency),
+            new FmMultiNode(2, 1, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 0.001,
+                gainCompensation: true),
+        ], 2);
+        FmSynthSound original = new(Graph(false, initialFrequency), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound retunedOnly = new(Graph(false, editedFrequency), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound combinedEdit = new(Graph(true, editedFrequency), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState changing = original.CreateState();
+        SoundState retunedReference = original.CreateState();
+        SoundState oldReference = original.CreateState();
+        changing.SetNoiseSeed(7620);
+        retunedReference.SetNoiseSeed(7620);
+        oldReference.SetNoiseSeed(7620);
+        original.Render(context, changing, 0, 128, new float[128]);
+        original.Render(context, retunedReference, 0, 128, new float[128]);
+        original.Render(context, oldReference, 0, 128, new float[128]);
+
+        // This independent reference changes frequency at exactly frame
+        // 128 without changing the original Multi skip (which is zero).
+        original.TryPrepareRunningState(retunedOnly, retunedReference)
+            .Should().BeTrue();
+        original.CommitPreparedRunningState(retunedOnly, retunedReference);
+
+        original.TryPrepareRunningState(combinedEdit, changing).Should().BeFalse(
+            "the phase replacement must be worker-prepared before publication");
+        original.RequestMultiExpansionPreparation(combinedEdit, changing)
+            .Should().BeTrue(
+                "a simultaneous nonstructural Source frequency edit must not discard the new Multi onset");
+        using FirPreparationScheduler worker = new();
+        original.QueuePendingFirControls(changing, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        original.AdoptPreparedFirControls(changing);
+        original.TryPrepareRunningState(combinedEdit, changing).Should().BeTrue();
+        original.CommitPreparedRunningState(combinedEdit, changing);
+
+        float[] actual = new float[160], oldPcm = new float[160],
+            retunedPcm = new float[160];
+        long beforeBytes = GC.GetAllocatedBytesForCurrentThread();
+        combinedEdit.Render(context, changing, 128, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - beforeBytes).Should().Be(0L,
+            "a combined edit may copy existing state but never allocate on PCM");
+        original.Render(context, oldReference, 128, oldPcm.Length, oldPcm);
+        retunedOnly.Render(context, retunedReference, 128,
+            retunedPcm.Length, retunedPcm);
+        for (int i = 0; i < actual.Length; i++)
+        {
+            double t = Math.Clamp(i / 64.0, 0.0, 1.0);
+            double w = t * t * (3.0 - 2.0 * t);
+            float expected = (float)(oldPcm[i] * (1.0 - w)
+                + retunedPcm[i] * w);
+            actual[i].Should().BeApproximately(expected, 1e-5f,
+                "old Sample history must fade into the retuned, integrated playhead");
+        }
+        actual[0].Should().Be(oldPcm[0]);
+        actual.Skip(64).Should().Equal(retunedPcm.Skip(64),
+            "after the fade the new Sample must integrate the edited frequency");
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
     public void DirectSampleMultiLiveRephasePreservesExactIntegratedPositionWithoutPcmAllocations()
     {
         // Cycle length rounds to one frame. Although the authored
