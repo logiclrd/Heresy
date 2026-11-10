@@ -826,8 +826,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					when b.Definition is FmOperatorNode updated
 						&& operation.Operation == updated.Operation:
 					break;
-				case FmFilterNode
-					when a.Filter is { } filter
+				case FmFilterNode filterNode
+					when b.Definition is FmFilterNode revisedNode
+						&& filterNode.TailSeconds == revisedNode.TailSeconds
+						&& a.Filter is { } filter
 						&& b.Filter is { } revisedFilter
 						&& filter.CanRephasePreparedOnePoleHistoryTo(revisedFilter):
 					break;
