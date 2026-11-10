@@ -870,7 +870,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		if (!NeedsMultiOnsetReplacement(next, live, index))
 			return true;
 		if (live.PreparedExpansion?.Matches(next, live) != true
-			|| live.PreparedExpansion.Slots[index] is null)
+			|| live.PreparedExpansion.Slots[index] is not MultiVoice[] preparedSlots)
 			return false;
 		// Do not chain crossfades or interrupt an unfinished ratio/mix
 		// transition. The held voice keeps the latest pending edit and
@@ -884,6 +884,16 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			if (voice.OnsetFadeFrom is not null
 				|| voice.RatioAt(live.NextFrame) != ratios[j]
 				|| voice.MixAt(live.NextFrame) != mix)
+				return false;
+			bool changedOnset = voice.HasStarted && voice.Initialized
+				&& (voice.Definition.RandomizePhase != layout.RandomizePhase
+					|| ((voice.Definition.RandomizePhase || layout.RandomizePhase)
+						&& voice.Definition.CycleLength != layout.CycleLength));
+			if (changedOnset
+				&& (preparedSlots[j] is not MultiVoice replacement
+					|| !voice.Sound.CanTransferPreparedOnsetHistoriesTo(
+						replacement.Sound, voice.Invocation.State,
+						replacement.Invocation.State)))
 				return false;
 		}
 		return true;
@@ -1170,11 +1180,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return requested;
 	}
 
-	/// <summary>Adopt already worker-constructed oscillator histories.
-	/// For each independent unmodulated oscillator, shift only its phase by
-	/// the deterministic onset-offset delta, without replaying child samples
-	/// inside PCM. Eligibility guarantees identical stateless-operator graphs,
-	/// same ratios and held note configuration across the edit.</summary>
+	/// <summary>Adopt already worker-constructed oscillator and OnePole
+	/// histories. Shift each independent phase by the onset-offset delta,
+	/// then copy the still-sounding IIR integrators into separately prepared
+	/// Filter chains. No child construction, clones or replay in PCM.</summary>
 	private void AttachPreparedOscillatorOnset(
 		FmSynthState parent, int index,
 		MultiVoice outgoing, MultiVoice replacement, long frame)
@@ -1189,10 +1198,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			* parent.PitchTrajectory.GetMultiplier(frame);
 		created.PlaybackSpeedMultiplier = parent.PlaybackSpeedMultiplier;
 		created.Position = previous.Position;
-		// The parent prepared this immutable mono bus before the original
-		// note began. Reuse it: the generic multi-oscillator child would
-		// otherwise lazily allocate a RenderContext on its first PCM frame.
-		// Eligibility excludes all Source/Filter descendants.
+		// Reuse the parent's immutable preprepared mono bus. Generic
+		// oscillator/OnePole descendants must not lazily allocate a
+		// RenderContext on the replacement's first PCM sample.
 		created.MonoContext = parent.MonoContext
 			?? throw new InvalidOperationException(
 					"Multi onset migration requires a prepared mono child bus.");
@@ -1202,10 +1210,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			created.PitchMultiplier, created.PlaybackSpeedMultiplier,
 			parent.SampleRate);
 
-		// Each independent oscillator has its own phase integration
-		// history. Stateless constants/operators need no migration, and
-		// modulation, Source, Filter and nested Multi are excluded by
-		// CanRephaseOscillatorGraph. No replay of skipped frames is needed.
+		// Each independent oscillator has its own phase history.
+		// Stateless constants/operators need no migration; unbound OnePole
+		// integrators are copied below. Other stateful nodes are excluded.
 		int offset = replacement.SkipFrames - outgoing.SkipFrames;
 		foreach (CompiledNode node in childGraph._nodes)
 		{
@@ -1220,6 +1227,15 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			phase -= Math.Floor(phase);
 			created.Phases[phaseIndex] = phase;
 		}
+		// Each destination Filter chain was built and its channel states
+		// allocated by the worker. Copy the exact current OnePole integrator
+		// values at the publication boundary; old/new chains then evolve
+		// independently during the 64-frame crossfade.
+		FmSynthSound previousGraph = outgoing.Sound;
+		for (int i = 0; i < childGraph._nodes.Length; i++)
+			if (previousGraph._nodes[i].Filter is { } oldFilter)
+				oldFilter.TransferPreparedOnePoleHistoryTo(
+					previous.Filters[i]!, created.Filters[i]!);
 		created.SampleRate = parent.SampleRate;
 		created.NextFrame = checked(frame - outgoing.StartFrame
 			+ replacement.SkipFrames);
