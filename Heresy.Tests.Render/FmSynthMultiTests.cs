@@ -654,6 +654,141 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void MultiRephaseMigratesBothIndependentOscillatorsBehindStatelessOperators()
+    {
+        FmSynthGraph Graph(bool random) => new([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 109),
+            new FmOscillatorNode(2, FmOscillatorWaveform.Triangle, 236,
+                constant: true),
+            new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
+            new FmConstantNode(4, 0.4),
+            new FmOperatorNode(5, FmOperatorKind.Multiply, [3, 4]),
+            new FmMultiNode(6, 5, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 840,
+                gainCompensation: true),
+        ], 6);
+        FmSynthSound original = new(Graph(false), new EmptyEnvelopes(),
+            enableLiveMultiExpansion: true);
+        FmSynthSound revised = new(Graph(true), new EmptyEnvelopes(),
+            enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        SoundState referenceState = original.CreateState();
+        held.SetNoiseSeed(0xC0FFEE);
+        referenceState.SetNoiseSeed(0xC0FFEE);
+        original.Render(context, held, 0, 128, new float[128]);
+        original.Render(context, referenceState, 0, 128, new float[128]);
+
+        original.TryPrepareRunningState(revised, held).Should().BeFalse(
+            "every initialized oscillator in the graph needs a worker-prepared phase");
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeTrue();
+        using FirPreparationScheduler worker = new();
+        original.QueuePendingFirControls(held, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        original.AdoptPreparedFirControls(held);
+        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, held);
+        float[] after = new float[160];
+        float[] reference = new float[160];
+        revised.Render(context, held, 128, after.Length, after);
+        original.Render(context, referenceState, 128, reference.Length, reference);
+        after[0].Should().Be(reference[0],
+            "the first publication frame must contain only the outgoing graph");
+        after.Should().OnlyContain(x => float.IsFinite(x));
+        Enumerable.Range(65, 95).Max(i => Math.Abs(after[i] - reference[i]))
+            .Should().BeGreaterThan(0.05f,
+                "both oscillator phases must adopt the seeded onset after the fade");
+        worker.PreparedMultiConstituentCount.Should().Be(2);
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
+    public void MultiOnsetCrossfadeReleasesBothChildHistoriesAtTheOriginalNoteEnd()
+    {
+        FmSynthGraph Graph(bool random) => new([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 170),
+            new FmOscillatorNode(2, FmOscillatorWaveform.Square, 230),
+            new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
+            new FmMultiNode(4, 3, voiceCount: 3, detune: 0,
+                randomizePhase: random, cycleLength: 1100,
+                gainCompensation: true),
+        ], 4);
+        FmSynthSound original = new(Graph(false), new EmptyEnvelopes(),
+            enableLiveMultiExpansion: true);
+        FmSynthSound revised = new(Graph(true), new EmptyEnvelopes(),
+            enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        SoundState referenceState = original.CreateState();
+        held.SetNoiseSeed(44);
+        referenceState.SetNoiseSeed(44);
+        original.Render(context, held, 0, 80, new float[80]);
+        original.Render(context, referenceState, 0, 80, new float[80]);
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeTrue();
+        using FirPreparationScheduler worker = new();
+        original.QueuePendingFirControls(held, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        original.AdoptPreparedFirControls(held);
+        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, held);
+
+        // Note Off occurs at frame 96, during the 80..143 crossfade.
+        // All children must end at frame 97, not acquire a fresh 64-frame
+        // release tail or extend playback to the new random phase offset.
+        held.NoteOffTime = TimeSpan.FromSeconds(96.0 / 48000);
+        referenceState.NoteOffTime = held.NoteOffTime;
+        float[] after = new float[120];
+        float[] reference = new float[120];
+        revised.Render(context, held, 80, after.Length, after);
+        original.Render(context, referenceState, 80, reference.Length, reference);
+        after[0].Should().Be(reference[0]);
+        after.Should().OnlyContain(x => float.IsFinite(x));
+        after.Skip(17).Should().OnlyContain(x => x == 0f,
+            "the original note end must silence both fade histories");
+        revised.GetEndFrameExclusive(context, held).Should().Be(97,
+            "the transition must not prolong the natural release");
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
+    public void ModulatedOscillatorMultiRetainsOldOnsetWithoutAHistoryMigrationPolicy()
+    {
+        FmSynthGraph Graph(bool random) => new([
+            new FmConstantNode(1, 2),
+            new FmOscillatorNode(2, FmOscillatorWaveform.Sine, 140,
+                multiplierNodeId: 1),
+            new FmMultiNode(3, 2, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 1250,
+                gainCompensation: true),
+        ], 3);
+        FmSynthSound original = new(Graph(false), new EmptyEnvelopes(),
+            enableLiveMultiExpansion: true);
+        FmSynthSound reference = new(Graph(false), new EmptyEnvelopes(),
+            enableLiveMultiExpansion: true);
+        FmSynthSound updated = new(Graph(true), new EmptyEnvelopes(),
+            enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        SoundState referenceState = reference.CreateState();
+        original.Render(context, held, 0, 96, new float[96]);
+        reference.Render(context, referenceState, 0, 96, new float[96]);
+        original.RequestMultiExpansionPreparation(updated, held).Should().BeFalse(
+            "FM history cannot yet be reconstructed from a phase-offset delta");
+        original.TryPrepareRunningState(updated, held).Should().BeTrue();
+        original.CommitPreparedRunningState(updated, held);
+        float[] after = new float[192];
+        float[] expected = new float[192];
+        updated.Render(context, held, 96, after.Length, after);
+        reference.Render(context, referenceState, 96, expected.Length, expected);
+        after.Should().Equal(expected,
+            "unsupported modulation retains already-playing onset history");
+    }
+
+    [Test]
     public void SeededMultiOnsetCycleCalculationIsInvariantAcrossRenderSplits()
     {
         // The initial offset calculation is shared with upcoming prepared
