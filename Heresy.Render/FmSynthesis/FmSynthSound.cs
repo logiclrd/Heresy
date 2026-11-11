@@ -866,9 +866,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			&& _nodes[0].Definition is FmOscillatorNode
 			&& _nodes[0].InputIndices.Length == 0
 			? _nodes[0] : null;
+		// Noise is counter-based: its phase is (voice seed, node ID,
+		// output frame), so a revised audible Constant/Operator/Envelope
+		// can be crossfaded around it without transferring RNG state.
+		// Direct Sample leaves still require their separate bound-state
+		// compatibility preflight at publication.
 		_canFadeBoundedOutput = _nodes.All(node => node.Definition is
 			FmOscillatorNode or FmConstantNode or FmOperatorNode
-			or FmEnvelopeNode
+			or FmEnvelopeNode or FmNoiseNode
 			|| node.Definition is FmSoundSourceNode
 				&& node.Source is SampleSound);
 		_multiRatios = _nodes.Select(node => node.Definition is FmMultiNode multi
