@@ -42,6 +42,36 @@ public sealed class NodeEnvelopeCurve : IEnvelopeCurve
 		_mode = definition.SustainLoopMode;
 	}
 
+	/// <summary>
+	/// Two separately prepared frozen node curves can describe the exact
+	/// same envelope even when their objects have different identities.
+	/// Compare the complete captured sample-addressable shape without
+	/// hashing, allocating, or consulting mutable authoring definitions.
+	/// Only node curves can prove this equivalence; arbitrary scripted
+	/// envelopes remain identity-only.
+	/// </summary>
+	internal bool HasSameFrozenShapeAs(NodeEnvelopeCurve other)
+	{
+		if (ReferenceEquals(this, other))
+			return true;
+		if (_mode != other._mode || _ticks.Length != other._ticks.Length
+			|| _values.Length != other._values.Length
+			|| BitConverter.DoubleToInt64Bits(_start)
+				!= BitConverter.DoubleToInt64Bits(other._start)
+			|| BitConverter.DoubleToInt64Bits(_end)
+				!= BitConverter.DoubleToInt64Bits(other._end)
+			|| BitConverter.DoubleToInt64Bits(_last)
+				!= BitConverter.DoubleToInt64Bits(other._last))
+			return false;
+		for (int i = 0; i < _ticks.Length; i++)
+			if (BitConverter.DoubleToInt64Bits(_ticks[i])
+					!= BitConverter.DoubleToInt64Bits(other._ticks[i])
+				|| BitConverter.DoubleToInt64Bits(_values[i])
+					!= BitConverter.DoubleToInt64Bits(other._values[i]))
+				return false;
+		return true;
+	}
+
 	public double GetValue(
 		long activeFrame, int sampleRate, long? noteOffActiveFrame)
 	{
