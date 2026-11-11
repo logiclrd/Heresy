@@ -24,7 +24,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	private sealed class SourceVoice
 	{
 		public SourceVoice(SoundInvocation invocation, double originalOuterFactor,
-			double originalFrequencyHz)
+			double originalFrequencyHz, int? boundInstrumentToneSlot)
 		{
 			Invocation = invocation;
 			// The invocation retains its original state/configuration. A
@@ -33,11 +33,15 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			Sound = invocation.Sound;
 			OriginalOuterFactor = originalOuterFactor;
 			OriginalFrequencyHz = originalFrequencyHz;
+			BoundInstrumentToneSlot = boundInstrumentToneSlot;
 			Pitch = new FmSourcePitchCurve();
 			invocation.State.PitchTrajectory.SetCurve(0, Pitch);
 		}
 		public SoundInvocation Invocation { get; }
 		public ISound Sound { get; set; }
+		/// <summary>Instrument tone-table index bound when this voice was
+		/// created, not recomputed from a retuned pitch on the PCM thread.</summary>
+		public int? BoundInstrumentToneSlot { get; }
 		public double OriginalOuterFactor { get; }
 		// Child pitch and speed are *never* retroactively rescaled. Edits
 		// alter only the forward-integrated FmSourcePitchCurve.
@@ -848,13 +852,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				&& revised.Source is SampleSound prepared
 				&& sample.CanSharePreparedOnsetTimelineWith(prepared)
 				&& sample.SourceChannelCount is >= 1 and <= 2
-				// Equivalent frozen data-driven tone maps can also use
-				// separately prepared Instrument wrappers. Their selected
-				// terminal Sample PCM, invocation snapshot and release state
-				// must still agree in the worker-prepared child preflight.
+				// Compare just the frozen pitch-to-table-slot geometry
+				// initially. Each existing note has already snapshotted
+				// its selected tone slot at binding; before enqueueing any
+				// worker we compare that specific tone, and after worker
+				// completion the terminal Sample/Envelope proof still runs.
 				|| old.Source is InstrumentSound instrument
 					&& revised.Source is InstrumentSound preparedInstrument
-					&& instrument.CanShareFrozenToneSelectionWith(
+					&& instrument.CanShareFrozenSelectionGeometryWith(
 						preparedInstrument));
 	}
 
@@ -997,6 +1002,29 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return true;
 	}
 
+	/// <summary>Every *running* Instrument Source has already selected
+	/// a tone when its invocation was created outside PCM. Only that
+	/// selected tone must match the revision's frozen table. Other notes
+	/// and their tone definitions may have changed. No selection, log2,
+	/// resolver call or allocation occurs on the realtime path.</summary>
+	private bool HasCompatibleBoundInstrumentTones(
+		FmSynthSound revised, SoundState activeState)
+	{
+		FmSynthState active = ValidateState(activeState);
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			if (_nodes[i].Definition is not FmSoundSourceNode
+				|| _nodes[i].Source is not InstrumentSound original)
+				continue;
+			if (revised._nodes[i].Source is not InstrumentSound updated
+				|| active.Sources[i] is not SourceVoice voice
+				|| !original.CanShareFrozenBoundToneWith(
+					updated, voice.BoundInstrumentToneSlot))
+				return false;
+		}
+		return true;
+	}
+
 	/// <summary>A frozen tone-map comparison proves which Source IDs the
 	/// data-driven Instrument will select, not what a separate song
 	/// resolver supplies for those IDs. Once the worker has constructed
@@ -1016,7 +1044,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				continue;
 			SourceVoice? old = before.Sources[i];
 			SourceVoice? prepared = after.Sources[i];
-			if (old?.Sound is not SampleSound sourceSample
+			if (old?.BoundInstrumentToneSlot != prepared?.BoundInstrumentToneSlot
+				|| old?.Sound is not SampleSound sourceSample
 				|| prepared?.Sound is not SampleSound preparedSample
 				|| !sourceSample.CanSharePreparedOnsetTimelineWith(preparedSample)
 				|| old.Invocation.Configuration
@@ -1096,7 +1125,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				long local = live.NextFrame - active.StartFrame;
 				if (local < 0 || local > long.MaxValue - active.SkipFrames
 					|| !originalChild.HasContinuingDirectSampleState(
-						active.Invocation.State, local + active.SkipFrames))
+						active.Invocation.State, local + active.SkipFrames)
+					|| !originalChild.HasCompatibleBoundInstrumentTones(
+						updatedChild, active.Invocation.State))
 					return false;
 			}
 			return true;
@@ -1708,9 +1739,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			CheckCancellation();
 			if (invocation is not null)
 			{
+				// One-time selected tone capture belongs to note/worker
+				// construction. Later PCM adoption compares this exact
+				// bound table slot, never re-selects against live pitch.
+				int? boundTone = sound is InstrumentSound instrument
+					? instrument.CaptureFrozenBoundToneIndex(childPitch) : null;
 				SourceVoice voice = new(invocation,
 					node.Constant ? 1.0 : pitchMultiplier * playbackSpeedMultiplier,
-					node.FrequencyHz);
+					node.FrequencyHz, boundTone);
 				// For a frozen live plan, even expensive maximum/minimum-phase
 				// FIR designs are already immutable: this only instantiates
 				// per-voice histories from prepared plans at the note boundary.
