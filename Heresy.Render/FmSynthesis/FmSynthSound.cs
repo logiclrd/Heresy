@@ -999,8 +999,6 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| original.Filters is not null || replacement.Filters is not null
 			|| original.FilterEnvelopeState is not null
 			|| replacement.FilterEnvelopeState is not null
-			|| previous.ReleaseIsControlledByVolumeEnvelope
-				!= destination.ReleaseIsControlledByVolumeEnvelope
 			|| previous.NaturalEndFrameExclusive.HasValue
 			|| previous.HasNoteOffTime
 			|| !(original.OriginalFrequencyHz > 0.0)
@@ -1019,8 +1017,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| !CanSharePreparedVolumeConfiguration(
 				original.Invocation.Configuration,
 				replacement.Invocation.Configuration)
-			|| (envelopes.Volume is not null
-				&& !previous.ReleaseIsControlledByVolumeEnvelope))
+			|| (envelopes.Volume is not null))
 			return false;
 		// The new Source must inherit the old Instrument's envelope clock
 		// even if its Multi phase offset has changed. Reject overflow
@@ -1178,9 +1175,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				|| old.Invocation.ToneFilters is not null
 				|| prepared.Invocation.ToneFilters is not null
 				|| old.Invocation.State is not SampleSoundState oldSample
-				|| prepared.Invocation.State is not SampleSoundState newSample
-				|| oldSample.ReleaseIsControlledByVolumeEnvelope
-					!= newSample.ReleaseIsControlledByVolumeEnvelope)
+				|| prepared.Invocation.State is not SampleSoundState newSample)
 				return false;
 		}
 		return true;
@@ -1712,7 +1707,6 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| live.Sources[0] is not { } voice
 			|| voice.Sound is not SampleSound currentSample
 			|| voice.Invocation.State is not SampleSoundState sampleState
-			|| !sampleState.ReleaseIsControlledByVolumeEnvelope
 			|| voice.InputFinished
 			|| voice.EndFrame is long end && end <= live.NextFrame
 			|| sampleState.NaturalEndFrameExclusive is long natural
