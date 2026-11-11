@@ -196,12 +196,58 @@ public sealed class NodeEnvelopePlaybackTests
 		using PreparedIncrementalPlaybackPlan plan = factory.Create(song, patternId);
 		float[] pcm = new float[300];
 		plan.Source.Render(pcm.Length, pcm);
-		Assert.That(pcm.Skip(80).Take(15).Any(v => Math.Abs(v) > 0.02f),
+		Assert.That(pcm.Skip(90).Take(30).Any(v => Math.Abs(v) > 0.02f),
 			Is.EqualTo(!shouldRetireEarly),
 			"Once short Volume release finishes, a nonzero terminal gain "
 			+ "must leave the long Pitch release audible");
 		Assert.That(pcm.Skip(220), Is.All.EqualTo(0f).Within(1e-6f),
 			"All completed release lifecycles must retire");
+	}
+
+	[TestCase(EnvelopeSustainLoopMode.Forward, true)]
+	[TestCase(EnvelopeSustainLoopMode.PingPong, true)]
+	[TestCase(EnvelopeSustainLoopMode.None, false)]
+	public void InstrumentPitchReleaseKeepsUnsustainedNestedSynthAlive(
+		EnvelopeSustainLoopMode loop, bool hasRelease)
+	{
+		SongDocument song = new();
+		ObjectId envelopeId = song.AllocateObjectId();
+		NodeEnvelopeDefinition envelope = new(envelopeId, "Pitch-only release");
+		envelope.ReplaceCurve([
+			new(TimeSpan.Zero, 0.0),
+			new(TimeSpan.FromMilliseconds(10), 0.0),
+			new(TimeSpan.FromMilliseconds(20), 0.0),
+			new(TimeSpan.FromMilliseconds(90), 0.0),
+		], 1, 2, loop);
+		song.Add(envelope);
+		ObjectId synthId = song.AllocateObjectId();
+		song.Add(new FmSynthDefinition(synthId, "Unsustained child",
+			new FmSynthGraph([new FmConstantNode(0, 0.5)], 0)));
+		ObjectId instrumentId = song.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Pitch release parent");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = synthId, PitchEnvelopeId = envelopeId,
+		});
+		instrument.ToneTable.Add(0);
+		song.Add(instrument);
+		ObjectId patternId = song.AllocateObjectId();
+		song.Add(new ScriptPatternDefinition(patternId, "Nested release")
+		{
+			RowCount = 4, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({instrumentId.Value})); Off(0.5, 0);",
+		});
+		PreparedIncrementalPlaybackFactory factory = new(
+			new RenderConfiguration(1000,
+				[new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0)]));
+		using PreparedIncrementalPlaybackPlan plan = factory.Create(song, patternId);
+		float[] pcm = new float[320];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm.Skip(75).Take(30).Any(v => Math.Abs(v) > 0.1f),
+			Is.EqualTo(hasRelease),
+			"Pitch-only sustain must protect the unlooped child source");
+		Assert.That(pcm.Skip(250), Is.All.EqualTo(0f).Within(1e-6f),
+			"Pitch release completion or a Definite cut must end the note");
 	}
 
 	private static byte[] ConstantSample()
