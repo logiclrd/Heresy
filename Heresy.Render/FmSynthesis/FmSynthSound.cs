@@ -866,16 +866,19 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			&& _nodes[0].Definition is FmOscillatorNode
 			&& _nodes[0].InputIndices.Length == 0
 			? _nodes[0] : null;
-		// Noise is counter-based: its phase is (voice seed, node ID,
-		// output frame), so a revised audible Constant/Operator/Envelope
-		// can be crossfaded around it without transferring RNG state.
-		// Direct Sample leaves still require their separate bound-state
-		// compatibility preflight at publication.
+		// Counter-based Noise has no mutable history. Filter nodes do:
+		// a continuing configured Filter may take the same scalar
+		// *final-output* fade only if its existing DSP history remains
+		// compatible and active. Source PCM has a separate bound-identity
+		// check. All of these decisions use prepared graph metadata.
 		_canFadeBoundedOutput = _nodes.All(node => node.Definition is
 			FmOscillatorNode or FmConstantNode or FmOperatorNode
 			or FmEnvelopeNode or FmNoiseNode
 			|| node.Definition is FmSoundSourceNode
-				&& node.Source is SampleSound);
+				&& node.Source is SampleSound
+			|| node.Definition is FmFilterNode
+					{ AudioInputNodeId: not null, Configuration: not null }
+				&& node.Filter is not null);
 		_multiRatios = _nodes.Select(node => node.Definition is FmMultiNode multi
 			? multi.GetFrequencyRatios() : Array.Empty<double>()).ToArray();
 		_multiReserve = new int[_nodes.Length];
@@ -909,11 +912,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		}
 
 
-		// Only Operator edges carry a value into another *audio value*.
-		// Do not traverse an Oscillator's multiplier input: that input
-		// retunes its phase integrator but does not add or scale its
-		// instantaneous output sample. A control-only edit must not
-		// trigger an unnecessary graph-output freeze.
+		// Follow actual audible inputs through Operators and the Filter
+		// audio input (always the first compiled Filter input). Do NOT
+		// traverse Filter numeric-control ports or Oscillator/Source pitch
+		// multiplier inputs: those change DSP controls, not the audible
+		// signal being multiplied or mixed at the final output.
 		void MarkAudibleNode(int index)
 		{
 			if (_statelessAudioPathNodes[index])
@@ -922,6 +925,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			if (_nodes[index].Definition is FmOperatorNode)
 				foreach (int input in _nodes[index].InputIndices)
 					MarkAudibleNode(input);
+			else if (_nodes[index].Definition is FmFilterNode
+					{ AudioInputNodeId: not null })
+				MarkAudibleNode(_nodes[index].InputIndices[0]);
 		}
 
 		int CountMultiVoices(int id)
@@ -1884,6 +1890,27 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return true;
 	}
 
+	/// <summary>Additional bounded-audio-fade guard for continuing Filter
+	/// histories. The full voice preflight has already admitted each
+	/// Filter's immutable stage/wiring compatibility; this check only
+	/// excludes completed tails and Note-Off lifecycles that cannot be
+	/// represented by a scalar held-output transition. No Filter chain
+	/// or prepared coefficient state is created inside PCM.</summary>
+	private bool CanFadeBoundFilterOutputs(FmSynthSound next, FmSynthState live)
+	{
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			if (_nodes[i].Definition is not FmFilterNode)
+				continue;
+			if (live.HasNoteOffTime
+				|| next._nodes[i].Definition is not FmFilterNode
+				|| _nodes[i].Filter is null || next._nodes[i].Filter is null
+				|| live.Filters[i]?.Chain is not { IsInputFinished: false })
+				return false;
+		}
+		return true;
+	}
+
 	/// <summary>Commit only an entirely preflighted state tree. No validation
 	/// after this boundary can leave multiple Filters partially updated.</summary>
 	public void CommitPreparedRunningState(FmSynthSound next, SoundState state)
@@ -1919,7 +1946,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				|| (_canFadeBoundedOutput
 					&& next._canFadeBoundedOutput
 					&& !_isMultiInputSubgraph && !next._isMultiInputSubgraph
-					&& CanFadeBoundSampleOutputs(next, live))))
+					&& CanFadeBoundSampleOutputs(next, live)
+					&& CanFadeBoundFilterOutputs(next, live))))
 			for (int i = 0; i < _nodes.Length; i++)
 			{
 				if (!_statelessAudioPathNodes[i])
