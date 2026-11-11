@@ -807,7 +807,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				// never in CreateInvocation or EvaluateFrame.
 				soundResolver!.TryResolve(sourceNode.SourceId,
 					mixdown: false, out sourceSound);
-				if (_allowMultiExpansion && ordered.Count == 1
+				if (_allowMultiExpansion
 					&& sourceSound is InstrumentSound directInstrument)
 					directInstrument.PrepareDirectSampleVolumesForLiveAudition();
 			}
@@ -1689,28 +1689,25 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		replacement.BeginPreparedOnsetFade(outgoing, frame);
 	}
 
-	/// <summary>For the first Instrument-envelope migration, every potentially
-	/// expensive Sample/curve lookup was frozen when the replacement Synth
-	/// was compiled. A single direct Source avoids partial branch migration.
-	/// Its selected tone, PCM identity, release policy and original note clock
-	/// remain unchanged; only the immutable node Volume function is replaced.
-	/// Unsupported, ended, filtered or compound voices keep their old curve
-	/// without preventing otherwise compatible Synth scalar updates.</summary>
-	private bool TryGetLiveDirectInstrumentVolume(
-		FmSynthSound next, FmSynthState live,
+	/// <summary>Preflight one continuing Instrument-backed Source using only
+	/// immutable, off-PCM prepared selected-tone and terminal Sample data.
+	/// A compound graph can contain several independent Instrument voices;
+	/// none of their Volume curves may be changed until all participants
+	/// pass the same selected-tone, PCM, envelope and release proof.
+	/// Unrecognized or filtered tone histories stay on the old curves.</summary>
+	private bool TryGetLiveInstrumentVolume(
+		FmSynthSound next, FmSynthState live, int index,
 		out SourceVoice? continuing, out NodeEnvelopeCurve? edited)
 	{
 		continuing = null;
 		edited = null;
 		if (!_allowMultiExpansion || !next._allowMultiExpansion
-			|| _nodes.Length != 1 || next._nodes.Length != 1
-			|| _outputIndex != 0 || next._outputIndex != 0
-			|| _nodes[0].Definition is not FmSoundSourceNode oldSource
-			|| next._nodes[0].Definition is not FmSoundSourceNode newSource
+			|| _nodes[index].Definition is not FmSoundSourceNode oldSource
+			|| next._nodes[index].Definition is not FmSoundSourceNode newSource
 			|| oldSource.SourceId != newSource.SourceId
-			|| _nodes[0].Source is not InstrumentSound oldInstrument
-			|| next._nodes[0].Source is not InstrumentSound newInstrument
-			|| live.Sources[0] is not { } voice
+			|| _nodes[index].Source is not InstrumentSound oldInstrument
+			|| next._nodes[index].Source is not InstrumentSound newInstrument
+			|| live.Sources[index] is not { } voice
 			|| voice.Sound is not SampleSound currentSample
 			|| voice.Invocation.State is not SampleSoundState sampleState
 			|| voice.InputFinished
@@ -1723,7 +1720,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| voice.Invocation.Configuration.Envelopes.Pitch is not null
 			|| voice.Invocation.Configuration.Envelopes.Panning is not null
 			|| voice.Invocation.Configuration.Envelopes.Filter is not null
-			|| voice.ActiveVolumeEnvelope is not NodeEnvelopeCurve existing
+			|| voice.ActiveVolumeEnvelope is not NodeEnvelopeCurve
 			|| !oldInstrument.CanShareFrozenBoundToneWith(
 				newInstrument, voice.BoundInstrumentToneSlot)
 			|| !newInstrument.TryGetPreparedDirectSampleVolume(
@@ -1731,11 +1728,33 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				out NodeEnvelopeCurve? newCurve)
 			|| newSample is null || newCurve is null
 			|| !currentSample.CanSharePreparedOnsetTimelineWith(newSample)
-			|| currentSample.NewNotePolicy != newSample.NewNotePolicy
-			|| existing.HasSameFrozenShapeAs(newCurve))
+			|| currentSample.NewNotePolicy != newSample.NewNotePolicy)
 			return false;
 		continuing = voice;
 		edited = newCurve;
+		return true;
+	}
+
+	/// <summary>The Volume migration is its own all-or-none transaction:
+	/// a rejected Instrument child does not undo otherwise compatible
+	/// parent scalar/Filter adoption, but no other Instrument Source in
+	/// this graph receives half of the edited shared-Volume generation.
+	/// A Source with no active node Volume curve has nothing to migrate.
+	/// This gate never selects a tone, resolves an asset, or allocates.</summary>
+	private bool CanAdoptLiveInstrumentVolumes(
+		FmSynthSound next, FmSynthState live)
+	{
+		if (!_allowMultiExpansion || !next._allowMultiExpansion)
+			return false;
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			if (_nodes[i].Source is not InstrumentSound
+				|| live.Sources[i]?.ActiveVolumeEnvelope is not NodeEnvelopeCurve)
+				continue;
+			if (!TryGetLiveInstrumentVolume(next, live, i,
+				out _, out _))
+				return false;
+		}
 		return true;
 	}
 
@@ -1744,12 +1763,23 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	public void CommitPreparedRunningState(FmSynthSound next, SoundState state)
 	{
 		FmSynthState live = ValidateState(state);
-		// This is a single-source, snapshot-proved transition. Everything
-		// referenced here is already frozen: no tone selection, asset lookup,
-		// new SampleSoundState, or worker allocation occurs in PCM.
-		if (TryGetLiveDirectInstrumentVolume(next, live,
-			out SourceVoice? volumeVoice, out NodeEnvelopeCurve? volumeCurve))
-			volumeVoice!.AdoptPreparedNodeVolume(volumeCurve!, live.NextFrame);
+		// Probe all active Instrument Volume children before changing any.
+		// This remains entirely frozen PCM-owner work: no Source resolution,
+		// tone selection, Sample state construction, or managed allocation.
+		// Incompatible branches retain their old gain without starving the
+		// independently safe graph parameter changes below.
+		if (CanAdoptLiveInstrumentVolumes(next, live))
+			for (int i = 0; i < _nodes.Length; i++)
+			{
+				if (live.Sources[i]?.ActiveVolumeEnvelope is not NodeEnvelopeCurve oldCurve
+					|| _nodes[i].Source is not InstrumentSound)
+					continue;
+				// All participating children passed the preflight above.
+				TryGetLiveInstrumentVolume(next, live, i,
+					out SourceVoice? volumeVoice, out NodeEnvelopeCurve? volumeCurve);
+				if (!oldCurve.HasSameFrozenShapeAs(volumeCurve!))
+					volumeVoice!.AdoptPreparedNodeVolume(volumeCurve!, live.NextFrame);
+			}
 		// Shape-only discontinuities are audible when an inspector replaces
 		// a single oscillator's Waveform, Curvature or Vmin/Vmax. Preserve
 		// the previous actual PCM value and smoothly join the prepared new
