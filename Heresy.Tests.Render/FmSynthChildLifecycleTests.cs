@@ -68,6 +68,39 @@ public sealed class FmSynthChildLifecycleTests
         Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(2));
     }
 
+    [TestCase(true)]
+    [TestCase(false)]
+    public void IndefiniteNoteOffDoesNotCutUnsustainedSample(bool looping)
+    {
+        Registry registry = new();
+        registry.Add(SampleId, MakeSample([1, 2, 3, 4], 8, loop: looping));
+        FmSynthSound synth = MakeSynth(registry, [
+            new FmSoundSourceNode(0, SampleId, C4),
+        ]);
+        SoundState state = synth.CreateState();
+        state.NoteOffDisposition = NoteOffDisposition.Indefinite;
+        state.NoteOffTime = TimeSpan.FromSeconds(2.0 / 8);
+        RenderContext context = Mono(8);
+        Assert.That(synth.HasSustainRelease(state), Is.False);
+        Assert.That(synth.GetEndFrameExclusive(context, state),
+            Is.Null, "the Indefinite event itself cannot end the Source");
+        float[] samples = new float[8];
+        synth.Render(context, state, 0, samples.Length, samples);
+        if (looping)
+        {
+            Assert.That(samples, Is.EqualTo(
+                new float[] { 1, 2, 3, 4, 1, 2, 3, 4 }));
+            Assert.That(synth.GetEndFrameExclusive(context, state), Is.Null);
+        }
+        else
+        {
+            Assert.That(samples, Is.EqualTo(
+                new float[] { 1, 2, 3, 4, 0, 0, 0, 0 }));
+            Assert.That(synth.GetEndFrameExclusive(context, state),
+                Is.EqualTo(4), "natural EOF still wins");
+        }
+    }
+
     [Test]
     public void InstrumentSampleSurvivesOffUntilItsVolumeEnvelopeFinishes()
     {
