@@ -136,6 +136,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				return held != 0.0 ? fadeEnd : null;
 			if (_outgoingVolumeEnvelope is not { } outgoing)
 				return null;
+			// An ended curve with a nonzero last node keeps providing
+			// that gain until the crossfade ends, not just its release EOF.
+			if (!outgoing.IsZeroAfterCompletion)
+				return fadeEnd;
 			long? end = outgoing.GetEndActiveFrameExclusiveAfterNoteOff(
 				envelopeNoteOffFrame, sampleRate);
 			return end.HasValue
