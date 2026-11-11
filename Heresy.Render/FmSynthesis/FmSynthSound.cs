@@ -64,6 +64,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		public ResonantFilterState? FilterEnvelopeState { get; set; }
 		public bool InputFinished { get; set; }
 		public long? EndFrame { get; set; }
+		// Gain is applied after tone Filters; a completed permanent-zero
+		// Volume envelope may silence this branch before other releases end.
+		public long? PostGainSilenceEnd { get; set; }
 
 		// The Instrument invocation's Sample/PitchTrajectory remain physically
 		// owned by the original note. Only an independently frozen node Volume
@@ -2496,9 +2499,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		if (voice is null)
 			return 0;
 		if (voice.EndFrame is not long end)
-			return null;
+			return voice.PostGainSilenceEnd;
 		long tail = voice.Filters?.PreparedTailFrames ?? 0;
-		return end > long.MaxValue - tail ? long.MaxValue : end + tail;
+		long withTail = end > long.MaxValue - tail ? long.MaxValue : end + tail;
+		return voice.PostGainSilenceEnd is long postGain
+			? Math.Min(withTail, postGain) : withTail;
 	}
 
 	private static long? GetOperatorSilenceEnd(
@@ -3277,6 +3282,30 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			// the parent graph's collective release lifetime. The parent
 			// caps this source after those releases, rather than faking a
 			// child Synth release or cutting its Sample at Note Off.
+			// The source's Volume gain is after all of its tone Filters.
+			// Once that curve is *finished* and permanently zero, the
+			// source is provably silent even if Pitch/Filter envelopes are
+			// still releasing. A nonzero terminal gain must not cut it.
+			voice.PostGainSilenceEnd = null;
+			if (state.NoteOffTime.HasValue
+				&& voice.ActiveVolumeEnvelope?.IsZeroAfterCompletion == true)
+			{
+				long off = checked(FrameTime.Ceiling(state.NoteOffTime.Value,
+					context.Configuration.SampleRate) + voice.EnvelopeFrameOffset);
+				long? finished = voice.ActiveVolumeEnvelope
+					.GetEndActiveFrameExclusiveAfterNoteOff(off,
+						context.Configuration.SampleRate);
+				if (finished.HasValue)
+				{
+					long silence = checked(finished.Value - voice.EnvelopeFrameOffset);
+					if (voice.GetOutgoingVolumeReleaseEnd(off,
+						context.Configuration.SampleRate) is long outgoingEnd)
+						silence = Math.Max(silence, outgoingEnd);
+					voice.PostGainSilenceEnd = silence;
+					childEnd = childEnd.HasValue
+						? Math.Min(childEnd.Value, silence) : silence;
+				}
+			}
 			// Once the zero-input tail has started, never reopen it merely
 			// because a child cannot project an updated pitch trajectory.
 			if (!voice.InputFinished)
