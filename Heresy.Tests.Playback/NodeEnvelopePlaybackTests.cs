@@ -153,6 +153,57 @@ public sealed class NodeEnvelopePlaybackTests
 		});
 	}
 
+	[TestCase(0.0, true)]
+	[TestCase(0.1, false)]
+	public void CompletedVolumeReleaseRetiresOnlyAtPermanentZero(
+		double finalVolume, bool shouldRetireEarly)
+	{
+		SongDocument song = new();
+		ObjectId pitchId = song.AllocateObjectId();
+		NodeEnvelopeDefinition pitch = new(pitchId, "Long Pitch release");
+		pitch.ReplaceCurve([
+			new(TimeSpan.Zero, 1.0),
+			new(TimeSpan.FromMilliseconds(10), 1.0),
+			new(TimeSpan.FromMilliseconds(120), 1.0),
+		], 1, 1, EnvelopeSustainLoopMode.Forward);
+		song.Add(pitch);
+		ObjectId volumeId = song.AllocateObjectId();
+		NodeEnvelopeDefinition volume = new(volumeId, "Short Volume release");
+		volume.ReplaceCurve([
+			new(TimeSpan.Zero, 1.0),
+			new(TimeSpan.FromMilliseconds(10), 1.0),
+			new(TimeSpan.FromMilliseconds(30), finalVolume),
+		], 1, 1, EnvelopeSustainLoopMode.Forward);
+		song.Add(volume);
+		ObjectId synthId = song.AllocateObjectId();
+		song.Add(new FmSynthDefinition(synthId, "Two releasing envelopes",
+			new FmSynthGraph([
+				new FmEnvelopeNode(1, pitchId),
+				new FmOscillatorNode(2, FmOscillatorWaveform.Square, 90,
+					multiplierNodeId: 1),
+				new FmEnvelopeNode(3, volumeId),
+				new FmOperatorNode(4, FmOperatorKind.Multiply, [2, 3]),
+			], 4)));
+		ObjectId patternId = song.AllocateObjectId();
+		song.Add(new ScriptPatternDefinition(patternId, "Release")
+		{
+			RowCount = 4, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({synthId.Value})); Off(0.5, 0);",
+		});
+		PreparedIncrementalPlaybackFactory factory = new(
+			new RenderConfiguration(1000,
+				[new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0)]));
+		using PreparedIncrementalPlaybackPlan plan = factory.Create(song, patternId);
+		float[] pcm = new float[300];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm.Skip(80).Take(15).Any(v => Math.Abs(v) > 0.02f),
+			Is.EqualTo(!shouldRetireEarly),
+			"Once short Volume release finishes, a nonzero terminal gain "
+			+ "must leave the long Pitch release audible");
+		Assert.That(pcm.Skip(220), Is.All.EqualTo(0f).Within(1e-6f),
+			"All completed release lifecycles must retire");
+	}
+
 	private static byte[] ConstantSample()
 	{
 		const int frames = 400;
@@ -225,9 +276,14 @@ public sealed class NodeEnvelopePlaybackTests
 		Assert.Multiple(() =>
 		{
 			Assert.That(chunked, Is.EqualTo(pcm).Within(1e-6f));
-			Assert.That(pcm.Skip(70).Take(25)
-				.Any(v => Math.Abs(v) > 0.5f), Is.True,
-				"Pitch envelope notes must keep sounding after Note Off");
+			if (loop == EnvelopeSustainLoopMode.None)
+				Assert.That(pcm.Skip(60).Take(35),
+					Is.All.EqualTo(0f).Within(1e-6f),
+					"No sustain loop means Definite Note Off must cut the sound");
+			else
+				Assert.That(pcm.Skip(70).Take(25)
+					.Any(v => Math.Abs(v) > 0.5f), Is.True,
+					"Any sustain-loop modulation keeps the note releasing");
 			Assert.That(pcm.Skip(200), Is.All.EqualTo(0f).Within(1e-6f),
 				"An oscillator with only a frequency envelope must "
 				+ "still retire when that release completes");
