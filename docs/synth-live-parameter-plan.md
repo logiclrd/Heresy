@@ -3832,3 +3832,7 @@ releasing note, or the complete all-property UI/device matrix.
 The Filter-output smoothing fixture awaits physical listening;
 PR #12 remains draft/unmerged and the broader all-nonstructural-
 property TODO remains open.
+
+### Slice 55 — local listening of Filter-contained output edits (2026-11-11)
+
+The user tested the suggested real-device **latched Test note** by inserting a **One-Pole Filter** between the continuing Sample Source and the Sample-side Operator, then changing its downstream Constant gain and switching that Operator's mode. Both changes produced the expected live result. This is **manual audio acceptance** of slice 55's bounded *Filter history preserved while audible downstream controls change* scenario. It does not constitute a separate listening test of changes to the Filter's own coefficients, Note Off during an active Filter tail, or every stateful topology.
