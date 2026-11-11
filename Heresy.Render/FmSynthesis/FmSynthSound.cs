@@ -718,11 +718,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	private readonly CompiledNode? _singleOutputOscillator;
 	// Audition-only smoothing of changes on an audible graph path uses a
 	// bounded output fade, not a second voice or reconstructed DSP state.
-	// Eligible nodes are stateless controls and direct Sample-backed Source
-	// leaves with an existing, independently validated bound playhead.
-	// Oscillator/Source FM inputs are controls, not audio paths.
-	// Instrument/Nested-Synth Source, Filter, and Multi transitions keep
-	// their own separate history/onset contracts.
+	// Eligible nodes are stateless controls, compatible direct Sample
+	// leaves, continuing Filters, and stable single-Oscillator Multi
+	// wrappers. Oscillator/Source FM inputs are not audio paths. Multi
+	// distribution, constituent shape, growth and onset revisions keep
+	// their separate history and crossfade transactions.
 	private readonly bool _canFadeBoundedOutput;
 	private readonly bool[] _statelessAudioPathNodes;
 	// All target ratios are calculated by the preparation worker, never
@@ -878,7 +878,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				&& node.Source is SampleSound
 			|| node.Definition is FmFilterNode
 					{ AudioInputNodeId: not null, Configuration: not null }
-				&& node.Filter is not null);
+				&& node.Filter is not null
+			|| node.Definition is FmMultiNode { InputNodeId: not null }
+				&& node.MultiInput?._singleOutputOscillator is not null);
 		_multiRatios = _nodes.Select(node => node.Definition is FmMultiNode multi
 			? multi.GetFrequencyRatios() : Array.Empty<double>()).ToArray();
 		_multiReserve = new int[_nodes.Length];
@@ -1911,6 +1913,70 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return true;
 	}
 
+	/// <summary>Allow only downstream audible controls to fade around a
+	/// stable, already-running Multi of independent Oscillators. Changing
+	/// constituent waveform/curvature, voice count, distribution or onset
+	/// has a separate child-state transition and cannot piggyback on the
+	/// graph-output hold. This guard is bounded and allocation-free.</summary>
+	private bool CanFadeStableMultiOutputs(FmSynthSound next, FmSynthState live)
+	{
+		if (!_hasMulti)
+			return true;
+		if (!next._hasMulti || live.HasNoteOffTime)
+			return false;
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			if (_nodes[i].Definition is not FmMultiNode previous)
+				continue;
+			if (next._nodes[i].Definition is not FmMultiNode revised
+				|| previous.InputNodeId != revised.InputNodeId
+				|| previous.Distribution != revised.Distribution
+				|| previous.Detune != revised.Detune
+				|| previous.VoiceCount != revised.VoiceCount
+				|| previous.HarmonicComponents != revised.HarmonicComponents
+				|| previous.ChordComponents != revised.ChordComponents
+				|| previous.RandomizePhase != revised.RandomizePhase
+				|| previous.GainCompensation != revised.GainCompensation
+				|| previous.CycleLength != revised.CycleLength
+				|| _nodes[i].MultiInput?._singleOutputOscillator?.Definition
+					is not FmOscillatorNode oldOsc
+				|| next._nodes[i].MultiInput?._singleOutputOscillator?.Definition
+					is not FmOscillatorNode newOsc
+				|| oldOsc.Id != newOsc.Id
+				|| oldOsc.Waveform != newOsc.Waveform
+				|| oldOsc.FrequencyHz != newOsc.FrequencyHz
+				|| oldOsc.Minimum != newOsc.Minimum
+				|| oldOsc.Maximum != newOsc.Maximum
+				|| oldOsc.Curvature != newOsc.Curvature
+				|| oldOsc.Constant != newOsc.Constant
+				|| oldOsc.ExponentialMultiplier != newOsc.ExponentialMultiplier
+				|| oldOsc.MultiplierNodeId != newOsc.MultiplierNodeId
+				|| _multiRatios[i].Length != next._multiRatios[i].Length
+				|| live.Multis[i].Length < _multiRatios[i].Length)
+				return false;
+			double targetMix = previous.GainCompensation
+				? 1.0 / _multiRatios[i].Length : 1.0;
+			for (int voiceIndex = 0; voiceIndex < live.Multis[i].Length; voiceIndex++)
+			{
+				MultiVoice voice = live.Multis[i][voiceIndex];
+				if (voiceIndex >= _multiRatios[i].Length)
+				{
+					if (voice.HasStarted || voice.OnsetFadeFrom is not null)
+						return false;
+					continue; // dormant preallocated headroom is inert
+				}
+				if (!voice.HasStarted || !voice.Initialized
+					|| voice.OnsetFadeFrom is not null
+					|| voice.SilenceEnd.HasValue
+					|| voice.Invocation.State.HasNoteOffTime
+					|| voice.RatioAt(live.NextFrame) != _multiRatios[i][voiceIndex]
+					|| voice.MixAt(live.NextFrame) != targetMix)
+					return false;
+			}
+		}
+		return true;
+	}
+
 	/// <summary>Commit only an entirely preflighted state tree. No validation
 	/// after this boundary can leave multiple Filters partially updated.</summary>
 	public void CommitPreparedRunningState(FmSynthSound next, SoundState state)
@@ -1947,7 +2013,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					&& next._canFadeBoundedOutput
 					&& !_isMultiInputSubgraph && !next._isMultiInputSubgraph
 					&& CanFadeBoundSampleOutputs(next, live)
-					&& CanFadeBoundFilterOutputs(next, live))))
+					&& CanFadeBoundFilterOutputs(next, live)
+					&& CanFadeStableMultiOutputs(next, live))))
 			for (int i = 0; i < _nodes.Length; i++)
 			{
 				if (!_statelessAudioPathNodes[i])
