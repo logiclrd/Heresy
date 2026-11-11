@@ -3350,3 +3350,53 @@ one Instrument→Synth case. This closes the broad *core lifecycle listening*
 gap while preserving exact untested subcases and performance qualifications.
 It does not authorize merging PR #12 or completing the independent
 all-nonstructural-Synth-property live-update TODO.
+
+## Slice 50 — audition-only Oscillator shape smoothing through stateless Operators
+
+The earlier direct one-Oscillator shape smoothing (Waveform, Curvature,
+Vmin/Vmax) worked only when that Oscillator was the Synth's entire output.
+The same nonstructural shape edit routed through an **Add or Multiply
+Operator** could abruptly change an already sounding note even though
+its oscillator phase and the rest of the graph were compatible.
+
+**Bounded adoption:** A live audition with a compiled graph containing
+only reachable **Oscillator, Constant and Operator** nodes now applies
+the same 64-output-frame cubic smoothstep to the **audible final graph
+output** when any contained Oscillator's Waveform, Curvature, Minimum or
+Maximum changes. Each Oscillator keeps its original independent phase
+integrator and continues advancing its new waveform normally. The
+outgoing value is the *last actual audible value of the entire graph*,
+not the first child Oscillator or a sum reconstructed from stale graph
+definitions. Once the fade completes, the exact new authored graph
+output is heard at its uninterrupted phase. A second edit during the
+fade starts from the currently blended final output. The compiled
+`Values` remain raw for control/modulation correctness; only the final
+`AudioValues` output is smoothed.
+
+**Scope/guards:** This is audition-only. The classifies-graph test is
+computed on the non-PCM compilation thread; publication performs a
+bounded scalar comparison and render adds no allocations or child
+states. Frequency-only edits do not fade. Non-audition playback/export
+retains the existing immediate sample values. Graphs involving **Sound
+Sources, Filters, Multi or compound Multi-generated children** are
+deliberately excluded: their continuity and onset transactions require
+separate prepared state-specific migration rather than treating their
+output history as a stateless oscillator.
+
+**Regression evidence:** New
+`FmSynthCompoundShapeLiveTests` exercises Add/Square,
+Multiply/Curvature and Add/Vmin-Vmax shape changes, each comparing all
+64 fading frames against the exact graph-level smoothstep oracle and
+checking post-fade phase equivalence and zero managed PCM allocations.
+A rapid Square→Sawtooth revision checks interruption against the
+last *blended* output; a frequency-only retune checks the absence of
+a gratuitous fade; ordinary non-audition rendering has its own
+negative-scope invariant.
+
+The first regression commit **failed red** as intended in
+[CI #43033101533](https://github.com/logiclrd/Heresy/actions/runs/43033101533):
+four new compound shape cases observed an immediate output jump, with
+the existing render tests unchanged. Implementation commits followed.
+Final CI qualification and real-device listening are separate from
+the red/green reasoning; the wider all-property live-edit milestone
+and draft/unmerged PR status remain unchanged.
