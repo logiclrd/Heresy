@@ -83,12 +83,58 @@ public sealed class InstrumentSound : ISound
 			}
 		}
 
+		// Capture the table slot once when a child invocation is bound
+		// off the PCM thread. Realtime edit preflight looks up that
+		// already-selected slot; it never recomputes a pitch-to-tone choice.
+		public int? CaptureSelectedTableIndex(double pitchMultiplier)
+		{
+			if (!(pitchMultiplier > 0.0) || !double.IsFinite(pitchMultiplier)
+				|| !(_divisions > 0.0) || !double.IsFinite(_divisions))
+				return null;
+			double continuous = Math.Log2(pitchMultiplier) * _divisions
+				+ _offset;
+			if (!double.IsFinite(continuous)
+				|| continuous < int.MinValue || continuous > int.MaxValue)
+				return null;
+			int index = checked((int)Math.Round(
+				continuous, MidpointRounding.AwayFromZero));
+			return (uint)index < (uint)_toneTable.Length
+				&& (uint)_toneTable[index] < (uint)_tones.Length
+				? index : null;
+		}
+
+		public bool HasSameSelectionGeometryAs(FrozenToneMap next)
+			=> _id == next._id && _divisions == next._divisions
+				&& _offset == next._offset
+				&& _nnaOverride == next._nnaOverride
+				&& _nnaFadeDuration == next._nnaFadeDuration;
+
+		private static bool SameTone(FrozenTone left, FrozenTone right)
+			=> left.SourceId == right.SourceId
+				&& left.PitchMultiplier == right.PitchMultiplier
+				&& left.Nna == right.Nna
+				&& left.VolumeEnvelopeId == right.VolumeEnvelopeId
+				&& left.PitchEnvelopeId == right.PitchEnvelopeId
+				&& left.PanningEnvelopeId == right.PanningEnvelopeId
+				&& left.FilterEnvelopeId == right.FilterEnvelopeId
+				&& ReferenceEquals(left.ToneFilter, right.ToneFilter);
+
+		public bool HasSameToneAtBoundSlotAs(FrozenToneMap next, int boundSlot)
+		{
+			if (!HasSameSelectionGeometryAs(next)
+				|| (uint)boundSlot >= (uint)_toneTable.Length
+				|| (uint)boundSlot >= (uint)next._toneTable.Length)
+				return false;
+			int oldTone = _toneTable[boundSlot];
+			int newTone = next._toneTable[boundSlot];
+			return (uint)oldTone < (uint)_tones.Length
+				&& (uint)newTone < (uint)next._tones.Length
+				&& SameTone(_tones[oldTone], next._tones[newTone]);
+		}
+
 		public bool HasSameSelectionAs(FrozenToneMap next)
 		{
-			if (_id != next._id || _divisions != next._divisions
-				|| _offset != next._offset
-				|| _nnaOverride != next._nnaOverride
-				|| _nnaFadeDuration != next._nnaFadeDuration
+			if (!HasSameSelectionGeometryAs(next)
 				|| _toneTable.Length != next._toneTable.Length
 				|| _tones.Length != next._tones.Length)
 				return false;
@@ -99,14 +145,7 @@ public sealed class InstrumentSound : ISound
 			{
 				FrozenTone left = _tones[i];
 				FrozenTone right = next._tones[i];
-				if (left.SourceId != right.SourceId
-					|| left.PitchMultiplier != right.PitchMultiplier
-					|| left.Nna != right.Nna
-					|| left.VolumeEnvelopeId != right.VolumeEnvelopeId
-					|| left.PitchEnvelopeId != right.PitchEnvelopeId
-					|| left.PanningEnvelopeId != right.PanningEnvelopeId
-					|| left.FilterEnvelopeId != right.FilterEnvelopeId
-					|| !ReferenceEquals(left.ToneFilter, right.ToneFilter))
+				if (!SameTone(left, right))
 					return false;
 			}
 			return true;
@@ -120,11 +159,34 @@ public sealed class InstrumentSound : ISound
 	/// Instrument definition. The terminal Sample PCM, selected envelope
 	/// objects and release policy are checked separately for each prepared
 	/// child invocation before publishing any onset state.</summary>
-	internal bool CanShareFrozenToneSelectionWith(InstrumentSound next)
+	/// <summary>The complete selection map need not be equal for a
+	/// held note to continue. Different frozen wrappers can be considered
+	/// only if they agree on the pitch-to-slot geometry and global NNA;
+	/// the particular bound slot is verified separately for every
+	/// already-running child before worker preparation.</summary>
+	internal bool CanShareFrozenSelectionGeometryWith(InstrumentSound next)
 		=> ReferenceEquals(this, next)
 			|| _frozenToneMap is { } oldMap
 				&& next._frozenToneMap is { } newMap
-				&& oldMap.HasSameSelectionAs(newMap);
+				&& oldMap.HasSameSelectionGeometryAs(newMap);
+
+	/// <summary>Snapshot the Instrument table index at note creation on
+	/// the worker/control boundary. Null identifies a non-data-driven
+	/// Instrument or a note without a selected tone.</summary>
+	internal int? CaptureFrozenBoundToneIndex(double originalPitch)
+		=> _frozenToneMap?.CaptureSelectedTableIndex(originalPitch);
+
+	/// <summary>No pitch-to-tone calculation or Source lookup occurs here:
+	/// compare only the immutable selected slot captured at Note On.
+	/// An identical scripted wrapper retains its previous eligibility,
+	/// but two independent script selectors cannot be equated this way.</summary>
+	internal bool CanShareFrozenBoundToneWith(
+		InstrumentSound next, int? originalBoundSlot)
+		=> ReferenceEquals(this, next)
+			|| originalBoundSlot is int index
+				&& _frozenToneMap is { } oldMap
+				&& next._frozenToneMap is { } newMap
+				&& oldMap.HasSameToneAtBoundSlotAs(newMap, index);
 
 	private readonly Func<double, ToneSpecification?> _selectTone;
     private readonly Func<double, ToneSpecification, InstrumentNnaSetting> _selectNna;
