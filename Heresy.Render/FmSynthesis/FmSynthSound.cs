@@ -2905,7 +2905,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		// after the final stateless Operator has produced audible output.
 		// The final AudioValues entry is blended too, so a rapid second
 		// edit correctly captures the previous *actual* audible output.
-		if (state.OscillatorShapeFadeFrom is double outgoing)
+		if (state.OscillatorShapeFadeFrom is double outgoingGraphOutput)
 		{
 			long delta = frame - state.OscillatorShapeFadeStartFrame;
 			if (delta >= MultiEditTransitionFrames)
@@ -2914,7 +2914,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			{
 				double weight = MultiTransitionWeight(
 					state.OscillatorShapeFadeStartFrame, frame);
-				state.AudioValues[_outputIndex] = outgoing * (1.0 - weight)
+				state.AudioValues[_outputIndex] = outgoingGraphOutput * (1.0 - weight)
 					+ state.AudioValues[_outputIndex] * weight;
 			}
 		}
