@@ -1619,7 +1619,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		// the previous actual PCM value and smoothly join the prepared new
 		// waveform over 64 frames. No child history or extra voice is made.
 		// Frequency-only edits keep their existing continuous phase policy.
-		if (_singleOutputOscillator?.Definition is FmOscillatorNode oldOsc
+		if (_allowMultiExpansion && next._allowMultiExpansion
+			&& _singleOutputOscillator?.Definition is FmOscillatorNode oldOsc
 			&& next._singleOutputOscillator?.Definition is FmOscillatorNode newOsc
 			&& (oldOsc.Waveform != newOsc.Waveform
 				|| oldOsc.Curvature != newOsc.Curvature
