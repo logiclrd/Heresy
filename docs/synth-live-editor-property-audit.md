@@ -646,3 +646,9 @@ independent Multi reference; no managed PCM allocations are
 allowed. Compound Multi-generated child shape, Filter/Source,
 multi-voice onset edits and release migration are **not** thereby
 qualified. The wider all-property TODO and draft PR remain open.
+
+### Slice 56 — manual mixed-property Multi listening acceptance
+
+The user auditioned an actual **Oscillator→Multi→Multiply with Constant** (the screenshot has Sine 440 Hz, Curvature 5, Spread seven voices, Constant 0.5) and reported correct realtime behavior **without audible clicks/pops** while editing Oscillator **Waveform, Curvature, Frequency Hz, Vmin, Vmax**; Multi **all three Distributions, Detune, Voice Count, Randomize Phase, Gain Compensation, Harmonic Components and Chord Components**; the downstream **Constant**; and the downstream **Operator Operation**.
+
+Mark these specified UI-to-audio paths as *physically listened to* for this fixture. Distinguish the unchanged-Multi downstream fade policy (slice 56) from the independent existing Multi property/onset transitions exercised during this exploratory test. This does **not** prove all timing combinations, exact crossfade math, release-in-progress behaviour, or compound Multi-contained audio/Filter/Sample migrations.
