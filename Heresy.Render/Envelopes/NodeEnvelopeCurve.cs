@@ -22,6 +22,9 @@ public sealed class NodeEnvelopeCurve : IEnvelopeCurve
 
 	private readonly record struct Position(double Ticks, int Direction);
 
+	public bool HasSustainLoop => _mode != EnvelopeSustainLoopMode.None;
+	public bool IsZeroAfterCompletion => _values[^1] == 0.0;
+
 	public NodeEnvelopeCurve(NodeEnvelopeDefinition definition)
 	{
 		ArgumentNullException.ThrowIfNull(definition);
@@ -166,11 +169,11 @@ public sealed class NodeEnvelopeCurve : IEnvelopeCurve
 
 	private double Interpolate(double ticks)
 	{
-		// The curve has no defined value after the final node, so it
-		// becomes silent. Do not normalize/clamp the last *node* value:
-		// it may deliberately be nonzero, negative, or above unity.
+		// A completed envelope holds its final value. Ending a release
+		// trajectory does not imply zero gain; the enclosing voice owns
+		// retirement, including the permanent-zero Volume special case.
 		if (ticks > _last)
-			return 0.0;
+			return _values[^1];
 		if (ticks <= _ticks[0])
 			return _values[0];
 
