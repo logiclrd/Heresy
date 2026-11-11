@@ -3836,3 +3836,64 @@ property TODO remains open.
 ### Slice 55 — local listening of Filter-contained output edits (2026-11-11)
 
 The user tested the suggested real-device **latched Test note** by inserting a **One-Pole Filter** between the continuing Sample Source and the Sample-side Operator, then changing its downstream Constant gain and switching that Operator's mode. Both changes produced the expected live result. This is **manual audio acceptance** of slice 55's bounded *Filter history preserved while audible downstream controls change* scenario. It does not constitute a separate listening test of changes to the Filter's own coefficients, Note Off during an active Filter tail, or every stateful topology.
+
+
+## Slice 56 — stable Multi output controls without constituent re-onset
+
+The preceding slice 55 listening test is now manually accepted for
+a continuing Sample passing through a One-Pole Filter, with edits to
+the downstream Constant gain and Operator operation.
+
+**Gap:** A live Synth can play multiple independently phased Oscillator
+constituents through a Multi while a downstream Constant or Operator
+changes. The revision already keeps all existing Multi voice states,
+but the old final output changed from the previous gain/mix to the
+new value in a single PCM frame. The bounded 64-frame audition output
+fade excluded any Multi node.
+
+**New strictly scoped compatibility:** The parent graph may contain a
+**Multi with a single direct Oscillator input** when the Multi itself
+is unchanged and all authored constituent settings (Distribution,
+Detune, Voice Count, harmonic/chord component expressions, phase
+randomization, gain compensation, cycle length) match. The child
+Oscillator's waveform, frequency, range, Curvature and multiplier
+flags must also be identical. Each currently authored child must
+already be initialized and active, with no Note Off, known retirement,
+active onset replacement, or in-progress ratio/mix glide; dormant
+reserved headroom must remain dormant. The old and next compiled
+frequency ratios must be identical.
+
+Under these constraints, the **existing** Multi child invocations
+can continue at their original phases while a changed **downstream
+audible Constant Value or Operator mode** starts the same one-scalar
+64-output-frame cubic smoothstep from the previously audible *whole
+graph* output to the revised complete Multi mix. Repeated downstream
+edits can restart from the currently blended output. The Multi node
+acts as an *audible leaf* in the parent's control routing: its own
+constituent graph is not traversed for this outer crossfade, and
+the earlier exclusion of compound Multi-generated child waveform
+migration is preserved. There is no second Multi mix, new constituent
+voice, rephasing or managed memory allocation during PCM.
+
+**Test-first verification:** New `FmSynthLiveMultiOutputTests`
+was **red before the implementation** in
+[CI #43066845750](https://github.com/logiclrd/Heresy/actions/runs/43066845750):
+four first-frame discontinuities — downstream Multiply gain, Add
+Constant, downstream Multiply→Add Operation, and a second change
+while an initial fade was still in progress. Ordinary non-audition
+playback retained its immediate semantics. The positive regressions
+assert exact 64-frame output transitions, complete agreement with
+the unedited independently rendered Multi trajectory once the fade
+ends, continued oscillator-phase/ratio identity and zero PCM
+allocations. The implementation remains bounded to *stable*
+Oscillator Multi constituents, rather than treating complex
+Multi-generated Source/Filter voices or onset growth as safe.
+
+**Remaining:** Multi distribution/voice-count/onset edits retain
+their separate prepared migration and mix-glide logic. Multi
+containing Sample, Instrument, nested Synth, Filter or compound
+Oscillator graphs still needs coordinated acceptance before
+participating in this outer fade. Filters mixed with stable Multi,
+release-in-progress, SourceId replacement, and the complete
+all-nonstructural-property audit remain open. Device listening for
+slice 56 is pending; PR #12 remains draft/unmerged.
