@@ -2076,8 +2076,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		{
 			// Any factor becoming zero silences the product.
 			long? earliest = null;
-			foreach (int input in inputs)
-				if (silentFrom[input] is long end)
+			for (int i = 0; i < inputs.Count; i++)
+				if (silentFrom[inputs[i]] is long end)
 					earliest = earliest.HasValue
 						? Math.Min(earliest.Value, end) : end;
 			return earliest;
@@ -2086,9 +2086,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		// For addition, minimum and maximum, all inputs must be
 		// provably zero before the combination is guaranteed zero.
 		long latest = 0;
-		foreach (int input in inputs)
+		for (int i = 0; i < inputs.Count; i++)
 		{
-			if (silentFrom[input] is not long end)
+			if (silentFrom[inputs[i]] is not long end)
 				return null;
 			latest = Math.Max(latest, end);
 		}
