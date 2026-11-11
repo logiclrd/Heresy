@@ -157,8 +157,22 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			Commit(new FmSynthGraph([
 				new FmConstantNode(0, 0.2),
 				new FmConstantNode(1, 0)], 0));
-			Next().Should().BeApproximately(0.95f, 1e-6f,
-				"the newest compatible generation updates, not older voices");
+			Next().Should().BeApproximately(0.875f, 1e-6f,
+				"a live audible scalar edit begins continuously from the last"
+				+ " output, without modifying older graph generations");
+			float[] scalarTransition = new float[64];
+			output.Render(scalarTransition.Length, scalarTransition);
+			for (int frame = 0; frame < scalarTransition.Length; frame++)
+			{
+				double t = (double)(frame + 1) / 64.0;
+				double weight = t * t * (3.0 - 2.0 * t);
+				double expected = 0.75 + 0.125 * (1.0 - weight)
+					+ 0.2 * weight;
+				scalarTransition[frame].Should().BeApproximately(
+					(float)expected, 1e-6f,
+					"only the newest compatible generation glides to its"
+					+ " edited Constant; earlier structural generations stay frozen");
+			}
 		}
 		finally
 		{
