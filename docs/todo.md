@@ -42,6 +42,16 @@ Do not reintroduce completed-task checklists here.
   physical listening/UI checks. See [effect operators](effect-operators.md)
   and [UI workflow](user-interface-workflows.md).
 
+- [ ] **Commit partially entered Pattern volume-command bytes on focus loss.**
+  If the first hexadecimal character/nybble of a volume change has been
+  entered and the Pattern editor loses focus before the second one, commit
+  that first high nybble together with **exactly the low nybble currently
+  displayed for the partial edit** (the prior low nybble or zero). Do not
+  discard the partial value or substitute a different unseen low nybble.
+  Exercise switching Pattern focus by mouse, keyboard and pane changes;
+  preserve complete two-nybble entry, undo/redo and saved values. See
+  [UI workflow](user-interface-workflows.md).
+
 ### Filters
 
 - [ ] **Finish physical filter-feature listening and desktop acceptance.**
@@ -84,6 +94,44 @@ Do not reintroduce completed-task checklists here.
   physical-device and codec evidence is still required. See
   [audio output](audio-output.md) and [export workflow](export-workflow.md).
 
+## Main window — object management
+
+- [ ] **Add Duplicate Object to every main-window object list.**
+  Provide a consistent **Duplicate Object** action in each object list,
+  creating a new independently identifiable object of the same kind with
+  the selected object's content and settings copied according to that
+  object's existing reference/ownership semantics. Keep the original
+  unchanged, give the copy a usable name and selection, and maintain valid
+  internal IDs, references, document persistence and undo/redo where
+  applicable. Audit each list rather than implementing just one object
+  type; check both complex objects and objects referenced elsewhere.
+  See [UI workflow](user-interface-workflows.md).
+
+## Envelope editor — graph affordances
+
+- [ ] **Draw thin green horizontal Vmin and Vmax guide lines.**
+  The Envelope editor's graph rescales and offsets the visible nodes, so
+  the drawn X baseline is **not** the numeric zero axis. Show separate,
+  visually precise horizontal green guides at the actual displayed
+  positions of **Vmin** and **Vmax**, updating as the limits, viewport,
+  value range or graph transform change. Do not imply that the X line
+  represents zero. Verify guides at edge cases including Vmin/Vmax
+  outside the node-data span. See [interactive envelope graph](envelope-graph.md)
+  and [node envelope design](node-envelope-design.md).
+
+- [ ] **Clamp envelope node-value drags to Vmin/Vmax unless Ctrl is held.**
+  During node dragging, restrict the value to the configured inclusive
+  limits by default; holding **Ctrl** permits values outside them. Ctrl
+  must be handled **continuously during an active drag**: when pressed,
+  immediately move to the unclamped value under the current pointer,
+  including outside the limits; when released, immediately snap an
+  out-of-range node to the corresponding boundary, even if the pointer
+  has not moved. Resume the appropriate mode as the pointer moves,
+  preserving drag/capture, undo grouping, pointer-to-value mapping
+  and unaffected time-axis behaviour. See
+  [interactive envelope graph](envelope-graph.md) and
+  [node envelope design](node-envelope-design.md).
+
 ## Desktop UI — keyboard shortcuts
 
 - [ ] **Support F2 as a keyboard shortcut for Rename wherever appropriate.**
@@ -118,6 +166,37 @@ Do not reintroduce completed-task checklists here.
   or text metrics), correct the visual alignment, and verify mouse hit
   testing and wire drawing stay aligned at different node layouts/scales.
   See [UI workflow](user-interface-workflows.md).
+
+- [ ] **Make Synth graph content extents scrollable with 20 px margins.**
+  Treat **every node and every connection edge** as contributing to
+  the graph's content extent, expanded by **20 pixels orthogonally in
+  each of the four directions**. Allow the viewport to scroll through
+  the full expanded bounds; hide scrollbars independently when that
+  axis's extents fit. When scrolling is possible, dragging the
+  **background** pans the graph without accidentally starting a node
+  move, connection edit or other pointer action. Recompute bounds after
+  moving, adding, deleting or rewiring graph elements and on resizing
+  the viewport. See [UI workflow](user-interface-workflows.md).
+
+- [ ] **Place newly added Synth nodes in unobstructed graph space.**
+  Choose a placement that does not intersect existing **node bodies**
+  or cover existing **connection edges**, respecting the node/edge
+  geometry and 20 px visible-content margin defined by the scrolling
+  task. When the chosen position would leave the new node or any of
+  its 20 px buffer partially outside the viewport, **automatically
+  scroll** to bring the entire node and buffer into view. Check densely
+  populated graphs, long edges, changed viewport sizes and repeated
+  additions; preserve subsequent manual placement and wiring. See
+  [UI workflow](user-interface-workflows.md).
+
+- [ ] **Expose Synth node drag handles within an 8 px proximity zone.**
+  Show the node's handles and permit their intended drag interaction
+  when the pointer is within **8 pixels of the node boundary**, even
+  when not directly over the node body. **Dragging the node body
+  itself** must still start only when the pointer actually lands on
+  the node. Distinguish handle hit targets from body-move hit targets;
+  verify near corners, adjacent nodes, connection ports, pointer
+  transitions and graph scrolling. See [UI workflow](user-interface-workflows.md).
 
 ## Synth editor — live parameter audition
 
