@@ -718,3 +718,7 @@ Node Envelopes, and checks old phase/release clocks and zero PCM
 managed allocations. Physical audio verification and broader
 Source/Filter/Multi migrations remain pending; PR #12 stays
 draft and unmerged.
+
+### Slice 58 — local physical acceptance of frozen Envelope/Noise Multi child
+
+The user reports that the suggested **already-playing** Synth test passed: a compound child `Add[Multiply[Oscillator, NodeEnvelope], Multiply[WhiteNoise, Constant(0.15)]]` feeding a Spread Multi, with downstream Constant gain changed **0.8 → 0.1** and downstream Operator changed **Multiply → Add**. The submitted graph screenshot depicts **seven** Spread voices rather than the suggested three, and shows the post-edit `Add[Multi #8, Constant #10 (0.1)]` output. This is real-device acceptance of slice 58's **outer output-control transition around an unchanged frozen child**, additional to mathematical regression evidence. It does not qualify live edits *inside* the child, a changing Envelope curve, Sample/Filter/nested Multi components, or already-releasing voices. The PR is draft/unmerged and the main all-property TODO stays open.
