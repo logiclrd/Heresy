@@ -1130,6 +1130,134 @@ public sealed class FmSynthMultiTests
         worker.Fault.Should().BeNull();
     }
 
+    [Test]
+    public void EquivalentFrozenNodeVolumeCurvesActuallyAllowOscillatorRephase()
+    {
+        // An unchanged Volume envelope is compiled twice from distinct
+        // frozen song definitions, producing separate curve objects.
+        // The oscillator MUST take its revised Multi phase (not just
+        // silently fall back), while the Instrument-selected Sample keeps
+        // the exact old playhead and Volume envelope clock.
+        ObjectId sampleId = (ObjectId)7680U;
+        ObjectId instrumentId = (ObjectId)7681U;
+        ObjectId envelopeId = (ObjectId)7682U;
+        float[] pcm = Enumerable.Range(0, 8192)
+            .Select(i => (float)(0.23 * Math.Sin(2 * Math.PI * i / 61.0)
+                + 0.10 * Math.Cos(2 * Math.PI * i / 19.0))).ToArray();
+        SampleSound sample = new(new SampleDefinition(sampleId, "Frozen curve PCM",
+            new ExternalAssetReference("frozen-curve-pcm.wav")),
+            new MemorySampleData(48000, 1, pcm));
+        SourceResolver sampleResolver = new(sampleId, sample);
+        Heresy.Core.Envelopes.NodeEnvelopeDefinition Definition()
+        {
+            Heresy.Core.Envelopes.NodeEnvelopeDefinition definition =
+                new(envelopeId, "Unchanged volume");
+            definition.ReplaceCurve([
+                new(TimeSpan.Zero, 1.0),
+                new(TimeSpan.FromTicks(208), 1.0),
+                new(TimeSpan.FromTicks(2291), 0.0),
+            ], 1, 1, Heresy.Core.Envelopes.EnvelopeSustainLoopMode.Forward);
+            return definition;
+        }
+        NodeEnvelopeCurve originalCurve = new(Definition());
+        NodeEnvelopeCurve revisedCurve = new(Definition());
+        ReferenceEquals(originalCurve, revisedCurve).Should().BeFalse();
+        CurveResolver oldEnvelopeResolver = new(envelopeId, originalCurve);
+        CurveResolver newEnvelopeResolver = new(envelopeId, revisedCurve);
+        Heresy.Core.Instruments.InstrumentDefinition Instrument()
+        {
+            Heresy.Core.Instruments.InstrumentDefinition definition =
+                new(instrumentId, "Same selected tone");
+            definition.ToneSpecifications.Add(
+                new Heresy.Core.Instruments.ToneSpecification
+                {
+                    SourceId = sampleId,
+                    VolumeEnvelopeId = envelopeId,
+                });
+            definition.ToneTable.Add(0);
+            return definition;
+        }
+        Heresy.Render.Instruments.InstrumentSound oldInstrument =
+            new(Instrument(), sampleResolver, oldEnvelopeResolver);
+        Heresy.Render.Instruments.InstrumentSound newInstrument =
+            new(Instrument(), sampleResolver, newEnvelopeResolver);
+        SourceResolver oldResolver = new(instrumentId, oldInstrument);
+        SourceResolver newResolver = new(instrumentId, newInstrument);
+        FmSynthGraph Mixed(bool random) => new([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 1270),
+            new FmSoundSourceNode(2, instrumentId, FmMultiNode.NeutralFrequencyHz),
+            new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
+            new FmMultiNode(4, 3, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 100,
+                gainCompensation: true),
+        ], 4);
+        FmSynthGraph OscOnly(bool random) => new([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 1270),
+            new FmMultiNode(4, 1, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 100,
+                gainCompensation: true),
+        ], 4);
+        FmSynthSound original = new(Mixed(false), oldEnvelopeResolver,
+            soundResolver: oldResolver, enableLiveMultiExpansion: true);
+        FmSynthSound revised = new(Mixed(true), newEnvelopeResolver,
+            soundResolver: newResolver, enableLiveMultiExpansion: true);
+        FmSynthSound oldOsc = new(OscOnly(false), new EmptyEnvelopes());
+        FmSynthSound newOsc = new(OscOnly(true), new EmptyEnvelopes());
+        RenderContext context = Mono();
+        SoundState changing = original.CreateState();
+        SoundState oldMixedReference = original.CreateState();
+        SoundState oldOscReference = oldOsc.CreateState();
+        SoundState newOscReference = newOsc.CreateState();
+        foreach (SoundState state in new[] {
+            changing, oldMixedReference, oldOscReference, newOscReference })
+            state.SetNoiseSeed(21);
+        original.Render(context, changing, 0, 128, new float[128]);
+        original.Render(context, oldMixedReference, 0, 128, new float[128]);
+        oldOsc.Render(context, oldOscReference, 0, 128, new float[128]);
+        newOsc.Render(context, newOscReference, 0, 128, new float[128]);
+        original.RequestMultiExpansionPreparation(revised, changing)
+            .Should().BeTrue("oscillator onset migration still needs a prepared state");
+        using FirPreparationScheduler worker = new();
+        original.QueuePendingFirControls(changing, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        original.AdoptPreparedFirControls(changing);
+        original.TryPrepareRunningState(revised, changing).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, changing);
+        float[] actual = new float[150], oldMix = new float[150],
+            oldOscPcm = new float[150], newOscPcm = new float[150];
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, changing, 128, 1, actual.AsSpan(0, 1));
+        long firstFrameBytes = GC.GetAllocatedBytesForCurrentThread() - before;
+        before = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, changing, 129, actual.Length - 1,
+            actual.AsSpan(1));
+        long remainingBytes = GC.GetAllocatedBytesForCurrentThread() - before;
+        firstFrameBytes.Should().Be(0L,
+            "worker-prepared mixed voices cannot allocate on their first PCM frame");
+        remainingBytes.Should().Be(0L,
+            "mixed voices cannot allocate during sustained PCM rendering");
+        original.Render(context, oldMixedReference, 128, oldMix.Length, oldMix);
+        oldOsc.Render(context, oldOscReference, 128, oldOscPcm.Length, oldOscPcm);
+        newOsc.Render(context, newOscReference, 128, newOscPcm.Length, newOscPcm);
+        for (int i = 0; i < actual.Length; i++)
+        {
+            double t = Math.Clamp(i / 64.0, 0.0, 1.0);
+            double w = t * t * (3.0 - 2.0 * t);
+            float expected = (float)(oldMix[i]
+                + (newOscPcm[i] - oldOscPcm[i]) * w);
+            actual[i].Should().BeApproximately(expected, 2e-5f,
+                "only the oscillator is rephased; Sample playback stays continuous");
+        }
+        actual[0].Should().Be(oldMix[0]);
+        Enumerable.Range(65, actual.Length - 65)
+            .Max(i => Math.Abs(actual[i] - oldMix[i]))
+            .Should().BeGreaterThan(0.04f,
+                "an equivalent independent Volume curve MUST allow oscillator rephase rather than silently retaining the old phase");
+        worker.Fault.Should().BeNull();
+    }
+
     [TestCase(160, false)]
     [TestCase(200, false)]
     [TestCase(160, true)]
