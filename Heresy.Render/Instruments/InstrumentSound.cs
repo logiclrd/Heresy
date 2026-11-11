@@ -346,18 +346,6 @@ public sealed class InstrumentSound : ISound
 				tone,
 				childInvocation.Configuration.Envelopes);
 
-		// Instrument binding flattens to the terminal sound/state, so
-		// SampleSound would otherwise still cut the PCM at Note Off even
-		// while the overlaid volume envelope is releasing. Select this
-		// per-invocation policy only after all envelope overlays at this
-		// level are resolved. An outer nested Instrument may override it.
-		if (childInvocation.Sound is SampleSound
-			&& childInvocation.State is SampleSoundState sampleState)
-		{
-			sampleState.ReleaseIsControlledByVolumeEnvelope =
-				envelopes.Volume is not null;
-		}
-
         // Resolve the hierarchy at this invocation's original incoming
         // pitch (not its child-transposed pitch). The selected child is
         // already snapshotted, so an outer explicit NNA wins over it.
