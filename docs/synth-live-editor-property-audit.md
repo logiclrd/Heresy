@@ -244,3 +244,19 @@ with Note Off during the fade. The new behavior is deliberately
 editor→transport→held-PCM integration and general tone Filter/envelope
 migrations remain outstanding. PR #12 and the all-properties TODO stay
 open.
+
+
+## Slice 47 accessibility and release distinctions
+
+The Synth Source inspector exposes referenced Instrument Node Volume envelopes
+in a modeless shared editor. Editing these shared objects uses the existing
+audio-revision publication callback without unmounting the Synth preview.
+Latch mode allows the preview note to survive focus changes; Hold mode does
+not. This makes the limited single Source / Instrument / direct Sample Volume
+audition manually accessible but does not extend the renderer's live migration
+to compound graphs or Instrument tones backed by another Synth.
+
+Separately, a Pattern Note Off for an Instrument tone selecting a Synth
+can now preserve the Synth's excitation until the Instrument Volume envelope
+finishes releasing, rather than cutting it after a one-frame Synth note-off.
+That fixes release lifetime, **not** held-note live parameter adoption.
