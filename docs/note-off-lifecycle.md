@@ -1,8 +1,10 @@
 # Definite and Indefinite Note Off — recursive sound lifetime
 
-Status: implemented on draft PR #12; automated PCM/regression acceptance recorded
-below. This is a Heresy sound-lifecycle contract, not an Impulse Tracker
-compatibility rule. Physical listening remains unverified.
+Status: implemented on draft PR #12; automated PCM/regression acceptance and
+specific real-device listening observations are recorded below. This is a
+Heresy sound-lifecycle contract, not an Impulse Tracker compatibility rule.
+Listening does not replace renderer-state assertions or cover every possible
+source/envelope combination.
 
 ## Vocabulary
 
@@ -112,3 +114,40 @@ reset release origins. A cut after Note Off must remain possible.
 - These tests are automated render/transport acceptance, not a substitute for
   physical listening of latched notes or sustained live-device performance.
   PR #12 remains draft, and the full nonstructural-live-property TODO is open.
+
+
+## Physical-device listening — recursive Note Off (2026-11-11)
+
+The user tested Note Off and Note Cut in the real Synth Test and Pattern
+interfaces. These are **observed audible/UI results**, not assertions about
+internal renderer retirement or a complete all-topologies acceptance matrix.
+
+| Case | Construction and observation | Manual verdict |
+| --- | --- | --- |
+| Parent sustaining, child non-sustaining | Instrument's sustain-loop Volume Envelope releases while an Instrument-selected Synth has no lifecycle of its own. Verified with child Oscillator, Sample Source, and two Sample Sources added by Operator. | **Pass** — Indefinite Off preserves child excitation during parent's release. |
+| Sustain exists only in child | Instrument has no envelope; selects Synth containing a looping Sample whose Source pitch multiplier is controlled by a sustain-loop Envelope (audible record-scratch modulation). A separate Synth with an Oscillator and sustain-loop Envelope multiplied into Volume was also tested. | **Pass** — child lifecycle is recognized through transparent Instrument parent. |
+| No sustaining lifecycle | Definite Note Off on plain Oscillator Synth, Sample Synth and Instrument selecting non-releasing Synth. | **Pass** — immediate cut with normal handling. |
+| Pitch-only sustain | Sustain-loop Envelope on pitch multiplier of a Sample-backed Source and separately an Oscillator, with no Volume sustain. | **Pass** — pitch modulation's release is audible; release is not limited to Volume. |
+| Two independent releases | Sample Source pitch multiplier driven by a spiky sustain-loop Envelope with roughly 3-second release following a nearly 1-second loop; downstream Multiply Operator scales Volume with a different Envelope, roughly 1-second release that rises to nearly full Volume and ends nonzero. Tested Synth preview and Pattern Note Off. | **Pass** — the shorter Volume release does not truncate the longer pitch release. |
+| Note Cut during release | Explicit CUT added after OFF in a Pattern while the note was still releasing. | **Pass** — remaining release cuts immediately. Repeated OFF origin was *not* manually checked. |
+| Off before first sustain traversal | OFF one Pattern row after Note On. | **Pass** — envelope plays from start through release, traversing the sustain-loop portion once without looping. |
+| Sample natural EOF under release | `layer3-continuous-mono.mp3` from tests (just under 0.5 s) passed through Source-only Synth into Instrument with envelope reaching sustain at 0.1 s and having 1.3 s release; Pattern OFF one row after note start. | **Pass** — audio ends at natural Sample EOF, not at the later envelope release deadline. |
+| Downstream Filter tail | Instrument with the same short Sample and Volume Envelope (sustain at 0.03 s, reaching zero at 0.1 s) used as a Source in a Synth feeding a Comb Filter at maximum feedback with 2 s tail. Tested held/released Synth preview and Pattern OFF. | **Pass** — Comb tail remains audible after Volume reaches zero and after Note Off. |
+| Independent release cycles in two branches | Two Oscillators, each with a different sustaining Pitch Envelope: one rises over roughly 1.7 s, the other drops to zero rapidly. Tested held, normal release and very early release. | **Pass** — neither branch prematurely truncates the other; an early OFF causes both envelopes to play through once without looping. |
+| Permanent-zero final Volume retirement | Proposed comparing shorter Volume release ending 0% with one ending nonzero while another envelope continues. | **Not manually assessable** — silence cannot reveal whether internal voice processing has stopped. Retain automated PCM/lifetime assertions; no listening signoff claimed. |
+
+**Acceptance scope:** The user has manually verified the principal release
+contract across parent-only and child-only sustain, pitch-only sustain,
+non-sustaining Definite cuts, concurrent independent releases, explicit Cut,
+pre-sustain Off, Sample EOF, downstream Filter tails and different-branch
+release clocks. This is substantive **physical listening acceptance of the
+slice-48 core lifecycle semantics**, not merely one nested-Instrument
+fixture.
+
+**Still separate:** exact internal retirement when final Volume permanently
+reaches zero, repeated Note Off not resetting release origin, all scripted
+curve variants, every Multi/Operator topology, precise anti-click/sample
+limits, CPU/underrun stress and exhaustive platform coverage. The automated
+tests remain the appropriate oracle for internal retirement and timing.
+PR #12 remains draft/unmerged; completing slice-48 listening does **not**
+complete the wider all-nonstructural-property Synth preview milestone.
