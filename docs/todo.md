@@ -147,6 +147,42 @@ Do not reintroduce completed-task checklists here.
   existing context-menu behaviour on the supported desktops. See
   [UI workflow](user-interface-workflows.md).
 
+## Synth editor — node value ranges and symmetry link
+
+- [ ] **Add Vmin and Vmax properties to Synth Noise nodes.**
+  Expose editable **Vmin** and **Vmax** values for Noise nodes in the
+  Synth editor, and apply them to the Noise node's generated output range.
+  Preserve today's Noise output for existing projects and newly created
+  nodes using suitable defaults (the existing bipolar range), while
+  allowing explicit range edits to persist, reload, render and take
+  effect under the Synth live-parameter policy where compatible.
+  Verify endpoint/range mapping and interaction with downstream
+  Operators and preview audio.
+
+- [ ] **Add a Vmin/Vmax symmetry-link toggle between their inputs.**
+  Wherever a Synth node exposes both **Vmin** and **Vmax** (including
+  Oscillator, Envelope and the new Noise properties), put a toggle
+  **directly between the Vmin and Vmax text inputs**, whether the
+  existing controls were laid out horizontally or vertically. In the
+  **Envelope node inspector**, move the Vmin/Vmax labels **above**
+  their inputs so the two text inputs occupy a horizontal row with
+  a natural central position for the toggle. Use the existing icons
+  `Heresy.UserInterface/Images/ChainUnlinked.axaml` and
+  `Heresy.UserInterface/Images/ChainLinked.axaml` for unchecked
+  and checked visual states, respectively.
+  The toggle is **initially checked if and only if Vmin = -Vmax**.
+  While checked, editing either bound immediately sets the other to
+  its **opposite sign** (Vmin = -Vmax). While unchecked, allow the
+  bounds to be edited independently. When the user turns the toggle
+  **from unchecked to checked**, perform this exact recentering:
+  `newVmax = (oldVmax - oldVmin) / 2`, then
+  `newVmin = -newVmax`; update both controls and the rendered node
+  through the normal edit/validation/undo path. Turning the toggle
+  off must **not** change either value. Check initial state on newly
+  created and reopened nodes, both directions of linked editing,
+  symmetric/asymmetric values, toggle transitions, layout and
+  immediate preview updates.
+
 ## Synth editor — UI defects
 
 - [ ] **Distinguish Caps Lock from Shift in Synth numeric text input under
