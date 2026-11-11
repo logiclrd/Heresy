@@ -1130,10 +1130,12 @@ public sealed class FmSynthMultiTests
         worker.Fault.Should().BeNull();
     }
 
-    [TestCase(160)]
-    [TestCase(200)]
+    [TestCase(160, false)]
+    [TestCase(200, false)]
+    [TestCase(160, true)]
+    [TestCase(200, true)]
     public void IndependentFrozenNodeVolumeCurvesKeepInstrumentSampleRelease(
-        int noteOffFrame)
+        int noteOffFrame, bool editedReleaseCurve)
     {
         // Two frozen Synth revisions each prepare the same *unchanged*
         // Instrument/Volume envelope from separate song snapshots.
@@ -1151,18 +1153,19 @@ public sealed class FmSynthMultiTests
             new ExternalAssetReference("frozen-node-volume.wav")),
             new MemorySampleData(48000, 1, pcm));
         SourceResolver sampleResolver = new(sampleId, sample);
-        Heresy.Core.Envelopes.NodeEnvelopeDefinition Envelope()
+        Heresy.Core.Envelopes.NodeEnvelopeDefinition Envelope(bool edited)
         {
             Heresy.Core.Envelopes.NodeEnvelopeDefinition definition =
                 new(envelopeId, "Frozen volume");
             definition.ReplaceCurve([
                 new(TimeSpan.Zero, 1.0),
                 new(TimeSpan.FromTicks(208), 1.0),
-                new(TimeSpan.FromTicks(2291), 0.0),
+                new(TimeSpan.FromTicks(edited ? 2710 : 2291), 0.0),
             ], 1, 1, Heresy.Core.Envelopes.EnvelopeSustainLoopMode.Forward);
             return definition;
         }
-        NodeEnvelopeCurve oldCurve = new(Envelope()), newCurve = new(Envelope());
+        NodeEnvelopeCurve oldCurve = new(Envelope(false));
+        NodeEnvelopeCurve newCurve = new(Envelope(editedReleaseCurve));
         ReferenceEquals(oldCurve, newCurve).Should().BeFalse();
         CurveResolver oldEnvelopeResolver = new(envelopeId, oldCurve);
         CurveResolver newEnvelopeResolver = new(envelopeId, newCurve);
@@ -1208,14 +1211,17 @@ public sealed class FmSynthMultiTests
         original.Render(context, reference, 0, 128, new float[128]);
         original.TryPrepareRunningState(revised, held).Should().BeFalse();
         original.RequestMultiExpansionPreparation(revised, held).Should().BeTrue(
-            "the same frozen node envelope shape in separate revisions should permit prepared oscillator rephase");
+            "the Instrument tone map is compatible; the worker must still establish if the independently frozen Volume curve matches");
         using FirPreparationScheduler worker = new();
         original.QueuePendingFirControls(held, worker);
         Assert.That(SpinWait.SpinUntil(
             () => worker.CompletedMultiExpansionCount >= 1,
             TimeSpan.FromSeconds(5)), Is.True);
         original.AdoptPreparedFirControls(held);
-        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.TryPrepareRunningState(revised, held).Should().BeTrue(
+            editedReleaseCurve
+                ? "a changed release shape must not starve the held note after rejecting an incompatible rephase"
+                : "an equivalent separately prepared curve should permit a prepared oscillator transition");
         original.CommitPreparedRunningState(revised, held);
 
         float[] actual = new float[132], expected = new float[132];
@@ -1236,7 +1242,7 @@ public sealed class FmSynthMultiTests
         original.Render(context, reference, noteOffFrame, releasedFrames,
             expected.AsSpan(heldFrames));
         actual.Should().Equal(expected,
-            "independent frozen curve objects must preserve the original held Volume release clock");
+            "neither an equivalent new curve object nor a rejected edited curve may rewrite the held Sample release");
         long end = oldCurve.GetEndActiveFrameExclusiveAfterNoteOff(
             noteOffFrame, 48000)!.Value;
         actual[heldFrames + 4].Should().BeGreaterThan(0.01f,
