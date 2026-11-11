@@ -3665,3 +3665,22 @@ Filter/Multi onset histories, overlapping released revisions,
 Sample data replacement and comprehensive high-load UI tests
 remain separate PR #12 work. PR #12 stays draft/unmerged and
 the all-nonstructural-properties TODO remains open.
+
+
+### Slice 53 — manual device acceptance (2026-11-11)
+
+The user physically tested an existing Synth whose **looping Sample
+Source** was augmented with a **Multiply Operator and editable
+Constant**. The graph in the supplied screenshot has an **Envelope
+node connected to the Sample Source's multiplier/modulation input**;
+the Sample Source output is then multiplied by **Constant 0.1**.
+The user reports that editing the Constant while the Test note
+continues **applies as expected**, confirming local listening of the
+slice-53 gain-control route with a modulated looping Sample.
+
+Scope of the report: the user did not separately report a
+Multiply→Add operation edit or a finite/nonlooping Sample EOF check.
+Those cases retain automated regression coverage, rather than
+being marked manually listened to. This is acceptance of the
+specific audible Constant edit, not SourceId reassignment or
+Instrument/Filter/Multi migration.
