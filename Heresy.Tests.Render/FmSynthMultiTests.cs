@@ -3126,6 +3126,113 @@ public sealed class FmSynthMultiTests
         unchanged.Should().OnlyContain(x => Math.Abs(x - 0.5f) < 1e-6f);
     }
 
+    [Test]
+    public void EditedFrozenInstrumentVolumeChangesAnAlreadyPlayingDirectSample()
+    {
+        // The shared Node Envelope was really changed, not merely compiled
+        // into a different but equivalent wrapper. It must affect the
+        // already-running Sample at its original playhead and note age.
+        // This is intentionally the bounded direct-Source case; no Multi
+        // onset preparation or arbitrary Instrument state replacement.
+        ObjectId sampleId = (ObjectId)7950U;
+        ObjectId instrumentId = (ObjectId)7951U;
+        ObjectId envelopeId = (ObjectId)7952U;
+        float[] pcm = Enumerable.Range(0, 4096)
+            .Select(i => (float)(0.39 + 0.15 * Math.Sin(i * 0.17)))
+            .ToArray();
+        SampleSound sample = new(
+            new SampleDefinition(sampleId, "Continuing PCM",
+                new ExternalAssetReference("continuing-pcm.wav")),
+            new MemorySampleData(48000, 1, pcm));
+        SourceResolver samples = new(sampleId, sample);
+
+        NodeEnvelopeCurve Curve(double level)
+        {
+            Heresy.Core.Envelopes.NodeEnvelopeDefinition definition =
+                new(envelopeId, "Shared volume");
+            definition.ReplaceCurve([
+                new(TimeSpan.Zero, level),
+                new(TimeSpan.FromTicks(208), level),
+                new(TimeSpan.FromTicks(2291), 0.0),
+            ], 1, 1, Heresy.Core.Envelopes.EnvelopeSustainLoopMode.Forward);
+            return new NodeEnvelopeCurve(definition);
+        }
+        Heresy.Core.Instruments.InstrumentDefinition Instrument()
+        {
+            Heresy.Core.Instruments.InstrumentDefinition definition =
+                new(instrumentId, "Same selected Sample");
+            definition.ToneSpecifications.Add(
+                new Heresy.Core.Instruments.ToneSpecification
+                {
+                    SourceId = sampleId,
+                    VolumeEnvelopeId = envelopeId,
+                });
+            definition.ToneTable.Add(0);
+            return definition;
+        }
+        CurveResolver oldEnvelopes = new(envelopeId, Curve(1.0));
+        CurveResolver editedEnvelopes = new(envelopeId, Curve(0.25));
+        Heresy.Render.Instruments.InstrumentSound firstInstrument =
+            new(Instrument(), samples, oldEnvelopes);
+        Heresy.Render.Instruments.InstrumentSound editedInstrument =
+            new(Instrument(), samples, editedEnvelopes);
+        FmSynthGraph graph = new([
+            new FmSoundSourceNode(1, instrumentId,
+                FmMultiNode.NeutralFrequencyHz),
+        ], 1);
+        FmSynthSound original = new(graph, oldEnvelopes,
+            soundResolver: new SourceResolver(instrumentId, firstInstrument),
+            enableLiveMultiExpansion: true);
+        FmSynthSound edited = new(graph, editedEnvelopes,
+            soundResolver: new SourceResolver(instrumentId, editedInstrument),
+            enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        SoundState oldReference = original.CreateState();
+        original.Render(context, held, 0, 128, new float[128]);
+        original.Render(context, oldReference, 0, 128, new float[128]);
+
+        original.TryPrepareRunningState(edited, held).Should().BeTrue(
+            "the source graph, selected tone, PCM and note clock are unchanged");
+        original.CommitPreparedRunningState(edited, held);
+        float[] actual = new float[160], reference = new float[160];
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        edited.Render(context, held, 128, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0L);
+        original.Render(context, oldReference, 128, reference.Length, reference);
+        for (int i = 0; i < actual.Length; i++)
+        {
+            double t = Math.Clamp(i / 64.0, 0.0, 1.0);
+            double w = t * t * (3.0 - 2.0 * t);
+            actual[i].Should().BeApproximately(
+                (float)(reference[i] * (1.0 - 0.75 * w)), 2e-5f,
+                "the held Sample must not re-trigger and its edited Volume must glide at its existing note age");
+        }
+        actual[0].Should().Be(reference[0]);
+        Math.Abs(actual[100]).Should().BeLessThan(
+            Math.Abs(reference[100]) * 0.26f,
+            "this must be an audible held-voice change, not just publication");
+
+        // Once the transition has completed, Note Off still follows the
+        // original Instrument release clock and retires after ten frames.
+        held.NoteOffTime = TimeSpan.FromSeconds(320.0 / 48000);
+        edited.GetEndFrameExclusive(context, held).Should().Be(330);
+        float[] continued = new float[56];
+        edited.Render(context, held, 288, continued.Length, continued);
+        continued[32].Should().NotBe(0);
+        continued.Skip(42).Should().OnlyContain(value => value == 0.0f);
+
+        // A new note selects the newly frozen curve independently.
+        SoundState newNote = edited.CreateState();
+        SoundState freshOld = original.CreateState();
+        float[] freshNewPcm = new float[96], freshOldPcm = new float[96];
+        edited.Render(context, newNote, 0, 96, freshNewPcm);
+        original.Render(context, freshOld, 0, 96, freshOldPcm);
+        for (int i = 0; i < 96; i++)
+            freshNewPcm[i].Should().BeApproximately(
+                freshOldPcm[i] * 0.25f, 2e-5f);
+    }
+
     private static float[] Render(FmSynthGraph graph, int count, ulong seed = 1)
     {
         FmSynthSound sound = new(graph, new EmptyEnvelopes());
