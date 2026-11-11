@@ -2352,24 +2352,21 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		}
 	}
 
+	/// <summary>Indefinite Off leaves an unlooped source running. Once
+	/// the note has a sustain-release lifecycle, all ordinary excitation
+	/// is bounded by the latest active release, not a one-frame cut.</summary>
 	private long? GetIndependentAudioReleaseEnd(
 		int nodeIndex, long offFrame, int sampleRate, FmSynthState state)
 	{
-		long until = checked(offFrame + 1); // existing one-frame anti-click
+		long? end = state.HasReleasingSubtree
+			? state.ReleasingSubtreeEnd
+			: state.NoteOffDisposition == NoteOffDisposition.Indefinite
+				? null : checked(offFrame + 1);
+		if (state.HasReleasingSubtree && !end.HasValue)
+			return null; // An active release is not bounded yet.
 		if (state.InheritedAudioReleaseEnd is long inherited)
-			until = Math.Max(until, inherited);
-		foreach (int envelopeIndex in _audioReleaseEnvelopeIndices[nodeIndex])
-		{
-			IEnvelopeCurve? curve = _nodes[envelopeIndex].Envelope;
-			if (curve is null)
-				continue;
-			long? envelopeEnd = curve.GetEndActiveFrameExclusiveAfterNoteOff(
-				offFrame, sampleRate);
-			if (!envelopeEnd.HasValue)
-				return null;
-			until = Math.Max(until, envelopeEnd.Value);
-		}
-		return until;
+			end = end.HasValue ? Math.Max(end.Value, inherited) : inherited;
+		return end;
 	}
 
 	/// <summary>
@@ -2381,6 +2378,21 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		int sampleRate, FmSynthState state)
 	{
 		TimeSpan? noteOffTime = state.NoteOffTime;
+		if (noteOffTime.HasValue)
+		{
+			long releaseFrame = FrameTime.Ceiling(noteOffTime.Value, sampleRate);
+			state.HasReleasingSubtree = HasSustainRelease(state);
+			state.ReleasingSubtreeEnd = state.HasReleasingSubtree
+				? GetReleasingSubtreeEnd(state, releaseFrame, sampleRate) : null;
+			if (!state.HasReleasingSubtree
+				&& state.NoteOffDisposition == NoteOffDisposition.Definite)
+				return checked(releaseFrame + 1);
+		}
+		else
+		{
+			state.HasReleasingSubtree = false;
+			state.ReleasingSubtreeEnd = null;
+		}
 		// A single unmodulated output oscillator has no Source EOF,
 		// downstream Filter, Operator or release Envelope to traverse.
 		// Preserve the same one-frame release/inherited-release rule and
@@ -2408,11 +2420,18 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			CompiledNode node = _nodes[index];
 			if (node.Definition is FmEnvelopeNode)
 			{
+				// Finishing a release leaves its authored last value in
+				// force; only a final zero proves this branch silent.
 				silentFrom[index] = node.Envelope is null ? 0L
 					: released.HasValue
-						? node.Envelope.GetEndActiveFrameExclusiveAfterNoteOff(
-							noteOffFrame, sampleRate)
-						: null;
+						? node.Envelope.IsZeroAfterCompletion
+							? node.Envelope.GetEndActiveFrameExclusiveAfterNoteOff(
+								noteOffFrame, sampleRate)
+							: GetIndependentAudioReleaseEnd(index,
+								noteOffFrame, sampleRate, state)
+						: node.Envelope.IsZeroAfterCompletion
+							? node.Envelope.GetEndActiveFrameExclusiveWithoutNoteOff(
+								sampleRate) : null;
 			}
 			else
 			{
@@ -2431,7 +2450,16 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				};
 			}
 		}
-		return silentFrom[_outputIndex];
+		long? outputEnd = silentFrom[_outputIndex];
+		if (released.HasValue && state.HasReleasingSubtree
+			&& state.ReleasingSubtreeEnd is long releaseEnd)
+		{
+			// A natural, earlier source EOF still wins; a source
+			// ignoring Indefinite Off cannot prolong the parent forever.
+			return outputEnd.HasValue
+				? Math.Min(outputEnd.Value, releaseEnd) : releaseEnd;
+		}
+		return outputEnd;
 	}
 
 	private static long? GetMultiSilenceEnd(FmSynthState state, int index)
