@@ -2290,3 +2290,87 @@ and tone-Filter migration, changed Source assignments, nested
 stateful graphs, all-property inspector audit, and physical
 listening/throughput acceptance. The whole all-properties TODO
 stays open and PR #12 stays **draft and unmerged**.
+
+
+## Thirty-seventh slice: continuity-first Sample Source live edits (supersedes 31–36 direct-Sample rephase policy)
+
+**Decision:** a live Synth edit changes what an already-playing note
+does **from this point forward**. It does not retroactively rewrite the
+note's pitch or Sample phase history to match a hypothetical fresh note.
+For direct bare Sample Sources, the already-integrated fractional
+playback position and playback offset are authoritative. The selected
+Sample asset/configuration and its own release/EOF state must still be
+compatible; an unrelated Source replacement is not eligible for this
+fast path.
+
+This decision **supersedes the direct-Sample onset displacement and
+exact-history reconstruction contract in the earlier slices (31–36)**.
+Those sections remain as development history, not current requirements.
+In particular the 1,024-frame Sample history buffer, 128-frame history
+copy cap, `FmSourcePitchCurve.HasConstantRateHistory` gate, historic
+rate reconstruction and `lastRate * skipDelta` projection have been
+**removed**. Ordinary playback/export already had no history ring;
+live audition now has none either.
+
+**Active Sample-only Multi edits:** changing `RandomizePhase` or
+`CycleLength` on a Multi whose active input is only bare direct
+Samples (optionally joined with stateless Constants/Operators and
+compatible stateful OnePole processing) preserves its initialized
+children's original `SkipFrames` and active `SoundState`. This edit
+does not need the worker, an added playhead or an onset crossfade.
+Subsequent new note onsets still use the *revised* phase policy.
+Changing the direct Sample's `FrequencyHz`, parent pitch/speed,
+or another compatible scalar property changes only future playback
+rate; it never rescales already-integrated Sample positions.
+
+**Mixed oscillator + Sample children:** where a compatible oscillator
+needs to adopt the revised Multi phase, the existing off-PCM worker
+still constructs detached whole-child replacements and an atomic
+64-output-frame onset crossfade. Each Sample Source in those children
+copies its **current integrated position** at the publication
+boundary from `oldState.PitchTrajectory.GetPosition(oldFrame)`
+directly to `newState.PitchTrajectory.SeedPreparedStreamingPosition(
+newFrame, position)`, with **no skip delta**. The original Sample
+`PitchMultiplier`, speed, `PlaybackOffset`, `SourceFrameOffset`,
+position, Note Off and `OriginalFrequencyHz` basis are retained
+into the new invocation. `FmSourcePitchCurve.SeedBeforeFrame` keeps
+only the last positive finite rate needed for the next chronological
+frame, not a proof of constant historical rate. The revised
+frequency and modulation apply from the first revised frame onward.
+Oscillators independently keep their established phase-shift
+semantics; unbound OnePole histories are still copied into
+worker-preallocated states. During the fade the two Sample branches
+start from the same physical position, so an unchanged Sample
+contribution is independent of the oscillator rephase.
+
+**Whole-voice eligibility and bounded work:** the prior
+same-Sample-asset/PCM-identity, source control compatibility,
+unmodulated Source and no unrelated Envelope/tone-Filter history
+restrictions stay in place for the mixed prepared transition.
+Noncontinuing/finished Sample histories are refused for this
+specific mixed transition without speculative restart. Note Off
+and natural Sample EOF remain attached to the original current
+playhead; no newly randomized Sample position can resurrect or
+prematurely truncate a held Source. No Source seek, audio replay or
+managed allocation belongs inside PCM. New constructed replacements
+and Filter histories stay on the worker.
+
+**Acceptance:** regression tests express continuity rather than
+historical rephase equality. For Sample-only Multi phase edits,
+PCM before and after a running-note edit matches an unedited held
+reference **bit for bit**, including fractional Sample interpolation,
+prior variable-rate pitch changes, large randomized skips,
+cross-wrapper frozen PCM snapshots, combined FrequencyHz retune,
+correct EOF and Note Off boundaries, and zero managed PCM allocations.
+A separate mixed oscillator+Sample regression compares every
+frame against an independent oracle: the original full mixed output
+plus the old/new isolated oscillator phase delta weighted by the
+64-frame transition. Its Sample part must not jump even when
+the oscillator phase does.
+
+**Scope still open:** actual device listening/click tests, sustained
+CPU/underrun profiling with dense Multi voices, broader FM-modulated
+Source/Instrument/Envelope/filter state migration and arbitrary
+structural Source reassignments, full property-inspector-to-audio
+audit, and the remaining all-properties goal. The PR stays
+**draft and unmerged** until explicit review/merge authorization.
