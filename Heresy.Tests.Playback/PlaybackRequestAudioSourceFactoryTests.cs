@@ -276,9 +276,19 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			((ILiveSynthSourceRevisionOutput)output).EnqueueLiveSynthParameters(
 				synthId, factory.PrepareLiveSynthSource(
 					SongDocumentSnapshot.Create(document), synthId));
-			output.Render(1, pcm);
-			pcm[0].Should().BeApproximately(0.5f, 1e-6f,
-				"switching a curve reference preserves the existing note age");
+			float[] envelopeTransition = new float[65];
+			output.Render(envelopeTransition.Length, envelopeTransition);
+			for (int frame = 0; frame < envelopeTransition.Length; frame++)
+			{
+				double t = Math.Min(1.0, frame / 64.0);
+				double weight = t * t * (3.0 - 2.0 * t);
+				float expected = (float)(0.75 * (1.0 - weight) + 0.5 * weight);
+				envelopeTransition[frame].Should().BeApproximately(expected, 1e-6f,
+					"switching the audible shared Envelope retains the original"
+					+ " note clock and joins the revised curve in 64 frames");
+			}
+			envelopeTransition[^1].Should().BeApproximately(0.5f, 1e-6f,
+				"the same ongoing voice fully reaches the new Envelope reference");
 		}
 		finally
 		{
