@@ -169,9 +169,13 @@ public sealed class SharedAudioEditLivePublicationTests
         PublishingFactory factory, int expected)
     {
         DateTime deadline = DateTime.UtcNow.AddSeconds(5);
-        while (factory.Prepared.Count < expected && DateTime.UtcNow < deadline)
+        while ((factory.Prepared.Count < expected
+                || factory.Source.Order.Count < expected + 1)
+            && DateTime.UtcNow < deadline)
             await Task.Delay(10);
         factory.Prepared.Count.Should().Be(expected);
+        factory.Source.Order.Count.Should().Be(expected + 1,
+            "the worker must have enqueued each prepared Synth onto the live output");
     }
 
     private sealed class PublishingFactory :
