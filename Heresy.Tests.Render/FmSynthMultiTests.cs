@@ -1326,8 +1326,16 @@ public sealed class FmSynthMultiTests
         original.CommitPreparedRunningState(revised, state);
 
         float[] actual = new float[384], reference = new float[384];
-        // Retaining the original Sample position retains its natural EOF.
+        // Before EOF, the streaming Source cannot necessarily project
+        // its finite end from a forward-only Source pitch curve.
         revised.Render(context, state, 80, 16, actual.AsSpan(0, 16));
+        revised.GetEndFrameExclusive(context, state).Should().BeNull();
+        revised.Render(context, state, 96, actual.Length - 16,
+            actual.AsSpan(16));
+        original.Render(context, referenceState, 80, reference.Length, reference);
+        actual.Should().Equal(reference,
+            "randomizing Multi phases cannot discard a still-running Sample");
+        actual[100].Should().NotBe(0f);
         actual.Skip(320).Should().OnlyContain(x => x == 0f);
         revised.GetEndFrameExclusive(context, state).Should().Be(400,
             "the finite end is discovered by rendering through frame 400");
