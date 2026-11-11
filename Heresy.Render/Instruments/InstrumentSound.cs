@@ -1,5 +1,6 @@
 using System;
 using System.Buffers;
+using System.Threading;
 
 using Heresy.Core.Filters;
 using Heresy.Render.Filters;
@@ -132,6 +133,17 @@ public sealed class InstrumentSound : ISound
 				&& SameTone(_tones[oldTone], next._tones[newTone]);
 		}
 
+		public int ToneCount => _tones.Length;
+		public FrozenTone ToneAt(int index) => _tones[index];
+
+		public int? ToneIndexAtBoundSlot(int slot)
+		{
+			if ((uint)slot >= (uint)_toneTable.Length)
+				return null;
+			int index = _toneTable[slot];
+			return (uint)index < (uint)_tones.Length ? index : null;
+		}
+
 		public bool HasSameSelectionAs(FrozenToneMap next)
 		{
 			if (!HasSameSelectionGeometryAs(next)
@@ -153,6 +165,55 @@ public sealed class InstrumentSound : ISound
 	}
 
 	private readonly FrozenToneMap? _frozenToneMap;
+
+	// Frozen on the preparation thread, never resolved during PCM. This
+	// intentionally handles only a *direct Sample* with an explicitly bound
+	// node-based Volume envelope and no tone Filter or other envelopes.
+	// More complex Instrument histories need their own migration proof.
+	private sealed record PreparedDirectSampleVolume(
+		SampleSound Sample, NodeEnvelopeCurve Curve);
+	private PreparedDirectSampleVolume?[]? _preparedLiveVolumes;
+
+	internal void PrepareDirectSampleVolumesForLiveAudition()
+	{
+		if (_frozenToneMap is not { } map
+			|| Volatile.Read(ref _preparedLiveVolumes) is not null)
+			return;
+		PreparedDirectSampleVolume?[] prepared =
+			new PreparedDirectSampleVolume?[map.ToneCount];
+		for (int i = 0; i < prepared.Length; i++)
+		{
+			FrozenTone tone = map.ToneAt(i);
+			if (tone.VolumeEnvelopeId is not ObjectId volumeId
+				|| tone.PitchEnvelopeId.HasValue
+				|| tone.PanningEnvelopeId.HasValue
+				|| tone.FilterEnvelopeId.HasValue
+				|| tone.ToneFilter is not null
+				|| !_envelopeResolver.TryResolve(volumeId, out IEnvelopeCurve? curve)
+				|| curve is not NodeEnvelopeCurve nodeCurve
+				|| !_soundResolver.TryResolve(tone.SourceId, mixdown: false,
+					out ISound? source)
+				|| source is not SampleSound sample)
+				continue;
+			prepared[i] = new(sample, nodeCurve);
+		}
+		Interlocked.CompareExchange(ref _preparedLiveVolumes, prepared, null);
+	}
+
+	internal bool TryGetPreparedDirectSampleVolume(
+		int? boundSlot, out SampleSound? sample, out NodeEnvelopeCurve? curve)
+	{
+		sample = null;
+		curve = null;
+		if (boundSlot is not int slot
+			|| _frozenToneMap?.ToneIndexAtBoundSlot(slot) is not int index
+			|| Volatile.Read(ref _preparedLiveVolumes) is not { } prepared
+			|| prepared[index] is not { } candidate)
+			return false;
+		sample = candidate.Sample;
+		curve = candidate.Curve;
+		return true;
+	}
 
 	/// <summary>Conservative allocation-free compatibility proof for two
 	/// independently prepared wrappers of the same frozen data-driven
