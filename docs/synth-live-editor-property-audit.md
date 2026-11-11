@@ -37,7 +37,7 @@ implementation slices.
 | Source: SourceId (Sample / Instrument / Synth) | Inspector permits reassignment. Renderer can migrate compatible **nested Synth** state, but arbitrary Sample/Instrument Source swaps remain unsupported for held voices; the next new note receives the new selection | **Open property gap**: prepare replacement Sample/Instrument invocation, define new-asset playhead and click-safe bounded transition, Note Off/EOF/release handling |
 | Source: Frequency Hz, Constant, Exponential multiplier | Preserves original child playback position/frequency basis while applying forward rate/mode changes | Verify real inspector with Sample, Instrument and Synth sources across prior pitch automation |
 | Source: Multiplier input | Graph wiring change | Structural-generation rule applies |
-| Envelope: selected Envelope object; shared curve edit | Graph Envelope nodes are stateless. **Slice 46:** a single direct Instrument→Sample Source adopts changed shared node Volume at its original note clock through a 64-frame gain blend (manually heard). **Slice 49:** multiple eligible Instrument-backed Sample Sources feeding Operators now preflight and adopt their shared Volume edits atomically; compound Multi constituents remain excluded | Open: compound Multi/onset coordination, scripted/nested tone Sources, other Envelope targets, rapid edits, device listening for multi-Source cases |
+| Envelope: selected Envelope object; shared curve edit | Graph Envelope nodes remain stateless. **Slice 52:** audible changed Node Envelope curves/references in held, stateless Oscillator/Constant/Operator/Envelope graphs use a 64-frame final-output fade without phase rebase; equivalent frozen wrappers do not fade and pitch-control-only Envelopes remain immediate. Changes during an active release are conservatively rejected. **Slices 46/49:** bounded direct/multi-Source Instrument Sample Volume adoption remains separate | Open: scripted graph Envelopes, release-in-progress migration, Source/Filter/Multi graphs, other Instrument envelope targets, rapid edits and full device matrix |
 | Filter: shared definition, per-use stage overrides, Tail Seconds | Existing coefficient/FIR and stage-identity preflights can adopt compatible prepared parameter changes and tail updates; graph rewiring and unsupported stage topology remain conservative | **Open coverage**: every typed stage parameter, Filter selection/structural stage changes, multi-filter tails and audible click/throughput acceptance |
 | Filter: audio and modulation inputs | Graph wiring change | Structural-generation rule applies |
 | Multi: Distribution, Detune, Voice Count, Harmonic/Chord Components, Randomize Phase, Gain Compensation, Cycle Length, presets | Ratio/mix glide, worker-prepared growth/onset phases, Sample playhead continuity and bounded fades have dedicated renderer coverage; feasibility depends on constituent/state eligibility and 128-voice cap | Audit combinations, nested State/Filter cases, rapid edits, maximum headroom, UI-to-PCM |
@@ -431,3 +431,55 @@ the frozen generation* acceptance. The screenshot's **Maximum**
 configuration is a distinct subsequent variant from the original
 **Multiply** rewire; these are not represented as an identical
 graph or an exact numerical PCM oracle.
+
+## Slice 52 — held audible graph Node Envelope edits
+
+Graph `FmEnvelopeNode` curves are sample-addressable and do not
+have local DSP history. An edit to the curve of an existing shared
+Node Envelope or a change to the node's selected Envelope object
+was already allowed under identical graph wiring. If that Envelope
+supplied an **audible amplitude factor** (for example,
+`Oscillator × Envelope`), the first revised sample could jump
+directly to the new curve's value.
+
+Slice 52 extends the existing audition-only final-output
+**64-frame cubic smoothstep** to **changed frozen
+`NodeEnvelopeCurve`** values in a stateless graph of Oscillators,
+Constants, Operators and Envelope nodes. The graph's Operator
+audio-input path identifies the actually audible Envelopes.
+An Envelope connected *only* to an Oscillator frequency multiplier
+stays a pitch control and does not initiate output smoothing.
+Immutable Node curves with the same captured shape are compared
+by `HasSameFrozenShapeAs`, avoiding a needless fade when the
+frozen-song rebuild produces a distinct equivalent wrapper.
+
+**Lifecycle boundary:** If Note Off has already occurred, a
+changed directly audible graph Envelope in this eligible shape
+is **declined by whole-voice preflight**, retaining the original
+released voice and its deadline. This avoids substituting a new
+Envelope whose release endpoint might erase an outgoing tail.
+A held note is eligible to adopt the edit, and subsequently
+releases using the revised curve at its original note age.
+Detailed migration of an in-progress release remains outside
+this bounded slice.
+
+Both shared-object curve changes and selected-Envelope-ID changes
+are covered. Changes to scripted graph Envelopes are deliberately
+not admitted into this **Node Envelope smooth-transition**
+guarantee, though their existing stateless evaluation semantics
+are otherwise retained. No Source, Filter, Multi or compound
+Multi-generated graph is newly admitted; normal playback/export
+does not acquire audition-only fading.
+
+The red-first
+`FmSynthLiveGraphEnvelopeTests` run
+[CI #43043724316](https://github.com/logiclrd/Heresy/actions/runs/43043724316)
+had exactly three new failures: same-ID audible edit,
+changed Envelope object ID, and changed curve after Note Off.
+Negative and positive regressions establish exact 64-frame output,
+retained phase, frozen-shape equality, pitch-only control
+continuity, no PCM managed allocations, non-audition isolation,
+and later release timing. An existing Playback integration
+regression was updated to assert the new 64-frame curve-reference
+join rather than immediate discontinuous replacement. Physical
+listening and full all-property acceptance remain separate.
