@@ -59,6 +59,36 @@ public sealed class FmSynthLiveGraphEnvelopeTests
     }
 
     [Test]
+    public void HeldEnvelopeEditKeepsItsRevisedSustainAndLaterReleaseClock()
+    {
+        FmSynthSound before = GainSound(OriginalId, Sustained(1.0));
+        FmSynthSound after = GainSound(OriginalId, Sustained(0.2));
+        RenderContext context = Mono();
+        SoundState held = before.CreateState();
+        SoundState reference = after.CreateState();
+        before.Render(context, held, 0, 128, new float[128]);
+        after.Render(context, reference, 0, 128, new float[128]);
+        before.TryPrepareRunningState(after, held).Should().BeTrue();
+        before.CommitPreparedRunningState(after, held);
+        // Complete the bounded transition before Note Off. The revised
+        // envelope must then release at the original running note age.
+        after.Render(context, held, 128, 128, new float[128]);
+        after.Render(context, reference, 128, 128, new float[128]);
+        TimeSpan noteOff = FrameTime.FrameStartTime(256, 48000);
+        held.NoteOffTime = reference.NoteOffTime = noteOff;
+        float[] actual = new float[192], expected = new float[192];
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        after.Render(context, held, 256, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
+        after.Render(context, reference, 256, expected.Length, expected);
+        for (int i = 0; i < actual.Length; i++)
+            actual[i].Should().BeApproximately(expected[i], 2e-6f,
+                "a held curve edit must not rebase its future release clock");
+        actual[^1].Should().Be(0.0f,
+            "the revised sustain loop must eventually release to its natural end");
+    }
+
+    [Test]
     public void EquivalentFrozenNodeCurveDoesNotStartAnUnnecessaryFade()
     {
         FmSynthSound oldSound = GainSound(OriginalId, Rising());
