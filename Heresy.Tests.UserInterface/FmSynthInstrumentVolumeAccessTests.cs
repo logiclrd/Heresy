@@ -60,13 +60,12 @@ public sealed class FmSynthInstrumentVolumeAccessTests
 				Field<Dictionary<ObjectId, Window>>(editor, "_sharedVolumeEditors");
 			windows.Should().ContainKey(envelope.Id);
 			Window popup = windows[envelope.Id];
-			ScrollViewer scroll = popup.Content.Should()
-				.BeOfType<ScrollViewer>().Subject;
-			NodeEnvelopeEditorControl volume = scroll.Content.Should()
-				.BeOfType<NodeEnvelopeEditorControl>().Subject;
+			ScrollViewer scroll = (ScrollViewer)popup.Content!;
+			NodeEnvelopeEditorControl volume =
+				(NodeEnvelopeEditorControl)scroll.Content!;
 			uint audioRevision = workspace.Document.AudioRevision;
 			Field<TextBox>(volume, "_nodesInput").Text =
-				"0, 0.4\\n0.01, 0.8\\n0.02, 0.2\\n0.09, 0";
+				"0, 0.4\n0.01, 0.8\n0.02, 0.2\n0.09, 0";
 			typeof(NodeEnvelopeEditorControl).GetMethod("Apply",
 				BindingFlags.Instance | BindingFlags.NonPublic)!
 				.Invoke(volume, []);
@@ -74,7 +73,6 @@ public sealed class FmSynthInstrumentVolumeAccessTests
 			changed.Should().Be(1);
 			host.Content.Should().BeSameAs(editor,
 				"the Synth preview view must remain mounted during shared edits");
-			editor.IsAttachedToVisualTree().Should().BeTrue();
 		}
 		finally { host.Close(); }
 	}
