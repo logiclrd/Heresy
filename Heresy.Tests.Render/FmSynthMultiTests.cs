@@ -1267,7 +1267,7 @@ public sealed class FmSynthMultiTests
         original.Render(context, reference, 272, unedited.Length, unedited);
         actual[0].Should().Be(unedited[0],
             "the first publication sample uses the original accumulated playhead");
-        actual.Should().OnlyContain(float.IsFinite);
+        actual.Should().OnlyContain(x => float.IsFinite(x));
         Enumerable.Range(65, actual.Length - 65)
             .Max(i => Math.Abs(actual[i] - unedited[i]))
             .Should().BeGreaterThan(0.01f,
