@@ -1130,6 +1130,122 @@ public sealed class FmSynthMultiTests
         worker.Fault.Should().BeNull();
     }
 
+    [TestCase(160)]
+    [TestCase(200)]
+    public void IndependentFrozenNodeVolumeCurvesKeepInstrumentSampleRelease(
+        int noteOffFrame)
+    {
+        // Two frozen Synth revisions each prepare the same *unchanged*
+        // Instrument/Volume envelope from separate song snapshots.
+        // Their NodeEnvelopeCurve instances are different, although their
+        // immutable release shapes are identical. No Synth/Instrument
+        // cycle or Instrument authoring edit is involved.
+        ObjectId sampleId = (ObjectId)7670U;
+        ObjectId instrumentId = (ObjectId)7671U;
+        ObjectId envelopeId = (ObjectId)7672U;
+        float[] pcm = Enumerable.Range(0, 2048)
+            .Select(i => (float)(0.38 + 0.11 * Math.Sin(2 * Math.PI * i / 59.0)))
+            .ToArray();
+        SampleSound sample = new(new SampleDefinition(sampleId,
+            "Frozen node curve PCM",
+            new ExternalAssetReference("frozen-node-volume.wav")),
+            new MemorySampleData(48000, 1, pcm));
+        SourceResolver sampleResolver = new(sampleId, sample);
+        Heresy.Core.Envelopes.NodeEnvelopeDefinition Envelope()
+        {
+            Heresy.Core.Envelopes.NodeEnvelopeDefinition definition =
+                new(envelopeId, "Frozen volume");
+            definition.ReplaceCurve([
+                new(TimeSpan.Zero, 1.0),
+                new(TimeSpan.FromTicks(208), 1.0),
+                new(TimeSpan.FromTicks(2291), 0.0),
+            ], 1, 1, Heresy.Core.Envelopes.EnvelopeSustainLoopMode.Forward);
+            return definition;
+        }
+        NodeEnvelopeCurve oldCurve = new(Envelope()), newCurve = new(Envelope());
+        ReferenceEquals(oldCurve, newCurve).Should().BeFalse();
+        CurveResolver oldEnvelopeResolver = new(envelopeId, oldCurve);
+        CurveResolver newEnvelopeResolver = new(envelopeId, newCurve);
+        Heresy.Core.Instruments.InstrumentDefinition Instrument()
+        {
+            Heresy.Core.Instruments.InstrumentDefinition definition =
+                new(instrumentId, "Unchanged frozen Instrument");
+            definition.ToneSpecifications.Add(
+                new Heresy.Core.Instruments.ToneSpecification
+                {
+                    SourceId = sampleId,
+                    VolumeEnvelopeId = envelopeId,
+                });
+            definition.ToneTable.Add(0);
+            return definition;
+        }
+        Heresy.Render.Instruments.InstrumentSound oldInstrument =
+            new(Instrument(), sampleResolver, oldEnvelopeResolver);
+        Heresy.Render.Instruments.InstrumentSound newInstrument =
+            new(Instrument(), sampleResolver, newEnvelopeResolver);
+        SourceResolver oldResolver = new(instrumentId, oldInstrument);
+        SourceResolver newResolver = new(instrumentId, newInstrument);
+        FmSynthGraph Graph(bool random) => new([
+            new FmSoundSourceNode(1, instrumentId,
+                FmMultiNode.NeutralFrequencyHz),
+            new FmOscillatorNode(2, FmOscillatorWaveform.Sine, 1270),
+            new FmConstantNode(3, 0.0),
+            new FmOperatorNode(4, FmOperatorKind.Multiply, [2, 3]),
+            new FmOperatorNode(5, FmOperatorKind.Add, [1, 4]),
+            new FmMultiNode(6, 5, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 100,
+                gainCompensation: true),
+        ], 6);
+        FmSynthSound original = new(Graph(false), oldEnvelopeResolver,
+            soundResolver: oldResolver, enableLiveMultiExpansion: true);
+        FmSynthSound revised = new(Graph(true), newEnvelopeResolver,
+            soundResolver: newResolver, enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState(), reference = original.CreateState();
+        held.SetNoiseSeed(21);
+        reference.SetNoiseSeed(21);
+        original.Render(context, held, 0, 128, new float[128]);
+        original.Render(context, reference, 0, 128, new float[128]);
+        original.TryPrepareRunningState(revised, held).Should().BeFalse();
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeTrue(
+            "the same frozen node envelope shape in separate revisions should permit prepared oscillator rephase");
+        using FirPreparationScheduler worker = new();
+        original.QueuePendingFirControls(held, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        original.AdoptPreparedFirControls(held);
+        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, held);
+
+        float[] actual = new float[132], expected = new float[132];
+        int heldFrames = noteOffFrame - 128;
+        int releasedFrames = actual.Length - heldFrames;
+        long allocations = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, 128, heldFrames,
+            actual.AsSpan(0, heldFrames));
+        (GC.GetAllocatedBytesForCurrentThread() - allocations).Should().Be(0L);
+        original.Render(context, reference, 128, heldFrames,
+            expected.AsSpan(0, heldFrames));
+        held.NoteOffTime = TimeSpan.FromSeconds((double)noteOffFrame / 48000);
+        reference.NoteOffTime = held.NoteOffTime;
+        allocations = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, noteOffFrame, releasedFrames,
+            actual.AsSpan(heldFrames));
+        (GC.GetAllocatedBytesForCurrentThread() - allocations).Should().Be(0L);
+        original.Render(context, reference, noteOffFrame, releasedFrames,
+            expected.AsSpan(heldFrames));
+        actual.Should().Equal(expected,
+            "independent frozen curve objects must preserve the original held Volume release clock");
+        long end = oldCurve.GetEndActiveFrameExclusiveAfterNoteOff(
+            noteOffFrame, 48000)!.Value;
+        actual[heldFrames + 4].Should().BeGreaterThan(0.01f,
+            "release remains audible after Note Off");
+        actual.Skip((int)(end - 128)).Should().OnlyContain(x => x == 0f);
+        revised.GetEndFrameExclusive(context, held).Should().Be(end);
+        worker.Fault.Should().BeNull();
+    }
+
     [TestCase(160, false, false, false)]
     [TestCase(200, false, false, false)]
     [TestCase(160, true, false, false)]
@@ -2771,6 +2887,16 @@ public sealed class FmSynthMultiTests
     [
         new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
     ]));
+
+    private sealed class CurveResolver(ObjectId id, IEnvelopeCurve selected)
+        : IEnvelopeCurveResolver
+    {
+        public bool TryResolve(ObjectId requested, out IEnvelopeCurve? curve)
+        {
+            curve = requested == id ? selected : null;
+            return curve is not null;
+        }
+    }
 
     private sealed class TenFrameRelease : IEnvelopeCurveResolver, IEnvelopeCurve
     {
