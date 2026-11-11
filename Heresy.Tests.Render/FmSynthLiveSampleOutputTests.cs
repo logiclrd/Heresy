@@ -95,6 +95,29 @@ public sealed class FmSynthLiveSampleOutputTests
     }
 
     [Test]
+    public void SampleOutputGainEditPreservesNaturalEofAndDoesNotKeepPCMAlive()
+    {
+        SampleSound sample = Sample(400);
+        FmSynthSound original = Sound(sample, 0.9);
+        FmSynthSound revised = Sound(sample, 0.2);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        original.Render(context, held, 0, 128, new float[128]);
+        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, held);
+        float[] after = new float[320];
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, 128, after.Length, after);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
+        after[150].Should().NotBe(0.0f,
+            "the running Sample continues playing after the output gain edit");
+        for (int i = 272; i < after.Length; i++)
+            after[i].Should().Be(0.0f,
+                "the Sample must end at its unchanged 400-frame EOF");
+        revised.GetEndFrameExclusive(context, held).Should().Be(400);
+    }
+
+    [Test]
     public void SampleOutputSecondGainEditStartsAtPreviouslyBlendedOutput()
     {
         SampleSound sample = Sample(600);
