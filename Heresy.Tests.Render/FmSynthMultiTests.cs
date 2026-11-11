@@ -3233,6 +3233,134 @@ public sealed class FmSynthMultiTests
                 freshOldPcm[i] * 0.25f, 2e-5f);
     }
 
+    [Test]
+    public void ChangedInstrumentVolumeCannotStealAnIncompatibleSampleState()
+    {
+        // The Instrument's selected SourceId is unchanged, but the
+        // separately frozen PCM is not. Never overwrite the active
+        // Sample/Envelope binding solely because the tone table matches.
+        ObjectId sampleId = (ObjectId)7960U;
+        ObjectId instrumentId = (ObjectId)7961U;
+        ObjectId envelopeId = (ObjectId)7962U;
+        SampleSound Sample(float level) => new(
+            new SampleDefinition(sampleId, "Selected PCM",
+                new ExternalAssetReference("selected-pcm.wav")),
+            new MemorySampleData(48000, 1,
+                Enumerable.Repeat(level, 4096).ToArray()));
+        NodeEnvelopeCurve Curve(double level)
+        {
+            Heresy.Core.Envelopes.NodeEnvelopeDefinition definition =
+                new(envelopeId, "Shared volume");
+            definition.ReplaceCurve([
+                new(TimeSpan.Zero, level),
+                new(TimeSpan.FromTicks(208), level),
+                new(TimeSpan.FromTicks(2291), 0.0),
+            ], 1, 1, Heresy.Core.Envelopes.EnvelopeSustainLoopMode.Forward);
+            return new(definition);
+        }
+        Heresy.Core.Instruments.InstrumentDefinition Instrument()
+        {
+            Heresy.Core.Instruments.InstrumentDefinition definition =
+                new(instrumentId, "Selected tone");
+            definition.ToneSpecifications.Add(
+                new Heresy.Core.Instruments.ToneSpecification
+                {
+                    SourceId = sampleId, VolumeEnvelopeId = envelopeId,
+                });
+            definition.ToneTable.Add(0);
+            return definition;
+        }
+        CurveResolver oldCurves = new(envelopeId, Curve(1.0));
+        CurveResolver newCurves = new(envelopeId, Curve(0.25));
+        Heresy.Render.Instruments.InstrumentSound oldInstrument = new(
+            Instrument(), new SourceResolver(sampleId, Sample(0.4f)),
+            oldCurves);
+        Heresy.Render.Instruments.InstrumentSound newInstrument = new(
+            Instrument(), new SourceResolver(sampleId, Sample(0.1f)),
+            newCurves);
+        FmSynthGraph graph = new([
+            new FmSoundSourceNode(1, instrumentId,
+                FmMultiNode.NeutralFrequencyHz),
+        ], 1);
+        FmSynthSound original = new(graph, oldCurves,
+            soundResolver: new SourceResolver(instrumentId, oldInstrument),
+            enableLiveMultiExpansion: true);
+        FmSynthSound edited = new(graph, newCurves,
+            soundResolver: new SourceResolver(instrumentId, newInstrument),
+            enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState(), reference = original.CreateState();
+        original.Render(context, held, 0, 128, new float[128]);
+        original.Render(context, reference, 0, 128, new float[128]);
+        original.TryPrepareRunningState(edited, held).Should().BeTrue(
+            "other compatible graph scalar edits must not be starved");
+        original.CommitPreparedRunningState(edited, held);
+        float[] actual = new float[160], expected = new float[160];
+        edited.Render(context, held, 128, actual.Length, actual);
+        original.Render(context, reference, 128, expected.Length, expected);
+        actual.Should().Equal(expected,
+            "the changed Sample is only available to new notes");
+    }
+
+    [Test]
+    public void OrdinaryPlaybackDoesNotUseTheLiveInstrumentVolumeFade()
+    {
+        ObjectId sampleId = (ObjectId)7970U;
+        ObjectId instrumentId = (ObjectId)7971U;
+        ObjectId envelopeId = (ObjectId)7972U;
+        SampleSound sample = new(
+            new SampleDefinition(sampleId, "Ordinary PCM",
+                new ExternalAssetReference("ordinary-pcm.wav")),
+            new MemorySampleData(48000, 1,
+                Enumerable.Repeat(0.4f, 4096).ToArray()));
+        SourceResolver source = new(sampleId, sample);
+        NodeEnvelopeCurve Curve(double gain)
+        {
+            Heresy.Core.Envelopes.NodeEnvelopeDefinition definition =
+                new(envelopeId, "Ordinary volume");
+            definition.ReplaceCurve([
+                new(TimeSpan.Zero, gain),
+                new(TimeSpan.FromTicks(208), gain),
+                new(TimeSpan.FromTicks(2291), 0.0),
+            ], 1, 1, Heresy.Core.Envelopes.EnvelopeSustainLoopMode.Forward);
+            return new(definition);
+        }
+        Heresy.Render.Instruments.InstrumentSound Instrument(
+            CurveResolver curves)
+        {
+            Heresy.Core.Instruments.InstrumentDefinition definition =
+                new(instrumentId, "Ordinary Instrument");
+            definition.ToneSpecifications.Add(
+                new Heresy.Core.Instruments.ToneSpecification
+                {
+                    SourceId = sampleId, VolumeEnvelopeId = envelopeId,
+                });
+            definition.ToneTable.Add(0);
+            return new(definition, source, curves);
+        }
+        CurveResolver beforeCurves = new(envelopeId, Curve(1.0));
+        CurveResolver afterCurves = new(envelopeId, Curve(0.25));
+        FmSynthGraph graph = new([
+            new FmSoundSourceNode(1, instrumentId,
+                FmMultiNode.NeutralFrequencyHz),
+        ], 1);
+        FmSynthSound before = new(graph, beforeCurves,
+            soundResolver: new SourceResolver(instrumentId, Instrument(beforeCurves)));
+        FmSynthSound after = new(graph, afterCurves,
+            soundResolver: new SourceResolver(instrumentId, Instrument(afterCurves)));
+        RenderContext context = Mono();
+        SoundState continuing = before.CreateState(), reference = before.CreateState();
+        before.Render(context, continuing, 0, 128, new float[128]);
+        before.Render(context, reference, 0, 128, new float[128]);
+        before.TryPrepareRunningState(after, continuing).Should().BeTrue();
+        before.CommitPreparedRunningState(after, continuing);
+        float[] actual = new float[160], oldPcm = new float[160];
+        after.Render(context, continuing, 128, actual.Length, actual);
+        before.Render(context, reference, 128, oldPcm.Length, oldPcm);
+        actual.Should().Equal(oldPcm,
+            "the new audition-only Volume policy must not affect normal playback/export");
+    }
+
     private static float[] Render(FmSynthGraph graph, int count, ulong seed = 1)
     {
         FmSynthSound sound = new(graph, new EmptyEnvelopes());
