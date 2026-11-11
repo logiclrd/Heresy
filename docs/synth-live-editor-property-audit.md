@@ -31,7 +31,7 @@ implementation slices.
 | Real inspector property | Code path / current live behavior | Remaining acceptance |
 | --- | --- | --- |
 | Constant: Value | Replaces reachable scalar and adopts without stored state | Confirm UI-to-PCM for representative graph descendants |
-| Oscillator: Waveform, Curvature, Vmin, Vmax | Recompiled waveform/curvature/range with retained phase. In live audition, a **single-output oscillator** now blends from the last audible sample to the new waveform over 64 output frames. A mid-fade edit restarts from the actual blended sample. No second voice or PCM allocation | Extend click-safe treatment through Operators, Multi, Source modulation and other oscillator-containing graphs; physical click tests |
+| Oscillator: Waveform, Curvature, Vmin, Vmax | Recompiled waveform/curvature/range with retained phase. Live auditions fade direct Oscillator output or **compound stateless Oscillator/Constant/Operator graphs** for 64 frames from the last audible **whole-graph** value; repeated edits join the current blended output, without changing phase or allocating in PCM | Still open: stateful Filter/Source and Multi graphs, arbitrary modulation topologies, physical click tests, UI-to-PCM coverage |
 | Oscillator: Frequency Hz, Constant, Exponential multiplier | Existing phase integrator continues at newly authored instantaneous rate; frequency-only edits are not subjected to the shape fade | UI/PCM matrix and high-rate modulation acceptance |
 | Oscillator: Multiplier input | Graph wiring change | Structural-generation rule applies |
 | Source: SourceId (Sample / Instrument / Synth) | Inspector permits reassignment. Renderer can migrate compatible **nested Synth** state, but arbitrary Sample/Instrument Source swaps remain unsupported for held voices; the next new note receives the new selection | **Open property gap**: prepare replacement Sample/Instrument invocation, define new-asset playhead and click-safe bounded transition, Note Off/EOF/release handling |
@@ -335,3 +335,30 @@ or *all* generalized Definite/Indefinite Note Off edge cases. The later
 slice-48 core lifecycle listening pass is recorded in
 [note-off-lifecycle.md](note-off-lifecycle.md); internal permanent-zero
 retirement and repeated-Off-origin listening remain separate.
+
+## Slice 50 — compound stateless Oscillator output transitions
+
+The direct-Oscillator shape fade (slice 43) did not cover an Oscillator
+feeding an Add/Multiply Operator. A live **Waveform, Curvature, Vmin or
+Vmax** edit was previously permitted structurally but produced a
+discontinuous first frame at the final output. A new red-before-fix
+regression observed the immediate jump through **Add and Multiply**
+([CI #43033101533](https://github.com/logiclrd/Heresy/actions/runs/43033101533)).
+
+A compiled graph consisting only of reachable **Oscillator, Constant and
+Operator** nodes is now eligible for a single 64-frame smoothstep on the
+**final audible graph output**, using the actual previously audible
+sample as its anchor. The raw per-node `Values` and independent
+oscillator phase integrators remain untouched. The final output's
+`AudioValues` records the already-blended value so rapid revisions
+start continuously. A frequency-only change does not start a shape
+fade. There are no PCM allocations, second playback voices or state
+reconstructions. Normal playback/export retains the unfaded values.
+
+The test matrix covers Square, Curvature and output-range changes,
+Add/Multiply graphs, fade interruption, post-fade uninterrupted phase,
+frequency retuning and non-audition isolation. **Sound Source, Filter,
+Multi and compound Multi-generated graphs remain excluded** until
+their distinct history/onset preflights are coordinated. Physical
+device listening of the newly supported compound case remains open;
+this slice does not settle the broader all-properties task.
