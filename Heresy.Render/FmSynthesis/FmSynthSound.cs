@@ -880,7 +880,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					{ AudioInputNodeId: not null, Configuration: not null }
 				&& node.Filter is not null
 			|| node.Definition is FmMultiNode { InputNodeId: not null }
-				&& node.MultiInput?._singleOutputOscillator is not null);
+				&& node.MultiInput is FmSynthSound multiChild
+				&& multiChild._oscillatorCount > 0
+				&& multiChild._nodes.All(child => child.Definition is
+					FmOscillatorNode or FmConstantNode or FmOperatorNode));
 		_multiRatios = _nodes.Select(node => node.Definition is FmMultiNode multi
 			? multi.GetFrequencyRatios() : Array.Empty<double>()).ToArray();
 		_multiReserve = new int[_nodes.Length];
@@ -1913,11 +1916,64 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return true;
 	}
 
-	/// <summary>Allow only downstream audible controls to fade around a
-	/// stable, already-running Multi of independent Oscillators. Changing
-	/// constituent waveform/curvature, voice count, distribution or onset
-	/// has a separate child-state transition and cannot piggyback on the
-	/// graph-output hold. This guard is bounded and allocation-free.</summary>
+	/// <summary>A Multi child has one independent phase integrator per
+	/// Oscillator. A parent output fade is safe only if its authored child
+	/// graph is frozen-identical, including *every* oscillator phase/rate
+	/// control and all stateless gain/mixing nodes. Checking the compiled
+	/// IDs, node types and input arrays also rejects rewiring and newly
+	/// reachable nodes. No allocations, hashes or authoring lookups.</summary>
+	private bool HasSameFrozenStatelessMultiGraphAs(FmSynthSound next)
+	{
+		if (_oscillatorCount < 1
+			|| _oscillatorCount != next._oscillatorCount
+			|| _nodes.Length != next._nodes.Length
+			|| _outputIndex != next._outputIndex
+			|| _hasSources || next._hasSources
+			|| _hasMulti || next._hasMulti
+			|| _newNotePolicy != next._newNotePolicy)
+			return false;
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			CompiledNode old = _nodes[i], revised = next._nodes[i];
+			if (old.Definition.Id != revised.Definition.Id
+				|| old.Definition.GetType() != revised.Definition.GetType()
+				|| old.OscillatorIndex != revised.OscillatorIndex
+				|| !old.InputIndices.AsSpan().SequenceEqual(revised.InputIndices))
+				return false;
+			switch (old.Definition)
+			{
+				case FmOscillatorNode oscillator
+					when revised.Definition is FmOscillatorNode candidate
+						&& oscillator.Waveform == candidate.Waveform
+						&& oscillator.FrequencyHz == candidate.FrequencyHz
+						&& oscillator.Minimum == candidate.Minimum
+						&& oscillator.Maximum == candidate.Maximum
+						&& oscillator.Curvature == candidate.Curvature
+						&& oscillator.Constant == candidate.Constant
+						&& oscillator.ExponentialMultiplier
+							== candidate.ExponentialMultiplier
+						&& oscillator.MultiplierNodeId == candidate.MultiplierNodeId:
+					break;
+				case FmConstantNode constant
+					when revised.Definition is FmConstantNode candidate
+						&& constant.Value == candidate.Value:
+					break;
+				case FmOperatorNode operation
+					when revised.Definition is FmOperatorNode candidate
+						&& operation.Operation == candidate.Operation:
+					break;
+				default:
+					return false;
+			}
+		}
+		return true;
+	}
+
+	/// <summary>Allow only downstream audible controls to fade around
+	/// a stable, already-running Multi whose Oscillator/Constant/Operator
+	/// child graph is frozen-identical. All constituent phases survive.
+	/// Any child edit, voice-count, distribution or onset change has a
+	/// separate transaction; this guard is bounded and allocation-free.</summary>
 	private bool CanFadeStableMultiOutputs(FmSynthSound next, FmSynthState live)
 	{
 		if (!_hasMulti)
@@ -1938,19 +1994,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				|| previous.RandomizePhase != revised.RandomizePhase
 				|| previous.GainCompensation != revised.GainCompensation
 				|| previous.CycleLength != revised.CycleLength
-				|| _nodes[i].MultiInput?._singleOutputOscillator?.Definition
-					is not FmOscillatorNode oldOsc
-				|| next._nodes[i].MultiInput?._singleOutputOscillator?.Definition
-					is not FmOscillatorNode newOsc
-				|| oldOsc.Id != newOsc.Id
-				|| oldOsc.Waveform != newOsc.Waveform
-				|| oldOsc.FrequencyHz != newOsc.FrequencyHz
-				|| oldOsc.Minimum != newOsc.Minimum
-				|| oldOsc.Maximum != newOsc.Maximum
-				|| oldOsc.Curvature != newOsc.Curvature
-				|| oldOsc.Constant != newOsc.Constant
-				|| oldOsc.ExponentialMultiplier != newOsc.ExponentialMultiplier
-				|| oldOsc.MultiplierNodeId != newOsc.MultiplierNodeId
+				|| _nodes[i].MultiInput is not FmSynthSound oldChild
+				|| next._nodes[i].MultiInput is not FmSynthSound nextChild
+				|| !oldChild.HasSameFrozenStatelessMultiGraphAs(nextChild)
 				|| _multiRatios[i].Length != next._multiRatios[i].Length
 				|| live.Multis[i].Length < _multiRatios[i].Length)
 				return false;
@@ -1965,7 +2011,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						return false;
 					continue; // dormant preallocated headroom is inert
 				}
-				if (!voice.HasStarted || !voice.Initialized
+				if (!voice.Sound.HasSameFrozenStatelessMultiGraphAs(oldChild)
+					|| !voice.HasStarted || !voice.Initialized
 					|| voice.OnsetFadeFrom is not null
 					|| voice.SilenceEnd.HasValue
 					|| voice.Invocation.State.HasNoteOffTime
