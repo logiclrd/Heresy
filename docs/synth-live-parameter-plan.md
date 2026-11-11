@@ -3976,3 +3976,77 @@ have separate safety contracts. Physical listening on this
 compound-child fixture remains outstanding; this slice
 does not close the all-nonstructural-property TODO or change
 PR #12's draft/unmerged status.
+
+
+## Slice 58 — frozen Noise and Node Envelope in compound Multi output transitions
+
+Slice 57 allowed the 64-output-frame audition-only smoothstep for a
+**downstream Constant or Operator edit** when an unchanged, stable
+Multi had a compound Oscillator/Constant/Operator child. A child graph
+that added Noise or an audible Node Envelope still disqualified this
+*outer output fade*, even when the newly prepared child was otherwise
+frozen-identical and its incumbent voices could continue without
+losing any state.
+
+**Bounded extension:** A Multi's frozen compound child may now
+contain **Oscillators, Constants, Operators, Noise and Node Envelopes**
+provided it still has at least one Oscillator and all other existing
+stable-Multi/parent conditions pass. Deterministic Noise requires no
+new evolving state: the child retains the same bound voice seed,
+Noise node ID and absolute frame, and no extra random stream is
+created. Each Node Envelope remains on the original child note
+clock. Independently prepared NodeEnvelopeCurve wrapper objects
+are considered the *same* frozen curve only when their entire
+captured sample-addressable shape matches.
+
+**Exact frozen-state guard:** Compare the old/new child graph's
+output, node count/order/IDs/types, compiled input indices and
+Oscillator phase indices. Match every Oscillator waveform,
+frequency, Curvature, Vmin/Vmax, constant and multiplier property,
+each Constant value, and each Operator operation. Noise is admitted
+only with the same node identity, as its signal depends on that
+identity, the bound seed and frame. An Envelope must have the
+**same selected EnvelopeId** and both old and new resolutions
+must be **NodeEnvelopeCurve** instances with
+`HasSameFrozenShapeAs`. A different Envelope selection or
+changed curve is **not** a frozen child and cannot piggyback on
+this *outer* fade; scripted or unresolved curves remain excluded.
+The currently bound child also must match its old compiled
+definition. The Multi's distribution, voice count, detuning,
+compensation, all ratios/mix, phase/onset and release preflight
+rules from slice 56 remain unchanged. Releasing or retiring
+children, changing constituent properties, and any nested
+Source/Filter/Multi remain outside this bounded transaction.
+All checks operate on already compiled snapshots without
+PCM allocations or extra child voices.
+
+**Red-first regression:** New
+`FmSynthLiveDeterministicMultiOutputTests` models an audible
+child `Add[Multiply[Sine, NodeEnvelope],
+Multiply[WhiteNoise, Constant]]` feeding a three-voice
+Spread Multi, followed by a downstream Constant and
+Multiply/Add Operator. Each separately prepared revised
+graph contains a newly allocated but **equivalent frozen
+NodeEnvelopeCurve**. In
+[CI #43082607418](https://github.com/logiclrd/Heresy/actions/runs/43082607418),
+four cases **failed red as intended** before implementation:
+two downstream gain edits, one downstream Operator change
+and a second edit during the first output transition.
+Ordinary non-audition rendering and the later-release regression
+passed before the fix. The positive oracle compares the complete
+64-frame smoothstep to an independently rendered graph with the
+**same explicit Noise seed**, preserving every constituent's
+Oscillator phase, Noise stream and Envelope clock. It asserts
+zero managed PCM allocations and correct subsequent Note Off
+behaviour after a finished fade.
+
+**Not claimed:** This does not add a new realtime migration
+for *changed* Multi child Envelopes or Noise implementations,
+Sources, Filters, nested Multi, arbitrary SourceId swaps, or
+in-progress releases; it only smooths compatible *downstream*
+controls around frozen child state. The separate UI TODO
+for Noise Vmin/Vmax and range-link buttons on `main` is
+not implemented by this renderer change. Real-device listening
+of this specific combined child is still pending, PR #12
+remains **draft/unmerged** and the all-property milestone
+remains open.
