@@ -275,9 +275,12 @@ cut by that forwarded request. All participating release lifecycles and
 audible Filter tails matter; permanent-zero *final* Volume may prove earlier
 silence only with appropriate downstream/tail proof. See
 `docs/note-off-lifecycle.md` for the normative table and the scripted
-release-duration compatibility exception. The generalized lifecycle was
-automatically tested in slice 48 but has not been physically listened to.
-It is not equivalent to adopting changed held Instrument envelope curves.
+release-duration compatibility exception. The generalized lifecycle was automatically tested in slice 48; a later
+real-device listening matrix also verified the core release semantics (see
+[Note Off lifecycle](note-off-lifecycle.md)). Internal retirement and
+repeated-Off-origin specifics remain automated-only or unverified as stated
+there. These lifecycle checks are distinct from adopting edited held
+Instrument envelope curves.
 
 ## Slice 49 — multi-Source shared Volume held-state migration
 
@@ -328,5 +331,7 @@ it is not merely a transport publication or a new-note effect.
 
 The report does not certify unrelated controls, nested/compound Multi
 children, exact fade math, repeated rapid edits, performance under load
-or physical listening of generalized Definite/Indefinite Note Off.
-Those acceptance items remain open as documented.
+or *all* generalized Definite/Indefinite Note Off edge cases. The later
+slice-48 core lifecycle listening pass is recorded in
+[note-off-lifecycle.md](note-off-lifecycle.md); internal permanent-zero
+retirement and repeated-Off-origin listening remain separate.
