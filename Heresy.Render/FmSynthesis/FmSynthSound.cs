@@ -1005,10 +1005,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	/// Independent scalar edits can then publish on the original voice.
 	/// All checks are nonallocating, and none select or resolve a tone.</summary>
 	private bool CanSharePreparedInstrumentBindingsWith(
-		FmSynthSound next, SoundState outgoing, SoundState replacement)
+		SoundState outgoing, SoundState replacement)
 	{
 		FmSynthState before = ValidateState(outgoing);
-		FmSynthState after = next.ValidateState(replacement);
+		FmSynthState after = ValidateState(replacement);
 		for (int i = 0; i < _nodes.Length; i++)
 		{
 			if (_nodes[i].Definition is not FmSoundSourceNode
@@ -1073,8 +1073,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					continue;
 				if (preparedSlots[j] is MultiVoice replacement
 					&& !originalChild.CanSharePreparedInstrumentBindingsWith(
-						updatedChild, outgoing.Invocation.State,
-						replacement.Invocation.State))
+						outgoing.Invocation.State, replacement.Invocation.State))
 					return false;
 			}
 		}
