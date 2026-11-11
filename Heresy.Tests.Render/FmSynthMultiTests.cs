@@ -24,6 +24,57 @@ namespace Heresy.Tests.Render;
 [TestFixture]
 public sealed class FmSynthMultiTests
 {
+    [TestCase(FmOscillatorWaveform.Square, 0.0, -1.0, 1.0)]
+    [TestCase(FmOscillatorWaveform.Sine, 2.0, -1.0, 1.0)]
+    [TestCase(FmOscillatorWaveform.Sine, 0.0, -0.25, 0.35)]
+    public void SingleOscillatorShapeEditSmoothsHeldPreviewWithoutLosingPhase(
+        FmOscillatorWaveform newWaveform, double curvature,
+        double minimum, double maximum)
+    {
+        // These are real Synth inspector controls, and the existing
+        // phase integrator must not restart. A single-output oscillator
+        // has no downstream state or child Source to reconstruct.
+        FmSynthGraph Graph(FmOscillatorWaveform wave, double curve,
+            double min, double max) => new([
+                new FmOscillatorNode(1, wave, 400.0,
+                    minimum: min, maximum: max, curvature: curve),
+            ], 1);
+        FmSynthSound original = new(
+            Graph(FmOscillatorWaveform.Sine, 0, -1, 1),
+            new EmptyEnvelopes());
+        FmSynthSound revised = new(
+            Graph(newWaveform, curvature, minimum, maximum),
+            new EmptyEnvelopes());
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        float[] originalPcm = new float[128], actual = new float[128],
+            freshPcm = new float[256];
+        original.Render(context, held, 0, originalPcm.Length, originalPcm);
+        SoundState fresh = revised.CreateState();
+        revised.Render(context, fresh, 0, freshPcm.Length, freshPcm);
+
+        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, held);
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, 128, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L,
+            "changing oscillator shape may not allocate inside the PCM loop");
+
+        for (int i = 0; i < 64; i++)
+        {
+            double t = i / 64.0;
+            double weight = t * t * (3.0 - 2.0 * t);
+            float expected = (float)(originalPcm[^1] * (1.0 - weight)
+                + freshPcm[128 + i] * weight);
+            actual[i].Should().BeApproximately(expected, 2e-6f,
+                "the 64-frame transition avoids an immediate waveform/curvature/level jump");
+        }
+        actual[0].Should().Be(originalPcm[^1]);
+        for (int i = 64; i < actual.Length; i++)
+            actual[i].Should().Be(freshPcm[128 + i],
+                "after the fade the held oscillator must have the new shape at its uninterrupted phase");
+    }
+
     [Test]
     public void GainCompensationMeansArithmeticAverageNotAutomaticSummation()
     {
