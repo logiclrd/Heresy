@@ -37,7 +37,7 @@ implementation slices.
 | Source: SourceId (Sample / Instrument / Synth) | Inspector permits reassignment. Renderer can migrate compatible **nested Synth** state, but arbitrary Sample/Instrument Source swaps remain unsupported for held voices; the next new note receives the new selection | **Open property gap**: prepare replacement Sample/Instrument invocation, define new-asset playhead and click-safe bounded transition, Note Off/EOF/release handling |
 | Source: Frequency Hz, Constant, Exponential multiplier | Preserves original child playback position/frequency basis while applying forward rate/mode changes | Verify real inspector with Sample, Instrument and Synth sources across prior pitch automation |
 | Source: Multiplier input | Graph wiring change | Structural-generation rule applies |
-| Envelope: selected Envelope object; shared curve edit | Graph Envelope nodes are stateless. **Slice 46:** a live single direct Instrument→Sample Source can now adopt a genuinely changed shared node Volume curve through a 64-frame gain blend at its original clock, with strict selected-tone and PCM proof. All other Instrument descendants retain conservative frozen-state behavior | Real UI→held PCM integration; scripted/nested/compound Envelopes, rapid edits, device listening |
+| Envelope: selected Envelope object; shared curve edit | Graph Envelope nodes are stateless. **Slice 46:** a single direct Instrument→Sample Source adopts changed shared node Volume at its original note clock through a 64-frame gain blend (manually heard). **Slice 49:** multiple eligible Instrument-backed Sample Sources feeding Operators now preflight and adopt their shared Volume edits atomically; compound Multi constituents remain excluded | Open: compound Multi/onset coordination, scripted/nested tone Sources, other Envelope targets, rapid edits, device listening for multi-Source cases |
 | Filter: shared definition, per-use stage overrides, Tail Seconds | Existing coefficient/FIR and stage-identity preflights can adopt compatible prepared parameter changes and tail updates; graph rewiring and unsupported stage topology remain conservative | **Open coverage**: every typed stage parameter, Filter selection/structural stage changes, multi-filter tails and audible click/throughput acceptance |
 | Filter: audio and modulation inputs | Graph wiring change | Structural-generation rule applies |
 | Multi: Distribution, Detune, Voice Count, Harmonic/Chord Components, Randomize Phase, Gain Compensation, Cycle Length, presets | Ratio/mix glide, worker-prepared growth/onset phases, Sample playhead continuity and bounded fades have dedicated renderer coverage; feasibility depends on constituent/state eligibility and 128-voice cap | Audit combinations, nested State/Filter cases, rapid edits, maximum headroom, UI-to-PCM |
@@ -109,9 +109,13 @@ every oscillator shape edit is click-free yet.
    SongPlaybackTransport. Their Instrument-dependent Synths and
    Synth parents are published once per audio revision, without
    reopening the live output. Invalid/no-op edits do not publish.
-   **Still open:** whether a held Instrument-backed voice can adopt
-   a genuinely changed Envelope/Filter DSP state; transport
-   notification alone is not proof of in-place sound migration.
+   **Held DSP now partly proven:** a selected direct Instrument→Sample
+   node Volume curve can change during a held note (slice 46, physically
+   heard); slice 49 extends that bounded proof to multiple eligible Source
+   nodes under Operators, using whole-graph Volume preflight. Instrument
+   tone Filters, non-Volume envelopes, compound Multi children and other
+   selected tone Source families still require separate migration policies.
+   Transport publication alone does not prove those other cases.
 3. **Filter and Multi property matrix:** keep distinct tests for
    feasible in-place parameter changes, worker-prepared shape
    changes, and intentionally unadoptable structural cases.
@@ -260,3 +264,50 @@ Separately, a Pattern Note Off for an Instrument tone selecting a Synth
 can now preserve the Synth's excitation until the Instrument Volume envelope
 finishes releasing, rather than cutting it after a one-frame Synth note-off.
 That fixes release lifetime, **not** held-note live parameter adoption.
+
+## Slice 48 — recursive Note Off semantics (separate from live edit eligibility)
+
+Definite Note Off at the root releases any selected recursive sound subtree
+with an active sustain loop, irrespective of which envelope target owns it;
+otherwise it cuts. A releasing ancestor sends Indefinite Off to its children;
+non-sustaining children then continue their natural sound rather than being
+cut by that forwarded request. All participating release lifecycles and
+audible Filter tails matter; permanent-zero *final* Volume may prove earlier
+silence only with appropriate downstream/tail proof. See
+`docs/note-off-lifecycle.md` for the normative table and the scripted
+release-duration compatibility exception. The generalized lifecycle was
+automatically tested in slice 48 but has not been physically listened to.
+It is not equivalent to adopting changed held Instrument envelope curves.
+
+## Slice 49 — multi-Source shared Volume held-state migration
+
+An audition-enabled Synth whose compiled graph includes multiple
+Instrument-backed Source nodes under Operators now prepares *each* eligible
+direct selected Sample + node Volume curve on the frozen preparation thread.
+At an audio publication boundary, the whole set of participating active
+Instrument node Volume Sources is preflighted before any curve migration.
+All must pass selected tone, immutable Sample PCM/timeline, matching note
+policy, no unsupported tone Filter or other envelope state, and continuous
+already-playing Sample proof; a single ineligible Source prevents *all*
+Volume changes without preventing independently compatible scalar adoption.
+Eligible curves keep each source's real fractional Sample position and
+original note/release envelope clock, with per-Source 64-frame gain fading.
+The transition does not allocate or resolve assets in PCM. Arrangement and
+offline playback remain unchanged.
+
+The two-Source Add-Operator regression was red before implementation
+([CI #43011714291](https://github.com/logiclrd/Heresy/actions/runs/43011714291)).
+The new test also asserts zero PCM allocations, original Note Off release,
+and exact oracle gain. A second test checks atomic rejection when one
+selected Sample's immutable PCM changed and simultaneously proves an
+independent Constant edit still adopts. Existing Multi-onset tests caught
+an unsafe broadened child adoption; they were not weakened. The final
+bounded implementation leaves compound **Multi-generated child graphs**
+on their previous conservative policy pending a coordinated onset/Volume
+migration. All regression suites and Linux ARM64 validation passed in
+[CI #43012576902](https://github.com/logiclrd/Heresy/actions/runs/43012576902).
+
+The user's **single direct Source** shared-Volume listening acceptance is
+recorded in the development plan. The two-Source version still needs
+physical listening, and the all-properties Synth live-edit milestone
+remains open. PR #12 stays draft/unmerged.
