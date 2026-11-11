@@ -2368,9 +2368,6 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			state.HasReleasingSubtree = HasSustainRelease(state);
 			state.ReleasingSubtreeEnd = state.HasReleasingSubtree
 				? GetReleasingSubtreeEnd(state, releaseFrame, sampleRate) : null;
-			if (!state.HasReleasingSubtree
-				&& state.NoteOffDisposition == NoteOffDisposition.Definite)
-				return checked(releaseFrame + 1);
 		}
 		else
 		{
@@ -2408,7 +2405,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				// force; only a final zero proves this branch silent.
 				silentFrom[index] = node.Envelope is null ? 0L
 					: released.HasValue
-						? node.Envelope.IsZeroAfterCompletion
+						? !state.HasReleasingSubtree
+							&& state.NoteOffDisposition == NoteOffDisposition.Definite
+							? checked(noteOffFrame + 1)
+							: node.Envelope.IsZeroAfterCompletion
 							? node.Envelope.GetEndActiveFrameExclusiveAfterNoteOff(
 								noteOffFrame, sampleRate)
 							: GetIndependentAudioReleaseEnd(index,
