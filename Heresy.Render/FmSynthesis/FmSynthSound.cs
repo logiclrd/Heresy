@@ -997,6 +997,41 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return true;
 	}
 
+	/// <summary>A frozen tone-map comparison proves which Source IDs the
+	/// data-driven Instrument will select, not what a separate song
+	/// resolver supplies for those IDs. Once the worker has constructed
+	/// replacement invocations, reject an incompatible terminal PCM or
+	/// captured release configuration *without retrying* that phase edit.
+	/// Independent scalar edits can then publish on the original voice.
+	/// All checks are nonallocating, and none select or resolve a tone.</summary>
+	private bool CanSharePreparedInstrumentBindingsWith(
+		FmSynthSound next, SoundState outgoing, SoundState replacement)
+	{
+		FmSynthState before = ValidateState(outgoing);
+		FmSynthState after = next.ValidateState(replacement);
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			if (_nodes[i].Definition is not FmSoundSourceNode
+				|| _nodes[i].Source is not InstrumentSound)
+				continue;
+			SourceVoice? old = before.Sources[i];
+			SourceVoice? prepared = after.Sources[i];
+			if (old?.Sound is not SampleSound sourceSample
+				|| prepared?.Sound is not SampleSound preparedSample
+				|| !sourceSample.CanSharePreparedOnsetTimelineWith(preparedSample)
+				|| old.Invocation.Configuration
+					!= prepared.Invocation.Configuration
+				|| old.Invocation.ToneFilters is not null
+				|| prepared.Invocation.ToneFilters is not null
+				|| old.Invocation.State is not SampleSoundState oldSample
+				|| prepared.Invocation.State is not SampleSoundState newSample
+				|| oldSample.ReleaseIsControlledByVolumeEnvelope
+					!= newSample.ReleaseIsControlledByVolumeEnvelope)
+				return false;
+		}
+		return true;
+	}
+
 	/// <summary>Held audition: compatible oscillator phases may rephase
 	/// through worker-prepared states. Direct Samples, including connected
 	/// rate modulation and matching flattened Instrument Volume-release
@@ -1016,6 +1051,33 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| next._nodes[index].MultiInput is not FmSynthSound updatedChild
 			|| !CanRephaseOscillatorGraph(originalChild, updatedChild))
 			return false;
+
+		// The frozen map alone cannot prove that the new resolver yields
+		// the same decoded Sample or immutable envelope. After the worker
+		// resolves the actual selected tone for each prepared voice, refuse
+		// an incompatible new onset and allow independent scalar changes
+		// to adopt without stalling behind an impossible worker transfer.
+		if (live.PreparedExpansion?.Matches(next, live) == true
+			&& live.PreparedExpansion.Slots[index] is MultiVoice[] preparedSlots)
+		{
+			for (int j = 0; j < _multiRatios[index].Length; j++)
+			{
+				MultiVoice outgoing = live.Multis[index][j];
+				if (!outgoing.HasStarted || !outgoing.Initialized
+					|| (outgoing.Definition.RandomizePhase
+						== updated.RandomizePhase
+						&& (!(outgoing.Definition.RandomizePhase
+							|| updated.RandomizePhase)
+							|| outgoing.Definition.CycleLength
+								== updated.CycleLength)))
+					continue;
+				if (preparedSlots[j] is MultiVoice replacement
+					&& !originalChild.CanSharePreparedInstrumentBindingsWith(
+						updatedChild, outgoing.Invocation.State,
+						replacement.Invocation.State))
+					return false;
+			}
+		}
 		foreach (MultiVoice voice in live.Multis[index])
 		{
 			if (!voice.HasStarted || !voice.Initialized
