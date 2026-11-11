@@ -614,7 +614,8 @@ public sealed class SongPlaybackTransportTests
 
 		document.MarkChanged(affectsAudio: true);
 		await transport.PublishSharedObjectEditAsync(document, sharedId);
-		factory.PreparedIds.Should().Equal(directId, affectedId, parentId,
+		factory.PreparedIds.Should().Equal(
+			new[] { directId, affectedId, parentId },
 			"the changed shared object must republish Synths through each Instrument, child before parent");
 		factory.Source.Order.Should().Equal("Start:80", "Update", "Update", "Update");
 		backend.OpenCount.Should().Be(1);
@@ -661,7 +662,8 @@ public sealed class SongPlaybackTransportTests
 		leaf.Graph = new FmSynthGraph([new FmConstantNode(0, 0.65)], 0);
 		document.MarkChanged(affectsAudio: true);
 		await transport.PublishSynthEditAsync(document, leafId);
-		factory.PreparedIds.Should().Equal(leafId, parentId, grandparentId,
+		factory.PreparedIds.Should().Equal(
+			new[] { leafId, parentId, grandparentId },
 			"an edited Synth under an Instrument must be prepared before its transitive parents");
 		factory.Source.Order.Should().Equal("Start:81", "Update", "Update", "Update");
 		backend.OpenCount.Should().Be(1);
@@ -707,7 +709,8 @@ public sealed class SongPlaybackTransportTests
 			[new StartNoteCommand(parentId)]);
 		document.MarkChanged(affectsAudio: true);
 		await transport.PublishSharedObjectEditAsync(document, envelopeId);
-		factory.PreparedIds.Should().Equal(childId, parentId,
+		factory.PreparedIds.Should().Equal(
+			new[] { childId, parentId },
 			"affected nested Synths must be published before parents even if a parent has a shorter direct dependency path");
 		factory.Source.Order.Should().Equal("Start:82", "Update", "Update");
 		backend.OpenCount.Should().Be(1);
