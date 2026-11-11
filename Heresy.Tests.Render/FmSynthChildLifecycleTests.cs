@@ -659,6 +659,8 @@ public sealed class FmSynthChildLifecycleTests
 
     private sealed class ThreeFrameRelease : IEnvelopeCurve
     {
+        public bool HasSustainLoop => true;
+        public bool IsZeroAfterCompletion => true;
         public double GetValue(long activeFrame, int rate, long? off) =>
             !off.HasValue ? 1 : Math.Max(0,
                 1 - (activeFrame - off.Value) / 3.0);
