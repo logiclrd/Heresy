@@ -2118,6 +2118,22 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
                 voice.Sound.QueuePendingFirControls(voice.Invocation.State, scheduler);
     }
 
+	/// <summary>Preserve Synth excitation through an enclosing Instrument
+	/// Volume envelope's release, rather than cutting an oscillator at the
+	/// first Note Off frame. The caller still owns the outer gain envelope
+	/// and enforces its finite retirement deadline. No curve evaluation,
+	/// allocation or child resolution occurs on the PCM path.</summary>
+	internal void ExtendExternalVolumeRelease(
+		SoundState state, long endFrameExclusive)
+	{
+		FmSynthState active = ValidateState(state);
+		if (!active.HasNoteOffTime || endFrameExclusive < 0)
+			throw new ArgumentOutOfRangeException(nameof(endFrameExclusive));
+		active.InheritedAudioReleaseEnd = active.InheritedAudioReleaseEnd is long existing
+			? Math.Max(existing, endFrameExclusive)
+			: endFrameExclusive;
+	}
+
 	public long? GetEndFrameExclusive(
 		RenderContext context, SoundState state)
 	{
