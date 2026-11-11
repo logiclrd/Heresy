@@ -155,6 +155,76 @@ public sealed class SharedAudioEditLivePublicationTests
         }
     }
 
+    [AvaloniaTest]
+    public async Task ScriptEnvelopeEditorPublishesInstrumentDependentSynthWithoutSessionRestart()
+    {
+        // Script Envelope authoring has a different Apply method from
+        // node envelopes. It must follow the same workspace event and
+        // MainWindow -> transport publication path.
+        TestBackend backend = new();
+        PublishingFactory factory = new();
+        SongPlaybackTransport playback = new(backend, factory);
+        MainWindow window = new(playback);
+        DocumentWorkspace workspace =
+            (DocumentWorkspace)typeof(MainWindow).GetField("_workspace",
+                BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(window)!;
+        try
+        {
+            ScriptEnvelopeDefinition envelope =
+                EnvelopeDocumentEditor.CreateScriptEnvelope(
+                    workspace, "Scripted tone volume");
+            ObjectId instrumentId = workspace.Document.AllocateObjectId();
+            InstrumentDefinition instrument = new(instrumentId, "Script volume tone");
+            instrument.ToneSpecifications.Add(new ToneSpecification
+            {
+                SourceId = ObjectId.None,
+                VolumeEnvelopeId = envelope.Id,
+            });
+            instrument.ToneTable.Add(0);
+            workspace.Document.Add(instrument);
+            ObjectId synthId = workspace.Document.AllocateObjectId();
+            workspace.Document.Add(new FmSynthDefinition(synthId, "Script volume child",
+                new FmSynthGraph([
+                    new FmSoundSourceNode(0, instrumentId,
+                        FmMultiNode.NeutralFrequencyHz)], 0)));
+            await playback.SendLiveEventAsync(workspace.Document,
+                ChannelTarget.Virtual(92), [new StartNoteCommand(synthId)]);
+            backend.OpenCount.Should().Be(1);
+
+            ScriptEnvelopeEditorControl editor =
+                new(workspace, envelope, () => {}, _ => {});
+            TextBox source = Field<TextBox>(editor, "_source");
+            uint revision = workspace.Document.AudioRevision;
+            source.Text = "releaseSeconds < 0 ? 0.75 : 0.25";
+            Invoke(editor, "Apply");
+            workspace.Document.AudioRevision.Should().Be(revision + 1);
+            await WaitForPreparedCountAsync(factory, 1);
+            factory.Prepared.ToArray().Select(x => x.Id).Should().Equal(synthId);
+            factory.Prepared.ToArray().Select(x => x.Revision)
+                .Should().OnlyContain(x => x == workspace.Document.AudioRevision);
+            factory.Source.Order.ToArray().Should().Equal("Start:92", "Update");
+            backend.OpenCount.Should().Be(1);
+
+            // An invalid expression is rejected by the real editor before
+            // either its revision or its shared-object event can change.
+            revision = workspace.Document.AudioRevision;
+            source.Text = "this is not valid C# !";
+            Invoke(editor, "Apply");
+            workspace.Document.AudioRevision.Should().Be(revision);
+            await playback.PublishSharedObjectEditAsync(
+                workspace.Document, envelope.Id);
+            factory.Prepared.Should().HaveCount(1);
+            factory.Source.Order.ToArray().Should().Equal("Start:92", "Update");
+            backend.OpenCount.Should().Be(1);
+        }
+        finally
+        {
+            workspace.New();
+            window.Close();
+        }
+    }
+
     private static T Field<T>(object editor, string name)
         => (T)editor.GetType().GetField(name,
             BindingFlags.Instance | BindingFlags.NonPublic)!
