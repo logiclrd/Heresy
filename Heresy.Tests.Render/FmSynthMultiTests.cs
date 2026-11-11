@@ -1131,6 +1131,151 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void ConnectedScalarModulatedSampleKeepsPositionWhileSiblingOscillatorRephases()
+    {
+        // A Source's connected (but stateless) rate multiplier must not
+        // disqualify its *already audible* Sample when an independent
+        // oscillator adopts a new Multi phase.
+        ObjectId id = (ObjectId)7640U;
+        float[] pcm = Enumerable.Range(0, 8192)
+            .Select(i => (float)(0.26 * Math.Sin(2 * Math.PI * i / 97.0)
+                + 0.10 * Math.Cos(2 * Math.PI * i / 29.0))).ToArray();
+        SampleSound sample = new(new SampleDefinition(id, "Connected rate",
+            new ExternalAssetReference("connected-rate.wav")),
+            new MemorySampleData(48000, 1, pcm));
+        SourceResolver resolver = new(id, sample);
+        FmSynthGraph Mixed(bool random) => new([
+            new FmConstantNode(1, 1.2),
+            new FmOscillatorNode(2, FmOscillatorWaveform.Sine, 1270),
+            new FmSoundSourceNode(3, id, FmMultiNode.NeutralFrequencyHz,
+                multiplierNodeId: 1),
+            new FmOperatorNode(4, FmOperatorKind.Add, [2, 3]),
+            new FmMultiNode(5, 4, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 100,
+                gainCompensation: true),
+        ], 5);
+        FmSynthGraph Osc(bool random) => new([
+            new FmOscillatorNode(2, FmOscillatorWaveform.Sine, 1270),
+            new FmMultiNode(5, 2, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 100,
+                gainCompensation: true),
+        ], 5);
+        FmSynthSound before = new(Mixed(false), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound after = new(Mixed(true), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound oldOsc = new(Osc(false), new EmptyEnvelopes());
+        FmSynthSound newOsc = new(Osc(true), new EmptyEnvelopes());
+        RenderContext context = Mono();
+        SoundState changing = before.CreateState();
+        SoundState oldReference = before.CreateState();
+        SoundState oldOscState = oldOsc.CreateState();
+        SoundState newOscState = newOsc.CreateState();
+        foreach (SoundState state in new[] {
+            changing, oldReference, oldOscState, newOscState })
+            state.SetNoiseSeed(21);
+        before.Render(context, changing, 0, 128, new float[128]);
+        before.Render(context, oldReference, 0, 128, new float[128]);
+        oldOsc.Render(context, oldOscState, 0, 128, new float[128]);
+        newOsc.Render(context, newOscState, 0, 128, new float[128]);
+        before.TryPrepareRunningState(after, changing).Should().BeFalse(
+            "a rephased oscillator requires detached worker preparation");
+        before.RequestMultiExpansionPreparation(after, changing).Should().BeTrue(
+            "Source modulation binding stays compatible with a continuous Sample");
+        using FirPreparationScheduler worker = new();
+        before.QueuePendingFirControls(changing, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        before.AdoptPreparedFirControls(changing);
+        before.TryPrepareRunningState(after, changing).Should().BeTrue();
+        before.CommitPreparedRunningState(after, changing);
+        float[] actual = new float[150], oldMixed = new float[150],
+            oldOscPcm = new float[150], newOscPcm = new float[150];
+        long allocBefore = GC.GetAllocatedBytesForCurrentThread();
+        after.Render(context, changing, 128, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocBefore).Should().Be(0L,
+            "bound-Source migration cannot allocate in the PCM callback");
+        before.Render(context, oldReference, 128, oldMixed.Length, oldMixed);
+        oldOsc.Render(context, oldOscState, 128, oldOscPcm.Length, oldOscPcm);
+        newOsc.Render(context, newOscState, 128, newOscPcm.Length, newOscPcm);
+        for (int i = 0; i < actual.Length; i++)
+        {
+            double t = Math.Clamp(i / 64.0, 0.0, 1.0);
+            double w = t * t * (3.0 - 2.0 * t);
+            actual[i].Should().BeApproximately(
+                (float)(oldMixed[i] + (newOscPcm[i] - oldOscPcm[i]) * w),
+                2e-5f, "only the independent oscillator phase changes");
+        }
+        actual[0].Should().Be(oldMixed[0]);
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
+    public void AudioRateModulatedSamplePreservesPlayheadAcrossModulatorRephase()
+    {
+        // The connected oscillator controls Sample rate. Rephasing that
+        // oscillator changes subsequent rate (not the Sample position at
+        // publication), so the result *should* diverge from the unedited
+        // Sample after the crossfade.
+        ObjectId id = (ObjectId)7641U;
+        float[] pcm = Enumerable.Range(0, 16384)
+            .Select(i => (float)(0.32 * Math.Sin(2 * Math.PI * i / 67.0)
+                + 0.07 * Math.Cos(2 * Math.PI * i / 31.0))).ToArray();
+        SampleSound sample = new(new SampleDefinition(id, "Audio-rate FM",
+            new ExternalAssetReference("audio-rate-fm.wav")),
+            new MemorySampleData(48000, 1, pcm));
+        SourceResolver resolver = new(id, sample);
+        FmSynthGraph Graph(bool random) => new([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 550,
+                minimum: 0.75, maximum: 1.25, constant: true),
+            new FmSoundSourceNode(2, id, FmMultiNode.NeutralFrequencyHz,
+                multiplierNodeId: 1),
+            new FmMultiNode(3, 2, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 100,
+                gainCompensation: true),
+        ], 3);
+        FmSynthSound original = new(Graph(false), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound revised = new(Graph(true), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState(), reference = original.CreateState();
+        held.SetNoiseSeed(21);
+        reference.SetNoiseSeed(21);
+        original.Render(context, held, 0, 176, new float[176]);
+        original.Render(context, reference, 0, 176, new float[176]);
+        held.PitchTrajectory.SetMultiplier(176, 1.2);
+        reference.PitchTrajectory.SetMultiplier(176, 1.2);
+        original.Render(context, held, 176, 96, new float[96]);
+        original.Render(context, reference, 176, 96, new float[96]);
+        original.TryPrepareRunningState(revised, held).Should().BeFalse();
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeTrue(
+            "an already-modulated Sample need not reconstruct its earlier FM rate");
+        using FirPreparationScheduler worker = new();
+        original.QueuePendingFirControls(held, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        original.AdoptPreparedFirControls(held);
+        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, held);
+        float[] actual = new float[160], unedited = new float[160];
+        long allocBefore = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, 272, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocBefore).Should().Be(0L);
+        original.Render(context, reference, 272, unedited.Length, unedited);
+        actual[0].Should().Be(unedited[0],
+            "the first publication sample uses the original accumulated playhead");
+        actual.Should().OnlyContain(float.IsFinite);
+        Enumerable.Range(65, actual.Length - 65)
+            .Max(i => Math.Abs(actual[i] - unedited[i]))
+            .Should().BeGreaterThan(0.01f,
+                "the rephased FM oscillator should affect *future* Sample speed");
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
     public void MixedMultiPreservesVariableRateSamplePlayheadAcrossLargeOnsetChange()
     {
         // An audible Sample and an independent oscillator share the same
