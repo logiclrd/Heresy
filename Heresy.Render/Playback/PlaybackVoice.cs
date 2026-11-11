@@ -837,6 +837,20 @@ public sealed class PlaybackVoice
 			sampleRate);
 
 		_volumeEnvelope?.NoteOff(absoluteFrame);
+		// A tone-level Instrument Volume envelope lives outside the selected
+		// terminal Synth. Its release must keep that Synth's oscillators alive
+		// until the outer gain reaches its authored end, even if the Synth
+		// itself has no release Envelope nodes. The regular composed voice
+		// deadline still takes the earlier of the two audible ends.
+		if (_volumeEnvelope is not null && Sound is FmSynthSound synth)
+		{
+			long releaseEnd = _volumeEnvelope
+				.GetEndFrameExclusiveAfterNoteOff(absoluteFrame)
+				?? long.MaxValue;
+			synth.ExtendExternalVolumeRelease(
+				SoundState, releaseEnd == long.MaxValue
+					? long.MaxValue : checked(releaseEnd - StartFrame));
+		}
 		_pitchEnvelope?.NoteOff(absoluteFrame);
 		_panningEnvelope?.NoteOff(absoluteFrame);
 		_filterEnvelope?.NoteOff(absoluteFrame);
