@@ -863,6 +863,34 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						preparedInstrument));
 	}
 
+	/// <summary>The same immutable Volume curve can be recompiled into
+	/// separate objects by successive frozen-song Synth publications.
+	/// Permit that one stateless-equivalent shape while keeping every
+	/// other authored note policy and selected envelope binding exactly
+	/// unchanged. Script envelopes still require shared object identity.
+	/// This runs on pre-captured render data without allocations or
+	/// authoring-model lookups.</summary>
+	private static bool CanSharePreparedVolumeConfiguration(
+		NoteConfigurationSnapshot previous, NoteConfigurationSnapshot revised)
+	{
+		if (previous == revised)
+			return true;
+		if (previous.NewNotePolicy != revised.NewNotePolicy
+			|| previous.NoteFadeDuration != revised.NoteFadeDuration
+			|| previous.NewNoteFadeDuration != revised.NewNoteFadeDuration)
+			return false;
+		EnvelopeConfigurationSnapshot a = previous.Envelopes;
+		EnvelopeConfigurationSnapshot b = revised.Envelopes;
+		if (!ReferenceEquals(a.Pitch, b.Pitch)
+			|| !ReferenceEquals(a.Panning, b.Panning)
+			|| !ReferenceEquals(a.Filter, b.Filter))
+			return false;
+		return ReferenceEquals(a.Volume, b.Volume)
+			|| a.Volume is NodeEnvelopeCurve oldNode
+				&& b.Volume is NodeEnvelopeCurve newNode
+				&& oldNode.HasSameFrozenShapeAs(newNode);
+	}
+
 	private static bool CanTransferPreparedDirectSample(
 		SourceVoice? original, SourceVoice? replacement,
 		long oldFrame, long nextFrame)
@@ -893,7 +921,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		var envelopes = original.Invocation.Configuration.Envelopes;
 		if (envelopes.Pitch is not null
 			|| envelopes.Filter is not null || envelopes.Panning is not null
-			|| original.Invocation.Configuration != replacement.Invocation.Configuration
+			|| !CanSharePreparedVolumeConfiguration(
+				original.Invocation.Configuration,
+				replacement.Invocation.Configuration)
 			|| (envelopes.Volume is not null
 				&& !previous.ReleaseIsControlledByVolumeEnvelope))
 			return false;
@@ -1048,8 +1078,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				|| old?.Sound is not SampleSound sourceSample
 				|| prepared?.Sound is not SampleSound preparedSample
 				|| !sourceSample.CanSharePreparedOnsetTimelineWith(preparedSample)
-				|| old.Invocation.Configuration
-					!= prepared.Invocation.Configuration
+				|| !CanSharePreparedVolumeConfiguration(
+					old.Invocation.Configuration, prepared.Invocation.Configuration)
 				|| old.Invocation.ToneFilters is not null
 				|| prepared.Invocation.ToneFilters is not null
 				|| old.Invocation.State is not SampleSoundState oldSample
