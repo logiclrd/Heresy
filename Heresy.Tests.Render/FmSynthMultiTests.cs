@@ -3361,6 +3361,101 @@ public sealed class FmSynthMultiTests
             "the new audition-only Volume policy must not affect normal playback/export");
     }
 
+    [TestCase(2291, 4374)]
+    [TestCase(4374, 2291)]
+    public void ChangedDirectInstrumentVolumeKeepsBothReleaseContributionsDuringFade(
+        long oldReleaseEndpointTicks, long newReleaseEndpointTicks)
+    {
+        // Note Off arrives while the old/new node curves are still being
+        // blended. Both must receive the *same original* Note Off origin;
+        // the outgoing curve's contribution is bounded by the 64-frame
+        // fade, not discarded at the revised envelope's shorter EOF.
+        ObjectId sampleId = (ObjectId)7980U;
+        ObjectId instrumentId = (ObjectId)7981U;
+        ObjectId envelopeId = (ObjectId)7982U;
+        SampleSound sample = new(
+            new SampleDefinition(sampleId, "Release PCM",
+                new ExternalAssetReference("release-pcm.wav")),
+            new MemorySampleData(48000, 1,
+                Enumerable.Repeat(0.5f, 4096).ToArray()));
+        SourceResolver source = new(sampleId, sample);
+        NodeEnvelopeCurve Curve(double level, long endpoint)
+        {
+            Heresy.Core.Envelopes.NodeEnvelopeDefinition definition =
+                new(envelopeId, "Release curve");
+            definition.ReplaceCurve([
+                new(TimeSpan.Zero, level),
+                new(TimeSpan.FromTicks(208), level),
+                new(TimeSpan.FromTicks(endpoint), 0.0),
+            ], 1, 1, Heresy.Core.Envelopes.EnvelopeSustainLoopMode.Forward);
+            return new(definition);
+        }
+        Heresy.Render.Instruments.InstrumentSound Instrument(
+            CurveResolver resolver)
+        {
+            Heresy.Core.Instruments.InstrumentDefinition definition =
+                new(instrumentId, "Release Instrument");
+            definition.ToneSpecifications.Add(
+                new Heresy.Core.Instruments.ToneSpecification
+                {
+                    SourceId = sampleId, VolumeEnvelopeId = envelopeId,
+                });
+            definition.ToneTable.Add(0);
+            return new(definition, source, resolver);
+        }
+        CurveResolver oldCurve = new(envelopeId, Curve(1.0, oldReleaseEndpointTicks));
+        CurveResolver newCurve = new(envelopeId, Curve(0.3, newReleaseEndpointTicks));
+        FmSynthGraph graph = new([
+            new FmSoundSourceNode(1, instrumentId,
+                FmMultiNode.NeutralFrequencyHz),
+        ], 1);
+        FmSynthSound oldSound = new(graph, oldCurve,
+            soundResolver: new SourceResolver(instrumentId, Instrument(oldCurve)),
+            enableLiveMultiExpansion: true);
+        FmSynthSound newSound = new(graph, newCurve,
+            soundResolver: new SourceResolver(instrumentId, Instrument(newCurve)),
+            enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState held = oldSound.CreateState();
+        SoundState oldReference = oldSound.CreateState();
+        SoundState newReference = newSound.CreateState();
+        oldSound.Render(context, held, 0, 128, new float[128]);
+        oldSound.Render(context, oldReference, 0, 128, new float[128]);
+        newSound.Render(context, newReference, 0, 128, new float[128]);
+        oldSound.TryPrepareRunningState(newSound, held).Should().BeTrue();
+        oldSound.CommitPreparedRunningState(newSound, held);
+
+        float[] actual = new float[96], outgoing = new float[96],
+            incoming = new float[96];
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        newSound.Render(context, held, 128, 32, actual.AsSpan(0, 32));
+        (GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0L);
+        oldSound.Render(context, oldReference, 128, 32, outgoing.AsSpan(0, 32));
+        newSound.Render(context, newReference, 128, 32, incoming.AsSpan(0, 32));
+
+        TimeSpan noteOff = TimeSpan.FromSeconds(160.0 / 48000);
+        held.NoteOffTime = noteOff;
+        oldReference.NoteOffTime = noteOff;
+        newReference.NoteOffTime = noteOff;
+        newSound.GetEndFrameExclusive(context, held).Should().Be(180,
+            "the longer of the two releases remains audible during the transition");
+        before = GC.GetAllocatedBytesForCurrentThread();
+        newSound.Render(context, held, 160, 64, actual.AsSpan(32));
+        (GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0L);
+        oldSound.Render(context, oldReference, 160, 64, outgoing.AsSpan(32));
+        newSound.Render(context, newReference, 160, 64, incoming.AsSpan(32));
+
+        for (int i = 0; i < actual.Length; i++)
+        {
+            double t = Math.Clamp(i / 64.0, 0.0, 1.0);
+            double w = t * t * (3.0 - 2.0 * t);
+            actual[i].Should().BeApproximately(
+                (float)(outgoing[i] * (1.0 - w) + incoming[i] * w),
+                2e-5f, "both Volume curves share the original release origin");
+        }
+        actual.Skip(52).Should().OnlyContain(x => x == 0.0f);
+    }
+
     private static float[] Render(FmSynthGraph graph, int count, ulong seed = 1)
     {
         FmSynthSound sound = new(graph, new EmptyEnvelopes());
