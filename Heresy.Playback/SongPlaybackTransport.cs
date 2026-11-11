@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Heresy.Core.Envelopes;
 using Heresy.Core.Filters;
 using Heresy.Core.FmSynthesis;
+using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
 using Heresy.Render.Realtime;
@@ -276,49 +277,112 @@ public sealed class SongPlaybackTransport
 		}
 	}
 
-	/// <summary>Collect direct Filter/Envelope/Synth references, then
-	/// transitive Synth Source parents. This scans immutable authoring
-	/// structure on the control thread, never within the PCM callback.
-	/// The visited set gives child-before-parent order and avoids duplicates.
-	/// No unrelated Synths or frozen base snapshot are changed.</summary>
+	/// <summary>Follow reverse Source, shared Envelope and Filter edges
+	/// through Synths and *both* Instrument kinds. Instruments are
+	/// intermediate dependents, not publishable Synth definitions; every
+	/// declared tone is inspected, including ones not selected by the
+	/// current held note. Only Synths actually reachable from the edit
+	/// are published. All graph discovery and ordering is on the command
+	/// thread, never on PCM.</summary>
 	private static IReadOnlyList<ObjectId> GetDependentSynths(
 		SongDocument document, ObjectId changedSourceId)
 	{
-		List<ObjectId> ordered = [];
+		List<ObjectId> discoveredSynths = [];
 		List<ObjectId> frontier = [changedSourceId];
-		HashSet<ObjectId> visited = [changedSourceId];
+		HashSet<ObjectId> reached = [changedSourceId];
 		if (document.TryGet(changedSourceId, out SongObject? changed)
 			&& changed is FmSynthDefinition)
-			ordered.Add(changedSourceId);
+			discoveredSynths.Add(changedSourceId);
 
 		for (int i = 0; i < frontier.Count; i++)
 		{
 			ObjectId affected = frontier[i];
 			foreach (SongObject candidate in document.Objects.Values)
 			{
-				if (candidate is not FmSynthDefinition synth
-					|| visited.Contains(synth.Id))
+				if (reached.Contains(candidate.Id))
 					continue;
-				foreach (FmSynthNode node in synth.Graph.Nodes)
+				bool dependsOnAffected = candidate switch
 				{
-					bool refersToChanged = node switch
-					{
-						FmSoundSourceNode source => source.SourceId == affected,
-						FmEnvelopeNode envelope => envelope.EnvelopeId == affected,
-						FmFilterNode filter =>
-							filter.Configuration?.DefinitionId == affected,
-						_ => false,
-					};
-					if (!refersToChanged)
-						continue;
-					visited.Add(synth.Id);
-					frontier.Add(synth.Id);
-					ordered.Add(synth.Id);
-					break;
-				}
+					FmSynthDefinition synth => SynthReferences(synth, affected),
+					InstrumentDefinition instrument =>
+						ToneReferences(instrument.ToneSpecifications, affected),
+					ScriptInstrumentDefinition instrument =>
+						ToneReferences(instrument.ToneSpecifications, affected),
+					_ => false,
+				};
+				if (!dependsOnAffected)
+					continue;
+				reached.Add(candidate.Id);
+				frontier.Add(candidate.Id);
+				if (candidate is FmSynthDefinition)
+					discoveredSynths.Add(candidate.Id);
 			}
 		}
+
+		// The same parent Synth may refer directly to the edited object
+		// AND indirectly through a nested Instrument/Synth. Discovery
+		// order alone would then publish that parent before its child.
+		// Walk only reached Source dependencies before emitting each Synth,
+		// so a parent's frozen replacement always follows any affected
+		// child revision it may resolve. Never publish Instruments.
+		List<ObjectId> ordered = [];
+		HashSet<ObjectId> inspected = [];
+		foreach (ObjectId synthId in discoveredSynths)
+			AppendDependenciesFirst(synthId);
 		return ordered;
+
+		void AppendDependenciesFirst(ObjectId id)
+		{
+			if (!reached.Contains(id) || !inspected.Add(id)
+				|| !document.TryGet(id, out SongObject? obj))
+				return;
+			switch (obj)
+			{
+				case FmSynthDefinition synth:
+					foreach (FmSynthNode node in synth.Graph.Nodes)
+						if (node is FmSoundSourceNode source)
+							AppendDependenciesFirst(source.SourceId);
+					ordered.Add(synth.Id);
+					break;
+				case InstrumentDefinition instrument:
+					foreach (ToneSpecification tone in instrument.ToneSpecifications)
+						AppendDependenciesFirst(tone.SourceId);
+					break;
+				case ScriptInstrumentDefinition instrument:
+					foreach (ToneSpecification tone in instrument.ToneSpecifications)
+						AppendDependenciesFirst(tone.SourceId);
+					break;
+			}
+		}
+
+		static bool SynthReferences(FmSynthDefinition synth, ObjectId affected)
+		{
+			foreach (FmSynthNode node in synth.Graph.Nodes)
+			{
+				if (node is FmSoundSourceNode source
+						&& source.SourceId == affected
+					|| node is FmEnvelopeNode envelope
+						&& envelope.EnvelopeId == affected
+					|| node is FmFilterNode filter
+						&& filter.Configuration?.DefinitionId == affected)
+					return true;
+			}
+			return false;
+		}
+
+		static bool ToneReferences(
+			IEnumerable<ToneSpecification> tones, ObjectId affected)
+		{
+			foreach (ToneSpecification tone in tones)
+				if (tone.SourceId == affected
+					|| tone.VolumeEnvelopeId == affected
+					|| tone.PitchEnvelopeId == affected
+					|| tone.PanningEnvelopeId == affected
+					|| tone.FilterEnvelopeId == affected
+					|| tone.FilterConfiguration?.DefinitionId == affected)
+					return true;
+			return false;
+		}
 	}
 
 	public async Task StopAsync()
