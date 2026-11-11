@@ -2653,3 +2653,106 @@ envelope history, physical click/throughput acceptance, and the
 all-properties Synth inspector-to-audio test. These are not
 silently inferred from matching IDs. The all-properties TODO remains
 open; PR #12 remains **draft and unmerged**.
+
+
+## Forty-first slice: selected-tone-only frozen Instrument compatibility
+
+Slice 40 admitted separate frozen data-driven Instrument wrappers only
+when their **entire** tone table and ordered tone specifications were
+identical. That was a correct but unnecessarily restrictive proof:
+editing another key's tone prevented the already-held note from
+participating in a compatible oscillator Multi phase change, even
+though the current note's selected Sample and Volume release were
+unchanged.
+
+**New distinction:** a held Instrument note's selected tone was bound
+at Note On, and the running Sample must preserve that selection.
+Unrelated tone-table slots or tone specifications may change for
+*future* notes. The existing note is never reselected by applying
+its current (possibly retuned) pitch to the new map on PCM.
+
+### One-time bound-slot capture
+
+When `FmSynthSound.CreateBoundState` constructs a `SourceVoice`
+outside realtime, it captures the data-driven Instrument's
+**tone-table index** using the same log2/divisions/offset and
+away-from-zero rounding as normal tone binding. This immutable
+`BoundInstrumentToneSlot` accompanies each existing SourceVoice
+and each independently worker-prepared replacement. The binding is
+performed only during normal note/worker construction, not during
+an audio callback or a later live parameter edit.
+
+The frozen `InstrumentSound` snapshot from slice 40 still holds the
+Instrument ID, pitch-selection divisions/offset, global NNA settings,
+tone-table slots and snapshots of each tone's Source ID, pitch
+multiplier, explicit NNA, envelope IDs and Filter identity. Its
+new comparison has two stages:
+
+1. **Static geometry:** both independently frozen Instrument wrappers
+   must agree on Instrument ID, note-to-slot divisions/offset and
+   global NNA override/fade semantics. Script-selected Instruments
+   have no proof of equivalence between different wrapper objects
+   and remain ineligible; identical wrapper references still pass.
+2. **Already-bound tone:** for **every active Multi child** and every
+   Instrument Source, compare the captured original table index's
+   *effective selected tone* in both frozen maps. The list may have
+   changed length or been reordered, and other table slots may
+   select entirely different tones. The particular table slot
+   corresponding to this bound note must still be valid and select
+   an identical Source ID, pitch multiplier, tone NNA, Volume/Pitch/
+   Panning/Filter envelope IDs, and identical tone Filter identity.
+   This is a fixed index/value comparison: **no pitch-to-tone
+   recalculation, Source resolution, SoundInvocation construction,
+   allocation or historical Sample rendering** happens during
+   live adoption.
+
+The worker then constructs the new child normally, and the existing
+whole-voice preflight enforces matching **selected table slot**,
+terminal immutable Sample PCM/timeline, NoteConfigurationSnapshot,
+release policy, and allowable tone Filter/Envelope shape before any
+state is transferred. A fresh note may select one of the newly
+edited tones; the already-held note keeps its original Sample
+playhead and original Instrument Volume-release clock. Compatible
+oscillators alone undergo the established 64-output-frame onset
+crossfade, with no managed PCM allocations.
+
+**Conservative exclusions and fallback:** a changed tone at the
+bound slot, global pitch-selection geometry, selected PCM or selected
+release configuration cannot be declared equivalent merely because
+the two Instrument IDs match. A changed *selected* tone refuses
+the phase rebase before scheduling worker preparation when possible.
+If the map matches but a different terminal PCM is discovered only
+after worker construction, the prepared rebase is discarded and
+independent compatible scalar updates remain live (slice 40).
+Original note speed/frequency edits do not retroactively reselect
+the Instrument tone.
+
+### Red-before-green acceptance
+
+The existing Instrument Sample/ten-frame Volume-release test is
+extended to check the old and new independently frozen wrappers
+with **one modified, unselected tone specification**, including
+different values of the unselected tone's pitch multiplier.
+The running note is bound once at C4 **or at C5 (tone slot 12)**,
+to prove no hardcoded slot-zero assumption. Both release timings
+remain covered: Note Off at frame 160 during the 64-frame crossfade
+(exclusive end 170), and frame 200 after it (end 210).
+The resulting PCM must match an uninterrupted held Sample exactly,
+including the original release envelope, with **zero** managed
+allocations in edited PCM renders.
+
+The test-only change fails under slice 40's whole-map gate. The
+selected-tone gate makes these legitimate unrelated-tone edits
+eligible. Negative tests also cover changed tone pitch **at the
+held note's own bound slot**, including C5, which must not rephase
+the old Sample or starve an independent Constant edit. The previous
+worker-resolved PCM mismatch fallback continues to apply.
+
+**Still open:** tone-selection changes that *do* affect the held
+note, changing its selected Sample asset, independently instantiated
+but semantically equal release curves, arbitrary scripted/nested
+Instrument selection, Instrument tone Filters and pitch/panning/
+Filter envelope state, listening/click and dense-Multi throughput
+checks, plus the all-properties Synth inspector-to-audio acceptance.
+The all-properties TODO remains open, and PR #12 stays
+**draft and unmerged**.
