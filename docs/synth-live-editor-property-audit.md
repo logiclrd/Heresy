@@ -403,3 +403,22 @@ no artificial fade on a Constant used solely for oscillator rate
 and no fade in non-audition playback. Final CI and physical
 device listening remain separate qualifications, and the broader
 all-nonstructural-property TODO is not complete.
+
+
+### Slice 51 physical listening and graph-generation boundary
+
+The user reported **passing local Test-note listening** with the suggested
+Synth containing an Oscillator and Constant joined through Multiply, with
+realtime changes to the audible Constant and Operator mode. This is
+manual acceptance of the *supported stateless audio-path* behaviour,
+distinct from the numerical fade regressions; other graph classes and
+stress testing remain outside its scope.
+
+A separate inadvertent structural check began with a playing
+`Multiply[Osc, Osc]` Synth and rewired the Operator to
+`Multiply[Osc, Osc, Constant]` while the note continued. The change
+had **no audible effect** on the existing voice, consistent with the
+specified frozen-generation policy after a wiring/topology edit. The
+user did not report starting a fresh note after the rewire, so
+new-note adoption of the revised topology is **not** marked manually
+verified by this observation.
