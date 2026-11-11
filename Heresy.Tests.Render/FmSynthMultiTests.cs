@@ -1130,10 +1130,12 @@ public sealed class FmSynthMultiTests
         worker.Fault.Should().BeNull();
     }
 
-    [TestCase(160)]
-    [TestCase(200)]
+    [TestCase(160, false)]
+    [TestCase(200, false)]
+    [TestCase(160, true)]
+    [TestCase(200, true)]
     public void InstrumentSelectedSampleRetainsVolumeReleaseAcrossMixedMultiOnsetEdit(
-        int noteOffFrame)
+        int noteOffFrame, bool separateFrozenInstrumentRevision)
     {
         // InstrumentSound flattens to a terminal SampleSound and selects
         // an invocation-owned Volume envelope. An otherwise independent
@@ -1162,6 +1164,26 @@ public sealed class FmSynthMultiTests
         Heresy.Render.Instruments.InstrumentSound instrument =
             new(definition, sampleResolver, envelope);
         SourceResolver instrumentResolver = new(instrumentId, instrument);
+        // A freshly frozen Synth revision may supply a distinct
+        // InstrumentSound wrapper *and* a distinct equivalent tone table.
+        // The currently bound Sample and Volume curve are still the same.
+        Heresy.Core.Instruments.InstrumentDefinition nextDefinition =
+            new(instrumentId, "Release instrument snapshot");
+        nextDefinition.ToneSpecifications.Add(
+            new Heresy.Core.Instruments.ToneSpecification
+            {
+                SourceId = sampleId,
+                VolumeEnvelopeId = releaseId,
+            });
+        nextDefinition.ToneTable.Add(0);
+        Heresy.Render.Instruments.InstrumentSound nextInstrument =
+            separateFrozenInstrumentRevision
+                ? new(nextDefinition, sampleResolver, envelope)
+                : instrument;
+        if (separateFrozenInstrumentRevision)
+            ReferenceEquals(instrument, nextInstrument).Should().BeFalse();
+        SourceResolver nextInstrumentResolver =
+            new(instrumentId, nextInstrument);
         FmSynthGraph Graph(bool random) => new([
             new FmSoundSourceNode(1, instrumentId,
                 FmMultiNode.NeutralFrequencyHz),
@@ -1176,7 +1198,7 @@ public sealed class FmSynthMultiTests
         FmSynthSound previous = new(Graph(false), envelope,
             soundResolver: instrumentResolver, enableLiveMultiExpansion: true);
         FmSynthSound next = new(Graph(true), envelope,
-            soundResolver: instrumentResolver, enableLiveMultiExpansion: true);
+            soundResolver: nextInstrumentResolver, enableLiveMultiExpansion: true);
         RenderContext context = Mono();
         SoundState held = previous.CreateState(), reference = previous.CreateState();
         held.SetNoiseSeed(21);
