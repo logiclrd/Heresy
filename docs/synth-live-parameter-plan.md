@@ -3910,3 +3910,69 @@ During an ongoing audition, the user reported that **all tested edits updated in
 - **Operator #4:** Operation.
 
 This is strong physical UI-to-audio acceptance for the tested changes and their ordinary combinations. It also goes beyond the *strictly unchanged-Multi* prerequisite of slice 56's **downstream output fade**: changing Multi's own settings exercises the separate existing constituent reconfiguration, ratio glide and prepared onset mechanisms. The user's lack of audible clicks is meaningful listening evidence, but not a numerical proof of every 64-frame transition, overlapping rapid-edits/release timeline, or the equivalence of compound Multi child graphs. Those boundaries remain separate.
+
+
+## Slice 57 — downstream output edits with frozen compound Oscillator Multi children
+
+Slice 56 qualified the bounded final-output 64-frame fade for a
+**stable Multi containing one direct Oscillator** when only a
+downstream Constant or Operator changed. Although that protects the
+phase state of multiple Multi voices, each constituent can itself
+contain more than one Oscillator in a *compound stateless graph*.
+The unchanged compound subgraph was previously excluded solely
+because it was not the single-Oscillator fast path, leaving
+downstream audible gain/mix edits discontinuous.
+
+**Bounded extension:** A Multi whose frozen input graph consists
+of **one or more Oscillators, Constants and Operators** is now an
+eligible audible leaf for the same *parent-only* 64-output-frame
+cubic smoothstep. Each Multi child retains all of its independently
+integrated Oscillator phases, unchanged mixer controls, and
+original per-voice ratio. There is no child onset rebuild or
+second child voice. The parent graph captures the last actual
+audible output and fades to the revised full Multi mix; repeated
+edits restart from the last blended sample. This is **not** a
+license to use the output fade for changes inside the compound
+Multi subgraph.
+
+**Exact frozen-child proof:** The old and next child must have
+identical compiled node counts, output node index, oscillator
+count, note policy, node IDs/types/compiled input indices and
+Oscillator phase indices. Every Oscillator must match all
+authored frequency, Waveform, Curvature, Vmin/Vmax, Constant
+and multiplier properties. Every Constant must match its
+numeric Value; every Operator must match Operation. No Node
+Envelope, Noise, Source, Filter, nested Multi or graph
+rewiring is admitted in this first compound-child extension.
+Each *actually bound* Multi child's sound is compared against
+the old frozen subgraph as well, guarding against stale
+generations. The outer Multi's Distribution, ratio definitions,
+Voice Count, Detune, Randomize Phase, Gain Compensation, cycle
+length, active mix ratios and initialized constituent states
+must pass the pre-existing stable-Multi guard, with no
+already-releasing note, dormant headroom activation, or
+onset/ratio glide. Checks run on precompiled arrays without
+allocating or rebuilding DSP histories.
+
+**Red-before-fix regression:** New
+`FmSynthLiveCompoundMultiOutputTests` uses a compound
+`Add[Sine 390 Hz (curved), Triangle 515 Hz]` child feeding
+a three-voice Spread Multi, then a Constant and parent
+Multiply/Add Operator. In
+[CI #43077451059](https://github.com/logiclrd/Heresy/actions/runs/43077451059),
+the first commit produced **four intentional discontinuity
+failures**: downstream Multiply gain, downstream Add Constant,
+Operator mode, and a second edit during the first fade.
+The ordinary non-audition rendering negative case passed.
+Positive cases check the complete 64-frame smoothstep, exact
+post-fade agreement with an independently advanced reference
+(including *both* phase integrators per constituent), repeated
+edits, and zero PCM managed allocations.
+
+**Scope still open:** Edits to constituent shapes and controls,
+Multi distribution/voice growth/onset, compound child
+Source/Filter/Envelope/Noise and release-in-progress still
+have separate safety contracts. Physical listening on this
+compound-child fixture remains outstanding; this slice
+does not close the all-nonstructural-property TODO or change
+PR #12's draft/unmerged status.
