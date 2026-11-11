@@ -1110,7 +1110,7 @@ public sealed class FmSynthMultiTests
         revised.Render(context, changing, 129, actual.Length - 1,
             actual.AsSpan(1));
         long remainingBytes = GC.GetAllocatedBytesForCurrentThread() - before;
-        TestContext.WriteLine($"Mixed onset PCM allocations: first={firstFrameBytes}, remaining={remainingBytes}");
+        TestContext.Out.WriteLine($"Mixed onset PCM allocations: first={firstFrameBytes}, remaining={remainingBytes}");
         (firstFrameBytes + remainingBytes).Should().Be(0L);
         original.Render(context, oldMixedReference, 128, oldMix.Length, oldMix);
         oldOsc.Render(context, oldOscReference, 128, oldOscPcm.Length, oldOscPcm);
