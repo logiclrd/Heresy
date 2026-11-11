@@ -3684,3 +3684,60 @@ Those cases retain automated regression coverage, rather than
 being marked manually listened to. This is acceptance of the
 specific audible Constant edit, not SourceId reassignment or
 Instrument/Filter/Multi migration.
+
+
+## Slice 54 — Sample/Envelope interaction and deterministic Noise mixing
+
+The slice-53 listening fixture combined a **looping Sample-backed
+Source**, a graph Envelope connected to that Source's **frequency
+multiplier**, and an output Multiply Operator with an editable
+Constant. The user reported a successful live Constant gain change.
+That listening observation is retained separately from the numerical
+Source-frame and phase tests.
+
+**Next compatibility boundary:** A graph consisting of an audible
+Sample-backed Source, scalar/Envelope controls, and a **Noise node**
+could previously lose the otherwise-eligible 64-frame output fade
+when its audible Constant or Operator was edited. This was not a
+Noise-state incompatibility: `FmNoiseNode` computes its sample as a
+counter-based deterministic function of **voice seed, node ID and
+output frame**, without an evolving random generator. No Noise
+history has to be transferred between compiled graph generations.
+
+**Implementation:** Admit `FmNoiseNode` to the existing bounded
+audition-only output-fade eligibility alongside Oscillator,
+Constant, Operator, Envelope and directly Sample-backed Source
+leaves. All earlier actual-output-path tests, bound Sample PCM
+identity preflight, retained Sample streaming position/EOF and
+already-releasing-note guards remain in place. A changed audible
+Constant or Operator in `Add[Noise, Multiply[Sample, Constant]]`
+can now join the preceding audible graph output with the same
+**64-frame cubic smoothstep**, preserving each Noise sample's
+deterministic frame identity and the Sample's original playhead.
+The raw graph values driving Source pitch remain unchanged.
+
+**Test-first results:** The added
+`FmSynthLiveSampleEnvelopeNoiseTests` matrix covers (1) an audible
+Node Envelope controlling gain of a continuing Sample Source,
+(2) an Envelope used only to control the Sample's forward pitch
+rate, (3) a changed audible Constant in a Sample+Noise graph,
+and (4) non-audition Sample+Noise isolation. In the initial
+[red CI #43051634792](https://github.com/logiclrd/Heresy/actions/runs/43051634792),
+only the Sample+Noise gain case failed as intended: the first
+post-edit output differed from the previous audible sample;
+the other three cases passed against the existing slice-53
+implementation. A single compiler eligibility change implements
+the bounded Noise extension. Tests assert the full 64-frame
+oracle, streaming/forward pitch continuity and zero managed PCM
+allocations. **The Sample-backed audible Envelope edit was already
+supported; this test establishes coverage rather than claiming
+a redundant new feature.**
+
+**Still separate:** arbitrary SourceId replacement and instrument
+tone selection, Filter/Multi histories, changes to ongoing release,
+scripted Envelope editing and complete device/stress acceptance
+are not solved by this deterministic-Noise extension. No
+ordinary playback/export crossfade has been introduced. PR #12
+remains draft/unmerged; the all-nonstructural-property TODO
+remains open. Device listening for this Sample+Noise case is
+not yet reported.
