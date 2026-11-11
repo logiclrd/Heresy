@@ -4067,3 +4067,72 @@ Add[
 The instructions were to change the **outer Constant from 0.8 to 0.1** and then switch the **outer Operator from Multiply to Add**, while leaving the compound Multi child unchanged. The actual user screenshot (after edits) shows Oscillator #1 (Sine 440 Hz), Envelope #2, Multiply #3, White Noise #4, Constant #5 (0.15), Multiply #6, Add #7, **Multi #8 Spread with 7 voices**, output Operator #9 **Add**, and outer Constant #10 **0.1**. Thus the screenshot is a seven-voice variation of the suggested three-voice fixture, and visibly captures the final configured state, not an audio waveform or intermediate state.
 
 The user explicitly reported the instructed listening test **passed**. Record **manual acceptance for downstream Constant and Operator changes around a frozen compound Oscillator/Envelope/Noise Multi child**; the stronger seven-voice variation is meaningful. Do **not** infer that internal Envelope selection/curve editing, Noise identity or seed changes, Multi voice-count/distribution edits, release-in-progress, or all rapid-transition timing combinations were tested in this session. Automated tests separately cover exact 64-frame smoothstep, same-seed Noise, equivalent frozen Node Envelope, subsequent Note Off release clock and zero PCM allocations. The broader all-nonstructural-property milestone remains open, and PR #12 remains draft/unmerged.
+
+
+## Slice 59 — frozen direct Sample Sources in compound Multi output transitions
+
+Slice 58's unchanged compound Multi children supported Oscillator, Constant,
+Operator, deterministic Noise and equivalent Node Envelope curves. A
+**direct Sample Source inside the Multi child** still disabled the parent
+64-output-frame audition fade, even if all the caller changed was a
+downstream Constant or Operator, and the Sample's existing integrated
+fractional playhead could safely continue.
+
+**New bounded eligibility:** The frozen Multi child may additionally
+contain a directly bound **Sample** Source, alongside the previously
+admitted node types and **at least one Oscillator**. The Sample itself
+is an audible leaf, not a newly instantiated or remapped playback
+voice. The old, prepared and currently bound child graphs must retain
+matching topology, output, node identity/order/input indices and all
+previously required frozen node properties. For each direct Sample,
+the old/new authored SourceId, FrequencyHz, Constant,
+ExponentialMultiplier and multiplier input must all be identical.
+The prepared Samples must have matching NewNotePolicy and pass
+`CanSharePreparedOnsetTimelineWith` (immutable PCM, sample rate,
+channel placement and loop geometry). Comparing names or IDs alone
+is not sufficient to substitute a changed Sample asset.
+
+**Every active Multi constituent is checked independently before
+starting any parent output fade.** In addition to the prior stable
+distribution, detune, ratios, mix, phase/onset, voice count,
+gain-compensation, no-Note-Off and no-activated-headroom conditions,
+its bound Sample must still match both the current and next prepared
+child. The bound SampleSoundState and SourceVoice must be continuing,
+not input-finished, expired, releasing, or dependent on unadmitted
+Source-local Filter history. A single ineligible child disqualifies
+this **outer** fade rather than partially admitting a subset of
+constituents. This adds no Source creation, PCM allocation, sample
+seek, historical replay, or extra sample-rate conversion in PCM.
+The 64-frame smoothstep joins the last audible **whole-parent**
+output to the naturally advancing revised parent output.
+
+**Desired-invariant regression first:** The newly added
+`FmSynthLiveSampleMultiOutputTests` uses
+`Multi[Add[direct Sample Source, Sine Oscillator]]`, with a
+three-voice Spread configuration and an external Constant and
+Multiply/Add Operator. The test-only commit
+`21ae1891ec4c` produced **four genuine first-frame
+discontinuities** on
+[CI #43113214702](https://github.com/logiclrd/Heresy/actions/runs/43113214702):
+two gain cases, Operator mode and an interrupted fade.
+The natural-Sample-EOF case and non-audition isolation case already
+passed without the fix. The implementation commit
+`05f1fc571f79` then passed
+[CI #43113603788](https://github.com/logiclrd/Heresy/actions/runs/43113603788),
+including **3,639 tests** and Linux ARM64, native-host and release
+validation. Positive tests assert the complete 64-frame fade against
+an independently advanced Sample+Oscillator reference, uninterrupted
+EOF and the simultaneous Oscillator, interrupted-fade continuity,
+ordinary non-audition semantics and zero PCM managed allocations.
+
+**Explicitly not added:** Reassigning SourceId, updating the
+Sample PCM/loop or its Source pitch controls *inside* this child
+during an outer fade; Instrument or nested Synth Sources, Filter
+or nested Multi nodes inside this child; already releasing or
+retiring constituent histories; changed inner Envelope/Noise;
+arbitrary nested migrations and performance stress. The previous
+separate live-control migration mechanisms remain in force where
+independently compatible. Real-device listening for this new
+Sample-in-Multi downstream-edit fixture is **not yet reported**.
+PR #12 stays draft/unmerged, and the all-nonstructural-properties
+TODO on main stays open.

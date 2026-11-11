@@ -722,3 +722,39 @@ draft and unmerged.
 ### Slice 58 — local physical acceptance of frozen Envelope/Noise Multi child
 
 The user reports that the suggested **already-playing** Synth test passed: a compound child `Add[Multiply[Oscillator, NodeEnvelope], Multiply[WhiteNoise, Constant(0.15)]]` feeding a Spread Multi, with downstream Constant gain changed **0.8 → 0.1** and downstream Operator changed **Multiply → Add**. The submitted graph screenshot depicts **seven** Spread voices rather than the suggested three, and shows the post-edit `Add[Multi #8, Constant #10 (0.1)]` output. This is real-device acceptance of slice 58's **outer output-control transition around an unchanged frozen child**, additional to mathematical regression evidence. It does not qualify live edits *inside* the child, a changing Envelope curve, Sample/Filter/nested Multi components, or already-releasing voices. The PR is draft/unmerged and the main all-property TODO stays open.
+
+
+## Slice 59 — continuing direct Sample inside a frozen compound Multi
+
+The 64-frame parent output smoothstep now admits the **unchanged
+Sample-backed Source** in a frozen compound Multi child of
+Oscillator/Constant/Operator/Noise/Node Envelope nodes (still with
+at least one Oscillator). This is an outer Constant/Operator transition,
+**not** a Source reassignment or new Sample invocation.
+
+The frozen child comparison requires matching SourceId, unchanged
+Source FrequencyHz/Constant/ExponentialMultiplier/modulation input,
+compatible immutable Sample PCM and loop geometry, and the same note
+policy. Per active Multi constituent, the original SampleSoundState
+must remain bound and continuing, with no input-finished, already
+ended, releasing or unsupported Source Filter state. All previous
+Multi stable-ratio, onset, no-Note-Off, voice-count and frozen child
+guards remain. The per-constituent preflight prevents beginning a
+parent fade when even one child is ineligible. Audio from the original
+Sample playhead advances normally through the 64-output-frame
+smoothstep; no new PCM-thread Sample state or replay is introduced.
+
+`FmSynthLiveSampleMultiOutputTests` was committed first in
+`21ae1891`. It caused four real discontinuity failures in
+[red CI #43113214702](https://github.com/logiclrd/Heresy/actions/runs/43113214702),
+while the separate natural EOF and ordinary playback cases already
+passed. Implementation `05f1fc57` passed
+[CI #43113603788](https://github.com/logiclrd/Heresy/actions/runs/43113603788)
+with 3,639 tests and required release/ARM64 checks. Tests cover
+the exact audible-output fade, interrupted edits, Sample readhead
+and EOF continuity, non-audition isolation and zero PCM allocations.
+
+This does not establish migration of changed Sample/Instrument/nested
+Synth Sources or arbitrary compound child stateful processing. A local
+hardware listening check of this new fixture remains outstanding.
+The all-nonstructural-property TODO and draft PR remain open.
