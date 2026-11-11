@@ -717,7 +717,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	// dispatch and redundant audible Operator routing on each sample.
 	private readonly CompiledNode? _singleOutputOscillator;
 	// Audition smoothing of changes that directly affect *audible output*
-	// uses a bounded scalar fade on graphs with stateless amplitude routing.
+	// uses a bounded scalar fade on graphs with stateless amplitude routing,
+	// including compiled Node Envelopes when not already releasing.
 	// Oscillator FM inputs are controls, not independent audible paths.
 	// Source/Filter/Multi graphs keep their separate state transactions.
 	private readonly bool _canFadeStatelessOutput;
@@ -864,7 +865,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			&& _nodes[0].InputIndices.Length == 0
 			? _nodes[0] : null;
 		_canFadeStatelessOutput = _nodes.All(node => node.Definition is
-			FmOscillatorNode or FmConstantNode or FmOperatorNode);
+			FmOscillatorNode or FmConstantNode or FmOperatorNode
+			or FmEnvelopeNode);
 		_multiRatios = _nodes.Select(node => node.Definition is FmMultiNode multi
 			? multi.GetFrequencyRatios() : Array.Empty<double>()).ToArray();
 		_multiReserve = new int[_nodes.Length];
@@ -1359,6 +1361,17 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return true;
 	}
 
+	/// <summary>Test the frozen audible Envelope, not authoring object
+	/// identity: unrelated revisions may prepare an equivalent curve
+	/// into a distinct NodeEnvelopeCurve wrapper. Script curves cannot
+	/// prove equivalent frozen shapes and remain identity-only.</summary>
+	private static bool HasSameFrozenEnvelope(
+		CompiledNode original, CompiledNode revised)
+		=> ReferenceEquals(original.Envelope, revised.Envelope)
+			|| original.Envelope is NodeEnvelopeCurve a
+				&& revised.Envelope is NodeEnvelopeCurve b
+				&& a.HasSameFrozenShapeAs(b);
+
 	/// <summary>Preflight the entire running voice before changing its sound.
 	/// Stateful nodes must prove that their existing invocation histories
 	/// remain valid. A declined edit leaves the old graph generation intact.</summary>
@@ -1399,9 +1412,21 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				case FmOscillatorNode:
 				case FmOperatorNode:
 				case FmNoiseNode:
+					break;
+
 				case FmEnvelopeNode:
-					// Envelope curves evaluate directly from the existing
-					// frame/note-off timeline; they have no node-local state.
+					// The held note can adopt a revised stateless curve at
+					// its original clock. Once release has begun, however,
+					// replacing an *audible* curve can change its retirement
+					// deadline or erase a still-audible outgoing release.
+					// Preserve the old generation until a stateful release
+					// migration policy can prove both lifetimes.
+					if (live.HasNoteOffTime
+						&& _canFadeStatelessOutput
+						&& next._canFadeStatelessOutput
+						&& _statelessAudioPathNodes[i]
+						&& !HasSameFrozenEnvelope(old, revised))
+						return false;
 					break;
 
 				case FmFilterNode:
@@ -1866,7 +1891,17 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				bool operatorChanged = _nodes[i].Definition is FmOperatorNode oldOperator
 					&& next._nodes[i].Definition is FmOperatorNode newOperator
 					&& oldOperator.Operation != newOperator.Operation;
-				if (shapeChanged || scalarChanged || operatorChanged)
+				// Shared Node Envelope revisions are stateless but can
+				// abruptly change an already sounding gain. Fade when
+				// an audible node curve truly changes, not when the
+				// frozen song recompiles an equivalent wrapper. Never
+				// treat a pitch-only Envelope as an audio value path.
+				bool envelopeChanged = _nodes[i].Definition is FmEnvelopeNode
+					&& next._nodes[i].Definition is FmEnvelopeNode
+					&& _nodes[i].Envelope is NodeEnvelopeCurve oldCurve
+					&& next._nodes[i].Envelope is NodeEnvelopeCurve newCurve
+					&& !oldCurve.HasSameFrozenShapeAs(newCurve);
+				if (shapeChanged || scalarChanged || operatorChanged || envelopeChanged)
 				{
 					live.StartStatelessOutputFade(_outputIndex);
 					break;
