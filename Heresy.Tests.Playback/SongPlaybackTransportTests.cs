@@ -667,6 +667,52 @@ public sealed class SongPlaybackTransportTests
 		backend.OpenCount.Should().Be(1);
 	}
 
+
+	[Test]
+	public async Task SharedEditWithDirectAndInstrumentPathsStillPublishesChildBeforeParent()
+	{
+		// Construct the parent before its child in document enumeration.
+		// A simple reverse-reference BFS would discover the parent through
+		// its direct Envelope node first, then the child through an Instrument,
+		// incorrectly publishing parent before child. Dependencies-first
+		// ordering is required regardless of the number of paths.
+		SongDocument document = new();
+		ObjectId envelopeId = document.AllocateObjectId();
+		document.Add(new NodeEnvelopeDefinition(envelopeId, "Shared"));
+		ObjectId instrumentId = document.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Tone Envelope");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = ObjectId.None,
+			VolumeEnvelopeId = envelopeId,
+		});
+		instrument.ToneTable.Add(0);
+		document.Add(instrument);
+		ObjectId childId = document.AllocateObjectId();
+		ObjectId parentId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(parentId, "Parent added first",
+			new FmSynthGraph([
+				new FmSoundSourceNode(0, childId, FmMultiNode.NeutralFrequencyHz),
+				new FmEnvelopeNode(1, envelopeId),
+				new FmOperatorNode(2, FmOperatorKind.Multiply, [0, 1]),
+			], 2)));
+		document.Add(new FmSynthDefinition(childId, "Child through Instrument",
+			new FmSynthGraph([
+				new FmSoundSourceNode(0, instrumentId, FmMultiNode.NeutralFrequencyHz)], 0)));
+
+		PublishingFactory factory = new();
+		TestBackend backend = new();
+		using SongPlaybackTransport transport = new(backend, factory);
+		await transport.SendLiveEventAsync(document, ChannelTarget.Virtual(82),
+			[new StartNoteCommand(parentId)]);
+		document.MarkChanged(affectsAudio: true);
+		await transport.PublishSharedObjectEditAsync(document, envelopeId);
+		factory.PreparedIds.Should().Equal(childId, parentId,
+			"affected nested Synths must be published before parents even if a parent has a shorter direct dependency path");
+		factory.Source.Order.Should().Equal("Start:82", "Update", "Update");
+		backend.OpenCount.Should().Be(1);
+	}
+
 	private sealed class PublishingFactory :
 		IBackgroundPlaybackSourceFactory, ILiveSynthSourcePreparationFactory
 	{
