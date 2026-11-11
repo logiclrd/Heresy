@@ -23,7 +23,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	private sealed class SourceVoice
 	{
 			public SourceVoice(SoundInvocation invocation, double originalOuterFactor,
-			double originalFrequencyHz, bool trackSampleHistory)
+			double originalFrequencyHz)
 		{
 			Invocation = invocation;
 			// The invocation retains its original state/configuration. A
@@ -34,11 +34,6 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			OriginalFrequencyHz = originalFrequencyHz;
 			Pitch = new FmSourcePitchCurve();
 			invocation.State.PitchTrajectory.SetCurve(0, Pitch);
-			// Reserved exclusively for interactive live-audition Sample
-			// onsets; normal playback/export retains no history ring.
-			if (trackSampleHistory && Sound is SampleSound
-				&& invocation.State is SampleSoundState sampleState)
-				sampleState.EnableLiveOnsetPositionHistory();
 		}
 		public SoundInvocation Invocation { get; }
 		public ISound Sound { get; set; }
@@ -822,10 +817,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return true;
 	}
 
-	/// <summary>Eligible Source child: the same bare Sample with no FM input. A
-	/// simultaneous authored FrequencyHz edit is supported by preserving
-	/// the outgoing voice's original pitch baseline. The integrated Source
-	/// pitch history must still have a constant positive rate.</summary>
+	/// <summary>Eligible Source child: the same bare Sample with no FM input.
+	/// Its existing playhead and frequency basis are retained while
+	/// independent oscillator phases can adopt the new Multi onset.</summary>
 	private static bool CanRephaseDirectSampleSource(
 		CompiledNode old, CompiledNode revised)
 	{
@@ -867,8 +861,6 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| !double.IsFinite(replacement.OriginalFrequencyHz
 				/ original.OriginalFrequencyHz)
 			|| original.OriginalOuterFactor != replacement.OriginalOuterFactor
-			|| (!original.Pitch.HasConstantRateHistory
-				&& !previous.CanTransferLiveOnsetPosition(oldFrame, nextFrame))
 			|| original.Pitch.LastFrame != oldFrame - 1
 			|| oldFrame < 0 || nextFrame < 0
 			|| !previous.PitchTrajectory.CanSeedPreparedStreamingPosition
@@ -879,14 +871,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| envelopes.Filter is not null || envelopes.Panning is not null
 			|| original.Invocation.Configuration != replacement.Invocation.Configuration)
 			return false;
-		// Constant-rate onsets keep the original O(1) skip projection.
-		// For variable-rate onsets the exact recorded integral must be
-		// within the 1024-frame backwards window (checked above). Never
-		// extrapolate future historical samples using the current rate.
-		if (!original.Pitch.HasConstantRateHistory)
-			return true;
-		double extra = (nextFrame - oldFrame) * original.Pitch.LastRate;
-		return double.IsFinite(extra) && Math.Abs(extra) <= 1000000.0;
+		// The active Sample position, not a hypothetical new onset
+		// position, is the source of truth. No history window, rate
+		// projection, or skip-dependent preflight is required.
+		return true;
 	}
 
 	/// <summary>Allow a new onset only when histories are independent
@@ -937,7 +925,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					break;
 				case FmSoundSourceNode
 					when CanRephaseDirectSampleSource(a, b):
-					hasTimeDependentInput = true;
+					// Samples preserve their running playhead. They do
+					// not by themselves justify a new Multi onset;
+					// oscillators elsewhere in this graph may still
+					// be rephased through a prepared replacement.
 					break;
 				case FmFilterNode filterNode
 					when b.Definition is FmFilterNode revisedNode
@@ -953,14 +944,12 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return hasTimeDependentInput;
 	}
 
-	/// <summary>Allow a direct Sample onset with either a constant-rate
-	/// streaming curve or an exact, recent integrated position when the
-	/// new skip rewinds within the audition-only 1024-frame history.
-	/// Forward variable-rate projections and older histories fall back
-	/// immediately: the independent scalar edit must not be starved
-	/// waiting on a worker that could never prepare this onset.</summary>
-	private bool HasDirectSampleOnsetSnapshot(
-		SoundState activeState, long oldLocalFrame, long newLocalFrame)
+	/// <summary>Only direct Sample voices with a current continuing
+	/// playhead can join a worker-prepared oscillator onset replacement.
+	/// This is independent of old rate history and the new phase skip:
+	/// Sample playback itself will never be rephased.</summary>
+	private bool HasContinuingDirectSampleState(
+		SoundState activeState, long oldLocalFrame)
 	{
 		FmSynthState active = ValidateState(activeState);
 		for (int i = 0; i < _nodes.Length; i++)
@@ -968,25 +957,20 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			if (_nodes[i].Definition is not FmSoundSourceNode)
 				continue;
 			SourceVoice? source = active.Sources[i];
-			if (oldLocalFrame <= 0 || newLocalFrame < 0
+			if (oldLocalFrame <= 0
 				|| source?.Sound is not SampleSound
 				|| source.Pitch.LastFrame != oldLocalFrame - 1
 				|| source.InputFinished || source.EndFrame.HasValue
 				|| source.Invocation.State.HasNoteOffTime
-				|| source.Invocation.State.NaturalEndFrameExclusive.HasValue
-				|| (!source.Pitch.HasConstantRateHistory
-					&& (source.Invocation.State is not SampleSoundState sample
-						|| !sample.CanTransferLiveOnsetPosition(
-							oldLocalFrame, newLocalFrame))))
+				|| source.Invocation.State.NaturalEndFrameExclusive.HasValue)
 				return false;
 		}
 		return true;
 	}
 
-	/// <summary>Eligible live audition: held notes and unchanged ratios,
-	/// with identical unmodulated oscillator/constant/operator,
-	/// optional unbound OnePole IIR, and bare same-asset direct Sample
-	/// children with constant-rate or bounded recent variable-rate histories.
+	/// <summary>Held audition: compatible oscillator phases may rephase
+	/// through worker-prepared states. Direct bare Samples retain their
+	/// physical playheads; Sample-only phase edits need no worker.
 	/// Other Source/Instrument, Filter, Envelope and nested Multi remain excluded.</summary>
 	private bool NeedsMultiOnsetReplacement(
 		FmSynthSound next, FmSynthState live, int index)
@@ -1008,28 +992,19 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					&& (!(voice.Definition.RandomizePhase || updated.RandomizePhase)
 						|| voice.Definition.CycleLength == updated.CycleLength)))
 				continue;
-			// Every initialized constituent must have a migratable
-			// integrated Sample history, or the old onsets are retained.
-			// Do not leave scalar/property publication blocked indefinitely.
+			// Only the oscillator phase changes. Direct Sample children
+			// retain their current accumulated position regardless of the
+			// new Multi skip, or any prior parent/Source pitch automation.
+			// A noncontinuing Sample state remains ineligible for this
+			// mixed-graph replacement, without starving scalar edits.
 			foreach (MultiVoice active in live.Multis[index])
 			{
 				if (!active.HasStarted || !active.Initialized)
 					continue;
-				// The target skip is a pure, bounded calculation; compute it
-				// before worker admission so a variable-rate rewind beyond
-				// the history ring never enters a permanently failing retry.
-				double pitch = live.PitchMultiplier
-					* active.RatioAt(live.NextFrame)
-					* live.PitchTrajectory.GetMultiplier(live.NextFrame);
-				int targetSkip = next.CalculateMultiSkip(
-					updated, live.NoiseSeed, index, active.Index, pitch,
-					live.PlaybackSpeedMultiplier, live.SampleRate);
 				long local = live.NextFrame - active.StartFrame;
-				if (local < 0 || local > long.MaxValue
-					- Math.Max(active.SkipFrames, targetSkip)
-					|| !originalChild.HasDirectSampleOnsetSnapshot(
-						active.Invocation.State,
-						local + active.SkipFrames, local + targetSkip))
+				if (local < 0 || local > long.MaxValue - active.SkipFrames
+					|| !originalChild.HasContinuingDirectSampleState(
+						active.Invocation.State, local + active.SkipFrames))
 					return false;
 			}
 			return true;
@@ -1367,30 +1342,23 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return requested;
 	}
 
-	/// <summary>Copy a bare Sample source's accumulated *integral*
-	/// rather than a nominal oscillator phase. Only called after the
-	/// same-asset, unmodulated, constant-rate source preflight. When
-	/// Source FrequencyHz changes concurrently, the replacement's rate
-	/// continues relative to the old invocation's original basis. This is
-	/// O(1): the ongoing Sample interpolation and playback offset live
-	/// in the new SoundState, and the outgoing playhead stays independent.</summary>
+	/// <summary>Copy the actual, already accumulated Sample playhead.
+	/// A Multi phase edit may rephase sibling oscillators, but a running
+	/// Sample keeps its physical fractional playback position regardless
+	/// of the new randomized skip or earlier rate automation. Its new
+	/// Source controls affect only subsequent integration. No history
+	/// replay, projection, or callback-side allocation is necessary.</summary>
 	private static void TransferPreparedDirectSample(
 		SourceVoice original, SourceVoice replacement,
 		long oldFrame, long newFrame)
 	{
 		SampleSoundState oldState = (SampleSoundState)original.Invocation.State;
 		SampleSoundState newState = (SampleSoundState)replacement.Invocation.State;
+		// Old Source pitch was integrated through oldFrame - 1. The
+		// cached position at oldFrame is the next Sample interpolation
+		// position, even after arbitrary previous pitch-rate changes.
+		double position = oldState.PitchTrajectory.GetPosition(oldFrame);
 		double rate = original.Pitch.LastRate;
-		double position;
-		if (!original.Pitch.HasConstantRateHistory && newFrame < oldFrame)
-		{
-			if (!oldState.TryGetRecordedPitchPosition(newFrame, out position))
-				throw new InvalidOperationException(
-					"Variable-rate Sample onset lacked a preflighted historical position.");
-		}
-		else
-			position = oldState.PitchTrajectory.GetPosition(oldFrame)
-				+ (newFrame - oldFrame) * rate;
 		newState.PitchMultiplier = oldState.PitchMultiplier;
 		newState.PlaybackSpeedMultiplier = oldState.PlaybackSpeedMultiplier;
 		newState.PlaybackOffset = oldState.PlaybackOffset;
@@ -1398,10 +1366,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		newState.Position = oldState.Position;
 		newState.NoteOffTime = oldState.NoteOffTime;
 		newState.PitchTrajectory.SeedPreparedStreamingPosition(newFrame, position);
-		newState.CopyLiveOnsetPositionsBeforeFrame(oldState, newFrame);
 		replacement.RetainOriginalFrequencyBasis(original);
-		replacement.Pitch.SeedBeforeFrame(newFrame, rate,
-			hasVariedRateHistory: !original.Pitch.HasConstantRateHistory);
+		replacement.Pitch.SeedBeforeFrame(newFrame, rate);
 	}
 
 	/// <summary>Adopt already worker-constructed oscillator and OnePole
@@ -1651,7 +1617,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			{
 				SourceVoice voice = new(invocation,
 					node.Constant ? 1.0 : pitchMultiplier * playbackSpeedMultiplier,
-					node.FrequencyHz, _allowMultiExpansion);
+					node.FrequencyHz);
 				// For a frozen live plan, even expensive maximum/minimum-phase
 				// FIR designs are already immutable: this only instantiates
 				// per-voice histories from prepared plans at the note boundary.
