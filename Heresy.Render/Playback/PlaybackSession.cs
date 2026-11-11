@@ -3979,6 +3979,30 @@ public sealed class PlaybackSession
 					soundEndRelative.Value)
 				: null;
 
+		// Multiple releasing envelopes compose by their LAST completion,
+		// not the earliest one. A child with its own sustain lifecycle must
+		// also finish; an unsustained child simply supplies PCM until the
+		// enclosing release ends or its natural EOF occurs.
+		if (voice.SoundState.NoteOffTime.HasValue
+			&& voice.HasLocalReleaseLifecycle)
+		{
+			long? localEnd = voice.GetLocalReleaseCompletionFrameExclusive(
+				absoluteFrame);
+			if (localEnd.HasValue)
+			{
+				if (voice.Sound.HasSustainRelease(voice.SoundState))
+					effectiveEndAbsolute = effectiveEndAbsolute.HasValue
+						? Math.Max(effectiveEndAbsolute.Value, localEnd.Value)
+						: null; // Cannot bound an unresolved child release.
+				else
+					effectiveEndAbsolute = effectiveEndAbsolute.HasValue
+						? Math.Min(effectiveEndAbsolute.Value, localEnd.Value)
+						: localEnd.Value;
+			}
+			else
+				effectiveEndAbsolute = null; // An active release has no finite end.
+		}
+
 		if (voice.FadeEndFrameExclusive.HasValue)
 		{
 			effectiveEndAbsolute =
