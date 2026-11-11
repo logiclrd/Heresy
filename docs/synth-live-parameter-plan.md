@@ -3604,3 +3604,64 @@ establish manual testing of editing shared node points in place,
 pitch-only Envelopes, active-release rejection, or every nested
 Source/Filter/Multi topology. Those narrower cases remain verified
 only to the extent documented by automated tests.
+
+
+## Slice 53 — bounded audible output transitions around continuing direct Sample Sources
+
+Slice 51's audible Constant and Operator 64-frame transitions were
+initially limited to entirely stateless Synth graphs. A common audible
+case remained abrupt even though it did not require replacing any DSP
+history: a held Synth with an existing, directly Sample-backed Source
+feeding an Operator and a Constant (for example
+`Multiply[Source(Sample), Constant]`). Editing the **Constant.Value**
+or the **Operator.Operation** adopted the revised graph values
+immediately, without moving the Sample playhead, but could jump from
+one PCM frame to the next.
+
+**Bounded extension:** Allow the established **64-output-frame cubic
+smoothstep** around *continuing* directly Sample-backed Source leaves,
+when the rest of the compiled graph consists of Oscillators, Constants,
+Operators and Node Envelope controls. No nested Synth, Instrument,
+Filter or Multi child is admitted by this slice. The Sample itself
+remains bound to the original `SourceVoice.Sound` and
+`SampleSoundState`; its relative playback position, integrated
+frequency trajectory, EOF, note clock, SourceId and Note Off semantics
+are **not** reconstructed, reset or exchanged. As in slices 50–52,
+only changed nodes on the actual output-value path can trigger the
+fade. Controls used only to modulate the Source's frequency do not
+acquire an unrelated audible hold.
+
+**Frozen Sample preflight:** Before starting an output fade, every
+compiled Source in the eligible graph must still point to a directly
+Sample-backed child with the **same SourceId**. The old compiled
+Sample, newly compiled Sample and already-bound Sample must share
+the same immutable PCM identity, loop/channel/timeline geometry
+(or exactly the same SampleSound object), proven by existing
+`CanSharePreparedOnsetTimelineWith`. Any ended/finishing Source,
+Source with tone-Filter histories or changing Sample data, or an
+already-Note-Off voice, is **ineligible for this new audible
+crossfade**. These conditions are checked using prepared and
+already-bound arrays, with no Sample lookup, copying, fresh child
+state or managed allocation inside PCM. This is an **output-control
+smoothing rule**, explicitly **not** a solution to nonstructural
+SourceId reassignment or arbitrary Sample/Instrument replacement.
+
+**Tests:** New `FmSynthLiveSampleOutputTests` covers an already
+running Sample feeding Multiply and Add with changed Constant
+values; an Add↔Multiply operation edit; a second gain edit during
+the first fade; exact 64-frame graph-level oracles, continued Sample
+playhead, non-audition playback isolation, zero managed PCM
+allocations and finite natural EOF. An initial test-only CI run
+[CI #43047797715](https://github.com/logiclrd/Heresy/actions/runs/43047797715)
+was **not** a valid red regression run: the new test file had a
+missing namespace import and the compiler stopped before the
+new invariants could execute. Do not cite it as red-before-green.
+The import was corrected and the implemented behaviour is being
+qualified in subsequent CI. Physical listening remains pending.
+
+**Out of scope:** SourceId replacement, Instrument or nested Synth
+selection, source-specific Envelope/Filter reconfiguration,
+Filter/Multi onset histories, overlapping released revisions,
+Sample data replacement and comprehensive high-load UI tests
+remain separate PR #12 work. PR #12 stays draft/unmerged and
+the all-nonstructural-properties TODO remains open.
