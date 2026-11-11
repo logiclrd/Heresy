@@ -3498,9 +3498,23 @@ During the same session the user inadvertently exercised an explicitly
 change** to the still-playing note, as intended: adding a connection
 changes the processing topology, and existing voices may remain on
 their previous frozen generation. This is independent manual
-confirmation of *old-voice structural isolation*. It does **not** alone
-establish that a newly triggered note uses the three-input graph;
-that complementary new-note check was not reported.
+confirmation of *old-voice structural isolation*. The user
+subsequently clarified that the **new-note side was also physically
+tested**, so the structural-generation scenario has both halves:
+the existing note remained on the former graph, while a new Test note
+rendered from the revised three-input topology.
+
+The user supplied a screenshot of a later, clearly identified
+three-input example with **Maximum[Oscillator, Oscillator, Constant]**,
+using a curved Sawtooth at **440 Hz**, a curved Sine at **560 Hz**
+and a Constant of **0.2**. The output scope shows the result of the
+Maximum operation, and the user reports being able to observe the
+dominant input switching as the shaped oscillator values cross.
+This scoped example supports audible/output-scope confirmation that
+newly triggered notes use the current three-input graph, including
+the added Constant input. The screenshot itself shows **Maximum**,
+not the earlier **Multiply** rewire; retain those as distinct fixtures.
+No precise numeric PCM curve measurement is claimed from the screenshot.
 
 The slice-51 bounded live-edit listening fixture is accepted, with
 the general all-nonstructural-properties TODO and draft/unmerged PR #12
