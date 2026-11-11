@@ -30,7 +30,7 @@ implementation slices.
 
 | Real inspector property | Code path / current live behavior | Remaining acceptance |
 | --- | --- | --- |
-| Constant: Value | Replaces reachable scalar without stored state. **Slice 51** adds 64-frame audible output smoothing for a changed Constant on the output-amplitude path of a live stateless Oscillator/Constant/Operator graph; a Constant used only to modulate frequency retains immediate forward retuning | Outside stateless paths, confirm full UI-to-PCM matrix and stateful source/filter/multi interactions |
+| Constant: Value | Replaces reachable scalar without stored state. **Slice 51** added 64-frame audible smoothing in stateless Oscillator/Constant/Operator graphs; **slice 53** extends those final-output transitions to continuing direct Sample-backed Sources under an Operator, preserving their bound playhead and EOF. Constants used solely as pitch controls retain immediate forward retuning | Instrument/nested Synth Source contexts, Filter/Multi combinations and full UI-to-PCM matrix remain open |
 | Oscillator: Waveform, Curvature, Vmin, Vmax | Recompiled waveform/curvature/range with retained phase. Live auditions fade a directly audible Oscillator shape in **stateless Oscillator/Constant/Operator graphs** for 64 frames from the last audible whole-graph value; repeated edits join the blended output. Purely pitch-modulating controls do not require output fades | Still open: Filter/Source/Multi graphs, full modulation/property matrix and exhaustive physical listening |
 | Oscillator: Frequency Hz, Constant, Exponential multiplier | Existing phase integrator continues at newly authored instantaneous rate; frequency-only edits are not subjected to the shape fade | UI/PCM matrix and high-rate modulation acceptance |
 | Oscillator: Multiplier input | Graph wiring change | Structural-generation rule applies |
@@ -42,7 +42,7 @@ implementation slices.
 | Filter: audio and modulation inputs | Graph wiring change | Structural-generation rule applies |
 | Multi: Distribution, Detune, Voice Count, Harmonic/Chord Components, Randomize Phase, Gain Compensation, Cycle Length, presets | Ratio/mix glide, worker-prepared growth/onset phases, Sample playhead continuity and bounded fades have dedicated renderer coverage; feasibility depends on constituent/state eligibility and 128-voice cap | Audit combinations, nested State/Filter cases, rapid edits, maximum headroom, UI-to-PCM |
 | Multi: input selection | Graph wiring change | Structural-generation rule applies |
-| Operator: operation (Add / Multiply / Minimum / Maximum) | Mode changes adopt with unchanged wiring. **Slice 51** adds 64-frame output smoothing when the changed Operator lies on a stateless audible path; no fade for Operators used purely as Oscillator pitch controls | Real UI-to-PCM and nonstateless graph coverage |
+| Operator: operation (Add / Multiply / Minimum / Maximum) | Compatible mode changes adopt with unchanged wiring. **Slice 51** adds audition-only 64-frame output smoothing on a stateless audible path; **slice 53** additionally admits continuing direct Sample-backed Sources without reconstructing their state. Pitch-control-only Operators remain unfaded | Real UI-to-PCM coverage and stateful Instrument/Filter/Multi graph cases remain open |
 | Operator: input node IDs | Graph wiring change | Structural-generation rule applies |
 | Noise | No editable sound parameters; seed history must survive neighboring edits | Nested noise/phase audit |
 | Graph: add/remove/output/wiring | Structural; existing voices may retain old generation, new notes see latest | Structural and overlapping generations remain separate tests |
@@ -483,3 +483,39 @@ and later release timing. An existing Playback integration
 regression was updated to assert the new 64-frame curve-reference
 join rather than immediate discontinuous replacement. Physical
 listening and full all-property acceptance remain separate.
+
+## Slice 53 — audible controls with retained direct Sample Source state
+
+Slice 53 extends the **same 64-frame audition output transition**
+used by stateless Oscillator/Constant/Operator/Node Envelope graphs
+to one additional, bounded stateful context: those graphs may
+contain directly **Sample-backed Source nodes as audio leaves**.
+Changing a Constant value (audible gain) or an Operator operation
+no longer has to jump from the last audible Sample output to a
+different level on the very next PCM frame. The existing Sample's
+playhead, pitch integration, natural EOF and Note Off remain on the
+original `SourceVoice` and its `SampleSoundState`; no second
+Sample instance or state is constructed on the realtime thread.
+
+The admission check is **not** broad Source migration. For
+this additional fade each bound Source must be a direct Sample,
+retain the same SourceId and compatible frozen Sample PCM
+identity, and not already be finished or releasing. The
+`CanSharePreparedOnsetTimelineWith` invariant prevents a changed
+PCM asset/loop layout from slipping into a superficial output-only
+fade. Instrument/nested Synth Sources, Filter and Multi DSP graphs
+are still excluded; arbitrary SourceId replacement remains an
+explicitly **open** nonstructural-property gap. The audible-value
+path continues to stop at Oscillator/Source leaves, preserving
+the separate forward rate-modulation semantics.
+
+New `FmSynthLiveSampleOutputTests` check audible Constant edits
+under Multiply/Add, an Operator mode change, mid-fade interruption,
+uninterrupted original Sample-frame trajectory, exact output
+crossfade frames, natural EOF, zero PCM allocations, and
+non-audition isolation. The first test-only CI attempt was
+**inconclusive**, not a successful red test, because a missing
+`Heresy.Render.Playback` namespace prevented test compilation.
+The import was fixed and full CI is used for qualification.
+Device listening is separate; the complete all-property
+feature remains unfinished.
