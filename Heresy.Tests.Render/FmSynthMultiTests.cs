@@ -1130,8 +1130,10 @@ public sealed class FmSynthMultiTests
         worker.Fault.Should().BeNull();
     }
 
-    [Test]
-    public void InstrumentSelectedSampleRetainsVolumeReleaseAcrossMixedMultiOnsetEdit()
+    [TestCase(160)]
+    [TestCase(200)]
+    public void InstrumentSelectedSampleRetainsVolumeReleaseAcrossMixedMultiOnsetEdit(
+        int noteOffFrame)
     {
         // InstrumentSound flattens to a terminal SampleSound and selects
         // an invocation-owned Volume envelope. An otherwise independent
@@ -1195,24 +1197,30 @@ public sealed class FmSynthMultiTests
         previous.CommitPreparedRunningState(next, held);
 
         float[] actual = new float[132], expected = new float[132];
+        int beforeNoteOff = noteOffFrame - 128;
+        int afterNoteOff = actual.Length - beforeNoteOff;
         long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
-        next.Render(context, held, 128, 72, actual.AsSpan(0, 72));
+        next.Render(context, held, 128, beforeNoteOff,
+            actual.AsSpan(0, beforeNoteOff));
         (GC.GetAllocatedBytesForCurrentThread() - allocatedBefore).Should().Be(0L);
-        previous.Render(context, reference, 128, 72, expected.AsSpan(0, 72));
-        held.NoteOffTime = TimeSpan.FromSeconds(200.0 / 48000);
+        previous.Render(context, reference, 128, beforeNoteOff,
+            expected.AsSpan(0, beforeNoteOff));
+        held.NoteOffTime = TimeSpan.FromSeconds((double)noteOffFrame / 48000);
         reference.NoteOffTime = held.NoteOffTime;
         allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
-        next.Render(context, held, 200, 60, actual.AsSpan(72, 60));
+        next.Render(context, held, noteOffFrame, afterNoteOff,
+            actual.AsSpan(beforeNoteOff, afterNoteOff));
         (GC.GetAllocatedBytesForCurrentThread() - allocatedBefore).Should().Be(0L,
             "Instrument Volume release cannot allocate during PCM");
-        previous.Render(context, reference, 200, 60, expected.AsSpan(72, 60));
+        previous.Render(context, reference, noteOffFrame, afterNoteOff,
+            expected.AsSpan(beforeNoteOff, afterNoteOff));
         actual.Should().Equal(expected,
-            "Sample positions and the Instrument Volume-envelope clock survive the changed Multi phase");
-        actual[72 + 7].Should().BeGreaterThan(0.01f,
+            "the original Instrument Volume release must survive both active and completed onset crossfades");
+        actual[beforeNoteOff + 7].Should().BeGreaterThan(0.01f,
             "the Instrument release must keep playing after Note Off");
-        actual.Skip(72 + 10).Should().OnlyContain(x => x == 0f,
-            "release ends after the original ten-frame envelope, never at the changed onset offset");
-        next.GetEndFrameExclusive(context, held).Should().Be(210L);
+        actual.Skip(beforeNoteOff + 10).Should().OnlyContain(x => x == 0f,
+            "release ends on the original ten-frame envelope clock");
+        next.GetEndFrameExclusive(context, held).Should().Be(noteOffFrame + 10L);
         worker.Fault.Should().BeNull();
     }
 
