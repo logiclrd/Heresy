@@ -68,6 +68,37 @@ public sealed class FmSynthLiveFilterOutputTests
     }
 
     [Test]
+    public void FilterParameterOnlyConstantEditDoesNotHoldTheAudibleOutput()
+    {
+        FilterInstance filter = OnePole();
+        FmSynthSound Build(double cutoff) => new(new FmSynthGraph([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 6100),
+            new FmConstantNode(2, cutoff),
+            new FmFilterNode(3, 1, filter, [
+                new FmFilterParameterConnection(1, FilterKind.OnePole,
+                    filter.GetStageGenerationForPersistence(1),
+                    "CutoffHz", 2),
+            ]),
+        ], 3), new EmptyEnvelopes(), enableLiveMultiExpansion: true);
+
+        FmSynthSound original = Build(8000);
+        FmSynthSound revised = Build(600);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        float[] before = new float[128], after = new float[3];
+        original.Render(context, held, 0, before.Length, before);
+        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, held);
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, 128, after.Length, after);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
+        Math.Abs(after[0] - before[^1]).Should().BeGreaterThan(1e-4f,
+            "a Filter cutoff modulation port is a control input,"
+            + " not a direct audio path deserving a 64-frame hold");
+        after.Should().OnlyContain(float.IsFinite);
+    }
+
+    [Test]
     public void NonAuditionFilteredGainEditRemainsImmediate()
     {
         FilterInstance filter = OnePole();
