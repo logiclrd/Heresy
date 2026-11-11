@@ -95,7 +95,7 @@ public sealed class FmSynthLiveFilterOutputTests
         Math.Abs(after[0] - before[^1]).Should().BeGreaterThan(1e-4f,
             "a Filter cutoff modulation port is a control input,"
             + " not a direct audio path deserving a 64-frame hold");
-        after.Should().OnlyContain(float.IsFinite);
+        after.Should().OnlyContain(sample => float.IsFinite(sample));
     }
 
     [Test]
