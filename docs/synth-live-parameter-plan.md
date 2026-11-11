@@ -2834,3 +2834,71 @@ scripted-envelope equivalence, changed selected Sample or Volume
 curve, arbitrary Instrument tone DSP, or the full all-properties
 inspector acceptance. The last remains open. PR #12 stays
 **draft/unmerged**.
+
+
+## Forty-third slice: real editor property audit and audition-only waveform transition
+
+The authoritative **property/control audit** now lives in
+[`docs/synth-live-editor-property-audit.md`](synth-live-editor-property-audit.md).
+It maps the controls actually exposed by `FmSynthEditorControl` to
+the document revision/publication path, current running-state
+eligibility, test evidence and known remaining gaps. The original
+all-properties TODO stays open. In particular, assigning another
+Sample/Instrument SourceId remains an unsupported held-note
+reassignment (compatible nested Synth bindings are a narrower
+exception); some shared object dependency paths through Instruments
+still need transitive publication review. Do not mistake a successful
+inspector commit or AudioRevision increment for a successful live
+voice adoption.
+
+**First audible implementation gap fixed:** Single-output Synth
+oscillators previously replaced their Waveform, Curvature, Vmin or
+Vmax output immediately upon compatible live publication. Depending
+on the oscillator phase, the output could jump by a large fraction of
+full scale in one sample. All three actual inspector shape families
+failed new red regressions before the fix.
+
+For audition-enabled `FmSynthSound` voices only (identified by
+`reserveMultiHeadroom` / `enableLiveMultiExpansion`), the
+`CommitPreparedRunningState` boundary now captures the existing
+voice's **last audible oscillator value** and output-frame index
+when a single-output oscillator's transfer shape or range changes.
+The first revised output frame reuses that value. During the next
+64 output frames, the existing oscillator phase integrator advances
+normally while its new output is blended from the captured value
+using the established cubic smoothstep. From frame +64 onward,
+the revised waveform/range is fully active. A second shape edit
+while the first fade is still underway captures the **current
+blended** output as the new fade origin, without a second phase
+trajectory, PCM buffer, allocation or retroactive replay.
+Frequency-only/mode edits retain their prior phase-continuity
+semantics and are not unnecessarily shape-faded.
+
+The smoothing is **not** applied to ordinary playback/export
+renderers: those preserve existing exact arithmetic and optimized
+vs. generic graph parity. The single-output audition shape is the
+only implemented smoothing scope in this slice; waveform changes
+within generic operator/Multi/modulation graphs still require
+their own compatibility/click rules and listening tests.
+
+Acceptance includes:
+
+- A failing-before-fix 3-case renderer matrix for Sine->Square,
+  nonzero Curvature and Vmin/Vmax changes, checked frame by frame
+  against the explicit 64-frame smoothstep oracle.
+- Repeated shape edits at frames 128 and 144, preserving the last
+  actually audible intermediate value and resuming the new
+  waveform at the original oscillator phase after the fade.
+- Frequency-only retune retaining phase without shape smoothing.
+- Zero managed allocation in the edited PCM render; all previous
+  ordinary renderer equivalence and realtime tests still pass.
+- Headless Avalonia test driving the **actual waveform selector**,
+  checking committed document audio revision, publication callback
+  and no new revision for a no-op re-selection.
+
+**Remaining acceptance:** generalized oscillator transfer smoothing
+in compound graphs, complete property-by-property UI-to-audio
+regressions, source reassignment, selected Filter and nested
+Instrument DSP migration, dense-voice throughput and physical
+click/underrun listening. The all-properties TODO remains open;
+PR #12 stays **draft and unmerged**.
