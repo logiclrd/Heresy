@@ -1110,8 +1110,10 @@ public sealed class FmSynthMultiTests
         revised.Render(context, changing, 129, actual.Length - 1,
             actual.AsSpan(1));
         long remainingBytes = GC.GetAllocatedBytesForCurrentThread() - before;
-        TestContext.Out.WriteLine($"Mixed onset PCM allocations: first={firstFrameBytes}, remaining={remainingBytes}");
-        (firstFrameBytes + remainingBytes).Should().Be(0L);
+        firstFrameBytes.Should().Be(0L,
+            "worker-prepared mixed voices cannot allocate on their first PCM frame");
+        remainingBytes.Should().Be(0L,
+            "mixed voices cannot allocate during sustained PCM rendering");
         original.Render(context, oldMixedReference, 128, oldMix.Length, oldMix);
         oldOsc.Render(context, oldOscReference, 128, oldOscPcm.Length, oldOscPcm);
         newOsc.Render(context, newOscReference, 128, newOscPcm.Length, newOscPcm);
@@ -1267,9 +1269,8 @@ public sealed class FmSynthMultiTests
     public void SamplePhaseEditKeepsExistingEofRatherThanRestartingPlayback()
     {
         // Multi ID 2, seed 21 and cycle 100 produce skip 44 for
-        // each randomized outgoing voice. A 170-frame Sample thus
-        // ends at outer frame 126, during the 80..143 fade. Its
-        // new, aligned incoming playhead must survive until frame 170.
+        // both randomized voices. Their 170-frame Sample ends at
+        // outer frame 126. A phase-policy edit must not extend its life.
         ObjectId id = (ObjectId)7611U;
         float[] pcm = Enumerable.Range(0, 170)
             .Select(i => (float)(0.15 + 0.4 * Math.Sin(2 * Math.PI * i / 61.0)))
@@ -1350,7 +1351,7 @@ public sealed class FmSynthMultiTests
         mixed[8].Should().BeGreaterThan(0.02f,
             "the outgoing Sample still sounds before Note Off");
         mixed.Skip(16).Should().OnlyContain(x => x == 0f,
-            "neither displaced Sample may extend audio past frame 96");
+            "phase-policy edits may not extend Sample audio past Note Off");
         revised.GetEndFrameExclusive(context, held).Should().Be(96,
             "a bare Sample's Note Off is exclusive even during an onset fade");
     }
@@ -1409,10 +1410,9 @@ public sealed class FmSynthMultiTests
     [Test]
     public void FrequencyRetuneAndSamplePhaseEditShareContinuousPlayhead()
     {
-        // A new Sample invocation is prepared with the *edited* frequency,
-        // but its migrated timeline must retain the old voice's pitch
-        // baseline. Otherwise the first frame aligns but the new playhead
-        // continues at the wrong rate after the crossfade.
+        // A Source frequency edit and a Sample-only Multi phase edit
+        // retain the same Sample invocation and integrated position.
+        // The new frequency affects the next frame without a new onset.
         ObjectId id = (ObjectId)7620U;
         float[] pcm = Enumerable.Range(0, 8192)
             .Select(i => (float)(0.3 * Math.Sin(2 * Math.PI * i / 79.0)
@@ -1438,13 +1438,10 @@ public sealed class FmSynthMultiTests
         RenderContext context = Mono();
         SoundState changing = original.CreateState();
         SoundState retunedReference = original.CreateState();
-        SoundState oldReference = original.CreateState();
         changing.SetNoiseSeed(7620);
         retunedReference.SetNoiseSeed(7620);
-        oldReference.SetNoiseSeed(7620);
         original.Render(context, changing, 0, 128, new float[128]);
         original.Render(context, retunedReference, 0, 128, new float[128]);
-        original.Render(context, oldReference, 0, 128, new float[128]);
 
         // This independent reference changes frequency at exactly frame
         // 128 without changing the original Multi skip (which is zero).
@@ -1471,9 +1468,8 @@ public sealed class FmSynthMultiTests
     [Test]
     public void DirectSampleMultiPhaseEditPreservesIntegratedPositionWithoutPcmAllocations()
     {
-        // Cycle length rounds to one frame. Although the authored
-        // Randomize Phase flag changes, the actual skip stays zero,
-        // making every output sample an exact history-copy oracle.
+        // Even with a one-frame cycle, changing the phase policy
+        // leaves the running Sample's fractional playback history alone.
         ObjectId id = (ObjectId)7601U;
         float[] pcm = Enumerable.Range(0, 4096)
             .Select(i => (float)(0.35 * Math.Sin(2 * Math.PI * i / 71.0)
@@ -1509,7 +1505,7 @@ public sealed class FmSynthMultiTests
         revised.Render(context, state, 192, actual.Length, actual);
         long allocated = GC.GetAllocatedBytesForCurrentThread() - beforeBytes;
         allocated.Should().Be(0L,
-            "the Sample's integrated position is transferred without PCM replay");
+            "in-place Sample phase-policy editing never allocates or replays");
         original.Render(context, comparison, 192, expected.Length, expected);
         actual.Should().Equal(expected,
             "identical onset skips must retain every interpolated Sample frame");
@@ -1558,12 +1554,10 @@ public sealed class FmSynthMultiTests
     [Test]
     public void VariableRateSamplePhaseEditPreservesAccumulatedPosition()
     {
-        // Seed 21 and a 100-frame cycle give both outgoing voices skip 44.
-        // At outer frame 80 the rate changes from 1 to 1.3. At outer
-        // frame 128, outgoing local frame is 172 and the new aligned
-        // onset is at local frame 128. Its *historical* integral is
-        // 124 * 1 + 4 * 1.3 = 129.2, not 128 nor a 44-frame rewind
-        // computed using the current 1.3 rate.
+        // The Samples started with randomized skip 44, then the
+        // parent pitch changed from 1 to 1.3 at outer frame 80.
+        // Removing randomization at outer frame 128 must not rewind
+        // any of their already-integrated fractional Sample positions.
         ObjectId id = (ObjectId)7621U;
         float[] pcm = Enumerable.Range(0, 8192)
             .Select(i => (float)(0.33 * Math.Sin(2 * Math.PI * i / 83.0)
@@ -1603,7 +1597,7 @@ public sealed class FmSynthMultiTests
         long beforeBytes = GC.GetAllocatedBytesForCurrentThread();
         revised.Render(context, held, 128, mixed.Length, mixed);
         (GC.GetAllocatedBytesForCurrentThread() - beforeBytes).Should().Be(0,
-            "recorded Sample history migration must allocate no PCM memory");
+            "playhead continuity after past rate edits allocates no PCM memory");
         old.Render(context, outgoingReference, 128, outgoing.Length, outgoing);
         mixed.Should().Equal(outgoing,
             "prior pitch automation remains part of the same Sample playhead");
@@ -1612,13 +1606,10 @@ public sealed class FmSynthMultiTests
     [Test]
     public void LongRunningSamplePhaseEditNeedsNoStoredHistory()
     {
-        // Multi ID 2, seed 137, cycle 800 yields old skips 725 and 735.
-        // At outer frame 200, the Source rate changes from 1 to 1.3;
-        // at outer frame 800, the aligned incoming local frame is 800.
-        // It was already integrated while the old randomized playhead
-        // advanced from zero, but it is >128 frames behind both active
-        // Source histories. Its *exact* historical integral is 800,
-        // not a projection backward at the current rate of 1.3.
+        // These existing randomized Sample voices have played for
+        // 800 outer frames, with a parent pitch change at frame 200.
+        // Neither a large phase skip nor long variable-rate history
+        // requires reconstructing old playback positions.
         ObjectId id = (ObjectId)7623U;
         float[] pcm = Enumerable.Range(0, 8192)
             .Select(i => (float)(0.36 * Math.Sin(2 * Math.PI * i / 91.0)
@@ -1658,19 +1649,17 @@ public sealed class FmSynthMultiTests
         long beforeBytes = GC.GetAllocatedBytesForCurrentThread();
         revised.Render(context, held, 800, actual.Length, actual);
         (GC.GetAllocatedBytesForCurrentThread() - beforeBytes).Should().Be(0L,
-            "a long rewind may only copy preallocated history, not allocate PCM state");
+            "continuing the original Sample needs no PCM history allocations");
         original.Render(context, outgoingReference, 800, outgoing.Length, outgoing);
         actual.Should().Equal(outgoing,
             "the entire long-running Sample history remains untouched by the phase edit");
     }
 
     [Test]
-    public void OutOfWindowVariableRateSampleOnsetKeepsScalarEditsLive()
+    public void LargeSamplePhaseEditStillPublishesIndependentScalarChanges()
     {
-        // A very old randomized onset has both children more than
-        // 1024 frames ahead. Even the larger retained history cannot
-        // reach the target and must neither guess a position nor starve
-        // an independent Constant edit.
+        // Huge randomized Sample offsets and earlier pitch edits
+        // cannot delay a separate, immediately compatible Constant edit.
         ObjectId id = (ObjectId)7622U;
         float[] pcm = Enumerable.Range(0, 16384)
             .Select(i => (float)(0.4 * Math.Sin(2 * Math.PI * i / 87.0)))
@@ -1716,11 +1705,10 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
-    public void LiveScalarEditIsNotBlockedByNonconstantSampleOnsetHistory()
+    public void NonconstantSampleHistoryDoesNotDelayIndependentScalarChanges()
     {
-        // A past pitch change invalidates the constant-rate shortcut.
-        // It must not starve an independent, immediately compatible
-        // authored Constant edit in the same parent Synth.
+        // A past Sample pitch change cannot starve an independent,
+        // immediately compatible authored Constant edit.
         ObjectId id = (ObjectId)7603U;
         float[] pcm = Enumerable.Range(0, 8192)
             .Select(i => (float)Math.Sin(2 * Math.PI * i / 91.0)).ToArray();
@@ -1750,8 +1738,8 @@ public sealed class FmSynthMultiTests
         original.Render(context, state, 80, 48, new float[48]);
         original.Render(context, baseline, 80, 48, new float[48]);
 
-        // A finite replay history has not been prepared. Publication
-        // must retain the old onset and still accept the scalar change.
+        // No Sample replay is needed; publication keeps the original
+        // playhead while accepting the independent scalar edit.
         original.TryPrepareRunningState(revised, state).Should().BeTrue(
             "a nonconstant Sample trajectory must not block unrelated live controls");
         original.CommitPreparedRunningState(revised, state);
