@@ -22,7 +22,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 {
 	private sealed class SourceVoice
 	{
-			public SourceVoice(SoundInvocation invocation, double originalOuterFactor,
+		public SourceVoice(SoundInvocation invocation, double originalOuterFactor,
 			double originalFrequencyHz)
 		{
 			Invocation = invocation;
@@ -2072,6 +2072,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		IReadOnlyList<int> inputs,
 		IReadOnlyList<long?> silentFrom)
 	{
+		// Called for each operator on every Source-bearing PCM frame.
+		// Do not foreach the IReadOnlyList interface: its enumerator
+		// boxes/allocates and scales with active Multi constituents.
 		if (operation == FmOperatorKind.Multiply)
 		{
 			// Any factor becoming zero silences the product.
