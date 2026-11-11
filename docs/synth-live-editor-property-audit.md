@@ -40,7 +40,7 @@ implementation slices.
 | Envelope: selected Envelope object; shared curve edit | Graph Envelope nodes remain stateless. **Slice 52:** audible changed Node Envelope curves/references in held, stateless Oscillator/Constant/Operator/Envelope graphs use a 64-frame final-output fade without phase rebase; equivalent frozen wrappers do not fade and pitch-control-only Envelopes remain immediate. Changes during an active release are conservatively rejected. **Slices 46/49:** bounded direct/multi-Source Instrument Sample Volume adoption remains separate | Open: scripted graph Envelopes, release-in-progress migration, Source/Filter/Multi graphs, other Instrument envelope targets, rapid edits and full device matrix |
 | Filter: shared definition, per-use stage overrides, Tail Seconds | Existing coefficient/FIR and stage-identity preflights adopt compatible prepared parameter changes and tail updates; graph rewiring and unsupported topology remain conservative. **Slice 55** lets an *independent audible Constant/Operator change* crossfade at the output through an unchanged, still-active compatible Filter chain without resetting its DSP history | Per-stage parameter change combinations, released-note tails, multi-filter and nested Instrument/Multi acceptance and physical click/throughput checks remain open |
 | Filter: audio and modulation inputs | Graph wiring change | Structural-generation rule applies |
-| Multi: Distribution, Detune, Voice Count, Harmonic/Chord Components, Randomize Phase, Gain Compensation, Cycle Length, presets | Existing ratio glide, preallocated growth, prepared onset and constituent state migrations remain separate. **Slice 56** added downstream audible gain/Operator output smoothing around an unchanged Multi of a single Oscillator; **slice 57** extends this to a frozen compound **Oscillator/Constant/Operator** child, preserving *all* independent phase integrators. The user's real-device slice-56 fixture exercised all three distributions and the listed Multi properties with no unwanted clicks | Still open: child edits occurring during the parent fade, compound Source/Filter/Envelope/Noise Multi children, rapid releases, headroom and full UI-to-PCM matrix |
+| Multi: Distribution, Detune, Voice Count, Harmonic/Chord Components, Randomize Phase, Gain Compensation, Cycle Length, presets | Existing prepared ratio/onset/voice growth and state migrations are separate. **Slices 56–58** now smooth downstream audible Constant/Operator edits around a stable Multi whose child is an unchanged graph of Oscillators, Constants, Operators, deterministic Noise and **equivalent frozen Node Envelopes**, preserving every child phase/seed/clock. The user's earlier slice-56 live listening explored the three distributions and other Multi properties without unwanted clicking | Still open: edits *inside* such compound children during the parent fade, child Source/Filter/nested Multi, already-releasing state, headroom interactions and full UI-to-PCM matrix |
 | Multi: input selection | Graph wiring change | Structural-generation rule applies |
 | Operator: operation (Add / Multiply / Minimum / Maximum) | Compatible mode edits with unchanged wiring use the same audible 64-frame output fade through stateless controls, continuing Sample/Filter and **unchanged Oscillator-only Multi** (slice 56), preserving constituent phases. Pure frequency or Filter-control routes do not require that fade | Unstable Multi onset/voice growth, multi-layer Source/Filter nesting and UI-to-PCM matrix remain open |
 | Operator: input node IDs | Graph wiring change | Structural-generation rule applies |
@@ -685,3 +685,36 @@ Multi *child* shape transitions, Sample/Filter/Instrument
 migration, already-releasing notes or unrestricted
 nested soundgraphs. The user has not yet reported local
 listening for this new compound case.
+
+## Slice 58 — frozen deterministic Noise and Node Envelope Multi children
+
+A frozen compound Multi subgraph containing Noise or a Node Envelope
+was previously excluded from the 64-frame **parent output** transition,
+even when only an independent downstream gain or mixing Operator
+changed. In slice 58, deterministic Noise is admitted because its
+value is keyed by the preserved child voice's seed, node ID and frame;
+no RNG history is migrated. A Node Envelope is admitted only if its
+selected EnvelopeId is unchanged and its frozen curve is a
+`NodeEnvelopeCurve` with exactly equivalent captured shape under
+`HasSameFrozenShapeAs`. Separately constructed but equivalent
+snapshots are safe; changing the curve, choosing another Envelope
+or using a scripted curve does **not** meet this outer-fade proof.
+
+The compiled child guard additionally matches the original and
+prepared graph topology, node IDs, input indices, Oscillator
+phase indices, all Oscillator and Constant properties, and Operator
+modes. The currently bound Multi child and all active ratios/mix,
+voice count and onset conditions are checked; no new voices or
+reseeded Noise streams are created in PCM.
+
+`FmSynthLiveDeterministicMultiOutputTests` was **red before the
+implementation**:
+[CI #43082607418](https://github.com/logiclrd/Heresy/actions/runs/43082607418)
+showed four first-frame discontinuities for downstream gain/mode
+and a mid-fade edit. The ordinary non-audition and later Note Off
+negative/continuity cases passed. The exact 64-frame oracle
+uses matched fixed Noise seeds and equivalent separately prepared
+Node Envelopes, and checks old phase/release clocks and zero PCM
+managed allocations. Physical audio verification and broader
+Source/Filter/Multi migrations remain pending; PR #12 stays
+draft and unmerged.
