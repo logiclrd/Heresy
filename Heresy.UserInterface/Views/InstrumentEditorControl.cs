@@ -185,6 +185,7 @@ public sealed class InstrumentEditorControl : UserControl
 				+ "A selected range covers complete rows; editing any field applies it to all selected tones. "
 				+ "The nearby-note dropdown snaps Pitch only when selected. "
 				+ "Shift+Up/Down or Shift+click extends selected rows; Tab/click within those rows preserves the range. "
+				+ "Ctrl+A selects all tone rows (not the insertion draft). "
 				+ "Up/Down navigate cells, Left/Right leave text at the caret boundary. "
 				+ "Focus a tone cell and press Delete to remove its row.",
 			TextWrapping = TextWrapping.Wrap,
@@ -668,6 +669,14 @@ public sealed class InstrumentEditorControl : UserControl
 	{
 		if (e.Handled)
 			return;
+		if (e.Key == Key.A
+			&& e.KeyModifiers is KeyModifiers.Control or KeyModifiers.Meta)
+		{
+			_selection.SelectAll(_projectedRows);
+			RefreshSelectionVisuals();
+			e.Handled = true;
+			return;
+		}
 		if (HandleGridNavigation(e))
 		{
 			e.Handled = true;
@@ -759,9 +768,10 @@ public sealed class InstrumentEditorControl : UserControl
 			// The event source can be a nested TextBox or ComboBox. Handling
 			// the bubbled GotFocus captures Tab and mouse focus traversal
 			// without relying on the ListBox.SelectedItem.
+			InstrumentToneGridSelection.Row? pointerAnchor = null;
 			surface.AddHandler(InputElement.GotFocusEvent, (_, _) =>
 			{
-				if (_movingGridFocus)
+				if (_movingGridFocus || pointerAnchor.HasValue)
 					return;
 				if (InstrumentToneGridSelection.RowPosition(
 					_projectedRows, projected.Index) < 0)
@@ -775,11 +785,34 @@ public sealed class InstrumentEditorControl : UserControl
 					_projectedRows, projected.Index) < 0)
 					return;
 				if ((e.KeyModifiers & KeyModifiers.Shift) != 0)
-					_selection.Extend(cell, _projectedRows);
+				{
+					// Preserve the anchor across Avalonia focus and ListBox
+					// selection events between pointer down and pointer up.
+					pointerAnchor = _selection.Anchor
+						?? new InstrumentToneGridSelection.Row(
+							(_selection.Focused ?? cell).ToneIndex);
+					_selection.ExtendFrom(pointerAnchor.Value, cell, _projectedRows);
+				}
 				else
+				{
+					pointerAnchor = null;
 					_selection.Focus(cell, _projectedRows);
+				}
 				RefreshSelectionVisuals();
 			}, RoutingStrategies.Tunnel, handledEventsToo: true);
+			surface.AddHandler(InputElement.PointerReleasedEvent, (_, _) =>
+			{
+				if (pointerAnchor is not { } anchor)
+					return;
+				pointerAnchor = null;
+				if (InstrumentToneGridSelection.RowPosition(
+					_projectedRows, projected.Index) < 0
+					|| InstrumentToneGridSelection.RowPosition(
+						_projectedRows, anchor.ToneIndex) < 0)
+					return;
+				_selection.ExtendFrom(anchor, cell, _projectedRows);
+				RefreshSelectionVisuals();
+			}, RoutingStrategies.Bubble, handledEventsToo: true);
 			surface.AttachedToVisualTree += (_, _) =>
 			{
 				_visibleCells[cell] = new WeakReference<Border>(surface);
