@@ -1020,8 +1020,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| envelopes.Filter is not null || envelopes.Panning is not null
 			|| !CanSharePreparedVolumeConfiguration(
 				original.Invocation.Configuration,
-				replacement.Invocation.Configuration)
-			|| (envelopes.Volume is not null))
+				replacement.Invocation.Configuration))
 			return false;
 		// The new Source must inherit the old Instrument's envelope clock
 		// even if its Multi phase offset has changed. Reject overflow
@@ -2195,21 +2194,6 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
                 voice.Sound.QueuePendingFirControls(voice.Invocation.State, scheduler);
     }
 
-	/// <summary>Preserve Synth excitation through an enclosing Instrument
-	/// Volume envelope's release, rather than cutting an oscillator at the
-	/// first Note Off frame. The caller still owns the outer gain envelope
-	/// and enforces its finite retirement deadline. No curve evaluation,
-	/// allocation or child resolution occurs on the PCM path.</summary>
-	internal void ExtendExternalVolumeRelease(
-		SoundState state, long endFrameExclusive)
-	{
-		FmSynthState active = ValidateState(state);
-		if (!active.HasNoteOffTime || endFrameExclusive < 0)
-			throw new ArgumentOutOfRangeException(nameof(endFrameExclusive));
-		active.InheritedAudioReleaseEnd = active.InheritedAudioReleaseEnd is long existing
-			? Math.Max(existing, endFrameExclusive)
-			: endFrameExclusive;
-	}
 
 	public long? GetEndFrameExclusive(
 		RenderContext context, SoundState state)
@@ -3029,6 +3013,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			InitializeMultiOnset(multi, state.NoiseSeed, index, voice,
 				child.PitchMultiplier, child.PlaybackSpeedMultiplier, sampleRate);
 		long displaced = checked(localFrame + voice.SkipFrames);
+		child.NoteOffDisposition = state.NoteOffDisposition == NoteOffDisposition.Indefinite
+			|| HasSustainRelease(state)
+			? NoteOffDisposition.Indefinite : NoteOffDisposition.Definite;
 		child.NoteOffTime = state.NoteOffTime is TimeSpan off
 			? off - TimeSpan.FromSeconds((double)voice.StartFrame / sampleRate)
 				+ TimeSpan.FromSeconds((double)voice.SkipFrames / sampleRate)
@@ -3266,10 +3253,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				}
 			}
 		}
+		bool forwardIndefinite = state.NoteOffDisposition ==
+			NoteOffDisposition.Indefinite || HasSustainRelease(state);
 		foreach (SourceVoice? voice in state.Sources)
 		{
 			if (voice is null)
 				continue;
+			voice.Invocation.State.NoteOffDisposition = forwardIndefinite
+				? NoteOffDisposition.Indefinite : NoteOffDisposition.Definite;
 			if (voice.Invocation.State.NoteOffTime != state.NoteOffTime)
 				voice.Invocation.State.NoteOffTime = state.NoteOffTime;
 			long? childEnd = voice.Sound.GetEndFrameExclusive(
@@ -3277,32 +3268,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			if (voice.Invocation.State.NaturalEndFrameExclusive is long natural)
 				childEnd = childEnd.HasValue
 					? Math.Min(childEnd.Value, natural) : natural;
-			// Instrument-selected samples deliberately ignore Note Off until
-			// their Volume envelope has released. The envelope can itself
-			// prove a finite end, even for a looping/indefinite child.
-			if (state.NoteOffTime.HasValue
-				&& voice.ActiveVolumeEnvelope is { } volume)
-			{
-				long release = FrameTime.Ceiling(state.NoteOffTime.Value,
-					context.Configuration.SampleRate);
-				long? volumeEnd = volume.GetEndActiveFrameExclusiveAfterNoteOff(
-					checked(release + voice.EnvelopeFrameOffset),
-					context.Configuration.SampleRate);
-				if (volumeEnd.HasValue)
-				{
-					// The Instrument's release is expressed in its original
-					// envelope clock, not a replacement Multi's shifted one.
-					long envelopeEnd = checked(
-						volumeEnd.Value - voice.EnvelopeFrameOffset);
-					if (voice.GetOutgoingVolumeReleaseEnd(
-						checked(release + voice.EnvelopeFrameOffset),
-						context.Configuration.SampleRate) is long outgoingEnd)
-						envelopeEnd = Math.Max(envelopeEnd, outgoingEnd);
-					childEnd = childEnd.HasValue
-						? Math.Min(childEnd.Value, envelopeEnd)
-						: envelopeEnd;
-				}
-			}
+			// Every active local envelope, not only Volume, contributes to
+			// the parent graph's collective release lifetime. The parent
+			// caps this source after those releases, rather than faking a
+			// child Synth release or cutting its Sample at Note Off.
 			// Once the zero-input tail has started, never reopen it merely
 			// because a child cannot project an updated pitch trajectory.
 			if (!voice.InputFinished)
