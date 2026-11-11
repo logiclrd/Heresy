@@ -2408,9 +2408,11 @@ rate has been driven by an oscillator on every PCM frame.
   `PitchTrajectory.GetPosition(oldFrame)`, without compensating for
   the changed Multi `SkipFrames`. `OriginalFrequencyHz`, playback
   offsets, released state, and forward-only adjacent `FmSourcePitchCurve`
-  rate are carried over in constant time. Sample-only Multi phase
-  changes still require **no** off-PCM worker, even when the Sample
-  has a modulating graph connection.
+  rate are carried over in constant time. If the connection is
+  stateless, a Sample-only phase-policy change still requires no
+  replacement. If the connected multiplier is an oscillator, its
+  phase **does** change through a worker-prepared transition, while
+  the Sample's physical playback position remains continuous.
 - The new support is for **already sounding, continuing direct Sample
   voices**. Natural EOF or Note Off, crossing nontrivial child
   Instrument tone filters/envelopes, reassigning Source IDs, changing
