@@ -2448,3 +2448,110 @@ Instrument-selected Sample envelopes/release state, non-OnePole
 Filters, feedback/stateful nested modulation, physical listening and
 sustained voice-load performance, and the full inspector all-properties
 end-to-end acceptance remain open. PR #12 stays draft and unmerged.
+
+
+## Thirty-ninth slice: matched Instrument-selected Sample Volume release continuity
+
+This slice adds **one deliberately bounded Instrument case** to the
+continuity-first Multi onset migration developed in slices 37–38:
+a frozen `InstrumentSound` resolving to the same terminal Sample
+with a compatible stateless **Volume envelope and its Note Off release**.
+
+### Semantics and eligibility
+
+- `InstrumentSound.CreateInvocation` already *flattens* the selected
+  Instrument tone to its terminal `SampleSound` and
+  `SampleSoundState`. Its tone-selected Volume envelope is retained
+  in `SoundInvocation.Configuration.Envelopes.Volume`; the terminal
+  Sample carries `ReleaseIsControlledByVolumeEnvelope`, so ordinary
+  Sample Note Off must not truncate its enveloped release.
+- The mixed Multi oscillator-rephase path now admits this shape only
+  when old/new `FmSoundSourceNode` retain their source binding,
+  positive finite frequency semantics and **the same frozen
+  `InstrumentSound` wrapper object**. At publication, the
+  actual old/new terminal `SampleSound` instances must still share
+  the immutable Sample/PCM timeline identity. The invocation's full
+  `NoteConfigurationSnapshot` must compare equal, both terminal
+  `SampleSoundState.ReleaseIsControlledByVolumeEnvelope` policies
+  must agree, and any Volume envelope must be the matched
+  Instrument-controlled release path.
+- Unchanged non-Volume controls, without a new bound pitch Source
+  identity, still follow the earlier compatibility gates. This
+  slice **does not transfer** Instrument tone Filters, pitch or
+  panning envelopes, Filter envelopes, stateful Instrument-selected
+  alternatives, changed tone mappings, independently resolved
+  Instrument wrapper instances, or nested arbitrary Source graphs.
+  These remain excluded until their own semantics and bounded
+  preparation are established.
+- The running Sample's integrated fractional playhead, initial
+  `OriginalFrequencyHz` basis, playback offset, native source
+  frame offset, spatial position and Note Off origin carry into
+  the detached worker-prepared replacement as in slice 37.
+  No historical rate replay or second Sample seek occurs.
+
+### Preserving the Instrument's original envelope clock
+
+A changed Multi `RandomizePhase` or `CycleLength` may assign the
+incoming child a different local `SkipFrames` even though the Sample
+itself must **not** rephase. Preserving only the Sample's accumulated
+`PitchTrajectory` would leave its Volume envelope at the wrong
+position on its release curve.
+
+Each Sample `SourceVoice` therefore also carries an
+`EnvelopeFrameOffset`, initially zero. An eligible oscillator onset
+replacement inherits the old envelope clock using the exact
+bounded scalar relation:
+
+`incoming.EnvelopeFrameOffset = old.EnvelopeFrameOffset
+    + oldLocalFrame - newLocalFrame`
+
+The new Sample's **actual** integrated playhead is seeded unchanged,
+while any invocation-owned Volume envelope evaluates at
+`newLocalFrame + EnvelopeFrameOffset`. Both the envelope
+`GetValue` release origin and the predicted envelope
+`GetEndActiveFrameExclusiveAfterNoteOff` end must use the
+**same translated clock**. In particular, the enclosing Multi
+already displaces the child Note Off by its phase skip. Thus
+the effective envelope Note Off is
+`childNoteOffFrame + EnvelopeFrameOffset`, and the predicted
+silence end is mapped back from the envelope clock into the
+new Source local clock. Translating only the envelope's active
+frame, without its release origin, is incorrect: it extends or
+truncates the Instrument release at the wrong frame.
+
+This scalar transfer and lookups are allocation-free. The
+replacement's Sample and oscillator histories remain independently
+prepared before publication; the existing 64-frame onset crossfade
+and whole-child atomic preflight are unchanged. No retroactive
+parameter rewrite or post-edit Sample replay is attempted.
+
+### Red-before-green acceptance
+
+The regression uses a single tone Instrument selecting a long
+mono Sample with a ten-frame Volume-release curve. A second,
+independent oscillator is intentionally muted by a stateless zero
+Multiply: its phase still requires the worker-prepared Multi
+replacement, while the audible PCM isolates only the continuing
+Instrument Sample. Removing/adding randomized Multi phase at
+outer frame 128 must not alter the audible Sample stream.
+
+The test checks identical PCM against an uninterrupted reference,
+zero managed allocations in pre- and post-Note Off PCM,
+and the **precise original 10-frame release**, both when Note Off
+occurs **during** the 64-frame crossfade (outer frame 160)
+and **after** it (frame 200). The Sample must still produce audio
+during its ten-frame release and become exactly silent at
+frame 170 or 210 respectively, with the same exclusive note end.
+The initial red test reproduced the previously unsupported
+Instrument migration. A subsequent implementation run exposed
+that the replacement's Volume release origin also required the
+clock translation; this additional invariant is covered by both
+timings.
+
+**Still open:** independent Instrument wrapper equivalence,
+changing tone selection or Sample assignment, Instrument tone
+Filters and pitch/panning/Filter envelopes, nested Instrument
+and feedback/stateful modulation, end-to-end property audit,
+physical listening/click testing and high-density Multi
+throughput acceptance. The all-properties live-editing TODO
+remains open. PR #12 stays **draft and unmerged**.
