@@ -569,7 +569,7 @@ public sealed class FmSynthChildLifecycleTests
     }
 
     [Test]
-    public void IndependentAdditiveEnvelopeDoesNotExtendBareOscillatorAudio()
+    public void IndependentAdditiveEnvelopeKeepsAllAudioBranchesUntilRelease()
     {
         Registry registry = new();
         registry.Add(SampleId, MakeSample([1, 1, 1, 1], 8, loop: true));
@@ -593,7 +593,7 @@ public sealed class FmSynthChildLifecycleTests
         second.NoteOffTime = state.NoteOffTime;
         synth.Render(context, second, 0, 3, split.AsSpan(0, 3));
         synth.Render(context, second, 3, 5, split.AsSpan(3, 5));
-        float[] expected = [3, 3, 2, 2f / 3, 1f / 3, 0, 0, 0];
+        float[] expected = [3, 3, 3, 2f + 2f / 3, 2f + 1f / 3, 0, 0, 0];
         for (int frame = 0; frame < expected.Length; frame++)
         {
             Assert.That(whole[frame], Is.EqualTo(expected[frame]).Within(1e-6),
@@ -607,7 +607,7 @@ public sealed class FmSynthChildLifecycleTests
     }
 
     [Test]
-    public void SharedOscillatorStaysAvailableAsSourcePitchControlAfterAudibleCutoff()
+    public void SharedOscillatorKeepsSourcePitchAndAudioDuringRelease()
     {
         Registry registry = new();
         registry.Add(SampleId, MakeSample(
@@ -629,7 +629,7 @@ public sealed class FmSynthChildLifecycleTests
         Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(5));
         float[] pcm = new float[7];
         synth.Render(context, state, 0, pcm.Length, pcm);
-        float[] expected = [2, 4, 6, 4, 8f / 3, 0, 0];
+        float[] expected = [2, 4, 6, 6, 14f / 3, 0, 0];
         for (int frame = 0; frame < expected.Length; frame++)
             Assert.That(pcm[frame], Is.EqualTo(expected[frame]).Within(1e-5),
                 $"shared oscillator frame {frame}");
