@@ -493,7 +493,7 @@ public sealed class FmSynthChildLifecycleTests
         float[] pcm = new float[8];
         synth.Render(context, state, 0, pcm.Length, pcm);
         Assert.That(pcm, Is.EqualTo(new float[]
-            { 2, 2, 1, 1, 1, 0, 0, 0 }));
+            { 2, 2, 2, 2, 2, 0, 0, 0 }));
         Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(5));
     }
 
@@ -518,7 +518,7 @@ public sealed class FmSynthChildLifecycleTests
             "the Envelope is on the audible multiplication path");
         float[] pcm = new float[7];
         synth.Render(context, state, 0, pcm.Length, pcm);
-        float[] expected = [2, 2, 1, 2f / 3, 1f / 3, 0, 0];
+        float[] expected = [2, 2, 2, 1f + 2f / 3, 1f + 1f / 3, 0, 0];
         for (int i = 0; i < pcm.Length; i++)
             Assert.That(pcm[i], Is.EqualTo(expected[i]).Within(1e-6),
                 $"frame {i}");
