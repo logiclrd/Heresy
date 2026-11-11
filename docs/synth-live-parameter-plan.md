@@ -3771,3 +3771,64 @@ Sample/Noise graph and these property paths**, in addition to the
 earlier exact-PCM automated regression. It does **not** establish
 SourceId reassignment, live Filter/Multi state transfer, Note Off
 during these edits, or every possible nested graph.
+
+
+## Slice 55 — audible output smoothing across compatible Filter histories
+
+The previous bounded final-output 64-frame crossfade covered stateless
+Oscillator, Constant, Operator, Node Envelope and counter-based Noise
+nodes, plus continuing direct Sample-backed Source leaves. A common
+further graph shape had the *same* audible output discontinuity despite
+a fully compatible unchanged DSP history: an audible
+`Multiply[Filter[Oscillator], Constant]` or
+`Multiply[Filter[Source(Sample)], Constant]`. The Filter did not
+change configuration or lose its history; nevertheless, its
+presence disqualified the otherwise safe gain/Operator transition.
+
+**Strictly bounded Filter admission:** Compilation marks a configured
+`FmFilterNode` with an **audio input** as eligible for the final-output
+transition when all other nodes also satisfy the previously supported
+Oscillator/Noise/Envelope/Constant/Operator/direct Sample rules. The
+audible-path traversal descends through the Filter's **audio input**
+and through all Operator audio inputs. It **does not** descend through
+a Filter's separate numeric parameter-control ports or an Oscillator
+or Sample Source's pitch-multiplier input, because those are control
+signals rather than an additive or multiplicative output contribution.
+
+**State continuity:** The entire voice must first pass its existing
+Filter stage-identity/configuration/wiring preflight. The fade is
+allowed only while each existing `FmFilterNodeProcessor.State.Chain`
+is present, still accepting input, and the note has **not already
+entered Note Off**. This excludes already-draining Filter tails from
+a scalar held-voice transition. The existing chain, its IIR/FIR
+histories, the original Sample's bound PCM playhead/pitch trajectory,
+and all authored Filter tail budgets survive; **no new Filter chain,
+Sample invocation, second renderer, or PCM buffer is constructed in
+the realtime callback**. Changes to a Filter's own parameters use
+their existing dedicated coefficient/FIR preparation and migration
+policy; this slice does not replace it or grant new structural Filter
+stage changes. As before, normal non-audition playback/export
+does not get a live output fade.
+
+**Test-first evidence:** New `FmSynthLiveFilterOutputTests` first
+failed three audible-discontinuity cases in
+[CI #43063347321](https://github.com/logiclrd/Heresy/actions/runs/43063347321):
+(1) Constant gain after an otherwise unchanged active One-Pole
+Filter driven by an Oscillator, (2) Multiply→Add operation after
+that Filter, and (3) Constant gain after the same Filter fed by a
+continuing finite Sample with an authored tail. Non-audition
+rendering remained unchanged. Positive regressions compare every
+frame against the 64-frame last-audible-output smoothstep oracle,
+verify the original Filter/Sample histories converge to an
+independently rendered revised graph after the fade, require
+zero managed PCM allocations, and check that the Sample's natural
+EOF and downstream Filter tail do not move.
+
+**Boundaries still open:** This does not claim live editing of
+arbitrary Filter stage topology, replacing a Sample/Instrument
+SourceId, transferring a nested Instrument Filter's tone state,
+compound Multi onset histories, Filter edits during an already-
+releasing note, or the complete all-property UI/device matrix.
+The Filter-output smoothing fixture awaits physical listening;
+PR #12 remains draft/unmerged and the broader all-nonstructural-
+property TODO remains open.
