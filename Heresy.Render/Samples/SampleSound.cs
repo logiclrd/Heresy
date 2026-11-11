@@ -108,7 +108,7 @@ public sealed class SampleSound : ISound, ISourceFrameSeekableSound
 		SampleSoundState sampleState = ValidateState(context, state);
 
 		long? noteOffEnd = sampleState.NoteOffTime.HasValue
-			&& !sampleState.ReleaseIsControlledByVolumeEnvelope
+			&& sampleState.NoteOffDisposition == NoteOffDisposition.Definite
 			? FrameTime.Ceiling(
 				sampleState.NoteOffTime.Value,
 				context.Configuration.SampleRate)
