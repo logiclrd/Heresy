@@ -3,6 +3,10 @@ using System.Numerics;
 
 namespace Heresy.Render.Sounds;
 
+/// <summary>Note Off intent. Indefinite releases sustain loops but never
+/// cuts an unsustained descendant solely because an Off arrived.</summary>
+public enum NoteOffDisposition { Definite, Indefinite }
+
 /// <summary>
 /// Mutable state for one invocation of a stateless sound renderer.
 /// </summary>
@@ -92,6 +96,9 @@ public abstract class SoundState
 	// 16-byte TimeSpan? through the NoteOffTime getter on hot render paths.
 	// This remains derived from the existing field: no duplicated state.
 	internal bool HasNoteOffTime => _noteOffTime.HasValue;
+
+	public NoteOffDisposition NoteOffDisposition { get; set; } =
+		NoteOffDisposition.Definite;
 
 	public TimeSpan? NoteOffTime
 	{
