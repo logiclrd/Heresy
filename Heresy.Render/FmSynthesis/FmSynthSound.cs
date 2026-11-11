@@ -1943,24 +1943,24 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			switch (old.Definition)
 			{
 				case FmOscillatorNode oscillator
-					when revised.Definition is FmOscillatorNode candidate
-						&& oscillator.Waveform == candidate.Waveform
-						&& oscillator.FrequencyHz == candidate.FrequencyHz
-						&& oscillator.Minimum == candidate.Minimum
-						&& oscillator.Maximum == candidate.Maximum
-						&& oscillator.Curvature == candidate.Curvature
-						&& oscillator.Constant == candidate.Constant
+					when revised.Definition is FmOscillatorNode updatedOscillator
+						&& oscillator.Waveform == updatedOscillator.Waveform
+						&& oscillator.FrequencyHz == updatedOscillator.FrequencyHz
+						&& oscillator.Minimum == updatedOscillator.Minimum
+						&& oscillator.Maximum == updatedOscillator.Maximum
+						&& oscillator.Curvature == updatedOscillator.Curvature
+						&& oscillator.Constant == updatedOscillator.Constant
 						&& oscillator.ExponentialMultiplier
-							== candidate.ExponentialMultiplier
-						&& oscillator.MultiplierNodeId == candidate.MultiplierNodeId:
+							== updatedOscillator.ExponentialMultiplier
+						&& oscillator.MultiplierNodeId == updatedOscillator.MultiplierNodeId:
 					break;
 				case FmConstantNode constant
-					when revised.Definition is FmConstantNode candidate
-						&& constant.Value == candidate.Value:
+					when revised.Definition is FmConstantNode updatedConstant
+						&& constant.Value == updatedConstant.Value:
 					break;
 				case FmOperatorNode operation
-					when revised.Definition is FmOperatorNode candidate
-						&& operation.Operation == candidate.Operation:
+					when revised.Definition is FmOperatorNode updatedOperator
+						&& operation.Operation == updatedOperator.Operation:
 					break;
 				default:
 					return false;
