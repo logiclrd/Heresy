@@ -44,7 +44,7 @@ implementation slices.
 | Multi: input selection | Graph wiring change | Structural-generation rule applies |
 | Operator: operation (Add / Multiply / Minimum / Maximum) | Compatible mode changes adopt with unchanged wiring. **Slice 51** adds audition-only 64-frame output smoothing on a stateless audible path; **slice 53** additionally admits continuing direct Sample-backed Sources without reconstructing their state. Pitch-control-only Operators remain unfaded | Real UI-to-PCM coverage and stateful Instrument/Filter/Multi graph cases remain open |
 | Operator: input node IDs | Graph wiring change | Structural-generation rule applies |
-| Noise | No editable sound parameters; seed history must survive neighboring edits | Nested noise/phase audit |
+| Noise | Counter-based sample generation needs no evolving RNG state. **Slice 54** admits Noise alongside compatible direct Sample/Envelope/Constant/Operator audible paths for 64-frame gain/mix transitions, preserving seed/node/frame identity | Mixed-state Filter/Multi graphs, fast edits and UI/device acceptance remain open |
 | Graph: add/remove/output/wiring | Structural; existing voices may retain old generation, new notes see latest | Structural and overlapping generations remain separate tests |
 | Canvas layout/routing | Document-only; must not trigger audio publication | No-op UI notifications |
 
@@ -530,3 +530,37 @@ selected-Node-Envelope live-switch route. Editing shared Envelope
 points in place, active-release rejection, and the other edge cases
 remain covered by their separate automated evidence unless explicitly
 reported as physically tested.
+
+## Slice 54 — Sample/Envelope interaction and counter-based Noise
+
+The user physically confirmed the slice-53 output gain change
+in a Synth with a looping **Sample Source**, a graph Envelope
+wired into the Source's frequency multiplier, and an audible
+Constant multiplied into the output. This is manual acceptance
+of the held Sample+Constant gain edit in a mixed control/audio
+graph—not of a full Source reassignment or every release/EOF case.
+
+Adding `FmNoiseNode` to a graph with otherwise compatible direct
+Sample, Oscillator, Constant, Operator and Node Envelope leaves
+used to disqualify audition output smoothing, despite the Noise
+implementation being a deterministic counter-based sample function
+of the voice seed, node identity and absolute frame. It owns no
+per-voice evolving RNG state. Slice 54 therefore allows Noise
+nodes in the existing bounded audible output-fade classification
+without creating or migrating Noise state. The direct-Sample
+frozen-PCM, active playhead and release guards are unchanged;
+pitch-only Envelope modifications still advance source position
+without a pointless final-output fade.
+
+The red-first four-case regression is
+`FmSynthLiveSampleEnvelopeNoiseTests`.
+[CI #43051634792](https://github.com/logiclrd/Heresy/actions/runs/43051634792)
+reported exactly one intentional first-frame discontinuity:
+a changed audible Constant in
+`Add[Noise, Multiply[Sample, Constant]]`. The other checks
+(already-supported audible Envelope gain edit around a Sample,
+Envelope used solely for Sample pitch control, and non-audition
+rendering) passed before the fix. Full 64-frame output and
+zero-managed-allocation invariants are retained. Filter,
+Instrument, Multi and SourceId replacement are still outside
+the bounded route; this does not complete the all-property TODO.
