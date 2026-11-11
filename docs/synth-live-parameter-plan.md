@@ -3121,3 +3121,50 @@ rapid-edit stress beyond the bounded fade rule; physical listening
 and sustained underrun/CPU acceptance. This is a scoped first migration
 case, **not** the full all-property acceptance milestone. Keep the
 main TODO unchecked and PR #12 draft/unmerged.
+
+
+## Slice 47 — Instrument release lifetime, selection and accessible shared-Volume audition
+
+**Instrument tone release:** A sustaining Instrument Volume Envelope correctly
+leaves its loop on Note Off, but a referenced Synth with no internal release
+could stop its oscillators after only one frame. The outer envelope advanced
+while its source had already become silent. A new prepared Pattern PCM
+regression first failed for both Forward and PingPong sustain loops
+([red run #42968779027](https://github.com/logiclrd/Heresy/actions/runs/42968779027)).
+A Synth hosted by an Instrument with a Volume Envelope now preserves internal
+independent audio excitation through the external envelope's release deadline,
+with no PCM allocation or audio replay. The regular composed voice lifetime
+still bounds final output. The fix passed
+[run #42968889454](https://github.com/logiclrd/Heresy/actions/runs/42968889454).
+This is ordinary Pattern Note Off semantics, **not** held Volume-curve
+migration for a nested Synth tone.
+
+**Instrument grid:** Shift-click was vulnerable to ListBox focus/selection
+events replacing its anchor. Capture the original anchor at the ListBox tunnel
+stage, before the cell/container focus events, and restore it at pointer
+release. Ctrl+A (also Meta+A) selects all projected tone rows, excluding the
+reserved entry draft. These selection changes never alter audio revisions;
+model and headless pointer/key regression tests exercise the actual behavior.
+
+**Preview workflow:** Slice 46's single-Source live Instrument Volume migration
+was not manually accessible: leaving the Synth editor stops its preview, and
+the Instrument's shared Volume curve was editable only elsewhere. A Source
+node selecting a data-driven Instrument now exposes its referenced Node
+Volume envelopes in a **modeless shared editor** in the Source inspector.
+Multiple referenced Volume envelopes can be selected by name/ID. Shared
+edits go through the existing document revision publication path, while the
+Synth editor and preview remain mounted. A **latched** note continues when
+focus moves to the auxiliary window; Hold-mode keys release on focus loss.
+Leaving the Synth view still stops its preview voices and closes its
+auxiliary envelope windows.
+
+**Listening fixture:** A one-node Synth graph consisting of a Sound Source,
+referencing an Instrument with a tone selecting **directly a looping or long
+Sample** and a Node Volume Envelope. Latch a note, open that Source inspector's
+shared Volume envelope, and edit its gain. Slice 46 should crossfade the
+already-sounding Sample without rewinding its playhead. A tone selecting
+another Synth, or a graph with multiple Sources and Operators, remains outside
+this migration. The UI interaction test does not replace physical listening
+or complete editor-to-held-PCM integration.
+
+PR #12 remains draft and unmerged; the all-property TODO remains open.
