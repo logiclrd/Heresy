@@ -40,7 +40,7 @@ implementation slices.
 | Envelope: selected Envelope object; shared curve edit | Graph Envelope nodes remain stateless. **Slice 52:** audible changed Node Envelope curves/references in held, stateless Oscillator/Constant/Operator/Envelope graphs use a 64-frame final-output fade without phase rebase; equivalent frozen wrappers do not fade and pitch-control-only Envelopes remain immediate. Changes during an active release are conservatively rejected. **Slices 46/49:** bounded direct/multi-Source Instrument Sample Volume adoption remains separate | Open: scripted graph Envelopes, release-in-progress migration, Source/Filter/Multi graphs, other Instrument envelope targets, rapid edits and full device matrix |
 | Filter: shared definition, per-use stage overrides, Tail Seconds | Existing coefficient/FIR and stage-identity preflights adopt compatible prepared parameter changes and tail updates; graph rewiring and unsupported topology remain conservative. **Slice 55** lets an *independent audible Constant/Operator change* crossfade at the output through an unchanged, still-active compatible Filter chain without resetting its DSP history | Per-stage parameter change combinations, released-note tails, multi-filter and nested Instrument/Multi acceptance and physical click/throughput checks remain open |
 | Filter: audio and modulation inputs | Graph wiring change | Structural-generation rule applies |
-| Multi: Distribution, Detune, Voice Count, Harmonic/Chord Components, Randomize Phase, Gain Compensation, Cycle Length, presets | Existing distribution/ratio glide, worker-prepared growth and onset phases, Sample continuity and bounded fades have dedicated renderer regression coverage. **Slice 56** separately permits *downstream Constant/Operator* output fading when a Multi of direct Oscillators has **unchanged configuration, stable mix ratios and already-running constituent voices**; no Multi property/onset change is smuggled into that fade | Still open: compound Multi child Source/Filter and rapid/releasing changes, maximum headroom, nested graphs, live UI-to-PCM validation |
+| Multi: Distribution, Detune, Voice Count, Harmonic/Chord Components, Randomize Phase, Gain Compensation, Cycle Length, presets | Existing ratio glide, preallocated growth, prepared onset and constituent state migrations remain separate. **Slice 56** added downstream audible gain/Operator output smoothing around an unchanged Multi of a single Oscillator; **slice 57** extends this to a frozen compound **Oscillator/Constant/Operator** child, preserving *all* independent phase integrators. The user's real-device slice-56 fixture exercised all three distributions and the listed Multi properties with no unwanted clicks | Still open: child edits occurring during the parent fade, compound Source/Filter/Envelope/Noise Multi children, rapid releases, headroom and full UI-to-PCM matrix |
 | Multi: input selection | Graph wiring change | Structural-generation rule applies |
 | Operator: operation (Add / Multiply / Minimum / Maximum) | Compatible mode edits with unchanged wiring use the same audible 64-frame output fade through stateless controls, continuing Sample/Filter and **unchanged Oscillator-only Multi** (slice 56), preserving constituent phases. Pure frequency or Filter-control routes do not require that fade | Unstable Multi onset/voice growth, multi-layer Source/Filter nesting and UI-to-PCM matrix remain open |
 | Operator: input node IDs | Graph wiring change | Structural-generation rule applies |
@@ -652,3 +652,36 @@ qualified. The wider all-property TODO and draft PR remain open.
 The user auditioned an actual **Oscillator→Multi→Multiply with Constant** (the screenshot has Sine 440 Hz, Curvature 5, Spread seven voices, Constant 0.5) and reported correct realtime behavior **without audible clicks/pops** while editing Oscillator **Waveform, Curvature, Frequency Hz, Vmin, Vmax**; Multi **all three Distributions, Detune, Voice Count, Randomize Phase, Gain Compensation, Harmonic Components and Chord Components**; the downstream **Constant**; and the downstream **Operator Operation**.
 
 Mark these specified UI-to-audio paths as *physically listened to* for this fixture. Distinguish the unchanged-Multi downstream fade policy (slice 56) from the independent existing Multi property/onset transitions exercised during this exploratory test. This does **not** prove all timing combinations, exact crossfade math, release-in-progress behaviour, or compound Multi-contained audio/Filter/Sample migrations.
+
+## Slice 57 — frozen compound Oscillator Multi output controls
+
+A Multi's child Synth can be a compound graph with multiple
+independent Oscillators and stateless Operators/Constants. An
+unchanged compound Multi was still excluded from the established
+64-frame *parent output* transition when an audible Constant
+gain or Operator mode changed downstream. Slice 57 now allows
+the final output fade for that **frozen, unchanged child**.
+
+The compiled child proof checks equal node topology/order and
+all Oscillator, Constant and Operator properties, including
+frequency multiplier inputs and Oscillator phase indexing.
+The already-running bound child is also compared, while the
+pre-existing stable-Multi guard verifies unchanged distribution,
+voice count, compensation, cycle length, ratios, initialized
+voices and no onset/mix glide or pending Note Off. Thus the
+output edit never silently replaces any constituent or resets
+any of its multiple phase accumulators.
+
+The test-first
+`FmSynthLiveCompoundMultiOutputTests` regression
+[CI #43077451059](https://github.com/logiclrd/Heresy/actions/runs/43077451059)
+failed four first-frame discontinuities before implementation
+(Multiply gain, Add Constant, Operator Operation and a second
+mid-transition edit). The ordinary playback negative test
+passed. The positive suite checks the exact 64-frame output
+oracle, unchanged compound child phase trajectory after fade
+and zero PCM allocations. It does not claim compound
+Multi *child* shape transitions, Sample/Filter/Instrument
+migration, already-releasing notes or unrestricted
+nested soundgraphs. The user has not yet reported local
+listening for this new compound case.
