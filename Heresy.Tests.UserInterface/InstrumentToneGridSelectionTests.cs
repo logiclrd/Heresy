@@ -330,8 +330,8 @@ public sealed class InstrumentToneGridSelectionTests
 			selection.Extent.Should().Be(new InstrumentToneGridSelection.Row(82));
 			selection.Contains(new(83, 8), projected).Should().BeTrue(
 				"Shift-click should include intervening complete rows");
-			window.KeyPress(Key.A, RawInputModifiers.Control, PhysicalKey.KeyA, "a");
-			window.KeyRelease(Key.A, RawInputModifiers.Control, PhysicalKey.KeyA, "a");
+			window.KeyPress(Key.A, RawInputModifiers.Control, PhysicalKey.A, "a");
+			window.KeyRelease(Key.A, RawInputModifiers.Control, PhysicalKey.A, "a");
 			selection.Contains(new(0, 9), projected).Should().BeTrue();
 			selection.Contains(new(84, 9), projected).Should().BeTrue();
 			selection.Contains(new(null, 0), projected).Should().BeFalse();
