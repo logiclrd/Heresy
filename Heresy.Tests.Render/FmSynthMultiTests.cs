@@ -1321,11 +1321,12 @@ public sealed class FmSynthMultiTests
         worker.Fault.Should().BeNull();
     }
 
-    [TestCase(1.125, false)]
-    [TestCase(0.875, false)]
-    [TestCase(1.0, true)]
+    [TestCase(1.125, false, false)]
+    [TestCase(0.875, false, false)]
+    [TestCase(1.125, false, true)]
+    [TestCase(1.0, true, false)]
     public void IncompatibleFrozenInstrumentBindingDoesNotStarveScalarEdit(
-        double newTonePitch, bool changedResolvedPcm)
+        double newTonePitch, bool changedResolvedPcm, bool higherSelectedTone)
     {
         // Distinct frozen wrappers alone must not prove equivalence: a
         // different selected tone pitch changes the source binding.
@@ -1363,7 +1364,9 @@ public sealed class FmSynthMultiTests
                     SourceId = sampleId,
                     PitchMultiplier = pitch,
                 });
-            definition.ToneTable.Add(0);
+            for (int i = 0; i <= 12; i++)
+                definition.ToneTable.Add(-1);
+            definition.ToneTable[higherSelectedTone ? 12 : 0] = 0;
             return definition;
         }
         Heresy.Render.Instruments.InstrumentSound oldInstrument =
@@ -1397,8 +1400,9 @@ public sealed class FmSynthMultiTests
             new EmptyEnvelopes(), soundResolver: oldResolver,
             enableLiveMultiExpansion: true);
         RenderContext context = Mono();
-        SoundState held = before.CreateState();
-        SoundState reference = before.CreateState();
+        double notePitch = higherSelectedTone ? 2.0 : 1.0;
+        SoundState held = before.CreateInvocation(notePitch, 1.0).State;
+        SoundState reference = before.CreateInvocation(notePitch, 1.0).State;
         held.SetNoiseSeed(21);
         reference.SetNoiseSeed(21);
         before.Render(context, held, 0, 128, new float[128]);
