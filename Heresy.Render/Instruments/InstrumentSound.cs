@@ -45,6 +45,87 @@ public sealed class InstrumentSound : ISound
 		}
 	}
 
+	// Data-driven frozen tone tables can be compared without resolving or
+	// selecting any tones on the PCM thread. Script-driven selectors have no
+	// general equivalence proof and stay limited to the same wrapper.
+	private sealed record FrozenTone(
+		ObjectId SourceId, double PitchMultiplier, InstrumentNnaSetting Nna,
+		ObjectId? VolumeEnvelopeId, ObjectId? PitchEnvelopeId,
+		ObjectId? PanningEnvelopeId, ObjectId? FilterEnvelopeId,
+		FilterInstance? ToneFilter);
+
+	private sealed class FrozenToneMap
+	{
+		private readonly ObjectId _id;
+		private readonly double _divisions;
+		private readonly int _offset;
+		private readonly InstrumentNnaOverride _nnaOverride;
+		private readonly TimeSpan _nnaFadeDuration;
+		private readonly int[] _toneTable;
+		private readonly FrozenTone[] _tones;
+
+		public FrozenToneMap(InstrumentDefinition definition)
+		{
+			_id = definition.Id;
+			_divisions = definition.Divisions;
+			_offset = definition.Offset;
+			_nnaOverride = definition.NnaOverride;
+			_nnaFadeDuration = definition.NnaFadeDuration;
+			_toneTable = definition.ToneTable.ToArray();
+			_tones = new FrozenTone[definition.ToneSpecifications.Count];
+			for (int i = 0; i < _tones.Length; i++)
+			{
+				ToneSpecification tone = definition.ToneSpecifications[i];
+				_tones[i] = new(tone.SourceId, tone.PitchMultiplier,
+					tone.Nna, tone.VolumeEnvelopeId, tone.PitchEnvelopeId,
+					tone.PanningEnvelopeId, tone.FilterEnvelopeId,
+					tone.FilterConfiguration);
+			}
+		}
+
+		public bool HasSameSelectionAs(FrozenToneMap next)
+		{
+			if (_id != next._id || _divisions != next._divisions
+				|| _offset != next._offset
+				|| _nnaOverride != next._nnaOverride
+				|| _nnaFadeDuration != next._nnaFadeDuration
+				|| _toneTable.Length != next._toneTable.Length
+				|| _tones.Length != next._tones.Length)
+				return false;
+			for (int i = 0; i < _toneTable.Length; i++)
+				if (_toneTable[i] != next._toneTable[i])
+					return false;
+			for (int i = 0; i < _tones.Length; i++)
+			{
+				FrozenTone left = _tones[i];
+				FrozenTone right = next._tones[i];
+				if (left.SourceId != right.SourceId
+					|| left.PitchMultiplier != right.PitchMultiplier
+					|| left.Nna != right.Nna
+					|| left.VolumeEnvelopeId != right.VolumeEnvelopeId
+					|| left.PitchEnvelopeId != right.PitchEnvelopeId
+					|| left.PanningEnvelopeId != right.PanningEnvelopeId
+					|| left.FilterEnvelopeId != right.FilterEnvelopeId
+					|| !ReferenceEquals(left.ToneFilter, right.ToneFilter))
+					return false;
+			}
+			return true;
+		}
+	}
+
+	private readonly FrozenToneMap? _frozenToneMap;
+
+	/// <summary>Conservative allocation-free compatibility proof for two
+	/// independently prepared wrappers of the same frozen data-driven
+	/// Instrument definition. The terminal Sample PCM, selected envelope
+	/// objects and release policy are checked separately for each prepared
+	/// child invocation before publishing any onset state.</summary>
+	internal bool CanShareFrozenToneSelectionWith(InstrumentSound next)
+		=> ReferenceEquals(this, next)
+			|| _frozenToneMap is { } oldMap
+				&& next._frozenToneMap is { } newMap
+				&& oldMap.HasSameSelectionAs(newMap);
+
 	private readonly Func<double, ToneSpecification?> _selectTone;
     private readonly Func<double, ToneSpecification, InstrumentNnaSetting> _selectNna;
 	private readonly ISoundResolver _soundResolver;
@@ -59,6 +140,9 @@ public sealed class InstrumentSound : ISound
             (pitch, tone) => definition.ResolveNna(pitch, tone))
 	{
 		ArgumentNullException.ThrowIfNull(definition);
+		// Capture the entire data-driven tone lookup once, outside PCM.
+		// Subsequent live phase preflights compare only immutable values.
+		_frozenToneMap = new FrozenToneMap(definition);
 	}
 
 	/// <summary>
