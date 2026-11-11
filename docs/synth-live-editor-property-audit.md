@@ -103,10 +103,15 @@ every oscillator shape edit is click-free yet.
    Instruments, including nested Instruments and Synth parents.
    Child-before-parent Synth publication is enforced even when a
    parent has another direct route to the changed object.
-   **Still open:** whether all actual UI editing surfaces trigger the
-   expected notification, and whether a held Instrument-backed voice
-   can adopt a genuinely changed Envelope/Filter DSP state; notification
-   alone is not a proof of in-place sound migration.
+   **UI-to-transport path checked (slice 45):** real Node Envelope,
+   Script Envelope, and Filter editor Apply operations emit the shared
+   workspace event, which MainWindow routes into an active
+   SongPlaybackTransport. Their Instrument-dependent Synths and
+   Synth parents are published once per audio revision, without
+   reopening the live output. Invalid/no-op edits do not publish.
+   **Still open:** whether a held Instrument-backed voice can adopt
+   a genuinely changed Envelope/Filter DSP state; transport
+   notification alone is not proof of in-place sound migration.
 3. **Filter and Multi property matrix:** keep distinct tests for
    feasible in-place parameter changes, worker-prepared shape
    changes, and intentionally unadoptable structural cases.
@@ -155,3 +160,48 @@ Sample with genuinely changed Envelope/Filter state remains on its
 old invocation until safe state migration is separately supported.
 The all-properties TODO, physical listening and shared-object
 UI-to-PCM coverage remain open.
+
+
+## Slice 45 — actual shared-editor-to-live-transport integration
+
+The earlier document and transport layers already contained the
+correct wiring: `EnvelopeDocumentEditor.UpdateNodeEnvelope`,
+`UpdateScriptEnvelope` and `FilterDocumentEditor.ApplyStage` emit
+`DocumentWorkspace.SharedAudioObjectCommitted` **after** successful
+audio-affecting authoring commits. The standalone and embedded
+editor controls invoke those helpers. `MainWindow` is subscribed to
+the workspace's event and sends the exact committed object ID
+through `ILiveSynthEditTransport.PublishSharedObjectEditAsync`.
+The existing `SongPlaybackTransport` prepares affected Synths
+off-PCM and publishes them in Source-dependency order.
+
+The missing part was an integration regression exercising that chain
+from the *real* editor controls through the *real* transport while a
+Synth audition was active. `SharedAudioEditLivePublicationTests` now
+constructs a headless `MainWindow` with a real
+`SongPlaybackTransport`, a detached-preparation recording factory
+and a deterministic live output backend (no hardware). It starts a
+Synth audition where the audible definition is reached through
+an Instrument tone with a shared Volume Envelope and Filter, and
+where a parent Synth also references that Instrument-backed Synth.
+
+The node Envelope and shared Filter editors commit changes through
+their actual draft/Apply methods. The test requires the prepared
+child and parent Synth revisions, in that order; exactly one
+publication per Synth per audio revision; updated frozen revision
+numbers; no unrelated Synth publication; and **no second audio
+session**. Invalid Envelope drafts, unchanged node reapplication,
+unchanged Filter reapplication and duplicate notifications remain
+no-ops. A separate test exercises the Script Envelope editor's
+independent expression-Apply path and verifies a rejected invalid
+script does not change the revision or publish audio.
+
+**Boundary:** these tests use a recording audio output, not a physical
+sound device, and prove correct editor/transport publication rather
+than audible migration of a running Instrument's *changed*
+Envelope or Filter DSP state. The existing conservative
+`FmSynthSound` adoption preflight still decides which held notes
+may change and which retain the original frozen generation. That
+migration acceptance, the remaining all-properties audit and
+physical listening/underrun tests remain **open**. PR #12 stays
+draft and unmerged.
