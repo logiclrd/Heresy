@@ -817,17 +817,19 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return true;
 	}
 
-	/// <summary>Eligible Source child: the same bare Sample with no FM input.
-	/// Its existing playhead and frequency basis are retained while
-	/// independent oscillator phases can adopt the new Multi onset.</summary>
+	/// <summary>A directly Sample-backed Source may have a connected
+	/// modulation input, provided its connection and modulation semantics
+	/// are unchanged. The whole-tree graph admission checks every upstream
+	/// oscillator/operator/filter separately; its newly phased modulation
+	/// controls only subsequent Sample rate, never its historical playhead.
+	/// The original Sample asset and frequency basis survive the edit.</summary>
 	private static bool CanRephaseDirectSampleSource(
 		CompiledNode old, CompiledNode revised)
 	{
 		return old.Definition is FmSoundSourceNode source
 			&& revised.Definition is FmSoundSourceNode next
 			&& source.SourceId == next.SourceId
-			&& source.MultiplierNodeId is null
-			&& next.MultiplierNodeId is null
+			&& source.MultiplierNodeId == next.MultiplierNodeId
 			&& source.FrequencyHz > 0.0
 			&& next.FrequencyHz > 0.0
 			&& double.IsFinite(next.FrequencyHz / source.FrequencyHz)
@@ -969,9 +971,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	}
 
 	/// <summary>Held audition: compatible oscillator phases may rephase
-	/// through worker-prepared states. Direct bare Samples retain their
-	/// physical playheads; Sample-only phase edits need no worker.
-	/// Other Source/Instrument, Filter, Envelope and nested Multi remain excluded.</summary>
+	/// through worker-prepared states. Direct Samples, including connected
+	/// rate modulation with unchanged wiring/semantics, retain their
+	/// physical playheads. Sample-only phase edits need no worker.
+	/// Instrument, Source reassignment, unsupported Filter/Envelope history
+	/// and nested Multi remain excluded.</summary>
 	private bool NeedsMultiOnsetReplacement(
 		FmSynthSound next, FmSynthState live, int index)
 	{
