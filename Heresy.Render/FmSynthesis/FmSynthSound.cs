@@ -716,12 +716,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	// stateful DSP still uses EvaluateOscillator, without the generic graph
 	// dispatch and redundant audible Operator routing on each sample.
 	private readonly CompiledNode? _singleOutputOscillator;
-	// Audition smoothing of changes that directly affect *audible output*
-	// uses a bounded scalar fade on graphs with stateless amplitude routing,
-	// including compiled Node Envelopes when not already releasing.
-	// Oscillator FM inputs are controls, not independent audible paths.
-	// Source/Filter/Multi graphs keep their separate state transactions.
-	private readonly bool _canFadeStatelessOutput;
+	// Audition-only smoothing of changes on an audible graph path uses a
+	// bounded output fade, not a second voice or reconstructed DSP state.
+	// Eligible nodes are stateless controls and direct Sample-backed Source
+	// leaves with an existing, independently validated bound playhead.
+	// Oscillator/Source FM inputs are controls, not audio paths.
+	// Instrument/Nested-Synth Source, Filter, and Multi transitions keep
+	// their own separate history/onset contracts.
+	private readonly bool _canFadeBoundedOutput;
 	private readonly bool[] _statelessAudioPathNodes;
 	// All target ratios are calculated by the preparation worker, never
 	// inside PCM publication or per-frame child rendering.
@@ -864,15 +866,17 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			&& _nodes[0].Definition is FmOscillatorNode
 			&& _nodes[0].InputIndices.Length == 0
 			? _nodes[0] : null;
-		_canFadeStatelessOutput = _nodes.All(node => node.Definition is
+		_canFadeBoundedOutput = _nodes.All(node => node.Definition is
 			FmOscillatorNode or FmConstantNode or FmOperatorNode
-			or FmEnvelopeNode);
+			or FmEnvelopeNode
+			|| node.Definition is FmSoundSourceNode
+				&& node.Source is SampleSound);
 		_multiRatios = _nodes.Select(node => node.Definition is FmMultiNode multi
 			? multi.GetFrequencyRatios() : Array.Empty<double>()).ToArray();
 		_multiReserve = new int[_nodes.Length];
 		_outputIndex = indexById[graph.OutputNodeId];
 		_statelessAudioPathNodes = new bool[_nodes.Length];
-		if (_canFadeStatelessOutput)
+		if (_canFadeBoundedOutput)
 			MarkAudibleNode(_outputIndex);
 		_oscillatorCount = oscillatorIndex;
 		int actualConstituents = CountMultiVoices(graph.OutputNodeId);
@@ -1422,8 +1426,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					// Preserve the old generation until a stateful release
 					// migration policy can prove both lifetimes.
 					if (live.HasNoteOffTime
-						&& _canFadeStatelessOutput
-						&& next._canFadeStatelessOutput
+						&& _canFadeBoundedOutput
+						&& next._canFadeBoundedOutput
 						&& _statelessAudioPathNodes[i]
 						&& !HasSameFrozenEnvelope(old, revised))
 						return false;
@@ -1840,6 +1844,41 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return true;
 	}
 
+	/// <summary>Safe audible output smoothing around direct Sample leaves:
+	/// every running Source keeps its exact bound SampleSoundState, phase/rate
+	/// trajectory, natural EOF and Note Off handling. Never let a changed
+	/// SourceId, different immutable PCM, tone Filter, already-ended Source
+	/// or active release enter a final-output fade. Structural and arbitrary
+	/// child-sound replacement remain governed by separate preflights.
+	/// This scans existing immutable compiled arrays; no PCM allocations.</summary>
+	private bool CanFadeBoundSampleOutputs(FmSynthSound next, FmSynthState live)
+	{
+		if (!_hasSources)
+			return true;
+		if (!next._hasSources || live.HasNoteOffTime)
+			return false;
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			if (_nodes[i].Definition is not FmSoundSourceNode source)
+				continue;
+			if (next._nodes[i].Definition is not FmSoundSourceNode revised
+				|| source.SourceId != revised.SourceId
+				|| _nodes[i].Source is not SampleSound oldSample
+				|| next._nodes[i].Source is not SampleSound newSample
+				|| live.Sources[i] is not { Sound: SampleSound bound } voice
+				|| voice.Invocation.State is not SampleSoundState sampleState
+				|| !bound.CanSharePreparedOnsetTimelineWith(oldSample)
+				|| !oldSample.CanSharePreparedOnsetTimelineWith(newSample)
+				|| voice.EndFrame is long end && end <= live.NextFrame
+				|| voice.InputFinished
+				|| sampleState.HasNoteOffTime
+				|| voice.Filters is not null
+				|| voice.FilterEnvelopeState is not null)
+				return false;
+		}
+		return true;
+	}
+
 	/// <summary>Commit only an entirely preflighted state tree. No validation
 	/// after this boundary can leave multiple Filters partially updated.</summary>
 	public void CommitPreparedRunningState(FmSynthSound next, SoundState state)
@@ -1872,9 +1911,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		if (_allowMultiExpansion && next._allowMultiExpansion
 			&& ((_singleOutputOscillator is not null
 					&& next._singleOutputOscillator is not null)
-				|| (_canFadeStatelessOutput
-					&& next._canFadeStatelessOutput
-					&& !_isMultiInputSubgraph && !next._isMultiInputSubgraph)))
+				|| (_canFadeBoundedOutput
+					&& next._canFadeBoundedOutput
+					&& !_isMultiInputSubgraph && !next._isMultiInputSubgraph
+					&& CanFadeBoundSampleOutputs(next, live))))
 			for (int i = 0; i < _nodes.Length; i++)
 			{
 				if (!_statelessAudioPathNodes[i])
