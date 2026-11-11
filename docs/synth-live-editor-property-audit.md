@@ -30,7 +30,7 @@ implementation slices.
 
 | Real inspector property | Code path / current live behavior | Remaining acceptance |
 | --- | --- | --- |
-| Constant: Value | Replaces scalar while retaining running graph state. **Slices 51–54** smooth audible output changes through stateless graphs, counter-based Noise and continuing direct Sample-backed Sources; **slice 55** additionally admits an unchanged compatible **Filter chain** on the audio path, preserving its state and authored tail. Frequency-control-only constants do not introduce a fade | Still open: arbitrary SourceId replacement, Instrument/nested Synth tone filters, Multi combinations, released-note migration and full UI-to-PCM matrix |
+| Constant: Value | Audible Constant edits use a bounded 64-frame final-output fade through stateless Oscillator/Envelope/Noise graphs, compatible direct Sample and Filter states (slices 51–55), and now **unchanged stable Oscillator Multi constituents** (slice 56), preserving each child's phase. Pitch/control-only Constants remain immediate | Broader Multi-contained Source/Filter, already-releasing histories, SourceId replacement and complete UI acceptance remain open |
 | Oscillator: Waveform, Curvature, Vmin, Vmax | Recompiled waveform/curvature/range with retained phase. Live auditions fade a directly audible Oscillator shape in **stateless Oscillator/Constant/Operator graphs** for 64 frames from the last audible whole-graph value; repeated edits join the blended output. Purely pitch-modulating controls do not require output fades | Still open: Filter/Source/Multi graphs, full modulation/property matrix and exhaustive physical listening |
 | Oscillator: Frequency Hz, Constant, Exponential multiplier | Existing phase integrator continues at newly authored instantaneous rate; frequency-only edits are not subjected to the shape fade | UI/PCM matrix and high-rate modulation acceptance |
 | Oscillator: Multiplier input | Graph wiring change | Structural-generation rule applies |
@@ -40,9 +40,9 @@ implementation slices.
 | Envelope: selected Envelope object; shared curve edit | Graph Envelope nodes remain stateless. **Slice 52:** audible changed Node Envelope curves/references in held, stateless Oscillator/Constant/Operator/Envelope graphs use a 64-frame final-output fade without phase rebase; equivalent frozen wrappers do not fade and pitch-control-only Envelopes remain immediate. Changes during an active release are conservatively rejected. **Slices 46/49:** bounded direct/multi-Source Instrument Sample Volume adoption remains separate | Open: scripted graph Envelopes, release-in-progress migration, Source/Filter/Multi graphs, other Instrument envelope targets, rapid edits and full device matrix |
 | Filter: shared definition, per-use stage overrides, Tail Seconds | Existing coefficient/FIR and stage-identity preflights adopt compatible prepared parameter changes and tail updates; graph rewiring and unsupported topology remain conservative. **Slice 55** lets an *independent audible Constant/Operator change* crossfade at the output through an unchanged, still-active compatible Filter chain without resetting its DSP history | Per-stage parameter change combinations, released-note tails, multi-filter and nested Instrument/Multi acceptance and physical click/throughput checks remain open |
 | Filter: audio and modulation inputs | Graph wiring change | Structural-generation rule applies |
-| Multi: Distribution, Detune, Voice Count, Harmonic/Chord Components, Randomize Phase, Gain Compensation, Cycle Length, presets | Ratio/mix glide, worker-prepared growth/onset phases, Sample playhead continuity and bounded fades have dedicated renderer coverage; feasibility depends on constituent/state eligibility and 128-voice cap | Audit combinations, nested State/Filter cases, rapid edits, maximum headroom, UI-to-PCM |
+| Multi: Distribution, Detune, Voice Count, Harmonic/Chord Components, Randomize Phase, Gain Compensation, Cycle Length, presets | Existing distribution/ratio glide, worker-prepared growth and onset phases, Sample continuity and bounded fades have dedicated renderer regression coverage. **Slice 56** separately permits *downstream Constant/Operator* output fading when a Multi of direct Oscillators has **unchanged configuration, stable mix ratios and already-running constituent voices**; no Multi property/onset change is smuggled into that fade | Still open: compound Multi child Source/Filter and rapid/releasing changes, maximum headroom, nested graphs, live UI-to-PCM validation |
 | Multi: input selection | Graph wiring change | Structural-generation rule applies |
-| Operator: operation (Add / Multiply / Minimum / Maximum) | Compatible mode edits adopt without changing wiring; bounded 64-frame audible output smoothing now works through stateless graphs, continuing direct Sample Sources and **compatible active Filter histories** (slice 55). Operator inputs used only as pitch or Filter parameter controls remain outside the audible-path fade | Releasing Filter tails, complex Filter/Multi/Instrument graphs and full UI-to-PCM coverage remain open |
+| Operator: operation (Add / Multiply / Minimum / Maximum) | Compatible mode edits with unchanged wiring use the same audible 64-frame output fade through stateless controls, continuing Sample/Filter and **unchanged Oscillator-only Multi** (slice 56), preserving constituent phases. Pure frequency or Filter-control routes do not require that fade | Unstable Multi onset/voice growth, multi-layer Source/Filter nesting and UI-to-PCM matrix remain open |
 | Operator: input node IDs | Graph wiring change | Structural-generation rule applies |
 | Noise | Counter-based sample generation needs no evolving RNG state. **Slice 54** admits Noise alongside compatible direct Sample/Envelope/Constant/Operator audible paths for 64-frame gain/mix transitions, preserving seed/node/frame identity | Mixed-state Filter/Multi graphs, fast edits and UI/device acceptance remain open |
 | Graph: add/remove/output/wiring | Structural; existing voices may retain old generation, new notes see latest | Structural and overlapping generations remain separate tests |
@@ -616,3 +616,33 @@ The bounded Filter listening case remains to be verified locally.
 ### Slice 55 — device acceptance of downstream edits through a Filter
 
 The user confirmed that the prescribed **One-Pole Filter inserted between the Sample Source and the Multiply Operator** did not prevent a latched Test note from responding correctly to changing the downstream Constant or changing the Operator mode (Multiply/Add). The expected audible behaviour passed. This is a **manual signoff of the slice-55 bounded continuing-Filter route**, not of arbitrary Filter coefficient changes, an already-draining tail, or mixed Multi/Filter scenarios.
+
+## Slice 56 — stable Multi as a continuing audible leaf
+
+The previously established audition output crossfade applied to
+compatible stateless/Noise/Envelope, direct Sample and active Filter
+graphs, but excluded Multi even if all constituent voices were
+unchanged and only an external gain or mixing Operator changed.
+
+Slice 56 treats an **unchanged Multi of a single direct Oscillator
+input** as a continuing audible leaf in the parent's routing. The
+allowed final-output transition requires unchanged Multi mode,
+detuning, Voice Count, components, Randomize Phase, compensation,
+Cycle Length and child Oscillator properties. Every authored voice
+must already be initialized, still running and stable at its
+prepared ratio and mix; no Note Off, pending end, active onset
+crossfade or expanded active headroom is admitted. It applies the
+standard 64-frame smoothstep to the **last actual whole-graph audio**
+without replaying or rephasing constituents. A second edit starts
+from the current blended output; ordinary non-audition playback
+remains immediate.
+
+The new tests in `FmSynthLiveMultiOutputTests` were red before
+implementation: [CI #43066845750](https://github.com/logiclrd/Heresy/actions/runs/43066845750)
+failed four audible discontinuity assertions for downstream Constant
+and Operator changes and interrupted fades. Test oracles compare
+all 64 transition frames and post-transition samples to the same
+independent Multi reference; no managed PCM allocations are
+allowed. Compound Multi-generated child shape, Filter/Source,
+multi-voice onset edits and release migration are **not** thereby
+qualified. The wider all-property TODO and draft PR remain open.
