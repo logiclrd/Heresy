@@ -1123,7 +1123,7 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
-    public void LiveSampleOnsetAcceptsFreshWrappersOverTheSameFrozenPcm()
+    public void LiveSamplePhaseEditRetainsStateAcrossFreshFrozenPcmWrappers()
     {
         // Production revisions use a new PlaybackSnapshotSoundResolver and
         // therefore a different SampleSound wrapper. Frozen song snapshots
@@ -1181,14 +1181,8 @@ public sealed class FmSynthMultiTests
         SoundState unchanged = original.CreateState();
         original.Render(context, state, 0, 160, new float[160]);
         original.Render(context, unchanged, 0, 160, new float[160]);
-        original.RequestMultiExpansionPreparation(revised, state).Should().BeTrue(
-            "the same immutable SamplePcmData authorizes onset migration across wrappers");
-        using FirPreparationScheduler worker = new();
-        original.QueuePendingFirControls(state, worker);
-        Assert.That(SpinWait.SpinUntil(
-            () => worker.CompletedMultiExpansionCount >= 1,
-            TimeSpan.FromSeconds(5)), Is.True);
-        original.AdoptPreparedFirControls(state);
+        original.RequestMultiExpansionPreparation(revised, state).Should().BeFalse(
+            "a Sample-only phase edit keeps the running Source invocation");
         original.TryPrepareRunningState(revised, state).Should().BeTrue();
         original.CommitPreparedRunningState(revised, state);
         float[] actual = new float[160], expected = new float[160];
@@ -1196,11 +1190,10 @@ public sealed class FmSynthMultiTests
         original.Render(context, unchanged, 160, expected.Length, expected);
         actual.Should().Equal(expected,
             "recompiling a frozen wrapper must not reset the Sample's integrated position");
-        worker.Fault.Should().BeNull();
     }
 
     [Test]
-    public void OutgoingSampleEofDuringFadeDoesNotTruncateLaterIncomingPlayback()
+    public void SamplePhaseEditKeepsExistingEofRatherThanRestartingPlayback()
     {
         // Multi ID 2, seed 21 and cycle 100 produce skip 44 for
         // each randomized outgoing voice. A 170-frame Sample thus
@@ -1227,39 +1220,26 @@ public sealed class FmSynthMultiTests
         RenderContext context = Mono();
         SoundState held = original.CreateState();
         SoundState outgoingReference = original.CreateState();
-        SoundState incomingReference = revised.CreateState();
         held.SetNoiseSeed(21);
         outgoingReference.SetNoiseSeed(21);
-        incomingReference.SetNoiseSeed(21);
         original.Render(context, held, 0, 80, new float[80]);
         original.Render(context, outgoingReference, 0, 80, new float[80]);
-        revised.Render(context, incomingReference, 0, 80, new float[80]);
-        using FirPreparationScheduler worker = new();
-        PublishPreparedSampleRephase(original, revised, held, worker);
-
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeFalse();
+        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, held);
         float[] mixed = new float[160];
         float[] oldPcm = new float[160];
-        float[] newPcm = new float[160];
+        // Same existing Source playback, not a newly aligned playhead.
         revised.Render(context, held, 80, mixed.Length, mixed);
         original.Render(context, outgoingReference, 80, oldPcm.Length, oldPcm);
-        revised.Render(context, incomingReference, 80, newPcm.Length, newPcm);
-        mixed[0].Should().Be(oldPcm[0],
-            "the publication frame must use the original early-ending Sample");
-        oldPcm.Skip(46).Should().OnlyContain(x => x == 0,
-            "the randomized outgoing Sample ends at frame 126");
-        for (int i = 64; i < 90; i++)
-            mixed[i].Should().BeApproximately(newPcm[i], 1e-6f,
-                "after the fade the surviving incoming Sample owns the PCM");
-        mixed[85].Should().NotBe(0f,
-            "incoming Sample audio survives the outgoing EOF");
-        mixed.Skip(90).Should().OnlyContain(x => x == 0f);
-        revised.GetEndFrameExclusive(context, held).Should().Be(170,
-            "the incoming Sample determines the final lifetime");
-        worker.Fault.Should().BeNull();
+        mixed.Should().Equal(oldPcm,
+            "a phase-policy edit does not extend the original Sample EOF");
+        mixed.Skip(46).Should().OnlyContain(x => x == 0f);
+        revised.GetEndFrameExclusive(context, held).Should().Be(126);
     }
 
     [Test]
-    public void DirectSampleNoteOffWithinOnsetFadeSilencesBothDisplacedPlayheads()
+    public void SamplePhaseEditPreservesTheOriginalNoteOffBoundary()
     {
         ObjectId id = (ObjectId)7612U;
         float[] pcm = Enumerable.Range(0, 500)
@@ -1286,12 +1266,10 @@ public sealed class FmSynthMultiTests
         reference.SetNoiseSeed(137);
         original.Render(context, held, 0, 80, new float[80]);
         original.Render(context, reference, 0, 80, new float[80]);
-        using FirPreparationScheduler worker = new();
-        PublishPreparedSampleRephase(original, revised, held, worker);
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeFalse();
+        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, held);
 
-        // The new skipped playheads are already beyond natural EOF,
-        // but the original active Sample should remain audible until
-        // the actual Note Off at frame 96, not to fade frame 144.
         held.NoteOffTime = TimeSpan.FromSeconds(96.0 / 48000);
         reference.NoteOffTime = held.NoteOffTime;
         float[] mixed = new float[160], oldPcm = new float[160];
@@ -1304,11 +1282,10 @@ public sealed class FmSynthMultiTests
             "neither displaced Sample may extend audio past frame 96");
         revised.GetEndFrameExclusive(context, held).Should().Be(96,
             "a bare Sample's Note Off is exclusive even during an onset fade");
-        worker.Fault.Should().BeNull();
     }
 
     [Test]
-    public void EarlyIncomingSampleEofRetainsOutgoingAudioOnlyUntilCrossfadeBoundary()
+    public void SamplePhaseEditDoesNotInventAnIncomingEof()
     {
         // For Multi node 2, seed 137 and cycle 800, the two
         // deterministic skips are 725 and 735 frames. Both incoming
@@ -1340,45 +1317,25 @@ public sealed class FmSynthMultiTests
         referenceState.SetNoiseSeed(137);
         original.Render(context, state, 0, 80, new float[80]);
         original.Render(context, referenceState, 0, 80, new float[80]);
-        using FirPreparationScheduler worker = new();
-        original.RequestMultiExpansionPreparation(revised, state).Should().BeTrue();
-        original.QueuePendingFirControls(state, worker);
-        Assert.That(SpinWait.SpinUntil(
-            () => worker.CompletedMultiExpansionCount >= 1,
-            TimeSpan.FromSeconds(5)), Is.True);
-        original.AdoptPreparedFirControls(state);
+        original.RequestMultiExpansionPreparation(revised, state).Should().BeFalse();
         original.TryPrepareRunningState(revised, state).Should().BeTrue();
         original.CommitPreparedRunningState(revised, state);
 
         float[] actual = new float[176], reference = new float[176];
-        // EOF is discovered on the first incoming frame. Check that
-        // an in-flight query already predicts the finite fade-bound
-        // and that querying it cannot change later PCM or playback.
+        // Retaining the original Sample position retains its natural EOF.
         revised.Render(context, state, 80, 16, actual.AsSpan(0, 16));
-        revised.GetEndFrameExclusive(context, state).Should().Be(144,
-            "outgoing Sample audio has a 64-frame maximum fade lifetime");
+        revised.GetEndFrameExclusive(context, state).Should().Be(400);
         revised.Render(context, state, 96, actual.Length - 16,
             actual.AsSpan(16));
         original.Render(context, referenceState, 80, reference.Length, reference);
-        for (int i = 0; i < actual.Length; i++)
-        {
-            double t = Math.Clamp(i / 64.0, 0, 1);
-            double weight = t * t * (3 - 2 * t);
-            actual[i].Should().BeApproximately(
-                (float)(reference[i] * (1.0 - weight)), 1e-5f,
-                "the outgoing Sample contributes only while the new playhead fades in");
-        }
-        actual[20].Should().BeGreaterThan(0.03f,
-            "an early incoming EOF must not prematurely cut the outgoing Sample");
-        actual.Skip(64).Should().OnlyContain(x => x == 0,
-            "an outgoing Sample cannot extend a note beyond the 64-frame fade");
-        revised.GetEndFrameExclusive(context, state).Should().Be(144,
-            "the last audible outgoing frame is 143 even if its Sample ends at 400");
-        worker.Fault.Should().BeNull();
+        actual.Should().Equal(reference,
+            "randomizing Multi phases cannot discard a still-running Sample");
+        actual[100].Should().NotBe(0f);
+        revised.GetEndFrameExclusive(context, state).Should().Be(400);
     }
 
     [Test]
-    public void FrequencyRetuneAndDirectSampleOnsetEditShareTheOriginalPlayhead()
+    public void FrequencyRetuneAndSamplePhaseEditShareContinuousPlayhead()
     {
         // A new Sample invocation is prepared with the *edited* frequency,
         // but its migrated timeline must retain the old voice's pitch
@@ -1423,46 +1380,24 @@ public sealed class FmSynthMultiTests
             .Should().BeTrue();
         original.CommitPreparedRunningState(retunedOnly, retunedReference);
 
-        original.TryPrepareRunningState(combinedEdit, changing).Should().BeFalse(
-            "the phase replacement must be worker-prepared before publication");
         original.RequestMultiExpansionPreparation(combinedEdit, changing)
-            .Should().BeTrue(
-                "a simultaneous nonstructural Source frequency edit must not discard the new Multi onset");
-        using FirPreparationScheduler worker = new();
-        original.QueuePendingFirControls(changing, worker);
-        Assert.That(SpinWait.SpinUntil(
-            () => worker.CompletedMultiExpansionCount >= 1,
-            TimeSpan.FromSeconds(5)), Is.True);
-        original.AdoptPreparedFirControls(changing);
+            .Should().BeFalse("the Sample needs no onset replacement");
         original.TryPrepareRunningState(combinedEdit, changing).Should().BeTrue();
         original.CommitPreparedRunningState(combinedEdit, changing);
 
-        float[] actual = new float[160], oldPcm = new float[160],
-            retunedPcm = new float[160];
+        float[] actual = new float[160], retunedPcm = new float[160];
         long beforeBytes = GC.GetAllocatedBytesForCurrentThread();
         combinedEdit.Render(context, changing, 128, actual.Length, actual);
         (GC.GetAllocatedBytesForCurrentThread() - beforeBytes).Should().Be(0L,
             "a combined edit may copy existing state but never allocate on PCM");
-        original.Render(context, oldReference, 128, oldPcm.Length, oldPcm);
         retunedOnly.Render(context, retunedReference, 128,
             retunedPcm.Length, retunedPcm);
-        for (int i = 0; i < actual.Length; i++)
-        {
-            double t = Math.Clamp(i / 64.0, 0.0, 1.0);
-            double w = t * t * (3.0 - 2.0 * t);
-            float expected = (float)(oldPcm[i] * (1.0 - w)
-                + retunedPcm[i] * w);
-            actual[i].Should().BeApproximately(expected, 1e-5f,
-                "old Sample history must fade into the retuned, integrated playhead");
-        }
-        actual[0].Should().Be(oldPcm[0]);
-        actual.Skip(64).Should().Equal(retunedPcm.Skip(64),
-            "after the fade the new Sample must integrate the edited frequency");
-        worker.Fault.Should().BeNull();
+        actual.Should().Equal(retunedPcm,
+            "new frequency affects the running Sample from the edit frame onward");
     }
 
     [Test]
-    public void DirectSampleMultiLiveRephasePreservesExactIntegratedPositionWithoutPcmAllocations()
+    public void DirectSampleMultiPhaseEditPreservesIntegratedPositionWithoutPcmAllocations()
     {
         // Cycle length rounds to one frame. Although the authored
         // Randomize Phase flag changes, the actual skip stays zero,
@@ -1493,14 +1428,7 @@ public sealed class FmSynthMultiTests
         original.Render(context, state, 0, 192, new float[192]);
         original.Render(context, comparison, 0, 192, new float[192]);
 
-        original.TryPrepareRunningState(revised, state).Should().BeFalse();
-        original.RequestMultiExpansionPreparation(revised, state).Should().BeTrue();
-        using FirPreparationScheduler worker = new();
-        original.QueuePendingFirControls(state, worker);
-        Assert.That(SpinWait.SpinUntil(
-            () => worker.CompletedMultiExpansionCount >= 1,
-            TimeSpan.FromSeconds(5)), Is.True);
-        original.AdoptPreparedFirControls(state);
+        original.RequestMultiExpansionPreparation(revised, state).Should().BeFalse();
         original.TryPrepareRunningState(revised, state).Should().BeTrue();
         original.CommitPreparedRunningState(revised, state);
         float[] actual = new float[160];
@@ -1513,12 +1441,10 @@ public sealed class FmSynthMultiTests
         original.Render(context, comparison, 192, expected.Length, expected);
         actual.Should().Equal(expected,
             "identical onset skips must retain every interpolated Sample frame");
-        worker.PreparedMultiConstituentCount.Should().Be(2);
-        worker.Fault.Should().BeNull();
     }
 
     [Test]
-    public void DirectSampleMultiLiveRephaseShiftsPlayheadButKeepsFirstFrame()
+    public void DirectSampleMultiPhaseEditNeverShiftsTheExistingPlayhead()
     {
         ObjectId id = (ObjectId)7602U;
         float[] pcm = Enumerable.Range(0, 8192)
@@ -1544,13 +1470,7 @@ public sealed class FmSynthMultiTests
         baseline.SetNoiseSeed(0x7602UL);
         original.Render(context, state, 0, 112, new float[112]);
         original.Render(context, baseline, 0, 112, new float[112]);
-        original.RequestMultiExpansionPreparation(revised, state).Should().BeTrue();
-        using FirPreparationScheduler worker = new();
-        original.QueuePendingFirControls(state, worker);
-        Assert.That(SpinWait.SpinUntil(
-            () => worker.CompletedMultiExpansionCount >= 1,
-            TimeSpan.FromSeconds(5)), Is.True);
-        original.AdoptPreparedFirControls(state);
+        original.RequestMultiExpansionPreparation(revised, state).Should().BeFalse();
         original.TryPrepareRunningState(revised, state).Should().BeTrue();
         original.CommitPreparedRunningState(revised, state);
         float[] actual = new float[192], expected = new float[192];
@@ -1559,15 +1479,12 @@ public sealed class FmSynthMultiTests
         actual[0].Should().Be(expected[0],
             "the first publication frame uses exactly the outgoing playhead");
         actual.Should().OnlyContain(x => float.IsFinite(x));
-        Enumerable.Range(65, 127).Max(i => Math.Abs(actual[i] - expected[i]))
-            .Should().BeGreaterThan(0.05f,
-                "the prepared Sample playheads must adopt the new phase offsets");
-        worker.PreparedMultiConstituentCount.Should().Be(3);
-        worker.Fault.Should().BeNull();
+        actual.Should().Equal(expected,
+            "an existing Sample never jumps to its revised phase offset");
     }
 
     [Test]
-    public void VariableRateSampleOnsetRewindUsesItsRecordedIntegratedPosition()
+    public void VariableRateSamplePhaseEditPreservesAccumulatedPosition()
     {
         // Seed 21 and a 100-frame cycle give both outgoing voices skip 44.
         // At outer frame 80 the rate changes from 1 to 1.3. At outer
@@ -1605,16 +1522,8 @@ public sealed class FmSynthMultiTests
         old.Render(context, held, 80, 48, new float[48]);
         old.Render(context, outgoingReference, 80, 48, new float[48]);
 
-        old.TryPrepareRunningState(revised, held).Should().BeFalse(
-            "a variable-rate Sample rewind needs a detached onset replacement");
-        old.RequestMultiExpansionPreparation(revised, held).Should().BeTrue(
-            "the rewound Sample position is already recorded exactly");
-        using FirPreparationScheduler worker = new();
-        old.QueuePendingFirControls(held, worker);
-        Assert.That(SpinWait.SpinUntil(
-            () => worker.CompletedMultiExpansionCount >= 1,
-            TimeSpan.FromSeconds(5)), Is.True);
-        old.AdoptPreparedFirControls(held);
+        old.RequestMultiExpansionPreparation(revised, held).Should().BeFalse(
+            "the variable-rate Sample never needs its historical playhead replayed");
         old.TryPrepareRunningState(revised, held).Should().BeTrue();
         old.CommitPreparedRunningState(revised, held);
 
@@ -1624,32 +1533,12 @@ public sealed class FmSynthMultiTests
         (GC.GetAllocatedBytesForCurrentThread() - beforeBytes).Should().Be(0,
             "recorded Sample history migration must allocate no PCM memory");
         old.Render(context, outgoingReference, 128, outgoing.Length, outgoing);
-        for (int i = 0; i < mixed.Length; i++)
-        {
-            double t = Math.Clamp(i / 64.0, 0.0, 1.0);
-            double weight = t * t * (3 - 2 * t);
-            double position = 129.2 + i * 1.3;
-            int baseFrame = (int)Math.Floor(position);
-            float incoming = pcm[baseFrame]
-                + (pcm[baseFrame + 1] - pcm[baseFrame])
-                    * (float)(position - baseFrame);
-            float expected = (float)(outgoing[i] * (1 - weight)
-                + incoming * weight);
-            mixed[i].Should().BeApproximately(expected, 2e-5f,
-                "the incoming Sample must use the historical, not nominal, pitch integral");
-        }
-        mixed[0].Should().Be(outgoing[0]);
-        // The migration must not reclassify the historical variable rate
-        // as a constant segment. A subsequent *forward* skip has no
-        // previously recorded future integral and must not be projected
-        // using the current 1.3 rate merely because the child was reseeded.
-        revised.RequestMultiExpansionPreparation(old, held).Should().BeFalse(
-            "a later forward phase edit must still respect prior rate changes");
-        worker.Fault.Should().BeNull();
+        mixed.Should().Equal(outgoing,
+            "prior pitch automation remains part of the same Sample playhead");
     }
 
     [Test]
-    public void VariableRateSampleRewindBeyond128FramesUsesExactHistoricalIntegral()
+    public void LongRunningSamplePhaseEditNeedsNoStoredHistory()
     {
         // Multi ID 2, seed 137, cycle 800 yields old skips 725 and 735.
         // At outer frame 200, the Source rate changes from 1 to 1.3;
@@ -1688,16 +1577,8 @@ public sealed class FmSynthMultiTests
         original.Render(context, held, 200, 600, new float[600]);
         original.Render(context, outgoingReference, 200, 600, new float[600]);
 
-        original.TryPrepareRunningState(revised, held).Should().BeFalse(
-            "a changed onset requires worker-prepared independent Sample states");
-        original.RequestMultiExpansionPreparation(revised, held).Should().BeTrue(
-            "the earlier integrated position is available, despite a >128-frame rewind");
-        using FirPreparationScheduler worker = new();
-        original.QueuePendingFirControls(held, worker);
-        Assert.That(SpinWait.SpinUntil(
-            () => worker.CompletedMultiExpansionCount >= 1,
-            TimeSpan.FromSeconds(5)), Is.True);
-        original.AdoptPreparedFirControls(held);
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeFalse(
+            "no history-window check or prepared Sample replacement is needed");
         original.TryPrepareRunningState(revised, held).Should().BeTrue();
         original.CommitPreparedRunningState(revised, held);
 
@@ -1707,22 +1588,8 @@ public sealed class FmSynthMultiTests
         (GC.GetAllocatedBytesForCurrentThread() - beforeBytes).Should().Be(0L,
             "a long rewind may only copy preallocated history, not allocate PCM state");
         original.Render(context, outgoingReference, 800, outgoing.Length, outgoing);
-        for (int i = 0; i < actual.Length; i++)
-        {
-            double t = Math.Clamp(i / 64.0, 0.0, 1.0);
-            double weight = t * t * (3.0 - 2.0 * t);
-            double position = 800.0 + i * 1.3;
-            int frame0 = (int)Math.Floor(position);
-            float incoming = pcm[frame0]
-                + (pcm[frame0 + 1] - pcm[frame0])
-                    * (float)(position - frame0);
-            float expected = (float)(outgoing[i] * (1 - weight)
-                + incoming * weight);
-            actual[i].Should().BeApproximately(expected, 2e-5f,
-                "the incoming Sample must start at the previously integrated position");
-        }
-        actual[0].Should().Be(outgoing[0]);
-        worker.Fault.Should().BeNull();
+        actual.Should().Equal(outgoing,
+            "the entire long-running Sample history remains untouched by the phase edit");
     }
 
     [Test]
@@ -2415,21 +2282,6 @@ public sealed class FmSynthMultiTests
         public long FrameCount => ImmutablePcm.FrameCount;
         public float GetSample(long frame, int channel)
             => ImmutablePcm.GetSample(frame, channel);
-    }
-
-    private static void PublishPreparedSampleRephase(
-        FmSynthSound previous, FmSynthSound next, SoundState state,
-        FirPreparationScheduler worker)
-    {
-        previous.TryPrepareRunningState(next, state).Should().BeFalse();
-        previous.RequestMultiExpansionPreparation(next, state).Should().BeTrue();
-        previous.QueuePendingFirControls(state, worker);
-        Assert.That(SpinWait.SpinUntil(
-            () => worker.CompletedMultiExpansionCount >= 1,
-            TimeSpan.FromSeconds(5)), Is.True);
-        previous.AdoptPreparedFirControls(state);
-        previous.TryPrepareRunningState(next, state).Should().BeTrue();
-        previous.CommitPreparedRunningState(next, state);
     }
 
     private sealed class SourceResolver : ISoundResolver, IEnvelopeCurveResolver
