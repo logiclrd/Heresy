@@ -3897,3 +3897,16 @@ participating in this outer fade. Filters mixed with stable Multi,
 release-in-progress, SourceId replacement, and the complete
 all-nonstructural-property audit remain open. Device listening for
 slice 56 is pending; PR #12 remains draft/unmerged.
+
+### Slice 56 — local audition acceptance: Oscillator, Multi and downstream controls (2026-11-11)
+
+The user built the prescribed Synth **Oscillator #1 → Multi #2 → Multiply Operator #4**, with **Constant #3** as the other Operator input, and performed extensive local Test-note listening. The screenshot shows a 440 Hz Sine Oscillator with Curvature **5**, Vmin **-1**, Vmax **1**, and a seven-voice Spread Multi, with a downstream Constant at **0.5** at the moment captured.
+
+During an ongoing audition, the user reported that **all tested edits updated in realtime without unwanted clicking or popping**:
+
+- **Oscillator #1:** Waveform, Curvature, Frequency Hz, Vmin, Vmax.
+- **Multi #2:** all **three Distributions** (Spread, Harmonic, Chord), Detune, Voice Count, Randomize Phase, Gain Compensation, Harmonic Components and Chord Components.
+- **Constant #3:** Value.
+- **Operator #4:** Operation.
+
+This is strong physical UI-to-audio acceptance for the tested changes and their ordinary combinations. It also goes beyond the *strictly unchanged-Multi* prerequisite of slice 56's **downstream output fade**: changing Multi's own settings exercises the separate existing constituent reconfiguration, ratio glide and prepared onset mechanisms. The user's lack of audible clicks is meaningful listening evidence, but not a numerical proof of every 64-frame transition, overlapping rapid-edits/release timeline, or the equivalence of compound Multi child graphs. Those boundaries remain separate.
