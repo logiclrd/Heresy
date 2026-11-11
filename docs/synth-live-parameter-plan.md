@@ -3032,3 +3032,92 @@ conservative; later notes use the updated frozen snapshot.
 SourceId reassignment, compound waveform smoothing,
 remaining inspector-to-audio acceptance, realtime throughput
 and physical listening remain **open**. Keep PR #12 draft.
+
+
+## Forty-sixth slice: held Instrument Sample adopts a changed node Volume envelope
+
+**First bounded real held-DSP migration after the UI/publication slices.**
+A live Synth consisting of a **single direct Sound Source node** that
+binds an ordinary data-driven Instrument's selected **terminal Sample**
+can now adopt a genuinely changed shared **node-based Volume envelope**
+without retriggering the Sample or rebuilding its state. This does not
+retroactively rephase its PCM playhead: the original integrated Sample
+position, Source frequency basis, Note Off event and envelope frame
+offset remain owned by the existing invocation.
+
+**Frozen candidate preparation, not PCM-time resolution:**
+
+- During compilation of a live-audition Synth with a single direct
+  Instrument Source, the Instrument pre-resolves candidate direct
+  Sample/Node Volume pairs for its frozen data-driven tone specifications
+  outside the audio callback. The tone-to-table-slot mapping stays
+  immutable. Ordinary rendering/export does not perform this additional
+  audition preparation.
+- At the atomic audio publication boundary, the original selected tone
+  slot is checked against the revised frozen Instrument mapping.
+  Eligibility requires the same selected Source ID, tone pitch/NNA,
+  envelope references and Filter absence, **the same terminal Sample
+  identity/timeline** (including independently frozen immutable PCM),
+  active Note Off/release control by a Volume envelope, no other selected
+  envelopes or tone DSP state, and a continuing (not retired) Source.
+  Both the prior and revised active curves must be node-based.
+- An unsupported selected Sample/PCM, Filter, scripted selection or
+  compound graph is not replaced with a speculative state. Existing
+  Sample history is preserved; other compatible graph scalar updates
+  remain eligible. This slice deliberately does **not** enable arbitrary
+  Instrument/SourceId replacement, tone Filter migrations, or Multi
+  descendant Volume updates.
+- The running SourceVoice owns a mutable **immutable-curve reference**,
+  separately from its initial SoundInvocation.Configuration. The only
+  PCM-boundary mutation is adoption of an already-frozen curve and
+  scalar transition metadata. No Sample state construction, lookup,
+  envelope compilation, array allocation or audio replay happens there.
+
+**Audible interpretation:** the existing Sample keeps playing at its
+actual position. The old and new Volume curves are both evaluated at
+the **same continuing envelope frame and Note Off origin**, and their
+gains blend for **64 output frames** using the already-established cubic
+smoothstep. An edit midway through a fade restarts from the actual
+last blended gain without stacking outgoing histories. The next
+freshly started note independently uses the newly frozen Instrument.
+
+**Release accounting:** while the gain transition is active, the
+outgoing curve's release contribution is bounded to at most its
+64-frame fade boundary and must not be erased merely because the
+new curve has a shorter release. The new curve may lengthen or shorten
+the remaining tail; the effective audible bound is the maximum of the
+new release end and the outgoing release clipped to the fade boundary,
+still limited by the original Sample's natural EOF. A conclusively
+retired voice is not resurrected. The original Note Off and
+SourceVoice.EnvelopeFrameOffset remain untouched.
+
+**Red-before-green evidence:** the new renderer regression originally
+failed on a measured held PCM discrepancy (~0.000217) at commit
+`55f9a03` despite correctly published graph changes. The implementation
+commits `94405df` and `6934c72` made that red test pass in
+GitHub Actions [#42964893697](https://github.com/logiclrd/Heresy/actions/runs/42964893697).
+The fixture uses a varying Sample waveform, an actual independently
+frozen old/new Instrument, and a shared node Volume curve whose
+held level changes from 1.0 to 0.25. Its per-frame oracle verifies
+the 64-frame gain blend and unaltered Sample position; it also verifies
+the ten-frame original-clock release (exclusive end 330 after Note Off
+at frame 320), a genuinely new note using the edited curve, and zero
+managed PCM render allocations.
+
+Additional guards require that changing terminal Sample PCM without
+changing the selected Source ID does **not** steal the held Sample's
+state, and that non-audition Synth rendering retains its previously
+frozen behaviour. Release-overlap cases exercise both directions of
+ten- versus twenty-frame release changes with Note Off **during** the
+64-frame gain transition, including audible PCM oracle and exclusive
+end 180 for Note Off at 160. These are separate from the prior
+editor-to-transport publication tests.
+
+**Still open:** an actual editor-through-transport-through-recorded-PCM
+integration (the earlier real-editor test stops at publication);
+scripted/complex/nested/Multi Instrument state, Pitch/Panning/Filter
+envelopes and tone Filter history migration; SourceId reassignment;
+rapid-edit stress beyond the bounded fade rule; physical listening
+and sustained underrun/CPU acceptance. This is a scoped first migration
+case, **not** the full all-property acceptance milestone. Keep the
+main TODO unchecked and PR #12 draft/unmerged.
