@@ -4050,3 +4050,20 @@ not implemented by this renderer change. Real-device listening
 of this specific combined child is still pending, PR #12
 remains **draft/unmerged** and the all-property milestone
 remains open.
+
+### Slice 58 — manual audition acceptance for frozen Envelope/Noise compound Multi (2026-11-11)
+
+The user completed the prescribed local **latched Test-note** procedure for the slice-58 graph and reported **PASS**. The requested fixture was:
+
+```text
+Add[
+  Multiply[Oscillator, Node Envelope],
+  Multiply[White Noise, Constant(0.15)]
+]
+  -> Multi (Spread; instructions specified 3 voices)
+  -> outer Operator [Multi, Constant(0.8)]
+```
+
+The instructions were to change the **outer Constant from 0.8 to 0.1** and then switch the **outer Operator from Multiply to Add**, while leaving the compound Multi child unchanged. The actual user screenshot (after edits) shows Oscillator #1 (Sine 440 Hz), Envelope #2, Multiply #3, White Noise #4, Constant #5 (0.15), Multiply #6, Add #7, **Multi #8 Spread with 7 voices**, output Operator #9 **Add**, and outer Constant #10 **0.1**. Thus the screenshot is a seven-voice variation of the suggested three-voice fixture, and visibly captures the final configured state, not an audio waveform or intermediate state.
+
+The user explicitly reported the instructed listening test **passed**. Record **manual acceptance for downstream Constant and Operator changes around a frozen compound Oscillator/Envelope/Noise Multi child**; the stronger seven-voice variation is meaningful. Do **not** infer that internal Envelope selection/curve editing, Noise identity or seed changes, Multi voice-count/distribution edits, release-in-progress, or all rapid-transition timing combinations were tested in this session. Automated tests separately cover exact 64-frame smoothstep, same-seed Noise, equivalent frozen Node Envelope, subsequent Note Off release clock and zero PCM allocations. The broader all-nonstructural-property milestone remains open, and PR #12 remains draft/unmerged.
