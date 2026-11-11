@@ -884,7 +884,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				&& multiChild._oscillatorCount > 0
 				&& multiChild._nodes.All(child => child.Definition is
 					FmOscillatorNode or FmConstantNode or FmOperatorNode
-					or FmNoiseNode or FmEnvelopeNode));
+					or FmNoiseNode or FmEnvelopeNode
+					|| child.Definition is FmSoundSourceNode
+						&& child.Source is SampleSound));
 		_multiRatios = _nodes.Select(node => node.Definition is FmMultiNode multi
 			? multi.GetFrequencyRatios() : Array.Empty<double>()).ToArray();
 		_multiReserve = new int[_nodes.Length];
@@ -1921,9 +1923,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	/// Oscillator. A parent output fade is safe only if its authored child
 	/// graph is frozen-identical, including *every* oscillator phase/rate
 	/// control and all stateless gain/mixing nodes, deterministic Noise
-	/// IDs, and selected, equivalent frozen Node Envelope curves.
+	/// IDs, selected equivalent Node Envelope curves, and unchanged
+	/// direct Sample geometry and Source pitch parameters.
 	/// Compare immutable snapshots rather than authoring object identity;
 	/// never accept edited or scripted Envelope curves in this outer fade.
+	/// Continuing Sample readheads are checked against the bound state.
 	/// Checking compiled IDs/types/inputs also rejects any rewire.
 	/// No allocations, hashes or authoring lookups.</summary>
 	private bool HasSameFrozenStatelessMultiGraphAs(FmSynthSound next)
@@ -1932,7 +1936,6 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| _oscillatorCount != next._oscillatorCount
 			|| _nodes.Length != next._nodes.Length
 			|| _outputIndex != next._outputIndex
-			|| _hasSources || next._hasSources
 			|| _hasMulti || next._hasMulti
 			|| _newNotePolicy != next._newNotePolicy)
 			return false;
@@ -1971,6 +1974,21 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				// node ID comparison above covers its entire configuration.
 				case FmNoiseNode when revised.Definition is FmNoiseNode:
 					break;
+				// The Sample is a frozen audible leaf, not a new invocation.
+				// Rebound PCM and changing pitch controls are ineligible.
+				case FmSoundSourceNode source
+					when revised.Definition is FmSoundSourceNode updatedSource
+						&& source.SourceId == updatedSource.SourceId
+						&& source.FrequencyHz == updatedSource.FrequencyHz
+						&& source.Constant == updatedSource.Constant
+						&& source.ExponentialMultiplier
+							== updatedSource.ExponentialMultiplier
+						&& source.MultiplierNodeId == updatedSource.MultiplierNodeId
+						&& old.Source is SampleSound oldSample
+						&& revised.Source is SampleSound updatedSample
+						&& oldSample.NewNotePolicy == updatedSample.NewNotePolicy
+						&& oldSample.CanSharePreparedOnsetTimelineWith(updatedSample):
+					break;
 				// An unchanged node-based Envelope evaluates on the
 				// continuing child note clock. Newly frozen wrappers are
 				// equivalent only when all captured curve data agrees.
@@ -1991,8 +2009,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 
 	/// <summary>Allow only downstream audible controls to fade around
 	/// a stable, already-running Multi whose Oscillator/Noise/Node-Envelope/
-	/// Constant/Operator child graph is frozen-identical. All constituent
-	/// phases, deterministic Noise streams and Envelope clocks survive.
+	/// Constant/Operator/direct-Sample child graph is frozen-identical.
+	/// All constituent phases, bound Sample readheads, deterministic Noise
+	/// streams and Envelope clocks survive.
 	/// Any child edit, voice-count, distribution or onset change has a
 	/// separate transaction; this guard is bounded and allocation-free.</summary>
 	private bool CanFadeStableMultiOutputs(FmSynthSound next, FmSynthState live)
@@ -2032,7 +2051,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						return false;
 					continue; // dormant preallocated headroom is inert
 				}
-				if (!voice.Sound.HasSameFrozenStatelessMultiGraphAs(oldChild)
+				if (voice.Invocation.State is not FmSynthState childState
+					|| !voice.Sound.HasSameFrozenStatelessMultiGraphAs(oldChild)
+					|| !voice.Sound.CanFadeBoundSampleOutputs(oldChild, childState)
+					|| !oldChild.CanFadeBoundSampleOutputs(nextChild, childState)
 					|| !voice.HasStarted || !voice.Initialized
 					|| voice.OnsetFadeFrom is not null
 					|| voice.SilenceEnd.HasValue
