@@ -2971,3 +2971,64 @@ dependency graph. Safe held-state migration, full UI-to-PCM
 acceptance, Filter parameter coverage and hardware listening
 remain open. Do not close the all-properties TODO or merge
 draft PR #12 on the strength of routing coverage alone.
+
+
+## Forty-fifth slice: shared editor commits reach active Instrument-backed Synth audition
+
+The slice 44 authoring dependency walk is implemented, but an
+end-to-end test must also prove that the *actual editors* notify
+`SongPlaybackTransport` with the changed shared object ID while
+a Synth audition is active. Inspecting only the transport's
+`GetDependentSynths` helper would miss a broken UI callback.
+
+**Tracing the production chain** showed that the necessary
+wiring was already present:
+
+1. Standalone/embedded `NodeEnvelopeEditorControl`,
+   `ScriptEnvelopeEditorControl` and `FilterEditorControl`
+   commit through their respective framework-independent
+   `EnvelopeDocumentEditor` and `FilterDocumentEditor` methods.
+2. After successful **audio-affecting** mutations, those methods
+   increment `SongDocument.AudioRevision` and call
+   `DocumentWorkspace.NotifySharedAudioObjectCommitted` with the
+   exact changed Envelope/Filter ID. Invalid edits, no-op drafts
+   and display-only envelope bounds do not emit an audio event.
+3. `MainWindow` subscribes to `SharedAudioObjectCommitted`,
+   checks the current workspace/document and whether its transport
+   supports `ILiveSynthEditTransport`, then schedules
+   `PublishSharedObjectEditAsync(document, objectId)`. This
+   does not open audio if no audition is active.
+4. The real `SongPlaybackTransport` reuses the running audition
+   session, prepares affected frozen Synth revisions off-PCM
+   through the ordered background queue, and publishes reachable
+   Synth parents in dependency order, now including Instrument
+   tone edges from slice 44.
+
+**New headless integration acceptance:** tests construct a real
+`MainWindow` and `SongPlaybackTransport`, with a deterministic
+recording live-output backend and detached-preparation factory
+(no physical sound device). They start an actual live *Synth*
+note whose graph includes an Instrument tone that references both
+a shared Volume Envelope and a shared Filter, plus an upstream
+Synth parent. Using the actual node Envelope and Filter editor
+Apply paths, the test requires one publication of the child and
+then its parent for each changed audio revision, publication
+ordered after the initial Note On, immutable snapshot revisions
+equal to the committed document revision, no unrelated Synth
+publications and exactly **one audio session** across both edits.
+Invalid/no-op node drafts and unchanged Filter drafts produce no
+additional publication. A second test uses the *actual script
+Envelope editor* and confirms successful expression changes
+publish the Instrument-dependent Synth while invalid C# expression
+drafts do not alter document revisions or audio.
+
+**No new production callback was necessary**; this slice closes
+the previously untested UI-to-transport integration boundary and
+validates the slice 44 routing with actual authoring controls.
+It does **not** prove or enable migration of genuinely changed
+Instrument-owned Filter or Envelope DSP history into an already
+playing Sample voice. Existing note compatibility remains
+conservative; later notes use the updated frozen snapshot.
+SourceId reassignment, compound waveform smoothing,
+remaining inspector-to-audio acceptance, realtime throughput
+and physical listening remain **open**. Keep PR #12 draft.
