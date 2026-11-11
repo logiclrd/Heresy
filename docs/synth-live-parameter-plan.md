@@ -3168,3 +3168,31 @@ this migration. The UI interaction test does not replace physical listening
 or complete editor-to-held-PCM integration.
 
 PR #12 remains draft and unmerged; the all-property TODO remains open.
+
+## Slice 48 — recursive Definite/Indefinite Note Off lifecycle
+
+The source-lifetime bug isolated in slice 47 exposed a general distinction:
+Note Off is **Definite** at the Pattern/preview root, but becomes
+**Indefinite** below an ancestor with a sustain-release lifecycle. The
+lifecycle is present if **any active/reachable, selected envelope sustain
+loop** exists in the recursively bound sound subtree, regardless of whether
+the envelope controls Volume, Pitch, Filter, Panning or graph modulation.
+A transparent Instrument delegates the lifecycle to the bound child.
+
+The complete normative event table, natural EOF and independent tail rules,
+multiple release endpoints, early permanent-zero final-Volume retirement,
+and the script-envelope compatibility decision are specified in
+[docs/note-off-lifecycle.md](note-off-lifecycle.md). The old special-case
+outer-Volume-to-Synth lifetime extension and Sample release policy were
+removed. Graph and Instrument voice state now propagate Off disposition
+without PCM-time source re-resolution or playhead reconstruction.
+
+Red-before-green acceptance initially established that a non-looped Pitch
+envelope must **not** extend an unsustained note. Automated tests now include
+nested Instrument→Synth Pitch-only release and Synth→Instrument Volume/Pitch
+release, including completed Volume0 versus terminal Volume10%, plus the
+existing Multi, shared Source, filter-tail and live gain transition suites.
+
+This is a source lifecycle refactor, not completion of all-property live Synth
+editing. Physical device listening and full interactive migration remain
+open; PR #12 stays draft and the main TODO stays unchecked.
