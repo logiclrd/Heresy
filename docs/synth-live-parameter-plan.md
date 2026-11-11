@@ -3209,3 +3209,63 @@ supported direct Instrument-backed Sample Volume path only. It does not verify
 multi-Source/Operator, nested Synth tone migration, other parameter families,
 or the separate Definite/Indefinite Note Off lifecycle behavior. The all-property
 acceptance TODO and PR #12 draft status remain unchanged.
+
+## Slice 49 — atomic shared Volume adoption in compound Source/Operator graphs
+
+The previous slice 46 held-Volume migration was limited to a Synth whose
+compiled graph had one direct Instrument-backed Sample Source. In particular,
+two already-sounding Instrument Source nodes joined by an Operator could
+receive a newly published shared Envelope definition while both continuing
+voices remained on their old curves.
+
+**Bounded extension:** Live-audition preparation now freezes direct
+Instrument→Sample node Volume candidates for every reachable compiled Source
+node, rather than only when the entire Synth contains one node. A compound
+Synth can therefore update multiple still-playing Instrument Samples through
+Operators without restarting their states. Each continuing source retains
+its selected frozen tone slot, PCM identity, integrated fractional Sample
+position, original pitch and envelope clock, Note Off origin, and the existing
+64-output-frame smoothstep gain transition. The 64-frame transition is applied
+to each branch's gain, not globally to the Operator or to arbitrary controls.
+
+**Atomic eligibility:** Before changing any Source Volume reference, the PCM
+owner preflights *all* participating active Instrument-backed node Volume
+sources against their individually prepared immutable candidates. The
+selected tone, unchanged Sample PCM/timeline, New Note policy, absence of
+unsupported tone Filters or other tone envelopes, and live state must match.
+If one participant cannot be proved compatible (for example, its selected
+Sample PCM changed behind an unchanged SourceId), **none** of those Source
+Volume curves are adopted. This conservative rejection does not prevent
+independently compatible graph scalar edits from adopting. A second, bounded
+nonallocating pass commits only actually changed curves after the full
+preflight succeeds. All preparation, tone selection and Sample resolution
+remain off PCM. Ordinary arrangement/export retains frozen-voice semantics.
+
+**Multi boundary:** The change initially exposed two preexisting
+`IndependentFrozenNodeVolumeCurvesKeepInstrumentSampleRelease` cases:
+a Multi onset rebase rejected by its worker must not also migrate an edited
+child Instrument release as a side effect. The implementation preserves the
+old allowance for a Multi constituent that consists of one direct Source,
+but does **not** broaden Volume migration to *compound* Multi-generated
+subgraphs. Their phase/onset and Volume transactions require a separate
+coordinated design. Both original tests were retained unchanged.
+
+**Red/green evidence:** The newly added two-Source Add-Operator held-PCM test
+failed on the original code in [red CI #43011714291](https://github.com/logiclrd/Heresy/actions/runs/43011714291);
+it confirms both already-playing voices adopt the edited shared node curve,
+with original Sample continuity, 64-frame smoothstep, Note Off deadline and
+zero managed render allocations. A second regression uses two distinct
+Instrument Sources, with an incompatible terminal PCM for one, and proves
+all-or-none Volume rejection while an independent Constant edit still applies.
+The first broad implementation exposed the existing Multi-onset test failures;
+the corrected scope is [green CI #43012576902](https://github.com/logiclrd/Heresy/actions/runs/43012576902),
+with **1,034 render**, **355 playback**, **1,149 UI**, and other passing suites
+of **910, 105 and 29**, plus successful Linux ARM64 codec validation.
+
+**Still open:** physical-device listening of the two-Source fixture and
+recursive Note Off semantics; live Volume edits in compound Multi children,
+arbitrary Instrument-selected Synths, tone Filters, scripted selectors, other
+envelope types, selected SourceId reassignment, rapid concurrent edits and
+real hardware throughput. The user-verified *single* direct Source audition
+from slices 46–48 remains recorded separately. PR #12 remains **draft and
+unmerged**, and the all-nonstructural-properties TODO stays **unchecked**.
