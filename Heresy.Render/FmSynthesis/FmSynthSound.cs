@@ -883,7 +883,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				&& node.MultiInput is FmSynthSound multiChild
 				&& multiChild._oscillatorCount > 0
 				&& multiChild._nodes.All(child => child.Definition is
-					FmOscillatorNode or FmConstantNode or FmOperatorNode));
+					FmOscillatorNode or FmConstantNode or FmOperatorNode
+					or FmNoiseNode or FmEnvelopeNode));
 		_multiRatios = _nodes.Select(node => node.Definition is FmMultiNode multi
 			? multi.GetFrequencyRatios() : Array.Empty<double>()).ToArray();
 		_multiReserve = new int[_nodes.Length];
@@ -1919,9 +1920,12 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	/// <summary>A Multi child has one independent phase integrator per
 	/// Oscillator. A parent output fade is safe only if its authored child
 	/// graph is frozen-identical, including *every* oscillator phase/rate
-	/// control and all stateless gain/mixing nodes. Checking the compiled
-	/// IDs, node types and input arrays also rejects rewiring and newly
-	/// reachable nodes. No allocations, hashes or authoring lookups.</summary>
+	/// control and all stateless gain/mixing nodes, deterministic Noise
+	/// IDs, and selected, equivalent frozen Node Envelope curves.
+	/// Compare immutable snapshots rather than authoring object identity;
+	/// never accept edited or scripted Envelope curves in this outer fade.
+	/// Checking compiled IDs/types/inputs also rejects any rewire.
+	/// No allocations, hashes or authoring lookups.</summary>
 	private bool HasSameFrozenStatelessMultiGraphAs(FmSynthSound next)
 	{
 		if (_oscillatorCount < 1
@@ -1962,6 +1966,22 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					when revised.Definition is FmOperatorNode updatedOperator
 						&& operation.Operation == updatedOperator.Operation:
 					break;
+				// Noise uses the continuing voice's seed, node ID and frame:
+				// it has no mutable RNG history to migrate. The compiled
+				// node ID comparison above covers its entire configuration.
+				case FmNoiseNode when revised.Definition is FmNoiseNode:
+					break;
+				// An unchanged node-based Envelope evaluates on the
+				// continuing child note clock. Newly frozen wrappers are
+				// equivalent only when all captured curve data agrees.
+				// Reject different IDs, changed points and scripted curves.
+				case FmEnvelopeNode envelope
+					when revised.Definition is FmEnvelopeNode updatedEnvelope
+						&& envelope.EnvelopeId == updatedEnvelope.EnvelopeId
+						&& old.Envelope is NodeEnvelopeCurve oldCurve
+						&& revised.Envelope is NodeEnvelopeCurve updatedCurve
+						&& oldCurve.HasSameFrozenShapeAs(updatedCurve):
+					break;
 				default:
 					return false;
 			}
@@ -1970,8 +1990,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	}
 
 	/// <summary>Allow only downstream audible controls to fade around
-	/// a stable, already-running Multi whose Oscillator/Constant/Operator
-	/// child graph is frozen-identical. All constituent phases survive.
+	/// a stable, already-running Multi whose Oscillator/Noise/Node-Envelope/
+	/// Constant/Operator child graph is frozen-identical. All constituent
+	/// phases, deterministic Noise streams and Envelope clocks survive.
 	/// Any child edit, voice-count, distribution or onset change has a
 	/// separate transaction; this guard is bounded and allocation-free.</summary>
 	private bool CanFadeStableMultiOutputs(FmSynthSound next, FmSynthState live)
