@@ -359,6 +359,8 @@ The test matrix covers Square, Curvature and output-range changes,
 Add/Multiply graphs, fade interruption, post-fade uninterrupted phase,
 frequency retuning and non-audition isolation. **Sound Source, Filter,
 Multi and compound Multi-generated graphs remain excluded** until
-their distinct history/onset preflights are coordinated. Physical
-device listening of the newly supported compound case remains open;
-this slice does not settle the broader all-properties task.
+their distinct history/onset preflights are coordinated. The user subsequently confirmed that editing a running **Test** note
+with two Oscillators under an Operator behaved as expected on their local
+audio device. That is **manual acceptance of the supported slice-50
+compound shape route**, not of the excluded stateful graph classes.
+The slice does not settle the broader all-properties task.
