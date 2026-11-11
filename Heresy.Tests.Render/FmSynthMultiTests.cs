@@ -1131,6 +1131,92 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void InstrumentSelectedSampleRetainsVolumeReleaseAcrossMixedMultiOnsetEdit()
+    {
+        // InstrumentSound flattens to a terminal SampleSound and selects
+        // an invocation-owned Volume envelope. An otherwise independent
+        // oscillator is silent here but has a phase to rephase. The Sample's
+        // accumulated playhead, original envelope clock and post-Note Off
+        // release must match a continuously playing reference exactly.
+        ObjectId sampleId = (ObjectId)7650U;
+        ObjectId instrumentId = (ObjectId)7651U;
+        ObjectId releaseId = (ObjectId)7652U;
+        float[] pcm = Enumerable.Range(0, 2048)
+            .Select(i => (float)(0.4 + 0.15 * Math.Sin(2 * Math.PI * i / 59.0)))
+            .ToArray();
+        SampleSound sample = new(new SampleDefinition(sampleId, "Released PCM",
+            new ExternalAssetReference("instrument-release.wav")),
+            new MemorySampleData(48000, 1, pcm));
+        SourceResolver sampleResolver = new(sampleId, sample);
+        TenFrameRelease envelope = new(releaseId);
+        Heresy.Core.Instruments.InstrumentDefinition definition =
+            new(instrumentId, "Release instrument");
+        definition.ToneSpecifications.Add(new Heresy.Core.Instruments.ToneSpecification
+        {
+            SourceId = sampleId,
+            VolumeEnvelopeId = releaseId,
+        });
+        definition.ToneTable.Add(0);
+        Heresy.Render.Instruments.InstrumentSound instrument =
+            new(definition, sampleResolver, envelope);
+        SourceResolver instrumentResolver = new(instrumentId, instrument);
+        FmSynthGraph Graph(bool random) => new([
+            new FmSoundSourceNode(1, instrumentId,
+                FmMultiNode.NeutralFrequencyHz),
+            new FmOscillatorNode(2, FmOscillatorWaveform.Sine, 1270),
+            new FmConstantNode(3, 0.0),
+            new FmOperatorNode(4, FmOperatorKind.Multiply, [2, 3]),
+            new FmOperatorNode(5, FmOperatorKind.Add, [1, 4]),
+            new FmMultiNode(6, 5, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 100,
+                gainCompensation: true),
+        ], 6);
+        FmSynthSound previous = new(Graph(false), envelope,
+            soundResolver: instrumentResolver, enableLiveMultiExpansion: true);
+        FmSynthSound next = new(Graph(true), envelope,
+            soundResolver: instrumentResolver, enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState held = previous.CreateState(), reference = previous.CreateState();
+        held.SetNoiseSeed(21);
+        reference.SetNoiseSeed(21);
+        previous.Render(context, held, 0, 128, new float[128]);
+        previous.Render(context, reference, 0, 128, new float[128]);
+
+        previous.TryPrepareRunningState(next, held).Should().BeFalse();
+        previous.RequestMultiExpansionPreparation(next, held).Should().BeTrue(
+            "Instrument-selected Samples with a matching stateless Volume envelope may follow the oscillator's prepared transition");
+        using FirPreparationScheduler worker = new();
+        previous.QueuePendingFirControls(held, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        previous.AdoptPreparedFirControls(held);
+        previous.TryPrepareRunningState(next, held).Should().BeTrue();
+        previous.CommitPreparedRunningState(next, held);
+
+        float[] actual = new float[132], expected = new float[132];
+        long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        next.Render(context, held, 128, 72, actual.AsSpan(0, 72));
+        (GC.GetAllocatedBytesForCurrentThread() - allocatedBefore).Should().Be(0L);
+        previous.Render(context, reference, 128, 72, expected.AsSpan(0, 72));
+        held.NoteOffTime = TimeSpan.FromSeconds(200.0 / 48000);
+        reference.NoteOffTime = held.NoteOffTime;
+        allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        next.Render(context, held, 200, 60, actual.AsSpan(72, 60));
+        (GC.GetAllocatedBytesForCurrentThread() - allocatedBefore).Should().Be(0L,
+            "Instrument Volume release cannot allocate during PCM");
+        previous.Render(context, reference, 200, 60, expected.AsSpan(72, 60));
+        actual.Should().Equal(expected,
+            "Sample positions and the Instrument Volume-envelope clock survive the changed Multi phase");
+        actual[72 + 7].Should().BeGreaterThan(0.01f,
+            "the Instrument release must keep playing after Note Off");
+        actual.Skip(72 + 10).Should().OnlyContain(x => x == 0f,
+            "release ends after the original ten-frame envelope, never at the changed onset offset");
+        next.GetEndFrameExclusive(context, held).Should().Be(210L);
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
     public void ConnectedScalarModulatedSampleKeepsPositionWhileSiblingOscillatorRephases()
     {
         // A Source's connected (but stateless) rate multiplier must not
