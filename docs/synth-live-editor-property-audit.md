@@ -612,3 +612,7 @@ same 64-frame smoothstep from the *last audible filtered output*
 to the continuing new graph, unchanged Filter/Source history,
 unchanged sample/Filter end, and zero managed PCM allocations.
 The bounded Filter listening case remains to be verified locally.
+
+### Slice 55 — device acceptance of downstream edits through a Filter
+
+The user confirmed that the prescribed **One-Pole Filter inserted between the Sample Source and the Multiply Operator** did not prevent a latched Test note from responding correctly to changing the downstream Constant or changing the Operator mode (Multiply/Add). The expected audible behaviour passed. This is a **manual signoff of the slice-55 bounded continuing-Filter route**, not of arbitrary Filter coefficient changes, an already-draining tail, or mixed Multi/Filter scenarios.
