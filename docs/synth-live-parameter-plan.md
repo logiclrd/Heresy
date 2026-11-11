@@ -3400,3 +3400,15 @@ the existing render tests unchanged. Implementation commits followed.
 Final CI qualification and real-device listening are separate from
 the red/green reasoning; the wider all-property live-edit milestone
 and draft/unmerged PR status remain unchanged.
+
+### Manual listening — slice 50 compound Oscillator edit (2026-11-11)
+
+The user tested a Synth with **two Oscillators** playing together through
+an Operator, using the live **Test** note and changing Oscillator
+properties as suggested after slice 50. The already-sounding Test note
+responded as expected. This constitutes **local physical listening
+acceptance** of the bounded compound Oscillator/Operator shape-edit
+route, in addition to its render/phase/zero-allocation regressions.
+The report does not certify other graph node classes, every Operator,
+all possible property combinations or long-running hardware throughput.
+The all-nonstructural-property milestone remains open.
