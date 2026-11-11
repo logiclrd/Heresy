@@ -9,6 +9,7 @@ using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
 using Heresy.Render.Configuration;
 using Heresy.Render.Playback;
+using Heresy.Render.Instruments;
 using Heresy.Render.Samples;
 using Heresy.Render.Envelopes;
 using Heresy.Render.Filters;
@@ -45,6 +46,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		public double OriginalFrequencyHz { get; private set; }
 		public void RetainOriginalFrequencyBasis(SourceVoice original)
 			=> OriginalFrequencyHz = original.OriginalFrequencyHz;
+		// Prepared Multi oscillators may change their local phase clock.
+		// Instrument Volume envelopes belong to the continuing Sample
+		// and must instead follow its original invocation frame clock.
+		public long EnvelopeFrameOffset { get; private set; }
+		public void RetainEnvelopeClock(SourceVoice original,
+			long oldFrame, long newFrame)
+			=> EnvelopeFrameOffset = checked(
+				original.EnvelopeFrameOffset + oldFrame - newFrame);
 		public FmSourcePitchCurve Pitch { get; }
 		public StreamingFilterChain? Filters { get; set; }
 		public ResonantFilterState? FilterEnvelopeState { get; set; }
@@ -835,10 +844,15 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			&& double.IsFinite(next.FrequencyHz / source.FrequencyHz)
 			&& source.Constant == next.Constant
 			&& source.ExponentialMultiplier == next.ExponentialMultiplier
-			&& old.Source is SampleSound sample
-			&& revised.Source is SampleSound prepared
-			&& sample.CanSharePreparedOnsetTimelineWith(prepared)
-			&& sample.SourceChannelCount is >= 1 and <= 2;
+			&& (old.Source is SampleSound sample
+				&& revised.Source is SampleSound prepared
+				&& sample.CanSharePreparedOnsetTimelineWith(prepared)
+				&& sample.SourceChannelCount is >= 1 and <= 2
+				// Only a single frozen Instrument wrapper for now. A different
+				// Instrument may select a different tone even when SourceId
+				// is unchanged; no speculative invocation is built in PCM.
+				|| old.Source is InstrumentSound instrument
+					&& ReferenceEquals(instrument, revised.Source));
 	}
 
 	private static bool CanTransferPreparedDirectSample(
@@ -855,7 +869,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| original.FilterEnvelopeState is not null
 			|| replacement.FilterEnvelopeState is not null
 			|| previous.ReleaseIsControlledByVolumeEnvelope
-			|| destination.ReleaseIsControlledByVolumeEnvelope
+				!= destination.ReleaseIsControlledByVolumeEnvelope
 			|| previous.NaturalEndFrameExclusive.HasValue
 			|| previous.HasNoteOffTime
 			|| !(original.OriginalFrequencyHz > 0.0)
@@ -869,9 +883,19 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| !destination.PitchTrajectory.CanSeedPreparedStreamingPosition)
 			return false;
 		var envelopes = original.Invocation.Configuration.Envelopes;
-		if (envelopes.Volume is not null || envelopes.Pitch is not null
+		if (envelopes.Pitch is not null
 			|| envelopes.Filter is not null || envelopes.Panning is not null
-			|| original.Invocation.Configuration != replacement.Invocation.Configuration)
+			|| original.Invocation.Configuration != replacement.Invocation.Configuration
+			|| (envelopes.Volume is not null
+				&& !previous.ReleaseIsControlledByVolumeEnvelope))
+			return false;
+		// The new Source must inherit the old Instrument's envelope clock
+		// even if its Multi phase offset has changed. Reject overflow
+		// before the allocation-free publication/transfer boundary.
+		long delta = oldFrame - nextFrame;
+		long oldOffset = original.EnvelopeFrameOffset;
+		if ((delta > 0 && oldOffset > long.MaxValue - delta)
+			|| (delta < 0 && oldOffset < long.MinValue - delta))
 			return false;
 		// The active Sample position, not a hypothetical new onset
 		// position, is the source of truth. No history window, rate
@@ -972,10 +996,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 
 	/// <summary>Held audition: compatible oscillator phases may rephase
 	/// through worker-prepared states. Direct Samples, including connected
-	/// rate modulation with unchanged wiring/semantics, retain their
-	/// physical playheads. Sample-only phase edits need no worker.
-	/// Instrument, Source reassignment, unsupported Filter/Envelope history
-	/// and nested Multi remain excluded.</summary>
+	/// rate modulation and matching flattened Instrument Volume-release
+	/// envelopes, retain their physical playheads and release clocks.
+	/// Source reassignment, incompatible Instrument selection, tone Filters,
+	/// other Envelope histories and nested Multi remain excluded.</summary>
 	private bool NeedsMultiOnsetReplacement(
 		FmSynthSound next, FmSynthState live, int index)
 	{
@@ -1371,6 +1395,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		newState.NoteOffTime = oldState.NoteOffTime;
 		newState.PitchTrajectory.SeedPreparedStreamingPosition(newFrame, position);
 		replacement.RetainOriginalFrequencyBasis(original);
+		replacement.RetainEnvelopeClock(original, oldFrame, newFrame);
 		replacement.Pitch.SeedBeforeFrame(newFrame, rate);
 	}
 
@@ -2664,8 +2689,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				* state.PitchTrajectory.GetMultiplier(frame);
 		outer *= (node.FrequencyHz / voice.OriginalFrequencyHz)
 			/ voice.OriginalOuterFactor;
-		long? released = noteOffFrame.HasValue && frame >= noteOffFrame
-			? noteOffFrame : null;
+		long envelopeFrame = voice.EnvelopeFrameOffset == 0
+			? frame : checked(frame + voice.EnvelopeFrameOffset);
+		long? released = noteOffFrame.HasValue
+			&& envelopeFrame >= noteOffFrame.Value ? noteOffFrame : null;
 		// Pitch envelopes are in octaves, as in PlaybackVoice.
 		if (voice.Invocation.Configuration.Envelopes.Pitch is { } pitchEnvelope)
 			multiplier *= Math.Pow(2.0,
@@ -2753,7 +2780,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			voice.FilterEnvelopeState.ProcessFrame(mono);
 		}
 		if (voice.Invocation.Configuration.Envelopes.Volume is { } envelope)
-			mono[0] *= (float)envelope.GetValue(frame, sampleRate, released);
+			mono[0] *= (float)envelope.GetValue(
+				envelopeFrame, sampleRate, released);
 		return mono[0];
 	}
 
@@ -2820,9 +2848,15 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				long? volumeEnd = volume.GetEndActiveFrameExclusiveAfterNoteOff(
 					release, context.Configuration.SampleRate);
 				if (volumeEnd.HasValue)
+				{
+					// The Instrument's release is expressed in its original
+					// envelope clock, not a replacement Multi's shifted one.
+					long envelopeEnd = checked(
+						volumeEnd.Value - voice.EnvelopeFrameOffset);
 					childEnd = childEnd.HasValue
-						? Math.Min(childEnd.Value, volumeEnd.Value)
-						: volumeEnd;
+						? Math.Min(childEnd.Value, envelopeEnd)
+						: envelopeEnd;
+				}
 			}
 			// Once the zero-input tail has started, never reopen it merely
 			// because a child cannot project an updated pitch trajectory.
