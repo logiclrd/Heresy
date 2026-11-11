@@ -3483,6 +3483,8 @@ public sealed class FmSynthMultiTests
 
     private sealed class TenFrameRelease : IEnvelopeCurveResolver, IEnvelopeCurve
     {
+        public bool HasSustainLoop => true;
+        public bool IsZeroAfterCompletion => true;
         private readonly ObjectId _id;
         public TenFrameRelease(ObjectId id) => _id = id;
         public bool TryResolve(ObjectId id, out IEnvelopeCurve? curve)
