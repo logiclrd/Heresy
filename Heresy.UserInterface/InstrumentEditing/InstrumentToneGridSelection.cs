@@ -60,6 +60,45 @@ public sealed class InstrumentToneGridSelection
 		Focused = cell;
 	}
 
+	/// <summary>Reassert the anchor captured before a Shift-pointer gesture.
+	/// Avalonia may deliver focus/selection events between mouse down and up;
+	/// those events must not silently replace the original range anchor.</summary>
+	public void ExtendFrom(Row anchor, Cell cell,
+		IReadOnlyList<InstrumentToneGridRow> rows)
+	{
+		Validate(cell, rows);
+		if (Position(rows, anchor.ToneIndex) < 0)
+			throw new ArgumentOutOfRangeException(nameof(anchor));
+		Anchor = anchor;
+		Extent = new Row(cell.ToneIndex);
+		Focused = cell;
+	}
+
+	/// <summary>Select every existing tone in projected order, excluding the
+	/// reserved insertion row. Retain a valid focused tone cell for editing.</summary>
+	public void SelectAll(IReadOnlyList<InstrumentToneGridRow> rows)
+	{
+		ArgumentNullException.ThrowIfNull(rows);
+		int? first = null;
+		int? last = null;
+		foreach (InstrumentToneGridRow row in rows)
+		{
+			if (row.Index is not int index) continue;
+			first ??= index;
+			last = index;
+		}
+		if (first is not int firstIndex || last is not int lastIndex)
+		{
+			Clear();
+			return;
+		}
+		Anchor = new Row(firstIndex);
+		Extent = new Row(lastIndex);
+		if (Focused is not Cell focused || focused.ToneIndex is null
+			|| Position(rows, focused.ToneIndex) < 0)
+			Focused = new Cell(firstIndex, Focused?.Column ?? 0);
+	}
+
 	public void BeginAt(Cell cell, IReadOnlyList<InstrumentToneGridRow> rows)
 	{
 		Validate(cell, rows);
