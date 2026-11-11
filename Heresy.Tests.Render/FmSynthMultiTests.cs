@@ -1130,12 +1130,17 @@ public sealed class FmSynthMultiTests
         worker.Fault.Should().BeNull();
     }
 
-    [TestCase(160, false)]
-    [TestCase(200, false)]
-    [TestCase(160, true)]
-    [TestCase(200, true)]
+    [TestCase(160, false, false, false)]
+    [TestCase(200, false, false, false)]
+    [TestCase(160, true, false, false)]
+    [TestCase(200, true, false, false)]
+    [TestCase(160, true, true, false)]
+    [TestCase(200, true, true, false)]
+    [TestCase(160, true, true, true)]
+    [TestCase(200, true, true, true)]
     public void InstrumentSelectedSampleRetainsVolumeReleaseAcrossMixedMultiOnsetEdit(
-        int noteOffFrame, bool separateFrozenInstrumentRevision)
+        int noteOffFrame, bool separateFrozenInstrumentRevision,
+        bool unrelatedToneEdit, bool higherSelectedTone)
     {
         // InstrumentSound flattens to a terminal SampleSound and selects
         // an invocation-owned Volume envelope. An otherwise independent
@@ -1207,7 +1212,19 @@ public sealed class FmSynthMultiTests
             SourceId = sampleId,
             VolumeEnvelopeId = releaseId,
         });
-        definition.ToneTable.Add(0);
+        // Both revisions have an *unselected* tone. Editing it must not
+        // rephase/restart the held Sample. Also exercise a Note On bound
+        // to table index 12 instead of assuming all notes use index 0.
+        definition.ToneSpecifications.Add(
+            new Heresy.Core.Instruments.ToneSpecification
+            {
+                SourceId = sampleId,
+                PitchMultiplier = 1.15,
+            });
+        for (int i = 0; i <= 12; i++)
+            definition.ToneTable.Add(-1);
+        definition.ToneTable[0] = higherSelectedTone ? 1 : 0;
+        definition.ToneTable[12] = higherSelectedTone ? 0 : 1;
         Heresy.Render.Instruments.InstrumentSound instrument =
             new(definition, sampleResolver, envelope);
         SourceResolver instrumentResolver = new(instrumentId, instrument);
@@ -1222,7 +1239,16 @@ public sealed class FmSynthMultiTests
                 SourceId = sampleId,
                 VolumeEnvelopeId = releaseId,
             });
-        nextDefinition.ToneTable.Add(0);
+        nextDefinition.ToneSpecifications.Add(
+            new Heresy.Core.Instruments.ToneSpecification
+            {
+                SourceId = sampleId,
+                PitchMultiplier = unrelatedToneEdit ? 1.65 : 1.15,
+            });
+        for (int i = 0; i <= 12; i++)
+            nextDefinition.ToneTable.Add(-1);
+        nextDefinition.ToneTable[0] = higherSelectedTone ? 1 : 0;
+        nextDefinition.ToneTable[12] = higherSelectedTone ? 0 : 1;
         Heresy.Render.Instruments.InstrumentSound nextInstrument =
             separateFrozenInstrumentRevision
                 ? new(nextDefinition, revisedSampleResolver, envelope)
@@ -1247,7 +1273,9 @@ public sealed class FmSynthMultiTests
         FmSynthSound next = new(Graph(true), envelope,
             soundResolver: nextInstrumentResolver, enableLiveMultiExpansion: true);
         RenderContext context = Mono();
-        SoundState held = previous.CreateState(), reference = previous.CreateState();
+        double notePitch = higherSelectedTone ? 2.0 : 1.0;
+        SoundState held = previous.CreateInvocation(notePitch, 1.0).State;
+        SoundState reference = previous.CreateInvocation(notePitch, 1.0).State;
         held.SetNoiseSeed(21);
         reference.SetNoiseSeed(21);
         previous.Render(context, held, 0, 128, new float[128]);
@@ -1255,7 +1283,7 @@ public sealed class FmSynthMultiTests
 
         previous.TryPrepareRunningState(next, held).Should().BeFalse();
         previous.RequestMultiExpansionPreparation(next, held).Should().BeTrue(
-            "Instrument-selected Samples with a matching stateless Volume envelope may follow the oscillator's prepared transition");
+            "editing an *unselected* Instrument tone must not block a frozen held Sample's prepared oscillator transition");
         using FirPreparationScheduler worker = new();
         previous.QueuePendingFirControls(held, worker);
         Assert.That(SpinWait.SpinUntil(
