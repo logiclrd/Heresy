@@ -100,10 +100,8 @@ public sealed class FmSynthCompoundShapeLiveTests
         SoundState held = original.CreateState();
         original.Render(context, held, 0, 128, new float[128]);
         float[] expected = new float[1], actual = new float[1];
-        revised.Render(context, revised.CreateState(), 0, 129, new float[129]);
         // Current frame samples depend on the phase accumulated *before*
         // the retune, not the new frequency which advances it afterwards.
-        original.Render(context, original.CreateState(), 0, 129, new float[129]);
         SoundState referenceState = original.CreateState();
         original.Render(context, referenceState, 0, 128, new float[128]);
         original.Render(context, referenceState, 128, 1, expected);
@@ -115,17 +113,43 @@ public sealed class FmSynthCompoundShapeLiveTests
             "frequency-only changes must not freeze an Operator output");
     }
 
+    [Test]
+    public void OrdinaryCompoundPlaybackDoesNotAddAnAuditionOnlyShapeFade()
+    {
+        FmSynthSound oldSound = Sound(FmOperatorKind.Add,
+            FmOscillatorWaveform.Sine, audition: false);
+        FmSynthSound next = Sound(FmOperatorKind.Add,
+            FmOscillatorWaveform.Square, audition: false);
+        RenderContext context = Mono();
+        SoundState held = oldSound.CreateState();
+        float[] previous = new float[128], expected = new float[1],
+            actual = new float[1];
+        oldSound.Render(context, held, 0, previous.Length, previous);
+        SoundState fresh = next.CreateState();
+        next.Render(context, fresh, 0, 128, new float[128]);
+        next.Render(context, fresh, 128, 1, expected);
+
+        oldSound.TryPrepareRunningState(next, held).Should().BeTrue();
+        oldSound.CommitPreparedRunningState(next, held);
+        next.Render(context, held, 128, 1, actual);
+        actual[0].Should().BeApproximately(expected[0], 2e-6f,
+            "ordinary playback must not inherit audition-only smoothing");
+        Math.Abs(actual[0] - previous[^1]).Should().BeGreaterThan(0.1f,
+            "the regular output should not be held at the prior sample");
+    }
+
     private static FmSynthSound Sound(
         FmOperatorKind operation,
         FmOscillatorWaveform firstWaveform,
         double curvature = 0.0, double minimum = -1.0,
-        double maximum = 1.0, double firstHz = 400.0)
+        double maximum = 1.0, double firstHz = 400.0,
+        bool audition = true)
         => new(new FmSynthGraph([
             new FmOscillatorNode(1, firstWaveform, firstHz,
                 minimum: minimum, maximum: maximum, curvature: curvature),
             new FmOscillatorNode(2, FmOscillatorWaveform.Sine, 233.0),
             new FmOperatorNode(3, operation, [1, 2]),
-        ], 3), new EmptyEnvelopes(), enableLiveMultiExpansion: true);
+        ], 3), new EmptyEnvelopes(), enableLiveMultiExpansion: audition);
 
     private static RenderContext Mono() => new(new RenderConfiguration(48000,
     [
