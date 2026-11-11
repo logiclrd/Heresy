@@ -3588,3 +3588,19 @@ retained note-clock/oscillator-phase expectations and no managed PCM
 allocations cover the positive behaviour. CI green and real-device
 listening are separate qualifications. This slice does not complete
 the full live-property milestone; PR #12 remains draft.
+
+
+### Manual listening — slice 52 Node Envelope switching (2026-11-11)
+
+The user physically tested the suggested running Synth **Test** note
+with an audible Node Envelope on a Multiply Operator, changing the
+Envelope node's selected Envelope object while the note continued.
+The user reported the live switching **passed**: the note responded
+as expected as the different Envelope objects were selected.
+This is **physical listening acceptance of the held-note
+selected-Envelope-object path**, alongside the CI math and phase
+regressions for the 64-frame transition. It does not independently
+establish manual testing of editing shared node points in place,
+pitch-only Envelopes, active-release rejection, or every nested
+Source/Filter/Multi topology. Those narrower cases remain verified
+only to the extent documented by automated tests.
