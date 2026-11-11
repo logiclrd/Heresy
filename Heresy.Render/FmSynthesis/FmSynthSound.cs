@@ -726,9 +726,6 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	private readonly PreparedToneFilterStageFactory? _preparedChildFilterFactory;
 	private readonly bool _hasSources;
 	private readonly double _maximumAudioPathTailSeconds;
-	// Prepared once: envelopes that genuinely extend each independent
-	// oscillator/constant audio branch through Note Off.
-	private readonly int[][] _audioReleaseEnvelopeIndices;
 	private const double C4FrequencyHz = 440.0 * 0.59460355750136053336; // 2^(-9/12)
 
 	public FmSynthSound(
@@ -879,7 +876,6 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				return CountMultiVoices(audio);
 			return 1;
 		}
-		_audioReleaseEnvelopeIndices = BuildAudioReleaseEnvelopeDependencies();
 		_maximumAudioPathTailSeconds = GetMaximumAudioPathTailSeconds();
 
 		void Visit(int id)
@@ -2273,78 +2269,6 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					// Subgraph's internal filters already own their tails.
 					break;
 			}
-		}
-	}
-
-	/// <summary>
-	/// An Envelope on an Add sibling is an independent audible branch;
-	/// it must not extend a bare oscillator. An Envelope in the oscillator's
-	/// frequency ancestry or another factor of a downstream Multiply *does*
-	/// keep that oscillator audible through the Envelope's release.
-	/// Precompute these graph relationships outside the PCM path.
-	/// </summary>
-	private int[][] BuildAudioReleaseEnvelopeDependencies()
-	{
-		int[][] dependencies = new int[_nodes.Length][];
-		for (int target = 0; target < _nodes.Length; target++)
-		{
-			CompiledNode node = _nodes[target];
-			if (node.Definition is not (FmOscillatorNode or FmConstantNode or FmNoiseNode or FmMultiNode))
-			{
-				dependencies[target] = [];
-				continue;
-			}
-			HashSet<int> related = [];
-			if (node.Definition is FmOscillatorNode)
-				foreach (int input in node.InputIndices)
-					CollectEnvelopes(input, related, audioOnly: false);
-
-			// A target's signal can be carried through Add, Multiply and
-			// Filter *audio* connections. Source/oscillator pitch ports are
-			// control paths, not audible ancestry for this traversal.
-			bool[] carries = new bool[_nodes.Length];
-			carries[target] = true;
-			for (int index = target + 1; index < _nodes.Length; index++)
-			{
-				CompiledNode other = _nodes[index];
-				carries[index] = other.Definition switch
-				{
-					FmOperatorNode => other.InputIndices.Any(input => carries[input]),
-					FmFilterNode filter when filter.AudioInputNodeId.HasValue =>
-						carries[other.InputIndices[0]],
-					_ => false,
-				};
-				if (other.Definition is not FmOperatorNode
-					{ Operation: FmOperatorKind.Multiply } || !carries[index])
-					continue;
-				foreach (int input in other.InputIndices)
-					if (!carries[input])
-						CollectEnvelopes(input, related, audioOnly: true);
-			}
-			dependencies[target] = [.. related];
-		}
-		return dependencies;
-
-		void CollectEnvelopes(int index, HashSet<int> found, bool audioOnly)
-		{
-			CompiledNode node = _nodes[index];
-			if (node.Definition is FmEnvelopeNode)
-				found.Add(index);
-			else if (node.Definition is FmFilterNode filter)
-			{
-				if (audioOnly)
-				{
-					if (filter.AudioInputNodeId.HasValue)
-						CollectEnvelopes(node.InputIndices[0], found, true);
-				}
-				else
-					foreach (int input in node.InputIndices)
-						CollectEnvelopes(input, found, false);
-			}
-			else if (node.Definition is FmOperatorNode || !audioOnly
-				&& node.Definition is (FmOscillatorNode or FmSoundSourceNode))
-				foreach (int input in node.InputIndices)
-					CollectEnvelopes(input, found, audioOnly);
 		}
 	}
 
