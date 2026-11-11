@@ -84,6 +84,21 @@ Do not reintroduce completed-task checklists here.
   physical-device and codec evidence is still required. See
   [audio output](audio-output.md) and [export workflow](export-workflow.md).
 
+## Desktop UI — keyboard shortcuts
+
+- [ ] **Support F2 as a keyboard shortcut for Rename wherever appropriate.**
+  For renameable items that already offer a context-menu **Rename** action
+  (for example, via right-click), pressing **F2** with the item selected and
+  keyboard focus in the relevant list/tree/editor should invoke the same
+  rename operation. Reuse the existing rename command, editing UI,
+  validation, cancellation and commit/persistence behaviour rather than
+  introducing a separate rename path. Do not intercept F2 while typing in
+  text fields or in contexts where it already has a distinct intended
+  meaning; do not enable renaming for non-renameable items. Audit applicable
+  item views and verify selection/focus, Enter/ESC, keyboard-only use and
+  existing context-menu behaviour on the supported desktops. See
+  [UI workflow](user-interface-workflows.md).
+
 ## Synth editor — UI defects
 
 - [ ] **Distinguish Caps Lock from Shift in Synth numeric text input under
