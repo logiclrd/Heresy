@@ -35,6 +35,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			OriginalFrequencyHz = originalFrequencyHz;
 			BoundInstrumentToneSlot = boundInstrumentToneSlot;
 			Pitch = new FmSourcePitchCurve();
+			ActiveVolumeEnvelope = invocation.Configuration.Envelopes.Volume;
 			invocation.State.PitchTrajectory.SetCurve(0, Pitch);
 		}
 		public SoundInvocation Invocation { get; }
@@ -63,6 +64,81 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		public ResonantFilterState? FilterEnvelopeState { get; set; }
 		public bool InputFinished { get; set; }
 		public long? EndFrame { get; set; }
+
+		// The Instrument invocation's Sample/PitchTrajectory remain physically
+		// owned by the original note. Only an independently frozen node Volume
+		// function can be replaced in the first bounded live-edit case.
+		public IEnvelopeCurve? ActiveVolumeEnvelope { get; private set; }
+		private IEnvelopeCurve? _outgoingVolumeEnvelope;
+		private double? _outgoingFrozenVolumeLevel;
+		private double _lastVolumeLevel = 1.0;
+		private long _volumeFadeStart = -1;
+
+		public void AdoptPreparedNodeVolume(NodeEnvelopeCurve next, long frame)
+		{
+			if (_volumeFadeStart >= 0
+				&& frame - _volumeFadeStart < MultiEditTransitionFrames)
+			{
+				// A second edit in flight begins at the last audible gain;
+				// don't build an unbounded chain of stale envelope objects.
+				_outgoingVolumeEnvelope = null;
+				_outgoingFrozenVolumeLevel = _lastVolumeLevel;
+			}
+			else
+			{
+				_outgoingVolumeEnvelope = ActiveVolumeEnvelope;
+				_outgoingFrozenVolumeLevel = null;
+			}
+			ActiveVolumeEnvelope = next;
+			_volumeFadeStart = frame;
+		}
+
+		public double EvaluateVolume(
+			long frame, long envelopeFrame, int sampleRate, long? released)
+		{
+			double gain = ActiveVolumeEnvelope?.GetValue(
+				envelopeFrame, sampleRate, released) ?? 1.0;
+			if (_volumeFadeStart >= 0)
+			{
+				long elapsed = frame - _volumeFadeStart;
+				if (elapsed >= MultiEditTransitionFrames)
+				{
+					_outgoingVolumeEnvelope = null;
+					_outgoingFrozenVolumeLevel = null;
+					_volumeFadeStart = -1;
+				}
+				else if (elapsed >= 0)
+				{
+					double oldGain = _outgoingFrozenVolumeLevel
+						?? _outgoingVolumeEnvelope?.GetValue(
+							envelopeFrame, sampleRate, released) ?? gain;
+					double weight = MultiTransitionWeight(_volumeFadeStart, frame);
+					gain = oldGain * (1.0 - weight) + gain * weight;
+				}
+			}
+			_lastVolumeLevel = gain;
+			return gain;
+		}
+
+		/// <summary>A shorter edited release cannot erase the retiring
+		/// curve's audible contribution during its bounded gain fade.</summary>
+		public long? GetOutgoingVolumeReleaseEnd(
+			long envelopeNoteOffFrame, int sampleRate)
+		{
+			if (_volumeFadeStart < 0)
+				return null;
+			long fadeEnd = _volumeFadeStart >= long.MaxValue - MultiEditTransitionFrames
+				? long.MaxValue : _volumeFadeStart + MultiEditTransitionFrames;
+			if (_outgoingFrozenVolumeLevel is double held)
+				return held != 0.0 ? fadeEnd : null;
+			if (_outgoingVolumeEnvelope is not { } outgoing)
+				return null;
+			long? end = outgoing.GetEndActiveFrameExclusiveAfterNoteOff(
+				envelopeNoteOffFrame, sampleRate);
+			return end.HasValue
+				? Math.Min(fadeEnd, checked(end.Value - EnvelopeFrameOffset))
+				: fadeEnd;
+		}
 	}
 
 
@@ -723,6 +799,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				// never in CreateInvocation or EvaluateFrame.
 				soundResolver!.TryResolve(sourceNode.SourceId,
 					mixdown: false, out sourceSound);
+				if (_allowMultiExpansion && ordered.Count == 1
+					&& sourceSound is InstrumentSound directInstrument)
+					directInstrument.PrepareDirectSampleVolumesForLiveAudition();
 			}
 			FmSynthSound? multiInput = node is FmMultiNode { InputNodeId: int multiId }
 				? new FmSynthSound(new FmSynthGraph(graph.Nodes, multiId),
@@ -1609,11 +1688,68 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		replacement.BeginPreparedOnsetFade(outgoing, frame);
 	}
 
+	/// <summary>For the first Instrument-envelope migration, every potentially
+	/// expensive Sample/curve lookup was frozen when the replacement Synth
+	/// was compiled. A single direct Source avoids partial branch migration.
+	/// Its selected tone, PCM identity, release policy and original note clock
+	/// remain unchanged; only the immutable node Volume function is replaced.
+	/// Unsupported, ended, filtered or compound voices keep their old curve
+	/// without preventing otherwise compatible Synth scalar updates.</summary>
+	private bool TryGetLiveDirectInstrumentVolume(
+		FmSynthSound next, FmSynthState live,
+		out SourceVoice? continuing, out NodeEnvelopeCurve? edited)
+	{
+		continuing = null;
+		edited = null;
+		if (!_allowMultiExpansion || !next._allowMultiExpansion
+			|| _nodes.Length != 1 || next._nodes.Length != 1
+			|| _outputIndex != 0 || next._outputIndex != 0
+			|| _nodes[0].Definition is not FmSoundSourceNode oldSource
+			|| next._nodes[0].Definition is not FmSoundSourceNode newSource
+			|| oldSource.SourceId != newSource.SourceId
+			|| _nodes[0].Source is not InstrumentSound oldInstrument
+			|| next._nodes[0].Source is not InstrumentSound newInstrument
+			|| live.Sources[0] is not { } voice
+			|| voice.Sound is not SampleSound currentSample
+			|| voice.Invocation.State is not SampleSoundState sampleState
+			|| !sampleState.ReleaseIsControlledByVolumeEnvelope
+			|| voice.InputFinished
+			|| voice.EndFrame is long end && end <= live.NextFrame
+			|| sampleState.NaturalEndFrameExclusive is long natural
+				&& natural <= live.NextFrame
+			|| voice.Filters is not null
+			|| voice.Invocation.ToneFilters is not null
+			|| voice.FilterEnvelopeState is not null
+			|| voice.Invocation.Configuration.Envelopes.Pitch is not null
+			|| voice.Invocation.Configuration.Envelopes.Panning is not null
+			|| voice.Invocation.Configuration.Envelopes.Filter is not null
+			|| voice.ActiveVolumeEnvelope is not NodeEnvelopeCurve existing
+			|| !oldInstrument.CanShareFrozenBoundToneWith(
+				newInstrument, voice.BoundInstrumentToneSlot)
+			|| !newInstrument.TryGetPreparedDirectSampleVolume(
+				voice.BoundInstrumentToneSlot, out SampleSound? newSample,
+				out NodeEnvelopeCurve? newCurve)
+			|| newSample is null || newCurve is null
+			|| !currentSample.CanSharePreparedOnsetTimelineWith(newSample)
+			|| currentSample.NewNotePolicy != newSample.NewNotePolicy
+			|| existing.HasSameFrozenShapeAs(newCurve))
+			return false;
+		continuing = voice;
+		edited = newCurve;
+		return true;
+	}
+
 	/// <summary>Commit only an entirely preflighted state tree. No validation
 	/// after this boundary can leave multiple Filters partially updated.</summary>
 	public void CommitPreparedRunningState(FmSynthSound next, SoundState state)
 	{
 		FmSynthState live = ValidateState(state);
+		// This is a single-source, snapshot-proved transition. Everything
+		// referenced here is already frozen: no tone selection, asset lookup,
+		// new SampleSoundState, or worker allocation occurs in PCM.
+		if (TryGetLiveDirectInstrumentVolume(next, live,
+			out SourceVoice? volumeVoice, out NodeEnvelopeCurve? volumeCurve))
+			volumeVoice!.AdoptPreparedNodeVolume(volumeCurve!, live.NextFrame);
 		// Shape-only discontinuities are audible when an inspector replaces
 		// a single oscillator's Waveform, Curvature or Vmin/Vmax. Preserve
 		// the previous actual PCM value and smoothly join the prepared new
@@ -2962,9 +3098,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				new ResonantFilterParameters(cutoff, 0));
 			voice.FilterEnvelopeState.ProcessFrame(mono);
 		}
-		if (voice.Invocation.Configuration.Envelopes.Volume is { } envelope)
-			mono[0] *= (float)envelope.GetValue(
-				envelopeFrame, sampleRate, released);
+		if (voice.ActiveVolumeEnvelope is not null)
+			mono[0] *= (float)voice.EvaluateVolume(
+				frame, envelopeFrame, sampleRate, released);
 		return mono[0];
 	}
 
@@ -3024,7 +3160,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			// their Volume envelope has released. The envelope can itself
 			// prove a finite end, even for a looping/indefinite child.
 			if (state.NoteOffTime.HasValue
-				&& voice.Invocation.Configuration.Envelopes.Volume is { } volume)
+				&& voice.ActiveVolumeEnvelope is { } volume)
 			{
 				long release = FrameTime.Ceiling(state.NoteOffTime.Value,
 					context.Configuration.SampleRate);
@@ -3037,6 +3173,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					// envelope clock, not a replacement Multi's shifted one.
 					long envelopeEnd = checked(
 						volumeEnd.Value - voice.EnvelopeFrameOffset);
+					if (voice.GetOutgoingVolumeReleaseEnd(
+						checked(release + voice.EnvelopeFrameOffset),
+						context.Configuration.SampleRate) is long outgoingEnd)
+						envelopeEnd = Math.Max(envelopeEnd, outgoingEnd);
 					childEnd = childEnd.HasValue
 						? Math.Min(childEnd.Value, envelopeEnd)
 						: envelopeEnd;
