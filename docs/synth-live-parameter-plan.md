@@ -3519,3 +3519,72 @@ No precise numeric PCM curve measurement is claimed from the screenshot.
 The slice-51 bounded live-edit listening fixture is accepted, with
 the general all-nonstructural-properties TODO and draft/unmerged PR #12
 status unchanged.
+
+
+## Slice 52 — bounded live graph Node Envelope output changes
+
+The stateless Synth graph audition now supports **audible edits to frozen
+node-based Envelopes**, expanding the prior Oscillator/Constant/Operator
+output fade. A changed `FmEnvelopeNode.EnvelopeId`, or changes to the
+shared Node Envelope object's frozen curve under an unchanged ID,
+previously passed the wire-shape preflight and used the revised curve
+immediately at the original note clock. When the Envelope was used
+as **Volume** (for example, `Multiply[Oscillator, Envelope]`), this
+could produce a large first-frame jump even though the running
+Oscillator phase did not rewind.
+
+**Bounded listening contract:** When a held live-audition graph is
+composed entirely of **Oscillator, Constant, Operator and Envelope**
+nodes, and a directly audible frozen `NodeEnvelopeCurve` changes,
+fade the *final audible graph output* using the already established
+**64 output-frame cubic smoothstep** from the previous actual audible
+sample. Each existing Oscillator phase continues uninterrupted; the
+new curve evaluates on the note's original frame/time basis. A second
+edit mid-fade starts from the currently blended value. The prepared
+graph's **Operator audio-input traversal** distinguishes Envelopes
+that are audible themselves from Envelopes feeding only an Oscillator
+frequency multiplier: pitch-only edits retain immediate forward
+frequency integration without an unnecessary audible fade.
+
+**Frozen-curve equivalence:** A full-song compilation often produces
+a new `NodeEnvelopeCurve` *object* representing the same authored
+points, sustain indices, loop mode and timings. Do not start a fade
+merely because object identities differ; compare via the existing
+`HasSameFrozenShapeAs` invariant. Scripted curve implementations
+remain outside this specific fade policy (identity-only equivalence);
+they are not silently treated as interchangeable with Node curves.
+Switching between separately bound Node Envelope IDs is handled
+when both resolved curves are valid.
+
+**Already-releasing note:** A live voice whose **Note Off has already
+started** may have an active release timeline and a downstream
+completion bound. Until an explicit dual-release state policy is
+designed, an edit changing an **audible** frozen Envelope in an
+otherwise eligible stateless graph is **rejected by whole-voice
+preflight** while Note Off is active. The old voice continues
+on its original curve/release origin; a future Note On uses the
+new revision. Unchanged equivalent curves and non-audible pitch
+controls are not rejected for this reason. An edit made while held
+can be adopted and then released later on the revised curve; edits
+during a just-started fade and the exact release-tail handoff remain
+distinct cases for future deeper testing.
+
+**Strict isolation:** The extra fade remains *audition only*. Normal
+Pattern playback/export uses original immediate authored values.
+No Source, Filter, Multi or compound Multi-generated graph is
+newly admitted, and no Sample playhead, Filter/Envelope state or
+extra PCM buffer is reconstructed in the realtime callback.
+Only frozen curve snapshots and scalar PCM state are examined.
+
+**Red-first regression:** New
+`FmSynthLiveGraphEnvelopeTests` demonstrated three failures before
+the fix in [CI #43043724316](https://github.com/logiclrd/Heresy/actions/runs/43043724316):
+(1) changed same-ID node Volume, (2) changed selected Node Envelope ID,
+and (3) rejection of an edited audible curve during a previously
+started release. Non-failing negative cases checked equivalent
+frozen wrappers, an Envelope used solely for Oscillator pitch
+control, and ordinary playback. Exact 64-frame render oracles,
+retained note-clock/oscillator-phase expectations and no managed PCM
+allocations cover the positive behaviour. CI green and real-device
+listening are separate qualifications. This slice does not complete
+the full live-property milestone; PR #12 remains draft.
