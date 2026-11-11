@@ -638,6 +638,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		// Preserve an external Multiply-envelope release through a Multi
 		// boundary without changing the inner subgraph's note-off event.
 		public long? InheritedAudioReleaseEnd { get; set; }
+		public bool HasReleasingSubtree { get; set; }
+		public long? ReleasingSubtreeEnd { get; set; }
 
 		public void Reset(int sampleRate)
 		{
@@ -683,6 +685,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			NextFrame = 0;
 			ChildEndChanged = false;
 			InheritedAudioReleaseEnd = null;
+			HasReleasingSubtree = false;
+			ReleasingSubtreeEnd = null;
 			SampleRate = sampleRate;
 		}
 	}
@@ -1829,6 +1833,85 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					j < ratios.Length ? ratios[j] : voices[j].RatioAt(live.NextFrame),
 					j < ratios.Length ? mix : 0.0, live.NextFrame);
 		}
+	}
+
+	/// <summary>Release is a property of the selected active graph, not
+	/// the mere presence of an envelope and not just the output gain.
+	/// Source-bound Instrument tones contribute only their selected curves;
+	/// dormant Multi reserve children cannot make a note sustained.</summary>
+	public bool HasSustainRelease(SoundState state)
+	{
+		FmSynthState active = ValidateState(state);
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			if (_nodes[i].Envelope?.HasSustainLoop == true)
+				return true;
+			if (active.Sources[i] is { } source
+				&& (HasSourceSustainRelease(source)
+					|| source.Sound.HasSustainRelease(source.Invocation.State)))
+				return true;
+			foreach (MultiVoice voice in active.Multis[i])
+				if (voice.HasStarted
+					&& voice.Sound.HasSustainRelease(voice.Invocation.State))
+					return true;
+		}
+		return false;
+	}
+
+	private static bool HasSourceSustainRelease(SourceVoice source)
+	{
+		EnvelopeConfigurationSnapshot curves = source.Invocation.Configuration.Envelopes;
+		return source.ActiveVolumeEnvelope?.HasSustainLoop == true
+			|| curves.Pitch?.HasSustainLoop == true
+			|| curves.Panning?.HasSustainLoop == true
+			|| curves.Filter?.HasSustainLoop == true;
+	}
+
+	/// <summary>Latest known completion of all active sustain loops in
+	/// this subtree. Null is an unknown/unbounded release, not silence.
+	/// The child states and EOFs were prepared before this query.</summary>
+	private long? GetReleasingSubtreeEnd(
+		FmSynthState state, long offFrame, int sampleRate)
+	{
+		long latest = checked(offFrame + 1);
+		bool unknown = false;
+		void Include(long? end)
+		{
+			if (!end.HasValue) unknown = true;
+			else latest = Math.Max(latest, end.Value);
+		}
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			IEnvelopeCurve? nodeCurve = _nodes[i].Envelope;
+			if (nodeCurve?.HasSustainLoop == true)
+				Include(nodeCurve.GetEndActiveFrameExclusiveAfterNoteOff(
+					offFrame, sampleRate));
+			if (state.Sources[i] is { } source)
+			{
+				EnvelopeConfigurationSnapshot curves =
+					source.Invocation.Configuration.Envelopes;
+				long envelopeOff = checked(offFrame + source.EnvelopeFrameOffset);
+				void IncludeSource(IEnvelopeCurve? curve)
+				{
+					if (curve?.HasSustainLoop != true) return;
+					long? end = curve.GetEndActiveFrameExclusiveAfterNoteOff(
+						envelopeOff, sampleRate);
+					Include(end.HasValue
+						? checked(end.Value - source.EnvelopeFrameOffset) : null);
+				}
+				IncludeSource(source.ActiveVolumeEnvelope);
+				IncludeSource(curves.Pitch);
+				IncludeSource(curves.Panning);
+				IncludeSource(curves.Filter);
+				if (source.Sound.HasSustainRelease(source.Invocation.State))
+					Include(source.EndFrame);
+			}
+			foreach (MultiVoice voice in state.Multis[i])
+				if (voice.HasStarted
+					&& voice.Sound.HasSustainRelease(voice.Invocation.State))
+					Include(voice.SilenceEnd);
+		}
+		return unknown ? null : latest;
 	}
 
 	public NoteConfigurationSnapshot SnapshotNoteConfiguration()
