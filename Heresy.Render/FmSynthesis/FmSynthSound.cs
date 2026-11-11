@@ -2691,8 +2691,15 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			/ voice.OriginalOuterFactor;
 		long envelopeFrame = voice.EnvelopeFrameOffset == 0
 			? frame : checked(frame + voice.EnvelopeFrameOffset);
-		long? released = noteOffFrame.HasValue
-			&& envelopeFrame >= noteOffFrame.Value ? noteOffFrame : null;
+		// The enclosing Multi displaces Note Off by its local skip.
+		// Shift that event into the same original Instrument envelope
+		// clock as the preserved activeFrame before evaluating release.
+		long? envelopeNoteOffFrame = noteOffFrame.HasValue
+			? checked(noteOffFrame.Value + voice.EnvelopeFrameOffset)
+			: null;
+		long? released = envelopeNoteOffFrame.HasValue
+			&& envelopeFrame >= envelopeNoteOffFrame.Value
+			? envelopeNoteOffFrame : null;
 		// Pitch envelopes are in octaves, as in PlaybackVoice.
 		if (voice.Invocation.Configuration.Envelopes.Pitch is { } pitchEnvelope)
 			multiplier *= Math.Pow(2.0,
@@ -2846,7 +2853,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				long release = FrameTime.Ceiling(state.NoteOffTime.Value,
 					context.Configuration.SampleRate);
 				long? volumeEnd = volume.GetEndActiveFrameExclusiveAfterNoteOff(
-					release, context.Configuration.SampleRate);
+					checked(release + voice.EnvelopeFrameOffset),
+					context.Configuration.SampleRate);
 				if (volumeEnd.HasValue)
 				{
 					// The Instrument's release is expressed in its original
