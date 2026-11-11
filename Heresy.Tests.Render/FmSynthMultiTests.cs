@@ -41,10 +41,10 @@ public sealed class FmSynthMultiTests
             ], 1);
         FmSynthSound original = new(
             Graph(FmOscillatorWaveform.Sine, 0, -1, 1),
-            new EmptyEnvelopes());
+            new EmptyEnvelopes(), enableLiveMultiExpansion: true);
         FmSynthSound revised = new(
             Graph(newWaveform, curvature, minimum, maximum),
-            new EmptyEnvelopes());
+            new EmptyEnvelopes(), enableLiveMultiExpansion: true);
         RenderContext context = Mono();
         SoundState held = original.CreateState();
         float[] originalPcm = new float[128], actual = new float[128],
@@ -81,7 +81,8 @@ public sealed class FmSynthMultiTests
         FmSynthSound Sound(FmOscillatorWaveform waveform) => new(
             new FmSynthGraph([
                 new FmOscillatorNode(1, waveform, 400.0),
-            ], 1), new EmptyEnvelopes());
+            ], 1), new EmptyEnvelopes(),
+            enableLiveMultiExpansion: true);
         FmSynthSound sine = Sound(FmOscillatorWaveform.Sine);
         FmSynthSound square = Sound(FmOscillatorWaveform.Square);
         FmSynthSound saw = Sound(FmOscillatorWaveform.Sawtooth);
@@ -121,7 +122,8 @@ public sealed class FmSynthMultiTests
         FmSynthSound Sound(double hz) => new(
             new FmSynthGraph([
                 new FmOscillatorNode(1, FmOscillatorWaveform.Sine, hz),
-            ], 1), new EmptyEnvelopes());
+            ], 1), new EmptyEnvelopes(),
+            enableLiveMultiExpansion: true);
         FmSynthSound original = Sound(400.0);
         FmSynthSound revised = Sound(800.0);
         RenderContext context = Mono();
