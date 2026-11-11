@@ -2902,3 +2902,72 @@ regressions, source reassignment, selected Filter and nested
 Instrument DSP migration, dense-voice throughput and physical
 click/underrun listening. The all-properties TODO remains open;
 PR #12 stays **draft and unmerged**.
+
+
+## Forty-fourth slice: transitive shared-object publication through Instrument tone references
+
+This slice addresses a **real editor-to-transport notification gap**
+identified by the property audit, without expanding historical
+Sample, Envelope or Filter DSP state migration.
+
+Previously, `SongPlaybackTransport.PublishSharedObjectEditAsync`
+found Synths with direct Envelope/Filter graph nodes and their
+transitive Synth Source parents, but did not traverse an
+`InstrumentDefinition` or `ScriptInstrumentDefinition` referenced
+by a Synth Source. Editing a shared node/script Envelope or Filter
+used exclusively by an Instrument tone could leave that Synth's
+current frozen publication overlay stale. Likewise,
+`PublishSynthEditAsync` could miss parent Synths when the edited
+child Synth appeared only inside an Instrument tone.
+
+**New reverse-dependency traversal (control thread, not PCM):**
+
+- For each changed ObjectId, follow a declared Synth Source,
+  Envelope or Filter reference as before, plus **all** tone
+  specifications on data or scripted Instruments. Every tone
+  `SourceId`, `VolumeEnvelopeId`, `PitchEnvelopeId`,
+  `PanningEnvelopeId`, `FilterEnvelopeId` and per-tone
+  `FilterConfiguration.DefinitionId` can connect the dependency.
+  Unselected tones remain part of this conservative authoring
+  dependency analysis; dynamic script selectors do not need
+  to execute to establish the declared references.
+- Recursively follow nested Instruments and Synth Sources, with a
+  visited set to avoid repeated traversal. Instrument wrappers
+  are intermediate nodes and never treated as publishable Synths.
+  Only *reachable* Synth definitions are prepared/enqueued.
+- Discovery order is not always valid publication order: if a
+  parent Synth directly references the changed shared Envelope
+  while also sourcing a child Synth through an Instrument, a
+  breadth-first walk could find the parent before the child.
+  A second traversal therefore visits only affected upstream
+  Source dependencies **before appending each Synth**. This
+  preserves child-before-parent overlay publication even when
+  the edited object has multiple distinct dependency paths.
+- Existing per-`AudioRevision` deduplication, one frozen
+  `SongDocumentSnapshot` per notification, ordered control
+  publication, no-session no-op behaviour, unrelated Synth
+  exclusion and no audio-session restart remain unchanged.
+
+**Acceptance tests:** a matrix of data vs. scripted Instruments
+and every one of the four tone Envelope fields plus the tone
+Filter field (10 scenarios). Each uses a shared object reachable
+through two nested Instruments and a Synth parent, plus a separate
+direct Synth consumer and an unrelated Synth. Tests require the
+direct Synth, Instrument-sourcing Synth and its parent to be
+published in dependency order, exactly once per revision, with
+no session restart; no audio session is opened merely to handle
+an edit. Additional cases cover editing a child Synth under
+an Instrument and a parent with **both** direct and
+Instrument-mediated dependency paths, where naive breadth-first
+publication would put the parent first.
+
+**Important limitation:** this slice fixes *which Synth revisions
+are prepared and published*, not whether an existing
+Instrument-selected Sample note may safely replace its already
+captured Volume/Pitch/Panning/Filter histories after an actual
+shared-object edit. Incompatible existing notes remain on their
+old generation, and freshly started notes see the new frozen
+dependency graph. Safe held-state migration, full UI-to-PCM
+acceptance, Filter parameter coverage and hardware listening
+remain open. Do not close the all-properties TODO or merge
+draft PR #12 on the strength of routing coverage alone.
