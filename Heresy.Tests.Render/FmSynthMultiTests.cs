@@ -1246,6 +1246,88 @@ public sealed class FmSynthMultiTests
         worker.Fault.Should().BeNull();
     }
 
+    [TestCase(1.125)]
+    [TestCase(0.875)]
+    public void ChangedInstrumentToneMapCannotRephaseButDoesNotStarveScalarEdit(
+        double newTonePitch)
+    {
+        // Distinct frozen wrappers alone must not prove equivalence: a
+        // different selected tone pitch changes the source binding.
+        // Refuse the hypothetical phase transition, but publish an
+        // independent Constant parameter change without restarting the
+        // original Sample/Instrument.
+        ObjectId sampleId = (ObjectId)7660U;
+        ObjectId instrumentId = (ObjectId)7661U;
+        float[] pcm = Enumerable.Range(0, 4096)
+            .Select(i => (float)(0.20 + 0.15 * Math.Sin(
+                2 * Math.PI * i / 71.0))).ToArray();
+        SampleSound sample = new(new SampleDefinition(sampleId,
+            "Guarded tone PCM", new ExternalAssetReference("guarded-tone.wav")),
+            new MemorySampleData(48000, 1, pcm));
+        SourceResolver sampleResolver = new(sampleId, sample);
+        Heresy.Core.Instruments.InstrumentDefinition Definition(double pitch)
+        {
+            Heresy.Core.Instruments.InstrumentDefinition definition =
+                new(instrumentId, "Guarded tone");
+            definition.ToneSpecifications.Add(
+                new Heresy.Core.Instruments.ToneSpecification
+                {
+                    SourceId = sampleId,
+                    PitchMultiplier = pitch,
+                });
+            definition.ToneTable.Add(0);
+            return definition;
+        }
+        Heresy.Render.Instruments.InstrumentSound oldInstrument =
+            new(Definition(1.0), sampleResolver, new EmptyEnvelopes());
+        Heresy.Render.Instruments.InstrumentSound changedInstrument =
+            new(Definition(newTonePitch), sampleResolver, new EmptyEnvelopes());
+        SourceResolver oldResolver = new(instrumentId, oldInstrument);
+        SourceResolver newResolver = new(instrumentId, changedInstrument);
+        FmSynthGraph Graph(bool randomized, double gain) => new([
+            new FmSoundSourceNode(1, instrumentId,
+                FmMultiNode.NeutralFrequencyHz),
+            new FmOscillatorNode(2, FmOscillatorWaveform.Sine, 1270),
+            new FmConstantNode(3, gain),
+            new FmOperatorNode(4, FmOperatorKind.Multiply, [2, 3]),
+            new FmOperatorNode(5, FmOperatorKind.Add, [1, 4]),
+            new FmMultiNode(6, 5, voiceCount: 2, detune: 0,
+                randomizePhase: randomized, cycleLength: 100,
+                gainCompensation: true),
+        ], 6);
+        FmSynthSound before = new(Graph(false, 0.0),
+            new EmptyEnvelopes(), soundResolver: oldResolver,
+            enableLiveMultiExpansion: true);
+        FmSynthSound unsafePhase = new(Graph(true, 0.18),
+            new EmptyEnvelopes(), soundResolver: newResolver,
+            enableLiveMultiExpansion: true);
+        FmSynthSound scalarOnly = new(Graph(false, 0.18),
+            new EmptyEnvelopes(), soundResolver: oldResolver,
+            enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState held = before.CreateState();
+        SoundState reference = before.CreateState();
+        held.SetNoiseSeed(21);
+        reference.SetNoiseSeed(21);
+        before.Render(context, held, 0, 128, new float[128]);
+        before.Render(context, reference, 0, 128, new float[128]);
+
+        before.RequestMultiExpansionPreparation(unsafePhase, held)
+            .Should().BeFalse(
+                "a changed selected tone pitch has no proven equivalent binding");
+        before.TryPrepareRunningState(unsafePhase, held).Should().BeTrue(
+            "unsafe oscillator rephase must not delay a compatible Constant edit");
+        before.CommitPreparedRunningState(unsafePhase, held);
+        before.TryPrepareRunningState(scalarOnly, reference).Should().BeTrue();
+        before.CommitPreparedRunningState(scalarOnly, reference);
+        float[] actual = new float[120], expected = new float[120];
+        unsafePhase.Render(context, held, 128, actual.Length, actual);
+        scalarOnly.Render(context, reference, 128, expected.Length, expected);
+        actual.Should().Equal(expected,
+            "the active Sample and oscillator keep their prior phase, while the Constant changes");
+        actual[0].Should().Be(expected[0]);
+    }
+
     [Test]
     public void ConnectedScalarModulatedSampleKeepsPositionWhileSiblingOscillatorRephases()
     {
