@@ -250,6 +250,71 @@ public sealed class NodeEnvelopePlaybackTests
 			"Pitch release completion or a Definite cut must end the note");
 	}
 
+	[TestCase(0.0, false)]
+	[TestCase(0.1, true)]
+	public void SynthInstrumentSourceFinishesAtPermanentZeroGainBeforePitchRelease(
+		double finalVolume, bool stillPlaying)
+	{
+		SongDocument song = new();
+		ObjectId sampleId = song.AllocateObjectId();
+		SampleDefinition sample = SampleDefinition.CreateImported(
+			sampleId, "Looped PCM", "constant.wav", ConstantSample());
+		sample.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 400);
+		song.Add(sample);
+		ObjectId volumeId = song.AllocateObjectId();
+		NodeEnvelopeDefinition volume = new(volumeId, "Final gain");
+		volume.ReplaceCurve([
+			new(TimeSpan.Zero, 1.0),
+			new(TimeSpan.FromMilliseconds(10), 1.0),
+			new(TimeSpan.FromMilliseconds(30), finalVolume),
+		], 1, 1, EnvelopeSustainLoopMode.Forward);
+		song.Add(volume);
+		ObjectId pitchId = song.AllocateObjectId();
+		NodeEnvelopeDefinition pitch = new(pitchId, "Long release");
+		pitch.ReplaceCurve([
+			new(TimeSpan.Zero, 0.0),
+			new(TimeSpan.FromMilliseconds(10), 0.0),
+			new(TimeSpan.FromMilliseconds(120), 0.0),
+		], 1, 1, EnvelopeSustainLoopMode.Forward);
+		song.Add(pitch);
+		ObjectId instrumentId = song.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Sustaining source");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = sampleId, VolumeEnvelopeId = volumeId,
+			PitchEnvelopeId = pitchId,
+		});
+		instrument.ToneTable.Add(0);
+		song.Add(instrument);
+		ObjectId synthId = song.AllocateObjectId();
+		song.Add(new FmSynthDefinition(synthId, "Graph Source",
+			new FmSynthGraph([
+				new FmSoundSourceNode(0, instrumentId,
+					FmMultiNode.NeutralFrequencyHz),
+			], 0)));
+		ObjectId patternId = song.AllocateObjectId();
+		song.Add(new ScriptPatternDefinition(patternId, "Zero gain retirement")
+		{
+			RowCount = 4, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({synthId.Value})); Off(0.5, 0);",
+		});
+		PreparedIncrementalPlaybackFactory factory = new(
+			new RenderConfiguration(1000,
+				[new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0)]));
+		using PreparedIncrementalPlaybackPlan plan = factory.Create(song, patternId);
+		float[] pcm = new float[320];
+		plan.Source.Render(100, pcm.AsSpan(0, 100));
+		Assert.That(plan.Session.GetChannelState(0).CurrentVoice is not null,
+			Is.EqualTo(stillPlaying),
+			"the post-filter Volume zero can retire this Source despite a longer Pitch release");
+		Assert.That(pcm.Skip(90).Take(10).Any(v => Math.Abs(v) > 0.02f),
+			Is.EqualTo(stillPlaying),
+			"a completed nonzero Volume gain remains audible");
+		plan.Source.Render(220, pcm.AsSpan(100, 220));
+		Assert.That(pcm.Skip(250), Is.All.Zero,
+			"the remaining Pitch release eventually retires");
+	}
+
 	private static byte[] ConstantSample()
 	{
 		const int frames = 400;
