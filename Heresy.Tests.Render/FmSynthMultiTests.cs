@@ -1359,7 +1359,10 @@ public sealed class FmSynthMultiTests
         FmSynthSound before = new(Graph(false, 0.0),
             new EmptyEnvelopes(), soundResolver: oldResolver,
             enableLiveMultiExpansion: true);
-        FmSynthSound unsafePhase = new(Graph(true, 0.18),
+        FmSynthSound unsafePhase = new(Graph(true, 0.0),
+            new EmptyEnvelopes(), soundResolver: newResolver,
+            enableLiveMultiExpansion: true);
+        FmSynthSound scalarUpdate = new(Graph(true, 0.18),
             new EmptyEnvelopes(), soundResolver: newResolver,
             enableLiveMultiExpansion: true);
         FmSynthSound scalarOnly = new(Graph(false, 0.18),
@@ -1391,12 +1394,17 @@ public sealed class FmSynthMultiTests
             requested.Should().BeFalse(
                 "a changed selected tone pitch has no proven equivalent binding");
         before.TryPrepareRunningState(unsafePhase, held).Should().BeTrue(
-            "incompatible prepared Instrument PCM must not delay the independent Constant edit");
+            "incompatible prepared Instrument PCM cannot permanently block publication");
         before.CommitPreparedRunningState(unsafePhase, held);
+        // A second, independent scalar revision must still publish after
+        // the refused onset. Its reference keeps the original phase.
+        unsafePhase.TryPrepareRunningState(scalarUpdate, held).Should().BeTrue(
+            "the rejected phase transition must not starve subsequent scalars");
+        unsafePhase.CommitPreparedRunningState(scalarUpdate, held);
         before.TryPrepareRunningState(scalarOnly, reference).Should().BeTrue();
         before.CommitPreparedRunningState(scalarOnly, reference);
         float[] actual = new float[120], expected = new float[120];
-        unsafePhase.Render(context, held, 128, actual.Length, actual);
+        scalarUpdate.Render(context, held, 128, actual.Length, actual);
         scalarOnly.Render(context, reference, 128, expected.Length, expected);
         actual.Should().Equal(expected,
             "the active Sample and oscillator keep their prior phase, while the Constant changes");
