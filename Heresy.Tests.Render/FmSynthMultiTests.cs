@@ -76,6 +76,72 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void SecondOscillatorShapeEditDuringFadeStartsFromTheCurrentAudibleValue()
+    {
+        FmSynthSound Sound(FmOscillatorWaveform waveform) => new(
+            new FmSynthGraph([
+                new FmOscillatorNode(1, waveform, 400.0),
+            ], 1), new EmptyEnvelopes());
+        FmSynthSound sine = Sound(FmOscillatorWaveform.Sine);
+        FmSynthSound square = Sound(FmOscillatorWaveform.Square);
+        FmSynthSound saw = Sound(FmOscillatorWaveform.Sawtooth);
+        RenderContext context = Mono();
+        SoundState held = sine.CreateState();
+        sine.Render(context, held, 0, 128, new float[128]);
+        sine.TryPrepareRunningState(square, held).Should().BeTrue();
+        sine.CommitPreparedRunningState(square, held);
+        float[] partial = new float[16], final = new float[100],
+            sawReference = new float[244];
+        square.Render(context, held, 128, 16, partial);
+
+        square.TryPrepareRunningState(saw, held).Should().BeTrue();
+        square.CommitPreparedRunningState(saw, held);
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        saw.Render(context, held, 144, final.Length, final);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
+        SoundState fresh = saw.CreateState();
+        saw.Render(context, fresh, 0, sawReference.Length, sawReference);
+        for (int i = 0; i < 64; i++)
+        {
+            double t = i / 64.0;
+            double weight = t * t * (3.0 - 2.0 * t);
+            float expected = (float)(partial[^1] * (1.0 - weight)
+                + sawReference[144 + i] * weight);
+            final[i].Should().BeApproximately(expected, 2e-6f,
+                "rapid successive shape edits must join the actual previous audible value");
+        }
+        final[0].Should().Be(partial[^1]);
+        for (int i = 64; i < final.Length; i++)
+            final[i].Should().Be(sawReference[144 + i]);
+    }
+
+    [Test]
+    public void OscillatorFrequencyOnlyEditKeepsTheExistingPhaseWithoutShapeFade()
+    {
+        FmSynthSound Sound(double hz) => new(
+            new FmSynthGraph([
+                new FmOscillatorNode(1, FmOscillatorWaveform.Sine, hz),
+            ], 1), new EmptyEnvelopes());
+        FmSynthSound original = Sound(400.0);
+        FmSynthSound revised = Sound(800.0);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        SoundState reference = original.CreateState();
+        original.Render(context, held, 0, 128, new float[128]);
+        original.Render(context, reference, 0, 129, new float[129]);
+        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, held);
+        float[] first = new float[1];
+        revised.Render(context, held, 128, 1, first);
+        float[] referenceBlock = new float[1];
+        // The value at this frame is determined by the preserved phase;
+        // the new frequency begins advancing it for subsequent frames.
+        original.Render(context, reference, 129, 1, referenceBlock);
+        first[0].Should().BeApproximately(
+            (float)Math.Sin(2 * Math.PI * (400.0 * 128 / 48000.0)), 2e-6f);
+    }
+
+    [Test]
     public void GainCompensationMeansArithmeticAverageNotAutomaticSummation()
     {
         FmSynthGraph avg = new([
