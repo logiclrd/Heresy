@@ -3741,3 +3741,33 @@ ordinary playback/export crossfade has been introduced. PR #12
 remains draft/unmerged; the all-nonstructural-property TODO
 remains open. Device listening for this Sample+Noise case is
 not yet reported.
+
+### Slice 54 — manual multi-property Sample and Noise audition (2026-11-11)
+
+The user extended the previously accepted looping Sample/Envelope/Constant
+Synth with an **attenuated White Noise** branch. The observed graph is:
+
+`Add[ Multiply[Source(Sample, Envelope-controlled multiplier), Constant],
+       Multiply[WhiteNoise, Constant] ]`
+
+The user tested **seven different editor changes** on the running
+Synth and reported that **all applied as expected**:
+
+1. **#1 Envelope:** change selected Envelope definition.
+2. **#2 Sample Source:** change base Frequency Hz.
+3. **#2 Sample Source:** toggle Exponential Multiplier on/off.
+4. **#3 Constant:** change its value (Sample branch gain).
+5. **#4 Operator:** change its Operation (Sample branch).
+6. **#6 Operator:** change its Operation (final output mixer).
+7. **#7 Constant:** change its value (attenuated Noise branch).
+8. **#8 Operator:** change its Operation (Noise branch).
+
+The eight operations above span **seven distinct editable nodes**;
+the Source contributes two independent property checks. The screenshot
+shows the Envelope→Sample modulation connection and the two separately
+attenuated Sample and Noise branches leading to the output Operator.
+This is **physical listening acceptance of slice 54's combined
+Sample/Noise graph and these property paths**, in addition to the
+earlier exact-PCM automated regression. It does **not** establish
+SourceId reassignment, live Filter/Multi state transfer, Note Off
+during these edits, or every possible nested graph.
