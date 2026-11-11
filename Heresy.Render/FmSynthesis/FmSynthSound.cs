@@ -1899,6 +1899,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						? checked(end.Value - source.EnvelopeFrameOffset) : null);
 				}
 				IncludeSource(source.ActiveVolumeEnvelope);
+				// An edited shorter Volume release cannot erase the previous
+				// audible gain during its in-flight 64-frame crossfade.
+				if (source.GetOutgoingVolumeReleaseEnd(envelopeOff, sampleRate)
+					is long outgoingVolumeEnd)
+					latest = Math.Max(latest, outgoingVolumeEnd);
 				IncludeSource(curves.Pitch);
 				IncludeSource(curves.Panning);
 				IncludeSource(curves.Filter);
