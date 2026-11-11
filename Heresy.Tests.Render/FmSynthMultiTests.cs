@@ -996,6 +996,133 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void SampleOnlyMultiPhaseEditPreservesCurrentPositionWithoutWorker()
+    {
+        // Changing an onset policy is not permission to jump an already
+        // sounding Sample's playhead. Its past pitch trajectory is part
+        // of the audible note, regardless of what a fresh note would do.
+        ObjectId id = (ObjectId)7630U;
+        float[] pcm = Enumerable.Range(0, 10000)
+            .Select(i => (float)(0.31 * Math.Sin(2 * Math.PI * i / 89.0)
+                + 0.09 * Math.Cos(2 * Math.PI * i / 37.0))).ToArray();
+        SampleSound sample = new(new SampleDefinition(id, "Continuous PCM",
+            new ExternalAssetReference("continuous.wav")),
+            new MemorySampleData(48000, 1, pcm));
+        SourceResolver resolver = new(id, sample);
+        FmSynthGraph Graph(bool random) => new([
+            new FmSoundSourceNode(1, id, FmMultiNode.NeutralFrequencyHz),
+            new FmMultiNode(2, 1, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 800,
+                gainCompensation: true),
+        ], 2);
+        FmSynthSound original = new(Graph(true), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound revised = new(Graph(false), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState changing = original.CreateState();
+        SoundState reference = original.CreateState();
+        changing.SetNoiseSeed(137);
+        reference.SetNoiseSeed(137);
+        original.Render(context, changing, 0, 200, new float[200]);
+        original.Render(context, reference, 0, 200, new float[200]);
+        changing.PitchTrajectory.SetMultiplier(200, 1.3);
+        reference.PitchTrajectory.SetMultiplier(200, 1.3);
+        original.Render(context, changing, 200, 600, new float[600]);
+        original.Render(context, reference, 200, 600, new float[600]);
+
+        original.RequestMultiExpansionPreparation(revised, changing)
+            .Should().BeFalse("Sample-only phase edits preserve the live playhead");
+        original.TryPrepareRunningState(revised, changing).Should().BeTrue(
+            "no Sample history reconstruction or replacement worker is necessary");
+        original.CommitPreparedRunningState(revised, changing);
+        float[] actual = new float[180], expected = new float[180];
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, changing, 800, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0L);
+        original.Render(context, reference, 800, expected.Length, expected);
+        actual.Should().Equal(expected,
+            "Sample output remains identical at every fractional position");
+    }
+
+    [Test]
+    public void MixedMultiRephasesOscillatorButKeepsSampleAtCurrentPosition()
+    {
+        // The oscillator's phase may adopt the new Multi skip, but the
+        // Sample's physical position must remain on its existing timeline.
+        // The oracle separates those two contributions explicitly.
+        ObjectId id = (ObjectId)7631U;
+        float[] pcm = Enumerable.Range(0, 8192)
+            .Select(i => (float)(0.23 * Math.Sin(2 * Math.PI * i / 61.0)
+                + 0.10 * Math.Cos(2 * Math.PI * i / 19.0))).ToArray();
+        SampleSound sample = new(new SampleDefinition(id, "Mixed source",
+            new ExternalAssetReference("mixed-source.wav")),
+            new MemorySampleData(48000, 1, pcm));
+        SourceResolver resolver = new(id, sample);
+        FmSynthGraph Mixed(bool random) => new([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 1270),
+            new FmSoundSourceNode(2, id, FmMultiNode.NeutralFrequencyHz),
+            new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
+            new FmMultiNode(4, 3, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 100,
+                gainCompensation: true),
+        ], 4);
+        FmSynthGraph OscOnly(bool random) => new([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 1270),
+            new FmMultiNode(4, 1, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 100,
+                gainCompensation: true),
+        ], 4);
+        FmSynthSound original = new(Mixed(false), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound revised = new(Mixed(true), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound oldOsc = new(OscOnly(false), new EmptyEnvelopes());
+        FmSynthSound newOsc = new(OscOnly(true), new EmptyEnvelopes());
+        RenderContext context = Mono();
+        SoundState changing = original.CreateState();
+        SoundState oldMixedReference = original.CreateState();
+        SoundState oldOscReference = oldOsc.CreateState();
+        SoundState newOscReference = newOsc.CreateState();
+        foreach (SoundState state in new[] {
+            changing, oldMixedReference, oldOscReference, newOscReference })
+            state.SetNoiseSeed(21);
+        original.Render(context, changing, 0, 128, new float[128]);
+        original.Render(context, oldMixedReference, 0, 128, new float[128]);
+        oldOsc.Render(context, oldOscReference, 0, 128, new float[128]);
+        newOsc.Render(context, newOscReference, 0, 128, new float[128]);
+        original.RequestMultiExpansionPreparation(revised, changing)
+            .Should().BeTrue("oscillator onset migration still needs a prepared state");
+        using FirPreparationScheduler worker = new();
+        original.QueuePendingFirControls(changing, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        original.AdoptPreparedFirControls(changing);
+        original.TryPrepareRunningState(revised, changing).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, changing);
+        float[] actual = new float[150], oldMix = new float[150],
+            oldOscPcm = new float[150], newOscPcm = new float[150];
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, changing, 128, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0L);
+        original.Render(context, oldMixedReference, 128, oldMix.Length, oldMix);
+        oldOsc.Render(context, oldOscReference, 128, oldOscPcm.Length, oldOscPcm);
+        newOsc.Render(context, newOscReference, 128, newOscPcm.Length, newOscPcm);
+        for (int i = 0; i < actual.Length; i++)
+        {
+            double t = Math.Clamp(i / 64.0, 0.0, 1.0);
+            double w = t * t * (3.0 - 2.0 * t);
+            float expected = (float)(oldMix[i]
+                + (newOscPcm[i] - oldOscPcm[i]) * w);
+            actual[i].Should().BeApproximately(expected, 2e-5f,
+                "only the oscillator is rephased; Sample playback stays continuous");
+        }
+        actual[0].Should().Be(oldMix[0]);
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
     public void LiveSampleOnsetAcceptsFreshWrappersOverTheSameFrozenPcm()
     {
         // Production revisions use a new PlaybackSnapshotSoundResolver and
