@@ -102,6 +102,57 @@ public sealed class NodeEnvelopePlaybackTests
 		});
 	}
 
+	[TestCase(EnvelopeSustainLoopMode.Forward)]
+	[TestCase(EnvelopeSustainLoopMode.PingPong)]
+	public void InstrumentToneVolumeEnvelopeReleasesAnUnderlyingSynthAfterPatternNoteOff(
+		EnvelopeSustainLoopMode mode)
+	{
+		SongDocument song = new();
+		ObjectId envelopeId = song.AllocateObjectId();
+		NodeEnvelopeDefinition envelope = new(envelopeId, "Instrument release");
+		envelope.ReplaceCurve(
+		[
+			new(TimeSpan.Zero, 0.4),
+			new(TimeSpan.FromMilliseconds(10), 0.8),
+			new(TimeSpan.FromMilliseconds(20), 0.2),
+			new(TimeSpan.FromMilliseconds(90), 0.0),
+		], 1, 2, mode);
+		song.Add(envelope);
+		ObjectId synthId = song.AllocateObjectId();
+		song.Add(new FmSynthDefinition(synthId, "Sustained source",
+			new FmSynthGraph([new FmConstantNode(0, 0.5)], 0)));
+		ObjectId instrumentId = song.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Synth with tone envelope");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = synthId, VolumeEnvelopeId = envelopeId,
+		});
+		instrument.ToneTable.Add(0);
+		song.Add(instrument);
+		ObjectId patternId = song.AllocateObjectId();
+		song.Add(new ScriptPatternDefinition(patternId, "Release synth")
+		{
+			RowCount = 4, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({instrumentId.Value})); Off(0.5, 0);",
+		});
+		PreparedIncrementalPlaybackFactory factory = new(
+			new RenderConfiguration(1000,
+				[new OutputChannelConfiguration(
+					Vector3.Zero, positionalImportance: 0)]));
+		using PreparedIncrementalPlaybackPlan plan = factory.Create(song, patternId);
+		float[] pcm = new float[320];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.Multiple(() =>
+		{
+			Assert.That(Math.Abs(pcm[35]), Is.GreaterThan(0.01f),
+				"the held Synth must sound before Note Off");
+			Assert.That(pcm.Skip(75).Take(85).Any(v => Math.Abs(v) > 0.01f),
+				Is.True, "the Instrument's release must keep its Synth source audible");
+			Assert.That(pcm.Skip(250), Is.All.EqualTo(0f).Within(1e-6f),
+				"release completion must still retire the Synth");
+		});
+	}
+
 	private static byte[] ConstantSample()
 	{
 		const int frames = 400;
