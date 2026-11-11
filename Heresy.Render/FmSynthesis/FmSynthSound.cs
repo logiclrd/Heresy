@@ -720,6 +720,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	private readonly int[] _multiReserve;
 	private readonly bool _hasMulti;
 	private readonly bool _allowMultiExpansion;
+	// A Multi constituent has a separate onset-rebase transaction. Do not
+	// broaden changed Volume adoption inside that transaction as a side effect.
+	private readonly bool _isMultiInputSubgraph;
 	private readonly int _outputIndex;
 	private readonly int _oscillatorCount;
 	private readonly NewNotePolicy _newNotePolicy;
@@ -736,11 +739,27 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		PreparedToneFilterStageFactory? preparedChildFilterFactory = null,
 		bool reserveMultiHeadroom = false,
 		bool enableLiveMultiExpansion = false)
+		: this(graph, envelopeResolver, newNotePolicy, soundResolver,
+			preparedChildFilterFactory, reserveMultiHeadroom,
+			enableLiveMultiExpansion, isMultiInputSubgraph: false)
+	{
+	}
+
+	private FmSynthSound(
+		FmSynthGraph graph,
+		IEnvelopeCurveResolver envelopeResolver,
+		NewNotePolicy? newNotePolicy,
+		ISoundResolver? soundResolver,
+		PreparedToneFilterStageFactory? preparedChildFilterFactory,
+		bool reserveMultiHeadroom,
+		bool enableLiveMultiExpansion,
+		bool isMultiInputSubgraph)
 	{
 		ArgumentNullException.ThrowIfNull(graph);
 		ArgumentNullException.ThrowIfNull(envelopeResolver);
 		_graph = graph;
 		_allowMultiExpansion = reserveMultiHeadroom || enableLiveMultiExpansion;
+		_isMultiInputSubgraph = isMultiInputSubgraph;
 
 		_newNotePolicy =
 			newNotePolicy
@@ -815,7 +834,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				? new FmSynthSound(new FmSynthGraph(graph.Nodes, multiId),
 					envelopeResolver, newNotePolicy, soundResolver,
 					preparedChildFilterFactory, reserveMultiHeadroom: false,
-					enableLiveMultiExpansion: _allowMultiExpansion)
+					enableLiveMultiExpansion: _allowMultiExpansion,
+					isMultiInputSubgraph: true)
 				: null;
 			compiled.Add(
 				new CompiledNode(
@@ -1745,6 +1765,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		FmSynthSound next, FmSynthState live)
 	{
 		if (!_allowMultiExpansion || !next._allowMultiExpansion)
+			return false;
+		// Multi onset crossfades have their own compatibility transaction.
+		// Keep their historical one-direct-Source allowance, but do not
+		// accidentally admit a changed Instrument release in a compound
+		// constituent whose prepared phase rebase was refused.
+		if ((_isMultiInputSubgraph || next._isMultiInputSubgraph)
+			&& (_nodes.Length != 1 || next._nodes.Length != 1
+				|| _outputIndex != 0 || next._outputIndex != 0))
 			return false;
 		for (int i = 0; i < _nodes.Length; i++)
 		{
