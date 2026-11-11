@@ -1293,10 +1293,11 @@ public sealed class FmSynthMultiTests
         worker.Fault.Should().BeNull();
     }
 
-    [TestCase(1.125)]
-    [TestCase(0.875)]
-    public void ChangedInstrumentToneMapCannotRephaseButDoesNotStarveScalarEdit(
-        double newTonePitch)
+    [TestCase(1.125, false)]
+    [TestCase(0.875, false)]
+    [TestCase(1.0, true)]
+    public void IncompatibleFrozenInstrumentBindingDoesNotStarveScalarEdit(
+        double newTonePitch, bool changedResolvedPcm)
     {
         // Distinct frozen wrappers alone must not prove equivalence: a
         // different selected tone pitch changes the source binding.
@@ -1312,6 +1313,18 @@ public sealed class FmSynthMultiTests
             "Guarded tone PCM", new ExternalAssetReference("guarded-tone.wav")),
             new MemorySampleData(48000, 1, pcm));
         SourceResolver sampleResolver = new(sampleId, sample);
+        // The same data-driven tone table may still resolve a different
+        // PCM asset in the new frozen song. That mismatch becomes
+        // provable only once the worker has bound the terminal Sample.
+        SampleSound revisedSample = changedResolvedPcm
+            ? new(new SampleDefinition(sampleId, "Changed PCM",
+                    new ExternalAssetReference("different-pcm.wav")),
+                new MemorySampleData(48000, 1,
+                    Enumerable.Range(0, 4096).Select(i =>
+                        (float)Math.Sin(i / 11.0)).ToArray()))
+            : sample;
+        SourceResolver revisedSampleResolver =
+            new(sampleId, revisedSample);
         Heresy.Core.Instruments.InstrumentDefinition Definition(double pitch)
         {
             Heresy.Core.Instruments.InstrumentDefinition definition =
@@ -1328,7 +1341,8 @@ public sealed class FmSynthMultiTests
         Heresy.Render.Instruments.InstrumentSound oldInstrument =
             new(Definition(1.0), sampleResolver, new EmptyEnvelopes());
         Heresy.Render.Instruments.InstrumentSound changedInstrument =
-            new(Definition(newTonePitch), sampleResolver, new EmptyEnvelopes());
+            new(Definition(newTonePitch), revisedSampleResolver,
+                new EmptyEnvelopes());
         SourceResolver oldResolver = new(instrumentId, oldInstrument);
         SourceResolver newResolver = new(instrumentId, changedInstrument);
         FmSynthGraph Graph(bool randomized, double gain) => new([
@@ -1359,11 +1373,25 @@ public sealed class FmSynthMultiTests
         before.Render(context, held, 0, 128, new float[128]);
         before.Render(context, reference, 0, 128, new float[128]);
 
-        before.RequestMultiExpansionPreparation(unsafePhase, held)
-            .Should().BeFalse(
+        bool requested = before.RequestMultiExpansionPreparation(
+            unsafePhase, held);
+        if (changedResolvedPcm)
+        {
+            requested.Should().BeTrue(
+                "the frozen tone map is equivalent, but the selected PCM must be verified by worker preparation");
+            using FirPreparationScheduler worker = new();
+            before.QueuePendingFirControls(held, worker);
+            Assert.That(SpinWait.SpinUntil(
+                () => worker.CompletedMultiExpansionCount >= 1,
+                TimeSpan.FromSeconds(5)), Is.True);
+            before.AdoptPreparedFirControls(held);
+            worker.Fault.Should().BeNull();
+        }
+        else
+            requested.Should().BeFalse(
                 "a changed selected tone pitch has no proven equivalent binding");
         before.TryPrepareRunningState(unsafePhase, held).Should().BeTrue(
-            "unsafe oscillator rephase must not delay a compatible Constant edit");
+            "incompatible prepared Instrument PCM must not delay the independent Constant edit");
         before.CommitPreparedRunningState(unsafePhase, held);
         before.TryPrepareRunningState(scalarOnly, reference).Should().BeTrue();
         before.CommitPreparedRunningState(scalarOnly, reference);
