@@ -517,5 +517,16 @@ non-audition isolation. The first test-only CI attempt was
 **inconclusive**, not a successful red test, because a missing
 `Heresy.Render.Playback` namespace prevented test compilation.
 The import was fixed and full CI is used for qualification.
-Device listening is separate; the complete all-property
-feature remains unfinished.
+Device listening for slice 53 is still pending; the complete
+all-property feature remains unfinished.
+
+### Slice 52 manual acceptance received (2026-11-11)
+
+The user subsequently tested the prescribed held **Test** note with
+an audible graph Node Envelope multiplied into an Oscillator and
+**switched between different Envelope objects while the note played**.
+The reported behaviour passed. This is physical acceptance of the
+selected-Node-Envelope live-switch route. Editing shared Envelope
+points in place, active-release rejection, and the other edge cases
+remain covered by their separate automated evidence unless explicitly
+reported as physically tested.
