@@ -3269,3 +3269,34 @@ envelope types, selected SourceId reassignment, rapid concurrent edits and
 real hardware throughput. The user-verified *single* direct Source audition
 from slices 46–48 remains recorded separately. PR #12 remains **draft and
 unmerged**, and the all-nonstructural-properties TODO stays **unchecked**.
+
+### Manual audio verification — two Instrument Sources under Add Operator (2026-11-11)
+
+User pulled the slice 49 build and listened to a Synth containing **two
+Source nodes referring to the same Instrument**, combined by an Operator.
+That Instrument's Tone Definitions are identical across the note range and
+all refer to the **same shared node Volume envelope**. To make the branches
+independently audible, the user set the second Source's authored base
+frequency to **1.25 times** the first (a just-intonation major-third 5:4
+ratio). The material was a short music-loop Sample rather than a single
+pitched instrumental note, yielding an unusual but clearly distinguishable
+two-pitch result.
+
+With a note latched and both Sources sounding, a live shared Volume envelope
+edit through the modeless editor opened from **either** Source immediately
+affected **both constituent sounds**, without interrupting their playback.
+The user reported that the realtime changes worked perfectly. This is
+**physical listening acceptance of the bounded multi-Source/Operator,
+Instrument→Sample shared-Volume edit path**, in addition to the previously
+accepted single direct Source path. The distinct Source frequencies make
+this stronger evidence of independently active Source branches than two
+identically configured Source nodes.
+
+This observation does **not** independently establish the underlying
+64-frame numerical transition oracle, allocation profile, exact Note Off
+release semantics, complex Multi-generated child adoption, arbitrary Source
+replacement, scripted/nested tone histories, or other inspector parameters.
+Those remain covered only to their separately documented extent. In
+particular, manual listening for slice 48's generalized
+Definite/Indefinite Note Off lifecycle is **still outstanding**. PR #12
+remains draft/unmerged; the broad all-nonstructural-properties TODO is open.
