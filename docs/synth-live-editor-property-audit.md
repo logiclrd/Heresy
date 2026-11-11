@@ -96,14 +96,17 @@ every oscillator shape edit is click-free yet.
    to the earlier generation rather than producing the selected new
    source. This requires off-PCM preparation and a defined transition,
    not a retroactive attempt to derive an arbitrary Sample's phase.
-2. **Shared dependency invalidation through Instruments:** the current
-   `SongPlaybackTransport.GetDependentSynths` scans direct Synth
-   Source/Envelope/Filter references and Synth parents but does not
-   traverse an Instrument's ToneSpecification Envelope/Filter references.
-   A separate shared Envelope edit reachable only through an Instrument
-   is therefore not identified as a transitive Synth dependency by
-   this helper. Audit and cover it before claiming shared-object
-   inspector-to-audio completeness.
+2. **Shared dependency invalidation through Instruments — transport
+   routing implemented (slice 44):** `SongPlaybackTransport.GetDependentSynths`
+   now follows the declared tone Source, Volume/Pitch/Panning/Filter
+   Envelope and tone Filter references of both data and script
+   Instruments, including nested Instruments and Synth parents.
+   Child-before-parent Synth publication is enforced even when a
+   parent has another direct route to the changed object.
+   **Still open:** whether all actual UI editing surfaces trigger the
+   expected notification, and whether a held Instrument-backed voice
+   can adopt a genuinely changed Envelope/Filter DSP state; notification
+   alone is not a proof of in-place sound migration.
 3. **Filter and Multi property matrix:** keep distinct tests for
    feasible in-place parameter changes, worker-prepared shape
    changes, and intentionally unadoptable structural cases.
@@ -113,3 +116,42 @@ every oscillator shape edit is click-free yet.
 
 Do not mark the existing all-properties TODO complete until every
 nonstructural inspector property has an explicit tested live behaviour.
+
+
+## Slice 44 — live dependency publication through Instrument tones
+
+The transport's frozen-publication dependency walk previously visited
+Synth Source, Envelope and Filter node references plus nested Synth
+parents, but stopped at Instrument objects. This dropped edits to a
+shared Envelope or Filter referenced only in an Instrument's tone
+specification, even when the active preview was an acyclic
+`Synth -> Instrument -> Sample`. It also missed a changed child Synth
+nested inside an Instrument.
+
+The new control-thread graph walk treats both
+`InstrumentDefinition` and `ScriptInstrumentDefinition` as
+**intermediate** dependents. It traverses all declared tone
+specifications (including currently unselected tones), checking
+`SourceId`, all four Envelope IDs and the tone's configured Filter
+definition ID. It follows nested Instrument and Synth Source
+references transitively. Instruments themselves are **not** published
+as Synth definitions; only reachable Synths are enqueued, one per
+audio revision, without restarting the active audio session.
+The publishing order visits affected child Synth dependencies before
+their parents even if a parent also directly references the shared
+object. Unrelated Synths and the frozen base session remain unchanged.
+
+Regression tests cover data/script Instrument variants across each
+of the four Envelope slots and the tone Filter (ten combinations),
+nested Instrument chains, shared objects also referenced directly
+by a separate Synth, repeat notifications at the same revision,
+a changed nested Synth Source, no-session notification, and a
+two-path parent/child ordering edge.
+
+This is **publication routing**, not a relaxation of the
+`FmSynthSound` state-adoption proof. A newly prepared Synth definition
+may be used for future notes while an already sounding Instrument
+Sample with genuinely changed Envelope/Filter state remains on its
+old invocation until safe state migration is separately supported.
+The all-properties TODO, physical listening and shared-object
+UI-to-PCM coverage remain open.
