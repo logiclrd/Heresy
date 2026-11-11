@@ -419,6 +419,15 @@ A separate inadvertent structural check began with a playing
 `Multiply[Osc, Osc, Constant]` while the note continued. The change
 had **no audible effect** on the existing voice, consistent with the
 specified frozen-generation policy after a wiring/topology edit. The
-user did not report starting a fresh note after the rewire, so
-new-note adoption of the revised topology is **not** marked manually
-verified by this observation.
+user subsequently clarified that **new-note adoption was also
+tested**. A later screenshot using the built-in output scope shows
+a **three-input Maximum Operator**, combining a curved 440 Hz
+Sawtooth Oscillator, a curved 560 Hz Sine Oscillator and a Constant
+at 0.2. The user observed the rendered waveform's dominant
+contribution shift between inputs as their values crossed.
+This supports the complementary *new-note uses the revised graph*
+acceptance, alongside the already-established *old note remains on
+the frozen generation* acceptance. The screenshot's **Maximum**
+configuration is a distinct subsequent variant from the original
+**Multiply** rewire; these are not represented as an identical
+graph or an exact numerical PCM oracle.
