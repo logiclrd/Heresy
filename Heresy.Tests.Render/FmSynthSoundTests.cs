@@ -806,6 +806,7 @@ public sealed class FmSynthSoundTests
 
 	private sealed class NoteOffProbeCurve : IEnvelopeCurve
 	{
+		public bool HasSustainLoop => true;
 		public double GetValue(
 			long activeFrame,
 			int sampleRate,
