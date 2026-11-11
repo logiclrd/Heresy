@@ -848,11 +848,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				&& revised.Source is SampleSound prepared
 				&& sample.CanSharePreparedOnsetTimelineWith(prepared)
 				&& sample.SourceChannelCount is >= 1 and <= 2
-				// Only a single frozen Instrument wrapper for now. A different
-				// Instrument may select a different tone even when SourceId
-				// is unchanged; no speculative invocation is built in PCM.
+				// Equivalent frozen data-driven tone maps can also use
+				// separately prepared Instrument wrappers. Their selected
+				// terminal Sample PCM, invocation snapshot and release state
+				// must still agree in the worker-prepared child preflight.
 				|| old.Source is InstrumentSound instrument
-					&& ReferenceEquals(instrument, revised.Source));
+					&& revised.Source is InstrumentSound preparedInstrument
+					&& instrument.CanShareFrozenToneSelectionWith(
+						preparedInstrument));
 	}
 
 	private static bool CanTransferPreparedDirectSample(
