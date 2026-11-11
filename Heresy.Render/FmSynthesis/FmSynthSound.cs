@@ -525,6 +525,21 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		public long NextFrame { get; set; }
 		public int SampleRate { get; set; }
 
+		// One single-oscillator preview shape change uses only a scalar
+		// hold-and-crossfade; no second phase integrator or PCM buffer.
+		// The previous audible sample is captured before publication,
+		// so even a second edit during a fade starts continuously.
+		public double? OscillatorShapeFadeFrom { get; private set; }
+		public long OscillatorShapeFadeStartFrame { get; private set; }
+		public void StartOscillatorShapeFade()
+		{
+			if (NextFrame == 0 || SampleRate == 0)
+				return;
+			OscillatorShapeFadeFrom = AudioValues[0];
+			OscillatorShapeFadeStartFrame = NextFrame;
+		}
+		public void ClearOscillatorShapeFade() => OscillatorShapeFadeFrom = null;
+
 		public override void SetNoiseSeed(ulong seed)
 		{
 			base.SetNoiseSeed(seed);
@@ -576,6 +591,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		{
 			Array.Clear(Values);
 			Array.Clear(AudioValues);
+			ClearOscillatorShapeFade();
 			Array.Clear(SilentFrom);
 			Array.Clear(Phases);
 			Array.Clear(Filters); // never reuse histories after rewind/rate change
@@ -1598,6 +1614,18 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	public void CommitPreparedRunningState(FmSynthSound next, SoundState state)
 	{
 		FmSynthState live = ValidateState(state);
+		// Shape-only discontinuities are audible when an inspector replaces
+		// a single oscillator's Waveform, Curvature or Vmin/Vmax. Preserve
+		// the previous actual PCM value and smoothly join the prepared new
+		// waveform over 64 frames. No child history or extra voice is made.
+		// Frequency-only edits keep their existing continuous phase policy.
+		if (_singleOutputOscillator?.Definition is FmOscillatorNode oldOsc
+			&& next._singleOutputOscillator?.Definition is FmOscillatorNode newOsc
+			&& (oldOsc.Waveform != newOsc.Waveform
+				|| oldOsc.Curvature != newOsc.Curvature
+				|| oldOsc.Minimum != newOsc.Minimum
+				|| oldOsc.Maximum != newOsc.Maximum))
+			live.StartOscillatorShapeFade();
 		// All expansion arrays and child SoundInvocations were allocated and
 		// seeded on the control worker. Splice in old references before
 		// committing any Filter, Source, or Multi parameter updates.
@@ -2516,6 +2544,23 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				throw new InvalidOperationException(
 					$"FM node {oscillator.Id} produced a non-finite value.");
 			state.Values[0] = value;
+			// A mono oscillator can smoothly adopt a new output shape
+			// without advancing a second phase or allocating in PCM. The
+			// first revised frame exactly repeats the last audible value;
+			// frame +64 is fully the revised waveform. Repeated edits during
+			// an active fade use the last blended value as their new origin.
+			if (state.OscillatorShapeFadeFrom is double outgoing)
+			{
+				long delta = frame - state.OscillatorShapeFadeStartFrame;
+				if (delta >= MultiEditTransitionFrames)
+					state.ClearOscillatorShapeFade();
+				else if (delta >= 0)
+				{
+					double weight = MultiTransitionWeight(
+						state.OscillatorShapeFadeStartFrame, frame);
+					value = outgoing * (1.0 - weight) + value * weight;
+				}
+			}
 			state.AudioValues[0] = state.SilentFrom[0] is long silent
 				&& frame >= silent ? 0.0 : value;
 			return state.AudioValues[0];
