@@ -30,8 +30,8 @@ implementation slices.
 
 | Real inspector property | Code path / current live behavior | Remaining acceptance |
 | --- | --- | --- |
-| Constant: Value | Replaces reachable scalar and adopts without stored state | Confirm UI-to-PCM for representative graph descendants |
-| Oscillator: Waveform, Curvature, Vmin, Vmax | Recompiled waveform/curvature/range with retained phase. Live auditions fade direct Oscillator output or **compound stateless Oscillator/Constant/Operator graphs** for 64 frames from the last audible **whole-graph** value; repeated edits join the current blended output, without changing phase or allocating in PCM | Still open: stateful Filter/Source and Multi graphs, arbitrary modulation topologies, physical click tests, UI-to-PCM coverage |
+| Constant: Value | Replaces reachable scalar without stored state. **Slice 51** adds 64-frame audible output smoothing for a changed Constant on the output-amplitude path of a live stateless Oscillator/Constant/Operator graph; a Constant used only to modulate frequency retains immediate forward retuning | Outside stateless paths, confirm full UI-to-PCM matrix and stateful source/filter/multi interactions |
+| Oscillator: Waveform, Curvature, Vmin, Vmax | Recompiled waveform/curvature/range with retained phase. Live auditions fade a directly audible Oscillator shape in **stateless Oscillator/Constant/Operator graphs** for 64 frames from the last audible whole-graph value; repeated edits join the blended output. Purely pitch-modulating controls do not require output fades | Still open: Filter/Source/Multi graphs, full modulation/property matrix and exhaustive physical listening |
 | Oscillator: Frequency Hz, Constant, Exponential multiplier | Existing phase integrator continues at newly authored instantaneous rate; frequency-only edits are not subjected to the shape fade | UI/PCM matrix and high-rate modulation acceptance |
 | Oscillator: Multiplier input | Graph wiring change | Structural-generation rule applies |
 | Source: SourceId (Sample / Instrument / Synth) | Inspector permits reassignment. Renderer can migrate compatible **nested Synth** state, but arbitrary Sample/Instrument Source swaps remain unsupported for held voices; the next new note receives the new selection | **Open property gap**: prepare replacement Sample/Instrument invocation, define new-asset playhead and click-safe bounded transition, Note Off/EOF/release handling |
@@ -42,7 +42,7 @@ implementation slices.
 | Filter: audio and modulation inputs | Graph wiring change | Structural-generation rule applies |
 | Multi: Distribution, Detune, Voice Count, Harmonic/Chord Components, Randomize Phase, Gain Compensation, Cycle Length, presets | Ratio/mix glide, worker-prepared growth/onset phases, Sample playhead continuity and bounded fades have dedicated renderer coverage; feasibility depends on constituent/state eligibility and 128-voice cap | Audit combinations, nested State/Filter cases, rapid edits, maximum headroom, UI-to-PCM |
 | Multi: input selection | Graph wiring change | Structural-generation rule applies |
-| Operator: operation (Add / Multiply / Minimum / Maximum) | Existing calculation semantics can update with unchanged wiring and state | UI-to-PCM coverage |
+| Operator: operation (Add / Multiply / Minimum / Maximum) | Mode changes adopt with unchanged wiring. **Slice 51** adds 64-frame output smoothing when the changed Operator lies on a stateless audible path; no fade for Operators used purely as Oscillator pitch controls | Real UI-to-PCM and nonstateless graph coverage |
 | Operator: input node IDs | Graph wiring change | Structural-generation rule applies |
 | Noise | No editable sound parameters; seed history must survive neighboring edits | Nested noise/phase audit |
 | Graph: add/remove/output/wiring | Structural; existing voices may retain old generation, new notes see latest | Structural and overlapping generations remain separate tests |
@@ -364,3 +364,42 @@ with two Oscillators under an Operator behaved as expected on their local
 audio device. That is **manual acceptance of the supported slice-50
 compound shape route**, not of the excluded stateful graph classes.
 The slice does not settle the broader all-properties task.
+
+## Slice 51 — stateless Constant and Operator live output changes
+
+Changing a Constant's audible amplitude contribution or changing an
+Operator's **Operation** is nonstructural, but immediate adoption could
+produce a sharp discontinuity in an already playing Synth. Slice 51
+reuses slice 50's 64-frame smoothstep from the last **actual audible**
+output, without replacing Oscillator phase state or allocating in PCM.
+
+The prepared graph is eligible only when its reachable nodes are
+**Oscillators, Constants and Operators**, with no Sound Source,
+Filter or Multi. At compile time, an **audible path bitmap** is
+computed by tracing Operator audio inputs backward from the final
+output, **stopping at Oscillator outputs**. This distinguishes an
+audible Constant or Operator edit from a change made only to an
+Oscillator's frequency multiplier. The latter is a *control*
+change and must update forward pitch integration **without**
+introducing a hold-and-fade on the audible output. An Oscillator
+shape change similarly fades only when that Oscillator contributes
+directly to the stateless audible output.
+
+A single Constant output is included. The implementation retains
+the direct Oscillator shape case within a simple Multi child but
+does not broaden transitions into compound Multi-generated, Filter
+or Source graphs. Ordinary playback/export retains the exact
+existing, unfaded semantics. Repeated output-affecting edits during
+an active fade start from the current blended output.
+
+The new test group in
+`FmSynthCompoundShapeLiveTests` was **red before implementation**:
+[CI #43038824435](https://github.com/logiclrd/Heresy/actions/runs/43038824435)
+reported four actual output discontinuities (gain, one-Constant
+output, Add→Multiply, a second edit while fading). Positive
+acceptance asserts full 64-frame oracle, preserved independent
+Oscillator phase and no PCM allocations. Negative cases establish
+no artificial fade on a Constant used solely for oscillator rate
+and no fade in non-audition playback. Final CI and physical
+device listening remain separate qualifications, and the broader
+all-nonstructural-property TODO is not complete.
