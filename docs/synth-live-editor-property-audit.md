@@ -308,6 +308,25 @@ migration. All regression suites and Linux ARM64 validation passed in
 [CI #43012576902](https://github.com/logiclrd/Heresy/actions/runs/43012576902).
 
 The user's **single direct Source** shared-Volume listening acceptance is
-recorded in the development plan. The two-Source version still needs
-physical listening, and the all-properties Synth live-edit milestone
-remains open. PR #12 stays draft/unmerged.
+recorded in the development plan. The two-Source Add-Operator route has since received **physical listening acceptance**
+(see below); more complex compound graphs, Note Off release listening and the
+all-properties Synth live-edit milestone remain open. PR #12 stays draft/unmerged.
+
+### Slice 49 manual listening acceptance — distinct Source pitches
+
+The user verified on a real audio device a Synth with **two Instrument
+Source nodes connected through an Operator**. Both reference the same
+Instrument, whose Tone Definitions are identical across the note range
+and share one Volume Envelope. The second Source's base frequency was
+set **25% above** the first (ratio 5:4), so both versions of the same
+short music-loop Sample were audibly distinct. With the note latched,
+opening the shared Volume editor from **either Source** and changing its
+curve caused the ongoing audio from **both** Sources to respond
+immediately, without interruption. This confirms the visible UI path
+and an audible in-place shared-Volume change in a compound graph;
+it is not merely a transport publication or a new-note effect.
+
+The report does not certify unrelated controls, nested/compound Multi
+children, exact fade math, repeated rapid edits, performance under load
+or physical listening of generalized Definite/Indefinite Note Off.
+Those acceptance items remain open as documented.
