@@ -608,23 +608,22 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		public long NextFrame { get; set; }
 		public int SampleRate { get; set; }
 
-		// One single-oscillator preview shape change uses only a scalar
-		// hold-and-crossfade; no second phase integrator or PCM buffer.
-		// The previous audible sample is captured before publication,
-		// so even a second edit during a fade starts continuously.
-		public double? OscillatorShapeFadeFrom { get; private set; }
-		public long OscillatorShapeFadeStartFrame { get; private set; }
-		public void StartOscillatorShapeFade(int outputIndex)
+		// An audition-only stateless graph parameter change uses one
+		// scalar output hold-and-crossfade; no second graph, integrator or
+		// PCM buffer. Repeated edits use the last already-blended output.
+		public double? StatelessOutputFadeFrom { get; private set; }
+		public long StatelessOutputFadeStartFrame { get; private set; }
+		public void StartStatelessOutputFade(int outputIndex)
 		{
 			if (NextFrame == 0 || SampleRate == 0)
 				return;
-			// Capture the *audible graph output*, not the first oscillator:
-			// stateless Operators can combine several independently phased
-			// voices. Mid-fade edits start from the last blended output.
-			OscillatorShapeFadeFrom = AudioValues[outputIndex];
-			OscillatorShapeFadeStartFrame = NextFrame;
+			// Capture the *audible graph output*, not a child control:
+			// stateless Operators can combine independently phased voices.
+			// Mid-fade edits start from the last blended output.
+			StatelessOutputFadeFrom = AudioValues[outputIndex];
+			StatelessOutputFadeStartFrame = NextFrame;
 		}
-		public void ClearOscillatorShapeFade() => OscillatorShapeFadeFrom = null;
+		public void ClearStatelessOutputFade() => StatelessOutputFadeFrom = null;
 
 		public override void SetNoiseSeed(ulong seed)
 		{
@@ -679,7 +678,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		{
 			Array.Clear(Values);
 			Array.Clear(AudioValues);
-			ClearOscillatorShapeFade();
+			ClearStatelessOutputFade();
 			Array.Clear(SilentFrom);
 			Array.Clear(Phases);
 			Array.Clear(Filters); // never reuse histories after rewind/rate change
@@ -717,11 +716,12 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	// stateful DSP still uses EvaluateOscillator, without the generic graph
 	// dispatch and redundant audible Operator routing on each sample.
 	private readonly CompiledNode? _singleOutputOscillator;
-	// A no-Source/no-Filter/no-Multi graph can smooth an oscillator shape
-	// change once at its output, without duplicating any DSP state.
-	// This deliberately excludes stateful child graphs and Multi onset
-	// transactions, which have separate compatibility contracts.
-	private readonly bool _canFadeCompoundOscillatorShape;
+	// Audition smoothing of changes that directly affect *audible output*
+	// uses a bounded scalar fade on graphs with stateless amplitude routing.
+	// Oscillator FM inputs are controls, not independent audible paths.
+	// Source/Filter/Multi graphs keep their separate state transactions.
+	private readonly bool _canFadeStatelessOutput;
+	private readonly bool[] _statelessAudioPathNodes;
 	// All target ratios are calculated by the preparation worker, never
 	// inside PCM publication or per-frame child rendering.
 	private readonly double[][] _multiRatios;
@@ -863,13 +863,15 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			&& _nodes[0].Definition is FmOscillatorNode
 			&& _nodes[0].InputIndices.Length == 0
 			? _nodes[0] : null;
-		_canFadeCompoundOscillatorShape = _nodes.Length > 1
-			&& _nodes.All(node => node.Definition is
-				FmOscillatorNode or FmConstantNode or FmOperatorNode);
+		_canFadeStatelessOutput = _nodes.All(node => node.Definition is
+			FmOscillatorNode or FmConstantNode or FmOperatorNode);
 		_multiRatios = _nodes.Select(node => node.Definition is FmMultiNode multi
 			? multi.GetFrequencyRatios() : Array.Empty<double>()).ToArray();
 		_multiReserve = new int[_nodes.Length];
 		_outputIndex = indexById[graph.OutputNodeId];
+		_statelessAudioPathNodes = new bool[_nodes.Length];
+		if (_canFadeStatelessOutput)
+			MarkAudibleNode(_outputIndex);
 		_oscillatorCount = oscillatorIndex;
 		int actualConstituents = CountMultiVoices(graph.OutputNodeId);
 		if (actualConstituents > FmMultiNode.MaximumVoices)
@@ -893,6 +895,22 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						FmMultiNode.MaximumVoices - _multiRatios[i].Length));
 					free -= _multiReserve[i];
 				}
+		}
+
+
+		// Only Operator edges carry a value into another *audio value*.
+		// Do not traverse an Oscillator's multiplier input: that input
+		// retunes its phase integrator but does not add or scale its
+		// instantaneous output sample. A control-only edit must not
+		// trigger an unnecessary graph-output freeze.
+		void MarkAudibleNode(int index)
+		{
+			if (_statelessAudioPathNodes[index])
+				return;
+			_statelessAudioPathNodes[index] = true;
+			if (_nodes[index].Definition is FmOperatorNode)
+				foreach (int input in _nodes[index].InputIndices)
+					MarkAudibleNode(input);
 		}
 
 		int CountMultiVoices(int id)
@@ -1819,31 +1837,41 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				if (!oldCurve.HasSameFrozenShapeAs(volumeCurve!))
 					volumeVoice!.AdoptPreparedNodeVolume(volumeCurve!, live.NextFrame);
 			}
-		// An oscillator shape edit may be audible through a compound
-		// stateless Operator graph, not just at a directly outputting
-		// oscillator. The previous whole-graph audible sample is the fade
-		// origin; each oscillator retains its original advancing phase.
-		// Exclude stateful Source/Filter/Multi trees, including compound
-		// Multi-generated subgraphs: their onset/state migrations require
-		// a separately coordinated transaction. Frequency-only edits
-		// continue immediately with no gratuitous shape fade.
+		// Stateless output changes are click-prone even when no waveform
+		// changes: a Constant can scale gain and an Operator can switch
+		// from Add to Multiply. Fade *only* a changed node that lies on
+		// the audible value path; changed modulation controls still retune
+		// their Oscillator immediately. Raw Values and phases are untouched.
+		// The direct single-oscillator exception remains supported inside
+		// Multi; compound Multi constituents have separate onset semantics.
 		if (_allowMultiExpansion && next._allowMultiExpansion
 			&& ((_singleOutputOscillator is not null
 					&& next._singleOutputOscillator is not null)
-				|| (_canFadeCompoundOscillatorShape
-					&& next._canFadeCompoundOscillatorShape
+				|| (_canFadeStatelessOutput
+					&& next._canFadeStatelessOutput
 					&& !_isMultiInputSubgraph && !next._isMultiInputSubgraph)))
 			for (int i = 0; i < _nodes.Length; i++)
-				if (_nodes[i].Definition is FmOscillatorNode oldOsc
+			{
+				if (!_statelessAudioPathNodes[i])
+					continue;
+				bool shapeChanged = _nodes[i].Definition is FmOscillatorNode oldOsc
 					&& next._nodes[i].Definition is FmOscillatorNode newOsc
 					&& (oldOsc.Waveform != newOsc.Waveform
 						|| oldOsc.Curvature != newOsc.Curvature
 						|| oldOsc.Minimum != newOsc.Minimum
-						|| oldOsc.Maximum != newOsc.Maximum))
+						|| oldOsc.Maximum != newOsc.Maximum);
+				bool scalarChanged = _nodes[i].Definition is FmConstantNode oldConstant
+					&& next._nodes[i].Definition is FmConstantNode newConstant
+					&& oldConstant.Value != newConstant.Value;
+				bool operatorChanged = _nodes[i].Definition is FmOperatorNode oldOperator
+					&& next._nodes[i].Definition is FmOperatorNode newOperator
+					&& oldOperator.Operation != newOperator.Operation;
+				if (shapeChanged || scalarChanged || operatorChanged)
 				{
-					live.StartOscillatorShapeFade(_outputIndex);
+					live.StartStatelessOutputFade(_outputIndex);
 					break;
 				}
+			}
 		// All expansion arrays and child SoundInvocations were allocated and
 		// seeded on the control worker. Splice in old references before
 		// committing any Filter, Source, or Multi parameter updates.
@@ -2810,15 +2838,15 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			// first revised frame exactly repeats the last audible value;
 			// frame +64 is fully the revised waveform. Repeated edits during
 			// an active fade use the last blended value as their new origin.
-			if (state.OscillatorShapeFadeFrom is double outgoing)
+			if (state.StatelessOutputFadeFrom is double outgoing)
 			{
-				long delta = frame - state.OscillatorShapeFadeStartFrame;
+				long delta = frame - state.StatelessOutputFadeStartFrame;
 				if (delta >= MultiEditTransitionFrames)
-					state.ClearOscillatorShapeFade();
+					state.ClearStatelessOutputFade();
 				else if (delta >= 0)
 				{
 					double weight = MultiTransitionWeight(
-						state.OscillatorShapeFadeStartFrame, frame);
+						state.StatelessOutputFadeStartFrame, frame);
 					value = outgoing * (1.0 - weight) + value * weight;
 				}
 			}
@@ -2901,19 +2929,19 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		}
 
 		// The generic path retains raw oscillator/Operator values in
-		// Values for pitch controls. Shape smoothing applies only once,
+		// Values for pitch controls. Stateless output smoothing applies once,
 		// after the final stateless Operator has produced audible output.
 		// The final AudioValues entry is blended too, so a rapid second
 		// edit correctly captures the previous *actual* audible output.
-		if (state.OscillatorShapeFadeFrom is double outgoingGraphOutput)
+		if (state.StatelessOutputFadeFrom is double outgoingGraphOutput)
 		{
-			long delta = frame - state.OscillatorShapeFadeStartFrame;
+			long delta = frame - state.StatelessOutputFadeStartFrame;
 			if (delta >= MultiEditTransitionFrames)
-				state.ClearOscillatorShapeFade();
+				state.ClearStatelessOutputFade();
 			else if (delta >= 0)
 			{
 				double weight = MultiTransitionWeight(
-					state.OscillatorShapeFadeStartFrame, frame);
+					state.StatelessOutputFadeStartFrame, frame);
 				state.AudioValues[_outputIndex] = outgoingGraphOutput * (1.0 - weight)
 					+ state.AudioValues[_outputIndex] * weight;
 			}
