@@ -2374,3 +2374,75 @@ Source/Instrument/Envelope/filter state migration and arbitrary
 structural Source reassignments, full property-inspector-to-audio
 audit, and the remaining all-properties goal. The PR stays
 **draft and unmerged** until explicit review/merge authorization.
+
+
+## Thirty-eighth slice: connected and audio-rate modulated Sample Source continuity
+
+The continuity-first rule introduced in slice 37 now extends to
+**direct Sample Sources with a connected Synth graph multiplier input**
+during worker-prepared Multi oscillator phase changes. A Sample's
+original fractional playback position is authoritative even if its
+rate has been driven by an oscillator on every PCM frame.
+
+**Compatibility / semantics**
+
+- `CanRephaseDirectSampleSource` no longer requires the original and
+  revised `MultiplierNodeId` to be null. Instead, the old and revised
+  node must retain the **same binding**, which also must pass
+  `CanRephaseOscillatorGraph`'s existing whole-graph checks on
+  stable node IDs, exact input index wiring and individually eligible
+  upstream Oscillator/Constant/Operator/OnePole stages.
+- A direct Sample still requires the **same frozen Sample PCM/definition
+  identity**, positive finite source frequencies and their ratio, and
+  unchanged authored `Constant` and `ExponentialMultiplier` flags.
+  A changed binding, changed Source identity, unsupported modulation
+  graph structure or untransferable Filter/Envelope/Instrument history
+  does not gain eligibility from this slice.
+- A rephased oscillator used as a **Source multiplier** adopts its
+  newly phased oscillator state in the prepared incoming child.
+  From the publication boundary onward, that oscillator may change
+  the Sample's **future playback rate**. Its pre-publication modulation
+  history never causes a Sample seek or retrospective re-integration.
+- As in slice 37, the incoming Source's `SampleSoundState` seeds
+  `PitchTrajectory` at its new local frame with the actual old
+  `PitchTrajectory.GetPosition(oldFrame)`, without compensating for
+  the changed Multi `SkipFrames`. `OriginalFrequencyHz`, playback
+  offsets, released state, and forward-only adjacent `FmSourcePitchCurve`
+  rate are carried over in constant time. Sample-only Multi phase
+  changes still require **no** off-PCM worker, even when the Sample
+  has a modulating graph connection.
+- The new support is for **already sounding, continuing direct Sample
+  voices**. Natural EOF or Note Off, crossing nontrivial child
+  Instrument tone filters/envelopes, reassigning Source IDs, changing
+  graph wiring, or attempting a nested stateful replacement still
+  retain their conservative existing eligibility or fallback paths.
+  Atomic per-voice preflight, 64-frame smoothstep crossfade for the
+  rephased oscillators and worker-prepared destinations remain.
+
+**Tests**
+
+Two regressions exercise both a connected stateless scalar multiplier
+and a truly dynamic oscillator-controlled rate:
+
+1. A Sample with a connected 1.2× scalar multiplier is mixed with a
+   separate oscillator. The Sample retains every old fractional
+   position while the oscillator changes its Multi phase. Every
+   crossfade frame is checked against the old full mixture plus the
+   separately rendered oscillator phase delta times the established
+   smoothstep weight. The publication frame exactly equals the old
+   PCM, and the edited PCM render allocates no managed memory.
+2. A Source driven by a 550-Hz positive-range oscillator has variable
+   integrated rate even before a parent pitch change. The oscillator
+   changes its own phase on a live Multi phase edit, but the Sample
+   starts from its existing position at the boundary. The first
+   crossfade output is exactly the previous held note's PCM; later
+   output differs audibly as the **new forward modulation** changes
+   its rate. Test verifies finite PCM, no managed allocations and
+   successful detached worker preparation without replaying the old
+   modulation history.
+
+**Remaining scope**: replacing the selected Sample Source itself,
+Instrument-selected Sample envelopes/release state, non-OnePole
+Filters, feedback/stateful nested modulation, physical listening and
+sustained voice-load performance, and the full inspector all-properties
+end-to-end acceptance remain open. PR #12 stays draft and unmerged.
