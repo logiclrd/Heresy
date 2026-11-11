@@ -9,6 +9,7 @@ using Heresy.Core.Envelopes;
 using Heresy.Core.Filters;
 using Heresy.Core.Diagnostics;
 using Heresy.Core.FmSynthesis;
+using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
 using Heresy.Core.Patterns;
 using Heresy.Core.Sequencing;
@@ -519,6 +520,151 @@ public sealed class SongPlaybackTransportTests
 		factory.PreparedIds.Should().HaveCount(6,
 			"unreferenced changes must not republish unrelated Synths");
 		factory.PreparedIds.Should().NotContain(unrelatedId);
+	}
+
+
+	[TestCase(false, 0)]
+	[TestCase(false, 1)]
+	[TestCase(false, 2)]
+	[TestCase(false, 3)]
+	[TestCase(false, 4)]
+	[TestCase(true, 0)]
+	[TestCase(true, 1)]
+	[TestCase(true, 2)]
+	[TestCase(true, 3)]
+	[TestCase(true, 4)]
+	public async Task SharedToneEnvelopeOrFilterEditPublishesThroughNestedInstruments(
+		bool scriptedToneSelector, int toneReferenceKind)
+	{
+		// The edit is *not* referenced by a Synth Envelope/Filter node.
+		// It is only reachable through an Instrument tone, which can itself
+		// be selected by another Instrument before reaching the Synth.
+		// Script and data Instruments both declare their tone dependencies.
+		SongDocument document = new();
+		ObjectId sharedId = document.AllocateObjectId();
+		FilterDefinition? filter = null;
+		if (toneReferenceKind == 4)
+		{
+			filter = new FilterDefinition(sharedId, "Tone filter");
+			document.Add(filter);
+		}
+		else
+			document.Add(new NodeEnvelopeDefinition(sharedId, "Tone envelope"));
+		ObjectId leafId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(leafId, "Independent tone source",
+			new FmSynthGraph([new FmConstantNode(0, 0.2)], 0)));
+		ObjectId toneInstrumentId = document.AllocateObjectId();
+		ToneSpecification tone = new()
+		{
+			SourceId = leafId,
+			VolumeEnvelopeId = toneReferenceKind == 0 ? sharedId : null,
+			PitchEnvelopeId = toneReferenceKind == 1 ? sharedId : null,
+			PanningEnvelopeId = toneReferenceKind == 2 ? sharedId : null,
+			FilterEnvelopeId = toneReferenceKind == 3 ? sharedId : null,
+			FilterConfiguration = filter is null ? null : new FilterInstance(filter),
+		};
+		if (scriptedToneSelector)
+		{
+			ScriptInstrumentDefinition script =
+				new(toneInstrumentId, "Script-selected tone") { Source = "0" };
+			script.ToneSpecifications.Add(tone);
+			document.Add(script);
+		}
+		else
+		{
+			InstrumentDefinition instrument = new(toneInstrumentId, "Data-selected tone");
+			instrument.ToneSpecifications.Add(tone);
+			instrument.ToneTable.Add(0);
+			document.Add(instrument);
+		}
+		ObjectId outerInstrumentId = document.AllocateObjectId();
+		InstrumentDefinition outerInstrument = new(outerInstrumentId, "Outer Instrument");
+		outerInstrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = toneInstrumentId,
+		});
+		outerInstrument.ToneTable.Add(0);
+		document.Add(outerInstrument);
+		ObjectId directId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(directId, "Direct shared reference",
+			toneReferenceKind == 4
+				? new FmSynthGraph([
+					new FmConstantNode(0, 0.1),
+					new FmFilterNode(1, 0, new FilterInstance(filter!))], 1)
+				: new FmSynthGraph([new FmEnvelopeNode(0, sharedId)], 0)));
+		ObjectId affectedId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(affectedId, "Instrument source",
+			new FmSynthGraph([
+				new FmSoundSourceNode(0, outerInstrumentId, FmMultiNode.NeutralFrequencyHz)], 0)));
+		ObjectId parentId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(parentId, "Parent Synth",
+			new FmSynthGraph([
+				new FmSoundSourceNode(0, affectedId, FmMultiNode.NeutralFrequencyHz)], 0)));
+		ObjectId unrelatedId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(unrelatedId, "Unrelated",
+			new FmSynthGraph([new FmConstantNode(0, 0.5)], 0)));
+
+		PublishingFactory factory = new();
+		TestBackend backend = new();
+		using SongPlaybackTransport transport = new(backend, factory);
+		await transport.PublishSharedObjectEditAsync(document, sharedId);
+		backend.OpenCount.Should().Be(0);
+		await transport.SendLiveEventAsync(document, ChannelTarget.Virtual(80),
+			[new StartNoteCommand(parentId)]);
+
+		document.MarkChanged(affectsAudio: true);
+		await transport.PublishSharedObjectEditAsync(document, sharedId);
+		factory.PreparedIds.Should().Equal(directId, affectedId, parentId,
+			"the changed shared object must republish Synths through each Instrument, child before parent");
+		factory.Source.Order.Should().Equal("Start:80", "Update", "Update", "Update");
+		backend.OpenCount.Should().Be(1);
+		factory.PreparedIds.Should().NotContain(leafId);
+		factory.PreparedIds.Should().NotContain(unrelatedId);
+
+		await transport.PublishSharedObjectEditAsync(document, sharedId);
+		factory.PreparedIds.Should().HaveCount(3,
+			"each dependent Synth is published only once for the frozen audio revision");
+		document.MarkChanged(affectsAudio: true);
+		await transport.PublishSharedObjectEditAsync(document, sharedId);
+		factory.PreparedIds.Should().Equal(
+			directId, affectedId, parentId, directId, affectedId, parentId);
+		backend.OpenCount.Should().Be(1);
+	}
+
+	[Test]
+	public async Task ChangedSynthInsideInstrumentPublishesThroughInstrumentAndSynthParents()
+	{
+		SongDocument document = new();
+		ObjectId leafId = document.AllocateObjectId();
+		FmSynthDefinition leaf = new(leafId, "Edited leaf",
+			new FmSynthGraph([new FmConstantNode(0, 0.2)], 0));
+		document.Add(leaf);
+		ObjectId instrumentId = document.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Uses leaf");
+		instrument.ToneSpecifications.Add(new ToneSpecification { SourceId = leafId });
+		instrument.ToneTable.Add(0);
+		document.Add(instrument);
+		ObjectId parentId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(parentId, "Uses Instrument",
+			new FmSynthGraph([
+				new FmSoundSourceNode(0, instrumentId, FmMultiNode.NeutralFrequencyHz)], 0)));
+		ObjectId grandparentId = document.AllocateObjectId();
+		document.Add(new FmSynthDefinition(grandparentId, "Uses Parent",
+			new FmSynthGraph([
+				new FmSoundSourceNode(0, parentId, FmMultiNode.NeutralFrequencyHz)], 0)));
+
+		PublishingFactory factory = new();
+		TestBackend backend = new();
+		using SongPlaybackTransport transport = new(backend, factory);
+		await transport.SendLiveEventAsync(document, ChannelTarget.Virtual(81),
+			[new StartNoteCommand(grandparentId)]);
+		leaf.Graph = new FmSynthGraph([new FmConstantNode(0, 0.65)], 0);
+		document.MarkChanged(affectsAudio: true);
+		await transport.PublishSynthEditAsync(document, leafId);
+		factory.PreparedIds.Should().Equal(leafId, parentId, grandparentId,
+			"an edited Synth under an Instrument must be prepared before its transitive parents");
+		factory.Source.Order.Should().Equal("Start:81", "Update", "Update", "Update");
+		backend.OpenCount.Should().Be(1);
 	}
 
 	private sealed class PublishingFactory :
