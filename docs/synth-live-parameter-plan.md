@@ -2756,3 +2756,81 @@ Filter envelope state, listening/click and dense-Multi throughput
 checks, plus the all-properties Synth inspector-to-audio acceptance.
 The all-properties TODO remains open, and PR #12 stays
 **draft and unmerged**.
+
+
+## Forty-second slice: frozen node Volume envelope equivalence without recursive Synth cycles
+
+**Architecture clarification.** A Synth cannot modify a nested Instrument
+by recursively selecting itself through one of that Instrument's tones.
+`FmSoundSourceReferences.Validate` traverses **all** declared
+`InstrumentDefinition` and `ScriptInstrumentDefinition` tones, as
+well as every nested Synth Source edge. Cycles reject before the
+candidate Synth graph is committed, even if a particular note would
+have selected a different, terminating tone. Such pitch-dependent
+conditional recursion is not a supported exemption.
+
+The actual production reason for independently prepared nested
+`InstrumentSound` and `NodeEnvelopeCurve` wrappers is simpler:
+a direct Synth preview edit republishes a **new frozen song snapshot**.
+`PlaybackSnapshotSoundResolver` independently prepares the
+Instrument and Node envelope renderer objects in each generation.
+Those objects are different even when the Instrument's selected
+tone and the Volume envelope's authored node shape are untouched.
+A nested `Synth A -> Instrument B -> Sample C + Envelope D`
+is acyclic and common; editing Synth A's Multi phase can require
+migration through the newly compiled versions of B and D. An
+identity-only Volume curve check would spuriously refuse this valid
+transition.
+
+**Bounded new compatibility proof.**
+
+- `NodeEnvelopeCurve.HasSameFrozenShapeAs` compares every copied node
+  time and scalar value, captured sustain-start and sustain-end tick,
+  last-node tick and sustain-loop mode **bit for bit**. It never consults
+  mutable `NodeEnvelopeDefinition`, hashes text, calls a song
+  resolver, constructs a new curve or allocates on PCM. Identity still
+  short-circuits for reused curve objects.
+- `FmSynthSound.CanSharePreparedVolumeConfiguration` permits a
+  separately frozen Node Volume curve with identical captured shape
+  in both the whole-child Sample transfer preflight and the early
+  prepared-Instrument-binding fallback check. The complete
+  `NewNotePolicy`, note/new-note fade durations, and all Pitch,
+  Panning and Filter envelope object references must remain
+  unchanged. Script envelopes or other non-node implementations
+  remain **identity-only**; no equivalence is guessed from Envelope ID.
+- As in slices 37–41, Instrument tone identity, immutable Sample PCM,
+  original playhead, original Volume-release clock, translated Note
+  Off origin, worker-prepared replacement and the 64-frame bounded
+  oscillator crossfade remain mandatory. The newly compiled Volume
+  curve is mathematically the same function, so substituting it
+  cannot change the held note's release. Truly edited Volume shapes
+  must retain the old held curve and decline that oscillator rephase,
+  while allowing independent compatible scalar edits.
+
+**Acceptance.** New tests build two independent
+`NodeEnvelopeDefinition` instances and two distinct
+`NodeEnvelopeCurve` objects with equal points and single-node
+sustain. The Instrument wrappers are also distinct. Note Off at
+outer frame 160 (during oscillator onset crossfade) and 200 (after
+it) must each reproduce the continuous old Sample's PCM, original
+Volume-release end and zero managed allocations. The same test
+also changes the new curve's release endpoint as a negative
+scenario: it cannot rewrite the running note's release.
+
+A second, **audible oscillator oracle** is necessary because Sample
+PCM equality alone cannot distinguish a successful oscillator phase
+transition from the intentional conservative fallback. It renders
+the old mixed output plus the isolated new-minus-old oscillator
+signal weighted by the 64-frame smoothstep, and checks each frame
+against the edited output, including first-frame parity and zero
+first/sustained PCM allocations. A measurable post-fade difference
+from the old oscillator confirms rephase really occurred. The
+initial Sample-only regression did not prove this and was
+strengthened accordingly.
+
+This is **not** support for Synth->Instrument->same-Synth recursion,
+editing an Instrument's tone map *from inside* the Synth graph,
+scripted-envelope equivalence, changed selected Sample or Volume
+curve, arbitrary Instrument tone DSP, or the full all-properties
+inspector acceptance. The last remains open. PR #12 stays
+**draft/unmerged**.
