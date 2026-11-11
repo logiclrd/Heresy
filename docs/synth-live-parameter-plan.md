@@ -2555,3 +2555,101 @@ and feedback/stateful modulation, end-to-end property audit,
 physical listening/click testing and high-density Multi
 throughput acceptance. The all-properties live-editing TODO
 remains open. PR #12 stays **draft and unmerged**.
+
+
+## Fortieth slice: equivalent frozen Instrument bindings across revision wrappers
+
+**Goal:** permit the continuity-first Instrument-selected Sample transfer
+from slice 39 when a revised Synth was compiled with a *different*
+`InstrumentSound` instance and independent frozen data-driven
+`InstrumentDefinition` copy, rather than requiring the identical
+InstrumentSound wrapper object. The selected Sample's physical playhead
+and Instrument Volume-release clock remain untouched by the Multi
+oscillator phase edit.
+
+### Immutable, allocation-free early eligibility
+
+A data-driven `InstrumentSound` constructed from
+`InstrumentDefinition` captures a **frozen tone-selection map** at
+construction, before any realtime audio processing:
+
+- Stable Instrument ID, tone-table divisions and offset
+- Complete tone-table index mapping and ordered tone specifications
+- Each tone's selected Source ID, pitch multiplier, explicit NNA and
+  envelope IDs (Volume/Pitch/Panning/Filter)
+- Instrument NNA override/fade duration and each tone's Filter
+  configuration reference
+
+Two distinct data-driven wrappers qualify as **selection-equivalent**
+only if those frozen snapshots match completely. This is a deliberately
+conservative proof: even a change to an unselected tone or NNA map
+refuses the *phase rebase* for this slice. Identical wrapper instances
+continue to use the previous slice 39 eligibility. Arbitrary
+script-selected `Func<double, ToneSpecification?>` wrappers have
+no safe general equivalence proof and are **not** compared between
+distinct instances. The comparison performs no song lookups,
+tone selection, PCM decoding, state construction or managed allocation
+on the producer/PCM path.
+
+### Verify the *actual* selected binding, not just its tone map
+
+Matching tone-table IDs cannot prove that two separately frozen song
+resolvers supply the same **decoded Sample** or immutable Volume
+curve. The existing off-thread prepared Multi replacement therefore
+still resolves each selected invocation and enforces the full
+whole-voice `CanTransferPreparedDirectSample` preflight:
+
+- Both selected terminals must be `SampleSound` with the **same
+  immutable Sample PCM/timeline identity**, including its loop,
+  sample rate, channel layout and geometry. Distinct
+  `SampleSound` wrappers sharing one immutable `SamplePcmData`
+  are allowed.
+- Captured `NoteConfigurationSnapshot` equality, Volume envelope
+  object and `ReleaseIsControlledByVolumeEnvelope` policy remain
+  mandatory; changed tone Filters, pitch/panning/Filter envelope
+  histories, different selected tone pitch and rebinding are excluded.
+- The original fractional Sample position, original Source frequency
+  basis and the Instrument's original envelope active-frame **and
+  Note Off** release origin move to the prepared child exactly as
+  in slice 39. No history replay/seek, retroactive pitch rescale,
+  unprepared Volume-state allocation or modified crossfade length.
+
+If the frozen tone-map signatures match but the **worker-prepared
+terminal binding does not**, the completed incompatible phase
+replacement is discarded for that revision. This check runs over
+already-prepared immutable child/source configurations; it performs
+no tone lookup or DSP work. The existing held Sample and oscillator
+retain their phase, while subsequent independently compatible
+scalar parameter revisions can still publish. It does not repeatedly
+attempt an impossible worker transfer or starve the live edit.
+
+### Acceptance and regression boundaries
+
+The prior Instrument release test now covers a matrix of:
+
+- Same-wrapper or **distinct InstrumentSound and data-driven
+  InstrumentDefinition wrappers**; the latter also uses distinct
+  `SampleSound` wrappers and Source resolvers sharing an explicitly
+  verified immutable decoded `SamplePcmData`.
+- Note Off at frame **160** (inside the 64-frame oscillator crossfade,
+  exclusive release end 170) and frame **200** (after fade, end 210).
+  All cases compare every affected PCM frame against an uninterrupted
+  held Sample, require the original ten-frame Volume release, exact
+  final silence and **zero managed PCM allocations**.
+
+Negative tests require that distinct frozen definitions with changed
+tone pitches do *not* qualify for a new oscillator phase, but leave
+an independently compatible Constant update live. A separate
+same-tone-map/different-resolved-PCM case verifies the worker detects
+the stronger binding mismatch and falls back to scalar adoption
+without restarting or jumping the existing Sample.
+
+**Still outstanding:** semantically equivalent *different* immutable
+Envelope curve objects (without shared reference), selected-tone-only
+rather than whole-map compatibility, scripted Instrument selector
+equivalence, changed tone assignments/PCM selection, nested
+Instrument chains, Instrument tone Filter and pitch/panning/Filter
+envelope history, physical click/throughput acceptance, and the
+all-properties Synth inspector-to-audio test. These are not
+silently inferred from matching IDs. The all-properties TODO remains
+open; PR #12 remains **draft and unmerged**.
