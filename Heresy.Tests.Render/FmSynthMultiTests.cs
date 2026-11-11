@@ -1129,6 +1129,71 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void MixedMultiPreservesVariableRateSamplePlayheadAcrossLargeOnsetChange()
+    {
+        // An audible Sample and an independent oscillator share the same
+        // Multi input. The oscillator may rephase; its output is multiplied
+        // by zero so this reference can inspect only Sample continuity.
+        // A parent pitch edit earlier in the held note makes the Sample's
+        // current integral different from a fresh note's phase-based offset.
+        ObjectId id = (ObjectId)7632U;
+        float[] pcm = Enumerable.Range(0, 8192)
+            .Select(i => (float)(0.30 * Math.Sin(2 * Math.PI * i / 103.0)
+                + 0.15 * Math.Cos(2 * Math.PI * i / 43.0))).ToArray();
+        SampleSound sample = new(new SampleDefinition(id, "Changed pitch PCM",
+            new ExternalAssetReference("varied-mixed-source.wav")),
+            new MemorySampleData(48000, 1, pcm));
+        SourceResolver resolver = new(id, sample);
+        FmSynthGraph Graph(bool random) => new([
+            new FmSoundSourceNode(1, id, FmMultiNode.NeutralFrequencyHz),
+            new FmOscillatorNode(2, FmOscillatorWaveform.Sine, 1270),
+            new FmConstantNode(3, 0.0),
+            new FmOperatorNode(4, FmOperatorKind.Multiply, [2, 3]),
+            new FmOperatorNode(5, FmOperatorKind.Add, [1, 4]),
+            new FmMultiNode(6, 5, voiceCount: 2, detune: 0,
+                randomizePhase: random, cycleLength: 800,
+                gainCompensation: true),
+        ], 6);
+        FmSynthSound original = new(Graph(true), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound revised = new(Graph(false), resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        SoundState reference = original.CreateState();
+        held.SetNoiseSeed(137);
+        reference.SetNoiseSeed(137);
+        original.Render(context, held, 0, 80, new float[80]);
+        original.Render(context, reference, 0, 80, new float[80]);
+        held.PitchTrajectory.SetMultiplier(80, 1.3);
+        reference.PitchTrajectory.SetMultiplier(80, 1.3);
+        original.Render(context, held, 80, 176, new float[176]);
+        original.Render(context, reference, 80, 176, new float[176]);
+
+        original.TryPrepareRunningState(revised, held).Should().BeFalse();
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeTrue(
+            "a sibling oscillator can rephase without reconstructing Sample history");
+        using FirPreparationScheduler worker = new();
+        original.QueuePendingFirControls(held, worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        original.AdoptPreparedFirControls(held);
+        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, held);
+
+        float[] actual = new float[160], expected = new float[160];
+        long beforeBytes = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, 256, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - beforeBytes).Should().Be(0L,
+            "variable-rate continuity and oscillator rephase allocate no PCM memory");
+        original.Render(context, reference, 256, expected.Length, expected);
+        actual.Should().Equal(expected,
+            "an earlier pitch change must not force the Sample to a hypothetical fresh-note offset");
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
     public void LiveSamplePhaseEditRetainsStateAcrossFreshFrozenPcmWrappers()
     {
         // Production revisions use a new PlaybackSnapshotSoundResolver and
