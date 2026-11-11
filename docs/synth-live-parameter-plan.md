@@ -3196,3 +3196,16 @@ existing Multi, shared Source, filter-tail and live gain transition suites.
 This is a source lifecycle refactor, not completion of all-property live Synth
 editing. Physical device listening and full interactive migration remain
 open; PR #12 stays draft and the main TODO stays unchecked.
+
+### Manual audio verification — direct Instrument Sample Volume editing (2026-11-11)
+
+User verified the slice 46/47 editor-to-playback fixture in a local build:
+a Synth with a single Source node referring to an Instrument whose selected
+Tone Definition has a Volume Envelope. The Source inspector's **Edit Shared
+Volume Envelope** control appeared; changing the envelope while a preview
+note was **latched** produced an immediate and smooth audible change without
+stopping the note. This closes the *manual listening* check for this narrowly
+supported direct Instrument-backed Sample Volume path only. It does not verify
+multi-Source/Operator, nested Synth tone migration, other parameter families,
+or the separate Definite/Indefinite Note Off lifecycle behavior. The all-property
+acceptance TODO and PR #12 draft status remain unchanged.
