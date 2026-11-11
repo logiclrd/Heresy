@@ -3477,3 +3477,31 @@ rendering retains immediate scalar/operation semantics.
 CI qualification and real-device listening are recorded
 separately; the complete all-property Synth live-update TODO
 remains open and PR #12 stays draft/unmerged.
+
+
+### Manual listening — slice 51 audible parameter changes and structural isolation (2026-11-11)
+
+The user performed the suggested physical-device **Test** listening check
+for slice 51 and reported **pass**. The suggested fixture had an
+Oscillator multiplied by a Constant, with live Constant gain changes
+and an Operator mode change (Multiply→Add) while the Test note was
+ongoing. The result provides manual audio acceptance of the narrow
+stateless **audible Constant/Operator edit** route in addition to the
+automated 64-frame PCM and phase regressions. This observation does not
+establish every scalar/mode combination or long-running device
+throughput.
+
+During the same session the user inadvertently exercised an explicitly
+**structural graph edit**: an already-sounding
+`Multiply[Oscillator, Oscillator]` was rewired into
+`Multiply[Oscillator, Oscillator, Constant]`. There was **no audible
+change** to the still-playing note, as intended: adding a connection
+changes the processing topology, and existing voices may remain on
+their previous frozen generation. This is independent manual
+confirmation of *old-voice structural isolation*. It does **not** alone
+establish that a newly triggered note uses the three-input graph;
+that complementary new-note check was not reported.
+
+The slice-51 bounded live-edit listening fixture is accepted, with
+the general all-nonstructural-properties TODO and draft/unmerged PR #12
+status unchanged.
