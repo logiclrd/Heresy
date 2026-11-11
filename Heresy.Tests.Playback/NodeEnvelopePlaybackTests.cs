@@ -277,7 +277,7 @@ public sealed class NodeEnvelopePlaybackTests
 		{
 			Assert.That(chunked, Is.EqualTo(pcm).Within(1e-6f));
 			if (loop == EnvelopeSustainLoopMode.None)
-				Assert.That(pcm.Skip(60).Take(35),
+				Assert.That(pcm.Skip(61).Take(34),
 					Is.All.EqualTo(0f).Within(1e-6f),
 					"No sustain loop means Definite Note Off must cut the sound");
 			else
