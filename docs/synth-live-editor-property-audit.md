@@ -37,7 +37,7 @@ implementation slices.
 | Source: SourceId (Sample / Instrument / Synth) | Inspector permits reassignment. Renderer can migrate compatible **nested Synth** state, but arbitrary Sample/Instrument Source swaps remain unsupported for held voices; the next new note receives the new selection | **Open property gap**: prepare replacement Sample/Instrument invocation, define new-asset playhead and click-safe bounded transition, Note Off/EOF/release handling |
 | Source: Frequency Hz, Constant, Exponential multiplier | Preserves original child playback position/frequency basis while applying forward rate/mode changes | Verify real inspector with Sample, Instrument and Synth sources across prior pitch automation |
 | Source: Multiplier input | Graph wiring change | Structural-generation rule applies |
-| Envelope: selected Envelope object; shared curve edit | Reachable Envelope node uses stateless prepared evaluation on existing time axis; separate Instrument Volume-envelope equivalence has limited shape migration. Changed selected envelope is not automatically a stateful curve replacement | Scripted/nested-envelope revision acceptance, release timing, user edits in connected dependencies |
+| Envelope: selected Envelope object; shared curve edit | Graph Envelope nodes are stateless. **Slice 46:** a live single direct Instrument→Sample Source can now adopt a genuinely changed shared node Volume curve through a 64-frame gain blend at its original clock, with strict selected-tone and PCM proof. All other Instrument descendants retain conservative frozen-state behavior | Real UI→held PCM integration; scripted/nested/compound Envelopes, rapid edits, device listening |
 | Filter: shared definition, per-use stage overrides, Tail Seconds | Existing coefficient/FIR and stage-identity preflights can adopt compatible prepared parameter changes and tail updates; graph rewiring and unsupported stage topology remain conservative | **Open coverage**: every typed stage parameter, Filter selection/structural stage changes, multi-filter tails and audible click/throughput acceptance |
 | Filter: audio and modulation inputs | Graph wiring change | Structural-generation rule applies |
 | Multi: Distribution, Detune, Voice Count, Harmonic/Chord Components, Randomize Phase, Gain Compensation, Cycle Length, presets | Ratio/mix glide, worker-prepared growth/onset phases, Sample playhead continuity and bounded fades have dedicated renderer coverage; feasibility depends on constituent/state eligibility and 128-voice cap | Audit combinations, nested State/Filter cases, rapid edits, maximum headroom, UI-to-PCM |
@@ -205,3 +205,42 @@ may change and which retain the original frozen generation. That
 migration acceptance, the remaining all-properties audit and
 physical listening/underrun tests remain **open**. PR #12 stays
 draft and unmerged.
+
+
+## Slice 46 — bounded held Instrument node Volume adoption
+
+Slice 45's real editor integration proved publication, but the held
+Sample continued using the Envelope curve captured in its flattened
+`SoundInvocation`. Slice 46 adds the first **actual held-voice DSP
+migration**, without reopening the session or retiming the Sample.
+
+For a live-audition Synth with exactly one directly outputting
+Instrument Source, preparation now freezes possible **direct terminal
+Sample + node Volume curve** candidates ahead of PCM. At publication,
+the already-selected data-driven tone slot, same terminal immutable
+Sample PCM/timeline, selected tone identity, release policy and absence
+of other tone Filter/Pitch/Panning/Filter-envelope state provide an
+allocation-free compatibility check. Ineligible Samples, scripted
+Instrument mappings, complex graphs and already-retired voices keep
+their old captured Volume. The original Sample SoundState and
+integrated fractional playhead are never replaced.
+
+A permitted change replaces only the active immutable Volume curve,
+then evaluates the old and new gains at the original continuing
+envelope age and Note Off origin. These gains crossfade over 64 frames
+with cubic smoothstep. Interruption uses the last blended gain instead
+of retaining multiple outgoing curves; outgoing release is bounded by
+the fade, so editing to a shorter release cannot retroactively erase
+the old contribution. Natural Sample EOF continues to bound the sound.
+
+The first regression **failed red** on the old code, then passed with
+this change; it checks actual held PCM on a varying Sample waveform,
+the original Sample's uninterrupted position, changed sustain level,
+zero managed render allocations, ten-frame release and a fresh note
+on the new curve. Guard tests cover incompatible changed PCM and
+non-audition frozen rendering, and overlapping 10/20-frame releases
+with Note Off during the fade. The new behavior is deliberately
+**narrower than all Envelope inspector properties**; true
+editor→transport→held-PCM integration and general tone Filter/envelope
+migrations remain outstanding. PR #12 and the all-properties TODO stay
+open.
