@@ -138,6 +138,157 @@ public sealed class FmSynthCompoundShapeLiveTests
             "the regular output should not be held at the prior sample");
     }
 
+
+    [Test]
+    public void HeldConstantGainEditCrossfadesTheAudibleStatelessGraph()
+    {
+        FmSynthSound SoundWithGain(double gain, bool audition = true)
+            => new(new FmSynthGraph([
+                new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 400),
+                new FmConstantNode(2, gain),
+                new FmOperatorNode(3, FmOperatorKind.Multiply, [1, 2]),
+            ], 3), new EmptyEnvelopes(), enableLiveMultiExpansion: audition);
+        FmSynthSound beforeSound = SoundWithGain(0.9);
+        FmSynthSound afterSound = SoundWithGain(0.1);
+        AssertSmoothStatelessEdit(beforeSound, afterSound);
+    }
+
+    [Test]
+    public void HeldOperatorKindEditCrossfadesTheAudibleStatelessGraph()
+    {
+        FmSynthSound beforeSound = Sound(FmOperatorKind.Add,
+            FmOscillatorWaveform.Sine);
+        FmSynthSound afterSound = Sound(FmOperatorKind.Multiply,
+            FmOscillatorWaveform.Sine);
+        AssertSmoothStatelessEdit(beforeSound, afterSound);
+    }
+
+    [Test]
+    public void HeldConstantOnlyOutputCrossfadesOnValueEdit()
+    {
+        FmSynthSound SoundWithValue(double value)
+            => new(new FmSynthGraph([
+                new FmConstantNode(1, value),
+            ], 1), new EmptyEnvelopes(), enableLiveMultiExpansion: true);
+        AssertSmoothStatelessEdit(SoundWithValue(0.9), SoundWithValue(-0.4));
+    }
+
+    [Test]
+    public void SecondStatelessParameterEditStartsAtTheCurrentBlendedOutput()
+    {
+        FmSynthSound SoundWith(double gain, FmOperatorKind operation)
+            => new(new FmSynthGraph([
+                new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 400),
+                new FmConstantNode(2, gain),
+                new FmOperatorNode(3, operation, [1, 2]),
+            ], 3), new EmptyEnvelopes(), enableLiveMultiExpansion: true);
+        FmSynthSound initial = SoundWith(0.9, FmOperatorKind.Multiply);
+        FmSynthSound first = SoundWith(0.1, FmOperatorKind.Multiply);
+        FmSynthSound second = SoundWith(0.1, FmOperatorKind.Add);
+        RenderContext context = Mono();
+        SoundState held = initial.CreateState();
+        initial.Render(context, held, 0, 128, new float[128]);
+        initial.TryPrepareRunningState(first, held).Should().BeTrue();
+        initial.CommitPreparedRunningState(first, held);
+        float[] partial = new float[20];
+        first.Render(context, held, 128, partial.Length, partial);
+
+        first.TryPrepareRunningState(second, held).Should().BeTrue();
+        first.CommitPreparedRunningState(second, held);
+        float[] actual = new float[96], reference = new float[244];
+        second.Render(context, second.CreateState(), 0, reference.Length, reference);
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        second.Render(context, held, 148, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
+        actual[0].Should().Be(partial[^1]);
+        for (int i = 0; i < actual.Length; i++)
+        {
+            double t = Math.Clamp(i / 64.0, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            actual[i].Should().BeApproximately(
+                (float)(partial[^1] * (1 - w) + reference[148 + i] * w),
+                2e-6f);
+        }
+    }
+
+    [Test]
+    public void ControlOnlyConstantEditDoesNotFreezeOscillatorFrequencyModulation()
+    {
+        FmSynthSound SoundWithMultiplier(double scalar) => new(
+            new FmSynthGraph([
+                new FmConstantNode(1, scalar),
+                new FmOscillatorNode(2, FmOscillatorWaveform.Sine, 100,
+                    multiplierNodeId: 1),
+            ], 2), new EmptyEnvelopes(), enableLiveMultiExpansion: true);
+        FmSynthSound before = SoundWithMultiplier(1.0);
+        FmSynthSound after = SoundWithMultiplier(3.0);
+        RenderContext context = Mono();
+        SoundState held = before.CreateState();
+        before.Render(context, held, 0, 128, new float[128]);
+
+        before.TryPrepareRunningState(after, held).Should().BeTrue();
+        before.CommitPreparedRunningState(after, held);
+        float[] actual = new float[2];
+        after.Render(context, held, 128, actual.Length, actual);
+        actual[0].Should().BeApproximately(
+            (float)Math.Sin(2 * Math.PI * 100 * 128 / 48000), 2e-6f);
+        actual[1].Should().BeApproximately(
+            (float)Math.Sin(2 * Math.PI * (100 * 128 + 300) / 48000), 2e-6f,
+            "a control-only Constant edit must retune continuously, not hold PCM");
+    }
+
+    [Test]
+    public void NonAuditionStatelessConstantAndOperatorEditsRemainImmediate()
+    {
+        FmSynthSound Build(double gain, FmOperatorKind operation)
+            => new(new FmSynthGraph([
+                new FmConstantNode(1, gain),
+                new FmConstantNode(2, 0.4),
+                new FmOperatorNode(3, operation, [1, 2]),
+            ], 3), new EmptyEnvelopes(), enableLiveMultiExpansion: false);
+        FmSynthSound original = Build(0.8, FmOperatorKind.Add);
+        FmSynthSound revised = Build(-0.2, FmOperatorKind.Multiply);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        original.Render(context, held, 0, 128, new float[128]);
+        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, held);
+        float[] output = new float[1];
+        revised.Render(context, held, 128, 1, output);
+        output[0].Should().BeApproximately(-0.08f, 2e-6f);
+    }
+
+    private static void AssertSmoothStatelessEdit(
+        FmSynthSound original, FmSynthSound revised)
+    {
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        float[] previous = new float[128], actual = new float[128],
+            revisedReference = new float[256];
+        original.Render(context, held, 0, previous.Length, previous);
+        revised.Render(context, revised.CreateState(), 0,
+            revisedReference.Length, revisedReference);
+
+        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, held);
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, 128, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L,
+            "bounded stateless control transitions must not allocate in PCM");
+
+        actual[0].Should().Be(previous[^1]);
+        for (int i = 0; i < actual.Length; i++)
+        {
+            double t = Math.Clamp(i / 64.0, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            float expected = (float)(previous[^1] * (1 - w)
+                + revisedReference[128 + i] * w);
+            actual[i].Should().BeApproximately(expected, 2e-6f,
+                "graph-level scalar and Operator edits must join the last output"
+                + " without altering existing oscillator phase");
+        }
+    }
+
     private static FmSynthSound Sound(
         FmOperatorKind operation,
         FmOscillatorWaveform firstWaveform,
