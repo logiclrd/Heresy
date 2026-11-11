@@ -1,7 +1,8 @@
 # Definite and Indefinite Note Off — recursive sound lifetime
 
-Status: agreed design for PR #12; implementation tracked separately. This is a
-Heresy sound-lifecycle contract, not an Impulse Tracker compatibility rule.
+Status: implemented on draft PR #12; automated PCM/regression acceptance recorded
+below. This is a Heresy sound-lifecycle contract, not an Impulse Tracker
+compatibility rule. Physical listening remains unverified.
 
 ## Vocabulary
 
@@ -69,10 +70,10 @@ reset release origins. A cut after Note Off must remain possible.
   immutable prepared sound definitions.
 - The release-capability calculation is based on the frozen bound invocation
   and its active/selected subtree, not all available Instrument tones.
-- The current one-off `FmSynthSound.ExtendExternalVolumeRelease` and
-  `SampleSoundState.ReleaseIsControlledByVolumeEnvelope` are provisional
-  compensations; replace them when general propagation and lifetime accounting
-  cover the same cases, rather than layering conflicting mechanisms.
+- The prior one-off `FmSynthSound.ExtendExternalVolumeRelease` and
+  `SampleSoundState.ReleaseIsControlledByVolumeEnvelope` compensations have
+  been removed. `SoundState.NoteOffDisposition` and recursive Synth lifetime
+  accounting now preserve the same audible releases without Volume-only rules.
 - Regressions: bare Sample/bare oscillator Definite cut; Indefinite continued
   generation/EOF; sustained Volume/Pitch/Filter; no-loop envelopes; nested
   Instrument→Synth; Synth→Instrument; multiple concurrent releases; permanent
@@ -80,3 +81,34 @@ reset release origins. A cut after Note Off must remain possible.
   repeated Note Off; Multi/Operator graph semantics.
 - Keep envelope clocks, selected tone identities and live-edited Sample
   playheads intact; do not allocate or rebuild note states in the PCM callback.
+
+## Implementation and validation — slice 48
+
+- Frozen `IEnvelopeCurve.HasSustainLoop` identifies node sustain loops. The
+  existing scripted envelope model has no authored node/loop indices: when a
+  scripted curve declares a finite release duration, it is treated as an
+  implicit sustain/release lifecycle for backward-compatible release behavior.
+  A script without a declared release duration does not claim one.
+- A completed node envelope retains the value of its **last node**; the
+  finite release-completion bound and the permanent-silence proof are separate
+  concepts. In particular a Volume endpoint of 0.1 is not a cut.
+- `PlaybackVoice` combines enabled local releases; `FmSynthSound` recursively
+  checks active, frozen Sources and Multi constituents and forwards Indefinite
+  Off through nested sound invocations. The earliest natural Sample EOF and
+  authored Filter tail remain independent limits. Existing PCM anti-click,
+  Note Cut and note-event ordering continue to apply.
+- A post-tone-Filter Source Volume which finishes at permanent zero proves
+  that Source silent at its completion, except for any currently outgoing
+  bounded Volume-edit crossfade. A subsequent graph Filter still receives
+  its authored tail budget. Multiple independent releases otherwise continue
+  until their last completion.
+- Tests were introduced red-first for the non-sustained Pitch-only Definite
+  Off case. Regression coverage now includes Instrument→Synth release,
+  Instrument Pitch-only release protecting an unsustained Synth, Source-bound
+  Instrument Volume0 vs Volume10% with longer Pitch release, multiple Synth
+  release curves, synthetic script-like release curves, nested Sample EOF,
+  Operator/Multi paths, live Volume-edited gain overlap and NNA lifetimes.
+  The earlier code's audio-local envelope dependency tree has been retired.
+- These tests are automated render/transport acceptance, not a substitute for
+  physical listening of latched notes or sustained live-device performance.
+  PR #12 remains draft, and the full nonstructural-live-property TODO is open.
