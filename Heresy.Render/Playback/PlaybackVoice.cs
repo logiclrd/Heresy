@@ -831,26 +831,17 @@ public sealed class PlaybackVoice
 		if (SoundState.NoteOffTime.HasValue)
 			return;
 
+		// The PlaybackVoice is the outermost Instrument envelope controller.
+		// When it owns a sustain loop, the flattened terminal source receives
+		// Indefinite Off: it must supply audio while that loop releases.
+		SoundState.NoteOffDisposition = HasLocalSustainRelease()
+			? NoteOffDisposition.Indefinite : NoteOffDisposition.Definite;
 		long relativeFrame = absoluteFrame - StartFrame;
 		SoundState.NoteOffTime = FrameTime.FrameStartTime(
 			relativeFrame,
 			sampleRate);
 
 		_volumeEnvelope?.NoteOff(absoluteFrame);
-		// A tone-level Instrument Volume envelope lives outside the selected
-		// terminal Synth. Its release must keep that Synth's oscillators alive
-		// until the outer gain reaches its authored end, even if the Synth
-		// itself has no release Envelope nodes. The regular composed voice
-		// deadline still takes the earlier of the two audible ends.
-		if (_volumeEnvelope is not null && Sound is FmSynthSound synth)
-		{
-			long releaseEnd = _volumeEnvelope
-				.GetEndFrameExclusiveAfterNoteOff(absoluteFrame)
-				?? long.MaxValue;
-			synth.ExtendExternalVolumeRelease(
-				SoundState, releaseEnd == long.MaxValue
-					? long.MaxValue : checked(releaseEnd - StartFrame));
-		}
 		_pitchEnvelope?.NoteOff(absoluteFrame);
 		_panningEnvelope?.NoteOff(absoluteFrame);
 		_filterEnvelope?.NoteOff(absoluteFrame);
@@ -858,10 +849,58 @@ public sealed class PlaybackVoice
 			envelope.NoteOff(absoluteFrame);
 	}
 
+	/// <summary>Only enabled, configured sustain loops participate in an
+	/// actual release. A non-looped envelope cannot turn Definite Off into
+	/// Indefinite Off merely by existing.</summary>
+	private bool HasLocalSustainRelease()
+	{
+		if (_volumeEnvelope?.HasSustainLoop == true
+			|| _pitchEnvelope?.HasSustainLoop == true
+			|| _panningEnvelope?.HasSustainLoop == true
+			|| _filterEnvelope?.HasSustainLoop == true)
+			return true;
+		foreach (EnvelopePlaybackState envelope in _eventFilterParameterEnvelopes.Values)
+			if (envelope.HasSustainLoop) return true;
+		foreach (EnvelopePlaybackState envelope in _enclosingFilterParameterEnvelopes.Values)
+			if (envelope.HasSustainLoop) return true;
+		return false;
+	}
+
+	internal bool HasLocalReleaseLifecycle => HasLocalSustainRelease();
+
+	/// <summary>The LAST completed sustain-loop release, not just the
+	/// Volume envelope. Null means either no locally-owned release or an
+	/// unbounded/paused release: see HasLocalReleaseLifecycle.</summary>
+	internal long? GetLocalReleaseCompletionFrameExclusive(long absoluteFrame)
+	{
+		long? latest = null;
+		bool unbounded = false;
+		void Include(EnvelopePlaybackState? envelope)
+		{
+			if (envelope?.HasSustainLoop != true) return;
+			long? end = envelope.GetEndFrameExclusiveAfterNoteOff(absoluteFrame);
+			if (!end.HasValue) unbounded = true;
+			else latest = latest.HasValue ? Math.Max(latest.Value, end.Value) : end;
+		}
+		Include(_volumeEnvelope);
+		Include(_pitchEnvelope);
+		Include(_panningEnvelope);
+		Include(_filterEnvelope);
+		foreach (EnvelopePlaybackState envelope in _eventFilterParameterEnvelopes.Values)
+			Include(envelope);
+		foreach (EnvelopePlaybackState envelope in _enclosingFilterParameterEnvelopes.Values)
+			Include(envelope);
+		return unbounded ? null : latest;
+	}
+
+	/// <summary>A permanently-zero final Volume gain proves that all
+	/// downstream audio is silent, even if other release clocks run longer.
+	/// Unlike a crossing of zero, only a completed zero endpoint qualifies.</summary>
 	internal long? GetVolumeEnvelopeEndFrameExclusiveAfterNoteOff(
 		long absoluteFrame)
-		=> _volumeEnvelope?.GetEndFrameExclusiveAfterNoteOff(
-			absoluteFrame);
+		=> _volumeEnvelope?.IsZeroAfterCompletion == true
+			? _volumeEnvelope.GetEndFrameExclusiveAfterNoteOff(absoluteFrame)
+			: null;
 
 	internal void SetEnvelopeEnabled(
 		EnvelopeTarget target,
