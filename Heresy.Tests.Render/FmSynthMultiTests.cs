@@ -1148,10 +1148,57 @@ public sealed class FmSynthMultiTests
         float[] pcm = Enumerable.Range(0, 2048)
             .Select(i => (float)(0.4 + 0.15 * Math.Sin(2 * Math.PI * i / 59.0)))
             .ToArray();
-        SampleSound sample = new(new SampleDefinition(sampleId, "Released PCM",
-            new ExternalAssetReference("instrument-release.wav")),
-            new MemorySampleData(48000, 1, pcm));
+        SampleSound sample;
+        SampleSound revisedSample;
+        if (separateFrozenInstrumentRevision)
+        {
+            // Fresh song snapshots normally also rebuild the SampleSound
+            // adapter. Give both wrappers the same genuinely immutable
+            // decoded PCM identity, not the same SampleSound instance.
+            using System.IO.MemoryStream wave = new();
+            using (System.IO.BinaryWriter writer = new(wave,
+                System.Text.Encoding.ASCII, leaveOpen: true))
+            {
+                writer.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
+                writer.Write(36 + pcm.Length * 2);
+                writer.Write(System.Text.Encoding.ASCII.GetBytes("WAVEfmt "));
+                writer.Write(16);
+                writer.Write((ushort)1);
+                writer.Write((ushort)1);
+                writer.Write(48000);
+                writer.Write(96000);
+                writer.Write((ushort)2);
+                writer.Write((ushort)16);
+                writer.Write(System.Text.Encoding.ASCII.GetBytes("data"));
+                writer.Write(pcm.Length * 2);
+                foreach (float value in pcm)
+                    writer.Write((short)Math.Round(value * 30000));
+            }
+            SampleDefinition originalSampleDefinition =
+                SampleDefinition.CreateImported(sampleId,
+                    "Released PCM", "instrument-release.wav", wave.ToArray());
+            SampleDefinition revisedSampleDefinition =
+                SampleDefinition.CreateImportedCopy(sampleId,
+                    originalSampleDefinition, "instrument-release-copy.wav",
+                    wave.ToArray());
+            ReferenceEquals(originalSampleDefinition.PcmData,
+                revisedSampleDefinition.PcmData).Should().BeTrue();
+            sample = new(originalSampleDefinition,
+                new FrozenPcmData(originalSampleDefinition.PcmData!));
+            revisedSample = new(revisedSampleDefinition,
+                new FrozenPcmData(revisedSampleDefinition.PcmData!));
+            ReferenceEquals(sample, revisedSample).Should().BeFalse();
+        }
+        else
+        {
+            sample = new(new SampleDefinition(sampleId, "Released PCM",
+                new ExternalAssetReference("instrument-release.wav")),
+                new MemorySampleData(48000, 1, pcm));
+            revisedSample = sample;
+        }
         SourceResolver sampleResolver = new(sampleId, sample);
+        SourceResolver revisedSampleResolver =
+            new(sampleId, revisedSample);
         TenFrameRelease envelope = new(releaseId);
         Heresy.Core.Instruments.InstrumentDefinition definition =
             new(instrumentId, "Release instrument");
@@ -1178,7 +1225,7 @@ public sealed class FmSynthMultiTests
         nextDefinition.ToneTable.Add(0);
         Heresy.Render.Instruments.InstrumentSound nextInstrument =
             separateFrozenInstrumentRevision
-                ? new(nextDefinition, sampleResolver, envelope)
+                ? new(nextDefinition, revisedSampleResolver, envelope)
                 : instrument;
         if (separateFrozenInstrumentRevision)
             ReferenceEquals(instrument, nextInstrument).Should().BeFalse();
