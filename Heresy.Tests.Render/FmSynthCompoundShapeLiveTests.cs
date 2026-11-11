@@ -238,6 +238,39 @@ public sealed class FmSynthCompoundShapeLiveTests
     }
 
     [Test]
+    public void OperatorUsedOnlyForPitchModulationDoesNotCrossfadeTheAudibleOutput()
+    {
+        FmSynthSound SoundWithControl(FmOperatorKind operation)
+            => new(new FmSynthGraph([
+                new FmConstantNode(1, 1),
+                new FmConstantNode(2, 2),
+                new FmOperatorNode(3, operation, [1, 2]),
+                new FmOscillatorNode(4, FmOscillatorWaveform.Sine, 100,
+                    multiplierNodeId: 3),
+            ], 4), new EmptyEnvelopes(), enableLiveMultiExpansion: true);
+
+        FmSynthSound before = SoundWithControl(FmOperatorKind.Add);
+        FmSynthSound after = SoundWithControl(FmOperatorKind.Multiply);
+        RenderContext context = Mono();
+        SoundState held = before.CreateState();
+        before.Render(context, held, 0, 128, new float[128]);
+
+        before.TryPrepareRunningState(after, held).Should().BeTrue();
+        before.CommitPreparedRunningState(after, held);
+        float[] actual = new float[2];
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        after.Render(context, held, 128, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
+
+        actual[0].Should().BeApproximately(
+            (float)Math.Sin(2 * Math.PI * (300 * 128.0) / 48000), 2e-6f);
+        actual[1].Should().BeApproximately(
+            (float)Math.Sin(2 * Math.PI * (300 * 128.0 + 200) / 48000),
+            2e-6f, "the changed pitch-control Operator must not start an"
+                + " unnecessary audible-output transition");
+    }
+
+    [Test]
     public void NonAuditionStatelessConstantAndOperatorEditsRemainImmediate()
     {
         FmSynthSound Build(double gain, FmOperatorKind operation)
