@@ -564,3 +564,20 @@ rendering) passed before the fix. Full 64-frame output and
 zero-managed-allocation invariants are retained. Filter,
 Instrument, Multi and SourceId replacement are still outside
 the bounded route; this does not complete the all-property TODO.
+
+### Slice 54 — manual combined-graph property acceptance
+
+The user audited an actual running Synth Test note with two summed
+branches: a looping **Sample Source** whose frequency multiplier is
+driven by an Envelope (Sample×Constant under one Operator), and
+**White Noise×Constant** under another Operator. The user reported
+all edits working across selected Envelope definition (#1),
+Sample frequency and Exponential Multiplier (#2), Sample gain Constant
+(#3), Sample branch Operator mode (#4), final Add Operator mode (#6),
+Noise gain Constant (#7), and Noise branch Operator mode (#8).
+
+This is broader real-device UI-to-audio acceptance for a *single
+mixed graph* than a standalone gain-only fixture. It does not certify
+new Noise Vmin/Vmax properties (those are a separate TODO on `main`),
+Source replacement, stateful Filter/Multi DSP, released-note editing,
+or every timing and graph shape combination.
