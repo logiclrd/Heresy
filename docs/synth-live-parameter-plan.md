@@ -3412,3 +3412,68 @@ route, in addition to its render/phase/zero-allocation regressions.
 The report does not certify other graph node classes, every Operator,
 all possible property combinations or long-running hardware throughput.
 The all-nonstructural-property milestone remains open.
+
+
+## Slice 51 — audition-only Constant/Operator output edits
+
+Slice 50 made the output of a compound stateless Oscillator graph
+click-safe when an Oscillator's waveform, Curvature or output range
+changed. Two other **nonstructural** Synth inspector properties already
+published into a held note, but could produce an immediate PCM jump:
+**Constant.Value** on an audible gain/mix path, and
+**FmOperatorNode.Operation** (Add/Multiply/Minimum/Maximum) on the
+audible path.
+
+**Audible-path criterion:** During immutable graph compilation,
+an eligible graph consists entirely of reachable **Oscillators,
+Constants and Operators**. The compiled output node is traced
+backward through **Operator audio inputs**; an Oscillator is a leaf
+even if it has a separate multiplier/modulation input. A changed
+Constant or Operator that lies on this reachable **audible-value
+path** may start a fade. A changed Constant/Operator that exists
+*only* upstream of an Oscillator's frequency multiplier is a
+**control edit** and must **not** hold or crossfade the graph's
+output; it affects the forward phase rate immediately. An Oscillator
+shape edit follows the same audible-path condition. Compilation
+constructs the path bitmap off the PCM thread; no graph search,
+asset resolution or allocation occurs during rendering.
+
+**Audible output transition:** For a compatible running audition,
+a changed audible Constant value or Operator operation starts
+the same 64-output-frame cubic smoothstep used in slice 50:
+`out(n) = lastAudible * (1 - w(n)) + newGraph(n) * w(n)`,
+`w(n) = t² (3 - 2t), t = clamp(n/64, 0, 1)`.
+The previous *whole-graph output* is captured at the publication
+boundary; untouched independent Oscillators keep their real
+integrated phases. A mid-fade parameter edit captures the
+currently blended output and begins a new bounded transition,
+not a chain of old generation buffers. The raw graph `Values`
+used by modulation/control remain unaffected. **A one-Constant
+output graph** is eligible, as are larger stateless graphs.
+
+**Boundaries:** Audio-only fade is enabled only for explicitly
+live/audition-enabled Synths. Ordinary playback/export has
+immediate authored values, and frequency-only parameter changes
+keep their old continuous pitch policy. Source, Filter and Multi
+graphs, including compound Multi-generated subgraphs, remain
+outside this stateless-output transaction. No stateful DSP history,
+Source playhead, Multi onset or release origin is reconstructed.
+The previously supported single Oscillator shape transition
+remains available even within a simple Multi constituent.
+
+**Red-first acceptance:** A new test group extending
+`FmSynthCompoundShapeLiveTests` first failed four actual PCM
+output invariants on the old implementation:
+(1) Constant gain in Oscillator × Constant,
+(2) one-Constant output,
+(3) Add→Multiply operation, and
+(4) a new operation during an already-running Constant gain
+transition. [Red run #43038824435](https://github.com/logiclrd/Heresy/actions/runs/43038824435).
+Positive tests assert the exact 64-frame oracle, original
+post-fade phase and zero PCM managed allocations. Negative
+tests ensure a Constant connected only to an Oscillator pitch
+multiplier **does not** freeze sound, and ordinary non-audition
+rendering retains immediate scalar/operation semantics.
+CI qualification and real-device listening are recorded
+separately; the complete all-property Synth live-update TODO
+remains open and PR #12 stays draft/unmerged.
