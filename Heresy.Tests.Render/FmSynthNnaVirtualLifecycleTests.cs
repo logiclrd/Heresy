@@ -256,6 +256,8 @@ public sealed class FmSynthNnaVirtualLifecycleTests
 
     private sealed class ThreeFrameRelease : IEnvelopeCurve
     {
+        public bool HasSustainLoop => true;
+        public bool IsZeroAfterCompletion => true;
         public double GetValue(long frame, int sampleRate, long? off)
             => !off.HasValue ? 1 : Math.Max(0, 1 - (frame - off.Value) / 3.0);
 
