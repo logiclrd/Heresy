@@ -4155,3 +4155,90 @@ changed Source rate, changed Filter or Instrument child processing,
 already-releasing Sample migration, exhaustive hardware stress or exact
 numerical fade equality; those remain separate from the automated
 64-frame, no-allocation and EOF assertions.
+
+
+## Slice 60 — frozen single-OnePole Filter and Sample inside compound Multi output transitions
+
+Slice 59 allowed an unchanged compound Multi child containing a direct Sample
+Source and at least one Oscillator to participate in the outer 64-frame
+audition-only Constant/Operator output fade. Putting an otherwise **unchanged
+OnePole Filter** on that direct Sample branch still disqualified the whole
+outer fade, although each Multi constituent owns a prepared continuing
+Filter chain and an integrated Sample playhead.
+
+**Bounded extension:** A Multi's frozen compound child may also contain a
+Filter node whose configuration is **exactly one unmodulated OnePole
+stage**, with an audio input, as well as the previously admitted
+Oscillator, direct Sample Source, Constant, Operator, deterministic Noise
+and equivalent Node Envelope nodes. At least one Oscillator remains
+required. The old, next, and bound child graphs must have the same
+compiled shape, output, node IDs/order, inputs and phase indices, with
+all existing exact frozen-node conditions. The Filter must have the
+same audio input, unchanged TailSeconds, same definition ID and stage
+ID, unchanged **stage generation as captured at preparation**, the same
+parameter descriptors and each identical effective Filter value. A
+modulated OnePole, another stage family, additional stages, or a
+changed Filter cutoff/tail is not eligible to masquerade as a frozen
+OnePole for this *parent* output fade.
+
+**Per-constituent acceptance:** The already-started bound child must
+agree with the original frozen child, and the originally prepared
+child must agree with the revised one. For every active Multi voice
+the existing Filter chain must still be present, with input accepting
+audio rather than drained, and no Note Off. The continuing direct
+Sample still passes the slice-59 immutable PCM/loop identity, source
+property and original readhead checks, and the original stable
+Multi ratios, mix, onset, voice count and headroom guards remain.
+The parent fade begins only if **all** constituents pass. No Filter
+integrator, Sample invocation, or Multi child is rebuilt in PCM;
+the previously audible complete graph output is the fade anchor,
+and the original Filter histories and Source positions advance
+normally throughout the 64 output frames. The Filter's frozen
+parameter comparison uses indexed descriptors rather than a
+captured iterator, and stage-generation metadata is snapshotted
+off PCM, not rediscovered from mutable authoring objects.
+
+**Desired-invariant regression first:** The new
+`FmSynthLiveFilteredMultiOutputTests` graph is
+`Multi[Add[OnePole[direct Sample], Sine(390Hz)]]`, using three
+Spread voices with a downstream Constant and Multiply/Add Operator.
+The test-only commit `8601687c3b33` produced **four real
+first-frame discontinuity failures** in
+[CI #43140007560](https://github.com/logiclrd/Heresy/actions/runs/43140007560):
+two downstream gains, the Operator edit and a second edit
+while the first fade was ongoing. The Sample-EOF/Filter-tail
+continuity and ordinary non-audition tests passed before the
+fix. That red run also saw a **separate, non-target**
+`FmRealtimeMaximumFirPublicationTests` allocation assertion
+(8200 vs <4096 bytes), so its five total failures must not all
+be reported as intentional. The first code implementation
+`18d393ff6ec1` passed
+[CI #43140366054](https://github.com/logiclrd/Heresy/actions/runs/43140366054)
+with **3,645 passing tests**, Linux ARM64 and release/native
+validation. A subsequent allocation-avoidance preflight refinement
+`26c8d1ca6e1f` also passed
+[CI #43140559227](https://github.com/logiclrd/Heresy/actions/runs/43140559227).
+The final code refinement `9e639348e031` captures stage
+generations before the PCM boundary. Final documentation-HEAD CI
+is separately required.
+
+**Exact tests:** complete 64-output-frame smoothstep against an
+independently rendered same-Sample/same-Filter three-voice reference,
+consecutive gain/mode changes before a fade finishes, retained
+per-constituent Filter history, integrated Sample position and
+end-of-file behavior with existing Filter tails, the parallel
+Oscillator continuing after the Sample, zero managed allocations
+while rendering PCM, and exact immediate output behavior outside
+audition.
+
+**Not implemented by this slice:** changing the Filter cutoff,
+stage, TailSeconds or modulation ports **inside** the Multi while
+an outer fade is active; additional Filter families/stages,
+Instrument or nested Synth Sources, nested Multi, SourceId
+reassignment, released/retiring Filter tails, stale or altered
+Samples, or any kind of all-properties signoff. Independently
+supported Filter live retunes remain distinct, not implicit
+proof that the Filter is frozen for a parent fade. No physical
+listening has yet been reported for this new Filter-in-Multi
+fixture. PR #12 stays draft/unmerged and the all-nonstructural-
+property TODO on main remains open.

@@ -770,3 +770,55 @@ the latched note. The child and Multi themselves were unchanged.
 This verifies the newly supported **outer-output editing path** on their
 local audio device, not source replacement, changed Filter history,
 post-Note-Off edits or all-property acceptance.
+
+
+## Slice 60 — frozen, unmodulated OnePole inside Sample-backed Multi
+
+An **unchanged single-stage, unmodulated OnePole Filter** may now sit
+between a direct Sample Source and an Add-mixed Oscillator **inside**
+the frozen Multi child while an external Constant or Operator mode
+changes on an already sounding Test note. The parent transition uses
+the existing audition-only 64-output-frame smoothstep, not a fresh
+Filter or Sample invocation. The Multi child still requires at
+least one Oscillator and the previously supported exact frozen
+node configurations.
+
+The Filter proof checks the immutable compiled audio input,
+single stage identity and **captured stage generation**, Filter
+definition ID, all effective parameters, absence of modulation
+bindings, unchanged Filter TailSeconds, and compatible actively
+processing Filter history for **each** already initialized and
+stable Multi constituent. The original immutable Sample PCM/loop
+geometry and fractional readhead are retained. An ended/releasing
+child, changing stage/coefficient, changed Sample Source property,
+modulated or multistage Filter, or still-moving Multi onset/ratio
+does not qualify for this *outer fade*. No Filter state,
+Sample playhead or additional voice is allocated/reinitialized in
+PCM; normal playback remains immediately responsive without
+audition fades.
+
+`FmSynthLiveFilteredMultiOutputTests` was committed before the
+fix at `8601687c`. [Red CI #43140007560](https://github.com/logiclrd/Heresy/actions/runs/43140007560)
+had **four intentional first-frame output discontinuities**
+(two gain cases, output Operator and second mid-fade edit);
+the Sample EOF/tail and non-audition cases already passed.
+A fifth failure in an existing, unrelated maximum-phase FIR
+allocation test is **not** a desired red assertion. The
+bounded implementation `18d393ff` passed
+[CI #43140366054](https://github.com/logiclrd/Heresy/actions/runs/43140366054)
+with **3,645 tests** and ARM64/release validation. Preflight
+allocation-avoidance refinement `26c8d1ca` subsequently passed
+[CI #43140559227](https://github.com/logiclrd/Heresy/actions/runs/43140559227).
+The compiled stage-generation capture `9e639348` is included
+in the final source and will be checked at documentation HEAD.
+The oracle verifies exact 64-frame blend, continuing bound
+readheads and Filter histories beyond the blend, sample EOF,
+rapid edits, zero managed PCM rendering allocations, and
+ordinary playback isolation.
+
+Physical listening on the filtered-Sample Multi fixture is
+**pending**. No new in-Multi Filter parameter edit, arbitrary
+Filter-family migration, SourceId reassignment, post-Note-Off
+migration, nested Instrument/Multi migration, or all-property
+acceptance is claimed. The PR remains draft and the main TODO
+remains unchecked.
