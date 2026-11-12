@@ -862,3 +862,12 @@ cases, no PCM allocations, ordinary playback isolation and
 release/ARM64 checks. **Hardware listening of the correction
 is not yet accepted**. The all-property milestone remains
 open; PR #12 remains draft and unmerged.
+
+
+## Slice 60 second listening failure and updated candidate (12 November 2026)
+
+The user **failed the second physical slice-60 audition**, hearing repeated Add/Multiply operator-switch pops and smaller Multiply-Constant pops, despite the previous 512-frame Add/Multiply morph. The earlier 10.7 ms Add transition and 1.3 ms whole-output-sample hold for pure Multiply were both insufficient evidence of inaudibility.
+
+Red-first [5d00f50e](https://github.com/logiclrd/Heresy/commit/5d00f50ecf628372f62bc407bd68445fe3adb686) / [CI #43322859134](https://github.com/logiclrd/Heresy/actions/runs/43322859134) produced exactly six expected transition oracle failures across 48 kHz and 96 kHz. Candidate fix [650ba5e](https://github.com/logiclrd/Heresy/commit/650ba5e607db3f7da8c83029bf2451836f3330a2) converts both Add-related and pure Multiply outer Multi+Constant output edits to a **100 ms, sample-rate-scaled moving gain/DC-offset morph**, including interrupted-edit continuity without freezing an audio frame or rebuilding bound child DSP. Existing Multi groups verify the new oracle, unchanged Sample/Filter histories, Note Off, no PCM allocations and normal playback isolation. [CI #43323623298](https://github.com/logiclrd/Heresy/actions/runs/43323623298) passed **3,656 tests** and all build/release checks.
+
+**User hearing confirmation of the 100 ms fix is still pending.** Large authored Add offsets can separately cause output clipping; test a quiet graph and modest constants if pops persist. Keep broader property-audit acceptance and PR #12 open.

@@ -4335,3 +4335,14 @@ remove the intentional DC offset introduced by Add, or
 certify hardware inaudibility. The user's local physical
 listening **retest is pending**. PR #12 remains draft/unmerged,
 and the all-nonstructural-property TODO remains open.
+
+
+## Slice 60 follow-up: second failed listening retest; 100 ms moving output transition (12 November 2026)
+
+**Audible status: NOT YET ACCEPTED.** The user reloaded the same slice-60 test file and again heard repeatable pops switching final Add/Multiply and smaller but detectable pops changing the Multiply Constant. The earlier 512-frame (~10.7 ms at 48 kHz) moving Add transition may have reduced the sound but demonstrably did not eliminate it. Multiply-only edits still used a 64-frame (~1.3 ms) hold of the last output sample before fading into the advancing waveform.
+
+**Red-first:** Commit [5d00f50e](https://github.com/logiclrd/Heresy/commit/5d00f50ecf628372f62bc407bd68445fe3adb686) introduced six new 48/96-kHz invariants requiring a 100 ms moving gain-and-bias transition: a large Add Constant step, both mode directions, and Multiply-only Constant changes. [CI #43322859134](https://github.com/logiclrd/Heresy/actions/runs/43322859134) failed precisely these six new cases; the other suites passed.
+
+**Implemented candidate:** [650ba5e](https://github.com/logiclrd/Heresy/commit/650ba5e607db3f7da8c83029bf2451836f3330a2) applies a sample-rate-scaled 100 ms moving affine gain/DC-bias ramp to **all** changes of the eligible final Multi + Constant → Add/Multiply audition shape, including pure Multiply. At 48 kHz this is 4800 frames; at 96 kHz, 9600 frames. The original Multi waveform keeps advancing with its Sample readheads, Filter histories, oscillator phases and envelope/noise clocks. Interrupted edits inherit the previously audible **moving gain/offset map**, not a frozen old sample; the existing whole-tree admission guards and ordinary-playback/export isolation remain. Existing Multi output tests now assert the longer oracle, interrupted transitions, Note Off, tail/EOF retention and no per-PCM managed allocations. [CI #43323623298](https://github.com/logiclrd/Heresy/actions/runs/43323623298) passed **all 3,656 tests**, plus Linux ARM64, release, Windows and native checks.
+
+**Remaining:** Despite automated green, the new 100 ms candidate has **not** passed hardware listening. The original user's failure remains tracked separately from CI. A large additive DC bias may also drive the authored output above full scale, creating clipping that no transition smoother can fix without changing the intended sound. Include an additional low-level/low-DC repeat test to distinguish clipping from transition faults if audible pops persist. Keep PR #12 draft/unmerged and the all-nonstructural-properties TODO open.
