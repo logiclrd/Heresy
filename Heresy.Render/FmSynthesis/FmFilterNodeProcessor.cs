@@ -31,6 +31,10 @@ internal sealed class FmFilterNodeProcessor
 	private readonly bool _useFastNumeric;
 	private readonly int _audioIndex;
 	private readonly ConfiguredFilterStage[] _effectiveStages;
+	// Capture generation when the graph is compiled. The shared authoring
+	// FilterDefinition may later change; reading it at publication time
+	// would compare the *new* generation for both frozen snapshots.
+	private readonly long[] _frozenStageGenerations;
 	// Prepared on the playback control thread; never designs FIR taps during
 	// ordered PCM publication. Null means live FIR retuning is unavailable.
 	private readonly PreparedFirControlBatch? _liveFirPlans;
@@ -81,6 +85,8 @@ internal sealed class FmFilterNodeProcessor
 		_initial = node.Configuration?.Clone();
 		_preparedSampleRate = preparedSampleRate;
 		_effectiveStages = _initial?.GetStages().ToArray() ?? [];
+		_frozenStageGenerations = _effectiveStages.Select(stage =>
+			_initial!.GetStageGenerationForPersistence(stage.StageId)).ToArray();
 		_audioIndex = node.AudioInputNodeId is int audioId
 			? indexById[audioId] : -1;
 		List<Binding> bindings = [];
@@ -430,8 +436,7 @@ internal sealed class FmFilterNodeProcessor
 		if (old.Kind != FilterKind.OnePole
 			|| revised.Kind != FilterKind.OnePole
 			|| old.StageId != revised.StageId
-			|| _initial.GetStageGenerationForPersistence(old.StageId)
-				!= next._initial.GetStageGenerationForPersistence(revised.StageId)
+			|| _frozenStageGenerations[0] != next._frozenStageGenerations[0]
 			|| old.Parameters.Parameters.Count != revised.Parameters.Parameters.Count)
 			return false;
 		// These are immutable, catalogue-ordered descriptor arrays.
