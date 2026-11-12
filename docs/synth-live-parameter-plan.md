@@ -4136,3 +4136,22 @@ independently compatible. Real-device listening for this new
 Sample-in-Multi downstream-edit fixture is **not yet reported**.
 PR #12 stays draft/unmerged, and the all-nonstructural-properties
 TODO on main stays open.
+
+
+### Slice 59 — local listening acceptance (2026-11-11)
+
+The user built the prescribed **direct looping Sample Source plus Sine Oscillator
+under an Add Operator, into a Spread Multi (3 voices, around 17 cents detune,
+Randomize Phase off, Gain Compensation on)**, followed by an outer
+Constant and Multiply/Add Operator. With a latched Test note playing, they
+changed the external Constant **0.8 → 0.1** and the external Operator
+**Multiply → Add**, leaving the Sample, Oscillator and Multi settings
+unchanged. They explicitly reported that the test **passed**.
+
+This is **physical listening acceptance for the newly admitted downstream
+output-control fade around a frozen, continuing Sample-backed Multi
+child**. It does not establish edited/changed SourceId, rewritten PCM,
+changed Source rate, changed Filter or Instrument child processing,
+already-releasing Sample migration, exhaustive hardware stress or exact
+numerical fade equality; those remain separate from the automated
+64-frame, no-allocation and EOF assertions.

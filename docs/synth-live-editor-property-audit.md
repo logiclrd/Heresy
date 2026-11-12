@@ -758,3 +758,15 @@ This does not establish migration of changed Sample/Instrument/nested
 Synth Sources or arbitrary compound child stateful processing. A local
 hardware listening check of this new fixture remains outstanding.
 The all-nonstructural-property TODO and draft PR remain open.
+
+
+### Slice 59 — real-device Sample-backed Multi acceptance
+
+The user reported **PASS** after setting up and auditioning the prescribed
+three-voice Spread Multi of an Add-combined direct looping Sample and
+390 Hz Sine Oscillator, followed by a downstream Constant edited from
+**0.8 to 0.1** and an output Operator switched **Multiply to Add** on
+the latched note. The child and Multi themselves were unchanged.
+This verifies the newly supported **outer-output editing path** on their
+local audio device, not source replacement, changed Filter history,
+post-Note-Off edits or all-property acceptance.
