@@ -822,3 +822,43 @@ Filter-family migration, SourceId reassignment, post-Note-Off
 migration, nested Instrument/Multi migration, or all-property
 acceptance is claimed. The PR remains draft and the main TODO
 remains unchecked.
+
+
+## Post-slice-60 additive-output listening regression and bounded fix
+
+The user reported audible clicks in the slice-60 local fixture
+when **Add** was the final output Operator and a large change
+was made to its Constant input, or when switching that Operator
+between **Add and Multiply**. The equivalent Constant change
+under **Multiply** did not click. The prior 64-frame smoothstep
+oracle proved sample continuity at the publication boundary,
+but not absence of the high-frequency transient associated
+with a rapid DC-bias change.
+
+The eligible audition-only compiled shape
+`Multi + Constant → Add/Multiply`, with frozen, active,
+stable Multi constituents and all original per-Source/Filter
+preflight guards, now uses a **512-frame, phase-coherent affine
+gain-and-offset morph** whenever Add is involved (or such
+a morph is already active). Unlike the original 64-frame
+held-output fade, every transitional frame evaluates the
+actual advancing Multi signal, applying interpolated gain
+and bias at the final output. Repeated edits join the
+previous active mapping; switching from an in-progress
+64-frame Multiply fade retains the last audible value.
+There are no extra DSP voices or allocations in PCM.
+Other graph shapes and Multiply-only changes keep the
+original 64-frame contract; regular playback/export
+remains immediate.
+
+The new red-first `FmSynthLiveAdditiveMultiTransitionTests`
+[run #43173794531](https://github.com/logiclrd/Heresy/actions/runs/43173794531)
+had **four expected failures** in Add gain/mode and
+interruption cases. Implementation `392b3c9d`
+[run #43174461292](https://github.com/logiclrd/Heresy/actions/runs/43174461292)
+passed **3,650 tests** including exact moving-signal
+512-frame regressions, prior 64-frame unaffected Multiply
+cases, no PCM allocations, ordinary playback isolation and
+release/ARM64 checks. **Hardware listening of the correction
+is not yet accepted**. The all-property milestone remains
+open; PR #12 remains draft and unmerged.

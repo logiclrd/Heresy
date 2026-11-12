@@ -4242,3 +4242,96 @@ proof that the Filter is frozen for a parent fade. No physical
 listening has yet been reported for this new Filter-in-Multi
 fixture. PR #12 stays draft/unmerged and the all-nonstructural-
 property TODO on main remains open.
+
+
+## Post-slice-60 regression fix — additive output click on live filtered Multi
+
+**User hardware report (2026-11-12):** The user heard a slight
+regression on the prescribed slice-60 latched Sample → OnePole +
+Sine → Add → Multi → outer Operator fixture. A large edit to the
+**outer Constant while the final Operator was Add** produced a
+click; changing that Operator **between Add and Multiply** also
+usually clicked. The same Constant changes with the final Operator
+set to **Multiply** did not click. This is a real-device *failure
+report against the previous code*, not a listening pass of the fix.
+
+**Diagnosis:** The previously proven 64-output-frame smoothstep
+ensured the first new PCM frame exactly repeated the last *audible
+whole-graph output*, but then faded that held value to the new
+moving graph over ~1.33 ms at 48 kHz. The exact 64-frame PCM
+oracle did not establish inaudibility of a large additive DC
+change. An abrupt DC offset or switching Add ↔ Multiply alters
+both the gain and bias; even a smooth 1.33-ms output ramp can
+produce an audible high-frequency transient. This explanation
+is grounded in the DSP transition shape; additional actual
+audio-device listening is still required to determine whether
+it fully accounts for the user's reported sound. Source/filter
+retirement or a dropped fade was not established as the cause.
+
+**Bounded correction:** For an eligible *top-level three-node
+compiled output graph*, where an unchanged stable **Multi**
+and one **Constant** feed a final binary Add or Multiply,
+a parameter edit affecting that final Constant/Operator now
+uses a separate **512-frame (~10.67 ms at 48 kHz) smoothstep
+of the operator's affine mapping** instead of the generic
+64-frame hold-and-fade.
+
+Let `s(f)` be the **current**, still-moving and fully evaluated
+Multi output at frame `f`. Multiply with Constant `c`
+maps to `c*s(f) + 0`; Add maps to `1*s(f) + c`.
+With `w(f) = smoothstep((f-S)/512)`, the final audible output
+becomes
+
+`s(f) * ((1-w)*oldGain + w*newGain)
++ ((1-w)*oldOffset + w*newOffset)`.
+
+This morphs the old and revised gain **and DC offset**, while
+rendering Sample readheads, independent Oscillator phases,
+Filter histories, Noise/Envelope clocks and Multi ratios only
+once, forward, as before. It **does not freeze or replay a
+single old output sample for 512 frames**, construct a second
+child graph, reconfigure any child Source/Filter, or allocate
+in PCM. The previous whole-tree atomic preflight, same
+unchanged/frozen Multi child admission and audition isolation
+still apply. A second additive edit derives its starting
+gain and bias from the *currently audible moving mapping*;
+a switch from an in-progress legacy Multiply-only 64-frame
+output hold joins its last actual blended value with a
+calibrated bias. Ordinary playback/export has no morph.
+Changing away from Add/Multiply falls back to the prior
+generic behavior. **Multiply-only Constant edits retain the
+original 64-frame output fade**; other graph shapes do too.
+
+**Red-first evidence:** `FmSynthLiveAdditiveMultiTransitionTests`
+was committed independently as `d86cfeb6` and
+[CI #43173794531](https://github.com/logiclrd/Heresy/actions/runs/43173794531)
+failed **four expected numerical transition cases**:
+large additive offset, two directions of Add/Multiply
+switching, and a second additive edit before the first
+completed. The normal-playback negative case passed.
+This catches the old 64-frame behavior without creating
+a test that endorses the audible click.
+
+**Green implementation:** `392b3c9d` updates the renderer
+and strengthens the existing Multi output regression groups
+(slices 56–60), retaining their independent 64-frame Multiply
+assertions and replacing the old Add-mode held-sample oracle
+with the full 512-frame moving-signal, gain/offset oracle.
+[CI #43174461292](https://github.com/logiclrd/Heresy/actions/runs/43174461292)
+passed **3,650 tests** (Render 1,102, Playback 355,
+UI 1,149, other 910/105/29), Linux ARM64, native/Windows
+checks and release-bundle validation. New tests also assert
+zero managed PCM allocations, overlapping edit continuity
+and unchanged ordinary playback.
+
+**Boundaries:** This is not a blanket 512-frame smoothing
+of every Constant or every FM control port. It applies only
+to the eligible final `Multi + Constant → Add/Multiply`
+audition output shape. Complex parent Operators, other
+control-node paths and unadmitted Multi child migrations
+keep their existing contracts. It does not prevent clipping
+if authored Add output exceeds the output device's range,
+remove the intentional DC offset introduced by Add, or
+certify hardware inaudibility. The user's local physical
+listening **retest is pending**. PR #12 remains draft/unmerged,
+and the all-nonstructural-property TODO remains open.
