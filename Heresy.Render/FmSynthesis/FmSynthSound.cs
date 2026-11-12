@@ -153,6 +153,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	// allocate or reconstruct a child invocation. One transition is 64 frames
 	// in the *outer* voice's sample clock (about 1.3 ms at 48 kHz).
 	private const int MultiEditTransitionFrames = 64;
+	// Add introduces a DC-offset step, which can still produce an audible
+	// transient after a 64-frame hold-and-fade. Morph the gain AND offset
+	// of a frozen Multi's final Add/Multiply map over 512 moving frames.
+	private const int AdditiveOutputTransitionFrames = 512;
 	private const int MultiGrowthReservePerNode = 4;
 
 	// A single 64-frame smoothstep is already the accepted ratio/mix
@@ -163,6 +167,15 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	{
 		double t = Math.Clamp(
 			(double)(frame - startFrame) / MultiEditTransitionFrames, 0.0, 1.0);
+		return t * t * (3.0 - 2.0 * t);
+	}
+
+	private static double AdditiveOutputTransitionWeight(
+		long startFrame, long frame)
+	{
+		double t = Math.Clamp(
+			(double)(frame - startFrame) / AdditiveOutputTransitionFrames,
+			0.0, 1.0);
 		return t * t * (3.0 - 2.0 * t);
 	}
 
@@ -625,6 +638,66 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		}
 		public void ClearStatelessOutputFade() => StatelessOutputFadeFrom = null;
 
+		// The frozen, continuing Multi's whole signal is evaluated once per
+		// frame. A final Multiply maps it to (constant * signal), while Add
+		// maps it to (signal + constant). Morph these two affine mappings,
+		// never holding the old waveform or recreating its DSP history.
+		public bool HasAdditiveOutputTransition { get; private set; }
+		public int AdditiveSignalIndex { get; private set; }
+		private double _additiveFromScale, _additiveFromOffset;
+		private double _additiveToScale, _additiveToOffset;
+		private long _additiveStartFrame;
+
+		public void StartAdditiveOutputTransition(int signalIndex, int outputIndex,
+			double fromScale, double fromOffset, double toScale, double toOffset)
+		{
+			if (NextFrame == 0 || SampleRate == 0)
+				return;
+			if (HasAdditiveOutputTransition && AdditiveSignalIndex == signalIndex)
+			{
+				// A second edit during the first transition inherits the
+				// mapping applied to the *last rendered* moving signal.
+				double w = AdditiveOutputTransitionWeight(
+					_additiveStartFrame, NextFrame - 1);
+				fromScale = _additiveFromScale * (1 - w) + _additiveToScale * w;
+				fromOffset = _additiveFromOffset * (1 - w) + _additiveToOffset * w;
+			}
+			else if (StatelessOutputFadeFrom is not null)
+			{
+				// A prior 64-frame waveform hold may still be in progress.
+				// Join its last audible value without freezing the Multi for
+				// the next, longer DC-offset smoothing interval.
+				fromOffset = AudioValues[outputIndex]
+					- fromScale * AudioValues[signalIndex];
+			}
+			AdditiveSignalIndex = signalIndex;
+			_additiveFromScale = fromScale;
+			_additiveFromOffset = fromOffset;
+			_additiveToScale = toScale;
+			_additiveToOffset = toOffset;
+			_additiveStartFrame = NextFrame;
+			HasAdditiveOutputTransition = true;
+			ClearStatelessOutputFade();
+		}
+
+		public double ApplyAdditiveOutputTransition(long frame, double signal)
+		{
+			long elapsed = frame - _additiveStartFrame;
+			if (elapsed >= AdditiveOutputTransitionFrames)
+			{
+				ClearAdditiveOutputTransition();
+				return signal * _additiveToScale + _additiveToOffset;
+			}
+			if (elapsed < 0)
+				return signal * _additiveFromScale + _additiveFromOffset;
+			double w = AdditiveOutputTransitionWeight(_additiveStartFrame, frame);
+			return signal * (_additiveFromScale * (1 - w) + _additiveToScale * w)
+				+ (_additiveFromOffset * (1 - w) + _additiveToOffset * w);
+		}
+
+		public void ClearAdditiveOutputTransition()
+			=> HasAdditiveOutputTransition = false;
+
 		public override void SetNoiseSeed(ulong seed)
 		{
 			base.SetNoiseSeed(seed);
@@ -679,6 +752,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			Array.Clear(Values);
 			Array.Clear(AudioValues);
 			ClearStatelessOutputFade();
+			ClearAdditiveOutputTransition();
 			Array.Clear(SilentFrom);
 			Array.Clear(Phases);
 			Array.Clear(Filters); // never reuse histories after rewind/rate change
@@ -2085,6 +2159,68 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return true;
 	}
 
+	/// <summary>Use a moving, phase-coherent output mapping for one exact
+	/// outer Multi + Constant -> Add/Multiply shape. A larger, audition-only
+	/// smoothing window removes the short DC step in Add mode without
+	/// holding a Sample, Filter, oscillator phase or any constituent audio.
+	/// All stable-Multi and bound-Source/Filter proofs precede mutation.
+	/// No per-frame DSP state, additional voice or allocation is needed.
+	/// A different graph shape retains the original 64-frame policy.</summary>
+	private bool TryStartAdditiveMultiOutputTransition(
+		FmSynthSound next, FmSynthState live)
+	{
+		if (!_allowMultiExpansion || !next._allowMultiExpansion
+			|| _isMultiInputSubgraph || next._isMultiInputSubgraph
+			|| _nodes.Length != 3 || next._nodes.Length != 3
+			|| _outputIndex != next._outputIndex
+			|| _nodes[_outputIndex].Definition is not FmOperatorNode original
+			|| next._nodes[_outputIndex].Definition is not FmOperatorNode updated
+			|| original.Operation is not (FmOperatorKind.Add or FmOperatorKind.Multiply)
+			|| updated.Operation is not (FmOperatorKind.Add or FmOperatorKind.Multiply)
+			|| (original.Operation != FmOperatorKind.Add
+				&& updated.Operation != FmOperatorKind.Add
+				&& !live.HasAdditiveOutputTransition)
+			|| _nodes[_outputIndex].InputIndices.Length != 2)
+			return false;
+		int left = _nodes[_outputIndex].InputIndices[0];
+		int right = _nodes[_outputIndex].InputIndices[1];
+		int constantIndex, signalIndex;
+		if (_nodes[left].Definition is FmMultiNode
+			&& _nodes[right].Definition is FmConstantNode)
+		{
+			signalIndex = left;
+			constantIndex = right;
+		}
+		else if (_nodes[right].Definition is FmMultiNode
+			&& _nodes[left].Definition is FmConstantNode)
+		{
+			signalIndex = right;
+			constantIndex = left;
+		}
+		else
+			return false;
+		if (_nodes[constantIndex].Definition is not FmConstantNode oldConstant
+			|| next._nodes[constantIndex].Definition is not FmConstantNode newConstant
+			|| (oldConstant.Value == newConstant.Value
+				&& original.Operation == updated.Operation)
+			|| !_canFadeBoundedOutput || !next._canFadeBoundedOutput
+			|| !CanFadeBoundSampleOutputs(next, live)
+			|| !CanFadeBoundFilterOutputs(next, live)
+			|| !CanFadeStableMultiOutputs(next, live))
+			return false;
+		double fromScale = original.Operation == FmOperatorKind.Add
+			? 1.0 : oldConstant.Value;
+		double fromOffset = original.Operation == FmOperatorKind.Add
+			? oldConstant.Value : 0.0;
+		double toScale = updated.Operation == FmOperatorKind.Add
+			? 1.0 : newConstant.Value;
+		double toOffset = updated.Operation == FmOperatorKind.Add
+			? newConstant.Value : 0.0;
+		live.StartAdditiveOutputTransition(signalIndex, _outputIndex,
+			fromScale, fromOffset, toScale, toOffset);
+		return true;
+	}
+
 	/// <summary>Commit only an entirely preflighted state tree. No validation
 	/// after this boundary can leave multiple Filters partially updated.</summary>
 	public void CommitPreparedRunningState(FmSynthSound next, SoundState state)
@@ -2114,7 +2250,17 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		// their Oscillator immediately. Raw Values and phases are untouched.
 		// The direct single-oscillator exception remains supported inside
 		// Multi; compound Multi constituents have separate onset semantics.
-		if (_allowMultiExpansion && next._allowMultiExpansion
+		bool additiveTransition = TryStartAdditiveMultiOutputTransition(next, live);
+		// When leaving Add/Multiply (e.g. for Maximum), fall back to the
+		// existing 64-frame full-output transition from the last audible
+		// sample instead of retaining a stale additive transform.
+		if (!additiveTransition
+			&& live.HasAdditiveOutputTransition
+			&& next._nodes[_outputIndex].Definition is FmOperatorNode nextOutput
+			&& nextOutput.Operation is not (FmOperatorKind.Add or FmOperatorKind.Multiply))
+			live.ClearAdditiveOutputTransition();
+		if (!additiveTransition
+			&& _allowMultiExpansion && next._allowMultiExpansion
 			&& ((_singleOutputOscillator is not null
 					&& next._singleOutputOscillator is not null)
 				|| (_canFadeBoundedOutput
@@ -3216,7 +3362,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		// after the final stateless Operator has produced audible output.
 		// The final AudioValues entry is blended too, so a rapid second
 		// edit correctly captures the previous *actual* audible output.
-		if (state.StatelessOutputFadeFrom is double outgoingGraphOutput)
+		if (state.HasAdditiveOutputTransition)
+			state.AudioValues[_outputIndex] = state.ApplyAdditiveOutputTransition(
+				frame, state.AudioValues[state.AdditiveSignalIndex]);
+		else if (state.StatelessOutputFadeFrom is double outgoingGraphOutput)
 		{
 			long delta = frame - state.StatelessOutputFadeStartFrame;
 			if (delta >= MultiEditTransitionFrames)
