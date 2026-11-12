@@ -83,6 +83,56 @@ public sealed class FmSynthLiveAdditiveMultiTransitionTests
         }
     }
 
+    // Physical slice-60 feedback: 512 moving frames are mathematically
+    // continuous but still audibly pop when a large Add DC offset changes.
+    // And Multiply-only edits still take the old 64-frame waveform HOLD,
+    // causing a smaller click instead of an advancing-signal gain ramp.
+    // Assert a 100 ms *moving* affine transition at BOTH output rates.
+    [TestCase(48000, FmOperatorKind.Add, FmOperatorKind.Add, 0.9, -0.8)]
+    [TestCase(48000, FmOperatorKind.Add, FmOperatorKind.Multiply, 0.8, 0.8)]
+    [TestCase(48000, FmOperatorKind.Multiply, FmOperatorKind.Add, 0.8, 0.8)]
+    [TestCase(48000, FmOperatorKind.Multiply, FmOperatorKind.Multiply, 0.8, 0.1)]
+    [TestCase(96000, FmOperatorKind.Add, FmOperatorKind.Multiply, 0.8, 0.8)]
+    [TestCase(96000, FmOperatorKind.Multiply, FmOperatorKind.Multiply, 0.8, 0.1)]
+    public void AudibleOutputMappingSlewsWithMovingMultiForAtLeastOneTenthSecond(
+        int sampleRate, FmOperatorKind beforeMode, FmOperatorKind afterMode,
+        double beforeConstant, double afterConstant)
+    {
+        SampleSound sample = Sample();
+        FilterInstance filter = OnePole();
+        FmSynthSound before = Sound(sample, filter, beforeConstant, beforeMode);
+        FmSynthSound after = Sound(sample, filter, afterConstant, afterMode);
+        RenderContext context = Mono(sampleRate);
+        int ramp = sampleRate / 10;
+        int length = 128 + ramp + 48;
+
+        SoundState held = before.CreateState();
+        float[] oldReference = new float[length];
+        float[] newReference = new float[length];
+        before.Render(context, before.CreateState(), 0, length, oldReference);
+        after.Render(context, after.CreateState(), 0, length, newReference);
+        before.Render(context, held, 0, 128, new float[128]);
+
+        before.TryPrepareRunningState(after, held).Should().BeTrue();
+        before.CommitPreparedRunningState(after, held);
+        float[] actual = new float[ramp + 48];
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        after.Render(context, held, 128, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
+
+        for (int i = 0; i < actual.Length; i++)
+        {
+            double t = Math.Clamp((double)i / ramp, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            double expected = oldReference[128 + i] * (1 - w)
+                + newReference[128 + i] * w;
+            actual[i].Should().BeApproximately((float)expected, 6e-6f,
+                "even Multiply-only changes must continue the original"
+                + " Sample/Filter/Multi waveform while gain/offset ramps"
+                + " for a full 100 ms at the active PCM sample rate");
+        }
+    }
+
     [Test]
     public void OrdinaryPlaybackHasNoAdditiveMorph()
     {
@@ -182,7 +232,7 @@ public sealed class FmSynthLiveAdditiveMultiTransitionTests
             new MemorySampleData(48000, 1, pcm));
     }
 
-    private static RenderContext Mono() => new(new RenderConfiguration(48000,
+    private static RenderContext Mono(int sampleRate = 48000) => new(new RenderConfiguration(sampleRate,
     [
         new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
     ]));
