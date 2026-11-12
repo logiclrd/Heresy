@@ -434,13 +434,17 @@ internal sealed class FmFilterNodeProcessor
 				!= next._initial.GetStageGenerationForPersistence(revised.StageId)
 			|| old.Parameters.Parameters.Count != revised.Parameters.Parameters.Count)
 			return false;
-		foreach (FilterParameterDescriptor parameter in old.Parameters.Parameters)
+		// These are immutable, catalogue-ordered descriptor arrays.
+		// Indexing avoids iterator/captured-lambda allocations on the
+		// realtime publication boundary.
+		for (int i = 0; i < old.Parameters.Parameters.Count; i++)
 		{
-			if (!revised.Parameters.Parameters.Any(candidate =>
-					string.Equals(candidate.Name, parameter.Name,
-						StringComparison.OrdinalIgnoreCase))
-				|| old.Parameters.GetParameter(parameter.Name)
-					!= revised.Parameters.GetParameter(parameter.Name))
+			string oldName = old.Parameters.Parameters[i].Name;
+			string revisedName = revised.Parameters.Parameters[i].Name;
+			if (!string.Equals(oldName, revisedName,
+					StringComparison.OrdinalIgnoreCase)
+				|| old.Parameters.GetParameter(oldName)
+					!= revised.Parameters.GetParameter(revisedName))
 				return false;
 		}
 		return true;
