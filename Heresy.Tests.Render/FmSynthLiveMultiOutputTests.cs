@@ -56,7 +56,7 @@ public sealed class FmSynthLiveMultiOutputTests
         final.Render(context, held, 148, actual.Length, actual);
         (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
         AssertInterruptedAffineFade(partial[^1], expected, actual,
-            148, 0.15, 0.15);
+            148, 0.90, 0.15, 0.15);
     }
 
     [Test]
@@ -78,7 +78,7 @@ public sealed class FmSynthLiveMultiOutputTests
             "ordinary playback must never acquire audition-only crossfades");
     }
 
-    private const int AdditiveFadeFrames = 512;
+    private const int AdditiveFadeFrames = 4800;
 
     private static void AssertSmoothEdit(FmSynthSound before,
         FmSynthSound after, bool additive = false)
@@ -86,18 +86,15 @@ public sealed class FmSynthLiveMultiOutputTests
         RenderContext context = Mono();
         SoundState held = before.CreateState();
         SoundState fresh = after.CreateState();
-        int length = additive ? AdditiveFadeFrames + 32 : 160;
+        int length = AdditiveFadeFrames + 32;
         float[] previous = new float[128], actual = new float[length],
             reference = new float[128 + length];
         before.Render(context, held, 0, previous.Length, previous);
         after.Render(context, fresh, 0, reference.Length, reference);
-        float[] oldReference = additive ? new float[128 + length] : [];
-        if (additive)
-        {
-            SoundState previousState = before.CreateState();
-            before.Render(context, previousState, 0,
-                oldReference.Length, oldReference);
-        }
+        float[] oldReference = new float[128 + length];
+        SoundState previousState = before.CreateState();
+        before.Render(context, previousState, 0,
+            oldReference.Length, oldReference);
 
         before.TryPrepareRunningState(after, held).Should().BeTrue();
         before.CommitPreparedRunningState(after, held);
@@ -106,10 +103,7 @@ public sealed class FmSynthLiveMultiOutputTests
         (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L,
             "the already-bound Multi children and histories must not"
             + " allocate or be reconstructed in PCM");
-        if (additive)
-            AssertMovingAffineFade(oldReference, reference, actual, 128);
-        else
-            AssertOutputFade(previous[^1], reference, actual, 128);
+        AssertMovingAffineFade(oldReference, reference, actual, 128);
     }
 
     private static void AssertMovingAffineFade(float[] oldReference,
@@ -123,46 +117,34 @@ public sealed class FmSynthLiveMultiOutputTests
                 (float)(oldReference[start + i] * (1 - w)
                     + newReference[start + i] * w), 3e-6f,
                 "Add changes must retain the moving original signal while"
-                + " smoothing its DC offset and gain over 512 frames");
+                + " smoothing its DC offset and gain over 100 ms");
         }
     }
 
     private static void AssertInterruptedAffineFade(float lastAudible,
         float[] finalReference, float[] actual, int start,
-        double previousScale, double revisedAddConstant)
+        double firstScale, double middleScale, double revisedAddConstant)
     {
-        // The preceding Multiply 64-frame fade may still be underway.
-        // Preserve its already audible value as an affine offset around
-        // the independently advancing, unchanged Multi signal.
+        // An interrupted moving Multiply ramp becomes the next ramp's
+        // starting gain: don't hold an audio sample or reset DSP history.
+        double before = Math.Clamp((double)(start - 1 - 128)
+            / AdditiveFadeFrames, 0, 1);
+        double previousWeight = before * before * (3 - 2 * before);
+        double previousScale = firstScale * (1 - previousWeight)
+            + middleScale * previousWeight;
         double previousSignal = finalReference[start - 1] - revisedAddConstant;
-        double previousOffset = lastAudible - previousScale * previousSignal;
+        lastAudible.Should().BeApproximately(
+            (float)(previousScale * previousSignal), 6e-6f);
         for (int i = 0; i < actual.Length; i++)
         {
             double t = Math.Clamp((double)i / AdditiveFadeFrames, 0, 1);
             double w = t * t * (3 - 2 * t);
             double movingSignal = finalReference[start + i] - revisedAddConstant;
             double expected = movingSignal * (previousScale * (1 - w) + w)
-                + previousOffset * (1 - w) + revisedAddConstant * w;
-            actual[i].Should().BeApproximately((float)expected, 3e-6f,
-                "the second edit must join the previous blend without"
-                + " freezing the original Multi's current audio");
-        }
-    }
-
-    private static void AssertOutputFade(float lastAudible,
-        float[] expected, float[] actual, int start)
-    {
-        actual[0].Should().Be(lastAudible,
-            "a downstream gain edit must not click even if Multi has voices");
-        for (int i = 0; i < actual.Length; i++)
-        {
-            double t = Math.Min(1.0, i / 64.0);
-            double w = t * t * (3.0 - 2.0 * t);
-            actual[i].Should().BeApproximately(
-                (float)(lastAudible * (1.0 - w) + expected[start + i] * w),
-                3e-6f,
-                "every Multi constituent's original phase and ratio must"
-                + " survive the final-output transition");
+                + revisedAddConstant * w;
+            actual[i].Should().BeApproximately((float)expected, 6e-6f,
+                "the second edit must inherit the previous moving gain"
+                + " and continue original Multi audio without a hold");
         }
     }
 

@@ -153,10 +153,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	// allocate or reconstruct a child invocation. One transition is 64 frames
 	// in the *outer* voice's sample clock (about 1.3 ms at 48 kHz).
 	private const int MultiEditTransitionFrames = 64;
-	// Add introduces a DC-offset step, which can still produce an audible
-	// transient after a 64-frame hold-and-fade. Morph the gain AND offset
-	// of a frozen Multi's final Add/Multiply map over 512 moving frames.
-	private const int AdditiveOutputTransitionFrames = 512;
+	// A 10.7 ms moving fade can still sound like a pop for a large DC
+	// offset step. Smooth the final affine map (gain and DC bias) for
+	// 100 ms in the active sample-rate clock. Multiply-only edits use
+	// this moving path too, avoiding the generic waveform hold transient.
+	private const int MultiOutputAffineTransitionMilliseconds = 100;
 	private const int MultiGrowthReservePerNode = 4;
 
 	// A single 64-frame smoothstep is already the accepted ratio/mix
@@ -171,11 +172,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	}
 
 	private static double AdditiveOutputTransitionWeight(
-		long startFrame, long frame)
+		long startFrame, long frame, int durationFrames)
 	{
 		double t = Math.Clamp(
-			(double)(frame - startFrame) / AdditiveOutputTransitionFrames,
-			0.0, 1.0);
+			(double)(frame - startFrame) / durationFrames, 0.0, 1.0);
 		return t * t * (3.0 - 2.0 * t);
 	}
 
@@ -647,6 +647,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		private double _additiveFromScale, _additiveFromOffset;
 		private double _additiveToScale, _additiveToOffset;
 		private long _additiveStartFrame;
+		private int _additiveDurationFrames;
 
 		public void StartAdditiveOutputTransition(int signalIndex, int outputIndex,
 			double fromScale, double fromOffset, double toScale, double toOffset)
@@ -658,7 +659,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				// A second edit during the first transition inherits the
 				// mapping applied to the *last rendered* moving signal.
 				double w = AdditiveOutputTransitionWeight(
-					_additiveStartFrame, NextFrame - 1);
+					_additiveStartFrame, NextFrame - 1, _additiveDurationFrames);
 				fromScale = _additiveFromScale * (1 - w) + _additiveToScale * w;
 				fromOffset = _additiveFromOffset * (1 - w) + _additiveToOffset * w;
 			}
@@ -676,6 +677,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			_additiveToScale = toScale;
 			_additiveToOffset = toOffset;
 			_additiveStartFrame = NextFrame;
+			_additiveDurationFrames = Math.Max(1,
+				(int)((long)SampleRate * MultiOutputAffineTransitionMilliseconds / 1000));
 			HasAdditiveOutputTransition = true;
 			ClearStatelessOutputFade();
 		}
@@ -683,14 +686,15 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		public double ApplyAdditiveOutputTransition(long frame, double signal)
 		{
 			long elapsed = frame - _additiveStartFrame;
-			if (elapsed >= AdditiveOutputTransitionFrames)
+			if (elapsed >= _additiveDurationFrames)
 			{
 				ClearAdditiveOutputTransition();
 				return signal * _additiveToScale + _additiveToOffset;
 			}
 			if (elapsed < 0)
 				return signal * _additiveFromScale + _additiveFromOffset;
-			double w = AdditiveOutputTransitionWeight(_additiveStartFrame, frame);
+			double w = AdditiveOutputTransitionWeight(
+				_additiveStartFrame, frame, _additiveDurationFrames);
 			return signal * (_additiveFromScale * (1 - w) + _additiveToScale * w)
 				+ (_additiveFromOffset * (1 - w) + _additiveToOffset * w);
 		}
@@ -2160,9 +2164,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	}
 
 	/// <summary>Use a moving, phase-coherent output mapping for one exact
-	/// outer Multi + Constant -> Add/Multiply shape. A larger, audition-only
-	/// smoothing window removes the short DC step in Add mode without
-	/// holding a Sample, Filter, oscillator phase or any constituent audio.
+	/// outer Multi + Constant -> Add/Multiply shape. A sample-rate-scaled
+	/// 100 ms audition-only window softens gain and DC offset changes
+	/// without holding Sample, Filter, oscillator or constituent audio.
 	/// All stable-Multi and bound-Source/Filter proofs precede mutation.
 	/// No per-frame DSP state, additional voice or allocation is needed.
 	/// A different graph shape retains the original 64-frame policy.</summary>
@@ -2177,9 +2181,6 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| next._nodes[_outputIndex].Definition is not FmOperatorNode updated
 			|| original.Operation is not (FmOperatorKind.Add or FmOperatorKind.Multiply)
 			|| updated.Operation is not (FmOperatorKind.Add or FmOperatorKind.Multiply)
-			|| (original.Operation != FmOperatorKind.Add
-				&& updated.Operation != FmOperatorKind.Add
-				&& !live.HasAdditiveOutputTransition)
 			|| _nodes[_outputIndex].InputIndices.Length != 2)
 			return false;
 		int left = _nodes[_outputIndex].InputIndices[0];

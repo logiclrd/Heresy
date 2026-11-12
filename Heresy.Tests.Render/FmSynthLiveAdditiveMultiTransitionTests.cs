@@ -21,7 +21,7 @@ namespace Heresy.Tests.Render;
 [TestFixture]
 public sealed class FmSynthLiveAdditiveMultiTransitionTests
 {
-    private const int SmoothFrames = 512; // ~10.67 ms at the 48 kHz fixture rate
+    private const int SmoothFrames = 4800; // 100 ms at the 48 kHz fixture rate
     private static readonly ObjectId SampleId = (ObjectId)9473U;
 
     [Test]
