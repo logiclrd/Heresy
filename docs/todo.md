@@ -96,6 +96,17 @@ Do not reintroduce completed-task checklists here.
 
 ## Main window — object management
 
+- [ ] **Implement graph-aware Synth import planning and dependency resolution.**
+  Replace the existing Import Synths flow with the editable TreeDataGrid
+  plan, stable canonical/alias rows, per-object/per-use mapping choices,
+  exact-match highlighting with manual provenance, collision-avoiding
+  suggested names, live internal validity and summary, separate song-wide
+  validation at Import click, and atomic commit. Include the present
+  Source+Multi import refusal and generic zero-import diagnostic as
+  regression coverage for the new engine, rather than a standalone
+  throwaway fix. See the complete approved [Synth import design](synth-import-plan.md).
+  This is separate from the future **Duplicate Object** feature.
+
 - [ ] **Add Duplicate Object to every main-window object list.**
   Provide a consistent **Duplicate Object** action in each object list,
   creating a new independently identifiable object of the same kind with

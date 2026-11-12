@@ -46,6 +46,7 @@ tests supersede contradictory old prose.
 | Contract | Document |
 | --- | --- |
 | Comprehensive UI and keyboard behavior (formerly in root README) | [UI workflows](user-interface-workflows.md) |
+| **Approved future design**: graph-aware Synth import, dependency remapping and atomic transaction | [Synth import planning](synth-import-plan.md) |
 | **Proposed** USB MIDI keyboard input (Pattern note entry, Program Change Source navigation, microtonal notes and preview bend) | [MIDI keyboard design](midi-keyboard-input-design.md) |
 | Implemented source tints, finite flattened-source overlays and overlap diagnostics | [Pattern source highlighting](pattern-source-highlighting.md) |
 | Pattern row Insert/Delete performance, measured Release baseline and localized redraw | [Pattern row mutation performance](pattern-row-mutation-performance.md) |
