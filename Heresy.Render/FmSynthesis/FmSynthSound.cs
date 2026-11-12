@@ -886,7 +886,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					FmOscillatorNode or FmConstantNode or FmOperatorNode
 					or FmNoiseNode or FmEnvelopeNode
 					|| child.Definition is FmSoundSourceNode
-						&& child.Source is SampleSound));
+						&& child.Source is SampleSound
+					|| child.Definition is FmFilterNode
+						{ AudioInputNodeId: not null, Configuration: not null }
+						&& child.Filter is not null));
 		_multiRatios = _nodes.Select(node => node.Definition is FmMultiNode multi
 			? multi.GetFrequencyRatios() : Array.Empty<double>()).ToArray();
 		_multiReserve = new int[_nodes.Length];
@@ -1924,7 +1927,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	/// graph is frozen-identical, including *every* oscillator phase/rate
 	/// control and all stateless gain/mixing nodes, deterministic Noise
 	/// IDs, selected equivalent Node Envelope curves, and unchanged
-	/// direct Sample geometry and Source pitch parameters.
+	/// direct Sample geometry/Source pitch parameters, and an unchanged
+	/// single unmodulated OnePole Filter configuration.
 	/// Compare immutable snapshots rather than authoring object identity;
 	/// never accept edited or scripted Envelope curves in this outer fade.
 	/// Continuing Sample readheads are checked against the bound state.
@@ -1989,6 +1993,18 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						&& oldSample.NewNotePolicy == updatedSample.NewNotePolicy
 						&& oldSample.CanSharePreparedOnsetTimelineWith(updatedSample):
 					break;
+				// Exact frozen OnePole parameters, stage identity, and
+				// tail are required. A retuned Filter is not an unchanged
+				// audible leaf, even if normal migration can admit it.
+				case FmFilterNode filter
+					when revised.Definition is FmFilterNode updatedFilter
+						&& filter.TailSeconds == updatedFilter.TailSeconds
+						&& filter.AudioInputNodeId == updatedFilter.AudioInputNodeId
+						&& old.Filter is FmFilterNodeProcessor oldProcessor
+						&& revised.Filter is FmFilterNodeProcessor newProcessor
+						&& oldProcessor.HasSameFrozenUnmodulatedOnePoleAs(
+							newProcessor):
+					break;
 				// An unchanged node-based Envelope evaluates on the
 				// continuing child note clock. Newly frozen wrappers are
 				// equivalent only when all captured curve data agrees.
@@ -2010,8 +2026,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	/// <summary>Allow only downstream audible controls to fade around
 	/// a stable, already-running Multi whose Oscillator/Noise/Node-Envelope/
 	/// Constant/Operator/direct-Sample child graph is frozen-identical.
-	/// All constituent phases, bound Sample readheads, deterministic Noise
-	/// streams and Envelope clocks survive.
+	/// All constituent phases, bound Sample readheads, continuing OnePole
+	/// histories, deterministic Noise streams and Envelope clocks survive.
 	/// Any child edit, voice-count, distribution or onset change has a
 	/// separate transaction; this guard is bounded and allocation-free.</summary>
 	private bool CanFadeStableMultiOutputs(FmSynthSound next, FmSynthState live)
@@ -2055,6 +2071,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					|| !voice.Sound.HasSameFrozenStatelessMultiGraphAs(oldChild)
 					|| !voice.Sound.CanFadeBoundSampleOutputs(oldChild, childState)
 					|| !oldChild.CanFadeBoundSampleOutputs(nextChild, childState)
+					|| !voice.Sound.CanFadeBoundFilterOutputs(oldChild, childState)
+					|| !oldChild.CanFadeBoundFilterOutputs(nextChild, childState)
 					|| !voice.HasStarted || !voice.Initialized
 					|| voice.OnsetFadeFrom is not null
 					|| voice.SilenceEnd.HasValue

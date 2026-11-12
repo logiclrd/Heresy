@@ -408,6 +408,44 @@ internal sealed class FmFilterNodeProcessor
 			|| !live.Chain.IsInputFinished;
 	}
 
+	/// <summary>Exact, allocation-free identity proof for the first bounded
+	/// frozen-Filter Multi child route. A single unmodulated OnePole retains
+	/// its live integrator only if the prepared audio connection, stage
+	/// identity, generation and every effective parameter value match.
+	/// This is deliberately stronger than general live retune eligibility:
+	/// a revised Filter coefficient is not a frozen leaf.</summary>
+	internal bool HasSameFrozenUnmodulatedOnePoleAs(
+		FmFilterNodeProcessor next)
+	{
+		if (_initial is null || next._initial is null
+			|| _initial.DefinitionId != next._initial.DefinitionId
+			|| _audioIndex != next._audioIndex
+			|| _preparedSampleRate != next._preparedSampleRate
+			|| _bindings.Length != 0 || next._bindings.Length != 0
+			|| _effectiveStages.Length != 1
+			|| next._effectiveStages.Length != 1)
+			return false;
+		ConfiguredFilterStage old = _effectiveStages[0];
+		ConfiguredFilterStage revised = next._effectiveStages[0];
+		if (old.Kind != FilterKind.OnePole
+			|| revised.Kind != FilterKind.OnePole
+			|| old.StageId != revised.StageId
+			|| _initial.GetStageGenerationForPersistence(old.StageId)
+				!= next._initial.GetStageGenerationForPersistence(revised.StageId)
+			|| old.Parameters.Parameters.Count != revised.Parameters.Parameters.Count)
+			return false;
+		foreach (FilterParameterDescriptor parameter in old.Parameters.Parameters)
+		{
+			if (!revised.Parameters.Parameters.Any(candidate =>
+					string.Equals(candidate.Name, parameter.Name,
+						StringComparison.OrdinalIgnoreCase))
+				|| old.Parameters.GetParameter(parameter.Name)
+					!= revised.Parameters.GetParameter(parameter.Name))
+				return false;
+		}
+		return true;
+	}
+
 	private int FindBindingIndex(int stageId, string parameterName)
 	{
 		for (int i = 0; i < _bindings.Length; i++)
