@@ -8,10 +8,12 @@ using Heresy.Core.Filters;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
 using Heresy.Core.Samples;
+using Heresy.Core.Sequencing;
 using Heresy.Render.Configuration;
 using Heresy.Render.Envelopes;
 using Heresy.Render.FmSynthesis;
 using Heresy.Render.Playback;
+using Heresy.Render.Realtime;
 using Heresy.Render.Samples;
 using Heresy.Render.Sounds;
 using NUnit.Framework;
@@ -23,6 +25,7 @@ public sealed class FmSynthLiveAdditiveMultiTransitionTests
 {
     private const int SmoothFrames = 4800; // 100 ms at the 48 kHz fixture rate
     private static readonly ObjectId SampleId = (ObjectId)9473U;
+    private static readonly ObjectId SynthId = (ObjectId)9475U;
 
     [Test]
     public void LargeAdditiveConstantStepKeepsFilteredMultiWaveformMoving()
@@ -133,6 +136,86 @@ public sealed class FmSynthLiveAdditiveMultiTransitionTests
         }
     }
 
+    // This fixture deliberately follows the FULL live-event/PlaybackSession
+    // PCM route of the user's saved graph, not just FmSynthSound.Render.
+    // Vary the upstream Operator and final Add/Multiply mode separately.
+    // Compare the entire post-mix PCM against the two unedited running
+    // references; any fallback to an abrupt DC step fails at the boundary.
+    [TestCase(FmOperatorKind.Add, FmOperatorKind.Add, FmOperatorKind.Add, 0.9, -0.8)]
+    [TestCase(FmOperatorKind.Add, FmOperatorKind.Add, FmOperatorKind.Multiply, 0.8, 0.8)]
+    [TestCase(FmOperatorKind.Add, FmOperatorKind.Multiply, FmOperatorKind.Add, 0.8, 0.8)]
+    [TestCase(FmOperatorKind.Multiply, FmOperatorKind.Add, FmOperatorKind.Add, 0.9, -0.8)]
+    [TestCase(FmOperatorKind.Multiply, FmOperatorKind.Add, FmOperatorKind.Multiply, 0.8, 0.8)]
+    [TestCase(FmOperatorKind.Multiply, FmOperatorKind.Multiply, FmOperatorKind.Add, 0.8, 0.8)]
+    public void LiveSessionFinalPcmMatchesContinuousMovingAffineOutput(
+        FmOperatorKind upstream, FmOperatorKind previousMode,
+        FmOperatorKind revisedMode, double previousConstant, double revisedConstant)
+    {
+        SampleSound sample = Sample();
+        FilterInstance filter = OnePole();
+        FmSynthSound previous = Sound(sample, filter, previousConstant,
+            previousMode, upstreamMode: upstream);
+        FmSynthSound revised = Sound(sample, filter, revisedConstant,
+            revisedMode, upstreamMode: upstream);
+        int warmupFrames = 256, checkFrames = 1024;
+        float[] oldReference = RenderWholeSession(previous,
+            warmupFrames + checkFrames);
+        float[] newReference = RenderWholeSession(revised,
+            warmupFrames + checkFrames);
+
+        PlaybackSession session = new(Mono(), new NoteScheduleBuilder().Freeze(),
+            new SynthResolver(previous));
+        PlaybackSessionAudioSource source = new(session);
+        source.EnqueueLiveEvent(ChannelTarget.Virtual(77),
+            [new StartNoteCommand(SynthId)]);
+        float[] warmup = new float[warmupFrames];
+        source.Render(warmupFrames, warmup);
+        for (int i = 0; i < warmupFrames; i++)
+            warmup[i].Should().BeApproximately(oldReference[i], 4e-6f);
+        session.AdoptLiveSynthParameters(SynthId, previous, revised);
+        float[] actual = new float[checkFrames];
+        source.Render(actual.Length, actual);
+
+        for (int i = 0; i < actual.Length; i++)
+        {
+            double w = Weight(i);
+            float expected = (float)Mix(oldReference[warmupFrames + i],
+                newReference[warmupFrames + i], w);
+            actual[i].Should().BeApproximately(expected, 1e-5f,
+                "the final real-session PCM must follow the advancing"
+                + " gain/DC map with no sudden fallback at the edit event"
+                + " or a render-quantum boundary");
+        }
+        // Explicitly include the last pre-edit frame in boundary analysis.
+        double before = warmup[^1], first = actual[0];
+        double expectedStep = oldReference[warmupFrames]
+            - oldReference[warmupFrames - 1];
+        (first - before).Should().BeApproximately(expectedStep, 1e-5,
+            "the edit boundary must contain only the underlying waveform's"
+            + " natural sample-to-sample evolution");
+    }
+
+    private static float[] RenderWholeSession(FmSynthSound sound, int frames)
+    {
+        PlaybackSession session = new(Mono(), new NoteScheduleBuilder().Freeze(),
+            new SynthResolver(sound));
+        PlaybackSessionAudioSource source = new(session);
+        source.EnqueueLiveEvent(ChannelTarget.Virtual(77),
+            [new StartNoteCommand(SynthId)]);
+        float[] output = new float[frames];
+        source.Render(frames, output);
+        return output;
+    }
+
+    private sealed class SynthResolver(FmSynthSound synth) : ISoundResolver
+    {
+        public bool TryResolve(ObjectId id, bool mixdown, out ISound? sound)
+        {
+            sound = id == SynthId ? synth : null;
+            return sound is not null;
+        }
+    }
+
     [Test]
     public void OrdinaryPlaybackHasNoAdditiveMorph()
     {
@@ -197,14 +280,15 @@ public sealed class FmSynthLiveAdditiveMultiTransitionTests
         => old * (1 - w) + next * w;
 
     private static FmSynthSound Sound(SampleSound sample, FilterInstance filter,
-        double value, FmOperatorKind mode, bool audition = true)
+        double value, FmOperatorKind mode, bool audition = true,
+        FmOperatorKind upstreamMode = FmOperatorKind.Add)
     {
         SampleResolver resolver = new(sample);
         return new(new FmSynthGraph([
             new FmSoundSourceNode(1, SampleId, FmMultiNode.NeutralFrequencyHz),
             new FmFilterNode(2, 1, filter, tailSeconds: 0.002),
             new FmOscillatorNode(3, FmOscillatorWaveform.Sine, 390),
-            new FmOperatorNode(4, FmOperatorKind.Add, [2, 3]),
+            new FmOperatorNode(4, upstreamMode, [2, 3]),
             new FmMultiNode(5, 4, voiceCount: 3, detune: 17,
                 randomizePhase: false, gainCompensation: true),
             new FmConstantNode(6, value),
