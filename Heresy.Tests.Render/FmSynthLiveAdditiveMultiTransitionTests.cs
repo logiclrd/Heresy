@@ -70,11 +70,16 @@ public sealed class FmSynthLiveAdditiveMultiTransitionTests
         long allocated = GC.GetAllocatedBytesForCurrentThread();
         last.Render(context, live, 201, actual.Length, actual);
         (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
+        double previousOffset = Mix(0.8, 0.1, Weight(72));
         for (int i = 0; i < actual.Length; i++)
-            actual[i].Should().BeApproximately(reference[201 + i], 5e-6f,
-                "repeated edits of the final DC constant must remain"
-                + " acoustically silent without restarting Sample, Filter"
-                + " or Multi state");
+        {
+            double w = Weight(i);
+            double movingSignal = reference[201 + i] + 0.3;
+            double expected = movingSignal + Mix(previousOffset, -0.3, w);
+            actual[i].Should().BeApproximately((float)expected, 5e-6f,
+                "raw Synth rendering must preserve its original moving"
+                + " gain and Add bias throughout rapid edits");
+        }
     }
 
     // Physical slice-60 feedback: 512 moving frames are mathematically
@@ -142,9 +147,9 @@ public sealed class FmSynthLiveAdditiveMultiTransitionTests
         RenderContext context = Mono();
         float[] clean = new float[320], plus = new float[320],
             minus = new float[320];
-        reference.Render(context, reference.CreateState(), 0, clean.Length, clean);
-        positive.Render(context, positive.CreateState(), 0, plus.Length, plus);
-        negative.Render(context, negative.CreateState(), 0, minus.Length, minus);
+        reference.RenderForAuditionMonitoring(context, reference.CreateState(), 0, clean.Length, clean);
+        positive.RenderForAuditionMonitoring(context, positive.CreateState(), 0, plus.Length, plus);
+        negative.RenderForAuditionMonitoring(context, negative.CreateState(), 0, minus.Length, minus);
         for (int i = 0; i < clean.Length; i++)
         {
             plus[i].Should().BeApproximately(clean[i], 5e-6f,
@@ -163,15 +168,15 @@ public sealed class FmSynthLiveAdditiveMultiTransitionTests
         FmSynthSound reference = Sound(sample, filter, 1, FmOperatorKind.Multiply);
         RenderContext context = Mono();
         SoundState held = before.CreateState();
-        before.Render(context, held, 0, 128, new float[128]);
+        before.RenderForAuditionMonitoring(context, held, 0, 128, new float[128]);
         before.TryPrepareRunningState(after, held).Should().BeTrue();
         before.CommitPreparedRunningState(after, held);
         float[] expected = new float[128 + SmoothFrames + 32];
-        reference.Render(context, reference.CreateState(), 0, expected.Length,
+        reference.RenderForAuditionMonitoring(context, reference.CreateState(), 0, expected.Length,
             expected);
         float[] actual = new float[SmoothFrames + 32];
         long allocated = GC.GetAllocatedBytesForCurrentThread();
-        after.Render(context, held, 128, actual.Length, actual);
+        after.RenderForAuditionMonitoring(context, held, 128, actual.Length, actual);
         (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
         for (int i = 0; i < actual.Length; i++)
             actual[i].Should().BeApproximately(expected[128 + i], 6e-6f,

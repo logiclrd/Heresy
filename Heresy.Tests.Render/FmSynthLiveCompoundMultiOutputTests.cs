@@ -55,7 +55,7 @@ public sealed class FmSynthLiveCompoundMultiOutputTests
         (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L,
             "neither the compound Multi's children nor the fade may allocate in PCM");
         AssertInterruptedAffineFade(partial[^1], expected, output,
-            148, 0.85, 0.1, 0.0);
+            148, 0.85, 0.1, 0.1);
     }
 
     [Test]
