@@ -3406,6 +3406,12 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			};
 		}
 
+		// A finite Source/Filter can end before a 100 ms live fade
+		// completes. Never keep its last audible sample alive beyond the
+		// genuine graph/audio end just to finish the transition. This is
+		// independent of the authored signal's fade destination.
+		if (draining)
+			state.ClearStatelessOutputFade();
 		// The generic path retains raw oscillator/Operator values in
 		// Values for pitch controls. Stateless output smoothing applies once,
 		// after the final stateless Operator has produced audible output.
