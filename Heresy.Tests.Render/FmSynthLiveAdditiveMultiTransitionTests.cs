@@ -195,6 +195,65 @@ public sealed class FmSynthLiveAdditiveMultiTransitionTests
             + " natural sample-to-sample evolution");
     }
 
+    // Mirror the user's sequence, not just an isolated final edit:
+    // switch the upstream Sample+Oscillator Operator from Add to Multiply
+    // on a held note, then switch the outer Operator before (or after)
+    // that upstream transition has finished. The baseline is the SAME
+    // live session without the final edit, so phase and filter history
+    // cannot be mistaken for an audible DC-step regression.
+    [TestCase(384)]
+    [TestCase(5000)]
+    public void UpstreamOperatorEditFollowedByOuterAddHasContinuousFinalPcm(
+        int framesBetweenEdits)
+    {
+        SampleSound sample = Sample();
+        FilterInstance filter = OnePole();
+        FmSynthSound original = Sound(sample, filter, 0.8,
+            FmOperatorKind.Multiply, upstreamMode: FmOperatorKind.Add);
+        FmSynthSound quieter = Sound(sample, filter, 0.8,
+            FmOperatorKind.Multiply, upstreamMode: FmOperatorKind.Multiply);
+        FmSynthSound additive = Sound(sample, filter, 0.8,
+            FmOperatorKind.Add, upstreamMode: FmOperatorKind.Multiply);
+
+        PlaybackSession changed = new(Mono(), new NoteScheduleBuilder().Freeze(),
+            new SynthResolver(original));
+        PlaybackSession baseline = new(Mono(), new NoteScheduleBuilder().Freeze(),
+            new SynthResolver(original));
+        PlaybackSessionAudioSource changedOutput = new(changed);
+        PlaybackSessionAudioSource baselineOutput = new(baseline);
+        changedOutput.EnqueueLiveEvent(ChannelTarget.Virtual(77),
+            [new StartNoteCommand(SynthId)]);
+        baselineOutput.EnqueueLiveEvent(ChannelTarget.Virtual(77),
+            [new StartNoteCommand(SynthId)]);
+        changedOutput.Render(256, new float[256]);
+        baselineOutput.Render(256, new float[256]);
+        changed.AdoptLiveSynthParameters(SynthId, original, quieter);
+        baseline.AdoptLiveSynthParameters(SynthId, original, quieter);
+        float[] progress = new float[framesBetweenEdits];
+        float[] referenceProgress = new float[framesBetweenEdits];
+        changedOutput.Render(progress.Length, progress);
+        baselineOutput.Render(referenceProgress.Length, referenceProgress);
+        progress.Should().Equal(referenceProgress,
+            "the initial child edit must be identical in both live sessions");
+
+        changed.AdoptLiveSynthParameters(SynthId, quieter, additive);
+        float[] actual = new float[1024], old = new float[1024];
+        changedOutput.Render(actual.Length, actual);
+        baselineOutput.Render(old.Length, old);
+        for (int i = 0; i < actual.Length; i++)
+        {
+            double w = Weight(i);
+            double next = old[i] / 0.8 + 0.8;
+            double expected = Mix(old[i], next, w);
+            actual[i].Should().BeApproximately((float)expected, 2e-5f,
+                "a final Add edit must ramp its exact DC offset despite"
+                + " an earlier upstream Operator migration and existing"
+                + " in-flight Sample, Filter, and Multi histories");
+        }
+        actual[0].Should().BeApproximately(old[0], 2e-5f,
+            "the publication boundary cannot introduce a DC step");
+    }
+
     private static float[] RenderWholeSession(FmSynthSound sound, int frames)
     {
         PlaybackSession session = new(Mono(), new NoteScheduleBuilder().Freeze(),
