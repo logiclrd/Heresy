@@ -74,6 +74,10 @@ public sealed record StartNoteCommand(
 	/// event-local layer; direct callers can supply custom typed overrides.
 	/// Prepared scripts map EventFilterDefinitionId to this property.</summary>
 	public FilterInstance? EventFilterConfiguration { get; init; }
+
+	/// <summary>Physical UI Test speaker monitoring only; never normal
+	/// playback or export. Does not modify the ISound.Render contract.</summary>
+	public bool MonitorFinalSynthDc { get; init; }
 }
 
 /// <summary>Begin the live note-volume controller for one non-mixdown

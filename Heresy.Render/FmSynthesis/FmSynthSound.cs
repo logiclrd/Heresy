@@ -702,6 +702,16 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		public void ClearAdditiveOutputTransition()
 			=> HasAdditiveOutputTransition = false;
 
+		public bool TrySnapshotAdditiveOffset(out double from, out double to,
+			out long startFrame, out int durationFrames)
+		{
+			from = _additiveFromOffset;
+			to = _additiveToOffset;
+			startFrame = _additiveStartFrame;
+			durationFrames = _additiveDurationFrames;
+			return HasAdditiveOutputTransition;
+		}
+
 		public override void SetNoiseSeed(ulong seed)
 		{
 			base.SetNoiseSeed(seed);
@@ -813,8 +823,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	// broaden changed Volume adoption inside that transaction as a side effect.
 	private readonly bool _isMultiInputSubgraph;
 	private readonly int _outputIndex;
-	// Monitoring-only cancellation of a literal DC constant after the final
-	// Add Operator. Raw Values and ordinary playback/export keep the bias.
+	// Exact final Multi+Constant Add output bias. Regular Render preserves
+	// it, while the explicit physical-monitor wrapper can reject it.
 	private readonly double _auditionFinalDcBias;
 	private readonly int _oscillatorCount;
 	private readonly NewNotePolicy _newNotePolicy;
@@ -975,13 +985,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			? multi.GetFrequencyRatios() : Array.Empty<double>()).ToArray();
 		_multiReserve = new int[_nodes.Length];
 		_outputIndex = indexById[graph.OutputNodeId];
-		// A large constant added as the final audio output is a DC voltage,
-		// not an audible note. DAC/audio hardware rejects the DC and can
-		// turn even a 100 ms bias ramp into a loud thump. Cancel ONLY that
-		// final bias for audition; keep raw graph Values, nested subgraphs
-		// (where bias may be intentional modulation), normal playback
-		// and export numerically unchanged.
-		if (_allowMultiExpansion && !_isMultiInputSubgraph
+		// Preparation-only shape recognition. Even audition-capable sound
+		// renderers keep raw Add output; only explicitly monitored notes
+		// request separate speaker-feed compensation.
+		if (!_isMultiInputSubgraph
 			&& _nodes.Length == 3
 			&& _nodes[_outputIndex].Definition is FmOperatorNode
 				{ Operation: FmOperatorKind.Add }
@@ -2235,13 +2242,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			return false;
 		double fromScale = original.Operation == FmOperatorKind.Add
 			? 1.0 : oldConstant.Value;
-		// The final Add constant is explicitly rejected by the audition
-		// output, so transitioning it must not drive a DC ramp into the
-		// monitoring hardware. Multiply still changes audible gain.
-		double fromOffset = 0.0;
+		// Preserve the full authored DC ramp in raw PCM: separate
+		// monitoring compensates it after sound generation.
+		double fromOffset = original.Operation == FmOperatorKind.Add
+			? oldConstant.Value : 0.0;
 		double toScale = updated.Operation == FmOperatorKind.Add
 			? 1.0 : newConstant.Value;
-		double toOffset = 0.0;
+		double toOffset = updated.Operation == FmOperatorKind.Add
+			? newConstant.Value : 0.0;
 		live.StartAdditiveOutputTransition(signalIndex, _outputIndex,
 			fromScale, fromOffset, toScale, toOffset);
 		return true;
@@ -3029,6 +3037,53 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return latest;
 	}
 
+	/// <summary>Physical Synth Test speaker output only: render the raw
+	/// Synth once, then remove its final Add DC bias at the monitor boundary.
+	/// Interpolated bias follows the SAME 100 ms affine mapping as PCM.
+	/// Direct ISound.Render, nested modulation and export stay exact;
+	/// no additional allocations or child render passes occur in PCM.</summary>
+	public void RenderForAuditionMonitoring(
+		RenderContext context, SoundState state, long startFrame,
+		int frameCount, Span<float> destination)
+	{
+		FmSynthState live = ValidateState(state);
+		bool inAffineFade = live.TrySnapshotAdditiveOffset(
+			out double fromOffset, out double toOffset,
+			out long fadeStart, out int fadeFrames);
+		double steadyBias = _auditionFinalDcBias;
+		bool inGenericFade = !inAffineFade
+			&& live.StatelessOutputFadeFrom is not null;
+		long genericFadeStart = live.StatelessOutputFadeStartFrame;
+		Render(context, state, startFrame, frameCount, destination);
+		if (!inAffineFade && steadyBias == 0.0)
+			return;
+		int channels = context.Configuration.OutputChannelCount;
+		long? audibleEnd = GetEndFrameExclusive(context, state);
+		for (int channel = 0; channel < channels; channel++)
+		{
+			double gain = Spatializer.CalculateGain(live.Position,
+				context.Configuration.OutputChannels[channel]);
+			for (int frame = 0; frame < frameCount; frame++)
+			{
+				long current = checked(startFrame + frame);
+				if (audibleEnd.HasValue && current >= audibleEnd.Value)
+					continue;
+				double bias;
+				if (inAffineFade)
+				{
+					double w = AdditiveOutputTransitionWeight(
+						fadeStart, current, fadeFrames);
+					bias = fromOffset * (1.0 - w) + toOffset * w;
+				}
+				else
+					bias = inGenericFade
+						? steadyBias * MultiTransitionWeight(genericFadeStart, current)
+						: steadyBias;
+				destination[frame * channels + channel] -= (float)(bias * gain);
+			}
+		}
+	}
+
 	public void Render(
 		RenderContext context,
 		SoundState state,
@@ -3383,13 +3438,6 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			};
 		}
 
-		// Audio monitoring deliberately rejects a literal final Add
-		// constant for this eligible audition shape. This changes only
-		// the presented output: raw Values still include the full bias,
-		// so upstream/nested modulation and non-audition rendering retain
-		// the authored graph semantics.
-		if (_auditionFinalDcBias != 0.0)
-			state.AudioValues[_outputIndex] -= _auditionFinalDcBias;
 		// The generic path retains raw oscillator/Operator values in
 		// Values for pitch controls. Stateless output smoothing applies once,
 		// after the final stateless Operator has produced audible output.

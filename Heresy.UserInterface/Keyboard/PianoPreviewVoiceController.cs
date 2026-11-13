@@ -224,10 +224,12 @@ public sealed class PianoPreviewPlaybackController
             PianoVoiceActionKind.Start when restart =>
                 [new NoteCutCommand(),
                     new StartNoteCommand(_sourceId,
-                        PitchMultiplier: voice.PitchMultiplier)],
+                        PitchMultiplier: voice.PitchMultiplier)
+                    { MonitorFinalSynthDc = true }],
             PianoVoiceActionKind.Start =>
                 [new StartNoteCommand(_sourceId,
-                    PitchMultiplier: voice.PitchMultiplier)],
+                    PitchMultiplier: voice.PitchMultiplier)
+                    { MonitorFinalSynthDc = true }],
             PianoVoiceActionKind.Release => [new NoteOffCommand()],
             PianoVoiceActionKind.Cut => [new NoteCutCommand()],
             _ => throw new ArgumentOutOfRangeException(nameof(kind)),

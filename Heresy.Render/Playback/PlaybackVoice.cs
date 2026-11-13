@@ -252,7 +252,8 @@ public sealed class PlaybackVoice
 		double initialNotePitchMultiplier = 1.0,
 		FilterChain? toneFilters = null,
 		FilterInstance? eventFilter = null,
-		FilterChain? enclosingEventFilters = null)
+		FilterChain? enclosingEventFilters = null,
+		bool monitorFinalSynthDc = false)
 	{
 		Sound = sound ?? throw new ArgumentNullException(nameof(sound));
 		SoundState = soundState ?? throw new ArgumentNullException(nameof(soundState));
@@ -279,6 +280,7 @@ public sealed class PlaybackVoice
 		_inheritedPitch = inheritedPitch;
 		_inheritedPitchAtStart = inheritedPitchAtStart;
 		SourceGainMultiplier = sourceGainMultiplier;
+		MonitorFinalSynthDc = monitorFinalSynthDc;
 		EnclosingVolumeChannels = enclosingVolumeChannels
 			?? Array.Empty<PlaybackChannelState>();
 		EnclosingSourceVolumes = enclosingSourceVolumes
@@ -397,6 +399,8 @@ public sealed class PlaybackVoice
 	}
 
 	public SoundState SoundState { get; }
+
+	internal bool MonitorFinalSynthDc { get; }
 
 	public NoteConfigurationSnapshot Configuration { get; }
 
