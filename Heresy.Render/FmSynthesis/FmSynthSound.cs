@@ -77,10 +77,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		private double _lastVolumeLevel = 1.0;
 		private long _volumeFadeStart = -1;
 
-		public void AdoptPreparedNodeVolume(NodeEnvelopeCurve next, long frame)
+		public void AdoptPreparedNodeVolume(NodeEnvelopeCurve next, long frame,
+			int sampleRate)
 		{
 			if (_volumeFadeStart >= 0
-				&& frame - _volumeFadeStart < MultiEditTransitionFrames)
+				&& frame - _volumeFadeStart < LiveTransitionFrames(sampleRate))
 			{
 				// A second edit in flight begins at the last audible gain;
 				// don't build an unbounded chain of stale envelope objects.
@@ -104,7 +105,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			if (_volumeFadeStart >= 0)
 			{
 				long elapsed = frame - _volumeFadeStart;
-				if (elapsed >= MultiEditTransitionFrames)
+				if (elapsed >= LiveTransitionFrames(sampleRate))
 				{
 					_outgoingVolumeEnvelope = null;
 					_outgoingFrozenVolumeLevel = null;
@@ -115,7 +116,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					double oldGain = _outgoingFrozenVolumeLevel
 						?? _outgoingVolumeEnvelope?.GetValue(
 							envelopeFrame, sampleRate, released) ?? gain;
-					double weight = MultiTransitionWeight(_volumeFadeStart, frame);
+					double weight = MultiTransitionWeight(_volumeFadeStart, frame, sampleRate);
 					gain = oldGain * (1.0 - weight) + gain * weight;
 				}
 			}
@@ -130,8 +131,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		{
 			if (_volumeFadeStart < 0)
 				return null;
-			long fadeEnd = _volumeFadeStart >= long.MaxValue - MultiEditTransitionFrames
-				? long.MaxValue : _volumeFadeStart + MultiEditTransitionFrames;
+			int frames = LiveTransitionFrames(sampleRate);
+			long fadeEnd = _volumeFadeStart >= long.MaxValue - frames
+				? long.MaxValue : _volumeFadeStart + frames;
 			if (_outgoingFrozenVolumeLevel is double held)
 				return held != 0.0 ? fadeEnd : null;
 			if (_outgoingVolumeEnvelope is not { } outgoing)
@@ -149,35 +151,16 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	}
 
 
-	// Small, predictable transitions run on the PCM owner, but never
-	// allocate or reconstruct a child invocation. One transition is 64 frames
-	// in the *outer* voice's sample clock (about 1.3 ms at 48 kHz).
-	private const int MultiEditTransitionFrames = 64;
-	// A 10.7 ms moving fade can still sound like a pop for a large DC
-	// offset step. Smooth the final affine map (gain and DC bias) for
-	// 100 ms in the active sample-rate clock. Multiply-only edits use
-	// this moving path too, avoiding the generic waveform hold transient.
-	private const int MultiOutputAffineTransitionMilliseconds = 100;
+	// One sample-rate-scaled transition policy for compatible live edits.
 	private const int MultiGrowthReservePerNode = 4;
-
-	// A single 64-frame smoothstep is already the accepted ratio/mix
-	// transition contract. A future dual-state onset crossfade must use
-	// the same bounded frame clock instead of introducing a separate
-	// sample-count rule or allocating an envelope inside the PCM loop.
-	private static double MultiTransitionWeight(long startFrame, long frame)
-	{
-		double t = Math.Clamp(
-			(double)(frame - startFrame) / MultiEditTransitionFrames, 0.0, 1.0);
-		return t * t * (3.0 - 2.0 * t);
-	}
-
-	private static double AdditiveOutputTransitionWeight(
-		long startFrame, long frame, int durationFrames)
-	{
-		double t = Math.Clamp(
-			(double)(frame - startFrame) / durationFrames, 0.0, 1.0);
-		return t * t * (3.0 - 2.0 * t);
-	}
+	private static int LiveTransitionFrames(int sampleRate)
+		=> FmLiveTransitionClock.Frames(sampleRate);
+	private static double MultiTransitionWeight(long start, long frame,
+		int sampleRate)
+		=> FmLiveTransitionClock.Weight(start, frame, sampleRate);
+	private static double AdditiveOutputTransitionWeight(long start,
+		long frame, int durationFrames)
+		=> FmLiveTransitionClock.WeightFrames(start, frame, durationFrames);
 
 	private sealed class MultiVoice
 	{
@@ -206,6 +189,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		private double RatioFrom { get; set; }
 		private double RatioTo { get; set; }
 		private long RatioEditFrame { get; set; }
+		private int _sampleRate = FmMultiNode.ReferenceSampleRate;
+		public void UseSampleRate(int sampleRate)
+		{
+			if (sampleRate > 0) _sampleRate = sampleRate;
+		}
 		private double MixFrom { get; set; }
 		private double MixTo { get; set; }
 		private long MixEditFrame { get; set; }
@@ -226,6 +214,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			StartFrame = outgoing.StartFrame;
 			HasStarted = true;
 			OnsetFadeFrom = outgoing;
+			_sampleRate = outgoing._sampleRate;
 			OnsetFadeStartFrame = frame;
 		}
 		public void FinishOnsetFade() => OnsetFadeFrom = null;
@@ -234,8 +223,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		/// contributing after the last crossfade frame, even if its
 		/// own Sample or Filter would otherwise play indefinitely.</summary>
 		public long OnsetFadeEndFrame => OnsetFadeStartFrame >=
-			long.MaxValue - MultiEditTransitionFrames
-			? long.MaxValue : OnsetFadeStartFrame + MultiEditTransitionFrames;
+			long.MaxValue - LiveTransitionFrames(_sampleRate)
+			? long.MaxValue : OnsetFadeStartFrame + LiveTransitionFrames(_sampleRate);
 
 		/// <summary>Keep the proved last audible contribution of the
 		/// retired branch. The incoming Sample can have reached EOF before
@@ -255,17 +244,20 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			OnsetFadeFrom = null;
 		}
 
-		private static double Interpolate(double from, double to,
-			long startFrame, long frame)
+		private double Interpolate(double from, double to,
+			long startFrame, long frame, bool pitch)
 		{
 			if (from == to) return to;
-			return from + (to - from) * MultiTransitionWeight(startFrame, frame);
+			double w = MultiTransitionWeight(startFrame, frame, _sampleRate);
+			return pitch
+				? FmLiveTransitionClock.Frequency(from, to, w)
+				: from + (to - from) * w;
 		}
 
 		public double RatioAt(long frame)
-			=> Interpolate(RatioFrom, RatioTo, RatioEditFrame, frame);
+			=> Interpolate(RatioFrom, RatioTo, RatioEditFrame, frame, true);
 		public double MixAt(long frame)
-			=> Interpolate(MixFrom, MixTo, MixEditFrame, frame);
+			=> Interpolate(MixFrom, MixTo, MixEditFrame, frame, false);
 		public bool CanAffectOutput(long frame)
 			=> HasStarted && (MixTo != 0.0 || MixAt(frame) != 0.0);
 
@@ -677,8 +669,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			_additiveToScale = toScale;
 			_additiveToOffset = toOffset;
 			_additiveStartFrame = NextFrame;
-			_additiveDurationFrames = Math.Max(1,
-				(int)((long)SampleRate * MultiOutputAffineTransitionMilliseconds / 1000));
+			_additiveDurationFrames = LiveTransitionFrames(SampleRate);
 			HasAdditiveOutputTransition = true;
 			ClearStatelessOutputFade();
 		}
@@ -2242,7 +2233,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				TryGetLiveInstrumentVolume(next, live, i,
 					out SourceVoice? volumeVoice, out NodeEnvelopeCurve? volumeCurve);
 				if (!oldCurve.HasSameFrozenShapeAs(volumeCurve!))
-					volumeVoice!.AdoptPreparedNodeVolume(volumeCurve!, live.NextFrame);
+					volumeVoice!.AdoptPreparedNodeVolume(
+						volumeCurve!, live.NextFrame, live.SampleRate);
 			}
 		// Stateless output changes are click-prone even when no waveform
 		// changes: a Constant can scale gain and an Operator can switch
@@ -2370,9 +2362,12 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			FmMultiNode layout = (FmMultiNode)next._nodes[i].Definition;
 			double mix = layout.GainCompensation ? 1.0 / ratios.Length : 1.0;
 			for (int j = 0; j < voices.Length; j++)
+			{
+				voices[j].UseSampleRate(live.SampleRate);
 				voices[j].Retune(
 					j < ratios.Length ? ratios[j] : voices[j].RatioAt(live.NextFrame),
 					j < ratios.Length ? mix : 0.0, live.NextFrame);
+			}
 		}
 	}
 
@@ -3271,12 +3266,13 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			if (state.StatelessOutputFadeFrom is double outgoing)
 			{
 				long delta = frame - state.StatelessOutputFadeStartFrame;
-				if (delta >= MultiEditTransitionFrames)
+				if (delta >= LiveTransitionFrames(context.Configuration.SampleRate))
 					state.ClearStatelessOutputFade();
 				else if (delta >= 0)
 				{
 					double weight = MultiTransitionWeight(
-						state.StatelessOutputFadeStartFrame, frame);
+						state.StatelessOutputFadeStartFrame, frame,
+						context.Configuration.SampleRate);
 					value = outgoing * (1.0 - weight) + value * weight;
 				}
 			}
@@ -3369,12 +3365,13 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		else if (state.StatelessOutputFadeFrom is double outgoingGraphOutput)
 		{
 			long delta = frame - state.StatelessOutputFadeStartFrame;
-			if (delta >= MultiEditTransitionFrames)
+			if (delta >= LiveTransitionFrames(context.Configuration.SampleRate))
 				state.ClearStatelessOutputFade();
 			else if (delta >= 0)
 			{
 				double weight = MultiTransitionWeight(
-					state.StatelessOutputFadeStartFrame, frame);
+					state.StatelessOutputFadeStartFrame, frame,
+					context.Configuration.SampleRate);
 				state.AudioValues[_outputIndex] = outgoingGraphOutput * (1.0 - weight)
 					+ state.AudioValues[_outputIndex] * weight;
 			}
@@ -3458,7 +3455,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			if (voice.OnsetFadeFrom is { } outgoing)
 			{
 				double weight = MultiTransitionWeight(
-					voice.OnsetFadeStartFrame, frame);
+					voice.OnsetFadeStartFrame, frame, sampleRate);
 				if (weight >= 1.0)
 				{
 					voice.CompleteOnsetFade();
@@ -3501,6 +3498,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		MultiVoice voice)
 	{
 		SoundState child = voice.Invocation.State;
+		voice.UseSampleRate(sampleRate);
 		long localFrame = frame - voice.StartFrame;
 		// Glide the ratio forward without resetting oscillator phase or
 		// re-scaling already-integrated Source playback positions.
