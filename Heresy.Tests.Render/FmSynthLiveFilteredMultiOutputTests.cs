@@ -70,7 +70,7 @@ public sealed class FmSynthLiveFilteredMultiOutputTests
         (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L,
             "neither Sample/Filter history nor Multi children may allocate in PCM");
         AssertInterruptedAffineFade(partial[^1], reference, output,
-            147, 0.83, 0.17, 0.17);
+            147, 0.83, 0.17, 0.0);
     }
 
     [Test]

@@ -70,17 +70,11 @@ public sealed class FmSynthLiveAdditiveMultiTransitionTests
         long allocated = GC.GetAllocatedBytesForCurrentThread();
         last.Render(context, live, 201, actual.Length, actual);
         (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
-        double oldOffset = Mix(0.8, 0.1, Weight(72));
         for (int i = 0; i < actual.Length; i++)
-        {
-            double w = Weight(i);
-            double signal = reference[201 + i] + 0.3;
-            double expected = signal + Mix(oldOffset, -0.3, w);
-            actual[i].Should().BeApproximately((float)expected, 5e-6f,
-                "overlapping additive changes must keep the moving Multi"
-                + " signal and the previous audible offset without restarting"
-                + " any bound Filter or Sample");
-        }
+            actual[i].Should().BeApproximately(reference[201 + i], 5e-6f,
+                "repeated edits of the final DC constant must remain"
+                + " acoustically silent without restarting Sample, Filter"
+                + " or Multi state");
     }
 
     // Physical slice-60 feedback: 512 moving frames are mathematically

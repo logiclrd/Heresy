@@ -56,7 +56,7 @@ public sealed class FmSynthLiveMultiOutputTests
         final.Render(context, held, 148, actual.Length, actual);
         (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
         AssertInterruptedAffineFade(partial[^1], expected, actual,
-            148, 0.90, 0.15, 0.15);
+            148, 0.90, 0.15, 0.0);
     }
 
     [Test]

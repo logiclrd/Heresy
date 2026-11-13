@@ -813,6 +813,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	// broaden changed Volume adoption inside that transaction as a side effect.
 	private readonly bool _isMultiInputSubgraph;
 	private readonly int _outputIndex;
+	// Monitoring-only cancellation of a literal DC constant after the final
+	// Add Operator. Raw Values and ordinary playback/export keep the bias.
+	private readonly double _auditionFinalDcBias;
 	private readonly int _oscillatorCount;
 	private readonly NewNotePolicy _newNotePolicy;
 	private readonly PreparedToneFilterStageFactory? _preparedChildFilterFactory;
@@ -972,6 +975,27 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			? multi.GetFrequencyRatios() : Array.Empty<double>()).ToArray();
 		_multiReserve = new int[_nodes.Length];
 		_outputIndex = indexById[graph.OutputNodeId];
+		// A large constant added as the final audio output is a DC voltage,
+		// not an audible note. DAC/audio hardware rejects the DC and can
+		// turn even a 100 ms bias ramp into a loud thump. Cancel ONLY that
+		// final bias for audition; keep raw graph Values, nested subgraphs
+		// (where bias may be intentional modulation), normal playback
+		// and export numerically unchanged.
+		if (_allowMultiExpansion && !_isMultiInputSubgraph
+			&& _nodes.Length == 3
+			&& _nodes[_outputIndex].Definition is FmOperatorNode
+				{ Operation: FmOperatorKind.Add }
+			&& _nodes[_outputIndex].InputIndices.Length == 2)
+		{
+			int left = _nodes[_outputIndex].InputIndices[0];
+			int right = _nodes[_outputIndex].InputIndices[1];
+			if (_nodes[left].Definition is FmMultiNode
+				&& _nodes[right].Definition is FmConstantNode added)
+				_auditionFinalDcBias = added.Value;
+			else if (_nodes[right].Definition is FmMultiNode
+				&& _nodes[left].Definition is FmConstantNode addedLeft)
+				_auditionFinalDcBias = addedLeft.Value;
+		}
 		_statelessAudioPathNodes = new bool[_nodes.Length];
 		if (_canFadeBoundedOutput)
 			MarkAudibleNode(_outputIndex);
@@ -2211,12 +2235,13 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			return false;
 		double fromScale = original.Operation == FmOperatorKind.Add
 			? 1.0 : oldConstant.Value;
-		double fromOffset = original.Operation == FmOperatorKind.Add
-			? oldConstant.Value : 0.0;
+		// The final Add constant is explicitly rejected by the audition
+		// output, so transitioning it must not drive a DC ramp into the
+		// monitoring hardware. Multiply still changes audible gain.
+		double fromOffset = 0.0;
 		double toScale = updated.Operation == FmOperatorKind.Add
 			? 1.0 : newConstant.Value;
-		double toOffset = updated.Operation == FmOperatorKind.Add
-			? newConstant.Value : 0.0;
+		double toOffset = 0.0;
 		live.StartAdditiveOutputTransition(signalIndex, _outputIndex,
 			fromScale, fromOffset, toScale, toOffset);
 		return true;
@@ -3358,6 +3383,13 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			};
 		}
 
+		// Audio monitoring deliberately rejects a literal final Add
+		// constant for this eligible audition shape. This changes only
+		// the presented output: raw Values still include the full bias,
+		// so upstream/nested modulation and non-audition rendering retain
+		// the authored graph semantics.
+		if (_auditionFinalDcBias != 0.0)
+			state.AudioValues[_outputIndex] -= _auditionFinalDcBias;
 		// The generic path retains raw oscillator/Operator values in
 		// Values for pitch controls. Stateless output smoothing applies once,
 		// after the final stateless Operator has produced audible output.
