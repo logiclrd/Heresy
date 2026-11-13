@@ -8,10 +8,12 @@ using Heresy.Core.Filters;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
 using Heresy.Core.Samples;
+using Heresy.Core.Sequencing;
 using Heresy.Render.Configuration;
 using Heresy.Render.Envelopes;
 using Heresy.Render.FmSynthesis;
 using Heresy.Render.Playback;
+using Heresy.Render.Realtime;
 using Heresy.Render.Samples;
 using Heresy.Render.Sounds;
 using NUnit.Framework;
@@ -23,6 +25,7 @@ public sealed class FmSynthLiveAdditiveMultiTransitionTests
 {
     private const int SmoothFrames = 4800; // 100 ms at the 48 kHz fixture rate
     private static readonly ObjectId SampleId = (ObjectId)9473U;
+    private static readonly ObjectId SynthId = (ObjectId)9475U;
 
     [Test]
     public void LargeAdditiveConstantStepKeepsFilteredMultiWaveformMoving()
@@ -181,6 +184,47 @@ public sealed class FmSynthLiveAdditiveMultiTransitionTests
         for (int i = 0; i < actual.Length; i++)
             actual[i].Should().BeApproximately(expected[128 + i], 6e-6f,
                 "changing only a final DC bias must not create a thump");
+    }
+
+    [Test]
+    public void LiveSessionAppliesDcCancellationOnlyToMarkedPreviewNotes()
+    {
+        SampleSound sample = Sample();
+        FilterInstance filter = OnePole();
+        FmSynthSound add = Sound(sample, filter, 0.85, FmOperatorKind.Add);
+        FmSynthSound plain = Sound(sample, filter, 1, FmOperatorKind.Multiply);
+        float[] marked = RenderLiveStart(add, monitorFinalDc: true);
+        float[] unmarked = RenderLiveStart(add, monitorFinalDc: false);
+        float[] expected = RenderLiveStart(plain, monitorFinalDc: true);
+        for (int i = 0; i < marked.Length; i++)
+        {
+            marked[i].Should().BeApproximately(expected[i], 6e-6f,
+                "the actual live-preview transport must reject final DC");
+            unmarked[i].Should().BeApproximately(expected[i] + 0.85f, 6e-6f,
+                "ordinary live notes must keep the authored Synth output");
+        }
+    }
+
+    private static float[] RenderLiveStart(FmSynthSound sound, bool monitorFinalDc)
+    {
+        PlaybackSession session = new(Mono(), new NoteScheduleBuilder().Freeze(),
+            new RootResolver(sound));
+        PlaybackSessionAudioSource audio = new(session);
+        audio.EnqueueLiveEvent(ChannelTarget.Virtual(77),
+            [new StartNoteCommand(SynthId)
+                { MonitorFinalSynthDc = monitorFinalDc }]);
+        float[] output = new float[256];
+        audio.Render(output.Length, output);
+        return output;
+    }
+
+    private sealed class RootResolver(FmSynthSound synth) : ISoundResolver
+    {
+        public bool TryResolve(ObjectId id, bool mixdown, out ISound? sound)
+        {
+            sound = id == SynthId ? synth : null;
+            return sound is not null;
+        }
     }
 
     [Test]
