@@ -125,7 +125,7 @@ public sealed class FmSynthLiveSampleEnvelopeNoiseTests
         actual[0].Should().Be(previous);
         for (int i = 0; i < actual.Length; i++)
         {
-            double t = Math.Min(1.0, i / 64.0);
+            double t = Math.Min(1.0, i / 4800.0);
             double w = t * t * (3 - 2 * t);
             actual[i].Should().BeApproximately(
                 (float)(previous * (1 - w)

@@ -48,7 +48,7 @@ public sealed class FmSynthLiveGraphEnvelopeTests
             "live graph Envelope edits must not abruptly replace audible gain");
         for (int i = 0; i < 128; i++)
         {
-            double t = Math.Clamp(i / 64.0, 0.0, 1.0);
+            double t = Math.Clamp(i / 4800.0, 0.0, 1.0);
             double w = t * t * (3.0 - 2.0 * t);
             actual[i].Should().BeApproximately(
                 (float)(before[^1] * (1.0 - w) + reference[128 + i] * w),

@@ -143,7 +143,7 @@ public sealed class FmSynthLiveFilterOutputTests
             "a changed audible property after a Filter must not click");
         for (int i = 0; i < actual.Length; i++)
         {
-            double t = Math.Min(1.0, i / 64.0);
+            double t = Math.Min(1.0, i / 4800.0);
             double w = t * t * (3 - 2 * t);
             actual[i].Should().BeApproximately(
                 (float)(previous * (1 - w) + expected[start + i] * w),

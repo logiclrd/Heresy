@@ -98,15 +98,15 @@ public sealed class FmSynthMultiSourceLiveVolumeTests
         before.Render(context, oldReference, 128, reference.Length, reference);
         for (int i = 0; i < actual.Length; i++)
         {
-            double t = Math.Clamp(i / 64.0, 0.0, 1.0);
+            double t = Math.Clamp(i / 4800.0, 0.0, 1.0);
             double w = t * t * (3.0 - 2.0 * t);
             actual[i].Should().BeApproximately(
                 (float)(reference[i] * (1.0 - 0.75 * w)), 2e-5f,
                 "both already-sounding Instrument Sources must adopt the new curve");
         }
         actual[0].Should().Be(reference[0]);
-        Math.Abs(actual[100]).Should().BeLessThan(
-            Math.Abs(reference[100]) * 0.26f);
+        // Per-frame assertions above cover this 100 ms envelope.
+        // At 100 samples it is not yet near the destination gain.
 
         held.NoteOffTime = TimeSpan.FromSeconds(320.0 / 48000);
         after.GetEndFrameExclusive(context, held).Should().Be(330,

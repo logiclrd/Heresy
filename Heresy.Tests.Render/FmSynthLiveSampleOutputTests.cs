@@ -47,13 +47,13 @@ public sealed class FmSynthLiveSampleOutputTests
         actual[0].Should().Be(before[^1]);
         for (int i = 0; i < actual.Length; i++)
         {
-            double t = Math.Min(1.0, i / 64.0);
+            double t = Math.Min(1.0, i / 4800.0);
             double weight = t * t * (3.0 - 2.0 * t);
             actual[i].Should().BeApproximately(
                 (float)(before[^1] * (1.0 - weight)
                     + reference[128 + i] * weight), 3e-6f,
                 "the original streaming Sample playhead must advance throughout"
-                + " the 64-frame output transition, not restart at frame zero");
+                + " the 100 ms output transition, not restart at frame zero");
         }
     }
 
@@ -74,17 +74,15 @@ public sealed class FmSynthLiveSampleOutputTests
         long allocated = GC.GetAllocatedBytesForCurrentThread();
         revised.Render(context, held, 128, after.Length, after);
         (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
-        for (int i = 0; i < 64; i++)
+        for (int i = 0; i < after.Length; i++)
         {
-            double t = i / 64.0;
+            double t = i / 4800.0;
             double w = t * t * (3.0 - 2.0 * t);
             after[i].Should().BeApproximately(
                 (float)(before[^1] * (1.0 - w)
                     + reference[128 + i] * w), 3e-6f);
         }
-        for (int i = 64; i < after.Length; i++)
-            after[i].Should().BeApproximately(reference[128 + i], 3e-6f,
-                "the new Operator must follow the old Sample's forward playhead");
+
 
         // This test deliberately uses Add with a nonzero Constant. After
         // Sample EOF, the *graph* still has a live Constant audio branch;
@@ -141,7 +139,7 @@ public sealed class FmSynthLiveSampleOutputTests
         output[0].Should().Be(partial[^1]);
         for (int i = 0; i < output.Length; i++)
         {
-            double t = Math.Min(1.0, i / 64.0);
+            double t = Math.Min(1.0, i / 4800.0);
             double w = t * t * (3.0 - 2.0 * t);
             output[i].Should().BeApproximately(
                 (float)(partial[^1] * (1 - w) + reference[144 + i] * w),

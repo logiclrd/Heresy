@@ -42,17 +42,15 @@ public sealed class FmSynthCompoundShapeLiveTests
 
         actual[0].Should().Be(before[^1],
             "a new shape under an Operator should join the last audible output");
-        for (int i = 0; i < 64; i++)
+        for (int i = 0; i < actual.Length; i++)
         {
-            double t = i / 64.0;
+            double t = i / 4800.0;
             double weight = t * t * (3.0 - 2.0 * t);
             float expected = (float)(before[^1] * (1.0 - weight)
                 + reference[128 + i] * weight);
             actual[i].Should().BeApproximately(expected, 2e-6f);
         }
-        for (int i = 64; i < actual.Length; i++)
-            actual[i].Should().BeApproximately(reference[128 + i], 2e-6f,
-                "the original independent oscillator phases must survive the fade");
+
     }
 
     [Test]
@@ -77,16 +75,15 @@ public sealed class FmSynthCompoundShapeLiveTests
         saw.Render(context, held, 144, after.Length, after);
         (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
         after[0].Should().Be(partial[^1]);
-        for (int i = 0; i < 64; i++)
+        for (int i = 0; i < after.Length; i++)
         {
-            double t = i / 64.0;
+            double t = i / 4800.0;
             double w = t * t * (3.0 - 2.0 * t);
             after[i].Should().BeApproximately(
                 (float)(partial[^1] * (1 - w) + reference[144 + i] * w),
                 2e-6f);
         }
-        for (int i = 64; i < after.Length; i++)
-            after[i].Should().BeApproximately(reference[144 + i], 2e-6f);
+
     }
 
     [Test]
@@ -203,7 +200,7 @@ public sealed class FmSynthCompoundShapeLiveTests
         actual[0].Should().Be(partial[^1]);
         for (int i = 0; i < actual.Length; i++)
         {
-            double t = Math.Clamp(i / 64.0, 0, 1);
+            double t = Math.Clamp(i / 4800.0, 0, 1);
             double w = t * t * (3 - 2 * t);
             actual[i].Should().BeApproximately(
                 (float)(partial[^1] * (1 - w) + reference[148 + i] * w),
@@ -312,7 +309,7 @@ public sealed class FmSynthCompoundShapeLiveTests
         actual[0].Should().Be(previous[^1]);
         for (int i = 0; i < actual.Length; i++)
         {
-            double t = Math.Clamp(i / 64.0, 0, 1);
+            double t = Math.Clamp(i / 4800.0, 0, 1);
             double w = t * t * (3 - 2 * t);
             float expected = (float)(previous[^1] * (1 - w)
                 + revisedReference[128 + i] * w);
