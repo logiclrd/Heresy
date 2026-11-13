@@ -30,7 +30,7 @@ internal static class FmLiveTransitionClock
         if (weight >= 1.0) return endHz;
         if (!(startHz > 0.0) || !(endHz > 0.0))
             return startHz;
-        return Math.Exp2(Math.Log2(startHz)
+        return Math.Pow(2.0, Math.Log2(startHz)
             + (Math.Log2(endHz) - Math.Log2(startHz)) * weight);
     }
 }
