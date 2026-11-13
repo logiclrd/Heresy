@@ -46,6 +46,16 @@ internal sealed class FmFilterNodeProcessor
 		int StageIndex, int CutoffBindingIndex, int QBindingIndex,
 		double BaseCutoff, double BaseQ);
 
+	// Prepared per-voice and used only for unbound TPT/SVF authored edits.
+	// Connected FM cutoff controls retain their exact per-frame semantics.
+	internal struct LiveTptRamp
+	{
+		public bool Active;
+		public double FromCutoff, ToCutoff;
+		public double FromQ, ToQ;
+		public long StartFrame;
+	}
+
 	private readonly record struct FastBiquadStage(
 		int StageIndex, int CutoffBindingIndex, int QBindingIndex,
 		int SlopeBindingIndex, int GainBindingIndex,
@@ -684,9 +694,40 @@ internal sealed class FmFilterNodeProcessor
 
 	/// <summary>Commit only the scratch previously admitted by the complete
 	/// Synth voice preflight; no partially rejected Filter publication.</summary>
-	internal void CommitPreparedLiveStateConfiguration(State? live)
+	internal void CommitPreparedLiveStateConfiguration(State? live,
+		long publicationFrame)
 	{
 		if (live?.Chain is null) return;
+		for (int i = 0; i < live.LiveTptCount; i++)
+		{
+			RealtimeTptStageUpdate target = live.FastUpdates[i];
+			int stageIndex = target.StageIndex;
+			ConfiguredFilterStage old = _effectiveStages[stageIndex];
+			ref LiveTptRamp ramp = ref live.LiveTptRamps[stageIndex];
+			if (HasBoundStage(old.StageId) || !(target.CutoffHz > 0.0)
+				|| live.SampleRate <= 0 || publicationFrame <= 0)
+			{
+				ramp.Active = false;
+				continue;
+			}
+			double fromHz = old.Parameters.GetParameter("CutoffHz").NumericValue;
+			double fromQ = old.Kind == FilterKind.OnePole ? 1.0
+				: old.Parameters.GetParameter("Q").NumericValue;
+			if (ramp.Active)
+			{
+				double weight = FmLiveTransitionClock.Weight(ramp.StartFrame,
+					publicationFrame - 1, live.SampleRate);
+				fromHz = FmLiveTransitionClock.Frequency(
+					ramp.FromCutoff, ramp.ToCutoff, weight);
+				fromQ = ramp.FromQ + (ramp.ToQ - ramp.FromQ) * weight;
+			}
+			ramp = new LiveTptRamp {
+				Active = fromHz != target.CutoffHz || fromQ != target.Q,
+				FromCutoff = fromHz, ToCutoff = target.CutoffHz,
+				FromQ = fromQ, ToQ = target.Q,
+				StartFrame = publicationFrame,
+			};
+		}
 		live.Chain.CommitPreparedRealtimeNumericUpdates(
 			live.FastUpdates.AsSpan(0, live.LiveTptCount), live.FastScratch,
 			live.BiquadUpdates.AsSpan(0, live.LiveBiquadCount), live.BiquadScratch,
@@ -708,6 +749,10 @@ internal sealed class FmFilterNodeProcessor
 		{
 			Configuration = initial?.Clone();
 			Values = (double[])initialValues.Clone();
+			SampleRate = sampleRate;
+			LiveTptRamps = new LiveTptRamp[Math.Max(1, authoredStageCount)];
+			RampTptUpdates = new RealtimeTptStageUpdate[Math.Max(1, authoredStageCount)];
+			RampTptScratch = new RealtimeTptCoefficients[Math.Max(1, authoredStageCount)];
 			FastUpdates = new RealtimeTptStageUpdate[Math.Max(1, authoredStageCount)];
 			FastScratch = new RealtimeTptCoefficients[Math.Max(1, authoredStageCount)];
 			BiquadUpdates = new RealtimeBiquadStageUpdate[Math.Max(1, authoredStageCount)];
@@ -747,6 +792,10 @@ internal sealed class FmFilterNodeProcessor
 
 		internal FilterInstance? Configuration { get; set; }
 		internal StreamingFilterChain? Chain { get; }
+		internal int SampleRate { get; }
+		internal LiveTptRamp[] LiveTptRamps { get; }
+		internal RealtimeTptStageUpdate[] RampTptUpdates { get; }
+		internal RealtimeTptCoefficients[] RampTptScratch { get; }
 		internal double[] Values { get; }
 		internal RealtimeTptStageUpdate[] FastUpdates { get; }
 		internal RealtimeTptCoefficients[] FastScratch { get; }
@@ -855,7 +904,7 @@ internal sealed class FmFilterNodeProcessor
 	/// committed coefficients and histories untouched.
 	/// </summary>
 	public float Process(State state, double[] nodeValues,
-		bool stopExcitation)
+		bool stopExcitation, long frame = -1)
 	{
 		ArgumentNullException.ThrowIfNull(state);
 		float input = 0;
@@ -872,10 +921,36 @@ internal sealed class FmFilterNodeProcessor
 		if (state.Chain is null || state.Configuration is null)
 			return input;
 
+		if (frame >= 0)
+			UpdateLiveTptRamps(state, frame);
 		if (_bindings.Length != 0 && !stopExcitation)
 			Retune(state, nodeValues);
 
 		return state.Chain.ProcessMonoFrame(input);
+	}
+
+	private static void UpdateLiveTptRamps(State state, long frame)
+	{
+		int count = 0;
+		for (int i = 0; i < state.LiveTptRamps.Length; i++)
+		{
+			ref LiveTptRamp ramp = ref state.LiveTptRamps[i];
+			if (!ramp.Active) continue;
+			double weight = FmLiveTransitionClock.Weight(
+				ramp.StartFrame, frame, state.SampleRate);
+			state.RampTptUpdates[count++] = new RealtimeTptStageUpdate(
+				i, FmLiveTransitionClock.Frequency(
+					ramp.FromCutoff, ramp.ToCutoff, weight),
+				ramp.FromQ + (ramp.ToQ - ramp.FromQ) * weight);
+		}
+		if (count == 0 || !state.Chain!.TryApplyRealtimeTptUpdates(
+			state.RampTptUpdates.AsSpan(0, count), state.RampTptScratch))
+			return;
+		int duration = FmLiveTransitionClock.Frames(state.SampleRate);
+		for (int i = 0; i < state.LiveTptRamps.Length; i++)
+			if (state.LiveTptRamps[i].Active
+				&& frame - state.LiveTptRamps[i].StartFrame >= duration)
+				state.LiveTptRamps[i].Active = false;
 	}
 
 	private static bool HasChanged(int bindingIndex, State state,
