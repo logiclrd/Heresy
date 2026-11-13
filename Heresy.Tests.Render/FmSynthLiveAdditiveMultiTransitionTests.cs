@@ -206,7 +206,7 @@ public sealed class FmSynthLiveAdditiveMultiTransitionTests
     public void UpstreamOperatorEditFollowedByOuterAddHasContinuousFinalPcm(
         int framesBetweenEdits)
     {
-        SampleSound sample = Sample();
+        SampleSound sample = Sample(16000);
         FilterInstance filter = OnePole();
         FmSynthSound original = Sound(sample, filter, 0.8,
             FmOperatorKind.Multiply, upstreamMode: FmOperatorKind.Add);
@@ -365,9 +365,9 @@ public sealed class FmSynthLiveAdditiveMultiTransitionTests
         return filter;
     }
 
-    private static SampleSound Sample()
+    private static SampleSound Sample(int frames = 2400)
     {
-        float[] pcm = Enumerable.Range(0, 2400)
+        float[] pcm = Enumerable.Range(0, frames)
             .Select(i => (float)(0.31 + 0.15 * Math.Sin(i * 0.097)
                 + 0.07 * Math.Cos(i * 0.043))).ToArray();
         return new(new SampleDefinition(SampleId, "Additive Sample",
