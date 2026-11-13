@@ -69,6 +69,51 @@ public sealed class FmSynthLiveFilterOutputTests
             + " because an audible Constant was edited");
     }
 
+    [TestCase(48000)]
+    [TestCase(96000)]
+    public void UnboundOnePoleCutoffGlidesLogarithmicallyOnCommonLiveClock(int sampleRate)
+    {
+        FmSynthSound Sound(double cutoff)
+        {
+            FilterInstance filter = OnePole();
+            filter.SetStageParameter(1, "CutoffHz",
+                FilterParameterValue.FromNumber(cutoff));
+            return new(new FmSynthGraph([
+                new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 6000),
+                new FmFilterNode(2, 1, filter),
+            ], 2), new EmptyEnvelopes(), enableLiveMultiExpansion: true);
+        }
+        RenderContext context = new(new RenderConfiguration(sampleRate, [
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
+        ]));
+        FmSynthSound previous = Sound(300);
+        FmSynthSound revised = Sound(12000);
+        SoundState held = previous.CreateState();
+        int ramp = sampleRate / 10;
+        float[] prior = new float[128 + ramp + 128],
+            target = new float[prior.Length],
+            actual = new float[ramp + 128];
+        previous.Render(context, previous.CreateState(), 0, prior.Length, prior);
+        revised.Render(context, revised.CreateState(), 0, target.Length, target);
+        previous.Render(context, held, 0, 128, new float[128]);
+        previous.TryPrepareRunningState(revised, held).Should().BeTrue();
+        previous.CommitPreparedRunningState(revised, held);
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, 128, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
+
+        // A sharp 300→12000 Hz coefficient retune produces an immediate
+        // high-frequency burst. Logarithmic cutoff migration initially
+        // stays close to the continuing lowpass and converges at 100 ms.
+        for (int i = 0; i < 24; i++)
+            Math.Abs(actual[i] - prior[128 + i]).Should().BeLessThan(0.04f,
+                "cutoff must not jump immediately to 12 kHz at publication");
+        for (int i = ramp + 32; i < actual.Length; i++)
+            Math.Abs(actual[i] - target[128 + i]).Should().BeLessThan(0.01f,
+                "the live OnePole must reach the authored cutoff while"
+                + " retaining integrator continuity and phase");
+    }
+
     [Test]
     public void FilterParameterOnlyConstantEditDoesNotHoldTheAudibleOutput()
     {
