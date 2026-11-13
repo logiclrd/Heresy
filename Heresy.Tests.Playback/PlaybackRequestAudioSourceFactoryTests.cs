@@ -164,7 +164,7 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			output.Render(scalarTransition.Length, scalarTransition);
 			for (int frame = 0; frame < scalarTransition.Length; frame++)
 			{
-				double t = (double)(frame + 1) / 64.0;
+				double t = Math.Min(1.0, (double)(frame + 1) / 10.0);
 				double weight = t * t * (3.0 - 2.0 * t);
 				double expected = 0.75 + 0.125 * (1.0 - weight)
 					+ 0.2 * weight;
@@ -276,16 +276,16 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			((ILiveSynthSourceRevisionOutput)output).EnqueueLiveSynthParameters(
 				synthId, factory.PrepareLiveSynthSource(
 					SongDocumentSnapshot.Create(document), synthId));
-			float[] envelopeTransition = new float[65];
+			float[] envelopeTransition = new float[101];
 			output.Render(envelopeTransition.Length, envelopeTransition);
 			for (int frame = 0; frame < envelopeTransition.Length; frame++)
 			{
-				double t = Math.Min(1.0, frame / 64.0);
+				double t = Math.Min(1.0, frame / 100.0);
 				double weight = t * t * (3.0 - 2.0 * t);
 				float expected = (float)(0.75 * (1.0 - weight) + 0.5 * weight);
 				envelopeTransition[frame].Should().BeApproximately(expected, 1e-6f,
 					"switching the audible shared Envelope retains the original"
-					+ " note clock and joins the revised curve in 64 frames");
+					+ " note clock and joins the revised curve in 100 ms");
 			}
 			envelopeTransition[^1].Should().BeApproximately(0.5f, 1e-6f,
 				"the same ongoing voice fully reaches the new Envelope reference");
@@ -343,9 +343,9 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			{
 				// The oscillator's expanded range applies immediately,
 				// but disabling Multi gain compensation now crossfades
-				// each constituent from 1/2 gain to 1 over 64 frames.
+				// each constituent from 1/2 gain to 1 over 100 ms.
 				// All oscillator phases must remain continuous throughout.
-				double t = Math.Min(1.0, (double)i / 64);
+				double t = Math.Min(1.0, (double)i / 100);
 				double smooth = t * t * (3.0 - 2.0 * t);
 				float gain = (float)(2.0 + 2.0 * smooth);
 				continuedEdited[i].Should().BeApproximately(
@@ -408,8 +408,12 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			ordinaryPcm.Should().OnlyContain(x => Math.Abs(x - 0.5f) < 1e-6f,
 				"ordinary playback must not prepare dormant Multi constituents");
 			livePcm[0].Should().BeApproximately(0.5f, 1e-6f);
-			livePcm[100].Should().BeApproximately(1.0f, 1e-6f,
-				"explicitly live-editable audition grows using prepared children");
+			double t = 100.0 / 4800.0;
+			double w = t * t * (3.0 - 2.0 * t);
+			livePcm[100].Should().BeApproximately(
+				(float)(0.5 + 0.5 * w), 2e-6f,
+				"explicitly live-editable audition starts the prepared"
+				+ " children on the 100 ms clock without an onset jump");
 		}
 		finally
 		{
@@ -711,8 +715,12 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			float[] expanded = new float[120];
 			output.Render(expanded.Length, expanded);
 			expanded[0].Should().BeApproximately(0.5f, 1e-6f);
-			expanded[100].Should().BeApproximately(2.25f, 1e-5f,
-				"the original two constituents and seven additional ones must coexist");
+			double t = 100.0 / 4800.0;
+			double w = t * t * (3.0 - 2.0 * t);
+			expanded[100].Should().BeApproximately(
+				(float)(0.5 + 1.75 * w), 2e-5f,
+				"the three worker-prepared children and four reserve"
+				+ " children must share the common 100 ms fade");
 			worker.Fault.Should().BeNull();
 		}
 		finally
@@ -758,8 +766,12 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			after[0].Should().BeApproximately(0.5f, 1e-6f,
 				"the existing latched note must not jump in amplitude at publication");
 			after[32].Should().BeInRange(0.5f, 1.0f);
-			after[100].Should().BeApproximately(1.0f, 1e-6f,
-				"both preprepared constituents become audible in the same held note");
+			double t = 100.0 / 4800.0;
+			double w = t * t * (3.0 - 2.0 * t);
+			after[100].Should().BeApproximately(
+				(float)(0.5 + 0.5 * w), 2e-6f,
+				"both prepared constituents fade in over 100 ms"
+				+ " without restarting the original two");
 
 			synth.Graph = Graph(1);
 			document.MarkChanged(affectsAudio: true);
@@ -768,8 +780,10 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 					SongDocumentSnapshot.Create(document), id));
 			float[] reduced = new float[150];
 			output.Render(reduced.Length, reduced);
-			reduced[0].Should().BeApproximately(1.0f, 1e-6f);
-			reduced[100].Should().BeApproximately(0.25f, 1e-6f);
+			reduced[0].Should().BeApproximately(after[^1], 1e-3f,
+				"retirement must begin from the currently mixed level");
+			reduced[100].Should().BeInRange(0.25f, reduced[0],
+				"the newly retired children cannot disappear abruptly");
 		}
 		finally
 		{
