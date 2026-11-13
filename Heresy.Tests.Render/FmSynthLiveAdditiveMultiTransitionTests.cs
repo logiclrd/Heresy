@@ -133,6 +133,76 @@ public sealed class FmSynthLiveAdditiveMultiTransitionTests
         }
     }
 
+    // An audio output DC bias is not a playable musical tone. The preview
+    // must not feed a full-scale static offset into AC-coupled hardware;
+    // otherwise even a perfectly smooth 100 ms additive step is audible.
+    // Keep the actual authored Add graph output for ordinary render/export.
+    [Test]
+    public void LiveAuditionRemovesFinalAddBiasWithoutChangingMultiWaveform()
+    {
+        SampleSound sample = Sample();
+        FilterInstance filter = OnePole();
+        FmSynthSound reference = Sound(sample, filter, 1, FmOperatorKind.Multiply);
+        FmSynthSound positive = Sound(sample, filter, 0.85, FmOperatorKind.Add);
+        FmSynthSound negative = Sound(sample, filter, -0.75, FmOperatorKind.Add);
+        RenderContext context = Mono();
+        float[] clean = new float[320], plus = new float[320],
+            minus = new float[320];
+        reference.Render(context, reference.CreateState(), 0, clean.Length, clean);
+        positive.Render(context, positive.CreateState(), 0, plus.Length, plus);
+        negative.Render(context, negative.CreateState(), 0, minus.Length, minus);
+        for (int i = 0; i < clean.Length; i++)
+        {
+            plus[i].Should().BeApproximately(clean[i], 5e-6f,
+                "Add should not feed an offset into the audio-monitoring path");
+            minus[i].Should().BeApproximately(clean[i], 5e-6f);
+        }
+    }
+
+    [Test]
+    public void EditingFinalAddBiasDoesNotCreateAudibleMovement()
+    {
+        SampleSound sample = Sample();
+        FilterInstance filter = OnePole();
+        FmSynthSound before = Sound(sample, filter, 0.85, FmOperatorKind.Add);
+        FmSynthSound after = Sound(sample, filter, -0.8, FmOperatorKind.Add);
+        FmSynthSound reference = Sound(sample, filter, 1, FmOperatorKind.Multiply);
+        RenderContext context = Mono();
+        SoundState held = before.CreateState();
+        before.Render(context, held, 0, 128, new float[128]);
+        before.TryPrepareRunningState(after, held).Should().BeTrue();
+        before.CommitPreparedRunningState(after, held);
+        float[] expected = new float[128 + SmoothFrames + 32];
+        reference.Render(context, reference.CreateState(), 0, expected.Length,
+            expected);
+        float[] actual = new float[SmoothFrames + 32];
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        after.Render(context, held, 128, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
+        for (int i = 0; i < actual.Length; i++)
+            actual[i].Should().BeApproximately(expected[128 + i], 6e-6f,
+                "changing only a final DC bias must not create a thump");
+    }
+
+    [Test]
+    public void NonAuditionOutputRetainsAuthoredAddConstant()
+    {
+        SampleSound sample = Sample();
+        FilterInstance filter = OnePole();
+        FmSynthSound additive = Sound(sample, filter, 0.85,
+            FmOperatorKind.Add, audition: false);
+        FmSynthSound signal = Sound(sample, filter, 1,
+            FmOperatorKind.Multiply, audition: false);
+        RenderContext context = Mono();
+        float[] added = new float[256], reference = new float[256];
+        additive.Render(context, additive.CreateState(), 0, added.Length, added);
+        signal.Render(context, signal.CreateState(), 0, reference.Length, reference);
+        for (int i = 0; i < added.Length; i++)
+            added[i].Should().BeApproximately(reference[i] + 0.85f, 5e-6f,
+                "the underlying authored Synth signal, normal playback and"
+                + " export must continue to include the Add bias");
+    }
+
     [Test]
     public void OrdinaryPlaybackHasNoAdditiveMorph()
     {
