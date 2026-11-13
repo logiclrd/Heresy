@@ -1463,10 +1463,10 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			float[] firOnlyPcm = new float[5200];
 			float[] iirOnlyPcm = new float[5200];
 			float[] bothPcm = new float[5200];
-			unchanged.Render(500, baseline);
-			firOnly.Render(500, firOnlyPcm);
-			iirOnly.Render(500, iirOnlyPcm);
-			both.Render(500, bothPcm);
+			unchanged.Render(baseline.Length, baseline);
+			firOnly.Render(baseline.Length, firOnlyPcm);
+			iirOnly.Render(baseline.Length, iirOnlyPcm);
+			both.Render(baseline.Length, bothPcm);
 
 			double firEffect = 0, iirEffect = 0;
 			for (int i = 0; i < bothPcm.Length; i++)
@@ -2127,7 +2127,7 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			float[][] after = Enumerable.Range(0, 4)
 				.Select(_ => new float[5200]).ToArray();
 			for (int i = 0; i < outputs.Length; i++)
-				outputs[i].Render(700, after[i]);
+				outputs[i].Render(after[i].Length, after[i]);
 			double firEffect = 0, iirEffect = 0;
 			for (int i = 0; i < 5200; i++)
 			{
