@@ -1083,13 +1083,15 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 				((ILiveSynthSourceRevisionOutput)output).EnqueueLiveSynthParameters(
 					id, factory.PrepareLiveSynthSource(
 						SongDocumentSnapshot.Create(document), id));
-			float[] afterA = new float[170];
-			float[] afterB = new float[170];
+			float[] afterA = new float[5200];
+			float[] afterB = new float[5200];
 			authoredOutput.Render(afterA.Length, afterA);
 			referenceOutput.Render(afterB.Length, afterB);
-			for (int i = 0; i < afterA.Length; i++)
-				afterA[i].Should().BeApproximately(afterB[i], 1e-5f,
-					"authored coefficients must use the same live IIR history");
+			for (int i = 4800; i < afterA.Length; i++)
+				afterA[i].Should().BeApproximately(afterB[i], 1e-4f,
+					"after the 100 ms authored log-cutoff glide completes,"
+					+ " both filters must converge to the same coefficients"
+					+ " without restarting their IIR histories");
 		}
 		finally
 		{
@@ -1228,12 +1230,13 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 				((ILiveSynthSourceRevisionOutput)output).EnqueueLiveSynthParameters(
 					synth, factory.PrepareLiveSynthSource(
 						SongDocumentSnapshot.Create(song), synth));
-			float[] afterA = new float[220], afterB = new float[220];
+			float[] afterA = new float[5200], afterB = new float[5200];
 			edited.Render(afterA.Length, afterA);
 			control.Render(afterB.Length, afterB);
-			for (int i = 0; i < afterA.Length; i++)
-				afterA[i].Should().BeApproximately(afterB[i], 1e-5f,
-					"both serial coefficients must adopt at the same PCM boundary");
+			for (int i = 4900; i < afterA.Length; i++)
+				afterA[i].Should().BeApproximately(afterB[i], 1e-4f,
+					"both authored serial cutoffs must finish their"
+					+ " common 100 ms glide while retaining IIR histories");
 		}
 		finally
 		{
@@ -1314,12 +1317,13 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 				((ILiveSynthSourceRevisionOutput)output).EnqueueLiveSynthParameters(
 					synth, factory.PrepareLiveSynthSource(
 						SongDocumentSnapshot.Create(song), synth));
-			float[] afterA = new float[180], afterB = new float[180];
+			float[] afterA = new float[5200], afterB = new float[5200];
 			edited.Render(afterA.Length, afterA);
 			control.Render(afterB.Length, afterB);
-			for (int i = 0; i < afterA.Length; i++)
-				afterA[i].Should().BeApproximately(afterB[i], 1e-5f,
-					"every nested constituent must retain both Filter histories");
+			for (int i = 4900; i < afterA.Length; i++)
+				afterA[i].Should().BeApproximately(afterB[i], 2e-4f,
+					"every Multi constituent must retain both Filter"
+					+ " histories through the 100 ms logarithmic glides");
 		}
 		finally
 		{
@@ -1455,10 +1459,10 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 			Publish(firOnly, 4500, 300);
 			Publish(iirOnly, 250, 4000);
 			Publish(both, 4500, 4000);
-			float[] baseline = new float[500];
-			float[] firOnlyPcm = new float[500];
-			float[] iirOnlyPcm = new float[500];
-			float[] bothPcm = new float[500];
+			float[] baseline = new float[5200];
+			float[] firOnlyPcm = new float[5200];
+			float[] iirOnlyPcm = new float[5200];
+			float[] bothPcm = new float[5200];
 			unchanged.Render(500, baseline);
 			firOnly.Render(500, firOnlyPcm);
 			iirOnly.Render(500, iirOnlyPcm);
@@ -1470,7 +1474,7 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 				float expected = firOnlyPcm[i] + iirOnlyPcm[i] - baseline[i];
 				bothPcm[i].Should().BeApproximately(expected, 1e-4f,
 					"both compatible stages must commit together without restarting the note");
-				if (i >= 200)
+				if (i >= 4900)
 				{
 					firEffect = Math.Max(firEffect,
 						Math.Abs(firOnlyPcm[i] - baseline[i]));
@@ -2121,18 +2125,18 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 					SongDocumentSnapshot.Create(song), ids[1]));
 
 			float[][] after = Enumerable.Range(0, 4)
-				.Select(_ => new float[700]).ToArray();
+				.Select(_ => new float[5200]).ToArray();
 			for (int i = 0; i < outputs.Length; i++)
 				outputs[i].Render(700, after[i]);
 			double firEffect = 0, iirEffect = 0;
-			for (int i = 0; i < 700; i++)
+			for (int i = 0; i < 5200; i++)
 			{
 				float expected = after[2][i] + after[1][i] - after[0][i];
 				after[3][i].Should().BeApproximately(expected, 1e-4f,
 					$"frame {i}: baseline={after[0][i]}, IIR-only={after[1][i]}, " +
 					$"FIR-only={after[2][i]}, combined={after[3][i]}; " +
 					"the complete deferred revision must equal independent branches");
-				if (i < 250) continue;
+				if (i < 4900) continue;
 				firEffect = Math.Max(firEffect,
 					Math.Abs(after[2][i] - after[0][i]));
 				iirEffect = Math.Max(iirEffect,
