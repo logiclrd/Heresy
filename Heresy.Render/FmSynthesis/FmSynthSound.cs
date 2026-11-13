@@ -3134,6 +3134,19 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				: EvaluateFrame(context, synthState,
 					relativeFrame, noteOffFrame, baseEnd);
 
+			// The final EOF can be discovered while evaluating this very
+			// frame (notably by a variable-rate Sample Source). Recheck
+			// before writing the current frame, not only before the NEXT
+			// one, so a long live output fade cannot leak its held sample
+			// one frame past the newly discovered end.
+			if (synthState.ChildEndChanged)
+			{
+				synthState.ChildEndChanged = false;
+				baseEnd = GetBaseEndFrameExclusive(sampleRate, synthState);
+				finalEnd = AddAuthoredTailFrames(baseEnd, sampleRate);
+				if (finalEnd.HasValue && relativeFrame >= finalEnd.Value)
+					value = 0.0;
+			}
 			int destinationBase =
 				frame * outputChannelCount;
 			for (int outputChannel = 0;
@@ -3150,17 +3163,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 
 			synthState.NextFrame =
 				checked(relativeFrame + 1);
-			if (synthState.ChildEndChanged)
-			{
-				// Sample EOF can become known only after its integrated
-				// pitch trajectory reaches the boundary. Recompute the
-				// containing graph's cutoff within this block, so an
-				// oscillator branch and serial Filter tails do not run
-				// indefinitely after an in-block natural end.
-				synthState.ChildEndChanged = false;
-				baseEnd = GetBaseEndFrameExclusive(sampleRate, synthState);
-				finalEnd = AddAuthoredTailFrames(baseEnd, sampleRate);
-			}
+
 		}
 	}
 
