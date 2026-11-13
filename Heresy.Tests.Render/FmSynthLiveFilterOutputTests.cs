@@ -201,7 +201,9 @@ public sealed class FmSynthLiveFilterOutputTests
             actual[i].Should().BeApproximately(target,
                 3e-6f,
                 "the original Filter/Sample history must keep running while"
-                + " the complete output transitions to revised controls");
+                + " the complete output transitions to revised controls"
+                + $" at PCM frame {start + i}, excitationEnd={excitationEnd},"
+                + $" authoredEnd={endingFrame}");
         }
     }
 
