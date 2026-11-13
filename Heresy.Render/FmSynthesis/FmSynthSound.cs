@@ -2385,7 +2385,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		live.PreparedExpansion = null;
 		for (int i = 0; i < _nodes.Length; i++)
 			if (_nodes[i].Filter is { } oldFilter)
-				oldFilter.CommitPreparedLiveStateConfiguration(live.Filters[i]);
+				oldFilter.CommitPreparedLiveStateConfiguration(
+					live.Filters[i], live.NextFrame);
 		for (int i = 0; i < _nodes.Length; i++)
 		{
 			SourceVoice? child = live.Sources[i];
@@ -3371,7 +3372,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 
 					FmFilterNode =>
 						ProcessAudioFilter(compiled, state, index,
-							context.Configuration.SampleRate, draining),
+							context.Configuration.SampleRate, draining, frame),
 
 					FmOperatorNode operation =>
 						EvaluateOperator(
@@ -3624,19 +3625,19 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	}
 
 	private static double ProcessAudioFilter(CompiledNode node,
-		FmSynthState state, int index, int sampleRate, bool draining)
+		FmSynthState state, int index, int sampleRate, bool draining, long frame)
 	{
 		FmFilterNode filter = (FmFilterNode)node.Definition;
 		FmFilterNodeProcessor.State filterState = state.Filters[index]
 			??= node.Filter!.CreateState(sampleRate);
 		if (!filter.AudioInputNodeId.HasValue)
-			return node.Filter!.Process(filterState, state.Values, draining);
+			return node.Filter!.Process(filterState, state.Values, draining, frame);
 		int input = node.InputIndices[0];
 		double raw = state.Values[input];
 		state.Values[input] = state.AudioValues[input];
 		try
 		{
-			return node.Filter!.Process(filterState, state.Values, draining);
+			return node.Filter!.Process(filterState, state.Values, draining, frame);
 		}
 		finally
 		{
