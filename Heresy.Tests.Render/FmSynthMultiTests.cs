@@ -638,13 +638,13 @@ public sealed class FmSynthMultiTests
         old.CanAdoptRunningState(next, voice).Should().BeTrue();
         old.TryPrepareRunningState(next, voice).Should().BeTrue();
         old.CommitPreparedRunningState(next, voice);
-        float[] edited = new float[300], reference = new float[300];
-        next.Render(context, voice, 117, 300, edited);
-        control.Render(context, comparison, 117, 300, reference);
+        float[] edited = new float[5000], reference = new float[5000];
+        next.Render(context, voice, 117, edited.Length, edited);
+        control.Render(context, comparison, 117, reference.Length, reference);
         edited[0].Should().BeApproximately(reference[0], 1e-5f,
             "the first sample after publication must continue both old phases");
         edited.Should().OnlyContain(x => float.IsFinite(x));
-        Enumerable.Range(130, 170)
+        Enumerable.Range(4800, 200)
             .Max(i => Math.Abs(edited[i] - reference[i]))
             .Should().BeGreaterThan(0.2f,
                 "the second constituent must take its new harmonic pitch");
@@ -1947,7 +1947,7 @@ public sealed class FmSynthMultiTests
         original.AdoptPreparedFirControls(held);
         original.TryPrepareRunningState(revised, held).Should().BeTrue();
         original.CommitPreparedRunningState(revised, held);
-        float[] actual = new float[160], unedited = new float[160];
+        float[] actual = new float[2800], unedited = new float[2800];
         long allocBefore = GC.GetAllocatedBytesForCurrentThread();
         revised.Render(context, held, 272, actual.Length, actual);
         (GC.GetAllocatedBytesForCurrentThread() - allocBefore).Should().Be(0L);
@@ -1955,7 +1955,7 @@ public sealed class FmSynthMultiTests
         actual[0].Should().Be(unedited[0],
             "the first publication sample uses the original accumulated playhead");
         actual.Should().OnlyContain(x => float.IsFinite(x));
-        Enumerable.Range(65, actual.Length - 65)
+        Enumerable.Range(1600, actual.Length - 1600)
             .Max(i => Math.Abs(actual[i] - unedited[i]))
             .Should().BeGreaterThan(0.01f,
                 "the rephased FM oscillator should affect *future* Sample speed");
@@ -2683,16 +2683,21 @@ public sealed class FmSynthMultiTests
         float[] after = new float[100];
         reduced.Render(context, state, 80, after.Length, after);
         after[0].Should().BeApproximately(0.6f, 1e-6f);
-        after[90].Should().BeApproximately(0.2f, 1e-6f,
-            "both parent constituents must migrate their inner Multi state");
+        double t = 90.0 / 4800.0;
+        double w = t * t * (3.0 - 2.0 * t);
+        after[90].Should().BeApproximately((float)(0.6 - 0.4 * w), 2e-6f,
+            "both parent constituents must retain their current mix"
+            + " while the inner voice retirement ramps over 100 ms");
 
         FmSynthSound revived = new(Graph(3), new EmptyEnvelopes());
         reduced.TryPrepareRunningState(revived, state).Should().BeTrue();
         reduced.CommitPreparedRunningState(revived, state);
         float[] comeback = new float[110];
         revived.Render(context, state, 180, comeback.Length, comeback);
-        comeback[0].Should().BeApproximately(0.2f, 1e-6f);
-        comeback[90].Should().BeApproximately(0.6f, 1e-6f);
+        comeback[0].Should().BeApproximately(after[^1], 1e-3f);
+        comeback[90].Should().BeInRange(after[^1], 0.6f,
+            "the nested constituents must resume from the last"
+            + " interpolated mix rather than an obsolete reduced value");
     }
 
     [Test]
@@ -2735,8 +2740,11 @@ public sealed class FmSynthMultiTests
         result[0].Should().BeApproximately(0.8f, 1e-6f,
             "the two existing children immediately adopt the authored value");
         result[32].Should().BeInRange(0.8f, 3.6f);
-        result[100].Should().BeApproximately(3.6f, 1e-5f,
-            "seven additional constituents fade in, including three prepared by the worker");
+        double t = 100.0 / 4800.0;
+        double w = t * t * (3.0 - 2.0 * t);
+        result[100].Should().BeApproximately((float)(0.8 + 2.8 * w), 2e-5f,
+            "seven worker-prepared constituents begin the 100 ms"
+            + " fade together without rewinding existing Sample state");
         worker.Fault.Should().BeNull();
     }
 
@@ -2773,7 +2781,12 @@ public sealed class FmSynthMultiTests
         float[] rendered = new float[120];
         current.Render(Mono(), state, 100, 120, rendered);
         rendered[0].Should().BeApproximately(0.25f, 1e-6f);
-        rendered[100].Should().BeApproximately(1.375f, 1e-6f);
+        double t = 100.0 / 4800.0;
+        double w = t * t * (3.0 - 2.0 * t);
+        rendered[100].Should().BeApproximately(
+            (float)(0.25 + 1.125 * w), 2e-5f,
+            "only the latest prepared revision contributes to"
+            + " the ongoing common-clock ramp");
         worker.Fault.Should().BeNull();
     }
 
@@ -2810,8 +2823,11 @@ public sealed class FmSynthMultiTests
         float[] after = new float[120];
         revision.Render(context, held, 100, 120, after);
         after[0].Should().BeApproximately(1.0f, 1e-6f);
-        after[100].Should().BeApproximately(4.5f, 1e-5f,
-            "both expanded Multi nodes must commit at the same audio boundary");
+        double t = 100.0 / 4800.0;
+        double w = t * t * (3.0 - 2.0 * t);
+        after[100].Should().BeApproximately(
+            (float)(1.0 + 3.5 * w), 3e-5f,
+            "both expanded Multi nodes share a 100 ms publication clock");
         worker.Fault.Should().BeNull();
     }
 
@@ -2847,7 +2863,11 @@ public sealed class FmSynthMultiTests
         float[] result = new float[120];
         expanded.Render(context, state, 90, 120, result);
         result[0].Should().BeApproximately(0.6f, 1e-6f);
-        result[100].Should().BeApproximately(1.8f, 1e-5f);
+        double t = 100.0 / 4800.0;
+        double w = t * t * (3.0 - 2.0 * t);
+        result[100].Should().BeApproximately(
+            (float)(0.6 + 1.2 * w), 2e-5f,
+            "both nested outer voices migrate the inner Multi together");
         worker.Fault.Should().BeNull();
     }
 
@@ -3013,9 +3033,11 @@ public sealed class FmSynthMultiTests
         sound.CanAdoptRunningState(stale, state).Should().BeFalse();
         sound.TryPrepareRunningState(latest, state).Should().BeTrue();
         sound.CommitPreparedRunningState(latest, state);
-        float[] result = new float[100];
+        float[] result = new float[4864];
         latest.Render(Mono(), state, 0, result.Length, result);
-        result[99].Should().BeApproximately(1.125f, 1e-5f);
+        result[^1].Should().BeApproximately(1.125f, 1e-5f,
+            "the latest accepted batch must eventually reach its"
+            + " authored nine-voice gain");
         worker.Fault.Should().BeNull();
     }
 
