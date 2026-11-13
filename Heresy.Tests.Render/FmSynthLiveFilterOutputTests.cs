@@ -60,7 +60,8 @@ public sealed class FmSynthLiveFilterOutputTests
         long allocated = GC.GetAllocatedBytesForCurrentThread();
         revised.Render(context, held, 128, after.Length, after);
         (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
-        AssertFade(previous[^1], expected, after, 128);
+        AssertFade(previous[^1], expected, after, 128,
+            revised.GetEndFrameExclusive(context, held));
         revised.GetEndFrameExclusive(context, held).Should().Be(
             revised.GetEndFrameExclusive(context, fresh),
             "the Sample EOF and the downstream Filter tail cannot move"
@@ -137,7 +138,7 @@ public sealed class FmSynthLiveFilterOutputTests
     }
 
     private static void AssertFade(float previous, float[] expected,
-        float[] actual, int start)
+        float[] actual, int start, long? endingFrame = null)
     {
         actual[0].Should().Be(previous,
             "a changed audible property after a Filter must not click");
@@ -145,8 +146,10 @@ public sealed class FmSynthLiveFilterOutputTests
         {
             double t = Math.Min(1.0, i / 4800.0);
             double w = t * t * (3 - 2 * t);
-            actual[i].Should().BeApproximately(
-                (float)(previous * (1 - w) + expected[start + i] * w),
+            float target = endingFrame.HasValue
+                && start + i >= endingFrame.Value ? 0.0f
+                : (float)(previous * (1 - w) + expected[start + i] * w);
+            actual[i].Should().BeApproximately(target,
                 3e-6f,
                 "the original Filter/Sample history must keep running while"
                 + " the complete output transitions to revised controls");
