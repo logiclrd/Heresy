@@ -1811,7 +1811,8 @@ public sealed class PlaybackSession
 			initialNotePitchMultiplier: start.PitchMultiplier,
 			toneFilters: invocation.ToneFilters,
 			eventFilter: start.EventFilterConfiguration,
-			enclosingEventFilters: BuildEnclosingEventFilters(ancestors))
+			enclosingEventFilters: BuildEnclosingEventFilters(ancestors),
+			monitorFinalSynthDc: start.MonitorFinalSynthDc)
 		{
 			OriginVirtualChannelId = virtualChannelId,
 			OriginScopedVirtualOwner = scopedOwner,
