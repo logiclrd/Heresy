@@ -67,7 +67,8 @@ public sealed class FmSynthLiveGraphEnvelopeTests
         SoundState held = before.CreateState();
         SoundState reference = after.CreateState();
         SoundState oldReference = before.CreateState();
-        before.Render(context, held, 0, 128, new float[128]);
+        float[] lastOld = new float[128];
+        before.Render(context, held, 0, 128, lastOld);
         before.Render(context, oldReference, 0, 128, new float[128]);
         after.Render(context, reference, 0, 128, new float[128]);
         before.TryPrepareRunningState(after, held).Should().BeTrue();
@@ -91,8 +92,10 @@ public sealed class FmSynthLiveGraphEnvelopeTests
         {
             double t = Math.Clamp((128.0 + i) / 4800.0, 0.0, 1.0);
             double w = t * t * (3.0 - 2.0 * t);
-            float interpolated = (float)(oldValues[i] * (1 - w)
-                + expected[i] * w);
+            long? end = after.GetEndFrameExclusive(context, held);
+            float interpolated = end.HasValue && 256 + i >= end.Value
+                ? 0.0f
+                : (float)(lastOld[^1] * (1 - w) + expected[i] * w);
             actual[i].Should().BeApproximately(interpolated, 2e-6f,
                 "the revised sustain/release must keep its original clock"
                 + " even while the common 100 ms fade is in progress");
