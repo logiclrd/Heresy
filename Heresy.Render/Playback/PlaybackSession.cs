@@ -9,7 +9,6 @@ using Heresy.Core.Timing;
 using Heresy.Core.Filters;
 using Heresy.Render.Configuration;
 using Heresy.Render.Envelopes;
-using Heresy.Render.FmSynthesis;
 using Heresy.Render.Filters;
 using Heresy.Render.Sounds;
 using Heresy.Render.Timing;
@@ -1811,8 +1810,7 @@ public sealed class PlaybackSession
 			initialNotePitchMultiplier: start.PitchMultiplier,
 			toneFilters: invocation.ToneFilters,
 			eventFilter: start.EventFilterConfiguration,
-			enclosingEventFilters: BuildEnclosingEventFilters(ancestors),
-			monitorFinalSynthDc: start.MonitorFinalSynthDc)
+			enclosingEventFilters: BuildEnclosingEventFilters(ancestors))
 		{
 			OriginVirtualChannelId = virtualChannelId,
 			OriginScopedVirtualOwner = scopedOwner,
@@ -3005,8 +3003,7 @@ public sealed class PlaybackSession
 			initialNotePitchMultiplier: start.PitchMultiplier,
 			toneFilters: invocation.ToneFilters,
 			eventFilter: start.EventFilterConfiguration,
-			enclosingEventFilters: BuildEnclosingEventFilters(enclosingSources),
-			monitorFinalSynthDc: start.MonitorFinalSynthDc);
+			enclosingEventFilters: BuildEnclosingEventFilters(enclosingSources));
 
 		voice.OriginSourceId = start.Mixdown ? ObjectId.None : start.SourceId;
 		voice.OriginPatternCursorId = _activePatternCursorId;
@@ -3854,16 +3851,10 @@ public sealed class PlaybackSession
 			}
 		}
 		if (sourceFrames > 0)
-		{
-			Span<float> sourceDestination = activeDestination.Slice(0,
-				checked(sourceFrames * outputChannelCount));
-			if (voice.MonitorFinalSynthDc && voice.Sound is FmSynthSound synth)
-				synth.RenderForAuditionMonitoring(_context, voice.SoundState,
-					invocationStartFrame, sourceFrames, sourceDestination);
-			else
-				voice.Sound.Render(_context, voice.SoundState,
-					invocationStartFrame, sourceFrames, sourceDestination);
-		}
+			voice.Sound.Render(
+				_context, voice.SoundState, invocationStartFrame,
+				sourceFrames, activeDestination.Slice(0,
+					checked(sourceFrames * outputChannelCount)));
 
 		// A streaming sound (notably a coroutine-backed private
 		// Pattern/Sequence mixdown) can discover its exact end *during*

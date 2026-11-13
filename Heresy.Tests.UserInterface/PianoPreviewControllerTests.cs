@@ -190,9 +190,7 @@ public sealed class PianoPreviewControllerTests
 
             sent.Should().HaveCount(5);
             sent[0].Commands.Should().ContainSingle()
-                .Which.Should().BeOfType<StartNoteCommand>()
-                .Which.MonitorFinalSynthDc.Should().Be(
-                    baseId == PianoPreviewPlaybackController.SynthVoiceIdBase);
+                .Which.Should().BeOfType<StartNoteCommand>();
             sent[1].Commands.Should().ContainSingle()
                 .Which.Should().BeOfType<NoteOffCommand>();
             sent[2].Commands.Should().ContainSingle()

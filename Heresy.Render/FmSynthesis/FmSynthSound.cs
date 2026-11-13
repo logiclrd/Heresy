@@ -702,16 +702,6 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		public void ClearAdditiveOutputTransition()
 			=> HasAdditiveOutputTransition = false;
 
-		public bool TrySnapshotAdditiveOffset(out double from, out double to,
-			out long startFrame, out int durationFrames)
-		{
-			from = _additiveFromOffset;
-			to = _additiveToOffset;
-			startFrame = _additiveStartFrame;
-			durationFrames = _additiveDurationFrames;
-			return HasAdditiveOutputTransition;
-		}
-
 		public override void SetNoiseSeed(ulong seed)
 		{
 			base.SetNoiseSeed(seed);
@@ -823,9 +813,6 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	// broaden changed Volume adoption inside that transaction as a side effect.
 	private readonly bool _isMultiInputSubgraph;
 	private readonly int _outputIndex;
-	// Exact final Multi+Constant Add output bias. Regular Render preserves
-	// it, while the explicit physical-monitor wrapper can reject it.
-	private readonly double _auditionFinalDcBias;
 	private readonly int _oscillatorCount;
 	private readonly NewNotePolicy _newNotePolicy;
 	private readonly PreparedToneFilterStageFactory? _preparedChildFilterFactory;
@@ -985,24 +972,6 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			? multi.GetFrequencyRatios() : Array.Empty<double>()).ToArray();
 		_multiReserve = new int[_nodes.Length];
 		_outputIndex = indexById[graph.OutputNodeId];
-		// Preparation-only shape recognition. Even audition-capable sound
-		// renderers keep raw Add output; only explicitly monitored notes
-		// request separate speaker-feed compensation.
-		if (!_isMultiInputSubgraph
-			&& _nodes.Length == 3
-			&& _nodes[_outputIndex].Definition is FmOperatorNode
-				{ Operation: FmOperatorKind.Add }
-			&& _nodes[_outputIndex].InputIndices.Length == 2)
-		{
-			int left = _nodes[_outputIndex].InputIndices[0];
-			int right = _nodes[_outputIndex].InputIndices[1];
-			if (_nodes[left].Definition is FmMultiNode
-				&& _nodes[right].Definition is FmConstantNode added)
-				_auditionFinalDcBias = added.Value;
-			else if (_nodes[right].Definition is FmMultiNode
-				&& _nodes[left].Definition is FmConstantNode addedLeft)
-				_auditionFinalDcBias = addedLeft.Value;
-		}
 		_statelessAudioPathNodes = new bool[_nodes.Length];
 		if (_canFadeBoundedOutput)
 			MarkAudibleNode(_outputIndex);
@@ -2242,8 +2211,6 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			return false;
 		double fromScale = original.Operation == FmOperatorKind.Add
 			? 1.0 : oldConstant.Value;
-		// Preserve the full authored DC ramp in raw PCM: separate
-		// monitoring compensates it after sound generation.
 		double fromOffset = original.Operation == FmOperatorKind.Add
 			? oldConstant.Value : 0.0;
 		double toScale = updated.Operation == FmOperatorKind.Add
@@ -3035,53 +3002,6 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			latest = Math.Max(latest, end);
 		}
 		return latest;
-	}
-
-	/// <summary>Physical Synth Test speaker output only: render the raw
-	/// Synth once, then remove its final Add DC bias at the monitor boundary.
-	/// Interpolated bias follows the SAME 100 ms affine mapping as PCM.
-	/// Direct ISound.Render, nested modulation and export stay exact;
-	/// no additional allocations or child render passes occur in PCM.</summary>
-	public void RenderForAuditionMonitoring(
-		RenderContext context, SoundState state, long startFrame,
-		int frameCount, Span<float> destination)
-	{
-		FmSynthState live = ValidateState(state);
-		bool inAffineFade = live.TrySnapshotAdditiveOffset(
-			out double fromOffset, out double toOffset,
-			out long fadeStart, out int fadeFrames);
-		double steadyBias = _auditionFinalDcBias;
-		bool inGenericFade = !inAffineFade
-			&& live.StatelessOutputFadeFrom is not null;
-		long genericFadeStart = live.StatelessOutputFadeStartFrame;
-		Render(context, state, startFrame, frameCount, destination);
-		if (!inAffineFade && steadyBias == 0.0)
-			return;
-		int channels = context.Configuration.OutputChannelCount;
-		long? audibleEnd = GetEndFrameExclusive(context, state);
-		for (int channel = 0; channel < channels; channel++)
-		{
-			double gain = Spatializer.CalculateGain(live.Position,
-				context.Configuration.OutputChannels[channel]);
-			for (int frame = 0; frame < frameCount; frame++)
-			{
-				long current = checked(startFrame + frame);
-				if (audibleEnd.HasValue && current >= audibleEnd.Value)
-					continue;
-				double bias;
-				if (inAffineFade)
-				{
-					double w = AdditiveOutputTransitionWeight(
-						fadeStart, current, fadeFrames);
-					bias = fromOffset * (1.0 - w) + toOffset * w;
-				}
-				else
-					bias = inGenericFade
-						? steadyBias * MultiTransitionWeight(genericFadeStart, current)
-						: steadyBias;
-				destination[frame * channels + channel] -= (float)(bias * gain);
-			}
-		}
 	}
 
 	public void Render(

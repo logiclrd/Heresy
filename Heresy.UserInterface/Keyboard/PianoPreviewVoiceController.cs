@@ -132,7 +132,6 @@ public sealed class PianoPreviewPlaybackController
 
     private readonly PianoPreviewVoiceController _voices;
     private readonly ObjectId _sourceId;
-    private readonly bool _isSynthPreview;
     private readonly PatternLiveAuditionActions? _audition;
     private readonly Func<Task>? _globalStop;
     private readonly Action<string>? _onError;
@@ -144,7 +143,6 @@ public sealed class PianoPreviewPlaybackController
         Func<Task>? globalStop = null, Action<string>? onError = null)
     {
         _sourceId = sourceId;
-        _isSynthPreview = voiceIdBase == SynthVoiceIdBase;
         _voices = new PianoPreviewVoiceController(voiceIdBase);
         _audition = audition;
         _globalStop = globalStop;
@@ -226,12 +224,10 @@ public sealed class PianoPreviewPlaybackController
             PianoVoiceActionKind.Start when restart =>
                 [new NoteCutCommand(),
                     new StartNoteCommand(_sourceId,
-                        PitchMultiplier: voice.PitchMultiplier)
-                    { MonitorFinalSynthDc = _isSynthPreview }],
+                        PitchMultiplier: voice.PitchMultiplier)],
             PianoVoiceActionKind.Start =>
                 [new StartNoteCommand(_sourceId,
-                    PitchMultiplier: voice.PitchMultiplier)
-                    { MonitorFinalSynthDc = _isSynthPreview }],
+                    PitchMultiplier: voice.PitchMultiplier)],
             PianoVoiceActionKind.Release => [new NoteOffCommand()],
             PianoVoiceActionKind.Cut => [new NoteCutCommand()],
             _ => throw new ArgumentOutOfRangeException(nameof(kind)),

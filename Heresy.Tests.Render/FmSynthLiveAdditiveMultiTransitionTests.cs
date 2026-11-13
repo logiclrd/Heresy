@@ -8,12 +8,10 @@ using Heresy.Core.Filters;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
 using Heresy.Core.Samples;
-using Heresy.Core.Sequencing;
 using Heresy.Render.Configuration;
 using Heresy.Render.Envelopes;
 using Heresy.Render.FmSynthesis;
 using Heresy.Render.Playback;
-using Heresy.Render.Realtime;
 using Heresy.Render.Samples;
 using Heresy.Render.Sounds;
 using NUnit.Framework;
@@ -25,7 +23,6 @@ public sealed class FmSynthLiveAdditiveMultiTransitionTests
 {
     private const int SmoothFrames = 4800; // 100 ms at the 48 kHz fixture rate
     private static readonly ObjectId SampleId = (ObjectId)9473U;
-    private static readonly ObjectId SynthId = (ObjectId)9475U;
 
     [Test]
     public void LargeAdditiveConstantStepKeepsFilteredMultiWaveformMoving()
@@ -73,15 +70,16 @@ public sealed class FmSynthLiveAdditiveMultiTransitionTests
         long allocated = GC.GetAllocatedBytesForCurrentThread();
         last.Render(context, live, 201, actual.Length, actual);
         (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
-        double previousOffset = Mix(0.8, 0.1, Weight(72));
+        double oldOffset = Mix(0.8, 0.1, Weight(72));
         for (int i = 0; i < actual.Length; i++)
         {
             double w = Weight(i);
-            double movingSignal = reference[201 + i] + 0.3;
-            double expected = movingSignal + Mix(previousOffset, -0.3, w);
+            double signal = reference[201 + i] + 0.3;
+            double expected = signal + Mix(oldOffset, -0.3, w);
             actual[i].Should().BeApproximately((float)expected, 5e-6f,
-                "raw Synth rendering must preserve its original moving"
-                + " gain and Add bias throughout rapid edits");
+                "overlapping additive changes must keep the moving Multi"
+                + " signal and the previous audible offset without restarting"
+                + " any bound Filter or Sample");
         }
     }
 
@@ -133,117 +131,6 @@ public sealed class FmSynthLiveAdditiveMultiTransitionTests
                 + " Sample/Filter/Multi waveform while gain/offset ramps"
                 + " for a full 100 ms at the active PCM sample rate");
         }
-    }
-
-    // An audio output DC bias is not a playable musical tone. The preview
-    // must not feed a full-scale static offset into AC-coupled hardware;
-    // otherwise even a perfectly smooth 100 ms additive step is audible.
-    // Keep the actual authored Add graph output for ordinary render/export.
-    [Test]
-    public void LiveAuditionRemovesFinalAddBiasWithoutChangingMultiWaveform()
-    {
-        SampleSound sample = Sample();
-        FilterInstance filter = OnePole();
-        FmSynthSound reference = Sound(sample, filter, 1, FmOperatorKind.Multiply);
-        FmSynthSound positive = Sound(sample, filter, 0.85, FmOperatorKind.Add);
-        FmSynthSound negative = Sound(sample, filter, -0.75, FmOperatorKind.Add);
-        RenderContext context = Mono();
-        float[] clean = new float[320], plus = new float[320],
-            minus = new float[320];
-        reference.RenderForAuditionMonitoring(context, reference.CreateState(), 0, clean.Length, clean);
-        positive.RenderForAuditionMonitoring(context, positive.CreateState(), 0, plus.Length, plus);
-        negative.RenderForAuditionMonitoring(context, negative.CreateState(), 0, minus.Length, minus);
-        for (int i = 0; i < clean.Length; i++)
-        {
-            plus[i].Should().BeApproximately(clean[i], 5e-6f,
-                "Add should not feed an offset into the audio-monitoring path");
-            minus[i].Should().BeApproximately(clean[i], 5e-6f);
-        }
-    }
-
-    [Test]
-    public void EditingFinalAddBiasDoesNotCreateAudibleMovement()
-    {
-        SampleSound sample = Sample();
-        FilterInstance filter = OnePole();
-        FmSynthSound before = Sound(sample, filter, 0.85, FmOperatorKind.Add);
-        FmSynthSound after = Sound(sample, filter, -0.8, FmOperatorKind.Add);
-        FmSynthSound reference = Sound(sample, filter, 1, FmOperatorKind.Multiply);
-        RenderContext context = Mono();
-        SoundState held = before.CreateState();
-        before.RenderForAuditionMonitoring(context, held, 0, 128, new float[128]);
-        before.TryPrepareRunningState(after, held).Should().BeTrue();
-        before.CommitPreparedRunningState(after, held);
-        float[] expected = new float[128 + SmoothFrames + 32];
-        reference.RenderForAuditionMonitoring(context, reference.CreateState(), 0, expected.Length,
-            expected);
-        float[] actual = new float[SmoothFrames + 32];
-        long allocated = GC.GetAllocatedBytesForCurrentThread();
-        after.RenderForAuditionMonitoring(context, held, 128, actual.Length, actual);
-        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
-        for (int i = 0; i < actual.Length; i++)
-            actual[i].Should().BeApproximately(expected[128 + i], 6e-6f,
-                "changing only a final DC bias must not create a thump");
-    }
-
-    [Test]
-    public void LiveSessionAppliesDcCancellationOnlyToMarkedPreviewNotes()
-    {
-        SampleSound sample = Sample();
-        FilterInstance filter = OnePole();
-        FmSynthSound add = Sound(sample, filter, 0.85, FmOperatorKind.Add);
-        FmSynthSound plain = Sound(sample, filter, 1, FmOperatorKind.Multiply);
-        float[] marked = RenderLiveStart(add, monitorFinalDc: true);
-        float[] unmarked = RenderLiveStart(add, monitorFinalDc: false);
-        float[] expected = RenderLiveStart(plain, monitorFinalDc: true);
-        for (int i = 0; i < marked.Length; i++)
-        {
-            marked[i].Should().BeApproximately(expected[i], 6e-6f,
-                "the actual live-preview transport must reject final DC");
-            unmarked[i].Should().BeApproximately(expected[i] + 0.85f, 6e-6f,
-                "ordinary live notes must keep the authored Synth output");
-        }
-    }
-
-    private static float[] RenderLiveStart(FmSynthSound sound, bool monitorFinalDc)
-    {
-        PlaybackSession session = new(Mono(), new NoteScheduleBuilder().Freeze(),
-            new RootResolver(sound));
-        PlaybackSessionAudioSource audio = new(session);
-        audio.EnqueueLiveEvent(ChannelTarget.Virtual(77),
-            [new StartNoteCommand(SynthId)
-                { MonitorFinalSynthDc = monitorFinalDc }]);
-        float[] output = new float[256];
-        audio.Render(output.Length, output);
-        return output;
-    }
-
-    private sealed class RootResolver(FmSynthSound synth) : ISoundResolver
-    {
-        public bool TryResolve(ObjectId id, bool mixdown, out ISound? sound)
-        {
-            sound = id == SynthId ? synth : null;
-            return sound is not null;
-        }
-    }
-
-    [Test]
-    public void NonAuditionOutputRetainsAuthoredAddConstant()
-    {
-        SampleSound sample = Sample();
-        FilterInstance filter = OnePole();
-        FmSynthSound additive = Sound(sample, filter, 0.85,
-            FmOperatorKind.Add, audition: false);
-        FmSynthSound signal = Sound(sample, filter, 1,
-            FmOperatorKind.Multiply, audition: false);
-        RenderContext context = Mono();
-        float[] added = new float[256], reference = new float[256];
-        additive.Render(context, additive.CreateState(), 0, added.Length, added);
-        signal.Render(context, signal.CreateState(), 0, reference.Length, reference);
-        for (int i = 0; i < added.Length; i++)
-            added[i].Should().BeApproximately(reference[i] + 0.85f, 5e-6f,
-                "the underlying authored Synth signal, normal playback and"
-                + " export must continue to include the Add bias");
     }
 
     [Test]
