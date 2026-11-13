@@ -590,6 +590,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			AudioValues = new double[nodeCount];
 			SilentFrom = new long?[nodeCount];
 			Phases = new double[oscillatorCount];
+			OscillatorFrequencyFrom = new double[oscillatorCount];
+			OscillatorFrequencyTo = new double[oscillatorCount];
+			OscillatorFrequencyStart = new long[oscillatorCount];
 			Filters = new FmFilterNodeProcessor.State?[nodeCount];
 			Sources = sources;
 			Multis = multis;
@@ -599,6 +602,46 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		public double[] AudioValues { get; }
 		public long?[] SilentFrom { get; }
 		public double[] Phases { get; }
+		private double[] OscillatorFrequencyFrom { get; }
+		private double[] OscillatorFrequencyTo { get; }
+		private long[] OscillatorFrequencyStart { get; }
+
+		// Zero To means no active glide. Every revised oscillator phase
+		// continues integrating its actual, logarithmically blended rate.
+		public double FrequencyAt(int oscillatorIndex,
+			double authoredHz, long frame)
+		{
+			double target = OscillatorFrequencyTo[oscillatorIndex];
+			if (target <= 0.0 || SampleRate <= 0)
+				return authoredHz;
+			long started = OscillatorFrequencyStart[oscillatorIndex];
+			if (frame - started >= LiveTransitionFrames(SampleRate))
+			{
+				OscillatorFrequencyTo[oscillatorIndex] = 0.0;
+				return authoredHz;
+			}
+			return FmLiveTransitionClock.Frequency(
+				OscillatorFrequencyFrom[oscillatorIndex], target,
+				MultiTransitionWeight(started, frame, SampleRate));
+		}
+
+		public void BeginFrequencyTransition(int oscillatorIndex,
+			double previousHz, double nextHz)
+		{
+			if (NextFrame <= 0 || SampleRate <= 0
+				|| !(previousHz > 0.0) || !(nextHz > 0.0)
+				|| !double.IsFinite(previousHz) || !double.IsFinite(nextHz))
+			{
+				OscillatorFrequencyTo[oscillatorIndex] = 0.0;
+				return;
+			}
+			double current = OscillatorFrequencyTo[oscillatorIndex] > 0.0
+				? FrequencyAt(oscillatorIndex, previousHz, NextFrame - 1)
+				: previousHz;
+			OscillatorFrequencyFrom[oscillatorIndex] = current;
+			OscillatorFrequencyTo[oscillatorIndex] = nextHz;
+			OscillatorFrequencyStart[oscillatorIndex] = NextFrame;
+		}
 		public FmFilterNodeProcessor.State?[] Filters { get; }
 		public SourceVoice?[] Sources { get; private set; }
 		public MultiVoice[][] Multis { get; private set; }
@@ -750,6 +793,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			ClearAdditiveOutputTransition();
 			Array.Clear(SilentFrom);
 			Array.Clear(Phases);
+			Array.Clear(OscillatorFrequencyFrom);
+			Array.Clear(OscillatorFrequencyTo);
+			Array.Clear(OscillatorFrequencyStart);
 			Array.Clear(Filters); // never reuse histories after rewind/rate change
 			MultiExpansion?.Cancel();
 			PreparedExpansion = null;
@@ -2218,6 +2264,12 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	public void CommitPreparedRunningState(FmSynthSound next, SoundState state)
 	{
 		FmSynthState live = ValidateState(state);
+		for (int i = 0; i < _nodes.Length; i++)
+			if (_nodes[i].Definition is FmOscillatorNode before
+				&& next._nodes[i].Definition is FmOscillatorNode after
+				&& before.FrequencyHz != after.FrequencyHz)
+				live.BeginFrequencyTransition(_nodes[i].OscillatorIndex,
+					before.FrequencyHz, after.FrequencyHz);
 		// Probe all active Instrument Volume children before changing any.
 		// This remains entirely frozen PCM-owner work: no Source resolution,
 		// tone selection, Sample state construction, or managed allocation.
@@ -3253,7 +3305,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				(FmOscillatorNode)outputOscillator.Definition;
 			double value = draining ? 0.0 : EvaluateOscillator(
 				oscillator, outputOscillator, state, pitchMultiplier,
-				context.Configuration.SampleRate);
+				context.Configuration.SampleRate, frame);
 			if (!double.IsFinite(value))
 				throw new InvalidOperationException(
 					$"FM node {oscillator.Id} produced a non-finite value.");
@@ -3326,7 +3378,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 							compiled,
 							state,
 							pitchMultiplier,
-							context.Configuration.SampleRate),
+							context.Configuration.SampleRate, frame),
 
 					_ =>
 						throw new NotSupportedException(
@@ -3883,7 +3935,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		CompiledNode compiled,
 		FmSynthState state,
 		double pitchMultiplier,
-		int sampleRate)
+		int sampleRate, long frame)
 	{
 		double phase =
 			state.Phases[
@@ -3922,7 +3974,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		}
 
 		double frequency =
-			oscillator.FrequencyHz
+			state.FrequencyAt(compiled.OscillatorIndex,
+				oscillator.FrequencyHz, frame)
 				* (oscillator.Constant ? 1.0 : pitchMultiplier)
 				* nodeMultiplier;
 		if (!double.IsFinite(frequency))
