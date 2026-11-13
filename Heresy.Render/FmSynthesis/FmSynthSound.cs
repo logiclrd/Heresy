@@ -3146,6 +3146,17 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				finalEnd = AddAuthoredTailFrames(baseEnd, sampleRate);
 				if (finalEnd.HasValue && relativeFrame >= finalEnd.Value)
 					value = 0.0;
+				else if (baseEnd.HasValue && relativeFrame >= baseEnd.Value)
+				{
+					// Source EOF was discovered *inside* EvaluateFrame.
+					// It already advanced the Filter's original history,
+					// but the generic 100 ms output hold was calculated
+					// before that EOF was known. Use the evaluated Filter
+					// tail immediately instead of leaking the old held
+					// sample into the tail window.
+					synthState.ClearStatelessOutputFade();
+					value = synthState.AudioValues[_outputIndex];
+				}
 			}
 			int destinationBase =
 				frame * outputChannelCount;
