@@ -111,9 +111,24 @@ public sealed class FmSynthUnifiedTransitionTests
         earlyDistance.Should().BeGreaterThan(oldDistance,
             "at 1–4 ms a 100 ms detune glide must still be closer to"
             + " the original waveform than the fully retuned waveform");
-        for (int i = 4800; i < actual.Length; i++)
-            actual[i].Should().BeApproximately(fresh[128 + i], 4e-5f,
-                "the new Multi layout must eventually become exact");
+        // A detuned voice accumulates *different phase history* during
+        // a glide than a fresh note started directly at the final pitch.
+        // Equality to fresh PCM after the glide would be an incorrect
+        // test oracle. Assert instead that splitting the PCM buffer does
+        // not alter the phase-integrated glide or its completion.
+        SoundState split = before.CreateState();
+        before.Render(context, split, 0, 128, new float[128]);
+        before.TryPrepareRunningState(after, split).Should().BeTrue();
+        before.CommitPreparedRunningState(after, split);
+        float[] first = new float[2048];
+        float[] rest = new float[actual.Length - first.Length];
+        after.Render(context, split, 128, first.Length, first);
+        after.Render(context, split, 128 + first.Length, rest.Length, rest);
+        for (int i = 0; i < actual.Length; i++)
+            actual[i].Should().BeApproximately(
+                i < first.Length ? first[i] : rest[i - first.Length],
+                4e-6f, "glide phase and final ratio must not depend"
+                + " on PCM buffer partitioning");
     }
 
     private static FmSynthSound Oscillator(double hz,
