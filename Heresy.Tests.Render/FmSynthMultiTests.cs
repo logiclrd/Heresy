@@ -1349,8 +1349,8 @@ public sealed class FmSynthMultiTests
         original.AdoptPreparedFirControls(changing);
         original.TryPrepareRunningState(revised, changing).Should().BeTrue();
         original.CommitPreparedRunningState(revised, changing);
-        float[] actual = new float[150], oldMix = new float[150],
-            oldOscPcm = new float[150], newOscPcm = new float[150];
+        float[] actual = new float[5000], oldMix = new float[5000],
+            oldOscPcm = new float[5000], newOscPcm = new float[5000];
         long before = GC.GetAllocatedBytesForCurrentThread();
         revised.Render(context, changing, 128, 1, actual.AsSpan(0, 1));
         long firstFrameBytes = GC.GetAllocatedBytesForCurrentThread() - before;
@@ -1375,7 +1375,7 @@ public sealed class FmSynthMultiTests
                 "only the oscillator is rephased; Sample playback stays continuous");
         }
         actual[0].Should().Be(oldMix[0]);
-        Enumerable.Range(65, actual.Length - 65)
+        Enumerable.Range(4800, actual.Length - 4800)
             .Max(i => Math.Abs(actual[i] - oldMix[i]))
             .Should().BeGreaterThan(0.04f,
                 "an equivalent independent Volume curve MUST allow oscillator rephase rather than silently retaining the old phase");
@@ -2692,12 +2692,15 @@ public sealed class FmSynthMultiTests
         FmSynthSound revived = new(Graph(3), new EmptyEnvelopes());
         reduced.TryPrepareRunningState(revived, state).Should().BeTrue();
         reduced.CommitPreparedRunningState(revived, state);
-        float[] comeback = new float[110];
+        float[] comeback = new float[4832];
         revived.Render(context, state, 180, comeback.Length, comeback);
         comeback[0].Should().BeApproximately(after[^1], 1e-3f);
-        comeback[90].Should().BeInRange(after[^1], 0.6f,
-            "the nested constituents must resume from the last"
-            + " interpolated mix rather than an obsolete reduced value");
+        Math.Abs(comeback[90] - after[^1]).Should().BeLessThan(0.002f,
+            "revival must begin continuously even when retirement"
+            + " was interrupted in the middle of its fade");
+        comeback[4810].Should().BeApproximately(0.6f, 2e-5f,
+            "the revived inner constituents must reach their authored"
+            + " three-voice mix after the common transition");
     }
 
     [Test]
