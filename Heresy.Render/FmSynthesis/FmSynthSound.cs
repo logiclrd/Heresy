@@ -600,6 +600,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 
 		public double[] Values { get; }
 		public double[] AudioValues { get; }
+		// Original audible graph output before the optional final transition.
+		// Needed when a finite Source reaches EOF during the current frame:
+		// AudioValues[_outputIndex] has already been overwritten by the
+		// fading monitor output, and cannot recover the real Filter tail.
+		public double UnfadedOutput { get; set; }
 		public long?[] SilentFrom { get; }
 		public double[] Phases { get; }
 		private double[] OscillatorFrequencyFrom { get; }
@@ -789,6 +794,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		{
 			Array.Clear(Values);
 			Array.Clear(AudioValues);
+			UnfadedOutput = 0;
 			ClearStatelessOutputFade();
 			ClearAdditiveOutputTransition();
 			Array.Clear(SilentFrom);
@@ -3156,7 +3162,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					// tail immediately instead of leaking the old held
 					// sample into the tail window.
 					synthState.ClearStatelessOutputFade();
-					value = synthState.AudioValues[_outputIndex];
+					value = synthState.UnfadedOutput;
 				}
 			}
 			int destinationBase =
@@ -3421,6 +3427,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			};
 		}
 
+		state.UnfadedOutput = state.AudioValues[_outputIndex];
 		// A finite Source/Filter can end before a 100 ms live fade
 		// completes. Never keep its last audible sample alive beyond the
 		// genuine graph/audio end just to finish the transition. This is
