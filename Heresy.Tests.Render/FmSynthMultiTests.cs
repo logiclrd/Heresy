@@ -60,9 +60,9 @@ public sealed class FmSynthMultiTests
         (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L,
             "changing oscillator shape may not allocate inside the PCM loop");
 
-        for (int i = 0; i < 64; i++)
+        for (int i = 0; i < actual.Length; i++)
         {
-            double t = i / 64.0;
+            double t = i / 4800.0;
             double weight = t * t * (3.0 - 2.0 * t);
             float expected = (float)(originalPcm[^1] * (1.0 - weight)
                 + freshPcm[128 + i] * weight);
@@ -70,9 +70,7 @@ public sealed class FmSynthMultiTests
                 "the 64-frame transition avoids an immediate waveform/curvature/level jump");
         }
         actual[0].Should().Be(originalPcm[^1]);
-        for (int i = 64; i < actual.Length; i++)
-            actual[i].Should().Be(freshPcm[128 + i],
-                "after the fade the held oscillator must have the new shape at its uninterrupted phase");
+
     }
 
     [Test]
@@ -102,9 +100,9 @@ public sealed class FmSynthMultiTests
         (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
         SoundState fresh = saw.CreateState();
         saw.Render(context, fresh, 0, sawReference.Length, sawReference);
-        for (int i = 0; i < 64; i++)
+        for (int i = 0; i < final.Length; i++)
         {
-            double t = i / 64.0;
+            double t = i / 4800.0;
             double weight = t * t * (3.0 - 2.0 * t);
             float expected = (float)(partial[^1] * (1.0 - weight)
                 + sawReference[144 + i] * weight);
@@ -112,8 +110,7 @@ public sealed class FmSynthMultiTests
                 "rapid successive shape edits must join the actual previous audible value");
         }
         final[0].Should().Be(partial[^1]);
-        for (int i = 64; i < final.Length; i++)
-            final[i].Should().Be(sawReference[144 + i]);
+
     }
 
     [Test]
@@ -588,16 +585,19 @@ public sealed class FmSynthMultiTests
         growth[0].Should().BeApproximately(0.5f, 1e-6f,
             "new children must fade in, not start at full output");
         growth[32].Should().BeInRange(0.5f, 1.0f);
-        growth[100].Should().BeApproximately(1.0f, 1e-6f);
+        // 100 frames is only 2.1 ms: the 100 ms ramp is still moving.
+        growth[100].Should().BeInRange(0.5f, 0.55f);
 
         FmSynthSound shrunk = new(Graph(1), new EmptyEnvelopes());
         grown.TryPrepareRunningState(shrunk, voice).Should().BeTrue();
         grown.CommitPreparedRunningState(shrunk, voice);
         float[] shrink = new float[130];
         shrunk.Render(context, voice, 210, shrink.Length, shrink);
-        shrink[0].Should().BeApproximately(1.0f, 1e-6f);
+        shrink[0].Should().BeApproximately(growth[^1], 1e-3f,
+            "a second edit starts at the current interpolated mix");
         shrink[32].Should().BeInRange(0.25f, 1.0f);
-        shrink[100].Should().BeApproximately(0.25f, 1e-6f);
+        shrink[100].Should().BeInRange(0.25f, shrink[0],
+            "retirement must continue a bounded fade toward the target");
 
         // Previously retired children keep advancing their own states
         // silently, so reactivating within the original reserve needs no
@@ -607,8 +607,10 @@ public sealed class FmSynthMultiTests
         shrunk.CommitPreparedRunningState(revived, voice);
         float[] revival = new float[130];
         revived.Render(context, voice, 340, revival.Length, revival);
-        revival[0].Should().BeApproximately(0.25f, 1e-6f);
-        revival[100].Should().BeApproximately(0.75f, 1e-6f);
+        revival[0].Should().BeApproximately(shrink[^1], 1e-3f,
+            "reviving during a retirement ramp cannot snap to a stale level");
+        revival[100].Should().BeInRange(revival[0], 0.75f,
+            "the new constituent gain must glide without a jump");
     }
 
     [Test]
@@ -1238,7 +1240,7 @@ public sealed class FmSynthMultiTests
         newOsc.Render(context, newOscReference, 128, newOscPcm.Length, newOscPcm);
         for (int i = 0; i < actual.Length; i++)
         {
-            double t = Math.Clamp(i / 64.0, 0.0, 1.0);
+            double t = Math.Clamp(i / 4800.0, 0.0, 1.0);
             double w = t * t * (3.0 - 2.0 * t);
             float expected = (float)(oldMix[i]
                 + (newOscPcm[i] - oldOscPcm[i]) * w);
@@ -1362,7 +1364,7 @@ public sealed class FmSynthMultiTests
         newOsc.Render(context, newOscReference, 128, newOscPcm.Length, newOscPcm);
         for (int i = 0; i < actual.Length; i++)
         {
-            double t = Math.Clamp(i / 64.0, 0.0, 1.0);
+            double t = Math.Clamp(i / 4800.0, 0.0, 1.0);
             double w = t * t * (3.0 - 2.0 * t);
             float expected = (float)(oldMix[i]
                 + (newOscPcm[i] - oldOscPcm[i]) * w);
@@ -1883,7 +1885,7 @@ public sealed class FmSynthMultiTests
         newOsc.Render(context, newOscState, 128, newOscPcm.Length, newOscPcm);
         for (int i = 0; i < actual.Length; i++)
         {
-            double t = Math.Clamp(i / 64.0, 0.0, 1.0);
+            double t = Math.Clamp(i / 4800.0, 0.0, 1.0);
             double w = t * t * (3.0 - 2.0 * t);
             actual[i].Should().BeApproximately(
                 (float)(oldMixed[i] + (newOscPcm[i] - oldOscPcm[i]) * w),
@@ -3202,7 +3204,7 @@ public sealed class FmSynthMultiTests
         original.Render(context, oldReference, 128, reference.Length, reference);
         for (int i = 0; i < actual.Length; i++)
         {
-            double t = Math.Clamp(i / 64.0, 0.0, 1.0);
+            double t = Math.Clamp(i / 4800.0, 0.0, 1.0);
             double w = t * t * (3.0 - 2.0 * t);
             actual[i].Should().BeApproximately(
                 (float)(reference[i] * (1.0 - 0.75 * w)), 2e-5f,
@@ -3447,7 +3449,7 @@ public sealed class FmSynthMultiTests
 
         for (int i = 0; i < actual.Length; i++)
         {
-            double t = Math.Clamp(i / 64.0, 0.0, 1.0);
+            double t = Math.Clamp(i / 4800.0, 0.0, 1.0);
             double w = t * t * (3.0 - 2.0 * t);
             actual[i].Should().BeApproximately(
                 (float)(outgoing[i] * (1.0 - w) + incoming[i] * w),
