@@ -1846,15 +1846,59 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return true;
 	}
 
-	/// <summary>A different Sample is never allowed to steal the old
-	/// SampleSoundState. Only the simplest directly audible Source-only
-	/// audition shape is eligible for a fresh, worker-prepared replacement.
-	/// More complex graph paths need a separate transactional state policy.</summary>
+	/// <summary>The only expanded Sample-replacement shape is a final
+	/// Add operator with directly connected Sample Source children. Require
+	/// every operand to be a Source, with no Filter, Multi, modulation,
+	/// nested Synth/Instrument, or hidden auxiliary audio path. Each
+	/// unchanged Source keeps its exact state while all changed Samples
+	/// are prepared by the same bounded worker transaction.</summary>
+	private bool HasDirectSampleAddMixerShape(FmSynthSound next,
+		FmSynthState state)
+	{
+		// Preserve the previously accepted single direct Source case.
+		if (_nodes.Length == 1)
+			return _outputIndex == 0;
+		if (_nodes.Length < 3
+			|| _nodes[_outputIndex].Definition is not FmOperatorNode
+				{ Operation: FmOperatorKind.Add }
+			|| next._nodes[_outputIndex].Definition is not FmOperatorNode
+				{ Operation: FmOperatorKind.Add })
+			return false;
+		int[] inputs = _nodes[_outputIndex].InputIndices;
+		if (inputs.Length != _nodes.Length - 1)
+			return false;
+
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			if (i == _outputIndex)
+				continue;
+			if (_nodes[i].Definition is not FmSoundSourceNode
+				|| next._nodes[i].Definition is not FmSoundSourceNode
+				|| state.Sources[i]?.Sound is not SampleSound
+				|| next._nodes[i].Source is not SampleSound)
+				return false;
+			bool directInput = false;
+			for (int j = 0; j < inputs.Length; j++)
+				if (inputs[j] == i)
+				{
+					directInput = true;
+					break;
+				}
+			if (!directInput)
+				return false;
+		}
+		return true;
+	}
+
+	/// <summary>A different Sample never inherits the old SampleSoundState.
+	/// One directly audible Source or multiple direct Sources feeding an
+	/// Add output may be replaced, atomically and off PCM, while still
+	/// declining already-releasing or already-fading sources.</summary>
 	private bool NeedsDirectSampleReplacement(FmSynthSound next,
 		FmSynthState state, int index)
 	{
 		if (!_allowMultiExpansion || !next._allowMultiExpansion
-			|| _nodes.Length != 1 || _outputIndex != 0 || index != 0
+			|| !HasDirectSampleAddMixerShape(next, state)
 			|| _nodes[index].Definition is not FmSoundSourceNode oldSource
 			|| next._nodes[index].Definition is not FmSoundSourceNode newSource
 			|| oldSource.SourceId == newSource.SourceId
