@@ -289,6 +289,40 @@ public sealed class FmSynthLiveSourceIdTests
     }
 
     [Test]
+    public void AddMixerDeclinesWholeEditWhenSecondSourceHasUnpreparedFrequencyAndAssetChange()
+    {
+        SampleSound a = Sample(FirstId, Enumerable.Repeat(0.11f, 16000).ToArray());
+        SampleSound b = Sample(AliasId, Enumerable.Repeat(0.17f, 16000).ToArray());
+        SampleSound c = Sample(ThirdId, Enumerable.Repeat(0.29f, 16000).ToArray());
+        SampleSound d = Sample(FourthId, Enumerable.Repeat(0.37f, 16000).ToArray());
+        ManySourceResolver resolver = new((FirstId, a), (AliasId, b),
+            (ThirdId, c), (FourthId, d));
+        FmSynthSound original = MixSound(FirstId, AliasId, resolver);
+        FmSynthSound revised = MixSound(ThirdId, FourthId, resolver,
+            secondFrequencyHz: FmMultiNode.NeutralFrequencyHz * 2);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        SoundState reference = original.CreateState();
+        original.Render(context, held, 0, 128, new float[128]);
+        original.Render(context, reference, 0, 128, new float[128]);
+
+        // The first replacement would be admissible alone. The second
+        // couples asset replacement to a changed initial frequency basis.
+        // Never publish just the first new Source or partially mutate the
+        // held original graph before rejecting the second Source.
+        original.CanPrepareMultiExpansion(revised, held).Should().BeFalse();
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeFalse();
+        original.TryPrepareRunningState(revised, held).Should().BeFalse();
+
+        float[] actual = new float[250], expected = new float[250];
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        original.Render(context, held, 128, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0);
+        original.Render(context, reference, 128, expected.Length, expected);
+        actual.Should().Equal(expected);
+    }
+
+    [Test]
     public void NonAddSourceOperatorStillRejectsDifferentSampleWithoutChangingHeldVoice()
     {
         SampleSound first = Sample(FirstId, Enumerable.Repeat(0.50f, 16000).ToArray());
@@ -349,10 +383,12 @@ public sealed class FmSynthLiveSourceIdTests
 
 
     private static FmSynthSound MixSound(ObjectId firstId, ObjectId secondId,
-        ManySourceResolver resolver, FmOperatorKind operation = FmOperatorKind.Add)
+        ManySourceResolver resolver, FmOperatorKind operation = FmOperatorKind.Add,
+        double? secondFrequencyHz = null)
         => new(new FmSynthGraph([
             new FmSoundSourceNode(1, firstId, FmMultiNode.NeutralFrequencyHz),
-            new FmSoundSourceNode(2, secondId, FmMultiNode.NeutralFrequencyHz),
+            new FmSoundSourceNode(2, secondId,
+                secondFrequencyHz ?? FmMultiNode.NeutralFrequencyHz),
             new FmOperatorNode(3, operation, [1, 2]),
         ], 3), resolver, soundResolver: resolver,
             enableLiveMultiExpansion: true);
