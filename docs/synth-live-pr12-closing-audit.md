@@ -33,7 +33,7 @@
 | Source selected Instrument | Existing Instrument tone selection, configured envelopes and tone Filters; direct Sample-backed node Volume migration (`FmSynthMultiSourceLiveVolumeTests`) | **Approved deferral:** comprehensive cross-family/unrelated Instrument *substitution*. Before merge, protect existing Instrument-backed scalar/Volume live edits and changed-Source refusal with regression and status evidence; document actual limitations |
 | Envelope selected/shared Node and Script Envelope | Frozen Node curve migration and bounded output fade in `FmSynthLiveGraphEnvelopeTests`, `FmSynthLiveSampleEnvelopeNoiseTests`; UI shared-object publication in `SharedAudioEditLivePublicationTests`; selected Instrument Volume in `FmSynthMultiSourceLiveVolumeTests` | Probe Script Envelope audible edit, Node Envelope inside Multi/Filter/Source paths, rebind `None ↔ reference`, and active-release replacement (current code conservatively refuses audible curve change after Note Off) |
 | Filter selected definition; overrides / TailSeconds / shared edit | Atomic multi-processor prepared IIR/FIR retunes and FM-bound controls, `FmSynthLiveFilterOutputTests`, `FmFilterNodeRenderingTests`, multiple Filter realtime tests; user physically edited a three-stage Filter containing **SvfNotch** and **CombFeedback** and heard ongoing changes | Probe each stage-parameter *family*, more than one edited processor per publication, connected modulated FIR, rapid retune, release/tail, nested Multi/Instrument and **Filter definition selection with equivalent stage shape**. Stage add/remove/kind/generation is *effective topology*, not automatically guaranteed |
-| Multi Presets/Distribution/Detune/VoiceCount/Components/RandomizePhase/GainCompensation/Cycle | Worker-prepared expansion, retirement/revival, onset histories and ratio fades; `FmSynthMultiRetirementTests`, live Multi output families, and superseded nested Multi expansion with simultaneous parent Filter change in `FmSynthNestedSourceMigrationTests`; many user listening passes | Probe further stateful compound Multi child Source/Filter combinations, interruption/release semantics (C4), and CPU deadline/recovery (C5) |
+| Multi Presets/Distribution/Detune/VoiceCount/Components/RandomizePhase/GainCompensation/Cycle | Worker-prepared expansion/retirement/revival and nested worker supersession in `FmSynthMultiRetirementTests` / `FmSynthNestedSourceMigrationTests`; `FmSynthLiveFilteredMultiOutputTests` now verifies simultaneous child Sample-rate + IIR Filter retune under a parent 100-ms moving gain, including oscillator sibling and three independent histories | Deeper Multi with changed child Instrument/Script Envelope, topology-effective onset changes and interruption/release (C4), plus CPU deadline/recovery (C5) |
 | Operator Add/Multiply/Minimum/Maximum | Compatible state adoption and smooth output mapping in `FmSynthCompoundShapeLiveTests` and sample/Filter/Multi output tests; user listened to Add/Multiply; final stable Multi + Constant affine transition / monitor-only DC behavior separately tested | Probe `Minimum ↔ Maximum` in an audible compound path, nested unstable Multi, release and non-audition parity; physical listening of high-DC final Add is not evidence that raw output may suppress authored DC |
 | Noise | No currently editable numeric Synth inspector properties; deterministic counter-based stream tested with envelope/sample/Multi combinations | Verify unaffected seed/clock across revisions. New Noise Vmin/Vmax is a **separate open main TODO**: when implemented, its live editing must meet the baseline |
 | Graph wiring, add/remove/reorder nodes, output, Filter modulation ports, Multi input, Operator inputs, Source/Oscillator multiplier input | Explicit structural classification via `FmSynthLiveGraphShape.HasSameWiring`, graph/UI regression tests | Ensure structural change -> existing voice old generation, fresh Note On new generation, and later compatible edits do not falsely rewrite incompatible old history |
@@ -260,6 +260,65 @@ held nested Multi and simultaneously changing parent OnePole, not
 universal interruptible 100-ms Source crossfades, arbitrary nested
 Instrument substitution or active Note Off/EOF. Those belong to the
 remaining C3 cases or C4 as specified. PR #12 stays draft/unmerged.
+
+## C3 stateful Sample/Filter Multi child plus simultaneous outer gain (2026-11-14)
+
+**RED FIRST — concrete missing 100-ms moving gain transition.**
+`FmSynthLiveFilteredMultiOutputTests.SimultaneousSourceRateFilterRetuneAndOuterGainInsideMultiPreservesMovingAudio`
+uses a genuinely stateful Multi child: `Sample Source → OnePole`,
+combined with an independent 709-Hz Sine oscillator through Add, then
+`Multi(3) → Multiply(Constant)`. One authored revision simultaneously
+retunes the continuing Sample Source's base frequency from C4 to
+**1.35 × C4**, the OnePole cutoff from **1200 to 3600 Hz**, and the
+outer gain from **0.85 to 0.20**. Each constituent owns its own Sample
+playhead, continuing IIR history and oscillator phase; no SourceId,
+Multi count/distribution/onset, graph wiring or stage topology changes.
+
+A separately maintained **unity-gain** reference receives identical
+inner Source and Filter revisions at the same frame (128). Its continuing
+PCM is the signal oracle: the primary voice must equal that moving
+signal multiplied by the established **100-ms smoothstep** of the
+outer gain for all **4,896** post-edit frames, with zero measured
+managed allocations during rendering. This requires a genuinely moving
+current signal—not a held prior output sample.
+
+[Test-only `1bd891f`](https://github.com/logiclrd/Heresy/commit/1bd891f352f68ed449d91f8c5d73dcedef94b757)
+produced the expected **behavioral red** in
+[CI #43624563534](https://github.com/logiclrd/Heresy/actions/runs/43624563534):
+at the very first edited frame, expected **0.17897737**, actual
+**0.04211232**, matching an immediate change to the new outer gain
+instead of starting at the old one. All other **1,168 Render tests**
+passed. This was not a test-fixture compile error.
+
+**Narrow fix:** [`c159e00`](https://github.com/logiclrd/Heresy/commit/c159e005d7f1e301dae955e46cdc1ad535483450)
+adds `FmSynthSound.HasCompatibleRetunedSampleFilterMultiGraphAs`.
+Only the dedicated moving **Add/Multiply affine output** transition
+may use this new admission path. It requires a stable Multi layout
+and fully preflighted child graphs, the same compatible Sample
+identity/Source mode, an unchanged oscillator shape and stateless
+arithmetic, continuing Sample/Filter histories, and compatible Filter
+topology. The source frequency and Filter numeric coefficients may
+change together. Nested Multi, selected Sample replacement, finished
+children, arbitrary oscillator shape edits and unprepared/incompatible
+Filter changes remain excluded. The **general stateless held-output
+fade** continues calling the original frozen-child-only guard,
+preserving existing growth/onset/ordinary-playback invariants.
+
+[Corrective CI #43624822034](https://github.com/logiclrd/Heresy/actions/runs/43624822034)
+**SUCCESS: 3,719 / 3,719 tests** (Core 910, Render.File 29,
+Render 1,169, Scripting 105, Playback 356, User Interface 1,150).
+Both Release/native/apphost/bundle checks and Linux ARM64 passed.
+The originally red PCM test now passes, and there were no other test
+regressions.
+
+**Boundary:** This is one concrete compatible Sample/OnePole/oscillator
+compound edit under a constant-layout Multi. It does not generalize
+arbitrary nested Instrument or Script Envelope mutation, switching
+Samples while fading, editing past Note Off, or changing child topology.
+Those remaining cases are individually C2/C3 audits or C4 lifecycle
+work; no physically impossible multi-control edit during 100 ms is
+required to accept this deterministic regression. C3 and the all-field
+milestone remain open; PR #12 stays draft and unmerged.
 
 ### Adjacent UI issues deliberately outside PR #12 closure
 
