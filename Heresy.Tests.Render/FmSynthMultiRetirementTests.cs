@@ -116,7 +116,7 @@ public sealed class FmSynthMultiRetirementTests
     {
         var multis = (Array)state.GetType().GetProperty("Multis")!
             .GetValue(state)!;
-        var voices = (Array)multis.GetValue(1)!;
+        var voices = multis.Cast<Array>().Single(x => x.Length > 0);
         return voices.Cast<object>().Select(voice =>
         {
             var invocation = (SoundInvocation)voice.GetType()
