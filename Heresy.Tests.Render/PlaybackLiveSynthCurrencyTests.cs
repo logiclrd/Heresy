@@ -2,13 +2,16 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 
+using Heresy.Core.Assets;
 using Heresy.Core.FmSynthesis;
+using Heresy.Core.Samples;
 using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
 using Heresy.Render.Configuration;
 using Heresy.Render.Envelopes;
 using Heresy.Render.FmSynthesis;
 using Heresy.Render.Playback;
+using Heresy.Render.Samples;
 using Heresy.Render.Sounds;
 
 using NUnit.Framework;
@@ -45,6 +48,26 @@ public sealed class PlaybackLiveSynthCurrencyTests
         session.AdoptLiveSynthParameters(SynthId, original, compatible);
         Assert.That(session.CountOlderAudioVoices(), Is.Zero,
             "a successfully adopted edit does not obsolete the note");
+    }
+
+    [Test]
+    public void WorkerPreparedSampleChangeRemainsCurrentWhilePreparationIsPending()
+    {
+        ObjectId oldId = (ObjectId)98111U, newId = (ObjectId)98112U;
+        Registry sounds = new();
+        sounds.Set(oldId, Sample(oldId));
+        sounds.Set(newId, Sample(newId));
+        FmSynthSound original = SampleGraph(oldId, sounds);
+        FmSynthSound replacement = SampleGraph(newId, sounds);
+        sounds.Set(SynthId, original);
+        PlaybackSession session = Session(sounds);
+        session.ApplyLiveEvent(ChannelTarget.Virtual(1),
+            [new StartNoteCommand(SynthId)]);
+        session.Render(0, 128, new float[128]);
+
+        session.AdoptLiveSynthParameters(SynthId, original, replacement);
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero,
+            "a compatible Sample replacement waiting for its worker is not a refusal");
     }
 
     [Test]
@@ -103,6 +126,17 @@ public sealed class PlaybackLiveSynthCurrencyTests
             new FmConstantNode(2, 0.3),
             new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
         ], 3), new NoEnvelopes());
+
+    private static SampleSound Sample(ObjectId id)
+        => new(new SampleDefinition(id, "Currency sample",
+            new ExternalAssetReference("currency.wav")),
+            new MemorySampleData(48000, 1, new float[1024]));
+
+    private static FmSynthSound SampleGraph(ObjectId id, Registry sounds)
+        => new(new FmSynthGraph([
+            new FmSoundSourceNode(1, id, FmMultiNode.NeutralFrequencyHz),
+        ], 1), new NoEnvelopes(), soundResolver: sounds,
+            enableLiveMultiExpansion: true);
 
     private sealed class Registry : ISoundResolver
     {
