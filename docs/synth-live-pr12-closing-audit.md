@@ -821,6 +821,77 @@ unmerged. Next C4 probes: nested Synth/ancestor scoped release
 ownership and in-flight worker supersession with incompatible
 publication before old workers complete.
 
+## C4(f) — nested Synth revision currency across independent scoped releases (2026-11-14)
+
+**Automated PASS; no production DSP/session fix required.**
+`FmSynthNnaVirtualLifecycleTests.ScopedNestedSynthReleasesKeepChildRevisionsAndOriginalOwnerClocks`
+exercises **referenced-child Synth publication** while a physically
+owned parent and independent scoped/nested-owner notes remain active
+or are already releasing. The parent has **no own sustain/release
+Envelope**: its Source references a child Synth whose Constant is
+multiplied by a sustain-loop Node Envelope (40-frame release at the
+fixture's 1,000-Hz sample rate). A parent OnePole supplies an
+independent 3-ms graph Filter tail.
+
+Owners **101** and **202** both use scoped virtual channel **7**;
+physical channel **0** is separately held. At frame **10**, a new
+owner-101 note displaces its original into an **NNA Off** release,
+whose original Note Off remains frame 10. Owner 202 gets Note Off
+at frame **11**. A child Constant edit **0.2 → 0.5** then
+publishes **child-before-parent** at frame **12**, mirroring the
+transport dependency order: the child-only session publication does
+not mark unrelated parent-origin voices older; the recompiled parent
+adopts all four relevant voice states with older count **0**.
+A third unedited-session PCM reference proves that the compatible
+child edit causes *actual audible PCM change* in the releasing
+ancestor graph, rather than being silently skipped. A second,
+separately compatible reference confirms frame-by-frame equality
+and preservation of each running ancestor Filter history.
+
+At frame **20**, the referenced child is changed to a structurally
+different Add/Multiply graph. The parent topology itself stays
+stable, but each of four old active note states has an incompatible
+nested child: the older-audio count becomes **4**, and the
+already-releasing NNA keeps its original frame-10 release origin.
+The complete mixed PCM across frames **20–27** matches an oracle
+which never received that incompatible child revision, including
+any continuing 100-ms compatible transition. No graph replay or
+partial child migration is allowed. A fresh owner **303** note
+started at frame **28** uses the newest child and is not older.
+
+By frame **60**, owner-101's NNA Off and owner-202's release,
+including parent graph tails, have retired: older count **4 → 2**.
+Off on owner 101 and rendering to frame **110** gives **2 → 1**;
+Off on physical channel 0 and rendering to frame **160**
+gives **1 → 0**. The fresh scope-303 note remains audibly
+active. No sibling-scoped release or structural child publication
+resets another note's release, steals its output Filter history,
+or transfers its sticky older mark.
+
+The initial deterministic fixture was committed in
+[`75f99fa`](https://github.com/logiclrd/Heresy/commit/75f99fa0aec12ab555b8a339be598810153df03e)
+and passed its own full CI. Its non-vacuity improvement, adding
+the unedited-output PCM oracle, was committed in
+[`e59479e`](https://github.com/logiclrd/Heresy/commit/e59479eecf50a0c8c7ac6313f7b34ef6b7570b35)
+and passed [CI #43641354569](https://github.com/logiclrd/Heresy/actions/runs/43641354569):
+**3,737/3,737 tests** (Core 910; Render.File 29;
+Render **1,187**; Scripting 105; Playback 356; UI 1,150);
+Release desktop/native host, Windows apphost resources, versioned
+bundle smoke and Linux ARM64 shared-codec validation also passed.
+These are **automated PCM and lifecycle** claims, not a new
+physical-device listening result.
+
+**C4 stays OPEN.** This bounded release case does not establish
+arbitrary multi-level ancestor/private-session cancellation,
+incompatible child state hidden inside every possible Multi/Instrument
+combination, editing the audible release Envelope while it is
+already releasing, or **in-flight worker completion/cancellation**
+under a later incompatible revision. The next focused C4 fixture
+is worker results in flight versus late incompatible publication and
+voice cancellation, including no resurrection of scoped/NNA notes.
+C2, C5–C7 and the main all-nonstructural-property Synth TODO
+remain unchecked. PR #12 remains draft and unmerged.
+
 ### Adjacent UI issues deliberately outside PR #12 closure
 
 Two independently actionable main-line TODOs were logged in [`docs/todo.md`](https://github.com/logiclrd/Heresy/blob/main/docs/todo.md) via [`dd55714`](https://github.com/logiclrd/Heresy/commit/dd55714d677ee8ee4641594e1f8ae2cb394039c3): stale **Configured stages** after editing a shared Filter definition and selected-stage controls hidden to the right in a non-resizable strip instead of below the list. `FmSynthEditorControl.AddFilterInspector` currently deliberately avoids rebuilding on popup close to preserve unsaved per-use drafts, and `FilterInstanceEditorControl` uses a left/right layout; the eventual fix must refresh safely without losing those drafts. These are real UI defects, but not evidence that a held note failed a realtime coefficient update.
