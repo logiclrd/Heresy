@@ -2,6 +2,10 @@ using System;
 using System.Numerics;
 
 using AwesomeAssertions;
+using Heresy.Core.Assets;
+using Heresy.Core.Filters;
+using Heresy.Core.Samples;
+using Heresy.Render.Samples;
 using Heresy.Core.Envelopes;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
@@ -184,6 +188,91 @@ public sealed class FmSynthLiveGraphEnvelopeTests
         output[0].Should().BeApproximately(
             (float)(0.2 * Math.Sin(2 * Math.PI * 440 * 128 / 48000)),
             2e-6f);
+    }
+
+
+    [Test]
+    public void ScriptEnvelopeChangedInsideMultiFadesBeforePreservingParentFilterHistory()
+    {
+        const int edit = 128, fade = 4800, continuation = fade + 96;
+        ObjectId scriptId = (ObjectId)9132U;
+        ObjectId referenceId = (ObjectId)9133U;
+        FilterInstance filter = new(new FilterDefinition(
+            (ObjectId)9134U, "Script child pole"));
+        filter.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(1500));
+        FmSynthSound Build(double scriptLevel) => new(new FmSynthGraph([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 360),
+            new FmEnvelopeNode(2, scriptId),
+            new FmOperatorNode(3, FmOperatorKind.Multiply, [1, 2]),
+            new FmMultiNode(4, 3, voiceCount: 3, detune: 0,
+                randomizePhase: false, gainCompensation: true),
+            new FmFilterNode(5, 4, filter, tailSeconds: 0.003),
+        ], 5), new SingleCurve(scriptId,
+            new ScriptEnvelopeCurve((_, _) => scriptLevel, null)),
+            enableLiveMultiExpansion: true);
+
+        FmSynthSound before = Build(0.8);
+        FmSynthSound after = Build(0.12);
+        RenderContext context = Mono();
+        SoundState held = before.CreateState();
+        before.Render(context, held, 0, edit, new float[edit]);
+        before.CanAdoptRunningState(after, held).Should().BeTrue();
+        before.TryPrepareRunningState(after, held).Should().BeTrue();
+        before.CommitPreparedRunningState(after, held);
+
+        // A Script edit must smooth at each Multi CHILD output, while the
+        // continuing parent OnePole integrates the MOVING new signal.
+        // All three non-randomized voices are phase-aligned with unity sum.
+        float[] baked = new float[edit + continuation];
+        double previous = Math.Sin(2 * Math.PI * 360 * (edit - 1) / 48000) * 0.8;
+        for (int frame = 0; frame < baked.Length; frame++)
+        {
+            double moving = Math.Sin(2 * Math.PI * 360 * frame / 48000);
+            if (frame < edit)
+                baked[frame] = (float)(moving * 0.8);
+            else
+            {
+                double t = Math.Clamp((double)(frame - edit) / fade, 0, 1);
+                double w = t * t * (3 - 2 * t);
+                baked[frame] = (float)(previous * (1 - w) + moving * 0.12 * w);
+            }
+        }
+        SampleSound sample = new(new SampleDefinition(
+            referenceId, "Script envelope oracle",
+            new ExternalAssetReference("script-envelope-oracle.wav")),
+            new MemorySampleData(48000, 1, baked));
+        FmSynthSound oracle = new(new FmSynthGraph([
+            new FmSoundSourceNode(1, referenceId,
+                FmMultiNode.NeutralFrequencyHz),
+            new FmMultiNode(2, 1, voiceCount: 3, detune: 0,
+                randomizePhase: false, gainCompensation: true),
+            new FmFilterNode(3, 2, filter, tailSeconds: 0.003),
+        ], 3), new SingleCurve(referenceId,
+            new ScriptEnvelopeCurve((_, _) => 1, null)),
+            soundResolver: new OneSource(referenceId, sample),
+            enableLiveMultiExpansion: true);
+        float[] expected = new float[baked.Length];
+        oracle.Render(context, oracle.CreateState(), 0,
+            expected.Length, expected);
+        float[] actual = new float[continuation];
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        after.Render(context, held, edit, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L,
+            "Script changes inside Multi may not allocate or restart child states in PCM");
+        for (int i = 0; i < continuation; i++)
+            actual[i].Should().BeApproximately(expected[edit + i], 7e-5f,
+                $"every scripted child must fade before the continuous parent IIR at {edit + i}");
+    }
+
+    private sealed class OneSource(ObjectId id, SampleSound sample) : ISoundResolver
+    {
+        public bool TryResolve(ObjectId requested, bool mixdown,
+            out ISound? sound)
+        {
+            sound = requested == id ? sample : null;
+            return sound is not null;
+        }
     }
 
     private static FmSynthSound GainSound(ObjectId envelopeId,
