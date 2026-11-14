@@ -359,8 +359,9 @@ public sealed class FmSynthLiveSourceIdTests
     }
 
     [Test]
-    public void NonAddSourceOperatorStillRejectsDifferentSampleWithoutChangingHeldVoice()
+    public void NonAddSourceOperatorKeepsSiblingAndCrossfadesOnlyChangedSample()
     {
+        const int start = 128, fadeFrames = 4800;
         SampleSound first = Sample(FirstId, Enumerable.Repeat(0.50f, 16000).ToArray());
         SampleSound independent = Sample(AliasId,
             Enumerable.Repeat(0.25f, 16000).ToArray());
@@ -374,20 +375,26 @@ public sealed class FmSynthLiveSourceIdTests
             FmOperatorKind.Multiply);
         RenderContext context = Mono();
         SoundState held = original.CreateState();
-        SoundState baseline = original.CreateState();
-        original.Render(context, held, 0, 128, new float[128]);
-        original.Render(context, baseline, 0, 128, new float[128]);
+        original.Render(context, held, 0, start, new float[start]);
+        PrepareReplacement(original, revised, held);
 
-        original.CanPrepareMultiExpansion(revised, held).Should().BeFalse(
-            "nonlinear mixing semantics require a separate documented scope");
-        original.RequestMultiExpansionPreparation(revised, held).Should().BeFalse();
-        original.TryPrepareRunningState(revised, held).Should().BeFalse();
-        float[] oldAudio = new float[100], expected = new float[100];
-        original.Render(context, held, 128, 100, oldAudio);
-        original.Render(context, baseline, 128, 100, expected);
-        oldAudio.Should().Equal(expected);
+        // The old refusal was an obsolete topology restriction. The
+        // unchanged sibling continues at 0.25 and multiplies the already
+        // source-crossfaded first operand, never a crossfade of the
+        // entire compound graph or a reset of its two Sample playheads.
+        float[] output = new float[fadeFrames + 1];
+        long bytes = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, start, output.Length, output);
+        (GC.GetAllocatedBytesForCurrentThread() - bytes).Should().Be(0);
+        for (int i = 0; i < output.Length; i++)
+        {
+            double t = Math.Clamp((double)i / fadeFrames, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            output[i].Should().BeApproximately(
+                (float)(0.25 * (0.50 * (1 - w) + 0.75 * w)), 2e-5f,
+                $"the unchanged sibling multiplies the local Source fade at {i}");
+        }
     }
-
 
     [Test]
     public void TwoStageOnePoleCascadeKeepsBothHistoriesForNewSampleSource()
