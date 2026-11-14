@@ -75,6 +75,31 @@ public sealed class NodeEnvelopeCurve : IEnvelopeCurve
 		return true;
 	}
 
+	/// <summary>Preserves the running sustain and release clock while
+	/// allowing node gain values to change. A changed final zero/nonzero
+	/// policy is also a lifecycle change, not an ordinary gain retune.
+	/// Unlike full shape equivalence, this deliberately ignores values
+	/// other than the final completion/silence policy.</summary>
+	internal bool HasSameFrozenTimelineAs(NodeEnvelopeCurve other)
+	{
+		if (ReferenceEquals(this, other))
+			return true;
+		if (_mode != other._mode || _ticks.Length != other._ticks.Length
+			|| IsZeroAfterCompletion != other.IsZeroAfterCompletion
+			|| BitConverter.DoubleToInt64Bits(_start)
+				!= BitConverter.DoubleToInt64Bits(other._start)
+			|| BitConverter.DoubleToInt64Bits(_end)
+				!= BitConverter.DoubleToInt64Bits(other._end)
+			|| BitConverter.DoubleToInt64Bits(_last)
+				!= BitConverter.DoubleToInt64Bits(other._last))
+			return false;
+		for (int i = 0; i < _ticks.Length; i++)
+			if (BitConverter.DoubleToInt64Bits(_ticks[i])
+				!= BitConverter.DoubleToInt64Bits(other._ticks[i]))
+				return false;
+		return true;
+	}
+
 	public double GetValue(
 		long activeFrame, int sampleRate, long? noteOffActiveFrame)
 	{
