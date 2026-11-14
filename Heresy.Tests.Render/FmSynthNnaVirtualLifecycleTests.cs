@@ -855,6 +855,130 @@ public sealed class FmSynthNnaVirtualLifecycleTests
         }
     }
 
+    [Test]
+    public void RepeatedSampleSourceEditsDuringLiveFadeDeferAndAdoptOnlyLatestAfterCompletion()
+    {
+        ObjectId aId = (ObjectId)72221U;
+        ObjectId bId = (ObjectId)72222U;
+        ObjectId cId = (ObjectId)72223U;
+        ObjectId dId = (ObjectId)72224U;
+        Registry registry = new();
+
+        SampleSound Sample(ObjectId id, float level)
+            => new(new SampleDefinition(id, "C4(h) source",
+                new ExternalAssetReference("c4-h-source.wav")),
+                new MemorySampleData(Rate, 1,
+                    Enumerable.Repeat(level, 800).ToArray()));
+        registry.Add(aId, Sample(aId, 0.2f));
+        registry.Add(bId, Sample(bId, 0.6f));
+        registry.Add(cId, Sample(cId, 0.8f));
+        registry.Add(dId, Sample(dId, 0.4f));
+
+        FmSynthSound Sound(ObjectId id)
+            => new(new FmSynthGraph([
+                new FmSoundSourceNode(1, id,
+                    FmMultiNode.NeutralFrequencyHz),
+            ], 1), registry,
+                new NewNotePolicy(NewNoteAction.Continue, TimeSpan.Zero),
+                soundResolver: registry, enableLiveMultiExpansion: true);
+
+        FmSynthSound a = Sound(aId);
+        FmSynthSound b = Sound(bId);
+        FmSynthSound c = Sound(cId);
+        FmSynthSound d = Sound(dId);
+        registry.Add(SourceId, a);
+        PlaybackSession session = Session(registry, Schedule());
+        session.ApplyLiveEvent(ChannelTarget.Physical(0),
+            [new StartNoteCommand(SourceId)]);
+        session.Render(0, 10, new float[10]);
+
+        using FirPreparationScheduler worker = new();
+        session.AdoptLiveSynthParameters(SourceId, a, b);
+        session.QueuePendingFirControls(worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        session.AdoptPreparedFirControls();
+        Assert.That(session.GetChannelState(0).CurrentVoice!.Sound,
+            Is.SameAs(b));
+        session.Render(10, 10, new float[10]);
+
+        // C arrives 10 ms into A→B's 100-ms Source-local crossfade,
+        // then D supersedes C after a further 10 ms. Never discard A's
+        // remaining audible history, start C just to abandon it, or
+        // reinterpret the current B readhead as C's prior history.
+        session.AdoptLiveSynthParameters(SourceId, b, c);
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero,
+            "a safely deferred live Sample edit must not be classified as a missed revision");
+        float[] firstRamp = new float[10];
+        session.Render(20, firstRamp.Length, firstRamp);
+        session.AdoptLiveSynthParameters(SourceId, c, d);
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero,
+            "the pending C must be replaceable with D without losing the A→B fade");
+
+        registry.Replace(SourceId, d);
+        session.ApplyLiveEvent(ChannelTarget.Virtual(99),
+            [new StartNoteCommand(SourceId)]);
+
+        // The newly started voice immediately uses D, while the original
+        // continues its precise A→B fade to frame 110 with no interruption.
+        float[] remainder = new float[81];
+        session.Render(30, remainder.Length, remainder);
+        Assert.Multiple(() =>
+        {
+            Assert.That(remainder[0], Is.EqualTo(
+                0.2f * (1 - 0.104f) + 0.6f * 0.104f + 0.4f)
+                .Within(0.002f));
+            Assert.That(remainder[30], Is.EqualTo(0.8f).Within(1e-4f),
+                "frame 60 contains A→B at half weight plus fresh D");
+            Assert.That(remainder[^1], Is.EqualTo(1.0f).Within(1e-4f),
+                "frame 110 completes the original fade, not an early C or D replacement");
+            Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+            Assert.That(session.GetChannelState(0).CurrentVoice!.Sound,
+                Is.SameAs(b), "second edit is deferred until outgoing A fully retires");
+        });
+
+        // The exact first Source fade is over. Prepare a new D invocation
+        // off PCM and begin B→D at the current frame; there must never
+        // be a worker-created C onset.
+        session.AdoptPreparedFirControls();
+        session.QueuePendingFirControls(worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 2,
+            TimeSpan.FromSeconds(5)), Is.True,
+            "the deferred latest D must be prepared after the initial fade");
+        session.AdoptPreparedFirControls();
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.GetChannelState(0).CurrentVoice!.Sound,
+                Is.SameAs(d));
+            Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+            Assert.That(worker.Fault, Is.Null);
+            Assert.That(worker.CompletedMultiExpansionCount, Is.EqualTo(2),
+                "only B and D, never superseded C, should create replacement onsets");
+        });
+
+        float[] secondRamp = new float[101];
+        session.Render(111, secondRamp.Length, secondRamp);
+        Assert.Multiple(() =>
+        {
+            Assert.That(secondRamp[0], Is.EqualTo(1.0f).Within(1e-5f),
+                "new B→D fade starts from exactly the audible end of A→B");
+            Assert.That(secondRamp[50], Is.EqualTo(0.9f).Within(1e-5f),
+                "the second 100-ms smoothstep mixes B=0.6 and D=0.4, plus fresh D");
+            Assert.That(secondRamp[^1], Is.EqualTo(0.8f).Within(1e-5f));
+            Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+        });
+
+        session.ApplyLiveEvent(ChannelTarget.Physical(0),
+            [new NoteCutCommand()]);
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+        float[] freshOnly = new float[4];
+        session.Render(212, freshOnly.Length, freshOnly);
+        Assert.That(freshOnly[^1], Is.EqualTo(0.4f).Within(1e-4f),
+            "the independent newest-generation voice is unaffected by older voice retirement");
+    }
+
     [TestCase(NewNoteAction.Cut, false)]
     [TestCase(NewNoteAction.Continue, true)]
     [TestCase(NewNoteAction.Off, true)]
