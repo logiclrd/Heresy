@@ -3266,7 +3266,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		long fadeEnd = voice.FadeStartFrame > long.MaxValue - frames
 			? long.MaxValue : voice.FadeStartFrame + frames;
 		if (state.NextFrame >= fadeEnd)
+		{
+			// A short replacement may have reached EOF before the fade,
+			// causing Render to skip EvaluateSource at this boundary.
+			// Retire the outgoing state from lifetime bookkeeping as well.
+			voice.CompleteSampleCrossfade();
+			state.ChildEndChanged = true;
 			return incoming;
+		}
 		// A short incoming Sample must not truncate the outgoing audio
 		// before its fade ends. The old asset cannot extend the NEW
 		// source's lifetime past that boundary.
