@@ -2693,16 +2693,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				bool operatorChanged = _nodes[i].Definition is FmOperatorNode oldOperator
 					&& next._nodes[i].Definition is FmOperatorNode newOperator
 					&& oldOperator.Operation != newOperator.Operation;
-				// Shared Node Envelope revisions are stateless but can
-				// abruptly change an already sounding gain. Fade when
-				// an audible node curve truly changes, not when the
-				// frozen song recompiles an equivalent wrapper. Never
-				// treat a pitch-only Envelope as an audio value path.
+				// Audible Node and compiled Script Envelope changes can jump
+				// the sounding gain. Compare frozen Node curve shapes; for
+				// Script curves, only the identical compiled instance proves
+				// equivalence. Fade at this output only when the Envelope
+				// lies on the audible path, never for pure pitch modulation.
 				bool envelopeChanged = _nodes[i].Definition is FmEnvelopeNode
 					&& next._nodes[i].Definition is FmEnvelopeNode
-					&& _nodes[i].Envelope is NodeEnvelopeCurve oldCurve
-					&& next._nodes[i].Envelope is NodeEnvelopeCurve newCurve
-					&& !oldCurve.HasSameFrozenShapeAs(newCurve);
+					&& !HasSameFrozenEnvelope(_nodes[i], next._nodes[i]);
 				// Compound Multi children have their own onset/mix clocks.
 				// A mere Constant or Operator edit must not add a frozen
 				// child-output fade while the parent is growing or retuning
