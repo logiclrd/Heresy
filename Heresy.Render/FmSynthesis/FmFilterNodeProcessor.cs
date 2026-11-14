@@ -40,6 +40,16 @@ internal sealed class FmFilterNodeProcessor
 	private readonly PreparedFirControlBatch? _liveFirPlans;
 	private readonly int? _preparedSampleRate;
 
+	/// <summary>Frozen, allocation-free eligibility for a direct Source →
+	/// single OnePole audio path. This asks only about the stage shape;
+	/// ordinary live Filter configuration preflight still decides whether
+	/// the running integrator can be retained for the revised definition.</summary>
+	internal bool IsSingleUnmodulatedOnePole =>
+		_audioIndex >= 0
+		&& _bindings.Length == 0
+		&& _effectiveStages.Length == 1
+		&& _effectiveStages[0].Kind == FilterKind.OnePole;
+
 	// Each stage stores stable indices into the connected numeric binding
 	// array. A missing input inherits that parameter's authored value.
 	private readonly record struct FastStage(
