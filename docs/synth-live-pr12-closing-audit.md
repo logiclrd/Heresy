@@ -673,6 +673,90 @@ simultaneous interrupted Source replacements still require C4
 coverage. C2 and C5–C7 remain open; the all-properties TODO remains
 unchecked and PR #12 remains draft/unmerged.
 
+## C4(d) — multiple live revisions across physical, scoped virtual and displaced NNA voices (2026-11-14)
+
+**Automated PASS; no production renderer or session changes required.**
+Two deterministic `FmSynthNnaVirtualLifecycleTests` regressions verify
+that live Synth revision and older-audio status belong to **each
+independently sounding voice**, rather than a global editor generation
+or its originating virtual channel number.
+
+**C4(d1) — compatible edits, missed generation, fresh notes and retirement.**
+`PhysicalScopedAndNnaVoicesRetainIndependentLiveRevisionCurrency`
+starts three old Synth notes: one physical, and one each on virtual
+channel 7 in independent invocation scopes **101** and **202**.
+A second scope-101 note uses `NewNoteAction.Continue`, migrating its
+earlier note into the NNA-displaced pool: **four old sounding voices**,
+but only three current channel slots. A compatible constant-output
+edit `0.25 → 0.5` must adopt across *all four*; older-audio count
+stays **zero**, and the resulting mixed PCM settles at **2.0**,
+not the previous combined level or a partial update.
+
+A subsequently **structural** Synth edit is genuinely incompatible
+with those four held graph states, so the older-audio count becomes
+**four**. A newly started unscoped virtual note on channel 99
+selects the new revision and does **not** acquire an older-audio flag.
+A further compatible scalar edit in that new graph cannot undo
+the four earlier misses; the old NNA voice still references the
+compatible *pre-structural* sound, not an invented migrated state.
+`CancelScopedVoices(101)` retires its **current and displaced NNA**
+voices but leaves scope 202 and physical channel 0 sounding, reducing
+the old count **4 → 2**. Scoped Note Off on owner 202 retires
+only that voice (**2 → 1**); a physical Note Cut retires the final
+old voice (**1 → 0**). The fresh note continues at its latest
+`0.8` PCM level after its own compatible edit.
+
+[Test `3424a52`](https://github.com/logiclrd/Heresy/commit/3424a523838b5cea7febddd3c48a7aaca67fc0a6)
+passed [CI #43638391476](https://github.com/logiclrd/Heresy/actions/runs/43638391476):
+**3,733/3,733 tests**, Release/native/apphost/bundle and Linux ARM64.
+
+**C4(d2) — per-voice worker preparation and superseded pending SourceId.**
+`PendingSampleRevisionsAcrossScopedAndDisplacedVoicesHonorLatestOnly`
+uses the same four-voice layout, but each note contains a terminal
+Sample Source rather than a Constant. Three frozen Sample assets
+have distinct constant values: **0.2** (original), **0.6**
+(obsolete intermediate) and **0.9** (latest). All four notes
+receive an initial SourceId replacement that requires worker
+preparation, followed by a newer SourceId revision *before any worker
+has run*. Pending preparation must **not** mark older-audio.
+Each voice cancels its obsolete pending candidate and keeps the
+latest request relative to its **actual sounding old Sample**,
+not the uncommitted intermediate candidate. The two scope-101
+notes, one current and one NNA-displaced, are cancelled before
+any preparation is queued. The remaining physical and scope-202
+notes each prepare and publish the newest Sample independently.
+Their mixed output follows two source-local **100-ms smoothstep**
+fades; approximately halfway it is **1.1**, and afterward **1.8**.
+Neither the obsolete **0.6** PCM nor a resurrected cancelled
+NNA voice is allowed to contribute. Older-audio remains **zero**
+both while pending and after publication. A fresh note bound to the
+newest Sample increases the final mix to **2.7**.
+
+The first two intermediate test commits
+[`f579df3`](https://github.com/logiclrd/Heresy/commit/f579df38086bc329624daa8a98704125fb3092ef)
+and [`894d7ed`](https://github.com/logiclrd/Heresy/commit/894d7ed7313f86f48e63fcd5d645da3912f39370)
+had a missing **test-only `FirPreparationScheduler` using directive**;
+their failed compilation runs were **not** behavioral red evidence.
+Corrected [`f4c5b50`](https://github.com/logiclrd/Heresy/commit/f4c5b501a436576dfc4d2e7557576e434c5ffa3a)
+passed the automated test suite and ARM64 in
+[CI #43638723593](https://github.com/logiclrd/Heresy/actions/runs/43638723593).
+Its final Release-bundle result and this audit-head result are
+verified separately. The test uses *supersession before enqueue*;
+it does not assert that already-running or saturated worker jobs
+can be forcibly stopped mid-construction. C5 owns that stress case.
+
+**C4 is still OPEN.** Verified here: physical/scoped/NNA enumeration
+for compatible and incompatible edits, per-note sticky currency,
+independent cancellation and retirement, pending-worker latest-wins
+before enqueue, and Source-local PCM smoothing on surviving voices.
+Still outstanding are the full session-level matrix for live
+**already-releasing** notes, NNA `Off`/`Fade` and host Filter-tail
+currency, linked nested Synth Sources and ancestor scopes, pending
+worker results already in flight during cancellation, and definitive
+incompatibility while a worker owns a different revision.
+C2 and C5–C7 remain open. Do **not** check C4 or the overarching
+all-nonstructural-properties TODO; PR #12 remains draft and unmerged.
+
 ### Adjacent UI issues deliberately outside PR #12 closure
 
 Two independently actionable main-line TODOs were logged in [`docs/todo.md`](https://github.com/logiclrd/Heresy/blob/main/docs/todo.md) via [`dd55714`](https://github.com/logiclrd/Heresy/commit/dd55714d677ee8ee4641594e1f8ae2cb394039c3): stale **Configured stages** after editing a shared Filter definition and selected-stage controls hidden to the right in a non-resizable strip instead of below the list. `FmSynthEditorControl.AddFilterInspector` currently deliberately avoids rebuilding on popup close to preserve unsaved per-use drafts, and `FilterInstanceEditorControl` uses a left/right layout; the eventual fix must refresh safely without losing those drafts. These are real UI defects, but not evidence that a held note failed a realtime coefficient update.
