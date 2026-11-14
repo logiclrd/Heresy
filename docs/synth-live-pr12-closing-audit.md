@@ -29,11 +29,11 @@
 | Oscillator Waveform, Curvature, Vmin/Vmax | Retains phase; bounded audible shape transition in `FmSynthCompoundShapeLiveTests`; `FmSynthUnifiedTransitionTests` covers common 100-ms clock | Probe *inside* a live Multi child and through mixed Filter/Source operators; verify no click without resetting child phase |
 | Oscillator Frequency Hz, Constant, Exponential multiplier | Existing phase/rate migration, logarithmic frequency glide and control-only distinction; `FmSynthUnifiedTransitionTests`, `FmSynthChildFrequencyModulationTests` | Real inspector/PCM test matrix for rapid audio-rate modulation and mixed child ancestry |
 | Source selected Sample; Source scalar Frequency/Constant/Exponential | `FmSynthLiveSourceIdTests` verifies independent Sample fades, multiple Sources, short EOF, graph-wide mixed Filters/Operators/fan-out, modulated input, atomic refusal; pre-existing forward-integrated pitch controls | Probe SourceId+frequency in one publication (currently declines), a SourceId switch inside a Multi child, overlapping edit during an active 100-ms fade, and Source `None`/silent selection policy |
-| Source selected nested Synth | Recursive compatible migration and dependent-publication tests; `FmSynthNestedSourceMigrationTests` proves child-only scalar adoption through parent Multi(3)→OnePole with zero PCM allocations, plus sticky older-audio marking for an incompatible child retained under a compatible parent Filter | Still test two compatible nested Synth SourceId selections, simultaneous parent/child edits, pending workers, held sibling isolation and interrupted/released nested combinations |
+| Source selected nested Synth | `FmSynthNestedSourceMigrationTests` covers compatible child edits under Multi(3)→OnePole, two compatible Synth SourceId selections, held-sibling isolation, sticky old-audio status on retained incompatible children, and nested worker supersession by newer parent+child revisions | Still probe distinct simultaneous parent/child commits with complex Filter/Source histories, deeper Instrument/Script Envelope combinations, and interrupted/released nested voices (C4 boundary) |
 | Source selected Instrument | Existing Instrument tone selection, configured envelopes and tone Filters; direct Sample-backed node Volume migration (`FmSynthMultiSourceLiveVolumeTests`) | **Approved deferral:** comprehensive cross-family/unrelated Instrument *substitution*. Before merge, protect existing Instrument-backed scalar/Volume live edits and changed-Source refusal with regression and status evidence; document actual limitations |
 | Envelope selected/shared Node and Script Envelope | Frozen Node curve migration and bounded output fade in `FmSynthLiveGraphEnvelopeTests`, `FmSynthLiveSampleEnvelopeNoiseTests`; UI shared-object publication in `SharedAudioEditLivePublicationTests`; selected Instrument Volume in `FmSynthMultiSourceLiveVolumeTests` | Probe Script Envelope audible edit, Node Envelope inside Multi/Filter/Source paths, rebind `None ↔ reference`, and active-release replacement (current code conservatively refuses audible curve change after Note Off) |
 | Filter selected definition; overrides / TailSeconds / shared edit | Atomic multi-processor prepared IIR/FIR retunes and FM-bound controls, `FmSynthLiveFilterOutputTests`, `FmFilterNodeRenderingTests`, multiple Filter realtime tests; user physically edited a three-stage Filter containing **SvfNotch** and **CombFeedback** and heard ongoing changes | Probe each stage-parameter *family*, more than one edited processor per publication, connected modulated FIR, rapid retune, release/tail, nested Multi/Instrument and **Filter definition selection with equivalent stage shape**. Stage add/remove/kind/generation is *effective topology*, not automatically guaranteed |
-| Multi Presets/Distribution/Detune/VoiceCount/Components/RandomizePhase/GainCompensation/Cycle | Worker-prepared expansion, retirement/revival, onset histories and ratio fades; `FmSynthMultiRetirementTests`, live Multi output test families; many user listening passes | Probe active *edits inside* a compound Multi child, nested Multi/Source/Filter cases, simultaneous voice growth and unrelated outer edit, transition interruption, and CPU deadline/recovery |
+| Multi Presets/Distribution/Detune/VoiceCount/Components/RandomizePhase/GainCompensation/Cycle | Worker-prepared expansion, retirement/revival, onset histories and ratio fades; `FmSynthMultiRetirementTests`, live Multi output families, and superseded nested Multi expansion with simultaneous parent Filter change in `FmSynthNestedSourceMigrationTests`; many user listening passes | Probe further stateful compound Multi child Source/Filter combinations, interruption/release semantics (C4), and CPU deadline/recovery (C5) |
 | Operator Add/Multiply/Minimum/Maximum | Compatible state adoption and smooth output mapping in `FmSynthCompoundShapeLiveTests` and sample/Filter/Multi output tests; user listened to Add/Multiply; final stable Multi + Constant affine transition / monitor-only DC behavior separately tested | Probe `Minimum ↔ Maximum` in an audible compound path, nested unstable Multi, release and non-audition parity; physical listening of high-DC final Add is not evidence that raw output may suppress authored DC |
 | Noise | No currently editable numeric Synth inspector properties; deterministic counter-based stream tested with envelope/sample/Multi combinations | Verify unaffected seed/clock across revisions. New Noise Vmin/Vmax is a **separate open main TODO**: when implemented, its live editing must meet the baseline |
 | Graph wiring, add/remove/reorder nodes, output, Filter modulation ports, Multi input, Operator inputs, Source/Oscillator multiplier input | Explicit structural classification via `FmSynthLiveGraphShape.HasSameWiring`, graph/UI regression tests | Ensure structural change -> existing voice old generation, fresh Note On new generation, and later compatible edits do not falsely rewrite incompatible old history |
@@ -217,6 +217,49 @@ publications, nested worker/pending-generation isolation and complex
 Instrument/Script Envelope cases; C4 interruption/Note Off/EOF and C2
 matrix closure. This bounded acceptance does not mark the PR complete,
 check the all-properties TODO, or authorize merging.
+
+## C3 nested Multi worker supersession during parent Filter edit (2026-11-14)
+
+**Automated ACCEPTED; no DSP change required.** The parameterized
+`FmSynthNestedSourceMigrationTests.SupersededNestedMultiWorkerCannotApplyObsoleteParentRevision`
+regression holds a parent `Source(child Synth) → OnePole` at 48 kHz.
+The child Synth is `Constant(0.10) → Multi(1)` initially. A first
+authored revision would grow the child to four voices, change its
+Constant to 0.14, and retune the **parent** OnePole from 1200 to
+1700 Hz. Before that revision can be adopted, a second authored
+revision supersedes it with `Constant(0.18) → Multi(3)` and parent
+OnePole at **2600 Hz**.
+
+Two deterministic worker conditions are exercised:
+(1) the obsolete Multi expansion has constructed a constituent and is
+held *in flight* on a test-only scheduler gate when the newer edit arrives;
+(2) the obsolete expansion has **fully completed**, but has not yet been
+adopted by the PCM owner. In either condition the held note stays audible
+with its original complete parent/child state during the pending interval.
+Supersession cancels the stale candidate without marking the note as
+`Playback uses older audio`. The latest child expansion is then
+worker-prepared and the parent publishes its Filter and child together.
+
+The complete 5,000-frame resulting two-note session matches, within
+7e-5 per sample, an independently constructed session that received
+**only the final revision at the same PCM frame**. This comparison
+detects obsolete intermediate DSP, Filter-history reset, or partial
+parent publication; the final output is separately asserted to have
+changed audibly. A new Note On uses the latest selected definition.
+The in-flight variant verifies that obsolete work was actually
+cancelled; neither worker records an exception.
+
+[Test-only commit `5471eb5`](https://github.com/logiclrd/Heresy/commit/5471eb5a0dc10b8fc8e2f690b197fd96f10e07a0).
+[CI #43623932059](https://github.com/logiclrd/Heresy/actions/runs/43623932059):
+both regression variants and the full Release test suite **PASS**, with
+Linux ARM64 successful. Exact-head final workflow conclusion is
+reported separately when available.
+
+**Boundary:** This proves two worker-queue orderings for an actively
+held nested Multi and simultaneously changing parent OnePole, not
+universal interruptible 100-ms Source crossfades, arbitrary nested
+Instrument substitution or active Note Off/EOF. Those belong to the
+remaining C3 cases or C4 as specified. PR #12 stays draft/unmerged.
 
 ### Adjacent UI issues deliberately outside PR #12 closure
 
