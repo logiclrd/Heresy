@@ -46,13 +46,31 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		public long StartFrame { get; private set; }
 		public SourceVoice? FadeFrom { get; private set; }
 		public long FadeStartFrame { get; private set; }
+		// The outgoing readhead stops being retained at the exact
+		// crossfade boundary. Its last *possible audible* frame still
+		// defines the downstream Filter's tail origin, even when the
+		// newly selected Sample reached EOF earlier. Never retroactively
+		// shorten the enclosing note to that earlier incoming EOF.
+		public long? CompletedFadeAudioEndFrame { get; private set; }
 		public void StartSampleCrossfade(SourceVoice previous, long frame)
 		{
 			StartFrame = frame;
 			FadeStartFrame = frame;
 			FadeFrom = previous;
 		}
-		public void CompleteSampleCrossfade() => FadeFrom = null;
+		public void CompleteSampleCrossfade(int sampleRate)
+		{
+			if (FadeFrom is not { } outgoing)
+				return;
+			int frames = LiveTransitionFrames(sampleRate);
+			long fadeEnd = FadeStartFrame > long.MaxValue - frames
+				? long.MaxValue : FadeStartFrame + frames;
+			long outgoingBound = GetOneChildSourceSilenceEnd(outgoing) is long end
+				? Math.Min(end, fadeEnd) : fadeEnd;
+			CompletedFadeAudioEndFrame = CompletedFadeAudioEndFrame is long earlier
+				? Math.Max(earlier, outgoingBound) : outgoingBound;
+			FadeFrom = null;
+		}
 		/// <summary>Instrument tone-table index bound when this voice was
 		/// created, not recomputed from a retuned pitch on the PCM thread.</summary>
 		public int? BoundInstrumentToneSlot { get; }
@@ -3470,7 +3488,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			return 0;
 		long? incoming = GetOneChildSourceSilenceEnd(voice);
 		if (voice.FadeFrom is not { } outgoing)
-			return incoming;
+			return IncludeCompletedSampleFadeBound(voice, incoming);
 		int frames = LiveTransitionFrames(state.SampleRate);
 		long fadeEnd = voice.FadeStartFrame > long.MaxValue - frames
 			? long.MaxValue : voice.FadeStartFrame + frames;
@@ -3479,9 +3497,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			// A short replacement may have reached EOF before the fade,
 			// causing Render to skip EvaluateSource at this boundary.
 			// Retire the outgoing state from lifetime bookkeeping as well.
-			voice.CompleteSampleCrossfade();
+			voice.CompleteSampleCrossfade(state.SampleRate);
 			state.ChildEndChanged = true;
-			return incoming;
+			return IncludeCompletedSampleFadeBound(voice, incoming);
 		}
 		// A short incoming Sample must not truncate the outgoing audio
 		// before its fade ends. The old asset cannot extend the NEW
@@ -3491,6 +3509,15 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return incoming.HasValue
 			? Math.Max(incoming.Value, oldBound) : null;
 	}
+
+	/// <summary>A retired outgoing Sample no longer needs DSP state, but
+	/// its last bounded output frame still determines when a subsequent
+	/// graph Filter is allowed to finish draining.</summary>
+	private static long? IncludeCompletedSampleFadeBound(
+		SourceVoice voice, long? incoming)
+		=> voice.CompletedFadeAudioEndFrame is not long completed
+			? incoming
+			: incoming.HasValue ? Math.Max(incoming.Value, completed) : null;
 
 	private static long? GetOneChildSourceSilenceEnd(SourceVoice voice)
 	{
@@ -4149,7 +4176,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			long elapsed = frame - voice.FadeStartFrame;
 			if (elapsed >= LiveTransitionFrames(sampleRate))
 			{
-				voice.CompleteSampleCrossfade();
+				voice.CompleteSampleCrossfade(sampleRate);
 				state.ChildEndChanged = true;
 			}
 			else
