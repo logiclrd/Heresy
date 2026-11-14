@@ -267,7 +267,10 @@ public sealed class MainWindow : Window
 			};
 
 		ToolTip.SetTip(_playbackSnapshotIndicator,
-			"Current playback uses an immutable song snapshot. Restart playback to hear edits.");
+			"The session's original song snapshot predates audio edits. "
+			+ "Compatible live Synth edits may still update playing notes; "
+			+ "other sounds or edits may retain older audio. "
+			+ "Restart playback to refresh the entire session.");
 		Content = BuildShell();
 		Closing += OnClosing;
 		Closed += (_, _) =>
@@ -3111,7 +3114,7 @@ public sealed class MainWindow : Window
 		_playbackSnapshotIndicator.Text = state switch
 		{
 			PlaybackSnapshotIndicatorState.AudioEdited =>
-				"Playback uses older audio",
+				"Playback snapshot is older",
 			PlaybackSnapshotIndicatorState.DifferentDocument =>
 				"Playback uses another song",
 			_ => string.Empty,
