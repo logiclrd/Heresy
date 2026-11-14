@@ -888,6 +888,22 @@ public sealed class PlaybackVoice
 		if (SoundState.NoteOffTime.HasValue)
 			return;
 
+		// An edited Sample awaiting an earlier Source-local fade cannot
+		// create a fresh onset once this note begins its release. The
+		// deferred revision was eligible while held, but has now become
+		// definitively missed by this still-sounding note. Invalidate its
+		// worker mailbox at the same Note Off boundary, not at some later
+		// block's AdoptPreparedFirControls poll; preserve the original
+		// Sample mix and the one-shot release origin below.
+		if (_pendingLiveSynth is FmSynthSound revised
+			&& Sound is FmSynthSound current
+			&& current.CanDeferSampleReplacementUntilFadeCompletes(
+				revised, SoundState))
+		{
+			UsesOlderAudio = true;
+			CancelPendingLivePreparation();
+		}
+
 		// The PlaybackVoice is the outermost Instrument envelope controller.
 		// When it owns a sustain loop, the flattened terminal source receives
 		// Indefinite Off: it must supply audio while that loop releases.
