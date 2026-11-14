@@ -267,10 +267,10 @@ public sealed class MainWindow : Window
 			};
 
 		ToolTip.SetTip(_playbackSnapshotIndicator,
-			"The session's original song snapshot predates audio edits. "
-			+ "Compatible live Synth edits may still update playing notes; "
-			+ "other sounds or edits may retain older audio. "
-			+ "Restart playback to refresh the entire session.");
+			"At least one playing note could not adopt an applicable Synth "
+			+ "edit. Compatible edits may still update that note; new notes "
+			+ "use newly prepared audio. The warning disappears when the "
+			+ "last affected note ends.");
 		Content = BuildShell();
 		Closing += OnClosing;
 		Closed += (_, _) =>
@@ -3109,12 +3109,12 @@ public sealed class MainWindow : Window
 			PlaybackSnapshotIndicator.GetState(
 				_playbackSnapshot, _workspace.Document);
 		_playbackSnapshotIndicator.IsVisible =
-			state is PlaybackSnapshotIndicatorState.AudioEdited
+			state is PlaybackSnapshotIndicatorState.OlderAudio
 				or PlaybackSnapshotIndicatorState.DifferentDocument;
 		_playbackSnapshotIndicator.Text = state switch
 		{
-			PlaybackSnapshotIndicatorState.AudioEdited =>
-				"Playback snapshot is older",
+			PlaybackSnapshotIndicatorState.OlderAudio =>
+				"Playback uses older audio",
 			PlaybackSnapshotIndicatorState.DifferentDocument =>
 				"Playback uses another song",
 			_ => string.Empty,
