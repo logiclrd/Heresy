@@ -3259,6 +3259,25 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		SourceVoice? voice = state.Sources[index];
 		if (voice is null)
 			return 0;
+		long? incoming = GetOneChildSourceSilenceEnd(voice);
+		if (voice.FadeFrom is not { } outgoing)
+			return incoming;
+		int frames = LiveTransitionFrames(state.SampleRate);
+		long fadeEnd = voice.FadeStartFrame > long.MaxValue - frames
+			? long.MaxValue : voice.FadeStartFrame + frames;
+		if (state.NextFrame >= fadeEnd)
+			return incoming;
+		// A short incoming Sample must not truncate the outgoing audio
+		// before its fade ends. The old asset cannot extend the NEW
+		// source's lifetime past that boundary.
+		long oldBound = GetOneChildSourceSilenceEnd(outgoing) is long end
+			? Math.Min(end, fadeEnd) : fadeEnd;
+		return incoming.HasValue
+			? Math.Max(incoming.Value, oldBound) : null;
+	}
+
+	private static long? GetOneChildSourceSilenceEnd(SourceVoice voice)
+	{
 		if (voice.EndFrame is not long end)
 			return voice.PostGainSilenceEnd;
 		long tail = voice.Filters?.PreparedTailFrames ?? 0;
@@ -3909,6 +3928,34 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		SourceVoice? voice = state.Sources[index];
 		if (voice is null)
 			return 0.0;
+		if (voice.FadeFrom is { } oldSource)
+		{
+			long elapsed = frame - voice.FadeStartFrame;
+			if (elapsed >= LiveTransitionFrames(sampleRate))
+			{
+				voice.CompleteSampleCrossfade();
+				state.ChildEndChanged = true;
+			}
+			else
+			{
+				double previous = EvaluateOneSource(node, compiled, state,
+					frame, sampleRate, noteOffFrame, oldSource);
+				double incoming = EvaluateOneSource(node, compiled, state,
+					frame, sampleRate, noteOffFrame, voice);
+				double weight = MultiTransitionWeight(
+					voice.FadeStartFrame, frame, sampleRate);
+				return previous * (1.0 - weight) + incoming * weight;
+			}
+		}
+		return EvaluateOneSource(node, compiled, state, frame,
+			sampleRate, noteOffFrame, voice);
+	}
+
+	private static double EvaluateOneSource(FmSoundSourceNode node,
+		CompiledNode compiled, FmSynthState state,
+		long frame, int sampleRate, long? noteOffFrame, SourceVoice voice)
+	{
+		long localFrame = frame - voice.StartFrame;
 
 		// The child is selected once per voice. Its relative pitch curve is
 		// then integrated by SampleSound (or evaluated by nested Synths).
@@ -3930,13 +3977,13 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				* state.PitchTrajectory.GetMultiplier(frame);
 		outer *= (node.FrequencyHz / voice.OriginalFrequencyHz)
 			/ voice.OriginalOuterFactor;
-		long envelopeFrame = voice.EnvelopeFrameOffset == 0
-			? frame : checked(frame + voice.EnvelopeFrameOffset);
+		long envelopeFrame = checked(localFrame + voice.EnvelopeFrameOffset);
 		// The enclosing Multi displaces Note Off by its local skip.
 		// Shift that event into the same original Instrument envelope
 		// clock as the preserved activeFrame before evaluating release.
 		long? envelopeNoteOffFrame = noteOffFrame.HasValue
-			? checked(noteOffFrame.Value + voice.EnvelopeFrameOffset)
+			? checked(noteOffFrame.Value - voice.StartFrame
+				+ voice.EnvelopeFrameOffset)
 			: null;
 		long? released = envelopeNoteOffFrame.HasValue
 			&& envelopeFrame >= envelopeNoteOffFrame.Value
@@ -3954,7 +4001,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		// an invalid SoundState while keeping source position effectively
 		// frozen. The graph emits zero until the input becomes positive.
 		bool muted = rate <= 0.0;
-		voice.Pitch.SetFrame(frame, muted ? 1e-12 : Math.Max(rate, 1e-12));
+		voice.Pitch.SetFrame(localFrame, muted ? 1e-12 : Math.Max(rate, 1e-12));
 		Span<float> mono = stackalloc float[1];
 		if (!voice.EndFrame.HasValue || frame < voice.EndFrame.Value)
 		{
@@ -3967,7 +4014,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				voice.Invocation.State.Position = new Vector3((float)pan, 0, 0);
 				Span<float> stereo = stackalloc float[2];
 				voice.Sound.Render(state.StereoChildContext!,
-					voice.Invocation.State, frame, 1, stereo);
+					voice.Invocation.State, localFrame, 1, stereo);
 				// A native stereo Sample has spatially separated source
 				// channels; a mono source uses equal-power speaker gain.
 				double divisor = voice.Sound is SampleSound pannedSample
@@ -3976,7 +4023,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			}
 			else
 				voice.Sound.Render(state.MonoContext!,
-					voice.Invocation.State, frame, 1, mono);
+					voice.Invocation.State, localFrame, 1, mono);
 			// Streaming sources discover their finite boundary only while
 			// rendering. A nested Synth does not necessarily publish a
 			// NaturalEndFrameExclusive in SoundState, so explicitly query
@@ -3992,9 +4039,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			}
 			if (observed is long natural)
 			{
+				long bound = natural > long.MaxValue - voice.StartFrame
+					? long.MaxValue : natural + voice.StartFrame;
 				long? previous = voice.EndFrame;
 				voice.EndFrame = previous.HasValue
-					? Math.Min(previous.Value, natural) : natural;
+					? Math.Min(previous.Value, bound) : bound;
 				if (voice.EndFrame != previous)
 					state.ChildEndChanged = true;
 			}
