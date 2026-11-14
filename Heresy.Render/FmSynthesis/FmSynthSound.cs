@@ -4125,52 +4125,72 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		}
 		bool forwardIndefinite = state.NoteOffDisposition ==
 			NoteOffDisposition.Indefinite || HasSustainRelease(state);
-		foreach (SourceVoice? voice in state.Sources)
+		foreach (SourceVoice? source in state.Sources)
 		{
-			if (voice is null)
+			if (source is null)
 				continue;
-			voice.Invocation.State.NoteOffDisposition = forwardIndefinite
-				? NoteOffDisposition.Indefinite : NoteOffDisposition.Definite;
-			if (voice.Invocation.State.NoteOffTime != state.NoteOffTime)
-				voice.Invocation.State.NoteOffTime = state.NoteOffTime;
-			long? childEnd = voice.Sound.GetEndFrameExclusive(
-				state.MonoContext, voice.Invocation.State);
-			if (voice.Invocation.State.NaturalEndFrameExclusive is long natural)
-				childEnd = childEnd.HasValue
-					? Math.Min(childEnd.Value, natural) : natural;
-			// Every active local envelope, not only Volume, contributes to
-			// the parent graph's collective release lifetime. The parent
-			// caps this source after those releases, rather than faking a
-			// child Synth release or cutting its Sample at Note Off.
-			// The source's Volume gain is after all of its tone Filters.
-			// Once that curve is *finished* and permanently zero, the
-			// source is provably silent even if Pitch/Filter envelopes are
-			// still releasing. A nonzero terminal gain must not cut it.
-			voice.PostGainSilenceEnd = null;
-			if (state.NoteOffTime.HasValue
-				&& voice.ActiveVolumeEnvelope?.IsZeroAfterCompletion == true)
-			{
-				long off = checked(FrameTime.Ceiling(state.NoteOffTime.Value,
-					context.Configuration.SampleRate) + voice.EnvelopeFrameOffset);
-				long? finished = voice.ActiveVolumeEnvelope
-					.GetEndActiveFrameExclusiveAfterNoteOff(off,
-						context.Configuration.SampleRate);
-				if (finished.HasValue)
-				{
-					long silence = checked(finished.Value - voice.EnvelopeFrameOffset);
-					if (voice.GetOutgoingVolumeReleaseEnd(off,
-						context.Configuration.SampleRate) is long outgoingEnd)
-						silence = Math.Max(silence, outgoingEnd);
-					voice.PostGainSilenceEnd = silence;
-					childEnd = childEnd.HasValue
-						? Math.Min(childEnd.Value, silence) : silence;
-				}
-			}
-			// Once the zero-input tail has started, never reopen it merely
-			// because a child cannot project an updated pitch trajectory.
-			if (!voice.InputFinished)
-				voice.EndFrame = childEnd;
+			PrepareBoundSourceLifetime(context, state, source, forwardIndefinite);
+			if (source.FadeFrom is { } outgoing)
+				PrepareBoundSourceLifetime(context, state, outgoing, forwardIndefinite);
 		}
+	}
+
+	/// <summary>Both sides of a direct Sample swap need independent EOF
+	/// and Note Off projections. The new voice's Sample timeline starts
+	/// at local zero; every published lifetime remains in parent frames.</summary>
+	private static void PrepareBoundSourceLifetime(
+		RenderContext context, FmSynthState state,
+		SourceVoice voice, bool forwardIndefinite)
+	{
+		voice.Invocation.State.NoteOffDisposition = forwardIndefinite
+			? NoteOffDisposition.Indefinite : NoteOffDisposition.Definite;
+		TimeSpan? childNoteOff = state.NoteOffTime is TimeSpan off
+			? off - TimeSpan.FromSeconds(
+				(double)voice.StartFrame / context.Configuration.SampleRate)
+			: null;
+		if (voice.Invocation.State.NoteOffTime != childNoteOff)
+			voice.Invocation.State.NoteOffTime = childNoteOff;
+		long? childEnd = voice.Sound.GetEndFrameExclusive(
+			state.MonoContext, voice.Invocation.State);
+		if (voice.Invocation.State.NaturalEndFrameExclusive is long natural)
+			childEnd = childEnd.HasValue
+				? Math.Min(childEnd.Value, natural) : natural;
+		if (childEnd is long localEnd)
+			childEnd = localEnd > long.MaxValue - voice.StartFrame
+				? long.MaxValue : localEnd + voice.StartFrame;
+		// Every active local envelope, not only Volume, contributes to
+		// the parent graph's collective release lifetime. The parent
+		// caps this source after those releases, rather than faking a
+		// child Synth release or cutting its Sample at Note Off.
+		// The source's Volume gain is after all of its tone Filters.
+		// Once that curve is *finished* and permanently zero, the
+		// source is provably silent even if Pitch/Filter envelopes are
+		// still releasing. A nonzero terminal gain must not cut it.
+		voice.PostGainSilenceEnd = null;
+		if (state.NoteOffTime.HasValue
+			&& voice.ActiveVolumeEnvelope?.IsZeroAfterCompletion == true)
+		{
+			long off = checked(FrameTime.Ceiling(childNoteOff!.Value,
+				context.Configuration.SampleRate) + voice.EnvelopeFrameOffset);
+			long? finished = voice.ActiveVolumeEnvelope
+				.GetEndActiveFrameExclusiveAfterNoteOff(off,
+					context.Configuration.SampleRate);
+			if (finished.HasValue)
+			{
+				long silence = checked(finished.Value - voice.EnvelopeFrameOffset
+					+ voice.StartFrame);
+				if (voice.GetOutgoingVolumeReleaseEnd(off,
+					context.Configuration.SampleRate) is long outgoingEnd)
+					silence = Math.Max(silence, outgoingEnd);
+				voice.PostGainSilenceEnd = silence;
+				childEnd = childEnd.HasValue
+					? Math.Min(childEnd.Value, silence) : silence;
+			}
+		}
+		// Once the zero-input tail has started, never reopen it merely
+		// because a child cannot project an updated pitch trajectory.
+		if (!voice.InputFinished)
+			voice.EndFrame = childEnd;
 	}
 
 	private static double EvaluateEnvelope(
