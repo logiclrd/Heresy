@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Threading;
 
 using Heresy.Core.Assets;
 using Heresy.Core.Filters;
@@ -239,6 +240,113 @@ public sealed class FmSynthNnaVirtualLifecycleTests
         session.Render(143, currentOutput.Length, currentOutput);
         Assert.That(currentOutput[^1], Is.EqualTo(0.8f).Within(1e-4f),
             "the independent fresh note adopts the latest compatible edit");
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+    }
+
+    [Test]
+    public void PendingSampleRevisionsAcrossScopedAndDisplacedVoicesHonorLatestOnly()
+    {
+        ObjectId oldId = (ObjectId)72111U;
+        ObjectId obsoleteId = (ObjectId)72112U;
+        ObjectId latestId = (ObjectId)72113U;
+        Registry registry = new();
+
+        SampleSound Sample(ObjectId id, float value)
+            => new(new SampleDefinition(id, "Frozen source for C4",
+                new ExternalAssetReference("c4-multi-notes.wav")),
+                new MemorySampleData(Rate, 1,
+                    Enumerable.Repeat(value, 2000).ToArray()));
+        registry.Add(oldId, Sample(oldId, 0.2f));
+        registry.Add(obsoleteId, Sample(obsoleteId, 0.6f));
+        registry.Add(latestId, Sample(latestId, 0.9f));
+
+        FmSynthSound Sound(ObjectId sampleId)
+            => new(new FmSynthGraph([
+                new FmSoundSourceNode(1, sampleId,
+                    FmMultiNode.NeutralFrequencyHz),
+            ], 1), registry,
+                new NewNotePolicy(NewNoteAction.Continue, TimeSpan.Zero),
+                soundResolver: registry, enableLiveMultiExpansion: true);
+
+        FmSynthSound old = Sound(oldId);
+        FmSynthSound obsolete = Sound(obsoleteId);
+        FmSynthSound latest = Sound(latestId);
+        registry.Add(SourceId, old);
+        PlaybackSession session = Session(registry, Schedule());
+
+        session.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+            [new StartNoteCommand(SourceId)]);
+        session.ApplyScopedEvent(202, ChannelTarget.Virtual(7),
+            [new StartNoteCommand(SourceId)]);
+        session.ApplyLiveEvent(ChannelTarget.Physical(0),
+            [new StartNoteCommand(SourceId)]);
+        session.Render(0, 10, new float[10]);
+        session.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+            [new StartNoteCommand(SourceId)]);
+        Assert.That(session.VirtualVoices, Has.Count.EqualTo(1));
+        PlaybackVoice nna = session.VirtualVoices.Single();
+        session.Render(10, 2, new float[2]);
+
+        // No worker has run yet. Every live voice gets its own pending
+        // Source replacement, including the NNA-displaced predecessor.
+        session.AdoptLiveSynthParameters(SourceId, old, obsolete);
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero,
+            "a prepared-but-not-yet-ready Source edit is not a refusal");
+        session.AdoptLiveSynthParameters(SourceId, obsolete, latest);
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero,
+            "superseding the pending candidate must be latest-wins on every voice");
+        Assert.That(nna.Sound, Is.SameAs(old),
+            "a pending worker revision has not yet replaced sounding audio");
+
+        // Cursor 101 owns the current scoped note plus its NNA
+        // predecessor. Both may be cancelled while their latest workers
+        // are pending without affecting scope 202 or the physical note.
+        session.CancelScopedVoices(101);
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.VirtualVoices, Is.Empty);
+            Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+            Assert.That(session.GetChannelState(0).CurrentVoice!.Sound,
+                Is.SameAs(old));
+        });
+        using FirPreparationScheduler worker = new();
+        session.QueuePendingFirControls(worker);
+        SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 2,
+            TimeSpan.FromSeconds(5)).Should().BeTrue(
+            "the remaining physical and scope-202 voices need two detached Source preparations");
+        session.AdoptPreparedFirControls();
+        Assert.That(worker.Fault, Is.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.GetChannelState(0).CurrentVoice!.Sound,
+                Is.SameAs(latest),
+                "the physical voice must publish the genuinely latest Sample");
+            Assert.That(session.CountOlderAudioVoices(), Is.Zero,
+                "no pending, adopted or cancelled voice counts as stale");
+        });
+
+        float[] actual = new float[112];
+        session.Render(12, actual.Length, actual);
+        Assert.Multiple(() =>
+        {
+            Assert.That(actual[50], Is.EqualTo(1.1f).Within(0.02f),
+                "two separate 0.2→0.9 Source-local 100-ms smoothsteps must be audible");
+            Assert.That(actual[^1], Is.EqualTo(1.8f).Within(1e-4f),
+                "scope 202 and the physical note both adopted the newest Sample");
+            Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+            Assert.That(session.VirtualVoices, Is.Empty);
+        });
+
+        // New notes select the latest asset while the previously
+        // cancelled scope is still absent. A later source event cannot
+        // retroactively resurrect its old/current NNA voices.
+        registry.Replace(SourceId, latest);
+        session.ApplyLiveEvent(ChannelTarget.Virtual(99),
+            [new StartNoteCommand(SourceId)]);
+        float[] fresh = new float[4];
+        session.Render(124, fresh.Length, fresh);
+        Assert.That(fresh[^1], Is.EqualTo(2.7f).Within(1e-4f));
         Assert.That(session.CountOlderAudioVoices(), Is.Zero);
     }
 
