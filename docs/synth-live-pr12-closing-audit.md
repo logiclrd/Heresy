@@ -108,6 +108,21 @@ New `FmSynthLiveFilteredMultiOutputTests.FrozenModulatedTwoStageMultiFilterKeeps
 
 **User-confirmed physical listening pass** for the human-reproducible portions of the preceding C3(d) fixture: with a latched Synth Test note, the outer gain edit 0.85→0.20 sounds smooth; after that 100-ms transition has finished, independent SvfNotch cutoff/Q edits affect the ongoing audio without audible interruption or unwanted clicks. This confirmation is specifically for these two separate actions, **not** for a manual edit during the 100-ms interval (which is physically impractical). The sub-100-ms overlap at 64 audio frames apart is covered by `FrozenModulatedTwoStageMultiFilterKeepsOuterFadeDuringInnerRetune` and successful CI #43616214415. Do not overinterpret the listening pass as generalized nested Multi/FIR or actual rapid-edit device acceptance.
 
+## C3(d) follow-up — bound FIR inside Multi during moving outer gain (2026-11-14)
+
+**Automated ACCEPTED, with no renderer change needed.** The new
+`FmSynthLiveFilteredMultiOutputTests.BoundFirInsideMultiWaitsForWorkerThenRetunesWithoutInterruptingOuterGain` fixture renders
+`Oscillator → FirBandPass (FM-bound LowCutoffHz, unbound HighCutoffHz) → Multi(3) → Multiply(Constant)`.
+An already-sounding note begins a 100-ms outer Constant/gain transition; while the gain is still moving, the authored unconnected high cutoff changes from 3900 to 8100 Hz. The connected low cutoff remains based on each **actual captured, voice-specific FM control**, not its fallback configuration. A separate unity-gain voice supplies the continuously advancing oscillator/FIR oracle.
+
+The regression insists that **before** the detached FIR kernels are available, the complete edit cannot preflight/commit and the output keeps its original FIR state and moving outer gain. Six independent child FIR preparations (three constituents in each of the two voices) complete via `FirPreparationScheduler`; the owner adopts prepared kernels and then atomically publishes the revisions. Every frame across and beyond the remaining outer 100-ms gain transition matches the unity-gain reference scaled by the uninterrupted original gain ramp, and the measured PCM rendering allocates **zero managed bytes**.
+
+Test committed in `3f44a0ca`; first CI #43618589057 failed to compile **only because the test omitted the `Heresy.Render.Filters` import**, corrected in `ced6a8a4`. This is not a DSP red-first failure. [Corrected CI #43618785504](https://github.com/logiclrd/Heresy/actions/runs/43618785504) **SUCCESS: 3,712 / 3,712 tests** (Render 1,162), Release, native/bundle checks and Linux ARM64 successful. No DSP implementation changes were necessary.
+
+**Human timing boundary:** No user listening of edits during the 100-ms overlap is requested. Two separately human-reproducible checks from the previous Multi+IIR fixture were already reported successful. This new success is an automated PCM/worker preparation acceptance, not physical device certification of every FIR configuration.
+
+**Still open:** C3 remains open for simultaneous structurally *compatible* nested Synth/Source edits, more complex and interrupted inner-Multi shape/voice-count cases, scripted Envelope and Instrument-backed paths and the wider C2/C4–C7 closing gates. The above success does not prove universal overbudget-FIR or stale-worker acceptance; separate existing worker tests cover their named cases only. PR #12 remains draft/unmerged.
+
 ### Adjacent UI issues deliberately outside PR #12 closure
 
 Two independently actionable main-line TODOs were logged in [`docs/todo.md`](https://github.com/logiclrd/Heresy/blob/main/docs/todo.md) via [`dd55714`](https://github.com/logiclrd/Heresy/commit/dd55714d677ee8ee4641594e1f8ae2cb394039c3): stale **Configured stages** after editing a shared Filter definition and selected-stage controls hidden to the right in a non-resizable strip instead of below the list. `FmSynthEditorControl.AddFilterInspector` currently deliberately avoids rebuilding on popup close to preserve unsaved per-use drafts, and `FilterInstanceEditorControl` uses a left/right layout; the eventual fix must refresh safely without losing those drafts. These are real UI defects, but not evidence that a held note failed a realtime coefficient update.
