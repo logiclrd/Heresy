@@ -301,8 +301,9 @@ public sealed class FmSynthLiveSourceIdTests
         }
         SampleSound baked = Sample(FirstId, blended);
         SourceResolver oracleResolver = new(FirstId, baked, AliasId, baked);
-        FmSynthSound oracle = Build(FirstId, neutral, false, false,
-            oracleResolver);
+        // The baked reference is already on the output-frame clock:
+        // do NOT apply the original 1.25x modulation a second time.
+        FmSynthSound oracle = FilteredSound(FirstId, oracleResolver, filter);
         float[] reference = new float[blended.Length];
         oracle.Render(context, oracle.CreateState(), 0,
             reference.Length, reference);
