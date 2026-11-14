@@ -1848,18 +1848,20 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 
 	/// <summary>Accept only established direct-Sample shapes: a
 	/// single Source output, directly added Sources, a single Source
-	/// through one OnePole, or a direct Add of Samples through one OnePole.
-	/// Each filtered path preserves one continuously running Filter state
-	/// rather than fading two independent Filter histories. Unrecognized
-	/// signal graphs retain the earlier Source generation.</summary>
+	/// through one Filter with one or two unmodulated OnePole stages,
+	/// or a direct Add of Samples through the same bounded Filter shape.
+	/// Every stage retains its own continuously running integrator rather
+	/// than crossfading independent Filter histories. Unrecognized signal
+	/// graphs retain the earlier Source generation.</summary>
 	private bool HasDirectSampleReplacementShape(FmSynthSound next,
 		FmSynthState state)
 	{
 		// Preserve the previously accepted single direct Source case.
 		if (_nodes.Length == 1)
 			return _outputIndex == 0;
-		// One Source -> one final OnePole. The Filter has its own retained
-		// history; only the Source invocation is replaced by the worker.
+		// One Source -> one final unmodulated one-/two-stage OnePole.
+		// The Filter keeps every stage history; only the Sample is replaced
+		// by the existing bounded worker.
 		// This test relies exclusively on frozen compiled metadata and does
 		// not enumerate authoring stages or allocate in the PCM owner.
 		if (_nodes.Length == 2)
@@ -1874,9 +1876,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				&& nextFilter.AudioInputNodeId == source.Id
 				&& _nodes[1].InputIndices.Length == 1
 				&& _nodes[1].InputIndices[0] == 0
-				&& _nodes[1].Filter?.IsSingleUnmodulatedOnePole == true
-				&& next._nodes[1].Filter?.IsSingleUnmodulatedOnePole == true;
-		// Direct Sample Sources -> final Add -> one unmodulated OnePole.
+				&& _nodes[1].Filter?.IsOneOrTwoUnmodulatedOnePoleStages == true
+				&& next._nodes[1].Filter?.IsOneOrTwoUnmodulatedOnePoleStages == true;
+		// Direct Sample Sources -> final Add -> one unmodulated OnePole cascade.
 		// Each changed Source keeps its independent crossfade and worker
 		// construction. The sole downstream Filter is *never* recreated:
 		// it receives the mixed Source frame, preserving its integrator.
@@ -1897,8 +1899,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					!= next._nodes[addIndex].Definition.Id
 				|| _nodes[_outputIndex].InputIndices.Length != 1
 				|| _nodes[_outputIndex].InputIndices[0] != addIndex
-				|| _nodes[_outputIndex].Filter?.IsSingleUnmodulatedOnePole != true
-				|| next._nodes[_outputIndex].Filter?.IsSingleUnmodulatedOnePole != true)
+				|| _nodes[_outputIndex].Filter?.IsOneOrTwoUnmodulatedOnePoleStages != true
+				|| next._nodes[_outputIndex].Filter?.IsOneOrTwoUnmodulatedOnePoleStages != true)
 				return false;
 
 			int[] addInputs = _nodes[addIndex].InputIndices;
@@ -1959,7 +1961,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 
 	/// <summary>A different Sample never inherits the old SampleSoundState.
 	/// One direct Source, a direct Add of Sources, and either path
-	/// through one unmodulated OnePole may be replaced atomically off PCM,
+	/// through one or two unmodulated OnePoles may be replaced atomically off PCM,
 	/// while released or already-fading voices remain declined.</summary>
 	private bool NeedsDirectSampleReplacement(FmSynthSound next,
 		FmSynthState state, int index)
