@@ -611,8 +611,9 @@ public sealed class FmSynthLiveSourceIdTests
     }
 
     [Test]
-    public void AddMixerDeclinesWholeEditWhenSecondSourceHasUnpreparedFrequencyAndAssetChange()
+    public void AddMixerAdoptsTwoSampleReplacementsWithSecondFrequencyBasisChangedAtomically()
     {
+        const int start = 128, fade = 4800;
         SampleSound a = Sample(FirstId, Enumerable.Repeat(0.11f, 16000).ToArray());
         SampleSound b = Sample(AliasId, Enumerable.Repeat(0.17f, 16000).ToArray());
         SampleSound c = Sample(ThirdId, Enumerable.Repeat(0.29f, 16000).ToArray());
@@ -624,24 +625,27 @@ public sealed class FmSynthLiveSourceIdTests
             secondFrequencyHz: FmMultiNode.NeutralFrequencyHz * 2);
         RenderContext context = Mono();
         SoundState held = original.CreateState();
-        SoundState reference = original.CreateState();
-        original.Render(context, held, 0, 128, new float[128]);
-        original.Render(context, reference, 0, 128, new float[128]);
+        original.Render(context, held, 0, start, new float[start]);
 
-        // The first replacement would be admissible alone. The second
-        // couples asset replacement to a changed initial frequency basis.
-        // Never publish just the first new Source or partially mutate the
-        // held original graph before rejecting the second Source.
-        original.CanPrepareMultiExpansion(revised, held).Should().BeFalse();
-        original.RequestMultiExpansionPreparation(revised, held).Should().BeFalse();
+        // Both inputs must have detached replacements before the Add
+        // can change: source 1 chooses C at its normal rate, source 2
+        // chooses D at twice its previous frequency. Neither outgoing
+        // A nor B is allowed to jump pitch during the first fade.
+        original.CanPrepareMultiExpansion(revised, held).Should().BeTrue();
         original.TryPrepareRunningState(revised, held).Should().BeFalse();
-
-        float[] actual = new float[250], expected = new float[250];
+        PrepareReplacement(original, revised, held);
+        float[] actual = new float[fade + 1];
         long allocated = GC.GetAllocatedBytesForCurrentThread();
-        original.Render(context, held, 128, actual.Length, actual);
+        revised.Render(context, held, start, actual.Length, actual);
         (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0);
-        original.Render(context, reference, 128, expected.Length, expected);
-        actual.Should().Equal(expected);
+        for (int frame = 0; frame <= fade; frame++)
+        {
+            double t = (double)frame / fade;
+            double weight = t * t * (3 - 2 * t);
+            float expected = (float)(0.28 * (1 - weight) + 0.66 * weight);
+            actual[frame].Should().BeApproximately(expected, 2e-5f,
+                $"both Source replacements must commit atomically at {start + frame}");
+        }
     }
 
     [Test]
@@ -1267,8 +1271,9 @@ public sealed class FmSynthLiveSourceIdTests
     }
 
     [Test]
-    public void FilteredAddMixerRejectsPartialSourceReplacementWhenOtherSourceChangesFrequency()
+    public void FilteredAddMixerAdoptsSourceIdAndFrequencyTogetherWithoutResettingOnePole()
     {
+        const int start = 128, fade = 4800;
         FilterInstance filter = OnePole();
         SampleSound first = Sample(FirstId, Enumerable.Repeat(0.11f, 16000).ToArray());
         SampleSound sibling = Sample(AliasId, Enumerable.Repeat(0.17f, 16000).ToArray());
@@ -1280,16 +1285,28 @@ public sealed class FmSynthLiveSourceIdTests
         FmSynthSound revised = FilteredMixSound(ThirdId, FourthId, resolver,
             filter, secondFrequencyHz: FmMultiNode.NeutralFrequencyHz * 2);
         RenderContext context = Mono();
-        SoundState held = original.CreateState(), uninterrupted = original.CreateState();
-        original.Render(context, held, 0, 128, new float[128]);
-        original.Render(context, uninterrupted, 0, 128, new float[128]);
-        original.CanPrepareMultiExpansion(revised, held).Should().BeFalse();
-        original.RequestMultiExpansionPreparation(revised, held).Should().BeFalse();
-        original.TryPrepareRunningState(revised, held).Should().BeFalse();
-        float[] actual = new float[180], expected = new float[180];
-        original.Render(context, held, 128, actual.Length, actual);
-        original.Render(context, uninterrupted, 128, expected.Length, expected);
-        actual.Should().Equal(expected);
+        SoundState held = original.CreateState();
+        original.Render(context, held, 0, start, new float[start]);
+
+        original.CanPrepareMultiExpansion(revised, held).Should().BeTrue();
+        PrepareReplacement(original, revised, held);
+        float[] incomingPcm = new float[start + fade + 64];
+        for (int frame = 0; frame < incomingPcm.Length; frame++)
+        {
+            double t = Math.Clamp((double)(frame - start) / fade, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            incomingPcm[frame] = (float)(0.28 * (1 - w) + 0.66 * w);
+        }
+        FmSynthSound oracle = FilteredReference(filter, incomingPcm);
+        float[] expected = new float[incomingPcm.Length];
+        oracle.Render(context, oracle.CreateState(), 0, expected.Length, expected);
+        float[] actual = new float[incomingPcm.Length - start];
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, start, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0);
+        for (int frame = 0; frame < actual.Length; frame++)
+            actual[frame].Should().BeApproximately(expected[start + frame], 3e-5f,
+                $"both Sources must feed the same uninterrupted OnePole at {start + frame}");
     }
 
     private static void PrepareReplacement(
