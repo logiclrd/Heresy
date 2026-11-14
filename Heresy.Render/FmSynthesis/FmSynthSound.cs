@@ -1707,7 +1707,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						// PCM and note configuration are unchanged; neither a new
 						// Sample state nor a fade is needed. Never extrapolate this
 						// to an arbitrary different Sample or Instrument asset.
-						&& !ReferenceEquals(live.Sources[i]?.Sound, revised.Source)
+						&& !(live.Sources[i]?.Sound is SampleSound boundSample
+							&& ReferenceEquals(boundSample, revised.Source))
 						&& (!CanMigrateSourceChild(live.Sources[i], revised.Source,
 								allowUnpreparedExpansion)
 							|| live.Sources[i]!.Invocation.Configuration
