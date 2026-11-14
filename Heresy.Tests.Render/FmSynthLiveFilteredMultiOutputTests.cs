@@ -132,6 +132,81 @@ public sealed class FmSynthLiveFilteredMultiOutputTests
         }
     }
 
+
+    [Test]
+    public void SimultaneousSourceRateFilterRetuneAndOuterGainInsideMultiPreservesMovingAudio()
+    {
+        const int editFrame = 128, fadeFrames = 4800;
+        SampleSound sample = Sample(16000);
+        FilterInstance oldFilter = OnePole();
+        FilterInstance revisedFilter = OnePole();
+        revisedFilter.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(3600));
+
+        FmSynthSound Build(double sourceFrequency, FilterInstance filter,
+            double gain)
+        {
+            SampleResolver resolver = new(sample);
+            return new(new FmSynthGraph([
+                // The complete Multi child contains a running Sample readhead,
+                // its own OnePole integrator and a phase-continuous sibling.
+                new FmSoundSourceNode(1, SampleId, sourceFrequency),
+                new FmFilterNode(2, 1, filter, tailSeconds: 0.003),
+                new FmOscillatorNode(3, FmOscillatorWaveform.Sine, 709,
+                    minimum: -0.08, maximum: 0.08),
+                new FmOperatorNode(4, FmOperatorKind.Add, [2, 3]),
+                new FmMultiNode(5, 4, voiceCount: 3, detune: 0,
+                    randomizePhase: false, gainCompensation: true),
+                new FmConstantNode(6, gain),
+                new FmOperatorNode(7, FmOperatorKind.Multiply, [5, 6]),
+            ], 7), resolver, soundResolver: resolver,
+                enableLiveMultiExpansion: true);
+        }
+
+        double neutral = FmMultiNode.NeutralFrequencyHz;
+        FmSynthSound original = Build(neutral, oldFilter, 0.85);
+        FmSynthSound combined = Build(neutral * 1.35, revisedFilter, 0.20);
+        FmSynthSound unityOriginal = Build(neutral, oldFilter, 1.0);
+        FmSynthSound unityRevised = Build(neutral * 1.35, revisedFilter, 1.0);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        SoundState raw = unityOriginal.CreateState();
+        original.Render(context, held, 0, editFrame, new float[editFrame]);
+        unityOriginal.Render(context, raw, 0, editFrame, new float[editFrame]);
+
+        original.CanAdoptRunningState(combined, held).Should().BeTrue();
+        unityOriginal.CanAdoptRunningState(unityRevised, raw).Should().BeTrue();
+        original.TryPrepareRunningState(combined, held).Should().BeTrue();
+        unityOriginal.TryPrepareRunningState(unityRevised, raw).Should().BeTrue();
+        original.CommitPreparedRunningState(combined, held);
+        unityOriginal.CommitPreparedRunningState(unityRevised, raw);
+
+        // The unchanged-unity-gain reference has the exact same forward
+        // integrated Sample pitch, independent oscillator phases and three
+        // independently retuning OnePole histories. Only the parent's
+        // 100-ms moving gain differs; it must not be lost just because
+        // the eligible child controls also changed in this publication.
+        float[] reference = new float[fadeFrames + 96];
+        unityRevised.Render(context, raw, editFrame, reference.Length, reference);
+        float[] actual = new float[reference.Length];
+        long bytes = GC.GetAllocatedBytesForCurrentThread();
+        combined.Render(context, held, editFrame, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - bytes).Should().Be(0,
+            "simultaneous Multi-child Sample/Filter and parent gain migration"
+            + " cannot allocate or restart child invocation state in PCM");
+
+        for (int i = 0; i < actual.Length; i++)
+        {
+            double t = Math.Clamp((double)i / fadeFrames, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            actual[i].Should().BeApproximately(
+                (float)(reference[i] * (0.85 * (1 - w) + 0.20 * w)),
+                8e-5f,
+                $"source pitch, three Filter histories, oscillator phases"
+                + $" and parent moving gain must agree at frame {editFrame + i}");
+        }
+    }
+
     [Test]
     public void BoundFirInsideMultiWaitsForWorkerThenRetunesWithoutInterruptingOuterGain()
     {
