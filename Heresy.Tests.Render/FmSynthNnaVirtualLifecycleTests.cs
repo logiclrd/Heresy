@@ -39,6 +39,32 @@ public sealed class FmSynthNnaVirtualLifecycleTests
     private static readonly ObjectId SourceId = (ObjectId)72004U;
     private static readonly ObjectId EnvelopeId = (ObjectId)72005U;
 
+    [Test]
+    public void IncompatibleFiniteSourceStopsCountingAtNaturalEofAndFilterTail()
+    {
+        Registry resolver = new();
+        FmSynthSound original = BuildNested(resolver, loop: false,
+            action: NewNoteAction.Continue, inheritedEnvelope: false);
+        resolver.Add(SourceId, original);
+        PlaybackSession session = Session(resolver, Schedule());
+        session.ApplyLiveEvent(ChannelTarget.Virtual(7),
+            [new StartNoteCommand(SourceId)]);
+        session.Render(0, 2, new float[2]);
+
+        FmSynthSound structurallyDifferent = new(new FmSynthGraph([
+            new FmConstantNode(1, 0.25),
+        ], 1), resolver);
+        session.AdoptLiveSynthParameters(SourceId, original,
+            structurallyDifferent);
+        Assert.That(session.CountOlderAudioVoices(), Is.EqualTo(1));
+
+        // The finite Sample and its downstream Filter have a real
+        // lifetime. No new note or transport restart is needed to clear
+        // the older-audio warning when they become silent.
+        session.Render(2, 30, new float[30]);
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+    }
+
     [TestCase(NewNoteAction.Cut, false)]
     [TestCase(NewNoteAction.Continue, true)]
     [TestCase(NewNoteAction.Off, true)]
