@@ -30,6 +30,74 @@ public sealed class FmSynthLiveSourceIdTests
     private static readonly ObjectId FourthId = (ObjectId)9914U;
 
     [Test]
+    public void SampleReplacementInsideMultiFadesEachVoiceBeforeContinuingParentFilter()
+    {
+        const int start = 128, fadeFrames = 4800;
+        FilterInstance filter = OnePole();
+        SampleSound originalSample = Sample(FirstId,
+            Enumerable.Repeat(0.30f, 16000).ToArray());
+        SampleSound incomingSample = Sample(AliasId,
+            Enumerable.Repeat(-0.10f, 16000).ToArray());
+        SourceResolver resolver = new(FirstId, originalSample, AliasId, incomingSample);
+
+        FmSynthSound Build(ObjectId sourceId, SourceResolver sounds)
+            => new(new FmSynthGraph([
+                new FmSoundSourceNode(1, sourceId, FmMultiNode.NeutralFrequencyHz),
+                new FmMultiNode(2, 1, voiceCount: 3, detune: 0,
+                    randomizePhase: false, gainCompensation: true),
+                new FmFilterNode(3, 2, filter, tailSeconds: 0.003),
+            ], 3), sounds, soundResolver: sounds,
+                enableLiveMultiExpansion: true);
+
+        FmSynthSound before = Build(FirstId, resolver);
+        FmSynthSound after = Build(AliasId, resolver);
+        RenderContext context = Mono();
+        SoundState held = before.CreateState();
+        before.Render(context, held, 0, start, new float[start]);
+
+        // Each Multi constituent owns its own SourceVoice and Sample readhead.
+        // Preparation may complete at different times; no constituent may
+        // partially adopt a SourceId change or restart the shared Filter.
+        before.RequestMultiExpansionPreparation(after, held).Should().BeTrue();
+        using FirPreparationScheduler worker = new();
+        before.QueuePendingFirControls(held, worker);
+        SpinWait.SpinUntil(() =>
+        {
+            before.AdoptPreparedFirControls(held);
+            return before.CanAdoptRunningState(after, held);
+        }, TimeSpan.FromSeconds(5)).Should().BeTrue();
+        before.TryPrepareRunningState(after, held).Should().BeTrue();
+        before.CommitPreparedRunningState(after, held);
+        worker.Fault.Should().BeNull();
+
+        // Three equal-frequency/phase constituents are gain-normalized to
+        // one source. An independent reference bakes the expected 100 ms
+        // Source-local fade and passes it through the SAME Multi + Filter.
+        float[] baked = new float[start + fadeFrames + 96];
+        for (int i = 0; i < baked.Length; i++)
+        {
+            double t = Math.Clamp((double)(i - start) / fadeFrames, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            baked[i] = i < start ? 0.30f
+                : (float)(0.30 * (1 - w) - 0.10 * w);
+        }
+        SampleSound referenceSample = Sample(FirstId, baked);
+        SourceResolver referenceResolver = new(FirstId, referenceSample,
+            AliasId, referenceSample);
+        FmSynthSound reference = Build(FirstId, referenceResolver);
+        float[] expected = new float[baked.Length];
+        reference.Render(context, reference.CreateState(), 0, expected.Length, expected);
+
+        float[] actual = new float[baked.Length - start];
+        long bytes = GC.GetAllocatedBytesForCurrentThread();
+        after.Render(context, held, start, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - bytes).Should().Be(0);
+        for (int i = 0; i < actual.Length; i++)
+            actual[i].Should().BeApproximately(expected[start + i], 5e-5f,
+                $"every child Source fade must enter one uninterrupted parent Filter at {start + i}");
+    }
+
+    [Test]
     public void ConnectedSourceRateModulationDoesNotBlockSampleReplacement()
     {
         const int start = 128, fadeFrames = 4800;
