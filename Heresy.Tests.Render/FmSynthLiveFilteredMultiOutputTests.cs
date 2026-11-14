@@ -45,6 +45,92 @@ public sealed class FmSynthLiveFilteredMultiOutputTests
     }
 
     [Test]
+    public void FrozenModulatedTwoStageMultiFilterKeepsOuterFadeDuringInnerRetune()
+    {
+        const int firstEdit = 128, secondEdit = 192, fade = 4800;
+        FilterInstance oldFilter = TwoStageModulatedFilter(revised: false);
+        FilterInstance newFilter = TwoStageModulatedFilter(revised: true);
+        FmSynthSound Build(FilterInstance filter, double gain)
+        {
+            FmFilterParameterConnection cutoff = new(1, FilterKind.OnePole,
+                filter.GetStageGenerationForPersistence(1), "CutoffHz", 2);
+            return new(new FmSynthGraph([
+                new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 2600),
+                new FmConstantNode(2, 1500),
+                new FmFilterNode(3, 1, filter, [cutoff], tailSeconds: 0.003),
+                new FmMultiNode(4, 3, voiceCount: 3, detune: 0,
+                    randomizePhase: false, gainCompensation: true),
+                new FmConstantNode(5, gain),
+                new FmOperatorNode(6, FmOperatorKind.Multiply, [4, 5]),
+            ], 6), new EmptyEnvelopes(), enableLiveMultiExpansion: true);
+        }
+
+        FmSynthSound initial = Build(oldFilter, 0.85);
+        FmSynthSound gainEdited = Build(oldFilter, 0.20);
+        FmSynthSound filterEdited = Build(newFilter, 0.20);
+
+        // This independent reference has unity gain at every frame.
+        // Its inner Multi, connected cutoff, and ongoing SVF history are
+        // identical to those in the primary voice; only the audible final
+        // gain is different, so the oracle can track the moving waveform.
+        FmSynthSound rawInitial = Build(oldFilter, 1.0);
+        FmSynthSound rawEdited = Build(newFilter, 1.0);
+        RenderContext context = Mono();
+        SoundState held = initial.CreateState();
+        SoundState raw = rawInitial.CreateState();
+        initial.Render(context, held, 0, firstEdit, new float[firstEdit]);
+        rawInitial.Render(context, raw, 0, firstEdit, new float[firstEdit]);
+
+        initial.CanAdoptRunningState(gainEdited, held).Should().BeTrue();
+        initial.TryPrepareRunningState(gainEdited, held).Should().BeTrue();
+        initial.CommitPreparedRunningState(gainEdited, held);
+
+        float[] initialRamp = new float[secondEdit - firstEdit];
+        float[] rawFirst = new float[initialRamp.Length];
+        rawInitial.Render(context, raw, firstEdit, rawFirst.Length, rawFirst);
+        gainEdited.Render(context, held, firstEdit, initialRamp.Length, initialRamp);
+
+        for (int i = 0; i < initialRamp.Length; i++)
+        {
+            double t = (double)i / fade;
+            double w = t * t * (3 - 2 * t);
+            initialRamp[i].Should().BeApproximately(
+                (float)(rawFirst[i] * (0.85 * (1 - w) + 0.20 * w)),
+                4e-5f,
+                "a completely unchanged connected two-stage Filter inside"
+                + " Multi must not disqualify outer moving-gain smoothing");
+        }
+
+        // Retune the UNCONNECTED SVF stage while the outer gain is still
+        // fading. The OnePole's wired cutoff continues at its existing
+        // modulation value. Neither inner Filter history nor the previous
+        // output gain ramp may be restarted.
+        gainEdited.CanAdoptRunningState(filterEdited, held).Should().BeTrue();
+        rawInitial.CanAdoptRunningState(rawEdited, raw).Should().BeTrue();
+        gainEdited.TryPrepareRunningState(filterEdited, held).Should().BeTrue();
+        rawInitial.TryPrepareRunningState(rawEdited, raw).Should().BeTrue();
+        gainEdited.CommitPreparedRunningState(filterEdited, held);
+        rawInitial.CommitPreparedRunningState(rawEdited, raw);
+
+        float[] actual = new float[fade + 48];
+        float[] expectedRaw = new float[actual.Length];
+        rawEdited.Render(context, raw, secondEdit, expectedRaw.Length, expectedRaw);
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        filterEdited.Render(context, held, secondEdit, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0);
+        for (int i = 0; i < actual.Length; i++)
+        {
+            double t = Math.Clamp((double)(secondEdit + i - firstEdit) / fade, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            float expected = (float)(expectedRaw[i] *
+                (0.85 * (1 - w) + 0.20 * w));
+            actual[i].Should().BeApproximately(expected, 7e-5f,
+                $"the parent gain clock and Multi child Filter histories"
+                + $" must continue together at PCM {secondEdit + i}");
+        }
+    }
+
+    [Test]
     public void RepeatedOuterEditsAnchorAtBlendedOutputWithFilterHistoryContinuing()
     {
         SampleSound sample = Sample(1800);
@@ -208,6 +294,32 @@ public sealed class FmSynthLiveFilteredMultiOutputTests
             new FmOperatorNode(7, operation, [5, 6]),
         ], 7), resolver, soundResolver: resolver,
             enableLiveMultiExpansion: audition);
+    }
+
+    private static FilterInstance TwoStageModulatedFilter(bool revised)
+    {
+        FilterDefinition definition = new((ObjectId)9472U,
+            "C3 frozen modulated child", [
+                new FilterStageDefinition(1, "Bound pole", FilterKind.OnePole),
+                new FilterStageDefinition(2, "Unbound notch", FilterKind.SvfNotch),
+            ]);
+        FilterInstance filter = new(definition);
+        filter.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(1500));
+        filter.SetStageParameter(2, "CutoffHz",
+            FilterParameterValue.FromNumber(revised ? 6900 : 820));
+        filter.SetStageParameter(2, "Q",
+            FilterParameterValue.FromNumber(revised ? 2.2 : 0.75));
+        return filter;
+    }
+
+    private sealed class EmptyEnvelopes : IEnvelopeCurveResolver
+    {
+        public bool TryResolve(ObjectId id, out IEnvelopeCurve? curve)
+        {
+            curve = null;
+            return false;
+        }
     }
 
     private static FilterInstance OnePole()
