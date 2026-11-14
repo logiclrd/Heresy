@@ -757,6 +757,70 @@ incompatibility while a worker owns a different revision.
 C2 and C5–C7 remain open. Do **not** check C4 or the overarching
 all-nonstructural-properties TODO; PR #12 remains draft and unmerged.
 
+## C4(e) — already-releasing scoped NNA, physical notes and host Filter tails (2026-11-14)
+
+**Automated PASS, no production DSP/session change required.**
+The parameterized
+`FmSynthNnaVirtualLifecycleTests.ReleasingScopedNnaAndPhysicalVoicesRetainIndependentCurrencyAndHostTails`
+regression runs with both `NewNoteAction.Off` and
+`NewNoteAction.Fade`. It expands the earlier four-voice C4(d)
+currency checks into **actual already-releasing** state and
+independent **forked host Filter histories**.
+
+A looping Sample selected through a nested Synth/Instrument has an
+enabled sustain-loop Volume Envelope with a **three-frame release**.
+Its parent Synth includes a OnePole with a **2-ms graph tail**.
+Physical channel 0 and independently scoped owners **101 and 202**
+(virtual channel 7) each hold an instance; all three hosts also have
+their own OnePole **100-Hz channel-output Filter**, with prepared,
+nonzero IIR tail budgets. A compatible parent OnePole cutoff change
+**150 → 240 Hz** is accepted on all three held voices before
+displacement, with older count **0** and the physical voice referring
+to the new sound.
+
+At session frame **120**, starting a second owner-101 note displaces
+that owner's previous note into NNA **Off** (original Note Off at
+frame 120) or **Fade** (exclusive fade end frame **124**).
+The old NNA receives a **fork** of its owner-101 output Filter history;
+the new current note continues through the un-forked host.
+Owner 202 receives Note Off at frame **121**. At frame **122**
+a structurally different Synth graph is definitively incompatible
+with the original held physical note, the owner-101 current note,
+the owner-202 releasing note and the displaced NNA note. The
+older-audio count is exactly **4**; NNA Sound identity and its
+original release/fade origin remain unchanged.
+
+After rendering to frame **134**, both the NNA and owner-202 release
+have retired; the old count is **2**. Note Off of owner 101 at frame
+134 and rendering to frame **144** drops it to **1**, leaving physical
+channel 0 alone. Physical Note Off at frame **144** and rendering
+through frame **149** retires the last old voice (**1 → 0**).
+**Real nonzero host Filter-tail PCM continues after frame 149** while
+the older count remains **0**: an output Filter tail is not a
+resurrected old voice. The fixture also asserts audible nonzero
+release PCM, forked host Filter identity/tail budget and NNA
+`NoteOffTime`/fade-end preservation.
+
+[Test-only commit `cd300b0`](https://github.com/logiclrd/Heresy/commit/cd300b09d1c158c513809aef1b2b874590ee5f66)
+passed [exact-commit CI #43640392451](https://github.com/logiclrd/Heresy/actions/runs/43640392451):
+**3,736/3,736 tests**, comprising Core 910, Render.File 29,
+Render **1,186**, Scripting 105, Playback 356 and UI 1,150;
+Release desktop-native and Windows apphost resources, versioned
+release-bundle smoke and Linux ARM64 shared codecs also succeeded.
+The two additional tests are the `Off` and `Fade` cases.
+
+**Bounded acceptance, not C4 closure.** This proves a concrete
+already-releasing, host-filtered multi-owner event order; it does
+**not** cover every Envelope-change-during-release policy, nested
+ancestor scope and referenced-child revision path, interrupted
+Source-local crossfade or worker result already in flight during a
+later publication/cancellation. Those cases and C5 CPU deadline
+stress remain separate. C4, C2, C5–C7 and the overarching Synth
+live-properties TODO stay **unchecked**; PR #12 remains draft,
+unmerged. Next C4 probes: nested Synth/ancestor scoped release
+ownership and in-flight worker supersession with incompatible
+publication before old workers complete.
+
 ### Adjacent UI issues deliberately outside PR #12 closure
 
 Two independently actionable main-line TODOs were logged in [`docs/todo.md`](https://github.com/logiclrd/Heresy/blob/main/docs/todo.md) via [`dd55714`](https://github.com/logiclrd/Heresy/commit/dd55714d677ee8ee4641594e1f8ae2cb394039c3): stale **Configured stages** after editing a shared Filter definition and selected-stage controls hidden to the right in a non-resizable strip instead of below the list. `FmSynthEditorControl.AddFilterInspector` currently deliberately avoids rebuilding on popup close to preserve unsaved per-use drafts, and `FilterInstanceEditorControl` uses a left/right layout; the eventual fix must refresh safely without losing those drafts. These are real UI defects, but not evidence that a held note failed a realtime coefficient update.
