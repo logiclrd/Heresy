@@ -30,6 +30,41 @@ public sealed class FmSynthLiveSourceIdTests
     private static readonly ObjectId FourthId = (ObjectId)9914U;
 
     [Test]
+    public void ConnectedSourceRateModulationDoesNotBlockSampleReplacement()
+    {
+        const int start = 128, fadeFrames = 4800;
+        SampleSound originalSample = Sample(FirstId,
+            Enumerable.Repeat(0.25f, 16000).ToArray());
+        SampleSound replacementSample = Sample(AliasId,
+            Enumerable.Repeat(0.75f, 16000).ToArray());
+        SourceResolver resolver = new(FirstId, originalSample, AliasId,
+            replacementSample);
+
+        FmSynthSound Build(ObjectId id) => new(new FmSynthGraph([
+            new FmConstantNode(1, 1.25),
+            new FmSoundSourceNode(2, id, FmMultiNode.NeutralFrequencyHz,
+                multiplierNodeId: 1),
+        ], 2), resolver, soundResolver: resolver,
+            enableLiveMultiExpansion: true);
+
+        FmSynthSound original = Build(FirstId), revised = Build(AliasId);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        original.Render(context, held, 0, start, new float[start]);
+        PrepareReplacement(original, revised, held);
+
+        // A wired but unchanged rate control cannot invalidate an
+        // independently prepared, new Sample onset and source-level fade.
+        float[] actual = new float[fadeFrames + 1];
+        long bytes = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, start, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - bytes).Should().Be(0);
+        actual[0].Should().BeApproximately(0.25f, 1e-6f);
+        actual[fadeFrames / 2].Should().BeApproximately(0.50f, 1e-5f);
+        actual[fadeFrames].Should().BeApproximately(0.75f, 1e-5f);
+    }
+
+    [Test]
     public void SameBoundSampleUnderDifferentSourceIdKeepsContinuousHeldPlayhead()
     {
         float[] samples = Enumerable.Range(0, 4800).Select(i =>
