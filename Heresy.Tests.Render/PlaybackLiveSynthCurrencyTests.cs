@@ -35,7 +35,10 @@ public sealed class PlaybackLiveSynthCurrencyTests
         session.Render(0, 16, new float[16]);
 
         Assert.That(session.CountOlderAudioVoices(), Is.Zero);
-        session.AdoptLiveSynthParameters(UnrelatedSynthId, original, structural);
+        // Different source identity AND different bound sound object:
+        // the unrelated Synth is not selected by this held voice.
+        session.AdoptLiveSynthParameters(UnrelatedSynthId,
+            Constant(0.5), structural);
         Assert.That(session.CountOlderAudioVoices(), Is.Zero,
             "edits to another source do not concern this voice");
 
