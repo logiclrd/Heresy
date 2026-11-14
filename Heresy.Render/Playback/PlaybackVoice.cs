@@ -400,6 +400,17 @@ public sealed class PlaybackVoice
 		if (_pendingLiveSynth is not null)
 			CancelPendingLivePreparation();
 		_pendingLiveSynth = null;
+		if (current.CanDeferSampleReplacementUntilFadeCompletes(
+			next, SoundState))
+		{
+			// The currently audible old/new Sample mixture is a single
+			// indivisible Source history. Keep it until its 100-ms clock
+			// ends; replace only this deferred intent on later editor edits.
+			// No third Sample/worker request exists yet, and the old note
+			// has not definitively missed this compatible revision.
+			_pendingLiveSynth = next;
+			return false;
+		}
 		if (!current.CanPrepareMultiExpansion(next, SoundState))
 		{
 			UsesOlderAudio = true;
@@ -696,6 +707,9 @@ public sealed class PlaybackVoice
             source.AdoptPreparedFirControls(SoundState);
 		if (_pendingLiveSynth is not FmSynthSound revised
 			|| Sound is not FmSynthSound current)
+			return;
+		if (current.CanDeferSampleReplacementUntilFadeCompletes(
+			revised, SoundState))
 			return;
 		if (!current.CanPrepareMultiExpansion(revised, SoundState))
 		{
