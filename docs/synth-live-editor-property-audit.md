@@ -5,7 +5,12 @@ Status: **in progress**, PR #12 (draft). This is a source-level audit of
 `SongPlaybackTransport` and `FmSynthSound`, not a claim that the complete
 all-properties live-edit feature has passed UI, device and PCM acceptance.
 See `docs/synth-live-parameter-plan.md` for design and the chronological
-implementation slices.
+implementation slices. **For the current property-by-property closure
+classification, accepted scope exclusions, risk-ranked verification probes and
+merge gates, use [PR #12 closing audit](synth-live-pr12-closing-audit.md).**
+Older slice-specific restrictions and pending-listening statements below are
+historical snapshots and may have been superseded by later changes and
+physical testing; they are not themselves an active-work checklist.
 
 ## Actual editor/publication path
 
