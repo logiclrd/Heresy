@@ -313,7 +313,7 @@ public sealed class FmSynthLiveGraphEnvelopeTests
         new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
     ]));
 
-    private sealed class SingleCurve(ObjectId id, NodeEnvelopeCurve envelope)
+    private sealed class SingleCurve(ObjectId id, IEnvelopeCurve envelope)
         : IEnvelopeCurveResolver
     {
         public bool TryResolve(ObjectId requested, out IEnvelopeCurve? curve)
