@@ -266,11 +266,6 @@ public sealed class MainWindow : Window
 				VerticalAlignment = VerticalAlignment.Center,
 			};
 
-		ToolTip.SetTip(_playbackSnapshotIndicator,
-			"At least one playing note could not adopt an applicable Synth "
-			+ "edit. Compatible edits may still update that note; new notes "
-			+ "use newly prepared audio. The warning disappears when the "
-			+ "last affected note ends.");
 		Content = BuildShell();
 		Closing += OnClosing;
 		Closed += (_, _) =>
@@ -3119,6 +3114,18 @@ public sealed class MainWindow : Window
 				"Playback uses another song",
 			_ => string.Empty,
 		};
+		ToolTip.SetTip(_playbackSnapshotIndicator, state switch
+		{
+			PlaybackSnapshotIndicatorState.OlderAudio =>
+				"At least one playing note could not adopt an applicable Synth "
+				+ "edit. Compatible edits may still update that note; new notes "
+				+ "may use newly prepared audio. The warning disappears when "
+				+ "the last affected note ends.",
+			PlaybackSnapshotIndicatorState.DifferentDocument =>
+				"Playback was started from another song document. Stop or "
+				+ "restart playback to use this song.",
+			_ => null,
+		});
 	}
 
 	private void OnRuntimeDiagnostics(
