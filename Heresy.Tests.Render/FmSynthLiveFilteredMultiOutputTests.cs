@@ -300,8 +300,8 @@ public sealed class FmSynthLiveFilteredMultiOutputTests
     {
         FilterDefinition definition = new((ObjectId)9472U,
             "C3 frozen modulated child", [
-                new FilterStageDefinition(1, "Bound pole", FilterKind.OnePole),
-                new FilterStageDefinition(2, "Unbound notch", FilterKind.SvfNotch),
+                new FilterStageDefinition(1, "BoundPole", FilterKind.OnePole),
+                new FilterStageDefinition(2, "UnboundNotch", FilterKind.SvfNotch),
             ]);
         FilterInstance filter = new(definition);
         filter.SetStageParameter(1, "CutoffHz",
