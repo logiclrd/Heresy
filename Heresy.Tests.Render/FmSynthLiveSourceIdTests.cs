@@ -273,8 +273,9 @@ public sealed class FmSynthLiveSourceIdTests
         RenderContext context = Mono();
 
         // Two independently rendered Source notes supply the oracle:
-        // A is evaluated at its ORIGINAL 1x rate and current playhead,
-        // B is a fresh 2x note beginning at the publication frame.
+        // A continues at its ORIGINAL 1.25x linear modulation and
+        // existing readhead. B starts at the revised 2x frequency basis
+        // and authored Constant/exponential mode at the edit frame.
         // Neither side is reconstructed from the other's readhead.
         FmSynthSound bareOld = Bare(FirstId, neutral, false, false);
         FmSynthSound bareNew = Bare(AliasId, neutral * 2,
@@ -319,7 +320,7 @@ public sealed class FmSynthLiveSourceIdTests
             "both independent Source playheads and the shared OnePole are PCM-owned");
         for (int i = 0; i < actual.Length; i++)
             actual[i].Should().BeApproximately(reference[start + i], 3e-5f,
-                $"A's original 1x rate, B's fresh 2x rate, and the one continuous pole at frame {start + i}");
+                $"A's original linear pitch, B's revised frequency/mode, and the continuous pole at frame {start + i}");
         actual[0].Should().BeApproximately(reference[start], 1e-6f);
         actual[fade / 2].Should().BeApproximately(reference[start + fade / 2], 3e-5f);
         actual[fade].Should().BeApproximately(reference[start + fade], 3e-5f);
