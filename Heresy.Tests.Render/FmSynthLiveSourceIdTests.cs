@@ -435,8 +435,9 @@ public sealed class FmSynthLiveSourceIdTests
     }
 
     [Test]
-    public void ThirdOnePoleStageRemainsOutsideBoundedSampleReplacementAdmission()
+    public void ThreeStageOnePoleCascadeRetainsAllStageHistoriesForSampleReplacement()
     {
+        const int start = 128, fadeFrames = 4800;
         FilterInstance filter = ThreeStageOnePole();
         SampleSound previousSample = Sample(FirstId,
             Enumerable.Repeat(0.35f, 16000).ToArray());
@@ -448,18 +449,26 @@ public sealed class FmSynthLiveSourceIdTests
         FmSynthSound revised = FilteredSound(AliasId, sources, filter);
         RenderContext context = Mono();
         SoundState held = original.CreateState();
-        SoundState unchanged = original.CreateState();
-        original.Render(context, held, 0, 128, new float[128]);
-        original.Render(context, unchanged, 0, 128, new float[128]);
+        original.Render(context, held, 0, start, new float[start]);
+        PrepareReplacement(original, revised, held);
 
-        original.CanPrepareMultiExpansion(revised, held).Should().BeFalse(
-            "two serial OnePole histories are the currently supported limit");
-        original.RequestMultiExpansionPreparation(revised, held).Should().BeFalse();
-        float[] actual = new float[224], expected = new float[224];
-        original.Render(context, held, 128, actual.Length, actual);
-        original.Render(context, unchanged, 128, expected.Length, expected);
-        actual.Should().Equal(expected,
-            "an unsupported third Filter stage must not partially commit a new Source");
+        float[] baked = new float[start + fadeFrames + 96];
+        for (int i = 0; i < baked.Length; i++)
+        {
+            double t = Math.Clamp((double)(i - start) / fadeFrames, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            baked[i] = i < start ? 0.35f : (float)(0.35 * (1 - w) + 0.70 * w);
+        }
+        FmSynthSound reference = FilteredReference(filter, baked);
+        float[] expected = new float[baked.Length];
+        reference.Render(context, reference.CreateState(), 0, expected.Length, expected);
+        float[] actual = new float[baked.Length - start];
+        long bytes = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, start, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - bytes).Should().Be(0);
+        for (int i = 0; i < actual.Length; i++)
+            actual[i].Should().BeApproximately(expected[start + i], 4e-5f,
+                $"all three Filter histories remain continuous at {start + i}");
     }
 
     [Test]
@@ -764,8 +773,9 @@ public sealed class FmSynthLiveSourceIdTests
     }
 
     [Test]
-    public void FilteredMultiplyMixerRejectsSourceReplacementWithoutMutatingHeldState()
+    public void FilteredMultiplyMixerCrossfadesSampleAtItsSourceBeforeNonlinearOperator()
     {
+        const int start = 128, fadeFrames = 4800;
         FilterInstance filter = OnePole();
         SampleSound first = Sample(FirstId, Enumerable.Repeat(0.35f, 16000).ToArray());
         SampleSound sibling = Sample(AliasId, Enumerable.Repeat(0.10f, 16000).ToArray());
@@ -778,18 +788,75 @@ public sealed class FmSynthLiveSourceIdTests
         FmSynthSound revised = FilteredMixSound(ThirdId, AliasId, resolver,
             filter, FmOperatorKind.Multiply);
         RenderContext context = Mono();
-        SoundState held = original.CreateState(), uninterrupted = original.CreateState();
-        original.Render(context, held, 0, 128, new float[128]);
-        original.Render(context, uninterrupted, 0, 128, new float[128]);
-        original.CanPrepareMultiExpansion(revised, held).Should().BeFalse();
-        original.RequestMultiExpansionPreparation(revised, held).Should().BeFalse();
-        original.TryPrepareRunningState(revised, held).Should().BeFalse();
-        float[] actual = new float[180], expected = new float[180];
-        long allocation = GC.GetAllocatedBytesForCurrentThread();
-        original.Render(context, held, 128, actual.Length, actual);
-        (GC.GetAllocatedBytesForCurrentThread() - allocation).Should().Be(0);
-        original.Render(context, uninterrupted, 128, expected.Length, expected);
-        actual.Should().Equal(expected);
+        SoundState held = original.CreateState();
+        original.Render(context, held, 0, start, new float[start]);
+        PrepareReplacement(original, revised, held);
+
+        // Crossfade the SOURCE, then multiply by the independently
+        // continuing sibling, then run the same Filter history.
+        float[] baked = new float[start + fadeFrames + 96];
+        for (int i = 0; i < baked.Length; i++)
+        {
+            double t = Math.Clamp((double)(i - start) / fadeFrames, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            baked[i] = (float)(0.1 * (i < start
+                ? 0.35 : 0.35 * (1 - w) + 0.55 * w));
+        }
+        FmSynthSound reference = FilteredReference(filter, baked);
+        float[] expected = new float[baked.Length];
+        reference.Render(context, reference.CreateState(), 0, expected.Length, expected);
+        float[] actual = new float[baked.Length - start];
+        long bytes = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, start, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - bytes).Should().Be(0);
+        for (int i = 0; i < actual.Length; i++)
+            actual[i].Should().BeApproximately(expected[start + i], 4e-5f,
+                $"the Sample blend precedes Multiply and the continuous Filter at {start + i}");
+    }
+
+    [Test]
+    public void SharedSampleFanoutThroughBiquadAndMultipleFilterNodesPreservesDspHistories()
+    {
+        const int start = 128, fadeFrames = 4800;
+        FilterInstance biquad = FilterWithKind((ObjectId)9940U, FilterKind.BiquadLowPass);
+        FilterInstance onePole = OnePole();
+        FilterInstance threePoles = ThreeStageOnePole();
+        SampleSound oldSample = Sample(FirstId, Enumerable.Repeat(0.30f, 16000).ToArray());
+        SampleSound nextSample = Sample(AliasId, Enumerable.Repeat(-0.20f, 16000).ToArray());
+        SourceResolver resolver = new(FirstId, oldSample, AliasId, nextSample);
+        FmSynthSound original = SharedSampleFanoutSound(
+            FirstId, resolver, biquad, onePole, threePoles);
+        FmSynthSound revised = SharedSampleFanoutSound(
+            AliasId, resolver, biquad, onePole, threePoles);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        original.Render(context, held, 0, start, new float[start]);
+        PrepareReplacement(original, revised, held);
+
+        // The reference routes a single baked Source through both
+        // Filter branches, their joined Add, then the final Multiply.
+        float[] baked = new float[start + fadeFrames + 96];
+        for (int i = 0; i < baked.Length; i++)
+        {
+            double t = Math.Clamp((double)(i - start) / fadeFrames, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            baked[i] = i < start ? 0.30f
+                : (float)(0.30 * (1 - w) - 0.20 * w);
+        }
+        SampleSound referenceSample = Sample(FirstId, baked);
+        SourceResolver referenceResolver = new(FirstId, referenceSample,
+            AliasId, referenceSample);
+        FmSynthSound reference = SharedSampleFanoutSound(
+            FirstId, referenceResolver, biquad, onePole, threePoles);
+        float[] expected = new float[baked.Length];
+        reference.Render(context, reference.CreateState(), 0, expected.Length, expected);
+        float[] actual = new float[baked.Length - start];
+        long bytes = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, start, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - bytes).Should().Be(0);
+        for (int i = 0; i < actual.Length; i++)
+            actual[i].Should().BeApproximately(expected[start + i], 5e-5f,
+                $"the fan-out, Biquad, serial OnePole, triple cascade, and operators at {start+i}");
     }
 
     [Test]
@@ -847,6 +914,25 @@ public sealed class FmSynthLiveSourceIdTests
         new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
     ]));
 
+
+    private static FilterInstance FilterWithKind(ObjectId id, FilterKind kind)
+        => new(new FilterDefinition(id, "Sample migration filter", [
+            new FilterStageDefinition(1, "stage", kind),
+        ]));
+
+    private static FmSynthSound SharedSampleFanoutSound(ObjectId source,
+        SourceResolver resolver, FilterInstance biquad,
+        FilterInstance onePole, FilterInstance triple)
+        => new(new FmSynthGraph([
+            new FmSoundSourceNode(1, source, FmMultiNode.NeutralFrequencyHz),
+            new FmFilterNode(2, 1, biquad, tailSeconds: 0.003),
+            new FmFilterNode(3, 2, onePole, tailSeconds: 0.003),
+            new FmFilterNode(4, 1, triple, tailSeconds: 0.003),
+            new FmOperatorNode(5, FmOperatorKind.Add, [3, 4]),
+            new FmConstantNode(6, 0.5),
+            new FmOperatorNode(7, FmOperatorKind.Multiply, [5, 6]),
+        ], 7), resolver, soundResolver: resolver,
+            enableLiveMultiExpansion: true);
 
     private static FilterInstance ThreeStageOnePole()
     {
