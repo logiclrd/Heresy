@@ -5,6 +5,7 @@ using System.Numerics;
 using AwesomeAssertions;
 using Heresy.Core.Assets;
 using Heresy.Core.Envelopes;
+using Heresy.Core.Filters;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
 using Heresy.Core.Samples;
@@ -115,6 +116,117 @@ public sealed class FmSynthMultiSourceLiveVolumeTests
         after.Render(context, held, 288, released.Length, released);
         released[32].Should().NotBe(0);
         released.Skip(42).Should().OnlyContain(v => v == 0.0f);
+    }
+
+
+    [Test]
+    public void SharedInstrumentVolumeRetuneThroughTwoSourcesAndParentFilterKeepsIirHistory()
+    {
+        const int start = 128, fade = 4800, continuation = fade + 96;
+        ObjectId sampleId = (ObjectId)8120U;
+        ObjectId instrumentId = (ObjectId)8121U;
+        ObjectId envelopeId = (ObjectId)8122U;
+        ObjectId oracleId = (ObjectId)8123U;
+        SampleSound sample = new(new SampleDefinition(sampleId,
+            "Two filtered Instrument voices",
+            new ExternalAssetReference("filtered-instrument.wav")),
+            new MemorySampleData(48000, 1,
+                Enumerable.Repeat(0.3f, 15000).ToArray()));
+        OneSourceResolver samples = new(sampleId, sample);
+
+        NodeEnvelopeCurve Curve(double volume)
+        {
+            NodeEnvelopeDefinition definition = new(envelopeId, "Instrument gain");
+            definition.ReplaceCurve([
+                new(TimeSpan.Zero, volume),
+                new(TimeSpan.FromMilliseconds(1), volume),
+                new(TimeSpan.FromMilliseconds(20), 0.0),
+            ], 1, 1, EnvelopeSustainLoopMode.Forward);
+            return new(definition);
+        }
+
+        Heresy.Core.Instruments.InstrumentDefinition Instrument()
+        {
+            Heresy.Core.Instruments.InstrumentDefinition definition =
+                new(instrumentId, "Filtered Instrument");
+            definition.ToneSpecifications.Add(
+                new Heresy.Core.Instruments.ToneSpecification
+                {
+                    SourceId = sampleId, VolumeEnvelopeId = envelopeId,
+                });
+            definition.ToneTable.Add(0);
+            return definition;
+        }
+
+        FilterInstance Filter()
+        {
+            FilterInstance filter = new(new FilterDefinition(
+                (ObjectId)8124U, "Continuing parent OnePole"));
+            filter.SetStageParameter(1, "CutoffHz",
+                FilterParameterValue.FromNumber(1200));
+            return filter;
+        }
+        FmSynthGraph Graph() => new([
+            new FmSoundSourceNode(1, instrumentId,
+                FmMultiNode.NeutralFrequencyHz),
+            new FmSoundSourceNode(2, instrumentId,
+                FmMultiNode.NeutralFrequencyHz),
+            new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
+            new FmFilterNode(4, 3, Filter(), tailSeconds: 0.003),
+        ], 4);
+
+        OneEnvelopeResolver previousCurves = new(envelopeId, Curve(1.0));
+        OneEnvelopeResolver nextCurves = new(envelopeId, Curve(0.25));
+        Heresy.Render.Instruments.InstrumentSound previousInstrument =
+            new(Instrument(), samples, previousCurves);
+        Heresy.Render.Instruments.InstrumentSound nextInstrument =
+            new(Instrument(), samples, nextCurves);
+        FmSynthSound before = new(Graph(), previousCurves,
+            soundResolver: new OneSourceResolver(instrumentId, previousInstrument),
+            enableLiveMultiExpansion: true);
+        FmSynthSound after = new(Graph(), nextCurves,
+            soundResolver: new OneSourceResolver(instrumentId, nextInstrument),
+            enableLiveMultiExpansion: true);
+        RenderContext context = new(new RenderConfiguration(48000, [
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
+        ]));
+        SoundState held = before.CreateState();
+        before.Render(context, held, 0, start, new float[start]);
+        before.CanAdoptRunningState(after, held).Should().BeTrue();
+        before.TryPrepareRunningState(after, held).Should().BeTrue();
+        before.CommitPreparedRunningState(after, held);
+
+        // Both bound Instrument Sources fade their own Volume envelopes
+        // BEFORE their sum reaches the continuing parent Filter. Baked PCM
+        // models that exact source-local smoothstep, not a post-filter fade.
+        float[] baked = new float[start + continuation];
+        for (int frame = 0; frame < baked.Length; frame++)
+        {
+            double t = Math.Clamp((double)(frame - start) / fade, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            baked[frame] = (float)(0.6 * (1 - 0.75 * w));
+        }
+        SampleSound referenceSample = new(new SampleDefinition(oracleId,
+            "Filtered Instrument oracle",
+            new ExternalAssetReference("filtered-instrument-oracle.wav")),
+            new MemorySampleData(48000, 1, baked));
+        FmSynthSound oracle = new(new FmSynthGraph([
+            new FmSoundSourceNode(1, oracleId,
+                FmMultiNode.NeutralFrequencyHz),
+            new FmFilterNode(2, 1, Filter(), tailSeconds: 0.003),
+        ], 2), previousCurves,
+            soundResolver: new OneSourceResolver(oracleId, referenceSample),
+            enableLiveMultiExpansion: true);
+        float[] expected = new float[baked.Length];
+        oracle.Render(context, oracle.CreateState(), 0, expected.Length, expected);
+        float[] actual = new float[continuation];
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        after.Render(context, held, start, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L,
+            "both Instrument Volume edits must preserve parent IIR without PCM allocations");
+        for (int i = 0; i < actual.Length; i++)
+            actual[i].Should().BeApproximately(expected[start + i], 5e-5f,
+                $"Instrument Volume must be source-local and the parent Filter continuous at {start + i}");
     }
 
     [Test]
