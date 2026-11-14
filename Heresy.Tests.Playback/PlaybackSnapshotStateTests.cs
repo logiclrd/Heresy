@@ -16,7 +16,7 @@ namespace Heresy.Tests.Playback;
 public sealed class PlaybackSnapshotStateTests
 {
 	[Test]
-	public async Task PlaybackCapturesActualRequestRevisionAndOnlyAudioEditsMakeItStale()
+	public async Task PlaybackSnapshotRevisionDoesNotDeclarePlayingNotesOlder()
 	{
 		SongDocument document = new();
 		ObjectId patternId = document.AllocateObjectId();
@@ -44,7 +44,8 @@ public sealed class PlaybackSnapshotStateTests
 			Is.EqualTo(PlaybackSnapshotIndicatorState.Current));
 		document.MarkChanged(affectsAudio: true);
 		Assert.That(PlaybackSnapshotIndicator.GetState(initial, document),
-			Is.EqualTo(PlaybackSnapshotIndicatorState.AudioEdited));
+			Is.EqualTo(PlaybackSnapshotIndicatorState.Current),
+			"an edited base snapshot does not prove an active note missed an update");
 		Assert.That(PlaybackSnapshotIndicator.GetState(initial, new SongDocument()),
 			Is.EqualTo(PlaybackSnapshotIndicatorState.DifferentDocument));
 
