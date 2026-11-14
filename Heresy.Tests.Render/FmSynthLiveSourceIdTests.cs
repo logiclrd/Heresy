@@ -6,6 +6,7 @@ using System.Threading;
 
 using AwesomeAssertions;
 using Heresy.Core.Assets;
+using Heresy.Core.Envelopes;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Filters;
 using Heresy.Core.Objects;
@@ -264,6 +265,143 @@ public sealed class FmSynthLiveSourceIdTests
         result[4800].Should().Be(0.0f);
         revised.GetEndFrameExclusive(context, held).Should().Be(228,
             "once the fade ends the outgoing Sample no longer extends the new EOF");
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void NoteOffDuringSampleReplacementKeepsBothReleaseContributionsAndFilterTail(
+        bool insideMulti)
+    {
+        const int edit = 128, noteOff = 1900, incomingLength = 2000;
+        const int releaseFrames = 800;
+        const int fade = 4800;
+        ObjectId envelopeId = (ObjectId)9923U;
+        NodeEnvelopeDefinition definition = new(envelopeId,
+            "Sustained release through ongoing Sample replacement");
+        definition.ReplaceCurve([
+            new(TimeSpan.Zero, 1.0),
+            new(TimeSpan.FromMilliseconds(1), 1.0),
+            new(TimeSpan.FromMilliseconds(12), 0.0),
+        ], 1, 1, EnvelopeSustainLoopMode.Forward);
+        NodeEnvelopeCurve release = new(definition);
+        IEnvelopeCurveResolver curves = new OneCurve(envelopeId, release);
+        FilterInstance filter = OnePole();
+
+        SampleSound outgoing = Sample(FirstId,
+            Enumerable.Repeat(0.25f, 16000).ToArray());
+        SampleSound incoming = Sample(AliasId,
+            Enumerable.Repeat(0.75f, incomingLength).ToArray());
+        SourceResolver resolver = new(FirstId, outgoing, AliasId, incoming);
+
+        FmSynthSound Build(ObjectId selected, SourceResolver samples)
+        {
+            // A sustain/release envelope belongs to the parent Synth,
+            // and the Source swap occurs BEFORE this continuing OnePole.
+            // The optional Multi has three independent equal-pitch
+            // Source invocation states, not one shared Sample playhead.
+            FmSynthGraph graph = insideMulti
+                ? new([
+                    new FmSoundSourceNode(1, selected,
+                        FmMultiNode.NeutralFrequencyHz),
+                    new FmMultiNode(2, 1, voiceCount: 3, detune: 0,
+                        randomizePhase: false, gainCompensation: true),
+                    new FmEnvelopeNode(3, envelopeId),
+                    new FmOperatorNode(4, FmOperatorKind.Multiply, [2, 3]),
+                    new FmFilterNode(5, 4, filter, tailSeconds: 0.003),
+                ], 5)
+                : new([
+                    new FmSoundSourceNode(1, selected,
+                        FmMultiNode.NeutralFrequencyHz),
+                    new FmEnvelopeNode(3, envelopeId),
+                    new FmOperatorNode(4, FmOperatorKind.Multiply, [1, 3]),
+                    new FmFilterNode(5, 4, filter, tailSeconds: 0.003),
+                ], 5);
+            return new(graph, curves, soundResolver: samples,
+                enableLiveMultiExpansion: true);
+        }
+
+        FmSynthSound original = Build(FirstId, resolver);
+        FmSynthSound revised = Build(AliasId, resolver);
+
+        // Independent reference bakes the TWO unsilenced Sample
+        // contributions before the shared envelope and IIR. The
+        // incoming Sample ends at global frame 2128, AFTER Note Off,
+        // while the outgoing Sample continues through the release.
+        float[] baked = new float[10000];
+        for (int frame = 0; frame < baked.Length; frame++)
+        {
+            if (frame < edit)
+            {
+                baked[frame] = 0.25f;
+                continue;
+            }
+            double t = Math.Clamp((double)(frame - edit) / fade, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            baked[frame] = (float)(0.25 * (1 - w)
+                + (frame - edit < incomingLength ? 0.75 * w : 0));
+        }
+        SampleSound referencePcm = Sample(FirstId, baked);
+        SourceResolver referenceResolver = new(FirstId, referencePcm,
+            AliasId, referencePcm);
+        FmSynthSound oracle = Build(FirstId, referenceResolver);
+
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        SoundState expectedState = oracle.CreateState();
+        original.Render(context, held, 0, edit, new float[edit]);
+        oracle.Render(context, expectedState, 0, edit, new float[edit]);
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeTrue();
+        using FirPreparationScheduler worker = new();
+        original.QueuePendingFirControls(held, worker);
+        SpinWait.SpinUntil(() =>
+        {
+            original.AdoptPreparedFirControls(held);
+            return original.CanAdoptRunningState(revised, held);
+        }, TimeSpan.FromSeconds(5)).Should().BeTrue();
+        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, held);
+        worker.Fault.Should().BeNull();
+
+        int heldFrames = noteOff - edit;
+        float[] beforeOff = new float[heldFrames];
+        float[] expectedHeld = new float[heldFrames];
+        long allocation = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, edit, heldFrames, beforeOff);
+        (GC.GetAllocatedBytesForCurrentThread() - allocation).Should().Be(0L);
+        oracle.Render(context, expectedState, edit, heldFrames, expectedHeld);
+        for (int i = 0; i < heldFrames; i++)
+            beforeOff[i].Should().BeApproximately(expectedHeld[i], 5e-5f,
+                $"both Source playheads and IIR history before Off at {edit + i}");
+
+        TimeSpan offTime = TimeSpan.FromSeconds((double)noteOff / 48000);
+        held.NoteOffTime = expectedState.NoteOffTime = offTime;
+        float[] released = new float[releaseFrames];
+        float[] expectedRelease = new float[releaseFrames];
+        allocation = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, noteOff, releaseFrames, released);
+        (GC.GetAllocatedBytesForCurrentThread() - allocation).Should().Be(0L,
+            "Note Off during a running source fade must not allocate PCM state");
+        oracle.Render(context, expectedState, noteOff, releaseFrames,
+            expectedRelease);
+        for (int i = 0; i < releaseFrames; i++)
+            released[i].Should().BeApproximately(expectedRelease[i], 5e-5f,
+                $"incoming/outgoing release and parent Filter at {noteOff + i}");
+
+        released[10].Should().BeGreaterThan(0.3f,
+            "both Samples contribute just after Note Off");
+        released[incomingLength + edit - noteOff + 40]
+            .Should().BeGreaterThan(0.01f,
+                "outgoing Sample still releases after incoming EOF");
+        long expectedEnd = release.GetEndActiveFrameExclusiveAfterNoteOff(
+            noteOff, 48000)!.Value + 144; // authored 3 ms Filter tail
+        oracle.GetEndFrameExclusive(context, expectedState)
+            .Should().Be(expectedEnd);
+        revised.GetEndFrameExclusive(context, held).Should().Be(expectedEnd,
+            "the outgoing fade cannot prolong release or remove the IIR tail");
+        released.Skip((int)(expectedEnd - noteOff))
+            .Should().OnlyContain(value => value == 0f,
+                "both Source histories and the authored tail must retire");
+        worker.Fault.Should().BeNull();
     }
 
     [Test]
@@ -1222,6 +1360,16 @@ public sealed class FmSynthLiveSourceIdTests
         {
             curve = null;
             return false;
+        }
+    }
+
+    private sealed class OneCurve(ObjectId id, NodeEnvelopeCurve value)
+        : IEnvelopeCurveResolver
+    {
+        public bool TryResolve(ObjectId requested, out IEnvelopeCurve? curve)
+        {
+            curve = requested == id ? value : null;
+            return curve is not null;
         }
     }
 
