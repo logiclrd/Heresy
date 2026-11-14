@@ -1123,6 +1123,17 @@ public sealed class FmSynthMultiTests
         bareAfter.Render(context, ungated, edit, frames - edit,
             upstream.AsSpan(edit));
 
+        // Prove this is truly a TWO-ONSET fixture, rather than passing
+        // vacuously because a rephase was refused or never audible.
+        SoundState neverRephased = bareBefore.CreateState();
+        neverRephased.SetNoiseSeed(seed);
+        float[] oldOnsetOnly = new float[frames];
+        bareBefore.Render(context, neverRephased, 0, frames, oldOnsetOnly);
+        Enumerable.Range(950, 500)
+            .Max(i => Math.Abs(upstream[i] - oldOnsetOnly[i]))
+            .Should().BeGreaterThan(0.02f,
+                "the prepared new oscillator phases and independent IIR histories must genuinely contribute");
+
         SampleSound baked = new(new SampleDefinition(bakedSampleId,
             "Unreleased phases and inner Filter histories",
             new ExternalAssetReference("c4-onset-release-oracle.wav")),
