@@ -355,6 +355,86 @@ public sealed class FmSynthLiveSourceIdTests
 
 
     [Test]
+    public void TwoStageOnePoleCascadeKeepsBothHistoriesForNewSampleSource()
+    {
+        const int start = 128, fadeFrames = 4800;
+        FilterInstance filter = TwoStageOnePole();
+        SampleSound oldSample = Sample(FirstId, Enumerable.Repeat(0.30f, 16000).ToArray());
+        SampleSound newSample = Sample(AliasId, Enumerable.Repeat(-0.25f, 16000).ToArray());
+        SourceResolver sources = new(FirstId, oldSample, AliasId, newSample);
+        FmSynthSound original = FilteredSound(FirstId, sources, filter);
+        FmSynthSound revised = FilteredSound(AliasId, sources, filter);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        original.Render(context, held, 0, start, new float[start]);
+        original.CanAdoptRunningState(revised, held).Should().BeFalse();
+        PrepareReplacement(original, revised, held);
+
+        // One continuously rendered two-stage cascade receives the
+        // precomputed Source-only transition, with no state reset at edit.
+        float[] baked = new float[start + fadeFrames + 96];
+        for (int i = 0; i < baked.Length; i++)
+        {
+            if (i < start) { baked[i] = 0.30f; continue; }
+            double t = Math.Clamp((double)(i - start) / fadeFrames, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            baked[i] = (float)(0.30 * (1 - w) - 0.25 * w);
+        }
+        FmSynthSound reference = FilteredReference(filter, baked);
+        float[] expected = new float[baked.Length];
+        reference.Render(context, reference.CreateState(), 0, expected.Length, expected);
+        float[] actual = new float[baked.Length - start];
+        long allocation = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, start, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocation).Should().Be(0);
+        for (int i = 0; i < actual.Length; i++)
+            actual[i].Should().BeApproximately(expected[start + i], 4e-5f,
+                $"both independent OnePole histories remain continuous at {start + i}");
+    }
+
+    [Test]
+    public void TwoStageOnePoleCascadeRetargetsTwoAddSourcesWithShortIncomingEof()
+    {
+        const int start = 128, fadeFrames = 4800;
+        FilterInstance filter = TwoStageOnePole();
+        SampleSound first = Sample(FirstId, Enumerable.Repeat(0.40f, 16000).ToArray());
+        SampleSound second = Sample(AliasId, Enumerable.Repeat(0.12f, 16000).ToArray());
+        SampleSound tiny = Sample(ThirdId, Enumerable.Repeat(0.90f, 48).ToArray());
+        SampleSound fourth = Sample(FourthId, Enumerable.Repeat(-0.20f, 16000).ToArray());
+        ManySourceResolver sources = new((FirstId, first), (AliasId, second),
+            (ThirdId, tiny), (FourthId, fourth));
+        FmSynthSound original = FilteredMixSound(FirstId, AliasId, sources, filter);
+        FmSynthSound revised = FilteredMixSound(ThirdId, FourthId, sources, filter);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        original.Render(context, held, 0, start, new float[start]);
+        PrepareReplacement(original, revised, held);
+
+        float[] baked = new float[start + fadeFrames + 128];
+        for (int i = 0; i < baked.Length; i++)
+        {
+            if (i < start) { baked[i] = 0.52f; continue; }
+            int local = i - start;
+            double t = Math.Clamp((double)local / fadeFrames, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            baked[i] = (float)(0.40 * (1 - w)
+                + (local < 48 ? 0.90 * w : 0)
+                + 0.12 * (1 - w) - 0.20 * w);
+        }
+        FmSynthSound reference = FilteredReference(filter, baked);
+        float[] expected = new float[baked.Length];
+        reference.Render(context, reference.CreateState(), 0,
+            expected.Length, expected);
+        float[] actual = new float[baked.Length - start];
+        long allocation = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, start, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocation).Should().Be(0);
+        for (int i = 0; i < actual.Length; i++)
+            actual[i].Should().BeApproximately(expected[start + i], 4e-5f,
+                $"both Sources atomically fade into an uninterrupted two-stage cascade at {start + i}");
+    }
+
+    [Test]
     public void FilteredSingleSourceReplacementRetainsOnePoleHistory()
     {
         FilterInstance filter = OnePole();
@@ -739,6 +819,20 @@ public sealed class FmSynthLiveSourceIdTests
         new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
     ]));
 
+
+    private static FilterInstance TwoStageOnePole()
+    {
+        FilterDefinition definition = new((ObjectId)9921U, "Two-stage Source cascade", [
+            new FilterStageDefinition(1, "first", FilterKind.OnePole),
+            new FilterStageDefinition(2, "second", FilterKind.OnePole),
+        ]);
+        FilterInstance instance = new(definition);
+        instance.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(800));
+        instance.SetStageParameter(2, "CutoffHz",
+            FilterParameterValue.FromNumber(1800));
+        return instance;
+    }
 
     private static FilterInstance OnePole()
     {
