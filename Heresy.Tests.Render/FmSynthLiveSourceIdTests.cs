@@ -109,8 +109,16 @@ public sealed class FmSynthLiveSourceIdTests
             "the replacement fades on the shared 100 ms smoothstep clock");
         output[4800].Should().BeApproximately(0.75f, 1e-5f,
             "after the fade the new Sample owns the entire output");
+        // A live pitch curve cannot project a Sample EOF before reaching it.
+        // Render through the actual end, then assert the new local clock.
+        float[] throughEof = new float[11201];
+        long eofAllocation = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, 4929, throughEof.Length, throughEof);
+        (GC.GetAllocatedBytesForCurrentThread() - eofAllocation).Should().Be(0);
+        throughEof[11198].Should().BeApproximately(0.75f, 1e-6f);
+        throughEof[11199].Should().Be(0.0f);
         revised.GetEndFrameExclusive(context, held).Should().Be(16128,
-            "new Sample EOF is measured relative to its fresh 128-frame onset");
+            "observed new Sample EOF belongs to its fresh onset at frame 128");
         worker.Fault.Should().BeNull();
     }
 
@@ -129,12 +137,15 @@ public sealed class FmSynthLiveSourceIdTests
         SoundState held = original.CreateState();
         original.Render(context, held, 0, 128, new float[128]);
         PrepareReplacement(original, revised, held);
-        revised.GetEndFrameExclusive(context, held).Should().Be(4928,
-            "a short new Sample cannot end the parent before the outgoing fade");
-
         float[] result = new float[4802];
         long allocation = GC.GetAllocatedBytesForCurrentThread();
-        revised.Render(context, held, 128, result.Length, result);
+        revised.Render(context, held, 128, 200, result.AsSpan(0, 200));
+        // Once the new 100-frame Sample's EOF was actually observed, its
+        // silence must not remove the old Sample before the full fade.
+        revised.GetEndFrameExclusive(context, held).Should().Be(4928,
+            "outgoing Sample must carry the fade after new Sample EOF");
+        revised.Render(context, held, 328, result.Length - 200,
+            result.AsSpan(200));
         (GC.GetAllocatedBytesForCurrentThread() - allocation).Should().Be(0);
         result[0].Should().BeApproximately(0.25f, 1e-6f);
         result[101].Should().BeGreaterThan(0.24f,
@@ -166,11 +177,11 @@ public sealed class FmSynthLiveSourceIdTests
         long allocation = GC.GetAllocatedBytesForCurrentThread();
         revised.Render(context, held, 128, output.Length, output);
         (GC.GetAllocatedBytesForCurrentThread() - allocation).Should().Be(0);
-        output[72].Should().BeGreaterThan(0.2f);
-        output[73].Should().Be(0.0f,
-            "the existing definite Note Off cuts both sides after frame 200");
-        output.Skip(73).Should().OnlyContain(x => x == 0f);
-        revised.GetEndFrameExclusive(context, held).Should().Be(201);
+        output[71].Should().BeGreaterThan(0.2f);
+        output[72].Should().Be(0.0f,
+            "the existing definite Sample Note Off is exclusive at frame 200");
+        output.Skip(72).Should().OnlyContain(x => x == 0f);
+        revised.GetEndFrameExclusive(context, held).Should().Be(200);
     }
 
     private static void PrepareReplacement(
