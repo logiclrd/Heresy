@@ -94,6 +94,30 @@ public sealed class MainWindowSharedAudioPublicationTests
 			Assert.That(indicator.IsVisible, Is.False,
 				"a base snapshot revision change alone cannot classify any playing note as older");
 
+			// One incompatible held note now matters, regardless of the
+			// unchanged session-base revision or other successful live edits.
+			typeof(MainWindow).GetField("_playbackSnapshot",
+				BindingFlags.Instance | BindingFlags.NonPublic)!
+				.SetValue(window, new PlaybackSnapshotInfo(
+					2, document, document.AudioRevision, OlderAudioVoiceCount: 1));
+			typeof(MainWindow).GetMethod("UpdatePlaybackSnapshotIndicator",
+				BindingFlags.Instance | BindingFlags.NonPublic)!
+				.Invoke(window, null);
+			Assert.That(indicator.IsVisible, Is.True);
+			Assert.That(indicator.Text, Is.EqualTo("Playback uses older audio"));
+			Assert.That(ToolTip.GetTip(indicator)?.ToString(),
+				Does.Contain("last affected note ends"));
+
+			// The last such note retires while current notes may continue.
+			typeof(MainWindow).GetField("_playbackSnapshot",
+				BindingFlags.Instance | BindingFlags.NonPublic)!
+				.SetValue(window, new PlaybackSnapshotInfo(
+					3, document, document.AudioRevision, OlderAudioVoiceCount: 0));
+			typeof(MainWindow).GetMethod("UpdatePlaybackSnapshotIndicator",
+				BindingFlags.Instance | BindingFlags.NonPublic)!
+				.Invoke(window, null);
+			Assert.That(indicator.IsVisible, Is.False);
+
 			// The old snapshot is not a different *document*. This remains
 			// separate from the genuine 'another song' warning.
 			typeof(MainWindow).GetField("_playbackSnapshot",
