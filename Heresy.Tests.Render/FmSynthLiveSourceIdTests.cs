@@ -231,6 +231,86 @@ public sealed class FmSynthLiveSourceIdTests
     }
 
     [Test]
+    public void ChangedSampleAndFrequencyBasisCrossfadeAtIndependentReadheadsBeforeOnePole()
+    {
+        const int start = 128, fade = 4800;
+        double neutral = FmMultiNode.NeutralFrequencyHz;
+        float[] oldData = Enumerable.Range(0, 20000)
+            .Select(i => (float)(0.08 + (i % 103) * 0.006))
+            .ToArray();
+        float[] newData = Enumerable.Range(0, 20000)
+            .Select(i => (float)(0.12 + (i % 157) * 0.004))
+            .ToArray();
+        SampleSound oldSample = Sample(FirstId, oldData);
+        SampleSound newSample = Sample(AliasId, newData);
+        SourceResolver resolver = new(FirstId, oldSample, AliasId, newSample);
+        FilterInstance filter = OnePole();
+
+        FmSynthSound Build(ObjectId id, double hz, SourceResolver sounds)
+            => new(new FmSynthGraph([
+                new FmSoundSourceNode(1, id, hz),
+                new FmFilterNode(2, 1, filter, tailSeconds: 0.003),
+            ], 2), sounds, soundResolver: sounds,
+                enableLiveMultiExpansion: true);
+        FmSynthSound original = Build(FirstId, neutral, resolver);
+        FmSynthSound revised = Build(AliasId, neutral * 2, resolver);
+        SoundState held = original.CreateState();
+        RenderContext context = Mono();
+
+        // Two independently rendered Source notes supply the oracle:
+        // A is evaluated at its ORIGINAL 1x rate and current playhead,
+        // B is a fresh 2x note beginning at the publication frame.
+        // Neither side is reconstructed from the other's readhead.
+        FmSynthSound bareOld = Sound(FirstId, resolver);
+        FmSynthSound bareNew = new(new FmSynthGraph([
+            new FmSoundSourceNode(1, AliasId, neutral * 2),
+        ], 1), resolver, soundResolver: resolver,
+            enableLiveMultiExpansion: true);
+        float[] outgoing = new float[start + fade + 64];
+        float[] incoming = new float[fade + 64];
+        bareOld.Render(context, bareOld.CreateState(), 0,
+            outgoing.Length, outgoing);
+        bareNew.Render(context, bareNew.CreateState(), 0,
+            incoming.Length, incoming);
+        float[] blended = new float[outgoing.Length];
+        for (int frame = 0; frame < blended.Length; frame++)
+        {
+            if (frame < start)
+            {
+                blended[frame] = outgoing[frame];
+                continue;
+            }
+            int local = frame - start;
+            double t = Math.Clamp((double)local / fade, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            blended[frame] = (float)(outgoing[frame] * (1 - w)
+                + incoming[local] * w);
+        }
+        SampleSound baked = Sample(FirstId, blended);
+        SourceResolver oracleResolver = new(FirstId, baked, AliasId, baked);
+        FmSynthSound oracle = Build(FirstId, neutral, oracleResolver);
+        float[] reference = new float[blended.Length];
+        oracle.Render(context, oracle.CreateState(), 0,
+            reference.Length, reference);
+
+        original.Render(context, held, 0, start, new float[start]);
+        original.CanPrepareMultiExpansion(revised, held).Should().BeTrue(
+            "a frequency-basis edit belongs to the NEW Sample onset, not to the old A readhead");
+        PrepareReplacement(original, revised, held);
+        float[] actual = new float[fade + 64];
+        long allocation = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, start, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocation).Should().Be(0L,
+            "both independent Source playheads and the shared OnePole are PCM-owned");
+        for (int i = 0; i < actual.Length; i++)
+            actual[i].Should().BeApproximately(reference[start + i], 3e-5f,
+                $"A's original 1x rate, B's fresh 2x rate, and the one continuous pole at frame {start + i}");
+        actual[0].Should().BeApproximately(reference[start], 1e-6f);
+        actual[fade / 2].Should().BeApproximately(reference[start + fade / 2], 3e-5f);
+        actual[fade].Should().BeApproximately(reference[start + fade], 3e-5f);
+    }
+
+    [Test]
     public void ShortReplacementSampleEofCannotEraseAudibleOutgoingFade()
     {
         SampleSound originalSample = Sample(FirstId,
