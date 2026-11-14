@@ -1177,20 +1177,21 @@ public sealed class FmSynthNnaVirtualLifecycleTests
         actual.AdoptPreparedFirControls();
         Compare(30, 81);
 
-        // The original fade is finished. B is already at natural EOF;
-        // only the filter tail remains. This is not a new note onset.
-        Assert.That(actual.GetChannelState(0).CurrentVoice, Is.Not.Null,
-            "the authored 40-ms filter tail must remain an independently owned voice");
+        // The original fade is finished and no independent Source
+        // remains active: the terminal B Sample is already at natural
+        // EOF. The old note has retired rather than using a deferred
+        // edit to create an onset after its finite lifetime. The
+        // existing Source EOF contract must not be artificially
+        // extended by a completed fade or a speculative Filter tail.
+        Assert.That(actual.GetChannelState(0).CurrentVoice, Is.Null);
         actual.AdoptPreparedFirControls();
         actual.QueuePendingFirControls(worker);
         Assert.Multiple(() =>
         {
-            Assert.That(actual.CountOlderAudioVoices(), Is.EqualTo(1),
-                "a second Sample cannot start from an expired B readhead solely because a Filter tail still sounds");
+            Assert.That(actual.CountOlderAudioVoices(), Is.Zero,
+                "a finished old note cannot keep a sticky older-audio mark");
             Assert.That(worker.CompletedMultiExpansionCount, Is.EqualTo(2),
-                "the deferred C must not be constructed for an exhausted voice");
-            Assert.That(actual.GetChannelState(0).CurrentVoice!.Sound,
-                Is.SameAs(second));
+                "the deferred C must not be constructed for a retired voice");
         });
 
         Compare(111, 59);
@@ -1212,6 +1213,105 @@ public sealed class FmSynthNnaVirtualLifecycleTests
         Assert.That(latest[^1], Is.GreaterThan(0.8f),
             "only a fresh note creates the new Sample invocation");
         Assert.That(worker.Fault, Is.Null);
+    }
+
+    [Test]
+    public void DeferredReplacementMayReviveFinishedSampleWhileSiblingKeepsNoteActive()
+    {
+        ObjectId aId = (ObjectId)72421U;
+        ObjectId shortId = (ObjectId)72422U;
+        ObjectId newestId = (ObjectId)72423U;
+        ObjectId siblingId = (ObjectId)72424U;
+        Registry registry = new();
+        SampleSound Sample(ObjectId id, float value, int frames)
+            => new(new SampleDefinition(id, "C4(i) sibling",
+                new ExternalAssetReference("c4-i-sibling.wav")),
+                new MemorySampleData(Rate, 1,
+                    Enumerable.Repeat(value, frames).ToArray()));
+        registry.Add(aId, Sample(aId, 0.2f, 800));
+        registry.Add(shortId, Sample(shortId, 0.6f, 15));
+        registry.Add(newestId, Sample(newestId, 0.9f, 800));
+        registry.Add(siblingId, Sample(siblingId, 0.1f, 800));
+
+        FilterInstance pole = new(new FilterDefinition(
+            (ObjectId)72425U, "C4(i) shared pole"));
+        pole.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(240));
+
+        FmSynthSound Sound(ObjectId id)
+            => new(new FmSynthGraph([
+                new FmSoundSourceNode(1, id,
+                    FmMultiNode.NeutralFrequencyHz),
+                new FmSoundSourceNode(2, siblingId,
+                    FmMultiNode.NeutralFrequencyHz),
+                new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
+                new FmFilterNode(4, 3, pole, tailSeconds: 0.003),
+            ], 4), registry, soundResolver: registry,
+                enableLiveMultiExpansion: true);
+
+        FmSynthSound first = Sound(aId);
+        FmSynthSound second = Sound(shortId);
+        FmSynthSound newest = Sound(newestId);
+        registry.Add(SourceId, first);
+        PlaybackSession session = Session(registry, Schedule());
+        session.ApplyLiveEvent(ChannelTarget.Physical(0),
+            [new StartNoteCommand(SourceId)]);
+        session.Render(0, 10, new float[10]);
+
+        using FirPreparationScheduler worker = new();
+        session.AdoptLiveSynthParameters(SourceId, first, second);
+        session.QueuePendingFirControls(worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        session.AdoptPreparedFirControls();
+        session.Render(10, 20, new float[20]);
+
+        // B ended at frame 25; A's 100-ms outgoing crossfade has not
+        // ended. The additional sibling Sample is still sounding.
+        session.AdoptLiveSynthParameters(SourceId, second, newest);
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+        float[] firstFade = new float[81];
+        session.Render(30, firstFade.Length, firstFade);
+        Assert.Multiple(() =>
+        {
+            Assert.That(firstFade[79], Is.GreaterThan(0.0f),
+                "the last A contribution and the continuing sibling remain audible");
+            Assert.That(session.GetChannelState(0).CurrentVoice!.Sound,
+                Is.SameAs(second));
+            Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+        });
+
+        // Unlike the one-Source note, this note is still genuinely
+        // active through the independent sibling; the expired B
+        // branch can be replaced with a fresh C invocation off-thread.
+        session.AdoptPreparedFirControls();
+        session.QueuePendingFirControls(worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 2,
+            TimeSpan.FromSeconds(5)), Is.True,
+            "the independently sounding sibling permits a new prepared C onset");
+        session.AdoptPreparedFirControls();
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.GetChannelState(0).CurrentVoice!.Sound,
+                Is.SameAs(newest));
+            Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+            Assert.That(worker.Fault, Is.Null);
+            Assert.That(worker.CompletedMultiExpansionCount, Is.EqualTo(2));
+        });
+
+        float[] secondFade = new float[101];
+        session.Render(111, secondFade.Length, secondFade);
+        Assert.Multiple(() =>
+        {
+            Assert.That(secondFade[0], Is.EqualTo(0.1f).Within(0.02f),
+                "the fresh C starts silent, preserving the sibling and its shared Filter history");
+            Assert.That(secondFade[50], Is.EqualTo(0.55f).Within(0.025f),
+                "the new 100-ms B→C mix contributes 0.45 plus the sibling 0.1");
+            Assert.That(secondFade[^1], Is.EqualTo(1.0f).Within(0.01f));
+            Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+        });
     }
 
     [TestCase(NewNoteAction.Cut, false)]
