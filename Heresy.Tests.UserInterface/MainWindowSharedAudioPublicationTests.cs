@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Threading.Tasks;
 
+using Avalonia.Controls;
 using Avalonia.Headless.NUnit;
 
 using Heresy.Core.Envelopes;
@@ -61,6 +62,54 @@ public sealed class MainWindowSharedAudioPublicationTests
 			// Close without prompting for unsaved changes. The existing
 			// document is no longer active, so its queued callbacks would
 			// also be ignored by the window's identity guard.
+			workspace.New();
+			window.Close();
+		}
+	}
+
+	[AvaloniaTest]
+	public void SnapshotWarningDescribesSessionBaseRatherThanClaimingOldSound()
+	{
+		RecordingTransport transport = new();
+		MainWindow window = new(transport);
+		DocumentWorkspace workspace = (DocumentWorkspace)typeof(MainWindow)
+			.GetField("_workspace", BindingFlags.Instance | BindingFlags.NonPublic)!
+			.GetValue(window)!;
+		TextBlock indicator = (TextBlock)typeof(MainWindow)
+			.GetField("_playbackSnapshotIndicator",
+				BindingFlags.Instance | BindingFlags.NonPublic)!
+			.GetValue(window)!;
+		window.Show();
+		try
+		{
+			// A live Synth edit can have reached its existing audition
+			// voice without refreshing the base song snapshot. The indicator
+			// cannot truthfully claim that its *audio* must be old.
+			SongDocument document = workspace.Document;
+			typeof(MainWindow).GetField("_playbackSnapshot",
+				BindingFlags.Instance | BindingFlags.NonPublic)!
+				.SetValue(window, new PlaybackSnapshotInfo(
+					1, document, document.AudioRevision));
+			document.MarkChanged(affectsAudio: true);
+			Assert.That(indicator.IsVisible, Is.True);
+			Assert.That(indicator.Text, Is.EqualTo("Playback snapshot is older"));
+			Assert.That(ToolTip.GetTip(indicator)?.ToString(),
+				Does.Contain("Compatible live Synth edits"),
+				"the explanation must acknowledge continued live audio updates");
+
+			// The old snapshot is not a different *document*. This remains
+			// separate from the genuine 'another song' warning.
+			typeof(MainWindow).GetField("_playbackSnapshot",
+				BindingFlags.Instance | BindingFlags.NonPublic)!
+				.SetValue(window, new PlaybackSnapshotInfo(
+					2, new SongDocument(), document.AudioRevision));
+			typeof(MainWindow).GetMethod("UpdatePlaybackSnapshotIndicator",
+				BindingFlags.Instance | BindingFlags.NonPublic)!
+				.Invoke(window, null);
+			Assert.That(indicator.Text, Is.EqualTo("Playback uses another song"));
+		}
+		finally
+		{
 			workspace.New();
 			window.Close();
 		}
