@@ -210,7 +210,7 @@ public sealed class FmSynthMultiRetirementTests
             "reviving a filtered Sample cannot build or replay DSP in PCM");
         actual[0].Should().BeApproximately(expected[10682], 2e-6f,
             "both continuing Sample playheads and IIR states must stay exact");
-        actual.Should().OnlyContain(float.IsFinite);
+        actual.Should().OnlyContain(x => float.IsFinite(x));
         Math.Abs(actual[^1] - expected[^1]).Should().BeGreaterThan(0.03f,
             "fresh reactivated Sample/Filter constituents become audible");
         ChildNextFrames(held).Skip(2).Should().OnlyContain(x => x == 4801,
