@@ -109,6 +109,7 @@ public sealed class SongPlaybackTransport
 					PollPlaybackPosition();
 					PollRuntimeDiagnostics();
 					PollAudioHealth();
+					PollOlderAudioVoices();
 				},
 				null,
 				Timeout.Infinite,
@@ -567,6 +568,42 @@ public sealed class SongPlaybackTransport
 			_currentPlaybackSnapshot = state;
 		}
 
+		NotifyPlaybackSnapshotChanged(state);
+	}
+
+	/// <summary>Inspect the producer's last published aggregate on the
+	/// transport timer, never the mutable voice graph on PCM or SDL.
+	/// A missed update is owned by its voice and disappears upon retirement.
+	/// A session's original snapshot revision is deliberately unchanged.</summary>
+	private void PollOlderAudioVoices()
+	{
+		if (_sourceFactory is not IPlaybackOlderAudioReportProvider provider)
+			return;
+		PlaybackRequest? request;
+		lock (_positionGate)
+			request = _diagnosticRequest;
+		if (request is null
+			|| !provider.TryGetOlderAudioVoiceCount(request, out int count))
+			return;
+		PlaybackSnapshotInfo state;
+		lock (_positionGate)
+		{
+			if (!ReferenceEquals(_diagnosticRequest, request)
+				|| !_currentPlaybackSnapshot.IsActive
+				|| _currentPlaybackSnapshot.OlderAudioVoiceCount == count)
+				return;
+			state = _currentPlaybackSnapshot with
+			{
+				Generation = _currentPlaybackSnapshot.Generation + 1,
+				OlderAudioVoiceCount = count,
+			};
+			_currentPlaybackSnapshot = state;
+		}
+		NotifyPlaybackSnapshotChanged(state);
+	}
+
+	private void NotifyPlaybackSnapshotChanged(PlaybackSnapshotInfo state)
+	{
 		if (PlaybackSnapshotChanged is not { } observers)
 			return;
 		PlaybackSnapshotChangedEventArgs args = new(state);
