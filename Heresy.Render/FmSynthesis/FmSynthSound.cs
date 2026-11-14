@@ -2248,8 +2248,21 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		// Source-local Volume migration can still apply to the held note.
 		// The participating Samples, curves, Filters and releases must
 		// continue passing TryGetLiveInstrumentVolume below.
-		if ((_isMultiInputSubgraph || next._isMultiInputSubgraph)
-			&& (_hasMulti || next._hasMulti))
+		bool compoundMultiChild = _isMultiInputSubgraph
+			|| next._isMultiInputSubgraph;
+		if (compoundMultiChild && (_hasMulti || next._hasMulti))
+			return false;
+		// A prepared oscillator onset may be refused when the selected
+		// Instrument Volume curve changed. Do not then rewrite the held
+		// Sample's future release deadline through a nominally compatible
+		// gain update. Only the exact captured sustain/release timeline
+		// (including its final zero policy) may migrate in an oscillator-
+		// bearing Multi child; edited node values on that timeline can
+		// still follow the usual source-local 100 ms smoothstep. Active
+		// Note Off/release transitions belong to the separate C4 contract.
+		bool preserveReleaseTimeline = compoundMultiChild
+			&& (_oscillatorCount > 0 || next._oscillatorCount > 0);
+		if (preserveReleaseTimeline && live.HasNoteOffTime)
 			return false;
 		for (int i = 0; i < _nodes.Length; i++)
 		{
@@ -2257,7 +2270,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				|| live.Sources[i]?.ActiveVolumeEnvelope is not NodeEnvelopeCurve)
 				continue;
 			if (!TryGetLiveInstrumentVolume(next, live, i,
-				out _, out _))
+				out SourceVoice? continuing, out NodeEnvelopeCurve? edited))
+				return false;
+			if (preserveReleaseTimeline
+				&& (continuing!.ActiveVolumeEnvelope is not NodeEnvelopeCurve oldCurve
+					|| !oldCurve.HasSameFrozenTimelineAs(edited!)))
 				return false;
 		}
 		return true;
