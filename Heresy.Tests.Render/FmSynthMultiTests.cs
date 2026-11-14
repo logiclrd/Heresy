@@ -1025,6 +1025,168 @@ public sealed class FmSynthMultiTests
         worker.Fault.Should().BeNull();
     }
 
+    [TestCase(320)]
+    [TestCase(640)]
+    public void NoteOffDuringPreparedMultiOnsetFadePreservesBothOnePoleHistoriesAndRelease(
+        int noteOffFrame)
+    {
+        const int edit = 128, frames = 1600, rate = 48000;
+        const int outerTail = 96;
+        const ulong seed = 0xC4B1UL;
+        ObjectId envelopeId = (ObjectId)7491U;
+        ObjectId bakedSampleId = (ObjectId)7492U;
+
+        // This is a genuine 10 ms sustain release, not Definite Note Off.
+        // The oscillator -> OnePole subtree lives in EACH outgoing and
+        // incoming Multi child, while the release and the second OnePole
+        // live outside the Multi and must see their moving mixed audio.
+        Heresy.Core.Envelopes.NodeEnvelopeDefinition definition =
+            new(envelopeId, "Shared release during onset rephase");
+        definition.ReplaceCurve([
+            new(TimeSpan.Zero, 1.0),
+            new(TimeSpan.FromMilliseconds(1), 1.0),
+            new(TimeSpan.FromMilliseconds(11), 0.0),
+        ], 1, 1, Heresy.Core.Envelopes.EnvelopeSustainLoopMode.Forward);
+        NodeEnvelopeCurve release = new(definition);
+        CurveResolver curves = new(envelopeId, release);
+        FilterInstance InnerPole() => new(new FilterDefinition(
+            (ObjectId)7493U, "Separate child IIR", [
+                new FilterStageDefinition(1, "low", FilterKind.OnePole, [
+                    new("CutoffHz", FilterParameterValue.FromNumber(700))])]));
+        FilterInstance OuterPole() => new(new FilterDefinition(
+            (ObjectId)7494U, "Continuing parent IIR", [
+                new FilterStageDefinition(1, "low", FilterKind.OnePole, [
+                    new("CutoffHz", FilterParameterValue.FromNumber(1300))])]));
+
+        FmSynthSound Multi(bool randomized, bool envelopeAndOuterFilter)
+        {
+            var nodes = new System.Collections.Generic.List<FmSynthNode> {
+                new FmOscillatorNode(1, FmOscillatorWaveform.Sawtooth, 309,
+                    minimum: -0.8, maximum: 0.8),
+                new FmFilterNode(2, 1, InnerPole(), tailSeconds: 0.002),
+                new FmMultiNode(3, 2, voiceCount: 3, detune: 0,
+                    randomizePhase: randomized, cycleLength: 1600,
+                    gainCompensation: true),
+            };
+            if (envelopeAndOuterFilter)
+            {
+                nodes.Add(new FmEnvelopeNode(4, envelopeId));
+                nodes.Add(new FmOperatorNode(5,
+                    FmOperatorKind.Multiply, [3, 4]));
+                nodes.Add(new FmFilterNode(6, 5,
+                    OuterPole(), tailSeconds: 0.002));
+            }
+            return new(new FmSynthGraph(nodes,
+                envelopeAndOuterFilter ? 6 : 3),
+                envelopeAndOuterFilter ? curves : new EmptyEnvelopes(),
+                enableLiveMultiExpansion: true);
+        }
+
+        FmSynthSound before = Multi(false, true), after = Multi(true, true);
+        FmSynthSound bareBefore = Multi(false, false);
+        FmSynthSound bareAfter = Multi(true, false);
+        RenderContext context = Mono();
+        SoundState held = before.CreateState();
+        SoundState ungated = bareBefore.CreateState();
+        held.SetNoiseSeed(seed);
+        ungated.SetNoiseSeed(seed);
+        before.Render(context, held, 0, edit, new float[edit]);
+
+        // Build an independent oracle without any Note Off. The original
+        // and worker-prepared Filter histories advance through precisely
+        // the same oscillator onset phases, but NEVER see release state.
+        // Baked mono PCM then goes through a separate release Envelope and
+        // parent OnePole, so the result cannot inherit the edited note's
+        // release/retirement bookkeeping.
+        float[] upstream = new float[frames];
+        bareBefore.Render(context, ungated, 0, edit,
+            upstream.AsSpan(0, edit));
+
+        using FirPreparationScheduler worker = new();
+        using FirPreparationScheduler oracleWorker = new();
+        void Rephase(FmSynthSound original, FmSynthSound revised,
+            SoundState state, FirPreparationScheduler scheduler)
+        {
+            original.RequestMultiExpansionPreparation(revised, state)
+                .Should().BeTrue("the oscillator and child OnePole are rephase-compatible");
+            original.QueuePendingFirControls(state, scheduler);
+            SpinWait.SpinUntil(
+                () => scheduler.CompletedMultiExpansionCount >= 1,
+                TimeSpan.FromSeconds(5)).Should().BeTrue();
+            original.AdoptPreparedFirControls(state);
+            original.TryPrepareRunningState(revised, state).Should().BeTrue();
+            original.CommitPreparedRunningState(revised, state);
+            scheduler.Fault.Should().BeNull();
+        }
+        Rephase(before, after, held, worker);
+        Rephase(bareBefore, bareAfter, ungated, oracleWorker);
+        bareAfter.Render(context, ungated, edit, frames - edit,
+            upstream.AsSpan(edit));
+
+        SampleSound baked = new(new SampleDefinition(bakedSampleId,
+            "Unreleased phases and inner Filter histories",
+            new ExternalAssetReference("c4-onset-release-oracle.wav")),
+            new MemorySampleData(rate, 1, upstream));
+        FmSynthSound oracle = new(new FmSynthGraph([
+            new FmSoundSourceNode(1, bakedSampleId,
+                FmMultiNode.NeutralFrequencyHz),
+            new FmEnvelopeNode(4, envelopeId),
+            new FmOperatorNode(5, FmOperatorKind.Multiply, [1, 4]),
+            new FmFilterNode(6, 5, OuterPole(), tailSeconds: 0.002),
+        ], 6), curves,
+            soundResolver: new SourceResolver(bakedSampleId, baked),
+            enableLiveMultiExpansion: true);
+        SoundState reference = oracle.CreateState();
+        oracle.Render(context, reference, 0, edit, new float[edit]);
+
+        // The first 192/512 frames of the 100-ms onset transition are
+        // already audible BEFORE Note Off. The two routes must agree
+        // independently of how the upcoming release is processed.
+        int preOff = noteOffFrame - edit;
+        float[] actualHeld = new float[preOff];
+        float[] expectedHeld = new float[preOff];
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        after.Render(context, held, edit, preOff, actualHeld);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
+        oracle.Render(context, reference, edit, preOff, expectedHeld);
+        for (int i = 0; i < preOff; i++)
+            actualHeld[i].Should().BeApproximately(expectedHeld[i], 6e-5f,
+                $"the independently prepared oscillator/IIR onset at {edit + i}");
+
+        TimeSpan off = TimeSpan.FromSeconds((double)noteOffFrame / rate);
+        held.NoteOffTime = reference.NoteOffTime = off;
+        int releaseEnd = checked((int)release
+            .GetEndActiveFrameExclusiveAfterNoteOff(noteOffFrame, rate)!.Value);
+        int expectedEnd = releaseEnd + outerTail;
+        expectedEnd.Should().Be(noteOffFrame + 481 + outerTail);
+
+        float[] actual = new float[frames - noteOffFrame];
+        float[] expected = new float[frames - noteOffFrame];
+        allocated = GC.GetAllocatedBytesForCurrentThread();
+        after.Render(context, held, noteOffFrame, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L,
+            "both prepared Filter histories must continue without PCM allocations");
+        oracle.Render(context, reference, noteOffFrame, expected.Length,
+            expected);
+        for (int i = 0; i < actual.Length; i++)
+            actual[i].Should().BeApproximately(expected[i], 6e-5f,
+                $"both onset branches and continuing parent release at {noteOffFrame + i}");
+
+        actual[3].Should().NotBe(0f,
+            "the release must not cut the active onset at Note Off");
+        Enumerable.Range(8, releaseEnd - noteOffFrame - 8)
+            .Max(i => Math.Abs(actual[i])).Should().BeGreaterThan(0.025f,
+                "the sounding outgoing and incoming child histories keep releasing");
+        actual.Skip(expectedEnd - noteOffFrame)
+            .Should().OnlyContain(x => x == 0f,
+                "neither the onset fade nor the child Filter can outlive the authored release and parent IIR tail");
+        after.GetEndFrameExclusive(context, held).Should().Be(expectedEnd,
+            "the old and prepared histories share one original Note Off deadline");
+        oracle.GetEndFrameExclusive(context, reference).Should().Be(expectedEnd);
+        worker.Fault.Should().BeNull();
+        oracleWorker.Fault.Should().BeNull();
+    }
+
     [Test]
     public void ModulatedOscillatorMultiRetainsOldOnsetWithoutAHistoryMigrationPolicy()
     {
