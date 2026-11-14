@@ -16,7 +16,7 @@
 
 1. `FmSynthEditorControl` commits inspector semantic changes through `UpdateParameter`/`FmSynthDocumentEditor.UpdateNode`; graph-only presentation does not publish audio. Inspector surfaces: Constant Value; Oscillator Waveform/Curvature/Frequency/Constant/Vmin/Vmax/Multiplier input/Exponential multiplier; Source selected object/Frequency/Constant/Multiplier input/Exponential multiplier; Envelope reference/shared Node or Script Envelope editor; Filter selected shared definition, stage overrides and TailSeconds, audio/modulation ports; Multi Presets/Distribution/Detune/VoiceCount/Components/RandomizePhase/GainCompensation/Cycle override and length; Operator kind/inputs; Noise currently no numeric inspector properties. Node/wire/output edits are structural; canvas positions/waypoints are presentational.
 2. Prepared revisions are published in ordered transport events, the prior voice's `FmSynthState` retains phase, Source playhead, Filter histories, Multi constituent history and release age when state compatibility permits. `CanAdoptRunningState` preflights *the entire graph*, followed by off-PCM preparation and atomic commit where necessary. Arbitrary incompatible replacement is never implemented as a silent `SoundState` type cast.
-3. Sample SourceId replacements are prepared off PCM and crossfaded **at each Source output** for 100 ms before any downstream Operator, fan-out or Filter. Graph-wide wiring/state preflight supersedes the former Add/OnePole whitelist. The same Source cannot start another replacement during its current fade; released voices and simultaneous changed Sample SourceId+frequency-basis edits still decline.
+3. Sample SourceId replacements are prepared off PCM and crossfaded **at each Source output** for 100 ms before any downstream Operator, fan-out or Filter. Graph-wide wiring/state preflight supersedes the former Add/OnePole whitelist. The same Source cannot start another replacement during its current fade: eligible later SourceId requests now coalesce into a single latest-wins deferred intent, which starts ordinary detached preparation only after the first fade finishes. Released voices and simultaneous changed Sample SourceId+frequency-basis edits still decline.
 4. Compatible *nested Synth* sound sources can recursively migrate their `FmSynthSound` instances and active histories, including SourceId reassignment between compatible Synth definitions. An **Instrument** selects a terminal tone/source when its `SoundInvocation` is first constructed, and its note configuration can include Volume/Pitch/Panning/Filter envelopes, tone Filter chains and release/NNA settings. Some held Instrument-backed Volume-envelope updates are supported, but replacing an arbitrary Instrument invocation is *not*. Pattern/Sequence are not direct `ISound` graph Source choices.
 5. Numeric Filter stage retunes (IIR and prepared FIR) can use two-phase transactional adoption across multiple stages/nodes; changed graph or effective processing topology remains a different category. Exact ongoing FM-bound parameter values matter when worker-preparing FIR. Scripted Envelope equivalence cannot always be proven across revisions. The existing log of slice-specific restrictions is **historical**, not an authoritative current whitelist.
 6. Audition-only smooth transitions and DC-monitor policy are distinct from raw Synth rendering and ordinary playback/export. Live output transitions depend on whether a change affects an audible signal, a modulation control, a Filter history, or a stable Multi child. There is **no proved universal single crossfade** for arbitrary nested signal graphs.
@@ -28,7 +28,7 @@
 | Constant Value | Compatible scalar publication; output transitions in `FmSynthCompoundShapeLiveTests`, `FmSynthLiveSampleOutputTests`, `FmSynthLiveFilterOutputTests`, stable Multi and filtered/sample Multi tests | Probe *upstream* Constant edits in evolving Multi/Source/Filter compound children, plus rapid overlapping revisions and release |
 | Oscillator Waveform, Curvature, Vmin/Vmax | Retains phase; bounded audible shape transition in `FmSynthCompoundShapeLiveTests`; `FmSynthUnifiedTransitionTests` covers common 100-ms clock | Probe *inside* a live Multi child and through mixed Filter/Source operators; verify no click without resetting child phase |
 | Oscillator Frequency Hz, Constant, Exponential multiplier | Existing phase/rate migration, logarithmic frequency glide and control-only distinction; `FmSynthUnifiedTransitionTests`, `FmSynthChildFrequencyModulationTests` | Real inspector/PCM test matrix for rapid audio-rate modulation and mixed child ancestry |
-| Source selected Sample; Source scalar Frequency/Constant/Exponential | `FmSynthLiveSourceIdTests` verifies independent Sample fades, multiple Sources, short EOF, graph-wide mixed Filters/Operators/fan-out, modulated input, atomic refusal; pre-existing forward-integrated pitch controls | Probe SourceId+frequency in one publication (currently declines), a SourceId switch inside a Multi child, overlapping edit during an active 100-ms fade, and Source `None`/silent selection policy |
+| Source selected Sample; Source scalar Frequency/Constant/Exponential | `FmSynthLiveSourceIdTests` verifies independent Sample fades, multiple Sources, short EOF, graph-wide mixed Filters/Operators/fan-out, modulated input, atomic refusal; pre-existing forward-integrated pitch controls | Probe SourceId+frequency in one publication (currently declines), a SourceId switch inside a Multi child, active-fade deferral combined with release/short EOF and downstream Filters, and Source `None`/silent selection policy; C4(h) verifies direct held-voice latest-wins deferral |
 | Source selected nested Synth | `FmSynthNestedSourceMigrationTests` covers compatible child edits under Multi(3)→OnePole, two compatible Synth SourceId selections, held-sibling isolation, sticky old-audio status on retained incompatible children, and nested worker supersession by newer parent+child revisions | Still probe distinct simultaneous parent/child commits with complex Filter/Source histories, deeper Instrument/Script Envelope combinations, and interrupted/released nested voices (C4 boundary) |
 | Source selected Instrument | `FmSynthMultiSourceLiveVolumeTests` now covers compatible selected-Sample Instrument Volume revisions across two Sources under a shared Filter and both nonoscillator and oscillator-bearing Multi(3), including source-local 100-ms gain smoothing, preserved oscillator phase/IIR history, worker-resolved incompatible rephase, rejection of changed release timelines, and all-or-none incompatible-tone refusal | **Approved deferral:** comprehensive cross-family/unrelated Instrument *substitution*. C2 still owns scripted Instrument Volume tones and UI publication; C4 owns active onset-fade interruption, Note Off/release changes and lifecycle transitions |
 | Envelope selected/shared Node and Script Envelope | Frozen Node curve migration, plus red-first-fixed audible Script Envelope smoothing inside Multi(3)→OnePole and no-fade Script pitch-only control in `FmSynthLiveGraphEnvelopeTests`; shared-object publication and Instrument Volume paths have separate regressions | C2 must verify Script editor commit/publication for every live field and `None ↔ reference`; C4 owns active Note Off and release-duration changes (audible releasing curve conservatively retained) |
@@ -53,7 +53,7 @@
 | Two compatible nested Synths selected through a SourceId edit, or an unchanged nested Synth whose own compatible definition changed | **Adopt recursively** | Preserve child state under whole-tree preflight; independently incompatible descendant stays in its prior generation and never receives unsafe later patch |
 | **Different Sample SourceId AND changed frequency/Constant/exponential basis in one authored revision** | **Unfinished eligible edit; C3/C4 regression and decision needed, not an approved permanent refusal** | A new independently prepared Sample can start with its new pitch, but the outgoing Sample needs an explicitly preserved prior pitch trajectory during the crossfade; merely removing the equality guard would risk retuning the outgoing audio unexpectedly |
 | **Unassigned `None` ↔ an eligible Sample source** | **Unfinished eligible edit; test and define explicit silence/new-invocation transition** | Authoring wiring is unchanged but an actual voice is created/destroyed. Validate note age, Note Off, fade-in/out, and new-note behavior before claiming support; do not classify it as graph rewiring |
-| A second different SourceId while the same Source's 100-ms old/new fade is unfinished | **Temporarily retain the prior generation; C4 still requires explicit interrupted-edit acceptance** | Current `FadeFrom` stores only one outgoing state. Replacing midfade without a bounded 3-way/flattened transition can lose audible history. The immediately requested revision still applies to future notes; do not claim held-note latest-wins until a concrete overlap policy is implemented and verified |
+| A second different SourceId while the same Source's 100-ms old/new fade is unfinished | **Defer compatible replacement until the active fade ends; latest pending SourceId wins** | Current `FadeFrom` still stores one outgoing state. The held voice finishes its original 100-ms mixture unchanged, with no premature older-audio warning. Subsequent SourceId edits replace the single pending intent; once the fade finishes, full preflight and worker preparation start an ordinary second 100-ms Source-local fade. Fresh notes use the latest definition immediately. A genuinely incompatible edit, changed Source frequency basis or release after Note Off does not gain an unsafe deferral |
 | SourceId reassignment **after Note Off has begun** | **Retain prior generation until release/EOF/tail retirement** | A replacement would introduce a fresh onset in a note whose release semantics are already committed. New notes take the new source; original note must never lose its previous tail |
 | A changed **audible Node Envelope curve after Note Off** | **Retain original releasing curve/lifetime until proven migratable** | The old curve may be audible after the new curve ends; replacing it without dual-curve end bookkeeping truncates release. Purely unrelated/matched envelope changes still follow ordinary preflight; revisit only with a concrete release-migration design |
 | Source swap involving unrelated Instrument invocations; Sample↔Instrument, Instrument↔Synth | **Approved feature deferral: retain prior generation** | Tone selection, envelopes, tone Filters and lifecycle state are independent types. Same-bound-Instrument *compatible property edits* are **not** blanket-exempt from the audit |
@@ -970,6 +970,91 @@ draft/unmerged. Next bounded C4 target: interrupted Source-local
 Sample transitions, including a later conflicting SourceId,
 release/EOF and older-generation accounting, without inventing
 fake historical Sample playheads.
+
+## C4(h) — repeated Sample SourceId edits during an active Source-local fade (2026-11-14)
+
+**RED first → compatible live migration FIXED.** A running note's
+already-audible Sample crossfade was originally excluded by
+`NeedsPreparedSampleReplacement`: a second otherwise eligible
+`SourceId` edit immediately marked the old note as
+`Playback uses older audio`, leaving it on the preceding Sample
+generation until retirement. The new
+`FmSynthNnaVirtualLifecycleTests.RepeatedSampleSourceEditsDuringLiveFadeDeferAndAdoptOnlyLatestAfterCompletion`
+test first failed exactly at that invariant: expected old-note count
+**0**, actual **1**, with no unrelated compilation/setup failure.
+[Test commit `6d7af89`](https://github.com/logiclrd/Heresy/commit/6d7af892f95ef301f8911709e99c27d6a2120c7a)
+recorded this regression before production changes.
+
+**Explicit bounded policy:** Do **not** rewrite an active old/new
+Sample's timeline, freeze a made-up historical mix, or form an
+unbounded three-/four-way fade. An otherwise preflight-compatible
+second Sample selection is held as *one deferred latest revision*
+on that particular voice until its current 100-ms Source-local
+fade has fully ended. Further inspector edits replace that pending
+intent, latest-wins, without constructing the superseded Sample
+invocation. Pending is **not** a missed revision and does **not**
+set sticky older-audio currency. The next normal
+`AdoptPreparedFirControls` / `QueuePendingFirControls` sequence
+repreflights and prepares the latest Sample entirely off PCM,
+then attaches its new invocation at the actual current frame,
+starting another ordinary **100-ms smoothstep**. The first
+fade is never shortened; a new note always selects the newest
+authored Sample immediately. The worker may introduce a small
+additional post-fade wait, but does not block the PCM callback.
+
+This is implemented by
+`FmSynthSound.CanDeferSampleReplacementUntilFadeCompletes`,
+a narrow `allowActiveSampleFade` flag **only for deferred
+admission preflight** (not for direct commit/worker construction),
+and `PlaybackVoice`'s existing single
+`_pendingLiveSynth` latest-wins slot:
+[admission commit `4a345ba`](https://github.com/logiclrd/Heresy/commit/4a345baa745069dbd3d7083837d2b33cf73c71a5)
+and [voice commit `8d2d39b`](https://github.com/logiclrd/Heresy/commit/8d2d39bbaeed426b72a8d29f258591829ea91667).
+A truly incompatible revision still sets older currency;
+edits involving a changed Source frequency/mode basis or an
+already-releasing note remain subject to their existing refusal
+rules. There is no new worker, allocation or third Sample history
+on PCM while the first fade is active.
+
+**End-to-end audible PCM contract at 1,000 Hz:** the original
+physical note has Sample A at **0.2**. At frame **10**, A→B
+(**0.6**) starts its 100-frame fade. At frame **20** the editor
+selects C (**0.8**), and at frame **30** D (**0.4**)
+supersedes C, both before the first fade completes.
+Older count remains **0**. A fresh virtual-99 note started at
+frame 30 uses **D** immediately. The original note remains
+on the undisturbed A→B clock through frame **110**:
+mixed PCM at frame **60** is **0.8** (A/B halfway + fresh D)
+and at frame **110** is **1.0** (B + fresh D).
+Only after that is D prepared off-thread: the retained note
+starts a B→D fade at frame **111**, with mixed PCM **1.0**
+at frame 111, **0.9** at frame **161**, and **0.8** at
+frame **211**. The worker completes exactly **two**
+Sample replacements (B, D): the superseded C is never
+constructed. The old physical note's later Cut leaves the
+fresh D note at **0.4**, no stale note or warning.
+The test asserts worker fault-free publication and exact
+transition values throughout; no audio renderer or Filter
+history has been artificially replayed.
+
+[Implementation CI #43644074525](https://github.com/logiclrd/Heresy/actions/runs/43644074525)
+passes the Release test-suite step, including the new PCM
+regression (previous baseline **3,739** tests; now **3,740**).
+Linux ARM64, native desktop host and Windows apphost checks also
+passed; exact final packaging status is checked separately.
+This is automated PCM acceptance, not a claim of physical
+device listening or missed hardware deadlines.
+
+**C4 stays OPEN.** This slice proves direct Sample
+SourceId latest-wins during an existing finite 100-ms fade,
+not all nested/Multi instances, short incoming EOF after a
+deferred supersession, release/Note Off *while deferral is
+outstanding*, shared-filter/FIR combinations, or
+SourceId-plus-frequency combined edits. Those are distinct
+remaining C1/C2/C4 contracts; C5 covers saturated workers
+and actual realtime callback deadlines. C2 and C4–C7 and
+the main all-nonstructural-properties TODO remain unchecked;
+PR #12 remains draft and unmerged.
 
 ### Adjacent UI issues deliberately outside PR #12 closure
 
