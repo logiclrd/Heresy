@@ -1763,19 +1763,25 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					// note configuration. Keep the already-captured envelope,
 					// fade and past-note semantics only when the newly
 					// selected Synth advertises an equivalent snapshot.
-					if (source.SourceId != newSource.SourceId
-						// A SourceId alias can resolve to the *exact same* frozen
-						// SampleSound already bound to this voice. Its invocation,
-						// PCM and note configuration are unchanged; neither a new
-						// Sample state nor a fade is needed. Never extrapolate this
-						// to an arbitrary different Sample or Instrument asset.
-						&& !(live.Sources[i]?.Sound is SampleSound boundSample
-							&& ReferenceEquals(boundSample, revised.Source))
-						&& (!CanMigrateSourceChild(live.Sources[i], revised.Source,
-								allowUnpreparedExpansion)
-							|| live.Sources[i]!.Invocation.Configuration
-								!= revised.Source!.SnapshotNoteConfiguration()))
-						return false;
+					if (source.SourceId != newSource.SourceId)
+					{
+						// An alias to the same bound Sample changes no history.
+						bool sameSample = live.Sources[i]?.Sound is SampleSound bound
+							&& ReferenceEquals(bound, revised.Source);
+						if (NeedsDirectSampleReplacement(next, live, i))
+						{
+							if (!allowUnpreparedExpansion
+								&& (live.PreparedExpansion?.Matches(next, live) != true
+									|| live.PreparedExpansion.SourceSlots[i] is null))
+								return false;
+						}
+						else if (!sameSample
+							&& (!CanMigrateSourceChild(live.Sources[i], revised.Source,
+									allowUnpreparedExpansion)
+								|| live.Sources[i]!.Invocation.Configuration
+									!= revised.Source!.SnapshotNoteConfiguration()))
+							return false;
+					}
 					if (live.Sources[i] is { } boundSource
 						&& !double.IsFinite(
 							newSource.FrequencyHz / boundSource.OriginalFrequencyHz))
@@ -1837,6 +1843,33 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					return false;
 			}
 		}
+		return true;
+	}
+
+	/// <summary>A different Sample is never allowed to steal the old
+	/// SampleSoundState. Only the simplest directly audible Source-only
+	/// audition shape is eligible for a fresh, worker-prepared replacement.
+	/// More complex graph paths need a separate transactional state policy.</summary>
+	private bool NeedsDirectSampleReplacement(FmSynthSound next,
+		FmSynthState state, int index)
+	{
+		if (!_allowMultiExpansion || !next._allowMultiExpansion
+			|| _nodes.Length != 1 || _outputIndex != 0 || index != 0
+			|| _nodes[index].Definition is not FmSoundSourceNode oldSource
+			|| next._nodes[index].Definition is not FmSoundSourceNode newSource
+			|| oldSource.SourceId == newSource.SourceId
+			|| oldSource.FrequencyHz != newSource.FrequencyHz
+			|| oldSource.Constant != newSource.Constant
+			|| oldSource.ExponentialMultiplier != newSource.ExponentialMultiplier
+			|| oldSource.MultiplierNodeId.HasValue
+			|| newSource.MultiplierNodeId.HasValue
+			|| state.Sources[index] is not { Sound: SampleSound } current
+			|| current.FadeFrom is not null
+			|| next._nodes[index].Source is not SampleSound revised
+			|| ReferenceEquals(current.Sound, revised)
+			|| state.SampleRate <= 0 || state.NextFrame <= 0
+			|| state.HasNoteOffTime)
+			return false;
 		return true;
 	}
 
@@ -1921,6 +1954,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			return false;
 		FmSynthState live = ValidateState(state);
 		bool requested = false;
+		for (int i = 0; i < _nodes.Length; i++)
+			if (NeedsDirectSampleReplacement(next, live, i))
+			{
+				requested = true;
+				if (live.PreparedExpansion?.Matches(next, live) != true)
+					live.MultiExpansion!.Offer(this, next, live);
+				break;
+			}
 		for (int i = 0; i < _nodes.Length; i++)
 			if (next._multiRatios[i].Length > live.Multis[i].Length
 				|| NeedsMultiOnsetReplacement(next, live, i)
@@ -2570,6 +2611,21 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				// Revived slots retain the fresh worker-created invocation.
 			}
 			live.ReplaceMultiVoices(i, grown);
+		}
+		// Publish newly selected Samples only after the *entire* voice has
+		// passed preflight. No source invocation is constructed in PCM.
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			if (!NeedsDirectSampleReplacement(next, live, i))
+				continue;
+			if (!expansionMatches
+				|| expansion!.SourceSlots[i] is not SourceVoice replacement
+				|| live.Sources[i] is not SourceVoice previous)
+				throw new InvalidOperationException(
+					"Sample SourceId replacement requires off-PCM worker preparation.");
+			replacement.StartSampleCrossfade(previous, live.NextFrame);
+			live.Sources[i] = replacement;
+			live.ChildEndChanged = true;
 		}
 		live.PreparedExpansion = null;
 		for (int i = 0; i < _nodes.Length; i++)
