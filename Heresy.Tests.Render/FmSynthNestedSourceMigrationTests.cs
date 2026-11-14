@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Threading;
 
 using AwesomeAssertions;
 using Heresy.Core.Assets;
@@ -13,6 +14,7 @@ using Heresy.Core.Sequencing;
 using Heresy.Render.Configuration;
 using Heresy.Render.Envelopes;
 using Heresy.Render.FmSynthesis;
+using Heresy.Render.Filters;
 using Heresy.Render.Playback;
 using Heresy.Render.Samples;
 using Heresy.Render.Sounds;
@@ -268,6 +270,122 @@ public sealed class FmSynthNestedSourceMigrationTests
         session.CountOlderAudioVoices().Should().Be(0);
     }
 
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void SupersededNestedMultiWorkerCannotApplyObsoleteParentRevision(
+        bool firstWorkerWasReady)
+    {
+        const int firstFrames = 128, waitingFrames = 64, outputFrames = 5000;
+        Registry sounds = new();
+        FilterInstance originalFilter = OnePole();
+        sounds.Set(ChildId, MultiConstantChild(1, 0.10));
+        FmSynthSound original = FilteredParent(ChildId, originalFilter, sounds);
+        sounds.Set(ChildId, MultiConstantChild(4, 0.14));
+        FmSynthSound obsolete = FilteredParent(ChildId, OnePole(1700), sounds);
+        sounds.Set(ChildId, MultiConstantChild(3, 0.18));
+        FmSynthSound latest = FilteredParent(ChildId, OnePole(2600), sounds);
+        sounds.Set(ParentId, original);
+
+        // Two independently running notes will reach the same selected
+        // revision: the primary sees an obsolete preparation first; its
+        // oracle sees ONLY the latest accepted candidate at the same frame.
+        PlaybackSession actualSession = new(Mono(),
+            new NoteScheduleBuilder().Freeze(), sounds);
+        PlaybackSession referenceSession = new(Mono(),
+            new NoteScheduleBuilder().Freeze(), sounds);
+        foreach (PlaybackSession session in new[] { actualSession, referenceSession })
+            session.ApplyLiveEvent(ChannelTarget.Virtual(1),
+                [new StartNoteCommand(ParentId)]);
+        actualSession.Render(0, firstFrames, new float[firstFrames]);
+        referenceSession.Render(0, firstFrames, new float[firstFrames]);
+
+        using ManualResetEventSlim firstStarted = new(false);
+        using ManualResetEventSlim allowFirstFinish = new(false);
+        using FirPreparationScheduler worker = new();
+        using FirPreparationScheduler referenceWorker = new();
+        int gateCount = 0;
+        worker.AfterMultiConstituentPrepared = () =>
+        {
+            if (!firstWorkerWasReady && Interlocked.Exchange(ref gateCount, 1) == 0)
+            {
+                firstStarted.Set();
+                // Never strand the scheduler if an assertion fails.
+                allowFirstFinish.Wait(TimeSpan.FromSeconds(10));
+            }
+        };
+
+        actualSession.AdoptLiveSynthParameters(ParentId, original, obsolete);
+        actualSession.CountOlderAudioVoices().Should().Be(0,
+            "worker preparation is not a definite refusal");
+        actualSession.QueuePendingFirControls(worker);
+        if (firstWorkerWasReady)
+            SpinWait.SpinUntil(() => worker.CompletedMultiExpansionCount >= 1,
+                TimeSpan.FromSeconds(5)).Should().BeTrue(
+                "the obsolete candidate should be ready but not yet published");
+        else
+            firstStarted.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue(
+                "the obsolete nested worker must be in-flight before supersession");
+
+        float[] waitingActual = new float[waitingFrames];
+        float[] waitingReference = new float[waitingFrames];
+        actualSession.Render(firstFrames, waitingFrames, waitingActual);
+        referenceSession.Render(firstFrames, waitingFrames, waitingReference);
+        waitingActual.Should().Equal(waitingReference,
+            "a pending revision must not change the sounding parent Filter or child");
+
+        actualSession.AdoptLiveSynthParameters(ParentId, obsolete, latest);
+        referenceSession.AdoptLiveSynthParameters(ParentId, original, latest);
+        actualSession.CountOlderAudioVoices().Should().Be(0,
+            "superseding a pending worker must not mark the still-migratable voice old");
+        referenceSession.CountOlderAudioVoices().Should().Be(0);
+        actualSession.QueuePendingFirControls(worker);
+        referenceSession.QueuePendingFirControls(referenceWorker);
+        allowFirstFinish.Set();
+
+        int expectedCompleted = firstWorkerWasReady ? 2 : 1;
+        SpinWait.SpinUntil(() =>
+            worker.CompletedMultiExpansionCount >= expectedCompleted
+            && referenceWorker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)).Should().BeTrue(
+                "only the latest nested Multi expansion should be prepared for adoption");
+        actualSession.AdoptPreparedFirControls();
+        referenceSession.AdoptPreparedFirControls();
+        actualSession.CountOlderAudioVoices().Should().Be(0);
+        referenceSession.CountOlderAudioVoices().Should().Be(0);
+
+        // New notes use the latest frozen parent, while the held notes keep
+        // their own accumulated child/Filter histories after publication.
+        sounds.Set(ParentId, latest);
+        foreach (PlaybackSession session in new[] { actualSession, referenceSession })
+            session.ApplyLiveEvent(ChannelTarget.Virtual(2),
+                [new StartNoteCommand(ParentId)]);
+        float[] actual = new float[outputFrames];
+        float[] expected = new float[outputFrames];
+        actualSession.Render(firstFrames + waitingFrames, outputFrames, actual);
+        referenceSession.Render(firstFrames + waitingFrames, outputFrames, expected);
+        for (int i = 0; i < outputFrames; i++)
+            actual[i].Should().BeApproximately(expected[i], 7e-5f,
+                $"no obsolete child, interrupted Filter history, or partial parent adoption at {i}");
+
+        actual[^1].Should().BeGreaterThan(0.30f,
+            "the 3-voice latest child, not the obsolete 4-voice proposal, must sound");
+        actualSession.CountOlderAudioVoices().Should().Be(0);
+        referenceSession.CountOlderAudioVoices().Should().Be(0);
+        worker.Fault.Should().BeNull();
+        referenceWorker.Fault.Should().BeNull();
+        if (!firstWorkerWasReady)
+            worker.CancelledMultiExpansionCount.Should().BeGreaterThan(0,
+                "the in-flight obsolete child preparation must be discarded");
+    }
+
+    private static FmSynthSound MultiConstantChild(int voices, double value)
+        => new(new FmSynthGraph([
+            new FmConstantNode(1, value),
+            new FmMultiNode(2, 1, voiceCount: voices, detune: 0,
+                randomizePhase: false, gainCompensation: false),
+        ], 2), new NoEnvelopes(), enableLiveMultiExpansion: true);
+
     private static FmSynthSound OscillatorChild(double frequency)
         => new(new FmSynthGraph([
             new FmOscillatorNode(1, FmOscillatorWaveform.Sine,
@@ -303,12 +421,12 @@ public sealed class FmSynthNestedSourceMigrationTests
         ], 2), new NoEnvelopes(), soundResolver: resolver,
             enableLiveMultiExpansion: true);
 
-    private static FilterInstance OnePole()
+    private static FilterInstance OnePole(double cutoffHz = 1200)
     {
         FilterInstance filter = new(new FilterDefinition(
             (ObjectId)99813U, "Nested Synth parent pole"));
         filter.SetStageParameter(1, "CutoffHz",
-            FilterParameterValue.FromNumber(1200));
+            FilterParameterValue.FromNumber(cutoffHz));
         return filter;
     }
 
