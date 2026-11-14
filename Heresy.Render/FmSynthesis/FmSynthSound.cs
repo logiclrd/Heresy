@@ -4151,14 +4151,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	{
 		voice.Invocation.State.NoteOffDisposition = forwardIndefinite
 			? NoteOffDisposition.Indefinite : NoteOffDisposition.Definite;
-		TimeSpan? childNoteOff = state.NoteOffTime is TimeSpan off
-			? off - TimeSpan.FromSeconds(
+		TimeSpan? childNoteOff = state.NoteOffTime is TimeSpan noteRelease
+			? noteRelease - TimeSpan.FromSeconds(
 				(double)voice.StartFrame / context.Configuration.SampleRate)
 			: null;
 		if (voice.Invocation.State.NoteOffTime != childNoteOff)
 			voice.Invocation.State.NoteOffTime = childNoteOff;
 		long? childEnd = voice.Sound.GetEndFrameExclusive(
-			state.MonoContext, voice.Invocation.State);
+			state.MonoContext!, voice.Invocation.State);
 		if (voice.Invocation.State.NaturalEndFrameExclusive is long natural)
 			childEnd = childEnd.HasValue
 				? Math.Min(childEnd.Value, natural) : natural;
