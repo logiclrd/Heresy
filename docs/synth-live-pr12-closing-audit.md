@@ -892,6 +892,85 @@ voice cancellation, including no resurrection of scoped/NNA notes.
 C2, C5–C7 and the main all-nonstructural-property Synth TODO
 remain unchecked. PR #12 remains draft and unmerged.
 
+## C4(g) — in-flight and ready nested Multi workers versus definitive incompatibility and scoped NNA cancellation (2026-11-14)
+
+**Automated PASS, no production DSP/session fix required.**
+The two parameterized cases of
+`FmSynthNnaVirtualLifecycleTests.InFlightNestedMultiWorkersCannotResurrectCancelledScopedNnaVoices`
+exercise **real detached work** for four independently sounding
+parent-owned Synth invocations. The 1,000-Hz fixture uses a nested
+`Constant(0.2) → Multi(1)` child beneath a parent Source and
+OnePole Filter, with a second child revision
+`Constant(0.6) → Multi(4)` requiring three prepared children
+**per old note**. Physical channel **0**, scoped virtual channel 7
+owned independently by **101** and **202**, and a displaced
+`NewNoteAction.Continue` predecessor in owner 101's NNA pool
+contribute **four old voices**. The parent Filter histories are
+per-voice; the test uses an independently unchanged session as
+the frame-by-frame PCM oracle.
+
+Both cases offer the compatible-but-not-yet-prepared nested
+expansion to all four voices; older-audio count remains **0**,
+because pending work is not definitive refusal.
+
+- **In-flight variant (`False`):** A deterministic off-PCM
+  `AfterMultiConstituentPrepared` gate holds the first worker
+  **after constructing a real child**, while the other three
+  voice-specific mailboxes are queued. The test then publishes
+  a different **structurally incompatible parent** and cancels
+  owner 101 before allowing the worker to finish.
+  All **four** obsolete queued/in-flight mailbox jobs are
+  accounted as **cancelled**, no obsolete child preparation is
+  counted as complete, and no abandoned arrays become audible.
+- **Ready-but-unadopted variant (`True`):** All **four**
+  obsolete worker results finish preparation **before** the
+  incompatible revision/cancellation, but have not been
+  consumed by the PCM owner. Their ready arrays are invalidated
+  and cannot publish after the structural edit or bring back
+  a cancelled owner.
+
+In **both** variants, definitive incompatibility changes the
+older-audio count **0 → 4** while the original parents continue
+sounding; `CancelScopedVoices(101)` retires that owner's
+current and NNA predecessor **4 → 2** without affecting
+owner 202 or physical 0. Explicit `AdoptPreparedFirControls`
+calls before and after worker completion cannot revive either
+cancelled note or replace the two retained old Synths.
+A frame-by-frame oracle verifies unchanged audio across
+the pending and post-cancellation windows. A newly started
+virtual-99 note uses the *current* structural graph:
+the two older notes remain at **0.2** each alongside the new
+**0.8** note, for settled mixed PCM **1.2**. Explicit owner-202
+and physical cuts reduce the sticky old count **2 → 1 → 0**;
+the new note remains audible at **0.8**. The worker reports no
+fault; the finally block always releases its deterministic
+gate, including on failed test assertions.
+
+[Test-only commit `c0c1c05`](https://github.com/logiclrd/Heresy/commit/c0c1c0580deeccfe709e1ee38012ff78e01c82fb)
+passed [exact-commit CI #43642579808](https://github.com/logiclrd/Heresy/actions/runs/43642579808):
+**3,739/3,739 tests**, Core 910, Render.File 29,
+Render **1,189**, Scripting 105, Playback 356 and UI 1,150.
+Release/native host, Windows apphost icon, versioned release-bundle
+and Linux ARM64 shared codecs were all green. This adds
+**two** deterministic worker-order cases over the 3,737-test
+C4(f) baseline. There is no actual device-CPU deadline or
+human sub-100-ms auditory claim.
+
+**C4 remains OPEN.** This bounds the stale *nested Multi*
+worker and scoped NNA cancellation interactions; it does not
+demonstrate every source-FIR worker combination, release
+Envelope changes while already releasing, or repeated
+**SourceId changes during an active Source-local 100-ms fade**.
+The last is a distinct unresolved eligible C1/C4 policy
+boundary. C5 still owns saturated worker queues, real callback
+deadlines and overload recovery; C2 owns the inspector-to-PCM
+property matrix. C2, C4–C7 and the overarching
+all-nonstructural Synth TODO stay unchecked and PR #12 stays
+draft/unmerged. Next bounded C4 target: interrupted Source-local
+Sample transitions, including a later conflicting SourceId,
+release/EOF and older-generation accounting, without inventing
+fake historical Sample playheads.
+
 ### Adjacent UI issues deliberately outside PR #12 closure
 
 Two independently actionable main-line TODOs were logged in [`docs/todo.md`](https://github.com/logiclrd/Heresy/blob/main/docs/todo.md) via [`dd55714`](https://github.com/logiclrd/Heresy/commit/dd55714d677ee8ee4641594e1f8ae2cb394039c3): stale **Configured stages** after editing a shared Filter definition and selected-stage controls hidden to the right in a non-resizable strip instead of below the list. `FmSynthEditorControl.AddFilterInspector` currently deliberately avoids rebuilding on popup close to preserve unsaved per-use drafts, and `FilterInstanceEditorControl` uses a left/right layout; the eventual fix must refresh safely without losing those drafts. These are real UI defects, but not evidence that a held note failed a realtime coefficient update.
