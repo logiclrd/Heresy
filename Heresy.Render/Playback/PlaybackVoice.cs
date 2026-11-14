@@ -352,6 +352,11 @@ public sealed class PlaybackVoice
 	// before the *whole* old voice can migrate in one atomic transaction.
 	private FmSynthSound? _pendingLiveSynth;
 
+	/// <summary>Sticky for this note: an applicable Synth revision was
+	/// definitively incompatible. Later independent shared updates do not
+	/// erase that missed revision. Only retirement clears the count.</summary>
+	internal bool UsesOlderAudio { get; private set; }
+
 	/// <summary>Explicit owner retirement/cut or a new authored revision
 	/// invalidates this voice's pending expansion work. The worker may
 	/// finish the child it was already constructing, but cannot publish
@@ -366,12 +371,20 @@ public sealed class PlaybackVoice
 	internal bool TryAdoptLiveSynth(ObjectId sourceId,
 		ISound previousSound, ISound nextSound)
 	{
-		if (OriginSourceId != sourceId
-			|| Sound is not FmSynthSound current
+		if (OriginSourceId != sourceId)
+			return false;
+		if (Sound is not FmSynthSound current
 			|| nextSound is not FmSynthSound next
 			|| (!ReferenceEquals(Sound, previousSound)
 				&& !ReferenceEquals(_pendingLiveSynth, previousSound)))
+		{
+			// The revision was relevant to this voice but no longer has
+			// a migratable predecessor. Do not confuse this with an unrelated
+			// Synth publication or an off-thread preparation delay.
+			UsesOlderAudio = true;
+			CancelPendingLivePreparation();
 			return false;
+		}
 
 		// When a second edit supersedes a not-yet-prepared first edit,
 		// compare it with the actual sounding generation, not the
@@ -380,7 +393,10 @@ public sealed class PlaybackVoice
 			CancelPendingLivePreparation();
 		_pendingLiveSynth = null;
 		if (!current.CanPrepareMultiExpansion(next, SoundState))
+		{
+			UsesOlderAudio = true;
 			return false;
+		}
 		if (current.TryPrepareRunningState(next, SoundState))
 		{
 			current.CommitPreparedRunningState(next, SoundState);
@@ -393,6 +409,8 @@ public sealed class PlaybackVoice
 			|| pending;
 		if (pending)
 			_pendingLiveSynth = next;
+		else
+			UsesOlderAudio = true;
 		return false;
 	}
 
@@ -658,6 +676,7 @@ public sealed class PlaybackVoice
 			return;
 		if (!current.CanPrepareMultiExpansion(revised, SoundState))
 		{
+			UsesOlderAudio = true;
 			CancelPendingLivePreparation();
 			return;
 		}
@@ -675,7 +694,10 @@ public sealed class PlaybackVoice
 			pending = current.RequestBoundLiveFirPreparation(
 				revised, SoundState) || pending;
 			if (!pending)
+			{
+				UsesOlderAudio = true;
 				CancelPendingLivePreparation();
+			}
 		}
     }
 
