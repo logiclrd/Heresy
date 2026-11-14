@@ -40,6 +40,19 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		}
 		public SoundInvocation Invocation { get; }
 		public ISound Sound { get; set; }
+		// A different Sample selected while this note is held receives its
+		// own local note clock. Only a detached worker-built SourceVoice may
+		// be attached; the original Sample continues during the bounded fade.
+		public long StartFrame { get; private set; }
+		public SourceVoice? FadeFrom { get; private set; }
+		public long FadeStartFrame { get; private set; }
+		public void StartSampleCrossfade(SourceVoice previous, long frame)
+		{
+			StartFrame = frame;
+			FadeStartFrame = frame;
+			FadeFrom = previous;
+		}
+		public void CompleteSampleCrossfade() => FadeFrom = null;
 		/// <summary>Instrument tone-table index bound when this voice was
 		/// created, not recomputed from a retuned pitch on the PCM thread.</summary>
 		public int? BoundInstrumentToneSlot { get; }
@@ -326,11 +339,13 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				revision._multiRatios[index].Length, 64) != 0;
 
 	private sealed class PreparedMultiExpansion(
-		FmSynthSound revision, MultiVoice[]?[] slots, int[] capacities,
+		FmSynthSound revision, MultiVoice[]?[] slots, SourceVoice?[] sourceSlots,
+		ISound?[] previousSources, int[] capacities,
 		ulong[] revivedLow, ulong[] revivedHigh,
 		ulong seed, double pitch, double speed, int sampleRate)
 	{
 		public MultiVoice[]?[] Slots { get; } = slots;
+		public SourceVoice?[] SourceSlots { get; } = sourceSlots;
 		public bool Matches(FmSynthSound next, FmSynthState state)
 		{
 			if (!ReferenceEquals(revision, next) || seed != state.NoiseSeed
@@ -338,7 +353,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				|| sampleRate != state.SampleRate)
 				return false;
 			for (int i = 0; i < capacities.Length; i++)
-				if (capacities[i] != state.Multis[i].Length
+				if (!ReferenceEquals(previousSources[i], state.Sources[i]?.Sound)
+					|| capacities[i] != state.Multis[i].Length
 					|| revivedLow[i] != RetiredMask(state.Multis[i],
 						next._multiRatios[i].Length, 0)
 					|| revivedHigh[i] != RetiredMask(state.Multis[i],
@@ -365,6 +381,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		private readonly ulong[] _revivedHigh = new ulong[nodeCount];
 		private readonly ulong[] _workRevivedLow = new ulong[nodeCount];
 		private readonly ulong[] _workRevivedHigh = new ulong[nodeCount];
+		private readonly bool[] _replaceSource = new bool[nodeCount];
+		private readonly bool[] _workReplaceSource = new bool[nodeCount];
+		private readonly ISound?[] _oldSources = new ISound?[nodeCount];
+		private readonly ISound?[] _workOldSources = new ISound?[nodeCount];
 		private FmSynthSound? _revision;
 		private ulong _seed;
 		private int _sampleRate;
@@ -382,7 +402,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					&& _seed == state.NoiseSeed && _pitch == state.BoundPitch
 					&& _speed == state.BoundSpeed && _sampleRate == state.SampleRate;
 				for (int i = 0; identical && i < _capacities.Length; i++)
-					identical = _capacities[i] == state.Multis[i].Length
+					identical = ReferenceEquals(_oldSources[i], state.Sources[i]?.Sound)
+						&& _capacities[i] == state.Multis[i].Length
 						&& _revivedLow[i] == RetiredMask(state.Multis[i],
 							next._multiRatios[i].Length, 0)
 						&& _revivedHigh[i] == RetiredMask(state.Multis[i],
@@ -397,6 +418,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				for (int i = 0; i < _capacities.Length; i++)
 				{
 					_capacities[i] = state.Multis[i].Length;
+					_oldSources[i] = state.Sources[i]?.Sound;
+					_replaceSource[i] = original.NeedsDirectSampleReplacement(next, state, i);
 					_rephase[i] = original.NeedsMultiOnsetReplacement(next, state, i);
 					_revivedLow[i] = RetiredMask(state.Multis[i],
 						next._multiRatios[i].Length, 0);
@@ -512,6 +535,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				Array.Copy(_rephase, _workRephase, _rephase.Length);
 				Array.Copy(_revivedLow, _workRevivedLow, _revivedLow.Length);
 				Array.Copy(_revivedHigh, _workRevivedHigh, _revivedHigh.Length);
+				Array.Copy(_replaceSource, _workReplaceSource, _replaceSource.Length);
+				Array.Copy(_oldSources, _workOldSources, _oldSources.Length);
 			}
 			long beforeTicks = Stopwatch.GetTimestamp();
 			long beforeBytes = GC.GetAllocatedBytesForCurrentThread();
@@ -596,7 +621,44 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				DiscardStale(version, scheduler, addedChildren, beforeBytes);
 				return;
 			}
-			PreparedMultiExpansion candidate = new(next, slots,
+			// The same bounded worker can also prepare a different direct
+			// Sample source. It creates a detached invocation with its own
+			// local frame zero; no live Sample state crosses worker threads.
+			SourceVoice?[] sourceSlots = new SourceVoice?[next._nodes.Length];
+			for (int i = 0; i < sourceSlots.Length; i++)
+			{
+				if (!_workReplaceSource[i])
+					continue;
+				if (!IsCurrent(version))
+				{
+					DiscardStale(version, scheduler, addedChildren, beforeBytes);
+					return;
+				}
+				FmSoundSourceNode authored =
+					(FmSoundSourceNode)next._nodes[i].Definition;
+				ISound newSound = next._nodes[i].Source
+					?? throw new InvalidOperationException(
+						"Missing prepared Sample source for live replacement.");
+				double childPitch = (authored.FrequencyHz / C4FrequencyHz)
+					* (authored.Constant ? 1.0 : pitch);
+				double childSpeed = authored.Constant ? 1.0 : speed;
+				SoundInvocation invocation = newSound.CreateInvocation(
+					childPitch, childSpeed)
+					?? throw new InvalidOperationException(
+						"Prepared Sample declined its replacement invocation.");
+				sourceSlots[i] = new SourceVoice(invocation,
+					authored.Constant ? 1.0 : pitch * speed,
+					authored.FrequencyHz, null);
+				addedChildren++;
+				scheduler.AfterMultiConstituentPrepared?.Invoke();
+			}
+			if (!IsCurrent(version))
+			{
+				DiscardStale(version, scheduler, addedChildren, beforeBytes);
+				return;
+			}
+			PreparedMultiExpansion candidate = new(next, slots, sourceSlots,
+				(ISound?[])_workOldSources.Clone(),
 				(int[])_workCapacities.Clone(),
 				(ulong[])_workRevivedLow.Clone(), (ulong[])_workRevivedHigh.Clone(),
 				seed, pitch, speed, sampleRate);
