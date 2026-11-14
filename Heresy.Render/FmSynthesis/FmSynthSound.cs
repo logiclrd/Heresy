@@ -1912,6 +1912,18 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| oldSource.MultiplierNodeId != newSource.MultiplierNodeId
 			|| state.Sources[index] is not { Sound: SampleSound } current
 			|| (current.FadeFrom is not null && !allowActiveSampleFade)
+			// A short incoming Sample may reach natural EOF while its
+			// predecessor still contributes to the Source-local fade.
+			// Defer the requested revision through that fade, but never
+			// construct a fresh Sample onset from the *finished* incoming
+			// readhead merely because a downstream Filter tail keeps the
+			// enclosing note alive after the fade. This is a refusal, not a
+			// restart or a transfer of the exhausted Sample's position.
+			|| (!allowActiveSampleFade
+				&& (current.InputFinished
+					|| current.EndFrame is long end && end <= state.NextFrame
+					|| current.Invocation.State.NaturalEndFrameExclusive is long eof
+						&& eof <= state.NextFrame - current.StartFrame))
 			|| next._nodes[index].Source is not SampleSound revised
 			|| ReferenceEquals(current.Sound, revised)
 			|| state.SampleRate <= 0 || state.NextFrame <= 0
