@@ -29,7 +29,7 @@
 | Oscillator Waveform, Curvature, Vmin/Vmax | Retains phase; bounded audible shape transition in `FmSynthCompoundShapeLiveTests`; `FmSynthUnifiedTransitionTests` covers common 100-ms clock | Probe *inside* a live Multi child and through mixed Filter/Source operators; verify no click without resetting child phase |
 | Oscillator Frequency Hz, Constant, Exponential multiplier | Existing phase/rate migration, logarithmic frequency glide and control-only distinction; `FmSynthUnifiedTransitionTests`, `FmSynthChildFrequencyModulationTests` | Real inspector/PCM test matrix for rapid audio-rate modulation and mixed child ancestry |
 | Source selected Sample; Source scalar Frequency/Constant/Exponential | `FmSynthLiveSourceIdTests` verifies independent Sample fades, multiple Sources, short EOF, graph-wide mixed Filters/Operators/fan-out, modulated input, atomic refusal; pre-existing forward-integrated pitch controls | Probe SourceId+frequency in one publication (currently declines), a SourceId switch inside a Multi child, overlapping edit during an active 100-ms fade, and Source `None`/silent selection policy |
-| Source selected nested Synth | Recursive compatible migration and dependent-publication tests; an incompatible child may retain prior generation | Test UI/PCM across two compatible SourceIds and child-only edit under parent Multi/Filter; explicit old-generation isolation for incompatible nested child |
+| Source selected nested Synth | Recursive compatible migration and dependent-publication tests; `FmSynthNestedSourceMigrationTests` proves child-only scalar adoption through parent Multi(3)→OnePole with zero PCM allocations, plus sticky older-audio marking for an incompatible child retained under a compatible parent Filter | Still test two compatible nested Synth SourceId selections, simultaneous parent/child edits, pending workers, held sibling isolation and interrupted/released nested combinations |
 | Source selected Instrument | Existing Instrument tone selection, configured envelopes and tone Filters; direct Sample-backed node Volume migration (`FmSynthMultiSourceLiveVolumeTests`) | **Approved deferral:** comprehensive cross-family/unrelated Instrument *substitution*. Before merge, protect existing Instrument-backed scalar/Volume live edits and changed-Source refusal with regression and status evidence; document actual limitations |
 | Envelope selected/shared Node and Script Envelope | Frozen Node curve migration and bounded output fade in `FmSynthLiveGraphEnvelopeTests`, `FmSynthLiveSampleEnvelopeNoiseTests`; UI shared-object publication in `SharedAudioEditLivePublicationTests`; selected Instrument Volume in `FmSynthMultiSourceLiveVolumeTests` | Probe Script Envelope audible edit, Node Envelope inside Multi/Filter/Source paths, rebind `None ↔ reference`, and active-release replacement (current code conservatively refuses audible curve change after Note Off) |
 | Filter selected definition; overrides / TailSeconds / shared edit | Atomic multi-processor prepared IIR/FIR retunes and FM-bound controls, `FmSynthLiveFilterOutputTests`, `FmFilterNodeRenderingTests`, multiple Filter realtime tests; user physically edited a three-stage Filter containing **SvfNotch** and **CombFeedback** and heard ongoing changes | Probe each stage-parameter *family*, more than one edited processor per publication, connected modulated FIR, rapid retune, release/tail, nested Multi/Instrument and **Filter definition selection with equivalent stage shape**. Stage add/remove/kind/generation is *effective topology*, not automatically guaranteed |
@@ -122,6 +122,50 @@ Test committed in `3f44a0ca`; first CI #43618589057 failed to compile **only bec
 **Human timing boundary:** No user listening of edits during the 100-ms overlap is requested. Two separately human-reproducible checks from the previous Multi+IIR fixture were already reported successful. This new success is an automated PCM/worker preparation acceptance, not physical device certification of every FIR configuration.
 
 **Still open:** C3 remains open for simultaneous structurally *compatible* nested Synth/Source edits, more complex and interrupted inner-Multi shape/voice-count cases, scripted Envelope and Instrument-backed paths and the wider C2/C4–C7 closing gates. The above success does not prove universal overbudget-FIR or stale-worker acceptance; separate existing worker tests cover their named cases only. PR #12 remains draft/unmerged.
+
+## C3 nested Synth/Source under parent Multi/Filter (2026-11-14)
+
+**Compatible child edit: AUTOMATED ACCEPTED without a DSP change.** The new
+`FmSynthNestedSourceMigrationTests.CompatibleNestedConstantEditInsideMultiPreservesParentFilterHistory`
+holds `Source(referenced child Synth: Constant 0.20) → Multi(3) → OnePole → Output`
+at 48 kHz, edits the *referenced child* Constant to 0.60, and keeps the same parent
+Multi constituents and OnePole state. All child invocations recursively adopt
+the new definition. A separate parent using a baked Sample whose value follows
+the 100-ms smoothstep supplies an independent, continuously rendered reference;
+every frame agrees within 5e-5, and the measured PCM segment allocates **zero
+managed bytes**. The test passed **before** the associated status-accounting fix.
+
+**Incompatible child edit: RED FIRST, then FIXED.** A parent
+`Source(child Synth) → OnePole` can correctly adopt its own compatible graph
+revision while a structurally changed referenced child Synth remains bound to
+its *old* sound. Initially the held voice continued playing that old child,
+but `PlaybackSession.CountOlderAudioVoices()` incorrectly returned **0**.
+`FmSynthNestedSourceMigrationTests.IncompatibleNestedChildRetainsSoundAndMarksOnlyHeldParentOlder`
+reproduced that bug on test-only commit `f67993a`: [CI #43620521906](https://github.com/logiclrd/Heresy/actions/runs/43620521906)
+had **1,163 of 1,164 Render tests passing**, with the expected 1-vs-0 failure.
+The earlier first test-only commit `7769ac3` failed at compilation due only
+to a missing `Heresy.Core.Sequencing` import; it was *not* behavioral evidence.
+
+Commit `ee0b8e7` adds a frozen-state recursive check for a truly retained
+incompatible nested Synth. Both immediate and worker-completed live publication
+paths mark the existing voice's **sticky older-audio flag** only after their
+preflight succeeds; a worker-pending revision is not treated as refusal.
+This retains the previous child audio and parent Filter history and keeps
+an unaffected new note current. Its old-audio count clears after the older
+note is Cut. The change does **not** reinstantiate child audio or broaden
+arbitrary Instrument/Source replacement.
+
+[CI #43620816545](https://github.com/logiclrd/Heresy/actions/runs/43620816545)
+**SUCCESS: 3,714 / 3,714 tests** (Core 910; Render.File 29; Render 1,164;
+Scripting 105; Playback 356; User Interface 1,150), including Release,
+native/apphost, release bundle smoke test and Linux ARM64 shared codecs.
+
+**Scope:** These are deterministic PCM and note-currency tests, not a claimed
+physical audition of nested edits. C3 remains **OPEN** for selecting between
+two compatible nested Synth SourceIds, simultaneous parent/child/held-sibling
+updates, nested pending worker generations and more complex Instrument/Script
+Envelope cases. C4 interruption/Note Off/EOF and C2 property-matrix closure
+also remain open; no sign-off or PR merge is implied.
 
 ### Adjacent UI issues deliberately outside PR #12 closure
 
