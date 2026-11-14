@@ -2237,17 +2237,19 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	{
 		if (!_allowMultiExpansion || !next._allowMultiExpansion)
 			return false;
-		// An oscillator-bearing or recursively nested Multi child can
-		// undergo its own prepared onset/rephase transaction. Keep those
-		// Instrument Volume histories isolated until that transition has
-		// a separate joint contract. A child containing only continuing
-		// Instrument Sources, Filters and stateless controls has no such
-		// oscillator/onset replacement: the caller has already preflighted
-		// its full Filter/Source tree, and the selected Sample/Volume tone
-		// proof below is still required for every participating Source.
+		// Recursive Multi children have independent onset/retirement
+		// transactions that are not covered by this selected-tone Volume
+		// proof. An oscillator sibling alone is not an incompatibility:
+		// it retains its own continuing phase, and the outer Multi's
+		// prepared onset preflight separately validates any requested
+		// rephase. In particular, a changed Instrument Volume curve fails
+		// CanSharePreparedInstrumentBindingsWith for an incoming onset, so
+		// an unsafe phase replacement is dropped while this compatible
+		// Source-local Volume migration can still apply to the held note.
+		// The participating Samples, curves, Filters and releases must
+		// continue passing TryGetLiveInstrumentVolume below.
 		if ((_isMultiInputSubgraph || next._isMultiInputSubgraph)
-			&& (_hasMulti || next._hasMulti
-				|| _oscillatorCount != 0 || next._oscillatorCount != 0))
+			&& (_hasMulti || next._hasMulti))
 			return false;
 		for (int i = 0; i < _nodes.Length; i++)
 		{
