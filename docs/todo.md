@@ -290,6 +290,33 @@ Do not reintroduce completed-task checklists here.
   verify near corners, adjacent nodes, connection ports, pointer
   transitions and graph scrolling. See [UI workflow](user-interface-workflows.md).
 
+- [ ] **Refresh Synth Filter Configured stages immediately after editing a
+  shared Filter definition.** When returning from the Filter definition editor
+  to the Synth Graph editor, the selected Filter node's **Configured stages**
+  list currently displays the *previous* stage kinds/configuration. For
+  example, a newly edited `SvfNotch` stage can still appear as
+  `BiquadPeaking`, even though the revised definition may already be
+  affecting a held Synth Test note. Ensure the stage list, selected-stage
+  identity, displayed kind/parameters and any stage-specific controls
+  refresh as soon as the definition edit is committed and the Synth view
+  resumes, without requiring a reselect or unrelated edit. Verify stage
+  additions, removals, kind changes, reordering, same-kind parameter
+  edits and repeated visits between the Filter and Synth editors.
+  Preserve unsaved drafts, live audio publication and selection where
+  the selected stage remains valid.
+
+- [ ] **Place Synth Filter stage-edit controls below the Configured stages
+  list, not in a horizontally off-screen strip.** The Filter node's
+  `Configured stages` list currently sits to the left of the stage
+  property editor within a non-resizable, right-docked vertical panel.
+  The property controls can fall outside the visible width and require
+  unobvious horizontal scrolling to discover. Reflow the stage-editor
+  controls *under* the list within the available inspector width, with
+  clearly visible labels/inputs and ordinary vertical scrolling as
+  needed. Do not depend on horizontal scrolling to find the controls;
+  check small/narrow editor widths, long stage lists, stage selection,
+  focus/keyboard navigation, and every supported stage kind.
+
 ## Synth editor — live parameter audition
 
 - [ ] **Apply *all non-structural Synth property changes* to ongoing preview
