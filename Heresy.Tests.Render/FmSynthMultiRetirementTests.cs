@@ -13,6 +13,7 @@ using Heresy.Core.Objects;
 using Heresy.Render.Configuration;
 using Heresy.Render.Envelopes;
 using Heresy.Render.FmSynthesis;
+using Heresy.Render.Playback;
 using Heresy.Render.Filters;
 using Heresy.Render.Sounds;
 using NUnit.Framework;
