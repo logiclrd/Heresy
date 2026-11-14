@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Numerics;
+using System.Threading;
 
 using AwesomeAssertions;
 using Heresy.Core.Assets;
@@ -10,6 +11,7 @@ using Heresy.Core.Samples;
 using Heresy.Render.Configuration;
 using Heresy.Render.Envelopes;
 using Heresy.Render.FmSynthesis;
+using Heresy.Render.Filters;
 using Heresy.Render.Playback;
 using Heresy.Render.Samples;
 using Heresy.Render.Sounds;
@@ -70,35 +72,117 @@ public sealed class FmSynthLiveSourceIdTests
     }
 
     [Test]
-    public void DifferentSampleSourceIdStillRefusesUnpreparedRunningStateMigration()
+    public void DifferentSampleSourceIdRequiresWorkerAndCrossfadesFreshOnset()
     {
-        SampleSound originalSample = Sample(FirstId, Enumerable.Range(0, 2400)
-            .Select(i => (float)Math.Sin(i * 0.04)).ToArray());
-        SampleSound differentSample = Sample(AliasId, Enumerable.Range(0, 2400)
-            .Select(i => (float)Math.Cos(i * 0.09)).ToArray());
+        SampleSound originalSample = Sample(FirstId,
+            Enumerable.Repeat(0.25f, 16000).ToArray());
+        SampleSound differentSample = Sample(AliasId,
+            Enumerable.Repeat(0.75f, 16000).ToArray());
         SourceResolver resolver = new(FirstId, originalSample, AliasId,
             differentSample);
         FmSynthSound original = Sound(FirstId, resolver);
         FmSynthSound revised = Sound(AliasId, resolver);
         SoundState held = original.CreateState();
-        SoundState comparison = original.CreateState();
         RenderContext context = Mono();
         original.Render(context, held, 0, 128, new float[128]);
-        original.Render(context, comparison, 0, 128, new float[128]);
 
         original.CanAdoptRunningState(revised, held).Should().BeFalse(
-            "an arbitrary new PCM asset needs a separate prepared onset and fade");
+            "a new Sample cannot inherit the old Sample state or be constructed in PCM");
         original.TryPrepareRunningState(revised, held).Should().BeFalse();
-        float[] continued = new float[150], expected = new float[150];
-        original.Render(context, held, 128, continued.Length, continued);
-        original.Render(context, comparison, 128, expected.Length, expected);
-        continued.Should().Equal(expected,
-            "declined migration must never partially mutate the held Sample");
-        float[] nextNote = new float[20];
-        revised.Render(context, revised.CreateState(), 0, nextNote.Length,
-            nextNote);
-        nextNote[0].Should().NotBeApproximately(expected[0], 0.2f,
-            "future notes must still use the new selected Sample");
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeTrue(
+            "the existing bounded worker can build the replacement Source invocation");
+        using FirPreparationScheduler worker = new();
+        original.QueuePendingFirControls(held, worker);
+        SpinWait.SpinUntil(() => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)).Should().BeTrue();
+        original.AdoptPreparedFirControls(held);
+        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, held);
+
+        float[] output = new float[4801];
+        long beforeAllocation = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, 128, output.Length, output);
+        (GC.GetAllocatedBytesForCurrentThread() - beforeAllocation).Should().Be(0);
+        output[0].Should().BeApproximately(0.25f, 1e-6f,
+            "the first replaced frame is the outgoing Sample, without a click");
+        output[2400].Should().BeApproximately(0.5f, 1e-5f,
+            "the replacement fades on the shared 100 ms smoothstep clock");
+        output[4800].Should().BeApproximately(0.75f, 1e-5f,
+            "after the fade the new Sample owns the entire output");
+        revised.GetEndFrameExclusive(context, held).Should().Be(16128,
+            "new Sample EOF is measured relative to its fresh 128-frame onset");
+        worker.Fault.Should().BeNull();
+    }
+
+    [Test]
+    public void ShortReplacementSampleEofCannotEraseAudibleOutgoingFade()
+    {
+        SampleSound originalSample = Sample(FirstId,
+            Enumerable.Repeat(0.25f, 16000).ToArray());
+        SampleSound shortSample = Sample(AliasId,
+            Enumerable.Repeat(0.75f, 100).ToArray());
+        SourceResolver resolver = new(FirstId, originalSample, AliasId,
+            shortSample);
+        FmSynthSound original = Sound(FirstId, resolver);
+        FmSynthSound revised = Sound(AliasId, resolver);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        original.Render(context, held, 0, 128, new float[128]);
+        PrepareReplacement(original, revised, held);
+
+        float[] result = new float[4802];
+        long allocation = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, 128, result.Length, result);
+        (GC.GetAllocatedBytesForCurrentThread() - allocation).Should().Be(0);
+        result[0].Should().BeApproximately(0.25f, 1e-6f);
+        result[101].Should().BeGreaterThan(0.24f,
+            "old Sample must remain audible after the replacement reaches EOF");
+        result[2400].Should().BeApproximately(0.125f, 1e-5f);
+        result[4800].Should().Be(0.0f);
+        revised.GetEndFrameExclusive(context, held).Should().Be(4928,
+            "outgoing Sample contributes only as far as the fade boundary");
+    }
+
+    [Test]
+    public void SourceReplacementNoteOffCutsBothSampleStatesAtOriginalBoundary()
+    {
+        SampleSound originalSample = Sample(FirstId,
+            Enumerable.Repeat(0.25f, 16000).ToArray());
+        SampleSound differentSample = Sample(AliasId,
+            Enumerable.Repeat(0.75f, 16000).ToArray());
+        SourceResolver resolver = new(FirstId, originalSample, AliasId,
+            differentSample);
+        FmSynthSound original = Sound(FirstId, resolver);
+        FmSynthSound revised = Sound(AliasId, resolver);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        original.Render(context, held, 0, 128, new float[128]);
+        PrepareReplacement(original, revised, held);
+        held.NoteOffTime = TimeSpan.FromSeconds(200.0 / 48000);
+
+        float[] output = new float[160];
+        long allocation = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, 128, output.Length, output);
+        (GC.GetAllocatedBytesForCurrentThread() - allocation).Should().Be(0);
+        output[72].Should().BeGreaterThan(0.2f);
+        output[73].Should().Be(0.0f,
+            "the existing definite Note Off cuts both sides after frame 200");
+        output.Skip(73).Should().OnlyContain(x => x == 0f);
+        revised.GetEndFrameExclusive(context, held).Should().Be(201);
+    }
+
+    private static void PrepareReplacement(
+        FmSynthSound original, FmSynthSound revised, SoundState held)
+    {
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeTrue();
+        using FirPreparationScheduler worker = new();
+        original.QueuePendingFirControls(held, worker);
+        SpinWait.SpinUntil(() => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)).Should().BeTrue();
+        original.AdoptPreparedFirControls(held);
+        original.TryPrepareRunningState(revised, held).Should().BeTrue();
+        original.CommitPreparedRunningState(revised, held);
+        worker.Fault.Should().BeNull();
     }
 
     private static SampleSound Sample(ObjectId id, float[] data)
