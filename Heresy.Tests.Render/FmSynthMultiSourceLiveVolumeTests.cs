@@ -296,10 +296,11 @@ public sealed class FmSynthMultiSourceLiveVolumeTests
                 $"Instrument Volume must be source-local and the parent Filter continuous at {start + i}");
     }
 
-    [TestCase(false)]
-    [TestCase(true)]
+    [TestCase(false, false)]
+    [TestCase(true, false)]
+    [TestCase(true, true)]
     public void IncompatibleSecondSampleRejectsEveryVolumeEditButNotIndependentScalarChanges(
-        bool insideMulti)
+        bool insideMulti, bool oscillatorSibling)
     {
         // Two different Instrument Sources share the same output graph.
         // The first selected PCM is unchanged; the second one has been
@@ -373,13 +374,22 @@ public sealed class FmSynthMultiSourceLiveVolumeTests
                     FmMultiNode.NeutralFrequencyHz),
                 new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
                 new FmConstantNode(4, scalar),
-                new FmOperatorNode(5, FmOperatorKind.Multiply, [3, 4]),
             ];
+            int signal = 3;
+            if (oscillatorSibling)
+            {
+                nodes.Add(new FmOscillatorNode(6, FmOscillatorWaveform.Sine,
+                    313, minimum: -0.09, maximum: 0.09));
+                nodes.Add(new FmOperatorNode(7, FmOperatorKind.Add, [3, 6]));
+                signal = 7;
+            }
+            nodes.Add(new FmOperatorNode(5,
+                FmOperatorKind.Multiply, [signal, 4]));
             if (insideMulti)
-                nodes.Add(new FmMultiNode(6, 5, voiceCount: 3,
+                nodes.Add(new FmMultiNode(8, 5, voiceCount: 3,
                     detune: 0, randomizePhase: false,
                     gainCompensation: true));
-            return new(nodes, insideMulti ? 6 : 5);
+            return new(nodes, insideMulti ? 8 : 5);
         }
         FmSynthSound before = new(Graph(1.0), oldCurves,
             soundResolver: oldInstruments, enableLiveMultiExpansion: true);
