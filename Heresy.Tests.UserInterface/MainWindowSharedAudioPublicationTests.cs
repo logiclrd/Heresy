@@ -68,7 +68,7 @@ public sealed class MainWindowSharedAudioPublicationTests
 	}
 
 	[AvaloniaTest]
-	public void SnapshotWarningDescribesSessionBaseRatherThanClaimingOldSound()
+	public void AudioEditWithoutMissedVoiceUpdateDoesNotShowOldAudioWarning()
 	{
 		RecordingTransport transport = new();
 		MainWindow window = new(transport);
@@ -91,11 +91,8 @@ public sealed class MainWindowSharedAudioPublicationTests
 				.SetValue(window, new PlaybackSnapshotInfo(
 					1, document, document.AudioRevision));
 			document.MarkChanged(affectsAudio: true);
-			Assert.That(indicator.IsVisible, Is.True);
-			Assert.That(indicator.Text, Is.EqualTo("Playback snapshot is older"));
-			Assert.That(ToolTip.GetTip(indicator)?.ToString(),
-				Does.Contain("Compatible live Synth edits"),
-				"the explanation must acknowledge continued live audio updates");
+			Assert.That(indicator.IsVisible, Is.False,
+				"a base snapshot revision change alone cannot classify any playing note as older");
 
 			// The old snapshot is not a different *document*. This remains
 			// separate from the genuine 'another song' warning.
