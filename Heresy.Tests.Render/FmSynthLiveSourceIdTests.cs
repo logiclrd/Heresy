@@ -230,8 +230,12 @@ public sealed class FmSynthLiveSourceIdTests
         worker.Fault.Should().BeNull();
     }
 
-    [Test]
-    public void ChangedSampleAndFrequencyBasisCrossfadeAtIndependentReadheadsBeforeOnePole()
+    [TestCase(false, false)]
+    [TestCase(true, false)]
+    [TestCase(false, true)]
+    [TestCase(true, true)]
+    public void ChangedSampleAndFrequencyBasisCrossfadeAtIndependentReadheadsBeforeOnePole(
+        bool newConstant, bool newExponential)
     {
         const int start = 128, fade = 4800;
         double neutral = FmMultiNode.NeutralFrequencyHz;
@@ -246,14 +250,25 @@ public sealed class FmSynthLiveSourceIdTests
         SourceResolver resolver = new(FirstId, oldSample, AliasId, newSample);
         FilterInstance filter = OnePole();
 
-        FmSynthSound Build(ObjectId id, double hz, SourceResolver sounds)
+        FmSynthSound Build(ObjectId id, double hz, bool constant,
+            bool exponential, SourceResolver sounds)
             => new(new FmSynthGraph([
-                new FmSoundSourceNode(1, id, hz),
+                new FmConstantNode(0, 1.25),
+                new FmSoundSourceNode(1, id, hz, multiplierNodeId: 0,
+                    constant: constant, exponentialMultiplier: exponential),
                 new FmFilterNode(2, 1, filter, tailSeconds: 0.003),
             ], 2), sounds, soundResolver: sounds,
                 enableLiveMultiExpansion: true);
-        FmSynthSound original = Build(FirstId, neutral, resolver);
-        FmSynthSound revised = Build(AliasId, neutral * 2, resolver);
+        FmSynthSound Bare(ObjectId id, double hz, bool constant, bool exponential)
+            => new(new FmSynthGraph([
+                new FmConstantNode(0, 1.25),
+                new FmSoundSourceNode(1, id, hz, multiplierNodeId: 0,
+                    constant: constant, exponentialMultiplier: exponential),
+            ], 1), resolver, soundResolver: resolver,
+                enableLiveMultiExpansion: true);
+        FmSynthSound original = Build(FirstId, neutral, false, false, resolver);
+        FmSynthSound revised = Build(AliasId, neutral * 2,
+            newConstant, newExponential, resolver);
         SoundState held = original.CreateState();
         RenderContext context = Mono();
 
@@ -261,11 +276,9 @@ public sealed class FmSynthLiveSourceIdTests
         // A is evaluated at its ORIGINAL 1x rate and current playhead,
         // B is a fresh 2x note beginning at the publication frame.
         // Neither side is reconstructed from the other's readhead.
-        FmSynthSound bareOld = Sound(FirstId, resolver);
-        FmSynthSound bareNew = new(new FmSynthGraph([
-            new FmSoundSourceNode(1, AliasId, neutral * 2),
-        ], 1), resolver, soundResolver: resolver,
-            enableLiveMultiExpansion: true);
+        FmSynthSound bareOld = Bare(FirstId, neutral, false, false);
+        FmSynthSound bareNew = Bare(AliasId, neutral * 2,
+            newConstant, newExponential);
         float[] outgoing = new float[start + fade + 64];
         float[] incoming = new float[fade + 64];
         bareOld.Render(context, bareOld.CreateState(), 0,
@@ -288,7 +301,8 @@ public sealed class FmSynthLiveSourceIdTests
         }
         SampleSound baked = Sample(FirstId, blended);
         SourceResolver oracleResolver = new(FirstId, baked, AliasId, baked);
-        FmSynthSound oracle = Build(FirstId, neutral, oracleResolver);
+        FmSynthSound oracle = Build(FirstId, neutral, false, false,
+            oracleResolver);
         float[] reference = new float[blended.Length];
         oracle.Render(context, oracle.CreateState(), 0,
             reference.Length, reference);
