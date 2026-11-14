@@ -1702,6 +1702,12 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					// fade and past-note semantics only when the newly
 					// selected Synth advertises an equivalent snapshot.
 					if (source.SourceId != newSource.SourceId
+						// A SourceId alias can resolve to the *exact same* frozen
+						// SampleSound already bound to this voice. Its invocation,
+						// PCM and note configuration are unchanged; neither a new
+						// Sample state nor a fade is needed. Never extrapolate this
+						// to an arbitrary different Sample or Instrument asset.
+						&& !ReferenceEquals(live.Sources[i]?.Sound, revised.Source)
 						&& (!CanMigrateSourceChild(live.Sources[i], revised.Source,
 								allowUnpreparedExpansion)
 							|| live.Sources[i]!.Invocation.Configuration
