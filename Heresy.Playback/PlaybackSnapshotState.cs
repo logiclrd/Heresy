@@ -1,6 +1,7 @@
 using System;
 
 using Heresy.Core.Objects;
+using Heresy.Render.Realtime;
 
 namespace Heresy.Playback;
 
