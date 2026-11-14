@@ -128,6 +128,9 @@ public sealed class MainWindowSharedAudioPublicationTests
 				BindingFlags.Instance | BindingFlags.NonPublic)!
 				.Invoke(window, null);
 			Assert.That(indicator.Text, Is.EqualTo("Playback uses another song"));
+			Assert.That(ToolTip.GetTip(indicator)?.ToString(),
+				Does.Contain("another song document"),
+				"the different-song warning must not describe an incompatible note");
 		}
 		finally
 		{
