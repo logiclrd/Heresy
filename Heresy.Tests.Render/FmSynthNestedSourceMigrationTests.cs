@@ -9,6 +9,7 @@ using Heresy.Core.Filters;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
 using Heresy.Core.Samples;
+using Heresy.Core.Sequencing;
 using Heresy.Render.Configuration;
 using Heresy.Render.Envelopes;
 using Heresy.Render.FmSynthesis;
@@ -82,17 +83,20 @@ public sealed class FmSynthNestedSourceMigrationTests
         FilterInstance filter = OnePole();
         resolver.Set(ChildId, ConstantChild(0.20));
         FmSynthSound original = FilteredParent(ChildId, filter, resolver);
-        SoundState uninterrupted = original.CreateState();
 
         resolver.Set(ChildId, StructuralChild(0.80));
         FmSynthSound revised = FilteredParent(ChildId, filter, resolver);
         resolver.Set(ParentId, original);
         PlaybackSession session = new(Mono(),
             new NoteScheduleBuilder().Freeze(), resolver);
+        PlaybackSession uninterrupted = new(Mono(),
+            new NoteScheduleBuilder().Freeze(), resolver);
         session.ApplyLiveEvent(ChannelTarget.Virtual(1),
             [new StartNoteCommand(ParentId)]);
+        uninterrupted.ApplyLiveEvent(ChannelTarget.Virtual(1),
+            [new StartNoteCommand(ParentId)]);
         session.Render(0, 128, new float[128]);
-        original.Render(Mono(), uninterrupted, 0, 128, new float[128]);
+        uninterrupted.Render(0, 128, new float[128]);
 
         session.AdoptLiveSynthParameters(ParentId, original, revised);
         session.CountOlderAudioVoices().Should().Be(1,
@@ -100,7 +104,7 @@ public sealed class FmSynthNestedSourceMigrationTests
 
         float[] expected = new float[128];
         float[] actual = new float[128];
-        original.Render(Mono(), uninterrupted, 128, expected.Length, expected);
+        uninterrupted.Render(128, expected.Length, expected);
         session.Render(128, actual.Length, actual);
         for (int i = 0; i < actual.Length; i++)
             actual[i].Should().BeApproximately(expected[i], 5e-5f,
