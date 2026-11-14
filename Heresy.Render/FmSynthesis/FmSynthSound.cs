@@ -1846,18 +1846,35 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return true;
 	}
 
-	/// <summary>The only expanded Sample-replacement shape is a final
-	/// Add operator with directly connected Sample Source children. Require
-	/// every operand to be a Source, with no Filter, Multi, modulation,
-	/// nested Synth/Instrument, or hidden auxiliary audio path. Each
-	/// unchanged Source keeps its exact state while all changed Samples
-	/// are prepared by the same bounded worker transaction.</summary>
-	private bool HasDirectSampleAddMixerShape(FmSynthSound next,
+	/// <summary>Accept only established direct-Sample shapes: a
+	/// single Source output, directly added Sources, or a single Sample
+	/// Source passing through one unchanged-topology, unmodulated OnePole.
+	/// Other signal graphs must retain the previous generation rather than
+	/// interpreting an old Sample or Filter history as a new asset.</summary>
+	private bool HasDirectSampleReplacementShape(FmSynthSound next,
 		FmSynthState state)
 	{
 		// Preserve the previously accepted single direct Source case.
 		if (_nodes.Length == 1)
 			return _outputIndex == 0;
+		// One Source -> one final OnePole. The Filter has its own retained
+		// history; only the Source invocation is replaced by the worker.
+		// This test relies exclusively on frozen compiled metadata and does
+		// not enumerate authoring stages or allocate in the PCM owner.
+		if (_nodes.Length == 2)
+			return _outputIndex == 1
+				&& _nodes[0].Definition is FmSoundSourceNode source
+				&& next._nodes[0].Definition is FmSoundSourceNode
+				&& state.Sources[0]?.Sound is SampleSound
+				&& next._nodes[0].Source is SampleSound
+				&& _nodes[1].Definition is FmFilterNode filter
+				&& next._nodes[1].Definition is FmFilterNode nextFilter
+				&& filter.AudioInputNodeId == source.Id
+				&& nextFilter.AudioInputNodeId == source.Id
+				&& _nodes[1].InputIndices.Length == 1
+				&& _nodes[1].InputIndices[0] == 0
+				&& _nodes[1].Filter?.IsSingleUnmodulatedOnePole == true
+				&& next._nodes[1].Filter?.IsSingleUnmodulatedOnePole == true;
 		if (_nodes.Length < 3
 			|| _nodes[_outputIndex].Definition is not FmOperatorNode
 				{ Operation: FmOperatorKind.Add }
@@ -1891,14 +1908,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	}
 
 	/// <summary>A different Sample never inherits the old SampleSoundState.
-	/// One directly audible Source or multiple direct Sources feeding an
-	/// Add output may be replaced, atomically and off PCM, while still
-	/// declining already-releasing or already-fading sources.</summary>
+	/// One directly audible Source, a single filtered Sample path,
+	/// or multiple direct Sources feeding Add may be replaced, atomically
+	/// and off PCM, while still declining released or already-fading voices.</summary>
 	private bool NeedsDirectSampleReplacement(FmSynthSound next,
 		FmSynthState state, int index)
 	{
 		if (!_allowMultiExpansion || !next._allowMultiExpansion
-			|| !HasDirectSampleAddMixerShape(next, state)
+			|| !HasDirectSampleReplacementShape(next, state)
 			|| _nodes[index].Definition is not FmSoundSourceNode oldSource
 			|| next._nodes[index].Definition is not FmSoundSourceNode newSource
 			|| oldSource.SourceId == newSource.SourceId
