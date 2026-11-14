@@ -588,6 +588,74 @@ public sealed class FmSynthLiveSourceIdTests
     }
 
     [Test]
+    public void FilteredAddMixerCanReviveSourceAfterShortSampleEofWithoutResettingOnePole()
+    {
+        const int start = 128, fadeFrames = 4800;
+        const int secondStart = start + fadeFrames + 1;
+        FilterInstance filter = OnePole();
+        SampleSound first = Sample(FirstId, Enumerable.Repeat(0.30f, 18000).ToArray());
+        SampleSound sibling = Sample(AliasId, Enumerable.Repeat(0.10f, 18000).ToArray());
+        SampleSound tiny = Sample(ThirdId, Enumerable.Repeat(0.70f, 48).ToArray());
+        SampleSound revived = Sample(FourthId, Enumerable.Repeat(-0.20f, 18000).ToArray());
+        ManySourceResolver resolver = new((FirstId, first), (AliasId, sibling),
+            (ThirdId, tiny), (FourthId, revived));
+        FmSynthSound original = FilteredMixSound(FirstId, AliasId, resolver, filter);
+        FmSynthSound shortened = FilteredMixSound(ThirdId, AliasId, resolver, filter);
+        FmSynthSound restored = FilteredMixSound(FourthId, AliasId, resolver, filter);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        original.Render(context, held, 0, start, new float[start]);
+        PrepareReplacement(original, shortened, held);
+
+        float[] firstTransition = new float[fadeFrames + 1];
+        long allocation = GC.GetAllocatedBytesForCurrentThread();
+        shortened.Render(context, held, start, firstTransition.Length,
+            firstTransition);
+        (GC.GetAllocatedBytesForCurrentThread() - allocation).Should().Be(0);
+        PrepareReplacement(shortened, restored, held);
+
+        float[] secondTransition = new float[fadeFrames + 64];
+        allocation = GC.GetAllocatedBytesForCurrentThread();
+        restored.Render(context, held, secondStart, secondTransition.Length,
+            secondTransition);
+        (GC.GetAllocatedBytesForCurrentThread() - allocation).Should().Be(0);
+
+        // The short Source has already reached EOF by the second edit.
+        // Its replacement must still start at a fresh frame zero while
+        // the sibling and the shared downstream filter remain continuous.
+        float[] referencePcm = new float[secondStart + secondTransition.Length];
+        for (int i = 0; i < referencePcm.Length; i++)
+        {
+            double sound = i < start ? 0.30 : 0;
+            if (i >= start && i < secondStart)
+            {
+                int local = i - start;
+                double t = Math.Clamp((double)local / fadeFrames, 0, 1);
+                double w = t * t * (3 - 2 * t);
+                sound = 0.30 * (1 - w) + (local < 48 ? 0.70 * w : 0);
+            }
+            if (i >= secondStart)
+            {
+                int local = i - secondStart;
+                double t = Math.Clamp((double)local / fadeFrames, 0, 1);
+                double w = t * t * (3 - 2 * t);
+                sound = -0.20 * w;
+            }
+            referencePcm[i] = (float)sound + 0.10f;
+        }
+        FmSynthSound reference = FilteredReference(filter, referencePcm);
+        float[] expected = new float[referencePcm.Length];
+        reference.Render(context, reference.CreateState(), 0, expected.Length,
+            expected);
+        for (int i = 0; i < firstTransition.Length; i++)
+            firstTransition[i].Should().BeApproximately(expected[start + i], 3e-5f);
+        for (int i = 0; i < secondTransition.Length; i++)
+            secondTransition[i].Should().BeApproximately(
+                expected[secondStart + i], 3e-5f,
+                $"returning to another Sample at frame {secondStart + i} preserves one Filter");
+    }
+
+    [Test]
     public void FilteredMultiplyMixerRejectsSourceReplacementWithoutMutatingHeldState()
     {
         FilterInstance filter = OnePole();
