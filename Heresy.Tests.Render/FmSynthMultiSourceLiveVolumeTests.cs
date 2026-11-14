@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 
@@ -119,8 +120,10 @@ public sealed class FmSynthMultiSourceLiveVolumeTests
     }
 
 
-    [Test]
-    public void SharedInstrumentVolumeRetuneThroughTwoSourcesAndParentFilterKeepsIirHistory()
+    [TestCase(false)]
+    [TestCase(true)]
+    public void SharedInstrumentVolumeRetuneThroughTwoSourcesAndParentFilterKeepsIirHistory(
+        bool insideMulti)
     {
         const int start = 128, fade = 4800, continuation = fade + 96;
         ObjectId sampleId = (ObjectId)8120U;
@@ -166,14 +169,22 @@ public sealed class FmSynthMultiSourceLiveVolumeTests
                 FilterParameterValue.FromNumber(1200));
             return filter;
         }
-        FmSynthGraph Graph() => new([
-            new FmSoundSourceNode(1, instrumentId,
-                FmMultiNode.NeutralFrequencyHz),
-            new FmSoundSourceNode(2, instrumentId,
-                FmMultiNode.NeutralFrequencyHz),
-            new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
-            new FmFilterNode(4, 3, Filter(), tailSeconds: 0.003),
-        ], 4);
+        FmSynthGraph Graph()
+        {
+            List<FmSynthNode> nodes = [
+                new FmSoundSourceNode(1, instrumentId,
+                    FmMultiNode.NeutralFrequencyHz),
+                new FmSoundSourceNode(2, instrumentId,
+                    FmMultiNode.NeutralFrequencyHz),
+                new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
+                new FmFilterNode(4, 3, Filter(), tailSeconds: 0.003),
+            ];
+            if (insideMulti)
+                nodes.Add(new FmMultiNode(5, 4, voiceCount: 3,
+                    detune: 0, randomizePhase: false,
+                    gainCompensation: true));
+            return new(nodes, insideMulti ? 5 : 4);
+        }
 
         OneEnvelopeResolver previousCurves = new(envelopeId, Curve(1.0));
         OneEnvelopeResolver nextCurves = new(envelopeId, Curve(0.25));
@@ -196,9 +207,11 @@ public sealed class FmSynthMultiSourceLiveVolumeTests
         before.TryPrepareRunningState(after, held).Should().BeTrue();
         before.CommitPreparedRunningState(after, held);
 
-        // Both bound Instrument Sources fade their own Volume envelopes
-        // BEFORE their sum reaches the continuing parent Filter. Baked PCM
-        // models that exact source-local smoothstep, not a post-filter fade.
+        // Both Instrument Sources in every active constituent fade their own
+        // Volume envelopes BEFORE their sum reaches the continuing OnePole.
+        // With detune zero and normalized gain, three independent Multi
+        // children should equal the single-Filter oracle. Baked PCM models
+        // that source-local smoothstep, not a post-filter gain fade.
         float[] baked = new float[start + continuation];
         for (int frame = 0; frame < baked.Length; frame++)
         {
