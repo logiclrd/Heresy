@@ -671,6 +671,190 @@ public sealed class FmSynthNnaVirtualLifecycleTests
         });
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void InFlightNestedMultiWorkersCannotResurrectCancelledScopedNnaVoices(
+        bool obsoleteWorkerAlreadyReady)
+    {
+        Registry registry = new();
+
+        FmSynthSound Child(int count, double level) => new(new FmSynthGraph([
+            new FmConstantNode(1, level),
+            new FmMultiNode(2, 1, voiceCount: count, detune: 0,
+                randomizePhase: false, gainCompensation: true),
+        ], 2), registry, enableLiveMultiExpansion: true);
+
+        FmSynthSound Parent()
+        {
+            FilterInstance filter = new(new FilterDefinition(
+                (ObjectId)72047U, "C4(g) parent pole"));
+            filter.SetStageParameter(1, "CutoffHz",
+                FilterParameterValue.FromNumber(180));
+            return new FmSynthSound(new FmSynthGraph([
+                new FmSoundSourceNode(1, InnerId,
+                    FmMultiNode.NeutralFrequencyHz),
+                new FmFilterNode(2, 1, filter, tailSeconds: 0.003),
+            ], 2), registry,
+                new NewNotePolicy(NewNoteAction.Continue, TimeSpan.Zero),
+                soundResolver: registry, enableLiveMultiExpansion: true);
+        }
+
+        FmSynthSound originalChild = Child(1, 0.2);
+        registry.Add(InnerId, originalChild);
+        FmSynthSound original = Parent();
+        registry.Add(SourceId, original);
+
+        // This candidate needs three fresh nested Multi constituents for
+        // every old note. The final revision is instead structurally
+        // incompatible with the entire parent graph.
+        registry.Replace(InnerId, Child(4, 0.6));
+        FmSynthSound obsolete = Parent();
+        FmSynthSound incompatible = new(new FmSynthGraph([
+            new FmConstantNode(9, 0.8),
+        ], 9), registry, soundResolver: registry);
+
+        PlaybackSession actual = Session(registry, Schedule());
+        PlaybackSession reference = Session(registry, Schedule());
+        void Both(Action<PlaybackSession> action)
+        {
+            action(actual);
+            action(reference);
+        }
+        void Compare(int start, int count)
+        {
+            float[] got = new float[count], expected = new float[count];
+            actual.Render(start, count, got);
+            reference.Render(start, count, expected);
+            for (int i = 0; i < count; i++)
+                Assert.That(got[i], Is.EqualTo(expected[i]).Within(1e-5f),
+                    $"an obsolete nested worker must not alter PCM at frame {start + i}");
+        }
+
+        Both(s => s.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+            [new StartNoteCommand(SourceId)]));
+        Both(s => s.ApplyScopedEvent(202, ChannelTarget.Virtual(7),
+            [new StartNoteCommand(SourceId)]));
+        Both(s => s.ApplyLiveEvent(ChannelTarget.Physical(0),
+            [new StartNoteCommand(SourceId)]));
+        Compare(0, 10);
+        Both(s => s.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+            [new StartNoteCommand(SourceId)]));
+        Assert.That(actual.VirtualVoices, Has.Count.EqualTo(1));
+        PlaybackVoice displaced = actual.VirtualVoices.Single();
+        Compare(10, 2);
+
+        using ManualResetEventSlim workerEntered = new(false);
+        using ManualResetEventSlim allowWorkerFinish = new(false);
+        using FirPreparationScheduler scheduler = new();
+        int firstCallback = 0;
+        if (!obsoleteWorkerAlreadyReady)
+            scheduler.AfterMultiConstituentPrepared = () =>
+            {
+                if (Interlocked.Exchange(ref firstCallback, 1) != 0)
+                    return;
+                workerEntered.Set();
+                // The finally block releases this gate even if an assertion
+                // fails on the PCM owner. No worker is left stranded.
+                allowWorkerFinish.Wait(TimeSpan.FromSeconds(10));
+            };
+
+        try
+        {
+            actual.AdoptLiveSynthParameters(SourceId, original, obsolete);
+            Assert.That(actual.CountOlderAudioVoices(), Is.Zero,
+                "worker-pending nested revisions are not definite refusals");
+            actual.QueuePendingFirControls(scheduler);
+
+            if (obsoleteWorkerAlreadyReady)
+                Assert.That(SpinWait.SpinUntil(
+                    () => scheduler.CompletedMultiExpansionCount >= 4,
+                    TimeSpan.FromSeconds(5)), Is.True,
+                    "all four obsolete nested worker results should be ready but not adopted");
+            else
+            {
+                Assert.That(workerEntered.Wait(TimeSpan.FromSeconds(5)),
+                    Is.True, "one nested expansion must really be in flight");
+                Assert.That(scheduler.PeakQueuedWorkItems,
+                    Is.GreaterThanOrEqualTo(3),
+                    "the other three voices must have queued independent work");
+            }
+
+            // A pending proposal cannot change the current audible sound.
+            Compare(12, 4);
+            Assert.That(displaced.Sound, Is.SameAs(original));
+
+            // All four old notes DEFINITIVELY miss this incompatible
+            // publication, even though their previous candidate was only
+            // pending or ready. Sticky currency belongs to their voices.
+            actual.AdoptLiveSynthParameters(SourceId, obsolete, incompatible);
+            Assert.That(actual.CountOlderAudioVoices(), Is.EqualTo(4));
+            actual.CancelScopedVoices(101);
+            reference.CancelScopedVoices(101);
+            Assert.Multiple(() =>
+            {
+                Assert.That(actual.VirtualVoices, Is.Empty);
+                Assert.That(actual.CountOlderAudioVoices(), Is.EqualTo(2),
+                    "scope 101 cancellation must retire current and displaced NNA");
+                Assert.That(actual.GetChannelState(0).CurrentVoice!.Sound,
+                    Is.SameAs(original));
+            });
+
+            // Exercise publication both while the worker is still held and
+            // after it finishes. Neither ready arrays nor discarded partial
+            // construction may revive a cancelled scoped voice or retune the
+            // retained incompatible generation.
+            actual.AdoptPreparedFirControls();
+            actual.QueuePendingFirControls(scheduler);
+            allowWorkerFinish.Set();
+            if (!obsoleteWorkerAlreadyReady)
+                Assert.That(SpinWait.SpinUntil(
+                    () => scheduler.CancelledMultiExpansionCount >= 4,
+                    TimeSpan.FromSeconds(5)), Is.True,
+                    "all four queued/working obsolete mailboxes must be discarded");
+            Assert.That(scheduler.Fault, Is.Null);
+            actual.AdoptPreparedFirControls();
+            Assert.That(actual.CountOlderAudioVoices(), Is.EqualTo(2));
+            Compare(16, 160);
+            Assert.That(scheduler.CompletedMultiExpansionCount,
+                Is.EqualTo(obsoleteWorkerAlreadyReady ? 4 : 0),
+                "none of the obsolete work may be accepted after an incompatible edit");
+
+            // A newly started note gets the newest structural definition,
+            // while the two surviving old notes keep their own parent
+            // Filter histories and old 0.2 constant Synth child.
+            registry.Replace(SourceId, incompatible);
+            Both(s => s.ApplyLiveEvent(ChannelTarget.Virtual(99),
+                [new StartNoteCommand(SourceId)]));
+            Compare(176, 128);
+            float[] settled = new float[4];
+            actual.Render(304, settled.Length, settled);
+            reference.Render(304, settled.Length, new float[4]);
+            Assert.That(settled[^1], Is.EqualTo(1.2f).Within(0.002f),
+                "the two retained 0.2 parents and one new 0.8 note must coexist");
+            Assert.That(actual.CountOlderAudioVoices(), Is.EqualTo(2));
+
+            actual.ApplyScopedEvent(202, ChannelTarget.Virtual(7),
+                [new NoteCutCommand()]);
+            Assert.That(actual.CountOlderAudioVoices(), Is.EqualTo(1));
+            actual.ApplyLiveEvent(ChannelTarget.Physical(0),
+                [new NoteCutCommand()]);
+            Assert.That(actual.CountOlderAudioVoices(), Is.Zero);
+            float[] current = new float[120];
+            actual.Render(308, current.Length, current);
+            Assert.Multiple(() =>
+            {
+                Assert.That(actual.VirtualVoices, Is.Empty);
+                Assert.That(actual.CountOlderAudioVoices(), Is.Zero);
+                Assert.That(current[^1], Is.EqualTo(0.8f).Within(1e-4f),
+                    "a cancelled old scope must not return during later PCM");
+            });
+        }
+        finally
+        {
+            allowWorkerFinish.Set();
+        }
+    }
+
     [TestCase(NewNoteAction.Cut, false)]
     [TestCase(NewNoteAction.Continue, true)]
     [TestCase(NewNoteAction.Off, true)]
