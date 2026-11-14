@@ -66,6 +66,44 @@ public sealed class FmSynthNnaVirtualLifecycleTests
     }
 
     [Test]
+    public void NnaDisplacedOlderVoiceOutlivesFreshCurrentNoteButEventuallyRetires()
+    {
+        Registry resolver = new();
+        FmSynthSound original = BuildNested(resolver, loop: false,
+            action: NewNoteAction.Continue, inheritedEnvelope: false);
+        resolver.Add(SourceId, original);
+        PlaybackSession session = Session(resolver, Schedule());
+        session.ApplyLiveEvent(ChannelTarget.Virtual(7),
+            [new StartNoteCommand(SourceId)]);
+        session.Render(0, 1, new float[1]);
+
+        FmSynthSound revised = new(new FmSynthGraph([
+            new FmConstantNode(1, 0.5),
+        ], 1), resolver);
+        session.AdoptLiveSynthParameters(SourceId, original, revised);
+        resolver.Replace(SourceId, revised);
+        session.ApplyLiveEvent(ChannelTarget.Virtual(7),
+            [new StartNoteCommand(SourceId)]);
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.VirtualVoices, Has.Count.EqualTo(1));
+            Assert.That(session.CountOlderAudioVoices(), Is.EqualTo(1),
+                "the displaced older note retains its own incompatible revision");
+        });
+
+        float[] output = new float[30];
+        session.Render(1, output.Length, output);
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.VirtualVoices, Is.Empty);
+            Assert.That(session.CountOlderAudioVoices(), Is.Zero,
+                "the last old note expires independently of the new note");
+            Assert.That(output[^1], Is.GreaterThan(0),
+                "the newly started revision continues to sound");
+        });
+    }
+
+    [Test]
     public void InstrumentToneHoldingOldSynthIsOlderWhenItsRevisionCannotMigrate()
     {
         Registry resolver = new();
@@ -325,6 +363,7 @@ public sealed class FmSynthNnaVirtualLifecycleTests
         private readonly Dictionary<ObjectId, IEnvelopeCurve> _envelopes = [];
         public int SoundLookups { get; private set; }
         public void Add(ObjectId id, ISound sound) => _sounds.Add(id, sound);
+        public void Replace(ObjectId id, ISound sound) => _sounds[id] = sound;
         public void AddEnvelope(ObjectId id, IEnvelopeCurve envelope) =>
             _envelopes.Add(id, envelope);
         public bool TryResolve(ObjectId id, bool mixdown, out ISound? sound)
