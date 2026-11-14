@@ -499,6 +499,168 @@ public sealed class FmSynthNnaVirtualLifecycleTests
         });
     }
 
+    [Test]
+    public void ScopedNestedSynthReleasesKeepChildRevisionsAndOriginalOwnerClocks()
+    {
+        Registry registry = new();
+        registry.AddEnvelope(EnvelopeId, new FortyFrameRelease());
+
+        // The parent has no own release-capable Envelope: its continuing
+        // child Synth alone supplies the sustain/release lifecycle.
+        FmSynthSound Child(double level, bool structural = false)
+            => structural
+                ? new FmSynthSound(new FmSynthGraph([
+                    new FmConstantNode(1, level),
+                    new FmConstantNode(4, 0),
+                    new FmOperatorNode(5, FmOperatorKind.Add, [1, 4]),
+                    new FmEnvelopeNode(2, EnvelopeId),
+                    new FmOperatorNode(3, FmOperatorKind.Multiply, [5, 2]),
+                ], 3), registry, enableLiveMultiExpansion: true)
+                : new FmSynthSound(new FmSynthGraph([
+                    new FmConstantNode(1, level),
+                    new FmEnvelopeNode(2, EnvelopeId),
+                    new FmOperatorNode(3, FmOperatorKind.Multiply, [1, 2]),
+                ], 3), registry, enableLiveMultiExpansion: true);
+
+        FmSynthSound Parent()
+        {
+            FilterDefinition definition = new((ObjectId)72036U,
+                "Ancestor OnePole");
+            FilterInstance filter = new(definition);
+            filter.SetStageParameter(1, "CutoffHz",
+                FilterParameterValue.FromNumber(240));
+            return new FmSynthSound(new FmSynthGraph([
+                new FmSoundSourceNode(1, InnerId,
+                    FmMultiNode.NeutralFrequencyHz),
+                new FmFilterNode(2, 1, filter, tailSeconds: 0.003),
+            ], 2), registry,
+                new NewNotePolicy(NewNoteAction.Off, TimeSpan.Zero),
+                soundResolver: registry, enableLiveMultiExpansion: true);
+        }
+
+        FmSynthSound originalChild = Child(0.2);
+        registry.Add(InnerId, originalChild);
+        FmSynthSound original = Parent();
+        registry.Add(SourceId, original);
+        PlaybackSession actual = Session(registry, Schedule());
+        PlaybackSession unchanged = Session(registry, Schedule());
+
+        void Both(Action<PlaybackSession> action)
+        {
+            action(actual);
+            action(unchanged);
+        }
+        void Compare(int start, int count)
+        {
+            float[] got = new float[count], expected = new float[count];
+            actual.Render(start, count, got);
+            unchanged.Render(start, count, expected);
+            for (int i = 0; i < count; i++)
+                Assert.That(got[i], Is.EqualTo(expected[i]).Within(1e-5f),
+                    $"nested release/Filter PCM must remain unchanged at frame {start + i}");
+        }
+
+        // Same virtual channel ID in different ancestors must never mean
+        // the same note. The physical host is a third independent owner.
+        Both(s => s.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+            [new StartNoteCommand(SourceId)]));
+        Both(s => s.ApplyScopedEvent(202, ChannelTarget.Virtual(7),
+            [new StartNoteCommand(SourceId)]));
+        Both(s => s.ApplyLiveEvent(ChannelTarget.Physical(0),
+            [new StartNoteCommand(SourceId)]));
+        Compare(0, 10);
+
+        // The old owner-101 note becomes NNA Off. Owner 202 starts a
+        // separate release a frame later. The parent carries the child
+        // lifecycle, despite having no top-level sustain Envelope.
+        Both(s => s.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+            [new StartNoteCommand(SourceId)]));
+        Assert.That(actual.VirtualVoices, Has.Count.EqualTo(1));
+        PlaybackVoice releasedNna = actual.VirtualVoices.Single();
+        Assert.That(releasedNna.SoundState.NoteOffTime,
+            Is.EqualTo(TimeSpan.FromMilliseconds(10)));
+        Compare(10, 1);
+        Both(s => s.ApplyScopedEvent(202, ChannelTarget.Virtual(7),
+            [new NoteOffCommand()]));
+        Compare(11, 1);
+
+        FmSynthSound compatibleChild = Child(0.5);
+        registry.Replace(InnerId, compatibleChild);
+        FmSynthSound compatibleParent = Parent();
+
+        // Dependency-order publication: the direct child event cannot
+        // mutate or mislabel a parent-owned note. The recompiled parent
+        // then migrates each eligible nested child invocation in place,
+        // including the two already-releasing scopes and the NNA voice.
+        actual.AdoptLiveSynthParameters(InnerId,
+            originalChild, compatibleChild);
+        Assert.That(actual.CountOlderAudioVoices(), Is.Zero);
+        Both(s => s.AdoptLiveSynthParameters(SourceId,
+            original, compatibleParent));
+        Assert.Multiple(() =>
+        {
+            Assert.That(actual.CountOlderAudioVoices(), Is.Zero);
+            Assert.That(releasedNna.Sound, Is.SameAs(compatibleParent));
+            Assert.That(releasedNna.SoundState.NoteOffTime,
+                Is.EqualTo(TimeSpan.FromMilliseconds(10)));
+        });
+        Compare(12, 8);
+
+        // One child becomes structurally incompatible while two
+        // independently scoped releases are still sounding. The
+        // containing parent retains each old child history (including
+        // any compatible transition still in flight) and marks four
+        // concrete old voices, not a shared ancestor or virtual ID.
+        FmSynthSound structuralChild = Child(0.9, structural: true);
+        registry.Replace(InnerId, structuralChild);
+        FmSynthSound structuralParent = Parent();
+        actual.AdoptLiveSynthParameters(InnerId,
+            compatibleChild, structuralChild);
+        actual.AdoptLiveSynthParameters(SourceId,
+            compatibleParent, structuralParent);
+        Assert.Multiple(() =>
+        {
+            Assert.That(actual.CountOlderAudioVoices(), Is.EqualTo(4));
+            Assert.That(releasedNna.SoundState.NoteOffTime,
+                Is.EqualTo(TimeSpan.FromMilliseconds(10)),
+                "nested revision must not restart NNA's original release");
+        });
+        Compare(20, 8);
+
+        // Fresh notes select the new child, but can never inherit the
+        // older marks of the old parent/ancestor invocations.
+        registry.Replace(SourceId, structuralParent);
+        actual.ApplyScopedEvent(303, ChannelTarget.Virtual(7),
+            [new StartNoteCommand(SourceId)]);
+        actual.Render(28, 32, new float[32]);
+        Assert.Multiple(() =>
+        {
+            Assert.That(actual.VirtualVoices, Is.Empty);
+            Assert.That(actual.CountOlderAudioVoices(), Is.EqualTo(2),
+                "owner-101 NNA and owner-202 release/graph tails have ended");
+        });
+
+        actual.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+            [new NoteOffCommand()]);
+        actual.Render(60, 50, new float[50]);
+        Assert.That(actual.CountOlderAudioVoices(), Is.EqualTo(1),
+            "retiring owner 101 must leave only the old physical note");
+
+        actual.ApplyLiveEvent(ChannelTarget.Physical(0),
+            [new NoteOffCommand()]);
+        float[] finalMix = new float[50];
+        actual.Render(110, finalMix.Length, finalMix);
+        Assert.Multiple(() =>
+        {
+            Assert.That(actual.CountOlderAudioVoices(), Is.Zero);
+            Assert.That(actual.GetChannelState(0).CurrentVoice, Is.Null);
+            Assert.That(finalMix[^1], Is.GreaterThan(0.1f),
+                "fresh scope 303 must still sound independently");
+            Assert.That(releasedNna.SoundState.NoteOffTime,
+                Is.EqualTo(TimeSpan.FromMilliseconds(10)));
+        });
+    }
+
     [TestCase(NewNoteAction.Cut, false)]
     [TestCase(NewNoteAction.Continue, true)]
     [TestCase(NewNoteAction.Off, true)]
@@ -713,6 +875,17 @@ public sealed class FmSynthNnaVirtualLifecycleTests
         params NoteCommand[] commands)
         => new(new MusicalTime(TimeSpan.FromMilliseconds(frame), 0),
             target, commands);
+
+    private sealed class FortyFrameRelease : IEnvelopeCurve
+    {
+        public bool HasSustainLoop => true;
+        public bool IsZeroAfterCompletion => true;
+        public double GetValue(long frame, int sampleRate, long? off)
+            => !off.HasValue ? 1
+                : Math.Max(0, 1 - (frame - off.Value) / 40.0);
+        public long? GetEndActiveFrameExclusiveAfterNoteOff(
+            long off, int sampleRate) => off + 40;
+    }
 
     private sealed class ThreeFrameRelease : IEnvelopeCurve
     {
