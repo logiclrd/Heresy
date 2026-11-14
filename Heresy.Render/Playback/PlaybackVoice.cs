@@ -372,7 +372,15 @@ public sealed class PlaybackVoice
 		ISound previousSound, ISound nextSound)
 	{
 		if (OriginSourceId != sourceId)
+		{
+			// An Instrument may select this Synth as its terminal sound.
+			// Its voice is not eligible for direct-Synth migration, but it
+			// still demonstrably retains the former Synth definition.
+			if (ReferenceEquals(Sound, previousSound)
+				|| ReferenceEquals(_pendingLiveSynth, previousSound))
+				UsesOlderAudio = true;
 			return false;
+		}
 		if (Sound is not FmSynthSound current
 			|| nextSound is not FmSynthSound next
 			|| (!ReferenceEquals(Sound, previousSound)
