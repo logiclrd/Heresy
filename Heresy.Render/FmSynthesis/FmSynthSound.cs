@@ -46,6 +46,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		public long StartFrame { get; private set; }
 		public SourceVoice? FadeFrom { get; private set; }
 		public long FadeStartFrame { get; private set; }
+		// An outgoing Sample must continue with the Source controls which
+		// produced its EXISTING forward-integrated pitch history. The
+		// new graph's FrequencyHz/Constant/exponential settings belong
+		// only to the independently prepared incoming Sample. Retaining
+		// the prior frozen node reference costs no PCM allocation.
+		public FmSoundSourceNode? OutgoingSourceDefinition { get; private set; }
+		public void FreezeOutgoingSourceDefinition(FmSoundSourceNode authored)
+			=> OutgoingSourceDefinition = authored;
 		public void StartSampleCrossfade(SourceVoice previous, long frame)
 		{
 			StartFrame = frame;
@@ -1906,9 +1914,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| _nodes[index].Definition is not FmSoundSourceNode oldSource
 			|| next._nodes[index].Definition is not FmSoundSourceNode newSource
 			|| oldSource.SourceId == newSource.SourceId
-			|| oldSource.FrequencyHz != newSource.FrequencyHz
-			|| oldSource.Constant != newSource.Constant
-			|| oldSource.ExponentialMultiplier != newSource.ExponentialMultiplier
+			// A fresh detached Sample may start at the revised pitch basis.
+			// The outgoing Source's previous FrequencyHz/Constant/mode
+			// are snapshotted when attaching the prepared crossfade.
+			// Actual wiring changes are still structurally incompatible.
 			|| oldSource.MultiplierNodeId != newSource.MultiplierNodeId
 			|| state.Sources[index] is not { Sound: SampleSound } current
 			|| (current.FadeFrom is not null && !allowActiveSampleFade)
@@ -2820,6 +2829,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				|| live.Sources[i] is not SourceVoice previous)
 				throw new InvalidOperationException(
 					"Sample SourceId replacement requires off-PCM worker preparation.");
+			previous.FreezeOutgoingSourceDefinition(
+				(FmSoundSourceNode)_nodes[i].Definition);
 			replacement.StartSampleCrossfade(previous, live.NextFrame);
 			live.Sources[i] = replacement;
 			live.ChildEndChanged = true;
@@ -4142,7 +4153,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			}
 			else
 			{
-				double previous = EvaluateOneSource(node, compiled, state,
+				double previous = EvaluateOneSource(
+					oldSource.OutgoingSourceDefinition ?? node, compiled, state,
 					frame, sampleRate, noteOffFrame, oldSource);
 				double incoming = EvaluateOneSource(node, compiled, state,
 					frame, sampleRate, noteOffFrame, voice);
