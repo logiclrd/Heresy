@@ -407,9 +407,7 @@ public sealed class PlaybackVoice
 		}
 		if (current.TryPrepareRunningState(next, SoundState))
 		{
-			current.CommitPreparedRunningState(next, SoundState);
-			current.CancelPendingMultiExpansion(SoundState);
-			Sound = next;
+			CommitPreparedLiveSynth(current, next);
 			return true;
 		}
 		bool pending = current.RequestMultiExpansionPreparation(next, SoundState);
@@ -420,6 +418,23 @@ public sealed class PlaybackVoice
 		else
 			UsesOlderAudio = true;
 		return false;
+	}
+
+	/// <summary>A parent may adopt its own Filter/scalar edit while an
+	/// incompatible bound child Synth keeps its old audio. That still counts
+	/// as a missed applicable revision for this retained physical voice.
+	/// Only mark definitive refusals; pending worker preparation is handled
+	/// separately and never marked merely for being pending.</summary>
+	private void CommitPreparedLiveSynth(
+		FmSynthSound current, FmSynthSound revised)
+	{
+		bool retainedOldChild = current.RetainsIncompatibleNestedSynth(
+			revised, SoundState);
+		current.CommitPreparedRunningState(revised, SoundState);
+		current.CancelPendingMultiExpansion(SoundState);
+		Sound = revised;
+		if (retainedOldChild)
+			UsesOlderAudio = true;
 	}
 
 	public SoundState SoundState { get; }
@@ -690,9 +705,7 @@ public sealed class PlaybackVoice
 		}
 		if (current.TryPrepareRunningState(revised, SoundState))
 		{
-			current.CommitPreparedRunningState(revised, SoundState);
-			current.CancelPendingMultiExpansion(SoundState);
-			Sound = revised;
+			CommitPreparedLiveSynth(current, revised);
 			_pendingLiveSynth = null;
 		}
 		else

@@ -1902,6 +1902,40 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			&& original.CanAdoptRunningState(
 				next, voice.Invocation.State, allowUnpreparedExpansion);
 
+	/// <summary>Detect child Synth audio which will retain an older
+	/// bound definition even though the containing graph can adopt its own
+	/// compatible properties. A worker-pending Multi expansion is not an
+	/// incompatibility; the caller invokes this only after full preparation
+	/// succeeds and before the recursive commit mutates any Source binding.
+	/// Traverse the already-running invocation tree without allocating.</summary>
+	internal bool RetainsIncompatibleNestedSynth(
+		FmSynthSound next, SoundState state)
+	{
+		FmSynthState live = ValidateState(state);
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			if (_nodes[i].Definition is FmSoundSourceNode
+				&& live.Sources[i] is { Sound: FmSynthSound oldChild } bound)
+			{
+				if (next._nodes[i].Source is not FmSynthSound newChild
+					|| !oldChild.CanPrepareMultiExpansion(
+						newChild, bound.Invocation.State)
+					|| oldChild.RetainsIncompatibleNestedSynth(
+						newChild, bound.Invocation.State))
+					return true;
+			}
+			if (_nodes[i].Definition is not FmMultiNode
+				|| next._nodes[i].MultiInput is not FmSynthSound newInput)
+				continue;
+			foreach (MultiVoice child in live.Multis[i])
+				if (child.HasStarted && !child.WasRetired
+					&& child.Sound.RetainsIncompatibleNestedSynth(
+						newInput, child.Invocation.State))
+					return true;
+		}
+		return false;
+	}
+
 	/// <summary>Transactional preflight over all Filters and nested Multi
 	/// constituents. Every chain validates its targets into owned scratch
 	/// before the voice can commit any DSP state or child sound binding.</summary>
