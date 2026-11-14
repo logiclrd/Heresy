@@ -190,10 +190,10 @@ public sealed class FmSynthNestedSourceMigrationTests
                 $"the younger note's independent nested state at {i}");
         }
         actualOlder.Zip(actualYounger, (a, b) => Math.Abs(a - b))
-            .Max().Should().BeGreaterThan(0.001,
+            .Max().Should().BeGreaterThan(0.001f,
                 "different note ages must not share a nested oscillator phase or filter history");
         actualOlder.Zip(oldGeneration, (a, b) => Math.Abs(a - b))
-            .Skip(4800).Max().Should().BeGreaterThan(0.005,
+            .Skip(4800).Max().Should().BeGreaterThan(0.005f,
                 "SourceId selection must actually retune the child rather than retain old audio");
     }
 
