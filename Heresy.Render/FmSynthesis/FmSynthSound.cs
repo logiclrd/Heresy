@@ -1705,8 +1705,37 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	public bool CanPrepareMultiExpansion(FmSynthSound next, SoundState state)
 		=> CanAdoptRunningState(next, state, allowUnpreparedExpansion: true);
 
+	/// <summary>An otherwise eligible SourceId replacement may have to
+	/// wait for its predecessor's already-audible 100-ms Sample fade.
+	/// This admission check does not start a third Sample or publish a
+	/// revision: the PCM owner retains only its latest deferred target.
+	/// Once the existing fade ends, ordinary worker preparation and the
+	/// full transactional preflight run again before any commit.</summary>
+	internal bool CanDeferSampleReplacementUntilFadeCompletes(
+		FmSynthSound next, SoundState state)
+	{
+		if (state is not FmSynthState live || live.HasNoteOffTime
+			|| _nodes.Length != next._nodes.Length)
+			return false;
+		bool blockedByFade = false;
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			if (_nodes[i].Definition is not FmSoundSourceNode oldSource
+				|| next._nodes[i].Definition is not FmSoundSourceNode newSource
+				|| oldSource.SourceId == newSource.SourceId
+				|| live.Sources[i] is not { Sound: SampleSound } current
+				|| current.FadeFrom is null
+				|| next._nodes[i].Source is not SampleSound replacement
+				|| ReferenceEquals(current.Sound, replacement))
+				continue;
+			blockedByFade = true;
+		}
+		return blockedByFade && CanAdoptRunningState(next, state,
+			allowUnpreparedExpansion: true, allowActiveSampleFade: true);
+	}
+
 	private bool CanAdoptRunningState(FmSynthSound next, SoundState state,
-		bool allowUnpreparedExpansion)
+		bool allowUnpreparedExpansion, bool allowActiveSampleFade = false)
 	{
 		ArgumentNullException.ThrowIfNull(next);
 		if (state is not FmSynthState live
@@ -1776,7 +1805,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						// An alias to the same bound Sample changes no history.
 						bool sameSample = live.Sources[i]?.Sound is SampleSound bound
 							&& ReferenceEquals(bound, revised.Source);
-						if (NeedsPreparedSampleReplacement(next, live, i))
+						if (NeedsPreparedSampleReplacement(next, live, i,
+							allowActiveSampleFade))
 						{
 							if (!allowUnpreparedExpansion
 								&& (live.PreparedExpansion?.Matches(next, live) != true
@@ -1866,9 +1896,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	/// stable modulation inputs are allowed, because each Source evaluates
 	/// those controls at the existing graph node on every rendered frame.
 	/// Never transfer a different Sample's readhead or create an invocation
-	/// on the PCM owner. Releasing and already-fading Sources remain excluded.</summary>
+	/// on the PCM owner. Releasing Sources remain excluded. An active fade
+	/// may be admitted only as a *deferred intent*, never as permission to
+	/// prepare or commit another Source while its predecessor still sounds.</summary>
 	private bool NeedsPreparedSampleReplacement(FmSynthSound next,
-		FmSynthState state, int index)
+		FmSynthState state, int index, bool allowActiveSampleFade = false)
 	{
 		if (!_allowMultiExpansion || !next._allowMultiExpansion
 			|| _nodes[index].Definition is not FmSoundSourceNode oldSource
@@ -1879,7 +1911,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| oldSource.ExponentialMultiplier != newSource.ExponentialMultiplier
 			|| oldSource.MultiplierNodeId != newSource.MultiplierNodeId
 			|| state.Sources[index] is not { Sound: SampleSound } current
-			|| current.FadeFrom is not null
+			|| (current.FadeFrom is not null && !allowActiveSampleFade)
 			|| next._nodes[index].Source is not SampleSound revised
 			|| ReferenceEquals(current.Sound, revised)
 			|| state.SampleRate <= 0 || state.NextFrame <= 0
