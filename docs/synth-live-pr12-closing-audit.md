@@ -167,6 +167,57 @@ updates, nested pending worker generations and more complex Instrument/Script
 Envelope cases. C4 interruption/Note Off/EOF and C2 property-matrix closure
 also remain open; no sign-off or PR merge is implied.
 
+## C3 compatible nested Synth SourceId selection and held siblings (2026-11-14)
+
+**Automated PCM and transport acceptance; no renderer change required.** The added
+`FmSynthNestedSourceMigrationTests.SelectingCompatibleSynthSourceIdKeepsIndependentMultiAndFilterHistories`
+selects between two distinct referenced Synth objects (193 Hz and 431 Hz
+Sine Oscillators with matching graph layout) behind parent
+`Source(child Synth) → Multi(3) → OnePole`. The old and new SourceIds
+differ, but the bound child invocation is structurally compatible. Two
+running voices at different local ages (211 and 67 frames) each preserve
+their own oscillator phase, Multi state, and parent IIR history. Across
+4,928 continuing frames, both PCM streams agree within 5e-5 with a
+separately migrated same-SourceId child-definition-edit oracle.
+Measured PCM rendering allocates **zero managed bytes**; after the
+100-ms logarithmic frequency glide, output demonstrably differs from an
+unmodified 193-Hz child. Distinct voice ages still produce distinct PCM.
+
+`FmSynthNestedSourceMigrationTests.CompatibleSynthSourceIdSelectionKeepsTwoHeldSiblingVoicesCurrent`
+exercises the **PlaybackSession** adoption path with two separate virtual
+channels started at different times. Both adopt the parent SourceId
+selection without an older-audio mark; a third newly started note uses
+the latest selected Synth. Its complete 5,024-frame mixed PCM trace
+matches an independently constructed same-ID child-edit session.
+Cutting the oldest note does not disrupt the remaining sibling histories
+or introduce a currency warning. This is a status-and-PCM regression,
+not an assertion that the child-editor UI allows simultaneous editing.
+
+Initial test commit `38128ae` failed to **compile** only because two
+float-valued comparison thresholds used double literals. This test
+fixture mistake is not DSP red-first evidence; corrected in
+[`e9605bd`](https://github.com/logiclrd/Heresy/commit/e9605bd1450621abc4ac01b977776f914cc5b655).
+[Corrected CI #43622895976](https://github.com/logiclrd/Heresy/actions/runs/43622895976):
+full automated test-suite step succeeded; Release packaging and ARM64
+status should be checked independently at the exact audited HEAD.
+
+**Physical acceptance boundary:** The user manually configured a
+referenced child Synth under a parent
+`Source → Multi(3) → OnePole` and confirmed that changing the
+**parent Source node's base Frequency Hz** affected the latched note
+without audible clicks, pops, or discontinuities. Opening the child
+Synth editor replaces the audition context, so live editing of the
+child's *internal* parameters while its parent is latched is not an
+exposed workflow, and is **not** a required physical test for PR #12.
+The recursive child-definition revisions above are automated safety
+coverage, not a claim of such manual playback acceptance.
+
+**Still open:** C3 other simultaneous/overlapping parent-and-child
+publications, nested worker/pending-generation isolation and complex
+Instrument/Script Envelope cases; C4 interruption/Note Off/EOF and C2
+matrix closure. This bounded acceptance does not mark the PR complete,
+check the all-properties TODO, or authorize merging.
+
 ### Adjacent UI issues deliberately outside PR #12 closure
 
 Two independently actionable main-line TODOs were logged in [`docs/todo.md`](https://github.com/logiclrd/Heresy/blob/main/docs/todo.md) via [`dd55714`](https://github.com/logiclrd/Heresy/commit/dd55714d677ee8ee4641594e1f8ae2cb394039c3): stale **Configured stages** after editing a shared Filter definition and selected-stage controls hidden to the right in a non-resizable strip instead of below the list. `FmSynthEditorControl.AddFilterInspector` currently deliberately avoids rebuilding on popup close to preserve unsaved per-use drafts, and `FilterInstanceEditorControl` uses a left/right layout; the eventual fix must refresh safely without losing those drafts. These are real UI defects, but not evidence that a held note failed a realtime coefficient update.
