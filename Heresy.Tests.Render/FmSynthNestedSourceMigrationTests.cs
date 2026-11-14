@@ -26,6 +26,7 @@ public sealed class FmSynthNestedSourceMigrationTests
     private static readonly ObjectId ChildId = (ObjectId)99810U;
     private static readonly ObjectId ParentId = (ObjectId)99811U;
     private static readonly ObjectId ReferenceSampleId = (ObjectId)99812U;
+    private static readonly ObjectId OtherChildId = (ObjectId)99814U;
 
     [Test]
     public void CompatibleNestedConstantEditInsideMultiPreservesParentFilterHistory()
@@ -122,6 +123,156 @@ public sealed class FmSynthNestedSourceMigrationTests
         session.CountOlderAudioVoices().Should().Be(0,
             "only retirement of the incompatible note clears the warning");
     }
+
+
+    [Test]
+    public void SelectingCompatibleSynthSourceIdKeepsIndependentMultiAndFilterHistories()
+    {
+        const int firstAge = 211, secondAge = 67, continuation = 4928;
+        Registry resolver = new();
+        FilterInstance filter = OnePole();
+        FmSynthSound firstChild = OscillatorChild(193);
+        FmSynthSound selectedChild = OscillatorChild(431);
+        resolver.Set(ChildId, firstChild);
+        FmSynthSound original = MultiFilteredParent(ChildId, filter, resolver);
+        resolver.Set(OtherChildId, selectedChild);
+        FmSynthSound selected = MultiFilteredParent(OtherChildId, filter, resolver);
+
+        // Oracle: a compatible edit of the same child definition, without
+        // changing the parent's SourceId, must produce identical PCM.
+        resolver.Set(ChildId, selectedChild);
+        FmSynthSound sameIdEdit = MultiFilteredParent(ChildId, filter, resolver);
+        RenderContext context = Mono();
+        SoundState older = original.CreateState();
+        SoundState younger = original.CreateState();
+        SoundState olderReference = original.CreateState();
+        SoundState youngerReference = original.CreateState();
+        SoundState uninterrupted = original.CreateState();
+
+        original.Render(context, older, 0, firstAge, new float[firstAge]);
+        original.Render(context, olderReference, 0, firstAge, new float[firstAge]);
+        original.Render(context, uninterrupted, 0, firstAge, new float[firstAge]);
+        original.Render(context, younger, 0, secondAge, new float[secondAge]);
+        original.Render(context, youngerReference, 0, secondAge, new float[secondAge]);
+
+        foreach (SoundState held in new[] { older, younger })
+        {
+            original.CanAdoptRunningState(selected, held).Should().BeTrue(
+                "a new SourceId for a compatible Synth may reuse that voice's invocation");
+            original.TryPrepareRunningState(selected, held).Should().BeTrue();
+            original.CommitPreparedRunningState(selected, held);
+        }
+        foreach (SoundState held in new[] { olderReference, youngerReference })
+        {
+            original.TryPrepareRunningState(sameIdEdit, held).Should().BeTrue();
+            original.CommitPreparedRunningState(sameIdEdit, held);
+        }
+
+        float[] actualOlder = new float[continuation];
+        float[] actualYounger = new float[continuation];
+        float[] expectedOlder = new float[continuation];
+        float[] expectedYounger = new float[continuation];
+        float[] oldGeneration = new float[continuation];
+        sameIdEdit.Render(context, olderReference, firstAge, continuation, expectedOlder);
+        sameIdEdit.Render(context, youngerReference, secondAge, continuation, expectedYounger);
+        original.Render(context, uninterrupted, firstAge, continuation, oldGeneration);
+
+        long bytes = GC.GetAllocatedBytesForCurrentThread();
+        selected.Render(context, older, firstAge, continuation, actualOlder);
+        selected.Render(context, younger, secondAge, continuation, actualYounger);
+        (GC.GetAllocatedBytesForCurrentThread() - bytes).Should().Be(0,
+            "neither compatible SourceId selection may rebuild an invocation on PCM");
+        for (int i = 0; i < continuation; i++)
+        {
+            actualOlder[i].Should().BeApproximately(expectedOlder[i], 5e-5f,
+                $"the older note's nested oscillator/Multi/filter state at {i}");
+            actualYounger[i].Should().BeApproximately(expectedYounger[i], 5e-5f,
+                $"the younger note's independent nested state at {i}");
+        }
+        actualOlder.Zip(actualYounger, (a, b) => Math.Abs(a - b))
+            .Max().Should().BeGreaterThan(0.001,
+                "different note ages must not share a nested oscillator phase or filter history");
+        actualOlder.Zip(oldGeneration, (a, b) => Math.Abs(a - b))
+            .Skip(4800).Max().Should().BeGreaterThan(0.005,
+                "SourceId selection must actually retune the child rather than retain old audio");
+    }
+
+    [Test]
+    public void CompatibleSynthSourceIdSelectionKeepsTwoHeldSiblingVoicesCurrent()
+    {
+        Registry sounds = new();
+        Registry referenceSounds = new();
+        FilterInstance filter = OnePole();
+        FmSynthSound firstChild = OscillatorChild(193);
+        FmSynthSound selectedChild = OscillatorChild(431);
+        sounds.Set(ChildId, firstChild);
+        referenceSounds.Set(ChildId, firstChild);
+        FmSynthSound original = MultiFilteredParent(ChildId, filter, sounds);
+        FmSynthSound referenceOriginal = MultiFilteredParent(
+            ChildId, filter, referenceSounds);
+        sounds.Set(OtherChildId, selectedChild);
+        referenceSounds.Set(ChildId, selectedChild);
+        FmSynthSound selected = MultiFilteredParent(OtherChildId, filter, sounds);
+        FmSynthSound equivalent = MultiFilteredParent(
+            ChildId, filter, referenceSounds);
+        sounds.Set(ParentId, original);
+        referenceSounds.Set(ParentId, referenceOriginal);
+        PlaybackSession session = new(Mono(),
+            new NoteScheduleBuilder().Freeze(), sounds);
+        PlaybackSession reference = new(Mono(),
+            new NoteScheduleBuilder().Freeze(), referenceSounds);
+
+        foreach (PlaybackSession playback in new[] { session, reference })
+            playback.ApplyLiveEvent(ChannelTarget.Virtual(1),
+                [new StartNoteCommand(ParentId)]);
+        float[] prelude = new float[211];
+        session.Render(0, 211, prelude);
+        reference.Render(0, 211, new float[211]);
+        foreach (PlaybackSession playback in new[] { session, reference })
+            playback.ApplyLiveEvent(ChannelTarget.Virtual(2),
+                [new StartNoteCommand(ParentId)]);
+        session.Render(211, 79, new float[79]);
+        reference.Render(211, 79, new float[79]);
+
+        session.AdoptLiveSynthParameters(ParentId, original, selected);
+        reference.AdoptLiveSynthParameters(ParentId, referenceOriginal, equivalent);
+        session.CountOlderAudioVoices().Should().Be(0,
+            "both held siblings must successfully adopt a compatible child Synth selection");
+        reference.CountOlderAudioVoices().Should().Be(0);
+
+        sounds.Set(ParentId, selected);
+        referenceSounds.Set(ParentId, equivalent);
+        session.ApplyLiveEvent(ChannelTarget.Virtual(3),
+            [new StartNoteCommand(ParentId)]);
+        reference.ApplyLiveEvent(ChannelTarget.Virtual(3),
+            [new StartNoteCommand(ParentId)]);
+
+        float[] actual = new float[5024];
+        float[] expected = new float[actual.Length];
+        session.Render(290, actual.Length, actual);
+        reference.Render(290, expected.Length, expected);
+        for (int i = 0; i < actual.Length; i++)
+            actual[i].Should().BeApproximately(expected[i], 7e-5f,
+                $"SourceId selection must not mix the three independent note histories at {i}");
+        session.CountOlderAudioVoices().Should().Be(0);
+
+        session.ApplyLiveEvent(ChannelTarget.Virtual(1), [new NoteCutCommand()]);
+        reference.ApplyLiveEvent(ChannelTarget.Virtual(1), [new NoteCutCommand()]);
+        float[] remaining = new float[256];
+        float[] remainingReference = new float[256];
+        session.Render(5314, 256, remaining);
+        reference.Render(5314, 256, remainingReference);
+        for (int i = 0; i < remaining.Length; i++)
+            remaining[i].Should().BeApproximately(remainingReference[i], 7e-5f,
+                "retiring one sibling must not change another child's selected Synth");
+        session.CountOlderAudioVoices().Should().Be(0);
+    }
+
+    private static FmSynthSound OscillatorChild(double frequency)
+        => new(new FmSynthGraph([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sine,
+                frequency, minimum: -0.08, maximum: 0.08),
+        ], 1), new NoEnvelopes(), enableLiveMultiExpansion: true);
 
     private static FmSynthSound ConstantChild(double value)
         => new(new FmSynthGraph([new FmConstantNode(1, value)], 1),
