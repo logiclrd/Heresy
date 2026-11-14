@@ -131,6 +131,117 @@ public sealed class FmSynthNnaVirtualLifecycleTests
         Assert.That(session.CountOlderAudioVoices(), Is.Zero);
     }
 
+    [Test]
+    public void PhysicalScopedAndNnaVoicesRetainIndependentLiveRevisionCurrency()
+    {
+        Registry registry = new();
+        FmSynthSound Constant(double value) => new(new FmSynthGraph([
+            new FmConstantNode(1, value),
+        ], 1), registry,
+            new NewNotePolicy(NewNoteAction.Continue, TimeSpan.Zero),
+            soundResolver: registry);
+        FmSynthSound Structural(double extra) => new(new FmSynthGraph([
+            new FmConstantNode(1, 0.5),
+            new FmConstantNode(2, extra),
+            new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
+        ], 3), registry,
+            new NewNotePolicy(NewNoteAction.Continue, TimeSpan.Zero),
+            soundResolver: registry);
+
+        FmSynthSound first = Constant(0.25);
+        FmSynthSound compatible = Constant(0.5);
+        FmSynthSound incompatible = Structural(0.1);
+        FmSynthSound latest = Structural(0.3);
+        registry.Add(SourceId, first);
+        PlaybackSession session = Session(registry, Schedule());
+
+        // Same virtual channel number is independent for each cursor;
+        // physical channel 0 has a third, unrelated ownership path.
+        session.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+            [new StartNoteCommand(SourceId)]);
+        session.ApplyScopedEvent(202, ChannelTarget.Virtual(7),
+            [new StartNoteCommand(SourceId)]);
+        session.ApplyLiveEvent(ChannelTarget.Physical(0),
+            [new StartNoteCommand(SourceId)]);
+        session.Render(0, 10, new float[10]);
+
+        // This displaces only cursor 101's earlier voice by NNA Continue.
+        // The displaced voice is still eligible for future live edits.
+        session.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+            [new StartNoteCommand(SourceId)]);
+        PlaybackVoice displaced = session.VirtualVoices.Single();
+        Assert.Multiple(() =>
+        {
+            Assert.That(displaced.OriginScopedVirtualOwner, Is.EqualTo(101));
+            Assert.That(displaced.OriginVirtualChannelId, Is.EqualTo(7u));
+            Assert.That(displaced.Sound, Is.SameAs(first));
+            Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+        });
+        session.Render(10, 5, new float[5]);
+
+        session.AdoptLiveSynthParameters(SourceId, first, compatible);
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.CountOlderAudioVoices(), Is.Zero,
+                "all four independently playing generations adopt the compatible edit");
+            Assert.That(displaced.Sound, Is.SameAs(compatible),
+                "the migrated NNA voice must not be omitted from publication");
+            Assert.That(session.GetChannelState(0).CurrentVoice!.Sound,
+                Is.SameAs(compatible), "the physical voice also adopts");
+        });
+        float[] afterAdoption = new float[121];
+        session.Render(15, afterAdoption.Length, afterAdoption);
+        Assert.That(afterAdoption[^1], Is.EqualTo(2.0f).Within(1e-4f),
+            "all four voices must actually sound at the new 0.5 gain, " +
+            "including both owner-scoped currents and the displaced NNA");
+
+        // A structurally incompatible edit is a DEFINITIVE refusal for
+        // the four old held notes, but the new note gets the new sound.
+        session.AdoptLiveSynthParameters(SourceId, compatible, incompatible);
+        Assert.That(session.CountOlderAudioVoices(), Is.EqualTo(4));
+        registry.Replace(SourceId, incompatible);
+        session.ApplyLiveEvent(ChannelTarget.Virtual(99),
+            [new StartNoteCommand(SourceId)]);
+        session.Render(136, 3, new float[3]);
+        Assert.That(session.CountOlderAudioVoices(), Is.EqualTo(4),
+            "fresh notes do not inherit a prior note's older-audio warning");
+
+        // A compatible later edit updates the NEW note, but cannot
+        // retroactively catch up the missed older four Synth graphs.
+        session.AdoptLiveSynthParameters(SourceId, incompatible, latest);
+        Assert.That(session.CountOlderAudioVoices(), Is.EqualTo(4),
+            "later compatible adoption must not clear a missed generation");
+        Assert.That(displaced.Sound, Is.SameAs(compatible),
+            "the old displaced graph remains frozen, not silently rebuilt");
+
+        // Cursor 101 owns two older voices: its current scoped note AND
+        // its displaced NNA predecessor. Neither scope 202 nor physical
+        // channel 0 may be cut when that cursor is cancelled.
+        session.CancelScopedVoices(101);
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.VirtualVoices, Is.Empty);
+            Assert.That(session.CountOlderAudioVoices(), Is.EqualTo(2),
+                "only the two surviving old notes still count as older");
+            Assert.That(session.GetChannelState(0).CurrentVoice, Is.Not.Null);
+        });
+
+        session.ApplyScopedEvent(202, ChannelTarget.Virtual(7),
+            [new NoteOffCommand()]);
+        session.Render(139, 4, new float[4]);
+        Assert.That(session.CountOlderAudioVoices(), Is.EqualTo(1),
+            "scope 202's definite Note Off retires exactly its own old note");
+        session.ApplyLiveEvent(ChannelTarget.Physical(0),
+            [new NoteCutCommand()]);
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero,
+            "the remaining newer virtual note must not count as older audio");
+        float[] currentOutput = new float[120];
+        session.Render(143, currentOutput.Length, currentOutput);
+        Assert.That(currentOutput[^1], Is.EqualTo(0.8f).Within(1e-4f),
+            "the independent fresh note adopts the latest compatible edit");
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+    }
+
     [TestCase(NewNoteAction.Cut, false)]
     [TestCase(NewNoteAction.Continue, true)]
     [TestCase(NewNoteAction.Off, true)]
