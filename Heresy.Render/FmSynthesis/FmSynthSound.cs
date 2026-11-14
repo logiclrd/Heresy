@@ -186,6 +186,18 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		// at StartFrame=0 and are never rewound or reconstructed.
 		public long StartFrame { get; private set; }
 		public bool HasStarted { get; private set; }
+		// A completed fade to zero is a DSP retirement, not a hidden
+		// instruction to simulate the old timeline forever.
+		public bool WasRetired { get; private set; }
+		public bool RetireAfterFade(long frame)
+		{
+			if (!HasStarted || MixTo != 0.0 || MixAt(frame) != 0.0
+				|| OnsetFadeFrom is not null)
+				return false;
+			HasStarted = false;
+			WasRetired = true;
+			return true;
+		}
 		private double RatioFrom { get; set; }
 		private double RatioTo { get; set; }
 		private long RatioEditFrame { get; set; }
@@ -267,6 +279,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			double currentMix = MixAt(frame);
 			if (!HasStarted && mix > 0.0)
 			{
+				if (WasRetired)
+					throw new InvalidOperationException(
+						"A retired Multi child must be replaced off the PCM thread.");
 				HasStarted = true;
 				StartFrame = frame;
 				// This child has never run. Its first sample is local 0,
@@ -293,8 +308,26 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	/// <summary>Fresh Multi children and replacement arrays constructed off
 	/// the PCM thread. Existing histories are inserted only when the entire
 	/// voice has passed atomic preflight, not read by this worker.</summary>
+	private static ulong RetiredMask(MultiVoice[] voices, int target, int offset)
+	{
+		ulong mask = 0;
+		for (int j = offset; j < Math.Min(voices.Length,
+			Math.Min(target, offset + 64)); j++)
+			if (voices[j].WasRetired)
+				mask |= 1UL << (j - offset);
+		return mask;
+	}
+
+	private static bool NeedsRetiredMultiRevival(
+		FmSynthSound revision, FmSynthState state, int index)
+		=> RetiredMask(state.Multis[index],
+			revision._multiRatios[index].Length, 0) != 0
+			|| RetiredMask(state.Multis[index],
+				revision._multiRatios[index].Length, 64) != 0;
+
 	private sealed class PreparedMultiExpansion(
 		FmSynthSound revision, MultiVoice[]?[] slots, int[] capacities,
+		ulong[] revivedLow, ulong[] revivedHigh,
 		ulong seed, double pitch, double speed, int sampleRate)
 	{
 		public MultiVoice[]?[] Slots { get; } = slots;
@@ -305,7 +338,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				|| sampleRate != state.SampleRate)
 				return false;
 			for (int i = 0; i < capacities.Length; i++)
-				if (capacities[i] != state.Multis[i].Length)
+				if (capacities[i] != state.Multis[i].Length
+					|| revivedLow[i] != RetiredMask(state.Multis[i],
+						next._multiRatios[i].Length, 0)
+					|| revivedHigh[i] != RetiredMask(state.Multis[i],
+						next._multiRatios[i].Length, 64))
 					return false;
 			return true;
 		}
@@ -324,6 +361,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		// Captured from the PCM owner; the worker never visits live voices.
 		private readonly bool[] _rephase = new bool[nodeCount];
 		private readonly bool[] _workRephase = new bool[nodeCount];
+		private readonly ulong[] _revivedLow = new ulong[nodeCount];
+		private readonly ulong[] _revivedHigh = new ulong[nodeCount];
+		private readonly ulong[] _workRevivedLow = new ulong[nodeCount];
+		private readonly ulong[] _workRevivedHigh = new ulong[nodeCount];
 		private FmSynthSound? _revision;
 		private ulong _seed;
 		private int _sampleRate;
@@ -341,7 +382,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					&& _seed == state.NoiseSeed && _pitch == state.BoundPitch
 					&& _speed == state.BoundSpeed && _sampleRate == state.SampleRate;
 				for (int i = 0; identical && i < _capacities.Length; i++)
-					identical = _capacities[i] == state.Multis[i].Length;
+					identical = _capacities[i] == state.Multis[i].Length
+						&& _revivedLow[i] == RetiredMask(state.Multis[i],
+							next._multiRatios[i].Length, 0)
+						&& _revivedHigh[i] == RetiredMask(state.Multis[i],
+							next._multiRatios[i].Length, 64);
 				if (identical && (_pending || _queued || _ready is not null))
 					return;
 				_revision = next;
@@ -353,6 +398,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				{
 					_capacities[i] = state.Multis[i].Length;
 					_rephase[i] = original.NeedsMultiOnsetReplacement(next, state, i);
+					_revivedLow[i] = RetiredMask(state.Multis[i],
+						next._multiRatios[i].Length, 0);
+					_revivedHigh[i] = RetiredMask(state.Multis[i],
+						next._multiRatios[i].Length, 64);
 				}
 				// Invalidate work from an earlier generation. A running
 				// worker checks this version after every new child.
@@ -461,6 +510,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				speed = _speed;
 				Array.Copy(_capacities, _workCapacities, _capacities.Length);
 				Array.Copy(_rephase, _workRephase, _rephase.Length);
+				Array.Copy(_revivedLow, _workRevivedLow, _revivedLow.Length);
+				Array.Copy(_revivedHigh, _workRevivedHigh, _revivedHigh.Length);
 			}
 			long beforeTicks = Stopwatch.GetTimestamp();
 			long beforeBytes = GC.GetAllocatedBytesForCurrentThread();
@@ -479,7 +530,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				int target = next._multiRatios[i].Length;
 				int retained = _workCapacities[i];
 				bool rephase = _workRephase[i];
-				if (target <= retained && !rephase)
+				bool revival = _workRevivedLow[i] != 0 || _workRevivedHigh[i] != 0;
+				if (target <= retained && !rephase && !revival)
 					continue;
 				FmSynthSound input = next._nodes[i].MultiInput
 					?? throw new InvalidOperationException(
@@ -488,7 +540,11 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				MultiVoice[] voices = new MultiVoice[Math.Max(target, retained)];
 				for (int j = 0; j < target; j++)
 				{
-					if (j < retained && !rephase)
+					bool retired = j < retained &&
+						(j < 64
+							? (_workRevivedLow[i] & (1UL << j)) != 0
+							: (_workRevivedHigh[i] & (1UL << (j - 64))) != 0);
+					if (j < retained && !rephase && !retired)
 						continue;
 					if (!IsCurrent(version))
 					{
@@ -517,12 +573,12 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					// channel histories. The active voice is never touched by
 					// the worker. PCM publication will copy its live integrators
 					// into these already allocated states after preflight.
-					if (rephase && j < retained)
+					if (rephase && j < retained && !retired)
 						input.PrepareOnePoleOnsetStates(invocation.State, sampleRate);
 					MultiVoice child = new(invocation, ratio, multi, j,
-						initialMixGain: rephase && j < retained
+						initialMixGain: rephase && j < retained && !retired
 							? (multi.GainCompensation ? 1.0 / target : 1.0) : 0.0,
-						started: rephase && j < retained);
+						started: rephase && j < retained && !retired);
 					child.Invocation.State.SetNoiseSeed(MultiHash(seed
 						^ ((ulong)(uint)multi.Id << 32)
 						^ (ulong)(uint)(j + 1)));
@@ -538,7 +594,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				return;
 			}
 			PreparedMultiExpansion candidate = new(next, slots,
-				(int[])_workCapacities.Clone(), seed, pitch, speed, sampleRate);
+				(int[])_workCapacities.Clone(),
+				(ulong[])_workRevivedLow.Clone(), (ulong[])_workRevivedHigh.Clone(),
+				seed, pitch, speed, sampleRate);
 			bool stale;
 			lock (_gate)
 			{
@@ -3528,8 +3586,13 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		double sum = 0.0;
 		foreach (MultiVoice voice in voices)
 		{
+			// The final zero-mix frame is the retirement boundary. No
+			// future invocation of this old state is legal without a detached
+			// replacement from the off-PCM Multi worker.
+			if (voice.RetireAfterFade(frame))
+				state.ChildEndChanged = true;
 			if (!voice.HasStarted)
-				continue; // dormant growth reserve needs no DSP work
+				continue; // dormant reserve or fully retired child: no DSP work
 			double incoming = RenderMultiConstituent(multi, state, index,
 				frame, sampleRate, externalEnd, pitchTrajectoryMultiplier, voice);
 			if (voice.OnsetFadeFrom is { } outgoing)
