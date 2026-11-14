@@ -351,6 +351,154 @@ public sealed class FmSynthNnaVirtualLifecycleTests
         Assert.That(session.CountOlderAudioVoices(), Is.Zero);
     }
 
+    [TestCase(NewNoteAction.Off)]
+    [TestCase(NewNoteAction.Fade)]
+    public void ReleasingScopedNnaAndPhysicalVoicesRetainIndependentCurrencyAndHostTails(
+        NewNoteAction action)
+    {
+        Registry registry = new();
+        FmSynthSound original = BuildNested(registry, loop: true,
+            action: action, inheritedEnvelope: true);
+
+        // Only the parent's compatible OnePole cutoff changes. The selected
+        // nested Instrument/Sample, its sustain-release clock and each
+        // invocation's own Filter histories remain the same.
+        FmSynthSound Retuned(double cutoff)
+        {
+            FilterDefinition definition = new((ObjectId)72006U, "Graph pole");
+            FilterInstance filter = new(definition);
+            filter.SetStageParameter(1, "CutoffHz",
+                FilterParameterValue.FromNumber(cutoff));
+            return new FmSynthSound(new FmSynthGraph([
+                new FmSoundSourceNode(0, InnerId, C4),
+                new FmFilterNode(1, 0, filter, tailSeconds: 0.002),
+            ], 1), registry,
+                new NewNotePolicy(action, action == NewNoteAction.Fade
+                    ? TimeSpan.FromMilliseconds(4) : TimeSpan.Zero),
+                soundResolver: registry);
+        }
+
+        FmSynthSound compatible = Retuned(240);
+        FmSynthSound incompatible = new(new FmSynthGraph([
+            new FmConstantNode(9, 0.25),
+        ], 9), registry, soundResolver: registry);
+        registry.Add(SourceId, original);
+        PlaybackSession session = Session(registry, Schedule());
+
+        // All three hosts own real IIR output histories. NNA displacement
+        // must fork scope 101's existing host instead of following its newly
+        // started voice through that same Filter a second time.
+        FilterDefinition hostDefinition = new((ObjectId)72016U, "Host pole");
+        FilterInstance host = new(hostDefinition);
+        host.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(100));
+        session.ConfigurePhysicalChannelOutputFilter(0, host);
+        session.ConfigureVirtualChannelOutputFilter(7, host, scopedOwner: 101);
+        session.ConfigureVirtualChannelOutputFilter(7, host, scopedOwner: 202);
+
+        session.ApplyLiveEvent(ChannelTarget.Physical(0),
+            [new StartNoteCommand(SourceId)]);
+        session.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+            [new StartNoteCommand(SourceId)]);
+        session.ApplyScopedEvent(202, ChannelTarget.Virtual(7),
+            [new StartNoteCommand(SourceId)]);
+        float[] initial = new float[10];
+        session.Render(0, initial.Length, initial);
+        Assert.That(initial.Any(value => Math.Abs(value) > 1e-5f), Is.True);
+
+        session.AdoptLiveSynthParameters(SourceId, original, compatible);
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.GetChannelState(0).CurrentVoice!.Sound,
+                Is.SameAs(compatible));
+            Assert.That(session.CountOlderAudioVoices(), Is.Zero,
+                "all three held voices should adopt the parent Filter retune");
+        });
+        registry.Replace(SourceId, compatible);
+        session.Render(10, 110, new float[110]);
+
+        // Scope 101 gets a second note, displacing its first note into the
+        // NNA Off or Fade pool. Scope 202 releases independently, and the
+        // physical voice stays held; all are sounding when publication occurs.
+        session.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+            [new StartNoteCommand(SourceId)]);
+        Assert.That(session.VirtualVoices, Has.Count.EqualTo(1));
+        PlaybackVoice displaced = session.VirtualVoices.Single();
+        Assert.Multiple(() =>
+        {
+            Assert.That(displaced.OriginScopedVirtualOwner, Is.EqualTo(101));
+            Assert.That(displaced.Sound, Is.SameAs(compatible));
+            Assert.That(displaced.DisplacedOutputFilterState, Is.Not.Null);
+            Assert.That(displaced.DisplacedOutputFilterState!.PreparedTailFrames,
+                Is.GreaterThan(0));
+        });
+        if (action == NewNoteAction.Off)
+            Assert.That(displaced.SoundState.NoteOffTime,
+                Is.EqualTo(TimeSpan.FromMilliseconds(120)));
+        else
+            Assert.That(displaced.FadeEndFrameExclusive, Is.EqualTo(124));
+
+        session.Render(120, 1, new float[1]);
+        session.ApplyScopedEvent(202, ChannelTarget.Virtual(7),
+            [new NoteOffCommand()]);
+        session.Render(121, 1, new float[1]);
+        session.AdoptLiveSynthParameters(SourceId, compatible, incompatible);
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.CountOlderAudioVoices(), Is.EqualTo(4),
+                "the releasing NNA, releasing other owner, fresh scoped note " +
+                "and held physical note each miss the new graph");
+            Assert.That(displaced.Sound, Is.SameAs(compatible),
+                "incompatible publication cannot replace the releasing state");
+        });
+
+        // Neither an incompatible graph nor another owner's Note Off may
+        // reset the NNA release/fade origin or hold it beyond its real end.
+        float[] earlyRelease = new float[12];
+        session.Render(122, earlyRelease.Length, earlyRelease);
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.VirtualVoices, Is.Empty);
+            Assert.That(session.CountOlderAudioVoices(), Is.EqualTo(2),
+                "only scope 101's new current and physical current survive");
+            Assert.That(displaced.SoundState.NoteOffTime,
+                Is.EqualTo(action == NewNoteAction.Off
+                    ? TimeSpan.FromMilliseconds(120) : null));
+            Assert.That(earlyRelease.Any(value => Math.Abs(value) > 1e-6f),
+                Is.True, "the release and its forked host remain audible");
+        });
+
+        session.ApplyScopedEvent(101, ChannelTarget.Virtual(7),
+            [new NoteOffCommand()]);
+        session.Render(134, 10, new float[10]);
+        Assert.That(session.CountOlderAudioVoices(), Is.EqualTo(1),
+            "scope 101 retires without affecting the held physical note");
+
+        session.ApplyLiveEvent(ChannelTarget.Physical(0),
+            [new NoteOffCommand()]);
+        float[] finalRelease = new float[5];
+        session.Render(144, finalRelease.Length, finalRelease);
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.GetChannelState(0).CurrentVoice, Is.Null);
+            Assert.That(session.CountOlderAudioVoices(), Is.Zero,
+                "a completed old voice no longer counts as stale");
+            Assert.That(finalRelease.Any(value => Math.Abs(value) > 1e-6f),
+                Is.True);
+        });
+
+        // The physical host's genuine OnePole history can still emit a tail
+        // after the last old note retires. It must NOT resurrect its warning.
+        float[] hostTail = new float[3];
+        session.Render(149, hostTail.Length, hostTail);
+        Assert.Multiple(() =>
+        {
+            Assert.That(hostTail.Any(value => Math.Abs(value) > 1e-7f),
+                Is.True, "host-tail PCM is independent of voice currency");
+            Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+        });
+    }
+
     [TestCase(NewNoteAction.Cut, false)]
     [TestCase(NewNoteAction.Continue, true)]
     [TestCase(NewNoteAction.Off, true)]
