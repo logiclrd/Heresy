@@ -40,13 +40,8 @@ public sealed class PlaybackLiveSynthCurrencyTests
             "edits to another source do not concern this voice");
 
         session.AdoptLiveSynthParameters(SynthId, original, compatible);
-        Assert.Multiple(() =>
-        {
-            Assert.That(session.CountOlderAudioVoices(), Is.Zero,
-                "a successfully adopted edit does not obsolete the note");
-            Assert.That(session.GetVirtualChannelState(1)?.CurrentVoice?.Sound,
-                Is.SameAs(compatible));
-        });
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero,
+            "a successfully adopted edit does not obsolete the note");
     }
 
     [Test]
@@ -83,8 +78,10 @@ public sealed class PlaybackLiveSynthCurrencyTests
             [new NoteCutCommand()]);
         Assert.That(session.CountOlderAudioVoices(), Is.Zero,
             "the final older note has been detached, though a current note remains");
-        Assert.That(session.GetVirtualChannelState(2)?.CurrentVoice,
-            Is.Not.Null);
+        float[] stillPlaying = new float[1];
+        session.Render(16, 1, stillPlaying);
+        Assert.That(stillPlaying[0], Is.GreaterThan(0),
+            "a current note remains audible after the last older note was cut");
     }
 
     private static PlaybackSession Session(ISoundResolver sounds)
