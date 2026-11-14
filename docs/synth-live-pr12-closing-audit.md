@@ -608,6 +608,71 @@ The C2 matrix, realtime stress C5 and physical listening C6 also
 remain open. This test does not certify PR #12 for merge or mark the
 overall all-properties TODO complete.
 
+## C4(c) — Note Off during a prepared Multi onset with sustained Envelope and independent Filter histories (2026-11-14)
+
+**Automated PASS, no production DSP change.**
+`FmSynthMultiTests.NoteOffDuringPreparedMultiOnsetFadePreservesBothOnePoleHistoriesAndRelease`
+covers Note Off at global frame **320** and **640**, both during the
+active 100-ms onset crossfade begun at frame **128**. The Multi has
+**three independently prepared oscillator and Filter states**:
+`Sawtooth(309 Hz) → OnePole(700 Hz, 2-ms tail) → Multi(3)`.
+A worker-prepared edit changes `RandomizePhase=false` to
+`RandomizePhase=true`, with the same 1,600-sample cycle and authored
+graph. Every replacement child carries its own phase skip, oscillator
+clock and history-transferred OnePole integrator; the old children
+remain audible during the outgoing side of the smoothstep.
+
+Outside the Multi, the signal passes through
+`Multiply(Node Envelope with sustain and 10-ms release)` and an
+unchanged **OnePole(1300 Hz, 2-ms parent tail)**. Note Off is delivered
+only *after* actually rendering the preceding 192 or 512 frames of
+the first onset fade. The parent sustain Envelope must keep both
+incoming and outgoing child Filters exciting and releasing on the
+original note clock. Its release becomes permanently silent at the
+exclusive frame **off + 481**; the outer Filter's 96-frame tail ends
+at precisely **off + 577** (global 897/1217). The still-in-progress
+4,800-frame rephase must neither cut off that signal nor prolong it
+to its nominal global frame-4928 fade completion.
+
+The independent oracle prepares exactly the same onset edit in a
+**separate** `Oscillator → OnePole → Multi` renderer with no Envelope
+and **no Note Off**. This generates a complete precomputed moving
+signal carrying the distinct old/new phases and their separate
+OnePole histories. A new frozen Sample containing that signal then
+feeds a separately compiled release Envelope and outer OnePole.
+Thus the expected release, Filter integration and retirement cannot
+inherit the edited note's release/retirement state. The test compares
+every sample both **before and after Note Off** at a 6e-5 tolerance,
+asserts audible release, exact parent end, permanent silence after
+that end and **zero measured PCM managed allocations**. The stronger
+test additionally renders an uninterrupted old-onset baseline and
+requires a measurable signal difference after the worker-prepared
+rephase; otherwise an erroneously refused onset might have passed
+the release comparison vacuously.
+
+[Test commit `3f42db3`](https://github.com/logiclrd/Heresy/commit/3f42db3332410faa66200c9ab9c3443c6f534ce3)
+first passed both Note Off cases in
+[CI #43635949054](https://github.com/logiclrd/Heresy/actions/runs/43635949054),
+**SUCCESS — 3,732/3,732 tests** (Render 1,182), Release bundle
+and Linux ARM64. The non-vacuity witness was added in test-only
+[`852ef5a`](https://github.com/logiclrd/Heresy/commit/852ef5a6e260bc8380df2e6d52ec6e70d6601bfd);
+the strengthened test-suite and ARM64 checks passed in
+[CI #43636190582](https://github.com/logiclrd/Heresy/actions/runs/43636190582).
+The workflow's final packaging result and this audit-head result are
+verified independently. No renderer fix was indicated.
+
+**C4 remains OPEN.** This case establishes release semantics for
+already-prepared oscillator onset replacement with unchanged OnePole
+plans and an **external** shared sustain Envelope. It does not grant
+general live mutation of a child release Envelope or eligibility for
+other Filter histories, recursively nested Multi, active fade
+supersession *combined* with Note Off, or cross-family Source changes.
+Multiple held/latched voices, NNA-displaced and scoped virtual voices,
+nested Synth Source release, incompatible candidate status and
+simultaneous interrupted Source replacements still require C4
+coverage. C2 and C5–C7 remain open; the all-properties TODO remains
+unchecked and PR #12 remains draft/unmerged.
+
 ### Adjacent UI issues deliberately outside PR #12 closure
 
 Two independently actionable main-line TODOs were logged in [`docs/todo.md`](https://github.com/logiclrd/Heresy/blob/main/docs/todo.md) via [`dd55714`](https://github.com/logiclrd/Heresy/commit/dd55714d677ee8ee4641594e1f8ae2cb394039c3): stale **Configured stages** after editing a shared Filter definition and selected-stage controls hidden to the right in a non-resizable strip instead of below the list. `FmSynthEditorControl.AddFilterInspector` currently deliberately avoids rebuilding on popup close to preserve unsaved per-use drafts, and `FilterInstanceEditorControl` uses a left/right layout; the eventual fix must refresh safely without losing those drafts. These are real UI defects, but not evidence that a held note failed a realtime coefficient update.
