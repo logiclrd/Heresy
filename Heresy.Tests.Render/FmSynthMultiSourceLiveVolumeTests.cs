@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Threading;
 
 using AwesomeAssertions;
 using Heresy.Core.Assets;
@@ -13,6 +14,7 @@ using Heresy.Core.Samples;
 using Heresy.Render.Configuration;
 using Heresy.Render.Envelopes;
 using Heresy.Render.FmSynthesis;
+using Heresy.Render.Filters;
 using Heresy.Render.Playback;
 using Heresy.Render.Samples;
 using Heresy.Render.Sounds;
@@ -216,6 +218,24 @@ public sealed class FmSynthMultiSourceLiveVolumeTests
         ]));
         SoundState held = before.CreateState();
         before.Render(context, held, 0, start, new float[start]);
+        if (changeOnset)
+        {
+            // A Randomize Phase change normally requests an off-PCM
+            // oscillator-onset replacement. A changed Instrument Volume
+            // curve makes that replacement's selected-tone configuration
+            // incompatible with the old captured curve; it must not
+            // take the new onset or lose the independent Volume edit.
+            before.CanAdoptRunningState(after, held).Should().BeFalse(
+                "an eligible but unprepared phase change must await its worker");
+            before.RequestMultiExpansionPreparation(after, held).Should().BeTrue();
+            using FirPreparationScheduler worker = new();
+            before.QueuePendingFirControls(held, worker);
+            SpinWait.SpinUntil(
+                () => worker.CompletedMultiExpansionCount >= 1,
+                TimeSpan.FromSeconds(5)).Should().BeTrue();
+            before.AdoptPreparedFirControls(held);
+            worker.Fault.Should().BeNull();
+        }
         before.CanAdoptRunningState(after, held).Should().BeTrue();
         before.TryPrepareRunningState(after, held).Should().BeTrue();
         before.CommitPreparedRunningState(after, held);
