@@ -779,6 +779,146 @@ public sealed class FmSynthMultiTests
     }
 
     [Test]
+    public void SupersedingPreparedRephaseDuringActiveMultiOnsetFadePublishesOnlyLatest()
+    {
+        const int initial = 96;
+        const int halfHold = 320;
+        const int transition = 4800;
+        const int laterFrames = 5024;
+
+        FmSynthSound Sound(bool random, double cycle) => new(
+            new FmSynthGraph([
+                new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 173),
+                new FmMultiNode(2, 1, voiceCount: 3, detune: 0,
+                    randomizePhase: random, cycleLength: cycle,
+                    gainCompensation: true),
+            ], 2), new EmptyEnvelopes(),
+            enableLiveMultiExpansion: true);
+
+        FmSynthSound original = Sound(false, 120);
+        FmSynthSound first = Sound(true, 820);
+        FmSynthSound obsolete = Sound(false, 120);
+        FmSynthSound latest = Sound(true, 1350);
+        RenderContext context = Mono();
+        SoundState actualState = original.CreateState();
+        SoundState oracleState = original.CreateState();
+        SoundState neverUpdatedState = original.CreateState();
+        foreach (SoundState state in new[] {
+            actualState, oracleState, neverUpdatedState })
+            state.SetNoiseSeed(47);
+        using FirPreparationScheduler actualWorker = new();
+        using FirPreparationScheduler oracleWorker = new();
+        using FirPreparationScheduler baselineWorker = new();
+
+        void Prepare(FmSynthSound from, FmSynthSound to,
+            SoundState state, FirPreparationScheduler worker, int count)
+        {
+            from.RequestMultiExpansionPreparation(to, state).Should().BeTrue();
+            from.QueuePendingFirControls(state, worker);
+            SpinWait.SpinUntil(
+                () => worker.CompletedMultiExpansionCount >= count,
+                TimeSpan.FromSeconds(5)).Should().BeTrue(
+                "the exact chosen revision must have a worker-prepared candidate");
+            from.AdoptPreparedFirControls(state);
+            worker.Fault.Should().BeNull();
+        }
+
+        foreach (SoundState state in new[] {
+            actualState, oracleState, neverUpdatedState })
+            original.Render(context, state, 0, initial, new float[initial]);
+
+        Prepare(original, first, actualState, actualWorker, 1);
+        Prepare(original, first, oracleState, oracleWorker, 1);
+        Prepare(original, first, neverUpdatedState, baselineWorker, 1);
+        foreach (SoundState state in new[] {
+            actualState, oracleState, neverUpdatedState })
+        {
+            original.TryPrepareRunningState(first, state).Should().BeTrue();
+            original.CommitPreparedRunningState(first, state);
+        }
+
+        // The first onset fade has begun. The primary then asks for a
+        // second revision, but is not allowed to adopt it until this fade
+        // has ended. The oracle never sees this obsolete candidate.
+        int frame = initial;
+        float[] earlyActual = new float[halfHold];
+        float[] earlyOracle = new float[halfHold];
+        first.Render(context, actualState, frame, halfHold, earlyActual);
+        first.Render(context, oracleState, frame, halfHold, earlyOracle);
+        first.Render(context, neverUpdatedState, frame, halfHold,
+            new float[halfHold]);
+        earlyActual.Should().Equal(earlyOracle);
+
+        Prepare(first, obsolete, actualState, actualWorker, 2);
+        first.TryPrepareRunningState(obsolete, actualState).Should().BeFalse(
+            "a new onset must not interrupt an in-progress outgoing fade");
+
+        frame += halfHold;
+        float[] middleActual = new float[halfHold];
+        float[] middleOracle = new float[halfHold];
+        first.Render(context, actualState, frame, halfHold, middleActual);
+        first.Render(context, oracleState, frame, halfHold, middleOracle);
+        first.Render(context, neverUpdatedState, frame, halfHold,
+            new float[halfHold]);
+        middleActual.Should().Equal(middleOracle,
+            "a ready but unadopted obsolete worker must not affect PCM");
+
+        // Supersede the stale prepared result while the first onset is
+        // still audible. Both routes prepare exactly the SAME latest
+        // revision, but only the primary has cancelled obsolete work.
+        first.CancelPendingMultiExpansion(actualState);
+        Prepare(first, latest, actualState, actualWorker, 3);
+        Prepare(first, latest, oracleState, oracleWorker, 2);
+        first.TryPrepareRunningState(latest, actualState).Should().BeFalse();
+        first.TryPrepareRunningState(latest, oracleState).Should().BeFalse();
+
+        frame += halfHold;
+        int finishFirst = transition + 1 - 2 * halfHold;
+        float[] tailActual = new float[finishFirst];
+        float[] tailOracle = new float[finishFirst];
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        first.Render(context, actualState, frame, finishFirst, tailActual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L,
+            "a pending rephase may not allocate while rendering the prior fade");
+        first.Render(context, oracleState, frame, finishFirst, tailOracle);
+        first.Render(context, neverUpdatedState, frame, finishFirst,
+            new float[finishFirst]);
+        tailActual.Should().Equal(tailOracle,
+            "neither stale nor latest preparation changes the first fade");
+        frame += finishFirst;
+        frame.Should().Be(initial + transition + 1);
+
+        first.TryPrepareRunningState(latest, actualState).Should().BeTrue(
+            "the latest prepared onset must become eligible at the bounded boundary");
+        first.TryPrepareRunningState(latest, oracleState).Should().BeTrue();
+        first.CommitPreparedRunningState(latest, actualState);
+        first.CommitPreparedRunningState(latest, oracleState);
+
+        // The first frame of the second fade must begin from the same
+        // genuinely current audio as the uninterrupted first definition.
+        float[] actual = new float[laterFrames];
+        float[] expected = new float[laterFrames];
+        float[] noSecond = new float[laterFrames];
+        allocated = GC.GetAllocatedBytesForCurrentThread();
+        latest.Render(context, actualState, frame, laterFrames, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L);
+        latest.Render(context, oracleState, frame, laterFrames, expected);
+        first.Render(context, neverUpdatedState, frame, laterFrames, noSecond);
+        actual.Should().Equal(expected,
+            "the cancelled intermediate generation must never alter the second fade");
+        actual[0].Should().Be(noSecond[0],
+            "the new crossfade begins with the last already-audible onset");
+        actual.Should().OnlyContain(float.IsFinite);
+        Enumerable.Range(4800, laterFrames - 4800)
+            .Max(i => Math.Abs(actual[i] - noSecond[i]))
+            .Should().BeGreaterThan(0.02f,
+                "the latest cycle-length change must actually become audible");
+        actualWorker.Fault.Should().BeNull();
+        oracleWorker.Fault.Should().BeNull();
+        baselineWorker.Fault.Should().BeNull();
+    }
+
+    [Test]
     public void MultiRephaseMigratesBothIndependentOscillatorsBehindStatelessOperators()
     {
         FmSynthGraph Graph(bool random) => new([
