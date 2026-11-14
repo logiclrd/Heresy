@@ -30,7 +30,7 @@
 | Oscillator Frequency Hz, Constant, Exponential multiplier | Existing phase/rate migration, logarithmic frequency glide and control-only distinction; `FmSynthUnifiedTransitionTests`, `FmSynthChildFrequencyModulationTests` | Real inspector/PCM test matrix for rapid audio-rate modulation and mixed child ancestry |
 | Source selected Sample; Source scalar Frequency/Constant/Exponential | `FmSynthLiveSourceIdTests` verifies independent Sample fades, multiple Sources, short EOF, graph-wide mixed Filters/Operators/fan-out, modulated input, atomic refusal; pre-existing forward-integrated pitch controls | Probe SourceId+frequency in one publication (currently declines), a SourceId switch inside a Multi child, overlapping edit during an active 100-ms fade, and Source `None`/silent selection policy |
 | Source selected nested Synth | `FmSynthNestedSourceMigrationTests` covers compatible child edits under Multi(3)→OnePole, two compatible Synth SourceId selections, held-sibling isolation, sticky old-audio status on retained incompatible children, and nested worker supersession by newer parent+child revisions | Still probe distinct simultaneous parent/child commits with complex Filter/Source histories, deeper Instrument/Script Envelope combinations, and interrupted/released nested voices (C4 boundary) |
-| Source selected Instrument | `FmSynthMultiSourceLiveVolumeTests` now covers compatible selected-Sample Instrument Volume revisions across two Sources under a shared Filter and inside stable nonoscillator Multi(3), including source-local smoothstep, IIR continuity and all-or-none incompatible-tone rejection | **Approved deferral:** comprehensive cross-family/unrelated Instrument *substitution*. C2 still must classify scripted Instrument Volume tones and UI publication; oscillator-bearing compound Multi onset/rephase and post-Note-Off cases require separate acceptance |
+| Source selected Instrument | `FmSynthMultiSourceLiveVolumeTests` now covers compatible selected-Sample Instrument Volume revisions across two Sources under a shared Filter and both nonoscillator and oscillator-bearing Multi(3), including source-local 100-ms gain smoothing, preserved oscillator phase/IIR history, worker-resolved incompatible rephase, rejection of changed release timelines, and all-or-none incompatible-tone refusal | **Approved deferral:** comprehensive cross-family/unrelated Instrument *substitution*. C2 still owns scripted Instrument Volume tones and UI publication; C4 owns active onset-fade interruption, Note Off/release changes and lifecycle transitions |
 | Envelope selected/shared Node and Script Envelope | Frozen Node curve migration, plus red-first-fixed audible Script Envelope smoothing inside Multi(3)→OnePole and no-fade Script pitch-only control in `FmSynthLiveGraphEnvelopeTests`; shared-object publication and Instrument Volume paths have separate regressions | C2 must verify Script editor commit/publication for every live field and `None ↔ reference`; C4 owns active Note Off and release-duration changes (audible releasing curve conservatively retained) |
 | Filter selected definition; overrides / TailSeconds / shared edit | Atomic multi-processor prepared IIR/FIR retunes and FM-bound controls, `FmSynthLiveFilterOutputTests`, `FmFilterNodeRenderingTests`, multiple Filter realtime tests; user physically edited a three-stage Filter containing **SvfNotch** and **CombFeedback** and heard ongoing changes | Probe each stage-parameter *family*, more than one edited processor per publication, connected modulated FIR, rapid retune, release/tail, nested Multi/Instrument and **Filter definition selection with equivalent stage shape**. Stage add/remove/kind/generation is *effective topology*, not automatically guaranteed |
 | Multi Presets/Distribution/Detune/VoiceCount/Components/RandomizePhase/GainCompensation/Cycle | Worker-prepared expansion/retirement/revival and nested worker supersession in `FmSynthMultiRetirementTests` / `FmSynthNestedSourceMigrationTests`; `FmSynthLiveFilteredMultiOutputTests` now verifies simultaneous child Sample-rate + IIR Filter retune under a parent 100-ms moving gain, including oscillator sibling and three independent histories | Deeper Multi with changed child Instrument/Script Envelope, topology-effective onset changes and interruption/release (C4), plus CPU deadline/recovery (C5) |
@@ -71,7 +71,7 @@ Do not turn this into arbitrary “slice 61, 62, ...” development. Each item b
 
 - [x] **C1 — Adopt/retain/refuse policy contract (small, prerequisite; decision record above).** Record agreed deferrals: cross-family/unrelated Instrument SourceId replacements and Pattern/Sequence Source support; runtime-topology Filter stage changes; structural graph connections; no fake continuity after a missed revision. Decide remaining boundary cases **individually**, especially SourceId+base-frequency, `None` ↔ assigned, simultaneous changes to a referenced nested Synth, active Note Off, and reassignments during a fade. For each, require an explicit rationale, new-note behavior, old-generation status, and atomicity; if a nonstructural case can reasonably be supported without new processor topology, treat it as a functionality gap rather than assuming refusal is acceptable.
 - [ ] **C2 — Inspector-to-PCM property matrix (medium).** Build a compact auditable matrix across all actual inspector fields and the exposed shared Filter/Envelope editors, with at least one whole-path UI commit/revision/publication test per family and a PCM invariant proving the selected held voice actually adopted the edit. Include presets/cycle, multiple Filter stage kinds, Script Envelope, and Operator Minimum/Maximum; distinguish “UI publishes” from “held voice adopts.” Mark each cell *verified, intentionally retained, or red-first failing* with exact test and device observations.
-- [ ] **C3 — Compound/nested migration probes (likely highest functional risk).** Use four focused repeatable fixtures: (a) Oscillator waveform/range and Node/Script Envelope edits **inside** a sounding Multi with a Filter or Source sibling; (b) SourceId change **inside** Multi and independently within a referenced child Synth, including held siblings; (c) simultaneous upstream Source/Filter controls and downstream Operator changes through a mixed multi-stage Filter; (d) Filter with connected FM cutoff plus an unconnected coefficient or prepared FIR change during parent Multi output smoothing. Demand no state replay, PCM allocation, missing audible transition, or partial-graph commit. Implement only demonstrated violations; preserve existing invariants.
+- [x] **C3 — Compound/nested migration probes (likely highest functional risk).** Use four focused repeatable fixtures: (a) Oscillator waveform/range and Node/Script Envelope edits **inside** a sounding Multi with a Filter or Source sibling; (b) SourceId change **inside** Multi and independently within a referenced child Synth, including held siblings; (c) simultaneous upstream Source/Filter controls and downstream Operator changes through a mixed multi-stage Filter; (d) Filter with connected FM cutoff plus an unconnected coefficient or prepared FIR change during parent Multi output smoothing. Demand no state replay, PCM allocation, missing audible transition, or partial-graph commit. Implement only demonstrated violations; preserve existing invariants. **Disposition:** C3's named deterministic fixtures and compound migration contracts are automated-verified as of 2026-11-14; physical acceptance remains C6 and active interrupted/releasing behavior remains C4.
 - [ ] **C4 — Interruption and release/EOF closure (medium/high).** Exercise edit-before-fade-end, latest-wins preparation cancellation, simultaneous multiple held/latched notes, Note Off during the Source fade, active Node Envelope releases, short Sample EOF plus Filter tail, NNA-displaced and scoped virtual notes. If a candidate must stay old, it must keep sounding correctly until retirement and show the correct older-audio status. Include event order and nested child Source notes; do not invent a new release clock.
 - [ ] **C5 — Realtime deadline/stress qualification (medium, separate from feature completeness).** Sustained live audition on real hardware with worker queue saturation and Multi voice-count excursions (including 3→17→3) while monitoring underruns, callback duration and recovery. Compare fresh vs already-running notes; once CPU overload causes a retained oversized constituent graph to keep processing silently, document or fix the actual retention/reclamation cause—do not certify realtime simply from zero managed allocations or median offline renderer speed. Keep offline/export semantics unchanged.
 - [ ] **C6 — Physical listening and editor acceptance matrix (medium).** Short Linux and Windows (where available) sessions covering every node family, representative compound fixture, two latched notes with distinct generations, rapid changes, Note Off, deliberate incompatible SourceId and structural edits, and audible Filter tails. Record tested graph, change, expected and observed result. Confirm no erroneous `Playback uses older audio` on fully compatible notes. The user's newest passed three-stage `SvfNotch` + `CombFeedback` audition is positive evidence for Filter coefficient editing, but **not proof** that inserting a third Filter stage migrated the old graph generation.
@@ -402,6 +402,92 @@ release deadline, instrument tails and overlapping interrupted fades
 remain **C4**. No physically impossible human 100-ms multitouch edit
 is required to accept the deterministic PCM regressions. C3 is not
 automatically checked, and PR #12 remains draft/unmerged.
+
+## C3 closing decision — oscillator-bearing Instrument Volume migration (2026-11-14)
+
+**C3 bounded automated acceptance complete.** The last open C3 compound boundary
+was a two-Instrument-Source `Source + Source → OnePole` child accompanied by
+a real, independently advancing 367-Hz Sine sibling under `Multi(3)`.
+Each Instrument Source is bound to a 15,000-frame Sample and its own
+Node Volume envelope. The authored edit changes both Volume levels from
+**1.0 to 0.25**, while keeping the selected Samples, authored node wiring,
+source/Filter lifetimes and envelope node times unchanged. The expected
+PCM is produced by an independently baked **source-local 100-ms Volume
+smoothstep** before each continuing OnePole, plus the independently
+integrating Sine sibling through the same normalized Multi. The
+4,896-frame test asserts a 5e-5 PCM tolerance and **zero render-thread
+managed allocations**.
+
+[Test-only `09b3f91`](https://github.com/logiclrd/Heresy/commit/09b3f91a2a1a0731c4115d88d4df88d08e46d653)
+first reproduced a **behavioral red** in
+[CI #43629503699](https://github.com/logiclrd/Heresy/actions/runs/43629503699):
+the stable-oscillator variant expected **0.6899251**, actual
+**0.6899753** at frame 163, because the blanket oscillator gate
+left the Instrument Volume at its old level. The phase-setting
+variant of that initial fixture had not yet prepared the worker;
+its preflight failure was **not** evidence of wrong DSP. Corrected
+[test `da5c02a`](https://github.com/logiclrd/Heresy/commit/da5c02a921e5b8a3fa92fe3392a92b1bfc6a5ec0)
+explicitly requests, waits for and adopts the worker-prepared onset
+candidate before retesting. [CI #43629569858](https://github.com/logiclrd/Heresy/actions/runs/43629569858)
+was then red on **both** sound-output cases, with the other **1,174
+Render tests** passing.
+
+[Initial correction `af8c1ba`](https://github.com/logiclrd/Heresy/commit/af8c1ba5ddb52b9c710f03d48b2451506b0e2aeb)
+removed the blanket oscillator gate while retaining the nested Multi
+exclusion and the existing preflight of *every* selected Instrument
+Tone, terminal Sample and Filter. Both new oscillator cases passed,
+including the simultaneous `Randomize Phase` edit: its prepared
+onset is refused when its replacement's Volume configuration is
+incompatible; the already-running oscillator retains its phase
+and its original Sample playheads while the compatible gain values
+migrate. This is not arbitrary Instrument replacement or a claim
+that a changed phase setting always forces a held note to rephase.
+
+**Established release regression defended the stricter boundary.**
+The first broad correction caused two pre-existing
+`FmSynthMultiTests.IndependentFrozenNodeVolumeCurvesKeepInstrumentSampleRelease`
+cases to fail: an edited **release node time**, combined with a refused
+oscillator rephase, had incorrectly modified the held Sample release
+deadline. Those assertions are correct and were retained unchanged.
+[`NodeEnvelopeCurve.HasSameFrozenTimelineAs` in `f9795c0`](https://github.com/logiclrd/Heresy/commit/f9795c081d357068b5d5e45ef8fe2d6104a6748a)
+compares frozen node times, sustain-loop mode/points and the final
+zero-completion policy independently of intermediate amplitude values.
+[Final guard `fd43a63`](https://github.com/logiclrd/Heresy/commit/fd43a63337e3b69c8e600c36e02bc2b4caf537ab)
+requires that same timeline for a compatible gain change in an
+oscillator-bearing Multi child; an active Note Off or altered release
+timeline is conservatively excluded in this case. A changed release
+duration cannot slip through merely because the Instrument's
+Sample and SourceId remain the same.
+
+[Negative regression `9c5f991`](https://github.com/logiclrd/Heresy/commit/9c5f9917715e4605fa275019f8a27432d60d4db7)
+also adds the oscillator-bearing Multi case to
+`IncompatibleSecondSampleRejectsEveryVolumeEditButNotIndependentScalarChanges`.
+When one bound Tone's terminal Sample is different, no shared Volume
+update partially migrates, but the independently eligible final
+scalar still applies. [Corrected CI #43630025276](https://github.com/logiclrd/Heresy/actions/runs/43630025276)
+is the code-bearing acceptance run. Both the new positive cases and
+the pre-existing release and negative-tone invariants must pass;
+the audit-head workflow result is separately linked after the audit commit.
+
+**Finite C3 exit:** The four originally named compound fixture families
+now have deterministic evidence in the C3 sections above: (a) audible
+oscillator shape and Node/Script Envelope changes in Multi; (b) direct
+and nested Synth/Sample SourceId changes, including held siblings; (c)
+combined Source/Filter/Operator and multi-stage migrations; and (d)
+modulated IIR and worker-prepared FIR retunes during an outer Multi
+transition. This final selected-tone case closes the remaining
+oscillator-bearing Instrument Volume question for **gain-only**
+compatible timelines. The C3 checklist is therefore checked as
+**automated scope completed**, *not* a blanket Cartesian-product proof.
+
+**Explicit boundaries outside C3:** Script Envelope and Instrument
+inspector publication and all property-by-property paths are C2.
+An already-active Multi onset fade interrupted by another change,
+changed Instrument release timelines, Note Off/EOF, and interrupted
+Sample fades remain C4. CPU deadline recovery and hardware audition
+remain C5/C6. Unrelated Instrument/source-family selection remains the
+agreed deferral. C3 closure does **not** check the overarching
+all-nonstructural-properties TODO or authorize merging PR #12.
 
 ### Adjacent UI issues deliberately outside PR #12 closure
 
