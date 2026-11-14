@@ -7,6 +7,7 @@ using System.Threading;
 using AwesomeAssertions;
 using Heresy.Core.Assets;
 using Heresy.Core.FmSynthesis;
+using Heresy.Core.Filters;
 using Heresy.Core.Objects;
 using Heresy.Core.Samples;
 using Heresy.Render.Configuration;
@@ -352,6 +353,106 @@ public sealed class FmSynthLiveSourceIdTests
         oldAudio.Should().Equal(expected);
     }
 
+
+    [Test]
+    public void FilteredSingleSourceReplacementRetainsOnePoleHistory()
+    {
+        FilterInstance filter = OnePole();
+        const int start = 128, fadeFrames = 4800;
+        SampleSound originalSample = Sample(FirstId,
+            Enumerable.Repeat(0.35f, 16000).ToArray());
+        SampleSound replacementSample = Sample(AliasId,
+            Enumerable.Repeat(-0.40f, 16000).ToArray());
+        SourceResolver resolver = new(FirstId, originalSample,
+            AliasId, replacementSample);
+        FmSynthSound original = FilteredSound(FirstId, resolver, filter);
+        FmSynthSound revised = FilteredSound(AliasId, resolver, filter);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        original.Render(context, held, 0, start, new float[start]);
+        original.CanAdoptRunningState(revised, held).Should().BeFalse();
+        PrepareReplacement(original, revised, held);
+
+        // The reference filter is never reconstructed. Its input is a
+        // precomputed Sample PCM with the intended source-only fade,
+        // so any reset of the running OnePole integrator is detectable.
+        float[] referenceInput = new float[10000];
+        for (int i = 0; i < referenceInput.Length; i++)
+        {
+            double t = Math.Clamp((double)(i - start) / fadeFrames, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            referenceInput[i] = i < start ? 0.35f
+                : (float)(0.35 * (1 - w) - 0.40 * w);
+        }
+        SampleSound referenceSample = Sample(FirstId, referenceInput);
+        SourceResolver referenceResolver = new(FirstId, referenceSample,
+            AliasId, referenceSample);
+        FmSynthSound reference = FilteredSound(FirstId,
+            referenceResolver, filter);
+        float[] expected = new float[start + fadeFrames + 32];
+        reference.Render(context, reference.CreateState(),
+            0, expected.Length, expected);
+
+        float[] actual = new float[fadeFrames + 32];
+        long allocation = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, start, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocation).Should().Be(0);
+        for (int i = 0; i < actual.Length; i++)
+            actual[i].Should().BeApproximately(expected[start + i], 3e-5f,
+                $"continuous OnePole filter and locally crossfaded Sample at {start + i}");
+    }
+
+    [Test]
+    public void FilteredShortReplacementKeepsOldSourceFadeAndFilterTail()
+    {
+        FilterInstance filter = OnePole();
+        const int start = 128, fadeFrames = 4800;
+        SampleSound originalSample = Sample(FirstId,
+            Enumerable.Repeat(0.45f, 12000).ToArray());
+        SampleSound shortSample = Sample(AliasId,
+            Enumerable.Repeat(0.90f, 48).ToArray());
+        SourceResolver resolver = new(FirstId, originalSample,
+            AliasId, shortSample);
+        FmSynthSound original = FilteredSound(FirstId, resolver, filter);
+        FmSynthSound revised = FilteredSound(AliasId, resolver, filter);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        original.Render(context, held, 0, start, new float[start]);
+        PrepareReplacement(original, revised, held);
+
+        // 48 frames of the incoming Sample contribute inside the fade;
+        // after its EOF the outgoing Sample still supplies the full
+        // remaining 100 ms crossfade to the *same* OnePole integrator.
+        float[] referenceInput = new float[10000];
+        for (int i = 0; i < referenceInput.Length; i++)
+        {
+            if (i < start) { referenceInput[i] = 0.45f; continue; }
+            int local = i - start;
+            double t = Math.Clamp((double)local / fadeFrames, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            referenceInput[i] = (float)(0.45 * (1 - w)
+                + (local < 48 ? 0.90 * w : 0));
+        }
+        SampleSound referenceSample = Sample(FirstId, referenceInput);
+        SourceResolver referenceResolver = new(FirstId, referenceSample,
+            AliasId, referenceSample);
+        FmSynthSound reference = FilteredSound(FirstId, referenceResolver, filter);
+        float[] expected = new float[start + fadeFrames + 144];
+        reference.Render(context, reference.CreateState(), 0,
+            expected.Length, expected);
+        float[] actual = new float[fadeFrames + 144];
+        long allocation = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, start, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocation).Should().Be(0);
+        for (int i = 0; i < actual.Length; i++)
+            actual[i].Should().BeApproximately(expected[start + i], 3e-5f,
+                $"one continuously filtered outgoing fade after the 48-frame EOF at {start + i}");
+        actual[fadeFrames - 1].Should().BeGreaterThan(0.0f,
+            "Filter history is still present immediately before fade completion");
+        actual[^1].Should().BeLessThan(0.001f,
+            "the continuing filter must decay after the fade");
+    }
+
     private static void PrepareReplacement(
         FmSynthSound original, FmSynthSound revised, SoundState held)
     {
@@ -381,6 +482,23 @@ public sealed class FmSynthLiveSourceIdTests
         new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
     ]));
 
+
+    private static FilterInstance OnePole()
+    {
+        FilterDefinition definition = new((ObjectId)9920U, "Source replacement pole");
+        FilterInstance instance = new(definition);
+        instance.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(1200));
+        return instance;
+    }
+
+    private static FmSynthSound FilteredSound(ObjectId source,
+        SourceResolver resolver, FilterInstance filter)
+        => new(new FmSynthGraph([
+            new FmSoundSourceNode(1, source, FmMultiNode.NeutralFrequencyHz),
+            new FmFilterNode(2, 1, filter, tailSeconds: 0.003),
+        ], 2), resolver, soundResolver: resolver,
+            enableLiveMultiExpansion: true);
 
     private static FmSynthSound MixSound(ObjectId firstId, ObjectId secondId,
         ManySourceResolver resolver, FmOperatorKind operation = FmOperatorKind.Add,
