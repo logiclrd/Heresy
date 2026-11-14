@@ -489,6 +489,64 @@ remain C5/C6. Unrelated Instrument/source-family selection remains the
 agreed deferral. C3 closure does **not** check the overarching
 all-nonstructural-properties TODO or authorize merging PR #12.
 
+## C4(a) — superseded Multi onset preparation during an active 100-ms fade (2026-11-14)
+
+**Automated accepted; no renderer change required.**
+`FmSynthMultiTests.SupersedingPreparedRephaseDuringActiveMultiOnsetFadePublishesOnlyLatest`
+strengthens the earlier
+`SecondMultiRephaseWaitsForPriorFadeWithoutLosingPreparedWork` test
+from finite-output acceptance to an exact, independent **latest-only
+PCM oracle**.
+
+A sounding `Sine(173 Hz) → Multi(3)` at 48 kHz starts in
+`RandomizePhase=false / CycleLength=120`. At frame **96**, the first
+worker-prepared revision changes onset to
+`RandomizePhase=true / CycleLength=820` and begins its established
+**4,800-frame (100-ms)** smoothstep between outgoing and new phases.
+After **320 frames**, a second revision proposing
+`false / 120` is worker-prepared, but the PCM owner correctly refuses
+to adopt another onset while an outgoing phase is still audible.
+An additional **320 frames** later, that already-prepared candidate
+is explicitly **cancelled** and superseded by the latest proposal,
+`true / 1350`, which is also worker-prepared. A second independent
+held-state oracle sees the first revision and **only** the final
+proposal; a third baseline hears only the first revision.
+All three share the same noise seed and initial active-frame clock.
+
+During the remaining first fade, the primary and latest-only oracle
+must agree *sample for sample*. The newest candidate remains pending
+even though its worker result is available; no obsolete prepared phase
+is published. After rendering the old fade's last sample at frame
+**4,896**, both held states must be able to commit the final prepared
+candidate at frame **4,897** without building DSP on PCM. The 5,024-frame
+second fade must be exactly equal between the primary and latest-only
+oracle. Its first frame equals the baseline's last unchanged phase;
+after the second 100-ms boundary the final phase must differ
+measurably from the never-updated baseline. The long render segments
+verify **zero managed PCM allocations** and finite output. This
+detects premature interruption, stalled latest revision, stale
+worker adoption, hidden phase restart and silent/no-op completion,
+not merely a successful `TryPrepareRunningState` return.
+
+[Test commit `450fa63`](https://github.com/logiclrd/Heresy/commit/450fa63b1cdbab4f3dcd4048a4ce99bc376c7b4f)
+initially had an assertion method-group-to-expression-tree **test
+compile error**, not a DSP failure. The fixture-only follow-up
+[`a301088`](https://github.com/logiclrd/Heresy/commit/a301088e93d1d6cb6de8111f0b6a00394b127328)
+used a predicate lambda; [CI #43630917174](https://github.com/logiclrd/Heresy/actions/runs/43630917174)
+passed the whole test-suite step with the new regression, plus ARM64
+validation. The complete workflow conclusion is independently verified.
+No renderer change was required in this slice.
+
+**Remaining C4 cases (not covered by this acceptance):** Note Off in
+the middle of Source or Multi onset crossfades, active Node Envelope
+release deadlines, short-Sample EOF versus outgoing and Filter tails,
+worker cancellation across **multiple** held siblings and nested
+Sources, NNA-displaced notes and scoped virtual-channel voice
+retirement. Older-audio generation status must remain truthful for
+any actual refusal. This regression does not certify these other
+event-order/lifecycle cases, nor does it justify checking the main
+all-nonstructural-properties TODO or merging PR #12.
+
 ### Adjacent UI issues deliberately outside PR #12 closure
 
 Two independently actionable main-line TODOs were logged in [`docs/todo.md`](https://github.com/logiclrd/Heresy/blob/main/docs/todo.md) via [`dd55714`](https://github.com/logiclrd/Heresy/commit/dd55714d677ee8ee4641594e1f8ae2cb394039c3): stale **Configured stages** after editing a shared Filter definition and selected-stage controls hidden to the right in a non-resizable strip instead of below the list. `FmSynthEditorControl.AddFilterInspector` currently deliberately avoids rebuilding on popup close to preserve unsaved per-use drafts, and `FilterInstanceEditorControl` uses a left/right layout; the eventual fix must refresh safely without losing those drafts. These are real UI defects, but not evidence that a held note failed a realtime coefficient update.
