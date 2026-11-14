@@ -129,6 +129,8 @@ public sealed class FmSynthLiveSourceIdTests
         SoundState held = original.CreateState();
         original.Render(context, held, 0, 128, new float[128]);
         PrepareReplacement(original, revised, held);
+        revised.GetEndFrameExclusive(context, held).Should().Be(4928,
+            "a short new Sample cannot end the parent before the outgoing fade");
 
         float[] result = new float[4802];
         long allocation = GC.GetAllocatedBytesForCurrentThread();
@@ -139,8 +141,8 @@ public sealed class FmSynthLiveSourceIdTests
             "old Sample must remain audible after the replacement reaches EOF");
         result[2400].Should().BeApproximately(0.125f, 1e-5f);
         result[4800].Should().Be(0.0f);
-        revised.GetEndFrameExclusive(context, held).Should().Be(4928,
-            "outgoing Sample contributes only as far as the fade boundary");
+        revised.GetEndFrameExclusive(context, held).Should().Be(228,
+            "once the fade ends the outgoing Sample no longer extends the new EOF");
     }
 
     [Test]
