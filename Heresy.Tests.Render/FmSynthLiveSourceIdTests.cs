@@ -140,10 +140,13 @@ public sealed class FmSynthLiveSourceIdTests
         float[] result = new float[4802];
         long allocation = GC.GetAllocatedBytesForCurrentThread();
         revised.Render(context, held, 128, 200, result.AsSpan(0, 200));
+        long firstRenderBytes = GC.GetAllocatedBytesForCurrentThread() - allocation;
+        firstRenderBytes.Should().Be(0);
         // Once the new 100-frame Sample's EOF was actually observed, its
         // silence must not remove the old Sample before the full fade.
         revised.GetEndFrameExclusive(context, held).Should().Be(4928,
             "outgoing Sample must carry the fade after new Sample EOF");
+        allocation = GC.GetAllocatedBytesForCurrentThread();
         revised.Render(context, held, 328, result.Length - 200,
             result.AsSpan(200));
         (GC.GetAllocatedBytesForCurrentThread() - allocation).Should().Be(0);
