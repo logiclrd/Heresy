@@ -2585,7 +2585,15 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					&& _nodes[i].Envelope is NodeEnvelopeCurve oldCurve
 					&& next._nodes[i].Envelope is NodeEnvelopeCurve newCurve
 					&& !oldCurve.HasSameFrozenShapeAs(newCurve);
-				if (shapeChanged || scalarChanged || operatorChanged || envelopeChanged)
+				// Compound Multi children have their own onset/mix clocks.
+				// A mere Constant or Operator edit must not add a frozen
+				// child-output fade while the parent is growing or retuning
+				// constituents. Admit only shape/curve edits here; the
+				// previous immediate child scalar policy is unchanged.
+				bool statelessMultiChild = _canFadeStatelessMultiChildOutput
+					&& next._canFadeStatelessMultiChildOutput;
+				if (shapeChanged || envelopeChanged
+					|| (!statelessMultiChild && (scalarChanged || operatorChanged)))
 				{
 					live.StartStatelessOutputFade(_outputIndex);
 					break;
