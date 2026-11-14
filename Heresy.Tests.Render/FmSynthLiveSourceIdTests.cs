@@ -435,6 +435,34 @@ public sealed class FmSynthLiveSourceIdTests
     }
 
     [Test]
+    public void ThirdOnePoleStageRemainsOutsideBoundedSampleReplacementAdmission()
+    {
+        FilterInstance filter = ThreeStageOnePole();
+        SampleSound previousSample = Sample(FirstId,
+            Enumerable.Repeat(0.35f, 16000).ToArray());
+        SampleSound replacementSample = Sample(AliasId,
+            Enumerable.Repeat(0.70f, 16000).ToArray());
+        SourceResolver sources = new(FirstId, previousSample,
+            AliasId, replacementSample);
+        FmSynthSound original = FilteredSound(FirstId, sources, filter);
+        FmSynthSound revised = FilteredSound(AliasId, sources, filter);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        SoundState unchanged = original.CreateState();
+        original.Render(context, held, 0, 128, new float[128]);
+        original.Render(context, unchanged, 0, 128, new float[128]);
+
+        original.CanPrepareMultiExpansion(revised, held).Should().BeFalse(
+            "two serial OnePole histories are the currently supported limit");
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeFalse();
+        float[] actual = new float[224], expected = new float[224];
+        original.Render(context, held, 128, actual.Length, actual);
+        original.Render(context, unchanged, 128, expected.Length, expected);
+        actual.Should().Equal(expected,
+            "an unsupported third Filter stage must not partially commit a new Source");
+    }
+
+    [Test]
     public void FilteredSingleSourceReplacementRetainsOnePoleHistory()
     {
         FilterInstance filter = OnePole();
@@ -819,6 +847,23 @@ public sealed class FmSynthLiveSourceIdTests
         new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
     ]));
 
+
+    private static FilterInstance ThreeStageOnePole()
+    {
+        FilterDefinition definition = new((ObjectId)9922U, "Unadmitted third OnePole", [
+            new FilterStageDefinition(1, "first", FilterKind.OnePole),
+            new FilterStageDefinition(2, "second", FilterKind.OnePole),
+            new FilterStageDefinition(3, "third", FilterKind.OnePole),
+        ]);
+        FilterInstance filter = new(definition);
+        filter.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(800));
+        filter.SetStageParameter(2, "CutoffHz",
+            FilterParameterValue.FromNumber(1800));
+        filter.SetStageParameter(3, "CutoffHz",
+            FilterParameterValue.FromNumber(2500));
+        return filter;
+    }
 
     private static FilterInstance TwoStageOnePole()
     {
