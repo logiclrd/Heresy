@@ -895,6 +895,85 @@ public sealed class FmSynthLiveSourceIdTests
     }
 
     [Test]
+    public void FilterWithConnectedCutoffModulationRetainsHistoryAcrossSampleReplacement()
+    {
+        const int start = 128, fadeFrames = 4800;
+        FilterInstance filter = FilterWithKind((ObjectId)9941U, FilterKind.BiquadLowPass);
+        FmFilterParameterConnection cutoff = new(1, FilterKind.BiquadLowPass,
+            filter.GetStageGenerationForPersistence(1), "CutoffHz", 2);
+
+        SampleSound previous = Sample(FirstId, Enumerable.Repeat(0.40f, 16000).ToArray());
+        SampleSound replacement = Sample(AliasId, Enumerable.Repeat(-0.15f, 16000).ToArray());
+        SourceResolver resolver = new(FirstId, previous, AliasId, replacement);
+
+        FmSynthSound Build(ObjectId id, SourceResolver sounds) => new(new FmSynthGraph([
+            new FmSoundSourceNode(1, id, FmMultiNode.NeutralFrequencyHz),
+            new FmConstantNode(2, 1200),
+            new FmFilterNode(3, 1, filter, [cutoff], tailSeconds: 0.003),
+        ], 3), sounds, soundResolver: sounds,
+            enableLiveMultiExpansion: true);
+
+        FmSynthSound original = Build(FirstId, resolver);
+        FmSynthSound revised = Build(AliasId, resolver);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        original.Render(context, held, 0, start, new float[start]);
+        PrepareReplacement(original, revised, held);
+
+        float[] baked = new float[start + fadeFrames + 96];
+        for (int i = 0; i < baked.Length; i++)
+        {
+            double t = Math.Clamp((double)(i - start) / fadeFrames, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            baked[i] = i < start ? 0.40f
+                : (float)(0.40 * (1 - w) - 0.15 * w);
+        }
+        SampleSound bakedSample = Sample(FirstId, baked);
+        SourceResolver referenceResolver = new(FirstId, bakedSample,
+            AliasId, bakedSample);
+        FmSynthSound reference = Build(FirstId, referenceResolver);
+        float[] expected = new float[baked.Length];
+        reference.Render(context, reference.CreateState(), 0, expected.Length, expected);
+        float[] actual = new float[baked.Length - start];
+        long bytes = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, start, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - bytes).Should().Be(0);
+        for (int i = 0; i < actual.Length; i++)
+            actual[i].Should().BeApproximately(expected[start + i], 5e-5f,
+                $"unchanged numeric modulation and Biquad state at frame {start + i}");
+    }
+
+    [Test]
+    public void IncompatibleFilterStageAlongsideSourceIdChangeDeclinesWholeEdit()
+    {
+        FilterInstance originalFilter = FilterWithKind(
+            (ObjectId)9942U, FilterKind.BiquadLowPass);
+        FilterInstance incompatible = FilterWithKind(
+            (ObjectId)9942U, FilterKind.BiquadHighPass);
+        SampleSound first = Sample(FirstId,
+            Enumerable.Repeat(0.30f, 16000).ToArray());
+        SampleSound replacement = Sample(AliasId,
+            Enumerable.Repeat(0.80f, 16000).ToArray());
+        SourceResolver resolver = new(FirstId, first, AliasId, replacement);
+        FmSynthSound original = FilteredSound(FirstId, resolver, originalFilter);
+        FmSynthSound revised = FilteredSound(AliasId, resolver, incompatible);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        SoundState uninterrupted = original.CreateState();
+        original.Render(context, held, 0, 128, new float[128]);
+        original.Render(context, uninterrupted, 0, 128, new float[128]);
+
+        original.CanPrepareMultiExpansion(revised, held).Should().BeFalse();
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeFalse();
+        original.TryPrepareRunningState(revised, held).Should().BeFalse();
+        float[] actual = new float[320], expected = new float[320];
+        original.Render(context, held, 128, actual.Length, actual);
+        original.Render(context, uninterrupted, 128, expected.Length, expected);
+        actual.Should().Equal(expected,
+            "Source replacement must not bypass the global Filter stage compatibility veto");
+    }
+
+    [Test]
     public void FilteredAddMixerRejectsPartialSourceReplacementWhenOtherSourceChangesFrequency()
     {
         FilterInstance filter = OnePole();
