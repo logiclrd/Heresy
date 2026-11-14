@@ -453,6 +453,195 @@ public sealed class FmSynthLiveSourceIdTests
             "the continuing filter must decay after the fade");
     }
 
+
+    [Test]
+    public void FilteredAddMixerRetargetsOneSourceWithContinuousOnePole()
+    {
+        const int start = 128, fadeFrames = 4800;
+        FilterInstance filter = OnePole();
+        SampleSound first = Sample(FirstId, Enumerable.Repeat(0.35f, 16000).ToArray());
+        float[] siblingPcm = Enumerable.Range(0, 16000)
+            .Select(i => (float)(0.08 * Math.Sin(i * 0.053))).ToArray();
+        SampleSound sibling = Sample(AliasId, siblingPcm);
+        SampleSound replacement = Sample(ThirdId,
+            Enumerable.Repeat(-0.40f, 16000).ToArray());
+        ManySourceResolver resolver = new((FirstId, first),
+            (AliasId, sibling), (ThirdId, replacement));
+        FmSynthSound original = FilteredMixSound(FirstId, AliasId, resolver, filter);
+        FmSynthSound revised = FilteredMixSound(ThirdId, AliasId, resolver, filter);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        original.Render(context, held, 0, start, new float[start]);
+        original.CanAdoptRunningState(revised, held).Should().BeFalse();
+        PrepareReplacement(original, revised, held);
+
+        // This reference has just one Filter and one continuous Sample
+        // with the expected per-frame mix already baked into its input.
+        // It detects any hidden reset of the filter's integrator or of
+        // the independent sibling's physical Sample playhead.
+        float[] referencePcm = new float[10000];
+        for (int i = 0; i < referencePcm.Length; i++)
+        {
+            double t = Math.Clamp((double)(i - start) / fadeFrames, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            referencePcm[i] = (float)(0.35 * (1 - w) - 0.40 * w)
+                + siblingPcm[i];
+        }
+        FmSynthSound reference = FilteredReference(filter, referencePcm);
+        float[] expected = new float[start + fadeFrames + 64];
+        reference.Render(context, reference.CreateState(), 0,
+            expected.Length, expected);
+
+        float[] actual = new float[fadeFrames + 64];
+        long allocation = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, start, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocation).Should().Be(0);
+        for (int i = 0; i < actual.Length; i++)
+            actual[i].Should().BeApproximately(expected[start + i], 3e-5f,
+                $"the sibling Sample and one unbroken OnePole history at frame {start + i}");
+    }
+
+    [Test]
+    public void FilteredAddMixerPreparesBothSourceReplacementsAtomically()
+    {
+        const int start = 128, fadeFrames = 4800;
+        FilterInstance filter = OnePole();
+        SampleSound first = Sample(FirstId, Enumerable.Repeat(0.11f, 16000).ToArray());
+        SampleSound second = Sample(AliasId, Enumerable.Repeat(0.17f, 16000).ToArray());
+        SampleSound third = Sample(ThirdId, Enumerable.Repeat(0.29f, 16000).ToArray());
+        SampleSound fourth = Sample(FourthId, Enumerable.Repeat(0.37f, 16000).ToArray());
+        ManySourceResolver resolver = new((FirstId, first), (AliasId, second),
+            (ThirdId, third), (FourthId, fourth));
+        FmSynthSound original = FilteredMixSound(FirstId, AliasId, resolver, filter);
+        FmSynthSound revised = FilteredMixSound(ThirdId, FourthId, resolver, filter);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        original.Render(context, held, 0, start, new float[start]);
+        original.CanAdoptRunningState(revised, held).Should().BeFalse();
+        PrepareReplacement(original, revised, held);
+
+        float[] referencePcm = new float[10000];
+        for (int i = 0; i < referencePcm.Length; i++)
+        {
+            double t = Math.Clamp((double)(i - start) / fadeFrames, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            referencePcm[i] = i < start ? 0.28f
+                : (float)(0.11 * (1 - w) + 0.29 * w)
+                    + (float)(0.17 * (1 - w) + 0.37 * w);
+        }
+        FmSynthSound reference = FilteredReference(filter, referencePcm);
+        float[] expected = new float[start + fadeFrames + 64];
+        reference.Render(context, reference.CreateState(), 0,
+            expected.Length, expected);
+        float[] actual = new float[fadeFrames + 64];
+        long allocation = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, start, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocation).Should().Be(0);
+        for (int i = 0; i < actual.Length; i++)
+            actual[i].Should().BeApproximately(expected[start + i], 3e-5f,
+                $"both worker-prepared Sources pass through the same continuous filter at {start + i}");
+    }
+
+    [Test]
+    public void FilteredAddMixerShortReplacementCannotCutOutgoingFadeOrFilterTail()
+    {
+        const int start = 128, fadeFrames = 4800;
+        FilterInstance filter = OnePole();
+        SampleSound first = Sample(FirstId, Enumerable.Repeat(0.45f, 12000).ToArray());
+        // A finite sibling also ends during the outgoing fade.
+        SampleSound sibling = Sample(AliasId, Enumerable.Repeat(0.10f, 1024).ToArray());
+        SampleSound tiny = Sample(ThirdId, Enumerable.Repeat(0.90f, 48).ToArray());
+        ManySourceResolver resolver = new((FirstId, first),
+            (AliasId, sibling), (ThirdId, tiny));
+        FmSynthSound original = FilteredMixSound(FirstId, AliasId, resolver, filter);
+        FmSynthSound revised = FilteredMixSound(ThirdId, AliasId, resolver, filter);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        original.Render(context, held, 0, start, new float[start]);
+        PrepareReplacement(original, revised, held);
+
+        float[] referencePcm = new float[10000];
+        for (int i = 0; i < referencePcm.Length; i++)
+        {
+            int local = i - start;
+            double t = Math.Clamp((double)local / fadeFrames, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            referencePcm[i] = (float)(i < start ? 0.45
+                : 0.45 * (1 - w) + (local < 48 ? 0.90 * w : 0))
+                + (i < 1024 ? 0.10f : 0.0f);
+        }
+        FmSynthSound reference = FilteredReference(filter, referencePcm);
+        float[] expected = new float[start + fadeFrames + 144];
+        reference.Render(context, reference.CreateState(), 0,
+            expected.Length, expected);
+        float[] actual = new float[fadeFrames + 144];
+        long allocation = GC.GetAllocatedBytesForCurrentThread();
+        revised.Render(context, held, start, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocation).Should().Be(0);
+        for (int i = 0; i < actual.Length; i++)
+            actual[i].Should().BeApproximately(expected[start + i], 3e-5f,
+                $"the 48-frame EOF, sibling EOF and downstream filter history at {start + i}");
+        actual[2400].Should().BeGreaterThan(0.10f,
+            "the old Sample must carry the transition long after both incoming and sibling EOFs");
+        actual[fadeFrames + 100].Should().BeLessThan(0.005f,
+            "the unchanged OnePole continues its natural decay");
+    }
+
+    [Test]
+    public void FilteredMultiplyMixerRejectsSourceReplacementWithoutMutatingHeldState()
+    {
+        FilterInstance filter = OnePole();
+        SampleSound first = Sample(FirstId, Enumerable.Repeat(0.35f, 16000).ToArray());
+        SampleSound sibling = Sample(AliasId, Enumerable.Repeat(0.10f, 16000).ToArray());
+        SampleSound replacement = Sample(ThirdId,
+            Enumerable.Repeat(0.55f, 16000).ToArray());
+        ManySourceResolver resolver = new((FirstId, first),
+            (AliasId, sibling), (ThirdId, replacement));
+        FmSynthSound original = FilteredMixSound(FirstId, AliasId, resolver,
+            filter, FmOperatorKind.Multiply);
+        FmSynthSound revised = FilteredMixSound(ThirdId, AliasId, resolver,
+            filter, FmOperatorKind.Multiply);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState(), uninterrupted = original.CreateState();
+        original.Render(context, held, 0, 128, new float[128]);
+        original.Render(context, uninterrupted, 0, 128, new float[128]);
+        original.CanPrepareMultiExpansion(revised, held).Should().BeFalse();
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeFalse();
+        original.TryPrepareRunningState(revised, held).Should().BeFalse();
+        float[] actual = new float[180], expected = new float[180];
+        long allocation = GC.GetAllocatedBytesForCurrentThread();
+        original.Render(context, held, 128, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocation).Should().Be(0);
+        original.Render(context, uninterrupted, 128, expected.Length, expected);
+        actual.Should().Equal(expected);
+    }
+
+    [Test]
+    public void FilteredAddMixerRejectsPartialSourceReplacementWhenOtherSourceChangesFrequency()
+    {
+        FilterInstance filter = OnePole();
+        SampleSound first = Sample(FirstId, Enumerable.Repeat(0.11f, 16000).ToArray());
+        SampleSound sibling = Sample(AliasId, Enumerable.Repeat(0.17f, 16000).ToArray());
+        SampleSound third = Sample(ThirdId, Enumerable.Repeat(0.29f, 16000).ToArray());
+        SampleSound fourth = Sample(FourthId, Enumerable.Repeat(0.37f, 16000).ToArray());
+        ManySourceResolver resolver = new((FirstId, first), (AliasId, sibling),
+            (ThirdId, third), (FourthId, fourth));
+        FmSynthSound original = FilteredMixSound(FirstId, AliasId, resolver, filter);
+        FmSynthSound revised = FilteredMixSound(ThirdId, FourthId, resolver,
+            filter, secondFrequencyHz: FmMultiNode.NeutralFrequencyHz * 2);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState(), uninterrupted = original.CreateState();
+        original.Render(context, held, 0, 128, new float[128]);
+        original.Render(context, uninterrupted, 0, 128, new float[128]);
+        original.CanPrepareMultiExpansion(revised, held).Should().BeFalse();
+        original.RequestMultiExpansionPreparation(revised, held).Should().BeFalse();
+        original.TryPrepareRunningState(revised, held).Should().BeFalse();
+        float[] actual = new float[180], expected = new float[180];
+        original.Render(context, held, 128, actual.Length, actual);
+        original.Render(context, uninterrupted, 128, expected.Length, expected);
+        actual.Should().Equal(expected);
+    }
+
     private static void PrepareReplacement(
         FmSynthSound original, FmSynthSound revised, SoundState held)
     {
@@ -499,6 +688,29 @@ public sealed class FmSynthLiveSourceIdTests
             new FmFilterNode(2, 1, filter, tailSeconds: 0.003),
         ], 2), resolver, soundResolver: resolver,
             enableLiveMultiExpansion: true);
+
+
+    private static FmSynthSound FilteredMixSound(ObjectId firstId,
+        ObjectId secondId, ManySourceResolver resolver, FilterInstance filter,
+        FmOperatorKind operation = FmOperatorKind.Add,
+        double? secondFrequencyHz = null)
+        => new(new FmSynthGraph([
+            new FmSoundSourceNode(1, firstId, FmMultiNode.NeutralFrequencyHz),
+            new FmSoundSourceNode(2, secondId,
+                secondFrequencyHz ?? FmMultiNode.NeutralFrequencyHz),
+            new FmOperatorNode(3, operation, [1, 2]),
+            new FmFilterNode(4, 3, filter, tailSeconds: 0.003),
+        ], 4), resolver, soundResolver: resolver,
+            enableLiveMultiExpansion: true);
+
+    private static FmSynthSound FilteredReference(FilterInstance filter,
+        float[] precomputedInput)
+    {
+        SampleSound referenceSample = Sample(FirstId, precomputedInput);
+        SourceResolver resolver = new(FirstId, referenceSample,
+            AliasId, referenceSample);
+        return FilteredSound(FirstId, resolver, filter);
+    }
 
     private static FmSynthSound MixSound(ObjectId firstId, ObjectId secondId,
         ManySourceResolver resolver, FmOperatorKind operation = FmOperatorKind.Add,
