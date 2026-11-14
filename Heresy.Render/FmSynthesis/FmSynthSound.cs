@@ -575,6 +575,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					// into these already allocated states after preflight.
 					if (rephase && j < retained && !retired)
 						input.PrepareOnePoleOnsetStates(invocation.State, sampleRate);
+					if (retired || j >= retained)
+						input.PrepareFreshMultiChildOnWorker(
+							invocation.State, sampleRate, cancelRequested);
 					MultiVoice child = new(invocation, ratio, multi, j,
 						initialMixGain: rephase && j < retained && !retired
 							? (multi.GainCompensation ? 1.0 / target : 1.0) : 0.0,
@@ -1162,6 +1165,49 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		for (int i = 0; i < _nodes.Length; i++)
 			if (_nodes[i].Filter is { } filter)
 				prepared.Filters[i] = filter.CreateState(sampleRate);
+	}
+
+	/// <summary>Prepare a new, never-rendered Multi constituent on the
+	/// cancellable control worker. A resumed voice is a fresh onset, not a
+	/// rewind of the retired invocation. Prime its mono bus, nested child
+	/// states and Filter histories before it becomes visible to PCM; otherwise
+	/// the first revived sample allocates in PrepareChildRender/ProcessAudioFilter.
+	/// This must never run on the PCM owner or touch a continuing voice.</summary>
+	private void PrepareFreshMultiChildOnWorker(SoundState state,
+		int sampleRate, Func<bool> cancellationRequested)
+	{
+		if (cancellationRequested())
+			throw new OperationCanceledException(
+				"Obsolete live Multi child preparation.");
+		FmSynthState prepared = ValidateState(state);
+		if (prepared.SampleRate == 0)
+			prepared.Reset(sampleRate);
+		else if (prepared.SampleRate != sampleRate)
+			throw new InvalidOperationException(
+				"Fresh Multi state has a mismatched prepared sample rate.");
+
+		if (_singleOutputOscillator is null)
+		{
+			prepared.MonoContext ??= new RenderContext(
+				new RenderConfiguration(sampleRate, [
+				new OutputChannelConfiguration(Vector3.Zero,
+					positionalImportance: 0)]));
+			PrepareChildRender(prepared.MonoContext, prepared);
+		}
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			if (cancellationRequested())
+				throw new OperationCanceledException(
+					"Obsolete live Multi Filter preparation.");
+			if (_nodes[i].Filter is { } filter && prepared.Filters[i] is null)
+				prepared.Filters[i] = filter.CreateState(sampleRate);
+			if (prepared.Sources[i] is { Sound: FmSynthSound nested } source)
+				nested.PrepareFreshMultiChildOnWorker(
+					source.Invocation.State, sampleRate, cancellationRequested);
+			foreach (MultiVoice child in prepared.Multis[i])
+				child.Sound.PrepareFreshMultiChildOnWorker(
+					child.Invocation.State, sampleRate, cancellationRequested);
+		}
 	}
 
 	/// <summary>Preflight both independently owned child graphs and all
