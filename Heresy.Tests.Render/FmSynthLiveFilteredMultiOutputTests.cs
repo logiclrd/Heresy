@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Numerics;
+using System.Threading;
 
 using AwesomeAssertions;
 using Heresy.Core.Assets;
@@ -127,6 +128,117 @@ public sealed class FmSynthLiveFilteredMultiOutputTests
             actual[i].Should().BeApproximately(expected, 7e-5f,
                 $"the parent gain clock and Multi child Filter histories"
                 + $" must continue together at PCM {secondEdit + i}");
+        }
+    }
+
+    [Test]
+    public void BoundFirInsideMultiWaitsForWorkerThenRetunesWithoutInterruptingOuterGain()
+    {
+        const int firstEdit = 128, secondEdit = 192;
+        const int delayWhileUnprepared = 16, fadeFrames = 4800;
+        FilterInstance originalFilter = BoundFirBandPass(revised: false);
+        FilterInstance revisedFilter = BoundFirBandPass(revised: true);
+
+        FmSynthSound Build(FilterInstance filter, double gain)
+        {
+            // Only LowCutoffHz is FM-bound. The edited HighCutoffHz remains
+            // independently authored, so its replacement FIR design must
+            // use this invocation's most recently accepted low cutoff.
+            FmFilterParameterConnection low = new(1, FilterKind.FirBandPass,
+                filter.GetStageGenerationForPersistence(1), "LowCutoffHz", 2);
+            return new(new FmSynthGraph([
+                new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 5500),
+                new FmConstantNode(2, 950),
+                new FmFilterNode(3, 1, filter, [low], tailSeconds: 0.004),
+                new FmMultiNode(4, 3, voiceCount: 3, detune: 0,
+                    randomizePhase: false, gainCompensation: true),
+                new FmConstantNode(5, gain),
+                new FmOperatorNode(6, FmOperatorKind.Multiply, [4, 5]),
+            ], 6), new EmptyEnvelopes(),
+                preparedChildFilterFactory: new PreparedToneFilterStageFactory(48000),
+                enableLiveMultiExpansion: true);
+        }
+
+        FmSynthSound original = Build(originalFilter, 0.85);
+        FmSynthSound gainEdited = Build(originalFilter, 0.20);
+        FmSynthSound firEdited = Build(revisedFilter, 0.20);
+        FmSynthSound rawOriginal = Build(originalFilter, 1.0);
+        FmSynthSound rawEdited = Build(revisedFilter, 1.0);
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        SoundState reference = rawOriginal.CreateState();
+        original.Render(context, held, 0, firstEdit, new float[firstEdit]);
+        rawOriginal.Render(context, reference, 0, firstEdit,
+            new float[firstEdit]);
+
+        original.TryPrepareRunningState(gainEdited, held).Should().BeTrue();
+        original.CommitPreparedRunningState(gainEdited, held);
+        gainEdited.Render(context, held, firstEdit,
+            secondEdit - firstEdit, new float[secondEdit - firstEdit]);
+        rawOriginal.Render(context, reference, firstEdit,
+            secondEdit - firstEdit, new float[secondEdit - firstEdit]);
+
+        // FIR reconfiguration is a nonstructural numeric edit but needs
+        // a distinct worker kernel for EACH Multi constituent. A request
+        // for all three must not mutate any live voice before publication.
+        gainEdited.CanAdoptRunningState(firEdited, held).Should().BeTrue();
+        rawOriginal.CanAdoptRunningState(rawEdited, reference).Should().BeTrue();
+        gainEdited.TryPrepareRunningState(firEdited, held).Should().BeFalse();
+        rawOriginal.TryPrepareRunningState(rawEdited, reference).Should().BeFalse();
+        gainEdited.RequestBoundLiveFirPreparation(firEdited, held).Should().BeTrue();
+        rawOriginal.RequestBoundLiveFirPreparation(rawEdited, reference)
+            .Should().BeTrue();
+
+        float[] heldBeforeReady = new float[delayWhileUnprepared];
+        float[] rawBeforeReady = new float[delayWhileUnprepared];
+        gainEdited.Render(context, held, secondEdit,
+            heldBeforeReady.Length, heldBeforeReady);
+        rawOriginal.Render(context, reference, secondEdit,
+            rawBeforeReady.Length, rawBeforeReady);
+        for (int i = 0; i < heldBeforeReady.Length; i++)
+        {
+            double t = (double)(secondEdit + i - firstEdit) / fadeFrames;
+            double w = t * t * (3 - 2 * t);
+            float expected = (float)(rawBeforeReady[i] *
+                (0.85 * (1 - w) + 0.20 * w));
+            heldBeforeReady[i].Should().BeApproximately(expected, 7e-5f,
+                "while any FIR plan is unavailable, all three child"
+                + " kernels and the parent gain clock must keep running");
+        }
+
+        using FirPreparationScheduler worker = new();
+        gainEdited.QueuePendingFirControls(held, worker);
+        rawOriginal.QueuePendingFirControls(reference, worker);
+        SpinWait.SpinUntil(
+            () => worker.CompletedPreparationCount >= 6,
+            TimeSpan.FromSeconds(5)).Should().BeTrue(
+                "each of three Multi children in each voice needs an"
+                + " independent prepared FIR plan");
+        gainEdited.AdoptPreparedFirControls(held);
+        rawOriginal.AdoptPreparedFirControls(reference);
+        gainEdited.TryPrepareRunningState(firEdited, held).Should().BeTrue();
+        rawOriginal.TryPrepareRunningState(rawEdited, reference).Should().BeTrue();
+        gainEdited.CommitPreparedRunningState(firEdited, held);
+        rawOriginal.CommitPreparedRunningState(rawEdited, reference);
+        worker.Fault.Should().BeNull();
+
+        int resumed = secondEdit + delayWhileUnprepared;
+        float[] actual = new float[fadeFrames + 48];
+        float[] raw = new float[actual.Length];
+        rawEdited.Render(context, reference, resumed, raw.Length, raw);
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        firEdited.Render(context, held, resumed, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0);
+        for (int i = 0; i < actual.Length; i++)
+        {
+            double t = Math.Clamp((double)(resumed + i - firstEdit)
+                / fadeFrames, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            float expected = (float)(raw[i] *
+                (0.85 * (1 - w) + 0.20 * w));
+            actual[i].Should().BeApproximately(expected, 8e-5f,
+                $"the bound-FIR child histories and outer output gain must"
+                + $" advance together at PCM frame {resumed + i}");
         }
     }
 
@@ -294,6 +406,24 @@ public sealed class FmSynthLiveFilteredMultiOutputTests
             new FmOperatorNode(7, operation, [5, 6]),
         ], 7), resolver, soundResolver: resolver,
             enableLiveMultiExpansion: audition);
+    }
+
+    private static FilterInstance BoundFirBandPass(bool revised)
+    {
+        FilterDefinition definition = new((ObjectId)9473U,
+            "C3 bound FIR child", [
+                new FilterStageDefinition(1, "Band", FilterKind.FirBandPass),
+            ]);
+        FilterInstance filter = new(definition);
+        filter.SetStageParameters(1, [
+            new("LowCutoffHz", FilterParameterValue.FromNumber(950)),
+            new("HighCutoffHz",
+                FilterParameterValue.FromNumber(revised ? 8100 : 3900)),
+            new("TapCount", FilterParameterValue.FromNumber(63)),
+            new("TransitionWidthHz", FilterParameterValue.FromNumber(200)),
+            new("PhaseResponse", FilterParameterValue.FromChoice("Linear")),
+        ]);
+        return filter;
     }
 
     private static FilterInstance TwoStageModulatedFilter(bool revised)
