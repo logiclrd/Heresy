@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 
 using Heresy.Core.Diagnostics;
 using Heresy.Core.FmSynthesis;
@@ -37,6 +38,7 @@ public sealed class PlaybackRequestAudioSourceFactory :
 	IBackgroundPlaybackSourceFactory,
 	IPlaybackPositionTimelineProvider,
 	IPlaybackRuntimeDiagnosticReportProvider,
+	IPlaybackOlderAudioReportProvider,
 	ILiveSynthSourcePreparationFactory
 {
 	private readonly Func<RenderConfiguration> _configurationSource;
@@ -162,6 +164,22 @@ public sealed class PlaybackRequestAudioSourceFactory :
 			return _positions.Remove(request, out timeline);
 	}
 
+	/// <summary>Read a single producer-published count, not its mutable
+	/// collection of PlaybackVoice objects, from the transport poll thread.</summary>
+	public bool TryGetOlderAudioVoiceCount(PlaybackRequest request, out int count)
+	{
+		lock (_gate)
+		{
+			if (_active.TryGetValue(request, out LiveRecursiveSource? live))
+			{
+				count = live.OlderAudioVoiceCount;
+				return true;
+			}
+		}
+		count = 0;
+		return false;
+	}
+
 	public bool TryTakeRuntimeDiagnostics(PlaybackRequest request,
 		out SequencingDiagnostic[] diagnostics)
 	{
@@ -189,6 +207,8 @@ public sealed class PlaybackRequestAudioSourceFactory :
 			bool ApplyToExistingVoices) : LiveAction;
 		private readonly ConcurrentQueue<LiveAction> _commands = new();
 		private readonly ConcurrentQueue<SequencingDiagnostic> _warnings = new();
+		private int _olderAudioVoiceCount;
+		public int OlderAudioVoiceCount => Volatile.Read(ref _olderAudioVoiceCount);
 		public SequencingDiagnostic[] DrainRuntimeDiagnostics()
 		{
 			List<SequencingDiagnostic> messages = [];
@@ -238,6 +258,10 @@ public sealed class PlaybackRequestAudioSourceFactory :
 				}
 			}
 			plan.Source.Render(frameCount, destination);
+			// The note list is owned by this producer. Publish only the
+			// scalar aggregate, never expose mutable PCM-owned voice objects.
+			Volatile.Write(ref _olderAudioVoiceCount,
+				plan.Source.Session.CountOlderAudioVoices());
 			// Drain in the same worker that owns sequencing diagnostics.
 			// Transport/UI readers see only immutable queued records.
 			foreach (SequencingDiagnostic message
