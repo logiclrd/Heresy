@@ -311,9 +311,9 @@ public sealed class FmSynthNnaVirtualLifecycleTests
         });
         using FirPreparationScheduler worker = new();
         session.QueuePendingFirControls(worker);
-        SpinWait.SpinUntil(
+        Assert.That(SpinWait.SpinUntil(
             () => worker.CompletedMultiExpansionCount >= 2,
-            TimeSpan.FromSeconds(5)).Should().BeTrue(
+            TimeSpan.FromSeconds(5)), Is.True,
             "the remaining physical and scope-202 voices need two detached Source preparations");
         session.AdoptPreparedFirControls();
         Assert.That(worker.Fault, Is.Null);
