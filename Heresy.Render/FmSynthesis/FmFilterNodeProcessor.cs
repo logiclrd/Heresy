@@ -424,43 +424,56 @@ internal sealed class FmFilterNodeProcessor
 			|| !live.Chain.IsInputFinished;
 	}
 
-	/// <summary>Exact, allocation-free identity proof for the first bounded
-	/// frozen-Filter Multi child route. A single unmodulated OnePole retains
-	/// its live integrator only if the prepared audio connection, stage
-	/// identity, generation and every effective parameter value match.
-	/// This is deliberately stronger than general live retune eligibility:
-	/// a revised Filter coefficient is not a frozen leaf.</summary>
-	internal bool HasSameFrozenUnmodulatedOnePoleAs(
-		FmFilterNodeProcessor next)
+	/// <summary>Frozen-output identity proof for a stable Multi child.
+	/// A parent gain/Operator fade can safely keep rendering ANY unchanged
+	/// child Filter chain, including several stage families and connected
+	/// numeric FM ports, provided the entire compiled stage plan, binding
+	/// routing and authored parameter snapshot are byte-for-byte equivalent
+	/// in DSP semantics. No Filter state is created or transferred here.
+	/// Connected ports with unsupported realtime numeric routing are
+	/// conservatively excluded; changed coefficients or topology are never
+	/// mistaken for a frozen child. This runs only at publication preflight,
+	/// without allocations or authoring-object lookups.</summary>
+	internal bool HasSameFrozenConfigurationAs(FmFilterNodeProcessor next)
 	{
 		if (_initial is null || next._initial is null
 			|| _initial.DefinitionId != next._initial.DefinitionId
 			|| _audioIndex != next._audioIndex
 			|| _preparedSampleRate != next._preparedSampleRate
-			|| _bindings.Length != 0 || next._bindings.Length != 0
-			|| _effectiveStages.Length != 1
-			|| next._effectiveStages.Length != 1)
+			|| _useFastNumeric != next._useFastNumeric
+			|| (_bindings.Length != 0 && !_useFastNumeric)
+			|| _bindings.Length != next._bindings.Length
+			|| _effectiveStages.Length != next._effectiveStages.Length)
 			return false;
-		ConfiguredFilterStage old = _effectiveStages[0];
-		ConfiguredFilterStage revised = next._effectiveStages[0];
-		if (old.Kind != FilterKind.OnePole
-			|| revised.Kind != FilterKind.OnePole
-			|| old.StageId != revised.StageId
-			|| _frozenStageGenerations[0] != next._frozenStageGenerations[0]
-			|| old.Parameters.Parameters.Count != revised.Parameters.Parameters.Count)
-			return false;
-		// These are immutable, catalogue-ordered descriptor arrays.
-		// Indexing avoids iterator/captured-lambda allocations on the
-		// realtime publication boundary.
-		for (int i = 0; i < old.Parameters.Parameters.Count; i++)
+
+		for (int i = 0; i < _bindings.Length; i++)
 		{
-			string oldName = old.Parameters.Parameters[i].Name;
-			string revisedName = revised.Parameters.Parameters[i].Name;
-			if (!string.Equals(oldName, revisedName,
+			Binding a = _bindings[i], b = next._bindings[i];
+			if (a.StageId != b.StageId
+				|| !string.Equals(a.ParameterName, b.ParameterName,
 					StringComparison.OrdinalIgnoreCase)
-				|| old.Parameters.GetParameter(oldName)
-					!= revised.Parameters.GetParameter(revisedName))
+				|| a.ValueIndex != b.ValueIndex
+				|| a.InitialValue != b.InitialValue)
 				return false;
+		}
+		for (int i = 0; i < _effectiveStages.Length; i++)
+		{
+			ConfiguredFilterStage a = _effectiveStages[i];
+			ConfiguredFilterStage b = next._effectiveStages[i];
+			if (a.StageId != b.StageId || a.Kind != b.Kind
+				|| _frozenStageGenerations[i] != next._frozenStageGenerations[i]
+				|| a.Parameters.Parameters.Count != b.Parameters.Parameters.Count)
+				return false;
+			for (int j = 0; j < a.Parameters.Parameters.Count; j++)
+			{
+				string aName = a.Parameters.Parameters[j].Name;
+				string bName = b.Parameters.Parameters[j].Name;
+				if (!string.Equals(aName, bName,
+						StringComparison.OrdinalIgnoreCase)
+					|| a.Parameters.GetParameter(aName)
+						!= b.Parameters.GetParameter(bName))
+					return false;
+			}
 		}
 		return true;
 	}
