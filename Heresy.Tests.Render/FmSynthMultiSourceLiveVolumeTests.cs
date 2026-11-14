@@ -242,8 +242,10 @@ public sealed class FmSynthMultiSourceLiveVolumeTests
                 $"Instrument Volume must be source-local and the parent Filter continuous at {start + i}");
     }
 
-    [Test]
-    public void IncompatibleSecondSampleRejectsEveryVolumeEditButNotIndependentScalarChanges()
+    [TestCase(false)]
+    [TestCase(true)]
+    public void IncompatibleSecondSampleRejectsEveryVolumeEditButNotIndependentScalarChanges(
+        bool insideMulti)
     {
         // Two different Instrument Sources share the same output graph.
         // The first selected PCM is unchanged; the second one has been
@@ -308,15 +310,23 @@ public sealed class FmSynthMultiSourceLiveVolumeTests
             new Heresy.Render.Instruments.InstrumentSound(
                 Instrument(instrumentB, sampleB, envelopeB), newSamples, newCurves));
 
-        FmSynthGraph Graph(double scalar) => new([
-            new FmSoundSourceNode(1, instrumentA,
-                FmMultiNode.NeutralFrequencyHz),
-            new FmSoundSourceNode(2, instrumentB,
-                FmMultiNode.NeutralFrequencyHz),
-            new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
-            new FmConstantNode(4, scalar),
-            new FmOperatorNode(5, FmOperatorKind.Multiply, [3, 4]),
-        ], 5);
+        FmSynthGraph Graph(double scalar)
+        {
+            List<FmSynthNode> nodes = [
+                new FmSoundSourceNode(1, instrumentA,
+                    FmMultiNode.NeutralFrequencyHz),
+                new FmSoundSourceNode(2, instrumentB,
+                    FmMultiNode.NeutralFrequencyHz),
+                new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
+                new FmConstantNode(4, scalar),
+                new FmOperatorNode(5, FmOperatorKind.Multiply, [3, 4]),
+            ];
+            if (insideMulti)
+                nodes.Add(new FmMultiNode(6, 5, voiceCount: 3,
+                    detune: 0, randomizePhase: false,
+                    gainCompensation: true));
+            return new(nodes, insideMulti ? 6 : 5);
+        }
         FmSynthSound before = new(Graph(1.0), oldCurves,
             soundResolver: oldInstruments, enableLiveMultiExpansion: true);
         FmSynthSound after = new(Graph(0.5), newCurves,
