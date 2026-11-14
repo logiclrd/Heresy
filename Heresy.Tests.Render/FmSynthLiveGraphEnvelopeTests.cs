@@ -128,12 +128,16 @@ public sealed class FmSynthLiveGraphEnvelopeTests
                 "identical frozen node curves must not cause a spurious hold");
     }
 
-    [Test]
-    public void EnvelopeUsedOnlyAsFrequencyControlDoesNotFadeAudibleOutput()
+    [TestCase(false)]
+    [TestCase(true)]
+    public void EnvelopeUsedOnlyAsFrequencyControlDoesNotFadeAudibleOutput(
+        bool scripted)
     {
         FmSynthSound Build(double multiplier)
         {
-            NodeEnvelopeCurve curve = Sustained(multiplier);
+            IEnvelopeCurve curve = scripted
+                ? new ScriptEnvelopeCurve((_, _) => multiplier, null)
+                : Sustained(multiplier);
             return new(new FmSynthGraph([
                 new FmEnvelopeNode(1, OriginalId),
                 new FmOscillatorNode(2, FmOscillatorWaveform.Sine, 100,
