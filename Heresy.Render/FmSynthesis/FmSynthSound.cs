@@ -2415,6 +2415,85 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		return true;
 	}
 
+	/// <summary>A moving affine gain/offset change may follow the CURRENT
+	/// Multi signal while a continuing child Sample is retuned through its
+	/// existing Filter histories. This proves only a stable child graph:
+	/// unchanged oscillator shape, stateless arithmetic, source identity,
+	/// Sample timeline and Filter topology. The outer all-voice preflight
+	/// has already admitted the numeric Source/Filter revisions; each bound
+	/// invocation is checked again below for active Sample/Filter lifetimes.
+	/// Neither Multi onset reconstruction nor Source replacement is admitted.
+	/// This does not authorize generic held-output fades for changed children.</summary>
+	private bool HasCompatibleRetunedSampleFilterMultiGraphAs(FmSynthSound next)
+	{
+		if (_oscillatorCount != next._oscillatorCount
+			|| _nodes.Length != next._nodes.Length
+			|| _outputIndex != next._outputIndex
+			|| _hasMulti || next._hasMulti
+			|| _newNotePolicy != next._newNotePolicy)
+			return false;
+		bool hasSample = false, hasFilter = false;
+		for (int i = 0; i < _nodes.Length; i++)
+		{
+			CompiledNode old = _nodes[i], revised = next._nodes[i];
+			if (old.Definition.Id != revised.Definition.Id
+				|| old.Definition.GetType() != revised.Definition.GetType()
+				|| old.OscillatorIndex != revised.OscillatorIndex
+				|| !old.InputIndices.AsSpan().SequenceEqual(revised.InputIndices))
+				return false;
+			switch (old.Definition)
+			{
+				case FmOscillatorNode osc
+					when revised.Definition is FmOscillatorNode updatedOsc
+						&& osc.Waveform == updatedOsc.Waveform
+						&& osc.FrequencyHz == updatedOsc.FrequencyHz
+						&& osc.Minimum == updatedOsc.Minimum
+						&& osc.Maximum == updatedOsc.Maximum
+						&& osc.Curvature == updatedOsc.Curvature
+						&& osc.Constant == updatedOsc.Constant
+						&& osc.ExponentialMultiplier == updatedOsc.ExponentialMultiplier
+						&& osc.MultiplierNodeId == updatedOsc.MultiplierNodeId:
+					break;
+				case FmConstantNode value
+					when revised.Definition is FmConstantNode updatedValue
+						&& value.Value == updatedValue.Value:
+					break;
+				case FmOperatorNode op
+					when revised.Definition is FmOperatorNode updatedOp
+						&& op.Operation == updatedOp.Operation:
+					break;
+				case FmNoiseNode when revised.Definition is FmNoiseNode:
+					break;
+				case FmSoundSourceNode source
+					when revised.Definition is FmSoundSourceNode updatedSource
+						&& source.SourceId == updatedSource.SourceId
+						&& source.Constant == updatedSource.Constant
+						&& source.ExponentialMultiplier
+							== updatedSource.ExponentialMultiplier
+						&& source.MultiplierNodeId == updatedSource.MultiplierNodeId
+						&& old.Source is SampleSound oldSample
+						&& revised.Source is SampleSound newSample
+						&& oldSample.NewNotePolicy == newSample.NewNotePolicy
+						&& oldSample.CanSharePreparedOnsetTimelineWith(newSample):
+					hasSample = true;
+					break;
+				case FmFilterNode filter
+					when revised.Definition is FmFilterNode updatedFilter
+						&& filter.AudioInputNodeId == updatedFilter.AudioInputNodeId
+						&& filter.TailSeconds == updatedFilter.TailSeconds
+						&& old.Filter is not null && revised.Filter is not null:
+					// Immutable stage compatibility and every invocation's
+					// prepared IIR/FIR buffers were checked by the enclosing
+					// TryPrepareRunningState before this PCM commit.
+					hasFilter = true;
+					break;
+				default:
+					return false;
+			}
+		}
+		return hasSample && hasFilter;
+	}
+
 	/// <summary>Allow only downstream audible controls to fade around
 	/// a stable, already-running Multi whose Oscillator/Noise/Node-Envelope/
 	/// Constant/Operator/direct-Sample child graph is frozen-identical.
@@ -2422,7 +2501,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	/// histories, deterministic Noise streams and Envelope clocks survive.
 	/// Any child edit, voice-count, distribution or onset change has a
 	/// separate transaction; this guard is bounded and allocation-free.</summary>
-	private bool CanFadeStableMultiOutputs(FmSynthSound next, FmSynthState live)
+	private bool CanFadeStableMultiOutputs(FmSynthSound next, FmSynthState live,
+		bool allowRetunedSampleFilterChild = false)
 	{
 		if (!_hasMulti)
 			return true;
@@ -2444,7 +2524,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				|| previous.CycleLength != revised.CycleLength
 				|| _nodes[i].MultiInput is not FmSynthSound oldChild
 				|| next._nodes[i].MultiInput is not FmSynthSound nextChild
-				|| !oldChild.HasSameFrozenStatelessMultiGraphAs(nextChild)
+				|| !(oldChild.HasSameFrozenStatelessMultiGraphAs(nextChild)
+					|| (allowRetunedSampleFilterChild
+						&& oldChild.HasCompatibleRetunedSampleFilterMultiGraphAs(nextChild)))
 				|| _multiRatios[i].Length != next._multiRatios[i].Length
 				|| live.Multis[i].Length < _multiRatios[i].Length)
 				return false;
@@ -2521,7 +2603,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| !_canFadeBoundedOutput || !next._canFadeBoundedOutput
 			|| !CanFadeBoundSampleOutputs(next, live)
 			|| !CanFadeBoundFilterOutputs(next, live)
-			|| !CanFadeStableMultiOutputs(next, live))
+			|| !CanFadeStableMultiOutputs(next, live,
+				allowRetunedSampleFilterChild: true))
 			return false;
 		double fromScale = original.Operation == FmOperatorKind.Add
 			? 1.0 : oldConstant.Value;
