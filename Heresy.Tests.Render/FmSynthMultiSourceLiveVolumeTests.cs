@@ -120,10 +120,12 @@ public sealed class FmSynthMultiSourceLiveVolumeTests
     }
 
 
-    [TestCase(false)]
-    [TestCase(true)]
+    [TestCase(false, false, false)]
+    [TestCase(true, false, false)]
+    [TestCase(true, true, false)]
+    [TestCase(true, true, true)]
     public void SharedInstrumentVolumeRetuneThroughTwoSourcesAndParentFilterKeepsIirHistory(
-        bool insideMulti)
+        bool insideMulti, bool oscillatorSibling, bool changeOnset)
     {
         const int start = 128, fade = 4800, continuation = fade + 96;
         ObjectId sampleId = (ObjectId)8120U;
@@ -169,7 +171,7 @@ public sealed class FmSynthMultiSourceLiveVolumeTests
                 FilterParameterValue.FromNumber(1200));
             return filter;
         }
-        FmSynthGraph Graph()
+        FmSynthGraph Graph(bool randomized)
         {
             List<FmSynthNode> nodes = [
                 new FmSoundSourceNode(1, instrumentId,
@@ -179,11 +181,22 @@ public sealed class FmSynthMultiSourceLiveVolumeTests
                 new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
                 new FmFilterNode(4, 3, Filter(), tailSeconds: 0.003),
             ];
+            int audible = 4;
+            if (oscillatorSibling)
+            {
+                nodes.Add(new FmOscillatorNode(5, FmOscillatorWaveform.Sine,
+                    367, minimum: -0.09, maximum: 0.09));
+                nodes.Add(new FmOperatorNode(6, FmOperatorKind.Add, [4, 5]));
+                audible = 6;
+            }
             if (insideMulti)
-                nodes.Add(new FmMultiNode(5, 4, voiceCount: 3,
-                    detune: 0, randomizePhase: false,
+            {
+                nodes.Add(new FmMultiNode(7, audible, voiceCount: 3,
+                    detune: 0, randomizePhase: randomized,
                     gainCompensation: true));
-            return new(nodes, insideMulti ? 5 : 4);
+                audible = 7;
+            }
+            return new(nodes, audible);
         }
 
         OneEnvelopeResolver previousCurves = new(envelopeId, Curve(1.0));
@@ -192,10 +205,10 @@ public sealed class FmSynthMultiSourceLiveVolumeTests
             new(Instrument(), samples, previousCurves);
         Heresy.Render.Instruments.InstrumentSound nextInstrument =
             new(Instrument(), samples, nextCurves);
-        FmSynthSound before = new(Graph(), previousCurves,
+        FmSynthSound before = new(Graph(randomized: false), previousCurves,
             soundResolver: new OneSourceResolver(instrumentId, previousInstrument),
             enableLiveMultiExpansion: true);
-        FmSynthSound after = new(Graph(), nextCurves,
+        FmSynthSound after = new(Graph(randomized: changeOnset), nextCurves,
             soundResolver: new OneSourceResolver(instrumentId, nextInstrument),
             enableLiveMultiExpansion: true);
         RenderContext context = new(new RenderConfiguration(48000, [
@@ -207,11 +220,13 @@ public sealed class FmSynthMultiSourceLiveVolumeTests
         before.TryPrepareRunningState(after, held).Should().BeTrue();
         before.CommitPreparedRunningState(after, held);
 
-        // Both Instrument Sources in every active constituent fade their own
-        // Volume envelopes BEFORE their sum reaches the continuing OnePole.
-        // With detune zero and normalized gain, three independent Multi
-        // children should equal the single-Filter oracle. Baked PCM models
-        // that source-local smoothstep, not a post-filter gain fade.
+        // Both Instrument Sources in every active constituent fade their
+        // Volume BEFORE their sum reaches each continuing OnePole. An
+        // oscillator sibling must retain its independently integrated phase.
+        // A changed Randomize Phase setting cannot rephase this bound
+        // Instrument child under the existing onset state-transfer contract;
+        // the held voice still adopts the compatible Volume edit. The
+        // unchanged-phase oracle uses the same normalized Multi layout.
         float[] baked = new float[start + continuation];
         for (int frame = 0; frame < baked.Length; frame++)
         {
@@ -223,11 +238,30 @@ public sealed class FmSynthMultiSourceLiveVolumeTests
             "Filtered Instrument oracle",
             new ExternalAssetReference("filtered-instrument-oracle.wav")),
             new MemorySampleData(48000, 1, baked));
-        FmSynthSound oracle = new(new FmSynthGraph([
+        List<FmSynthNode> oracleNodes = [
             new FmSoundSourceNode(1, oracleId,
                 FmMultiNode.NeutralFrequencyHz),
             new FmFilterNode(2, 1, Filter(), tailSeconds: 0.003),
-        ], 2), previousCurves,
+        ];
+        int oracleOutput = 2;
+        if (oscillatorSibling)
+        {
+            oracleNodes.Add(new FmOscillatorNode(3,
+                FmOscillatorWaveform.Sine, 367,
+                minimum: -0.09, maximum: 0.09));
+            oracleNodes.Add(new FmOperatorNode(4,
+                FmOperatorKind.Add, [2, 3]));
+            oracleOutput = 4;
+        }
+        if (insideMulti)
+        {
+            oracleNodes.Add(new FmMultiNode(5, oracleOutput,
+                voiceCount: 3, detune: 0, randomizePhase: false,
+                gainCompensation: true));
+            oracleOutput = 5;
+        }
+        FmSynthSound oracle = new(new FmSynthGraph(oracleNodes, oracleOutput),
+            previousCurves,
             soundResolver: new OneSourceResolver(oracleId, referenceSample),
             enableLiveMultiExpansion: true);
         float[] expected = new float[baked.Length];
