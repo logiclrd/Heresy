@@ -1901,21 +1901,21 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				|| next._nodes[_outputIndex].Filter?.IsSingleUnmodulatedOnePole != true)
 				return false;
 
-			int[] inputs = _nodes[addIndex].InputIndices;
-			if (inputs.Length != addIndex)
+			int[] addInputs = _nodes[addIndex].InputIndices;
+			if (addInputs.Length != addIndex)
 				return false;
 			for (int i = 0; i < addIndex; i++)
 			{
-				if (_nodes[i].Definition is not FmSoundSourceNode source
-					|| next._nodes[i].Definition is not FmSoundSourceNode nextSource
-					|| source.MultiplierNodeId.HasValue
-					|| nextSource.MultiplierNodeId.HasValue
+				if (_nodes[i].Definition is not FmSoundSourceNode inputSource
+					|| next._nodes[i].Definition is not FmSoundSourceNode nextInputSource
+					|| inputSource.MultiplierNodeId.HasValue
+					|| nextInputSource.MultiplierNodeId.HasValue
 					|| state.Sources[i]?.Sound is not SampleSound
 					|| next._nodes[i].Source is not SampleSound)
 					return false;
 				bool directlyAdded = false;
-				for (int j = 0; j < inputs.Length; j++)
-					if (inputs[j] == i)
+				for (int j = 0; j < addInputs.Length; j++)
+					if (addInputs[j] == i)
 					{
 						directlyAdded = true;
 						break;
