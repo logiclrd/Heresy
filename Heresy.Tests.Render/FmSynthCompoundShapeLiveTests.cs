@@ -54,6 +54,26 @@ public sealed class FmSynthCompoundShapeLiveTests
     }
 
     [Test]
+    public void CompoundOscillatorShapeInsideMultiFadesWithoutResettingChildPhases()
+    {
+        // The very same Oscillator -> Constant Multiply shape has proven
+        // transition behavior as an ordinary graph. Wrapping it in a stable
+        // Multi must not turn the nonstructural waveform edit into an
+        // instantaneous discontinuity on every constituent.
+        FmSynthSound Build(FmOscillatorWaveform waveform) => new(
+            new FmSynthGraph([
+                new FmOscillatorNode(1, waveform, 400),
+                new FmConstantNode(2, 0.4),
+                new FmOperatorNode(3, FmOperatorKind.Multiply, [1, 2]),
+                new FmMultiNode(4, 3, voiceCount: 3, detune: 0,
+                    randomizePhase: false, gainCompensation: true),
+            ], 4), new EmptyEnvelopes(), enableLiveMultiExpansion: true);
+
+        AssertSmoothStatelessEdit(Build(FmOscillatorWaveform.Sine),
+            Build(FmOscillatorWaveform.Square));
+    }
+
+    [Test]
     public void SecondCompoundShapeEditJoinsTheAlreadyBlendedOutput()
     {
         FmSynthSound original = Sound(FmOperatorKind.Add, FmOscillatorWaveform.Sine);
