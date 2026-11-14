@@ -40,6 +40,7 @@ internal sealed class PlaybackSnapshotSoundResolver
 	private readonly ConcurrentDictionary<ObjectId, ISound> _preparedMixdowns = new();
 	private uint _nextPreparedId = uint.MaxValue;
 	private readonly PreparedToneFilterStageFactory? _toneFilterPlans;
+	private readonly bool _reserveSynthMultiHeadroom;
 
 	/// <summary>
 	/// Reserve an invocation-unique source identity before publishing its
@@ -69,7 +70,8 @@ internal sealed class PlaybackSnapshotSoundResolver
 	public PlaybackSnapshotSoundResolver(
 		SongDocument document,
 		ISampleDataProvider sampleDataProvider,
-		int? preparedSampleRate = null)
+		int? preparedSampleRate = null,
+		bool reserveSynthMultiHeadroom = false)
 	{
 		_document =
 			document
@@ -78,6 +80,7 @@ internal sealed class PlaybackSnapshotSoundResolver
 		_sampleDataProvider =
 			sampleDataProvider
 				?? throw new ArgumentNullException(nameof(sampleDataProvider));
+		_reserveSynthMultiHeadroom = reserveSynthMultiHeadroom;
 		if (preparedSampleRate.HasValue)
 			_toneFilterPlans = new PreparedToneFilterStageFactory(
 				preparedSampleRate.Value);
@@ -192,7 +195,9 @@ internal sealed class PlaybackSnapshotSoundResolver
 				// preparing any referenced sounds. No live-song traversal in PCM.
 				FmSoundSourceReferences.Validate(_document, fmSynth.Id, fmSynth.Graph);
 				sound = new FmSynthSound(fmSynth.Graph, this,
-					soundResolver: this, preparedChildFilterFactory: _toneFilterPlans);
+					soundResolver: this,
+					preparedChildFilterFactory: _toneFilterPlans,
+					reserveMultiHeadroom: _reserveSynthMultiHeadroom);
 				break;
 
 			case PatternDefinition when mixdown:

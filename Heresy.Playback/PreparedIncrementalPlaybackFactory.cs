@@ -30,12 +30,14 @@ public sealed class PreparedIncrementalPlaybackPlan : IDisposable
 	private bool _disposed;
 	private BufferedAudioOutputSource? _renderingWorker;
 	private readonly Action _disposePrivateMixdowns;
+	private readonly PublishedLiveSynthResolver? _liveSynthResolver;
 
 	internal PreparedIncrementalPlaybackPlan(
 		SongDocumentSnapshot snapshot, IncrementalRecursiveTimeline timeline,
 		PlaybackSession session, PreparedIncrementalAudioSource source,
 		long rootInvocationId, Action disposePrivateMixdowns,
-		SequencingContext sequencingContext)
+		SequencingContext sequencingContext,
+		PublishedLiveSynthResolver? liveSynthResolver = null)
 	{
 		Snapshot = snapshot;
 		Timeline = timeline;
@@ -44,6 +46,24 @@ public sealed class PreparedIncrementalPlaybackPlan : IDisposable
 		RootInvocationId = rootInvocationId;
 		_disposePrivateMixdowns = disposePrivateMixdowns;
 		SequencingContext = sequencingContext;
+		_liveSynthResolver = liveSynthResolver;
+	}
+
+	/// <summary>Called only from the live PCM producer between events,
+	/// never from the document UI or the native audio callback.</summary>
+	internal void AdoptPreparedLiveSynth(ObjectId sourceId, ISound preparedSound,
+		bool applyToExistingVoices = false)
+	{
+		ObjectDisposedException.ThrowIf(_disposed, this);
+		if (_liveSynthResolver is null)
+			throw new InvalidOperationException(
+				"This playback plan does not allow Synth publication.");
+		if (applyToExistingVoices
+			&& _liveSynthResolver.TryResolve(sourceId, mixdown: false,
+				out ISound? previousSound)
+			&& previousSound is not null)
+			Session.AdoptLiveSynthParameters(sourceId, previousSound, preparedSound);
+		_liveSynthResolver.Publish(sourceId, preparedSound);
 	}
 
 	public SongDocumentSnapshot Snapshot { get; }
@@ -272,7 +292,8 @@ public sealed class PreparedIncrementalPlaybackFactory
 	/// renderer; only the supplied already-resolved NoteSchedule is transient.
 	/// </summary>
 	public PreparedIncrementalPlaybackPlan CreateAdHoc(
-		SongDocumentSnapshot snapshot, NoteSchedule schedule)
+		SongDocumentSnapshot snapshot, NoteSchedule schedule,
+		bool reserveSynthMultiHeadroom = false)
 	{
 		ArgumentNullException.ThrowIfNull(snapshot);
 		ArgumentNullException.ThrowIfNull(schedule);
@@ -281,7 +302,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 		PreparedRoslynIncrementalScriptSources scripts = new(frozen);
 		PlaybackSnapshotSoundResolver sounds = new(
 			SongDocumentSnapshot.Create(frozen.Document).Document, _samples,
-			_configuration.SampleRate);
+			_configuration.SampleRate, reserveSynthMultiHeadroom);
 		sounds.PrepareDirectSources();
 		AdHocPattern transient = new(frozen.Document.AllocateObjectId(), schedule);
 		SequencingContext context = new();
@@ -290,9 +311,12 @@ public sealed class PreparedIncrementalPlaybackFactory
 		try
 		{
 			long invocation = timeline.AddRoot(transient.Id);
+			// The initial resolver remains frozen. New Synth definitions are
+			// separately prepared and adopted only on the PCM producer.
+			PublishedLiveSynthResolver liveSynthResolver = new(sounds);
 			PlaybackSession session = new(
 				new RenderContext(_configuration),
-				new NoteScheduleBuilder().Freeze(), sounds);
+				new NoteScheduleBuilder().Freeze(), liveSynthResolver);
 			PreparedIncrementalAudioSource source =
 				CreatePrivateMixdownAwareSource(
 					timeline, session, scripts, sounds, [transient.Id],
@@ -300,7 +324,7 @@ public sealed class PreparedIncrementalPlaybackFactory
 					context.Diagnostics);
 			return new PreparedIncrementalPlaybackPlan(
 				frozen, timeline, session, source,
-				invocation, disposeChildren, context);
+				invocation, disposeChildren, context, liveSynthResolver);
 		}
 		catch
 		{

@@ -244,6 +244,27 @@ public sealed class PlaybackSession
 
 	public long NextFrame => _nextFrame;
 
+	/// <summary>PCM-producer-only publication to active physical, virtual,
+	/// displaced and released voices. Matching the immediately previous sound
+	/// keeps incompatible historical graph generations isolated.</summary>
+	public void AdoptLiveSynthParameters(ObjectId sourceId,
+		ISound previousSound, ISound nextSound)
+	{
+		void Adopt(PlaybackVoice? voice)
+		{
+			if (voice is not null)
+				voice.TryAdoptLiveSynth(sourceId, previousSound, nextSound);
+		}
+		foreach (PlaybackChannelState channel in _channels.Values)
+			Adopt(channel.CurrentVoice);
+		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+			Adopt(channel.CurrentVoice);
+		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+			Adopt(channel.CurrentVoice);
+		foreach (PlaybackVoice voice in _virtualVoices)
+			Adopt(voice);
+	}
+
 	public int SampleRate => _context.Configuration.SampleRate;
 
 	public int OutputChannelCount => _context.Configuration.OutputChannelCount;
@@ -1793,6 +1814,7 @@ public sealed class PlaybackSession
 		{
 			OriginVirtualChannelId = virtualChannelId,
 			OriginScopedVirtualOwner = scopedOwner,
+			OriginSourceId = start.Mixdown ? ObjectId.None : start.SourceId,
 		};
 
 		channel.AttachVoice(
@@ -2983,6 +3005,7 @@ public sealed class PlaybackSession
 			eventFilter: start.EventFilterConfiguration,
 			enclosingEventFilters: BuildEnclosingEventFilters(enclosingSources));
 
+		voice.OriginSourceId = start.Mixdown ? ObjectId.None : start.SourceId;
 		voice.OriginPatternCursorId = _activePatternCursorId;
 		channel.AttachVoice(voice, eventFrame);
 	}
@@ -3033,6 +3056,7 @@ public sealed class PlaybackSession
 		PlaybackVoice voice = _virtualVoices[index];
 		if (voice.DisplacedOutputFilterState is { HasTail: true } tail)
 			_displacedOutputTails.Add(tail);
+		voice.CancelPendingLivePreparation();
 		_virtualVoices.RemoveAt(index);
 	}
 
@@ -3069,6 +3093,7 @@ public sealed class PlaybackSession
 		{
 			case NewNoteAction.Cut:
 				oldVoice.AddCutTo(channel.AntiClickTail);
+				oldVoice.CancelPendingLivePreparation();
 				break;
 
 			case NewNoteAction.Continue:
@@ -3092,6 +3117,8 @@ public sealed class PlaybackSession
 					oldVoice.DisplacedOutputFilterState = ForkHostFilter(oldVoice);
 					_virtualVoices.Add(oldVoice);
 				}
+				else
+					oldVoice.CancelPendingLivePreparation();
 				break;
 
 			case NewNoteAction.Fade:
@@ -3952,6 +3979,30 @@ public sealed class PlaybackSession
 					soundEndRelative.Value)
 				: null;
 
+		// Multiple releasing envelopes compose by their LAST completion,
+		// not the earliest one. A child with its own sustain lifecycle must
+		// also finish; an unsustained child simply supplies PCM until the
+		// enclosing release ends or its natural EOF occurs.
+		if (voice.SoundState.NoteOffTime.HasValue
+			&& voice.HasLocalReleaseLifecycle)
+		{
+			long? localEnd = voice.GetLocalReleaseCompletionFrameExclusive(
+				absoluteFrame);
+			if (localEnd.HasValue)
+			{
+				if (voice.Sound.HasSustainRelease(voice.SoundState))
+					effectiveEndAbsolute = effectiveEndAbsolute.HasValue
+						? Math.Max(effectiveEndAbsolute.Value, localEnd.Value)
+						: null; // Cannot bound an unresolved child release.
+				else
+					effectiveEndAbsolute = effectiveEndAbsolute.HasValue
+						? Math.Min(effectiveEndAbsolute.Value, localEnd.Value)
+						: localEnd.Value;
+			}
+			else
+				effectiveEndAbsolute = null; // An active release has no finite end.
+		}
+
 		if (voice.FadeEndFrameExclusive.HasValue)
 		{
 			effectiveEndAbsolute =
@@ -3995,7 +4046,7 @@ public sealed class PlaybackSession
 			voice, absoluteFrame);
 
 		if (effectiveEnd.HasValue && absoluteFrame >= effectiveEnd.Value)
-			channel.DetachCurrentVoice();
+			channel.DetachCurrentVoice()?.CancelPendingLivePreparation();
 	}
 
 	private static void AddBuffer(Span<float> destination, ReadOnlySpan<float> source)

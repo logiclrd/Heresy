@@ -330,6 +330,7 @@ public sealed class FmFilterNodeRenderingTests
 
 	private sealed class IndefiniteEnvelope : IEnvelopeCurve
 	{
+		public bool HasSustainLoop => true;
 		public double GetValue(long activeFrame, int sampleRate,
 			long? noteOffActiveFrame) => 1;
 	}

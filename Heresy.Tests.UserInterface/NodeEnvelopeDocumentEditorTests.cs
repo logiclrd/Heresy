@@ -68,6 +68,44 @@ public sealed class NodeEnvelopeDocumentEditorTests
 	}
 
 	[Test]
+	public void OnlyAudibleNodeEnvelopeEditsNotifySharedDependents()
+	{
+		DocumentWorkspace workspace = new();
+		NodeEnvelopeDefinition envelope =
+			EnvelopeDocumentEditor.CreateNodeEnvelope(workspace, "Shared");
+		var notifications = new System.Collections.Generic.List<SharedAudioObjectCommittedEventArgs>();
+		workspace.SharedAudioObjectCommitted += (_, e) => notifications.Add(e);
+		uint revision = workspace.Document.AudioRevision;
+
+		EnvelopeDocumentEditor.UpdateNodeEnvelopeDisplayRange(workspace, envelope,
+			envelope.Vmin - 0.5, envelope.Vmax + 0.5);
+		Assert.That(workspace.Document.AudioRevision, Is.EqualTo(revision));
+		Assert.That(notifications, Is.Empty);
+
+		EnvelopeDocumentEditor.UpdateNodeEnvelope(workspace, envelope,
+			envelope.Nodes, envelope.SustainStartIndex, envelope.SustainEndIndex,
+			envelope.SustainLoopMode);
+		Assert.That(notifications, Is.Empty);
+		EnvelopeNode[] edited = [new(TimeSpan.Zero, 0.42)];
+		EnvelopeDocumentEditor.UpdateNodeEnvelope(workspace, envelope,
+			edited, 0, 0, EnvelopeSustainLoopMode.Forward);
+		Assert.That(notifications.Count, Is.EqualTo(1));
+		Assert.That(notifications[0].Document, Is.SameAs(workspace.Document));
+		Assert.That(notifications[0].ObjectId, Is.EqualTo(envelope.Id));
+		Assert.That(notifications[0].AudioRevision,
+			Is.EqualTo(workspace.Document.AudioRevision));
+
+		EnvelopeDocumentEditor.UpdateNodeEnvelope(workspace, envelope,
+			edited, 0, 0, EnvelopeSustainLoopMode.Forward);
+		Assert.Throws<ArgumentException>(() =>
+			EnvelopeDocumentEditor.UpdateNodeEnvelope(workspace, envelope,
+				[new EnvelopeNode(TimeSpan.Zero, 0.1),
+				 new EnvelopeNode(TimeSpan.Zero, 0.2)],
+				0, 0, EnvelopeSustainLoopMode.Forward));
+		Assert.That(notifications.Count, Is.EqualTo(1));
+	}
+
+	[Test]
 	public void ForeignEnvelopeEditsAreRejected()
 	{
 		DocumentWorkspace workspace = new();

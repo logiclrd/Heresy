@@ -17,7 +17,8 @@ public sealed class LazySongPlaybackTransport
 		IPlaybackPositionTransport,
 		IPlaybackRuntimeDiagnosticsTransport,
 		IPlaybackAudioHealthTransport,
-		IPlaybackSnapshotTransport
+		IPlaybackSnapshotTransport,
+		ILiveSynthEditTransport
 {
 	private readonly object _gate = new();
 	private readonly Func<ISongPlaybackTransport> _factory;
@@ -206,6 +207,29 @@ public sealed class LazySongPlaybackTransport
 			document,
 			target,
 			commands);
+
+	public Task PublishSynthEditAsync(SongDocument document, ObjectId sourceId)
+	{
+		lock (_gate)
+		{
+			ThrowIfDisposed();
+			return (_inner as ILiveSynthEditTransport)?.PublishSynthEditAsync(
+				document, sourceId) ?? Task.CompletedTask;
+		}
+	}
+
+	/// <summary>Never instantiate the inner audio transport solely to
+	/// publish a shared Envelope/Filter authoring edit. If an audition is
+	/// already running, forward it through the inner command gate.</summary>
+	public Task PublishSharedObjectEditAsync(SongDocument document, ObjectId objectId)
+	{
+		lock (_gate)
+		{
+			ThrowIfDisposed();
+			return (_inner as ILiveSynthEditTransport)?.PublishSharedObjectEditAsync(
+				document, objectId) ?? Task.CompletedTask;
+		}
+	}
 
 	public Task StopAsync()
 	{

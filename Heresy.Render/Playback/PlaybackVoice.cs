@@ -5,6 +5,8 @@ using System.Linq;
 using System.Numerics;
 
 using Heresy.Core.Envelopes;
+using Heresy.Core.Objects;
+using Heresy.Render.FmSynthesis;
 using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
 using Heresy.Render.Envelopes;
@@ -339,7 +341,60 @@ public sealed class PlaybackVoice
 			RecomposePitchTrajectory(0);
 	}
 
-	public ISound Sound { get; }
+	/// <summary>Only the ordered PCM producer may adopt a new prepared sound.
+	/// The existing SoundState and all note-level controls remain intact.</summary>
+	public ISound Sound { get; private set; }
+
+	internal ObjectId OriginSourceId { get; set; } = ObjectId.None;
+
+	// The PCM owner holds at most one deferred, latest-wins Synth revision.
+	// A bound FIR stage may need an invocation-local off-thread design
+	// before the *whole* old voice can migrate in one atomic transaction.
+	private FmSynthSound? _pendingLiveSynth;
+
+	/// <summary>Explicit owner retirement/cut or a new authored revision
+	/// invalidates this voice's pending expansion work. The worker may
+	/// finish the child it was already constructing, but cannot publish
+	/// or retain the obsolete prepared arrays afterward.</summary>
+	internal void CancelPendingLivePreparation()
+	{
+		_pendingLiveSynth = null;
+		if (Sound is FmSynthSound current)
+			current.CancelPendingMultiExpansion(SoundState);
+	}
+
+	internal bool TryAdoptLiveSynth(ObjectId sourceId,
+		ISound previousSound, ISound nextSound)
+	{
+		if (OriginSourceId != sourceId
+			|| Sound is not FmSynthSound current
+			|| nextSound is not FmSynthSound next
+			|| (!ReferenceEquals(Sound, previousSound)
+				&& !ReferenceEquals(_pendingLiveSynth, previousSound)))
+			return false;
+
+		// When a second edit supersedes a not-yet-prepared first edit,
+		// compare it with the actual sounding generation, not the
+		// superseded candidate. Obsolete worker results cannot publish it.
+		if (_pendingLiveSynth is not null)
+			CancelPendingLivePreparation();
+		_pendingLiveSynth = null;
+		if (!current.CanPrepareMultiExpansion(next, SoundState))
+			return false;
+		if (current.TryPrepareRunningState(next, SoundState))
+		{
+			current.CommitPreparedRunningState(next, SoundState);
+			current.CancelPendingMultiExpansion(SoundState);
+			Sound = next;
+			return true;
+		}
+		bool pending = current.RequestMultiExpansionPreparation(next, SoundState);
+		pending = current.RequestBoundLiveFirPreparation(next, SoundState)
+			|| pending;
+		if (pending)
+			_pendingLiveSynth = next;
+		return false;
+	}
 
 	public SoundState SoundState { get; }
 
@@ -598,6 +653,30 @@ public sealed class PlaybackVoice
         _enclosingEnvelopeRealtime?.AdoptPreparedFirs();
         if (Sound is IFirPreparationSound source)
             source.AdoptPreparedFirControls(SoundState);
+		if (_pendingLiveSynth is not FmSynthSound revised
+			|| Sound is not FmSynthSound current)
+			return;
+		if (!current.CanPrepareMultiExpansion(revised, SoundState))
+		{
+			CancelPendingLivePreparation();
+			return;
+		}
+		if (current.TryPrepareRunningState(revised, SoundState))
+		{
+			current.CommitPreparedRunningState(revised, SoundState);
+			current.CancelPendingMultiExpansion(SoundState);
+			Sound = revised;
+			_pendingLiveSynth = null;
+		}
+		else
+		{
+			bool pending = current.RequestMultiExpansionPreparation(
+				revised, SoundState);
+			pending = current.RequestBoundLiveFirPreparation(
+				revised, SoundState) || pending;
+			if (!pending)
+				CancelPendingLivePreparation();
+		}
     }
 
     internal void QueuePendingFirControls(FirPreparationScheduler scheduler)
@@ -752,6 +831,11 @@ public sealed class PlaybackVoice
 		if (SoundState.NoteOffTime.HasValue)
 			return;
 
+		// The PlaybackVoice is the outermost Instrument envelope controller.
+		// When it owns a sustain loop, the flattened terminal source receives
+		// Indefinite Off: it must supply audio while that loop releases.
+		SoundState.NoteOffDisposition = HasLocalSustainRelease()
+			? NoteOffDisposition.Indefinite : NoteOffDisposition.Definite;
 		long relativeFrame = absoluteFrame - StartFrame;
 		SoundState.NoteOffTime = FrameTime.FrameStartTime(
 			relativeFrame,
@@ -765,10 +849,58 @@ public sealed class PlaybackVoice
 			envelope.NoteOff(absoluteFrame);
 	}
 
+	/// <summary>Only enabled, configured sustain loops participate in an
+	/// actual release. A non-looped envelope cannot turn Definite Off into
+	/// Indefinite Off merely by existing.</summary>
+	private bool HasLocalSustainRelease()
+	{
+		if (_volumeEnvelope?.HasSustainLoop == true
+			|| _pitchEnvelope?.HasSustainLoop == true
+			|| _panningEnvelope?.HasSustainLoop == true
+			|| _filterEnvelope?.HasSustainLoop == true)
+			return true;
+		foreach (EnvelopePlaybackState envelope in _eventFilterParameterEnvelopes.Values)
+			if (envelope.HasSustainLoop) return true;
+		foreach (EnvelopePlaybackState envelope in _enclosingFilterParameterEnvelopes.Values)
+			if (envelope.HasSustainLoop) return true;
+		return false;
+	}
+
+	internal bool HasLocalReleaseLifecycle => HasLocalSustainRelease();
+
+	/// <summary>The LAST completed sustain-loop release, not just the
+	/// Volume envelope. Null means either no locally-owned release or an
+	/// unbounded/paused release: see HasLocalReleaseLifecycle.</summary>
+	internal long? GetLocalReleaseCompletionFrameExclusive(long absoluteFrame)
+	{
+		long? latest = null;
+		bool unbounded = false;
+		void Include(EnvelopePlaybackState? envelope)
+		{
+			if (envelope?.HasSustainLoop != true) return;
+			long? end = envelope.GetEndFrameExclusiveAfterNoteOff(absoluteFrame);
+			if (!end.HasValue) unbounded = true;
+			else latest = latest.HasValue ? Math.Max(latest.Value, end.Value) : end;
+		}
+		Include(_volumeEnvelope);
+		Include(_pitchEnvelope);
+		Include(_panningEnvelope);
+		Include(_filterEnvelope);
+		foreach (EnvelopePlaybackState envelope in _eventFilterParameterEnvelopes.Values)
+			Include(envelope);
+		foreach (EnvelopePlaybackState envelope in _enclosingFilterParameterEnvelopes.Values)
+			Include(envelope);
+		return unbounded ? null : latest;
+	}
+
+	/// <summary>A permanently-zero final Volume gain proves that all
+	/// downstream audio is silent, even if other release clocks run longer.
+	/// Unlike a crossing of zero, only a completed zero endpoint qualifies.</summary>
 	internal long? GetVolumeEnvelopeEndFrameExclusiveAfterNoteOff(
 		long absoluteFrame)
-		=> _volumeEnvelope?.GetEndFrameExclusiveAfterNoteOff(
-			absoluteFrame);
+		=> _volumeEnvelope?.IsZeroAfterCompletion == true
+			? _volumeEnvelope.GetEndFrameExclusiveAfterNoteOff(absoluteFrame)
+			: null;
 
 	internal void SetEnvelopeEnabled(
 		EnvelopeTarget target,

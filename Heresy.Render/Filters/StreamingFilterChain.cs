@@ -6,6 +6,15 @@ using Heresy.Core.Filters;
 
 namespace Heresy.Render.Filters;
 
+/// <summary>Optional in-place copy of an already prepared IIR history.
+/// A replacement chain owns its own state objects; the PCM owner copies
+/// scalar integrators into them only after whole-voice compatibility preflight.
+/// No clone, new stage, coefficient design or worker access to live histories.</summary>
+internal interface IPreparedOnePoleHistoryTransfer
+{
+	void CopyHistoryFrom(IPreparedOnePoleHistoryTransfer source);
+}
+
 /// <summary>
 /// Invocation-owned incremental serial filter chain. A single instance is
 /// never shared by unrelated notes, output hosts or private mixdowns.
@@ -86,6 +95,70 @@ public sealed class StreamingFilterChain
 	public int TailRemainingFrames => _tailRemainingFrames;
 	public bool IsInputFinished => _inputFinished;
 	public int StageCount => _stages.Length;
+
+	/// <summary>Preflight a frozen OnePole-only chain and its independent,
+	/// preallocated destination histories. Other DSP families need their
+	/// own history-transfer semantics and must not enter this fast path.</summary>
+	internal bool CanCopyPreparedOnePoleHistoryFrom(StreamingFilterChain source)
+	{
+		if (source is null || SampleRate != source.SampleRate
+			|| OutputChannelCount != source.OutputChannelCount
+			|| _stages.Length == 0 || _stages.Length != source._stages.Length
+			|| _tailBudgetFrames != source._tailBudgetFrames
+			|| _preparedLatencyFrames != source._preparedLatencyFrames
+			|| _inputFinished || source._inputFinished)
+			return false;
+		for (int i = 0; i < _stages.Length; i++)
+		{
+			RunningStage to = _stages[i];
+			RunningStage from = source._stages[i];
+			PreparedFilterStage stage = to.Stage;
+			PreparedFilterStage previous = from.Stage;
+			// OnePole has precisely CutoffHz and structural Mode. Direct
+			// dictionary lookups avoid the LINQ closures/enumerators in
+			// HasSameParameters during an audio-boundary preflight.
+			if (stage.Kind != FilterKind.OnePole
+				|| previous.Kind != FilterKind.OnePole
+				|| stage.LayerIndex != previous.LayerIndex
+				|| stage.StageIndex != previous.StageIndex
+				|| stage.DefinitionId != previous.DefinitionId
+				|| stage.StageId != previous.StageId
+				|| stage.Generation != previous.Generation
+				|| stage.Parameters.Count != 2
+				|| previous.Parameters.Count != 2
+				|| !stage.Parameters.TryGetValue("CutoffHz", out var cutoff)
+				|| !previous.Parameters.TryGetValue("CutoffHz", out var oldCutoff)
+				|| cutoff != oldCutoff
+				|| !stage.Parameters.TryGetValue("Mode", out var mode)
+				|| !previous.Parameters.TryGetValue("Mode", out var oldMode)
+				|| mode != oldMode
+				|| to.Channels.Length != from.Channels.Length)
+				return false;
+			for (int j = 0; j < to.Channels.Length; j++)
+				if (to.Channels[j] is not IPreparedOnePoleHistoryTransfer
+					|| from.Channels[j] is not IPreparedOnePoleHistoryTransfer)
+					return false;
+		}
+		return true;
+	}
+
+	/// <summary>Only call after CanCopyPreparedOnePoleHistoryFrom
+	/// succeeded on the same pair at the publication boundary. It copies
+	/// live scalar integrators into already allocated destination states;
+	/// every subsequent sample evolves each branch independently.</summary>
+	internal void CopyPreparedOnePoleHistoryFrom(StreamingFilterChain source)
+	{
+		for (int i = 0; i < _stages.Length; i++)
+		{
+			IStreamingFilterStageState[] to = _stages[i].Channels;
+			IStreamingFilterStageState[] from = source._stages[i].Channels;
+			for (int j = 0; j < to.Length; j++)
+				((IPreparedOnePoleHistoryTransfer)to[j]).CopyHistoryFrom(
+					(IPreparedOnePoleHistoryTransfer)from[j]);
+		}
+		_tailRemainingFrames = source._tailRemainingFrames;
+		_inputFinished = source._inputFinished;
+	}
 
 	/// <summary>
 	/// Prepares and validates all stages before publishing any changes.
@@ -193,6 +266,32 @@ public sealed class StreamingFilterChain
 	/// scratch and prepared states keep this path allocation-free.
 	/// </summary>
 	internal bool TryApplyRealtimeNumericUpdates(
+		ReadOnlySpan<RealtimeTptStageUpdate> tptUpdates,
+		Span<RealtimeTptCoefficients> tptScratch,
+		ReadOnlySpan<RealtimeBiquadStageUpdate> biquadUpdates,
+		Span<RealtimeBiquadCoefficients> biquadScratch,
+		ReadOnlySpan<RealtimeLinearLadderStageUpdate> ladderUpdates,
+		Span<RealtimeLinearLadderCoefficients> ladderScratch,
+		ReadOnlySpan<RealtimeSaturatedLadderStageUpdate> saturatedUpdates,
+		Span<RealtimeSaturatedLadderCoefficients> saturatedScratch,
+		ReadOnlySpan<RealtimeAllPassStageUpdate> allPassUpdates,
+		Span<RealtimeAllPassCoefficient> allPassScratch,
+		ReadOnlySpan<RealtimeFeedbackCombStageUpdate> combUpdates,
+		Span<RealtimeFeedbackCombCoefficients> combScratch,
+		ReadOnlySpan<RealtimeFeedforwardCombStageUpdate> feedforwardUpdates,
+		Span<RealtimeFeedforwardCombCoefficients> feedforwardScratch,
+		ReadOnlySpan<RealtimeFirStageUpdate> firUpdates)
+	{
+		if (!TryPreflightRealtimeNumericUpdates(tptUpdates, tptScratch, biquadUpdates, biquadScratch, ladderUpdates, ladderScratch, saturatedUpdates, saturatedScratch, allPassUpdates, allPassScratch, combUpdates, combScratch, feedforwardUpdates, feedforwardScratch, firUpdates))
+			return false;
+		CommitPreparedRealtimeNumericUpdates(tptUpdates, tptScratch, biquadUpdates, biquadScratch, ladderUpdates, ladderScratch, saturatedUpdates, saturatedScratch, allPassUpdates, allPassScratch, combUpdates, combScratch, feedforwardUpdates, feedforwardScratch, firUpdates);
+		return true;
+	}
+
+	/// <summary>Preflight every selected stage into preallocated coefficient
+	/// scratch without changing any PCM history. Separate Filter chains can
+	/// all validate before the Synth transaction begins committing.</summary>
+	internal bool TryPreflightRealtimeNumericUpdates(
 		ReadOnlySpan<RealtimeTptStageUpdate> tptUpdates,
 		Span<RealtimeTptCoefficients> tptScratch,
 		ReadOnlySpan<RealtimeBiquadStageUpdate> biquadUpdates,
@@ -415,6 +514,28 @@ public sealed class StreamingFilterChain
 					return false;
 		}
 
+		return true;
+	}
+
+	/// <summary>Commit only already-preflighted updates. The sole producer
+	/// cannot interleave rendering or another transaction between phases.</summary>
+	internal void CommitPreparedRealtimeNumericUpdates(
+		ReadOnlySpan<RealtimeTptStageUpdate> tptUpdates,
+		Span<RealtimeTptCoefficients> tptScratch,
+		ReadOnlySpan<RealtimeBiquadStageUpdate> biquadUpdates,
+		Span<RealtimeBiquadCoefficients> biquadScratch,
+		ReadOnlySpan<RealtimeLinearLadderStageUpdate> ladderUpdates,
+		Span<RealtimeLinearLadderCoefficients> ladderScratch,
+		ReadOnlySpan<RealtimeSaturatedLadderStageUpdate> saturatedUpdates,
+		Span<RealtimeSaturatedLadderCoefficients> saturatedScratch,
+		ReadOnlySpan<RealtimeAllPassStageUpdate> allPassUpdates,
+		Span<RealtimeAllPassCoefficient> allPassScratch,
+		ReadOnlySpan<RealtimeFeedbackCombStageUpdate> combUpdates,
+		Span<RealtimeFeedbackCombCoefficients> combScratch,
+		ReadOnlySpan<RealtimeFeedforwardCombStageUpdate> feedforwardUpdates,
+		Span<RealtimeFeedforwardCombCoefficients> feedforwardScratch,
+		ReadOnlySpan<RealtimeFirStageUpdate> firUpdates)
+	{
 		for (int i = 0; i < tptUpdates.Length; i++)
 		{
 			foreach (IStreamingFilterStageState channel in
@@ -470,7 +591,6 @@ public sealed class StreamingFilterChain
 				((IRealtimeFirFilterState)channel)
 					.CommitRealtime(firUpdates[i].Plan);
 		}
-		return true;
 	}
 
 	// The previous numeric-only update contract remains in use by tests.

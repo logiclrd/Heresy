@@ -36,4 +36,15 @@ public sealed class SpatializerTests
 
 		Assert.That(gain, Is.EqualTo(1.0));
 	}
+	[Test]
+	public void NeutralGainFastPathPreservesNonFinitePositionDiagnostics()
+	{
+		OutputChannelConfiguration output = new(
+			Vector3.Zero, positionalImportance: 0.0);
+
+		Assert.That(double.IsNaN(Spatializer.CalculateGain(
+			new Vector3(float.NaN, 0.0f, 0.0f), output)), Is.True);
+		Assert.That(double.IsNaN(Spatializer.CalculateGain(
+			new Vector3(float.PositiveInfinity, 0.0f, 0.0f), output)), Is.True);
+	}
 }

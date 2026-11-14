@@ -68,6 +68,39 @@ public sealed class FmSynthChildLifecycleTests
         Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(2));
     }
 
+    [TestCase(true)]
+    [TestCase(false)]
+    public void IndefiniteNoteOffDoesNotCutUnsustainedSample(bool looping)
+    {
+        Registry registry = new();
+        registry.Add(SampleId, MakeSample([1, 2, 3, 4], 8, loop: looping));
+        FmSynthSound synth = MakeSynth(registry, [
+            new FmSoundSourceNode(0, SampleId, C4),
+        ]);
+        SoundState state = synth.CreateState();
+        state.NoteOffDisposition = NoteOffDisposition.Indefinite;
+        state.NoteOffTime = TimeSpan.FromSeconds(2.0 / 8);
+        RenderContext context = Mono(8);
+        Assert.That(synth.HasSustainRelease(state), Is.False);
+        Assert.That(synth.GetEndFrameExclusive(context, state),
+            Is.Null, "the Indefinite event itself cannot end the Source");
+        float[] samples = new float[8];
+        synth.Render(context, state, 0, samples.Length, samples);
+        if (looping)
+        {
+            Assert.That(samples, Is.EqualTo(
+                new float[] { 1, 2, 3, 4, 1, 2, 3, 4 }));
+            Assert.That(synth.GetEndFrameExclusive(context, state), Is.Null);
+        }
+        else
+        {
+            Assert.That(samples, Is.EqualTo(
+                new float[] { 1, 2, 3, 4, 0, 0, 0, 0 }));
+            Assert.That(synth.GetEndFrameExclusive(context, state),
+                Is.EqualTo(4), "natural EOF still wins");
+        }
+    }
+
     [Test]
     public void InstrumentSampleSurvivesOffUntilItsVolumeEnvelopeFinishes()
     {
@@ -493,7 +526,7 @@ public sealed class FmSynthChildLifecycleTests
         float[] pcm = new float[8];
         synth.Render(context, state, 0, pcm.Length, pcm);
         Assert.That(pcm, Is.EqualTo(new float[]
-            { 2, 2, 1, 1, 1, 0, 0, 0 }));
+            { 2, 2, 2, 2, 2, 0, 0, 0 }));
         Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(5));
     }
 
@@ -518,7 +551,7 @@ public sealed class FmSynthChildLifecycleTests
             "the Envelope is on the audible multiplication path");
         float[] pcm = new float[7];
         synth.Render(context, state, 0, pcm.Length, pcm);
-        float[] expected = [2, 2, 1, 2f / 3, 1f / 3, 0, 0];
+        float[] expected = [2, 2, 2, 1f + 2f / 3, 1f + 1f / 3, 0, 0];
         for (int i = 0; i < pcm.Length; i++)
             Assert.That(pcm[i], Is.EqualTo(expected[i]).Within(1e-6),
                 $"frame {i}");
@@ -569,7 +602,7 @@ public sealed class FmSynthChildLifecycleTests
     }
 
     [Test]
-    public void IndependentAdditiveEnvelopeDoesNotExtendBareOscillatorAudio()
+    public void IndependentAdditiveEnvelopeKeepsAllAudioBranchesUntilRelease()
     {
         Registry registry = new();
         registry.Add(SampleId, MakeSample([1, 1, 1, 1], 8, loop: true));
@@ -593,7 +626,7 @@ public sealed class FmSynthChildLifecycleTests
         second.NoteOffTime = state.NoteOffTime;
         synth.Render(context, second, 0, 3, split.AsSpan(0, 3));
         synth.Render(context, second, 3, 5, split.AsSpan(3, 5));
-        float[] expected = [3, 3, 2, 2f / 3, 1f / 3, 0, 0, 0];
+        float[] expected = [3, 3, 3, 2f + 2f / 3, 2f + 1f / 3, 0, 0, 0];
         for (int frame = 0; frame < expected.Length; frame++)
         {
             Assert.That(whole[frame], Is.EqualTo(expected[frame]).Within(1e-6),
@@ -607,7 +640,7 @@ public sealed class FmSynthChildLifecycleTests
     }
 
     [Test]
-    public void SharedOscillatorStaysAvailableAsSourcePitchControlAfterAudibleCutoff()
+    public void SharedOscillatorKeepsSourcePitchAndAudioDuringRelease()
     {
         Registry registry = new();
         registry.Add(SampleId, MakeSample(
@@ -629,7 +662,7 @@ public sealed class FmSynthChildLifecycleTests
         Assert.That(synth.GetEndFrameExclusive(context, state), Is.EqualTo(5));
         float[] pcm = new float[7];
         synth.Render(context, state, 0, pcm.Length, pcm);
-        float[] expected = [2, 4, 6, 4, 8f / 3, 0, 0];
+        float[] expected = [2, 4, 6, 6, 14f / 3, 0, 0];
         for (int frame = 0; frame < expected.Length; frame++)
             Assert.That(pcm[frame], Is.EqualTo(expected[frame]).Within(1e-5),
                 $"shared oscillator frame {frame}");
@@ -659,6 +692,8 @@ public sealed class FmSynthChildLifecycleTests
 
     private sealed class ThreeFrameRelease : IEnvelopeCurve
     {
+        public bool HasSustainLoop => true;
+        public bool IsZeroAfterCompletion => true;
         public double GetValue(long activeFrame, int rate, long? off) =>
             !off.HasValue ? 1 : Math.Max(0,
                 1 - (activeFrame - off.Value) / 3.0);

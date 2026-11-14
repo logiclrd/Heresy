@@ -30,12 +30,31 @@ internal sealed class FmFilterNodeProcessor
 	private readonly FastFirControlStage[] _fastFirs;
 	private readonly bool _useFastNumeric;
 	private readonly int _audioIndex;
+	private readonly ConfiguredFilterStage[] _effectiveStages;
+	// Capture generation when the graph is compiled. The shared authoring
+	// FilterDefinition may later change; reading it at publication time
+	// would compare the *new* generation for both frozen snapshots.
+	private readonly long[] _frozenStageGenerations;
+	// Prepared on the playback control thread; never designs FIR taps during
+	// ordered PCM publication. Null means live FIR retuning is unavailable.
+	private readonly PreparedFirControlBatch? _liveFirPlans;
+	private readonly int? _preparedSampleRate;
 
 	// Each stage stores stable indices into the connected numeric binding
 	// array. A missing input inherits that parameter's authored value.
 	private readonly record struct FastStage(
 		int StageIndex, int CutoffBindingIndex, int QBindingIndex,
 		double BaseCutoff, double BaseQ);
+
+	// Prepared per-voice and used only for unbound TPT/SVF authored edits.
+	// Connected FM cutoff controls retain their exact per-frame semantics.
+	internal struct LiveTptRamp
+	{
+		public bool Active;
+		public double FromCutoff, ToCutoff;
+		public double FromQ, ToQ;
+		public long StartFrame;
+	}
 
 	private readonly record struct FastBiquadStage(
 		int StageIndex, int CutoffBindingIndex, int QBindingIndex,
@@ -69,11 +88,15 @@ internal sealed class FmFilterNodeProcessor
 		int TapCount, double WidthHz, string PhaseResponse);
 
 	public FmFilterNodeProcessor(FmFilterNode node,
-		IReadOnlyDictionary<int, int> indexById)
+		IReadOnlyDictionary<int, int> indexById, int? preparedSampleRate = null)
 	{
 		ArgumentNullException.ThrowIfNull(node);
 		ArgumentNullException.ThrowIfNull(indexById);
 		_initial = node.Configuration?.Clone();
+		_preparedSampleRate = preparedSampleRate;
+		_effectiveStages = _initial?.GetStages().ToArray() ?? [];
+		_frozenStageGenerations = _effectiveStages.Select(stage =>
+			_initial!.GetStageGenerationForPersistence(stage.StageId)).ToArray();
 		_audioIndex = node.AudioInputNodeId is int audioId
 			? indexById[audioId] : -1;
 		List<Binding> bindings = [];
@@ -99,7 +122,7 @@ internal sealed class FmFilterNodeProcessor
 		List<FastFeedforwardCombStage> feedforwardCombs = [];
 		List<FastFirControlStage> firs = [];
 		bool supported = _bindings.Length != 0;
-		ConfiguredFilterStage[] stages = _initial?.GetStages().ToArray() ?? [];
+		ConfiguredFilterStage[] stages = _effectiveStages;
 		for (int stageIndex = 0; stageIndex < stages.Length; stageIndex++)
 		{
 			ConfiguredFilterStage stage = stages[stageIndex];
@@ -248,6 +271,473 @@ internal sealed class FmFilterNodeProcessor
 		_fastFeedforwardCombs = _useFastNumeric ? [.. feedforwardCombs] : [];
 		_fastFirs = _useFastNumeric ? [.. firs] : [];
 
+		// Initial FIR designs are compiled with the detached revision by the
+		// playback control worker, never when a held voice adopts that revision.
+		// Use the same bounded work admission policy as live FM FIR modulation.
+		if (_initial is not null && preparedSampleRate is int rate)
+		{
+			List<FirControlRequest> targets = [];
+			for (int i = 0; i < stages.Length; i++)
+			{
+				ConfiguredFilterStage stage = stages[i];
+				if (!LinearPhaseFirFilterStageFactory.IsStandardFir(stage.Kind))
+					continue;
+				bool band = stage.Kind is FilterKind.FirBandPass or FilterKind.FirNotch;
+				targets.Add(new FirControlRequest(i, stage.StageId, stage.Kind,
+					band ? 0 : stage.Parameters.GetParameter("CutoffHz").NumericValue,
+					band ? stage.Parameters.GetParameter("LowCutoffHz").NumericValue : 0,
+					band ? stage.Parameters.GetParameter("HighCutoffHz").NumericValue : 0,
+					(int)stage.Parameters.GetParameter("TapCount").NumericValue,
+					stage.Parameters.GetParameter("TransitionWidthHz").NumericValue,
+					stage.Parameters.GetParameter("PhaseResponse").ChoiceValue!));
+			}
+			if (targets.Count > 0
+				&& targets.Count <= FirControlPreparationPolicy.MaximumQueuedStages)
+			{
+				FirControlPreparationPolicy policy = new(rate);
+				if (policy.TryOffer(targets.ToArray())
+					&& policy.TryPreparePending(_initial, out PreparedFirControlBatch? candidate)
+					&& candidate?.AllRealtimePhases == true)
+					_liveFirPlans = candidate;
+			}
+		}
+	}
+
+	/// <summary>First prepared Multi onset migration: unchanged,
+	/// unmodulated OnePole-only audio stages. Their integrator histories
+	/// can be copied into preallocated independent stage state at the
+	/// publication boundary; other DSP families require a later policy.</summary>
+	internal bool CanRephasePreparedOnePoleHistoryTo(
+		FmFilterNodeProcessor next)
+	{
+		if (next is null || _audioIndex < 0 || _audioIndex != next._audioIndex
+			|| _initial is null || next._initial is null
+			|| _initial.DefinitionId != next._initial.DefinitionId
+			|| _bindings.Length != 0 || next._bindings.Length != 0
+			|| _effectiveStages.Length == 0
+			|| _effectiveStages.Length != next._effectiveStages.Length)
+			return false;
+		for (int i = 0; i < _effectiveStages.Length; i++)
+		{
+			ConfiguredFilterStage old = _effectiveStages[i];
+			ConfiguredFilterStage revised = next._effectiveStages[i];
+			if (old.Kind != FilterKind.OnePole || revised.Kind != FilterKind.OnePole
+				|| old.StageId != revised.StageId
+				|| _initial.GetStageGenerationForPersistence(old.StageId)
+					!= next._initial.GetStageGenerationForPersistence(revised.StageId)
+				|| old.Parameters.Parameters.Count != 2
+				|| revised.Parameters.Parameters.Count != 2
+				|| old.Parameters.GetParameter("CutoffHz")
+					!= revised.Parameters.GetParameter("CutoffHz")
+				|| old.Parameters.GetParameter("Mode")
+					!= revised.Parameters.GetParameter("Mode"))
+				return false;
+		}
+		return true;
+	}
+
+	internal bool CanTransferPreparedOnePoleHistoryTo(
+		FmFilterNodeProcessor next, State? previous, State? prepared)
+		=> CanRephasePreparedOnePoleHistoryTo(next)
+			&& previous?.Chain is { } source
+			&& prepared?.Chain is { } destination
+			&& destination.CanCopyPreparedOnePoleHistoryFrom(source);
+
+	internal void TransferPreparedOnePoleHistoryTo(State previous, State prepared)
+		=> prepared.Chain!.CopyPreparedOnePoleHistoryFrom(previous.Chain!);
+
+	/// <summary>Check immutable Filter stage identity and wiring. Authored
+	/// values of connected numeric ports are fallback values: the running
+	/// modulation owns their effective DSP values. Unbound numeric edits
+	/// may retune that same stage using its last committed bound controls.
+	/// Binding rewiring and structural parameters remain incompatible.</summary>
+	internal bool CanAdoptStateConfiguration(FmFilterNodeProcessor next,
+		State? live)
+	{
+		ArgumentNullException.ThrowIfNull(next);
+		if (_audioIndex != next._audioIndex
+			|| _bindings.Length != next._bindings.Length
+			|| _useFastNumeric != next._useFastNumeric)
+			return false;
+		for (int i = 0; i < _bindings.Length; i++)
+		{
+			Binding a = _bindings[i];
+			Binding b = next._bindings[i];
+			if (a.StageId != b.StageId
+				|| !string.Equals(a.ParameterName, b.ParameterName,
+					StringComparison.OrdinalIgnoreCase)
+				|| a.ValueIndex != b.ValueIndex)
+				return false;
+			// InitialValue belongs to the authored fallback, NOT the live
+			// modulation routing. A revised fallback cannot replace a
+			// connected parameter's already-committed DSP control value.
+		}
+		if (_initial is null || next._initial is null)
+			return _initial is null && next._initial is null;
+		if (_initial.DefinitionId != next._initial.DefinitionId
+			|| _effectiveStages.Length != next._effectiveStages.Length)
+			return false;
+
+		bool changes = false;
+		for (int i = 0; i < _effectiveStages.Length; i++)
+		{
+			ConfiguredFilterStage a = _effectiveStages[i];
+			ConfiguredFilterStage b = next._effectiveStages[i];
+			if (a.StageId != b.StageId || a.Kind != b.Kind
+				|| _initial.GetStageGenerationForPersistence(a.StageId)
+					!= next._initial.GetStageGenerationForPersistence(b.StageId)
+				|| a.Parameters.Parameters.Count != b.Parameters.Parameters.Count)
+				return false;
+
+			bool changed = false;
+			foreach (FilterParameterDescriptor parameter in a.Parameters.Parameters)
+			{
+				if (!b.Parameters.Parameters.Any(p =>
+						string.Equals(p.Name, parameter.Name,
+							StringComparison.OrdinalIgnoreCase)))
+					return false;
+				FilterParameterValue oldValue = a.Parameters.GetParameter(parameter.Name);
+				FilterParameterValue newValue = b.Parameters.GetParameter(parameter.Name);
+				if (oldValue == newValue)
+					continue;
+				if (parameter.IsStructural)
+					return false;
+				// Connected parameters have absolute FM inputs. Editing
+				// their fallback alone must not retune a sounding voice.
+				if (!IsBound(a.StageId, parameter.Name))
+					changed = true;
+			}
+			if (!changed)
+				continue;
+			changes = true;
+			if (!CanUpdateKind(b.Kind)
+				|| (_bindings.Length != 0 && !_useFastNumeric)
+
+				|| (LinearPhaseFirFilterStageFactory.IsStandardFir(b.Kind)
+					&& (next._preparedSampleRate != live?.Chain?.SampleRate
+						|| (HasBoundStage(a.StageId)
+							? live?.LiveFirControl is null
+							: next._liveFirPlans is null))))
+				return false;
+		}
+		return !changes || live?.Chain is null
+			|| !live.Chain.IsInputFinished;
+	}
+
+	/// <summary>Exact, allocation-free identity proof for the first bounded
+	/// frozen-Filter Multi child route. A single unmodulated OnePole retains
+	/// its live integrator only if the prepared audio connection, stage
+	/// identity, generation and every effective parameter value match.
+	/// This is deliberately stronger than general live retune eligibility:
+	/// a revised Filter coefficient is not a frozen leaf.</summary>
+	internal bool HasSameFrozenUnmodulatedOnePoleAs(
+		FmFilterNodeProcessor next)
+	{
+		if (_initial is null || next._initial is null
+			|| _initial.DefinitionId != next._initial.DefinitionId
+			|| _audioIndex != next._audioIndex
+			|| _preparedSampleRate != next._preparedSampleRate
+			|| _bindings.Length != 0 || next._bindings.Length != 0
+			|| _effectiveStages.Length != 1
+			|| next._effectiveStages.Length != 1)
+			return false;
+		ConfiguredFilterStage old = _effectiveStages[0];
+		ConfiguredFilterStage revised = next._effectiveStages[0];
+		if (old.Kind != FilterKind.OnePole
+			|| revised.Kind != FilterKind.OnePole
+			|| old.StageId != revised.StageId
+			|| _frozenStageGenerations[0] != next._frozenStageGenerations[0]
+			|| old.Parameters.Parameters.Count != revised.Parameters.Parameters.Count)
+			return false;
+		// These are immutable, catalogue-ordered descriptor arrays.
+		// Indexing avoids iterator/captured-lambda allocations on the
+		// realtime publication boundary.
+		for (int i = 0; i < old.Parameters.Parameters.Count; i++)
+		{
+			string oldName = old.Parameters.Parameters[i].Name;
+			string revisedName = revised.Parameters.Parameters[i].Name;
+			if (!string.Equals(oldName, revisedName,
+					StringComparison.OrdinalIgnoreCase)
+				|| old.Parameters.GetParameter(oldName)
+					!= revised.Parameters.GetParameter(revisedName))
+				return false;
+		}
+		return true;
+	}
+
+	private int FindBindingIndex(int stageId, string parameterName)
+	{
+		for (int i = 0; i < _bindings.Length; i++)
+			if (_bindings[i].StageId == stageId
+				&& string.Equals(_bindings[i].ParameterName, parameterName,
+					StringComparison.OrdinalIgnoreCase))
+				return i;
+		return -1;
+	}
+
+	private bool IsBound(int stageId, string parameterName)
+		=> FindBindingIndex(stageId, parameterName) >= 0;
+
+	private bool HasBoundStage(int stageId)
+	{
+		foreach (Binding binding in _bindings)
+			if (binding.StageId == stageId)
+				return true;
+		return false;
+	}
+
+	/// <summary>A bound parameter's latest accepted absolute control
+	/// value, not its (possibly edited) authored fallback. Unconnected
+	/// controls always use the newly prepared authoring snapshot.</summary>
+	private double EffectiveNumber(ConfiguredFilterStage stage,
+		State live, string parameterName)
+	{
+		int index = FindBindingIndex(stage.StageId, parameterName);
+		return index < 0
+			? stage.Parameters.GetParameter(parameterName).NumericValue
+			: live.Values[index];
+	}
+
+	private static bool CanUpdateKind(FilterKind kind)
+		=> kind == FilterKind.OnePole
+			|| SvfFilterStageFactory.IsSvf(kind)
+			|| BiquadFilterStageFactory.IsBiquad(kind)
+			|| kind is FilterKind.LadderLinear or FilterKind.LadderSaturated
+				or FilterKind.AllPass or FilterKind.CombFeedback
+				or FilterKind.CombFeedforward
+			|| LinearPhaseFirFilterStageFactory.IsStandardFir(kind);
+
+	/// <summary>Preflight all authored coefficients using the existing
+	/// per-invocation arrays and two-phase atomic realtime chain interface.
+	/// No DSP histories or compiled child bindings change in this phase.</summary>
+	internal bool TryPrepareLiveStateConfiguration(
+		FmFilterNodeProcessor next, State? live)
+	{
+		if (live?.Chain is null || _initial is null || next._initial is null)
+			return true;
+		int tpt = 0, biquad = 0, ladder = 0, saturated = 0;
+		int allpass = 0, comb = 0, feedforward = 0, fir = 0;
+		for (int i = 0; i < _effectiveStages.Length; i++)
+		{
+			ConfiguredFilterStage a = _effectiveStages[i];
+			ConfiguredFilterStage b = next._effectiveStages[i];
+			bool changed = false;
+			foreach (FilterParameterDescriptor parameter in a.Parameters.Parameters)
+				if (!IsBound(a.StageId, parameter.Name)
+					&& a.Parameters.GetParameter(parameter.Name)
+						!= b.Parameters.GetParameter(parameter.Name))
+				{
+					changed = true;
+					break;
+				}
+			if (!changed) continue;
+			double Number(string name) => EffectiveNumber(b, live, name);
+			FilterKind kind = b.Kind;
+			if (kind == FilterKind.OnePole || SvfFilterStageFactory.IsSvf(kind))
+			{
+				live.FastUpdates[tpt++] = new RealtimeTptStageUpdate(i,
+					Number("CutoffHz"),
+					kind == FilterKind.OnePole ? 1 : Number("Q"));
+			}
+			else if (BiquadFilterStageFactory.IsBiquad(kind))
+			{
+				bool shelf = kind is FilterKind.BiquadLowShelf
+					or FilterKind.BiquadHighShelf;
+				live.BiquadUpdates[biquad++] = new RealtimeBiquadStageUpdate(i,
+					Number("CutoffHz"), shelf ? 1 : Number("Q"),
+					shelf ? Number("ShelfSlope") : 1,
+					shelf || kind == FilterKind.BiquadPeaking
+						? Number("GainDb") : 0);
+			}
+			else if (kind == FilterKind.LadderLinear)
+			{
+				live.LadderUpdates[ladder++] = new RealtimeLinearLadderStageUpdate(
+					i, Number("CutoffHz"), Number("Resonance"));
+			}
+			else if (kind == FilterKind.LadderSaturated)
+			{
+				live.SaturatedUpdates[saturated++] = new RealtimeSaturatedLadderStageUpdate(
+					i, Number("CutoffHz"), Number("Resonance"), Number("Drive"));
+			}
+			else if (kind == FilterKind.AllPass)
+			{
+				live.AllPassUpdates[allpass++] =
+					new RealtimeAllPassStageUpdate(i, Number("CutoffHz"));
+			}
+			else if (kind == FilterKind.CombFeedback)
+			{
+				live.CombUpdates[comb++] = new RealtimeFeedbackCombStageUpdate(
+					i, Number("Feedback"), Number("Mix"));
+			}
+			else if (kind == FilterKind.CombFeedforward)
+			{
+				live.FeedforwardUpdates[feedforward++] = new RealtimeFeedforwardCombStageUpdate(
+					i, Number("Feedforward"), Number("Mix"));
+			}
+			else if (LinearPhaseFirFilterStageFactory.IsStandardFir(kind))
+			{
+				// A bound FIR must be designed against THIS voice's last
+				// accepted FM parameters, not against the authored fallback.
+				// The off-loop worker publishes an exact-snapshot candidate;
+				// until then the entire voice transaction is deferred.
+				PreparedFirControlBatch? plans = HasBoundStage(a.StageId)
+					? ReferenceEquals(live.LiveFirRevision, next)
+						&& LiveFirSnapshotMatches(next, live)
+							? live.LiveFirReady : null
+					: next._liveFirPlans;
+				if (plans is null) return false;
+				bool found = false;
+				foreach (PreparedFirControlStage plan in plans.Stages)
+					if (plan.StageIndex == i)
+					{
+						live.LiveFirUpdates[fir++] =
+							new RealtimeFirStageUpdate(i, plan.Plan);
+						found = true;
+						break;
+					}
+				if (!found) return false;
+			}
+			else return false;
+
+		}
+		live.LiveTptCount = tpt;
+		live.LiveBiquadCount = biquad;
+		live.LiveLadderCount = ladder;
+		live.LiveSaturatedCount = saturated;
+		live.LiveAllPassCount = allpass;
+		live.LiveCombCount = comb;
+		live.LiveFeedforwardCount = feedforward;
+		live.LiveFirCount = fir;
+		return live.Chain.TryPreflightRealtimeNumericUpdates(
+			live.FastUpdates.AsSpan(0, tpt), live.FastScratch,
+			live.BiquadUpdates.AsSpan(0, biquad), live.BiquadScratch,
+			live.LadderUpdates.AsSpan(0, ladder), live.LadderScratch,
+			live.SaturatedUpdates.AsSpan(0, saturated), live.SaturatedScratch,
+			live.AllPassUpdates.AsSpan(0, allpass), live.AllPassScratch,
+			live.CombUpdates.AsSpan(0, comb), live.CombScratch,
+			live.FeedforwardUpdates.AsSpan(0, feedforward),
+			live.FeedforwardScratch,
+			live.LiveFirUpdates.AsSpan(0, fir));
+	}
+
+	/// <summary>Build a voice-specific, bounded FIR batch from the last
+	/// successfully committed *absolute* FM controls and the newly authored
+	/// unconnected parameters. Caller-supplied scratch is invocation owned.
+	/// No Filter cloning, kernel preparation or audio-state mutation here.</summary>
+	private int CaptureBoundLiveFirRequests(
+		FmFilterNodeProcessor next, State live)
+	{
+		FirControlRequest[] requests = live.LiveFirRequests!;
+		int count = 0;
+		for (int i = 0; i < _effectiveStages.Length; i++)
+		{
+			ConfiguredFilterStage before = _effectiveStages[i];
+			ConfiguredFilterStage after = next._effectiveStages[i];
+			if (!LinearPhaseFirFilterStageFactory.IsStandardFir(after.Kind)
+				|| !HasBoundStage(before.StageId))
+				continue;
+			bool changed = false;
+			foreach (FilterParameterDescriptor parameter in before.Parameters.Parameters)
+				if (!IsBound(before.StageId, parameter.Name)
+					&& before.Parameters.GetParameter(parameter.Name)
+						!= after.Parameters.GetParameter(parameter.Name))
+				{
+					changed = true;
+					break;
+				}
+			if (!changed) continue;
+			if (count >= requests.Length)
+				return -1;
+			bool band = after.Kind is FilterKind.FirBandPass or FilterKind.FirNotch;
+			double Number(string name) => EffectiveNumber(after, live, name);
+			requests[count++] = new FirControlRequest(i, after.StageId,
+				after.Kind, band ? 0 : Number("CutoffHz"),
+				band ? Number("LowCutoffHz") : 0,
+				band ? Number("HighCutoffHz") : 0,
+				(int)after.Parameters.GetParameter("TapCount").NumericValue,
+				after.Parameters.GetParameter("TransitionWidthHz").NumericValue,
+				after.Parameters.GetParameter("PhaseResponse").ChoiceValue!);
+		}
+		live.LiveFirRequestCount = count;
+		return count;
+	}
+
+	private bool LiveFirSnapshotMatches(FmFilterNodeProcessor next, State live)
+	{
+		int count = CaptureBoundLiveFirRequests(next, live);
+		return count > 0 && live.LiveFirReady?.Matches(
+			live.LiveFirRequests!.AsSpan(0, count)) == true;
+	}
+
+	/// <summary>Offer at most one latest-wins pending request per running
+	/// Filter and revision. The normal per-frame FM FIR worker/mailbox is
+	/// independent: the old DSP kernel cannot accidentally adopt this
+	/// candidate while the complete Synth transaction is still pending.</summary>
+	internal bool RequestBoundLiveFirPreparation(
+		FmFilterNodeProcessor next, State? live)
+	{
+		if (live?.LiveFirControl is null || live.LiveFirMailbox is null)
+			return false;
+		int count = CaptureBoundLiveFirRequests(next, live);
+		if (count <= 0) return false;
+		if (ReferenceEquals(live.LiveFirRevision, next)
+			&& live.LiveFirReady?.Matches(
+				live.LiveFirRequests!.AsSpan(0, count)) == true)
+			return true;
+		if (!live.LiveFirControl.TryOffer(
+			live.LiveFirRequests!.AsSpan(0, count)))
+			return false;
+		live.LiveFirRevision = next;
+		live.LiveFirReady = null;
+		return true;
+	}
+
+	/// <summary>Commit only the scratch previously admitted by the complete
+	/// Synth voice preflight; no partially rejected Filter publication.</summary>
+	internal void CommitPreparedLiveStateConfiguration(State? live,
+		long publicationFrame)
+	{
+		if (live?.Chain is null) return;
+		for (int i = 0; i < live.LiveTptCount; i++)
+		{
+			RealtimeTptStageUpdate target = live.FastUpdates[i];
+			int stageIndex = target.StageIndex;
+			ConfiguredFilterStage old = _effectiveStages[stageIndex];
+			ref LiveTptRamp ramp = ref live.LiveTptRamps[stageIndex];
+			if (HasBoundStage(old.StageId) || !(target.CutoffHz > 0.0)
+				|| live.SampleRate <= 0 || publicationFrame <= 0)
+			{
+				ramp.Active = false;
+				continue;
+			}
+			double fromHz = old.Parameters.GetParameter("CutoffHz").NumericValue;
+			double fromQ = old.Kind == FilterKind.OnePole ? 1.0
+				: old.Parameters.GetParameter("Q").NumericValue;
+			if (ramp.Active)
+			{
+				double weight = FmLiveTransitionClock.Weight(ramp.StartFrame,
+					publicationFrame - 1, live.SampleRate);
+				fromHz = FmLiveTransitionClock.Frequency(
+					ramp.FromCutoff, ramp.ToCutoff, weight);
+				fromQ = ramp.FromQ + (ramp.ToQ - ramp.FromQ) * weight;
+			}
+			ramp = new LiveTptRamp {
+				Active = fromHz != target.CutoffHz || fromQ != target.Q,
+				FromCutoff = fromHz, ToCutoff = target.CutoffHz,
+				FromQ = fromQ, ToQ = target.Q,
+				StartFrame = publicationFrame,
+			};
+		}
+		live.Chain.CommitPreparedRealtimeNumericUpdates(
+			live.FastUpdates.AsSpan(0, live.LiveTptCount), live.FastScratch,
+			live.BiquadUpdates.AsSpan(0, live.LiveBiquadCount), live.BiquadScratch,
+			live.LadderUpdates.AsSpan(0, live.LiveLadderCount), live.LadderScratch,
+			live.SaturatedUpdates.AsSpan(0, live.LiveSaturatedCount), live.SaturatedScratch,
+			live.AllPassUpdates.AsSpan(0, live.LiveAllPassCount), live.AllPassScratch,
+			live.CombUpdates.AsSpan(0, live.LiveCombCount), live.CombScratch,
+			live.FeedforwardUpdates.AsSpan(0, live.LiveFeedforwardCount),
+			live.FeedforwardScratch,
+			live.LiveFirUpdates.AsSpan(0, live.LiveFirCount));
 	}
 
 	public sealed class State
@@ -255,30 +745,41 @@ internal sealed class FmFilterNodeProcessor
 		internal State(FilterInstance? initial,
 			double[] initialValues, int sampleRate, int tptCount, int biquadCount, int ladderCount,
 			int saturatedLadderCount, int allPassCount, int combCount,
-			int feedforwardCount, int firCount)
+			int feedforwardCount, int firCount, int authoredStageCount)
 		{
 			Configuration = initial?.Clone();
 			Values = (double[])initialValues.Clone();
-			FastUpdates = new RealtimeTptStageUpdate[tptCount];
-			FastScratch = new RealtimeTptCoefficients[tptCount];
-			BiquadUpdates = new RealtimeBiquadStageUpdate[biquadCount];
-			BiquadScratch = new RealtimeBiquadCoefficients[biquadCount];
-			LadderUpdates = new RealtimeLinearLadderStageUpdate[ladderCount];
-			LadderScratch = new RealtimeLinearLadderCoefficients[ladderCount];
-			SaturatedUpdates = new RealtimeSaturatedLadderStageUpdate[saturatedLadderCount];
-			SaturatedScratch = new RealtimeSaturatedLadderCoefficients[saturatedLadderCount];
-			AllPassUpdates = new RealtimeAllPassStageUpdate[allPassCount];
-			AllPassScratch = new RealtimeAllPassCoefficient[allPassCount];
-			CombUpdates = new RealtimeFeedbackCombStageUpdate[combCount];
-			CombScratch = new RealtimeFeedbackCombCoefficients[combCount];
-			FeedforwardUpdates = new RealtimeFeedforwardCombStageUpdate[feedforwardCount];
-			FeedforwardScratch = new RealtimeFeedforwardCombCoefficients[feedforwardCount];
+			SampleRate = sampleRate;
+			LiveTptRamps = new LiveTptRamp[Math.Max(1, authoredStageCount)];
+			RampTptUpdates = new RealtimeTptStageUpdate[Math.Max(1, authoredStageCount)];
+			RampTptScratch = new RealtimeTptCoefficients[Math.Max(1, authoredStageCount)];
+			FastUpdates = new RealtimeTptStageUpdate[Math.Max(1, authoredStageCount)];
+			FastScratch = new RealtimeTptCoefficients[Math.Max(1, authoredStageCount)];
+			BiquadUpdates = new RealtimeBiquadStageUpdate[Math.Max(1, authoredStageCount)];
+			BiquadScratch = new RealtimeBiquadCoefficients[Math.Max(1, authoredStageCount)];
+			LadderUpdates = new RealtimeLinearLadderStageUpdate[Math.Max(1, authoredStageCount)];
+			LadderScratch = new RealtimeLinearLadderCoefficients[Math.Max(1, authoredStageCount)];
+			SaturatedUpdates = new RealtimeSaturatedLadderStageUpdate[Math.Max(1, authoredStageCount)];
+			SaturatedScratch = new RealtimeSaturatedLadderCoefficients[Math.Max(1, authoredStageCount)];
+			AllPassUpdates = new RealtimeAllPassStageUpdate[Math.Max(1, authoredStageCount)];
+			AllPassScratch = new RealtimeAllPassCoefficient[Math.Max(1, authoredStageCount)];
+			CombUpdates = new RealtimeFeedbackCombStageUpdate[Math.Max(1, authoredStageCount)];
+			CombScratch = new RealtimeFeedbackCombCoefficients[Math.Max(1, authoredStageCount)];
+			FeedforwardUpdates = new RealtimeFeedforwardCombStageUpdate[Math.Max(1, authoredStageCount)];
+			FeedforwardScratch = new RealtimeFeedforwardCombCoefficients[Math.Max(1, authoredStageCount)];
+			LiveFirUpdates = new RealtimeFirStageUpdate[Math.Max(1, authoredStageCount)];
 			if (firCount > 0)
 			{
 				FirControl = new FirControlPreparationPolicy(sampleRate);
+				LiveFirControl = new FirControlPreparationPolicy(sampleRate);
+				LiveFirRequests = new FirControlRequest[
+					FirControlPreparationPolicy.MaximumQueuedStages];
                 if (Configuration is not null)
                     FirMailbox = new FirPreparationMailbox(
                         new FilterChain([Configuration]), sampleRate);
+				if (Configuration is not null)
+					LiveFirMailbox = new FirPreparationMailbox(
+						new FilterChain([Configuration]), sampleRate);
 				FirRequests = new FirControlRequest[
 					Math.Min(firCount, FirControlPreparationPolicy.MaximumQueuedStages)];
 				FirPreparedUpdates = new RealtimeFirStageUpdate[FirRequests.Length];
@@ -291,6 +792,10 @@ internal sealed class FmFilterNodeProcessor
 
 		internal FilterInstance? Configuration { get; set; }
 		internal StreamingFilterChain? Chain { get; }
+		internal int SampleRate { get; }
+		internal LiveTptRamp[] LiveTptRamps { get; }
+		internal RealtimeTptStageUpdate[] RampTptUpdates { get; }
+		internal RealtimeTptCoefficients[] RampTptScratch { get; }
 		internal double[] Values { get; }
 		internal RealtimeTptStageUpdate[] FastUpdates { get; }
 		internal RealtimeTptCoefficients[] FastScratch { get; }
@@ -308,11 +813,26 @@ internal sealed class FmFilterNodeProcessor
 		internal RealtimeFeedforwardCombCoefficients[] FeedforwardScratch { get; }
 		internal FirControlPreparationPolicy? FirControl { get; }
         internal FirPreparationMailbox? FirMailbox { get; }
+		internal FirControlPreparationPolicy? LiveFirControl { get; }
+		internal FirPreparationMailbox? LiveFirMailbox { get; }
+		internal FirControlRequest[]? LiveFirRequests { get; }
+		internal int LiveFirRequestCount { get; set; }
+		internal FmFilterNodeProcessor? LiveFirRevision { get; set; }
+		internal PreparedFirControlBatch? LiveFirReady { get; set; }
 		internal FirControlRequest[]? FirRequests { get; }
 		internal RealtimeFirStageUpdate[]? FirPreparedUpdates { get; }
+		internal RealtimeFirStageUpdate[] LiveFirUpdates { get; }
 		internal PreparedFirControlBatch? FirReady { get; set; }
         internal FirControlRequest[]? FirHeldRequests { get; }
         internal int FirHoldCount { get; set; }
+		internal int LiveTptCount { get; set; }
+		internal int LiveBiquadCount { get; set; }
+		internal int LiveLadderCount { get; set; }
+		internal int LiveSaturatedCount { get; set; }
+		internal int LiveAllPassCount { get; set; }
+		internal int LiveCombCount { get; set; }
+		internal int LiveFeedforwardCount { get; set; }
+		internal int LiveFirCount { get; set; }
 	}
 
 	public State CreateState(int sampleRate)
@@ -321,7 +841,7 @@ internal sealed class FmFilterNodeProcessor
 			sampleRate, _fastStages.Length, _fastBiquads.Length,
 			_fastLadders.Length, _fastSaturatedLadders.Length,
 			_fastAllPasses.Length, _fastFeedbackCombs.Length,
-			_fastFeedforwardCombs.Length, _fastFirs.Length);
+			_fastFeedforwardCombs.Length, _fastFirs.Length, _effectiveStages.Length);
 
 	/// <summary>
 	/// Control-side operation, called explicitly between rendering blocks.
@@ -351,18 +871,30 @@ internal sealed class FmFilterNodeProcessor
     internal bool AdoptPreparedFirs(State state)
     {
         PreparedFirControlBatch? ready = state.FirMailbox?.TakeReady();
-        if (ready is null) return false;
-        state.FirReady = ready;
-        return true;
+		PreparedFirControlBatch? liveReady = state.LiveFirMailbox?.TakeReady();
+		if (ready is not null)
+			state.FirReady = ready;
+		if (liveReady is not null)
+			state.LiveFirReady = liveReady;
+		return ready is not null || liveReady is not null;
     }
 
     internal bool QueuePendingFirs(State state, FirPreparationScheduler scheduler)
     {
-        if (state.FirControl is null || state.FirMailbox is null
-            || state.FirControl.PendingCount == 0) return false;
-        if (state.FirHoldCount == 0)
-            state.FirHoldCount = state.FirControl.CopyPending(state.FirHeldRequests!);
-        return state.FirMailbox.CapturePending(state.FirControl, scheduler);
+		bool queued = false;
+		if (state.FirControl is not null && state.FirMailbox is not null
+			&& state.FirControl.PendingCount != 0)
+		{
+			if (state.FirHoldCount == 0)
+				state.FirHoldCount = state.FirControl.CopyPending(state.FirHeldRequests!);
+			queued = state.FirMailbox.CapturePending(state.FirControl, scheduler);
+		}
+		if (state.LiveFirControl is not null
+			&& state.LiveFirMailbox is not null
+			&& state.LiveFirControl.PendingCount != 0)
+			queued = state.LiveFirMailbox.CapturePending(
+				state.LiveFirControl, scheduler) || queued;
+		return queued;
     }
 
 	/// <summary>
@@ -372,7 +904,7 @@ internal sealed class FmFilterNodeProcessor
 	/// committed coefficients and histories untouched.
 	/// </summary>
 	public float Process(State state, double[] nodeValues,
-		bool stopExcitation)
+		bool stopExcitation, long frame = -1)
 	{
 		ArgumentNullException.ThrowIfNull(state);
 		float input = 0;
@@ -389,10 +921,36 @@ internal sealed class FmFilterNodeProcessor
 		if (state.Chain is null || state.Configuration is null)
 			return input;
 
+		if (frame >= 0)
+			UpdateLiveTptRamps(state, frame);
 		if (_bindings.Length != 0 && !stopExcitation)
 			Retune(state, nodeValues);
 
 		return state.Chain.ProcessMonoFrame(input);
+	}
+
+	private static void UpdateLiveTptRamps(State state, long frame)
+	{
+		int count = 0;
+		for (int i = 0; i < state.LiveTptRamps.Length; i++)
+		{
+			ref LiveTptRamp ramp = ref state.LiveTptRamps[i];
+			if (!ramp.Active) continue;
+			double weight = FmLiveTransitionClock.Weight(
+				ramp.StartFrame, frame, state.SampleRate);
+			state.RampTptUpdates[count++] = new RealtimeTptStageUpdate(
+				i, FmLiveTransitionClock.Frequency(
+					ramp.FromCutoff, ramp.ToCutoff, weight),
+				ramp.FromQ + (ramp.ToQ - ramp.FromQ) * weight);
+		}
+		if (count == 0 || !state.Chain!.TryApplyRealtimeTptUpdates(
+			state.RampTptUpdates.AsSpan(0, count), state.RampTptScratch))
+			return;
+		int duration = FmLiveTransitionClock.Frames(state.SampleRate);
+		for (int i = 0; i < state.LiveTptRamps.Length; i++)
+			if (state.LiveTptRamps[i].Active
+				&& frame - state.LiveTptRamps[i].StartFrame >= duration)
+				state.LiveTptRamps[i].Active = false;
 	}
 
 	private static bool HasChanged(int bindingIndex, State state,
