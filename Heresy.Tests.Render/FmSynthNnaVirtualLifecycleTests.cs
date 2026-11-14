@@ -15,6 +15,7 @@ using Heresy.Core.Timing;
 using Heresy.Render.Configuration;
 using Heresy.Render.Envelopes;
 using Heresy.Render.FmSynthesis;
+using Heresy.Render.Filters;
 using Heresy.Render.Instruments;
 using Heresy.Render.Playback;
 using Heresy.Render.Samples;
