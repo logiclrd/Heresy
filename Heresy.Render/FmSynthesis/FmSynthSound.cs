@@ -1697,16 +1697,20 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						if (!allowUnpreparedExpansion
 							&& !CanCommitMultiOnsetReplacement(next, live, i))
 							return false;
-						if (next._multiRatios[i].Length > live.Multis[i].Length
+						bool revival = NeedsRetiredMultiRevival(next, live, i);
+						if ((next._multiRatios[i].Length > live.Multis[i].Length
+							|| revival)
 							&& (live.MultiExpansion is null
 								|| (!allowUnpreparedExpansion
-									&& live.PreparedExpansion?.Matches(next, live)
-										!= true)))
+									&& (live.PreparedExpansion?.Matches(next, live)
+										!= true
+										|| live.PreparedExpansion.Slots[i] is null))))
 							return false;
 						foreach (MultiVoice child in live.Multis[i])
-							if (!child.Sound.CanAdoptRunningState(
-								revised.MultiInput!, child.Invocation.State,
-								allowUnpreparedExpansion))
+							if (!child.WasRetired
+								&& !child.Sound.CanAdoptRunningState(
+									revised.MultiInput!, child.Invocation.State,
+									allowUnpreparedExpansion))
 								return false;
 					}
 					else if (live.Multis[i].Length != 0
@@ -1755,8 +1759,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				|| next._nodes[i].MultiInput is not FmSynthSound revised)
 				continue;
 			foreach (MultiVoice child in live.Multis[i])
-				if (!child.Sound.TryPrepareRunningState(
-					revised, child.Invocation.State))
+				if (!child.WasRetired
+					&& !child.Sound.TryPrepareRunningState(
+						revised, child.Invocation.State))
 					return false;
 		}
 		for (int i = 0; i < _nodes.Length; i++)
@@ -1803,7 +1808,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		bool requested = false;
 		for (int i = 0; i < _nodes.Length; i++)
 			if (next._multiRatios[i].Length > live.Multis[i].Length
-				|| NeedsMultiOnsetReplacement(next, live, i))
+				|| NeedsMultiOnsetReplacement(next, live, i)
+				|| NeedsRetiredMultiRevival(next, live, i))
 			{
 				requested = true;
 				if (live.PreparedExpansion?.Matches(next, live) != true)
@@ -1816,8 +1822,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				|| next._nodes[i].MultiInput is not FmSynthSound revised)
 				continue;
 			foreach (MultiVoice child in live.Multis[i])
-				requested = child.Sound.RequestMultiExpansionPreparation(
-					revised, child.Invocation.State) || requested;
+				if (!child.WasRetired)
+					requested = child.Sound.RequestMultiExpansionPreparation(
+						revised, child.Invocation.State) || requested;
 		}
 		for (int i = 0; i < _nodes.Length; i++)
 		{
@@ -2419,7 +2426,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		{
 			MultiVoice[] oldVoices = live.Multis[i];
 			bool rephase = NeedsMultiOnsetReplacement(next, live, i);
-			if (next._multiRatios[i].Length <= oldVoices.Length && !rephase)
+			bool revival = NeedsRetiredMultiRevival(next, live, i);
+			if (next._multiRatios[i].Length <= oldVoices.Length
+				&& !rephase && !revival)
 				continue;
 			if (!expansionMatches
 				|| expansion!.Slots[i] is not MultiVoice[] grown)
@@ -2441,8 +2450,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					next.AttachPreparedOscillatorOnset(live, i, previous,
 						replacement, live.NextFrame);
 				}
-				else
+				else if (!previous.WasRetired || j >= next._multiRatios[i].Length)
 					grown[j] = previous;
+				// Revived slots retain the fresh worker-created invocation.
 			}
 			live.ReplaceMultiVoices(i, grown);
 		}
@@ -2468,8 +2478,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				continue;
 			foreach (MultiVoice child in live.Multis[i])
 			{
-				child.Sound.CommitPreparedRunningState(
-					revised, child.Invocation.State);
+				if (!child.WasRetired)
+					child.Sound.CommitPreparedRunningState(
+						revised, child.Invocation.State);
 				child.Sound = revised;
 			}
 			// Every compatible child was fully admitted before we change
