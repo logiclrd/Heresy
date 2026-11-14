@@ -23,4 +23,8 @@ PR #12's bounded retirement slice changes the contract:
 
 Desired-invariant regressions: `FmSynthMultiRetirementTests.ThreeToSeventeenToThreeStopsAdvancingFourteenRetiredChildren` inspects actual child render progress across the zero-mix boundary, while `FullyRetiredConstituentsRequireWorkerPreparedFreshRevival` requires worker preparation and checks a new local lifetime. Existing fade, Note Off/Cut, Sample EOF, Nested Multi, rapid retargeting and allocation invariants must remain intact.
 
-**Review / acceptance:** Automated CI must pass on the latest HEAD, and the user must run another Linux hardware audition of 3 → 17 → 3, optionally 3 → 17 → 3 → 17, before claiming physical recovery. This is a local bounded PR #12 slice; leave PR draft/unmerged and the all-nonstructural-properties milestone open.
+**Automated acceptance:** [run #43550811563](https://github.com/logiclrd/Heresy/actions/runs/43550811563) passed all 3,672 tests, Release, and Linux ARM64 on `ce2ba0b1d6e`.
+
+**Physical acceptance (reported by user, 2026-11-13): PASS for overload recovery.** Deliberately exceeding available CPU with a higher Multi voice count still produces audible artifacts as expected, but reducing the held Multi voice count now **recovers regular playback without restarting the note**. This establishes the previously missing end-to-end recovery behavior, not a guarantee that arbitrary voice counts can run in realtime. A second increase/revival after retirement and Sample/Filter-rich child variants have not yet been separately confirmed by this report.
+
+PR #12 stays **draft/unmerged**; the overarching all-nonstructural-properties TODO stays open.
