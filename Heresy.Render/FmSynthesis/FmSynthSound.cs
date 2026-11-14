@@ -2285,7 +2285,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	/// control and all stateless gain/mixing nodes, deterministic Noise
 	/// IDs, selected equivalent Node Envelope curves, and unchanged
 	/// direct Sample geometry/Source pitch parameters, and an unchanged
-	/// single unmodulated OnePole Filter configuration.
+	/// exactly-frozen multi-stage Filter configuration, including stable
+	/// connected modulation routing.
 	/// Compare immutable snapshots rather than authoring object identity;
 	/// never accept edited or scripted Envelope curves in this outer fade.
 	/// Continuing Sample readheads are checked against the bound state.
@@ -2350,16 +2351,16 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 						&& oldSample.NewNotePolicy == updatedSample.NewNotePolicy
 						&& oldSample.CanSharePreparedOnsetTimelineWith(updatedSample):
 					break;
-				// Exact frozen OnePole parameters, stage identity, and
-				// tail are required. A retuned Filter is not an unchanged
-				// audible leaf, even if normal migration can admit it.
+				// The complete frozen Filter stage plan, parameter values,
+				// routing and tail must agree. Retuning a child Filter is
+				// not the same as an unchanged leaf for parent fading.
 				case FmFilterNode filter
 					when revised.Definition is FmFilterNode updatedFilter
 						&& filter.TailSeconds == updatedFilter.TailSeconds
 						&& filter.AudioInputNodeId == updatedFilter.AudioInputNodeId
 						&& old.Filter is FmFilterNodeProcessor oldProcessor
 						&& revised.Filter is FmFilterNodeProcessor newProcessor
-						&& oldProcessor.HasSameFrozenUnmodulatedOnePoleAs(
+						&& oldProcessor.HasSameFrozenConfigurationAs(
 							newProcessor):
 					break;
 				// An unchanged node-based Envelope evaluates on the
