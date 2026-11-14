@@ -547,6 +547,67 @@ any actual refusal. This regression does not certify these other
 event-order/lifecycle cases, nor does it justify checking the main
 all-nonstructural-properties TODO or merging PR #12.
 
+## C4(b) — Note Off during a Sample Source fade with release and EOF (2026-11-14)
+
+**Automated PASS; no renderer change required.**
+`FmSynthLiveSourceIdTests.NoteOffDuringSampleReplacementKeepsBothReleaseContributionsAndFilterTail`
+is parameterized for a direct Sample Source and for three independent
+equal-pitch Sample Source invocations inside `Multi(3)`. Both graphs
+feed a common sustained Node Envelope and a continuing OnePole Filter
+with an authored **3-ms (144-frame)** tail. The test uses one long
+outgoing constant-valued Sample (**0.25**), one shorter incoming Sample
+(**0.75**, 2,000 frames), and a Node Envelope with sustain at unity
+followed by an 11-ms release to permanent zero.
+
+At global frame **128**, the held Synth commits a prepared SourceId
+replacement and begins its **100-ms (4,800-frame)** source-local
+smoothstep. Both old and new Sample invocations contribute to the
+Filter input. At frame **1900**, with the fade still only partially
+complete, the test delivers **Note Off** *after* rendering the preceding
+1,772 faded frames, so this is a genuinely in-progress interruption,
+not just a Note Off timestamp set in advance. The incoming Sample
+naturally reaches EOF at global frame **2128**, *during* the subsequent
+release. The outgoing Sample must remain available through the parent
+Envelope's release even after the incoming EOF, without restarting
+either readhead. The Node Envelope's own release ends at exclusive
+frame **2429** and the authored downstream OnePole tail ends at
+exclusive frame **2573**. There must be no artificial extension to
+the full source-fade endpoint at frame 4928.
+
+The independently baked PCM oracle is a *single* Sample carrying the
+mathematically correct outgoing/incoming source-local mix at every
+frame, through the same Envelope and continuing Filter graph. For
+both source layouts, every frame from the edit through Note Off and
+release is compared at **5e-5** tolerance. Assertions explicitly
+verify: both Sample contributions after Note Off; the outgoing Sample's
+continued contribution after incoming EOF; exact retirement at the
+Envelope-plus-Filter boundary; zero PCM output thereafter; and
+**zero measured managed allocations** in both running and releasing
+render segments. Because the oracle shares the authored Filter and
+Envelope processing but not the changeable Source invocations, it
+detects duplicate/lost release handling, a reset OnePole integrator,
+premature EOF truncation and accidental completion at the 100-ms
+source-fade boundary.
+
+[Test `bb10e5f`](https://github.com/logiclrd/Heresy/commit/bb10e5fcbf95a54eb10e6660af0f5e1c436c82a0)
+passed both parameterized cases in
+[CI #43631732357](https://github.com/logiclrd/Heresy/actions/runs/43631732357),
+along with the entire Release test suite and Linux ARM64 validation;
+the release-bundle workflow conclusion is separately checked.
+No production DSP fix was needed.
+
+**C4 remains open.** The earlier Note Off during Multi *onset*
+crossfade tests cover definite release and an authored IIR tail;
+they do not establish a general sustain-release Envelope with
+independent incoming/outgoing onset phases after Note Off.
+Remaining C4 coverage includes that distinct active-onset release
+case, multiple simultaneously held/latched and NNA/scoped virtual
+voices, nested Synth Source release, overlapping active Source
+replacement requests, incompatible candidates and older-audio status.
+The C2 matrix, realtime stress C5 and physical listening C6 also
+remain open. This test does not certify PR #12 for merge or mark the
+overall all-properties TODO complete.
+
 ### Adjacent UI issues deliberately outside PR #12 closure
 
 Two independently actionable main-line TODOs were logged in [`docs/todo.md`](https://github.com/logiclrd/Heresy/blob/main/docs/todo.md) via [`dd55714`](https://github.com/logiclrd/Heresy/commit/dd55714d677ee8ee4641594e1f8ae2cb394039c3): stale **Configured stages** after editing a shared Filter definition and selected-stage controls hidden to the right in a non-resizable strip instead of below the list. `FmSynthEditorControl.AddFilterInspector` currently deliberately avoids rebuilding on popup close to preserve unsaved per-use drafts, and `FilterInstanceEditorControl` uses a left/right layout; the eventual fix must refresh safely without losing those drafts. These are real UI defects, but not evidence that a held note failed a realtime coefficient update.
