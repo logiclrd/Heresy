@@ -2237,13 +2237,17 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	{
 		if (!_allowMultiExpansion || !next._allowMultiExpansion)
 			return false;
-		// Multi onset crossfades have their own compatibility transaction.
-		// Keep their historical one-direct-Source allowance, but do not
-		// accidentally admit a changed Instrument release in a compound
-		// constituent whose prepared phase rebase was refused.
+		// An oscillator-bearing or recursively nested Multi child can
+		// undergo its own prepared onset/rephase transaction. Keep those
+		// Instrument Volume histories isolated until that transition has
+		// a separate joint contract. A child containing only continuing
+		// Instrument Sources, Filters and stateless controls has no such
+		// oscillator/onset replacement: the caller has already preflighted
+		// its full Filter/Source tree, and the selected Sample/Volume tone
+		// proof below is still required for every participating Source.
 		if ((_isMultiInputSubgraph || next._isMultiInputSubgraph)
-			&& (_nodes.Length != 1 || next._nodes.Length != 1
-				|| _outputIndex != 0 || next._outputIndex != 0))
+			&& (_hasMulti || next._hasMulti
+				|| _oscillatorCount != 0 || next._oscillatorCount != 0))
 			return false;
 		for (int i = 0; i < _nodes.Length; i++)
 		{
