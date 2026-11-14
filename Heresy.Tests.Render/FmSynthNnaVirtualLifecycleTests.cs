@@ -65,6 +65,34 @@ public sealed class FmSynthNnaVirtualLifecycleTests
         Assert.That(session.CountOlderAudioVoices(), Is.Zero);
     }
 
+    [Test]
+    public void InstrumentToneHoldingOldSynthIsOlderWhenItsRevisionCannotMigrate()
+    {
+        Registry resolver = new();
+        FmSynthSound original = new(new FmSynthGraph([
+            new FmConstantNode(1, 0.5),
+        ], 1), resolver);
+        FmSynthSound edited = new(new FmSynthGraph([
+            new FmConstantNode(1, 0.5),
+            new FmConstantNode(2, 0.25),
+            new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
+        ], 3), resolver);
+        resolver.Add(InnerId, original);
+        resolver.Add(InstrumentId, new InstrumentSound(
+            _ => new ToneSpecification { SourceId = InnerId },
+            resolver, resolver));
+        PlaybackSession session = Session(resolver, Schedule());
+        session.ApplyLiveEvent(ChannelTarget.Virtual(7),
+            [new StartNoteCommand(InstrumentId)]);
+        session.Render(0, 2, new float[2]);
+
+        session.AdoptLiveSynthParameters(InnerId, original, edited);
+        Assert.That(session.CountOlderAudioVoices(), Is.EqualTo(1),
+            "the Instrument tone cannot migrate its terminal Synth via the direct route");
+        session.ApplyLiveEvent(ChannelTarget.Virtual(7), [new NoteCutCommand()]);
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+    }
+
     [TestCase(NewNoteAction.Cut, false)]
     [TestCase(NewNoteAction.Continue, true)]
     [TestCase(NewNoteAction.Off, true)]
