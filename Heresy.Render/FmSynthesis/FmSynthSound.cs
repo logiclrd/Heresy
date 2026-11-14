@@ -575,7 +575,7 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					// into these already allocated states after preflight.
 					if (rephase && j < retained && !retired)
 						input.PrepareOnePoleOnsetStates(invocation.State, sampleRate);
-					if (retired || j >= retained)
+					if (sampleRate > 0 && (retired || j >= retained))
 						input.PrepareFreshMultiChildOnWorker(
 							invocation.State, sampleRate, cancelRequested);
 					MultiVoice child = new(invocation, ratio, multi, j,
