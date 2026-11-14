@@ -46,8 +46,9 @@ public sealed class FmSynthMultiRetirementTests
         atFadeEnd.Skip(3).Should().OnlyContain(x => x > 0,
             "all 17 children were genuinely rendered before retirement");
 
+        float[] continuation = new float[1000];
         long beforeAlloc = GC.GetAllocatedBytesForCurrentThread();
-        reduced.Render(context, held, 9682, 1000, new float[1000]);
+        reduced.Render(context, held, 9682, continuation.Length, continuation);
         long afterAlloc = GC.GetAllocatedBytesForCurrentThread();
         long[] after = ChildNextFrames(held);
         after.Take(3).Zip(atFadeEnd.Take(3))
@@ -96,7 +97,7 @@ public sealed class FmSynthMultiRetirementTests
         revived[0].Should().BeApproximately(0.5f, 1e-5f);
         revived[^1].Should().BeApproximately(1.0f, 1e-5f);
         ChildNextFrames(held).Skip(2).Should().OnlyContain(
-            x => x < retired[2] + 5000,
+            x => x == 4801,
             "revived states start a fresh, local lifetime, not a stale catch-up");
     }
 
