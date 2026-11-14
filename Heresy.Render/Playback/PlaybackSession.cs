@@ -265,6 +265,27 @@ public sealed class PlaybackSession
 			Adopt(voice);
 	}
 
+	/// <summary>Count only surviving voices that have definitively missed an
+	/// applicable Synth revision. Includes released and NNA-displaced voices.
+	/// No history reconstruction, collections or PCM allocations.</summary>
+	public int CountOlderAudioVoices()
+	{
+		int count = 0;
+		foreach (PlaybackChannelState channel in _channels.Values)
+			if (channel.CurrentVoice?.UsesOlderAudio == true)
+				count++;
+		foreach (PlaybackChannelState channel in _targetedVirtualChannels.Values)
+			if (channel.CurrentVoice?.UsesOlderAudio == true)
+				count++;
+		foreach (PlaybackChannelState channel in _scopedVirtualChannels.Values)
+			if (channel.CurrentVoice?.UsesOlderAudio == true)
+				count++;
+		foreach (PlaybackVoice voice in _virtualVoices)
+			if (voice.UsesOlderAudio)
+				count++;
+		return count;
+	}
+
 	public int SampleRate => _context.Configuration.SampleRate;
 
 	public int OutputChannelCount => _context.Configuration.OutputChannelCount;
