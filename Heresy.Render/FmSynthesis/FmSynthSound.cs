@@ -968,6 +968,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 	// distribution, constituent shape, growth and onset revisions keep
 	// their separate history and crossfade transactions.
 	private readonly bool _canFadeBoundedOutput;
+	// A Multi child can independently smooth a changed *stateless* audible
+	// transfer shape without freezing an already-running Sample, Filter or
+	// nested Multi. Precompute this classification outside the PCM loop.
+	private readonly bool _canFadeStatelessMultiChildOutput;
 	private readonly bool[] _statelessAudioPathNodes;
 	// All target ratios are calculated by the preparation worker, never
 	// inside PCM publication or per-frame child rendering.
@@ -1115,6 +1119,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		// *final-output* fade only if its existing DSP history remains
 		// compatible and active. Source PCM has a separate bound-identity
 		// check. All of these decisions use prepared graph metadata.
+		_canFadeStatelessMultiChildOutput = isMultiInputSubgraph
+			&& _nodes.All(node => node.Definition is
+				FmOscillatorNode or FmConstantNode or FmOperatorNode
+				or FmNoiseNode or FmEnvelopeNode);
 		_canFadeBoundedOutput = _nodes.All(node => node.Definition is
 			FmOscillatorNode or FmConstantNode or FmOperatorNode
 			or FmEnvelopeNode or FmNoiseNode
@@ -2544,7 +2552,10 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					&& next._singleOutputOscillator is not null)
 				|| (_canFadeBoundedOutput
 					&& next._canFadeBoundedOutput
-					&& !_isMultiInputSubgraph && !next._isMultiInputSubgraph
+					&& ((!_isMultiInputSubgraph && !next._isMultiInputSubgraph)
+						|| (_canFadeStatelessMultiChildOutput
+							&& next._canFadeStatelessMultiChildOutput
+							&& live.NextFrame > 0))
 					&& CanFadeBoundSampleOutputs(next, live)
 					&& CanFadeBoundFilterOutputs(next, live)
 					&& CanFadeStableMultiOutputs(next, live))))
