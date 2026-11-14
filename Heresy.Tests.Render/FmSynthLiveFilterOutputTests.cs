@@ -42,6 +42,78 @@ public sealed class FmSynthLiveFilterOutputTests
     }
 
     [Test]
+    public void SimultaneousSourceFrequencyThreeStageFilterAndOperatorEditIsContinuous()
+    {
+        const int start = 128, fade = 4800;
+        SampleSound sample = Sample(16000);
+        FilterInstance initialFilter = ThreeStageMixedFilter(revised: false);
+        FilterInstance retunedFilter = ThreeStageMixedFilter(revised: true);
+
+        FmSynthSound Build(double frequency, FilterInstance filter,
+            FmOperatorKind operation)
+        {
+            SourceResolver resolver = new(sample);
+            return new(new FmSynthGraph([
+                new FmSoundSourceNode(1, SampleId, frequency),
+                new FmFilterNode(2, 1, filter, tailSeconds: 0.004),
+                new FmConstantNode(3, 0.5),
+                new FmOperatorNode(4, operation, [2, 3]),
+            ], 4), resolver, soundResolver: resolver,
+                enableLiveMultiExpansion: true);
+        }
+
+        double baseHz = FmMultiNode.NeutralFrequencyHz;
+        FmSynthSound original = Build(baseHz, initialFilter,
+            FmOperatorKind.Multiply);
+        FmSynthSound combined = Build(baseHz * 1.5, retunedFilter,
+            FmOperatorKind.Add);
+
+        // Independent oracle: the Operator was Add from note onset, so its
+        // upstream Source and all three Filter histories evolve identically
+        // to the edited graph. Only this reference's output does NOT need
+        // an Operator transition at the edit boundary.
+        FmSynthSound refOriginal = Build(baseHz, initialFilter,
+            FmOperatorKind.Add);
+        FmSynthSound refRevised = Build(baseHz * 1.5, retunedFilter,
+            FmOperatorKind.Add);
+
+        RenderContext context = Mono();
+        SoundState held = original.CreateState();
+        SoundState referenceState = refOriginal.CreateState();
+        float[] before = new float[start];
+        original.Render(context, held, 0, start, before);
+        refOriginal.Render(context, referenceState, 0, start, new float[start]);
+
+        // A single revision changes Source pitch integration, three different
+        // Filter stage families, and the final audible Operator. No stage may
+        // be partially committed or independently reset.
+        original.CanAdoptRunningState(combined, held).Should().BeTrue();
+        original.TryPrepareRunningState(combined, held).Should().BeTrue();
+        refOriginal.TryPrepareRunningState(refRevised, referenceState)
+            .Should().BeTrue();
+        original.CommitPreparedRunningState(combined, held);
+        refOriginal.CommitPreparedRunningState(refRevised, referenceState);
+
+        float[] actual = new float[fade + 96], reference = new float[actual.Length];
+        refRevised.Render(context, referenceState, start, reference.Length, reference);
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        combined.Render(context, held, start, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0,
+            "simultaneous Source, stage and Operator edits may not allocate in PCM");
+
+        for (int i = 0; i < actual.Length; i++)
+        {
+            double t = Math.Clamp((double)i / fade, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            float expected = (float)(before[^1] * (1 - w)
+                + reference[i] * w);
+            actual[i].Should().BeApproximately(expected, 8e-5f,
+                $"the moving three-stage Filter and Source must match"
+                + $" the independent post-edit reference at PCM {start + i}");
+        }
+    }
+
+    [Test]
     public void FilteredSampleGainEditPreservesOriginalPlayheadAndFilterTail()
     {
         FilterInstance filter = OnePole();
@@ -228,6 +300,29 @@ public sealed class FmSynthLiveFilterOutputTests
             new FmOperatorNode(4, FmOperatorKind.Multiply, [2, 3]),
         ], 4), resolver, soundResolver: resolver,
             enableLiveMultiExpansion: true);
+    }
+
+    private static FilterInstance ThreeStageMixedFilter(bool revised)
+    {
+        FilterDefinition definition = new((ObjectId)9365U,
+            "C3 mixed state Filter", [
+                new FilterStageDefinition(1, "Pole", FilterKind.OnePole),
+                new FilterStageDefinition(2, "Notch", FilterKind.SvfNotch),
+                new FilterStageDefinition(3, "Echo", FilterKind.CombFeedback),
+            ]);
+        FilterInstance instance = new(definition);
+        instance.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(revised ? 2800 : 850));
+        instance.SetStageParameter(2, "CutoffHz",
+            FilterParameterValue.FromNumber(revised ? 4800 : 1700));
+        instance.SetStageParameter(2, "Q",
+            FilterParameterValue.FromNumber(revised ? 3.0 : 0.8));
+        instance.SetStageParameters(3, [
+            new("DelaySeconds", FilterParameterValue.FromNumber(0.001)),
+            new("Feedback", FilterParameterValue.FromNumber(revised ? 0.38 : 0.12)),
+            new("Mix", FilterParameterValue.FromNumber(revised ? 0.55 : 0.2)),
+        ]);
+        return instance;
     }
 
     private static FilterInstance OnePole()
