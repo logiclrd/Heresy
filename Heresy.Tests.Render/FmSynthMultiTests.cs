@@ -908,7 +908,7 @@ public sealed class FmSynthMultiTests
             "the cancelled intermediate generation must never alter the second fade");
         actual[0].Should().Be(noSecond[0],
             "the new crossfade begins with the last already-audible onset");
-        actual.Should().OnlyContain(float.IsFinite);
+        actual.Should().OnlyContain(x => float.IsFinite(x));
         Enumerable.Range(4800, laterFrames - 4800)
             .Max(i => Math.Abs(actual[i] - noSecond[i]))
             .Should().BeGreaterThan(0.02f,
