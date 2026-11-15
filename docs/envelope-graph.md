@@ -86,13 +86,31 @@ retain their independent script editor.
 
 ## Shared-editor synchronization and desktop verification
 
-The standalone Envelope editor and the FM Envelope-node inspector both
-reference one live Envelope object. When a different mounted editor changes
-that curve, clean numeric fields refresh automatically. If the user has
-uncommitted numeric changes, the editor preserves them and warns that the
-shared object changed: applying the stale draft is refused. **Reload shared
-envelope** explicitly discards that draft and picks up the new curve.
-The graphical view stays subscribed to document changes while mounted.
+The standalone Envelope editor, FM Envelope-node inspector and
+modeless Instrument Volume window can share one live Envelope object.
+Each accepted change raises an **object-level Changed event** after the
+complete validated state is installed. Mounted graphical and numeric views
+refresh immediately on that event, independent of unrelated song changes.
+**Last committed edit wins:** if two views both have pending raw node text
+and one accepts its text with **Set nodes**, the other view's unfinished
+text is replaced with the accepted shared state. No conflict dialog or
+Reload button is needed in this single-user workflow.
+
+**Set nodes** sits immediately below the raw node-data textbox and
+modifies *only* the nodes, using the current accepted sustain indices,
+loop mode and display bounds. Raw node text is otherwise staged until
+Set nodes is clicked, even when the editor loses focus or closes. The
+separate Sustain start/end, Loop mode, Vmin and Vmax controls are organized
+in a four-column label/input Grid (maximum width **800 px**) and each
+commits independently on focus loss. Pending valid parameters are also
+committed before Save, switching views, New/Open or exiting the editor;
+invalid fields remain uncommitted with a validation message and can
+block a guarded document transition. Parameter edits never reparse or
+silently apply the raw node-data draft. Display limits change the
+document revision but not the audio revision; curve/sustain/loop edits
+retain their ordinary audio revision and shared playback publication.
+An accepted change in another view replaces all older uncommitted
+parameter or node text there, rather than preserving a stale draft.
 
 Headless CI now simulates mouse drags and navigation, and verifies
 synchronization across mounted standalone/FM editors. Playback tests
