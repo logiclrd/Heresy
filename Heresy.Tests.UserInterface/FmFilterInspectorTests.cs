@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 
@@ -316,6 +317,35 @@ public sealed class FmFilterInspectorTests
 				json, "/tmp/heresy-batch-mode/song.hm.json");
 		FmSynthDefinition saved = (FmSynthDefinition)reopened.Objects[synth.Id];
 		Assert.That(saved.FilterBatchChangesNodeIds.SetEquals([one]), Is.True);
+
+		string path = Path.Combine(Path.GetTempPath(),
+			$"heresy-batch-ui-{Guid.NewGuid():N}.hm.json");
+		try
+		{
+			workspace.SaveAs(path);
+			Assert.That(workspace.IsModified, Is.False);
+			DocumentWorkspace reloaded = new();
+			reloaded.Open(path);
+			FmSynthDefinition restored = (FmSynthDefinition)
+				reloaded.Document.Objects[synth.Id];
+			FmSynthEditorControl reopenedView = SynthEditor(reloaded, restored, one);
+			FilterInstanceEditorControl reopenedFilter = Inspector(reopenedView)
+				.Children.OfType<FilterInstanceEditorControl>().Single();
+			Assert.That(InstanceField<CheckBox>(
+				reopenedFilter, "_batchChanges").IsChecked, Is.True,
+				"SaveAs/Open must reconstruct the enabled checkbox");
+			SelectFilterNode(reopenedView, two);
+			reopenedFilter = Inspector(reopenedView)
+				.Children.OfType<FilterInstanceEditorControl>().Single();
+			Assert.That(InstanceField<CheckBox>(
+				reopenedFilter, "_batchChanges").IsChecked, Is.False,
+				"other Filter nodes must still default to immediate mode");
+		}
+		finally
+		{
+			if (File.Exists(path))
+				File.Delete(path);
+		}
 		workspace.New();
 		Assert.That(workspace.Document.Objects.ContainsKey(synth.Id), Is.False);
 	}
