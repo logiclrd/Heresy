@@ -35,7 +35,7 @@ public sealed class FmSynthBufferedConcurrentQualificationTests
         FilterDefinition filter = new(filterId, "C5(d) buffered IIR", [
             new FilterStageDefinition(1, "low", FilterKind.OnePole,
                 [new("CutoffHz", FilterParameterValue.FromNumber(950))]),
-            new FilterStageDefinition(2, "low", FilterKind.OnePole,
+            new FilterStageDefinition(2, "second", FilterKind.OnePole,
                 [new("CutoffHz", FilterParameterValue.FromNumber(1200))]),
         ]);
         song.Add(filter);
