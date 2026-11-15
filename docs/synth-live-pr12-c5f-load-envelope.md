@@ -64,7 +64,8 @@ This does **not** imply a threshold at 9, 12 or 17 for *other* Synth graphs, fil
 
    ```bash
    C5F_AUDIO_FILE="$(ls -t "$HOME"/heresy-c5f-audio-*.csv | head -n 1)"
-   printf 'Audio file: %s\\nMarker file: %s\\n' "$C5F_AUDIO_FILE" "$HERESY_C5_MARKERS"
+   echo "Audio file: $C5F_AUDIO_FILE"
+   echo "Marker file: $HERESY_C5_MARKERS"
    python3 build/c5f_load_envelope.py report \
      --csv "$C5F_AUDIO_FILE" \
      --markers "$HERESY_C5_MARKERS" \
