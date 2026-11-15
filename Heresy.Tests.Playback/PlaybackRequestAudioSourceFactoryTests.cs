@@ -181,6 +181,83 @@ public sealed class PlaybackRequestAudioSourceFactoryTests
 	}
 
 	[Test]
+	public void CurrentMultiNoteAfterStructuralPublicationReceivesSubsequentMultiRevision()
+	{
+		// C6-C: make the real production FIFO/resolver own two oscillator-only
+		// notes, structurally replace the output with a Multi, start a fresh
+		// note, and then commit a compatible Multi field on THAT new note.
+		SongDocument document = new();
+		ObjectId id = document.AllocateObjectId();
+		FmSynthDefinition synth = new(id, "Post structural Multi",
+			new FmSynthGraph([new FmConstantNode(0, 0.1)], 0));
+		document.Add(synth);
+		PlaybackRequestAudioSourceFactory factory = new(MonoConfiguration(1000));
+		IAudioOutputSource output = factory.Create(
+			AdHocPlaybackRequest.Create(document, new NoteScheduleBuilder().Freeze(),
+				reserveSynthMultiHeadroom: true));
+		try
+		{
+			ILiveAudioOutputSource notes = (ILiveAudioOutputSource)output;
+			ILiveSynthSourceRevisionOutput edits =
+				(ILiveSynthSourceRevisionOutput)output;
+			notes.EnqueueLiveEvent(ChannelTarget.Virtual(61),
+				[new StartNoteCommand(id)]);
+			notes.EnqueueLiveEvent(ChannelTarget.Virtual(62),
+				[new StartNoteCommand(id)]);
+			float[] before = new float[64];
+			output.Render(before.Length, before);
+			before.Should().OnlyContain(x => Math.Abs(x - 0.2f) < 1e-6f);
+
+			FmSynthGraph Multi(int count) => new([
+				new FmConstantNode(0, 0.1),
+				new FmMultiNode(1, inputNodeId: 0, voiceCount: count,
+					detune: 0, randomizePhase: false, gainCompensation: false),
+			], 1);
+			synth.Graph = Multi(7);
+			document.MarkChanged(affectsAudio: true);
+			edits.EnqueueLiveSynthParameters(id,
+				factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(document), id));
+			notes.EnqueueLiveEvent(ChannelTarget.Virtual(63),
+				[new StartNoteCommand(id)]);
+			float[] structural = new float[256];
+			output.Render(structural.Length, structural);
+			structural[^1].Should().BeApproximately(0.9f, 2e-5f,
+				"the two old 0.1 notes must keep playing and the new Multi is 7 x 0.1");
+
+			synth.Graph = Multi(3);
+			document.MarkChanged(affectsAudio: true);
+			edits.EnqueueLiveSynthParameters(id,
+				factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(document), id));
+			float[] revised = new float[512];
+			output.Render(revised.Length, revised);
+			revised[^1].Should().BeApproximately(0.5f, 2e-4f,
+				"later Multi count change must update the fresh 7-to-3 voice,"
+				+ " never the two frozen oscillator-only notes");
+
+			synth.Graph = new FmSynthGraph([
+				new FmConstantNode(0, 0.2),
+				new FmMultiNode(1, inputNodeId: 0, voiceCount: 3,
+					detune: 0, randomizePhase: false, gainCompensation: false),
+			], 1);
+			document.MarkChanged(affectsAudio: true);
+			edits.EnqueueLiveSynthParameters(id,
+				factory.PrepareLiveSynthSource(
+					SongDocumentSnapshot.Create(document), id));
+			float[] scalar = new float[512];
+			output.Render(scalar.Length, scalar);
+			scalar[^1].Should().BeApproximately(0.8f, 2e-4f,
+				"the same current Multi note must still accept upstream edits,"
+				+ " while older structural voices retain the old oscillator");
+		}
+		finally
+		{
+			(output as IDisposable)?.Dispose();
+		}
+	}
+
+	[Test]
 	public void LiveOscillatorRangeEditPreservesTheExistingVoicePhase()
 	{
 		SongDocument document = new();
