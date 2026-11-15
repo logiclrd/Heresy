@@ -30,6 +30,9 @@ jobs:
       with:
         dotnet-version: 10.0.x
 
+    - name: Verify C5(f) SDL qualification CSV analyzer
+      run: python3 -m unittest discover -s build -p 'test_c5f_*.py' -v
+
     - name: Execute test suite
       run: dotnet test -p:Configuration=Release --logger "console;verbosity=normal"
 
