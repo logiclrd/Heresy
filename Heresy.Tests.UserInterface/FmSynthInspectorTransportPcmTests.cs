@@ -718,6 +718,204 @@ public sealed class FmSynthInspectorTransportPcmTests
     }
 
 
+
+    [AvaloniaTest]
+    public async Task OnePoleAndFourSvfKindsRetuneMultipleRealInspectorParametersOnHeldPcm()
+    {
+        // C2(w): family-sized matrix: five independent source/Filter graphs,
+        // each with two real per-use inspector revisions. The four SVFs
+        // exercise cutoff and Q, and OnePole exercises two distinct cutoff
+        // retunes. Compare every original running IIR history with a
+        // separately authored/migrated current Session, NOT a new NoteOn.
+        const int rate = 8000;
+        FilterKind[] kinds = [
+            FilterKind.OnePole,
+            FilterKind.SvfLowPass,
+            FilterKind.SvfHighPass,
+            FilterKind.SvfBandPass,
+            FilterKind.SvfNotch,
+        ];
+        foreach (FilterKind kind in kinds)
+        {
+            DocumentWorkspace workspace = new();
+            FilterDefinition definition = FilterDocumentEditor.CreateFilter(
+                workspace, "C2(w) shared " + kind);
+            FilterStageDefinition originalStage = definition.GetStage(1);
+            FilterStageDefinition replacementStage =
+                new(1, originalStage.Name, kind);
+            replacementStage = replacementStage.WithDefaults([
+                new KeyValuePair<string, FilterParameterValue>(
+                    "CutoffHz", FilterParameterValue.FromNumber(180)),
+            ]);
+            FilterDocumentEditor.ApplyStage(workspace, definition, 1,
+                originalStage, replacementStage.Name, replacementStage.Kind,
+                replacementStage.DefaultParameters);
+            FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
+                workspace, "C2(w) held " + kind);
+            int osc = FmSynthDocumentEditor.AddOscillatorNode(
+                workspace, synth, FmOscillatorWaveform.Sine, 220, 75, 90);
+            int filterId = FmSynthDocumentEditor.AddFilterNode(
+                workspace, synth, 330, 90);
+            FilterInstance initialUse = new(definition);
+            FmSynthDocumentEditor.SetFilterConfiguration(
+                workspace, synth, filterId, initialUse);
+            FmSynthDocumentEditor.ConnectNodes(
+                workspace, synth, osc, filterId, 0);
+            FmSynthDocumentEditor.SetOutputNode(workspace, synth, filterId);
+            FmSynthDefinition parent = MakeDependentParent(
+                workspace, synth, "C2(w) parent " + kind);
+
+            RenderConfiguration configuration = new(rate, [
+                new OutputChannelConfiguration(Vector3.Zero,
+                    positionalImportance: 0),
+            ]);
+            TrackingFactory factory = new(configuration, synth.Id);
+            ManualBackend backend = new();
+            using SongPlaybackTransport transport = new(backend, factory);
+            await transport.SendLiveEventAsync(workspace.Document,
+                ChannelTarget.Virtual(201), [new StartNoteCommand(synth.Id)]);
+            PlaybackSnapshotInfo baseSnapshot = transport.CurrentPlaybackSnapshot;
+
+            FmSynthGraph initialGraph = synth.Graph;
+            Resolver oracleResolver = new(synth.Id);
+            Resolver untouchedResolver = new(synth.Id);
+            FmSynthSound Author(FilterInstance authored, Resolver resolver)
+                => new(new FmSynthGraph(initialGraph.Nodes.Select(n =>
+                    n.Id == filterId
+                        ? (FmSynthNode)new FmFilterNode(filterId, osc, authored)
+                        : n), filterId),
+                    resolver, soundResolver: resolver,
+                    enableLiveMultiExpansion: true);
+            FilterInstance oracleUse = new(definition);
+            FmSynthSound oracleSound = Author(oracleUse, oracleResolver);
+            oracleResolver.Sound = oracleSound;
+            untouchedResolver.Sound = Author(new FilterInstance(definition),
+                untouchedResolver);
+            PlaybackSession oracle = IndependentSession(configuration, oracleResolver);
+            PlaybackSession untouched = IndependentSession(
+                configuration, untouchedResolver);
+            StartIndependent(oracle, synth.Id);
+            StartIndependent(untouched, synth.Id);
+            int frame = 0;
+            void Compare(int count, string label, bool requireDifference)
+            {
+                float[] actual = backend.Render(count);
+                float[] expected = new float[count], original = new float[count];
+                oracle.Render(frame, count, expected);
+                untouched.Render(frame, count, original);
+                double difference = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    Assert.That(actual[i], Is.EqualTo(expected[i]).Within(6e-4f),
+                        kind + " " + label + ": held IIR PCM frame " + (frame + i));
+                    difference = Math.Max(difference,
+                        Math.Abs(actual[i] - original[i]));
+                }
+                if (requireDifference)
+                    Assert.That(difference, Is.GreaterThan(0.012),
+                        kind + " " + label
+                        + ": actual inspector update must affect sounding PCM");
+                Assert.That(factory.OlderAudioCount, Is.Zero,
+                    kind + ": compatible numeric edits are current");
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+                Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                    Is.EqualTo(baseSnapshot.AudioRevision));
+                frame += count;
+            }
+            Compare(225, "initial live", false);
+            uint audio = workspace.Document.AudioRevision;
+            uint document = workspace.Document.DocumentRevision;
+            int changed = 0, callbacks = 0;
+            List<Task> pending = [];
+            FmSynthEditorControl editor = new(workspace, synth,
+                () => { }, _ => changed++,
+                publishSynthEditAsync: () =>
+                {
+                    callbacks++;
+                    Task task = transport.PublishSynthEditAsync(
+                        workspace.Document, synth.Id);
+                    pending.Add(task);
+                    return task;
+                });
+            FilterInstanceEditorControl filterEditor = Inspector(editor)
+                .Children.OfType<FilterInstanceEditorControl>().Single();
+            Dictionary<string, CheckBox> overrides =
+                (Dictionary<string, CheckBox>)typeof(FilterInstanceEditorControl)
+                    .GetField("_overrideToggles",
+                        BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .GetValue(filterEditor)!;
+            Dictionary<string, Control> fields =
+                (Dictionary<string, Control>)typeof(FilterInstanceEditorControl)
+                    .GetField("_editors",
+                        BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .GetValue(filterEditor)!;
+            void Apply() => typeof(FilterInstanceEditorControl)
+                .GetMethod("ApplyDraft",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(filterEditor, null);
+
+            async Task Change(string parameter, double value, int ordinal)
+            {
+                overrides[parameter].IsChecked = true;
+                ((TextBox)fields[parameter]).Text =
+                    value.ToString("R", CultureInfo.InvariantCulture);
+                Apply();
+                await Task.WhenAll(pending.ToArray())
+                    .WaitAsync(TimeSpan.FromSeconds(8));
+                FmFilterNode committed = synth.Graph.Nodes
+                    .OfType<FmFilterNode>().Single();
+                Assert.Multiple(() =>
+                {
+                    Assert.That(workspace.Document.AudioRevision,
+                        Is.EqualTo(audio + ordinal));
+                    Assert.That(workspace.Document.DocumentRevision,
+                        Is.EqualTo(document + ordinal));
+                    Assert.That(callbacks, Is.EqualTo(ordinal));
+                    Assert.That(changed, Is.EqualTo(ordinal));
+                    Assert.That(committed.Configuration!.GetOverrides(1)
+                        [parameter].NumericValue, Is.EqualTo(value));
+                    Assert.That(factory.Preparations.Count, Is.EqualTo(2 * ordinal));
+                    Assert.That(factory.Preparations.Skip((ordinal - 1) * 2)
+                        .Select(p => p.Id),
+                        Is.EqualTo(new[] { synth.Id, parent.Id }));
+                    Assert.That(factory.Preparations.Skip((ordinal - 1) * 2)
+                        .All(p => p.AudioRevision == audio + ordinal), Is.True);
+                    Assert.That(factory.Preparations[(ordinal - 1) * 2]
+                        .FilterCutoffHz, Is.EqualTo(
+                            parameter == "CutoffHz" ? value : 380),
+                        kind + " frozen worker's exact effective cutoff");
+                });
+                oracleUse.SetStageParameter(1, parameter,
+                    FilterParameterValue.FromNumber(value));
+                FmSynthSound revised = Author(oracleUse, oracleResolver);
+                oracle.AdoptLiveSynthParameters(synth.Id, oracleSound, revised);
+                oracleResolver.Sound = revised;
+                oracleSound = revised;
+                Compare(960, parameter + "=" + value, true);
+            }
+
+            // First edit: all five different physical IIR kinds change
+            // cutoff, not merely the authoring parameter.
+            await Change("CutoffHz", 380, 1);
+            // Second edit: the SVFs each change Q independently; OnePole
+            // instead performs an additional cutoff change, since it has no Q.
+            await Change(kind == FilterKind.OnePole ? "CutoffHz" : "Q",
+                kind == FilterKind.OnePole ? 90 : 6.5, 2);
+            Apply();
+            await Task.WhenAll(pending.ToArray())
+                .WaitAsync(TimeSpan.FromSeconds(8));
+            await transport.PublishSynthEditAsync(workspace.Document, synth.Id);
+            Assert.Multiple(() =>
+            {
+                Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 2));
+                Assert.That(callbacks, Is.EqualTo(2));
+                Assert.That(factory.Preparations.Count, Is.EqualTo(4));
+                Assert.That(factory.OlderAudioCount, Is.Zero);
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+            });
+        }
+    }
+
     [AvaloniaTest]
     public async Task SourceSampleSelectorPublishesFrozenWorkerPreparedReplacementAndHeldPcm()
     {
