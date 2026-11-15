@@ -14,6 +14,8 @@ using Avalonia.Headless.NUnit;
 using Avalonia.Input;
 
 using Heresy.Core.Filters;
+using Heresy.Core.Envelopes;
+using Heresy.Core.Instruments;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
@@ -760,6 +762,227 @@ public sealed class FmSynthInspectorTransportPcmTests
         await transport.PublishSynthEditAsync(workspace.Document, synth.Id);
         Assert.That(factory.Preparations.Count, Is.EqualTo(6),
             "same revision cannot reprepare a third Source onset");
+    }
+
+
+    [AvaloniaTest]
+    public async Task InstrumentSelectionRefusalRetainsOlderStatusAcrossCompatibleSharedVolumeEdit()
+    {
+        // C2(p): a Sample→Instrument change is approved incompatible
+        // substitution for the old sounding Source. New notes use the
+        // Instrument; a subsequent eligible direct Sample-backed Instrument
+        // Volume edit may retune those current notes, but must NEVER erase
+        // the distinct original Sample's older-audio currency.
+        DocumentWorkspace workspace = new();
+        SampleDefinition Imported(string name, short level)
+        {
+            ObjectId id = workspace.Document.AllocateObjectId();
+            SampleDefinition sample = SampleDefinition.CreateImported(
+                id, name, name + ".wav", FourFrameWave(level));
+            sample.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 4);
+            workspace.Document.Add(sample);
+            return sample;
+        }
+        SampleDefinition sampleA = Imported("C2(p) old Sample", 8192);
+        SampleDefinition instrumentPcm = Imported("C2(p) Instrument PCM", 24576);
+        NodeEnvelopeDefinition volume =
+            EnvelopeDocumentEditor.CreateNodeEnvelope(workspace,
+                "C2(p) shared Instrument Volume",
+                [new EnvelopeNode(TimeSpan.Zero, 1.0)], 0, 0,
+                EnvelopeSustainLoopMode.Forward);
+        ObjectId instrumentId = workspace.Document.AllocateObjectId();
+        InstrumentDefinition instrument = new(instrumentId,
+            "C2(p) chosen data Instrument");
+        instrument.ToneSpecifications.Add(new ToneSpecification
+        {
+            SourceId = instrumentPcm.Id, VolumeEnvelopeId = volume.Id,
+        });
+        instrument.ToneTable.Add(0);
+        workspace.Document.Add(instrument);
+
+        FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
+            workspace, "C2(p) Source family refusal");
+        int source = FmSynthDocumentEditor.AddSoundSourceNode(
+            workspace, synth, 140, 90, sampleA.Id,
+            FmMultiNode.NeutralFrequencyHz);
+        FmSynthDocumentEditor.SetOutputNode(workspace, synth, source);
+        FmSynthDefinition parent = MakeDependentParent(
+            workspace, synth, "C2(p) Instrument dependent parent");
+
+        TrackingFactory factory = new(Mono(), synth.Id);
+        ManualBackend backend = new();
+        using SongPlaybackTransport transport = new(backend, factory);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(111), [new StartNoteCommand(synth.Id)]);
+        Assert.That(backend.Render(13), Is.All.EqualTo(0.25f).Within(3e-5f));
+        PlaybackSnapshotInfo baseSnapshot = transport.CurrentPlaybackSnapshot;
+        uint audio = workspace.Document.AudioRevision;
+        uint document = workspace.Document.DocumentRevision;
+        int changed = 0, callbacks = 0;
+        List<Task> pending = [];
+        List<SharedAudioObjectCommittedEventArgs> notifications = [];
+        workspace.SharedAudioObjectCommitted += (_, evt) =>
+        {
+            notifications.Add(evt);
+            pending.Add(transport.PublishSharedObjectEditAsync(
+                evt.Document, evt.ObjectId));
+        };
+        FmSynthEditorControl editor = new(workspace, synth,
+            () => { }, _ => changed++,
+            publishSynthEditAsync: () =>
+            {
+                callbacks++;
+                Task task = transport.PublishSynthEditAsync(
+                    workspace.Document, synth.Id);
+                pending.Add(task);
+                return task;
+            });
+        Window owner = new()
+        {
+            Width = 950, Height = 700, Content = editor,
+        };
+        Window? volumeWindow = null;
+        owner.Show();
+        try
+        {
+            ComboBox sourceSelector = Field<ComboBox>(Inspector(editor),
+                "Source (Sample / Instrument / Synth)");
+            object instrumentChoice = sourceSelector.Items.Cast<object>()
+                .Single(choice => choice.ToString()!.Contains(
+                    "C2(p) chosen data Instrument",
+                    StringComparison.Ordinal));
+            sourceSelector.SelectedItem = instrumentChoice;
+            await Task.WhenAll(pending.ToArray())
+                .WaitAsync(TimeSpan.FromSeconds(8));
+            Assert.Multiple(() =>
+            {
+                Assert.That(synth.Graph.Nodes.OfType<FmSoundSourceNode>()
+                    .Single().SourceId, Is.EqualTo(instrumentId));
+                Assert.That(workspace.Document.AudioRevision,
+                    Is.EqualTo(audio + 1));
+                Assert.That(workspace.Document.DocumentRevision,
+                    Is.EqualTo(document + 1));
+                Assert.That(callbacks, Is.EqualTo(1));
+                Assert.That(factory.Preparations.Count, Is.EqualTo(2));
+                Assert.That(factory.Preparations.Select(x => x.Id),
+                    Is.EqualTo(new[] { synth.Id, parent.Id }));
+                Assert.That(factory.Preparations[0].SampleSourceId,
+                    Is.EqualTo(instrumentId));
+                Assert.That(factory.Preparations[0].InstrumentVolumeLevel,
+                    Is.EqualTo(1.0), "frozen new Instrument uses original Volume");
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+            });
+            // The old incompatible Sample must never morph into Instrument
+            // or re-start its own clock. Revision publication becomes
+            // visible on the actual PCM boundary.
+            Assert.That(backend.Render(20),
+                Is.All.EqualTo(0.25f).Within(3e-5f));
+            Assert.That(factory.OlderAudioCount, Is.EqualTo(1),
+                "approved Sample→Instrument substitution retains older A");
+            await transport.SendLiveEventAsync(workspace.Document,
+                ChannelTarget.Virtual(112), [new StartNoteCommand(synth.Id)]);
+            Assert.That(backend.Render(9), Is.All.EqualTo(1.0f).Within(3e-5f),
+                "old Sample 0.25 and new Instrument 0.75 coexist");
+
+            StackPanel inspector = Inspector(editor);
+            Assert.That(Field<ComboBox>(inspector,
+                "Instrument tone Volume").SelectedItem, Is.Not.Null);
+            Button open = inspector.Children.OfType<Button>()
+                .Single(x => Equals(x.Content, "Edit shared Volume envelope…"));
+            open.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(
+                Button.ClickEvent));
+            Dictionary<ObjectId, Window> openEditors =
+                (Dictionary<ObjectId, Window>)typeof(FmSynthEditorControl)
+                    .GetField("_sharedVolumeEditors",
+                        BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .GetValue(editor)!;
+            Assert.That(openEditors.TryGetValue(volume.Id, out volumeWindow),
+                Is.True, "actual modeless shared editor opens from Source");
+            Assert.That(volumeWindow, Is.Not.Null);
+            NodeEnvelopeEditorControl volumeEditor =
+                (NodeEnvelopeEditorControl)((ScrollViewer)
+                    volumeWindow!.Content!).Content!;
+            TextBox nodes = (TextBox)typeof(NodeEnvelopeEditorControl)
+                .GetField("_nodesInput",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(volumeEditor)!;
+            Button apply = ((StackPanel)volumeEditor.Content!)
+                .Children.OfType<StackPanel>()
+                .SelectMany(panel => panel.Children.OfType<Button>())
+                .Single(x => Equals(x.Content, "Apply envelope"));
+            nodes.Text = "0, 0.5";
+            apply.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(
+                Button.ClickEvent));
+            await Task.WhenAll(pending.ToArray())
+                .WaitAsync(TimeSpan.FromSeconds(8));
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(volume.Nodes.Single().Value, Is.EqualTo(0.5));
+                Assert.That(notifications.Count, Is.EqualTo(1));
+                Assert.That(notifications[0].ObjectId, Is.EqualTo(volume.Id));
+                Assert.That(workspace.Document.AudioRevision,
+                    Is.EqualTo(audio + 2));
+                Assert.That(workspace.Document.DocumentRevision,
+                    Is.EqualTo(document + 2));
+                Assert.That(callbacks, Is.EqualTo(2),
+                    "shared + Synth routes must coalesce to one publication");
+                Assert.That(factory.Preparations.Count, Is.EqualTo(4));
+                Assert.That(factory.Preparations.Skip(2).Select(x => x.Id),
+                    Is.EqualTo(new[] { synth.Id, parent.Id }));
+                Assert.That(factory.Preparations[2].SampleSourceId,
+                    Is.EqualTo(instrumentId));
+                Assert.That(factory.Preparations[2].InstrumentVolumeLevel,
+                    Is.EqualTo(0.5), "worker freezes new shared Volume value");
+            });
+            float[] mixed = backend.Render(101);
+            for (int i = 0; i < mixed.Length; i++)
+            {
+                double t = i / 100.0;
+                double w = t * t * (3 - 2 * t);
+                float expected = (float)(0.25 + 0.75 * (1 - 0.5 * w));
+                Assert.That(mixed[i],
+                    Is.EqualTo(expected).Within(4e-5f),
+                    $"older Sample + compatible current Instrument frame {i}");
+            }
+            Assert.Multiple(() =>
+            {
+                Assert.That(factory.OlderAudioCount, Is.EqualTo(1),
+                    "the original incompatible Sample remains older even "
+                    + "after a compatible shared Instrument Volume edit");
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+                Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                    Is.EqualTo(baseSnapshot.AudioRevision));
+            });
+
+            await transport.SendLiveEventAsync(workspace.Document,
+                ChannelTarget.Virtual(111), [new NoteCutCommand()]);
+            Assert.That(backend.Render(7),
+                Is.All.EqualTo(0.375f).Within(4e-5f),
+                "retiring only the older A leaves revised Instrument sounding");
+            Assert.That(factory.OlderAudioCount, Is.Zero,
+                "the sticky older count clears only after A retires");
+            apply.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(
+                Button.ClickEvent));
+            await Task.WhenAll(pending.ToArray());
+            await transport.PublishSharedObjectEditAsync(
+                workspace.Document, volume.Id);
+            Assert.Multiple(() =>
+            {
+                Assert.That(workspace.Document.AudioRevision,
+                    Is.EqualTo(audio + 2));
+                Assert.That(callbacks, Is.EqualTo(2));
+                Assert.That(notifications.Count, Is.EqualTo(1));
+                Assert.That(factory.Preparations.Count, Is.EqualTo(4));
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+                Assert.That(changed, Is.GreaterThanOrEqualTo(2));
+            });
+        }
+        finally
+        {
+            volumeWindow?.Close();
+            owner.Close();
+        }
     }
 
     [AvaloniaTest]
@@ -2173,7 +2396,8 @@ public sealed class FmSynthInspectorTransportPcmTests
         ObjectId? SampleSourceId = null, FmOscillatorNode? Oscillator = null,
         FmSoundSourceNode? Source = null, FmMultiNode? Multi = null,
         ObjectId? FilterDefinitionId = null, double? FilterCutoffHz = null,
-        int? FilterStageCount = null, double? FilterTailSeconds = null);
+        int? FilterStageCount = null, double? FilterTailSeconds = null,
+        double? InstrumentVolumeLevel = null);
 
     private sealed class TrackingFactory(RenderConfiguration configuration,
         ObjectId editedSynthId)
@@ -2242,7 +2466,19 @@ public sealed class FmSynthInspectorTransportPcmTests
                     : null,
                 sourceId == editedSynthId
                     ? filter?.Configuration?.GetStages().Count : null,
-                sourceId == editedSynthId ? filter?.TailSeconds : null));
+                sourceId == editedSynthId ? filter?.TailSeconds : null,
+                sourceId == editedSynthId
+                    && sourceNode is not null
+                    && snapshot.Document.Objects.TryGetValue(
+                        sourceNode.SourceId, out SongObject? linked)
+                    && linked is InstrumentDefinition instrument
+                    && instrument.ToneSpecifications.Count > 0
+                    && instrument.ToneSpecifications[0].VolumeEnvelopeId
+                        is ObjectId volumeId
+                    && snapshot.Document.Objects.TryGetValue(
+                        volumeId, out SongObject? envelope)
+                    && envelope is NodeEnvelopeDefinition curve
+                        ? curve.Nodes[0].Value : null));
             return _actual.PrepareLiveSynthSource(snapshot, sourceId);
         }
     }
