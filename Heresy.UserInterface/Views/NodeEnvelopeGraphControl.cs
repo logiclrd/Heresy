@@ -529,6 +529,8 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		if (graph is null)
 			return;
 		Point pointer = e.GetPosition(this);
+		_hoverPointer = pointer;
+		InvalidateVisual();
 		int selected = graph.HitNode(pointer.X, pointer.Y);
 
 		// The node dot takes precedence over the 5-pixel-wide guide.
@@ -596,6 +598,8 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 	{
 		base.OnPointerMoved(e);
 		Point pointer = e.GetPosition(this);
+		_hoverPointer = pointer;
+		InvalidateVisual();
 		if (!IsDragging || _fixedLayout is null)
 		{
 			UpdateHoverCursor(pointer);
@@ -691,7 +695,9 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 			return;
 		// Render the final pointer position even on platforms which
 		// coalesce the last move directly into pointer release.
-		UpdateDraggedPosition(e.GetPosition(this));
+		Point pointer = e.GetPosition(this);
+		_hoverPointer = pointer;
+		UpdateDraggedPosition(pointer);
 		int dragged = _dragNode;
 		bool changed = _dragMoved
 			&& (!_previewNodes.SequenceEqual(_envelope.Nodes)
@@ -776,5 +782,7 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 	{
 		base.OnPointerCaptureLost(e);
 		CancelDrag();
+		_hoverPointer = null;
+		InvalidateVisual();
 	}
 }
