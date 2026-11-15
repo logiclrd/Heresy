@@ -19,7 +19,7 @@ namespace Heresy.Tests.UserInterface;
 public sealed class FilterInstanceEditorControlTests
 {
 	[AvaloniaTest]
-	public void NarrowInspectorStacksStageListAboveParameterEditorsWithoutHorizontalScrolling()
+	public void NarrowInspectorUsesTwoColumnSharedGridForOverrideAndValue()
 	{
 		FilterDefinition definition = new((ObjectId)48U, "Multi-stage", new[] {
 			new FilterStageDefinition(1, "low", FilterKind.OnePole),
@@ -31,34 +31,57 @@ public sealed class FilterInstanceEditorControlTests
 		ScrollViewer viewport = root.Children.OfType<ScrollViewer>().Single();
 		Assert.That(viewport.HorizontalScrollBarVisibility,
 			Is.EqualTo(Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled),
-			"embedded Filter inspectors must not hide controls to the right");
+			"the embedded inspector must not hide controls horizontally");
 		Assert.That(viewport.VerticalScrollBarVisibility,
 			Is.EqualTo(Avalonia.Controls.Primitives.ScrollBarVisibility.Auto));
-		StackPanel layout = (StackPanel)viewport.Content!;
+
+		Grid layout = (Grid)viewport.Content!;
+		Grid parameters = Field<Grid>(editor, "_parameters");
 		ListBox stages = Field<ListBox>(editor, "_stages");
-		StackPanel parameters = Field<StackPanel>(editor, "_parameters");
 		TextBlock selectedStage = Field<TextBlock>(editor, "_stageLabel");
 		Assert.Multiple(() =>
 		{
-			Assert.That(layout.Children.IndexOf(stages), Is.GreaterThanOrEqualTo(0));
-			Assert.That(layout.Children.IndexOf(selectedStage),
-				Is.GreaterThan(layout.Children.IndexOf(stages)));
-			Assert.That(layout.Children.IndexOf(parameters),
-				Is.GreaterThan(layout.Children.IndexOf(selectedStage)));
-			Assert.That(layout.Orientation, Is.EqualTo(Avalonia.Layout.Orientation.Vertical));
+			Assert.That(parameters, Is.SameAs(layout),
+				"all inspector content shares a single two-column grid");
+			Assert.That(layout.ColumnDefinitions.Count, Is.EqualTo(2));
+			Assert.That(layout.ColumnDefinitions[0].Width.GridUnitType,
+				Is.EqualTo(Avalonia.Controls.GridUnitType.Auto));
+			Assert.That(layout.ColumnDefinitions[1].Width.GridUnitType,
+				Is.EqualTo(Avalonia.Controls.GridUnitType.Star));
+			Assert.That(Grid.GetRow(stages), Is.LessThan(Grid.GetRow(selectedStage)));
+			Assert.That(Grid.GetColumnSpan(stages), Is.EqualTo(2));
+			Assert.That(Grid.GetColumnSpan(selectedStage), Is.EqualTo(2));
 		});
-		foreach (StackPanel group in parameters.Children.OfType<StackPanel>())
-		{
-			Assert.That(group.Children[0], Is.TypeOf<TextBlock>(),
-				"the parameter name must appear above its editable controls");
-			Assert.That(group.Children.OfType<StackPanel>()
-				.Any(row => row.Orientation == Avalonia.Layout.Orientation.Horizontal),
-				Is.False, "wide horizontal label/override/value strips overflow");
-		}
+		VerifyParameterPairLayout(editor, "CutoffHz");
+		Assert.That(layout.Children.OfType<TextBlock>()
+			.Any(t => t.Text == "Inherited default: 1000 Hz"
+				&& Grid.GetColumnSpan(t) == 2), Is.True);
 		stages.SelectedIndex = 1;
 		Assert.That(Field<Dictionary<string, Control>>(editor, "_editors").Keys,
 			Does.Contain("GainDb"),
-			"selected stages must retain their normal inspector functionality");
+			"switching stages must retain its normal inspector behavior");
+		VerifyParameterPairLayout(editor, "GainDb");
+	}
+
+	private static void VerifyParameterPairLayout(
+		FilterInstanceEditorControl editor, string name)
+	{
+		Grid layout = Field<Grid>(editor, "_parameters");
+		CheckBox toggle = Field<Dictionary<string, CheckBox>>(
+			editor, "_overrideToggles")[name];
+		Control value = Field<Dictionary<string, Control>>(
+			editor, "_editors")[name];
+		Assert.Multiple(() =>
+		{
+			Assert.That(layout.Children.Contains(toggle), Is.True);
+			Assert.That(layout.Children.Contains(value), Is.True);
+			Assert.That(Grid.GetRow(toggle), Is.EqualTo(Grid.GetRow(value)),
+				"Override and value occupy the same row");
+			Assert.That(Grid.GetColumn(toggle), Is.EqualTo(0));
+			Assert.That(Grid.GetColumn(value), Is.EqualTo(1));
+			Assert.That(Grid.GetColumnSpan(toggle), Is.EqualTo(1));
+			Assert.That(Grid.GetColumnSpan(value), Is.EqualTo(1));
+		});
 	}
 
 	[AvaloniaTest]
@@ -71,15 +94,15 @@ public sealed class FilterInstanceEditorControlTests
 			Field<Dictionary<string, CheckBox>>(editor, "_overrideToggles");
 		Dictionary<string, Control> values =
 			Field<Dictionary<string, Control>>(editor, "_editors");
-		StackPanel parameters = Field<StackPanel>(editor, "_parameters");
+		Grid parameters = Field<Grid>(editor, "_parameters");
 		Assert.That(toggles.Keys, Is.EquivalentTo(
 			FilterCatalogue.GetParameters(FilterKind.OnePole).Select(x => x.Name)));
 		Assert.That(toggles.Values.All(x => x.IsChecked != true), Is.True);
 		Assert.That(values.Values.All(x => !x.IsEnabled), Is.True);
 		Assert.That(((TextBox)values["CutoffHz"]).Text, Is.EqualTo("1000"));
-		Assert.That(parameters.Children.OfType<StackPanel>()
-			.Any(row => row.Children.OfType<TextBlock>()
-				.Any(t => t.Text == "Inherited default: 1000 Hz")), Is.True);
+		Assert.That(parameters.Children.OfType<TextBlock>()
+			.Any(t => t.Text == "Inherited default: 1000 Hz"
+				&& Grid.GetColumnSpan(t) == 2), Is.True);
 		Assert.That(ToolTip.GetTip(values["CutoffHz"])?.ToString(),
 			Does.Contain("Permitted: 1 to 20000"));
 	}
