@@ -368,29 +368,36 @@ public sealed class PatternVolumePreviewTests
     }
 
     [AvaloniaTest]
-    public void EmptyAndRejectedInputRestoreOriginalTextWithoutWritingSongData()
+    public void CompletedOverRangeEntryClampsAndNextHighDigitPreviewsWithoutCommit()
     {
         DocumentWorkspace workspace = new();
         DataPatternDefinition pattern =
             PatternDocumentEditor.CreateDataPattern(workspace, "Pattern", 3, 1);
         PatternEditorControl editor = Editor(workspace, pattern);
         SetCursor(editor, 0, 0, PatternCellField.Volume);
-        TextBlock label = Fields<TextBlock>(editor, "_volumeTexts")[(0, 0)];
-        uint rev = workspace.Document.AudioRevision;
-        Type(editor, 0, 0, "6");
-        Assert.That(((Run)label.Inlines![0]).Text, Is.EqualTo("6"));
-        Assert.That(((Run)label.Inlines[1]).Text, Is.EqualTo("0"));
-        Type(editor, 0, 0, "5");
-        Assert.That(label.Text, Is.EqualTo(".."));
-        Assert.That(label.Inlines, Is.Empty);
-        Assert.That(pattern.Grid[0, 0], Is.Null);
-        Assert.That(Cursor(editor).Row, Is.Zero);
-        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(rev));
+        TextBlock first = Fields<TextBlock>(editor, "_volumeTexts")[(0, 0)];
+        uint before = workspace.Document.AudioRevision;
 
-        Type(editor, 0, 0, "7");
-        Assert.That(label.Text, Is.EqualTo(".."));
-        Assert.That(label.Inlines, Is.Empty);
-        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(rev));
+        Type(editor, 0, 0, "6");
+        Assert.That(((Run)first.Inlines![0]).Text, Is.EqualTo("6"));
+        Assert.That(((Run)first.Inlines[1]).Text, Is.EqualTo("0"));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(before));
+
+        Type(editor, 0, 0, "5");
+        Assert.That(first.Text, Is.EqualTo("64"));
+        Assert.That(first.Inlines, Is.Empty);
+        Assert.That(pattern.Grid[0, 0]!.Volume, Is.EqualTo(1.0));
+        Assert.That(Cursor(editor).Row, Is.EqualTo(1));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(before + 1));
+
+        Type(editor, 1, 0, "7");
+        TextBlock second = Fields<TextBlock>(editor, "_volumeTexts")[(1, 0)];
+        Assert.That(((Run)second.Inlines![0]).Text, Is.EqualTo("7"));
+        Assert.That(((Run)second.Inlines[1]).Text, Is.EqualTo("0"));
+        Assert.That(pattern.Grid[1, 0], Is.Null,
+            "first digits including 7–9 remain only a preview");
+        Assert.That(Cursor(editor).Row, Is.EqualTo(1));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(before + 1));
     }
 
     [AvaloniaTest]
