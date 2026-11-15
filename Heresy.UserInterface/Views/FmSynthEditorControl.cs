@@ -1536,11 +1536,12 @@ public sealed class FmSynthEditorControl : UserControl
 		});
 		_inspector.Children.Add(new TextBlock
 		{
-			Text = "Audio enters the Input port. Only nonstructural numeric "
-				+ "stage parameters have modulation ports. Disconnected ports "
-				+ "use the per-use static configuration. Until FM Filter "
-				+ "rendering is implemented, this node passes audio unchanged; "
-				+ "Tail is stored but not yet applied.",
+			Text = "Audio enters the Input port. Nonstructural numeric "
+				+ "stage parameters expose modulation ports; disconnected ports "
+				+ "use the per-use static configuration. Filters process audio "
+				+ "during playback, and Tail can preserve residual Filter output "
+				+ "after the input ends. Rewiring ports or changing the effective "
+				+ "stage topology may leave existing notes on an older graph.",
 			TextWrapping = TextWrapping.Wrap,
 		});
 		if (node.StaleConnections.Count > 0)
