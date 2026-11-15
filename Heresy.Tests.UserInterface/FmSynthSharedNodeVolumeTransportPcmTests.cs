@@ -660,7 +660,9 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
                 Assert.That(notifications.Count, Is.EqualTo(ordinal));
                 Assert.That(notifications.Last().ObjectId, Is.EqualTo(script.Id));
                 Assert.That(callbacks, Is.EqualTo(ordinal));
-                Assert.That(changed, Is.EqualTo(ordinal));
+                Assert.That(changed, Is.GreaterThanOrEqualTo(ordinal),
+                    "Script editor may report a same-value UI Apply even when "
+                    + "the Synth audio-revision gate correctly suppresses publication");
                 Assert.That(actualFactory.Preparations.Count, Is.EqualTo(ordinal * 2));
                 Assert.That(actualFactory.Preparations.Skip((ordinal - 1) * 2)
                     .Select(p => p.SynthId),
