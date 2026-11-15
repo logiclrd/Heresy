@@ -66,7 +66,7 @@ public sealed class FmSynthInstrumentVolumeAccessTests
 			uint audioRevision = workspace.Document.AudioRevision;
 			Field<TextBox>(volume, "_nodesInput").Text =
 				"0, 0.4\n0.01, 0.8\n0.02, 0.2\n0.09, 0";
-			typeof(NodeEnvelopeEditorControl).GetMethod("Apply",
+			typeof(NodeEnvelopeEditorControl).GetMethod("SetNodes",
 				BindingFlags.Instance | BindingFlags.NonPublic)!
 				.Invoke(volume, []);
 			workspace.Document.AudioRevision.Should().Be(audioRevision + 1);
