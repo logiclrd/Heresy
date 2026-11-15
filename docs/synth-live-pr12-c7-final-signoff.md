@@ -1,6 +1,6 @@
 # PR #12 — C7 final signoff and merge-readiness review
 
-**2026-11-15 status: TECHNICAL EVIDENCE REVIEW COMPLETED / C7 OWNER SIGNOFF OPEN / PR DRAFT AND UNMERGED.** No final merge authorization has been granted. This review combines *bounded* C1–C6 evidence and identifies which statements may be made without extrapolating beyond the machine, property graph or user reports.
+**2026-11-15 closing disposition: C7 TECHNICAL AUDIT ACCEPTED BY OWNER; PR #12 MERGE EXPLICITLY AUTHORIZED.** This records the pre-merge acceptance decision; the actual merged state must be verified separately on GitHub. This review combines *bounded* C1–C6 evidence and identifies which statements may be made without extrapolating beyond the machine, property graph or user reports.
 
 ## Acceptance evidence available
 
@@ -34,8 +34,8 @@
 - [x] Verify **pre-audit HEAD** `7fa51f…` and its exact successful Release, Python, Linux ARM64 and Windows packaging run; compare PR to `main` and inspect the newer main-side diff, as detailed below.
 - [x] Reconcile the active 28-surface C2(af) inventory with current Synth inspector and reachable shared UI, and distinguish main-side *planned but not implemented* Noise Vmin/Vmax / chain-link icons from currently exposed fields.
 - [x] Identify specific actual current-code offline/export parity tests and source boundaries, with their deliberate limits, as detailed below.
-- [ ] Confirm exact **post-C7-documentation-commit** HEAD CI and branch state; do not silently transplant the earlier green result to a new SHA.
-- [ ] **Final feature decision with user approval:** only then mark the original Synth live-parameter TODO complete/remove its open entry, declare C7 accepted and make PR #12 merge-ready. **Do not merge without explicit user authorization.**
+- [x] Confirm exact C7 technical-audit HEAD `a1dd02ed559ed097c0ca0b428b22d0aaa2781fa0` CI: Actions [#43762678905](https://github.com/logiclrd/Heresy/actions/runs/43762678905), SUCCESS (3,826 Release .NET tests + 5 Python, Windows bundle smoke and Linux ARM64). A subsequent owner-signoff docs-only HEAD must be verified separately.
+- [x] **Owner feature decision and merge authorization:** On 2026-11-15, after review of the technical audit and its exact-HEAD green CI, the owner explicitly replied **“Yep, let's go ahead and merge that in.”** C7 and the bounded all-properties milestone are accepted for merge. The original Synth live-parameter TODO is checked in the same final signoff sequence; preserve the TODO's requirements text for historical traceability.
 
 ### Provisional outcome
 
@@ -79,7 +79,11 @@ The current `FmSynthEditorControl` inspector still exposes Constant; Oscillator 
 | Offline/export | Supported by the concrete frozen-source actual FLAC and pre-quantization production PCM tests described above; no universal physical/export equivalence claim |
 | Windows real hardware | **Untested/unavailable**, not a failure and not substituted with packaging smoke |
 | Process/runtime provenance | Exact executing managed runtime and Runtime Diagnostics UI state were not independently recorded |
-| Post-audit exact HEAD CI | Must check after this documentation change; earlier green run belongs to `7fa51f…` |
-| Owner authorization | **Outstanding**: explicitly accept C7, decide whether to check/remove original all-nonstructural TODO, mark PR ready for review and/or authorize merge |
+| Post-audit exact HEAD CI | **SUCCESS** for C7 audit commit `a1dd02ed…`: Actions #43762678905, 3,826 .NET + five Python; subsequent owner-approval documentation commits require their own checks |
+| Owner authorization | **GRANTED** 2026-11-15 for C7 acceptance, original Synth TODO completion and PR #12 merge; do not misstate this as Windows hardware acceptance or future deferred features |
 
 **Recommendation:** Given the intentionally bounded contract, **approve C7 technical feature evidence, conditional on green exact-post-audit-head CI**, and ask the owner to decide the TODO and PR state. No newly discovered code regression justifies an untested production patch, another full 27-trial stress sweep or a repeat of accepted C6 listening. Any user requirement for *Windows hardware acceptance* or automatic *held Instrument tone reassignment* is a separate decision/scope expansion; do not silently add it to PR #12.
+
+## Final owner authorization and execution boundary — 2026-11-15
+
+The owner has explicitly authorized merging PR #12 after reviewing the fully green [C7 technical-audit CI #43762678905](https://github.com/logiclrd/Heresy/actions/runs/43762678905). C7 is accepted under its bounded C1–C6 contract. Accordingly, the original all-nonstructural Synth preview item in `docs/todo.md` is now marked complete without deleting its acceptance criteria. The PR should be moved out of draft and merged after verification of the exact final signoff HEAD. This dated record is pre-merge authorization, not a substitute for the eventual GitHub merge result. Deferred Windows physical acceptance, broad held-Instrument retargeting and new Noise controls remain separate work.
