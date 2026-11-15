@@ -719,17 +719,25 @@ advance one row; `.` clears it and advances, so volume values can be painted
 down rows even when those rows contain no new notes. After typing only the
 **first** digit, the editor previews that new tens digit alongside **exactly**
 the previously stored/displayed units digit (or zero for an empty cell),
-without yet changing the song. When that Volume field/cell **loses focus**
+without yet changing the song. **Every first digit `0–9` is accepted**,
+including `7`, `8` and `9`; the intermediate two-digit preview remains
+faithful to the typed tens digit and the displayed units digit, even when the
+number exceeds the tracker maximum. When that Volume field/cell **loses focus**
 (mouse or keyboard navigation, switching panes, deactivating the window or
-leaving the Pattern editor), the exact two-digit preview commits using the
-normal validated Pattern volume operation, **without advancing the row**.
-The old value is preserved with an error if that display would exceed 64
-(e.g. `68`); the editor does not silently replace its units digit with zero.
-A completed two-digit entry continues to commit and advance exactly as before.
-Programmatic cursor redraws and unrelated editing cancellations are not
-interpreted as focus loss; duplicate focus-loss notifications cannot publish
-the same edit twice. The normal document/audio revision, notification and
-save/reopen path applies to focus-loss commits.
+leaving the Pattern editor), its preview is committed through the normal
+validated Pattern volume operation, **clamped to `64` when larger**, without
+advancing the row. For example, a provisional `68` commits as `64`;
+`78`, `88` and `98` likewise become `64`. The editor never changes the
+displayed units digit merely to obtain a valid provisional value. Two typed
+digits also clamp (e.g. `65` or `99` → `64`) and advance one row as usual.
+Pressing **Backspace after the first digit** cancels the provisional preview,
+restores the exact previous field contents (including `..` for an empty cell),
+and leaves focus, cursor, document and audio revision unchanged; a later
+focus-loss event must not commit the cancelled digit. Programmatic cursor
+redraws and unrelated editing cancellations are not interpreted as focus
+loss; duplicate focus-loss notifications cannot publish the same edit twice.
+The normal document/audio revision, notification and save/reopen path applies
+to committed changes.
 
 Pattern translation treats that single volume column differently according to
 what the row does. For an ordinary `StartPatternNote`, the value is folded
