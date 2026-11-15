@@ -65,6 +65,61 @@ public sealed class FmSynthMultiRetirementTests
         (afterAlloc - beforeAlloc).Should().Be(0);
     }
 
+    // Paired with the C5(c) buffered producer regression: those fourteen
+    // expensive filtered child invocations must actually stop rendering,
+    // not merely be hidden by zero gain after the held 17->3 transition.
+    [Test]
+    public void FilteredThreeToSeventeenToThreeRetiresFourteenDspHistories()
+    {
+        FilterDefinition filter = new((ObjectId)9851U, "C5(c) three-stage", [
+            new FilterStageDefinition(1, "first", FilterKind.OnePole,
+                [new("CutoffHz", FilterParameterValue.FromNumber(850))]),
+            new FilterStageDefinition(2, "second", FilterKind.OnePole,
+                [new("CutoffHz", FilterParameterValue.FromNumber(1100))]),
+            new FilterStageDefinition(3, "third", FilterKind.OnePole,
+                [new("CutoffHz", FilterParameterValue.FromNumber(1350))]),
+        ]);
+        FmSynthSound Sound(int count) => new(new FmSynthGraph([
+            new FmConstantNode(1, 0.015625),
+            new FmFilterNode(2, 1, new FilterInstance(filter)),
+            new FmMultiNode(3, 2, voiceCount: count, detune: 0,
+                randomizePhase: false, gainCompensation: false),
+        ], 3), new EmptyEnvelopes(), enableLiveMultiExpansion: true);
+
+        RenderContext context = Mono();
+        FmSynthSound original = Sound(3);
+        SoundState held = original.CreateState();
+        original.Render(context, held, 0, 80, new float[80]);
+
+        FmSynthSound expanded = Sound(17);
+        PrepareExpansion(original, expanded, held);
+        original.TryPrepareRunningState(expanded, held).Should().BeTrue();
+        original.CommitPreparedRunningState(expanded, held);
+        expanded.Render(context, held, 80, 4801, new float[4801]);
+
+        FmSynthSound reduced = Sound(3);
+        expanded.TryPrepareRunningState(reduced, held).Should().BeTrue();
+        expanded.CommitPreparedRunningState(reduced, held);
+        reduced.Render(context, held, 4881, 4801, new float[4801]);
+        long[] atFadeEnd = ChildNextFrames(held);
+        atFadeEnd.Should().HaveCount(17);
+        atFadeEnd.Skip(3).Should().OnlyContain(frame => frame > 0,
+            "all fourteen expensive filtered children really ran while audible");
+
+        float[] continued = new float[1024];
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        reduced.Render(context, held, 9682, continued.Length, continued);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0L,
+            "no child reconfiguration or heavy-state revival belongs in PCM");
+        long[] after = ChildNextFrames(held);
+        after.Take(3).Zip(atFadeEnd.Take(3))
+            .Should().OnlyContain(pair => pair.First > pair.Second);
+        after.Skip(3).Should().Equal(atFadeEnd.Skip(3),
+            "retired three-stage Filter children must not advance their DSP clocks");
+        continued.Should().OnlyContain(x => Math.Abs(x - 0.046875f) < 0.0015,
+            "the same held note must still output its three filtered children");
+    }
+
     [Test]
     public void FullyRetiredConstituentsRequireWorkerPreparedFreshRevival()
     {
