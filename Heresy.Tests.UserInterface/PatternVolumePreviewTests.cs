@@ -35,13 +35,14 @@ public sealed class PatternVolumePreviewTests
     }
 
     [AvaloniaTest]
-    [TestCase("48", "5", 58)]
-    [TestCase("03", "6", 63)]
-    [TestCase("..", "4", 40)]
-    [TestCase("00", "0", 0)]
-    public void LostCellFocusCommitsExactlyTheDisplayedPartialVolume(
-        string initial, string firstDigit, int expected)
+    public void LostCellFocusCommitsExactlyTheDisplayedPartialVolume()
     {
+        foreach ((string initial, string firstDigit, int expected) in new[]
+        {
+            ("48", "5", 58), ("03", "6", 63),
+            ("..", "4", 40), ("00", "0", 0),
+        })
+        {
         DocumentWorkspace workspace = new();
         DataPatternDefinition pattern =
             PatternDocumentEditor.CreateDataPattern(workspace, "Pattern", 3, 1);
@@ -73,6 +74,7 @@ public sealed class PatternVolumePreviewTests
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(
             before + (initial == expected.ToString("00") ? 0U : 1U)),
             "repeated focus loss cannot commit again");
+        }
     }
 
     [AvaloniaTest]
