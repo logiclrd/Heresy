@@ -395,7 +395,9 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
                     Is.EqualTo(document + ordinal));
                 Assert.That(callbacks, Is.EqualTo(ordinal),
                     "one selector commit requests one publication");
-                Assert.That(changed, Is.EqualTo(ordinal));
+                Assert.That(changed, Is.EqualTo(2 * ordinal),
+                    "one inspector parameter commit and one rebuilt-view "
+                    + "notification are allowed; publication is once per revision");
                 Assert.That(factory.Preparations.Count, Is.EqualTo(2 * ordinal));
                 Assert.That(factory.Preparations.Skip(2 * (ordinal - 1))
                     .Select(p => p.SynthId),
