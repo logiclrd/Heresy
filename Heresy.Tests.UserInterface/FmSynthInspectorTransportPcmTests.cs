@@ -290,9 +290,11 @@ public sealed class FmSynthInspectorTransportPcmTests
                         .SelectMany(_ => new[] { child.Id, parent.Id })),
                     "worker compiles child before dependent parent");
                 Assert.That(factory.Preparations.Skip((ordinal - 1) * 2)
-                    .All(p => p.AudioRevision == initialAudio + ordinal
-                        && p.Operation == mode), Is.True,
-                    "detached snapshot contains the committed Operator mode");
+                    .All(p => p.AudioRevision == initialAudio + ordinal),
+                    Is.True, "both frozen preparations use the same revision");
+                Assert.That(factory.Preparations[(ordinal - 1) * 2].Operation,
+                    Is.EqualTo(mode),
+                    "edited child snapshot contains the committed Operator mode");
                 Assert.That(backend.OpenCount, Is.EqualTo(1));
             });
             float[] pcm = backend.Render(101);
@@ -468,10 +470,12 @@ public sealed class FmSynthInspectorTransportPcmTests
                 Is.EqualTo(new[] { child.Id, parent.Id }),
                 "shared notification compiles child before dependent parent");
             Assert.That(factory.Preparations.All(p =>
-                p.AudioRevision == initialAudio + 1
-                && p.FilterDefinitionId == shared.Id
-                && p.FilterCutoffHz == 45), Is.True,
-                "worker captures frozen shared defaults, not stale overrides");
+                p.AudioRevision == initialAudio + 1), Is.True);
+            Assert.That(factory.Preparations[0].FilterDefinitionId,
+                Is.EqualTo(shared.Id));
+            Assert.That(factory.Preparations[0].FilterCutoffHz,
+                Is.EqualTo(45),
+                "edited child worker captures frozen shared defaults");
             Assert.That(backend.OpenCount, Is.EqualTo(1));
         });
         independent.SetStageDefaults(1, [
