@@ -183,6 +183,30 @@ Regression coverage exercises empty-ring silence, count increments,
 worker-exception retention, per-session observation/reset, duplicate-fault
 suppression, observer isolation and subscriptions through lazy transport.
 
+## Opt-in C5(e) device qualification CSV
+
+For physical Linux (or Windows) realtime acceptance only, launch Heresy with
+`HERESY_C5_AUDIO_CSV` set to an **absolute path** for a new CSV file. Each
+actual SDL output session appends a unique session ID, one header per file,
+start/stop records and **250-ms background-timer** snapshots of PCM producer
+blocks/budget, ring buffered frames/underruns, off-PCM Multi preparation,
+and SDL callback request counts/peak elapsed time. The live audio callback
+only records a few atomic counters and timestamps when opted in; no file
+access, blocking recorder calls or UI action runs inside the callback.
+Without that environment setting, **neither production profiling nor the
+recorder is enabled**. Open/failed output sessions cannot be treated as
+valid device evidence just because an automated CSV test passed.
+
+SDL's reported requested frames (`additionalAmount`) are not a known
+hardware interrupt period. The callback's nominal-request-duration
+comparison is a diagnostic, **not** a verified hardware-deadline miss.
+The existing UI **Audio underruns** status and one-per-session fault
+diagnostics remain authoritative for user-visible realtime behavior.
+Machine-specific physical observations and reproducible instructions
+are in [C5(e) device qualification playbook](synth-live-pr12-c5e-device-playbook.md).
+C5(e) and the C5(f) supported load envelope remain open until actual
+device evidence is recorded.
+
 ## Global output scope — SDL delivery tap
 
 `AudioOutputWaveformCapture` mirrors the final interleaved **float PCM
