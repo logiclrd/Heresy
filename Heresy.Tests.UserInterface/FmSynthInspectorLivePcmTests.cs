@@ -322,6 +322,12 @@ public sealed class FmSynthInspectorLivePcmTests
                     + $"{number} at frame {frame + i}");
                 Assert.That(float.IsFinite(actualPcm[i]), Is.True);
             }
+            if (number == 1)
+                Assert.That(actualPcm.Zip(originalPcm,
+                    (revised, old) => Math.Abs(revised - old)).Max(),
+                    Is.GreaterThan(0.05),
+                    "Unison must audibly rephase the already-playing Multi, "
+                    + "not merely publish equal but unchanged PCM histories");
             Assert.That(actual.CountOlderAudioVoices(), Is.Zero);
             frame += actualPcm.Length;
         }
