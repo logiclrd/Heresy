@@ -96,6 +96,30 @@ public sealed class FilterCatalogueTests
 	}
 
 	[Test]
+	public void CompatibleLowHighPassModeChoicesAreNotAudioRateFmPorts()
+	{
+		// A Choice need not change DSP state topology. Both filter families
+		// select their low/high output from one existing scalar history.
+		foreach (FilterKind kind in new[]
+			{ FilterKind.OnePole, FilterKind.SpeakerLegacyRc })
+		{
+			FilterParameterDescriptor mode = FilterCatalogue.GetParameters(kind)
+				.Single(parameter => parameter.Name == "Mode");
+			Assert.That(mode.Kind, Is.EqualTo(FilterParameterValueKind.Choice));
+			Assert.That(mode.IsStructural, Is.False, kind.ToString());
+			Assert.That(mode.IsModulatable, Is.False,
+				kind + ": compatible mode is not a sample-rate FM port");
+			Assert.That(mode.Choices,
+				Is.EqualTo(new[] { "LowPass", "HighPass" }));
+			FilterParameterDescriptor cutoff = FilterCatalogue.GetParameters(kind)
+				.Single(parameter => parameter.Name == "CutoffHz");
+			Assert.That(cutoff.IsModulatable, Is.True);
+		}
+		Assert.That(FilterParameterDescriptor.Choice("Topology", "A", "A", "B")
+			.IsStructural, Is.True, "other Choice contracts remain structural");
+	}
+
+	[Test]
 	public void SharedParameterConventionsUseSharedImmutableDescriptors()
 	{
 		FilterParameterDescriptor svf = FilterCatalogue.GetParameters(
