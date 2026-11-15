@@ -4259,6 +4259,12 @@ public sealed class PatternEditorControl : UserControl
 	/// *exact* provisional two-digit display (previous committed units,
 	/// or zero for an empty cell); no unseen second digit is invented.
 	/// Unlike normal two-key entry this does not advance the cursor.</summary>
+	/// <summary>Host preflight before saving, replacing the song or
+	/// closing the application: a still-focused first digit must become a
+	/// real document edit before the unsaved-changes guard is evaluated.</summary>
+	public void CommitPendingVolumeOnLeavingEditor()
+		=> CommitPendingVolumeOnFocusLoss();
+
 	private void CommitPendingVolumeOnFocusLoss()
 	{
 		if (_volumePreviewAddress is (int row, int channel))
