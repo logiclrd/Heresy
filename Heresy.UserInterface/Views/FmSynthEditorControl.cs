@@ -117,6 +117,9 @@ public sealed class FmSynthEditorControl : UserControl
 		// preview's view; leaving this view still stops its voices.
 		DetachedFromVisualTree += (_, _) =>
 		{
+			// Parent navigation normally preflights this; retain a final
+			// best-effort commit if another host detaches us unexpectedly.
+			TryCommitPendingFilterChanges();
 			foreach (Window editor in _sharedVolumeEditors.Values.ToArray())
 				editor.Close();
 			_sharedVolumeEditors.Clear();
@@ -133,7 +136,11 @@ public sealed class FmSynthEditorControl : UserControl
 				Content = "← Document",
 				MinWidth = 100,
 			};
-		back.Click += (_, _) => _close();
+		back.Click += (_, _) =>
+		{
+			if (TryCommitPendingFilterChanges())
+				_close();
+		};
 
 		TextBlock title =
 			new()
@@ -405,9 +412,24 @@ public sealed class FmSynthEditorControl : UserControl
 		}
 	}
 
+	/// <summary>Validate and publish the outgoing Filter's pending overrides
+	/// before switching editors, nodes, or closing the owning window.</summary>
+	public bool TryCommitPendingFilterChanges()
+	{
+		if (_activeFilterInstanceEditor is not FilterInstanceEditorControl editor
+			|| editor.TryCommitPendingChanges())
+			return true;
+		_message.Text = "Cannot leave this Filter node: its unapplied overrides "
+			+ "could not be committed. Correct the invalid or stale draft, "
+			+ "then Apply or Reload the configuration.";
+		return false;
+	}
+
 	private void SelectNode(
 		int nodeId)
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		_selectedNodeId = nodeId;
 		_canvas.SetSelectedNode(
 			nodeId);
@@ -644,6 +666,8 @@ public sealed class FmSynthEditorControl : UserControl
 	/// selection, notification and failure semantics.</summary>
 	private void RemoveNode(int nodeId)
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		try
 		{
 			FmSynthDocumentEditor.RemoveNode(
@@ -1582,7 +1606,12 @@ public sealed class FmSynthEditorControl : UserControl
 			{
 				_message.Text = message;
 				_changed(message);
-			});
+			},
+			synthBatchMode: true,
+			initialBatchChanges:
+				_workspace.GetSynthFilterBatchChanges(_synth.Id, node.Id),
+			batchChangesChanged: value =>
+				_workspace.SetSynthFilterBatchChanges(_synth.Id, node.Id, value));
 		_inspector.Children.Add(instanceEditor);
 		_activeFilterInspectorNodeId = node.Id;
 		_activeFilterInstanceEditor = instanceEditor;
@@ -1901,6 +1930,8 @@ public sealed class FmSynthEditorControl : UserControl
 		int? selectedNodeId,
 		string message)
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		_selectedNodeId = selectedNodeId;
 		_canvas.Refresh();
 		_canvas.SetSelectedNode(
