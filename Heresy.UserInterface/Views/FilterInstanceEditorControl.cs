@@ -24,10 +24,20 @@ public sealed class FilterInstanceEditorControl : UserControl
 {
 	private readonly FilterInstanceEditSession _session;
 	private readonly Action<string> _changed;
-	private readonly ListBox _stages = new() { MinWidth = 230, MinHeight = 170 };
-	private readonly StackPanel _parameters = new() { Spacing = 8 };
+	private readonly ListBox _stages = new() { MinHeight = 170 };
+	// One shared grid: Auto-width Override column, remaining width for values.
+	// Headers, descriptions, stage list and help rows span both columns.
+	private readonly Grid _parameters = new()
+	{
+		ColumnDefinitions = new ColumnDefinitions("Auto,*"),
+		ColumnSpacing = 8,
+		RowSpacing = 5,
+		Margin = new Thickness(12),
+	};
+	private readonly Button _apply = new() { Content = "Apply overrides" };
+	private readonly Button _reload = new() { Content = "Reload configuration" };
 	private readonly TextBlock _message = new() { TextWrapping = TextWrapping.Wrap };
-	private readonly TextBlock _stageLabel = new() { FontWeight = FontWeight.SemiBold };
+	private readonly TextBlock _stageLabel = new() { FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap };
 	private readonly Dictionary<string, CheckBox> _overrideToggles =
 		new(StringComparer.OrdinalIgnoreCase);
 	private readonly Dictionary<string, Control> _editors =
@@ -45,68 +55,21 @@ public sealed class FilterInstanceEditorControl : UserControl
 		_session = session ?? throw new ArgumentNullException(nameof(session));
 		_changed = changed ?? throw new ArgumentNullException(nameof(changed));
 		_stages.SelectionChanged += (_, _) => OnStageSelected();
+		_apply.Click += (_, _) => ApplyDraft();
+		_reload.Click += (_, _) => Reload();
 		Content = BuildView();
 		RefreshStages();
 	}
 
 	private Control BuildView()
 	{
-		StackPanel left = new()
-		{
-			Spacing = 8, Margin = new Thickness(12),
-		};
-		left.Children.Add(new TextBlock
-		{
-			Text = "Configured stages (serial order)",
-			FontWeight = FontWeight.SemiBold,
-		});
-		left.Children.Add(_stages);
-		left.Children.Add(new TextBlock
-		{
-			Text = "The shared Filter defines stage names, types and defaults. "
-				+ "Overrides here affect only this use.",
-			TextWrapping = TextWrapping.Wrap,
-		});
-
-		StackPanel right = new()
-		{
-			Spacing = 8, Margin = new Thickness(12),
-		};
-		right.Children.Add(_stageLabel);
-		right.Children.Add(new TextBlock
-		{
-			Text = "Check Override to customize this use; uncheck to inherit the "
-				+ "definition's current default. Structural options do not "
-				+ "produce audio-rate FM modulation ports.",
-			TextWrapping = TextWrapping.Wrap,
-		});
-		right.Children.Add(_parameters);
-
-		Button apply = new() { Content = "Apply overrides" };
-		apply.Click += (_, _) => ApplyDraft();
-		Button reload = new() { Content = "Reload configuration" };
-		reload.Click += (_, _) => Reload();
-		StackPanel actions = new()
-		{
-			Orientation = Orientation.Horizontal, Spacing = 8,
-		};
-		actions.Children.Add(apply);
-		actions.Children.Add(reload);
-		right.Children.Add(actions);
-
-		Grid columns = new()
-		{
-			ColumnDefinitions = new ColumnDefinitions("Auto,*"),
-		};
-		Grid.SetColumn(left, 0);
-		Grid.SetColumn(right, 1);
-		columns.Children.Add(left);
-		columns.Children.Add(right);
-
+		// Every inspector row belongs to the same two-column grid.
+		// Stages and explanatory text span both columns; only the Override
+		// checkbox and its value editor occupy separate adjacent cells.
 		ScrollViewer content = new()
 		{
-			Content = columns,
-			HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+			Content = _parameters,
+			HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
 			VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
 		};
 		DockPanel root = new();
@@ -120,6 +83,31 @@ public sealed class FilterInstanceEditorControl : UserControl
 		root.Children.Add(content);
 		return root;
 	}
+
+	private void AddFullWidthRow(Control control)
+	{
+		int row = _parameters.RowDefinitions.Count;
+		_parameters.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+		Grid.SetRow(control, row);
+		Grid.SetColumn(control, 0);
+		Grid.SetColumnSpan(control, 2);
+		_parameters.Children.Add(control);
+	}
+
+	private void AddOverrideValueRow(CheckBox toggle, Control editor)
+	{
+		int row = _parameters.RowDefinitions.Count;
+		_parameters.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+		Grid.SetRow(toggle, row);
+		Grid.SetColumn(toggle, 0);
+		Grid.SetColumnSpan(toggle, 1);
+		Grid.SetRow(editor, row);
+		Grid.SetColumn(editor, 1);
+		Grid.SetColumnSpan(editor, 1);
+		_parameters.Children.Add(toggle);
+		_parameters.Children.Add(editor);
+	}
+
 
 	private void RefreshStages(int? selectedId = null)
 	{
@@ -180,6 +168,7 @@ public sealed class FilterInstanceEditorControl : UserControl
 		{
 			_loadedStage = stage;
 			_parameters.Children.Clear();
+			_parameters.RowDefinitions.Clear();
 			_editors.Clear();
 			_overrideToggles.Clear();
 			_loadedValues.Clear();
@@ -187,8 +176,28 @@ public sealed class FilterInstanceEditorControl : UserControl
 			_stageLabel.Text = stage is null
 				? "No stage selected"
 				: $"{stage.Name} — {stage.Kind}";
-			if (stage is null)
-				return;
+			AddFullWidthRow(new TextBlock
+			{
+				Text = "Configured stages (serial order)",
+				FontWeight = FontWeight.SemiBold,
+			});
+			AddFullWidthRow(_stages);
+			AddFullWidthRow(new TextBlock
+			{
+				Text = "The shared Filter defines stage names, types and defaults. "
+					+ "Overrides here affect only this use.",
+				TextWrapping = TextWrapping.Wrap,
+			});
+			AddFullWidthRow(_stageLabel);
+			AddFullWidthRow(new TextBlock
+			{
+				Text = "Check Override to customize this use; uncheck to inherit the "
+					+ "definition's current default. Structural options do not "
+					+ "produce audio-rate FM modulation ports.",
+				TextWrapping = TextWrapping.Wrap,
+			});
+			if (stage is not null)
+			{
 			IReadOnlyDictionary<string, FilterParameterValue> overrides =
 				_session.Current.GetOverrides(stage.StageId);
 			foreach (FilterParameterDescriptor descriptor in
@@ -207,7 +216,7 @@ public sealed class FilterInstanceEditorControl : UserControl
 						+ (string.IsNullOrWhiteSpace(descriptor.Units)
 							? "" : $" ({descriptor.Units})")
 						+ (descriptor.IsStructural ? " [structural]" : ""),
-					MinWidth = 175,
+					TextWrapping = TextWrapping.Wrap,
 					VerticalAlignment = VerticalAlignment.Center,
 				};
 				CheckBox toggle = new()
@@ -223,7 +232,7 @@ public sealed class FilterInstanceEditorControl : UserControl
 					{
 						ItemsSource = descriptor.Choices,
 						SelectedItem = value.ChoiceValue,
-						MinWidth = 150,
+						HorizontalAlignment = HorizontalAlignment.Stretch,
 						IsEnabled = overridden,
 					};
 				}
@@ -232,7 +241,7 @@ public sealed class FilterInstanceEditorControl : UserControl
 					editor = new TextBox
 					{
 						Text = Format(value),
-						Width = 130,
+						HorizontalAlignment = HorizontalAlignment.Stretch,
 						IsEnabled = overridden,
 					};
 				}
@@ -260,30 +269,30 @@ public sealed class FilterInstanceEditorControl : UserControl
 				_loadedValues.Add(descriptor.Name, Format(value));
 				_loadedOverrideFlags.Add(descriptor.Name, overridden);
 
-				StackPanel row = new()
-				{
-					Orientation = Orientation.Horizontal, Spacing = 8,
-				};
-				row.Children.Add(title);
-				row.Children.Add(toggle);
-				row.Children.Add(editor);
-				StackPanel group = new() { Spacing = 3 };
-				group.Children.Add(row);
-				group.Children.Add(new TextBlock
+				// The label and help are full-width. Only Override and its
+				// matching input share a two-column row.
+				title.Margin = new Thickness(0, 8, 0, 0);
+				AddFullWidthRow(title);
+				AddOverrideValueRow(toggle, editor);
+				AddFullWidthRow(new TextBlock
 				{
 					Text = $"Inherited default: {defaultText}"
 						+ (string.IsNullOrWhiteSpace(descriptor.Units)
 							? "" : $" {descriptor.Units}"),
 					FontStyle = FontStyle.Italic,
 					Foreground = Brushes.Gray,
+					TextWrapping = TextWrapping.Wrap,
 				});
-				group.Children.Add(new TextBlock
+				AddFullWidthRow(new TextBlock
 				{
 					Text = rangeText,
 					Foreground = Brushes.Gray,
+					TextWrapping = TextWrapping.Wrap,
 				});
-				_parameters.Children.Add(group);
 			}
+			}
+			AddFullWidthRow(_apply);
+			AddFullWidthRow(_reload);
 			_message.Text = "";
 		}
 		finally { _loading = false; }
