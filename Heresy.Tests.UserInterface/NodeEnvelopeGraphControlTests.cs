@@ -421,6 +421,52 @@ public sealed class NodeEnvelopeGraphControlTests
 	}
 
 	[AvaloniaTest]
+	public void SharedGraphValueGuidesRefreshAfterChangingDisplayLimitsAndResize()
+	{
+		DocumentWorkspace workspace = new();
+		NodeEnvelopeDefinition envelope =
+			EnvelopeDocumentEditor.CreateNodeEnvelope(workspace, "Limits");
+		NodeEnvelopeGraphControl graph = new(workspace, envelope);
+		Control surface = (Control)typeof(NodeEnvelopeGraphControl)
+			.GetField("_surface", BindingFlags.Instance
+				| BindingFlags.NonPublic)!.GetValue(graph)!;
+		surface.Measure(new Size(440, 250));
+		surface.Arrange(new Rect(0, 0, 440, 250));
+		MethodInfo layout = surface.GetType().GetMethod("Layout",
+			BindingFlags.Instance | BindingFlags.NonPublic)!;
+		NodeEnvelopeGraphGeometry before =
+			(NodeEnvelopeGraphGeometry)layout.Invoke(surface, [])!;
+		uint audio = workspace.Document.AudioRevision;
+		uint document = workspace.Document.DocumentRevision;
+
+		EnvelopeDocumentEditor.UpdateNodeEnvelopeDisplayRange(
+			workspace, envelope, -12, 30);
+		graph.RefreshFromEnvelope();
+		NodeEnvelopeGraphGeometry after =
+			(NodeEnvelopeGraphGeometry)layout.Invoke(surface, [])!;
+		after.ValueLimitGuideYs.MinY.Should().BeApproximately(after.Y(-12), 1e-10);
+		after.ValueLimitGuideYs.MaxY.Should().BeApproximately(after.Y(30), 1e-10);
+		after.Y(0).Should().NotBe(before.Y(0),
+			"the graph must use the newly committed numerical value transform");
+		after.ValueLimitGuideYs.MinY.Should().BeLessThan(after.Bottom);
+		after.ValueLimitGuideYs.MaxY.Should().BeGreaterThan(after.Top);
+		workspace.Document.AudioRevision.Should().Be(audio,
+			"changing the visual value bounds is not a sound edit");
+		workspace.Document.DocumentRevision.Should().Be(document + 1);
+
+		surface.Measure(new Size(440, 400));
+		surface.Arrange(new Rect(0, 0, 440, 400));
+		NodeEnvelopeGraphGeometry taller =
+			(NodeEnvelopeGraphGeometry)layout.Invoke(surface, [])!;
+		taller.ValueLimitGuideYs.MinY.Should()
+			.BeGreaterThan(after.ValueLimitGuideYs.MinY);
+		taller.ValueLimitGuideYs.MaxY.Should()
+			.BeGreaterThan(after.ValueLimitGuideYs.MaxY);
+		workspace.Document.AudioRevision.Should().Be(audio,
+			"resizing the viewport cannot affect playback");
+	}
+
+	[AvaloniaTest]
 	public void ZoomOutTimeDomainPersistsUntilFitButtonIsInvoked()
 	{
 		DocumentWorkspace workspace = new();
