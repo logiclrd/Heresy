@@ -716,7 +716,20 @@ Volume is first-class pattern-cell data, independent of the effect stack. It is
 stored as an optional normalized value and presented in the tracker grid as a
 decimal `00..64` column (`..` means absent). Two decimal digits set the volume and
 advance one row; `.` clears it and advances, so volume values can be painted
-down rows even when those rows contain no new notes.
+down rows even when those rows contain no new notes. After typing only the
+**first** digit, the editor previews that new tens digit alongside **exactly**
+the previously stored/displayed units digit (or zero for an empty cell),
+without yet changing the song. When that Volume field/cell **loses focus**
+(mouse or keyboard navigation, switching panes, deactivating the window or
+leaving the Pattern editor), the exact two-digit preview commits using the
+normal validated Pattern volume operation, **without advancing the row**.
+The old value is preserved with an error if that display would exceed 64
+(e.g. `68`); the editor does not silently replace its units digit with zero.
+A completed two-digit entry continues to commit and advance exactly as before.
+Programmatic cursor redraws and unrelated editing cancellations are not
+interpreted as focus loss; duplicate focus-loss notifications cannot publish
+the same edit twice. The normal document/audio revision, notification and
+save/reopen path applies to focus-loss commits.
 
 Pattern translation treats that single volume column differently according to
 what the row does. For an ordinary `StartPatternNote`, the value is folded
