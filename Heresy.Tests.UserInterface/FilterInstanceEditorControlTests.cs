@@ -125,6 +125,15 @@ public sealed class FilterInstanceEditorControlTests
 		cutoff.Text = "2200";
 		Assert.That(editor.TryCommitPendingChanges(), Is.True);
 		Assert.That(publishes, Is.EqualTo(3));
+		toggles = Field<Dictionary<string, CheckBox>>(editor, "_overrideToggles");
+		toggles["CutoffHz"].IsChecked = false;
+		Invoke(editor, "ApplyOnFocusLoss");
+		Assert.That(publishes, Is.EqualTo(4));
+		Assert.That(current.GetOverrides(1), Is.Empty);
+		Assert.That(Field<Dictionary<string, Control>>(editor, "_editors")
+			["CutoffHz"], Is.SameAs(cutoff));
+		Assert.That(cutoff.Text, Is.EqualTo("1000"),
+			"reinheriting must immediately redisplay the shared default");
 	}
 
 	[AvaloniaTest]
