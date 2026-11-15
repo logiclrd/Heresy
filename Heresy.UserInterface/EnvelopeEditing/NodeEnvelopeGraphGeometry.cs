@@ -81,9 +81,10 @@ public sealed class NodeEnvelopeGraphGeometry
 	public double Right => _right;
 	public double Top => _top;
 	public double Bottom => _bottom;
-	/// <summary>Horizontal pixel coordinates for the *actual* authored
-	/// minimum/maximum limits. These use the same fixed value transform as
-	/// the curve; the bottom X baseline is not the numeric zero axis.</summary>
+	/// <summary>Vertical pixel positions of the *horizontal* guide
+	/// lines for the actual authored Vmin/Vmax limits. These use the same
+	/// fixed value transform as the curve; the bottom X baseline is
+	/// not the numeric zero axis.</summary>
 	public (double MinY, double MaxY) ValueLimitGuideYs =>
 		(Y(_vmin), Y(_vmax));
 	public int Count => _nodes.Length;
