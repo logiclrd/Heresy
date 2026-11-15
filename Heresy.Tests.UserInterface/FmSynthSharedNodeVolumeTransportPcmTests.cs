@@ -499,6 +499,65 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
                     Assert.That(stabilized[i],
                         Is.EqualTo(unchanged[i] * 0.25f).Within(5e-5f),
                         variant + ": settled gain keeps original running tone");
+                if (variant == "Pitch")
+                {
+                    // A *different* shared Pitch curve edit is not the
+                    // same-bound Volume migration we just accepted. Its
+                    // frozen history cannot be replaced under the retained
+                    // Sample playhead. This must be an explicit older
+                    // generation, not a silent false-current result.
+                    NodeEnvelopeDefinition pitch = (NodeEnvelopeDefinition)
+                        workspace.Document.Objects[pitchId!.Value];
+                    EnvelopeDocumentEditor.UpdateNodeEnvelope(
+                        workspace, pitch,
+                        [new EnvelopeNode(TimeSpan.Zero, 0.8)], 0, 0,
+                        EnvelopeSustainLoopMode.Forward);
+                    await Task.WhenAll(pending.ToArray())
+                        .WaitAsync(TimeSpan.FromSeconds(8));
+                    Assert.Multiple(() =>
+                    {
+                        Assert.That(workspace.Document.AudioRevision,
+                            Is.EqualTo(originalAudio + 2));
+                        Assert.That(notifications.Count, Is.EqualTo(2));
+                        Assert.That(notifications[1].ObjectId, Is.EqualTo(pitch.Id));
+                        Assert.That(factory.Preparations.Count, Is.EqualTo(4),
+                            "Pitch dependent Synth still gets detached preparations");
+                    });
+                    float[] retainedPitch = backend.Render(29);
+                    float[] originalPitch = referenceBackend.Render(29);
+                    for (int i = 0; i < retainedPitch.Length; i++)
+                        Assert.That(retainedPitch[i],
+                            Is.EqualTo(originalPitch[i] * 0.25f)
+                                .Within(5e-5f),
+                            "unmigrated companion Pitch cannot replace old PCM");
+                    Assert.That(factory.OlderAudioCount, Is.EqualTo(1),
+                        "different retained Pitch must mark missed generation");
+
+                    // A later compatible Volume edit cannot erase that
+                    // deliberately older Pitch generation or recolor its
+                    // frozen 0.25 gain. Fresh notes receive 0.4.
+                    Private<TextBox>(volumeEditor, "_nodesInput").Text = "0, 0.4";
+                    Click(ApplyButton(volumeEditor));
+                    await Task.WhenAll(pending.ToArray())
+                        .WaitAsync(TimeSpan.FromSeconds(8));
+                    float[] afterVolume = backend.Render(25);
+                    float[] originalVolume = referenceBackend.Render(25);
+                    for (int i = 0; i < afterVolume.Length; i++)
+                        Assert.That(afterVolume[i],
+                            Is.EqualTo(originalVolume[i] * 0.25f)
+                                .Within(5e-5f),
+                            "refused old companion stays on previous Volume");
+                    Assert.That(factory.OlderAudioCount, Is.EqualTo(1));
+                    await transport.SendLiveEventAsync(workspace.Document,
+                        ChannelTarget.Virtual(192),
+                        [new StartNoteCommand(child.Id)]);
+                    float[] mixed = backend.Render(8);
+                    float[] oldOnly = referenceBackend.Render(8);
+                    Assert.That(mixed.Zip(oldOnly, (a, b) => a - b * 0.25f)
+                        .Max(), Is.GreaterThan(0.12f),
+                        "fresh note must have authored new Volume and pitch");
+                    Assert.That(factory.OlderAudioCount, Is.EqualTo(1));
+                }
             }
             finally { popup?.Close(); owner.Close(); }
         }
