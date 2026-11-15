@@ -286,7 +286,7 @@ public sealed class FmSynthInspectorLivePcmTests
             oracleResolver.Sound = revisedOracle;
             expectedMulti = expected;
 
-            int completedBefore = worker.CompletedMultiExpansionCount;
+            long completedBefore = worker.CompletedMultiExpansionCount;
             actual.QueuePendingFirControls(worker);
             oracle.QueuePendingFirControls(worker);
             Assert.That(SpinWait.SpinUntil(
