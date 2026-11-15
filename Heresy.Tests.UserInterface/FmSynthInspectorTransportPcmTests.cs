@@ -1803,7 +1803,7 @@ public sealed class FmSynthInspectorTransportPcmTests
         TextBox tail = Field<TextBox>(Inspector(editor),
             "Tail (seconds, nonnegative)");
 
-        async Task Change(double next, int count, string label)
+        async Task<float[]> Change(double next, int count, string label)
         {
             Enter(tail, next.ToString("R", CultureInfo.InvariantCulture));
             await Task.WhenAll(pending.ToArray())
@@ -1829,7 +1829,7 @@ public sealed class FmSynthInspectorTransportPcmTests
             oracle.AdoptLiveSynthParameters(synth.Id, oracleSound, revised);
             oracleResolver.Sound = revised;
             oracleSound = revised;
-            Compare(count, label);
+            float[] observed = Compare(count, label);
             Assert.Multiple(() =>
             {
                 Assert.That(factory.OlderAudioCount, Is.Zero,
@@ -1838,20 +1838,35 @@ public sealed class FmSynthInspectorTransportPcmTests
                 Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
                     Is.EqualTo(baseSnapshot.AudioRevision));
             });
+            return observed;
         }
 
         // Sample was naturally finished at frame 4, but the Filter state
         // stays active until the 4+12=16 exclusive deadline. Extend while
         // that residual sound is already playing.
-        await Change(0.018, 8, "extend tail while ringing");
-        Assert.That(frame, Is.EqualTo(15));
-        // Shorten while the revised 4+18=22 tail is still active.
-        await Change(0.012, 12, "shorten tail while ringing");
-        Assert.That(frame, Is.EqualTo(27));
-        // Final shortened deadline is frame 4+12=16, exclusive: no
-        // Filter residual survives the author-defined end.
-        Assert.That(backend.Render(5),
-            Is.All.EqualTo(0f).Within(1e-7f));
+        float[] extended = await Change(0.018, 10,
+            "extend tail beyond original cutoff");
+        Assert.That(frame, Is.EqualTo(17));
+        // The original tail was exclusive at 4+12=16. Frame 16 is
+        // definitely *past* that deadline but must still ring on this
+        // same original voice after its eligible tail extension.
+        Assert.That(extended[9], Is.GreaterThan(1e-5f),
+            "tail extension must keep the old IIR audible beyond its old end");
+        // Shorten while the revised 4+18=22 tail is still active, to
+        // 4+15=19. Frames 17 and 18 retain the existing ringing history;
+        // frame 19 onward must be exactly silent.
+        float[] shortened = await Change(0.015, 12,
+            "shorten still-ringing tail to new deadline");
+        Assert.That(frame, Is.EqualTo(29));
+        Assert.Multiple(() =>
+        {
+            Assert.That(shortened[0], Is.GreaterThan(1e-5f));
+            Assert.That(shortened[1], Is.GreaterThan(1e-5f));
+            Assert.That(shortened.Skip(2), Is.All.EqualTo(0f).Within(1e-7f),
+                "the newly authored exclusive deadline is 19");
+            Assert.That(backend.Render(5),
+                Is.All.EqualTo(0f).Within(1e-7f));
+        });
         Assert.Multiple(() =>
         {
             Assert.That(factory.OlderAudioCount, Is.Zero);
@@ -1859,7 +1874,7 @@ public sealed class FmSynthInspectorTransportPcmTests
             Assert.That(changes, Is.EqualTo(2));
             Assert.That(backend.OpenCount, Is.EqualTo(1));
         });
-        Enter(tail, "0.012");
+        Enter(tail, "0.015");
         await transport.PublishSynthEditAsync(workspace.Document, synth.Id);
         Assert.That(callbacks, Is.EqualTo(2),
             "identical Tail submission must not publish a new generation");
