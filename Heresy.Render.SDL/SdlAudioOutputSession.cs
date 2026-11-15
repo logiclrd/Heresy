@@ -1,5 +1,6 @@
 using System;
 using System.Buffers;
+using System.Diagnostics;
 using System.Threading;
 
 using Heresy.Render.Realtime;
@@ -17,6 +18,12 @@ internal sealed class SdlAudioOutputSession
 	private readonly SdlApi.AudioStreamCallback _callback;
 	private readonly AudioOutputWaveformCapture? _waveformCapture;
 	private readonly AudioOutputWaveformCapture.Session? _captureSession;
+	private readonly AudioDeviceQualificationCsvRecorder? _qualificationRecorder;
+	private long _callbackCount;
+	private long _callbackRequestedFrames;
+	private long _callbackPeakRequestedFrames;
+	private long _callbackPeakTicks;
+	private long _callbackOverNominal;
 
 	private IntPtr _stream;
 	private Exception? _fault;
@@ -61,10 +68,32 @@ internal sealed class SdlAudioOutputSession
 
 		// The SDL callback never calls a sequencer or renderer. A dedicated
 		// worker owns the source and publishes bounded interleaved PCM.
+		// Qualification CSV is strictly opt-in. Enable producer timestamps
+		// only for these manual device runs, never for normal playback.
+		string? csvPath = Environment.GetEnvironmentVariable(
+			AudioDeviceQualificationCsvRecorder.EnvironmentVariable);
+		bool qualify = !string.IsNullOrWhiteSpace(csvPath);
 		_source = source as BufferedAudioOutputSource
-			?? new BufferedAudioOutputSource(source);
+			?? new BufferedAudioOutputSource(source,
+				profileProducerRender: qualify);
 		_waveformCapture = waveformCapture;
 		_captureSession = waveformCapture?.BeginSession(format);
+		if (qualify)
+		{
+			try
+			{
+				_qualificationRecorder = new AudioDeviceQualificationCsvRecorder(
+					csvPath!, _source, ObserveCallbacks, () => Fault);
+			}
+			catch (Exception error) when (error is System.IO.IOException
+				or UnauthorizedAccessException or ArgumentException
+				or NotSupportedException)
+			{
+				Console.Error.WriteLine(
+					$"C5(e) CSV recording could not start: {error.Message}");
+			}
+		}
+
 	}
 
 	public AudioOutputFormat Format { get; }
@@ -137,6 +166,7 @@ internal sealed class SdlAudioOutputSession
 			SdlApi.DestroyAudioStream(stream);
 		if (_captureSession is { } capture)
 			_waveformCapture!.EndSession(capture);
+		_qualificationRecorder?.Dispose();
 		_source.Dispose();
 
 		_onDisposed(this);
@@ -155,6 +185,11 @@ internal sealed class SdlAudioOutputSession
 		if (additionalAmount <= 0)
 			return;
 
+		// A few atomic counters and timestamps are enabled only in the
+		// C5(e) opt-in mode. Never log, allocate, or invoke UI here.
+		bool profile = _qualificationRecorder is not null;
+		long began = profile ? Stopwatch.GetTimestamp() : 0;
+		int requestedFrames = 0;
 		try
 		{
 			int bytesPerFrame =
@@ -167,6 +202,7 @@ internal sealed class SdlAudioOutputSession
 						+ bytesPerFrame
 						- 1)
 					/ bytesPerFrame);
+			requestedFrames = frameCount;
 			int sampleCount =
 				checked(
 					frameCount
@@ -224,6 +260,40 @@ internal sealed class SdlAudioOutputSession
 		catch (Exception ex)
 		{
 			SetFault(ex);
+		}
+		finally
+		{
+			if (profile)
+				RecordCallback(requestedFrames,
+					Stopwatch.GetTimestamp() - began);
+		}
+	}
+
+	private AudioDeviceCallbackObservation ObserveCallbacks() => new(
+		Interlocked.Read(ref _callbackCount),
+		Interlocked.Read(ref _callbackRequestedFrames),
+		Interlocked.Read(ref _callbackPeakRequestedFrames),
+		Interlocked.Read(ref _callbackPeakTicks),
+		Interlocked.Read(ref _callbackOverNominal));
+
+	private void RecordCallback(int frames, long elapsedTicks)
+	{
+		Interlocked.Increment(ref _callbackCount);
+		Interlocked.Add(ref _callbackRequestedFrames, frames);
+		UpdateMaximum(ref _callbackPeakRequestedFrames, frames);
+		UpdateMaximum(ref _callbackPeakTicks, elapsedTicks);
+		if (frames > 0 && (double)elapsedTicks / Stopwatch.Frequency
+			> (double)frames / Format.SampleRate)
+			Interlocked.Increment(ref _callbackOverNominal);
+	}
+
+	private static void UpdateMaximum(ref long target, long measured)
+	{
+		long prior;
+		while ((prior = Interlocked.Read(ref target)) < measured
+			&& Interlocked.CompareExchange(
+				ref target, measured, prior) != prior)
+		{
 		}
 	}
 
