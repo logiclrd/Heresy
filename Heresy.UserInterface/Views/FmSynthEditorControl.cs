@@ -1254,7 +1254,24 @@ public sealed class FmSynthEditorControl : UserControl
 		{
 			try
 			{
-				UpdateParameter(node.Id, current => change((FmMultiNode)current));
+				UpdateParameter(node.Id, current =>
+				{
+					FmMultiNode previous = (FmMultiNode)current;
+					FmMultiNode proposed = change(previous);
+					// Every Multi text commit constructs a fresh immutable node,
+					// even when the semantic content is unchanged. Avoid a
+					// spurious audio revision/live publication (and worker onset).
+					return previous.InputNodeId == proposed.InputNodeId
+						&& previous.Distribution == proposed.Distribution
+						&& previous.Detune == proposed.Detune
+						&& previous.VoiceCount == proposed.VoiceCount
+						&& previous.HarmonicComponents == proposed.HarmonicComponents
+						&& previous.ChordComponents == proposed.ChordComponents
+						&& previous.RandomizePhase == proposed.RandomizePhase
+						&& previous.GainCompensation == proposed.GainCompensation
+						&& previous.CycleLength == proposed.CycleLength
+						? null : proposed;
+				});
 				RefreshFields(cycle);
 			}
 			catch (Exception ex)
