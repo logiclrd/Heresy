@@ -45,6 +45,39 @@ public sealed class FmFilterAuthoringTests
 	}
 
 	[Test]
+	public void BatchPreferenceIsPersistedWithoutAudioRevisionAndRemovedWithFilterNode()
+	{
+		DocumentWorkspace work = new();
+		FmSynthDefinition fm = FmSynthDocumentEditor.CreateFmSynth(work, "Batch");
+		int a = FmSynthDocumentEditor.AddFilterNode(work, fm, 180, 90);
+		int b = FmSynthDocumentEditor.AddFilterNode(work, fm, 390, 90);
+		uint audio = work.Document.AudioRevision;
+		uint document = work.Document.DocumentRevision;
+
+		Assert.That(FmSynthDocumentEditor.SetFilterBatchChanges(work, fm, a, true),
+			Is.True);
+		Assert.That(fm.FilterBatchChangesNodeIds.SetEquals([a]), Is.True);
+		Assert.That(work.Document.DocumentRevision, Is.EqualTo(document + 1));
+		Assert.That(work.Document.AudioRevision, Is.EqualTo(audio));
+		Assert.That(FmSynthDocumentEditor.SetFilterBatchChanges(work, fm, a, true),
+			Is.False, "setting the same editor preference twice is a no-op");
+		Assert.That(work.Document.DocumentRevision, Is.EqualTo(document + 1));
+		Assert.Throws<InvalidOperationException>(() =>
+			FmSynthDocumentEditor.SetFilterBatchChanges(work, fm, 0, true),
+			"non-Filter nodes cannot be assigned this preference");
+
+		FmFilterNode current = fm.Graph.Nodes.OfType<FmFilterNode>()
+			.Single(node => node.Id == a);
+		FmSynthDocumentEditor.UpdateNode(work, fm, current.WithTail(0.4));
+		Assert.That(fm.FilterBatchChangesNodeIds.SetEquals([a]), Is.True,
+			"ordinary graph replacement must preserve node editor settings");
+		Assert.That(fm.FilterBatchChangesNodeIds.Contains(b), Is.False);
+		FmSynthDocumentEditor.RemoveNode(work, fm, a);
+		Assert.That(fm.FilterBatchChangesNodeIds, Is.Empty,
+			"a deleted Filter cannot lend Batch changes to a future reused ID");
+	}
+
+	[Test]
 	public void DynamicModulationPortsFollowStableStageIdsAcrossReorderAndRename()
 	{
 		DocumentWorkspace work = new();
