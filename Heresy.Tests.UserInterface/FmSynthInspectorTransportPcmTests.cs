@@ -1115,6 +1115,261 @@ public sealed class FmSynthInspectorTransportPcmTests
         });
     }
 
+
+    [AvaloniaTest]
+    public async Task AllSevenBiquadFamiliesRetuneTheirDistinctInspectorParametersWithRetainedPcm()
+    {
+        // C2(x): every authored Biquad kind, not one representative:
+        // LP/HP/BP/Notch use Cutoff+Q, Peaking uses Gain+Cutoff+Q,
+        // and Low/HighShelf use Gain+Cutoff+ShelfSlope. Both current and
+        // untouched independently compiled Filter states start with the
+        // original voice; the oracle adopts each revised live definition
+        // onto its retained IIR history. No edit starts a new note.
+        const int rate = 8000;
+        FilterKind[] kinds = [
+            FilterKind.BiquadLowPass,
+            FilterKind.BiquadHighPass,
+            FilterKind.BiquadBandPass,
+            FilterKind.BiquadNotch,
+            FilterKind.BiquadPeaking,
+            FilterKind.BiquadLowShelf,
+            FilterKind.BiquadHighShelf,
+        ];
+        Assert.That(kinds.Distinct().Count(), Is.EqualTo(7));
+        foreach (FilterKind kind in kinds)
+        {
+            bool shelf = kind is FilterKind.BiquadLowShelf
+                or FilterKind.BiquadHighShelf;
+            bool peaking = kind == FilterKind.BiquadPeaking;
+            (string Name, double Value)[] edits = shelf
+                ? [("GainDb", 12), ("CutoffHz", 380),
+                   ("ShelfSlope", 0.4)]
+                : peaking
+                    ? [("GainDb", 12), ("CutoffHz", 380),
+                       ("Q", 2.5)]
+                    : [("CutoffHz", 380), ("Q", 6.5)];
+            Assert.That(edits.Select(x => x.Name),
+                Is.EquivalentTo(FilterCatalogue.GetParameters(kind)
+                    .Select(x => x.Name)), kind + ": all numeric inspector fields");
+
+            DocumentWorkspace workspace = new();
+            FilterDefinition definition = FilterDocumentEditor.CreateFilter(
+                workspace, "C2(x) shared " + kind);
+            FilterStageDefinition original = definition.GetStage(1);
+            FilterStageDefinition configured = new(1, original.Name, kind);
+            configured = configured.WithDefaults([
+                new KeyValuePair<string, FilterParameterValue>(
+                    "CutoffHz", FilterParameterValue.FromNumber(180)),
+            ]);
+            FilterDocumentEditor.ApplyStage(workspace, definition, 1,
+                original, configured.Name, configured.Kind,
+                configured.DefaultParameters);
+            FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
+                workspace, "C2(x) held " + kind);
+            int osc = FmSynthDocumentEditor.AddOscillatorNode(
+                workspace, synth, FmOscillatorWaveform.Sine, 220, 80, 90);
+            int filterId = FmSynthDocumentEditor.AddFilterNode(
+                workspace, synth, 310, 90);
+            FmSynthDocumentEditor.SetFilterConfiguration(
+                workspace, synth, filterId, new FilterInstance(definition));
+            FmSynthDocumentEditor.ConnectNodes(
+                workspace, synth, osc, filterId, 0);
+            FmSynthDocumentEditor.SetOutputNode(workspace, synth, filterId);
+            FmSynthDefinition parent = MakeDependentParent(
+                workspace, synth, "C2(x) dependent " + kind);
+
+            RenderConfiguration config = new(rate, [
+                new OutputChannelConfiguration(Vector3.Zero,
+                    positionalImportance: 0),
+            ]);
+            TrackingFactory factory = new(config, synth.Id);
+            ManualBackend backend = new();
+            using SongPlaybackTransport transport = new(backend, factory);
+            await transport.SendLiveEventAsync(workspace.Document,
+                ChannelTarget.Virtual(231), [new StartNoteCommand(synth.Id)]);
+            PlaybackSnapshotInfo originalSnapshot =
+                transport.CurrentPlaybackSnapshot;
+
+            FmSynthGraph graph = synth.Graph;
+            Resolver referenceResolver = new(synth.Id);
+            Resolver untouchedResolver = new(synth.Id);
+            FmSynthSound Author(FilterInstance use, Resolver resolver)
+                => new(new FmSynthGraph(graph.Nodes.Select(node =>
+                    node.Id == filterId
+                        ? (FmSynthNode)new FmFilterNode(filterId, osc, use)
+                        : node), filterId),
+                    resolver, soundResolver: resolver,
+                    enableLiveMultiExpansion: true);
+            FilterInstance authored = new(definition);
+            FmSynthSound running = Author(authored, referenceResolver);
+            referenceResolver.Sound = running;
+            untouchedResolver.Sound = Author(
+                new FilterInstance(definition), untouchedResolver);
+            PlaybackSession reference = IndependentSession(
+                config, referenceResolver);
+            PlaybackSession untouched = IndependentSession(
+                config, untouchedResolver);
+            StartIndependent(reference, synth.Id);
+            StartIndependent(untouched, synth.Id);
+            int frame = 0;
+            void Compare(int count, string label, bool changedAudibly)
+            {
+                float[] actual = backend.Render(count);
+                float[] expected = new float[count];
+                float[] originalPcm = new float[count];
+                reference.Render(frame, count, expected);
+                untouched.Render(frame, count, originalPcm);
+                double difference = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    Assert.That(float.IsFinite(actual[i]), Is.True,
+                        kind + ": finite PCM at " + (frame + i));
+                    Assert.That(actual[i], Is.EqualTo(expected[i])
+                        .Within(7e-4f),
+                        kind + " " + label + ": original running IIR at "
+                            + (frame + i));
+                    difference = Math.Max(difference,
+                        Math.Abs(actual[i] - originalPcm[i]));
+                }
+                if (changedAudibly)
+                    Assert.That(difference, Is.GreaterThan(0.008),
+                        kind + " " + label
+                            + ": Biquad edit must change audible held PCM");
+                Assert.Multiple(() =>
+                {
+                    Assert.That(factory.OlderAudioCount, Is.Zero,
+                        kind + ": compatible Biquad changes are current");
+                    Assert.That(reference.CountOlderAudioVoices(), Is.Zero);
+                    Assert.That(backend.OpenCount, Is.EqualTo(1));
+                    Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                        Is.EqualTo(originalSnapshot.AudioRevision));
+                });
+                frame += count;
+            }
+            Compare(240, "initial immutable Biquad", false);
+
+            uint audio = workspace.Document.AudioRevision;
+            uint document = workspace.Document.DocumentRevision;
+            int callbacks = 0, changed = 0;
+            List<Task> pending = [];
+            FmSynthEditorControl editor = new(workspace, synth,
+                () => { }, _ => changed++,
+                publishSynthEditAsync: () =>
+                {
+                    callbacks++;
+                    Task task = transport.PublishSynthEditAsync(
+                        workspace.Document, synth.Id);
+                    pending.Add(task);
+                    return task;
+                });
+            FilterInstanceEditorControl instanceEditor = Inspector(editor)
+                .Children.OfType<FilterInstanceEditorControl>().Single();
+            Dictionary<string, CheckBox> overrides =
+                (Dictionary<string, CheckBox>)typeof(FilterInstanceEditorControl)
+                    .GetField("_overrideToggles",
+                        BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .GetValue(instanceEditor)!;
+            Dictionary<string, Control> fields =
+                (Dictionary<string, Control>)typeof(FilterInstanceEditorControl)
+                    .GetField("_editors",
+                        BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .GetValue(instanceEditor)!;
+            void Apply() => typeof(FilterInstanceEditorControl)
+                .GetMethod("ApplyDraft",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(instanceEditor, null);
+            TextBlock message = (TextBlock)typeof(FilterInstanceEditorControl)
+                .GetField("_message",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(instanceEditor)!;
+
+            // Invalid numeric draft must be refused atomically before ANY
+            // detached compilation, even on gain/shelf-specific controls.
+            string first = edits[0].Name;
+            overrides[first].IsChecked = true;
+            ((TextBox)fields[first]).Text = "NaN";
+            Apply();
+            Assert.Multiple(() =>
+            {
+                Assert.That(message.Text, Does.Contain("finite"), kind.ToString());
+                Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio));
+                Assert.That(callbacks, Is.Zero);
+                Assert.That(factory.Preparations, Is.Empty);
+            });
+
+            double currentCutoff = 180;
+            for (int step = 0; step < edits.Length; step++)
+            {
+                (string name, double value) = edits[step];
+                overrides[name].IsChecked = true;
+                ((TextBox)fields[name]).Text =
+                    value.ToString("R", CultureInfo.InvariantCulture);
+                Apply();
+                await Task.WhenAll(pending.ToArray())
+                    .WaitAsync(TimeSpan.FromSeconds(12));
+                int ordinal = step + 1;
+                if (name == "CutoffHz")
+                    currentCutoff = value;
+                FmFilterNode committed = synth.Graph.Nodes
+                    .OfType<FmFilterNode>().Single();
+                Assert.Multiple(() =>
+                {
+                    Assert.That(workspace.Document.AudioRevision,
+                        Is.EqualTo(audio + ordinal), kind + " audio revision");
+                    Assert.That(workspace.Document.DocumentRevision,
+                        Is.EqualTo(document + ordinal), kind + " document revision");
+                    Assert.That(callbacks, Is.EqualTo(ordinal),
+                        kind + " one publication per true edit");
+                    Assert.That(changed, Is.GreaterThanOrEqualTo(ordinal),
+                        kind + " refresh is not a second audio publication");
+                    Assert.That(committed.Configuration!.GetOverrides(1)
+                        [name].NumericValue, Is.EqualTo(value),
+                        kind + " real inspector committed " + name);
+                    Assert.That(factory.Preparations.Count,
+                        Is.EqualTo(ordinal * 2));
+                    Assert.That(factory.Preparations.Skip((ordinal - 1) * 2)
+                        .Select(p => p.Id),
+                        Is.EqualTo(new[] { synth.Id, parent.Id }),
+                        kind + " child-before-parent immutable worker");
+                    Assert.That(factory.Preparations.Skip((ordinal - 1) * 2)
+                        .All(p => p.AudioRevision == audio + ordinal), Is.True);
+                    Assert.That(factory.Preparations[(ordinal - 1) * 2]
+                        .FilterCutoffHz, Is.EqualTo(currentCutoff),
+                        kind + " worker frozen effective CutoffHz");
+                    Assert.That(factory.Preparations[(ordinal - 1) * 2]
+                        .FilterDefinitionId, Is.EqualTo(definition.Id));
+                });
+
+                // Author an entirely independent instance change and
+                // migrate its original voice history with the real
+                // PlaybackSession adoption API. The comparison therefore
+                // detects loss of the 32-frame coefficient ramp as well.
+                authored = authored.Clone();
+                authored.SetStageParameter(1, name,
+                    FilterParameterValue.FromNumber(value));
+                FmSynthSound revised = Author(authored, referenceResolver);
+                reference.AdoptLiveSynthParameters(synth.Id, running, revised);
+                referenceResolver.Sound = revised;
+                running = revised;
+                Compare(960, name + "=" + value, true);
+            }
+            Apply(); // unchanged inspector draft
+            await Task.WhenAll(pending.ToArray())
+                .WaitAsync(TimeSpan.FromSeconds(12));
+            await transport.PublishSynthEditAsync(workspace.Document, synth.Id);
+            Assert.Multiple(() =>
+            {
+                Assert.That(workspace.Document.AudioRevision,
+                    Is.EqualTo(audio + edits.Length));
+                Assert.That(callbacks, Is.EqualTo(edits.Length));
+                Assert.That(factory.Preparations.Count,
+                    Is.EqualTo(edits.Length * 2));
+                Assert.That(factory.OlderAudioCount, Is.Zero);
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+            });
+        }
+    }
+
     [AvaloniaTest]
     public async Task SourceSampleSelectorPublishesFrozenWorkerPreparedReplacementAndHeldPcm()
     {
