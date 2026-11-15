@@ -1282,6 +1282,319 @@ public sealed class FmSynthInspectorTransportPcmTests
         }
     }
 
+
+    [AvaloniaTest]
+    public async Task SourceNoneSampleNoneSameSampleReentryPreservesOneHeldProductionVoice()
+    {
+        // C2(v): an independent Constant anchor keeps one note audible
+        // when its Source node is (None). None->Sample must be prepared on
+        // the detached worker, Sample->None must fade the outgoing original,
+        // and reselecting the SAME Sample after fade-out must start a fresh
+        // worker-prepared Sample, not resurrect its retired readhead.
+        DocumentWorkspace workspace = new();
+        ObjectId sampleId = workspace.Document.AllocateObjectId();
+        SampleDefinition sample = SampleDefinition.CreateImported(
+            sampleId, "C2(v) reenter Sample", "reenter.wav", FourFrameWave(16384));
+        sample.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 4);
+        workspace.Document.Add(sample);
+        FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
+            workspace, "C2(v) None Sample reentry");
+        int anchor = FmSynthDocumentEditor.AddConstantNode(
+            workspace, synth, 0.125, 70, 90);
+        int source = FmSynthDocumentEditor.AddSoundSourceNode(
+            workspace, synth, 180, 170, ObjectId.None,
+            FmMultiNode.NeutralFrequencyHz);
+        int add = FmSynthDocumentEditor.AddOperatorNode(
+            workspace, synth, FmOperatorKind.Add, [anchor, source], 320, 125);
+        FmSynthDocumentEditor.SetOutputNode(workspace, synth, add);
+        FmSynthDefinition parent = MakeDependentParent(
+            workspace, synth, "C2(v) None Sample parent");
+
+        TrackingFactory factory = new(Mono(), synth.Id);
+        ManualBackend backend = new();
+        using SongPlaybackTransport transport = new(backend, factory);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(191), [new StartNoteCommand(synth.Id)]);
+        Assert.That(backend.Render(19),
+            Is.All.EqualTo(0.125f).Within(3e-5f),
+            "the original note must sound via its independent anchor");
+        PlaybackSnapshotInfo baseSnapshot = transport.CurrentPlaybackSnapshot;
+        uint audio = workspace.Document.AudioRevision;
+        uint document = workspace.Document.DocumentRevision;
+        int changed = 0, callbacks = 0;
+        List<Task> pending = [];
+        FmSynthEditorControl editor = new(workspace, synth,
+            () => { }, _ => changed++,
+            publishSynthEditAsync: () =>
+            {
+                callbacks++;
+                Task task = transport.PublishSynthEditAsync(
+                    workspace.Document, synth.Id);
+                pending.Add(task);
+                return task;
+            });
+        typeof(FmSynthEditorControl).GetMethod("SelectNode",
+            BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(editor, [source]);
+        ComboBox selector = Field<ComboBox>(
+            Inspector(editor), "Source (Sample / Instrument / Synth)");
+        object sampleChoice = selector.Items.Cast<object>().Single(choice =>
+            choice.ToString()!.Contains("C2(v) reenter Sample",
+                StringComparison.Ordinal));
+        object noneChoice = selector.Items.Cast<object>().Single(choice =>
+            choice.ToString() == "(None)");
+        IFirPreparationAudioSource preparing =
+            (IFirPreparationAudioSource)backend.Source!;
+        using FirPreparationScheduler scheduler = new();
+
+        async Task Select(object choice, ObjectId selected, int ordinal)
+        {
+            selector.SelectedItem = choice;
+            await Task.WhenAll(pending.ToArray())
+                .WaitAsync(TimeSpan.FromSeconds(8));
+            Assert.Multiple(() =>
+            {
+                Assert.That(synth.Graph.Nodes.OfType<FmSoundSourceNode>()
+                    .Single().SourceId, Is.EqualTo(selected));
+                Assert.That(workspace.Document.AudioRevision,
+                    Is.EqualTo(audio + ordinal));
+                Assert.That(workspace.Document.DocumentRevision,
+                    Is.EqualTo(document + ordinal));
+                Assert.That(changed, Is.EqualTo(ordinal));
+                Assert.That(callbacks, Is.EqualTo(ordinal));
+                Assert.That(factory.Preparations.Count, Is.EqualTo(2 * ordinal));
+                Assert.That(factory.Preparations.Skip(2 * (ordinal - 1))
+                    .Select(x => x.Id),
+                    Is.EqualTo(new[] { synth.Id, parent.Id }));
+                Assert.That(factory.Preparations[2 * (ordinal - 1)]
+                    .SampleSourceId, Is.EqualTo(selected));
+                Assert.That(factory.Preparations.Skip(2 * (ordinal - 1))
+                    .All(x => x.AudioRevision == audio + ordinal), Is.True);
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+                Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                    Is.EqualTo(baseSnapshot.AudioRevision));
+            });
+        }
+
+        async Task BringInSample(int expectedCompleted, int boundary)
+        {
+            preparing.AdoptPreparedFirControls();
+            Assert.That(backend.Render(1)[0],
+                Is.EqualTo(0.125f).Within(3e-5f),
+                "first PCM boundary cannot instantiate an unprepared Sample");
+            preparing.QueuePendingFirControls(scheduler);
+            Assert.That(SpinWait.SpinUntil(() =>
+                scheduler.CompletedMultiExpansionCount >= expectedCompleted,
+                TimeSpan.FromSeconds(8)), Is.True,
+                "a new Sample onset is always prepared off PCM");
+            preparing.AdoptPreparedFirControls();
+            float[] fade = backend.Render(101);
+            CheckSmoothstep(fade, 0.125f, 0.625f, boundary);
+            Assert.Multiple(() =>
+            {
+                Assert.That(factory.OlderAudioCount, Is.Zero);
+                Assert.That(scheduler.Fault, Is.Null);
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+            });
+        }
+
+        await Select(sampleChoice, sampleId, 1);
+        await BringInSample(1, 20);
+        Assert.That(backend.Render(9),
+            Is.All.EqualTo(0.625f).Within(3e-5f));
+
+        await Select(noneChoice, ObjectId.None, 2);
+        preparing.AdoptPreparedFirControls();
+        float[] removed = backend.Render(101);
+        CheckSmoothstep(removed, 0.625f, 0.125f, 130);
+        Assert.That(factory.OlderAudioCount, Is.Zero);
+        Assert.That(backend.Render(7),
+            Is.All.EqualTo(0.125f).Within(3e-5f),
+            "Sample tail completed without retiring its Constant-backed note");
+
+        await Select(sampleChoice, sampleId, 3);
+        await BringInSample(2, 239);
+        Assert.That(backend.Render(7),
+            Is.All.EqualTo(0.625f).Within(3e-5f));
+        selector.SelectedItem = sampleChoice;
+        await transport.PublishSynthEditAsync(workspace.Document, synth.Id);
+        Assert.Multiple(() =>
+        {
+            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 3));
+            Assert.That(callbacks, Is.EqualTo(3));
+            Assert.That(factory.Preparations.Count, Is.EqualTo(6));
+            Assert.That(scheduler.CompletedMultiExpansionCount, Is.EqualTo(2),
+                "old Sample must not be recycled as a new onset");
+            Assert.That(factory.OlderAudioCount, Is.Zero);
+            Assert.That(scheduler.Fault, Is.Null);
+            Assert.That(backend.OpenCount, Is.EqualTo(1));
+        });
+    }
+
+    [AvaloniaTest]
+    public async Task SourceSampleSynthDataAndScriptInstrumentSelectionsRetainOlderGenerations()
+    {
+        // C2(v): cross-family selections must not graft a Sample history
+        // onto Synth, data Instrument or Script Instrument states. Each
+        // new note uses its newly selected family; previously sounding
+        // voices remain unchanged older generations until explicitly Cut.
+        DocumentWorkspace workspace = new();
+        SampleDefinition Imported(string name, short level)
+        {
+            ObjectId id = workspace.Document.AllocateObjectId();
+            SampleDefinition sample = SampleDefinition.CreateImported(
+                id, name, name + ".wav", FourFrameWave(level));
+            sample.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 4);
+            workspace.Document.Add(sample);
+            return sample;
+        }
+        SampleDefinition oldSample = Imported("C2(v) old Sample", 4096);
+        SampleDefinition dataPcm = Imported("C2(v) data tone", 8192);
+        SampleDefinition scriptPcm = Imported("C2(v) script tone", 6144);
+        FmSynthDefinition nested = FmSynthDocumentEditor.CreateFmSynth(
+            workspace, "C2(v) referenced Synth");
+        int constant = FmSynthDocumentEditor.AddConstantNode(
+            workspace, nested, 0.25, 90, 90);
+        FmSynthDocumentEditor.SetOutputNode(workspace, nested, constant);
+        ObjectId dataId = workspace.Document.AllocateObjectId();
+        InstrumentDefinition data = new(dataId, "C2(v) data Instrument");
+        data.ToneSpecifications.Add(new ToneSpecification
+        {
+            SourceId = dataPcm.Id,
+        });
+        data.ToneTable.Add(0);
+        workspace.Document.Add(data);
+        ScriptInstrumentDefinition script =
+            ScriptInstrumentDocumentEditor.Create(
+                workspace, "C2(v) scripted Instrument", "0");
+        ScriptInstrumentDocumentEditor.AddTone(workspace, script, scriptPcm.Id);
+
+        FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
+            workspace, "C2(v) Source cross-family generations");
+        int source = FmSynthDocumentEditor.AddSoundSourceNode(
+            workspace, synth, 120, 90, oldSample.Id,
+            FmMultiNode.NeutralFrequencyHz);
+        FmSynthDocumentEditor.SetOutputNode(workspace, synth, source);
+        FmSynthDefinition parent = MakeDependentParent(
+            workspace, synth, "C2(v) cross-family parent");
+
+        TrackingFactory factory = new(Mono(), synth.Id);
+        ManualBackend backend = new();
+        using SongPlaybackTransport transport = new(backend, factory);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(195), [new StartNoteCommand(synth.Id)]);
+        Assert.That(backend.Render(13),
+            Is.All.EqualTo(0.125f).Within(3e-5f));
+        uint audio = workspace.Document.AudioRevision;
+        uint document = workspace.Document.DocumentRevision;
+        PlaybackSnapshotInfo baseSnapshot = transport.CurrentPlaybackSnapshot;
+        int changed = 0, callbacks = 0;
+        List<Task> pending = [];
+        FmSynthEditorControl editor = new(workspace, synth,
+            () => { }, _ => changed++,
+            publishSynthEditAsync: () =>
+            {
+                callbacks++;
+                Task task = transport.PublishSynthEditAsync(
+                    workspace.Document, synth.Id);
+                pending.Add(task);
+                return task;
+            });
+
+        async Task Select(string name, ObjectId id, int ordinal,
+            float oldMixture)
+        {
+            // Switching to Instrument changes the inspector's available
+            // shared-Volume actions, so always find the CURRENT selector.
+            ComboBox selector = Field<ComboBox>(
+                Inspector(editor), "Source (Sample / Instrument / Synth)");
+            object option = selector.Items.Cast<object>().Single(x =>
+                x.ToString()!.Contains(name, StringComparison.Ordinal));
+            selector.SelectedItem = option;
+            await Task.WhenAll(pending.ToArray())
+                .WaitAsync(TimeSpan.FromSeconds(8));
+            Assert.Multiple(() =>
+            {
+                Assert.That(synth.Graph.Nodes.OfType<FmSoundSourceNode>()
+                    .Single().SourceId, Is.EqualTo(id));
+                Assert.That(workspace.Document.AudioRevision,
+                    Is.EqualTo(audio + ordinal));
+                Assert.That(workspace.Document.DocumentRevision,
+                    Is.EqualTo(document + ordinal));
+                Assert.That(changed, Is.EqualTo(ordinal));
+                Assert.That(callbacks, Is.EqualTo(ordinal));
+                Assert.That(factory.Preparations.Count, Is.EqualTo(ordinal * 2));
+                Assert.That(factory.Preparations.Skip(2 * (ordinal - 1))
+                    .Select(x => x.Id),
+                    Is.EqualTo(new[] { synth.Id, parent.Id }));
+                Assert.That(factory.Preparations.Skip(2 * (ordinal - 1))
+                    .All(x => x.AudioRevision == audio + ordinal), Is.True);
+                Assert.That(factory.Preparations[2 * (ordinal - 1)]
+                    .SampleSourceId, Is.EqualTo(id));
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+                Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                    Is.EqualTo(baseSnapshot.AudioRevision));
+            });
+            Assert.That(backend.Render(9),
+                Is.All.EqualTo(oldMixture).Within(4e-5f),
+                "incompatible Source selection cannot overwrite older PCM");
+            Assert.That(factory.OlderAudioCount, Is.EqualTo(ordinal),
+                "each independently sounding incompatible source remains older");
+        }
+
+        await Select("C2(v) referenced Synth", nested.Id, 1, 0.125f);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(196), [new StartNoteCommand(synth.Id)]);
+        Assert.That(backend.Render(11),
+            Is.All.EqualTo(0.375f).Within(4e-5f),
+            "new Synth-backed note joins the unchanged older Sample");
+
+        await Select("C2(v) data Instrument", dataId, 2, 0.375f);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(197), [new StartNoteCommand(synth.Id)]);
+        Assert.That(backend.Render(11),
+            Is.All.EqualTo(0.625f).Within(4e-5f),
+            "new data Instrument starts without rewriting the older Synth/Sample");
+
+        await Select("C2(v) scripted Instrument", script.Id, 3, 0.625f);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(198), [new StartNoteCommand(synth.Id)]);
+        Assert.That(backend.Render(11),
+            Is.All.EqualTo(0.8125f).Within(4e-5f),
+            "new scripted Instrument uses its compiled finite tone selector");
+        Assert.That(factory.OlderAudioCount, Is.EqualTo(3));
+
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(195), [new NoteCutCommand()]);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(196), [new NoteCutCommand()]);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(197), [new NoteCutCommand()]);
+        float[] retiring = backend.Render(7);
+        Assert.Multiple(() =>
+        {
+            Assert.That(retiring[0],
+                Is.EqualTo(0.8125f).Within(4e-5f),
+                "cuts begin at the last sounding mixed PCM");
+            Assert.That(retiring[^1],
+                Is.EqualTo(0.1875f).Within(4e-5f),
+                "only the new Script Instrument survives de-click");
+            Assert.That(factory.OlderAudioCount, Is.Zero,
+                "each older generation is removed on its own owner cut");
+            Assert.That(backend.OpenCount, Is.EqualTo(1));
+            Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                Is.EqualTo(baseSnapshot.AudioRevision));
+        });
+        await transport.PublishSynthEditAsync(workspace.Document, synth.Id);
+        Assert.Multiple(() =>
+        {
+            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 3));
+            Assert.That(callbacks, Is.EqualTo(3));
+            Assert.That(changed, Is.EqualTo(3));
+            Assert.That(factory.Preparations.Count, Is.EqualTo(6));
+        });
+    }
+
     [AvaloniaTest]
     public async Task OscillatorInspectorShapeAndPitchPublishThroughTransportWithHeldPcmOracle()
     {
