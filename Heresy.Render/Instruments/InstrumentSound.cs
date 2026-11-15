@@ -1,9 +1,12 @@
 using System;
 using System.Buffers;
+using System.Globalization;
+using System.Linq;
 using System.Threading;
 
 using Heresy.Core.Filters;
 using Heresy.Render.Filters;
+using Heresy.Render.FmSynthesis;
 
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
@@ -53,7 +56,7 @@ public sealed class InstrumentSound : ISound
 		ObjectId SourceId, double PitchMultiplier, InstrumentNnaSetting Nna,
 		ObjectId? VolumeEnvelopeId, ObjectId? PitchEnvelopeId,
 		ObjectId? PanningEnvelopeId, ObjectId? FilterEnvelopeId,
-		FilterInstance? ToneFilter);
+		FilterInstance? ToneFilter, string? ToneFilterFingerprint);
 
 	private sealed class FrozenToneMap
 	{
@@ -80,8 +83,35 @@ public sealed class InstrumentSound : ISound
 				_tones[i] = new(tone.SourceId, tone.PitchMultiplier,
 					tone.Nna, tone.VolumeEnvelopeId, tone.PitchEnvelopeId,
 					tone.PanningEnvelopeId, tone.FilterEnvelopeId,
-					tone.FilterConfiguration);
+					tone.FilterConfiguration,
+					CaptureToneFilterFingerprint(tone.FilterConfiguration));
 			}
+		}
+
+		// All Filter identities, stage generations and effective parameter
+		// values are captured on the worker, not compared by object identity
+		// or reserialized on PCM. Identical authored tone Filters can retain
+		// their old streaming history during a Volume-only revision.
+		private static string? CaptureToneFilterFingerprint(FilterInstance? filter)
+		{
+			if (filter is null)
+				return null;
+			return filter.DefinitionId.Value.ToString(CultureInfo.InvariantCulture)
+				+ ":" + string.Join("|", filter.GetStages().Select(stage =>
+					stage.StageId.ToString(CultureInfo.InvariantCulture)
+					+ ":" + filter.GetStageGenerationForPersistence(stage.StageId)
+						.ToString(CultureInfo.InvariantCulture)
+					+ ":" + stage.Kind
+					+ ":" + string.Join(",", stage.Parameters.Parameters.Select(param =>
+					{
+						FilterParameterValue value =
+							stage.Parameters.GetParameter(param.Name);
+						return param.Name + "=" + value.Kind + ":"
+							+ (value.Kind == FilterParameterValueKind.Number
+								? BitConverter.DoubleToInt64Bits(value.NumericValue)
+									.ToString("X16", CultureInfo.InvariantCulture)
+								: value.ChoiceValue);
+					}))));
 		}
 
 		// Capture the table slot once when a child invocation is bound
@@ -118,7 +148,8 @@ public sealed class InstrumentSound : ISound
 				&& left.PitchEnvelopeId == right.PitchEnvelopeId
 				&& left.PanningEnvelopeId == right.PanningEnvelopeId
 				&& left.FilterEnvelopeId == right.FilterEnvelopeId
-				&& ReferenceEquals(left.ToneFilter, right.ToneFilter);
+				&& string.Equals(left.ToneFilterFingerprint,
+					right.ToneFilterFingerprint, StringComparison.Ordinal);
 
 		public bool HasSameToneAtBoundSlotAs(FrozenToneMap next, int boundSlot)
 		{
@@ -166,52 +197,66 @@ public sealed class InstrumentSound : ISound
 
 	private readonly FrozenToneMap? _frozenToneMap;
 
-	// Frozen on the preparation thread, never resolved during PCM. This
-	// intentionally handles only a *direct Sample* with an explicitly bound
-	// node-based Volume envelope and no tone Filter or other envelopes.
-	// More complex Instrument histories need their own migration proof.
-	private sealed record PreparedDirectSampleVolume(
-		SampleSound Sample, NodeEnvelopeCurve Curve);
-	private PreparedDirectSampleVolume?[]? _preparedLiveVolumes;
+	// Frozen on the preparation thread: a continuing bound Instrument
+	// can change only its selected Node Volume curve while preserving
+	// independently prepared terminal Sample/Synth, Pitch/Panning/Filter
+	// curves and tone-Filter histories. No tone re-selection on PCM.
+	private sealed record PreparedBoundToneVolume(
+		ISound Sound, NodeEnvelopeCurve Curve,
+		IEnvelopeCurve? Pitch, IEnvelopeCurve? Panning, IEnvelopeCurve? Filter);
+	private PreparedBoundToneVolume?[]? _preparedLiveVolumes;
 
 	internal void PrepareDirectSampleVolumesForLiveAudition()
 	{
 		if (_frozenToneMap is not { } map
 			|| Volatile.Read(ref _preparedLiveVolumes) is not null)
 			return;
-		PreparedDirectSampleVolume?[] prepared =
-			new PreparedDirectSampleVolume?[map.ToneCount];
+		PreparedBoundToneVolume?[] prepared =
+			new PreparedBoundToneVolume?[map.ToneCount];
 		for (int i = 0; i < prepared.Length; i++)
 		{
 			FrozenTone tone = map.ToneAt(i);
 			if (tone.VolumeEnvelopeId is not ObjectId volumeId
-				|| tone.PitchEnvelopeId.HasValue
-				|| tone.PanningEnvelopeId.HasValue
-				|| tone.FilterEnvelopeId.HasValue
-				|| tone.ToneFilter is not null
-				|| !_envelopeResolver.TryResolve(volumeId, out IEnvelopeCurve? curve)
-				|| curve is not NodeEnvelopeCurve nodeCurve
+				|| !_envelopeResolver.TryResolve(volumeId,
+					out IEnvelopeCurve? envelope)
+				|| envelope is not NodeEnvelopeCurve nodeCurve
 				|| !_soundResolver.TryResolve(tone.SourceId, mixdown: false,
 					out ISound? source)
-				|| source is not SampleSound sample)
+				|| source is not (SampleSound or FmSynthSound))
 				continue;
-			prepared[i] = new(sample, nodeCurve);
+			IEnvelopeCurve? pitch = null, panning = null, filter = null;
+			if (tone.PitchEnvelopeId is ObjectId pitchId
+				&& !_envelopeResolver.TryResolve(pitchId, out pitch))
+				continue;
+			if (tone.PanningEnvelopeId is ObjectId panningId
+				&& !_envelopeResolver.TryResolve(panningId, out panning))
+				continue;
+			if (tone.FilterEnvelopeId is ObjectId filterId
+				&& !_envelopeResolver.TryResolve(filterId, out filter))
+				continue;
+			prepared[i] = new(source, nodeCurve, pitch, panning, filter);
 		}
 		Interlocked.CompareExchange(ref _preparedLiveVolumes, prepared, null);
 	}
 
-	internal bool TryGetPreparedDirectSampleVolume(
-		int? boundSlot, out SampleSound? sample, out NodeEnvelopeCurve? curve)
+	internal bool TryGetPreparedBoundToneVolume(
+		int? boundSlot, out ISound? sound, out NodeEnvelopeCurve? curve,
+		out IEnvelopeCurve? pitch, out IEnvelopeCurve? panning,
+		out IEnvelopeCurve? filter)
 	{
-		sample = null;
+		sound = null;
 		curve = null;
+		pitch = panning = filter = null;
 		if (boundSlot is not int slot
 			|| _frozenToneMap?.ToneIndexAtBoundSlot(slot) is not int index
 			|| Volatile.Read(ref _preparedLiveVolumes) is not { } prepared
 			|| prepared[index] is not { } candidate)
 			return false;
-		sample = candidate.Sample;
+		sound = candidate.Sound;
 		curve = candidate.Curve;
+		pitch = candidate.Pitch;
+		panning = candidate.Panning;
+		filter = candidate.Filter;
 		return true;
 	}
 

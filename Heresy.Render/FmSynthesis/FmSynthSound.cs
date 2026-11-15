@@ -2021,10 +2021,37 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		FmSynthSound next, SoundState state)
 	{
 		FmSynthState live = ValidateState(state);
+		bool canMigrateVolumes = CanAdoptLiveInstrumentVolumes(next, live);
 		for (int i = 0; i < _nodes.Length; i++)
 		{
+			SourceVoice? bound = live.Sources[i];
 			if (_nodes[i].Definition is FmSoundSourceNode
-				&& live.Sources[i] is { Sound: FmSynthSound oldChild } bound)
+				&& _nodes[i].Source is InstrumentSound originalInstrument
+				&& next._nodes[i].Source is InstrumentSound revisedInstrument
+				&& bound?.ActiveVolumeEnvelope is NodeEnvelopeCurve oldVolume)
+			{
+				bool known = originalInstrument.CanShareFrozenBoundToneWith(
+					revisedInstrument, bound.BoundInstrumentToneSlot)
+					&& revisedInstrument.TryGetPreparedBoundToneVolume(
+						bound.BoundInstrumentToneSlot, out ISound? revisedSource,
+						out NodeEnvelopeCurve? newVolume, out _, out _, out _);
+				if (!known || newVolume is null
+					|| (!oldVolume.HasSameFrozenShapeAs(newVolume)
+						&& !canMigrateVolumes))
+					return true;
+				if (bound.Sound is FmSynthSound oldNested)
+				{
+					if (revisedSource is not FmSynthSound revisedNested
+						|| !oldNested.CanPrepareMultiExpansion(
+							revisedNested, bound.Invocation.State)
+						|| oldNested.RetainsIncompatibleNestedSynth(
+							revisedNested, bound.Invocation.State))
+						return true;
+				}
+				continue;
+			}
+			if (_nodes[i].Definition is FmSoundSourceNode
+				&& bound is { Sound: FmSynthSound oldChild })
 			{
 				if (next._nodes[i].Source is not FmSynthSound newChild
 					|| !oldChild.CanPrepareMultiExpansion(
@@ -2289,18 +2316,30 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		replacement.BeginPreparedOnsetFade(outgoing, frame);
 	}
 
-	/// <summary>Preflight one continuing Instrument-backed Source using only
-	/// immutable, off-PCM prepared selected-tone and terminal Sample data.
-	/// A compound graph can contain several independent Instrument voices;
-	/// none of their Volume curves may be changed until all participants
-	/// pass the same selected-tone, PCM, envelope and release proof.
-	/// Unrecognized or filtered tone histories stay on the old curves.</summary>
+	/// <summary>Immutable, allocation-free exact-shape proof for companion
+	/// tone control curves. We preserve their original release/phase clocks;
+	/// an independently changed companion cannot sneak into a Volume edit.</summary>
+	private static bool HasSameFrozenToneControl(
+		IEnvelopeCurve? original, IEnvelopeCurve? revised)
+		=> ReferenceEquals(original, revised)
+			|| original is NodeEnvelopeCurve a
+				&& revised is NodeEnvelopeCurve b
+				&& a.HasSameFrozenShapeAs(b);
+
+	/// <summary>Preflight a still-sounding, same-selected data-Instrument
+	/// Source. Its terminal Sample or nested Synth state, tone Filter,
+	/// companion envelope curves and original release clocks all remain
+	/// owned by the existing SourceVoice. Only a separately frozen Node
+	/// Volume curve is crossfaded; the nested Synth can itself commit an
+	/// independently preflighted compatible frozen revision.</summary>
 	private bool TryGetLiveInstrumentVolume(
 		FmSynthSound next, FmSynthState live, int index,
-		out SourceVoice? continuing, out NodeEnvelopeCurve? edited)
+		out SourceVoice? continuing, out NodeEnvelopeCurve? edited,
+		out FmSynthSound? nestedReplacement)
 	{
 		continuing = null;
 		edited = null;
+		nestedReplacement = null;
 		if (!_allowMultiExpansion || !next._allowMultiExpansion
 			|| _nodes[index].Definition is not FmSoundSourceNode oldSource
 			|| next._nodes[index].Definition is not FmSoundSourceNode newSource
@@ -2308,27 +2347,43 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			|| _nodes[index].Source is not InstrumentSound oldInstrument
 			|| next._nodes[index].Source is not InstrumentSound newInstrument
 			|| live.Sources[index] is not { } voice
-			|| voice.Sound is not SampleSound currentSample
-			|| voice.Invocation.State is not SampleSoundState sampleState
 			|| voice.InputFinished
 			|| voice.EndFrame is long end && end <= live.NextFrame
-			|| sampleState.NaturalEndFrameExclusive is long natural
-				&& natural <= live.NextFrame
-			|| voice.Filters is not null
-			|| voice.Invocation.ToneFilters is not null
-			|| voice.FilterEnvelopeState is not null
-			|| voice.Invocation.Configuration.Envelopes.Pitch is not null
-			|| voice.Invocation.Configuration.Envelopes.Panning is not null
-			|| voice.Invocation.Configuration.Envelopes.Filter is not null
 			|| voice.ActiveVolumeEnvelope is not NodeEnvelopeCurve
 			|| !oldInstrument.CanShareFrozenBoundToneWith(
 				newInstrument, voice.BoundInstrumentToneSlot)
-			|| !newInstrument.TryGetPreparedDirectSampleVolume(
-				voice.BoundInstrumentToneSlot, out SampleSound? newSample,
-				out NodeEnvelopeCurve? newCurve)
-			|| newSample is null || newCurve is null
-			|| !currentSample.CanSharePreparedOnsetTimelineWith(newSample)
-			|| currentSample.NewNotePolicy != newSample.NewNotePolicy)
+			|| !newInstrument.TryGetPreparedBoundToneVolume(
+				voice.BoundInstrumentToneSlot, out ISound? revisedSound,
+				out NodeEnvelopeCurve? newCurve, out IEnvelopeCurve? revisedPitch,
+				out IEnvelopeCurve? revisedPan, out IEnvelopeCurve? revisedFilter)
+			|| revisedSound is null || newCurve is null)
+			return false;
+		EnvelopeConfigurationSnapshot original =
+			voice.Invocation.Configuration.Envelopes;
+		if (!HasSameFrozenToneControl(original.Pitch, revisedPitch)
+			|| !HasSameFrozenToneControl(original.Panning, revisedPan)
+			|| !HasSameFrozenToneControl(original.Filter, revisedFilter))
+			return false;
+		if (voice.Sound is SampleSound currentSample
+			&& voice.Invocation.State is SampleSoundState sampleState
+			&& revisedSound is SampleSound revisedSample)
+		{
+			if (sampleState.NaturalEndFrameExclusive is long natural
+					&& natural <= live.NextFrame
+				|| !currentSample.CanSharePreparedOnsetTimelineWith(revisedSample)
+				|| currentSample.NewNotePolicy != revisedSample.NewNotePolicy)
+				return false;
+		}
+		else if (voice.Sound is FmSynthSound originalSynth
+			&& voice.Invocation.State is FmSynthState
+			&& revisedSound is FmSynthSound revisedSynth)
+		{
+			if (!originalSynth.TryPrepareRunningState(
+				revisedSynth, voice.Invocation.State))
+				return false;
+			nestedReplacement = revisedSynth;
+		}
+		else
 			return false;
 		continuing = voice;
 		edited = newCurve;
@@ -2379,7 +2434,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				|| live.Sources[i]?.ActiveVolumeEnvelope is not NodeEnvelopeCurve)
 				continue;
 			if (!TryGetLiveInstrumentVolume(next, live, i,
-				out SourceVoice? continuing, out NodeEnvelopeCurve? edited))
+				out SourceVoice? continuing, out NodeEnvelopeCurve? edited,
+				out _))
 				return false;
 			if (preserveReleaseTimeline
 				&& (continuing!.ActiveVolumeEnvelope is not NodeEnvelopeCurve oldCurve
@@ -2775,7 +2831,15 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					continue;
 				// All participating children passed the preflight above.
 				TryGetLiveInstrumentVolume(next, live, i,
-					out SourceVoice? volumeVoice, out NodeEnvelopeCurve? volumeCurve);
+					out SourceVoice? volumeVoice, out NodeEnvelopeCurve? volumeCurve,
+					out FmSynthSound? revisedNested);
+				if (revisedNested is not null)
+				{
+					FmSynthSound originalNested = (FmSynthSound)volumeVoice!.Sound;
+					originalNested.CommitPreparedRunningState(
+						revisedNested, volumeVoice.Invocation.State);
+					volumeVoice.Sound = revisedNested;
+				}
 				if (!oldCurve.HasSameFrozenShapeAs(volumeCurve!))
 					volumeVoice!.AdoptPreparedNodeVolume(
 						volumeCurve!, live.NextFrame, live.SampleRate);
