@@ -12,6 +12,7 @@ using Avalonia.Headless.NUnit;
 using Avalonia.Interactivity;
 
 using Heresy.Core.Envelopes;
+using Heresy.Core.Filters;
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Instruments;
 using Heresy.Core.Objects;
@@ -328,6 +329,176 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
         }
     }
 
+
+    [AvaloniaTest]
+    public async Task ModelessInstrumentVolumeWithPitchToneFilterOrNestedSynthAdoptsContinuingPcm()
+    {
+        // C2(ae), red-first: these are all real modeless data-Instrument
+        // Volume editor actions in the *same* open Synth view. Neither the
+        // Instrument selection nor any tone's SourceId/wiring is edited.
+        // Existing independent Sample pitch, tone Filter and nested Synth
+        // histories must remain at their original running clocks.
+        foreach (string variant in new[] { "Pitch", "ToneFilter", "NestedSynth" })
+        {
+            DocumentWorkspace workspace = new();
+            ObjectId sampleId = workspace.Document.AllocateObjectId();
+            SampleDefinition sample = SampleDefinition.CreateImported(
+                sampleId, "C2(ae) PCM " + variant, "sample.wav",
+                FourFrameWave(16384));
+            sample.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 4);
+            workspace.Document.Add(sample);
+
+            NodeEnvelopeDefinition volume =
+                EnvelopeDocumentEditor.CreateNodeEnvelope(
+                    workspace, "C2(ae) shared Volume " + variant,
+                    [new EnvelopeNode(TimeSpan.Zero, 1.0)], 0, 0,
+                    EnvelopeSustainLoopMode.Forward);
+            ObjectId? pitchId = null;
+            if (variant == "Pitch")
+                pitchId = EnvelopeDocumentEditor.CreateNodeEnvelope(
+                    workspace, "C2(ae) unchanged pitch",
+                    [new EnvelopeNode(TimeSpan.Zero, 0.3)], 0, 0,
+                    EnvelopeSustainLoopMode.Forward).Id;
+
+            FilterInstance? toneFilter = null;
+            if (variant == "ToneFilter")
+                toneFilter = new FilterInstance(FilterDocumentEditor.CreateFilter(
+                    workspace, "C2(ae) unchanged OnePole"));
+            ObjectId selectedSource = sampleId;
+            if (variant == "NestedSynth")
+            {
+                FmSynthDefinition nested = FmSynthDocumentEditor.CreateFmSynth(
+                    workspace, "C2(ae) nested Synth");
+                int constant = FmSynthDocumentEditor.AddConstantNode(
+                    workspace, nested, 0.5, 60, 70);
+                FmSynthDocumentEditor.SetOutputNode(workspace, nested, constant);
+                selectedSource = nested.Id;
+            }
+
+            ObjectId instrumentId = workspace.Document.AllocateObjectId();
+            InstrumentDefinition instrument = new(instrumentId,
+                "C2(ae) Instrument " + variant);
+            instrument.ToneSpecifications.Add(new ToneSpecification
+            {
+                SourceId = selectedSource,
+                VolumeEnvelopeId = volume.Id,
+                PitchEnvelopeId = pitchId,
+                FilterConfiguration = toneFilter,
+            });
+            instrument.ToneTable.Add(0);
+            workspace.Document.Add(instrument);
+            FmSynthDefinition child = FmSynthDocumentEditor.CreateFmSynth(
+                workspace, "C2(ae) audition " + variant);
+            int sourceId = FmSynthDocumentEditor.AddSoundSourceNode(
+                workspace, child, 80, 90, instrumentId,
+                FmMultiNode.NeutralFrequencyHz);
+            FmSynthDocumentEditor.SetOutputNode(workspace, child, sourceId);
+            FmSynthDefinition parent = ReferencingParent(workspace, child);
+
+            TrackingFactory factory = new(MonoConfiguration(), volume.Id);
+            ManualBackend backend = new();
+            using SongPlaybackTransport transport = new(backend, factory);
+            TrackingFactory referenceFactory = new(MonoConfiguration(), volume.Id);
+            ManualBackend referenceBackend = new();
+            using SongPlaybackTransport reference =
+                new(referenceBackend, referenceFactory);
+            await transport.SendLiveEventAsync(workspace.Document,
+                ChannelTarget.Virtual(191), [new StartNoteCommand(child.Id)]);
+            await reference.SendLiveEventAsync(workspace.Document,
+                ChannelTarget.Virtual(191), [new StartNoteCommand(child.Id)]);
+            float[] before = backend.Render(40);
+            float[] initialReference = referenceBackend.Render(40);
+            Assert.That(before, Is.EqualTo(initialReference).Within(3e-5f),
+                variant + ": original authoring and reference PCM align");
+            Assert.That(before.Max(x => Math.Abs(x)), Is.GreaterThan(0.05f),
+                variant + ": selected tone must really be audible");
+            uint baseRevision = transport.CurrentPlaybackSnapshot.AudioRevision;
+            uint originalAudio = workspace.Document.AudioRevision;
+            int publishes = 0, changed = 0;
+            List<Task> pending = [];
+            List<SharedAudioObjectCommittedEventArgs> notifications = [];
+            workspace.SharedAudioObjectCommitted += (_, e) =>
+            {
+                notifications.Add(e);
+                pending.Add(transport.PublishSharedObjectEditAsync(
+                    e.Document, e.ObjectId));
+            };
+
+            FmSynthEditorControl editor = new(workspace, child, () => { },
+                _ => changed++,
+                publishSynthEditAsync: () =>
+                {
+                    publishes++;
+                    Task t = transport.PublishSynthEditAsync(
+                        workspace.Document, child.Id);
+                    pending.Add(t);
+                    return t;
+                });
+            Window owner = new() { Width = 960, Height = 720, Content = editor };
+            owner.Show();
+            Window? popup = null;
+            try
+            {
+                typeof(FmSynthEditorControl).GetMethod("SelectNode",
+                    BindingFlags.NonPublic | BindingFlags.Instance)!
+                    .Invoke(editor, [sourceId]);
+                Click(Inspector(editor).Children.OfType<Button>()
+                    .Single(x => Equals(x.Content, "Edit shared Volume envelope…")));
+                var opened = Private<Dictionary<ObjectId, Window>>(
+                    editor, "_sharedVolumeEditors");
+                popup = opened[volume.Id];
+                NodeEnvelopeEditorControl volumeEditor = (NodeEnvelopeEditorControl)
+                    ((ScrollViewer)popup.Content!).Content!;
+                Private<TextBox>(volumeEditor, "_nodesInput").Text = "0, 0.25";
+                Click(ApplyButton(volumeEditor));
+                await Task.WhenAll(pending.ToArray())
+                    .WaitAsync(TimeSpan.FromSeconds(8));
+                Assert.Multiple(() =>
+                {
+                    Assert.That(volume.Nodes.Single().Value, Is.EqualTo(0.25));
+                    Assert.That(workspace.Document.AudioRevision,
+                        Is.EqualTo(originalAudio + 1));
+                    Assert.That(publishes, Is.EqualTo(1));
+                    Assert.That(changed, Is.EqualTo(1));
+                    Assert.That(notifications.Count, Is.EqualTo(1));
+                    Assert.That(notifications[0].ObjectId, Is.EqualTo(volume.Id));
+                    Assert.That(factory.Preparations.Select(x => x.SynthId),
+                        Is.EqualTo(new[] { child.Id, parent.Id }));
+                    Assert.That(factory.Preparations.All(x =>
+                        x.AudioRevision == originalAudio + 1
+                            && x.EnvelopeLevel == 0.25), Is.True);
+                    Assert.That(backend.OpenCount, Is.EqualTo(1));
+                });
+
+                float[] actual = backend.Render(101);
+                float[] untouched = referenceBackend.Render(101);
+                for (int frame = 0; frame < actual.Length; frame++)
+                {
+                    double t = frame / 100.0;
+                    double smooth = t * t * (3 - 2 * t);
+                    Assert.That(actual[frame],
+                        Is.EqualTo((float)(untouched[frame] *
+                            (1.0 - 0.75 * smooth))).Within(5e-5f),
+                        variant + ": original pitch/filter/nested state at " + frame);
+                }
+                Assert.Multiple(() =>
+                {
+                    Assert.That(factory.OlderAudioCount, Is.Zero,
+                        variant + ": eligible shared gain must be current");
+                    Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                        Is.EqualTo(baseRevision));
+                    Assert.That(backend.OpenCount, Is.EqualTo(1));
+                });
+                float[] stabilized = backend.Render(31);
+                float[] unchanged = referenceBackend.Render(31);
+                for (int i = 0; i < stabilized.Length; i++)
+                    Assert.That(stabilized[i],
+                        Is.EqualTo(unchanged[i] * 0.25f).Within(5e-5f),
+                        variant + ": settled gain keeps original running tone");
+            }
+            finally { popup?.Close(); owner.Close(); }
+        }
+    }
 
     [AvaloniaTest]
     public async Task EnvelopeChoiceNodeToNodeToScriptAndNonePublishesHeldProductionPcm()
