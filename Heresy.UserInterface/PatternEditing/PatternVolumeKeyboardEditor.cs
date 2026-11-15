@@ -68,23 +68,17 @@ public static class PatternVolumeKeyboardEditor
 		int digit = value - '0';
 		if (!state.PendingTensDigit.HasValue)
 		{
-			if (digit > 6)
-			{
-				state.Reset();
-				return new PatternVolumeInputResult(true, false, true);
-			}
-
+			// Allow all decimal first digits. The preview remains faithful
+			// to what's typed; clamping happens only when the entry commits.
 			state.SetPendingTensDigit(digit);
 			return new PatternVolumeInputResult(true, false, false);
 		}
 
-		int trackerVolume =
+		int enteredVolume =
 			(state.PendingTensDigit.Value * 10) + digit;
 		state.Reset();
 
-		if (trackerVolume > 64)
-			return new PatternVolumeInputResult(true, false, true);
-
+		int trackerVolume = Math.Min(enteredVolume, 64);
 		double volume = trackerVolume / 64.0;
 		bool changed =
 			pattern.Grid[cursor.Row, cursor.Channel]?.Volume != volume;
