@@ -61,7 +61,7 @@ public sealed class FmSynthInspectorTransportPcmTests
         RenderConfiguration configuration = new(Rate, [
             new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
         ]);
-        TrackingFactory factory = new(configuration, synth.Id, parent.Id);
+        TrackingFactory factory = new(configuration, synth.Id);
         ManualBackend backend = new();
         using SongPlaybackTransport transport = new(backend, factory);
 
@@ -231,7 +231,7 @@ public sealed class FmSynthInspectorTransportPcmTests
         double? LowConstant, int WorkerThread);
 
     private sealed class TrackingFactory(RenderConfiguration configuration,
-        ObjectId editedSynthId, ObjectId parentId)
+        ObjectId editedSynthId)
         : IBackgroundPlaybackSourceFactory,
           ILiveSynthSourcePreparationFactory
     {
