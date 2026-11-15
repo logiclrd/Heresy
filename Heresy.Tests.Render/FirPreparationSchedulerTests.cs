@@ -87,6 +87,170 @@ public sealed class FirPreparationSchedulerTests
     }
 
     [Test]
+    public void SaturatedMultiQueueRefusesExcessAdmissionButRecoversWhenDrained()
+    {
+        // Hold the *real* preparation worker off-PCM. Exactly 64 queued
+        // Multi admissions can wait behind its already-dequeued first
+        // request. The next candidate must remain with its caller for a
+        // later producer boundary, not be silently discarded or enqueued
+        // beyond the cap.
+        using FirPreparationScheduler scheduler = new();
+        using ManualResetEventSlim entered = new(false);
+        using ManualResetEventSlim resume = new(false);
+        int visits = 0;
+        scheduler.BeforePrepareWorkItem = () =>
+        {
+            if (Interlocked.Increment(ref visits) != 1) return;
+            entered.Set();
+            if (!resume.Wait(TimeSpan.FromSeconds(10)))
+                throw new TimeoutException("C5(b) queue gate timed out");
+        };
+        CounterWorkItem active = new();
+        CounterWorkItem[] queued =
+            new CounterWorkItem[FirPreparationScheduler.MaximumQueuedMultiExpansions];
+        CounterWorkItem deferred = new();
+        try
+        {
+            Assert.That(scheduler.TryEnqueueMultiExpansion(active), Is.True);
+            Assert.That(entered.Wait(TimeSpan.FromSeconds(5)), Is.True);
+            for (int i = 0; i < queued.Length; i++)
+            {
+                queued[i] = new CounterWorkItem();
+                Assert.That(scheduler.TryEnqueueMultiExpansion(queued[i]),
+                    Is.True, $"admission {i} below cap");
+            }
+            Assert.Multiple(() =>
+            {
+                Assert.That(scheduler.TryEnqueueMultiExpansion(deferred), Is.False,
+                    "the queue cannot grow past its bounded Multi admission cap");
+                Assert.That(scheduler.PeakQueuedWorkItems,
+                    Is.EqualTo(FirPreparationScheduler.MaximumQueuedMultiExpansions));
+                Assert.That(scheduler.CompletedPreparationCount, Is.Zero,
+                    "nothing can be committed while the worker is stopped");
+            });
+        }
+        finally { resume.Set(); }
+
+        Assert.That(SpinWait.SpinUntil(
+            () => scheduler.CompletedPreparationCount == queued.Length + 1,
+            TimeSpan.FromSeconds(10)), Is.True,
+            "the admitted work must drain after the gate opens");
+        Assert.That(scheduler.TryEnqueueMultiExpansion(deferred), Is.True,
+            "a rejected pending request must be retryable after the queue drains");
+        Assert.That(SpinWait.SpinUntil(
+            () => scheduler.CompletedPreparationCount == queued.Length + 2,
+            TimeSpan.FromSeconds(10)), Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(active.Prepared, Is.EqualTo(1));
+            Assert.That(queued, Is.All.Matches<CounterWorkItem>(
+                item => item.Prepared == 1));
+            Assert.That(deferred.Prepared, Is.EqualTo(1));
+            Assert.That(scheduler.PeakQueuedWorkItems,
+                Is.EqualTo(FirPreparationScheduler.MaximumQueuedMultiExpansions));
+            Assert.That(scheduler.Fault, Is.Null);
+        });
+    }
+
+    [Test]
+    public void ManyFirMailboxesCoalesceRapidSupersessionIntoLatestFrozenSnapshots()
+    {
+        // Multiple independent Filter invocations compete for one worker.
+        // Repeated edits to *each* mailbox must not multiply its queued
+        // slots, or make an older prepared kernel visible after adoption.
+        const int invocationCount = 12;
+        const int revisionsPerInvocation = 25;
+        using FirPreparationScheduler scheduler = new();
+        using ManualResetEventSlim entered = new(false);
+        using ManualResetEventSlim resume = new(false);
+        int visits = 0;
+        scheduler.BeforePrepareWorkItem = () =>
+        {
+            if (Interlocked.Increment(ref visits) != 1) return;
+            entered.Set();
+            if (!resume.Wait(TimeSpan.FromSeconds(10)))
+                throw new TimeoutException("C5(b) FIR gate timed out");
+        };
+        FirControlPreparationPolicy[] producers =
+            new FirControlPreparationPolicy[invocationCount];
+        FirPreparationMailbox[] mailboxes =
+            new FirPreparationMailbox[invocationCount];
+        double[] latest = new double[invocationCount];
+        try
+        {
+            for (int i = 0; i < invocationCount; i++)
+            {
+                producers[i] = new FirControlPreparationPolicy(Rate);
+                mailboxes[i] = new FirPreparationMailbox(Chain(), Rate);
+                Assert.That(producers[i].TryOffer([Request(1700 + i)]), Is.True);
+                Assert.That(mailboxes[i].CapturePending(producers[i], scheduler),
+                    Is.True);
+                if (i == 0)
+                    Assert.That(entered.Wait(TimeSpan.FromSeconds(5)), Is.True);
+            }
+            for (int revision = 0; revision < revisionsPerInvocation; revision++)
+                for (int i = 0; i < invocationCount; i++)
+                {
+                    double cutoff = 2500 + i * 40 + revision;
+                    latest[i] = cutoff;
+                    Assert.That(producers[i].TryOffer([Request(cutoff)]), Is.True);
+                    Assert.That(mailboxes[i].CapturePending(
+                        producers[i], scheduler), Is.True);
+                    Assert.That(mailboxes[i].TakeReady(), Is.Null,
+                        "superseded kernels cannot be published before worker runs");
+                }
+            Assert.Multiple(() =>
+            {
+                Assert.That(scheduler.PeakQueuedWorkItems,
+                    Is.LessThanOrEqualTo(invocationCount),
+                    "revisions must share their invocation's one queued slot");
+                Assert.That(scheduler.CompletedPreparationCount, Is.Zero);
+            });
+        }
+        finally { resume.Set(); }
+
+        Assert.That(SpinWait.SpinUntil(
+            () => scheduler.CompletedPreparationCount == invocationCount,
+            TimeSpan.FromSeconds(10)), Is.True);
+        for (int i = 0; i < invocationCount; i++)
+        {
+            PreparedFirControlBatch? batch = mailboxes[i].TakeReady();
+            Assert.That(batch, Is.Not.Null, $"mailbox {i} latest kernel");
+            Assert.That(batch!.Matches([Request(latest[i])]), Is.True,
+                $"mailbox {i} must publish its last immutable revision only");
+            Assert.That(batch.Matches([Request(1700 + i)]), Is.False,
+                "the oldest snapshot cannot reappear after supersession");
+            Assert.That(batch.Matches([Request(latest[i] - 1)]), Is.False);
+            Assert.That(mailboxes[i].TakeReady(), Is.Null);
+        }
+        Assert.Multiple(() =>
+        {
+            Assert.That(scheduler.PeakQueuedWorkItems,
+                Is.LessThanOrEqualTo(invocationCount));
+            Assert.That(scheduler.CompletedPreparationCount,
+                Is.EqualTo(invocationCount));
+            Assert.That(scheduler.Fault, Is.Null);
+        });
+        TestContext.Progress.WriteLine(
+            $"C5(b) FIR worker: {invocationCount} queued invocations, " +
+            $"{revisionsPerInvocation} later edits per invocation, " +
+            $"peak queued={scheduler.PeakQueuedWorkItems}, " +
+            $"prepared latest={scheduler.CompletedPreparationCount}");
+    }
+
+    private sealed class CounterWorkItem : IRealtimePreparationWorkItem
+    {
+        private int _prepared;
+        internal int Prepared => Volatile.Read(ref _prepared);
+        public void Prepare(FirPreparationScheduler scheduler)
+        {
+            Interlocked.Increment(ref _prepared);
+            scheduler.RecordCompleted();
+        }
+        public void MarkFailed(FirPreparationScheduler scheduler) { }
+    }
+
+    [Test]
     public void DisposingHostStopsWorkerAfterActivePreparationWithoutTouchingPcmState()
     {
         FirControlPreparationPolicy producer = new(Rate);
