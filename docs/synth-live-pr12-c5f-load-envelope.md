@@ -1,6 +1,14 @@
 # PR #12 — C5(f) observed realtime load envelope (Linux-first)
 
-**Status (2026-11-15): BASELINE RECORDED / TRIAL METHODOLOGY AUTOMATED; LOAD-ENVELOPE SIGNOFF OPEN.** C5(a–d) have bounded automated acceptance. C5(e)'s first **actual Linux** device test established that an original held note recovered after overload, but did not establish the highest sustainable load. Windows is unavailable to the tester and **not tested**, not failed. C6 listening, C7 authorization, overall C5 and the all-nonstructural Synth TODO remain open. Do not merge PR #12.
+**Status (2026-11-15): FIRST BOUNDED PHYSICAL LOAD ENVELOPE ACCEPTED (27 trials, 1–8 notes); C5 OVERALL STILL OPEN.** C5(a–d) have bounded automated acceptance. C5(e)'s first **actual Linux** device test established that an original held note recovered after overload, but did not establish the highest sustainable load. Windows is unavailable to the tester and **not tested**, not failed. C6 listening, C7 authorization, overall C5 and the all-nonstructural Synth TODO remain open. Do not merge PR #12.
+
+## Completed physical run — no need to repeat known failing combinations
+
+The tester **completed and supplied** the requested real Linux load experiment and extended it methodically: **27 trials** of 12 seconds per labeled interval, from **one note through eight simultaneous latched notes** with progressively increasing odd Multi Voice Counts, stopping each note-count ladder at continuous disruptive underruns. The [full, independently verified data and exact safe-candidate versus failing brackets](synth-live-pr12-c5f-results-2026-11-15.md) are recorded in the repository. **Nineteen** stationary windows had **zero** new underruns, and **eight** were continuous overload. The highest observed zero-underrun counts per note for note-count groups 1–7 were **15, 9, 7, 5, 3, 3, 3**, respectively; for eight notes, even **3 voices/note** overloaded. First disrupted counts were **17, 11, 9, 7, 5, 5, 5, 3** for one to eight notes. The original three-voice recovery testing was accepted separately under C5(e).
+
+**These are ~12-second single-run observations, not recommended general realtime limits.** Particularly, `3x7` was a zero-underrun trial but used **97.2% of its nominal average PCM block budget** and had **8.5% overbudget PCM blocks**; `2x9`, `4x5`, `7x3` and `1x15` are similarly near the budget knee. No additional overload reruns are required to accept this **bounded C5(f) matrix**. Only if validating production headroom for those borderline configurations would repeating on a longer audio session or under varied CPU load be useful; do not mark them universally safe.
+
+The instructions below are **retained for reproducibility or future optimization before/after comparisons**, **not** as a pending request to the tester. Windows hardware is currently inaccessible/not tested. C5's cross-gate reconciliation, C6 full-editor listening, C7 approval, main TODO and PR merge are still OPEN.
 
 ## Scope: one machine, graph, output device, and snapshot of host conditions
 
@@ -89,4 +97,4 @@ For this specific host/backend/graph, classify each tested interval as **realtim
 
 A load that was briefly clean under idle OS conditions is not a guaranteed maximum. No code-level enforcement of a universal voice-count cap is justified by this single machine/graph. A CPU optimization may be considered later, separate from the C5 physical recovery correctness gate, if the user wants to improve the unsupported envelope.
 
-**C5(f) remains OPEN until marked real-device trials and listening outcomes arrive.** The existing C5(e) recovery test should not need repeating. The optional Windows cross-backend pass, C6 listening, C7 final signoff and PR merge remain distinct.
+**C5(f)'s first machine-specific physical matrix is BOUNDED ACCEPTED** based on the marked actual-device trials and the tester's continuous-underrun labels. This is not a long-duration robustness certification, a global voice ceiling or a requirement to change production synthesis. **C5 overall remains open**, as do C6 listening, C7 final signoff and PR merge. The earlier C5(e) same-note recovery test need not be repeated, and Windows hardware is currently unavailable.
