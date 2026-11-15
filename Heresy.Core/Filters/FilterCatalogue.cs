@@ -84,12 +84,12 @@ public static class FilterCatalogue
 			structural: true, integer: true, odd: true);
 	private static readonly FilterParameterDescriptor TransitionWidth =
 		FilterParameterDescriptor.Number("TransitionWidthHz", 200, 1, 5000, "Hz",
-			structural: true);
+			fmPort: false);
 	private static readonly FilterParameterDescriptor FirWindow =
-		FilterParameterDescriptor.Choice("Window", "Hamming",
+		FilterParameterDescriptor.LiveChoice("Window", "Hamming",
 			"Hann", "Hamming", "Blackman");
 	private static readonly FilterParameterDescriptor PhaseResponse =
-		FilterParameterDescriptor.Choice("PhaseResponse", "Linear",
+		FilterParameterDescriptor.LiveChoice("PhaseResponse", "Linear",
 			"Linear", "Minimum", "Maximum");
 
 	private static readonly IReadOnlyList<FilterMenuItem> _menu =

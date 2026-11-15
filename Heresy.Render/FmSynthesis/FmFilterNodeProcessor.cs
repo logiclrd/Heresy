@@ -85,7 +85,7 @@ internal sealed class FmFilterNodeProcessor
 		int StageIndex, int StageId, FilterKind Kind,
 		int CutoffBindingIndex, int LowBindingIndex, int HighBindingIndex,
 		double BaseCutoff, double BaseLow, double BaseHigh,
-		int TapCount, double WidthHz, string PhaseResponse);
+		int TapCount, double WidthHz, string PhaseResponse, string Window);
 
 	public FmFilterNodeProcessor(FmFilterNode node,
 		IReadOnlyDictionary<int, int> indexById, int? preparedSampleRate = null)
@@ -252,7 +252,8 @@ internal sealed class FmFilterNodeProcessor
 					band ? stage.Parameters.GetParameter("HighCutoffHz").NumericValue : 0,
 					(int)stage.Parameters.GetParameter("TapCount").NumericValue,
 					stage.Parameters.GetParameter("TransitionWidthHz").NumericValue,
-					stage.Parameters.GetParameter("PhaseResponse").ChoiceValue!));
+					stage.Parameters.GetParameter("PhaseResponse").ChoiceValue!,
+					stage.Parameters.GetParameter("Window").ChoiceValue!));
 			}
 			else
 				supported = false;
@@ -289,7 +290,8 @@ internal sealed class FmFilterNodeProcessor
 					band ? stage.Parameters.GetParameter("HighCutoffHz").NumericValue : 0,
 					(int)stage.Parameters.GetParameter("TapCount").NumericValue,
 					stage.Parameters.GetParameter("TransitionWidthHz").NumericValue,
-					stage.Parameters.GetParameter("PhaseResponse").ChoiceValue!));
+					stage.Parameters.GetParameter("PhaseResponse").ChoiceValue!,
+					Window: stage.Parameters.GetParameter("Window").ChoiceValue!));
 			}
 			if (targets.Count > 0
 				&& targets.Count <= FirControlPreparationPolicy.MaximumQueuedStages)
@@ -401,6 +403,13 @@ internal sealed class FmFilterNodeProcessor
 				if (oldValue == newValue)
 					continue;
 				if (parameter.IsStructural)
+					return false;
+				// A Linear vs Minimum/Maximum FIR phase change changes
+				// reported latency and is not a same-ring live migration.
+				if (LinearPhaseFirFilterStageFactory.IsStandardFir(a.Kind)
+					&& parameter.Name == "PhaseResponse"
+					&& (oldValue.ChoiceValue == "Linear")
+						!= (newValue.ChoiceValue == "Linear"))
 					return false;
 				// Connected parameters have absolute FM inputs. Editing
 				// their fallback alone must not retune a sounding voice.
@@ -674,7 +683,8 @@ internal sealed class FmFilterNodeProcessor
 				band ? Number("HighCutoffHz") : 0,
 				(int)after.Parameters.GetParameter("TapCount").NumericValue,
 				after.Parameters.GetParameter("TransitionWidthHz").NumericValue,
-				after.Parameters.GetParameter("PhaseResponse").ChoiceValue!);
+				after.Parameters.GetParameter("PhaseResponse").ChoiceValue!,
+				Window: after.Parameters.GetParameter("Window").ChoiceValue!);
 		}
 		live.LiveFirRequestCount = count;
 		return count;
@@ -1046,7 +1056,8 @@ internal sealed class FmFilterNodeProcessor
 						sourceValues, _bindings),
 					ValueOrDefault(stage.HighBindingIndex, stage.BaseHigh,
 						sourceValues, _bindings),
-					stage.TapCount, stage.WidthHz, stage.PhaseResponse);
+					stage.TapCount, stage.WidthHz, stage.PhaseResponse,
+					Window: stage.Window);
 			}
 			firReady = state.FirReady;
 			if (firReady is null || !firReady.AllRealtimePhases

@@ -53,6 +53,7 @@ public sealed class FilterParameterDescriptor
 		double? maximum,
 		string units,
 		bool structural,
+		bool modulatable,
 		bool integer,
 		bool odd,
 		IReadOnlyList<string> choices)
@@ -64,6 +65,7 @@ public sealed class FilterParameterDescriptor
 		Maximum = maximum;
 		Units = units;
 		IsStructural = structural;
+		IsModulatable = modulatable && kind == FilterParameterValueKind.Number && !structural;
 		IsInteger = integer;
 		IsOddOnly = odd;
 		Choices = choices;
@@ -77,7 +79,7 @@ public sealed class FilterParameterDescriptor
 	public double? Maximum { get; }
 	public string Units { get; }
 	public bool IsStructural { get; }
-	public bool IsModulatable => Kind == FilterParameterValueKind.Number && !IsStructural;
+	public bool IsModulatable { get; }
 	public bool IsInteger { get; }
 	public bool IsOddOnly { get; }
 	public IReadOnlyList<string> Choices { get; }
@@ -85,7 +87,7 @@ public sealed class FilterParameterDescriptor
 	public static FilterParameterDescriptor Number(
 		string name, double defaultValue, double minimum, double maximum,
 		string units = "", bool structural = false, bool integer = false,
-		bool odd = false)
+		bool odd = false, bool fmPort = true)
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
 		if (!double.IsFinite(minimum) || !double.IsFinite(maximum)
@@ -96,7 +98,7 @@ public sealed class FilterParameterDescriptor
 		return new FilterParameterDescriptor(name, FilterParameterValueKind.Number,
 			FilterParameterValue.FromNumber(defaultValue), minimum, maximum,
 			units ?? throw new ArgumentNullException(nameof(units)),
-			structural, integer, odd, Array.AsReadOnly<string>([]));
+			structural, fmPort, integer, odd, Array.AsReadOnly<string>([]));
 	}
 
 	/// <summary>
@@ -131,7 +133,7 @@ public sealed class FilterParameterDescriptor
 
 		return new FilterParameterDescriptor(name, FilterParameterValueKind.Choice,
 			FilterParameterValue.FromChoice(defaultValue), null, null, "", structural,
-			false, false, Array.AsReadOnly((string[])choices.Clone()));
+			false, false, false, Array.AsReadOnly((string[])choices.Clone()));
 	}
 
 	/// <summary>

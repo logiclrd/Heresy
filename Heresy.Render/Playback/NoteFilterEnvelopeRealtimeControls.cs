@@ -31,6 +31,7 @@ internal sealed class NoteFilterEnvelopeRealtimeControls
 		public int TapCount;
 		public double TransitionWidth;
 		public string PhaseResponse = "Linear";
+		public string Window = "Hamming";
 		public bool Dirty;
 
 		public int IndexOf(string parameter)
@@ -115,6 +116,8 @@ internal sealed class NoteFilterEnvelopeRealtimeControls
 						stage.Parameters.GetParameter("TransitionWidthHz").NumericValue;
 					entry.PhaseResponse =
 						stage.Parameters.GetParameter("PhaseResponse").ChoiceValue!;
+					entry.Window =
+						stage.Parameters.GetParameter("Window").ChoiceValue!;
 					firCount++;
 				}
 				stages.Add(entry);
@@ -363,7 +366,8 @@ internal sealed class NoteFilterEnvelopeRealtimeControls
 					stage.Ordinal, stage.StageId, stage.Kind,
 					stage.Read("CutoffHz"), stage.Read("LowCutoffHz"),
 					stage.Read("HighCutoffHz"), stage.TapCount,
-					stage.TransitionWidth, stage.PhaseResponse, stage.LayerIndex);
+					stage.TransitionWidth, stage.PhaseResponse, stage.LayerIndex,
+					Window: stage.Window);
 			}
 			ready = _firReady;
 			if (ready is null || !ready.AllRealtimePhases

@@ -73,6 +73,11 @@ public sealed class PreparedFilterStage
 			&& StageId == previous.StageId
 			&& Kind == previous.Kind
 			&& Generation == previous.Generation
+			// Do not migrate a ringing history between fixed-delay Linear
+			// phase and zero-fixed-delay Minimum/Maximum regimes.
+			&& (!LinearPhaseFirFilterStageFactory.IsStandardFir(Kind)
+				|| (Parameters["PhaseResponse"].ChoiceValue == "Linear")
+					== (previous.Parameters["PhaseResponse"].ChoiceValue == "Linear"))
 			&& _structural.Count == previous._structural.Count
 			&& _structural.All(pair => previous._structural.TryGetValue(
 				pair.Key, out FilterParameterValue? value) && value == pair.Value);
