@@ -178,6 +178,14 @@ public sealed class FilterInstanceEditorControlTests
 		Assert.That(lastPreference, Is.False);
 		Assert.That(publishes, Is.EqualTo(1),
 			"changing batch preference alone cannot mutate the song");
+		batch.IsChecked = true;
+		var refreshed = Field<Dictionary<string, Control>>(editor, "_editors");
+		((TextBox)refreshed["LowCutoffHz"]).Text = "2500";
+		batch.IsChecked = false;
+		Assert.That(publishes, Is.EqualTo(2),
+			"exiting Batch changes must commit already-unfocused valid edits");
+		Assert.That(current.GetStageParameters(1)
+			.GetParameter("LowCutoffHz").NumericValue, Is.EqualTo(2500));
 	}
 
 	[AvaloniaTest]
