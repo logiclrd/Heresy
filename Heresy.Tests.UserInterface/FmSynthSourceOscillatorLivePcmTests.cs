@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Numerics;
 using System.Reflection;
@@ -122,8 +123,14 @@ public sealed class FmSynthSourceOscillatorLivePcmTests
                 .Single(n => n.Id == oscillatorId);
             Assert.Multiple(() =>
             {
-                Assert.That(committed, Is.EqualTo(expected),
-                    "all Oscillator fields must commit atomically");
+                Assert.That(committed.Waveform, Is.EqualTo(expected.Waveform));
+                Assert.That(committed.Curvature, Is.EqualTo(expected.Curvature));
+                Assert.That(committed.FrequencyHz, Is.EqualTo(expected.FrequencyHz));
+                Assert.That(committed.Minimum, Is.EqualTo(expected.Minimum));
+                Assert.That(committed.Maximum, Is.EqualTo(expected.Maximum));
+                Assert.That(committed.MultiplierNodeId, Is.EqualTo(expected.MultiplierNodeId));
+                Assert.That(committed.ExponentialMultiplier, Is.EqualTo(expected.ExponentialMultiplier));
+                Assert.That(committed.Constant, Is.EqualTo(expected.Constant));
                 Assert.That(workspace.Document.AudioRevision, Is.EqualTo(revision + 1));
                 Assert.That(publications, Is.EqualTo(operations));
                 Assert.That(changes, Is.EqualTo(operations));
@@ -302,8 +309,11 @@ public sealed class FmSynthSourceOscillatorLivePcmTests
                 .OfType<FmSoundSourceNode>().Single(n => n.Id == sourceNodeId);
             Assert.Multiple(() =>
             {
-                Assert.That(committed, Is.EqualTo(expected),
-                    "actual Source inspector must commit all authored control values");
+                Assert.That(committed.SourceId, Is.EqualTo(expected.SourceId));
+                Assert.That(committed.FrequencyHz, Is.EqualTo(expected.FrequencyHz));
+                Assert.That(committed.MultiplierNodeId, Is.EqualTo(expected.MultiplierNodeId));
+                Assert.That(committed.ExponentialMultiplier, Is.EqualTo(expected.ExponentialMultiplier));
+                Assert.That(committed.Constant, Is.EqualTo(expected.Constant));
                 Assert.That(workspace.Document.AudioRevision, Is.EqualTo(revision + 1));
                 Assert.That(publications, Is.EqualTo(operations));
                 Assert.That(changes, Is.EqualTo(operations));
@@ -355,7 +365,8 @@ public sealed class FmSynthSourceOscillatorLivePcmTests
             frame += Window;
         }
 
-        Change(() => Enter(frequency, "391.99543598174927"),
+        Change(() => Enter(frequency,
+                (neutral * 1.5).ToString("R", CultureInfo.InvariantCulture)),
             new FmSoundSourceNode(sourceNodeId, aId, neutral * 1.5,
                 multiplierNodeId: multiplierId), false, true);
         Change(() => exponential.IsChecked = true,
