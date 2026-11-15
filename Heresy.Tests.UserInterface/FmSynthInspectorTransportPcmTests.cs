@@ -1147,11 +1147,16 @@ public sealed class FmSynthInspectorTransportPcmTests
                 30, authored.VoiceCount, authored.HarmonicComponents,
                 authored.ChordComponents, authored.RandomizePhase,
                 authored.GainCompensation, authored.CycleLength), false);
+        // The production compiler reserves Multi headroom. Growing 2→3
+        // and later 3→4 within that capacity must use those already
+        // prepared slots, not fabricate a requirement for another worker
+        // completion. Phase-policy/cycle changes above still require the
+        // genuine detached onset preparation path.
         await Change("Spread voice growth", () => Enter(count, "3"),
             authored.With(authored.InputNodeId, authored.Distribution,
                 authored.Detune, 3, authored.HarmonicComponents,
                 authored.ChordComponents, authored.RandomizePhase,
-                authored.GainCompensation, authored.CycleLength), true);
+                authored.GainCompensation, authored.CycleLength), false);
         await Change("Gain compensation", () => gain.IsChecked = false,
             authored.With(authored.InputNodeId, authored.Distribution,
                 authored.Detune, authored.VoiceCount, authored.HarmonicComponents,
@@ -1183,7 +1188,7 @@ public sealed class FmSynthInspectorTransportPcmTests
                 authored.GainCompensation, authored.CycleLength), false);
         await Change("Chorus preset",
             () => presets.SelectedItem = "Chorus",
-            authored.WithPreset("Chorus"), true);
+            authored.WithPreset("Chorus"), false);
         Assert.That(presets.SelectedIndex, Is.Zero);
 
         // Submitting unchanged Multi drafts or re-requesting the same
