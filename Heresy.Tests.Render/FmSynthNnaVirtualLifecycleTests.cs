@@ -982,6 +982,129 @@ public sealed class FmSynthNnaVirtualLifecycleTests
             "the fresh newest-generation note and its sibling stay independent");
     }
 
+    [TestCase(true)]
+    [TestCase(false)]
+    public void NoteOffDuringDeferredSilenceTransitionCancelsOnsetAndPreservesRelease(
+        bool startsUnassigned)
+    {
+        ObjectId firstId = (ObjectId)72511U;
+        ObjectId secondId = (ObjectId)72512U;
+        ObjectId siblingId = (ObjectId)72513U;
+        ObjectId envelopeId = (ObjectId)72514U;
+        Registry registry = new();
+        registry.AddEnvelope(envelopeId, new OneHundredSixtyFrameRelease());
+        SampleSound Sample(ObjectId id, float value)
+            => new(new SampleDefinition(id, "C4(l) interrupted release",
+                new ExternalAssetReference("c4-l-release.wav")),
+                new MemorySampleData(Rate, 1,
+                    Enumerable.Repeat(value, 800).ToArray()));
+        registry.Add(firstId, Sample(firstId, 0.4f));
+        registry.Add(secondId, Sample(secondId, 0.8f));
+        registry.Add(siblingId, Sample(siblingId, 0.1f));
+        FilterInstance pole = new(new FilterDefinition(
+            (ObjectId)72515U, "C4(l) release pole"));
+        pole.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(240));
+
+        FmSynthSound Sound(ObjectId id)
+            => new(new FmSynthGraph([
+                new FmSoundSourceNode(1, id, FmMultiNode.NeutralFrequencyHz),
+                new FmSoundSourceNode(2, siblingId, FmMultiNode.NeutralFrequencyHz),
+                new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
+                new FmEnvelopeNode(4, envelopeId),
+                new FmOperatorNode(5, FmOperatorKind.Multiply, [3, 4]),
+                new FmFilterNode(6, 5, pole, tailSeconds: 0.003),
+            ], 6), registry, soundResolver: registry,
+                enableLiveMultiExpansion: true);
+        FmSynthSound initial = Sound(startsUnassigned ? ObjectId.None : firstId);
+        FmSynthSound first = Sound(startsUnassigned ? firstId : ObjectId.None);
+        FmSynthSound latest = Sound(secondId);
+        registry.Add(SourceId, initial);
+
+        PlaybackSession actual = Session(registry, Schedule());
+        PlaybackSession oracle = Session(registry, Schedule());
+        void Both(Action<PlaybackSession> action)
+        {
+            action(actual);
+            action(oracle);
+        }
+        void Compare(int start, int count)
+        {
+            float[] got = new float[count], expected = new float[count];
+            actual.Render(start, count, got);
+            oracle.Render(start, count, expected);
+            for (int i = 0; i < count; i++)
+                Assert.That(got[i], Is.EqualTo(expected[i]).Within(1e-5f),
+                    $"a missed onset must not change release, fading Source or OnePole at {start + i}");
+        }
+
+        Both(s => s.ApplyLiveEvent(ChannelTarget.Physical(0),
+            [new StartNoteCommand(SourceId)]));
+        Compare(0, 10);
+        using FirPreparationScheduler worker = new();
+        Both(s => s.AdoptLiveSynthParameters(SourceId, initial, first));
+        if (startsUnassigned)
+        {
+            Both(s => s.QueuePendingFirControls(worker));
+            Assert.That(SpinWait.SpinUntil(
+                () => worker.CompletedMultiExpansionCount == 2,
+                TimeSpan.FromSeconds(5)), Is.True);
+            Both(s => s.AdoptPreparedFirControls());
+        }
+        Assert.That(actual.GetChannelState(0).CurrentVoice!.Sound,
+            Is.SameAs(first));
+        Compare(10, 10);
+
+        actual.AdoptLiveSynthParameters(SourceId, first, latest);
+        Assert.That(actual.CountOlderAudioVoices(), Is.Zero,
+            "before Off this compatible Source edit is still pending");
+        Compare(20, 10);
+        Both(s => s.ApplyLiveEvent(ChannelTarget.Physical(0),
+            [new NoteOffCommand()]));
+        Assert.Multiple(() =>
+        {
+            Assert.That(actual.CountOlderAudioVoices(), Is.EqualTo(1),
+                "the pending onset becomes definitively ineligible at original Off");
+            Assert.That(actual.GetChannelState(0).CurrentVoice!.SoundState.NoteOffTime,
+                Is.EqualTo(TimeSpan.FromMilliseconds(30)));
+            Assert.That(actual.GetChannelState(0).CurrentVoice!.Sound,
+                Is.SameAs(first), "the original fading Source survives Off");
+        });
+        registry.Replace(SourceId, latest);
+        Both(s => s.ApplyLiveEvent(ChannelTarget.Virtual(99),
+            [new StartNoteCommand(SourceId)]));
+        actual.AdoptPreparedFirControls();
+        actual.QueuePendingFirControls(worker);
+        Assert.That(worker.CompletedMultiExpansionCount,
+            Is.EqualTo(startsUnassigned ? 2 : 0),
+            "Note Off cannot schedule a deferred fresh Sample onset");
+
+        Compare(30, 70);
+        Assert.That(actual.CountOlderAudioVoices(), Is.EqualTo(1));
+        Both(s => s.ApplyLiveEvent(ChannelTarget.Physical(0),
+            [new NoteOffCommand()]));
+        Assert.That(actual.GetChannelState(0).CurrentVoice!.SoundState.NoteOffTime,
+            Is.EqualTo(TimeSpan.FromMilliseconds(30)),
+            "repeated Off never resets either release or Source fade age");
+        Compare(100, 120);
+        actual.AdoptPreparedFirControls();
+        actual.QueuePendingFirControls(worker);
+        Assert.Multiple(() =>
+        {
+            Assert.That(actual.GetChannelState(0).CurrentVoice, Is.Null);
+            Assert.That(actual.CountOlderAudioVoices(), Is.Zero,
+                "older status clears when the releasing note and Filter tail retire");
+            Assert.That(worker.CompletedMultiExpansionCount,
+                Is.EqualTo(startsUnassigned ? 2 : 0));
+            Assert.That(worker.Fault, Is.Null);
+        });
+        float[] newest = new float[5], expectedNewest = new float[5];
+        actual.Render(220, newest.Length, newest);
+        oracle.Render(220, expectedNewest.Length, expectedNewest);
+        Assert.That(newest, Is.EqualTo(expectedNewest).Within(1e-5f),
+            "the independent newest-generation note continues playing");
+    }
+
     [Test]
     public void RepeatedSampleSourceEditsDuringLiveFadeDeferAndAdoptOnlyLatestAfterCompletion()
     {
