@@ -35,6 +35,8 @@ public sealed class FilterInstanceEditorControl : UserControl
 		Margin = new Thickness(12),
 	};
 	private readonly Button _apply = new() { Content = "Apply overrides" };
+	private readonly CheckBox _batchChanges = new() { Content = "Batch changes" };
+	private readonly bool _synthBatchMode;
 	private readonly Button _reload = new() { Content = "Reload configuration" };
 	private readonly TextBlock _message = new() { TextWrapping = TextWrapping.Wrap };
 	private readonly TextBlock _stageLabel = new() { FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap };
@@ -50,15 +52,37 @@ public sealed class FilterInstanceEditorControl : UserControl
 	private bool _loading;
 
 	public FilterInstanceEditorControl(
-		FilterInstanceEditSession session, Action<string> changed)
+		FilterInstanceEditSession session, Action<string> changed,
+		bool synthBatchMode = false, bool initialBatchChanges = false,
+		Action<bool>? batchChangesChanged = null)
 	{
 		_session = session ?? throw new ArgumentNullException(nameof(session));
 		_changed = changed ?? throw new ArgumentNullException(nameof(changed));
+		_synthBatchMode = synthBatchMode;
+		_batchChanges.IsChecked = initialBatchChanges;
+		_batchChanges.PropertyChanged += (_, change) =>
+		{
+			if (change.Property == ToggleButton.IsCheckedProperty)
+				batchChangesChanged?.Invoke(BatchChanges);
+		};
 		_stages.SelectionChanged += (_, _) => OnStageSelected();
 		_apply.Click += (_, _) => ApplyDraft();
 		_reload.Click += (_, _) => Reload();
 		Content = BuildView();
 		RefreshStages();
+	}
+
+	public bool BatchChanges => _batchChanges.IsChecked == true;
+
+	/// <summary>Returns false and retains the original controls if a dirty
+	/// draft cannot be safely committed before its owner navigates away.</summary>
+	public bool TryCommitPendingChanges()
+		=> !HasUnsavedDraft() || TryApplyDraft();
+
+	private void ApplyOnFocusLoss()
+	{
+		if (!_loading && _synthBatchMode && !BatchChanges && HasUnsavedDraft())
+			TryApplyDraft();
 	}
 
 	private Control BuildView()
@@ -138,7 +162,13 @@ public sealed class FilterInstanceEditorControl : UserControl
 			return;
 		if (HasUnsavedDraft())
 		{
-			_message.Text = "Apply or reload the current stage draft before switching.";
+			if (_synthBatchMode && TryApplyDraft())
+			{
+				RefreshStages(requestedId);
+				return;
+			}
+			if (!_synthBatchMode)
+				_message.Text = "Apply or reload the current stage draft before switching.";
 			_loading = true;
 			try
 			{
@@ -264,6 +294,11 @@ public sealed class FilterInstanceEditorControl : UserControl
 					if (change.Property == ToggleButton.IsCheckedProperty)
 						editor.IsEnabled = toggle.IsChecked == true;
 				};
+				if (_synthBatchMode)
+				{
+					toggle.LostFocus += (_, _) => ApplyOnFocusLoss();
+					editor.LostFocus += (_, _) => ApplyOnFocusLoss();
+				}
 				_overrideToggles.Add(descriptor.Name, toggle);
 				_editors.Add(descriptor.Name, editor);
 				_loadedValues.Add(descriptor.Name, Format(value));
@@ -291,6 +326,8 @@ public sealed class FilterInstanceEditorControl : UserControl
 				});
 			}
 			}
+			if (_synthBatchMode)
+				AddFullWidthRow(_batchChanges);
 			AddFullWidthRow(_apply);
 			AddFullWidthRow(_reload);
 			_message.Text = "";
@@ -325,7 +362,9 @@ public sealed class FilterInstanceEditorControl : UserControl
 		return false;
 	}
 
-	private void ApplyDraft()
+	private void ApplyDraft() => TryApplyDraft();
+
+	private bool TryApplyDraft()
 	{
 		try
 		{
@@ -365,8 +404,13 @@ public sealed class FilterInstanceEditorControl : UserControl
 				: "No configuration changes.";
 			if (changed)
 				_changed("Updated configured Filter instance.");
+			return true;
 		}
-		catch (Exception error) { _message.Text = error.Message; }
+		catch (Exception error)
+		{
+			_message.Text = error.Message;
+			return false;
+		}
 	}
 
 	private void Reload()
