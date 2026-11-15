@@ -897,13 +897,23 @@ and compatibility tick timing. See
 
 ### Shared node-envelope workflow and audition validation
 
-The standalone editor and FM graph inspector share the same live node
-Envelope object. Clean numeric drafts reflect changes from a second
-mounted editor automatically. Unsaved numeric input is never silently
-overwritten: if another view updates the Envelope, the stale draft is
-blocked from committing until **Reload shared envelope** is clicked.
-The two editors retain the same graphical editor control and the
-standalone **← Document** navigation.
+The standalone editor, FM graph inspector and modeless shared Volume
+window can reference the same node Envelope object. Every accepted model
+change notifies its mounted editors immediately. **Last accepted commit
+wins:** if two views contain unsaved raw node text, clicking **Set nodes**
+in one replaces the other's pending text with the newly accepted values.
+There is no Reload button or stale-draft refusal. **Set nodes** lives
+directly below the raw node textbox and commits only the node list.
+
+The Sustain indices, Loop mode, Vmin and Vmax are independent controls
+in a four-column label/control Grid (maximum width 800). Their validated
+values commit on losing focus or when leaving/saving the editor; a
+different view's accepted change refreshes all fields. Invalid entries
+do not alter the song; the user can correct them before a guarded
+view/close transition. Vmin/Vmax edits are display-only and do not
+advance the audio revision; sustain, loop and node changes do. The
+editors retain the same graphical control and standalone
+**← Document** navigation.
 
 The automated playback regressions exercise both Forward and PingPong
 sustain, Note Off release and eventual silence for direct FM graph
