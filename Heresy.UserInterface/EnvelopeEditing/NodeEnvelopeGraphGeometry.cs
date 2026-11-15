@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 
 using Heresy.Core.Envelopes;
@@ -386,3 +387,57 @@ public sealed record NodeEnvelopeGraphEdit(
 	int SustainStartIndex,
 	int SustainEndIndex,
 	int SelectedNodeIndex);
+
+
+/// <summary>Precise decimal tick/value formatting shared by Envelope axis
+/// drawing and tests. No scientific notation is used for axis text.</summary>
+public static class NodeEnvelopeGraphScale
+{
+	/// <summary>Use one decimal place for both limits, at least three
+	/// fractional places (0.000/1.000), and enough for three significant
+	/// digits in the smallest nonzero magnitude (0.00450/0.00700).</summary>
+	public static (string Min, string Max) ValueLabels(double vmin, double vmax)
+	{
+		NodeEnvelopeDefinition.ValidateDisplayRange(vmin, vmax);
+		double smallest = double.PositiveInfinity;
+		foreach (double value in new[] { vmin, vmax })
+		{
+			if (value != 0)
+				smallest = Math.Min(smallest, Math.Abs(value));
+		}
+		int places = 3;
+		if (double.IsFinite(smallest))
+		{
+			// Decimal formatting supports at most 99 places. Values too
+			// small to distinguish at a reasonable width remain fixed-point.
+			places = Math.Clamp(
+				2 - (int)Math.Floor(Math.Log10(smallest)), 3, 99);
+		}
+		string format = "F" + places.ToString(CultureInfo.InvariantCulture);
+		return (vmin.ToString(format, CultureInfo.InvariantCulture),
+			vmax.ToString(format, CultureInfo.InvariantCulture));
+	}
+
+	/// <summary>Largest integer power of ten strictly less than the final
+	/// node's time divided by sqrt(10). Preserve the corresponding decimal
+	/// precision in every time-grid label.</summary>
+	public static (double Seconds, int Decimals) TimeStep(TimeSpan lastNodeTime)
+	{
+		double seconds = lastNodeTime.TotalSeconds;
+		if (seconds <= 0)
+			return (0, 0);
+		int exponent = (int)Math.Floor(Math.Log10(seconds / Math.Sqrt(10)));
+		return (Math.Pow(10, exponent), Math.Max(0, -exponent));
+	}
+
+	public static string TimeLabel(double seconds, int decimals)
+		=> seconds.ToString("F" + decimals.ToString(CultureInfo.InvariantCulture),
+			CultureInfo.InvariantCulture);
+
+	/// <summary>Hover values identify the original node's time and value,
+	/// not the pointer's possibly rounded pixel coordinates.</summary>
+	public static string NodeCoordinates(EnvelopeNode node)
+		=> "t=" + node.Time.TotalSeconds.ToString("0.#########",
+			CultureInfo.InvariantCulture)
+			+ "  v=" + node.Value.ToString("0.#########", CultureInfo.InvariantCulture);
+}
