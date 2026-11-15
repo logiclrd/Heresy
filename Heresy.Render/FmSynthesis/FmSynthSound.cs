@@ -3537,15 +3537,15 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		if (voice.FadingOutToSilenceDefinition is not null)
 		{
 			int duration = LiveTransitionFrames(state.SampleRate);
-			long fadeEnd = voice.FadeToSilenceStartFrame > long.MaxValue - duration
+			long silenceFadeEnd = voice.FadeToSilenceStartFrame > long.MaxValue - duration
 				? long.MaxValue : voice.FadeToSilenceStartFrame + duration;
-			if (state.NextFrame >= fadeEnd)
+			if (state.NextFrame >= silenceFadeEnd)
 			{
 				state.Sources[index] = null;
 				state.ChildEndChanged = true;
 				return 0;
 			}
-			return incoming.HasValue ? Math.Min(incoming.Value, fadeEnd) : fadeEnd;
+			return incoming.HasValue ? Math.Min(incoming.Value, silenceFadeEnd) : silenceFadeEnd;
 		}
 		if (voice.FadeFrom is not { } outgoing)
 			return incoming;
