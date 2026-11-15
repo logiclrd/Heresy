@@ -235,7 +235,7 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
                 pending.Add(task);
                 return task;
             });
-        using Window owner = new()
+        Window owner = new()
         {
             Width = 960, Height = 720, Content = editor,
         };
