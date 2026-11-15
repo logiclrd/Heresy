@@ -2167,6 +2167,241 @@ public sealed class FmSynthInspectorTransportPcmTests
         });
     }
 
+
+    [AvaloniaTest]
+    public async Task RemainingEightMultiPresetsPublishThroughTransportWithRetainedProductionPcm()
+    {
+        // C2(t): each named preset is a genuine inspector action, not merely
+        // a renderer-level WithPreset assertion. Exercise all eight omitted
+        // C2(q) names on ONE held note, with independent preset descriptors,
+        // original-voice PCM, complete phase/fade clocks, and the bounded
+        // background worker for both rephasing and retired-child revival.
+        DocumentWorkspace workspace = new();
+        FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
+            workspace, "C2(t) all remaining Multi presets");
+        int oscillator = FmSynthDocumentEditor.AddOscillatorNode(
+            workspace, synth, FmOscillatorWaveform.Sine, 83, 70, 85);
+        int id = FmSynthDocumentEditor.AddMultiNode(
+            workspace, synth, 310, 105);
+        FmSynthDocumentEditor.ConnectNodes(
+            workspace, synth, oscillator, id, 0);
+        FmSynthDocumentEditor.SetOutputNode(workspace, synth, id);
+        // Begin with seven live children, avoiding an unsupported immediate
+        // 2 -> 7 capacity jump. The first preset changes Randomize Phase and
+        // must prepare fresh onsets without constructing state on PCM.
+        FmMultiNode authored = new(id, oscillator,
+            detune: 40, voiceCount: 7, randomizePhase: false,
+            gainCompensation: true);
+        FmSynthDocumentEditor.UpdateNode(workspace, synth, authored);
+        FmSynthDefinition parent = MakeDependentParent(
+            workspace, synth, "C2(t) dependent Synth");
+
+        RenderConfiguration config = Mono();
+        TrackingFactory factory = new(config, synth.Id);
+        ManualBackend backend = new();
+        using SongPlaybackTransport transport = new(backend, factory);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Physical(0), [new StartNoteCommand(synth.Id)]);
+
+        Resolver oracleResolver = new(synth.Id),
+            untouchedResolver = new(synth.Id);
+        FmSynthSound Build(FmMultiNode layout, Resolver resolver)
+            => new(new FmSynthGraph(synth.Graph.Nodes.Select(node =>
+                node.Id == id ? (FmSynthNode)layout : node), id),
+                resolver, soundResolver: resolver,
+                reserveMultiHeadroom: true, enableLiveMultiExpansion: true);
+        FmSynthSound previous = Build(authored, oracleResolver);
+        oracleResolver.Sound = previous;
+        untouchedResolver.Sound = Build(authored, untouchedResolver);
+        PlaybackSession oracle = IndependentSession(config, oracleResolver);
+        PlaybackSession untouched = IndependentSession(config, untouchedResolver);
+        StartIndependent(oracle, synth.Id);
+        StartIndependent(untouched, synth.Id);
+        float[] initial = backend.Render(15), expectedInitial = new float[15];
+        oracle.Render(0, 15, expectedInitial);
+        untouched.Render(0, 15, new float[15]);
+        Assert.That(initial, Is.EqualTo(expectedInitial).Within(5e-5f),
+            "independent and production original seven-voice phases agree");
+
+        PlaybackSnapshotInfo snapshot = transport.CurrentPlaybackSnapshot;
+        uint audio = workspace.Document.AudioRevision;
+        uint document = workspace.Document.DocumentRevision;
+        List<Task> pending = [];
+        int changes = 0, callbacks = 0, frame = 15;
+        FmSynthEditorControl editor = new(workspace, synth,
+            () => { }, _ => changes++,
+            publishSynthEditAsync: () =>
+            {
+                callbacks++;
+                Task task = transport.PublishSynthEditAsync(
+                    workspace.Document, synth.Id);
+                pending.Add(task);
+                return task;
+            });
+        ComboBox presets = Field<ComboBox>(Inspector(editor), "Presets");
+        Assert.That(presets.SelectedIndex, Is.Zero);
+        IFirPreparationAudioSource preparing =
+            (IFirPreparationAudioSource)backend.Source!;
+        using FirPreparationScheduler scheduler = new();
+
+        // Explicit, independent preset specifications. Null means a field
+        // not authored by that preset must retain its prior value.
+        // The named distribution's actual harmonic/chord ratios are
+        // separately asserted, so copying WithPreset would be vacuous.
+        (string Name, FmMultiDistribution Distribution,
+            double? Detune, int? Voices, string? Harmonics, string? Chord,
+            bool Gain, bool RequiresWorker, double[] Ratios)[] cases =
+        [
+            ("Super saw/super square", FmMultiDistribution.Spread,
+                12, 7, null, null, true, true,
+                Enumerable.Range(0, 7).Select(j =>
+                    Math.Pow(2, (12.0 * (j / 6.0 - 0.5)) / 1200)).ToArray()),
+            ("Power Chord", FmMultiDistribution.Harmonic,
+                null, null, "1 3/2 2", null, false, false,
+                [1, 1.5, 2]),
+            ("Major Third", FmMultiDistribution.Chord,
+                null, null, null, "0 4", false, false,
+                [1, Math.Pow(2, 4.0 / 12)]),
+            ("Major Sixth", FmMultiDistribution.Chord,
+                null, null, null, "0 9", false, false,
+                [1, Math.Pow(2, 9.0 / 12)]),
+            ("Major Triad", FmMultiDistribution.Chord,
+                null, null, null, "0 4 7", false, true,
+                [1, Math.Pow(2, 4.0 / 12), Math.Pow(2, 7.0 / 12)]),
+            ("Minor Third", FmMultiDistribution.Chord,
+                null, null, null, "0 3", false, false,
+                [1, Math.Pow(2, 3.0 / 12)]),
+            ("Minor Sixth", FmMultiDistribution.Chord,
+                null, null, null, "0 8", false, false,
+                [1, Math.Pow(2, 8.0 / 12)]),
+            ("Minor Triad", FmMultiDistribution.Chord,
+                null, null, null, "0 3 7", false, true,
+                [1, Math.Pow(2, 3.0 / 12), Math.Pow(2, 7.0 / 12)]),
+        ];
+        Assert.That(cases.Select(x => x.Name),
+            Is.EquivalentTo(FmMultiNode.Presets.Except(
+                new[] { "Unison", "Chorus" })));
+
+        for (int step = 0; step < cases.Length; step++)
+        {
+            var preset = cases[step];
+            // Build the expected descriptor independently of WithPreset:
+            // verify UI mutations as well as actual compiled FM ratios.
+            FmMultiNode next = new(id, oscillator, preset.Distribution,
+                preset.Detune ?? authored.Detune,
+                preset.Voices ?? authored.VoiceCount,
+                preset.Harmonics ?? authored.HarmonicComponents,
+                preset.Chord ?? authored.ChordComponents,
+                randomizePhase: true, gainCompensation: preset.Gain,
+                cycleLength: authored.CycleLength);
+
+            presets.SelectedItem = preset.Name;
+            await Task.WhenAll(pending.ToArray())
+                .WaitAsync(TimeSpan.FromSeconds(8));
+            Assert.Multiple(() =>
+            {
+                Assert.That(presets.SelectedIndex, Is.Zero,
+                    preset.Name + ": preset is a one-shot UI action");
+                Assert.That(SameMulti(synth.Graph.Nodes.OfType<FmMultiNode>()
+                    .Single(), next), Is.True,
+                    preset.Name + ": actual inspector applies expected fields");
+                Assert.That(workspace.Document.AudioRevision,
+                    Is.EqualTo(audio + step + 1));
+                Assert.That(workspace.Document.DocumentRevision,
+                    Is.EqualTo(document + step + 1));
+                Assert.That(changes, Is.EqualTo(step + 1));
+                Assert.That(callbacks, Is.EqualTo(step + 1));
+                Assert.That(factory.Preparations.Count,
+                    Is.EqualTo((step + 1) * 2));
+                Assert.That(factory.Preparations.Skip(step * 2)
+                    .Select(x => x.Id),
+                    Is.EqualTo(new[] { synth.Id, parent.Id }),
+                    preset.Name + ": worker child before dependent parent");
+                Assert.That(factory.Preparations.Skip(step * 2)
+                    .All(x => x.AudioRevision == audio + step + 1), Is.True);
+                Assert.That(SameMulti(factory.Preparations[step * 2].Multi,
+                    next), Is.True, preset.Name + ": frozen worker descriptor");
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+            });
+            double[] actualRatios = next.GetFrequencyRatios();
+            Assert.That(actualRatios.Length, Is.EqualTo(preset.Ratios.Length));
+            for (int j = 0; j < actualRatios.Length; j++)
+                Assert.That(actualRatios[j],
+                    Is.EqualTo(preset.Ratios[j]).Within(1e-12),
+                    preset.Name + ": exact frequency-ratio component " + j);
+
+            FmSynthSound revised = Build(next, oracleResolver);
+            oracle.AdoptLiveSynthParameters(synth.Id, previous, revised);
+            oracleResolver.Sound = revised;
+            previous = revised;
+            authored = next;
+
+            // The first boundary applies transport's immutable publication.
+            // For randomized rephase or fully retired child revival, BOTH
+            // continuing sessions receive their own off-PCM prepared onsets.
+            preparing.AdoptPreparedFirControls();
+            oracle.AdoptPreparedFirControls();
+            float[] boundary = backend.Render(1), expectedBoundary = new float[1];
+            oracle.Render(frame, 1, expectedBoundary);
+            Assert.That(boundary[0],
+                Is.EqualTo(expectedBoundary[0]).Within(7e-5f),
+                preset.Name + ": first held production frame");
+            long before = scheduler.CompletedMultiExpansionCount;
+            preparing.QueuePendingFirControls(scheduler);
+            oracle.QueuePendingFirControls(scheduler);
+            if (preset.RequiresWorker)
+                Assert.That(SpinWait.SpinUntil(() =>
+                    scheduler.CompletedMultiExpansionCount >= before + 2,
+                    TimeSpan.FromSeconds(8)), Is.True,
+                    preset.Name + ": must worker-prepare both fresh child onsets");
+            Assert.That(scheduler.Fault, Is.Null);
+            preparing.AdoptPreparedFirControls();
+            oracle.AdoptPreparedFirControls();
+
+            float[] actual = backend.Render(140), expected = new float[140];
+            float[] original = new float[141];
+            oracle.Render(frame + 1, 140, expected);
+            untouched.Render(frame, 141, original);
+            for (int i = 0; i < 140; i++)
+            {
+                Assert.That(float.IsFinite(actual[i]), Is.True,
+                    preset.Name + ": finite production PCM");
+                Assert.That(actual[i], Is.EqualTo(expected[i]).Within(9e-5f),
+                    preset.Name + ": original held note PCM at " + (frame + i + 1));
+            }
+            Assert.That(actual.Zip(original.Skip(1),
+                    (x, y) => Math.Abs(x - y)).Max(),
+                Is.GreaterThan(0.025),
+                preset.Name + ": preset must change actual audible output");
+            Assert.Multiple(() =>
+            {
+                Assert.That(factory.OlderAudioCount, Is.Zero,
+                    preset.Name + ": current compatible voice");
+                Assert.That(oracle.CountOlderAudioVoices(), Is.Zero);
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+                Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                    Is.EqualTo(snapshot.AudioRevision));
+                Assert.That(scheduler.Fault, Is.Null);
+            });
+            frame += 141;
+        }
+
+        // Only duplicate semantic *publication*, not a deliberate second
+        // preset click, is a no-op. The latter is an unconditional action.
+        await transport.PublishSynthEditAsync(workspace.Document, synth.Id);
+        Assert.Multiple(() =>
+        {
+            Assert.That(callbacks, Is.EqualTo(cases.Length));
+            Assert.That(workspace.Document.AudioRevision,
+                Is.EqualTo(audio + cases.Length));
+            Assert.That(factory.Preparations.Count,
+                Is.EqualTo(cases.Length * 2));
+            Assert.That(factory.OlderAudioCount, Is.Zero);
+            Assert.That(backend.OpenCount, Is.EqualTo(1));
+            Assert.That(scheduler.Fault, Is.Null);
+        });
+    }
+
     private static bool SameMulti(FmMultiNode? actual, FmMultiNode expected)
         => actual is not null
             && actual.Id == expected.Id
