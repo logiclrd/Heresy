@@ -919,12 +919,11 @@ public sealed class FmSynthInspectorTransportPcmTests
 
 
     [AvaloniaTest]
-    public async Task LegacyRcCutoffRetunesRunningHistoryButModeRetainsOldGeneration()
+    public async Task LegacyRcCutoffAndModeAdoptTheOriginalHistoricalRecurrence()
     {
-        // C2(ab): legacy RC cutoff retunes the original _low history without
-        // changing the historical recurrence. Its Mode remains a structural
-        // change: old notes keep the already-adopted cutoff/LowPass state,
-        // and fresh notes receive the revised HighPass selection.
+        // C2(ab): both the cutoff coefficient and LowPass/HighPass output tap
+        // change on the original _low history. No TPT replacement, new
+        // invocation, PCM history reset or older-generation warning.
         const int rate = 8000;
         DocumentWorkspace workspace = new();
         FilterDefinition definition = FilterDocumentEditor.CreateFilter(
@@ -939,7 +938,7 @@ public sealed class FmSynthInspectorTransportPcmTests
         FilterDocumentEditor.ApplyStage(workspace, definition, 1,
             before, stage.Name, stage.Kind, stage.DefaultParameters);
         FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
-            workspace, "C2(w) legacy RC immutable older state");
+            workspace, "C2(ab) legacy RC compatible original state");
         int osc = FmSynthDocumentEditor.AddOscillatorNode(
             workspace, synth, FmOscillatorWaveform.Sine, 220, 80, 95);
         int filterId = FmSynthDocumentEditor.AddFilterNode(
@@ -950,7 +949,7 @@ public sealed class FmSynthInspectorTransportPcmTests
             workspace, synth, osc, filterId, 0);
         FmSynthDocumentEditor.SetOutputNode(workspace, synth, filterId);
         FmSynthDefinition parent = MakeDependentParent(
-            workspace, synth, "C2(w) RC dependent parent");
+            workspace, synth, "C2(ab) RC dependent parent");
         FmSynthGraph initialGraph = synth.Graph;
 
         RenderConfiguration config = new(rate, [
@@ -992,7 +991,7 @@ public sealed class FmSynthInspectorTransportPcmTests
             if (audibleRetune)
                 Assert.That(actual.Zip(unedited, (a, b) => Math.Abs(a - b)).Max(),
                     Is.GreaterThan(0.005),
-                    "legacy cutoff change must affect audible original-note PCM");
+                    "legacy cutoff or tap change must affect audible original-note PCM");
             Assert.That(factory.OlderAudioCount,
                 Is.EqualTo(olderExpected ? 1 : 0), label);
             Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
@@ -1086,11 +1085,15 @@ public sealed class FmSynthInspectorTransportPcmTests
                 .Configuration!.GetStageParameters(1)
                 .GetParameter("Mode").ChoiceValue, Is.EqualTo("HighPass"));
         });
-        CompareOlder(200, "legacy mode refuses while retaining 380-Hz LP", true);
+        FmSynthSound modeRevision = Author(revisedUse, olderResolver);
+        older.AdoptLiveSynthParameters(synth.Id, running, modeRevision);
+        olderResolver.Sound = modeRevision;
+        running = modeRevision;
+        CompareOlder(200, "legacy Mode switches output tap on original _low", false, true);
 
         // Independently authored fresh voice demonstrates that the new
-        // *both-property* definition is effective even while the old note
-        // remains frozen on the last compatible 380-Hz LowPass state.
+        // *both-property* definition is effective while the migrated original
+        // continues on its own source age, sample clock and RC history.
         Resolver freshResolver = new(synth.Id);
         freshResolver.Sound = Author(revisedUse, freshResolver);
         PlaybackSession fresh = IndependentSession(config, freshResolver);
@@ -1106,18 +1109,18 @@ public sealed class FmSynthInspectorTransportPcmTests
         {
             Assert.That(mixed[i], Is.EqualTo(oldOnly[i] + newOnly[i])
                 .Within(7e-4f),
-                "new RC HighPass joins retained 380-Hz LowPass at " + (frame + i));
+                "new RC HighPass joins migrated original HighPass at " + (frame + i));
             audibleNew = Math.Max(audibleNew, Math.Abs(newOnly[i]));
         }
         Assert.That(audibleNew, Is.GreaterThan(0.05));
-        Assert.That(factory.OlderAudioCount, Is.EqualTo(1));
+        Assert.That(factory.OlderAudioCount, Is.Zero);
         await transport.SendLiveEventAsync(workspace.Document,
             ChannelTarget.Virtual(217), [new NoteCutCommand()]);
         backend.Render(7);
         Assert.Multiple(() =>
         {
             Assert.That(factory.OlderAudioCount, Is.Zero,
-                "legacy older status clears only when the old owner retires");
+                "compatible legacy RC edits never acquire older status");
             Assert.That(backend.OpenCount, Is.EqualTo(1));
             Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
                 Is.EqualTo(baseSnapshot.AudioRevision));

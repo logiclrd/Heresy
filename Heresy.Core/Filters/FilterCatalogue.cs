@@ -65,7 +65,7 @@ public static class FilterCatalogue
 	private static readonly FilterParameterDescriptor OnePoleMode =
 		FilterParameterDescriptor.LiveChoice("Mode", "LowPass", "LowPass", "HighPass");
 	private static readonly FilterParameterDescriptor LegacySpeakerMode =
-		FilterParameterDescriptor.Choice("Mode", "LowPass", "LowPass", "HighPass");
+		FilterParameterDescriptor.LiveChoice("Mode", "LowPass", "LowPass", "HighPass");
 	private static readonly FilterParameterDescriptor Delay =
 		FilterParameterDescriptor.Number("DelaySeconds", 0.02, 0.001, 2, "s",
 			structural: true);

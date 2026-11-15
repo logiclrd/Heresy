@@ -328,7 +328,8 @@ public sealed class StreamingFilterChain
 				return false;
 			if (update.HighPass is bool highPass)
 			{
-				if (_stages[update.StageIndex].Stage.Kind != FilterKind.OnePole)
+				if (_stages[update.StageIndex].Stage.Kind is not
+					(FilterKind.OnePole or FilterKind.SpeakerLegacyRc))
 					return false;
 				tptScratch[i] = tptScratch[i] with { HighPass = highPass };
 			}

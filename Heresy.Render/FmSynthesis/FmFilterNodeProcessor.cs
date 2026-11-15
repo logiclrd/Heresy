@@ -553,7 +553,7 @@ internal sealed class FmFilterNodeProcessor
 					Number("CutoffHz"),
 					kind is FilterKind.OnePole or FilterKind.SpeakerLegacyRc
 						? 1 : Number("Q"),
-					kind == FilterKind.OnePole
+					kind is FilterKind.OnePole or FilterKind.SpeakerLegacyRc
 						? b.Parameters.GetParameter("Mode").ChoiceValue == "HighPass"
 						: null);
 			}

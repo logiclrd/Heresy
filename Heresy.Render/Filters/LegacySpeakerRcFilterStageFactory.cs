@@ -48,6 +48,7 @@ public sealed class LegacySpeakerRcFilterStageFactory : IStreamingFilterStageFac
     {
         private Plan _plan = plan;
         private double _alpha = plan.Alpha;
+        private bool _highPass = plan.HighPass;
         private double _low = low;
 
         public float Process(float sample)
@@ -57,13 +58,14 @@ public sealed class LegacySpeakerRcFilterStageFactory : IStreamingFilterStageFac
             if (input == 0 && Math.Abs(low) <= 1e-7)
                 low = 0;
             _low = low;
-            return (float)(_plan.HighPass ? input - low : low);
+            return (float)(_highPass ? input - low : low);
         }
 
         public IStreamingFilterStageState Clone()
         {
             State clone = new(_plan, _low);
             clone._alpha = _alpha;
+            clone._highPass = _highPass;
             return clone;
         }
         public void Reconfigure(IStreamingFilterStagePlan plan)
@@ -71,6 +73,7 @@ public sealed class LegacySpeakerRcFilterStageFactory : IStreamingFilterStageFac
             _plan = plan as Plan ??
                 throw new ArgumentException("Incompatible legacy RC Filter plan.");
             _alpha = _plan.Alpha;
+            _highPass = _plan.HighPass;
         }
 
         // Share the allocation-free scalar-coefficient admission stream with
@@ -93,6 +96,8 @@ public sealed class LegacySpeakerRcFilterStageFactory : IStreamingFilterStageFac
         public void CommitRealtime(RealtimeTptCoefficients coefficients)
         {
             _alpha = coefficients.G;
+            if (coefficients.HighPass is bool highPass)
+                _highPass = highPass;
         }
     }
 }
