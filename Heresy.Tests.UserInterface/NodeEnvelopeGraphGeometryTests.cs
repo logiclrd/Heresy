@@ -46,6 +46,83 @@ public sealed class NodeEnvelopeGraphGeometryTests
 		Assert.That(wider.Value(wider.Y(-3)), Is.EqualTo(-3).Within(1e-10));
 	}
 
+	[TestCase(0, 1, "0.000", "1.000")]
+	[TestCase(0.0045, 0.007, "0.00450", "0.00700")]
+	[TestCase(-0.0045, 0.007, "-0.00450", "0.00700")]
+	[TestCase(-2, 6, "-2.000", "6.000")]
+	[TestCase(-0.12, 0.345, "-0.120", "0.345")]
+	public void ValueLabelsShareDecimalPlacesAndNeverUseExponents(
+		double min, double max, string expectedMin, string expectedMax)
+	{
+		(string actualMin, string actualMax) =
+			NodeEnvelopeGraphScale.ValueLabels(min, max);
+		Assert.That(actualMin, Is.EqualTo(expectedMin));
+		Assert.That(actualMax, Is.EqualTo(expectedMax));
+		Assert.That(actualMin + actualMax, Does.Not.Contain("E"));
+	}
+
+	[TestCase(0.29, 0.01, 2, "0.30")]
+	[TestCase(0.32, 0.1, 1, "0.3")]
+	[TestCase(3.1, 0.1, 1, "0.3")]
+	[TestCase(3.2, 1, 0, "3")]
+	[TestCase(0.029, 0.001, 3, "0.030")]
+	public void TimeGridStepUsesLastNodeOverSquareRootTen(
+		double finalSeconds, double expectedStep, int expectedDecimals,
+		string expectedLabel)
+	{
+		(double interval, int decimals) =
+			NodeEnvelopeGraphScale.TimeStep(TimeSpan.FromSeconds(finalSeconds));
+		Assert.That(interval, Is.EqualTo(expectedStep).Within(1e-12));
+		Assert.That(decimals, Is.EqualTo(expectedDecimals));
+		Assert.That(NodeEnvelopeGraphScale.TimeLabel(
+			expectedLabel == "3" ? 3 : 0.3, decimals),
+			Is.EqualTo(expectedLabel));
+	}
+
+	[Test]
+	public void NumericalZeroAxisIsNotTheBottomEdgeAndGreenLimitMayCoincide()
+	{
+		NodeEnvelopeGraphGeometry normal = new(Nodes(), 440, 250, -2, 6,
+			leftPadding: 76, bottomPadding: 54);
+		Assert.That(normal.ZeroAxisY, Is.Not.Null);
+		Assert.That(normal.ZeroAxisY!.Value,
+			Is.EqualTo(normal.Y(0)).Within(1e-10));
+		Assert.That(normal.ZeroAxisY.Value, Is.LessThan(normal.Bottom));
+		Assert.That(normal.Left, Is.EqualTo(76));
+		Assert.That(normal.Bottom, Is.EqualTo(196));
+		NodeEnvelopeGraphGeometry zeroMin =
+			new(Nodes(), 440, 250, 0, 1);
+		Assert.That(zeroMin.ZeroAxisY!.Value,
+			Is.EqualTo(zeroMin.ValueLimitGuideYs.MinY).Within(1e-10));
+		NodeEnvelopeGraphGeometry belowZero =
+			new(Nodes(), 440, 250, 2, 4);
+		Assert.That(belowZero.ZeroAxisY, Is.Null);
+		NodeEnvelopeGraphGeometry aboveZero =
+			new(Nodes(), 440, 250, -4, -1);
+		Assert.That(aboveZero.ZeroAxisY, Is.Null);
+	}
+
+	[Test]
+	public void HoverReportsEveryOverlappingNodeDotButNotOutsideDragRadius()
+	{
+		EnvelopeNode[] near =
+		[
+			new(TimeSpan.Zero, 0.5),
+			new(TimeSpan.FromTicks(1), 0.5),
+			new(TimeSpan.FromTicks(2), 0.50001),
+			new(TimeSpan.FromSeconds(1), 0.8),
+		];
+		NodeEnvelopeGraphGeometry graph = new(near, 440, 250);
+		(double x, double y) = graph.Point(1);
+		Assert.That(graph.HitNodes(x, y), Is.EqualTo(new[] { 0, 1, 2 }));
+		Assert.That(graph.HitNodes(x + NodeEnvelopeGraphGeometry.NodeHitRadius + 1, y),
+			Is.Empty);
+		Assert.That(graph.HitNodes(double.NaN, y), Is.Empty);
+		Assert.That(graph.HitNodes(x, double.PositiveInfinity), Is.Empty);
+		Assert.That(NodeEnvelopeGraphScale.NodeCoordinates(near[2]),
+			Does.Contain("t=0.0000002"));
+	}
+
 	[Test]
 	public void ValueLimitGuidesUseActualVminVmaxRatherThanNodeBaseline()
 	{
