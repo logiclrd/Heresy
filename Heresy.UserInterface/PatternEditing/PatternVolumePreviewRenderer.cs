@@ -17,7 +17,7 @@ public static class PatternVolumePreviewRenderer
 {
     public static string PendingText(int tensDigit, string committedText)
     {
-        if ((uint)tensDigit > 6)
+        if ((uint)tensDigit > 9)
             throw new ArgumentOutOfRangeException(nameof(tensDigit));
 
         char previousUnits = committedText.Length == 2
