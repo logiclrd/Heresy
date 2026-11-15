@@ -1499,6 +1499,212 @@ public sealed class FmSynthInspectorTransportPcmTests
         Assert.That(factory.Preparations.Count, Is.EqualTo(6));
     }
 
+
+    [AvaloniaTest]
+    public async Task MultistageBiquadCombFirInspectorRetunesHeldProductionPcm()
+    {
+        // C2(n): actual per-use stage editor -> frozen child-before-parent
+        // transport -> real continuing output, compared against separately
+        // authored serial Biquad/Comb/FIR state histories. Each new FIR plan
+        // is prepared at publication, outside the producer's PCM callback.
+        const int rate = 8000;
+        DocumentWorkspace workspace = new();
+        FilterDefinition definition = FilterDocumentEditor.CreateFilter(
+            workspace, "C2(n) serial Biquad Comb FIR");
+        FilterStageDefinition one = definition.GetStage(1);
+        FilterDocumentEditor.ApplyStage(workspace, definition, 1, one,
+            one.Name, FilterKind.BiquadPeaking,
+            new FilterStageDefinition(1, one.Name, FilterKind.BiquadPeaking)
+                .DefaultParameters);
+        FilterStageDefinition comb = FilterDocumentEditor.AddStage(
+            workspace, definition, FilterKind.CombFeedforward);
+        FilterStageDefinition fir = FilterDocumentEditor.AddStage(
+            workspace, definition, FilterKind.FirLowPass);
+        Assert.That(definition.Stages.Select(x => x.Kind), Is.EqualTo(new[]
+        {
+            FilterKind.BiquadPeaking, FilterKind.CombFeedforward,
+            FilterKind.FirLowPass,
+        }));
+        FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
+            workspace, "C2(n) serial inspector");
+        int osc = FmSynthDocumentEditor.AddOscillatorNode(
+            workspace, synth, FmOscillatorWaveform.Sine, 231, 75, 85);
+        int id = FmSynthDocumentEditor.AddFilterNode(
+            workspace, synth, 320, 100);
+        FmSynthDocumentEditor.SetFilterConfiguration(
+            workspace, synth, id, new FilterInstance(definition));
+        FmSynthDocumentEditor.ConnectNodes(workspace, synth, osc, id, 0);
+        FmSynthDocumentEditor.SetOutputNode(workspace, synth, id);
+        FmSynthDefinition parent = MakeDependentParent(workspace, synth,
+            "C2(n) dependent Synth");
+
+        RenderConfiguration configuration = new(rate, [
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
+        ]);
+        TrackingFactory factory = new(configuration, synth.Id);
+        ManualBackend backend = new();
+        using SongPlaybackTransport transport = new(backend, factory);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Physical(0), [new StartNoteCommand(synth.Id)]);
+
+        FmSynthGraph initialGraph = synth.Graph;
+        Resolver resolver = new(synth.Id), originalResolver = new(synth.Id);
+        FmSynthSound Author(FilterInstance use, Resolver target)
+        {
+            // A separate immutable plan and separate IIR/FIR histories:
+            // this does not import production's prepared DSP state.
+            PreparedToneFilterStageFactory plans = new(rate);
+            plans.Prewarm(use);
+            plans.Freeze();
+            return new(new FmSynthGraph(initialGraph.Nodes.Select(node =>
+                node.Id == id
+                    ? (FmSynthNode)new FmFilterNode(id, osc, use)
+                    : node), id),
+                target, soundResolver: target,
+                preparedChildFilterFactory: plans,
+                enableLiveMultiExpansion: true);
+        }
+        FilterInstance authored = new(definition);
+        FmSynthSound referenceSound = Author(authored, resolver);
+        resolver.Sound = referenceSound;
+        originalResolver.Sound = Author(new FilterInstance(definition),
+            originalResolver);
+        PlaybackSession reference = IndependentSession(configuration, resolver);
+        PlaybackSession original = IndependentSession(
+            configuration, originalResolver);
+        StartIndependent(reference, synth.Id);
+        StartIndependent(original, synth.Id);
+        int frame = 0;
+        void Compare(int count, string label, bool differs)
+        {
+            float[] observed = backend.Render(count), expected = new float[count];
+            float[] untouched = new float[count];
+            reference.Render(frame, count, expected);
+            original.Render(frame, count, untouched);
+            for (int i = 0; i < count; i++)
+            {
+                Assert.That(float.IsFinite(observed[i]), Is.True,
+                    label + ": finite PCM");
+                Assert.That(observed[i], Is.EqualTo(expected[i]).Within(7e-4f),
+                    label + ": production vs independent serial Filter frame " + (frame + i));
+            }
+            if (differs)
+                Assert.That(observed.Zip(untouched,
+                    (a, b) => Math.Abs(a - b)).Max(), Is.GreaterThan(0.005),
+                    label + ": the committed stage edit must affect PCM");
+            Assert.That(backend.OpenCount, Is.EqualTo(1));
+            frame += count;
+        }
+        Compare(280, "initial serial Filter", false);
+        PlaybackSnapshotInfo baseSnapshot = transport.CurrentPlaybackSnapshot;
+        uint audio = workspace.Document.AudioRevision;
+        uint document = workspace.Document.DocumentRevision;
+        int callbacks = 0, changed = 0, steps = 0;
+        List<Task> pending = [];
+        FmSynthEditorControl editor = new(workspace, synth,
+            () => { }, _ => changed++,
+            publishSynthEditAsync: () =>
+            {
+                callbacks++;
+                Task task = transport.PublishSynthEditAsync(
+                    workspace.Document, synth.Id);
+                pending.Add(task);
+                return task;
+            });
+        FilterInstanceEditorControl embedded = Inspector(editor).Children
+            .OfType<FilterInstanceEditorControl>().Single();
+        ListBox stages = (ListBox)typeof(FilterInstanceEditorControl)
+            .GetField("_stages", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(embedded)!;
+        void Edit(int stageIndex, string parameter, string value)
+        {
+            stages.SelectedIndex = stageIndex;
+            var toggles = (Dictionary<string, CheckBox>)
+                typeof(FilterInstanceEditorControl).GetField(
+                    "_overrideToggles", BindingFlags.NonPublic | BindingFlags.Instance)!
+                    .GetValue(embedded)!;
+            var fields = (Dictionary<string, Control>)
+                typeof(FilterInstanceEditorControl).GetField(
+                    "_editors", BindingFlags.NonPublic | BindingFlags.Instance)!
+                    .GetValue(embedded)!;
+            toggles[parameter].IsChecked = true;
+            ((TextBox)fields[parameter]).Text = value;
+            typeof(FilterInstanceEditorControl).GetMethod("ApplyDraft",
+                BindingFlags.NonPublic | BindingFlags.Instance)!
+                .Invoke(embedded, null);
+        }
+        async Task Change(string label, int stageIndex,
+            string parameter, double nextValue)
+        {
+            Edit(stageIndex, parameter, nextValue.ToString("R",
+                CultureInfo.InvariantCulture));
+            await Task.WhenAll(pending.ToArray())
+                .WaitAsync(TimeSpan.FromSeconds(12));
+            steps++;
+            Assert.Multiple(() =>
+            {
+                Assert.That(workspace.Document.AudioRevision,
+                    Is.EqualTo(audio + steps), label + " audio revision");
+                Assert.That(workspace.Document.DocumentRevision,
+                    Is.EqualTo(document + steps), label + " document revision");
+                Assert.That(callbacks, Is.EqualTo(steps), label + " publication count");
+                Assert.That(changed, Is.GreaterThanOrEqualTo(steps));
+                Assert.That(factory.Preparations.Count, Is.EqualTo(steps * 2));
+                Assert.That(factory.Preparations.Skip((steps - 1) * 2)
+                    .Select(p => p.Id), Is.EqualTo(new[] { synth.Id, parent.Id }),
+                    label + " worker child before parent");
+                Assert.That(factory.Preparations.Skip((steps - 1) * 2)
+                    .All(p => p.AudioRevision == audio + steps), Is.True);
+                Assert.That(factory.Preparations[(steps - 1) * 2]
+                    .FilterDefinitionId, Is.EqualTo(definition.Id));
+                Assert.That(factory.Preparations[(steps - 1) * 2]
+                    .FilterStageCount, Is.EqualTo(3));
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+            });
+            FilterInstance actualUse = synth.Graph.Nodes
+                .OfType<FmFilterNode>().Single().Configuration!;
+            Assert.That(actualUse.GetStageParameters(stageIndex + 1)
+                .GetParameter(parameter).NumericValue,
+                Is.EqualTo(nextValue), label + " committed inspector parameter");
+
+            authored = authored.Clone();
+            authored.SetStageParameter(stageIndex + 1, parameter,
+                FilterParameterValue.FromNumber(nextValue));
+            FmSynthSound next = Author(authored, resolver);
+            reference.AdoptLiveSynthParameters(
+                synth.Id, referenceSound, next);
+            resolver.Sound = next;
+            referenceSound = next;
+            Compare(1300, label, true);
+            Assert.Multiple(() =>
+            {
+                Assert.That(factory.OlderAudioCount, Is.Zero,
+                    label + " retains live IIR/FIR state");
+                Assert.That(reference.CountOlderAudioVoices(), Is.Zero);
+                Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                    Is.EqualTo(baseSnapshot.AudioRevision));
+            });
+        }
+
+        await Change("BiquadPeaking GainDb", 0, "GainDb", 12);
+        await Change("CombFeedforward Mix", 1, "Mix", 0.9);
+        await Change("FirLowPass CutoffHz", 2, "CutoffHz", 1500);
+
+        // A real invalid draft and an unchanged re-apply cannot spawn a
+        // phantom FIR redesign, audio revision or transport publication.
+        Edit(2, "CutoffHz", "NaN");
+        Edit(2, "CutoffHz", "1500");
+        await transport.PublishSynthEditAsync(workspace.Document, synth.Id);
+        Assert.Multiple(() =>
+        {
+            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 3));
+            Assert.That(callbacks, Is.EqualTo(3));
+            Assert.That(factory.Preparations.Count, Is.EqualTo(6));
+            Assert.That(factory.OlderAudioCount, Is.Zero);
+            Assert.That(backend.OpenCount, Is.EqualTo(1));
+        });
+    }
+
     private static bool SameOscillator(
         FmOscillatorNode? actual, FmOscillatorNode expected)
         => actual is not null
@@ -1630,7 +1836,8 @@ public sealed class FmSynthInspectorTransportPcmTests
         double? LowConstant, int WorkerThread, double? FilterQ = null,
         ObjectId? SampleSourceId = null, FmOscillatorNode? Oscillator = null,
         FmSoundSourceNode? Source = null, FmMultiNode? Multi = null,
-        ObjectId? FilterDefinitionId = null, double? FilterCutoffHz = null);
+        ObjectId? FilterDefinitionId = null, double? FilterCutoffHz = null,
+        int? FilterStageCount = null);
 
     private sealed class TrackingFactory(RenderConfiguration configuration,
         ObjectId editedSynthId)
@@ -1696,7 +1903,9 @@ public sealed class FmSynthInspectorTransportPcmTests
                 sourceId == editedSynthId ? filter?.Configuration?.DefinitionId : null,
                 sourceId == editedSynthId && filter?.Configuration is FilterInstance use
                     ? use.GetStageParameters(1).GetParameter("CutoffHz").NumericValue
-                    : null));
+                    : null,
+                sourceId == editedSynthId
+                    ? filter?.Configuration?.GetStages().Count : null));
             return _actual.PrepareLiveSynthSource(snapshot, sourceId);
         }
     }
