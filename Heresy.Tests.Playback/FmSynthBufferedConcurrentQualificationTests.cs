@@ -191,6 +191,7 @@ public sealed class FmSynthBufferedConcurrentQualificationTests
         }
         finally
         {
+            buffered.Dispose(); // stop producer before disposing its source
             (raw as IDisposable)?.Dispose();
         }
     }
