@@ -1705,6 +1705,167 @@ public sealed class FmSynthInspectorTransportPcmTests
         });
     }
 
+
+    [AvaloniaTest]
+    public async Task TailInspectorChangesAlreadyRingingFiniteSampleFilterDeadline()
+    {
+        // C2(n): a finite Sample has ended but its OnePole still rings.
+        // Real inspector Tail edits must change the eligible original
+        // output's *exclusive* retirement deadline, not restart its
+        // Sample or replace its IIR integrators.
+        DocumentWorkspace workspace = new();
+        ObjectId sampleId = workspace.Document.AllocateObjectId();
+        SampleDefinition sample = SampleDefinition.CreateImported(
+            sampleId, "C2(n) finite 4 frame input", "finite.wav",
+            FourFrameWave(24576));
+        workspace.Document.Add(sample);
+        FilterDefinition definition = FilterDocumentEditor.CreateFilter(
+            workspace, "C2(n) tail OnePole");
+        FilterInstance configured = new(definition);
+        configured.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(20));
+        FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
+            workspace, "C2(n) finite-source tail");
+        int sourceId = FmSynthDocumentEditor.AddSoundSourceNode(
+            workspace, synth, 90, 110, sampleId, FmMultiNode.NeutralFrequencyHz);
+        int filterId = FmSynthDocumentEditor.AddFilterNode(
+            workspace, synth, 310, 110);
+        FmSynthDocumentEditor.SetFilterConfiguration(
+            workspace, synth, filterId, configured);
+        FmSynthDocumentEditor.ConnectNodes(workspace, synth,
+            sourceId, filterId, 0);
+        FmSynthDocumentEditor.UpdateNode(workspace, synth,
+            synth.Graph.Nodes.OfType<FmFilterNode>().Single().WithTail(0.012));
+        FmSynthDocumentEditor.SetOutputNode(workspace, synth, filterId);
+        FmSynthDefinition parent = MakeDependentParent(
+            workspace, synth, "C2(n) tail dependent Synth");
+
+        RenderConfiguration config = Mono();
+        TrackingFactory factory = new(config, synth.Id);
+        ManualBackend backend = new();
+        using SongPlaybackTransport transport = new(backend, factory);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Physical(0), [new StartNoteCommand(synth.Id)]);
+
+        Resolver oracleResolver = new(synth.Id), untouchedResolver = new(synth.Id);
+        SampleSound pcm = new(sample, new MemorySampleData(Rate, 1,
+            new float[] { 0.75f, 0.75f, 0.75f, 0.75f }));
+        oracleResolver.AddSample(sampleId, pcm);
+        untouchedResolver.AddSample(sampleId, pcm);
+        FmSynthGraph baseGraph = synth.Graph;
+        FmSynthSound Author(double seconds, Resolver resolver)
+            => new(new FmSynthGraph(baseGraph.Nodes.Select(node =>
+                node.Id == filterId
+                    ? (FmSynthNode)new FmFilterNode(filterId, sourceId,
+                        configured, tailSeconds: seconds)
+                    : node), filterId),
+                resolver, soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound oracleSound = Author(0.012, oracleResolver);
+        oracleResolver.Sound = oracleSound;
+        untouchedResolver.Sound = Author(0.012, untouchedResolver);
+        PlaybackSession oracle = IndependentSession(config, oracleResolver);
+        PlaybackSession untouched = IndependentSession(config, untouchedResolver);
+        StartIndependent(oracle, synth.Id);
+        StartIndependent(untouched, synth.Id);
+        int frame = 0;
+        float[] Compare(int count, string label)
+        {
+            float[] actual = backend.Render(count), reference = new float[count],
+                unedited = new float[count];
+            oracle.Render(frame, count, reference);
+            untouched.Render(frame, count, unedited);
+            for (int i = 0; i < actual.Length; i++)
+                Assert.That(actual[i], Is.EqualTo(reference[i]).Within(4e-5f),
+                    label + ": continuing finite Sample/IIR PCM at " + (frame + i));
+            frame += count;
+            Assert.That(backend.OpenCount, Is.EqualTo(1));
+            return actual;
+        }
+        float[] initial = Compare(7, "4 PCM frames plus initial 3 tail");
+        Assert.That(initial[5], Is.GreaterThan(0.02f),
+            "OnePole must be audibly ringing after the finite Sample ends");
+        PlaybackSnapshotInfo baseSnapshot = transport.CurrentPlaybackSnapshot;
+
+        uint audio = workspace.Document.AudioRevision;
+        uint document = workspace.Document.DocumentRevision;
+        int changes = 0, callbacks = 0;
+        List<Task> pending = [];
+        FmSynthEditorControl editor = new(workspace, synth,
+            () => { }, _ => changes++,
+            publishSynthEditAsync: () =>
+            {
+                callbacks++;
+                Task task = transport.PublishSynthEditAsync(
+                    workspace.Document, synth.Id);
+                pending.Add(task);
+                return task;
+            });
+        TextBox tail = Field<TextBox>(Inspector(editor),
+            "Tail (seconds, nonnegative)");
+
+        async Task Change(double next, int count, string label)
+        {
+            Enter(tail, next.ToString("R", CultureInfo.InvariantCulture));
+            await Task.WhenAll(pending.ToArray())
+                .WaitAsync(TimeSpan.FromSeconds(8));
+            FmFilterNode node = synth.Graph.Nodes.OfType<FmFilterNode>().Single();
+            Assert.Multiple(() =>
+            {
+                Assert.That(node.TailSeconds, Is.EqualTo(next));
+                Assert.That(workspace.Document.AudioRevision,
+                    Is.EqualTo(audio + callbacks));
+                Assert.That(workspace.Document.DocumentRevision,
+                    Is.EqualTo(document + callbacks));
+                Assert.That(factory.Preparations.Count, Is.EqualTo(callbacks * 2));
+                Assert.That(factory.Preparations.Skip((callbacks - 1) * 2)
+                    .Select(x => x.Id), Is.EqualTo(new[] { synth.Id, parent.Id }));
+                Assert.That(factory.Preparations[(callbacks - 1) * 2]
+                    .FilterDefinitionId, Is.EqualTo(definition.Id));
+                Assert.That(factory.Preparations[(callbacks - 1) * 2]
+                    .FilterTailSeconds, Is.EqualTo(next));
+                Assert.That(changes, Is.EqualTo(callbacks));
+            });
+            FmSynthSound revised = Author(next, oracleResolver);
+            oracle.AdoptLiveSynthParameters(synth.Id, oracleSound, revised);
+            oracleResolver.Sound = revised;
+            oracleSound = revised;
+            Compare(count, label);
+            Assert.Multiple(() =>
+            {
+                Assert.That(factory.OlderAudioCount, Is.Zero,
+                    label + ": no older generation after pure tail edit");
+                Assert.That(oracle.CountOlderAudioVoices(), Is.Zero);
+                Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                    Is.EqualTo(baseSnapshot.AudioRevision));
+            });
+        }
+
+        // Sample was naturally finished at frame 4, but the Filter state
+        // stays active until the 4+12=16 exclusive deadline. Extend while
+        // that residual sound is already playing.
+        await Change(0.018, 8, "extend tail while ringing");
+        Assert.That(frame, Is.EqualTo(15));
+        // Shorten while the revised 4+18=22 tail is still active.
+        await Change(0.012, 12, "shorten tail while ringing");
+        Assert.That(frame, Is.EqualTo(27));
+        // Final shortened deadline is frame 4+12=16, exclusive: no
+        // Filter residual survives the author-defined end.
+        Assert.That(backend.Render(5),
+            Is.All.EqualTo(0f).Within(1e-7f));
+        Assert.Multiple(() =>
+        {
+            Assert.That(factory.OlderAudioCount, Is.Zero);
+            Assert.That(callbacks, Is.EqualTo(2));
+            Assert.That(changes, Is.EqualTo(2));
+            Assert.That(backend.OpenCount, Is.EqualTo(1));
+        });
+        Enter(tail, "0.012");
+        await transport.PublishSynthEditAsync(workspace.Document, synth.Id);
+        Assert.That(callbacks, Is.EqualTo(2),
+            "identical Tail submission must not publish a new generation");
+        Assert.That(factory.Preparations.Count, Is.EqualTo(4));
+    }
+
     private static bool SameOscillator(
         FmOscillatorNode? actual, FmOscillatorNode expected)
         => actual is not null
@@ -1837,7 +1998,7 @@ public sealed class FmSynthInspectorTransportPcmTests
         ObjectId? SampleSourceId = null, FmOscillatorNode? Oscillator = null,
         FmSoundSourceNode? Source = null, FmMultiNode? Multi = null,
         ObjectId? FilterDefinitionId = null, double? FilterCutoffHz = null,
-        int? FilterStageCount = null);
+        int? FilterStageCount = null, double? FilterTailSeconds = null);
 
     private sealed class TrackingFactory(RenderConfiguration configuration,
         ObjectId editedSynthId)
@@ -1905,7 +2066,8 @@ public sealed class FmSynthInspectorTransportPcmTests
                     ? use.GetStageParameters(1).GetParameter("CutoffHz").NumericValue
                     : null,
                 sourceId == editedSynthId
-                    ? filter?.Configuration?.GetStages().Count : null));
+                    ? filter?.Configuration?.GetStages().Count : null,
+                sourceId == editedSynthId ? filter?.TailSeconds : null));
             return _actual.PrepareLiveSynthSource(snapshot, sourceId);
         }
     }
