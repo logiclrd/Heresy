@@ -26,6 +26,8 @@ public sealed class NodeEnvelopeGraphGeometry
 	private readonly long _domainTicks;
 	private readonly double _valuePerPixel;
 	private readonly double _highValue;
+	private readonly double _vmin;
+	private readonly double _vmax;
 
 	public NodeEnvelopeGraphGeometry(
 		IReadOnlyList<EnvelopeNode> nodes, double width, double height,
@@ -38,6 +40,8 @@ public sealed class NodeEnvelopeGraphGeometry
 			|| width <= 2 * Padding || height <= 2 * Padding)
 			throw new ArgumentOutOfRangeException(nameof(width));
 		NodeEnvelopeDefinition.ValidateDisplayRange(vmin, vmax);
+		_vmin = vmin;
+		_vmax = vmax;
 		_nodes = nodes.ToArray();
 		_left = Padding;
 		_right = width - Padding;
@@ -64,6 +68,8 @@ public sealed class NodeEnvelopeGraphGeometry
 		_domainTicks = view._domainTicks;
 		_valuePerPixel = view._valuePerPixel;
 		_highValue = view._highValue;
+		_vmin = view._vmin;
+		_vmax = view._vmax;
 	}
 
 	/// <summary>The same fixed pixel transform with updated live nodes.
@@ -75,6 +81,12 @@ public sealed class NodeEnvelopeGraphGeometry
 	public double Right => _right;
 	public double Top => _top;
 	public double Bottom => _bottom;
+	/// <summary>Vertical pixel positions of the *horizontal* guide
+	/// lines for the actual authored Vmin/Vmax limits. These use the same
+	/// fixed value transform as the curve; the bottom X baseline is
+	/// not the numeric zero axis.</summary>
+	public (double MinY, double MaxY) ValueLimitGuideYs =>
+		(Y(_vmin), Y(_vmax));
 	public int Count => _nodes.Length;
 	public long DomainTicks => _domainTicks;
 	/// <summary>How many logical pixels lie between the final node and

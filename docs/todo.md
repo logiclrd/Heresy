@@ -155,16 +155,6 @@ Do not reintroduce completed-task checklists here.
 
 ## Envelope editor — graph affordances
 
-- [ ] **Draw thin green horizontal Vmin and Vmax guide lines.**
-  The Envelope editor's graph rescales and offsets the visible nodes, so
-  the drawn X baseline is **not** the numeric zero axis. Show separate,
-  visually precise horizontal green guides at the actual displayed
-  positions of **Vmin** and **Vmax**, updating as the limits, viewport,
-  value range or graph transform change. Do not imply that the X line
-  represents zero. Verify guides at edge cases including Vmin/Vmax
-  outside the node-data span. See [interactive envelope graph](envelope-graph.md)
-  and [node envelope design](node-envelope-design.md).
-
 - [ ] **Clamp envelope node-value drags to Vmin/Vmax unless Ctrl is held.**
   During node dragging, restrict the value to the configured inclusive
   limits by default; holding **Ctrl** permits values outside them. Ctrl

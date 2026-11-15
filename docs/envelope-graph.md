@@ -30,6 +30,20 @@ Changes are committed once on pointer release, with live visual
 feedback and cancellation on capture loss. Drag rendering uses the
 current preview nodes, not cached node locations. Vertical scale is
 fixed by persisted Vmin/Vmax, with a 5% margin above and below.
+Two **thin, 1-pixel green horizontal guide lines** mark the configured
+**Vmin** and **Vmax** positions using the *same value-to-pixel transform*
+as the envelope's nodes. They span the graph plotting area, draw above
+sustain shading but behind the vertical guides, node curve and dots, and
+remain within the 5% top/bottom margins even when the node-data range
+lies entirely outside the configured bounds. The lower X baseline is
+the bottom edge of the plotting region, **not** a numeric zero line; it
+must not be mistaken for Vmin or Vmax. The guides recompute on bound
+edits, node changes and viewport resizing; changing just the display
+bounds or viewport does not modify the audio revision. With the fixed
+percentage margin, the guides retain constant *relative* heights when
+only the numerical bounds change, while the mapped node values and
+numeric zero position change accordingly. This feature is visual only;
+the guides do not add pointer hit targets or change dragging behavior.
 None mode omits sustain shading and traverses the envelope only once.
 Tab/Shift-Tab cycles node selection, arrow keys nudge time and value,
 and Ctrl-Tab/Ctrl-Shift-Tab exits the graph. The document editor

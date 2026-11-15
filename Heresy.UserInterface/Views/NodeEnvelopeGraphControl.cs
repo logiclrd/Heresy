@@ -170,6 +170,12 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		new SolidColorBrush(Color.FromRgb(110, 120, 140));
 	private static readonly IBrush Guide =
 		new SolidColorBrush(Color.FromArgb(65, 146, 161, 181));
+	// Keep the thin green lines legible on both the dark and light
+	// graph backgrounds without making them compete with the blue curve.
+	private static readonly IBrush DarkValueLimitGuide =
+		new SolidColorBrush(Color.FromRgb(96, 224, 138));
+	private static readonly IBrush LightValueLimitGuide =
+		new SolidColorBrush(Color.FromRgb(33, 130, 70));
 	private static readonly IBrush Curve =
 		new SolidColorBrush(Color.FromRgb(97, 207, 246));
 	private static readonly IBrush Dot =
@@ -313,6 +319,18 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 			context.FillRectangle(Sustain,
 				new Rect(sx, graph.Top, Math.Max(0, ex - sx),
 					graph.Bottom - graph.Top));
+
+		// The bottom X axis is only the viewport baseline. Draw the true
+		// authored value limits at their mapped heights instead; draw them
+		// above sustain shading but underneath node guides, curve and dots.
+		(double minY, double maxY) = graph.ValueLimitGuideYs;
+		Pen valueGuide = new(
+			ActualThemeVariant == ThemeVariant.Light
+				? LightValueLimitGuide : DarkValueLimitGuide, 1);
+		context.DrawLine(valueGuide,
+			new Point(graph.Left, minY), new Point(graph.Right, minY));
+		context.DrawLine(valueGuide,
+			new Point(graph.Left, maxY), new Point(graph.Right, maxY));
 
 		for (int i = 0; i < graph.Count; i++)
 		{
