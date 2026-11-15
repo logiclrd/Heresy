@@ -695,6 +695,9 @@ public sealed class FmSynthEditorControl : UserControl
 		{
 			FmSynthDocumentEditor.RemoveNode(
 				_workspace, _synth, nodeId);
+			// A later node could reuse this editor-local ID. Never carry
+			// the removed node's Batch changes preference onto a new node.
+			_workspace.SetSynthFilterBatchChanges(_synth.Id, nodeId, false);
 			AfterGraphChange(
 				_synth.Graph.OutputNodeId,
 				$"Removed FM node #{nodeId}");
