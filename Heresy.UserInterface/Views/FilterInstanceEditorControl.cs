@@ -62,8 +62,14 @@ public sealed class FilterInstanceEditorControl : UserControl
 		_batchChanges.IsChecked = initialBatchChanges;
 		_batchChanges.PropertyChanged += (_, change) =>
 		{
-			if (change.Property == ToggleButton.IsCheckedProperty)
-				batchChangesChanged?.Invoke(BatchChanges);
+			if (change.Property != ToggleButton.IsCheckedProperty)
+				return;
+			batchChangesChanged?.Invoke(BatchChanges);
+			// If an unapplied batch already exists, disabling batching is an
+			// explicit return to auto-commit; publish it now rather than waiting
+			// for a control that may have already lost focus.
+			if (!BatchChanges)
+				ApplyOnFocusLoss();
 		};
 		_stages.SelectionChanged += (_, _) => OnStageSelected();
 		_apply.Click += (_, _) => ApplyDraft();
