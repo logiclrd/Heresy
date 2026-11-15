@@ -225,6 +225,288 @@ public sealed class FmSynthInspectorTransportPcmTests
         Assert.That(factory.OlderAudioCount, Is.Zero);
     }
 
+
+    [AvaloniaTest]
+    public async Task OperatorAddMultiplyInspectorRetunesSameProductionVoiceBothDirections()
+    {
+        // C2(r): the real Operation ComboBox, not a direct renderer
+        // mutation, must publish Add -> Multiply -> Add through the frozen
+        // production worker and fade the SAME continuously held note.
+        DocumentWorkspace workspace = new();
+        FmSynthDefinition child = FmSynthDocumentEditor.CreateFmSynth(
+            workspace, "C2(r) Add Multiply production");
+        int a = FmSynthDocumentEditor.AddConstantNode(
+            workspace, child, 0.2, 80, 80);
+        int b = FmSynthDocumentEditor.AddConstantNode(
+            workspace, child, 0.4, 80, 200);
+        int op = FmSynthDocumentEditor.AddOperatorNode(
+            workspace, child, FmOperatorKind.Add, [a, b], 310, 130);
+        FmSynthDocumentEditor.SetOutputNode(workspace, child, op);
+        FmSynthDefinition parent = MakeDependentParent(
+            workspace, child, "C2(r) dependent Add Multiply");
+
+        TrackingFactory factory = new(Mono(), child.Id);
+        ManualBackend backend = new();
+        using SongPlaybackTransport transport = new(backend, factory);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(44), [new StartNoteCommand(child.Id)]);
+        Assert.That(backend.Render(17),
+            Is.All.EqualTo(0.6f).Within(2e-6f),
+            "Add must preserve its authored DC component");
+        PlaybackSnapshotInfo baseSnapshot = transport.CurrentPlaybackSnapshot;
+        uint initialAudio = workspace.Document.AudioRevision;
+        uint initialDocument = workspace.Document.DocumentRevision;
+        int callbacks = 0, changed = 0;
+        List<Task> pending = [];
+        FmSynthEditorControl editor = new(workspace, child,
+            () => { }, _ => changed++,
+            publishSynthEditAsync: () =>
+            {
+                callbacks++;
+                Task task = transport.PublishSynthEditAsync(
+                    workspace.Document, child.Id);
+                pending.Add(task);
+                return task;
+            });
+        ComboBox operation = Field<ComboBox>(Inspector(editor), "Operation");
+        Assert.That(operation.SelectedItem, Is.EqualTo(FmOperatorKind.Add));
+
+        async Task Select(FmOperatorKind mode, int ordinal,
+            float from, float to, int startFrame)
+        {
+            operation.SelectedItem = mode;
+            await Task.WhenAll(pending.ToArray())
+                .WaitAsync(TimeSpan.FromSeconds(8));
+            Assert.Multiple(() =>
+            {
+                Assert.That(workspace.Document.AudioRevision,
+                    Is.EqualTo(initialAudio + ordinal));
+                Assert.That(workspace.Document.DocumentRevision,
+                    Is.EqualTo(initialDocument + ordinal));
+                Assert.That(callbacks, Is.EqualTo(ordinal));
+                Assert.That(changed, Is.EqualTo(ordinal));
+                Assert.That(factory.Preparations.Select(p => p.Id),
+                    Is.EqualTo(Enumerable.Range(0, ordinal)
+                        .SelectMany(_ => new[] { child.Id, parent.Id })),
+                    "worker compiles child before dependent parent");
+                Assert.That(factory.Preparations.Skip((ordinal - 1) * 2)
+                    .All(p => p.AudioRevision == initialAudio + ordinal
+                        && p.Operation == mode), Is.True,
+                    "detached snapshot contains the committed Operator mode");
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+            });
+            float[] pcm = backend.Render(101);
+            CheckSmoothstep(pcm, from, to, startFrame);
+            Assert.Multiple(() =>
+            {
+                Assert.That(factory.OlderAudioCount, Is.Zero);
+                Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                    Is.EqualTo(baseSnapshot.AudioRevision));
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+            });
+            operation.SelectedItem = mode;
+            await Task.Yield();
+            Assert.Multiple(() =>
+            {
+                Assert.That(callbacks, Is.EqualTo(ordinal),
+                    "reselecting the same authored mode must be a no-op");
+                Assert.That(factory.Preparations.Count,
+                    Is.EqualTo(ordinal * 2));
+                Assert.That(workspace.Document.AudioRevision,
+                    Is.EqualTo(initialAudio + ordinal));
+            });
+        }
+
+        // 0.2 + 0.4 = 0.6; 0.2 * 0.4 = 0.08. Both endpoints
+        // are audible and cannot be confused with a neutral operand.
+        await Select(FmOperatorKind.Multiply, 1, 0.6f, 0.08f, 17);
+        await Select(FmOperatorKind.Add, 2, 0.08f, 0.6f, 118);
+        await transport.PublishSynthEditAsync(workspace.Document, child.Id);
+        Assert.Multiple(() =>
+        {
+            Assert.That(factory.Preparations.Count, Is.EqualTo(4),
+                "duplicate semantic publication must not repeat work");
+            Assert.That(backend.Render(32),
+                Is.All.EqualTo(0.6f).Within(2e-6f));
+            Assert.That(factory.OlderAudioCount, Is.Zero);
+        });
+    }
+
+    [AvaloniaTest]
+    public async Task SharedFilterDefaultsEditorRetunesOriginalProductionIirHistory()
+    {
+        // C2(r): one integrated shared FilterEditor -> document notification
+        // -> real child-before-parent transport -> original production PCM.
+        // Both oracle and untouched reference own separate IIR histories.
+        const int rate = 8000;
+        DocumentWorkspace workspace = new();
+        FilterDefinition shared = FilterDocumentEditor.CreateFilter(
+            workspace, "C2(r) shared OnePole");
+        FilterStageDefinition old = shared.GetStage(1);
+        FilterDocumentEditor.ApplyStage(workspace, shared, 1, old,
+            old.Name, old.Kind, old.WithDefaults([
+                new KeyValuePair<string, FilterParameterValue>(
+                    "CutoffHz", FilterParameterValue.FromNumber(165)),
+            ]).DefaultParameters);
+        FmSynthDefinition child = FmSynthDocumentEditor.CreateFmSynth(
+            workspace, "C2(r) shared Filter child");
+        int osc = FmSynthDocumentEditor.AddOscillatorNode(
+            workspace, child, FmOscillatorWaveform.Sine, 330, 70, 80);
+        int id = FmSynthDocumentEditor.AddFilterNode(
+            workspace, child, 310, 90);
+        FmSynthDocumentEditor.SetFilterConfiguration(
+            workspace, child, id, new FilterInstance(shared));
+        FmSynthDocumentEditor.ConnectNodes(workspace, child, osc, id, 0);
+        FmSynthDocumentEditor.SetOutputNode(workspace, child, id);
+        FmSynthDefinition parent = MakeDependentParent(
+            workspace, child, "C2(r) shared Filter parent");
+
+        RenderConfiguration config = new(rate, [
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
+        ]);
+        TrackingFactory factory = new(config, child.Id);
+        ManualBackend backend = new();
+        using SongPlaybackTransport transport = new(backend, factory);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Physical(0), [new StartNoteCommand(child.Id)]);
+        PlaybackSnapshotInfo baseSnapshot = transport.CurrentPlaybackSnapshot;
+
+        FilterDefinition independent = new(shared.Id, "independent authored OnePole");
+        FilterDefinition untouched = new(shared.Id, "unmodified OnePole");
+        foreach (FilterDefinition definition in new[] { independent, untouched })
+            definition.SetStageDefaults(1, [
+                new("CutoffHz", FilterParameterValue.FromNumber(165)),
+            ]);
+        FmSynthGraph initialGraph = child.Graph;
+        Resolver resolver = new(child.Id), originalResolver = new(child.Id);
+        FmSynthSound Author(FilterDefinition definition, Resolver target)
+            => new(new FmSynthGraph(initialGraph.Nodes.Select(node =>
+                node.Id == id
+                    ? (FmSynthNode)new FmFilterNode(id, osc,
+                        new FilterInstance(definition)) : node), id),
+                target, soundResolver: target, enableLiveMultiExpansion: true);
+        FmSynthSound running = Author(independent, resolver);
+        resolver.Sound = running;
+        originalResolver.Sound = Author(untouched, originalResolver);
+        PlaybackSession reference = IndependentSession(config, resolver);
+        PlaybackSession unchanged = IndependentSession(
+            config, originalResolver);
+        StartIndependent(reference, child.Id);
+        StartIndependent(unchanged, child.Id);
+        int frame = 0;
+        void Compare(int count, string label, bool changedAudibly)
+        {
+            float[] actual = backend.Render(count);
+            float[] expected = new float[count], original = new float[count];
+            reference.Render(frame, count, expected);
+            unchanged.Render(frame, count, original);
+            for (int i = 0; i < count; i++)
+                Assert.That(actual[i], Is.EqualTo(expected[i])
+                    .Within(6e-5f),
+                    label + ": separate continuing IIR history at " + (frame + i));
+            if (changedAudibly)
+                Assert.That(actual.Zip(original,
+                    (a, b) => Math.Abs(a - b)).Max(),
+                    Is.GreaterThan(0.05),
+                    "shared definition edit must change audible production PCM");
+            Assert.That(backend.OpenCount, Is.EqualTo(1));
+            frame += count;
+        }
+        Compare(160, "initial independent Filter", false);
+
+        uint initialAudio = workspace.Document.AudioRevision;
+        uint initialDocument = workspace.Document.DocumentRevision;
+        List<SharedAudioObjectCommittedEventArgs> notifications = [];
+        List<Task> pending = [];
+        workspace.SharedAudioObjectCommitted += (_, e) =>
+        {
+            notifications.Add(e);
+            pending.Add(transport.PublishSharedObjectEditAsync(
+                e.Document, e.ObjectId));
+        };
+        int changedCallbacks = 0;
+        FilterEditorControl editor = new(workspace, shared,
+            () => { }, _ => changedCallbacks++);
+        Dictionary<string, Control> controls =
+            (Dictionary<string, Control>)typeof(FilterEditorControl)
+                .GetField("_editors", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .GetValue(editor)!;
+        TextBox cutoff = (TextBox)controls["CutoffHz"];
+        TextBlock message = (TextBlock)typeof(FilterEditorControl)
+            .GetField("_message", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(editor)!;
+        void Apply() => typeof(FilterEditorControl)
+            .GetMethod("ApplyDraft", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(editor, null);
+
+        cutoff.Text = "NaN";
+        Apply();
+        Assert.Multiple(() =>
+        {
+            Assert.That(message.Text, Does.Contain("finite"));
+            Assert.That(workspace.Document.AudioRevision,
+                Is.EqualTo(initialAudio));
+            Assert.That(notifications, Is.Empty);
+            Assert.That(pending, Is.Empty);
+        });
+        cutoff.Text = "45";
+        Apply();
+        await Task.WhenAll(pending.ToArray()).WaitAsync(TimeSpan.FromSeconds(8));
+        Assert.Multiple(() =>
+        {
+            Assert.That(shared.GetStage(1).DefaultParameters["CutoffHz"]
+                .NumericValue, Is.EqualTo(45));
+            Assert.That(workspace.Document.AudioRevision,
+                Is.EqualTo(initialAudio + 1));
+            Assert.That(workspace.Document.DocumentRevision,
+                Is.EqualTo(initialDocument + 1));
+            Assert.That(notifications.Select(n => n.ObjectId),
+                Is.EqualTo(new[] { shared.Id }));
+            Assert.That(notifications[0].AudioRevision,
+                Is.EqualTo(initialAudio + 1));
+            Assert.That(factory.Preparations.Select(p => p.Id),
+                Is.EqualTo(new[] { child.Id, parent.Id }),
+                "shared notification compiles child before dependent parent");
+            Assert.That(factory.Preparations.All(p =>
+                p.AudioRevision == initialAudio + 1
+                && p.FilterDefinitionId == shared.Id
+                && p.FilterCutoffHz == 45), Is.True,
+                "worker captures frozen shared defaults, not stale overrides");
+            Assert.That(backend.OpenCount, Is.EqualTo(1));
+        });
+        independent.SetStageDefaults(1, [
+            new("CutoffHz", FilterParameterValue.FromNumber(45)),
+        ]);
+        FmSynthSound next = Author(independent, resolver);
+        reference.AdoptLiveSynthParameters(child.Id, running, next);
+        resolver.Sound = next;
+        running = next;
+        Compare(1600, "shared OnePole cutoff 165 to 45", true);
+        Assert.Multiple(() =>
+        {
+            Assert.That(reference.CountOlderAudioVoices(), Is.Zero);
+            Assert.That(factory.OlderAudioCount, Is.Zero);
+            Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                Is.EqualTo(baseSnapshot.AudioRevision),
+                "partial publication does not replace the base snapshot");
+        });
+
+        Apply(); // same-value draft
+        await Task.WhenAll(pending.ToArray());
+        await transport.PublishSharedObjectEditAsync(
+            workspace.Document, shared.Id); // duplicate shared publish
+        Assert.Multiple(() =>
+        {
+            Assert.That(workspace.Document.AudioRevision,
+                Is.EqualTo(initialAudio + 1));
+            Assert.That(notifications.Count, Is.EqualTo(1));
+            Assert.That(factory.Preparations.Count, Is.EqualTo(2),
+                "no-op and duplicate cannot recompile the same revision");
+            Assert.That(factory.OlderAudioCount, Is.Zero);
+            Assert.That(backend.OpenCount, Is.EqualTo(1));
+        });
+    }
+
     [AvaloniaTest]
     public async Task ModulatedSvfNotchPerUseQInspectorRetunesContinuingProductionFilter()
     {
