@@ -325,7 +325,8 @@ public sealed class FmRealtimeMaximumFirPublicationTests
 		FirControlPreparationPolicy policy = new(Rate);
 		Assert.That(policy.TryOffer([
 			new FirControlRequest(0, 1, FilterKind.FirLowPass,
-				4900, 0, 0, 127, property == "Window" ? 200 : 400, "Maximum")
+				4900, 0, 0, 127, property == "Window" ? 200 : 400, "Maximum",
+				Window: property == "Window" ? "Blackman" : "Hamming")
 		]), Is.True);
 		Assert.That(policy.TryPreparePending(modified, out var batch), Is.True);
 		StreamingFilterChain active = new(new FilterChain([current]), Rate, 1);

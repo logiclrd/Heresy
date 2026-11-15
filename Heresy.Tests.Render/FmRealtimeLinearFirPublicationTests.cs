@@ -31,7 +31,9 @@ public sealed class FmRealtimeLinearFirPublicationTests
 		// All design choices must travel in the exact worker snapshot,
 		// without mutating the original Filter or preparing on the PCM path.
 		const int sampleRate = 8000;
-		FilterDefinition definition = new((ObjectId)1921U, "PriorWindow");
+		FilterDefinition definition = new((ObjectId)1921U, "PriorWindow", [
+			new FilterStageDefinition(1, "fir", FilterKind.FirLowPass),
+		]);
 		FilterInstance original = new(definition);
 		original.SetStageParameter(1, "CutoffHz",
 			FilterParameterValue.FromNumber(1000));

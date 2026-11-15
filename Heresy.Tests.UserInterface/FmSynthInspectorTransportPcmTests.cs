@@ -2467,7 +2467,7 @@ public sealed class FmSynthInspectorTransportPcmTests
                 new FilterInstance(definition), untouchedResolver);
             PlaybackSession oldUnchanged = IndependentSession(
                 config, untouchedResolver);
-            StartIndependent(untouched, synth.Id);
+            StartIndependent(oldUnchanged, synth.Id);
             float[] initial = backend.Render(260), expectedInitial = new float[260];
             older.Render(0, 260, expectedInitial);
             for (int i = 0; i < initial.Length; i++)

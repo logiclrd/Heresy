@@ -73,11 +73,16 @@ public sealed class PreparedFilterStage
 			&& StageId == previous.StageId
 			&& Kind == previous.Kind
 			&& Generation == previous.Generation
-			// Do not migrate a ringing history between fixed-delay Linear
-			// phase and zero-fixed-delay Minimum/Maximum regimes.
+			// General Filter.Configure is used by note/channel effects and
+			// retains its legacy design-change reset policy. Only an
+			// explicitly admitted prepared Synth revision opts into same-ring
+			// Window/Width/Minimum<->Maximum history migration.
 			&& (!LinearPhaseFirFilterStageFactory.IsStandardFir(Kind)
-				|| (Parameters["PhaseResponse"].ChoiceValue == "Linear")
-					== (previous.Parameters["PhaseResponse"].ChoiceValue == "Linear"))
+				|| (Parameters["PhaseResponse"]
+					== previous.Parameters["PhaseResponse"]
+					&& Parameters["Window"] == previous.Parameters["Window"]
+					&& Parameters["TransitionWidthHz"]
+						== previous.Parameters["TransitionWidthHz"]))
 			&& _structural.Count == previous._structural.Count
 			&& _structural.All(pair => previous._structural.TryGetValue(
 				pair.Key, out FilterParameterValue? value) && value == pair.Value);

@@ -128,43 +128,29 @@ public sealed class FirPhaseConversionTests
 	}
 
 	[Test]
-	public void PhaseLatencyChangesResetButMinimumMaximumPreserveSameRing()
+	public void OrdinaryConfigureResetsPhaseEvenWhenSynthLivePathCouldPreserveRing()
 	{
+		// Channel/event Filter.Configure has no prepared Synth-live admission;
+		// retain its previous phase-change reset semantics. The separate
+		// Synth migration explicitly permits Minimum/Maximum shared latency.
 		FilterInstance use = CreateUse(FilterKind.FirLowPass, "Linear");
 		StreamingFilterChain runtime = Runtime(use);
 		runtime.ProcessFrame(new float[] { 1 });
-
-		use.SetStageParameter(1, "PhaseResponse",
-			FilterParameterValue.FromChoice("Minimum"));
-		runtime.Configure(new FilterChain(new[] { use }));
-		float[] afterLatencySwitch = new float[130];
-		runtime.ProcessInterleaved(afterLatencySwitch);
-		Assert.That(afterLatencySwitch, Is.All.Zero,
-			"Linear to zero-fixed-latency phase starts an independent ring.");
-
-		float[] impulse = { 1f };
-		runtime.ProcessFrame(impulse);
-		use.SetStageParameter(1, "PhaseResponse",
-			FilterParameterValue.FromChoice("Maximum"));
-		runtime.Configure(new FilterChain(new[] { use }));
-		float[] retained = new float[126];
-		runtime.ProcessInterleaved(retained);
-		Assert.That(retained.Any(value => Math.Abs(value) > 1e-6f), Is.True,
-			"Minimum/Maximum keeps old samples in the same FIR ring.");
-
-		runtime.ProcessFrame(new float[] { 1 });
-		use.SetStageParameter(1, "PhaseResponse",
-			FilterParameterValue.FromChoice("Linear"));
-		runtime.Configure(new FilterChain(new[] { use }));
-		float[] backToLinear = new float[130];
-		runtime.ProcessInterleaved(backToLinear);
-		Assert.That(backToLinear, Is.All.Zero,
-			"Returning to fixed group delay resets the incompatible ring.");
-		FilterParameterDescriptor phase = FilterCatalogue.GetParameters(
+		foreach (string phase in new[] { "Minimum", "Maximum", "Linear" })
+		{
+			use.SetStageParameter(1, "PhaseResponse",
+				FilterParameterValue.FromChoice(phase));
+			runtime.Configure(new FilterChain(new[] { use }));
+			float[] zeros = new float[130];
+			runtime.ProcessInterleaved(zeros);
+			Assert.That(zeros, Is.All.Zero,
+				$"{phase}: non-Synth Configure resets earlier FIR samples.");
+			runtime.ProcessFrame(new float[] { 1 });
+		}
+		FilterParameterDescriptor descriptor = FilterCatalogue.GetParameters(
 			FilterKind.FirLowPass).Single(d => d.Name == "PhaseResponse");
-		Assert.That(phase.IsStructural, Is.False,
-			"same-latency choice is compatible but latency is runtime-gated");
-		Assert.That(phase.IsModulatable, Is.False);
+		Assert.That(descriptor.IsStructural, Is.False);
+		Assert.That(descriptor.IsModulatable, Is.False);
 	}
 
 	[Test]
