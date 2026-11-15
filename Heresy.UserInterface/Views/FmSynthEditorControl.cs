@@ -1516,6 +1516,23 @@ public sealed class FmSynthEditorControl : UserControl
 		{
 			if (choosing || selected.SelectedItem is not object selection)
 				return;
+			// A changed Filter definition selection replaces the configured use.
+			// Commit the old node's draft first, or restore the old selector
+			// when an invalid/stale draft prevents safe replacement.
+			if (!TryCommitPendingFilterChanges())
+			{
+				choosing = true;
+				try
+				{
+					FilterInstance? unchanged =
+						((FmFilterNode)CurrentNode(node.Id)).Configuration;
+					selected.SelectedItem = unchanged is null ? noneItem
+						: definitions.FirstOrDefault(x =>
+							x.Id == unchanged.DefinitionId);
+				}
+				finally { choosing = false; }
+				return;
+			}
 			choosing = true;
 			try
 			{
