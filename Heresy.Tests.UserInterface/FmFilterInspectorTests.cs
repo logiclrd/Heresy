@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 
@@ -6,6 +7,7 @@ using Avalonia.Controls;
 using Avalonia.Headless.NUnit;
 
 using Heresy.Core.Filters;
+using Heresy.Core.Objects;
 using Heresy.Core.FmSynthesis;
 using Heresy.UserInterface.Documents;
 using Heresy.UserInterface.Views;
@@ -79,6 +81,189 @@ public sealed class FmFilterInspectorTests
 			Assert.That(explanation, Does.Not.Contain("passes audio unchanged"));
 		});
 	}
+
+	[AvaloniaTest]
+	public void SharedFilterKindCommitRefreshesVisibleInspectorWithoutReselectingNode()
+	{
+		DocumentWorkspace work = new();
+		FilterDefinition definition = FilterDocumentEditor.CreateFilter(work, "Shared");
+		FilterStageDefinition first = definition.GetStage(1);
+		FilterDocumentEditor.ApplyStage(work, definition, 1, first,
+			"voice", FilterKind.BiquadPeaking,
+			new FilterStageDefinition(1, "voice", FilterKind.BiquadPeaking)
+				.DefaultParameters);
+		FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(work, "FM");
+		int nodeId = FmSynthDocumentEditor.AddFilterNode(work, synth, 110, 90);
+		FmSynthDocumentEditor.SetFilterConfiguration(
+			work, synth, nodeId, new FilterInstance(definition));
+		FmSynthEditorControl editor = SynthEditor(work, synth, nodeId);
+		StackPanel inspector = Inspector(editor);
+		FilterInstanceEditorControl existing =
+			inspector.Children.OfType<FilterInstanceEditorControl>().Single();
+		ListBox list = InstanceField<ListBox>(existing, "_stages");
+		Assert.That(((ListBoxItem)list.SelectedItem!).Content!.ToString(),
+			Does.Contain("BiquadPeaking"));
+		uint beforeRefresh = work.Document.AudioRevision;
+
+		FilterStageDefinition prior = definition.GetStage(1);
+		FilterDocumentEditor.ApplyStage(work, definition, 1, prior,
+			"notch", FilterKind.SvfNotch,
+			new FilterStageDefinition(1, "notch", FilterKind.SvfNotch)
+				.DefaultParameters);
+		uint committedRevision = work.Document.AudioRevision;
+		Assert.That(committedRevision, Is.GreaterThan(beforeRefresh));
+		NotifySharedFilterChanged(editor, nodeId);
+
+		Assert.That(inspector.Children.OfType<FilterInstanceEditorControl>()
+			.Single(), Is.SameAs(existing),
+			"refresh must not replace the per-use editor and discard drafts");
+		Assert.That(((ListBoxItem)list.SelectedItem!).Content!.ToString(),
+			Does.Contain("notch — SvfNotch"));
+		Assert.That(InstanceField<TextBlock>(existing, "_stageLabel").Text,
+			Does.Contain("notch — SvfNotch"));
+		Assert.That(InstanceField<Dictionary<string, Control>>(existing, "_editors")
+			.Keys, Is.EquivalentTo(FilterCatalogue.GetParameters(FilterKind.SvfNotch)
+				.Select(x => x.Name)),
+			"the selected stage's parameter controls must reflect its new kind");
+		Assert.That(StageSummary(inspector).Children.OfType<TextBlock>()
+			.Any(t => t.Text?.Contains("notch (stage #1)") == true), Is.True);
+		Assert.That(work.Document.AudioRevision, Is.EqualTo(committedRevision),
+			"presentation refresh must not publish another audio edit");
+	}
+
+	[AvaloniaTest]
+	public void SharedFilterStageMutationsRefreshOrderAndPreserveStableSelection()
+	{
+		DocumentWorkspace work = new();
+		FilterDefinition definition = FilterDocumentEditor.CreateFilter(work, "Stages");
+		FilterStageDefinition second = FilterDocumentEditor.AddStage(
+			work, definition, FilterKind.BiquadPeaking);
+		FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(work, "FM");
+		int id = FmSynthDocumentEditor.AddFilterNode(work, synth, 100, 100);
+		FmSynthDocumentEditor.SetFilterConfiguration(
+			work, synth, id, new FilterInstance(definition));
+		FmSynthEditorControl editor = SynthEditor(work, synth, id);
+		FilterInstanceEditorControl instance = Inspector(editor)
+			.Children.OfType<FilterInstanceEditorControl>().Single();
+		ListBox list = InstanceField<ListBox>(instance, "_stages");
+		list.SelectedIndex = 1;
+		Assert.That(((ListBoxItem)list.SelectedItem!).Tag,
+			Is.EqualTo(second.StageId));
+
+		FilterStageDefinition current = definition.GetStage(second.StageId);
+		var changedDefaults = current.DefaultParameters.ToDictionary(p => p.Key, p => p.Value);
+		changedDefaults["GainDb"] = FilterParameterValue.FromNumber(6);
+		FilterDocumentEditor.ApplyStage(work, definition, second.StageId, current,
+			"peak", current.Kind, changedDefaults);
+		NotifySharedFilterChanged(editor, id);
+		Assert.That(((ListBoxItem)list.SelectedItem!).Tag,
+			Is.EqualTo(second.StageId));
+		Assert.That(InstanceField<Dictionary<string, Control>>(instance, "_editors")
+			["GainDb"], Is.TypeOf<TextBox>());
+		Assert.That(((TextBox)InstanceField<Dictionary<string, Control>>(
+			instance, "_editors")["GainDb"]).Text, Is.EqualTo("6"),
+			"same-kind shared default edits must refresh displayed values");
+
+		current = definition.GetStage(second.StageId);
+		FilterDocumentEditor.MoveStage(work, definition, second.StageId, 0, current);
+		NotifySharedFilterChanged(editor, id);
+		Assert.That(((ListBoxItem)list.SelectedItem!).Tag,
+			Is.EqualTo(second.StageId));
+		Assert.That(((ListBoxItem)list.Items[0]!).Tag, Is.EqualTo(second.StageId));
+		Assert.That(StageSummary(Inspector(editor)).Children
+			.OfType<TextBlock>().First().Text, Does.StartWith("peak (stage #"),
+			"the outer Synth port summary must follow shared stage ordering");
+
+		FilterStageDefinition third = FilterDocumentEditor.AddStage(
+			work, definition, FilterKind.SvfNotch);
+		NotifySharedFilterChanged(editor, id);
+		Assert.That(list.Items.Count, Is.EqualTo(3));
+		Assert.That(((ListBoxItem)list.SelectedItem!).Tag,
+			Is.EqualTo(second.StageId));
+		FilterDocumentEditor.RemoveStage(work, definition, second.StageId,
+			definition.GetStage(second.StageId));
+		NotifySharedFilterChanged(editor, id);
+		Assert.That(list.ItemCount, Is.EqualTo(2));
+		Assert.That(((ListBoxItem)list.SelectedItem!).Tag,
+			Is.Not.EqualTo(second.StageId));
+		Assert.That(list.Items.Cast<ListBoxItem>().Any(x =>
+			x.Tag is int stageId && stageId == third.StageId), Is.True);
+	}
+
+	[AvaloniaTest]
+	public void DirtyOverrideDraftSurvivesSharedKindChangeUntilExplicitReload()
+	{
+		DocumentWorkspace work = new();
+		FilterDefinition definition = FilterDocumentEditor.CreateFilter(work, "Conflict");
+		FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(work, "FM");
+		int id = FmSynthDocumentEditor.AddFilterNode(work, synth, 100, 100);
+		FmSynthDocumentEditor.SetFilterConfiguration(
+			work, synth, id, new FilterInstance(definition));
+		FmSynthEditorControl editor = SynthEditor(work, synth, id);
+		FilterInstanceEditorControl instance = Inspector(editor).Children
+			.OfType<FilterInstanceEditorControl>().Single();
+		var toggles = InstanceField<Dictionary<string, CheckBox>>(
+			instance, "_overrideToggles");
+		var inputs = InstanceField<Dictionary<string, Control>>(instance, "_editors");
+		toggles["CutoffHz"].IsChecked = true;
+		((TextBox)inputs["CutoffHz"]).Text = "3900";
+
+		FilterStageDefinition previous = definition.GetStage(1);
+		FilterDocumentEditor.ApplyStage(work, definition, 1, previous,
+			"newkind", FilterKind.SvfNotch,
+			new FilterStageDefinition(1, "newkind", FilterKind.SvfNotch)
+				.DefaultParameters);
+		NotifySharedFilterChanged(editor, id);
+		Assert.That(((TextBox)inputs["CutoffHz"]).Text, Is.EqualTo("3900"));
+		Assert.That(InstanceField<Dictionary<string, Control>>(
+			instance, "_editors")["CutoffHz"], Is.SameAs(inputs["CutoffHz"]));
+		Assert.That(InstanceField<TextBlock>(instance, "_message").Text,
+			Does.Contain("preserved"));
+		Assert.That(((ListBoxItem)InstanceField<ListBox>(
+			instance, "_stages").SelectedItem!).Content!.ToString(),
+			Does.Contain("newkind — SvfNotch"),
+			"stage list shows the actual shared definition while the draft remains");
+		var reload = typeof(FilterInstanceEditorControl).GetMethod("Reload",
+			BindingFlags.NonPublic | BindingFlags.Instance)!;
+		reload.Invoke(instance, null);
+		Assert.That(InstanceField<TextBlock>(instance, "_stageLabel").Text,
+			Does.Contain("newkind — SvfNotch"));
+		Assert.That(InstanceField<Dictionary<string, Control>>(instance, "_editors")
+			.Keys, Is.EquivalentTo(FilterCatalogue.GetParameters(FilterKind.SvfNotch)
+				.Select(x => x.Name)));
+	}
+
+	private static FmSynthEditorControl SynthEditor(
+		DocumentWorkspace work, FmSynthDefinition synth, int nodeId)
+	{
+		FmSynthEditorControl editor = new(work, synth, () => { }, _ => { });
+		typeof(FmSynthEditorControl).GetMethod("SelectNode",
+			BindingFlags.NonPublic | BindingFlags.Instance)!
+			.Invoke(editor, new object[] { nodeId });
+		return editor;
+	}
+
+	private static StackPanel Inspector(FmSynthEditorControl editor)
+		=> (StackPanel)typeof(FmSynthEditorControl)
+			.GetField("_inspector", BindingFlags.NonPublic | BindingFlags.Instance)!
+			.GetValue(editor)!;
+
+	private static T InstanceField<T>(
+		FilterInstanceEditorControl editor, string name)
+		=> (T)typeof(FilterInstanceEditorControl)
+			.GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!
+			.GetValue(editor)!;
+
+	private static StackPanel StageSummary(StackPanel inspector)
+		=> inspector.Children.OfType<StackPanel>()
+			.Single(x => x.Name == "SharedFilterStageSummary");
+
+	private static void NotifySharedFilterChanged(
+		FmSynthEditorControl editor, int nodeId)
+		=> typeof(FmSynthEditorControl)
+			.GetMethod("OnSharedFilterDefinitionCommitted",
+				BindingFlags.NonPublic | BindingFlags.Instance)!
+			.Invoke(editor, new object[] { nodeId });
 
 	[Test]
 	public void FilterPortsExpandOnlyForModulatableParameters()

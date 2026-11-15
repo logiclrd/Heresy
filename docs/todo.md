@@ -290,21 +290,6 @@ Do not reintroduce completed-task checklists here.
   verify near corners, adjacent nodes, connection ports, pointer
   transitions and graph scrolling. See [UI workflow](user-interface-workflows.md).
 
-- [ ] **Refresh Synth Filter Configured stages immediately after editing a
-  shared Filter definition.** When returning from the Filter definition editor
-  to the Synth Graph editor, the selected Filter node's **Configured stages**
-  list currently displays the *previous* stage kinds/configuration. For
-  example, a newly edited `SvfNotch` stage can still appear as
-  `BiquadPeaking`, even though the revised definition may already be
-  affecting a held Synth Test note. Ensure the stage list, selected-stage
-  identity, displayed kind/parameters and any stage-specific controls
-  refresh as soon as the definition edit is committed and the Synth view
-  resumes, without requiring a reselect or unrelated edit. Verify stage
-  additions, removals, kind changes, reordering, same-kind parameter
-  edits and repeated visits between the Filter and Synth editors.
-  Preserve unsaved drafts, live audio publication and selection where
-  the selected stage remains valid.
-
 - [ ] **Add a per-Filter-node `Batch changes` mode to the Synth Filter
   instance inspector.** Add an initially unchecked **Batch changes** checkbox
   directly above **Apply overrides**. Remember the checked state independently
