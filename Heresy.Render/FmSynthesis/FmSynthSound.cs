@@ -1737,11 +1737,12 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		=> CanAdoptRunningState(next, state, allowUnpreparedExpansion: true);
 
 	/// <summary>An otherwise eligible SourceId replacement may have to
-	/// wait for its predecessor's already-audible 100-ms Sample fade.
-	/// This admission check does not start a third Sample or publish a
-	/// revision: the PCM owner retains only its latest deferred target.
-	/// Once the existing fade ends, ordinary worker preparation and the
-	/// full transactional preflight run again before any commit.</summary>
+	/// wait for its predecessor's already-audible 100-ms Sample or
+	/// silence fade (None→Sample or Sample→None). A second invocation
+	/// cannot replace a still-audible previous state or treat a fading
+	/// Source as fresh silence. This admission check never commits or
+	/// constructs a Source; the PCM owner retains only the latest intent,
+	/// then preflights and prepares it after the original fade finishes.</summary>
 	internal bool CanDeferSampleReplacementUntilFadeCompletes(
 		FmSynthSound next, SoundState state)
 	{
@@ -1755,10 +1756,16 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				|| next._nodes[i].Definition is not FmSoundSourceNode newSource
 				|| oldSource.SourceId == newSource.SourceId
 				|| live.Sources[i] is not { Sound: SampleSound } current
-				|| current.FadeFrom is null
+				|| (current.FadeFrom is null
+					&& !current.FadingInFromSilence
+					&& current.FadingOutToSilenceDefinition is null)
 				|| (next._nodes[i].Source is not SampleSound
 					&& !newSource.SourceId.IsNone)
-				|| ReferenceEquals(current.Sound, next._nodes[i].Source))
+				// A Sample being removed is still in its old physical
+				// readhead. Re-selecting even that SAME Sample after None
+				// needs a new onset once its fade-out has finished.
+				|| (ReferenceEquals(current.Sound, next._nodes[i].Source)
+					&& current.FadingOutToSilenceDefinition is null))
 				continue;
 			blockedByFade = true;
 		}
@@ -1835,7 +1842,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 					if (source.SourceId != newSource.SourceId)
 					{
 						// An alias to the same bound Sample changes no history.
-						bool sameSample = live.Sources[i]?.Sound is SampleSound bound
+						bool sameSample = live.Sources[i] is { Sound: SampleSound bound }
+							&& live.Sources[i]!.FadingOutToSilenceDefinition is null
 							&& ReferenceEquals(bound, revised.Source);
 						if (NeedsPreparedSampleReplacement(next, live, i,
 							allowActiveSampleFade))
@@ -1954,9 +1962,14 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			return oldSource.SourceId.IsNone && _nodes[index].Source is null;
 		return current.Sound is SampleSound
 			&& (current.FadeFrom is null || allowActiveSampleFade)
-			&& !current.FadingInFromSilence
-			&& current.FadingOutToSilenceDefinition is null
-			&& !ReferenceEquals(current.Sound, revised);
+			&& (!current.FadingInFromSilence || allowActiveSampleFade)
+			&& (current.FadingOutToSilenceDefinition is null
+				|| allowActiveSampleFade)
+			// The currently selected None has no Sample. An outgoing
+			// Sample retained only for fade-out is not a live alias,
+			// even if the new SourceId resolves to the same asset.
+			&& (!ReferenceEquals(current.Sound, revised)
+				|| current.FadingOutToSilenceDefinition is not null);
 	}
 
 	/// <summary>Removing an active Sample is a bounded, worker-free
@@ -1976,8 +1989,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			&& oldSource.MultiplierNodeId == newSource.MultiplierNodeId
 			&& state.Sources[index] is { Sound: SampleSound } current
 			&& (current.FadeFrom is null || allowActiveSampleFade)
-			&& !current.FadingInFromSilence
-			&& current.FadingOutToSilenceDefinition is null
+			&& (!current.FadingInFromSilence || allowActiveSampleFade)
+			&& (current.FadingOutToSilenceDefinition is null
+				|| allowActiveSampleFade)
 			&& state.SampleRate > 0 && state.NextFrame > 0
 			&& !state.HasNoteOffTime;
 	}
