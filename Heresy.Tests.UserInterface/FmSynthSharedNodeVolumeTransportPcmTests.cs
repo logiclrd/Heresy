@@ -881,20 +881,21 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
             });
 
             NodeEnvelopeCurve revised = new(node);
-            // The independently frozen old/revised curves are evaluated at
-            // the original 145-frame-onward note clock, not restarted
-            // from the beginning on each edit.
+            // Stateless output fades freeze the LAST AUDIBLE PCM sample,
+            // not the old Envelope evaluated again at the next clock
+            // position. The new curve still advances on the original
+            // held-note timeline: no rewind or second envelope invocation.
+            double heldOutgoing = previous.GetValue(frame - 1, Rate, null);
             float[] actual = backend.Render(101);
             double maxDifference = 0;
             for (int i = 0; i < actual.Length; i++)
             {
                 double t = i / 100.0;
                 double w = t * t * (3 - 2 * t);
-                double oldValue = previous.GetValue(frame + i, Rate, null);
                 double newValue = revised.GetValue(frame + i, Rate, null);
-                double expected = oldValue * (1 - w) + newValue * w;
+                double expected = heldOutgoing * (1 - w) + newValue * w;
                 maxDifference = Math.Max(maxDifference,
-                    Math.Abs(oldValue - newValue));
+                    Math.Abs(heldOutgoing - newValue));
                 Assert.That(actual[i], Is.EqualTo((float)expected)
                     .Within(3e-5f),
                     label + ": independent frozen-timeline PCM at " + (frame + i));
