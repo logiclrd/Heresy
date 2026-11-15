@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
 using System.Threading.Tasks;
 
@@ -162,6 +163,47 @@ public sealed class PatternVolumePreviewTests
         Assert.That(pattern.Grid[0, 0]!.Volume, Is.EqualTo(20.0 / 64.0));
         Assert.That(workspace.Document.AudioRevision, Is.EqualTo(before + 1));
         owner.Close();
+    }
+
+    [AvaloniaTest]
+    public void HostSavePreflightMakesPendingVolumeDirtyAndPersistsIt()
+    {
+        DocumentWorkspace workspace = new();
+        DataPatternDefinition pattern =
+            PatternDocumentEditor.CreateDataPattern(workspace, "Pattern", 3, 1);
+        string path = Path.Combine(Path.GetTempPath(),
+            $"heresy-partial-volume-{Guid.NewGuid():N}.hm.json");
+        try
+        {
+            workspace.SaveAs(path);
+            Assert.That(workspace.IsModified, Is.False);
+            PatternEditorControl editor = Editor(workspace, pattern);
+            SetCursor(editor, 0, 0, PatternCellField.Volume);
+            Type(editor, 0, 0, "4");
+            Assert.That(workspace.IsModified, Is.False,
+                "the first digit remains an uncommitted presentation preview");
+
+            editor.CommitPendingVolumeOnLeavingEditor();
+
+            Assert.That(workspace.IsModified, Is.True,
+                "save and replace guards must see the pending volume mutation");
+            Assert.That(pattern.Grid[0, 0]!.Volume, Is.EqualTo(40.0 / 64.0));
+            workspace.Save();
+            Assert.That(workspace.IsModified, Is.False);
+            DocumentWorkspace reopened = new();
+            reopened.Open(path);
+            DataPatternDefinition restored =
+                (DataPatternDefinition)reopened.Document.Objects[pattern.Id];
+            Assert.That(restored.Grid[0, 0]!.Volume, Is.EqualTo(40.0 / 64.0));
+            editor.CommitPendingVolumeOnLeavingEditor();
+            Assert.That(workspace.IsModified, Is.False,
+                "repeated host preflight is a no-op");
+        }
+        finally
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
     }
 
     [AvaloniaTest]
