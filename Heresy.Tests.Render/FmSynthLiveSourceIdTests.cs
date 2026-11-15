@@ -383,6 +383,52 @@ public sealed class FmSynthLiveSourceIdTests
     }
 
     [Test]
+    public void ReselectSameSampleAfterNoneFadeRequiresFreshIndependentOnset()
+    {
+        const int start = 128, fade = 4800;
+        float[] varying = Enumerable.Range(0, 16000)
+            .Select(i => i < 500 ? 0.20f : -0.35f).ToArray();
+        SampleSound originalSample = Sample(FirstId, varying);
+        SampleSound sibling = Sample(AliasId,
+            Enumerable.Repeat(0.10f, 16000).ToArray());
+        ManySourceResolver resolver = new((FirstId, originalSample),
+            (AliasId, sibling));
+        FmSynthSound before = MixSound(FirstId, AliasId, resolver);
+        FmSynthSound silent = MixSound(ObjectId.None, AliasId, resolver);
+        FmSynthSound restored = MixSound(FirstId, AliasId, resolver);
+        RenderContext context = Mono();
+        SoundState held = before.CreateState();
+        before.Render(context, held, 0, start, new float[start]);
+        before.CanAdoptRunningState(silent, held).Should().BeTrue();
+        before.TryPrepareRunningState(silent, held).Should().BeTrue();
+        before.CommitPreparedRunningState(silent, held);
+
+        silent.Render(context, held, start, 128, new float[128]);
+        silent.CanDeferSampleReplacementUntilFadeCompletes(restored, held)
+            .Should().BeTrue(
+                "the same immutable asset is still the outgoing None-fade history");
+        silent.CanPrepareMultiExpansion(restored, held).Should().BeFalse(
+            "it must not adopt the partially retired old Sample readhead");
+
+        silent.Render(context, held, start + 128, fade - 128 + 1,
+            new float[fade - 128 + 1]);
+        silent.CanPrepareMultiExpansion(restored, held).Should().BeTrue(
+            "after the old fade, the independently sounding sibling permits onset");
+        PrepareReplacement(silent, restored, held);
+
+        float[] actual = new float[fade + 1];
+        long allocated = GC.GetAllocatedBytesForCurrentThread();
+        restored.Render(context, held, start + fade + 1,
+            actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - allocated).Should().Be(0);
+        actual[0].Should().BeApproximately(0.1f, 1e-5f);
+        actual[fade / 2].Should().BeApproximately(0.2f, 1e-5f,
+            "freshly reselected Sample starts at its initial 0.2 plateau, not old -0.35");
+        actual[^1].Should().BeApproximately(0.3f, 1e-5f,
+            "full incoming gain uses a new readhead despite the same Sample object");
+    }
+
+    [Test]
     public void DifferentSampleSourceIdRequiresWorkerAndCrossfadesFreshOnset()
     {
         SampleSound originalSample = Sample(FirstId,
