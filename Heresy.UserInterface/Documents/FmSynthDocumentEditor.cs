@@ -894,6 +894,10 @@ public static class FmSynthDocumentEditor
 		result.CopySourceColourFrom(source);
 		result.NodePositions.AddRange(
 			source.NodePositions);
+		// Node IDs are retained when a Synth is imported, so carry its
+		// persisted per-Filter inspector settings as with other editor layout.
+		result.FilterBatchChangesNodeIds.UnionWith(
+			source.FilterBatchChangesNodeIds);
 		foreach (FmSynthConnectionRoutingHint hint in
 			source.ConnectionRoutingHints)
 		{
