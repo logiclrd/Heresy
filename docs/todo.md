@@ -86,10 +86,16 @@ Do not reintroduce completed-task checklists here.
 
 ## Synth editor — live parameter audition
 
-- [ ] **Apply *all non-structural Synth property changes* to ongoing preview
-  notes in realtime, without restarting them.** Already-playing Synth preview
-  voices currently retain their prepared graph snapshot after edits. The
-  requirement covers every editable property whose change leaves the Synth
+- [x] **Apply *all non-structural Synth property changes* to ongoing preview
+  notes in realtime, without restarting them.** Completed under the bounded
+  compatibility/structural-refusal contract of PR #12 (C1–C7, 2026-11-15),
+  explicitly accepted for merge by the owner after the 28-surface inspector
+  audit, 3,826 .NET / five Python tests, Linux device listening and measured
+  overload/recovery, and frozen offline/export parity checks. Windows
+  physical playback was unavailable and untested. See the
+  [C7 signoff](synth-live-pr12-c7-final-signoff.md) for accepted deferrals,
+  evidence, and the precise limits of the claim.
+  The requirement covers every editable property whose change leaves the Synth
   graph structurally compatible, **not merely a selected set of parameters**.
   Oscillator Frequency Hz, Waveform and Curvature, and Filter CutoffHz are
   representative examples, **not a minimum viable subset or exhaustive list**.
