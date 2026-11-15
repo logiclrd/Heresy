@@ -2032,12 +2032,21 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			{
 				ISound? revisedSource = null;
 				NodeEnvelopeCurve? newVolume = null;
+				IEnvelopeCurve? newPitch = null, newPan = null, newFilter = null;
 				bool known = originalInstrument.CanShareFrozenBoundToneWith(
 					revisedInstrument, bound.BoundInstrumentToneSlot)
 					&& revisedInstrument.TryGetPreparedBoundToneVolume(
 						bound.BoundInstrumentToneSlot, out revisedSource,
-						out newVolume, out _, out _, out _);
+						out newVolume, out newPitch, out newPan, out newFilter);
+				EnvelopeConfigurationSnapshot original =
+					bound.Invocation.Configuration.Envelopes;
+				// A retained original note cannot pretend to be current after
+				// an independently changed Pitch/Pan/Filter control. Those
+				// active companion timelines are not a Volume-only migration.
 				if (!known || newVolume is null
+					|| !HasSameFrozenToneControl(original.Pitch, newPitch)
+					|| !HasSameFrozenToneControl(original.Panning, newPan)
+					|| !HasSameFrozenToneControl(original.Filter, newFilter)
 					|| (!oldVolume.HasSameFrozenShapeAs(newVolume)
 						&& !canMigrateVolumes))
 					return true;
