@@ -327,6 +327,268 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
         }
     }
 
+
+    [AvaloniaTest]
+    public async Task EnvelopeChoiceNodeToNodeToScriptAndNonePublishesHeldProductionPcm()
+    {
+        // C2(i): the actual Envelope ComboBox, not a document setter.
+        // Bound held-note changes retain a single producer and publish only
+        // one frozen child-before-parent revision per semantic selection.
+        DocumentWorkspace workspace = new();
+        NodeEnvelopeDefinition first = EnvelopeDocumentEditor.CreateNodeEnvelope(
+            workspace, "C2(i) first",
+            [new EnvelopeNode(TimeSpan.Zero, 0.25)], 0, 0,
+            EnvelopeSustainLoopMode.Forward);
+        NodeEnvelopeDefinition second = EnvelopeDocumentEditor.CreateNodeEnvelope(
+            workspace, "C2(i) second",
+            [new EnvelopeNode(TimeSpan.Zero, 0.75)], 0, 0,
+            EnvelopeSustainLoopMode.Forward);
+        ScriptEnvelopeDefinition scripted =
+            EnvelopeDocumentEditor.CreateScriptEnvelope(
+                workspace, "C2(i) script", "0.4");
+        FmSynthDefinition child = FmSynthDocumentEditor.CreateFmSynth(
+            workspace, "C2(i) selected Envelope");
+        int envelopeNode = FmSynthDocumentEditor.AddEnvelopeNode(
+            workspace, child, first.Id, 200, 70);
+        FmSynthDocumentEditor.SetOutputNode(workspace, child, envelopeNode);
+        FmSynthDefinition parent = ReferencingParent(workspace, child);
+
+        TrackingFactory factory = new(MonoConfiguration(), first.Id);
+        ManualBackend backend = new();
+        using SongPlaybackTransport transport = new(backend, factory);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(83), [new StartNoteCommand(child.Id)]);
+        Assert.That(backend.Render(13),
+            Is.All.EqualTo(0.25f).Within(2e-6f));
+        uint baseRevision = transport.CurrentPlaybackSnapshot.AudioRevision;
+        uint audio = workspace.Document.AudioRevision;
+        uint document = workspace.Document.DocumentRevision;
+        int changed = 0, callbacks = 0;
+        List<Task> publishes = [];
+        FmSynthEditorControl editor = new(workspace, child,
+            () => { }, _ => changed++,
+            publishSynthEditAsync: () =>
+            {
+                callbacks++;
+                Task task = transport.PublishSynthEditAsync(
+                    workspace.Document, child.Id);
+                publishes.Add(task);
+                return task;
+            });
+        ComboBox Choice() => EnvelopeChoiceBox(editor);
+        ObjectId SelectedId() => child.Graph.Nodes
+            .OfType<FmEnvelopeNode>().Single().EnvelopeId;
+        async Task Select(ObjectId target, int ordinal)
+        {
+            ComboBox choice = Choice();
+            object item = choice.Items.OfType<object>().Single(option =>
+                option.GetType().GetProperty("Id")?.GetValue(option)
+                    is ObjectId id && id == target);
+            choice.SelectedItem = item;
+            await Task.WhenAll(publishes.ToArray());
+            Assert.Multiple(() =>
+            {
+                Assert.That(SelectedId(), Is.EqualTo(target));
+                Assert.That(workspace.Document.AudioRevision,
+                    Is.EqualTo(audio + ordinal));
+                Assert.That(workspace.Document.DocumentRevision,
+                    Is.EqualTo(document + ordinal));
+                Assert.That(callbacks, Is.EqualTo(ordinal),
+                    "one selector commit requests one publication");
+                Assert.That(changed, Is.EqualTo(ordinal));
+                Assert.That(factory.Preparations.Count, Is.EqualTo(2 * ordinal));
+                Assert.That(factory.Preparations.Skip(2 * (ordinal - 1))
+                    .Select(p => p.SynthId),
+                    Is.EqualTo(new[] { child.Id, parent.Id }));
+                Assert.That(factory.Preparations[2 * (ordinal - 1)]
+                    .SelectedEnvelopeId, Is.EqualTo(target));
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+            });
+        }
+        void Fade(float from, float to, int start)
+        {
+            float[] values = backend.Render(101);
+            for (int i = 0; i < values.Length; i++)
+            {
+                double t = i / 100.0;
+                double w = t * t * (3.0 - 2.0 * t);
+                Assert.That(values[i],
+                    Is.EqualTo((float)(from * (1 - w) + to * w))
+                        .Within(3e-5f),
+                    $"selected Envelope held PCM at {start + i}");
+            }
+            Assert.That(factory.OlderAudioCount, Is.Zero,
+                "compatible selector changes are not missed generations");
+        }
+
+        // New... needs an open host window to present its modal prompt.
+        // With this intentionally unmounted editor it must fail safely and
+        // restore the previous selection without publishing an audio edit.
+        ComboBox original = Choice();
+        object newOption = original.Items.OfType<ComboBoxItem>().Single(item =>
+            item.Content is TextBlock text && text.Text == "New...");
+        original.SelectedItem = newOption;
+        Assert.Multiple(() =>
+        {
+            Assert.That(SelectedId(), Is.EqualTo(first.Id));
+            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio));
+            Assert.That(callbacks, Is.Zero);
+            Assert.That(factory.Preparations, Is.Empty);
+        });
+
+        await Select(second.Id, 1);
+        Fade(0.25f, 0.75f, 13);
+        // Re-selecting the selected Envelope is a no-op.
+        ComboBox current = Choice();
+        current.SelectedItem = current.SelectedItem;
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 1));
+        Assert.That(callbacks, Is.EqualTo(1));
+
+        await Select(scripted.Id, 2);
+        Fade(0.75f, 0.4f, 114);
+
+        // An assigned Envelope may be cleared by the real (None) choice.
+        // Its already-held audible output has the standard 100-ms fade to
+        // silence; no old-voice warning is warranted for eligible adoption.
+        ComboBox clear = Choice();
+        clear.SelectedItem = clear.Items.OfType<ComboBoxItem>().Single(item =>
+            Equals(item.Content, "(None)"));
+        await Task.WhenAll(publishes.ToArray());
+        Assert.Multiple(() =>
+        {
+            Assert.That(SelectedId(), Is.EqualTo(ObjectId.None));
+            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 3));
+            Assert.That(callbacks, Is.EqualTo(3));
+            Assert.That(factory.Preparations.Count, Is.EqualTo(6));
+            Assert.That(factory.Preparations.Skip(4).Select(p => p.SynthId),
+                Is.EqualTo(new[] { child.Id, parent.Id }));
+            Assert.That(factory.Preparations[4].SelectedEnvelopeId,
+                Is.EqualTo(ObjectId.None));
+        });
+        Fade(0.4f, 0.0f, 215);
+        Assert.That(backend.Render(8), Is.All.EqualTo(0).Within(2e-6f));
+        Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+            Is.EqualTo(baseRevision),
+            "partial Synth overlays must not advance the base snapshot");
+    }
+
+    [AvaloniaTest]
+    public async Task EnvelopeSelectorAfterNoteOffRetainsOriginalReleaseAndStickyCurrency()
+    {
+        // C4(n) renderer contract exercised through the actual selector,
+        // production worker and two independently continuing production
+        // sessions: the untouched second session is the release PCM oracle.
+        DocumentWorkspace workspace = new();
+        static EnvelopeNode[] Release(int duration) =>
+        [
+            new(TimeSpan.Zero, 1.0),
+            new(TimeSpan.FromMilliseconds(1), 1.0),
+            new(TimeSpan.FromMilliseconds(duration), 0.0),
+        ];
+        NodeEnvelopeDefinition first = EnvelopeDocumentEditor.CreateNodeEnvelope(
+            workspace, "C2(i) old release", Release(90), 1, 1,
+            EnvelopeSustainLoopMode.Forward);
+        NodeEnvelopeDefinition second = EnvelopeDocumentEditor.CreateNodeEnvelope(
+            workspace, "C2(i) alternate release", Release(20), 1, 1,
+            EnvelopeSustainLoopMode.Forward);
+        FmSynthDefinition child = FmSynthDocumentEditor.CreateFmSynth(
+            workspace, "C2(i) selected releasing Envelope");
+        int id = FmSynthDocumentEditor.AddEnvelopeNode(
+            workspace, child, first.Id, 200, 70);
+        FmSynthDocumentEditor.SetOutputNode(workspace, child, id);
+        FmSynthDefinition parent = ReferencingParent(workspace, child);
+
+        TrackingFactory actualFactory = new(MonoConfiguration(), first.Id);
+        TrackingFactory referenceFactory = new(MonoConfiguration(), first.Id);
+        ManualBackend actualBackend = new(), referenceBackend = new();
+        using SongPlaybackTransport transport = new(actualBackend, actualFactory);
+        using SongPlaybackTransport reference = new(
+            referenceBackend, referenceFactory);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(91), [new StartNoteCommand(child.Id)]);
+        await reference.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(91), [new StartNoteCommand(child.Id)]);
+        float[] initial = actualBackend.Render(12);
+        Assert.That(initial, Is.All.EqualTo(1.0f).Within(2e-6f));
+        Assert.That(referenceBackend.Render(12),
+            Is.EqualTo(initial).Within(2e-6f));
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(91), [new NoteOffCommand()]);
+        await reference.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(91), [new NoteOffCommand()]);
+        Assert.That(actualBackend.Render(5),
+            Is.EqualTo(referenceBackend.Render(5)).Within(2e-6f));
+
+        uint revision = workspace.Document.AudioRevision;
+        int callbacks = 0;
+        List<Task> publishes = [];
+        FmSynthEditorControl editor = new(workspace, child, () => { }, _ => { },
+            publishSynthEditAsync: () =>
+            {
+                callbacks++;
+                Task task = transport.PublishSynthEditAsync(
+                    workspace.Document, child.Id);
+                publishes.Add(task);
+                return task;
+            });
+        ComboBox choice = EnvelopeChoiceBox(editor);
+        choice.SelectedItem = choice.Items.OfType<object>().Single(option =>
+            option.GetType().GetProperty("Id")?.GetValue(option)
+                is ObjectId selected && selected == second.Id);
+        await Task.WhenAll(publishes.ToArray());
+        Assert.Multiple(() =>
+        {
+            Assert.That(workspace.Document.AudioRevision,
+                Is.EqualTo(revision + 1));
+            Assert.That(callbacks, Is.EqualTo(1));
+            Assert.That(actualFactory.Preparations.Select(p => p.SynthId),
+                Is.EqualTo(new[] { child.Id, parent.Id }));
+            Assert.That(actualFactory.Preparations[0].SelectedEnvelopeId,
+                Is.EqualTo(second.Id));
+            Assert.That(actualBackend.OpenCount, Is.EqualTo(1));
+        });
+        // The publication is consumed only at the PCM boundary. A refused
+        // audible release changes neither original PCM nor end timestamp.
+        float[] oldRelease = actualBackend.Render(20);
+        float[] originalReference = referenceBackend.Render(20);
+        for (int i = 0; i < oldRelease.Length; i++)
+            Assert.That(oldRelease[i],
+                Is.EqualTo(originalReference[i]).Within(2e-6f),
+                $"refused original release at frame {17 + i}");
+        Assert.That(actualFactory.OlderAudioCount, Is.EqualTo(1),
+            "a definitively refused audible release must be sticky older");
+
+        // New notes must use the newly selected curve even though the old
+        // physical note keeps its original frozen release generation.
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(92), [new StartNoteCommand(child.Id)]);
+        float[] withFresh = actualBackend.Render(2);
+        float[] withoutFresh = referenceBackend.Render(2);
+        Assert.That(withFresh.Zip(withoutFresh,
+            (a, b) => Math.Abs(a - b)).Max(), Is.GreaterThan(0.9),
+            "a new note uses the current second Envelope while old release continues");
+        Assert.That(actualFactory.OlderAudioCount, Is.EqualTo(1));
+        // Original release's end eventually retires the sticky count, while
+        // the independently sounding newer sustained note remains current.
+        actualBackend.Render(130);
+        referenceBackend.Render(130);
+        Assert.That(actualFactory.OlderAudioCount, Is.Zero);
+        Assert.Multiple(() =>
+        {
+            Assert.That(referenceFactory.OlderAudioCount, Is.Zero);
+            Assert.That(actualBackend.OpenCount, Is.EqualTo(1));
+        });
+    }
+
+    private static ComboBox EnvelopeChoiceBox(FmSynthEditorControl editor)
+    {
+        StackPanel panel = Inspector(editor);
+        int labelIndex = panel.Children.Select((item, i) => (item, i))
+            .Single(pair => pair.item is TextBlock text
+                && text.Text == "Envelope").i;
+        return (ComboBox)panel.Children[labelIndex + 1];
+    }
+
     private static FmSynthDefinition ReferencingParent(
         DocumentWorkspace workspace, FmSynthDefinition child)
     {
@@ -384,7 +646,7 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
     }
 
     private sealed record Prepared(ObjectId SynthId, uint AudioRevision,
-        double EnvelopeLevel);
+        double EnvelopeLevel, ObjectId? SelectedEnvelopeId = null);
 
     private sealed class TrackingFactory(RenderConfiguration configuration,
         ObjectId envelopeId)
@@ -414,8 +676,12 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
         {
             NodeEnvelopeDefinition frozen = (NodeEnvelopeDefinition)
                 snapshot.Document.Objects[envelopeId];
+            ObjectId? selected = snapshot.Document.Objects[sourceId]
+                is FmSynthDefinition synth
+                ? synth.Graph.Nodes.OfType<FmEnvelopeNode>()
+                    .SingleOrDefault()?.EnvelopeId : null;
             Preparations.Add(new Prepared(sourceId,
-                snapshot.AudioRevision, frozen.Nodes[0].Value));
+                snapshot.AudioRevision, frozen.Nodes[0].Value, selected));
             return _real.PrepareLiveSynthSource(snapshot, sourceId);
         }
     }
