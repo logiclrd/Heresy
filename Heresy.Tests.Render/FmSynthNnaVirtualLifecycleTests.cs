@@ -855,6 +855,133 @@ public sealed class FmSynthNnaVirtualLifecycleTests
         }
     }
 
+    [TestCase(true)]
+    [TestCase(false)]
+    public void SilenceTransitionSupersessionDefersOnlyLatestWithoutStaleCurrency(
+        bool startsUnassigned)
+    {
+        // Both None→Sample and Sample→None must complete their first
+        // 100-frame fade before creating a subsequent Sample onset.
+        // A separately sounding Sample sibling keeps the parent note
+        // alive even when the selected first branch is None.
+        ObjectId aId = (ObjectId)72501U;
+        ObjectId bId = (ObjectId)72502U;
+        ObjectId cId = (ObjectId)72503U;
+        ObjectId dId = (ObjectId)72504U;
+        ObjectId siblingId = (ObjectId)72505U;
+        Registry registry = new();
+        SampleSound Sample(ObjectId id, float level)
+            => new(new SampleDefinition(id, "C4(l) silence transition",
+                new ExternalAssetReference("c4-l-source.wav")),
+                new MemorySampleData(Rate, 1,
+                    Enumerable.Repeat(level, 800).ToArray()));
+        registry.Add(aId, Sample(aId, 0.2f));
+        registry.Add(bId, Sample(bId, 0.6f));
+        registry.Add(cId, Sample(cId, 0.8f));
+        registry.Add(dId, Sample(dId, 0.4f));
+        registry.Add(siblingId, Sample(siblingId, 0.1f));
+
+        FmSynthSound Sound(ObjectId id)
+            => new(new FmSynthGraph([
+                new FmSoundSourceNode(1, id, FmMultiNode.NeutralFrequencyHz),
+                new FmSoundSourceNode(2, siblingId, FmMultiNode.NeutralFrequencyHz),
+                new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
+            ], 3), registry,
+                new NewNotePolicy(NewNoteAction.Continue, TimeSpan.Zero),
+                soundResolver: registry, enableLiveMultiExpansion: true);
+
+        FmSynthSound initial = Sound(startsUnassigned ? ObjectId.None : aId);
+        FmSynthSound first = Sound(startsUnassigned ? bId : ObjectId.None);
+        FmSynthSound superseded = Sound(cId);
+        FmSynthSound latest = Sound(dId);
+        registry.Add(SourceId, initial);
+        PlaybackSession session = Session(registry, Schedule());
+        session.ApplyLiveEvent(ChannelTarget.Physical(0),
+            [new StartNoteCommand(SourceId)]);
+        session.Render(0, 10, new float[10]);
+
+        using FirPreparationScheduler worker = new();
+        session.AdoptLiveSynthParameters(SourceId, initial, first);
+        if (startsUnassigned)
+        {
+            session.QueuePendingFirControls(worker);
+            Assert.That(SpinWait.SpinUntil(
+                () => worker.CompletedMultiExpansionCount == 1,
+                TimeSpan.FromSeconds(5)), Is.True);
+            session.AdoptPreparedFirControls();
+        }
+        Assert.That(session.GetChannelState(0).CurrentVoice!.Sound,
+            Is.SameAs(first), "the first None transition should be accepted");
+        session.Render(10, 10, new float[10]);
+
+        // Two rapid edits are serialized at event boundaries, not
+        // performed by a human inside the 100-ms transition.
+        session.AdoptLiveSynthParameters(SourceId, first, superseded);
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero,
+            "a valid later Source must wait, not mark older during a silence fade");
+        session.Render(20, 10, new float[10]);
+        session.AdoptLiveSynthParameters(SourceId, superseded, latest);
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+
+        registry.Replace(SourceId, latest);
+        session.ApplyLiveEvent(ChannelTarget.Virtual(99),
+            [new StartNoteCommand(SourceId)]);
+        float[] firstRamp = new float[81];
+        session.Render(30, firstRamp.Length, firstRamp);
+        for (int i = 0; i < firstRamp.Length; i++)
+        {
+            int frame = 30 + i;
+            double t = (frame - 10) / 100.0;
+            double w = t * t * (3.0 - 2.0 * t);
+            double held = startsUnassigned ? 0.6 * w : 0.2 * (1.0 - w);
+            Assert.That(firstRamp[i],
+                Is.EqualTo((float)(0.1 + held + 0.4)).Within(1e-5f),
+                $"old silence fade must finish unchanged at global frame {frame}");
+        }
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.GetChannelState(0).CurrentVoice!.Sound,
+                Is.SameAs(first), "the latest edit remains deferred");
+            Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+            Assert.That(worker.CompletedMultiExpansionCount,
+                Is.EqualTo(startsUnassigned ? 1 : 0),
+                "do not prepare either superseded candidate during first fade");
+        });
+
+        session.AdoptPreparedFirControls();
+        session.QueuePendingFirControls(worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount
+                == (startsUnassigned ? 2 : 1),
+            TimeSpan.FromSeconds(5)), Is.True);
+        session.AdoptPreparedFirControls();
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.GetChannelState(0).CurrentVoice!.Sound,
+                Is.SameAs(latest), "the second transition begins only after first fade");
+            Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+            Assert.That(worker.Fault, Is.Null);
+        });
+
+        float[] secondRamp = new float[101];
+        session.Render(111, secondRamp.Length, secondRamp);
+        for (int i = 0; i < secondRamp.Length; i++)
+        {
+            double t = i / 100.0, w = t * t * (3.0 - 2.0 * t);
+            double branch = startsUnassigned ? 0.6 * (1.0 - w) + 0.4 * w
+                : 0.4 * w;
+            Assert.That(secondRamp[i],
+                Is.EqualTo((float)(0.1 + branch + 0.4)).Within(1e-5f),
+                $"only latest Sample can begin after silence fade at frame {111 + i}");
+        }
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+        session.ApplyLiveEvent(ChannelTarget.Physical(0), [new NoteCutCommand()]);
+        float[] newestOnly = new float[4];
+        session.Render(212, newestOnly.Length, newestOnly);
+        Assert.That(newestOnly[^1], Is.EqualTo(0.5f).Within(1e-5f),
+            "the fresh newest-generation note and its sibling stay independent");
+    }
+
     [Test]
     public void RepeatedSampleSourceEditsDuringLiveFadeDeferAndAdoptOnlyLatestAfterCompletion()
     {
