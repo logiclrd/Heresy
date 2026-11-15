@@ -2187,8 +2187,9 @@ public sealed class FmSynthInspectorTransportPcmTests
             workspace, synth, oscillator, id, 0);
         FmSynthDocumentEditor.SetOutputNode(workspace, synth, id);
         // Begin with seven live children, avoiding an unsupported immediate
-        // 2 -> 7 capacity jump. The first preset changes Randomize Phase and
-        // must prepare fresh onsets without constructing state on PCM.
+        // 2 -> 7 capacity jump. Super saw changes BOTH ratio geometry and
+        // randomized-phase policy: ratio retuning preserves the existing
+        // onset. Only unchanged ratios permit worker-rephasing that onset.
         FmMultiNode authored = new(id, oscillator,
             detune: 40, voiceCount: 7, randomizePhase: false,
             gainCompensation: true);
@@ -2253,7 +2254,7 @@ public sealed class FmSynthInspectorTransportPcmTests
             bool Gain, bool RequiresWorker, double[] Ratios)[] cases =
         [
             ("Super saw/super square", FmMultiDistribution.Spread,
-                12, 7, null, null, true, true,
+                12, 7, null, null, true, false,
                 Enumerable.Range(0, 7).Select(j =>
                     Math.Pow(2, (12.0 * (j / 6.0 - 0.5)) / 1200)).ToArray()),
             ("Power Chord", FmMultiDistribution.Harmonic,
@@ -2337,8 +2338,10 @@ public sealed class FmSynthInspectorTransportPcmTests
             authored = next;
 
             // The first boundary applies transport's immutable publication.
-            // For randomized rephase or fully retired child revival, BOTH
-            // continuing sessions receive their own off-PCM prepared onsets.
+            // For eligible unchanged-ratio randomized rephase or fully retired
+            // child revival, BOTH sessions need off-PCM prepared onsets.
+            // A simultaneous ratio+phase-policy edit (Super saw here)
+            // retains the old onset and smoothly retunes its ratios.
             preparing.AdoptPreparedFirControls();
             oracle.AdoptPreparedFirControls();
             float[] boundary = backend.Render(1), expectedBoundary = new float[1];
