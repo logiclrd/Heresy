@@ -362,8 +362,12 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
 
             FilterInstance? toneFilter = null;
             if (variant == "ToneFilter")
+            {
                 toneFilter = new FilterInstance(FilterDocumentEditor.CreateFilter(
                     workspace, "C2(ae) unchanged OnePole"));
+                toneFilter.SetStageParameter(1, "CutoffHz",
+                    FilterParameterValue.FromNumber(180));
+            }
             ObjectId selectedSource = sampleId;
             if (variant == "NestedSynth")
             {
