@@ -269,11 +269,13 @@ public sealed class FilterInstanceEditorControl : UserControl
 							? "" : $" {descriptor.Units}"),
 					FontStyle = FontStyle.Italic,
 					Foreground = Brushes.Gray,
+					TextWrapping = TextWrapping.Wrap,
 				});
 				group.Children.Add(new TextBlock
 				{
 					Text = rangeText,
 					Foreground = Brushes.Gray,
+					TextWrapping = TextWrapping.Wrap,
 				});
 				_parameters.Children.Add(group);
 			}
