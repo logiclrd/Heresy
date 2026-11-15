@@ -1084,11 +1084,11 @@ public sealed class FmSynthInspectorTransportPcmTests
             oracle.AdoptPreparedFirControls();
 
             float[] observed = backend.Render(140);
-            float[] expectedPcm = new float[140], unchanged = new float[140];
+            float[] expectedPcm = new float[140], unchanged = new float[141];
             oracle.Render(frame + 1, 140, expectedPcm);
-            original.Render(frame, 141, new float[141]);
-            // For nonvacuous comparisons, advance a second original PCM
-            // history over the identical 141-frame logical interval.
+            original.Render(frame, 141, unchanged);
+            // The never-edited reference advances on the same clock, so
+            // the preset-onset check is nonvacuous.
             for (int j = 0; j < observed.Length; j++)
             {
                 Assert.That(float.IsFinite(observed[j]), Is.True,
@@ -1096,6 +1096,10 @@ public sealed class FmSynthInspectorTransportPcmTests
                 Assert.That(observed[j], Is.EqualTo(expectedPcm[j])
                     .Within(7e-5f), label + ": held output frame " + (frame + 1 + j));
             }
+            if (mustDiffer)
+                Assert.That(observed.Zip(unchanged.Skip(1),
+                    (revisedPcm, oldPcm) => Math.Abs(revisedPcm - oldPcm)).Max(),
+                    Is.GreaterThan(0.04), label + ": real Multi onset must sound different");
             Assert.Multiple(() =>
             {
                 Assert.That(factory.OlderAudioCount, Is.Zero,
@@ -1113,7 +1117,7 @@ public sealed class FmSynthInspectorTransportPcmTests
         // Spread(2) sound. Cycle edits then require new worker onsets.
         await Change("Unison preset",
             () => presets.SelectedItem = "Unison",
-            authored.WithPreset("Unison"), true);
+            authored.WithPreset("Unison"), true, mustDiffer: true);
         Assert.That(presets.SelectedIndex, Is.Zero,
             "preset is an action, not a sticky ComboBox value");
         double defaultCycle = FmMultiNode.ReferenceSampleRate
