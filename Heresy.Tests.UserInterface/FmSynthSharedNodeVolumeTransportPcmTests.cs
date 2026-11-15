@@ -145,12 +145,19 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
             Assert.That(backend.OpenCount, Is.EqualTo(1));
         });
 
-        // A shared Node curve is evaluated at the retained envelope clock.
-        // Unlike replacement of the Envelope SourceId, numeric edits of
-        // its shared node values take effect at the next producer boundary.
+        // The shared Node curve retains the original note's envelope clock
+        // and uses the same 100-ms smoothstep as other live parameter edits.
+        // Independently calculate all frames, including the frozen old gain
+        // at the revision boundary and the settled target after frame 100.
         float[] edited = backend.Render(120);
-        Assert.That(edited, Is.All.EqualTo(0.75f).Within(2e-5f),
-            "the original held note must play the revised Node envelope");
+        for (int frame = 0; frame < edited.Length; frame++)
+        {
+            double t = Math.Min(1.0, frame / 100.0);
+            double w = t * t * (3.0 - 2.0 * t);
+            float target = (float)(0.25 + 0.5 * w);
+            Assert.That(edited[frame], Is.EqualTo(target).Within(2e-5f),
+                $"shared Node editor smoothstep on held PCM frame {13 + frame}");
+        }
         Assert.Multiple(() =>
         {
             Assert.That(factory.OlderAudioCount, Is.Zero);
