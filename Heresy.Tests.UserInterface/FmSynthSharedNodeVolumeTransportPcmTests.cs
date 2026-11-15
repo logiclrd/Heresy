@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading.Tasks;
 
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Headless.NUnit;
 using Avalonia.Interactivity;
 
@@ -97,7 +98,7 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
         // signal "changed", but neither global shared notification nor
         // the Synth's audio-revision gate may publish a new sound.
         vmax.Text = "1.5";
-        Click(apply);
+        vmax.RaiseEvent(new FocusChangedEventArgs(InputElement.LostFocusEvent));
         Assert.Multiple(() =>
         {
             Assert.That(shared.Vmax, Is.EqualTo(1.5));
@@ -1091,7 +1092,8 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
         async Task Fade(string label, int ordinal,
             EnvelopeSustainLoopMode expectedMode, int expectedStart)
         {
-            Click(apply);
+            Assert.That(editor.TryCommitPendingFields(), Is.True,
+                "a single independent live field commit replaces Apply");
             await Task.WhenAll(pending.ToArray())
                 .WaitAsync(TimeSpan.FromSeconds(8));
             Assert.Multiple(() =>
@@ -1869,9 +1871,8 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
     private static Button ApplyButton(NodeEnvelopeEditorControl editor)
     {
         StackPanel body = (StackPanel)editor.Content!;
-        return body.Children.OfType<StackPanel>()
-            .SelectMany(panel => panel.Children.OfType<Button>())
-            .Single(button => Equals(button.Content, "Apply envelope"));
+        return body.Children.OfType<Button>()
+            .Single(button => Equals(button.Content, "Set nodes"));
     }
 
     private static void Click(Button button)
