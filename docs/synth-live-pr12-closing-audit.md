@@ -1442,6 +1442,83 @@ deadline/overload stress, C6 human auditions, C7 final sign-off.
 The main all-properties TODO stays unchecked; PR #12 stays
 draft/unmerged pending user authorization.
 
+## C4(m) — deferred combined Sample SourceId, frequency and mode edits (2026-11-14)
+
+**GREEN integration regression; no production change.** The C4(h)
+latest-only pending SourceId policy and C4(j) independent outgoing/
+incoming frequency-basis preservation were individually verified, but
+not previously exercised *together* when another authored edit changes
+both the Sample and its Source's FrequencyHz/Constant/exponential mode
+while an earlier Sample crossfade is still audible.
+
+Added `FmSynthNnaVirtualLifecycleTests.DeferredSampleAndFrequencyModeRevisionKeepsBothPitchHistoriesBeforeOnePole`
+in [`9871116`](https://github.com/logiclrd/Heresy/commit/987111665bbbe970db38a5e6f1b72bf5d3e0ac64),
+with all **four** combinations of the latest Source's `Constant`
+and `ExponentialMultiplier` flags. The test uses
+**1,000 Hz** and a **100-frame/100-ms** smoothstep:
+original A (frequency basis ×1.4, exponential rate modulation) sounds
+at note start; B (basis ×0.75, linear modulation) is worker-prepared
+and crossfaded from frame **10** through frame **110**;
+at frame **20** a third C is requested with a different Sample and
+frequency/mode; at frame **30** it is superseded by D (basis ×2,
+one of the four Constant/exponential combinations). The note retains
+the genuine B revision and correct original A→B pitch trajectories
+until that first fade finishes. C is never constructed for the held
+voice; the already-existing latest-wins pending slot retains D
+without a sticky older-generation mark. After the original fade ends
+the worker prepares **D alone** and the second crossfade starts at
+frame **111**. Total prepared Source replacements are **exactly two**
+(B and D), not three.
+
+**Independent oracle:** A, B and D are separately rendered as
+Source-only `FmSynthSound` invocations, each with distinct
+nonconstant Sample data, original frequency basis, and authored rate
+mode; each incoming Source starts with its *own* local Sample playhead
+at its actual publication frame. Only after constructing the two
+100-frame smoothstep transitions is the independently sounding 0.1
+sibling added. The complete 240-frame authored PCM mix is then passed
+through a separately instantiated **continuously running OnePole
+Filter**. Every live-session output frame is compared against this
+filtered reference at **3e-5** tolerance, spanning original
+A→B history, deferred intent, second B→D transition, latest scalar
+basis and mode, and post-fade steady state. The test separately
+asserts that older-audio count remains zero at both deferral and
+adoption boundaries and that the old physical voice actually
+publishes D only when the second worker result becomes available.
+
+The initial test-only
+[CI #43661450756](https://github.com/logiclrd/Heresy/actions/runs/43661450756)
+failed **before the new Render test ran** due to CS0219, an unused
+`secondFadeEnd` constant under warnings-as-errors. This was a
+fixture compilation oversight, **not** red DSP evidence; it was
+corrected in
+[`6c7279e`](https://github.com/logiclrd/Heresy/commit/6c7279ed4ec1546787fae9a691633ba1bb96e15e).
+At this exact test HEAD,
+[CI #43661605124](https://github.com/logiclrd/Heresy/actions/runs/43661605124)
+completed **SUCCESS** including **3,761/3,761 tests**
+(Core 910, Render.File 29, Render 1,211, Scripting 105,
+Playback 356, UI 1,150), native desktop Release host,
+Windows apphost icon/resources, versioned release-bundle smoke
+and Linux ARM64 shared-codec gates. The implementation was already
+correct for this named interaction: **no production files changed**.
+This is automated PCM evidence, not a physical-device listening
+test, a callback-overload stress proof, or a universal assertion
+about simultaneous updates to an *upstream modulation Constant
+node's own value* (which is different from the Source `Constant`
+mode).
+
+**C4 remains OPEN after C4(m).** The next distinct bounded risk is
+the specified **audible Node Envelope edit arriving while a note is
+already releasing**: prove rejection is atomic (retain original
+release PCM and its Filter tail), sticky older currency survives
+otherwise-compatible later edits, and retirement clears the count.
+Only an independently evidenced nested Source/Filter/NNA lifecycle
+gap should justify further C4 variants, rather than an unbounded
+matrix. C2 inspector-property-to-PCM audit, C5 physical
+callback/CPU-load stress, C6 device listening and C7 final signoff
+remain separate and open. PR #12 remains draft/unmerged, with
+C4 and the overarching all-properties TODO unchecked.
+
 ### Adjacent UI issues deliberately outside PR #12 closure
 
 Two independently actionable main-line TODOs were logged in [`docs/todo.md`](https://github.com/logiclrd/Heresy/blob/main/docs/todo.md) via [`dd55714`](https://github.com/logiclrd/Heresy/commit/dd55714d677ee8ee4641594e1f8ae2cb394039c3): stale **Configured stages** after editing a shared Filter definition and selected-stage controls hidden to the right in a non-resizable strip instead of below the list. `FmSynthEditorControl.AddFilterInspector` currently deliberately avoids rebuilding on popup close to preserve unsaved per-use drafts, and `FilterInstanceEditorControl` uses a left/right layout; the eventual fix must refresh safely without losing those drafts. These are real UI defects, but not evidence that a held note failed a realtime coefficient update.
