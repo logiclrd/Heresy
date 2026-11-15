@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Headless.NUnit;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 
 using Heresy.Core.FmSynthesis;
 using Heresy.Core.Objects;
@@ -33,9 +34,8 @@ public sealed class FmSynthMultiRemainingInspectorLivePcmTests
     [AvaloniaTest]
     public void InspectorMultiEditAfterStructuralOutputChangeReachesNewNoteBesideTwoOlderNotes()
     {
-        // C6-C: the first two voices keep their pre-Multi graph, while a
-        // third Note On binds the new Multi. Its own later inspector edit
-        // must still adopt, even with the old voices sounding concurrently.
+        // C6-C: use the *same mounted inspector* to add/connect/select
+        // Multi, then retune it after an unrelated old generation remains.
         DocumentWorkspace workspace = new();
         FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
             workspace, "C6-C new Multi live migration");
@@ -49,24 +49,49 @@ public sealed class FmSynthMultiRemainingInspectorLivePcmTests
             enableLiveMultiExpansion: true);
         FmSynthSound original = Compile();
         resolver.Sound = original;
-
         PlaybackSession playback = new(new RenderContext(
             new RenderConfiguration(1000, [
                 new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
             ])), new NoteScheduleBuilder().Freeze(), resolver);
+
+        int published = 0;
+        FmSynthSound current = original;
+        FmSynthEditorControl editor = new(workspace, synth, () => { },
+            _ => { }, publishSynthEditAsync: () =>
+            {
+                FmSynthSound revision = Compile();
+                playback.AdoptLiveSynthParameters(synth.Id, current, revision);
+                resolver.Sound = revision;
+                current = revision;
+                published++;
+                return Task.CompletedTask;
+            });
+
         playback.ApplyLiveEvent(ChannelTarget.Physical(0),
             [new StartNoteCommand(synth.Id)]);
         playback.ApplyLiveEvent(ChannelTarget.Physical(1),
             [new StartNoteCommand(synth.Id)]);
         playback.Render(0, 80, new float[80]);
 
-        int multi = FmSynthDocumentEditor.AddMultiNode(workspace, synth, 320, 80);
-        FmSynthDocumentEditor.ConnectNodes(
-            workspace, synth, oscillator, multi, 0);
-        FmSynthDocumentEditor.SetOutputNode(workspace, synth, multi);
-        FmSynthSound withMulti = Compile();
-        playback.AdoptLiveSynthParameters(synth.Id, original, withMulti);
-        resolver.Sound = withMulti;
+        // Real UI handlers—not just direct graph setters—create the Multi
+        // inspector, connect its input and choose it as graph output.
+        typeof(FmSynthEditorControl).GetMethod(
+            "AddMulti", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(editor, null);
+        int multi = synth.Graph.Nodes.OfType<FmMultiNode>().Single().Id;
+        typeof(FmSynthEditorControl).GetMethod(
+            "ConnectNodes", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(editor, [oscillator, multi, 0]);
+        StackPanel inspector = (StackPanel)typeof(FmSynthEditorControl)
+            .GetField("_inspector", BindingFlags.NonPublic
+                | BindingFlags.Instance)!.GetValue(editor)!;
+        Button setOutput = inspector.Children.OfType<Button>()
+            .Single(x => Equals(x.Content, "Make output"));
+        setOutput.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.That(synth.Graph.OutputNodeId, Is.EqualTo(multi));
+        Assert.That(published, Is.EqualTo(3),
+            "Add Multi, connect oscillator and make output must publish");
+        FmSynthSound withMulti = current;
         Assert.That(playback.CountOlderAudioVoices(), Is.EqualTo(2));
         playback.ApplyLiveEvent(ChannelTarget.Physical(2),
             [new StartNoteCommand(synth.Id)]);
@@ -83,27 +108,12 @@ public sealed class FmSynthMultiRemainingInspectorLivePcmTests
             Assert.That(playback.CountOlderAudioVoices(), Is.EqualTo(2));
         });
 
-        int published = 0;
-        FmSynthSound current = withMulti;
-        FmSynthEditorControl editor = new(workspace, synth, () => { },
-            _ => { }, publishSynthEditAsync: () =>
-            {
-                FmSynthSound revision = Compile();
-                playback.AdoptLiveSynthParameters(synth.Id, current, revision);
-                resolver.Sound = revision;
-                current = revision;
-                published++;
-                return Task.CompletedTask;
-            });
-        StackPanel inspector = (StackPanel)typeof(FmSynthEditorControl)
-            .GetField("_inspector", BindingFlags.NonPublic
-                | BindingFlags.Instance)!.GetValue(editor)!;
         TextBox voices = (TextBox)inspector.Children[
-            inspector.Children.Select((x, i) => (x, i))
+            inspector.Children.Select((x, index) => (x, index))
                 .Single(pair => pair.x is TextBlock t
-                    && t.Text == "Voice Count").i + 1];
-
+                    && t.Text == "Voice Count").index + 1];
         uint before = workspace.Document.AudioRevision;
+        int count = published;
         voices.Text = "3";
         voices.RaiseEvent(new KeyEventArgs
         {
@@ -116,14 +126,14 @@ public sealed class FmSynthMultiRemainingInspectorLivePcmTests
                 "the new Multi field must commit one semantic audio revision");
             Assert.That(synth.Graph.Nodes.OfType<FmMultiNode>()
                 .Single().VoiceCount, Is.EqualTo(3));
-            Assert.That(published, Is.EqualTo(1),
+            Assert.That(published, Is.EqualTo(count + 1),
                 "the actual Multi inspector edit must request live publication");
             Assert.That(oldFirst.Sound, Is.SameAs(original));
             Assert.That(oldSecond.Sound, Is.SameAs(original));
             Assert.That(newest.Sound, Is.SameAs(current),
                 "post-structural current voice must adopt new Multi configuration");
             Assert.That(playback.CountOlderAudioVoices(), Is.EqualTo(2),
-                "a failed structural migration may not poison the newer voice");
+                "an earlier structural refusal must not poison the newer voice");
         });
     }
 
