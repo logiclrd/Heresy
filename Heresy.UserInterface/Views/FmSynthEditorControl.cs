@@ -272,6 +272,8 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private void AddConstant()
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		try
 		{
 			(double X, double Y) =
@@ -295,6 +297,8 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private void AddOscillator()
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		try
 		{
 			(double X, double Y) =
@@ -319,6 +323,8 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private void AddNoise()
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		try
 		{
 			(double x, double y) = NextSpawnPosition();
@@ -330,6 +336,8 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private void AddSoundSource()
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		try
 		{
 			(double x, double y) = NextSpawnPosition();
@@ -342,6 +350,8 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private void AddEnvelope()
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		try
 		{
 			// New envelope nodes intentionally begin unassigned, even if
@@ -360,6 +370,8 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private void AddMulti()
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		try
 		{
 			(double x, double y) = NextSpawnPosition();
@@ -372,6 +384,8 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private void AddFilter()
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		try
 		{
 			(double x, double y) = NextSpawnPosition();
@@ -387,6 +401,8 @@ public sealed class FmSynthEditorControl : UserControl
 
 	private void AddOperator()
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		try
 		{
 			int input =
@@ -472,6 +488,8 @@ public sealed class FmSynthEditorControl : UserControl
 		int targetNodeId,
 		int targetInputIndex)
 	{
+		if (!TryCommitPendingFilterChanges())
+			return;
 		try
 		{
 			uint previousRevision = _workspace.Document.AudioRevision;
@@ -577,6 +595,8 @@ public sealed class FmSynthEditorControl : UserControl
 					"Make output",
 					() =>
 					{
+						if (!TryCommitPendingFilterChanges())
+							return;
 						try
 						{
 							FmSynthDocumentEditor.SetOutputNode(
