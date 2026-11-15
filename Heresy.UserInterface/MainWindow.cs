@@ -760,6 +760,7 @@ public sealed class MainWindow : Window
 
 	private async Task<bool> SaveDocumentAsync()
 	{
+		CommitPendingPatternVolume();
 		if (_workspace.FilePath is null)
 			return await SaveDocumentAsAsync();
 
@@ -778,6 +779,7 @@ public sealed class MainWindow : Window
 
 	private async Task<bool> SaveDocumentAsAsync()
 	{
+		CommitPendingPatternVolume();
 		if (!StorageProvider.CanSave)
 		{
 			SetStatus("This platform does not provide a save-file picker.");
@@ -1066,6 +1068,15 @@ public sealed class MainWindow : Window
 		}
 	}
 
+	/// <summary>Complete a first Pattern volume digit before host actions
+	/// that may save, replace or close the document. This can change the
+	/// unsaved state; always run it before the unsaved-changes guard.</summary>
+	private void CommitPendingPatternVolume()
+	{
+		if (_mainContent.Content is PatternEditorControl pattern)
+			pattern.CommitPendingVolumeOnLeavingEditor();
+	}
+
 	private bool TryLeaveSynthEditor()
 	{
 		if (_mainContent.Content is not FmSynthEditorControl synth
@@ -1078,6 +1089,7 @@ public sealed class MainWindow : Window
 
 	private bool TrySetEditorContent(Control editor)
 	{
+		CommitPendingPatternVolume();
 		if (!TryLeaveSynthEditor())
 			return false;
 		_mainContent.Content = editor;
@@ -1086,6 +1098,7 @@ public sealed class MainWindow : Window
 
 	private async Task<bool> ConfirmCanReplaceDocumentAsync()
 	{
+		CommitPendingPatternVolume();
 		// Commit in-editor drafts before deciding whether the document
 		// needs saving or is safe to replace.
 		if (!TryLeaveSynthEditor())
@@ -1110,6 +1123,7 @@ public sealed class MainWindow : Window
 		WindowClosingEventArgs e)
 	{
 		_ = sender;
+		CommitPendingPatternVolume();
 		if (!TryLeaveSynthEditor())
 		{
 			e.Cancel = true;
