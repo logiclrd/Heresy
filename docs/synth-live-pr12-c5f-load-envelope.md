@@ -60,11 +60,13 @@ This does **not** imply a threshold at 9, 12 or 17 for *other* Synth graphs, fil
 
 5. Optionally **repeat only the last apparently clean and first unreliable configurations** for one more 12-second trial each (name them `1x7-repeat`, etc.), to guard against scheduler jitter. Listen throughout. Note the actual Filter stages/parameter values, any ambient host load and what Runtime Diagnostics said. Leave Windows for a future machine-access opportunity.
 
-6. Exit Heresy, then run in terminal B:
+6. Exit Heresy, then run in terminal B. **Environment variables set in terminal A do not automatically carry into B**, so select the newly created audio CSV from disk (or paste the exact path printed by terminal A):
 
    ```bash
+   C5F_AUDIO_FILE="$(ls -t "$HOME"/heresy-c5f-audio-*.csv | head -n 1)"
+   printf 'Audio file: %s\\nMarker file: %s\\n' "$C5F_AUDIO_FILE" "$HERESY_C5_MARKERS"
    python3 build/c5f_load_envelope.py report \
-     --csv "$HERESY_C5_AUDIO_CSV" \
+     --csv "$C5F_AUDIO_FILE" \
      --markers "$HERESY_C5_MARKERS" \
      --output "$HOME/heresy-c5f-report.md"
    ```
