@@ -51,6 +51,68 @@ public sealed class PlaybackLiveSynthCurrencyTests
     }
 
     [Test]
+    public void NewMultiVoiceAfterStructuralEditAdoptsLaterMultiSettingsWhileOlderNotesStayOld()
+    {
+        FmSynthSound old = OscillatorOnly();
+        FmSynthSound added = MultiOscillator(7);
+        FmSynthSound edited = MultiOscillator(3);
+
+        static PlaybackSession Make(FmSynthSound original,
+            FmSynthSound next, out Registry resolver)
+        {
+            resolver = new Registry();
+            resolver.Set(SynthId, original);
+            PlaybackSession playback = Session(resolver);
+            playback.ApplyLiveEvent(ChannelTarget.Virtual(1),
+                [new StartNoteCommand(SynthId)]);
+            playback.ApplyLiveEvent(ChannelTarget.Virtual(2),
+                [new StartNoteCommand(SynthId)]);
+            playback.Render(0, 64, new float[64]);
+            playback.AdoptLiveSynthParameters(SynthId, original, next);
+            resolver.Set(SynthId, next);
+            playback.ApplyLiveEvent(ChannelTarget.Virtual(3),
+                [new StartNoteCommand(SynthId)]);
+            playback.Render(64, 64, new float[64]);
+            return playback;
+        }
+
+        PlaybackSession test = Make(old, added, out _);
+        PlaybackSession unchanged = Make(old, added, out _);
+        Assert.That(test.CountOlderAudioVoices(), Is.EqualTo(2),
+            "the old two oscillator notes retain their original generation");
+        test.AdoptLiveSynthParameters(SynthId, added, edited);
+        Assert.That(test.CountOlderAudioVoices(), Is.EqualTo(2),
+            "the fresh Multi note is current even though older siblings exist");
+
+        // The still-current third note must retune its Multi child gains.
+        // A test of only the older-audio count would miss silent rejection.
+        float[] changed = new float[5300], reference = new float[5300];
+        test.Render(128, changed.Length, changed);
+        unchanged.Render(128, reference.Length, reference);
+        double difference = 0;
+        for (int i = 5000; i < changed.Length; i++)
+            difference += Math.Abs(changed[i] - reference[i]);
+        Assert.That(difference, Is.GreaterThan(1.0),
+            "the new current note must audibly use the three-voice Multi");
+        Assert.That(test.CountOlderAudioVoices(), Is.EqualTo(2),
+            "a compatible Multi edit must not add a third older note");
+    }
+
+    private static FmSynthSound OscillatorOnly()
+        => new(new FmSynthGraph([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 390,
+                minimum: -0.07, maximum: 0.07),
+        ], 1), new NoEnvelopes(), enableLiveMultiExpansion: true);
+
+    private static FmSynthSound MultiOscillator(int count)
+        => new(new FmSynthGraph([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 390,
+                minimum: -0.07, maximum: 0.07),
+            new FmMultiNode(2, 1, voiceCount: count, detune: 0,
+                randomizePhase: false, gainCompensation: false),
+        ], 2), new NoEnvelopes(), enableLiveMultiExpansion: true);
+
+    [Test]
     public void WorkerPreparedSampleChangeRemainsCurrentWhilePreparationIsPending()
     {
         ObjectId oldId = (ObjectId)98111U, newId = (ObjectId)98112U;
