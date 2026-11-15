@@ -11,5 +11,10 @@ public sealed record EnvelopeConfigurationSnapshot(
 	IEnvelopeCurve? Panning = null,
 	IEnvelopeCurve? Filter = null)
 {
+	public bool HasSustainLoop => Volume?.HasSustainLoop == true
+		|| Pitch?.HasSustainLoop == true
+		|| Panning?.HasSustainLoop == true
+		|| Filter?.HasSustainLoop == true;
+
 	public static EnvelopeConfigurationSnapshot Empty { get; } = new();
 }

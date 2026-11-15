@@ -128,8 +128,11 @@ public sealed class FirPhaseConversionTests
 	}
 
 	[Test]
-	public void ChangingPhaseModeDiscardsOldSamplesEvenAtMatchingTapCounts()
+	public void OrdinaryConfigureResetsPhaseEvenWhenSynthLivePathCouldPreserveRing()
 	{
+		// Channel/event Filter.Configure has no prepared Synth-live admission;
+		// retain its previous phase-change reset semantics. The separate
+		// Synth migration explicitly permits Minimum/Maximum shared latency.
 		FilterInstance use = CreateUse(FilterKind.FirLowPass, "Linear");
 		StreamingFilterChain runtime = Runtime(use);
 		runtime.ProcessFrame(new float[] { 1 });
@@ -141,14 +144,13 @@ public sealed class FirPhaseConversionTests
 			float[] zeros = new float[130];
 			runtime.ProcessInterleaved(zeros);
 			Assert.That(zeros, Is.All.Zero,
-				$"{phase}: structural phase change must clear old FIR ring.");
-
-			float[] impulse = { 1f };
-			runtime.ProcessFrame(impulse);
-			Assert.That(float.IsFinite(impulse[0]), Is.True);
+				$"{phase}: non-Synth Configure resets earlier FIR samples.");
+			runtime.ProcessFrame(new float[] { 1 });
 		}
-		Assert.That(FilterCatalogue.GetParameters(FilterKind.FirLowPass)
-			.Single(d => d.Name == "PhaseResponse").IsStructural, Is.True);
+		FilterParameterDescriptor descriptor = FilterCatalogue.GetParameters(
+			FilterKind.FirLowPass).Single(d => d.Name == "PhaseResponse");
+		Assert.That(descriptor.IsStructural, Is.False);
+		Assert.That(descriptor.IsModulatable, Is.False);
 	}
 
 	[Test]

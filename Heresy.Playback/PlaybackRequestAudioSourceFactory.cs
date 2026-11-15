@@ -2,13 +2,18 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 
 using Heresy.Core.Diagnostics;
+using Heresy.Core.FmSynthesis;
+using Heresy.Core.Objects;
 using Heresy.Core.Sequencing;
 using Heresy.Render.Configuration;
 using Heresy.Render.Filters;
 using Heresy.Render.Realtime;
+using Heresy.Render.FmSynthesis;
 using Heresy.Render.Samples;
+using Heresy.Render.Sounds;
 using Heresy.Scripting.Analysis;
 
 namespace Heresy.Playback;
@@ -32,7 +37,9 @@ public sealed class PlaybackSourceCompilationException : InvalidOperationExcepti
 public sealed class PlaybackRequestAudioSourceFactory :
 	IBackgroundPlaybackSourceFactory,
 	IPlaybackPositionTimelineProvider,
-	IPlaybackRuntimeDiagnosticReportProvider
+	IPlaybackRuntimeDiagnosticReportProvider,
+	IPlaybackOlderAudioReportProvider,
+	ILiveSynthSourcePreparationFactory
 {
 	private readonly Func<RenderConfiguration> _configurationSource;
 	private readonly ISampleDataProvider _samples;
@@ -66,6 +73,35 @@ public sealed class PlaybackRequestAudioSourceFactory :
 		_samples = sampleDataProvider ?? throw new ArgumentNullException(nameof(sampleDataProvider));
 	}
 
+	/// <summary>Compile a replacement Synth from a detached song revision.
+	/// Run only on the playback control worker, never the PCM producer or SDL
+	/// callback. The immutable sound owns nested prepared resources.</summary>
+	public ISound PrepareLiveSynthSource(
+		SongDocumentSnapshot snapshot, ObjectId sourceId)
+	{
+		ArgumentNullException.ThrowIfNull(snapshot);
+		if (!snapshot.Document.TryGet(sourceId, out SongObject? node)
+			|| node is not FmSynthDefinition)
+			throw new ArgumentException(
+				"Live Synth publication requires an existing Synth source.",
+				nameof(sourceId));
+		RenderConfiguration configuration = _configurationSource()
+			?? throw new InvalidOperationException(
+				"The playback output configuration source returned null.");
+		// Replacement Synth generations are prepared for live editing.
+		// They must retain headroom for subsequent audition revisions.
+		PlaybackSnapshotSoundResolver sounds = new(
+			SongDocumentSnapshot.Create(snapshot.Document).Document,
+			_samples, configuration.SampleRate,
+			reserveSynthMultiHeadroom: true);
+		sounds.PrepareDirectSources();
+		if (!sounds.TryResolve(sourceId, mixdown: false, out ISound? result)
+			|| result is not FmSynthSound)
+			throw new InvalidOperationException(
+				"Could not prepare the requested Synth revision.");
+		return result;
+	}
+
 	public IAudioOutputSource Create(PlaybackRequest request)
 	{
 		ArgumentNullException.ThrowIfNull(request);
@@ -87,7 +123,8 @@ public sealed class PlaybackRequestAudioSourceFactory :
 					startRow: pattern.StartRow,
 					repeatPattern: pattern.Repeat),
 				AdHocPlaybackRequest adHoc =>
-					factory.CreateAdHoc(adHoc.Snapshot, adHoc.Schedule),
+					factory.CreateAdHoc(adHoc.Snapshot, adHoc.Schedule,
+						reserveSynthMultiHeadroom: adHoc.ReserveSynthMultiHeadroom),
 				_ => throw new NotSupportedException(
 					$"Unsupported playback request: {request.GetType().Name}"),
 			};
@@ -127,6 +164,22 @@ public sealed class PlaybackRequestAudioSourceFactory :
 			return _positions.Remove(request, out timeline);
 	}
 
+	/// <summary>Read a single producer-published count, not its mutable
+	/// collection of PlaybackVoice objects, from the transport poll thread.</summary>
+	public bool TryGetOlderAudioVoiceCount(PlaybackRequest request, out int count)
+	{
+		lock (_gate)
+		{
+			if (_active.TryGetValue(request, out LiveRecursiveSource? live))
+			{
+				count = live.OlderAudioVoiceCount;
+				return true;
+			}
+		}
+		count = 0;
+		return false;
+	}
+
 	public bool TryTakeRuntimeDiagnostics(PlaybackRequest request,
 		out SequencingDiagnostic[] diagnostics)
 	{
@@ -144,10 +197,18 @@ public sealed class PlaybackRequestAudioSourceFactory :
 
 	private sealed class LiveRecursiveSource(
 		PreparedIncrementalPlaybackPlan plan,
-		PlaybackPositionTimeline? positions) : ILiveAudioOutputSource, IFirPreparationAudioSource, IDisposable
+		PlaybackPositionTimeline? positions) : ILiveAudioOutputSource, ILiveSynthSourceRevisionOutput,
+		IFirPreparationAudioSource, IDisposable
 	{
-		private readonly ConcurrentQueue<LivePlaybackEvent> _commands = new();
+		// Publication and note messages share FIFO ordering on the producer.
+		private abstract record LiveAction;
+		private sealed record NoteAction(LivePlaybackEvent Event) : LiveAction;
+		private sealed record SynthAction(ObjectId Id, ISound Sound,
+			bool ApplyToExistingVoices) : LiveAction;
+		private readonly ConcurrentQueue<LiveAction> _commands = new();
 		private readonly ConcurrentQueue<SequencingDiagnostic> _warnings = new();
+		private int _olderAudioVoiceCount;
+		public int OlderAudioVoiceCount => Volatile.Read(ref _olderAudioVoiceCount);
 		public SequencingDiagnostic[] DrainRuntimeDiagnostics()
 		{
 			List<SequencingDiagnostic> messages = [];
@@ -167,13 +228,40 @@ public sealed class PlaybackRequestAudioSourceFactory :
 			IReadOnlyList<NoteCommand> commands)
 		{
 			ArgumentNullException.ThrowIfNull(commands);
-			_commands.Enqueue(new LivePlaybackEvent(target, commands.ToArray()));
+			_commands.Enqueue(new NoteAction(
+				new LivePlaybackEvent(target, commands.ToArray())));
+		}
+		public void EnqueueLiveSynthSource(ObjectId sourceId, ISound preparedSound)
+		{
+			ArgumentNullException.ThrowIfNull(preparedSound);
+			_commands.Enqueue(new SynthAction(sourceId, preparedSound, false));
+		}
+		public void EnqueueLiveSynthParameters(ObjectId sourceId, ISound preparedSound)
+		{
+			ArgumentNullException.ThrowIfNull(preparedSound);
+			_commands.Enqueue(new SynthAction(sourceId, preparedSound, true));
 		}
 		public void Render(int frameCount, Span<float> destination)
 		{
-			while (_commands.TryDequeue(out LivePlaybackEvent? command))
-				plan.Source.ApplyLiveEvent(command.Target, command.Commands);
+			while (_commands.TryDequeue(out LiveAction? action))
+			{
+				switch (action)
+				{
+					case NoteAction note:
+						plan.Source.ApplyLiveEvent(
+							note.Event.Target, note.Event.Commands);
+						break;
+					case SynthAction synth:
+						plan.AdoptPreparedLiveSynth(synth.Id, synth.Sound,
+							synth.ApplyToExistingVoices);
+						break;
+				}
+			}
 			plan.Source.Render(frameCount, destination);
+			// The note list is owned by this producer. Publish only the
+			// scalar aggregate, never expose mutable PCM-owned voice objects.
+			Volatile.Write(ref _olderAudioVoiceCount,
+				plan.Source.Session.CountOlderAudioVoices());
 			// Drain in the same worker that owns sequencing diagnostics.
 			// Transport/UI readers see only immutable queued records.
 			foreach (SequencingDiagnostic message

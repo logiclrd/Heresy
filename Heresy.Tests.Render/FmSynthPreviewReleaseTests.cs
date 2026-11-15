@@ -176,7 +176,7 @@ public sealed class FmSynthPreviewReleaseTests
 	}
 
 	[Test]
-	public void IndependentAdditiveEnvelopeDoesNotKeepLiveOscillatorAudible()
+	public void IndependentAdditiveEnvelopeKeepsOscillatorUntilReleaseEnds()
 	{
 		PlaybackSession session = Session(new FmSynthGraph(
 		[
@@ -197,9 +197,9 @@ public sealed class FmSynthPreviewReleaseTests
 		float[] release = new float[5];
 		source.Render(release.Length, release);
 		release[0].Should().BeApproximately(1.8f, 1e-5f);
-		release[1].Should().BeApproximately(0.8f * 2f / 3f, 1e-5f);
-		release[2].Should().BeApproximately(0.8f / 3f, 1e-5f);
-		release[3].Should().Be(0f);
+		release[1].Should().BeApproximately(1f + 0.8f * 2f / 3f, 1e-5f);
+		release[2].Should().BeApproximately(1f + 0.8f / 3f, 1e-5f);
+		release[3].Should().Be(1f, "the oscillator remains while the release finishes");
 		release[4].Should().Be(0f);
 	}
 

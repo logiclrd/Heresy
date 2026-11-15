@@ -63,6 +63,21 @@ public sealed class FmFilterInspectorTests
 		Assert.That(inspector.Children
 			.OfType<TextBlock>().Any(text =>
 				text.Text == "Tail (seconds, nonnegative)"), Is.True);
+		// A real FM Filter already processes sound and Tail already preserves
+		// residual samples. Keep the contextual inspector explanation
+		// synchronized with the tested renderer and live adoption semantics.
+		string explanation = inspector.Children.OfType<TextBlock>()
+			.Single(text => text.Text?.StartsWith(
+				"Audio enters the Input port.", StringComparison.Ordinal) == true)
+			.Text!;
+		Assert.Multiple(() =>
+		{
+			Assert.That(explanation, Does.Contain("Filters process audio"));
+			Assert.That(explanation, Does.Contain("Tail can preserve residual"));
+			Assert.That(explanation, Does.Contain("older graph"));
+			Assert.That(explanation, Does.Not.Contain("not yet applied"));
+			Assert.That(explanation, Does.Not.Contain("passes audio unchanged"));
+		});
 	}
 
 	[Test]

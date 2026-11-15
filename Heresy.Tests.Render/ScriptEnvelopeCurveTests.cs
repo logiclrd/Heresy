@@ -19,6 +19,9 @@ public sealed class ScriptEnvelopeCurveTests
 		{
 			Assert.That(curve.GetValue(100, 100, null), Is.EqualTo(0.25));
 			Assert.That(curve.GetValue(250, 100, 200), Is.EqualTo(0.0));
+			Assert.That(curve.HasSustainLoop, Is.True,
+					"a declared finite release is an implicit Script lifecycle");
+			Assert.That(curve.IsZeroAfterCompletion, Is.True);
 			Assert.That(curve.GetEndActiveFrameExclusiveAfterNoteOff(200, 100),
 				Is.EqualTo(250));
 			Assert.That(curve.GetValue(251, 100, 200), Is.Zero);
@@ -46,6 +49,9 @@ public sealed class ScriptEnvelopeCurveTests
 		ScriptEnvelopeCurve curve = new((_, _) => 0.5, null);
 		Assert.Multiple(() =>
 		{
+			Assert.That(curve.HasSustainLoop, Is.False,
+					"an unbounded Script is not an implicit sustain/release lifecycle");
+			Assert.That(curve.IsZeroAfterCompletion, Is.False);
 			Assert.That(curve.GetEndActiveFrameExclusiveAfterNoteOff(10, 100),
 				Is.Null);
 			Assert.That(curve.GetValue(10000, 100, 10), Is.EqualTo(0.5));

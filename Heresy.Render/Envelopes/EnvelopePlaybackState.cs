@@ -42,6 +42,8 @@ public sealed class EnvelopePlaybackState
 	}
 
 	public bool Enabled => _segments[^1].Enabled;
+	public bool HasSustainLoop => Enabled && _curve.HasSustainLoop;
+	public bool IsZeroAfterCompletion => Enabled && _curve.IsZeroAfterCompletion;
 	public long ActiveFrame => _activeFrame;
 	public long? NoteOffActiveFrame => _noteOffActiveFrame;
 

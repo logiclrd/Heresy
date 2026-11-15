@@ -47,6 +47,35 @@ public sealed class SampleSound : ISound, ISourceFrameSeekableSound
 	/// </summary>
 	public NewNotePolicy NewNotePolicy { get; set; }
 
+	/// <summary>Two separately compiled frozen-song Synth revisions
+	/// may resolve distinct SampleSound wrappers over the SAME immutable
+	/// decoded PCM. This comparison admits no changed PCM, loop layout,
+	/// channel placement or sample rate into the O(1) playhead migration.
+	/// Direct test renderers which deliberately reuse one Sound instance
+	/// remain equivalent without requiring persisted PCM metadata.</summary>
+	internal bool CanSharePreparedOnsetTimelineWith(SampleSound next)
+	{
+		if (ReferenceEquals(this, next))
+			return true;
+		if (next is null || _definition.Id != next._definition.Id
+			|| _definition.PcmData is null
+			|| _data is not IImmutableSamplePcmIdentity oldData
+			|| next._data is not IImmutableSamplePcmIdentity nextData
+			|| !ReferenceEquals(_definition.PcmData, next._definition.PcmData)
+			|| !ReferenceEquals(oldData.ImmutablePcm, _definition.PcmData)
+			|| !ReferenceEquals(nextData.ImmutablePcm, _definition.PcmData)
+			|| _definition.Loop != next._definition.Loop
+			|| _data.SampleRate != next._data.SampleRate
+			|| _data.ChannelCount != next._data.ChannelCount
+			|| _data.FrameCount != next._data.FrameCount
+			|| _sourceChannelPositions.Length != next._sourceChannelPositions.Length)
+			return false;
+		for (int i = 0; i < _sourceChannelPositions.Length; i++)
+			if (_sourceChannelPositions[i] != next._sourceChannelPositions[i])
+				return false;
+		return true;
+	}
+
 	/// <summary>Original PCM channels before graph-domain mono averaging.</summary>
 	public int SourceChannelCount => _data.ChannelCount;
 
@@ -79,7 +108,7 @@ public sealed class SampleSound : ISound, ISourceFrameSeekableSound
 		SampleSoundState sampleState = ValidateState(context, state);
 
 		long? noteOffEnd = sampleState.NoteOffTime.HasValue
-			&& !sampleState.ReleaseIsControlledByVolumeEnvelope
+			&& sampleState.NoteOffDisposition == NoteOffDisposition.Definite
 			? FrameTime.Ceiling(
 				sampleState.NoteOffTime.Value,
 				context.Configuration.SampleRate)

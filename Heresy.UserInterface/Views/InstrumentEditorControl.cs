@@ -12,6 +12,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 
 using Heresy.Core.Envelopes;
 using Heresy.Core.Filters;
@@ -51,6 +52,8 @@ public sealed class InstrumentEditorControl : UserControl
 	private readonly Dictionary<InstrumentToneGridSelection.Cell,
 		WeakReference<Border>> _visibleCells = [];
 	private bool _movingGridFocus;
+	private InstrumentToneGridSelection.Row? _shiftPointerAnchor;
+	private InstrumentToneGridSelection.Cell? _shiftPointerTarget;
 	private readonly TextBlock _message = new()
 	{
 		TextWrapping = TextWrapping.Wrap,
@@ -100,6 +103,12 @@ public sealed class InstrumentEditorControl : UserControl
 		// editing and open popups to their native handlers when appropriate.
 		_rows.AddHandler(InputElement.KeyDownEvent, OnGridKeyDown,
 			RoutingStrategies.Tunnel, handledEventsToo: true);
+		// Capture a Shift-range's original anchor *before* Avalonia's
+		// ListBoxItem selection/focus handlers can replace it.
+		_rows.AddHandler(InputElement.PointerPressedEvent,
+			OnGridPointerPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
+		_rows.AddHandler(InputElement.PointerReleasedEvent,
+			OnGridPointerReleased, RoutingStrategies.Bubble, handledEventsToo: true);
 		Content = BuildContent();
 		RefreshRows();
 	}
@@ -185,6 +194,7 @@ public sealed class InstrumentEditorControl : UserControl
 				+ "A selected range covers complete rows; editing any field applies it to all selected tones. "
 				+ "The nearby-note dropdown snaps Pitch only when selected. "
 				+ "Shift+Up/Down or Shift+click extends selected rows; Tab/click within those rows preserves the range. "
+				+ "Ctrl+A selects all tone rows (not the insertion draft). "
 				+ "Up/Down navigate cells, Left/Right leave text at the caret boundary. "
 				+ "Focus a tone cell and press Delete to remove its row.",
 			TextWrapping = TextWrapping.Wrap,
@@ -664,10 +674,67 @@ public sealed class InstrumentEditorControl : UserControl
 		}
 	}
 
+	private static InstrumentToneGridSelection.Cell? PointerCell(object? source)
+	{
+		if (source is not Visual visual)
+			return null;
+		if (visual is Border { Tag: InstrumentToneGridSelection.Cell direct })
+			return direct;
+		foreach (Visual parent in visual.GetVisualAncestors())
+			if (parent is Border { Tag: InstrumentToneGridSelection.Cell cell })
+				return cell;
+		return null;
+	}
+
+	private void OnGridPointerPressed(object? sender, PointerPressedEventArgs e)
+	{
+		_shiftPointerAnchor = null;
+		_shiftPointerTarget = null;
+		if ((e.KeyModifiers & KeyModifiers.Shift) == 0
+			|| PointerCell(e.Source) is not { } cell
+			|| InstrumentToneGridSelection.RowPosition(_projectedRows,
+				cell.ToneIndex) < 0)
+			return;
+		InstrumentToneGridSelection.Row anchor = _selection.Anchor
+			?? new InstrumentToneGridSelection.Row(
+				(_selection.Focused ?? cell).ToneIndex);
+		if (InstrumentToneGridSelection.RowPosition(_projectedRows,
+			anchor.ToneIndex) < 0)
+			return;
+		_shiftPointerAnchor = anchor;
+		_shiftPointerTarget = cell;
+		_selection.ExtendFrom(anchor, cell, _projectedRows);
+		RefreshSelectionVisuals();
+	}
+
+	private void OnGridPointerReleased(object? sender, PointerReleasedEventArgs e)
+	{
+		InstrumentToneGridSelection.Row? anchor = _shiftPointerAnchor;
+		InstrumentToneGridSelection.Cell? target = _shiftPointerTarget;
+		_shiftPointerAnchor = null;
+		_shiftPointerTarget = null;
+		if (anchor is not { } original || target is not { } cell
+			|| InstrumentToneGridSelection.RowPosition(_projectedRows,
+				original.ToneIndex) < 0
+			|| InstrumentToneGridSelection.RowPosition(_projectedRows,
+				cell.ToneIndex) < 0)
+			return;
+		_selection.ExtendFrom(original, cell, _projectedRows);
+		RefreshSelectionVisuals();
+	}
+
 	private void OnGridKeyDown(object? sender, KeyEventArgs e)
 	{
 		if (e.Handled)
 			return;
+		if (e.Key == Key.A
+			&& e.KeyModifiers is KeyModifiers.Control or KeyModifiers.Meta)
+		{
+			_selection.SelectAll(_projectedRows);
+			RefreshSelectionVisuals();
+			e.Handled = true;
+			return;
+		}
 		if (HandleGridNavigation(e))
 		{
 			e.Handled = true;
@@ -759,9 +826,10 @@ public sealed class InstrumentEditorControl : UserControl
 			// The event source can be a nested TextBox or ComboBox. Handling
 			// the bubbled GotFocus captures Tab and mouse focus traversal
 			// without relying on the ListBox.SelectedItem.
+			surface.Tag = cell;
 			surface.AddHandler(InputElement.GotFocusEvent, (_, _) =>
 			{
-				if (_movingGridFocus)
+				if (_movingGridFocus || _shiftPointerAnchor.HasValue)
 					return;
 				if (InstrumentToneGridSelection.RowPosition(
 					_projectedRows, projected.Index) < 0)
@@ -774,9 +842,9 @@ public sealed class InstrumentEditorControl : UserControl
 				if (InstrumentToneGridSelection.RowPosition(
 					_projectedRows, projected.Index) < 0)
 					return;
-				if ((e.KeyModifiers & KeyModifiers.Shift) != 0)
-					_selection.Extend(cell, _projectedRows);
-				else
+				if (_shiftPointerAnchor is { } anchor)
+					_selection.ExtendFrom(anchor, cell, _projectedRows);
+				else if ((e.KeyModifiers & KeyModifiers.Shift) == 0)
 					_selection.Focus(cell, _projectedRows);
 				RefreshSelectionVisuals();
 			}, RoutingStrategies.Tunnel, handledEventsToo: true);

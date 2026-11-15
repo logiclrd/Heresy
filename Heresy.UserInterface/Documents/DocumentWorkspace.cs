@@ -15,6 +15,17 @@ namespace Heresy.UserInterface.Documents;
 /// Owns the single active authoring document and the persistence baseline used
 /// by the UI's saved/modified state. The semantic document remains in Core.
 /// </summary>
+/// <summary>An audio-affecting edit of a shared song object, committed by
+/// the authoring layer. Unlike a general document revision, this identifies
+/// exactly which dependency can need a live Synth re-publication.</summary>
+public sealed class SharedAudioObjectCommittedEventArgs(
+	SongDocument document, ObjectId objectId, uint audioRevision) : EventArgs
+{
+	public SongDocument Document { get; } = document;
+	public ObjectId ObjectId { get; } = objectId;
+	public uint AudioRevision { get; } = audioRevision;
+}
+
 public sealed class DocumentWorkspace
 {
 	private uint _savedDocumentRevision;
@@ -26,6 +37,20 @@ public sealed class DocumentWorkspace
 	}
 
 	public SongDocument Document { get; private set; }
+
+	/// <summary>Fired only after a successful audio-affecting edit to a shared
+	/// Envelope or Filter. The caller owns mutation and revision increment;
+	/// this notification never modifies the song or opens an audio session.</summary>
+	public event EventHandler<SharedAudioObjectCommittedEventArgs>? SharedAudioObjectCommitted;
+
+	internal void NotifySharedAudioObjectCommitted(ObjectId objectId)
+	{
+		if (objectId.IsNone)
+			throw new ArgumentOutOfRangeException(nameof(objectId));
+		SharedAudioObjectCommitted?.Invoke(this,
+			new SharedAudioObjectCommittedEventArgs(
+				Document, objectId, Document.AudioRevision));
+	}
 
 	public string? FilePath { get; private set; }
 

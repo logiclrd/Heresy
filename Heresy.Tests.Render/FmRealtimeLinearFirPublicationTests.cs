@@ -23,6 +23,68 @@ public sealed class FmRealtimeLinearFirPublicationTests
 	private const int Rate = 48000;
 	private const int Boundary = 21;
 
+	[Test]
+	public void WorkerFirSnapshotIncludesWindowWidthAndPhaseAgainstOlderAuthoredFilter()
+	{
+		// C2(ac): an FM-bound old voice can request a new prepared kernel
+		// while its state.Configuration is still the prior authoring revision.
+		// All design choices must travel in the exact worker snapshot,
+		// without mutating the original Filter or preparing on the PCM path.
+		const int sampleRate = 8000;
+		FilterDefinition definition = new((ObjectId)1921U, "PriorWindow", [
+			new FilterStageDefinition(1, "fir", FilterKind.FirLowPass),
+		]);
+		FilterInstance original = new(definition);
+		original.SetStageParameter(1, "CutoffHz",
+			FilterParameterValue.FromNumber(1000));
+		FirControlRequest request = new(0, 1, FilterKind.FirLowPass,
+			1350, 0, 0, 127, 350, "Minimum", Window: "Blackman");
+		FirControlPreparationPolicy policy = new(sampleRate);
+		Assert.That(policy.TryOffer([request]), Is.True);
+		Assert.That(policy.TryPreparePending(original, out var prepared), Is.True);
+		Assert.That(prepared, Is.Not.Null);
+		Assert.Multiple(() =>
+		{
+			Assert.That(prepared!.Matches([request]), Is.True);
+			Assert.That(prepared.Matches([request with { Window = "Hamming" }]),
+				Is.False, "a stale window cannot consume the worker candidate");
+			Assert.That(prepared.Matches([
+				request with { TransitionWidthHz = 300 }]),
+				Is.False, "a stale width cannot consume the worker candidate");
+			Assert.That(prepared.Matches([
+				request with { PhaseResponse = "Maximum" }]),
+				Is.False, "a stale phase cannot consume the worker candidate");
+			Assert.That(original.GetStageParameters(1)
+				.GetParameter("Window").ChoiceValue, Is.EqualTo("Hamming"));
+			Assert.That(original.GetStageParameters(1)
+				.GetParameter("PhaseResponse").ChoiceValue, Is.EqualTo("Linear"));
+			Assert.That(original.GetStageParameters(1)
+				.GetParameter("CutoffHz").NumericValue, Is.EqualTo(1000));
+		});
+		FilterInstance expectedUse = original.Clone();
+		expectedUse.SetStageParameters(1, [
+			new("CutoffHz", FilterParameterValue.FromNumber(1350)),
+			new("TransitionWidthHz", FilterParameterValue.FromNumber(350)),
+			new("Window", FilterParameterValue.FromChoice("Blackman")),
+			new("PhaseResponse", FilterParameterValue.FromChoice("Minimum")),
+		]);
+		StreamingFilterChain expected = new(
+			new FilterChain([expectedUse]), sampleRate, 1);
+		IStreamingFilterStageState detached = prepared!.Stages[0].Plan.CreateState();
+		float[] frame = new float[1];
+		for (int i = 0; i < 127; i++)
+		{
+			float input = i == 0 ? 1f : 0f;
+			frame[0] = input;
+			float fromWorker = detached.Process(input);
+			expected.ProcessFrame(frame);
+			Assert.That(fromWorker, Is.EqualTo(frame[0]).Within(1e-6f),
+				"window/width/phase prepared snapshot at impulse frame " + i);
+		}
+		Assert.That(policy.TryOffer([
+			request with { Window = "Invalid" }]), Is.False);
+	}
+
 	[TestCase(FilterKind.FirLowPass, 3)]
 	[TestCase(FilterKind.FirLowPass, 2047)]
 	[TestCase(FilterKind.FirHighPass, 127)]

@@ -142,9 +142,35 @@ public sealed class LazySongPlaybackTransportTests
 		received.Should().ContainSingle();
 	}
 
+	[Test]
+	public async Task SharedObjectNotificationPreservesLazinessAndForwardsToRunningTransport()
+	{
+		int created = 0;
+		ProbeTransport? probe = null;
+		using LazySongPlaybackTransport lazy = new(() =>
+		{
+			created++;
+			return probe = new ProbeTransport();
+		});
+		SongDocument document = new();
+		ObjectId filterId = (ObjectId)24U;
+
+		await ((ILiveSynthEditTransport)lazy)
+			.PublishSharedObjectEditAsync(document, filterId);
+		created.Should().Be(0,
+			"a shared definition edit with no existing audio must not create playback");
+
+		await lazy.PlayPatternAsync(document, (ObjectId)1U);
+		await ((ILiveSynthEditTransport)lazy)
+			.PublishSharedObjectEditAsync(document, filterId);
+		created.Should().Be(1);
+		probe!.SharedPublished.Should().Equal(filterId);
+	}
+
 	private sealed class ProbeTransport
 		: ISongPlaybackTransport, IPlaybackRuntimeDiagnosticsTransport,
-			IPlaybackAudioHealthTransport, IPlaybackSnapshotTransport
+			IPlaybackAudioHealthTransport, IPlaybackSnapshotTransport,
+			ILiveSynthEditTransport
 	{
 		public event EventHandler<PlaybackRuntimeDiagnosticsEventArgs>?
 			RuntimeDiagnostics;
@@ -174,6 +200,17 @@ public sealed class LazySongPlaybackTransportTests
 					new SequencingDiagnostic(
 						"HRSEQ001", "Dropped out-of-order Pattern note", 1, 3),
 				]));
+
+		public List<ObjectId> SharedPublished { get; } = [];
+		public Task PublishSharedObjectEditAsync(
+			SongDocument document, ObjectId objectId)
+		{
+			SharedPublished.Add(objectId);
+			return Task.CompletedTask;
+		}
+		public Task PublishSynthEditAsync(
+			SongDocument document, ObjectId sourceId)
+			=> Task.CompletedTask;
 
 		public int PatternCalls { get; private set; }
 		public int StopCalls { get; private set; }

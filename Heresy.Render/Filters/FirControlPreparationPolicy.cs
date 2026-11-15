@@ -7,14 +7,15 @@ namespace Heresy.Render.Filters;
 
 /// <summary>
 /// One nonstructural FIR control proposal captured without allocating.
-/// Structural tap/window/phase/transition settings come from the immutable
-/// authored stage and must not be changed by the FM sample.
+/// Tap count remains structural. Window, phase and transition width
+/// are immutable exact-snapshot controls (not audio-rate FM ports); a
+/// compatible Synth revision may supply new values to a worker request.
 /// </summary>
 internal readonly record struct FirControlRequest(
 	int StageIndex, int StageId, FilterKind Kind,
 	double CutoffHz, double LowCutoffHz, double HighCutoffHz,
 	int TapCount, double TransitionWidthHz, string PhaseResponse,
-	int LayerIndex = 0);
+	int LayerIndex = 0, string Window = "Hamming");
 
 /// <summary>A control-side prepared plan; publication into running DSP is
 /// deliberately left to the separate per-FIR response milestones.</summary>
@@ -164,6 +165,11 @@ internal sealed class FirControlPreparationPolicy
 			for (int i = 0; i < _count; i++)
 			{
 				FirControlRequest req = _pending[i];
+				candidate.SetStageParameters(req.StageId, [
+					new("TransitionWidthHz", FilterParameterValue.FromNumber(req.TransitionWidthHz)),
+					new("Window", FilterParameterValue.FromChoice(req.Window)),
+					new("PhaseResponse", FilterParameterValue.FromChoice(req.PhaseResponse)),
+				]);
 				if (req.Kind is FilterKind.FirLowPass or FilterKind.FirHighPass)
 					candidate.SetStageParameter(req.StageId, "CutoffHz",
 						FilterParameterValue.FromNumber(req.CutoffHz));
@@ -233,6 +239,11 @@ internal sealed class FirControlPreparationPolicy
 				FirControlRequest request = _pending[i];
 				if ((uint)request.LayerIndex >= (uint)proposed.Length)
 					throw new ArgumentException("Unrecognized FIR layer.");
+				proposed[request.LayerIndex].SetStageParameters(request.StageId, [
+					new("TransitionWidthHz", FilterParameterValue.FromNumber(request.TransitionWidthHz)),
+					new("Window", FilterParameterValue.FromChoice(request.Window)),
+					new("PhaseResponse", FilterParameterValue.FromChoice(request.PhaseResponse)),
+				]);
 				if (request.Kind is FilterKind.FirLowPass or FilterKind.FirHighPass)
 					proposed[request.LayerIndex].SetStageParameter(
 						request.StageId, "CutoffHz",
@@ -301,7 +312,8 @@ internal sealed class FirControlPreparationPolicy
 			|| (req.TapCount & 1) == 0
 			|| !double.IsFinite(req.TransitionWidthHz)
 			|| req.TransitionWidthHz < 1 || req.TransitionWidthHz > 5000
-			|| req.PhaseResponse is not ("Linear" or "Minimum" or "Maximum"))
+			|| req.PhaseResponse is not ("Linear" or "Minimum" or "Maximum")
+			|| req.Window is not ("Hann" or "Hamming" or "Blackman"))
 			return false;
 		double nyquist = sampleRate * 0.5;
 		double half = req.TransitionWidthHz * 0.5;

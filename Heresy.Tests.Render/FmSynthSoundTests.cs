@@ -43,6 +43,64 @@ public sealed class FmSynthSoundTests
 	}
 
 	[Test]
+	public void RapidRunningConstantEditsPublishAtExactBoundariesWithoutRewind()
+	{
+		// Immutable revisions must take effect on the same held voice without
+		// a new note, an extra frame of the old value, or stale revisions.
+		FmSynthSound SoundAt(double value) => Sound(new FmSynthGraph(
+		[
+			new FmConstantNode(1, value),
+		], outputNodeId: 1));
+		FmSynthSound first = SoundAt(0.25);
+		SoundState state = first.CreateState();
+		RenderContext context = MonoContext(48000);
+		float[] initial = new float[80];
+		first.Render(context, state, 0, initial.Length, initial);
+		initial.Should().OnlyContain(v => v == 0.25f);
+
+		FmSynthSound second = SoundAt(1.0);
+		first.TryPrepareRunningState(second, state).Should().BeTrue();
+		first.CommitPreparedRunningState(second, state);
+		float[] updated = new float[16];
+		second.Render(context, state, 80, updated.Length, updated);
+		updated.Should().OnlyContain(v => v == 1.0f,
+			"compatible scalar revisions publish at the exact frame boundary");
+
+		FmSynthSound third = SoundAt(-0.5);
+		second.TryPrepareRunningState(third, state).Should().BeTrue();
+		second.CommitPreparedRunningState(third, state);
+		float[] retuned = new float[80];
+		third.Render(context, state, 96, retuned.Length, retuned);
+		retuned.Should().OnlyContain(v => v == -0.5f,
+			"rapid successive edits must not reintroduce an old value");
+	}
+
+	[Test]
+	public void RunningConstantEditPropagatesToRetainedNestedMultiStates()
+	{
+		FmSynthSound SoundAt(double value) => Sound(new FmSynthGraph(
+		[
+			new FmConstantNode(1, value),
+			new FmMultiNode(2, 1, voiceCount: 2,
+				randomizePhase: false, gainCompensation: false),
+		], outputNodeId: 2));
+		RenderContext context = MonoContext(48000);
+		FmSynthSound first = SoundAt(0.25);
+		SoundState state = first.CreateState();
+		float[] held = new float[80];
+		first.Render(context, state, 0, held.Length, held);
+		held.Should().OnlyContain(v => v == 0.5f);
+
+		FmSynthSound revised = SoundAt(0.5);
+		first.TryPrepareRunningState(revised, state).Should().BeTrue();
+		first.CommitPreparedRunningState(revised, state);
+		float[] continued = new float[81];
+		revised.Render(context, state, 80, continued.Length, continued);
+		continued.Should().OnlyContain(v => v == 1.0f,
+			"both retained Multi children must adopt the same scalar revision");
+	}
+
+	[Test]
 	public void SineOscillatorAdvancesAtConfiguredFrequency()
 	{
 		FmSynthSound sound =
@@ -132,6 +190,86 @@ public sealed class FmSynthSoundTests
 	}
 
 	[Test]
+	public void SingleOscillatorMatchesGenericGraphAcrossLiveEditsPitchAndRelease()
+	{
+		const int sampleRate = 48000;
+		RenderContext context = MonoContext(sampleRate);
+		foreach (FmOscillatorWaveform waveform in Enum.GetValues<FmOscillatorWaveform>())
+		{
+			foreach (bool constant in new[] { false, true })
+			{
+				FmSynthGraph Graph(FmOscillatorWaveform kind, double frequency,
+					double curvature, double minimum, double maximum,
+					bool constantRate, bool exponential, bool generic)
+				{
+					FmOscillatorNode oscillator = new(1, kind, frequency,
+						minimum: minimum, maximum: maximum, curvature: curvature,
+						constant: constantRate, exponentialMultiplier: exponential);
+					return generic
+						? new FmSynthGraph([
+							oscillator, new FmConstantNode(2, 1.0),
+							new FmOperatorNode(3, FmOperatorKind.Multiply, [1, 2])
+						], outputNodeId: 3)
+						: new FmSynthGraph([oscillator], outputNodeId: 1);
+				}
+				FmSynthSound direct = Sound(Graph(waveform, 631, 2.5,
+					-0.6, 0.8, constant, false, false));
+				FmSynthSound generic = Sound(Graph(waveform, 631, 2.5,
+					-0.6, 0.8, constant, false, true));
+				SoundState directState = direct.CreateState();
+				SoundState genericState = generic.CreateState();
+				foreach (SoundState state in new[] { directState, genericState })
+				{
+					state.PitchMultiplier = 1.375;
+					state.PlaybackSpeedMultiplier = 0.75;
+					state.PitchTrajectory.SetMultiplier(95, 1.15);
+				}
+				float[] directPcm = new float[350];
+				float[] genericPcm = new float[350];
+				direct.Render(context, directState, 0, 119,
+					directPcm.AsSpan(0, 119));
+				generic.Render(context, genericState, 0, 119,
+					genericPcm.AsSpan(0, 119));
+
+				// Change all authored oscillator parameters that are legal
+				// non-structural edits while retaining the original phase.
+				FmOscillatorWaveform editedWaveform =
+					waveform == FmOscillatorWaveform.Sine
+						? FmOscillatorWaveform.Sawtooth
+						: FmOscillatorWaveform.Sine;
+				// Vmin/Vmax, constant frequency, and the exponential-FM
+				// interpretation are also authored non-wire properties.
+				// The latter is an inert setting when no multiplier is bound.
+				FmSynthSound directRevision = Sound(Graph(
+					editedWaveform, 417, -1.5,
+					-0.2, 0.55, !constant, true, false));
+				FmSynthSound genericRevision = Sound(Graph(
+					editedWaveform, 417, -1.5,
+					-0.2, 0.55, !constant, true, true));
+				direct.TryPrepareRunningState(directRevision, directState)
+					.Should().BeTrue();
+				generic.TryPrepareRunningState(genericRevision, genericState)
+					.Should().BeTrue();
+				direct.CommitPreparedRunningState(directRevision, directState);
+				generic.CommitPreparedRunningState(genericRevision, genericState);
+				directState.NoteOffTime =
+					TimeSpan.FromSeconds(205.0 / sampleRate);
+				genericState.NoteOffTime = directState.NoteOffTime;
+				directRevision.Render(context, directState, 119, 231,
+					directPcm.AsSpan(119));
+				genericRevision.Render(context, genericState, 119, 231,
+					genericPcm.AsSpan(119));
+
+				directPcm.Should().Equal(genericPcm,
+					"the optimized single oscillator must preserve generic graph " +
+					"waveform math, pitch timeline, live revision phase and release");
+				directPcm[^1].Should().Be(0,
+					"Note Off still ends the standalone oscillator");
+			}
+		}
+	}
+
+	[Test]
 	public void ConstantOscillatorStillRespondsToConnectedLinearAndSemitoneMultipliers()
 	{
 		foreach (bool exponential in new[] { false, true })
@@ -150,6 +288,38 @@ public sealed class FmSynthSoundTests
 			output[2].Should().BeApproximately(1.0f, 1e-6f,
 				"explicit FM multiplication still doubles a fixed-rate oscillator");
 		}
+	}
+
+	[Test]
+	public void HeldOscillatorAdoptsExponentialMultiplierModeWithoutRewindingPhase()
+	{
+		// The same connected FM input means either twelve semitones or a
+		// twelvefold linear ratio; switching mode is an authored parameter
+		// change, not graph rewiring or permission to reset the held note.
+		FmSynthSound SoundWithMode(bool exponential) => Sound(new FmSynthGraph(
+		[
+			new FmConstantNode(1, 12.0),
+			new FmOscillatorNode(2, FmOscillatorWaveform.Sine, 100,
+				multiplierNodeId: 1, exponentialMultiplier: exponential),
+		], outputNodeId: 2));
+		RenderContext context = MonoContext(48000);
+		FmSynthSound before = SoundWithMode(true);
+		SoundState held = before.CreateState();
+		SoundState reference = before.CreateState();
+		float[] start = new float[128];
+		before.Render(context, held, 0, start.Length, start);
+		float[] unchanged = new float[136];
+		before.Render(context, reference, 0, unchanged.Length, unchanged);
+
+		FmSynthSound revised = SoundWithMode(false);
+		before.TryPrepareRunningState(revised, held).Should().BeTrue();
+		before.CommitPreparedRunningState(revised, held);
+		float[] after = new float[8];
+		revised.Render(context, held, 128, after.Length, after);
+		after[0].Should().BeApproximately(unchanged[128], 1e-6f,
+			"an FM interpretation edit must not change accumulated phase");
+		Math.Abs(after[1] - unchanged[129]).Should().BeGreaterThan(0.05f,
+			"the newly authored linear multiplier must affect the next phase step");
 	}
 
 	[Test]
@@ -636,6 +806,7 @@ public sealed class FmSynthSoundTests
 
 	private sealed class NoteOffProbeCurve : IEnvelopeCurve
 	{
+		public bool HasSustainLoop => true;
 		public double GetValue(
 			long activeFrame,
 			int sampleRate,

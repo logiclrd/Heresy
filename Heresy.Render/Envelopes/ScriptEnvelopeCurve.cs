@@ -24,6 +24,11 @@ public sealed class ScriptEnvelopeCurve : IEnvelopeCurve
 		_releaseDuration = releaseDuration;
 	}
 
+	// A declared script release is an explicit reactive sustain/release
+	// lifecycle (the script has no authored node-loop indices).
+	public bool HasSustainLoop => _releaseDuration.HasValue;
+	public bool IsZeroAfterCompletion => _releaseDuration.HasValue;
+
 	public double GetValue(long activeFrame, int sampleRate, long? noteOffActiveFrame)
 	{
 		if (activeFrame < 0)

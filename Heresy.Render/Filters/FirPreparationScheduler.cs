@@ -1,10 +1,20 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 
 using Heresy.Core.Filters;
 
 namespace Heresy.Render.Filters;
+
+/// <summary>Independent bounded preparation request, served by the one
+/// existing non-PCM control worker. An invocation owns its own latest-wins
+/// mailbox; no mutable DSP state crosses into this thread.</summary>
+internal interface IRealtimePreparationWorkItem
+{
+    void Prepare(FirPreparationScheduler scheduler);
+    void MarkFailed(FirPreparationScheduler scheduler);
+}
 
 /// <summary>
 /// One off-PCM preparation thread per live audio producer. Each invocation
@@ -15,11 +25,30 @@ namespace Heresy.Render.Filters;
 public sealed class FirPreparationScheduler : IDisposable
 {
     private readonly object _gate = new();
-    private readonly Queue<FirPreparationMailbox> _queue = new();
+    private readonly Queue<IRealtimePreparationWorkItem> _queue = new();
     private readonly Thread _thread;
     private bool _stopped;
     private Exception? _fault;
     private long _completed;
+    // Only Multi expansion admissions are capped here. FIR mailboxes retain
+    // their existing bounded, per-stage latest-wins scheduling contract.
+    // A refused Multi request stays in its invocation mailbox and retries
+    // on a later producer block without blocking the audio thread.
+    public const int MaximumQueuedMultiExpansions = 64;
+    private int _peakQueuedWorkItems;
+    private long _completedMulti;
+    private long _cancelledMulti;
+    private long _preparedMultiConstituents;
+    private long _abandonedMultiConstituents;
+    private long _multiPreparationTicks;
+    private long _multiPreparationAllocatedBytes;
+    private long _abandonedMultiPreparationAllocatedBytes;
+    private long _peakMultiPreparationAllocatedBytes;
+    internal Action? BeforePrepareWorkItem { get; set; }
+    // Deterministic concurrency-test gate on the OFF-PCM worker only.
+    internal Action? AfterMultiConstituentPrepared { get; set; }
+    // Off-thread-only deterministic test hook for deep child construction.
+    internal Action? AfterNestedMultiChildStateCreated { get; set; }
 
     public FirPreparationScheduler()
     {
@@ -33,14 +62,84 @@ public sealed class FirPreparationScheduler : IDisposable
 
     public Exception? Fault => Volatile.Read(ref _fault);
     public long CompletedPreparationCount => Interlocked.Read(ref _completed);
+    public long CompletedMultiExpansionCount => Interlocked.Read(ref _completedMulti);
+    public long CancelledMultiExpansionCount => Interlocked.Read(ref _cancelledMulti);
+    public long PreparedMultiConstituentCount =>
+        Interlocked.Read(ref _preparedMultiConstituents);
+    public long AbandonedMultiConstituentCount =>
+        Interlocked.Read(ref _abandonedMultiConstituents);
+    public long MultiPreparationAllocatedBytes =>
+        Interlocked.Read(ref _multiPreparationAllocatedBytes);
+    public long AbandonedMultiPreparationAllocatedBytes =>
+        Interlocked.Read(ref _abandonedMultiPreparationAllocatedBytes);
+    public long PeakMultiPreparationAllocatedBytes =>
+        Interlocked.Read(ref _peakMultiPreparationAllocatedBytes);
+    public TimeSpan MultiPreparationElapsedTime =>
+        TimeSpan.FromSeconds((double)Interlocked.Read(ref _multiPreparationTicks)
+            / Stopwatch.Frequency);
+    public int PeakQueuedWorkItems => Volatile.Read(ref _peakQueuedWorkItems);
     internal void RecordCompleted() => Interlocked.Increment(ref _completed);
+    internal void RecordCancelledMultiExpansion(
+        int abandonedChildren = 0, long abandonedAllocatedBytes = 0)
+    {
+        Interlocked.Increment(ref _cancelledMulti);
+        Interlocked.Add(ref _abandonedMultiConstituents, abandonedChildren);
+        Interlocked.Add(ref _abandonedMultiPreparationAllocatedBytes,
+            abandonedAllocatedBytes);
+        Max(ref _peakMultiPreparationAllocatedBytes, abandonedAllocatedBytes);
+    }
 
-    internal void Enqueue(FirPreparationMailbox mailbox)
+    private static void Max(ref long target, long observed)
+    {
+        long old;
+        while ((old = Interlocked.Read(ref target)) < observed
+            && Interlocked.CompareExchange(ref target, observed, old) != old)
+        {
+        }
+    }
+
+    private void UpdatePeakQueue()
+    {
+        int count = _queue.Count;
+        int old;
+        while ((old = Volatile.Read(ref _peakQueuedWorkItems)) < count
+            && Interlocked.CompareExchange(
+                ref _peakQueuedWorkItems, count, old) != old)
+        {
+        }
+    }
+
+    internal void RecordMultiExpansion(int childCount,
+        long elapsedTicks, long allocatedBytes)
+    {
+        Interlocked.Increment(ref _completedMulti);
+        Interlocked.Add(ref _preparedMultiConstituents, childCount);
+        Interlocked.Add(ref _multiPreparationTicks, elapsedTicks);
+        Interlocked.Add(ref _multiPreparationAllocatedBytes, allocatedBytes);
+        Max(ref _peakMultiPreparationAllocatedBytes, allocatedBytes);
+        RecordCompleted();
+    }
+
+    internal bool TryEnqueueMultiExpansion(IRealtimePreparationWorkItem mailbox)
+    {
+        lock (_gate)
+        {
+            if (_stopped || _queue.Count >= MaximumQueuedMultiExpansions)
+                return false;
+            _queue.Enqueue(mailbox);
+            UpdatePeakQueue();
+            Monitor.Pulse(_gate);
+            return true;
+        }
+    }
+
+    internal void Enqueue(IRealtimePreparationWorkItem mailbox)
     {
         lock (_gate)
         {
             if (_stopped) return;
             _queue.Enqueue(mailbox);
+            UpdatePeakQueue();
             Monitor.Pulse(_gate);
         }
     }
@@ -49,7 +148,7 @@ public sealed class FirPreparationScheduler : IDisposable
     {
         while (true)
         {
-            FirPreparationMailbox next;
+            IRealtimePreparationWorkItem next;
             lock (_gate)
             {
                 while (!_stopped && _queue.Count == 0)
@@ -59,6 +158,7 @@ public sealed class FirPreparationScheduler : IDisposable
             }
             try
             {
+                BeforePrepareWorkItem?.Invoke(); // deterministic test gate
                 next.Prepare(this);
             }
             catch (Exception exception)
@@ -91,7 +191,7 @@ public sealed class FirPreparationScheduler : IDisposable
 /// Version checking prevents a worker result prepared from a superseded
 /// snapshot from becoming visible to the rendering thread.
 /// </summary>
-internal sealed class FirPreparationMailbox
+internal sealed class FirPreparationMailbox : IRealtimePreparationWorkItem
 {
     private readonly object _gate = new();
     private readonly FilterChain _authored;
@@ -162,7 +262,7 @@ internal sealed class FirPreparationMailbox
         }
     }
 
-    internal void Prepare(FirPreparationScheduler scheduler)
+    public void Prepare(FirPreparationScheduler scheduler)
     {
         long version;
         int count;
@@ -196,7 +296,7 @@ internal sealed class FirPreparationMailbox
             scheduler.RecordCompleted();
     }
 
-    internal void MarkFailed(FirPreparationScheduler scheduler)
+    public void MarkFailed(FirPreparationScheduler scheduler)
     {
         bool retry;
         lock (_gate)

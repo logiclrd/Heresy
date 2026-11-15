@@ -7,6 +7,12 @@ namespace Heresy.Render.Envelopes;
 /// </summary>
 public interface IEnvelopeCurve
 {
+	/// <summary>Whether Note Off has an actual sustain loop to release.</summary>
+	bool HasSustainLoop => false;
+
+	/// <summary>Whether completed playback is permanently zero.</summary>
+	bool IsZeroAfterCompletion => false;
+
 	double GetValue(
 		long activeFrame,
 		int sampleRate,
@@ -21,8 +27,9 @@ public interface IEnvelopeCurve
 	long? GetEndActiveFrameExclusiveWithoutNoteOff(int sampleRate) => null;
 
 	/// <summary>
-	/// Returns the first active-envelope frame which is guaranteed to be silent
-	/// after Note Off, or null when the curve has no deterministic finite end.
+	/// Returns the first active-envelope frame after release traversal finishes,
+	/// not necessarily a zero-amplitude boundary. A nonzero terminal value
+	/// remains in effect until the enclosing note retires.
 	/// </summary>
 	long? GetEndActiveFrameExclusiveAfterNoteOff(
 		long noteOffActiveFrame,

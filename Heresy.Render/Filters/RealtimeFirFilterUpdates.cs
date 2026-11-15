@@ -6,10 +6,13 @@ namespace Heresy.Render.Filters;
 /// publication never designs taps or replaces PCM history.
 /// </summary>
 internal readonly record struct RealtimeFirStageUpdate(
-	int StageIndex, IStreamingFilterStagePlan Plan);
+	int StageIndex, IStreamingFilterStagePlan Plan,
+	bool AllowDesignChange = false);
 
 internal interface IRealtimeFirFilterState
 {
-	bool TryPrepareRealtime(IStreamingFilterStagePlan plan);
-	void CommitRealtime(IStreamingFilterStagePlan plan);
+	bool TryPrepareRealtime(IStreamingFilterStagePlan plan,
+		bool allowDesignChange = false);
+	void CommitRealtime(IStreamingFilterStagePlan plan,
+		bool allowDesignChange = false);
 }

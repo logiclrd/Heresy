@@ -13,6 +13,10 @@ public interface ISound
 
 	SoundState CreateState();
 
+	/// <summary>Whether this bound, selected sound has any active sustain
+	/// loop in its reachable sound subtree. Pure query, no PCM allocation.</summary>
+	bool HasSustainRelease(SoundState state) => false;
+
 	/// <summary>
 	/// Binds one requested note to an executable sound/state/configuration.
 	/// Ordinary sounds use the default implementation. Recursive sounds such as

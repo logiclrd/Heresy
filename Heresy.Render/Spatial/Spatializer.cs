@@ -16,6 +16,16 @@ public static class Spatializer
 	{
 		ArgumentNullException.ThrowIfNull(outputChannel);
 
+		// Multi child mono contexts have zero positional importance.
+		// Finite sources in such channels always have unity gain; avoid
+		// evaluating a power function for each constituent's PCM frame.
+		// Preserve the old NaN behavior for invalid source positions.
+		if (outputChannel.PositionalImportance == 0.0
+			&& float.IsFinite(sourcePosition.X)
+			&& float.IsFinite(sourcePosition.Y)
+			&& float.IsFinite(sourcePosition.Z))
+			return 1.0;
+
 		double dx = (double)sourcePosition.X - outputChannel.Position.X;
 		double dy = (double)sourcePosition.Y - outputChannel.Position.Y;
 		double dz = (double)sourcePosition.Z - outputChannel.Position.Z;

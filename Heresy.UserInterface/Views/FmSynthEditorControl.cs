@@ -36,9 +36,12 @@ public sealed class FmSynthEditorControl : UserControl
 	private readonly FmSynthDefinition _synth;
 	private readonly Action _close;
 	private readonly Action<string> _changed;
+	private readonly Func<Task>? _publishSynthEditAsync;
+	private uint _lastNotifiedAudioRevision;
 	private readonly FmSynthGraphCanvas _canvas;
 	private readonly PianoPreviewPlaybackController _previewPlayback;
 	private readonly PianoTestControl _pianoTest;
+	private readonly Dictionary<ObjectId, Window> _sharedVolumeEditors = [];
 	private readonly StackPanel _inspector =
 		new()
 		{
@@ -58,7 +61,8 @@ public sealed class FmSynthEditorControl : UserControl
 		FmSynthDefinition synth,
 		Action close,
 		Action<string> changed,
-		PatternLiveAuditionActions? liveAudition = null)
+		PatternLiveAuditionActions? liveAudition = null,
+		Func<Task>? publishSynthEditAsync = null)
 	{
 		_workspace =
 			workspace
@@ -69,9 +73,19 @@ public sealed class FmSynthEditorControl : UserControl
 		_close =
 			close
 				?? throw new ArgumentNullException(nameof(close));
-		_changed =
-			changed
-				?? throw new ArgumentNullException(nameof(changed));
+		ArgumentNullException.ThrowIfNull(changed);
+		_publishSynthEditAsync = publishSynthEditAsync;
+		_lastNotifiedAudioRevision = workspace.Document.AudioRevision;
+		_changed = message =>
+		{
+			changed(message);
+			uint revision = _workspace.Document.AudioRevision;
+			if (revision == _lastNotifiedAudioRevision)
+				return; // presentation-only changes must not publish
+			_lastNotifiedAudioRevision = revision;
+			if (_publishSynthEditAsync is not null)
+				_ = PublishCommittedEditAsync();
+		};
 		_previewPlayback = new PianoPreviewPlaybackController(
 			synth.Id, PianoPreviewPlaybackController.SynthVoiceIdBase,
 			liveAudition, onError: error => _message.Text = error);
@@ -94,6 +108,14 @@ public sealed class FmSynthEditorControl : UserControl
 		// Only graph focus should delete graph nodes. Inspector TextBoxes
 		// retain their normal Delete-key text editing behavior.
 		_canvas.KeyDown += OnGraphKeyDown;
+		// A modeless shared-envelope editor must not outlive the Synth
+		// preview's view; leaving this view still stops its voices.
+		DetachedFromVisualTree += (_, _) =>
+		{
+			foreach (Window editor in _sharedVolumeEditors.Values.ToArray())
+				editor.Close();
+			_sharedVolumeEditors.Clear();
+		};
 		Content = BuildContent();
 		RebuildInspector();
 	}
@@ -853,6 +875,56 @@ public sealed class FmSynthEditorControl : UserControl
 		};
 		AddField("Multiplier input", multiplier);
 		_inspector.Children.Add(exponential);
+		// Editing an Instrument tone's shared Volume Envelope must be possible
+		// without navigating away from this Synth preview. A modal dialog
+		// would prevent audition interaction, so expose a modeless editor.
+		// Only direct Sample tones currently support live held-voice Volume
+		// migration; the editor is useful for other tones too, but their
+		// existing voices retain their original DSP generation.
+		if (_workspace.Document.TryGet(node.SourceId, out SongObject? linked)
+			&& linked is InstrumentDefinition instrument)
+		{
+			NodeEnvelopeDefinition[] volumes = instrument.ToneSpecifications
+				.Where(tone => tone.VolumeEnvelopeId.HasValue)
+				.Select(tone => tone.VolumeEnvelopeId!.Value)
+				.Distinct()
+				.Select(id => _workspace.Document.TryGet(id,
+					out SongObject? obj) ? obj as NodeEnvelopeDefinition : null)
+				.OfType<NodeEnvelopeDefinition>()
+				.OrderBy(envelope => envelope.Name, StringComparer.OrdinalIgnoreCase)
+				.ThenBy(envelope => envelope.Id.Value)
+				.ToArray();
+			if (volumes.Length != 0)
+			{
+				EnvelopeChoice[] volumeOptions = volumes
+					.Select(env => new EnvelopeChoice(env.Id,
+						$"{env.Name} <{env.Id.Value}>")).ToArray();
+				ComboBox volumeChoice = new()
+				{
+					ItemsSource = volumeOptions,
+					SelectedItem = volumeOptions[0],
+				};
+				AddField("Instrument tone Volume", volumeChoice);
+				Button editVolume = Button("Edit shared Volume envelope…", () =>
+				{
+					try
+					{
+						if (volumeChoice.SelectedItem is EnvelopeChoice selected)
+							OpenSharedInstrumentVolumeEditor(volumes.Single(x =>
+								x.Id == selected.Id));
+					}
+					catch (Exception ex) { _message.Text = ex.Message; }
+				});
+				_inspector.Children.Add(editVolume);
+				_inspector.Children.Add(new TextBlock
+				{
+					Text = "Latch a preview note, then edit this envelope in the "
+						+ "separate window. Only a direct Sample-backed Instrument tone "
+						+ "currently updates existing Synth preview voices.",
+					TextWrapping = TextWrapping.Wrap,
+				});
+			}
+		}
 		BindParameterSelection(source,
 			() => options.FirstOrDefault(c => c.Id ==
 				((FmSoundSourceNode)CurrentNode(node.Id)).SourceId) ?? unassigned,
@@ -873,6 +945,39 @@ public sealed class FmSynthEditorControl : UserControl
 		BindParameterToggle(exponential,
 			() => ((FmSoundSourceNode)CurrentNode(node.Id)).ExponentialMultiplier,
 			value => UpdateSoundSource(node.Id, exponential: value));
+	}
+
+	private void OpenSharedInstrumentVolumeEditor(NodeEnvelopeDefinition envelope)
+	{
+		if (_sharedVolumeEditors.TryGetValue(envelope.Id, out Window? existing))
+		{
+			existing.Activate();
+			return;
+		}
+		Window? owner = TopLevel.GetTopLevel(this) as Window;
+		if (owner is null)
+			throw new InvalidOperationException(
+				"Open the Synth editor in a window to edit a shared Instrument envelope.");
+		Window editor = new()
+		{
+			Title = $"Instrument Volume envelope — {envelope.Name}",
+			Width = 960,
+			Height = 760,
+			Content = new ScrollViewer
+			{
+				Content = new NodeEnvelopeEditorControl(_workspace, envelope,
+					message =>
+					{
+						_message.Text = message;
+						_changed(message);
+					}),
+				VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+				HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+			},
+		};
+		_sharedVolumeEditors.Add(envelope.Id, editor);
+		editor.Closed += (_, _) => _sharedVolumeEditors.Remove(envelope.Id);
+		editor.Show(owner);
 	}
 
 	private void AddEnvelopeInspector(FmEnvelopeNode node)
@@ -1149,7 +1254,24 @@ public sealed class FmSynthEditorControl : UserControl
 		{
 			try
 			{
-				UpdateParameter(node.Id, current => change((FmMultiNode)current));
+				UpdateParameter(node.Id, current =>
+				{
+					FmMultiNode previous = (FmMultiNode)current;
+					FmMultiNode proposed = change(previous);
+					// Every Multi text commit constructs a fresh immutable node,
+					// even when the semantic content is unchanged. Avoid a
+					// spurious audio revision/live publication (and worker onset).
+					return previous.InputNodeId == proposed.InputNodeId
+						&& previous.Distribution == proposed.Distribution
+						&& previous.Detune == proposed.Detune
+						&& previous.VoiceCount == proposed.VoiceCount
+						&& previous.HarmonicComponents == proposed.HarmonicComponents
+						&& previous.ChordComponents == proposed.ChordComponents
+						&& previous.RandomizePhase == proposed.RandomizePhase
+						&& previous.GainCompensation == proposed.GainCompensation
+						&& previous.CycleLength == proposed.CycleLength
+						? null : proposed;
+				});
 				RefreshFields(cycle);
 			}
 			catch (Exception ex)
@@ -1414,11 +1536,12 @@ public sealed class FmSynthEditorControl : UserControl
 		});
 		_inspector.Children.Add(new TextBlock
 		{
-			Text = "Audio enters the Input port. Only nonstructural numeric "
-				+ "stage parameters have modulation ports. Disconnected ports "
-				+ "use the per-use static configuration. Until FM Filter "
-				+ "rendering is implemented, this node passes audio unchanged; "
-				+ "Tail is stored but not yet applied.",
+			Text = "Audio enters the Input port. Nonstructural numeric "
+				+ "stage parameters expose modulation ports; disconnected ports "
+				+ "use the per-use static configuration. Filters process audio "
+				+ "during playback, and Tail can preserve residual Filter output "
+				+ "after the input ends. Rewiring ports or changing the effective "
+				+ "stage topology may leave existing notes on an older graph.",
 			TextWrapping = TextWrapping.Wrap,
 		});
 		if (node.StaleConnections.Count > 0)
@@ -1636,6 +1759,13 @@ public sealed class FmSynthEditorControl : UserControl
 		int? multiplierId = null, bool replaceMultiplier = false,
 		bool? exponential = null, bool? constant = null)
 	{
+		// The Source inspector has object-family-specific controls (e.g.
+		// a data Instrument's shared Volume editor). A SourceId edit must
+		// refresh those controls immediately; merely refreshing the canvas
+		// leaves stale Sample/Instrument actions until the user reselects
+		// the graph node. Do not rebuild for ordinary numeric edits.
+		ObjectId previousSourceId =
+			((FmSoundSourceNode)CurrentNode(nodeId)).SourceId;
 		UpdateParameter(nodeId, current =>
 		{
 			FmSoundSourceNode live = (FmSoundSourceNode)current;
@@ -1649,6 +1779,10 @@ public sealed class FmSynthEditorControl : UserControl
 				&& exp == live.ExponentialMultiplier && fixedPitch == live.Constant
 				? null : new FmSoundSourceNode(nodeId, id, freq, input, exp, fixedPitch);
 		});
+		if (sourceId is ObjectId selectedId
+			&& selectedId != previousSourceId
+			&& ((FmSoundSourceNode)CurrentNode(nodeId)).SourceId == selectedId)
+			RebuildInspector();
 	}
 
 	private void UpdateOscillator(
@@ -1692,6 +1826,18 @@ public sealed class FmSynthEditorControl : UserControl
 					live.Id, wave, freq, min, max, multiplier, exp, fixedFrequency,
 					curve);
 			});
+	}
+
+	private async Task PublishCommittedEditAsync()
+	{
+		try
+		{
+			await _publishSynthEditAsync!();
+		}
+		catch (Exception error)
+		{
+			_message.Text = $"Could not apply live Synth edit: {error.Message}";
+		}
 	}
 
 	private void UpdateParameter(

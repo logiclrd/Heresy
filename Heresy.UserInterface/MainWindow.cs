@@ -217,6 +217,7 @@ public sealed class MainWindow : Window
 		};
 		_workspace = workspace
 			?? throw new ArgumentNullException(nameof(workspace));
+		_workspace.SharedAudioObjectCommitted += OnSharedAudioObjectCommitted;
 		_playbackTransport = playbackTransport;
 		_audioOutputSettings = audioOutputSettings ?? new AudioOutputSettings();
 		_exportService = exportService ??
@@ -265,8 +266,6 @@ public sealed class MainWindow : Window
 				VerticalAlignment = VerticalAlignment.Center,
 			};
 
-		ToolTip.SetTip(_playbackSnapshotIndicator,
-			"Current playback uses an immutable song snapshot. Restart playback to hear edits.");
 		Content = BuildShell();
 		Closing += OnClosing;
 		Closed += (_, _) =>
@@ -283,6 +282,7 @@ public sealed class MainWindow : Window
 					OnPlaybackSnapshotChanged;
 			if (_observedDocument is not null)
 				_observedDocument.Changed -= OnDocumentChanged;
+			_workspace.SharedAudioObjectCommitted -= OnSharedAudioObjectCommitted;
 			_runtimeDiagnosticsWindow?.Close();
 			_scopeHost.Shutdown();
 			if (_playbackPositionTransport is not null)
@@ -2518,7 +2518,11 @@ public sealed class MainWindow : Window
 							_playbackTransport.SendLiveEventAsync(
 								_workspace.Document,
 								liveEvent.Target,
-								liveEvent.Commands)));
+								liveEvent.Commands)),
+				_playbackTransport is ILiveSynthEditTransport synthEdits
+					? () => synthEdits.PublishSynthEditAsync(
+						_workspace.Document, synth.Id)
+					: null);
 		_mainContent.Content = editor;
 		UpdateWindowTitle();
 		SetStatus($"Editing synth {synth.Name}");
@@ -3007,6 +3011,42 @@ public sealed class MainWindow : Window
 		});
 	}
 
+	/// <summary>Shared authoring editors identify the exact Filter/Envelope
+	/// whose audio content was committed. Queue dependent Synth publications
+	/// through the transport's command gate; never reopen playback here.</summary>
+	private void OnSharedAudioObjectCommitted(
+		object? sender, SharedAudioObjectCommittedEventArgs e)
+	{
+		if (_windowClosed || !ReferenceEquals(sender, _workspace)
+			|| !ReferenceEquals(e.Document, _workspace.Document)
+			|| _playbackTransport is not ILiveSynthEditTransport)
+			return;
+		if (Dispatcher.UIThread.CheckAccess())
+			_ = PublishSharedAudioObjectEditAsync(e.Document, e.ObjectId);
+		else
+			Dispatcher.UIThread.Post(() =>
+			{
+				if (!_windowClosed && ReferenceEquals(e.Document, _workspace.Document))
+					_ = PublishSharedAudioObjectEditAsync(e.Document, e.ObjectId);
+			});
+	}
+
+	private async Task PublishSharedAudioObjectEditAsync(
+		SongDocument document, ObjectId objectId)
+	{
+		if (_playbackTransport is not ILiveSynthEditTransport edits)
+			return;
+		try
+		{
+			await edits.PublishSharedObjectEditAsync(document, objectId);
+		}
+		catch (Exception error)
+		{
+			if (!_windowClosed && ReferenceEquals(document, _workspace.Document))
+				SetStatus($"Could not publish shared Synth dependency: {error.Message}");
+		}
+	}
+
 	/// <summary>Document notifications are raised by the editing caller;
 	/// they do not imply that the frozen playback snapshot has changed.</summary>
 	private void OnDocumentChanged(
@@ -3064,16 +3104,28 @@ public sealed class MainWindow : Window
 			PlaybackSnapshotIndicator.GetState(
 				_playbackSnapshot, _workspace.Document);
 		_playbackSnapshotIndicator.IsVisible =
-			state is PlaybackSnapshotIndicatorState.AudioEdited
+			state is PlaybackSnapshotIndicatorState.OlderAudio
 				or PlaybackSnapshotIndicatorState.DifferentDocument;
 		_playbackSnapshotIndicator.Text = state switch
 		{
-			PlaybackSnapshotIndicatorState.AudioEdited =>
+			PlaybackSnapshotIndicatorState.OlderAudio =>
 				"Playback uses older audio",
 			PlaybackSnapshotIndicatorState.DifferentDocument =>
 				"Playback uses another song",
 			_ => string.Empty,
 		};
+		ToolTip.SetTip(_playbackSnapshotIndicator, state switch
+		{
+			PlaybackSnapshotIndicatorState.OlderAudio =>
+				"At least one playing note could not adopt an applicable Synth "
+				+ "edit. Compatible edits may still update that note; new notes "
+				+ "may use newly prepared audio. The warning disappears when "
+				+ "the last affected note ends.",
+			PlaybackSnapshotIndicatorState.DifferentDocument =>
+				"Playback was started from another song document. Stop or "
+				+ "restart playback to use this song.",
+			_ => null,
+		});
 	}
 
 	private void OnRuntimeDiagnostics(

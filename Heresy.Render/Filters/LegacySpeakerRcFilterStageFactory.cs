@@ -43,26 +43,61 @@ public sealed class LegacySpeakerRcFilterStageFactory : IStreamingFilterStageFac
         public IStreamingFilterStageState CreateState() => new State(this, 0);
     }
 
-    private sealed class State(Plan plan, double low) : IStreamingFilterStageState
+    private sealed class State(Plan plan, double low)
+        : IStreamingFilterStageState, IRealtimeTptFilterState
     {
         private Plan _plan = plan;
+        private double _alpha = plan.Alpha;
+        private bool _highPass = plan.HighPass;
         private double _low = low;
 
         public float Process(float sample)
         {
             double input = sample;
-            double low = _low + _plan.Alpha * (input - _low);
+            double low = _low + _alpha * (input - _low);
             if (input == 0 && Math.Abs(low) <= 1e-7)
                 low = 0;
             _low = low;
-            return (float)(_plan.HighPass ? input - low : low);
+            return (float)(_highPass ? input - low : low);
         }
 
-        public IStreamingFilterStageState Clone() => new State(_plan, _low);
+        public IStreamingFilterStageState Clone()
+        {
+            State clone = new(_plan, _low);
+            clone._alpha = _alpha;
+            clone._highPass = _highPass;
+            return clone;
+        }
         public void Reconfigure(IStreamingFilterStagePlan plan)
         {
             _plan = plan as Plan ??
                 throw new ArgumentException("Incompatible legacy RC Filter plan.");
+            _alpha = _plan.Alpha;
+            _highPass = _plan.HighPass;
+        }
+
+        // Share the allocation-free scalar-coefficient admission stream with
+        // TPT stages, but retain the exact historical exponential RC recurrence.
+        // Reconfiguration does not replace/reset the running _low history.
+        public bool TryPrepareRealtime(double cutoffHz, double q, int sampleRate,
+            out RealtimeTptCoefficients coefficients)
+        {
+            coefficients = default;
+            if (!double.IsFinite(cutoffHz) || cutoffHz <= 0
+                || cutoffHz >= sampleRate * 0.5 || sampleRate <= 0)
+                return false;
+            double alpha = 1.0 - Math.Exp(-2.0 * Math.PI * cutoffHz / sampleRate);
+            if (!double.IsFinite(alpha) || alpha < 0 || alpha >= 1)
+                return false;
+            coefficients = new RealtimeTptCoefficients(alpha, 0);
+            return true;
+        }
+
+        public void CommitRealtime(RealtimeTptCoefficients coefficients)
+        {
+            _alpha = coefficients.G;
+            if (coefficients.HighPass is bool highPass)
+                _highPass = highPass;
         }
     }
 }

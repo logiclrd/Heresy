@@ -111,7 +111,7 @@ public sealed class StreamingFilterChainTests
 	}
 
 	[Test]
-	public void NonStructuralUpdatesPreserveHistoriesWhileStructuralUpdatesReset()
+	public void CutoffAndModePreserveHistoriesWhileStageKindChangesReset()
 	{
 		FilterDefinition definition = Definition();
 		FilterInstance instance = new(definition);
@@ -131,10 +131,10 @@ public sealed class StreamingFilterChainTests
 		changed.SetStageParameter(1, "Mode",
 			FilterParameterValue.FromChoice("HighPass"));
 		runtime.Configure(new FilterChain(new[] { changed }));
-		float[] afterStructural = { 0f };
-		runtime.ProcessFrame(afterStructural);
-		Assert.That(afterStructural[0], Is.Zero,
-			"Structural change must start a fresh per-channel history.");
+		float[] afterMode = { 0f };
+		runtime.ProcessFrame(afterMode);
+		Assert.That(afterMode[0], Is.EqualTo(1f),
+			"OnePole Mode changes the output tap, not this fixture's history shape.");
 
 		changed.SetStageParameter(1, "CutoffHz",
 			FilterParameterValue.FromNumber(1000));

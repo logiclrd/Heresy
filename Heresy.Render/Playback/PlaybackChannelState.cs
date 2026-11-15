@@ -920,5 +920,6 @@ public sealed class PlaybackChannelState
 	{
 		PlaybackVoice? voice = DetachCurrentVoice();
 		voice?.AddCutTo(AntiClickTail);
+		voice?.CancelPendingLivePreparation();
 	}
 }

@@ -285,6 +285,7 @@ public sealed class FmSynthChildInheritedControlsTests
 
     private sealed class MovingOctaveCurve : IEnvelopeCurve
     {
+        public bool HasSustainLoop => true;
         public double GetValue(long frame, int sampleRate, long? noteOffFrame)
         {
             if (noteOffFrame is long off)
@@ -303,6 +304,8 @@ public sealed class FmSynthChildInheritedControlsTests
 
     private sealed class ThreeFrameRelease : IEnvelopeCurve
     {
+        public bool HasSustainLoop => true;
+        public bool IsZeroAfterCompletion => true;
         public double GetValue(long frame, int sampleRate, long? noteOffFrame)
             => noteOffFrame is long off
                 ? Math.Max(0, 1 - (frame - off) / 3.0)
@@ -319,6 +322,7 @@ public sealed class FmSynthChildInheritedControlsTests
 
     private sealed class ReleasePitchCurve : IEnvelopeCurve
     {
+        public bool HasSustainLoop => true;
         public double GetValue(long frame, int rate, long? off) => off.HasValue ? 1 : 0;
     }
 

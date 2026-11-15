@@ -136,7 +136,7 @@ public sealed class NodeEnvelopeCurveTests
 	}
 
 	[Test]
-	public void LastNodeMayBeNonZeroAndRetiresAfterItsLastSample()
+	public void CompletedNonzeroReleaseRetainsItsTerminalValue()
 	{
 		NodeEnvelopeDefinition definition = new((ObjectId)1U, "One node");
 		definition.ReplaceCurve([new(TimeSpan.Zero, -1.25)], 0, 0,
@@ -144,13 +144,13 @@ public sealed class NodeEnvelopeCurveTests
 		NodeEnvelopeCurve curve = new(definition);
 		Assert.That(curve.GetValue(999, 10, null), Is.EqualTo(-1.25));
 		Assert.That(curve.GetValue(9, 10, 9), Is.EqualTo(-1.25));
-		Assert.That(curve.GetValue(10, 10, 9), Is.Zero);
+		Assert.That(curve.GetValue(10, 10, 9), Is.EqualTo(-1.25));
 		Assert.That(curve.GetEndActiveFrameExclusiveAfterNoteOff(9, 10),
 			Is.EqualTo(10));
 	}
 
 	[Test]
-	public void ExactFinalNodeMayBeAboveUnityBeforeSilence()
+	public void CompletedReleaseRetainsFinalValueAboveUnity()
 	{
 		NodeEnvelopeDefinition definition = new((ObjectId)1U, "Positive tail");
 		definition.ReplaceCurve(
@@ -159,7 +159,7 @@ public sealed class NodeEnvelopeCurveTests
 			0, 0, EnvelopeSustainLoopMode.PingPong);
 		NodeEnvelopeCurve curve = new(definition);
 		Assert.That(curve.GetValue(20, 10, 10), Is.EqualTo(2.5));
-		Assert.That(curve.GetValue(21, 10, 10), Is.Zero);
+		Assert.That(curve.GetValue(21, 10, 10), Is.EqualTo(2.5));
 		Assert.That(curve.GetEndActiveFrameExclusiveAfterNoteOff(10, 10),
 			Is.EqualTo(21));
 	}

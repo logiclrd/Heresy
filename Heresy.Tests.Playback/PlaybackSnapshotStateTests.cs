@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Threading.Tasks;
 
 using Heresy.Core.Objects;
@@ -16,7 +17,7 @@ namespace Heresy.Tests.Playback;
 public sealed class PlaybackSnapshotStateTests
 {
 	[Test]
-	public async Task PlaybackCapturesActualRequestRevisionAndOnlyAudioEditsMakeItStale()
+	public async Task PlaybackSnapshotRevisionDoesNotDeclarePlayingNotesOlder()
 	{
 		SongDocument document = new();
 		ObjectId patternId = document.AllocateObjectId();
@@ -44,7 +45,8 @@ public sealed class PlaybackSnapshotStateTests
 			Is.EqualTo(PlaybackSnapshotIndicatorState.Current));
 		document.MarkChanged(affectsAudio: true);
 		Assert.That(PlaybackSnapshotIndicator.GetState(initial, document),
-			Is.EqualTo(PlaybackSnapshotIndicatorState.AudioEdited));
+			Is.EqualTo(PlaybackSnapshotIndicatorState.Current),
+			"an edited base snapshot does not prove an active note missed an update");
 		Assert.That(PlaybackSnapshotIndicator.GetState(initial, new SongDocument()),
 			Is.EqualTo(PlaybackSnapshotIndicatorState.DifferentDocument));
 
@@ -88,6 +90,60 @@ public sealed class PlaybackSnapshotStateTests
 	}
 
 	[Test]
+	public async Task ActiveOlderVoiceCountDrivesWarningAndClearsWhenLastVoiceRetires()
+	{
+		SongDocument document = new();
+		ObjectId patternId = document.AllocateObjectId();
+		document.Add(new DataPatternDefinition(patternId, "Pattern"));
+		Factory factory = new();
+		using SongPlaybackTransport transport = new(new Backend(), factory);
+		List<PlaybackSnapshotInfo> observed = [];
+		((IPlaybackSnapshotTransport)transport).PlaybackSnapshotChanged +=
+			(_, e) => observed.Add(e.Snapshot);
+		await transport.PlayPatternAsync(document, patternId);
+		PlaybackSnapshotInfo original =
+			((IPlaybackSnapshotTransport)transport).CurrentPlaybackSnapshot;
+		document.MarkChanged(affectsAudio: true);
+		Assert.That(PlaybackSnapshotIndicator.GetState(original, document),
+			Is.EqualTo(PlaybackSnapshotIndicatorState.Current),
+			"an authored revision alone proves nothing about active voices");
+
+		// Invoke the same timer entry point deterministically, rather than
+		// racing a wall-clock timer or a hardware audio device.
+		void Poll() => typeof(SongPlaybackTransport)
+			.GetMethod("PollOlderAudioVoices",
+				BindingFlags.Instance | BindingFlags.NonPublic)!
+			.Invoke(transport, null);
+		factory.OlderAudioVoiceCount = 2;
+		Poll();
+		PlaybackSnapshotInfo two =
+			((IPlaybackSnapshotTransport)transport).CurrentPlaybackSnapshot;
+		Assert.Multiple(() =>
+		{
+			Assert.That(two.OlderAudioVoiceCount, Is.EqualTo(2));
+			Assert.That(two.AudioRevision, Is.EqualTo(original.AudioRevision));
+			Assert.That(PlaybackSnapshotIndicator.GetState(two, document),
+				Is.EqualTo(PlaybackSnapshotIndicatorState.OlderAudio));
+		});
+		factory.OlderAudioVoiceCount = 1;
+		Poll();
+		Assert.That(((IPlaybackSnapshotTransport)transport)
+			.CurrentPlaybackSnapshot.OlderAudioVoiceCount, Is.EqualTo(1));
+		factory.OlderAudioVoiceCount = 0;
+		Poll();
+		PlaybackSnapshotInfo cleared =
+			((IPlaybackSnapshotTransport)transport).CurrentPlaybackSnapshot;
+		Assert.Multiple(() =>
+		{
+			Assert.That(cleared.OlderAudioVoiceCount, Is.Zero);
+			Assert.That(PlaybackSnapshotIndicator.GetState(cleared, document),
+				Is.EqualTo(PlaybackSnapshotIndicatorState.Current));
+			Assert.That(cleared.Generation, Is.GreaterThan(two.Generation));
+			Assert.That(observed[^1], Is.EqualTo(cleared));
+		});
+	}
+
+	[Test]
 	public async Task FailedReplacementClearsPreviouslyPublishedSnapshot()
 	{
 		Backend backend = new();
@@ -116,9 +172,16 @@ public sealed class PlaybackSnapshotStateTests
 		Assert.That(document.AudioRevision, Is.EqualTo(1));
 	}
 
-	private sealed class Factory : IBackgroundPlaybackSourceFactory
+	private sealed class Factory : IBackgroundPlaybackSourceFactory,
+		IPlaybackOlderAudioReportProvider
 	{
+		public int OlderAudioVoiceCount { get; set; }
 		public IAudioOutputSource Create(PlaybackRequest request) => new Source();
+		public bool TryGetOlderAudioVoiceCount(PlaybackRequest request, out int count)
+		{
+			count = OlderAudioVoiceCount;
+			return true;
+		}
 	}
 	private sealed class Source : ILiveAudioOutputSource
 	{

@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Threading.Tasks;
 
 using Avalonia.Controls;
 using Avalonia.Headless.NUnit;
@@ -23,6 +24,44 @@ namespace Heresy.Tests.UserInterface;
 [TestFixture]
 public sealed class FmSynthSourceEditorTests
 {
+    [AvaloniaTest]
+    public void OscillatorWaveformInspectorCommitsAndPublishesHeldAuditionRevision()
+    {
+        DocumentWorkspace workspace = new();
+        FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
+            workspace, "Live-shape inspector");
+        int oscillatorId = FmSynthDocumentEditor.AddOscillatorNode(
+            workspace, synth, FmOscillatorWaveform.Sine, 400.0, 200, 90);
+        FmSynthDocumentEditor.SetOutputNode(workspace, synth, oscillatorId);
+        int publications = 0;
+        FmSynthEditorControl editor = new(workspace, synth, () => {}, _ => {},
+            publishSynthEditAsync: () =>
+            {
+                publications++;
+                return Task.CompletedTask;
+            });
+        StackPanel inspector = (StackPanel)typeof(FmSynthEditorControl)
+            .GetField("_inspector", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(editor)!;
+        Grid row = inspector.Children.OfType<Grid>().Single();
+        StackPanel waveformControls = row.Children.OfType<StackPanel>().Single();
+        ComboBox waveform = waveformControls.Children.OfType<ComboBox>().Single();
+        uint revision = workspace.Document.AudioRevision;
+
+        waveform.SelectedItem = FmOscillatorWaveform.Square;
+        synth.Graph.Nodes.OfType<FmOscillatorNode>()
+            .Single(x => x.Id == oscillatorId).Waveform
+            .Should().Be(FmOscillatorWaveform.Square);
+        workspace.Document.AudioRevision.Should().Be(revision + 1);
+        publications.Should().Be(1,
+            "an audible oscillator shape edit must notify live audition");
+
+        waveform.SelectedItem = FmOscillatorWaveform.Square;
+        workspace.Document.AudioRevision.Should().Be(revision + 1);
+        publications.Should().Be(1,
+            "reselecting the same waveform must not publish a new revision");
+    }
+
     [Test]
     public void SourceNodeSupportsWiredModulationDeleteAndPersistedConstant()
     {

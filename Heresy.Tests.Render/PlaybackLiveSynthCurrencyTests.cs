@@ -1,0 +1,232 @@
+using System;
+using System.Collections.Generic;
+using System.Numerics;
+
+using Heresy.Core.Assets;
+using Heresy.Core.FmSynthesis;
+using Heresy.Core.Samples;
+using Heresy.Core.Objects;
+using Heresy.Core.Sequencing;
+using Heresy.Render.Configuration;
+using Heresy.Render.Envelopes;
+using Heresy.Render.FmSynthesis;
+using Heresy.Render.Playback;
+using Heresy.Render.Samples;
+using Heresy.Render.Sounds;
+
+using NUnit.Framework;
+
+namespace Heresy.Tests.Render;
+
+[TestFixture]
+public sealed class PlaybackLiveSynthCurrencyTests
+{
+    private static readonly ObjectId SynthId = (ObjectId)98101U;
+    private static readonly ObjectId UnrelatedSynthId = (ObjectId)98102U;
+
+    [Test]
+    public void CompatibleAndUnrelatedEditsNeverMarkTheHeldNoteOlder()
+    {
+        Registry sounds = new();
+        FmSynthSound original = Constant(0.5);
+        FmSynthSound compatible = Constant(0.8);
+        FmSynthSound structural = Structural(0.8);
+        sounds.Set(SynthId, original);
+        PlaybackSession session = Session(sounds);
+        session.ApplyLiveEvent(ChannelTarget.Virtual(1),
+            [new StartNoteCommand(SynthId)]);
+        session.Render(0, 16, new float[16]);
+
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+        // Different source identity AND different bound sound object:
+        // the unrelated Synth is not selected by this held voice.
+        session.AdoptLiveSynthParameters(UnrelatedSynthId,
+            Constant(0.5), structural);
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero,
+            "edits to another source do not concern this voice");
+
+        session.AdoptLiveSynthParameters(SynthId, original, compatible);
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero,
+            "a successfully adopted edit does not obsolete the note");
+    }
+
+    [Test]
+    public void NewMultiVoiceAfterStructuralEditAdoptsLaterMultiSettingsWhileOlderNotesStayOld()
+    {
+        FmSynthSound old = OscillatorOnly();
+        FmSynthSound added = MultiOscillator(7);
+        FmSynthSound retunedOscillator = MultiOscillator(7, frequencyHz: 312);
+        FmSynthSound edited = MultiOscillator(3, frequencyHz: 312);
+
+        static PlaybackSession Make(FmSynthSound original,
+            FmSynthSound next, out Registry resolver)
+        {
+            resolver = new Registry();
+            resolver.Set(SynthId, original);
+            PlaybackSession playback = Session(resolver);
+            playback.ApplyLiveEvent(ChannelTarget.Virtual(1),
+                [new StartNoteCommand(SynthId)]);
+            playback.ApplyLiveEvent(ChannelTarget.Virtual(2),
+                [new StartNoteCommand(SynthId)]);
+            playback.Render(0, 64, new float[64]);
+            playback.AdoptLiveSynthParameters(SynthId, original, next);
+            resolver.Set(SynthId, next);
+            playback.ApplyLiveEvent(ChannelTarget.Virtual(3),
+                [new StartNoteCommand(SynthId)]);
+            playback.Render(64, 64, new float[64]);
+            return playback;
+        }
+
+        PlaybackSession test = Make(old, added, out _);
+        PlaybackSession unchanged = Make(old, added, out _);
+        Assert.That(test.CountOlderAudioVoices(), Is.EqualTo(2),
+            "the old two oscillator notes retain their original generation");
+        // C6-C's new third note was observed taking Oscillator edits before
+        // Multi changes refused to reach it. Exercise that full order too.
+        test.AdoptLiveSynthParameters(
+            SynthId, added, retunedOscillator);
+        unchanged.AdoptLiveSynthParameters(
+            SynthId, added, retunedOscillator);
+        Assert.That(test.CountOlderAudioVoices(), Is.EqualTo(2));
+        test.AdoptLiveSynthParameters(SynthId, retunedOscillator, edited);
+        Assert.That(test.CountOlderAudioVoices(), Is.EqualTo(2),
+            "the fresh Multi note is current even though older siblings exist");
+
+        // The still-current third note must retune its Multi child gains.
+        // A test of only the older-audio count would miss silent rejection.
+        float[] changed = new float[5300], reference = new float[5300];
+        test.Render(128, changed.Length, changed);
+        unchanged.Render(128, reference.Length, reference);
+        double difference = 0;
+        for (int i = 5000; i < changed.Length; i++)
+            difference += Math.Abs(changed[i] - reference[i]);
+        Assert.That(difference, Is.GreaterThan(1.0),
+            "the new current note must audibly use the three-voice Multi");
+        Assert.That(test.CountOlderAudioVoices(), Is.EqualTo(2),
+            "a compatible Multi edit must not add a third older note");
+    }
+
+    private static FmSynthSound OscillatorOnly()
+        => new(new FmSynthGraph([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 390,
+                minimum: -0.07, maximum: 0.07),
+        ], 1), new NoEnvelopes(), enableLiveMultiExpansion: true);
+
+    private static FmSynthSound MultiOscillator(int count, double frequencyHz = 390)
+        => new(new FmSynthGraph([
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sine, frequencyHz,
+                minimum: -0.07, maximum: 0.07),
+            new FmMultiNode(2, 1, voiceCount: count, detune: 0,
+                randomizePhase: false, gainCompensation: false),
+        ], 2), new NoEnvelopes(), enableLiveMultiExpansion: true);
+
+    [Test]
+    public void WorkerPreparedSampleChangeRemainsCurrentWhilePreparationIsPending()
+    {
+        ObjectId oldId = (ObjectId)98111U, newId = (ObjectId)98112U;
+        Registry sounds = new();
+        sounds.Set(oldId, Sample(oldId));
+        sounds.Set(newId, Sample(newId));
+        FmSynthSound original = SampleGraph(oldId, sounds);
+        FmSynthSound replacement = SampleGraph(newId, sounds);
+        sounds.Set(SynthId, original);
+        PlaybackSession session = Session(sounds);
+        session.ApplyLiveEvent(ChannelTarget.Virtual(1),
+            [new StartNoteCommand(SynthId)]);
+        session.Render(0, 128, new float[128]);
+
+        session.AdoptLiveSynthParameters(SynthId, original, replacement);
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero,
+            "a compatible Sample replacement waiting for its worker is not a refusal");
+    }
+
+    [Test]
+    public void IncompatibleEditSticksToOnlyOldNotesUntilTheirActualRetirement()
+    {
+        Registry sounds = new();
+        FmSynthSound original = Constant(0.5);
+        FmSynthSound structural = Structural(0.4);
+        FmSynthSound nextStructural = Structural(0.7);
+        sounds.Set(SynthId, original);
+        PlaybackSession session = Session(sounds);
+        session.ApplyLiveEvent(ChannelTarget.Virtual(1),
+            [new StartNoteCommand(SynthId)]);
+        session.Render(0, 8, new float[8]);
+
+        session.AdoptLiveSynthParameters(SynthId, original, structural);
+        Assert.That(session.CountOlderAudioVoices(), Is.EqualTo(1),
+            "a changed graph cannot be migrated to the held invocation");
+
+        // Fresh notes use the latest published definition, not the
+        // previous voice's frozen graph.
+        sounds.Set(SynthId, structural);
+        session.ApplyLiveEvent(ChannelTarget.Virtual(2),
+            [new StartNoteCommand(SynthId)]);
+        session.Render(8, 8, new float[8]);
+        Assert.That(session.CountOlderAudioVoices(), Is.EqualTo(1),
+            "a new up-to-date note must not inherit the older mark");
+
+        session.AdoptLiveSynthParameters(SynthId, structural, nextStructural);
+        Assert.That(session.CountOlderAudioVoices(), Is.EqualTo(1),
+            "a later compatible revision must not erase an earlier miss");
+
+        session.ApplyLiveEvent(ChannelTarget.Virtual(1),
+            [new NoteCutCommand()]);
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero,
+            "the final older note has been detached, though a current note remains");
+        float[] stillPlaying = new float[1];
+        session.Render(16, 1, stillPlaying);
+        Assert.That(stillPlaying[0], Is.GreaterThan(0),
+            "a current note remains audible after the last older note was cut");
+    }
+
+    private static PlaybackSession Session(ISoundResolver sounds)
+        => new(new RenderContext(new RenderConfiguration(48000, [
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
+        ])), new NoteScheduleBuilder().Freeze(), sounds);
+
+    private static FmSynthSound Constant(double value)
+        => new(new FmSynthGraph([
+            new FmConstantNode(1, value),
+        ], 1), new NoEnvelopes());
+
+    private static FmSynthSound Structural(double value)
+        => new(new FmSynthGraph([
+            new FmConstantNode(1, value),
+            new FmConstantNode(2, 0.3),
+            new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
+        ], 3), new NoEnvelopes());
+
+    private static SampleSound Sample(ObjectId id)
+        => new(new SampleDefinition(id, "Currency sample",
+            new ExternalAssetReference("currency.wav")),
+            new MemorySampleData(48000, 1, new float[1024]));
+
+    private static FmSynthSound SampleGraph(ObjectId id, Registry sounds)
+        => new(new FmSynthGraph([
+            new FmSoundSourceNode(1, id, FmMultiNode.NeutralFrequencyHz),
+        ], 1), new NoEnvelopes(), soundResolver: sounds,
+            enableLiveMultiExpansion: true);
+
+    private sealed class Registry : ISoundResolver
+    {
+        private readonly Dictionary<ObjectId, ISound> _sounds = [];
+        public void Set(ObjectId id, ISound sound) => _sounds[id] = sound;
+        public bool TryResolve(ObjectId id, bool mixdown, out ISound? sound)
+        {
+            if (!mixdown)
+                return _sounds.TryGetValue(id, out sound);
+            sound = null;
+            return false;
+        }
+    }
+
+    private sealed class NoEnvelopes : IEnvelopeCurveResolver
+    {
+        public bool TryResolve(ObjectId id, out IEnvelopeCurve? curve)
+        {
+            curve = null;
+            return false;
+        }
+    }
+}

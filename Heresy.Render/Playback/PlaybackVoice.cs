@@ -5,6 +5,8 @@ using System.Linq;
 using System.Numerics;
 
 using Heresy.Core.Envelopes;
+using Heresy.Core.Objects;
+using Heresy.Render.FmSynthesis;
 using Heresy.Core.Sequencing;
 using Heresy.Core.Timing;
 using Heresy.Render.Envelopes;
@@ -339,7 +341,112 @@ public sealed class PlaybackVoice
 			RecomposePitchTrajectory(0);
 	}
 
-	public ISound Sound { get; }
+	/// <summary>Only the ordered PCM producer may adopt a new prepared sound.
+	/// The existing SoundState and all note-level controls remain intact.</summary>
+	public ISound Sound { get; private set; }
+
+	internal ObjectId OriginSourceId { get; set; } = ObjectId.None;
+
+	// The PCM owner holds at most one deferred, latest-wins Synth revision.
+	// A bound FIR stage may need an invocation-local off-thread design
+	// before the *whole* old voice can migrate in one atomic transaction.
+	private FmSynthSound? _pendingLiveSynth;
+
+	/// <summary>Sticky for this note: an applicable Synth revision was
+	/// definitively incompatible. Later independent shared updates do not
+	/// erase that missed revision. Only retirement clears the count.</summary>
+	internal bool UsesOlderAudio { get; private set; }
+
+	/// <summary>Explicit owner retirement/cut or a new authored revision
+	/// invalidates this voice's pending expansion work. The worker may
+	/// finish the child it was already constructing, but cannot publish
+	/// or retain the obsolete prepared arrays afterward.</summary>
+	internal void CancelPendingLivePreparation()
+	{
+		_pendingLiveSynth = null;
+		if (Sound is FmSynthSound current)
+			current.CancelPendingMultiExpansion(SoundState);
+	}
+
+	internal bool TryAdoptLiveSynth(ObjectId sourceId,
+		ISound previousSound, ISound nextSound)
+	{
+		if (OriginSourceId != sourceId)
+		{
+			// An Instrument may select this Synth as its terminal sound.
+			// Its voice is not eligible for direct-Synth migration, but it
+			// still demonstrably retains the former Synth definition.
+			if (ReferenceEquals(Sound, previousSound)
+				|| ReferenceEquals(_pendingLiveSynth, previousSound))
+				UsesOlderAudio = true;
+			return false;
+		}
+		if (Sound is not FmSynthSound current
+			|| nextSound is not FmSynthSound next
+			|| (!ReferenceEquals(Sound, previousSound)
+				&& !ReferenceEquals(_pendingLiveSynth, previousSound)))
+		{
+			// The revision was relevant to this voice but no longer has
+			// a migratable predecessor. Do not confuse this with an unrelated
+			// Synth publication or an off-thread preparation delay.
+			UsesOlderAudio = true;
+			CancelPendingLivePreparation();
+			return false;
+		}
+
+		// When a second edit supersedes a not-yet-prepared first edit,
+		// compare it with the actual sounding generation, not the
+		// superseded candidate. Obsolete worker results cannot publish it.
+		if (_pendingLiveSynth is not null)
+			CancelPendingLivePreparation();
+		_pendingLiveSynth = null;
+		if (current.CanDeferSampleReplacementUntilFadeCompletes(
+			next, SoundState))
+		{
+			// The currently audible old/new Sample mixture is a single
+			// indivisible Source history. Keep it until its 100-ms clock
+			// ends; replace only this deferred intent on later editor edits.
+			// No third Sample/worker request exists yet, and the old note
+			// has not definitively missed this compatible revision.
+			_pendingLiveSynth = next;
+			return false;
+		}
+		if (!current.CanPrepareMultiExpansion(next, SoundState))
+		{
+			UsesOlderAudio = true;
+			return false;
+		}
+		if (current.TryPrepareRunningState(next, SoundState))
+		{
+			CommitPreparedLiveSynth(current, next);
+			return true;
+		}
+		bool pending = current.RequestMultiExpansionPreparation(next, SoundState);
+		pending = current.RequestBoundLiveFirPreparation(next, SoundState)
+			|| pending;
+		if (pending)
+			_pendingLiveSynth = next;
+		else
+			UsesOlderAudio = true;
+		return false;
+	}
+
+	/// <summary>A parent may adopt its own Filter/scalar edit while an
+	/// incompatible bound child Synth keeps its old audio. That still counts
+	/// as a missed applicable revision for this retained physical voice.
+	/// Only mark definitive refusals; pending worker preparation is handled
+	/// separately and never marked merely for being pending.</summary>
+	private void CommitPreparedLiveSynth(
+		FmSynthSound current, FmSynthSound revised)
+	{
+		bool retainedOldChild = current.RetainsIncompatibleNestedSynth(
+			revised, SoundState);
+		current.CommitPreparedRunningState(revised, SoundState);
+		current.CancelPendingMultiExpansion(SoundState);
+		Sound = revised;
+		if (retainedOldChild)
+			UsesOlderAudio = true;
+	}
 
 	public SoundState SoundState { get; }
 
@@ -598,6 +705,35 @@ public sealed class PlaybackVoice
         _enclosingEnvelopeRealtime?.AdoptPreparedFirs();
         if (Sound is IFirPreparationSound source)
             source.AdoptPreparedFirControls(SoundState);
+		if (_pendingLiveSynth is not FmSynthSound revised
+			|| Sound is not FmSynthSound current)
+			return;
+		if (current.CanDeferSampleReplacementUntilFadeCompletes(
+			revised, SoundState))
+			return;
+		if (!current.CanPrepareMultiExpansion(revised, SoundState))
+		{
+			UsesOlderAudio = true;
+			CancelPendingLivePreparation();
+			return;
+		}
+		if (current.TryPrepareRunningState(revised, SoundState))
+		{
+			CommitPreparedLiveSynth(current, revised);
+			_pendingLiveSynth = null;
+		}
+		else
+		{
+			bool pending = current.RequestMultiExpansionPreparation(
+				revised, SoundState);
+			pending = current.RequestBoundLiveFirPreparation(
+				revised, SoundState) || pending;
+			if (!pending)
+			{
+				UsesOlderAudio = true;
+				CancelPendingLivePreparation();
+			}
+		}
     }
 
     internal void QueuePendingFirControls(FirPreparationScheduler scheduler)
@@ -752,6 +888,27 @@ public sealed class PlaybackVoice
 		if (SoundState.NoteOffTime.HasValue)
 			return;
 
+		// An edited Sample awaiting an earlier Source-local fade cannot
+		// create a fresh onset once this note begins its release. The
+		// deferred revision was eligible while held, but has now become
+		// definitively missed by this still-sounding note. Invalidate its
+		// worker mailbox at the same Note Off boundary, not at some later
+		// block's AdoptPreparedFirControls poll; preserve the original
+		// Sample mix and the one-shot release origin below.
+		if (_pendingLiveSynth is FmSynthSound revised
+			&& Sound is FmSynthSound current
+			&& current.CanDeferSampleReplacementUntilFadeCompletes(
+				revised, SoundState))
+		{
+			UsesOlderAudio = true;
+			CancelPendingLivePreparation();
+		}
+
+		// The PlaybackVoice is the outermost Instrument envelope controller.
+		// When it owns a sustain loop, the flattened terminal source receives
+		// Indefinite Off: it must supply audio while that loop releases.
+		SoundState.NoteOffDisposition = HasLocalSustainRelease()
+			? NoteOffDisposition.Indefinite : NoteOffDisposition.Definite;
 		long relativeFrame = absoluteFrame - StartFrame;
 		SoundState.NoteOffTime = FrameTime.FrameStartTime(
 			relativeFrame,
@@ -765,10 +922,58 @@ public sealed class PlaybackVoice
 			envelope.NoteOff(absoluteFrame);
 	}
 
+	/// <summary>Only enabled, configured sustain loops participate in an
+	/// actual release. A non-looped envelope cannot turn Definite Off into
+	/// Indefinite Off merely by existing.</summary>
+	private bool HasLocalSustainRelease()
+	{
+		if (_volumeEnvelope?.HasSustainLoop == true
+			|| _pitchEnvelope?.HasSustainLoop == true
+			|| _panningEnvelope?.HasSustainLoop == true
+			|| _filterEnvelope?.HasSustainLoop == true)
+			return true;
+		foreach (EnvelopePlaybackState envelope in _eventFilterParameterEnvelopes.Values)
+			if (envelope.HasSustainLoop) return true;
+		foreach (EnvelopePlaybackState envelope in _enclosingFilterParameterEnvelopes.Values)
+			if (envelope.HasSustainLoop) return true;
+		return false;
+	}
+
+	internal bool HasLocalReleaseLifecycle => HasLocalSustainRelease();
+
+	/// <summary>The LAST completed sustain-loop release, not just the
+	/// Volume envelope. Null means either no locally-owned release or an
+	/// unbounded/paused release: see HasLocalReleaseLifecycle.</summary>
+	internal long? GetLocalReleaseCompletionFrameExclusive(long absoluteFrame)
+	{
+		long? latest = null;
+		bool unbounded = false;
+		void Include(EnvelopePlaybackState? envelope)
+		{
+			if (envelope?.HasSustainLoop != true) return;
+			long? end = envelope.GetEndFrameExclusiveAfterNoteOff(absoluteFrame);
+			if (!end.HasValue) unbounded = true;
+			else latest = latest.HasValue ? Math.Max(latest.Value, end.Value) : end;
+		}
+		Include(_volumeEnvelope);
+		Include(_pitchEnvelope);
+		Include(_panningEnvelope);
+		Include(_filterEnvelope);
+		foreach (EnvelopePlaybackState envelope in _eventFilterParameterEnvelopes.Values)
+			Include(envelope);
+		foreach (EnvelopePlaybackState envelope in _enclosingFilterParameterEnvelopes.Values)
+			Include(envelope);
+		return unbounded ? null : latest;
+	}
+
+	/// <summary>A permanently-zero final Volume gain proves that all
+	/// downstream audio is silent, even if other release clocks run longer.
+	/// Unlike a crossing of zero, only a completed zero endpoint qualifies.</summary>
 	internal long? GetVolumeEnvelopeEndFrameExclusiveAfterNoteOff(
 		long absoluteFrame)
-		=> _volumeEnvelope?.GetEndFrameExclusiveAfterNoteOff(
-			absoluteFrame);
+		=> _volumeEnvelope?.IsZeroAfterCompletion == true
+			? _volumeEnvelope.GetEndFrameExclusiveAfterNoteOff(absoluteFrame)
+			: null;
 
 	internal void SetEnvelopeEnabled(
 		EnvelopeTarget target,

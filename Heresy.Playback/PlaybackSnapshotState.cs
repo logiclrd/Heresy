@@ -1,6 +1,7 @@
 using System;
 
 using Heresy.Core.Objects;
+using Heresy.Render.Realtime;
 
 namespace Heresy.Playback;
 
@@ -11,7 +12,8 @@ namespace Heresy.Playback;
 public readonly record struct PlaybackSnapshotInfo(
 	long Generation,
 	SongDocument? SourceDocument,
-	uint AudioRevision)
+	uint AudioRevision,
+	int OlderAudioVoiceCount = 0)
 {
 	public bool IsActive => SourceDocument is not null;
 }
@@ -20,11 +22,12 @@ public enum PlaybackSnapshotIndicatorState
 {
 	Inactive,
 	Current,
-	AudioEdited,
+	OlderAudio,
 	DifferentDocument,
 }
 
-/// <summary>Compares frozen audio revision, not the persistence baseline.</summary>
+/// <summary>Warn only about active notes that definitively missed an applicable edit.
+/// The original frozen base revision is metadata, not proof of stale audio.</summary>
 public static class PlaybackSnapshotIndicator
 {
 	public static PlaybackSnapshotIndicatorState GetState(
@@ -36,9 +39,9 @@ public static class PlaybackSnapshotIndicator
 			return PlaybackSnapshotIndicatorState.Inactive;
 		if (!ReferenceEquals(snapshot.SourceDocument, currentDocument))
 			return PlaybackSnapshotIndicatorState.DifferentDocument;
-		return snapshot.AudioRevision == currentDocument.AudioRevision
-			? PlaybackSnapshotIndicatorState.Current
-			: PlaybackSnapshotIndicatorState.AudioEdited;
+		return snapshot.OlderAudioVoiceCount > 0
+			? PlaybackSnapshotIndicatorState.OlderAudio
+			: PlaybackSnapshotIndicatorState.Current;
 	}
 }
 
@@ -53,4 +56,12 @@ public sealed class PlaybackSnapshotChangedEventArgs(
 	PlaybackSnapshotInfo snapshot) : EventArgs
 {
 	public PlaybackSnapshotInfo Snapshot { get; } = snapshot;
+}
+
+/// <summary>Immutable currency observation from the PCM producer, sampled
+/// outside realtime via its request-bound source. A failed incompatible
+/// publication is counted until each affected voice actually retires.</summary>
+public interface IPlaybackOlderAudioReportProvider
+{
+	bool TryGetOlderAudioVoiceCount(PlaybackRequest request, out int count);
 }

@@ -82,19 +82,24 @@ public sealed record PatternPlaybackRequest(
 
 public sealed record AdHocPlaybackRequest(
 	SongDocumentSnapshot Snapshot,
-	NoteSchedule Schedule)
+	NoteSchedule Schedule,
+	bool ReserveSynthMultiHeadroom = false)
 	: PlaybackRequest(Snapshot)
 {
+	/// <summary>Only live Synth audition opts into dormant constituent
+	/// capacity. Ordinary ad-hoc playback keeps this disabled.</summary>
 	public static AdHocPlaybackRequest Create(
 		SongDocument document,
-		NoteSchedule schedule)
+		NoteSchedule schedule,
+		bool reserveSynthMultiHeadroom = false)
 	{
 		ArgumentNullException.ThrowIfNull(document);
 		ArgumentNullException.ThrowIfNull(schedule);
 
 		return new AdHocPlaybackRequest(
 			SongDocumentSnapshot.Create(document),
-			schedule);
+			schedule,
+			reserveSynthMultiHeadroom);
 	}
 }
 

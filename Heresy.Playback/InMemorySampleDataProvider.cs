@@ -26,13 +26,14 @@ public sealed class InMemorySampleDataProvider
 	}
 
 	private sealed class Adapter
-		: ISampleData
+		: ISampleData, IImmutableSamplePcmIdentity
 	{
 		private readonly SamplePcmData _pcm;
 
 		public Adapter(SamplePcmData pcm)
 			=> _pcm = pcm;
 
+		public SamplePcmData ImmutablePcm => _pcm;
 		public int SampleRate => _pcm.SampleRate;
 		public int ChannelCount => _pcm.ChannelCount;
 		public long FrameCount => _pcm.FrameCount;

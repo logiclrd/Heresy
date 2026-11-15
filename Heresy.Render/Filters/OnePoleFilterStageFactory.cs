@@ -81,12 +81,13 @@ public sealed class OnePoleFilterStageFactory : IStreamingFilterStageFactory
 
 	private sealed class OnePoleState(
 		OnePolePlan plan, double integrator) : IStreamingFilterStageState,
-		IRealtimeTptFilterState
+		IRealtimeTptFilterState, IPreparedOnePoleHistoryTransfer
 	{
 		// A scalar is sufficient for one first-order TPT integrator.
 		// No state is shared with another output channel or invocation.
 		private OnePolePlan _plan = plan;
 		private double _gain = plan.Gain;
+		private bool _highPass = plan.HighPass;
 		private double _integrator = integrator;
 
 		public float Process(float sample)
@@ -96,7 +97,7 @@ public sealed class OnePoleFilterStageFactory : IStreamingFilterStageFactory
 			double v = (input - _integrator) * _gain;
 			double low = _integrator + v;
 			double next = low + v;
-			double output = _plan.HighPass ? input - low : low;
+			double output = _highPass ? input - low : low;
 
 			// Above the representable float-noise floor. Eliminating
 			// residuals here also prevents subnormal feedback and ensures
@@ -112,10 +113,26 @@ public sealed class OnePoleFilterStageFactory : IStreamingFilterStageFactory
 			return (float)Math.Clamp(output, -float.MaxValue, float.MaxValue);
 		}
 
+		// Copy an existing integrator into a detached, worker-prepared
+		// state. No aliasing or heap allocation: the original and replacement
+		// OnePole histories can now render different phase trajectories.
+		void IPreparedOnePoleHistoryTransfer.CopyHistoryFrom(
+			IPreparedOnePoleHistoryTransfer source)
+		{
+			if (source is not OnePoleState previous)
+				throw new ArgumentException(
+					"OnePole history requires another OnePole state.",
+					nameof(source));
+			_integrator = previous._integrator;
+			_gain = previous._gain;
+			_highPass = previous._highPass;
+		}
+
 		public IStreamingFilterStageState Clone()
 		{
 			OnePoleState result = new(_plan, _integrator);
 			result._gain = _gain;
+			result._highPass = _highPass;
 			return result;
 		}
 
@@ -124,10 +141,11 @@ public sealed class OnePoleFilterStageFactory : IStreamingFilterStageFactory
 			if (plan is not OnePolePlan replacement)
 				throw new ArgumentException(
 					"One-Pole state requires a One-Pole plan.", nameof(plan));
-			// Cutoff changes preserve the integrator history. Mode is a
-			// structural parameter and the chain replaces the state.
+			// Both cutoff and output-tap selections keep the original
+			// scalar TPT integrator and change only prepared coefficients/tap.
 			_plan = replacement;
 			_gain = replacement.Gain;
+			_highPass = replacement.HighPass;
 		}
 
 		public bool TryPrepareRealtime(
@@ -150,6 +168,8 @@ public sealed class OnePoleFilterStageFactory : IStreamingFilterStageFactory
 		public void CommitRealtime(RealtimeTptCoefficients coefficients)
 		{
 			_gain = coefficients.G;
+			if (coefficients.HighPass is bool highPass)
+				_highPass = highPass;
 		}
 	}
 }

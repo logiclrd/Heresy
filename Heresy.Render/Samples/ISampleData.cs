@@ -12,3 +12,11 @@ public interface ISampleData
 
 	float GetSample(long frame, int channel);
 }
+/// <summary>A decoded sample-data provider may opt in to identity
+/// comparison when it exposes the same immutable PCM object across frozen
+/// song snapshots. Arbitrary sample providers must not be presumed
+/// equivalent merely because their dimensions or object IDs match.</summary>
+public interface IImmutableSamplePcmIdentity
+{
+	Heresy.Core.Samples.SamplePcmData ImmutablePcm { get; }
+}

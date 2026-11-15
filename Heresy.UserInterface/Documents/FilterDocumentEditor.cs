@@ -45,6 +45,7 @@ public static class FilterDocumentEditor
 			name += "_";
 		FilterStageDefinition added = definition.AddStage(name, kind);
 		workspace.Document.MarkChanged(affectsAudio: true);
+		workspace.NotifySharedAudioObjectCommitted(definition.Id);
 		return added;
 	}
 
@@ -56,6 +57,7 @@ public static class FilterDocumentEditor
 		// Last-stage removal is rejected atomically by FilterDefinition.
 		definition.RemoveStage(stageId);
 		workspace.Document.MarkChanged(affectsAudio: true);
+		workspace.NotifySharedAudioObjectCommitted(definition.Id);
 		return true;
 	}
 
@@ -72,6 +74,7 @@ public static class FilterDocumentEditor
 			return false;
 		definition.MoveStage(stageId, targetIndex);
 		workspace.Document.MarkChanged(affectsAudio: true);
+		workspace.NotifySharedAudioObjectCommitted(definition.Id);
 		return true;
 	}
 
@@ -97,6 +100,7 @@ public static class FilterDocumentEditor
 		definition.ReplaceStages(definition.Stages.Select(stage =>
 			stage.StageId == stageId ? candidate : stage));
 		workspace.Document.MarkChanged(affectsAudio: true);
+		workspace.NotifySharedAudioObjectCommitted(definition.Id);
 		return true;
 	}
 

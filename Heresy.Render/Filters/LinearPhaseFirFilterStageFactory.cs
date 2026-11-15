@@ -275,21 +275,28 @@ public sealed class LinearPhaseFirFilterStageFactory : IStreamingFilterStageFact
 
 		public IStreamingFilterStageState Clone() => new FirState(this);
 
-		public bool TryPrepareRealtime(IStreamingFilterStagePlan plan)
+		public bool TryPrepareRealtime(IStreamingFilterStagePlan plan,
+			bool allowDesignChange = false)
 			=> plan is FirPlan next
 				&& next.Coefficients.Length == _history.Length
 				&& next.PhaseResponse is "Linear" or "Minimum" or "Maximum"
-				&& next.PhaseResponse == _plan.PhaseResponse
-				&& next.Window == _plan.Window
-				&& next.TransitionWidthHz == _plan.TransitionWidthHz
+				&& next.Window is "Hann" or "Hamming" or "Blackman"
+				// Channel/event Filters keep their original structural semantics;
+				// only an explicitly admitted Synth live revision may migrate
+				// the same-sized convolution ring across design selections.
+				&& (allowDesignChange
+					|| (next.PhaseResponse == _plan.PhaseResponse
+						&& next.Window == _plan.Window
+						&& next.TransitionWidthHz == _plan.TransitionWidthHz))
 				&& next.LatencyFrames == (next.PhaseResponse == "Linear"
 					? (_history.Length - 1) / 2 : 0)
 				&& _plan.LatencyFrames == next.LatencyFrames;
 
-		public void CommitRealtime(IStreamingFilterStagePlan plan)
+		public void CommitRealtime(IStreamingFilterStagePlan plan,
+			bool allowDesignChange = false)
 		{
 			FirPlan next = (FirPlan)plan;
-			if (!TryPrepareRealtime(next))
+			if (!TryPrepareRealtime(next, allowDesignChange))
 				throw new ArgumentException(
 					"Realtime FIR plans must preserve supported phase and FIR structure.",
 					nameof(plan));

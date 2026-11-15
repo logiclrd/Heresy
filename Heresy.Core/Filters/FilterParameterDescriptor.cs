@@ -53,6 +53,7 @@ public sealed class FilterParameterDescriptor
 		double? maximum,
 		string units,
 		bool structural,
+		bool modulatable,
 		bool integer,
 		bool odd,
 		IReadOnlyList<string> choices)
@@ -64,6 +65,7 @@ public sealed class FilterParameterDescriptor
 		Maximum = maximum;
 		Units = units;
 		IsStructural = structural;
+		IsModulatable = modulatable && kind == FilterParameterValueKind.Number && !structural;
 		IsInteger = integer;
 		IsOddOnly = odd;
 		Choices = choices;
@@ -77,7 +79,7 @@ public sealed class FilterParameterDescriptor
 	public double? Maximum { get; }
 	public string Units { get; }
 	public bool IsStructural { get; }
-	public bool IsModulatable => Kind == FilterParameterValueKind.Number && !IsStructural;
+	public bool IsModulatable { get; }
 	public bool IsInteger { get; }
 	public bool IsOddOnly { get; }
 	public IReadOnlyList<string> Choices { get; }
@@ -85,7 +87,7 @@ public sealed class FilterParameterDescriptor
 	public static FilterParameterDescriptor Number(
 		string name, double defaultValue, double minimum, double maximum,
 		string units = "", bool structural = false, bool integer = false,
-		bool odd = false)
+		bool odd = false, bool fmPort = true)
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
 		if (!double.IsFinite(minimum) || !double.IsFinite(maximum)
@@ -96,15 +98,25 @@ public sealed class FilterParameterDescriptor
 		return new FilterParameterDescriptor(name, FilterParameterValueKind.Number,
 			FilterParameterValue.FromNumber(defaultValue), minimum, maximum,
 			units ?? throw new ArgumentNullException(nameof(units)),
-			structural, integer, odd, Array.AsReadOnly<string>([]));
+			structural, fmPort, integer, odd, Array.AsReadOnly<string>([]));
 	}
 
 	/// <summary>
-	/// Enumerated selections are always structural: they are not FM graph
-	/// audio-rate ports, but can be assigned in effect-command parameter text.
+	/// Choices are not FM graph audio-rate ports, independently of whether
+	/// the running processor can migrate their state. Most choices are structural.
 	/// </summary>
 	public static FilterParameterDescriptor Choice(
 		string name, string defaultValue, params string[] choices)
+		=> CreateChoice(name, defaultValue, structural: true, choices);
+
+	/// <summary>An output/algorithm selection proven to preserve the existing
+	/// runtime state shape. Never creates an audio-rate FM port.</summary>
+	public static FilterParameterDescriptor LiveChoice(
+		string name, string defaultValue, params string[] choices)
+		=> CreateChoice(name, defaultValue, structural: false, choices);
+
+	private static FilterParameterDescriptor CreateChoice(
+		string name, string defaultValue, bool structural, string[] choices)
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
 		ArgumentNullException.ThrowIfNull(choices);
@@ -120,8 +132,8 @@ public sealed class FilterParameterDescriptor
 		}
 
 		return new FilterParameterDescriptor(name, FilterParameterValueKind.Choice,
-			FilterParameterValue.FromChoice(defaultValue), null, null, "", true,
-			false, false, Array.AsReadOnly((string[])choices.Clone()));
+			FilterParameterValue.FromChoice(defaultValue), null, null, "", structural,
+			false, false, false, Array.AsReadOnly((string[])choices.Clone()));
 	}
 
 	/// <summary>

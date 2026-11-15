@@ -454,3 +454,14 @@ shared specification copy-on-write, scripted expression diagnostics, stale
 changes and version-one JSON persistence; previous Core/Script/Playback NNA
 regressions continue covering recursive precedence and note snapshot behavior.
 Physical-device audible NNA acceptance is intentionally still open.
+
+
+## Shift-pointer range selection and Select All
+
+The tone grid keeps its whole-row selection independent of the virtualized
+ListBox. Shift-click preserves the original tone-index anchor across focus
+events by capturing it on the ListBox's pointer tunnel stage and reasserting
+it at release. Ctrl+A (Meta+A on Command platforms) selects every projected
+tone, retaining a valid editing focus and excluding the reserved insertion
+draft. Neither gesture mutates SongDocument.AudioRevision. Both the semantic
+selection model and actual Avalonia headless pointer/key route are tested.

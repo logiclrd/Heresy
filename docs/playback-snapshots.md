@@ -38,11 +38,14 @@ from faulty subscribers and are never invoked inside audio callbacks.
 merely to read the initial inactive snapshot.
 
 For live note audition, Note Off and other existing-note commands
-continue using the existing frozen session even after an audio edit.
-A subsequent new note detects the revision mismatch and starts a fresh
-snapshot, updating its published identity. A different authoring
-document always starts a fresh audition session even when its revision
-number happens to match.
+continue using the existing session after an audio edit. Direct Synth
+edits may be compiled and published through a revision-aware overlay,
+allowing compatible held voices to migrate and new direct Synth notes
+to use revised definitions **without replacing the session's base song
+snapshot**. Other sounds can still belong to the original snapshot;
+a non-Synth note start that cannot use the overlay takes the conservative
+fresh-session path. A different authoring document always starts a fresh
+audition session even when its revision number happens to match.
 
 ## User-facing status
 
@@ -51,8 +54,14 @@ unsaved-file asterisk**:
 
 - Hidden when no session is active, or the current document's audio
   revision matches the playback snapshot.
-- **Playback uses older audio** after an audio-affecting authoring edit.
-  Restart playback to hear the change.
+- **Playback snapshot is older** after an audio-affecting authoring edit.
+  This describes the immutable *base session snapshot*, not proof that
+  every sounding note uses an old definition: compatible live Synth
+  edits can already have reached the currently held voices. Since other
+  voices or Sound definitions may still reflect the original snapshot,
+  the indicator must not be hidden or the base revision advanced just
+  because some Synths were published. Restart playback to refresh the
+  entire session. The tooltip explains this distinction.
 - **Playback uses another song** when New/Open replaces the active
   authoring document while audio from the old document is still playing.
 

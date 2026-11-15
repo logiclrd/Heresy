@@ -63,7 +63,9 @@ public static class FilterCatalogue
 	private static readonly FilterParameterDescriptor LegacySpeakerCutoff =
         FilterParameterDescriptor.Number("CutoffHz", 1000, double.Epsilon, 192000, "Hz");
 	private static readonly FilterParameterDescriptor OnePoleMode =
-		FilterParameterDescriptor.Choice("Mode", "LowPass", "LowPass", "HighPass");
+		FilterParameterDescriptor.LiveChoice("Mode", "LowPass", "LowPass", "HighPass");
+	private static readonly FilterParameterDescriptor LegacySpeakerMode =
+		FilterParameterDescriptor.LiveChoice("Mode", "LowPass", "LowPass", "HighPass");
 	private static readonly FilterParameterDescriptor Delay =
 		FilterParameterDescriptor.Number("DelaySeconds", 0.02, 0.001, 2, "s",
 			structural: true);
@@ -82,12 +84,12 @@ public static class FilterCatalogue
 			structural: true, integer: true, odd: true);
 	private static readonly FilterParameterDescriptor TransitionWidth =
 		FilterParameterDescriptor.Number("TransitionWidthHz", 200, 1, 5000, "Hz",
-			structural: true);
+			fmPort: false);
 	private static readonly FilterParameterDescriptor FirWindow =
-		FilterParameterDescriptor.Choice("Window", "Hamming",
+		FilterParameterDescriptor.LiveChoice("Window", "Hamming",
 			"Hann", "Hamming", "Blackman");
 	private static readonly FilterParameterDescriptor PhaseResponse =
-		FilterParameterDescriptor.Choice("PhaseResponse", "Linear",
+		FilterParameterDescriptor.LiveChoice("PhaseResponse", "Linear",
 			"Linear", "Minimum", "Maximum");
 
 	private static readonly IReadOnlyList<FilterMenuItem> _menu =
@@ -164,7 +166,7 @@ public static class FilterCatalogue
 		Add(FilterKind.LadderSaturated, Cutoff, Resonance, Drive, Oversampling);
 		Add(FilterKind.AllPass, Cutoff, AllPassOrder);
 		Add(FilterKind.OnePole, Cutoff, OnePoleMode);
-        Add(FilterKind.SpeakerLegacyRc, LegacySpeakerCutoff, OnePoleMode);
+        Add(FilterKind.SpeakerLegacyRc, LegacySpeakerCutoff, LegacySpeakerMode);
 		Add(FilterKind.CombFeedback, Delay, Feedback, Mix);
 		Add(FilterKind.CombFeedforward, Delay, Feedforward, Mix);
 

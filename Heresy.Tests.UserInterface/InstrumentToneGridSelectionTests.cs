@@ -2,7 +2,9 @@ using System;
 using System.Linq;
 using System.Reflection;
 
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.NUnit;
 using Avalonia.Input;
 using Avalonia.Media;
@@ -266,6 +268,77 @@ public sealed class InstrumentToneGridSelectionTests
 		{
 			owner.Close();
 		}
+	}
+
+	[Test]
+	public void SelectAllIncludesEveryToneButNeverTheEntryDraft()
+	{
+		var (rows, selection) = NewSelection();
+		selection.BeginAt(new(82, 6), rows);
+		selection.SelectAll(rows);
+		foreach (InstrumentToneGridRow row in rows)
+		{
+			selection.Contains(new(row.Index, 6), rows)
+				.Should().Be(row.Index.HasValue);
+		}
+		selection.Focused.Should().Be(new InstrumentToneGridSelection.Cell(82, 6));
+		selection.EditTargetRows(new(80, 2), rows)
+			.Should().BeEquivalentTo(rows.Where(r => r.Index.HasValue)
+				.Select(r => r.Index!.Value));
+	}
+
+	[AvaloniaTest]
+	public void ShiftPointerSelectionAndControlAUseActualInstrumentEditorEventRoutes()
+	{
+		DocumentWorkspace workspace = new();
+		InstrumentDefinition instrument = InstrumentDocumentEditor.CreateInstrument(
+			workspace, "Pointer and select all");
+		InstrumentEditorControl editor = new(
+			workspace, instrument, () => { }, _ => { });
+		Window window = new() { Content = editor, Width = 1700, Height = 750 };
+		window.Show();
+		try
+		{
+			InstrumentToneGridSelection selection =
+				Field<InstrumentToneGridSelection>(editor, "_selection");
+			InstrumentToneGridRow[] projected =
+				Field<InstrumentToneGridRow[]>(editor, "_projectedRows");
+			ListBox list = Field<ListBox>(editor, "_rows");
+			list.ScrollIntoView(1);
+			window.UpdateLayout();
+			var visible = Field<System.Collections.Generic.Dictionary<
+				InstrumentToneGridSelection.Cell, WeakReference<Border>>>(
+					editor, "_visibleCells");
+			Point Position(int toneIndex)
+			{
+				Border surface = visible[new(toneIndex, 0)]
+					.TryGetTarget(out Border? cell) ? cell! :
+					throw new InvalidOperationException("Expected a realized grid cell.");
+				return surface.TranslatePoint(
+					new Point(12, surface.Bounds.Height / 2), window)!.Value;
+			}
+			void Click(Point point, RawInputModifiers modifiers)
+			{
+				window.MouseMove(point);
+				window.MouseDown(point, MouseButton.Left, modifiers);
+				window.MouseUp(point, MouseButton.Left, modifiers);
+			}
+			uint revision = workspace.Document.AudioRevision;
+			Click(Position(84), RawInputModifiers.None);
+			Click(Position(82), RawInputModifiers.Shift);
+			selection.Anchor.Should().Be(new InstrumentToneGridSelection.Row(84));
+			selection.Extent.Should().Be(new InstrumentToneGridSelection.Row(82));
+			selection.Contains(new(83, 8), projected).Should().BeTrue(
+				"Shift-click should include intervening complete rows");
+			window.KeyPress(Key.A, RawInputModifiers.Control, PhysicalKey.A, "a");
+			window.KeyRelease(Key.A, RawInputModifiers.Control, PhysicalKey.A, "a");
+			selection.Contains(new(0, 9), projected).Should().BeTrue();
+			selection.Contains(new(84, 9), projected).Should().BeTrue();
+			selection.Contains(new(null, 0), projected).Should().BeFalse();
+			workspace.Document.AudioRevision.Should().Be(revision,
+				"selection must never mutate the Instrument");
+		}
+		finally { window.Close(); }
 	}
 
 	[Test]

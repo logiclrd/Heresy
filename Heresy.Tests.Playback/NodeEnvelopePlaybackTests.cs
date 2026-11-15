@@ -102,6 +102,219 @@ public sealed class NodeEnvelopePlaybackTests
 		});
 	}
 
+	[TestCase(EnvelopeSustainLoopMode.Forward)]
+	[TestCase(EnvelopeSustainLoopMode.PingPong)]
+	public void InstrumentToneVolumeEnvelopeReleasesAnUnderlyingSynthAfterPatternNoteOff(
+		EnvelopeSustainLoopMode mode)
+	{
+		SongDocument song = new();
+		ObjectId envelopeId = song.AllocateObjectId();
+		NodeEnvelopeDefinition envelope = new(envelopeId, "Instrument release");
+		envelope.ReplaceCurve(
+		[
+			new(TimeSpan.Zero, 0.4),
+			new(TimeSpan.FromMilliseconds(10), 0.8),
+			new(TimeSpan.FromMilliseconds(20), 0.2),
+			new(TimeSpan.FromMilliseconds(90), 0.0),
+		], 1, 2, mode);
+		song.Add(envelope);
+		ObjectId synthId = song.AllocateObjectId();
+		song.Add(new FmSynthDefinition(synthId, "Sustained source",
+			new FmSynthGraph([new FmConstantNode(0, 0.5)], 0)));
+		ObjectId instrumentId = song.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Synth with tone envelope");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = synthId, VolumeEnvelopeId = envelopeId,
+		});
+		instrument.ToneTable.Add(0);
+		song.Add(instrument);
+		ObjectId patternId = song.AllocateObjectId();
+		song.Add(new ScriptPatternDefinition(patternId, "Release synth")
+		{
+			RowCount = 4, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({instrumentId.Value})); Off(0.5, 0);",
+		});
+		PreparedIncrementalPlaybackFactory factory = new(
+			new RenderConfiguration(1000,
+				[new OutputChannelConfiguration(
+					Vector3.Zero, positionalImportance: 0)]));
+		using PreparedIncrementalPlaybackPlan plan = factory.Create(song, patternId);
+		float[] pcm = new float[320];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.Multiple(() =>
+		{
+			Assert.That(Math.Abs(pcm[35]), Is.GreaterThan(0.01f),
+				"the held Synth must sound before Note Off");
+			Assert.That(pcm.Skip(75).Take(85).Any(v => Math.Abs(v) > 0.01f),
+				Is.True, "the Instrument's release must keep its Synth source audible");
+			Assert.That(pcm.Skip(250), Is.All.EqualTo(0f).Within(1e-6f),
+				"release completion must still retire the Synth");
+		});
+	}
+
+	[TestCase(0.0, true)]
+	[TestCase(0.1, false)]
+	public void CompletedVolumeReleaseRetiresOnlyAtPermanentZero(
+		double finalVolume, bool shouldRetireEarly)
+	{
+		SongDocument song = new();
+		ObjectId pitchId = song.AllocateObjectId();
+		NodeEnvelopeDefinition pitch = new(pitchId, "Long Pitch release");
+		pitch.ReplaceCurve([
+			new(TimeSpan.Zero, 1.0),
+			new(TimeSpan.FromMilliseconds(10), 1.0),
+			new(TimeSpan.FromMilliseconds(120), 1.0),
+		], 1, 1, EnvelopeSustainLoopMode.Forward);
+		song.Add(pitch);
+		ObjectId volumeId = song.AllocateObjectId();
+		NodeEnvelopeDefinition volume = new(volumeId, "Short Volume release");
+		volume.ReplaceCurve([
+			new(TimeSpan.Zero, 1.0),
+			new(TimeSpan.FromMilliseconds(10), 1.0),
+			new(TimeSpan.FromMilliseconds(30), finalVolume),
+		], 1, 1, EnvelopeSustainLoopMode.Forward);
+		song.Add(volume);
+		ObjectId synthId = song.AllocateObjectId();
+		song.Add(new FmSynthDefinition(synthId, "Two releasing envelopes",
+			new FmSynthGraph([
+				new FmEnvelopeNode(1, pitchId),
+				new FmOscillatorNode(2, FmOscillatorWaveform.Square, 90,
+					multiplierNodeId: 1),
+				new FmEnvelopeNode(3, volumeId),
+				new FmOperatorNode(4, FmOperatorKind.Multiply, [2, 3]),
+			], 4)));
+		ObjectId patternId = song.AllocateObjectId();
+		song.Add(new ScriptPatternDefinition(patternId, "Release")
+		{
+			RowCount = 4, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({synthId.Value})); Off(0.5, 0);",
+		});
+		PreparedIncrementalPlaybackFactory factory = new(
+			new RenderConfiguration(1000,
+				[new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0)]));
+		using PreparedIncrementalPlaybackPlan plan = factory.Create(song, patternId);
+		float[] pcm = new float[300];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm.Skip(90).Take(30).Any(v => Math.Abs(v) > 0.02f),
+			Is.EqualTo(!shouldRetireEarly),
+			"Once short Volume release finishes, a nonzero terminal gain "
+			+ "must leave the long Pitch release audible");
+		Assert.That(pcm.Skip(220), Is.All.EqualTo(0f).Within(1e-6f),
+			"All completed release lifecycles must retire");
+	}
+
+	[TestCase(EnvelopeSustainLoopMode.Forward, true)]
+	[TestCase(EnvelopeSustainLoopMode.PingPong, true)]
+	[TestCase(EnvelopeSustainLoopMode.None, false)]
+	public void InstrumentPitchReleaseKeepsUnsustainedNestedSynthAlive(
+		EnvelopeSustainLoopMode loop, bool hasRelease)
+	{
+		SongDocument song = new();
+		ObjectId envelopeId = song.AllocateObjectId();
+		NodeEnvelopeDefinition envelope = new(envelopeId, "Pitch-only release");
+		envelope.ReplaceCurve([
+			new(TimeSpan.Zero, 0.0),
+			new(TimeSpan.FromMilliseconds(10), 0.0),
+			new(TimeSpan.FromMilliseconds(20), 0.0),
+			new(TimeSpan.FromMilliseconds(90), 0.0),
+		], 1, 2, loop);
+		song.Add(envelope);
+		ObjectId synthId = song.AllocateObjectId();
+		song.Add(new FmSynthDefinition(synthId, "Unsustained child",
+			new FmSynthGraph([new FmConstantNode(0, 0.5)], 0)));
+		ObjectId instrumentId = song.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Pitch release parent");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = synthId, PitchEnvelopeId = envelopeId,
+		});
+		instrument.ToneTable.Add(0);
+		song.Add(instrument);
+		ObjectId patternId = song.AllocateObjectId();
+		song.Add(new ScriptPatternDefinition(patternId, "Nested release")
+		{
+			RowCount = 4, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({instrumentId.Value})); Off(0.5, 0);",
+		});
+		PreparedIncrementalPlaybackFactory factory = new(
+			new RenderConfiguration(1000,
+				[new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0)]));
+		using PreparedIncrementalPlaybackPlan plan = factory.Create(song, patternId);
+		float[] pcm = new float[320];
+		plan.Source.Render(pcm.Length, pcm);
+		Assert.That(pcm.Skip(75).Take(30).Any(v => Math.Abs(v) > 0.1f),
+			Is.EqualTo(hasRelease),
+			"Pitch-only sustain must protect the unlooped child source");
+		Assert.That(pcm.Skip(250), Is.All.EqualTo(0f).Within(1e-6f),
+			"Pitch release completion or a Definite cut must end the note");
+	}
+
+	[TestCase(0.0, false)]
+	[TestCase(0.1, true)]
+	public void SynthInstrumentSourceFinishesAtPermanentZeroGainBeforePitchRelease(
+		double finalVolume, bool stillPlaying)
+	{
+		SongDocument song = new();
+		ObjectId sampleId = song.AllocateObjectId();
+		SampleDefinition sample = SampleDefinition.CreateImported(
+			sampleId, "Looped PCM", "constant.wav", ConstantSample());
+		sample.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 400);
+		song.Add(sample);
+		ObjectId volumeId = song.AllocateObjectId();
+		NodeEnvelopeDefinition volume = new(volumeId, "Final gain");
+		volume.ReplaceCurve([
+			new(TimeSpan.Zero, 1.0),
+			new(TimeSpan.FromMilliseconds(10), 1.0),
+			new(TimeSpan.FromMilliseconds(30), finalVolume),
+		], 1, 1, EnvelopeSustainLoopMode.Forward);
+		song.Add(volume);
+		ObjectId pitchId = song.AllocateObjectId();
+		NodeEnvelopeDefinition pitch = new(pitchId, "Long release");
+		pitch.ReplaceCurve([
+			new(TimeSpan.Zero, 0.0),
+			new(TimeSpan.FromMilliseconds(10), 0.0),
+			new(TimeSpan.FromMilliseconds(120), 0.0),
+		], 1, 1, EnvelopeSustainLoopMode.Forward);
+		song.Add(pitch);
+		ObjectId instrumentId = song.AllocateObjectId();
+		InstrumentDefinition instrument = new(instrumentId, "Sustaining source");
+		instrument.ToneSpecifications.Add(new ToneSpecification
+		{
+			SourceId = sampleId, VolumeEnvelopeId = volumeId,
+			PitchEnvelopeId = pitchId,
+		});
+		instrument.ToneTable.Add(0);
+		song.Add(instrument);
+		ObjectId synthId = song.AllocateObjectId();
+		song.Add(new FmSynthDefinition(synthId, "Graph Source",
+			new FmSynthGraph([
+				new FmSoundSourceNode(0, instrumentId,
+					FmMultiNode.NeutralFrequencyHz),
+			], 0)));
+		ObjectId patternId = song.AllocateObjectId();
+		song.Add(new ScriptPatternDefinition(patternId, "Zero gain retirement")
+		{
+			RowCount = 4, ChannelCount = 1,
+			Source = $"Note(0, 0, _O({synthId.Value})); Off(0.5, 0);",
+		});
+		PreparedIncrementalPlaybackFactory factory = new(
+			new RenderConfiguration(1000,
+				[new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0)]));
+		using PreparedIncrementalPlaybackPlan plan = factory.Create(song, patternId);
+		float[] pcm = new float[320];
+		plan.Source.Render(100, pcm.AsSpan(0, 100));
+		Assert.That(plan.Session.GetChannelState(0).CurrentVoice is not null,
+			Is.EqualTo(stillPlaying),
+			"the post-filter Volume zero can retire this Source despite a longer Pitch release");
+		Assert.That(pcm.Skip(90).Take(10).Any(v => Math.Abs(v) > 0.02f),
+			Is.EqualTo(stillPlaying),
+			"a completed nonzero Volume gain remains audible");
+		plan.Source.Render(220, pcm.AsSpan(100, 220));
+		Assert.That(pcm.Skip(250), Is.All.Zero,
+			"the remaining Pitch release eventually retires");
+	}
+
 	private static byte[] ConstantSample()
 	{
 		const int frames = 400;
@@ -174,9 +387,14 @@ public sealed class NodeEnvelopePlaybackTests
 		Assert.Multiple(() =>
 		{
 			Assert.That(chunked, Is.EqualTo(pcm).Within(1e-6f));
-			Assert.That(pcm.Skip(70).Take(25)
-				.Any(v => Math.Abs(v) > 0.5f), Is.True,
-				"Pitch envelope notes must keep sounding after Note Off");
+			if (loop == EnvelopeSustainLoopMode.None)
+				Assert.That(pcm.Skip(61).Take(34),
+					Is.All.EqualTo(0f).Within(1e-6f),
+					"No sustain loop means Definite Note Off must cut the sound");
+			else
+				Assert.That(pcm.Skip(70).Take(25)
+					.Any(v => Math.Abs(v) > 0.5f), Is.True,
+					"Any sustain-loop modulation keeps the note releasing");
 			Assert.That(pcm.Skip(200), Is.All.EqualTo(0f).Within(1e-6f),
 				"An oscillator with only a frequency envelope must "
 				+ "still retire when that release completes");
