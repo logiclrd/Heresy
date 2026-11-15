@@ -491,6 +491,22 @@ public sealed class FmSynthInspectorTransportPcmTests
         }
     }
 
+    private sealed class Resolver(ObjectId id)
+        : ISoundResolver, IEnvelopeCurveResolver
+    {
+        public ISound? Sound { get; set; }
+        public bool TryResolve(ObjectId requested, bool mixdown, out ISound? sound)
+        {
+            sound = requested == id && !mixdown ? Sound : null;
+            return sound is not null;
+        }
+        public bool TryResolve(ObjectId requested, out IEnvelopeCurve? curve)
+        {
+            curve = null;
+            return false;
+        }
+    }
+
     private sealed class ManualBackend : IAudioOutputBackend
     {
         public IAudioOutputSource? Source { get; private set; }
