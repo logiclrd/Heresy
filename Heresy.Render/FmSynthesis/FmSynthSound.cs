@@ -61,6 +61,29 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			FadeFrom = previous;
 		}
 		public void CompleteSampleCrossfade() => FadeFrom = null;
+		// A None Source has no invocation. The worker may attach a new
+		// Sample only at the actual publication frame, with an explicit
+		// silence-to-Sample onset rather than a fabricated old playhead.
+		public bool FadingInFromSilence { get; private set; }
+		public void StartSampleFadeInFromSilence(long frame)
+		{
+			StartFrame = frame;
+			FadeStartFrame = frame;
+			FadingInFromSilence = true;
+		}
+		public void CompleteSampleFadeInFromSilence()
+			=> FadingInFromSilence = false;
+		// A removed Sample still has an actual readhead while it audibly
+		// fades to silence. The former authored node retains its rate model;
+		// the SourceVoice is then retired without creating a silent ISound.
+		public FmSoundSourceNode? FadingOutToSilenceDefinition { get; private set; }
+		public long FadeToSilenceStartFrame { get; private set; }
+		public void StartSampleFadeOutToSilence(
+			FmSoundSourceNode original, long frame)
+		{
+			FadingOutToSilenceDefinition = original;
+			FadeToSilenceStartFrame = frame;
+		}
 		/// <summary>Instrument tone-table index bound when this voice was
 		/// created, not recomputed from a retuned pitch on the PCM thread.</summary>
 		public int? BoundInstrumentToneSlot { get; }
@@ -1733,8 +1756,9 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 				|| oldSource.SourceId == newSource.SourceId
 				|| live.Sources[i] is not { Sound: SampleSound } current
 				|| current.FadeFrom is null
-				|| next._nodes[i].Source is not SampleSound replacement
-				|| ReferenceEquals(current.Sound, replacement))
+				|| (next._nodes[i].Source is not SampleSound
+					&& !newSource.SourceId.IsNone)
+				|| ReferenceEquals(current.Sound, next._nodes[i].Source))
 				continue;
 			blockedByFade = true;
 		}
@@ -1822,6 +1846,8 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 								return false;
 						}
 						else if (!sameSample
+							&& !CanFadeSampleToSilence(next, live, i,
+								allowActiveSampleFade)
 							&& (!CanMigrateSourceChild(live.Sources[i], revised.Source,
 									allowUnpreparedExpansion)
 								|| live.Sources[i]!.Invocation.Configuration
@@ -1919,14 +1945,41 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			// are snapshotted when attaching the prepared crossfade.
 			// Actual wiring changes are still structurally incompatible.
 			|| oldSource.MultiplierNodeId != newSource.MultiplierNodeId
-			|| state.Sources[index] is not { Sound: SampleSound } current
-			|| (current.FadeFrom is not null && !allowActiveSampleFade)
 			|| next._nodes[index].Source is not SampleSound revised
-			|| ReferenceEquals(current.Sound, revised)
 			|| state.SampleRate <= 0 || state.NextFrame <= 0
 			|| state.HasNoteOffTime)
 			return false;
-		return true;
+		SourceVoice? current = state.Sources[index];
+		if (current is null)
+			return oldSource.SourceId.IsNone && _nodes[index].Source is null;
+		return current.Sound is SampleSound
+			&& (current.FadeFrom is null || allowActiveSampleFade)
+			&& !current.FadingInFromSilence
+			&& current.FadingOutToSilenceDefinition is null
+			&& !ReferenceEquals(current.Sound, revised);
+	}
+
+	/// <summary>Removing an active Sample is a bounded, worker-free
+	/// Source-output fade. It must retain the original authored pitch
+	/// trajectory and child release state, not reset the parent graph or
+	/// construct a proxy silence invocation. A second edit during an
+	/// existing Sample crossfade can only be deferred until it completes.</summary>
+	private bool CanFadeSampleToSilence(FmSynthSound next, FmSynthState state,
+		int index, bool allowActiveSampleFade = false)
+	{
+		return _allowMultiExpansion && next._allowMultiExpansion
+			&& _nodes[index].Definition is FmSoundSourceNode oldSource
+			&& next._nodes[index].Definition is FmSoundSourceNode newSource
+			&& !oldSource.SourceId.IsNone && newSource.SourceId.IsNone
+			&& _nodes[index].Source is SampleSound
+			&& next._nodes[index].Source is null
+			&& oldSource.MultiplierNodeId == newSource.MultiplierNodeId
+			&& state.Sources[index] is { Sound: SampleSound } current
+			&& (current.FadeFrom is null || allowActiveSampleFade)
+			&& !current.FadingInFromSilence
+			&& current.FadingOutToSilenceDefinition is null
+			&& state.SampleRate > 0 && state.NextFrame > 0
+			&& !state.HasNoteOffTime;
 	}
 
 	/// <summary>Only a compatible referenced Synth can inherit a bound
@@ -2818,22 +2871,35 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 			}
 			live.ReplaceMultiVoices(i, grown);
 		}
-		// Publish newly selected Samples only after the *entire* voice has
-		// passed preflight. No source invocation is constructed in PCM.
+		// Both None->Sample and Sample->Sample obtain a complete child
+		// invocation from the worker. Sample->None has no new invocation:
+		// retain the original child until its Source-local fade ends.
 		for (int i = 0; i < _nodes.Length; i++)
 		{
-			if (!NeedsPreparedSampleReplacement(next, live, i))
-				continue;
-			if (!expansionMatches
-				|| expansion!.SourceSlots[i] is not SourceVoice replacement
-				|| live.Sources[i] is not SourceVoice previous)
-				throw new InvalidOperationException(
-					"Sample SourceId replacement requires off-PCM worker preparation.");
-			previous.FreezeOutgoingSourceDefinition(
-				(FmSoundSourceNode)_nodes[i].Definition);
-			replacement.StartSampleCrossfade(previous, live.NextFrame);
-			live.Sources[i] = replacement;
-			live.ChildEndChanged = true;
+			if (NeedsPreparedSampleReplacement(next, live, i))
+			{
+				if (!expansionMatches
+					|| expansion!.SourceSlots[i] is not SourceVoice replacement)
+					throw new InvalidOperationException(
+						"Sample SourceId replacement requires off-PCM worker preparation.");
+				SourceVoice? previous = live.Sources[i];
+				if (previous is null)
+					replacement.StartSampleFadeInFromSilence(live.NextFrame);
+				else
+				{
+					previous.FreezeOutgoingSourceDefinition(
+						(FmSoundSourceNode)_nodes[i].Definition);
+					replacement.StartSampleCrossfade(previous, live.NextFrame);
+				}
+				live.Sources[i] = replacement;
+				live.ChildEndChanged = true;
+			}
+			else if (CanFadeSampleToSilence(next, live, i))
+			{
+				live.Sources[i]!.StartSampleFadeOutToSilence(
+					(FmSoundSourceNode)_nodes[i].Definition, live.NextFrame);
+				live.ChildEndChanged = true;
+			}
 		}
 		live.PreparedExpansion = null;
 		for (int i = 0; i < _nodes.Length; i++)
@@ -3468,6 +3534,19 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		if (voice is null)
 			return 0;
 		long? incoming = GetOneChildSourceSilenceEnd(voice);
+		if (voice.FadingOutToSilenceDefinition is not null)
+		{
+			int duration = LiveTransitionFrames(state.SampleRate);
+			long fadeEnd = voice.FadeToSilenceStartFrame > long.MaxValue - duration
+				? long.MaxValue : voice.FadeToSilenceStartFrame + duration;
+			if (state.NextFrame >= fadeEnd)
+			{
+				state.Sources[index] = null;
+				state.ChildEndChanged = true;
+				return 0;
+			}
+			return incoming.HasValue ? Math.Min(incoming.Value, fadeEnd) : fadeEnd;
+		}
 		if (voice.FadeFrom is not { } outgoing)
 			return incoming;
 		int frames = LiveTransitionFrames(state.SampleRate);
@@ -4143,6 +4222,34 @@ public sealed class FmSynthSound : IStreamingFiniteSound, IFirPreparationSound
 		SourceVoice? voice = state.Sources[index];
 		if (voice is null)
 			return 0.0;
+		if (voice.FadingOutToSilenceDefinition is { } outgoingDefinition)
+		{
+			long elapsed = frame - voice.FadeToSilenceStartFrame;
+			if (elapsed >= LiveTransitionFrames(sampleRate))
+			{
+				state.Sources[index] = null;
+				state.ChildEndChanged = true;
+				return 0.0;
+			}
+			double weight = MultiTransitionWeight(
+				voice.FadeToSilenceStartFrame, frame, sampleRate);
+			return (1.0 - weight) * EvaluateOneSource(
+				outgoingDefinition, compiled, state, frame, sampleRate,
+				noteOffFrame, voice);
+		}
+		if (voice.FadingInFromSilence)
+		{
+			long elapsed = frame - voice.FadeStartFrame;
+			if (elapsed >= LiveTransitionFrames(sampleRate))
+				voice.CompleteSampleFadeInFromSilence();
+			else
+			{
+				double weight = MultiTransitionWeight(
+					voice.FadeStartFrame, frame, sampleRate);
+				return weight * EvaluateOneSource(
+					node, compiled, state, frame, sampleRate, noteOffFrame, voice);
+			}
+		}
 		if (voice.FadeFrom is { } oldSource)
 		{
 			long elapsed = frame - voice.FadeStartFrame;
