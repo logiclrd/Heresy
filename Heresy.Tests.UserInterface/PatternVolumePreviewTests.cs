@@ -123,6 +123,48 @@ public sealed class PatternVolumePreviewTests
     }
 
     [AvaloniaTest]
+    public void WindowDeactivationCommitsPartialVolumeBeforeReleasingPreview()
+    {
+        DocumentWorkspace workspace = new();
+        DataPatternDefinition pattern =
+            PatternDocumentEditor.CreateDataPattern(workspace, "Pattern", 3, 1);
+        PatternEditorControl editor = Editor(workspace, pattern);
+        SetCursor(editor, 0, 0, PatternCellField.Volume);
+        Type(editor, 0, 0, "3");
+        uint before = workspace.Document.AudioRevision;
+
+        Invoke(editor, "OnOwnerDeactivated", null!, EventArgs.Empty);
+
+        Assert.That(pattern.Grid[0, 0]!.Volume, Is.EqualTo(30.0 / 64.0));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(before + 1));
+        Assert.That(Fields<TextBlock>(editor, "_volumeTexts")[(0, 0)].Text,
+            Is.EqualTo("30"));
+    }
+
+    [AvaloniaTest]
+    public void RemovingPatternEditorCommitsDisplayedPartialVolume()
+    {
+        DocumentWorkspace workspace = new();
+        DataPatternDefinition pattern =
+            PatternDocumentEditor.CreateDataPattern(workspace, "Pattern", 3, 1);
+        Window owner = new() { Width = 900, Height = 500 };
+        PatternEditorControl editor = new(owner, workspace, pattern,
+            () => { }, _ => { });
+        owner.Content = editor;
+        owner.Show();
+        owner.UpdateLayout();
+        SetCursor(editor, 0, 0, PatternCellField.Volume);
+        Type(editor, 0, 0, "2");
+        uint before = workspace.Document.AudioRevision;
+
+        owner.Content = new TextBlock { Text = "Different editor" };
+
+        Assert.That(pattern.Grid[0, 0]!.Volume, Is.EqualTo(20.0 / 64.0));
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(before + 1));
+        owner.Close();
+    }
+
+    [AvaloniaTest]
     public void PendingRendererUsesFocusBrushAndNormalThemeForegroundForSecondDigit()
     {
         foreach (IBrush normal in new IBrush[] { Brushes.White, Brushes.Black })
