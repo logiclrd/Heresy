@@ -391,6 +391,42 @@ public sealed class FmFilterInspectorTests
 			.GetParameter("CutoffHz").NumericValue, Is.EqualTo(2500));
 	}
 
+	[AvaloniaTest]
+	public void InvalidPendingOverridePreventsReplacingFilterDefinitionSelection()
+	{
+		DocumentWorkspace workspace = new();
+		FilterDefinition filter = FilterDocumentEditor.CreateFilter(workspace, "Shared");
+		FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(workspace, "FM");
+		int id = FmSynthDocumentEditor.AddFilterNode(workspace, synth, 100, 100);
+		FmSynthDocumentEditor.SetFilterConfiguration(
+			workspace, synth, id, new FilterInstance(filter));
+		FmSynthEditorControl view = SynthEditor(workspace, synth, id);
+		StackPanel panel = Inspector(view);
+		FilterInstanceEditorControl instance = panel.Children
+			.OfType<FilterInstanceEditorControl>().Single();
+		InstanceField<CheckBox>(instance, "_batchChanges").IsChecked = true;
+		var flags = InstanceField<Dictionary<string, CheckBox>>(
+			instance, "_overrideToggles");
+		var inputs = InstanceField<Dictionary<string, Control>>(
+			instance, "_editors");
+		flags["CutoffHz"].IsChecked = true;
+		((TextBox)inputs["CutoffHz"]).Text = "invalid";
+		int selectorLabel = panel.Children
+			.Select((child, index) => (child, index))
+			.Single(pair => pair.child is TextBlock text
+				&& text.Text == "Shared Filter definition").index;
+		StackPanel selectorRow = (StackPanel)panel.Children[selectorLabel + 1];
+		ComboBox selection = (ComboBox)selectorRow.Children[0];
+		object previous = selection.SelectedItem!;
+		uint rev = workspace.Document.AudioRevision;
+		selection.SelectedIndex = 1; // (None) would discard the entire configured use.
+		Assert.That(selection.SelectedItem, Is.SameAs(previous));
+		Assert.That(((FmFilterNode)synth.Graph.Nodes.Single(n => n.Id == id))
+			.Configuration, Is.Not.Null);
+		Assert.That(workspace.Document.AudioRevision, Is.EqualTo(rev));
+		Assert.That(((TextBox)inputs["CutoffHz"]).Text, Is.EqualTo("invalid"));
+	}
+
 	private static void SelectFilterNode(FmSynthEditorControl view, int nodeId)
 		=> typeof(FmSynthEditorControl).GetMethod("SelectNode",
 			BindingFlags.NonPublic | BindingFlags.Instance)!
