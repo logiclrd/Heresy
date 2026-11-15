@@ -1758,6 +1758,13 @@ public sealed class FmSynthEditorControl : UserControl
 		int? multiplierId = null, bool replaceMultiplier = false,
 		bool? exponential = null, bool? constant = null)
 	{
+		// The Source inspector has object-family-specific controls (e.g.
+		// a data Instrument's shared Volume editor). A SourceId edit must
+		// refresh those controls immediately; merely refreshing the canvas
+		// leaves stale Sample/Instrument actions until the user reselects
+		// the graph node. Do not rebuild for ordinary numeric edits.
+		ObjectId previousSourceId =
+			((FmSoundSourceNode)CurrentNode(nodeId)).SourceId;
 		UpdateParameter(nodeId, current =>
 		{
 			FmSoundSourceNode live = (FmSoundSourceNode)current;
@@ -1771,6 +1778,10 @@ public sealed class FmSynthEditorControl : UserControl
 				&& exp == live.ExponentialMultiplier && fixedPitch == live.Constant
 				? null : new FmSoundSourceNode(nodeId, id, freq, input, exp, fixedPitch);
 		});
+		if (sourceId is ObjectId selectedId
+			&& selectedId != previousSourceId
+			&& ((FmSoundSourceNode)CurrentNode(nodeId)).SourceId == selectedId)
+			RebuildInspector();
 	}
 
 	private void UpdateOscillator(
