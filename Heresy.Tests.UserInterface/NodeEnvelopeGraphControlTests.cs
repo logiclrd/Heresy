@@ -454,6 +454,9 @@ public sealed class NodeEnvelopeGraphControlTests
 			"changing the visual value bounds is not a sound edit");
 		workspace.Document.DocumentRevision.Should().Be(document + 1);
 
+		// The surface has an explicit default Height=250; update the
+		// control's height before arranging a genuinely larger viewport.
+		surface.Height = 400;
 		surface.Measure(new Size(440, 400));
 		surface.Arrange(new Rect(0, 0, 440, 400));
 		NodeEnvelopeGraphGeometry taller =
