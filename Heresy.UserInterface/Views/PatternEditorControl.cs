@@ -1276,13 +1276,7 @@ public sealed class PatternEditorControl : UserControl
 			};
 
 		cell.LostFocus += (_, _) =>
-		{
-			if (_volumePreviewAddress == (displayRow, channel))
-			{
-				_volumeInput.Reset();
-				RefreshVolumePreview();
-			}
-		};
+			CommitPendingVolumeOnFocusLoss(displayRow, channel);
 		cell.PointerPressed += (_, e) =>
 			OnCellPointerPressed(displayRow, channel, cell, e);
 		cell.KeyDown += async (_, e) =>
@@ -1344,10 +1338,16 @@ public sealed class PatternEditorControl : UserControl
 		if (_expandedCell == (row, channel))
 			CollapseVisualEffects(collapseCursor: true);
 
+		if (_volumePreviewAddress is (int pendingRow, int pendingChannel)
+			&& (pendingRow != row || pendingChannel != channel
+				|| field != PatternCellField.Volume))
+			CommitPendingVolumeOnFocusLoss(pendingRow, pendingChannel);
 		_volumeInput.Reset();
 		_cursor.SetPosition(row, channel, field);
 		UpdateCurrentPatternControls();
-		cell.Focus();
+		// A just-committed partial volume may have rebuilt the old cell.
+		// Focus the current control in the rebuilt grid, not a stale Border.
+		FocusCursorCell();
 		RefreshCursorVisuals();
 		if (field == PatternCellField.Source
 			&& sourceWasActive
@@ -1369,6 +1369,21 @@ public sealed class PatternEditorControl : UserControl
 		_suppressHandledTrackerKeyTextInput = false;
 		if (_cursor.Row != row || _cursor.Channel != channel)
 			_cursor.SetPosition(row, channel, PatternCellField.Note);
+
+		// Backspace on a partially typed Volume cancels the first digit.
+		// This must run before any navigation or focus-loss commit can
+		// reinterpret the provisional two-digit preview as a real edit.
+		if (_cursor.Field == PatternCellField.Volume
+			&& e.Key == Key.Back
+			&& e.KeyModifiers == KeyModifiers.None
+			&& _volumePreviewAddress == (row, channel)
+			&& _volumeInput.PendingTensDigit.HasValue)
+		{
+			_volumeInput.Reset();
+			RefreshVolumePreview();
+			e.Handled = true;
+			return;
+		}
 
 		PatternEditorRow editorRow = _context.GetRow(row);
 
@@ -1724,6 +1739,7 @@ public sealed class PatternEditorControl : UserControl
 			&& (e.KeyModifiers & channelNavigationBlockers) == 0
 			&& e.Key is Key.Left or Key.Right)
 		{
+			CommitPendingVolumeOnFocusLoss();
 			_volumeInput.Reset();
 			PatternEditorContextCursor.MoveChannel(
 				_context,
@@ -1938,6 +1954,7 @@ public sealed class PatternEditorControl : UserControl
 			e.KeyModifiers,
 			out int noteColumnDelta))
 		{
+			CommitPendingVolumeOnFocusLoss();
 			_volumeInput.Reset();
 			bool moved =
 				PatternEditorContextCursor.MoveToAdjacentNote(
@@ -1958,6 +1975,7 @@ public sealed class PatternEditorControl : UserControl
 			e.KeyModifiers,
 			out bool firstRow))
 		{
+			CommitPendingVolumeOnFocusLoss();
 			_volumeInput.Reset();
 			if (_expandedCell is not null)
 				CollapseVisualEffects(collapseCursor: true);
@@ -1986,6 +2004,7 @@ public sealed class PatternEditorControl : UserControl
 			e.KeyModifiers,
 			out bool topLeft))
 		{
+			CommitPendingVolumeOnFocusLoss();
 			_volumeInput.Reset();
 			if (_expandedCell is not null)
 				CollapseVisualEffects(collapseCursor: true);
@@ -2010,6 +2029,7 @@ public sealed class PatternEditorControl : UserControl
 		if ((e.KeyModifiers & homeEndBlockers) == 0
 			&& e.Key is Key.Home or Key.End)
 		{
+			CommitPendingVolumeOnFocusLoss();
 			_volumeInput.Reset();
 			if (_expandedCell is not null)
 				CollapseVisualEffects(collapseCursor: true);
@@ -2035,6 +2055,7 @@ public sealed class PatternEditorControl : UserControl
 		{
 			int fromRow = _cursor.Row;
 			int fromChannel = _cursor.Channel;
+			CommitPendingVolumeOnFocusLoss();
 			_volumeInput.Reset();
 			int movedRows = PatternPageNavigation.Move(
 				_context, _cursor, _scroll.Viewport.Height, RowHeight,
@@ -2056,18 +2077,21 @@ public sealed class PatternEditorControl : UserControl
 		switch (e.Key)
 		{
 			case Key.Left:
+				CommitPendingVolumeOnFocusLoss();
 				_volumeInput.Reset();
 				PatternEditorContextCursor.MoveLeft(_context, _cursor);
 				e.Handled = true;
 				break;
 
 			case Key.Right:
+				CommitPendingVolumeOnFocusLoss();
 				_volumeInput.Reset();
 				PatternEditorContextCursor.MoveRight(_context, _cursor);
 				e.Handled = true;
 				break;
 
 			case Key.Up:
+				CommitPendingVolumeOnFocusLoss();
 				_volumeInput.Reset();
 				PatternEditorContextCursor.MoveUp(_context, _cursor);
 				if (previouslyExpanded is not null)
@@ -2076,6 +2100,7 @@ public sealed class PatternEditorControl : UserControl
 				break;
 
 			case Key.Down:
+				CommitPendingVolumeOnFocusLoss();
 				_volumeInput.Reset();
 				PatternEditorContextCursor.MoveDown(_context, _cursor);
 				if (previouslyExpanded is not null)
@@ -2222,6 +2247,8 @@ public sealed class PatternEditorControl : UserControl
 		_ = e;
 		_followRepeatKeys.Clear();
 		_previewRepeatKeys.Clear();
+		if (_volumePreviewAddress is (int row, int channel))
+			CommitPendingVolumeOnFocusLoss(row, channel);
 		_volumeInput.Reset();
 		RefreshVolumePreview();
 		await ReleaseAllHeldPreviewsAsync();
@@ -2230,6 +2257,8 @@ public sealed class PatternEditorControl : UserControl
 	protected override void OnDetachedFromVisualTree(
 		Avalonia.VisualTreeAttachmentEventArgs e)
 	{
+		if (_volumePreviewAddress is (int row, int channel))
+			CommitPendingVolumeOnFocusLoss(row, channel);
 		_owner.Deactivated -= OnOwnerDeactivated;
 		_followRepeatKeys.Clear();
 		_previewRepeatKeys.Clear();
@@ -2372,6 +2401,7 @@ public sealed class PatternEditorControl : UserControl
 			value,
 			out int patternDelta))
 		{
+			CommitPendingVolumeOnFocusLoss();
 			_volumeInput.Reset();
 			RefreshVolumePreview();
 			SwitchPattern(patternDelta);
@@ -4237,6 +4267,73 @@ public sealed class PatternEditorControl : UserControl
 		}
 		RefreshVolumePreview();
 		RefreshEffectHint();
+	}
+
+	/// <summary>Finish a provisional tracker Volume when its logical
+	/// field or physical cell loses focus. The low digit comes from the
+	/// *exact* provisional two-digit display (previous committed units,
+	/// or zero for an empty cell); no unseen second digit is invented.
+	/// Unlike normal two-key entry this does not advance the cursor.</summary>
+	/// <summary>Host preflight before saving, replacing the song or
+	/// closing the application: a still-focused first digit must become a
+	/// real document edit before the unsaved-changes guard is evaluated.</summary>
+	public void CommitPendingVolumeOnLeavingEditor()
+		=> CommitPendingVolumeOnFocusLoss();
+
+	private void CommitPendingVolumeOnFocusLoss()
+	{
+		if (_volumePreviewAddress is (int row, int channel))
+			CommitPendingVolumeOnFocusLoss(row, channel);
+	}
+
+	private void CommitPendingVolumeOnFocusLoss(int displayRow, int channel)
+	{
+		if (_volumePreviewAddress != (displayRow, channel)
+			|| _volumeInput.PendingTensDigit is not int tensDigit)
+			return;
+
+		PatternEditorRow mapped = _context.GetRow(displayRow);
+		string committed = PatternCellViewModel.Create(
+			_workspace.Document, mapped.Pattern, mapped.PatternRow, channel).VolumeText;
+		string visible = PatternVolumePreviewRenderer.PendingText(
+			tensDigit, committed);
+		// Clear the draft *before* any document callback can rebuild the
+		// displayed cell and generate another LostFocus.
+		_volumeInput.Reset();
+
+		if (!int.TryParse(visible, NumberStyles.None,
+			CultureInfo.InvariantCulture, out int level))
+		{
+			_message.Text = $"Could not parse volume {visible}. "
+				+ "The previous volume was kept.";
+			RefreshVolumePreview();
+			return;
+		}
+
+		// Display the originally typed pair until commitment, then clamp
+		// its numeric value to the valid 00–64 tracker range.
+		double next = Math.Min(level, 64) / 64.0;
+		bool changed = mapped.Pattern.Grid[mapped.PatternRow, channel]?.Volume != next;
+		try
+		{
+			if (changed)
+				PatternDocumentEditor.SetVolume(
+					_workspace, mapped.Pattern, mapped.PatternRow, channel, next);
+			_noteInputState.CurrentVolume = next;
+			UpdateEditStateDisplay();
+			RefreshVolumePreview();
+			if (changed)
+			{
+				RefreshUnderlyingCell(mapped.Pattern, mapped.PatternRow, channel);
+				_changed($"Edited volume in {mapped.Pattern.Name} row "
+					+ $"{mapped.PatternRow}, channel {channel + 1}");
+			}
+		}
+		catch (Exception error)
+		{
+			RefreshVolumePreview();
+			_message.Text = $"Could not apply partial volume {visible}: {error.Message}";
+		}
 	}
 
 	/// <summary>Repaint only the pending Volume display. Its first digit

@@ -42,16 +42,6 @@ Do not reintroduce completed-task checklists here.
   physical listening/UI checks. See [effect operators](effect-operators.md)
   and [UI workflow](user-interface-workflows.md).
 
-- [ ] **Commit partially entered Pattern volume-command bytes on focus loss.**
-  If the first hexadecimal character/nybble of a volume change has been
-  entered and the Pattern editor loses focus before the second one, commit
-  that first high nybble together with **exactly the low nybble currently
-  displayed for the partial edit** (the prior low nybble or zero). Do not
-  discard the partial value or substitute a different unseen low nybble.
-  Exercise switching Pattern focus by mouse, keyboard and pane changes;
-  preserve complete two-nybble entry, undo/redo and saved values. See
-  [UI workflow](user-interface-workflows.md).
-
 ### Filters
 
 - [ ] **Finish physical filter-feature listening and desktop acceptance.**
