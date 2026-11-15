@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Linq;
 
 using Avalonia;
@@ -170,8 +171,21 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		new SolidColorBrush(Color.FromRgb(246, 247, 248));
 	private static readonly IBrush Axis =
 		new SolidColorBrush(Color.FromRgb(110, 120, 140));
-	private static readonly IBrush Guide =
-		new SolidColorBrush(Color.FromArgb(65, 146, 161, 181));
+	// Every node (including sustain endpoints) gets a curve-coloured
+	// vertical guide at 40% opacity; time-grid lines remain neutral grey.
+	private static readonly IBrush NodeGuide =
+		new SolidColorBrush(Color.FromArgb(102, 97, 207, 246));
+	private static readonly IBrush DarkLabel =
+		new SolidColorBrush(Color.FromRgb(190, 199, 210));
+	private static readonly IBrush LightLabel =
+		new SolidColorBrush(Color.FromRgb(69, 79, 90));
+	private static readonly IBrush DarkHoverBackground =
+		new SolidColorBrush(Color.FromArgb(240, 44, 51, 63));
+	private static readonly IBrush LightHoverBackground =
+		new SolidColorBrush(Color.FromArgb(242, 226, 231, 236));
+	private const double AxisFontSize = 10;
+	private const double HoverFontSize = 11;
+	private const double TimeLabelArea = 54;
 	// Keep the thin green lines legible on both the dark and light
 	// graph backgrounds without making them compete with the blue curve.
 	private static readonly IBrush DarkValueLimitGuide =
@@ -204,6 +218,7 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 	private int _previewSustainEnd;
 	private bool _dragMoved;
 	private Point _press;
+	private Point? _hoverPointer;
 	private NodeEnvelopeGraphGeometry? _fixedLayout;
 	private long _timeDomainTicks;
 
@@ -236,6 +251,11 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		ClipToBounds = true;
 		Focusable = true;
 		IsTabStop = true;
+		PointerExited += (_, _) =>
+		{
+			_hoverPointer = null;
+			InvalidateVisual();
+		};
 	}
 
 	public void RefreshFromEnvelope()
@@ -284,16 +304,33 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		DomainChanged?.Invoke();
 	}
 
+	private static FormattedText Label(string content, IBrush foreground,
+		double size = AxisFontSize)
+		=> new(content, CultureInfo.InvariantCulture,
+			FlowDirection.LeftToRight, new Typeface(FontFamily.Default),
+			size, foreground);
+
 	private NodeEnvelopeGraphGeometry? Layout()
 	{
 		if (Bounds.Width <= 2 * NodeEnvelopeGraphGeometry.Padding
-			|| Bounds.Height <= 2 * NodeEnvelopeGraphGeometry.Padding)
+			|| Bounds.Height <= NodeEnvelopeGraphGeometry.Padding + TimeLabelArea)
 			return null;
-		return _fixedLayout is not null
-			? _fixedLayout.WithNodes(_previewNodes)
-			: new NodeEnvelopeGraphGeometry(_previewNodes,
-				Bounds.Width, Bounds.Height, _envelope.Vmin, _envelope.Vmax,
-				_timeDomainTicks);
+		if (_fixedLayout is not null)
+			return _fixedLayout.WithNodes(_previewNodes);
+		(string minText, string maxText) =
+			NodeEnvelopeGraphScale.ValueLabels(_envelope.Vmin, _envelope.Vmax);
+		IBrush foreground = ActualThemeVariant == ThemeVariant.Light
+			? LightLabel : DarkLabel;
+		double labelWidth = Math.Max(
+			Label(minText, foreground).Width,
+			Label(maxText, foreground).Width);
+		double left = Math.Min(
+			Bounds.Width - NodeEnvelopeGraphGeometry.Padding - 1,
+			Math.Max(NodeEnvelopeGraphGeometry.Padding, labelWidth + 12));
+		return new NodeEnvelopeGraphGeometry(_previewNodes,
+			Bounds.Width, Bounds.Height, _envelope.Vmin, _envelope.Vmax,
+			_timeDomainTicks, leftPadding: left,
+			bottomPadding: TimeLabelArea);
 	}
 
 	public override void Render(DrawingContext context)
@@ -524,7 +561,9 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 					ExpandTimeDomainToFinalNode();
 					_fixedLayout = new NodeEnvelopeGraphGeometry(
 						_previewNodes, Bounds.Width, Bounds.Height,
-						_envelope.Vmin, _envelope.Vmax, _timeDomainTicks);
+						_envelope.Vmin, _envelope.Vmax, _timeDomainTicks,
+					leftPadding: _fixedLayout.Left,
+					bottomPadding: Bounds.Height - _fixedLayout.Bottom);
 				}
 				InvalidateVisual();
 				DomainChanged?.Invoke();
