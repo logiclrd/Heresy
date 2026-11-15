@@ -4,7 +4,6 @@ using System.Linq;
 using System.Reflection;
 
 using Avalonia.Controls;
-using Avalonia.Media;
 using Avalonia.Headless.NUnit;
 
 using Heresy.Core.Filters;
@@ -178,7 +177,7 @@ public sealed class FmFilterInspectorTests
 		FilterStageDefinition third = FilterDocumentEditor.AddStage(
 			work, definition, FilterKind.SvfNotch);
 		NotifySharedFilterChanged(editor, id);
-		Assert.That(list.ItemCount, Is.EqualTo(3));
+		Assert.That(list.Items.Count, Is.EqualTo(3));
 		Assert.That(((ListBoxItem)list.SelectedItem!).Tag,
 			Is.EqualTo(second.StageId));
 		FilterDocumentEditor.RemoveStage(work, definition, second.StageId,
