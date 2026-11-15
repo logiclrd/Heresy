@@ -2465,7 +2465,7 @@ public sealed class FmSynthInspectorTransportPcmTests
             Resolver untouchedResolver = new(synth.Id);
             untouchedResolver.Sound = Author(
                 new FilterInstance(definition), untouchedResolver);
-            PlaybackSession untouched = IndependentSession(
+            PlaybackSession oldUnchanged = IndependentSession(
                 config, untouchedResolver);
             StartIndependent(untouched, synth.Id);
             float[] initial = backend.Render(260), expectedInitial = new float[260];
@@ -2560,7 +2560,7 @@ public sealed class FmSynthInspectorTransportPcmTests
             float[] stillOld = backend.Render(240), oldExpected = new float[240];
             older.Render(260, 240, oldExpected);
             float[] unchangedOld = new float[240];
-            untouched.Render(260, 240, unchangedOld);
+            oldUnchanged.Render(260, 240, unchangedOld);
             if (compatible)
                 Assert.That(stillOld.Zip(unchangedOld,
                         (current, old) => Math.Abs(current - old)).Max(),

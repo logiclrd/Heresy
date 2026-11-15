@@ -618,7 +618,8 @@ internal sealed class FmFilterNodeProcessor
 					if (plan.StageIndex == i)
 					{
 						live.LiveFirUpdates[fir++] =
-							new RealtimeFirStageUpdate(i, plan.Plan);
+							new RealtimeFirStageUpdate(i, plan.Plan,
+								AllowDesignChange: true);
 						found = true;
 						break;
 					}

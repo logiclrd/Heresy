@@ -493,7 +493,8 @@ public sealed class StreamingFilterChain
 			if ((uint)update.StageIndex >= (uint)_stages.Length
 				|| _stages[update.StageIndex].Channels[0]
 					is not IRealtimeFirFilterState fir
-				|| !fir.TryPrepareRealtime(update.Plan))
+				|| !fir.TryPrepareRealtime(
+					update.Plan, update.AllowDesignChange))
 				return false;
 			for (int j = 0; j < i; j++)
 				if (firUpdates[j].StageIndex == update.StageIndex)
@@ -596,7 +597,8 @@ public sealed class StreamingFilterChain
 			foreach (IStreamingFilterStageState channel in
 				_stages[firUpdates[i].StageIndex].Channels)
 				((IRealtimeFirFilterState)channel)
-					.CommitRealtime(firUpdates[i].Plan);
+					.CommitRealtime(firUpdates[i].Plan,
+						firUpdates[i].AllowDesignChange);
 		}
 	}
 
