@@ -333,6 +333,48 @@ public sealed class NodeEnvelopeGraphControlTests
 	}
 
 	[AvaloniaTest]
+	public void NodeCoordinateHoverTracksPointerWithoutChangingSong()
+	{
+		DocumentWorkspace workspace = new();
+		NodeEnvelopeDefinition envelope =
+			EnvelopeDocumentEditor.CreateNodeEnvelope(workspace, "Hover coordinates");
+		NodeEnvelopeGraphControl graph = new(workspace, envelope);
+		Control surface = (Control)typeof(NodeEnvelopeGraphControl)
+			.GetField("_surface", BindingFlags.Instance
+				| BindingFlags.NonPublic)!.GetValue(graph)!;
+		Window host = new() { Width = 550, Height = 370, Content = graph };
+		host.Show();
+		try
+		{
+			BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+			NodeEnvelopeGraphGeometry geometry =
+				(NodeEnvelopeGraphGeometry)surface.GetType()
+					.GetMethod("Layout", flags)!.Invoke(surface, [])!;
+			uint before = workspace.Document.AudioRevision;
+			var (x, y) = geometry.Point(1);
+			host.MouseMove(new Point(x, y));
+			Point? hovered = (Point?)surface.GetType()
+				.GetField("_hoverPointer", flags)!.GetValue(surface);
+			Assert.That(hovered, Is.Not.Null);
+			Assert.That(geometry.HitNodes(hovered!.Value.X, hovered.Value.Y),
+				Does.Contain(1));
+			Assert.That(NodeEnvelopeGraphScale.NodeCoordinates(envelope.Nodes[1]),
+				Does.Contain("t=0.01"));
+
+			Point elsewhere = new(geometry.Right - 6, geometry.Top + 6);
+			host.MouseMove(elsewhere);
+			Point? moved = (Point?)surface.GetType()
+				.GetField("_hoverPointer", flags)!.GetValue(surface);
+			Assert.That(moved, Is.Not.Null);
+			Assert.That(geometry.HitNodes(moved!.Value.X, moved.Value.Y),
+				Is.Empty, "the overlay has no matching card once pointer leaves a dot");
+			Assert.That(workspace.Document.AudioRevision, Is.EqualTo(before),
+				"hover annotations must never change the Envelope");
+		}
+		finally { host.Close(); }
+	}
+
+	[AvaloniaTest]
 	public void HeadlessPointerDragSelectsAndAdjustsSustainBounds()
 	{
 		DocumentWorkspace workspace = new();
