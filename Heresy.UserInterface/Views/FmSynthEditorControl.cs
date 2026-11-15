@@ -695,9 +695,6 @@ public sealed class FmSynthEditorControl : UserControl
 		{
 			FmSynthDocumentEditor.RemoveNode(
 				_workspace, _synth, nodeId);
-			// A later node could reuse this editor-local ID. Never carry
-			// the removed node's Batch changes preference onto a new node.
-			_workspace.SetSynthFilterBatchChanges(_synth.Id, nodeId, false);
 			AfterGraphChange(
 				_synth.Graph.OutputNodeId,
 				$"Removed FM node #{nodeId}");
@@ -1652,9 +1649,20 @@ public sealed class FmSynthEditorControl : UserControl
 			},
 			synthBatchMode: true,
 			initialBatchChanges:
-				_workspace.GetSynthFilterBatchChanges(_synth.Id, node.Id),
+				_synth.FilterBatchChangesNodeIds.Contains(node.Id),
 			batchChangesChanged: value =>
-				_workspace.SetSynthFilterBatchChanges(_synth.Id, node.Id, value));
+			{
+				try
+				{
+					if (FmSynthDocumentEditor.SetFilterBatchChanges(
+						_workspace, _synth, node.Id, value))
+						_changed($"Updated Filter node #{node.Id} Batch changes");
+				}
+				catch (Exception error)
+				{
+					_message.Text = error.Message;
+				}
+			});
 		_inspector.Children.Add(instanceEditor);
 		_activeFilterInspectorNodeId = node.Id;
 		_activeFilterInstanceEditor = instanceEditor;
