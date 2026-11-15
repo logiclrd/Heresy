@@ -1345,7 +1345,9 @@ public sealed class PatternEditorControl : UserControl
 		_volumeInput.Reset();
 		_cursor.SetPosition(row, channel, field);
 		UpdateCurrentPatternControls();
-		cell.Focus();
+		// A just-committed partial volume may have rebuilt the old cell.
+		// Focus the current control in the rebuilt grid, not a stale Border.
+		FocusCursorCell();
 		RefreshCursorVisuals();
 		if (field == PatternCellField.Source
 			&& sourceWasActive
