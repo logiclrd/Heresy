@@ -939,6 +939,279 @@ public sealed class FmSynthInspectorTransportPcmTests
         });
     }
 
+
+    [AvaloniaTest]
+    public async Task MultiInspectorControlsPublishWorkerPreparedHeldProductionPcm()
+    {
+        // C2(l): join the real Multi inspector to the frozen production
+        // transport and the SAME running source's PCM, explicitly driving
+        // the producer/worker mailbox around each edit. An independent,
+        // separately authored Multi/Session owns its own onset histories.
+        DocumentWorkspace workspace = new();
+        FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
+            workspace, "C2(l) Multi production");
+        int oscillator = FmSynthDocumentEditor.AddOscillatorNode(
+            workspace, synth, FmOscillatorWaveform.Sine, 83, 70, 80);
+        int id = FmSynthDocumentEditor.AddMultiNode(
+            workspace, synth, 310, 100);
+        FmSynthDocumentEditor.ConnectNodes(workspace, synth, oscillator, id, 0);
+        FmSynthDocumentEditor.SetOutputNode(workspace, synth, id);
+        FmMultiNode authored = new(id, oscillator,
+            detune: 15, voiceCount: 2, randomizePhase: false,
+            gainCompensation: true);
+        FmSynthDocumentEditor.UpdateNode(workspace, synth, authored);
+        FmSynthDefinition parent = MakeDependentParent(
+            workspace, synth, "C2(l) dependent parent");
+
+        RenderConfiguration config = Mono();
+        TrackingFactory factory = new(config, synth.Id);
+        ManualBackend backend = new();
+        using SongPlaybackTransport transport = new(backend, factory);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Physical(0), [new StartNoteCommand(synth.Id)]);
+        Resolver expectedResolver = new(synth.Id),
+            originalResolver = new(synth.Id);
+        FmSynthSound Build(FmMultiNode layout, Resolver resolver)
+            => new(new FmSynthGraph(synth.Graph.Nodes.Select(node =>
+                node.Id == id ? (FmSynthNode)layout : node), id),
+                resolver, soundResolver: resolver,
+                reserveMultiHeadroom: true, enableLiveMultiExpansion: true);
+        FmSynthSound expectedSound = Build(authored, expectedResolver);
+        expectedResolver.Sound = expectedSound;
+        originalResolver.Sound = Build(authored, originalResolver);
+        PlaybackSession oracle = IndependentSession(config, expectedResolver);
+        PlaybackSession original = IndependentSession(config, originalResolver);
+        StartIndependent(oracle, synth.Id);
+        StartIndependent(original, synth.Id);
+        float[] initial = backend.Render(12), initialOracle = new float[12];
+        oracle.Render(0, 12, initialOracle);
+        original.Render(0, 12, new float[12]);
+        Assert.That(initial, Is.EqualTo(initialOracle).Within(3e-5f),
+            "production and independent Multi begin at the same sound clock");
+
+        PlaybackSnapshotInfo baseSnapshot = transport.CurrentPlaybackSnapshot;
+        uint audio = workspace.Document.AudioRevision;
+        uint document = workspace.Document.DocumentRevision;
+        int changes = 0, callbacks = 0, operations = 0, frame = 12;
+        List<Task> pending = [];
+        FmSynthEditorControl editor = new(workspace, synth,
+            () => { }, _ => changes++,
+            publishSynthEditAsync: () =>
+            {
+                callbacks++;
+                Task task = transport.PublishSynthEditAsync(
+                    workspace.Document, synth.Id);
+                pending.Add(task);
+                return task;
+            });
+        StackPanel inspector = Inspector(editor);
+        ComboBox presets = Field<ComboBox>(inspector, "Presets");
+        ComboBox distribution = Field<ComboBox>(inspector, "Distribution");
+        TextBox detune = Field<TextBox>(inspector, "Detune (total cents)");
+        TextBox count = Field<TextBox>(inspector, "Voice Count");
+        TextBox components = Field<TextBox>(inspector, "Components");
+        TextBox cycle = Field<TextBox>(inspector,
+            "Cycle Length (samples at C4 / 48 kHz)");
+        CheckBox randomize = inspector.Children.OfType<CheckBox>()
+            .Single(x => Equals(x.Content, "Randomize Phase"));
+        CheckBox gain = inspector.Children.OfType<CheckBox>()
+            .Single(x => Equals(x.Content, "Gain Compensation"));
+        CheckBox overrideCycle = inspector.Children.OfType<CheckBox>()
+            .Single(x => Equals(x.Content, "Override cycle"));
+        IFirPreparationAudioSource preparing =
+            (IFirPreparationAudioSource)backend.Source!;
+        using FirPreparationScheduler scheduler = new();
+
+        async Task Change(string label, Action edit, FmMultiNode next,
+            bool requiresWorker, bool mustDiffer = false)
+        {
+            uint previousRevision = workspace.Document.AudioRevision;
+            edit();
+            await Task.WhenAll(pending.ToArray())
+                .WaitAsync(TimeSpan.FromSeconds(8));
+            operations++;
+            FmMultiNode committed = synth.Graph.Nodes.OfType<FmMultiNode>()
+                .Single();
+            Assert.Multiple(() =>
+            {
+                Assert.That(SameMulti(committed, next), Is.True,
+                    label + ": actual inspector fields");
+                Assert.That(workspace.Document.AudioRevision,
+                    Is.EqualTo(previousRevision + 1), label + ": semantic audio revision");
+                Assert.That(workspace.Document.AudioRevision,
+                    Is.EqualTo(audio + operations));
+                Assert.That(workspace.Document.DocumentRevision,
+                    Is.EqualTo(document + operations));
+                Assert.That(changes, Is.EqualTo(operations));
+                Assert.That(callbacks, Is.EqualTo(operations));
+                Assert.That(factory.Preparations.Count, Is.EqualTo(operations * 2));
+                Assert.That(factory.Preparations.Skip((operations - 1) * 2)
+                    .Select(x => x.Id), Is.EqualTo(new[] { synth.Id, parent.Id }),
+                    label + ": child-before-parent frozen order");
+                Assert.That(SameMulti(factory.Preparations[(operations - 1) * 2].Multi,
+                    next), Is.True, label + ": worker snapshot");
+                Assert.That(factory.Preparations.Skip((operations - 1) * 2)
+                    .All(x => x.AudioRevision == audio + operations), Is.True);
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+            });
+
+            FmSynthSound revised = Build(next, expectedResolver);
+            oracle.AdoptLiveSynthParameters(synth.Id, expectedSound, revised);
+            expectedSound = revised;
+            expectedResolver.Sound = revised;
+            authored = next;
+
+            // Render one boundary to apply the transport revision. For
+            // expansion/rephase, old children must remain audible until the
+            // independently scheduled worker produces fresh onsets.
+            preparing.AdoptPreparedFirControls();
+            oracle.AdoptPreparedFirControls();
+            float[] actualFirst = backend.Render(1);
+            float[] expectedFirst = new float[1];
+            oracle.Render(frame, 1, expectedFirst);
+            Assert.That(actualFirst[0], Is.EqualTo(expectedFirst[0])
+                .Within(5e-5f), label + ": initial PCM boundary");
+            long before = scheduler.CompletedMultiExpansionCount;
+            preparing.QueuePendingFirControls(scheduler);
+            oracle.QueuePendingFirControls(scheduler);
+            if (requiresWorker)
+                Assert.That(SpinWait.SpinUntil(() =>
+                    scheduler.CompletedMultiExpansionCount >= before + 2,
+                    TimeSpan.FromSeconds(8)), Is.True,
+                    label + ": separately prepared production and oracle Multi onsets");
+            Assert.That(scheduler.Fault, Is.Null);
+            preparing.AdoptPreparedFirControls();
+            oracle.AdoptPreparedFirControls();
+
+            float[] observed = backend.Render(140);
+            float[] expectedPcm = new float[140], unchanged = new float[140];
+            oracle.Render(frame + 1, 140, expectedPcm);
+            original.Render(frame, 141, new float[141]);
+            // For nonvacuous comparisons, advance a second original PCM
+            // history over the identical 141-frame logical interval.
+            for (int j = 0; j < observed.Length; j++)
+            {
+                Assert.That(float.IsFinite(observed[j]), Is.True,
+                    label + ": output must remain finite");
+                Assert.That(observed[j], Is.EqualTo(expectedPcm[j])
+                    .Within(7e-5f), label + ": held output frame " + (frame + 1 + j));
+            }
+            Assert.Multiple(() =>
+            {
+                Assert.That(factory.OlderAudioCount, Is.Zero,
+                    label + ": compatible pending/onset revision is current");
+                Assert.That(oracle.CountOlderAudioVoices(), Is.Zero);
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+                Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                    Is.EqualTo(baseSnapshot.AudioRevision));
+                Assert.That(scheduler.Fault, Is.Null);
+            });
+            frame += 141;
+        }
+
+        // Real preset action enables randomized phase on the prior
+        // Spread(2) sound. Cycle edits then require new worker onsets.
+        await Change("Unison preset",
+            () => presets.SelectedItem = "Unison",
+            authored.WithPreset("Unison"), true);
+        Assert.That(presets.SelectedIndex, Is.Zero,
+            "preset is an action, not a sticky ComboBox value");
+        double defaultCycle = FmMultiNode.ReferenceSampleRate
+            / FmMultiNode.NeutralFrequencyHz;
+        await Change("Cycle override enabled",
+            () => overrideCycle.IsChecked = true,
+            authored.With(authored.InputNodeId, authored.Distribution,
+                authored.Detune, authored.VoiceCount,
+                authored.HarmonicComponents, authored.ChordComponents,
+                authored.RandomizePhase, authored.GainCompensation,
+                defaultCycle), true);
+        await Change("Cycle override length",
+            () => Enter(cycle, "1120"),
+            authored.With(authored.InputNodeId, authored.Distribution,
+                authored.Detune, authored.VoiceCount,
+                authored.HarmonicComponents, authored.ChordComponents,
+                authored.RandomizePhase, authored.GainCompensation, 1120), true);
+        await Change("Cycle override disabled",
+            () => overrideCycle.IsChecked = false,
+            authored.With(authored.InputNodeId, authored.Distribution,
+                authored.Detune, authored.VoiceCount,
+                authored.HarmonicComponents, authored.ChordComponents,
+                authored.RandomizePhase, authored.GainCompensation, null), true);
+
+        await Change("Spread detune", () => Enter(detune, "30"),
+            authored.With(authored.InputNodeId, authored.Distribution,
+                30, authored.VoiceCount, authored.HarmonicComponents,
+                authored.ChordComponents, authored.RandomizePhase,
+                authored.GainCompensation, authored.CycleLength), false);
+        await Change("Spread voice growth", () => Enter(count, "3"),
+            authored.With(authored.InputNodeId, authored.Distribution,
+                authored.Detune, 3, authored.HarmonicComponents,
+                authored.ChordComponents, authored.RandomizePhase,
+                authored.GainCompensation, authored.CycleLength), true);
+        await Change("Gain compensation", () => gain.IsChecked = false,
+            authored.With(authored.InputNodeId, authored.Distribution,
+                authored.Detune, authored.VoiceCount, authored.HarmonicComponents,
+                authored.ChordComponents, authored.RandomizePhase,
+                false, authored.CycleLength), false);
+        await Change("Randomize phase", () => randomize.IsChecked = false,
+            authored.With(authored.InputNodeId, authored.Distribution,
+                authored.Detune, authored.VoiceCount, authored.HarmonicComponents,
+                authored.ChordComponents, false,
+                authored.GainCompensation, authored.CycleLength), true);
+
+        await Change("Harmonic distribution",
+            () => distribution.SelectedItem = FmMultiDistribution.Harmonic,
+            authored.WithDistribution(FmMultiDistribution.Harmonic), false);
+        await Change("Harmonic components",
+            () => Enter(components, "1 3/2 2"),
+            authored.With(authored.InputNodeId, authored.Distribution,
+                authored.Detune, authored.VoiceCount, "1 3/2 2",
+                authored.ChordComponents, authored.RandomizePhase,
+                authored.GainCompensation, authored.CycleLength), false);
+        await Change("Chord distribution",
+            () => distribution.SelectedItem = FmMultiDistribution.Chord,
+            authored.WithDistribution(FmMultiDistribution.Chord), false);
+        await Change("Chord components",
+            () => Enter(components, "0 3 7"),
+            authored.With(authored.InputNodeId, authored.Distribution,
+                authored.Detune, authored.VoiceCount,
+                authored.HarmonicComponents, "0 3 7", authored.RandomizePhase,
+                authored.GainCompensation, authored.CycleLength), false);
+        await Change("Chorus preset",
+            () => presets.SelectedItem = "Chorus",
+            authored.WithPreset("Chorus"), true);
+        Assert.That(presets.SelectedIndex, Is.Zero);
+
+        // Submitting unchanged Multi drafts or re-requesting the same
+        // document revision must not schedule a phantom onset/revision.
+        Enter(detune, "25");
+        Enter(count, "4");
+        await transport.PublishSynthEditAsync(workspace.Document, synth.Id);
+        Assert.Multiple(() =>
+        {
+            Assert.That(operations, Is.EqualTo(13));
+            Assert.That(callbacks, Is.EqualTo(13));
+            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 13));
+            Assert.That(factory.Preparations.Count, Is.EqualTo(26));
+            Assert.That(factory.OlderAudioCount, Is.Zero);
+            Assert.That(backend.OpenCount, Is.EqualTo(1));
+            Assert.That(scheduler.Fault, Is.Null);
+        });
+    }
+
+    private static bool SameMulti(FmMultiNode? actual, FmMultiNode expected)
+        => actual is not null
+            && actual.Id == expected.Id
+            && actual.InputNodeId == expected.InputNodeId
+            && actual.Distribution == expected.Distribution
+            && actual.Detune == expected.Detune
+            && actual.VoiceCount == expected.VoiceCount
+            && actual.HarmonicComponents == expected.HarmonicComponents
+            && actual.ChordComponents == expected.ChordComponents
+            && actual.RandomizePhase == expected.RandomizePhase
+            && actual.GainCompensation == expected.GainCompensation
+            && actual.CycleLength == expected.CycleLength;
+
     private static bool SameOscillator(
         FmOscillatorNode? actual, FmOscillatorNode expected)
         => actual is not null
@@ -1069,7 +1342,7 @@ public sealed class FmSynthInspectorTransportPcmTests
         ObjectId Id, uint AudioRevision, FmOperatorKind? Operation,
         double? LowConstant, int WorkerThread, double? FilterQ = null,
         ObjectId? SampleSourceId = null, FmOscillatorNode? Oscillator = null,
-        FmSoundSourceNode? Source = null);
+        FmSoundSourceNode? Source = null, FmMultiNode? Multi = null);
 
     private sealed class TrackingFactory(RenderConfiguration configuration,
         ObjectId editedSynthId)
@@ -1127,7 +1400,10 @@ public sealed class FmSynthInspectorTransportPcmTests
             Preparations.Add(new Preparation(sourceId,
                 snapshot.AudioRevision, operation?.Operation,
                 low?.Value, Environment.CurrentManagedThreadId, q,
-                sampleSourceId, oscillator, sourceNode));
+                sampleSourceId, oscillator, sourceNode,
+                sourceId == editedSynthId
+                    ? frozen.Graph.Nodes.OfType<FmMultiNode>().SingleOrDefault()
+                    : null));
             return _actual.PrepareLiveSynthSource(snapshot, sourceId);
         }
     }
