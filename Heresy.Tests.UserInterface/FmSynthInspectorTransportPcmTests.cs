@@ -1221,6 +1221,285 @@ public sealed class FmSynthInspectorTransportPcmTests
             && actual.GainCompensation == expected.GainCompensation
             && actual.CycleLength == expected.CycleLength;
 
+
+    [AvaloniaTest]
+    public async Task FilterDefinitionSelectorKeepsCompatibleHistoryAndRefusesOtherDefinitions()
+    {
+        // C2(m): a new Filter *identity* is not a compatible live plan,
+        // even when its OnePole stage IDs, kinds and defaults are identical.
+        // Within the SAME identity, the inspector's replacement instance
+        // may reset per-use numeric overrides and retune continuing IIR.
+        DocumentWorkspace workspace = new();
+        FilterDefinition Filter(string name)
+        {
+            FilterDefinition definition =
+                FilterDocumentEditor.CreateFilter(workspace, name);
+            FilterStageDefinition old = definition.GetStage(1);
+            FilterStageDefinition revised = old.WithDefaults([
+                new KeyValuePair<string, FilterParameterValue>(
+                    "CutoffHz", FilterParameterValue.FromNumber(165)),
+            ]);
+            FilterDocumentEditor.ApplyStage(workspace, definition, 1, old,
+                revised.Name, revised.Kind, revised.DefaultParameters);
+            return definition;
+        }
+        FilterDefinition a = Filter("C2(m) Filter A");
+        FilterDefinition b = Filter("C2(m) Filter B");
+        Assert.That(a.GetStage(1).DefaultParameters,
+            Is.EquivalentTo(b.GetStage(1).DefaultParameters),
+            "different Filter IDs are deliberately given identical stage plans");
+
+        FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
+            workspace, "C2(m) Filter selector transport");
+        int oscillator = FmSynthDocumentEditor.AddOscillatorNode(
+            workspace, synth, FmOscillatorWaveform.Sine, 91, 70, 90);
+        int filterId = FmSynthDocumentEditor.AddFilterNode(
+            workspace, synth, 310, 90);
+        FilterInstance initialUse = new(a);
+        initialUse.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(45));
+        FmSynthDocumentEditor.SetFilterConfiguration(
+            workspace, synth, filterId, initialUse);
+        FmSynthDocumentEditor.ConnectNodes(
+            workspace, synth, oscillator, filterId, 0);
+        FmSynthDocumentEditor.SetOutputNode(workspace, synth, filterId);
+        FmSynthDefinition parent = MakeDependentParent(
+            workspace, synth, "C2(m) parent");
+
+        RenderConfiguration config = Mono();
+        TrackingFactory factory = new(config, synth.Id);
+        ManualBackend backend = new();
+        using SongPlaybackTransport transport = new(backend, factory);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Physical(0), [new StartNoteCommand(synth.Id)]);
+
+        // Separate immutable graph authoring and independent IIR state for
+        // the PCM oracle, never the inspector callback or production source.
+        FmSynthGraph baseline = synth.Graph;
+        Resolver oracleResolver = new(synth.Id), originalResolver = new(synth.Id);
+        FmSynthSound Author(FilterInstance? configUse, Resolver resolver)
+            => new(new FmSynthGraph(baseline.Nodes.Select(node =>
+                node.Id == filterId
+                    ? (FmSynthNode)new FmFilterNode(filterId, oscillator, configUse)
+                    : node), filterId),
+                resolver, soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound oracleSound = Author(initialUse, oracleResolver);
+        oracleResolver.Sound = oracleSound;
+        originalResolver.Sound = Author(initialUse, originalResolver);
+        PlaybackSession oracle = IndependentSession(config, oracleResolver);
+        PlaybackSession unchanged = IndependentSession(config, originalResolver);
+        StartIndependent(oracle, synth.Id);
+        StartIndependent(unchanged, synth.Id);
+
+        int frame = 0;
+        void Compare(int count, string stage, bool audibleDifference = false)
+        {
+            float[] actual = backend.Render(count);
+            float[] reference = new float[count], original = new float[count];
+            oracle.Render(frame, count, reference);
+            if (audibleDifference)
+                unchanged.Render(frame, count, original);
+            for (int j = 0; j < count; j++)
+                Assert.That(actual[j], Is.EqualTo(reference[j])
+                    .Within(6e-5f), stage + " held PCM at " + (frame + j));
+            if (audibleDifference)
+                Assert.That(actual.Zip(original,
+                    (x, y) => Math.Abs(x - y)).Max(),
+                    Is.GreaterThan(0.025),
+                    stage + ": same-definition numeric change must be audible");
+            Assert.That(backend.OpenCount, Is.EqualTo(1),
+                stage + ": no output session restart");
+            frame += count;
+        }
+        Compare(35, "starting overridden A");
+
+        PlaybackSnapshotInfo originalSnapshot =
+            transport.CurrentPlaybackSnapshot;
+        uint audio = workspace.Document.AudioRevision;
+        uint document = workspace.Document.DocumentRevision;
+        int callbacks = 0, changed = 0;
+        List<Task> pending = [];
+        FmSynthEditorControl editor = new(workspace, synth, () => { },
+            _ => changed++,
+            publishSynthEditAsync: () =>
+            {
+                callbacks++;
+                Task task = transport.PublishSynthEditAsync(
+                    workspace.Document, synth.Id);
+                pending.Add(task);
+                return task;
+            });
+        ComboBox Selector()
+        {
+            StackPanel row = Field<StackPanel>(
+                Inspector(editor), "Shared Filter definition");
+            return (ComboBox)row.Children[0];
+        }
+        object Choice(ComboBox selector, string name)
+            => selector.Items.Cast<object>().Single(item =>
+                item.ToString()!.Contains(name, StringComparison.Ordinal));
+
+        // A temporarily cleared ComboBox selection is NOT a model edit.
+        // Rechoosing the original Filter creates a new default instance
+        // (same DefinitionId/stage topology), thereby removing the initial
+        // per-use cutoff override 45 and restoring the shared default 165.
+        ComboBox selector = Selector();
+        object aChoice = Choice(selector, "C2(m) Filter A");
+        Assert.That(selector.SelectedItem, Is.EqualTo(aChoice));
+        selector.SelectedItem = null;
+        Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio));
+        selector.SelectedItem = aChoice;
+        await Task.WhenAll(pending.ToArray()).WaitAsync(TimeSpan.FromSeconds(8));
+        Assert.Multiple(() =>
+        {
+            Assert.That(synth.Graph.Nodes.OfType<FmFilterNode>().Single()
+                .Configuration!.GetStageParameters(1).GetParameter("CutoffHz")
+                .NumericValue, Is.EqualTo(165));
+            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 1));
+            Assert.That(workspace.Document.DocumentRevision,
+                Is.EqualTo(document + 1));
+            Assert.That(callbacks, Is.EqualTo(1));
+            Assert.That(factory.Preparations.Select(x => x.Id),
+                Is.EqualTo(new[] { synth.Id, parent.Id }));
+            Assert.That(factory.Preparations[0].FilterDefinitionId,
+                Is.EqualTo(a.Id));
+            Assert.That(factory.Preparations[0].FilterCutoffHz,
+                Is.EqualTo(165));
+            Assert.That(factory.Preparations.All(x =>
+                x.AudioRevision == audio + 1), Is.True);
+        });
+        FmSynthSound resetToDefault = Author(new FilterInstance(a), oracleResolver);
+        oracle.AdoptLiveSynthParameters(synth.Id, oracleSound, resetToDefault);
+        oracleResolver.Sound = resetToDefault;
+        oracleSound = resetToDefault;
+        Compare(900, "same Filter identity numeric retune", audibleDifference: true);
+        Assert.Multiple(() =>
+        {
+            Assert.That(factory.OlderAudioCount, Is.Zero);
+            Assert.That(oracle.CountOlderAudioVoices(), Is.Zero);
+            Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                Is.EqualTo(originalSnapshot.AudioRevision));
+        });
+
+        // The other definition has exactly the same stage identity/layout
+        // and default coefficients, but a DIFFERENT persisted Filter ID.
+        // It must not steal IIR history from the earlier generation.
+        selector = Selector();
+        selector.SelectedItem = Choice(selector, "C2(m) Filter B");
+        await Task.WhenAll(pending.ToArray()).WaitAsync(TimeSpan.FromSeconds(8));
+        Assert.Multiple(() =>
+        {
+            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 2));
+            Assert.That(workspace.Document.DocumentRevision,
+                Is.EqualTo(document + 2));
+            Assert.That(callbacks, Is.EqualTo(2));
+            Assert.That(factory.Preparations.Select(x => x.Id),
+                Is.EqualTo(new[] { synth.Id, parent.Id, synth.Id, parent.Id }));
+            Assert.That(factory.Preparations[2].FilterDefinitionId,
+                Is.EqualTo(b.Id));
+            Assert.That(factory.Preparations[2].FilterCutoffHz,
+                Is.EqualTo(165));
+        });
+        FmSynthSound newB = Author(new FilterInstance(b), oracleResolver);
+        oracle.AdoptLiveSynthParameters(synth.Id, oracleSound, newB);
+        oracleResolver.Sound = newB;
+        oracleSound = newB;
+        Compare(96, "equivalent stage plan but different Filter ID");
+        Assert.Multiple(() =>
+        {
+            Assert.That(factory.OlderAudioCount, Is.EqualTo(1),
+                "definition identity mismatch is deliberate older generation");
+            Assert.That(oracle.CountOlderAudioVoices(), Is.EqualTo(1));
+        });
+
+        // New physical note gets the selected B; old A continues its own
+        // history while both mix through the original session.
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Physical(1), [new StartNoteCommand(synth.Id)]);
+        oracle.ApplyLiveEvent(ChannelTarget.Physical(1),
+            [new StartNoteCommand(synth.Id)]);
+        Assert.That(oracle.GetChannelState(1).CurrentVoice!.Sound,
+            Is.SameAs(newB));
+        Compare(96, "new B note plus retained A");
+        Assert.That(factory.OlderAudioCount, Is.EqualTo(1));
+
+        // Removing the selected Filter is also incompatible for existing
+        // IIR processing. New notes bypass, but old A and B remain audible
+        // and independently count as older until each actually retires.
+        selector = Selector();
+        object none = selector.Items.Cast<object>().ElementAt(1);
+        Assert.That(((ComboBoxItem)none).Content, Is.EqualTo("(None)"));
+        selector.SelectedItem = none;
+        await Task.WhenAll(pending.ToArray()).WaitAsync(TimeSpan.FromSeconds(8));
+        Assert.Multiple(() =>
+        {
+            Assert.That(synth.Graph.Nodes.OfType<FmFilterNode>().Single()
+                .Configuration, Is.Null);
+            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 3));
+            Assert.That(workspace.Document.DocumentRevision,
+                Is.EqualTo(document + 3));
+            Assert.That(callbacks, Is.EqualTo(3));
+            Assert.That(factory.Preparations.Select(x => x.Id),
+                Is.EqualTo(new[] { synth.Id, parent.Id, synth.Id, parent.Id,
+                    synth.Id, parent.Id }));
+            Assert.That(factory.Preparations[4].FilterDefinitionId, Is.Null);
+        });
+        FmSynthSound withoutFilter = Author(null, oracleResolver);
+        oracle.AdoptLiveSynthParameters(synth.Id, newB, withoutFilter);
+        oracleResolver.Sound = withoutFilter;
+        Compare(96, "removed Filter preserves older A and B");
+        Assert.Multiple(() =>
+        {
+            Assert.That(factory.OlderAudioCount, Is.EqualTo(2));
+            Assert.That(oracle.CountOlderAudioVoices(), Is.EqualTo(2));
+        });
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Physical(2), [new StartNoteCommand(synth.Id)]);
+        oracle.ApplyLiveEvent(ChannelTarget.Physical(2),
+            [new StartNoteCommand(synth.Id)]);
+        Assert.That(oracle.GetChannelState(2).CurrentVoice!.Sound,
+            Is.SameAs(withoutFilter));
+        Compare(96, "new bypass note plus older A and B");
+
+        // New... cannot open a modal name prompt in an unattached editor.
+        // The selector must revert without creating a Filter or publishing
+        // a fourth semantic revision.
+        selector = Selector();
+        selector.SelectedIndex = 0;
+        await Task.Yield();
+        Assert.Multiple(() =>
+        {
+            Assert.That(synth.Graph.Nodes.OfType<FmFilterNode>().Single()
+                .Configuration, Is.Null);
+            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audio + 3));
+            Assert.That(callbacks, Is.EqualTo(3));
+            Assert.That(factory.Preparations.Count, Is.EqualTo(6));
+        });
+
+        // Retirement is the only event allowed to clear the sticky older
+        // currency. The newer bypass note remains audible after both cuts.
+        foreach (int channel in new[] { 0, 1 })
+        {
+            await transport.SendLiveEventAsync(workspace.Document,
+                ChannelTarget.Physical(channel), [new NoteCutCommand()]);
+            oracle.ApplyLiveEvent(ChannelTarget.Physical(channel),
+                [new NoteCutCommand()]);
+        }
+        Compare(40, "both original Filter generations retired");
+        Assert.Multiple(() =>
+        {
+            Assert.That(factory.OlderAudioCount, Is.Zero);
+            Assert.That(oracle.CountOlderAudioVoices(), Is.Zero);
+            Assert.That(callbacks, Is.EqualTo(3));
+            Assert.That(changed, Is.EqualTo(3));
+            Assert.That(backend.OpenCount, Is.EqualTo(1));
+            Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                Is.EqualTo(originalSnapshot.AudioRevision));
+        });
+        await transport.PublishSynthEditAsync(workspace.Document, synth.Id);
+        Assert.That(factory.Preparations.Count, Is.EqualTo(6));
+    }
+
     private static bool SameOscillator(
         FmOscillatorNode? actual, FmOscillatorNode expected)
         => actual is not null
@@ -1351,7 +1630,8 @@ public sealed class FmSynthInspectorTransportPcmTests
         ObjectId Id, uint AudioRevision, FmOperatorKind? Operation,
         double? LowConstant, int WorkerThread, double? FilterQ = null,
         ObjectId? SampleSourceId = null, FmOscillatorNode? Oscillator = null,
-        FmSoundSourceNode? Source = null, FmMultiNode? Multi = null);
+        FmSoundSourceNode? Source = null, FmMultiNode? Multi = null,
+        ObjectId? FilterDefinitionId = null, double? FilterCutoffHz = null);
 
     private sealed class TrackingFactory(RenderConfiguration configuration,
         ObjectId editedSynthId)
@@ -1412,6 +1692,10 @@ public sealed class FmSynthInspectorTransportPcmTests
                 sampleSourceId, oscillator, sourceNode,
                 sourceId == editedSynthId
                     ? frozen.Graph.Nodes.OfType<FmMultiNode>().SingleOrDefault()
+                    : null,
+                sourceId == editedSynthId ? filter?.Configuration?.DefinitionId : null,
+                sourceId == editedSynthId && filter?.Configuration is FilterInstance use
+                    ? use.GetStageParameters(1).GetParameter("CutoffHz").NumericValue
                     : null));
             return _actual.PrepareLiveSynthSource(snapshot, sourceId);
         }
