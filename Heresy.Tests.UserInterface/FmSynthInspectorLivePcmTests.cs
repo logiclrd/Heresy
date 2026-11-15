@@ -447,6 +447,184 @@ public sealed class FmSynthInspectorLivePcmTests
         });
     }
 
+    [AvaloniaTest]
+    public void ConstantAndOperatorInspectorsAdoptHeldPcmButLayoutDoesNotPublishAndRewireRetainsOldVoice()
+    {
+        DocumentWorkspace workspace = new();
+        FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
+            workspace, "C2(e) value/mode versus layout/wiring");
+        int a = FmSynthDocumentEditor.AddConstantNode(
+            workspace, synth, 0.12, 80, 80);
+        int b = FmSynthDocumentEditor.AddConstantNode(
+            workspace, synth, 0.2, 80, 240);
+        int operationId = FmSynthDocumentEditor.AddOperatorNode(
+            workspace, synth, FmOperatorKind.Add, [a, b], 310, 130);
+        FmSynthDocumentEditor.SetOutputNode(workspace, synth, operationId);
+        SynthResolver resolver = new(synth.Id);
+        FmSynthSound Compile() => new(synth.Graph, resolver,
+            soundResolver: resolver, enableLiveMultiExpansion: true);
+        FmSynthSound current = Compile();
+        resolver.Sound = current;
+        PlaybackSession session = new(
+            new RenderContext(new RenderConfiguration(Rate, [
+                new OutputChannelConfiguration(Vector3.Zero,
+                    positionalImportance: 0),
+            ])), new NoteScheduleBuilder().Freeze(), resolver);
+        session.ApplyLiveEvent(ChannelTarget.Physical(0),
+            [new StartNoteCommand(synth.Id)]);
+        PlaybackVoice held = session.GetChannelState(0).CurrentVoice!;
+        float[] first = new float[10];
+        session.Render(0, 10, first);
+        Assert.That(first, Is.All.EqualTo(0.32f).Within(2e-6f));
+
+        int changed = 0, published = 0;
+        FmSynthEditorControl editor = new(workspace, synth,
+            () => { }, _ => changed++,
+            publishSynthEditAsync: () =>
+            {
+                FmSynthSound next = Compile();
+                session.AdoptLiveSynthParameters(synth.Id, current, next);
+                resolver.Sound = next;
+                current = next;
+                published++;
+                return Task.CompletedTask;
+            });
+        StackPanel inspector = (StackPanel)typeof(FmSynthEditorControl)
+            .GetField("_inspector", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(editor)!;
+        void Select(int id) => typeof(FmSynthEditorControl)
+            .GetMethod("SelectNode", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(editor, [id]);
+        Control Field(string name)
+        {
+            int index = inspector.Children.Select((c, i) => (c, i))
+                .Single(p => p.c is TextBlock t && t.Text == name).i;
+            return inspector.Children[index + 1];
+        }
+        void Enter(TextBox box, string value)
+        {
+            box.Text = value;
+            box.RaiseEvent(new KeyEventArgs
+            {
+                RoutedEvent = InputElement.KeyDownEvent,
+                Key = Key.Enter,
+            });
+        }
+        void Ramp(int firstFrame, float from, float to)
+        {
+            float[] pcm = new float[101];
+            session.Render(firstFrame, pcm.Length, pcm);
+            for (int i = 0; i < pcm.Length; i++)
+            {
+                double u = i / 100.0;
+                double weight = u * u * (3 - 2 * u);
+                float expected = (float)(from * (1 - weight) + to * weight);
+                Assert.That(pcm[i], Is.EqualTo(expected).Within(2e-6f),
+                    $"authoring inspector held-PCM ramp at frame {firstFrame + i}");
+            }
+        }
+
+        Select(a);
+        uint audioStart = workspace.Document.AudioRevision;
+        uint documentStart = workspace.Document.DocumentRevision;
+        TextBox value = (TextBox)Field("Value");
+        Enter(value, "0.4");
+        Assert.Multiple(() =>
+        {
+            Assert.That(synth.Graph.Nodes.OfType<FmConstantNode>()
+                .Single(n => n.Id == a).Value, Is.EqualTo(0.4));
+            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(audioStart + 1));
+            Assert.That(published, Is.EqualTo(1));
+            Assert.That(held.Sound, Is.SameAs(current));
+            Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+        });
+        Ramp(10, 0.32f, 0.6f);
+        Enter(value, "0.4");
+        Assert.That(published, Is.EqualTo(1), "identical Constant draft is a no-op");
+
+        Select(operationId);
+        ComboBox op = (ComboBox)Field("Operation");
+        uint preOperation = workspace.Document.AudioRevision;
+        op.SelectedItem = FmOperatorKind.Multiply;
+        Assert.Multiple(() =>
+        {
+            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(preOperation + 1));
+            Assert.That(published, Is.EqualTo(2));
+            Assert.That(held.Sound, Is.SameAs(current));
+        });
+        Ramp(111, 0.6f, 0.08f);
+        op.SelectedItem = FmOperatorKind.Multiply;
+        Assert.That(published, Is.EqualTo(2));
+
+        // Existing UI graph layout actions mark only the document revision.
+        // Exercise their editor changed-notification gate, not just Core.
+        uint beforeLayoutAudio = workspace.Document.AudioRevision;
+        uint beforeLayoutDoc = workspace.Document.DocumentRevision;
+        FmSynthDocumentEditor.MoveNode(workspace, synth, a, 125, 180);
+        FmSynthDocumentEditor.SetRoutingHint(workspace, synth, a,
+            operationId, 0, [new FmSynthRoutePoint(220, 190)]);
+        typeof(FmSynthEditorControl)
+            .GetMethod("AfterGraphChange",
+                BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(editor, [operationId, "Moved graph waypoint"]);
+        Assert.Multiple(() =>
+        {
+            Assert.That(workspace.Document.AudioRevision,
+                Is.EqualTo(beforeLayoutAudio),
+                "node position and wire waypoints are document-only");
+            Assert.That(workspace.Document.DocumentRevision,
+                Is.EqualTo(beforeLayoutDoc + 2));
+            Assert.That(published, Is.EqualTo(2),
+                "even an editor changed notification must not republish layout");
+            Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+        });
+
+        // Changing the Operator input list is a structural graph change.
+        // An already sounding voice must retain its old generation and
+        // report currency instead of mutating its captured graph state.
+        TextBox inputs = (TextBox)Field("Input node IDs");
+        FmSynthSound stillSounding = held.Sound as FmSynthSound
+            ?? throw new InvalidOperationException("Expected held Synth");
+        Enter(inputs, a.ToString());
+        Assert.Multiple(() =>
+        {
+            Assert.That(synth.Graph.Nodes.OfType<FmOperatorNode>()
+                .Single(n => n.Id == operationId).InputNodeIds,
+                Is.EqualTo(new[] { a }));
+            Assert.That(workspace.Document.AudioRevision,
+                Is.EqualTo(beforeLayoutAudio + 1));
+            Assert.That(published, Is.EqualTo(3));
+            Assert.That(held.Sound, Is.SameAs(stillSounding),
+                "structural rewiring must not splice into a running graph");
+            Assert.That(session.CountOlderAudioVoices(), Is.EqualTo(1),
+                "deliberate structural incompatibility must mark older audio");
+        });
+        float[] oldPcm = new float[8];
+        session.Render(212, 8, oldPcm);
+        Assert.That(oldPcm, Is.All.EqualTo(0.08f).Within(2e-5f),
+            "old input multiply stays active until old voice retires");
+
+        PlaybackSession fresh = new(
+            new RenderContext(new RenderConfiguration(Rate, [
+                new OutputChannelConfiguration(Vector3.Zero,
+                    positionalImportance: 0),
+            ])), new NoteScheduleBuilder().Freeze(), resolver);
+        fresh.ApplyLiveEvent(ChannelTarget.Physical(0),
+            [new StartNoteCommand(synth.Id)]);
+        float[] newlyAuthored = new float[8];
+        fresh.Render(0, 8, newlyAuthored);
+        Assert.That(newlyAuthored, Is.All.EqualTo(0.4f).Within(2e-5f),
+            "a fresh note must see the new one-input Multiply definition");
+        Assert.Multiple(() =>
+        {
+            Assert.That(workspace.Document.DocumentRevision,
+                Is.EqualTo(documentStart + 5),
+                "two scalar edits, two layout edits, one structural edit");
+            Assert.That(changed, Is.GreaterThanOrEqualTo(4));
+            Assert.That(published, Is.EqualTo(3));
+        });
+    }
+
     private sealed class SynthResolver(ObjectId synthId)
         : ISoundResolver, IEnvelopeCurveResolver
     {
