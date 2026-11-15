@@ -2,6 +2,8 @@
 
 **Audit date:** 2026-11-14. **Audited branch:** `feat/synth-live-parameter-foundation` at `ec2e1b324c5d1ee757fcf5e4684b78986ee466e8`. **State:** draft, unmerged. This is a **source/test inventory and closing plan**, not new DSP implementation, not a passing UI/device property matrix, and not authorization to merge. The current automated baseline is [CI #43610633937](https://github.com/logiclrd/Heresy/actions/runs/43610633937), 3,706 passing tests, Release, release-bundle smoke and ARM64 checks. The authoritative completion requirement remains [todo.md](todo.md), “Apply *all non-structural Synth property changes* to ongoing preview notes in realtime.”
 
+**C2 active work (2026-11-14):** The [granular inspector→publication→held-PCM ledger](synth-live-pr12-c2-inspector-matrix.md) is now the current C2 status source. It inventories the *actual* available controls and separately tracks real UI commit (U), inspector callback (P), production transport publication (T), held-voice migration/currency (V), and PCM oracle (A). Initial **C2(a)** covers a real Operator Minimum↔Maximum ComboBox, correct audio/document revision and callback counts, and 100-ms held-voice PCM crossfades with no older-audio mark; its direct callback uses a live `PlaybackSession` rather than pretending to verify the production transport worker. The original C2 property-matrix table below remains the broad source-level inventory, not a completed UI-to-PCM checklist. **C2 stays OPEN**; C1/C3/C4 remain closed, C5/C6/C7 and the overarching all-properties TODO remain open.
+
 ## Evidence standard and scope
 
 - **Implemented:** the renderer/editor contains a compatible publication or a deliberately safe old-generation branch.
