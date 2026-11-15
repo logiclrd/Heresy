@@ -108,6 +108,30 @@ public sealed class FmSynthMultiRemainingInspectorLivePcmTests
             Assert.That(playback.CountOlderAudioVoices(), Is.EqualTo(2));
         });
 
+        // Reproduce the observed order: the third note responds to an
+        // upstream Oscillator inspector edit before a Multi edit is tried.
+        var select = typeof(FmSynthEditorControl).GetMethod(
+            "SelectNode", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        select.Invoke(editor, [oscillator]);
+        TextBox frequency = (TextBox)inspector.Children[
+            inspector.Children.Select((x, index) => (x, index))
+                .Single(pair => pair.x is TextBlock t
+                    && t.Text == "Frequency Hz").index + 1];
+        int beforeOscillator = published;
+        frequency.Text = "117";
+        frequency.RaiseEvent(new KeyEventArgs
+        {
+            RoutedEvent = InputElement.KeyDownEvent,
+            Key = Key.Enter,
+        });
+        Assert.Multiple(() =>
+        {
+            Assert.That(published, Is.EqualTo(beforeOscillator + 1));
+            Assert.That(newest.Sound, Is.SameAs(current),
+                "a newly started Multi note must accept Oscillator revisions");
+            Assert.That(playback.CountOlderAudioVoices(), Is.EqualTo(2));
+        });
+        select.Invoke(editor, [multi]);
         TextBox voices = (TextBox)inspector.Children[
             inspector.Children.Select((x, index) => (x, index))
                 .Single(pair => pair.x is TextBlock t
