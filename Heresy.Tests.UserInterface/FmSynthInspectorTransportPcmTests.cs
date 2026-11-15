@@ -602,6 +602,166 @@ public sealed class FmSynthInspectorTransportPcmTests
     }
 
 
+
+    [AvaloniaTest]
+    public async Task SourceInspectorSampleSupersessionDefersOnlyLatestThroughRealTransport()
+    {
+        // C2(p): actual Source selector, not direct revision API calls.
+        // A→B has a worker-prepared onset and 100-ms fade. C and D arrive
+        // during that fade: neither interrupts A/B histories, only D gets
+        // a prepared invocation once the original fade has finished.
+        DocumentWorkspace workspace = new();
+        SampleDefinition Imported(string name, short value)
+        {
+            ObjectId id = workspace.Document.AllocateObjectId();
+            SampleDefinition result = SampleDefinition.CreateImported(
+                id, name, name + ".wav", FourFrameWave(value));
+            result.Loop = new SampleLoop(SampleLoopMode.Forward, 0, 4);
+            workspace.Document.Add(result);
+            return result;
+        }
+        SampleDefinition a = Imported("C2(p) Sample A", 8192);
+        SampleDefinition b = Imported("C2(p) Sample B", 24576);
+        SampleDefinition c = Imported("C2(p) Sample C superseded", 28672);
+        SampleDefinition d = Imported("C2(p) Sample D latest", 16384);
+        FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
+            workspace, "C2(p) latest-only inspector");
+        int source = FmSynthDocumentEditor.AddSoundSourceNode(
+            workspace, synth, 140, 95, a.Id, FmMultiNode.NeutralFrequencyHz);
+        FmSynthDocumentEditor.SetOutputNode(workspace, synth, source);
+        FmSynthDefinition parent = MakeDependentParent(
+            workspace, synth, "C2(p) dependent Synth");
+
+        TrackingFactory factory = new(Mono(), synth.Id);
+        ManualBackend backend = new();
+        using SongPlaybackTransport transport = new(backend, factory);
+        await transport.SendLiveEventAsync(workspace.Document,
+            ChannelTarget.Virtual(107), [new StartNoteCommand(synth.Id)]);
+        Assert.That(backend.Render(17), Is.All.EqualTo(0.25f).Within(3e-5f));
+        PlaybackSnapshotInfo baseSnapshot = transport.CurrentPlaybackSnapshot;
+        uint audio = workspace.Document.AudioRevision;
+        uint document = workspace.Document.DocumentRevision;
+        int changed = 0, callbacks = 0;
+        List<Task> pending = [];
+        FmSynthEditorControl editor = new(workspace, synth, () => { },
+            _ => changed++,
+            publishSynthEditAsync: () =>
+            {
+                callbacks++;
+                Task task = transport.PublishSynthEditAsync(
+                    workspace.Document, synth.Id);
+                pending.Add(task);
+                return task;
+            });
+        async Task Select(SampleDefinition selected, int ordinal)
+        {
+            ComboBox selector = Field<ComboBox>(Inspector(editor),
+                "Source (Sample / Instrument / Synth)");
+            object item = selector.Items.Cast<object>().Single(choice =>
+                choice.ToString()!.Contains(selected.Name,
+                    StringComparison.Ordinal));
+            selector.SelectedItem = item;
+            await Task.WhenAll(pending.ToArray())
+                .WaitAsync(TimeSpan.FromSeconds(8));
+            Assert.Multiple(() =>
+            {
+                Assert.That(synth.Graph.Nodes.OfType<FmSoundSourceNode>()
+                    .Single().SourceId, Is.EqualTo(selected.Id));
+                Assert.That(workspace.Document.AudioRevision,
+                    Is.EqualTo(audio + ordinal));
+                Assert.That(workspace.Document.DocumentRevision,
+                    Is.EqualTo(document + ordinal));
+                Assert.That(callbacks, Is.EqualTo(ordinal));
+                Assert.That(changed, Is.EqualTo(ordinal));
+                Assert.That(factory.Preparations.Count, Is.EqualTo(ordinal * 2));
+                Assert.That(factory.Preparations.Skip((ordinal - 1) * 2)
+                    .Select(p => p.Id),
+                    Is.EqualTo(new[] { synth.Id, parent.Id }));
+                Assert.That(factory.Preparations[(ordinal - 1) * 2]
+                    .SampleSourceId, Is.EqualTo(selected.Id));
+                Assert.That(factory.Preparations.Skip((ordinal - 1) * 2)
+                    .All(p => p.AudioRevision == audio + ordinal), Is.True);
+                Assert.That(backend.OpenCount, Is.EqualTo(1));
+                Assert.That(transport.CurrentPlaybackSnapshot.AudioRevision,
+                    Is.EqualTo(baseSnapshot.AudioRevision));
+            });
+        }
+
+        IFirPreparationAudioSource preparing =
+            (IFirPreparationAudioSource)backend.Source!;
+        using FirPreparationScheduler scheduler = new();
+        await Select(b, 1);
+        preparing.AdoptPreparedFirControls();
+        Assert.That(backend.Render(1)[0], Is.EqualTo(0.25f).Within(3e-5f),
+            "unprepared B cannot start on the PCM thread");
+        preparing.QueuePendingFirControls(scheduler);
+        Assert.That(SpinWait.SpinUntil(() =>
+            scheduler.CompletedMultiExpansionCount == 1,
+            TimeSpan.FromSeconds(8)), Is.True,
+            "B requires one detached replacement onset");
+        preparing.AdoptPreparedFirControls();
+
+        // Check the audible A→B fade over 101 consecutive sample frames.
+        int firstIndex = 0;
+        void FirstFade(int count, string label)
+        {
+            float[] pcm = backend.Render(count);
+            for (int j = 0; j < count; j++)
+            {
+                int i = firstIndex + j;
+                double t = i / 100.0;
+                double w = t * t * (3 - 2 * t);
+                float expected = (float)(0.25 * (1 - w) + 0.75 * w);
+                Assert.That(pcm[j], Is.EqualTo(expected).Within(3e-5f),
+                    label + ": original A→B frame " + i);
+            }
+            firstIndex += count;
+            Assert.That(factory.OlderAudioCount, Is.Zero,
+                label + ": a safely pending Source is not an older voice");
+        }
+        FirstFade(25, "A→B first 25 frames");
+        await Select(c, 2);
+        preparing.QueuePendingFirControls(scheduler);
+        Assert.That(scheduler.CompletedMultiExpansionCount, Is.EqualTo(1),
+            "C must not be prepared while A→B still sounds");
+        FirstFade(20, "C arrives but A→B is unchanged");
+        await Select(d, 3);
+        preparing.QueuePendingFirControls(scheduler);
+        Assert.That(scheduler.CompletedMultiExpansionCount, Is.EqualTo(1),
+            "D's worker preparation must also wait for the first fade");
+        FirstFade(56, "D supersedes C but first fade finishes");
+        Assert.That(firstIndex, Is.EqualTo(101));
+        Assert.That(scheduler.CompletedMultiExpansionCount, Is.EqualTo(1));
+
+        // The initial fade is over. NOW and only now the worker may
+        // construct latest D: C must never have a prepared onset.
+        preparing.AdoptPreparedFirControls();
+        preparing.QueuePendingFirControls(scheduler);
+        Assert.That(SpinWait.SpinUntil(() =>
+            scheduler.CompletedMultiExpansionCount >= 2,
+            TimeSpan.FromSeconds(8)), Is.True,
+            "only the latest D begins its new detached preparation");
+        preparing.AdoptPreparedFirControls();
+        float[] last = backend.Render(101);
+        CheckSmoothstep(last, 0.75f, 0.5f, 119);
+        Assert.That(backend.Render(9),
+            Is.All.EqualTo(0.5f).Within(3e-5f));
+        Assert.Multiple(() =>
+        {
+            Assert.That(scheduler.CompletedMultiExpansionCount, Is.EqualTo(2),
+                "exactly B then latest D, never superseded C");
+            Assert.That(scheduler.Fault, Is.Null);
+            Assert.That(factory.OlderAudioCount, Is.Zero);
+            Assert.That(factory.Preparations.Count, Is.EqualTo(6));
+            Assert.That(callbacks, Is.EqualTo(3));
+            Assert.That(changed, Is.EqualTo(3));
+            Assert.That(backend.OpenCount, Is.EqualTo(1));
+        });
+        await transport.PublishSynthEditAsync(workspace.Document, synth.Id);
+        Assert.That(factory.Preparations.Count, Is.EqualTo(6),
+            "same revision cannot reprepare a third Source onset");
+    }
+
     [AvaloniaTest]
     public async Task OscillatorInspectorShapeAndPitchPublishThroughTransportWithHeldPcmOracle()
     {
