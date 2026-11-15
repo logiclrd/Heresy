@@ -82,7 +82,7 @@ public sealed class FilterInstanceEditorControl : UserControl
 	private void ApplyOnFocusLoss()
 	{
 		if (!_loading && _synthBatchMode && !BatchChanges && HasUnsavedDraft())
-			TryApplyDraft();
+			TryApplyDraft(keepControls: true);
 	}
 
 	private Control BuildView()
@@ -364,7 +364,7 @@ public sealed class FilterInstanceEditorControl : UserControl
 
 	private void ApplyDraft() => TryApplyDraft();
 
-	private bool TryApplyDraft()
+	private bool TryApplyDraft(bool keepControls = false)
 	{
 		try
 		{
@@ -398,7 +398,10 @@ public sealed class FilterInstanceEditorControl : UserControl
 			}
 			int stageId = _loadedStage.StageId;
 			bool changed = _session.ApplyStage(stageId, requested);
-			RefreshStages(stageId);
+			if (keepControls)
+				UpdateCommittedValuesInPlace(stageId);
+			else
+				RefreshStages(stageId);
 			_message.Text = changed
 				? "This Filter use was updated."
 				: "No configuration changes.";
@@ -411,6 +414,38 @@ public sealed class FilterInstanceEditorControl : UserControl
 			_message.Text = error.Message;
 			return false;
 		}
+	}
+
+	/// <summary>Focus-loss commits must not replace the TextBox receiving
+	/// focus (for example, after checking Override and tabbing to its value).
+	/// Synchronize the existing controls with normalized committed values.</summary>
+	private void UpdateCommittedValuesInPlace(int stageId)
+	{
+		_loading = true;
+		try
+		{
+			FilterSpecificationInstance effective =
+				_session.Current.GetStageParameters(stageId);
+			IReadOnlyDictionary<string, FilterParameterValue> overrides =
+				_session.Current.GetOverrides(stageId);
+			foreach ((string name, Control editor) in _editors)
+			{
+				FilterParameterValue value = effective.GetParameter(name);
+				string normalized = Format(value);
+				switch (editor)
+				{
+					case TextBox numeric:
+						numeric.Text = normalized;
+						break;
+					case ComboBox choice:
+						choice.SelectedItem = value.ChoiceValue;
+						break;
+				}
+				_loadedValues[name] = normalized;
+				_loadedOverrideFlags[name] = overrides.ContainsKey(name);
+			}
+		}
+		finally { _loading = false; }
 	}
 
 	private void Reload()
