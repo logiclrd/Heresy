@@ -1,0 +1,43 @@
+# PR #12 — C7 final signoff and merge-readiness review
+
+**2026-11-15 status: REVIEW PREPARED / C7 OPEN / PR DRAFT AND UNMERGED.** No final merge authorization has been granted. This review combines *bounded* C1–C6 evidence and identifies which statements may be made without extrapolating beyond the machine, property graph or user reports.
+
+## Acceptance evidence available
+
+| Gate | Latest disposition | Direct evidence and scope |
+| --- | --- | --- |
+| **C1** | **ACCEPTED** | [Closing audit adopt/retain/refuse table](synth-live-pr12-closing-audit.md#c1-decision-record--2026-11-14): explicit eligible parameter migration, incompatible graph and release refusal, approved unrelated/cross-family Instrument SourceId exceptions and deferred Pattern/Sequence source kinds. |
+| **C2** | **ACCEPTED / bounded automated** | [C2(af) final 28-surface inventory](synth-live-pr12-c2-inspector-matrix.md#c2af--final-28-surface-c2-automated-inspector-to-pcm-signoff-2026-11-15): current editable inspector and embedded shared-property families, real UI commit → semantic revision → transport publication → held/current PCM, and explicit state-dependent older-generation refusals. This is not hardware or every graph combination. |
+| **C3** | **ACCEPTED / bounded automated** | [Closing audit compound/nested graph scenarios](synth-live-pr12-closing-audit.md): nested Synth and Instrument Source, Multi, Filter/FIR and mixed Operator controls, retained histories, independent reference PCM. |
+| **C4** | **ACCEPTED / bounded automated** | [Closing audit C4](synth-live-pr12-closing-audit.md): interruption/worker supersession, Note Off/release, released Source, short EOF/tail, multi-owner sticky older-audio status. |
+| **C5** | **ACCEPTED / bounded Linux** | [C5(g) decision](synth-live-pr12-c5-realtime-qualification.md#c5g--explicit-bounded-linux-realtime-acceptance-decision-2026-11-15), [27-trial actual Linux load envelope](synth-live-pr12-c5f-results-2026-11-15.md): real same-original-note 3→17→3 recovery, 19 zero-underrun and eight continuously overloaded marked windows; unsafe observed high loads and marginal no-underrun cases explicitly documented. Windows hardware currently unavailable/not tested; no hardware-interrupt deadline guarantee. |
+| **C6** | **ACCEPTED / bounded Linux physical listening** | [C6-A–H human-observation ledger](synth-live-pr12-c6-physical-listening.md): Oscillator/Operator, Filter/Multi, old/current generations, Hold Note Off/release, Sample A→B→None→A with oscillator sibling preserving the note, Noise and inline Script Envelope, fixed-bound Instrument tone pitch retune, rapid edits + structural Filter. C6-C originally failed, then tester reported defect corrected and confirmed physical PASS; the specific corrective action was not supplied. Earlier separately reported data-Instrument shared Volume and nested Synth Source tests support G's other narrow branches; they were not newly performed in the second batch. |
+| **PR release verification** | **PRE-FINAL** | Full .NET Release suite, Python analyzer tests, Windows bundle/apphost/icon smoke checks, and Linux ARM64 shared codec package tests have passed on prior exact HEAD `ef40fe471c8fea04f70751959d2701a14ac270e3` (3,826 .NET + 5 Python). **Re-run / confirm exact final docs HEAD before any final acceptance claim.** These checks validate build/package format, **not** physical Windows playback. |
+| **Overall all-nonstructural Synth TODO** | **OPEN until final approval** | [Original feature acceptance contract](todo.md) requires the current-property completeness, multi-voice/live/release/latency/underrun/human listening results above. Do **not** mark/remove its entry from `docs/todo.md` or merge merely because one bounded gate passed. |
+
+## Explicit scope and deferrals — disclose at signoff
+
+1. **Instrument tone mapping on a held note:** the selected tone is **frozen at Note On**. Editing an unchanged bound Instrument Source's Frequency Hz continuously retunes the **same selected terminal Sample**, preserving its integrated playhead/envelope. Only a fresh Note On maps its new pitch into the Instrument's tone table. This was explicitly designed in [selected-tone binding slice 41](synth-live-parameter-plan.md#forty-first-slice-selected-tone-only-frozen-instrument-compatibility); `FmSynthSound.SourceVoice.BoundInstrumentToneSlot` and `EvaluateSource` implement it. An already-held note is **not** dynamically remapped across C4/C5 assigned Sample identities. This is *not* C6-G failure, nor a promise that future Gxx/GFF portamento tone reselection already works. [Broader Gxx/GFF TODO](todo.md) retains future Instrument tone selection after retuning.
+2. **Unrelated Source family substitution:** arbitrary Sample↔Instrument↔Synth and unrelated Instrument invocation replacement can retain old audio and correctly mark the older generation, without reconstructing incompatible child state. Pattern and Sequence are not yet supported as new Synth Source object kinds. A future feature must integrate with this baseline.
+3. **Structural vs editable properties:** add/remove/wire nodes, output selection and effective Filter topology changes are structural; continuing notes can retain old graph histories. Numeric and other eligible same-topology properties are not blanket-refused because preparation is required.
+4. **Realtime safety:** true Linux/device recovery and load brackets are observed, including **unsafe 1×17 and 3×9+** on Ryzen 7 7840HS/PipeWire; don't claim the highest 12-second zero-underrun count to be an endorsed reliable capacity. Other workstation/graph/Windows/demand patterns are unknown. Exact managed process runtime/UI Diagnostics state was not supplied, though CSV fault types were empty; these are documentation limits, not evidence of failure.
+5. **Unimplemented controls:** Noise Vmin/Vmax is a separate open feature; an unwired Synth Script Instrument modeless shared Volume editor and future Pattern/Sequence Source are not invented as existing inspector controls.
+6. **Offline and export parity:** ordinary arrangement/export uses frozen snapshots; live preview-specific smoothstep/publication must not be inferred to rewrite authored raw PCM/output. The existing package/test suite and prior targeted parity regressions should be referenced in the final signoff. No production code changes were made during the C5/C6 evidence-only documentation acceptance.
+7. **C6 human provenance:** User's reported pass is accepted in its named physical Linux scope without pretending a hidden root-cause patch, blanket Windows pass, or every possible nested DSP topology was manually verified. No arbitrary fast edits inside a 100-ms transition were required of a human.
+
+## C7 open checklist / terminal conditions
+
+- [x] Consolidate **C1–C6 named acceptance dispositions** into one bounded decision ledger.
+- [x] Preserve the historical failure then successful retest for **C6-C**, with unknown corrective action not rewritten as a code fix.
+- [x] Separate **frozen Instrument tone identity** from dynamic tone retargeting and future Gxx/GFF work, so the C6-G expectation does not become an accidental PR scope increase.
+- [x] Record **Windows unavailable/not tested**, measured Linux overloads/headroom, and process-runtime provenance limits.
+- [ ] Confirm **exact final PR HEAD** Release/automated/property tests, Linux ARM64 and Windows packaging smoke checks, compare checkout with `main` and inspect any new unreviewed diff/property surfaces.
+- [ ] Confirm no **unmanaged currently exposed nonstructural property** remains outside the 28-surface C2(af) ledger; verify that no new post-C2 nonstructural controls were introduced. C6 and C5 added tests/docs but no new user-controlled Synth field families were reported.
+- [ ] Confirm a specific offline/export equivalence regression or scope limitation for the current code, rather than treating preview audio as a rendered master.
+- [ ] **Final feature decision with user approval:** only then mark the original Synth live-parameter TODO complete/remove its open entry, declare C7 accepted and make PR #12 merge-ready. **Do not merge without explicit user authorization.**
+
+### Provisional outcome
+
+**READY FOR FINAL REVIEW, NOT MERGE-AUTHORIZED.** The current C1–C6 evidence supports a defensible, bounded feature-acceptance claim for the implemented nonstructural editor properties and the physically observed Linux path. The remaining work is final exact-head/diff/parity verification and an explicit owner decision; it is **not** a request for more repeat C5 stress runs or the already-completed C6 listening matrix.
+
+PR #12 is **OPEN / DRAFT / UNMERGED**.
