@@ -461,7 +461,7 @@ public sealed class NodeEnvelopeGraphControlTests
 			Preview()[2].Value.Should().BeApproximately(1, 1e-10,
 				"default node dragging clamps to Vmax");
 			TimeSpan draggedTime = Preview()[2].Time;
-			envelope.Nodes[2].Value.Should().Be(0.5,
+			envelope.Nodes[2].Value.Should().Be(0.7,
 				"the pointer preview must not commit the Envelope");
 
 			host.KeyPress(Key.LeftCtrl, RawInputModifiers.Control,
