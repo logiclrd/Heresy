@@ -16,9 +16,10 @@ using Heresy.UserInterface.Documents;
 namespace Heresy.UserInterface.Views;
 
 /// <summary>
-/// Shared interactive node graph and precision node-list editor for both
-/// standalone Envelopes and FM Envelope nodes. Protects unsaved numeric edits
-/// from concurrent changes to the same shared Envelope object.
+/// The same live, shared node Envelope can be edited in the standalone
+/// document view, Synth inspector, or an independent Instrument Volume
+/// window. Each accepted edit notifies every mounted view. The latest
+/// committed state replaces any older unfinished draft in other views.
 /// </summary>
 public sealed class NodeEnvelopeEditorControl : UserControl
 {
@@ -27,18 +28,14 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 	private readonly Action<string> _changed;
 	private readonly NodeEnvelopeGraphControl _graph;
 	private bool _loadingFields;
-	private bool _draftDirty;
+	private bool _publishing;
 	private string? _loadedNodesText;
 	private string? _loadedStartText;
 	private string? _loadedEndText;
 	private string? _loadedVminText;
 	private string? _loadedVmaxText;
-	private EnvelopeNode[] _baselineNodes = [];
-	private int _baselineStart;
-	private int _baselineEnd;
-	private EnvelopeSustainLoopMode _baselineMode;
-	private double _baselineVmin;
-	private double _baselineVmax;
+	private EnvelopeSustainLoopMode _loadedMode;
+
 	private readonly TextBox _nodesInput = new()
 	{
 		AcceptsReturn = true,
@@ -56,10 +53,7 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 		ItemsSource = Enum.GetValues<EnvelopeSustainLoopMode>(),
 		MinWidth = 140,
 	};
-	private readonly TextBlock _message = new()
-	{
-		TextWrapping = TextWrapping.Wrap,
-	};
+	private readonly TextBlock _message = new() { TextWrapping = TextWrapping.Wrap };
 
 	public NodeEnvelopeEditorControl(
 		DocumentWorkspace workspace,
@@ -84,12 +78,14 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 			_message.Text = "Envelope updated from graph.";
 			_changed($"Updated envelope {_envelope.Name}");
 		};
-		_nodesInput.TextChanged += (_, _) => MarkDraftDirty();
-		_sustainStart.TextChanged += (_, _) => MarkDraftDirty();
-		_sustainEnd.TextChanged += (_, _) => MarkDraftDirty();
-		_vmin.TextChanged += (_, _) => MarkDraftDirty();
-		_vmax.TextChanged += (_, _) => MarkDraftDirty();
-		_loopMode.SelectionChanged += (_, _) => MarkDraftDirty();
+
+		// The raw node textbox is intentionally the *only* explicit batch.
+		// Every other control commits its own value on focus loss.
+		_sustainStart.LostFocus += (_, _) => TryCommitField(_sustainStart);
+		_sustainEnd.LostFocus += (_, _) => TryCommitField(_sustainEnd);
+		_loopMode.LostFocus += (_, _) => TryCommitField(_loopMode);
+		_vmin.LostFocus += (_, _) => TryCommitField(_vmin);
+		_vmax.LostFocus += (_, _) => TryCommitField(_vmax);
 		AttachedToVisualTree += OnAttached;
 		DetachedFromVisualTree += OnDetached;
 
@@ -132,6 +128,10 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 			TextWrapping = TextWrapping.Wrap,
 		});
 		form.Children.Add(_nodesInput);
+		Button setNodes = new() { Content = "Set nodes", MinWidth = 115,
+			HorizontalAlignment = HorizontalAlignment.Left };
+		setNodes.Click += (_, _) => SetNodes();
+		form.Children.Add(setNodes);
 		form.Children.Add(new TextBlock
 		{
 			Text = "The node list remains available for precise numeric editing "
@@ -142,7 +142,10 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 		});
 		Grid controls = new()
 		{
-			ColumnSpacing = 10, RowSpacing = 6,
+			ColumnSpacing = 10,
+			RowSpacing = 6,
+			MaxWidth = 800,
+			HorizontalAlignment = HorizontalAlignment.Left,
 			ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,*"),
 			RowDefinitions = new RowDefinitions("Auto,Auto,Auto"),
 		};
@@ -152,22 +155,6 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 		AddField(controls, "Vmin", _vmin, 2, 0);
 		AddField(controls, "Vmax", _vmax, 2, 2);
 		form.Children.Add(controls);
-		Button apply = new() { Content = "Apply envelope", MinWidth = 140 };
-		apply.Click += (_, _) => Apply();
-		Button reload = new() { Content = "Reload shared envelope" };
-		reload.Click += (_, _) =>
-		{
-			RefreshFromEnvelope();
-			_message.Text = "Numeric editor reloaded from the shared envelope.";
-		};
-		StackPanel actions = new()
-		{
-			Orientation = Orientation.Horizontal,
-			Spacing = 8,
-		};
-		actions.Children.Add(apply);
-		actions.Children.Add(reload);
-		form.Children.Add(actions);
 		form.Children.Add(_message);
 		Content = form;
 		RefreshFromEnvelope();
@@ -176,8 +163,11 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 	private static void AddField(
 		Grid grid, string label, Control editor, int row, int col)
 	{
-		TextBlock text = new() { Text = label,
-			VerticalAlignment = VerticalAlignment.Center };
+		TextBlock text = new()
+		{
+			Text = label,
+			VerticalAlignment = VerticalAlignment.Center,
+		};
 		Grid.SetRow(text, row);
 		Grid.SetColumn(text, col);
 		grid.Children.Add(text);
@@ -188,58 +178,150 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 
 	private void OnAttached(object? sender, VisualTreeAttachmentEventArgs e)
 	{
-		_workspace.Document.Changed += OnDocumentChanged;
-		if (!BaselineIsCurrent())
-			OnSharedEnvelopeChanged();
+		_envelope.Changed += OnEnvelopeChanged;
+		// Reattachment must always see the latest accepted shared state.
+		RefreshFromEnvelope();
 	}
 
 	private void OnDetached(object? sender, VisualTreeAttachmentEventArgs e)
-		=> _workspace.Document.Changed -= OnDocumentChanged;
-
-	private void OnDocumentChanged(object? sender, SongDocumentChangedEventArgs e)
 	{
-		_ = sender;
-		_ = e;
-		if (!BaselineIsCurrent())
-			OnSharedEnvelopeChanged();
+		// Commit independent parameter fields before a view is removed,
+		// whether or not the focus system sent each field LostFocus.
+		TryCommitPendingFields();
+		_envelope.Changed -= OnEnvelopeChanged;
 	}
 
-	private void OnSharedEnvelopeChanged()
+	private void OnEnvelopeChanged(object? sender, EventArgs e)
 	{
-		if (HasDraftChanges())
-		{
-			_message.Text = "This shared envelope changed in another editor. "
-				+ "Your unsaved numbers are preserved but cannot overwrite the "
-				+ "new curve. Reload the shared envelope before applying.";
-			return;
-		}
+		if (_publishing)
+			return; // This editor updates only its own committed field.
+		bool discarded = HasPendingChanges();
 		RefreshFromEnvelope();
-		_message.Text = "Shared envelope updated.";
+		_message.Text = discarded
+			? "The shared envelope changed. Uncommitted edits in this view "
+				+ "were replaced by the newly accepted state."
+			: "Shared envelope updated.";
 	}
 
-	private bool BaselineIsCurrent()
-		=> _baselineStart == _envelope.SustainStartIndex
-			&& _baselineEnd == _envelope.SustainEndIndex
-			&& _baselineMode == _envelope.SustainLoopMode
-			&& _baselineVmin == _envelope.Vmin
-			&& _baselineVmax == _envelope.Vmax
-			&& _baselineNodes.SequenceEqual(_envelope.Nodes);
-
-	private void MarkDraftDirty()
-	{
-		if (!_loadingFields)
-			_draftDirty = true;
-	}
-
-	private bool HasDraftChanges()
-		=> _draftDirty
-			|| _nodesInput.Text != _loadedNodesText
+	private bool HasPendingChanges()
+		=> _nodesInput.Text != _loadedNodesText
 			|| _sustainStart.Text != _loadedStartText
 			|| _sustainEnd.Text != _loadedEndText
 			|| _vmin.Text != _loadedVminText
 			|| _vmax.Text != _loadedVmaxText
 			|| _loopMode.SelectedItem is not EnvelopeSustainLoopMode mode
-			|| mode != _baselineMode;
+			|| mode != _loadedMode;
+
+	/// <summary>Commit focus-loss parameters independently before a view
+	/// transition or song Save. A second pass permits related valid bounds
+	/// or sustain indices to be entered in either order.</summary>
+	public bool TryCommitPendingFields()
+	{
+		bool valid = true;
+		Control[] fields = [_sustainStart, _sustainEnd, _loopMode, _vmin, _vmax];
+		foreach (Control field in fields)
+			valid = TryCommitField(field) && valid;
+		if (!valid)
+		{
+			valid = true;
+			foreach (Control field in fields)
+				valid = TryCommitField(field) && valid;
+		}
+		return valid;
+	}
+
+	/// <summary>Each field commits against the currently accepted shared
+	/// Envelope, without reparsing raw node text or applying unrelated
+	/// pending inputs from this editor.</summary>
+	private bool TryCommitField(Control field)
+	{
+		if (_loadingFields || _publishing)
+			return true;
+		bool changedText = field switch
+		{
+			_ when ReferenceEquals(field, _sustainStart) =>
+				_sustainStart.Text != _loadedStartText,
+			_ when ReferenceEquals(field, _sustainEnd) =>
+				_sustainEnd.Text != _loadedEndText,
+			_ when ReferenceEquals(field, _vmin) =>
+				_vmin.Text != _loadedVminText,
+			_ when ReferenceEquals(field, _vmax) =>
+				_vmax.Text != _loadedVmaxText,
+			_ when ReferenceEquals(field, _loopMode) =>
+				_loopMode.SelectedItem is not EnvelopeSustainLoopMode selected
+				|| selected != _loadedMode,
+			_ => false,
+		};
+		if (!changedText)
+			return true;
+
+		try
+		{
+			int start = ReferenceEquals(field, _sustainStart)
+				? ParseIndex(_sustainStart, "Sustain start")
+				: _envelope.SustainStartIndex;
+			int end = ReferenceEquals(field, _sustainEnd)
+				? ParseIndex(_sustainEnd, "Sustain end")
+				: _envelope.SustainEndIndex;
+			EnvelopeSustainLoopMode mode = ReferenceEquals(field, _loopMode)
+				? _loopMode.SelectedItem is EnvelopeSustainLoopMode selected
+					? selected
+					: throw new ArgumentException("Select a sustain loop mode.")
+				: _envelope.SustainLoopMode;
+			double vmin = ReferenceEquals(field, _vmin)
+				? ParseDisplayBound(_vmin, "Vmin")
+				: _envelope.Vmin;
+			double vmax = ReferenceEquals(field, _vmax)
+				? ParseDisplayBound(_vmax, "Vmax")
+				: _envelope.Vmax;
+
+			uint before = _workspace.Document.DocumentRevision;
+			_publishing = true;
+			try
+			{
+				EnvelopeDocumentEditor.UpdateNodeEnvelope(
+					_workspace, _envelope, _envelope.Nodes, start, end,
+					mode, vmin, vmax);
+			}
+			finally { _publishing = false; }
+			SyncFieldFromEnvelope(field);
+			_message.Text = "Envelope parameter updated.";
+			if (_workspace.Document.DocumentRevision != before)
+				_changed($"Updated envelope {_envelope.Name}");
+			return true;
+		}
+		catch (Exception ex)
+		{
+			_message.Text = ex.Message;
+			return false;
+		}
+	}
+
+	private void SyncFieldFromEnvelope(Control field)
+	{
+		_loadingFields = true;
+		try
+		{
+			if (ReferenceEquals(field, _sustainStart))
+				_loadedStartText = _sustainStart.Text =
+					_envelope.SustainStartIndex.ToString(CultureInfo.InvariantCulture);
+			else if (ReferenceEquals(field, _sustainEnd))
+				_loadedEndText = _sustainEnd.Text =
+					_envelope.SustainEndIndex.ToString(CultureInfo.InvariantCulture);
+			else if (ReferenceEquals(field, _vmin))
+				_loadedVminText = _vmin.Text =
+					_envelope.Vmin.ToString("G17", CultureInfo.InvariantCulture);
+			else if (ReferenceEquals(field, _vmax))
+				_loadedVmaxText = _vmax.Text =
+					_envelope.Vmax.ToString("G17", CultureInfo.InvariantCulture);
+			else if (ReferenceEquals(field, _loopMode))
+			{
+				_loadedMode = _envelope.SustainLoopMode;
+				_loopMode.SelectedItem = _loadedMode;
+			}
+		}
+		finally { _loadingFields = false; }
+	}
 
 	public void RefreshFromEnvelope()
 	{
@@ -247,62 +329,59 @@ public sealed class NodeEnvelopeEditorControl : UserControl
 		try
 		{
 			_graph.RefreshFromEnvelope();
-			_nodesInput.Text = string.Join("\n", _envelope.Nodes.Select(node =>
-				node.Time.TotalSeconds.ToString("G17", CultureInfo.InvariantCulture)
-				+ ", "
-				+ node.Value.ToString("G17", CultureInfo.InvariantCulture)));
-			_sustainStart.Text = _envelope.SustainStartIndex.ToString(
-				CultureInfo.InvariantCulture);
-			_sustainEnd.Text = _envelope.SustainEndIndex.ToString(
-				CultureInfo.InvariantCulture);
-			_loopMode.SelectedItem = _envelope.SustainLoopMode;
-			_vmin.Text = _envelope.Vmin.ToString("G17", CultureInfo.InvariantCulture);
-			_vmax.Text = _envelope.Vmax.ToString("G17", CultureInfo.InvariantCulture);
-			_loadedNodesText = _nodesInput.Text;
-			_loadedStartText = _sustainStart.Text;
-			_loadedEndText = _sustainEnd.Text;
-			_loadedVminText = _vmin.Text;
-			_loadedVmaxText = _vmax.Text;
-			_baselineNodes = _envelope.Nodes.ToArray();
-			_baselineStart = _envelope.SustainStartIndex;
-			_baselineEnd = _envelope.SustainEndIndex;
-			_baselineMode = _envelope.SustainLoopMode;
-			_baselineVmin = _envelope.Vmin;
-			_baselineVmax = _envelope.Vmax;
-			_draftDirty = false;
+			_loadedNodesText = _nodesInput.Text = string.Join("\n",
+				_envelope.Nodes.Select(node =>
+					node.Time.TotalSeconds.ToString("G17",
+						CultureInfo.InvariantCulture)
+					+ ", "
+					+ node.Value.ToString("G17", CultureInfo.InvariantCulture)));
+			_loadedStartText = _sustainStart.Text =
+				_envelope.SustainStartIndex.ToString(CultureInfo.InvariantCulture);
+			_loadedEndText = _sustainEnd.Text =
+				_envelope.SustainEndIndex.ToString(CultureInfo.InvariantCulture);
+			_loadedMode = _envelope.SustainLoopMode;
+			_loopMode.SelectedItem = _loadedMode;
+			_loadedVminText = _vmin.Text =
+				_envelope.Vmin.ToString("G17", CultureInfo.InvariantCulture);
+			_loadedVmaxText = _vmax.Text =
+				_envelope.Vmax.ToString("G17", CultureInfo.InvariantCulture);
 		}
-		finally
-		{
-			_loadingFields = false;
-		}
+		finally { _loadingFields = false; }
 	}
 
-	private void Apply()
+	/// <summary>Explicitly accept *only* the raw node list, never the
+	/// Sustain, Loop, Vmin or Vmax drafts adjacent to it.</summary>
+	private void SetNodes()
 	{
+		if (_nodesInput.Text == _loadedNodesText)
+			return;
 		try
 		{
-			if (!BaselineIsCurrent())
-				throw new InvalidOperationException(
-					"The shared envelope changed since this draft began. "
-					+ "Reload the shared envelope before applying.");
-			// Preserve exact TimeSpan ticks and floating-point values
-			// when only display settings or sustain controls change.
-			// Re-parsing an unchanged G17 time in seconds can round a
-			// TimeSpan and accidentally create an audio revision.
-			List<EnvelopeNode> nodes = _nodesInput.Text == _loadedNodesText
-				? _baselineNodes.ToList()
-				: ParseNodes(_nodesInput.Text);
-			int start = ParseIndex(_sustainStart, "Sustain start");
-			int end = ParseIndex(_sustainEnd, "Sustain end");
-			if (_loopMode.SelectedItem is not EnvelopeSustainLoopMode mode)
-				throw new ArgumentException("Select a sustain loop mode.");
-			double vmin = ParseDisplayBound(_vmin, "Vmin");
-			double vmax = ParseDisplayBound(_vmax, "Vmax");
-			EnvelopeDocumentEditor.UpdateNodeEnvelope(
-				_workspace, _envelope, nodes, start, end, mode, vmin, vmax);
-			RefreshFromEnvelope();
-			_message.Text = "Node envelope updated.";
-			_changed($"Updated envelope {_envelope.Name}");
+			List<EnvelopeNode> nodes = ParseNodes(_nodesInput.Text);
+			uint before = _workspace.Document.DocumentRevision;
+			_publishing = true;
+			try
+			{
+				EnvelopeDocumentEditor.UpdateNodeEnvelope(
+					_workspace, _envelope, nodes,
+					_envelope.SustainStartIndex, _envelope.SustainEndIndex,
+					_envelope.SustainLoopMode);
+			}
+			finally { _publishing = false; }
+			_loadingFields = true;
+			try
+			{
+				_loadedNodesText = _nodesInput.Text = string.Join("\n",
+					_envelope.Nodes.Select(node =>
+						node.Time.TotalSeconds.ToString("G17",
+							CultureInfo.InvariantCulture)
+						+ ", "
+						+ node.Value.ToString("G17", CultureInfo.InvariantCulture)));
+			}
+			finally { _loadingFields = false; }
+			_message.Text = "Envelope nodes updated.";
+			if (_workspace.Document.DocumentRevision != before)
+				_changed($"Updated envelope {_envelope.Name}");
 		}
 		catch (Exception ex)
 		{

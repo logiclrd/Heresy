@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Linq;
 
 using Avalonia;
@@ -121,21 +122,23 @@ public sealed class NodeEnvelopeGraphControl : UserControl
 
 	private void OnAttached(object? sender, VisualTreeAttachmentEventArgs e)
 	{
-		_workspace.Document.Changed += OnDocumentChanged;
+		_envelope.Changed += OnEnvelopeChanged;
 		RefreshFromEnvelope();
 	}
 
 	private void OnDetached(object? sender, VisualTreeAttachmentEventArgs e)
 	{
-		_workspace.Document.Changed -= OnDocumentChanged;
+		_envelope.Changed -= OnEnvelopeChanged;
 		_surface.CancelDrag();
 	}
 
-	private void OnDocumentChanged(object? sender, SongDocumentChangedEventArgs e)
+	private void OnEnvelopeChanged(object? sender, EventArgs e)
 	{
-		_ = e;
-		if (!_surface.IsDragging)
-			RefreshFromEnvelope();
+		// Unrelated song mutations no longer redraw this graph. A new,
+		// accepted state in its own Envelope invalidates any old drag.
+		if (_surface.IsDragging)
+			_surface.CancelDrag();
+		RefreshFromEnvelope();
 	}
 
 	private void Commit(NodeEnvelopeGraphEdit edited)
@@ -168,8 +171,21 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		new SolidColorBrush(Color.FromRgb(246, 247, 248));
 	private static readonly IBrush Axis =
 		new SolidColorBrush(Color.FromRgb(110, 120, 140));
-	private static readonly IBrush Guide =
-		new SolidColorBrush(Color.FromArgb(65, 146, 161, 181));
+	// Every node (including sustain endpoints) gets a curve-coloured
+	// vertical guide at 40% opacity; time-grid lines remain neutral grey.
+	private static readonly IBrush NodeGuide =
+		new SolidColorBrush(Color.FromArgb(102, 97, 207, 246));
+	private static readonly IBrush DarkLabel =
+		new SolidColorBrush(Color.FromRgb(190, 199, 210));
+	private static readonly IBrush LightLabel =
+		new SolidColorBrush(Color.FromRgb(69, 79, 90));
+	private static readonly IBrush DarkHoverBackground =
+		new SolidColorBrush(Color.FromArgb(240, 44, 51, 63));
+	private static readonly IBrush LightHoverBackground =
+		new SolidColorBrush(Color.FromArgb(242, 226, 231, 236));
+	private const double AxisFontSize = 10;
+	private const double HoverFontSize = 11;
+	private const double TimeLabelArea = 54;
 	// Keep the thin green lines legible on both the dark and light
 	// graph backgrounds without making them compete with the blue curve.
 	private static readonly IBrush DarkValueLimitGuide =
@@ -202,6 +218,7 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 	private int _previewSustainEnd;
 	private bool _dragMoved;
 	private Point _press;
+	private Point? _hoverPointer;
 	private NodeEnvelopeGraphGeometry? _fixedLayout;
 	private long _timeDomainTicks;
 
@@ -234,6 +251,11 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		ClipToBounds = true;
 		Focusable = true;
 		IsTabStop = true;
+		PointerExited += (_, _) =>
+		{
+			_hoverPointer = null;
+			InvalidateVisual();
+		};
 	}
 
 	public void RefreshFromEnvelope()
@@ -282,34 +304,49 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		DomainChanged?.Invoke();
 	}
 
+	private static FormattedText Label(string content, IBrush foreground,
+		double size = AxisFontSize)
+		=> new(content, CultureInfo.InvariantCulture,
+			FlowDirection.LeftToRight, new Typeface(FontFamily.Default),
+			size, foreground);
+
 	private NodeEnvelopeGraphGeometry? Layout()
 	{
 		if (Bounds.Width <= 2 * NodeEnvelopeGraphGeometry.Padding
-			|| Bounds.Height <= 2 * NodeEnvelopeGraphGeometry.Padding)
+			|| Bounds.Height <= NodeEnvelopeGraphGeometry.Padding + TimeLabelArea)
 			return null;
-		return _fixedLayout is not null
-			? _fixedLayout.WithNodes(_previewNodes)
-			: new NodeEnvelopeGraphGeometry(_previewNodes,
-				Bounds.Width, Bounds.Height, _envelope.Vmin, _envelope.Vmax,
-				_timeDomainTicks);
+		if (_fixedLayout is not null)
+			return _fixedLayout.WithNodes(_previewNodes);
+		(string minText, string maxText) =
+			NodeEnvelopeGraphScale.ValueLabels(_envelope.Vmin, _envelope.Vmax);
+		IBrush foreground = ActualThemeVariant == ThemeVariant.Light
+			? LightLabel : DarkLabel;
+		double labelWidth = Math.Max(
+			Label(minText, foreground).Width,
+			Label(maxText, foreground).Width);
+		double left = Math.Min(
+			Bounds.Width - NodeEnvelopeGraphGeometry.Padding - 1,
+			Math.Max(NodeEnvelopeGraphGeometry.Padding, labelWidth + 12));
+		return new NodeEnvelopeGraphGeometry(_previewNodes,
+			Bounds.Width, Bounds.Height, _envelope.Vmin, _envelope.Vmax,
+			_timeDomainTicks, leftPadding: left,
+			bottomPadding: TimeLabelArea);
 	}
 
 	public override void Render(DrawingContext context)
 	{
 		base.Render(context);
-		context.FillRectangle(
-			ActualThemeVariant == ThemeVariant.Light
-				? LightBackground : DarkBackground,
+		bool light = ActualThemeVariant == ThemeVariant.Light;
+		context.FillRectangle(light ? LightBackground : DarkBackground,
 			new Rect(Bounds.Size));
 		NodeEnvelopeGraphGeometry? graph = Layout();
 		if (graph is null)
 			return;
-		context.DrawLine(new Pen(Axis, 1),
+		IBrush labelBrush = light ? LightLabel : DarkLabel;
+		Pen gray = new(Axis, 1);
+		context.DrawLine(gray,
 			new Point(graph.Left, graph.Top),
 			new Point(graph.Left, graph.Bottom));
-		context.DrawLine(new Pen(Axis, 1),
-			new Point(graph.Left, graph.Bottom),
-			new Point(graph.Right, graph.Bottom));
 
 		int start = _previewSustainStart;
 		int end = _previewSustainEnd;
@@ -320,53 +357,145 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 				new Rect(sx, graph.Top, Math.Max(0, ex - sx),
 					graph.Bottom - graph.Top));
 
-		// The bottom X axis is only the viewport baseline. Draw the true
-		// authored value limits at their mapped heights instead; draw them
-		// above sustain shading but underneath node guides, curve and dots.
+		// Gray time subdivisions are based on the LAST NODE, not on
+		// the possibly expanded/frozen horizontal viewport domain.
+		// Every vertical line has its own fixed-point time label.
+		(double interval, int decimals) =
+			NodeEnvelopeGraphScale.TimeStep(_previewNodes[^1].Time);
+		if (interval > 0)
+		{
+			double tickSpacing = graph.X(interval * TimeSpan.TicksPerSecond)
+				- graph.Left;
+			FormattedText sample = Label(
+				NodeEnvelopeGraphScale.TimeLabel(_previewNodes[^1].Time.TotalSeconds,
+					decimals), labelBrush);
+			int lanes = (int)Math.Clamp(
+				Math.Ceiling((sample.Width + 3) / Math.Max(tickSpacing, 1)),
+				1, 3);
+			double domainSeconds = graph.DomainTicks
+				/ (double)TimeSpan.TicksPerSecond;
+			// An old expanded domain can outlive a much shorter
+			// envelope. Bound drawing work for that extreme case.
+			int maxTick = (int)Math.Min(512,
+				Math.Floor(domainSeconds / interval + 1e-9));
+			for (int index = 0; index <= maxTick; index++)
+			{
+				double seconds = index * interval;
+				double x = graph.X(seconds * TimeSpan.TicksPerSecond);
+				if (x > graph.Right + 0.01)
+					break;
+				context.DrawLine(gray, new Point(x, graph.Top),
+					new Point(x, graph.Bottom));
+				FormattedText text = Label(
+					NodeEnvelopeGraphScale.TimeLabel(seconds, decimals),
+					labelBrush);
+				double labelX = Math.Clamp(x - text.Width / 2,
+					0, Math.Max(0, Bounds.Width - text.Width));
+				double labelY = graph.Bottom + 3
+					+ (index % lanes) * (text.Height + 2);
+				context.DrawText(text, new Point(labelX, labelY));
+			}
+		}
+
+		// The former thick bottom baseline is removed. The only gray
+		// horizontal axis denotes actual numeric zero, and is absent
+		// when zero is beyond the displayed value range.
+		if (graph.ZeroAxisY is double zeroY)
+			context.DrawLine(gray, new Point(graph.Left, zeroY),
+				new Point(graph.Right, zeroY));
+
+		// Render green bounds AFTER zero so green wins if Vmin/Vmax=0.
 		(double minY, double maxY) = graph.ValueLimitGuideYs;
-		Pen valueGuide = new(
-			ActualThemeVariant == ThemeVariant.Light
-				? LightValueLimitGuide : DarkValueLimitGuide, 1);
+		Pen valueGuide = new(light
+			? LightValueLimitGuide : DarkValueLimitGuide, 1);
 		context.DrawLine(valueGuide,
 			new Point(graph.Left, minY), new Point(graph.Right, minY));
 		context.DrawLine(valueGuide,
 			new Point(graph.Left, maxY), new Point(graph.Right, maxY));
 
-		for (int i = 0; i < graph.Count; i++)
+		(string minLabel, string maxLabel) =
+			NodeEnvelopeGraphScale.ValueLabels(_envelope.Vmin, _envelope.Vmax);
+		DrawValueLabel(context, graph, minLabel, minY, labelBrush);
+		DrawValueLabel(context, graph, maxLabel, maxY, labelBrush);
+
+		// Node guides use the same blue as the envelope polyline with
+		// exactly 40% opacity. Sustain endpoints remain three pixels wide.
+		for (int index = 0; index < graph.Count; index++)
 		{
-			(double x, _) = graph.Point(i);
-			bool isBoundary = _envelope.SustainLoopMode
+			(double x, _) = graph.Point(index);
+			bool boundary = _envelope.SustainLoopMode
 				!= EnvelopeSustainLoopMode.None
-				&& (i == start || i == end);
-			// Boundary guides stay visible when start == end, and
-			// are three times wider than ordinary 1-pixel guides.
-			context.DrawLine(
-				new Pen(isBoundary ? Sustain : Guide,
-					isBoundary ? 3 : 1),
-				new Point(x, graph.Top),
-				new Point(x, graph.Bottom));
+				&& (index == start || index == end);
+			context.DrawLine(new Pen(NodeGuide, boundary ? 3 : 1),
+				new Point(x, graph.Top), new Point(x, graph.Bottom));
 		}
 
-		for (int i = 0; i + 1 < graph.Count; i++)
+		for (int index = 0; index + 1 < graph.Count; index++)
 		{
-			(double x1, double y1) = graph.Point(i);
-			(double x2, double y2) = graph.Point(i + 1);
+			(double x1, double y1) = graph.Point(index);
+			(double x2, double y2) = graph.Point(index + 1);
 			context.DrawLine(new Pen(Curve, 2),
 				new Point(x1, y1), new Point(x2, y2));
 			if (_envelope.SustainLoopMode != EnvelopeSustainLoopMode.None
-				&& i >= start && i < end)
+				&& index >= start && index < end)
 				context.DrawLine(new Pen(Sustain, 3),
 					new Point(x1, y1), new Point(x2, y2));
 		}
 
-		for (int i = 0; i < graph.Count; i++)
+		for (int index = 0; index < graph.Count; index++)
 		{
-			(double x, double y) = graph.Point(i);
+			(double x, double y) = graph.Point(index);
 			context.DrawEllipse(Dot, null, new Point(x, y),
 				NodeEnvelopeGraphGeometry.NodeRadius,
 				NodeEnvelopeGraphGeometry.NodeRadius);
-			if (i == _selected)
+			if (index == _selected)
 				DrawSelection(context, x, y);
+		}
+		DrawHoverCoordinates(context, graph, light);
+	}
+
+	private static void DrawValueLabel(DrawingContext context,
+		NodeEnvelopeGraphGeometry graph, string value, double y, IBrush brush)
+	{
+		FormattedText label = Label(value, brush);
+		context.DrawText(label, new Point(
+			Math.Max(0, graph.Left - label.Width - 7),
+			y - label.Height / 2));
+	}
+
+	/// <summary>Noninteractive coordinate cards follow the mouse, not a
+	/// selected node. All overlapping drag-hit dots are reported and
+	/// stacked with a 2-pixel gap, in node order.</summary>
+	private void DrawHoverCoordinates(DrawingContext context,
+		NodeEnvelopeGraphGeometry graph, bool light)
+	{
+		if (_hoverPointer is not Point pointer)
+			return;
+		int[] hits = graph.HitNodes(pointer.X, pointer.Y);
+		if (hits.Length == 0)
+			return;
+		IBrush textBrush = light ? LightLabel : DarkLabel;
+		IBrush fill = light ? LightHoverBackground : DarkHoverBackground;
+		FormattedText[] labels = hits.Select(index =>
+			Label(NodeEnvelopeGraphScale.NodeCoordinates(_previewNodes[index]),
+				textBrush, HoverFontSize)).ToArray();
+		double rowHeight = Math.Max(18, labels.Max(x => x.Height) + 5);
+		double maxWidth = labels.Max(x => x.Width) + 10;
+		double totalHeight = labels.Length * rowHeight
+			+ (labels.Length - 1) * 2;
+		double left = Math.Clamp(pointer.X + 9, 0,
+			Math.Max(0, Bounds.Width - maxWidth));
+		double top = pointer.Y + 14;
+		if (top + totalHeight > Bounds.Height)
+			top = pointer.Y - totalHeight - 9;
+		top = Math.Clamp(top, 0, Math.Max(0, Bounds.Height - totalHeight));
+		for (int i = 0; i < labels.Length; i++)
+		{
+			double y = top + i * (rowHeight + 2);
+			context.FillRectangle(fill,
+				new Rect(left, y, maxWidth, rowHeight), 3);
+			context.DrawText(labels[i], new Point(left + 5,
+				y + (rowHeight - labels[i].Height) / 2));
 		}
 	}
 
@@ -400,6 +529,8 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 		if (graph is null)
 			return;
 		Point pointer = e.GetPosition(this);
+		_hoverPointer = pointer;
+		InvalidateVisual();
 		int selected = graph.HitNode(pointer.X, pointer.Y);
 
 		// The node dot takes precedence over the 5-pixel-wide guide.
@@ -467,6 +598,8 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 	{
 		base.OnPointerMoved(e);
 		Point pointer = e.GetPosition(this);
+		_hoverPointer = pointer;
+		InvalidateVisual();
 		if (!IsDragging || _fixedLayout is null)
 		{
 			UpdateHoverCursor(pointer);
@@ -522,7 +655,9 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 					ExpandTimeDomainToFinalNode();
 					_fixedLayout = new NodeEnvelopeGraphGeometry(
 						_previewNodes, Bounds.Width, Bounds.Height,
-						_envelope.Vmin, _envelope.Vmax, _timeDomainTicks);
+						_envelope.Vmin, _envelope.Vmax, _timeDomainTicks,
+					leftPadding: _fixedLayout.Left,
+					bottomPadding: Bounds.Height - _fixedLayout.Bottom);
 				}
 				InvalidateVisual();
 				DomainChanged?.Invoke();
@@ -560,7 +695,9 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 			return;
 		// Render the final pointer position even on platforms which
 		// coalesce the last move directly into pointer release.
-		UpdateDraggedPosition(e.GetPosition(this));
+		Point pointer = e.GetPosition(this);
+		_hoverPointer = pointer;
+		UpdateDraggedPosition(pointer);
 		int dragged = _dragNode;
 		bool changed = _dragMoved
 			&& (!_previewNodes.SequenceEqual(_envelope.Nodes)
@@ -645,5 +782,7 @@ internal sealed class NodeEnvelopeGraphSurface : Control
 	{
 		base.OnPointerCaptureLost(e);
 		CancelDrag();
+		_hoverPointer = null;
+		InvalidateVisual();
 	}
 }

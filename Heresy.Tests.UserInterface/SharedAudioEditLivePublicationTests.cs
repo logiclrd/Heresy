@@ -83,7 +83,7 @@ public sealed class SharedAudioEditLivePublicationTests
             TextBox nodes = Field<TextBox>(envelopeEditor, "_nodesInput");
             nodes.Text = "not valid";
             uint revision = workspace.Document.AudioRevision;
-            Invoke(envelopeEditor, "Apply");
+            Invoke(envelopeEditor, "SetNodes");
             workspace.Document.AudioRevision.Should().Be(revision);
             factory.Prepared.Should().BeEmpty();
             backend.OpenCount.Should().Be(0);
@@ -93,11 +93,11 @@ public sealed class SharedAudioEditLivePublicationTests
             backend.OpenCount.Should().Be(1);
             factory.Source.Order.ToArray().Should().Equal("Start:91");
 
-            // The node editor's Apply commits and emits the shared-object
+            // The node editor's Set nodes commits and emits the shared-object
             // notification. MainWindow forwards it to the active transport.
             nodes.Text = "0, 0\n0.01, 0.45\n0.11, 0.2\n0.41, 0";
             revision = workspace.Document.AudioRevision;
-            Invoke(envelopeEditor, "Apply");
+            Invoke(envelopeEditor, "SetNodes");
             workspace.Document.AudioRevision.Should().Be(revision + 1);
             await WaitForPreparedCountAsync(factory, 2);
             factory.Prepared.ToArray().Select(x => x.Id)
@@ -111,7 +111,7 @@ public sealed class SharedAudioEditLivePublicationTests
             // Reapplying the unchanged shared Envelope cannot cause
             // another frozen-audio publication or extra audio session.
             revision = workspace.Document.AudioRevision;
-            Invoke(envelopeEditor, "Apply");
+            Invoke(envelopeEditor, "SetNodes");
             workspace.Document.AudioRevision.Should().Be(revision);
 
             // The real Filter editor has a separate stage draft/Apply

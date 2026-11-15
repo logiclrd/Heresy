@@ -106,6 +106,57 @@ public sealed class NodeEnvelopeDocumentEditorTests
 	}
 
 	[Test]
+	public void ObjectChangedNotifiesOnceForAtomicEditsAndNeverForNoOpsOrFailures()
+	{
+		DocumentWorkspace workspace = new();
+		NodeEnvelopeDefinition envelope =
+			EnvelopeDocumentEditor.CreateNodeEnvelope(workspace, "Notify");
+		int notifications = 0;
+		EnvelopeNode[]? observed = null;
+		(double min, double max, int start, int end)? observedDetails = null;
+		envelope.Changed += (_, _) =>
+		{
+			notifications++;
+			observed = envelope.Nodes.ToArray();
+			observedDetails = (envelope.Vmin, envelope.Vmax,
+				envelope.SustainStartIndex, envelope.SustainEndIndex);
+		};
+
+		EnvelopeDocumentEditor.UpdateNodeEnvelopeDisplayRange(
+			workspace, envelope, -2, 3);
+		Assert.That(notifications, Is.EqualTo(1));
+		Assert.That(observedDetails, Is.EqualTo((-2.0, 3.0, 2, 2)));
+		EnvelopeDocumentEditor.UpdateNodeEnvelopeDisplayRange(
+			workspace, envelope, -2, 3);
+		Assert.That(notifications, Is.EqualTo(1));
+
+		EnvelopeNode[] revised =
+		[
+			new(TimeSpan.Zero, 0.25),
+			new(TimeSpan.FromSeconds(0.1), 0.5),
+		];
+		EnvelopeDocumentEditor.UpdateNodeEnvelope(
+			workspace, envelope, revised, 0, 1,
+			EnvelopeSustainLoopMode.PingPong, -5, 5);
+		Assert.That(notifications, Is.EqualTo(2),
+			"combined curve and value-range mutation must publish one object event");
+		Assert.That(observed, Is.EqualTo(revised));
+		Assert.That(observedDetails, Is.EqualTo((-5.0, 5.0, 0, 1)));
+		EnvelopeDocumentEditor.UpdateNodeEnvelope(
+			workspace, envelope, revised.ToArray(), 0, 1,
+			EnvelopeSustainLoopMode.PingPong, -5, 5);
+		Assert.That(notifications, Is.EqualTo(2));
+		Assert.Throws<ArgumentException>(() =>
+			EnvelopeDocumentEditor.UpdateNodeEnvelope(
+				workspace, envelope,
+				[new EnvelopeNode(TimeSpan.Zero, 0),
+				 new EnvelopeNode(TimeSpan.Zero, 1)],
+				0, 1, EnvelopeSustainLoopMode.PingPong));
+		Assert.That(notifications, Is.EqualTo(2),
+			"invalid edits must never notify any live view");
+	}
+
+	[Test]
 	public void ForeignEnvelopeEditsAreRejected()
 	{
 		DocumentWorkspace workspace = new();

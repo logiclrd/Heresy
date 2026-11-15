@@ -35,15 +35,43 @@ Two **thin, 1-pixel green horizontal guide lines** mark the configured
 as the envelope's nodes. They span the graph plotting area, draw above
 sustain shading but behind the vertical guides, node curve and dots, and
 remain within the 5% top/bottom margins even when the node-data range
-lies entirely outside the configured bounds. The lower X baseline is
-the bottom edge of the plotting region, **not** a numeric zero line; it
-must not be mistaken for Vmin or Vmax. The guides recompute on bound
-edits, node changes and viewport resizing; changing just the display
-bounds or viewport does not modify the audio revision. With the fixed
-percentage margin, the guides retain constant *relative* heights when
-only the numerical bounds change, while the mapped node values and
-numeric zero position change accordingly. This feature is visual only;
-the guides do not add pointer hit targets or change dragging behavior.
+lies entirely outside the configured bounds. The former thick gray
+**bottom baseline is removed** and replaced by a thin gray horizontal
+line at the **numeric zero** value *only when visible*. Green bound lines
+are drawn over this gray line, so a Vmin/Vmax value of zero takes
+precedence. The guides recompute on bound edits, node changes and
+viewport resizing; changing just the display bounds or viewport does not
+modify the audio revision. With the fixed percentage margin, the guides
+retain constant *relative* heights when only the numerical bounds
+change, while the mapped node values and numeric zero position change
+accordingly.
+
+Vmin/Vmax each have a label centered vertically on their corresponding
+green line **to the left of the plot**. Both labels use the same
+fixed-point decimal precision: at least three fractional places
+(default `0.000` / `1.000`), adding decimals when necessary to represent
+the smaller nonzero magnitude to three significant figures, so
+`0.0045` / `0.007` appears as `0.00450` / `0.00700`. Neither uses
+scientific notation. The plot reserves the measured label width.
+
+Thin **gray vertical time grid lines** subdivide the visible time domain
+at the largest integral power of ten not exceeding the last node time
+in seconds divided by `sqrt(10)`. For a last time `0.29`, the spacing is
+`0.01`; at `0.32`, `0.1`; at `3.1`, `0.1`; and at `3.2`, `1`.
+A fixed-point label appears beneath every line, with decimal places
+matching the grid interval (e.g. `0.30` at 0.01 spacing versus `0.3`
+at 0.1 spacing). Labels use short staggered lanes when grid density is
+high. The separate vertical guides attached to each **node** use the
+main curve's light-blue color at **40% opacity**, with existing thicker
+sustain-endpoint guides preserved.
+
+When the mouse is inside a node dot's 4-pixel-radius draggable region,
+a compact overlay displays its **actual stored time/value** beneath the
+pointer. The overlay tracks pointer movement and disappears when the
+pointer leaves the hit area or the graph. If several nodes overlap the
+same drag region, one overlay per matched node appears, stacked in node
+order with a **2-pixel gap**. These purely visual overlays do not modify
+hit-testing precedence, pointer capture, or audio revision.
 None mode omits sustain shading and traverses the envelope only once.
 Tab/Shift-Tab cycles node selection, arrow keys nudge time and value,
 and Ctrl-Tab/Ctrl-Shift-Tab exits the graph. The document editor
@@ -86,13 +114,31 @@ retain their independent script editor.
 
 ## Shared-editor synchronization and desktop verification
 
-The standalone Envelope editor and the FM Envelope-node inspector both
-reference one live Envelope object. When a different mounted editor changes
-that curve, clean numeric fields refresh automatically. If the user has
-uncommitted numeric changes, the editor preserves them and warns that the
-shared object changed: applying the stale draft is refused. **Reload shared
-envelope** explicitly discards that draft and picks up the new curve.
-The graphical view stays subscribed to document changes while mounted.
+The standalone Envelope editor, FM Envelope-node inspector and
+modeless Instrument Volume window can share one live Envelope object.
+Each accepted change raises an **object-level Changed event** after the
+complete validated state is installed. Mounted graphical and numeric views
+refresh immediately on that event, independent of unrelated song changes.
+**Last committed edit wins:** if two views both have pending raw node text
+and one accepts its text with **Set nodes**, the other view's unfinished
+text is replaced with the accepted shared state. No conflict dialog or
+Reload button is needed in this single-user workflow.
+
+**Set nodes** sits immediately below the raw node-data textbox and
+modifies *only* the nodes, using the current accepted sustain indices,
+loop mode and display bounds. Raw node text is otherwise staged until
+Set nodes is clicked, even when the editor loses focus or closes. The
+separate Sustain start/end, Loop mode, Vmin and Vmax controls are organized
+in a four-column label/input Grid (maximum width **800 px**) and each
+commits independently on focus loss. Pending valid parameters are also
+committed before Save, switching views, New/Open or exiting the editor;
+invalid fields remain uncommitted with a validation message and can
+block a guarded document transition. Parameter edits never reparse or
+silently apply the raw node-data draft. Display limits change the
+document revision but not the audio revision; curve/sustain/loop edits
+retain their ordinary audio revision and shared playback publication.
+An accepted change in another view replaces all older uncommitted
+parameter or node text there, rather than preserving a stale draft.
 
 Headless CI now simulates mouse drags and navigation, and verifies
 synchronization across mounted standalone/FM editors. Playback tests

@@ -35,6 +35,11 @@ public sealed class NodeEnvelopeDefinition : EnvelopeDefinition
 	private ReadOnlyCollection<EnvelopeNode> _nodes =
 		Array.AsReadOnly<EnvelopeNode>([]);
 
+	/// <summary>Fires once after an accepted atomic authoring update, for
+	/// all live editors of this shared Envelope. Document revision and
+	/// audio publication remain the responsibility of the document editor.</summary>
+	public event EventHandler? Changed;
+
 	public NodeEnvelopeDefinition(ObjectId id, string name) : base(id, name)
 	{
 		// A useful initial volume-like shape, not an imposed value range.
@@ -60,11 +65,8 @@ public sealed class NodeEnvelopeDefinition : EnvelopeDefinition
 	public double Vmax { get; private set; } = 1.0;
 
 	public void SetDisplayRange(double vmin, double vmax)
-	{
-		ValidateDisplayRange(vmin, vmax);
-		Vmin = vmin;
-		Vmax = vmax;
-	}
+		=> UpdateDefinition(_nodes, SustainStartIndex, SustainEndIndex,
+			SustainLoopMode, vmin, vmax);
 
 	public static void ValidateDisplayRange(double vmin, double vmax)
 	{
@@ -79,15 +81,38 @@ public sealed class NodeEnvelopeDefinition : EnvelopeDefinition
 		int sustainStartIndex,
 		int sustainEndIndex,
 		EnvelopeSustainLoopMode sustainLoopMode)
+		=> UpdateDefinition(nodes, sustainStartIndex, sustainEndIndex,
+			sustainLoopMode, Vmin, Vmax);
+
+	/// <summary>Validate and publish all curve/display properties together.
+	/// Synchronous subscribers see one complete accepted state, never the
+	/// intermediate combination of new nodes and old display limits.</summary>
+	public void UpdateDefinition(
+		IEnumerable<EnvelopeNode> nodes,
+		int sustainStartIndex,
+		int sustainEndIndex,
+		EnvelopeSustainLoopMode sustainLoopMode,
+		double vmin, double vmax)
 	{
 		ArgumentNullException.ThrowIfNull(nodes);
 		EnvelopeNode[] candidate = nodes.ToArray();
 		Validate(candidate, sustainStartIndex, sustainEndIndex,
 			sustainLoopMode);
+		ValidateDisplayRange(vmin, vmax);
+		if (_nodes.SequenceEqual(candidate)
+			&& SustainStartIndex == sustainStartIndex
+			&& SustainEndIndex == sustainEndIndex
+			&& SustainLoopMode == sustainLoopMode
+			&& Vmin == vmin && Vmax == vmax)
+			return;
+
 		_nodes = Array.AsReadOnly(candidate);
 		SustainStartIndex = sustainStartIndex;
 		SustainEndIndex = sustainEndIndex;
 		SustainLoopMode = sustainLoopMode;
+		Vmin = vmin;
+		Vmax = vmax;
+		Changed?.Invoke(this, EventArgs.Empty);
 	}
 
 	public static void Validate(

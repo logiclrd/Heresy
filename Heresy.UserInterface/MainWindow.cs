@@ -761,6 +761,8 @@ public sealed class MainWindow : Window
 	private async Task<bool> SaveDocumentAsync()
 	{
 		CommitPendingPatternVolume();
+		if (!TryCommitPendingEnvelopeFields())
+			return false;
 		if (_workspace.FilePath is null)
 			return await SaveDocumentAsAsync();
 
@@ -780,6 +782,8 @@ public sealed class MainWindow : Window
 	private async Task<bool> SaveDocumentAsAsync()
 	{
 		CommitPendingPatternVolume();
+		if (!TryCommitPendingEnvelopeFields())
+			return false;
 		if (!StorageProvider.CanSave)
 		{
 			SetStatus("This platform does not provide a save-file picker.");
@@ -1077,6 +1081,23 @@ public sealed class MainWindow : Window
 			pattern.CommitPendingVolumeOnLeavingEditor();
 	}
 
+	/// <summary>Finish independently edited Envelope parameters before Save
+	/// and unsaved-change decisions, even when a field retains keyboard focus.
+	/// An invalid draft blocks leaving instead of silently being discarded.</summary>
+	private bool TryCommitPendingEnvelopeFields()
+	{
+		bool valid = _mainContent.Content switch
+		{
+			EnvelopeEditorControl editor => editor.TryCommitPendingFields(),
+			FmSynthEditorControl synth => synth.TryCommitPendingEnvelopeFields(),
+			_ => true,
+		};
+		if (!valid)
+			SetStatus("Correct the invalid Envelope parameter before leaving "
+				+ "or saving this editor.");
+		return valid;
+	}
+
 	private bool TryLeaveSynthEditor()
 	{
 		if (_mainContent.Content is not FmSynthEditorControl synth
@@ -1090,7 +1111,7 @@ public sealed class MainWindow : Window
 	private bool TrySetEditorContent(Control editor)
 	{
 		CommitPendingPatternVolume();
-		if (!TryLeaveSynthEditor())
+		if (!TryCommitPendingEnvelopeFields() || !TryLeaveSynthEditor())
 			return false;
 		_mainContent.Content = editor;
 		return true;
@@ -1099,6 +1120,8 @@ public sealed class MainWindow : Window
 	private async Task<bool> ConfirmCanReplaceDocumentAsync()
 	{
 		CommitPendingPatternVolume();
+		if (!TryCommitPendingEnvelopeFields())
+			return false;
 		// Commit in-editor drafts before deciding whether the document
 		// needs saving or is safe to replace.
 		if (!TryLeaveSynthEditor())
@@ -1124,7 +1147,7 @@ public sealed class MainWindow : Window
 	{
 		_ = sender;
 		CommitPendingPatternVolume();
-		if (!TryLeaveSynthEditor())
+		if (!TryCommitPendingEnvelopeFields() || !TryLeaveSynthEditor())
 		{
 			e.Cancel = true;
 			return;

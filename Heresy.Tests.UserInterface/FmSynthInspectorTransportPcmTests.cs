@@ -3542,9 +3542,8 @@ public sealed class FmSynthInspectorTransportPcmTests
                     BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(volumeEditor)!;
             Button apply = ((StackPanel)volumeEditor.Content!)
-                .Children.OfType<StackPanel>()
-                .SelectMany(panel => panel.Children.OfType<Button>())
-                .Single(x => Equals(x.Content, "Apply envelope"));
+                .Children.OfType<Button>()
+                .Single(x => Equals(x.Content, "Set nodes"));
             nodes.Text = "0, 0.5";
             apply.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(
                 Button.ClickEvent));
