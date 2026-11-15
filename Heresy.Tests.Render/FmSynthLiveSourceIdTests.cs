@@ -278,6 +278,67 @@ public sealed class FmSynthLiveSourceIdTests
     }
 
     [Test]
+    public void ShortSampleAssignedFromNoneEofsAtNewLocalAgeWithoutSilencingSibling()
+    {
+        const int start = 128, fade = 4800, shortLength = 48;
+        FilterInstance filter = OnePole();
+        SampleSound shortSample = Sample(FirstId,
+            Enumerable.Repeat(0.80f, shortLength).ToArray());
+        SampleSound sibling = Sample(AliasId,
+            Enumerable.Repeat(0.10f, 16000).ToArray());
+        ManySourceResolver resolver = new((FirstId, shortSample), (AliasId, sibling));
+        FmSynthSound before = FilteredMixSound(ObjectId.None, AliasId, resolver, filter);
+        FmSynthSound after = FilteredMixSound(FirstId, AliasId, resolver, filter);
+        RenderContext context = Mono();
+        SoundState held = before.CreateState();
+        before.Render(context, held, 0, start, new float[start]);
+        PrepareReplacement(before, after, held);
+
+        float[] baked = new float[start + fade + 64];
+        for (int frame = 0; frame < baked.Length; frame++)
+        {
+            int local = frame - start;
+            double t = Math.Clamp((double)local / fade, 0, 1);
+            double w = t * t * (3 - 2 * t);
+            baked[frame] = local >= 0 && local < shortLength
+                ? (float)(0.10 + 0.80 * w) : 0.10f;
+        }
+        FmSynthSound oracle = FilteredReference(filter, baked);
+        float[] expected = new float[baked.Length];
+        oracle.Render(context, oracle.CreateState(), 0, expected.Length, expected);
+        float[] actual = new float[baked.Length - start];
+        long bytes = GC.GetAllocatedBytesForCurrentThread();
+        after.Render(context, held, start, actual.Length, actual);
+        (GC.GetAllocatedBytesForCurrentThread() - bytes).Should().Be(0);
+        for (int frame = 0; frame < actual.Length; frame++)
+            actual[frame].Should().BeApproximately(expected[start + frame], 3e-5f,
+                $"fresh Sample EOF at parent frame {start + shortLength} must preserve sibling and OnePole at {start + frame}");
+    }
+
+    [Test]
+    public void NoteOffBeforeUnassignedSourceOnsetRejectsLateSampleCreation()
+    {
+        const int start = 128;
+        SampleSound incoming = Sample(FirstId,
+            Enumerable.Repeat(0.80f, 16000).ToArray());
+        SampleSound sibling = Sample(AliasId,
+            Enumerable.Repeat(0.10f, 16000).ToArray());
+        ManySourceResolver resolver = new((FirstId, incoming), (AliasId, sibling));
+        FmSynthSound before = MixSound(ObjectId.None, AliasId, resolver);
+        FmSynthSound after = MixSound(FirstId, AliasId, resolver);
+        RenderContext context = Mono();
+        SoundState held = before.CreateState();
+        before.Render(context, held, 0, start, new float[start]);
+
+        held.NoteOffDisposition = NoteOffDisposition.Indefinite;
+        held.NoteOffTime = TimeSpan.FromSeconds((double)start / 48000);
+        before.CanPrepareMultiExpansion(after, held).Should().BeFalse(
+            "a newly assigned Sample cannot begin after this voice entered release");
+        before.RequestMultiExpansionPreparation(after, held).Should().BeFalse();
+        before.TryPrepareRunningState(after, held).Should().BeFalse();
+    }
+
+    [Test]
     public void DifferentSampleSourceIdRequiresWorkerAndCrossfadesFreshOnset()
     {
         SampleSound originalSample = Sample(FirstId,
