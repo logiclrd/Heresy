@@ -1661,7 +1661,7 @@ public sealed class FmSynthInspectorTransportPcmTests
             FilterDocumentEditor.ApplyStage(workspace, definition, 1,
                 oldStage, newStage.Name, newStage.Kind, newStage.DefaultParameters);
             Assert.That(definition.GetStage(1).DefaultParameters
-                .GetParameter("Mode").ChoiceValue,
+                ["Mode"].ChoiceValue,
                 Is.EqualTo(item.InitialMode),
                 "original authoring must really use the chosen source mode");
             FilterParameterDescriptor descriptor =
