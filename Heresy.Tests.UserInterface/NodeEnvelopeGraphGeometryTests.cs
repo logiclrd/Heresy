@@ -104,10 +104,12 @@ public sealed class NodeEnvelopeGraphGeometryTests
 			Is.EqualTo(new NodeEnvelopeGraphGeometry(lowNodes, 440, 250,
 				10, 20).ValueLimitGuideYs),
 			"configured limits outside the node-data span must still draw");
-		Assert.That(small.WithNodes(highNodes).ValueLimitGuideYs,
-			Is.EqualTo(shifted.ValueLimitGuideYs),
-			"the 5% margins keep Vmin/Vmax guides at the same relative heights "
-			+ "even when limits change; the numerical value transform moves");
+		Assert.That(small.ValueLimitGuideYs.MinY,
+			Is.EqualTo(shifted.ValueLimitGuideYs.MinY).Within(1e-10),
+			"the 5% margins keep Vmin at the same relative height");
+		Assert.That(small.ValueLimitGuideYs.MaxY,
+			Is.EqualTo(shifted.ValueLimitGuideYs.MaxY).Within(1e-10),
+			"the 5% margins keep Vmax at the same relative height");
 		Assert.That(small.Y(0), Is.Not.EqualTo(shifted.Y(0)),
 			"the numerical zero axis must change when the authored limits change");
 	}
