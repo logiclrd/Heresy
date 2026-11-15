@@ -13,6 +13,12 @@ namespace Heresy.UserInterface.Views;
 /// node-list editor is temporary until the graphical editor is rebuilt.</summary>
 public sealed class EnvelopeEditorControl : UserControl
 {
+	private readonly NodeEnvelopeEditorControl _editor;
+
+	/// <summary>Commit independent parameter drafts before Save or leaving
+	/// the document view; the raw node textbox remains explicitly staged.</summary>
+	public bool TryCommitPendingFields() => _editor.TryCommitPendingFields();
+
 	public EnvelopeEditorControl(
 		DocumentWorkspace workspace,
 		NodeEnvelopeDefinition envelope,
@@ -41,11 +47,11 @@ public sealed class EnvelopeEditorControl : UserControl
 		header.Children.Add(back);
 		header.Children.Add(title);
 
-		NodeEnvelopeEditorControl editor = new(workspace, envelope, changed);
+		_editor = new NodeEnvelopeEditorControl(workspace, envelope, changed);
 		DockPanel root = new();
 		DockPanel.SetDock(header, Dock.Top);
 		root.Children.Add(header);
-		root.Children.Add(new ScrollViewer { Content = editor });
+		root.Children.Add(new ScrollViewer { Content = _editor });
 		Content = root;
 	}
 }
