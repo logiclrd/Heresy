@@ -56,8 +56,8 @@ public sealed class FilterInstanceEditorControlTests
 				Is.False, "wide horizontal label/override/value strips overflow");
 		}
 		stages.SelectedIndex = 1;
-		Assert.That(Field<Dictionary<string, Control>>(editor, "_editors"),
-			Does.ContainKey("GainDb"),
+		Assert.That(Field<Dictionary<string, Control>>(editor, "_editors").Keys,
+			Does.Contain("GainDb"),
 			"selected stages must retain their normal inspector functionality");
 	}
 
