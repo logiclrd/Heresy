@@ -386,6 +386,67 @@ public sealed class FmSynthInspectorLivePcmTests
         });
     }
 
+    [AvaloniaTest]
+    public void MultiUnchangedTextCommitsAreAudioRevisionAndPublicationNoOps()
+    {
+        DocumentWorkspace workspace = new();
+        FmSynthDefinition synth = FmSynthDocumentEditor.CreateFmSynth(
+            workspace, "C2(e) Multi semantic no-op");
+        int oscillator = FmSynthDocumentEditor.AddOscillatorNode(
+            workspace, synth, FmOscillatorWaveform.Sine, 90, 80, 80);
+        int multi = FmSynthDocumentEditor.AddMultiNode(workspace, synth,
+            300, 80);
+        FmSynthDocumentEditor.ConnectNodes(workspace, synth,
+            oscillator, multi, 0);
+        FmSynthDocumentEditor.SetOutputNode(workspace, synth, multi);
+        int published = 0, changed = 0;
+        FmSynthEditorControl editor = new(workspace, synth,
+            () => { }, _ => changed++,
+            publishSynthEditAsync: () =>
+            {
+                published++;
+                return Task.CompletedTask;
+            });
+        StackPanel inspector = (StackPanel)typeof(FmSynthEditorControl)
+            .GetField("_inspector", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(editor)!;
+        Control Field(string label)
+        {
+            int index = inspector.Children.Select((c, i) => (c, i))
+                .Single(x => x.c is TextBlock text && text.Text == label).i;
+            return inspector.Children[index + 1];
+        }
+        void Enter(TextBox box)
+            => box.RaiseEvent(new KeyEventArgs
+            {
+                RoutedEvent = InputElement.KeyDownEvent,
+                Key = Key.Enter,
+            });
+
+        uint originalAudio = workspace.Document.AudioRevision;
+        uint originalDocument = workspace.Document.DocumentRevision;
+        FmMultiNode original = synth.Graph.Nodes.OfType<FmMultiNode>().Single();
+
+        Enter((TextBox)Field("Detune (total cents)"));
+        Enter((TextBox)Field("Voice Count"));
+        Enter((TextBox)Field("Components"));
+        Enter((TextBox)Field("Cycle Length (samples at C4 / 48 kHz)"));
+        Assert.Multiple(() =>
+        {
+            Assert.That(workspace.Document.AudioRevision, Is.EqualTo(originalAudio),
+                "unchanged Multi text submissions must never consume audio revisions");
+            Assert.That(workspace.Document.DocumentRevision,
+                Is.EqualTo(originalDocument));
+            Assert.That(changed, Is.Zero,
+                "the inspector must not signal a semantic graph mutation");
+            Assert.That(published, Is.Zero,
+                "the live transport must not receive an unchanged Multi candidate");
+            Assert.That(synth.Graph.Nodes.OfType<FmMultiNode>().Single(),
+                Is.SameAs(original),
+                "a no-op must retain the same frozen-authored node object");
+        });
+    }
+
     private sealed class SynthResolver(ObjectId synthId)
         : ISoundResolver, IEnvelopeCurveResolver
     {
