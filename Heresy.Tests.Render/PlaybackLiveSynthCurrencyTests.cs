@@ -55,7 +55,8 @@ public sealed class PlaybackLiveSynthCurrencyTests
     {
         FmSynthSound old = OscillatorOnly();
         FmSynthSound added = MultiOscillator(7);
-        FmSynthSound edited = MultiOscillator(3);
+        FmSynthSound retunedOscillator = MultiOscillator(7, frequencyHz: 312);
+        FmSynthSound edited = MultiOscillator(3, frequencyHz: 312);
 
         static PlaybackSession Make(FmSynthSound original,
             FmSynthSound next, out Registry resolver)
@@ -80,7 +81,14 @@ public sealed class PlaybackLiveSynthCurrencyTests
         PlaybackSession unchanged = Make(old, added, out _);
         Assert.That(test.CountOlderAudioVoices(), Is.EqualTo(2),
             "the old two oscillator notes retain their original generation");
-        test.AdoptLiveSynthParameters(SynthId, added, edited);
+        // C6-C's new third note was observed taking Oscillator edits before
+        // Multi changes refused to reach it. Exercise that full order too.
+        test.AdoptLiveSynthParameters(
+            SynthId, added, retunedOscillator);
+        unchanged.AdoptLiveSynthParameters(
+            SynthId, added, retunedOscillator);
+        Assert.That(test.CountOlderAudioVoices(), Is.EqualTo(2));
+        test.AdoptLiveSynthParameters(SynthId, retunedOscillator, edited);
         Assert.That(test.CountOlderAudioVoices(), Is.EqualTo(2),
             "the fresh Multi note is current even though older siblings exist");
 
@@ -104,9 +112,9 @@ public sealed class PlaybackLiveSynthCurrencyTests
                 minimum: -0.07, maximum: 0.07),
         ], 1), new NoEnvelopes(), enableLiveMultiExpansion: true);
 
-    private static FmSynthSound MultiOscillator(int count)
+    private static FmSynthSound MultiOscillator(int count, double frequencyHz = 390)
         => new(new FmSynthGraph([
-            new FmOscillatorNode(1, FmOscillatorWaveform.Sine, 390,
+            new FmOscillatorNode(1, FmOscillatorWaveform.Sine, frequencyHz,
                 minimum: -0.07, maximum: 0.07),
             new FmMultiNode(2, 1, voiceCount: count, detune: 0,
                 randomizePhase: false, gainCompensation: false),
