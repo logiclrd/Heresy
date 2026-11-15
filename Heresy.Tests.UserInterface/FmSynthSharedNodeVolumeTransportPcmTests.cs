@@ -1239,7 +1239,7 @@ public sealed class FmSynthSharedNodeVolumeTransportPcmTests
             TrackingFactory factory = new(MonoConfiguration(), script.Id);
             ManualBackend backend = new();
             using SongPlaybackTransport transport = new(backend, factory);
-            int channel = initiallyFinite ? 185 : 186;
+            uint channel = initiallyFinite ? 185u : 186u;
             await transport.SendLiveEventAsync(workspace.Document,
                 ChannelTarget.Virtual(channel),
                 [new StartNoteCommand(child.Id)]);
