@@ -305,6 +305,36 @@ Do not reintroduce completed-task checklists here.
   Preserve unsaved drafts, live audio publication and selection where
   the selected stage remains valid.
 
+- [ ] **Add a per-Filter-node `Batch changes` mode to the Synth Filter
+  instance inspector.** Add an initially unchecked **Batch changes** checkbox
+  directly above **Apply overrides**. Remember the checked state independently
+  for each Synth Filter node when navigating away and back, rather than as one
+  global or shared-Filter-definition option; explicitly cover reopen and
+  save/reload expectations for that node-specific editor setting.
+
+  When **unchecked** (the default), a changed Filter parameter input or
+  per-use Override checkbox should commit through the existing validated,
+  copy-on-write update path **when that control loses focus**, instead of
+  requiring Apply. Do not publish an incomplete numeric draft, an invalid
+  cross-field combination or an unchanged value. Preserve the existing
+  inheritance/override semantics, realtime publication policy, undo/revision
+  behavior and protection against stale shared definitions.
+
+  When **checked**, retain the explicit **Apply overrides** batch operation,
+  but **auto-apply a dirty, unapplied draft when its editor is torn down**,
+  including selecting a different Synth node and closing/replacing the Synth
+  editor. Commit against the original node/stage before changing selection,
+  and never silently discard valid pending edits or accidentally apply them
+  to the newly selected node. If validation or concurrency checks prevent
+  a safe commit, show an actionable error and preserve the draft or prevent
+  teardown; do not silently drop data or overwrite concurrent changes.
+  Define how stage switching, which rebuilds the parameter controls, follows
+  the same no-loss rule. Test both modes, each input kind, focus shifts,
+  multiple Filter nodes with different settings, explicit Apply/Reload,
+  stale drafts, same-node reselection, node switching, editor close/reopen
+  and no-op changes. See [filter design](filter-design.md) and
+  [UI workflow](user-interface-workflows.md).
+
 ## Synth editor — live parameter audition
 
 - [x] **Apply *all non-structural Synth property changes* to ongoing preview
