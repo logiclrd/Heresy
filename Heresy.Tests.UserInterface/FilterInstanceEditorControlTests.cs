@@ -19,6 +19,49 @@ namespace Heresy.Tests.UserInterface;
 public sealed class FilterInstanceEditorControlTests
 {
 	[AvaloniaTest]
+	public void NarrowInspectorStacksStageListAboveParameterEditorsWithoutHorizontalScrolling()
+	{
+		FilterDefinition definition = new((ObjectId)48U, "Multi-stage", new[] {
+			new FilterStageDefinition(1, "low", FilterKind.OnePole),
+			new FilterStageDefinition(2, "peak", FilterKind.BiquadPeaking),
+		});
+		FilterInstance use = new(definition);
+		FilterInstanceEditorControl editor = Editor(() => use, x => use = x);
+		DockPanel root = (DockPanel)editor.Content!;
+		ScrollViewer viewport = root.Children.OfType<ScrollViewer>().Single();
+		Assert.That(viewport.HorizontalScrollBarVisibility,
+			Is.EqualTo(Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled),
+			"embedded Filter inspectors must not hide controls to the right");
+		Assert.That(viewport.VerticalScrollBarVisibility,
+			Is.EqualTo(Avalonia.Controls.Primitives.ScrollBarVisibility.Auto));
+		StackPanel layout = (StackPanel)viewport.Content!;
+		ListBox stages = Field<ListBox>(editor, "_stages");
+		StackPanel parameters = Field<StackPanel>(editor, "_parameters");
+		TextBlock selectedStage = Field<TextBlock>(editor, "_stageLabel");
+		Assert.Multiple(() =>
+		{
+			Assert.That(layout.Children.IndexOf(stages), Is.GreaterThanOrEqualTo(0));
+			Assert.That(layout.Children.IndexOf(selectedStage),
+				Is.GreaterThan(layout.Children.IndexOf(stages)));
+			Assert.That(layout.Children.IndexOf(parameters),
+				Is.GreaterThan(layout.Children.IndexOf(selectedStage)));
+			Assert.That(layout.Orientation, Is.EqualTo(Avalonia.Layout.Orientation.Vertical));
+		});
+		foreach (StackPanel group in parameters.Children.OfType<StackPanel>())
+		{
+			Assert.That(group.Children[0], Is.TypeOf<TextBlock>(),
+				"the parameter name must appear above its editable controls");
+			Assert.That(group.Children.OfType<StackPanel>()
+				.Any(row => row.Orientation == Avalonia.Layout.Orientation.Horizontal),
+				Is.False, "wide horizontal label/override/value strips overflow");
+		}
+		stages.SelectedIndex = 1;
+		Assert.That(Field<Dictionary<string, Control>>(editor, "_editors"),
+			Does.ContainKey("GainDb"),
+			"selected stages must retain their normal inspector functionality");
+	}
+
+	[AvaloniaTest]
 	public void InheritedFieldsAreDisabledAndDisplaySharedDefaultsWithUnits()
 	{
 		FilterDefinition definition = new((ObjectId)40U, "Pole");
