@@ -1,6 +1,6 @@
 # PR #12 — C2 inspector-to-live-PCM acceptance matrix
 
-**Status: C2 IN PROGRESS; C2(a) first bounded regression accepted 2026-11-14.** This ledger supplements [the PR closing audit](synth-live-pr12-closing-audit.md); it does not supersede its C1/C3/C4 decisions or authorize completing the overall Synth TODO. Derived from the actual controls in `FmSynthEditorControl`, the committed model in `FmSynthDocumentEditor`, `SongPlaybackTransport`, and existing UI/renderer/session tests. It separates *controls exposed* from *runtime state eligible* and *evidence actually observed*.
+**Status: C2 IN PROGRESS; C2(a) and bounded C2(b) inspector/held-PCM regressions accepted 2026-11-14.** This ledger supplements [the PR closing audit](synth-live-pr12-closing-audit.md); it does not supersede its C1/C3/C4 decisions or authorize completing the overall Synth TODO. Derived from the actual controls in `FmSynthEditorControl`, the committed model in `FmSynthDocumentEditor`, `SongPlaybackTransport`, and existing UI/renderer/session tests. It separates *controls exposed* from *runtime state eligible* and *evidence actually observed*.
 
 ## Evidence vocabulary — avoid claiming a full path from one partial test
 
@@ -15,7 +15,7 @@
 
 ## Real inspector surface inventory and first disposition
 
-The matrix below deliberately records code paths and *partial* existing evidence even where a single cross-layer test is missing. Rows are classified as **OPEN** unless explicitly identified as the bounded C2(a) result.
+The matrix below deliberately records code paths and *partial* existing evidence even where a single cross-layer test is missing. Rows are classified as **OPEN** unless explicitly identified as bounded C2(a)/C2(b) evidence.
 
 | Real inspector surface | Known UI/renderer/session evidence | C2 remaining cross-layer acceptance |
 | --- | --- | --- |
@@ -34,11 +34,11 @@ The matrix below deliberately records code paths and *partial* existing evidence
 | **Filter — per-use stage parameter overrides** | `FilterInstanceEditorControl` embedded under inspector, `FmFilterAuthoringTests`; renderer transactional IIR/FIR/filter-port coverage and physically heard SvfNotch/CombFeedback | **OPEN, high risk** actual per-use control commit→Filter preparation→held PCM for representative distinct stage kinds and multi-stage atomicity |
 | **Filter — Tail (seconds, nonnegative)** | Actual inspector TextBox and `FmSynthDocumentEditor` semantic graph update; renderer authored-tail lifetime regressions | **OPEN** U/P/T/V/A and original released-note tail ownership |
 | **Filter — audio Input and modulating parameter ports** | Connected node/port IDs are graph edges in `FmSynthGraph` | **STRUCTURAL**; numeric parameter edits along *existing* connections remain eligible and covered by separate Filter row |
-| **Multi — Presets** | `AddMultiInspector` selects a named preset and calls `FmMultiNode.WithPreset`; `FmMultiNodeTests` tests authored transformations; renderer has worker prepared Multi onset/version coverage | **OPEN, high priority** real preset UI commit→P/T/V/A, including preset changing several nonstructural fields atomically |
+| **Multi — Presets** | **C2(b) U+P+V+A and real detached worker**, `FmSynthInspectorLivePcmTests.MultiPresetAndCycleInspectorEditsPrepareHeldOnsetsAndMatchAuthoredPcm`: real Unison action switches Randomize Phase false→true on held oscillator Multi, compiles a new definition, worker prepares replacement onset, same voice accepts, PCM matches independent authored reference and differs audibly from unedited session; preset selection resets to its placeholder | **PARTIAL**: actual production transport handoff T remains open; another preset changing *multiple* distinct fields (e.g. spread voice count/distribution/components/gain) is not yet directly exercised |
 | **Multi — Distribution, Detune, Voice Count** | Inspector ComboBox/text and `FmMultiNode.With...`; renderer C3 and C4(a)/(c)/(g) supports eligible Multi updates and prepared child expansions | **OPEN, high priority** each UI control U/P/T/V/A, worker completion without PCM construction or stale current voice |
 | **Multi — Components (Harmonic and Chord)** | TextBox conditionally edits `HarmonicComponents` or `ChordComponents` depending on Distribution; renderer has ratio/component coverage | **OPEN** U/P/T/V/A for both distributions; do not infer one from the other |
 | **Multi — Randomize Phase, Gain Compensation** | Independent toggles; renderer has compatible onset/rephase and gain migration regressions | **OPEN** U/P/T/V/A, with no unintentional Note restart |
-| **Multi — Override cycle; Cycle Length (samples at C4 / 48 kHz)** | Two distinct controls; `CycleLength` toggles null/non-null; authored cycle affects onset policy and can need worker preparation | **OPEN, high priority** both U/P/T/V/A, including toggling override and changing numeric length in a held note |
+| **Multi — Override cycle; Cycle Length (samples at C4 / 48 kHz)** | **C2(b) U+P+V+A and real detached worker**: real checkbox enables default derived cycle override, real Cycle Length TextBox Enter commits **1120**, and checkbox disables override back to null. Each UI action publishes once; actual held voice adopts after off-PCM preparation, with frame-for-frame PCM equality against separately authored Multi revisions | **PARTIAL**: production transport queue/worker handoff T remains open; scripted/rapid overlapping inspector edits remain separate C2/C4 evidence |
 | **Multi — input** | Changes the input node edge | **STRUCTURAL** |
 | **Operator — Operation (Add/Multiply)** | `AddOperatorInspector` ComboBox and established renderer/physical Add/Multiply smoothing | **OPEN** control U/P/T/V/A for Add/Multiply in an audible compound graph |
 | **Operator — Operation (Minimum/Maximum)** | **C2(a) U+P+V+A**: `FmSynthInspectorLivePcmTests.OperatorMinimumMaximumInspectorCommitPublishesAndUpdatesHeldPcm` exercises the real ComboBox twice, checks one semantic revision/callback per change and unchanged revision on reselect, binds its callback to `PlaybackSession.AdoptLiveSynthParameters`, verifies the *existing* physical voice's compiled Sound/older count and all 202 PCM frames against 100-ms smoothsteps. Release CI at [#43664807533](https://github.com/logiclrd/Heresy/actions/runs/43664807533). | **PARTIAL**: the callback is hooked directly to an in-process PlaybackSession, **not** the real background `SongPlaybackTransport` worker (T still OPEN); a mixed/filtered operand graph also remains to be tested before all Operator modes are signed off |
@@ -53,11 +53,76 @@ The first new test is intentionally more demanding than the existing waveform-in
 
 This isolates a previously incomplete **UI→publication request→session/PCM** proof. It is not a genuine red-first bug fix: the existing behavior passed its first compiled test run. It is **not** a C6 device listening result and does **not** cover background transport queue worker scheduling. Only this named row is partially accepted; C2 remains unchecked.
 
+## C2(b) — Multi preset and cycle override through actual inspector, detached worker and PCM (2026-11-14)
+
+**Bounded automated acceptance.** The new headless
+`FmSynthInspectorLivePcmTests.MultiPresetAndCycleInspectorEditsPrepareHeldOnsetsAndMatchAuthoredPcm`
+uses the same actual `FmSynthEditorControl` as C2(a), but unlike the
+stateless Operator test explicitly drives the **real
+`FirPreparationScheduler`**. Three independently started
+`PlaybackSession` histories use the same real Synth graph,
+sample rate (1,000 Hz) and one sustained physical oscillator-backed
+Spread(2) Multi: the **UI-edited actual**, a **separately authored
+oracle**, and a **never-edited control**. The oracle's four frozen
+`FmMultiNode` revisions are constructed from the specified expected
+parameters, *not* copied from the UI's committed object.
+
+The Multi begins with **Detune 15 cents, 2 voices, randomized phase
+off, gain compensation on**, and no cycle override. At frame 12 the
+actual **Unison** preset changes randomized onset to on; the
+preset action returns its ComboBox to the `Presets` placeholder.
+After a 140-frame comparison window, the actual **Override cycle**
+checkbox is enabled with the UI's neutral-C4 derived cycle;
+after another 140 frames, the actual numeric **Cycle Length**
+TextBox commits **1120** by Enter; after another 140 frames, the
+checkbox is disabled, returning authored `CycleLength` to null.
+Every selected edit must change `AudioRevision` and
+`DocumentRevision` exactly once, call the live Synth publication
+callback once, and retain the **same physical `PlaybackVoice`**.
+While a requested prepared onset is pending, older-audio count stays
+zero rather than treating it as a definitively missed revision.
+
+For each of four revisions, the real session and independent oracle
+queue detached Multi onset preparation and the test explicitly waits
+for **two successful worker completions** (eight total, one per
+session and edited revision). Only after PCM-boundary
+`AdoptPreparedFirControls` can either existing voice publish its new
+frozen Synth. The test verifies the identities and no older-audio
+marks, then checks **140 PCM frames per revision**, sample by sample
+at `2e-5` tolerance against the independently authored reference.
+A strengthened test also compares the first changed held-note
+signal against the unedited session and requires an audible,
+non-vacuous **maximum absolute difference over 0.05**. No NoteOn,
+voice rebuilding or synthetic historical rewind is used for any of
+the four changes.
+
+The original test commit `bef25a6` failed CI at a **test-only
+namespace import**, and `00c0bc8` failed at a **long/int test
+variable type**. These **did not run** the C2(b) assertions and are
+not evidence of a renderer defect. Corrected `6285e97` passed
+the C2(b) test and the full test suite; `a6a96e8` strengthened
+the audible-difference proof. Production DSP/UI source files were
+not changed for this slice.
+
+**Evidence classifications: U + P + V + A, including real detached
+Multi preparation and PCM-boundary adoption.** The inspector's
+callback is a test-controlled, in-process publication to the
+real `PlaybackSession`; it does **not** exercise
+`SongPlaybackTransport.PublishSynthEditAsync`'s own ordered
+background compilation worker (T is still open). This named
+**Unison** preset changes the phase policy only because the other
+Unison settings already match; it does **not** prove every
+multi-field preset's atomic UI behavior. Remaining distribution,
+detune, components, voice count, randomize/gain toggles and
+actual background-transport T are separate C2 matrix entries.
+
+**C2 remains OPEN**; this slice does not change the C1/C3/C4
+checkmarks or C5/C6/C7 and final all-properties TODO.
+
 ## Next bounded steps (proposed, not preapproved scope expansions)
 
-1. **C2(b): real Multi inspector controls** — Start with **Preset + Override cycle/Cycle Length**, because these can alter multiple prepared child onset/rate controls together, and require a live voice's *actual* PCM/worker result rather than a changed graph description. Reuse the test's real UI callback/PCM harness; add a worker/transport ordering probe where needed.
-2. **C2(c): shared Filter and Script Envelope pipeline** — exercise real shared edit notification with dependency-order publication and actual held PCM; distinguish equivalent stage plans from structural stage changes.
-3. **C2(d): Source selector/frequency/modes and oscillator family** — bind already proven C4/C3 renderer histories to the real inspector and transport paths, including an intentionally retained unrelated Instrument candidate.
-4. **C2(e): remaining Multi/Filter/Operator/Constant controls and structural/presentational no-op rules** — use this matrix to record each actual control's disposition and exact proof before C2 closes. Keep C5/C6 measurements and C7 merge authorization separate.
+1. **C2(c): shared Filter and Script Envelope pipeline** — exercise real shared edit notification with dependency-order publication and actual held PCM; distinguish equivalent stage plans from structural stage changes.
+2. **C2(d): Source selector/frequency/modes and oscillator family** — bind already proven C4/C3 renderer histories to the real inspector and transport paths, including an intentionally retained unrelated Instrument candidate.
+3. **C2(e): remaining Multi/Filter/Operator/Constant controls and structural/presentational no-op rules** — use this matrix to record each actual control's disposition and exact proof before C2 closes. Keep C5/C6 measurements and C7 merge authorization separate.
 
 **Gate status:** C1, C3 and C4 are complete; **C2 remains OPEN**, as do C5/C6/C7 and the overarching all-properties Synth TODO. PR #12 remains draft/unmerged.
