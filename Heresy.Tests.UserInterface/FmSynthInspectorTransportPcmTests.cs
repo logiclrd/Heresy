@@ -1297,8 +1297,7 @@ public sealed class FmSynthInspectorTransportPcmTests
             float[] actual = backend.Render(count);
             float[] reference = new float[count], original = new float[count];
             oracle.Render(frame, count, reference);
-            if (audibleDifference)
-                unchanged.Render(frame, count, original);
+            unchanged.Render(frame, count, original);
             for (int j = 0; j < count; j++)
                 Assert.That(actual[j], Is.EqualTo(reference[j])
                     .Within(6e-5f), stage + " held PCM at " + (frame + j));
@@ -1668,11 +1667,12 @@ public sealed class FmSynthInspectorTransportPcmTests
                 ? frozen.Graph.Nodes.OfType<FmConstantNode>()
                     .SingleOrDefault(n => n.Id == 1)
                 : null;
+            FmFilterNode? filter = sourceId == editedSynthId
+                ? frozen.Graph.Nodes.OfType<FmFilterNode>().SingleOrDefault()
+                : null;
             double? q = null;
             if (sourceId == editedSynthId)
             {
-                FmFilterNode? filter = frozen.Graph.Nodes
-                    .OfType<FmFilterNode>().SingleOrDefault();
                 if (filter?.Configuration?.GetOverrides(1)
                     .TryGetValue("Q", out FilterParameterValue? value) == true)
                     q = value.NumericValue;
