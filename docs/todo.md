@@ -305,18 +305,6 @@ Do not reintroduce completed-task checklists here.
   Preserve unsaved drafts, live audio publication and selection where
   the selected stage remains valid.
 
-- [ ] **Place Synth Filter stage-edit controls below the Configured stages
-  list, not in a horizontally off-screen strip.** The Filter node's
-  `Configured stages` list currently sits to the left of the stage
-  property editor within a non-resizable, right-docked vertical panel.
-  The property controls can fall outside the visible width and require
-  unobvious horizontal scrolling to discover. Reflow the stage-editor
-  controls *under* the list within the available inspector width, with
-  clearly visible labels/inputs and ordinary vertical scrolling as
-  needed. Do not depend on horizontal scrolling to find the controls;
-  check small/narrow editor widths, long stage lists, stage selection,
-  focus/keyboard navigation, and every supported stage kind.
-
 ## Synth editor — live parameter audition
 
 - [x] **Apply *all non-structural Synth property changes* to ongoing preview
