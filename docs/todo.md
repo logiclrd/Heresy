@@ -153,21 +153,6 @@ Do not reintroduce completed-task checklists here.
   type; check both complex objects and objects referenced elsewhere.
   See [UI workflow](user-interface-workflows.md).
 
-## Envelope editor — graph affordances
-
-- [ ] **Clamp envelope node-value drags to Vmin/Vmax unless Ctrl is held.**
-  During node dragging, restrict the value to the configured inclusive
-  limits by default; holding **Ctrl** permits values outside them. Ctrl
-  must be handled **continuously during an active drag**: when pressed,
-  immediately move to the unclamped value under the current pointer,
-  including outside the limits; when released, immediately snap an
-  out-of-range node to the corresponding boundary, even if the pointer
-  has not moved. Resume the appropriate mode as the pointer moves,
-  preserving drag/capture, undo grouping, pointer-to-value mapping
-  and unaffected time-axis behaviour. See
-  [interactive envelope graph](envelope-graph.md) and
-  [node envelope design](node-envelope-design.md).
-
 ## Desktop UI — keyboard shortcuts
 
 - [ ] **Support F2 as a keyboard shortcut for Rename wherever appropriate.**
