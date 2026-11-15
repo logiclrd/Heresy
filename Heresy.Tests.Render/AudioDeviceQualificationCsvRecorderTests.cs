@@ -51,7 +51,7 @@ public sealed class AudioDeviceQualificationCsvRecorderTests
                 second.SampleNow();
 
             string[] rows = File.ReadAllLines(path);
-            Assert.That(rows.Length, Is.EqualTo(7),
+            Assert.That(rows.Length, Is.EqualTo(8),
                 "one header, two first-session samples and distinct start/stop rows per session");
             string[] names = rows[0].Split(',');
             Assert.That(names.Distinct().Count(), Is.EqualTo(names.Length));
