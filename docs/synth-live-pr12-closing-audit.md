@@ -67,12 +67,12 @@
 
 ## Finite proposed closing work, priority-ordered
 
-Do not turn this into arbitrary “slice 61, 62, ...” development. Each item begins with a reproducible gap probe, a classified decision, or a bounded stress/acceptance case. **Status at audit: all closure items below open** (regardless of earlier individual-feature tests).
+Do not turn this into arbitrary “slice 61, 62, ...” development. Each item begins with a reproducible gap probe, a classified decision, or a bounded stress/acceptance case. **Status at initial audit: all closure items below open; current checked items incorporate subsequent acceptance evidence** (regardless of earlier individual-feature tests).
 
 - [x] **C1 — Adopt/retain/refuse policy contract (small, prerequisite; decision record above).** Record agreed deferrals: cross-family/unrelated Instrument SourceId replacements and Pattern/Sequence Source support; runtime-topology Filter stage changes; structural graph connections; no fake continuity after a missed revision. Decide remaining boundary cases **individually**, especially SourceId+base-frequency, `None` ↔ assigned, simultaneous changes to a referenced nested Synth, active Note Off, and reassignments during a fade. For each, require an explicit rationale, new-note behavior, old-generation status, and atomicity; if a nonstructural case can reasonably be supported without new processor topology, treat it as a functionality gap rather than assuming refusal is acceptable.
 - [ ] **C2 — Inspector-to-PCM property matrix (medium).** Build a compact auditable matrix across all actual inspector fields and the exposed shared Filter/Envelope editors, with at least one whole-path UI commit/revision/publication test per family and a PCM invariant proving the selected held voice actually adopted the edit. Include presets/cycle, multiple Filter stage kinds, Script Envelope, and Operator Minimum/Maximum; distinguish “UI publishes” from “held voice adopts.” Mark each cell *verified, intentionally retained, or red-first failing* with exact test and device observations.
 - [x] **C3 — Compound/nested migration probes (likely highest functional risk).** Use four focused repeatable fixtures: (a) Oscillator waveform/range and Node/Script Envelope edits **inside** a sounding Multi with a Filter or Source sibling; (b) SourceId change **inside** Multi and independently within a referenced child Synth, including held siblings; (c) simultaneous upstream Source/Filter controls and downstream Operator changes through a mixed multi-stage Filter; (d) Filter with connected FM cutoff plus an unconnected coefficient or prepared FIR change during parent Multi output smoothing. Demand no state replay, PCM allocation, missing audible transition, or partial-graph commit. Implement only demonstrated violations; preserve existing invariants. **Disposition:** C3's named deterministic fixtures and compound migration contracts are automated-verified as of 2026-11-14; physical acceptance remains C6 and active interrupted/releasing behavior remains C4.
-- [ ] **C4 — Interruption and release/EOF closure (medium/high).** Exercise edit-before-fade-end, latest-wins preparation cancellation, simultaneous multiple held/latched notes, Note Off during the Source fade, active Node Envelope releases, short Sample EOF plus Filter tail, NNA-displaced and scoped virtual notes. If a candidate must stay old, it must keep sounding correctly until retirement and show the correct older-audio status. Include event order and nested child Source notes; do not invent a new release clock.
+- [x] **C4 — Interruption and release/EOF closure (medium/high).** Exercise edit-before-fade-end, latest-wins preparation cancellation, simultaneous multiple held/latched notes, Note Off during the Source fade, active Node Envelope releases, short Sample EOF plus Filter tail, NNA-displaced and scoped virtual notes. If a candidate must stay old, it must keep sounding correctly until retirement and show the correct older-audio status. Include event order and nested child Source notes; do not invent a new release clock.
 - [ ] **C5 — Realtime deadline/stress qualification (medium, separate from feature completeness).** Sustained live audition on real hardware with worker queue saturation and Multi voice-count excursions (including 3→17→3) while monitoring underruns, callback duration and recovery. Compare fresh vs already-running notes; once CPU overload causes a retained oversized constituent graph to keep processing silently, document or fix the actual retention/reclamation cause—do not certify realtime simply from zero managed allocations or median offline renderer speed. Keep offline/export semantics unchanged.
 - [ ] **C6 — Physical listening and editor acceptance matrix (medium).** Short Linux and Windows (where available) sessions covering every node family, representative compound fixture, two latched notes with distinct generations, rapid changes, Note Off, deliberate incompatible SourceId and structural edits, and audible Filter tails. Record tested graph, change, expected and observed result. Confirm no erroneous `Playback uses older audio` on fully compatible notes. The user's newest passed three-stage `SvfNotch` + `CombFeedback` audition is positive evidence for Filter coefficient editing, but **not proof** that inserting a third Filter stage migrated the old graph generation.
 - [ ] **C7 — Final sign-off / bounded merge (small).** Update this matrix with observed disposition for every row, attach test names and device results, confirm full project CI/Release/ARM64 and parity, check no unmanaged UI field or undocumented arbitrary whitelist remains, and only then mark the main [all-property TODO](todo.md) complete and make PR #12 merge-ready **with the user's approval**. Document deferred Instrument Source replacement and future Pattern/Sequence integration as independent follow-ups.
@@ -1604,6 +1604,78 @@ C5 actual callback/overload stress, C6 device listening
 and C7 final signoff are separate and remain open. Leave
 the overarching all-properties TODO unchecked and PR #12
 draft/unmerged without explicit user approval.
+
+## C4 closing decision — bounded interruption and release/EOF acceptance (2026-11-14)
+
+**C4 IS COMPLETE for the agreed bounded automated scope.**
+This is a cross-slice **evidence audit**, not a new DSP algorithm,
+a new physical audition, or a claim of exhaustive support for every
+possible graph × revision × event order. The initial checklist C4
+was to exercise: editing before a fade ends, latest-wins
+preparation/cancellation, multiple held/latched voices, Note Off
+during Source fades, releasing Node Envelopes, short Sample EOF
+with a Filter tail, NNA-displaced and scoped virtual notes,
+nested child Source event order, correct original lifetimes,
+and truthful per-voice older-audio currency. All those named
+contracts now have deterministic regression evidence across
+C4(a)–(n), without identifying a new, independent concrete gap
+during this closing pass.
+
+| Original C4 obligation | Accepted evidence | Result / exact invariant |
+| --- | --- | --- |
+| Edit before 100-ms fade finishes, supersede prepared or pending onset | **C4(a)** `FmSynthMultiTests.SupersedingPreparedRephaseDuringActiveMultiOnsetFadePublishesOnlyLatest`; **C4(h)** `FmSynthNnaVirtualLifecycleTests.RepeatedSampleSourceEditsDuringLiveFadeDeferAndAdoptOnlyLatestAfterCompletion`; **C4(l)** `SilenceTransitionSupersessionDefersOnlyLatestWithoutStaleCurrency`; **C4(m)** `DeferredSampleAndFrequencyModeRevisionKeepsBothPitchHistoriesBeforeOnePole` | The existing audible transition runs to its original deadline. Only the latest future Source/Multi state is prepared or adopted, with no obsolete intermediate audio or premature older-status warning |
+| Note Off during active Source or Multi fade and original release clocks | **C4(b)** `NoteOffDuringSampleReplacementKeepsBothReleaseContributionsAndFilterTail`; **C4(c)** `NoteOffDuringPreparedMultiOnsetFadePreservesBothOnePoleHistoriesAndRelease`; **C4(i)** `NoteOffDuringDeferredSampleEditRetainsOriginalReleaseAndMarksOldImmediately`; **C4(l)** `NoteOffDuringDeferredSilenceTransitionCancelsOnsetAndPreservesRelease` | Original Sustain/Note Off and outgoing/fading histories remain audible, repeated Off does not restart them, and deferred *new Sample onsets* become definitely missed at Note Off rather than reappearing later |
+| Short Sample EOF and actual Filter-tail ownership | **C4(b)** Source fade and short EOF; **C4(i)** `DeferredSampleEditCannotRestartExpiredIncomingSampleFromFilterTail` and `DeferredReplacementMayReviveFinishedSampleWhileSiblingKeepsNoteActive`; **C4(k)** `ShortSampleAssignedFromNoneEofsAtNewLocalAgeWithoutSilencingSibling` and `RemovingOnlySampleBoundsNaturalNoteEndAndPreservesOnePoleTail` | An expired sole Source cannot resurrect a retired note. An expired Source branch with an independently sounding sibling may be safely replaced. Source-local fades, EOF and authored Filter tails end at their own deadlines |
+| Several held/latched voices, scoped virtual channels and NNA-displaced predecessors | **C4(d)** `PhysicalScopedAndNnaVoicesRetainIndependentLiveRevisionCurrency`, `PendingSampleRevisionsAcrossScopedAndDisplacedVoicesHonorLatestOnly`; **C4(e)** `ReleasingScopedNnaAndPhysicalVoicesRetainIndependentCurrencyAndHostTails` (`Off` and `Fade`) | Independent voice state, old-generation mark, release/cut and scope cancellation; a forked *host* Filter tail is not falsely counted as a resurrected older note |
+| Referenced child Synth publication, scoped ancestor release, in-flight/ready workers and cancellation | **C4(f)** `ScopedNestedSynthReleasesKeepChildRevisionsAndOriginalOwnerClocks`; **C4(g)** `InFlightNestedMultiWorkersCannotResurrectCancelledScopedNnaVoices` (in-flight and ready-unadopted variants) | Child-before-parent revision order, original nested release clocks and parent Filter histories; stale worker results cannot revive cancelled NNA/scoped voices or overwrite a later incompatible generation |
+| Sample SourceId with independent pitch histories and unassigned selection | **C4(j)** `ChangedSampleAndFrequencyBasisCrossfadeAtIndependentReadheadsBeforeOnePole` (four frequency/mode cases); **C4(k)** fundamental `None↔Sample` PCM/EOF/tail cases; **C4(l)** same-Sample re-onset; **C4(m)** combined SourceId/frequency/mode deferral (four variants) | Distinct old and new forward-integrated playheads and frozen pitch settings; silence onset/removal without fabricated Sample, correct same-asset re-onset and shared OnePole continuity |
+| Audible Node Envelope edit while release is active, whole-graph refusal and sticky currency | **C4(n)** `ReleasingAudibleNodeEnvelopeEditRefusesWholeGraphAndRetainsStickyCurrency` (5-ms and 85-ms replacement releases) | Reject changed audible frozen release atomically, including simultaneous Constant/Filter changes; preserve original PCM, Note Off frame and tail, retain older currency across later compatible adoption, clear exactly on true old-voice retirement |
+
+**Last independent implementation/test evidence:** [C4(n) CI
+#43662393967](https://github.com/logiclrd/Heresy/actions/runs/43662393967)
+and [its exact audit-HEAD CI
+#43662637451](https://github.com/logiclrd/Heresy/actions/runs/43662637451)
+both **SUCCESS** with **3,763/3,763 tests**, full
+Release/native-desktop/Windows-apphost/release-bundle smoke and
+Linux ARM64 shared-codec validation. C4 was accepted after
+matching the original finite list to the 14 completed slices;
+**no extra DSP/test change was justified by this review**.
+The present C4-checkbox-and-audit HEAD requires its own
+independent CI verification, recorded separately.
+
+**Why no further C4 slice:** Earlier section-level "C4 remains
+OPEN" statements described the historical gap *at those
+intermediate commits*. C4(e) now resolves C4(d)'s released NNA
+and host-filter tails; C4(f)/(g) resolve nested ancestry,
+already-releasing scope and worker races; C4(h)–(m) resolve
+interrupted and combined Source replacements, short Sample EOF
+and silence transitions; C4(n) resolves the previously named
+changed audible release-Envelope refusal. The closing audit
+did not uncover another **distinct, reproducible** nested
+Source/Filter/NNA bug or obligation not already covered by
+one of those cases. Arbitrary deeper nested combinations
+cannot be treated as a finite completion prerequisite without
+new failure evidence.
+
+**Strict boundary:** The C4 checkbox does **not** imply
+all nonstructural inspector properties have been audited,
+that every possible Script/Instrument/Filter combination was
+physically heard, or that saturated worker queues and real
+callback deadlines are qualified. C2 owns the per-field
+inspector→publication→PCM matrix, including Script Envelope,
+equivalent-shape Filter definition selection, Operator Minimum/
+Maximum and real inspector binding; C5 owns actual hardware
+deadlines, worker saturation and the 3→17→3 Multi overload
+recovery; C6 owns physical Linux/Windows listening and status
+acceptance; C7 owns final signoff, overall TODO and any
+merge-ready decision. The mutually agreed C1 deferrals
+(unrelated/cross-family Instrument substitution and future
+Pattern/Sequence Source types) remain explicitly deferred,
+not falsely verified as compatible live adoption.
+**C1, C3 and now C4 are checked; C2, C5, C6, C7 and the
+overarching all-properties TODO remain unchecked.**
+PR #12 remains **open, draft, unmerged** until explicit user
+authorization.
 
 ### Adjacent UI issues deliberately outside PR #12 closure
 
