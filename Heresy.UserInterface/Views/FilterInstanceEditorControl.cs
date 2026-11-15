@@ -24,10 +24,10 @@ public sealed class FilterInstanceEditorControl : UserControl
 {
 	private readonly FilterInstanceEditSession _session;
 	private readonly Action<string> _changed;
-	private readonly ListBox _stages = new() { MinWidth = 230, MinHeight = 170 };
+	private readonly ListBox _stages = new() { MinHeight = 170 };
 	private readonly StackPanel _parameters = new() { Spacing = 8 };
 	private readonly TextBlock _message = new() { TextWrapping = TextWrapping.Wrap };
-	private readonly TextBlock _stageLabel = new() { FontWeight = FontWeight.SemiBold };
+	private readonly TextBlock _stageLabel = new() { FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap };
 	private readonly Dictionary<string, CheckBox> _overrideToggles =
 		new(StringComparer.OrdinalIgnoreCase);
 	private readonly Dictionary<string, Control> _editors =
@@ -51,36 +51,36 @@ public sealed class FilterInstanceEditorControl : UserControl
 
 	private Control BuildView()
 	{
-		StackPanel left = new()
+		// This editor is also embedded in the Synth's fixed-width inspector.
+		// Never put the stage list and its parameters into side-by-side columns:
+		// the second column would be unreachable without horizontal scrolling.
+		StackPanel body = new()
 		{
-			Spacing = 8, Margin = new Thickness(12),
+			Orientation = Orientation.Vertical,
+			Spacing = 8,
+			Margin = new Thickness(12),
 		};
-		left.Children.Add(new TextBlock
+		body.Children.Add(new TextBlock
 		{
 			Text = "Configured stages (serial order)",
 			FontWeight = FontWeight.SemiBold,
 		});
-		left.Children.Add(_stages);
-		left.Children.Add(new TextBlock
+		body.Children.Add(_stages);
+		body.Children.Add(new TextBlock
 		{
 			Text = "The shared Filter defines stage names, types and defaults. "
 				+ "Overrides here affect only this use.",
 			TextWrapping = TextWrapping.Wrap,
 		});
-
-		StackPanel right = new()
-		{
-			Spacing = 8, Margin = new Thickness(12),
-		};
-		right.Children.Add(_stageLabel);
-		right.Children.Add(new TextBlock
+		body.Children.Add(_stageLabel);
+		body.Children.Add(new TextBlock
 		{
 			Text = "Check Override to customize this use; uncheck to inherit the "
 				+ "definition's current default. Structural options do not "
 				+ "produce audio-rate FM modulation ports.",
 			TextWrapping = TextWrapping.Wrap,
 		});
-		right.Children.Add(_parameters);
+		body.Children.Add(_parameters);
 
 		Button apply = new() { Content = "Apply overrides" };
 		apply.Click += (_, _) => ApplyDraft();
@@ -88,25 +88,17 @@ public sealed class FilterInstanceEditorControl : UserControl
 		reload.Click += (_, _) => Reload();
 		StackPanel actions = new()
 		{
-			Orientation = Orientation.Horizontal, Spacing = 8,
+			Orientation = Orientation.Vertical,
+			Spacing = 8,
 		};
 		actions.Children.Add(apply);
 		actions.Children.Add(reload);
-		right.Children.Add(actions);
-
-		Grid columns = new()
-		{
-			ColumnDefinitions = new ColumnDefinitions("Auto,*"),
-		};
-		Grid.SetColumn(left, 0);
-		Grid.SetColumn(right, 1);
-		columns.Children.Add(left);
-		columns.Children.Add(right);
+		body.Children.Add(actions);
 
 		ScrollViewer content = new()
 		{
-			Content = columns,
-			HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+			Content = body,
+			HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
 			VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
 		};
 		DockPanel root = new();
@@ -260,15 +252,16 @@ public sealed class FilterInstanceEditorControl : UserControl
 				_loadedValues.Add(descriptor.Name, Format(value));
 				_loadedOverrideFlags.Add(descriptor.Name, overridden);
 
-				StackPanel row = new()
+				// Names, overrides and values stack even at narrow host widths.
+				// The inspector's only overflow direction is vertical.
+				StackPanel group = new()
 				{
-					Orientation = Orientation.Horizontal, Spacing = 8,
+					Orientation = Orientation.Vertical,
+					Spacing = 3,
 				};
-				row.Children.Add(title);
-				row.Children.Add(toggle);
-				row.Children.Add(editor);
-				StackPanel group = new() { Spacing = 3 };
-				group.Children.Add(row);
+				group.Children.Add(title);
+				group.Children.Add(toggle);
+				group.Children.Add(editor);
 				group.Children.Add(new TextBlock
 				{
 					Text = $"Inherited default: {defaultText}"
