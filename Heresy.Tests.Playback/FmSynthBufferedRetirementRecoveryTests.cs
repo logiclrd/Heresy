@@ -270,12 +270,16 @@ public sealed class FmSynthBufferedRetirementRecoveryTests
     }
 
     private sealed class GatedRenderSource(IAudioOutputSource raw) :
-        IAudioOutputSource, IFirPreparationAudioSource, IDisposable
+        ILiveAudioOutputSource, IFirPreparationAudioSource, IDisposable
     {
         private readonly ManualResetEventSlim _blocked = new(false);
         private readonly ManualResetEventSlim _release = new(false);
         private int _gateNext;
         public AudioOutputFormat Format => raw.Format;
+
+        public void EnqueueLiveEvent(ChannelTarget target,
+            System.Collections.Generic.IReadOnlyList<NoteCommand> commands) =>
+            ((ILiveAudioOutputSource)raw).EnqueueLiveEvent(target, commands);
 
         public void GateNextRender()
         {
