@@ -1108,6 +1108,195 @@ public sealed class FmSynthNnaVirtualLifecycleTests
             "the independent newest-generation note continues playing");
     }
 
+    [TestCase(false, false)]
+    [TestCase(true, false)]
+    [TestCase(false, true)]
+    [TestCase(true, true)]
+    public void DeferredSampleAndFrequencyModeRevisionKeepsBothPitchHistoriesBeforeOnePole(
+        bool latestConstant, bool latestExponential)
+    {
+        // C4(m): the same held note first crossfades A→B, then receives
+        // C followed by D *during* that 100-ms transition. D changes
+        // SourceId, FrequencyHz and the Constant/exponential rate modes
+        // simultaneously. Three independent Source-only render histories
+        // and one uninterrupted OnePole are the PCM oracle.
+        const int firstOnset = 10, firstFadeEnd = 110;
+        const int secondOnset = 111, secondFadeEnd = 211;
+        const int total = 240;
+        ObjectId aId = (ObjectId)72601U;
+        ObjectId bId = (ObjectId)72602U;
+        ObjectId cId = (ObjectId)72603U;
+        ObjectId dId = (ObjectId)72604U;
+        ObjectId siblingId = (ObjectId)72605U;
+        ObjectId referenceId = (ObjectId)72606U;
+        double neutral = FmMultiNode.NeutralFrequencyHz;
+        Registry registry = new();
+
+        SampleSound Sample(ObjectId id, Func<int, float> f)
+            => new(new SampleDefinition(id, "C4(m) independent pitch",
+                new ExternalAssetReference("c4-m-source.wav")),
+                new MemorySampleData(Rate, 1,
+                    Enumerable.Range(0, 2400).Select(f).ToArray()));
+        registry.Add(aId, Sample(aId, i => (float)(0.04 + (i % 67) * 0.002)));
+        registry.Add(bId, Sample(bId, i => (float)(0.08 + (i % 83) * 0.003)));
+        registry.Add(cId, Sample(cId, i => (float)(0.29 + (i % 11) * 0.002)));
+        registry.Add(dId, Sample(dId, i => (float)(0.11 + (i % 97) * 0.002)));
+        registry.Add(siblingId, Sample(siblingId, _ => 0.10f));
+
+        FilterInstance pole = new(new FilterDefinition(
+            (ObjectId)72607U, "C4(m) continuously running pole"));
+        pole.SetStageParameter(1, "CutoffHz",
+            FilterParameterValue.FromNumber(240));
+
+        FmSynthSound Full(ObjectId id, double hz, bool constant,
+            bool exponential)
+            => new(new FmSynthGraph([
+                new FmConstantNode(0, 1.25),
+                new FmSoundSourceNode(1, id, hz, multiplierNodeId: 0,
+                    constant: constant, exponentialMultiplier: exponential),
+                new FmSoundSourceNode(2, siblingId, neutral),
+                new FmOperatorNode(3, FmOperatorKind.Add, [1, 2]),
+                new FmFilterNode(4, 3, pole, tailSeconds: 0.003),
+            ], 4), registry,
+                new NewNotePolicy(NewNoteAction.Continue, TimeSpan.Zero),
+                soundResolver: registry, enableLiveMultiExpansion: true);
+
+        FmSynthSound Bare(ObjectId id, double hz, bool constant,
+            bool exponential)
+            => new(new FmSynthGraph([
+                new FmConstantNode(0, 1.25),
+                new FmSoundSourceNode(1, id, hz, multiplierNodeId: 0,
+                    constant: constant, exponentialMultiplier: exponential),
+            ], 1), registry, soundResolver: registry,
+                enableLiveMultiExpansion: true);
+
+        FmSynthSound a = Full(aId, neutral * 1.4, false, true);
+        FmSynthSound b = Full(bId, neutral * 0.75, false, false);
+        FmSynthSound superseded = Full(cId, neutral * 3.5, true, false);
+        FmSynthSound latest = Full(dId, neutral * 2,
+            latestConstant, latestExponential);
+        registry.Add(SourceId, a);
+
+        RenderContext context = new(new RenderConfiguration(Rate, [
+            new OutputChannelConfiguration(Vector3.Zero, positionalImportance: 0),
+        ]));
+        float[] A = new float[total];
+        float[] B = new float[total - firstOnset];
+        float[] D = new float[total - secondOnset];
+        FmSynthSound bareA = Bare(aId, neutral * 1.4, false, true);
+        FmSynthSound bareB = Bare(bId, neutral * 0.75, false, false);
+        FmSynthSound bareD = Bare(dId, neutral * 2,
+            latestConstant, latestExponential);
+        bareA.Render(context, bareA.CreateState(), 0, A.Length, A);
+        bareB.Render(context, bareB.CreateState(), 0, B.Length, B);
+        bareD.Render(context, bareD.CreateState(), 0, D.Length, D);
+
+        static double Weight(int start, int frame)
+        {
+            double t = Math.Clamp((frame - start) / 100.0, 0, 1);
+            return t * t * (3 - 2 * t);
+        }
+        float[] bakedInput = new float[total];
+        for (int frame = 0; frame < total; frame++)
+        {
+            double source;
+            if (frame < firstOnset)
+                source = A[frame];
+            else if (frame <= firstFadeEnd)
+            {
+                double w = Weight(firstOnset, frame);
+                source = A[frame] * (1 - w) + B[frame - firstOnset] * w;
+            }
+            else if (frame < secondOnset)
+                source = B[frame - firstOnset];
+            else
+            {
+                double w = Weight(secondOnset, frame);
+                source = B[frame - firstOnset] * (1 - w)
+                    + D[frame - secondOnset] * w;
+            }
+            bakedInput[frame] = (float)(source + 0.10);
+        }
+        // This baked Sample is already on the output clock; applying a
+        // Source pitch modifier again would invalidate the oracle.
+        Registry referenceRegistry = new();
+        referenceRegistry.Add(referenceId,
+            new SampleSound(new SampleDefinition(referenceId,
+                "C4(m) baked reference",
+                new ExternalAssetReference("c4-m-reference.wav")),
+                new MemorySampleData(Rate, 1, bakedInput)));
+        FmSynthSound reference = new(new FmSynthGraph([
+            new FmSoundSourceNode(1, referenceId, neutral),
+            new FmFilterNode(2, 1, pole, tailSeconds: 0.003),
+        ], 2), referenceRegistry, soundResolver: referenceRegistry,
+            enableLiveMultiExpansion: true);
+        float[] expected = new float[total];
+        reference.Render(context, reference.CreateState(), 0,
+            expected.Length, expected);
+
+        PlaybackSession session = Session(registry, Schedule());
+        float[] actual = new float[total];
+        session.ApplyLiveEvent(ChannelTarget.Physical(0),
+            [new StartNoteCommand(SourceId)]);
+        session.Render(0, firstOnset,
+            actual.AsSpan(0, firstOnset));
+        using FirPreparationScheduler worker = new();
+        session.AdoptLiveSynthParameters(SourceId, a, b);
+        session.QueuePendingFirControls(worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 1,
+            TimeSpan.FromSeconds(5)), Is.True);
+        session.AdoptPreparedFirControls();
+        Assert.That(session.GetChannelState(0).CurrentVoice!.Sound,
+            Is.SameAs(b));
+        session.Render(10, 10, actual.AsSpan(10, 10));
+
+        session.AdoptLiveSynthParameters(SourceId, b, superseded);
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero,
+            "a C SourceId+frequency/mode edit during A→B must defer, not refuse");
+        session.Render(20, 10, actual.AsSpan(20, 10));
+        session.AdoptLiveSynthParameters(SourceId, superseded, latest);
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero,
+            "the latest D supersedes C without mutating A→B's pitch history");
+        session.Render(30, firstFadeEnd - 30 + 1,
+            actual.AsSpan(30, firstFadeEnd - 30 + 1));
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.GetChannelState(0).CurrentVoice!.Sound,
+                Is.SameAs(b), "B still owns the note until A→B's original fade is over");
+            Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+            Assert.That(worker.CompletedMultiExpansionCount, Is.EqualTo(1),
+                "obsolete C and latest D must not be built during A→B");
+        });
+
+        session.AdoptPreparedFirControls();
+        session.QueuePendingFirControls(worker);
+        Assert.That(SpinWait.SpinUntil(
+            () => worker.CompletedMultiExpansionCount >= 2,
+            TimeSpan.FromSeconds(5)), Is.True,
+            "the off-PCM worker creates the latest D only after A→B");
+        session.AdoptPreparedFirControls();
+        Assert.Multiple(() =>
+        {
+            Assert.That(session.GetChannelState(0).CurrentVoice!.Sound,
+                Is.SameAs(latest), "only the complete D revision may publish");
+            Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+            Assert.That(worker.CompletedMultiExpansionCount, Is.EqualTo(2),
+                "C must never be prepared or adopted");
+            Assert.That(worker.Fault, Is.Null);
+        });
+        session.Render(secondOnset, total - secondOnset,
+            actual.AsSpan(secondOnset));
+
+        for (int frame = 0; frame < total; frame++)
+            Assert.That(actual[frame],
+                Is.EqualTo(expected[frame]).Within(3e-5f),
+                $"one continuous pole, independently integrated A/B/D pitch and latest-only Source at frame {frame} ({latestConstant}/{latestExponential})");
+        Assert.That(session.CountOlderAudioVoices(), Is.Zero);
+        Assert.That(session.GetChannelState(0).CurrentVoice!.Sound,
+            Is.SameAs(latest));
+    }
+
     [Test]
     public void RepeatedSampleSourceEditsDuringLiveFadeDeferAndAdoptOnlyLatestAfterCompletion()
     {
