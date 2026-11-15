@@ -161,6 +161,9 @@ public sealed class FmFilterInspectorTests
 			Is.EqualTo(second.StageId));
 		Assert.That(InstanceField<Dictionary<string, Control>>(instance, "_editors")
 			["GainDb"], Is.TypeOf<TextBox>());
+		Assert.That(((TextBox)InstanceField<Dictionary<string, Control>>(
+			instance, "_editors")["GainDb"]).Text, Is.EqualTo("6"),
+			"same-kind shared default edits must refresh displayed values");
 
 		current = definition.GetStage(second.StageId);
 		FilterDocumentEditor.MoveStage(work, definition, second.StageId, 0, current);
@@ -168,6 +171,9 @@ public sealed class FmFilterInspectorTests
 		Assert.That(((ListBoxItem)list.SelectedItem!).Tag,
 			Is.EqualTo(second.StageId));
 		Assert.That(((ListBoxItem)list.Items[0]!).Tag, Is.EqualTo(second.StageId));
+		Assert.That(StageSummary(Inspector(editor)).Children
+			.OfType<TextBlock>().First().Text, Does.StartWith("peak (stage #"),
+			"the outer Synth port summary must follow shared stage ordering");
 
 		FilterStageDefinition third = FilterDocumentEditor.AddStage(
 			work, definition, FilterKind.SvfNotch);
