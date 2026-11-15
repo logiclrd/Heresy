@@ -199,7 +199,7 @@ public sealed class FilterInstanceEditorControl : UserControl
 						+ (string.IsNullOrWhiteSpace(descriptor.Units)
 							? "" : $" ({descriptor.Units})")
 						+ (descriptor.IsStructural ? " [structural]" : ""),
-					MinWidth = 175,
+					TextWrapping = TextWrapping.Wrap,
 					VerticalAlignment = VerticalAlignment.Center,
 				};
 				CheckBox toggle = new()
