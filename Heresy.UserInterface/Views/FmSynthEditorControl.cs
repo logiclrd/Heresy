@@ -1041,7 +1041,7 @@ public sealed class FmSynthEditorControl : UserControl
 	public bool TryCommitPendingEnvelopeFields()
 	{
 		foreach (NodeEnvelopeEditorControl editor in
-			_inspector.Children.OfType<NodeEnvelopeEditorControl>())
+			_inspector.Children.OfType<NodeEnvelopeEditorControl>().ToArray())
 		{
 			if (!editor.TryCommitPendingFields())
 				return false;
